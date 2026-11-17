@@ -7,13 +7,23 @@ import (
 	"testing"
 )
 
-func checkStatusLines(out string) string {
+// The compiler starts a message of a mode with "fern: -MODE: " and the oracle
+// with "MODE: " or nothing, so a differential compares the lines without it.
+func withoutLinePrefix(out, prefix string) string {
+	lines := strings.Split(out, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimPrefix(line, prefix)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func checkStatusLines(out, prefix string) string {
 	var rows []string
-	for _, line := range strings.Split(out, "\n") {
+	for _, row := range strings.Split(withoutLinePrefix(out, prefix), "\n") {
 		switch {
-		case strings.HasPrefix(line, "ok   "), strings.HasPrefix(line, "FAIL "),
-			strings.HasPrefix(line, "check: "):
-			rows = append(rows, line)
+		case strings.HasPrefix(row, "ok   "), strings.HasPrefix(row, "FAIL "),
+			strings.HasSuffix(row, "workspace member(s) ok"), strings.HasSuffix(row, "workspace member(s) failed"):
+			rows = append(rows, row)
 		}
 	}
 	return strings.Join(rows, "\n")
@@ -102,8 +112,8 @@ func TestSelfHostCheckWorkspaceDifferentialX86_64(t *testing.T) {
 				t.Fatalf("native check ok = %v, self-host = %v\n--- native ---\n%s\n--- self-host ---\n%s",
 					nativeOK, shOK, nativeOut, shOut)
 			}
-			want := checkStatusLines(strings.ReplaceAll(string(nativeOut), nativeDir, "<ROOT>"))
-			got := checkStatusLines(strings.ReplaceAll(string(shOut), selfDir, "<ROOT>"))
+			want := checkStatusLines(strings.ReplaceAll(string(nativeOut), nativeDir, "<ROOT>"), "check: ")
+			got := checkStatusLines(strings.ReplaceAll(string(shOut), selfDir, "<ROOT>"), "fern: -check: ")
 			if want != got {
 				t.Errorf("member verdicts differ:\n--- native ---\n%s\n--- self-host ---\n%s\n\n--- native raw ---\n%s\n--- self-host raw ---\n%s",
 					want, got, nativeOut, shOut)

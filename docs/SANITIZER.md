@@ -22,7 +22,7 @@ changes the code the backend emits — so it goes on the build, not on the run.
 | --- | --- | --- |
 | rc over-release (double free) | a `dec` sees a refcount already `<= 0` | `fern-sanitizer: rc over-release (double free)` + backtrace, exit 124 |
 | use-after-free | an `inc`/`dec` touches a quarantined block | `fern-sanitizer: use-after-free (touched a quarantined block)` + backtrace, exit 124 |
-| heap-buffer-overflow | a `__free` finds the redzone after a raw block written | `fern-sanitizer: heap-buffer-overflow (a raw block was written past its end)` + backtrace, exit 124 |
+| heap-buffer-overflow | a release finds that the redzone after a block was written | `fern-sanitizer: heap-buffer-overflow (a block was written past its end)` + backtrace, exit 124 |
 | second context | a context that does not own the heap allocates or releases a block | `fern-sanitizer: second context (a thread or stack that does not own the heap used it)` + backtrace, exit 124 |
 | leak census | `main` returns with live bytes outstanding | `leakcheck: …` summary + `fern-sanitizer: leak <K> bytes in <N> blocks` |
 
@@ -58,9 +58,9 @@ section 2.1). The checker and the boundaries in that section hold the rule.
 The second-context check makes a violation of the rule a finding. Without it,
 a violation corrupts a count with no error.
 
-The check runs in the census of each allocation and each release. It does
-not run at an `inc` or a `dec` that frees nothing. The owner of the heap
-depends on the image:
+The check runs in the census of each allocation and each release, and at
+each count operation beside its poison check (`san_owner_guard`). The owner
+of the heap depends on the image:
 
 - **An executable** owns the stack mapping that `_start` makes. The check
   compares the stack pointer with `__fern_stack_top`. The distance must be
@@ -73,16 +73,23 @@ depends on the image:
 
 A program cannot make a second context without the runtime floor. User code
 has no raw syscall. It gives a Fern function to C only through a locked
-export. Thus the check guards the runtime and its boundaries. Its
-tests use the runtime CLI (`drivers/runtime_run.fern`) to make a thread with
-a raw `clone` (`TestX86_64SanitizeSecondContextReported`,
+export. Thus the check guards the runtime and its boundaries.
+
+The tests use the runtime CLI (`drivers/runtime_run.fern`) to make a thread
+with a raw `clone`. The thread allocates in
+`TestX86_64SanitizeSecondContextReported`,
 `TestArm64SanitizeSecondContextReported` and
-`TestSharedLibSanitizeStrayThread`). The sanitized legs of
+`TestSharedLibSanitizeStrayThread`. It only adds to a count in
+`TestSanitizeSecondContextThatOnlyCounts`. The sanitized legs of
 `TestSharedLibBusyLock` hold the other side: threads that take turns make no
 finding.
 
 A kernel image and a freestanding library have no check. Their entry does
-not make the stack mapping, and they have no busy lock.
+not make the stack mapping, and they have no busy lock. On a kernel image the
+second context is an interrupt handler. The checker keeps a handler to `@norc`
+code (`E102`), which touches no box, and the fatal reports of `-sanitize`
+need a host to exit through. Thus a kernel image has neither the check nor a
+way to report it.
 
 ## What it does NOT turn on
 
@@ -112,26 +119,32 @@ Real, and the reason this is opt-in:
   `fern-sanitizer: write-after-free` with exit 124. A loop that churns 200
   rows through one recycled block instead bumps 200 blocks' worth of arena,
   up to the budget. `TestSelfHostSanitizeQuarantineGrowth` pins the growth,
-  88 bytes per release of a 64-byte array, and `docs/security/QUARANTINE.md`
+  104 bytes per release of a 64-byte array with its redzone, and `docs/security/QUARANTINE.md`
   records the policy.
 - Every `inc`/`dec` takes the out-of-line helper (the inline rc fast path is
   bypassed, since it is the helper that carries the poison check).
-- **A raw block carries a redzone.** `__alloc(n)` takes 16 bytes more and
-  fills the two words after `n` rounded to 8 with the poison pattern. The
-  leak census counts the block without them, so a block the typed runtime
-  releases balances. `__free(p, n)` reads them
-  back, and a word that lost the pattern reports
-  `fern-sanitizer: heap-buffer-overflow` with exit 124. A write inside the
-  rounding of `n`, past the redzone, or past a typed box is not seen.
+- **Each block carries a redzone.** `__fern_alloc` takes the size class of
+  the request and two words more. It fills the two words after the end of the
+  class with the poison pattern. The release finds the class again from the
+  size it frees, in `__fern_quar_push`. A word that lost the pattern reports
+  `fern-sanitizer: heap-buffer-overflow` with exit 124
+  (`TestSanitizeTypedBoxOverflowReported`).
+- **The redzone follows the class, not the request.** A string grows in place
+  up to the end of its class. Perceus reuse pairs boxes of one class, so a
+  reused box keeps its redzone. The leak census counts the request alone.
+- **A fresh raw block holds the poison pattern.** `__alloc(n)` fills the `n`
+  bytes rounded to 8, and `__alloc_u8_uninit(n)` fills its elements. Without
+  the fill, a fresh block comes from new pages and reads as zero. Thus a read
+  of memory that the program never wrote looks correct. With the fill, the read
+  gives `0x7EEDFACE7EEDFACE` on each run (`TestSanitizeFillsFreshRawBlocks`).
 
 With the flag **off**, none of this exists: every check is unemitted and the
 asm is byte-identical to a build from a compiler that never had the feature.
 `TestSelfHostSanitizeOffEmitsNoSymbolsX86_64` and `TestSelfHostOverReleaseReportArm64`
 pin the cheap proxy for that.
 
-The wasm census is the cheap end of all this: two counters and one line, with
-the freelist still recycling, because the quarantine that carries the rest of
-the cost is not built there.
+Wasm pays for its quarantine, its poison checks and its census, but not for a
+redzone or a fill.
 
 ## Backend coverage
 
@@ -141,7 +154,7 @@ the cost is not built there.
 | arm64 (native) | ✅ | ✅ | ✅ | — |
 | x86-64 (self-host) | ✅ | ✅ | ✅ | ✅ |
 | arm64 (self-host) | ✅ | ✅ | ✅ | ✅ |
-| wasm, native and self-host | ✅ | — | — | — |
+| wasm (self-host) | ✅ | ✅ | ✅ | — |
 | the Go SSA backends | — | — | — | — |
 
 Every row above emits the **same** message text and the same exit status — a
@@ -168,9 +181,9 @@ and report the use-after-free.
 
 `-sanitize` on a target that is not fully covered **warns and names what the
 build does carry**, so a silent run is never mistaken for a checked one. On
-wasm that reads "the leak census only, not the rc over-release or
-use-after-free detectors"; on an SSA backend, or a target with no
-instrumentation at all, it says the build carries no checks.
+wasm it names the census and the over-release and use-after-free detectors,
+and it says that the redzone and the fill are not there. On a target with no
+instrumentation at all, it says that the build carries no checks.
 
 The **self-host** compiler takes `-sanitize` as native does, and reads
 `FERN_SANITIZE=1` at emit time (its `FERN_LEAKCHECK` / `FERN_RC_TRACE` ports
@@ -211,24 +224,43 @@ supplies a capability").
 balanced census off the serial console. The fatal checks of `-sanitize` still
 need a host, because their abort path is a syscall.
 
-## wasm: the census, and only the census
+## wasm: the census and the quarantine
 
-The wasm backend carries the **leak census** — the same line, the same verdict
-text, the same "a clean run says nothing" contract:
+The wasm backend carries the **leak census**, the **rc over-release** report
+and the **use-after-free** report, with the texts of the native runtime:
 
 ```sh
 FERN_LEAKCHECK=1 fern -target wasm32-wasi -o prog.wasm prog.fern   # census
-FERN_SANITIZE=1  fern -target wasm32-wasi -o prog.wasm prog.fern   # + verdict
+FERN_SANITIZE=1  fern -target wasm32-wasi -o prog.wasm prog.fern   # + verdict and detectors
 ```
 
-It costs two counters in two helpers, because this runtime has exactly two
-chokepoints: every allocation reaches `__fern_alloc` (the box / rc1 / u8-array
-wrappers all forward to it) and every reclamation reaches `__free`. Both
-count at the same `(size+15)&-16` rounding, so a block's allocation and its
-release cancel exactly, and a block that the quarantine-free freelist recycles
-is counted once each way.
+The census costs two counters in two helpers, because every allocation
+reaches `__fern_alloc` and every release reaches `__fern_raw_free`,
+`__fern_arr_dec` or `__fern_alloc_reuse`. Both count at the same rounding, so
+a block's allocation and its release cancel.
 
-Three things about it are specific to this backend:
+Under `-sanitize` the three releases hand the block to `__fern_quar`, a FIFO
+quarantine:
+
+- Word 0 of a released block holds the poison word `0x7EEDFACE`, word 1 its
+  size and word 2 the next block. A block of fewer than 16 bytes has no room
+  for the link. It keeps the poison and is never used again.
+- `__fern_rc_inc`, `__fern_rc_dec` and `__fern_arr_dec` report a block whose
+  count is the poison word, with `fern-sanitizer: use-after-free`.
+- A count that reaches zero a second time reports
+  `fern-sanitizer: rc over-release`.
+- A raw release of a block that is in the quarantine is a double free.
+
+A release past the budget (`-quarantine`, 64 MiB by default) evicts the
+oldest block to its free list. The eviction reports a block whose poison word
+was written. It does not read the payload, as the native eviction does.
+
+A core module exits with 124 after a report, as a native program does. A
+component has no exit status but success or failure, so it traps.
+`TestWasmSanitizeReportsFreedBlocks` holds the reports, a clean run, and a
+churn of 4.9 GB through the 4 GiB of wasm32.
+
+Three more things are specific to this backend:
 
 - **Its counters are reserved unconditionally.** They are scratch slots in the
   module's reserved low-memory window, chained off the end of it like the
@@ -236,20 +268,16 @@ Three things about it are specific to this backend:
   them with the flag off, and no census code is emitted — but the addresses
   above them shift, so a flag-off wasm module is not byte-identical to one from
   a compiler predating the census the way a flag-off native binary is.
-
 - **The report is latched.** Wasm's exit seams NEST — the synthesised
   `_start` / `_lang_run` wrapper calls `__fern_exit`, which is also where the
   `exit()` builtin lands — so `__fern_lc_report` prints at most once per
   process rather than once per seam.
-- **A module with no exit seam never reports.** A `wasm32-wasi-http` handler
-  component is invoked per request and does not exit, so its counters tick and
-  nothing prints. That is the same rule as a native server that never returns
-  from `main`, and it is what the `-sanitize` warning for that target says.
+- **A module with no exit seam prints no census.** A `wasm32-wasi-http`
+  handler component is invoked per request and does not exit, so its counters
+  tick and nothing prints. The over-release and use-after-free reports do not
+  wait for an exit, so a handler makes them.
 
-What wasm does NOT carry is the two fatal checks. Both need a poisoned rc word
-and an abort path, and neither is built here — so on wasm a silent run means
-"did not leak", not "clean". The rc over-release COUNTER is still there
-(`__rc_underflow_count()`), it is just not a report.
+What wasm does NOT carry is the redzone and the fill of fresh raw blocks.
 
 ## Editing notes
 
@@ -283,20 +311,20 @@ whose reference outlived the count.
 - **Cycles.** A reference cycle is a leak the census reports as live bytes
   with no further attribution. Identifying cycle members (trial-decrement over
   the leak set) is the unbuilt half of #5362.
-- **Uninitialised reads.** Poisoning fresh allocations with a sentinel is
-  cheap; distinguishing a read of an unwritten slot from a read of a
-  legitimately-poison-valued one needs shadow memory. Neither is built.
+- **Uninitialised reads.** The fill makes a read of unwritten raw memory give
+  the poison pattern, but nothing reports the read. A report must tell an
+  unwritten byte from a byte that holds the pattern, and that needs shadow
+  memory, which is not built. A typed box is not filled: the language writes
+  each field and each element before a read.
 - **A stale reference that never touches the block again.** The detector fires
   on the `inc`/`dec`, so a dangling pointer that is only ever *read through*
   raw-memory builtins is invisible.
-- **A write past a typed box, or far past a raw block.** The redzone sits
-  after a raw block alone, it is 16 bytes, and the free reads it. A write
-  that lands beyond it, or in the next block, is seen only when that block's
-  own release or count reports it.
+- **A write inside the slack of a class, or far past a block.** The redzone
+  is 16 bytes after the end of the size class. A write between the end of the
+  request and the end of the class is not seen. A write that lands beyond the
+  redzone, or in the next block, is seen only when that block's own release
+  or count reports it. A block that is never released is never checked.
 
-- **A second context that only counts.** The second-context check runs in
-  the census of an allocation and a release. A second context that only
-  increments or decrements counts, and frees nothing, is not seen.
 - **A second context on the same thread or stack.** A raw `clone` with the
   stack of its parent, or a thread pointer that a raw `clone` copies into a
   shared object, looks like the owner.

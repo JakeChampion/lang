@@ -22,6 +22,7 @@ import "std/protobuf";
 import "std/quic/frames";
 import "std/quic/packet";
 import "std/result";
+import "std/shape";
 import "std/time";
 import "std/truetype";
 import "std/tz";
@@ -971,7 +972,9 @@ function truetype_summary(raw: u8[]): string {
   }
   let heavy = if (f.has_axis("wght")) { f.at_axis("wght", 700.0) } else { f };
   pixels += heavy.render(heavy.glyph(65), 12.0, 0.0).coverage.len();
-  return "truetype ok " + f.glyphs.to_string() + " " + advance.to_string() + " " + pixels.to_string();
+  // The GSUB lookups of the font, for an Arabic word and a Latin one.
+  let shaped = shape.shape(f, "السَّلام", "arab").glyphs.len() + shape.shape(f, "office", "latn").glyphs.len();
+  return "truetype ok " + f.glyphs.to_string() + " " + advance.to_string() + " " + pixels.to_string() + " " + shaped.to_string();
 }
 
 // The offset and the abbreviation of the zone at times across its range.

@@ -1700,7 +1700,7 @@ function __proxied[D: async.Driver](drv: D, own c: __Conns, at: i32, next: Optio
   }
   match (next) {
     Some(sess) => {
-      let took: (__Conns, __Tls, u8[], boolean) = __tls_taken(drv, c, at, Secured(sess), rest[0:rest.len()], opts);
+      let took: (__Conns, __Tls, u8[], boolean, boolean) = __tls_taken(drv, c, at, Secured(sess), rest[0:rest.len()], opts);
       return (__Conns { ...took.0, bufs: took.0.bufs.with(at, took.2), tls: took.0.tls.with(at, took.1) }, done || took.3);
     },
     None => {
@@ -1774,6 +1774,7 @@ function __serve_read_tls[D: async.Driver](drv: D, own c: __Conns, at: i32, scra
     }
     let done = false;
     let more = true;
+    let advanced = false;
     while (more) {
       __arr_set_len(scratch, __recv_room());
       let n = drv.recv_into(c.socks[at], scratch);
@@ -1788,6 +1789,7 @@ function __serve_read_tls[D: async.Driver](drv: D, own c: __Conns, at: i32, scra
         t = took.1;
         buf = __read_onto(buf, took.2);
         done = took.3;
+        advanced = advanced || took.4;
         more = !done && n == __recv_room() && buf.len() <= http.request_bytes_cap(opts.limits);
         if (buf.len() > http.request_bytes_cap(opts.limits)) {
           done = true;
@@ -1798,6 +1800,15 @@ function __serve_read_tls[D: async.Driver](drv: D, own c: __Conns, at: i32, scra
     let off = __serve_handshook(c, at, was, done, opts);
     c = off.0;
     done = off.1;
+    if let Secured(now) = t {
+      advanced = advanced || !was && now.connected();
+    }
+    if (!done && was_idle && buf.len() == 0 && advanced) {
+      // The handshake moved on: the deadline restarts for the peer's next
+      // flight or request, so the server's own handshake work is not charged.
+      let next = monotonic_ns() + opts.recv_deadline.as_nanos();
+      return (__Conns { ...c, deadlines: c.deadlines.with(at, next), due: __sooner(c.due, next) }, false);
+    }
     if (done || !was_idle || buf.len() == 0) {
       return (c, done);
     }
@@ -1886,7 +1897,8 @@ function __kernel_record(c: __Conns, at: i32): (__Conns, boolean) {
   return (c, true);
 }
 
-function __tls_taken[D: async.Driver](drv: D, own c: __Conns, at: i32, t: __Tls, raw: [u8], opts: Config): (__Conns, __Tls, u8[], boolean) {
+// The fifth answer is true when the step sent the peer a handshake flight.
+function __tls_taken[D: async.Driver](drv: D, own c: __Conns, at: i32, t: __Tls, raw: [u8], opts: Config): (__Conns, __Tls, u8[], boolean, boolean) {
   let none: u8[] = [];
   if let Secured(sess) = t {
     match (sess.read(raw, clock.now())) {
@@ -1902,15 +1914,15 @@ function __tls_taken[D: async.Driver](drv: D, own c: __Conns, at: i32, t: __Tls,
             _ => {}
           }
         }
-        return (c, Secured(step.session), step.data, done);
+        return (c, Secured(step.session), step.data, done, step.output.len() > 0 && !step.session.connected());
       },
       Err(f) => {
         tcp_send_bytes(c.socks[at], f.alert);
-        return (c, Plain, none, true);
+        return (c, Plain, none, true, false);
       }
     }
   }
-  return (c, t, none, true);
+  return (c, t, none, true, false);
 }
 
 function __bytes_from(buf: u8[], from: i32): u8[] {

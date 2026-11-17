@@ -36,6 +36,9 @@ pub const PLAYER: i32 = 8;
 
 pub const USERS: i32 = 9;
 
+// The list of the downloads of the app.
+pub const DOWNLOADS: i32 = 10;
+
 // The tabs of the bar at the bottom, and the screen of each.
 pub function tab_names(): string[] {
   return ["Home", "Libraries", "Search", "Settings"];
@@ -84,6 +87,10 @@ pub struct View {
   // download that came in percent, or -1 when it has none.
   menu: plex.Item,
   menu_download: i32,
+  // The rows of the screen of the downloads.
+  saved: SavedRow[],
+  // The title of the music that plays while another screen shows, or "".
+  now_playing: string,
   users: plex.HomeUser[],
   pin_for: string,
   pin_digits: string,
@@ -92,6 +99,8 @@ pub struct View {
   pin_code: string,
   status: string,
   error: string,
+  // True on the home screen with no server, where only the downloads show.
+  offline: boolean,
   servers: plex.Server[],
   server_states: string[],
   query: string,
@@ -114,15 +123,16 @@ pub function english(): i18n.Strings {
 }
 
 pub function empty_view(w: i32, h: i32): View {
-  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english() };
+  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, saved: [], now_playing: "", users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", offline: false, servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english() };
 }
 
 // --- metrics
 
 // `u` is the size of a density-independent pixel, and `ts` the scale of the
 // text, for a window of w by h. The system bars cover `top` pixels at the
-// top of the window and `bottom` pixels at its bottom.
-pub struct Metrics { w: i32, h: i32, top: i32, bottom: i32, u: i32, ts: i32, cw: i32, th: i32, texts: i18n.Strings }
+// top of the window and `bottom` pixels at its bottom. The bar of the music
+// that plays takes `bar` pixels above the tabs.
+pub struct Metrics { w: i32, h: i32, top: i32, bottom: i32, u: i32, ts: i32, cw: i32, th: i32, texts: i18n.Strings, bar: i32 }
 
 pub function metrics(w: i32, h: i32, top: i32, bottom: i32): Metrics {
   let short = w;
@@ -137,7 +147,7 @@ pub function metrics(w: i32, h: i32, top: i32, bottom: i32): Metrics {
   if (ts < 1) {
     ts = 1;
   }
-  return Metrics { w: w, h: h, top: top, bottom: bottom, u: u, ts: ts, cw: draw.text_width("x", ts), th: draw.text_height(ts), texts: english() };
+  return Metrics { w: w, h: h, top: top, bottom: bottom, u: u, ts: ts, cw: draw.text_width("x", ts), th: draw.text_height(ts), texts: english(), bar: 0 };
 }
 
 // The pixels from dot to dot of the small dot-matrix words, such as the
@@ -386,6 +396,23 @@ function bottom_bar(m: Metrics, v: View): scene.Node[] {
   return out;
 }
 
+// The bar of the music that plays, above the tabs: its title opens the
+// player, and its button pauses or plays.
+function now_bar(m: Metrics, v: View): scene.Node[] {
+  if (m.bar == 0) {
+    return [];
+  }
+  let y = m.h - bottom_height(m) - m.bar;
+  let line = (m.u / 2).max(1);
+  let words = if (v.player.paused) { tr(m, "PLAY") } else { tr(m, "PAUSE") };
+  let bw = button_width(m, words);
+  let bx = m.w - 16 * m.u - bw;
+  let out: scene.Node[] = [tap(fill(0, y, m.w, m.bar, look.bg(), 0), "now:open"), fill(0, y, m.w, line, look.outline(), 0)];
+  let cells = (bx - 32 * m.u) / m.cw;
+  out = out.append(label(m, 16 * m.u, y + (m.bar - m.th) / 2, fit(v.now_playing, cells), m.ts, look.ink()));
+  return util_append(out, button(m, bx, y + (m.bar - button_height(m)) / 2, words, !v.player.paused, "now:toggle"));
+}
+
 // The top of the content of a screen, and its bottom.
 pub function content_top(m: Metrics): i32 {
   return top_height(m);
@@ -393,7 +420,7 @@ pub function content_top(m: Metrics): i32 {
 
 pub function content_bottom(m: Metrics, screen: i32): i32 {
   if (has_tabs(screen)) {
-    return m.h - bottom_height(m);
+    return m.h - bottom_height(m) - m.bar;
   }
   return m.h - m.bottom;
 }
@@ -561,6 +588,9 @@ function home(m: Metrics, v: View): scene.Node[] {
   }
   if (v.error.len() > 0) {
     out = util_append(out, wrapped(m, 16 * m.u, content_bottom(m, v.screen) - 80 * m.u, m.w - 32 * m.u, v.error, look.red()));
+  }
+  if (v.offline) {
+    out = out.append(note(m, content_bottom(m, v.screen) - 48 * m.u, tr(m, "Offline: the downloads play with no server")));
   }
   return out;
 }
@@ -911,6 +941,7 @@ function settings(m: Metrics, v: View): scene.Node[] {
     (tr(m, "User"), v.account, "users"),
     (tr(m, "Server"), v.server_name, "servers"),
     (tr(m, "Quality"), v.quality, "quality"),
+    (tr(m, "Downloads"), m.texts.format("{0} of {1} done", [v.saved.filter((r: SavedRow): boolean => r.done).len().to_string(), v.saved.len().to_string()]), "downloads"),
     (tr(m, "Sign out"), "", "signout"),
   ];
   let row = 72 * m.u;
@@ -936,6 +967,40 @@ function settings(m: Metrics, v: View): scene.Node[] {
   }
   let about = plex.PRODUCT + " " + plex.VERSION + ". A Plex client written in Fern, with no Java code: the screens, the network, TLS and JSON are Fern, and the video plays through the media player of Android.";
   out = util_append(out, wrapped(m, 16 * m.u, y + 16 * m.u, m.w - 32 * m.u, about, look.muted()));
+  return out;
+}
+
+// A download on the screen of the downloads: the title of its item, its
+// state, such as "42%", and whether it is done.
+pub struct SavedRow { title: string, state: string, done: boolean }
+
+// The downloads, one panel each: the title and the state, and a button
+// that stops the download or removes its file. A tap on a done download
+// plays it.
+function downloads(m: Metrics, v: View): scene.Node[] {
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, look.bg(), 0)];
+  let y = top_height(m) + 8 * m.u - v.scroll;
+  if (v.saved.len() == 0) {
+    return out.append(note(m, y + 16 * m.u, tr(m, "No downloads")));
+  }
+  let row = 72 * m.u;
+  let k = 0;
+  for r in v.saved {
+    let n = panel(m, 16 * m.u, y, m.w - 32 * m.u, row - 8 * m.u);
+    if (r.done) {
+      n = tap(n, "saved:" + k.to_string());
+    }
+    out = out.append(n);
+    let words = if (r.done) { tr(m, "REMOVE") } else { tr(m, "STOP") };
+    let bw = button_width(m, words);
+    let bx = m.w - 32 * m.u - bw;
+    let cells = (bx - 48 * m.u) / m.cw;
+    out = out.append(label(m, 32 * m.u, y + 10 * m.u, fit(r.title, cells), m.ts, look.ink()));
+    out = out.append(label(m, 32 * m.u, y + 14 * m.u + m.th, fit(r.state, cells), m.ts, look.muted()));
+    out = util_append(out, button(m, bx, y + (row - 8 * m.u - button_height(m)) / 2, words, false, "unsave:" + k.to_string()));
+    y += row;
+    k += 1;
+  }
   return out;
 }
 
@@ -1013,9 +1078,10 @@ function pin_pad(m: Metrics, digits: string): scene.Node[] {
   return out;
 }
 
-// The progress bar of the player, as a node whose tap seeks.
-pub function seek_bar(m: Metrics): scene.Node {
-  return mk(24 * m.u, m.h - m.bottom - 72 * m.u, m.w - 48 * m.u, 24 * m.u, scene.Blank, "seek", "seek");
+// The progress bar of the player, as a node whose tap seeks. The buttons
+// of music go under it, so it goes up by their height.
+pub function seek_bar(m: Metrics, p: PlayerView): scene.Node {
+  return mk(24 * m.u, m.h - m.bottom - 72 * m.u - music_height(m, p), m.w - 48 * m.u, 24 * m.u, scene.Blank, "seek", "seek");
 }
 
 // The size of a preview thumbnail over the seek bar.
@@ -1073,7 +1139,7 @@ function player(m: Metrics, v: View): scene.Node[] {
   if (p.status.len() > 0) {
     out = out.append(label(m, (m.w - draw.text_width(p.status, m.ts)) / 2, cy + r + 16 * m.u, fit(p.status, m.w / m.cw), m.ts, look.muted()));
   }
-  let bar = seek_bar(m);
+  let bar = seek_bar(m, p);
   let shown_ms = p.position_ms;
   if (p.scrub_ms >= 0i64) {
     shown_ms = p.scrub_ms;
@@ -1118,16 +1184,24 @@ function player(m: Metrics, v: View): scene.Node[] {
 }
 
 // The buttons of music under the seek bar: shuffle, repeat, the sleep
-// timer and the next track, in rows that fit the width.
-function music_row(m: Metrics, p: PlayerView, y: i32): scene.Node[] {
+// timer and the next track. None for a video.
+function music_words(m: Metrics, p: PlayerView): (string, boolean, string)[] {
+  if (!p.audio) {
+    return [];
+  }
   let words: (string, boolean, string)[] = [(tr(m, "SHUFFLE"), p.shuffle, "shuffle"), (p.repeat, false, "repeat"), (p.sleep, false, "sleep")];
   if (p.has_next) {
     words = words.append((tr(m, "NEXT"), false, "next_track"));
   }
+  return words;
+}
+
+// The buttons of music from `y` down, in rows that fit the width.
+function music_row(m: Metrics, p: PlayerView, y: i32): scene.Node[] {
   let out: scene.Node[] = [];
   let x = 16 * m.u;
   let gap = 10 * m.u;
-  for word in words {
+  for word in music_words(m, p) {
     let (text, on, act) = word;
     let w = button_width(m, text);
     if (x > 16 * m.u && x + w > m.w - 16 * m.u) {
@@ -1138,6 +1212,26 @@ function music_row(m: Metrics, p: PlayerView, y: i32): scene.Node[] {
     x += w + gap;
   }
   return out;
+}
+
+// The height of the rows of the buttons of music, with the gap under each.
+function music_height(m: Metrics, p: PlayerView): i32 {
+  let words = music_words(m, p);
+  if (words.len() == 0) {
+    return 0;
+  }
+  let rows = 1;
+  let x = 16 * m.u;
+  let gap = 10 * m.u;
+  for word in words {
+    let w = button_width(m, word.0);
+    if (x > 16 * m.u && x + w > m.w - 16 * m.u) {
+      x = 16 * m.u;
+      rows += 1;
+    }
+    x += w + gap;
+  }
+  return rows * (button_height(m) + gap);
 }
 
 // The lines of the subtitle that shows, in the middle above `bottom`, in a
@@ -1169,7 +1263,7 @@ function skip_button(m: Metrics, p: PlayerView): scene.Node[] {
   if (p.skip.len() == 0) {
     return [];
   }
-  let bar = seek_bar(m);
+  let bar = seek_bar(m, p);
   return button(m, m.w - 16 * m.u - button_width(m, p.skip), bar.y - button_height(m) - 64 * m.u, p.skip, true, "skip");
 }
 
@@ -1197,7 +1291,7 @@ function up_next_card(m: Metrics, p: PlayerView): scene.Node[] {
   let w = (m.w - 32 * m.u).min(320 * m.u);
   let h = 132 * m.u;
   let x = m.w - 16 * m.u - w;
-  let y = seek_bar(m).y - h - 16 * m.u;
+  let y = seek_bar(m, p).y - h - 16 * m.u;
   let sp = small_pitch(m);
   let pad = 16 * m.u;
   let words = m.texts.format("UP NEXT IN {0}", [p.up_next_secs.to_string()]);
@@ -1302,7 +1396,9 @@ function seek_dots(f: draw.Frame, r: look.Rect, permille: i32, dot: i32): void {
 
 // The nodes of the screen of `v`, in the order to draw them.
 pub function nodes(v: View): scene.Node[] {
-  let m = Metrics { ...metrics(v.w, v.h, v.top, v.bottom), texts: v.texts };
+  let base = metrics(v.w, v.h, v.top, v.bottom);
+  let bar = if (v.now_playing.len() > 0 && has_tabs(v.screen)) { 64 * base.u } else { 0 };
+  let m = Metrics { ...base, texts: v.texts, bar: bar };
   if (v.screen == LOGIN) {
     return login(m, v);
   }
@@ -1325,11 +1421,13 @@ pub function nodes(v: View): scene.Node[] {
     body = search(m, v);
   } else if (v.screen == USERS) {
     body = users(m, v);
+  } else if (v.screen == DOWNLOADS) {
+    body = downloads(m, v);
   } else {
     body = settings(m, v);
   }
-  let back = v.screen == LIBRARY || v.screen == DETAIL || v.screen == USERS;
-  let out = util_append(util_append(body, top_bar(m, v, back)), bottom_bar(m, v));
+  let back = v.screen == LIBRARY || v.screen == DETAIL || v.screen == USERS || v.screen == DOWNLOADS;
+  let out = util_append(util_append(util_append(body, top_bar(m, v, back)), now_bar(m, v)), bottom_bar(m, v));
   if (v.menu.key.len() > 0) {
     out = util_append(out, poster_menu(m, v.menu, v.menu_download));
   }
@@ -1337,8 +1435,8 @@ pub function nodes(v: View): scene.Node[] {
 }
 
 // The menu of a held poster, at the bottom over a dark veil: its title,
-// Play, its download, Mark watched or Mark unwatched, Go to show for an
-// episode, and Cancel. `download` is the percent of its download that came,
+// Play, its download, Download all for a group of items, Mark watched or
+// Mark unwatched, Go to show for an episode, and Cancel. `download` is the percent of its download that came,
 // or -1. A tap on the veil closes it.
 function poster_menu(m: Metrics, it: plex.Item, download: i32): scene.Node[] {
   let rows: (string, string)[] = [];
@@ -1351,6 +1449,9 @@ function poster_menu(m: Metrics, it: plex.Item, download: i32): scene.Node[] {
       words = m.texts.format("Stop download ({0}%)", [download.to_string()]);
     }
     rows = rows.append((words, "menu:download"));
+  }
+  if (["show", "season", "artist", "album"].contains(it.kind)) {
+    rows = rows.append((tr(m, "Download all"), "menu:download_all"));
   }
   if (plex.watched(it)) {
     rows = rows.append((tr(m, "Mark unwatched"), "menu:mark"));

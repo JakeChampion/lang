@@ -89,8 +89,8 @@ func TestTablesAreStringsNotArrays(t *testing.T) {
 		t.Error("generated module declares an array table; tables must be string literals")
 	}
 	tables := regexp.MustCompile(`(?m)^function (_\w+(?:_table|_ranges))\(\)`).FindAllStringSubmatch(src, -1)
-	if len(tables) != 26 {
-		t.Fatalf("generated %d table functions, want 26", len(tables))
+	if len(tables) != 28 {
+		t.Fatalf("generated %d table functions, want 28", len(tables))
 	}
 	for _, table := range tables {
 		name := table[1]

@@ -259,7 +259,7 @@ function draw_text(own p: Painter, c: gl.Canvas, n: scene.Node, t: Text, dy: i32
         q = Painter { ...q, atlas: a, slots: q.slots.insert(pl.key, slot) };
       }
       if let Some(slot) = q.slots.get(pl.key) {
-        glyphs = glyphs.append(gl.Glyph { slot: slot, x: n.x + pl.x, y: base + pl.bm.top });
+        glyphs = glyphs.append(gl.Glyph { slot: slot, x: n.x + pl.x, y: base + pl.y });
       }
     }
   }

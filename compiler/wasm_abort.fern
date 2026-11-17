@@ -26,3 +26,33 @@ pub function helpers(offsets: i32[], mode: i32): string {
   }
   return out + "  (func $__fern_alloc_size_abort (result i32) (call $__fern_abort_alloc) (unreachable))\n";
 }
+
+// The two reports of -sanitize that the wasm heap runtime makes. Their texts
+// are those of the native runtime.
+pub function san_texts(): string[] {
+  return ["fern-sanitizer: rc over-release (double free)\n", "fern-sanitizer: use-after-free (touched a quarantined block)\n"];
+}
+
+// $__fern_san_over and $__fern_san_uaf write their report to stderr. A core
+// module then exits with 124, as a native program does. A component has no
+// exit status but success or failure, so it traps.
+pub function san_helpers(offsets: i32[], mode: i32): string {
+  let names: string[] = ["over", "uaf"];
+  let messages = san_texts();
+  let out = "";
+  for i in 0..names.len() {
+    out = out + "  (func $__fern_san_" + names[i] + "\n";
+    let ptr = util.i32_to_string(offsets[i] + 4);
+    let len = util.i32_to_string(messages[i].len());
+    if (mode == 0) {
+      out = out + "    (i32.store (i32.const 0) (i32.const " + ptr + "))\n";
+      out = out + "    (i32.store (i32.const 4) (i32.const " + len + "))\n";
+      out += "    (drop (call $__fern_fd_write (i32.const 2) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
+      out += "    (call $__fern_proc_exit_raw (i32.const 124))\n";
+    } else {
+      out = out + "    (call $__fern_bwf (call $__fern_get_stderr) (i32.const " + ptr + ") (i32.const " + len + ") (i32.const 0))\n";
+    }
+    out += "    (unreachable))\n";
+  }
+  return out;
+}

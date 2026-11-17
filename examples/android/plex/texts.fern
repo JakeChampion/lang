@@ -96,9 +96,19 @@ function table(): string[][] {
     ["Remove download", "Download entfernen", "Supprimer le téléchargement", "Eliminar la descarga"],
     ["Stop download ({0}%)", "Download stoppen ({0}%)", "Arrêter le téléchargement ({0}%)", "Detener la descarga ({0}%)"],
     ["Downloads", "Downloads", "Téléchargements", "Descargas"],
-    ["Only a file that this phone plays as it is can download", "Nur eine Datei, die dieses Gerät direkt abspielt, lässt sich herunterladen", "Seul un fichier que cet appareil lit directement peut se télécharger", "Solo se descarga un archivo que este dispositivo reproduce directamente"],
+    ["{0} of {1} done", "{0} von {1} fertig", "{0} sur {1} terminés", "{0} de {1} listas"],
+    ["No downloads", "Keine Downloads", "Aucun téléchargement", "No hay descargas"],
+    ["Waiting", "Wartet", "En attente", "En espera"],
+    ["Done", "Fertig", "Terminé", "Lista"],
+    ["Paused", "Pausiert", "En pause", "En pausa"],
+    ["REMOVE", "LÖSCHEN", "SUPPRIMER", "BORRAR"],
+    ["STOP", "STOPP", "ARRÊTER", "PARAR"],
+    ["PLAY", "PLAY", "LIRE", "REPRODUCIR"],
+    ["PAUSE", "PAUSE", "PAUSE", "PAUSA"],
+    ["Download all", "Alle herunterladen", "Tout télécharger", "Descargar todo"],
     ["Android refused the download", "Android hat den Download abgelehnt", "Android a refusé le téléchargement", "Android rechazó la descarga"],
     ["The download failed", "Der Download ist fehlgeschlagen", "Le téléchargement a échoué", "La descarga ha fallado"],
+    ["Offline: the downloads play with no server", "Offline: die Downloads spielen ohne Server", "Hors ligne : les téléchargements se lisent sans serveur", "Sin conexión: las descargas se reproducen sin servidor"],
   ];
 }
 

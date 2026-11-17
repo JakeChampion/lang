@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -68,6 +69,10 @@ func TestSelfHostDriverSizeReport(t *testing.T) {
 
 const stage2Row = "fern.fern/stage2"
 
+// tlsHelloRow is the smallest HTTP/1.1 server over TLS, built by stage 1 with
+// -size: the binary-size row of the networking stack (#12508).
+const tlsHelloRow = "net/tls_hello"
+
 func TestSelfHostWarmStockDriver(t *testing.T) {
 	list := os.Getenv("FERN_WARM_DRIVER")
 	if list == "" {
@@ -94,6 +99,20 @@ func TestSelfHostWarmStockDriver(t *testing.T) {
 					t.Fatal(err)
 				}
 				recordDriverSize(t, driver, stage2)
+				return
+			}
+			if driver == tlsHelloRow {
+				if len(runner) != 0 {
+					t.Fatalf("%s runs the fern.fern driver as a compiler, which needs a native x86-64 host", driver)
+				}
+				stage1 := cachedDriverBin(t, gcc, dir, "fern.fern")
+				bin := filepath.Join(t.TempDir(), "tls_hello")
+				src := langSrcAbs(t, "scripts/net-bench.d/tls_hello.fern")
+				cmd := exec.Command(stage1, "-size", "-target", e2eharness.TargetX86_64Linux, "-o", bin, src, e2eharness.SelfHostStdlibRoot(t))
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("stage 1 -size %s: %v\n%s", src, err, out)
+				}
+				recordDriverSize(t, driver, bin)
 				return
 			}
 			bin := cachedDriverBin(t, gcc, dir, driver)

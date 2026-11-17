@@ -107,7 +107,7 @@ QEMU_AARCH64=/path/to/qemu-aarch64 FERN="$PWD/bin/fern" ./fern-image/scripts/tes
 ```
 
 Use the pinned Wasmtime toolchain. ARM64 records use QEMU and do not qualify hardware performance.
-Native and ARM64 builds use heap sanitization. Wasm provides the leak census only.
+Native and ARM64 builds use heap sanitization. Wasm provides the leak census and the use-after-free checks.
 The campaign is finite. It does not establish broad compatibility, unbounded fuzz coverage, security, or performance parity.
 
 ## Recorded qualification

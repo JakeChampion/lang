@@ -1,3 +1,4 @@
+import "std/array";
 import "std/test";
 import "std/unicode" as unicode;
 
@@ -109,6 +110,27 @@ function test_is_letter(): test.TestOutcome {
     && (0x4E2D as char).is_letter() && !(48 as char).is_letter());
 }
 
+// Marks of the categories Mn, Mc and Me, and letters that are not marks.
+function test_is_mark(): test.TestOutcome {
+  return test.assert_true((0x301 as char).is_mark() && (0x64E as char).is_mark() && (0x903 as char).is_mark()
+    && (0x20DD as char).is_mark() && !(97 as char).is_mark() && !(0x628 as char).is_mark() && !(0x2FF as char).is_mark());
+}
+
+// The combining class of a starter is 0. The fatha has 30, the shadda 33,
+// the acute accent 230 and the dot below 220.
+function test_combining_class(): test.TestOutcome {
+  let got = [97, 0x64E, 0x651, 0x301, 0x323, 0x1D165].map((c: i32): string => unicode.combining_class(c as char).to_string());
+  return test.assert_eq(got.join(" "), "0 30 33 230 220 216");
+}
+
+// Beh is dual joining, alef right joining, the tatweel join causing and the
+// fatha transparent. A Latin letter and the hamza do not join. The Syriac
+// letter alaph is right joining and the Mongolian letter a is dual joining.
+function test_joining_type(): test.TestOutcome {
+  let got = [0x628, 0x627, 0x640, 0x64E, 97, 0x621, 0x200D, 0x710, 0x1820, 0xA872].map((c: i32): string => unicode.joining_type(c as char).to_string());
+  return test.assert_eq(got.join(" "), "2 3 1 5 0 0 1 3 2 4");
+}
+
 function test_is_digit(): test.TestOutcome {
   return test.assert_true((48 as char).is_digit() && (0x0669 as char).is_digit()
     && !(97 as char).is_digit());
@@ -206,6 +228,9 @@ function main(): i32 {
   r = r.it("eq_ignore_case", test_eq_ignore_case);
   r = r.it("roundtrip", test_roundtrip);
   r = r.it("is_letter", test_is_letter);
+  r = r.it("is_mark", test_is_mark);
+  r = r.it("combining_class", test_combining_class);
+  r = r.it("joining_type", test_joining_type);
   r = r.it("is_digit", test_is_digit);
   r = r.it("is_alphanumeric/space", test_is_alnum_whitespace);
   r = r.it("is_upper/lower", test_is_upper_lower);

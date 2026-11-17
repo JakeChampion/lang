@@ -36,15 +36,15 @@ func TestSelfHostThreeReferenceMetadata(t *testing.T) {
 	}
 	driver := buildSelfHostBin(t, gcc, dir, "three_ref_metadata.fern", "three-ref-metadata")
 	for _, tc := range []struct{ name, want string }{
-		{"triple-metadata", "findings=0 unproved=0 skipped="},
-		{"call-balanced", "findings=0 unproved=0 skipped="},
+		{"triple-metadata", "findings=0 unproved=0 failed="},
+		{"call-balanced", "findings=0 unproved=0 failed="},
 		{"call-leak-primary", "leaked at return of v0"},
 		{"call-leak-secondary", "leaked at return of v1"},
 		{"call-leak-third", "leaked at return of v2"},
-		{"call-return-primary", "findings=0 unproved=0 skipped="},
-		{"call-return-secondary", "findings=0 unproved=0 skipped="},
-		{"call-return-third", "findings=0 unproved=0 skipped="},
-		{"callee-balanced", "findings=0 unproved=0 skipped="},
+		{"call-return-primary", "findings=0 unproved=0 failed="},
+		{"call-return-secondary", "findings=0 unproved=0 failed="},
+		{"call-return-third", "findings=0 unproved=0 failed="},
+		{"callee-balanced", "findings=0 unproved=0 failed="},
 		{"callee-leak-secondary", "leaked at return of v1"},
 		{"callee-leak-third", "leaked at return of v2"},
 		{"callee-scalar-cannot-own-third", "leaked at return of v2"},
@@ -58,9 +58,9 @@ func TestSelfHostThreeReferenceMetadata(t *testing.T) {
 			if !strings.Contains(string(out), tc.want) {
 				t.Errorf("want %q in %s", tc.want, out)
 			}
-			summary := "findings=0 unproved=0 skipped="
+			summary := "findings=0 unproved=0 failed="
 			if !strings.HasPrefix(tc.want, "findings=0") {
-				summary = "findings=1 unproved=0 skipped="
+				summary = "findings=1 unproved=0 failed="
 			}
 			if !strings.HasSuffix(strings.TrimSpace(string(out)), summary) {
 				t.Errorf("want final summary %q in %s", summary, out)
@@ -127,7 +127,7 @@ function main(): i32 {
  let m=physicalbody.Metadata {contracts:[ssasem.Contract {name:"triple",params:[],modes:[],result:triple_type()},ssasem.Contract {name:"case",params:params,modes:modes,result:result}],records:semrecords.no_records(),enums:[],finalizers:[]};
  let abis=physicalbody.abis(physicalbody.Collection {producers:[m],rows:[]});let abi=abis.lookup("triple");
  if (!abi.known || !abi.pair_first || abi.pair_second!= -1 || abi.split_second!= -1 || abi.split_third!= -1 || !abi.result_unit) {print("invalid triple metadata");return 91;}
- if (name=="triple-metadata") {print("findings=0 unproved=0 skipped=");return 0;}
+ if (name=="triple-metadata") {print("findings=0 unproved=0 failed=");return 0;}
  let ops: ir.Op[]=[ir.op_call_pair_word(0),ir.op_call_pair_word(1),ir.op_ret_pair_word(0),ir.op_ret_pair_word(1),ir.op_ret_scalar_word(1)];
  let ins: ssa.SInst[]=[];let term=ret(8);let np: i32=0;
  if (in_callee) {
@@ -145,6 +145,6 @@ function main(): i32 {
  let f=ssa.SFunc {name:"case",nparams:np,nvals:9,blocks:[ssa.SBlock {id:0,insts:ins,term:term,preds:[]}],entry:0,takes_env:false};
  let r=rccertify.certify(f,ops,abis.lookup("case"),abis,rcsigs.table(),rcsigs.op_table());
  for x in r.findings {print(rccertify.render("case",x));}
- print("findings="+util.i32_to_string(r.findings.len())+" unproved="+util.i32_to_string(r.unproved)+" skipped="+r.skipped);
+ print("findings="+util.i32_to_string(r.findings.len())+" unproved="+util.i32_to_string(r.unproved)+" failed="+r.failed);
  return 0;
 }`

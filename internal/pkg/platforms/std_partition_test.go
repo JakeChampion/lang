@@ -101,6 +101,7 @@ var stdModuleReach = map[string]string{
 	"std/regex":         "random",
 	"std/result":        "",
 	"std/semver":        "",
+	"std/shape":         "",
 	"std/serve":         "config,env,fs,host,ktls,log,mmio,mmsg,now,pollable,privileged,proc,random,reactor,signal,sysinfo,tcp,unix,uring,vsock",
 	"std/signal":        "signal",
 	"std/sim":           "arena,fs,log,mmio,now,pollable,privileged,proc,random,reactor,tcp,uring",

@@ -484,7 +484,10 @@ locals sit above `nvals`. It emits:
   `__sem_release_<T>` helpers, and `__sem_drop_<T>` for children only); a
   value whose variant a payload read fixes (`ssaunits.known_variant`) is
   released by what that variant holds, in place, and a variant holding no
-  counted field by its box alone (`drop_known`, `token_children`); a
+  counted field by its box alone (`drop_known`, `token_children`). A value
+  that a variant test fixes as a variant with no field is a static box. Its
+  release has the mark `ir.static_release`, and the native emitters write no
+  code for it (`ssaunits.known_static`, `ssaunits.static_on_edge`). A
   `zero` (the null word the inliner passes for the payloads of a variant a
   path did not build) is dropped with no code at all (`null_unit`);
 - **takes and steals** as a uniqueness test, a slot store of zero and the
@@ -573,8 +576,11 @@ onto a parameter, or onto a value that a test found to be the box of a
 parameter, gives a twin of that parameter. A twin holds no unit if it is the
 box of the parameter, and one unit if it is a new box. A test of the twin
 against the parameter decides the side on each edge, and a join meets the
-two sides apart. A use that a twin cannot describe reads the twin as one
-count. On the arm where `__fern_rc_is_unique` found another holder, a push
+two sides apart. A test of any value with a plain count against a parameter
+also gives a twin with one side: the box of the parameter on the equal edge,
+and another box on the other edge. A retain or a release of a twin with one
+side changes the count of that side. Another use that a twin cannot describe
+reads the twin as one count. On the arm where `__fern_rc_is_unique` found another holder, a push
 copies the box, or it keeps a box with a negative count in place. No retain
 or release changes such a box, so there the result counts as a new box. A phi takes one unit of an input that holds one. The exception is
 a phi that no operation touches, that no return takes, and that feeds no phi

@@ -40,7 +40,7 @@ const HUBS: string = "{\"MediaContainer\":{\"Hub\":[{\"title\":\"Continue Watchi
 
 const SECTIONS: string = "{\"MediaContainer\":{\"Directory\":[{\"key\":\"1\",\"type\":\"movie\",\"title\":\"Movies\"},{\"key\":\"2\",\"type\":\"show\",\"title\":\"TV Shows\"}]}}";
 
-const MOVIE: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"},{\"id\":33,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT External)\",\"key\":\"/library/streams/33\"}]}]}]}]}}";
+const MOVIE: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS)\"},{\"id\":33,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT External)\",\"key\":\"/library/streams/33\"}]}]}]}]}}";
 
 // A track of an album, with its artist.
 const SONG: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"601\",\"type\":\"track\",\"title\":\"Song\",\"parentTitle\":\"Album\",\"grandparentTitle\":\"Band\",\"duration\":200000,\"Media\":[{\"container\":\"mp4\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":61,\"key\":\"/library/parts/61/file.m4a\"}]}]}]}}";
@@ -57,7 +57,7 @@ const CREDITS: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"503
 const EPISODES: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"503\",\"type\":\"episode\",\"title\":\"Pilot\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":13,\"key\":\"/library/parts/13/file.mp4\"}]}]},{\"ratingKey\":\"501\",\"type\":\"episode\",\"title\":\"Second\",\"index\":2,\"parentIndex\":1,\"duration\":2500000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\"}]}]}]}}";
 
 // The movie of the second poster: the movie above, with an intro marker.
-const INTRO: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Marker\":[{\"type\":\"intro\",\"startTimeOffset\":50000,\"endTimeOffset\":130000}],\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"},{\"id\":33,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT External)\",\"key\":\"/library/streams/33\"}]}]}]}]}}";
+const INTRO: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Marker\":[{\"type\":\"intro\",\"startTimeOffset\":50000,\"endTimeOffset\":130000}],\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS)\"},{\"id\":33,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT External)\",\"key\":\"/library/streams/33\"}]}]}]}]}}";
 
 // A page of a library of 63 movies from `start`.
 // A page of the movie library of 400 items, from `start`.
@@ -141,6 +141,18 @@ function reply_to(r: plex.Request): plex.Reply {
   if (u.contains("/library/metadata/601")) {
     return ok(SONG);
   }
+  if (u.contains("/library/metadata/600/allLeaves")) {
+    return ok(EPISODES);
+  }
+  if (u.contains("/library/metadata/702/allLeaves")) {
+    return ok(ALBUM_TRACKS);
+  }
+  if (u.contains("/library/metadata/702/children")) {
+    return ok("{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"701\",\"type\":\"album\",\"title\":\"Album\",\"parentTitle\":\"Band\"}]}}");
+  }
+  if (u.contains("/library/metadata/702")) {
+    return ok("{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"702\",\"type\":\"artist\",\"title\":\"Band\"}]}}");
+  }
   if (u.contains("/library/metadata/701/children")) {
     return ok(ALBUM_TRACKS);
   }
@@ -210,7 +222,7 @@ function reply_all(rs: plex.Request[]): plex.Reply[] {
 // files.
 // The requests, the calls of the player and the files of the fake device,
 // and the decoders that it has.
-struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]], sound: Cell[boolean], gpu: Cell[boolean], languages: Cell[string[]], pip: Cell[boolean], access: Cell[android.AccessItem[]], progress: Cell[download.Progress] }
+struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]], sound: Cell[boolean], gpu: Cell[boolean], languages: Cell[string[]], pip: Cell[boolean], access: Cell[android.AccessItem[]], progress: Cell[download.Progress], ids: Cell[i64], focus: Cell[boolean] }
 
 function none_access(): android.AccessItem[] {
   let out: android.AccessItem[] = [];
@@ -219,7 +231,7 @@ function none_access(): android.AccessItem[] {
 
 function new_log(): Log {
   let none: string[] = [];
-  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]), sound: cell_new(true), gpu: cell_new(false), languages: cell_new(["en-US"]), pip: cell_new(false), access: cell_new(none_access()), progress: cell_new(download.Progress { status: download.PENDING, done: 0i64, total: -1i64 }) };
+  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]), sound: cell_new(true), gpu: cell_new(false), languages: cell_new(["en-US"]), pip: cell_new(false), access: cell_new(none_access()), progress: cell_new(download.Progress { status: download.PENDING, done: 0i64, total: -1i64 }), ids: cell_new(42i64), focus: cell_new(true) };
 }
 
 function note(c: Cell[string[]], s: string): void {
@@ -313,7 +325,9 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     access: (items: android.AccessItem[]): void => log.access.set(items),
     download: (r: plex.Request, name: string, title: string): i64 => {
       note(log.calls, "download " + r.url + " " + name + " " + title);
-      return 42i64;
+      let id = log.ids.get();
+      log.ids.set(id + 1i64);
+      return id;
     },
     download_progress: (id: i64): download.Progress => log.progress.get(),
     download_remove: (id: i64): void => note(log.calls, "download remove " + id.to_string()),
@@ -331,6 +345,11 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     set_volume: (level: i32): void => note(log.calls, "volume " + level.to_string()),
     now_playing: (title: string, artist: string, album: string, length_ms: i64, playing: boolean, at_ms: i64): void => note(log.calls, "media " + title + " by " + artist + " on " + album + " playing=" + playing.to_string()),
     media_end: (): void => note(log.calls, "media end"),
+    take_focus: (): boolean => {
+      note(log.calls, "focus");
+      return log.focus.get();
+    },
+    drop_focus: (): void => note(log.calls, "focus off"),
     ask_notifications: (): void => note(log.calls, "ask notifications"),
     random: (): i32 => 5,
     decoders: log.decoders.get(),
@@ -865,6 +884,41 @@ function video_drawn(log: Log, f: draw.Frame): control.App {
   return settle(at(ready, log, 350i64, f, android.Vsync(0i64)), log, 350i64, f);
 }
 
+// The play takes the audio focus, so another app stops. When a call or
+// another app takes it, the play pauses, and it goes on when the focus
+// comes back. A play that the person paused stays paused. While Android
+// refuses the focus, the play does not start. The stop lets it go.
+function test_audio_focus(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let playing = video_drawn(log, f);
+  let starts = count_calls(log, "start");
+  if (count_calls(log, "focus") != 1 || starts != 1) {
+    return test.fail("the play did not take the focus: " + log.calls.get().join(" | "));
+  }
+  let lost = settle(at(playing, log, 2000i64, f, android.Posted(18, 2 as usize)), log, 2000i64, f);
+  if (!lost.play.paused || count_calls(log, "pause") != 1) {
+    return test.fail("a loss of the focus did not pause");
+  }
+  let back = settle(at(lost, log, 2100i64, f, android.Posted(18, 1 as usize)), log, 2100i64, f);
+  if (back.play.paused || count_calls(log, "start") != starts + 1) {
+    return test.fail("the focus came back, and the play did not go on");
+  }
+  let mine = tap(tap(back, log, 2200i64, f, "overlay"), log, 2300i64, f, "toggle");
+  let again = settle(at(at(mine, log, 2400i64, f, android.Posted(18, 2 as usize)), log, 2500i64, f, android.Posted(18, 1 as usize)), log, 2500i64, f);
+  if (!again.play.paused || count_calls(log, "start") != starts + 1) {
+    return test.fail("the focus started a play that the person paused");
+  }
+  log.focus.set(false);
+  let refused = tap(again, log, 2600i64, f, "toggle");
+  if (!refused.play.paused || count_calls(log, "start") != starts + 1) {
+    return test.fail("the play started with no focus");
+  }
+  let stopped = tap(refused, log, 2700i64, f, "back");
+  return test.assert_eq(has_call(log, "focus off").to_string(), "true");
+}
+
 // A tap at (x, y) at time `now`, then ticks.
 function tap_at(own s: control.App, log: Log, now: i64, f: draw.Frame, x: f32, y: f32): control.App {
   let t = at(s, log, now, f, android.Touch(0, x, y));
@@ -915,6 +969,8 @@ function test_double_tap_seeks(): test.TestOutcome {
 // A drag up the left half of the video makes the window brighter, and a
 // drag down the right half makes the sound quieter. Each shows its level,
 // and the brightness of the system comes back when the video stops.
+// A drag from the top or the bottom edge opens the notifications or the
+// navigation of Android, so it does not set the volume.
 function test_drag_sets_light_and_volume(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -938,7 +994,16 @@ function test_drag_sets_light_and_volume(): test.TestOutcome {
     return test.fail("the drag did not set the volume: " + log.calls.get().join(" | "));
   }
   let done = settle(at(lower, log, 2100i64, f, android.Touch(1, rx, y0 + (H / 5) as f32)), log, 2100i64, f);
-  let shown = tap(done, log, 3000i64, f, "overlay");
+  let volumes = log.calls.get().filter((c: string): boolean => c.starts_with("volume ")).len();
+  let pulled = done;
+  for y in [2.0f32, (H - 2) as f32] {
+    let to = if (y < 10.0f32) { y + (H / 4) as f32 } else { y - (H / 4) as f32 };
+    pulled = at(at(at(pulled, log, 2200i64, f, android.Touch(0, rx, y)), log, 2250i64, f, android.Touch(2, rx, to)), log, 2300i64, f, android.Touch(1, rx, to));
+    if (log.calls.get().filter((c: string): boolean => c.starts_with("volume ")).len() != volumes) {
+      return test.fail("a drag from the edge of the screen set the volume: " + log.calls.get().join(" | "));
+    }
+  }
+  let shown = tap(pulled, log, 3000i64, f, "overlay");
   let back = tap(shown, log, 3100i64, f, "back");
   return test.assert_eq(has_call(log, "light -1000").to_string(), "true");
 }
@@ -1068,6 +1133,53 @@ function last_part(log: Log): string {
 // all starts the album again after its last track, and repeat one plays the
 // track again. Shuffle stays in the settings. The sleep timer pauses the
 // music at its time, and "at the end" plays no next track.
+// Play on an artist plays all of the tracks of the artist, from the first
+// one: the children of an artist are albums, which do not play.
+function test_artist_plays_all(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let s = at(control.new(fake(log, 0i64, f), "/data", "https://up.example:32400", "srv", "702"), log, 0i64, f, android.Start);
+  let artist = settle(at(s, log, 0i64, f, android.WindowCreated(android.Window { ptr: 1 as usize })), log, 0i64, f);
+  if (!has_url(log, "/library/metadata/702/allLeaves") || last_part(log) != "71" || artist.play.queue.len() != 2 || artist.error != "") {
+    return test.fail("the artist did not play all of its tracks: " + artist.error + " " + log.calls.get().join(" | "));
+  }
+  return test.pass();
+}
+
+// Back on the player of music shows the screen before, and the music plays
+// on. A bar above the tabs pauses and plays it, and opens the player
+// again. A new play stops the music first.
+function test_back_keeps_music(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let s = at(control.new(fake(log, 0i64, f), "/data", "https://up.example:32400", "srv", "701"), log, 0i64, f, android.Start);
+  let album = settle(at(s, log, 0i64, f, android.WindowCreated(android.Window { ptr: 1 as usize })), log, 0i64, f);
+  let one = settle(at(tap(album, log, 100i64, f, "play"), log, 150i64, f, android.Posted(19, 0 as usize)), log, 150i64, f);
+  let stops = count_calls(log, "stop");
+  let away = settle(at(at(one, log, 200i64, f, android.Key(4, 0)), log, 200i64, f, android.Key(4, 1)), log, 200i64, f);
+  if (away.screen == ui.PLAYER || !away.play.active || count_calls(log, "stop") != stops || !says(away, "One · Band")) {
+    return test.fail("Back stopped the music, or no bar shows it: " + log.calls.get().join(" | "));
+  }
+  let paused = tap(away, log, 300i64, f, "now:toggle");
+  let was_paused = paused.play.paused;
+  let played = tap(paused, log, 400i64, f, "now:toggle");
+  if (!was_paused || played.play.paused || count_calls(log, "pause") != 1) {
+    return test.fail("the button of the bar did not pause and play");
+  }
+  let opened = tap(played, log, 500i64, f, "now:open");
+  if (opened.screen != ui.PLAYER || node(opened, "now:open").is_some()) {
+    return test.fail("the bar did not open the player");
+  }
+  let detail = settle(at(at(opened, log, 600i64, f, android.Key(4, 0)), log, 600i64, f, android.Key(4, 1)), log, 600i64, f);
+  let again = tap(detail, log, 700i64, f, "play");
+  if (count_calls(log, "stop") != stops + 1 || again.screen != ui.PLAYER || !again.play.active) {
+    return test.fail("a new play did not stop the music first: " + log.calls.get().join(" | "));
+  }
+  return test.pass();
+}
+
 function test_album_queue_repeat_and_sleep(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -1246,8 +1358,9 @@ function hold(own s: control.App, log: Log, now: i64, f: draw.Frame, act: string
 // gives Android the file of its part, and the app keeps the list in its
 // files. The menu shows the progress, and a done download shows in a row
 // of the home screen. After a new start with no server, the row is still
-// there, and Play reads the file. Remove download deletes it, and an item
-// that the phone does not play as it is does not download.
+// there, and Play reads the file. Remove download deletes it. An item that
+// the phone does not play as it is downloads as one Matroska file that the
+// server transcodes.
 function test_downloads(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -1281,6 +1394,10 @@ function test_downloads(): test.TestOutcome {
     return test.fail("no row of downloads");
   }
   let off = shown(log, f, "https://down.example:32400", "srv");
+  let rows_off = control.view(off).hubs;
+  if (!off.offline || rows_off.len() != 1 || rows_off[0].title != "Downloads" || control.view(off).error != "" || !says(off, "Offline: the downloads play with no server")) {
+    return test.fail("with no server, the home screen is not the row of the downloads alone: " + off.error);
+  }
   let row = poster_of(off, "501");
   let parts = row.split(":");
   if (row.len() == 0 || control.num(parts[1]) != control.view(off).hubs.len() - 1) {
@@ -1302,12 +1419,56 @@ function test_downloads(): test.TestOutcome {
   }
   log.decoders.set(["video/hevc", "audio/mp4a-latm"]);
   let online = shown(log, f, "https://up.example:32400", "srv");
-  let other = poster_of(online, "502");
-  let refused = tap(hold(online, log, 4000i64, f, other), log, 4700i64, f, "menu:download");
-  if (log.calls.get().filter((c: string): boolean => c.starts_with("download http")).len() != 1 || !refused.error.starts_with("Only a file")) {
-    return test.fail("a file that needs a transcode downloaded");
+  if (online.offline) {
+    return test.fail("a reply of the server did not end the offline state");
   }
-  return test.pass();
+  let other = poster_of(online, "502");
+  let converted = tap(hold(online, log, 4000i64, f, other), log, 4700i64, f, "menu:download");
+  let conversions = log.calls.get().filter((c: string): boolean => c.starts_with("download https://up.example:32400/video/:/transcode/universal/start?"));
+  if (conversions.len() != 1 || !conversions[0].contains("protocol=http&") || !conversions[0].contains("container%3Dmkv") || !conversions[0].ends_with(" 502.mkv Inception") || converted.error != "") {
+    return test.fail("a file that needs a transcode did not download as one: " + log.calls.get().join(" | "));
+  }
+  return test.assert_eq((converted.downloads.len() == 1 && converted.downloads[0].file == "502.mkv").to_string(), "true");
+}
+
+// Download all in the menu of a season downloads each of its episodes. The
+// screen of the downloads, from the settings, shows each one with its
+// state. A tap on a done download plays its file, and Remove deletes it.
+function test_download_all_and_the_screen(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let season = plex.Item { ...plex.no_item(), key: "600", kind: "season", title: "Season 1" };
+  let menu = settle(control.App { ...home, menu: season, dirty: true }, log, 100i64, f);
+  if (!says(menu, "Download all") || node(menu, "menu:download").is_some()) {
+    return test.fail("no Download all in the menu of a season");
+  }
+  let asked = settle(tap(menu, log, 200i64, f, "menu:download_all"), log, 300i64, f);
+  let starts = log.calls.get().filter((c: string): boolean => c.starts_with("download http"));
+  if (!has_url(log, "/library/metadata/600/allLeaves") || starts.len() != 2 || asked.downloads.len() != 2) {
+    return test.fail("the season did not download each episode: " + log.calls.get().join(" | "));
+  }
+  let settings = tap(asked, log, 400i64, f, "tab:3");
+  if (!says(settings, "0 of 2 done")) {
+    return test.fail("the settings do not count the downloads");
+  }
+  let list = tap(settings, log, 500i64, f, "downloads");
+  if (list.screen != ui.DOWNLOADS || !says(list, "Waiting") || node(list, "saved:0").is_some() || node(list, "unsave:1").is_none()) {
+    return test.fail("the screen of the downloads");
+  }
+  log.progress.set(download.Progress { status: download.DONE, done: 1000i64, total: 1000i64 });
+  let done = at(list, log, 5000i64, f, android.Tick);
+  if (!says(done, "Done") || node(done, "saved:0").is_none()) {
+    return test.fail("a done download does not show as done");
+  }
+  let removed = tap(done, log, 5100i64, f, "unsave:1");
+  if (!has_call(log, "download remove 43") || removed.downloads.len() != 1) {
+    return test.fail("Remove did not delete the download: " + log.calls.get().join(" | "));
+  }
+  let plays = count_plays(log);
+  let played = tap(removed, log, 5200i64, f, "saved:0");
+  return test.assert_eq((count_plays(log) == plays + 1 && has_call(log, "play file:///sdcard/files/") && played.screen == ui.PLAYER).to_string(), "true");
 }
 
 // While a track of an album plays, the second player prepares the next
@@ -1426,7 +1587,44 @@ function test_up_next_plays(): test.TestOutcome {
   return test.assert_eq((stops.len() == 1 && stops[0].contains("&time=8880000&duration=8880000")).to_string(), "true");
 }
 
-// Cancel on the card hides it, and the next episode does not play.
+// While the card shows, the second player prepares the next episode. At
+// the end of the countdown, it plays at once in place of the episode that
+// ends, and the first player does not open it again.
+function test_up_next_prepares_early(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let ready = season_playing(log, f);
+  if (has_call(log, "next https://")) {
+    return test.fail("the second player prepared the next episode before the card");
+  }
+  let carded = settle(ready, log, 1000i64, f);
+  if (!has_call(log, "next https://up.example:32400/library/parts/11/file.mp4") || carded.play.next.key != "501") {
+    return test.fail("the second player did not prepare the next episode: " + log.calls.get().join(" | "));
+  }
+  let prepared = settle(at(carded, log, 1100i64, f, android.Posted(19 | 1 << 8, 0 as usize)), log, 1100i64, f);
+  if (!prepared.play.next_ready || has_call(log, "chain true")) {
+    return test.fail("the prepared episode is not ready, or it was chained as a track");
+  }
+  let plays = count_plays(log);
+  let shows = count_calls(log, "show");
+  let starts = count_calls(log, "start");
+  let next = settle(prepared, log, 11500i64, f);
+  if (count_calls(log, "swap") != 1 || count_plays(log) != plays || next.play.item.key != "501" || !next.play.prepared) {
+    return test.fail("the second player did not take over: " + log.calls.get().join(" | "));
+  }
+  if (count_calls(log, "show") != shows + 1 || count_calls(log, "start") != starts + 1 || next.screen != ui.PLAYER) {
+    return test.fail("the next episode is not on the screen: " + log.calls.get().join(" | "));
+  }
+  if (!has_url(log, "/library/metadata/501?includeMarkers=1")) {
+    return test.fail("no metadata of the next episode");
+  }
+  let stops = log.urls.get().filter((u: string): boolean => u.contains("ratingKey=503") && u.contains("state=stopped"));
+  return test.assert_eq((stops.len() == 1 && stops[0].contains("&time=8880000&duration=8880000")).to_string(), "true");
+}
+
+// Cancel on the card hides it, the second player lets the next episode go,
+// and the next episode does not play.
 function test_up_next_cancel(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -1436,6 +1634,9 @@ function test_up_next_cancel(): test.TestOutcome {
   let off = tap(carded, log, 1100i64, f, "next_cancel");
   if (node(off, "next_now").is_some()) {
     return test.fail("the card stayed");
+  }
+  if (count_calls(log, "chain false") != 1 || off.play.next.key.len() != 0) {
+    return test.fail("the second player kept the next episode: " + log.calls.get().join(" | "));
   }
   let later = settle(off, log, 20000i64, f);
   return test.assert_eq((count_plays(log) - plays).to_string(), "0");
@@ -1706,7 +1907,28 @@ function test_system_bars_leave_the_content_free(): test.TestOutcome {
 }
 
 function test_layout_fits_the_window(): test.TestOutcome {
-  return test.assert_eq(layout_fault(W, H, false) + "|" + layout_fault(1080, 2400, true), "|");
+  return test.assert_eq(layout_fault(W, H, false) + "|" + layout_fault(1080, 2400, true) + "|" + music_fault(W, H) + "|" + music_fault(1080, 2400), "|||");
+}
+
+// The buttons of music and the seek bar end above the navigation bar, and
+// the buttons are under the seek bar.
+function music_fault(w: i32, h: i32): string {
+  let bottom = h / 20;
+  let pv = ui.PlayerView { ...ui.no_player(), title: "Song", overlay: true, audio: true, has_next: true, repeat: "REPEAT OFF", sleep: "SLEEP OFF", duration_ms: 300000i64 };
+  let ns = ui.nodes(ui.View { ...ui.empty_view(w, h), bottom: bottom, screen: ui.PLAYER, player: pv });
+  let free = scene.node(0, 0, w, h - bottom, scene.Blank);
+  let Some(bar) = find(ns, "seek") else {
+    return "no seek bar";
+  };
+  for name in ["shuffle", "repeat", "sleep", "next_track"] {
+    let Some(b) = find(ns, name) else {
+      return "no button " + name;
+    };
+    if (!inside(b, free) || b.y < bar.y + bar.h) {
+      return "the button " + name + " is not between the seek bar and the navigation bar";
+    }
+  }
+  return "";
 }
 
 function test_dot_font_has_the_signs(): test.TestOutcome {
@@ -1728,6 +1950,10 @@ function main(): i32 {
   r = r.it("the speed button sets the rate, also after a pause", test_speed_button);
   r = r.it("Auto takes a lower quality after two stalls in a minute", test_auto_quality_steps_down);
   r = r.it("the texts are in the language of the person", test_texts_in_the_language_of_the_person);
+  r = r.it("Play on an artist plays all of its tracks", test_artist_plays_all);
+  r = r.it("the play takes the audio focus and gives way to a call", test_audio_focus);
+  r = r.it("Back keeps the music, with a bar that controls it", test_back_keeps_music);
+  r = r.it("Download all of a season, and the screen of the downloads", test_download_all_and_the_screen);
   r = r.it("an album plays in order, repeats, shuffles and sleeps", test_album_queue_repeat_and_sleep);
   r = r.it("a video plays on in a picture-in-picture window", test_picture_in_picture);
   r = r.it("a video that stops part of the way goes on Watch Next", test_watch_next);
@@ -1740,6 +1966,7 @@ function main(): i32 {
   r = r.it("the connections of a server race", test_connection_race);
   r = r.it("a skip button skips the intro", test_skip_intro);
   r = r.it("the card of the next episode counts down and plays it", test_up_next_plays);
+  r = r.it("the second player prepares the next episode while the card shows", test_up_next_prepares_early);
   r = r.it("cancel on the card of the next episode keeps it from playing", test_up_next_cancel);
   r = r.it("a library loads the pages near the screen", test_library_pages);
   r = r.it("the letter strip jumps to the first item of a letter", test_library_letters);

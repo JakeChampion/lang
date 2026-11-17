@@ -15,13 +15,13 @@ func TestSelfHostTwoReferenceTailMetadata(t *testing.T) {
 	}
 	driver := buildSelfHostBin(t, gcc, dir, "two_ref_metadata.fern", "two-ref-metadata")
 	for _, tc := range []struct{ name, want string }{
-		{"quad-metadata", "findings=0 unproved=0 skipped="},
-		{"call-balanced", "findings=0 unproved=0 skipped="},
+		{"quad-metadata", "findings=0 unproved=0 failed="},
+		{"call-balanced", "findings=0 unproved=0 failed="},
 		{"call-leak-primary", "leaked at return of v0"},
 		{"call-leak-secondary", "leaked at return of v2"},
-		{"call-return-primary", "findings=0 unproved=0 skipped="},
-		{"call-return-secondary", "findings=0 unproved=0 skipped="},
-		{"callee-balanced", "findings=0 unproved=0 skipped="},
+		{"call-return-primary", "findings=0 unproved=0 failed="},
+		{"call-return-secondary", "findings=0 unproved=0 failed="},
+		{"callee-balanced", "findings=0 unproved=0 failed="},
 		{"callee-scalar-cannot-own-secondary", "leaked at return of v1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -33,9 +33,9 @@ func TestSelfHostTwoReferenceTailMetadata(t *testing.T) {
 			if !strings.Contains(string(out), tc.want) {
 				t.Errorf("want %q in %s", tc.want, out)
 			}
-			wantSummary := "findings=0 unproved=0 skipped="
+			wantSummary := "findings=0 unproved=0 failed="
 			if !strings.HasPrefix(tc.want, "findings=0") {
-				wantSummary = "findings=1 unproved=0 skipped="
+				wantSummary = "findings=1 unproved=0 failed="
 			}
 			if !strings.HasSuffix(strings.TrimSpace(string(out)), wantSummary) {
 				t.Errorf("want final summary %q in %s", wantSummary, out)
@@ -81,7 +81,7 @@ function main(): i32 {
  if (!abi.known || !abi.pair_first || abi.pair_second != -1 || !abi.result_unit) { print("invalid metadata"); return 91; }
  let qa = abis.lookup("quad");
  if (!qa.known || !qa.pair_first || qa.pair_second != -1 || !qa.result_unit) { print("invalid quad metadata"); return 92; }
- if (name == "quad-metadata") { print("findings=0 unproved=0 skipped="); return 0; }
+ if (name == "quad-metadata") { print("findings=0 unproved=0 failed="); return 0; }
  let ops: ir.Op[] = [ir.op_call_scalar_word(1), ir.op_call_pair_word(0), ir.op_ret_pair_word(0), ir.op_ret_scalar_word(1)];
  let ins: ssa.SInst[] = []; let term = ret(7); let np: i32 = 0;
  if (in_callee) {
@@ -100,7 +100,7 @@ function main(): i32 {
  let f = func(np, 8, [block(0, [], ins, term)]);
  let r = rccertify.certify(f, ops, abis.lookup("case"), abis, rcsigs.table(), rcsigs.op_table());
  for x in r.findings { print(rccertify.render("case", x)); }
- print("findings=" + util.i32_to_string(r.findings.len()) + " unproved=" + util.i32_to_string(r.unproved) + " skipped=" + r.skipped);
+ print("findings=" + util.i32_to_string(r.findings.len()) + " unproved=" + util.i32_to_string(r.unproved) + " failed=" + r.failed);
  return 0;
 }
 `

@@ -52,9 +52,12 @@ Playback:
   nearest sync frame.
 - The app reports the position every 10 seconds, and marks an item watched
   at its end.
+
 - A tap on the video shows the controls over it for 4 seconds while the
-  video plays on: back 10 seconds, play, forward 30 seconds, and a bar that
-  seeks as a finger drags along it, with a preview thumbnail of the time. A tap outside them hides them, and the play button pauses.
+  video plays on. They are back 10 seconds, play, and forward 30 seconds.
+  A bar seeks as a finger drags along it, with a preview thumbnail of the
+  time. A tap outside the controls hides them, and the play button pauses.
+
 - The speed button at the top plays at 1x, 1.25x, 1.5x, 2x, 0.5x or
   0.75x. The pitch of the sound stays the same. Each tap gives the next
   speed, and the app keeps it for the next items.
@@ -79,6 +82,15 @@ work while the screen is off. A video pauses when the app goes away, unless Andr
 picture-in-picture window. From Android 12, a video that plays goes into
 that window when the user goes home.
 
+Back on the player of music shows the screen before, and the music plays
+on. A bar above the tabs shows the track, with a button that pauses and
+plays it. A tap on the bar opens the player again. Back on a video stops
+it.
+
+Each play asks Android for the audio focus, so another app that plays
+stops. A call or another app that plays pauses the app. When the focus
+comes back, the play goes on, unless the person paused it.
+
 Gestures on the video:
 
 - Two taps at the left of the video seek back 10 seconds, and two taps at
@@ -97,7 +109,11 @@ app asks the server for the markers of the item when it starts to play.
 
 The Tracks button of the player chooses the sound and the subtitles, and
 the server remembers the choice. A file that plays as it is changes its
-sound in place. The app draws a SubRip or WebVTT file beside the video over it, so the file plays as it is. Other subtitles burn into a transcode.
+sound in place. The app draws text subtitles over the video itself, so the
+file plays as it is. These are SubRip, WebVTT, ASS and SSA, in a file beside
+the video or inside it. The server gives the text of a track inside the
+file at the address of its stream. Other subtitles, such as PGS, burn into
+a transcode.
 
 The app reads the list of the decoders of the phone from Android. The
 player plays the file as it is when the phone decodes its video and its
@@ -127,11 +143,17 @@ row of the home screen. The row shows its poster and its place. The row opens th
 video in the app. A video that plays to its end goes off the row.
 
 Download in the menu of a poster gives the file of the item to the
-download manager of Android. Only a file that the phone
-plays as it is can download. The menu shows the progress, and a second tap
+download manager of Android. A file that the phone does not play as it is
+downloads as a transcode at the quality of the settings. The server
+makes one Matroska file with H.264 video and AAC sound. The menu shows the progress, and a second tap
 stops the download. A done download shows in the last row of the home
 screen and plays from the phone with no server. Remove download deletes
 the file.
+
+Download all in the menu of a show, a season, an artist or an album
+downloads each of its episodes or tracks. Downloads in the settings
+opens the list of the downloads, with the state of each one. A tap on a
+done download plays it, and its button removes it.
 
 TalkBack reads each screen. The app gives the screen reader each button
 by its text and each poster by its title. A double tap presses the

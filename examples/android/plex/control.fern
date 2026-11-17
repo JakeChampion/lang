@@ -10,6 +10,7 @@
 import "std/android";
 import "std/android/download";
 import "std/android/draw";
+import "std/android/focus";
 import "std/android/motion";
 import "std/android/player";
 import "std/android/session";
@@ -90,6 +91,10 @@ pub struct Device {
   now_playing: (string, string, string, i64, boolean, i64) => void,
   // Ends the media controls, and lets the app stop with its window.
   media_end: () => void,
+  // Asks Android for the audio focus, so another app that plays stops.
+  // False when Android refuses it, as during a call. And lets it go.
+  take_focus: () => boolean,
+  drop_focus: () => void,
   // Asks for the permission to post notifications, where Android needs it
   // and the app has not got it, so the media controls can show.
   ask_notifications: () => void,
@@ -232,6 +237,9 @@ struct Play {
   next_ready: boolean,
   next_plan: string,
   next_tried: string,
+  // True when the play paused because another app or a call took the
+  // audio focus, so it goes on when the focus comes back.
+  focus_paused: boolean,
 }
 
 pub struct App {
@@ -335,6 +343,8 @@ pub struct App {
   // progress.
   downloads: Saved[],
   downloads_at: i64,
+  // True from a request that reached no server to the next reply of one.
+  offline: boolean,
 }
 
 // A download of an item: the ID that Android gave, the item as the server
@@ -371,7 +381,7 @@ function no_server(): plex.Server {
 }
 
 function no_play(): Play {
-  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [], album: [], bif: None, scrub_ms: -1i64, scrub_seek_at: 0i64, thumb_index: -1, thumb: None, level: 0, stalls: [], choice: plex.no_choice(), cues: [], sheet: false, up_next_at: 0i64, next_off: false, tap_at: -1000i64, tap_x: 0, tap_overlay: false, badge: "", badge_until: 0i64, gesture: 0, gesture_from: 0, gesture_level: -1, gesture_max: 0, light: -1, next: plex.no_item(), next_queue: [], next_stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, next_session: "", next_ready: false, next_plan: "", next_tried: "" };
+  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [], album: [], bif: None, scrub_ms: -1i64, scrub_seek_at: 0i64, thumb_index: -1, thumb: None, level: 0, stalls: [], choice: plex.no_choice(), cues: [], sheet: false, up_next_at: 0i64, next_off: false, tap_at: -1000i64, tap_x: 0, tap_overlay: false, badge: "", badge_until: 0i64, gesture: 0, gesture_from: 0, gesture_level: -1, gesture_max: 0, light: -1, next: plex.no_item(), next_queue: [], next_stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, next_session: "", next_ready: false, next_plan: "", next_tried: "", focus_paused: false };
 }
 
 function no_press(): Press {
@@ -477,7 +487,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     query: "", typing: false, search_at: 0i64, error: "",
     api: None, asks: [], img: None, cache: map_new(64), cached: [], failed: [], report: None, reports: [],
     play: no_play(), press: no_press(), menu: plex.no_item(), focus: "", asked_notifications: false, users: [], pin_for: "", pin_digits: "", nodes: [], dirty: true, gpu: false, paint: false, fling: no_fling(),
-    downloads: load_downloads(dev, dir), downloads_at: 0i64,
+    downloads: load_downloads(dev, dir), downloads_at: 0i64, offline: false,
   };
   s = App { ...s, server: plex.Server { ...no_server(), name: setting(text, "server_name"), id: setting(text, "server_id"), token: s.base.token } };
   if (s.quality < 0 || s.quality >= plex.qualities().len()) {
@@ -900,11 +910,11 @@ function answer(own s: App, purpose: string, r: plex.Reply): App {
   if (!r.ok()) {
     // A request that reached no server can mean that the network changed.
     if (r.status == 0) {
-      return recheck(failed(t, verb, r));
+      return recheck(App { ...failed(t, verb, r), offline: true });
     }
-    return failed(t, verb, r);
+    return failed(App { ...t, offline: false }, verb, r);
   }
-  return got_media(t, verb, rest, r);
+  return got_media(App { ...t, offline: false }, verb, rest, r);
 }
 
 function got_media(own t: App, verb: string, rest: string, r: plex.Reply): App {
@@ -945,6 +955,9 @@ function got_media(own t: App, verb: string, rest: string, r: plex.Reply): App {
   }
   if (verb == "download") {
     return got_download(t, r);
+  }
+  if (verb == "downloadall") {
+    return download_all(t, plex.parse_items(r.text()).items);
   }
   if (verb == "search") {
     if (rest == t.query) {
@@ -1422,14 +1435,21 @@ function play_detail(own s: App): App {
   if (plex.playable_kind(it.kind)) {
     return start_play(s, it, []);
   }
-  if (it.kind == "show") {
+  // The children of a show are seasons, and the children of an artist are
+  // albums, so the server gives all of their episodes or tracks.
+  if (it.kind == "show" || it.kind == "artist") {
     return ask(s, "leaves:" + it.key, Leaves(it.key));
   }
   let children = s.children;
   return play_first(s, children);
 }
 
+// Plays the first episode not watched, and the rest after it. Music starts
+// at its first track.
 function play_first(own s: App, items: plex.Item[]): App {
+  if (items.len() > 0 && items[0].kind == "track") {
+    return play_list(s, items, 0);
+  }
   let i = 0;
   while (i < items.len()) {
     if (plex.playable_kind(items[i].kind) && !plex.watched(items[i])) {
@@ -1654,6 +1674,21 @@ function saved_at(s: App, key: string): i32 {
 
 // The part of the download of the item `key` that came, in percent: 100
 // once it is done, or -1 when the item has no download.
+// The row of the download `d` on the screen of the downloads.
+function saved_row(s: App, d: Saved): ui.SavedRow {
+  let state = s.texts.text("Waiting");
+  if (d.status == download.DONE) {
+    state = s.texts.text("Done");
+  } else if (d.status == download.FAILED) {
+    state = s.texts.text("The download failed");
+  } else if (d.status == download.PAUSED) {
+    state = s.texts.text("Paused");
+  } else if (d.status == download.RUNNING) {
+    state = download_percent(s, d.item.key).to_string() + "%";
+  }
+  return ui.SavedRow { title: plex.card_title(d.item), state: state, done: d.status == download.DONE };
+}
+
 function download_percent(s: App, key: string): i32 {
   let at = saved_at(s, key);
   if (at < 0) {
@@ -1679,6 +1714,12 @@ function on_disk(p: Play): boolean {
   return p.stream.url.starts_with("file://");
 }
 
+// The home screen with no server and with downloads that play: it shows
+// a note in place of the error of the connection.
+function offline_home(s: App): boolean {
+  return s.offline && s.screen == ui.HOME && s.downloads.filter((d: Saved): boolean => d.status == download.DONE).len() > 0;
+}
+
 // The rows of the screen: on the home screen, the downloads that are done
 // come last, so the rows of the server keep their places.
 function shown_hubs(s: App): plex.Hub[] {
@@ -1689,23 +1730,29 @@ function shown_hubs(s: App): plex.Hub[] {
   if (s.screen != ui.HOME || done.len() == 0) {
     return s.hubs;
   }
-  return s.hubs.append(plex.Hub { title: s.texts.text("Downloads"), ident: "downloads", items: done });
+  let row = plex.Hub { title: s.texts.text("Downloads"), ident: "downloads", items: done };
+  // With no server, the rows of the server are old, and only the
+  // downloads play.
+  if (s.offline) {
+    return [row];
+  }
+  return s.hubs.append(row);
 }
 
-// Starts the download of the item of the metadata `r` when the phone plays
-// its file as it is.
+// Starts the download of the item of the metadata `r`. A file that the
+// phone does not play as it is downloads as a transcode at the quality of
+// the settings.
 function got_download(own t: App, r: plex.Reply): App {
   let Some(it) = plex.parse_item(r.text()) else {
     return t;
   };
-  if (saved_at(t, it.key) >= 0) {
+  if (saved_at(t, it.key) >= 0 || !plex.playable_kind(it.kind)) {
     return t;
   }
-  if (!plex.direct_playable(it, t.dev.decoders)) {
-    return App { ...t, error: "Only a file that this phone plays as it is can download" };
-  }
-  let name = plex.download_name(it);
-  let id = t.dev.download(plex.download_request(t.client, t.base, it), name, plex.card_title(it));
+  let direct = plex.direct_playable(it, t.dev.decoders);
+  let name = plex.download_name(it, !direct);
+  let req = if (direct) { plex.download_request(t.client, t.base, it) } else { plex.download_transcode_request(t.client, t.base, it, plex.qualities()[t.quality], hex_id(t.dev), t.dev.decoders, plex.remembered(it)) };
+  let id = t.dev.download(req, name, plex.card_title(it));
   if (id < 0i64) {
     return App { ...t, error: "Android refused the download" };
   }
@@ -1715,6 +1762,18 @@ function got_download(own t: App, r: plex.Reply): App {
   let u = App { ...t, downloads: t.downloads.append(Saved { id: id, item: it, file: name, status: download.PENDING, done: 0i64, total: -1i64 }), downloads_at: 0i64, error: "" };
   save_downloads(u);
   return u;
+}
+
+// Asks for the metadata of each item of `items` that plays and has no
+// download, and downloads it: all of the episodes of a show or a season,
+// or all of the tracks of an artist or an album.
+function download_all(own t: App, items: plex.Item[]): App {
+  for it in items {
+    if (plex.playable_kind(it.kind) && saved_at(t, it.key) < 0) {
+      t = ask(t, "download:" + it.key, Meta(it.key));
+    }
+  }
+  return t;
 }
 
 // Stops the download at `at` and deletes its file.
@@ -1777,6 +1836,9 @@ function menu_act(own s: App, a: string): App {
       return drop_download(t, at);
     }
     return ask(t, "download:" + it.key, Meta(it.key));
+  }
+  if (a == "menu:download_all") {
+    return ask(t, "downloadall:" + it.key, Leaves(it.key));
   }
   if (a == "menu:show" && it.grandparent_key.len() > 0) {
     return open_item(t, plex.Item { ...plex.no_item(), key: it.grandparent_key, kind: "show", title: it.grandparent });
@@ -1903,11 +1965,26 @@ function stream_of(s: App, it: plex.Item, session: string, q: plex.Quality): (pl
 }
 
 function start_play(own s: App, first: plex.Item, queue: plex.Item[]): App {
+  if (s.play.active) {
+    s = stop_play(s, false);
+  }
   let session = hex_id(s.dev);
   let level = first_level(s.quality);
-  let (it, stream, kept) = stream_of(s, first, session, plex.qualities()[level]);
+  let (it, stream, _) = stream_of(s, first, session, plex.qualities()[level]);
   let choice = plex.remembered(it);
   let p = Play { ...no_play(), active: true, item: it, stream: stream, session: session, overlay: true, status: "Loading", queue: queue, position: it.offset_ms, duration: it.duration_ms, level: level, choice: choice };
+  let t = player_screen(s, p);
+  log.info("plex: play " + it.key + " transcode=" + stream.transcode.to_string());
+  if (!t.dev.play(stream.url)) {
+    return App { ...t, play: Play { ...t.play, status: "The player refused the stream" } };
+  }
+  return t;
+}
+
+// The player screen for `p`, with requests for what the item needs other
+// than its stream: the thumbnails, the subtitles, and its metadata.
+function player_screen(own s: App, p: Play): App {
+  let it = p.item;
   let t = App { ...push(s), screen: ui.PLAYER, play: p, dirty: true };
   if let Some(part) = plex.thumbnail_part(it) {
     t = ask(t, "bif:" + part.id, Bif(part.id));
@@ -1915,12 +1992,8 @@ function start_play(own s: App, first: plex.Item, queue: plex.Item[]): App {
   t = ask_cues(t);
   // An item from a list has no markers and no tracks, so the app asks for
   // all of its metadata. A download keeps all of it.
-  if (!audio(t.play) && !kept) {
+  if (!audio(p) && !on_disk(p)) {
     t = ask(t, "playmeta:" + it.key, Meta(it.key));
-  }
-  log.info("plex: play " + it.key + " transcode=" + stream.transcode.to_string());
-  if (!t.dev.play(stream.url)) {
-    return App { ...t, play: Play { ...t.play, status: "The player refused the stream" } };
   }
   return t;
 }
@@ -2039,6 +2112,10 @@ function resume(own s: App): App {
   if (!p.prepared) {
     return s;
   }
+  if (!s.dev.take_focus()) {
+    log.info("plex: Android gave no audio focus, so the play waits");
+    return App { ...s, play: Play { ...p, paused: true, overlay: true }, dirty: true };
+  }
   let video = p.video;
   if (!audio(p) && !video && s.window != 0 as usize) {
     video = s.dev.show_video(s.window);
@@ -2057,7 +2134,7 @@ function resume(own s: App): App {
     s.dev.request_frame();
   }
   let at = s.dev.mono_ms();
-  let t = timeline(App { ...s, play: Play { ...p, paused: false, video: video, overlay: !video, reported_at: at }, dirty: true }, "playing");
+  let t = timeline(App { ...s, play: Play { ...p, paused: false, video: video, overlay: !video, reported_at: at, focus_paused: false }, dirty: true }, "playing");
   announce(t);
   // The media controls of a track are a notification.
   if (audio(t.play) && !t.asked_notifications) {
@@ -2068,6 +2145,35 @@ function resume(own s: App): App {
 }
 
 // Pauses and takes the video off the window, so the overlay can show.
+// A call or another app took the audio focus, so the play pauses. When the
+// focus comes back after such a pause, the play goes on. Android lowers
+// the volume itself for a short sound, such as a notification.
+function focus_changed(own s: App, c: focus.Change): App {
+  let p = s.play;
+  if (!p.active) {
+    return s;
+  }
+  match (c) {
+    focus.Loss => {
+      if (p.paused || !p.prepared) {
+        return s;
+      }
+      log.info("plex: another app took the audio focus");
+      let t = pause_play(s);
+      return App { ...t, play: Play { ...t.play, focus_paused: true } };
+    },
+    focus.Gain => {
+      if (!p.focus_paused || !p.paused) {
+        return s;
+      }
+      return resume(s);
+    },
+    focus.Duck => {
+      return s;
+    }
+  }
+}
+
 function pause_play(own s: App): App {
   let p = s.play;
   s.dev.pause();
@@ -2154,15 +2260,16 @@ function media_command(own s: App, c: session.Command): App {
 
 // Ends the playback and goes back. A watched item is marked so.
 function stop_play(own s: App, completed: boolean): App {
-  let p = s.play;
-  if (p.next.key.len() > 0) {
-    s.dev.chain(false);
+  if (s.play.next.key.len() > 0) {
+    s = drop_next(s);
   }
+  let p = s.play;
   let pos = p.position;
   if (p.prepared) {
     pos = s.dev.position();
   }
   s.dev.stop();
+  s.dev.drop_focus();
   s.dev.keep_screen_on(false);
   s.dev.immersive(false);
   if (p.video) {
@@ -2194,6 +2301,11 @@ function stop_play(own s: App, completed: boolean): App {
     }
   }
   t = keep_place(t, p.item.key, if (finished) { 0i64 } else { pos });
+  // Music that plays while another screen shows stops with no screen to go
+  // back from.
+  if (t.screen != ui.PLAYER) {
+    return App { ...t, play: no_play(), dirty: true };
+  }
   return refresh_detail(pop(App { ...t, play: no_play() }));
 }
 
@@ -2220,8 +2332,11 @@ function refresh_detail(own s: App): App {
 }
 
 function completed(own s: App): App {
-  if (s.play.next_ready) {
+  if (s.play.next_ready && audio(s.play)) {
     return carry_on(s);
+  }
+  if (s.play.next_ready) {
+    return take_next(s);
   }
   let album = s.play.album;
   let at_end = sleeps_at_end(s);
@@ -2271,26 +2386,26 @@ function plan_of(s: App): string {
   return [p.item.key, s.repeat.to_string(), s.shuffle.to_string(), s.sleep.to_string(), p.next_off.to_string(), p.queue.map((it: plex.Item): string => it.key).join(",")].join("|");
 }
 
-// Prepares the next track of the music on the second player while the
-// track plays, so it follows with no gap.
+// Prepares the next item on the second player. The next track of the
+// music follows with no gap. The next video starts at once when the card of
+// the next item ends, so the second player prepares it while the card shows.
 function line_up(own s: App): App {
   let p = s.play;
-  if (!p.active || !p.prepared || !audio(p)) {
+  if (!p.active || !p.prepared) {
     return s;
   }
   let plan = plan_of(s);
   if (p.next.key.len() > 0 && p.next_plan != plan) {
-    s.dev.chain(false);
-    s = App { ...s, play: Play { ...p, next: plex.no_item(), next_ready: false, next_plan: "" } };
+    s = drop_next(s);
     p = s.play;
   }
-  if (p.next.key.len() > 0 || p.next_tried == plan) {
+  if (p.next.key.len() > 0 || p.next_tried == plan || !audio(p) && p.up_next_at == 0i64) {
     return s;
   }
   let Some((it, queue)) = following(s) else {
     return App { ...s, play: Play { ...p, next_tried: plan } };
   };
-  if (it.kind != "track") {
+  if (!follows(p, it)) {
     return App { ...s, play: Play { ...p, next_tried: plan } };
   }
   let session = hex_id(s.dev);
@@ -2301,8 +2416,30 @@ function line_up(own s: App): App {
   return App { ...s, play: Play { ...p, next: item, next_queue: queue, next_stream: stream, next_session: session, next_plan: plan, next_ready: false } };
 }
 
-// An event of the second player: once it is prepared, it follows the track
-// that plays. When it fails, the next track starts as usual at the end.
+// True when the second player can prepare `it` to follow `p`: a track
+// follows a track, and a video follows a video.
+function follows(p: Play, it: plex.Item): boolean {
+  if (audio(p)) {
+    return it.kind == "track";
+  }
+  return it.kind != "track" && plex.playable_kind(it.kind);
+}
+
+// Takes the next item away from the second player. The server stops the
+// transcode that it started for the item.
+function drop_next(own s: App): App {
+  let p = s.play;
+  s.dev.chain(false);
+  let t = App { ...s, play: Play { ...p, next: plex.no_item(), next_ready: false, next_plan: "" } };
+  if (p.next_stream.transcode) {
+    return report(t, StopTranscode(p.next_session));
+  }
+  return t;
+}
+
+// An event of the second player. Once it is prepared, it follows the track
+// that plays, or waits for the end of the card of the next video. When it
+// fails, the next item starts as usual at the end.
 function next_event(own s: App, c: player.Change): App {
   let p = s.play;
   if (p.next.key.len() == 0) {
@@ -2310,13 +2447,15 @@ function next_event(own s: App, c: player.Change): App {
   }
   match (c) {
     player.Prepared => {
-      s.dev.chain(true);
+      if (audio(p)) {
+        s.dev.chain(true);
+      }
       return App { ...s, play: Play { ...p, next_ready: true } };
     },
     player.Failed(what, extra) => {
-      log.warn("plex: the next track failed: " + what.to_string() + " " + extra.to_string());
-      s.dev.chain(false);
-      return App { ...s, play: Play { ...p, next: plex.no_item(), next_ready: false, next_tried: p.next_plan, next_plan: "" } };
+      log.warn("plex: the next item failed: " + what.to_string() + " " + extra.to_string());
+      let t = drop_next(s);
+      return App { ...t, play: Play { ...t.play, next_tried: p.next_plan } };
     },
     _ => {
       return s;
@@ -2337,6 +2476,17 @@ function carry_on(own s: App): App {
   t = keep_place(report(t, Scrobble(p.item.key, true)), p.item.key, 0i64);
   let np = Play { ...no_play(), active: true, item: p.next, stream: p.next_stream, session: p.next_session, overlay: true, queue: p.next_queue, album: p.album, duration: p.next.duration_ms, level: p.level, choice: plex.remembered(p.next) };
   return prepared(App { ...t, play: np, dirty: true });
+}
+
+// The second player prepared the next video while its card showed. It
+// takes the place of the video that ends, and plays at once.
+function take_next(own s: App): App {
+  let p = s.play;
+  let t = stop_play(App { ...s, play: Play { ...p, next: plex.no_item() } }, true);
+  t.dev.swap();
+  log.info("plex: play " + p.next.key + " from the second player");
+  let np = Play { ...no_play(), active: true, item: p.next, stream: p.next_stream, session: p.next_session, overlay: true, queue: p.next_queue, album: p.album, position: p.next.offset_ms, duration: p.next.duration_ms, level: p.level, choice: plex.remembered(p.next) };
+  return prepared(player_screen(t, np));
 }
 
 // The next item of a list, which keeps its album.
@@ -2526,6 +2676,9 @@ function up_next_secs(p: Play, now: i64): i32 {
 
 // Plays the next item now. The item that plays counts as watched.
 function play_next(own s: App): App {
+  if (s.play.next_ready && !audio(s.play)) {
+    return take_next(s);
+  }
   let queue = s.play.queue;
   let album = s.play.album;
   let t = stop_play(s, true);
@@ -2733,9 +2886,18 @@ function player_control(own s: App, act: string, n: scene.Node, x: i32): App {
     return seek_by(s, 30000i64);
   }
   if (act == "back") {
-    return stop_play(s, false);
+    return leave_player(s);
   }
   return s;
+}
+
+// Back on the player: music plays on while the screen before shows, with a
+// bar that opens the player again. A video stops.
+function leave_player(own s: App): App {
+  if (!audio(s.play) || !s.play.active) {
+    return stop_play(s, false);
+  }
+  return pop(App { ...s, play: Play { ...s.play, sheet: false } });
 }
 
 // --- touches and keys
@@ -2887,6 +3049,8 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
 // A drag up or down on the video: on its left half it sets the brightness
 // of the window, and on its right half the volume. `vertical` is true when
 // the finger moved more up or down than across. Each change shows its level.
+// A drag from the top or the bottom edge belongs to Android, which opens
+// its notifications or its navigation with it.
 function player_drag(own s: App, vertical: boolean): App {
   let p = s.play;
   let pr = s.press;
@@ -2895,7 +3059,9 @@ function player_drag(own s: App, vertical: boolean): App {
     if let Some(n) = scene.hit(s.nodes, pr.x0 as i32, pr.y0 as i32) {
       on = n.tap.name;
     }
-    if (!vertical || !p.video || !p.drawn || on != "overlay" && on != "hide") {
+    let edge = 48 * ui.metrics(s.w, s.h, s.top, s.bottom).u;
+    let from_edge = pr.y0 < s.top.max(edge) as f32 || pr.y0 > (s.h - s.bottom.max(edge)) as f32;
+    if (!vertical || !p.video || !p.drawn || from_edge || on != "overlay" && on != "hide") {
       return s;
     }
     if (pr.x0 < (s.w / 2) as f32) {
@@ -3080,6 +3246,34 @@ pub function act(own s: App, a: string, n: scene.Node, x: i32): App {
   if (a == "users") {
     return open_users(t);
   }
+  if (a == "now:open" && t.play.active) {
+    return App { ...push(t), screen: ui.PLAYER, dirty: true };
+  }
+  if (a == "now:toggle" && t.play.active) {
+    if (t.play.paused) {
+      return resume(t);
+    }
+    return pause_play(t);
+  }
+  if (a == "downloads") {
+    let title = t.texts.text("Downloads");
+    return App { ...push(t), screen: ui.DOWNLOADS, title: title, scroll: 0, dirty: true };
+  }
+  if (a.starts_with("saved:")) {
+    let at = num(a.split_at(6).1);
+    if (at < t.downloads.len() && t.downloads[at].status == download.DONE) {
+      let it = t.downloads[at].item;
+      return start_play(t, it, []);
+    }
+    return t;
+  }
+  if (a.starts_with("unsave:")) {
+    let at = num(a.split_at(7).1);
+    if (at < t.downloads.len()) {
+      return drop_download(t, at);
+    }
+    return t;
+  }
   if (a.starts_with("user:")) {
     return pick_user(t, num(a.split_at(5).1));
   }
@@ -3107,7 +3301,7 @@ function back(own s: App): App {
     return App { ...s, typing: false, dirty: true };
   }
   if (s.screen == ui.PLAYER) {
-    return stop_play(s, false);
+    return leave_player(s);
   }
   if (s.stack.len() > 0) {
     return pop(s);
@@ -3406,8 +3600,8 @@ pub function view(s: App): ui.View {
     texts: s.texts,
     top: s.top, bottom: s.bottom,
     screen: s.screen, tab: s.tab, title: s.title, scroll: s.scroll, rows: s.rows, hubs: hubs,
-    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, menu_download: download_percent(s, s.menu.key), users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
-    pin_code: s.pin.code, error: s.texts.text(s.error), servers: s.servers, server_states: s.states,
+    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, menu_download: download_percent(s, s.menu.key), saved: s.downloads.map((d: Saved): ui.SavedRow => saved_row(s, d)), now_playing: if (s.play.active && s.screen != ui.PLAYER) { p.item.title + " · " + p.item.grandparent } else { "" }, users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
+    pin_code: s.pin.code, error: if (offline_home(s)) { "" } else { s.texts.text(s.error) }, offline: offline_home(s), servers: s.servers, server_states: s.states,
     query: s.query, typing: s.typing, account: s.account, server_name: s.server.name,
     quality: plex.qualities()[s.quality].name, player: pv, base: s.base,
     loading: busy(s), cache: s.cache,
@@ -3509,6 +3703,9 @@ function event(own s: App, e: android.Event): App {
       return next_event(s, c);
     }
     return player_event(s, c);
+  }
+  if let Some(c) = focus.event(e) {
+    return focus_changed(s, c);
   }
   if let Some(c) = session.event(e) {
     return media_command(s, c);

@@ -7450,6 +7450,15 @@ function contract_types(calls: ssasem.Contract[]): typeinfo.Type[] {
 
 struct Made { p: Produced, memo: SchemaMemo }
 
+// The name that a call of the declaration has. The graph of a method has the
+// bare name of the method, and an instance has its own name.
+function self_call_name(fd: parser.FuncDecl, name: string): string {
+  if (name == fd.name) {
+    return parser.decl_key(fd);
+  }
+  return name;
+}
+
 function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo, finalizers: ssasem.Finalizer[]): Made {
   if (!s.ok) {
     return Made { p: refuse(s.why), memo: memo };
@@ -7484,7 +7493,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo,
   }
   let graph = ssa.SFunc { ...f.graph, name: name, nparams: params.len() };
   f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: semrecords.records_of(table.records), enums: table.enums, schema_checked: false, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows, finalizers: finalizers, map_module: s.scope.module_imported("core/map") };
-  f = ssasem.tail_recursion(ssasem.boxed_enum_dyns(f), name);
+  f = ssasem.tail_recursion(ssasem.boxed_enum_dyns(f), self_call_name(fd, name));
   f = ssabounds.word_loads(ssabounds.grouped_accesses(ssabounds.proven_indices(f)), word_load_contracts(), [ssabytes.word_name(4), ssabytes.word_name(8)], [ssabytes.swap_name(4), ssabytes.swap_name(8)]);
   f = ssaquotient.shared_quotients(ssabounds.nonneg_quotients(f));
   return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: util.append_all(s.requests, closed.requests), bodyless: false, analysis: None, view_escape: 0, dropped: false }, memo: table.memo };
@@ -9574,6 +9583,10 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   finalizers = cell_writing_finalizers(closed, names, finalizers);
   let anchored = anchor_module(with_finalizers(closed, finalizers), names, verify);
   let all = anchored.all;
+  for h in names.len()..anchored.names.len() {
+    let f = all[h].func;
+    instance_contracts = instance_contracts.append(ssasem.Contract { name: anchored.names[h], params: f.params, modes: all[h].modes, result: f.result });
+  }
   names = anchored.names;
   let laid: semrecords.Record[] = [];
   if (verify) {

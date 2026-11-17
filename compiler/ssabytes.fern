@@ -1,6 +1,5 @@
 import "./ir";
 import "./irtables";
-import "./sourcepos";
 
 pub function length_name(): string {
   return "__sem_view_len";
@@ -211,15 +210,7 @@ function data_name(): string {
 }
 
 function body(name: string, params: i32, locals: i32, ops: ir.Op[]): irtables.LowerState {
-  return irtables.LowerState {
-    scratch_start: 0,
-    source_positions: sourcepos.no_source(),
-    unsuspended: irtables.no_unsuspended(),
-    ok: true, why: "", ops: ops, n_locals: locals, n_params: params,
-    erased_wide: false, superseded: false, arr_slots: [], i64_slots: [],
-    f64_slots: [], v128_slots: [], str_slots: [], name: name, result_kind: irtables.result_i32(),
-    dbg_slots: [], dbg_names: [], dbg_types: [],
-  };
+  return irtables.LowerState { ...irtables.empty_state(name), ops: ops, n_locals: locals, n_params: params };
 }
 
 function tagged(): ir.Op[] {
