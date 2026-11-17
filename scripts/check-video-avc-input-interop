@@ -41,14 +41,14 @@ def decoded(path):
                                     "-pix_fmt", "yuv444p16le", "-f", "rawvideo", "-"])
 
 
-def reject(path, data):
+def reject(path, data, message="invalid video header or packet"):
     path.write_bytes(data)
     native = subprocess.run([str(binary), str(path)], capture_output=True, text=True)
     wasi = subprocess.run(["wasmtime", "run", "--dir", ".", str(wasm), path.name],
                           cwd=path.parent, capture_output=True, text=True)
     assert native.returncode == wasi.returncode == 1, (path.name, native, wasi)
     assert native.stdout == wasi.stdout, path.name
-    assert "invalid video header or packet" in native.stderr and "invalid video header or packet" in wasi.stderr
+    assert message in native.stderr and message in wasi.stderr
     assert re.search(r"leakcheck: allocs=(\d+) frees=\1 live_bytes=0", native.stderr), native.stderr
 
 
@@ -177,6 +177,78 @@ def parameter_reuse(directory):
         print(f"{name}: native/WASI refusal matches independent FFmpeg parameter checks", flush=True)
 
 
+def encoded_groups(groups):
+    return b"".join(b"\0\0\0\1" + unit for group in groups for unit in group)
+
+
+def delimiter_extraction(path, groups):
+    data = subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:v:0", "-c", "copy",
+                                    "-bsf:v", "filter_units=pass_types=1|5|6|7|8|9|12", "-f", "h264", "-"])
+    expected = [unit for group in groups for unit in group if unit[0] & 31 in (1, 5, 6, 7, 8, 9, 12)]
+    assert units(data) == expected, path.name
+
+
+def delimiter_controls(directory, original):
+    spec = importlib.util.spec_from_file_location("avc_delimiter_vectors", ROOT / "scripts/gen-video-avc-input-fixtures.py")
+    fixtures = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fixtures)
+    trace = fixtures.syntax.build_trace(name="avc-input-aud-trace")
+    for value in range(256):
+        path = directory / "aud-syntax.bin"
+        path.write_bytes(b"\0\0\0\1\x09" + bytes([value]))
+        oracle = subprocess.run([str(trace), str(path)], capture_output=True, text=True)
+        assert (oracle.returncode == 0) == (value & 31 == 16), (value, oracle.stderr)
+        if oracle.returncode == 0:
+            fields = fixtures.syntax.references.trace_fields(oracle.stderr)
+            assert fields["primary_pic_type"] == value >> 5 and fields["rbsp_stop_one_bit"] == 1
+    path.write_bytes(b"\0\0\0\1\x09")
+    assert subprocess.run([str(trace), str(path)], capture_output=True).returncode != 0
+    print("CBS checks all 256 delimiter bytes and rejects the empty payload", flush=True)
+    data = original.read_bytes()
+    packets = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_packets", "-of", "json", str(original)]))["packets"]
+    groups = [[b"\x09\xf0", *units(data[int(packet["pos"]):int(packet["pos"]) + int(packet["size"])])]
+              for packet in packets]
+    assert len(groups) == 18 and all(sum(unit[0] & 31 == 9 for unit in group) == 1 for group in groups)
+    path = directory / "universal-picture-delimiters.h264"
+    path.write_bytes(encoded_groups(groups))
+    delimiter_extraction(path, groups)
+    compare(path, 18, decoded(original))
+    traced = subprocess.run(["ffmpeg", "-v", "trace", "-i", str(path), "-c:v", "copy", "-bsf:v", "trace_headers",
+                             "-f", "null", "-"], capture_output=True, text=True, check=True)
+    fields = re.findall(r"primary_pic_type\s+[01]+\s+=\s+(\d+)", traced.stderr)
+    assert fields == ["7"] * 18, fields
+    sei = next(unit for group in groups for unit in group if unit[0] & 31 == 6)
+    payloads = [("empty", b"\x09", "incomplete video packet"),
+                ("alignment", b"\x09\xf1", "invalid video header or packet"),
+                ("stop", b"\x09\xe0", "invalid video header or packet"),
+                ("extra80", b"\x09\xf0\x80", "invalid video header or packet"),
+                ("extraFF", b"\x09\xf0\xff", "invalid video header or packet"),
+                ("extra01", b"\x09\xf0\x01", "invalid video header or packet")]
+    for index in (0, 6):
+        for name, unit, message in payloads:
+            changed = [list(group) for group in groups]
+            changed[index][0] = unit
+            path = directory / f"invalid-aud-{index}-{name}.h264"
+            path.write_bytes(encoded_groups(changed))
+            delimiter_extraction(path, changed)
+            reject(path, path.read_bytes(), message)
+        for kind in (6, 7, 8, 9):
+            changed = [list(group) for group in groups]
+            if kind == 6:
+                changed[index].insert(0, sei)
+            elif kind == 9:
+                changed[index].insert(0, b"\x09\xf0")
+            else:
+                aud = changed[index].pop(0)
+                at = next(i for i, unit in enumerate(changed[index]) if unit[0] & 31 == kind)
+                changed[index].insert(at + 1, aud)
+            path = directory / f"invalid-aud-{index}-after-{kind}.h264"
+            path.write_bytes(encoded_groups(changed))
+            delimiter_extraction(path, changed)
+            reject(path, path.read_bytes())
+    print("20 coded delimiter payload or position refusals preserve exact FFmpeg extraction", flush=True)
+
+
 with tempfile.TemporaryDirectory() as temporary:
     directory = Path(temporary)
     cases = [
@@ -204,3 +276,4 @@ with tempfile.TemporaryDirectory() as temporary:
     for source in (paths[0], paths[3], paths[5]):
         idr_frame_numbers(directory, source)
     parameter_reuse(directory)
+    delimiter_controls(directory, paths[0])
