@@ -117,8 +117,14 @@ function slot_events(): test.TestOutcome {
       return test.fail("a prepared event of the second player");
     }
   }
+  // Posted carries a pointer-width argument. Android targets use 64 bits.
+  let what = if (4294967296u64 as usize == 0 as usize) { 0 } else { 1 };
   match (player.event(android.Posted(21 | 1 << 8, (1u64 << 32u64 | 4294966292u64) as usize))) {
-    Some(player.Failed(1, -1004)) => {},
+    Some(player.Failed(a, -1004)) => {
+      if (a != what) {
+        return test.fail("the fields of a failure of the second player");
+      }
+    },
     _ => {
       return test.fail("a failure of the second player");
     }

@@ -102,10 +102,39 @@ def controls():
     yield "parameter replacement", [[s, p, slice_nal(frame=1)],
                                     [sequence(poc=0), pps.make(bottom=1), slice_nal(order=0, bottom=True, b=1)]]
     yield from replacement_controls()
+    yield from reference_controls()
     for width in range(4, 17):
         seq = sequence(poc=2, frame_num=width - 4)
         for idr, number in ((True, 0), (False, (1 << width) - 1)):
             yield f"frame number width {width} IDR {idr}", [[seq, p, slice_nal(idr=idr, frame=number, frame_bits=width)]]
+
+
+def reference_controls():
+    p = pps.make()
+    zero = sequence(profile=88, poc=2, references=0)
+    one = sequence(profile=88, poc=2, references=1)
+    for references, seq in ((0, zero), (1, one)):
+        for kind in range(10):
+            if references == 0 and kind % 5 not in (2, 4):
+                continue
+            yield f"reference count {references} permits slice type {kind}", [
+                [seq, p, slice_nal(frame=0, reference=0, slice_type=kind)]]
+    intra = slice_nal(frame=0, reference=0, slice_type=2)
+    predicted = slice_nal(frame=1, reference=0)
+    yield "cached PPS follows zero-reference SPS replacement", [[one, p, predicted], [zero, intra]]
+    yield "cached PPS follows restored references", [[zero, p, intra], [one, predicted]]
+
+
+def reference_invalid():
+    p = pps.make()
+    zero = sequence(profile=88, poc=2, references=0)
+    one = sequence(profile=88, poc=2, references=1)
+    intra = slice_nal(frame=0, reference=0, slice_type=2)
+    for kind in (0, 1, 3, 5, 6, 8):
+        bad = slice_nal(frame=0, reference=0, slice_type=kind)
+        yield f"zero references reject slice type {kind}", [zero, p, bad], "Header"
+        yield f"later zero-reference picture rejects slice type {kind}", [zero, p, intra, b"\x09\xf0", bad], "Header"
+        yield f"cached PPS follows zero references for slice type {kind}", [one, p, slice_nal(reference=0), zero, bad], "Header"
 
 
 def replacement_sequence(**options):
@@ -149,6 +178,7 @@ def incompatible_pairs():
 
 def invalid():
     s, p = sequence(poc=2), pps.make()
+    yield from reference_invalid()
     sei = b"\x06\x05\x10" + bytes(range(1, 17)) + b"\x80"
     for prefix in ([], [b"\x09\xf0"], [s], [s, p], [sei]):
         name = "-".join(str(unit[0] & 31) for unit in prefix) or "none"

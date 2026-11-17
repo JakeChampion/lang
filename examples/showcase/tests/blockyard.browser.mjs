@@ -106,15 +106,17 @@ try {
   const end = Date.now() + 5000;
   while (!edits.some((c) => c.material === 7) && Date.now() < end)
     await a.waitForTimeout(50);
+  const evidence = async () =>
+    JSON.stringify({
+      messages,
+      edits,
+      position: await a.locator("#view").evaluate((e) => ({ ...e.dataset })),
+      toast: await a.locator(".toast").allTextContents(),
+    });
   assert.ok(
     edits.some((c) => c.material === 7),
     "second player did not receive the touch block placement: " +
-      JSON.stringify({
-        messages,
-        edits,
-        position: await a.locator("#view").evaluate((e) => ({ ...e.dataset })),
-        toast: await a.locator(".toast").allTextContents(),
-      }),
+      (await evidence()),
   );
   const removed = Date.now() + 5000;
   while (!edits.some((c) => c.material === 0) && Date.now() < removed)
@@ -122,12 +124,7 @@ try {
   assert.ok(
     edits.some((c) => c.material === 0),
     "second player did not receive the touch block removal: " +
-      JSON.stringify({
-        messages: messages.filter((m) => m.kind !== "welcome"),
-        edits,
-        position: await a.locator("#view").evaluate((e) => ({ ...e.dataset })),
-        toast: await a.locator(".toast").allTextContents(),
-      }),
+      (await evidence()),
   );
   await a.locator("#fly").tap();
   await a.waitForTimeout(100);

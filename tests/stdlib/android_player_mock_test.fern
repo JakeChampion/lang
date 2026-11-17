@@ -34,6 +34,9 @@ function audio_track(track: i32): void;
 @import("libandroid.so", "mock_player_selected_track")
 function selected_track(): i32;
 
+@import("libandroid.so", "mock_player_nexts")
+function nexts(): i32;
+
 @import("libandroid.so", "mock_player_target_releases")
 function target_releases(): i32;
 
@@ -150,6 +153,9 @@ function operations(ctx: usize): i32 {
     return 217;
   }
   mode(0);
+  if (p.slot != 0 || !player.set_next(ctx, p, Some(p)) || !player.set_next(ctx, p, None) || nexts() != 2 || live() != 2) {
+    return 219;
+  }
   player.hide(ctx, p);
   player.stop(ctx, p);
   mode(16);
