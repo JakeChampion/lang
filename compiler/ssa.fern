@@ -123,6 +123,11 @@ pub const LANE_STORE: i32 = 62;
 // of one number gives the same cell.
 pub const FRAME_CELL: i32 = 63;
 
+// A check that the index in args[0] is below the length in args[1], with no
+// result. The program aborts when it is not, with the message of a string
+// index when imm is 1.
+pub const BOUND: i32 = 64;
+
 pub function frame_cell(result: i32, cell: i32, offset: i32): SInst {
   return SInst { kind_tag: FRAME_CELL, result: result, args: [], imm: cell * 4096 + offset, str: "" };
 }
@@ -6492,6 +6497,116 @@ function share_shape_loads(f: SFunc): Formed {
     return Formed { f: f, repl: [] };
   }
   return Formed { f: rewrite_through(f, repl), repl: repl };
+}
+
+// Checked reads and writes of one array in a block, with no write of
+// memory between them other than to its elements, share one load of its
+// length. The length is then a value, and each check compares the index
+// with it. A target that compares with the length in memory gains nothing.
+pub function shared_lengths(f: SFunc): SFunc {
+  let used = used_values(f);
+  let made: i32[] = [];
+  let blocks: SBlock[] = [];
+  for blk in f.blocks {
+    let wins = length_windows(blk.insts, used);
+    if (!wins.shared) {
+      blocks = blocks.append(blk);
+      continue;
+    }
+    let lens = wins.count.map((c: i32): i32 => -1);
+    let insts: SInst[] = [];
+    for k in 0..blk.insts.len() {
+      let ins = blk.insts[k];
+      let w = wins.of[k];
+      if (w < 0 || wins.count[w] < 2) {
+        insts = insts.append(ins);
+        continue;
+      }
+      if (lens[w] < 0) {
+        lens = lens.with(w, f.nvals + made.len());
+        made = made.append(w);
+        insts = insts.append(SInst { kind_tag: LD_AT, result: lens[w], args: [ins.args[0]], imm: if (ins.kind_tag == STR_AT) { 8 } else { 0 }, str: "" });
+      }
+      insts = insts.append(SInst { kind_tag: BOUND, result: -1, args: [ins.args[1], lens[w]], imm: if (ins.kind_tag == STR_AT) { 1 } else { 0 }, str: "" });
+      if (ins.kind_tag == ARR_ST || ins.imm == 0) {
+        insts = insts.append(SInst { ...ins, imm: 1 });
+      }
+    }
+    blocks = blocks.append(SBlock { ...blk, insts: insts });
+  }
+  if (made.len() == 0) {
+    return f;
+  }
+  return SFunc { ...f, blocks: blocks, nvals: f.nvals + made.len() };
+}
+
+// `used[v]` is true when an instruction or a terminator reads value v.
+function used_values(f: SFunc): boolean[] {
+  let used = __alloc_bool(f.nvals);
+  for blk in f.blocks {
+    for ins in blk.insts {
+      for a in ins.args {
+        if (a >= 0 && a < f.nvals) {
+          used = used.with(a, true);
+        }
+      }
+    }
+    for v in [blk.term.cond, blk.term.value] {
+      if (v >= 0 && v < f.nvals) {
+        used = used.with(v, true);
+      }
+    }
+  }
+  return used;
+}
+
+// `of[k]` is the window of the checked access at k, or -1, and `count[w]`
+// the accesses of window w. A window holds the accesses of one array up to
+// a write that can change a length.
+struct Windows { of: i32[], count: i32[], shared: boolean }
+
+function length_windows(insts: SInst[], used: boolean[]): Windows {
+  let of: i32[] = [];
+  let count: i32[] = [];
+  let bases: i32[] = [];
+  let open: i32[] = [];
+  let shared = false;
+  for ins in insts {
+    if (length_checked(ins, used)) {
+      let w = -1;
+      for j in 0..bases.len() {
+        if (bases[j] == ins.args[0]) {
+          w = open[j];
+        }
+      }
+      if (w < 0) {
+        w = count.len();
+        count = count.append(0);
+        bases = bases.append(ins.args[0]);
+        open = open.append(w);
+      }
+      count = count.with(w, count[w] + 1);
+      shared = shared || count[w] >= 2;
+      of = of.append(w);
+      continue;
+    }
+    of = of.append(-1);
+    if (inst_has_effect(ins.kind_tag) && ins.kind_tag != LINE && ins.kind_tag != ARR_AT && ins.kind_tag != STR_AT && ins.kind_tag != ARR_ST && ins.kind_tag != BOUND) {
+      bases = [];
+      open = [];
+    }
+  }
+  return Windows { of: of, count: count, shared: shared };
+}
+
+// A read, a check alone whose result has no use, or a write of an array
+// that compares its index with the length in the array, or such a read of
+// a string.
+function length_checked(ins: SInst, used: boolean[]): boolean {
+  if (ins.kind_tag == ARR_AT || ins.kind_tag == STR_AT) {
+    return ins.args.len() == 2 && (ins.imm == 0 || ins.imm == 2 && (ins.result < 0 || !used[ins.result]));
+  }
+  return ins.kind_tag == ARR_ST && ins.args.len() == 3 && ins.imm == 0;
 }
 
 function earlier_shape(f: SFunc, at: i32[], bi: i32, k: i32, load: SInst): i32 {

@@ -4790,6 +4790,13 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     s = fr_sub_imm(s, d, "x29", ssa.cell_offset(ins) - ssa_view_off(fr, ins.result));
     return ssa_store(reg_of, ins.result, d, s);
   }
+  if (k == ssa.BOUND) {
+    let b = ssa_src(reg_of, ins.args[0], "x5");
+    s = ssa_load(reg_of, ins.args[0], b, s);
+    let n = ssa_src(reg_of, ins.args[1], "x6");
+    s = ssa_load(reg_of, ins.args[1], n, s);
+    return ssa_trap_guard(ssa_cmp_rr(s.need("heap"), b, n), CC_LO, if (ins.imm == 1) { "__fern_str_oob_abort" } else { "__fern_oob_abort" });
+  }
   if (k >= ssa.LD_AT && k <= ssa.STR_AT) {
     return ssa_mem_inst(ins, reg_of, fr.imm, s);
   }
@@ -5439,7 +5446,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let seen_slots = prepared.seen_slots;
   s = asmcore.EmitState { ...s, dw_first: true, dw_pos: 0 };
   let formed = prepared.formed;
-  let f = formed.f;
+  let f = ssa.shared_lengths(formed.f);
   s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f), ssa_even: ssadeps.even_values(f) };
   let imm = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left(), false);
   let call_kinds = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), false);
