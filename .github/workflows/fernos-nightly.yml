@@ -4,9 +4,11 @@ name: FernOS nightly
 # arm64-linux compiler compiles itself on the arm64 kernel, and the result
 # has the size and the FNV-1a hash of the result on Linux.
 #
-# NIGHTLY, NOT PER PULL REQUEST: the test builds the compiler, compiles it
-# again under qemu-aarch64 for the Linux result (about 6 minutes), and then
-# boots a VM of 6 GiB in which the compile takes about 23 minutes. The
+# NIGHTLY, NOT PER PULL REQUEST: the test builds the compiler and boots a VM
+# of 6 GiB, in which the compile takes 45 to 65 minutes on a hosted runner.
+# The compile under qemu-aarch64 for the Linux result runs at the same time.
+# The test stops the VM after 90 minutes and prints its console, so the
+# timeout of the test binary and of the job are above that limit. The
 # kernel-boot job of each pull request runs the small compile instead
 # (TestSelfHostKernelCompilesOnQemu), which uses the same system calls.
 on:
@@ -33,7 +35,7 @@ jobs:
     if: github.repository == 'JakeChampion/lang'
     name: self-compile-on-fernos
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
@@ -59,7 +61,7 @@ jobs:
           BIN="$PWD/e2ecompiler.test"
           cd internal/testing/e2ecompiler
           gotestsum --format standard-verbose --raw-command -- \
-            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostKernelSelfCompilesOnQemu$' -test.v -test.timeout 70m
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostKernelSelfCompilesOnQemu$' -test.v -test.timeout 100m
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
@@ -80,7 +82,7 @@ jobs:
               `Nightly run failed: ${url}`,
               ``,
               `Reproduce with qemu-system-aarch64 and qemu-aarch64 on PATH:`,
-              `\`FERN_REQUIRE_QEMU_SYSTEM=1 go test -run '^TestSelfHostKernelSelfCompilesOnQemu$' -timeout 70m ./internal/testing/e2ecompiler/\``,
+              `\`FERN_REQUIRE_QEMU_SYSTEM=1 go test -run '^TestSelfHostKernelSelfCompilesOnQemu$' -timeout 100m ./internal/testing/e2ecompiler/\``,
             ].join('\n')
             const open = await github.paginate(github.rest.issues.listForRepo, {
               ...context.repo, state: 'open', per_page: 100,
