@@ -6,11 +6,15 @@ This module reads TrueType fonts and draws their glyphs as coverage maps.
 
 `parse` reads the tables of a font: the character map, the horizontal metrics, the outlines and the kerning of the GPOS table. A variable font holds one set of outlines and the changes that each axis, such as the weight, makes to them. `at_axis` gives the font at a value on one axis. `glyph` gives the glyph of a code point, and `advance` and `kerning` give the space between glyphs in font units. `render` scales the outline of a glyph to a size in pixels and gives the part of each pixel that the outline covers.
 
-The rasterizer adds the signed area that each line of the outline covers to the cells of a buffer. The running sum of the buffer is then the coverage of each pixel. Curves become lines first. The rasterizer uses the nonzero rule, with the coverage limited to one.
+The rasterizer adds the signed area that each line of the outline covers to the cells of a buffer. The running sum of the buffer is then the coverage of each pixel. Curves become lines first, quadratic curves of TrueType and cubic curves of CFF alike. The rasterizer uses the nonzero rule, with the coverage limited to one.
 
 ## Contracts
 
-`parse` accepts a font with `glyf` outlines and a Unicode character map of format 4 or 12. It gives None for other fonts. A code point that the font does not map gives glyph 0. The kerning comes from the pair adjustment lookups of the `kern` feature, both formats. Composite glyphs that join their parts at points, not at offsets, draw their parts with no offset. The hinting instructions of the font have no effect.
+`parse` accepts a font with `glyf` outlines, a `CFF` table or a `CFF2` table, and a Unicode character map of format 4 or 12. It gives None for other fonts. `parse_index` takes one font of a collection file, `.ttc`, by its index.
+
+A CFF table can use CIDs, with a font dict for each group of glyphs. The charstrings are of Type 2. They draw cubic curves, and their hints have no effect. In a variable CFF2 font, `blend` takes the place of the font on each axis that `at_axis` sets.
+
+A code point that the font does not map gives glyph 0. The kerning comes from the pair adjustment lookups of the `kern` feature, both formats. Composite glyphs that join their parts at points, not at offsets, draw their parts with no offset. The hinting instructions of the font have no effect.
 
 `at_axis` moves the outlines and the advances of a variable font, from the `gvar` and `HVAR` tables. It limits the value to the range of the axis. The kerning and the line metrics stay those of the default design. A font with no such axis stays as it is.
 
@@ -43,6 +47,8 @@ The root chunk keeps the order of the declarations.
 
 <<outlines>>
 
+<<cff outlines>>
+
 <<the rasterizer>>
 ```
 
@@ -51,6 +57,7 @@ The root chunk keeps the order of the declarations.
 ```fern
 <<module introduction>>=
 // This module reads TrueType fonts and draws their glyphs as coverage maps.
+import "std/array";
 import "std/f64";
 
 // A font in the bytes `data`, with the offsets of its tables. `cmap` is the
@@ -85,7 +92,17 @@ pub struct Font {
   gvar: i32,
   hvar: i32,
   coords: f64[],
+  cff: Cff,
 }
+
+// The parts of a CFF or a CFF2 table: the offsets of the INDEX of the
+// charstrings and of the global subroutines, the offset of the local
+// subroutines of each font dict, and the offset of FDSelect.
+// `charstrings` is -1 for a font with `glyf` outlines, and `fdselect` is
+// -1 for a font with one dict. The count of an INDEX has `count_bytes`
+// bytes: 2 in CFF and 4 in CFF2. A CFF2 table can have the offset of an
+// item variation store, `vstore`, and the first `vsindex` of each dict.
+pub struct Cff { charstrings: i32, gsubrs: i32, subrs: i32[], fdselect: i32, count_bytes: i32, vstore: i32, vsindex: i32[] }
 
 // The coverage of a glyph, row by row, from 0 for none to 255 for all of a
 // pixel. `left` and `top` place the first pixel from the pen on the
@@ -115,11 +132,12 @@ function u32_at(b: [u8], at: i32): i32 {
   return u16_at(b, at) << 16 | u16_at(b, at + 2);
 }
 
-// The offset of the table `tag`, or -1.
-function table(b: [u8], tag: string): i32 {
-  let n = u16_at(b, 4);
+// The offset of the table `tag` of the font whose table directory is at
+// `base`, or -1.
+function table(b: [u8], base: i32, tag: string): i32 {
+  let n = u16_at(b, base + 4);
   for i in 0..n {
-    let r = 12 + 16 * i;
+    let r = base + 12 + 16 * i;
     if (b.len() >= r + 16 && b[r] == tag[0] && b[r + 1] == tag[1] && b[r + 2] == tag[2] && b[r + 3] == tag[3]) {
       return u32_at(b, r + 8);
     }
@@ -127,34 +145,69 @@ function table(b: [u8], tag: string): i32 {
   return -1;
 }
 
-// The font in `data`, or None when it is not a TrueType font with outlines.
-pub function parse(data: [u8]): Option[Font] {
-  let b: u8[] = [];
-  for x in data {
-    b = b.append(x);
-  }
-  let version = u32_at(b, 0);
-  if (b.len() < 12 || version != 65536 && version != 1953658213) {
+// The font in `data`, or None when it is not a font with outlines. For a
+// collection, it is the first font.
+pub function parse(data: u8[]): Option[Font] {
+  return parse_index(data, 0);
+}
+
+// The font number `index` of the collection in `data`, from 0. A file that
+// is not a collection holds the font 0 alone. The font keeps `data`.
+pub function parse_index(data: u8[], index: i32): Option[Font] {
+  let b = data;
+  let base = font_base(b, index);
+  if (base < 0 || b.len() < base + 12 || !known_version(u32_at(b, base))) {
     return None;
   }
-  let Some(t) = tables(b, ["head", "hhea", "maxp", "cmap", "loca", "glyf", "hmtx"]) else {
+  let Some(t) = tables(b, base, ["head", "hhea", "maxp", "cmap", "hmtx"]) else {
     return None;
   };
   let (head, hhea, maxp) = (t[0], t[1], t[2]);
   let (sub, format) = cmap_subtable(b, t[3]);
   let upem = u16_at(b, head + 18);
-  if (sub < 0 || upem <= 0) {
+  let glyphs = u16_at(b, maxp + 4);
+  let cff = cff_of(b, table(b, base, "CFF "), glyphs);
+  if (cff.charstrings < 0) {
+    cff = cff2_of(b, table(b, base, "CFF2"), glyphs);
+  }
+  let loca = table(b, base, "loca");
+  let glyf = table(b, base, "glyf");
+  if (sub < 0 || upem <= 0 || cff.charstrings < 0 && (loca < 0 || glyf < 0)) {
     return None;
   }
-  let pairs = kern_subtables(b, table(b, "GPOS"));
-  return Some(Font { data: b, cmap: sub, cmap_format: format, loca: t[4], glyf: t[5], hmtx: t[6], hmetrics: u16_at(b, hhea + 34), glyphs: u16_at(b, maxp + 4), long_loca: i16_at(b, head + 50) != 0, units_per_em: upem, ascender: i16_at(b, hhea + 4), descender: i16_at(b, hhea + 6), line_gap: i16_at(b, hhea + 8), pairs: pairs, fvar: table(b, "fvar"), avar: table(b, "avar"), gvar: table(b, "gvar"), hvar: table(b, "HVAR"), coords: [] });
+  let pairs = kern_subtables(b, table(b, base, "GPOS"));
+  return Some(Font { data: b, cmap: sub, cmap_format: format, loca: loca, glyf: glyf, hmtx: t[4], hmetrics: u16_at(b, hhea + 34), glyphs: glyphs, long_loca: i16_at(b, head + 50) != 0, units_per_em: upem, ascender: i16_at(b, hhea + 4), descender: i16_at(b, hhea + 6), line_gap: i16_at(b, hhea + 8), pairs: pairs, fvar: table(b, base, "fvar"), avar: table(b, base, "avar"), gvar: table(b, base, "gvar"), hvar: table(b, base, "HVAR"), coords: [], cff: cff });
 }
 
+// The offset of the table directory of the font `index` of a collection,
+// or of a font file alone, or -1 when there is no such font.
+function font_base(b: [u8], index: i32): i32 {
+  if (u32_at(b, 0) != TTCF) {
+    return if (index == 0) { 0 } else { -1 };
+  }
+  if (index < 0 || index >= u32_at(b, 8)) {
+    return -1;
+  }
+  return u32_at(b, 12 + 4 * index);
+}
+
+// The versions of a TrueType font, of an Apple TrueType font, "true", and
+// of an OpenType font with CFF outlines.
+function known_version(v: i32): boolean {
+  return v == 65536 || v == 1953658213 || v == OTTO;
+}
+
+// The first four bytes of a collection file, "ttcf", and of an OpenType
+// font with CFF outlines, "OTTO".
+const TTCF: i32 = 1953784678;
+
+const OTTO: i32 = 1330926671;
+
 // The offsets of the tables `tags`, or None when one is missing.
-function tables(b: [u8], tags: string[]): Option[i32[]] {
+function tables(b: [u8], base: i32, tags: string[]): Option[i32[]] {
   let out: i32[] = [];
   for tag in tags {
-    let at = table(b, tag);
+    let at = table(b, base, tag);
     if (at < 0) {
       return None;
     }
@@ -942,7 +995,9 @@ function advance_delta(f: Font, g: i32): f64 {
 ```fern
 <<outlines>>=
 // A point of an outline, in font units, on the curve or a control point.
-struct Point { x: f64, y: f64, on: boolean }
+// Two control points of a cubic curve of CFF come in a row, and each has
+// `cubic`.
+struct Point { x: f64, y: f64, on: boolean, cubic: boolean }
 
 // The points of a simple glyph in font units, the flags of each, and the
 // last point of each contour. For a composite glyph, the points are the
@@ -977,6 +1032,9 @@ const MAX_GLYPH_READS: i32 = 4096;
 
 // The contours of glyph `g`, each a list of points.
 function contours(f: Font, g: i32): Point[][] {
+  if (f.cff.charstrings >= 0) {
+    return cff_contours(f, g);
+  }
   let (cs, _) = contours_within(f, g, 0, MAX_GLYPH_READS);
   return cs;
 }
@@ -996,7 +1054,7 @@ function contours_within(f: Font, g: i32, depth: i32, reads: i32): (Point[][], i
   let (dx, dy) = glyph_deltas(f, g, o);
   let pts: Point[] = [];
   for i in 0..o.xs.len() {
-    pts = pts.append(Point { x: o.xs[i] as f64 + dx[i], y: o.ys[i] as f64 + dy[i], on: (o.flags[i] & 1) != 0 });
+    pts = pts.append(Point { x: o.xs[i] as f64 + dx[i], y: o.ys[i] as f64 + dy[i], on: (o.flags[i] & 1) != 0, cubic: false });
   }
   return (split_contours(pts, o.ends), reads - 1);
 }
@@ -1178,7 +1236,7 @@ function composite(f: Font, g: i32, at: i32, depth: i32, reads: i32): (Point[][]
     for part in inner {
       let moved: Point[] = [];
       for p in part {
-        moved = moved.append(Point { x: q.a * p.x + q.c * p.y + dx, y: q.b * p.x + q.d * p.y + dy, on: p.on });
+        moved = moved.append(Point { x: q.a * p.x + q.c * p.y + dx, y: q.b * p.x + q.d * p.y + dy, on: p.on, cubic: p.cubic });
       }
       out = out.append(moved);
     }
@@ -1188,6 +1246,603 @@ function composite(f: Font, g: i32, at: i32, depth: i32, reads: i32): (Point[][]
 
 function f2dot14(b: [u8], at: i32): f64 {
   return i16_at(b, at) as f64 / 16384.0;
+}
+```
+
+### `cff outlines`
+
+A CFF table holds INDEX structures. An INDEX has a count, the size of an offset, the offsets of its items from 1, and the data of its items. A DICT is a list of operands, each list before its operator. A Type 2 charstring is a program for a stack machine: each number goes on the stack, and each operator takes the numbers of the stack. A subroutine is a charstring that another charstring calls by its biased number.
+
+The first operator that clears the stack can take one more number than it needs: the width of the glyph. The widths come from `hmtx`, so the interpreter drops that number.
+
+```fern
+<<cff outlines>>=
+// The number of `size` bytes at `at`, high byte first.
+function offset_at(b: [u8], at: i32, size: i32): i32 {
+  let v = 0;
+  for i in 0..size {
+    v = v << 8 | u8_at(b, at + i);
+  }
+  return v;
+}
+
+// The count of the INDEX at `at`, whose count has `cb` bytes.
+function index_count(b: [u8], at: i32, cb: i32): i32 {
+  return offset_at(b, at, cb);
+}
+
+// The start and the end of item `i` of the INDEX at `at`.
+function index_item(b: [u8], at: i32, cb: i32, i: i32): (i32, i32) {
+  let n = index_count(b, at, cb);
+  if (i < 0 || i >= n) {
+    return (0, 0);
+  }
+  let size = u8_at(b, at + cb);
+  let offsets = at + cb + 1;
+  let data = offsets - 1 + (n + 1) * size;
+  return (data + offset_at(b, offsets + i * size, size), data + offset_at(b, offsets + (i + 1) * size, size));
+}
+
+// The offset after the INDEX at `at`.
+function index_end(b: [u8], at: i32, cb: i32): i32 {
+  let n = index_count(b, at, cb);
+  if (n == 0) {
+    return at + cb;
+  }
+  let (_, end) = index_item(b, at, cb, n - 1);
+  return end;
+}
+
+// The operand of a DICT at `i` and the offset after it. A real number
+// counts as 0.
+function dict_operand(b: [u8], i: i32): (i32, i32) {
+  let b0 = u8_at(b, i);
+  if (b0 == 28) {
+    return (i16_at(b, i + 1), i + 3);
+  }
+  if (b0 == 29) {
+    return (u32_at(b, i + 1), i + 5);
+  }
+  if (b0 == 30) {
+    return (0, real_end(b, i + 1));
+  }
+  return short_number(b, i);
+}
+
+// A number of one or two bytes, the same in a DICT and in a charstring.
+function short_number(b: [u8], i: i32): (i32, i32) {
+  let b0 = u8_at(b, i);
+  if (b0 <= 246) {
+    return (b0 - 139, i + 1);
+  }
+  if (b0 <= 250) {
+    return ((b0 - 247) * 256 + u8_at(b, i + 1) + 108, i + 2);
+  }
+  return (-(b0 - 251) * 256 - u8_at(b, i + 1) - 108, i + 2);
+}
+
+// The offset after the nibbles of a real number, which end with 15.
+function real_end(b: [u8], at: i32): i32 {
+  let i = at;
+  while (i < b.len()) {
+    let v = u8_at(b, i);
+    i += 1;
+    if ((v & 15) == 15 || v >> 4 == 15) {
+      return i;
+    }
+  }
+  return i;
+}
+
+// The operands of the operator `op` in the DICT from `start` up to `end`,
+// or none. An operator is a byte up to 27, and the operator 12 x is
+// 1200 + x.
+function dict_operands(b: [u8], start: i32, end: i32, op: i32): i32[] {
+  let args: i32[] = [];
+  let i = start;
+  while (i < end) {
+    let b0 = u8_at(b, i);
+    if (b0 > 27) {
+      let (v, next) = dict_operand(b, i);
+      args = args.append(v);
+      i = next;
+      continue;
+    }
+    let code = if (b0 == 12) { 1200 + u8_at(b, i + 1) } else { b0 };
+    if (code == op) {
+      return args;
+    }
+    args = [];
+    i += if (b0 == 12) { 2 } else { 1 };
+  }
+  return [];
+}
+
+function no_cff(): Cff {
+  return Cff { charstrings: -1, gsubrs: -1, subrs: [], fdselect: -1, count_bytes: 2, vstore: -1, vsindex: [] };
+}
+
+// The parts of the CFF table at `at`, for a font of `glyphs` glyphs.
+function cff_of(b: [u8], at: i32, glyphs: i32): Cff {
+  if (at < 0 || u8_at(b, at) != 1) {
+    return no_cff();
+  }
+  let tops = index_end(b, at + u8_at(b, at + 2), 2);
+  let gsubrs = index_end(b, index_end(b, tops, 2), 2);
+  let (ts, te) = index_item(b, tops, 2, 0);
+  let cs = dict_operands(b, ts, te, 17);
+  if (cs.len() != 1 || index_count(b, at + cs[0], 2) < glyphs) {
+    return no_cff();
+  }
+  let fdarray = dict_operands(b, ts, te, 1236);
+  let fdselect = dict_operands(b, ts, te, 1237);
+  let one = Cff { ...no_cff(), charstrings: at + cs[0], gsubrs: gsubrs, subrs: [private_subrs(b, at, ts, te)], vsindex: [0] };
+  if (fdarray.len() != 1 || fdselect.len() != 1) {
+    return one;
+  }
+  return with_dicts(b, at, one, at + fdarray[0], at + fdselect[0]);
+}
+
+// The CFF2 table at `at`. Its top DICT follows the header, and the global
+// subroutines follow the top DICT. It always has an FDArray.
+function cff2_of(b: [u8], at: i32, glyphs: i32): Cff {
+  if (at < 0 || u8_at(b, at) != 2) {
+    return no_cff();
+  }
+  let ts = at + u8_at(b, at + 2);
+  let te = ts + u16_at(b, at + 3);
+  let cs = dict_operands(b, ts, te, 17);
+  let fdarray = dict_operands(b, ts, te, 1236);
+  if (cs.len() != 1 || fdarray.len() != 1 || index_count(b, at + cs[0], 4) < glyphs) {
+    return no_cff();
+  }
+  let fdselect = dict_operands(b, ts, te, 1237);
+  let vstore = dict_operands(b, ts, te, 24);
+  let base = Cff { ...no_cff(), charstrings: at + cs[0], gsubrs: te, count_bytes: 4, vstore: if (vstore.len() == 1) { at + vstore[0] + 2 } else { -1 } };
+  return with_dicts(b, at, base, at + fdarray[0], if (fdselect.len() == 1) { at + fdselect[0] } else { -1 });
+}
+
+// `c` with the local subroutines and the first vsindex of each font dict
+// of the FDArray at `fds`, and the FDSelect at `fdselect`.
+function with_dicts(b: [u8], at: i32, c: Cff, fds: i32, fdselect: i32): Cff {
+  let subrs: i32[] = [];
+  let vsindex: i32[] = [];
+  for i in 0..index_count(b, fds, c.count_bytes) {
+    let (fs, fe) = index_item(b, fds, c.count_bytes, i);
+    subrs = subrs.append(private_subrs(b, at, fs, fe));
+    vsindex = vsindex.append(private_vsindex(b, at, fs, fe));
+  }
+  return Cff { ...c, subrs: subrs, vsindex: vsindex, fdselect: fdselect };
+}
+
+// The offset of the local subroutines of the Private DICT that the DICT
+// from `start` up to `end` names, or -1.
+function private_subrs(b: [u8], at: i32, start: i32, end: i32): i32 {
+  let p = dict_operands(b, start, end, 18);
+  if (p.len() != 2) {
+    return -1;
+  }
+  let ps = at + p[1];
+  let s = dict_operands(b, ps, ps + p[0], 19);
+  return if (s.len() == 1) { ps + s[0] } else { -1 };
+}
+
+// The vsindex of the Private DICT that the DICT from `start` up to `end`
+// names, or 0.
+function private_vsindex(b: [u8], at: i32, start: i32, end: i32): i32 {
+  let p = dict_operands(b, start, end, 18);
+  if (p.len() != 2) {
+    return 0;
+  }
+  let ps = at + p[1];
+  let v = dict_operands(b, ps, ps + p[0], 22);
+  return if (v.len() == 1) { v[0] } else { 0 };
+}
+
+// The font dict of glyph `g`, from FDSelect of format 0 or 3.
+function fd_of(f: Font, g: i32): i32 {
+  let sel = f.cff.fdselect;
+  if (sel < 0) {
+    return 0;
+  }
+  let b = f.data;
+  if (u8_at(b, sel) == 0) {
+    return u8_at(b, sel + 1 + g);
+  }
+  let n = u16_at(b, sel + 1);
+  for i in 0..n {
+    let r = sel + 3 + 3 * i;
+    if (g >= u16_at(b, r) && g < u16_at(b, r + 3)) {
+      return u8_at(b, r + 2);
+    }
+  }
+  return 0;
+}
+
+// The bias of the numbers of a set of `n` subroutines.
+function bias(n: i32): i32 {
+  if (n < 1240) {
+    return 107;
+  }
+  return if (n < 33900) { 1131 } else { 32768 };
+}
+
+// The state of the Type 2 interpreter: the stack, the current point, the
+// contours that are done and the one that is open, the count of stems, and
+// whether the width is settled. `ops` counts the operators that ran.
+// `vsindex` selects the regions of a blend.
+struct T2 { stack: f64[], x: f64, y: f64, cs: Point[][], cur: Point[], stems: i32, width: boolean, done: boolean, ops: i32, vsindex: i32 }
+
+// The most operators of one glyph, and the depth of the calls of
+// subroutines. A hostile font can call the same subroutine many times.
+const MAX_T2_OPS: i32 = 65536;
+
+const MAX_T2_DEPTH: i32 = 10;
+
+// The contours of glyph `g` of a font with CFF outlines.
+function cff_contours(f: Font, g: i32): Point[][] {
+  let cb = f.cff.count_bytes;
+  if (g < 0 || g >= index_count(f.data, f.cff.charstrings, cb)) {
+    return [];
+  }
+  let (s, e) = index_item(f.data, f.cff.charstrings, cb, g);
+  let fd = fd_of(f, g);
+  let local = if (fd < f.cff.subrs.len()) { f.cff.subrs[fd] } else { -1 };
+  let vsindex = if (fd < f.cff.vsindex.len()) { f.cff.vsindex[fd] } else { 0 };
+  // A CFF2 charstring has no width.
+  let t = run(f, local, T2 { stack: [], x: 0.0, y: 0.0, cs: [], cur: [], stems: 0, width: cb == 4, done: false, ops: 0, vsindex: vsindex }, s, e, 0);
+  return closed(t).cs;
+}
+
+// Runs the charstring from `start` up to `end`. `local` is the offset of
+// the local subroutines.
+function run(f: Font, local: i32, own st: T2, start: i32, end: i32, depth: i32): T2 {
+  let b = f.data;
+  let t = st;
+  let i = start;
+  while (i < end && !t.done && t.ops < MAX_T2_OPS) {
+    let b0 = u8_at(b, i);
+    t = T2 { ...t, ops: t.ops + 1 };
+    if (is_number(b0)) {
+      let (v, next) = t2_number(b, i);
+      t = T2 { ...t, stack: t.stack.append(v) };
+      i = next;
+    } else if (is_call(b0)) {
+      t = called(f, local, t, if (b0 == 10) { local } else { f.cff.gsubrs }, depth);
+      i += 1;
+    } else if (b0 == 11) {
+      return t;
+    } else if (is_mask(b0)) {
+      t = stemmed(t);
+      i += 1 + (t.stems + 7) / 8;
+    } else if (b0 == 15 || b0 == 16) {
+      t = varied(f, t, b0);
+      i += 1;
+    } else {
+      t = cleared(operated(t, b0, u8_at(b, i + 1)));
+      i += if (b0 == 12) { 2 } else { 1 };
+    }
+  }
+  return t;
+}
+
+// The first bytes of a number, of a call of a local or a global
+// subroutine, and of a hint mask or a counter mask.
+function is_number(b0: i32): boolean {
+  return b0 >= 32 || b0 == 28;
+}
+
+function is_call(b0: i32): boolean {
+  return b0 == 10 || b0 == 29;
+}
+
+function is_mask(b0: i32): boolean {
+  return b0 == 19 || b0 == 20;
+}
+
+// vsindex, which selects the regions of the blends after it, and blend.
+// blend takes n values, n times as many deltas as there are regions, and
+// n, and leaves the n values with their deltas added at the place of the
+// font.
+function varied(f: Font, own t: T2, op: i32): T2 {
+  let s = t.stack;
+  let len = s.len();
+  if (len == 0) {
+    return t;
+  }
+  if (op == 15) {
+    return T2 { ...t, vsindex: s[len - 1] as i32, stack: [] };
+  }
+  let n = s[len - 1] as i32;
+  let scalars = region_scalars(f, t.vsindex);
+  let k = scalars.len();
+  let start = len - 1 - n * (k + 1);
+  if (n < 0 || start < 0) {
+    return T2 { ...t, stack: [] };
+  }
+  let out = s.take(start);
+  for i in 0..n {
+    let v = s[start + i];
+    for j in 0..k {
+      v += s[start + n + i * k + j] * scalars[j];
+    }
+    out = out.append(v);
+  }
+  return T2 { ...t, stack: out };
+}
+
+// The scalar of each region of the item variation data `vsindex` of the
+// CFF2 table, at the place of the font. Each is 0 at the default design.
+function region_scalars(f: Font, vsindex: i32): f64[] {
+  let store = f.cff.vstore;
+  let b = f.data;
+  if (store < 0 || vsindex < 0 || vsindex >= u16_at(b, store + 6)) {
+    return [];
+  }
+  let d = store + u32_at(b, store + 8 + 4 * vsindex);
+  let out: f64[] = [];
+  for r in 0..u16_at(b, d + 4) {
+    out = out.append(region_scalar(f, store + u32_at(b, store + 2), u16_at(b, d + 6 + 2 * r)));
+  }
+  return out;
+}
+
+// The number of a charstring at `i`, and the offset after it.
+function t2_number(b: [u8], i: i32): (f64, i32) {
+  let b0 = u8_at(b, i);
+  if (b0 == 28) {
+    return (i16_at(b, i + 1) as f64, i + 3);
+  }
+  if (b0 == 255) {
+    return (u32_at(b, i + 1) as f64 / 65536.0, i + 5);
+  }
+  let (v, next) = short_number(b, i);
+  return (v as f64, next);
+}
+
+// A call of the subroutine whose biased number is on the top of the stack,
+// in the set at `set`.
+function called(f: Font, local: i32, own st: T2, set: i32, depth: i32): T2 {
+  let n = st.stack.len();
+  if (n == 0) {
+    return st;
+  }
+  let k = st.stack[n - 1] as i32;
+  let t = T2 { ...st, stack: st.stack.take(n - 1) };
+  if (set < 0 || depth >= MAX_T2_DEPTH) {
+    return t;
+  }
+  let cb = f.cff.count_bytes;
+  let (s, e) = index_item(f.data, set, cb, k + bias(index_count(f.data, set, cb)));
+  if (e <= s) {
+    return t;
+  }
+  return run(f, local, t, s, e, depth + 1);
+}
+
+function cleared(own t: T2): T2 {
+  return T2 { ...t, stack: [] };
+}
+
+// The state with the width settled: the first number of the stack is the
+// width when `extra` is true.
+function settled(own t: T2, extra: boolean): T2 {
+  if (t.width || !extra) {
+    return T2 { ...t, width: true };
+  }
+  return T2 { ...t, stack: t.stack.drop(1), width: true };
+}
+
+// The stems of a stem operator or of a hint mask, which counts the stems of
+// the numbers before it as vertical stems.
+function stemmed(own t: T2): T2 {
+  let odd = t.stack.len() % 2 == 1;
+  let s = settled(t, odd);
+  return T2 { ...s, stems: s.stems + s.stack.len() / 2, stack: [] };
+}
+
+// The stem operators, the moves and the lines.
+function is_stem(op: i32): boolean {
+  return op == 1 || op == 3 || op == 18 || op == 23;
+}
+
+function is_move(op: i32): boolean {
+  return op == 21 || op == 22 || op == 4;
+}
+
+function is_line(op: i32): boolean {
+  return op == 5 || op == 6 || op == 7;
+}
+
+function operated(own t: T2, op: i32, next: i32): T2 {
+  if (is_stem(op)) {
+    return stemmed(t);
+  }
+  if (is_move(op)) {
+    return moved(t, op);
+  }
+  if (is_line(op)) {
+    return lined(t, op);
+  }
+  if (op == 14) {
+    let odd = t.stack.len() % 2 == 1;
+    let s = closed(settled(t, odd));
+    return T2 { ...s, done: true };
+  }
+  if (op == 12) {
+    return flexed(t, next);
+  }
+  return curved(t, op);
+}
+
+// The open contour added to the contours that are done.
+function closed(own t: T2): T2 {
+  if (t.cur.len() < 2) {
+    return T2 { ...t, cur: [] };
+  }
+  return T2 { ...t, cs: t.cs.append(t.cur), cur: [] };
+}
+
+function moved(own st: T2, op: i32): T2 {
+  let need = if (op == 21) { 2 } else { 1 };
+  let extra = st.stack.len() > need;
+  let t = closed(settled(st, extra));
+  let s = t.stack;
+  let (dx, dy) = (0.0, 0.0);
+  if (op == 21 && s.len() >= 2) {
+    dx = s[0];
+    dy = s[1];
+  } else if (s.len() >= 1) {
+    dx = if (op == 22) { s[0] } else { 0.0 };
+    dy = if (op == 4) { s[0] } else { 0.0 };
+  }
+  let x = t.x + dx;
+  let y = t.y + dy;
+  return T2 { ...t, x: x, y: y, cur: [Point { x: x, y: y, on: true, cubic: false }] };
+}
+
+function line_to(own t: T2, dx: f64, dy: f64): T2 {
+  let x = t.x + dx;
+  let y = t.y + dy;
+  return T2 { ...t, x: x, y: y, cur: t.cur.append(Point { x: x, y: y, on: true, cubic: false }) };
+}
+
+function curve_to(own t: T2, dx1: f64, dy1: f64, dx2: f64, dy2: f64, dx3: f64, dy3: f64): T2 {
+  let (x1, y1) = (t.x + dx1, t.y + dy1);
+  let (x2, y2) = (x1 + dx2, y1 + dy2);
+  let (x3, y3) = (x2 + dx3, y2 + dy3);
+  let cur = t.cur.append(Point { x: x1, y: y1, on: false, cubic: true }).append(Point { x: x2, y: y2, on: false, cubic: true }).append(Point { x: x3, y: y3, on: true, cubic: false });
+  return T2 { ...t, x: x3, y: y3, cur: cur };
+}
+
+// rlineto, hlineto and vlineto. hlineto and vlineto change between
+// horizontal and vertical lines.
+function lined(own st: T2, op: i32): T2 {
+  let s = st.stack;
+  let t = st;
+  if (op == 5) {
+    for k in 0..s.len() / 2 {
+      t = line_to(t, s[2 * k], s[2 * k + 1]);
+    }
+    return t;
+  }
+  for k in 0..s.len() {
+    t = if (k % 2 == 0 == (op == 6)) { line_to(t, s[k], 0.0) } else { line_to(t, 0.0, s[k]) };
+  }
+  return t;
+}
+
+// rrcurveto, rcurveline, rlinecurve, hhcurveto, vvcurveto, vhcurveto and
+// hvcurveto. Each other operator does nothing.
+function curved(own t: T2, op: i32): T2 {
+  if (op == 8 || op == 24) {
+    return curves_then_line(t, op == 24);
+  }
+  if (op == 25) {
+    return line_curve(t);
+  }
+  if (op == 27 || op == 26) {
+    return straight_curves(t, op == 27);
+  }
+  if (op == 30 || op == 31) {
+    return turning_curves(t, op == 31);
+  }
+  return t;
+}
+
+// rrcurveto, or rcurveline with `line` true: curves of six numbers, then a
+// line from the last two.
+function curves_then_line(own t: T2, line: boolean): T2 {
+  let s = t.stack;
+  let n = s.len();
+  let room = if (line) { n - 2 } else { n };
+  let out = t;
+  let k = 0;
+  while (k + 6 <= room) {
+    out = curve_to(out, s[k], s[k + 1], s[k + 2], s[k + 3], s[k + 4], s[k + 5]);
+    k += 6;
+  }
+  return if (line && k + 2 == n) { line_to(out, s[k], s[k + 1]) } else { out };
+}
+
+// rlinecurve: lines, then one curve from the last six numbers.
+function line_curve(own t: T2): T2 {
+  let s = t.stack;
+  let n = s.len();
+  if (n < 6) {
+    return t;
+  }
+  let out = t;
+  let k = 0;
+  while (k + 2 <= n - 6) {
+    out = line_to(out, s[k], s[k + 1]);
+    k += 2;
+  }
+  return curve_to(out, s[n - 6], s[n - 5], s[n - 4], s[n - 3], s[n - 2], s[n - 1]);
+}
+
+// hhcurveto, with `across` true, or vvcurveto: curves that start and end
+// horizontal, or vertical. An odd first number moves the first point
+// across.
+function straight_curves(own t: T2, across: boolean): T2 {
+  let s = t.stack;
+  let n = s.len();
+  let out = t;
+  let k = n % 2;
+  let first = if (k == 1) { s[0] } else { 0.0 };
+  while (k + 4 <= n) {
+    out = if (across) { curve_to(out, s[k], first, s[k + 1], s[k + 2], s[k + 3], 0.0) } else { curve_to(out, first, s[k], s[k + 1], s[k + 2], 0.0, s[k + 3]) };
+    first = 0.0;
+    k += 4;
+  }
+  return out;
+}
+
+// hvcurveto, with `across` true, or vhcurveto: curves whose tangents change
+// between horizontal and vertical. A fifth number ends the last curve.
+function turning_curves(own t: T2, across: boolean): T2 {
+  let s = t.stack;
+  let n = s.len();
+  let out = t;
+  let k = 0;
+  let h = across;
+  while (k + 4 <= n) {
+    let last = if (k + 5 == n) { s[k + 4] } else { 0.0 };
+    out = if (h) { curve_to(out, s[k], 0.0, s[k + 1], s[k + 2], last, s[k + 3]) } else { curve_to(out, 0.0, s[k], s[k + 1], s[k + 2], s[k + 3], last) };
+    h = !h;
+    k += 4;
+  }
+  return out;
+}
+
+// The two-byte operators 12 x: flex, hflex, hflex1 and flex1, each two
+// curves. Each other operator of the set does nothing.
+function flexed(own t: T2, x: i32): T2 {
+  let s = t.stack;
+  let n = s.len();
+  if (x == 35 && n >= 13) {
+    return curve_to(curve_to(t, s[0], s[1], s[2], s[3], s[4], s[5]), s[6], s[7], s[8], s[9], s[10], s[11]);
+  }
+  if (x == 34 && n >= 7) {
+    return curve_to(curve_to(t, s[0], 0.0, s[1], s[2], s[3], 0.0), s[4], 0.0, s[5], 0.0 - s[2], s[6], 0.0);
+  }
+  if (x == 36 && n >= 9) {
+    return curve_to(curve_to(t, s[0], s[1], s[2], s[3], s[4], 0.0), s[5], 0.0, s[6], s[7], s[8], 0.0 - (s[1] + s[3] + s[7]));
+  }
+  if (x == 37 && n >= 11) {
+    return flex1(t);
+  }
+  return t;
+}
+
+// flex1: the last point moves along the axis on which the five points
+// before it move most.
+function flex1(own t: T2): T2 {
+  let s = t.stack;
+  let dx = s[0] + s[2] + s[4] + s[6] + s[8];
+  let dy = s[1] + s[3] + s[5] + s[7] + s[9];
+  let (ex, ey) = if (dx.abs() > dy.abs()) { (s[10], 0.0 - dy) } else { (0.0 - dx, s[10]) };
+  return curve_to(curve_to(t, s[0], s[1], s[2], s[3], s[4], s[5]), s[6], s[7], s[8], s[9], ex, ey);
 }
 ```
 
@@ -1319,6 +1974,31 @@ function curve(r: Raster, x0: f64, y0: f64, cx: f64, cy: f64, x1: f64, y1: f64):
   return out;
 }
 
+// A cubic curve as lines, about one for each two pixels of its length.
+function cubic(r: Raster, x0: f64, y0: f64, c1: Point, c2: Point, x1: f64, y1: f64): Raster {
+  let ax = x0 - 2.0 * c1.x + c2.x;
+  let ay = y0 - 2.0 * c1.y + c2.y;
+  let bx = c1.x - 2.0 * c2.x + x1;
+  let by = c1.y - 2.0 * c2.y + y1;
+  let dev = (ax * ax + ay * ay).max(bx * bx + by * by).sqrt();
+  let n = 1;
+  if (dev > 0.333) {
+    n = 1 + (6.0 * dev).sqrt() as i32;
+  }
+  let out = r;
+  let (px, py) = (x0, y0);
+  for i in 1..n + 1 {
+    let t = i as f64 / (n as f64);
+    let u = 1.0 - t;
+    let qx = u * u * u * x0 + 3.0 * u * u * t * c1.x + 3.0 * u * t * t * c2.x + t * t * t * x1;
+    let qy = u * u * u * y0 + 3.0 * u * u * t * c1.y + 3.0 * u * t * t * c2.y + t * t * t * y1;
+    out = line(out, px, py, qx, qy);
+    px = qx;
+    py = qy;
+  }
+  return out;
+}
+
 // The most pixels of one bitmap. The coordinates of a glyph and the size are
 // input, so their product does not set the allocation.
 const MAX_BITMAP_PIXELS: f64 = 16777216.0;
@@ -1394,16 +2074,24 @@ function outline(r: Raster, c: Point[], scale: f64, ox: f64, oy: f64): Raster {
   }
   let pts: Point[] = [];
   for p in c {
-    pts = pts.append(Point { x: p.x * scale + ox, y: oy - p.y * scale, on: p.on });
+    pts = pts.append(Point { ...p, x: p.x * scale + ox, y: oy - p.y * scale });
   }
   let (first, sx, sy) = start_point(pts);
   let out = r;
   let (cx, cy) = (sx, sy);
   let control = false;
   let (qx, qy) = (0.0, 0.0);
+  let held: Point[] = [];
   for k in 1..n + 1 {
     let p = pts[(first + k) % n];
-    if (p.on && control) {
+    if (p.cubic) {
+      held = held.append(p);
+      continue;
+    }
+    if (held.len() == 2) {
+      out = cubic(out, cx, cy, held[0], held[1], p.x, p.y);
+      held = [];
+    } else if (p.on && control) {
       out = curve(out, cx, cy, qx, qy, p.x, p.y);
     } else if (p.on) {
       out = line(out, cx, cy, p.x, p.y);

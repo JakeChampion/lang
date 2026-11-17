@@ -185,7 +185,7 @@ function loaded_font(more: Fallback, found: fonts.Found): (Fallback, i32) {
       return (more, i);
     }
   }
-  if let Some(font) = truetype.parse(read_file_bytes(found.path).unwrap_or([])) {
+  if let Some(font) = truetype.parse_index(read_file_bytes(found.path).unwrap_or([]), found.index) {
     return (Fallback { ...more, names: more.names.append(name), faces: more.faces.append(fonts.styled(font, found, found.weight)) }, more.names.len());
   }
   return (more, -1);
@@ -193,7 +193,7 @@ function loaded_font(more: Fallback, found: fonts.Found): (Fallback, i32) {
 
 // The fonts of the files in `found`, one for each weight of `ws`. `read`
 // gives the bytes of a file. One file can hold more than one weight, so
-// each file is read and parsed one time. A weight with no font takes the
+// each font of a file is read and parsed one time. A weight with no font takes the
 // first font that there is.
 pub function load(found: Option[fonts.Found][], ws: i32[], read: (string) => u8[]): Fonts {
   let paths: string[] = [];
@@ -202,11 +202,12 @@ pub function load(found: Option[fonts.Found][], ws: i32[], read: (string) => u8[
   for i in 0..found.len().min(ws.len()) {
     let face: Option[truetype.Font] = None;
     if let Some(f) = found[i] {
-      let at = place(paths, f.path);
+      let key = f.path + "#" + f.index.to_string();
+      let at = place(paths, key);
       if (at < 0) {
         at = paths.len();
-        paths = paths.append(f.path);
-        parsed = parsed.append(truetype.parse(read(f.path)));
+        paths = paths.append(key);
+        parsed = parsed.append(truetype.parse_index(read(f.path), f.index));
       }
       if let Some(font) = parsed[at] {
         face = Some(fonts.styled(font, f, ws[i]));

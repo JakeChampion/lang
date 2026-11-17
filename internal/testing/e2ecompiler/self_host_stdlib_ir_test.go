@@ -20,9 +20,9 @@ var cryptoIRCases = []stdlibIRCase{
 
 var pathIRCases = []stdlibIRCase{
 	{"join-len", `return path.join(["usr", "local", "bin"]).len();`},
-	{"ext-len", `return path.extension("a.b.c.txt").len();`},
-	{"filename-len", `return path.file_name("/a/b/c.txt").len();`},
-	{"parent-len", `return path.parent("/a/b/c.txt").len();`},
+	{"ext-len", `match (path.extension("a.b.c.txt")) { Some(s) => { return s.len(); }, None => { return 99; } }`},
+	{"filename-len", `match (path.file_name("/a/b/c.txt")) { Some(s) => { return s.len(); }, None => { return 99; } }`},
+	{"parent-len", `match (path.parent("/a/b/c.txt")) { Some(s) => { return s.len(); }, None => { return 99; } }`},
 }
 
 var mathIRCases = []stdlibIRCase{

@@ -8,16 +8,20 @@ Path helpers operate on POSIX path strings. They separate filenames, extensions,
 
 ## Contracts
 
+`parent`, `file_name`, `extension` and `stem` return `None` when the path has no such part. A path of one name has no parent, and the root has no parent and no file name.
+
 These operations do not consult the filesystem. Text cleanup cannot establish whether a path exists or whether a symbolic link changes its destination.
 
 ## Executable example
 
 ```fern test name=std-path-example
 import "std/path";
+import "std/option";
 
 function main(): i32 {
   if (path.clean("a/./b/../c") != "a/c") { return 1; }
-  if (path.extension("main.fern") != "fern") { return 2; }
+  if (path.extension("main.fern").unwrap_or("") != "fern") { return 2; }
+  if (path.extension("Makefile").is_some()) { return 3; }
   return 0;
 }
 ```
@@ -81,63 +85,67 @@ pub function join(parts: string[]): string {
   return out;
 }
 
-pub function parent(p: string): string {
-  let n = p.len();
-  if (n == 0) {
-    return "";
-  }
-  let i = n - 1;
-  if (n == 1 && p[0] == 47) {
-    return "/";
-  }
-  while (i > 0 && p[i] == 47) {
-    i -= 1;
-  }
-  while (i >= 0 && p[i] != 47) {
-    i -= 1;
-  }
-  if (i < 0) {
-    return "";
-  }
-  if (i == 0) {
-    return "/";
-  }
-  return slice_unchecked(p, 0, i) + "";
-}
-
-pub function file_name(p: string): string {
-  let n = p.len();
-  if (n == 0) {
-    return "";
-  }
-  let end = n;
+pub function parent(p: string): Option[string] {
+  let end = p.len();
   while (end > 0 && p[end - 1] == 47) {
     end -= 1;
   }
   if (end == 0) {
-    return "";
+    return None;
   }
   let i = end - 1;
   while (i >= 0 && p[i] != 47) {
     i -= 1;
   }
-  return slice_unchecked(p, i + 1, end) + "";
+  if (i < 0) {
+    return None;
+  }
+  while (i > 0 && p[i - 1] == 47) {
+    i -= 1;
+  }
+  if (i == 0) {
+    return Some("/");
+  }
+  return Some(slice_unchecked(p, 0, i) + "");
 }
 
-pub function extension(p: string): string {
-  let name = file_name(p);
-  let n = name.len();
-  if (n == 0) {
-    return "";
+pub function file_name(p: string): Option[string] {
+  let end = p.len();
+  while (end > 0 && p[end - 1] == 47) {
+    end -= 1;
   }
-  let i = n - 1;
+  if (end == 0) {
+    return None;
+  }
+  let i = end - 1;
+  while (i >= 0 && p[i] != 47) {
+    i -= 1;
+  }
+  return Some(slice_unchecked(p, i + 1, end) + "");
+}
+
+// The index of the dot that starts the extension of a file name, or -1.
+// A dot at index 0 starts a hidden name, not an extension.
+function __ext_dot(name: string): i32 {
+  let i = name.len() - 1;
   while (i > 0 && name[i] != 46) {
     i -= 1;
   }
   if (i <= 0) {
-    return "";
+    return -1;
   }
-  return slice_unchecked(name, i + 1, n) + "";
+  return i;
+}
+
+pub function extension(p: string): Option[string] {
+  let Some(name) = file_name(p) else {
+    return None;
+  };
+  let dot = __ext_dot(name);
+  if (dot < 0) {
+    return None;
+  }
+  return Some(slice_unchecked(name, dot + 1, name.len()) + "");
 }
 ```
 
@@ -199,20 +207,15 @@ pub function is_absolute(p: string): boolean {
   return p.len() > 0 && p[0] == 47;
 }
 
-pub function stem(p: string): string {
-  let name = file_name(p);
-  let n = name.len();
-  if (n == 0) {
-    return "";
+pub function stem(p: string): Option[string] {
+  let Some(name) = file_name(p) else {
+    return None;
+  };
+  let dot = __ext_dot(name);
+  if (dot < 0) {
+    return Some(name);
   }
-  let i = n - 1;
-  while (i > 0 && name[i] != 46) {
-    i -= 1;
-  }
-  if (i <= 0) {
-    return name;
-  }
-  return slice_unchecked(name, 0, i) + "";
+  return Some(slice_unchecked(name, 0, dot) + "");
 }
 
 pub function with_extension(p: string, ext: string): string {
