@@ -205,11 +205,11 @@ function reply_all(rs: plex.Request[]): plex.Reply[] {
 // files.
 // The requests, the calls of the player and the files of the fake device,
 // and the decoders that it has.
-struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]], sound: Cell[boolean], gpu: Cell[boolean], languages: Cell[string[]] }
+struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]], sound: Cell[boolean], gpu: Cell[boolean], languages: Cell[string[]], pip: Cell[boolean] }
 
 function new_log(): Log {
   let none: string[] = [];
-  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]), sound: cell_new(true), gpu: cell_new(false), languages: cell_new(["en-US"]) };
+  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]), sound: cell_new(true), gpu: cell_new(false), languages: cell_new(["en-US"]), pip: cell_new(false) };
 }
 
 function note(c: Cell[string[]], s: string): void {
@@ -296,6 +296,10 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
       return true;
     },
     set_speed: (rate: i32): void => note(log.calls, "speed " + rate.to_string()),
+    pip: (on: boolean): void => note(log.calls, "pip " + on.to_string()),
+    in_pip: (): boolean => log.pip.get(),
+    watch_next: (key: string, title: string, kind: i32, at: i64, length: i64, poster: string): void => note(log.calls, "watch next " + key + " " + title + " kind=" + kind.to_string() + " at=" + at.to_string() + " poster=" + poster),
+    watch_next_drop: (key: string): void => note(log.calls, "watch next drop " + key),
     brightness: (level: f32): void => note(log.calls, "light " + ((level * 1000.0f32) as i32).to_string()),
     system_brightness: (): f32 => 0.5f32,
     volume: (): (i32, i32) => (7, 15),
@@ -1094,6 +1098,47 @@ function test_album_queue_repeat_and_sleep(): test.TestOutcome {
   return test.pass();
 }
 
+// A video that plays lets Android show it in a picture-in-picture window,
+// and a pause stops that. When the app goes away into that window, the
+// video plays on. When it goes away with no such window, the video pauses.
+function test_picture_in_picture(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let playing = video_drawn(log, f);
+  if (!has_call(log, "pip true")) {
+    return test.fail("a video that plays did not allow picture-in-picture: " + log.calls.get().join(" | "));
+  }
+  log.pip.set(true);
+  let small = settle(at(playing, log, 400i64, f, android.Pause), log, 400i64, f);
+  if (small.play.paused) {
+    return test.fail("the video paused in the picture-in-picture window");
+  }
+  log.pip.set(false);
+  let away = settle(at(small, log, 500i64, f, android.Pause), log, 500i64, f);
+  if (!away.play.paused || !has_call(log, "pip false")) {
+    return test.fail("the video did not pause when the app went away: " + log.calls.get().join(" | "));
+  }
+  return test.pass();
+}
+
+// A video that stops part of the way goes on the Watch Next row of Android
+// TV, at its place and with its poster. A video that plays to its end goes
+// off the row.
+function test_watch_next(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let playing = video_drawn(log, f);
+  let back = tap(tap(playing, log, 400i64, f, "overlay"), log, 500i64, f, "back");
+  if (!has_call(log, "watch next 501 Inception kind=0 at=") || !has_call(log, "poster=https://up.example:32400/photo/:/transcode?")) {
+    return test.fail("a video that stopped part of the way is not on Watch Next: " + log.calls.get().join(" | "));
+  }
+  let again = settle(at(tap(back, log, 600i64, f, "play"), log, 700i64, f, android.Posted(19, 0 as usize)), log, 700i64, f);
+  let ended = settle(at(again, log, 800i64, f, android.Posted(20, 0 as usize)), log, 800i64, f);
+  return test.assert_eq(has_call(log, "watch next drop 501").to_string(), "true");
+}
+
 function count_plays(log: Log): i32 {
   return log.calls.get().filter((c: string): boolean => c.starts_with("play ")).len();
 }
@@ -1465,6 +1510,8 @@ function main(): i32 {
   r = r.it("Auto takes a lower quality after two stalls in a minute", test_auto_quality_steps_down);
   r = r.it("the texts are in the language of the person", test_texts_in_the_language_of_the_person);
   r = r.it("an album plays in order, repeats, shuffles and sleeps", test_album_queue_repeat_and_sleep);
+  r = r.it("a video plays on in a picture-in-picture window", test_picture_in_picture);
+  r = r.it("a video that stops part of the way goes on Watch Next", test_watch_next);
   r = r.it("a double tap at a side of the video seeks 10 seconds", test_double_tap_seeks);
   r = r.it("a drag on the video sets the brightness and the volume", test_drag_sets_light_and_volume);
   r = r.it("the connections of a server race", test_connection_race);

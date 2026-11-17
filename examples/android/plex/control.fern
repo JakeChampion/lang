@@ -92,6 +92,15 @@ pub struct Device {
   // Asks for the permission to post notifications, where Android needs it
   // and the app has not got it, so the media controls can show.
   ask_notifications: () => void,
+  // Lets Android show the video in a picture-in-picture window when the
+  // user leaves the app, or stops that. True while the app shows in one.
+  pip: (boolean) => void,
+  in_pip: () => boolean,
+  // Puts a video on the Watch Next row of Android TV: its key, title, kind
+  // (watchnext.MOVIE or EPISODE), place, length and poster address. And
+  // takes the video of a key off the row.
+  watch_next: (string, string, i32, i64, i64, string) => void,
+  watch_next_drop: (string) => void,
   random: () => i32,
   // The MIME types that the decoders of the phone take.
   decoders: string[],
@@ -1800,6 +1809,7 @@ function resume(own s: App): App {
   }
   s.dev.keep_screen_on(true);
   if (video) {
+    s.dev.pip(true);
     s.dev.immersive(true);
     s.dev.request_frame();
   }
@@ -1819,6 +1829,7 @@ function pause_play(own s: App): App {
   let p = s.play;
   s.dev.pause();
   if (p.video) {
+    s.dev.pip(false);
     s.dev.pause_video();
   }
   s.dev.keep_screen_on(false);
@@ -1908,6 +1919,9 @@ function stop_play(own s: App, completed: boolean): App {
   s.dev.stop();
   s.dev.keep_screen_on(false);
   s.dev.immersive(false);
+  if (p.video) {
+    s.dev.pip(false);
+  }
   if (audio(p)) {
     s.dev.media_end();
   }
@@ -1921,8 +1935,17 @@ function stop_play(own s: App, completed: boolean): App {
   if (p.stream.transcode) {
     t = report(t, StopTranscode(p.session));
   }
-  if (completed || p.duration > 0i64 && pos * 10i64 >= p.duration * 9i64) {
+  let finished = completed || p.duration > 0i64 && pos * 10i64 >= p.duration * 9i64;
+  if (finished) {
     t = report(t, Scrobble(p.item.key, true));
+  }
+  if (p.video || !audio(p) && plex.playable_kind(p.item.kind)) {
+    if (finished) {
+      t.dev.watch_next_drop(p.item.key);
+    } else if (pos > 0i64) {
+      let kind = if (p.item.kind == "episode") { 3 } else { 0 };
+      t.dev.watch_next(p.item.key, plex.card_title(p.item), kind, pos, p.duration, plex.image_url(t.base, plex.poster(p.item), 400, 600));
+    }
   }
   return refresh_detail(pop(App { ...t, play: no_play() }));
 }
@@ -3131,8 +3154,9 @@ function event(own s: App, e: android.Event): App {
       return App { ...s, shown: false };
     },
     android.Pause => {
-      // Music plays on while the app is away. A video pauses.
-      if (s.play.active && s.play.prepared && !s.play.paused && !audio(s.play)) {
+      // Music plays on while the app is away. A video pauses, unless it
+      // plays on in a picture-in-picture window.
+      if (s.play.active && s.play.prepared && !s.play.paused && !audio(s.play) && !s.dev.in_pip()) {
         return pause_play(s);
       }
       return s;
