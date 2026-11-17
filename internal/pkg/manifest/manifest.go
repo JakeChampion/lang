@@ -556,7 +556,7 @@ func validDepName(s string) bool {
 // list them. TestAndroidKeysMatchCompiler holds the two in step.
 var (
 	androidText     = []string{"package", "label", "icon", "banner", "key", "version_name"}
-	androidSwitches = []string{"home", "tv", "compress", "cleartext", "debuggable"}
+	androidSwitches = []string{"home", "tv", "pip", "compress", "cleartext", "debuggable"}
 	androidLists    = []string{"permissions", "assets", "widget"}
 	androidNumbers  = []string{"min_sdk", "version_code"}
 )
