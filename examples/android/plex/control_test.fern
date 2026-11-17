@@ -208,11 +208,16 @@ function reply_all(rs: plex.Request[]): plex.Reply[] {
 // files.
 // The requests, the calls of the player and the files of the fake device,
 // and the decoders that it has.
-struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]], sound: Cell[boolean], gpu: Cell[boolean], languages: Cell[string[]], pip: Cell[boolean] }
+struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]], sound: Cell[boolean], gpu: Cell[boolean], languages: Cell[string[]], pip: Cell[boolean], access: Cell[android.AccessItem[]] }
+
+function none_access(): android.AccessItem[] {
+  let out: android.AccessItem[] = [];
+  return out;
+}
 
 function new_log(): Log {
   let none: string[] = [];
-  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]), sound: cell_new(true), gpu: cell_new(false), languages: cell_new(["en-US"]), pip: cell_new(false) };
+  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]), sound: cell_new(true), gpu: cell_new(false), languages: cell_new(["en-US"]), pip: cell_new(false), access: cell_new(none_access()) };
 }
 
 function note(c: Cell[string[]], s: string): void {
@@ -303,6 +308,7 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     in_pip: (): boolean => log.pip.get(),
     watch_next: (key: string, title: string, kind: i32, at: i64, length: i64, poster: string): void => note(log.calls, "watch next " + key + " " + title + " kind=" + kind.to_string() + " at=" + at.to_string() + " poster=" + poster),
     watch_next_drop: (key: string): void => note(log.calls, "watch next drop " + key),
+    access: (items: android.AccessItem[]): void => log.access.set(items),
     brightness: (level: f32): void => note(log.calls, "light " + ((level * 1000.0f32) as i32).to_string()),
     system_brightness: (): f32 => 0.5f32,
     volume: (): (i32, i32) => (7, 15),
@@ -1162,6 +1168,36 @@ function test_drawn_subtitles(): test.TestOutcome {
   return test.assert_eq(says(shown, "Hello from SRT").to_string(), "true");
 }
 
+// The home screen gives TalkBack each poster by its title, with a click
+// and a long click, and the words of each button. A double tap on a poster
+// opens it, and a double tap and hold opens its menu.
+function test_accessibility(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let items = log.access.get();
+  let poster = -1;
+  for it in items {
+    if (it.text == "Inception" && (it.actions & android.ACCESS_LONG_CLICK) != 0 && (it.actions & android.ACCESS_CLICK) != 0) {
+      poster = it.id;
+    }
+  }
+  if (poster < 0) {
+    return test.fail("no poster for TalkBack: " + items.map((i: android.AccessItem): string => i.text).join(" | "));
+  }
+  if (items.filter((i: android.AccessItem): boolean => i.text == "Libraries").len() == 0) {
+    return test.fail("no tab for TalkBack");
+  }
+  let menu = at(home, log, 100i64, f, android.Access(poster, android.ACCESS_LONG_CLICK));
+  if (menu.menu.key.len() == 0) {
+    return test.fail("a double tap and hold did not open the menu of the poster");
+  }
+  let again = shown(log, f, "https://up.example:32400", "srv");
+  let detail = settle(at(again, log, 200i64, f, android.Access(poster, android.ACCESS_CLICK)), log, 200i64, f);
+  return test.assert_eq((detail.screen == ui.DETAIL).to_string(), "true");
+}
+
 function count_plays(log: Log): i32 {
   return log.calls.get().filter((c: string): boolean => c.starts_with("play ")).len();
 }
@@ -1536,6 +1572,7 @@ function main(): i32 {
   r = r.it("a video plays on in a picture-in-picture window", test_picture_in_picture);
   r = r.it("a video that stops part of the way goes on Watch Next", test_watch_next);
   r = r.it("a subtitle file beside the video is drawn by the app", test_drawn_subtitles);
+  r = r.it("TalkBack reads the posters and the buttons, and acts on them", test_accessibility);
   r = r.it("a double tap at a side of the video seeks 10 seconds", test_double_tap_seeks);
   r = r.it("a drag on the video sets the brightness and the volume", test_drag_sets_light_and_volume);
   r = r.it("the connections of a server race", test_connection_race);

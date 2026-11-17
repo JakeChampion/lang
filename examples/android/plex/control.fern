@@ -101,6 +101,9 @@ pub struct Device {
   // takes the video of a key off the row.
   watch_next: (string, string, i32, i64, i64, string) => void,
   watch_next_drop: (string) => void,
+  // Gives an accessibility service, such as TalkBack, the items that the
+  // screen shows.
+  access: (android.AccessItem[]) => void,
   random: () => i32,
   // The MIME types that the decoders of the phone take.
   decoders: string[],
@@ -3227,6 +3230,9 @@ function event(own s: App, e: android.Event): App {
     android.Touch(action, x, y) => {
       return touch(s, action, x, y);
     },
+    android.Access(id, action) => {
+      return access_act(s, id, action);
+    },
     android.Key(code, action) => {
       return key(s, code, action);
     },
@@ -3254,12 +3260,59 @@ function event(own s: App, e: android.Event): App {
 // Makes the nodes of the screen when it changed. With the GPU, they draw
 // at the next vsync. With the CPU, they draw at once, unless the player
 // has the window.
+// The items of the screen for an accessibility service: each node with
+// words, by its index. A node with an action is a button. A poster reads
+// the title of its item, and a long press opens its menu.
+function access_items(s: App): android.AccessItem[] {
+  let out: android.AccessItem[] = [];
+  for i in 0..s.nodes.len() {
+    let n = s.nodes[i];
+    let text = n.say;
+    let actions = 0;
+    if (n.tap.name.len() > 0) {
+      actions = android.ACCESS_CLICK;
+      if let Some(it) = item_at(s, n.tap.name) {
+        if (it.key.len() > 0) {
+          text = plex.card_title(it);
+          actions |= android.ACCESS_LONG_CLICK;
+        }
+      }
+    }
+    if (text.len() > 0) {
+      out = out.append(android.AccessItem { id: i, x: n.x, y: n.y, w: n.w, h: n.h, text: text, actions: actions });
+    }
+  }
+  return out;
+}
+
+// A double tap of an accessibility service on an item taps its node, and a
+// double tap and hold on a poster opens its menu.
+function access_act(own s: App, id: i32, action: i32): App {
+  if (id < 0 || id >= s.nodes.len()) {
+    return s;
+  }
+  let n = s.nodes[id];
+  if (action == android.ACCESS_LONG_CLICK) {
+    if let Some(it) = item_at(s, n.tap.name) {
+      if (it.key.len() > 0) {
+        return App { ...s, menu: it, dirty: true };
+      }
+    }
+    return s;
+  }
+  if (n.tap.name.len() == 0) {
+    return s;
+  }
+  return act(s, n.tap.name, n, n.x + n.w / 2);
+}
+
 function draw_screen(own s: App): App {
   if (!s.dirty || s.window == 0 as usize || s.w == 0) {
     return s;
   }
   let m = ui.metrics(s.w, s.h, s.top, s.bottom);
   let t = App { ...s, nodes: with_focus(ui.nodes(view(s)), s.focus, m.u), dirty: false };
+  t.dev.access(access_items(t));
   if (t.gpu) {
     t.dev.request_frame();
     return App { ...t, paint: true };

@@ -3,6 +3,7 @@
 // phone: the clock, the files of the app, the window, the network through
 // workers, the image decoder and the media player.
 import "std/android";
+import "std/android/access";
 import "std/android/launch";
 import "std/android/draw";
 import "std/android/gl";
@@ -463,6 +464,7 @@ function device(ctx: usize, p: player.Player, gpu: Cell[Option[Gpu]], media: Med
     in_pip: (): boolean => android.in_pip(ctx),
     watch_next: (key: string, title: string, kind: i32, at: i64, length: i64, poster: string): void => watch_next(ctx, key, title, kind, at, length, poster),
     watch_next_drop: (key: string): void => watchnext.drop(ctx, key),
+    access: (items: android.AccessItem[]): void => access.publish(ctx, items),
     random: (): i32 => rand.next_i32() & 2147483647,
     decoders: decoders(ctx),
     languages: android.languages(ctx),

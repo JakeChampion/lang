@@ -121,6 +121,10 @@ On Android TV, a video that stops part of the way goes on the Watch Next
 row of the home screen. The row shows its poster and its place. The row opens the
 video in the app. A video that plays to its end goes off the row.
 
+TalkBack reads each screen. The app gives the screen reader each button
+by its text and each poster by its title. A double tap presses the
+control, and a double tap and hold on a poster opens its menu.
+
 Search and settings:
 
 - Search starts when you stop typing, and shows the hubs of the results.
