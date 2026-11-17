@@ -227,12 +227,105 @@ function holding(c: i32, freed: boolean): i32 {
   return c;
 }
 
+// A side of a twin that no path takes.
+function no_side(): i32 {
+  return 9;
+}
+
+// A value that may be the box of the parameter with root `o`: it holds
+// `same` units of its own if it is that box, and `apart` units if it is not.
+function twin(o: i32, same: i32, apart: i32): i32 {
+  if (same == apart) {
+    if (same == no_side()) {
+      return absent();
+    }
+    return same;
+  }
+  if (same > no_side() || apart > no_side() || same < 0 || apart < 0) {
+    return maybe();
+  }
+  return -1000 - (o * 100 + same * 10 + apart);
+}
+
+function is_twin(s: i32): boolean {
+  return s <= -1000;
+}
+
+function twin_key(s: i32): i32 {
+  return (-1000 - s) / 100;
+}
+
+function twin_same(s: i32): i32 {
+  return (-1000 - s) / 10 % 10;
+}
+
+function twin_apart(s: i32): i32 {
+  return (-1000 - s) % 10;
+}
+
+// The state of a twin read as a plain count.
+function flat(s: i32): i32 {
+  if (!is_twin(s)) {
+    return s;
+  }
+  if (twin_same(s) == no_side()) {
+    return twin_apart(s);
+  }
+  if (twin_apart(s) == no_side()) {
+    return twin_same(s);
+  }
+  return maybe();
+}
+
+// A plain count `c` is the twin of every box with `c` on both sides.
+function side_of(s: i32, o: i32, same: boolean): i32 {
+  if (is_twin(s)) {
+    if (twin_key(s) != o) {
+      return -1;
+    }
+    if (same) {
+      return twin_same(s);
+    }
+    return twin_apart(s);
+  }
+  if (s >= 0 && s <= cap()) {
+    return s;
+  }
+  return -1;
+}
+
+function side_meet(a: i32, b: i32): i32 {
+  if (a == no_side()) {
+    return b;
+  }
+  if (b == no_side() || a == b) {
+    return a;
+  }
+  return -1;
+}
+
+function meet_twin(a: i32, b: i32): i32 {
+  let o = twin_key(b);
+  if (is_twin(a)) {
+    o = twin_key(a);
+  }
+  let same = side_meet(side_of(a, o, true), side_of(b, o, true));
+  let apart = side_meet(side_of(a, o, false), side_of(b, o, false));
+  if (same >= 0 && apart >= 0) {
+    return twin(o, same, apart);
+  }
+  return meet(flat(a), flat(b));
+}
+
 function meet(a: i32, b: i32): i32 {
   if (a == b || b == absent()) {
     return a;
   }
   if (a == absent()) {
     return b;
+  }
+  if (is_twin(a) || is_twin(b)) {
+    return meet_twin(a, b);
   }
   if ((is_free(a) || is_free(b)) && (a >= 0 || a == free()) && (b >= 0 || b == free())) {
     let ca = units(a);
@@ -2355,6 +2448,7 @@ function spend(own p: Progress, w: Walk, v: i32, block: i32, what: string): Prog
   if (k < 0) {
     return p;
   }
+  p = settled(p, k);
   let s = p.state[k];
   if (s == maybe() || s == free()) {
     return p;
@@ -2393,7 +2487,11 @@ function spend_counted(own p: Progress, w: Walk, v: i32, block: i32, what: strin
 
 function spend_if_held(own p: Progress, w: Walk, v: i32): Progress {
   let k = w.idx[w.root[v]];
-  if (k < 0 || units(p.state[k]) <= 0) {
+  if (k < 0) {
+    return p;
+  }
+  p = settled(p, k);
+  if (units(p.state[k]) <= 0) {
     return p;
   }
   return Progress { ...p, state: p.state.with(k, p.state[k] - 1) };
@@ -2408,6 +2506,7 @@ function retain(own p: Progress, w: Walk, v: i32, result: i32): Progress {
   if (result >= 0 && w.uses[result] == 0 && w.uses[v] == 1 && w.origin[r] == org_borrowed() && owned_base(w, r)) {
     return p;
   }
+  p = settled(p, k);
   let s = p.state[k];
   if (s == maybe() || s == free()) {
     return p;
@@ -2433,6 +2532,14 @@ function owned_base(w: Walk, v: i32): boolean {
   return o == org_fresh() || o == org_transferred() || o == org_child();
 }
 
+// A twin read as a plain count, before a use that only a count describes.
+function settled(own p: Progress, k: i32): Progress {
+  if (is_twin(p.state[k])) {
+    return Progress { ...p, state: p.state.with(k, flat(p.state[k])) };
+  }
+  return p;
+}
+
 function poison(own p: Progress, w: Walk, v: i32): Progress {
   let k = w.idx[w.root[v]];
   if (k < 0) {
@@ -2456,7 +2563,7 @@ function define(own p: Progress, w: Walk, v: i32, block: i32): Progress {
   if (k < 0) {
     return p;
   }
-  if (units(p.state[k]) > 0) {
+  if (units(flat(p.state[k])) > 0) {
     p = found(p, w, "redefined while held", v, block, "the previous value's unit was never spent");
   }
   return Progress { ...p, state: p.state.with(k, initial_count(w.origin[v])) };
@@ -2553,10 +2660,60 @@ function apply_named_op(own p: Progress, w: Walk, ins: ssa.SInst, block: i32): P
     return apply_ret_word(p, w, ins, block);
   }
   let s = w.ops.op_lookup(ins.str);
+  let operand = -2;
+  if (rcsigs.pushes_element(ins.str) && ins.args.len() > 0 && ins.args[0] >= 0) {
+    operand = 0;
+    let ko = w.idx[w.root[ins.args[0]]];
+    if (ko >= 0) {
+      operand = p.state[ko];
+    }
+  }
   if (s.known) {
     p = apply_op_row(p, w, ins, block, s);
   }
-  return define(p, w, ins.result, block);
+  p = define(p, w, ins.result, block);
+  if (operand != -2) {
+    p = push_twin(p, w, ins, s, operand, block);
+  }
+  return p;
+}
+
+// A push grows its array in place and returns it, or returns a new box.
+// Pushed onto a parameter, or onto a value that is a parameter's box, the
+// result holds no unit of its own if it is that box, and one if it is new.
+// An owned push onto a value that is not that box gives a value that is not.
+function push_twin(own p: Progress, w: Walk, ins: ssa.SInst, s: rcsigs.Sig, operand: i32, block: i32): Progress {
+  if (ins.result < 0) {
+    return p;
+  }
+  let kr = w.idx[w.root[ins.result]];
+  let r = w.root[ins.args[0]];
+  let ko = w.idx[r];
+  if (kr < 0 || kr == ko) {
+    return p;
+  }
+  if (s.known && s.effect == rcsigs.effect_move()) {
+    if (is_twin(operand) && twin_same(operand) == no_side() && p.state[kr] == 1) {
+      return Progress { ...p, state: p.state.with(kr, twin(twin_key(operand), no_side(), 1)) };
+    }
+    return p;
+  }
+  if (!s.known || s.effect != rcsigs.effect_none() || s.result != rcsigs.result_unknown()) {
+    return p;
+  }
+  if (first_on_shared_arm(w, block, r, ins.result)) {
+    return Progress { ...p, state: p.state.with(kr, 1) };
+  }
+  let target = -1;
+  if (is_twin(operand) && twin_apart(operand) == no_side()) {
+    target = twin_key(operand);
+  } else if (r < w.f.nparams) {
+    target = r;
+  }
+  if (target < 0) {
+    return p;
+  }
+  return Progress { ...p, state: p.state.with(kr, twin(target, 0, 1)) };
 }
 
 function apply_store(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken: i32[]): Progress {
@@ -2571,8 +2728,8 @@ function apply_store(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken
   if (zero_at(w, val)) {
     for r in taken {
       let k = w.idx[r];
-      if (k >= 0 && p.state[k] != maybe()) {
-        let s = p.state[k];
+      if (k >= 0 && flat(p.state[k]) != maybe()) {
+        let s = flat(p.state[k]);
         if (s == owed()) {
           p = Progress { ...p, state: p.state.with(k, 0) };
         } else if (s == absent() || is_free(s) || s + 1 > cap()) {
@@ -2785,7 +2942,7 @@ function enter_phis(own p: Progress, w: Walk, bi: i32): Progress {
     if (k < 0) {
       continue;
     }
-    if (units(p.state[k]) > 0) {
+    if (units(flat(p.state[k])) > 0) {
       p = found(p, w, "redefined while held", ins.result, b.id, "the previous value's unit was never spent");
     }
     let at = p.phi_at[ins.result];
@@ -2878,11 +3035,75 @@ function same_box_on_edge(own p: Progress, w: Walk, bi: i32, sid: i32): Progress
   if (c.str == "ne") {
     equal = !equal;
   }
+  p = twin_on_edge(p, w, c.args[0], c.args[1], equal);
+  p = twin_on_edge(p, w, c.args[1], c.args[0], equal);
   if (!equal) {
     return p;
   }
   p = took_operand(p, w, c.args[0], c.args[1]);
   return took_operand(p, w, c.args[1], c.args[0]);
+}
+
+// The push is the first call of the arm where `__fern_rc_is_unique` found
+// that the box `root` has more than one holder. The push copies such a box.
+// A box with a negative count stays in place, and no retain or release
+// changes it, so the result counts as a new box on both paths.
+function first_on_shared_arm(w: Walk, block: i32, root: i32, result: i32): boolean {
+  let bi = w.at[block];
+  if (bi < 0 || w.f.blocks[bi].preds.len() != 1) {
+    return false;
+  }
+  let pb = w.at[w.f.blocks[bi].preds[0]];
+  if (pb < 0) {
+    return false;
+  }
+  let t = w.f.blocks[pb].term;
+  if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f || t.f != block) {
+    return false;
+  }
+  let c = def_of(w.f, w.defs, t.cond);
+  if (!is_call(c, "__fern_rc_is_unique") || c.args.len() != 1 || c.args[0] < 0 || w.root[c.args[0]] != root) {
+    return false;
+  }
+  for ins in w.f.blocks[bi].insts {
+    if (ins.result == result) {
+      return true;
+    }
+    if (ins.kind_tag == ssa.CALL || ins.kind_tag == ssa.RT_CALL || is_store(ins.kind_tag)) {
+      return false;
+    }
+  }
+  return false;
+}
+
+// A test of a twin against its box decides the side. On the equal edge the
+// two names are one box, and the twin takes the units of the other name.
+function twin_on_edge(own p: Progress, w: Walk, x: i32, y: i32, equal: boolean): Progress {
+  if (x < 0 || y < 0) {
+    return p;
+  }
+  let kx = w.idx[w.root[x]];
+  let o = w.root[y];
+  if (kx < 0 || w.root[x] == o) {
+    return p;
+  }
+  let s = p.state[kx];
+  if (!is_twin(s) || twin_key(s) != o) {
+    return p;
+  }
+  if (!equal) {
+    return Progress { ...p, state: p.state.with(kx, twin(o, no_side(), twin_apart(s))) };
+  }
+  let same = twin_same(s);
+  let ky = w.idx[o];
+  if (ky < 0) {
+    return Progress { ...p, state: p.state.with(kx, twin(o, same, no_side())) };
+  }
+  let held = p.state[ky];
+  if (same != no_side() && held >= 0 && same + held <= cap()) {
+    return Progress { ...p, state: p.state.with(kx, twin(o, same + held, no_side())).with(ky, 0) };
+  }
+  return Progress { ...p, state: p.state.with(kx, twin(o, same, no_side())) };
 }
 
 function took_operand(own p: Progress, w: Walk, result: i32, operand: i32): Progress {
@@ -2962,6 +3183,22 @@ function literal(w: Walk, v: i32): boolean {
   return k == ssa.STR_LIT || k == ssa.AGG_LIT;
 }
 
+// The units of one side of a twin that a phi input takes: one, as for a
+// plain count.
+function handed(side: i32): i32 {
+  if (side == no_side() || side == 0) {
+    return side;
+  }
+  return 1;
+}
+
+function kept_side(side: i32, taken: i32): i32 {
+  if (side == no_side()) {
+    return side;
+  }
+  return side - taken;
+}
+
 function phi_input(own p: Progress, w: Walk, a: i32): Fed {
   if (a < 0 || w.derived[a]) {
     return Fed { p: p, input: 0 };
@@ -2974,6 +3211,15 @@ function phi_input(own p: Progress, w: Walk, a: i32): Fed {
     return Fed { p: p, input: 0 };
   }
   let st = p.state[k];
+  if (is_twin(st)) {
+    let o = twin_key(st);
+    let same = twin_same(st);
+    let apart = twin_apart(st);
+    let in_same = handed(same);
+    let in_apart = handed(apart);
+    p = Progress { ...p, state: p.state.with(k, twin(o, kept_side(same, in_same), kept_side(apart, in_apart))) };
+    return Fed { p: p, input: twin(o, in_same, in_apart) };
+  }
   if (st == maybe() || st == absent() || st == owed()) {
     return Fed { p: p, input: maybe() };
   }
@@ -3040,7 +3286,7 @@ function apply_return(own p: Progress, w: Walk, lv: Live, bi: i32): Progress {
 function retire(own p: Progress, w: Walk, lv: Live, at: i32, n: i32, block: i32, kind: string): Progress {
   for j in 0..n {
     let k = lv.slots[at + j];
-    let held = p.state[k];
+    let held = flat(p.state[k]);
     if (units(held) > 0) {
       p = found(p, w, kind, root_at(w, k), block, util.i32_to_string(units(held)) + " unit(s) still held");
     } else if (held == owed()) {
