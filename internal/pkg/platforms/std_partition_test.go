@@ -11,7 +11,7 @@ import (
 
 var stdModuleReach = map[string]string{
 	"std/_test_empty":   "",
-	"std/android":       "cabi",
+	"std/android":       "atomics,cabi",
 	"std/ansi":          "",
 	"std/array":         "",
 	"std/async":         "log,mmio,now,pollable,privileged,reactor,tcp,uring",
@@ -101,6 +101,7 @@ var stdModuleReach = map[string]string{
 	"std/regex":         "random",
 	"std/result":        "",
 	"std/semver":        "",
+	"std/shape":         "",
 	"std/serve":         "config,env,fs,host,ktls,log,mmio,mmsg,now,pollable,privileged,proc,random,reactor,signal,sysinfo,tcp,unix,uring,vsock",
 	"std/signal":        "signal",
 	"std/sim":           "arena,fs,log,mmio,now,pollable,privileged,proc,random,reactor,tcp,uring",

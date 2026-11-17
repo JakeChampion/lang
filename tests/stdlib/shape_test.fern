@@ -1,0 +1,112 @@
+// Tests of std/shape and of the GSUB lookups of std/truetype. The font and
+// the glyphs that HarfBuzz gives for each case come from
+// scripts/gen-shape-vectors.py.
+import "std/array";
+import "std/base64";
+import "std/shape";
+import "std/string";
+import "std/test";
+import "std/truetype";
+import "./shape_vectors";
+
+function font_of(data: string): Option[truetype.Font] {
+  if let Ok(b) = base64.decode(data) {
+    return truetype.parse(b);
+  }
+  return None;
+}
+
+function naskh(): Option[truetype.Font] {
+  return font_of(shape_vectors.font());
+}
+
+function joined(xs: i32[]): string {
+  return xs.map((x: i32): string => x.to_string()).join(",");
+}
+
+// The cases of the script `script` that do not give the glyphs and the
+// clusters of HarfBuzz, one on each line.
+function differences(font: Option[truetype.Font], cases: string, script: string): string {
+  let Some(f) = font else {
+    return "the font did not parse";
+  };
+  let out = "";
+  let count = 0;
+  for line in cases.split("\n") {
+    let parts = line.split("\t");
+    if (parts.len() != 4 || parts[0] != script) {
+      continue;
+    }
+    count += 1;
+    let r = shape.shape(f, parts[1], script);
+    let got = joined(r.glyphs) + " " + joined(r.clusters);
+    let want = parts[2] + " " + parts[3];
+    if (got != want) {
+      out = out + parts[1] + ": " + got + ", want " + want + "\n";
+    }
+  }
+  return if (count == 0) { "no cases" } else { out };
+}
+
+function test_arabic_matches_harfbuzz(): test.TestOutcome {
+  return test.assert_eq(differences(naskh(), shape_vectors.cases(), "arab"), "");
+}
+
+function test_default_shaper_matches_harfbuzz(): test.TestOutcome {
+  return test.assert_eq(differences(naskh(), shape_vectors.cases(), "latn"), "");
+}
+
+// Each type and format of lookup, the flags that skip marks and bases, and
+// the lookups of a context that change the count of glyphs.
+function test_each_lookup_matches_harfbuzz(): test.TestOutcome {
+  return test.assert_eq(differences(font_of(shape_vectors.lookup_font()), shape_vectors.lookup_cases(), "latn"), "");
+}
+
+// The init feature of the font holds two lookups, and the medi feature
+// holds one of them too.
+function test_feature_lookups(): test.TestOutcome {
+  let Some(f) = naskh() else {
+    return test.fail("the font did not parse");
+  };
+  let got = joined(f.feature_lookups("arab", "init")) + " " + joined(f.feature_lookups("arab", "medi")) + " " + joined(f.feature_lookups("cyrl", "fina")) + " " + f.feature_lookups("arab", "smcp").len().to_string();
+  return test.assert_eq(got, "2,9 2,10 11 0");
+}
+
+// A font with no GSUB table gives the glyph of each character, with the
+// cluster of each character.
+function test_no_gsub(): test.TestOutcome {
+  let Some(f) = naskh() else {
+    return test.fail("the font did not parse");
+  };
+  let plain = truetype.Font { ...f, gsub: -1 };
+  let r = shape.shape(plain, "بب", "arab");
+  return test.assert_eq(joined(r.glyphs) + " " + joined(r.clusters), plain.glyph(0x628).to_string() + "," + plain.glyph(0x628).to_string() + " 0,1");
+}
+
+// Each start of the bytes of the font parses, or gives None, and each
+// font that parses shapes a word with no crash.
+function test_a_cut_font_does_not_crash(): test.TestOutcome {
+  let Ok(data) = base64.decode(shape_vectors.font()) else {
+    return test.fail("the font did not decode");
+  };
+  let shaped = 0;
+  let n = 0;
+  while (n <= data.len()) {
+    if let Some(f) = truetype.parse(data.take(n)) {
+      shaped += shape.shape(f, "السَّلَامُ", "arab").glyphs.len();
+    }
+    n += 997;
+  }
+  return test.assert_eq(shaped > 0, true);
+}
+
+function main(): i32 {
+  let r = test.new("std/shape");
+  r = r.it("Arabic words give the glyphs of HarfBuzz", test_arabic_matches_harfbuzz);
+  r = r.it("the default shaper gives the glyphs of HarfBuzz", test_default_shaper_matches_harfbuzz);
+  r = r.it("each type of lookup gives the glyphs of HarfBuzz", test_each_lookup_matches_harfbuzz);
+  r = r.it("feature_lookups reads the script and the feature lists", test_feature_lookups);
+  r = r.it("a font with no GSUB table gives one glyph for each character", test_no_gsub);
+  r = r.it("a cut font does not crash", test_a_cut_font_does_not_crash);
+  return r.finish();
+}

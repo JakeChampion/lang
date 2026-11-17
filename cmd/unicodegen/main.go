@@ -664,6 +664,7 @@ func tables() (caseT string, runs []run, classes map[string]classTable) {
 	addClass("lower", unicode.IsLower)
 	addClass("cased", isCased)
 	addClass("caseignorable", isCaseIgnorable)
+	addClass("mark", unicode.IsMark)
 
 	verify(caseT, classes)
 	return caseT, runs, classes
@@ -1226,6 +1227,10 @@ var bidiData string
 // class of each code point that bididata.txt does not name.
 var bidiNames = []string{"L", "R", "AL", "EN", "ES", "ET", "AN", "CS", "NSM", "BN", "B", "S", "WS", "ON", "LRE", "LRO", "RLE", "RLO", "PDF", "LRI", "RLI", "FSI", "PDI"}
 
+// The Joining_Type values in the order of std/unicode's joining_type. U is
+// 0, the type of each code point that bididata.txt does not name.
+var joiningNames = []string{"U", "C", "D", "R", "L", "T"}
+
 type bidiRun struct {
 	lo, hi rune
 	class  int
@@ -1237,10 +1242,14 @@ type bidiBracket struct {
 	kind     int
 }
 
-func parseBidiData() (classes []bidiRun, brackets []bidiBracket, mirrors [][2]rune, version string) {
+func parseBidiData() (classes []bidiRun, brackets []bidiBracket, mirrors [][2]rune, joins []bidiRun, version string) {
 	index := map[string]int{}
 	for i, name := range bidiNames {
 		index[name] = i
+	}
+	joinIndex := map[string]int{}
+	for i, name := range joiningNames {
+		joinIndex[name] = i
 	}
 	for _, line := range strings.Split(bidiData, "\n") {
 		if line == "" {
@@ -1268,6 +1277,12 @@ func parseBidiData() (classes []bidiRun, brackets []bidiBracket, mirrors [][2]ru
 			brackets = append(brackets, bidiBracket{cp: rune(mustHex(f[1])), pair: rune(mustHex(f[2])), kind: kind})
 		case f[0] == "M" && len(f) == 3:
 			mirrors = append(mirrors, [2]rune{rune(mustHex(f[1])), rune(mustHex(f[2]))})
+		case f[0] == "J" && len(f) == 4:
+			kind, ok := joinIndex[f[3]]
+			if !ok || kind == 0 {
+				panic("unicodegen: bad Joining_Type: " + line)
+			}
+			joins = append(joins, bidiRun{lo: rune(mustHex(f[1])), hi: rune(mustHex(f[2])), class: kind})
 		default:
 			panic("unicodegen: unknown bididata record: " + line)
 		}
@@ -1275,16 +1290,39 @@ func parseBidiData() (classes []bidiRun, brackets []bidiBracket, mirrors [][2]ru
 	sort.Slice(classes, func(i, j int) bool { return classes[i].lo < classes[j].lo })
 	sort.Slice(brackets, func(i, j int) bool { return brackets[i].cp < brackets[j].cp })
 	sort.Slice(mirrors, func(i, j int) bool { return mirrors[i][0] < mirrors[j][0] })
-	return classes, brackets, mirrors, version
+	sort.Slice(joins, func(i, j int) bool { return joins[i].lo < joins[j].lo })
+	return classes, brackets, mirrors, joins, version
+}
+
+// encodeRuns gives the table of ranges `runs`: the first and the last code
+// point and the value of each.
+func encodeRuns(runs []bidiRun) string {
+	var b strings.Builder
+	for _, r := range runs {
+		encField(&b, int(r.lo))
+		encField(&b, int(r.hi))
+		encField(&b, r.class)
+	}
+	return b.String()
+}
+
+// verifyRuns checks that each end of each range of `runs` decodes from the
+// table `t` to its value.
+func verifyRuns(t string, runs []bidiRun, names []string, what string) {
+	for i, r := range runs {
+		if r.lo > r.hi || i > 0 && runs[i-1].hi >= r.lo {
+			panic(fmt.Sprintf("unicodegen: %s range U+%04X..U+%04X overlaps or is inverted", what, r.lo, r.hi))
+		}
+		for _, cp := range []rune{r.lo, r.hi} {
+			if at := decodeRecord(t, 3, int(cp), true); at < 0 || decField(t, at+2*fieldChars) != r.class {
+				panic(fmt.Sprintf("unicodegen: %s of U+%04X does not decode to %s", what, cp, names[r.class]))
+			}
+		}
+	}
 }
 
 func encodeBidi(classes []bidiRun, brackets []bidiBracket, mirrors [][2]rune) (classT, bracketT, mirrorT string) {
-	var c, p, m strings.Builder
-	for _, r := range classes {
-		encField(&c, int(r.lo))
-		encField(&c, int(r.hi))
-		encField(&c, r.class)
-	}
+	var p, m strings.Builder
 	for _, r := range brackets {
 		encField(&p, int(r.cp))
 		encField(&p, int(r.pair))
@@ -1294,7 +1332,7 @@ func encodeBidi(classes []bidiRun, brackets []bidiBracket, mirrors [][2]rune) (c
 		encField(&m, int(r[0]))
 		encField(&m, int(r[1]))
 	}
-	return c.String(), p.String(), m.String()
+	return encodeRuns(classes), p.String(), m.String()
 }
 
 // decodeRecord gives the record of `width` fields whose first field is
@@ -1322,16 +1360,7 @@ func decodeRecord(t string, width int, cp int, ranged bool) int {
 }
 
 func verifyBidi(classT, bracketT, mirrorT string, classes []bidiRun, brackets []bidiBracket, mirrors [][2]rune) {
-	for i, r := range classes {
-		if r.lo > r.hi || i > 0 && classes[i-1].hi >= r.lo {
-			panic(fmt.Sprintf("unicodegen: Bidi_Class range U+%04X..U+%04X overlaps or is inverted", r.lo, r.hi))
-		}
-		for _, cp := range []rune{r.lo, r.hi} {
-			if at := decodeRecord(classT, 3, int(cp), true); at < 0 || decField(classT, at+2*fieldChars) != r.class {
-				panic(fmt.Sprintf("unicodegen: bidi_class(U+%04X) does not decode to %s", cp, bidiNames[r.class]))
-			}
-		}
-	}
+	verifyRuns(classT, classes, bidiNames, "Bidi_Class")
 	for _, r := range brackets {
 		at := decodeRecord(bracketT, 3, int(r.cp), false)
 		if at < 0 || decField(bracketT, at+fieldChars) != int(r.pair) || decField(bracketT, at+2*fieldChars) != r.kind {
@@ -1424,10 +1453,12 @@ func generate() (string, genStats) {
 	verifyWB(wbTable, wbs)
 	stats.tableBytes += len(wbTable)
 
-	bidiClasses, bidiBrackets, bidiMirrors, bidiVersion := parseBidiData()
+	bidiClasses, bidiBrackets, bidiMirrors, joins, bidiVersion := parseBidiData()
 	bidiClassT, bidiBracketT, bidiMirrorT := encodeBidi(bidiClasses, bidiBrackets, bidiMirrors)
 	verifyBidi(bidiClassT, bidiBracketT, bidiMirrorT, bidiClasses, bidiBrackets, bidiMirrors)
-	stats.tableBytes += len(bidiClassT) + len(bidiBracketT) + len(bidiMirrorT)
+	joinT := encodeRuns(joins)
+	verifyRuns(joinT, joins, joiningNames, "Joining_Type")
+	stats.tableBytes += len(bidiClassT) + len(bidiBracketT) + len(bidiMirrorT) + len(joinT)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, `// This module converts Unicode case and classifies characters.
@@ -1443,7 +1474,7 @@ import "std/utf8" as utf8;
 `, unicode.Version, normDataVersion(), strings.Fields(gcbVersion)[0], strings.Fields(wbVersion)[0], strings.Fields(bidiVersion)[0])
 
 	emitTable(&b, "_case_table", caseT)
-	for _, name := range []string{"letter", "digit", "space", "upper", "lower", "cased", "caseignorable"} {
+	for _, name := range []string{"letter", "digit", "space", "upper", "lower", "cased", "caseignorable", "mark"} {
 		c := classes[name]
 		emitTable(&b, "_"+name+"_ranges", c.table)
 	}
@@ -1466,6 +1497,7 @@ import "std/utf8" as utf8;
 	emitTable(&b, "_bidi_ranges", bidiClassT)
 	emitTable(&b, "_bidi_bracket_table", bidiBracketT)
 	emitTable(&b, "_bidi_mirror_table", bidiMirrorT)
+	emitTable(&b, "_joining_ranges", joinT)
 
 	stats.tableBytes += regexData(&b)
 
@@ -1911,6 +1943,11 @@ pub function (c: char) is_lower(): boolean {
     return _is_lower_cp(c as i32);
 }
 
+// A mark: of the general category Mn, Mc or Me.
+pub function (c: char) is_mark(): boolean {
+    return c as i32 >= 768 && _in_ranges(_mark_ranges(), c as i32);
+}
+
 function _all_cp(s: string, kind: i32): boolean {
     let n = s.len();
     if (n == 0) { return false; }
@@ -2268,6 +2305,21 @@ pub function bidi_mirror(c: char): i32 {
     let at = _record_of(t, 2, c as i32, false);
     if (at < 0) { return -1; }
     return _fld(t, at + 4);
+}
+
+// The Joining_Type of c: 0 U (non-joining), 1 C (join causing), 2 D
+// (dual joining), 3 R (right joining), 4 L (left joining) or 5 T
+// (transparent).
+pub function joining_type(c: char): i32 {
+    let t = _joining_ranges();
+    let at = _record_of(t, 3, c as i32, true);
+    if (at < 0) { return 0; }
+    return _fld(t, at + 8);
+}
+
+// The Canonical_Combining_Class of c, from 0 to 254.
+pub function combining_class(c: char): i32 {
+    return _ccc_of(c);
 }
 
 function _wb_of(cp: char): i32 {

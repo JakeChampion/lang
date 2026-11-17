@@ -14,6 +14,8 @@ A face does not have each character. For a character that the face does not have
 
 `width` and `line` measure a text with no drawing. `fit` cuts a text to a width, and `wrap` breaks it into lines. `wrap_ranges` gives the lines as ranges of characters. A text field uses them to find its cursor, and `std/bidi` uses them to order each line.
 
+A run of Arabic letters in one font goes to `std/shape`, which gives the joining forms of the letters. The run has no letter spacing, so that its letters stay joined. A mark of the font has no advance.
+
 `std/truetype` draws each glyph one time for each size, weight and quarter of a pixel. A `Cache` keeps the glyphs. It also keeps a `Sprite` for each text: the coverage of the whole text, which `put` draws on a frame in a color. `layout` gives the glyphs of a text with their positions, for a painter that draws glyphs from an atlas on the GPU.
 
 ## Contracts
@@ -51,7 +53,9 @@ import "std/android/draw";
 import "std/android/fonts";
 import "std/option";
 import "std/result";
+import "std/shape";
 import "std/truetype";
+import "std/unicode";
 import "std/utf8";
 ```
 
@@ -311,35 +315,105 @@ pub function face_for(fs: Fonts, weight: i32): i32 {
 
 ```fern
 <<measurement>>=
-// The font id and the glyph of each character of `s`, the pen position of
-// each in pixels, then the end of the text. `track` adds space between the
+// The glyphs of `s` from the left: the font id and the glyph of each, and
+// the pen position of each in pixels, then the end of the text. `pen` is
+// the position of the next glyph. `track` adds space between the
 // characters, in thousandths of the em, as Android's letterSpacing does.
-struct Pens { ids: i32[], glyphs: i32[], at: f64[] }
+struct Pens { ids: i32[], glyphs: i32[], at: f64[], pen: f64 }
 
 function pens(fs: Fonts, w: i32, px: i32, track: i32, s: string): Pens {
-  let ids: i32[] = [];
-  let glyphs: i32[] = [];
-  let out: f64[] = [];
+  let cs: char[] = [];
+  for c in s.chars() {
+    cs = cs.append(c);
+  }
   let spacing = px as f64 * (track as f64) / 1000.0;
-  let pen = 0.0;
+  let p = Pens { ids: [], glyphs: [], at: [], pen: 0.0 };
   let prev = -1;
   let prev_id = -1;
-  for c in s.chars() {
-    let id = face_of(fs, w, c as i32);
+  let i = 0;
+  while (i < cs.len()) {
+    let id = face_of(fs, w, cs[i] as i32);
     let f = font(fs, id);
-    let scale = px as f64 / (f.units_per_em as f64);
-    let g = f.glyph(c as i32);
-    if (prev >= 0 && id == prev_id) {
-      pen += f.kerning(prev, g) as f64 * scale;
+    let end = cursive_end(fs, w, cs, i, id);
+    if (end > i) {
+      p = shaped_run(p, f, id, px, cs, i, end);
+      prev = -1;
+      i = end;
+    } else {
+      let g = f.glyph(cs[i] as i32);
+      let kern = if (prev >= 0 && id == prev_id) { f.kerning(prev, g) } else { 0 };
+      p = placed(p, f, id, px, g, kern);
+      prev = g;
+      i += 1;
     }
-    ids = ids.append(id);
-    glyphs = glyphs.append(g);
-    out = out.append(pen);
-    pen = pen + f.advance(g) as f64 * scale + spacing;
-    prev = g;
+    p = Pens { ...p, pen: p.pen + spacing };
     prev_id = id;
   }
-  return Pens { ids: ids, glyphs: glyphs, at: out.append(pen - spacing) };
+  return Pens { ...p, at: p.at.append(p.pen - spacing) };
+}
+
+// `p` with the glyph `g` of the font `id` at its pen, after `kern` font
+// units. A mark of the font has no advance.
+function placed(own p: Pens, f: truetype.Font, id: i32, px: i32, g: i32, kern: i32): Pens {
+  let scale = px as f64 / (f.units_per_em as f64);
+  let x = p.pen + kern as f64 * scale;
+  let advance = if (f.glyph_class(g) == 3) { 0.0 } else { f.advance(g) as f64 * scale };
+  return Pens { ids: p.ids.append(id), glyphs: p.glyphs.append(g), at: p.at.append(x), pen: x + advance };
+}
+
+// The end of the run of Arabic letters from `cs[i]` that the font `id`
+// shapes, or `i` when no such run starts there. The run can hold marks and
+// joiners, and it holds at least one letter.
+function cursive_end(fs: Fonts, w: i32, cs: char[], i: i32, id: i32): i32 {
+  let j = i;
+  let letters = 0;
+  while (j < cs.len() && in_run(cs[j]) && face_of(fs, w, cs[j] as i32) == id) {
+    letters += if (arabic(cs[j]) && unicode.joining_type(cs[j]) != JT_T) { 1 } else { 0 };
+    j += 1;
+  }
+  return if (letters > 0) { j } else { i };
+}
+
+// The joining types of std/unicode that a run can hold with no Arabic
+// letter: join causing, such as the zero width joiner, and transparent.
+const JT_C: i32 = 1;
+
+const JT_T: i32 = 5;
+
+// Whether `c` can be in a run of Arabic letters: an Arabic letter that
+// joins, or a character that joins with no script, such as a mark.
+function in_run(c: char): boolean {
+  let t = unicode.joining_type(c);
+  return t == JT_C || t == JT_T || t != 0 && arabic(c);
+}
+
+// Whether `c` is in a block of the Arabic script.
+function arabic(c: char): boolean {
+  let n = c as i32;
+  return n >= 0x600 && n <= 0x6FF || n >= 0x750 && n <= 0x77F || n >= 0x870 && n <= 0x8FF || n >= 0xFB50 && n <= 0xFDFF || n >= 0xFE70 && n <= 0xFEFF;
+}
+
+// `p` with the glyphs of the Arabic letters `cs[i..end]`. They are in
+// visual order, so they are shaped from the last one to the first, and
+// their glyphs are placed from the last one to the first.
+function shaped_run(own p: Pens, f: truetype.Font, id: i32, px: i32, cs: char[], i: i32, end: i32): Pens {
+  let logical = "";
+  let k = end - 1;
+  while (k >= i) {
+    logical += cs[k].to_string();
+    k -= 1;
+  }
+  let run = shape.shape(f, logical, "arab");
+  let out = p;
+  let prev = -1;
+  let j = run.glyphs.len() - 1;
+  while (j >= 0) {
+    let g = run.glyphs[j];
+    out = placed(out, f, id, px, g, if (prev >= 0) { f.kerning(g, prev) } else { 0 });
+    prev = g;
+    j -= 1;
+  }
+  return out;
 }
 
 pub function width(fs: Fonts, w: i32, px: i32, s: string): i32 {
