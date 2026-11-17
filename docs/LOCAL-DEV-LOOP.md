@@ -429,6 +429,30 @@ builds regardless of how much memory is free.
 CI does not hit either wall; it shards across the `test-e2e-*` workflows, each
 well under its job timeout.
 
+## Quick sets per area
+
+Each set below gives the first signal for a change in one area, in a few
+minutes. It does not replace the gates of `docs/TEST-GATES.md`, and the pull
+request runs the full suite. The times are from 2026-11-17 on the 4-core
+container, with a warm build cache, and mostly with another suite running at
+a load near 8. A cold cache adds the build of the self-host CLI.
+
+| Area | Command | Time |
+| --- | --- | --- |
+| Go checker | `go test ./internal/check/checker/ -count=1` | 30 to 55 s |
+| One conformance case | `go test ./internal/testing/e2e -run 'TestFernFixtures$/NAME' -count=1` | 2 s |
+| Bounds facts of the SSA path | `go test ./internal/testing/e2ecompiler -run 'TestSelfHostCaller(BelowLength\|Range)$' -count=1 -timeout 60m` | 50 s |
+| An Android app | `go test ./internal/testing/e2e -run 'TestAndroidPlex' -count=1` | 90 s |
+| The control of an Android app | `go test ./internal/testing/e2e -run 'TestAndroidPlexControl' -count=1` | 55 s |
+| A std/android module with a JNI mock | `go test ./internal/testing/e2e -run 'TestAndroidTvRows' -count=1` | 50 s |
+| The perf comparator | `node scripts/perf-gate-selftest.mjs` | 1 s |
+| A Fern file that CI checks alone | `scripts/check-changed-programs origin/main` | 1 to 2 min |
+
+For an area with no row, find the test files of the package that you
+changed, and run the tests that name it. A `-run` that matches no test is an
+`ok` in less than a second. Read the `--- PASS` lines with `-v` before you
+trust it.
+
 ## Build memory
 
 Every `buildSelfHostBin` / `buildBin` of a self-host driver (`asm_run.fern` /
