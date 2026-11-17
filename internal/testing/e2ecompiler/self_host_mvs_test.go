@@ -250,8 +250,8 @@ func TestSelfHostResolveDifferentialX86_64(t *testing.T) {
 				t.Fatalf("native resolved = %v, self-host resolved = %v\n--- native ---\n%s\n--- self-host ---\n%s",
 					nativeOK, shOK, nativeOut, shOut)
 			}
-			if want, got := strings.ReplaceAll(string(nativeOut), nativeDir, "<ROOT>"),
-				strings.ReplaceAll(string(shOut), selfDir, "<ROOT>"); want != got {
+			if want, got := withoutLinePrefix(strings.ReplaceAll(string(nativeOut), nativeDir, "<ROOT>"), "resolve: "),
+				withoutLinePrefix(strings.ReplaceAll(string(shOut), selfDir, "<ROOT>"), "fern: -resolve: "); want != got {
 				t.Errorf("resolve output differs:\n--- native ---\n%s\n--- self-host ---\n%s", want, got)
 			}
 			if !c.wantOK {

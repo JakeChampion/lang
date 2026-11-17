@@ -2443,6 +2443,15 @@ function found(own p: Progress, w: Walk, kind: string, root: i32, block: i32, me
 }
 
 function spend(own p: Progress, w: Walk, v: i32, block: i32, what: string): Progress {
+  let k = w.idx[w.root[v]];
+  if (k < 0) {
+    return p;
+  }
+  let before = p.state[k];
+  return one_sided(spend_count(p, w, v, block, what), k, before);
+}
+
+function spend_count(own p: Progress, w: Walk, v: i32, block: i32, what: string): Progress {
   let r = w.root[v];
   let k = w.idx[r];
   if (k < 0) {
@@ -2490,6 +2499,15 @@ function spend_if_held(own p: Progress, w: Walk, v: i32): Progress {
   if (k < 0) {
     return p;
   }
+  let before = p.state[k];
+  return one_sided(spend_held_count(p, w, v), k, before);
+}
+
+function spend_held_count(own p: Progress, w: Walk, v: i32): Progress {
+  let k = w.idx[w.root[v]];
+  if (k < 0) {
+    return p;
+  }
   p = settled(p, k);
   if (units(p.state[k]) <= 0) {
     return p;
@@ -2498,6 +2516,31 @@ function spend_if_held(own p: Progress, w: Walk, v: i32): Progress {
 }
 
 function retain(own p: Progress, w: Walk, v: i32, result: i32): Progress {
+  let k = w.idx[w.root[v]];
+  if (k < 0) {
+    return p;
+  }
+  let before = p.state[k];
+  return one_sided(retain_count(p, w, v, result), k, before);
+}
+
+// A twin with one side is exact: a spend or a retain changes the count of
+// that side, and the twin keeps what it knows about the box.
+function one_sided(own p: Progress, k: i32, before: i32): Progress {
+  let c = p.state[k];
+  if (!is_twin(before) || is_twin(c) || c < 0 || c > cap()) {
+    return p;
+  }
+  if (twin_same(before) == no_side()) {
+    return Progress { ...p, state: p.state.with(k, twin(twin_key(before), no_side(), c)) };
+  }
+  if (twin_apart(before) == no_side()) {
+    return Progress { ...p, state: p.state.with(k, twin(twin_key(before), c, no_side())) };
+  }
+  return p;
+}
+
+function retain_count(own p: Progress, w: Walk, v: i32, result: i32): Progress {
   let r = w.root[v];
   let k = w.idx[r];
   if (k < 0) {
@@ -3035,13 +3078,12 @@ function same_box_on_edge(own p: Progress, w: Walk, bi: i32, sid: i32): Progress
   if (c.str == "ne") {
     equal = !equal;
   }
-  p = twin_on_edge(p, w, c.args[0], c.args[1], equal);
-  p = twin_on_edge(p, w, c.args[1], c.args[0], equal);
-  if (!equal) {
-    return p;
+  if (equal) {
+    p = took_operand(p, w, c.args[0], c.args[1]);
+    p = took_operand(p, w, c.args[1], c.args[0]);
   }
-  p = took_operand(p, w, c.args[0], c.args[1]);
-  return took_operand(p, w, c.args[1], c.args[0]);
+  p = twin_on_edge(p, w, c.args[0], c.args[1], equal);
+  return twin_on_edge(p, w, c.args[1], c.args[0], equal);
 }
 
 // The push is the first call of the arm where `__fern_rc_is_unique` found
@@ -3076,6 +3118,15 @@ function first_on_shared_arm(w: Walk, block: i32, root: i32, result: i32): boole
   return false;
 }
 
+// A plain count tested against a parameter: on the equal edge the value is
+// the box of the parameter, and on the other edge it is not.
+function side_of_test(o: i32, c: i32, equal: boolean): i32 {
+  if (equal) {
+    return twin(o, c, no_side());
+  }
+  return twin(o, no_side(), c);
+}
+
 // A test of a twin against its box decides the side. On the equal edge the
 // two names are one box, and the twin takes the units of the other name.
 function twin_on_edge(own p: Progress, w: Walk, x: i32, y: i32, equal: boolean): Progress {
@@ -3088,6 +3139,9 @@ function twin_on_edge(own p: Progress, w: Walk, x: i32, y: i32, equal: boolean):
     return p;
   }
   let s = p.state[kx];
+  if (s >= 0 && s <= cap() && o < w.f.nparams) {
+    return Progress { ...p, state: p.state.with(kx, side_of_test(o, s, equal)) };
+  }
   if (!is_twin(s) || twin_key(s) != o) {
     return p;
   }
