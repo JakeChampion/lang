@@ -9,6 +9,7 @@ struct Context {
   bindings: ast.TypedBinding[],
   injected: string[],
   blocked: boolean,
+  value: Option[ast.Expr],
 }
 
 function context(fname: string, lname: string, args: ast.Expr[], bindings: ast.TypedBinding[]): Context {
@@ -16,7 +17,7 @@ function context(fname: string, lname: string, args: ast.Expr[], bindings: ast.T
   for arg in args {
     injected = astwalk.collect_idents_expr(arg, injected);
   }
-  return Context { fname: fname, lname: lname, args: args, bindings: bindings, injected: injected, blocked: false };
+  return Context { fname: fname, lname: lname, args: args, bindings: bindings, injected: injected, blocked: false, value: None };
 }
 
 function shadow(ctx: Context, names: string[]): Context {
@@ -51,6 +52,15 @@ function body(stmts: ast.Stmt[], ctx: Context): (ast.Stmt[], Context) {
 pub function subst_fcall_one(stmt: ast.Stmt, fname: string, lname: string, capargs: ast.Expr[], bindings: ast.TypedBinding[]): ast.Stmt {
   let (one, _) = body([stmt], context(fname, lname, capargs, bindings));
   return one[0];
+}
+
+// The statements with each call of fname as subst_fcall_one gives it, and
+// with value in place of each other read of fname. The names in shadowed
+// are bound before the first statement.
+pub function subst_fn(stmts: ast.Stmt[], fname: string, lname: string, capargs: ast.Expr[], value: ast.Expr, shadowed: string[]): ast.Stmt[] {
+  let plain = context(fname, lname, capargs, []);
+  let (out, _) = body(stmts, shadow(Context { ...plain, value: Some(value) }, shadowed));
+  return out;
 }
 
 function expr(e: ast.Expr, ctx: Context): ast.Expr {
@@ -119,6 +129,14 @@ function expr_at(e: ast.Expr, ctx: Context): (ast.Expr, Context, boolean) {
     },
     ast.ExprLambda(lm) => {
       return (lambda(lm, ctx), ctx, true);
+    },
+    ast.ExprIdent(i) => {
+      if (i.name == ctx.fname && !i.builtin) {
+        if let Some(value) = ctx.value {
+          return (value, ctx, true);
+        }
+      }
+      return (e, ctx, false);
     },
     _ => {
       return (e, ctx, false);

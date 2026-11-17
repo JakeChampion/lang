@@ -1818,12 +1818,19 @@ function null_takes(w: Walk, takes: Takes): boolean[] {
 }
 
 function is_take(w: Walk, st: ssa.SInst): boolean {
-  return (st.kind_tag == ssa.ST_AT || st.kind_tag == ssa.ARR_ST) && st.args.len() >= 2 && zero_at(w, st.args[st.args.len() - 1])
-    && !(st.args[0] >= 0 && st.args[0] < w.reused.len() && w.reused[st.args[0]]);
+  return (st.kind_tag == ssa.ST_AT || st.kind_tag == ssa.ARR_ST) && st.args.len() >= 2 && zero_at(w, st.args[st.args.len() - 1]);
+}
+
+function is_reused(w: Walk, v: i32): boolean {
+  return v >= 0 && v < w.reused.len() && w.reused[v];
 }
 
 function matches_store(w: Walk, ld: ssa.SInst, st: ssa.SInst): boolean {
   if (ld.args.len() == 0 || w.root[ld.args[0]] != w.root[st.args[0]]) {
+    return false;
+  }
+  // A reused box has the root of the box it replaces, and a slot of one is not a slot of the other.
+  if (is_reused(w, ld.args[0]) != is_reused(w, st.args[0])) {
     return false;
   }
   if (st.kind_tag == ssa.ST_AT) {

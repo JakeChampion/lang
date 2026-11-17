@@ -385,6 +385,30 @@ function pick(name: string): Case {
         let b5: ssa.SBlock = block(5, [3, 4], [call(7, "take", [4]), const_int(8, 2), call(9, "__fern_alloc_reuse", [2, 8]), fresh_box(11), store(9, 8, 11)], ret(9));
         return Case { f: func(1, 12, [b0, b1, b2, b3, b4, b5]), modes: [counted], returns_unit: true };
     }
+    if (name == "token-reuse-takes-a-slot-of-the-reused-box") {
+        // token-reuse-writes-the-slot-read, and the frame then reads the
+        // slot of the reused box and nulls it: the read owns the unit that
+        // the store put there, and the frame releases it.
+        let b0: ssa.SBlock = block(0, [], [param(0), call(1, "__fern_rc_is_unique", [0]), const_int(3, 0)], brif(1, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [], br(3));
+        let b2: ssa.SBlock = block(2, [0], [], br(3));
+        let b3: ssa.SBlock = block(3, [1, 2], [inst(8, 2, [0, 3], 0, ""), counted_load(4, 0, 8), inst(9, 5, [2, 3], 0, "eq")], brif(5, 4, 5));
+        let b4: ssa.SBlock = block(4, [3], [call(6, "__fern_rc_inc", [4]), call(10, "__fern_rc_dec", [0])], br(5));
+        let b5: ssa.SBlock = block(5, [3, 4], [call(7, "take", [4]), const_int(8, 2), call(9, "__fern_alloc_reuse", [2, 8]), fresh_box(11), store(9, 8, 11), counted_load(12, 9, 8), store(9, 8, 3), call(13, "__fern_rc_dec", [12])], ret(9));
+        return Case { f: func(1, 14, [b0, b1, b2, b3, b4, b5]), modes: [counted], returns_unit: true };
+    }
+    if (name == "token-reuse-nulls-the-slot-read") {
+        // A null store into the reused box is not a take of the read off the
+        // box it replaces: the shared arm does not retain the field, so the
+        // move has no unit.
+        let b0: ssa.SBlock = block(0, [], [param(0), call(1, "__fern_rc_is_unique", [0]), const_int(3, 0)], brif(1, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [], br(3));
+        let b2: ssa.SBlock = block(2, [0], [], br(3));
+        let b3: ssa.SBlock = block(3, [1, 2], [inst(8, 2, [0, 3], 0, ""), counted_load(4, 0, 8), inst(9, 5, [2, 3], 0, "eq")], brif(5, 4, 5));
+        let b4: ssa.SBlock = block(4, [3], [call(10, "__fern_rc_dec", [0])], br(5));
+        let b5: ssa.SBlock = block(5, [3, 4], [call(7, "take", [4]), const_int(8, 2), call(9, "__fern_alloc_reuse", [2, 8]), store(9, 8, 3)], ret(9));
+        return Case { f: func(1, 11, [b0, b1, b2, b3, b4, b5]), modes: [counted], returns_unit: true };
+    }
     if (name == "token-reuse-puts-back-and-stores-elsewhere" || name == "token-reuse-puts-back-and-stores-elsewhere-unretained") {
         // A field read off the token's box is stored back into its own slot
         // of the reused box and into a second slot: the first store keeps
@@ -705,6 +729,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"derived-token-test-skips-the-shell", nil, 0, ""},
 		{"reuse-through-a-carried-token-writes-the-slot", nil, 2, ""},
 		{"token-reuse-writes-the-slot-read", nil, 0, ""},
+		{"token-reuse-takes-a-slot-of-the-reused-box", nil, 0, ""},
+		{"token-reuse-nulls-the-slot-read", []string{"spent without a unit of v4"}, 0, ""},
 		{"token-reuse-puts-back-and-stores-elsewhere", nil, 0, ""},
 		{"token-reuse-puts-back-and-stores-elsewhere-unretained", []string{"spent without a unit of v4"}, 0, ""},
 		{"token-reuse-through-a-phi-an-outside-arm-nulls", nil, 1, ""},
