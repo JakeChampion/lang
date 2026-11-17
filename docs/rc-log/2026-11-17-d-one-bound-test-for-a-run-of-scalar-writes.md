@@ -30,6 +30,12 @@ The group test goes before the first member, on the receiver of that
 member. Each member then has no test of its own. A run can mix reads and
 writes.
 
+A read of an index that an earlier access leaves in range is not a member.
+The earlier access is in the same block, or in a block that dominates it.
+The read merges with that access, so its test goes without a group. In the
+inner loop of an insertion sort, a group of that read and the write after it
+added three instructions to each turn (`sort_ints`, +16% on ARM64).
+
 A write of a counted element is not a member. Such a write releases the
 element that it replaces, and a release can run a finalizer.
 
