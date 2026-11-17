@@ -1281,6 +1281,10 @@ function test_downloads(): test.TestOutcome {
     return test.fail("no row of downloads");
   }
   let off = shown(log, f, "https://down.example:32400", "srv");
+  let rows_off = control.view(off).hubs;
+  if (!off.offline || rows_off.len() != 1 || rows_off[0].title != "Downloads" || control.view(off).error != "" || !says(off, "Offline: the downloads play with no server")) {
+    return test.fail("with no server, the home screen is not the row of the downloads alone: " + off.error);
+  }
   let row = poster_of(off, "501");
   let parts = row.split(":");
   if (row.len() == 0 || control.num(parts[1]) != control.view(off).hubs.len() - 1) {
@@ -1302,6 +1306,9 @@ function test_downloads(): test.TestOutcome {
   }
   log.decoders.set(["video/hevc", "audio/mp4a-latm"]);
   let online = shown(log, f, "https://up.example:32400", "srv");
+  if (online.offline) {
+    return test.fail("a reply of the server did not end the offline state");
+  }
   let other = poster_of(online, "502");
   let refused = tap(hold(online, log, 4000i64, f, other), log, 4700i64, f, "menu:download");
   if (log.calls.get().filter((c: string): boolean => c.starts_with("download http")).len() != 1 || !refused.error.starts_with("Only a file")) {

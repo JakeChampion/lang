@@ -99,6 +99,7 @@ function table(): string[][] {
     ["Only a file that this phone plays as it is can download", "Nur eine Datei, die dieses Gerät direkt abspielt, lässt sich herunterladen", "Seul un fichier que cet appareil lit directement peut se télécharger", "Solo se descarga un archivo que este dispositivo reproduce directamente"],
     ["Android refused the download", "Android hat den Download abgelehnt", "Android a refusé le téléchargement", "Android rechazó la descarga"],
     ["The download failed", "Der Download ist fehlgeschlagen", "Le téléchargement a échoué", "La descarga ha fallado"],
+    ["Offline: the downloads play with no server", "Offline: die Downloads spielen ohne Server", "Hors ligne : les téléchargements se lisent sans serveur", "Sin conexión: las descargas se reproducen sin servidor"],
   ];
 }
 

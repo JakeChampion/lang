@@ -335,6 +335,8 @@ pub struct App {
   // progress.
   downloads: Saved[],
   downloads_at: i64,
+  // True from a request that reached no server to the next reply of one.
+  offline: boolean,
 }
 
 // A download of an item: the ID that Android gave, the item as the server
@@ -477,7 +479,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     query: "", typing: false, search_at: 0i64, error: "",
     api: None, asks: [], img: None, cache: map_new(64), cached: [], failed: [], report: None, reports: [],
     play: no_play(), press: no_press(), menu: plex.no_item(), focus: "", asked_notifications: false, users: [], pin_for: "", pin_digits: "", nodes: [], dirty: true, gpu: false, paint: false, fling: no_fling(),
-    downloads: load_downloads(dev, dir), downloads_at: 0i64,
+    downloads: load_downloads(dev, dir), downloads_at: 0i64, offline: false,
   };
   s = App { ...s, server: plex.Server { ...no_server(), name: setting(text, "server_name"), id: setting(text, "server_id"), token: s.base.token } };
   if (s.quality < 0 || s.quality >= plex.qualities().len()) {
@@ -900,11 +902,11 @@ function answer(own s: App, purpose: string, r: plex.Reply): App {
   if (!r.ok()) {
     // A request that reached no server can mean that the network changed.
     if (r.status == 0) {
-      return recheck(failed(t, verb, r));
+      return recheck(App { ...failed(t, verb, r), offline: true });
     }
-    return failed(t, verb, r);
+    return failed(App { ...t, offline: false }, verb, r);
   }
-  return got_media(t, verb, rest, r);
+  return got_media(App { ...t, offline: false }, verb, rest, r);
 }
 
 function got_media(own t: App, verb: string, rest: string, r: plex.Reply): App {
@@ -1679,6 +1681,12 @@ function on_disk(p: Play): boolean {
   return p.stream.url.starts_with("file://");
 }
 
+// The home screen with no server and with downloads that play: it shows
+// a note in place of the error of the connection.
+function offline_home(s: App): boolean {
+  return s.offline && s.screen == ui.HOME && s.downloads.filter((d: Saved): boolean => d.status == download.DONE).len() > 0;
+}
+
 // The rows of the screen: on the home screen, the downloads that are done
 // come last, so the rows of the server keep their places.
 function shown_hubs(s: App): plex.Hub[] {
@@ -1689,7 +1697,13 @@ function shown_hubs(s: App): plex.Hub[] {
   if (s.screen != ui.HOME || done.len() == 0) {
     return s.hubs;
   }
-  return s.hubs.append(plex.Hub { title: s.texts.text("Downloads"), ident: "downloads", items: done });
+  let row = plex.Hub { title: s.texts.text("Downloads"), ident: "downloads", items: done };
+  // With no server, the rows of the server are old, and only the
+  // downloads play.
+  if (s.offline) {
+    return [row];
+  }
+  return s.hubs.append(row);
 }
 
 // Starts the download of the item of the metadata `r` when the phone plays
@@ -3407,7 +3421,7 @@ pub function view(s: App): ui.View {
     top: s.top, bottom: s.bottom,
     screen: s.screen, tab: s.tab, title: s.title, scroll: s.scroll, rows: s.rows, hubs: hubs,
     sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, menu_download: download_percent(s, s.menu.key), users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
-    pin_code: s.pin.code, error: s.texts.text(s.error), servers: s.servers, server_states: s.states,
+    pin_code: s.pin.code, error: if (offline_home(s)) { "" } else { s.texts.text(s.error) }, offline: offline_home(s), servers: s.servers, server_states: s.states,
     query: s.query, typing: s.typing, account: s.account, server_name: s.server.name,
     quality: plex.qualities()[s.quality].name, player: pv, base: s.base,
     loading: busy(s), cache: s.cache,

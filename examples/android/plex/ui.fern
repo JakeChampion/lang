@@ -92,6 +92,8 @@ pub struct View {
   pin_code: string,
   status: string,
   error: string,
+  // True on the home screen with no server, where only the downloads show.
+  offline: boolean,
   servers: plex.Server[],
   server_states: string[],
   query: string,
@@ -114,7 +116,7 @@ pub function english(): i18n.Strings {
 }
 
 pub function empty_view(w: i32, h: i32): View {
-  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english() };
+  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", offline: false, servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english() };
 }
 
 // --- metrics
@@ -561,6 +563,9 @@ function home(m: Metrics, v: View): scene.Node[] {
   }
   if (v.error.len() > 0) {
     out = util_append(out, wrapped(m, 16 * m.u, content_bottom(m, v.screen) - 80 * m.u, m.w - 32 * m.u, v.error, look.red()));
+  }
+  if (v.offline) {
+    out = out.append(note(m, content_bottom(m, v.screen) - 48 * m.u, tr(m, "Offline: the downloads play with no server")));
   }
   return out;
 }
