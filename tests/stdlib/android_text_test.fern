@@ -7,6 +7,7 @@ import "std/array";
 import "std/base64";
 import "std/test";
 import "std/truetype";
+import "./color_vectors";
 import "./image_vectors";
 import "./shape_vectors";
 
@@ -164,6 +165,26 @@ function mark_on_beh(fs: text.Fonts): test.TestOutcome {
   return test.assert_eq(above.to_string() + " " + (middle.abs() < base.bm.width / 4).to_string(), "true true");
 }
 
+// "B" of the color font is a red square, from COLR. Its glyph has its
+// colors and no coverage. The sprite of a text keeps the colors apart from
+// the coverage, and `put` draws them on a frame.
+function test_a_color_glyph(): test.TestOutcome {
+  let Some(f) = font_of(color_vectors.v1()) else {
+    return test.fail("the font did not parse");
+  };
+  let fs = text.from_faces([f], [400]);
+  let (c, placed) = text.layout(text.new_cache(), fs, 0, 20, 0, "B");
+  let (_, sp) = text.sprite(c, fs, 0, 20, 0, "B");
+  if (placed.len() != 1 || sp.rgba.len() != 4 * sp.w * sp.h) {
+    return test.fail("the color glyph has no colors");
+  }
+  let pl = placed[0];
+  let k = 4 * (pl.bm.height / 2 * pl.bm.width + pl.bm.width / 2);
+  let s = 4 * (sp.h / 2 * sp.w + sp.w / 2);
+  let got = pl.rgba[k].to_string() + "," + pl.rgba[k + 1].to_string() + "," + pl.rgba[k + 3].to_string() + " " + pl.bm.coverage.len().to_string() + " " + sp.rgba[s].to_string() + "," + sp.rgba[s + 3].to_string() + " " + sp.cov[s / 4].to_string();
+  return test.assert_eq(got, "255,0,255 0 255,255 0");
+}
+
 function main(): i32 {
   let r = test.new("std/android/text");
   r = r.it("width and line measure a text", test_width_and_line);
@@ -176,5 +197,6 @@ function main(): i32 {
   r = r.it("a run of Arabic letters is shaped", test_arabic_is_shaped);
   r = r.it("a mark sits on its base", test_a_mark_sits_on_its_base);
   r = r.it("a mark takes the font of its base", test_a_mark_takes_the_font_of_its_base);
+  r = r.it("a color glyph keeps its colors", test_a_color_glyph);
   return r.finish();
 }

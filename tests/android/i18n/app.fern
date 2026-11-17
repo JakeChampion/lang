@@ -83,6 +83,18 @@ function table_tags(path: string): string {
   return tags.join(",");
 }
 
+// Whether the emoji `s` draws in color, with yellow in the middle of its
+// glyph, as the face of U+1F600 has.
+function yellow(fs: text.Fonts, s: string): string {
+  let (_, placed) = text.layout(text.new_cache(), fs, 0, 64, 0, s);
+  if (placed.len() != 1 || placed[0].rgba.len() == 0) {
+    return "no color";
+  }
+  let p = placed[0];
+  let k = 4 * (p.bm.height * 3 / 10 * p.bm.width + p.bm.width / 2);
+  return (p.rgba[k] as i32 > 200 && p.rgba[k + 1] as i32 > 140 && p.rgba[k + 2] as i32 < 120).to_string();
+}
+
 function step(s: App, e: android.Event): App {
   if let android.Resume = e {
     if (s.done) {
@@ -111,6 +123,9 @@ function step(s: App, e: android.Event): App {
     for f in fonts.fallbacks(s.ctx, "sans-serif", 400, 0x1F600) {
       log.warn("i18ntest: font of U+1F600 " + f.path + "#" + f.index.to_string() + " " + table_tags(f.path));
     }
+    let smile = "😀";
+    fs = fs.covering(0, smile, text.system_fallbacks(s.ctx, "sans-serif"));
+    log.warn("i18ntest: emoji yellow " + yellow(fs, smile));
     android.finish(s.ctx);
     return App { ...s, done: true };
   }
