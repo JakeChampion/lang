@@ -3238,7 +3238,7 @@ function draw_screen(own s: App): App {
   if (!t.play.video) {
     let f = t.dev.lock(t.window);
     if (f.width > 0) {
-      let c = scene.render(f, text.Fonts { faces: [], weights: [] }, text.new_cache(), t.nodes);
+      let c = scene.render(f, text.from_faces([], []), text.new_cache(), t.nodes);
     }
     t.dev.post(f);
   }

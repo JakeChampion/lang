@@ -186,6 +186,24 @@ fold releases each box while it reads it, and no second walk releases the
 tree. One call that keeps its argument clears the slot for each caller
 (`semsource.without_kept_alive`), and the walk borrows as before.
 
+A loop that `ssasem.tail_recursion` made can be inlined in its caller, and
+then no call is left. The value that enters the loop slot is then the
+argument: a value with a later use clears the slot too (`enters_alive`).
+
+The unit plan lets a loop slot borrow the value that enters it
+(`ssaunits.borrows_entry`). The slot is that of a `tail_recursion` loop or
+the cursor of a `while` loop. Each other argument of the slot is a part of
+the slot. The value that enters has a use after each read of the slot and of
+each value that borrows from the slot (the anchored table of the analysis).
+No return and no other phi takes one of these values. The walk of a list that
+the function keeps then counts nothing
+(`TestSelfHostWalkOfAKeptListBorrows`,
+`TestSelfHostWhileWalkOfAKeptListBorrows`).
+
+`tail_recursion` also takes a self call whose result returns through the phi
+of a join, as in `a && f(x)`: the block of the call returns the result itself
+(`returned_self_calls`).
+
 The inference counts a record, a variant, an owned array, a map or a string
 (`owned_shape`). When a callee gives such a parameter to a sink that consumes
 it, the caller hands over its last unit. The sink then updates or adopts the
@@ -527,15 +545,24 @@ or with type arguments) rather than falling through.
 ### 1.6 The certifier
 
 `rccertify.certify` reads the lowered ops back as SSA (`ssa_lift`) and
-nothing of the plan. A branch that compares two constants goes only to the
-side it takes (`irverifygate.decided`). A call of `exit` ends its path, and
+nothing of the plan. A branch on a comparison of two constants, or of a
+value with itself, goes only to the side it takes (`irverifygate.decided`). A call of `exit` ends its path, and
 a block whose every path ends at one releases nothing: no value dies on an
 edge into it. Thus the certifier walks no edge that no run takes. It accounts per path the units the frame holds: an
 allocation or owned call result is a fresh unit, a counted parameter a unit
 handed in, a load, a borrowed parameter or an address into a box nothing; a retain adds one; a
-release, a move into a callee or container and a return each spend one; at a
-join the counts are met per value, and a disagreement is unproved rather than
-a finding. A load inside the arm a box was proved unique in (the children
+release, a move into a callee or container and a return each spend one. A
+string or aggregate literal is free: it holds no unit, and a retain or a
+release of it does nothing, because every retain and release skips an
+immortal box. At a join the counts are met per value. A count met with free
+is that count on some paths and free on the others: a spend of the free part
+does nothing, and a unit still held on the counted part is a leak. A null
+constant and a borrow are not free. Any other disagreement is unproved rather
+than a finding. A phi takes one unit of an input that holds one. The exception is
+a phi that no operation touches, that no return takes, and that feeds no phi
+that is touched or returned: nothing can spend a unit of it, so its inputs
+keep their units (`spent_phis`). The slot of a loop that borrows is such a
+phi. A load inside the arm a box was proved unique in (the children
 release, a reuse token's non-null arm, a `__sem_drop_<T>` body) is the frame's
 to release. A join a reuse token the function branches on decides is walked
 again under each of the token's values: the function pruned to the paths
@@ -545,17 +572,36 @@ shallow release as a shell where it was unique, seeded with the rows the
 walk without an assumption settled; what both walks settle is proved, and
 either walk's finding is one. A finding is a definite violation: a unit
 spent that the frame does not hold, or a unit it holds when it returns.
-Every compile certifies
-every function it emits, through a memo keyed by the function's ops, contract
-and callee contracts (`rcmemo`, under the user's cache root), so a steady
-compile pays only for lowerings it has not seen. `FERN_RC_CERTIFY=0` leaves it
-out, `FERN_RC_CERTIFY=report` turns refusals into a census, and a refusal
-exits 5 naming the function and the unit. A function that resumes from a
-task frame is the one function the certifier skips, because it does not
-model the frame. The memo does not record a skip. A function that the
-certifier cannot decide is a refusal that also exits 5. The causes are ops
-that do not lift, no entry block, a liveness failure, or a walk that does not
-settle. Pinned by `TestSelfHostRcCertify*`
+
+Every compile certifies every function it emits, through a memo keyed by a
+128-bit digest of the function's ops, contract and callee contracts
+(`rcmemo`, under the user's cache root). Thus a steady compile pays only for
+lowerings it has not seen. `FERN_RC_CERTIFY=0` leaves the certifier out. A
+refusal exits 5 and names the function and the unit.
+
+A function that the
+certifier cannot decide is also a refusal with exit 5. The causes are ops
+that do not lift, no entry block, a liveness failure, a walk that does not
+settle, or a call to a callee that has no rc signature and no ABI. A function that resumes from a task frame is the one function
+the certifier skips, because it does not model the frame. The memo does not
+record a skip.
+
+`FERN_RC_CERTIFY=report` turns refusals into a census line for each
+function. The line gives the tracked and the unproved values and the
+findings. An `at=` field names each unproved value as
+`FERN_RC_CERTIFY_DUMP` prints it. The line also gives the most rounds a walk
+took to settle, and any skip, failure or opaque callee. A runtime unit's gate prints its census too.
+
+`FERN_RC_CERTIFY=mutate` adds three mutants of each function that passes: its
+middle release deleted, its middle retain deleted, and its middle release
+done twice. A finding refutes a mutant. A mutant that leaves more values
+unproved is weakened, and a mutant that passes is missed.
+
+The Perf lane pins
+the unproved values, the skipped functions and the mutant
+outcomes (`scripts/certify-census`, `.github/certify-baseline.txt`). Thus
+none of these counts moves without a re-bank. Pinned by
+`TestSelfHostRcCertify*`
 and the `certifier-refuses-missing-retain` row of the physical-RC driver.
 
 ## 2. The runtime contract
@@ -580,7 +626,10 @@ pointer that flows through the program points past the header.
   call that knows n calls `__fern_rec_box_n` (`asmcore.sized_rec_box`). That
   routine has the address of the free list and the size of the block as
   constants, and goes to `__fern_rec_box` only when the bump leaves its
-  64 KiB line. The output has a routine only for each n that a call names. A build with the sanitizer, the
+  64 KiB line. The output has a routine only for each n that a call names.
+  A drop that proved such a box unique frees it through
+  `__fn___fern_box_free.u` (`ir.sole_box`), which puts the block on its free
+  list with no test. A build with the sanitizer, the
   quarantine, `-harden` or an allocation profile gives each box the header
   of an array and keeps the tag in the same half. A program can have 32,766
   shapes, and a record can have 65,535 fields. On wasm32 a record keeps its
@@ -660,6 +709,10 @@ threads call into the object at once, with heap traffic and same-thread
 callbacks, and each result is correct. A thread that enters while another
 one runs a long call waits for it.
 
+Under `-sanitize`, the census of each allocation and each release checks the
+rule. An executable checks the stack, and a shared object checks the thread
+that holds the turn (`SANITIZER.md`, "One context per heap").
+
 An abort or `exit` ends the process with `exit_group`, not `exit`, so a
 report inside a host's thread takes the whole host down rather than one
 thread (#12169).
@@ -678,7 +731,8 @@ In the order they are usually reached for:
    checks and the IR verifiers, exiting 4 at the op the lowering produced
    rather than where the machine code falls over.
 3. `FERN_RC_CERTIFY=report` with `FERN_RC_CERTIFY_MEMO=0`: the certifier's
-   census over every function, and `FERN_RC_CERTIFY_DUMP=<name>` (or a
+   census over every function (`FERN_RC_CERTIFY=mutate` adds the mutant
+   outcomes), and `FERN_RC_CERTIFY_DUMP=<name>` (or a
    `<prefix>*`) to print the lifted SSA it read, under the report mode and at
    a refusal.
 4. `FERN_SEM_DUMP=<function>`: the semantic graph as the inliner leaves it,
@@ -704,6 +758,15 @@ miscompile; `internal/testing/e2ecompiler` is primary on a lowering change.
 - The reuse pairing is decided in the lowering, not the plan, so the replay
   does not see it and the certifier is the only check on it (#11909 proposes
   tokens as plan units).
+- A gate knows the ABIs of its own unit only. An instance of a generic
+  function gets its contract from its declaration, with the binding of the
+  request that made it (`semsource.instance_contract`). A runtime unit is
+  lowered when a program first needs it, after the program's gate exists, so
+  the routines that a program calls there, and the helpers that `ssarc` and
+  `ssabytes` generate, have rows in `rcsigs` instead.
+- A function that resumes from a task frame is not certified. Its body before
+  `suspend.transform_state` has the same counting and no frame, so the gate
+  could certify that body, if the lowered state carried it to the gate.
 - The analyses in section 1.3 are separate walks with separate soundness
   arguments; their seams are where the imprecisions sit (#11910 proposes one
   forward model they all query).

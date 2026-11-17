@@ -140,9 +140,9 @@ pub function busy_give_x86(): string {
 // before the waiter runs. Both routines keep every register except r11 and
 // the flags, and __fern_busy_give keeps r11 too.
 function emit_busy_lock_x86(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    .section .bss\n    .align 8\n__fern_busy: .skip 8\n    .text\n");
+  s = s.write("    .section .bss\n    .align 8\n__fern_busy: .skip 8\n" + busy_owner_word(s) + "    .text\n");
   s = s.write("__fern_busy_take:\n    cmpl $0, __fern_busy+4(%rip)\n    jne .Lfern_busy_defer\n");
-  s = s.write(".Lfern_busy_try:\n    movl $1, %r11d\n    xchgl %r11d, __fern_busy(%rip)\n    testl %r11d, %r11d\n    jnz .Lfern_busy_wait\n    ret\n");
+  s = s.write(".Lfern_busy_try:\n    movl $1, %r11d\n    xchgl %r11d, __fern_busy(%rip)\n    testl %r11d, %r11d\n    jnz .Lfern_busy_wait\n" + busy_owner_store(s) + "    ret\n");
   s = s.write(".Lfern_busy_defer:\n    pushq %rax\n    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    pushq %r10\n");
   s = s.write("    pushq $1000000\n    pushq $0\n");
   s = s.write("    movl $202, %eax\n    leaq __fern_busy+4(%rip), %rdi\n    movl $128, %esi\n    movl $1, %edx\n    movq %rsp, %r10\n").syscall(202);
@@ -154,7 +154,7 @@ function emit_busy_lock_x86(s: asmcore.EmitState): asmcore.EmitState {
   // The waiter has the turn: it lets the threads that wait for it go on.
   s = s.write(".Lfern_busy_won:\n    xorl %eax, %eax\n    xchgl %eax, __fern_busy+4(%rip)\n    testl %eax, %eax\n    jz .Lfern_busy_out\n");
   s = s.write("    movl $202, %eax\n    leaq __fern_busy+4(%rip), %rdi\n    movl $129, %esi\n    movl $2147483647, %edx\n").syscall(202);
-  s = s.write(".Lfern_busy_out:\n    popq %r10\n    popq %rdi\n    popq %rsi\n    popq %rdx\n    popq %rcx\n    popq %rax\n    ret\n");
+  s = s.write(".Lfern_busy_out:\n" + busy_owner_store(s) + "    popq %r10\n    popq %rdi\n    popq %rsi\n    popq %rdx\n    popq %rcx\n    popq %rax\n    ret\n");
   s = s.write("__fern_busy_give:\n    pushq %r11\n    xorl %r11d, %r11d\n    xchgl %r11d, __fern_busy(%rip)\n    cmpl $2, %r11d\n    je .Lfern_busy_wake\n    popq %r11\n    ret\n");
   s = s.write(".Lfern_busy_wake:\n    pushq %rax\n    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
   s = s.write("    movl $1, __fern_busy+4(%rip)\n");
@@ -599,6 +599,22 @@ function emit_box_dec(own s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write("    subq $2, %rcx\n    jae .Lboxdec_cap\n    xorl %ecx, %ecx\n.Lboxdec_cap:\n    movq %rcx, -8(%rax)\n    movq $1, (%rax)\n    addq $8, %rax\n");
   return s.write("    jmp __fn___fern_arr_dec.u\n.Lboxdec_ret:\n    ret\n");
+}
+
+// __fn___fern_box_free.u frees a box in %rax that its caller proved unique,
+// of 1 to 255 words and not an array. The block of n + 1 words goes on its
+// free list with no test. A build whose box routines are not direct gives the
+// box to __fn___fern_box_dec.u.
+function emit_box_free(own s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.has_need("box_free")) {
+    return s;
+  }
+  s = s.write("__fn___fern_box_free.u:\n");
+  if (!direct_boxes(s)) {
+    return s.write("    jmp __fn___fern_box_dec.u\n");
+  }
+  s = s.write("    movzwl -4(%rax), %ecx\n    leaq -8(%rax), %rdx\n    leaq __fern_freelist+8(%rip), %r8\n");
+  return s.write("    movq (%r8,%rcx,8), %rdi\n    movq %rdi, (%rdx)\n    movq %rdx, (%r8,%rcx,8)\n    ret\n");
 }
 
 // %rax holds the block that the bump allocator made and %rdi its end. When
@@ -1264,6 +1280,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .globl __fern_hev_a\n");
   s = s.write("__fern_hev_a:\n");
   s = hev_save(s);
+  s = san_owner_check(s);
   s = s.write("    movq 112(%rsp), %r14\n");
   s = s.write("    movq 120(%rsp), %r12\n");
   s = s.write("    movq 128(%rsp), %r13\n");
@@ -1294,6 +1311,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .globl __fern_hev_f\n");
   s = s.write("__fern_hev_f:\n");
   s = hev_save(s);
+  s = san_owner_check(s);
   s = s.write("    movq 104(%rsp), %r14\n");
   s = s.write("    movq 112(%rsp), %r12\n");
   s = s.write("    movq 120(%rsp), %r13\n");
@@ -1523,6 +1541,50 @@ function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_san_abort_uaf:\n");
   s = s.write("    leaq .Lsan_uaf(%rip), %rsi\n");
   s = s.write("    movq $61, %rdx\n");
+  s = s.write("    movq $2, %rdi\n");
+  s = s.write("    movq $1, %rax\n");
+  s = s.syscall(1);
+  return san_report_exit(s);
+}
+
+// A census run by a context that does not own the heap aborts. %rax is free.
+function san_owner_check(s: asmcore.EmitState): asmcore.EmitState {
+  if (asmcore.owner_by_stack(s)) {
+    return s.write("    movq __fern_stack_top(%rip), %rax\n    subq %rsp, %rax\n    cmpq $" + util.i32_to_string(asmcore.stack_size()) + ", %rax\n    jae __fern_san_abort_owner\n");
+  }
+  if (asmcore.owner_by_thread(s)) {
+    return s.write("    movq %fs:0, %rax\n    cmpq __fern_san_owner(%rip), %rax\n    jne __fern_san_abort_owner\n");
+  }
+  return s;
+}
+
+// The thread that takes the turn owns the heap. %r11 is free.
+function busy_owner_store(s: asmcore.EmitState): string {
+  if (asmcore.owner_by_thread(s)) {
+    return "    movq %fs:0, %r11\n    movq %r11, __fern_san_owner(%rip)\n";
+  }
+  return "";
+}
+
+function busy_owner_word(s: asmcore.EmitState): string {
+  if (asmcore.owner_by_thread(s)) {
+    return "    .globl __fern_san_owner\n__fern_san_owner: .skip 8\n";
+  }
+  return "";
+}
+
+function emit_san_owner_abort(s: asmcore.EmitState): asmcore.EmitState {
+  if (!asmcore.owner_by_stack(s) && !asmcore.owner_by_thread(s)) {
+    return s;
+  }
+  let msg = asmcore.san_owner_message();
+  s = s.write("    .section .rodata\n");
+  s = s.write(".Lsan_owner:\n    .ascii \"" + msg + "\\n\"\n");
+  s = s.write("    .section .text\n");
+  s = s.write("    .globl __fern_san_abort_owner\n");
+  s = s.write("__fern_san_abort_owner:\n");
+  s = s.write("    leaq .Lsan_owner(%rip), %rsi\n");
+  s = s.write("    movq $" + util.i32_to_string(msg.len() + 1) + ", %rdx\n");
   s = s.write("    movq $2, %rdi\n");
   s = s.write("    movq $1, %rax\n");
   s = s.syscall(1);
@@ -4717,6 +4779,7 @@ function emit_ir_runtime_part_5(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write("    ret\n");
   s = emit_box_dec(s);
+  s = emit_box_free(s);
   s = s.write("__fn___fern_str_free:\n");
   s = s.write("    movq 8(%rsp), %rax\n");
   s = s.write("__fn___fern_str_free.r:\n");
@@ -8779,7 +8842,7 @@ function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms,
   let a = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
   let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
   if (imm.is_imm[ins.args[1]]) {
-    return ssa_fput(reg_of, ins.result, d, s.write(x86_lane_shift_by(b, op, ins.imm, imm.value[ins.args[1]] as i32 & ins.imm - 1, a, d)));
+    return ssa_fput(reg_of, ins.result, d, x86_lane_shift_by(s, b, op, ins.imm, imm.value[ins.args[1]] as i32 & ins.imm - 1, a, d));
   }
   s = ssa_load(reg_of, ins.args[1], "%rcx", s);
   s = s.write("    andl $" + util.i32_to_string(ins.imm - 1) + ", %ecx\n    movd %ecx, %xmm2\n");
@@ -8794,17 +8857,27 @@ function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms,
 // the count in the instruction. Lanes of 8 bits take the shift of 16 bits
 // and a mask of constant bytes. The signed shift of bytes keeps the
 // sequence of x86_byte_lane_shift, with its count from a constant.
-function x86_lane_shift_by(b: string, op: string, w: i32, count: i32, a: string, d: string): string {
+function x86_lane_shift_by(s: asmcore.EmitState, b: string, op: string, w: i32, count: i32, a: string, d: string): asmcore.EmitState {
   let c = util.i32_to_string(count);
   if (w != 8) {
-    return "    " + op + ssa_vint_sfx(w) + " $" + c + ", " + a + ", " + d + "\n";
+    return s.write("    " + op + ssa_vint_sfx(w) + " $" + c + ", " + a + ", " + d + "\n");
   }
   if (b == "vishrs") {
-    return "    movl $" + c + ", %ecx\n    movd %ecx, %xmm2\n" + x86_byte_lane_shift(b, a, d);
+    return s.write("    movl $" + c + ", %ecx\n    movd %ecx, %xmm2\n" + x86_byte_lane_shift(b, a, d));
   }
-  let kept = if (b == "vishl") { 255 << count & 255 } else { 255 >> count };
-  return "    " + op + "w $" + c + ", " + a + ", %xmm0\n    movl $" + util.i32_to_string(kept) + ", %ecx\n    movd %ecx, %xmm1\n"
-    + "    vpbroadcastb %xmm1, %xmm1\n    vpand %xmm1, %xmm0, " + d + "\n";
+  let kept = x86_lane_row(s, if (b == "vishl") { 255 << count & 255 } else { 255 >> count });
+  return kept.state.write("    " + op + "w $" + c + ", " + a + ", %xmm0\n    vpand " + kept.name + "(%rip), %xmm0, " + d + "\n");
+}
+
+// A row of 16 equal bytes in read-only data. An instruction reads the row
+// as its memory operand, so a loop does not build the constant.
+function x86_lane_row(s: asmcore.EmitState, byte: i32): asmcore.LabelOut {
+  let l = asmcore.fresh_label(s);
+  let row: u8[] = [];
+  for _ in 0..16 {
+    row = row.append(byte as u8);
+  }
+  return asmcore.LabelOut { state: l.state.write("    .section .rodata\n" + l.name + ":\n" + asmcore.byte_rows(row) + "    .section .text\n"), name: l.name };
 }
 
 // Lanes of 8 bits have no shift instruction. The shift of the lanes of 16
@@ -8851,7 +8924,7 @@ function x86_lane_widen(b: string, w: i32, a: string, d: string): string {
 
 // The ops that change the shape of integer lanes. `ins.imm` is the width
 // of a lane of the first value. %xmm0 is the scratch register.
-function ssa_vint_shape(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_vint_shape(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let id = ir.kind_id(b);
   let w = ins.imm;
   s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
@@ -8869,10 +8942,14 @@ function ssa_vint_shape(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.Emi
     if (w != 8) {
       ircore.unsupported_op_refuse(id, "x86-64");
     }
+    if (ssa.lane_nibble(imm, ins.args[1])) {
+      return ssa_fput(reg_of, ins.result, d, s.write("    vpshufb " + y + ", " + a + ", " + d + "\n"));
+    }
     // pshufb gives zero for an index with its top bit. The saturating add
     // of 0x70 sets that bit for each index above 15, and keeps the low
     // four bits of each other index.
-    s = s.write("    movl $0x70707070, %ecx\n    movd %ecx, %xmm0\n    vpbroadcastd %xmm0, %xmm0\n    vpaddusb %xmm0, " + y + ", %xmm0\n");
+    let clamp = x86_lane_row(s, 112);
+    s = clamp.state.write("    vpaddusb " + clamp.name + "(%rip), " + y + ", %xmm0\n");
     return ssa_fput(reg_of, ins.result, d, s.write("    vpshufb %xmm0, " + a + ", " + d + "\n"));
   }
   if (w != 16 && w != 32) {
@@ -8888,7 +8965,7 @@ function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
     return ssa_vint(ins, b, reg_of, imm, s);
   }
   if (ir.is_lane_shape_kind(ir.kind_id(b))) {
-    return ssa_vint_shape(ins, b, reg_of, s);
+    return ssa_vint_shape(ins, b, reg_of, imm, s);
   }
   if (b == "vpermute") {
     return ssa_vpermute(ins, reg_of, s);
@@ -9595,7 +9672,11 @@ function ssa_box_release(ins: ssa.SInst, s: asmcore.EmitState): boolean {
 }
 
 function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
-  if (ins.imm == 5) {
+  if (ins.imm == ssa.SOLE_BOX && compact_boxes(s) && !hev_on(s) && !s.split_units) {
+    s = ssa_call_sym(helper_arg_moves(ins, reg_of, s).need("box_free"), "__fn___fern_box_free.u");
+    return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
+  }
+  if (ssa.sole_release(ins)) {
     return ssa_helper_entry(ins, reg_of, ".u", s);
   }
   s = helper_call_needs(ins.str, s);
@@ -9774,6 +9855,9 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   if (k == ssa.ST_AT) {
     return ssa_mov_rm(s, ssa_elem_bits(ins.str), false, b, a, ins.imm);
   }
+  if (k != ssa.ARR_ST && ins.imm == 3) {
+    return ssa_trap_jump(ssa_test_rr(s.need("heap"), 32, b, b), "js", if (k == ssa.STR_AT) { "__fern_str_oob_abort" } else { "__fern_oob_abort" });
+  }
   if (k == ssa.ARR_AT) {
     s = s.need("heap");
     if (ins.imm != 1) {
@@ -9854,6 +9938,10 @@ function ssa_elem_read_at(s: asmcore.EmitState, mark: string, d: string, a: stri
 function ssa_mem_at(ins: ssa.SInst, reg_of: i32[], c: i32, a: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
   let k = ins.kind_tag;
   s = s.need("heap");
+  // A constant index here is not negative.
+  if (k != ssa.ARR_ST && ins.imm == 3) {
+    return s;
+  }
   if (ins.imm != 1) {
     let len_at = 0;
     let trap = "__fern_oob_abort";
@@ -10680,7 +10768,7 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
   return ssa_store(reg_of, ins.result, "%rdx", asmcore.ssa_x0_forget(s));
 }
 
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, shift32: i32[], lit0: i32[], lbase: i32, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32 }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], carry: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, shift32: i32[], lit0: i32[], lbase: i32, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32 }
 
 // With `test`, `b` is the immediate mask of an `and` whose result the compare tested against zero.
 // load_bits is not 0 when the compare reads one operand from memory, with a
@@ -10889,14 +10977,21 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ins.kind_tag == ssa.BINARY && ins.str == "and_not") {
     return ssa_and_not(ins, reg_of, s);
   }
-  if (ssa.carry_triple(blk, ii, fr.uses)) {
-    return ssa_carried_sum(ins, reg_of, s);
+  let role = ssa.carry_role(fr.carry, ins);
+  if (role == ssa.CARRY_HEAD) {
+    return ssa_carried_sum(ins, ins.result, false, reg_of, s);
   }
-  if (ssa.carry_triple(blk, ii - 1, fr.uses)) {
-    return s;
+  if (role == ssa.CARRY_LINK) {
+    return ssa_carried_sum(blk.insts[ii - 1], ins.result, true, reg_of, s);
   }
-  if (ssa.carry_triple(blk, ii - 2, fr.uses)) {
+  if (role == ssa.CARRY_READ) {
     return ssa_carry_reader(ins, blk.insts[ii - 1].result, reg_of, s);
+  }
+  if (role == ssa.CARRY_KEEP) {
+    return ssa_carry_set(ins, reg_of, s);
+  }
+  if (role != 0) {
+    return s;
   }
   if (ins.kind_tag == ssa.CARRY) {
     return ssa_carry(ins, reg_of, s);
@@ -10904,7 +10999,7 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ssa.low_word_pair(blk, ii, fr.uses)) {
     return s;
   }
-  if (ssa.low_word_pair(blk, ii - 1, fr.uses)) {
+  if (ssa.low_word_pair(blk, ii - 1, fr.uses) && ssa.carry_role(fr.carry, blk.insts[ii - 1]) == 0) {
     return ssa_bin_sized(blk.insts[ii - 1], ins.result, 32, reg_of, fr, s);
   }
   if (ins.kind_tag == ssa.PARAM || ins.kind_tag == ssa.PHI || ssa_feeds_select(fr, blk, ii + 1)) {
@@ -10982,14 +11077,32 @@ function ssa_and_not(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
   return ssa_store(reg_of, ins.result, d, s);
 }
 
-function ssa_carried_sum(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+// The add or the subtract of the operands of `ins` into `result`, which
+// makes the flags. With `carried`, it also adds the carry of the flags.
+function ssa_carried_sum(ins: ssa.SInst, result: i32, carried: boolean, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let op: string = if (ins.str == "sub") { "subq" } else { "addq" };
-  let d = ssa_dst(reg_of, ins.result);
-  if (ssa_in_x(reg_of, ins.args[1]) && reg_of[ins.args[1]] == reg_of[ins.result]) {
+  if (carried) {
+    op = if (ins.str == "sub") { "sbbq" } else { "adcq" };
+  }
+  let d = ssa_dst(reg_of, result);
+  if (ssa_in_x(reg_of, ins.args[1]) && reg_of[ins.args[1]] == reg_of[result]) {
     d = "%r11";
   }
   s = ssa_load(reg_of, ins.args[0], d, s);
   s = s.write("    " + op + " " + ssa_operand(reg_of, ins.args[1], s) + ", " + d + "\n");
+  if (d == "%r11") {
+    s = asmcore.ssa_x0_forget(s);
+  }
+  return ssa_store(reg_of, result, d, s);
+}
+
+// The carry of the flags, in the register of `ins`.
+function ssa_carry_set(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (reg_of[ins.result] == -1) {
+    return s;
+  }
+  let d = ssa_dst(reg_of, ins.result);
+  s = s.write("    setb " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n");
   if (d == "%r11") {
     s = asmcore.ssa_x0_forget(s);
   }
@@ -11023,10 +11136,7 @@ function ssa_carry(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore
   }
   s = ssa_load(reg_of, ins.args[0], "%r11", s);
   s = s.write("    " + op + " " + ssa_operand(reg_of, ins.args[1], s) + ", %r11\n");
-  s = asmcore.ssa_x0_forget(s);
-  let d = ssa_dst(reg_of, ins.result);
-  s = s.write("    setb " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n");
-  return ssa_store(reg_of, ins.result, d, s);
+  return ssa_carry_set(ins, reg_of, asmcore.ssa_x0_forget(s));
 }
 
 function ssa_operand(reg_of: i32[], v: i32, s: asmcore.EmitState): string {
@@ -11199,6 +11309,11 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   }
   if (k == ssa.STR_VIEW) {
     return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s);
+  }
+  if (k == ssa.FRAME_CELL) {
+    let d = ssa_dst(reg_of, ins.result);
+    s = s.write("    leaq " + util.i32_to_string(ssa_view_off(fr, ins.result) - ssa.cell_offset(ins)) + "(%rbp), " + d + "\n");
+    return ssa_store(reg_of, ins.result, d, s);
   }
   if (k >= ssa.LD_AT && k <= ssa.STR_AT) {
     return ssa_mem_inst(ins, reg_of, fr.imm, s);
@@ -11955,7 +12070,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let alloc = ssa_allocate(f, imm, prepared.lowered.ops, s);
   match (env("FERN_SSA_ALLOC")) {
     Some(want) => {
-      if (want == label_name) {
+      if (want == label_name || want == "*") {
         eprint("FERN_SSA_ALLOC: " + label_name + "\n" + ssa.print_func(f) + ssa.print_alloc_costs(f, alloc, ssa.SpillCosts { fold_alu_rhs: true }));
       }
     },
@@ -11997,7 +12112,13 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let lbase = s.nlab;
   s = s.lab_take(bp.len());
   let lanes = ssa.lane_values(f);
-  let fr = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, shift32: ssa.narrow_right_shifts(f, imm), lit0: ssa.literal_first_bytes(f), lbase: lbase, lanes: lanes, cold: cold, cold_base: nspill + 3 * ssa.view_count(views), canary: canary };
+  let uses = ssa.use_counts(f);
+  let fr = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: uses, carry: ssa.carry_roles(f, uses), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, shift32: ssa.narrow_right_shifts(f, imm), lit0: ssa.literal_first_bytes(f), lbase: lbase, lanes: lanes, cold: cold, cold_base: nspill + 3 * ssa.view_count(views), canary: canary };
+  let early_homes = ssa_early_homes(f, reg_of, s);
+  let split = if (bare) { ssa_frame_split(f, fr, reg_of, early_homes) } else { ssa.FrameSplit { early: [], sites: [] } };
+  // An early block returns with no frame to take down.
+  let fr_early = SsaFrame { ...fr, saved: [], pad: 0, epilogue: ssa_bare_epilogue([], 0) };
+  let cfi_framed = false;
   let fusions: ssaprepare.Fusion[] = [];
   let framed = !leaf;
   let frame = ssa_frame_words(fr.nspill, views, cold) * 8;
@@ -12012,13 +12133,16 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   if (leaf) {
     body = buf_new(4096);
     s = asmcore.EmitState { ...s, capture: body };
+  } else if (split.early.len() > 0) {
+    s = asmcore.EmitState { ...ssa_cfi(s, 7, "", 0), ssa_trap_suffix: leaf_trap(saved.len() + pad / 8) };
   } else if (bare) {
     s = asmcore.EmitState { ...ssa_bare_frame(s, saved, pad), ssa_trap_suffix: leaf_trap(saved.len() + pad / 8) };
   } else {
     s = ssa_frame(s, saved, frame, canary);
   }
   s = asmcore.EmitState { ...s, ssa_save: save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes), slot_load_at: -1 };
-  s = ssa_load_params(f, reg_of, s);
+  s = ssa_load_params(f, if (split.early.len() > 0) { early_homes.entry } else { reg_of }, s);
+  let frame_homes = reg_of;
   let pos = 0;
   for bi in 0..f.blocks.len() {
     let blk = f.blocks[bi];
@@ -12028,6 +12152,18 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     }
     s = asmcore.ssa_x0_forget(s);
     s = s.lab_def(ssa_blab(fr, lp, blk.id));
+    let early = split.early.len() > 0 && split.early[bi];
+    let reg_of = if (early) { early_homes.homes } else { frame_homes };
+    if (split.early.len() > 0 && split.sites[bi]) {
+      if (cfi_framed) {
+        s = ssa_cfi_no_frame(s);
+      }
+      s = ssa_late_params(frame_homes, early_homes, ssa_bare_frame(s, saved, pad));
+      cfi_framed = true;
+    } else if (split.early.len() > 0 && early == cfi_framed) {
+      s = if (early) { ssa_cfi_no_frame(s) } else { ssa_cfi_bare_frame(s, saved, pad) };
+      cfi_framed = !early;
+    }
     let fu = ssa_fuse(ssa_fuse_view(fr), blk);
     fusions = ssa_retain_fusion(fusions, fu, s.retain_prepared);
     let ii = 0;
@@ -12050,11 +12186,14 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     s = ssa_fused_test(fr, reg_of, fu, asmcore.ssa_join(lp, blk.id), s);
     s = asmcore.dbg_label(s, dbg, fn_label, pos + blk.insts.len());
     if (!tailed) {
-      s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
+      s = ssa_term(f, if (early) { fr_early } else { fr }, blk, reg_of, lp, next, fu, s);
     }
     pos = pos + blk.insts.len() + 1;
   }
   s = asmcore.dbg_label(s, dbg, fn_label, pos);
+  if (split.early.len() > 0) {
+    s = ssa_cfi(s, 8, "", 0);
+  }
   if (leaf) {
     let text = buf_take(body);
     buf_free(body);
@@ -12164,6 +12303,145 @@ function ssa_bare_frame(s: asmcore.EmitState, saved: i32[], pad: i32): asmcore.E
     return s.write("    pushq %rcx\n    .cfi_def_cfa_offset " + util.i32_to_string(off) + "\n");
   }
   return ssa_cfi(ssa_push_r(s, "%rcx"), 3, "", off);
+}
+
+// The blocks of a function with a bare frame that run before the frame, and
+// the blocks that make it (ssa.frame_split).
+function ssa_frame_split(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], early: EarlyHomes): ssa.FrameSplit {
+  if (early.homes.len() == 0) {
+    return ssa.FrameSplit { early: [], sites: [] };
+  }
+  let ok: boolean[] = [];
+  let tied: i32[] = [];
+  for bi in 0..f.blocks.len() {
+    let blk = f.blocks[bi];
+    ok = ok.append(ssa_frameless(f, fr, reg_of, early, blk));
+    let to: i32 = -1;
+    if (blk.term.kind_tag == ssa.TERM_BR && ssa_rotates(f, fr, bi, blk.term.target)) {
+      to = ssa.block_index(fr.blk_pos, blk.term.target);
+    }
+    tied = tied.append(to);
+  }
+  // A jump goes to the end of a chain of blocks that only pass it on. The
+  // chain can depend on the homes, and the split needs one answer.
+  let fwd: i32[] = [];
+  for blk in f.blocks {
+    let to = ssa.forward_target(f, fr.blk_pos, fr.imm, reg_of, blk.id);
+    if (to != ssa.forward_target(f, fr.blk_pos, fr.imm, early.homes, blk.id)) {
+      return ssa.FrameSplit { early: [], sites: [] };
+    }
+    fwd = fwd.append(ssa.block_index(fr.blk_pos, to));
+  }
+  return ssa.frame_split(f, fr.blk_pos, ok, tied, fwd);
+}
+
+// The homes of the early blocks of `f`, or no homes when a parameter cannot
+// wait in the register of its argument: another parameter has that register
+// as its home, or the parameter is a lane.
+function ssa_early_homes(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): EarlyHomes {
+  let none = EarlyHomes { late: [], homes: [], entry: [] };
+  let late: i32[] = [];
+  let homes = reg_of;
+  let entry = reg_of;
+  for p in 0..f.nparams {
+    if (ssa_frame_home(reg_of[p])) {
+      if (ssa.lane_param(f, p) || p >= ssa_reg_params(f) || s.var_rows) {
+        return none;
+      }
+      late = late.append(p);
+      homes = homes.with(p, ssa_param_loc(f, p));
+      entry = entry.with(p, -1);
+    }
+  }
+  for p in 0..f.nparams {
+    if (util.index_of_i32(late, p) < 0 && reg_of[p] >= 0 && util.index_of_i32(late, reg_of[p]) >= 0) {
+      return none;
+    }
+  }
+  return EarlyHomes { late: late, homes: homes, entry: entry };
+}
+
+// Moves each late parameter from the register of its argument to its home.
+function ssa_late_params(reg_of: i32[], early: EarlyHomes, s: asmcore.EmitState): asmcore.EmitState {
+  let srcs: i32[] = [];
+  let dsts: i32[] = [];
+  for p in early.late {
+    srcs = srcs.append(early.homes[p]);
+    dsts = dsts.append(reg_of[p]);
+  }
+  return ssa_parallel_moves(srcs, dsts, s);
+}
+
+// A home that the frame saves: a callee register, or a slot.
+function ssa_frame_home(h: i32): boolean {
+  return h < -1 || h >= ssa_nregs() && h < ssa_nregs() + ssa_nsaved();
+}
+
+// A block that can run with no frame. Each instruction is a move, a load, a
+// constant or an integer operation that cannot trap. No value of the block
+// has a home that the frame saves, and no instruction writes the register
+// that holds a late parameter. A phi of a successor is written on the edge,
+// so its home counts too.
+function ssa_frameless(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], early: EarlyHomes, blk: ssa.SBlock): boolean {
+  let t = blk.term;
+  if (t.kind_tag != ssa.TERM_RET && t.kind_tag != ssa.TERM_BR && t.kind_tag != ssa.TERM_BRIF) {
+    return false;
+  }
+  for ins in blk.insts {
+    let k = ins.kind_tag;
+    let plain = k == ssa.PARAM || k == ssa.CONST_INT || k == ssa.CONST_I64 || k == ssa.COPY || k == ssa.PHI || k == ssa.LD_AT || k == ssa.SHAPE_ADDR || k == ssa.LINE;
+    if (!plain && !(k == ssa.BINARY && util.has_str(["add", "sub", "and", "or", "xor", "eq", "ne", "lt_s", "lt_u", "le_s", "le_u", "gt_s", "gt_u", "ge_s", "ge_u"], ins.str))) {
+      return false;
+    }
+    if (k != ssa.PARAM && ins.result >= 0 && ssa_taken_home(early.late, reg_of[ins.result])) {
+      return false;
+    }
+    for a in ins.args {
+      if (a >= 0 && a < early.homes.len() && ssa_frame_home(early.homes[a])) {
+        return false;
+      }
+    }
+  }
+  for to in [t.target, t.t, t.f] {
+    let ti = if (t.kind_tag == ssa.TERM_RET) { -1 } else { ssa.block_index(fr.blk_pos, to) };
+    if (ti >= 0) {
+      for ins in f.blocks[ti].insts {
+        if (ins.kind_tag == ssa.PHI && ssa_taken_home(early.late, reg_of[ins.result])) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+// The homes of the early blocks. A parameter whose home the frame saves
+// stays in the register of its argument until the frame exists. `late` has
+// each such parameter. The register of argument p has the home index p, so
+// `late` names those registers too. `homes` has that register in place of
+// the home, and `entry` has no home for a late parameter, so the entry does
+// not move it.
+struct EarlyHomes { late: i32[], homes: i32[], entry: i32[] }
+
+// A home that an early block must not write: one that the frame saves, or
+// the register of the argument of a late parameter.
+function ssa_taken_home(late: i32[], h: i32): boolean {
+  return ssa_frame_home(h) || h >= 0 && util.index_of_i32(late, h) >= 0;
+}
+
+// The CFI rows of the bare frame, for a block that follows text with no
+// frame.
+function ssa_cfi_bare_frame(s: asmcore.EmitState, saved: i32[], pad: i32): asmcore.EmitState {
+  s = ssa_cfi(s, 3, "", 8 + 8 * saved.len() + pad);
+  for i in 0..saved.len() {
+    s = ssa_cfi(s, 6, ssa_reg(saved[i]), 0 - (16 + 8 * i));
+  }
+  return s;
+}
+
+// The CFI rows of the entry, which the emitter remembered there.
+function ssa_cfi_no_frame(s: asmcore.EmitState): asmcore.EmitState {
+  return ssa_cfi(ssa_cfi(s, 8, "", 0), 7, "", 0);
 }
 
 function ssa_bare_epilogue(saved: i32[], pad: i32): string {
@@ -13407,6 +13685,7 @@ function emit_runtime_module(m: parser.Module, lowered: physicalbody.Lowered, s:
     }
   }
   s = emit_named_bodies(bodies, physical, unit.pre, fns.len(), s, vgate);
+  irverifygate.report_census(vgate);
   s = emit_cfi_stubs_from(s, cf0);
   if (s.string_lits.len() > lit0) {
     s = s.write("    .section .rodata\n");
@@ -14339,6 +14618,7 @@ function emit_entry_environment(s: asmcore.EmitState): asmcore.EmitState {
   if (s.rc_free_debug) {
     s = s.write("    .text\n");
     s = emit_san_uaf_abort(s);
+    s = emit_san_owner_abort(s);
     s = emit_san_waf_abort(s);
     s = emit_san_hbo_abort(s);
   }

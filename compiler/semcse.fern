@@ -96,10 +96,7 @@ pub function slot_hash(u: ssa.SInst): i32 {
 }
 
 pub function read_slots(reads: ssa.SInst[]): Slots {
-  let nb = 2;
-  while (nb <= reads.len() * 2) {
-    nb *= 2;
-  }
+  let nb = buckets(reads.len());
   let head = util.minus_ones(nb);
   let next = util.minus_ones(reads.len());
   let k = reads.len() - 1;
@@ -112,6 +109,14 @@ pub function read_slots(reads: ssa.SInst[]): Slots {
   return Slots { head: head, next: next };
 }
 
+function buckets(n: i32): i32 {
+  let nb = 2;
+  while (nb <= n * 2) {
+    nb *= 2;
+  }
+  return nb;
+}
+
 pub function identity(n: i32): i32[] {
   let out = __alloc_i32(n);
   for k in 0..n {
@@ -122,18 +127,34 @@ pub function identity(n: i32): i32[] {
 
 function merge_block(b: ssa.SBlock, values: typeinfo.Type[], own same: Same): Same {
   let seen: ssa.SInst[] = [];
+  let head: i32[] = [];
+  let next: i32[] = [];
   for ins in b.insts {
     if (read(ins.kind_tag) && ins.result >= 0 && ins.result < same.of.len() && same.of[ins.result] == ins.result) {
-      let args = renamed(ins.args, same.of);
-      let first = earlier(seen, ins, args, values);
+      if (head.len() == 0) {
+        head = util.minus_ones(buckets(b.insts.len()));
+      }
+      let u = ssa.SInst { ...ins, args: renamed(ins.args, same.of) };
+      let slot = read_hash(u) & head.len() - 1;
+      let first = earlier(seen, next, head[slot], u, values);
       if (first >= 0) {
         same = Same { of: same.of.with(ins.result, first), merged: same.merged + 1 };
       } else {
-        seen = seen.append(ssa.SInst { ...ins, args: args });
+        next = next.append(head[slot]);
+        head = head.with(slot, seen.len());
+        seen = seen.append(u);
       }
     }
   }
   return same;
+}
+
+function read_hash(u: ssa.SInst): i32 {
+  let h = slot_hash(u);
+  for a in u.args {
+    h = (h & 1048575) * 31 + (a & 1048575);
+  }
+  return h;
 }
 
 function rewritten(b: ssa.SBlock, same: i32[]): ssa.SBlock {
@@ -163,11 +184,14 @@ function read(kind: i32): boolean {
   return kind == ssasem.record_get() || kind == ssasem.tuple_get() || kind == ssasem.variant_get() || kind == ssasem.array_get() || kind == ssasem.str_index();
 }
 
-function earlier(seen: ssa.SInst[], ins: ssa.SInst, args: i32[], values: typeinfo.Type[]): i32 {
-  for s in seen {
-    if (s.kind_tag == ins.kind_tag && s.imm == ins.imm && s.str == ins.str && util.same_i32s(s.args, args) && semtypes.equal(values[s.result], values[ins.result])) {
+function earlier(seen: ssa.SInst[], next: i32[], at: i32, u: ssa.SInst, values: typeinfo.Type[]): i32 {
+  let i = at;
+  while (i >= 0) {
+    let s = seen[i];
+    if (s.kind_tag == u.kind_tag && s.imm == u.imm && s.str == u.str && util.same_i32s(s.args, u.args) && semtypes.equal(values[s.result], values[u.result])) {
       return s.result;
     }
+    i = next[i];
   }
   return -1;
 }

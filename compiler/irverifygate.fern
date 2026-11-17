@@ -25,7 +25,7 @@ pub function gate(sigs: irverify.NameIndex, kinds: ssa_lift.KindTable, abis: rcc
 pub function gate_unreported(sigs: irverify.NameIndex, kinds: ssa_lift.KindTable, abis: rccertify.Abis): Gate {
   let certify = util.certify_mode();
   let census = 0 as usize;
-  if (certify == 1) {
+  if (certify == 1 || certify == 3) {
     census = buf_new(256);
   }
   return Gate { sigs: physical_signatures(sigs, abis), seen: 0 as usize, modelled: 0 as usize, abis: abis, rc: rcsigs.table(), rcops: rcsigs.op_table(), kinds: kinds, census: census, memo: rcmemo.off(), verify: util.verify_on(), certify: certify };
@@ -68,6 +68,17 @@ pub function close_memo(m: rcmemo.Memo): void {
   }
 }
 
+// The census lines of a gate. A unit's gate prints these and no summary.
+pub function report_census(g: Gate): void {
+  if (g.census != 0 as usize) {
+    let lines = buf_take(g.census);
+    buf_free(g.census);
+    if (lines.len() > 0) {
+      eprint(lines);
+    }
+  }
+}
+
 pub function report_on(): boolean {
   match (env("FERN_IR_VERIFY")) {
     Some(v) => {
@@ -80,13 +91,7 @@ pub function report_on(): boolean {
 }
 
 pub function report(g: Gate): void {
-  if (g.census != 0 as usize) {
-    let lines = buf_take(g.census);
-    buf_free(g.census);
-    if (lines.len() > 0) {
-      eprint(lines);
-    }
-  }
+  report_census(g);
   if (!report_on()) {
     return;
   }
@@ -152,8 +157,11 @@ pub function certify_or_refuse(fn_name: string, lifted: ssa.SFunc, ops: ir.Op[],
     }
   }
   let r = rccertify.certify(f, ops, g.abis.lookup(fn_name), g.abis, g.rc, g.rcops);
-  if (mode == 1) {
+  if (mode == 1 || mode == 3) {
     report_one(fn_name, f, r, g);
+    if (mode == 3 && r.findings.len() == 0 && r.failed == "" && r.skipped == "") {
+      mutants(fn_name, f, ops, g, r);
+    }
     return 0;
   }
   if (r.failed != "") {
@@ -214,7 +222,7 @@ pub function certify_ops_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32,
 // with itself, sent to the side it takes, so the certifier walks no edge the
 // program cannot take. A phi that a decided branch leaves with one input can
 // make the two operands of a later comparison one value.
-function decided(f: ssa.SFunc): ssa.SFunc {
+pub function decided(f: ssa.SFunc): ssa.SFunc {
   let next = decided_once(f);
   for _ in 0..f.blocks.len() {
     if (!next.changed) {
@@ -263,22 +271,156 @@ function branch_taken(defs: ssa.SInst[], t: ssa.STerm): i32 {
     return -1;
   }
   let c = defs[t.cond];
-  if (c.kind_tag != ssa.BINARY || c.args.len() != 2 || c.str != "eq" && c.str != "ne") {
+  if (c.kind_tag != ssa.BINARY || c.args.len() != 2) {
     return -1;
   }
-  let a = defs[c.args[0]];
-  let b = defs[c.args[1]];
-  let same = c.args[0] == c.args[1];
-  if (!same) {
+  let holds = -1;
+  if (c.args[0] == c.args[1]) {
+    holds = compared_with_itself(c.str);
+  } else {
+    let a = defs[c.args[0]];
+    let b = defs[c.args[1]];
     if (a.kind_tag != ssa.CONST_INT || b.kind_tag != ssa.CONST_INT || a.str != "" || b.str != "") {
       return -1;
     }
-    same = a.imm == b.imm;
+    holds = compared(c.str, c.imm, a.imm, b.imm);
   }
-  if (same == (c.str == "eq")) {
+  if (holds < 0) {
+    return -1;
+  }
+  if (holds == 1) {
     return t.t;
   }
   return t.f;
+}
+
+// 1 when the comparison `op` holds of a value and itself, 0 when it fails,
+// -1 when `op` is not a comparison.
+function compared_with_itself(op: string): i32 {
+  if (op == "eq" || op == "le_s" || op == "le_u" || op == "ge_s" || op == "ge_u") {
+    return 1;
+  }
+  if (op == "ne" || op == "lt_s" || op == "lt_u" || op == "gt_s" || op == "gt_u") {
+    return 0;
+  }
+  return -1;
+}
+
+// 1 when the comparison `op` of `width` bits holds of the constants `a` and
+// `b`, 0 when it fails, -1 when it is not a comparison of 32 or 64 bits.
+function compared(op: string, width: i32, a: i32, b: i32): i32 {
+  if (op == "eq") {
+    return if (a == b) { 1 } else { 0 };
+  }
+  if (op == "ne") {
+    return if (a != b) { 1 } else { 0 };
+  }
+  if (width != 32 && width != 64) {
+    return -1;
+  }
+  let x = a as i64;
+  let y = b as i64;
+  if (op.ends_with("_u")) {
+    if (width == 32) {
+      x = x & 4294967295i64;
+      y = y & 4294967295i64;
+    } else {
+      // The sign bit flipped orders the words as unsigned under a signed compare.
+      let sign = 0 - 9223372036854775807i64 - 1i64;
+      x = x ^ sign;
+      y = y ^ sign;
+    }
+  } else if (!op.ends_with("_s")) {
+    return -1;
+  }
+  let base = slice_unchecked(op, 0, op.len() - 2);
+  let holds = false;
+  if (base == "lt") {
+    holds = x < y;
+  } else if (base == "le") {
+    holds = x <= y;
+  } else if (base == "gt") {
+    holds = x > y;
+  } else if (base == "ge") {
+    holds = x >= y;
+  } else {
+    return -1;
+  }
+  return if (holds) { 1 } else { 0 };
+}
+
+// FERN_RC_CERTIFY=mutate: three mutants of a function the certifier passes.
+// The first loses its middle release, the second its middle retain, and the
+// third does its middle release twice. A mutant is refuted when the certifier
+// has a finding on it, weakened when it leaves more values unproved or cannot
+// decide it, and missed when it passes as the function did.
+function mutants(fn_name: string, f: ssa.SFunc, ops: ir.Op[], g: Gate, r: rccertify.Report): void {
+  let outcomes: string[] = [];
+  for kind in 0..3 {
+    let m = mutant(f, g, kind);
+    if (m.blocks.len() > 0) {
+      let mr = rccertify.certify(m, ops, g.abis.lookup(fn_name), g.abis, g.rc, g.rcops);
+      if (mr.findings.len() > 0) {
+        outcomes = outcomes.append("refuted");
+      } else if (mr.failed != "" || mr.unproved > r.unproved) {
+        outcomes = outcomes.append("weakened");
+      } else {
+        outcomes = outcomes.append("missed");
+      }
+    }
+  }
+  if (outcomes.len() > 0) {
+    buf_push(g.census, "FERN_RC_CERTIFY: mutants " + fn_name + " refuted=" + util.i32_to_string(util.count_str(outcomes, "refuted"))
+      + " weakened=" + util.i32_to_string(util.count_str(outcomes, "weakened")) + " missed=" + util.i32_to_string(util.count_str(outcomes, "missed")) + "\n");
+  }
+}
+
+// Kind 0 deletes the middle release, 1 the middle retain, and 2 doubles the
+// middle release. A function with no such call gives no blocks.
+function mutant(f: ssa.SFunc, g: Gate, kind: i32): ssa.SFunc {
+  let want = rcsigs.effect_release();
+  if (kind == 1) {
+    want = rcsigs.effect_retain();
+  }
+  let at_block: i32[] = [];
+  let at_inst: i32[] = [];
+  for bi in 0..f.blocks.len() {
+    let insts = f.blocks[bi].insts;
+    for ii in 0..insts.len() {
+      if (counting(insts[ii], g, want)) {
+        at_block = at_block.append(bi);
+        at_inst = at_inst.append(ii);
+      }
+    }
+  }
+  if (at_block.len() == 0) {
+    return ssa.SFunc { ...f, blocks: [] };
+  }
+  let bi = at_block[at_block.len() / 2];
+  let ii = at_inst[at_block.len() / 2];
+  let b = f.blocks[bi];
+  let ins = b.insts[ii];
+  let insts: ssa.SInst[] = [];
+  for j in 0..b.insts.len() {
+    if (j != ii) {
+      insts = insts.append(b.insts[j]);
+    } else if (kind == 1 && ins.result >= 0) {
+      // A retain's result names its operand, so the copy keeps each later read.
+      insts = insts.append(ssa.SInst { kind_tag: ssa.COPY, result: ins.result, args: [ins.args[0]], imm: 0, str: "" });
+    } else if (kind == 2) {
+      insts = insts.append(ins);
+      insts = insts.append(ssa.SInst { ...ins, result: -1 });
+    }
+  }
+  return ssa.SFunc { ...f, blocks: f.blocks.with(bi, ssa.SBlock { ...b, insts: insts }) };
+}
+
+function counting(ins: ssa.SInst, g: Gate, effect: i32): boolean {
+  if (ins.kind_tag != ssa.CALL || ins.args.len() == 0) {
+    return false;
+  }
+  let s = g.rc.lookup(ins.str);
+  return s.known && s.arg == 0 && s.effect == effect;
 }
 
 function census_line(fn_name: string, r: rccertify.Report, g: Gate): void {
@@ -286,12 +428,19 @@ function census_line(fn_name: string, r: rccertify.Report, g: Gate): void {
     return;
   }
   let line: string = "FERN_RC_CERTIFY: census " + fn_name + " tracked=" + util.i32_to_string(r.tracked)
-    + " unproved=" + util.i32_to_string(r.unproved) + " findings=" + util.i32_to_string(r.findings.len());
+    + " unproved=" + util.i32_to_string(r.unproved) + " findings=" + util.i32_to_string(r.findings.len())
+    + " rounds=" + util.i32_to_string(r.rounds);
   if (r.skipped != "") {
     line = line + " skipped=" + r.skipped;
   }
   if (r.failed != "") {
     line = line + " failed=" + r.failed;
+  }
+  for v in r.unproved_at {
+    line = line + " at=v" + util.i32_to_string(v);
+  }
+  for name in r.opaque {
+    line = line + " opaque=" + name;
   }
   let own = g.abis.lookup(fn_name);
   if (!own.known) {
@@ -304,9 +453,6 @@ function census_line(fn_name: string, r: rccertify.Report, g: Gate): void {
     if (own.result_unit) {
       line += ">unit";
     }
-  }
-  for name in r.opaque {
-    line = line + " opaque=" + name;
   }
   buf_push(g.census, line + "\n");
 }

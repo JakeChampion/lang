@@ -273,6 +273,15 @@ pub function in_bounds(op: Op): Op {
   return Op { ...op, i32_imm: 1 };
 }
 
+// The op reads nothing. It aborts when bit 31 of the index is set.
+pub function sign_only(op: Op): Op {
+  return Op { ...op, i32_imm: 3 };
+}
+
+pub function is_sign_only(op: Op): boolean {
+  return (op.kind_tag == K_ARR_GET || op.kind_tag == K_STR_INDEX) && op.i32_imm == 3;
+}
+
 pub function counted(op: Op): Op {
   return Op { ...op, i64_imm: 1 };
 }
@@ -303,6 +312,16 @@ pub function sole(op: Op): Op {
 
 pub function is_sole(op: Op): boolean {
   return op.i64_imm == 5;
+}
+
+// The sole release of a box of 1 to 255 words that is not an array. The box
+// routines give its block to the free list with no test.
+pub function sole_box(op: Op): Op {
+  return Op { ...op, i64_imm: 9 };
+}
+
+pub function is_sole_box(op: Op): boolean {
+  return op.i64_imm == 9;
 }
 
 pub function lane_call(op: Op): Op {

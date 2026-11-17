@@ -47,9 +47,14 @@ a_match_value_of_owned_arms_is_owned                 0
 a_module_calls_methods_its_imports_reach             0
 a_module_does_not_see_a_sibling_imports_variants     0
 a_module_names_variants_its_imports_reach            0
+a_once_capture_beside_a_borrow                       0
 a_once_closure_owns_its_captures                     0
+a_once_continuation_resumed_in_a_loop                0
 a_once_function_called_through_an_alias              0
 a_once_function_type_in_a_generic_position           0
+a_once_payload_of_an_owned_payload                   0
+a_once_lambda_may_move_its_capture_in_its_body       0
+a_once_payload_of_an_owned_generic_value_is_called   0
 a_receiver_method_lifts_a_closure_that_captures_its_receiver 0
 a_returned_value_match_returns_from_each_arm         0
 a_specialised_callee_keeps_its_record_update_donor                      0
@@ -211,6 +216,7 @@ callback_aggregate_environment_loans                 0
 callback_capture_lifetimes                           0
 callback_fresh_local_last_use                        0
 callback_shadowed_bindings                           0
+calls_of_functions_named_like_builtins               0
 captured_map_keeps_raw_byte_keys                     0
 cast_generic_float_width                             0
 cast_in_tuple                                        0
@@ -242,6 +248,7 @@ closure_capture_shared_cell                          0
 closure_captures_builtin_record_binding              0
 closure_captures_defining_scope                      0
 closure_captures_generic_value                       0
+closure_cells_in_function_and_closure_bodies         0
 closure_field_match                                  0
 closure_field_rebind                                 0
 closure_returns_composite                            0
@@ -727,6 +734,9 @@ nested_arm_patterns                                  0
 nested_array_literals_take_the_wider_element_type    0
 nested_call_temp                                     0
 nested_function_calls_itself                         0
+nested_function_name_is_local_to_its_block           0
+nested_function_with_a_capture_is_a_value            0
+nested_functions_that_call_each_other                0
 nested_lambdas_check_in_linear_time                  0
 nested_loops                                         0
 nested_option                                        0
@@ -805,6 +815,7 @@ own_for_element_of_borrowed_array                    0
 own_fresh_result_from_a_borrowing_callee             0
 own_func_name_shadowed_by_param                      0
 own_inplace_sort                                     0
+own_let_bound_literal_at_last_use                    0
 own_local_destructured_at_last_use                   0
 own_local_moved_into_exit                            0
 own_local_rebound_on_every_branch                    0
@@ -1471,6 +1482,7 @@ vec_lane_kernels                                     0
 view_beside_its_array_in_a_call                      0
 view_of_branch_value                                 0
 view_param_returned_after_loop                       0
+view_taken_from_a_reused_box                         0
 views_in_aggregates_stay_local                       0
 void_value_arm_falls_through                         0
 void_value_if_statement                              0

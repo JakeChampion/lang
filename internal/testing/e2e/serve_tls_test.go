@@ -189,16 +189,23 @@ func (w *serveTLSWorld) drive(t *testing.T, cmd *exec.Cmd, stream bool) {
 	}
 	t.Run(name, func(t *testing.T) {
 		var reused, resumed bool
+		// How far the last GET went, for the message of a failure.
+		var connected, shook, wrote, answered bool
 		trace := &httptrace.ClientTrace{
-			GotConn:          func(i httptrace.GotConnInfo) { reused = i.Reused },
-			TLSHandshakeDone: func(cs tls.ConnectionState, err error) { resumed = cs.DidResume },
+			GotConn:              func(i httptrace.GotConnInfo) { reused, connected = i.Reused, true },
+			TLSHandshakeDone:     func(cs tls.ConnectionState, err error) { resumed, shook = cs.DidResume, err == nil },
+			WroteRequest:         func(i httptrace.WroteRequestInfo) { wrote = i.Err == nil },
+			GotFirstResponseByte: func() { answered = true },
 		}
 		get := func(path string) (*http.Response, []byte) {
 			t.Helper()
+			connected, shook, wrote, answered = false, false, false, false
+			began := time.Now()
 			req, _ := http.NewRequest("GET", base+path, nil)
 			resp, err := client.Do(req.WithContext(httptrace.WithClientTrace(req.Context(), trace)))
 			if err != nil {
-				t.Fatalf("GET %s: %v", path, err)
+				t.Fatalf("GET %s: %v after %v (connection %v, reused %v, new TLS handshake done %v, request written %v, first response byte %v)",
+					path, err, time.Since(began).Round(time.Millisecond), connected, connected && reused, shook, wrote, answered)
 			}
 			defer resp.Body.Close()
 			body, _ := io.ReadAll(resp.Body)
@@ -255,9 +262,11 @@ func (w *serveTLSWorld) drive(t *testing.T, cmd *exec.Cmd, stream bool) {
 		}
 		_ = plain.SetDeadline(time.Now().Add(30 * time.Second))
 		fmt.Fprint(plain, "GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+		// A fatal unexpected_message alert. A close_notify here is the receive
+		// deadline of the server, which waited for a record that does not come.
 		got := make([]byte, 64)
-		if n, err := plain.Read(got); err == nil && (n == 0 || got[0] != 0x15) {
-			t.Fatalf("a plaintext request was answered with %q", got[:n])
+		if n, err := plain.Read(got); err != nil || !bytes.Equal(got[:n], []byte{0x15, 3, 3, 0, 2, 2, 10}) {
+			t.Fatalf("a plaintext request was answered with %x (%v), want a fatal unexpected_message alert", got[:n], err)
 		}
 		plain.Close()
 		tr.CloseIdleConnections()

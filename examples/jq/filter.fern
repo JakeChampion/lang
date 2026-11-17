@@ -30,7 +30,10 @@ pub enum Ast {
   Compare(string, Ast, Ast),
   Arith(string, Ast, Ast),
   Alt(Ast, Ast),
-  Call(string, Ast[]),
+  // A call. `true` tells that the call is the last step of the body of its
+  // function, or of the program: each output of the call is an output of
+  // that body.
+  Call(string, Ast[], boolean),
   Catch(Ast, Ast),
   Interp(string, string[], Ast[]),
   Format(string),
@@ -591,7 +594,56 @@ pub function parse_unchecked(program: string, file: string, skip: i32): Parsed {
   if (q.error.len() > 0) {
     return Parsed { ast: Identity, error: q.error, at: q.err_at, defs: [], undefined: [], undefined_at: [] };
   }
-  return Parsed { ast: ast, error: "", at: 0, defs: top_defs(ast), undefined: q.undefined, undefined_at: q.undefined_at };
+  return Parsed { ast: marked(ast, true), error: "", at: 0, defs: top_defs(ast), undefined: q.undefined, undefined_at: q.undefined_at };
+}
+
+// `f` with the mark of each call. `last` tells that each output of `f` is an
+// output of the body around it. An argument of a call is not a body, because
+// a `$` parameter takes its outputs one at a time.
+function marked(f: Ast, last: boolean): Ast {
+  return match (f) {
+    Call(name, args, _) => Call(name, all_marked(args), last),
+    Pipe(a, b) => Pipe(marked(a, false), marked(b, last)),
+    Comma(a, b) => Comma(marked(a, last), marked(b, last)),
+    If(cond, yes, no) => If(marked(cond, false), marked(yes, last), marked(no, last)),
+    Def(name, params, body, rest) => Def(name, params, marked(body, true), marked(rest, last)),
+    Bind(source, name, body) => Bind(marked(source, false), name, marked(body, last)),
+    Label(name, body) => Label(name, marked(body, last)),
+    _ => marked_parts(f),
+  };
+}
+
+// `f` with the marks of its parts, when no part gives the outputs of `f`.
+function marked_parts(f: Ast): Ast {
+  return match (f) {
+    Index(a, b) => Index(marked(a, false), marked(b, false)),
+    Slice(a, b, c) => Slice(marked(a, false), marked(b, false), marked(c, false)),
+    Iterate(a) => Iterate(marked(a, false)),
+    Optional(a) => Optional(marked(a, false)),
+    Try(a) => Try(marked(a, false)),
+    Collect(a) => Collect(marked(a, false)),
+    Object(keys, values) => Object(all_marked(keys), all_marked(values)),
+    Compare(op, a, b) => Compare(op, marked(a, false), marked(b, false)),
+    Arith(op, a, b) => Arith(op, marked(a, false), marked(b, false)),
+    Alt(a, b) => Alt(marked(a, false), marked(b, false)),
+    Catch(a, b) => Catch(marked(a, false), marked(b, false)),
+    Interp(name, texts, parts) => Interp(name, texts, all_marked(parts)),
+    Update(op, a, b) => Update(op, marked(a, false), marked(b, false)),
+    Reduce(source, name, init, update) => Reduce(marked(source, false), name, marked(init, false), marked(update, false)),
+    Foreach(source, name, init, update, extract) => Foreach(marked(source, false), name, marked(init, false), marked(update, false), marked(extract, false)),
+    And(a, b) => And(marked(a, false), marked(b, false)),
+    Or(a, b) => Or(marked(a, false), marked(b, false)),
+    Negate(a) => Negate(marked(a, false)),
+    _ => f,
+  };
+}
+
+function all_marked(fs: Ast[]): Ast[] {
+  let out: Ast[] = [];
+  for f in fs {
+    out = out.append(marked(f, false));
+  }
+  return out;
 }
 
 // The functions that the definitions at the start of `f` give, as
@@ -638,7 +690,7 @@ pub function parse_in(program: string, defs: string[], file: string, library: bo
       if (library && !q.ended) {
         return Parsed { ast: Identity, error: MAIN_IN_LIBRARY, at: -1, defs: [], undefined: [], undefined_at: [] };
       }
-      return Parsed { ast: ast, error: "", at: 0, defs: top_defs(ast), undefined: q.undefined, undefined_at: q.undefined_at };
+      return Parsed { ast: marked(ast, true), error: "", at: 0, defs: top_defs(ast), undefined: q.undefined, undefined_at: q.undefined_at };
     }
     q = q.fail(unexpected(q.peek()) + END_EXPECTED);
   } else if (q.err_at == p.offs[skip] && q.error == unexpected(p.peek())) {
@@ -1419,9 +1471,9 @@ function parse_call(name: string, p: P): (Ast, P) {
   let called = name + "/" + args.len().to_string();
   if (q.error.len() == 0 && p.check && !functions().contains(called) && !p.defs.contains(called) && called != "_match_impl/3") {
     let at = if (p.at - 1 < p.offs.len()) { p.offs[p.at - 1] } else { 0 };
-    return (Call(name, args), P { ...q, undefined: q.undefined.append(called + " is not defined"), undefined_at: q.undefined_at.append(at) });
+    return (Call(name, args, false), P { ...q, undefined: q.undefined.append(called + " is not defined"), undefined_at: q.undefined_at.append(at) });
   }
-  return (Call(name, args), q);
+  return (Call(name, args, false), q);
 }
 
 function parse_group(x: string, p: P): (Ast, P) {
@@ -1441,7 +1493,7 @@ function parse_group(x: string, p: P): (Ast, P) {
     return parse_object(p.advance());
   }
   if (x == "..") {
-    return (Call("recurse", []), p.advance());
+    return (Call("recurse", [], false), p.advance());
   }
   return (Identity, p.fail(unexpected(TPunct(x))));
 }
@@ -1561,7 +1613,7 @@ pub function undefined_vars(f: Ast, names: string[]): string[] {
     Compare(_, a, b) => all_undefined([a, b], names),
     Arith(_, a, b) => all_undefined([a, b], names),
     Alt(a, b) => all_undefined([a, b], names),
-    Call(_, args) => all_undefined(args, names),
+    Call(_, args, _) => all_undefined(args, names),
     Catch(a, b) => all_undefined([a, b], names),
     Interp(_, _, parts) => all_undefined(parts, names),
     Update(_, a, b) => all_undefined([a, b], names),

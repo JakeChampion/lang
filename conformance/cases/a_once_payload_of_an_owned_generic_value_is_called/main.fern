@@ -1,0 +1,38 @@
+// A `once` function in the payload of an owned value is owned, so a call
+// may consume it. The value is generic here, so the payload type can hold
+// a handle and keeps its ownership along the match.
+
+enum Fut[T] {
+  Pending(i32, once (i32) => Fut[T]),
+  Done(T),
+}
+
+enum Tree[T] {
+  Fork(Tree[T], Tree[T]),
+  Leaf(Fut[T]),
+  Hollow,
+}
+
+function cancel[T](own t: Tree[T]): i32 {
+  match (t) {
+    Fork(l, r) => {
+      let before = cancel(l);
+      return before + cancel(r);
+    },
+    Leaf(f) => {
+      if let Pending(w, k) = f {
+        if let Done(v) = k(w) {
+          return 1;
+        }
+      }
+    },
+    Hollow => {}
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let t: Tree[string] = Fork(Leaf(Pending(4, once (n: i32): Fut[string] => Done("x"))), Fork(Leaf(Done("y")), Hollow));
+  print(cancel(t).to_string());
+  return 0;
+}

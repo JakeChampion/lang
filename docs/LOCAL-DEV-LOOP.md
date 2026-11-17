@@ -107,6 +107,26 @@ trend. `scripts/perf-history metrics` lists what the newest note holds and
 the last 50 main commits (`show METRIC N REV` widens or moves the window). Both
 fetch the notes ref first, so they need the remote; nothing else is hosted.
 
+## The aarch64 `.ir` rows on an x86-64 machine: count with qemu
+
+The Perf lane counts the `aarch64/<name>.ir` rows with callgrind on an arm64
+runner. An x86-64 machine cannot run that. qemu gives the same count: it can
+run one instruction for each translation block and log each block that it
+runs.
+
+```
+./bin/fern -target arm64-linux -o /tmp/b.bin bench/perceus_deriv.fern
+qemu-aarch64 -one-insn-per-tb -d exec,nochain -D /dev/stdout /tmp/b.bin | grep -c '^Trace'
+```
+
+Subtract 2 from the count. On 2026-11-16 the result was the value of the Perf
+lane to the digit for the five `perceus_*` rows and for `record_update`. It
+was 17 to 20 instructions more for `call_overhead`, `enum_match` and
+`int_loop`. The tolerance of a row is 1%. qemu runs about 600,000
+instructions for each second in this mode, so a row of 60 million takes
+about two minutes. The `.text` row is the number of indented lines of
+`./bin/fern -target arm64-linux <file>`.
+
 ## Native compiler and X25519 comparisons
 
 Build two compiler snapshots with `bootstrap/bootstrap.sh distcheck`, then run
@@ -834,7 +854,10 @@ under `$FERN_CACHE_DIR`, or `$XDG_CACHE_HOME/fern` off macOS, when set. A cold c
 the compiler pays about 15% for it; a warm one pays a digest per function.
 `FERN_IR_VERIFY=1` prints `FERN_RC_CERTIFY: memo hits=… misses=…` at the end
 of a compile. An entry names the bytes of the compiler that wrote it, so a compiler
-built from changed sources certifies every function again. `stamps-<version>.txt`
+built from changed sources certifies every function again. An entry is two
+64-bit digests. Before a compile writes the memo, it reads the entries on
+disk again. It writes a file beside the memo and renames that file over it.
+Thus two compiles at the same time keep the entries of both. `stamps-<version>.txt`
 beside the memo maps a binary's inode and modification time to that digest,
 so a compiler hashes its own bytes only on its first compile. To certify everything again, delete the directory or set
 `FERN_RC_CERTIFY_MEMO=0`; to keep a test's memo apart, point

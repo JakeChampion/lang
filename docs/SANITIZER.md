@@ -23,6 +23,7 @@ changes the code the backend emits — so it goes on the build, not on the run.
 | rc over-release (double free) | a `dec` sees a refcount already `<= 0` | `fern-sanitizer: rc over-release (double free)` + backtrace, exit 124 |
 | use-after-free | an `inc`/`dec` touches a quarantined block | `fern-sanitizer: use-after-free (touched a quarantined block)` + backtrace, exit 124 |
 | heap-buffer-overflow | a `__free` finds the redzone after a raw block written | `fern-sanitizer: heap-buffer-overflow (a raw block was written past its end)` + backtrace, exit 124 |
+| second context | a context that does not own the heap allocates or releases a block | `fern-sanitizer: second context (a thread or stack that does not own the heap used it)` + backtrace, exit 124 |
 | leak census | `main` returns with live bytes outstanding | `leakcheck: …` summary + `fern-sanitizer: leak <K> bytes in <N> blocks` |
 
 A run that the `exit()` builtin ends prints the census, marked ` from=exit`,
@@ -48,6 +49,40 @@ what this mode is for.)
 (`INTEGER-SEMANTICS.md`), so unlike C there is no integer UB to sanitize. The
 surface is purely the heap/rc correctness that Perceus's manual `inc`/`dec`
 makes possible to get wrong.
+
+## One context per heap
+
+Reference counts and the free lists are not atomic. The runtime is sound only
+when one context at a time runs Fern code against a heap (`RC-DESIGN.md`
+section 2.1). The checker and the boundaries in that section hold the rule.
+The second-context check makes a violation of the rule a finding. Without it,
+a violation corrupts a count with no error.
+
+The check runs in the census of each allocation and each release. It does
+not run at an `inc` or a `dec` that frees nothing. The owner of the heap
+depends on the image:
+
+- **An executable** owns the stack mapping that `_start` makes. The check
+  compares the stack pointer with `__fern_stack_top`. The distance must be
+  less than the size of the mapping, which is 1 GiB. A thread that a raw
+  `clone` makes, or a handler on the signal stack, runs on another stack.
+- **A shared object** owns the thread that holds the turn on `__fern_busy`.
+  `__fern_busy_take` stores the thread pointer in `__fern_san_owner` when it
+  gets the turn. The check compares the thread pointer with that word. The
+  thread pointer is `%fs:0` on x86-64 and `tpidr_el0` on arm64.
+
+A program cannot make a second context without the runtime floor. User code
+has no raw syscall. It gives a Fern function to C only through a locked
+export. Thus the check guards the runtime and its boundaries. Its
+tests use the runtime CLI (`drivers/runtime_run.fern`) to make a thread with
+a raw `clone` (`TestX86_64SanitizeSecondContextReported`,
+`TestArm64SanitizeSecondContextReported` and
+`TestSharedLibSanitizeStrayThread`). The sanitized legs of
+`TestSharedLibBusyLock` hold the other side: threads that take turns make no
+finding.
+
+A kernel image and a freestanding library have no check. Their entry does
+not make the stack mapping, and they have no busy lock.
 
 ## What it does NOT turn on
 
@@ -100,14 +135,14 @@ the cost is not built there.
 
 ## Backend coverage
 
-| | leak census | rc over-release | use-after-free |
-| --- | --- | --- | --- |
-| x86-64 (native) | ✅ | ✅ | ✅ |
-| arm64 (native) | ✅ | ✅ | ✅ |
-| x86-64 (self-host) | ✅ | ✅ | ✅ |
-| arm64 (self-host) | ✅ | ✅ | ✅ |
-| wasm, native and self-host | ✅ | — | — |
-| the Go SSA backends | — | — | — |
+| | leak census | rc over-release | use-after-free | second context |
+| --- | --- | --- | --- | --- |
+| x86-64 (native) | ✅ | ✅ | ✅ | — |
+| arm64 (native) | ✅ | ✅ | ✅ | — |
+| x86-64 (self-host) | ✅ | ✅ | ✅ | ✅ |
+| arm64 (self-host) | ✅ | ✅ | ✅ | ✅ |
+| wasm, native and self-host | ✅ | — | — | — |
+| the Go SSA backends | — | — | — | — |
 
 Every row above emits the **same** message text and the same exit status — a
 `fern-sanitizer:` line does not tell you which compiler produced the binary,
@@ -258,6 +293,13 @@ whose reference outlived the count.
   after a raw block alone, it is 16 bytes, and the free reads it. A write
   that lands beyond it, or in the next block, is seen only when that block's
   own release or count reports it.
+
+- **A second context that only counts.** The second-context check runs in
+  the census of an allocation and a release. A second context that only
+  increments or decrements counts, and frees nothing, is not seen.
+- **A second context on the same thread or stack.** A raw `clone` with the
+  stack of its parent, or a thread pointer that a raw `clone` copies into a
+  shared object, looks like the owner.
 
 Note also that the over-release guard sits **ahead** of the free on the `dec`
 path, so a refcount that drifts low is usually reported as a double free

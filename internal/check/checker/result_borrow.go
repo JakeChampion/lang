@@ -20,11 +20,6 @@ func (c *checker) recordOwnedResult(call *ast.Call, own bool) {
 
 func (c *checker) computeResultBorrows(prog *ast.Program) {
 	c.resultBorrows = make(map[string]bool, len(prog.Funcs))
-	c.resultLendsOf = map[string][]bool{}
-	c.resultDecls = make(map[string]*ast.FuncDecl, len(prog.Funcs))
-	for _, fn := range prog.Funcs {
-		c.resultDecls[fn.Name] = fn
-	}
 	c.resultAnalysed = make(map[string]bool, len(prog.Funcs))
 	c.declaredMethods = map[string]bool{}
 	c.handleFreeResults = map[string]bool{}
@@ -81,63 +76,6 @@ func (c *checker) funcResultBorrows(fn *ast.FuncDecl) bool {
 }
 
 func (c *checker) funcResultBorrowsWith(fn *ast.FuncDecl, ownedResult bool) bool {
-	return c.funcResultBorrowsFrom(fn, ownedResult, -1)
-}
-
-// resultLends reports, for each parameter of the function name, whether its
-// result can borrow from that parameter. A function with no analysed body
-// has no answer, and the result is nil.
-func (c *checker) resultLends(name string) []bool {
-	if lends, done := c.resultLendsOf[name]; done {
-		return lends
-	}
-	fn := c.resultDecls[name]
-	if fn == nil || fn.Body == nil {
-		return nil
-	}
-	lends := make([]bool, len(fn.Params))
-	for i := range fn.Params {
-		lends[i] = c.funcResultBorrowsFrom(fn, false, i)
-	}
-	c.resultLendsOf[name] = lends
-	return lends
-}
-
-// lendingArgsOwned reports a plain call of an analysed function where each
-// argument that the result can borrow from is a fresh construction that is
-// owned. Only the result holds such an argument after the call.
-func (c *checker) lendingArgsOwned(x *ast.Call, owned func(ast.Expr) bool) bool {
-	id, ok := x.Callee.(*ast.Ident)
-	if !ok || x.Method != nil || c.callValueCallees[x] {
-		return false
-	}
-	lends := c.resultLends(id.Name)
-	if lends == nil || len(x.Args) > len(lends) {
-		return false
-	}
-	for i, arg := range x.Args {
-		if lends[i] && !(freshConstruction(arg) && owned(arg)) {
-			return false
-		}
-	}
-	return true
-}
-
-// freshConstruction reports a literal that builds a value, or a call that is
-// not the read of an associated constant.
-func freshConstruction(e ast.Expr) bool {
-	switch x := e.(type) {
-	case *ast.StructLit, *ast.ArrayLit, *ast.TupleLit, *ast.MapLit:
-		return true
-	case *ast.Call:
-		return !x.AssocConst
-	}
-	return false
-}
-
-// funcResultBorrowsFrom is the result borrow of fn from the parameter at
-// only, or from each parameter when only is negative.
-func (c *checker) funcResultBorrowsFrom(fn *ast.FuncDecl, ownedResult bool, only int) bool {
 	if fn.Body == nil {
 		return false
 	}
@@ -148,13 +86,11 @@ func (c *checker) funcResultBorrowsFrom(fn *ast.FuncDecl, ownedResult bool, only
 	if ownedResult && c.valueData(fn.ReturnType, map[string]bool{}) {
 		return false
 	}
-	// The scopes below hold names, so each binding needs its own name.
-	defer distinctBindings(fn)()
+	if ownedResult {
+		defer distinctBindings(fn)()
+	}
 	b := borrowScope{borrowed: map[string]bool{}, values: map[string]bool{}, handlesOnly: !c.holdsNoHandle(fn.ReturnType), ownedResult: ownedResult}
-	for i, p := range fn.Params {
-		if only >= 0 && i != only {
-			continue
-		}
+	for _, p := range fn.Params {
 		if c.callbackCanLend(p.Type) || !p.Own && p.Type != nil && mayRetainBorrow(p.Type) {
 			b.borrowed[p.Name] = true
 			if elem := elemType(p.Type); elem != nil && !mayRetainBorrow(elem) {
@@ -228,13 +164,6 @@ func (c *checker) borrowedLocals(fn *ast.FuncDecl, b borrowScope) map[string]boo
 			case *ast.Assign:
 				if id, ok := s.Target.(*ast.Ident); ok {
 					changed = mark(id.Name, s.Value) || changed
-				}
-			case *ast.Match:
-				// An arm's binders come from the scrutinee.
-				for _, arm := range s.Arms {
-					for _, name := range arm.Binders() {
-						changed = mark(name, s.Tag) || changed
-					}
 				}
 			case *ast.ForEach:
 				changed = markForEach(mark, s, b.values) || changed
@@ -503,6 +432,11 @@ func (c *checker) callSiteBorrowsBeside(x *ast.Call, except string) bool {
 		sig = c.info.FuncSigs[id.Name]
 		flags = c.ownFuncs[id.Name]
 	}
+	// A variant holds its payloads, so a payload lends as a parameter of
+	// its type does.
+	if variant, ok := c.info.EnumConstructions[x]; ok && sig == nil && len(variant.Payloads) == len(x.Args) {
+		sig = &ast.FuncType{Params: variant.Payloads}
+	}
 	for i, a := range x.Args {
 		if aid, ok := a.(*ast.Ident); ok && except != "" && aid.Name == except {
 			continue
@@ -643,6 +577,10 @@ func (c *checker) callbacksReturnOwned(call *ast.Call) bool {
 }
 
 func (c *checker) argMayBorrow(e ast.Expr) bool {
+	// A variant that no call gives payloads to holds nothing to lend.
+	if v, ok := c.info.EnumConstructions[e]; ok && len(v.Payloads) == 0 {
+		return false
+	}
 	switch x := e.(type) {
 	case *ast.Lambda:
 		return c.lambdaResultBorrows(x, borrowScope{borrowed: lambdaFreeNames(x)})
@@ -777,6 +715,12 @@ func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) b
 		return !c.signatureResultBorrows(id.Name) || c.resultAnalysed[id.Name] && !c.resultBorrows[id.Name] && !c.holdsNoHandle(sig.Result)
 	}
 	return inferred(tag)
+}
+
+// isOnceFunc reports a `once` function type.
+func isOnceFunc(t ast.Type) bool {
+	ft, ok := t.(*ast.FuncType)
+	return ok && ft.Once
 }
 
 // holdsNoHandle reports a type that cannot hold a handle: a number, a

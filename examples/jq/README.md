@@ -126,18 +126,37 @@ says "need RS to resync". It prints each parse error with
 
 ## Recursion
 
-jq makes a tail call with no new stack frame. The port uses a stack frame for
-each call of a function of a `def`. Thus the stack sets the limit of the
-depth of a function that calls itself. A depth of 1000000 is good on x86-64.
+jq makes a tail call with no new stack frame, and it keeps its frames on the
+heap. The port does not keep the calls of a function of a `def` on the
+machine stack. After each 64 calls, the evaluator goes back to a loop, and
+the loop makes the next call. Thus only the memory sets the limit of the
+depth of a function that calls itself, on each target. A depth of 3000000
+is good in jq and in the port:
 
-jq keeps its frames on the heap, so only the memory sets its limit. A depth
-of 3000000 is good in jq, and a depth of 30000000 gives an error that jq
-cannot allocate memory. In the port, a deeper recursion stops with a stack
-overflow and exit 134, because the evaluator calls itself for each filter.
+```
+def f: if . == 0 then 0 else (. - 1 | f) end; 3000000 | f
+def f: if . == 0 then 0 else (. - 1 | f) + 1 end; 3000000 | f
+def f: ., (. + 1 | f); first(0 | f | select(. >= 3000000))
+```
 
-On wasm32-wasi, wasmtime gives 512 KiB of stack, and a depth of 100 is good.
-The compiler makes different frames for different programs, so the limit is
-between 150 and 500. The option `-W max-wasm-stack` of wasmtime makes the
+A call that is the last step of its function adds no memory, as in jq. The
+first and the third program use 9 MB at each depth. The second program uses
+165 MB at a depth of 3000000. At a depth of 30000000, jq gives an error that
+it cannot allocate memory, and the port gives the result with 1.6 GB.
+
+One difference stays. Some constructs read the end of their filter: `[...]`,
+`{...}`, `try`, `?`, `//`, `reduce`, `foreach`, `label`, `first`, `limit`,
+`path` and the left side of a comma. The evaluator calls itself for each of
+them. Thus a function that calls itself in one of these constructs uses the
+machine stack for each call:
+
+```
+def f: if . == 0 then 0 else [. - 1 | f] | .[0] + 1 end; 3000000 | f
+```
+
+jq gives 3000000. The port is good to a depth of 500000 on x86-64 and of
+200 on wasm32-wasi. A deeper recursion stops with a stack overflow and exit
+134. On wasm32-wasi, the option `-W max-wasm-stack` of wasmtime makes the
 stack larger.
 
 ## Numbers

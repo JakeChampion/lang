@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// The parser stores a float literal's bits once. An integer literal that the
+// The parser stores a literal's bits once. An integer literal that the
 // parser or the checker settles to a float must get its bits at that point.
 var interpFloatLiteralCases = []struct {
 	name string
@@ -19,9 +19,14 @@ var interpFloatLiteralCases = []struct {
 	{"integer-settled-to-f64", "function half(x: f64): f64 { return x / 2.0; }\nfunction main(): i32 {\n  let x: f64 = 3;\n  if (x != 3.0 || half(5) != 2.5) { return 1; }\n  return 7;\n}\n"},
 	{"integer-settled-to-f32", "function main(): i32 {\n  let x: f32 = 2;\n  let y: f32 = 0.1;\n  if (x + y < 2.09 || x + y > 2.11) { return 1; }\n  return 7;\n}\n"},
 	{"negative-and-exponent", "function main(): i32 {\n  let x: f64 = -2.5e-3;\n  if (x * 1000.0 != -2.5) { return 1; }\n  return 7;\n}\n"},
+	{"integer-radix-and-sign", "function main(): i32 {\n  let h = 0x2A;\n  let b = 0b101;\n  let n = -17;\n  if (h != 42 || b != 5 || n + 17 != 0 || 0XfF != 255) { return 1; }\n  return 7;\n}\n"},
+	{"integer-widths", "function main(): i32 {\n  let big: i64 = 5000000000;\n  let u = 200u8;\n  let w = 0x7fffffffffffffffi64;\n  if (big / 1000000000i64 != 5i64 || u as i32 != 200 || w - 0x7ffffffffffffffei64 != 1i64) { return 1; }\n  return 7;\n}\n"},
+	{"integer-const-fold", "const K: i32 = 6 * 7;\nfunction main(): i32 {\n  let a = [1, 2, 3];\n  if (K != 42 || a[2 - 1] != 2 || 1000000 * 3 != 3000000) { return 1; }\n  return 7;\n}\n"},
 	{"tuple-value-block-widths", "function pick(c: boolean): (f32, (f64, i64)) {\n  return if (c) { (2, (3, 4)) } else { (6, (7, 8)) };\n}\nfunction main(): i32 {\n  let a = pick(true);\n  let b = pick(false);\n  if ((a.0 as f64) + 0.5 != 2.5 || a.1.0 + 0.5 != 3.5 || a.1.1 != 4i64) { return 1; }\n  if ((b.0 as f64) + 0.5 != 6.5 || b.1.0 + 0.5 != 7.5 || b.1.1 != 8i64) { return 2; }\n  return 7;\n}\n"},
 	{"tuple-value-block-nonnumeric", "function pick(c: boolean): (string, boolean) {\n  return match (c) { true => (\"yes\", true), false => (\"no\", false) };\n}\nfunction main(): i32 {\n  let a = pick(true);\n  let b = pick(false);\n  if (a.0 != \"yes\" || !a.1 || b.0 != \"no\" || b.1) { return 1; }\n  return 7;\n}\n"},
 }
+
+var interpCachedLiterals = []string{"1.0", "1.6666666666666602e-01", "41", "0x2A", "0b101"}
 
 func TestSelfHostInterpFloatLiteral(t *testing.T) {
 	native := runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
@@ -57,7 +62,7 @@ func TestSelfHostInterpFloatLiteral(t *testing.T) {
 
 	// Different text must not replace the bits that the parser cached.
 	// A control interpreter that parses the text again returns zero here.
-	for _, literal := range []string{"1.0", "1.6666666666666602e-01"} {
+	for _, literal := range interpCachedLiterals {
 		t.Run("cached-bits/"+literal, func(t *testing.T) {
 			if got := runDriverExit(t, runner, cacheBin, []byte("return "+literal+";\n")); got != 7 {
 				t.Fatalf("cached-bit probe exited %d, want 7", got)
@@ -86,7 +91,12 @@ func TestSelfHostInterpFloatLiteral(t *testing.T) {
 		if strings.Count(string(src), cached) != 1 {
 			t.Fatal("expected one cached float evaluation in the interpreter")
 		}
+		const cachedInt = "box_i64(n.bits)"
+		if strings.Count(string(src), cachedInt) != 1 {
+			t.Fatal("expected one cached integer evaluation in the interpreter")
+		}
 		control := strings.Replace(string(src), cached, "v_float(f64_from_bits(util.parse_f64_bits(n.text)))", 1)
+		control = strings.Replace(control, cachedInt, "box_i64(util.lit_to_i64(n.text))", 1)
 		if err := os.WriteFile(path, []byte(control), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -97,7 +107,7 @@ func TestSelfHostInterpFloatLiteral(t *testing.T) {
 			gcc, _ := x86_64Tooling(t)
 			controlBin = buildSelfHostBin(t, gcc, dir, "drivers/interp_float_cache_run.fern", "interp_float_reparse_control")
 		}
-		for _, literal := range []string{"1.0", "1.6666666666666602e-01"} {
+		for _, literal := range interpCachedLiterals {
 			if got := runDriverExit(t, runner, controlBin, []byte("return "+literal+";\n")); got != 3 {
 				t.Fatalf("reparse control for %s exited %d, want cached-bit mismatch 3", literal, got)
 			}

@@ -118,6 +118,23 @@ pub const TERNARY: i32 = 61;
 
 pub const LANE_STORE: i32 = 62;
 
+// The address of a cell of one word in the frame, less an offset. imm holds
+// the number of the cell and the offset (frame_cell). Each such instruction
+// of one number gives the same cell.
+pub const FRAME_CELL: i32 = 63;
+
+pub function frame_cell(result: i32, cell: i32, offset: i32): SInst {
+  return SInst { kind_tag: FRAME_CELL, result: result, args: [], imm: cell * 4096 + offset, str: "" };
+}
+
+pub function cell_number(ins: SInst): i32 {
+  return ins.imm / 4096;
+}
+
+pub function cell_offset(ins: SInst): i32 {
+  return ins.imm % 4096;
+}
+
 // The kinds of STerm.
 pub const TERM_NONE: i32 = 0;
 
@@ -290,6 +307,7 @@ const KIND_NAMES: string[] = [
   "dyn_dispatch",  // 60
   "ternary",  // 61
   "lane_store",  // 62
+  "frame_cell",  // 63
 ];
 
 // The name of each semantic kind. Semantic ids run from -1 downward, so the
@@ -552,6 +570,97 @@ pub function hard_call_positions(f: SFunc, cold: i32[]): boolean[] {
   return out;
 }
 
+// `early` has each block that runs before the function makes its frame, and
+// `sites` has each block that makes the frame when control enters it. The two
+// are empty when the frame is made at the entry.
+pub struct FrameSplit { early: boolean[], sites: boolean[] }
+
+// The positions that the jumps of `t` reach. The emitter sends a jump to a
+// block that only passes it on to the end of that chain (`forward_target`),
+// and `fwd` has that end for each position.
+function block_successors(at: i32[], fwd: i32[], t: STerm): i32[] {
+  let ids: i32[] = [];
+  if (t.kind_tag == TERM_BR) {
+    ids = [t.target];
+  } else if (t.kind_tag == TERM_BRIF && t.t == t.f) {
+    ids = [t.t];
+  } else if (t.kind_tag == TERM_BRIF) {
+    ids = [t.t, t.f];
+  }
+  let out: i32[] = [];
+  for id in ids {
+    let to = block_index(at, id);
+    out = out.append(if (to >= 0) { fwd[to] } else { to });
+  }
+  return out;
+}
+
+// Splits a function whose frame only saves registers. `ok[b]` says the block
+// at position b needs no frame: it makes no call and no trap, and it reads
+// and writes no register that the frame saves. `tied[b]` is the position of a
+// block that the emitter copies to the end of b, or -1. `fwd[b]` is the
+// position that a jump to b reaches.
+//
+// A block is early when it is ok, each of its predecessors is early, and a
+// block tied to it is early. The predecessors of a block that is not early
+// are all early or all not early, so the frame is made one time on each path.
+// The split is empty unless an early block returns.
+pub function frame_split(f: SFunc, at: i32[], ok: boolean[], tied: i32[], fwd: i32[]): FrameSplit {
+  let none = FrameSplit { early: [], sites: [] };
+  let n = f.blocks.len();
+  if (n == 0 || f.blocks[0].id != f.entry || !ok[0]) {
+    return none;
+  }
+  let preds: i32[][] = [];
+  for b in f.blocks {
+    preds = preds.append([]);
+  }
+  for b in 0..n {
+    for to in block_successors(at, fwd, f.blocks[b].term) {
+      if (to < 0) {
+        return none;
+      }
+      preds = preds.with(to, preds[to].append(b));
+    }
+  }
+  let early = ok;
+  let changed = true;
+  while (changed && early[0]) {
+    changed = false;
+    for b in 0..n {
+      let before = false;
+      let after = false;
+      for p in preds[b] {
+        before = before || early[p];
+        after = after || !early[p];
+      }
+      if (early[b] && (after || tied[b] >= 0 && !early[tied[b]])) {
+        early = early.with(b, false);
+        changed = true;
+      } else if (!early[b] && before && after) {
+        for p in preds[b] {
+          early = early.with(p, false);
+        }
+        changed = true;
+      }
+    }
+  }
+  let returns = false;
+  let sites = __alloc_bool(n);
+  for b in 0..n {
+    returns = returns || early[b] && f.blocks[b].term.kind_tag == TERM_RET;
+    for p in preds[b] {
+      if (!early[b] && early[p]) {
+        sites = sites.with(b, true);
+      }
+    }
+  }
+  if (!early[0] || !returns) {
+    return none;
+  }
+  return FrameSplit { early: early, sites: sites };
+}
+
 pub const COLD_NONE: i32 = 0;
 
 pub const COLD_SLOW: i32 = 1;
@@ -602,11 +711,22 @@ pub function light_call(ins: SInst): boolean {
   return ins.kind_tag == ARR_BOX && ins.str == "box" || fresh_alloc_call(ins);
 }
 
+// The imm of a release of a box that its frame proved unique (ir.sole).
+pub const SOLE: i32 = 5;
+
+// The imm of such a release of a box of 1 to 255 words (ir.sole_box).
+pub const SOLE_BOX: i32 = 9;
+
+// A release with no test of the count.
+pub function sole_release(ins: SInst): boolean {
+  return ins.imm == SOLE || ins.imm == SOLE_BOX;
+}
+
 // A release that the emitters test inline: the count of a shared box goes
 // down by one, and only a unique box calls the routine. The helper release
 // of a record or a variant has the mark 7 (`ir.box_release`).
 pub function inline_release(ins: SInst): boolean {
-  return ins.kind_tag == CALL && ins.args.len() == 1 && (ins.str == "__fern_rc_dec" && ins.imm != 5 || ins.imm == 7 && ins.str.starts_with("__sem_release_"));
+  return ins.kind_tag == CALL && ins.args.len() == 1 && (ins.str == "__fern_rc_dec" && !sole_release(ins) || ins.imm == 7 && ins.str.starts_with("__sem_release_"));
 }
 
 function cold_kind(blk: SBlock, k: i32, cold: boolean, size: boolean, back: boolean, light: boolean): i32 {
@@ -1123,14 +1243,14 @@ function forbidden_abi(abi_reg: i32, allowed: boolean): i32 {
   return abi_reg;
 }
 
-function cheapest_active(act_val: i32[], act_reg: i32[], act_hi: i32[], shared_with: i32[], weight: i32[], lo: i32[], hi: i32[], lens: i32[], now: i32, nregs: i32, need_saved: boolean, forbidden: i32, fixed: ssafixed.Table, until: i32): i32 {
+function cheapest_active(act_val: i32[], act_reg: i32[], act_hi: i32[], shared_with: i32[], lent: boolean[], weight: i32[], lo: i32[], hi: i32[], lens: i32[], now: i32, nregs: i32, need_saved: boolean, forbidden: i32, fixed: ssafixed.Table, until: i32): i32 {
   let best: i32 = -1;
   let best_w = 0;
   let best_len = 1;
   for i in 0..act_val.len() {
     if ((act_reg[i] >= nregs || !need_saved) && act_reg[i] != forbidden && ssafixed.allows(fixed, act_reg[i], now, until)) {
-      let w = chain_weight(act_val[i], shared_with, weight, hi, now);
-      let len = chain_len(act_val[i], act_hi[i], shared_with, lo, hi, lens, now);
+      let w = chain_weight(act_val[i], shared_with, lent, weight, hi, now);
+      let len = chain_len(act_val[i], act_hi[i], shared_with, lent, lo, hi, lens, now);
       let cmp = cmp_spill_cost(w, len, best_w, best_len);
       if (best < 0 || cmp < 0 || cmp == 0 && act_hi[i] > act_hi[best]) {
         best = i;
@@ -1156,17 +1276,23 @@ function cmp_spill_cost(w1: i32, len1: i32, w2: i32, len2: i32): i32 {
 
 // The positions a chain's values are live at, or, with no live lengths, the
 // span from its first value's start to its end.
-function chain_len(v: i32, top: i32, shared_with: i32[], lo: i32[], hi: i32[], lens: i32[], now: i32): i32 {
+function chain_len(v: i32, top: i32, shared_with: i32[], lent: boolean[], lo: i32[], hi: i32[], lens: i32[], now: i32): i32 {
   if (lens.len() == 0) {
     return top - chain_lo(v, shared_with, lo, hi, now) + 1;
   }
-  let n = live_len(v, lo, hi, lens);
+  let n = 0;
+  if (heads(v, lent, hi, now)) {
+    n = live_len(v, lo, hi, lens);
+  }
   let ev = shared_with[v];
   while (ev >= 0) {
     if (still_holds(ev, hi, now)) {
       n += live_len(ev, lo, hi, lens);
     }
     ev = shared_with[ev];
+  }
+  if (n == 0) {
+    return 1;
   }
   return n;
 }
@@ -1190,8 +1316,18 @@ function chain_lo(v: i32, shared_with: i32[], lo: i32[], hi: i32[], now: i32): i
   return m;
 }
 
-function chain_weight(v: i32, shared_with: i32[], weight: i32[], hi: i32[], now: i32): i32 {
-  let w = weight[v];
+// The first value of a chain counts: its mates are the same value at another
+// place. But a value that borrowed the register is not a mate, and it can end
+// before the value that lent it. It then counts no more.
+function heads(v: i32, lent: boolean[], hi: i32[], now: i32): boolean {
+  return v >= lent.len() || !lent[v] || still_holds(v, hi, now);
+}
+
+function chain_weight(v: i32, shared_with: i32[], lent: boolean[], weight: i32[], hi: i32[], now: i32): i32 {
+  let w = 0;
+  if (heads(v, lent, hi, now)) {
+    w = weight[v];
+  }
   let ev = shared_with[v];
   while (ev >= 0) {
     if (still_holds(ev, hi, now)) {
@@ -1742,6 +1878,11 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
 
   let sites = ReadSites { start: [], blk: [], pos: [], succ_a: [], succ_b: [], phi_end: [], nparams: f.nparams };
   let phi_side: boolean[] = [];
+  let phi_only: boolean[] = [];
+  let phi_none: boolean[] = [];
+  let lent_to: boolean[] = [];
+  let wanted = MateStarts { start: [], lo: [] };
+  let mate_lo = wanted;
   let reg_of = __alloc_i32(f.nvals);
   let shared_with = __alloc_i32(f.nvals);
   for i in 0..f.nvals {
@@ -1943,13 +2084,35 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
     let pick = pick_fixed_reg(free, cabi, call_def[v] == 1 && abi_ok, abi_ok, fixed, lo[v], hi[v]);
     let from_caller = !spans_hard(hard, crossing_all, oi < split, cum, lo[v], hi[v], v) && pick >= 0 && !soft;
     from_caller = from_caller || cold_caller(free_s.len(), cold_calls && oi < split, pick, cum, lo[v], hi[v]);
-    // A save around a call restores its holder, so a lent interval holds none.
-    if (!from_caller && oi < split && !keep_caller && !spans_call(cum_all, lo[v] - 1, hi[v] + 1)) {
+    // A save around a call restores its holder, so a lent interval of a caller
+    // register holds none. A call keeps a saved register.
+    let lends_caller = !from_caller && oi < split && !keep_caller && !spans_call(cum_all, lo[v] - 1, hi[v] + 1);
+    let lends_saved = !from_caller && oi < split && free_s.len() == 0 && held_until(act_reg, act_hi, sat, sat + nsaved, hi[v]);
+    if (lends_caller || lends_saved) {
       sites = cached_read_sites(f, sites, at, blk_start);
       if (phi_side.len() == 0) {
         phi_side = phi_values(f);
       }
-      if let Some(lend) = borrowable(sites, v, act_val, act_reg, Lender { cbase: cbase, sat: sat, cabi: cabi, abi_ok: abi_ok, reads: defining_args(f, v, def_blk, def_pos, blk_start), phi: phi_side }, fixed, shared_with, lo, hi, def_blk, def_pos) {
+      let reads = defining_args(f, v, def_blk, def_pos, blk_start);
+      let lend: i32 = -1;
+      if (lends_caller) {
+        let caller = Lender { cbase: cbase, sat: sat, cabi: cabi, abi_ok: abi_ok, phi: phi_side, keeps: phi_side, wanted: wanted, first: true };
+        if let Some(ai) = borrowable(sites, v, act_val, act_reg, act_hi, caller, Reads { all: reads, a: -1, b: -1 }, fixed, shared_with, lo, hi, def_blk, def_pos) {
+          lend = ai;
+        }
+      }
+      if (lend < 0 && lends_saved) {
+        if (phi_only.len() == 0) {
+          phi_only = phi_results(f);
+          phi_none = __alloc_bool(f.nvals + 1);
+          mate_lo = mate_starts(mates, def_a, def_b, lo, hi, f.nvals);
+        }
+        let saved = Lender { cbase: sat, sat: sat + nsaved, cabi: -1, abi_ok: true, phi: phi_none, keeps: phi_only, wanted: mate_lo, first: false };
+        if let Some(ai) = borrowable(sites, v, act_val, act_reg, act_hi, saved, Reads { all: reads, a: def_a[v], b: def_b[v] }, fixed, shared_with, lo, hi, def_blk, def_pos) {
+          lend = ai;
+        }
+      }
+      if (lend >= 0) {
         let top = later_interval_end(act_hi[lend], hi[v]);
         let lent = act_reg[lend];
         let holder = act_val[lend];
@@ -1958,6 +2121,10 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
         act_reg = drop_active_at(act_reg, lend);
         reg_of = reg_of.with(v, lent);
         shared_with = shared_with.with(v, holder);
+        if (lent_to.len() == 0) {
+          lent_to = __alloc_bool(f.nvals);
+        }
+        lent_to = lent_to.with(v, true);
         act_val = act_val.append(v);
         act_hi = act_hi.append(top);
         act_reg = act_reg.append(lent);
@@ -1967,18 +2134,18 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
     }
     if (!from_caller && free_s.len() == 0) {
       let need_saved = spans_hard(hard, crossing_all, oi < split, cum, lo[v], hi[v], v);
-      let fa = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, hi, lens, lo[v], sat, need_saved, forbidden_abi(cabi, abi_ok), fixed, hi[v]);
+      let fa = cheapest_active(act_val, act_reg, act_hi, shared_with, lent_to, weight, lo, hi, lens, lo[v], sat, need_saved, forbidden_abi(cabi, abi_ok), fixed, hi[v]);
       let cmp = 0;
       if (fa >= 0) {
-        let fw = chain_weight(act_val[fa], shared_with, weight, hi, lo[v]);
-        cmp = cmp_spill_cost(fw, chain_len(act_val[fa], act_hi[fa], shared_with, lo, hi, lens, lo[v]), weight[v], live_len(v, lo, hi, lens));
+        let fw = chain_weight(act_val[fa], shared_with, lent_to, weight, hi, lo[v]);
+        cmp = cmp_spill_cost(fw, chain_len(act_val[fa], act_hi[fa], shared_with, lent_to, lo, hi, lens, lo[v]), weight[v], live_len(v, lo, hi, lens));
       }
       if (fa >= 0 && (cmp < 0 || cmp == 0 && act_hi[fa] > hi[v])) {
         let taken = act_reg[fa];
         let ev = act_val[fa];
         let first = true;
         while (ev >= 0) {
-          if (first || still_holds(ev, hi, lo[v])) {
+          if (first && heads(ev, lent_to, hi, lo[v]) || still_holds(ev, hi, lo[v])) {
             reg_of = reg_of.with(ev, -1);
           }
           first = false;
@@ -2224,7 +2391,8 @@ pub function spill_slot(code: i32): i32 {
 }
 
 // One line per value with a home: its interval, its spill weight and the
-// register index or frame slot it took. FERN_SSA_ALLOC=<function> prints it.
+// register index or frame slot it took. FERN_SSA_ALLOC=<function> prints it,
+// and `*` prints each function.
 pub function print_alloc(f: SFunc, a: Alloc): string {
   return print_alloc_costs(f, a, SpillCosts { fold_alu_rhs: false });
 }
@@ -2769,11 +2937,26 @@ function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
   return ReadSites { start: start, blk: blk, pos: pos, succ_a: succ_a, succ_b: succ_b, phi_end: phi_end, nparams: f.nparams };
 }
 
-// reads are the operands of v's definition: the emitter can write v before it
-// reads them, so none of them can hold the register v takes.
 // phi marks each phi and each value a phi reads: an edge copy writes outside
-// the intervals, so those values take no part in a lend.
-struct Lender { cbase: i32, sat: i32, cabi: i32, abi_ok: boolean, reads: i32[], phi: boolean[] }
+// the intervals, so those values lend no register. keeps marks the values
+// that borrow none.
+struct Lender { cbase: i32, sat: i32, cabi: i32, abi_ok: boolean, phi: boolean[], keeps: boolean[], wanted: MateStarts, first: boolean }
+
+// The operands of the definition of a borrower. The emitter lets the result
+// share the home of `a` or of `b`, so those two can lend.
+struct Reads { all: i32[], a: i32, b: i32 }
+
+function phi_results(f: SFunc): boolean[] {
+  let out = __alloc_bool(f.nvals + 1);
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == PHI && ins.result >= 0 && ins.result < f.nvals) {
+        out = out.with(ins.result, true);
+      }
+    }
+  }
+  return out;
+}
 
 function phi_values(f: SFunc): boolean[] {
   let out = __alloc_bool(f.nvals + 1);
@@ -2806,26 +2989,95 @@ function defining_args(f: SFunc, v: i32, def_blk: i32[], def_pos: i32[], blk_sta
   return f.blocks[b].insts[k].args;
 }
 
-// A caller-saved register whose values do not interfere with v: none is live
-// at v's definition, and v is live at none of theirs.
-function borrowable(sites: ReadSites, v: i32, act_val: i32[], act_reg: i32[], ln: Lender, fixed: ssafixed.Table, shared_with: i32[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): Option[i32] {
-  if (ln.phi[v]) {
+// For each value, the start of each value that can take its register: a
+// value that names it as a mate, or whose definition reads it.
+struct MateStarts { start: i32[], lo: i32[] }
+
+function mate_starts(mates: Mates, def_a: i32[], def_b: i32[], lo: i32[], hi: i32[], nvals: i32): MateStarts {
+  let count = __alloc_i32(nvals + 1);
+  for w in 0..nvals {
+    if (hi[w] >= 0) {
+      for m in [mates.hint[w], mates.alt[w], def_a[w], def_b[w]] {
+        if (m >= 0) {
+          count = count.with(m + 1, count[m + 1] + 1);
+        }
+      }
+    }
+  }
+  for m in 0..nvals {
+    count = count.with(m + 1, count[m + 1] + count[m]);
+  }
+  let fill = count;
+  let out = __alloc_i32(count[nvals]);
+  for w in 0..nvals {
+    if (hi[w] >= 0) {
+      for m in [mates.hint[w], mates.alt[w], def_a[w], def_b[w]] {
+        if (m >= 0) {
+          out = out.with(fill[m], lo[w]);
+          fill = fill.with(m, fill[m] + 1);
+        }
+      }
+    }
+  }
+  return MateStarts { start: count, lo: out };
+}
+
+// A mate of a value of the chain starts after `from` and not after `to`. It
+// takes the register of the chain only when no other value holds it then.
+function chain_wanted(ms: MateStarts, holder: i32, shared_with: i32[], from: i32, to: i32): boolean {
+  if (ms.start.len() == 0) {
+    return false;
+  }
+  let m = holder;
+  while (m >= 0) {
+    for i in ms.start[m]..ms.start[m + 1] {
+      if (ms.lo[i] > from && ms.lo[i] <= to) {
+        return true;
+      }
+    }
+    m = shared_with[m];
+  }
+  return false;
+}
+
+// A register from `first` to before `last` has values that hold it to `until`
+// or longer.
+function held_until(act_reg: i32[], act_hi: i32[], first: i32, last: i32, until: i32): boolean {
+  for ai in 0..act_reg.len() {
+    if (act_reg[ai] >= first && act_reg[ai] < last && act_hi[ai] >= until) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// A register of the pool of `ln` whose values do not interfere with v: none is
+// live at v's definition, and v is live at none of theirs. With `first`, v
+// takes the first such register. Without it, the values of the register hold
+// it to the end of v or longer, so v keeps it from no later value, and v
+// takes the one that comes free first.
+function borrowable(sites: ReadSites, v: i32, act_val: i32[], act_reg: i32[], act_hi: i32[], ln: Lender, reads: Reads, fixed: ssafixed.Table, shared_with: i32[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): Option[i32] {
+  if (ln.keeps[v]) {
     return None;
   }
+  let best: i32 = -1;
   for ai in 0..act_val.len() {
     let hr = act_reg[ai];
     let open = hr >= ln.cbase && hr < ln.sat && (hr != ln.cabi || ln.abi_ok) && ssafixed.allows(fixed, hr, lo[v], hi[v]);
-    if (open && chain_dead_at_def(sites, act_val[ai], v, shared_with, lo, hi, def_blk, def_pos) && dead_at_chain(sites, v, act_val[ai], shared_with, ln.reads, ln.phi, lo, hi, def_blk, def_pos)) {
-      return Some(ai);
+    if (open && (ln.first || act_hi[ai] >= hi[v]) && (best < 0 || !ln.first && act_hi[ai] < act_hi[best]) && !chain_wanted(ln.wanted, act_val[ai], shared_with, lo[v], hi[v]) && chain_dead_at_def(sites, act_val[ai], v, shared_with, lo, hi, def_blk, def_pos) && dead_at_chain(sites, v, act_val[ai], shared_with, reads, ln.phi, lo, hi, def_blk, def_pos)) {
+      best = ai;
     }
   }
-  return None;
+  if (best < 0) {
+    return None;
+  }
+  return Some(best);
 }
 
-function dead_at_chain(sites: ReadSites, v: i32, holder: i32, shared_with: i32[], reads: i32[], phi: boolean[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): boolean {
+function dead_at_chain(sites: ReadSites, v: i32, holder: i32, shared_with: i32[], reads: Reads, phi: boolean[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): boolean {
   let m = holder;
   while (m >= 0) {
-    if (hi[m] >= lo[v] && (phi[m] || util.index_of_i32(reads, m) >= 0 || live_at_def(sites, v, m, def_blk, def_pos))) {
+    if (hi[m] >= lo[v] && (phi[m] || m != reads.a && m != reads.b && util.index_of_i32(reads.all, m) >= 0 || live_at_def(sites, v, m, def_blk, def_pos))) {
       return false;
     }
     m = shared_with[m];
@@ -2850,7 +3102,8 @@ function live_near(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i3
     return 1;
   }
   let rb = def_blk[r];
-  if (rb == ab && def_pos[r] > def_pos[a] && def_pos[r] >= sites.phi_end[rb]) {
+  // The entry writes a parameter, not its instruction.
+  if (r >= sites.nparams && rb == ab && def_pos[r] > def_pos[a] && def_pos[r] >= sites.phi_end[rb]) {
     return 0;
   }
   let first = sites.start[r];
@@ -2874,10 +3127,11 @@ function live_near(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i3
 }
 
 // The entry of a function writes each parameter at one time, so two
-// parameters are live at the definition of each other.
+// parameters are live at the definition of each other. No other value is
+// live at the entry.
 function live_at_def(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i32[]): boolean {
-  if (r < sites.nparams && a < sites.nparams) {
-    return true;
+  if (a >= 0 && a < sites.nparams) {
+    return r < sites.nparams;
   }
   let near = live_near(sites, r, a, def_blk, def_pos);
   if (near != 2) {
@@ -3057,7 +3311,13 @@ function slot_free_at(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: 
   return slot_end[s] < from && !kept_for_mate(wanted_by, reg_of, holder[s], v);
 }
 
-pub struct Imms { is_imm: boolean[], konst: boolean[], value: i64[], sym_at: i32[], syms: string[] }
+// `nibble` marks each value whose lanes of 8 bits are all below 16. It is
+// empty when the function has no swizzle.
+pub struct Imms { is_imm: boolean[], konst: boolean[], value: i64[], sym_at: i32[], syms: string[], nibble: boolean[] }
+
+pub function lane_nibble(imm: Imms, v: i32): boolean {
+  return v >= 0 && v < imm.nibble.len() && imm.nibble[v];
+}
 
 pub function imm_sym(imm: Imms, v: i32): string {
   let k = imm.sym_at[v];
@@ -3116,7 +3376,56 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
       is_imm = is_imm.with(t.cond, false);
     }
   }
-  return Imms { is_imm: is_imm, konst: konst, value: value, sym_at: __alloc_i32(f.nvals), syms: [] };
+  let nibble = lane_nibbles(f, konst, value);
+  return Imms { is_imm: is_imm, konst: konst, value: value, sym_at: __alloc_i32(f.nvals), syms: [], nibble: nibble };
+}
+
+function has_swizzle(f: SFunc): boolean {
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == BINARY && ins.str.starts_with("viswizzle")) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function lane_nibbles(f: SFunc, konst: boolean[], value: i64[]): boolean[] {
+  if (!has_swizzle(f)) {
+    return [];
+  }
+  let out = __alloc_bool(f.nvals);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for blk in f.blocks {
+      for ins in blk.insts {
+        if (ins.result >= 0 && !out[ins.result] && lane_inst(ins) && nibble_result(ins, out, konst, value)) {
+          out = out.with(ins.result, true);
+          changed = true;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function nibble_result(ins: SInst, nibble: boolean[], konst: boolean[], value: i64[]): boolean {
+  let b = lane_base(ins.str);
+  if (b == "vand") {
+    return nibble[ins.args[0]] || nibble[ins.args[1]];
+  }
+  if (ins.imm != 8) {
+    return false;
+  }
+  if (b == "visplat") {
+    return konst[ins.args[0]] && (value[ins.args[0]] & 255i64) < 16i64;
+  }
+  if (b == "vishru") {
+    return konst[ins.args[1]] && (value[ins.args[1]] & 7i64) >= 4i64;
+  }
+  return b == "viminu" && (nibble[ins.args[0]] || nibble[ins.args[1]]);
 }
 
 // Operand `a` is the value of a store of 4 or 8 bytes.
@@ -5145,7 +5454,7 @@ pub function form(f: SFunc, owned_frame_views: boolean): Formed {
     g = pruned.f;
     trimmed = pruned.repl;
   }
-  g = sink_loads(combine_byte_stores(zero_extended_indices(drop_inert_counts(g, owned_frame_views))));
+  g = sink_loads(combine_byte_stores(zero_extended_indices(unsigned_group_checks(drop_inert_counts(g, owned_frame_views)))));
   return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), plain.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl), trimmed) };
 }
 
@@ -5804,6 +6113,121 @@ function inert_count(ins: SInst, defs: SInst[], uses: i32[], owned_frame_views: 
     return tagged_frame_view(defs, ins.args[0]);
   }
   return frame_view_at(defs, ins.args[0]);
+}
+
+struct GroupIndex { lo: i32, span: i32, chain: i32 }
+
+// The parts of the index `(lo + span) | (lo >> 31)` of a check with no read,
+// or lo -1. chain is the count of reads of lo that the index alone keeps.
+function group_index(defs: SInst[], uses: i32[], ins: SInst): GroupIndex {
+  let none = GroupIndex { lo: -1, span: 0, chain: 0 };
+  if (ins.kind_tag != ARR_AT && ins.kind_tag != STR_AT || ins.imm != 2 || ins.args.len() < 2) {
+    return none;
+  }
+  let join = def_of(defs, ins.args[1]);
+  if (join.kind_tag != BINARY || join.str != "or" || join.args.len() != 2 || uses[join.result] != 1) {
+    return none;
+  }
+  for k in 0..2 {
+    let sign = def_of(defs, join.args[1 - k]);
+    if (sign.kind_tag != BINARY || sign.str != "shr_s" || sign.args.len() != 2 || !const_is(defs, sign.args[1], 31i64)) {
+      continue;
+    }
+    let lo = sign.args[0];
+    let top = def_of(defs, join.args[k]);
+    let chain = if (uses[sign.result] == 1) { 1 } else { 0 };
+    let sole = uses[top.result] == 1;
+    if (signed_extension(top)) {
+      top = def_of(defs, top.args[0]);
+      sole = sole && uses[top.result] == 1;
+    }
+    if (top.kind_tag != BINARY || top.str != "add" || top.args.len() != 2 || top.args[0] != lo) {
+      continue;
+    }
+    let span = def_of(defs, top.args[1]);
+    if (span.kind_tag == CONST_INT && span.imm >= 0 && span.imm <= 65536) {
+      return GroupIndex { lo: lo, span: span.imm, chain: if (sole) { chain + 1 } else { chain } };
+    }
+  }
+  return none;
+}
+
+function has_check_only(f: SFunc): boolean {
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if ((ins.kind_tag == ARR_AT || ins.kind_tag == STR_AT) && ins.imm == 2) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function reads_of(insts: SInst[], from: i32, v: i32): i32 {
+  let n = 0;
+  for k in from..insts.len() {
+    for a in insts[k].args {
+      if (a == v) {
+        n += 1;
+      }
+    }
+  }
+  return n;
+}
+
+// A check with no read takes the index `(lo + span) | (lo >> 31)`. That index
+// is not below a length when lo is negative or lo + span is past the end. The
+// zero-extended lo plus span gives the same answer, because no length reaches
+// 2^31. After the check lo is not negative, so each later read of lo in the
+// block takes the zero-extended value when that leaves lo with no read.
+pub function unsigned_group_checks(f: SFunc): SFunc {
+  if (!has_check_only(f)) {
+    return f;
+  }
+  let defs = inst_defs(f);
+  let uses = use_counts(f);
+  let nvals = f.nvals;
+  let blocks: SBlock[] = [];
+  for blk in f.blocks {
+    let insts: SInst[] = [];
+    let lo = -1;
+    let wide = -1;
+    for k in 0..blk.insts.len() {
+      let ins = blk.insts[k];
+      if (lo >= 0 && ins.kind_tag != PHI) {
+        for a in 0..ins.args.len() {
+          if (ins.args[a] == lo) {
+            ins = SInst { ...ins, args: ins.args.with(a, wide) };
+          }
+        }
+      }
+      let g = group_index(defs, uses, ins);
+      if (g.lo < 0) {
+        insts = insts.append(ins);
+        continue;
+      }
+      let src = g.lo;
+      if (signed_extension(def_of(defs, src))) {
+        src = def_of(defs, src).args[0];
+      }
+      insts = insts.append(SInst { kind_tag: UNARY, result: nvals, args: [src], imm: 0, str: "int_cast:u32" });
+      insts = insts.append(SInst { kind_tag: CONST_INT, result: nvals + 1, args: [], imm: g.span, str: "" });
+      insts = insts.append(SInst { kind_tag: BINARY, result: nvals + 2, args: [nvals, nvals + 1], imm: 64, str: "add" });
+      insts = insts.append(SInst { ...ins, args: ins.args.with(1, nvals + 2) });
+      if (reads_of(blk.insts, k + 1, g.lo) == uses[g.lo] - g.chain) {
+        lo = g.lo;
+        wide = nvals;
+      } else {
+        lo = -1;
+      }
+      nvals += 3;
+    }
+    blocks = blocks.append(SBlock { ...blk, insts: insts });
+  }
+  if (nvals == f.nvals) {
+    return f;
+  }
+  return prune_dead(SFunc { ...f, blocks: blocks, nvals: nvals });
 }
 
 // An index reads a sign- and a zero-extended i32 the same: no length reaches 2^31, so a negative index fails either way.
@@ -6500,7 +6924,7 @@ function source_facts(f: SFunc, def_b: i32[], def_k: i32[], ins: SInst): i32 {
     return EXT_BYTE;
   }
   if (ins.kind_tag == ARR_AT || ins.kind_tag == STR_AT) {
-    return if (ins.imm == 2) { 0 } else { elem_facts(ins) };
+    return if (ins.imm == 2 || ins.imm == 3) { 0 } else { elem_facts(ins) };
   }
   if (ins.kind_tag == LD_AT) {
     return elem_facts(ins);
@@ -6548,11 +6972,9 @@ pub function drop_low_wraps(f: SFunc): Formed {
   let def_k = __alloc_i32(f.nvals);
   let required = __alloc_i32(f.nvals);
   let prop = __alloc_bool(f.nvals);
-  let i = 0;
-  while (i < f.nvals) {
+  for i in 0..f.nvals {
     def_b = def_b.with(i, -1);
     def_k = def_k.with(i, -1);
-    i += 1;
   }
   let wraps: i32[] = [];
   let wrap_arg: i32[] = [];
@@ -7238,34 +7660,6 @@ pub function low_word_pair(blk: SBlock, ii: i32, uses: i32[]): boolean {
   return unsigned_extension(w) && w.args[0] == op.result && op.result >= 0 && op.result < uses.len() && uses[op.result] == 1;
 }
 
-pub function carry_triple(blk: SBlock, ii: i32, uses: i32[]): boolean {
-  if (ii < 0 || ii + 2 >= blk.insts.len()) {
-    return false;
-  }
-  let sum = blk.insts[ii];
-  let c = blk.insts[ii + 1];
-  let reader = blk.insts[ii + 2];
-  if (c.kind_tag != CARRY || c.args.len() != 2 || sum.kind_tag != BINARY || reader.kind_tag != BINARY || sum.args.len() != 2 || reader.args.len() != 2) {
-    return false;
-  }
-  let sub = c.imm == 1;
-  let op: string = if (sub) { "sub" } else { "add" };
-  if (sum.str != op || reader.str != op || uses[c.result] != 1) {
-    return false;
-  }
-  let same = sum.args[0] == c.args[0] && sum.args[1] == c.args[1];
-  if (!sub && sum.args[0] == c.args[1] && sum.args[1] == c.args[0]) {
-    same = true;
-  }
-  if (!same) {
-    return false;
-  }
-  if (sub) {
-    return reader.args[1] == c.result && reader.args[0] != c.result;
-  }
-  return reader.args[0] == c.result != (reader.args[1] == c.result);
-}
-
 pub function fuse_carries(f: SFunc): SFunc {
   if (!has_carry_shift(f)) {
     return f;
@@ -7275,7 +7669,353 @@ pub function fuse_carries(f: SFunc): SFunc {
   if (!t.changed) {
     return f;
   }
-  return prune_dead(t.f);
+  return gather_carries(prune_dead(t.f));
+}
+
+// The roles of the instructions of a carry chain. The emitters keep the
+// carry of a chain in the flags, so no instruction between two members of a
+// chain can change the flags.
+//
+// - HEAD is an add or a subtract that makes the flags for the carry after it.
+// - FLAG is a carry that stays in the flags. KEEP also gets a register,
+//   because a reader that is not next in the chain uses it.
+// - SKIP and LINK are the two adds of `x + y + carry`. The second one adds
+//   the three operands with the carry of the flags.
+// - READ adds a carry to one operand.
+pub const CARRY_HEAD: i32 = 1;
+
+pub const CARRY_FLAG: i32 = 2;
+
+pub const CARRY_KEEP: i32 = 3;
+
+pub const CARRY_SKIP: i32 = 4;
+
+pub const CARRY_LINK: i32 = 5;
+
+pub const CARRY_READ: i32 = 6;
+
+// The role of each value in a carry chain, or an empty array for a function
+// with no carry.
+pub function carry_roles(f: SFunc, uses: i32[]): i32[] {
+  if (!has_carry(f)) {
+    return [];
+  }
+  let roles = __alloc_i32(f.nvals);
+  for blk in f.blocks {
+    roles = block_carry_roles(blk.insts, uses, roles);
+  }
+  return roles;
+}
+
+pub function carry_role(roles: i32[], ins: SInst): i32 {
+  if (ins.result < 0 || ins.result >= roles.len()) {
+    return 0;
+  }
+  return roles[ins.result];
+}
+
+// The instruction at `ii` is a carry that reads the flags of the instruction before it.
+pub function carry_fed(roles: i32[], blk: SBlock, ii: i32): boolean {
+  if (ii >= blk.insts.len()) {
+    return false;
+  }
+  let role = carry_role(roles, blk.insts[ii]);
+  return role == CARRY_FLAG || role == CARRY_KEEP;
+}
+
+function has_carry(f: SFunc): boolean {
+  for blk in f.blocks {
+    if (block_has_carry(blk)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function block_has_carry(blk: SBlock): boolean {
+  for ins in blk.insts {
+    if (ins.kind_tag == CARRY) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function block_carry_roles(a: SInst[], uses: i32[], roles: i32[]): i32[] {
+  for i in 1..a.len() {
+    if (sum_of(a[i - 1], a[i])) {
+      let role = roles[a[i - 1].result];
+      if (role == 0) {
+        roles = roles.with(a[i - 1].result, CARRY_HEAD);
+      }
+      if (role == 0 || role == CARRY_READ) {
+        roles = chain_roles(a, i, uses, roles);
+      }
+    }
+  }
+  return roles;
+}
+
+// The carry at `first` is in the flags. Its role and the roles of the
+// instructions that read the flags after it.
+function chain_roles(a: SInst[], first: i32, uses: i32[], roles: i32[]): i32[] {
+  let at = first;
+  while (at >= 0) {
+    let c = a[at];
+    let read = 0;
+    let next = -1;
+    if (at + 2 < a.len() && link_of(a[at + 1], a[at + 2], c, uses)) {
+      roles = roles.with(a[at + 1].result, CARRY_SKIP).with(a[at + 2].result, CARRY_LINK);
+      read = 1;
+      if (at + 3 < a.len() && carry_out_of(a[at + 3], a[at + 1], c)) {
+        read = 2;
+        next = at + 3;
+      }
+    } else if (at + 1 < a.len() && reader_of(a[at + 1], c)) {
+      roles = roles.with(a[at + 1].result, CARRY_READ);
+      read = if (at + 2 < a.len() && sum_of(a[at + 1], a[at + 2])) { 2 } else { 1 };
+    }
+    roles = roles.with(c.result, if (uses[c.result] > read) { CARRY_KEEP } else { CARRY_FLAG });
+    at = next;
+  }
+  return roles;
+}
+
+function carry_op(c: SInst): string {
+  return if (c.imm == 1) { "sub" } else { "add" };
+}
+
+function wide_op(ins: SInst, op: string): boolean {
+  return ins.kind_tag == BINARY && ins.str == op && ins.imm == 64 && ins.args.len() == 2;
+}
+
+// `ins` has the operands x and y, in that order for a subtract.
+function operands_are(ins: SInst, x: i32, y: i32): boolean {
+  if (ins.args[0] == x && ins.args[1] == y) {
+    return true;
+  }
+  return ins.str == "add" && ins.args[0] == y && ins.args[1] == x;
+}
+
+// `c` is the carry of the two operands of `sum`.
+function sum_of(sum: SInst, c: SInst): boolean {
+  return c.kind_tag == CARRY && c.args.len() == 2 && wide_op(sum, carry_op(c)) && operands_are(sum, c.args[0], c.args[1]);
+}
+
+// `r` adds the carry `c` to one operand, or subtracts the borrow `c` from it.
+function reader_of(r: SInst, c: SInst): boolean {
+  return wide_op(r, carry_op(c)) && r.args[1 - carry_at(r, c)] != c.result && r.args[carry_at(r, c)] == c.result;
+}
+
+function carry_at(r: SInst, c: SInst): i32 {
+  return if (r.str == "add" && r.args[0] == c.result) { 0 } else { 1 };
+}
+
+// `t` and `s` are the two adds of `x + y + c`, and only `s` reads `t`.
+function link_of(t: SInst, s: SInst, c: SInst, uses: i32[]): boolean {
+  let op = carry_op(c);
+  if (!wide_op(t, op) || !wide_op(s, op) || uses[t.result] != 1 || t.args[0] == c.result || t.args[1] == c.result) {
+    return false;
+  }
+  return operands_are(s, t.result, c.result);
+}
+
+// `out` is the carry of the operands of `t` and of the carry `c`.
+function carry_out_of(out: SInst, t: SInst, c: SInst): boolean {
+  return out.kind_tag == CARRY && out.args.len() == 3 && out.imm == c.imm && out.args[2] == c.result && operands_are(t, out.args[0], out.args[1]);
+}
+
+// Puts the members of each carry chain of a block next to each other. Each
+// instruction that moves is an add, a subtract or a carry, which has no
+// effect, and each one stays after the instructions that make its operands.
+function gather_carries(f: SFunc): SFunc {
+  let uses = use_counts(f);
+  let nblocks: SBlock[] = [];
+  for blk in f.blocks {
+    if (block_has_carry(blk)) {
+      nblocks = nblocks.append(SBlock { ...blk, insts: chained(carries_after_sums(blk.insts), uses) });
+    } else {
+      nblocks = nblocks.append(blk);
+    }
+  }
+  return SFunc { ...f, blocks: nblocks };
+}
+
+function carries_after_sums(a: SInst[]): SInst[] {
+  for i in 1..a.len() {
+    let c = a[i];
+    let j = sum_before(a, i);
+    if (j >= 0 && j + 1 != i && !sum_of(a[j], a[j + 1])) {
+      a = arranged(a, a[j].result, [c.result], false);
+    }
+  }
+  return a;
+}
+
+function sum_before(a: SInst[], at: i32): i32 {
+  if (a[at].kind_tag != CARRY) {
+    return -1;
+  }
+  for j in 0..at {
+    if (sum_of(a[j], a[at])) {
+      return j;
+    }
+  }
+  return -1;
+}
+
+// `moved` names instructions by result. `before` puts them before the
+// instruction `anchor`, and they go after it when `before` is not set.
+struct CarryMove { moved: i32[], anchor: i32, before: boolean }
+
+function no_carry_move(): CarryMove {
+  return CarryMove { moved: [], anchor: -1, before: false };
+}
+
+function chained(a: SInst[], uses: i32[]): SInst[] {
+  let tail = -1;
+  let sunk: i32[] = [];
+  let p = 0;
+  while (p < a.len()) {
+    let c = a[p];
+    if (c.kind_tag == CARRY && (c.result == tail || p > 0 && sum_of(a[p - 1], c))) {
+      let m = link_move(a, p, uses);
+      if (m.moved.len() == 0) {
+        m = reader_move(a, p, sunk);
+      }
+      if (m.moved.len() > 0) {
+        a = arranged(a, m.anchor, m.moved, m.before);
+      }
+      if (m.moved.len() == 3) {
+        tail = m.moved[2];
+      }
+      if (m.before) {
+        sunk = sunk.append(c.result);
+        p -= 2;
+      } else {
+        p = made_at(a, c.result);
+      }
+    }
+    p += 1;
+  }
+  return a;
+}
+
+function made_at(a: SInst[], v: i32): i32 {
+  for i in 0..a.len() {
+    if (a[i].result == v) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function listed(ids: i32[], v: i32): boolean {
+  for id in ids {
+    if (id == v) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function arranged(a: SInst[], anchor: i32, moved: i32[], before: boolean): SInst[] {
+  let out: SInst[] = [];
+  for ins in a {
+    if (ins.result == anchor && before) {
+      out = with_made(out, a, moved);
+    }
+    if (ins.result < 0 || !listed(moved, ins.result)) {
+      out = out.append(ins);
+    }
+    if (ins.result == anchor && !before) {
+      out = with_made(out, a, moved);
+    }
+  }
+  return out;
+}
+
+function with_made(out: SInst[], a: SInst[], moved: i32[]): SInst[] {
+  for v in moved {
+    out = out.append(a[made_at(a, v)]);
+  }
+  return out;
+}
+
+// `v` has its value before the instruction at `p`.
+function made_before(a: SInst[], v: i32, p: i32): boolean {
+  let at = made_at(a, v);
+  return at < p;
+}
+
+// The instruction at `i` reads the flags of a carry before it that is not `except`.
+function reads_flags(a: SInst[], i: i32, except: i32): boolean {
+  for back in 1..3 {
+    if (i >= back && a[i - back].kind_tag == CARRY && a[i - back].result != except && listed(a[i].args, a[i - back].result)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The two adds of `x + y + c` for the carry `c` at `p`, and the carry of that sum when the block has it.
+function link_move(a: SInst[], p: i32, uses: i32[]): CarryMove {
+  let c = a[p];
+  for q in p + 1..a.len() {
+    let s = a[q];
+    if (!wide_op(s, carry_op(c)) || !listed(s.args, c.result)) {
+      continue;
+    }
+    let ti = made_at(a, s.args[1 - carry_at(s, c)]);
+    if (ti < 0 || !link_of(a[ti], s, c, uses) || reads_flags(a, ti, -1) || sum_of(a[ti], a[ti + 1])) {
+      continue;
+    }
+    if (ti > p && !(made_before(a, a[ti].args[0], p) && made_before(a, a[ti].args[1], p))) {
+      continue;
+    }
+    let moved: i32[] = [a[ti].result, s.result];
+    for out in a {
+      if (carry_out_of(out, a[ti], c)) {
+        return CarryMove { moved: moved.append(out.result), anchor: c.result, before: false };
+      }
+    }
+    return CarryMove { moved: moved, anchor: c.result, before: false };
+  }
+  return no_carry_move();
+}
+
+// The reader of the carry `c` at `p` goes after `c`, with the carry of its
+// own sum. When an operand of the reader comes later, the sum and `c` go down
+// to the reader, one time for each carry.
+function reader_move(a: SInst[], p: i32, sunk: i32[]): CarryMove {
+  let c = a[p];
+  for q in p + 1..a.len() {
+    let r = a[q];
+    if (!reader_of(r, c) || reads_flags(a, q, c.result)) {
+      continue;
+    }
+    if (made_before(a, r.args[1 - carry_at(r, c)], p)) {
+      let moved: i32[] = [r.result];
+      if (q + 1 < a.len() && sum_of(r, a[q + 1])) {
+        moved = moved.append(a[q + 1].result);
+      }
+      return CarryMove { moved: moved, anchor: c.result, before: false };
+    }
+    if (c.args.len() == 2 && !listed(sunk, c.result) && !reads_flags(a, p - 1, -1) && !read_between(a, p, q)) {
+      return CarryMove { moved: [a[p - 1].result, c.result], anchor: r.result, before: true };
+    }
+  }
+  return no_carry_move();
+}
+
+// An instruction between `p` and `q` reads the carry at `p` or the sum before it.
+function read_between(a: SInst[], p: i32, q: i32): boolean {
+  for k in p + 1..q {
+    if (listed(a[k].args, a[p].result) || listed(a[k].args, a[p - 1].result)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function has_carry_shift(f: SFunc): boolean {
@@ -7343,6 +8083,9 @@ function zero_one(defs: SInst[], v: i32): boolean {
 }
 
 function carry_of(defs: SInst[], shr: SInst): SInst {
+  if (wide_op(shr, "or") || wide_op(shr, "add")) {
+    return full_carry(defs, shr);
+  }
   if (!is_top_bit(defs, shr)) {
     return no_inst();
   }
@@ -7355,6 +8098,42 @@ function carry_of(defs: SInst[], shr: SInst): SInst {
     m = carry_halves(defs, shr, o.args[1], o.args[0]);
   }
   return m;
+}
+
+// `carry(x, y) | carry(x + y, c)` is the carry of `x + y + c` when `c` is 0
+// or 1. The two halves are not 1 together, so their sum is the same carry.
+function full_carry(defs: SInst[], join: SInst): SInst {
+  let a = half_carry(defs, join.args[0]);
+  let b = half_carry(defs, join.args[1]);
+  if (a.kind_tag == NONE || b.kind_tag == NONE || a.imm != b.imm) {
+    return no_inst();
+  }
+  let m = carry_of_halves(defs, join, a, b);
+  return if (m.kind_tag == NONE) { carry_of_halves(defs, join, b, a) } else { m };
+}
+
+function half_carry(defs: SInst[], v: i32): SInst {
+  let d = copy_source(defs, v);
+  if (!is_top_bit(defs, d)) {
+    return no_inst();
+  }
+  let m = carry_of(defs, d);
+  return if (m.kind_tag == CARRY && m.args.len() == 2) { m } else { no_inst() };
+}
+
+function carry_of_halves(defs: SInst[], join: SInst, first: SInst, second: SInst): SInst {
+  let x = first.args[0];
+  let y = first.args[1];
+  for k in 0..2 {
+    let inner = wide_of(defs, second.args[k], carry_op(first));
+    if (inner.kind_tag == NONE || !zero_one(defs, second.args[1 - k]) || first.imm == 1 && k == 1) {
+      continue;
+    }
+    if (copy_root(defs, inner.args[0]) == x && copy_root(defs, inner.args[1]) == y || first.imm == 0 && same_pair(defs, inner.args[0], inner.args[1], x, y)) {
+      return SInst { kind_tag: CARRY, result: join.result, args: [x, y, second.args[1 - k]], imm: first.imm, str: "" };
+    }
+  }
+  return no_inst();
 }
 
 function carry_halves(defs: SInst[], shr: SInst, p: i32, q: i32): SInst {
@@ -7556,7 +8335,7 @@ function inst_has_effect(k: i32): boolean {
   if (k < PRINT) {
     return k == PARAM || k == CALL || k == CALL_INDIRECT || k == ALLOC || k == STORE_ELEM || k == CONCAT;
   }
-  return k != SELECT && k != LD_AT && k != FN_ADDR && k != SHAPE_ADDR && k != STR_LIT && k != LD_IDX && k != LD_BYTE && k != AGG_LIT && k != SYM_ADDR && k != TERNARY;
+  return k != SELECT && k != CARRY && k != LD_AT && k != FN_ADDR && k != SHAPE_ADDR && k != STR_LIT && k != LD_IDX && k != LD_BYTE && k != AGG_LIT && k != SYM_ADDR && k != TERNARY && k != FRAME_CELL;
 }
 
 function prune_roots(f: SFunc): i32[] {
@@ -7584,12 +8363,10 @@ function prune_mark(f: SFunc, work: i32[]): i32[] {
   let def_b = __alloc_i32(f.nvals);
   let def_k = __alloc_i32(f.nvals);
   for bi in 0..f.blocks.len() {
-    let k = 0;
-    while (k < f.blocks[bi].insts.len()) {
+    for k in 0..f.blocks[bi].insts.len() {
       let r = f.blocks[bi].insts[k].result;
       def_b = def_b.with(r, bi + 1);
       def_k = def_k.with(r, k);
-      k += 1;
     }
   }
   let at = 0;
@@ -7778,19 +8555,36 @@ pub function has_phis(f: SFunc, blk_pos: i32[], id: i32): boolean {
   return false;
 }
 
+// The frame slot of each view that lives in the frame, and of each frame
+// cell. The instructions of one cell share one slot.
 pub function view_slots(f: SFunc): i32[] {
   let out: i32[] = [];
   let n = 0;
+  let cells: i32[] = [];
   for blk in f.blocks {
     for ins in blk.insts {
-      if (ins.kind_tag == STR_VIEW) {
-        if (out.len() == 0) {
-          out = util.minus_ones(f.nvals);
+      if (ins.kind_tag != STR_VIEW && ins.kind_tag != FRAME_CELL) {
+        continue;
+      }
+      if (out.len() == 0) {
+        out = util.minus_ones(f.nvals);
+      }
+      let slot = -1;
+      if (ins.kind_tag == FRAME_CELL) {
+        while (cells.len() <= cell_number(ins)) {
+          cells = cells.append(-1);
         }
-        if (ins.imm >= 1) {
-          out = out.with(ins.result, n);
-          n += 1;
-        }
+        slot = cells[cell_number(ins)];
+      }
+      if (ins.kind_tag == STR_VIEW && ins.imm >= 1 || ins.kind_tag == FRAME_CELL && slot < 0) {
+        slot = n;
+        n += 1;
+      }
+      if (ins.kind_tag == FRAME_CELL) {
+        cells = cells.with(cell_number(ins), slot);
+      }
+      if (slot >= 0) {
+        out = out.with(ins.result, slot);
       }
     }
   }

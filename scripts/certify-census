@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# certify-census — count what the emitted-RC certifier cannot decide, and
+# write a metrics report that scripts/ci-check-perf compares with
+# .github/certify-baseline.txt.
+#
+# Usage: certify-census [REPORT]
+#
+#   REPORT  where to write the `metric<TAB>value` report (default: stdout).
+#
+# The certifier refuses a compile only for a definite imbalance or a callee
+# it has no rule for. A value it cannot prove balanced is "unproved", and a
+# function that resumes from a task frame is "skipped". Neither fails a
+# compile, so without this lane either count can grow and nothing reports it.
+# The rows:
+#
+#   x86_64/fern_main.unproved  values unproved over the whole compiler
+#   x86_64/fern_main.skipped   functions skipped over the whole compiler
+#   wasm32/checker.unproved    values unproved over compiler/checker.fern on
+#                              wasm32, where a view in the frame holds a unit
+#   x86_64/checker.refuted     mutants of checker.fern that the certifier
+#   x86_64/checker.weakened    refutes, leaves weaker, or misses
+#   x86_64/checker.missed      (FERN_RC_CERTIFY=mutate in docs/RC-DESIGN.md)
+#
+# A mutant loses one release or one retain, or does one release twice. A
+# missed mutant is an imbalance that the certifier would let through, so a rise
+# in the missed row says that the certifier sees less than it did.
+#
+# The counts come from a static analysis of a deterministic compile, so they
+# repeat to the digit. The subjects are the compiler's own sources, so a change
+# to those sources moves the counts too. Read a move as a question: did the
+# lowering or the certifier change, or did the subject?
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+REPORT="${1:-/dev/stdout}"
+
+# Unconditionally: make rebuilds only what is stale, and a local run must not
+# measure an old binary.
+make bin/fern >&2
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+# fern_main reads its assets from an -embed directory. make lays one out only
+# when it builds bin/fern, and CI can restore bin/fern from a cache instead.
+./scripts/fern-embed-stage "$work/embed"
+
+# census MODE TARGET SUBJECT OUT [ARGS...] — the census lines of one compile.
+# A compile that fails stops the script, because its census covers only part of
+# the subject and would read as an improvement.
+census() {
+  local mode=$1 target=$2 subject=$3 out=$4
+  shift 4
+  if ! FERN_RC_CERTIFY=$mode FERN_RC_CERTIFY_MEMO=0 ./bin/fern-selfhost -target "$target" "$@" \
+    -emit asm -o /dev/null "$PWD/$subject" "$PWD/internal/stdlib" > "$out" 2>&1; then
+    echo "certify-census: the self-host compiler failed on $subject for $target" >&2
+    grep -v 'FERN_RC_CERTIFY: census' "$out" | sed -n '1,20p' >&2
+    exit 1
+  fi
+  if ! grep -q 'FERN_RC_CERTIFY: census' "$out"; then
+    echo "certify-census: no census from $subject for $target" >&2
+    exit 1
+  fi
+}
+
+# sum FIELD FILE — the total of FIELD=N over the census and mutant lines of
+# FILE. For skipped, whose value is a reason, the count of fields.
+sum() {
+  awk -v want="$1" '/FERN_RC_CERTIFY: (census|mutants)/ {
+    for (i = 1; i <= NF; i++) {
+      split($i, kv, "=")
+      if (kv[1] == want) { n += (want == "skipped") ? 1 : kv[2] }
+    }
+  } END { print n + 0 }' "$2"
+}
+
+census report x86-64-linux compiler/fern_main.fern "$work/x86" -embed "$work/embed"
+census report wasm32-wasi compiler/checker.fern "$work/wasm"
+census mutate x86-64-linux compiler/checker.fern "$work/mutants"
+
+{
+  printf 'x86_64/fern_main.unproved\t%s\n' "$(sum unproved "$work/x86")"
+  printf 'x86_64/fern_main.skipped\t%s\n' "$(sum skipped "$work/x86")"
+  printf 'wasm32/checker.unproved\t%s\n' "$(sum unproved "$work/wasm")"
+  printf 'x86_64/checker.refuted\t%s\n' "$(sum refuted "$work/mutants")"
+  printf 'x86_64/checker.weakened\t%s\n' "$(sum weakened "$work/mutants")"
+  printf 'x86_64/checker.missed\t%s\n' "$(sum missed "$work/mutants")"
+} > "$REPORT"

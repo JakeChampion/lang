@@ -97,6 +97,29 @@ function main(): i32 {
 }
 `
 
+// The bytes are what GNU as writes for the same lines. A segment operand with
+// a base register is not encoded.
+func TestSelfHostX86GasFsLoadGroundTruth(t *testing.T) {
+	runX86GasWasmSelfTest(t, "x86_gas_fs_groundtruth", x86GasFsLoadGroundTruthMain)
+}
+
+const x86GasFsLoadGroundTruthMain = `
+function main(): i32 {
+    let a: X86Asm = x86_gas_assemble("    .text\n_start:\n    movq %fs:0, %rax\n    movq %fs:0, %r11\n    movq %fs:16, %rcx\n");
+    if (a.unknown.len() > 0) { return 95; }
+    let exp: i32[] = [100, 72, 139, 4, 37, 0, 0, 0, 0, 100, 76, 139, 28, 37, 0, 0, 0, 0, 100, 72, 139, 12, 37, 16, 0, 0, 0];
+    if (a.text.len() != exp.len()) { return 96; }
+    let i: i32 = 0;
+    while (i < exp.len()) {
+        if (a.text[i] as i32 != exp[i]) { return 97; }
+        i = i + 1;
+    }
+    let bad: X86Asm = x86_gas_assemble("    .text\n_start:\n    movq %fs:8(%rax), %rcx\n");
+    if (bad.unknown.len() != 1) { return 98; }
+    return 0;
+}
+`
+
 func TestSelfHostX86GasCarryChainGroundTruth(t *testing.T) {
 	runX86GasWasmSelfTest(t, "x86_gas_carrychain_groundtruth", x86GasCarryChainGroundTruthMain)
 }

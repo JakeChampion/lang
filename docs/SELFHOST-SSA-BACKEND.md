@@ -74,8 +74,14 @@ lowered function it:
    each of those tests decided (`ssa.split_tokens`), gives each other reuse
    allocation of such a token a branch on the token, so that the side with
    the box writes neither the shape nor a word that the box already has
-   (`ssatokenkeep.keeps`), gives a cons-tail loop with two hole positions
-   one phi for the address of its hole (`ssaholeaddr.addresses`), marks each
+   (`ssatokenkeep.keeps`), turns a branch into a jump when a branch above
+   it tested the same value against zero, below one side of that branch or
+   at the join of its two sides (`ssasame.decided`), gives a cons-tail loop with two hole positions
+   one phi for the address of its hole (`ssaholeaddr.addresses`), gives a
+   cons-tail loop a cell in the frame for its result and starts its hole at
+   the address of that cell, so that a fill is one store with no null test
+   and a return reads the cell (`ssaholecell.cells`, `ssa.FRAME_CELL`), marks
+   each
    reuse
    allocation whose token is null so that it calls the fresh entry of the
    helper with no test (`ssa.fresh_boxes`), then turns each branch whose two arms
@@ -102,7 +108,15 @@ lowered function it:
    after `cmn`, `cmp`, `adcs` or `sbcs` and x86-64 after `add`, `sub`, `adc`
    or `sbb`. An incoming c must be 0 or 1, a shift right by 63, an and
    with 1 or another carry, for the flags to agree with the formula. P-256's
-   field multiply takes 20 ns in place of 31 ns on Apple Silicon. The step
+   field multiply takes 20 ns in place of 31 ns on Apple Silicon. The
+   or and the sum of the two half carries `carry(x, y)` and
+   `carry(x + y, c)` become the one carry of `x + y + c`. The step then
+   puts the members of a carry chain next to each other in their block: a
+   sum, its carry, and the add that reads that carry. `ssa.carry_roles`
+   gives each member a role, and the emitters keep the carry in the flags
+   from one member to the next, so a multi-word add is one `add` and then
+   `adc` for each word (`adds` and `adcs` on arm64). A carry gets a
+   register only when a reader outside the chain uses it (#15728). The step
    then lets a call return from its own block when its result reaches the
    return only through joins (`ssa.return_calls`): the last operand of an
    `&&` or an `||` that the function returns is then a tail call;
@@ -125,8 +139,8 @@ stderr, one line per function whose lift or emit took over 200 ms, with both
 times and its op and slot counts. `FERN_SSA_ALLOC=<function>` prints that
 function's register form, each block with its position and whether it is
 cold, each call with its cold kind, and each value's interval, spill weight
-and home (`ssa.print_alloc`). Nothing about the emitted program changes
-with it.
+and home (`ssa.print_alloc`). `FERN_SSA_ALLOC=*` prints each function of
+the module. Nothing about the emitted program changes with it.
 
 `FERN_SSA_DENY=<mask>` keeps the allocator off each register whose bit is
 set, on x86-64 and on arm64. The bit of a register is its allocator index.
@@ -554,8 +568,9 @@ as zero.
 `ssa.zero_extended_indices` makes an i32 sign extension a
 zero-extension when only array indices read it. A byte view index is a
 zero-extension too (`ssabytes`). No length reaches 2^31, so a negative index
-still fails the unsigned bounds check. The sum that makes an index is then one
-`leal`.
+still fails the unsigned bounds check. The sign test of a read that a guard
+proves below the length (`ir.sign_only`) reads the low half of the index for
+the same reason. The sum that makes an index is then one `leal`.
 
 Division,
 a shift by a register count and the table shared with the stack machine
@@ -597,6 +612,33 @@ not register pressure. The order to take that in:
    subset that worked on the lifted function saved 1.2-1.9% of instructions
    for 20-22% more compile time
    (`docs/ssa-log/2026-09-17-the-optimiser-costs-more-than-it-saves.md`).
+
+### The frame split
+
+A function whose frame only saves registers makes that frame on the paths
+that need it (`ssa.frame_split`). On x86-64 that is a function with a bare
+frame. On arm64 it is a function with no slot. A profile build and a build
+with the canary make the frame at the entry.
+
+- An early block runs before the frame. It has only moves, loads, constants
+  and integer operations that cannot trap, and no value of the block has a
+  home that the frame saves. Each predecessor of an early block is early.
+- A site is a block that is not early and has an early predecessor. Each
+  predecessor of a site is early. The emitter writes the saves at the start
+  of a site, so each path makes the frame one time.
+- A return in an early block is a `ret` alone.
+- A parameter whose home the frame saves is a late parameter. In the early
+  blocks it stays in the register of its argument, and each site moves it to
+  its home (`EarlyHomes`). No early block writes that register.
+- The split is empty unless an early block returns. The CFI rows follow the
+  text: the entry state is remembered, and each block restores it or states
+  the rows of the frame.
+
+- The edges are the edges that the emitter writes: a jump to a block that
+  only passes it on goes to the end of that chain (`ssa.forward_target`).
+
+`TestSelfHostFrameSplit` pins the shape on the two ISAs, and
+`TestSelfHostSSAFrameSplit` checks the split of graphs made by hand.
 
 ### Cold calls
 

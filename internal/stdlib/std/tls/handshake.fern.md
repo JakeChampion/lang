@@ -3222,6 +3222,28 @@ pub function (s: Server) read_alerting(input: [u8]): Result[ServerStep, Refusal]
   return Err(Refusal { error: Misuse("read"), alert: [] });
 }
 
+// The error of a record header that no record can have: a type that is not one, or a length over the limit.
+// A caller that waits for the whole record asks this first, so that it does not wait for bytes that do not come.
+pub function header_error(header: [u8]): Option[HandshakeError] {
+  match (record.framed_end(header)) {
+    Ok(_) => {
+      return None;
+    },
+    Err(e) => {
+      return Some(Record(e));
+    }
+  }
+  return None;
+}
+
+// header_error for a server, with the alert that it sends.
+pub function (s: Server) header_refusal(header: [u8]): Option[Refusal] {
+  if let Some(error) = header_error(header) {
+    return Some(Refusal { error: error, alert: __sealed_alert(s.conn.write, s.conn.writing == 0 || s.conn.kernel, s.conn.quic, false, error) });
+  }
+  return None;
+}
+
 function __server_read(s: Server, input: [u8]): Result[ServerStep, HandshakeError] {
   if (s.state == S_CLOSED) {
     return Err(Misuse("read after close"));

@@ -347,6 +347,11 @@ pub function lane_span_proven(): i32 {
   return 3;
 }
 
+// A guard proves the index of a read below the length, and not its sign.
+pub function below_proven(): i32 {
+  return 4;
+}
+
 pub function tuple_get(): i32 {
   return -4;
 }
@@ -2577,6 +2582,46 @@ pub function send_helper_name(t: typeinfo.Type): string {
 
 pub function is_send_helper(name: string): boolean {
   return name.starts_with("__sem_send_");
+}
+
+// The copy of one part of a sent value, and the copy of a part that is not
+// shared. Each borrows the part and returns a fresh copy.
+pub function send_part_name(t: typeinfo.Type): string {
+  return "__sem_sendpart_" + type_key(t);
+}
+
+pub function send_body_name(t: typeinfo.Type): string {
+  return "__sem_sendbody_" + type_key(t);
+}
+
+pub function is_send_part(name: string): boolean {
+  return name.starts_with("__sem_sendpart_") || name.starts_with("__sem_sendbody_");
+}
+
+// The table of boxes that one send has copied, so a box it reaches twice has
+// one copy. The table is a word that no count covers.
+pub function seen_new_name(): string {
+  return "__sem_seen_new";
+}
+
+pub function seen_get_name(): string {
+  return "__sem_seen_get";
+}
+
+pub function seen_put_name(): string {
+  return "__sem_seen_put";
+}
+
+pub function seen_free_name(): string {
+  return "__sem_seen_free";
+}
+
+pub function seen_insert_name(): string {
+  return "__sem_seen_insert";
+}
+
+pub function seen_grow_name(): string {
+  return "__sem_seen_grow";
 }
 
 // The per-type helper that `__send_adopt` calls: it returns the address it
@@ -5242,6 +5287,7 @@ pub function tail_recursion(own f: Func, name: string): Func {
   if (f.values.len() < nparams || !calls_itself(f, name)) {
     return f;
   }
+  f = returned_self_calls(f, name, nparams);
   let parents = borrow_parents(f);
   let defs = ssa.inst_defs(f.graph);
   let kinds = back_kinds(f, name, nparams, parents, defs);
@@ -5254,6 +5300,59 @@ pub function tail_recursion(own f: Func, name: string): Func {
     return f;
   }
   return spliced(f, kinds, nparams, sites, name);
+}
+
+// A join that holds one phi and returns it gets the result of a self call
+// from a block that only jumps to it, in `a && f(x)` or in an arm of a value
+// `match`. That block can return the result itself, and then it ends in a
+// self tail call. The join loses that predecessor.
+function returned_self_calls(own f: Func, name: string, nparams: i32): Func {
+  let at = ssa.block_positions(f.graph);
+  let uses = ssa.use_counts(f.graph);
+  let blocks = f.graph.blocks;
+  let changed = false;
+  for ji in 0..blocks.len() {
+    let join = blocks[ji];
+    if (join.term.kind_tag != ssa.TERM_RET || join.insts.len() != 1 || join.insts[0].kind_tag != ssa.PHI || join.insts[0].result != join.term.value) {
+      continue;
+    }
+    let args: i32[] = [];
+    let preds: i32[] = [];
+    let gone: i32[] = [];
+    for slot in 0..join.preds.len() {
+      let pi = ssa.block_index(at, join.preds[slot]);
+      let arg = join.insts[0].args[slot];
+      if (pi >= 0 && returns_self_call(blocks[pi], join.id, name, nparams, arg, uses)) {
+        gone = gone.append(pi);
+      } else {
+        args = args.append(arg);
+        preds = preds.append(join.preds[slot]);
+      }
+    }
+    // A join keeps one predecessor or more, so it stays a block of the graph.
+    if (gone.len() == 0 || preds.len() == 0) {
+      continue;
+    }
+    for pi in gone {
+      let last = blocks[pi].insts[blocks[pi].insts.len() - 1];
+      blocks = blocks.with(pi, ssa.SBlock { ...blocks[pi], term: ssa.STerm { ...blocks[pi].term, kind_tag: ssa.TERM_RET, target: 0, value: last.result } });
+    }
+    blocks = blocks.with(ji, ssa.SBlock { ...join, insts: [ssa.SInst { ...join.insts[0], args: args }], preds: preds });
+    changed = true;
+  }
+  if (!changed) {
+    return f;
+  }
+  return Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } };
+}
+
+// The block ends in a call of `name` whose one use is the phi of `join`.
+function returns_self_call(b: ssa.SBlock, join: i32, name: string, nparams: i32, arg: i32, uses: i32[]): boolean {
+  if (b.term.kind_tag != ssa.TERM_BR || b.term.target != join || b.insts.len() == 0) {
+    return false;
+  }
+  let last = b.insts[b.insts.len() - 1];
+  return last.kind_tag == call() && last.str == name && last.args.len() == nparams && last.result == arg && arg >= 0 && arg < uses.len() && uses[arg] == 1;
 }
 
 function calls_itself(f: Func, name: string): boolean {

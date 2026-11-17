@@ -6081,8 +6081,6 @@ type checker struct {
 	callbackResultCalls  map[*ast.Call]bool
 	callbackValues       map[ast.Expr]bool
 	resultBorrows        map[string]bool
-	resultLendsOf        map[string][]bool
-	resultDecls          map[string]*ast.FuncDecl
 	resultAnalysed       map[string]bool
 	// declaredMethods names the methods the program declares.
 	declaredMethods map[string]bool
@@ -11336,7 +11334,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					return true
 				}
 				if sig, ok := c.info.FuncSigs[id.Name]; ok && sig.Result != nil && mayRetainBorrow(sig.Result) {
-					if !c.calleeResultBorrows(x) || c.callbacksReturnOwned(x) || c.lendingArgsOwned(x, isOwnedExpr) {
+					if !c.calleeResultBorrows(x) || c.callbacksReturnOwned(x) {
 						return true
 					}
 				}
@@ -11633,8 +11631,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				continue
 			}
 			// A copyable payload is a local value. A payload that can hold
-			// a handle keeps its linear ownership.
-			if (scrutOwned || ownedField && ownershipBindingUnchanged(fn, bname)) && c.holdsNoHandle(types[i]) {
+			// a handle keeps its linear ownership, and so does a `once`
+			// function, which a call consumes.
+			if (scrutOwned || ownedField && ownershipBindingUnchanged(fn, bname)) && c.holdsNoHandle(types[i]) && !isOnceFunc(types[i]) {
 				continue
 			}
 			if scrutOwned {
@@ -12287,6 +12286,17 @@ func (c *checker) stmtsDiverge(stmts []ast.Stmt) bool {
 }
 
 func detectMutualRecSCCs(fns []*ast.FuncDecl) map[string]bool {
+	out := map[string]bool{}
+	for _, group := range MutualRecGroups(fns) {
+		for _, name := range group {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// MutualRecGroups has one list for each set of the functions of fns that call each other.
+func MutualRecGroups(fns []*ast.FuncDecl) [][]string {
 	siblings := map[string]*ast.FuncDecl{}
 	for _, fn := range fns {
 		siblings[fn.Name] = fn
@@ -12306,7 +12316,7 @@ func detectMutualRecSCCs(fns []*ast.FuncDecl) map[string]bool {
 	lowlinks := map[string]int{}
 	onStack := map[string]bool{}
 	var stack []string
-	out := map[string]bool{}
+	var out [][]string
 	var strongconnect func(name string)
 	strongconnect = func(name string) {
 		indices[name] = index
@@ -12338,9 +12348,7 @@ func detectMutualRecSCCs(fns []*ast.FuncDecl) map[string]bool {
 				}
 			}
 			if len(scc) >= 2 {
-				for _, n := range scc {
-					out[n] = true
-				}
+				out = append(out, scc)
 			}
 		}
 	}

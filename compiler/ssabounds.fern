@@ -8,6 +8,8 @@ struct Rel { lo: i32, hi: i32, strict: boolean, nonnegative: boolean }
 
 struct Graph { defs: ssa.SInst[], home: i32[], i32s: boolean[], i64s: boolean[], unsigned_max: i64[], widens: i32[], rels: Rel[], first: i32[], count: i32[], up: i32[], above: i32[], preds: i32[][] }
 
+pub struct SignTested { func: ssasem.Func, changed: boolean }
+
 pub function proven_indices(f: ssasem.Func): ssasem.Func {
   if (!any_checked_index(f)) {
     return f;
@@ -46,6 +48,40 @@ pub function proven_indices(f: ssasem.Func): ssasem.Func {
     return f;
   }
   return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } };
+}
+
+// A checked read with an index that a guard proves below the length keeps
+// only the test of the sign of its index. This runs after each pass that
+// compares reads, because it gives such a read a state of its own.
+pub function sign_tested_reads(f: ssasem.Func): SignTested {
+  if (!any_checked_index(f)) {
+    return SignTested { func: f, changed: false };
+  }
+  let g = graph_of(f);
+  let blocks: ssa.SBlock[] = [];
+  let changed = false;
+  for b in 0..f.graph.blocks.len() {
+    let blk = f.graph.blocks[b];
+    let insts: ssa.SInst[] = [];
+    let marked = false;
+    for ins in blk.insts {
+      if (checked_index(ins) && g.i32s[ins.args[1]] && !is_const(g, ins.args[1]) && below(g, b, ins.args[1], ins.args[0], [], depth())) {
+        insts = insts.append(ssa.SInst { ...ins, imm: ssasem.below_proven() });
+        marked = true;
+      } else {
+        insts = insts.append(ins);
+      }
+    }
+    if (marked) {
+      blk = ssa.SBlock { ...blk, insts: insts };
+      changed = true;
+    }
+    blocks = blocks.append(blk);
+  }
+  if (!changed) {
+    return SignTested { func: f, changed: false };
+  }
+  return SignTested { func: ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } }, changed: true };
 }
 
 // The element accesses of a function, chained by the root of their index.
@@ -210,7 +246,7 @@ function any_checked_index(f: ssasem.Func): boolean {
   return false;
 }
 
-// The check grouped_reads places before a run of unchecked reads.
+// The check grouped_accesses places before a run of unchecked reads and writes.
 function group_check(ins: ssa.SInst): boolean {
   return ins.kind_tag == ssasem.array_get() && ins.args.len() == 2 && ins.imm == ssasem.check_only();
 }
@@ -1207,16 +1243,19 @@ function pow2_divisor(g: Graph, ins: ssa.SInst): i32 {
   return k;
 }
 
-pub function grouped_reads(f: ssasem.Func): ssasem.Func {
-  if (!any_checked_index(f)) {
+pub function grouped_accesses(f: ssasem.Func): ssasem.Func {
+  if (!any_checked_index(f) || !any_pair(f)) {
     return f;
   }
   let defs = ssa.inst_defs(f.graph);
+  let g = graph_of(f);
+  let before = Before { g: g, seen: accesses(f, g), dom: ssadeps.dominates(f.graph) };
   let values = f.values;
   let blocks: ssa.SBlock[] = [];
   let changed = false;
-  for blk in f.graph.blocks {
-    let plan = probes_of(f, defs, blk.insts);
+  for b in 0..f.graph.blocks.len() {
+    let blk = f.graph.blocks[b];
+    let plan = probes_of(f, defs, blk.insts, before, b);
     if (!plan.any) {
       blocks = blocks.append(blk);
       continue;
@@ -1253,8 +1292,13 @@ pub function grouped_reads(f: ssasem.Func): ssasem.Func {
           values = values.append(t).append(t).append(t).append(t).append(t);
           idx = v + 4;
         }
-        insts = insts.append(ssa.SInst { ...ins, result: values.len(), args: [ins.args[0], idx], imm: ssasem.check_only() });
-        values = values.append(f.values[ins.result]);
+        if (scalar_write(f, ins)) {
+          insts = insts.append(ssa.SInst { kind_tag: ssasem.array_get(), result: values.len(), args: [ins.args[0], idx], imm: ssasem.check_only(), str: "" });
+          values = values.append(typeinfo.array_elem(f.values[ins.args[0]]));
+        } else {
+          insts = insts.append(ssa.SInst { ...ins, result: values.len(), args: [ins.args[0], idx], imm: ssasem.check_only() });
+          values = values.append(f.values[ins.result]);
+        }
         p += 1;
       }
       if (plan.unchecked[pos]) {
@@ -1273,23 +1317,44 @@ pub function grouped_reads(f: ssasem.Func): ssasem.Func {
 
 struct Probes { at: i32[], x: i32[], lo: i32[], span: i32[], unchecked: boolean[], any: boolean }
 
-function probes_of(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[]): Probes {
+// Whether a block has two accesses that can be members of one group.
+function any_pair(f: ssasem.Func): boolean {
+  for blk in f.graph.blocks {
+    let one = false;
+    for ins in blk.insts {
+      if (checked_index(ins) && scalar(f, ins.result) || scalar_write(f, ins) && ins.imm == 0) {
+        if (one) {
+          return true;
+        }
+        one = true;
+      }
+    }
+  }
+  return false;
+}
+
+struct Before { g: Graph, seen: Seen, dom: ssadeps.Dom }
+
+function probes_of(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], before: Before, b: i32): Probes {
   let out = Probes { at: [], x: [], lo: [], span: [], unchecked: __alloc_bool(insts.len()), any: false };
   let start = 0;
   for pos in 0..=insts.len() {
     if (pos == insts.len() || !silent(f, insts[pos])) {
-      out = probes_in_run(f, defs, insts, start, pos, out);
+      out = probes_in_run(f, defs, insts, start, pos, before, b, out);
       start = pos + 1;
     }
   }
   return out;
 }
 
-function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], start: i32, end: i32, own out: Probes): Probes {
+// A read of an index that an earlier access leaves in range is not a member.
+// It merges with that access, and its test goes with it.
+function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], start: i32, end: i32, before: Before, b: i32, own out: Probes): Probes {
   let reads: i32[] = [];
   for k in start..end {
     let ins = insts[k];
-    if (checked_index(ins) && ssasem.is_i32(f.values[ins.args[1]]) && scalar(f, ins.result)) {
+    let read = checked_index(ins) && scalar(f, ins.result) && !accessed_before(before.g, before.seen, before.dom, b, k, ins);
+    if ((read || scalar_write(f, ins) && ins.imm == 0) && ssasem.is_i32(f.values[ins.args[1]])) {
       reads = reads.append(k);
     }
   }
@@ -1301,13 +1366,14 @@ function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], st
       continue;
     }
     let first = insts[reads[i]];
+    let arr = written_root(f, defs, first.args[0]);
     let x = offset_base(f, defs, first.args[1]);
     let low = offset_of(f, defs, first.args[1]);
     let high = low;
     let members: i32[] = [reads[i]];
     for j in i + 1..reads.len() {
       let r = insts[reads[j]];
-      if (!done[j] && r.args[0] == first.args[0] && offset_base(f, defs, r.args[1]) == x) {
+      if (!done[j] && written_root(f, defs, r.args[0]) == arr && offset_base(f, defs, r.args[1]) == x) {
         done = done.with(j, true);
         let c = offset_of(f, defs, r.args[1]);
         if (c < low) {
@@ -1333,6 +1399,24 @@ function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], st
     i += 1;
   }
   return out;
+}
+
+// A write of a scalar element. It changes no length, and nothing can see
+// it when a later check stops the program.
+function scalar_write(f: ssasem.Func, ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.with() && ins.args.len() == 3 && ins.str != "lane_bytes" && scalar(f, ins.args[2]);
+}
+
+// The array that a chain of scalar writes started from. Each array of the
+// chain has the length of this one.
+function written_root(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
+  for _ in 0..64 {
+    if (v < 0 || v >= defs.len() || !scalar_write(f, defs[v])) {
+      break;
+    }
+    v = defs[v].args[0];
+  }
+  return v;
 }
 
 function offset_base(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
@@ -1382,7 +1466,7 @@ function silent(f: ssasem.Func, ins: ssa.SInst): boolean {
   if (k == ssa.CONST_INT || k == ssa.CONST_BOOL || k == ssa.CONST_I64 || k == ssa.COPY || k == ssa.PHI || k == ssa.LINE || k == ssasem.param()) {
     return true;
   }
-  if (k == ssasem.array_get() || k == ssasem.str_index() || k == ssasem.length()) {
+  if (k == ssasem.array_get() || k == ssasem.str_index() || k == ssasem.length() || scalar_write(f, ins)) {
     return true;
   }
   if (ins.result < 0 || ins.result >= f.values.len()) {

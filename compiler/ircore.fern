@@ -370,7 +370,7 @@ function with_builtin_enums(lifted: parser.Module): parser.Module {
 pub function all_runtime_need_roots(): string[] {
   return util.append_all(rtbytecopy.kernel_names(), [
     "alloc_u8", "alloc_bytes_uninit", "args", "set_args", "arr_push", "arr_push_owned", "arr_slice",
-    "arr_str_join", "arr_concat", "bytes_owned", "bytes_range", "bytes_into", "byte_append", "byte_write", "byte_back", "arr_inc_elems", "arr_own_elems", "str_own", "str_borrow", "str_grow", "account", "env", "eprint", "heap", "heap_adopt",
+    "arr_str_join", "arr_concat", "bytes_owned", "bytes_range", "bytes_into", "byte_append", "byte_write", "byte_back", "arr_inc_elems", "arr_own_elems", "str_own", "str_borrow", "str_grow", "account", "env", "eprint", "heap", "heap_adopt", "box_free",
     "i32_to_string", "u32_to_string", "monotonic_ns", "now_ns", "now_unix_ms",
     "map_hash_seed",
     "chdir", "chroot", "setuid", "setgid", "setgroups",
@@ -384,7 +384,7 @@ pub function all_runtime_need_roots(): string[] {
     "stat", "lstat", "statfs", "mounts", "sysctl", "access", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "read_dir_ino_bytes", "remove_file", "create_dir_all", "remove_dir_all", "write_file", "write_file_exec",
     "write_file_bytes", "write_file_bytes_u8",
     "getxattr_bytes_u8", "lgetxattr_bytes_u8", "setxattr_bytes_u8", "lsetxattr_bytes_u8",
-    "create_dir", "remove_dir", "create_link", "clone_file", "create_symlink", "read_link", "read_link_bytes", "map_file", "map_file_unchecked", "scan_masks", "umask", "rename",
+    "create_dir", "remove_dir", "create_link", "clone_file", "create_symlink", "read_link", "read_link_bytes", "map_file_unchecked", "umask", "rename",
     "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "lgetxattr", "lgetxattr_bytes", "setxattr", "setxattr_bytes", "lsetxattr", "lsetxattr_bytes",
     "chmod", "chmod_at", "set_file_times", "truncate", "mknod", "chown_at",
     "open_dir", "dir_open", "dir_entries", "dir_entries_bytes", "dir_entries_ino", "dir_entries_ino_bytes", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown", "dir_open_file",
@@ -407,7 +407,7 @@ pub function all_runtime_need_roots(): string[] {
     "signal_catch", "signal_taken", "signal_raise",
     "trap_stubs", "abort_134",
     "process_alive", "signal_send", "set_process_group", "rlimit_nofile",
-    "disable_core_dumps", "prctl_query", "proc_waitpid_status", "proc_wait_any", "worker_region", "worker_exit", "worker_unmap", "worker_regions",
+    "disable_core_dumps", "prctl_query", "proc_wait_any", "worker_region", "worker_exit", "worker_unmap", "worker_regions",
     "ct_mark",
     "priority", "set_priority",
     "clock_resolution", "clock_set",
@@ -877,9 +877,14 @@ function inline_leaf(fd: parser.FuncDecl, r: irtables.LowerResult): boolean {
   let k_dyn = ir.K_DYN_DISPATCH;
   let k_line = ir.K_LINE;
   let work = 0;
+  let sign_tested = false;
   for o in r.ops {
     let k = o.kind_tag;
-    if (k != k_load && k != k_store && k != k_tee && k != k_line) {
+    // A sign test, its drop and the data pointer of a string are parts of
+    // the read after them. They count as that one read.
+    let part = ir.is_sign_only(o) || sign_tested && (k == ir.K_DROP || k == ir.K_STR_DATA);
+    sign_tested = part || sign_tested && k == k_load;
+    if (k != k_load && k != k_store && k != k_tee && k != k_line && !part) {
       work += 1;
     }
     if (work > inline_leaf_ops()) {

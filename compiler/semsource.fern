@@ -50,7 +50,9 @@ pub struct Request { key: string, name: string, binding: ssasem.Binding }
 
 // `laid` holds the records whose fields of scalar records and Options are laid
 // out as their parts, as `records` now has them.
-pub struct Built { decls: Produced[], instances: Produced[], contracts: ssasem.Contracts, names: string[], dyn_arms: string[], records: semrecords.Records, enums: semrecords.Enum[], finalizers: ssasem.Finalizer[], laid: semrecords.Record[] }
+// instance_contracts: each instance's contract, its declaration's with the
+// request's binding. The table holds the declarations only.
+pub struct Built { decls: Produced[], instances: Produced[], contracts: ssasem.Contracts, names: string[], dyn_arms: string[], records: semrecords.Records, enums: semrecords.Enum[], finalizers: ssasem.Finalizer[], laid: semrecords.Record[], instance_contracts: ssasem.Contract[] }
 
 struct Exit { block: i32, env: i32[] }
 
@@ -7483,7 +7485,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo,
   let graph = ssa.SFunc { ...f.graph, name: name, nparams: params.len() };
   f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: semrecords.records_of(table.records), enums: table.enums, schema_checked: false, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows, finalizers: finalizers, map_module: s.scope.module_imported("core/map") };
   f = ssasem.tail_recursion(ssasem.boxed_enum_dyns(f), name);
-  f = ssabounds.word_loads(ssabounds.grouped_reads(ssabounds.proven_indices(f)), word_load_contracts(), [ssabytes.word_name(4), ssabytes.word_name(8)], [ssabytes.swap_name(4), ssabytes.swap_name(8)]);
+  f = ssabounds.word_loads(ssabounds.grouped_accesses(ssabounds.proven_indices(f)), word_load_contracts(), [ssabytes.word_name(4), ssabytes.word_name(8)], [ssabytes.swap_name(4), ssabytes.swap_name(8)]);
   f = ssaquotient.shared_quotients(ssabounds.nonneg_quotients(f));
   return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: util.append_all(s.requests, closed.requests), bodyless: false, analysis: None, view_escape: 0, dropped: false }, memo: table.memo };
 }
@@ -9549,10 +9551,14 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   }
   let decl_index = util.name_index(names);
   let instances: Produced[] = [];
+  let instance_contracts: ssasem.Contract[] = [];
   let at = 0;
   while (at < pending.pending.len()) {
     let r = pending.pending[at];
     let di = decl_index.find(r.key);
+    if let Some(c) = instance_contract(table, r) {
+      instance_contracts = instance_contracts.append(c);
+    }
     let p = refuse("unbounded instantiation");
     if (at < instance_limit()) {
       let made = build(mod.funcs[di], scopes[di], table, r.binding, r.name, handed_back, shadows, views, mod.funcs, mod.impls, finalizers, memo, layout_of(opts, finalizers));
@@ -9578,6 +9584,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     table = split_contracts(table, inlined.all, names);
     laid = inlined.laid;
     all = version_loops(prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report, opts.passes), names, mod, opts, true), opts.stack_phi_joins), opts.size);
+    all = sign_tested_reads(all);
   }
   if (opts.shape_slot) {
     all = with_shape_slots(all);
@@ -9601,7 +9608,20 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     i += 1;
   }
   let records = laid_records(semrecords.Records { list: memo.records, names: memo.record_names }, laid);
-  return Built { decls: decls, instances: instances, contracts: table, names: names, dyn_arms: dispatched_arms(util.append_all(decls, instances)), records: records, enums: memo.enums, finalizers: finalizers, laid: laid };
+  return Built { decls: decls, instances: instances, contracts: table, names: names, dyn_arms: dispatched_arms(util.append_all(decls, instances)), records: records, enums: memo.enums, finalizers: finalizers, laid: laid, instance_contracts: instance_contracts };
+}
+
+function instance_contract(table: ssasem.Contracts, r: Request): Option[ssasem.Contract] {
+  let at = table.names.find(r.key);
+  if (at < 0) {
+    return None;
+  }
+  let c = table.list[at];
+  let vars = ssasem.contract_variables(c);
+  if (vars.len() == 0 || !ssasem.binds_all(r.binding, vars)) {
+    return None;
+  }
+  return Some(ssasem.instantiate_contract(c, r.binding, vars));
 }
 
 function laid_records(records: semrecords.Records, laid: semrecords.Record[]): semrecords.Records {
@@ -9716,6 +9736,22 @@ function version_loops(all: Produced[], size: boolean): Produced[] {
       let v = semversion.version(p.func);
       if (v.loops > 0) {
         p = Produced { ...p, func: v.f, analysis: None };
+      }
+    }
+    out = out.append(p);
+  }
+  return out;
+}
+
+function sign_tested_reads(all: Produced[]): Produced[] {
+  let out: Produced[] = [];
+  let sw = optbisect.switches();
+  for old in all {
+    let p = old;
+    if (p.ok && !p.template) {
+      let r = ssabounds.sign_tested_reads(p.func);
+      if (r.changed && optbisect.allowed_by(sw, "sign-test", p.func.graph.name)) {
+        p = Produced { ...p, func: r.func, analysis: None };
       }
     }
     out = out.append(p);

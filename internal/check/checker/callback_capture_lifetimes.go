@@ -165,7 +165,10 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 			if len(definitions[capture.Name]) > 1 || c.copyableCallResult(capture.Type) {
 				continue
 			}
-			out = mergeCallbackLoans(out, []callbackLoan{{param: capture, direct: true}})
+			// A `once` lambda moves its captures in, so it holds no loan on them.
+			if !value.Once {
+				out = mergeCallbackLoans(out, []callbackLoan{{param: capture, direct: true}})
+			}
 			for _, path := range c.callbackCapturePlaces(value, capture.Name) {
 				sources := selectCallbackLoans(resolve(capture.Name, active), path)
 				out = mergeCallbackLoans(out, flattenCallbackLoans(sources))

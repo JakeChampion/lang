@@ -1,6 +1,7 @@
 // Tests of std/android/text. The test font has 1000 units to the em: "A" is
 // 600 units wide and "V" is 850 with its side bearings, so at 10 pixels to
 // the em "AAAA" is 24 pixels wide.
+import "std/android/fonts";
 import "std/android/text";
 import "std/test";
 import "std/truetype";
@@ -8,14 +9,14 @@ import "./image_vectors";
 
 function fonts(): text.Fonts {
   if let Some(f) = truetype.parse(image_vectors.font()) {
-    return text.Fonts { faces: [f, f, f], weights: [400, 500, 700] };
+    return text.from_faces([f, f, f], [400, 500, 700]);
   }
-  return text.Fonts { faces: [], weights: [] };
+  return text.from_faces([], []);
 }
 
 function test_width_and_line(): test.TestOutcome {
   let f = fonts();
-  let none = text.Fonts { faces: [], weights: [] };
+  let none = text.from_faces([], []);
   let got = text.width(f, 0, 10, "AAAA").to_string() + " " + text.line(f, 0, 10).to_string() + " " + text.width(f, 0, 10, "").to_string() + " " + text.width(none, 0, 10, "AAAA").to_string();
   return test.assert_eq(got, "24 10 0 0");
 }
@@ -65,6 +66,38 @@ function test_wrap_ranges_keeps_the_place_of_each_character(): test.TestOutcome 
   return test.assert_eq(ranges(words) + " | " + ranges(fed) + " | " + ranges(long) + " | " + ranges(empty), "0-9 10-14 | 0-1 2-2 3-5 | 0-5 5-10 | 0-0");
 }
 
+// The test font with U+05D0, the Hebrew letter alef, in place of U+00C1:
+// the start, the end and the delta of the fourth segment of its cmap.
+function alef_font(): u8[] {
+  return image_vectors.font().with(468, 5u8).with(469, 208u8).with(480, 5u8).with(481, 208u8).with(490, 250u8).with(491, 52u8);
+}
+
+// The id of the font of a glyph of a layout, from its key.
+function font_id(p: text.Placed): i64 {
+  return (p.key >> 32) / 4i64 / 4096i64;
+}
+
+function test_fallback_takes_a_font_that_has_the_character(): test.TestOutcome {
+  let f = fonts();
+  let given: truetype.Font[] = [];
+  if let Some(alef) = truetype.parse(alef_font()) {
+    given = [alef];
+  }
+  let fs = f.with_fallback(text.fallback(given));
+  let none = (weight: i32, cp: i32): fonts.Found[] => [];
+  // Before `covering`, alef takes the face. After it, alef takes the glyph
+  // of "Á" from the fallback font. Bet is in no font, so it stays in the
+  // face. The fallback looks for each one only once.
+  let before = text.width(fs, 0, 10, "א") == text.width(f, 0, 10, "א");
+  fs = fs.covering(0, "אב", none);
+  let looked = fs.looked();
+  let same = text.width(fs, 0, 10, "א") == text.width(f, 0, 10, "Á") && text.width(fs, 0, 10, "ב") == text.width(f, 0, 10, "ב");
+  fs = fs.covering(0, "אבAא", none);
+  let (_, placed) = text.layout(text.new_cache(), fs, 0, 10, 0, "Aא");
+  let ids = placed.map((p: text.Placed): string => font_id(p).to_string()).join(" ");
+  return test.assert_eq(before.to_string() + " " + same.to_string() + " " + looked.to_string() + " " + fs.looked().to_string() + " " + ids, "true true 2 2 0 64");
+}
+
 function test_letters_and_span(): test.TestOutcome {
   let cs = text.letters("aé…z");
   return test.assert_eq(cs.len().to_string() + " " + text.span(cs, 1, 3) + " " + text.span(cs, 3, 1) + "|" + text.span(cs, 0, 4), "4 é… |aé…z");
@@ -78,5 +111,6 @@ function main(): i32 {
   r = r.it("wrap breaks at spaces and line feeds", test_wrap_breaks_at_spaces);
   r = r.it("wrap_ranges keeps the place of each character", test_wrap_ranges_keeps_the_place_of_each_character);
   r = r.it("letters and span take characters", test_letters_and_span);
+  r = r.it("a fallback font draws a character that the face does not have", test_fallback_takes_a_font_that_has_the_character);
   return r.finish();
 }

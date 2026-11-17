@@ -39,7 +39,7 @@ pub function load(target: string, roots: string): parser.Module {
 pub function load_with(target: string, roots: string, mode: i32, path: string, reuse: boolean): parser.Module {
   let keys = ["__FERN_PROFILE_MODE", "__FERN_PROFILE_PATH", "__FERN_RUNTIME_REUSE"];
   let values: ast.Expr[] = [
-    ast.ExprNumber { text: util.i32_to_string(mode), raw: "", suffix: "", is_float: false, bits: 0, line: 0, col: 0 },
+    parser.e_number(util.i32_to_string(mode), "", false),
     ast.ExprString { value: path, line: 0, col: 0 },
     ast.ExprBool { value: reuse, line: 0, col: 0 },
   ];

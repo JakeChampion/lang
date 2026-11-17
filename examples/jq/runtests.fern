@@ -341,6 +341,6 @@ function pull(c: modules.Compiled, vars: eval.Env, v: json.JsonValue, limit: i32
     }
     return t;
   };
-  let s = eval.run(c.ast, v, env, k, eval.state(input.empty()));
+  let s = eval.evaluate(c.ast, v, env, k, eval.state(input.empty()));
   return s.items;
 }
