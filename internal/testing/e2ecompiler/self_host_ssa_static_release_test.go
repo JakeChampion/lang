@@ -19,7 +19,7 @@ function make(n: i64): List {
 }
 
 @noinline
-function inc(own xs: List): List {
+function inc(xs: List): List {
   return match (xs) { Cons(x, rest) => Cons(x + 1i64, inc(rest)), Nil => Nil };
 }
 

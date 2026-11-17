@@ -9,10 +9,10 @@ import (
 	"testing"
 )
 
-// `check` releases each `Nil` child, a static box. Nothing lives in a caller
+// `discard` releases a tree that nothing tested. Nothing lives in a caller
 // register at that release, so the emitters once called the helper there,
 // and the helper made the tests of the count again. The edge after the free
-// of a node once swapped its two children with one xchgq.
+// of a node in `check` once swapped its two children with one xchgq.
 const inlineBoxReleaseProg = `enum Tree { Nil, Node(i64, Tree, Tree) }
 
 function make(item: i64, depth: i32): Tree {
@@ -26,11 +26,17 @@ function check(t: Tree): i64 {
   return match (t) { Node(item, l, r) => item + check(l) - check(r), Nil => 0i64 };
 }
 
+@noinline
+function discard(own t: Tree): i64 {
+  return 1i64;
+}
+
 function main(): i32 {
   let total = 0i64;
   let i = 1i64;
   while (i <= 20i64) {
-    total += check(make(i, 6)) + check(make(0i64 - i, 6));
+    let t = make(i, 6);
+    total += check(t) + discard(t) - 1i64 + check(make(0i64 - i, 6));
     i += 1i64;
   }
   if (total != 0i64 - 40i64) {
@@ -57,9 +63,9 @@ func TestSelfHostSSABoxReleaseIsInline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fn := functionListing(string(asm), "__fn_check")
+	fn := functionListing(string(asm), "__fn_discard")
 	if fn == "" {
-		t.Fatal("check not in the listing")
+		t.Fatal("discard not in the listing")
 	}
 	lines := strings.Split(fn, "\n")
 	calls := 0
@@ -80,10 +86,10 @@ func TestSelfHostSSABoxReleaseIsInline(t *testing.T) {
 		}
 	}
 	if calls == 0 {
-		t.Fatalf("check calls no release of Tree, so the test checks nothing\n%s", fn)
+		t.Fatalf("discard calls no release of Tree, so the test checks nothing\n%s", fn)
 	}
-	if strings.Contains(fn, "xchgq") {
-		t.Errorf("check swaps two registers with xchgq\n%s", fn)
+	if check := functionListing(string(asm), "__fn_check"); strings.Contains(check, "xchgq") {
+		t.Errorf("check swaps two registers with xchgq\n%s", check)
 	}
 	for _, tg := range h.targets {
 		bin := filepath.Join(dir, tg.target+".bin")
