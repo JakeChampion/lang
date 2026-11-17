@@ -581,8 +581,8 @@ refusal exits 5 and names the function and the unit.
 
 A function that the
 certifier cannot decide is also a refusal with exit 5. The causes are ops
-that do not lift, no entry block, a liveness failure, or a walk that does
-not settle. A function that resumes from a task frame is the one function
+that do not lift, no entry block, a liveness failure, a walk that does not
+settle, or a call to a callee that has no rc signature and no ABI. A function that resumes from a task frame is the one function
 the certifier skips, because it does not model the frame. The memo does not
 record a skip.
 
@@ -598,7 +598,7 @@ done twice. A finding refutes a mutant. A mutant that leaves more values
 unproved is weakened, and a mutant that passes is missed.
 
 The Perf lane pins
-the unproved values, the skipped functions, the opaque calls and the mutant
+the unproved values, the skipped functions and the mutant
 outcomes (`scripts/certify-census`, `.github/certify-baseline.txt`). Thus
 none of these counts moves without a re-bank. Pinned by
 `TestSelfHostRcCertify*`
@@ -709,6 +709,10 @@ threads call into the object at once, with heap traffic and same-thread
 callbacks, and each result is correct. A thread that enters while another
 one runs a long call waits for it.
 
+Under `-sanitize`, the census of each allocation and each release checks the
+rule. An executable checks the stack, and a shared object checks the thread
+that holds the turn (`SANITIZER.md`, "One context per heap").
+
 An abort or `exit` ends the process with `exit_group`, not `exit`, so a
 report inside a host's thread takes the whole host down rather than one
 thread (#12169).
@@ -754,11 +758,12 @@ miscompile; `internal/testing/e2ecompiler` is primary on a lowering change.
 - The reuse pairing is decided in the lowering, not the plan, so the replay
   does not see it and the certifier is the only check on it (#11909 proposes
   tokens as plan units).
-- A gate knows the ABIs of its own unit only. A call from a program to a
-  generic instantiation or a runtime helper of another unit is opaque, and
-  the call leaves its arguments unproved. The compiler's own sources make no
-  such call. The programs under `examples/`, `tests/`, `conformance/` and
-  the utilities make 1,511 on x86-64 (2026-11-16).
+- A gate knows the ABIs of its own unit only. An instance of a generic
+  function gets its contract from its declaration, with the binding of the
+  request that made it (`semsource.instance_contract`). A runtime unit is
+  lowered when a program first needs it, after the program's gate exists, so
+  the routines that a program calls there, and the helpers that `ssarc` and
+  `ssabytes` generate, have rows in `rcsigs` instead.
 - A function that resumes from a task frame is not certified. Its body before
   `suspend.transform_state` has the same counting and no frame, so the gate
   could certify that body, if the lowered state carried it to the gate.

@@ -2584,6 +2584,46 @@ pub function is_send_helper(name: string): boolean {
   return name.starts_with("__sem_send_");
 }
 
+// The copy of one part of a sent value, and the copy of a part that is not
+// shared. Each borrows the part and returns a fresh copy.
+pub function send_part_name(t: typeinfo.Type): string {
+  return "__sem_sendpart_" + type_key(t);
+}
+
+pub function send_body_name(t: typeinfo.Type): string {
+  return "__sem_sendbody_" + type_key(t);
+}
+
+pub function is_send_part(name: string): boolean {
+  return name.starts_with("__sem_sendpart_") || name.starts_with("__sem_sendbody_");
+}
+
+// The table of boxes that one send has copied, so a box it reaches twice has
+// one copy. The table is a word that no count covers.
+pub function seen_new_name(): string {
+  return "__sem_seen_new";
+}
+
+pub function seen_get_name(): string {
+  return "__sem_seen_get";
+}
+
+pub function seen_put_name(): string {
+  return "__sem_seen_put";
+}
+
+pub function seen_free_name(): string {
+  return "__sem_seen_free";
+}
+
+pub function seen_insert_name(): string {
+  return "__sem_seen_insert";
+}
+
+pub function seen_grow_name(): string {
+  return "__sem_seen_grow";
+}
+
 // The per-type helper that `__send_adopt` calls: it returns the address it
 // is given as a value of the type, which the caller then owns.
 pub function adopt_helper_name(t: typeinfo.Type): string {

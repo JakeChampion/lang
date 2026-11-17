@@ -15,6 +15,8 @@ The listener runs on the main thread of the app. Each callback sends an event to
 
 `audio_tracks` gives the index of each sound track of the stream, in the order of the file, and `select_track` plays the track with an index. `Failed` has the `what` and `extra` codes of `MediaPlayer.OnErrorListener`.
 
+`set_speed` sets the rate of the playback, with the pitch of the sound kept. A rate other than zero also starts a paused player, so set it while the player plays, and again after `start`.
+
 `target` makes a `SurfaceTexture` of Android on an external texture of `std/android/gl`, and a `Surface` that feeds it. `show_target` puts the video on that surface in place of the window. The app then draws each frame with the GPU, for example with bars that keep the shape of the video.
 
 `next_frame` takes the newest frame into the texture, and gives its transform matrix and its time. `held` is false until the texture holds a frame of the target. Call `target`, `next_frame` and `close_target` with the GL context of the texture current. `close_target` releases the two objects, after `hide` or `stop` takes the video off the surface.
@@ -713,6 +715,31 @@ pub function select_track(ctx: usize, p: Player, index: i32): boolean {
   }
   defer end(e);
   return call_void(e, p.obj, "selectTrack", "(I)V", [index as usize]);
+}
+
+// Plays at `rate` times the normal speed, from 0.25 to 4.0, with
+// PlaybackParams. False for a rate out of that range.
+pub function set_speed(ctx: usize, p: Player, rate: f32): boolean {
+  if (!(rate >= 0.25f32 && rate <= 4.0f32)) {
+    return false;
+  }
+  let e: usize = android.env(ctx);
+  if (!begin(e)) {
+    return false;
+  }
+  defer end(e);
+  let params = new_object(e, find_class(e, "android/media/PlaybackParams"), "()V", []);
+  let id = method(e, params, "setSpeed", "(F)Landroid/media/PlaybackParams;");
+  if (id == 0 as usize) {
+    return false;
+  }
+  let args = jni.jvalue_set_f32(jni.jvalue_alloc(1), 0, rate);
+  let sped = jni.call_object_method_a(e, params, id, args);
+  jni.free_buffer(args);
+  if (cleared(e) || sped == 0 as usize) {
+    return false;
+  }
+  return call_void(e, p.obj, "setPlaybackParams", "(Landroid/media/PlaybackParams;)V", [sped]);
 }
 
 // The width and the height of the video, or 0 and 0 for audio.

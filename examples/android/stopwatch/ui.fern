@@ -204,7 +204,7 @@ pub function nodes(v: View, w: i32, h: i32): scene.Node[] {
 
 // Draws the view `v` on the frame.
 pub function render(f: draw.Frame, v: View): void {
-  let c = scene.render(f, text.Fonts { faces: [], weights: [] }, text.new_cache(), nodes(v, f.width, f.height));
+  let c = scene.render(f, text.from_faces([], []), text.new_cache(), nodes(v, f.width, f.height));
 }
 
 // The radius of a dot of text with `pitch`, for the thin font or the normal

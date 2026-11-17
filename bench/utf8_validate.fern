@@ -1,0 +1,29 @@
+import "std/utf8";
+
+// 128 KiB of text: ASCII words with 2-, 3- and 4-byte sequences between them.
+function text(): string {
+  let words = ["café ", "naïve ", "résumé ", "中文 ", "日本語 ", "한국어 ", "𝄞 ", "plain ", "ASCII ", "text "];
+  let out = "";
+  let s = 12345;
+  while (out.len() < 131072) {
+    s = s * 1103515245 + 12345 & 2147483647;
+    out = out + words[(s >> 16) % words.len()];
+  }
+  return out;
+}
+
+function main(): i32 {
+  let bs = text().bytes();
+  let acc = 0;
+  for r in 0..256 {
+    match (utf8.from_bytes(bs)) {
+      Ok(s) => {
+        acc += s[r * 200] as i32;
+      },
+      Err(_) => {
+        return 1;
+      }
+    }
+  }
+  return acc % 97;
+}

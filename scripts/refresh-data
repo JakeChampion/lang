@@ -110,6 +110,7 @@ toolchain_tables() {
   python3 cmd/unicodegen/gen_gcbdata.py "$ucd" > cmd/unicodegen/gcbdata.txt
   python3 cmd/unicodegen/gen_wbdata.py "$ucd" > cmd/unicodegen/wbdata.txt
   python3 cmd/unicodegen/gen_normdata.py "$ucd" > cmd/unicodegen/normdata.txt
+  python3 cmd/unicodegen/gen_bididata.py "$ucd" > cmd/unicodegen/bididata.txt
   go run ./cmd/unicodegen internal/stdlib/std/unicode.fern
   go test ./cmd/unicodegen ./internal/tables/tzdata
 }

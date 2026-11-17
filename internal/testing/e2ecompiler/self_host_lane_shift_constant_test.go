@@ -34,7 +34,7 @@ function main(): i32 {
 
 // A lane shift by a constant has its count in the instruction, on x86-64
 // and on arm64. On x86-64, lanes of 8 bits take the shift of 16 bits and
-// one mask of constant bytes.
+// one mask of constant bytes, which is a row of read-only data.
 func TestSelfHostLaneShiftByConstant(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
@@ -58,6 +58,9 @@ func TestSelfHostLaneShiftByConstant(t *testing.T) {
 		}
 		if strings.Contains(body, "%xmm2, %xmm") && name != "shr2" && name != "shl4" {
 			t.Errorf("%s takes its count from a register:\n%s", name, body)
+		}
+		if byteLanes := name == "shr2" || name == "shl4"; byteLanes != strings.Contains(body, "(%rip), %xmm0, ") || strings.Contains(body, "vpbroadcastb") {
+			t.Errorf("%s: only a shift of byte lanes takes a mask, and the mask is a row of read-only data:\n%s", name, body)
 		}
 	}
 	// The count of var is in a register, so its mask is a shift of ones.

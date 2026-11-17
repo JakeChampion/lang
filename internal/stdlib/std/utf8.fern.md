@@ -13,6 +13,8 @@ For example, `decode_at("Aé€", 3)` returns `Some((8364, 3))`, so the next pos
 
 Strict conversion rejects malformed UTF-8. Lossy conversion replaces invalid input. Byte positions and code-point counts measure different quantities.
 
+The validator checks 16 bytes in one step, as lanes of `u8x16`. A step that finds an error stops, and a scalar check gives the offset of the first invalid sequence. The offset is the same as the offset of a check of one byte at a time.
+
 ## Executable example
 
 ```fern test name=std-utf8-example
@@ -152,8 +154,84 @@ pub function is_valid(s: string): boolean {
 // The length of the longest valid prefix: the offset of the first invalid
 // sequence, or the whole length.
 function __valid_prefix(s: string): i32 {
+  return __scalar_prefix(s, __lanes_prefix(s.as_bytes()));
+}
+
+// Checks 16 bytes in each step, by the method of Keiser and Lemire,
+// "Validating UTF-8 in less than one instruction per byte" (2021). It stops
+// at the first step that finds an error, and answers the start of the last
+// sequence before that step. Each error that the steps do not find starts
+// there or later.
+function __lanes_prefix(b: [u8]): i32 {
+  let n = b.len();
+  let at = 0;
+  if (n < 16) {
+    return 0;
+  }
+  // Each table gives the error classes that a nibble permits: an error is a
+  // class that all three nibbles of a byte and the byte before it permit.
+  let high1 = __u8x16_of(2 as u8, 2 as u8, 2 as u8, 2 as u8, 2 as u8, 2 as u8, 2 as u8, 2 as u8, 128 as u8, 128 as u8, 128 as u8, 128 as u8, 33 as u8, 1 as u8, 21 as u8, 73 as u8);
+  let low1 = __u8x16_of(231 as u8, 163 as u8, 131 as u8, 131 as u8, 139 as u8, 203 as u8, 203 as u8, 203 as u8, 203 as u8, 203 as u8, 203 as u8, 203 as u8, 203 as u8, 219 as u8, 203 as u8, 203 as u8);
+  let high2 = __u8x16_of(1 as u8, 1 as u8, 1 as u8, 1 as u8, 1 as u8, 1 as u8, 1 as u8, 1 as u8, 230 as u8, 174 as u8, 186 as u8, 186 as u8, 1 as u8, 1 as u8, 1 as u8, 1 as u8);
+  // Lane k of `firstj` takes byte k - j of the first step, and 0 where that
+  // is before the start.
+  let first1 = __u8x16_of(255 as u8, 0 as u8, 1 as u8, 2 as u8, 3 as u8, 4 as u8, 5 as u8, 6 as u8, 7 as u8, 8 as u8, 9 as u8, 10 as u8, 11 as u8, 12 as u8, 13 as u8, 14 as u8);
+  let first2 = __u8x16_of(255 as u8, 255 as u8, 0 as u8, 1 as u8, 2 as u8, 3 as u8, 4 as u8, 5 as u8, 6 as u8, 7 as u8, 8 as u8, 9 as u8, 10 as u8, 11 as u8, 12 as u8, 13 as u8);
+  let first3 = __u8x16_of(255 as u8, 255 as u8, 255 as u8, 0 as u8, 1 as u8, 2 as u8, 3 as u8, 4 as u8, 5 as u8, 6 as u8, 7 as u8, 8 as u8, 9 as u8, 10 as u8, 11 as u8, 12 as u8);
+  let nibble = __u8x16_splat(15 as u8);
+  let top = __u8x16_splat(128 as u8);
+  let zero = __u8x16_splat(0 as u8);
+  while (at + 16 <= n) {
+    let cur = __u8x16_load_view(b, at);
+    // Lane k of `pj` is the byte j places before lane k of `cur`.
+    let p1 = zero;
+    let p2 = zero;
+    let p3 = zero;
+    if (at > 0) {
+      p1 = __u8x16_load_view(b, at - 1);
+      p2 = __u8x16_load_view(b, at - 2);
+      p3 = __u8x16_load_view(b, at - 3);
+    } else {
+      p1 = __u8x16_swizzle(cur, first1);
+      p2 = __u8x16_swizzle(cur, first2);
+      p3 = __u8x16_swizzle(cur, first3);
+    }
+    if (__u8x16_bitmask(__u8x16_or(cur, p3)) != 0) {
+      let special = __u8x16_and(__u8x16_and(__u8x16_swizzle(high1, __u8x16_shr(p1, 4)), __u8x16_swizzle(low1, __u8x16_and(p1, nibble))), __u8x16_swizzle(high2, __u8x16_shr(cur, 4)));
+      // A second continuation byte is correct only as the third or the
+      // fourth byte of a sequence.
+      let deep = __u8x16_and(__u8x16_or(__u8x16_sub_sat(p2, __u8x16_splat(96 as u8)), __u8x16_sub_sat(p3, __u8x16_splat(112 as u8))), top);
+      if (__u8x16_bitmask(__u8x16_eq(__u8x16_xor(deep, special), zero)) != 65535) {
+        return __sequence_start(b, at);
+      }
+    }
+    at += 16;
+  }
+  return __sequence_start(b, at);
+}
+
+// The start of the last sequence before `at`, which can be incomplete, or
+// `at` when the bytes before it end with an ASCII byte.
+function __sequence_start(b: [u8], at: i32): i32 {
+  let j = at - 1;
+  while (j >= 0 && j >= at - 4) {
+    let c = b[j] as i32;
+    if (c >= 192) {
+      return j;
+    }
+    if (c < 128) {
+      return j + 1;
+    }
+    j -= 1;
+  }
+  return at;
+}
+
+// The length of the longest valid prefix of `s`. `from` is the start of a
+// sequence, and the bytes before it are valid.
+function __scalar_prefix(s: string, from: i32): i32 {
   let n = s.len();
-  let i = 0;
+  let i = from;
   while (i < n) {
     let b0 = s[i] as i32;
     if (b0 < 128) {

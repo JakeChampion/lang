@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -531,6 +532,7 @@ func (e *Enum) String() string {
 }
 
 type Interp struct {
+	mutualFuncs     map[*ast.Block]map[string][]string
 	Funcs           map[string]*ast.FuncDecl
 	Enums           map[string]*ast.EnumDecl
 	variants        map[string][]variantRef
@@ -6460,7 +6462,14 @@ func (i *Interp) execBlock(b *ast.Block, parent *env) (result, error) {
 	defer e.releaseScope()
 	i.envs = append(i.envs, e)
 	defer func() { i.envs = i.envs[:len(i.envs)-1] }()
+	groups := i.mutualLocalFuncs(b)
 	for _, s := range b.Stmts {
+		if fn, ok := s.(*ast.FuncDecl); ok && groups[fn.Name] != nil {
+			if _, bound := e.vars[fn.Name]; !bound {
+				declareMutualFuncs(b, groups[fn.Name], e)
+			}
+			continue
+		}
 		r, err := i.execStmt(s, e)
 		if err != nil {
 			return result{}, err
@@ -6470,6 +6479,53 @@ func (i *Interp) execBlock(b *ast.Block, parent *env) (result, error) {
 		}
 	}
 	return result{flow: flowNormal}, nil
+}
+
+// mutualLocalFuncs gives, for each nested function of b that calls a group
+// of its siblings and is called by them, the names of that group.
+func (i *Interp) mutualLocalFuncs(b *ast.Block) map[string][]string {
+	var fns []*ast.FuncDecl
+	for _, s := range b.Stmts {
+		if fn, ok := s.(*ast.FuncDecl); ok && fn.IsLocal {
+			fns = append(fns, fn)
+		}
+	}
+	if len(fns) < 2 {
+		return nil
+	}
+	if groups, ok := i.mutualFuncs[b]; ok {
+		return groups
+	}
+	if i.mutualFuncs == nil {
+		i.mutualFuncs = map[*ast.Block]map[string][]string{}
+	}
+	groups := map[string][]string{}
+	for _, group := range checker.MutualRecGroups(fns) {
+		for _, name := range group {
+			groups[name] = group
+		}
+	}
+	i.mutualFuncs[b] = groups
+	return groups
+}
+
+// declareMutualFuncs binds each function of group, and each sees the others.
+func declareMutualFuncs(b *ast.Block, group []string, e *env) {
+	var closures []*Closure
+	for _, s := range b.Stmts {
+		if fn, ok := s.(*ast.FuncDecl); ok && fn.IsLocal && slices.Contains(group, fn.Name) {
+			closure := &Closure{Decl: fn}
+			e.declare(fn.Name, closure)
+			closures = append(closures, closure)
+		}
+	}
+	for _, closure := range closures {
+		closure.Env = e.capture(closure.Decl.Captures)
+		for _, peer := range closures {
+			slot, _ := e.captureCell(peer.Decl.Name)
+			closure.Env.captureBinding(peer.Decl.Name, slot)
+		}
+	}
 }
 
 func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {

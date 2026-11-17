@@ -261,19 +261,28 @@ cause on stderr and prints a frame-pointer backtrace under it. Build
 with `-g` and the addresses resolve to function names through `nm` or
 `addr2line`.
 
-`-sanitize` turns on the heap checks together: it reports a double free
-(a reference count released too many times) or a use-after-free as a
-`fern-sanitizer:` line plus a backtrace, and prints a leak census when the
-program exits. A clean run prints no `fern-sanitizer:` line, and its
-output and exit code are unchanged.
+`-sanitize` turns on the heap checks together. Each of these findings is a
+`fern-sanitizer:` line plus a backtrace:
+
+- A double free: a reference count released too many times.
+- A use-after-free.
+- A second context: an allocation or a release by a thread that does not own
+  the heap.
+
+At exit, the sanitizer prints a leak census. A clean run prints no
+`fern-sanitizer:` line, and its output and exit code are unchanged.
+
+A heap belongs to one context. In an executable that context is the stack
+that the program starts on. In a shared object it is the thread that holds
+the turn on the lock of the object.
 
 ```bash
 fern -target x86-64-linux -sanitize -g -o prog prog.fern && ./prog
 ```
 
 The sanitizer never reuses freed memory, so it is for debugging, not for
-shipping. All three checks run on the native x86-64 and arm64 targets;
-on wasm only the leak census is available.
+shipping. All four checks run on the native x86-64 and arm64 targets.
+On wasm, only the leak census is available.
 
 ## Embedding assets
 
