@@ -10,9 +10,9 @@ The rasterizer adds the signed area that each line of the outline covers to the 
 
 ## Contracts
 
-`parse` accepts a font with `glyf` outlines or a `CFF` table, and a Unicode character map of format 4 or 12. It gives None for other fonts. `parse_index` takes one font of a collection file, `.ttc`, by its index.
+`parse` accepts a font with `glyf` outlines, a `CFF` table or a `CFF2` table, and a Unicode character map of format 4 or 12. It gives None for other fonts. `parse_index` takes one font of a collection file, `.ttc`, by its index.
 
-A CFF table can use CIDs, with a font dict for each group of glyphs. The charstrings are of Type 2. They draw cubic curves, and their hints have no effect.
+A CFF table can use CIDs, with a font dict for each group of glyphs. The charstrings are of Type 2. They draw cubic curves, and their hints have no effect. In a variable CFF2 font, `blend` takes the place of the font on each axis that `at_axis` sets.
 
 A code point that the font does not map gives glyph 0. The kerning comes from the pair adjustment lookups of the `kern` feature, both formats. Composite glyphs that join their parts at points, not at offsets, draw their parts with no offset. The hinting instructions of the font have no effect.
 
@@ -95,12 +95,14 @@ pub struct Font {
   cff: Cff,
 }
 
-// The parts of a CFF table: the offsets of the INDEX of the charstrings
-// and of the global subroutines, the offset of the local subroutines of
-// each font dict, and the offset of FDSelect. `charstrings` is -1 for a
-// font with `glyf` outlines, and `fdselect` is -1 for a font with one
-// dict.
-pub struct Cff { charstrings: i32, gsubrs: i32, subrs: i32[], fdselect: i32 }
+// The parts of a CFF or a CFF2 table: the offsets of the INDEX of the
+// charstrings and of the global subroutines, the offset of the local
+// subroutines of each font dict, and the offset of FDSelect.
+// `charstrings` is -1 for a font with `glyf` outlines, and `fdselect` is
+// -1 for a font with one dict. The count of an INDEX has `count_bytes`
+// bytes: 2 in CFF and 4 in CFF2. A CFF2 table can have the offset of an
+// item variation store, `vstore`, and the first `vsindex` of each dict.
+pub struct Cff { charstrings: i32, gsubrs: i32, subrs: i32[], fdselect: i32, count_bytes: i32, vstore: i32, vsindex: i32[] }
 
 // The coverage of a glyph, row by row, from 0 for none to 255 for all of a
 // pixel. `left` and `top` place the first pixel from the pen on the
@@ -165,6 +167,9 @@ pub function parse_index(data: u8[], index: i32): Option[Font] {
   let upem = u16_at(b, head + 18);
   let glyphs = u16_at(b, maxp + 4);
   let cff = cff_of(b, table(b, base, "CFF "), glyphs);
+  if (cff.charstrings < 0) {
+    cff = cff2_of(b, table(b, base, "CFF2"), glyphs);
+  }
   let loca = table(b, base, "loca");
   let glyf = table(b, base, "glyf");
   if (sub < 0 || upem <= 0 || cff.charstrings < 0 && (loca < 0 || glyf < 0)) {
@@ -1261,28 +1266,30 @@ function offset_at(b: [u8], at: i32, size: i32): i32 {
   return v;
 }
 
-function index_count(b: [u8], at: i32): i32 {
-  return u16_at(b, at);
+// The count of the INDEX at `at`, whose count has `cb` bytes.
+function index_count(b: [u8], at: i32, cb: i32): i32 {
+  return offset_at(b, at, cb);
 }
 
 // The start and the end of item `i` of the INDEX at `at`.
-function index_item(b: [u8], at: i32, i: i32): (i32, i32) {
-  let n = index_count(b, at);
+function index_item(b: [u8], at: i32, cb: i32, i: i32): (i32, i32) {
+  let n = index_count(b, at, cb);
   if (i < 0 || i >= n) {
     return (0, 0);
   }
-  let size = u8_at(b, at + 2);
-  let data = at + 2 + (n + 1) * size;
-  return (data + offset_at(b, at + 3 + i * size, size), data + offset_at(b, at + 3 + (i + 1) * size, size));
+  let size = u8_at(b, at + cb);
+  let offsets = at + cb + 1;
+  let data = offsets - 1 + (n + 1) * size;
+  return (data + offset_at(b, offsets + i * size, size), data + offset_at(b, offsets + (i + 1) * size, size));
 }
 
 // The offset after the INDEX at `at`.
-function index_end(b: [u8], at: i32): i32 {
-  let n = index_count(b, at);
+function index_end(b: [u8], at: i32, cb: i32): i32 {
+  let n = index_count(b, at, cb);
   if (n == 0) {
-    return at + 2;
+    return at + cb;
   }
-  let (_, end) = index_item(b, at, n - 1);
+  let (_, end) = index_item(b, at, cb, n - 1);
   return end;
 }
 
@@ -1328,13 +1335,14 @@ function real_end(b: [u8], at: i32): i32 {
 }
 
 // The operands of the operator `op` in the DICT from `start` up to `end`,
-// or none. The operator 12 x is 1200 + x.
+// or none. An operator is a byte up to 27, and the operator 12 x is
+// 1200 + x.
 function dict_operands(b: [u8], start: i32, end: i32, op: i32): i32[] {
   let args: i32[] = [];
   let i = start;
   while (i < end) {
     let b0 = u8_at(b, i);
-    if (b0 > 21) {
+    if (b0 > 27) {
       let (v, next) = dict_operand(b, i);
       args = args.append(v);
       i = next;
@@ -1351,7 +1359,7 @@ function dict_operands(b: [u8], start: i32, end: i32, op: i32): i32[] {
 }
 
 function no_cff(): Cff {
-  return Cff { charstrings: -1, gsubrs: -1, subrs: [], fdselect: -1 };
+  return Cff { charstrings: -1, gsubrs: -1, subrs: [], fdselect: -1, count_bytes: 2, vstore: -1, vsindex: [] };
 }
 
 // The parts of the CFF table at `at`, for a font of `glyphs` glyphs.
@@ -1359,25 +1367,52 @@ function cff_of(b: [u8], at: i32, glyphs: i32): Cff {
   if (at < 0 || u8_at(b, at) != 1) {
     return no_cff();
   }
-  let tops = index_end(b, at + u8_at(b, at + 2));
-  let gsubrs = index_end(b, index_end(b, tops));
-  let (ts, te) = index_item(b, tops, 0);
+  let tops = index_end(b, at + u8_at(b, at + 2), 2);
+  let gsubrs = index_end(b, index_end(b, tops, 2), 2);
+  let (ts, te) = index_item(b, tops, 2, 0);
   let cs = dict_operands(b, ts, te, 17);
-  if (cs.len() != 1 || index_count(b, at + cs[0]) < glyphs) {
+  if (cs.len() != 1 || index_count(b, at + cs[0], 2) < glyphs) {
     return no_cff();
   }
   let fdarray = dict_operands(b, ts, te, 1236);
   let fdselect = dict_operands(b, ts, te, 1237);
+  let one = Cff { ...no_cff(), charstrings: at + cs[0], gsubrs: gsubrs, subrs: [private_subrs(b, at, ts, te)], vsindex: [0] };
   if (fdarray.len() != 1 || fdselect.len() != 1) {
-    return Cff { charstrings: at + cs[0], gsubrs: gsubrs, subrs: [private_subrs(b, at, ts, te)], fdselect: -1 };
+    return one;
   }
-  let fds = at + fdarray[0];
+  return with_dicts(b, at, one, at + fdarray[0], at + fdselect[0]);
+}
+
+// The CFF2 table at `at`. Its top DICT follows the header, and the global
+// subroutines follow the top DICT. It always has an FDArray.
+function cff2_of(b: [u8], at: i32, glyphs: i32): Cff {
+  if (at < 0 || u8_at(b, at) != 2) {
+    return no_cff();
+  }
+  let ts = at + u8_at(b, at + 2);
+  let te = ts + u16_at(b, at + 3);
+  let cs = dict_operands(b, ts, te, 17);
+  let fdarray = dict_operands(b, ts, te, 1236);
+  if (cs.len() != 1 || fdarray.len() != 1 || index_count(b, at + cs[0], 4) < glyphs) {
+    return no_cff();
+  }
+  let fdselect = dict_operands(b, ts, te, 1237);
+  let vstore = dict_operands(b, ts, te, 24);
+  let base = Cff { ...no_cff(), charstrings: at + cs[0], gsubrs: te, count_bytes: 4, vstore: if (vstore.len() == 1) { at + vstore[0] + 2 } else { -1 } };
+  return with_dicts(b, at, base, at + fdarray[0], if (fdselect.len() == 1) { at + fdselect[0] } else { -1 });
+}
+
+// `c` with the local subroutines and the first vsindex of each font dict
+// of the FDArray at `fds`, and the FDSelect at `fdselect`.
+function with_dicts(b: [u8], at: i32, c: Cff, fds: i32, fdselect: i32): Cff {
   let subrs: i32[] = [];
-  for i in 0..index_count(b, fds) {
-    let (fs, fe) = index_item(b, fds, i);
+  let vsindex: i32[] = [];
+  for i in 0..index_count(b, fds, c.count_bytes) {
+    let (fs, fe) = index_item(b, fds, c.count_bytes, i);
     subrs = subrs.append(private_subrs(b, at, fs, fe));
+    vsindex = vsindex.append(private_vsindex(b, at, fs, fe));
   }
-  return Cff { charstrings: at + cs[0], gsubrs: gsubrs, subrs: subrs, fdselect: at + fdselect[0] };
+  return Cff { ...c, subrs: subrs, vsindex: vsindex, fdselect: fdselect };
 }
 
 // The offset of the local subroutines of the Private DICT that the DICT
@@ -1390,6 +1425,18 @@ function private_subrs(b: [u8], at: i32, start: i32, end: i32): i32 {
   let ps = at + p[1];
   let s = dict_operands(b, ps, ps + p[0], 19);
   return if (s.len() == 1) { ps + s[0] } else { -1 };
+}
+
+// The vsindex of the Private DICT that the DICT from `start` up to `end`
+// names, or 0.
+function private_vsindex(b: [u8], at: i32, start: i32, end: i32): i32 {
+  let p = dict_operands(b, start, end, 18);
+  if (p.len() != 2) {
+    return 0;
+  }
+  let ps = at + p[1];
+  let v = dict_operands(b, ps, ps + p[0], 22);
+  return if (v.len() == 1) { v[0] } else { 0 };
 }
 
 // The font dict of glyph `g`, from FDSelect of format 0 or 3.
@@ -1423,7 +1470,8 @@ function bias(n: i32): i32 {
 // The state of the Type 2 interpreter: the stack, the current point, the
 // contours that are done and the one that is open, the count of stems, and
 // whether the width is settled. `ops` counts the operators that ran.
-struct T2 { stack: f64[], x: f64, y: f64, cs: Point[][], cur: Point[], stems: i32, width: boolean, done: boolean, ops: i32 }
+// `vsindex` selects the regions of a blend.
+struct T2 { stack: f64[], x: f64, y: f64, cs: Point[][], cur: Point[], stems: i32, width: boolean, done: boolean, ops: i32, vsindex: i32 }
 
 // The most operators of one glyph, and the depth of the calls of
 // subroutines. A hostile font can call the same subroutine many times.
@@ -1433,13 +1481,16 @@ const MAX_T2_DEPTH: i32 = 10;
 
 // The contours of glyph `g` of a font with CFF outlines.
 function cff_contours(f: Font, g: i32): Point[][] {
-  if (g < 0 || g >= index_count(f.data, f.cff.charstrings)) {
+  let cb = f.cff.count_bytes;
+  if (g < 0 || g >= index_count(f.data, f.cff.charstrings, cb)) {
     return [];
   }
-  let (s, e) = index_item(f.data, f.cff.charstrings, g);
+  let (s, e) = index_item(f.data, f.cff.charstrings, cb, g);
   let fd = fd_of(f, g);
   let local = if (fd < f.cff.subrs.len()) { f.cff.subrs[fd] } else { -1 };
-  let t = run(f, local, T2 { stack: [], x: 0.0, y: 0.0, cs: [], cur: [], stems: 0, width: false, done: false, ops: 0 }, s, e, 0);
+  let vsindex = if (fd < f.cff.vsindex.len()) { f.cff.vsindex[fd] } else { 0 };
+  // A CFF2 charstring has no width.
+  let t = run(f, local, T2 { stack: [], x: 0.0, y: 0.0, cs: [], cur: [], stems: 0, width: cb == 4, done: false, ops: 0, vsindex: vsindex }, s, e, 0);
   return closed(t).cs;
 }
 
@@ -1464,6 +1515,9 @@ function run(f: Font, local: i32, own st: T2, start: i32, end: i32, depth: i32):
     } else if (is_mask(b0)) {
       t = stemmed(t);
       i += 1 + (t.stems + 7) / 8;
+    } else if (b0 == 15 || b0 == 16) {
+      t = varied(f, t, b0);
+      i += 1;
     } else {
       t = cleared(operated(t, b0, u8_at(b, i + 1)));
       i += if (b0 == 12) { 2 } else { 1 };
@@ -1484,6 +1538,53 @@ function is_call(b0: i32): boolean {
 
 function is_mask(b0: i32): boolean {
   return b0 == 19 || b0 == 20;
+}
+
+// vsindex, which selects the regions of the blends after it, and blend.
+// blend takes n values, n times as many deltas as there are regions, and
+// n, and leaves the n values with their deltas added at the place of the
+// font.
+function varied(f: Font, own t: T2, op: i32): T2 {
+  let s = t.stack;
+  let len = s.len();
+  if (len == 0) {
+    return t;
+  }
+  if (op == 15) {
+    return T2 { ...t, vsindex: s[len - 1] as i32, stack: [] };
+  }
+  let n = s[len - 1] as i32;
+  let scalars = region_scalars(f, t.vsindex);
+  let k = scalars.len();
+  let start = len - 1 - n * (k + 1);
+  if (n < 0 || start < 0) {
+    return T2 { ...t, stack: [] };
+  }
+  let out = s.take(start);
+  for i in 0..n {
+    let v = s[start + i];
+    for j in 0..k {
+      v += s[start + n + i * k + j] * scalars[j];
+    }
+    out = out.append(v);
+  }
+  return T2 { ...t, stack: out };
+}
+
+// The scalar of each region of the item variation data `vsindex` of the
+// CFF2 table, at the place of the font. Each is 0 at the default design.
+function region_scalars(f: Font, vsindex: i32): f64[] {
+  let store = f.cff.vstore;
+  let b = f.data;
+  if (store < 0 || vsindex < 0 || vsindex >= u16_at(b, store + 6)) {
+    return [];
+  }
+  let d = store + u32_at(b, store + 8 + 4 * vsindex);
+  let out: f64[] = [];
+  for r in 0..u16_at(b, d + 4) {
+    out = out.append(region_scalar(f, store + u32_at(b, store + 2), u16_at(b, d + 6 + 2 * r)));
+  }
+  return out;
 }
 
 // The number of a charstring at `i`, and the offset after it.
@@ -1511,7 +1612,8 @@ function called(f: Font, local: i32, own st: T2, set: i32, depth: i32): T2 {
   if (set < 0 || depth >= MAX_T2_DEPTH) {
     return t;
   }
-  let (s, e) = index_item(f.data, set, k + bias(index_count(f.data, set)));
+  let cb = f.cff.count_bytes;
+  let (s, e) = index_item(f.data, set, cb, k + bias(index_count(f.data, set, cb)));
   if (e <= s) {
     return t;
   }

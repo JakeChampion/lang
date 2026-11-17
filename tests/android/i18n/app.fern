@@ -6,6 +6,7 @@
 // pixels, and finishes. The Chinese font of the system is CFF, in a
 // collection.
 import "std/android";
+import "std/android/fonts";
 import "std/android/launch";
 import "std/android/text";
 import "std/bidi";
@@ -51,6 +52,9 @@ function step(s: App, e: android.Event): App {
     log.warn("i18ntest: languages " + langs.join(","));
     log.warn("i18ntest: chose " + lang + " " + texts.text("hello"));
     log.warn("i18ntest: rtl " + android.rtl_layout(s.ctx).to_string());
+    for f in fonts.fallbacks(s.ctx, "sans-serif", 400, 20013) {
+      log.warn("i18ntest: font of U+4E2D " + f.path + "#" + f.index.to_string());
+    }
     let fs = text.system(s.ctx, "sans-serif", [400]);
     for word in ["שלום", "مرحبا", "中文"] {
       fs = fs.covering(0, word, text.system_fallbacks(s.ctx, "sans-serif"));

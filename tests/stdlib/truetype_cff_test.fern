@@ -69,6 +69,26 @@ function test_cid(): test.TestOutcome {
   return same_as_truetype(font(bytes(cff_vectors.cid()), 0));
 }
 
+function test_cff2(): test.TestOutcome {
+  return same_as_truetype(font(bytes(cff_vectors.cff2()), 0));
+}
+
+// At the weight 900 a blend makes the counter of "O" wider, so the glyph
+// has less coverage. "L" has no blend, and stays as it is.
+function test_cff2_blends_at_an_axis(): test.TestOutcome {
+  let Some(f) = font(bytes(cff_vectors.cff2()), 0) else {
+    return test.fail("the CFF2 font did not parse");
+  };
+  let heavy = f.at_axis("wght", 900.0);
+  let (o, _) = compared(drawn(f, 79), drawn(f, 79));
+  let (o_heavy, _) = compared(drawn(heavy, 79), drawn(heavy, 79));
+  let (_, l_diff) = compared(drawn(f, 76), drawn(heavy, 76));
+  let fewer = o - o_heavy;
+  // The counter becomes a trapezoid of 7500 more square units: about 31
+  // pixels at 64 pixels to the em, or 7800 of coverage.
+  return test.assert_eq(f.has_axis("wght").to_string() + " " + (fewer > 6000 && fewer < 9500).to_string() + " " + l_diff.to_string(), "true true 0");
+}
+
 // The counter of "O" is a hole: the middle of the glyph has no coverage,
 // and the ring around it has full coverage.
 function test_the_counter_is_a_hole(): test.TestOutcome {
@@ -123,6 +143,8 @@ function main(): i32 {
   let r = test.new("std/truetype CFF");
   r = r.it("a CFF font draws as its TrueType copy", test_cff);
   r = r.it("a CID-keyed CFF font draws as its TrueType copy", test_cid);
+  r = r.it("a CFF2 font draws as its TrueType copy", test_cff2);
+  r = r.it("a blend of a CFF2 font follows the weight", test_cff2_blends_at_an_axis);
   r = r.it("the counter of a CFF glyph is a hole", test_the_counter_is_a_hole);
   r = r.it("parse_index takes a font of a collection", test_collection);
   r = r.it("a cut CFF font does not crash", test_a_cut_font_does_not_crash);
