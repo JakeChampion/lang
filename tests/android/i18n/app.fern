@@ -5,7 +5,8 @@
 // Hebrew, an Arabic and a Chinese word come from a fallback font and have
 // pixels. The Chinese font of the system is CFF, in a collection. Last it
 // logs whether the fatha of an Arabic letter is above the middle of the
-// letter, and finishes.
+// letter. Then it logs the file of the emoji font and the tags of its
+// tables, and finishes.
 import "std/android";
 import "std/android/fonts";
 import "std/android/launch";
@@ -54,6 +55,29 @@ function mark_on_base(fs: text.Fonts, s: string): string {
   return (mark.y + mark.bm.height <= base.y).to_string() + " " + (middle.abs() < base.bm.width / 4).to_string();
 }
 
+// The tags of the tables of the font file at `path`, or of the first font
+// of a collection, joined with commas.
+function table_tags(path: string): string {
+  let b = read_file_bytes(path).unwrap_or([]);
+  let base = if (b.len() > 16 && b[0] == 116u8 && b[1] == 116u8 && b[2] == 99u8 && b[3] == 102u8) { b[12] as i32 << 24 | b[13] as i32 << 16 | b[14] as i32 << 8 | b[15] as i32 } else { 0 };
+  if (b.len() < base + 12) {
+    return "unread";
+  }
+  let n = b[base + 4] as i32 << 8 | b[base + 5] as i32;
+  let tags: string[] = [];
+  for i in 0..n {
+    let r = base + 12 + 16 * i;
+    if (r + 4 <= b.len()) {
+      let tag = "";
+      for k in 0..4 {
+        tag += ((b[r + k] as i32) as char).to_string();
+      }
+      tags = tags.append(tag);
+    }
+  }
+  return tags.join(",");
+}
+
 function step(s: App, e: android.Event): App {
   if let android.Resume = e {
     if (s.done) {
@@ -76,6 +100,9 @@ function step(s: App, e: android.Event): App {
     let fatha = "بَ";
     fs = fs.covering(0, fatha, text.system_fallbacks(s.ctx, "sans-serif"));
     log.warn("i18ntest: mark " + mark_on_base(fs, bidi.display(fatha, bidi.AUTO)));
+    for f in fonts.fallbacks(s.ctx, "sans-serif", 400, 0x1F600) {
+      log.warn("i18ntest: font of U+1F600 " + f.path + "#" + f.index.to_string() + " " + table_tags(f.path));
+    }
     android.finish(s.ctx);
     return App { ...s, done: true };
   }
