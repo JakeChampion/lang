@@ -1248,11 +1248,14 @@ pub function grouped_accesses(f: ssasem.Func): ssasem.Func {
     return f;
   }
   let defs = ssa.inst_defs(f.graph);
+  let g = graph_of(f);
+  let before = Before { g: g, seen: accesses(f, g), dom: ssadeps.dominates(f.graph) };
   let values = f.values;
   let blocks: ssa.SBlock[] = [];
   let changed = false;
-  for blk in f.graph.blocks {
-    let plan = probes_of(f, defs, blk.insts);
+  for b in 0..f.graph.blocks.len() {
+    let blk = f.graph.blocks[b];
+    let plan = probes_of(f, defs, blk.insts, before, b);
     if (!plan.any) {
       blocks = blocks.append(blk);
       continue;
@@ -1314,23 +1317,28 @@ pub function grouped_accesses(f: ssasem.Func): ssasem.Func {
 
 struct Probes { at: i32[], x: i32[], lo: i32[], span: i32[], unchecked: boolean[], any: boolean }
 
-function probes_of(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[]): Probes {
+struct Before { g: Graph, seen: Seen, dom: ssadeps.Dom }
+
+function probes_of(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], before: Before, b: i32): Probes {
   let out = Probes { at: [], x: [], lo: [], span: [], unchecked: __alloc_bool(insts.len()), any: false };
   let start = 0;
   for pos in 0..=insts.len() {
     if (pos == insts.len() || !silent(f, insts[pos])) {
-      out = probes_in_run(f, defs, insts, start, pos, out);
+      out = probes_in_run(f, defs, insts, start, pos, before, b, out);
       start = pos + 1;
     }
   }
   return out;
 }
 
-function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], start: i32, end: i32, own out: Probes): Probes {
+// A read of an index that an earlier access leaves in range is not a member.
+// It merges with that access, and its test goes with it.
+function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], start: i32, end: i32, before: Before, b: i32, own out: Probes): Probes {
   let reads: i32[] = [];
   for k in start..end {
     let ins = insts[k];
-    if ((checked_index(ins) && scalar(f, ins.result) || scalar_write(f, ins) && ins.imm == 0) && ssasem.is_i32(f.values[ins.args[1]])) {
+    let read = checked_index(ins) && scalar(f, ins.result) && !accessed_before(before.g, before.seen, before.dom, b, k, ins);
+    if ((read || scalar_write(f, ins) && ins.imm == 0) && ssasem.is_i32(f.values[ins.args[1]])) {
       reads = reads.append(k);
     }
   }
