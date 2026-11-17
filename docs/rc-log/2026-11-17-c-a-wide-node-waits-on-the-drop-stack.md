@@ -43,9 +43,11 @@ child left. No field needed a mark.
 That drop was correct, and it ran 6% fewer instructions than the calls. It
 made the program slower. The two stacks do not keep the order of one stack.
 The nodes were thus not freed in the order of a walk of the tree. The free
-lists then gave the next tree blocks that were far apart. The program built 6
-trees of 13 levels. The build of a tree after the first took 18 to 25 ms,
-against 11 ms with the calls. The time of the drop itself did not change.
+lists then gave the next tree blocks that were far apart.
+
+The program built 6 trees of 13 levels. The build of a tree after the first
+took 18 to 25 ms, against 11 ms with the calls. The time of the drop itself
+did not change.
 
 The instruction count does not see this cost. Measure the time of a program
 that builds a tree after a drop.
@@ -69,12 +71,13 @@ change.
 
 ## Tests
 
+In the new test, each field of each variant is in turn the spine of a tree of
+1,000,000 levels. One frame for each level needs more than a stack of 8 MB.
+The trees share subtrees.
+
 - `TestSelfHostDropOfAWideNodeHasNoCall` checks that the drop of an enum with
   variants of two and three waiting fields has no call of a drop helper, on
-  x86-64 and arm64. Each field of each variant is in turn the spine of a tree
-  of 1,000,000 levels. One frame for each level needs more than a stack of
-  8 MB. The trees share subtrees. The census is balanced on x86-64, arm64 and
-  wasm32.
+  x86-64 and arm64. The census is balanced on x86-64, arm64 and wasm32.
 - `TestSelfHostDropSkipsAChildlessBox` now checks that the drop of `E`, whose
   `Pair` has two waiting fields, has no call. Its new enum `G` keeps its next
   nodes in an array. The drop of `G` thus still has the call and the test of
