@@ -1014,6 +1014,22 @@ function direct_with(it: Item, decoders: string[], choice: Choice): boolean {
   return direct_container(m.container) && decodes(decoders, m.video) && decodes(decoders, audio_codec(it, choice));
 }
 
+// The request that downloads the file of the first version of the item as
+// it is. The item must have a part.
+pub function download_request(c: Client, b: Base, it: Item): Request {
+  return get(c.with_token(b.token), b.uri + it.media[0].parts[0].key + "?download=1");
+}
+
+// The name of the file of a download of the item: its key and the
+// extension of its container.
+pub function download_name(it: Item): string {
+  let ext = "bin";
+  if (it.media.len() > 0 && it.media[0].container.len() > 0) {
+    ext = it.media[0].container;
+  }
+  return it.key + "." + ext;
+}
+
 // The address of the file of the item, which the player reads as it is.
 // `session` joins the stream to the reports of the timeline.
 pub function direct_url(b: Base, it: Item, session: string): string {

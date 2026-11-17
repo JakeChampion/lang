@@ -558,6 +558,23 @@ pub function int_array_region(env: usize, array: usize, start: i32, n: i32): i32
   }
 }
 
+// A new long[] of `n` zeros.
+pub function new_long_array(env: usize, n: i32): usize {
+  return call1(env, 180, n as usize);
+}
+
+// Puts the longs `values` in `array` from the index `start`.
+pub function set_long_array_region(env: usize, array: usize, start: i32, values: [i64]): void {
+  unsafe {
+    let buf: usize = alloc_buffer(8 * values.len() + 8);
+    for k in 0..values.len() {
+      __store_i64(buf + (8 * k) as usize, values[k]);
+    }
+    let done: usize = call4(env, 212, array, start as usize, values.len() as usize, buf);
+    free_buffer(buf);
+  }
+}
+
 // A new float[] of `n` zeros.
 pub function new_float_array(env: usize, n: i32): usize {
   return call1(env, 181, n as usize);

@@ -80,8 +80,10 @@ pub struct View {
   sort: i32,
   unwatched: boolean,
   letters: plex.Letter[],
-  // The item of the menu of a held poster, or no_item.
+  // The item of the menu of a held poster, or no_item, and the part of its
+  // download that came in percent, or -1 when it has none.
   menu: plex.Item,
+  menu_download: i32,
   users: plex.HomeUser[],
   pin_for: string,
   pin_digits: string,
@@ -112,7 +114,7 @@ pub function english(): i18n.Strings {
 }
 
 pub function empty_view(w: i32, h: i32): View {
-  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english() };
+  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english() };
 }
 
 // --- metrics
@@ -1329,18 +1331,26 @@ pub function nodes(v: View): scene.Node[] {
   let back = v.screen == LIBRARY || v.screen == DETAIL || v.screen == USERS;
   let out = util_append(util_append(body, top_bar(m, v, back)), bottom_bar(m, v));
   if (v.menu.key.len() > 0) {
-    out = util_append(out, poster_menu(m, v.menu));
+    out = util_append(out, poster_menu(m, v.menu, v.menu_download));
   }
   return out;
 }
 
 // The menu of a held poster, at the bottom over a dark veil: its title,
-// Play, Mark watched or Mark unwatched, Go to show for an episode, and
-// Cancel. A tap on the veil closes it.
-function poster_menu(m: Metrics, it: plex.Item): scene.Node[] {
+// Play, its download, Mark watched or Mark unwatched, Go to show for an
+// episode, and Cancel. `download` is the percent of its download that came,
+// or -1. A tap on the veil closes it.
+function poster_menu(m: Metrics, it: plex.Item, download: i32): scene.Node[] {
   let rows: (string, string)[] = [];
   if (plex.playable_kind(it.kind)) {
     rows = rows.append((tr(m, "Play"), "menu:play"));
+    let words = tr(m, "Download");
+    if (download >= 100) {
+      words = tr(m, "Remove download");
+    } else if (download >= 0) {
+      words = m.texts.format("Stop download ({0}%)", [download.to_string()]);
+    }
+    rows = rows.append((words, "menu:download"));
   }
   if (plex.watched(it)) {
     rows = rows.append((tr(m, "Mark unwatched"), "menu:mark"));
