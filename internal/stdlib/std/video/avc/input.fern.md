@@ -66,7 +66,7 @@ struct SequenceSlot { value: avc.SliceSequence, generation: i64 }
 
 struct PictureSlot { value: avc.PictureParameters, encoded: u8[], generation: i64 }
 
-struct Identity { parameter_id: i32, frame_num: i32, reference: boolean, idr: boolean, idr_id: i32, order_type: i32, order_a: i32, order_b: i32 }
+struct Identity { parameter_id: i32, frame_num: i32, reference: boolean, idr: boolean, idr_id: i32, order_type: i32, order_a: i32, order_b: i32, slice_types: u32 }
 
 pub struct Stream { units: nals.Stream, sequences: SequenceSlot[], pictures: PictureSlot[], next_sequence: i64, packet: u8[], packet_offset: i64, packet_units: i32, last: Option[Identity], pending: Option[nals.Unit], pending_offset: i64, forced: boolean, ended: boolean, finished: boolean, packets: i32, limits: Limits }
 
@@ -185,7 +185,7 @@ function order_fields(input: [u8], at: i64, context: avc.SliceSequence, pps: avc
   return Ok((0, 0));
 }
 
-function slice_fields(input: [u8], at: i64, context: avc.SliceSequence, pps: avc.PictureParameters, header: u8): Result[Identity, frame.VideoError] {
+function slice_fields(input: [u8], at: i64, context: avc.SliceSequence, pps: avc.PictureParameters, header: u8, kind: u32): Result[Identity, frame.VideoError] {
   let (at, number) = avc.read(input, at, context.frame_bits)?;
   let idr = (header & 31u8) == 5u8;
   if (idr && number != 0u32) {
@@ -198,7 +198,8 @@ function slice_fields(input: [u8], at: i64, context: avc.SliceSequence, pps: avc
     id = value;
   }
   let (a, b) = order_fields(input, at, context, pps)?;
-  return Ok(Identity { parameter_id: pps.parameter_id, frame_num: number as i32, reference: (header & 96u8) != 0u8, idr: idr, idr_id: id as i32, order_type: context.order_type, order_a: a, order_b: b });
+  let types = 1u32 << kind % 5u32 | (if (kind >= 5u32) { 32u32 } else { 0u32 });
+  return Ok(Identity { parameter_id: pps.parameter_id, frame_num: number as i32, reference: (header & 96u8) != 0u8, idr: idr, idr_id: id as i32, order_type: context.order_type, order_a: a, order_b: b, slice_types: types });
 }
 
 function check_slice(first: u32, kind: u32, header: u8, context: avc.SliceSequence): Result[void, frame.VideoError] {
@@ -220,7 +221,7 @@ function slice_identity(own stream: Stream, input: [u8]): Result[(Stream, Identi
   let (updated, pps) = current_picture(stream, id as i32)?;
   let context = sequence(updated, pps.sequence_id)?;
   check_slice(first, kind, input[0], context.value)?;
-  let identity = slice_fields(bytes, fields_at, context.value, pps, input[0])?;
+  let identity = slice_fields(bytes, fields_at, context.value, pps, input[0], kind)?;
   return Ok((updated, identity));
 }
 
@@ -302,7 +303,22 @@ function filler(input: [u8], has_picture: boolean): Result[void, frame.VideoErro
   return Ok(());
 }
 
-function append_packet(own bytes: u8[], input: [u8], maximum: i32, kind: i32, has_picture: boolean): Result[u8[], frame.VideoError] {
+function picture_identity(previous: Option[Identity], next: Option[Identity]): Result[Option[Identity], frame.VideoError] {
+  let Some(current) = next else {
+    return Ok(previous);
+  };
+  let Some(last) = previous else {
+    return Ok(next);
+  };
+  let types = last.slice_types | current.slice_types;
+  let families = types & 31u32;
+  if ((types & 32u32) != 0u32 && (families & families - 1u32) != 0u32) {
+    return Err(frame.Header);
+  }
+  return Ok(Some(Identity { ...current, slice_types: types }));
+}
+
+function append_packet(own bytes: u8[], input: [u8], maximum: i32, kind: i32, previous: Option[Identity], next: Option[Identity]): Result[(u8[], Option[Identity]), frame.VideoError] {
   if (maximum - bytes.len() < 4 || input.len() > maximum - bytes.len() - 4) {
     return Err(frame.Limit);
   }
@@ -310,15 +326,16 @@ function append_packet(own bytes: u8[], input: [u8], maximum: i32, kind: i32, ha
     delimiter(input, bytes.len() == 0)?;
   }
   if (kind == 12) {
-    filler(input, has_picture)?;
+    filler(input, previous.is_some())?;
   }
+  let identity = picture_identity(previous, next)?;
   for byte in [0u8, 0u8, 0u8, 1u8] {
     bytes = bytes.append(byte);
   }
   for byte in input {
     bytes = bytes.append(byte);
   }
-  return Ok(bytes);
+  return Ok((bytes, identity));
 }
 
 function emit(own stream: Stream): Result[Step, frame.VideoError] {
@@ -346,8 +363,7 @@ function append_unit(own stream: Stream, unit: nals.Unit, offset: i64, kind: i32
   }
   let updated = parameters(stream, unit.bytes, kind)?;
   let at = if (updated.packet_units == 0) { offset } else { updated.packet_offset };
-  let bytes = append_packet(updated.packet, unit.bytes, updated.limits.video.max_packet_bytes, kind, updated.last.is_some())?;
-  let last = if (identity.is_some()) { identity } else { updated.last };
+  let (bytes, last) = append_packet(updated.packet, unit.bytes, updated.limits.video.max_packet_bytes, kind, updated.last, identity)?;
   let forced = kind == 10 || updated.forced && kind != 1 && kind != 5;
   return Ok(Step { stream: Stream { ...updated, packet: bytes, packet_offset: at, packet_units: updated.packet_units + 1, last: last, forced: forced, ended: kind == 11 }, event: Waiting });
 }
