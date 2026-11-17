@@ -3,13 +3,14 @@ import "./rccertify";
 import "./ssa";
 import "./util";
 import "std/envflag";
+import "std/rand";
 import "std/string";
 
 // stamp is a digest of the compiler's bytes, so an entry another build wrote is not a hit.
 pub struct Memo { on: boolean, path: string, known: util.NameIndex, adds: usize, hits: usize, misses: usize, call_kind: i32, stamp: string }
 
 function version(): string {
-  return "12";
+  return "13";
 }
 
 function keep(): i32 {
@@ -161,8 +162,18 @@ function newest(lines: string[]): string[] {
   return out;
 }
 
+// Two digests of the function from two seeds: 128 bits, so a hit that names
+// another function is not a practical risk.
 pub function key(m: Memo, fn_name: string, f: ssa.SFunc, ops: ir.Op[], abis: rccertify.Abis): string {
-  let d = util.roll_text(util.roll_text(util.digest_start(), m.stamp), fn_name);
+  return key_from(util.digest_start(), m, fn_name, f, ops, abis) + "_" + key_from(second_seed(), m, fn_name, f, ops, abis);
+}
+
+function second_seed(): i64 {
+  return 7809847782465536322i64;
+}
+
+function key_from(seed: i64, m: Memo, fn_name: string, f: ssa.SFunc, ops: ir.Op[], abis: rccertify.Abis): string {
+  let d = util.roll_text(util.roll_text(seed, m.stamp), fn_name);
   d = roll_abi(d, abis.lookup(fn_name));
   d = util.roll(util.roll(util.roll_flag(util.roll(d, f.nparams), f.takes_env), f.nvals), f.blocks.len());
   for o in ops {
@@ -215,6 +226,9 @@ pub function close(m: Memo): string {
   return summary;
 }
 
+// The entries on disk now, which another compile may have added to, and this
+// compile's, written beside the memo and renamed over it. A reader sees the
+// old file or the new one, never part of one.
 function write(m: Memo, adds: string): void {
   let cut = m.path.len();
   while (cut > 0 && m.path[cut - 1] != b'/') {
@@ -227,12 +241,25 @@ function write(m: Memo, adds: string): void {
     }
   }
   let chunks: string[] = [];
-  for k in m.known.names {
+  for k in lines_of(m.path) {
     chunks = chunks.append(k + "\n");
   }
   chunks = chunks.append(adds);
-  match (write_file(m.path, util.str_join_chunks(chunks))) {
+  let suffix = "";
+  for b in rand.bytes(6) {
+    suffix += util.i32_to_string(b as i32);
+  }
+  let tmp = m.path + ".tmp-" + suffix;
+  match (write_file(tmp, util.str_join_chunks(chunks))) {
     Ok(done) => {},
-    Err(e) => {}
+    Err(e) => {
+      return;
+    }
+  }
+  match (rename(tmp, m.path)) {
+    Ok(done) => {},
+    Err(e) => {
+      let gone = remove_file(tmp);
+    }
   }
 }

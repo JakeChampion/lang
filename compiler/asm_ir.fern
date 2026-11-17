@@ -13595,6 +13595,7 @@ function emit_runtime_module(m: parser.Module, lowered: physicalbody.Lowered, s:
     }
   }
   s = emit_named_bodies(bodies, physical, unit.pre, fns.len(), s, vgate);
+  irverifygate.report_census(vgate);
   s = emit_cfi_stubs_from(s, cf0);
   if (s.string_lits.len() > lit0) {
     s = s.write("    .section .rodata\n");
