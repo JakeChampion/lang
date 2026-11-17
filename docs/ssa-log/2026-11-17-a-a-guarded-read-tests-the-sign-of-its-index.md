@@ -37,9 +37,10 @@ string in each pass.
 
 ## The change
 
-A read has a third state, `ssasem.below_proven()`. `ssabounds.proof_of`
-gives it to a checked read of an `i32` index when `below` holds and `nonneg`
-does not. A later run of the pass can still prove the read completely.
+A read has a third state, `ssasem.below_proven()`.
+`ssabounds.sign_tested_reads` gives it to a checked read of an `i32` index
+when `below` holds. The pass runs one time, after the inliner and each other
+pass of the semantic graph, so those passes see the same reads as before.
 
 `ssarc` lowers such a read as two operations:
 
@@ -70,6 +71,18 @@ accepts a negative index.
 The unchecked read is a raw load, so the data pointer of the string moves
 out of the loop. The function keeps no frame.
 
+## The trap: the limit of a small leaf
+
+`ircore.inline_tiny_leaves` splices a leaf of 16 operations or fewer. A
+checked read of a string is one operation. The new form is four: the sign
+test, its drop, `str_data` and `raw_load8`. A leaf at the limit, such as
+`__json_byte` of `std/json`, then had 19 operations and stayed a call. `aarch64/utf8_ingest_unchecked.ir` rose 1.03%.
+
+`inline_leaf` now counts the sign test, its drop and the `str_data` after
+them as parts of the one read. The four operations are four instructions,
+and the checked read is five. The row is 2,577,484 against 2,593,884 before
+the change (-0.63%).
+
 ## Measured
 
 Instructions for each element of the loop, from the listings:
@@ -94,6 +107,8 @@ machine. The loads that the change removes hit the first-level cache.
 - `TestSelfHostGuardLeavesASignTest` checks the listings of x86-64 and
   arm64: a sign test before the read, no second compare with the length, and
   no frame.
+- `TestSelfHostGuardSignTestKeepsTheLeaf` checks that a leaf of 16
+  operations is spliced into its caller, with a sign test for each read.
 - `TestSelfHostGuardSignTestAborts` runs a negative start on x86-64, arm64
   and wasm32 for a string, an `i32[]`, an `i64[]`, a `[i32]` view and a
   `[u8]` view. Each case aborts with the message and the status of the full

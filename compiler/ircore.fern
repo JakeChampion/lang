@@ -877,9 +877,14 @@ function inline_leaf(fd: parser.FuncDecl, r: irtables.LowerResult): boolean {
   let k_dyn = ir.K_DYN_DISPATCH;
   let k_line = ir.K_LINE;
   let work = 0;
+  let sign_tested = false;
   for o in r.ops {
     let k = o.kind_tag;
-    if (k != k_load && k != k_store && k != k_tee && k != k_line) {
+    // A sign test, its drop and the data pointer of a string are parts of
+    // the read after them. They count as that one read.
+    let part = ir.is_sign_only(o) || sign_tested && (k == ir.K_DROP || k == ir.K_STR_DATA);
+    sign_tested = part || sign_tested && k == k_load;
+    if (k != k_load && k != k_store && k != k_tee && k != k_line && !part) {
       work += 1;
     }
     if (work > inline_leaf_ops()) {

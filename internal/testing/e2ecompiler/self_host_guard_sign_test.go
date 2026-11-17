@@ -155,3 +155,66 @@ func TestSelfHostGuardSignTestAborts(t *testing.T) {
 		}
 	}
 }
+
+// byte_at has 16 operations that the inliner of small leaves counts, which is
+// its limit, when its read keeps the full check.
+const guardSignLeafProg = `function byte_at(s: string, i: i32): u8 {
+    if (i < s.len()) { return s[i]; }
+    return 0u8;
+}
+
+@noinline
+function scan(s: string, from: i32): i32 {
+    let i = from;
+    let n = 0;
+    while (byte_at(s, i) != b'"') {
+        if (byte_at(s, i) == b'\\') { n += 1; }
+        if (byte_at(s, i) == 0u8) { return n; }
+        i += 1;
+    }
+    return n + i;
+}
+
+function main(): i32 { return scan("ab\\c\"", 0) + 37; }
+`
+
+// The sign test, its drop and the data pointer of the string are one read for
+// the inliner of small leaves, so a leaf at the limit is still spliced.
+func TestSelfHostGuardSignTestKeepsTheLeaf(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "leaf.fern")
+	if err := os.WriteFile(src, []byte(guardSignLeafProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tg := range []struct{ target, call, sign string }{
+		{"x86-64-linux", "call __fn_byte_at", `testl %\w+, %\w+\n\s+js __fern_str_oob_abort`},
+		{"arm64-linux", "bl __fn_byte_at", `cmp w\d+, #0\n\s+b\.ge 1f\n\s+b __fern_str_oob_abort`},
+	} {
+		out := filepath.Join(dir, tg.target+".s")
+		if combined, err := exec.Command(h.cli, "-target", tg.target, "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+			t.Fatalf("emitting %s: %v\n%s", tg.target, err, combined)
+		}
+		asm, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(asm), tg.call) {
+			t.Errorf("%s: scan calls byte_at", tg.target)
+		}
+		end := ".cfi_endproc"
+		if tg.target == "arm64-linux" {
+			end = ".ltorg"
+		}
+		body := guardSignBody(t, asm, "scan", end)
+		if n := len(regexp.MustCompile(tg.sign).FindAllString(body, -1)); n != 3 {
+			t.Errorf("%s: scan has %d sign tests, want 3:\n%s", tg.target, n, body)
+		}
+	}
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		if stderr, code := cli.exitOf(t, guardSignLeafProg, target); code != 42 {
+			t.Errorf("%s: exit %d, want 42\n%s", target, code, stderr)
+		}
+	}
+}

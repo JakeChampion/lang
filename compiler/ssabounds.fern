@@ -8,6 +8,8 @@ struct Rel { lo: i32, hi: i32, strict: boolean, nonnegative: boolean }
 
 struct Graph { defs: ssa.SInst[], home: i32[], i32s: boolean[], i64s: boolean[], unsigned_max: i64[], widens: i32[], rels: Rel[], first: i32[], count: i32[], up: i32[], above: i32[], preds: i32[][] }
 
+pub struct SignTested { func: ssasem.Func, changed: boolean }
+
 pub function proven_indices(f: ssasem.Func): ssasem.Func {
   if (!any_checked_index(f)) {
     return f;
@@ -29,8 +31,6 @@ pub function proven_indices(f: ssasem.Func): ssasem.Func {
       }
       if (proof == PROOF_UNCHECKED) {
         insts = insts.append(ssa.SInst { ...ins, imm: 1 });
-      } else if (proof == PROOF_BELOW) {
-        insts = insts.append(ssa.SInst { ...ins, imm: ssasem.below_proven() });
       } else if (proof == PROOF_LANE_SPAN) {
         insts = insts.append(ssa.SInst { ...ins, imm: ssasem.lane_span_proven() });
       } else if (proof == PROOF_NONE) {
@@ -48,6 +48,40 @@ pub function proven_indices(f: ssasem.Func): ssasem.Func {
     return f;
   }
   return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } };
+}
+
+// A checked read with an index that a guard proves below the length keeps
+// only the test of the sign of its index. This runs after each pass that
+// compares reads, because it gives such a read a state of its own.
+pub function sign_tested_reads(f: ssasem.Func): SignTested {
+  if (!any_checked_index(f)) {
+    return SignTested { func: f, changed: false };
+  }
+  let g = graph_of(f);
+  let blocks: ssa.SBlock[] = [];
+  let changed = false;
+  for b in 0..f.graph.blocks.len() {
+    let blk = f.graph.blocks[b];
+    let insts: ssa.SInst[] = [];
+    let marked = false;
+    for ins in blk.insts {
+      if (checked_index(ins) && g.i32s[ins.args[1]] && !is_const(g, ins.args[1]) && below(g, b, ins.args[1], ins.args[0], [], depth())) {
+        insts = insts.append(ssa.SInst { ...ins, imm: ssasem.below_proven() });
+        marked = true;
+      } else {
+        insts = insts.append(ins);
+      }
+    }
+    if (marked) {
+      blk = ssa.SBlock { ...blk, insts: insts };
+      changed = true;
+    }
+    blocks = blocks.append(blk);
+  }
+  if (!changed) {
+    return SignTested { func: f, changed: false };
+  }
+  return SignTested { func: ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } }, changed: true };
 }
 
 // The element accesses of a function, chained by the root of their index.
@@ -73,7 +107,7 @@ function accesses(f: ssasem.Func, g: Graph): Seen {
 }
 
 function element_access(ins: ssa.SInst): boolean {
-  let read = index_read(ins) && (ins.imm == 0 || ins.imm == 1 || ins.imm == ssasem.below_proven());
+  let read = index_read(ins) && (ins.imm == 0 || ins.imm == 1);
   return read || ins.kind_tag == ssasem.with() && ins.args.len() == 3 && (ins.imm == 0 || ins.imm == 1);
 }
 
@@ -111,8 +145,6 @@ const PROOF_DROPPED: i32 = 2;
 
 const PROOF_LANE_SPAN: i32 = 3;
 
-const PROOF_BELOW: i32 = 4;
-
 // A checked access the facts prove becomes unchecked, and a proven group check goes.
 function proof_of(g: Graph, b: i32, ins: ssa.SInst): i32 {
   if (byte_lane_read(ins) || byte_lane_write(ins)) {
@@ -128,9 +160,6 @@ function proof_of(g: Graph, b: i32, ins: ssa.SInst): i32 {
   }
   if ((checked_index(ins) || checked_write(ins)) && g.i32s[ins.args[1]] && proven(g, b, ins.args[1], ins.args[0])) {
     return PROOF_UNCHECKED;
-  }
-  if (index_read(ins) && ins.imm == 0 && g.i32s[ins.args[1]] && !is_const(g, ins.args[1]) && below(g, b, ins.args[1], ins.args[0], [], depth())) {
-    return PROOF_BELOW;
   }
   if (group_check(ins) && group_proven(g, b, ins.args[1], ins.args[0])) {
     return PROOF_DROPPED;
@@ -199,7 +228,7 @@ function at_most(g: Graph, b: i32, lo: i32, hi: i32): boolean {
 }
 
 function checked_index(ins: ssa.SInst): boolean {
-  return index_read(ins) && (ins.imm == 0 || ins.imm == ssasem.below_proven());
+  return index_read(ins) && ins.imm == 0;
 }
 
 function checked_write(ins: ssa.SInst): boolean {
