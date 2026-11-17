@@ -4433,7 +4433,7 @@ function strings_ordered(op: string, a: string, b: string): boolean {
 }
 
 function is_checked_op(op: string): boolean {
-  return util.has_str(["+?", "-?", "*?", "/?", "%?", "<<?", ">>?"], op);
+  return op.len() >= 2 && op[op.len() - 1] == b'?' && util.has_str(["+?", "-?", "*?", "/?", "%?", "<<?", ">>?"], op);
 }
 
 function checked_operand_type(b: ast.ExprBinary, lv: Value): string {
