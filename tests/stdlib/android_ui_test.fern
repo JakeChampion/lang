@@ -24,7 +24,7 @@ function fonts(): text.Fonts {
 }
 
 function screen(): ui.Screen {
-  return ui.Screen { w: 200, h: 400, d: 1.0, dark: false, theme: ui.theme(false), left: 0, top: 0, right: 0, bottom: 0, font: 1.0 };
+  return ui.Screen { w: 200, h: 400, d: 1.0, dark: false, theme: ui.theme(false), left: 0, top: 0, right: 0, bottom: 0, font: 1.0, rtl: false };
 }
 
 // The messages of the elements and of the programs of these tests.
@@ -228,6 +228,70 @@ function test_a_frame_covers_its_text(): test.TestOutcome {
   let s = sim.start(0, ui.program(alef_view, kept), alef_fonts(), 200, 400, 1.0);
   let w = s.shell.host.lay.nodes[0].w;
   return test.assert_eq(s.shell.host.fonts.looked().to_string() + " " + (w == text.width(fonts(), 0, 10, "Á")).to_string(), "1 true");
+}
+
+function rtl_screen(): ui.Screen {
+  return ui.Screen { ...screen(), rtl: true };
+}
+
+function test_a_right_to_left_layout_mirrors(): test.TestOutcome {
+  // A row puts its first element at the right. A text keeps the order of
+  // its letters, and a left-to-right text is at the left of its box.
+  let s = rtl_screen();
+  let row = ui.on_screen(laid_on(ui.row([label("A"), label("AA")]).spaced(4.0), s, ui.no_focus()).nodes, s);
+  let col = ui.on_screen(laid_on(ui.column([label("AAA").wide(), label("אב").wide()]).width(60.0), s, ui.no_focus()).nodes, s);
+  let w = text.width(fonts(), 0, 10, "בא");
+  return test.assert_eq(boxes(row) + " | " + labels(col), "194,0,6,10 178,0,12,10 | AAA@140 בא@" + (200 - w).to_string());
+}
+
+// The keys of the canvases of `ns`.
+function canvas_keys(ns: scene.Node[]): string {
+  let out: string[] = [];
+  for n in ns {
+    if let scene.Custom(key, _, _) = n.paint {
+      out = out.append(key.split("#")[0]);
+    }
+  }
+  return out.join(" ");
+}
+
+function test_the_back_arrow_points_to_the_start(): test.TestOutcome {
+  // In a right-to-left layout the arrow of the app bar points to the right,
+  // and it is at the right of the bar.
+  let bar: ui.El[Msg] = ui.app_bar("A", Some(Go), []);
+  let ltr = laid(bar);
+  let s = rtl_screen();
+  let rtl = ui.on_screen(laid_on(bar, s, ui.no_focus()).nodes, s);
+  let right = false;
+  for n in rtl {
+    if let scene.Custom(_, _, _) = n.paint {
+      right = n.x > 100;
+    }
+  }
+  return test.assert_eq(canvas_keys(ltr.nodes) + " " + canvas_keys(rtl) + " " + right.to_string(), "back back|rtl true");
+}
+
+function pair_view(m: i32, s: ui.Screen): ui.El[Msg] {
+  return ui.row([label("A").on_tap(Pick(1)), label("V").on_tap(Pick(2))]).spaced(20.0);
+}
+
+function picked(own m: i32, msg: Msg): i32 {
+  if let Pick(i) = msg {
+    return i;
+  }
+  return m;
+}
+
+function test_a_tap_in_a_right_to_left_layout(): test.TestOutcome {
+  // The first element is at the right of the screen, and a tap there gives
+  // its message.
+  let s = sim.directed(sim.start(0, ui.program(pair_view, picked), fonts(), 200, 400, 1.0), true);
+  let at = sim.place_of(s, "A", 0);
+  s = sim.tap_nth(s, "A", 0);
+  let first = s.shell.app;
+  s = sim.tap_nth(s, "V", 0);
+  let right = if let Some((x, _)) = at { x > 150 } else { false };
+  return test.assert_eq(right.to_string() + " " + first.to_string() + " " + s.shell.app.to_string(), "true 1 2");
 }
 
 function test_roles_take_the_theme(): test.TestOutcome {
@@ -1023,6 +1087,19 @@ function test_a_right_to_left_field(): test.TestOutcome {
   return test.assert_eq(got, "גבא@" + left.to_string() + " 1 0 1");
 }
 
+function test_a_field_in_a_right_to_left_layout(): test.TestOutcome {
+  // The field fills the screen, so it does not move. Its text of
+  // left-to-right letters stays at the left, with the caret after it, and a
+  // tap at the left edge puts the caret before the first letter.
+  let s = sim.directed(form(false), true);
+  s = sim.type_in(s, "name", "AAAA");
+  let nodes = ui.on_screen(s.shell.host.lay.nodes, s.shell.host.screen);
+  let end = caret_x(nodes);
+  s = sim.tap_at(s, 17, 28);
+  let got = labels(nodes).split(" ")[0] + " " + (end - 16 - text.width(fonts(), 0, 16, "AAAA")).to_string() + " " + s.shell.host.caret.to_string();
+  return test.assert_eq(got, "AAAA@16 1 0");
+}
+
 function test_hardware_keys_edit_at_the_caret(): test.TestOutcome {
   let s = sim.tap_at(sim.type_in(form(false), "name", "AAAA"), 36, 28);
   s = sim.event(s, android.Char(86));
@@ -1308,6 +1385,9 @@ function main(): i32 {
   r = r.it("a text wraps and clamps", test_text_wraps);
   r = r.it("a right-to-left text reads from the right", test_right_to_left_text);
   r = r.it("a frame takes a fallback font for a character of its text", test_a_frame_covers_its_text);
+  r = r.it("a right-to-left layout mirrors rows and not text", test_a_right_to_left_layout_mirrors);
+  r = r.it("a tap in a right-to-left layout reaches its element", test_a_tap_in_a_right_to_left_layout);
+  r = r.it("the back arrow points to the start of the layout", test_the_back_arrow_points_to_the_start);
   r = r.it("a role takes its color from the theme", test_roles_take_the_theme);
   r = r.it("a seeded theme takes the hue of its seed", test_a_seeded_theme);
   r = r.it("a theme follows the state of the program", test_a_theme_follows_the_state);
@@ -1350,6 +1430,7 @@ function main(): i32 {
   r = r.it("an accessibility service reads a field", test_field_is_spoken);
   r = r.it("a tap on the text puts the caret there", test_a_tap_puts_the_caret);
   r = r.it("a right-to-left field has its text and caret at the right", test_a_right_to_left_field);
+  r = r.it("a field in a right-to-left layout keeps its left-to-right text", test_a_field_in_a_right_to_left_layout);
   r = r.it("the keys of a hardware keyboard edit at the caret", test_hardware_keys_edit_at_the_caret);
   r = r.it("a long text shows the part at the caret", test_a_long_text_shows_the_part_at_the_caret);
   r = r.it("an area wraps its text and takes new lines", test_an_area_wraps_and_takes_new_lines);

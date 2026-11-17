@@ -199,6 +199,9 @@ function c_config_density(config: usize): i32;
 @import("libandroid.so", "AConfiguration_getUiModeNight")
 function c_config_night(config: usize): i32;
 
+@import("libandroid.so", "AConfiguration_getLayoutDirection")
+function c_config_layout_direction(config: usize): i32;
+
 @import("libandroid.so", "AConfiguration_delete")
 function c_config_delete(config: usize): void;
 
@@ -1701,6 +1704,24 @@ pub function density(ctx: usize): i32 {
 
 // ACONFIGURATION_UI_MODE_NIGHT_YES.
 const UI_MODE_NIGHT_YES: i32 = 2;
+
+// ACONFIGURATION_LAYOUTDIR_RTL.
+const LAYOUTDIR_RTL: i32 = 2;
+
+// The layout of the activity is right to left: the language of the person
+// is written right to left, or the developer options force it.
+pub function rtl_layout(ctx: usize): boolean {
+  unsafe {
+    if (detached(ctx)) {
+      return false;
+    }
+    let config: usize = c_config_new();
+    c_config_from_assets(config, NativeActivity.c_load_asset_manager(Context.c_load_activity(ctx)));
+    let dir: i32 = c_config_layout_direction(config);
+    c_config_delete(config);
+    return dir == LAYOUTDIR_RTL;
+  }
+}
 
 // The scale of the text of the system, which the person sets as the font
 // size: 1 is the default, and 1.3 makes text 30% larger. Multiply a size

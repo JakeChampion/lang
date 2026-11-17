@@ -10,7 +10,7 @@ Each function then does what a person does. `tap` and `hold` find an element by 
 
 After each event, the simulator draws a frame, as the display does at the next vsync. So the layout that the test reads is the layout that the person sees.
 
-`themed` sets the dark theme, and `scaled` sets the font size of the system. `kept` keeps the loop alive after a Destroy event, as `android.keep_alive` does, so a test can check what the program closes.
+`themed` sets the dark theme, and `scaled` sets the font size of the system. `directed` sets a layout that is right to left. `kept` keeps the loop alive after a Destroy event, as `android.keep_alive` does, so a test can check what the program closes.
 
 `texts` gives the texts that the screen shows, and `shows` tells whether it shows one text. `says` also finds an element by what an accessibility service reads for it, such as a button of icons. `finished` tells whether the program closed the app, and `keyboard` gives the text that the keyboard of the system shows. `spoken` gives what an accessibility service reads. `picture` draws the screen on a frame, which `testkit.save_png` writes as a PNG file.
 
@@ -59,7 +59,7 @@ import "std/worker";
 <<device>>=
 // The program, its shell, the directory of the device, the size of the
 // window, and the time in ms.
-pub struct Sim[S, M] { p: ui.Program[S, M], shell: ui.Shell[S, M], dir: string, w: i32, h: i32, d: f64, dark: boolean, font: f64, now: i64 }
+pub struct Sim[S, M] { p: ui.Program[S, M], shell: ui.Shell[S, M], dir: string, w: i32, h: i32, d: f64, dark: boolean, font: f64, rtl: boolean, now: i64 }
 
 const FRAME_MS: i64 = 16i64;
 
@@ -76,7 +76,7 @@ function said(items: android.AccessItem[]): string {
 }
 
 // A device with a window of w by h pixels at the time `now` in ms.
-function device(dir: string, w: i32, h: i32, d: f64, dark: boolean, font: f64, now: i64): ui.Device {
+function device(dir: string, w: i32, h: i32, d: f64, dark: boolean, font: f64, rtl: boolean, now: i64): ui.Device {
   return ui.Device {
     stays: (): boolean => testkit.read_text(dir + "/kept") == "true",
     size: (window: usize): (i32, i32) => (w, h),
@@ -96,6 +96,7 @@ function device(dir: string, w: i32, h: i32, d: f64, dark: boolean, font: f64, n
     hide_keyboard: (): void => note(dir, "calls", "no keyboard"),
     state_file: (): string => dir + "/state.kv",
     fallbacks: (weight: i32, cp: i32): fonts.Found[] => [],
+    rtl: (): boolean => rtl,
   };
 }
 
@@ -108,9 +109,9 @@ pub function start[S, M](own state: S, own p: ui.Program[S, M], fonts: text.Font
 }
 
 function started[S, M](own state: S, own p: ui.Program[S, M], fonts: text.Fonts, dir: string, w: i32, h: i32, d: f64): Sim[S, M] {
-  let dev = device(dir, w, h, d, false, 1.0, 0i64);
+  let dev = device(dir, w, h, d, false, 1.0, false, 0i64);
   let first = ui.restored(state, p, dev);
-  let s = Sim { p: p, shell: ui.shell(first, fonts, dev), dir: dir, w: w, h: h, d: d, dark: false, font: 1.0, now: 0i64 };
+  let s = Sim { p: p, shell: ui.shell(first, fonts, dev), dir: dir, w: w, h: h, d: d, dark: false, font: 1.0, rtl: false, now: 0i64 };
   return event(event(s, android.Start), android.WindowCreated(android.Window { ptr: 1 as usize }));
 }
 
@@ -123,7 +124,7 @@ pub function relaunch[S, M](own s: Sim[S, M], own state: S): Sim[S, M] {
 // The simulator with the text of the system at the scale `font`: 1 is the
 // default font size.
 pub function scaled[S, M](own s: Sim[S, M], font: f64): Sim[S, M] {
-  return event(Sim { p: s.p, shell: s.shell, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, font: font, now: s.now }, android.WindowResized(android.Window { ptr: 1 as usize }));
+  return event(Sim { p: s.p, shell: s.shell, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, font: font, rtl: s.rtl, now: s.now }, android.WindowResized(android.Window { ptr: 1 as usize }));
 }
 
 // The simulator with the loop kept alive after a Destroy, as
@@ -133,9 +134,15 @@ pub function kept[S, M](own s: Sim[S, M], on: boolean): Sim[S, M] {
   return s;
 }
 
+// The simulator with a layout that is right to left, or left to right, as
+// a language of the person sets it.
+pub function directed[S, M](own s: Sim[S, M], rtl: boolean): Sim[S, M] {
+  return event(Sim { ...s, rtl: rtl }, android.WindowResized(android.Window { ptr: 1 as usize }));
+}
+
 // The simulator in the dark theme, or in the light theme.
 pub function themed[S, M](own s: Sim[S, M], dark: boolean): Sim[S, M] {
-  return frame(Sim { p: s.p, shell: s.shell, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: dark, font: s.font, now: s.now });
+  return frame(Sim { p: s.p, shell: s.shell, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: dark, font: s.font, rtl: s.rtl, now: s.now });
 }
 ```
 
@@ -147,13 +154,13 @@ pub function themed[S, M](own s: Sim[S, M], dark: boolean): Sim[S, M] {
 <<events>>=
 // The shell with the device of the time of the simulator.
 function at_now[S, M](own s: Sim[S, M]): Sim[S, M] {
-  let dev = device(s.dir, s.w, s.h, s.d, s.dark, s.font, s.now);
-  return Sim { p: s.p, shell: ui.Shell { app: s.shell.app, host: ui.Host { ...s.shell.host, dev: dev }, said: s.shell.said, jobs: s.shell.jobs }, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, font: s.font, now: s.now };
+  let dev = device(s.dir, s.w, s.h, s.d, s.dark, s.font, s.rtl, s.now);
+  return Sim { p: s.p, shell: ui.Shell { app: s.shell.app, host: ui.Host { ...s.shell.host, dev: dev }, said: s.shell.said, jobs: s.shell.jobs }, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, font: s.font, rtl: s.rtl, now: s.now };
 }
 
 function stepped[S, M](own s: Sim[S, M], e: android.Event): Sim[S, M] {
   let t = at_now(s);
-  return Sim { p: t.p, shell: ui.step(t.shell, t.p, e), dir: t.dir, w: t.w, h: t.h, d: t.d, dark: t.dark, font: t.font, now: t.now };
+  return Sim { p: t.p, shell: ui.step(t.shell, t.p, e), dir: t.dir, w: t.w, h: t.h, d: t.d, dark: t.dark, font: t.font, rtl: t.rtl, now: t.now };
 }
 
 // Draws a frame at the time of the simulator.
@@ -164,7 +171,7 @@ pub function frame[S, M](own s: Sim[S, M]): Sim[S, M] {
 
 function told[S, M](own s: Sim[S, M], m: M): Sim[S, M] {
   let t = at_now(s);
-  return Sim { p: t.p, shell: ui.send(t.shell, t.p, m), dir: t.dir, w: t.w, h: t.h, d: t.d, dark: t.dark, font: t.font, now: t.now };
+  return Sim { p: t.p, shell: ui.send(t.shell, t.p, m), dir: t.dir, w: t.w, h: t.h, d: t.d, dark: t.dark, font: t.font, rtl: t.rtl, now: t.now };
 }
 
 // Gives `update` the message `m`, and draws a frame.
@@ -181,7 +188,7 @@ pub function jobs_done[S, M: worker.Send](own s: Sim[S, M]): Sim[S, M] {
 }
 
 function joined[S, M: worker.Send](own s: Sim[S, M]): Sim[S, M] {
-  return Sim { p: s.p, shell: ui.joined_jobs(s.shell, s.p), dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, font: s.font, now: s.now };
+  return Sim { p: s.p, shell: ui.joined_jobs(s.shell, s.p), dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, font: s.font, rtl: s.rtl, now: s.now };
 }
 
 // Gives the program the event `e`, and draws a frame.
@@ -190,7 +197,7 @@ pub function event[S, M](own s: Sim[S, M], e: android.Event): Sim[S, M] {
 }
 
 function later[S, M](own s: Sim[S, M], ms: i64): Sim[S, M] {
-  return Sim { p: s.p, shell: s.shell, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, font: s.font, now: s.now + ms };
+  return Sim { p: s.p, shell: s.shell, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, font: s.font, rtl: s.rtl, now: s.now + ms };
 }
 
 // Lets `ms` milliseconds go by. The program gets each tick that it waits
@@ -213,7 +220,7 @@ pub function after[S, M](own s: Sim[S, M], ms: i64): Sim[S, M] {
 
 // The shell of `s` with the device of its time, to read only.
 function at_now_view[S, M](s: Sim[S, M]): ui.Shell[S, M] {
-  return ui.Shell { app: s.shell.app, host: ui.Host { ...s.shell.host, dev: device(s.dir, s.w, s.h, s.d, s.dark, s.font, s.now) }, said: s.shell.said, jobs: s.shell.jobs };
+  return ui.Shell { app: s.shell.app, host: ui.Host { ...s.shell.host, dev: device(s.dir, s.w, s.h, s.d, s.dark, s.font, s.rtl, s.now) }, said: s.shell.said, jobs: s.shell.jobs };
 }
 
 // Draws frames until no list flings, for at most 10 seconds.
@@ -271,7 +278,7 @@ function middle(n: scene.Node): Option[(i32, i32)] {
 // number `nth`, from 0, that shows or says `label`.
 pub function place_of[S, M](s: Sim[S, M], label: string, nth: i32): Option[(i32, i32)] {
   let seen = 0;
-  for n in s.shell.host.lay.nodes {
+  for n in ui.on_screen(s.shell.host.lay.nodes, s.shell.host.screen) {
     if (labelled(n, label)) {
       if let Some(at) = middle(n) {
         if (seen == nth) {
@@ -318,7 +325,7 @@ pub function hold_nth[S, M](own s: Sim[S, M], label: string, nth: i32): Sim[S, M
 // its width from 0 to 1, and lifts.
 pub function slide[S, M](own s: Sim[S, M], label: string, part: f64): Sim[S, M] {
   let at: Option[(i32, i32)] = None;
-  for n in s.shell.host.lay.nodes {
+  for n in ui.on_screen(s.shell.host.lay.nodes, s.shell.host.screen) {
     if (at.is_none() && n.tap.name == ui.SLIDER_ACTION && n.say == label) {
       if let Some((_, y)) = middle(n) {
         at = Some((ui.slide_x(n, part, s.d), y));
@@ -369,7 +376,7 @@ function moved_to[S, M](own s: Sim[S, M], from: (i32, i32), to: (i32, i32), ms: 
 // A tap on the field `name`, then the keyboard of the system gives it the
 // text `text`.
 pub function type_in[S, M](own s: Sim[S, M], name: string, text: string): Sim[S, M] {
-  for n in s.shell.host.lay.nodes {
+  for n in ui.on_screen(s.shell.host.lay.nodes, s.shell.host.screen) {
     if (n.tap.name == ui.FIELD_ACTION + name) {
       if let Some((x, y)) = middle(n) {
         return event(tap_at(s, x, y), android.Text(text));
@@ -405,7 +412,7 @@ pub function back[S, M](own s: Sim[S, M]): Sim[S, M] {
 // outside the rows of its list does not show.
 pub function texts[S, M](s: Sim[S, M]): string[] {
   let out: string[] = [];
-  for n in s.shell.host.lay.nodes {
+  for n in ui.on_screen(s.shell.host.lay.nodes, s.shell.host.screen) {
     match (n.paint) {
       scene.Label(t, _, _, _, _) => {
         if (n.y + n.h > n.clip0 && n.y < n.clip1) {
@@ -465,7 +472,7 @@ pub function picture[S, M](s: Sim[S, M]): draw.Frame {
   let host = s.shell.host;
   let fr = draw.offscreen(s.w, s.h);
   fr.fill(0, 0, s.w, s.h, host.screen.theme.background);
-  let c = scene.render(fr, host.fonts, text.new_cache(), ui.shown(host.input, host.lay, host.screen.theme.pressed));
+  let c = scene.render(fr, host.fonts, text.new_cache(), ui.on_screen(ui.shown(host.input, host.lay, host.screen.theme.pressed), host.screen));
   return fr;
 }
 ```
