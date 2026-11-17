@@ -1219,6 +1219,135 @@ func verifyWB(wbTable string, wbs []wbRun) {
 
 type genStats struct{ runs, tableBytes int }
 
+//go:embed bididata.txt
+var bidiData string
+
+// The Bidi_Class values in the order of std/bidi's constants. L is 0, the
+// class of each code point that bididata.txt does not name.
+var bidiNames = []string{"L", "R", "AL", "EN", "ES", "ET", "AN", "CS", "NSM", "BN", "B", "S", "WS", "ON", "LRE", "LRO", "RLE", "RLO", "PDF", "LRI", "RLI", "FSI", "PDI"}
+
+type bidiRun struct {
+	lo, hi rune
+	class  int
+}
+
+// A paired bracket: its pair and its type, 1 for open and 2 for close.
+type bidiBracket struct {
+	cp, pair rune
+	kind     int
+}
+
+func parseBidiData() (classes []bidiRun, brackets []bidiBracket, mirrors [][2]rune, version string) {
+	index := map[string]int{}
+	for i, name := range bidiNames {
+		index[name] = i
+	}
+	for _, line := range strings.Split(bidiData, "\n") {
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			if strings.HasPrefix(line, "# UCD ") {
+				version = strings.TrimSpace(strings.TrimPrefix(line, "# UCD "))
+			}
+			continue
+		}
+		f := strings.Split(line, ";")
+		switch {
+		case f[0] == "B" && len(f) == 4:
+			class, ok := index[f[3]]
+			if !ok || class == 0 {
+				panic("unicodegen: bad Bidi_Class: " + line)
+			}
+			classes = append(classes, bidiRun{lo: rune(mustHex(f[1])), hi: rune(mustHex(f[2])), class: class})
+		case f[0] == "P" && len(f) == 4 && (f[3] == "o" || f[3] == "c"):
+			kind := 1
+			if f[3] == "c" {
+				kind = 2
+			}
+			brackets = append(brackets, bidiBracket{cp: rune(mustHex(f[1])), pair: rune(mustHex(f[2])), kind: kind})
+		case f[0] == "M" && len(f) == 3:
+			mirrors = append(mirrors, [2]rune{rune(mustHex(f[1])), rune(mustHex(f[2]))})
+		default:
+			panic("unicodegen: unknown bididata record: " + line)
+		}
+	}
+	sort.Slice(classes, func(i, j int) bool { return classes[i].lo < classes[j].lo })
+	sort.Slice(brackets, func(i, j int) bool { return brackets[i].cp < brackets[j].cp })
+	sort.Slice(mirrors, func(i, j int) bool { return mirrors[i][0] < mirrors[j][0] })
+	return classes, brackets, mirrors, version
+}
+
+func encodeBidi(classes []bidiRun, brackets []bidiBracket, mirrors [][2]rune) (classT, bracketT, mirrorT string) {
+	var c, p, m strings.Builder
+	for _, r := range classes {
+		encField(&c, int(r.lo))
+		encField(&c, int(r.hi))
+		encField(&c, r.class)
+	}
+	for _, r := range brackets {
+		encField(&p, int(r.cp))
+		encField(&p, int(r.pair))
+		encField(&p, r.kind)
+	}
+	for _, r := range mirrors {
+		encField(&m, int(r[0]))
+		encField(&m, int(r[1]))
+	}
+	return c.String(), p.String(), m.String()
+}
+
+// decodeRecord gives the record of `width` fields whose first field is
+// `cp`, or whose first two fields hold it when `ranged` is set, or -1.
+func decodeRecord(t string, width int, cp int, ranged bool) int {
+	size := width * fieldChars
+	lo, hi := 0, len(t)/size-1
+	for lo <= hi {
+		mid := lo + (hi-lo)/2
+		base := mid * size
+		top := decField(t, base)
+		if ranged {
+			top = decField(t, base+fieldChars)
+		}
+		switch {
+		case cp < decField(t, base):
+			hi = mid - 1
+		case cp > top:
+			lo = mid + 1
+		default:
+			return base
+		}
+	}
+	return -1
+}
+
+func verifyBidi(classT, bracketT, mirrorT string, classes []bidiRun, brackets []bidiBracket, mirrors [][2]rune) {
+	for i, r := range classes {
+		if r.lo > r.hi || i > 0 && classes[i-1].hi >= r.lo {
+			panic(fmt.Sprintf("unicodegen: Bidi_Class range U+%04X..U+%04X overlaps or is inverted", r.lo, r.hi))
+		}
+		for _, cp := range []rune{r.lo, r.hi} {
+			if at := decodeRecord(classT, 3, int(cp), true); at < 0 || decField(classT, at+2*fieldChars) != r.class {
+				panic(fmt.Sprintf("unicodegen: bidi_class(U+%04X) does not decode to %s", cp, bidiNames[r.class]))
+			}
+		}
+	}
+	for _, r := range brackets {
+		at := decodeRecord(bracketT, 3, int(r.cp), false)
+		if at < 0 || decField(bracketT, at+fieldChars) != int(r.pair) || decField(bracketT, at+2*fieldChars) != r.kind {
+			panic(fmt.Sprintf("unicodegen: the bracket U+%04X does not decode", r.cp))
+		}
+	}
+	for _, r := range mirrors {
+		if at := decodeRecord(mirrorT, 2, int(r[0]), false); at < 0 || decField(mirrorT, at+fieldChars) != int(r[1]) {
+			panic(fmt.Sprintf("unicodegen: the mirror of U+%04X does not decode", r[0]))
+		}
+	}
+	if at := decodeRecord(classT, 3, 'A', true); at >= 0 {
+		panic("unicodegen: U+0041 is L and must have no Bidi_Class record")
+	}
+}
+
 func graphemeScanner(signature, setup, empty, boundary, finish string) string {
 	return fmt.Sprintf(`%s {
     %s
@@ -1295,18 +1424,23 @@ func generate() (string, genStats) {
 	verifyWB(wbTable, wbs)
 	stats.tableBytes += len(wbTable)
 
+	bidiClasses, bidiBrackets, bidiMirrors, bidiVersion := parseBidiData()
+	bidiClassT, bidiBracketT, bidiMirrorT := encodeBidi(bidiClasses, bidiBrackets, bidiMirrors)
+	verifyBidi(bidiClassT, bidiBracketT, bidiMirrorT, bidiClasses, bidiBrackets, bidiMirrors)
+	stats.tableBytes += len(bidiClassT) + len(bidiBracketT) + len(bidiMirrorT)
+
 	var b strings.Builder
 	fmt.Fprintf(&b, `// This module converts Unicode case and classifies characters.
 //
 // Generator: cmd/unicodegen.
 // Import this module for Unicode methods on strings and char values.
 // std/string owns explicit ASCII transforms.
-// Unicode versions: Go %s, normalization %s, grapheme boundaries %s, word boundaries %s.
+// Unicode versions: Go %s, normalization %s, grapheme boundaries %s, word boundaries %s, bidi %s.
 // Use `+"`go run ./cmd/unicodegen internal/stdlib/std/unicode.fern`"+` to regenerate this file.
 
 import "std/utf8" as utf8;
 
-`, unicode.Version, normDataVersion(), strings.Fields(gcbVersion)[0], strings.Fields(wbVersion)[0])
+`, unicode.Version, normDataVersion(), strings.Fields(gcbVersion)[0], strings.Fields(wbVersion)[0], strings.Fields(bidiVersion)[0])
 
 	emitTable(&b, "_case_table", caseT)
 	for _, name := range []string{"letter", "digit", "space", "upper", "lower", "cased", "caseignorable"} {
@@ -1328,6 +1462,10 @@ import "std/utf8" as utf8;
 	emitTable(&b, "_extpict_ranges", extT)
 
 	emitTable(&b, "_wb_ranges", wbTable)
+
+	emitTable(&b, "_bidi_ranges", bidiClassT)
+	emitTable(&b, "_bidi_bracket_table", bidiBracketT)
+	emitTable(&b, "_bidi_mirror_table", bidiMirrorT)
 
 	stats.tableBytes += regexData(&b)
 
@@ -2080,6 +2218,56 @@ pub function reverse_graphemes(s: string): string {
     }
     buf_free(h);
     return result;
+}
+
+// The start of the record of width fields whose first field is n, or
+// whose first two fields hold n when ranged is set, or -1.
+function _record_of(t: string, width: i32, n: i32, ranged: boolean): i32 {
+    let size = width * 4;
+    let lo = 0;
+    let hi = t.len() / size - 1;
+    while (lo <= hi) {
+        let mid = lo + (hi - lo) / 2;
+        let base = mid * size;
+        let top = _fld(t, base);
+        if (ranged) { top = _fld(t, base + 4); }
+        if (n < _fld(t, base)) { hi = mid - 1; }
+        else if (n > top) { lo = mid + 1; }
+        else { return base; }
+    }
+    return -1;
+}
+
+// The Bidi_Class of c, as a constant of std/bidi: 0 is L.
+pub function bidi_class(c: char): i32 {
+    let t = _bidi_ranges();
+    let at = _record_of(t, 3, c as i32, true);
+    if (at < 0) { return 0; }
+    return _fld(t, at + 8);
+}
+
+// The Bidi_Paired_Bracket of c, or -1 when c is no paired bracket.
+pub function bidi_paired_bracket(c: char): i32 {
+    let t = _bidi_bracket_table();
+    let at = _record_of(t, 3, c as i32, false);
+    if (at < 0) { return -1; }
+    return _fld(t, at + 4);
+}
+
+// The Bidi_Paired_Bracket_Type of c: 1 open, 2 close, or 0.
+pub function bidi_bracket_type(c: char): i32 {
+    let t = _bidi_bracket_table();
+    let at = _record_of(t, 3, c as i32, false);
+    if (at < 0) { return 0; }
+    return _fld(t, at + 8);
+}
+
+// The Bidi_Mirroring_Glyph of c, or -1 when it has none.
+pub function bidi_mirror(c: char): i32 {
+    let t = _bidi_mirror_table();
+    let at = _record_of(t, 2, c as i32, false);
+    if (at < 0) { return -1; }
+    return _fld(t, at + 4);
 }
 
 function _wb_of(cp: char): i32 {
