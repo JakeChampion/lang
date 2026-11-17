@@ -3311,7 +3311,13 @@ function slot_free_at(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: 
   return slot_end[s] < from && !kept_for_mate(wanted_by, reg_of, holder[s], v);
 }
 
-pub struct Imms { is_imm: boolean[], konst: boolean[], value: i64[], sym_at: i32[], syms: string[] }
+// `nibble` marks each value whose lanes of 8 bits are all below 16. It is
+// empty when the function has no swizzle.
+pub struct Imms { is_imm: boolean[], konst: boolean[], value: i64[], sym_at: i32[], syms: string[], nibble: boolean[] }
+
+pub function lane_nibble(imm: Imms, v: i32): boolean {
+  return v >= 0 && v < imm.nibble.len() && imm.nibble[v];
+}
 
 pub function imm_sym(imm: Imms, v: i32): string {
   let k = imm.sym_at[v];
@@ -3370,7 +3376,56 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
       is_imm = is_imm.with(t.cond, false);
     }
   }
-  return Imms { is_imm: is_imm, konst: konst, value: value, sym_at: __alloc_i32(f.nvals), syms: [] };
+  let nibble = lane_nibbles(f, konst, value);
+  return Imms { is_imm: is_imm, konst: konst, value: value, sym_at: __alloc_i32(f.nvals), syms: [], nibble: nibble };
+}
+
+function has_swizzle(f: SFunc): boolean {
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == BINARY && ins.str.starts_with("viswizzle")) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function lane_nibbles(f: SFunc, konst: boolean[], value: i64[]): boolean[] {
+  if (!has_swizzle(f)) {
+    return [];
+  }
+  let out = __alloc_bool(f.nvals);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for blk in f.blocks {
+      for ins in blk.insts {
+        if (ins.result >= 0 && !out[ins.result] && lane_inst(ins) && nibble_result(ins, out, konst, value)) {
+          out = out.with(ins.result, true);
+          changed = true;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function nibble_result(ins: SInst, nibble: boolean[], konst: boolean[], value: i64[]): boolean {
+  let b = lane_base(ins.str);
+  if (b == "vand") {
+    return nibble[ins.args[0]] || nibble[ins.args[1]];
+  }
+  if (ins.imm != 8) {
+    return false;
+  }
+  if (b == "visplat") {
+    return konst[ins.args[0]] && (value[ins.args[0]] & 255i64) < 16i64;
+  }
+  if (b == "vishru") {
+    return konst[ins.args[1]] && (value[ins.args[1]] & 7i64) >= 4i64;
+  }
+  return b == "viminu" && (nibble[ins.args[0]] || nibble[ins.args[1]]);
 }
 
 // Operand `a` is the value of a store of 4 or 8 bytes.

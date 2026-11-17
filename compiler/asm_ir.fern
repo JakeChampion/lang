@@ -8842,7 +8842,7 @@ function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms,
   let a = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
   let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
   if (imm.is_imm[ins.args[1]]) {
-    return ssa_fput(reg_of, ins.result, d, s.write(x86_lane_shift_by(b, op, ins.imm, imm.value[ins.args[1]] as i32 & ins.imm - 1, a, d)));
+    return ssa_fput(reg_of, ins.result, d, x86_lane_shift_by(s, b, op, ins.imm, imm.value[ins.args[1]] as i32 & ins.imm - 1, a, d));
   }
   s = ssa_load(reg_of, ins.args[1], "%rcx", s);
   s = s.write("    andl $" + util.i32_to_string(ins.imm - 1) + ", %ecx\n    movd %ecx, %xmm2\n");
@@ -8857,17 +8857,27 @@ function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms,
 // the count in the instruction. Lanes of 8 bits take the shift of 16 bits
 // and a mask of constant bytes. The signed shift of bytes keeps the
 // sequence of x86_byte_lane_shift, with its count from a constant.
-function x86_lane_shift_by(b: string, op: string, w: i32, count: i32, a: string, d: string): string {
+function x86_lane_shift_by(s: asmcore.EmitState, b: string, op: string, w: i32, count: i32, a: string, d: string): asmcore.EmitState {
   let c = util.i32_to_string(count);
   if (w != 8) {
-    return "    " + op + ssa_vint_sfx(w) + " $" + c + ", " + a + ", " + d + "\n";
+    return s.write("    " + op + ssa_vint_sfx(w) + " $" + c + ", " + a + ", " + d + "\n");
   }
   if (b == "vishrs") {
-    return "    movl $" + c + ", %ecx\n    movd %ecx, %xmm2\n" + x86_byte_lane_shift(b, a, d);
+    return s.write("    movl $" + c + ", %ecx\n    movd %ecx, %xmm2\n" + x86_byte_lane_shift(b, a, d));
   }
-  let kept = if (b == "vishl") { 255 << count & 255 } else { 255 >> count };
-  return "    " + op + "w $" + c + ", " + a + ", %xmm0\n    movl $" + util.i32_to_string(kept) + ", %ecx\n    movd %ecx, %xmm1\n"
-    + "    vpbroadcastb %xmm1, %xmm1\n    vpand %xmm1, %xmm0, " + d + "\n";
+  let kept = x86_lane_row(s, if (b == "vishl") { 255 << count & 255 } else { 255 >> count });
+  return kept.state.write("    " + op + "w $" + c + ", " + a + ", %xmm0\n    vpand " + kept.name + "(%rip), %xmm0, " + d + "\n");
+}
+
+// A row of 16 equal bytes in read-only data. An instruction reads the row
+// as its memory operand, so a loop does not build the constant.
+function x86_lane_row(s: asmcore.EmitState, byte: i32): asmcore.LabelOut {
+  let l = asmcore.fresh_label(s);
+  let row: u8[] = [];
+  for _ in 0..16 {
+    row = row.append(byte as u8);
+  }
+  return asmcore.LabelOut { state: l.state.write("    .section .rodata\n" + l.name + ":\n" + asmcore.byte_rows(row) + "    .section .text\n"), name: l.name };
 }
 
 // Lanes of 8 bits have no shift instruction. The shift of the lanes of 16
@@ -8914,7 +8924,7 @@ function x86_lane_widen(b: string, w: i32, a: string, d: string): string {
 
 // The ops that change the shape of integer lanes. `ins.imm` is the width
 // of a lane of the first value. %xmm0 is the scratch register.
-function ssa_vint_shape(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_vint_shape(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let id = ir.kind_id(b);
   let w = ins.imm;
   s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
@@ -8932,10 +8942,14 @@ function ssa_vint_shape(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.Emi
     if (w != 8) {
       ircore.unsupported_op_refuse(id, "x86-64");
     }
+    if (ssa.lane_nibble(imm, ins.args[1])) {
+      return ssa_fput(reg_of, ins.result, d, s.write("    vpshufb " + y + ", " + a + ", " + d + "\n"));
+    }
     // pshufb gives zero for an index with its top bit. The saturating add
     // of 0x70 sets that bit for each index above 15, and keeps the low
     // four bits of each other index.
-    s = s.write("    movl $0x70707070, %ecx\n    movd %ecx, %xmm0\n    vpbroadcastd %xmm0, %xmm0\n    vpaddusb %xmm0, " + y + ", %xmm0\n");
+    let clamp = x86_lane_row(s, 112);
+    s = clamp.state.write("    vpaddusb " + clamp.name + "(%rip), " + y + ", %xmm0\n");
     return ssa_fput(reg_of, ins.result, d, s.write("    vpshufb %xmm0, " + a + ", " + d + "\n"));
   }
   if (w != 16 && w != 32) {
@@ -8951,7 +8965,7 @@ function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
     return ssa_vint(ins, b, reg_of, imm, s);
   }
   if (ir.is_lane_shape_kind(ir.kind_id(b))) {
-    return ssa_vint_shape(ins, b, reg_of, s);
+    return ssa_vint_shape(ins, b, reg_of, imm, s);
   }
   if (b == "vpermute") {
     return ssa_vpermute(ins, reg_of, s);
