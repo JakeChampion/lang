@@ -709,6 +709,10 @@ threads call into the object at once, with heap traffic and same-thread
 callbacks, and each result is correct. A thread that enters while another
 one runs a long call waits for it.
 
+Under `-sanitize`, the census of each allocation and each release checks the
+rule. An executable checks the stack, and a shared object checks the thread
+that holds the turn (`SANITIZER.md`, "One context per heap").
+
 An abort or `exit` ends the process with `exit_group`, not `exit`, so a
 report inside a host's thread takes the whole host down rather than one
 thread (#12169).

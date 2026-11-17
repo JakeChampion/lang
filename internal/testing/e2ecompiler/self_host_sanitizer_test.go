@@ -139,7 +139,7 @@ func TestSelfHostSanitizeOffEmitsNoSymbolsX86_64(t *testing.T) {
 	}
 
 	on := hevCompile(t, runner, driverBin, sanSelfHostCleanSrc, []string{"FERN_SANITIZE=1"})
-	for _, marker := range []string{"__fern_san_abort", ".Lsan_df", ".Lsan_leak", "__fern_lc_report"} {
+	for _, marker := range []string{"__fern_san_abort", ".Lsan_df", ".Lsan_leak", "__fern_lc_report", "jae __fern_san_abort_owner", "__fern_san_abort_owner:"} {
 		if !strings.Contains(on, marker) {
 			t.Errorf("flag-on asm is missing %q", marker)
 		}

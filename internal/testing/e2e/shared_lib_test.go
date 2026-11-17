@@ -1304,6 +1304,11 @@ func selfHostSharedX86(t *testing.T, src string, exports ...string) []byte {
 
 func selfHostShared(t *testing.T, target, src string, exports ...string) []byte {
 	t.Helper()
+	return selfHostSharedEnv(t, target, src, nil, exports...)
+}
+
+func selfHostSharedEnv(t *testing.T, target, src string, env []string, exports ...string) []byte {
+	t.Helper()
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -1312,7 +1317,7 @@ func selfHostShared(t *testing.T, target, src string, exports ...string) []byte 
 	soPath := filepath.Join(dir, "libfern.so")
 	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-target", target, "-shared", "-export", strings.Join(exports, ","),
 		"-o", soPath, srcPath, e2eharness.SelfHostStdlibRoot(t))
-	cmd.Env = e2eharness.ChildEnv()
+	cmd.Env = e2eharness.ChildEnv(env...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("self-host -shared: %v\n%s", err, out)
 	}

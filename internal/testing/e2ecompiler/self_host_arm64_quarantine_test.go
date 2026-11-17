@@ -152,7 +152,7 @@ func TestSelfHostUafQuarantineAsmContractArm64(t *testing.T) {
 	if mustMatch(t, armPoisonPair, off) {
 		t.Error("flag-off asm materialises the poison — the detector is not fully gated")
 	}
-	for _, marker := range []string{"__fern_san_abort_uaf", ".Lsan_uaf", "__fern_quar_push", "__fern_san_abort_waf"} {
+	for _, marker := range []string{"__fern_san_abort_uaf", ".Lsan_uaf", "__fern_quar_push", "__fern_san_abort_waf", "__fern_san_abort_owner", "__fern_san_owner"} {
 		if strings.Contains(off, marker) {
 			t.Errorf("flag-off asm contains %q — the detector is not fully gated", marker)
 		}
