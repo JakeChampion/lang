@@ -31,6 +31,10 @@ Its payload contains three primary-picture-type bits followed by exact RBSP trai
 These checks follow H.264 clauses 7.3.2.4, 7.3.2.11, and 7.4.1.2.3.
 They do not compare the primary picture type with all slice types in the coded picture.
 
+Filler payloads contain zero or more `ff` bytes followed by exactly `80`.
+The reader checks this syntax after unit and packet limits, before the packet copy, without another payload allocation.
+These checks follow H.264 clauses 7.3.2.7 and 7.3.2.11.
+
 The reader assigns no timestamp.
 Interlaced pictures, separate color planes, slice groups, redundant pictures, and partitioned or extended slices return `Unsupported`.
 An IDR slice requires a zero frame number. Non-IDR frame numbers retain their supported width from the SPS.
@@ -276,12 +280,30 @@ function delimiter(input: [u8], first: boolean): Result[void, frame.VideoError] 
   return Ok(());
 }
 
+function filler(input: [u8]): Result[void, frame.VideoError] {
+  if (input.len() < 2) {
+    return Err(frame.Truncated);
+  }
+  if (input[input.len() - 1] != 128u8) {
+    return Err(frame.Header);
+  }
+  for byte in input[1:input.len() - 1] {
+    if (byte != 255u8) {
+      return Err(frame.Header);
+    }
+  }
+  return Ok(());
+}
+
 function append_packet(own bytes: u8[], input: [u8], maximum: i32, kind: i32): Result[u8[], frame.VideoError] {
   if (maximum - bytes.len() < 4 || input.len() > maximum - bytes.len() - 4) {
     return Err(frame.Limit);
   }
   if (kind == 9) {
     delimiter(input, bytes.len() == 0)?;
+  }
+  if (kind == 12) {
+    filler(input)?;
   }
   for byte in [0u8, 0u8, 0u8, 1u8] {
     bytes = bytes.append(byte);

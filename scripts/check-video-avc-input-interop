@@ -249,6 +249,54 @@ def delimiter_controls(directory, original):
     print("20 coded delimiter payload or position refusals preserve exact FFmpeg extraction", flush=True)
 
 
+def filler_controls(directory, baseline, reordered):
+    spec = importlib.util.spec_from_file_location("avc_filler_vectors", ROOT / "scripts/gen-video-avc-input-fixtures.py")
+    fixtures = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fixtures)
+    trace = fixtures.syntax.build_trace(name="avc-input-filler-trace")
+    lengths = (0, 1, 31, 255, 4095)
+    for count in lengths:
+        path = directory / "filler-syntax.bin"
+        path.write_bytes(b"\0\0\0\1\x0c" + b"\xff" * count + b"\x80")
+        oracle = subprocess.run([str(trace), str(path)], capture_output=True, text=True, check=True)
+        fields = fixtures.syntax.references.trace_fields(oracle.stderr)
+        assert fields["rbsp_stop_one_bit"] == 1
+    for payload in (b"", b"\xff\x01"):
+        path.write_bytes(b"\0\0\0\1\x0c" + payload)
+        assert subprocess.run([str(trace), str(path)], capture_output=True).returncode != 0
+    print("CBS reads five filler lengths and refuses empty or zero-stop payloads", flush=True)
+    for original in (baseline, reordered):
+        data = original.read_bytes()
+        packets = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_packets", "-of", "json", str(original)]))["packets"]
+        groups = [units(data[int(packet["pos"]):int(packet["pos"]) + int(packet["size"])])
+                  + [b"\x0c" + b"\xff" * lengths[index % len(lengths)] + b"\x80"]
+                  for index, packet in enumerate(packets)]
+        path = directory / ("filler-lengths-" + original.name)
+        path.write_bytes(encoded_groups(groups))
+        delimiter_extraction(path, groups)
+        compare(path, 18, decoded(original))
+        if original != baseline:
+            continue
+        bad = [("empty", b"", "incomplete video packet"),
+               ("missing-stop", b"\xff", "invalid video header or packet"),
+               ("first", b"\x01\xff\x80", "invalid video header or packet"),
+               ("later", b"\xff\x01\xff\x80", "invalid video header or packet"),
+               ("early-stop", b"\x80\xff\x80", "invalid video header or packet"),
+               ("alignment", b"\xff\xff\x81", "invalid video header or packet"),
+               ("extra80", b"\xff\x80\x80", "invalid video header or packet"),
+               ("extraFF", b"\xff\x80\xff", "invalid video header or packet"),
+               ("extra01", b"\xff\x80\x01", "invalid video header or packet")]
+        for index in (0, 6):
+            for name, payload, message in bad:
+                changed = [list(group) for group in groups]
+                changed[index][-1] = b"\x0c" + payload
+                path = directory / f"invalid-filler-{index}-{name}.h264"
+                path.write_bytes(encoded_groups(changed))
+                delimiter_extraction(path, changed)
+                reject(path, path.read_bytes(), message)
+    print("18 coded filler refusals preserve exact FFmpeg extraction and follow the H.264 syntax", flush=True)
+
+
 with tempfile.TemporaryDirectory() as temporary:
     directory = Path(temporary)
     cases = [
@@ -277,3 +325,4 @@ with tempfile.TemporaryDirectory() as temporary:
         idr_frame_numbers(directory, source)
     parameter_reuse(directory)
     delimiter_controls(directory, paths[0])
+    filler_controls(directory, paths[0], paths[3])

@@ -89,6 +89,10 @@ def controls():
                                                    [sei, s, p, slice_nal(frame=0, idr=True)]]
     yield "filler after sequence end remains a suffix", [[s, p, slice_nal(frame=0, idr=True), b"\x0a", b"\x0c\xff\x80"],
                                                         [slice_nal(frame=0, idr=True), b"\x0b"]]
+    for count in (0, 1, 31, 255, 4095):
+        yield f"filler length {count} remains with its picture", [
+            [s, p, slice_nal(frame=1), b"\x0c" + b"\xff" * count + b"\x80"],
+            [slice_nal(frame=2), b"\x0b"]]
     yield "parameter replacement", [[s, p, slice_nal(frame=1)],
                                     [sequence(poc=0), pps.make(bottom=1), slice_nal(order=0, bottom=True, b=1)]]
     yield from replacement_controls()
@@ -139,6 +143,16 @@ def incompatible_pairs():
 
 def invalid():
     s, p = sequence(poc=2), pps.make()
+    yield "filler payload is incomplete", [s, p, slice_nal(), b"\x0c"], "Truncated"
+    for value in range(256):
+        if value != 255:
+            for position in (0, 31):
+                payload = b"\xff" * position + bytes([value]) + b"\xff\x80"
+                yield f"filler rejects byte {value} at {position}", [s, p, slice_nal(), b"\x0c" + payload], "Header"
+        if value != 128:
+            yield f"filler rejects final byte {value}", [s, p, slice_nal(), b"\x0c\xff" + bytes([value])], "Header"
+    for payload in (b"\x80\x80", b"\xff\x80\xff", b"\xff\x80\x01"):
+        yield f"filler rejects extra payload {payload.hex()}", [s, p, slice_nal(), b"\x0c" + payload], "Header"
     yield "AUD payload is incomplete", [b"\x09", s, p, slice_nal()], "Truncated"
     for value in range(256):
         if value & 31 != 16:
