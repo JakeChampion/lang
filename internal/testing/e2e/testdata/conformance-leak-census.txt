@@ -811,6 +811,7 @@ own_for_element_of_borrowed_array                    0
 own_fresh_result_from_a_borrowing_callee             0
 own_func_name_shadowed_by_param                      0
 own_inplace_sort                                     0
+own_let_bound_literal_at_last_use                    0
 own_local_destructured_at_last_use                   0
 own_local_moved_into_exit                            0
 own_local_rebound_on_every_branch                    0

@@ -5939,22 +5939,51 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
 
 pub struct DbgVars { at: boolean[], rows: string[] }
 
-// The rows in progress. `done` gives, for each value, the last entry of
-// `dbg_slots` that has a row of it, plus 1.
-struct DbgRows { at: boolean[], rows: string[], done: i32[] }
-
-// The entries of `seen_slots` of each slot: `head` gives the first entry of
-// a slot, and `next` the entry after each entry of the same slot, or -1.
-struct DbgSeen { head: i32[], next: i32[] }
-
-function dbg_seen(seen_slots: i32[]): DbgSeen {
-  let top = -1;
-  for slot in seen_slots {
-    if (slot > top) {
-      top = slot;
+pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.Lowered, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgVars {
+  if (seen_vals.len() == 0) {
+    return DbgVars { at: [], rows: [] };
+  }
+  let seen = dbg_seen_by_slot(seen_slots);
+  let at = __alloc_bool(npos + 1);
+  let rows: string[] = [];
+  // done[v] is the last variable that has a row for the value v.
+  let done = util.minus_ones(a.def_pos.len());
+  for i in 0..r.dbg_slots.len() {
+    let param = "0";
+    if (r.dbg_slots[i] < r.n_params) {
+      param = "1";
+    }
+    let j: i32 = -1;
+    if (r.dbg_slots[i] >= 0 && r.dbg_slots[i] < seen.head.len()) {
+      j = seen.head[r.dbg_slots[i]];
+    }
+    while (j >= 0) {
+      let v = dbg_home(a, repl, locs, npos, seen_vals[j]);
+      if (v >= 0 && done[v] != i) {
+        done = done.with(v, i);
+        let lo = a.def_pos[v] + 1;
+        let hi = a.hi[v] + 1;
+        at = at.with(lo, true).with(hi, true);
+        rows = rows.append(fn_label + "|" + r.dbg_names[i] + "|" + r.dbg_types[i] + "|" + param + "|" + dbg_label_name(fn_label, lo) + "|" + dbg_label_name(fn_label, hi) + "|" + locs[v]);
+      }
+      j = seen.next[j];
     }
   }
-  let head = util.minus_ones(top + 1);
+  return DbgVars { at: at, rows: rows };
+}
+
+// head[slot] is the first index of seen_slots that holds the slot, and
+// next[j] is the next index with the same slot. An absent entry is -1.
+struct DbgSeen { head: i32[], next: i32[] }
+
+function dbg_seen_by_slot(seen_slots: i32[]): DbgSeen {
+  let n = 0;
+  for slot in seen_slots {
+    if (slot >= n) {
+      n = slot + 1;
+    }
+  }
+  let head = util.minus_ones(n);
   let next = util.minus_ones(seen_slots.len());
   let j = seen_slots.len() - 1;
   while (j >= 0) {
@@ -5966,44 +5995,6 @@ function dbg_seen(seen_slots: i32[]): DbgSeen {
     j -= 1;
   }
   return DbgSeen { head: head, next: next };
-}
-
-pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.Lowered, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgVars {
-  if (seen_vals.len() == 0) {
-    return DbgVars { at: [], rows: [] };
-  }
-  let seen = dbg_seen(seen_slots);
-  let d = DbgRows { at: __alloc_bool(npos + 1), rows: [], done: __alloc_i32(a.def_pos.len()) };
-  for i in 0..r.dbg_slots.len() {
-    d = dbg_var(d, fn_label, a, r, i, repl, seen_vals, seen, locs, npos);
-  }
-  return DbgVars { at: d.at, rows: d.rows };
-}
-
-function dbg_var(own d: DbgRows, fn_label: string, a: ssa.Alloc, r: irtables.Lowered, i: i32, repl: i32[], seen_vals: i32[], seen: DbgSeen, locs: string[], npos: i32): own DbgRows {
-  let slot = r.dbg_slots[i];
-  if (slot < 0 || slot >= seen.head.len()) {
-    return d;
-  }
-  let param = "0";
-  if (slot < r.n_params) {
-    param = "1";
-  }
-  let j = seen.head[slot];
-  while (j >= 0) {
-    let v = dbg_home(a, repl, locs, npos, seen_vals[j]);
-    if (v >= 0 && d.done[v] != i + 1) {
-      let lo = a.def_pos[v] + 1;
-      let hi = a.hi[v] + 1;
-      d = DbgRows {
-        at: d.at.with(lo, true).with(hi, true),
-        rows: d.rows.append(fn_label + "|" + r.dbg_names[i] + "|" + r.dbg_types[i] + "|" + param + "|" + dbg_label_name(fn_label, lo) + "|" + dbg_label_name(fn_label, hi) + "|" + locs[v]),
-        done: d.done.with(v, i + 1),
-      };
-    }
-    j = seen.next[j];
-  }
-  return d;
 }
 
 function dbg_home(a: ssa.Alloc, repl: i32[], locs: string[], npos: i32, v: i32): i32 {

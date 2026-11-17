@@ -268,7 +268,7 @@ pub function e_number(text: string, suffix: string, is_float: boolean): ast.Expr
 
 pub function literal_bits(text: string, is_float: boolean): i64 {
   if (!is_float) {
-    return 0;
+    return util.lit_to_i64(text);
   }
   return util.parse_f64_bits(text);
 }
@@ -22136,7 +22136,7 @@ function tv_obj_ident(e: ast.Expr, sc: TvScope): ast.Expr {
   if let ast.ExprIdent(id) = e {
     let k = tp_index(id.name, sc.vars);
     if (k >= 0 && !util.has_str(sc.values, id.name) && sc.lits && is_const_arg(sc.cts[k])) {
-      return ast.ExprNumber { text: sc.cts[k], suffix: "", raw: "", is_float: false, bits: 0, line: id.line, col: id.col };
+      return e_spelled_at(sc.cts[k], "", "", false, id.line, id.col);
     }
     if (k >= 0 && !util.has_str(sc.values, id.name)) {
       return ast.ExprIdent { ...id, name: sc.cts[k] };

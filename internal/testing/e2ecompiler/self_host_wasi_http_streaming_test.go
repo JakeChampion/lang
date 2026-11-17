@@ -2,7 +2,9 @@ package e2ecompiler
 
 import (
 	"bufio"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -116,7 +118,9 @@ func TestSelfHostWasiHttpStreamsBodies(t *testing.T) {
 		}
 	})
 
-	// io.MultiReader hides the length, so these bodies arrive chunked with no Content-Length.
+	// These bodies arrive chunked with no Content-Length. The server answers a body past
+	// the limit and closes while the client still writes, so the client reads the answer
+	// on its own connection and does not stop at a write error.
 	for _, c := range []struct {
 		name   string
 		body   string
@@ -127,9 +131,9 @@ func TestSelfHostWasiHttpStreamsBodies(t *testing.T) {
 		{"past-limit", strings.Repeat("b", 2<<20), 413, "the body is past the limit"},
 	} {
 		t.Run("chunked-"+c.name, func(t *testing.T) {
-			resp, err := client.Post(base+"/len", "text/plain", io.MultiReader(strings.NewReader(c.body)))
+			resp, err := postChunked(addr, "/len", c.body)
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("%v\nwasmtime serve:\n%s", err, slog.String())
 			}
 			got, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
@@ -138,4 +142,44 @@ func TestSelfHostWasiHttpStreamsBodies(t *testing.T) {
 			}
 		})
 	}
+}
+
+// postChunked sends body to path in chunks of 32 KiB and gives the response.
+// The write runs apart from the read, and its error is not the result: a
+// server can answer and close before it reads the whole body.
+func postChunked(addr, path, body string) (*http.Response, error) {
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	conn.SetDeadline(time.Now().Add(10 * time.Second))
+	go func() {
+		w := bufio.NewWriter(conn)
+		fmt.Fprintf(w, "POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\n", path, addr)
+		for rest := body; len(rest) > 0; {
+			n := min(len(rest), 32<<10)
+			fmt.Fprintf(w, "%x\r\n%s\r\n", n, rest[:n])
+			rest = rest[n:]
+		}
+		w.WriteString("0\r\n\r\n")
+		w.Flush()
+	}()
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("POST %s: %w", path, err)
+	}
+	resp.Body = closeBoth{resp.Body, conn}
+	return resp, nil
+}
+
+// closeBoth closes the connection of a response with its body.
+type closeBoth struct {
+	io.ReadCloser
+	conn net.Conn
+}
+
+func (c closeBoth) Close() error {
+	c.ReadCloser.Close()
+	return c.conn.Close()
 }

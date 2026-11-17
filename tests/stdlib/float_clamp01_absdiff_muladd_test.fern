@@ -1,5 +1,6 @@
 import "std/test";
 import "std/f64";
+import "std/f32";
 
 function test_clamp01(): test.TestOutcome {
   if (!float_near(0.5.clamp01(), 0.5)) {
@@ -32,6 +33,66 @@ function test_mul_add(): test.TestOutcome {
   return test.assert_eq_f64_near(2.0.mul_add(0.0 - 1.5, 1.0), 0.0 - 2.0, 0.0001);
 }
 
+@noinline
+function abs_diff64(a: f64, b: f64): f64 {
+  return a.abs_diff(b);
+}
+
+@noinline
+function abs_diff32(a: f32, b: f32): f32 {
+  return a.abs_diff(b);
+}
+
+function test_abs_diff_zero64(): test.TestOutcome {
+  let zeros: i64[] = [0, -9223372036854775807 - 1];
+  for a in zeros {
+    for b in zeros {
+      if (f64_bits(abs_diff64(f64_from_bits(a), f64_from_bits(b))) != 0) {
+        return test.fail("f64 zero sign");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function test_abs_diff_zero32(): test.TestOutcome {
+  let zeros: i32[] = [0, -2147483647 - 1];
+  for a in zeros {
+    for b in zeros {
+      if (f32_bits(abs_diff32(f32_from_bits(a), f32_from_bits(b))) != 0) {
+        return test.fail("f32 zero sign");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function test_abs_diff_special64(): test.TestOutcome {
+  if (f64_bits(abs_diff64(f64_from_bits(-9223372036854775807), 0.0)) != 1) {
+    return test.fail("f64 negative subnormal");
+  }
+  if (abs_diff64(f64.MIN, f64.MAX) != f64.INFINITY) {
+    return test.fail("f64 overflow");
+  }
+  if (!abs_diff64(f64.INFINITY, f64.INFINITY).is_nan() || !abs_diff64(f64.NAN, 1.0).is_nan()) {
+    return test.fail("f64 NaN");
+  }
+  return test.pass();
+}
+
+function test_abs_diff_special32(): test.TestOutcome {
+  if (f32_bits(abs_diff32(f32_from_bits(-2147483647), 0.0 as f32)) != 1) {
+    return test.fail("f32 negative subnormal");
+  }
+  if (abs_diff32(f32.MIN, f32.MAX) != f32.INFINITY) {
+    return test.fail("f32 overflow");
+  }
+  if (!abs_diff32(f32.INFINITY, f32.INFINITY).is_nan() || !abs_diff32(f32.NAN, 1.0 as f32).is_nan()) {
+    return test.fail("f32 NaN");
+  }
+  return test.pass();
+}
+
 function test_f32(): test.TestOutcome {
   if (!float_near((1.7 as f32).clamp01() as f64, 1.0)) {
     return test.fail("clamp01 f32");
@@ -58,6 +119,10 @@ function main(): i32 {
   let r = test.new("std/f64 clamp01/abs_diff/mul_add");
   r = r.it("clamp01", test_clamp01);
   r = r.it("abs_diff", test_abs_diff);
+  r = r.it("abs_diff zero f64", test_abs_diff_zero64);
+  r = r.it("abs_diff zero f32", test_abs_diff_zero32);
+  r = r.it("abs_diff special f64", test_abs_diff_special64);
+  r = r.it("abs_diff special f32", test_abs_diff_special32);
   r = r.it("mul_add", test_mul_add);
   r = r.it("f32", test_f32);
   return r.finish();

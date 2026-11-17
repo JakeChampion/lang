@@ -1084,7 +1084,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
   let bd: ast.Stmt[] = [];
   for cj in 0..caps.len() {
     let env: ast.Expr = ast.ExprIdent { name: "__env", line: 0, col: 0, ty: "", builtin: false };
-    let at: ast.Expr = ast.ExprNumber { text: util.i32_to_string(1 + cj), suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 };
+    let at: ast.Expr = parser.e_number(util.i32_to_string(1 + cj), "", false);
     let read: ast.Expr = ast.ExprIndex { array: env, index: at, unchecked: false, ty: "", line: 0, col: 0 };
     // The body of a `once` lambda takes its captures out of the environment.
     if (lam.once) {

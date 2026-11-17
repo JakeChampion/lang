@@ -12,40 +12,36 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// manyLocalsProgram has one function with n local variables, so -g gives n
-// rows of variable locations for that function.
-func manyLocalsProgram(n int) string {
+// assignmentsProgram has one function that assigns one variable n times, so
+// the variable has n values and each one gets a row of debug information.
+func assignmentsProgram(n int) string {
 	var b strings.Builder
-	b.WriteString("function f(a: i32): i32 {\n  let v0 = a ^ 1;\n")
-	for i := 1; i < n; i++ {
-		fmt.Fprintf(&b, "  let v%d = v%d + %d;\n", i, i-1, i%7)
+	b.WriteString("function f(x: i32): i32 {\n  let t = x;\n")
+	for i := range n {
+		fmt.Fprintf(&b, "  t = (t * 31 + %d) %% 65521;\n", i)
 	}
-	fmt.Fprintf(&b, "  return v%d;\n}\nfunction main(): i32 { return f(3) %% 256; }\n", n-1)
+	b.WriteString("  return t;\n}\n")
+	b.WriteString("function main(): i32 { return f(args().len()) % 256; }\n")
 	return b.String()
 }
 
-// The rows of variable locations must not take a time that grows with the
-// square of the count of variables (#14578). Before the fix, -g added 90% to
-// the compile of this program, and 3.3 s.
+// The time to write the variable rows of a -g build must grow with the count
+// of values of a variable, not with its square (#14578).
 func TestSelfHostDebugVarsInLinearTime(t *testing.T) {
-	target := e2eharness.HostSelfHostTarget()
-	if target == "" {
-		t.Skip("no native self-host target")
-	}
 	cli := e2eharness.SelfHostCLI(t)
 	stdlib := e2eharness.SelfHostStdlibRoot(t)
-	dir := t.TempDir()
-	path := filepath.Join(dir, "locals.fern")
-	if err := os.WriteFile(path, []byte(manyLocalsProgram(16000)), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	fastest := func(flags ...string) time.Duration {
-		args := append(flags, "-target", target, "-o", filepath.Join(dir, "locals"), path, stdlib)
+	fastest := func(t *testing.T, src string) time.Duration {
+		t.Helper()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "vars.fern")
+		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
 		best := time.Duration(0)
-		for range 2 {
+		for range 3 {
 			start := time.Now()
-			if out, err := exec.Command(cli, args...).CombinedOutput(); err != nil {
-				t.Fatalf("fern %v: %v\n%s", flags, err, out)
+			if out, err := exec.Command(cli, "-g", "-o", filepath.Join(dir, "vars"), path, stdlib).CombinedOutput(); err != nil {
+				t.Fatalf("fern -g: %v\n%s", err, out)
 			}
 			if took := time.Since(start); best == 0 || took < best {
 				best = took
@@ -53,11 +49,15 @@ func TestSelfHostDebugVarsInLinearTime(t *testing.T) {
 		}
 		return best
 	}
-	plain := fastest()
-	added := fastest("-g") - plain
-	t.Logf("16000 variables: %v, and -g adds %v", plain, added)
-	// Both limits, so a faster compile without -g does not make the test fail.
-	if added > plain*2/5 && added > 1500*time.Millisecond {
-		t.Errorf("-g adds %v to a compile of %v: the rows of variable locations take too long", added, plain)
+	// The time above a program with no assignments, so the start of the
+	// compiler does not hide a square law.
+	base := fastest(t, assignmentsProgram(0))
+	short := max(fastest(t, assignmentsProgram(4000))-base, time.Millisecond)
+	long := fastest(t, assignmentsProgram(16000)) - base
+	t.Logf("no assignments: %v, 4000 assignments: +%v, 16000 assignments: +%v", base, short, long)
+	// Four times the assignments gives 4 for a linear time, 8 for the power
+	// 1.5 and 16 for a square law.
+	if long > 8*short {
+		t.Errorf("4000 assignments take %v and 16000 assignments take %v: the time grows faster than the count of assignments", short, long)
 	}
 }
