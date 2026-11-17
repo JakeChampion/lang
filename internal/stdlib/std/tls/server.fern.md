@@ -201,6 +201,9 @@ function __read(s: Session, buf: [u8], now: i64): Result[Step, tls.Failure] {
   while (!closed && buf.len() - at >= 5) {
     let end = at + 5 + (buf[at + 3] as i32 << 8 | buf[at + 4] as i32);
     if (end > buf.len()) {
+      if let Some(r) = session.server.header_refusal(buf[at:at + 5]) {
+        return Err(tls.Failure { error: tls.HandshakeFailed(r.error), alert: r.alert });
+      }
       break;
     }
     let next = __record(session, buf[at:end], now)?;

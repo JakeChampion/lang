@@ -86,6 +86,9 @@ def controls():
     yield "prefix SEI starts the next picture", [[s, p, slice_nal()], [opaque(39), slice_nal()]]
     yield "suffix filler and both end markers stay with the picture", [
         [s, p, slice_nal(), opaque(40), opaque(38, b"\xff\x80"), opaque(36, b""), opaque(37, b"")]]
+    for count in (0, 1, 31, 255, 4095):
+        yield f"filler permits {count} FF bytes and exact trailing bits", [
+            [s, p, slice_nal(), opaque(38, b"\xff" * count + b"\x80")], [slice_nal()]]
     yield "EOS starts the next coded sequence with IRAP", [[s, p, slice_nal(), opaque(36, b"")], [slice_nal(kind=19)]]
     yield "EOB ends the last coded picture", [[s, p, slice_nal(), opaque(37, b"")]]
     yield "dependent segments stay with the first slice", [[s, pps.make(dependent=1), slice_nal(),
@@ -117,6 +120,8 @@ def incompatible_pairs():
 
 def invalid():
     s, p = sequence(), pps.make()
+    for name, payload, error in filler_refusals():
+        yield name, [s, p, slice_nal(), opaque(38, payload)], error
     yield "slice requires its PPS", [slice_nal()], "State"
     yield "PPS requires its SPS", [p], "State"
     yield "prefix has no picture", [s, p], "Truncated"
@@ -183,6 +188,21 @@ def invalid():
     yield "trailing parameter records need a picture", [s, p, slice_nal(), s], "Truncated"
     for name, before, after, picture, _ in incompatible_pairs():
         yield name, [before, picture, slice_nal(), after, slice_nal()], "Header"
+
+
+def filler_refusals():
+    yield "filler requires trailing bits", b"", "Truncated"
+    for count in (1, 31, 255):
+        yield f"filler with {count} FF bytes lacks trailing bits", b"\xff" * count, "Header"
+    for stop in (0x01, 0x40, 0x7f, 0x81, 0xff):
+        yield f"filler rejects trailing byte {stop}", b"\xff" + bytes([stop]), "Header"
+    for byte in (0x00, 0x03, 0x7f, 0x80, 0xfe):
+        for at in (0, 15, 30):
+            payload = b"\xff" * at + bytes([byte]) + b"\xff" * (30 - at) + b"\x80"
+            yield f"filler rejects byte {byte} at position {at}", payload, "Header"
+    yield "filler rejects escaped payload data", b"\xff\0\0\x03\x01\x80", "Header"
+    yield "filler rejects data after trailing bits", b"\xff\x80\xff", "Header"
+    yield "filler rejects duplicate trailing bits", b"\xff\x80\x80", "Header"
 
 
 def packed(groups):

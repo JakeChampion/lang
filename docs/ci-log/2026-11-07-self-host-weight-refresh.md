@@ -69,3 +69,53 @@ them, used 828 runner minutes, and its self-host lane used 394. Run
 summed self-host test time went from 39,891 s to 36,060 s. In run 42348301476
 it was 32,231 s. Neither run hit the oracle verdict cache, because the Go
 checker changed in #14369.
+
+## Third refresh, after a worker ran out of time
+
+2026-11-17. Shard 1 of the x86 self-host lane failed on main at `62000413`
+(#16293). No test failed. Worker 0 of the shard ran 103 tests for 1,680 s,
+which is the limit of the test binary. The other three workers ran 125 or 126
+tests each in 1,067 to 1,192 s.
+
+The table was 10 days old. The `verify` job of that run reported 36 tests
+with a wrong weight. 23 of them had no row, so the partition gave them 1 s.
+`TestSelfHostStdTestFewRegisters` took 632 s, `TestSelfHostExampleGitForms`
+294 s and `TestSelfHostExampleAgeCLI` 277 s. `TestSelfHostBREDFA` had a
+weight of 12 and took 391 s.
+
+The refresh uses two runs on main. Their self-host lanes were not green,
+which is different from the first two refreshes.
+
+- [44004378701](https://github.com/JakeChampion/lang/actions/runs/44004378701),
+  commit `dc3e50cf`, supplies 4,726 measured rows. Shard 3 failed on a test.
+- [44047684053](https://github.com/JakeChampion/lang/actions/runs/44047684053),
+  commit `62000413`, supplies 4,716 measured rows. It has no row for the
+  tests that worker 0 of shard 1 did not finish.
+
+A row of a failed run can only raise a weight or add one. A weight goes down
+only when the two runs measured the test.
+
+The refresh changes 2,688 rows. 517 tests get their first row, and 141 rows
+of tests that are gone leave the table. In 105 rows, one weight is 10 s or
+more and the new weight is less than half or more than double the old weight.
+
+The replay uses the same method and the same two runs.
+
+| Shards | Weights | Run 44004378701 largest | Run 44047684053 largest |
+| --- | --- | ---: | ---: |
+| 10 x86 | before | 3,911 s | 5,294 s |
+| 10 x86 | after | 3,547 s | 4,437 s |
+| 2 aarch64 | before | 16,065 s | 22,605 s |
+| 2 aarch64 | after | 16,118 s | 21,951 s |
+
+The mean x86 shard load is 3,115 s in the first run and 4,380 s in the
+second. The largest x86 shard goes from 21 to 26 percent above the mean to 1
+to 14 percent above it.
+
+The four workers of a shard divide its tests with the same table
+(`ci-test-workers -weights`), so the refresh also corrects the division that
+failed. With four equal workers, a shard of 4,437 s needs 1,110 s for each
+worker, against the limit of 1,680 s. Live CI must confirm the balance.
+
+The mean x86 shard load was 3,606 s at the second refresh. The summed
+self-host test time of run 44047684053 is 43,805 s.
