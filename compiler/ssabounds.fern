@@ -1244,7 +1244,7 @@ function pow2_divisor(g: Graph, ins: ssa.SInst): i32 {
 }
 
 pub function grouped_accesses(f: ssasem.Func): ssasem.Func {
-  if (!any_checked_index(f)) {
+  if (!any_checked_index(f) || !any_pair(f)) {
     return f;
   }
   let defs = ssa.inst_defs(f.graph);
@@ -1316,6 +1316,22 @@ pub function grouped_accesses(f: ssasem.Func): ssasem.Func {
 }
 
 struct Probes { at: i32[], x: i32[], lo: i32[], span: i32[], unchecked: boolean[], any: boolean }
+
+// Whether a block has two accesses that can be members of one group.
+function any_pair(f: ssasem.Func): boolean {
+  for blk in f.graph.blocks {
+    let n = 0;
+    for ins in blk.insts {
+      if (checked_index(ins) && scalar(f, ins.result) || scalar_write(f, ins) && ins.imm == 0) {
+        n += 1;
+      }
+    }
+    if (n >= 2) {
+      return true;
+    }
+  }
+  return false;
+}
 
 struct Before { g: Graph, seen: Seen, dom: ssadeps.Dom }
 
