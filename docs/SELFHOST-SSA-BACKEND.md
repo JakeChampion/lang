@@ -108,7 +108,15 @@ lowered function it:
    after `cmn`, `cmp`, `adcs` or `sbcs` and x86-64 after `add`, `sub`, `adc`
    or `sbb`. An incoming c must be 0 or 1, a shift right by 63, an and
    with 1 or another carry, for the flags to agree with the formula. P-256's
-   field multiply takes 20 ns in place of 31 ns on Apple Silicon. The step
+   field multiply takes 20 ns in place of 31 ns on Apple Silicon. The
+   or and the sum of the two half carries `carry(x, y)` and
+   `carry(x + y, c)` become the one carry of `x + y + c`. The step then
+   puts the members of a carry chain next to each other in their block: a
+   sum, its carry, and the add that reads that carry. `ssa.carry_roles`
+   gives each member a role, and the emitters keep the carry in the flags
+   from one member to the next, so a multi-word add is one `add` and then
+   `adc` for each word (`adds` and `adcs` on arm64). A carry gets a
+   register only when a reader outside the chain uses it (#15728). The step
    then lets a call return from its own block when its result reaches the
    return only through joins (`ssa.return_calls`): the last operand of an
    `&&` or an `||` that the function returns is then a tail call;

@@ -10701,7 +10701,7 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
   return ssa_store(reg_of, ins.result, "%rdx", asmcore.ssa_x0_forget(s));
 }
 
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, shift32: i32[], lit0: i32[], lbase: i32, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32 }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], carry: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, shift32: i32[], lit0: i32[], lbase: i32, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32 }
 
 // With `test`, `b` is the immediate mask of an `and` whose result the compare tested against zero.
 // load_bits is not 0 when the compare reads one operand from memory, with a
@@ -10910,14 +10910,21 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ins.kind_tag == ssa.BINARY && ins.str == "and_not") {
     return ssa_and_not(ins, reg_of, s);
   }
-  if (ssa.carry_triple(blk, ii, fr.uses)) {
-    return ssa_carried_sum(ins, reg_of, s);
+  let role = ssa.carry_role(fr.carry, ins);
+  if (role == ssa.CARRY_HEAD) {
+    return ssa_carried_sum(ins, ins.result, false, reg_of, s);
   }
-  if (ssa.carry_triple(blk, ii - 1, fr.uses)) {
-    return s;
+  if (role == ssa.CARRY_LINK) {
+    return ssa_carried_sum(blk.insts[ii - 1], ins.result, true, reg_of, s);
   }
-  if (ssa.carry_triple(blk, ii - 2, fr.uses)) {
+  if (role == ssa.CARRY_READ) {
     return ssa_carry_reader(ins, blk.insts[ii - 1].result, reg_of, s);
+  }
+  if (role == ssa.CARRY_KEEP) {
+    return ssa_carry_set(ins, reg_of, s);
+  }
+  if (role != 0) {
+    return s;
   }
   if (ins.kind_tag == ssa.CARRY) {
     return ssa_carry(ins, reg_of, s);
@@ -10925,7 +10932,7 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ssa.low_word_pair(blk, ii, fr.uses)) {
     return s;
   }
-  if (ssa.low_word_pair(blk, ii - 1, fr.uses)) {
+  if (ssa.low_word_pair(blk, ii - 1, fr.uses) && ssa.carry_role(fr.carry, blk.insts[ii - 1]) == 0) {
     return ssa_bin_sized(blk.insts[ii - 1], ins.result, 32, reg_of, fr, s);
   }
   if (ins.kind_tag == ssa.PARAM || ins.kind_tag == ssa.PHI || ssa_feeds_select(fr, blk, ii + 1)) {
@@ -11003,14 +11010,32 @@ function ssa_and_not(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
   return ssa_store(reg_of, ins.result, d, s);
 }
 
-function ssa_carried_sum(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+// The add or the subtract of the operands of `ins` into `result`, which
+// makes the flags. With `carried`, it also adds the carry of the flags.
+function ssa_carried_sum(ins: ssa.SInst, result: i32, carried: boolean, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let op: string = if (ins.str == "sub") { "subq" } else { "addq" };
-  let d = ssa_dst(reg_of, ins.result);
-  if (ssa_in_x(reg_of, ins.args[1]) && reg_of[ins.args[1]] == reg_of[ins.result]) {
+  if (carried) {
+    op = if (ins.str == "sub") { "sbbq" } else { "adcq" };
+  }
+  let d = ssa_dst(reg_of, result);
+  if (ssa_in_x(reg_of, ins.args[1]) && reg_of[ins.args[1]] == reg_of[result]) {
     d = "%r11";
   }
   s = ssa_load(reg_of, ins.args[0], d, s);
   s = s.write("    " + op + " " + ssa_operand(reg_of, ins.args[1], s) + ", " + d + "\n");
+  if (d == "%r11") {
+    s = asmcore.ssa_x0_forget(s);
+  }
+  return ssa_store(reg_of, result, d, s);
+}
+
+// The carry of the flags, in the register of `ins`.
+function ssa_carry_set(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (reg_of[ins.result] == -1) {
+    return s;
+  }
+  let d = ssa_dst(reg_of, ins.result);
+  s = s.write("    setb " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n");
   if (d == "%r11") {
     s = asmcore.ssa_x0_forget(s);
   }
@@ -11044,10 +11069,7 @@ function ssa_carry(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore
   }
   s = ssa_load(reg_of, ins.args[0], "%r11", s);
   s = s.write("    " + op + " " + ssa_operand(reg_of, ins.args[1], s) + ", %r11\n");
-  s = asmcore.ssa_x0_forget(s);
-  let d = ssa_dst(reg_of, ins.result);
-  s = s.write("    setb " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n");
-  return ssa_store(reg_of, ins.result, d, s);
+  return ssa_carry_set(ins, reg_of, asmcore.ssa_x0_forget(s));
 }
 
 function ssa_operand(reg_of: i32[], v: i32, s: asmcore.EmitState): string {
@@ -12023,7 +12045,8 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let lbase = s.nlab;
   s = s.lab_take(bp.len());
   let lanes = ssa.lane_values(f);
-  let fr = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, shift32: ssa.narrow_right_shifts(f, imm), lit0: ssa.literal_first_bytes(f), lbase: lbase, lanes: lanes, cold: cold, cold_base: nspill + 3 * ssa.view_count(views), canary: canary };
+  let uses = ssa.use_counts(f);
+  let fr = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: uses, carry: ssa.carry_roles(f, uses), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, shift32: ssa.narrow_right_shifts(f, imm), lit0: ssa.literal_first_bytes(f), lbase: lbase, lanes: lanes, cold: cold, cold_base: nspill + 3 * ssa.view_count(views), canary: canary };
   let early_homes = ssa_early_homes(f, reg_of, s);
   let split = if (bare) { ssa_frame_split(f, fr, reg_of, early_homes) } else { ssa.FrameSplit { early: [], sites: [] } };
   // An early block returns with no frame to take down.
