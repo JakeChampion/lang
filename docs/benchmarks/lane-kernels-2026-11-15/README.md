@@ -31,6 +31,18 @@ The scalar count is from the compiler of main at 79104f89.
 | --- | --: | --: | --: | --: |
 | `base64_decode` | 32 MiB | 1,700,509,514 | 551,372,106 | 3.1 |
 
+`bench/utf8_validate.fern` validates 128 KiB of text 256 times with `utf8.from_bytes`.
+The text has ASCII words and 2-, 3- and 4-byte sequences between them.
+The validator checks 16 bytes in one step, by the lookup method of Keiser and Lemire.
+A step that finds an error stops, and the scalar validator goes on from the start of the last sequence before that step.
+The scalar count is from the compiler of main at 7feebc01.
+
+| Program | Bytes validated | Scalar | Lanes | Ratio |
+| --- | --: | --: | --: | --: |
+| `utf8_validate` | 32 MiB | 428,769,185 | 216,573,090 | 2.0 |
+
+The step of the validator runs about 100 instructions on x86-64 where its operations need about 30. #16323 has the two costs in the emitted loop.
+
 For each byte, the hex encoder runs 4.2 instructions in place of 29.3.
 The base64 encoder runs 7.4 in place of 24.7.
 
