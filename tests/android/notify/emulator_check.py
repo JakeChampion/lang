@@ -56,7 +56,7 @@ def check_shown(listing):
     failures = []
     if not any("Fern notify test" in r for r in shown):
         failures.append("the notification has no title 'Fern notify test'")
-    if not any(re.search(r"android\.progress=50\b", r) for r in shown):
+    if not any("android.progress=Integer (50)" in r for r in shown):
         failures.append("the notification has no progress of 50")
     return failures
 
