@@ -11,7 +11,9 @@ static Object objects[OBJECT_COUNT];
 static Object exception = {EXCEPTION, 0}, text = {STRING, "mock"};
 static void *table[235];
 static void **env_table = table;
-static uintptr_t context[8], activity[8], window[24];
+/* The loop context holds its senders in word 29. */
+static uintptr_t context[30], activity[8], window[24];
+static int64_t senders[8];
 static int mode, locals, globals, frames, saved_locals, pending, releases, opens, prepares, starts, global_calls, target_releases;
 static int64_t last_seek;
 static int last_seek_mode, audio_track, selected_track = -1;
@@ -19,9 +21,9 @@ static int last_seek_mode, audio_track, selected_track = -1;
 enum { CONSTRUCTOR=1, GET_LOADER, LOAD_CLASS, PREPARED, COMPLETED, ERROR, INFO, SEEKED,
        SET_USAGE, SET_CONTENT, BUILD, SET_ATTRS, RESET, SOURCE, PREPARE, SET_SURFACE,
        START, PAUSE, SEEK, POSITION, DURATION, PLAYING, WIDTH, HEIGHT, RELEASE,
-       GET_TIMESTAMP, MEDIA_TIME, SYSTEM_TIME, PARSE, TEXTURE_INIT, SURFACE_INIT, UPDATE, MATRIX, FRAME_TIME, SELECTED_TRACK, TRACK_INFO, TRACK_TYPE, SELECT_TRACK };
-static const char *names[] = {"", "<init>", "getClassLoader", "loadClass", "setOnPreparedListener", "setOnCompletionListener", "setOnErrorListener", "setOnInfoListener", "setOnSeekCompleteListener", "setUsage", "setContentType", "build", "setAudioAttributes", "reset", "setDataSource", "prepareAsync", "setSurface", "start", "pause", "seekTo", "getCurrentPosition", "getDuration", "isPlaying", "getVideoWidth", "getVideoHeight", "release", "getTimestamp", "getAnchorMediaTimeUs", "getAnchorSytemNanoTime", "parse", "<init>", "<init>", "updateTexImage", "getTransformMatrix", "getTimestamp", "getSelectedTrack", "getTrackInfo", "getTrackType", "selectTrack"};
-static const char *signatures[] = {"", "()V", "()Ljava/lang/ClassLoader;", "(Ljava/lang/String;)Ljava/lang/Class;", "(Landroid/media/MediaPlayer$OnPreparedListener;)V", "(Landroid/media/MediaPlayer$OnCompletionListener;)V", "(Landroid/media/MediaPlayer$OnErrorListener;)V", "(Landroid/media/MediaPlayer$OnInfoListener;)V", "(Landroid/media/MediaPlayer$OnSeekCompleteListener;)V", "(I)Landroid/media/AudioAttributes$Builder;", "(I)Landroid/media/AudioAttributes$Builder;", "()Landroid/media/AudioAttributes;", "(Landroid/media/AudioAttributes;)V", "()V", "(Landroid/content/Context;Landroid/net/Uri;)V", "()V", "(Landroid/view/Surface;)V", "()V", "()V", "(JI)V", "()I", "()I", "()Z", "()I", "()I", "()V", "()Landroid/media/MediaTimestamp;", "()J", "()J", "(Ljava/lang/String;)Landroid/net/Uri;", "(I)V", "(Landroid/graphics/SurfaceTexture;)V", "()V", "([F)V", "()J", "(I)I", "()[Landroid/media/MediaPlayer$TrackInfo;", "()I", "(I)V"};
+       GET_TIMESTAMP, MEDIA_TIME, SYSTEM_TIME, PARSE, TEXTURE_INIT, SURFACE_INIT, UPDATE, MATRIX, FRAME_TIME, SELECTED_TRACK, TRACK_INFO, TRACK_TYPE, SELECT_TRACK, SESSION };
+static const char *names[] = {"", "<init>", "getClassLoader", "loadClass", "setOnPreparedListener", "setOnCompletionListener", "setOnErrorListener", "setOnInfoListener", "setOnSeekCompleteListener", "setUsage", "setContentType", "build", "setAudioAttributes", "reset", "setDataSource", "prepareAsync", "setSurface", "start", "pause", "seekTo", "getCurrentPosition", "getDuration", "isPlaying", "getVideoWidth", "getVideoHeight", "release", "getTimestamp", "getAnchorMediaTimeUs", "getAnchorSytemNanoTime", "parse", "<init>", "<init>", "updateTexImage", "getTransformMatrix", "getTimestamp", "getSelectedTrack", "getTrackInfo", "getTrackType", "selectTrack", "getAudioSessionId"};
+static const char *signatures[] = {"", "()V", "()Ljava/lang/ClassLoader;", "(Ljava/lang/String;)Ljava/lang/Class;", "(Landroid/media/MediaPlayer$OnPreparedListener;)V", "(Landroid/media/MediaPlayer$OnCompletionListener;)V", "(Landroid/media/MediaPlayer$OnErrorListener;)V", "(Landroid/media/MediaPlayer$OnInfoListener;)V", "(Landroid/media/MediaPlayer$OnSeekCompleteListener;)V", "(I)Landroid/media/AudioAttributes$Builder;", "(I)Landroid/media/AudioAttributes$Builder;", "()Landroid/media/AudioAttributes;", "(Landroid/media/AudioAttributes;)V", "()V", "(Landroid/content/Context;Landroid/net/Uri;)V", "()V", "(Landroid/view/Surface;)V", "()V", "()V", "(JI)V", "()I", "()I", "()Z", "()I", "()I", "()V", "()Landroid/media/MediaTimestamp;", "()J", "()J", "(Ljava/lang/String;)Landroid/net/Uri;", "(I)V", "(Landroid/graphics/SurfaceTexture;)V", "()V", "([F)V", "()J", "(I)I", "()[Landroid/media/MediaPlayer$TrackInfo;", "()I", "(I)V", "()I"};
 
 static Object *local(Object *obj) { assert(obj); locals++; assert(locals < 64); return obj; }
 static Object *find_class(void *env, const char *name) {
@@ -42,7 +44,7 @@ static Object *get_class(void *env, Object *obj) {
 }
 static void *method_id(void *env, Object *cls, const char *name, const char *sig) {
     (void)env; assert(cls && !pending);
-    for (int i=1; i<=SELECT_TRACK; i++) if (!strcmp(name, names[i]) && !strcmp(sig, signatures[i])) {
+    for (int i=1; i<=SESSION; i++) if (!strcmp(name, names[i]) && !strcmp(sig, signatures[i])) {
         if (mode == 11 && i == START) { pending = 1; return 0; }
         return (void *)(uintptr_t)i;
     }
@@ -144,6 +146,7 @@ static int32_t int_call(void *env, Object *obj, void *method, Value *args) {
     case WIDTH: return 320;
     case HEIGHT: return 240;
     case SELECTED_TRACK: assert(args[0].i == 2); return audio_track;
+    case SESSION: return 41;
     default: assert(0); return 0;
     }
 }
@@ -210,7 +213,7 @@ void *ANativeWindow_toSurface(void *env, void *native_window) {
 }
 void *mock_player_context(void) {
     for (int i=0; i<OBJECT_COUNT; i++) objects[i].kind = i;
-    context[2] = (uintptr_t)activity; context[4] = (uintptr_t)&env_table; activity[3] = (uintptr_t)(objects + ACTIVITY);
+    context[2] = (uintptr_t)activity; context[4] = (uintptr_t)&env_table; context[29] = (uintptr_t)senders; activity[3] = (uintptr_t)(objects + ACTIVITY);
     table[6] = find_class; table[15] = exception_occurred; table[19] = push; table[20] = pop;
     table[21] = new_global; table[22] = delete_global; table[23] = delete_local; table[30] = new_object;
     table[31] = get_class; table[33] = method_id; table[36] = object_call; table[39] = boolean_call;
