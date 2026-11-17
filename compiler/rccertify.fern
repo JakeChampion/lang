@@ -105,14 +105,15 @@ pub function render(fn_name: string, x: Finding): string {
 // `skipped` names a function the design leaves uncertified. `failed` names
 // one the certifier could not decide, which the gate refuses.
 // `rounds`: the most rounds one walk of the function took to settle.
-pub struct Report { findings: Finding[], tracked: i32, unproved: i32, opaque: string[], skipped: string, failed: string, rounds: i32 }
+// `unproved_at`: one value of each slot that `unproved` counts.
+pub struct Report { findings: Finding[], tracked: i32, unproved: i32, unproved_at: i32[], opaque: string[], skipped: string, failed: string, rounds: i32 }
 
 function skipped(why: string): Report {
-  return Report { findings: [], tracked: 0, unproved: 0, opaque: [], skipped: why, failed: "", rounds: 0 };
+  return Report { findings: [], tracked: 0, unproved: 0, unproved_at: [], opaque: [], skipped: why, failed: "", rounds: 0 };
 }
 
 function failed(why: string): Report {
-  return Report { findings: [], tracked: 0, unproved: 0, opaque: [], skipped: "", failed: why, rounds: 0 };
+  return Report { findings: [], tracked: 0, unproved: 0, unproved_at: [], opaque: [], skipped: "", failed: why, rounds: 0 };
 }
 
 function org_none(): i32 {
@@ -4072,6 +4073,16 @@ function slot_roots(w: Walk): i32[] {
   return out;
 }
 
+function flagged_roots(flags: boolean[], roots: i32[]): i32[] {
+  let out: i32[] = [];
+  for k in 0..flags.len() {
+    if (flags[k]) {
+      out = out.append(roots[k]);
+    }
+  }
+  return out;
+}
+
 function unproved_under(a: Assumed, v: i32): boolean {
   let k = a.w.idx[v];
   return k >= 0 && a.p.unproved[k];
@@ -4131,7 +4142,15 @@ pub function certify(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, si
     }
     findings = findings.append(Finding { kind: x.kind, value: value, block: x.block, defined: x.defined, message: x.message });
   }
-  return Report { ...report, findings: findings };
+  let unproved_at: i32[] = [];
+  for v in report.unproved_at {
+    if (v >= 0 && v < dense.original.len()) {
+      unproved_at = unproved_at.append(dense.original[v]);
+    } else {
+      unproved_at = unproved_at.append(v);
+    }
+  }
+  return Report { ...report, findings: findings, unproved_at: unproved_at };
 }
 
 function certify_graph(f0: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable): Report {
@@ -4177,5 +4196,5 @@ function certify_graph(f0: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis,
       }
     }
   }
-  return Report { findings: findings, tracked: w.tracked, unproved: count_true(unproved), opaque: done.p.opaque, skipped: "", failed: "", rounds: rounds };
+  return Report { findings: findings, tracked: w.tracked, unproved: count_true(unproved), unproved_at: flagged_roots(unproved, slot_roots(w)), opaque: done.p.opaque, skipped: "", failed: "", rounds: rounds };
 }

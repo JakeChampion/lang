@@ -2150,7 +2150,11 @@ function splice_calls(f0: ssasem.Func, size: i32, self: i32, funcs: ssasem.Func[
     while (k < f.graph.blocks[bi].insts.len() && !spliced && done < max_splices()) {
       let at = ready_callee(f, f.graph.blocks[bi].insts[k], ix, ready, closures);
       if (at >= 0 && ctors[at] && !shared[at] && !literal_args(f.graph.blocks[bi], k)) {
-        at = -1;
+        f = renamed(f, swap);
+        swap = [];
+        if (!only_taken_apart(f.graph, f.graph.blocks[bi].insts[k].result)) {
+          at = -1;
+        }
       }
       if (at >= 0 && shared[at] && !small_branch_body(funcs[at])) {
         f = renamed(f, swap);

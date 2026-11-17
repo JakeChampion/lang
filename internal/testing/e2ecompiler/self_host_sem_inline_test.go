@@ -207,3 +207,70 @@ func TestSelfHostSplicedUpdateNamesItsBase(t *testing.T) {
 		}
 	}
 }
+
+const builderUpdateProgram = `struct Env { names: string[], vals: i32[], tag: string, depth: i32, cells: boolean }
+function fresh(n: string[], t: string): Env {
+    let vs: i32[] = [];
+    return Env { names: n, vals: vs, tag: t, depth: 0, cells: true };
+}
+@noinline function weigh(e: Env): i32 {
+    let c: i32 = 0;
+    if (e.cells) { c = 1; }
+    return e.names.len() * 100 + e.tag.len() * 10 + e.depth + c;
+}
+@noinline function first(n: string[]): i32 { return weigh(Env { ...fresh(n, "ab"), depth: 3 }); }
+@noinline function second(n: string[]): i32 { return weigh(Env { ...fresh(n, "abc"), cells: n.len() > 5 }); }
+@noinline function third(n: string[]): i32 { return weigh(Env { ...fresh(n, "a"), depth: 2, cells: false }); }
+@noinline function whole(n: string[]): i32 { return weigh(fresh(n, "abcd")); }
+function print_int(n: i32): i32 {
+    if (n > 9) { print_int(n / 10); }
+    putchar(48 + n % 10);
+    return 0;
+}
+function main(): i32 {
+    let n: string[] = ["x", "y"];
+    print_int(first(n)); print("");
+    print_int(second(n)); print("");
+    print_int(third(n)); print("");
+    print_int(whole(n)); print("");
+    return 0;
+}
+`
+
+func TestSelfHostBuilderUpdateRuns(t *testing.T) {
+	runSemanticProgram(t, "builderupdate", builderUpdateProgram, []string{"fresh", "weigh", "first", "second", "third", "whole"},
+		semInlineWants("224\n230\n212\n241\n"))
+}
+
+var semDumpBuilderCall = regexp.MustCompile(`(?m)^\s*v\d+ = k-7 \[[0-9,]*\] imm=\d+ fresh\s*$`)
+
+// A record update of the result of a builder reads only the fields of that
+// result. The body of the builder goes into the caller, and the update
+// becomes one record with no base. A caller that passes the result on keeps
+// the call.
+func TestSelfHostBuilderUpdateBuildsOneRecord(t *testing.T) {
+	c := buildSelfHostCLI(t)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(builderUpdateProgram), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dump := func(fn string) []byte {
+		cmd := runX86_64Bin(c.runner, c.bin, "-target", "x86-64-linux", "-emit", "asm", "-o", filepath.Join(t.TempDir(), "out.s"), src, c.stdlib)
+		cmd.Env = append(os.Environ(), "FERN_SEM_DUMP="+fn)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("compile: %v\n%s", err, out)
+		}
+		return out
+	}
+	for _, fn := range []string{"first", "second", "third"} {
+		out := dump(fn)
+		updates := semDumpUpdate.FindAllSubmatch(out, -1)
+		if len(updates) != 1 || string(updates[0][1]) != "0" || semDumpBuilderCall.Match(out) {
+			t.Errorf("want one record with no base and no call of fresh in %s:\n%s", fn, out)
+		}
+	}
+	if out := dump("whole"); !semDumpBuilderCall.Match(out) {
+		t.Errorf("want whole to keep its call of fresh:\n%s", out)
+	}
+}

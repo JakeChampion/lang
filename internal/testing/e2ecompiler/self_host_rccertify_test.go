@@ -631,7 +631,11 @@ function main(): i32 {
     for x in r.findings {
         print(rccertify.render("case", x));
     }
-    print("findings=" + util.i32_to_string(r.findings.len()) + " tracked=" + util.i32_to_string(r.tracked) + " unproved=" + util.i32_to_string(r.unproved) + " skipped=" + r.skipped);
+    let at: string = "";
+    for v in r.unproved_at {
+        at = at + " at=v" + util.i32_to_string(v);
+    }
+    print("findings=" + util.i32_to_string(r.findings.len()) + " tracked=" + util.i32_to_string(r.tracked) + at + " unproved=" + util.i32_to_string(r.unproved) + " skipped=" + r.skipped);
     return 0;
 }
 `
@@ -742,6 +746,12 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 			}
 			if want := fmt.Sprintf(" unproved=%d skipped=%s", tc.unproved, tc.skipped); !strings.HasSuffix(lines[len(lines)-1], want) {
 				t.Errorf("want%s, got %q", want, lines[len(lines)-1])
+			}
+			if named := strings.Count(lines[len(lines)-1], " at=v"); named != tc.unproved {
+				t.Errorf("want the summary to name %d unproved value(s), got %q", tc.unproved, lines[len(lines)-1])
+			}
+			if tc.name == "retained-on-one-arm-released-on-another" && !strings.Contains(lines[len(lines)-1], " at=v0 ") {
+				t.Errorf("want the unproved value v0 named, got %q", lines[len(lines)-1])
 			}
 		})
 	}
