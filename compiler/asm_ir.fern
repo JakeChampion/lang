@@ -11988,7 +11988,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let alloc = ssa_allocate(f, imm, prepared.lowered.ops, s);
   match (env("FERN_SSA_ALLOC")) {
     Some(want) => {
-      if (want == label_name) {
+      if (want == label_name || want == "*") {
         eprint("FERN_SSA_ALLOC: " + label_name + "\n" + ssa.print_func(f) + ssa.print_alloc_costs(f, alloc, ssa.SpillCosts { fold_alu_rhs: true }));
       }
     },
@@ -13602,6 +13602,7 @@ function emit_runtime_module(m: parser.Module, lowered: physicalbody.Lowered, s:
     }
   }
   s = emit_named_bodies(bodies, physical, unit.pre, fns.len(), s, vgate);
+  irverifygate.report_census(vgate);
   s = emit_cfi_stubs_from(s, cf0);
   if (s.string_lits.len() > lit0) {
     s = s.write("    .section .rodata\n");

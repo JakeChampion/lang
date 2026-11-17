@@ -20,6 +20,9 @@ function main(): i32 { let a: string[] = ["ab", "c"]; let b: string[] = ["de", "
 function main(): i32 { let a: i32[] = [7, 8]; let c: i32[] = a.concat([9]); return c.len() * 10 + c[2]; }`},
 	{"chained", `import "std/array";
 function main(): i32 { let a: i32[] = [1]; let b: i32[] = [2, 3]; let c: i32[] = a.concat(b).concat(a); return c.len(); }`},
+	{"builtin-struct-field", `import "std/array";
+function joined(h: HeaderMap): string[] { return h.names.concat(h.values); }
+function main(): i32 { let h = HeaderMap { names: ["a", "b"], values: ["c"] }; return joined(h).len(); }`},
 }
 
 func TestSelfHostArrayConcatMethodIR(t *testing.T) {

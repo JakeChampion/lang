@@ -96,6 +96,7 @@ function main(): i32 {
 
 // A call that is the last operand of && or ||, or the value of a branch of the
 // returned expression, reaches the return through a join. It is a tail call.
+// A tail call of the function itself is a loop in its body.
 func TestSelfHostSSATailCallThroughJoin(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
@@ -113,8 +114,11 @@ func TestSelfHostSSATailCallThroughJoin(t *testing.T) {
 			}
 			for name, callee := range tails {
 				body := tailCallBody(t, string(asm), name)
-				want := regexp.MustCompile(`(?m)^\s+` + jump[target] + ` __fn_` + callee + `\.r$`)
-				if !want.MatchString(body) {
+				leaves := regexp.MustCompile(`(?m)^\s+` + jump[target] + ` __fn_` + callee + `\.r$`).MatchString(body)
+				if name == callee && leaves {
+					t.Fatalf("%s jumps to its own entry, and does not loop:\n%s", name, body)
+				}
+				if name != callee && !leaves {
 					t.Fatalf("%s does not jump to the register entry of %s:\n%s", name, callee, body)
 				}
 				if strings.Contains(body, frames[target]) || strings.Contains(body, "call") || strings.Contains(body, "bl ") {

@@ -131,8 +131,8 @@ stderr, one line per function whose lift or emit took over 200 ms, with both
 times and its op and slot counts. `FERN_SSA_ALLOC=<function>` prints that
 function's register form, each block with its position and whether it is
 cold, each call with its cold kind, and each value's interval, spill weight
-and home (`ssa.print_alloc`). Nothing about the emitted program changes
-with it.
+and home (`ssa.print_alloc`). `FERN_SSA_ALLOC=*` prints each function of
+the module. Nothing about the emitted program changes with it.
 
 `FERN_SSA_DENY=<mask>` keeps the allocator off each register whose bit is
 set, on x86-64 and on arm64. The bit of a register is its allocator index.
