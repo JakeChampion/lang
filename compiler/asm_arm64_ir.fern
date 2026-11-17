@@ -3550,6 +3550,9 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   if (k == ssa.ST_AT) {
     return ssa_ldst(s, false, b, a, ins.imm);
   }
+  if (k != ssa.ARR_ST && ins.imm == 3) {
+    return ssa_trap_guard(ssa_cmp_imm(s.need("heap"), ssa_wreg(b), 0), CC_GE, if (k == ssa.STR_AT) { "__fern_str_oob_abort" } else { "__fern_oob_abort" });
+  }
   if (k == ssa.ARR_AT) {
     if (ins.imm != 1) {
       s = s.need("heap");
@@ -3661,6 +3664,10 @@ function ssa_mem_at(ins: ssa.SInst, reg_of: i32[], c: i32, a: string, d: string,
   let k = ins.kind_tag;
   if (k != ssa.ARR_AT || ins.imm != 1) {
     s = s.need("heap");
+  }
+  // A constant index here is not negative.
+  if (k != ssa.ARR_ST && ins.imm == 3) {
+    return s;
   }
   if (ins.imm != 1) {
     let len_at = 0;

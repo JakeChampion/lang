@@ -71,7 +71,7 @@ x86_64/map_int.ir	24115264
 x86_64/map_probe_chain.text	8895
 x86_64/map_probe_chain.ir	235291505
 x86_64/map_string.text	9772
-x86_64/map_string.ir	50691579	2
+x86_64/map_string.ir	49328509	2
 x86_64/ordmap_insert.text	6028
 x86_64/ordmap_insert.ir	68669850
 x86_64/pmap_insert.text	3598
@@ -105,7 +105,7 @@ x86_64/tokenize.ir	31710112
 x86_64/utf8_ingest_unchecked.text	8715
 x86_64/utf8_ingest_unchecked.ir	2100062
 x86_64/utf8_ingest_validated.text	9021
-x86_64/utf8_ingest_validated.ir	5084663
+x86_64/utf8_ingest_validated.ir	4973863
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
 # the dev container — paste its block in verbatim. The `.text` half needs no
@@ -184,7 +184,7 @@ aarch64/tokenize.ir	33490121
 aarch64/utf8_ingest_unchecked.text	9170
 aarch64/utf8_ingest_unchecked.ir	2593882
 aarch64/utf8_ingest_validated.text	9484
-aarch64/utf8_ingest_validated.ir	6064882
+aarch64/utf8_ingest_validated.ir	5988082
 x86_64/perceus_cfold.text	2257
 x86_64/perceus_cfold.ir	37302530
 x86_64/perceus_deriv.text	3127
@@ -205,7 +205,7 @@ aarch64/perceus_rbtree.text	3071
 aarch64/perceus_rbtree.ir	26406510
 aarch64/perceus_rbtree_ck.text	3660
 aarch64/perceus_rbtree_ck.ir	34374612
-x86_64/video_qtrle.text 5457
+x86_64/video_qtrle.text 5370
 x86_64/video_qtrle.ir 1547169520
 aarch64/video_qtrle.text 6144
 aarch64/video_qtrle.ir 1166068375
@@ -224,8 +224,8 @@ x86_64/base64_decode.text	3297
 x86_64/base64_decode.ir	551372106
 aarch64/base64_decode.text	3349
 aarch64/base64_decode.ir	347238827
-x86_64/gather_many.text	5540
-x86_64/gather_many.ir	104726815
-aarch64/gather_many.text	6053
-aarch64/gather_many.ir	206322178
+x86_64/gather_many.text	5812
+x86_64/gather_many.ir	37006962
+aarch64/gather_many.text	6251
+aarch64/gather_many.ir	42764802
 aarch64/hex_decode.ir	182381782
