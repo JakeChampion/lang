@@ -6241,6 +6241,7 @@ function main(): i32 {
 
 func TestArm64StdlibBundle23(t *testing.T) {
 	src := `
+import "std/option";
 import "std/string";
 function main(): i32 {
     // remove_all
@@ -6249,12 +6250,12 @@ function main(): i32 {
     if ("abc".remove_all("X") != "abc") { return 3; }
 
     // before / after — first separator
-    if ("key=value".before("=") != "key") { return 4; }
-    if ("key=value".after("=") != "value") { return 5; }
-    if ("plain".before("=") != "plain") { return 6; }
-    if ("plain".after("=") != "") { return 7; }
-    if ("=tail".before("=") != "") { return 8; }
-    if ("head=".after("=") != "") { return 9; }
+    if ("key=value".before("=").unwrap_or("none") != "key") { return 4; }
+    if ("key=value".after("=").unwrap_or("none") != "value") { return 5; }
+    if ("plain".before("=").is_some()) { return 6; }
+    if ("plain".after("=").is_some()) { return 7; }
+    if ("=tail".before("=").unwrap_or("none") != "") { return 8; }
+    if ("head=".after("=").unwrap_or("none") != "") { return 9; }
 
     // between — markers
     match ("(hello)".between("(", ")")) {
