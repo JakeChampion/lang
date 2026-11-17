@@ -354,10 +354,15 @@ function show_video(ctx: usize, p: player.Player, has: boolean, gpu: Cell[Option
     return false;
   }
   if let Some(g) = gpu.get() {
-    if (g.target.is_some() && painter.attached(g.painter)) {
-      gpu.set(Some(Gpu { ...g, shown_ns: -1i64 }));
-      log.info("plex: video on a texture");
-      return true;
+    // The target can come from the other player, so this player gets it.
+    if let Some(t) = g.target {
+      if (painter.attached(g.painter) && player.show_target(ctx, p, t)) {
+        gpu.set(Some(Gpu { ...g, shown_ns: -1i64 }));
+        log.info("plex: video on a texture");
+        return true;
+      }
+      player.close_target(ctx, t);
+      g = Gpu { ...g, target: None };
     }
     if (painter.attached(g.painter) && g.texture.id != 0) {
       if let Some(t) = player.target(ctx, g.texture.id) {

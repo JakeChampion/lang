@@ -1433,7 +1433,44 @@ function test_up_next_plays(): test.TestOutcome {
   return test.assert_eq((stops.len() == 1 && stops[0].contains("&time=8880000&duration=8880000")).to_string(), "true");
 }
 
-// Cancel on the card hides it, and the next episode does not play.
+// While the card shows, the second player prepares the next episode. At
+// the end of the countdown, it plays at once in place of the episode that
+// ends, and the first player does not open it again.
+function test_up_next_prepares_early(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let ready = season_playing(log, f);
+  if (has_call(log, "next https://")) {
+    return test.fail("the second player prepared the next episode before the card");
+  }
+  let carded = settle(ready, log, 1000i64, f);
+  if (!has_call(log, "next https://up.example:32400/library/parts/11/file.mp4") || carded.play.next.key != "501") {
+    return test.fail("the second player did not prepare the next episode: " + log.calls.get().join(" | "));
+  }
+  let prepared = settle(at(carded, log, 1100i64, f, android.Posted(19 | 1 << 8, 0 as usize)), log, 1100i64, f);
+  if (!prepared.play.next_ready || has_call(log, "chain true")) {
+    return test.fail("the prepared episode is not ready, or it was chained as a track");
+  }
+  let plays = count_plays(log);
+  let shows = count_calls(log, "show");
+  let starts = count_calls(log, "start");
+  let next = settle(prepared, log, 11500i64, f);
+  if (count_calls(log, "swap") != 1 || count_plays(log) != plays || next.play.item.key != "501" || !next.play.prepared) {
+    return test.fail("the second player did not take over: " + log.calls.get().join(" | "));
+  }
+  if (count_calls(log, "show") != shows + 1 || count_calls(log, "start") != starts + 1 || next.screen != ui.PLAYER) {
+    return test.fail("the next episode is not on the screen: " + log.calls.get().join(" | "));
+  }
+  if (!has_url(log, "/library/metadata/501?includeMarkers=1")) {
+    return test.fail("no metadata of the next episode");
+  }
+  let stops = log.urls.get().filter((u: string): boolean => u.contains("ratingKey=503") && u.contains("state=stopped"));
+  return test.assert_eq((stops.len() == 1 && stops[0].contains("&time=8880000&duration=8880000")).to_string(), "true");
+}
+
+// Cancel on the card hides it, the second player lets the next episode go,
+// and the next episode does not play.
 function test_up_next_cancel(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -1443,6 +1480,9 @@ function test_up_next_cancel(): test.TestOutcome {
   let off = tap(carded, log, 1100i64, f, "next_cancel");
   if (node(off, "next_now").is_some()) {
     return test.fail("the card stayed");
+  }
+  if (count_calls(log, "chain false") != 1 || off.play.next.key.len() != 0) {
+    return test.fail("the second player kept the next episode: " + log.calls.get().join(" | "));
   }
   let later = settle(off, log, 20000i64, f);
   return test.assert_eq((count_plays(log) - plays).to_string(), "0");
@@ -1747,6 +1787,7 @@ function main(): i32 {
   r = r.it("the connections of a server race", test_connection_race);
   r = r.it("a skip button skips the intro", test_skip_intro);
   r = r.it("the card of the next episode counts down and plays it", test_up_next_plays);
+  r = r.it("the second player prepares the next episode while the card shows", test_up_next_prepares_early);
   r = r.it("cancel on the card of the next episode keeps it from playing", test_up_next_cancel);
   r = r.it("a library loads the pages near the screen", test_library_pages);
   r = r.it("the letter strip jumps to the first item of a letter", test_library_letters);

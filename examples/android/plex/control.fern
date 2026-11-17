@@ -1919,9 +1919,21 @@ function stream_of(s: App, it: plex.Item, session: string, q: plex.Quality): (pl
 function start_play(own s: App, first: plex.Item, queue: plex.Item[]): App {
   let session = hex_id(s.dev);
   let level = first_level(s.quality);
-  let (it, stream, kept) = stream_of(s, first, session, plex.qualities()[level]);
+  let (it, stream, _) = stream_of(s, first, session, plex.qualities()[level]);
   let choice = plex.remembered(it);
   let p = Play { ...no_play(), active: true, item: it, stream: stream, session: session, overlay: true, status: "Loading", queue: queue, position: it.offset_ms, duration: it.duration_ms, level: level, choice: choice };
+  let t = player_screen(s, p);
+  log.info("plex: play " + it.key + " transcode=" + stream.transcode.to_string());
+  if (!t.dev.play(stream.url)) {
+    return App { ...t, play: Play { ...t.play, status: "The player refused the stream" } };
+  }
+  return t;
+}
+
+// The player screen for `p`, with requests for what the item needs other
+// than its stream: the thumbnails, the subtitles, and its metadata.
+function player_screen(own s: App, p: Play): App {
+  let it = p.item;
   let t = App { ...push(s), screen: ui.PLAYER, play: p, dirty: true };
   if let Some(part) = plex.thumbnail_part(it) {
     t = ask(t, "bif:" + part.id, Bif(part.id));
@@ -1929,12 +1941,8 @@ function start_play(own s: App, first: plex.Item, queue: plex.Item[]): App {
   t = ask_cues(t);
   // An item from a list has no markers and no tracks, so the app asks for
   // all of its metadata. A download keeps all of it.
-  if (!audio(t.play) && !kept) {
+  if (!audio(p) && !on_disk(p)) {
     t = ask(t, "playmeta:" + it.key, Meta(it.key));
-  }
-  log.info("plex: play " + it.key + " transcode=" + stream.transcode.to_string());
-  if (!t.dev.play(stream.url)) {
-    return App { ...t, play: Play { ...t.play, status: "The player refused the stream" } };
   }
   return t;
 }
@@ -2168,10 +2176,10 @@ function media_command(own s: App, c: session.Command): App {
 
 // Ends the playback and goes back. A watched item is marked so.
 function stop_play(own s: App, completed: boolean): App {
-  let p = s.play;
-  if (p.next.key.len() > 0) {
-    s.dev.chain(false);
+  if (s.play.next.key.len() > 0) {
+    s = drop_next(s);
   }
+  let p = s.play;
   let pos = p.position;
   if (p.prepared) {
     pos = s.dev.position();
@@ -2234,8 +2242,11 @@ function refresh_detail(own s: App): App {
 }
 
 function completed(own s: App): App {
-  if (s.play.next_ready) {
+  if (s.play.next_ready && audio(s.play)) {
     return carry_on(s);
+  }
+  if (s.play.next_ready) {
+    return take_next(s);
   }
   let album = s.play.album;
   let at_end = sleeps_at_end(s);
@@ -2285,26 +2296,26 @@ function plan_of(s: App): string {
   return [p.item.key, s.repeat.to_string(), s.shuffle.to_string(), s.sleep.to_string(), p.next_off.to_string(), p.queue.map((it: plex.Item): string => it.key).join(",")].join("|");
 }
 
-// Prepares the next track of the music on the second player while the
-// track plays, so it follows with no gap.
+// Prepares the next item on the second player. The next track of the
+// music follows with no gap. The next video starts at once when the card of
+// the next item ends, so the second player prepares it while the card shows.
 function line_up(own s: App): App {
   let p = s.play;
-  if (!p.active || !p.prepared || !audio(p)) {
+  if (!p.active || !p.prepared) {
     return s;
   }
   let plan = plan_of(s);
   if (p.next.key.len() > 0 && p.next_plan != plan) {
-    s.dev.chain(false);
-    s = App { ...s, play: Play { ...p, next: plex.no_item(), next_ready: false, next_plan: "" } };
+    s = drop_next(s);
     p = s.play;
   }
-  if (p.next.key.len() > 0 || p.next_tried == plan) {
+  if (p.next.key.len() > 0 || p.next_tried == plan || !audio(p) && p.up_next_at == 0i64) {
     return s;
   }
   let Some((it, queue)) = following(s) else {
     return App { ...s, play: Play { ...p, next_tried: plan } };
   };
-  if (it.kind != "track") {
+  if (!follows(p, it)) {
     return App { ...s, play: Play { ...p, next_tried: plan } };
   }
   let session = hex_id(s.dev);
@@ -2315,8 +2326,30 @@ function line_up(own s: App): App {
   return App { ...s, play: Play { ...p, next: item, next_queue: queue, next_stream: stream, next_session: session, next_plan: plan, next_ready: false } };
 }
 
-// An event of the second player: once it is prepared, it follows the track
-// that plays. When it fails, the next track starts as usual at the end.
+// True when the second player can prepare `it` to follow `p`: a track
+// follows a track, and a video follows a video.
+function follows(p: Play, it: plex.Item): boolean {
+  if (audio(p)) {
+    return it.kind == "track";
+  }
+  return it.kind != "track" && plex.playable_kind(it.kind);
+}
+
+// Takes the next item away from the second player. The server stops the
+// transcode that it started for the item.
+function drop_next(own s: App): App {
+  let p = s.play;
+  s.dev.chain(false);
+  let t = App { ...s, play: Play { ...p, next: plex.no_item(), next_ready: false, next_plan: "" } };
+  if (p.next_stream.transcode) {
+    return report(t, StopTranscode(p.next_session));
+  }
+  return t;
+}
+
+// An event of the second player. Once it is prepared, it follows the track
+// that plays, or waits for the end of the card of the next video. When it
+// fails, the next item starts as usual at the end.
 function next_event(own s: App, c: player.Change): App {
   let p = s.play;
   if (p.next.key.len() == 0) {
@@ -2324,13 +2357,15 @@ function next_event(own s: App, c: player.Change): App {
   }
   match (c) {
     player.Prepared => {
-      s.dev.chain(true);
+      if (audio(p)) {
+        s.dev.chain(true);
+      }
       return App { ...s, play: Play { ...p, next_ready: true } };
     },
     player.Failed(what, extra) => {
-      log.warn("plex: the next track failed: " + what.to_string() + " " + extra.to_string());
-      s.dev.chain(false);
-      return App { ...s, play: Play { ...p, next: plex.no_item(), next_ready: false, next_tried: p.next_plan, next_plan: "" } };
+      log.warn("plex: the next item failed: " + what.to_string() + " " + extra.to_string());
+      let t = drop_next(s);
+      return App { ...t, play: Play { ...t.play, next_tried: p.next_plan } };
     },
     _ => {
       return s;
@@ -2351,6 +2386,17 @@ function carry_on(own s: App): App {
   t = keep_place(report(t, Scrobble(p.item.key, true)), p.item.key, 0i64);
   let np = Play { ...no_play(), active: true, item: p.next, stream: p.next_stream, session: p.next_session, overlay: true, queue: p.next_queue, album: p.album, duration: p.next.duration_ms, level: p.level, choice: plex.remembered(p.next) };
   return prepared(App { ...t, play: np, dirty: true });
+}
+
+// The second player prepared the next video while its card showed. It
+// takes the place of the video that ends, and plays at once.
+function take_next(own s: App): App {
+  let p = s.play;
+  let t = stop_play(App { ...s, play: Play { ...p, next: plex.no_item() } }, true);
+  t.dev.swap();
+  log.info("plex: play " + p.next.key + " from the second player");
+  let np = Play { ...no_play(), active: true, item: p.next, stream: p.next_stream, session: p.next_session, overlay: true, queue: p.next_queue, album: p.album, position: p.next.offset_ms, duration: p.next.duration_ms, level: p.level, choice: plex.remembered(p.next) };
+  return prepared(player_screen(t, np));
 }
 
 // The next item of a list, which keeps its album.
@@ -2540,6 +2586,9 @@ function up_next_secs(p: Play, now: i64): i32 {
 
 // Plays the next item now. The item that plays counts as watched.
 function play_next(own s: App): App {
+  if (s.play.next_ready && !audio(s.play)) {
+    return take_next(s);
+  }
   let queue = s.play.queue;
   let album = s.play.album;
   let t = stop_play(s, true);
