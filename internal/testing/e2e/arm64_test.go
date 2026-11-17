@@ -7434,6 +7434,7 @@ function main(): i32 {
 func TestArm64Paths(t *testing.T) {
 	src := `
 import "std/path";
+import "std/option";
 function main(): i32 {
     // path.join — simple, leading/trailing slashes, empty parts.
     if (path.join(["a", "b", "c"]) != "a/b/c") { return 1; }
@@ -7448,29 +7449,29 @@ function main(): i32 {
     if (path.join(empty) != "") { return 9; }
 
     // path.parent — handle root and trailing-slash cases.
-    if (path.parent("/a/b/c") != "/a/b") { return 10; }
-    if (path.parent("a/b") != "a") { return 11; }
-    if (path.parent("a") != "") { return 12; }
-    if (path.parent("/") != "/") { return 13; }
-    if (path.parent("") != "") { return 14; }
-    if (path.parent("/a") != "/") { return 15; }
-    if (path.parent("/a/b/") != "/a") { return 16; }
+    if (path.parent("/a/b/c").unwrap_or("?") != "/a/b") { return 10; }
+    if (path.parent("a/b").unwrap_or("?") != "a") { return 11; }
+    if (path.parent("a").is_some()) { return 12; }
+    if (path.parent("/").is_some()) { return 13; }
+    if (path.parent("").is_some()) { return 14; }
+    if (path.parent("/a").unwrap_or("?") != "/") { return 15; }
+    if (path.parent("/a/b/").unwrap_or("?") != "/a") { return 16; }
 
     // path.file_name — last component.
-    if (path.file_name("/a/b/c.txt") != "c.txt") { return 17; }
-    if (path.file_name("file") != "file") { return 18; }
-    if (path.file_name("/") != "") { return 19; }
-    if (path.file_name("") != "") { return 20; }
-    if (path.file_name("a/b/") != "b") { return 21; }
+    if (path.file_name("/a/b/c.txt").unwrap_or("?") != "c.txt") { return 17; }
+    if (path.file_name("file").unwrap_or("?") != "file") { return 18; }
+    if (path.file_name("/").is_some()) { return 19; }
+    if (path.file_name("").is_some()) { return 20; }
+    if (path.file_name("a/b/").unwrap_or("?") != "b") { return 21; }
 
     // path.extension — last .X suffix on the last component.
-    if (path.extension("a.txt") != "txt") { return 22; }
-    if (path.extension("/path/to/file.log") != "log") { return 23; }
-    if (path.extension("multi.dot.tar.gz") != "gz") { return 24; }
-    if (path.extension("noext") != "") { return 25; }
-    if (path.extension(".hidden") != "") { return 26; }    // leading-dot file
-    if (path.extension("a.b/.hidden") != "") { return 27; }
-    if (path.extension("") != "") { return 28; }
+    if (path.extension("a.txt").unwrap_or("?") != "txt") { return 22; }
+    if (path.extension("/path/to/file.log").unwrap_or("?") != "log") { return 23; }
+    if (path.extension("multi.dot.tar.gz").unwrap_or("?") != "gz") { return 24; }
+    if (path.extension("noext").is_some()) { return 25; }
+    if (path.extension(".hidden").is_some()) { return 26; }    // leading-dot file
+    if (path.extension("a.b/.hidden").is_some()) { return 27; }
+    if (path.extension("").is_some()) { return 28; }
 
     return 0;
 }`
