@@ -273,6 +273,11 @@ pub function in_bounds(op: Op): Op {
   return Op { ...op, i32_imm: 1 };
 }
 
+// The op reads nothing. It aborts when bit 31 of the index is set.
+pub function sign_only(op: Op): Op {
+  return Op { ...op, i32_imm: 3 };
+}
+
 pub function counted(op: Op): Op {
   return Op { ...op, i64_imm: 1 };
 }

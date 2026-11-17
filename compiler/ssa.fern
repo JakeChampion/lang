@@ -6753,7 +6753,7 @@ function source_facts(f: SFunc, def_b: i32[], def_k: i32[], ins: SInst): i32 {
     return EXT_BYTE;
   }
   if (ins.kind_tag == ARR_AT || ins.kind_tag == STR_AT) {
-    return if (ins.imm == 2) { 0 } else { elem_facts(ins) };
+    return if (ins.imm == 2 || ins.imm == 3) { 0 } else { elem_facts(ins) };
   }
   if (ins.kind_tag == LD_AT) {
     return elem_facts(ins);

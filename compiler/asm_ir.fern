@@ -9795,6 +9795,9 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   if (k == ssa.ST_AT) {
     return ssa_mov_rm(s, ssa_elem_bits(ins.str), false, b, a, ins.imm);
   }
+  if (k != ssa.ARR_ST && ins.imm == 3) {
+    return ssa_trap_jump(ssa_test_rr(s.need("heap"), 32, b, b), "js", if (k == ssa.STR_AT) { "__fern_str_oob_abort" } else { "__fern_oob_abort" });
+  }
   if (k == ssa.ARR_AT) {
     s = s.need("heap");
     if (ins.imm != 1) {
@@ -9875,6 +9878,10 @@ function ssa_elem_read_at(s: asmcore.EmitState, mark: string, d: string, a: stri
 function ssa_mem_at(ins: ssa.SInst, reg_of: i32[], c: i32, a: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
   let k = ins.kind_tag;
   s = s.need("heap");
+  // A constant index here is not negative.
+  if (k != ssa.ARR_ST && ins.imm == 3) {
+    return s;
+  }
   if (ins.imm != 1) {
     let len_at = 0;
     let trap = "__fern_oob_abort";
