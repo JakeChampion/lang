@@ -46,8 +46,8 @@ x86_64/array_scale_f64.text	1415
 x86_64/array_scale_f64.ir	21309613
 x86_64/array_with.ir	31137597
 x86_64/array_with.text	1109
-x86_64/ascii_scan.text	1498
-x86_64/ascii_scan.ir	36931770
+x86_64/ascii_scan.text	2253
+x86_64/ascii_scan.ir	45037775
 x86_64/byte_copy_append.text	1362
 x86_64/byte_copy_append.ir	13442091
 x86_64/byte_copy_with.text	1641
@@ -105,7 +105,7 @@ x86_64/tokenize.ir	31710112
 x86_64/utf8_ingest_unchecked.text	8715
 x86_64/utf8_ingest_unchecked.ir	2100062
 x86_64/utf8_ingest_validated.text	9419
-x86_64/utf8_ingest_validated.ir	4973863
+x86_64/utf8_ingest_validated.ir	3846263
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
 # the dev container — paste its block in verbatim. The `.text` half needs no
@@ -125,8 +125,8 @@ aarch64/array_scale_f64.text	1609
 aarch64/array_scale_f64.ir	25340945
 aarch64/array_with.text	1347
 aarch64/array_with.ir	24587164
-aarch64/ascii_scan.text	1810
-aarch64/ascii_scan.ir	68639570
+aarch64/ascii_scan.text	2510
+aarch64/ascii_scan.ir	78884644
 aarch64/byte_copy_append.text	1600
 aarch64/byte_copy_append.ir	31926661
 aarch64/byte_copy_with.text	1894
@@ -184,7 +184,7 @@ aarch64/tokenize.ir	33490121
 aarch64/utf8_ingest_unchecked.text	9170
 aarch64/utf8_ingest_unchecked.ir	2593882
 aarch64/utf8_ingest_validated.text	9778
-aarch64/utf8_ingest_validated.ir	5899482
+aarch64/utf8_ingest_validated.ir	4871885
 x86_64/perceus_cfold.text	2257
 x86_64/perceus_cfold.ir	37302530
 x86_64/perceus_deriv.text	3127
@@ -210,18 +210,18 @@ x86_64/video_qtrle.ir 1547169520
 aarch64/video_qtrle.text 6144
 aarch64/video_qtrle.ir 1166068375
 x86_64/hex_encode.text	2080
-x86_64/hex_encode.ir	68509742
+x86_64/hex_encode.ir	56975406
 aarch64/hex_encode.text	2305
 x86_64/base64_encode.text	2416
-x86_64/base64_encode.ir	91318318
+x86_64/base64_encode.ir	66158638
 aarch64/base64_encode.text	2616
 aarch64/hex_encode.ir	67811416
 aarch64/base64_encode.ir	65374809
 x86_64/hex_decode.text	2592
-x86_64/hex_decode.ir	266949213
+x86_64/hex_decode.ir	251175773
 aarch64/hex_decode.text	2765
 x86_64/base64_decode.text	3297
-x86_64/base64_decode.ir	551372106
+x86_64/base64_decode.ir	511304834
 aarch64/base64_decode.text	3349
 aarch64/base64_decode.ir	347238827
 x86_64/gather_many.text	5812
@@ -229,7 +229,7 @@ x86_64/gather_many.ir	37006962
 aarch64/gather_many.text	6251
 aarch64/gather_many.ir	42764802
 aarch64/hex_decode.ir	182381782
-aarch64/utf8_validate.text	2824
-aarch64/utf8_validate.ir	227712358
-x86_64/utf8_validate.text	2586
-x86_64/utf8_validate.ir	216573090
+aarch64/utf8_validate.text	2891
+aarch64/utf8_validate.ir	242063462
+x86_64/utf8_validate.text	2642
+x86_64/utf8_validate.ir	185266338
