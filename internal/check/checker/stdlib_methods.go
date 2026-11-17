@@ -85,6 +85,7 @@ var stdlibMethodIndex = map[string]map[string]string{
 		"is_digit":        "std/unicode",
 		"is_letter":       "std/unicode",
 		"is_lower":        "std/unicode",
+		"is_mark":         "std/unicode",
 		"is_upper":        "std/unicode",
 		"is_whitespace":   "std/unicode",
 		"to_lower":        "std/unicode",
