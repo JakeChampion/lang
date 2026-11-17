@@ -57,7 +57,8 @@ Play, and the first is now fixed:
    an AAR. So AndroidX, Google Play services, Firebase, Play Billing and
    the SDKs of other vendors are out of reach.
 
-3. **Text and languages.** There is no text shaping and no color emoji.
+3. **Text and languages.** Arabic text is shaped, but its marks do not
+   move to their bases yet. There is no color emoji.
    `std/i18n` now gives localized strings.
    `std/bidi` gives right-to-left text in the order of UAX #9.
    `std/android/text` takes a character that its font does not have from
@@ -112,7 +113,7 @@ compressed.
 | Material 3 components | Colors only, few components | Full | Full | Third party |
 | Navigation | By hand | Navigation 3 | Navigator, go_router | React Navigation |
 | Accessibility | TalkBack tree, font scale | Semantics | Semantics | Native views |
-| Right-to-left text and shaping | Order, no shaping | Yes | Yes | Yes |
+| Right-to-left text and shaping | Order, Arabic forms | Yes | Yes | Yes |
 | UI tests on the computer | Full simulator | Robolectric | Widget tests | Jest |
 | Screenshot tests | PNG of the simulator | Paparazzi, Roborazzi | Golden tests | Third party |
 | Camera, location, push | No | Yes | Plugins | Expo modules |
@@ -161,7 +162,14 @@ The order puts first what stops a release, then what most apps need.
 6. **Java and Kotlin libraries.** Merge DEX files and manifests of a JAR
    or an AAR into the APK.
 
-7. **Text.** Shaping and color glyphs. CFF glyphs are done:
+7. **Text.** The positions of marks, from GPOS, and color glyphs.
+
+   Arabic shaping is done: `std/shape` gives each letter its joining
+   form, and applies the GSUB lookups of the font in the stages of
+   HarfBuzz. For the test words, its glyphs are those of HarfBuzz.
+   `std/android/text` shapes each run of Arabic letters.
+
+   CFF glyphs are done:
    `std/truetype` reads CFF outlines, CID-keyed ones too, and the fonts
    of a collection. So the CJK fonts of the system draw.
 

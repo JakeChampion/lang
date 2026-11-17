@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Regenerate bididata.txt — the source data of the Unicode Bidirectional
-Algorithm (UAX #9).
+Algorithm (UAX #9), and the joining types that Arabic shaping needs.
 
 Neither Go's `unicode` package nor CPython's `unicodedata` gives the
 paired brackets or the mirrored glyphs, so the data is read from the
@@ -10,8 +10,8 @@ the one that Go's `unicode` tracks.
 Run:  python3 cmd/unicodegen/gen_bididata.py 17.0.0 > cmd/unicodegen/bididata.txt
 
 The UCD files are fetched from unicode.org; `--ucd DIR` reads
-DerivedBidiClass.txt, BidiBrackets.txt and BidiMirroring.txt from DIR
-instead.
+DerivedBidiClass.txt, BidiBrackets.txt, BidiMirroring.txt and
+DerivedJoiningType.txt from DIR instead.
 
 Only the code points whose Bidi_Class is not L are emitted: L is the
 default of most of the code space. The defaults of the `@missing` lines
@@ -64,6 +64,19 @@ def bidi_classes(text: str):
     return classes
 
 
+def joining_types(text: str):
+    """The Joining_Type of each code point, U where the file names none."""
+    types = ["U"] * MAX_CP
+    for line in text.splitlines():
+        body = line.split("#", 1)[0].strip()
+        if not body:
+            continue
+        cps, value = [x.strip() for x in body.split(";")[:2]]
+        lo, hi = cp_range(cps)
+        types[lo:hi + 1] = [value] * (hi - lo + 1)
+    return types
+
+
 def runs(values, skip):
     out = []
     run = None
@@ -108,12 +121,16 @@ def main() -> None:
     out.write("# B;<lo>;<hi>;<class>   Bidi_Class (not L only)\n")
     out.write("# P;<cp>;<pair>;<o|c>   Bidi_Paired_Bracket and Bidi_Paired_Bracket_Type\n")
     out.write("# M;<cp>;<mirror>       Bidi_Mirroring_Glyph\n")
+    out.write("# J;<lo>;<hi>;<type>    Joining_Type (not U only)\n")
     for lo, hi, v in runs(classes, skip="L"):
         out.write("B;%04X;%04X;%s\n" % (lo, hi, v))
     for cp, pair, rest in pairs(ucd_file(version, ucd_dir, "BidiBrackets.txt")):
         out.write("P;%04X;%04X;%s\n" % (cp, pair, rest[0]))
     for cp, mirror, _ in pairs(ucd_file(version, ucd_dir, "BidiMirroring.txt")):
         out.write("M;%04X;%04X\n" % (cp, mirror))
+    joins = joining_types(ucd_file(version, ucd_dir, "extracted/DerivedJoiningType.txt"))
+    for lo, hi, v in runs(joins, skip="U"):
+        out.write("J;%04X;%04X;%s\n" % (lo, hi, v))
 
 
 if __name__ == "__main__":
