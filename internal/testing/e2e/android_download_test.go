@@ -5,7 +5,8 @@ import "testing"
 // A download goes to the DownloadManager with its headers, its title, its
 // notification and its file name in the external files directory, and the
 // ID of enqueue comes back. The state of a download reads the columns of the
-// row of its ID, and an ID with no row is GONE. Each call closes its cursor
+// row of its ID, and an ID with no row is GONE. A jboolean is its low 8
+// bits. Each call closes its cursor
 // and ends each local frame that it starts.
 func TestAndroidDownload(t *testing.T) {
 	const src = `import "std/android/download";
@@ -85,7 +86,8 @@ static uintptr_t object(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t
   return fresh();
 }
 static uintptr_t static_object(uintptr_t e, uintptr_t cls, uintptr_t id, const uint64_t *args) { note_call(name_of(id), args, arities[id - 1]); return fresh(); }
-static uint8_t bcall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) { note_call(name_of(id), args, arities[id - 1]); return 1; }
+// A jboolean leaves the bits above the low 8 of the register undefined.
+static uintptr_t bcall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) { note_call(name_of(id), args, arities[id - 1]); return rows == 2 ? 0x100 : 0x501; }
 static int32_t icall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
   note_call(name_of(id), args, arities[id - 1]);
   if (!strcmp(name_of(id), "getColumnIndex")) {
@@ -172,6 +174,8 @@ int main(int argc, char **argv) {
 
   rows = 0;
   require(status_of((uintptr_t)ctx, 7) == 0 && total_of((uintptr_t)ctx, 7) == -1 && frames == 0, "an id with no row is gone");
+  rows = 2;
+  require(status_of((uintptr_t)ctx, 7) == 0 && frames == 0, "a false moveToFirst with high bits is false");
   rows = 1;
 
   log_[0] = 0;

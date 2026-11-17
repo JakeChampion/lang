@@ -20,6 +20,8 @@ Other modules send their own events to the loop thread with `tell`, and the loop
 
 When the loop has no activity and the app does not keep it alive, `step` gets a last Destroy event, and `run` returns. Thus Destroy is always the last event of a loop. While the loop has no activity, `activity_object` gives the Application Context, and `detached` is true.
 
+A module that makes more than one Java object of one listener class can tell their events apart with senders. `add_sender` keeps a number that names an object, such as the audio session of a media player, and gives it a slot from 0 to 7. In a callback, `sender_slot` gives the slot of the number of the object. The module puts that slot in its event. `drop_sender` frees the slot. The loop thread writes the slots, and a callback reads them with atomic loads. Thus neither one waits for a lock.
+
 A lock of the process guards the live loop. `start`, `tell` and the end of a loop with no activity take it, so a new activity does not take over a loop that ends.
 
 ## Contracts
@@ -386,7 +388,7 @@ Only the UI thread can change the views of the activity. `immersive` sets bit 0 
 <<the UI thread>>=
 // The context block of an activity, which both threads share.
 @derive(ffi.CLayout)
-struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize, ui_read: i32, ui_write: i32, field: usize, watcher: usize, quiet: i32, focused: i32, host: usize, provider: usize, delegate_class: usize, tree_class: usize, tree: usize, hovered: i32, sent: i64, kept: i32, app: usize, vm: usize, sdk: i32, dpi: i32, night: i32, motion: usize, back_class: usize, insets_class: usize, windowed: i32 }
+struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize, ui_read: i32, ui_write: i32, field: usize, watcher: usize, quiet: i32, focused: i32, host: usize, provider: usize, delegate_class: usize, tree_class: usize, tree: usize, hovered: i32, sent: i64, kept: i32, app: usize, vm: usize, sdk: i32, dpi: i32, night: i32, motion: usize, back_class: usize, insets_class: usize, windowed: i32, senders: usize }
 
 // ANativeActivity.
 @derive(ffi.CLayout)
@@ -547,6 +549,57 @@ pub function live_activity(e: usize): usize {
   }
 }
 
+// The most senders of a loop.
+const SENDERS: i32 = 8;
+
+// Keeps the number `id`, which is not 0, as a sender of events of the loop
+// `ctx`, and gives its slot, or -1 when each slot holds one. Call it on the
+// loop thread.
+pub function add_sender(ctx: usize, id: i64): i32 {
+  if (id == 0i64) {
+    return -1;
+  }
+  unsafe {
+    let table: usize = Context.c_load_senders(ctx);
+    for k in 0..SENDERS {
+      if (__atomic_load_acquire(table + (k * 8) as usize) == 0i64) {
+        __atomic_store_release(table + (k * 8) as usize, id);
+        return k;
+      }
+    }
+  }
+  return -1;
+}
+
+// Frees the slot `slot` of the senders of the loop `ctx`. Call it on the
+// loop thread.
+pub function drop_sender(ctx: usize, slot: i32): void {
+  if (slot < 0 || slot >= SENDERS) {
+    return;
+  }
+  unsafe {
+    __atomic_store_release(Context.c_load_senders(ctx) + (slot * 8) as usize, 0i64);
+  }
+}
+
+// The slot of the sender `id` of the live loop, or -1. Call it on a thread
+// other than the loop thread, such as the UI thread in a callback.
+pub function sender_slot(e: usize, id: i64): i32 {
+  let ctx = live_loop(e);
+  if (ctx == 0 as usize || id == 0i64) {
+    return -1;
+  }
+  unsafe {
+    let table: usize = Context.c_load_senders(ctx);
+    for k in 0..SENDERS {
+      if (__atomic_load_acquire(table + (k * 8) as usize) == id) {
+        return k;
+      }
+    }
+  }
+  return -1;
+}
+
 // Sends the message `kind` with `arg` to the live loop, and waits for its
 // reply. It is false when no loop runs. Call it on a thread other than the
 // loop thread, such as the UI thread in a callback of a Java class.
@@ -586,7 +639,10 @@ function ui_env(activity: usize): usize {
 function new_context(activity: usize): usize {
   unsafe {
     let ctx: usize = __alloc(Context.c_size() as i32);
-    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sent: 0i64, kept: 0, app: 0 as usize, vm: NativeActivity.c_load_vm(activity), sdk: NativeActivity.c_load_sdk_version(activity), dpi: 0, night: 0, motion: 0 as usize, back_class: 0 as usize, insets_class: 0 as usize, windowed: 0 }.c_store(ctx);
+    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sent: 0i64, kept: 0, app: 0 as usize, vm: NativeActivity.c_load_vm(activity), sdk: NativeActivity.c_load_sdk_version(activity), dpi: 0, night: 0, motion: 0 as usize, back_class: 0 as usize, insets_class: 0 as usize, windowed: 0, senders: __alloc(SENDERS * 8) }.c_store(ctx);
+    for k in 0..SENDERS {
+      __store_i64(Context.c_load_senders(ctx) + (k * 8) as usize, 0i64);
+    }
     let ok: i32 = c_pipe2(ctx + Context.c_offset_message_read(), 524288) | c_pipe2(ctx + Context.c_offset_reply_read(), 524288) | c_pipe2(ctx + Context.c_offset_ui_read(), UI_PIPE_FLAGS);
     if (ok != 0) {
       __free(ctx, Context.c_size() as i32);

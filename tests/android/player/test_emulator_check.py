@@ -81,7 +81,7 @@ class ContentSourceTests(unittest.TestCase):
             "playertest: " + marker for marker in (
                 "opened", "prepared round=0", "paused position_ms=1", "pause stable",
                 "seeked position_ms=1", "timestamp media_us=1", "completed round=0",
-                "prepared round=1", "speed took_ms=2100", "completed round=1", "expected error", "passed"))))
+                "prepared round=1", "speed took_ms=2100", "completed round=1", "slots 0 1", "expected error", "passed"))))
 
         def device(*args, **kwargs):
             nonlocal stops
