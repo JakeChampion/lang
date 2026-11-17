@@ -1320,14 +1320,14 @@ struct Probes { at: i32[], x: i32[], lo: i32[], span: i32[], unchecked: boolean[
 // Whether a block has two accesses that can be members of one group.
 function any_pair(f: ssasem.Func): boolean {
   for blk in f.graph.blocks {
-    let n = 0;
+    let one = false;
     for ins in blk.insts {
       if (checked_index(ins) && scalar(f, ins.result) || scalar_write(f, ins) && ins.imm == 0) {
-        n += 1;
+        if (one) {
+          return true;
+        }
+        one = true;
       }
-    }
-    if (n >= 2) {
-      return true;
     }
   }
   return false;
