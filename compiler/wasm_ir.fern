@@ -5669,7 +5669,7 @@ function tail_call_wat(ops: ir.Op[], i: i32, windows: i32): string {
 // fern-lint: allow cyclomatic-complexity
 function emit_function_ir_named(ns: string, r: irtables.Lowered, fn_name: string, result_wat: string, strs: Placed, caggs: Placed, structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
   irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vgate);
-  irverifygate.certify_ops_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vgate);
+  irverifygate.certify_lowered_or_refuse(fn_name, r, vgate);
   let f = wasmlocals.coalesce(r.ops, r.n_params, r.n_locals, r.i64_slots, r.f64_slots, r.v128_slots);
   let arrtmp = f.n_locals;
   let eltmp = f.n_locals + 1;

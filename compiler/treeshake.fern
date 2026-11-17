@@ -410,7 +410,7 @@ pub function body_refs(fd: parser.FuncDecl): BodyRefs {
   return BodyRefs { any: util.name_index(any), methods: util.name_index(methods) };
 }
 
-struct LocalTypes { names: string[], types: string[] }
+struct LocalTypes { names: util.NameIndex, types: string[] }
 
 function lt_bind(own lt: LocalTypes, name: string, ty0: string): LocalTypes {
   // A generic `Vec[N, T]` is a lane type the instance picks, so its methods
@@ -419,9 +419,9 @@ function lt_bind(own lt: LocalTypes, name: string, ty0: string): LocalTypes {
   if (ty.starts_with("Vec[") && ty.ends_with("]")) {
     ty = "";
   }
-  let k = util.index_of_str(lt.names, name);
+  let k = lt.names.find(name);
   if (k < 0) {
-    return LocalTypes { names: lt.names.append(name), types: lt.types.append(ty) };
+    return LocalTypes { names: lt.names.added(name), types: lt.types.append(ty) };
   }
   if (lt.types[k] == ty) {
     return lt;
@@ -449,7 +449,7 @@ function lt_stmt(st: ast.Stmt, own lt: LocalTypes): LocalTypes {
 }
 
 function local_types(fd: parser.FuncDecl): LocalTypes {
-  let lt = LocalTypes { names: [], types: [] };
+  let lt = LocalTypes { names: util.name_index([]), types: [] };
   if (fd.receiver_name.len() > 0) {
     lt = lt_bind(lt, fd.receiver_name, fd.receiver_type);
   }
@@ -489,7 +489,7 @@ function body_recv_tag(e: ast.Expr, lt: LocalTypes): string {
     return "[]";
   }
   if let ast.ExprIdent(id) = e {
-    let k = util.index_of_str(lt.names, id.name);
+    let k = lt.names.find(id.name);
     if (k >= 0 && lt.types[k].len() > 0) {
       return lt.types[k];
     }
@@ -517,7 +517,7 @@ function method_name_of(e: ast.Expr, lt: LocalTypes, own acc: string[]): string[
 function typed_method_name_of(fa: ast.ExprFieldAccess, arity: i32, lt: LocalTypes, own acc: string[]): string[] {
   let m = ts_arity_root(fa.field, arity);
   if let ast.ExprIdent(id) = fa.obj {
-    let k = util.index_of_str(lt.names, id.name);
+    let k = lt.names.find(id.name);
     if (k >= 0) {
       let spelled = lt.types[k];
       if (spelled.starts_with("impl ")) {

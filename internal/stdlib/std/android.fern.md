@@ -20,6 +20,8 @@ Other modules send their own events to the loop thread with `tell`, and the loop
 
 When the loop has no activity and the app does not keep it alive, `step` gets a last Destroy event, and `run` returns. Thus Destroy is always the last event of a loop. While the loop has no activity, `activity_object` gives the Application Context, and `detached` is true.
 
+A module that makes more than one Java object of one listener class can tell their events apart with senders. `add_sender` keeps a number that names an object, such as the audio session of a media player, and gives it a slot from 0 to 7. In a callback, `sender_slot` gives the slot of the number of the object. The module puts that slot in its event. `drop_sender` frees the slot. The loop thread writes the slots, and a callback reads them with atomic loads. Thus neither one waits for a lock.
+
 A lock of the process guards the live loop. `start`, `tell` and the end of a loop with no activity take it, so a new activity does not take over a loop that ends.
 
 ## Contracts
@@ -198,6 +200,9 @@ function c_config_density(config: usize): i32;
 
 @import("libandroid.so", "AConfiguration_getUiModeNight")
 function c_config_night(config: usize): i32;
+
+@import("libandroid.so", "AConfiguration_getLayoutDirection")
+function c_config_layout_direction(config: usize): i32;
 
 @import("libandroid.so", "AConfiguration_delete")
 function c_config_delete(config: usize): void;
@@ -378,7 +383,7 @@ function message_event(kind: i32, arg: usize): Event {
 
 The context block that `start` hangs off `ANativeActivity.instance` is a `Context`. It holds the two pipes, the activity, the thread handle, the JNIEnv of the loop thread, the window flags, the time of the last vsync, the frame flags, the Choreographer of the loop thread, and the motion event of the `Touch` step that runs. Each thread reads and writes one field at a time, so a write of one thread does not overwrite a field of the other.
 
-Only the UI thread can change the views of the activity. `immersive` sets bit 0 for hidden bars and bit 1 for an explicit request, and sends a request to the UI thread through the pipe of the text fields. The UI thread applies the bits through its JNIEnv, which the activity holds. The focus callback applies them again, because Android shows the bars again while another window has the focus. The window gets the focus after it shows, and again each time the user returns to it. `brightness` goes to the UI thread in the same way, because it changes the attributes of the window.
+Only the UI thread can change the views of the activity. `immersive` sets bit 0 for hidden bars and bit 1 for an explicit request, and sends a request to the UI thread through the pipe of the text fields. The UI thread applies the bits through its JNIEnv, which the activity holds. The focus callback applies them again, because Android shows the bars again while another window has the focus. The window gets the focus after it shows, and again each time the user returns to it. `brightness` goes to the UI thread in the same way, because it changes the attributes of the window. `pip_auto` goes there too: it gives the activity the `PictureInPictureParams` of a video, so Android shows the activity in a small window when the user leaves it. `in_pip` tells whether the activity shows in that window.
 
 `NativeActivity` and `Callbacks` have the fields of `ANativeActivity` and `ANativeActivityCallbacks` in `android/native_activity.h`, in their order. `@derive(ffi.CLayout)` gives each field its C offset.
 
@@ -386,7 +391,7 @@ Only the UI thread can change the views of the activity. `immersive` sets bit 0 
 <<the UI thread>>=
 // The context block of an activity, which both threads share.
 @derive(ffi.CLayout)
-struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize, ui_read: i32, ui_write: i32, field: usize, watcher: usize, quiet: i32, focused: i32, host: usize, provider: usize, delegate_class: usize, tree_class: usize, tree: usize, hovered: i32, sent: i64, kept: i32, app: usize, vm: usize, sdk: i32, dpi: i32, night: i32, motion: usize, back_class: usize, insets_class: usize, windowed: i32 }
+struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize, ui_read: i32, ui_write: i32, field: usize, watcher: usize, quiet: i32, focused: i32, host: usize, provider: usize, delegate_class: usize, tree_class: usize, tree: usize, hovered: i32, sent: i64, kept: i32, app: usize, vm: usize, sdk: i32, dpi: i32, night: i32, motion: usize, back_class: usize, insets_class: usize, windowed: i32, senders: usize }
 
 // ANativeActivity.
 @derive(ffi.CLayout)
@@ -547,6 +552,57 @@ pub function live_activity(e: usize): usize {
   }
 }
 
+// The most senders of a loop.
+const SENDERS: i32 = 8;
+
+// Keeps the number `id`, which is not 0, as a sender of events of the loop
+// `ctx`, and gives its slot, or -1 when each slot holds one. Call it on the
+// loop thread.
+pub function add_sender(ctx: usize, id: i64): i32 {
+  if (id == 0i64) {
+    return -1;
+  }
+  unsafe {
+    let table: usize = Context.c_load_senders(ctx);
+    for k in 0..SENDERS {
+      if (__atomic_load_acquire(table + (k * 8) as usize) == 0i64) {
+        __atomic_store_release(table + (k * 8) as usize, id);
+        return k;
+      }
+    }
+  }
+  return -1;
+}
+
+// Frees the slot `slot` of the senders of the loop `ctx`. Call it on the
+// loop thread.
+pub function drop_sender(ctx: usize, slot: i32): void {
+  if (slot < 0 || slot >= SENDERS) {
+    return;
+  }
+  unsafe {
+    __atomic_store_release(Context.c_load_senders(ctx) + (slot * 8) as usize, 0i64);
+  }
+}
+
+// The slot of the sender `id` of the live loop, or -1. Call it on a thread
+// other than the loop thread, such as the UI thread in a callback.
+pub function sender_slot(e: usize, id: i64): i32 {
+  let ctx = live_loop(e);
+  if (ctx == 0 as usize || id == 0i64) {
+    return -1;
+  }
+  unsafe {
+    let table: usize = Context.c_load_senders(ctx);
+    for k in 0..SENDERS {
+      if (__atomic_load_acquire(table + (k * 8) as usize) == id) {
+        return k;
+      }
+    }
+  }
+  return -1;
+}
+
 // Sends the message `kind` with `arg` to the live loop, and waits for its
 // reply. It is false when no loop runs. Call it on a thread other than the
 // loop thread, such as the UI thread in a callback of a Java class.
@@ -586,7 +642,10 @@ function ui_env(activity: usize): usize {
 function new_context(activity: usize): usize {
   unsafe {
     let ctx: usize = __alloc(Context.c_size() as i32);
-    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sent: 0i64, kept: 0, app: 0 as usize, vm: NativeActivity.c_load_vm(activity), sdk: NativeActivity.c_load_sdk_version(activity), dpi: 0, night: 0, motion: 0 as usize, back_class: 0 as usize, insets_class: 0 as usize, windowed: 0 }.c_store(ctx);
+    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sent: 0i64, kept: 0, app: 0 as usize, vm: NativeActivity.c_load_vm(activity), sdk: NativeActivity.c_load_sdk_version(activity), dpi: 0, night: 0, motion: 0 as usize, back_class: 0 as usize, insets_class: 0 as usize, windowed: 0, senders: __alloc(SENDERS * 8) }.c_store(ctx);
+    for k in 0..SENDERS {
+      __store_i64(Context.c_load_senders(ctx) + (k * 8) as usize, 0i64);
+    }
     let ok: i32 = c_pipe2(ctx + Context.c_offset_message_read(), 524288) | c_pipe2(ctx + Context.c_offset_reply_read(), 524288) | c_pipe2(ctx + Context.c_offset_ui_read(), UI_PIPE_FLAGS);
     if (ok != 0) {
       __free(ctx, Context.c_size() as i32);
@@ -1544,6 +1603,40 @@ pub function brightness(ctx: usize, level: f32): void {
   ui_request(ctx, UiRequest { op: BRIGHTNESS, a: permille, b: 0, data: 0 as usize });
 }
 
+// Lets Android put the activity in a picture-in-picture window when the
+// user leaves it, with the shape of a `w` by `h` video, or stops that for
+// `on` false. Android does so from version 12 (API 31), and the APK needs
+// the `pip` key of its [android] table. Android 8 to 11 keep only the
+// shape.
+pub function pip_auto(ctx: usize, on: boolean, w: i32, h: i32): void {
+  let a = 0;
+  if (on) {
+    a = 1;
+  }
+  ui_request(ctx, UiRequest { op: PIP, a: a, b: w, data: h as usize });
+}
+
+// True while the activity shows in a picture-in-picture window.
+pub function in_pip(ctx: usize): boolean {
+  if (sdk_version(ctx) < 26) {
+    return false;
+  }
+  let e = env(ctx);
+  unsafe {
+    let activity: usize = Context.c_load_activity(ctx);
+    let obj: usize = NativeActivity.c_load_clazz(activity);
+    let class: usize = jni.get_object_class(e, obj);
+    let id: usize = jni.get_method_id(e, class, "isInPictureInPictureMode", "()Z");
+    let on = false;
+    if (id != 0 as usize) {
+      on = jni.call_boolean_method_a(e, obj, id, 0 as usize) != 0;
+    }
+    let d: usize = jni.delete_local_ref(e, class);
+    let cleared: usize = jni.exception_clear(e);
+    return on;
+  }
+}
+
 // The brightness of the screen that the user set for the system, from 0.0
 // to 1.0: Settings.System.SCREEN_BRIGHTNESS over 255. Call it on the loop
 // thread.
@@ -1702,6 +1795,24 @@ pub function density(ctx: usize): i32 {
 // ACONFIGURATION_UI_MODE_NIGHT_YES.
 const UI_MODE_NIGHT_YES: i32 = 2;
 
+// ACONFIGURATION_LAYOUTDIR_RTL.
+const LAYOUTDIR_RTL: i32 = 2;
+
+// The layout of the activity is right to left: the language of the person
+// is written right to left, or the developer options force it.
+pub function rtl_layout(ctx: usize): boolean {
+  unsafe {
+    if (detached(ctx)) {
+      return false;
+    }
+    let config: usize = c_config_new();
+    c_config_from_assets(config, NativeActivity.c_load_asset_manager(Context.c_load_activity(ctx)));
+    let dir: i32 = c_config_layout_direction(config);
+    c_config_delete(config);
+    return dir == LAYOUTDIR_RTL;
+  }
+}
+
 // The scale of the text of the system, which the person sets as the font
 // size: 1 is the default, and 1.3 makes text 30% larger. Multiply a size
 // in sp by the scale and by the pixels of one dp.
@@ -1799,6 +1910,10 @@ const FAST_DISPLAY: i32 = 9;
 
 // The request of `brightness`: `a` is the level in thousandths, or -1.
 const BRIGHTNESS: i32 = 10;
+
+// The request of `pip_auto`: `a` is 1 for on, and `b` and `data` are the
+// width and the height of the video.
+const PIP: i32 = 11;
 
 // InputType.TYPE_CLASS_TEXT: text with the suggestions of the keyboard.
 pub const INPUT_TEXT: i32 = 1;
@@ -1926,6 +2041,10 @@ function do_request(ctx: usize, r: UiRequest): boolean {
     apply_brightness(ctx, r.a);
     return false;
   }
+  if (r.op == PIP) {
+    apply_pip(ctx, r.a != 0, r.b, r.data as i32);
+    return false;
+  }
   if (r.op > FIELD_HIDE) {
     return access_request(ctx, r);
   }
@@ -1961,6 +2080,64 @@ function apply_brightness(ctx: usize, permille: i32): void {
     }
     if (window != 0 as usize) {
       let g: usize = jni.delete_local_ref(e, window);
+    }
+    let cleared: usize = jni.exception_clear(e);
+  }
+}
+
+// Activity.setPictureInPictureParams with the shape of a w by h video,
+// held to the shapes that Android takes (from 1 by 2.39 to 2.39 by 1), and
+// with setAutoEnterEnabled from API 31.
+function apply_pip(ctx: usize, on: boolean, w: i32, h: i32): void {
+  if (sdk_version(ctx) < 26) {
+    return;
+  }
+  let width = w.max(1);
+  let height = h.max(1);
+  if (width * 100 > height * 239) {
+    width = height * 239 / 100;
+  }
+  if (height * 100 > width * 239) {
+    height = width * 239 / 100;
+  }
+  unsafe {
+    let activity: usize = Context.c_load_activity(ctx);
+    let e: usize = NativeActivity.c_load_env(activity);
+    let obj: usize = NativeActivity.c_load_clazz(activity);
+    let builder_class: usize = jni.find_class(e, "android/app/PictureInPictureParams$Builder");
+    let rational_class: usize = jni.find_class(e, "android/util/Rational");
+    if (builder_class != 0 as usize && rational_class != 0 as usize) {
+      let builder_args: usize = jni.jvalues([]);
+      let builder: usize = jni.new_object_a(e, builder_class, jni.get_method_id(e, builder_class, "<init>", "()V"), builder_args);
+      jni.free_buffer(builder_args);
+      let ratio_args: usize = jni.jvalues([width as usize, height as usize]);
+      let ratio: usize = jni.new_object_a(e, rational_class, jni.get_method_id(e, rational_class, "<init>", "(II)V"), ratio_args);
+      jni.free_buffer(ratio_args);
+      if (builder != 0 as usize && ratio != 0 as usize) {
+        let shaped: usize = jni.call_object(e, builder, "setAspectRatio", "(Landroid/util/Rational;)Landroid/app/PictureInPictureParams$Builder;", [ratio]);
+        if (sdk_version(ctx) >= 31) {
+          let auto_on = 0 as usize;
+          if (on) {
+            auto_on = 1 as usize;
+          }
+          let entered: usize = jni.call_object(e, builder, "setAutoEnterEnabled", "(Z)Landroid/app/PictureInPictureParams$Builder;", [auto_on]);
+          let gone_entered: usize = jni.delete_local_ref(e, entered);
+        }
+        let params: usize = jni.call_object(e, builder, "build", "()Landroid/app/PictureInPictureParams;", []);
+        if (params != 0 as usize) {
+          let set = jni.call_void(e, obj, "setPictureInPictureParams", "(Landroid/app/PictureInPictureParams;)V", [params]);
+          let gone_params: usize = jni.delete_local_ref(e, params);
+        }
+        let gone_shaped: usize = jni.delete_local_ref(e, shaped);
+      }
+      let gone_builder: usize = jni.delete_local_ref(e, builder);
+      let gone_ratio: usize = jni.delete_local_ref(e, ratio);
+    }
+    if (builder_class != 0 as usize) {
+      let gb: usize = jni.delete_local_ref(e, builder_class);
+    }
+    if (rational_class != 0 as usize) {
+      let gr: usize = jni.delete_local_ref(e, rational_class);
     }
     let cleared: usize = jni.exception_clear(e);
   }

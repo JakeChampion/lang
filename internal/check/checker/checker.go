@@ -8731,6 +8731,14 @@ func (c *checker) errfCode(pos ast.Position, code, format string, args ...any) {
 	c.report(c.currentModule(), pos, code, fmt.Sprintf(format, args...))
 }
 
+// movedErr reports an E050 at pos, with the note `note` at `at`, the place
+// where the value moved.
+func (c *checker) movedErr(pos, at ast.Position, note, format string, args ...any) {
+	if err := c.report(c.currentModule(), pos, "E050", fmt.Sprintf(format, args...)); err != nil {
+		err.Related = []diag.Label{{Pos: at, Message: note, Kind: diag.LabelSecondary}}
+	}
+}
+
 func firstTryOp(e ast.Expr) (ast.Position, bool) {
 	var pos ast.Position
 	found := false
@@ -11418,7 +11426,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		for _, capture := range captures {
 			if at, consumed := moved[capture.Name]; consumed {
-				c.errfCode(value.Pos(), "E050", "callback %q uses captured owned parameter %q after it was consumed (moved at line %d)", name, capture.Name, at.Line)
+				c.movedErr(value.Pos(), at, "moved here", "callback %q uses captured owned parameter %q after it was consumed", name, capture.Name)
 			}
 		}
 	}
@@ -11877,7 +11885,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				}
 				path := id.Name + "." + x.Field
 				if at, isMoved := moved[path]; isMoved {
-					c.errfCode(x.Pos(), "E050", "use of owned parameter %q after its field %q was consumed (moved at line %d)", id.Name, x.Field, at.Line)
+					c.movedErr(x.Pos(), at, "moved here", "use of owned parameter %q after its field %q was consumed", id.Name, x.Field)
 					return true
 				}
 				if !fieldMoves[x] {
@@ -11887,11 +11895,11 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					return true
 				}
 				if at, isDeferred := deferMoved[path]; isDeferred {
-					c.errfCode(x.Pos(), "E050", "field %q of owned parameter %q is consumed twice: a deferred call at line %d consumes it", x.Field, id.Name, at.Line)
+					c.movedErr(x.Pos(), at, "the deferred call is here", "field %q of owned parameter %q is consumed twice: a deferred call consumes it", x.Field, id.Name)
 					return true
 				}
 				if at, isDeferred := deferMoved[id.Name]; isDeferred {
-					c.errfCode(x.Pos(), "E050", "owned parameter %q is consumed twice: a deferred call at line %d consumes it", id.Name, at.Line)
+					c.movedErr(x.Pos(), at, "the deferred call is here", "owned parameter %q is consumed twice: a deferred call consumes it", id.Name)
 					return true
 				}
 				moved[path] = x.Pos()
@@ -11911,22 +11919,22 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				return true
 			}
 			if at, isMoved := moved[id.Name]; isMoved {
-				c.errfCode(id.Pos(), "E050", "use of owned parameter %q after it was consumed (moved at line %d)", id.Name, at.Line)
+				c.movedErr(id.Pos(), at, "moved here", "use of owned parameter %q after it was consumed", id.Name)
 				return true
 			}
 			if !fieldTarget[id] {
 				if path, at, isMoved := movedPrefix(moved, id.Name, updates[id]); isMoved {
-					c.errfCode(id.Pos(), "E050", "use of owned parameter %q after its field %q was consumed (moved at line %d)", id.Name, path[len(id.Name)+1:], at.Line)
+					c.movedErr(id.Pos(), at, "moved here", "use of owned parameter %q after its field %q was consumed", id.Name, path[len(id.Name)+1:])
 					return true
 				}
 			}
 			if !borrow[id] {
 				if at, isDeferred := deferMoved[id.Name]; isDeferred {
-					c.errfCode(id.Pos(), "E050", "owned parameter %q is consumed twice: a deferred call at line %d consumes it", id.Name, at.Line)
+					c.movedErr(id.Pos(), at, "the deferred call is here", "owned parameter %q is consumed twice: a deferred call consumes it", id.Name)
 					return true
 				}
 				if path, at, isDeferred := movedPrefix(deferMoved, id.Name, nil); isDeferred {
-					c.errfCode(id.Pos(), "E050", "owned parameter %q is consumed twice: a deferred call at line %d consumes its field %q", id.Name, at.Line, path[len(id.Name)+1:])
+					c.movedErr(id.Pos(), at, "the deferred call is here", "owned parameter %q is consumed twice: a deferred call consumes its field %q", id.Name, path[len(id.Name)+1:])
 					return true
 				}
 				moved[id.Name] = id.Pos()
@@ -12018,7 +12026,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				if id, ok := x.Init.(*ast.Ident); ok && owned[id.Name] {
 					if !atLastUse(x.Init) {
 						if at, isMoved := moved[id.Name]; isMoved {
-							c.errfCode(id.Pos(), "E050", "use of owned parameter %q after it was consumed (moved at line %d)", id.Name, at.Line)
+							c.movedErr(id.Pos(), at, "moved here", "use of owned parameter %q after it was consumed", id.Name)
 						}
 						return
 					}
@@ -12072,7 +12080,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					continue
 				}
 				if prev, dup := deferMoved[name]; dup {
-					c.errfCode(at, "E050", "owned parameter %q is consumed twice: a deferred call at line %d consumes it", name, prev.Line)
+					c.movedErr(at, prev, "the deferred call is here", "owned parameter %q is consumed twice: a deferred call consumes it", name)
 					continue
 				}
 				deferMoved[name] = at

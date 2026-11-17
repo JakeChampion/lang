@@ -7,14 +7,12 @@
 #
 #   REPORT  where to write the `metric<TAB>value` report (default: stdout).
 #
-# The certifier refuses a compile only for a definite imbalance or a callee
-# it has no rule for. A value it cannot prove balanced is "unproved", and a
-# function that resumes from a task frame is "skipped". Neither fails a
-# compile, so without this lane either count can grow and nothing reports it.
+# The certifier refuses a compile for a definite imbalance, or for a function
+# it cannot decide. A value it cannot prove balanced is "unproved", which fails
+# no compile, so without this lane the count can grow and nothing reports it.
 # The rows:
 #
 #   x86_64/fern_main.unproved  values unproved over the whole compiler
-#   x86_64/fern_main.skipped   functions skipped over the whole compiler
 #   wasm32/checker.unproved    values unproved over compiler/checker.fern on
 #                              wasm32, where a view in the frame holds a unit
 #   x86_64/checker.refuted     mutants of checker.fern that the certifier
@@ -66,12 +64,12 @@ census() {
 }
 
 # sum FIELD FILE — the total of FIELD=N over the census and mutant lines of
-# FILE. For skipped, whose value is a reason, the count of fields.
+# FILE.
 sum() {
   awk -v want="$1" '/FERN_RC_CERTIFY: (census|mutants)/ {
     for (i = 1; i <= NF; i++) {
       split($i, kv, "=")
-      if (kv[1] == want) { n += (want == "skipped") ? 1 : kv[2] }
+      if (kv[1] == want) { n += kv[2] }
     }
   } END { print n + 0 }' "$2"
 }
@@ -82,7 +80,6 @@ census mutate x86-64-linux compiler/checker.fern "$work/mutants"
 
 {
   printf 'x86_64/fern_main.unproved\t%s\n' "$(sum unproved "$work/x86")"
-  printf 'x86_64/fern_main.skipped\t%s\n' "$(sum skipped "$work/x86")"
   printf 'wasm32/checker.unproved\t%s\n' "$(sum unproved "$work/wasm")"
   printf 'x86_64/checker.refuted\t%s\n' "$(sum refuted "$work/mutants")"
   printf 'x86_64/checker.weakened\t%s\n' "$(sum weakened "$work/mutants")"

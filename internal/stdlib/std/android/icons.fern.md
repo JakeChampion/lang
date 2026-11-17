@@ -273,6 +273,18 @@ pub function check(color: i32): (draw.Frame, i32, i32, i32, i32) => void {
   };
 }
 
+// The arrow of `back` that points to the right, for a layout that is right
+// to left.
+pub function forward(color: i32): (draw.Frame, i32, i32, i32, i32) => void {
+  return (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => {
+    let (s, l, t) = square(x, y, w, h, 40);
+    let lw = line_width(s) * 3 / 2;
+    stroke(f, l + s, t + s / 2, l, t + s / 2, lw, color);
+    stroke(f, l + s, t + s / 2, l + s / 2, t, lw, color);
+    stroke(f, l + s, t + s / 2, l + s / 2, t + s, lw, color);
+  };
+}
+
 // An arrow to the left.
 pub function back(color: i32): (draw.Frame, i32, i32, i32, i32) => void {
   return (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => {

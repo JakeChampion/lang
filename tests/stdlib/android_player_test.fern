@@ -105,11 +105,34 @@ function error_events(): test.TestOutcome {
   return test.assert_true(true);
 }
 
+// The bits above the low 8 of the kind hold the slot of the player that
+// sent the event. Each kind decodes the same, and `sent` names the player.
+function slot_events(): test.TestOutcome {
+  let first = player.Player { obj: 0 as usize, listener: 0 as usize, slot: 0 };
+  let second = player.Player { ...first, slot: 1 };
+  let prepared = android.Posted(19 | 1 << 8, 0 as usize);
+  match (player.event(prepared)) {
+    Some(player.Prepared) => {},
+    _ => {
+      return test.fail("a prepared event of the second player");
+    }
+  }
+  match (player.event(android.Posted(21 | 1 << 8, (1u64 << 32u64 | 4294966292u64) as usize))) {
+    Some(player.Failed(1, -1004)) => {},
+    _ => {
+      return test.fail("a failure of the second player");
+    }
+  }
+  let other = android.Posted(27 | 1 << 8, 0 as usize);
+  return test.assert_eq([second.sent(prepared), first.sent(prepared), first.sent(android.Posted(20, 0 as usize)), second.sent(other), second.sent(android.Tick)].map((b: boolean): string => b.to_string()).join(" "), "true false true false false");
+}
+
 function main(): i32 {
   let suite = test.new("Android media player events");
   suite = suite.it("prepared, completion, and seek", simple_events);
   suite = suite.it("rendering, buffering, and unrelated events", info_events);
   suite = suite.it("signed platform error codes", error_events);
   suite = suite.it("a target holds a frame once its transform turns", target_frames);
+  suite = suite.it("the slot of the player that sent an event", slot_events);
   return suite.finish();
 }

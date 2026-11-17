@@ -898,6 +898,13 @@ pub function take[T](xs: T[], n: i32): T[] {
   return xs.truncate(n);
 }
 
+// A copy of `xs` in a new buffer. A later change to either array does not
+// change the other, so an append to `xs` after a clone can stay in place.
+pub function clone[T](xs: [T]): T[] {
+  let out: T[] = [];
+  return out.concat(xs);
+}
+
 pub function drop[T](xs: T[], n: i32): T[] {
   let out: T[] = [];
   let i = n;
@@ -1534,6 +1541,10 @@ pub function (xs: T[]) reverse(): T[] {
 
 pub function (xs: T[]) take(n: i32): T[] {
   return take(xs, n);
+}
+
+pub function (xs: T[]) clone(): T[] {
+  return clone(xs);
 }
 
 pub function (xs: T[]) drop(n: i32): T[] {

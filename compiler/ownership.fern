@@ -118,9 +118,9 @@ pub struct Slot { row: i32, at: i32 }
 
 // The eager slots that a call or a loop of `f` gives a value that lives on,
 // or a value that `f` does not own.
-pub function kept_alive(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): Slot[] {
+pub function kept_alive(f: ssasem.Func, name: string, a: ssasem.Analysis, rows: Escapes[], ix: Index): Slot[] {
   let out: Slot[] = [];
-  let sc = Scope { rows: rows, ix: ix, me: find(rows, ix, f.graph.name), defs: ssa.inst_defs(f.graph) };
+  let sc = Scope { rows: rows, ix: ix, me: find(rows, ix, name), defs: ssa.inst_defs(f.graph) };
   for bi in 0..f.graph.blocks.len() {
     let b = f.graph.blocks[bi];
     for pos in 0..b.insts.len() {
@@ -301,7 +301,7 @@ function call_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
   let row = find(rows, ix, ins.str);
   let cycle = same_cycle(rows, fr.me, row);
   for i in 0..ins.args.len() {
-    let unchanged = ins.str == f.graph.name && unchanged_slot(fr, ins.args[i], i) || cycle && quiet_slot(rows, row, i);
+    let unchanged = ins.str == fr.name && unchanged_slot(fr, ins.args[i], i) || cycle && quiet_slot(rows, row, i);
     if (!unchanged && ssasem.counted(f, f.values[ins.args[i]]) && consumed_at(rows, row, i)) {
       out = carry(out, f, a, ins.args[i], true);
     }
@@ -313,13 +313,15 @@ function unchanged_slot(fr: Frame, value: i32, slot: i32): boolean {
   return value == slot || value >= 0 && value < fr.forwards.len() && fr.forwards[value] == slot;
 }
 
-struct Frame { me: i32, forwards: i32[] }
+// name is the name that a call of the function has. The graph of a method
+// has the bare name of the method.
+struct Frame { name: string, me: i32, forwards: i32[] }
 
-function forwarded(f: ssasem.Func): i32[] {
+function forwarded(f: ssasem.Func, name: string): i32[] {
   let out = util.minus_ones(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (slot_phi(ins) && ins.str == f.graph.name && ins.result >= 0 && ins.result < out.len() && only_forwards(ins)) {
+      if (slot_phi(ins) && ins.str == name && ins.result >= 0 && ins.result < out.len() && only_forwards(ins)) {
         out = out.with(ins.result, ins.imm);
       }
     }
@@ -454,13 +456,6 @@ function lent_out(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index
   return out;
 }
 
-pub function lends(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): boolean {
-  if (!a.ok) {
-    return true;
-  }
-  return lends_from(f, lent_out(f, a, rows, ix));
-}
-
 function lends_from(f: ssasem.Func, lent: boolean[]): boolean {
   let i = 0;
   while (i < f.params.len() && i < lent.len()) {
@@ -477,15 +472,15 @@ function lends_from(f: ssasem.Func, lent: boolean[]): boolean {
   return false;
 }
 
-function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): boolean[] {
+function carried_values(f: ssasem.Func, name: string, a: ssasem.Analysis, rows: Escapes[], ix: Index): boolean[] {
   let out = __alloc_bool(f.graph.nvals);
-  let fr = Frame { me: find(rows, ix, f.graph.name), forwards: [] };
+  let fr = Frame { name: name, me: find(rows, ix, name), forwards: [] };
   for bi in 0..f.graph.blocks.len() {
     let b = f.graph.blocks[bi];
     for pos in 0..b.insts.len() {
       let ins = b.insts[pos];
-      if (fr.forwards.len() == 0 && ins.kind_tag == ssasem.call() && ins.str == f.graph.name) {
-        fr = Frame { ...fr, forwards: forwarded(f) };
+      if (fr.forwards.len() == 0 && ins.kind_tag == ssasem.call() && ins.str == name) {
+        fr = Frame { ...fr, forwards: forwarded(f, name) };
       }
       out = instruction_carried(out, f, a, ins, rows, ix, fr);
       // At the last use of its left operand, a concatenation grows that buffer.
@@ -500,13 +495,6 @@ function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix:
   return continued(out, f, a);
 }
 
-pub function escaping(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): boolean[] {
-  if (!a.ok) {
-    return all_true(f.params.len());
-  }
-  return escaping_from(f, carried_values(f, a, rows, ix), lent_out(f, a, rows, ix));
-}
-
 function escaping_from(f: ssasem.Func, carried: boolean[], lent: boolean[]): boolean[] {
   let out: boolean[] = [];
   for i in 0..f.params.len() {
@@ -518,11 +506,11 @@ function escaping_from(f: ssasem.Func, carried: boolean[], lent: boolean[]): boo
 pub struct Transfers { escapes: boolean[], lends: boolean }
 
 // Both summaries use the same lending facts from the current rows.
-pub function transfers(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index, escapes: boolean): Transfers {
+pub function transfers(f: ssasem.Func, name: string, a: ssasem.Analysis, rows: Escapes[], ix: Index, escapes: boolean): Transfers {
   if (!a.ok) {
     return Transfers { escapes: all_true(f.params.len()), lends: true };
   }
   let lent = lent_out(f, a, rows, ix);
-  let bits: boolean[] = if (escapes) { escaping_from(f, carried_values(f, a, rows, ix), lent) } else { [] };
+  let bits: boolean[] = if (escapes) { escaping_from(f, carried_values(f, name, a, rows, ix), lent) } else { [] };
   return Transfers { escapes: bits, lends: lends_from(f, lent) };
 }
