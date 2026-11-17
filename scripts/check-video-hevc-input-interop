@@ -124,12 +124,12 @@ def check_temporal_headers(path, groups):
     assert filtered_units(path, "|".join(map(str, kinds))) == expected_units
 
 
-def refuse(path):
+def refuse(path, message="invalid video header or packet"):
     native = subprocess.run([str(binary), str(path)], capture_output=True, text=True)
     wasi = subprocess.run(["wasmtime", "run", "--dir", ".", str(wasm), path.name],
                           cwd=path.parent, capture_output=True, text=True)
     assert native.returncode == wasi.returncode == 1 and native.stdout == wasi.stdout
-    assert "invalid video header or packet" in native.stderr and "invalid video header or packet" in wasi.stderr
+    assert message in native.stderr and message in wasi.stderr
     assert re.search(r"leakcheck: allocs=([1-9]\d*) frees=\1 live_bytes=0", native.stderr), native.stderr
 
 
@@ -201,6 +201,30 @@ def temporal_association(directory, original):
                 refuse(path)
                 print(f"picture {temporal}, NAL {kind}, temporal {other}: independent headers match; native/WASI refusal follows H.265", flush=True)
     remaining_temporal(directory, groups, original)
+    filler_payloads(directory, groups, original)
+
+
+def filler_payloads(directory, groups, original):
+    spec = importlib.util.spec_from_file_location("hevc_filler_vectors", ROOT / "scripts/gen-video-hevc-input-fixtures.py")
+    fixtures = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fixtures)
+    lengths = (0, 31, 4095)
+    valid = [group[:-1] + [group[-1][:2] + b"\xff" * lengths[i % len(lengths)] + b"\x80"]
+             for i, group in enumerate(groups)]
+    path = directory / "filler-payload-lengths.hevc"
+    path.write_bytes(encoded_groups(valid))
+    check_temporal_headers(path, valid)
+    compare(path, 18)
+    assert decoded(path) == decoded(original)
+    for i, (name, payload, error) in enumerate(fixtures.filler_refusals()):
+        changed = [list(group) for group in groups]
+        changed[1][-1] = changed[1][-1][:2] + payload
+        path = directory / f"invalid-filler-payload-{i}.hevc"
+        path.write_bytes(encoded_groups(changed))
+        check_temporal_headers(path, changed)
+        message = "incomplete video packet" if error == "Truncated" else "invalid video header or packet"
+        refuse(path, message)
+        print(f"{name}: FFmpeg extraction matches. Native/WASI refusal follows H.265", flush=True)
 
 
 def temporal_parameters(directory):
