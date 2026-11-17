@@ -997,30 +997,36 @@ const CHAIN_PENDING: i32 = 30;
 
 const CHAIN_CELL: i32 = 32;
 
-// The field of the type of the chain that waits for the next node, when the
-// variant links its next node and has one such field. Its node is a cell of
-// the stack of the drop: the field keeps the child, and the next field keeps
-// the cell below it. A node then needs no call for its child.
-function waiting_field(v: semrecords.Variant, t: typeinfo.Type, f: ssasem.Func): i32 {
+// The fields of the type of the chain that wait for the next node, when the
+// variant links its next node. Its node is a cell of the stack of the drop:
+// each waiting field keeps a child, and the next field keeps the cell below
+// it. A node then needs no call for its children.
+function waiting_fields(v: semrecords.Variant, t: typeinfo.Type): i32[] {
+  let out: i32[] = [];
   let tail = self_tail_field(v, t);
-  if (tail < 0 || !semtypes.equal(v.fields[tail].ty, t)) {
-    return -1;
+  if (!semrecords.inhabited(v) || tail < 0 || !semtypes.equal(v.fields[tail].ty, t)) {
+    return out;
   }
-  let at = -1;
   for i in 0..v.fields.len() {
     if (i != tail && semtypes.equal(v.fields[i].ty, t)) {
-      if (at >= 0) {
-        return -1;
-      }
-      at = i;
+      out = out.append(i);
     }
   }
-  return at;
+  return out;
+}
+
+function holds(xs: i32[], x: i32): boolean {
+  for y in xs {
+    if (y == x) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function chain_waits(t: typeinfo.Type, f: ssasem.Func): boolean {
   for v in f.enums[semrecords.find_enum(f.enums, t)].variants {
-    if (semrecords.inhabited(v) && waiting_field(v, t, f) >= 0) {
+    if (waiting_fields(v, t).len() > 0) {
       return true;
     }
   }
@@ -1049,8 +1055,10 @@ function leaf_exits(own r: irtables.LowerState, slot: i32, leaves: string[]): ir
 
 // The value of `slot` is the next node. `d` labels are open in the block of
 // the dispatch.
-function chain_goes_to(own r: irtables.LowerState, slot: i32, d: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
-  r = free_node(r, t, f);
+function chain_goes_to(own r: irtables.LowerState, slot: i32, d: i32, frees: boolean, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  if (frees) {
+    r = free_node(r, t, f);
+  }
   r = emit(r, ir.op_load_local(slot));
   r = emit(r, ir.op_store_local(CHAIN_NODE));
   return emit(r, ir.op_br(d + 1));
@@ -1058,8 +1066,9 @@ function chain_goes_to(own r: irtables.LowerState, slot: i32, d: i32, t: typeinf
 
 // The last child of the node. With one count it is the next node, or a box
 // with no child that is freed here. A shared child gives back its count.
-// Each path leaves: to the loop with the next node, or to the stack.
-function chain_last_child(own r: irtables.LowerState, d: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+// Each path leaves: to the loop with the next node, or to the stack. A node
+// that waits on the stack is not freed here (`frees`).
+function chain_last_child(own r: irtables.LowerState, d: i32, frees: boolean, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
   let leaves = childless_shapes(t, f);
   r = emit(r, ir.op_load_local(CHAIN_NEXT));
   r = emit(r, aligned_unique_of(t, f));
@@ -1067,19 +1076,37 @@ function chain_last_child(own r: irtables.LowerState, d: i32, t: typeinfo.Type, 
   if (leaves.len() > 0) {
     r = emit(r, ir.op_block(0));
     r = leaf_exits(r, CHAIN_NEXT, leaves);
-    r = chain_goes_to(r, CHAIN_NEXT, d + 2, t, f);
+    r = chain_goes_to(r, CHAIN_NEXT, d + 2, frees, t, f);
     r = emit(r, ir.op_end());
     r = sole_release_of(release(r, CHAIN_NEXT, t, f), t, f);
-    r = free_node(r, t, f);
-    r = emit(r, ir.op_br(d + 1));
+    r = chain_ends(r, d + 1, frees, t, f);
   } else {
-    r = chain_goes_to(r, CHAIN_NEXT, d + 1, t, f);
+    r = chain_goes_to(r, CHAIN_NEXT, d + 1, frees, t, f);
   }
   r = emit(r, ir.op_else());
   r = release(r, CHAIN_NEXT, t, f);
-  r = free_node(r, t, f);
-  r = emit(r, ir.op_br(d + 1));
+  r = chain_ends(r, d + 1, frees, t, f);
   return emit(r, ir.op_end());
+}
+
+// The node has no next node, so the loop goes to the stack.
+function chain_ends(own r: irtables.LowerState, d: i32, frees: boolean, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  if (frees) {
+    r = free_node(r, t, f);
+  }
+  return emit(r, ir.op_br(d));
+}
+
+// The node has two or more waiting children. It goes on the stack as a cell
+// with each of them in place, and `tail` keeps the cell below. The last child
+// is then the next node.
+function chain_many_children(own r: irtables.LowerState, d: i32, tail: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  r = emit(r, ir.op_load_local(CHAIN_NODE));
+  r = emit(r, ir.op_load_local(CHAIN_PENDING));
+  r = emit(r, ir.op_struct_set(tail, 0));
+  r = emit(r, ir.op_load_local(CHAIN_NODE));
+  r = emit(r, ir.op_store_local(CHAIN_PENDING));
+  return chain_last_child(r, d, false, t, f);
 }
 
 // The two children of the node: the field `waits` in CHAIN_FIELD and the
@@ -1121,11 +1148,11 @@ function chain_two_children(own r: irtables.LowerState, d: i32, waits: i32, tail
   if (extra > 0) {
     r = emit(r, ir.op_end());
     r = sole_release_of(release(r, CHAIN_NEXT, t, f), t, f);
-    r = chain_goes_to(r, CHAIN_FIELD, d + 3 + extra, t, f);
+    r = chain_goes_to(r, CHAIN_FIELD, d + 3 + extra, true, t, f);
   }
   r = emit(r, ir.op_else());
   r = release(r, CHAIN_NEXT, t, f);
-  r = chain_goes_to(r, CHAIN_FIELD, d + 3 + extra, t, f);
+  r = chain_goes_to(r, CHAIN_FIELD, d + 3 + extra, true, t, f);
   r = emit(r, ir.op_end());
   if (extra > 0) {
     r = emit(r, ir.op_end());
@@ -1136,7 +1163,7 @@ function chain_two_children(own r: irtables.LowerState, d: i32, waits: i32, tail
   r = release(r, CHAIN_FIELD, t, f);
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_end());
-  return chain_last_child(r, d, t, f);
+  return chain_last_child(r, d, true, t, f);
 }
 
 // The array in CHAIN_FIELD holds the next nodes. When the array has one
@@ -1181,7 +1208,7 @@ function chain_tail_array(own r: irtables.LowerState, d: i32, elem: typeinfo.Typ
   r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
   r = emit(r, ir.op_store_local(CHAIN_NEXT));
   r = release(r, CHAIN_FIELD, array, f);
-  r = chain_last_child(r, d + 2, elem, f);
+  r = chain_last_child(r, d + 2, true, elem, f);
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_end());
   return release(r, CHAIN_FIELD, array, f);
@@ -1191,9 +1218,9 @@ function chain_tail_array(own r: irtables.LowerState, d: i32, elem: typeinfo.Typ
 // next node leaves from here. Another variant goes on to the code after it.
 function drop_chain_fields(own r: irtables.LowerState, d: i32, v: semrecords.Variant, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
   let tail = self_tail_field(v, t);
-  let waits = waiting_field(v, t, f);
+  let waits = waiting_fields(v, t);
   for i in 0..v.fields.len() {
-    if (ssasem.counted(f, v.fields[i].ty) && i != tail && i != waits) {
+    if (ssasem.counted(f, v.fields[i].ty) && i != tail && !holds(waits, i)) {
       r = emit(r, ir.op_load_local(CHAIN_NODE));
       r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
       r = emit(r, ir.op_store_local(CHAIN_FIELD));
@@ -1217,26 +1244,29 @@ function drop_chain_fields(own r: irtables.LowerState, d: i32, v: semrecords.Var
   r = emit(r, ir.op_load_local(CHAIN_NODE));
   r = emit(r, ir.counted(ir.op_struct_get(tail, 0)));
   r = emit(r, ir.op_store_local(CHAIN_NEXT));
-  if (waits < 0) {
-    return chain_last_child(r, d, t, f);
+  if (waits.len() == 0) {
+    return chain_last_child(r, d, true, t, f);
+  }
+  if (waits.len() > 1) {
+    return chain_many_children(r, d, tail, t, f);
   }
   r = emit(r, ir.op_load_local(CHAIN_NODE));
-  r = emit(r, ir.counted(ir.op_struct_get(waits, 0)));
+  r = emit(r, ir.counted(ir.op_struct_get(waits[0], 0)));
   r = emit(r, ir.op_store_local(CHAIN_FIELD));
-  return chain_two_children(r, d, waits, tail, t, f);
+  return chain_two_children(r, d, waits[0], tail, t, f);
 }
 
-// Each variant that can wait on the stack keeps its first child and its last
-// child in the same two fields.
-function one_cell_shape(e: semrecords.Enum, t: typeinfo.Type, f: ssasem.Func): boolean {
-  let waits = -1;
+// Each variant that can wait on the stack keeps its waiting children and its
+// last child in the same fields.
+function one_cell_shape(e: semrecords.Enum, t: typeinfo.Type): boolean {
+  let waits: i32[] = [];
   let tail = -1;
   for v in e.variants {
-    let w = waiting_field(v, t, f);
-    if (!semrecords.inhabited(v) || w < 0) {
+    let w = waiting_fields(v, t);
+    if (w.len() == 0) {
       continue;
     }
-    if (waits >= 0 && (w != waits || self_tail_field(v, t) != tail)) {
+    if (tail >= 0 && (!same_fields(w, waits) || self_tail_field(v, t) != tail)) {
       return false;
     }
     waits = w;
@@ -1245,22 +1275,72 @@ function one_cell_shape(e: semrecords.Enum, t: typeinfo.Type, f: ssasem.Func): b
   return true;
 }
 
-function cell_fields(own r: irtables.LowerState, v: semrecords.Variant, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+function same_fields(a: i32[], b: i32[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The cell gives its child in `field` as the next node and stays on the
+// stack. The field then holds a copy of the cell below, which marks the child
+// as taken: a child is never a cell of the stack. `open` variant tests are
+// open around this code.
+function cell_keeps(own r: irtables.LowerState, field: i32, tail: i32, open: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
   r = emit(r, ir.op_load_local(CHAIN_CELL));
-  r = emit(r, ir.counted(ir.op_struct_get(waiting_field(v, t, f), 0)));
+  r = emit(r, ir.op_struct_get(field, 0));
+  r = emit(r, ir.op_load_local(CHAIN_CELL));
+  r = emit(r, ir.op_struct_get(tail, 0));
+  r = emit(r, ir.op_bin("ne", ir.width_ptr(), false));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(CHAIN_CELL));
+  r = emit(r, ir.counted(ir.op_struct_get(field, 0)));
   r = emit(r, ir.op_store_local(CHAIN_NODE));
   r = emit(r, ir.op_load_local(CHAIN_CELL));
-  r = emit(r, ir.counted(ir.op_struct_get(self_tail_field(v, t), 0)));
+  r = emit(r, ir.op_load_local(CHAIN_CELL));
+  r = emit(r, ir.op_struct_get(tail, 0));
+  r = emit(r, ir.op_struct_set(field, 0));
+  r = emit(r, ir.op_load_local(CHAIN_NODE));
+  r = emit(r, aligned_unique_of(t, f));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_br(open + 4));
+  r = emit(r, ir.op_else());
+  r = release(r, CHAIN_NODE, t, f);
+  r = emit(r, ir.op_br(open + 3));
+  r = emit(r, ir.op_end());
+  return emit(r, ir.op_end());
+}
+
+// The children of a cell leave from the last waiting field to the first. The
+// cell leaves the stack with its first waiting child.
+function cell_fields(own r: irtables.LowerState, v: semrecords.Variant, open: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let waits = waiting_fields(v, t);
+  let tail = self_tail_field(v, t);
+  let k = waits.len() - 1;
+  while (k > 0) {
+    r = cell_keeps(r, waits[k], tail, open, t, f);
+    k -= 1;
+  }
+  r = emit(r, ir.op_load_local(CHAIN_CELL));
+  r = emit(r, ir.counted(ir.op_struct_get(waits[0], 0)));
+  r = emit(r, ir.op_store_local(CHAIN_NODE));
+  r = emit(r, ir.op_load_local(CHAIN_CELL));
+  r = emit(r, ir.counted(ir.op_struct_get(tail, 0)));
   return emit(r, ir.op_store_local(CHAIN_PENDING));
 }
 
-// The cell on top of the stack gives its first child as the next node, and
-// the cell below it as the top. A cell that is not the node of the call is
-// freed. A cell and its child each have one count, and the tests prove it to
+// The cell on top of the stack gives a waiting child as the next node. With
+// its last such child it gives the cell below it as the top, and a cell that
+// is not the node of the call is freed. A cell and its child each have one count, and the tests prove it to
 // the certifier. When a test fails, the shared box gives back its count.
 function popped(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
   let e = f.enums[semrecords.find_enum(f.enums, t)];
-  let same = one_cell_shape(e, t, f);
+  let same = one_cell_shape(e, t);
   r = emit(r, ir.op_loop(0));
   r = emit(r, ir.op_load_local(CHAIN_PENDING));
   r = emit(r, ir.op_const_i32(0));
@@ -1273,7 +1353,7 @@ function popped(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): i
   r = emit(r, ir.op_if(0));
   let opened: string[] = [];
   for v in e.variants {
-    if (!semrecords.inhabited(v) || waiting_field(v, t, f) < 0 || same && opened.len() > 0) {
+    if (waiting_fields(v, t).len() == 0 || same && opened.len() > 0) {
       continue;
     }
     if (!same) {
@@ -1282,8 +1362,8 @@ function popped(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): i
       r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
       r = emit(r, ir.op_if(0));
     }
-    r = cell_fields(r, v, t, f);
     opened = opened.append(v.name);
+    r = cell_fields(r, v, if (same) { 0 } else { opened.len() }, t, f);
   }
   if (!same) {
     r = close_ifs(r, opened.len());
@@ -1313,7 +1393,7 @@ function popped(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): i
 
 // The drop of the children of a node of an enum that links its next node.
 // The loop takes a node apart. Its last child with one count is the next
-// node, with no call. A node with two such children waits on a stack that
+// node, with no call. A node with more such children waits on a stack that
 // the nodes themselves hold. When no child is the next node, the loop takes
 // the next node from the top of the stack.
 function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
