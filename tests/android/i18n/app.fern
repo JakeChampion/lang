@@ -73,7 +73,7 @@ function step(s: App, e: android.Event): App {
       fs = fs.covering(0, word, text.system_fallbacks(s.ctx, "sans-serif"));
       log.warn("i18ntest: fallback " + drawn(fs, bidi.display(word, bidi.AUTO)));
     }
-    let fatha = "\u{628}\u{64e}";
+    let fatha = "بَ";
     fs = fs.covering(0, fatha, text.system_fallbacks(s.ctx, "sans-serif"));
     log.warn("i18ntest: mark " + mark_on_base(fs, bidi.display(fatha, bidi.AUTO)));
     android.finish(s.ctx);
