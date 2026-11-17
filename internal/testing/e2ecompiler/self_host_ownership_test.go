@@ -770,20 +770,22 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	if arrDrop.MatchString(scan) {
 		t.Errorf("byte_total calls %s: an array parameter the body only reads was inferred COUNTED", arrDrop)
 	}
-	const cursorDrop = "__sem_release_Cursor"
+	// A release is the helper, or the decrement of a count on the path
+	// where the box has more than one reference.
+	cursorDrop := regexp.MustCompile(`__sem_release_Cursor|subl \$1, -8\(`)
 	step, ok := asmWholeFunc(string(asm), "Cursor__advance")
 	if !ok {
 		t.Fatal("no __fn_Cursor__advance in the emitted code")
 	}
-	if !strings.Contains(step, cursorDrop) {
-		t.Fatalf("Cursor.advance does not call %s — the marker this reads is gone, so the projection assertion below proves nothing", cursorDrop)
+	if !cursorDrop.MatchString(step) {
+		t.Fatalf("Cursor.advance has no release (%s) — the marker this reads is gone, so the projection assertion below proves nothing", cursorDrop)
 	}
 	look, ok := asmWholeFunc(string(asm), "Cursor__peek")
 	if !ok {
 		t.Fatal("no __fn_Cursor__peek in the emitted code")
 	}
-	if strings.Contains(look, cursorDrop) {
-		t.Errorf("Cursor.peek calls %s: a receiver whose projection is returned was inferred COUNTED, so every call retains and releases the whole cursor", cursorDrop)
+	if cursorDrop.MatchString(look) {
+		t.Errorf("Cursor.peek has a release (%s): a receiver whose projection is returned was inferred COUNTED, so every call retains and releases the whole cursor", cursorDrop)
 	}
 	const grow = "__fern_str_grow"
 	grown, ok := asmWholeFunc(string(asm), "exclaim")
