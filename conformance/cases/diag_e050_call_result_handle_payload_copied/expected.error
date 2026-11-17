@@ -1,1 +1,2 @@
-main.fern:11:14: error[E050]: use of owned parameter "r" after it was consumed (moved at line 10)
+main.fern:11:14: error[E050]: use of owned parameter "r" after it was consumed
+main.fern:10:18: note: moved here
