@@ -1882,6 +1882,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
   let phi_none: boolean[] = [];
   let lent_to: boolean[] = [];
   let wanted = MateStarts { start: [], lo: [] };
+  let mate_lo = wanted;
   let reg_of = __alloc_i32(f.nvals);
   let shared_with = __alloc_i32(f.nvals);
   for i in 0..f.nvals {
@@ -2086,21 +2087,32 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
     // A save around a call restores its holder, so a lent interval of a caller
     // register holds none. A call keeps a saved register.
     let lends_caller = !from_caller && oi < split && !keep_caller && !spans_call(cum_all, lo[v] - 1, hi[v] + 1);
-    let lends_saved = !from_caller && oi < split && free_s.len() == 0;
+    let lends_saved = !from_caller && oi < split && free_s.len() == 0 && held_until(act_reg, act_hi, sat, sat + nsaved, hi[v]);
     if (lends_caller || lends_saved) {
       sites = cached_read_sites(f, sites, at, blk_start);
       if (phi_side.len() == 0) {
         phi_side = phi_values(f);
       }
       let reads = defining_args(f, v, def_blk, def_pos, blk_start);
-      if (lends_saved && phi_only.len() == 0) {
-        phi_only = phi_results(f);
-        phi_none = __alloc_bool(f.nvals + 1);
-        wanted = mate_starts(mates, def_a, def_b, lo, hi, f.nvals);
+      let lend: i32 = -1;
+      if (lends_caller) {
+        let caller = Lender { cbase: cbase, sat: sat, cabi: cabi, abi_ok: abi_ok, phi: phi_side, keeps: phi_side, wanted: wanted, first: true };
+        if let Some(ai) = borrowable(sites, v, act_val, act_reg, act_hi, caller, Reads { all: reads, a: -1, b: -1 }, fixed, shared_with, lo, hi, def_blk, def_pos) {
+          lend = ai;
+        }
       }
-      let caller = Lender { cbase: cbase, sat: sat, cabi: cabi, abi_ok: abi_ok, reads: reads, phi: phi_side, keeps: phi_side, wanted: MateStarts { start: [], lo: [] }, first: true };
-      let saved = Lender { cbase: sat, sat: sat + nsaved, cabi: -1, abi_ok: true, reads: unshared_reads(reads, def_a[v], def_b[v]), phi: phi_none, keeps: phi_only, wanted: wanted, first: false };
-      if let Some(lend) = lent(sites, v, act_val, act_reg, act_hi, Lends { caller: lends_caller, saved: lends_saved }, caller, saved, fixed, shared_with, lo, hi, def_blk, def_pos) {
+      if (lend < 0 && lends_saved) {
+        if (phi_only.len() == 0) {
+          phi_only = phi_results(f);
+          phi_none = __alloc_bool(f.nvals + 1);
+          mate_lo = mate_starts(mates, def_a, def_b, lo, hi, f.nvals);
+        }
+        let saved = Lender { cbase: sat, sat: sat + nsaved, cabi: -1, abi_ok: true, phi: phi_none, keeps: phi_only, wanted: mate_lo, first: false };
+        if let Some(ai) = borrowable(sites, v, act_val, act_reg, act_hi, saved, Reads { all: reads, a: def_a[v], b: def_b[v] }, fixed, shared_with, lo, hi, def_blk, def_pos) {
+          lend = ai;
+        }
+      }
+      if (lend >= 0) {
         let top = later_interval_end(act_hi[lend], hi[v]);
         let lent = act_reg[lend];
         let holder = act_val[lend];
@@ -2924,12 +2936,14 @@ function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
   return ReadSites { start: start, blk: blk, pos: pos, succ_a: succ_a, succ_b: succ_b, phi_end: phi_end, nparams: f.nparams };
 }
 
-// reads are the operands of v's definition: the emitter can write v before it
-// reads them, so none of them can hold the register v takes.
 // phi marks each phi and each value a phi reads: an edge copy writes outside
 // the intervals, so those values lend no register. keeps marks the values
 // that borrow none.
-struct Lender { cbase: i32, sat: i32, cabi: i32, abi_ok: boolean, reads: i32[], phi: boolean[], keeps: boolean[], wanted: MateStarts, first: boolean }
+struct Lender { cbase: i32, sat: i32, cabi: i32, abi_ok: boolean, phi: boolean[], keeps: boolean[], wanted: MateStarts, first: boolean }
+
+// The operands of the definition of a borrower. The emitter lets the result
+// share the home of `a` or of `b`, so those two can lend.
+struct Reads { all: i32[], a: i32, b: i32 }
 
 function phi_results(f: SFunc): boolean[] {
   let out = __alloc_bool(f.nvals + 1);
@@ -2973,20 +2987,6 @@ function defining_args(f: SFunc, v: i32, def_blk: i32[], def_pos: i32[], blk_sta
   }
   return f.blocks[b].insts[k].args;
 }
-
-// The operands of a definition whose home the result cannot take. The emitter
-// lets the result share the home of `a` or of `b`.
-function unshared_reads(reads: i32[], a: i32, b: i32): i32[] {
-  let out: i32[] = [];
-  for r in reads {
-    if (r != a && r != b) {
-      out = out.append(r);
-    }
-  }
-  return out;
-}
-
-struct Lends { caller: boolean, saved: boolean }
 
 // For each value, the start of each value that can take its register: a
 // value that names it as a mate, or whose definition reads it.
@@ -3039,16 +3039,15 @@ function chain_wanted(ms: MateStarts, holder: i32, shared_with: i32[], from: i32
   return false;
 }
 
-function lent(sites: ReadSites, v: i32, act_val: i32[], act_reg: i32[], act_hi: i32[], pools: Lends, caller: Lender, saved: Lender, fixed: ssafixed.Table, shared_with: i32[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): Option[i32] {
-  if (pools.caller) {
-    if let Some(ai) = borrowable(sites, v, act_val, act_reg, act_hi, caller, fixed, shared_with, lo, hi, def_blk, def_pos) {
-      return Some(ai);
+// A register from `first` to before `last` has values that hold it to `until`
+// or longer.
+function held_until(act_reg: i32[], act_hi: i32[], first: i32, last: i32, until: i32): boolean {
+  for ai in 0..act_reg.len() {
+    if (act_reg[ai] >= first && act_reg[ai] < last && act_hi[ai] >= until) {
+      return true;
     }
   }
-  if (pools.saved) {
-    return borrowable(sites, v, act_val, act_reg, act_hi, saved, fixed, shared_with, lo, hi, def_blk, def_pos);
-  }
-  return None;
+  return false;
 }
 
 // A register of the pool of `ln` whose values do not interfere with v: none is
@@ -3056,7 +3055,7 @@ function lent(sites: ReadSites, v: i32, act_val: i32[], act_reg: i32[], act_hi: 
 // takes the first such register. Without it, the values of the register hold
 // it to the end of v or longer, so v keeps it from no later value, and v
 // takes the one that comes free first.
-function borrowable(sites: ReadSites, v: i32, act_val: i32[], act_reg: i32[], act_hi: i32[], ln: Lender, fixed: ssafixed.Table, shared_with: i32[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): Option[i32] {
+function borrowable(sites: ReadSites, v: i32, act_val: i32[], act_reg: i32[], act_hi: i32[], ln: Lender, reads: Reads, fixed: ssafixed.Table, shared_with: i32[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): Option[i32] {
   if (ln.keeps[v]) {
     return None;
   }
@@ -3064,7 +3063,7 @@ function borrowable(sites: ReadSites, v: i32, act_val: i32[], act_reg: i32[], ac
   for ai in 0..act_val.len() {
     let hr = act_reg[ai];
     let open = hr >= ln.cbase && hr < ln.sat && (hr != ln.cabi || ln.abi_ok) && ssafixed.allows(fixed, hr, lo[v], hi[v]);
-    if (open && (ln.first || act_hi[ai] >= hi[v]) && (best < 0 || !ln.first && act_hi[ai] < act_hi[best]) && !chain_wanted(ln.wanted, act_val[ai], shared_with, lo[v], hi[v]) && chain_dead_at_def(sites, act_val[ai], v, shared_with, lo, hi, def_blk, def_pos) && dead_at_chain(sites, v, act_val[ai], shared_with, ln.reads, ln.phi, lo, hi, def_blk, def_pos)) {
+    if (open && (ln.first || act_hi[ai] >= hi[v]) && (best < 0 || !ln.first && act_hi[ai] < act_hi[best]) && !chain_wanted(ln.wanted, act_val[ai], shared_with, lo[v], hi[v]) && chain_dead_at_def(sites, act_val[ai], v, shared_with, lo, hi, def_blk, def_pos) && dead_at_chain(sites, v, act_val[ai], shared_with, reads, ln.phi, lo, hi, def_blk, def_pos)) {
       best = ai;
     }
   }
@@ -3074,10 +3073,10 @@ function borrowable(sites: ReadSites, v: i32, act_val: i32[], act_reg: i32[], ac
   return Some(best);
 }
 
-function dead_at_chain(sites: ReadSites, v: i32, holder: i32, shared_with: i32[], reads: i32[], phi: boolean[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): boolean {
+function dead_at_chain(sites: ReadSites, v: i32, holder: i32, shared_with: i32[], reads: Reads, phi: boolean[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): boolean {
   let m = holder;
   while (m >= 0) {
-    if (hi[m] >= lo[v] && (phi[m] || util.index_of_i32(reads, m) >= 0 || live_at_def(sites, v, m, def_blk, def_pos))) {
+    if (hi[m] >= lo[v] && (phi[m] || m != reads.a && m != reads.b && util.index_of_i32(reads.all, m) >= 0 || live_at_def(sites, v, m, def_blk, def_pos))) {
       return false;
     }
     m = shared_with[m];
