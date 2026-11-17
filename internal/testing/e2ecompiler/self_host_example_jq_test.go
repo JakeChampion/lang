@@ -213,6 +213,47 @@ func jqSuiteCase(t *testing.T, bin, ref, modules string, c jqCase) bool {
 	return true
 }
 
+// A function that calls itself goes deeper than the machine stack lets a
+// call go. The evaluator leaves the machine stack at each 1024 calls, so each
+// program here goes through that point in a different construct.
+func TestSelfHostExampleJqDeepRecursion(t *testing.T) {
+	bin := buildJq(t)
+	for _, c := range []struct{ program, want string }{
+		{"def f: if . == 0 then 0 else (. - 1 | f) end; 3000000 | f", "0"},
+		{"def f: if . == 0 then 0 else (. - 1 | f) + 1 end; 3000000 | f", "3000000"},
+		{"def f($n): if $n == 0 then . else f($n - 1) end; 7 | f(3000000)", "7"},
+		{"def f(g): if . == 0 then g else (. - 1 | f(g)) end; 100000 | f(5)", "5"},
+		{"def f: if . == 0 then empty else ., (. - 1 | f) end; [5000 | f] | length", "5000"},
+		{"def f: if . == 0 then 0 else try (. - 1 | f) catch . end; 5000 | f", "0"},
+		{"def f: if . == 0 then error(\"x\") else (. - 1 | f) end; try (5000 | f) catch .", "\"x\""},
+		{"def f: if . == 0 then error(\"x\") else (. - 1 | f)? end; [5000 | f]", "[]"},
+		{"def f: if . == 0 then 0 else [. - 1 | f] | .[0] + 1 end; 5000 | f", "5000"},
+		{"def f: if . == 0 then 0 else {a: (. - 1 | f)} | .a + 1 end; 5000 | f", "5000"},
+		{"def f: if . == 0 then null else (. - 1 | f) // 1 end; 5000 | f", "1"},
+		{"def f: if . == 0 then 0 else reduce (. - 1 | f) as $x (1; . + $x) end; 5000 | f", "5000"},
+		{"def f: if . == 0 then 0 else foreach (. - 1 | f) as $x (1; . + $x) end; 5000 | f", "5000"},
+		{"def f: if . == 0 then 0 else (. - 1 | f) as $x | $x + 1 end; 5000 | f", "5000"},
+		{"def f: if . == 0 then 0 else first(. - 1 | f) + 1 end; 5000 | f", "5000"},
+		{"def f: if . == 0 then 0 else label $l | (. - 1 | f), break $l end; 5000 | f", "0"},
+		{"def f: if . == 0 then \"\" else \"\\(. - 1 | f)\" end; 5000 | f", "\"\""},
+		{"def f: ., (. + 1 | f); [label $out | 0 | f | if . == 5000 then break $out else . end] | length", "5000"},
+		{"def f: ., (. + 1 | f); first(0 | f | select(. >= 5000))", "5000"},
+		{"def f: ., (. + 1 | f); [limit(3; 0 | f | select(. > 4000))]", "[4001,4002,4003]"},
+		{"def f: ., (. + 1 | f); isempty(0 | f | select(. > 4000))", "false"},
+		{"def f: if type == \"object\" then .a | f else . end; reduce range(3000) as $i (1; {a: .}) | [path(f)] | .[0] | length", "3000"},
+		{"def f: if type == \"object\" then .a | f else . end; reduce range(3000) as $i (1; {a: .}) | (f |= 2) | [paths] | length", "3000"},
+		{"def f: if . == 0 then 0 else (. - 1 | f) end; [range(3) | 2000 + . | f]", "[0,0,0]"},
+	} {
+		out, err := exec.Command(bin, "-n", "-c", c.program).CombinedOutput()
+		if got := strings.TrimSpace(string(out)); err != nil || got != c.want {
+			if len(got) > 300 {
+				got = got[:300]
+			}
+			t.Errorf("%q: got %s (%v), want %s", c.program, got, err, c.want)
+		}
+	}
+}
+
 // The command line gives the stdout, the stderr and the exit status of jq 1.7.
 func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 	ref, err := exec.LookPath("jq")

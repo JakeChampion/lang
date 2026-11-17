@@ -478,7 +478,7 @@ function flush(own st: eval.St): own eval.St {
 struct Ran { st: eval.St, code: i32, halted: boolean }
 
 function apply(f: filter.Ast, v: json.JsonValue, e: eval.Env, k: (json.JsonValue, own eval.St) => own eval.St, own st: eval.St): Ran {
-  let s = eval.run(f, v, e, k, eval.St { ...st, last: 0 });
+  let s = eval.evaluate(f, v, e, k, eval.St { ...st, last: 0 });
   if (s.sig == eval.HALT) {
     let code = s.code;
     return Ran { st: flush(s), code: code, halted: true };
