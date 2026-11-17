@@ -62,9 +62,9 @@ utilities give 0 findings on each target:
 
 | target | unproved before | unproved after |
 |---|---:|---:|
-| x86-64 | X86_BEFORE | X86_AFTER |
-| arm64 | ARM_BEFORE | ARM_AFTER |
-| wasm32 | WASM_BEFORE | WASM_AFTER |
+| x86-64 | 96,362 | 93,544 |
+| arm64 | 93,275 | 90,656 |
+| wasm32 | 68,108 | 66,262 |
 
 ## What is left
 
