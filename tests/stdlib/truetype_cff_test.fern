@@ -1,0 +1,152 @@
+// Tests of the CFF outlines and the collections of std/truetype. The fonts
+// come from scripts/gen-cff-vectors.py: "O" and "L" as CFF charstrings, the
+// same glyphs in a CID-keyed CFF table, and as quadratic TrueType curves.
+import "std/array";
+import "std/base64";
+import "std/test";
+import "std/truetype";
+import "./cff_vectors";
+
+function bytes(data: string): u8[] {
+  if let Ok(b) = base64.decode(data) {
+    return b;
+  }
+  return [];
+}
+
+function font(data: u8[], index: i32): Option[truetype.Font] {
+  return truetype.parse_index(data, index);
+}
+
+// The coverage of the glyph of `cp` at 64 pixels to the em, and its box.
+function drawn(f: truetype.Font, cp: i32): truetype.Bitmap {
+  return f.render(f.glyph(cp), 64.0, 0.0);
+}
+
+// The sum of the coverage of `a`, and the sum of the difference of `a` and
+// `b` at each pixel. The two must have the same box.
+function compared(a: truetype.Bitmap, b: truetype.Bitmap): (i32, i32) {
+  if (a.width != b.width || a.height != b.height || a.left != b.left || a.top != b.top) {
+    return (0, -1);
+  }
+  let sum = 0;
+  let diff = 0;
+  for i in 0..a.coverage.len() {
+    let x = a.coverage[i] as i32;
+    sum += x;
+    diff += (x - b.coverage[i] as i32).abs();
+  }
+  return (sum, diff);
+}
+
+// The bitmap of each glyph of a CFF font is within 2% of the bitmap of the
+// TrueType font: the curves differ by 0.05 of a unit and by the rounding of
+// the TrueType points.
+function same_as_truetype(cff: Option[truetype.Font]): test.TestOutcome {
+  let Some(t) = font(bytes(cff_vectors.ttf()), 0) else {
+    return test.fail("the TrueType font did not parse");
+  };
+  let Some(c) = cff else {
+    return test.fail("the CFF font did not parse");
+  };
+  for cp in [79, 76] {
+    let (sum, diff) = compared(drawn(c, cp), drawn(t, cp));
+    if (diff < 0 || sum < 1000 || diff * 50 > sum) {
+      return test.fail("glyph " + cp.to_string() + ": coverage " + sum.to_string() + ", difference " + diff.to_string());
+    }
+    if (c.advance(c.glyph(cp)) != t.advance(t.glyph(cp))) {
+      return test.fail("glyph " + cp.to_string() + ": the advances differ");
+    }
+  }
+  return test.pass();
+}
+
+function test_cff(): test.TestOutcome {
+  return same_as_truetype(font(bytes(cff_vectors.cff()), 0));
+}
+
+function test_cid(): test.TestOutcome {
+  return same_as_truetype(font(bytes(cff_vectors.cid()), 0));
+}
+
+function test_cff2(): test.TestOutcome {
+  return same_as_truetype(font(bytes(cff_vectors.cff2()), 0));
+}
+
+// At the weight 900 a blend makes the counter of "O" wider, so the glyph
+// has less coverage. "L" has no blend, and stays as it is.
+function test_cff2_blends_at_an_axis(): test.TestOutcome {
+  let Some(f) = font(bytes(cff_vectors.cff2()), 0) else {
+    return test.fail("the CFF2 font did not parse");
+  };
+  let heavy = f.at_axis("wght", 900.0);
+  let (o, _) = compared(drawn(f, 79), drawn(f, 79));
+  let (o_heavy, _) = compared(drawn(heavy, 79), drawn(heavy, 79));
+  let (_, l_diff) = compared(drawn(f, 76), drawn(heavy, 76));
+  let fewer = o - o_heavy;
+  // The counter becomes a trapezoid of 7500 more square units: about 31
+  // pixels at 64 pixels to the em, or 7800 of coverage.
+  return test.assert_eq(f.has_axis("wght").to_string() + " " + (fewer > 6000 && fewer < 9500).to_string() + " " + l_diff.to_string(), "true true 0");
+}
+
+// The counter of "O" is a hole: the middle of the glyph has no coverage,
+// and the ring around it has full coverage.
+function test_the_counter_is_a_hole(): test.TestOutcome {
+  let Some(c) = font(bytes(cff_vectors.cff()), 0) else {
+    return test.fail("the CFF font did not parse");
+  };
+  let bm = drawn(c, 79);
+  let middle = bm.coverage[bm.height / 2 * bm.width + bm.width / 2] as i32;
+  let ring = bm.coverage[bm.height / 2 * bm.width + bm.width / 14] as i32;
+  return test.assert_eq(middle.to_string() + " " + ring.to_string(), "0 255");
+}
+
+// A collection holds the TrueType font and then the CFF font. `parse`
+// takes the first one, and an index past the end gives None.
+function test_collection(): test.TestOutcome {
+  let ttc = bytes(cff_vectors.ttc());
+  let first = font(ttc, 0);
+  let second = font(ttc, 1);
+  let got = [first.is_some(), second.is_some(), font(ttc, 2).is_none(), truetype.parse(ttc).is_some(), font(bytes(cff_vectors.ttf()), 1).is_none()];
+  let kinds = "";
+  if let Some(f) = first {
+    kinds = kinds + f.cff.charstrings.to_string().take(1);
+  }
+  if let Some(s) = second {
+    kinds = kinds + (s.cff.charstrings > 0).to_string();
+  }
+  let flags = got.map((b: boolean): string => b.to_string()).join(" ");
+  let close = if let test.Pass = same_as_truetype(second) { "same" } else { "different" };
+  return test.assert_eq(flags + " " + kinds + " " + close, "true true true true true -true same");
+}
+
+// Each start of the bytes of a CFF font parses, or gives None, and each
+// glyph of what parses draws with no crash.
+function test_a_cut_font_does_not_crash(): test.TestOutcome {
+  let drawn_glyphs = 0;
+  for data in [bytes(cff_vectors.cff()), bytes(cff_vectors.cid())] {
+    let n = 0;
+    while (n <= data.len()) {
+      if let Some(f) = truetype.parse(data.take(n)) {
+        for g in 0..4 {
+          let bm = f.render(g, 32.0, 0.0);
+          drawn_glyphs += if (bm.width > 0) { 1 } else { 0 };
+        }
+      }
+      n += 7;
+    }
+  }
+  return test.assert_eq(drawn_glyphs > 0, true);
+}
+
+function main(): i32 {
+  let r = test.new("std/truetype CFF");
+  r = r.it("a CFF font draws as its TrueType copy", test_cff);
+  r = r.it("a CID-keyed CFF font draws as its TrueType copy", test_cid);
+  r = r.it("a CFF2 font draws as its TrueType copy", test_cff2);
+  r = r.it("a blend of a CFF2 font follows the weight", test_cff2_blends_at_an_axis);
+  r = r.it("the counter of a CFF glyph is a hole", test_the_counter_is_a_hole);
+  r = r.it("parse_index takes a font of a collection", test_collection);
+  r = r.it("a cut CFF font does not crash", test_a_cut_font_does_not_crash);
+  return r.finish();
+}

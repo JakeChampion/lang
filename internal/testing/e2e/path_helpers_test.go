@@ -4,17 +4,18 @@ import "testing"
 
 const pathHelpersProg = `
 import "std/path" as path;
+import "std/option";
 function main(): i32 {
     if (!path.is_absolute("/etc/hosts")) { return 1; }
     if (path.is_absolute("etc/hosts")) { return 2; }
     if (path.is_absolute("")) { return 3; }
     if (path.is_absolute("./x")) { return 4; }
-    if (path.stem("a/b/foo.txt") != "foo") { return 5; }
-    if (path.stem("archive.tar.gz") != "archive.tar") { return 6; }
-    if (path.stem(".bashrc") != ".bashrc") { return 7; }
-    if (path.stem("foo") != "foo") { return 8; }
-    if (path.stem("/a/b/") != "b") { return 9; }
-    if (path.stem("") != "") { return 10; }
+    if (path.stem("a/b/foo.txt").unwrap_or("?") != "foo") { return 5; }
+    if (path.stem("archive.tar.gz").unwrap_or("?") != "archive.tar") { return 6; }
+    if (path.stem(".bashrc").unwrap_or("?") != ".bashrc") { return 7; }
+    if (path.stem("foo").unwrap_or("?") != "foo") { return 8; }
+    if (path.stem("/a/b/").unwrap_or("?") != "b") { return 9; }
+    if (path.stem("").is_some()) { return 10; }
     if (path.with_extension("a/b/foo.txt", "md") != "a/b/foo.md") { return 11; }
     if (path.with_extension("foo", "md") != "foo.md") { return 12; }
     if (path.with_extension("archive.tar.gz", "") != "archive.tar") { return 13; }
