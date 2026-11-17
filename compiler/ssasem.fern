@@ -347,6 +347,11 @@ pub function lane_span_proven(): i32 {
   return 3;
 }
 
+// A guard proves the index of a read below the length, and not its sign.
+pub function below_proven(): i32 {
+  return 4;
+}
+
 pub function tuple_get(): i32 {
   return -4;
 }
