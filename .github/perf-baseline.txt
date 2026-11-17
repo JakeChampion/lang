@@ -184,7 +184,7 @@ aarch64/tokenize.ir	33490121
 aarch64/utf8_ingest_unchecked.text	9170
 aarch64/utf8_ingest_unchecked.ir	2593882
 aarch64/utf8_ingest_validated.text	9484
-aarch64/utf8_ingest_validated.ir	6128531
+aarch64/utf8_ingest_validated.ir	6064882
 x86_64/perceus_cfold.text	2257
 x86_64/perceus_cfold.ir	37302530
 x86_64/perceus_deriv.text	3116
