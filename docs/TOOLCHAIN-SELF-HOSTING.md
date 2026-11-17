@@ -895,15 +895,15 @@ an adapter-free wasi:cli/run component (step 6 of `docs/NATIVE-RETIREMENT.md`).
     without the `wasm-tools` shell-out. End-to-end tests:
     `TestCmdLangTargetWasmNoAdapter` /
     `TestCmdLangTargetWasmNoAdapterRejectsUnsupported`.
-- **Compound canonical-ABI shapes.** `canon lower` with
-  `mem+realloc` is in place but multi-result lifts, post-return
-  lower, and the full "string / list / record param" lowering
-  patterns aren't wired through the high-level helpers (they're
-  composable via individual section composers though). Interfaces
-  whose shape the structured `WasiImport` fields can't express
-  yet (e.g. `wasi:clocks/wall-clock` exports `datetime` then
-  references it from `now`) need a future "raw instance-type
-  body" escape hatch on `WasiImport`.
+- **Compound canonical-ABI shapes.** The extern bridge in
+  `compiler/wasm_ir.fern` lowers strings, lists, options, results,
+  tuples, variants and records of scalars in both directions. The
+  `wasi:clocks/wall-clock` record `datetime` is one of them
+  (`TestSelfHostExternRecordResultWallClock`). A record with a
+  string or list field, and `post-return`, wait for the CLI to
+  compose against a world that the user gives (#16345). The
+  component model has one result for each function, so there is
+  no multi-result lift.
 
 #### Original scope
 
