@@ -2082,7 +2082,7 @@ pub struct Scope {
   default_recv: string,
   tparams: string[],
   tbounds: string[],
-  lit_locals: string[],
+  lit_locals: util.NameIndex,
   in_unsafe: boolean,
   range_indexes: i32[],
 }
@@ -2456,37 +2456,37 @@ function new_scope(): Scope {
   let ms: MethodSig[] = [];
   let structs = struct_table(ss, [], [], no_spellings());
   let unions = union_table(us);
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, []), methods: method_table(ms), imports: Imports { paths: [], unloaded: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], in_unsafe: false, range_indexes: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, []), methods: method_table(ms), imports: Imports { paths: [], unloaded: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: util.name_index([]), in_unsafe: false, range_indexes: [] };
 }
 
 function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: Imports, impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let ns: string[] = [];
   let ts: typeinfo.Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, imports.unloaded), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], in_unsafe: false, range_indexes: [] };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, imports.unloaded), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: util.name_index([]), in_unsafe: false, range_indexes: [] };
 }
 
 function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
   let ns = s.names.append(name);
   let ts = s.types.append(t);
-  if (!util.has_str(s.lit_locals, name)) {
+  if (!s.lit_locals.has(name)) {
     return Scope { ...s, names: ns, types: ts };
   }
   let lits: string[] = [];
-  for lit in s.lit_locals {
+  for lit in s.lit_locals.names {
     if (lit != name) {
       lits = lits.append(lit);
     }
   }
-  return Scope { ...s, names: ns, types: ts, lit_locals: lits };
+  return Scope { ...s, names: ns, types: ts, lit_locals: util.name_index(lits) };
 }
 
 function (s: Scope) bind_inferred(v: ast.StmtVar, t: typeinfo.Type): Scope {
   // Read s before the bind, so that the bind is the last use of s and grows
   // its arrays in place.
-  let unsettled = is_integer(t) && unsettled_tree(v.init, s.lit_locals);
+  let unsettled = is_integer(t) && unsettled_tree(v.init, s.lit_locals.names);
   let b = s.bind(v.name, t);
   if (unsettled) {
-    return Scope { ...b, lit_locals: b.lit_locals.append(v.name) };
+    return Scope { ...b, lit_locals: b.lit_locals.added(v.name) };
   }
   return b;
 }
@@ -5134,7 +5134,7 @@ function t_func_after_env(sig: FuncSig): typeinfo.Type {
 }
 
 function inferred_payload(e: ast.Expr, s: Scope): typeinfo.Type {
-  return unsettled_marked(check_expr(e, s), e, s.lit_locals, true);
+  return unsettled_marked(check_expr(e, s), e, s.lit_locals.names, true);
 }
 
 function integer_literal_widens(from: typeinfo.Type, to: typeinfo.Type): boolean {
@@ -11517,7 +11517,7 @@ function mx_arm_result_type(e: ast.Expr, s: Scope): typeinfo.Type {
       return typeinfo.TypeI32 { ...n, polymorphic: true };
     }
   }
-  return unsettled_marked(t, e, s.lit_locals, false);
+  return unsettled_marked(t, e, s.lit_locals.names, false);
 }
 
 function unsettled_marked(t: typeinfo.Type, e: ast.Expr, lits: string[], literals: boolean): typeinfo.Type {
@@ -13171,16 +13171,16 @@ function duplicate_var_diag(stmts: ast.Stmt[], v: ast.StmtVar): util.Diag {
 
 function dupvar_diags(stmts: ast.Stmt[]): util.Diag[] {
   let out: util.Diag[] = [];
-  let declared: string[] = [];
+  let declared = util.name_index([]);
   for stmt in stmts {
     match (stmt) {
       ast.StmtVar(v) => {
-        if (util.has_str(declared, v.name)) {
+        if (declared.has(v.name)) {
           if (!ast.var_binds_itself(v)) {
             out = out.append(duplicate_var_diag(stmts, v));
           }
         } else {
-          declared = declared.append(v.name);
+          declared = declared.added(v.name);
         }
         if (v.type_name.len() == 0) {
           if (empty_array_rooted(v.init)) {
@@ -13418,7 +13418,7 @@ function reads_lit_local(e: ast.Expr, s: Scope): boolean {
     }
     return false;
   }
-  return unsettled_tree(e, s.lit_locals) && !unsettled_tree(e, []);
+  return unsettled_tree(e, s.lit_locals.names) && !unsettled_tree(e, []);
 }
 
 function float_read_int_tree(e: ast.Expr): boolean {
@@ -33144,7 +33144,7 @@ function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
     }
     let t = check_expr(r.value, bs);
     if (int_literal_tree(r.value)) {
-      return unsettled_marked(t, r.value, bs.lit_locals, true);
+      return unsettled_marked(t, r.value, bs.lit_locals.names, true);
     }
     if (!names_whole_type(t, bs)) {
       return t_unknown("value block tail");
@@ -37888,7 +37888,7 @@ function lit_typed_scope(s: Scope, st: LitInfer): Scope {
       let w = st.width[lit_find(st, k)];
       if (is_unknown(w)) {
         w = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: true };
-        lits = lits.append(s.names[i]);
+        lits = lits.added(s.names[i]);
       }
       types = types.with(i, w);
     }
