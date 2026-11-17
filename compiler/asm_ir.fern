@@ -352,7 +352,29 @@ function emit_raw_alloc_san(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    subq $16, __fern_lc_alloc_bytes(%rip)\n");
   }
   s = s.write("    addq $7, %rdi\n    andq $-8, %rdi\n    movabs $" + rc_poison64() + ", %rdx\n");
+  s = san_raw_fill(s);
   return s.write("    movq %rdx, (%rax,%rdi)\n    movq %rdx, 8(%rax,%rdi)\n    ret\n");
+}
+
+// Under -sanitize a fresh raw block holds the poison pattern, so a read of a
+// byte that the program never wrote gives the same value on each run. %rax is
+// the block, %rdi its size rounded to 8 and %rdx the pattern.
+function san_raw_fill(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.sanitize) {
+    return s;
+  }
+  s = s.write("    pushq %rcx\n    xorl %ecx, %ecx\n.Lraw_san_fill:\n    cmpq %rdi, %rcx\n    jae .Lraw_san_filled\n");
+  return s.write("    movq %rdx, (%rax,%rcx)\n    addq $8, %rcx\n    jmp .Lraw_san_fill\n.Lraw_san_filled:\n    popq %rcx\n");
+}
+
+// The same fill for the elements of a byte array that `__alloc_u8_uninit`
+// makes. %rax is the box and %r12 the count of bytes. It uses %r12 and %r13.
+function san_uninit_fill(s: asmcore.EmitState): string {
+  if (!s.sanitize) {
+    return "";
+  }
+  return "    addq $7, %r12\n    shrq $3, %r12\n    movabs $" + rc_poison64() + ", %r13\n.Lfern_uninit_fill:\n    testq %r12, %r12\n    jz .Lfern_uninit_filled\n"
+    + "    movq %r13, (%rax,%r12,8)\n    decq %r12\n    jmp .Lfern_uninit_fill\n.Lfern_uninit_filled:\n";
 }
 
 // The free side of the redzone: %rdi is the block and %rsi its size rounded
@@ -855,7 +877,7 @@ function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
   s = emit_alloc_packed(s, "bytes", 3);
   if (s.has_need("alloc_bytes_uninit")) {
     s = s.write("__fern_alloc_bytes_uninit:\n    testl %edi, %edi\n    js __fern_alloc_size_abort.c\n    jz .Lfern_alloc_bytes_empty\n");
-    s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %r12\n    pushq %r13\n    movq %rdi, %r12\n    leaq 7(%rdi), %rdi\n    shrq $3, %rdi\n    call __fern_arr_box\n    movq %r12, (%rax)\n    popq %r13\n    popq %r12\n    popq %rbp\n    ret\n");
+    s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %r12\n    pushq %r13\n    movq %rdi, %r12\n    leaq 7(%rdi), %rdi\n    shrq $3, %rdi\n    call __fern_arr_box\n    movq %r12, (%rax)\n" + san_uninit_fill(s) + "    popq %r13\n    popq %r12\n    popq %rbp\n    ret\n");
   }
   return s;
 }

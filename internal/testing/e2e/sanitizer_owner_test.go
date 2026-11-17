@@ -100,3 +100,34 @@ func TestSanitizeOwnerCleanRunIsSilent(t *testing.T) {
 		checkSanitizedBalanced(t, sanCleanSrc, 0, run)
 	}
 }
+
+// sanUninitSrc reads raw memory that it never wrote. Under -sanitize each
+// byte holds the poison pattern 0x7EEDFACE7EEDFACE, little-endian.
+const sanUninitSrc = `function main(): i32 {
+  unsafe {
+    let p: usize = __alloc(20);
+    let w: i64 = __load_i64(p + 8 as usize);
+    let b: i32 = __load_u8(p + 19 as usize);
+    let a: u8[] = __alloc_u8_uninit(13);
+    let c: i32 = a[12] as i32;
+    __free(p, 20);
+    if (w == 9146242183059077838i64 && b == 126 && c == 206) {
+      return 42;
+    }
+    return 1;
+  }
+}`
+
+// A fresh raw block and the elements of __alloc_u8_uninit hold the poison
+// pattern, so a read of memory that the program never wrote gives the same
+// value on each run.
+func TestSanitizeFillsFreshRawBlocks(t *testing.T) {
+	for name, run := range map[string]func(*testing.T, string) (string, string, int){"x86-64": runSanitizeX86_64, "arm64": runSanitizeArm64} {
+		t.Run(name, func(t *testing.T) {
+			_, stderr, code := run(t, sanUninitSrc)
+			if code != 42 || strings.Contains(stderr, "fern-sanitizer:") {
+				t.Errorf("exit=%d, want 42 and no finding\nstderr: %s", code, stderr)
+			}
+		})
+	}
+}

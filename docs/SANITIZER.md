@@ -123,6 +123,11 @@ Real, and the reason this is opt-in:
   back, and a word that lost the pattern reports
   `fern-sanitizer: heap-buffer-overflow` with exit 124. A write inside the
   rounding of `n`, past the redzone, or past a typed box is not seen.
+- **A fresh raw block holds the poison pattern.** `__alloc(n)` fills the `n`
+  bytes rounded to 8, and `__alloc_u8_uninit(n)` fills its elements. Without
+  the fill, a fresh block comes from new pages and reads as zero. Thus a read
+  of memory that the program never wrote looks correct. With the fill, the read
+  gives `0x7EEDFACE7EEDFACE` on each run (`TestSanitizeFillsFreshRawBlocks`).
 
 With the flag **off**, none of this exists: every check is unemitted and the
 asm is byte-identical to a build from a compiler that never had the feature.
@@ -283,9 +288,11 @@ whose reference outlived the count.
 - **Cycles.** A reference cycle is a leak the census reports as live bytes
   with no further attribution. Identifying cycle members (trial-decrement over
   the leak set) is the unbuilt half of #5362.
-- **Uninitialised reads.** Poisoning fresh allocations with a sentinel is
-  cheap; distinguishing a read of an unwritten slot from a read of a
-  legitimately-poison-valued one needs shadow memory. Neither is built.
+- **Uninitialised reads.** The fill makes a read of unwritten raw memory give
+  the poison pattern, but nothing reports the read. A report must tell an
+  unwritten byte from a byte that holds the pattern, and that needs shadow
+  memory, which is not built. A typed box is not filled: the language writes
+  each field and each element before a read.
 - **A stale reference that never touches the block again.** The detector fires
   on the `inc`/`dec`, so a dangling pointer that is only ever *read through*
   raw-memory builtins is invisible.

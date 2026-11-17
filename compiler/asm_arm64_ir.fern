@@ -8519,7 +8519,28 @@ function emit_raw_alloc_san(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write("    ldr x1, [sp, #16]\n");
   s = s.write("    add x1, x1, #7\n    lsr x1, x1, #3\n    add x9, x0, x1, lsl #3\n" + rc_poison_into("w10") + "    orr x10, x10, x10, lsl #32\n");
+  s = s.write(san_raw_fill(s));
   return s.write("    str x10, [x9]\n    str x10, [x9, #8]\n" + rt_unframe_of(s, 32) + "    ret\n");
+}
+
+// Under -sanitize a fresh raw block holds the poison pattern, so a read of a
+// byte that the program never wrote gives the same value on each run. x0 is
+// the block, x9 its end and x10 the pattern. It uses x11.
+function san_raw_fill(s: asmcore.EmitState): string {
+  if (!s.sanitize) {
+    return "";
+  }
+  return "    mov x11, x0\n.Lraw_san_fill:\n    cmp x11, x9\n    b.hs .Lraw_san_filled\n    str x10, [x11]\n    add x11, x11, #8\n    b .Lraw_san_fill\n.Lraw_san_filled:\n";
+}
+
+// The same fill for the elements of a byte array that `__alloc_u8_uninit`
+// makes. x0 is the box and x19 the count of bytes. It uses x19 and x20.
+function san_uninit_fill(s: asmcore.EmitState): string {
+  if (!s.sanitize) {
+    return "";
+  }
+  return "    add x19, x19, #7\n    lsr x19, x19, #3\n" + rc_poison_into("w20") + "    orr x20, x20, x20, lsl #32\n"
+    + ".Lfern_uninit_fill:\n    cbz x19, .Lfern_uninit_filled\n    str x20, [x0, x19, lsl #3]\n    sub x19, x19, #1\n    b .Lfern_uninit_fill\n.Lfern_uninit_filled:\n";
 }
 
 // The free side of the redzone: x0 is the block and x5 its size in words.
@@ -8843,7 +8864,7 @@ function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
   s = emit_alloc_packed(s, "bytes", 3);
   if (s.has_need("alloc_bytes_uninit")) {
     s = s.write("__fern_alloc_bytes_uninit:\n    tbz w0, #31, .Lfern_uninit_sized\n    b __fern_alloc_size_abort_leaf\n.Lfern_uninit_sized:\n    cbz w0, .Lfern_alloc_bytes_empty\n");
-    s = s.write(rt_frame(s) + "    mov x29, sp\n    stp x19, x20, [sp, #-16]!\n    sxtw x19, w0\n    add x0, x19, #7\n    lsr x0, x0, #3\n    bl __fern_arr_box\n    str x19, [x0]\n    ldp x19, x20, [sp], #16\n" + rt_unframe(s) + "    ret\n");
+    s = s.write(rt_frame(s) + "    mov x29, sp\n    stp x19, x20, [sp, #-16]!\n    sxtw x19, w0\n    add x0, x19, #7\n    lsr x0, x0, #3\n    bl __fern_arr_box\n    str x19, [x0]\n" + san_uninit_fill(s) + "    ldp x19, x20, [sp], #16\n" + rt_unframe(s) + "    ret\n");
   }
   return s;
 }
