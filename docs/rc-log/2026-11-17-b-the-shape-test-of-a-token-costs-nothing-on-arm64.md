@@ -5,9 +5,9 @@ Issue #15687. Main at `f3a6dd3b`.
 
 ## The question
 
-`ssatokenkeep.keeps` gives a reuse allocation a branch on its token. When no
-block above proved the shape of the token, the box side first compares the
-tag in the header of the token with the shape that the allocation builds
+`ssatokenkeep.keeps` gives a reuse allocation a branch on its token. Sometimes no
+block above proved the shape of the token. The box side then first compares
+the tag in the header of the token with the shape that the allocation builds
 (`shape_test`). The box side then writes neither the shape nor a word that
 the box already has.
 
