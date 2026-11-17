@@ -6168,10 +6168,10 @@ pub function runtime_sync_roots(s: EmitState): string {
   return out;
 }
 
-// Under -sanitize the user `__alloc` goes through the wrapper that adds the
-// redzone.
+// Under -sanitize the user `__alloc` goes through the wrapper that fills the
+// block with the poison pattern.
 pub function raw_alloc_sym(s: EmitState): string {
-  if (s.rc_free_debug) {
+  if (s.sanitize) {
     return "__fern_raw_alloc_san";
   }
   return "__fern_alloc";

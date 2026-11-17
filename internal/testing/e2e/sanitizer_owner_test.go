@@ -100,3 +100,64 @@ func TestSanitizeOwnerCleanRunIsSilent(t *testing.T) {
 		checkSanitizedBalanced(t, sanCleanSrc, 0, run)
 	}
 }
+
+// sanUninitSrc reads raw memory that it never wrote. Under -sanitize each
+// byte holds the poison pattern 0x7EEDFACE7EEDFACE, little-endian.
+const sanUninitSrc = `function main(): i32 {
+  unsafe {
+    let p: usize = __alloc(20);
+    let w: i64 = __load_i64(p + 8 as usize);
+    let b: i32 = __load_u8(p + 19 as usize);
+    let a: u8[] = __alloc_u8_uninit(13);
+    let c: i32 = a[12] as i32;
+    __free(p, 20);
+    if (w == 9146242183059077838i64 && b == 126 && c == 206) {
+      return 42;
+    }
+    return 1;
+  }
+}`
+
+// A fresh raw block and the elements of __alloc_u8_uninit hold the poison
+// pattern, so a read of memory that the program never wrote gives the same
+// value on each run.
+func TestSanitizeFillsFreshRawBlocks(t *testing.T) {
+	for name, run := range map[string]func(*testing.T, string) (string, string, int){"x86-64": runSanitizeX86_64, "arm64": runSanitizeArm64} {
+		t.Run(name, func(t *testing.T) {
+			_, stderr, code := run(t, sanUninitSrc)
+			if code != 42 || strings.Contains(stderr, "fern-sanitizer:") {
+				t.Errorf("exit=%d, want 42 and no finding\nstderr: %s", code, stderr)
+			}
+		})
+	}
+}
+
+// sanBoxOverflowSrc writes the byte after the last word of a 16-byte array:
+// the first byte of the redzone at the end of its size class. OFFSET is 24 to
+// write past the box, or 23 for its last byte.
+const sanBoxOverflowSrc = `function main(): i32 {
+  unsafe {
+    let a: u8[] = __alloc_u8(16);
+    let p: usize = a as usize;
+    __store_u8(p + OFFSET as usize, 1);
+    return a.len();
+  }
+}`
+
+// A write past the end of a typed box is a finding when the box is released.
+// A write inside the box is not.
+func TestSanitizeTypedBoxOverflowReported(t *testing.T) {
+	const report = "fern-sanitizer: heap-buffer-overflow (a block was written past its end)"
+	for name, run := range map[string]func(*testing.T, string, ...string) (string, string, int){"x86-64": runSanitizeX86_64With, "arm64": runSanitizeArm64With} {
+		t.Run(name, func(t *testing.T) {
+			_, stderr, code := run(t, strings.Replace(sanBoxOverflowSrc, "OFFSET", "24", 1), uncertified)
+			if code != e2eharness.ExitSanitizer || !strings.Contains(stderr, report) {
+				t.Errorf("past the box: exit=%d, want %d with the report\nstderr: %s", code, e2eharness.ExitSanitizer, stderr)
+			}
+			_, stderr, code = run(t, strings.Replace(sanBoxOverflowSrc, "OFFSET", "23", 1), uncertified)
+			if code != 16 || strings.Contains(stderr, "fern-sanitizer:") {
+				t.Errorf("inside the box: exit=%d, want 16 and no finding\nstderr: %s", code, stderr)
+			}
+		})
+	}
+}
