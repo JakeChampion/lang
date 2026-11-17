@@ -248,3 +248,8 @@ soak/recent.rss_end_kb	624
 soak/recent.rss_growth_kb	0
 soak/recent.allocs	600516072
 soak/recent.live_bytes	0
+
+# lane: net-h3spec
+h3spec/passed	86
+h3spec/failed	0
+h3spec/pending	0
