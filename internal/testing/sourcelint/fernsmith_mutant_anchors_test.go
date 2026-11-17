@@ -18,6 +18,7 @@ func TestFernsmithMutantAnchorsExist(t *testing.T) {
 	}
 	var plants []struct {
 		Where  string `json:"where"`
+		Func   string `json:"function"`
 		Anchor string `json:"anchor"`
 		Plant  string `json:"plant"`
 	}
@@ -32,12 +33,19 @@ func TestFernsmithMutantAnchorsExist(t *testing.T) {
 		t.Fatalf("read compiler/lift.fern: %v", err)
 	}
 	for _, p := range plants {
-		if p.Where == "" || p.Anchor == "" || p.Plant == "" {
+		if p.Where == "" || p.Func == "" || p.Anchor == "" || p.Plant == "" {
 			t.Errorf("plant %q has an empty field", p.Where)
 			continue
 		}
 		if n := strings.Count(string(src), p.Anchor); n != 1 {
 			t.Errorf("the anchor for %s occurs %d times in compiler/lift.fern, not once: update scripts/fernsmith-mutant-plants.json\nanchor:\n%s", p.Where, n, p.Anchor)
+			continue
+		}
+		// The plant reads the locals of one function, so its anchor must stay in it.
+		before := string(src)[:strings.Index(string(src), p.Anchor)]
+		head := before[strings.LastIndex(before, "\nfunction ")+len("\nfunction "):]
+		if got := head[:strings.IndexAny(head, "(<[")]; got != p.Func {
+			t.Errorf("the anchor for %s is in %s, not in %s: update scripts/fernsmith-mutant-plants.json", p.Where, got, p.Func)
 		}
 	}
 }

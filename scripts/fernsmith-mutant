@@ -15,8 +15,9 @@
 # the interpreter until one diverges, shrinks its corpus, and checks
 # the repro against the unplanted compiler. scripts/fernsmith-mutant-plants.json
 # holds each plant and its anchor in compiler/lift.fern. When an anchor
-# changes, the script fails and does not build an unplanted "mutant".
-# TestFernsmithMutantAnchorsExist checks the anchors on each pull request.
+# changes, or moves out of its function, the script fails and does not build
+# an unplanted "mutant". TestFernsmithMutantAnchorsExist checks the anchors on
+# each pull request.
 #
 # Environment:
 #
@@ -45,6 +46,9 @@ src = open(path).read()
 for p in plants:
     if src.count(p["anchor"]) != 1:
         sys.exit("fernsmith-mutant: the anchor for " + p["where"] + " is not in compiler/lift.fern exactly once; update scripts/fernsmith-mutant-plants.json")
+    head = src[:src.index(p["anchor"])].rsplit("\nfunction ", 1)[-1]
+    if not head.startswith(p["function"] + "("):
+        sys.exit("fernsmith-mutant: the anchor for " + p["where"] + " is not in " + p["function"] + "; update scripts/fernsmith-mutant-plants.json")
     src = src.replace(p["anchor"], p["plant"] + p["anchor"])
 open(path, "w").write(src)
 PY
