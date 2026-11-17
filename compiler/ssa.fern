@@ -5399,7 +5399,7 @@ pub function form(f: SFunc, owned_frame_views: boolean): Formed {
     g = pruned.f;
     trimmed = pruned.repl;
   }
-  g = sink_loads(combine_byte_stores(zero_extended_indices(drop_inert_counts(g, owned_frame_views))));
+  g = sink_loads(combine_byte_stores(zero_extended_indices(unsigned_group_checks(drop_inert_counts(g, owned_frame_views)))));
   return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), plain.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl), trimmed) };
 }
 
@@ -6058,6 +6058,121 @@ function inert_count(ins: SInst, defs: SInst[], uses: i32[], owned_frame_views: 
     return tagged_frame_view(defs, ins.args[0]);
   }
   return frame_view_at(defs, ins.args[0]);
+}
+
+struct GroupIndex { lo: i32, span: i32, chain: i32 }
+
+// The parts of the index `(lo + span) | (lo >> 31)` of a check with no read,
+// or lo -1. chain is the count of reads of lo that the index alone keeps.
+function group_index(defs: SInst[], uses: i32[], ins: SInst): GroupIndex {
+  let none = GroupIndex { lo: -1, span: 0, chain: 0 };
+  if (ins.kind_tag != ARR_AT && ins.kind_tag != STR_AT || ins.imm != 2 || ins.args.len() < 2) {
+    return none;
+  }
+  let join = def_of(defs, ins.args[1]);
+  if (join.kind_tag != BINARY || join.str != "or" || join.args.len() != 2 || uses[join.result] != 1) {
+    return none;
+  }
+  for k in 0..2 {
+    let sign = def_of(defs, join.args[1 - k]);
+    if (sign.kind_tag != BINARY || sign.str != "shr_s" || sign.args.len() != 2 || !const_is(defs, sign.args[1], 31i64)) {
+      continue;
+    }
+    let lo = sign.args[0];
+    let top = def_of(defs, join.args[k]);
+    let chain = if (uses[sign.result] == 1) { 1 } else { 0 };
+    let sole = uses[top.result] == 1;
+    if (signed_extension(top)) {
+      top = def_of(defs, top.args[0]);
+      sole = sole && uses[top.result] == 1;
+    }
+    if (top.kind_tag != BINARY || top.str != "add" || top.args.len() != 2 || top.args[0] != lo) {
+      continue;
+    }
+    let span = def_of(defs, top.args[1]);
+    if (span.kind_tag == CONST_INT && span.imm >= 0 && span.imm <= 65536) {
+      return GroupIndex { lo: lo, span: span.imm, chain: if (sole) { chain + 1 } else { chain } };
+    }
+  }
+  return none;
+}
+
+function has_check_only(f: SFunc): boolean {
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if ((ins.kind_tag == ARR_AT || ins.kind_tag == STR_AT) && ins.imm == 2) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function reads_of(insts: SInst[], from: i32, v: i32): i32 {
+  let n = 0;
+  for k in from..insts.len() {
+    for a in insts[k].args {
+      if (a == v) {
+        n += 1;
+      }
+    }
+  }
+  return n;
+}
+
+// A check with no read takes the index `(lo + span) | (lo >> 31)`. That index
+// is not below a length when lo is negative or lo + span is past the end. The
+// zero-extended lo plus span gives the same answer, because no length reaches
+// 2^31. After the check lo is not negative, so each later read of lo in the
+// block takes the zero-extended value when that leaves lo with no read.
+pub function unsigned_group_checks(f: SFunc): SFunc {
+  if (!has_check_only(f)) {
+    return f;
+  }
+  let defs = inst_defs(f);
+  let uses = use_counts(f);
+  let nvals = f.nvals;
+  let blocks: SBlock[] = [];
+  for blk in f.blocks {
+    let insts: SInst[] = [];
+    let lo = -1;
+    let wide = -1;
+    for k in 0..blk.insts.len() {
+      let ins = blk.insts[k];
+      if (lo >= 0 && ins.kind_tag != PHI) {
+        for a in 0..ins.args.len() {
+          if (ins.args[a] == lo) {
+            ins = SInst { ...ins, args: ins.args.with(a, wide) };
+          }
+        }
+      }
+      let g = group_index(defs, uses, ins);
+      if (g.lo < 0) {
+        insts = insts.append(ins);
+        continue;
+      }
+      let src = g.lo;
+      if (signed_extension(def_of(defs, src))) {
+        src = def_of(defs, src).args[0];
+      }
+      insts = insts.append(SInst { kind_tag: UNARY, result: nvals, args: [src], imm: 0, str: "int_cast:u32" });
+      insts = insts.append(SInst { kind_tag: CONST_INT, result: nvals + 1, args: [], imm: g.span, str: "" });
+      insts = insts.append(SInst { kind_tag: BINARY, result: nvals + 2, args: [nvals, nvals + 1], imm: 64, str: "add" });
+      insts = insts.append(SInst { ...ins, args: ins.args.with(1, nvals + 2) });
+      if (reads_of(blk.insts, k + 1, g.lo) == uses[g.lo] - g.chain) {
+        lo = g.lo;
+        wide = nvals;
+      } else {
+        lo = -1;
+      }
+      nvals += 3;
+    }
+    blocks = blocks.append(SBlock { ...blk, insts: insts });
+  }
+  if (nvals == f.nvals) {
+    return f;
+  }
+  return prune_dead(SFunc { ...f, blocks: blocks, nvals: nvals });
 }
 
 // An index reads a sign- and a zero-extended i32 the same: no length reaches 2^31, so a negative index fails either way.
@@ -6802,11 +6917,9 @@ pub function drop_low_wraps(f: SFunc): Formed {
   let def_k = __alloc_i32(f.nvals);
   let required = __alloc_i32(f.nvals);
   let prop = __alloc_bool(f.nvals);
-  let i = 0;
-  while (i < f.nvals) {
+  for i in 0..f.nvals {
     def_b = def_b.with(i, -1);
     def_k = def_k.with(i, -1);
-    i += 1;
   }
   let wraps: i32[] = [];
   let wrap_arg: i32[] = [];
