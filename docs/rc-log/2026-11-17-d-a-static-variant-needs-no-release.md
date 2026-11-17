@@ -26,6 +26,11 @@ wasm see the release that they know. It marks the release
 `ir.static_release` (`ssa.STATIC_RELEASE`). The x86-64 and arm64 emitters
 write no code for it. wasm calls the helper, which keeps a static box.
 
+Each construction of the variant must be the static box. `__send_copy` made
+a box on the heap for such a variant, so `send_copy_deep` of the conformance
+leak census leaked its copy of `Open`. The copy helper now gives back the
+same static box (`send_static`).
+
 The first form left the release out. The certifier then found a unit that
 nothing released, for example in `interp__io_error_value`.
 
