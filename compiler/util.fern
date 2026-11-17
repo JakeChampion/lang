@@ -367,6 +367,18 @@ function decimal_within(s: string, pos: string, neg: string): boolean {
   return true;
 }
 
+// The value of an integer literal: decimal, or hex or binary after `0x` or `0b`.
+pub function int_literal_i64(t: string): i64 {
+  let hs = 0;
+  if (t.len() > 0 && t[0] == b'-') {
+    hs = 1;
+  }
+  if (t.len() > hs + 1 && t[hs] == b'0' && (t[hs + 1] == b'x' || t[hs + 1] == b'X' || t[hs + 1] == b'b' || t[hs + 1] == b'B')) {
+    return lit_to_i64(t);
+  }
+  return digits_to_i64(t);
+}
+
 pub function digits_to_i64(s: string): i64 {
   if (s.len() == 0) {
     return 0;
