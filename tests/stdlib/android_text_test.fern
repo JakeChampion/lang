@@ -126,16 +126,34 @@ function test_arabic_is_shaped(): test.TestOutcome {
   return test.assert_eq(laid_glyphs(fs, "باب") + " " + laid_glyphs(fs, "ب ب"), "85,7,4,85,11 85,7,1,85,7");
 }
 
+// The font of a base64 string, or None.
+function font_of(data: string): Option[truetype.Font] {
+  if let Ok(b) = base64.decode(data) {
+    return truetype.parse(b);
+  }
+  return None;
+}
+
 // The fatha attaches to the beh with the GPOS anchors of the font: its
 // bitmap is above the beh, and its middle is near the middle of the beh.
 function test_a_mark_sits_on_its_base(): test.TestOutcome {
-  let Ok(b) = base64.decode(shape_vectors.font()) else {
-    return test.fail("the font did not decode");
-  };
-  let Some(naskh) = truetype.parse(b) else {
+  let Some(naskh) = font_of(shape_vectors.font()) else {
     return test.fail("the font did not parse");
   };
-  let (_, placed) = text.layout(text.new_cache(), text.from_faces([naskh], [400]), 0, 100, 0, "َب");
+  return mark_on_beh(text.from_faces([naskh], [400]));
+}
+
+// The face has the fatha and not the beh, so the beh comes from a fallback
+// font. The fatha takes the font of the beh, and attaches to it.
+function test_a_mark_takes_the_font_of_its_base(): test.TestOutcome {
+  let (Some(marks), Some(naskh)) = (font_of(shape_vectors.marks_font()), font_of(shape_vectors.font())) else {
+    return test.fail("a font did not parse");
+  };
+  return mark_on_beh(text.from_faces([marks], [400]).with_fallback(text.fallback([naskh])).covering(0, "بَ", (w: i32, cp: i32): fonts.Found[] => []));
+}
+
+function mark_on_beh(fs: text.Fonts): test.TestOutcome {
+  let (_, placed) = text.layout(text.new_cache(), fs, 0, 100, 0, "َب");
   let glyphs = placed.map((p: text.Placed): i64 => p.key & 4294967295i64);
   if (glyphs.len() != 3 || glyphs[0] != 95i64 || glyphs[2] != 7i64) {
     return test.fail("the glyphs are " + glyphs.map((g: i64): string => g.to_string()).join(","));
@@ -157,5 +175,6 @@ function main(): i32 {
   r = r.it("a fallback font draws a character that the face does not have", test_fallback_takes_a_font_that_has_the_character);
   r = r.it("a run of Arabic letters is shaped", test_arabic_is_shaped);
   r = r.it("a mark sits on its base", test_a_mark_sits_on_its_base);
+  r = r.it("a mark takes the font of its base", test_a_mark_takes_the_font_of_its_base);
   return r.finish();
 }

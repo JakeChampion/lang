@@ -19,6 +19,8 @@ units. HarfBuzz shapes Arabic right to left, so the script reverses its
 glyphs. The cases of the script "latn" use the default shaper of
 HarfBuzz, with no joining forms, left to right.
 
+marks_font() is a second subset with the space and the marks alone.
+
 The script also builds two fonts of its own, with no outlines:
 lookup_font(), with a GSUB lookup of each type and format, and
 position_font(), with a GPOS lookup of each type.
@@ -55,7 +57,17 @@ WORDS = [
 LATIN = ["بب", "الله", "لا", "مُحَمَّد"]
 
 
-def subsetted(path: str) -> bytes:
+# The bytes of `font`, with a fixed time in its head table, so that the
+# script writes the same file each time.
+def saved(font: TTFont) -> bytes:
+    font["head"].created = font["head"].modified = 0x7C259DC0
+    font.recalcTimestamp = False
+    out = io.BytesIO()
+    font.save(out)
+    return out.getvalue()
+
+
+def subsetted(path: str, unicodes) -> bytes:
     opts = subset.Options()
     opts.layout_features = FEATURES
     opts.name_IDs = ["*"]
@@ -63,11 +75,9 @@ def subsetted(path: str) -> bytes:
     opts.hinting = False
     font = TTFont(path)
     s = subset.Subsetter(opts)
-    s.populate(unicodes=[0x20] + list(range(0x621, 0x656)))
+    s.populate(unicodes=unicodes)
     s.subset(font)
-    out = io.BytesIO()
-    font.save(out)
-    return out.getvalue()
+    return saved(font)
 
 
 LETTERS = [chr(c) for c in range(ord("a"), ord("z") + 1)]
@@ -257,9 +267,7 @@ def lookup_font() -> bytes:
     fb.setupPost()
     fb.font["GSUB"] = gsub_table()
     fb.font["GDEF"] = gdef_table(order)
-    out = io.BytesIO()
-    fb.save(out)
-    return out.getvalue()
+    return saved(fb.font)
 
 
 GPOS_MARKS = {0x301: "acute", 0x300: "grave"}
@@ -431,9 +439,7 @@ def position_font() -> bytes:
     t = newTable("GDEF")
     t.table = gdef
     fb.font["GDEF"] = t
-    out = io.BytesIO()
-    fb.save(out)
-    return out.getvalue()
+    return saved(fb.font)
 
 
 def shaped(data: bytes, text: str, script: str):
@@ -462,7 +468,8 @@ def case(data: bytes, text: str, script: str) -> str:
 def main() -> None:
     if len(sys.argv) != 2:
         sys.exit(__doc__)
-    data = subsetted(sys.argv[1])
+    data = subsetted(sys.argv[1], [0x20] + list(range(0x621, 0x656)))
+    marks = subsetted(sys.argv[1], [0x20] + list(range(0x64B, 0x656)))
     lines = []
     for script, words in [("arab", WORDS), ("latn", LATIN)]:
         for w in words:
@@ -479,6 +486,11 @@ def main() -> None:
         "",
         "pub function font(): string {",
         '  return "%s";' % base64.b64encode(data).decode("ascii"),
+        "}",
+        "",
+        "// The same font with the space and the marks from U+064B to U+0655 alone.",
+        "pub function marks_font(): string {",
+        '  return "%s";' % base64.b64encode(marks).decode("ascii"),
         "}",
         "",
         "// One case on each line, split by tabs: the script, the text, and the",
