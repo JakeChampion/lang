@@ -153,10 +153,10 @@ aarch64/map_string.text	9871
 aarch64/map_string.ir	48682017	2
 aarch64/ordmap_insert.text	6330
 aarch64/ordmap_insert.ir	85640844
-aarch64/pmap_insert.text	3834
-aarch64/pmap_insert.ir	59165657
-aarch64/pvec_with.text	3691
-aarch64/pvec_with.ir	51515095
+aarch64/pmap_insert.text	3853
+aarch64/pmap_insert.ir	57175954
+aarch64/pvec_with.text	3689
+aarch64/pvec_with.ir	50562775
 aarch64/record_update.text	1347
 aarch64/record_update.ir	24587164
 aarch64/sort_inplace.text	1841
@@ -201,13 +201,13 @@ aarch64/perceus_deriv.text	3377
 aarch64/perceus_deriv.ir	61206090
 aarch64/perceus_nqueens.text	1930
 aarch64/perceus_nqueens.ir	65931160
-aarch64/perceus_rbtree.text	3068
-aarch64/perceus_rbtree.ir	26570990
-aarch64/perceus_rbtree_ck.text	3642
-aarch64/perceus_rbtree_ck.ir	34544692
+aarch64/perceus_rbtree.text	3071
+aarch64/perceus_rbtree.ir	26406510
+aarch64/perceus_rbtree_ck.text	3660
+aarch64/perceus_rbtree_ck.ir	34374612
 x86_64/video_qtrle.text 5457
 x86_64/video_qtrle.ir 1547169520
-aarch64/video_qtrle.text 6073
+aarch64/video_qtrle.text 6144
 aarch64/video_qtrle.ir 1166068375
 x86_64/hex_encode.text	2080
 x86_64/hex_encode.ir	68509742
