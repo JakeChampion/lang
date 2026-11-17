@@ -1424,14 +1424,21 @@ function play_detail(own s: App): App {
   if (plex.playable_kind(it.kind)) {
     return start_play(s, it, []);
   }
-  if (it.kind == "show") {
+  // The children of a show are seasons, and the children of an artist are
+  // albums, so the server gives all of their episodes or tracks.
+  if (it.kind == "show" || it.kind == "artist") {
     return ask(s, "leaves:" + it.key, Leaves(it.key));
   }
   let children = s.children;
   return play_first(s, children);
 }
 
+// Plays the first episode not watched, and the rest after it. Music starts
+// at its first track.
 function play_first(own s: App, items: plex.Item[]): App {
+  if (items.len() > 0 && items[0].kind == "track") {
+    return play_list(s, items, 0);
+  }
   let i = 0;
   while (i < items.len()) {
     if (plex.playable_kind(items[i].kind) && !plex.watched(items[i])) {
@@ -2950,6 +2957,8 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
 // A drag up or down on the video: on its left half it sets the brightness
 // of the window, and on its right half the volume. `vertical` is true when
 // the finger moved more up or down than across. Each change shows its level.
+// A drag from the top or the bottom edge belongs to Android, which opens
+// its notifications or its navigation with it.
 function player_drag(own s: App, vertical: boolean): App {
   let p = s.play;
   let pr = s.press;
@@ -2958,7 +2967,9 @@ function player_drag(own s: App, vertical: boolean): App {
     if let Some(n) = scene.hit(s.nodes, pr.x0 as i32, pr.y0 as i32) {
       on = n.tap.name;
     }
-    if (!vertical || !p.video || !p.drawn || on != "overlay" && on != "hide") {
+    let edge = 48 * ui.metrics(s.w, s.h, s.top, s.bottom).u;
+    let from_edge = pr.y0 < s.top.max(edge) as f32 || pr.y0 > (s.h - s.bottom.max(edge)) as f32;
+    if (!vertical || !p.video || !p.drawn || from_edge || on != "overlay" && on != "hide") {
       return s;
     }
     if (pr.x0 < (s.w / 2) as f32) {

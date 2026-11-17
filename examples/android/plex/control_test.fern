@@ -141,6 +141,15 @@ function reply_to(r: plex.Request): plex.Reply {
   if (u.contains("/library/metadata/601")) {
     return ok(SONG);
   }
+  if (u.contains("/library/metadata/702/allLeaves")) {
+    return ok(ALBUM_TRACKS);
+  }
+  if (u.contains("/library/metadata/702/children")) {
+    return ok("{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"701\",\"type\":\"album\",\"title\":\"Album\",\"parentTitle\":\"Band\"}]}}");
+  }
+  if (u.contains("/library/metadata/702")) {
+    return ok("{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"702\",\"type\":\"artist\",\"title\":\"Band\"}]}}");
+  }
   if (u.contains("/library/metadata/701/children")) {
     return ok(ALBUM_TRACKS);
   }
@@ -915,6 +924,8 @@ function test_double_tap_seeks(): test.TestOutcome {
 // A drag up the left half of the video makes the window brighter, and a
 // drag down the right half makes the sound quieter. Each shows its level,
 // and the brightness of the system comes back when the video stops.
+// A drag from the top or the bottom edge opens the notifications or the
+// navigation of Android, so it does not set the volume.
 function test_drag_sets_light_and_volume(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -938,7 +949,16 @@ function test_drag_sets_light_and_volume(): test.TestOutcome {
     return test.fail("the drag did not set the volume: " + log.calls.get().join(" | "));
   }
   let done = settle(at(lower, log, 2100i64, f, android.Touch(1, rx, y0 + (H / 5) as f32)), log, 2100i64, f);
-  let shown = tap(done, log, 3000i64, f, "overlay");
+  let volumes = log.calls.get().filter((c: string): boolean => c.starts_with("volume ")).len();
+  let pulled = done;
+  for y in [2.0f32, (H - 2) as f32] {
+    let to = if (y < 10.0f32) { y + (H / 4) as f32 } else { y - (H / 4) as f32 };
+    pulled = at(at(at(pulled, log, 2200i64, f, android.Touch(0, rx, y)), log, 2250i64, f, android.Touch(2, rx, to)), log, 2300i64, f, android.Touch(1, rx, to));
+    if (log.calls.get().filter((c: string): boolean => c.starts_with("volume ")).len() != volumes) {
+      return test.fail("a drag from the edge of the screen set the volume: " + log.calls.get().join(" | "));
+    }
+  }
+  let shown = tap(pulled, log, 3000i64, f, "overlay");
   let back = tap(shown, log, 3100i64, f, "back");
   return test.assert_eq(has_call(log, "light -1000").to_string(), "true");
 }
@@ -1068,6 +1088,20 @@ function last_part(log: Log): string {
 // all starts the album again after its last track, and repeat one plays the
 // track again. Shuffle stays in the settings. The sleep timer pauses the
 // music at its time, and "at the end" plays no next track.
+// Play on an artist plays all of the tracks of the artist, from the first
+// one: the children of an artist are albums, which do not play.
+function test_artist_plays_all(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let s = at(control.new(fake(log, 0i64, f), "/data", "https://up.example:32400", "srv", "702"), log, 0i64, f, android.Start);
+  let artist = settle(at(s, log, 0i64, f, android.WindowCreated(android.Window { ptr: 1 as usize })), log, 0i64, f);
+  if (!has_url(log, "/library/metadata/702/allLeaves") || last_part(log) != "71" || artist.play.queue.len() != 2 || artist.error != "") {
+    return test.fail("the artist did not play all of its tracks: " + artist.error + " " + log.calls.get().join(" | "));
+  }
+  return test.pass();
+}
+
 function test_album_queue_repeat_and_sleep(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -1777,6 +1811,7 @@ function main(): i32 {
   r = r.it("the speed button sets the rate, also after a pause", test_speed_button);
   r = r.it("Auto takes a lower quality after two stalls in a minute", test_auto_quality_steps_down);
   r = r.it("the texts are in the language of the person", test_texts_in_the_language_of_the_person);
+  r = r.it("Play on an artist plays all of its tracks", test_artist_plays_all);
   r = r.it("an album plays in order, repeats, shuffles and sleeps", test_album_queue_repeat_and_sleep);
   r = r.it("a video plays on in a picture-in-picture window", test_picture_in_picture);
   r = r.it("a video that stops part of the way goes on Watch Next", test_watch_next);
