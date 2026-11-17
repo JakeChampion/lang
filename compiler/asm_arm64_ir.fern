@@ -3364,7 +3364,7 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, around: i32, base
   if (ins.str == "__fern_str_free") {
     s = ssa_tbz(s, true, p, 0, kept);
   }
-  if (ins.str != "__fern_rc_dec" || !asmcore.ssa_is_boxed(s, ins.args[0])) {
+  if (ins.str != "__fern_rc_dec" && ins.imm != 7 || !asmcore.ssa_is_boxed(s, ins.args[0])) {
     s = ssa_cmp_floor(s, p);
     s = ssa_bcond(s, CC_LO, kept);
   }

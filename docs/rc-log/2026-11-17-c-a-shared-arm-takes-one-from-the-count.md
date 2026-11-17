@@ -14,12 +14,16 @@ A shared box loses one count and a static box is kept, with no call. Only a
 unique box calls the helper.
 
 `check` of binarytrees releases a `Nil` child at each leaf. `Nil` is a static
-box, so each of these releases is now three tests and no call.
+box, so each of these releases is now two tests and no call.
 `TestSelfHostSSABoxReleaseIsInline` pins the shape.
 
-## The shared arm of a classified donor
+A mark-7 release is now also a count site of `ssadeps.boxed_values`. Where a
+load of the value comes first on each path, as the tag test of a match
+does, the release has no test against the heap floor.
 
-A match that takes a donor apart reads its uniqueness once. The unique arm
+## The shared arm of a donor
+
+A match that takes a donor apart, or rebuilds it, reads its uniqueness once. The unique arm
 frees the box. The shared arm released the box through the full ladder,
 which read the count again and had a path to the helper. On that arm the
 count is above one or the box is static, so the release cannot free the box.
@@ -32,9 +36,9 @@ has no call, so the register allocator sees no clobber there.
 The mark is correct only if the count at the death is the count that the
 token read. A release of another value between the read and the death can
 make the box unique, and then the decrement leaks it.
-`ssaunits.classified_count_holds` makes sure of this: from the read to the
-death, each instruction reads the donor, and no step drops a value, reuses
-a box or ends another row. In `depth` of `TestSelfHostSoleReleaseShape*`,
+`ssaunits.count_holds` makes sure of this. From the read to the death, each
+instruction reads the donor, changes no count, or is the rebuild of the
+keep. No step drops another value, reuses another box or ends another row. In `depth` of `TestSelfHostSoleReleaseShape*`,
 the shared arm is now this:
 
 ```
@@ -63,16 +67,16 @@ small sizes. The output of each run is the same as main's.
 
 | workload | change |
 |---|---:|
-| treemap | -7.0% |
-| binarytrees | -5.0% |
-| deriv | -1.5% |
-| msort | -0.7% |
-| rbtree | -0.7% |
-| rbtree-ck | -0.5% |
-| pmap | -0.2% |
+| treemap | -10.5% |
+| binarytrees | -7.4% |
+| deriv | -2.0% |
+| cfold | -1.8% |
+| rbtree-ck | -1.2% |
+| msort | -1.0% |
+| rbtree | -0.5% |
+| pmap | -0.3% |
 | nqueens | 0.0% |
-| cfold | +0.4% |
-| qsort | +1.5% |
+| qsort | +0.7% |
 
 The qsort row is the swap in the loop of `append`. The `xchgq` was two
 instructions with the load, and the moves through `%r11` are four. The

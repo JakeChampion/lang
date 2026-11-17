@@ -392,7 +392,7 @@ function counted_values(f: ssa.SFunc): boolean[] {
 
 function counts_box(ins: ssa.SInst): boolean {
   return ins.kind_tag == ssa.CALL && ins.args.len() == 1 && ins.args[0] >= 0
-    && (ins.str == "__fern_rc_inc" || ins.str == "__fern_rc_is_unique" || ins.str == "__fern_rc_dec");
+    && (ins.str == "__fern_rc_inc" || ins.str == "__fern_rc_is_unique" || ins.str == "__fern_rc_dec" || ssa.inline_release(ins));
 }
 
 function loads_from(ins: ssa.SInst, v: i32): boolean {
