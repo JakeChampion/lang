@@ -1,0 +1,46 @@
+// The smallest HTTP/1.1 server over TLS: the binary-size row of #9851.
+// The driver-size gate builds it with -size as net/tls_hello
+// (.github/selfhost-driver-sizes.txt). TLS_CERT and TLS_KEY name the PEM
+// certificate and key.
+import "std/http";
+import "std/serve";
+import "std/platform";
+import "std/tls/identity";
+import "std/tls/server";
+import "std/rand";
+
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+  return http.ok("hello");
+}
+
+function tls_config(): Result[serve.Config, string] {
+  let Some(cert_path) = env("TLS_CERT") else {
+    return Err("TLS_CERT is not set");
+  };
+  let Some(key_path) = env("TLS_KEY") else {
+    return Err("TLS_KEY is not set");
+  };
+  let Ok(cert) = read_file(cert_path) else {
+    return Err("cannot read " + cert_path);
+  };
+  let Ok(key) = read_file(key_path) else {
+    return Err("cannot read " + key_path);
+  };
+  return match (identity.from_pem(cert, key)) {
+    Ok(id) => Ok(serve.config().with_tls(server.config(id, rand.bytes(32)))),
+    Err(e) => Err(e.message()),
+  };
+}
+
+function main(): i32 {
+  match (tls_config()) {
+    Ok(opts) => {
+      return serve.exit_code(serve.run(8443, opts, handle));
+    },
+    Err(e) => {
+      eprint("tls_hello: " + e);
+      return 2;
+    }
+  }
+  return 2;
+}
