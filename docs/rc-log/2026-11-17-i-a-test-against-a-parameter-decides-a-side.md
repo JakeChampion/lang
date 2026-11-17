@@ -68,5 +68,17 @@ utilities give 0 findings on each target:
 
 ## What is left
 
-- A push onto a value that is not a parameter, such as the phi of a loop
-  that starts at a parameter, is still unproved.
+Over `fern_main`, the two functions with the most unproved values show the
+two shapes that are left. Each has 129.
+
+- `ssa_lift.lift_impl` keeps arrays in the phis of a loop. A phi joins a
+  value and an owned push of that same value, and the walk reads the value
+  after the phi. A rule for it must know that the two inputs can be one box
+  across the back edge.
+
+- `verify.server` splices callees that return a `Result` in two words. A
+  join keeps a phi of the constant tags and a phi of each payload with a
+  zero. A branch after an empty block reads the tag phi. The walk does
+  not connect the tag to its payload. `semthread.split_constant_joins` splits
+  such a join, but not this one. A small program with the same chain of `?`
+  on `std/tls/der` gives no such join, so the cause needs the full callee.
