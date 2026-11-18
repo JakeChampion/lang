@@ -13,7 +13,7 @@ FAKE_ADB = """#!/bin/sh
 case "$*" in
   "logcat -d"*) cat "$FAKE_LOGCAT" ;;
   "exec-out screencap") cat "$FAKE_SCREEN" ;;
-  "root") cat "$FAKE_ROOT" ;;
+  "root") cat "$FAKE_ROOT"; exit "${FAKE_ROOT_EXIT:-0}" ;;
   # The old adbd answers the first calls, then adbd is down for one call.
   "shell id -u")
     echo x >> "$FAKE_CALLS"
@@ -57,6 +57,12 @@ class EmulatorTest(unittest.TestCase):
 
     def test_root_waits_for_the_new_adbd(self):
         self.root.write_text("restarting adbd as root\n")
+        self.assertTrue(emulator.root(timeout=5))
+        self.assertEqual(len(self.calls.read_text().splitlines()), 4)
+
+    def test_root_waits_after_an_error_of_adb_root(self):
+        self.root.write_text("error: closed\n")
+        os.environ["FAKE_ROOT_EXIT"] = "1"
         self.assertTrue(emulator.root(timeout=5))
         self.assertEqual(len(self.calls.read_text().splitlines()), 4)
 
