@@ -2780,8 +2780,9 @@ func liveAfterBinding(info *Info, bf *bodyFrames, c ast.Node, aid *ast.Ident, or
 		return true
 	}
 	reach := settleReach{frames: frames, level: len(frames) - 1, scope: bindingLevel(frames, aid.Name)}
+	earlier := fieldValueMentions(st, aid)
 	if m, ok := st.(*ast.Match); ok && st != c && nodeHolds(m.Tag, c) {
-		if live, settled := callTagSettles(info, m, aid, order, reach); live || settled {
+		if live, settled := callTagSettles(info, m, aid, order, earlier, reach); live || settled {
 			return live
 		}
 		return liveFrom(info, frames, len(frames)-1, aid.Name, bindingLevel(frames, aid.Name))
@@ -2796,21 +2797,6 @@ func liveAfterBinding(info *Info, bf *bodyFrames, c ast.Node, aid *ast.Ident, or
 		}
 		return liveFrom(info, frames, len(frames)-1, aid.Name, bindingLevel(frames, aid.Name))
 	}
-	// A literal takes its base after its field values run.
-	earlier := map[*ast.Ident]bool{}
-	ast.Walk(st, func(m ast.Node) bool {
-		if sl, ok := m.(*ast.StructLit); ok && sl.Base == ast.Expr(aid) {
-			for _, f := range sl.Fields {
-				ast.Walk(f.Value, func(v ast.Node) bool {
-					if id, ok := v.(*ast.Ident); ok {
-						earlier[id] = true
-					}
-					return true
-				})
-			}
-		}
-		return true
-	})
 	later := false
 	var visit func(ast.Node) bool
 	visit = func(m ast.Node) bool {
@@ -2883,14 +2869,34 @@ func matchTagLive(info *Info, m *ast.Match, name string, reach settleReach) (liv
 	return false, settled
 }
 
+// fieldValueMentions holds the names in the field values of each literal in
+// st with the base aid. A literal takes its base after its field values run.
+func fieldValueMentions(st ast.Node, aid *ast.Ident) map[*ast.Ident]bool {
+	earlier := map[*ast.Ident]bool{}
+	ast.Walk(st, func(m ast.Node) bool {
+		if sl, ok := m.(*ast.StructLit); ok && sl.Base == ast.Expr(aid) {
+			for _, f := range sl.Fields {
+				ast.Walk(f.Value, func(v ast.Node) bool {
+					if id, ok := v.(*ast.Ident); ok {
+						earlier[id] = true
+					}
+					return true
+				})
+			}
+		}
+		return true
+	})
+	return earlier
+}
+
 // callTagSettles decides a local that a call in a match tag takes. live
 // reports a later read in the tag, or a read in a guard or an arm before a
 // whole assignment. settled reports that every arm assigns the local whole
 // or leaves the statement, so no later statement reads the taken value.
-func callTagSettles(info *Info, m *ast.Match, aid *ast.Ident, order IdentOrder, reach settleReach) (live, settled bool) {
+func callTagSettles(info *Info, m *ast.Match, aid *ast.Ident, order IdentOrder, earlier map[*ast.Ident]bool, reach settleReach) (live, settled bool) {
 	later := false
 	ast.Walk(m.Tag, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && id.Name == aid.Name && order.Idx[id] > order.Idx[aid] {
+		if id, ok := n.(*ast.Ident); ok && id.Name == aid.Name && order.Idx[id] > order.Idx[aid] && !earlier[id] {
 			later = true
 		}
 		return !later
