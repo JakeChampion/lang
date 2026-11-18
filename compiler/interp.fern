@@ -5758,10 +5758,10 @@ function eval_expr(e: ast.Expr, env: Env): Value {
       return v_err("f-string: formatter-only node");
     },
     ast.ExprUnknown(u) => {
-      if (util.is_f64_range_kind(u.kind)) {
-        return v_err("error[P002]: " + util.f64_range_message(u.kind));
+      if (u.fault.code == "P002") {
+        return v_err("error[P002]: " + u.fault.message);
       }
-      return v_err("parser-side unknown: " + u.kind);
+      return v_err("parser-side unknown: " + ast.fault_text(u.fault));
     },
     ast.ExprZero(z) => {
       return zero_value_of(env.heap, z.type_name);
@@ -10369,7 +10369,7 @@ pub function eval_stmt(st: ast.Stmt, own env: Env): StepResult {
       return eval_for_stmt(f, env);
     },
     ast.StmtUnknown(u) => {
-      return step_stop(env, v_err("parser-side unknown stmt: " + u.kind));
+      return step_stop(env, v_err("parser-side unknown stmt: " + ast.fault_text(u.fault)));
     }
   }
 }

@@ -113,7 +113,7 @@ compressed.
 | Material 3 components | Colors only, few components | Full | Full | Third party |
 | Navigation | By hand | Navigation 3 | Navigator, go_router | React Navigation |
 | Accessibility | TalkBack tree, font scale | Semantics | Semantics | Native views |
-| Right-to-left text and shaping | Order, Arabic and Indic shaping | Yes | Yes | Yes |
+| Right-to-left text and shaping | Order, Arabic, Hebrew, Thai and Indic shaping | Yes | Yes | Yes |
 | UI tests on the computer | Full simulator | Robolectric | Widget tests | Jest |
 | Screenshot tests | PNG of the simulator | Paparazzi, Roborazzi | Golden tests | Third party |
 | Camera, location, push | No | Yes | Plugins | Expo modules |
@@ -162,8 +162,9 @@ The order puts first what stops a release, then what most apps need.
 6. **Java and Kotlin libraries.** Merge DEX files and manifests of a JAR
    or an AAR into the APK.
 
-7. **Text.** The shaping of Hebrew, Thai, and the scripts of the
-   Universal Shaping Engine, such as Sinhala, Khmer and Myanmar.
+7. **Text.** The shaping of the scripts of the Universal Shaping Engine,
+   such as Sinhala, Khmer and Myanmar. The marks of a font with no GPOS
+   table, which HarfBuzz moves by their combining classes.
 
    Indic shaping is done: `std/shape` follows the Indic shaper of HarfBuzz
    for Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu,
@@ -177,6 +178,15 @@ The order puts first what stops a release, then what most apps need.
    the test words and for random strings: more than 200,000 in
    Devanagari and 12,000 in each other script. `std/android/text` shapes
    each run of an Indic script.
+
+   Hebrew, Thai and Lao shaping is done, with the shapers of HarfBuzz for
+   them. A Hebrew run goes from right to left, and a bracket in it takes
+   the glyph of its mirror. Hebrew sorts its points as HarfBuzz sorts
+   them, and composes the presentation forms for a font with no mark
+   positioning. Thai and Lao split the sara am. A Thai font with no Thai
+   GSUB script uses the glyphs of the private use area that old fonts
+   have. The glyphs, the clusters and the positions are those of HarfBuzz
+   15 for more than 8,000 random strings in each script.
 
    Color emoji are done: `std/truetype` draws the glyphs of COLR
    versions 0 and 1, and `std/android/text` and the painter of

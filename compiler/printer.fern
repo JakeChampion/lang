@@ -2264,7 +2264,7 @@ function print_use(us: UseSugar, line: i32, depth: i32, f: Fmt): (string, Fmt) {
 function expr_is_missing(e: ast.Expr): boolean {
   match (e) {
     ast.ExprUnknown(u) => {
-      return u.kind.len() == 0 || u.kind == parser.BARE_RETURN || u.kind.starts_with("punct:");
+      return u.fault.mark.len() == 0 && u.fault.code.len() == 0 || u.fault.mark == parser.BARE_RETURN || u.fault.mark == parser.PUNCT_FAULT;
     },
     _ => {
       return false;
