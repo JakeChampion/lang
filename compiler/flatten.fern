@@ -925,7 +925,7 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       if (cast.len() > 0) {
         cast = rewrite_type_name(cast, ctx);
       }
-      return ast.ExprUnary { ...ast.rebuild_unary(u, rewrite_expr(u.operand, ctx), u.line, u.col, u.ty), cast: cast };
+      return ast.with_cast(ast.rebuild_unary(u, rewrite_expr(u.operand, ctx), u.line, u.col, u.ty), cast);
     },
     ast.ExprIndex(x) => {
       return ast.ExprIndex {

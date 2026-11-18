@@ -21204,7 +21204,7 @@ function erase_view_expr(e: ast.Expr): ast.Expr {
       return ast.ExprZero { ...z, type_name: erase_view_spelling(z.type_name) };
     },
     ast.ExprUnary(u) => {
-      return ast.ExprUnary { ...ast.rebuild_unary(u, u.operand, u.line, u.col, erase_view_spelling(u.ty)), cast: erase_view_spelling(u.cast) };
+      return ast.with_cast(ast.rebuild_unary(u, u.operand, u.line, u.col, erase_view_spelling(u.ty)), erase_view_spelling(u.cast));
     },
     ast.ExprLambda(lm) => {
       return ast.ExprLambda { ...lm, params: erase_view_params(lm.params), ret_type: erase_view_spelling(lm.ret_type), ret_fn_ret: erase_view_spelling(lm.ret_fn_ret), ret_fn_param_types: erase_view_spelling(lm.ret_fn_param_types) };

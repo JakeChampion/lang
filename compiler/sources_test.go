@@ -50,9 +50,9 @@ func TestOperatorNodesComeFromTheirConstructors(t *testing.T) {
 }
 
 // constructorLine is true for the declaration of an operator node and for a
-// line of one of its two constructors.
+// line of one of its constructors.
 func constructorLine(line string) bool {
-	for _, start := range []string{"pub struct Expr", "pub function binary(", "pub function unary(", "  return Expr"} {
+	for _, start := range []string{"pub struct Expr", "pub function binary(", "pub function unary(", "pub function cast(", "pub function rebuild_unary(", "pub function with_cast(", "  return Expr"} {
 		if strings.HasPrefix(line, start) {
 			return true
 		}

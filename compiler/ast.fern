@@ -114,6 +114,11 @@ pub function rebuild_unary(u: ExprUnary, operand: Expr, line: i32, col: i32, ty:
   return ExprUnary { ...u, operand: operand, line: line, col: col, ty: ty, lit: unary_class(u.op, operand) };
 }
 
+// u with the cast target `target`. The literal class does not depend on it.
+pub function with_cast(u: ExprUnary, target: string): ExprUnary {
+  return ExprUnary { ...u, cast: target };
+}
+
 function lit_class(e: Expr): i32 {
   match (e) {
     ExprNumber(n) => {
