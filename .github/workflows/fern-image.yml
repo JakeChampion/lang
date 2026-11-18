@@ -98,6 +98,7 @@ jobs:
         run: bash fern-image/scripts/test-jxl-tone-reference.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - uses: ./.github/actions/disable-chrome-apt
       - name: Check sample transparency with offline libpng
         run: |
           sudo apt-get update
