@@ -27,7 +27,7 @@ import "./ui";
 
 // The input and output of the app. `read` gives "" for a file that does not
 // exist. `fetch` starts a worker that sends the requests in turn. The player
-// functions drive the one media player of the app.
+// functions drive the player of the item that plays.
 pub struct Device {
   mono_ms: () => i64,
   read: (string) => string,
@@ -2232,9 +2232,9 @@ function pick_sound(dev: Device, p: Play): void {
 }
 
 // Plays the item with a new choice of tracks, and makes the server
-// remember it. A file that plays as it is prepares again with the new
-// sound. Otherwise the stream starts again where it is, once the server
-// has the choice.
+// remember it. A file that plays as it is changes its sound in place.
+// Otherwise the stream starts again where it is, once the server has the
+// choice.
 function choose(own s: App, choice: plex.Choice): App {
   let p = s.play;
   let part = "";
@@ -2252,7 +2252,7 @@ function choose(own s: App, choice: plex.Choice): App {
     if (part.len() > 0) {
       t = report(t, SelectTracks(part, choice));
     }
-    return ask_cues(new_sound(t, next, p.choice.audio, pos));
+    return ask_cues(sound_now(t, next));
   }
   let q = plex.qualities()[p.level];
   let session = hex_id(t.dev);
@@ -2261,7 +2261,7 @@ function choose(own s: App, choice: plex.Choice): App {
     if (part.len() > 0) {
       t = report(t, SelectTracks(part, choice));
     }
-    return ask_cues(new_sound(t, next, p.choice.audio, pos));
+    return ask_cues(sound_now(t, next));
   }
   log.info("plex: new tracks, so the stream starts again");
   t.dev.stop();
@@ -2310,26 +2310,17 @@ function follow_remembered(own s: App, choice: plex.Choice): App {
       return ask_cues(App { ...s, play: Play { ...next, stream: stream, session: session, prepared: false, video: false, overlay: true, position: pos, status: "Loading" }, dirty: true });
     }
   }
-  let playing = plex.played_sound(p.item);
-  let at = s.dev.position();
-  return ask_cues(new_sound(s, next, playing, at));
+  return ask_cues(sound_now(s, next));
 }
 
-// The play `next` of a file that plays as it is, with the sound `was`
-// before. The media player selects a sound track only before it starts, so
-// a new sound prepares the file again at `pos`, and `prepared` selects the
-// track. A player that is not prepared yet selects it when it is.
-function new_sound(own s: App, next: Play, was: string, pos: i64): App {
-  if (!next.prepared || next.choice.audio.len() == 0 || next.choice.audio == was) {
-    return App { ...s, play: next, dirty: true };
+// The play `next` of a file that plays as it is. The player changes its
+// sound in place, and `prepared` selects it for a player that is not
+// prepared yet.
+function sound_now(own s: App, next: Play): App {
+  if (next.prepared) {
+    pick_sound(s.dev, next);
   }
-  log.info("plex: a new sound, so the file prepares again");
-  s.dev.stop();
-  if (next.video) {
-    s.dev.hide_video();
-  }
-  let ok = s.dev.play(next.stream.url);
-  return App { ...s, play: Play { ...next, stream: plex.Stream { ...next.stream, offset_ms: pos }, prepared: false, video: false, overlay: true, position: pos, status: "Loading" }, dirty: true };
+  return App { ...s, play: next, dirty: true };
 }
 
 // True when the first version of the item has a sound track.

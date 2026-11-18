@@ -584,7 +584,7 @@ pub function parse_sections(body: string): Section[] {
 // A sound or subtitle track of a file. `kind` is 2 for sound and 3 for
 // subtitles. `selected` is true for the track that the server remembers,
 // and `external` is true for a subtitle file beside the video.
-pub struct Track { id: string, kind: i32, title: string, language: string, codec: string, selected: boolean, external: boolean, key: string, standard: boolean }
+pub struct Track { id: string, kind: i32, title: string, language: string, codec: string, selected: boolean, external: boolean, key: string }
 
 // A file of a version of an item. `indexes` is "sd" when the server holds
 // preview thumbnails of it.
@@ -946,7 +946,7 @@ pub function auto_quality(): i32 {
   return qualities().len() - 1;
 }
 
-// The containers that the media player of Android reads.
+// The containers that ExoPlayer reads.
 function direct_container(c: string): boolean {
   return c == "mp4" || c == "m4v" || c == "mov" || c == "mkv" || c == "webm" || c == "mpegts" || c == "ts" || c == "mp3" || c == "m4a" || c == "aac" || c == "flac" || c == "ogg" || c == "opus" || c == "wav";
 }
@@ -1005,35 +1005,13 @@ pub function direct_playable(it: Item, decoders: string[]): boolean {
   return direct_with(it, decoders, no_choice());
 }
 
-// As direct_playable, with the sound of `choice`. The media player of
-// Android plays the sound that the file marks as its default, and it does
-// not change the sound of a stream well. So a file with another sound of
-// the choice plays as a transcode, in which the server copies the video
-// and that sound.
+// As direct_playable, with the sound of `choice`.
 pub function direct_with(it: Item, decoders: string[], choice: Choice): boolean {
   if (it.media.len() == 0 || it.media[0].parts.len() == 0) {
     return false;
   }
-  if (choice.audio.len() > 0 && audio_tracks(it).len() > 1 && choice.audio != played_sound(it)) {
-    return false;
-  }
   let m = it.media[0];
   return direct_container(m.container) && decodes(decoders, m.video) && decodes(decoders, audio_codec(it, choice));
-}
-
-// The id of the sound track that the file plays when no one chooses one:
-// the track that the file marks as its default, else its first.
-pub function played_sound(it: Item): string {
-  let sounds = audio_tracks(it);
-  for t in sounds {
-    if (t.standard) {
-      return t.id;
-    }
-  }
-  if (sounds.len() > 0) {
-    return sounds[0].id;
-  }
-  return "";
 }
 
 // The request that downloads the file of the first version of the item as
@@ -1097,7 +1075,7 @@ pub function direct_url(b: Base, it: Item, session: string): string {
 }
 
 // What the client asks the transcoder to make: H.264 video and AAC sound,
-// which the media player of each Android device plays. A stream is HLS in
+// which each Android device decodes. A stream is HLS in
 // MPEG-TS, and a download is one Matroska file over HTTP. HEVC never goes
 // in MPEG-TS: a hardware HEVC encode into TS can change its picture
 // parameters between slices. A quality with a bitrate adds an upper bound
@@ -1225,7 +1203,7 @@ function tracks_of(d: json.Document, n: i32): Track[] {
       if (title.len() == 0) {
         title = str(d, t, "language");
       }
-      out = out.append(Track { id: int(d, t, "id").to_string(), kind: kind, title: title, language: str(d, t, "languageCode"), codec: str(d, t, "codec"), selected: flag(d, t, "selected"), external: str(d, t, "key").len() > 0, key: str(d, t, "key"), standard: flag(d, t, "default") });
+      out = out.append(Track { id: int(d, t, "id").to_string(), kind: kind, title: title, language: str(d, t, "languageCode"), codec: str(d, t, "codec"), selected: flag(d, t, "selected"), external: str(d, t, "key").len() > 0, key: str(d, t, "key") });
     }
   }
   return out;

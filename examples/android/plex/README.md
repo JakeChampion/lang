@@ -2,8 +2,8 @@
 
 A Plex client for Android, written in Fern. Its shape follows
 [Plezy](https://github.com/edde746/plezy), a Plex client in Flutter. The app
-has no Java code of its own. It is a NativeActivity app, and `fern -apk`
-writes its APK with no Android SDK.
+has no Java code of its own: it plays the video with Media3 ExoPlayer. It is
+a NativeActivity app, and `fern -apk` writes its APK with no Android SDK.
 
 The look is the dot-matrix style of the [stopwatch](../stopwatch/README.md):
 a black screen, grey cards with round corners, and white and grey text.
@@ -116,12 +116,11 @@ app asks the server for the markers of the item when it starts to play.
 The Tracks button of the player chooses the sound and the subtitles, and
 the server remembers the choice.
 
-The media player of Android plays the sound that a file marks as its
-default. It does not change the sound of a stream well. So a sound that
-is not the default of the file plays as a transcode, in which the server
-copies the video and that sound. A play from a row of the home screen
-takes the sound that the server remembers when all of its metadata comes.
-A download plays that sound too.
+The app plays with Media3 ExoPlayer, through `std/android/exoplayer`. A
+file that plays as it is changes its sound in place, with no new start. A
+play from a row of the home screen takes the sound that the server
+remembers when all of its metadata comes. A download plays that sound
+too.
 
 A transcode takes its sound from the choice that the server remembers. So
 a new transcode starts after the server has the choice, and the old one
@@ -141,7 +140,7 @@ the quality of the settings. A transcode is of the whole item, and the
 player seeks in it, as Plezy does. While the player is paused, the app pings
 the transcode so that the server keeps it.
 
-A phone can list a decoder that the media player does not use. Thus a file
+A phone can list a decoder that the player does not use. Thus a file
 that plays as it is can have no sound. Then the app plays it again
 from the same place as a transcode that converts the sound. It does this
 when the player selects no sound track, or when it reports that the sound
@@ -222,7 +221,7 @@ and trackers. This app does not.
 | `plex.fern` | The model: the requests to plex.tv and to a server, and the records in their JSON replies. Every function is pure. |
 | `ui.fern` | The look. `nodes` lays out a screen as a list of nodes of `std/android/ui/scene`, each with a rectangle, what it shows, and the action of a tap. `std/android/ui/painter` draws the nodes with the GPU, and the scene module finds the node under a touch, so one layout serves both. |
 | `control.fern` | The behaviour on each event: the touches, the keys, the replies, the player and the window. Each input and output goes through a `Device`. |
-| `app.fern` | The NativeActivity, the `Device` of the phone, and the @jni listener of the media player. |
+| `app.fern` | The NativeActivity, the `Device` of the phone, and the @jni listener of the ExoPlayer. |
 | `plex_test.fern` | The tests of `plex.fern`, with replies in the shape that plex.tv and a server send. |
 | `control_test.fern` | Runs the app on the host against a fake plex.tv and a fake server, through a fake `Device`. |
 | `emulator_check.py` | Runs the APK on an emulator against a fake Plex server on the host. |
@@ -247,9 +246,9 @@ painter draws them at the next vsync. A list moves on after a swipe, along
 the fling of `std/android/motion`, and a touch stops it. A device with no
 OpenGL ES 2 draws with the CPU at each change.
 
-`std/android/player` plays the stream with the media player of Android. The
-player draws the video into a `SurfaceTexture` on an external texture of
-`std/android/gl`. At each vsync, the painter draws the newest frame in the
+`std/android/exoplayer` plays the stream with ExoPlayer. The player draws
+the video into a `SurfaceTexture` of `std/android/player`, on an external
+texture of `std/android/gl`. At each vsync, the painter draws the newest frame in the
 middle of the window, with the controls over it. Black bars keep the shape
 of the video. Until the texture holds a frame of the stream, the
 video is black. A device with no external textures shows the video on the
@@ -259,16 +258,18 @@ window, which stretches it, and a tap there pauses.
 
 ```sh
 make build
-./bin/fern -apk fern-plex.apk -apk-package dev.fern.plex -apk-label "Fern for Plex" \
-     -apk-min-sdk 30 -apk-cleartext -apk-tv -apk-banner examples/android/plex/banner.png \
-     -apk-permission INTERNET,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MEDIA_PLAYBACK,POST_NOTIFICATIONS,WAKE_LOCK \
-     examples/android/plex/app.fern
+tools/media3/fetch
+./bin/fern -apk fern-plex.apk examples/android/plex/app.fern
 adb install -r fern-plex.apk
 ```
 
+`fern.toml` gives the settings of the APK. Its `dex` key names the DEX file
+of Media3 ExoPlayer that `tools/media3/fetch` writes, and the APK holds it
+as `classes2.dex`. The script needs `java` on the PATH.
+
 The app needs Android 11 (API 30) or later, for the image decoder of the NDK.
-`-apk-cleartext` lets the media player read a server at an `http://` address
-on the local network.
+`cleartext` lets the player read a server at an `http://` address on the
+local network.
 
 To use a server with no sign-in at plex.tv, give its address and a token in
 the intent. The extra `play` opens an item by its key and plays it:

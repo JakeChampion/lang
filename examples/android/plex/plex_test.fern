@@ -325,25 +325,16 @@ function test_tracks(): test.TestOutcome {
   }
   let phone = ["video/avc", "audio/mp4a-latm"];
   let original = plex.qualities()[0];
-  // The media player plays the default sound of a file, so the second
-  // sound plays as a transcode that copies the video.
   let commentary = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, plex.Choice { audio: "22", subtitle: "" });
-  if (!commentary.transcode || !commentary.url.contains("audioStreamID=22") || !commentary.url.contains("directStream=1")) {
-    return test.fail("the second sound did not play as a copy of the video with that sound: " + commentary.url);
-  }
-  let Some(marked) = plex.parse_item(TRACKED.replace("\"Commentary (AAC Stereo)\"", "\"Commentary (AAC Stereo)\",\"default\":true")) else {
-    return test.fail("no item with a default sound");
-  };
-  let own_default = plex.stream_for(client(), base(), marked, original, 0i64, "s1", phone, plex.Choice { audio: "22", subtitle: "" });
-  if (own_default.transcode || plex.played_sound(marked) != "22" || plex.played_sound(it) != "21") {
-    return test.fail("the default sound of the file did not play as it is: " + own_default.url);
+  if (commentary.transcode) {
+    return test.fail("the AAC track did not play as it is");
   }
   let main = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, plex.Choice { audio: "21", subtitle: "" });
   if (!main.transcode || !main.url.contains("audioStreamID=21") || !main.url.contains("subtitles=none")) {
     return test.fail("the E-AC-3 track did not convert: " + main.url);
   }
-  let drawn = plex.stream_for(client(), base(), marked, original, 0i64, "s1", phone, plex.Choice { audio: "22", subtitle: "31" });
-  if (drawn.transcode || plex.text_subtitle(marked, plex.Choice { audio: "22", subtitle: "31" }).is_none()) {
+  let drawn = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, plex.Choice { audio: "22", subtitle: "31" });
+  if (drawn.transcode || plex.text_subtitle(it, plex.Choice { audio: "22", subtitle: "31" }).is_none()) {
     return test.fail("the SubRip subtitle did not play with the file as it is: " + drawn.url);
   }
   let in_transcode = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, plex.Choice { audio: "21", subtitle: "31" });
