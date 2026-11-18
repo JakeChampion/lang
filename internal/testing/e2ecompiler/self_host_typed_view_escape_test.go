@@ -12,11 +12,12 @@ func TestSelfHostTypedViewEscape(t *testing.T) {
 	dir := copySelfHostTree(t)
 	const driver = `import "./lexer";
 import "./parser";
+import "./astpasses";
 import "./checker";
 import "./semsource";
 import "./util";
 function main(): i32 {
-  let mod = parser.module_with_builtins_typed(checker.annotate_module(parser.parse_module(lexer.tokenize(args()[1]))));
+  let mod = astpasses.module_with_builtins_typed(checker.annotate_module(parser.parse_module(lexer.tokenize(args()[1]))));
   let built = semsource.build_module(mod);
   if (args().len() > 2) {
     for d in semsource.check_views(mod) {

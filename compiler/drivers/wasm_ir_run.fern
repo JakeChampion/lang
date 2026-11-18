@@ -1,4 +1,5 @@
 import "../parser";
+import "../defaultargs";
 import "./rundriver";
 import "../util";
 import "../asmcore";
@@ -15,7 +16,7 @@ function run(): i32 {
   if (asmcore.refuse_parse_errors([mod])) {
     return 1;
   }
-  let arity_errs = asmcore.check_call_arity(parser.fill_default_args_module(mod));
+  let arity_errs = asmcore.check_call_arity(defaultargs.fill_module(mod));
   arity_errs = util.append_diags(arity_errs, asmcore.check_map_new_chain(mod));
   arity_errs = util.append_diags(arity_errs, asmcore.check_undefined_calls(mod));
   if (arity_errs.len() > 0) {
