@@ -20,6 +20,23 @@ def adb(*args, check=True):
     return subprocess.run(["adb", *args], check=check, capture_output=True, text=True).stdout
 
 
+def root(timeout=30):
+    """Start adbd again as root. True when the shell of the device then
+    runs as root, and False for a device that refuses root."""
+    asked = subprocess.run(["adb", "root"], capture_output=True, text=True)
+    if asked.returncode != 0 or "cannot run as root" in asked.stdout + asked.stderr:
+        return False
+    # `adb root` returns before adbd stops, so `adb wait-for-device` can
+    # return while the old adbd still answers.
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        uid = subprocess.run(["adb", "shell", "id", "-u"], capture_output=True, text=True)
+        if uid.returncode == 0 and uid.stdout.strip() == "0":
+            return True
+        time.sleep(0.2)
+    return False
+
+
 def fail(message):
     failures.append(message)
     print("FAIL " + message, flush=True)

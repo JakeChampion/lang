@@ -13,6 +13,7 @@ func TestSelfHostPackedBytesGraph(t *testing.T) {
 	dir := copySelfHostTree(t)
 	const source = `import "./lexer";
 import "./parser";
+import "./astpasses";
 import "./checker";
 import "./embed";
 import "./semsource";
@@ -43,7 +44,7 @@ function check(n: i32): i32 {
   let mod = parser.parse_module(lexer.tokenize("function f(spare: i32): u8[] { return __fern_asset_bytes(\"blob\"); }"));
   let folded = embed.fold_assets(mod, assets);
   if (folded.errs.len() != 0) { return 1; }
-  mod = parser.module_with_builtins_typed(checker.annotate_module(folded.module));
+  mod = astpasses.module_with_builtins_typed(checker.annotate_module(folded.module));
   let p = semsource.build_module(mod).decls[0];
   if (!p.ok) { print(p.why); return 2; }
   if (p.func.graph.nvals > 8 || !ssasem.analyze(p.func).ok) { return 3; }
@@ -98,7 +99,7 @@ function main(): i32 {
   if (byteconst.words(byteconst.values("0xff,-1,0b101")) != "255,255,5") { return 16; }
   let source: string = "";
   match (read_file(args()[1])) { Ok(text) => { source = text; }, Err(_) => { return 17; } }
-  let mod = parser.module_with_builtins_typed(checker.annotate_module(parser.parse_module(lexer.tokenize(source))));
+  let mod = astpasses.module_with_builtins_typed(checker.annotate_module(parser.parse_module(lexer.tokenize(source))));
   let p = semsource.build_module(mod).decls[0];
   if (!p.ok || p.func.graph.nvals > 8) { return 18; }
   let found: i32 = 0;

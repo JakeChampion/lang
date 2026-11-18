@@ -974,6 +974,10 @@ function truetype_summary(raw: u8[]): string {
   pixels += heavy.render(heavy.glyph(65), 12.0, 0.0).coverage.len();
   // The GSUB lookups of the font, for an Arabic word and a Latin one.
   let shaped = shape.shape(f, "السَّلام", "arab").glyphs.len() + shape.shape(f, "office", "latn").glyphs.len();
+  // The color glyphs of the font, from COLR and CPAL.
+  for g in [f.glyph(0x1F600), f.glyph(65), f.glyphs - 1] {
+    pixels += f.render_color(g, 12.0, 0.25, -1).rgba.len();
+  }
   return "truetype ok " + f.glyphs.to_string() + " " + advance.to_string() + " " + pixels.to_string() + " " + shaped.to_string();
 }
 

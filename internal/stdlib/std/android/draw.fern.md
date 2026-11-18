@@ -254,6 +254,38 @@ pub function (f: Frame) mask(x: i32, y: i32, w: i32, h: i32, cov: [u8], color: i
 }
 
 // The pixel word at x and y, or 0 outside the frame.
+// Draws the `w` by `h` premultiplied RGBA pixels of `rgba` over the frame,
+// with their top left at (x, y).
+pub function (f: Frame) blend(x: i32, y: i32, w: i32, h: i32, rgba: [u8]): void {
+  let x0 = clamp(x, 0, f.width);
+  let x1 = clamp(x + w, 0, f.width);
+  let y0 = clamp(y, 0, f.height);
+  let y1 = clamp(y + h, 0, f.height);
+  if (x1 <= x0 || y1 <= y0 || rgba.len() < 4 * w * h) {
+    return;
+  }
+  unsafe {
+    for row in y0..y1 {
+      let to = f.bits + (row * f.stride * 4) as usize;
+      for col in x0..x1 {
+        let k = 4 * ((row - y) * w + col - x);
+        let a = rgba[k + 3] as i32;
+        if (a != 0) {
+          let at = to + (col * 4) as usize;
+          __store_i32(at, premultiplied_over(rgba[k] as i32, rgba[k + 1] as i32, rgba[k + 2] as i32, a, __load_i32(at)));
+        }
+      }
+    }
+  }
+}
+
+// The premultiplied color (r, g, b, a) over the pixel word `under`.
+function premultiplied_over(r: i32, g: i32, b: i32, a: i32, under: i32): i32 {
+  let keep = 255 - a;
+  let part = (v: i32, shift: i32): i32 => (v + ((under >> shift & 255) * keep + 127) / 255).min(255);
+  return rgba(part(r, 0), part(g, 8), part(b, 16), part(a, 24));
+}
+
 pub function (f: Frame) pixel(x: i32, y: i32): i32 {
   if (x < 0 || y < 0 || x >= f.width || y >= f.height) {
     return 0;
