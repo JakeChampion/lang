@@ -2026,12 +2026,11 @@ function sanitize_warning(target: string): string {
   if (is_native_target(target)) {
     return "";
   }
-  let carries = "the leak census and the rc over-release and use-after-free detectors, not the heap-buffer-overflow redzone or the fill of fresh raw blocks";
   if (target == "wasm32-wasi") {
-    return "fern: warning: -sanitize on -target " + target + " carries " + carries;
+    return "";
   }
   if (target == "wasm32-wasi-http") {
-    return "fern: warning: -sanitize on -target " + target + " carries " + carries + " — and the census prints at process exit, which a request handler never reaches";
+    return "fern: warning: -sanitize on -target " + target + " prints the leak census at process exit, which a request handler never reaches";
   }
   return "fern: warning: -sanitize has no effect on -target " + target + " (the detectors are native x86-64 and arm64 and wasm); this build carries no checks";
 }

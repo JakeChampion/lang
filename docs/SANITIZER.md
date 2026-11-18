@@ -143,8 +143,8 @@ asm is byte-identical to a build from a compiler that never had the feature.
 `TestSelfHostSanitizeOffEmitsNoSymbolsX86_64` and `TestSelfHostOverReleaseReportArm64`
 pin the cheap proxy for that.
 
-Wasm pays for its quarantine, its poison checks and its census, but not for a
-redzone or a fill.
+Wasm pays the same: its quarantine, its poison checks, its redzone, its fill
+and its census.
 
 ## Backend coverage
 
@@ -180,10 +180,11 @@ natively on Apple Silicon. There `__rc_dec` is the freeing dec, so a stale
 and report the use-after-free.
 
 `-sanitize` on a target that is not fully covered **warns and names what the
-build does carry**, so a silent run is never mistaken for a checked one. On
-wasm it names the census and the over-release and use-after-free detectors,
-and it says that the redzone and the fill are not there. On a target with no
-instrumentation at all, it says that the build carries no checks.
+build does carry**, so a silent run is never mistaken for a checked one.
+wasm32-wasi carries each check that applies to it, so it has no warning. On
+wasm32-wasi-http the warning says that the census prints at process exit. On
+a target with no instrumentation at all, it says that the build carries no
+checks.
 
 The **self-host** compiler takes `-sanitize` as native does, and reads
 `FERN_SANITIZE=1` at emit time (its `FERN_LEAKCHECK` / `FERN_RC_TRACE` ports
@@ -224,10 +225,12 @@ supplies a capability").
 balanced census off the serial console. The fatal checks of `-sanitize` still
 need a host, because their abort path is a syscall.
 
-## wasm: the census and the quarantine
+## wasm: the census, the quarantine and the redzone
 
-The wasm backend carries the **leak census**, the **rc over-release** report
-and the **use-after-free** report, with the texts of the native runtime:
+The wasm backend carries the **leak census** and the **fill of fresh raw
+blocks**. It also makes the **rc over-release**, **use-after-free** and
+**heap-buffer-overflow** reports, with the texts of the native runtime. It has
+no second-context check, because a wasm module has one thread:
 
 ```sh
 FERN_LEAKCHECK=1 fern -target wasm32-wasi -o prog.wasm prog.fern   # census
@@ -277,7 +280,20 @@ Three more things are specific to this backend:
   tick and nothing prints. The over-release and use-after-free reports do not
   wait for an exit, so a handler makes them.
 
-What wasm does NOT carry is the redzone and the fill of fresh raw blocks.
+The redzone and the fill follow the native design:
+
+- `__fern_alloc` is a wrapper under `-sanitize`. `__fern_san_class` finds the
+  size class of the request as the allocator rounds it. The wrapper asks
+  `__fern_alloc_inner` for the class and 16 bytes more, and fills the 16 bytes
+  with the poison pattern. The census counts the request alone.
+- `__fern_quar` reads the 16 bytes at the end of the class of each release. It
+  keeps the block at its whole size, so eviction hands the block to the free
+  list that the allocation takes from.
+- A user `__alloc` calls `__fern_raw_alloc_san`, and `__alloc_u8_uninit` calls
+  `__fern_san_fill`. Each fills its bytes with `0x7EEDFACE7EEDFACE`.
+
+`TestSanitizeFillsFreshRawBlocks` and `TestSanitizeTypedBoxOverflowReported`
+run on wasm32 as on the native targets.
 
 ## Editing notes
 

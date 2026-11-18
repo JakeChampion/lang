@@ -164,7 +164,10 @@ const sanUninitSrc = `function main(): i32 {
 // pattern, so a read of memory that the program never wrote gives the same
 // value on each run.
 func TestSanitizeFillsFreshRawBlocks(t *testing.T) {
-	for name, run := range map[string]func(*testing.T, string) (string, string, int){"x86-64": runSanitizeX86_64, "arm64": runSanitizeArm64} {
+	wasm := func(t *testing.T, src string) (string, string, int) {
+		return runSanitizeWasm(t, src, "FERN_SANITIZE=1")
+	}
+	for name, run := range map[string]func(*testing.T, string) (string, string, int){"x86-64": runSanitizeX86_64, "arm64": runSanitizeArm64, "wasm32": wasm} {
 		t.Run(name, func(t *testing.T) {
 			_, stderr, code := run(t, sanUninitSrc)
 			if code != 42 || strings.Contains(stderr, "fern-sanitizer:") {
@@ -190,7 +193,10 @@ const sanBoxOverflowSrc = `function main(): i32 {
 // A write inside the box is not.
 func TestSanitizeTypedBoxOverflowReported(t *testing.T) {
 	const report = "fern-sanitizer: heap-buffer-overflow (a block was written past its end)"
-	for name, run := range map[string]func(*testing.T, string, ...string) (string, string, int){"x86-64": runSanitizeX86_64With, "arm64": runSanitizeArm64With} {
+	wasm := func(t *testing.T, src string, env ...string) (string, string, int) {
+		return runSanitizeWasm(t, src, append([]string{"FERN_SANITIZE=1"}, env...)...)
+	}
+	for name, run := range map[string]func(*testing.T, string, ...string) (string, string, int){"x86-64": runSanitizeX86_64With, "arm64": runSanitizeArm64With, "wasm32": wasm} {
 		t.Run(name, func(t *testing.T) {
 			_, stderr, code := run(t, strings.Replace(sanBoxOverflowSrc, "OFFSET", "24", 1), uncertified)
 			if code != e2eharness.ExitSanitizer || !strings.Contains(stderr, report) {

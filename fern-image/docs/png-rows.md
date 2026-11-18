@@ -92,7 +92,7 @@ These checks provide cooperative cancellation, without a hard deadline guarantee
 Eight targeted cases cover all five filters in RGB/RGBA, selected rows, borrowed input windows, and row mutation.
 They also cover exact admission limits, invalid bounds, consumer failure, cancellation, malformed input, and final-filter validation.
 All eight pass on native Linux, Wasm, and ARM64 under QEMU with zero final live bytes.
-Native and ARM64 checks use heap sanitization. Wasm provides the leak census and the use-after-free checks.
+Native and ARM64 checks use heap sanitization. Wasm provides the same checks.
 
 The differential worker also emits full folded rows and a middle row selection.
 The offline collector compares both outputs with independent Pillow bytes.

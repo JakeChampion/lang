@@ -3135,7 +3135,8 @@ pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerRes
   let sv = str_values(ir_cache);
   let cv = const_agg_values(ir_cache);
   let ft = fn_value_table(ir_cache);
-  let unit = emit_functions_ns("", mod, ir_cache, physical);
+  let san = sw.sanitize && mode != 1;
+  let unit = emit_functions_ns("", mod, ir_cache, physical, san);
   let needs = needs_of(ir_cache);
   if (mode == 2 && module_is_proxy(mod)) {
     needs = needs.append("@proxy");
@@ -3144,7 +3145,7 @@ pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerRes
     needs = needs.append("@stdin");
   }
   return emit_ir_module_units(
-    with_runtime_units([WasmUnit { ns: "", text: unit, strs: sv, caggs: cv, fns: ft }], needs, rt_lower), mod,
+    with_runtime_units([WasmUnit { ns: "", text: unit, strs: sv, caggs: cv, fns: ft }], needs, rt_lower, san), mod,
     needs, indirect_fn_sigs(ir_cache), mode, sw,
   );
 }
@@ -4636,6 +4637,7 @@ struct WasmOpCtx {
   funcs: parser.FuncDecl[],
   base: i32,
   window: i32,
+  san: boolean,
 }
 
 function has_lane_op(ops: ir.Op[]): boolean {
@@ -5134,7 +5136,9 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == ir.K_STORE_I64) {
     parts = parts.append("    i64.store\n    i32.const 0\n");
   } else if (o.kind_tag == ir.K_ALLOC_U8 || o.kind_tag == ir.K_ALLOC_UNINIT) {
-    parts = emit_wasm_alloc_u8(caggs, ns, arrtmp, eltmp, o, parts);
+    parts = emit_wasm_alloc_u8(caggs, ns, arrtmp, eltmp, o, parts, cx.san);
+  } else if (o.kind_tag == ir.K_ALLOC && cx.san) {
+    parts = parts.append("    call $__fern_raw_alloc_san\n");
   } else if (o.kind_tag == ir.K_ALLOC) {
     parts = parts.append("    call $__fern_alloc\n");
   } else if (o.kind_tag == ir.K_PTR_WIDTH) {
@@ -5466,10 +5470,10 @@ function emit_str_op_wat(o: ir.Op): string {
   return ircore.unsupported_op_refuse(o.kind_tag, "wasm");
 }
 
-function emit_function_ir(ns: string, r: irtables.LowerResult, fd: parser.FuncDecl, strs: Placed, caggs: Placed, structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
+function emit_function_ir(ns: string, r: irtables.LowerResult, fd: parser.FuncDecl, strs: Placed, caggs: Placed, structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate, san: boolean): string {
   let fn_name = parser.decl_key(fd);
   let body = ircore.body_for_emit(fn_name, r);
-  return emit_function_ir_named(ns, body, fn_name, result_wat(body, fd, structs), strs, caggs, structs, fn_table, funcs, vgate);
+  return emit_function_ir_named(ns, body, fn_name, result_wat(body, fd, structs), strs, caggs, structs, fn_table, funcs, vgate, san);
 }
 
 function result_wat(r: irtables.Lowered, fd: parser.FuncDecl, structs: irtables.StructTab): string {
@@ -5667,7 +5671,7 @@ function tail_call_wat(ops: ir.Op[], i: i32, windows: i32): string {
 }
 
 // fern-lint: allow cyclomatic-complexity
-function emit_function_ir_named(ns: string, r: irtables.Lowered, fn_name: string, result_wat: string, strs: Placed, caggs: Placed, structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
+function emit_function_ir_named(ns: string, r: irtables.Lowered, fn_name: string, result_wat: string, strs: Placed, caggs: Placed, structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate, san: boolean): string {
   irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vgate);
   irverifygate.certify_lowered_or_refuse(fn_name, r, vgate);
   let f = wasmlocals.coalesce(r.ops, r.n_params, r.n_locals, r.i64_slots, r.f64_slots, r.v128_slots);
@@ -5737,14 +5741,14 @@ function emit_function_ir_named(ns: string, r: irtables.Lowered, fn_name: string
     if (o.kind_tag == ir.K_RETURN) {
       parts = parts.append(shadow_frame_pop(windows));
     }
-    parts = parts.append(emit_ir_op(o, WasmOpCtx { ns: ns, strs: strs, caggs: caggs, structs: structs, fn_table: fn_table, funcs: funcs, base: f.n_locals, window: window }));
+    parts = parts.append(emit_ir_op(o, WasmOpCtx { ns: ns, strs: strs, caggs: caggs, structs: structs, fn_table: fn_table, funcs: funcs, base: f.n_locals, window: window, san: san }));
     i += 1;
   }
   parts = parts.append(shadow_frame_close(windows, result_wat));
   return util.str_join_chunks(parts);
 }
 
-pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables.LowerResult[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, physical: physicalbody.Collection): string {
+pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables.LowerResult[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, physical: physicalbody.Collection, san: boolean): string {
   mod = parser.infer_ret_types_module(mod);
   let strs = placed_strs(str_values(cache));
   let caggs = placed_caggs(const_agg_values(cache), 0);
@@ -5753,21 +5757,21 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
   let parts: string[] = [];
   for fi in 0..mod.funcs.len() {
     if (mod.funcs[fi].import_iface.len() == 0 && !cache[fi].superseded) {
-      parts = parts.append(emit_function_ir(ns, cache[fi], mod.funcs[fi], strs, caggs, all_structs, ft, all_funcs, vgate));
+      parts = parts.append(emit_function_ir(ns, cache[fi], mod.funcs[fi], strs, caggs, all_structs, ft, all_funcs, vgate, san));
     }
   }
   for xi in mod.funcs.len()..cache.len() {
     let body = ircore.body_for_emit(cache[xi].name, cache[xi]);
-    parts = parts.append(emit_function_ir_named(ns, body, cache[xi].name, produced_result_wat(body), strs, caggs, all_structs, ft, all_funcs, vgate));
+    parts = parts.append(emit_function_ir_named(ns, body, cache[xi].name, produced_result_wat(body), strs, caggs, all_structs, ft, all_funcs, vgate, san));
   }
   irverifygate.report(vgate);
   irverifygate.close_memo(vgate.memo);
   return util.str_join_chunks(parts);
 }
 
-pub function emit_functions_ns(ns: string, mod: parser.Module, cache: irtables.LowerResult[], physical: physicalbody.Collection): string {
+pub function emit_functions_ns(ns: string, mod: parser.Module, cache: irtables.LowerResult[], physical: physicalbody.Collection, san: boolean): string {
   let im = parser.infer_ret_types_module(mod);
-  return emit_functions_view(ns, im, cache, im.funcs, irtables.struct_tab(im.structs), physical);
+  return emit_functions_view(ns, im, cache, im.funcs, irtables.struct_tab(im.structs), physical, san);
 }
 
 function struct_type_id(structs: irtables.StructTab, shape: string): i32 {
@@ -9229,6 +9233,61 @@ function san_poison(): string {
   return "2129525454";
 }
 
+// The poison word twice, which fills a redzone and a fresh raw block.
+function san_poison64(): string {
+  return "9146242183059077838";
+}
+
+// Under -sanitize the allocator is a wrapper that adds the redzone, and the
+// body of the allocator has this name.
+function alloc_body_name(h: WasmHeap): string {
+  if (h.san) {
+    return "__fern_alloc_inner";
+  }
+  return "__fern_alloc";
+}
+
+// Under -sanitize each block carries a redzone: the 16 bytes after the end
+// of its size class hold the poison pattern from its allocation to its
+// release. A block grows in place only inside its class, so the end of the
+// class does not move. $__fern_san_class gives the bytes of the class of a
+// request, as the allocator rounds it. The census counts the request alone.
+function san_redzone_funcs(h: WasmHeap, flc: string): string {
+  let o = "  (func $__fern_san_class (param $n i32) (result i32)\n";
+  o += "    (local $cls i32)\n";
+  o += "    (local.set $n (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8)))\n";
+  o += "    (local.set $cls (call $__fern_capw (i32.shr_u (local.get $n) (i32.const 3))))\n";
+  o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then (return (i32.shl (local.get $cls) (i32.const 3)))))\n";
+  o += "    (if (i32.le_u (local.get $n) (i32.const 1073741824)) (then (return (call $__fern_large_cap (local.get $n)))))\n";
+  o += "    (local.get $n))\n";
+  o += "  (func $__fern_alloc (param $n i32) (result i32)\n";
+  o += "    (local $c i32) (local $p i32)\n";
+  o += "    (if (i32.gt_u (local.get $n) (i32.const 2147483647)) (then (call $__fern_abort_alloc) (unreachable)))\n";
+  o += "    (local.set $c (call $__fern_san_class (local.get $n)))\n";
+  o += "    (local.set $p (call $__fern_alloc_inner (i32.add (local.get $c) (i32.const 16))))\n";
+  if (h.lc) {
+    o += "    (global.set $__fern_lc_alloc_bytes (i64.sub (global.get $__fern_lc_alloc_bytes) (i64.extend_i32_u (i32.sub (i32.add (local.get $c) (i32.const 16)) (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8))))))\n";
+  }
+  o = o + "    (i64.store (i32.add (local.get $p) (local.get $c)) (i64.const " + san_poison64() + "))\n";
+  o = o + "    (i64.store (i32.add (i32.add (local.get $p) (local.get $c)) (i32.const 8)) (i64.const " + san_poison64() + "))\n";
+  o += "    (local.get $p))\n";
+  // A fresh raw block holds the poison pattern, so a read of a byte that the
+  // program never wrote gives the same value on each run.
+  o += "  (func $__fern_san_fill (param $p i32) (param $n i32)\n";
+  o += "    (local $end i32)\n";
+  o += "    (local.set $end (i32.add (local.get $p) (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8))))\n";
+  o += "    (block $sf_done (loop $sf\n";
+  o += "      (br_if $sf_done (i32.ge_u (local.get $p) (local.get $end)))\n";
+  o = o + "      (i64.store (local.get $p) (i64.const " + san_poison64() + "))\n";
+  o += "      (local.set $p (i32.add (local.get $p) (i32.const 8)))\n";
+  o += "      (br $sf))))\n";
+  o += "  (func $__fern_raw_alloc_san (param $n i32) (result i32)\n";
+  o += "    (local $p i32)\n";
+  o += "    (local.set $p (call $__fern_alloc (local.get $n)))\n";
+  o += "    (call $__fern_san_fill (local.get $p) (local.get $n))\n";
+  return o + "    (local.get $p))\n";
+}
+
 function san_poison_check(san: boolean, rc: string): string {
   if (!san) {
     return "";
@@ -9279,7 +9338,10 @@ function raw_release_san(): string {
 function quarantine_funcs(h: WasmHeap, flb: string, flc: string): string {
   let o = "  (global $__fern_quar_head (mut i32) (i32.const 0))\n  (global $__fern_quar_tail (mut i32) (i32.const 0))\n  (global $__fern_quar_bytes (mut i64) (i64.const 0))\n";
   o += "  (func $__fern_quar (param $base i32) (param $bytes i32)\n";
-  o += "    (local $e i32) (local $n i32) (local $cls i32)\n";
+  o += "    (local $e i32) (local $n i32) (local $cls i32) (local $c i32)\n";
+  o += "    (local.set $c (call $__fern_san_class (local.get $bytes)))\n";
+  o = o + "    (if (i32.or (i64.ne (i64.load (i32.add (local.get $base) (local.get $c))) (i64.const " + san_poison64() + ")) (i64.ne (i64.load (i32.add (i32.add (local.get $base) (local.get $c)) (i32.const 8))) (i64.const " + san_poison64() + "))) (then (call $__fern_san_hbo)))\n";
+  o += "    (local.set $bytes (i32.add (local.get $c) (i32.const 16)))\n";
   o = o + "    (i32.store (local.get $base) (i32.const " + san_poison() + "))\n";
   o += "    (i32.store (i32.add (local.get $base) (i32.const 4)) (local.get $bytes))\n";
   o += "    (if (i32.lt_u (local.get $bytes) (i32.const 16)) (then (return)))\n";
@@ -9344,7 +9406,10 @@ pub function heap_alloc_helpers(h: WasmHeap): string {
   o += "    (local.set $w (i32.and (i32.add (local.get $w) (i32.sub (local.get $g) (i32.const 1))) (i32.sub (i32.const 0) (local.get $g))))\n";
   o = o + "    (if (i32.ge_u (local.get $w) (i32.const " + flc + ")) (then (return (i32.sub (i32.const " + flc + ") (i32.const 1)))))\n";
   o += "    (local.get $w))\n";
-  o += "  (func $__fern_alloc (param $n i32) (result i32)\n";
+  if (h.san) {
+    o += san_redzone_funcs(h, flc);
+  }
+  o = o + "  (func $" + alloc_body_name(h) + " (param $n i32) (result i32)\n";
   o += "    (local $p i32) (local $cls i32) (local $head i32)\n";
   o += "    (if (i32.gt_u (local.get $n) (i32.const 2147483647)) (then (call $__fern_abort_alloc) (unreachable)))\n";
   o += "    (local.set $n (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8)))\n";
@@ -10196,7 +10261,7 @@ function needs_str_split(needs: string[]): boolean {
   return need(needs, "str_split") || need(needs, "@uses_str_lines");
 }
 
-pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (parser.Module) => physicalbody.Lowered): WasmUnit[] {
+pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (parser.Module) => physicalbody.Lowered, san: boolean): WasmUnit[] {
   let roots = "";
   if (need(needs, "@uses_str_cmp")) {
     roots += " __fern_strcmp";
@@ -10264,7 +10329,7 @@ pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (p
   let mod = rtmodule.load_wasm("wasm32-wasi", roots);
   let lowered = rt_lower(mod);
   let bodies = irtables.lowered_results(lowered.bodies);
-  let text = emit_functions_ns("$runtime", mod, bodies, physicalbody.collection(lowered));
+  let text = emit_functions_ns("$runtime", mod, bodies, physicalbody.collection(lowered), san);
   return units.append(WasmUnit { ns: "$runtime", text: text, strs: str_values(bodies), caggs: const_agg_values(bodies), fns: fn_value_table(bodies) });
 }
 
@@ -10507,7 +10572,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   let shadow = shadow_stack_bytes(needs);
   parts = parts.append(wasm_abort.helpers(abort_offsets, mode));
   if (san) {
-    parts = parts.append(wasm_abort.san_helpers([strs.offs[abort_to], strs.offs[abort_to + 1]], mode));
+    parts = parts.append(wasm_abort.san_helpers([strs.offs[abort_to], strs.offs[abort_to + 1], strs.offs[abort_to + 2]], mode));
   }
   parts = parts.append("  (memory (export \"memory\") " + util.i32_to_string(memory_min_pages(sv, cv, shadow)) + ")\n");
   if (shadow > 0) {
@@ -13677,7 +13742,7 @@ function empty_bytes_const(): string {
   return ir.op_const_bytes("").str;
 }
 
-function emit_wasm_alloc_u8(caggs: Placed, ns: string, arrtmp: i32, eltmp: i32, o: ir.Op, parts: string[]): string[] {
+function emit_wasm_alloc_u8(caggs: Placed, ns: string, arrtmp: i32, eltmp: i32, o: ir.Op, parts: string[], san: boolean): string[] {
   let stride = narrow_elem(o).size;
   if (o.width == 64) {
     stride = 8;
@@ -13696,6 +13761,8 @@ function emit_wasm_alloc_u8(caggs: Placed, ns: string, arrtmp: i32, eltmp: i32, 
   parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n" + n + "    i32.store\n");
   if (o.kind_tag != ir.K_ALLOC_UNINIT) {
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n    i32.const 0\n" + bytes + "    memory.fill\n");
+  } else if (san) {
+    parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n" + bytes + "    call $__fern_san_fill\n");
   }
   parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    end\n");
 
