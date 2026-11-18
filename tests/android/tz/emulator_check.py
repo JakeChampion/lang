@@ -9,9 +9,12 @@ getprop gives for persist.sys.timezone, and the offset that date gives for
 2026-01-01T00:00:00Z. OUT_DIR gets the output of the program.
 """
 
+from pathlib import Path
 import subprocess
 import sys
-import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from emulator import root  # noqa: E402
 
 ZONE = "Asia/Kolkata"
 INSTANT = 1767225600
@@ -30,9 +33,7 @@ def offset_seconds(text):
 
 def main(binary, out):
     subprocess.run(["mkdir", "-p", out], check=True)
-    if adb("root", check=False).returncode == 0:
-        adb("wait-for-device")
-        time.sleep(1)
+    if root():
         adb("shell", "setprop", "persist.sys.timezone", ZONE, check=False)
     adb("push", binary, "/data/local/tmp/fern-zone")
     adb("shell", "chmod", "755", "/data/local/tmp/fern-zone")
