@@ -94,7 +94,9 @@ func TestCommandModuleLeakCensusBalancesAndIsOptIn(t *testing.T) {
 	}
 }
 
-func TestSanitizeWarnsWhatWasmCarries(t *testing.T) {
+// Wasm carries each check of -sanitize that applies to it, so a build for it
+// warns of nothing.
+func TestSanitizeWarnsNothingOnWasm(t *testing.T) {
 	bin := buildFernForStdoutTest(t)
 	entry := writeFern(t, "function main(): i32 { return 0; }\n")
 	out := filepath.Join(t.TempDir(), "prog.wasm")
@@ -102,14 +104,7 @@ func TestSanitizeWarnsWhatWasmCarries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build: %v\n%s", err, o)
 	}
-	got := string(o)
-	if !strings.Contains(got, "leak census") || !strings.Contains(got, "use-after-free") {
-		t.Errorf("warning does not name what wasm carries:\n%s", got)
-	}
-	if !strings.Contains(got, "not the heap-buffer-overflow redzone") {
-		t.Errorf("warning does not name what wasm lacks:\n%s", got)
-	}
-	if strings.Contains(got, "carries no checks") {
-		t.Errorf("warning still says wasm carries nothing:\n%s", got)
+	if got := string(o); strings.Contains(got, "warning") {
+		t.Errorf("-sanitize on wasm32-wasi warned:\n%s", got)
 	}
 }

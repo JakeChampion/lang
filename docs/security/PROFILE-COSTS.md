@@ -105,7 +105,7 @@ The percentage is the change against `safe`.
 |---|---|---|---|---|---|---|
 | `safe` | yes | yes | yes | yes | yes | check-only, exit 2 |
 | `hardened` | yes | yes | refused, exit 2 | refused, exit 2 | refused, exit 2 | refused, exit 2 |
-| `diagnostic` | yes | yes | yes | yes | yes, without the redzone and the fill | check-only, exit 2 |
+| `diagnostic` | yes | yes | yes | yes | yes | check-only, exit 2 |
 | `minimal` | yes | yes | yes | yes | yes | check-only, exit 2 |
 
 `TestSelfHostProfiles` pins the refusal of `hardened` on wasm32-wasi. The refusal message names the two targets that accept it.
