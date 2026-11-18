@@ -1,6 +1,6 @@
 # Text shaping
 
-This module gives the glyphs of a font for a text, and their positions. It substitutes the glyphs for ligatures and for marks, for the joining forms of Arabic, and for the conjuncts of Indic scripts. It follows the rules of HarfBuzz for Hebrew, Thai, Lao and Khmer too. Then it moves the glyphs: for the kerning, the cursive joins and the marks on their bases.
+This module gives the glyphs of a font for a text, and their positions. It substitutes the glyphs for ligatures and for marks, for the joining forms of Arabic, and for the conjuncts of Indic scripts. It follows the rules of HarfBuzz for Hebrew, Thai, Lao, Khmer and Myanmar too. Then it moves the glyphs: for the kerning, the cursive joins and the marks on their bases.
 
 ## Model
 
@@ -30,7 +30,7 @@ The Arabic stages are `rvrn`, then the features of the direction, then `ccmp` an
 
 ## Hebrew, Thai and Lao
 
-Hebrew (`hebr`) goes from right to left. Thai (`thai`) and Lao (`lao `, with a space) go from left to right, and take the stages of the default shaper. The differences from the default shaper are in the steps 2, 4, 5 and 9 above, and in the section `thai`. Khmer (`khmr`) takes a shaper of its own, which the section `khmer` tells.
+Hebrew (`hebr`) goes from right to left. Thai (`thai`) and Lao (`lao `, with a space) go from left to right, and take the stages of the default shaper. The differences from the default shaper are in the steps 2, 4, 5 and 9 above, and in the section `thai`. Khmer (`khmr`) and Myanmar (`mymr`) take shapers of their own, which the sections `khmer` and `myanmar` tell.
 
 ## Indic scripts
 
@@ -50,7 +50,7 @@ The clusters join as HarfBuzz joins them when glyphs move. The tags of the Unive
 
 ## Contracts
 
-The glyphs, the clusters and the positions are those of HarfBuzz. That is true for the GSUB lookups of the types 1 to 8 and the GPOS lookups of the types 1 to 9. The test `tests/stdlib/shape_test.fern` compares them for a set of Arabic and Devanagari words. `tests/stdlib/shape_indic_test.fern` compares them for the other Indic scripts, and `tests/stdlib/shape_script_test.fern` for Hebrew, Thai, Lao and Khmer. An Arabic run and a Hebrew run go from right to left, and a run of another script from left to right.
+The glyphs, the clusters and the positions are those of HarfBuzz. That is true for the GSUB lookups of the types 1 to 8 and the GPOS lookups of the types 1 to 9. The test `tests/stdlib/shape_test.fern` compares them for a set of Arabic and Devanagari words. `tests/stdlib/shape_indic_test.fern` compares them for the other Indic scripts, and `tests/stdlib/shape_script_test.fern` for Hebrew, Thai, Lao, Khmer and Myanmar. An Arabic run and a Hebrew run go from right to left, and a run of another script from left to right.
 
 When no GPOS lookup applies, the marks have no positioning. That occurs for a font with no GPOS table, and for Hebrew, a font whose GPOS table has no `hebr` script. HarfBuzz then moves the marks by their combining classes and the extents of their glyphs, and `shape` does not. A character that the font does not have takes the glyph 0.
 
@@ -91,6 +91,8 @@ function main(): i32 {
 
 <<khmer>>
 
+<<myanmar>>
+
 <<positions>>
 ```
 
@@ -129,6 +131,14 @@ const HALF: i32 = 512;
 const PSTF: i32 = 1024;
 
 const RTLM: i32 = 2048;
+
+// The fields of the shaper value of a glyph: the category in the bits 0 to
+// 5, the position in the bits 6 to 9, and the character from the bit 10.
+const CAT_MASK: i32 = 63;
+
+const POS_SHIFT: i32 = 6;
+
+const CP_SHIFT: i32 = 10;
 
 const CFAR: i32 = 4096;
 ```
@@ -340,9 +350,15 @@ function ordered(cs: Chars, script: string): Chars {
 // shaper, and whether it composes the Hebrew presentation forms.
 struct Normalizer { script: string, indic: boolean, forms: boolean }
 
-// Whether the shaper of `n` splits each character that it can, and
-// composes no mark with a mark: the Indic and the Khmer shapers.
-function syllabic(n: Normalizer): boolean {
+// Whether the shaper of `n` splits each character that it can: the Indic,
+// the Khmer and the Myanmar shapers.
+function splits_all(n: Normalizer): boolean {
+  return n.indic || n.script == "khmr" || n.script == "mym2";
+}
+
+// Whether the shaper of `n` composes no mark with a mark: the Indic and the
+// Khmer shapers.
+function marks_stay(n: Normalizer): boolean {
   return n.indic || n.script == "khmr";
 }
 
@@ -397,7 +413,7 @@ function parts_of(f: truetype.Font, cs: Chars, i: i32, n: Normalizer): char[] {
     return [c];
   }
   let next_mark = i + 1 < cs.cps.len() && cs.cps[i + 1].is_mark();
-  let shortest = !syllabic(n) && (i == 0 || !c.is_mark()) && !next_mark;
+  let shortest = !splits_all(n) && (i == 0 || !c.is_mark()) && !next_mark;
   if (shortest && f.glyph(c as i32) != 0) {
     return [c];
   }
@@ -468,7 +484,7 @@ function composed(f: truetype.Font, cs: Chars, n: Normalizer): Chars {
 // of `cps`, or 0.
 function composite(f: truetype.Font, cps: char[], starter: i32, c: char, n: Normalizer): i32 {
   let last = cps.len() - 1;
-  let free = c.is_mark() && !(syllabic(n) && cps[starter].is_mark()) && (starter == last || sort_class(cps[last]) < sort_class(c));
+  let free = c.is_mark() && !(marks_stay(n) && cps[starter].is_mark()) && (starter == last || sort_class(cps[last]) < sort_class(c));
   let both = if (free) { composition_of(cps[starter], c, n) } else { 0 };
   return if (both != 0 && f.glyph(both) != 0) { both } else { 0 };
 }
@@ -510,7 +526,7 @@ function hebrew_form(a: i32, b: i32): i32 {
 
 // A run of the glyphs of `cs` in the font `f`, with the masks `masks` and
 // the properties of the characters. The shaper value of each glyph holds
-// its character from the bit 9.
+// its character from the bit CP_SHIFT.
 function run_of_chars(f: truetype.Font, cs: Chars, masks: i32[]): truetype.Run {
   let glyphs: i32[] = [];
   let props: i32[] = [];
@@ -519,7 +535,7 @@ function run_of_chars(f: truetype.Font, cs: Chars, masks: i32[]): truetype.Run {
     let c = cs.cps[i];
     glyphs = glyphs.append(glyph_of(f, cs.shown[i]));
     props = props.append(char_props(c));
-    vars = vars.append(c as i32 << 9);
+    vars = vars.append(c as i32 << CP_SHIFT);
   }
   return truetype.Run { ...truetype.run_of(glyphs, cs.clusters, masks), props: props, vars: vars };
 }
@@ -567,7 +583,7 @@ function space_width(n: i32): i32 {
 function with_space_widths(f: truetype.Font, r: truetype.Run): truetype.Run {
   let p = r.pos;
   for i in 0..r.glyphs.len() {
-    let n = r.vars[i] >> 9;
+    let n = r.vars[i] >> CP_SHIFT;
     let w = space_width(n);
     if (w != NO_SPACE && w != 0 && f.glyph(n) == 0 && (r.props[i] & truetype.LIGATED) == 0) {
       p = truetype.Positions { ...p, advances: p.advances.with(i, fallback_advance(f, w, p.advances[i])) };
@@ -927,10 +943,13 @@ function consonant_kind(u: i32): i32 {
   return if (u >= 0xE01 && u <= 0xE2E) { 0 } else { 4 };
 }
 
+// The above vowels of the machines of the Thai marks, as ranges.
+const THAI_ABOVE_VOWELS: i32[] = [0xE31, 0xE31, 0xE34, 0xE37, 0xE47, 0xE47, 0xE4D, 0xE4E];
+
 // The kind of the Thai mark `u`: 0 above vowel, 1 below vowel, 2 tone mark,
 // or -1 for another character.
 function thai_mark_kind(u: i32): i32 {
-  if (u == 0xE31 || u >= 0xE34 && u <= 0xE37 || u == 0xE47 || u == 0xE4D || u == 0xE4E) {
+  if (in_ranges(u, THAI_ABOVE_VOWELS)) {
     return 0;
   }
   if (u >= 0xE38 && u <= 0xE3A) {
@@ -1036,33 +1055,67 @@ function stages(f: truetype.Font, script: string, rtl: boolean): Feature[][] {
 // The glyphs of `text` in the font `f`, for the script `script`, an
 // OpenType tag such as "arab", "deva" or "latn".
 pub function shape(f: truetype.Font, text: string, script: string): truetype.Run {
+  if let Some(r) = shaped_apart(f, text, script) {
+    return r;
+  }
+  return default_shaped(f, text, script);
+}
+
+// The glyphs of `text` from the Khmer, the Myanmar or the Indic shaper, or
+// None when the default shaper shapes it.
+function shaped_apart(f: truetype.Font, text: string, script: string): Option[truetype.Run] {
   if (script == "khmr") {
-    return khmer_shaped(f, text);
+    return Some(khmer_shaped(f, text));
+  }
+  if (script == "mymr") {
+    if let Some((gsub, gpos)) = myanmar_tags(f) {
+      return Some(myanmar_shaped(f, text, gsub, gpos));
+    }
   }
   if let Some(c) = indic_config(script) {
     if let Some(p) = indic_plan(f, c) {
-      return indic_shaped(f, text, p);
+      return Some(indic_shaped(f, text, p));
     }
   }
+  return None;
+}
+
+// The glyphs of `text` from the default shaper, with the rules of HarfBuzz
+// for Arabic, Hebrew, Thai and Lao.
+function default_shaped(f: truetype.Font, text: string, script: string): truetype.Run {
   let arabic = script == "arab";
   let rtl = arabic || script == "hebr";
   let n = Normalizer { script: script, indic: false, forms: script == "hebr" && !f.has_feature(script, "mark") };
   let cs = normalized(f, preprocessed(f, characters(text), script, rtl), n);
-  let shapes = forms(cs.cps);
-  let masks: i32[] = [];
-  for i in 0..cs.cps.len() {
-    masks = masks.append(cs.masks[i] | (if (arabic) { shapes[i] } else { 0 }));
-  }
-  let r = run_of_chars(f, cs, masks);
+  let r = run_of_chars(f, cs, masks_of(cs, arabic));
   for stage in stages(f, script, rtl) {
     r = applied_stage(f, r, script, stage, false);
   }
   let positioned = f.gpos >= 0 && (script != "hebr" || f.has_script("hebr", true));
   r = with_space_widths(f, f.with_advances(r, rtl));
   if (positioned) {
-    r = applied_stage(f, r, script, position_features(), true);
+    r = applied_stage(f, r, gpos_tag(f, script), position_features(), true);
   }
   return finished(f, r, true, positioned);
+}
+
+// The mask of each character of `cs`, with its joining form in Arabic.
+function masks_of(cs: Chars, arabic: boolean): i32[] {
+  if (!arabic) {
+    return cs.masks;
+  }
+  let shapes = forms(cs.cps);
+  let masks: i32[] = [];
+  for i in 0..cs.cps.len() {
+    masks = masks.append(cs.masks[i] | shapes[i]);
+  }
+  return masks;
+}
+
+// The script of the GPOS lookups of the default shaper. HarfBuzz takes the
+// new Myanmar tag first.
+function gpos_tag(f: truetype.Font, script: string): string {
+  return if (script == "mymr" && f.has_script("mym2", true)) { "mym2" } else { script };
 }
 
 // `cs` after the steps of HarfBuzz before the normalization: the split of
@@ -1206,23 +1259,23 @@ const SYL_BROKEN: i32 = 4;
 const SYL_OTHER: i32 = 5;
 
 // The bit of the category `c`, for a set of categories.
-function cat_bit(c: i32): i32 {
-  return 1 << c;
+function cat_bit(c: i32): i64 {
+  return 1i64 << c as i64;
 }
 
 // `r` with the syllable of each glyph in its properties: the number of the
-// syllable from 1, then its type in the four low bits. With `khmer`, the
-// syllables are those of the Khmer grammar.
-function with_syllables(r: truetype.Run, khmer: boolean): truetype.Run {
+// syllable from 1, then its type in the four low bits. The grammar is that
+// of the Indic, the Khmer or the Myanmar shaper, by `grammar`.
+function with_syllables(r: truetype.Run, grammar: string): truetype.Run {
   let cats: i32[] = [];
   for v in r.vars {
-    cats = cats.append(v & 31);
+    cats = cats.append(v & CAT_MASK);
   }
   let props = r.props;
   let serial = 1;
   let i = 0;
   while (i < cats.len()) {
-    let (end, kind) = if (khmer) { khmer_syllable_from(cats, i) } else { syllable_from(cats, i) };
+    let (end, kind) = syllable_by(grammar, cats, i);
     for k in i..end {
       props = props.with(k, props[k] & 255 | (serial << 4 | kind) << truetype.SYLLABLE_SHIFT);
     }
@@ -1230,6 +1283,15 @@ function with_syllables(r: truetype.Run, khmer: boolean): truetype.Run {
     i = end;
   }
   return truetype.Run { ...r, props: props };
+}
+
+// The end and the type of the syllable of the grammar `grammar` that starts
+// at `i`.
+function syllable_by(grammar: string, cats: i32[], i: i32): (i32, i32) {
+  if (grammar == "khmer") {
+    return khmer_syllable_from(cats, i);
+  }
+  return if (grammar == "myanmar") { myanmar_syllable_from(cats, i) } else { syllable_from(cats, i) };
 }
 
 // The end and the type of the syllable that starts at `i`. A lone SMPst is
@@ -1254,10 +1316,10 @@ function syllable_from(cats: i32[], i: i32): (i32, i32) {
 
 // The positions after a character of a category of `set` at each position
 // of `xs`.
-function step(cats: i32[], xs: i32[], set: i32): i32[] {
+function step(cats: i32[], xs: i32[], set: i64): i32[] {
   let out: i32[] = [];
   for x in xs {
-    if (x < cats.len() && (set >> cats[x] & 1) != 0) {
+    if (x < cats.len() && (set >> cats[x] as i64 & 1i64) != 0i64) {
       out = out.append(x + 1);
     }
   }
@@ -1284,12 +1346,12 @@ function either(xs: i32[], ys: i32[]): i32[] {
 }
 
 // The positions of `xs`, and those after one character of `set`.
-function optional(cats: i32[], xs: i32[], set: i32): i32[] {
+function optional(cats: i32[], xs: i32[], set: i64): i32[] {
   return either(xs, step(cats, xs, set));
 }
 
 // The positions after any count of characters of `set`.
-function any_of(cats: i32[], xs: i32[], set: i32): i32[] {
+function any_of(cats: i32[], xs: i32[], set: i64): i32[] {
   let all = xs;
   let next = xs;
   while (next.len() > 0) {
@@ -1299,7 +1361,7 @@ function any_of(cats: i32[], xs: i32[], set: i32): i32[] {
   return all;
 }
 
-function joiner_bits(): i32 {
+function joiner_bits(): i64 {
   return cat_bit(CAT_ZWJ) | cat_bit(CAT_ZWNJ);
 }
 
@@ -1328,7 +1390,7 @@ function matra_group(cats: i32[], xs: i32[]): i32[] {
 }
 
 // sm = SM | SMPst
-function sm_bits(): i32 {
+function sm_bits(): i64 {
   return cat_bit(CAT_SM) | cat_bit(CAT_SMPST);
 }
 
@@ -1399,7 +1461,7 @@ function broken_cluster(cats: i32[], xs: i32[]): i32[] {
 
 ### `indic`
 
-The reorderings work on a list of glyph records. The shaper value of each glyph holds three fields. The bits 0 to 4 hold the Indic category, and the bits 5 to 8 the Indic position. The character is from the bit 9. An inserted dotted circle has the character 0.
+The reorderings work on a list of glyph records. The shaper value of each glyph holds three fields. The bits 0 to 5 hold the category, and the bits 6 to 9 the position. The character is from the bit 10. An inserted dotted circle has the character 0.
 
 The steps follow `hb-ot-shaper-indic.cc` of HarfBuzz, for the configuration of Devanagari. The base is the last consonant that has no below-base or post-base form. The reph goes to the end of the syllable, before the syllable modifiers. A pre-base matra goes after the last halant that has no ZWJ after it.
 
@@ -1416,7 +1478,11 @@ const POS_BASE_C: i32 = 4;
 
 const POS_AFTER_MAIN: i32 = 5;
 
+const POS_BEFORE_SUB: i32 = 7;
+
 const POS_BELOW_C: i32 = 8;
+
+const POS_AFTER_SUB: i32 = 9;
 
 const POS_POST_C: i32 = 11;
 
@@ -1524,13 +1590,13 @@ function indic_shaped(f: truetype.Font, text: string, p: Plan): truetype.Run {
   let vars: i32[] = [];
   let masks: i32[] = [];
   for c in cs.cps {
-    vars = vars.append(indic.properties(c as i32) | c as i32 << 9);
+    vars = vars.append(indic.properties(c as i32) | c as i32 << CP_SHIFT);
     masks = masks.append(GLOBAL);
   }
   let r = truetype.Run { ...run_of_chars(f, cs, masks), vars: vars };
   r = applied_stage(f, r, p.gsub, [feature("rvrn", GLOBAL, 0)], false);
   r = applied_stage(f, r, p.gsub, direction_features(false), false);
-  r = with_syllables(r, false);
+  r = with_syllables(r, "indic");
   let per = truetype.PER_SYLLABLE;
   r = applied_stage(f, r, p.gsub, [feature("locl", GLOBAL, per), feature("ccmp", GLOBAL, per)], false);
   r = run_of_glyphs(r, initially_reordered(f, p, glyphs_of(r)));
@@ -1572,15 +1638,15 @@ function run_of_glyphs(r: truetype.Run, gs: Glyph[]): truetype.Run {
 }
 
 function cat_of(g: Glyph): i32 {
-  return g.var & 31;
+  return g.var & CAT_MASK;
 }
 
 function pos_of(g: Glyph): i32 {
-  return g.var >> 5 & 15;
+  return g.var >> POS_SHIFT & 15;
 }
 
 function with_pos(g: Glyph, pos: i32): Glyph {
-  return Glyph { ...g, var: g.var & ~480 | pos << 5 };
+  return Glyph { ...g, var: g.var & ~(15 << POS_SHIFT) | pos << POS_SHIFT };
 }
 
 function syllable_of(g: Glyph): i32 {
@@ -1593,16 +1659,16 @@ function has_prop(g: Glyph, prop: i32): boolean {
 
 // Whether `g` is of a category of `set`. A glyph that ligated is of no
 // category.
-function is_one_of(g: Glyph, set: i32): boolean {
-  return !has_prop(g, truetype.LIGATED) && (set >> cat_of(g) & 1) != 0;
+function is_one_of(g: Glyph, set: i64): boolean {
+  return !has_prop(g, truetype.LIGATED) && (set >> cat_of(g) as i64 & 1i64) != 0i64;
 }
 
 // Whether the category of `g` is in `set`, when it ligated too.
-function in_set(g: Glyph, set: i32): boolean {
-  return (set >> cat_of(g) & 1) != 0;
+function in_set(g: Glyph, set: i64): boolean {
+  return (set >> cat_of(g) as i64 & 1i64) != 0i64;
 }
 
-function consonant_bits(): i32 {
+function consonant_bits(): i64 {
   return cat_bit(CAT_C) | cat_bit(CAT_CS) | cat_bit(CAT_RA) | cat_bit(CAT_CM) | cat_bit(CAT_V) | cat_bit(CAT_PLACEHOLDER) | cat_bit(CAT_DOTTEDCIRCLE);
 }
 
@@ -1753,7 +1819,7 @@ function with_dotted_circles(f: truetype.Font, gs: Glyph[]): Glyph[] {
       continue;
     }
     last = s;
-    let g = Glyph { id: circle, cluster: gs[i].cluster, mask: gs[i].mask, lig: 0, prop: s << truetype.SYLLABLE_SHIFT, var: CAT_DOTTEDCIRCLE | POS_END << 5, key: 0 };
+    let g = Glyph { id: circle, cluster: gs[i].cluster, mask: gs[i].mask, lig: 0, prop: s << truetype.SYLLABLE_SHIFT, var: CAT_DOTTEDCIRCLE | POS_END << POS_SHIFT, key: 0 };
     while (i < gs.len() && syllable_of(gs[i]) == s && cat_of(gs[i]) == CAT_REPHA) {
       out = out.append(gs[i]);
       i += 1;
@@ -2244,7 +2310,7 @@ function final_syllable(p: Plan, gs0: Glyph[], start: i32, end: i32): Glyph[] {
     gs = pref_moved(p, gs, start, end, base);
   }
   // A pre-base matra at the start of a word takes the init feature.
-  if (pos_of(gs[start]) == POS_PRE_M && (start == 0 || !letter_like(gs[start - 1].var >> 9))) {
+  if (pos_of(gs[start]) == POS_PRE_M && (start == 0 || !letter_like(gs[start - 1].var >> CP_SHIFT))) {
     gs = with_mask(gs, start, INIT);
   }
   return gs;
@@ -2498,7 +2564,7 @@ function khmer_syllable_from(cats: i32[], i: i32): (i32, i32) {
 }
 
 // c = C | Ra | V
-function khmer_c_bits(): i32 {
+function khmer_c_bits(): i64 {
   return cat_bit(CAT_C) | cat_bit(CAT_RA) | cat_bit(CAT_V);
 }
 
@@ -2557,13 +2623,13 @@ function khmer_shaped(f: truetype.Font, text: string): truetype.Run {
   let vars: i32[] = [];
   let masks: i32[] = [];
   for c in cs.cps {
-    vars = vars.append(indic.properties(c as i32) | c as i32 << 9);
+    vars = vars.append(indic.properties(c as i32) | c as i32 << CP_SHIFT);
     masks = masks.append(GLOBAL);
   }
   let r = truetype.Run { ...run_of_chars(f, cs, masks), vars: vars };
   r = applied_stage(f, r, "khmr", [feature("rvrn", GLOBAL, 0)], false);
   r = applied_stage(f, r, "khmr", direction_features(false), false);
-  r = with_syllables(r, true);
+  r = with_syllables(r, "khmer");
   r = run_of_glyphs(r, khmer_reordered(f, glyphs_of(r)));
   let per = truetype.PER_SYLLABLE;
   let manual = truetype.MANUAL_ZWNJ | truetype.MANUAL_ZWJ;
@@ -2637,6 +2703,307 @@ function coeng_ro_moved(gs0: Glyph[], start: i32, end: i32, i: i32, cfar: boolea
 }
 ```
 
+### `myanmar`
+
+Myanmar takes the Myanmar shaper of HarfBuzz when the GSUB table of the font has the tag `mym2`. It takes it too when the table has no script that HarfBuzz takes for Myanmar. With the old tag `mymr`, `DFLT` or `latn` it takes the default shaper. `shape` takes the tag `mymr` for Myanmar.
+
+1. The stages `rvrn` and the features of the direction apply. Then the text splits into syllables with the Myanmar grammar of HarfBuzz. The features `locl` and `ccmp` apply in each syllable.
+2. A broken cluster gets a dotted circle at its start, when the font has one.
+3. The base of a syllable is its first consonant after a kinzi, a Ra, an asat and a virama at its start. Each character takes a position: the kinzi after the main consonant, the medial Ra and the characters before the base before it, and a pre-base vowel before them all. The characters then go in a stable sort by position, and the clusters join as HarfBuzz joins them. A sequence of pre-base vowels keeps the order of the text.
+4. The features `rphf`, `pref`, `blwf` and `pstf` apply one at a time, each in one syllable.
+5. The features `pres`, `abvs`, `blws`, `psts`, `rlig`, `calt`, `clig`, `liga` and `rclt` apply in one stage. Each mark then has no advance, before the GPOS features apply.
+
+```fern
+<<myanmar>>=
+// The Myanmar categories of the table. HarfBuzz gives the categories IV, DB
+// and GB the numbers of V, N and PLACEHOLDER.
+const CAT_AS: i32 = 28;
+
+const CAT_MH: i32 = 29;
+
+const CAT_MR: i32 = 30;
+
+const CAT_MW: i32 = 31;
+
+const CAT_MY: i32 = 32;
+
+const CAT_PT: i32 = 33;
+
+const CAT_VS: i32 = 34;
+
+const CAT_ML: i32 = 35;
+
+// The GSUB and the GPOS tags of the Myanmar shaper for the font `f`, or
+// None when HarfBuzz takes the default shaper.
+function myanmar_tags(f: truetype.Font): Option[(string, string)] {
+  let old = f.has_script("mymr", false) || f.has_script("DFLT", false) || !f.has_script("dflt", false) && f.has_script("latn", false);
+  if (!f.has_script("mym2", false) && old) {
+    return None;
+  }
+  return Some(("mym2", if (f.has_script("mym2", true)) { "mym2" } else { "mymr" }));
+}
+
+// The end and the type of the Myanmar syllable that starts at `i`. A lone
+// joiner or SMPst is a syllable of no type.
+function myanmar_syllable_from(cats: i32[], i: i32): (i32, i32) {
+  let at = [i];
+  let best = i;
+  let kind = SYL_OTHER;
+  let syllable = myanmar_consonant_syllable(cats, at);
+  if (syllable.len() > 0 && syllable[syllable.len() - 1] > best) {
+    best = syllable[syllable.len() - 1];
+    kind = 0;
+  }
+  if (best == i && ((joiner_bits() | cat_bit(CAT_SMPST)) >> cats[i] as i64 & 1i64) != 0i64) {
+    best = i + 1;
+  }
+  let broken = myanmar_broken_cluster(cats, at);
+  if (broken.len() > 0 && broken[broken.len() - 1] > best) {
+    best = broken[broken.len() - 1];
+    kind = SYL_BROKEN;
+  }
+  return if (best == i) { (i + 1, SYL_OTHER) } else { (best, kind) };
+}
+
+// The positions after any count of the rule `rule` from the positions `xs`.
+function repeated(cats: i32[], xs: i32[], rule: (i32[], i32[]) => i32[]): i32[] {
+  let all = xs;
+  let next = xs;
+  while (next.len() > 0) {
+    next = rule(cats, next);
+    all = either(all, next);
+  }
+  return all;
+}
+
+// (DB As?)?
+function dot_below(cats: i32[], xs: i32[]): i32[] {
+  return either(xs, optional(cats, step(cats, xs, cat_bit(CAT_N)), cat_bit(CAT_AS)));
+}
+
+// medial_group = MY? As? MR? ((MW MH? ML? | MH ML? | ML) As?)?
+function medial_group(cats: i32[], xs: i32[]): i32[] {
+  let a = optional(cats, optional(cats, optional(cats, xs, cat_bit(CAT_MY)), cat_bit(CAT_AS)), cat_bit(CAT_MR));
+  let mw = optional(cats, optional(cats, step(cats, a, cat_bit(CAT_MW)), cat_bit(CAT_MH)), cat_bit(CAT_ML));
+  let mh = optional(cats, step(cats, a, cat_bit(CAT_MH)), cat_bit(CAT_ML));
+  let medials = either(either(mw, mh), step(cats, a, cat_bit(CAT_ML)));
+  return either(a, optional(cats, medials, cat_bit(CAT_AS)));
+}
+
+// main_vowel_group = (VPre VS?)* VAbv* VBlw* A* (DB As?)?
+function main_vowels(cats: i32[], xs: i32[]): i32[] {
+  let pre = repeated(cats, xs, (cs: i32[], ys: i32[]): i32[] => optional(cs, step(cs, ys, cat_bit(CAT_VPRE)), cat_bit(CAT_VS)));
+  return dot_below(cats, any_of(cats, any_of(cats, any_of(cats, pre, cat_bit(CAT_VABV)), cat_bit(CAT_VBLW)), cat_bit(CAT_A)));
+}
+
+// post_vowel_group = VPst MH? ML? As* VAbv* A* (DB As?)?
+function post_vowels(cats: i32[], xs: i32[]): i32[] {
+  let a = optional(cats, optional(cats, step(cats, xs, cat_bit(CAT_VPST)), cat_bit(CAT_MH)), cat_bit(CAT_ML));
+  return dot_below(cats, any_of(cats, any_of(cats, any_of(cats, a, cat_bit(CAT_AS)), cat_bit(CAT_VABV)), cat_bit(CAT_A)));
+}
+
+// tone_group = sm | PT A* DB? As?
+function tone_group(cats: i32[], xs: i32[]): i32[] {
+  let pt = optional(cats, optional(cats, any_of(cats, step(cats, xs, cat_bit(CAT_PT)), cat_bit(CAT_A)), cat_bit(CAT_N)), cat_bit(CAT_AS));
+  return either(step(cats, xs, sm_bits()), pt);
+}
+
+// complex_syllable_tail = As* medial_group main_vowel_group post_vowel_group* tone_group* j?
+function myanmar_complex_tail(cats: i32[], xs: i32[]): i32[] {
+  let a = main_vowels(cats, medial_group(cats, any_of(cats, xs, cat_bit(CAT_AS))));
+  let tones = repeated(cats, repeated(cats, a, post_vowels), tone_group);
+  return optional(cats, tones, joiner_bits());
+}
+
+// The bits of the consonants of the grammar: c | IV.
+function myanmar_c_bits(): i64 {
+  return cat_bit(CAT_C) | cat_bit(CAT_RA) | cat_bit(CAT_V);
+}
+
+// syllable_tail = (H (c | IV) VS?)* (H | complex_syllable_tail)
+function myanmar_tail(cats: i32[], xs: i32[]): i32[] {
+  let all = repeated(cats, xs, (cs: i32[], ys: i32[]): i32[] => optional(cs, step(cs, step(cs, ys, cat_bit(CAT_H)), myanmar_c_bits()), cat_bit(CAT_VS)));
+  return either(step(cats, all, cat_bit(CAT_H)), myanmar_complex_tail(cats, all));
+}
+
+// k = Ra As H
+function kinzi(cats: i32[], xs: i32[]): i32[] {
+  return step(cats, step(cats, step(cats, xs, cat_bit(CAT_RA)), cat_bit(CAT_AS)), cat_bit(CAT_H));
+}
+
+// consonant_syllable = (k | CS)? (c | IV | GB | DOTTEDCIRCLE) VS? syllable_tail
+function myanmar_consonant_syllable(cats: i32[], xs: i32[]): i32[] {
+  let a = either(xs, either(kinzi(cats, xs), step(cats, xs, cat_bit(CAT_CS))));
+  let held = myanmar_c_bits() | cat_bit(CAT_PLACEHOLDER) | cat_bit(CAT_DOTTEDCIRCLE);
+  return myanmar_tail(cats, optional(cats, step(cats, a, held), cat_bit(CAT_VS)));
+}
+
+// broken_cluster = k? VS? syllable_tail
+function myanmar_broken_cluster(cats: i32[], xs: i32[]): i32[] {
+  return myanmar_tail(cats, optional(cats, either(xs, kinzi(cats, xs)), cat_bit(CAT_VS)));
+}
+
+// The glyphs of the Myanmar text `text` in the font `f`, with the lookups
+// of the scripts `gsub` and `gpos`.
+function myanmar_shaped(f: truetype.Font, text: string, gsub: string, gpos: string): truetype.Run {
+  let cs = normalized(f, characters(text), Normalizer { script: "mym2", indic: false, forms: false });
+  let vars: i32[] = [];
+  let masks: i32[] = [];
+  for c in cs.cps {
+    vars = vars.append(indic.properties(c as i32) | c as i32 << CP_SHIFT);
+    masks = masks.append(GLOBAL);
+  }
+  let r = truetype.Run { ...run_of_chars(f, cs, masks), vars: vars };
+  r = applied_stage(f, r, gsub, [feature("rvrn", GLOBAL, 0)], false);
+  r = applied_stage(f, r, gsub, direction_features(false), false);
+  r = with_syllables(r, "myanmar");
+  let per = truetype.PER_SYLLABLE;
+  r = applied_stage(f, r, gsub, [feature("locl", GLOBAL, per), feature("ccmp", GLOBAL, per)], false);
+  r = run_of_glyphs(r, myanmar_reordered(f, glyphs_of(r)));
+  for tag in ["rphf", "pref", "blwf", "pstf"] {
+    r = applied_stage(f, r, gsub, [feature(tag, GLOBAL, per | truetype.MANUAL_ZWJ)], false);
+  }
+  r = without_syllables(r);
+  let last = ["pres", "abvs", "blws", "psts"].map((tag: string): Feature => feature(tag, GLOBAL, truetype.MANUAL_ZWJ));
+  r = applied_stage(f, r, gsub, last.concat(["rlig", "calt", "clig", "liga", "rclt"].map((tag: string): Feature => feature(tag, GLOBAL, 0))), false);
+  let positioned = f.gpos >= 0;
+  r = marks_zeroed(f, with_space_widths(f, f.with_advances(r, false)), positioned);
+  if (positioned) {
+    r = applied_stage(f, r, gpos, position_features(), true);
+  }
+  return finished(f, r, false, positioned);
+}
+
+// The glyphs `gs` with a dotted circle at the start of each broken cluster,
+// and each syllable reordered.
+function myanmar_reordered(f: truetype.Font, gs0: Glyph[]): Glyph[] {
+  let gs = with_dotted_circles(f, gs0);
+  let start = 0;
+  while (start < gs.len()) {
+    let end = syllable_end(gs, start);
+    let kind = syllable_of(gs[start]) & 15;
+    if (kind == 0 || kind == SYL_BROKEN) {
+      gs = myanmar_left_flipped(sorted_merged(myanmar_positioned(gs, start, end), start, end), start, end);
+    }
+    start = end;
+  }
+  return gs;
+}
+
+// The consonants of the Myanmar shaper: C, CS, Ra, IV, GB and the dotted
+// circle.
+function myanmar_consonant_bits(): i64 {
+  return cat_bit(CAT_C) | cat_bit(CAT_CS) | cat_bit(CAT_RA) | cat_bit(CAT_V) | cat_bit(CAT_PLACEHOLDER) | cat_bit(CAT_DOTTEDCIRCLE);
+}
+
+// The base of the syllable from `start` to `end` of `gs`, and whether the
+// syllable starts with a kinzi.
+function myanmar_base(gs: Glyph[], start: i32, end: i32): (i32, boolean) {
+  let kinzi = start + 3 <= end && cat_of(gs[start]) == CAT_RA && cat_of(gs[start + 1]) == CAT_AS && cat_of(gs[start + 2]) == CAT_H;
+  for i in if (kinzi) { start + 3 } else { start }..end {
+    if (is_one_of(gs[i], myanmar_consonant_bits())) {
+      return (i, kinzi);
+    }
+  }
+  return (start, kinzi);
+}
+
+// `gs` with the position of each glyph of the syllable from `start` to
+// `end`, as HarfBuzz gives them.
+function myanmar_positioned(gs0: Glyph[], start: i32, end: i32): Glyph[] {
+  let (base, kinzi) = myanmar_base(gs0, start, end);
+  let gs = gs0;
+  let i = start;
+  while (i < start + (if (kinzi) { 3 } else { 0 })) {
+    gs = gs.with(i, with_pos(gs[i], POS_AFTER_MAIN));
+    i += 1;
+  }
+  while (i < base) {
+    gs = gs.with(i, with_pos(gs[i], POS_PRE_C));
+    i += 1;
+  }
+  if (i < end) {
+    gs = gs.with(i, with_pos(gs[i], POS_BASE_C));
+    i += 1;
+  }
+  let pos = POS_AFTER_MAIN;
+  while (i < end) {
+    let (next, at) = myanmar_position(cat_of(gs[i]), pos, pos_of(gs[i - 1]));
+    pos = next;
+    gs = gs.with(i, with_pos(gs[i], at));
+    i += 1;
+  }
+  return gs;
+}
+
+// The position state after a glyph of the category `c` after the base, and
+// the position of the glyph, from the state `pos` and the position `prev`
+// of the glyph before it.
+function myanmar_position(c: i32, pos: i32, prev: i32): (i32, i32) {
+  if (c == CAT_MR) {
+    return (pos, POS_PRE_C);
+  }
+  if (c == CAT_VPRE) {
+    return (pos, POS_PRE_M);
+  }
+  if (c == CAT_VS) {
+    return (pos, prev);
+  }
+  if (pos == POS_AFTER_MAIN && c == CAT_VBLW) {
+    return (POS_BELOW_C, POS_BELOW_C);
+  }
+  if (pos == POS_BELOW_C && c == CAT_A) {
+    return (pos, POS_BEFORE_SUB);
+  }
+  if (pos == POS_BELOW_C && c != CAT_VBLW) {
+    return (POS_AFTER_SUB, POS_AFTER_SUB);
+  }
+  return (pos, pos);
+}
+
+// `gs` with the glyphs from `start` to `end` in a stable sort by position.
+// The clusters join over each glyph that moves, as the sort of HarfBuzz
+// joins them.
+function sorted_merged(gs0: Glyph[], start: i32, end: i32): Glyph[] {
+  let gs = gs0;
+  for i in start + 1..end {
+    let j = i;
+    while (j > start && pos_of(gs[j - 1]) > pos_of(gs[i])) {
+      j -= 1;
+    }
+    if (j < i) {
+      gs = moved(merged(gs, j, i + 1), i, j);
+    }
+  }
+  return gs;
+}
+
+// `gs` with the pre-base vowels of the syllable from `start` to `end` in
+// the other order, each with the variation selectors after it.
+function myanmar_left_flipped(gs0: Glyph[], start: i32, end: i32): Glyph[] {
+  let first = end;
+  let last = end;
+  for i in start..end {
+    if (pos_of(gs0[i]) == POS_PRE_M) {
+      first = if (first == end) { i } else { first };
+      last = i;
+    }
+  }
+  if (first >= last) {
+    return gs0;
+  }
+  let gs = reversed(gs0, first, last + 1);
+  let i = first;
+  for j in first..last + 1 {
+    if (cat_of(gs[j]) == CAT_VPRE) {
+      gs = reversed(gs, i, j + 1);
+      i = j + 1;
+    }
+  }
+  return gs;
+}
+```
+
 ### `positions`
 
 After the GPOS lookups, a mark has no advance, except in the Indic shaper. In a font with no GPOS table, a mark of a left-to-right run also moves back by its advance. Thus it stays on its base. A default ignorable glyph has no advance and no offset.
@@ -2652,12 +3019,8 @@ const MAX_CHAIN: i32 = 64;
 // no offset for each default ignorable glyph, and each attachment added to
 // the offsets of its glyph. Without `positioned`, no GPOS lookup applied.
 function finished(f: truetype.Font, r: truetype.Run, zero_marks: boolean, positioned: boolean): truetype.Run {
-  let p = r.pos;
+  let p = if (zero_marks) { marks_zeroed(f, r, positioned).pos } else { r.pos };
   for i in 0..r.glyphs.len() {
-    if (zero_marks && f.glyph_class(r.glyphs[i]) == 3) {
-      let back = if (!positioned && !p.rtl) { p.advances[i] } else { 0 };
-      p = truetype.Positions { ...p, advances: p.advances.with(i, 0), dx: p.dx.with(i, p.dx[i] - back) };
-    }
     if (truetype.is_ignorable(r.props[i])) {
       p = truetype.Positions { ...p, advances: p.advances.with(i, 0), dx: p.dx.with(i, 0), dy: p.dy.with(i, 0) };
     }
@@ -2669,6 +3032,20 @@ function finished(f: truetype.Font, r: truetype.Run, zero_marks: boolean, positi
     p = propagated(p, i, MAX_CHAIN);
   }
   return hidden(f, truetype.Run { ...r, pos: p });
+}
+
+// `r` with no advance for each mark, of the GDEF class 3. Without
+// `positioned`, a mark of a left-to-right run also moves back by its
+// advance.
+function marks_zeroed(f: truetype.Font, r: truetype.Run, positioned: boolean): truetype.Run {
+  let p = r.pos;
+  for i in 0..r.glyphs.len() {
+    if (f.glyph_class(r.glyphs[i]) == 3) {
+      let back = if (!positioned && !p.rtl) { p.advances[i] } else { 0 };
+      p = truetype.Positions { ...p, advances: p.advances.with(i, 0), dx: p.dx.with(i, p.dx[i] - back) };
+    }
+  }
+  return truetype.Run { ...r, pos: p };
 }
 
 // `r` with the glyph of the space for each default ignorable glyph, or with

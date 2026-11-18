@@ -10,8 +10,7 @@ The three files come from the Unicode Character Database
 src/gen-indic-table.py of HarfBuzz 15: the same blocks, the same map of
 the values, the same changes to the categories and the positions, and the
 same positions of the matras for each block. The table also holds the
-Khmer categories of the Khmer shaper. It leaves out the Myanmar
-characters.
+categories of the Khmer and the Myanmar shapers.
 """
 
 import re
@@ -24,14 +23,15 @@ OUT = ROOT / "internal" / "stdlib" / "std" / "shape" / "indic.fern"
 ALLOWED_SINGLES = [0x00A0, 0x25CC]
 ALLOWED_BLOCKS = [
     "Basic Latin", "Latin-1 Supplement", "Devanagari", "Bengali", "Gurmukhi", "Gujarati", "Oriya", "Tamil",
-    "Telugu", "Kannada", "Malayalam", "Khmer", "Vedic Extensions", "General Punctuation", "Superscripts and Subscripts",
-    "Devanagari Extended",
+    "Telugu", "Kannada", "Malayalam", "Myanmar", "Khmer", "Vedic Extensions", "General Punctuation",
+    "Superscripts and Subscripts", "Devanagari Extended", "Myanmar Extended-B", "Myanmar Extended-A",
+    "Myanmar Extended-C",
 ]
 
 # The numbers of std/shape for the categories and the positions.
 CATEGORIES = ["X", "C", "V", "N", "H", "ZWNJ", "ZWJ", "M", "SM", "", "A", "PLACEHOLDER", "DOTTEDCIRCLE",
               "RS", "MPst", "Repha", "Ra", "CM", "Symbol", "CS", "SMPst", "VAbv", "VBlw", "VPre", "VPst",
-              "Robatic", "Xgroup", "Ygroup"]
+              "Robatic", "Xgroup", "Ygroup", "As", "MH", "MR", "MW", "MY", "PT", "VS", "ML"]
 POSITIONS = ["START", "RA_TO_BECOME_REPH", "PRE_M", "PRE_C", "BASE_C", "AFTER_MAIN", "ABOVE_C", "BEFORE_SUB",
              "BELOW_C", "AFTER_SUB", "BEFORE_POST", "POST_C", "AFTER_POST", "SMVD", "END"]
 
@@ -72,7 +72,15 @@ CATEGORY_OVERRIDES = {
     0x17C6: "Xgroup", 0x17CB: "Xgroup", 0x17CD: "Xgroup", 0x17CE: "Xgroup", 0x17CF: "Xgroup", 0x17D0: "Xgroup",
     0x17D1: "Xgroup", 0x17C7: "Ygroup", 0x17C8: "Ygroup", 0x17DD: "Ygroup", 0x17D3: "Ygroup",
     0x17D9: "PLACEHOLDER",
+    # Myanmar
+    0x104E: "C", 0x1004: "Ra", 0x101B: "Ra", 0x105A: "Ra", 0x1032: "A", 0x1036: "A", 0x103A: "As",
+    0x103E: "MH", 0x1060: "ML", 0x103C: "MR", 0x103D: "MW", 0x1082: "MW", 0x103B: "MY", 0x105E: "MY", 0x105F: "MY",
+    0x1063: "PT", 0x1064: "PT", 0x1069: "PT", 0x106A: "PT", 0x106B: "PT", 0x106C: "PT", 0x106D: "PT", 0xAA7B: "PT",
+    0x1038: "SM", 0x1087: "SM", 0x1088: "SM", 0x1089: "SM", 0x108A: "SM", 0x108B: "SM", 0x108C: "SM", 0x108D: "SM",
+    0x108F: "SM", 0x109A: "SM", 0x109B: "SM", 0x109C: "SM", 0x104A: "PLACEHOLDER",
 }
+# The variation selectors, which the Myanmar grammar holds.
+CATEGORY_OVERRIDES.update({c: "VS" for c in range(0xFE00, 0xFE10)})
 CATEGORY_OVERRIDES.update({c: "A" for c in range(0x1CE2, 0x1CE9)})
 CATEGORY_OVERRIDES.update({c: "Symbol" for c in list(range(0xA8F2, 0xA8F8)) + list(range(0x1CE9, 0x1CED))
                            + list(range(0x1CEE, 0x1CF2))})
@@ -133,7 +141,7 @@ def matra_position(u, pos, block):
     raise ValueError("no matra position %s for U+%04X" % (pos, u))
 
 
-# The category of a matra of Khmer, from its position.
+# The category of a matra of Khmer or Myanmar, from its position.
 SIDE_CATEGORIES = {"PRE_C": "VPre", "ABOVE_C": "VAbv", "BELOW_C": "VBlw", "POST_C": "VPst"}
 
 
@@ -148,14 +156,14 @@ def properties(u, cats, sides, blocks):
         pos = "END"
     if cat in CONSONANTS:
         pos = "BASE_C"
-    elif cat in MATRAS and blocks.get(u) == "Khmer":
+    elif cat in MATRAS and blocks.get(u, "").startswith(("Khmer", "Myanmar")):
         cat = SIDE_CATEGORIES[pos]
     elif cat in MATRAS:
         pos = matra_position(u, pos, blocks.get(u, "No_Block"))
     elif cat in SMVD:
         pos = "SMVD"
     pos = POSITION_OVERRIDES.get(u, pos)
-    return CATEGORIES.index(cat) | POSITIONS.index(pos) << 5
+    return CATEGORIES.index(cat) | POSITIONS.index(pos) << 6
 
 
 def version(path):
@@ -167,7 +175,7 @@ def main():
     if len(sys.argv) != 4:
         sys.exit(__doc__)
     cats, sides, blocks = read(sys.argv[1]), read(sys.argv[2]), read(sys.argv[3])
-    default = POSITIONS.index("END") << 5
+    default = POSITIONS.index("END") << 6
     chars = [u for u in sorted(set(cats) | set(sides) | set(CATEGORY_OVERRIDES))
              if u in ALLOWED_SINGLES or u in CATEGORY_OVERRIDES or blocks.get(u) in ALLOWED_BLOCKS]
     table = {u: properties(u, cats, sides, blocks) for u in chars}
@@ -185,7 +193,7 @@ def main():
         "// %s -- do not edit by hand." % version(sys.argv[1]),
         "//",
         "// The Indic category of each character, from the bit 0, and its Indic",
-        "// position, from the bit 5, with the numbers of std/shape. A character out",
+        "// position, from the bit 6, with the numbers of std/shape. A character out",
         "// of the table has the category 0 (X) and the position 14 (END).",
         "",
         "// The first and the last code point of each run of the table.",

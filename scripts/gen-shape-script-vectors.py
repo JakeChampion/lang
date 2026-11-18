@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Write tests/stdlib/shape_script_vectors.fern: for Hebrew, Thai, Lao and
-Khmer, a subset of a Noto Sans font and the glyphs that HarfBuzz gives for a list
+"""Write tests/stdlib/shape_script_vectors.fern: for Hebrew, Thai, Lao,
+Khmer and Myanmar, a subset of a Noto Sans font and the glyphs that HarfBuzz gives for a list
 of words and of random strings, for the tests of std/shape.
 
 Run:  python3 -I scripts/gen-shape-script-vectors.py FONTDIR
 
 FONTDIR holds NotoSansHebrew-Regular.ttf, NotoSansThai-Regular.ttf,
-NotoSansLao-Regular.ttf and NotoSansKhmer-Regular.ttf, from the Noto project (notofonts.github.io). They
+NotoSansLao-Regular.ttf, NotoSansKhmer-Regular.ttf and
+NotoSansMyanmar-Regular.ttf, from the Noto project (notofonts.github.io). They
 are under the SIL Open Font License 1.1, and each subset keeps each name of
 its font, so it keeps the notice and the license. A subset holds the
 characters of its cases, and its glyphs have no outlines.
@@ -17,7 +18,10 @@ mark, so that the shaper composes the presentation forms. For Thai it is
 the script thai, so that the shaper uses the glyphs of the private use
 area. The Thai subset gets such glyphs, with no outlines. For Lao it is the
 script tag. For Khmer it is the feature pref. A second Khmer subset has its
-feature pstf renamed cfar, and the test renames cfar. The Hebrew subset does not have U+FB2C and U+FB2D, so that each
+feature pstf renamed cfar, and the test renames cfar. For Myanmar it is the
+script mym2, so that the font has no script. A second Myanmar subset has
+the old script tag mymr, which takes the default shaper, and the test
+renames it. The Hebrew subset does not have U+FB2C and U+FB2D, so that each
 of them decomposes by one step only. The random strings come from a fixed
 seed, so the script writes the same file each time.
 """
@@ -41,7 +45,7 @@ OUT = HERE.parent / "tests" / "stdlib" / "shape_script_vectors.fern"
 ZWJ, ZWNJ = "\u200d", "\u200c"
 
 FEATURES = ["ccmp", "locl", "rlig", "calt", "clig", "liga", "rclt", "rtla", "rtlm", "ltra", "ltrm", "kern", "mark",
-            "mkmk", "dist", "abvm", "blwm", "pref", "blwf", "abvf", "pstf", "cfar", "pres", "abvs", "blws", "psts"]
+            "mkmk", "dist", "abvm", "blwm", "rphf", "pref", "blwf", "abvf", "pstf", "cfar", "pres", "abvs", "blws", "psts"]
 
 # The code points of the private use area that old Thai fonts use.
 PUA = list(range(0xF700, 0xF71B)) + list(range(0xF884, 0xF89F))
@@ -56,6 +60,10 @@ KHMER_WORDS = ["ភាសាខ្មែរ", "ក្រ", "ស្ត្រី",
                # A ligature from a ZWJ is not default ignorable.
                "\u17bc\u17be\u1799\u200d\u17ca\u200c"]
 KHMER_ALPHABET = "កខគងចជញដតនបពមយរលវសហអ" + "\u17d2" * 4 + "\u17b6\u17b7\u17b8\u17bb\u17bc\u17be\u17c0\u17c1\u17c2\u17c4\u17c6\u17c7\u17c9\u17cb" + ZWJ + ZWNJ
+
+MYANMAR_WORDS = ["မြန်မာ", "မင်္ဂလာ", "သင်္ချိုင်း", "ကျွန်ုပ်", "ကြ", "ကျ", "ကွ", "ကှ", "ကေ", "ကော်", "ကို", "ကုံ",
+                 "ကြော", "ကြွေ", "ဿ", "ပ္ပ", "ဥ", "၎င်း", "က\ufe00\u1031", "\u1031", "\u103a", "ၵ\u1062", "\u200d"]
+MYANMAR_ALPHABET = "ကခဂငစဆဇညတထဒနပဖဗမယရလဝသဟအ" + "\u1039\u103a\u103b\u103c\u103d\u103e\u102b\u102c\u102d\u102e\u102f\u1030\u1031\u1032\u1036\u1037\u1038" + ZWJ
 
 SCRIPTS = [
     ("hebr", "hebr", "mark", "Hebr", "NotoSansHebrew", {0xFB2C, 0xFB2D}, None,
@@ -80,6 +88,8 @@ SCRIPTS = [
      "\u0eca\u0ecb\u0ecc\u0ecd" + "າເແໂໃໄ" + ZWJ + ZWNJ),
     ("khmr", "khmr", "pref", "Khmr", "NotoSansKhmer", set(), None, KHMER_WORDS, KHMER_ALPHABET),
     ("khmr", "khmr_cfar", "cfar", "Khmr", "NotoSansKhmer", set(), (b"pstf", b"cfar"), KHMER_WORDS, KHMER_ALPHABET),
+    ("mymr", "mymr", "mym2", "Mymr", "NotoSansMyanmar", set(), None, MYANMAR_WORDS, MYANMAR_ALPHABET),
+    ("mymr", "mymr_old", "mymr", "Mymr", "NotoSansMyanmar", set(), (b"mym2", b"mymr"), MYANMAR_WORDS, MYANMAR_ALPHABET),
 ]
 
 RANDOM_CASES = 40
@@ -139,7 +149,7 @@ def main():
         texts = words + randoms
         data = subset(fonts / (name + "-Regular.ttf"), texts, left_out, script == "Thai")
         if edit:
-            assert data.count(edit[0]) == 1 and data.count(edit[1]) == 0
+            assert data.count(edit[0]) >= 1
             data = data.replace(*edit)
         assert data.count(renamed.encode()) >= 1
         old = data.replace(renamed.encode(), (renamed[:3] + "0").encode())

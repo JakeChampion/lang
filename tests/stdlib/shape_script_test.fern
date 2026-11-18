@@ -1,4 +1,4 @@
-// Tests of std/shape for Hebrew, Thai, Lao and Khmer. The fonts and the glyphs
+// Tests of std/shape for Hebrew, Thai, Lao, Khmer and Myanmar. The fonts and the glyphs
 // that HarfBuzz gives for each case come from
 // scripts/gen-shape-script-vectors.py.
 import "std/base64";
@@ -92,6 +92,17 @@ function test_khmer_cfar(): test.TestOutcome {
   return test.assert_eq(differences(shape_script_vectors.khmr_cfar_font(), "cfar", shape_script_vectors.khmr_cfar_cases(), "khmr"), "");
 }
 
+// Myanmar: the kinzi, the medial Ra and the pre-base vowels, in the font
+// and in the font with no script.
+function test_myanmar(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.mymr_font(), "mym2", shape_script_vectors.mymr_cases(), "mymr"), "");
+}
+
+// Myanmar with the old script tag mymr, which takes the default shaper.
+function test_old_myanmar(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.mymr_old_font(), "mymr", shape_script_vectors.mymr_old_cases(), "mymr"), "");
+}
+
 // A presentation form that the font does not have splits by one step when
 // no mark follows it: U+FB2C becomes U+FB49 and the shin dot.
 function test_one_step_decomposition(): test.TestOutcome {
@@ -103,12 +114,14 @@ function test_one_step_decomposition(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.new("std/shape Hebrew, Thai, Lao and Khmer");
+  let r = test.new("std/shape Hebrew, Thai, Lao, Khmer and Myanmar");
   r = r.it("Hebrew gives the glyphs of HarfBuzz", test_hebrew);
   r = r.it("Thai gives the glyphs of HarfBuzz", test_thai);
   r = r.it("Lao gives the glyphs of HarfBuzz", test_lao);
   r = r.it("Khmer gives the glyphs of HarfBuzz", test_khmer);
   r = r.it("Khmer with cfar gives the glyphs of HarfBuzz", test_khmer_cfar);
+  r = r.it("Myanmar gives the glyphs of HarfBuzz", test_myanmar);
+  r = r.it("Myanmar with the old tag gives the glyphs of HarfBuzz", test_old_myanmar);
   r = r.it("a form splits by the fewest steps", test_one_step_decomposition);
   return r.finish();
 }
