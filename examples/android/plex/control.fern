@@ -32,6 +32,8 @@ pub struct Device {
   mono_ms: () => i64,
   read: (string) => string,
   write: (string, string) => void,
+  // Deletes the file at the path.
+  remove: (string) => void,
   size: (usize) => (i32, i32),
   lock: (usize) => draw.Frame,
   post: (draw.Frame) => void,
@@ -1001,6 +1003,13 @@ function answer(own s: App, purpose: string, r: plex.Reply): App {
   if (verb == "bif") {
     return got_bif(t, rest, r);
   }
+  if (verb == "subfile") {
+    let (key, id) = split_purpose(rest);
+    if (r.ok() && t.dir.len() > 0 && saved_at(t, key) >= 0) {
+      t.dev.write(download_subtitle_path(t.dir, key, id), r.text());
+    }
+    return t;
+  }
   if (verb == "subtitle") {
     if (r.ok() && t.play.active && t.play.choice.subtitle == rest) {
       return App { ...t, play: Play { ...t.play, cues: plex.parse_cues(r.text()) }, dirty: true };
@@ -1745,6 +1754,12 @@ function download_meta_path(dir: string, key: string): string {
   return dir + "/download-" + key + ".json";
 }
 
+// The file that keeps the text of the subtitle track `id` of the download
+// of the item `key`.
+function download_subtitle_path(dir: string, key: string, id: string): string {
+  return dir + "/download-" + key + "-" + id + ".sub";
+}
+
 // The downloads that the files of `dir` list. Each line of the list holds
 // the ID, the key, the file, the status and the place to play from. The
 // metadata of each item is in a file of its own.
@@ -1757,7 +1772,8 @@ function load_downloads(dev: Device, dir: string): Saved[] {
     let f = line.split("\t");
     if (f.len() == 5) {
       if let Some(it) = plex.parse_item(dev.read(download_meta_path(dir, f[1]))) {
-        out = out.append(Saved { id: num64(f[0]), item: plex.Item { ...it, offset_ms: num64(f[4]) }, file: f[2], status: num(f[3]), done: 0i64, total: -1i64 });
+        let held = plex.file_item(it, plex.transcoded_file(it, f[2]));
+        out = out.append(Saved { id: num64(f[0]), item: plex.Item { ...held, offset_ms: num64(f[4]) }, file: f[2], status: num(f[3]), done: 0i64, total: -1i64 });
       }
     }
   }
@@ -1872,8 +1888,14 @@ function got_download(own t: App, r: plex.Reply): App {
   if (t.dir.len() > 0) {
     t.dev.write(download_meta_path(t.dir, it.key), r.text());
   }
-  let u = App { ...t, downloads: t.downloads.append(Saved { id: id, item: it, file: name, status: download.PENDING, done: 0i64, total: -1i64 }), downloads_at: 0i64, error: "" };
+  let held = plex.file_item(it, !direct);
+  let u = App { ...t, downloads: t.downloads.append(Saved { id: id, item: held, file: name, status: download.PENDING, done: 0i64, total: -1i64 }), downloads_at: 0i64, error: "" };
   save_downloads(u);
+  // The text of each subtitle comes with the file, so it shows with no
+  // server.
+  for track in plex.subtitle_tracks(held) {
+    u = ask(u, "subfile:" + held.key + ":" + track.id, Subtitle(track));
+  }
   return u;
 }
 
@@ -1918,6 +1940,13 @@ function download_all(own t: App, items: plex.Item[]): App {
 function drop_download(own s: App, at: i32): App {
   let id = s.downloads[at].id;
   s.dev.download_remove(id);
+  if (s.dir.len() > 0) {
+    let it = s.downloads[at].item;
+    s.dev.remove(download_meta_path(s.dir, it.key));
+    for track in plex.subtitle_tracks(it) {
+      s.dev.remove(download_subtitle_path(s.dir, it.key, track.id));
+    }
+  }
   let kept = s.downloads.filter((d: Saved): boolean => d.id != id);
   let t = App { ...s, downloads: kept, dirty: true };
   save_downloads(t);
@@ -2200,6 +2229,12 @@ function choose(own s: App, choice: plex.Choice): App {
   if (p.item.media.len() > 0 && p.item.media[0].parts.len() > 0) {
     t = report(t, SelectTracks(p.item.media[0].parts[0].id, choice));
   }
+  let next = Play { ...p, choice: choice, cues: [], sheet: false };
+  // A downloaded file holds the tracks of the sheet, so it plays on.
+  if (on_disk(p)) {
+    pick_sound(t.dev, next);
+    return ask_cues(App { ...t, play: next, dirty: true });
+  }
   let q = plex.qualities()[p.level];
   let session = hex_id(t.dev);
   let pos = p.position;
@@ -2207,7 +2242,6 @@ function choose(own s: App, choice: plex.Choice): App {
     pos = t.dev.position();
   }
   let stream = plex.stream_for(t.client, t.base, p.item, q, pos, session, t.dev.decoders, choice);
-  let next = Play { ...p, choice: choice, cues: [], sheet: false };
   if (!stream.transcode && !p.stream.transcode) {
     pick_sound(t.dev, next);
     return ask_cues(App { ...t, play: next, dirty: true });
@@ -2749,10 +2783,16 @@ const CONTROLS_MS: i64 = 4000i64;
 
 // Asks for the file of the chosen subtitle track when the app draws it.
 function ask_cues(own s: App): App {
-  if let Some(track) = plex.text_subtitle(s.play.item, s.play.choice) {
-    return ask(s, "subtitle:" + track.id, Subtitle(track));
+  let Some(track) = plex.text_subtitle(s.play.item, s.play.choice) else {
+    return s;
+  };
+  if (on_disk(s.play) && s.dir.len() > 0) {
+    let text = s.dev.read(download_subtitle_path(s.dir, s.play.item.key, track.id));
+    if (text.len() > 0) {
+      return App { ...s, play: Play { ...s.play, cues: plex.parse_cues(text) }, dirty: true };
+    }
   }
-  return s;
+  return ask(s, "subtitle:" + track.id, Subtitle(track));
 }
 
 // The markers and the media of the item that plays, from all of its

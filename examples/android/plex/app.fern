@@ -197,6 +197,10 @@ function write_text(path: string, text: string): void {
   let written = write_file(path, text);
 }
 
+function remove_text(path: string): void {
+  let removed = remove_file(path);
+}
+
 // Sends one request. It runs in a worker, so it can wait for the network.
 function send_one(r: plex.Request): plex.Reply {
   let req = fetch.request(r.method, r.url);
@@ -450,6 +454,7 @@ function device(ctx: usize, ps: Players, gpu: Cell[Option[Gpu]], media: Media): 
     mono_ms: (): i64 => mono_ms(),
     read: (path: string): string => read_text(path),
     write: (path: string, text: string): void => write_text(path, text),
+    remove: (path: string): void => remove_text(path),
     size: (window: usize): (i32, i32) => window_size(window),
     lock: (window: usize): draw.Frame => lock(window),
     post: (f: draw.Frame): void => android.post(f),

@@ -164,6 +164,13 @@ stops the download. A done download shows in the last row of the home
 screen and plays from the phone with no server. Remove download deletes
 the file.
 
+The sheet of tracks of a download lists the tracks of its file. A file as
+it is keeps each of its sound tracks, and a choice changes the sound in
+place. A transcode keeps only the sound that it played. The download
+also keeps the text of each text subtitle, so subtitles show with no
+server. An image subtitle such as PGS does not show from a file. A
+choice never stops the file to play a stream of the server.
+
 When no server hears the place where a play stopped, or that an item
 was watched, the app keeps it in a file. The server hears it when it
 answers again.

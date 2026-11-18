@@ -270,6 +270,7 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     mono_ms: (): i64 => now,
     read: (path: string): string => file_of(log, path),
     write: (path: string, text: string): void => note(log.files, path + "=" + text),
+    remove: (path: string): void => note(log.files, path + "="),
     size: (window: usize): (i32, i32) => (W, H),
     lock: (window: usize): draw.Frame => f,
     post: (g: draw.Frame): void => {},
@@ -1464,10 +1465,64 @@ function test_downloads(): test.TestOutcome {
   let other = poster_of(online, "502");
   let converted = tap(hold(online, log, 4000i64, f, other), log, 4700i64, f, "menu:download");
   let conversions = log.calls.get().filter((c: string): boolean => c.starts_with("download https://up.example:32400/video/:/transcode/universal/start?"));
-  if (conversions.len() != 1 || !conversions[0].contains("protocol=http&") || !conversions[0].contains("container%3Dmkv") || !conversions[0].ends_with(" 502.mkv Inception") || converted.error != "") {
+  if (conversions.len() != 1 || !conversions[0].contains("protocol=http&") || !conversions[0].contains("container%3Dmkv") || !conversions[0].ends_with(" 502.transcode.mkv Inception") || converted.error != "") {
     return test.fail("a file that needs a transcode did not download as one: " + log.calls.get().join(" | "));
   }
-  return test.assert_eq((converted.downloads.len() == 1 && converted.downloads[0].file == "502.mkv").to_string(), "true");
+  return test.assert_eq((converted.downloads.len() == 1 && converted.downloads[0].file == "502.transcode.mkv").to_string(), "true");
+}
+
+// The sheet of tracks of a download lists the tracks of its file, and a
+// choice plays on in the file. A file as it is changes its sound in place.
+// A transcode lists only the sound that it played. The text of a subtitle
+// came with the download, so the app reads it from the phone.
+function test_downloaded_tracks(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let home_poster = poster_of(home, "501");
+  let asked = tap(hold(home, log, 1000i64, f, home_poster), log, 1700i64, f, "menu:download");
+  let saved = settle(asked, log, 1800i64, f);
+  if (file_of(log, "/data/download-501-33.sub").len() == 0) {
+    return test.fail("the download did not keep the text of its subtitle");
+  }
+  log.progress.set(download.Progress { status: download.DONE, done: 1000i64, total: 1000i64 });
+  let done = at(saved, log, 5000i64, f, android.Tick);
+  let done_poster = poster_of(done, "501");
+  let played = tap(hold(done, log, 5100i64, f, done_poster), log, 5800i64, f, "menu:play");
+  let ready = settle(at(played, log, 5900i64, f, android.Posted(19, 0 as usize)), log, 5900i64, f);
+  let plays = count_plays(log);
+  let fetched = log.urls.get().filter((u: string): boolean => u.contains("/library/streams/33")).len();
+  let sheet = tap(tap(ready, log, 6000i64, f, "overlay"), log, 6100i64, f, "tracks");
+  let listed = node(sheet, "audio:22").is_some() && node(sheet, "sub:33").is_some() && node(sheet, "sub:31").is_none();
+  let commentary = tap(sheet, log, 6200i64, f, "audio:22");
+  if (!listed || !has_call(log, "track 2") || count_plays(log) != plays || !commentary.play.stream.url.starts_with("file://")) {
+    return test.fail("the sound of the file did not change in place: " + log.calls.get().join(" | "));
+  }
+  let subs = tap(tap(commentary, log, 6300i64, f, "tracks"), log, 6400i64, f, "sub:33");
+  let again = log.urls.get().filter((u: string): boolean => u.contains("/library/streams/33")).len();
+  if (subs.play.cues.len() == 0 || again != fetched || count_plays(log) != plays) {
+    return test.fail("the subtitle of the file did not come from the phone");
+  }
+  log.decoders.set(["video/hevc", "audio/mp4a-latm"]);
+  let other = shown(log, f, "https://up.example:32400", "srv");
+  let other_poster = poster_of(other, "502");
+  let copied = settle(tap(hold(other, log, 7000i64, f, other_poster), log, 7700i64, f, "menu:download"), log, 7800i64, f);
+  let copy = at(copied, log, 9000i64, f, android.Tick);
+  let copy_poster = poster_of(copy, "502");
+  let opened = tap(hold(copy, log, 9100i64, f, copy_poster), log, 9800i64, f, "menu:play");
+  if (!has_call(log, "play file:///sdcard/files/502.transcode.mkv")) {
+    return test.fail("the transcode did not play from the phone: " + log.calls.get().join(" | "));
+  }
+  let up = settle(at(opened, log, 9900i64, f, android.Posted(19, 0 as usize)), log, 9900i64, f);
+  let at_start = count_plays(log);
+  let tracks = tap(tap(up, log, 10000i64, f, "overlay"), log, 10100i64, f, "tracks");
+  let one_sound = node(tracks, "audio:21").is_some() && node(tracks, "audio:22").is_none() && node(tracks, "sub:31").is_none();
+  let shown_sub = tap(tracks, log, 10200i64, f, "sub:33");
+  if (!one_sound || count_plays(log) != at_start || shown_sub.play.cues.len() == 0) {
+    return test.fail("the transcode did not list its own tracks, or left its file: " + log.calls.get().join(" | "));
+  }
+  return test.assert_eq(shown_sub.play.stream.url, "file:///sdcard/files/502.transcode.mkv");
 }
 
 // Download all in the menu of a season downloads each of its episodes. The
@@ -2060,6 +2115,7 @@ function main(): i32 {
   r = r.it("a subtitle file beside the video is drawn by the app", test_drawn_subtitles);
   r = r.it("TalkBack reads the posters and the buttons, and acts on them", test_accessibility);
   r = r.it("a download plays with no server, and goes when it is removed", test_downloads);
+  r = r.it("the sheet of tracks of a download lists its file, which plays on", test_downloaded_tracks);
   r = r.it("the next track of an album follows with no gap", test_gapless_album);
   r = r.it("a double tap at a side of the video seeks 10 seconds", test_double_tap_seeks);
   r = r.it("a drag on the video sets the brightness and the volume", test_drag_sets_light_and_volume);
