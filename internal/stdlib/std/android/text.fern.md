@@ -14,7 +14,9 @@ A face does not have each character. For a character that the face does not have
 
 `width` and `line` measure a text with no drawing. `fit` cuts a text to a width, and `wrap` breaks it into lines. `wrap_ranges` gives the lines as ranges of characters. A text field uses them to find its cursor, and `std/bidi` uses them to order each line.
 
-A run of Arabic letters goes to `std/shape`, which gives the joining forms of the letters and the position of each glyph. The run takes the font of its first letter. A mark sits on its base at the anchors of the font. As in Minikin, a mark takes the font of its base when that font has the mark, so that the two can attach. The run has no letter spacing, so that its letters stay joined. Outside such a run, a mark of the font has no advance.
+A run of Arabic letters or of Devanagari letters goes to `std/shape`. It gives the joining forms of the Arabic letters, the conjuncts and the reordered matras of Devanagari, and the position of each glyph. The run takes the font of its first letter.
+
+A mark sits on its base at the anchors of the font. As in Minikin, a mark takes the font of its base when that font has the mark, so that the two can attach. The run has no letter spacing, so that its letters stay joined. Outside such a run, a mark of the font has no advance.
 
 A glyph with colors in the `COLR` table of its font draws in its colors and not in the color of the text. An emoji is such a glyph. Its `Placed` holds its premultiplied colors, and a sprite holds them as a second layer that `put` draws over the text.
 
@@ -335,11 +337,11 @@ function pens(fs: Fonts, w: i32, px: i32, track: i32, s: string): Pens {
   let prev_id = -1;
   let i = 0;
   while (i < cs.len()) {
-    let (end, run_id) = cursive_end(fs, w, cs, i);
+    let (end, run_id, script) = run_end(fs, w, cs, i);
     let id = if (end > i) { run_id } else { mark_face(fs, w, cs[i], prev_id) };
     let f = font(fs, id);
     if (end > i) {
-      p = shaped_run(p, f, id, px, cs, i, end);
+      p = shaped_run(p, f, id, px, cs, i, end, script);
       prev = -1;
       i = end;
     } else {
@@ -370,47 +372,53 @@ function pen_glyph(own p: Pens, id: i32, g: i32, x: f64, y: f64, next: f64): Pen
   return Pens { ids: p.ids.append(id), glyphs: p.glyphs.append(g), at: p.at.append(x), ys: p.ys.append(y), pen: next };
 }
 
-// The end of the run of Arabic letters from `cs[i]`, and the font that
-// shapes it: the font of its first letter. It is `i` and -1 when no such
-// run starts there. The run can hold marks and joiners, and it holds at
-// least one letter.
-function cursive_end(fs: Fonts, w: i32, cs: char[], i: i32): (i32, i32) {
-  let id = run_font(fs, w, cs, i);
+// The end of the run of letters to shape from `cs[i]`, the font that
+// shapes it, and its script: "arab" or "deva". The font is that of the
+// first letter. It is `i`, -1 and "" when no such run starts there. The run
+// can hold marks and joiners, and it holds at least one letter.
+function run_end(fs: Fonts, w: i32, cs: char[], i: i32): (i32, i32, string) {
+  let (id, script) = run_font(fs, w, cs, i);
   let k = i;
   let letters = 0;
-  while (id >= 0 && k < cs.len() && in_run(cs[k]) && run_face(fs, w, cs[k], id)) {
-    letters += if (letter(cs[k])) { 1 } else { 0 };
+  while (id >= 0 && k < cs.len() && in_run(cs[k], script) && run_face(fs, w, cs[k], id, script)) {
+    letters += if (letter_script(cs[k]) == script) { 1 } else { 0 };
     k += 1;
   }
-  return if (letters > 0) { (k, id) } else { (i, -1) };
+  return if (letters > 0) { (k, id, script) } else { (i, -1, "") };
 }
 
-// The font of the first letter of the characters from `cs[i]` that can be
-// in a run, or -1.
-function run_font(fs: Fonts, w: i32, cs: char[], i: i32): i32 {
+// The font and the script of the first letter of the characters from
+// `cs[i]` that can be in a run, or -1 and "".
+function run_font(fs: Fonts, w: i32, cs: char[], i: i32): (i32, string) {
   let j = i;
-  while (j < cs.len() && in_run(cs[j])) {
-    if (letter(cs[j])) {
-      return face_of(fs, w, cs[j] as i32);
+  while (j < cs.len() && (in_run(cs[j], "arab") || in_run(cs[j], "deva"))) {
+    let script = letter_script(cs[j]);
+    if (script != "") {
+      return (face_of(fs, w, cs[j] as i32), script);
     }
     j += 1;
   }
-  return -1;
+  return (-1, "");
 }
 
-// An Arabic letter that joins.
-function letter(c: char): boolean {
-  return arabic(c) && unicode.joining_type(c) != JT_T;
+// The script of `c` when it is a letter of a run: "arab" for an Arabic
+// letter that joins, "deva" for a Devanagari character that is not a mark,
+// or "".
+function letter_script(c: char): string {
+  if (arabic(c) && unicode.joining_type(c) != JT_T) {
+    return "arab";
+  }
+  return if (devanagari(c) && !c.is_mark()) { "deva" } else { "" };
 }
 
 // Whether the run of the font `id` holds `c`: a letter of that font, or a
 // mark or a joiner that the font has. A mark takes the font of its letter,
 // as Minikin gives it.
-function run_face(fs: Fonts, w: i32, c: char, id: i32): boolean {
+function run_face(fs: Fonts, w: i32, c: char, id: i32, script: string): boolean {
   if (face_of(fs, w, c as i32) == id) {
     return true;
   }
-  return !letter(c) && font(fs, id).glyph(c as i32) != 0;
+  return letter_script(c) != script && font(fs, id).glyph(c as i32) != 0;
 }
 
 // The font of `c`: the font `prev` of the character before it when `c` is
@@ -428,11 +436,23 @@ const JT_C: i32 = 1;
 
 const JT_T: i32 = 5;
 
-// Whether `c` can be in a run of Arabic letters: an Arabic letter that
-// joins, or a character that joins with no script, such as a mark.
-function in_run(c: char): boolean {
+// Whether `c` can be in a run of the script `script`. An Arabic run holds
+// the Arabic letters that join, and the characters that join with no
+// script, such as a mark. A Devanagari run holds the characters of the
+// Devanagari blocks, the marks, the ZWNJ and the ZWJ.
+function in_run(c: char, script: string): boolean {
+  if (script == "deva") {
+    let n = c as i32;
+    return devanagari(c) || c.is_mark() || n == 0x200C || n == 0x200D;
+  }
   let t = unicode.joining_type(c);
   return t == JT_C || t == JT_T || t != 0 && arabic(c);
+}
+
+// Whether `c` is in the block Devanagari or Devanagari Extended.
+function devanagari(c: char): boolean {
+  let n = c as i32;
+  return n >= 0x900 && n <= 0x97F || n >= 0xA8E0 && n <= 0xA8FF;
 }
 
 // Whether `c` is in a block of the Arabic script.
@@ -441,26 +461,26 @@ function arabic(c: char): boolean {
   return n >= 0x600 && n <= 0x6FF || n >= 0x750 && n <= 0x77F || n >= 0x870 && n <= 0x8FF || n >= 0xFB50 && n <= 0xFDFF || n >= 0xFE70 && n <= 0xFEFF;
 }
 
-// `p` with the glyphs of the Arabic letters `cs[i..end]`. They are in
-// visual order, so they are shaped from the last one to the first, and
-// their glyphs are placed from the last one to the first, at the positions
-// that std/shape gives.
-function shaped_run(own p: Pens, f: truetype.Font, id: i32, px: i32, cs: char[], i: i32, end: i32): Pens {
+// `p` with the glyphs of the letters `cs[i..end]` of the script `script`,
+// at the positions that std/shape gives. The characters are in visual
+// order. An Arabic run goes from right to left, so it is shaped from the
+// last character to the first, and its glyphs are placed from the last one
+// to the first.
+function shaped_run(own p: Pens, f: truetype.Font, id: i32, px: i32, cs: char[], i: i32, end: i32, script: string): Pens {
+  let rtl = script == "arab";
   let logical = "";
-  let k = end - 1;
-  while (k >= i) {
-    logical += cs[k].to_string();
-    k -= 1;
+  for k in 0..end - i {
+    logical += cs[if (rtl) { end - 1 - k } else { i + k }].to_string();
   }
-  let run = shape.shape(f, logical, "arab");
+  let run = shape.shape(f, logical, script);
   let scale = px as f64 / (f.units_per_em as f64);
   let out = p;
-  let j = run.glyphs.len() - 1;
-  while (j >= 0) {
+  let n = run.glyphs.len();
+  for k in 0..n {
+    let j = if (rtl) { n - 1 - k } else { k };
     let x = out.pen + run.pos.dx[j] as f64 * scale;
     let next = out.pen + run.pos.advances[j] as f64 * scale;
     out = pen_glyph(out, id, run.glyphs[j], x, -(run.pos.dy[j] as f64) * scale, next);
-    j -= 1;
   }
   return out;
 }
