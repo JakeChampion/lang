@@ -16724,6 +16724,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			if rtt, handled := c.compositeOpOverload(n, lt, rt, s); handled {
 				return rtt
 			}
+			if n.Op == "+" && lt != nil && rt != nil && (isStringLike(lt) || isStringLike(rt)) {
+				c.errfCode(n.P, "E009", "operator %q requires matching numeric or string operands, got %s and %s", n.Op, lt, rt)
+				return nil
+			}
 			if isFloat(lt) || isFloat(rt) {
 				c.requireFloat(n.P, lt, n.Op)
 				c.requireFloat(n.P, rt, n.Op)

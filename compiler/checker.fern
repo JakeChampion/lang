@@ -15613,6 +15613,8 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
       if (!oks && !oki2 && !okf2 && !okov2) {
         if (both_int) {
           out = out.append(mixed_int_diag(b.op, pl, pr, b.line, b.col));
+        } else if (typeinfo.is_text(pl) || typeinfo.is_text(pr)) {
+          out = out.append(dg_at("E009", "operator \"+\" requires matching numeric or string operands, got " + type_label(pl) + " and " + type_label(pr), b.line, b.col));
         } else {
           out = util.append_diags(out, numeric_operand_diags(b.op, pl, pr, b.line, b.col));
         }
