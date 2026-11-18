@@ -154,7 +154,7 @@ func TestShippedFernFetch(t *testing.T) {
 	if out, code := e.run("-run", "main.fern"); code == 0 || !strings.Contains(out, "is not in the package store — run `fern -fetch") {
 		t.Fatalf("before fetching: exit %d\n%s", code, out)
 	}
-	if out, code := e.run("-fetch"); code != 0 || out != "fetching helper ("+url+")\nfetch: 1 downloaded, 2 package(s) checked\n" {
+	if out, code := e.run("-fetch"); code != 0 || out != "fern: -fetch: fetching helper ("+url+")\nfern: -fetch: 1 downloaded, 2 package(s) checked\n" {
 		t.Fatalf("-fetch: exit %d\n%s", code, out)
 	}
 	store := filepath.Join(e.cache, "pkgs", strings.TrimPrefix(hash, "sha256:"))
@@ -164,7 +164,7 @@ func TestShippedFernFetch(t *testing.T) {
 	if out, code := e.run("-run", "main.fern"); code != 9 {
 		t.Fatalf("after fetching: exit %d\n%s", code, out)
 	}
-	if out, code := e.run("-fetch", e.dir); code != 0 || out != "fetch: 0 downloaded, 2 package(s) checked\n" {
+	if out, code := e.run("-fetch", e.dir); code != 0 || out != "fern: -fetch: 0 downloaded, 2 package(s) checked\n" {
 		t.Errorf("second -fetch: exit %d\n%s", code, out)
 	}
 }

@@ -348,7 +348,7 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, code, stderr := runLSPRaw(t, s.selfHost(), []byte(c.in))
-			if code != 2 || !strings.Contains(stderr, "fern -lsp:") {
+			if code != 2 || !strings.Contains(stderr, "fern: -lsp: ") {
 				t.Errorf("exit %d, stderr %q; want exit 2 naming the framing failure", code, stderr)
 			}
 		})

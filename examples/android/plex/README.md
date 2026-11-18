@@ -82,6 +82,15 @@ work while the screen is off. A video pauses when the app goes away, unless Andr
 picture-in-picture window. From Android 12, a video that plays goes into
 that window when the user goes home.
 
+Back on the player of music shows the screen before, and the music plays
+on. A bar above the tabs shows the track, with a button that pauses and
+plays it. A tap on the bar opens the player again. Back on a video stops
+it.
+
+Each play asks Android for the audio focus, so another app that plays
+stops. A call or another app that plays pauses the app. When the focus
+comes back, the play goes on, unless the person paused it.
+
 Gestures on the video:
 
 - Two taps at the left of the video seek back 10 seconds, and two taps at
@@ -140,6 +149,11 @@ makes one Matroska file with H.264 video and AAC sound. The menu shows the progr
 stops the download. A done download shows in the last row of the home
 screen and plays from the phone with no server. Remove download deletes
 the file.
+
+Download all in the menu of a show, a season, an artist or an album
+downloads each of its episodes or tracks. Downloads in the settings
+opens the list of the downloads, with the state of each one. A tap on a
+done download plays it, and its button removes it.
 
 TalkBack reads each screen. The app gives the screen reader each button
 by its text and each poster by its title. A double tap presses the
