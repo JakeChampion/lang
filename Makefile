@@ -144,6 +144,7 @@ ci-selftest:
 	@command -v node >/dev/null 2>&1 || { \
 		echo "node is not on PATH: the lint lane runs this on the runner image" >&2; exit 1; }
 	node scripts/ci-changes-selftest.mjs
+	node scripts/ci-priority-gate-selftest.mjs
 	node scripts/ci-run-affected-selftest.mjs
 	node scripts/main-red-selftest.mjs
 	node scripts/perf-gate-selftest.mjs

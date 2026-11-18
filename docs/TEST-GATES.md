@@ -164,6 +164,33 @@ do not reach it.
 - **State.** The retry list and the removed heads are one JSON blob at
   `refs/merge-queue/state`.
 
+### The `ci-priority` label
+
+Use the `ci-priority` label on a pull request that repairs main. While main is
+red, the suite of each other pull request fails, so the repair must go first.
+
+- **First in the queue.** The queue takes a pull request with the label before
+  the retry list and before the other pull requests. It does not wait for the
+  `CI verdict` of that pull request. The suite of the batch tests main and
+  the repair together, so one suite run is sufficient.
+- **Alone.** A priority batch holds only pull requests with the label.
+- **The batch in flight.** The queue cancels a batch in flight that has no
+  priority pull request. That batch goes back to the front of the retry list.
+- **The pull request suites.** When the priority batch starts, the queue
+  cancels each pull request suite that is under way and starts it again. The
+  queue cancels the runs of the priority pull request itself, and does not
+  start them again. The first job of each pull request suite (`Wait for a
+  priority batch` in `ci-suite.yml`) waits while a priority batch is in
+  flight. This job is in the lock of the lane, so at most two runners wait.
+  The wait stops after 100 minutes, and an API error stops it at once.
+- **Not first.** A draft and a pull request with `merge-queue-hold` do not
+  go first. When the queue removes a priority pull request, a new commit puts
+  it first again. A person who adds the `merge-queue` label also does that.
+
+A suite that waits, or that the queue starts again, tests the merge commit of
+its push. That commit does not contain the repair. To test a pull request on
+the repaired main, merge main into it after the repair lands.
+
 The queue protects main only if nothing else merges. That part is a repository
 setting: a ruleset on `main` that requires the `CI verdict` check, with
 "Require branches to be up to date". The commit that the queue pushes has
