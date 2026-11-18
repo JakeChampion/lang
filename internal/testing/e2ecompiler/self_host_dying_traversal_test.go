@@ -68,7 +68,7 @@ func TestSelfHostDyingTraversalConsumes(t *testing.T) {
 	if err := os.WriteFile(src, []byte(dyingTraversalProg), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	release := regexp.MustCompile(`__sem_release_|__sem_drop_|__fern_box_dec|__fern_arr_dec`)
+	release := regexp.MustCompile(`__sem_release_|__sem_drop_|__fern_box_dec|__fern_box_free|__fern_arr_dec`)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			asm, err := os.ReadFile(cli.emit(t, src, target))

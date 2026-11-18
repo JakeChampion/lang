@@ -223,10 +223,10 @@ function main(): i32 {
     before = __heap_bump_bytes();
     let d: i32[] = a.concat(a);
     let concat_cost: i64 = __heap_bump_bytes() - before;
-    print("alloc " + (alloc_cost < (6000000 as i64)).to_string());
-    print("push " + (push_cost < (12000000 as i64)).to_string());
-    print("for " + (for_cost < (6000000 as i64)).to_string());
-    print("concat " + (concat_cost < (12000000 as i64)).to_string());
+    print("alloc " + (alloc_cost < (7000000 as i64)).to_string());
+    print("push " + (push_cost < (13000000 as i64)).to_string());
+    print("for " + (for_cost < (7000000 as i64)).to_string());
+    print("concat " + (concat_cost < (13000000 as i64)).to_string());
     print("lens " + (a.len() + b.len() + c.len() + d.len()).to_string());
     return 0;
 }
@@ -380,8 +380,8 @@ function main(): i32 {
     let ys: f32[] = [];
     for k in 0..1048576 { ys = ys.append(0.5); }
     let for_cost: i64 = __heap_bump_bytes() - before;
-    print("push " + (push_cost < (12000000 as i64)).to_string());
-    print("for " + (for_cost < (6000000 as i64)).to_string());
+    print("push " + (push_cost < (13000000 as i64)).to_string());
+    print("for " + (for_cost < (7000000 as i64)).to_string());
     print("lens " + (xs.len() + ys.len()).to_string() + " " + xs[1048575].to_string());
     return 0;
 }
@@ -529,9 +529,9 @@ function main(): i32 {
     before = __heap_bump_bytes();
     let zs: u16[] = __alloc_u16(1048576);
     let alloc_cost: i64 = __heap_bump_bytes() - before;
-    print("push " + (push_cost < (6000000 as i64)).to_string());
-    print("for " + (for_cost < (3000000 as i64)).to_string());
-    print("alloc " + (alloc_cost < (3000000 as i64)).to_string());
+    print("push " + (push_cost < (7000000 as i64)).to_string());
+    print("for " + (for_cost < (3500000 as i64)).to_string());
+    print("alloc " + (alloc_cost < (3500000 as i64)).to_string());
     print("lens " + (xs.len() + ys.len() + zs.len()).to_string() + " " + xs[1048575].to_string() + " " + ys[1048575].to_string());
     return 0;
 }

@@ -15,8 +15,8 @@ var auditStdPathCases = []struct {
 	exit int
 }{
 	{"join", `function main(): i32 { if (join(["a", "b", "c"]) == "a/b/c") { return 7; } return 1; }`, 7},
-	{"file-name", `function main(): i32 { if (file_name("/x/y/z.txt") == "z.txt") { return 8; } return 1; }`, 8},
-	{"extension", `function main(): i32 { if (extension("z.txt") == "txt") { return 9; } return 1; }`, 9},
+	{"file-name", `function main(): i32 { let Some(name) = file_name("/x/y/z.txt") else { return 1; }; if (name == "z.txt") { return 8; } return 2; }`, 8},
+	{"extension", `function main(): i32 { let Some(ext) = extension("z.txt") else { return 1; }; if (ext == "txt") { return 9; } return 2; }`, 9},
 }
 
 func stdPathSource(t *testing.T, mainBody string) []byte {

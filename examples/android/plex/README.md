@@ -142,6 +142,14 @@ On Android TV, a video that stops part of the way goes on the Watch Next
 row of the home screen. The row shows its poster and its place. The row opens the
 video in the app. A video that plays to its end goes off the row.
 
+The app also has a channel row of its own on the home screen of Android
+TV. It shows the items that came to the server last, from the rows of the
+home screen that the server names "recent". A tap on one opens it in the
+app. When the person removes the channel, the app adds it again.
+
+The Search key of a remote opens the search with the keyboard. The
+microphone of the keyboard takes the words by voice.
+
 Download in the menu of a poster gives the file of the item to the
 download manager of Android. A file that the phone does not play as it is
 downloads as a transcode at the quality of the settings. The server
@@ -149,6 +157,10 @@ makes one Matroska file with H.264 video and AAC sound. The menu shows the progr
 stops the download. A done download shows in the last row of the home
 screen and plays from the phone with no server. Remove download deletes
 the file.
+
+When no server hears the place where a play stopped, or that an item
+was watched, the app keeps it in a file. The server hears it when it
+answers again.
 
 Download all in the menu of a show, a season, an artist or an album
 downloads each of its episodes or tracks. Downloads in the settings

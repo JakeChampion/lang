@@ -493,6 +493,7 @@ function device(ctx: usize, ps: Players, gpu: Cell[Option[Gpu]], media: Media): 
     in_pip: (): boolean => android.in_pip(ctx),
     watch_next: (key: string, title: string, kind: i32, at: i64, length: i64, poster: string): void => watch_next(ctx, key, title, kind, at, length, poster),
     watch_next_drop: (key: string): void => watchnext.drop(ctx, key),
+    channel: (cards: control.Card[]): void => fill_channel(ctx, android.data_dir(ctx) + "/channel", cards),
     access: (items: android.AccessItem[]): void => access.publish(ctx, items),
     download: (r: plex.Request, name: string, title: string): i64 => download.start(ctx, r.url, r.headers, name, title),
     download_progress: (id: i64): download.Progress => download.progress(ctx, id),
@@ -568,6 +569,49 @@ function pause(ctx: usize, p: player.Player, has: boolean): void {
 function watch_next(ctx: usize, key: string, title: string, kind: i32, at: i64, length: i64, poster: string): void {
   let link = watchnext.app_link(ctx, "play", key);
   let kept = watchnext.keep(ctx, watchnext.Program { id: key, title: title, kind: kind, position_ms: at, duration_ms: length, poster: poster, link: link });
+}
+
+// Gives the channel row of the app on Android TV the cards. The file `path`
+// keeps the ID of the channel, so the app adds the channel one time. When
+// the person removed the channel, the app adds it again.
+function fill_channel(ctx: usize, path: string, cards: control.Card[]): void {
+  if (!watchnext.home_rows(ctx)) {
+    return;
+  }
+  let programs = cards.map((c: control.Card): watchnext.Program => watchnext.Program { id: c.key, title: c.title, kind: program_kind(c.kind), position_ms: 0i64, duration_ms: 0i64, poster: c.poster, link: watchnext.app_link(ctx, "play", c.key) });
+  let kept = control.num64(read_text(path).trim());
+  if (kept > 0i64 && watchnext.show_channel(ctx, kept, programs)) {
+    return;
+  }
+  let made = watchnext.add_channel(ctx, "Fern for Plex", watchnext.app_link(ctx, "from", "channel"));
+  if (made < 0i64) {
+    return;
+  }
+  write_text(path, made.to_string());
+  let shown = watchnext.show_channel(ctx, made, programs);
+}
+
+// The kind of a program of the channel for the kind of a Plex item.
+function program_kind(kind: string): i32 {
+  if (kind == "show") {
+    return watchnext.SERIES;
+  }
+  if (kind == "season") {
+    return watchnext.SEASON;
+  }
+  if (kind == "episode") {
+    return watchnext.EPISODE;
+  }
+  if (kind == "track") {
+    return watchnext.TRACK;
+  }
+  if (kind == "album") {
+    return watchnext.ALBUM;
+  }
+  if (kind == "artist") {
+    return watchnext.ARTIST;
+  }
+  return watchnext.MOVIE;
 }
 
 // Gives Android the shape of the video for a picture-in-picture window.

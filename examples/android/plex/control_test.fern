@@ -322,6 +322,7 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     in_pip: (): boolean => log.pip.get(),
     watch_next: (key: string, title: string, kind: i32, at: i64, length: i64, poster: string): void => note(log.calls, "watch next " + key + " " + title + " kind=" + kind.to_string() + " at=" + at.to_string() + " poster=" + poster),
     watch_next_drop: (key: string): void => note(log.calls, "watch next drop " + key),
+    channel: (cards: control.Card[]): void => note(log.calls, "channel " + cards.map((c: control.Card): string => c.key + ":" + c.kind + ":" + c.title + ":" + c.poster).join(" ")),
     access: (items: android.AccessItem[]): void => log.access.set(items),
     download: (r: plex.Request, name: string, title: string): i64 => {
       note(log.calls, "download " + r.url + " " + name + " " + title);
@@ -884,6 +885,35 @@ function video_drawn(log: Log, f: draw.Frame): control.App {
   return settle(at(ready, log, 350i64, f, android.Vsync(0i64)), log, 350i64, f);
 }
 
+// The channel row of Android TV gets the items of the rows that the server
+// names "recent", with their posters, and not the items to go on with.
+function test_channel_row(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let sent = log.calls.get().filter((c: string): boolean => c.starts_with("channel "));
+  if (sent.len() != 1 || !sent[0].starts_with("channel 501:movie:Inception:https://up.example:32400/photo/:/transcode?") || !sent[0].contains(" 502:movie:Amélie:") || sent[0].contains("77:")) {
+    return test.fail("the channel did not get the recent items: " + sent.join(" | "));
+  }
+  return test.pass();
+}
+
+// The Search key of a remote opens the search with the keyboard, so the
+// microphone of the keyboard can take the words. On the player it does
+// nothing.
+function test_search_key(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let searching = settle(at(at(home, log, 1000i64, f, android.Key(84, 0)), log, 1000i64, f, android.Key(84, 1)), log, 1000i64, f);
+  if (searching.screen != ui.SEARCH || !searching.typing || !has_call(log, "field show")) {
+    return test.fail("the Search key did not open the search with the keyboard: " + log.calls.get().join(" | "));
+  }
+  return test.pass();
+}
+
 // The play takes the audio focus, so another app stops. When a call or
 // another app takes it, the play pauses, and it goes on when the focus
 // comes back. A play that the person paused stays paused. While Android
@@ -1358,7 +1388,9 @@ function hold(own s: control.App, log: Log, now: i64, f: draw.Frame, act: string
 // gives Android the file of its part, and the app keeps the list in its
 // files. The menu shows the progress, and a done download shows in a row
 // of the home screen. After a new start with no server, the row is still
-// there, and Play reads the file. Remove download deletes it. An item that
+// there, and Play reads the file. The place where that play stopped waits
+// in a file until a server answers, and then the server hears it. Remove
+// download deletes the download. An item that
 // the phone does not play as it is downloads as one Matroska file that the
 // server transcodes.
 function test_downloads(): test.TestOutcome {
@@ -1408,9 +1440,12 @@ function test_downloads(): test.TestOutcome {
     return test.fail("Play did not read the file: " + log.calls.get().join(" | "));
   }
   let ready = settle(at(played, log, 1800i64, f, android.Posted(19, 0 as usize)), log, 1800i64, f);
-  let stopped = at(at(ready, log, 2000i64, f, android.Key(4, 0)), log, 2000i64, f, android.Key(4, 1));
+  let stopped = settle(at(at(ready, log, 2000i64, f, android.Key(4, 0)), log, 2000i64, f, android.Key(4, 1)), log, 2000i64, f);
   if (!file_of(log, "/data/downloads").starts_with("42\t501\t501.mp4\t8\t120000")) {
     return test.fail("the place of the download: " + file_of(log, "/data/downloads"));
+  }
+  if (file_of(log, "/data/pending") != "501\t0\t120000\t8880000\n") {
+    return test.fail("the app did not keep the stop that no server heard: " + file_of(log, "/data/pending"));
   }
   let kept = poster_of(stopped, "501");
   let removed = tap(hold(stopped, log, 3000i64, f, kept), log, 3700i64, f, "menu:download");
@@ -1421,6 +1456,10 @@ function test_downloads(): test.TestOutcome {
   let online = shown(log, f, "https://up.example:32400", "srv");
   if (online.offline) {
     return test.fail("a reply of the server did not end the offline state");
+  }
+  let heard = log.urls.get().filter((u: string): boolean => u.starts_with("GET https://up.example:32400/:/timeline?") && u.contains("ratingKey=501") && u.contains("state=stopped") && u.contains("&time=120000&duration=8880000"));
+  if (heard.len() != 1 || file_of(log, "/data/pending") != "\n") {
+    return test.fail("the server did not hear the stop of the offline play: " + file_of(log, "/data/pending"));
   }
   let other = poster_of(online, "502");
   let converted = tap(hold(online, log, 4000i64, f, other), log, 4700i64, f, "menu:download");
@@ -1952,6 +1991,8 @@ function main(): i32 {
   r = r.it("the texts are in the language of the person", test_texts_in_the_language_of_the_person);
   r = r.it("Play on an artist plays all of its tracks", test_artist_plays_all);
   r = r.it("the play takes the audio focus and gives way to a call", test_audio_focus);
+  r = r.it("the channel row of Android TV gets the recent items", test_channel_row);
+  r = r.it("the Search key opens the search with the keyboard", test_search_key);
   r = r.it("Back keeps the music, with a bar that controls it", test_back_keeps_music);
   r = r.it("Download all of a season, and the screen of the downloads", test_download_all_and_the_screen);
   r = r.it("an album plays in order, repeats, shuffles and sleeps", test_album_queue_repeat_and_sleep);
