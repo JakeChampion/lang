@@ -34,7 +34,7 @@ This module does not trim encoder delay, apply replay gain, resample, or perform
 
 ```fern
 <<*>>=
-// This module decodes audio packets through the MediaCodec of Android.
+// This module decodes audio packets through MediaCodec on Android.
 import "std/android/audio/capabilities";
 import "std/android/video/capabilities" as policy;
 import "std/android/video" as shared;
