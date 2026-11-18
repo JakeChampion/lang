@@ -1899,10 +1899,13 @@ function (s: Scope) has_cmp_method(verb: string, t: typeinfo.Type): boolean {
   } else if (receiver_key(t) != "") {
     found = s.lookup_method(verb, receiver_key(t));
   }
-  if let Some(m) = found {
-    return impl_of_holds(s, t, m.impl_trait);
+  if (found.is_none()) {
+    return false;
   }
-  return false;
+  if (verb == "eq") {
+    return s.trait_holds(t, "Eq");
+  }
+  return s.trait_holds(t, "Ord");
 }
 
 function (s: Scope) binop_overload_ret(op: string, lt: typeinfo.Type): typeinfo.Type {
@@ -1924,11 +1927,36 @@ function (s: Scope) overload_ret(method: string, t: typeinfo.Type): typeinfo.Typ
   if (recv == "") {
     return t_unknown("operand is not a nominal type");
   }
+  if (!s.trait_holds(t, ast.operator_trait(method))) {
+    return t_unknown("no impl of the operator trait");
+  }
   let Some(ms) = s.lookup_method(method, recv) else {
     return t_unknown("no such method");
   };
   let no_type_args: string[] = [];
   return generic_method_ret(ms, receiver_binding(ms, no_type_args, t, s), s);
+}
+
+// trait_holds says whether t implements the trait named tr, by an impl whose
+// bounds t meets or by a derive.
+function (s: Scope) trait_holds(t: typeinfo.Type, tr: string): boolean {
+  let tn = impl_type_name(t);
+  if (tn.len() > 0) {
+    for imp in s.impls {
+      if (imp.trait_name == tr && impl_receiver(imp) == tn) {
+        return impl_bounds_hold(s, imp, t);
+      }
+    }
+  }
+  let recv = cmp_method_receiver(t);
+  return recv.len() > 0 && derives_trait(s, recv, tr);
+}
+
+// operator_trait_hint is the E009 advice for an operator on a nominal type
+// that does not implement the trait of the operator.
+function operator_trait_hint(method: string, t: typeinfo.Type): string {
+  let label = util.demangle(type_label(t));
+  return "add `impl ops." + ast.operator_trait(method) + " for " + label + "`, which requires `import \"core/ops\";`";
 }
 
 function downcast_operand_ok(t: typeinfo.Type): boolean {
@@ -2558,7 +2586,7 @@ function bind_struct_destr_fields(out: Scope, v: ast.StmtVar, s: Scope): Scope {
   for i in 0..names.len() {
     let ft = t_unknown("binding");
     if (i < fields.len()) {
-      ft = check_expr(ast.ExprFieldAccess { obj: v.init, field: fields[i], line: v.line, col: v.col, ty: "", const_read: false }, s);
+      ft = check_expr(ast.ExprFieldAccess { obj: v.init, field: fields[i], line: v.line, col: v.col, ty: "", const_read: false, display: false }, s);
     }
     out = out.bind(names[i], ft);
   }
@@ -3349,18 +3377,6 @@ function impl_parts(t: typeinfo.Type): typeinfo.Type[] {
       return [];
     }
   }
-}
-
-// impl_of_holds says whether the impl of trait_name that t takes its method
-// from has its bounds met by the parts of t.
-function impl_of_holds(s: Scope, t: typeinfo.Type, trait_name: string): boolean {
-  let tn = impl_type_name(t);
-  for imp in s.impls {
-    if (impl_receiver(imp) == tn && imp.trait_name == trait_name) {
-      return impl_bounds_hold(s, imp, t);
-    }
-  }
-  return true;
 }
 
 function impl_receiver(imp: parser.ImplInfo): string {
@@ -14760,7 +14776,7 @@ function display_resolves(t: typeinfo.Type, s: Scope): boolean {
   if (tn.len() == 0) {
     return false;
   }
-  return s.has_method("to_string", tn) || conforms_by_impl_or_derive(s, tn, "Display") || !is_unknown(builtin_method_sig(tn, "to_string"));
+  return !is_unknown(builtin_method_sig(tn, "to_string")) || s.trait_holds(t, "Display");
 }
 
 function display_unjudged(t: typeinfo.Type): boolean {
@@ -14813,8 +14829,16 @@ function display_rewrite(c: ast.ExprCall, nargs: ast.Expr[], s: Scope): ast.Expr
   }
   let ln = expr_line(c.args[0]);
   let cl = expr_col(c.args[0]);
-  let callee: ast.Expr = ast.ExprFieldAccess { obj: nargs[0], field: "to_string", line: ln, col: cl, ty: "", const_read: false };
+  let callee: ast.Expr = ast.ExprFieldAccess { obj: nargs[0], field: "to_string", line: ln, col: cl, ty: "", const_read: false, display: true };
   return [ast.ExprCall { callee: callee, args: [], line: ln, col: cl, type_args: [], ty: "string" }];
+}
+
+// display_advice tells how t can come to implement `Display`.
+function display_advice(t: typeinfo.Type): string {
+  if (cmp_method_receiver(t) == "" || cmp_parts(t).is_some()) {
+    return cmp_hint(t, "cmp.Display");
+  }
+  return util.derive_hint(display_dispatch_name(t), "cmp.Display", "cmp.Display");
 }
 
 function display_arg_diags(c: ast.ExprCall, s: Scope): util.Diag[] {
@@ -14826,13 +14850,8 @@ function display_arg_diags(c: ast.ExprCall, s: Scope): util.Diag[] {
   if (display_unjudged(at) || display_resolves(at, s)) {
     return [];
   }
-  let label = type_label(at);
-  let advice = "give " + label + " a `to_string(): string` method, or " + util.derive_hint(display_dispatch_name(at), "cmp.Display", "cmp.Display");
-  if (cmp_method_receiver(at) == "" || cmp_parts(at).is_some()) {
-    advice = cmp_hint(at, "cmp.Display");
-  }
   return [dg_at(
-    "E038", "argument 1 to \"" + name + "\": " + label + " does not implement `Display` (no `to_string(): string` in scope) — " + advice,
+    "E038", "argument 1 to \"" + name + "\": " + type_label(at) + " does not implement `Display` — " + display_advice(at),
     expr_line(c.args[0]), expr_col(c.args[0]),
   )];
 }
@@ -15192,6 +15211,12 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
     },
     ast.ExprFieldAccess(mfa) => {
       let recv = check_expr(mfa.obj, s);
+      if (mfa.display && !display_unjudged(recv) && !display_resolves(recv, s)) {
+        return out.append(dg_at(
+          "E038", "an interpolated value of type " + type_label(recv) + " does not implement `Display` — " + display_advice(recv),
+          expr_line(mfa.obj), expr_col(mfa.obj),
+        ));
+      }
       match (recv) {
         typeinfo.TypeTuple(tup) => {
           if (tuple_element_field(recv, mfa.field)) {
@@ -15555,6 +15580,11 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
   if (typeinfo.is_lanes(blt) || typeinfo.is_lanes(brt)) {
     return (util.append_diags(out, lanes_operator_diags(b, blt, brt)), binary_result_type(b, blt, brt, s));
   }
+  let method = ast.operator_method(b.op);
+  if (method.len() > 0 && cmp_method_receiver(blt).len() > 0 && type_eq(blt, brt) && is_unknown(s.binop_overload_ret(b.op, blt))) {
+    let msg = "operator \"" + b.op + "\" is not defined for " + util.demangle(type_label(blt)) + " — " + operator_trait_hint(method, blt);
+    return (out.append(dg_at("E009", msg, b.line, b.col)), blt);
+  }
   if (b.op == "&&" || b.op == "||") {
     if (!is_unknown(blt) && !type_eq(blt, typeinfo.t_bool())) {
       out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires boolean, got " + type_label(blt), b.line, b.col));
@@ -15694,6 +15724,9 @@ function unary_operator_diags(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope, out
   }
   out = util.append_diags(out, tvar_neg_diags(u, ot, s));
   out = bitwise_not_diags(u, ot, out);
+  if (u.op == "-" && cmp_method_receiver(ot).len() > 0 && is_unknown(s.unop_overload_ret(u.op, ot))) {
+    return out.append(dg_at("E009", "unary `-` is not defined for " + util.demangle(type_label(ot)) + " — " + operator_trait_hint("neg", ot), u.line, u.col));
+  }
   if (u.op == "-") {
     let nok = !is_unknown(s.unop_overload_ret(u.op, ot));
     if (!operand_open(ot) && !is_integer(ot) && !is_float(ot) && !typeinfo.is_lanes(ot) && !nok) {
@@ -17348,14 +17381,14 @@ function iterator_lowering(fr: ast.StmtFor, s: Scope): Option[ast.Stmt] {
   let col = expr_col(fr.iter);
   let subject = fr.iter;
   if (sub.via_iter) {
-    subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: fr.iter, field: "iter", line: line, col: col, ty: "", const_read: false }, args: [], line: line, col: col, type_args: [], ty: "" };
+    subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: fr.iter, field: "iter", line: line, col: col, ty: "", const_read: false, display: false }, args: [], line: line, col: col, type_args: [], ty: "" };
   }
   return Some(parser.iterator_loop(fr, subject, col));
 }
 
 function probe_method(t: typeinfo.Type, name: string, s: Scope): typeinfo.Type {
   let recv: ast.Expr = ast.ExprIdent { name: "__for_iter", line: 0, col: 0, ty: "", builtin: false };
-  let call: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: name, line: 0, col: 0, ty: "", const_read: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
+  let call: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: name, line: 0, col: 0, ty: "", const_read: false, display: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
   return check_expr(call, s.bind("__for_iter", t));
 }
 
@@ -36464,7 +36497,7 @@ function qualified_variant_ref(id: ast.ExprIdent, want: typeinfo.Type, s: Scope)
   if (member.len() == 0) {
     return ast.ExprIdent { ...id };
   }
-  return ast.ExprFieldAccess { obj: ast.ExprIdent { ...id, name: du.name, ty: "" }, field: member, line: id.line, col: id.col, ty: "", const_read: false };
+  return ast.ExprFieldAccess { obj: ast.ExprIdent { ...id, name: du.name, ty: "" }, field: member, line: id.line, col: id.col, ty: "", const_read: false, display: false };
 }
 
 function qualify_call(c: ast.ExprCall, want: typeinfo.Type, s: Scope, coll: util.NameIndex): ast.Expr {
@@ -38944,7 +38977,7 @@ function lit_float_read(e: ast.Expr, want: parser.TypeRef): ast.Expr {
   if (want.is_tuple) {
     let elems: ast.Expr[] = [];
     for i in 0..want.args.len() {
-      let part: ast.Expr = ast.ExprFieldAccess { obj: e, field: util.i32_to_string(i), line: expr_line(e), col: expr_col(e), ty: "", const_read: false };
+      let part: ast.Expr = ast.ExprFieldAccess { obj: e, field: util.i32_to_string(i), line: expr_line(e), col: expr_col(e), ty: "", const_read: false, display: false };
       elems = elems.append(lit_float_read(part, want.args[i]));
     }
     return ast.ExprTuple { elements: elems, line: expr_line(e), col: expr_col(e) };

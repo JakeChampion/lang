@@ -70,9 +70,11 @@ var interpCallFaultCases = []struct {
     return 3;
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
-	{"interp-user-tostring-not-credited", interpCallPrelude + `struct Holder { name: string, tag: string }
+	{"interp-user-tostring-not-credited", interpCallPrelude + `import "core/cmp";
+struct Holder { name: string, tag: string }
 function mk(pre: string): Holder { return Holder { name: w(pre), tag: w(pre + "t") }; }
 function (h: Holder) to_string(): string { return h.name; }
+impl cmp.Display for Holder {}
 function round(pre: string): i32 {
     let h: Holder = mk(pre);
     let s: string = h.to_string();

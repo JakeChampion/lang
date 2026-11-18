@@ -4,6 +4,18 @@
 #include <stddef.h>
 #include <string.h>
 
+#ifdef FERN_AUDIO_CODEC_MOCK
+#define MOCK_MIME "audio/mp4a-latm"
+#define MOCK_FORMAT "createAudioFormat"
+#define MOCK_FIRST 48000
+#define MOCK_SECOND 2
+#else
+#define MOCK_MIME "video/avc"
+#define MOCK_FORMAT "createVideoFormat"
+#define MOCK_FIRST 16
+#define MOCK_SECOND 8
+#endif
+
 typedef struct { int kind, id; const char *text; } Object;
 typedef union { void *l; int32_t i; int64_t j; } Value;
 enum { CLASS, LIST, FORMAT, INFO, CAPS, PROFILE, INFOS, TYPES, PROFILES, COLORS, STRING, EXCEPTION };
@@ -12,14 +24,14 @@ static Object list = {LIST,0,0}, format = {FORMAT,0,0}, exception = {EXCEPTION,0
 static Object infos_array = {INFOS,0,0}, infos[6], caps[6], types[6];
 static Object profiles_array = {PROFILES,0,0}, profile = {PROFILE,0,0}, colors = {COLORS,0,0};
 static const char *names[] = {"c2.vendor.avc.decoder", "c2.android.avc.decoder", "c2.vendor.avc.encoder", "c2.android.avc.encoder", "alias.avc.decoder", "other.hevc.decoder"};
-static Object name_objects[6], avc = {STRING,0,"video/avc"}, hevc = {STRING,0,"video/hevc"};
+static Object name_objects[6], avc = {STRING,0,MOCK_MIME}, hevc = {STRING,0,"video/hevc"};
 static struct { Object obj; char bytes[513]; } strings[512];
 static int string_count, frame_count, saved_strings[16], pending, mode, hardware_queries;
 static void *table[235];
 static void **env_table = table;
 
 enum { CONSTRUCTOR=1, GET_INFOS, GET_TYPES, GET_NAME, GET_CAPABILITIES, IS_ENCODER, IS_SUPPORTED, IS_HARDWARE, IS_SOFTWARE, IS_VENDOR, IS_ALIAS, CREATE_FORMAT, SET_INTEGER };
-static const char *method_names[] = {"", "<init>", "getCodecInfos", "getSupportedTypes", "getName", "getCapabilitiesForType", "isEncoder", "isFormatSupported", "isHardwareAccelerated", "isSoftwareOnly", "isVendor", "isAlias", "createVideoFormat", "setInteger"};
+static const char *method_names[] = {"", "<init>", "getCodecInfos", "getSupportedTypes", "getName", "getCapabilitiesForType", "isEncoder", "isFormatSupported", "isHardwareAccelerated", "isSoftwareOnly", "isVendor", "isAlias", MOCK_FORMAT, "setInteger"};
 static const char *signatures[] = {"", "(I)V", "()[Landroid/media/MediaCodecInfo;", "()[Ljava/lang/String;", "()Ljava/lang/String;", "(Ljava/lang/String;)Landroid/media/MediaCodecInfo$CodecCapabilities;", "()Z", "(Landroid/media/MediaFormat;)Z", "()Z", "()Z", "()Z", "()Z", "(Ljava/lang/String;II)Landroid/media/MediaFormat;", "(Ljava/lang/String;I)V"};
 
 void mock_jni_mode(int value) { assert(frame_count == 0); mode = value; pending = value == 6; hardware_queries = string_count = 0; }
@@ -50,7 +62,7 @@ static Object *object_call(void *env, Object *obj, void *method, Value *args) {
     case GET_INFOS: assert(obj == &list); return &infos_array;
     case GET_TYPES: assert(obj->kind == INFO); return types + obj->id;
     case GET_NAME: assert(obj->kind == INFO); return name_objects + obj->id;
-    case GET_CAPABILITIES: assert(obj->kind == INFO && !strcmp(((Object *)args[0].l)->text,"video/avc")); return caps + obj->id;
+    case GET_CAPABILITIES: assert(obj->kind == INFO && !strcmp(((Object *)args[0].l)->text,MOCK_MIME)); return caps + obj->id;
     default: assert(0); return NULL;
     }
 }
@@ -71,12 +83,13 @@ static uint8_t boolean_call(void *env, Object *obj, void *method, Value *args) {
 }
 static Object *static_object_call(void *env, Object *cls, void *method, Value *args) {
     (void)env; assert(cls == classes + 1 && (uintptr_t)method == CREATE_FORMAT);
-    assert(!strcmp(((Object *)args[0].l)->text,"video/avc") && args[1].i == 16 && args[2].i == 8); return &format;
+    assert(!strcmp(((Object *)args[0].l)->text,MOCK_MIME) && args[1].i == MOCK_FIRST && args[2].i == MOCK_SECOND); return &format;
 }
 static void void_call(void *env, Object *obj, void *method, Value *args) {
     (void)env; assert(obj == &format && (uintptr_t)method == SET_INTEGER);
     const char *key = ((Object *)args[0].l)->text;
-    if (!strcmp(key,"frame-rate")) assert(args[1].i == 30);
+    if (!strcmp(key,"aac-profile")) assert(args[1].i == 2);
+    else if (!strcmp(key,"frame-rate")) assert(args[1].i == 30);
     else if (!strcmp(key,"bitrate")) assert(args[1].i == 100000);
     else { assert(!strcmp(key,"color-format")); assert(args[1].i == 19); }
 }

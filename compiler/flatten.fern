@@ -585,7 +585,7 @@ function serve_ref(qual: string, name: string): ast.Expr {
   if (qual.len() == 0) {
     return ast.ExprIdent { name: name, line: 0, col: 0, ty: "", builtin: false };
   }
-  return ast.ExprFieldAccess { obj: ast.ExprIdent { name: qual, line: 0, col: 0, ty: "", builtin: false }, field: name, line: 0, col: 0, ty: "", const_read: false };
+  return ast.ExprFieldAccess { obj: ast.ExprIdent { name: qual, line: 0, col: 0, ty: "", builtin: false }, field: name, line: 0, col: 0, ty: "", const_read: false, display: false };
 }
 
 function import_prefixes(mod: parser.Module, ids: string[], pfxs: string[]): string[] {

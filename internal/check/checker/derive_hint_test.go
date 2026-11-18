@@ -134,7 +134,7 @@ function main(): i32 {
     print(a);
     return 0;
 }`,
-			want: []string{"does not implement `Display`", "`to_string(): string` method", "`@derive(cmp.Display)`", "`impl cmp.Display for P`", cmpImportFrag},
+			want: []string{"does not implement `Display`", "`@derive(cmp.Display)`", "`impl cmp.Display for P`", cmpImportFrag},
 			fixes: []string{`import "core/cmp";
 @derive(cmp.Display)
 struct P { x: i32 }
@@ -147,12 +147,6 @@ struct P { x: i32 }
 impl cmp.Display for P {
     function to_string(self: Self): string { return "P"; }
 }
-function main(): i32 {
-    let a: P = P { x: 1 };
-    print(a);
-    return 0;
-}`, `struct P { x: i32 }
-function (p: P) to_string(): string { return "P"; }
 function main(): i32 {
     let a: P = P { x: 1 };
     print(a);
@@ -244,7 +238,6 @@ var foreignHintCases = []struct {
 	name   string
 	bad    string
 	orphan string
-	local  string
 }{
 	{
 		name: "E041 equality",
@@ -281,14 +274,6 @@ impl cmp.Display for regex.Match {
     function to_string(self: Self): string { return "m"; }
 }
 function main(): i32 { return 0; }`,
-		local: `import "std/regex";
-import "std/result";
-pub function (m: regex.Match) to_string(): string { return "m"; }
-function main(): i32 {
-    let a: regex.Match = regex.Match { start: 0, end: 0 };
-    print(a);
-    return 0;
-}`,
 	},
 	{
 		name: "E045 map key",
@@ -340,11 +325,6 @@ func TestDeriveHintsForForeignTypesNameAWritableFix(t *testing.T) {
 				}
 			} else if strings.Contains(msg, "orphan impl") {
 				t.Errorf("hint mentions an orphan impl but names no impl route: %v", msg)
-			}
-			if tc.local != "" {
-				if err := checkModuleSource(t, tc.local); err != nil {
-					t.Errorf("the route the hint offers does not check clean: %v\nsrc:\n%s", err, tc.local)
-				}
 			}
 		})
 	}
