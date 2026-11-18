@@ -6647,7 +6647,16 @@ function without_lines(f: SFunc): SFunc {
 }
 
 pub function slot_call(ins: SInst): boolean {
-  return ins.kind_tag == CALL_IND && ins.str == "slot";
+  return ins.kind_tag == CALL_IND && (ins.str == "slot" || ins.str.starts_with("slot:"));
+}
+
+// A slot call keeps the contract that the lift gave the call
+// (ir.call_units) after "slot:".
+function slot_text(units: string): string {
+  if (units == "") {
+    return "slot";
+  }
+  return "slot:" + units;
 }
 
 function slot_calls(f: SFunc): SFunc {
@@ -6718,7 +6727,7 @@ function slot_block(blk: SBlock, env_of: i32[], uses: i32[], dropped: boolean[])
   let insts: SInst[] = [];
   for ins in blk.insts {
     if (reads_own_slot(ins, env_of, uses)) {
-      insts = insts.append(SInst { ...ins, args: ins.args.with(0, ins.args[1]), str: "slot" });
+      insts = insts.append(SInst { ...ins, args: ins.args.with(0, ins.args[1]), str: slot_text(ins.str) });
     } else if (ins.kind_tag != ARR_AT || !dropped[ins.result]) {
       insts = insts.append(ins);
     }
