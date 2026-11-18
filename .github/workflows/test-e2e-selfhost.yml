@@ -140,6 +140,8 @@ jobs:
           qemu-package: qemu-user
           cross-gcc: "false"
       - uses: ./.github/actions/build-e2e-binaries
+        with:
+          workers: "true"
       - name: build fern.fern (whole self-hosted compiler)
         env:
           FERN_WARM_DRIVER: "fern.fern"
@@ -1065,6 +1067,7 @@ jobs:
       - uses: ./.github/actions/build-e2e-binaries
         with:
           e2e: "true"
+          workers: "true"
       # TestSelfHostTabsBytes holds expand and unexpand to the GNU release the
       # coreutils corpus is pinned to; the image's own is older and differs.
       - uses: ./.github/actions/gnu-coreutils

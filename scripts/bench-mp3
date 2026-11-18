@@ -26,7 +26,7 @@ with tempfile.TemporaryDirectory() as tmp:
     shutil.copy(root / 'scripts/audio-reference/mp3_bench.c', tmp / 'bench.c')
     for name, flags in [('scalar', []), ('simd', ['-DFERN_MP3_BENCH_SIMD'])]:
         subprocess.run(['cc', '-O3', '-ffp-contract=off', *flags, '-o', str(tmp / name), str(tmp / 'bench.c')], check=True)
-    subprocess.run([compiler, '-target', target, '-o', str(tmp / 'fern'), 'bench/audio/mp3_decode.fern', 'internal/stdlib'], check=True)
+    subprocess.run([compiler, '-stdlib', 'internal/stdlib', '-target', target, '-o', str(tmp / 'fern'), 'bench/audio/mp3_decode.fern'], check=True)
     data = vectors.encoded(tmp, 48000, 2, values=vectors.signal(48000, 2, 48000))
     (tmp / 'input.mp3').write_bytes(data)
     times = {'fern': [], 'scalar': [], 'simd': []}

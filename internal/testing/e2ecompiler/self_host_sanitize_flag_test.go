@@ -67,13 +67,13 @@ func TestSelfHostSanitizeFlag(t *testing.T) {
 		}
 	})
 
-	t.Run("wasm_report_and_note", func(t *testing.T) {
+	t.Run("wasm_report_and_no_note", func(t *testing.T) {
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			t.Skip("wasmtime not on PATH")
 		}
 		wasm, warn := build(t, "dfree.wasm", "-sanitize", "-target", "wasm32-wasi", "-emit", "core-module")
-		if !strings.Contains(warn, "fern: warning: -sanitize on -target wasm32-wasi carries the leak census and the rc over-release and use-after-free detectors, not the heap-buffer-overflow redzone") {
-			t.Errorf("the coverage note is missing:\n%s", warn)
+		if strings.Contains(warn, "warning") {
+			t.Errorf("-sanitize on wasm32-wasi warned:\n%s", warn)
 		}
 		run := exec.Command("wasmtime", "run", wasm)
 		var stderr strings.Builder

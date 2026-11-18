@@ -9,6 +9,7 @@ import "std/test";
 import "std/truetype";
 import "./color_vectors";
 import "./image_vectors";
+import "./shape_indic_vectors";
 import "./shape_vectors";
 
 function fonts(): text.Fonts {
@@ -138,6 +139,16 @@ function test_devanagari_is_shaped(): test.TestOutcome {
   return test.assert_eq(laid_glyphs(fs, "कि") + " " + laid_glyphs(fs, "र्कि"), "478,54 523,54,666");
 }
 
+// A run of Tamil letters goes through the Indic shaper too: the two parts
+// of the split matra o go on the two sides of the consonant.
+function test_tamil_is_shaped(): test.TestOutcome {
+  let Some(tamil) = font_of(shape_indic_vectors.taml_font()) else {
+    return test.fail("the font did not parse");
+  };
+  let fs = text.from_faces([tamil], [400]);
+  return test.assert_eq(laid_glyphs(fs, "கொ") + " " + laid_glyphs(fs, "கோ"), "26,6,21 27,6,21");
+}
+
 // The font of a base64 string, or None.
 function font_of(data: string): Option[truetype.Font] {
   if let Ok(b) = base64.decode(data) {
@@ -235,6 +246,7 @@ function main(): i32 {
   r = r.it("a fallback font draws a character that the face does not have", test_fallback_takes_a_font_that_has_the_character);
   r = r.it("a run of Arabic letters is shaped", test_arabic_is_shaped);
   r = r.it("a run of Devanagari letters is shaped", test_devanagari_is_shaped);
+  r = r.it("a run of Tamil letters is shaped", test_tamil_is_shaped);
   r = r.it("a mark sits on its base", test_a_mark_sits_on_its_base);
   r = r.it("a mark takes the font of its base", test_a_mark_takes_the_font_of_its_base);
   r = r.it("a color glyph keeps its colors", test_a_color_glyph);

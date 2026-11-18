@@ -1,24 +1,24 @@
 # Text shaping
 
-This module gives the glyphs of a font for a text, and their positions. It does the OpenType substitution of the glyphs for the joining forms of Arabic, for the conjuncts of Devanagari, for ligatures and for marks. Then it moves the glyphs: for the kerning, the cursive joins and the marks on their bases.
+This module gives the glyphs of a font for a text, and their positions. It substitutes the glyphs for ligatures and for marks, for the joining forms of Arabic, and for the conjuncts of Indic scripts. Then it moves the glyphs: for the kerning, the cursive joins and the marks on their bases.
 
 ## Model
 
-`shape` takes a text in logical order and the OpenType tag of its script, such as `"arab"` or `"deva"`. It gives a `truetype.Run`: the glyphs in logical order, with the cluster of each glyph and its position. A cluster is the index of the first character that the glyph shows. A mark has the cluster of its base.
+`shape` takes a text in logical order and the OpenType tag of its script, such as `"arab"`, `"deva"` or `"taml"`. It gives a `truetype.Run`: the glyphs in logical order, with the cluster of each glyph and its position. A cluster is the index of the first character that the glyph shows. A mark has the cluster of its base.
 
 A position is the advance of the glyph and its offset from its pen, in font units. A glyph goes at its pen and its offset, and the pen then moves by its advance. In a right-to-left run, the glyph that is last in logical order goes first, at the left.
 
 Shaping has these steps, in the order of HarfBuzz:
 
 1. Each character starts a cluster. A mark, a ZWJ and the other characters that continue a grapheme take the cluster of the character before them.
-2. A character with a canonical decomposition splits into its parts when the font has a glyph for each part. A character that has a glyph and no mark after it stays whole, except in Devanagari, where U+0958 and the other characters split.
+2. A character with a canonical decomposition splits into its parts when the font has a glyph for each part. A character that has a glyph and no mark after it stays whole. In the Indic scripts, U+0958 and the other characters split.
 3. The marks after each base go in the order of their combining class. Among the Arabic marks, the shadda goes first. In Arabic, the modifier combining marks, such as the hamza above, then go first among the marks of the same class.
 4. A mark joins the starter before it when the two compose and the font has a glyph for the result. Thus U+064A and the hamza above become U+0626, and U+0928 and the nukta become U+0929.
-5. Each character takes the glyph that the character map of the font gives.
-6. In Arabic, each letter takes a form: isolated, initial, medial or final. It is the joining form of the letter between its neighbours, from its Unicode joining type. A mark is transparent: it does not stop the letters on its two sides from joining. Devanagari goes through the Indic shaper, which the section "Indic scripts" tells.
+5. Each character takes the glyph that the character map of the font gives. A space that the font does not have takes the glyph of the space, with the width that HarfBuzz gives it. U+2011 takes the glyph of U+2010.
+6. In Arabic, each letter takes a form: isolated, initial, medial or final. It is the joining form of the letter between its neighbours, from its Unicode joining type. A mark is transparent: it does not stop the letters on its two sides from joining. The Indic scripts go through the Indic shaper, which the section "Indic scripts" tells.
 7. The lookups of the GSUB features apply in stages. A lookup of a form applies only to the letters of that form.
 8. Each glyph takes its advance from the font. Then the lookups of the GPOS features apply in one stage: `abvm`, `blwm`, `curs`, `dist`, `kern`, `mark` and `mkmk`.
-9. Each mark, of the GDEF class 3, has no advance, but in Devanagari a mark keeps its advance. A default ignorable glyph, such as a ZWJ, has no advance and no offset. Each glyph that a lookup attached takes the offsets of the glyph that it attaches to.
+9. Each mark, of the GDEF class 3, has no advance, but in the Indic scripts a mark keeps its advance. A default ignorable glyph, such as a ZWJ, has no advance and no offset. Each glyph that a lookup attached takes the offsets of the glyph that it attaches to.
 10. Each default ignorable glyph becomes the glyph of the space. In a font with no space, the default ignorable glyphs go, and their clusters join those next to them.
 
 A default ignorable glyph does not stop a lookup when the lookup can skip it. The flags of each feature tell which ZWNJ and ZWJ glyphs a lookup can skip, as in HarfBuzz.
@@ -27,7 +27,9 @@ The Arabic stages are `rvrn`, then `ccmp` and `locl`. Then `isol`, `fina`, `medi
 
 ## Indic scripts
 
-For Devanagari, `shape` follows the Indic shaper of HarfBuzz. A font with the script tag `dev2` takes the rules of the new Indic specification. A font with `deva` only takes the rules of the old one. A font that has neither tag, but has `DFLT` or `latn`, takes the default shaper.
+`shape` follows the Indic shaper of HarfBuzz for nine scripts. They are Devanagari (`deva`), Bengali (`beng`), Gurmukhi (`guru`), Gujarati (`gujr`), Oriya (`orya`), Tamil (`taml`), Telugu (`telu`), Kannada (`knda`) and Malayalam (`mlym`). A font with the new tag of the script, such as `dev2` or `mlm2`, takes the rules of the new Indic specification. A font with the old tag only takes the rules of the old one. A font that has neither tag, but has `DFLT` or `latn`, takes the default shaper.
+
+Each script has the configuration that HarfBuzz gives it: its virama, where its reph goes, and how a reph forms. In Telugu a reph forms only with a ZWJ, and in Malayalam it is the dot reph U+0D4E. In Telugu and Kannada the below-base forms apply only after the base. Kannada, Malayalam and Tamil have rules of their own in the reorderings.
 
 1. Each character has an Indic category and an Indic position, from the table that `scripts/gen-indic-table.py` writes.
 2. The stage `rvrn` applies. Then the text splits into syllables with the grammar of HarfBuzz: consonant syllables, vowel syllables, standalone clusters, symbol clusters and broken clusters. Each other character is a syllable alone. The features `locl` and `ccmp` apply in each syllable.
@@ -37,11 +39,11 @@ For Devanagari, `shape` follows the Indic shaper of HarfBuzz. A font with the sc
 6. The final reordering moves a pre-base matra after the half forms, and the reph to its place near the end of the syllable.
 7. The features `init`, `pres`, `abvs`, `blws`, `psts`, `haln`, `rlig`, `calt`, `clig` and `rclt` apply in one stage. The GPOS features follow.
 
-The clusters join as HarfBuzz joins them when glyphs move. The `dev3` tag of the Universal Shaping Engine is not used, and the table holds the blocks Devanagari (U+0900 to U+097F) and Devanagari Extended (U+A8E0 to U+A8FF).
+The clusters join as HarfBuzz joins them when glyphs move. The tags of the Universal Shaping Engine, such as `dev3`, are not used. The table holds the blocks that HarfBuzz gives the Indic shaper: the nine Indic blocks, Vedic Extensions and Devanagari Extended, and the placeholders and joiners of Basic Latin, Latin-1 and General Punctuation.
 
 ## Contracts
 
-The glyphs, the clusters and the positions are those of HarfBuzz. That is true for the GSUB lookups of the types 1 to 8 and the GPOS lookups of the types 1 to 9. The test `tests/stdlib/shape_test.fern` compares them for a set of words, Arabic and Devanagari. An Arabic run goes from right to left, and a run of another script from left to right.
+The glyphs, the clusters and the positions are those of HarfBuzz. That is true for the GSUB lookups of the types 1 to 8 and the GPOS lookups of the types 1 to 9. The test `tests/stdlib/shape_test.fern` compares them for a set of Arabic and Devanagari words, and `tests/stdlib/shape_indic_test.fern` for the other Indic scripts. An Arabic run goes from right to left, and a run of another script from left to right.
 
 A font with no GPOS table has no mark positioning: HarfBuzz then moves the marks by their combining classes, and `shape` does not. `shape` does not mirror the brackets of a right-to-left text. A character that the font does not have takes the glyph 0.
 
@@ -124,7 +126,7 @@ A default ignorable character gets the property `IGNORABLE` of `std/truetype`. A
 
 The Indic shaper of HarfBuzz first puts a dotted circle between an independent vowel and a matra that look like another vowel together. U+0905 and U+093E are such a pair. It also puts one between a Ra and a virama, and U+0907. The pairs come from the list of invalid clusters of Microsoft, as `hb-ot-shaper-vowel-constraints.cc` of HarfBuzz holds them. The dotted circle takes the cluster of the matra.
 
-The normalization of HarfBuzz comes next. A character that has a glyph and no mark after it stays whole. Each other character splits into its canonical decomposition when the font has a glyph for each part. The Indic shaper splits each character that it can, but not U+0931. After the marks go in order, each mark composes with the starter before it. The Indic shaper does not compose a mark with a mark.
+The normalization of HarfBuzz comes next. A character that has a glyph and no mark after it stays whole, unless it is a mark after the first character. Each other character splits into its canonical decomposition when the font has a glyph for each part. The Indic shaper splits each character that it can, but not U+0931. After the marks go in order, each mark composes with the starter before it, when a mark follows the first character of the text. The Indic shaper does not compose a mark with a mark.
 
 ```fern
 <<characters>>=
@@ -194,24 +196,6 @@ function default_ignorable(n: i32): boolean {
   return n >= 0xAD && in_ranges(n, DEFAULT_IGNORABLES);
 }
 
-// The matras that cannot follow each of the independent vowels U+0905,
-// U+0906, U+0909 and U+090F.
-function invalid_matras(vowel: i32): i32[] {
-  if (vowel == 0x905) {
-    return [0x93A, 0x93B, 0x93E, 0x945, 0x946, 0x949, 0x94A, 0x94B, 0x94C, 0x94F, 0x956, 0x957];
-  }
-  if (vowel == 0x906) {
-    return [0x93A, 0x945, 0x946, 0x947, 0x948];
-  }
-  if (vowel == 0x909) {
-    return [0x941];
-  }
-  if (vowel == 0x90F) {
-    return [0x945, 0x946, 0x947];
-  }
-  return [];
-}
-
 function holds(xs: i32[], v: i32): boolean {
   for x in xs {
     if (x == v) {
@@ -221,25 +205,75 @@ function holds(xs: i32[], v: i32): boolean {
   return false;
 }
 
-// The index of the matra or the U+0907 after `i` that takes a dotted circle
-// before it, or 0.
-function circle_before(cps: char[], i: i32): i32 {
-  let n = cps.len();
-  let c = cps[i] as i32;
-  if (c == 0x930 && i + 2 < n && cps[i + 1] as i32 == 0x94D && cps[i + 2] as i32 == 0x907) {
-    return i + 2;
+// The pairs of an independent vowel and a matra that look like another
+// vowel in the script `script`, from the list of invalid clusters of
+// Microsoft. Each group is a vowel, its matras, and 0.
+function invalid_pairs(script: string): i32[] {
+  if (script == "deva") {
+    return [0x905, 0x93A, 0x93B, 0x93E, 0x945, 0x946, 0x949, 0x94A, 0x94B, 0x94C, 0x94F, 0x956, 0x957, 0, 0x906, 0x93A, 0x945, 0x946, 0x947, 0x948, 0, 0x909, 0x941, 0, 0x90F, 0x945, 0x946, 0x947, 0];
   }
-  return if (i + 1 < n && holds(invalid_matras(c), cps[i + 1] as i32)) { i + 1 } else { 0 };
+  if (script == "beng") {
+    return [0x985, 0x9BE, 0, 0x98B, 0x9C3, 0, 0x98C, 0x9E2, 0];
+  }
+  if (script == "guru") {
+    return [0xA05, 0xA3E, 0xA48, 0xA4C, 0, 0xA72, 0xA3F, 0xA40, 0xA47, 0, 0xA73, 0xA41, 0xA42, 0xA4B, 0];
+  }
+  if (script == "gujr") {
+    return [0xA85, 0xABE, 0xAC5, 0xAC7, 0xAC8, 0xAC9, 0xACB, 0xACC, 0, 0xAC5, 0xABE, 0];
+  }
+  if (script == "orya") {
+    return [0xB05, 0xB3E, 0, 0xB0F, 0xB57, 0, 0xB13, 0xB57, 0];
+  }
+  if (script == "taml") {
+    return [0xB85, 0xBC2, 0];
+  }
+  if (script == "telu") {
+    return [0xC12, 0xC4C, 0xC55, 0, 0xC3F, 0xC55, 0, 0xC46, 0xC55, 0, 0xC4A, 0xC55, 0];
+  }
+  if (script == "knda") {
+    return [0xC89, 0xCBE, 0, 0xC8B, 0xCBE, 0, 0xC92, 0xCCC, 0];
+  }
+  return if (script == "mlym") { [0xD07, 0xD57, 0, 0xD09, 0xD57, 0, 0xD0E, 0xD46, 0, 0xD12, 0xD3E, 0xD57, 0] } else { [] };
 }
 
-// `cs` with a dotted circle before each matra that `invalid_matras` names
-// after its vowel, and before a U+0907 after a Ra and a virama.
-function vowel_constrained(cs: Chars): Chars {
+// Whether the vowel `a` and the matra `b` are one of the pairs `pairs`.
+function invalid_pair(pairs: i32[], a: i32, b: i32): boolean {
+  let k = 0;
+  while (k < pairs.len()) {
+    let vowel = pairs[k];
+    k += 1;
+    while (k < pairs.len() && pairs[k] != 0) {
+      if (vowel == a && pairs[k] == b) {
+        return true;
+      }
+      k += 1;
+    }
+    k += 1;
+  }
+  return false;
+}
+
+// The index of the matra or the U+0907 after `i` that takes a dotted circle
+// before it in the script `script`, or 0.
+function circle_before(cps: char[], i: i32, script: string, pairs: i32[]): i32 {
+  let n = cps.len();
+  let c = cps[i] as i32;
+  if (script == "deva" && c == 0x930 && i + 2 < n && cps[i + 1] as i32 == 0x94D && cps[i + 2] as i32 == 0x907) {
+    return i + 2;
+  }
+  return if (i + 1 < n && invalid_pair(pairs, c, cps[i + 1] as i32)) { i + 1 } else { 0 };
+}
+
+// `cs` with a dotted circle before each matra of a pair of `invalid_pairs`
+// for the script `script`, and in Devanagari before a U+0907 after a Ra and
+// a virama.
+function vowel_constrained(cs: Chars, script: string): Chars {
+  let pairs = invalid_pairs(script);
   let cps: char[] = [];
   let clusters: i32[] = [];
   let i = 0;
   while (i < cs.cps.len()) {
-    let at = circle_before(cs.cps, i);
+    let at = circle_before(cs.cps, i, script, pairs);
     let to = if (at == 0) { i + 1 } else { at };
     for k in i..to {
       cps = cps.append(cs.cps[k]);
@@ -266,9 +300,16 @@ function ordered(cs: Chars, arabic: boolean): Chars {
 }
 
 // `cs` after the normalization of HarfBuzz, for the Indic shaper with
-// `indic`.
+// `indic`. HarfBuzz composes only a text that holds a mark after its first
+// character.
 function normalized(f: truetype.Font, cs: Chars, arabic: boolean, indic: boolean): Chars {
-  return composed(f, ordered(decomposed(f, cs, indic), arabic), indic);
+  let parts = ordered(decomposed(f, cs, indic), arabic);
+  for i in 1..cs.cps.len() {
+    if (cs.cps[i].is_mark()) {
+      return composed(f, parts, indic);
+    }
+  }
+  return parts;
 }
 
 // `cs` with each character in its canonical decomposition, when the font
@@ -289,9 +330,7 @@ function decomposed(f: truetype.Font, cs: Chars, indic: boolean): Chars {
 // The characters that the character at `i` of `cs` becomes.
 function parts_of(f: truetype.Font, cs: Chars, i: i32, indic: boolean): char[] {
   let c = cs.cps[i];
-  let next_mark = i + 1 < cs.cps.len() && cs.cps[i + 1].is_mark();
-  let alone = !indic && !c.is_mark() && !next_mark && f.glyph(c as i32) != 0;
-  if (alone || indic && c as i32 == 0x931) {
+  if (stays_whole(f, cs, i, indic)) {
     return [c];
   }
   let parts = unicode.decomposition(c);
@@ -301,6 +340,18 @@ function parts_of(f: truetype.Font, cs: Chars, i: i32, indic: boolean): char[] {
     }
   }
   return parts;
+}
+
+// Whether the character at `i` of `cs` keeps away from its decomposition:
+// outside the Indic shaper, when the font has its glyph and no mark follows
+// it, and in the Indic shaper, when it is one of KEPT_WHOLE.
+function stays_whole(f: truetype.Font, cs: Chars, i: i32, indic: boolean): boolean {
+  let c = cs.cps[i];
+  if (indic) {
+    return holds(KEPT_WHOLE, c as i32);
+  }
+  let next_mark = i + 1 < cs.cps.len() && cs.cps[i + 1].is_mark();
+  return (i == 0 || !c.is_mark()) && !next_mark && f.glyph(c as i32) != 0;
 }
 
 // `cs` with each mark composed with the starter before it, when no mark
@@ -343,40 +394,141 @@ function composed(f: truetype.Font, cs: Chars, indic: boolean): Chars {
 function composite(f: truetype.Font, cps: char[], starter: i32, c: char, indic: boolean): i32 {
   let last = cps.len() - 1;
   let free = c.is_mark() && !(indic && cps[starter].is_mark()) && (starter == last || sort_class(cps[last]) < sort_class(c));
-  let both = if (free) { unicode.composition(cps[starter], c) } else { 0 };
+  let both = if (free) { composition_of(cps[starter], c, indic) } else { 0 };
   return if (both != 0 && f.glyph(both) != 0) { both } else { 0 };
 }
 
+// The composition of `a` and `b`. The Indic shaper also composes U+09AF
+// and the nukta, which Unicode excludes.
+function composition_of(a: char, b: char, indic: boolean): i32 {
+  if (indic && a as i32 == 0x9AF && b as i32 == 0x9BC) {
+    return 0x9DF;
+  }
+  return unicode.composition(a, b);
+}
+
 // A run of the glyphs of `cs` in the font `f`, with the masks `masks` and
-// the properties of the characters.
+// the properties of the characters. The shaper value of each glyph holds
+// its character from the bit 9.
 function run_of_chars(f: truetype.Font, cs: Chars, masks: i32[]): truetype.Run {
   let glyphs: i32[] = [];
   let props: i32[] = [];
+  let vars: i32[] = [];
   for c in cs.cps {
-    glyphs = glyphs.append(f.glyph(c as i32));
+    glyphs = glyphs.append(glyph_of(f, c as i32));
     props = props.append(char_props(c));
+    vars = vars.append(c as i32 << 9);
   }
-  return truetype.Run { ...truetype.run_of(glyphs, cs.clusters, masks), props: props };
+  return truetype.Run { ...truetype.run_of(glyphs, cs.clusters, masks), props: props, vars: vars };
+}
+
+// The glyph of `n` in `f`. A space that the font does not have takes the
+// glyph of the space, and U+2011 takes that of U+2010, as in HarfBuzz.
+function glyph_of(f: truetype.Font, n: i32): i32 {
+  let g = f.glyph(n);
+  if (g != 0) {
+    return g;
+  }
+  if (space_width(n) != NO_SPACE) {
+    return f.glyph(0x20);
+  }
+  return if (n == 0x2011) { f.glyph(0x2010) } else { 0 };
+}
+
+// The width that HarfBuzz gives a space with no glyph of its own: the em
+// divided by the number, or the width of the space (0), of a digit
+// (FIGURE_SPACE), of a full stop (PUNCTUATION_SPACE), of half a space
+// (NARROW_SPACE), or of 4/18 of the em (MATH_SPACE).
+const NO_SPACE: i32 = -1;
+
+const FIGURE_SPACE: i32 = -2;
+
+const PUNCTUATION_SPACE: i32 = -3;
+
+const NARROW_SPACE: i32 = -4;
+
+const MATH_SPACE: i32 = -5;
+
+function space_width(n: i32): i32 {
+  let spaces = [0x20, 0xA0, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200A, 0x202F, 0x205F, 0x3000];
+  let widths = [0, 0, 2, 1, 2, 1, 3, 4, 6, FIGURE_SPACE, PUNCTUATION_SPACE, 5, 16, NARROW_SPACE, MATH_SPACE, 1];
+  for k in 0..spaces.len() {
+    if (spaces[k] == n) {
+      return widths[k];
+    }
+  }
+  return NO_SPACE;
+}
+
+// `r` with the advance of each space that took the glyph of the space, as
+// HarfBuzz gives it before the GPOS lookups.
+function with_space_widths(f: truetype.Font, r: truetype.Run): truetype.Run {
+  let p = r.pos;
+  for i in 0..r.glyphs.len() {
+    let n = r.vars[i] >> 9;
+    let w = space_width(n);
+    if (w != NO_SPACE && w != 0 && f.glyph(n) == 0 && (r.props[i] & truetype.LIGATED) == 0) {
+      p = truetype.Positions { ...p, advances: p.advances.with(i, fallback_advance(f, w, p.advances[i])) };
+    }
+  }
+  return truetype.Run { ...r, pos: p };
+}
+
+// The advance of a space of the width `w` in `f`, from the advance
+// `advance` of the space.
+function fallback_advance(f: truetype.Font, w: i32, advance: i32): i32 {
+  let em = f.units_per_em;
+  if (w > 0) {
+    return (em + w / 2) / w;
+  }
+  if (w == MATH_SPACE) {
+    return em * 4 / 18;
+  }
+  if (w == NARROW_SPACE) {
+    return advance / 2;
+  }
+  let chars = if (w == FIGURE_SPACE) { [0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39] } else { [0x2E, 0x2C] };
+  for c in chars {
+    if (f.glyph(c) != 0) {
+      return f.advance(f.glyph(c));
+    }
+  }
+  return advance;
 }
 ```
 
 ### `marks`
 
-HarfBuzz sorts a sequence of marks by a combining class that it changes for some scripts. For Arabic, the shadda takes the class 27 and the marks of the classes 27 to 32 move up by one. The sort is stable, and it does not change a sequence of more than 32 marks.
+HarfBuzz sorts a sequence of marks by a combining class that it changes for some scripts. For Arabic, the shadda takes the class 27 and the marks of the classes 27 to 32 move up by one. The Hebrew points take the order of their use. The Telugu length marks and the Thai vowels below go before the virama and the other marks. The sort is stable, and it does not change a sequence of more than 32 marks.
 
 ```fern
 <<marks>>=
 // The most marks in a sequence that the sort changes.
 const MAX_MARKS: i32 = 32;
 
-// The combining class of `c`, as HarfBuzz changes it for Arabic.
+// The classes that HarfBuzz gives the combining classes 10 to 36: the
+// Hebrew points, the Arabic marks and the superscript alaph.
+const MODIFIED_CLASSES: i32[] = [22, 15, 16, 17, 23, 18, 19, 20, 21, 14, 24, 12, 25, 13, 10, 11, 26, 28, 29, 30, 31, 32, 33, 27, 34, 35, 36];
+
+// The combining class of `c`, as HarfBuzz changes it to sort the marks.
 function sort_class(c: char): i32 {
-  let k = unicode.combining_class(c);
-  if (k == 33) {
-    return 27;
+  let n = c as i32;
+  if (n == 0x1A60 || n == 0xFC6) {
+    return 254;
   }
-  if (k >= 27 && k <= 32) {
-    return k + 1;
+  if (n == 0xF39) {
+    return 127;
+  }
+  let k = unicode.combining_class(c);
+  if (k >= 10 && k <= 36) {
+    return MODIFIED_CLASSES[k - 10];
+  }
+  let from = [84, 91, 103, 130, 132];
+  let to = [4, 5, 3, 132, 131];
+  for i in 0..from.len() {
+    if (k == from[i]) {
+      return to[i];
+    }
   }
   return k;
 }
@@ -575,8 +727,8 @@ function stages(f: truetype.Font, script: string): Feature[][] {
 // The glyphs of `text` in the font `f`, for the script `script`, an
 // OpenType tag such as "arab", "deva" or "latn".
 pub function shape(f: truetype.Font, text: string, script: string): truetype.Run {
-  if (script == "deva") {
-    if let Some(p) = indic_plan(f) {
+  if let Some(c) = indic_config(script) {
+    if let Some(p) = indic_plan(f, c) {
       return indic_shaped(f, text, p);
     }
   }
@@ -591,7 +743,7 @@ pub function shape(f: truetype.Font, text: string, script: string): truetype.Run
   for stage in stages(f, script) {
     r = applied_stage(f, r, script, stage, false);
   }
-  r = f.with_advances(r, arabic);
+  r = with_space_widths(f, f.with_advances(r, arabic));
   r = applied_stage(f, r, script, position_features(), true);
   return finished(f, r, true);
 }
@@ -699,6 +851,8 @@ const CAT_SYMBOL: i32 = 18;
 
 const CAT_CS: i32 = 19;
 
+const CAT_SMPST: i32 = 20;
+
 // The types of syllable that the shaper tests, by the place of their rule
 // in the list. A consonant syllable is 0.
 const SYL_SYMBOL: i32 = 3;
@@ -733,7 +887,8 @@ function with_syllables(r: truetype.Run): truetype.Run {
   return truetype.Run { ...r, props: props };
 }
 
-// The end and the type of the syllable that starts at `i`.
+// The end and the type of the syllable that starts at `i`. A lone SMPst is
+// a syllable of no type, before the broken clusters.
 function syllable_from(cats: i32[], i: i32): (i32, i32) {
   let at = [i];
   let ends = [consonant_syllable(cats, at), vowel_syllable(cats, at), standalone_cluster(cats, at), symbol_cluster(cats, at), broken_cluster(cats, at)];
@@ -741,6 +896,9 @@ function syllable_from(cats: i32[], i: i32): (i32, i32) {
   let kind = SYL_OTHER;
   for k in 0..ends.len() {
     let e = ends[k];
+    if (k == SYL_BROKEN && cats[i] == CAT_SMPST && best == i) {
+      best = i + 1;
+    }
     if (e.len() > 0 && e[e.len() - 1] > best) {
       best = e[e.len() - 1];
       kind = k;
@@ -817,17 +975,22 @@ function optional_reph(cats: i32[], xs: i32[]): i32[] {
   return either(xs, either(ra, step(cats, xs, cat_bit(CAT_REPHA))));
 }
 
-// matra_group = z* (M | SM? MPst) N? H?
+// matra_group = z* (M | sm? MPst) N? H?
 function matra_group(cats: i32[], xs: i32[]): i32[] {
   let a = any_of(cats, xs, joiner_bits());
-  let m = either(step(cats, a, cat_bit(CAT_M)), step(cats, optional(cats, a, cat_bit(CAT_SM)), cat_bit(CAT_MPST)));
+  let m = either(step(cats, a, cat_bit(CAT_M)), step(cats, optional(cats, a, sm_bits()), cat_bit(CAT_MPST)));
   return optional(cats, optional(cats, m, cat_bit(CAT_N)), cat_bit(CAT_H));
 }
 
-// syllable_tail = (z? SM SM? ZWNJ?)? A*
+// sm = SM | SMPst
+function sm_bits(): i32 {
+  return cat_bit(CAT_SM) | cat_bit(CAT_SMPST);
+}
+
+// syllable_tail = (z? sm sm? ZWNJ?)? A*
 function syllable_tail(cats: i32[], xs: i32[]): i32[] {
-  let a = step(cats, optional(cats, xs, joiner_bits()), cat_bit(CAT_SM));
-  let b = optional(cats, optional(cats, a, cat_bit(CAT_SM)), cat_bit(CAT_ZWNJ));
+  let a = step(cats, optional(cats, xs, joiner_bits()), sm_bits());
+  let b = optional(cats, optional(cats, a, sm_bits()), cat_bit(CAT_ZWNJ));
   return any_of(cats, either(xs, b), cat_bit(CAT_A));
 }
 
@@ -906,33 +1069,82 @@ const POS_PRE_C: i32 = 3;
 
 const POS_BASE_C: i32 = 4;
 
+const POS_AFTER_MAIN: i32 = 5;
+
 const POS_BELOW_C: i32 = 8;
 
 const POS_POST_C: i32 = 11;
+
+const POS_AFTER_POST: i32 = 12;
 
 const POS_SMVD: i32 = 13;
 
 const POS_END: i32 = 14;
 
-// What the Indic shaper keeps for a font: the script tags of its GSUB and
-// GPOS tables, whether the rules of the old specification apply, the glyph
-// of the virama, and whether the font has the features rphf and pref.
-struct Plan { gsub: string, gpos: string, old_spec: boolean, virama: i32, rphf: boolean, pref: boolean }
+// The reph positions and the reph modes of HarfBuzz.
+const REPH_BEFORE_POST: i32 = 0;
+
+const REPH_AFTER_MAIN: i32 = 1;
+
+const REPH_BEFORE_SUB: i32 = 2;
+
+const REPH_AFTER_SUB: i32 = 3;
+
+const REPH_AFTER_POST: i32 = 4;
+
+const MODE_IMPLICIT: i32 = 0;
+
+const MODE_EXPLICIT: i32 = 1;
+
+const MODE_LOG_REPHA: i32 = 2;
+
+// The configuration of an Indic script: its old tag and its new tag, its
+// virama, where its reph goes, how a reph forms, and whether the
+// below-base forms apply only after the base.
+struct Config { script: string, tag: string, virama: i32, reph_pos: i32, reph_mode: i32, post_only: boolean }
+
+// The characters that the Indic shaper does not decompose.
+const KEPT_WHOLE: i32[] = [0x931, 0x9DC, 0x9DD, 0xB94];
+
+// What the Indic shaper keeps for a font: the configuration of the script,
+// the script tags of its GSUB and GPOS tables, whether the rules of the old
+// specification apply, whether a context with glyphs around its input is
+// left out when the shaper asks which lookups apply, the glyph of the
+// virama, and whether the font has the features rphf and pref.
+struct Plan { config: Config, gsub: string, gpos: string, old_spec: boolean, zero: boolean, virama: i32, rphf: boolean, pref: boolean }
 
 // A glyph of a run, with its fields of the run. `key` holds the place of
 // the glyph before a sort.
 struct Glyph { id: i32, cluster: i32, mask: i32, lig: i32, prop: i32, var: i32, key: i32 }
 
-// The plan of the Indic shaper for Devanagari in `f`, or None when the
-// default shaper applies.
-function indic_plan(f: truetype.Font): Option[Plan] {
-  let gsub = if (f.has_script("dev2", false)) { "dev2" } else { "deva" };
-  let neither = gsub == "deva" && !f.has_script("deva", false);
+// The configuration of the Indic script `script`, an old OpenType tag such
+// as "deva", as indic_configs of HarfBuzz gives it, or None.
+function indic_config(script: string): Option[Config] {
+  let scripts = ["deva", "beng", "guru", "gujr", "orya", "taml", "telu", "knda", "mlym"];
+  let tags = ["dev2", "bng2", "gur2", "gjr2", "ory2", "tml2", "tel2", "knd2", "mlm2"];
+  let viramas = [0x94D, 0x9CD, 0xA4D, 0xACD, 0xB4D, 0xBCD, 0xC4D, 0xCCD, 0xD4D];
+  let rephs = [REPH_BEFORE_POST, REPH_AFTER_SUB, REPH_BEFORE_SUB, REPH_BEFORE_POST, REPH_AFTER_MAIN, REPH_AFTER_POST, REPH_AFTER_POST, REPH_AFTER_POST, REPH_AFTER_MAIN];
+  let modes = [MODE_IMPLICIT, MODE_IMPLICIT, MODE_IMPLICIT, MODE_IMPLICIT, MODE_IMPLICIT, MODE_IMPLICIT, MODE_EXPLICIT, MODE_IMPLICIT, MODE_LOG_REPHA];
+  for k in 0..scripts.len() {
+    if (scripts[k] == script) {
+      let post_only = script == "telu" || script == "knda";
+      return Some(Config { script: script, tag: tags[k], virama: viramas[k], reph_pos: rephs[k], reph_mode: modes[k], post_only: post_only });
+    }
+  }
+  return None;
+}
+
+// The plan of the Indic shaper for the script of `c` in `f`, or None when
+// the default shaper applies.
+function indic_plan(f: truetype.Font, c: Config): Option[Plan] {
+  let gsub = if (f.has_script(c.tag, false)) { c.tag } else { c.script };
+  let neither = gsub == c.script && !f.has_script(c.script, false);
   if (neither && (f.has_script("DFLT", false) || !f.has_script("dflt", false) && f.has_script("latn", false))) {
     return None;
   }
-  let gpos = if (f.has_script("dev2", true)) { "dev2" } else { "deva" };
-  return Some(Plan { gsub: gsub, gpos: gpos, old_spec: gsub != "dev2", virama: f.glyph(0x94D), rphf: f.has_feature(gsub, "rphf"), pref: f.has_feature(gsub, "pref") });
+  let gpos = if (f.has_script(c.tag, true)) { c.tag } else { c.script };
+  let old_spec = gsub != c.tag;
+  return Some(Plan { config: c, gsub: gsub, gpos: gpos, old_spec: old_spec, zero: !old_spec && c.script != "mlym", virama: f.glyph(c.virama), rphf: f.has_feature(gsub, "rphf"), pref: f.has_feature(gsub, "pref") });
 }
 
 // The features of the Indic shaper between the two reorderings, one stage
@@ -961,9 +1173,9 @@ function final_features(): Feature[] {
   return out;
 }
 
-// The glyphs of the Devanagari text `text` in the font `f`.
+// The glyphs of the text `text` of an Indic script in the font `f`.
 function indic_shaped(f: truetype.Font, text: string, p: Plan): truetype.Run {
-  let cs = normalized(f, vowel_constrained(characters(text)), false, true);
+  let cs = normalized(f, vowel_constrained(characters(text), p.config.script), false, true);
   let vars: i32[] = [];
   let masks: i32[] = [];
   for c in cs.cps {
@@ -981,7 +1193,7 @@ function indic_shaped(f: truetype.Font, text: string, p: Plan): truetype.Run {
   }
   r = run_of_glyphs(r, finally_reordered(p, glyphs_of(r)));
   r = applied_stage(f, r, p.gsub, final_features(), false);
-  r = f.with_advances(r, false);
+  r = with_space_widths(f, f.with_advances(r, false));
   r = applied_stage(f, r, p.gpos, position_features(), true);
   return finished(f, r, false);
 }
@@ -1174,7 +1386,7 @@ function consonant_position(f: truetype.Font, p: Plan, g: i32): i32 {
 // Whether a lookup of `tag` joins the virama and the glyph `g`, in either
 // order: some fonts have the order of the old specification in new tables.
 function with_virama(f: truetype.Font, p: Plan, tag: string, g: i32): boolean {
-  return f.would_substitute(p.gsub, tag, [p.virama, g], !p.old_spec) || f.would_substitute(p.gsub, tag, [g, p.virama], !p.old_spec);
+  return f.would_substitute(p.gsub, tag, [p.virama, g], p.zero) || f.would_substitute(p.gsub, tag, [g, p.virama], p.zero);
 }
 
 // `gs` with a dotted circle at the start of each broken cluster, after a
@@ -1216,18 +1428,28 @@ function base_of(f: truetype.Font, p: Plan, gs: Glyph[], start: i32, end: i32): 
   return (base, reph && !(base == start && limit - base <= 2));
 }
 
-// The index after a Ra and a virama at `start` that rphf joins, and after
-// the joiners that follow them, or `start` when they do not form a reph.
+// The index after the reph at `start` and the joiners after it, or `start`
+// when no reph forms there. In Malayalam the reph is a repha character.
 function reph_limit(f: truetype.Font, p: Plan, gs: Glyph[], start: i32, end: i32): i32 {
-  let joiners = joiner_bits();
-  if (!p.rphf || start + 3 > end || is_one_of(gs[start + 2], joiners) || !f.would_substitute(p.gsub, "rphf", [gs[start].id, gs[start + 1].id], !p.old_spec)) {
+  let logical = p.config.reph_mode == MODE_LOG_REPHA;
+  if (logical && cat_of(gs[start]) != CAT_REPHA || !logical && (!p.rphf || start + 3 > end || !reph_formed(f, p, gs, start))) {
     return start;
   }
-  let limit = start + 2;
-  while (limit < end && is_one_of(gs[limit], joiners)) {
+  let limit = start + (if (logical) { 1 } else { 2 });
+  while (limit < end && is_one_of(gs[limit], joiner_bits())) {
     limit += 1;
   }
   return limit;
+}
+
+// Whether a Ra and a virama at `start` form a reph by rphf. In Telugu a ZWJ
+// must follow them.
+function reph_formed(f: truetype.Font, p: Plan, gs: Glyph[], start: i32): boolean {
+  let two = [gs[start].id, gs[start + 1].id];
+  if (p.config.reph_mode == MODE_IMPLICIT) {
+    return !is_one_of(gs[start + 2], joiner_bits()) && f.would_substitute(p.gsub, "rphf", two, p.zero);
+  }
+  return cat_of(gs[start + 2]) == CAT_ZWJ && (f.would_substitute(p.gsub, "rphf", two, p.zero) || f.would_substitute(p.gsub, "rphf", two.append(gs[start + 2].id), p.zero));
 }
 
 // The base from the end of the syllable back to `limit`: the last consonant
@@ -1268,7 +1490,7 @@ function half_requested(gs: Glyph[], start: i32, i: i32): boolean {
 
 // `gs` after the initial reordering of the syllable from `start` to `end`.
 function reordered_syllable(f: truetype.Font, p: Plan, gs0: Glyph[], start: i32, end: i32): Glyph[] {
-  let gs = gs0;
+  let gs = kannada_swapped(p, gs0, start, end);
   let (base, reph) = base_of(f, p, gs, start, end);
   for i in start..base {
     gs = gs.with(i, with_pos(gs[i], pos_of(gs[i]).min(POS_PRE_C)));
@@ -1280,7 +1502,7 @@ function reordered_syllable(f: truetype.Font, p: Plan, gs0: Glyph[], start: i32,
     gs = gs.with(start, with_pos(gs[start], POS_RA_TO_BECOME_REPH));
   }
   if (p.old_spec) {
-    gs = halant_moved(gs, base, end);
+    gs = halant_moved(gs, base, end, p.config.script == "knda");
   }
   gs = marks_attached(gs, start, end, base);
   gs = sorted_syllable(p, gs, start, end);
@@ -1294,15 +1516,26 @@ function reordered_syllable(f: truetype.Font, p: Plan, gs0: Glyph[], start: i32,
   return with_initial_masks(f, p, gs, start, end, new_base);
 }
 
+// In Kannada a Ra, a halant and a ZWJ at the start of a syllable act as a
+// Ra, a ZWJ and a halant.
+function kannada_swapped(p: Plan, gs: Glyph[], start: i32, end: i32): Glyph[] {
+  if (p.config.script != "knda" || start + 3 > end || !is_one_of(gs[start], cat_bit(CAT_RA)) || !is_one_of(gs[start + 1], cat_bit(CAT_H)) || !is_one_of(gs[start + 2], cat_bit(CAT_ZWJ))) {
+    return gs;
+  }
+  let out = merged(gs, start + 1, start + 3);
+  let t = out[start + 1];
+  return out.with(start + 1, out[start + 2]).with(start + 2, t);
+}
+
 // `gs` with the first halant after the base moved after the last consonant,
-// as the old specification asks.
-function halant_moved(gs: Glyph[], base: i32, end: i32): Glyph[] {
+// as the old specification asks. In Kannada a second halant stops the move.
+function halant_moved(gs: Glyph[], base: i32, end: i32, kannada: boolean): Glyph[] {
   for i in base + 1..end {
     if (cat_of(gs[i]) != CAT_H) {
       continue;
     }
     let j = end - 1;
-    while (j > i && !is_one_of(gs[j], consonant_bits())) {
+    while (j > i && !is_one_of(gs[j], consonant_bits()) && !(kannada && cat_of(gs[j]) == CAT_H)) {
       j -= 1;
     }
     return if (cat_of(gs[j]) != CAT_H && j > i) { moved(gs, i, j) } else { gs };
@@ -1407,7 +1640,7 @@ function by_position(gs0: Glyph[], start: i32, end: i32): Glyph[] {
 }
 
 // `gs` with the pre-base matras before `base` in the other order, but each
-// matra and halant group in its own order.
+// group that ends with a matra in its own order.
 function left_matras_flipped(gs: Glyph[], start: i32, base: i32): Glyph[] {
   let (first, last) = (-1, -1);
   for i in start..base {
@@ -1422,7 +1655,7 @@ function left_matras_flipped(gs: Glyph[], start: i32, base: i32): Glyph[] {
   let out = reversed(gs, first, last + 1);
   let i = first;
   for j in first..last + 1 {
-    if (in_set(out[j], cat_bit(CAT_M) | cat_bit(CAT_H))) {
+    if (in_set(out[j], cat_bit(CAT_M) | cat_bit(CAT_MPST))) {
       out = reversed(out, i, j + 1);
       i = j + 1;
     }
@@ -1458,13 +1691,13 @@ function cycles_merged(gs0: Glyph[], start: i32, end: i32, base: i32): Glyph[] {
 // syllable from `start` to `end` with the base at `base`.
 function with_initial_masks(f: truetype.Font, p: Plan, gs0: Glyph[], start: i32, end: i32, base: i32): Glyph[] {
   let gs = side_masked(p, gs0, start, end, base);
-  if (p.old_spec) {
+  if (p.old_spec && p.config.script == "deva") {
     gs = eyelash_masked(gs, start, base);
   }
   if (p.pref && base + 2 < end) {
     gs = pref_masked(f, p, gs, base, end);
   }
-  return zwnj_masked(gs, base, end);
+  return zwnj_masked(gs, start, end);
 }
 
 // `gs` with the mask `m` added to the glyph at `k`.
@@ -1472,8 +1705,10 @@ function with_mask(gs: Glyph[], k: i32, m: i32): Glyph[] {
   return gs.with(k, Glyph { ...gs[k], mask: gs[k].mask | m });
 }
 
-// `gs` with rphf on the reph, the half and below-base forms before the base,
-// and the below-base, above-base and post-base forms after it.
+// `gs` with rphf on the reph, the half forms before the base, and the
+// below-base, above-base and post-base forms after it. With the new
+// specification the below-base forms also apply before the base, but not
+// in Telugu and Kannada.
 function side_masked(p: Plan, gs0: Glyph[], start: i32, end: i32, base: i32): Glyph[] {
   let gs = gs0;
   let i = start;
@@ -1481,7 +1716,7 @@ function side_masked(p: Plan, gs0: Glyph[], start: i32, end: i32, base: i32): Gl
     gs = with_mask(gs, i, RPHF);
     i += 1;
   }
-  let pre = if (p.old_spec) { HALF } else { HALF | BLWF };
+  let pre = if (p.old_spec || p.config.post_only) { HALF } else { HALF | BLWF };
   for k in start..base {
     gs = with_mask(gs, k, pre);
   }
@@ -1506,18 +1741,17 @@ function eyelash_masked(gs0: Glyph[], start: i32, base: i32): Glyph[] {
 // `gs` with pref on the first two glyphs after the base that pref joins.
 function pref_masked(f: truetype.Font, p: Plan, gs: Glyph[], base: i32, end: i32): Glyph[] {
   for k in base + 1..end - 1 {
-    if (f.would_substitute(p.gsub, "pref", [gs[k].id, gs[k + 1].id], !p.old_spec)) {
+    if (f.would_substitute(p.gsub, "pref", [gs[k].id, gs[k + 1].id], p.zero)) {
       return with_mask(with_mask(gs, k, PREF), k + 1, PREF);
     }
   }
   return gs;
 }
 
-// A ZWNJ after the base stops the half forms before it, back to a
-// consonant.
-function zwnj_masked(gs0: Glyph[], base: i32, end: i32): Glyph[] {
+// A ZWNJ stops the half forms before it, back to a consonant.
+function zwnj_masked(gs0: Glyph[], start: i32, end: i32): Glyph[] {
   let gs = gs0;
-  for k in base + 1..end {
+  for k in start + 1..end {
     if (!is_one_of(gs[k], joiner_bits()) || cat_of(gs[k]) != CAT_ZWNJ) {
       continue;
     }
@@ -1525,7 +1759,7 @@ function zwnj_masked(gs0: Glyph[], base: i32, end: i32): Glyph[] {
     while (true) {
       j -= 1;
       gs = gs.with(j, Glyph { ...gs[j], mask: gs[j].mask & ~HALF });
-      if (j <= base || is_one_of(gs[j], consonant_bits())) {
+      if (j <= start || is_one_of(gs[j], consonant_bits())) {
         break;
       }
     }
@@ -1548,27 +1782,68 @@ function finally_reordered(p: Plan, gs0: Glyph[]): Glyph[] {
 // The base of the syllable from `start` to `end` after the basic features,
 // and whether a pre-base-reordering consonant can still move. A pref
 // candidate that did not ligate makes the glyph after its halants the base.
+// In Malayalam a consonant after a halant that took no below-base form is
+// the base.
 function final_base(p: Plan, gs0: Glyph[], start: i32, end: i32): (Glyph[], i32, boolean) {
-  let gs = gs0;
-  let try_pref = p.pref;
   let base = start;
-  while (base < end && pos_of(gs[base]) < POS_BASE_C) {
+  while (base < end && pos_of(gs0[base]) < POS_BASE_C) {
     base += 1;
   }
-  if (base < end) {
-    let to = pref_base(gs, base, end, try_pref);
-    if (to >= 0) {
-      base = to;
-      try_pref = false;
-    }
-    if (to >= 0 && base < end) {
-      gs = gs.with(base, with_pos(gs[base], POS_BASE_C));
-    }
-    if (base < end && start < base && pos_of(gs[base]) > POS_BASE_C) {
-      base -= 1;
-    }
+  if (base == end) {
+    return (gs0, adjusted_base(gs0, start, end, base), p.pref);
+  }
+  let (gs, b, try_pref) = pref_rebased(gs0, base, end, p.pref);
+  base = b;
+  if (base < end && p.config.script == "mlym") {
+    let (gs1, b1) = below_forms_skipped(gs, base, end);
+    gs = gs1;
+    base = b1;
+  }
+  if (base < end && start < base && pos_of(gs[base]) > POS_BASE_C) {
+    base -= 1;
   }
   return (gs, adjusted_base(gs, start, end, base), try_pref);
+}
+
+// `gs`, the base and whether pref can still move, after a pref candidate
+// that did not ligate makes the glyph after its halants the base.
+function pref_rebased(gs: Glyph[], base: i32, end: i32, try_pref: boolean): (Glyph[], i32, boolean) {
+  let to = pref_base(gs, base, end, try_pref);
+  if (to < 0) {
+    return (gs, base, try_pref);
+  }
+  return (if (to < end) { gs.with(to, with_pos(gs[to], POS_BASE_C)) } else { gs }, to, false);
+}
+
+// `gs` and the base after the Malayalam step: each halant after the base,
+// with joiners around it, that has a below-base consonant after it makes
+// that consonant the base.
+function below_forms_skipped(gs0: Glyph[], base0: i32, end: i32): (Glyph[], i32) {
+  let gs = gs0;
+  let base = base0;
+  let i = base + 1;
+  while (i < end) {
+    i = after_joiners(gs, i, end);
+    if (i == end || !is_one_of(gs[i], cat_bit(CAT_H))) {
+      break;
+    }
+    i = after_joiners(gs, i + 1, end);
+    if (i < end && is_one_of(gs[i], consonant_bits()) && pos_of(gs[i]) == POS_BELOW_C) {
+      base = i;
+      gs = gs.with(base, with_pos(gs[base], POS_BASE_C));
+    }
+    i += 1;
+  }
+  return (gs, base);
+}
+
+// The first index from `i` that is not a joiner, or `end`.
+function after_joiners(gs: Glyph[], i0: i32, end: i32): i32 {
+  let i = i0;
+  while (i < end && is_one_of(gs[i], joiner_bits())) {
+    i += 1;
+  }
+  return i;
 }
 
 // The glyph after the halants of a pref candidate after `base` that did not
@@ -1612,15 +1887,15 @@ function final_syllable(p: Plan, gs0: Glyph[], start: i32, end: i32): Glyph[] {
   let gs = gs1;
   let base = base0;
   if (start + 1 < end && start < base) {
-    let (gs2, b) = pre_matras_moved(gs, start, end, base);
+    let (gs2, b) = pre_matras_moved(p, gs, start, end, base);
     gs = gs2;
     base = b;
   }
-  let (gs3, b3) = reph_moved(gs, start, end, base);
+  let (gs3, b3) = reph_moved(p, gs, start, end, base);
   gs = gs3;
   base = b3;
   if (try_pref && base + 1 < end) {
-    gs = pref_moved(gs, start, end, base);
+    gs = pref_moved(p, gs, start, end, base);
   }
   // A pre-base matra at the start of a word takes the init feature.
   if (pos_of(gs[start]) == POS_PRE_M && (start == 0 || !letter_like(gs[start - 1].var >> 9))) {
@@ -1644,22 +1919,22 @@ function viramas_restored(p: Plan, gs0: Glyph[], start: i32, end: i32): Glyph[] 
 // `gs` with the reph at `start` moved to its place, and the new base. A Ra
 // and a virama move only when they ligated, and a repha only when it did
 // not.
-function reph_moved(gs: Glyph[], start: i32, end: i32, base: i32): (Glyph[], i32) {
+function reph_moved(p: Plan, gs: Glyph[], start: i32, end: i32, base: i32): (Glyph[], i32) {
   let reph = start + 1 < end && pos_of(gs[start]) == POS_RA_TO_BECOME_REPH;
   if (!reph || cat_of(gs[start]) == CAT_REPHA == ligated_alone(gs[start])) {
     return (gs, base);
   }
-  let to = reph_target(gs, start, end, base);
+  let to = reph_target(p, gs, start, end, base);
   let b = if (start < base && base <= to) { base - 1 } else { base };
   return (moved(merged(gs, start, to + 1), start, to), b);
 }
 
 // `gs` with each pre-base matra moved after the last halant before the
 // base that no ZWJ follows, and the new base.
-function pre_matras_moved(gs0: Glyph[], start: i32, end: i32, base0: i32): (Glyph[], i32) {
+function pre_matras_moved(p: Plan, gs0: Glyph[], start: i32, end: i32, base0: i32): (Glyph[], i32) {
   let gs = gs0;
   let base = base0;
-  let new_pos = pre_matra_target(gs, start, end, base);
+  let new_pos = pre_matra_target(p, gs, start, end, base);
   if (start < new_pos && pos_of(gs[new_pos]) != POS_PRE_M) {
     let i = new_pos;
     while (i > start) {
@@ -1682,9 +1957,13 @@ function pre_matras_moved(gs0: Glyph[], start: i32, end: i32, base0: i32): (Glyp
 }
 
 // The place for the pre-base matras: the last halant before the base that
-// does not belong to a matra and that no ZWJ follows, or `start`.
-function pre_matra_target(gs: Glyph[], start: i32, end: i32, base: i32): i32 {
+// does not belong to a matra and that no ZWJ follows, or `start`. In Tamil
+// and Malayalam, the glyph before the base.
+function pre_matra_target(p: Plan, gs: Glyph[], start: i32, end: i32, base: i32): i32 {
   let at = if (base == end) { base - 2 } else { base - 1 };
+  if (no_half_forms(p)) {
+    return at;
+  }
   while (true) {
     at = last_mover(gs, start, at);
     if (!is_one_of(gs[at], cat_bit(CAT_H)) || pos_of(gs[at]) == POS_PRE_M) {
@@ -1698,6 +1977,12 @@ function pre_matra_target(gs: Glyph[], start: i32, end: i32, base: i32): i32 {
   return start;
 }
 
+// Whether the script has no half forms or explicit viramas: what half forms
+// there are Chillus or ligated viramas, which a matra goes after.
+function no_half_forms(p: Plan): boolean {
+  return p.config.script == "taml" || p.config.script == "mlym";
+}
+
 // The last matra or halant from `at` back to `start`, or `start`.
 function last_mover(gs: Glyph[], start: i32, at0: i32): i32 {
   let at = at0;
@@ -1707,18 +1992,47 @@ function last_mover(gs: Glyph[], start: i32, at0: i32): i32 {
   return at;
 }
 
-// Where the reph at `start` goes: after the first halant between it and
-// the base, or else at the end of the syllable before the syllable
-// modifiers, and before a halant that follows a matra.
-function reph_target(gs: Glyph[], start: i32, end: i32, base: i32): i32 {
+// Where the reph at `start` goes, by the reph position of the script: after
+// the first halant between it and the base, or after the main consonant,
+// or before the post-base forms, or else at the end of the syllable before
+// the syllable modifiers.
+function reph_target(p: Plan, gs: Glyph[], start: i32, end: i32, base: i32): i32 {
+  let rp = p.config.reph_pos;
+  let after = after_halant(gs, start, base);
+  if (after >= 0) {
+    return after;
+  }
+  if (rp == REPH_AFTER_MAIN || rp == REPH_AFTER_SUB) {
+    let to = base;
+    while (to + 1 < end && before_reph(pos_of(gs[to + 1]), rp)) {
+      to += 1;
+    }
+    if (to < end) {
+      return to;
+    }
+  }
+  return reph_end(gs, start, end, base);
+}
+
+// The index after the first halant between `start` and the base, and after
+// a joiner that follows it, or -1.
+function after_halant(gs: Glyph[], start: i32, base: i32): i32 {
   let to = start + 1;
   while (to < base && !is_one_of(gs[to], cat_bit(CAT_H))) {
     to += 1;
   }
-  if (to < base) {
-    return if (to + 1 < base && is_one_of(gs[to + 1], joiner_bits())) { to + 1 } else { to };
+  if (to >= base) {
+    return -1;
   }
-  return reph_end(gs, start, end, base);
+  return if (to + 1 < base && is_one_of(gs[to + 1], joiner_bits())) { to + 1 } else { to };
+}
+
+// Whether a reph of the position `rp` goes after a glyph at `pos`.
+function before_reph(pos: i32, rp: i32): boolean {
+  if (rp == REPH_AFTER_MAIN) {
+    return pos <= POS_AFTER_MAIN;
+  }
+  return pos != POS_POST_C && pos != POS_AFTER_POST && pos != POS_SMVD;
 }
 
 // The place for a reph at the end of the syllable: before the syllable
@@ -1742,8 +2056,9 @@ function reph_end(gs: Glyph[], start: i32, end: i32, base: i32): i32 {
 }
 
 // `gs` with the pre-base-reordering consonant that pref formed moved
-// before the base, after the last halant or matra before it.
-function pref_moved(gs: Glyph[], start: i32, end: i32, base: i32): Glyph[] {
+// before the base, after the last halant or matra before it. In Tamil and
+// Malayalam it goes just before the base.
+function pref_moved(p: Plan, gs: Glyph[], start: i32, end: i32, base: i32): Glyph[] {
   for i in base + 1..end {
     if ((gs[i].mask & PREF) == 0) {
       continue;
@@ -1751,16 +2066,22 @@ function pref_moved(gs: Glyph[], start: i32, end: i32, base: i32): Glyph[] {
     if (!ligated_alone(gs[i])) {
       return gs;
     }
-    let new_pos = base;
-    while (new_pos > start && !is_one_of(gs[new_pos - 1], cat_bit(CAT_M) | cat_bit(CAT_MPST) | cat_bit(CAT_H))) {
-      new_pos -= 1;
-    }
+    let new_pos = if (no_half_forms(p)) { base } else { last_mover_before(gs, start, base) };
     if (new_pos > start && is_one_of(gs[new_pos - 1], cat_bit(CAT_H)) && new_pos < end && is_one_of(gs[new_pos], joiner_bits())) {
       new_pos += 1;
     }
     return moved(merged(gs, new_pos, i + 1), i, new_pos);
   }
   return gs;
+}
+
+// The index after the last matra or halant before `base`, or `start`.
+function last_mover_before(gs: Glyph[], start: i32, base: i32): i32 {
+  let at = base;
+  while (at > start && !is_one_of(gs[at - 1], cat_bit(CAT_M) | cat_bit(CAT_MPST) | cat_bit(CAT_H))) {
+    at -= 1;
+  }
+  return at;
 }
 
 // Whether the character `cp` is of a general category that HarfBuzz counts
