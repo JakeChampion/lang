@@ -60,9 +60,60 @@ concurrency:
 
 jobs:
 
+  # A pull request suite waits here while the merge queue tests a batch of
+  # `ci-priority` pull requests (scripts/merge-queue): those repair main, and
+  # every suite on a red main fails. It waits inside the lane lock, so at most
+  # one runner waits for each lane. The lanes need this job with `!cancelled()`,
+  # so they also run when it is skipped on main and fails open on an API error.
+  wait-for-priority:
+    name: Wait for a priority batch
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pollMs = Number(process.env.CI_PRIORITY_POLL_MS) || 60000;
+            const deadline = Date.now() + (Number(process.env.CI_PRIORITY_WAIT_MINUTES) || 100) * 60000;
+            // The pull request with `ci-priority` that the batch in flight
+            // tests, or null. A priority batch holds only priority pull
+            // requests, so the last merge of the batch names one of them.
+            const priorityBatch = async () => {
+              let head;
+              try {
+                head = (await github.rest.repos.getBranch({ owner, repo, branch: "merge-queue/batch" })).data.commit;
+              } catch (e) {
+                if (e.status === 404) return null;
+                throw e;
+              }
+              const m = /^Merge pull request #(\d+) /.exec(head.commit.message);
+              if (!m) return null;
+              const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: Number(m[1]) });
+              return pr.state === "open" && pr.labels.some((l) => l.name === "ci-priority") ? pr.number : null;
+            };
+            for (;;) {
+              let number;
+              try {
+                number = await priorityBatch();
+              } catch (e) {
+                core.warning(`the suite runs: the merge queue could not be read (${e.message})`);
+                return;
+              }
+              if (number === null) return;
+              if (Date.now() >= deadline) {
+                core.warning(`the suite runs: the priority batch of #${number} is still in flight`);
+                return;
+              }
+              core.info(`the merge queue tests #${number}, which has ci-priority: this suite waits`);
+              await new Promise((resolve) => setTimeout(resolve, pollMs));
+            }
+
   test-units:
     name: Test units
-    if: fromJSON(inputs.lanes)['test-units']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['test-units'] }}
     uses: ./.github/workflows/test-units.yml
     with:
       repository-only: ${{ fromJSON(inputs.selection).unitRepositoryOnly == true }}
@@ -73,67 +124,78 @@ jobs:
 
   test-coreutils:
     name: Test coreutils
-    if: fromJSON(inputs.lanes)['test-coreutils']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['test-coreutils'] }}
     uses: ./.github/workflows/test-coreutils.yml
     secrets: inherit
 
   test-e2e-x86_64:
     name: Test e2e x86_64
-    if: fromJSON(inputs.lanes)['test-e2e-x86_64']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['test-e2e-x86_64'] }}
     uses: ./.github/workflows/test-e2e-x86_64.yml
     secrets: inherit
 
   test-e2e-arm64:
     name: Test e2e arm64
-    if: fromJSON(inputs.lanes)['test-e2e-arm64']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['test-e2e-arm64'] }}
     uses: ./.github/workflows/test-e2e-arm64.yml
     secrets: inherit
 
   test-e2e-wasm:
     name: Test e2e wasm
-    if: fromJSON(inputs.lanes)['test-e2e-wasm']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['test-e2e-wasm'] }}
     uses: ./.github/workflows/test-e2e-wasm.yml
     secrets: inherit
 
   test-e2e-other:
     name: Test e2e other
-    if: fromJSON(inputs.lanes)['test-e2e-other']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['test-e2e-other'] }}
     uses: ./.github/workflows/test-e2e-other.yml
     secrets: inherit
 
   test-e2e-differential:
     name: Test e2e differential
-    if: fromJSON(inputs.lanes)['test-e2e-differential']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['test-e2e-differential'] }}
     uses: ./.github/workflows/test-e2e-differential.yml
     secrets: inherit
 
   test-e2e-selfhost:
     name: Test e2e self-host
-    if: fromJSON(inputs.lanes)['test-e2e-selfhost']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['test-e2e-selfhost'] }}
     uses: ./.github/workflows/test-e2e-selfhost.yml
     secrets: inherit
 
   test-fernsmith:
     name: Test fernsmith
-    if: fromJSON(inputs.lanes)['test-fernsmith']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['test-fernsmith'] }}
     uses: ./.github/workflows/test-fernsmith.yml
     secrets: inherit
 
   fuzz-diff:
     name: Fuzz
-    if: fromJSON(inputs.lanes)['fuzz-diff']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['fuzz-diff'] }}
     uses: ./.github/workflows/fuzz-diff.yml
     secrets: inherit
 
   examples:
     name: Examples
-    if: fromJSON(inputs.lanes)['examples']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['examples'] }}
     uses: ./.github/workflows/examples.yml
     secrets: inherit
 
   perf:
     name: Perf
-    if: fromJSON(inputs.lanes)['perf']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['perf'] }}
     uses: ./.github/workflows/perf.yml
     secrets: inherit
     # Its jobs push refs/notes/perf on main.
@@ -142,7 +204,8 @@ jobs:
 
   bootstrap:
     name: Bootstrap
-    if: fromJSON(inputs.lanes)['bootstrap']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['bootstrap'] }}
     uses: ./.github/workflows/bootstrap.yml
     secrets: inherit
     # Its `release` job requests `contents: write` for the publish path, and
@@ -154,7 +217,8 @@ jobs:
 
   macos:
     name: macOS arm64
-    if: fromJSON(inputs.lanes)['macos']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['macos'] }}
     uses: ./.github/workflows/macos.yml
     with:
       groups: ${{ toJSON(fromJSON(inputs.selection).macosGroups || fromJSON('["profile","coreutils","native","fixtures","examples"]')) }}
@@ -163,43 +227,50 @@ jobs:
 
   docs-build:
     name: Docs build
-    if: fromJSON(inputs.lanes)['docs-build']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['docs-build'] }}
     uses: ./.github/workflows/docs-build.yml
     secrets: inherit
 
   playground-e2e:
     name: Playground E2E
-    if: fromJSON(inputs.lanes)['playground-e2e']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['playground-e2e'] }}
     uses: ./.github/workflows/playground-e2e.yml
     secrets: inherit
 
   showcase:
     name: Showcase
-    if: fromJSON(inputs.lanes)['showcase']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['showcase'] }}
     uses: ./.github/workflows/showcase.yml
     secrets: inherit
 
   android:
     name: Android
-    if: fromJSON(inputs.lanes)['android']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['android'] }}
     uses: ./.github/workflows/android.yml
     secrets: inherit
 
   vscode-extension:
     name: VS Code Extension
-    if: fromJSON(inputs.lanes)['vscode-extension']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['vscode-extension'] }}
     uses: ./.github/workflows/vscode-extension.yml
     secrets: inherit
 
   fern-image:
     name: Fern image
-    if: fromJSON(inputs.lanes)['fern-image']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['fern-image'] }}
     uses: ./.github/workflows/fern-image.yml
     secrets: inherit
 
   test-affected:
     name: Test affected consumers
-    if: fromJSON(inputs.lanes)['test-affected']
+    needs: [wait-for-priority]
+    if: ${{ !cancelled() && fromJSON(inputs.lanes)['test-affected'] }}
     uses: ./.github/workflows/test-affected.yml
     with:
       selection: ${{ inputs.selection }}

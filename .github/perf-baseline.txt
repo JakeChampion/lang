@@ -1,9 +1,10 @@
-# Retired- and static-instruction baselines for the bench corpus,
-# checked against every run by scripts/ci-check-perf.
+# Retired- and static-instruction and data-read baselines for the bench
+# corpus, checked against every run by scripts/ci-check-perf.
 #
 # FORMAT: metric  value  [tolerance%]. The metric key is
-# <arch>/<benchmark>.<text|ir> — .text is the count of instructions in the
-# emitted assembly, .ir the count of instructions actually retired.
+# <arch>/<benchmark>.<text|ir|dr> — .text is the count of instructions in the
+# emitted assembly, .ir the count of instructions actually retired, and .dr
+# the count of reads of data memory.
 #
 # WHAT IS EXACT AND WHAT IS NOT. Every figure here repeats to the digit on a
 # given commit EXCEPT the rows that hash string keys: core/map draws a
@@ -233,3 +234,95 @@ aarch64/utf8_validate.text	2882
 aarch64/utf8_validate.ir	239905894
 x86_64/utf8_validate.text	2633
 x86_64/utf8_validate.ir	183108770
+aarch64/array_append.dr	1601015
+aarch64/array_index.dr	4040138
+aarch64/array_scale_f64.dr	8332522
+aarch64/array_with.dr	1639642
+aarch64/ascii_scan.dr	7929531
+aarch64/base64_decode.dr	8749949
+aarch64/base64_encode.dr	4312623
+aarch64/byte_copy_append.dr	6298434
+aarch64/byte_copy_with.dr	6199460
+aarch64/call_overhead.dr	1187566
+aarch64/closure_call.dr	4842023
+aarch64/deflate_decode.dr	2789052
+aarch64/deflate_encode.dr	5499009
+aarch64/enum_match.dr	1125004
+aarch64/gather_many.dr	10348475
+aarch64/hex_decode.dr	15885910
+aarch64/hex_encode.dr	3287599
+aarch64/http_hello.dr	4476098
+aarch64/int_loop.dr	3000003
+aarch64/map_int.dr	4579829
+aarch64/map_probe_chain.dr	40635365
+aarch64/map_string.dr	10136148 2
+aarch64/ordmap_insert.dr	18665522
+aarch64/perceus_cfold.dr	11182883
+aarch64/perceus_deriv.dr	14832116
+aarch64/perceus_nqueens.dr	12023406
+aarch64/perceus_rbtree.dr	7147326
+aarch64/perceus_rbtree_ck.dr	8634563
+aarch64/pmap_insert.dr	10552067
+aarch64/pvec_with.dr	12571597
+aarch64/record_update.dr	1639642
+aarch64/sort_inplace.dr	5416308
+aarch64/sort_ints.dr	3279554
+aarch64/sort_strings.dr	19976031
+aarch64/string_build.dr	7803941
+aarch64/string_count_byte.dr	24608650
+aarch64/string_find_byte.dr	12338666
+aarch64/string_rfind_byte.dr	12342791
+aarch64/string_scan.dr	15509910
+aarch64/string_slice.dr	2580011
+aarch64/struct_drop.dr	47340142
+aarch64/tokenize.dr	5920013
+aarch64/utf8_ingest_unchecked.dr	584141
+aarch64/utf8_ingest_validated.dr	832544
+aarch64/utf8_validate.dr	29588157
+aarch64/video_qtrle.dr	91328867
+x86_64/array_append.dr	1601176
+x86_64/array_index.dr	4040143
+x86_64/array_scale_f64.dr	4248333
+x86_64/array_with.dr	1246
+x86_64/ascii_scan.dr	4955859
+x86_64/base64_decode.dr	23322476
+x86_64/base64_encode.dr	15794229
+x86_64/byte_copy_append.dr	3244438
+x86_64/byte_copy_with.dr	3124467
+x86_64/call_overhead.dr	187564
+x86_64/closure_call.dr	4878023
+x86_64/deflate_decode.dr	4613645
+x86_64/deflate_encode.dr	13156498
+x86_64/enum_match.dr	225002
+x86_64/gather_many.dr	10701857
+x86_64/hex_decode.dr	25270109
+x86_64/hex_encode.dr	6369332
+x86_64/http_hello.dr	5456040
+x86_64/int_loop.dr	2
+x86_64/map_int.dr	4677542
+x86_64/map_probe_chain.dr	43194356
+x86_64/map_string.dr	11581007 2
+x86_64/ordmap_insert.dr	17455427
+x86_64/perceus_cfold.dr	10209285
+x86_64/perceus_deriv.dr	15184918
+x86_64/perceus_nqueens.dr	12785008
+x86_64/perceus_rbtree.dr	6890845
+x86_64/perceus_rbtree_ck.dr	9213763
+x86_64/pmap_insert.dr	11537935
+x86_64/pvec_with.dr	12550953
+x86_64/record_update.dr	1246
+x86_64/sort_inplace.dr	5957542
+x86_64/sort_ints.dr	3588898
+x86_64/sort_strings.dr	23468692
+x86_64/string_build.dr	9396923
+x86_64/string_count_byte.dr	13913900
+x86_64/string_find_byte.dr	6269916
+x86_64/string_rfind_byte.dr	6277999
+x86_64/string_scan.dr	16463525
+x86_64/string_slice.dr	2580009
+x86_64/struct_drop.dr	54560074
+x86_64/tokenize.dr	6770008
+x86_64/utf8_ingest_unchecked.dr	550769
+x86_64/utf8_ingest_validated.dr	776973
+x86_64/utf8_validate.dr	27641588
+x86_64/video_qtrle.dr	321555951

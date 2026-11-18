@@ -19,7 +19,7 @@ func TestSelfHostWithAfterReadUnchecked(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "with.fern")
 	program := withAfterRead + `function main(): i32 {
   let a = bump(bump([1, 2, 3], 1), 1);
-  let b = maybe(put([1, 4, 3], 0), 2, true);
+  let b = maybe(put([1, 4, 3], args().len() - 1), 2, true);
   return a[1] + b[0] + b[2] - 15;
 }`
 	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {

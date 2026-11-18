@@ -15,6 +15,10 @@ with open(os.environ["FAKE_GH_LOG"], "a") as f:
     f.write(json.dumps(args) + "\n")
 if args[:2] == ["pr", "list"]:
     print(json.dumps(world["prs"]))
+elif args[0] == "api" and "/actions/runs/" in args[1]:
+    run = args[1].split("/actions/runs/")[1].split("/")[0]
+    ci = json.load(open(os.environ["FAKE_GH_CI"]))
+    print("\n".join(ci[run]["jobs"]))
 elif args[0] == "api":
     sha = args[1].split("/commits/")[1].split("/")[0]
     runs = [{"conclusion": "success"}] if sha in world["green"] else []
@@ -28,12 +32,24 @@ elif args[:2] == ["workflow", "run"]:
         head = subprocess.run(["git", "ls-remote", "origin", "refs/heads/merge-queue/batch"],
                               capture_output=True, text=True).stdout.split()[0]
         runs = json.load(open(os.environ["FAKE_GH_RUNS"]))
-        runs.insert(0, {"headSha": head, "status": "queued"})
+        runs.insert(0, {"databaseId": 100 + len(runs), "headSha": head, "status": "queued"})
         json.dump(runs, open(os.environ["FAKE_GH_RUNS"], "w"))
+elif args[:2] == ["run", "list"] and args[3] == "ci.yml":
+    status = args[args.index("--status") + 1]
+    ci = json.load(open(os.environ["FAKE_GH_CI"]))
+    print(json.dumps([{"databaseId": int(run), "headSha": x["headSha"]}
+                      for run, x in ci.items() if x["status"] == status]))
 elif args[:2] == ["run", "list"]:
     if os.environ.get("GH_TOKEN") != world.get("actions_token"):
         sys.exit(1)
     print(open(os.environ["FAKE_GH_RUNS"]).read())
+elif args[:2] == ["run", "cancel"]:
+    ci = json.load(open(os.environ["FAKE_GH_CI"]))
+    if args[2] in ci:
+        ci[args[2]]["status"] = "completed"
+        json.dump(ci, open(os.environ["FAKE_GH_CI"], "w"))
+elif args[:2] == ["run", "view"]:
+    print(json.load(open(os.environ["FAKE_GH_CI"]))[args[2]]["status"])
 '''
 
 
@@ -47,6 +63,8 @@ class MergeQueueTest(unittest.TestCase):
         self.runs = os.path.join(self.tmp, "runs.json")
         with open(self.runs, "w") as f:
             f.write("[]")
+        self.ci = os.path.join(self.tmp, "ci.json")
+        self.set_ci({})
         fake = os.path.join(self.tmp, "gh")
         with open(fake, "w") as f:
             f.write(FAKE_GH)
@@ -57,7 +75,7 @@ class MergeQueueTest(unittest.TestCase):
             "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@fern.invalid",
             "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull,
             "MERGE_QUEUE_GH": fake, "FAKE_GH_WORLD": self.world, "FAKE_GH_LOG": self.log,
-            "FAKE_GH_RUNS": self.runs, "GH_TOKEN": "personal", "MERGE_QUEUE_ACTIONS_TOKEN": "workflow",
+            "FAKE_GH_RUNS": self.runs, "FAKE_GH_CI": self.ci, "MERGE_QUEUE_KICK_SECONDS": "0", "GH_TOKEN": "personal", "MERGE_QUEUE_ACTIONS_TOKEN": "workflow",
         }
         self.actions_token = "workflow"
         self.git(self.tmp, "init", "-q", "--bare", "-b", "main", self.remote)
@@ -165,6 +183,11 @@ class MergeQueueTest(unittest.TestCase):
 
     def set_runs(self, runs):
         with open(self.runs, "w") as f:
+            json.dump(runs, f)
+
+    def set_ci(self, runs):
+        """The pull request runs of ci.yml: {id: {"headSha", "status", "jobs"}}."""
+        with open(self.ci, "w") as f:
             json.dump(runs, f)
 
     def test_a_failed_dispatch_takes_the_lock_away(self):
@@ -324,6 +347,78 @@ class MergeQueueTest(unittest.TestCase):
         self.prs[0]["labels"] = [{"name": "merge-queue"}]
         self.queue("form")
         self.assertEqual(self.called("pr", "edit"), [["pr", "edit", "2", "--remove-label", "merge-queue"]])
+
+
+    def test_a_priority_pull_request_goes_first_alone_and_without_a_green_verdict(self):
+        self.pull_request(1, "a.txt", "a\n")
+        self.pull_request(2, "b.txt", "b\n", green=False, labels=("ci-priority",))
+        self.pull_request(3, "c.txt", "c\n", labels=("ci-priority", "merge-queue-hold"))
+        self.pull_request(4, "d.txt", "d\n", draft=True, labels=("ci-priority",))
+        self.queue("form")
+        self.assertEqual(self.batch(), [2])
+        self.assertEqual(self.called("pr", "edit"), [["pr", "edit", "2", "--add-label", "merge-queue"]])
+
+    def test_a_priority_pull_request_goes_before_the_retry_list(self):
+        self.pull_request(1, "a.txt", "a\n")
+        self.pull_request(2, "b.txt", "b\n")
+        self.queue("form")
+        self.land("failure")
+        self.pull_request(3, "c.txt", "c\n", green=False, labels=("ci-priority",))
+        self.queue("form")
+        self.assertEqual(self.batch(), [3])
+        self.assertEqual(self.state()["retry"], [[1], [2]])
+
+    def test_a_priority_pull_request_cancels_the_batch_in_flight(self):
+        self.pull_request(1, "a.txt", "a\n")
+        self.queue("form")
+        tip = self.remote_ref("merge-queue/batch")
+        self.pull_request(2, "b.txt", "b\n", green=False, labels=("ci-priority",))
+        self.queue("form")
+        self.assertEqual(self.called("run", "cancel"), [["run", "cancel", "100"]])
+        self.assertEqual(self.remote_ref("merge-queue/batch"), tip)
+        self.land("cancelled")
+        self.queue("form")
+        self.assertEqual(self.batch(), [2])
+        self.assertEqual(self.state()["retry"], [[1]])
+        self.land("success")
+        self.prs = [p for p in self.prs if p["number"] == 1]
+        self.queue("form")
+        self.assertEqual(self.batch(), [1])
+
+    def test_a_priority_batch_in_flight_is_not_cancelled(self):
+        self.pull_request(1, "a.txt", "a\n", labels=("ci-priority",))
+        self.queue("form")
+        self.pull_request(2, "b.txt", "b\n", labels=("ci-priority",))
+        self.queue("form")
+        self.assertEqual(self.called("run", "cancel"), [])
+        self.assertEqual(self.batch(), [1])
+
+    def test_a_priority_batch_puts_the_suites_under_way_behind_it(self):
+        a = self.pull_request(1, "a.txt", "a\n", green=False)
+        b = self.pull_request(2, "b.txt", "b\n", green=False)
+        c = self.pull_request(3, "c.txt", "c\n", green=False)
+        d = self.pull_request(4, "d.txt", "d\n", green=False, labels=("ci-priority",))
+        self.set_ci({
+            "10": {"headSha": a, "status": "in_progress", "jobs": ["changes", "Full suite / Test units / heavy"]},
+            "11": {"headSha": b, "status": "in_progress", "jobs": ["changes", "Lint / lint"]},
+            "12": {"headSha": c, "status": "in_progress", "jobs": ["changes", "Full suite / Wait for a priority batch"]},
+            "13": {"headSha": d, "status": "queued", "jobs": []},
+        })
+        self.queue("form")
+        self.assertEqual(self.batch(), [4])
+        self.assertEqual(sorted(self.called("run", "cancel")), [["run", "cancel", "10"], ["run", "cancel", "13"]])
+        self.assertEqual(self.called("run", "rerun"), [["run", "rerun", "10"]])
+
+    def test_a_removed_priority_pull_request_goes_first_again_only_with_a_new_commit(self):
+        self.pull_request(1, "a.txt", "a\n", green=False, labels=("ci-priority",))
+        self.queue("form")
+        self.land("failure")
+        self.assertEqual(self.called("pr", "edit"), [["pr", "edit", "1", "--remove-label", "merge-queue"]])
+        self.queue("form")
+        self.assertEqual(self.remote_ref("merge-queue/batch"), "")
+        self.pull_request(1, "a.txt", "fixed\n", green=False, labels=("ci-priority",))
+        self.queue("form")
+        self.assertEqual(self.batch(), [1])
 
 
 if __name__ == "__main__":

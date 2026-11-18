@@ -72,7 +72,7 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t MINE < <(
-            go test -list '^Test(Arm64|Seccomp)' ./internal/testing/e2e/ |
+            (cd internal/testing/e2e && "$RUNNER_TEMP/e2e-arm64.test" -test.list '^Test(Arm64|Seccomp)') |
               grep -E '^Test' |
               sort |
               scripts/shard-tests "${{ matrix.shard }}" "${{ matrix.nshard }}" /dev/null

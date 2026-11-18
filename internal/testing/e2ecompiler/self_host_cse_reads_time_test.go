@@ -3,7 +3,6 @@ package e2ecompiler
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -39,11 +38,7 @@ func TestSelfHostBlockReadsMergeInLinearTime(t *testing.T) {
 		}
 		best := time.Duration(0)
 		for range 3 {
-			start := time.Now()
-			if out, err := exec.Command(cli, "-o", filepath.Join(dir, "reads"), path, stdlib).CombinedOutput(); err != nil {
-				t.Fatalf("fern -o: %v\n%s", err, out)
-			}
-			if took := time.Since(start); best == 0 || took < best {
+			if took := cpuTime(t, cli, "-o", filepath.Join(dir, "reads"), path, stdlib); best == 0 || took < best {
 				best = took
 			}
 		}

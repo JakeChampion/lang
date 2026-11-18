@@ -123,6 +123,20 @@ function test_combining_class(): test.TestOutcome {
   return test.assert_eq(got.join(" "), "0 30 33 230 220 216");
 }
 
+// The full decomposition of a character, through two levels, and of a
+// Hangul syllable. A character with no decomposition gives itself.
+function test_decomposition(): test.TestOutcome {
+  let show = (c: char): string => unicode.decomposition(c).map((d: char): string => (d as i32).to_string()).join(" ");
+  return test.assert_eq(show('\u{958}') + "|" + show('\u{1E09}') + "|" + show('\u{AC01}') + "|" + show('a'), "2325 2364|99 807 769|4352 4449 4520|97");
+}
+
+// A primary composite, and none for an exclusion or a pair that does not
+// compose.
+function test_composition(): test.TestOutcome {
+  let got = [unicode.composition('\u{928}', '\u{93C}'), unicode.composition('\u{915}', '\u{93C}'), unicode.composition('\u{64A}', '\u{654}'), unicode.composition('a', 'b'), unicode.composition('\u{1100}', '\u{1161}')];
+  return test.assert_eq(got.map((n: i32): string => n.to_string()).join(" "), "2345 0 1574 0 44032");
+}
+
 // Beh is dual joining, alef right joining, the tatweel join causing and the
 // fatha transparent. A Latin letter and the hamza do not join. The Syriac
 // letter alaph is right joining and the Mongolian letter a is dual joining.
@@ -230,6 +244,8 @@ function main(): i32 {
   r = r.it("is_letter", test_is_letter);
   r = r.it("is_mark", test_is_mark);
   r = r.it("combining_class", test_combining_class);
+  r = r.it("decomposition", test_decomposition);
+  r = r.it("composition", test_composition);
   r = r.it("joining_type", test_joining_type);
   r = r.it("is_digit", test_is_digit);
   r = r.it("is_alphanumeric/space", test_is_alnum_whitespace);

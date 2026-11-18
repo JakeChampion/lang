@@ -437,34 +437,38 @@ shows the receiver spelling.
 
 ## Operators on your own types
 
-The operators are spelled as methods, matched by name, so a type that
-declares the method gets the operator. No trait is involved. A primitive
-keeps its own operators even in generic code: on a float, `<` and `==` are
-IEEE comparisons, while its `cmp` and `eq` methods are a total order.
+An operator on a struct or an enum binds through a trait. The type gets the
+operator when it implements the trait of that operator. A method with the
+correct name and no impl does not give the operator. A primitive keeps its
+own operators even in generic code: on a float, `<` and `==` are IEEE
+comparisons, while its `cmp` and `eq` methods are a total order.
 
-| Operator | Method |
-| -------- | ------ |
-| `==` `!=` | `eq(other): boolean` |
-| `<` `<=` `>` `>=` | `cmp(other): i32` |
-| `+` `-` `*` `/` `%` | `add` `sub` `mul` `div` `rem` |
-| `&` `\|` `^` `<<` `>>` | `bitand` `bitor` `bitxor` `shl` `shr` |
-| unary `-` | `neg()` |
+| Operator | Trait | Method |
+| -------- | ----- | ------ |
+| `==` `!=` | `cmp.Eq` | `eq(other): boolean` |
+| `<` `<=` `>` `>=` | `cmp.Ord` | `cmp(other): i32` |
+| `+` `-` `*` `/` `%` | `ops.Add` `ops.Sub` `ops.Mul` `ops.Div` `ops.Rem` | `add` `sub` `mul` `div` `rem` |
+| `&` `\|` `^` `<<` `>>` | `ops.BitAnd` `ops.BitOr` `ops.BitXor` `ops.Shl` `ops.Shr` | `bitand` `bitor` `bitxor` `shl` `shr` |
+| unary `-` | `ops.Neg` | `neg()` |
 
-[`core/ops`](../../stdlib/ops/) declares one trait for each arithmetic and
-bit operator: `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Neg`, `BitAnd`, `BitOr`,
-`BitXor`, `Shl` and `Shr`. Each trait has the method from the table. A
+[`core/cmp`](../../stdlib/cmp/) declares `Eq` and `Ord`, and
+[`core/ops`](../../stdlib/ops/) declares the arithmetic and bit traits. A
 generic function that is bounded on one of these traits can use its operator:
 `function wrap[T: ops.Rem](a: T, m: T): T { return a % m; }`. Every integer
 type implements all of the traits. The float types implement all of them
 except `Rem` and the bit traits.
 
 ```fern
+import "core/cmp";
+import "core/ops";
 import "std/i32";
 
+@derive(cmp.Eq)
 struct V2 { x: i32, y: i32 }
 
-function (a: V2) add(b: V2): V2 { return V2 { x: a.x + b.x, y: a.y + b.y }; }
-function (a: V2) eq(b: V2): boolean { return a.x == b.x && a.y == b.y; }
+impl ops.Add for V2 {
+    function add(self: Self, b: V2): V2 { return V2 { x: self.x + b.x, y: self.y + b.y }; }
+}
 
 function main(): i32 {
     let p: V2 = V2 { x: 1, y: 2 } + V2 { x: 3, y: 4 };
@@ -473,6 +477,11 @@ function main(): i32 {
     return 0;
 }
 ```
+
+`print`, `write`, `eprint` and an f-string part bind through `cmp.Display` in
+the same way. They take a string, a primitive, or a value whose type
+implements `Display`. A plain `to_string` method without the impl is not
+sufficient.
 
 ## Finalizers — `mem.Drop`
 

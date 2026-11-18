@@ -3493,12 +3493,17 @@ function main(): i32 {
     return (c as i32) - 78;
 }
 `},
-	{name: "arithmetic-operators-on-a-struct", atLeast: 5, want: "42|", src: `
+	{name: "arithmetic-operators-on-a-struct", atLeast: 5, want: "42|", src: `import "core/ops";
+
 struct V { x: i32 }
 function (a: V) add(b: V): V { return V { x: a.x + b.x }; }
+impl ops.Add for V {}
 function (a: V) sub(b: V): V { return V { x: a.x - b.x }; }
+impl ops.Sub for V {}
 function (a: V) mul(b: V): V { return V { x: a.x * b.x }; }
+impl ops.Mul for V {}
 function (a: V) neg(): V { return V { x: 0 - a.x }; }
+impl ops.Neg for V {}
 
 function main(): i32 {
     let a: V = V { x: 5 };

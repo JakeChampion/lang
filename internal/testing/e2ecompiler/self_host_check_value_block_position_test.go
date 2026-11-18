@@ -97,7 +97,7 @@ func TestSelfHostCheckFStringToStringPosition(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)
 	oracle := e2eharness.BuildLangBinForInterp(t)
-	lead := regexp.MustCompile(`(?m)^[^\s:]+:(\d+):(\d+): error\[E043\]: (.+)$`)
+	lead := regexp.MustCompile(`(?m)^[^\s:]+:(\d+):(\d+): error\[E038\]: (.+)$`)
 	p := filepath.Join(t.TempDir(), "prog.fern")
 	src := "struct P { x: i32 }\n\nfunction main(): i32 {\n  let p = P { x: 7 };\n  let s = f\"p = {p}\";\n  return 0;\n}\n"
 	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
@@ -108,6 +108,6 @@ func TestSelfHostCheckFStringToStringPosition(t *testing.T) {
 	want := lead.FindStringSubmatch(string(goOut))
 	got := lead.FindStringSubmatch(string(shOut))
 	if want == nil || got == nil || got[1] != want[1] || got[2] != want[2] || got[3] != want[3] {
-		t.Errorf("E043 positions or messages differ\n--- Go ---\n%s--- self-host ---\n%s", goOut, shOut)
+		t.Errorf("E038 positions or messages differ\n--- Go ---\n%s--- self-host ---\n%s", goOut, shOut)
 	}
 }

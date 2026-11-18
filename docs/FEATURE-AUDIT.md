@@ -106,7 +106,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Bitwise `& \| ^ << >>` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | prop generators (LCG) + audit fixture |
 | Unary minus `-x` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | Operator precedence / parenthesisation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `2+3*4`, left-assoc, parens |
-| Operator overloading on composites (`== != < <= > >=`, `+ - * / % & \| ^ << >>`, unary `-`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `==`→`eq`, `<`…→`cmp`, `+ - * / %`→`add`/`sub`/`mul`/`div`/`rem`, `& \| ^ << >>`→`bitand`/`bitor`/`bitxor`/`shl`/`shr`, unary `-`→`neg` (#2706); checker desugars to the method, structural by name |
+| Operator overloading on composites (`== != < <= > >=`, `+ - * / % & \| ^ << >>`, unary `-`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `==`→`eq`, `<`…→`cmp`, `+ - * / %`→`add`/`sub`/`mul`/`div`/`rem`, `& \| ^ << >>`→`bitand`/`bitor`/`bitxor`/`shl`/`shr`, unary `-`→`neg` (#2706); the type must implement the trait of the operator (`cmp.Eq`, `cmp.Ord`, or the `core/ops` trait), and the checker desugars to its method |
 | Sized int types `i32 i64 u8 u32 u64` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | i64 arith, u8 cast; out-of-range literal is a static error; `i8`/`i16`/`u16`/`isize` retired (#4408) |
 | Integer overflow / wrapping semantics | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | runtime narrowing cast wraps mod 2ⁿ |
 | Float types `f32 f64` arithmetic | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `+ * /`, f32 + f64 |

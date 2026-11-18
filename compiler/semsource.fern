@@ -9380,7 +9380,7 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
     own_row = own_row.append(ownership.find(rows, ix, names[i]));
     i += 1;
   }
-  let readers = row_readers(all, own_row, rows, ix);
+  let dependents = row_dependents(all, own_row, rows, ix);
   let work: i32[] = [];
   let queued = __alloc_bool(own_row.len());
   i = 0;
@@ -9409,7 +9409,7 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
       }
     }
     for row in again {
-      let next = with_queued(Worklist { work: work, queued: queued }, util.append_all(readers[row], row_owners(own_row, row)));
+      let next = with_queued(Worklist { work: work, queued: queued }, dependents[row]);
       work = next.work;
       queued = next.queued;
     }
@@ -9446,18 +9446,7 @@ function without_kept_alive(own rows: ownership.Escapes[], ix: ownership.Index, 
   return Lazy { rows: rows, again: again };
 }
 
-// The functions that have this row.
-function row_owners(own_row: i32[], row: i32): i32[] {
-  let out: i32[] = [];
-  for i in 0..own_row.len() {
-    if (own_row[i] == row) {
-      out = out.append(i);
-    }
-  }
-  return out;
-}
-
-function row_readers(all: Produced[], own_row: i32[], rows: ownership.Escapes[], ix: ownership.Index): i32[][] {
+function row_dependents(all: Produced[], own_row: i32[], rows: ownership.Escapes[], ix: ownership.Index): i32[][] {
   let out: i32[][] = [];
   let last = util.minus_ones(rows.len());
   while (out.len() < rows.len()) {
@@ -9476,6 +9465,12 @@ function row_readers(all: Produced[], own_row: i32[], rows: ownership.Escapes[],
           }
         }
       }
+    }
+  }
+  for i in 0..own_row.len() {
+    let row = own_row[i];
+    if (row >= 0) {
+      out = out.with(row, out[row].append(i));
     }
   }
   return out;

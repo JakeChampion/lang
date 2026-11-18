@@ -3,7 +3,6 @@ package e2ecompiler
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,11 +41,7 @@ func TestSelfHostChainChecksInLinearTime(t *testing.T) {
 		best := make([]time.Duration, len(srcs))
 		for range 5 {
 			for i, path := range paths {
-				start := time.Now()
-				if out, err := exec.Command(cli, "-check", path, stdlib).CombinedOutput(); err != nil {
-					t.Fatalf("fern -check: %v\n%s", err, out)
-				}
-				if took := time.Since(start); best[i] == 0 || took < best[i] {
+				if took := cpuTime(t, cli, "-check", path, stdlib); best[i] == 0 || took < best[i] {
 					best[i] = took
 				}
 			}

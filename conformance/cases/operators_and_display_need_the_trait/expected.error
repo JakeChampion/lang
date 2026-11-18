@@ -1,0 +1,6 @@
+main.fern:27:16: error[E009]: operator "+" is not defined for V — add `impl ops.Add for V`, which requires `import "core/ops";`
+main.fern:28:14: error[E009]: unary `-` is not defined for V — add `impl ops.Neg for V`, which requires `import "core/ops";`
+main.fern:29:9: error[E041]: cannot compare values of type V with "==": type does not implement `Eq` — add `@derive(cmp.Eq)` (or `impl cmp.Eq for V`), which requires `import "core/cmp";`, so `==` can use structural equality
+main.fern:29:19: error[E041]: cannot order values of type V with "<": type does not implement `Ord` — add `@derive(cmp.Ord)` (or `impl cmp.Ord for V`), which requires `import "core/cmp";`, so ordering can use structural comparison
+main.fern:32:9: error[E038]: argument 1 to "print": V does not implement `Display` — add `@derive(cmp.Display)` (or `impl cmp.Display for V`), which requires `import "core/cmp";`
+main.fern:33:22: error[E038]: an interpolated value of type V does not implement `Display` — add `@derive(cmp.Display)` (or `impl cmp.Display for V`), which requires `import "core/cmp";`

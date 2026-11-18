@@ -782,6 +782,8 @@ function __in_family(ip: IpAddr, v4: boolean): u8[] {
 pub function (p: Prefix) to_string(): string {
   return p.ip.to_string() + "/" + p.bits.to_string();
 }
+
+impl cmp.Display for Prefix {}
 ```
 
 ### `19 function __pieces(s: string, sep: i32): string[]`

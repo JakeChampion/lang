@@ -36,7 +36,9 @@ pub struct ExprSlice { array: Expr, start: Expr, end: Expr, ty: string, open_end
 
 pub struct ExprStructLit { type_name: string, field_names: string[], field_lines: i32[], field_cols: i32[], field_values: Expr[], has_base: boolean, base: Expr, line: i32, col: i32, written: string }
 
-pub struct ExprFieldAccess { obj: Expr, field: string, line: i32, col: i32, ty: string, const_read: boolean }
+// display marks a `to_string` callee that binds through `cmp.Display`: an
+// f-string part, or the argument of `print`, `write` or `eprint`.
+pub struct ExprFieldAccess { obj: Expr, field: string, line: i32, col: i32, ty: string, const_read: boolean, display: boolean }
 
 pub struct ExprUnknown { kind: string, line: i32, col: i32 }
 
@@ -601,6 +603,18 @@ pub function operator_method(op: string): string {
     ">>" => "shr",
     _ => "",
   };
+}
+
+// operator_trait names the core/ops trait that an operator method binds through.
+pub function operator_trait(method: string): string {
+  let methods: string[] = ["add", "sub", "mul", "div", "rem", "neg", "bitand", "bitor", "bitxor", "shl", "shr"];
+  let traits: string[] = ["Add", "Sub", "Mul", "Div", "Rem", "Neg", "BitAnd", "BitOr", "BitXor", "Shl", "Shr"];
+  for i in 0..methods.len() {
+    if (methods[i] == method) {
+      return traits[i];
+    }
+  }
+  return "";
 }
 
 pub function is_operator_method(name: string): boolean {

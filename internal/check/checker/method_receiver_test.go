@@ -6,9 +6,11 @@ import (
 )
 
 func TestMethodReceiverCheckedOnce(t *testing.T) {
-	const decls = `struct P { n: i32 }
+	const decls = `import "core/cmp";
+struct P { n: i32 }
 function (self: P) get(): i32 { return self.n; }
 function (self: P) to_string(): string { return "p"; }
+impl cmp.Display for P {}
 function mk(a: i32): P { return P { n: a }; }
 `
 	cases := []struct {

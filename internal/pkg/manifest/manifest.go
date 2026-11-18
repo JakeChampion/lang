@@ -557,7 +557,7 @@ func validDepName(s string) bool {
 var (
 	androidText     = []string{"package", "label", "icon", "banner", "key", "version_name"}
 	androidSwitches = []string{"home", "tv", "pip", "compress", "cleartext", "debuggable"}
-	androidLists    = []string{"permissions", "assets", "widget"}
+	androidLists    = []string{"permissions", "assets", "dex", "widget"}
 	androidNumbers  = []string{"min_sdk", "version_code"}
 )
 

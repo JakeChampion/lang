@@ -6,10 +6,13 @@ import (
 	"testing"
 )
 
-const checkedArithNestedProgram = `
+const checkedArithNestedProgram = `import "core/ops";
+
 struct V { x: i32 }
 function (a: V) add(b: V): V { return V { x: a.x + b.x }; }
+impl ops.Add for V {}
 function (a: V) neg(): V { return V { x: 0 - a.x }; }
+impl ops.Neg for V {}
 
 function main(): i32 {
     // Checked arithmetic inside a nested function, every operator.

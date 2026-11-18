@@ -95,6 +95,15 @@ jobs:
         run: python3 -B -m unittest discover -s examples/android/paper -p 'test_*.py'
       - name: Check the Tune provider assertions
         run: python3 -B -m unittest discover -s examples/android/tune -p 'test_*.py'
+      # The Plex app plays with Media3 ExoPlayer, and its fern.toml names the
+      # DEX file that tools/media3/fetch writes from the pinned artifacts.
+      - name: Cache the Media3 artifacts
+        uses: actions/cache@v6
+        with:
+          path: build/media3/cache
+          key: media3-${{ hashFiles('tools/media3/media3.lock') }}
+      - name: Get Media3 ExoPlayer
+        run: tools/media3/fetch
       - name: Build the stopwatch APK and the logcat report program
         run: |
           make bin/fern
@@ -139,6 +148,7 @@ jobs:
           keytool -genkeypair -keystore build/bundle.p12 -storetype PKCS12 -storepass android -alias bundle -keyalg EC -groupname secp256r1 -dname CN=bundle -validity 3650
           java -jar build/bundletool.jar build-apks --bundle=build/android-stopwatch/fern-counter.aab --output=build/counter.apks --mode=universal --ks=build/bundle.p12 --ks-pass=pass:android --ks-key-alias=bundle --key-pass=pass:android
           unzip -p build/counter.apks universal.apk > build/android-stopwatch/fern-counter-bundle.apk
+      - uses: ./.github/actions/disable-chrome-apt
       - name: Check native video packets and the QTRLE comparison harness
         run: |
           sudo apt-get update
@@ -211,6 +221,7 @@ jobs:
         with:
           name: fern-stopwatch-apk
           path: build/android-stopwatch
+      - uses: ./.github/actions/disable-chrome-apt
       - name: Install the video reference tools
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Check the Plex video screen assertion
@@ -221,6 +232,15 @@ jobs:
       # frames. It then shows no picture until the next keyframe.
       - name: Write the test video of the Plex check
         run: ffmpeg -loglevel error -f lavfi -i testsrc=size=320x240:rate=25 -t 20 -c:v libx264 -g 25 -bf 0 -pix_fmt yuv420p -movflags +faststart build/android-stopwatch/pattern.mp4
+      # The Plex app plays with Media3 ExoPlayer, and its fern.toml names the
+      # DEX file that tools/media3/fetch writes from the pinned artifacts.
+      - name: Cache the Media3 artifacts
+        uses: actions/cache@v6
+        with:
+          path: build/media3/cache
+          key: media3-${{ hashFiles('tools/media3/media3.lock') }}
+      - name: Get Media3 ExoPlayer
+        run: tools/media3/fetch
       - name: Let the emulator use KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -269,6 +289,8 @@ jobs:
             chmod +x build/android-stopwatch/jnibind
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" tests/android/jnibind/bindings.spec | diff -u tests/android/jnibind/bindings.fern - || echo "bindings of tests/android/jnibind" >> build/android-stopwatch/emulator/failed
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" examples/android/paper/bindings.spec | diff -u examples/android/paper/bindings.fern - || echo "bindings of examples/android/paper" >> build/android-stopwatch/emulator/failed
+            build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/watchnext/bindings.spec | diff -u internal/stdlib/std/android/watchnext/bindings.fern - || echo "bindings of std/android/watchnext" >> build/android-stopwatch/emulator/failed
+            build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" build/media3/jars/*.jar internal/stdlib/std/android/exoplayer/bindings.spec | diff -u internal/stdlib/std/android/exoplayer/bindings.fern - || echo "bindings of std/android/exoplayer" >> build/android-stopwatch/emulator/failed
             python3 examples/android/counter/emulator_check.py build/android-stopwatch/fern-counter.apk build/android-stopwatch/emulator/counter || echo "examples/android/counter" >> build/android-stopwatch/emulator/failed
             adb uninstall dev.fern.counter || true
             python3 examples/android/counter/emulator_check.py build/android-stopwatch/fern-counter-bundle.apk build/android-stopwatch/emulator/counter-bundle || echo "examples/android/counter from its bundle" >> build/android-stopwatch/emulator/failed

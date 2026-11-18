@@ -49,12 +49,10 @@ function initrd(t: fdt.Tree): Option[Range] {
 }
 
 function copy_range(r: Range): u8[] {
-  let image: u8[] = [];
+  let image = __alloc_u8((r.end - r.start) as i32);
   unsafe {
-    let at = r.start;
-    while (at < r.end) {
-      image = image.append(__load_u8(at) as u8);
-      at += 1 as usize;
+    for k in 0..image.len() {
+      image = image.with(k, __load_u8(r.start + k as usize) as u8);
     }
   }
   return image;

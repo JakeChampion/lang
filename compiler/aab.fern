@@ -76,8 +76,8 @@ function entry(name: string, data: u8[]): apk.Entry {
 // The files of the bundle, with no signature.
 pub function files(app: apk.App, libs: apk.Lib[]): apk.Entry[] {
   let out: apk.Entry[] = [entry("BundleConfig.pb", bundle_config()), entry(BASE + "manifest/AndroidManifest.xml", androidxml.proto(apk.manifest_tree(app)))];
-  if (app.dex.len() > 0) {
-    out = out.append(entry(BASE + "dex/classes.dex", app.dex));
+  for d in apk.dex_files(app) {
+    out = out.append(entry(BASE + "dex/" + d.name, d.data));
   }
   if (apk.has_resources(app)) {
     out = out.append(entry(BASE + "resources.pb", resource_table(app)));

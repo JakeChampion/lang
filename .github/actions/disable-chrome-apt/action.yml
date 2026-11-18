@@ -3,8 +3,9 @@ description: >
   Remove the runner image's Google Chrome apt feed before installing Ubuntu
   packages. Playwright downloads its own Chromium; this feed supplies none of
   the compiler, Valgrind or browser system dependencies used by these jobs.
-  Use the official Ubuntu archive instead of the slow Azure mirror. Preserve
-  apt signature verification, suites, components and signing keys.
+  Use the official Ubuntu archive instead of the slow cloud mirror of the
+  runner image. Preserve apt signature verification, suites, components and
+  signing keys.
 runs:
   using: composite
   steps:

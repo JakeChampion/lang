@@ -11,9 +11,7 @@ func FernCLI(t testing.TB) string {
 	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("go build fern: %v\n%s", err, out)
-	}
+	copyExecutable(t, BuildLangBinForInterp(t), bin)
 	sib := filepath.Join(dir, "fern-selfhost")
 	if err := os.Symlink(SelfHostCLI(t), sib); err != nil {
 		t.Fatal(err)
