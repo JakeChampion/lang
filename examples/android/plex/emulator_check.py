@@ -378,7 +378,8 @@ def check_gapless(out, port):
         return fail("Play on the artist did not play its first track")
     if not wait_for(lambda: "plex: play 912 with no gap" in logcat(), timeout=30):
         return fail("the second track did not follow with no gap: " + " | ".join(l for l in logcat().splitlines() if "plex" in l))
-    if not seen("/:/scrobble?identifier=com.plexapp.plugins.library&key=911"):
+    # The scrobble goes out after the "stopped" timeline in the report queue.
+    if not wait_for(lambda: seen("/:/scrobble?identifier=com.plexapp.plugins.library&key=911"), timeout=15):
         fail("the first track did not become watched at its end")
 
 
