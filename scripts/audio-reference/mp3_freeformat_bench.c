@@ -12,9 +12,11 @@
 
 static uint32_t checksum = 2166136261u;
 static uint64_t samples;
+static int decode_only;
 
 static void hash(const float *pcm, size_t count) {
-    for (size_t i = 0; i < count; i++) {
+    size_t end = decode_only && count ? 1 : count;
+    for (size_t i = 0; i < end; i++) {
         uint32_t bits;
         memcpy(&bits, pcm + i, sizeof(bits));
         for (int shift = 0; shift < 32; shift += 8)
@@ -67,7 +69,8 @@ static long peak_rss(void) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 5 || (strcmp(argv[2], "whole") && strcmp(argv[2], "frames"))) return 1;
+    if ((argc != 5 && argc != 6) || (strcmp(argv[2], "whole") && strcmp(argv[2], "frames"))) return 1;
+    decode_only = argc == 6 && !strcmp(argv[5], "decode");
     FILE *file = fopen(argv[1], "rb");
     if (!file || fseek(file, 0, SEEK_END)) return 2;
     long size = ftell(file);

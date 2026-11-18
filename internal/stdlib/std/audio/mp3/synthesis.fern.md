@@ -270,24 +270,24 @@ function dct32x4_into(own samples: f32[], base: i32, groups: i32, own t: f32[]):
   return (samples, t);
 }
 
-function pair(z: [f32], at: i32): (f32, f32) {
-  let a = (z[at + 14 * 64] - z[at]) * 29.0f32;
-  a += (z[at + 64] + z[at + 13 * 64]) * 213.0f32;
-  a += (z[at + 12 * 64] - z[at + 2 * 64]) * 459.0f32;
-  a += (z[at + 3 * 64] + z[at + 11 * 64]) * 2037.0f32;
-  a += (z[at + 10 * 64] - z[at + 4 * 64]) * 5153.0f32;
-  a += (z[at + 5 * 64] + z[at + 9 * 64]) * 6574.0f32;
-  a += (z[at + 8 * 64] - z[at + 6 * 64]) * 37489.0f32;
-  a += z[at + 7 * 64] * 75038.0f32;
-  let b = z[at + 2 + 14 * 64] * 104.0f32;
-  b += z[at + 2 + 12 * 64] * 1567.0f32;
-  b += z[at + 2 + 10 * 64] * 9727.0f32;
-  b += z[at + 2 + 8 * 64] * 64019.0f32;
-  b += z[at + 2 + 6 * 64] * -9975.0f32;
-  b += z[at + 2 + 4 * 64] * -45.0f32;
-  b += z[at + 2 + 2 * 64] * 146.0f32;
-  b += z[at + 2] * -5.0f32;
-  return (a / 32768.0f32, b / 32768.0f32);
+function pair4(z: f32[], at: i32): f32x4 {
+  let a = (__f32x4_load(z, at + 14 * 64) - __f32x4_load(z, at)) * __f32x4_splat(29.0f32);
+  a += (__f32x4_load(z, at + 64) + __f32x4_load(z, at + 13 * 64)) * __f32x4_splat(213.0f32);
+  a += (__f32x4_load(z, at + 12 * 64) - __f32x4_load(z, at + 2 * 64)) * __f32x4_splat(459.0f32);
+  a += (__f32x4_load(z, at + 3 * 64) + __f32x4_load(z, at + 11 * 64)) * __f32x4_splat(2037.0f32);
+  a += (__f32x4_load(z, at + 10 * 64) - __f32x4_load(z, at + 4 * 64)) * __f32x4_splat(5153.0f32);
+  a += (__f32x4_load(z, at + 5 * 64) + __f32x4_load(z, at + 9 * 64)) * __f32x4_splat(6574.0f32);
+  a += (__f32x4_load(z, at + 8 * 64) - __f32x4_load(z, at + 6 * 64)) * __f32x4_splat(37489.0f32);
+  a += __f32x4_load(z, at + 7 * 64) * __f32x4_splat(75038.0f32);
+  let b = __f32x4_load(z, at + 14 * 64) * __f32x4_splat(104.0f32);
+  b += __f32x4_load(z, at + 12 * 64) * __f32x4_splat(1567.0f32);
+  b += __f32x4_load(z, at + 10 * 64) * __f32x4_splat(9727.0f32);
+  b += __f32x4_load(z, at + 8 * 64) * __f32x4_splat(64019.0f32);
+  b += __f32x4_load(z, at + 6 * 64) * __f32x4_splat(-9975.0f32);
+  b += __f32x4_load(z, at + 4 * 64) * __f32x4_splat(-45.0f32);
+  b += __f32x4_load(z, at + 2 * 64) * __f32x4_splat(146.0f32);
+  b += __f32x4_load(z, at) * __f32x4_splat(-5.0f32);
+  return __f32x4_of(__f32x4_lane(a, 0), __f32x4_lane(a, 1), __f32x4_lane(b, 2), __f32x4_lane(b, 3)) / __f32x4_splat(32768.0f32);
 }
 
 function synth(samples: [f32], base: i32, channels: i32, own lines: f32[], offset: i32, own output: f32[], out_at: i32): (f32[], f32[]) {
@@ -295,10 +295,11 @@ function synth(samples: [f32], base: i32, channels: i32, own lines: f32[], offse
   let z = offset + 15 * 64;
   lines = lines.with(z + 60, samples[base + 18 * 16]).with(z + 61, samples[right + 18 * 16]).with(z + 62, samples[base]).with(z + 63, samples[right]);
   lines = lines.with(z + 124, samples[base + 1 + 18 * 16]).with(z + 125, samples[right + 1 + 18 * 16]).with(z + 126, samples[base + 1]).with(z + 127, samples[right + 1]);
-  for ch in 0..channels {
-    let (a, b) = pair(lines, offset + 60 + ch);
-    let (c, d) = pair(lines, offset + 124 + ch);
-    output = output.with(out_at + ch, a).with(out_at + 16 * channels + ch, b).with(out_at + 32 * channels + ch, c).with(out_at + 48 * channels + ch, d);
+  let first = pair4(lines, offset + 60);
+  let second = pair4(lines, offset + 124);
+  output = output.with(out_at, __f32x4_lane(first, 0)).with(out_at + 16 * channels, __f32x4_lane(first, 2)).with(out_at + 32 * channels, __f32x4_lane(second, 0)).with(out_at + 48 * channels, __f32x4_lane(second, 2));
+  if (channels == 2) {
+    output = output.with(out_at + 1, __f32x4_lane(first, 1)).with(out_at + 16 * channels + 1, __f32x4_lane(first, 3)).with(out_at + 32 * channels + 1, __f32x4_lane(second, 1)).with(out_at + 48 * channels + 1, __f32x4_lane(second, 3));
   }
   let wa = 0;
   let i = 14;

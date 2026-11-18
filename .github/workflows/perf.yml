@@ -57,10 +57,14 @@ on:
         description: "Baseline ref for an optional same-host macOS native comparison"
         type: string
         default: ""
+      audio_baseline:
+        description: "Baseline ref for an optional native MP2 comparison on x86-64 and ARM64"
+        type: string
+        default: ""
 
 jobs:
   bench:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_baseline == '' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_baseline == '' && inputs.audio_baseline == '') }}
     strategy:
       fail-fast: false
       matrix:
@@ -349,6 +353,59 @@ jobs:
             exit 0
           fi
           scripts/rebank-main "$GITHUB_SHA" "${{ runner.temp }}/corrected"
+
+  audio-pair:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.audio_baseline != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, host: x86_64 }
+          - { runner: ubuntu-24.04-arm, host: aarch64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: candidate
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.audio_baseline }}
+          path: baseline
+      - uses: ./candidate/.github/actions/disable-chrome-apt
+      - name: Install the reference encoder
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Build the compiler
+        working-directory: candidate
+        run: bash bootstrap/bootstrap.sh build
+      - name: Fetch hash-checked reference headers
+        working-directory: candidate
+        run: |
+          mkdir -p build/minimp3
+          python3 - <<'PY'
+          from pathlib import Path
+          from urllib.request import urlopen
+          revision = 'ea99364f61c14656440e8d77e9c233ccf3124633'
+          for name in ('minimp3.h', 'minimp3_ex.h'):
+              url = f'https://raw.githubusercontent.com/lieff/minimp3/{revision}/{name}'
+              Path('build/minimp3', name).write_bytes(urlopen(url).read())
+          PY
+      - name: Compare on native hardware
+        working-directory: candidate
+        run: >-
+          python3 scripts/bench-mp2 --compiler bin/fern-selfhost
+          --baseline-stdlib ../baseline/internal/stdlib --workspace
+          --reference-dir build/minimp3 --output build/audio-pair
+          --rounds 100 --trials 9
+      - name: Upload every timing
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: audio-pair-${{ matrix.host }}
+          path: candidate/build/audio-pair/results.json
+          if-no-files-found: error
 
   native-pair:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.native_baseline != '' }}

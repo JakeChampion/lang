@@ -7,6 +7,13 @@ Free-format frames and other MPEG layers remain unsupported.
 
 The decoder retains only synthesis history and format information.
 Frame scratch is bounded and does not remain in decoder state.
+
+`workspace` allocates 3200 float elements and 128 bytes for repeated frame decode.
+`decode_frame_with` consumes and returns this workspace on every call.
+The caller can release it independently of decoder history.
+Unique workspace arrays retain storage across successful frames. Payload errors can replace scratch storage.
+The complete-input decoder reuses one workspace across its frames.
+
 `decode_frame_into` consumes caller-owned PCM storage and preserves entries after the valid sample prefix on success.
 That prefix contains `frame.frames * frame.channels` samples.
 
@@ -30,6 +37,12 @@ import "std/audio/pcm";
 import "std/audio/wire";
 
 pub opaque struct Decoder { qmf: f32[], sample_rate: i32, channels: i32 }
+
+pub opaque struct Workspace { scratch: f32[], lines: f32[], transform: f32[], scale: layer.Scale }
+
+pub function workspace(): Workspace {
+  return Workspace { scratch: spectral.zeros(1152), lines: spectral.zeros(1728), transform: spectral.zeros(128), scale: layer.empty() };
+}
 
 pub struct Frame { sample_rate: i32, channels: i32, frames: i32, bytes_read: i32, samples: f32[] }
 
@@ -69,16 +82,14 @@ pub function inspect(input: [u8], at: i32, limits: pcm.Limits): Result[header.He
   return Ok(h);
 }
 
-function reconstruct(own d: Decoder, input: [u8], b: bits.Bits, scale: layer.Scale, h: header.Header, own output: f32[]): (Decoder, Result[Frame, pcm.AudioError]) {
+function reconstruct(own d: Decoder, input: [u8], b: bits.Bits, h: header.Header, own output: f32[], own work: Workspace): (Decoder, Workspace, Result[Frame, pcm.AudioError]) {
   let Decoder { qmf, sample_rate, channels } = d;
-  let scratch = spectral.zeros(1152);
-  let lines = spectral.zeros(1728);
-  let transform = spectral.zeros(128);
+  let Workspace { scratch, lines, transform, scale } = work;
   for part in 0..3 {
     let decoded = layer.granule_into(input, b, scale, part, scratch);
     let (next_bits, samples) = match (decoded) {
       Ok(value) => value,
-      Err(e) => { return (Decoder { qmf: clear(qmf), sample_rate: 0, channels: 0 }, Err(e)); },
+      Err(e) => { return (Decoder { qmf: clear(qmf), sample_rate: 0, channels: 0 }, workspace(), Err(e)); },
     };
     b = next_bits;
     let (next_qmf, pcm, values, synthesis_lines, transform_values) = synthesis.granule12_into(qmf, samples, h.channels, output, part * 384 * h.channels, lines, transform);
@@ -88,21 +99,29 @@ function reconstruct(own d: Decoder, input: [u8], b: bits.Bits, scale: layer.Sca
     lines = synthesis_lines;
     transform = transform_values;
   }
-  return (Decoder { qmf: qmf, sample_rate: sample_rate, channels: channels }, Ok(Frame { sample_rate: h.sample_rate, channels: h.channels, frames: 1152, bytes_read: h.bytes, samples: output }));
+  return (Decoder { qmf: qmf, sample_rate: sample_rate, channels: channels }, Workspace { scratch: scratch, lines: lines, transform: transform, scale: scale }, Ok(Frame { sample_rate: h.sample_rate, channels: h.channels, frames: 1152, bytes_read: h.bytes, samples: output }));
 }
 
 pub function (own d: Decoder) decode_frame_into(input: [u8], at: i32, own output: f32[], limits: pcm.Limits): (Decoder, Result[Frame, pcm.AudioError]) {
-  let h = match (inspect(input, at, limits)) { Ok(value) => value, Err(e) => { return (d, Err(e)); } };
+  let (next, work, result) = d.decode_frame_with(input, at, output, workspace(), limits);
+  return (next, result);
+}
+
+pub function (own d: Decoder) decode_frame_with(input: [u8], at: i32, own output: f32[], own work: Workspace, limits: pcm.Limits): (Decoder, Workspace, Result[Frame, pcm.AudioError]) {
+  let h = match (inspect(input, at, limits)) { Ok(value) => value, Err(e) => { return (d, work, Err(e)); } };
   if (output.len() < 1152 * h.channels) {
-    return (d, Err(pcm.Buffer));
+    return (d, work, Err(pcm.Buffer));
   }
   let start = at + 4 + (if (h.crc) { 2 } else { 0 });
   let payload = input[start:at + h.bytes];
-  let (b, scale) = match (layer.read(payload, h)) { Ok(value) => value, Err(e) => { return (d.reset(), Err(e)); } };
-  if (h.crc && layer.checksum(input[at + 2:at + 4], payload, scale.protected_bits()) != wire.be(input, at + 4, 2) as i32) {
-    return (d.reset(), Err(pcm.Checksum));
+  let Workspace { scratch, lines, transform, scale } = work;
+  let (scales, read) = layer.read_into(payload, h, scale);
+  let work = Workspace { scratch: scratch, lines: lines, transform: transform, scale: scales };
+  let b = match (read) { Ok(value) => value, Err(e) => { return (d.reset(), work, Err(e)); } };
+  if (h.crc && layer.checksum(input[at + 2:at + 4], payload, work.scale.protected_bits()) != wire.be(input, at + 4, 2) as i32) {
+    return (d.reset(), work, Err(pcm.Checksum));
   }
-  return reconstruct(prepared(d, h), payload, b, scale, h, output);
+  return reconstruct(prepared(d, h), payload, b, h, output, work);
 }
 
 pub function (own d: Decoder) decode_frame(input: [u8], at: i32, limits: pcm.Limits): (Decoder, Result[Frame, pcm.AudioError]) {
@@ -113,6 +132,7 @@ pub function (own d: Decoder) decode_frame(input: [u8], at: i32, limits: pcm.Lim
 pub function decode_raw(input: [u8], limits: pcm.Limits): Result[Decoded, pcm.AudioError] {
   let h = inspect(input, 0, limits)?;
   let state = decoder();
+  let work = workspace();
   let buffer = spectral.zeros(1152 * h.channels);
   let output: f32[] = [];
   let at = 0;
@@ -121,8 +141,9 @@ pub function decode_raw(input: [u8], limits: pcm.Limits): Result[Decoded, pcm.Au
     if (current.sample_rate != h.sample_rate || current.channels != h.channels) {
       return Err(pcm.Header);
     }
-    let (next, result) = state.decode_frame_into(input, at, buffer, limits);
+    let (next, scratch, result) = state.decode_frame_with(input, at, buffer, work, limits);
     state = next;
+    work = scratch;
     let frame = result?;
     let count = frame.frames * frame.channels;
     if (count > limits.max_samples - output.len()) {
