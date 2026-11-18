@@ -13,6 +13,15 @@ FAKE_ADB = """#!/bin/sh
 case "$*" in
   "logcat -d"*) cat "$FAKE_LOGCAT" ;;
   "exec-out screencap") cat "$FAKE_SCREEN" ;;
+  "root") cat "$FAKE_ROOT" ;;
+  # The old adbd answers the first calls, then adbd is down for one call.
+  "shell id -u")
+    echo x >> "$FAKE_CALLS"
+    case "$(wc -l < "$FAKE_CALLS" | tr -d ' ')" in
+      1|2) echo 2000 ;;
+      3) exit 1 ;;
+      *) echo 0 ;;
+    esac ;;
 esac
 """
 
@@ -29,6 +38,10 @@ class EmulatorTest(unittest.TestCase):
         os.environ["PATH"] = str(d) + os.pathsep + os.environ["PATH"]
         os.environ["FAKE_LOGCAT"] = str(self.logcat)
         os.environ["FAKE_SCREEN"] = str(self.screen)
+        self.root = d / "root.txt"
+        self.calls = d / "calls.txt"
+        os.environ["FAKE_ROOT"] = str(self.root)
+        os.environ["FAKE_CALLS"] = str(self.calls)
         emulator.failures.clear()
 
     def tearDown(self):
@@ -41,6 +54,16 @@ class EmulatorTest(unittest.TestCase):
         m = emulator.wait_for(r"paper: drawn (\d+)x(\d+)", timeout=1)
         self.assertEqual(m.groups(), ("1080", "2400"))
         self.assertIsNone(emulator.wait_for(r"paper: layer 1", timeout=0.6))
+
+    def test_root_waits_for_the_new_adbd(self):
+        self.root.write_text("restarting adbd as root\n")
+        self.assertTrue(emulator.root(timeout=5))
+        self.assertEqual(len(self.calls.read_text().splitlines()), 4)
+
+    def test_root_refused(self):
+        self.root.write_text("adbd cannot run as root in production builds\n")
+        self.assertFalse(emulator.root(timeout=5))
+        self.assertFalse(self.calls.exists())
 
     def test_crashes(self):
         log = "I/fern ( 1): ok\nF/libc ( 1): Fatal signal 11 (SIGSEGV)\nE/AndroidRuntime ( 1): FATAL EXCEPTION: main\n"

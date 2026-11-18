@@ -2,6 +2,7 @@ import "./ast";
 import "./lexer";
 import "./lexical";
 import "./parser";
+import "./defaultargs";
 import "./util";
 import "./aborts";
 import "./astwalk";
@@ -10762,7 +10763,7 @@ function lowered(raw: parser.Module): parser.Module {
     funcs = funcs.append(lexical.resolve_func(fd).func);
   }
   let resolved = parser.Module { ...typed, funcs: funcs };
-  return parser.fill_default_args_module(parser.desugar_ranges_module(parser.lower_defers_module(resolved)));
+  return defaultargs.fill_module(parser.desugar_ranges_module(parser.lower_defers_module(resolved)));
 }
 
 pub function (s: Session) declare(m: parser.Module): Session {

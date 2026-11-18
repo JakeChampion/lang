@@ -109,7 +109,7 @@ function main(): i32 { return used([1, 2]); }
 	if pp != pm {
 		t.Errorf("produced %d of %d: the census is measuring a module the production "+
 			"prepass would have rewritten. The CLI lowers "+
-			"lift_lambdas_typed(parser.module_with_builtins_typed(merged)); this driver has to "+
+			"lift_lambdas_typed(astpasses.module_with_builtins_typed(merged)); this driver has to "+
 			"run the same prepass or it reports the instrument's refusals as the "+
 			"boundary's.\n%s", pp, pm, prepassReport)
 	}

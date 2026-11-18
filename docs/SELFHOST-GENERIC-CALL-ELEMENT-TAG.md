@@ -97,7 +97,7 @@ serialises fine — as the non-generic `mk()` row proves.
 ## Not the annotate/monomorphise ordering
 
 `checker.annotate_module` (fern.fern:640) does run before `monomorphize_module`
-(inside `parser.module_with_builtins`, fern.fern:682), and an earlier writeup
+(inside `astpasses.module_with_builtins`, fern.fern:682), and an earlier writeup
 blamed that. It is not sufficient: `dup` and `pk` are annotated at exactly the
 same point and both work. Ordering would predict failures that do not happen.
 

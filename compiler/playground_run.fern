@@ -11,6 +11,8 @@ import "./ircore";
 import "./lexer";
 import "./modloader";
 import "./parser";
+import "./defaultargs";
+import "./astpasses";
 import "./platforms";
 import "./semarrayreport";
 import "./semlower";
@@ -295,7 +297,7 @@ function run(): i32 {
   }
 
   let merged = modloader.bundle(ov, "stdin", entry, loaded, target, "");
-  merged = parser.fill_default_args_module(merged);
+  merged = defaultargs.fill_module(merged);
   merged = parser.resolve_variant_fields_module(merged);
 
   if (o.check) {
@@ -330,7 +332,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
     return 1;
   }
   merged = checked.typed;
-  let errs = asmcore.check_call_arity(parser.fill_default_args_module(merged));
+  let errs = asmcore.check_call_arity(defaultargs.fill_module(merged));
   errs = util.append_diags(errs, asmcore.check_map_new_chain(merged));
   errs = util.append_diags(errs, asmcore.check_undefined_calls(merged));
   if (report_diags(errs, files)) {
@@ -358,7 +360,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   merged = constfold.fold_module(merged);
   merged = treeshake.treeshake(merged);
 
-  let typed = parser.module_with_builtins_typed(merged);
+  let typed = astpasses.module_with_builtins_typed(merged);
   let full = parser.erase_view_module(typed);
   let sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(false, false, true, semarrayreport.off())), switches: asmcore.Switches { ...asmcore.env_switches(), target: target } };
   if (report_diags(sub.refused, files)) {

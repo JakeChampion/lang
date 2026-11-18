@@ -176,6 +176,11 @@ The stream retains at most 32 sequence records, 256 picture records, and one pen
 Each picture record retains its original bounded PPS NAL for validation after an SPS changes.
 
 Before the next matching slice, the reader validates that PPS against the current SPS and refreshes its cached metadata.
+
+The shared PPS validator requires CAVLC entropy mode for explicit Baseline and Extended profiles under H.264 clauses A.2.1 and A.2.3.
+This check also applies after a profile change through a cached PPS. Main and High CABAC parameter sets remain supported.
+It adds no state or allocation and does not establish full profile, compatibility flags, entropy, or pixel conformance.
+
 Unused stale records do not reject unrelated pictures. A new PPS replaces its old record before use.
 Each PPS obeys the configured NAL and packet limits and the 64 KiB PPS ceiling.
 The cache retains at most 16 MiB of PPS payloads, without an exact process-memory claim.
