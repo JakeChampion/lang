@@ -318,6 +318,10 @@ function read_failure(what: string, path: string, reason: string): string {
   return "fern: cannot read " + what + " " + path + ": " + reason;
 }
 
+function mode_message(flag: string, text: string): string {
+  return "fern: " + flag + ": " + text;
+}
+
 // A mode written with no dash is read as the entry file. The line names the
 // flag.
 function report_entry_read_failure(st: DiagStyle, path: string, e: lexer.TokError): void {
@@ -2976,7 +2980,7 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
   }
   let mdir = find_manifest_dir(dir);
   if (mdir.len() == 0) {
-    eprint("resolve: no fern.toml governs " + dir);
+    eprint(mode_message("-resolve", "no fern.toml governs " + dir));
     return 1;
   }
   let mpath = mdir + "/fern.toml";
@@ -2987,11 +2991,11 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
   }
   let roots = manifest_reqs(man);
   if (roots.len() == 0) {
-    eprint("resolve: " + mpath + " declares no versioned dependencies (nothing to resolve)");
+    eprint(mode_message("-resolve", mpath + " declares no versioned dependencies (nothing to resolve)"));
     return 1;
   }
   if (man.index.len() == 0) {
-    eprint("resolve: " + mpath + " has versioned dependencies but no `index = \"…\"` under [package]");
+    eprint(mode_message("-resolve", mpath + " has versioned dependencies but no `index = \"…\"` under [package]"));
     return 1;
   }
   let ipath = man.index;
@@ -3008,22 +3012,22 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
     Err(e) => {}
   }
   if (!iok) {
-    eprint("index " + ipath + ": cannot read");
+    eprint(mode_message("-resolve", "index " + ipath + ": cannot read"));
     return 1;
   }
   if (man.index_key.len() > 0) {
     let why = index_signature_error(ipath, isrc, man.index_key);
     if (why.len() > 0) {
-      eprint(why);
+      eprint(mode_message("-resolve", why));
       return 1;
     }
   }
-  let ix: mvs.Index = match (mvs.parse_index(isrc)) { Ok(index) => index, Err(message) => { eprint("index " + ipath + ": " + message); return 1; } };
+  let ix: mvs.Index = match (mvs.parse_index(isrc)) { Ok(index) => index, Err(message) => { eprint(mode_message("-resolve", "index " + ipath + ": " + message)); return 1; } };
   ix = mvs.with_dir(ix, mvs.join_path(util.dir_of(ipath), "."));
   let lock = mdir + "/fern.lock";
   let stale = index_serial_error(ipath, ix.serial, mdir);
   if (stale.len() > 0) {
-    eprint(stale);
+    eprint(mode_message("-resolve", stale));
     return 1;
   }
 
@@ -3063,19 +3067,19 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
     }
   }
   if (st.err.len() > 0) {
-    eprint(st.err);
+    eprint(mode_message("-resolve", st.err));
     return 1;
   }
 
-  let sel: mvs.Sel[] = match (mvs.selected(st)) { Ok(value) => value, Err(message) => { eprint(message); return 1; } };
+  let sel: mvs.Sel[] = match (mvs.selected(st)) { Ok(value) => value, Err(message) => { eprint(mode_message("-resolve", message)); return 1; } };
   match (write_file(lock, mvs.lock_text(ix.serial, sel))) {
     Ok(u) => {},
     Err(e) => {
-      eprint("resolve: cannot write " + lock + ": " + e.message());
+      eprint(mode_message("-resolve", "cannot write " + lock + ": " + e.message()));
       return 1;
     }
   }
-  eprint("resolve: " + util.i32_to_string(sel.len()) + " package(s) pinned in " + lock);
+  eprint(mode_message("-resolve", util.i32_to_string(sel.len()) + " package(s) pinned in " + lock));
   for i in 0..sel.len() {
     eprint("  " + sel[i].name + " " + sel[i].ver);
   }
@@ -3202,7 +3206,7 @@ function dep_source(spec: string, fetcher: Fetcher): string {
       eprint("fern: -add: url must be http(s), got " + util.quoted(u));
       return "";
     }
-    eprint("fetching " + u + " to compute its hash…");
+    eprint(mode_message("-add", "fetching " + u + " to compute its hash…"));
     let got = fetcher.fetch(u, "");
     if (got.err.len() > 0) {
       eprint("fern: -add: " + got.err);
@@ -3288,7 +3292,7 @@ function run_fetch(start: string, fetcher: Fetcher): i32 {
   }
   let mdir = find_manifest_dir(dir);
   if (mdir.len() == 0) {
-    eprint("fetch: no fern.toml governs " + dir);
+    eprint(mode_message("-fetch", "no fern.toml governs " + dir));
     return 1;
   }
   let w = fetch_walk(fetcher, FetchWalk { seen: [], fetched: 0, err: "" }, mdir);
@@ -3296,10 +3300,10 @@ function run_fetch(start: string, fetcher: Fetcher): i32 {
     w = fetch_locked(fetcher, w, mdir);
   }
   if (w.err.len() > 0) {
-    eprint(w.err);
+    eprint(mode_message("-fetch", w.err));
     return 1;
   }
-  eprint("fetch: " + util.i32_to_string(w.fetched) + " downloaded, " + util.i32_to_string(w.seen.len()) + " package(s) checked");
+  eprint(mode_message("-fetch", util.i32_to_string(w.fetched) + " downloaded, " + util.i32_to_string(w.seen.len()) + " package(s) checked"));
   return 0;
 }
 
@@ -3319,7 +3323,7 @@ function fetch_walk(fetcher: Fetcher, w: FetchWalk, mdir: string): FetchWalk {
     let ddir = "";
     if (d.kind == "url") {
       if (store_dir(d.hash).len() == 0) {
-        eprint("fetching " + d.name + " (" + d.url + ")");
+        eprint(mode_message("-fetch", "fetching " + d.name + " (" + d.url + ")"));
         out = FetchWalk { ...out, fetched: out.fetched + 1 };
       }
       let got = fetch_into_store(fetcher, d.url, d.hash);
@@ -3351,7 +3355,7 @@ function fetch_locked(fetcher: Fetcher, w: FetchWalk, mdir: string): FetchWalk {
   let out = w;
   for e in entries {
     if (e.url.len() > 0 && store_dir(e.hash).len() == 0) {
-      eprint("fetching " + e.name + "@" + e.version + " (" + e.url + ")");
+      eprint(mode_message("-fetch", "fetching " + e.name + "@" + e.version + " (" + e.url + ")"));
       let got = fetcher.fetch(e.url, e.hash);
       if (got.err.len() > 0) {
         return FetchWalk { ...out, err: "locked dependency " + util.quoted(e.name) + ": " + got.err };
@@ -3373,14 +3377,14 @@ function run_vendor(start: string): i32 {
       Err(e) => {}
     }
     if (!readable) {
-      eprint("vendor: cannot read " + start);
+      eprint(mode_message("-vendor", "cannot read " + start));
       return 1;
     }
     dir = util.dir_of(start);
   }
   let mdir = find_manifest_dir(dir);
   if (mdir.len() == 0) {
-    eprint("vendor: no fern.toml governs " + dir);
+    eprint(mode_message("-vendor", "no fern.toml governs " + dir));
     return 1;
   }
   let root = read_manifest(mdir + "/");
@@ -3402,7 +3406,7 @@ function run_vendor(start: string): i32 {
         mem = mvs.join_path(mdir, rel);
       }
       if (!has_manifest(mem)) {
-        eprint("vendor: workspace member " + util.quoted(rel) + " has no fern.toml");
+        eprint(mode_message("-vendor", "workspace member " + util.quoted(rel) + " has no fern.toml"));
         return 1;
       }
       starts = starts.append(mem + "");
@@ -3411,7 +3415,7 @@ function run_vendor(start: string): i32 {
 
   let set = vendor_collect(starts);
   if (set.err.len() > 0) {
-    eprint(set.err);
+    eprint(mode_message("-vendor", set.err));
     return 1;
   }
 
@@ -3419,18 +3423,18 @@ function run_vendor(start: string): i32 {
   match (remove_dir_all(vdir)) {
     Ok(u) => {},
     Err(e) => {
-      eprint("vendor: clearing " + vdir);
+      eprint(mode_message("-vendor", "clearing " + vdir));
       return 1;
     }
   }
   for i in 0..set.names.len() {
     let err = copy_package(set.srcs[i], vdir + "/" + set.names[i]);
     if (err.len() > 0) {
-      eprint("vendor: copying " + util.quoted(set.names[i]) + ": " + err);
+      eprint(mode_message("-vendor", "copying " + util.quoted(set.names[i]) + ": " + err));
       return 1;
     }
   }
-  eprint("vendor: " + util.i32_to_string(set.names.len()) + " package(s) written to " + vdir);
+  eprint(mode_message("-vendor", util.i32_to_string(set.names.len()) + " package(s) written to " + vdir));
   return 0;
 }
 
@@ -3472,7 +3476,7 @@ function vendor_collect(starts: string[]): VendorSet {
         if (srcs[at] != src.dir) {
           return VendorSet {
             names: names, srcs: srcs,
-            err: "vendor: two different packages both named " + util.quoted(key)
+            err: "two different packages both named " + util.quoted(key)
               + " (" + srcs[at] + " and " + src.dir + ") — package names must be unique to vendor",
           };
         }
@@ -4385,7 +4389,7 @@ function write_generated(code: string, out_path: string): i32 {
   }
   match (write_file(out_path, code)) {
     Ok(u) => {
-      eprint("wrote " + out_path);
+      eprint("fern: wrote " + out_path);
       return 0;
     },
     Err(e) => {
@@ -4595,7 +4599,7 @@ function flatten_path(p: string): string {
 function check_dir(st: DiagStyle, dir: string, root: string, target: string, target_given: boolean, embed_dir: string): i32 {
   let mdir = find_manifest_dir(dir);
   if (mdir.len() == 0) {
-    eprint("check: " + dir + " is a directory with no fern.toml — pass a .fern file, or run inside a package");
+    eprint(mode_message("-check", dir + " is a directory with no fern.toml — pass a .fern file, or run inside a package"));
     return 1;
   }
   let man = read_manifest(mdir + "/");
@@ -4606,7 +4610,7 @@ function check_dir(st: DiagStyle, dir: string, root: string, target: string, tar
   if (man.members.len() == 0) {
     let entry = package_entry(mdir);
     if (entry.len() == 0) {
-      eprint("no entry module in " + mdir + " (looked for " + man.lib + " and main.fern)");
+      eprint(mode_message("-check", "no entry module in " + mdir + " (looked for " + man.lib + " and main.fern)"));
       return 1;
     }
     return check_file(st, entry, root, target, target_given, embed_dir);
@@ -4622,22 +4626,22 @@ function check_dir(st: DiagStyle, dir: string, root: string, target: string, tar
     }
     let mentry = package_entry(mem);
     if (mentry.len() == 0) {
-      eprint("FAIL " + rel + ": no entry module in " + mem + " (looked for " + read_manifest(mem + "/").lib + " and main.fern)");
+      eprint(mode_message("-check", "FAIL " + rel + ": no entry module in " + mem + " (looked for " + read_manifest(mem + "/").lib + " and main.fern)"));
       failed += 1;
       continue;
     }
     if (check_file(st, mentry, root, target, target_given, embed_dir) != 0) {
-      eprint("FAIL " + rel);
+      eprint(mode_message("-check", "FAIL " + rel));
       failed += 1;
       continue;
     }
-    eprint("ok   " + rel);
+    eprint(mode_message("-check", "ok   " + rel));
   }
   if (failed > 0) {
-    eprint("check: " + util.i32_to_string(failed) + " of " + util.i32_to_string(man.members.len()) + " workspace member(s) failed");
+    eprint(mode_message("-check", util.i32_to_string(failed) + " of " + util.i32_to_string(man.members.len()) + " workspace member(s) failed"));
     return 1;
   }
-  eprint("check: " + util.i32_to_string(man.members.len()) + " workspace member(s) ok");
+  eprint(mode_message("-check", util.i32_to_string(man.members.len()) + " workspace member(s) ok"));
   return 0;
 }
 
@@ -4690,7 +4694,7 @@ function run_lsp(s: Server): i32 {
     inp = f.inp;
     if (f.done) {
       if (f.err.len() > 0) {
-        eprint("fern -lsp: " + f.err);
+        eprint(mode_message("-lsp", f.err));
         return 2;
       }
       return 0;
@@ -5419,7 +5423,7 @@ function explain(dir: string, code: string): i32 {
         }
         avail += c;
       }
-      eprint("unknown error code \"" + code + "\"\navailable codes: [" + avail + "]");
+      eprint(mode_message("-explain", "unknown error code \"" + code + "\"\n  available codes: [" + avail + "]"));
       return 1;
     }
   }

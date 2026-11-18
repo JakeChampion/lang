@@ -133,8 +133,8 @@ func runResolveBoth(t *testing.T, nativeBin, driverBin string, pkgs map[string]s
 	if shOK != nativeOK {
 		t.Fatalf("native resolved = %v, self-host resolved = %v\n--- native ---\n%s\n--- self-host ---\n%s", nativeOK, shOK, nativeOut, shOut)
 	}
-	want := strings.ReplaceAll(string(nativeOut), nativeDir, "<ROOT>")
-	got := strings.ReplaceAll(string(shOut), selfDir, "<ROOT>")
+	want := withoutLinePrefix(strings.ReplaceAll(string(nativeOut), nativeDir, "<ROOT>"), "resolve: ")
+	got := withoutLinePrefix(strings.ReplaceAll(string(shOut), selfDir, "<ROOT>"), "fern: -resolve: ")
 	if want != got {
 		t.Errorf("resolve output differs:\n--- native ---\n%s\n--- self-host ---\n%s", want, got)
 	}

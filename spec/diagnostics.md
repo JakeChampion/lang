@@ -28,6 +28,13 @@ without context, notes, fixes or colour. Carriage returns and newlines in a
 diagnostic header are escaped in this mode, including those in filenames.
 The choice of terminal format does not remove editor metadata.
 
+A message of the `fern` command that is not about a position in a source
+file starts with `fern: `. A message from a mode names the flag of the mode
+next: `fern: -resolve: no fern.toml governs DIR`. A usage line starts with
+`usage: `. A line that continues the line before it starts with two spaces.
+`TestSelfHostCLIMessageForm` holds the package tools, `-explain`, `-doc` and
+`-lsp` to these forms.
+
 The LSP publishes secondary locations as `relatedInformation` and exposes
 replacement edits as quickfix code actions. Its ranges use UTF-16 positions,
 including supplementary Unicode characters and the end of a file. A textual
