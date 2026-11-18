@@ -684,7 +684,7 @@ function pick(name: string): Case {
         return Case { f: func(0, 4, [b0]), modes: [], returns_unit: false };
     }
     if (name == "slot-call-with-no-contract") {
-        // A slot call with no contract leaves its operand unproved.
+        // A slot call with no contract leaves its operand and its result unproved.
         let b0: ssa.SBlock = block(0, [], [fresh_box(0), const_int(1, 0), inst(56, 2, [1, 0], 0, "slot"), const_int(3, 0)], ret(3));
         return Case { f: func(0, 4, [b0]), modes: [], returns_unit: false };
     }
@@ -839,7 +839,7 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"indirect-call-result-leaked", []string{"leaked at return of v1"}, 0},
 		{"indirect-call-with-no-contract", nil, 1},
 		{"slot-call-takes-its-operand", nil, 0},
-		{"slot-call-with-no-contract", nil, 1},
+		{"slot-call-with-no-contract", nil, 2},
 		{"unknown-callee-refused", []string{"cannot be certified: calls mystery, which has no rc signature and no ABI"}, 0},
 		{"unknown-contract-returns-a-phi-of-a-fresh-box", nil, 2},
 		{"loop-phi-borrows-a-held-box", nil, 0},
