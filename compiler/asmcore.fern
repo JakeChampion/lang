@@ -4493,84 +4493,12 @@ pub function assignable(want: Ty, got: Ty): boolean {
   return true;
 }
 
-function parse_unknown_error(where: string, kind: string, line: i32, col: i32): util.Diag {
-  let lex = kind;
-  if (lex.starts_with("stmt: ")) {
-    lex = slice_unchecked(lex, 6, lex.len()).to_owned();
+function parse_unknown_error(where: string, f: ast.Fault, line: i32, col: i32): util.Diag {
+  let message = f.message;
+  if (f.scoped) {
+    message = where + ": " + message;
   }
-  if (lex.starts_with("lex:")) {
-    return util.Diag { related: [], length: 0, code: slice_unchecked(lex, 4, 8).to_owned(), message: slice_unchecked(lex, 9, lex.len()).to_owned(), line: line, col: col, fix: None };
-  }
-  if (lex.starts_with("code:")) {
-    return util.Diag { related: [], length: 0, code: slice_unchecked(lex, 5, 9).to_owned(), message: where + ": " + slice_unchecked(lex, 10, lex.len()), line: line, col: col, fix: None };
-  }
-  if (util.is_f64_range_kind(kind)) {
-    return util.Diag { related: [], length: 0, code: "P002", message: where + ": " + util.f64_range_message(kind), line: line, col: col, fix: None };
-  }
-  if (kind == "nest:too-deep" || kind == "stmt: nest:too-deep") {
-    return util.Diag { related: [], length: 0, code: "P005", message: where + ": input nests deeper than " + util.i32_to_string(parser.MAX_NEST_DEPTH) + " levels", line: line, col: col, fix: None };
-  }
-  let decl = decl_sentinel_text(kind);
-  if (decl.len() > 0) {
-    return util.Diag { related: [], length: 0, code: "P001", message: where + ": " + decl, line: line, col: col, fix: None };
-  }
-  return util.Diag { related: [], length: 0, code: "P001", message: where + ": " + sentinel_message(kind), line: line, col: col, fix: None };
-}
-
-function sentinel_message(kind: string): string {
-  let k = kind;
-  if (k.starts_with("stmt: ")) {
-    k = slice_unchecked(k, 6, k.len()).to_owned();
-  }
-  if (k.starts_with("punct:")) {
-    return "expected an expression, got \"" + slice_unchecked(k, 6, k.len()) + "\"";
-  }
-  if (k.starts_with("keyword:")) {
-    return "expected an expression, got \"" + slice_unchecked(k, 8, k.len()) + "\"";
-  }
-  if (k.starts_with("missing ")) {
-    return missing_message(slice_unchecked(k, 8, k.len()).to_owned());
-  }
-  return match (k) {
-    "eof" => "expected an expression, got the end of the file",
-    "primary" => "expected an expression",
-    "lambda: bad destructuring param" => "expected a parameter name or a destructuring pattern",
-    "bad tuple pattern" => "expected a tuple pattern",
-    _ => k,
-  };
-}
-
-function missing_message(what: string): string {
-  return match (what) {
-    "= in let" => "expected \"=\" after the name in this declaration",
-    "`in` in for" => "expected \"in\" after the `for` pattern",
-    "for-let name" => "expected a name after \"let\" in this `for` loop",
-    "binding name" => "expected a name to bind",
-    "statement in braceless body" => "expected a statement",
-    "{ in block" => "expected \"{\" to open a block",
-    "{ in lambda body" => "expected \"{\" to open the lambda body",
-    "{ in branch body" => "expected \"{\" to open the branch body",
-    "field name in struct lit" => "expected a field name in this struct literal",
-    ": in struct lit" => "expected \":\" after the field name in this struct literal",
-    "} in struct lit" => "expected \"}\" to close this struct literal",
-    "} in struct update" => "expected \"}\" to close this struct update",
-    ") in call" => "expected \")\" to close this call",
-    "] in slice" => "expected \"]\" to close this slice",
-    "] in index" => "expected \"]\" to close this index",
-    "] in array literal" => "expected \"]\" to close this array literal",
-    "field name after ." => "expected a field or method name after \".\"",
-    _ => "expected " + what,
-  };
-}
-
-function decl_sentinel_text(kind: string): string {
-  if (kind.starts_with("decl:")) {
-    return slice_unchecked(kind, 5, kind.len()).to_owned();
-  }
-  if (kind.starts_with("stmt: decl:")) {
-    return slice_unchecked(kind, 11, kind.len()).to_owned();
-  }
-  return "";
+  return util.Diag { related: [], length: 0, code: f.code, message: message, line: line, col: col, fix: None };
 }
 
 struct UnkScan { where: string, errs: util.Diag[] }
@@ -4581,10 +4509,10 @@ function unknown_error_stmt_at(st: ast.Stmt, own a: UnkScan): UnkScan {
       return a;
     },
     ast.StmtUnknown(u) => {
-      if (u.kind == parser.REPORTED || u.kind == parser.MISSING_TAIL) {
+      if (u.fault.code.len() == 0) {
         return a;
       }
-      return UnkScan { ...a, errs: a.errs.append(parse_unknown_error(a.where, "stmt: " + u.kind, u.line, u.col)) };
+      return UnkScan { ...a, errs: a.errs.append(parse_unknown_error(a.where, u.fault, u.line, u.col)) };
     },
     ast.StmtDefer(_) => {
       return a;
@@ -4625,10 +4553,10 @@ function unknown_error_expr_at(e: ast.Expr, own a: UnkScan): UnkScan {
       return a;
     },
     ast.ExprUnknown(u) => {
-      if (u.kind == parser.BARE_RETURN || u.kind == parser.REPORTED) {
+      if (u.fault.code.len() == 0) {
         return a;
       }
-      return UnkScan { ...a, errs: a.errs.append(parse_unknown_error(a.where, u.kind, u.line, u.col)) };
+      return UnkScan { ...a, errs: a.errs.append(parse_unknown_error(a.where, u.fault, u.line, u.col)) };
     },
     ast.ExprIdent(_) => {
       return a;

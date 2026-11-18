@@ -1533,8 +1533,8 @@ function check_fstrings(): test.TestOutcome {
     ast.StmtReturn(r) => {
       match (r.value) {
         ast.ExprUnknown(u) => {
-          if (u.kind != "f-string interpolation: unexpected trailing tokens after expression") {
-            return test.fail("u.kind != \"f-string interpolation: unexpected trailing tokens after expression\"");
+          if (u.fault.code != "P001" || u.fault.message != "f-string interpolation: unexpected trailing tokens after expression") {
+            return test.fail("u.fault != P001 \"f-string interpolation: unexpected trailing tokens after expression\"");
           }
           if (u.line != 1 || u.col != 17) {
             return test.fail("u.line != 1 || u.col != 17");
