@@ -254,20 +254,9 @@ function called_from_cycle(callees: i32[][], cycle: i32[]): boolean[] {
   return out;
 }
 
-// An @inline function is spliced at every call, as one called once is. Its
-// view parameters may only be read, as a leaf's are.
+// An @inline function uses the same view restrictions as a function with one call.
 function forced_spliceable(f: ssasem.Func, cycle: i32): boolean {
-  if (cycle >= 0 || ssasem.holds_view(f, f.result) || !spliceable(f, max_once_insts())) {
-    return false;
-  }
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      if (ins.kind_tag == ssasem.param() && ssasem.holds_view(f, f.values[ins.result]) && !read_view_param(f, ins)) {
-        return false;
-      }
-    }
-  }
-  return true;
+  return cycle < 0 && !lends_view(f) && spliceable(f, max_once_insts());
 }
 
 // A body that splicing makes forced_spliceable joins the once set.

@@ -399,12 +399,26 @@ jobs:
           --baseline-stdlib ../baseline/internal/stdlib --workspace
           --reference-dir build/minimp3 --output build/audio-pair
           --rounds 100 --trials 9
+      - name: Check the convenience frame API
+        working-directory: candidate
+        run: >-
+          python3 scripts/bench-mp2 --compiler bin/fern-selfhost
+          --baseline-stdlib ../baseline/internal/stdlib
+          --reference-dir build/minimp3 --output build/audio-convenience
+          --rounds 100 --trials 5
+      - name: Refresh MP3 and QOA reference comparisons
+        working-directory: candidate
+        run: |
+          FERN="$PWD/bin/fern-selfhost" python3 scripts/bench-mp3 > build/audio-pair/mp3.json
+          FERN="$PWD/bin/fern-selfhost" python3 scripts/bench-audio > build/audio-pair/qoa.json
       - name: Upload every timing
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: audio-pair-${{ matrix.host }}
-          path: candidate/build/audio-pair/results.json
+          path: |
+            candidate/build/audio-pair/*.json
+            candidate/build/audio-convenience/results.json
           if-no-files-found: error
 
   native-pair:

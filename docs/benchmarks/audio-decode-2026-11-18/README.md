@@ -36,13 +36,16 @@ Fern validates protected-frame CRC. The reference timing does not perform that C
 The convenience frame method retains its independent scratch construction path.
 This avoids two extra workspace objects per frame compared with a wrapper around the new API.
 
-A remaining compiler boundary materializes one Scale record per frame when both decode APIs are reachable.
-The legacy comparison records 633 versus 591 allocations for the 42-frame stereo stream.
-Its median decode time still falls by 7–15% in this separate five-trial campaign.
-Use `decode_frame_with` to obtain the reported allocation reductions. Issue #16444 tracks the compiler boundary.
+The compiler now applies its existing single-caller view restrictions to explicit inlining.
+The MP2 granule helper can inline through its borrowed byte input.
+This removes the extra Scale record from each convenience call and resolves #16444.
+The convenience API matches main's allocation counts on all three streams: 591, 395, and 199.
 
-The final convenience-path adjustment does not change the workspace benchmark binary on x86-64 or ARM64.
-Its SHA-256 matches the original measured candidate on each ISA.
+Use `decode_frame_with` to obtain the reported allocation reductions.
+Five paired trials measure 8–12% less frame decode time with the convenience API.
+
+The final compiler change does not change either workspace benchmark binary on x86-64 or ARM64.
+Both the baseline and candidate match the original measured binaries on each ISA.
 This identity check preserves the applicability of the workspace timing reports.
 
 ## Measurement scope
@@ -84,6 +87,10 @@ The MP3 reference and mutation suite also passes after the shared synthesis chan
 MP2 smoke, MP2 boundaries, and MP3 reference tests pass on WASM.
 Those suites compile for Android ARM64.
 
+Compiler tests cover explicit inlining, borrowed readers, bounds failures, and string lifetimes.
+They pass on native x86-64, ARM64 under QEMU, and WASM.
+The new assembly assertions fail with the baseline compiler and pass with the corrected compiler.
+
 The native CI comparison passes on ARM64 and x86-64 in [run 44287107715](https://github.com/JakeChampion/lang/actions/runs/44287107715).
 ARM64 median time falls by 7–12%. The second x86-64 host measures 6–11% less time.
 Both hosts preserve exact scalar-reference PCM and the same allocation reductions.
@@ -105,3 +112,16 @@ python3 scripts/bench-mp2 --compiler bin/fern-selfhost \
 `--baseline-workspace` compares two implementations that both expose the workspace API.
 The baseline otherwise uses the existing frame API.
 Issues #16437, #14886, and #14516 retain the remaining performance work.
+
+## Other decoder baselines
+
+The current MP3 whole-input benchmark takes 7.08 times the scalar minimp3 time and 9.93 times its SIMD time.
+The current QOA benchmark takes 2.37 times the pinned C reference time.
+These five-trial measurements use the same local host and corrected compiler.
+They establish remaining gaps, not improvements from a matched earlier Fern build.
+
+MP3 checks three observable PCM samples per file in the timed region.
+QOA checks all output samples and uses i32 output, while its C reference uses int16.
+These older drivers include process startup and differ from the MP2 decode-only driver.
+Do not compare ratios across codecs as a measure of relative implementation quality.
+The JSON files retain the measurements and reference identities.

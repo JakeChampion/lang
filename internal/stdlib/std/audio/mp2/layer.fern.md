@@ -185,6 +185,7 @@ function clear_inactive(scale: Scale, own output: f32[]): f32[] {
   return output;
 }
 
+@inline
 pub function granule_into(input: [u8], b: bits.Bits, scale: Scale, part: i32, own output: f32[]): Result[(bits.Bits, f32[]), pcm.AudioError] {
   output = clear_inactive(scale, output);
   for group in 0..4 {

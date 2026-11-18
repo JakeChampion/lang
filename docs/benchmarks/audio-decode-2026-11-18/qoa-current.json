@@ -1,0 +1,34 @@
+{
+  "machine": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "compiler_sha256": "d085a5b580b816ec69a6603f761b76001d971842f3f6efe04d65790905fceb1a",
+  "compiler": "fern (unknown build)\nbuilt for x86-64-linux",
+  "qoa_reference": "bc0589710ff6aa2f50e08fb4d0a815d567bc0f3e",
+  "iterations": 1000,
+  "frames_per_file": 10004,
+  "channels": 2,
+  "seconds": {
+    "fern": [
+      0.15634457800024393,
+      0.14726531999986037,
+      0.15269397400015805,
+      0.14676576800002294,
+      0.14810674699992887
+    ],
+    "reference": [
+      0.061879920000137645,
+      0.0633874149998519,
+      0.062384779999774764,
+      0.06509942000002411,
+      0.061681682000198634
+    ]
+  },
+  "median_seconds": {
+    "fern": 0.14810674699992887,
+    "reference": 0.062384779999774764
+  },
+  "fern_over_c": 2.3740846244943654,
+  "output_storage": {
+    "fern": "i32",
+    "reference": "int16"
+  }
+}
