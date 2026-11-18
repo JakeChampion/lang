@@ -571,7 +571,11 @@ function lift_call_indirect_prod(op: ir.Op, lv: LiftVals): LiftVals {
     stack = util.drop_last_i32(stack);
   }
   let v = lv.nvals;
-  let insts = lv.insts.append(ssa.SInst { kind_tag: ssa.CALL_IND, result: v, args: args, imm: op.i64_imm as i32, str: "" });
+  let units = "";
+  if (ir.call_units(op) >= 0) {
+    units = util.i32_to_string(ir.call_units(op));
+  }
+  let insts = lv.insts.append(ssa.SInst { kind_tag: ssa.CALL_IND, result: v, args: args, imm: op.i64_imm as i32, str: units });
   return LiftVals { nvals: v + 1, stack: stack.append(v), insts: insts, ok: true };
 }
 

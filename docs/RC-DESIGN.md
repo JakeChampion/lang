@@ -582,7 +582,11 @@ and another box on the other edge. A retain or a release of a twin with one
 side changes the count of that side. Another use that a twin cannot describe
 reads the twin as one count. On the arm where `__fern_rc_is_unique` found another holder, a push
 copies the box, or it keeps a box with a negative count in place. No retain
-or release changes such a box, so there the result counts as a new box. A phi takes one unit of an input that holds one. The exception is
+or release changes such a box, so there the result counts as a new box. A
+call through a function value takes the contract that the lowering writes on
+its op (`ir.call_units`). An operand that the function type takes as `own`
+hands its unit to the callee, and a counted result holds a fresh unit. A raw
+call names no contract, so its operands and its result stay unproved. A phi takes one unit of an input that holds one. The exception is
 a phi that no operation touches, that no return takes, and that feeds no phi
 that is touched or returned: nothing can spend a unit of it, so its inputs
 keep their units (`spent_phis`). The slot of a loop that borrows is such a

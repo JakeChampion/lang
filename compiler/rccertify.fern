@@ -1296,7 +1296,15 @@ function simple_origin(w: Walk, ins: ssa.SInst): i32 {
     return org_none();
   }
   if (k == ssa.CALL_IND || k == ssa.DYN_DISPATCH) {
-    return org_unknown();
+    let units = indirect_units(ins);
+    let result = units & ir.call_units_result();
+    if (units < 0) {
+      return org_unknown();
+    }
+    if (result != 0) {
+      return org_fresh();
+    }
+    return org_none();
   }
   if (is_named_op(k) && ins.str != "call_word") {
     return named_origin(w, ins);
@@ -2838,8 +2846,33 @@ function apply(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken: i32[
     return apply_store(p, w, ins, block, taken);
   }
   if (k == ssa.CALL_IND || k == ssa.DYN_DISPATCH) {
+    return apply_indirect(p, w, ins, block);
+  }
+  return define(p, w, ins.result, block);
+}
+
+// The contract of a call through a function value (ir.call_units), or -1.
+// The lift puts the target first, so the operand j of the contract is the
+// argument j + 1.
+function indirect_units(ins: ssa.SInst): i32 {
+  if (ins.kind_tag != ssa.CALL_IND || ins.str == "") {
+    return -1;
+  }
+  return util.digits_to_i32(ins.str);
+}
+
+function apply_indirect(own p: Progress, w: Walk, ins: ssa.SInst, block: i32): Progress {
+  let units = indirect_units(ins);
+  if (units < 0) {
     p = poison_all(p, w, ins.args);
     return define(p, w, ins.result, block);
+  }
+  for i in 1..ins.args.len() {
+    let bit = 1 << i - 1;
+    let handed = units & bit;
+    if (handed != 0) {
+      p = spend(p, w, ins.args[i], block, "moved into a call through a function value");
+    }
   }
   return define(p, w, ins.result, block);
 }
