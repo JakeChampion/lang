@@ -43,8 +43,35 @@ function drawn(fs: text.Fonts, s: string): string {
   return n.to_string() + "/" + placed.len().to_string();
 }
 
-// Whether the first glyph of `s` is above its last glyph, and whether its
-// middle is near the middle of the last glyph.
+// The lowest row of the ink of `mark`, and the highest row of the ink of
+// `base` in the columns of the ink of `mark`, in rows below the baseline.
+// A pixel is ink when its coverage is above half.
+function ink_rows(mark: text.Placed, base: text.Placed): (i32, i32) {
+  let (bottom, x0, x1) = (-(1 << 20), 1 << 20, -(1 << 20));
+  for row in 0..mark.bm.height {
+    for col in 0..mark.bm.width {
+      if (mark.bm.coverage[row * mark.bm.width + col] as i32 > 128) {
+        bottom = bottom.max(mark.y + row);
+        x0 = x0.min(mark.x + col);
+        x1 = x1.max(mark.x + col);
+      }
+    }
+  }
+  let top = 1 << 20;
+  for row in 0..base.bm.height {
+    for col in 0..base.bm.width {
+      let x = base.x + col;
+      if (x >= x0 && x <= x1 && base.bm.coverage[row * base.bm.width + col] as i32 > 128) {
+        top = top.min(base.y + row);
+      }
+    }
+  }
+  return (bottom, top);
+}
+
+// Whether the ink of the first glyph of `s` is above the ink of its last
+// glyph under it, and whether its middle is near the middle of the last
+// glyph. The ends of a beh can be higher than a fatha over its middle.
 function mark_on_base(fs: text.Fonts, s: string): string {
   let (_, placed) = text.layout(text.new_cache(), fs, 0, 64, 0, s);
   if (placed.len() < 2) {
@@ -52,7 +79,13 @@ function mark_on_base(fs: text.Fonts, s: string): string {
   }
   let (mark, base) = (placed[0], placed[placed.len() - 1]);
   let middle = mark.x + mark.bm.width / 2 - (base.x + base.bm.width / 2);
-  return (mark.y + mark.bm.height <= base.y).to_string() + " " + (middle.abs() < base.bm.width / 4).to_string();
+  let (bottom, top) = ink_rows(mark, base);
+  let parts: string[] = [];
+  for p in placed {
+    parts = parts.append("g" + (p.key & 4294967295i64).to_string() + " font " + (p.key >> 32 >> 2 >> 12).to_string() + " x" + p.x.to_string() + " y" + p.y.to_string() + " " + p.bm.width.to_string() + "x" + p.bm.height.to_string());
+  }
+  log.warn("i18ntest: placed " + parts.join(", "));
+  return (bottom < top).to_string() + " " + (middle.abs() < base.bm.width / 4).to_string();
 }
 
 // The tags of the tables of the font file at `path`, or of the first font
@@ -78,6 +111,18 @@ function table_tags(path: string): string {
   return tags.join(",");
 }
 
+// Whether the emoji `s` draws in color, with yellow in the middle of its
+// glyph, as the face of U+1F600 has.
+function yellow(fs: text.Fonts, s: string): string {
+  let (_, placed) = text.layout(text.new_cache(), fs, 0, 64, 0, s);
+  if (placed.len() != 1 || placed[0].rgba.len() == 0) {
+    return "no color";
+  }
+  let p = placed[0];
+  let k = 4 * (p.bm.height * 3 / 10 * p.bm.width + p.bm.width / 2);
+  return (p.rgba[k] as i32 > 200 && p.rgba[k + 1] as i32 > 140 && p.rgba[k + 2] as i32 < 120).to_string();
+}
+
 function step(s: App, e: android.Event): App {
   if let android.Resume = e {
     if (s.done) {
@@ -99,10 +144,16 @@ function step(s: App, e: android.Event): App {
     }
     let fatha = "بَ";
     fs = fs.covering(0, fatha, text.system_fallbacks(s.ctx, "sans-serif"));
+    for f in fonts.fallbacks(s.ctx, "sans-serif", 400, 0x628) {
+      log.warn("i18ntest: font of U+0628 " + f.path + "#" + f.index.to_string());
+    }
     log.warn("i18ntest: mark " + mark_on_base(fs, bidi.display(fatha, bidi.AUTO)));
     for f in fonts.fallbacks(s.ctx, "sans-serif", 400, 0x1F600) {
       log.warn("i18ntest: font of U+1F600 " + f.path + "#" + f.index.to_string() + " " + table_tags(f.path));
     }
+    let smile = "😀";
+    fs = fs.covering(0, smile, text.system_fallbacks(s.ctx, "sans-serif"));
+    log.warn("i18ntest: emoji yellow " + yellow(fs, smile));
     android.finish(s.ctx);
     return App { ...s, done: true };
   }

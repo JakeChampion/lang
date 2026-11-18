@@ -351,6 +351,21 @@ function test_mask(): test.TestOutcome {
   return test.assert_eq(got.join(" "), "255,0 128,0 0,0 255,0 31,128");
 }
 
+// Premultiplied colors over black: opaque red stays red, half green
+// gives half green, and a pixel of no alpha leaves black. The clip drops
+// the pixels outside the frame.
+function test_blend(): test.TestOutcome {
+  let f = frame(3, 1);
+  let rgba: u8[] = [255 as u8, 0 as u8, 0 as u8, 255 as u8, 0 as u8, 128 as u8, 0 as u8, 128 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 9 as u8, 9 as u8, 9 as u8, 255 as u8];
+  f.blend(0, 0, 4, 1, rgba);
+  let got: string[] = [];
+  for p in [f.pixel(0, 0), f.pixel(1, 0), f.pixel(2, 0)] {
+    got = got.append((p & 255).to_string() + "," + (p >> 8 & 255).to_string() + "," + (p >> 16 & 255).to_string() + "," + (p >> 24 & 255).to_string());
+  }
+  free_frame(f);
+  return test.assert_eq(got.join(" "), "255,0,0,255 0,128,0,255 0,0,0,255");
+}
+
 // An image of `w` by `h` pixels, each of the pixel word `color`.
 function solid(w: i32, h: i32, color: i32): draw.Image {
   let px: u8[] = [];
@@ -437,6 +452,7 @@ function main(): i32 {
   r = r.it("blit copies an offscreen frame", test_offscreen_blit);
   r = r.it("blend_frame blends a frame by an alpha", test_blend_frame);
   r = r.it("mask blends a colour by a coverage map", test_mask);
+  r = r.it("blend puts premultiplied colors over the frame", test_blend);
   r = r.it("a blend over a transparent pixel is premultiplied", test_premultiplied);
   r = r.it("a color goes to OKLCH and back", test_lch_round_trip);
   r = r.it("color_of fits a color that no pixel word shows", test_color_of_fits_a_wide_color);
