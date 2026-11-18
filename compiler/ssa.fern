@@ -2884,6 +2884,17 @@ pub function successors(t: STerm): i32[] {
   return [];
 }
 
+// The number of distinct blocks a terminator can jump to.
+pub function successor_count(t: STerm): i32 {
+  if (t.kind_tag == TERM_BR || t.kind_tag == TERM_BRIF && t.t == t.f) {
+    return 1;
+  }
+  if (t.kind_tag == TERM_BRIF) {
+    return 2;
+  }
+  return 0;
+}
+
 pub function successor_id(t: STerm, which: i32): i32 {
   if (t.kind_tag == TERM_BR && which == 0) {
     return t.target;

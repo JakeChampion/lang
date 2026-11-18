@@ -76,7 +76,7 @@ func TestSelfHostServeAllocsPerRequestWasm(t *testing.T) {
 	e2eharness.CheckServeAllocs(t, "127.0.0.1:"+strconv.Itoa(port), 0, e2eharness.ServeAllocsRoundsEmulated)
 }
 
-const ServeAllocsH2Ceiling = 21
+const ServeAllocsH2Ceiling = 20
 
 func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 	cli := buildSelfHostCLI(t)

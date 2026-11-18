@@ -302,11 +302,13 @@ func TestSelfHostTreeshakeKeepsDisplayToStringX86_64(t *testing.T) {
 		t.Fatalf("stdlib path: %v", err)
 	}
 
-	const src = `import "std/i32";
+	const src = `import "core/cmp";
+import "std/i32";
 import "std/i64";
 
 struct Q { a: i32 }
 @noinline function (q: Q) to_string(): string { return "Q!"; }
+impl cmp.Display for Q {}
 
 function main(): i32 {
     let q: Q = Q { a: 7 };

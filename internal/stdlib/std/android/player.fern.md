@@ -124,6 +124,65 @@ function info_change(what: i32): Option[Change] {
   return None;
 }
 
+// The kind and the argument of the Posted event that carries the change
+// `c` from the player in the slot `slot`. std/android/exoplayer sends its
+// changes this way too, so `event` and `sent_by` read the events of both.
+pub function posted(c: Change, slot: i32): (i32, usize) {
+  let tag = slot_tag(slot);
+  match (c) {
+    Prepared => {
+      return (PREPARED | tag, 0 as usize);
+    },
+    Completed => {
+      return (COMPLETED | tag, 0 as usize);
+    },
+    Failed(what, extra) => {
+      return (FAILED | tag, ((what as u64 & 4294967295u64) << 32u64 | extra as u64 & 4294967295u64) as usize);
+    },
+    Buffering(on) => {
+      return (INFO | tag, buffering_info(on) as usize);
+    },
+    Rendering => {
+      return (INFO | tag, INFO_RENDERING as usize);
+    },
+    Seeked => {
+      return (SEEKED | tag, 0 as usize);
+    },
+    AudioNotPlaying => {
+      return (INFO | tag, INFO_AUDIO_NOT_PLAYING as usize);
+    },
+    VideoNotPlaying => {
+      return (INFO | tag, INFO_VIDEO_NOT_PLAYING as usize);
+    }
+  }
+}
+
+// The bits of the kind that hold the slot. A player with no slot sends
+// with the slot 0.
+function slot_tag(slot: i32): i32 {
+  if (slot > 0) {
+    return slot << 8;
+  }
+  return 0;
+}
+
+function buffering_info(on: boolean): i32 {
+  if (on) {
+    return INFO_BUFFERING_START;
+  }
+  return INFO_BUFFERING_END;
+}
+
+// Whether the Posted event `e` carries a change of the player in the slot
+// `slot`.
+pub function sent_by(e: android.Event, slot: i32): boolean {
+  let android.Posted(tagged, arg) = e else {
+    return false;
+  };
+  let kind = tagged & 255;
+  return kind >= PREPARED && kind <= SEEKED && tagged >> 8 == slot;
+}
+
 // The change of the player that a Posted event carries, or None for an
 // event of another module.
 pub function event(e: android.Event): Option[Change] {
@@ -168,11 +227,7 @@ pub struct Player { obj: usize, listener: usize, slot: i32 }
 
 // Whether the player `p` sent the Posted event `e`.
 pub function (p: Player) sent(e: android.Event): boolean {
-  let android.Posted(tagged, arg) = e else {
-    return false;
-  };
-  let kind = tagged & 255;
-  return kind >= PREPARED && kind <= SEEKED && tagged >> 8 == p.slot;
+  return sent_by(e, p.slot);
 }
 
 const PLAYER: string = "android/media/MediaPlayer";
@@ -831,39 +886,36 @@ Each native method of the app's listener calls one of these with its `JNIEnv` an
 
 ```fern
 <<the listener>>=
-function post(e: usize, mp: usize, kind: i32, arg: usize): void {
+function post(e: usize, mp: usize, c: Change): void {
   if (!begin(e)) {
     return;
   }
   defer end(e);
-  let slot = android.sender_slot(e, session_of(e, mp));
-  if (slot < 0) {
-    slot = 0;
-  }
-  let sent = android.tell(e, kind | slot << 8, arg);
+  let (kind, arg) = posted(c, android.sender_slot(e, session_of(e, mp)));
+  let sent = android.tell(e, kind, arg);
 }
 
 pub function prepared(e: usize, listener: usize, mp: usize): void {
-  post(e, mp, PREPARED, 0 as usize);
+  post(e, mp, Prepared);
 }
 
 pub function completed(e: usize, listener: usize, mp: usize): void {
-  post(e, mp, COMPLETED, 0 as usize);
+  post(e, mp, Completed);
 }
 
 pub function failed(e: usize, listener: usize, mp: usize, what: i32, extra: i32): u8 {
-  post(e, mp, FAILED, ((what as u64 & 4294967295u64) << 32u64 | extra as u64 & 4294967295u64) as usize);
+  post(e, mp, Failed(what, extra));
   return 1u8;
 }
 
 pub function info(e: usize, listener: usize, mp: usize, what: i32, extra: i32): u8 {
-  if let Some(_) = info_change(what) {
-    post(e, mp, INFO, what as usize);
+  if let Some(c) = info_change(what) {
+    post(e, mp, c);
   }
   return 0u8;
 }
 
 pub function seeked(e: usize, listener: usize, mp: usize): void {
-  post(e, mp, SEEKED, 0 as usize);
+  post(e, mp, Seeked);
 }
 ```

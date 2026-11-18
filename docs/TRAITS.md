@@ -384,16 +384,24 @@ function main(): i32 {
 }
 ```
 
-`print(x)` / `write(x)` / `eprint(x)` accept any `T` whose type carries a
-`to_string(): string` in scope — a `@derive(Display)` / `impl Display`
-type, any primitive scalar, or a bounded generic
-`T: Display`. A plain `string` argument is passed through unchanged; a
-non-string argument is rewritten by the checker to `arg.to_string()` (the
-same desugar f-strings use), so the value stringifies through the trait
-before reaching the string-only runtime helper. A type with no `to_string`
-in scope is rejected with a `Display`-specific diagnostic. This is a
-checker-stage rewrite only — the formatter still renders the source
-`print(x)` form, and every backend sees an ordinary `print(string)` call.
+`print(x)`, `write(x)`, `eprint(x)` and an f-string part `{x}` accept a
+string, a primitive scalar, or a bounded generic `T: Display`. They also
+accept a type with `@derive(cmp.Display)` or an `impl` of `Display`. A plain
+`to_string` method without the impl is not sufficient: the checker rejects
+the value with `E038`.
+
+A `string` argument is passed through unchanged. The
+checker rewrites any other argument to `arg.to_string()`, the same desugar
+that an f-string part gets. This is a checker-stage rewrite only. The
+formatter keeps the source `print(x)` form, and every backend sees an
+ordinary `print(string)` call.
+
+The operators bind through traits in the same way. On a struct or an enum,
+`==` and `!=` need `cmp.Eq`, and the order operators need `cmp.Ord`. The
+arithmetic, bit and unary `-` operators need their `core/ops` trait. A method
+with the correct name and no impl does not give the operator (`E009`,
+`E041`).
+
 Every primitive (`i32`, `i64`, `u8`, `u32`, `u64`, `usize`, `f32`, `f64`,
 `boolean`, `char`, and `string`) has `to_string()` and supports interpolation
 without a source import. A visible user-defined method takes precedence.

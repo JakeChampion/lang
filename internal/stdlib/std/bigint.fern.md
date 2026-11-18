@@ -55,6 +55,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<module introduction>>=
 // This module provides arbitrary-precision integers.
 import "core/cmp";
+import "core/ops";
 import "std/number_parse";
 ```
 
@@ -825,6 +826,12 @@ pub function (a: BigInt) to_string(): string {
 ```fern
 <<comparison traits>>=
 impl cmp.Display for BigInt {}
+
+impl ops.Add for BigInt {}
+
+impl ops.Sub for BigInt {}
+
+impl ops.Mul for BigInt {}
 
 impl cmp.Eq for BigInt {}
 

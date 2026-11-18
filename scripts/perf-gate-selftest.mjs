@@ -283,5 +283,14 @@ let cases = 0;
   cases++;
 }
 
+// A host with no valgrind measures no dynamic row: the .ir and the .dr rows
+// of the baseline are not MISSING there, and a static row still is.
+{
+  const blind = check("x86_64/a.text\t10\nx86_64/a.ir\t1000\nx86_64/a.dr\t300\nx86_64/b.text\t5\n", "# no-valgrind: no dynamic rows\nx86_64/a.text\t10\n");
+  assert.doesNotMatch(blind.text, /MISSING: x86_64\/a\.(ir|dr)/, "a dynamic row is not missing on a host with no valgrind");
+  assert.match(blind.text, /MISSING: x86_64\/b\.text/, "a static row is still missing there");
+  cases++;
+}
+
 fs.rmSync(dir, { recursive: true, force: true });
 console.log(`perf-gate-selftest: ${cases} cases pass against scripts/ci-check-perf`);

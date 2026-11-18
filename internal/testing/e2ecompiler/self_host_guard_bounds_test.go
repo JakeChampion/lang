@@ -148,7 +148,7 @@ function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6]; return word(xs, 1) - 2
 var guardBoundsTwins = []struct{ name, proven, unproven string }{
 	{"guard_and",
 		`@noinline function pick(xs: i32[], k: i32): i32 { if (k >= 0 && k < xs.len()) { return xs[k]; } return 9; } function main(): i32 { return pick([1, 2, 3], 1); }`,
-		`@noinline function pick(xs: i32[], k: i32): i32 { if (k >= 0 && k < 3) { return xs[k]; } return 9; } function main(): i32 { return pick([1, 2, 3], 1); }`},
+		`@noinline function pick(xs: i32[], k: i32): i32 { if (k >= 0 && k < 3) { return xs[k]; } return 9; } function main(): i32 { return pick([1, 2, 3], 1) + pick([1, 2, 3], 5) * 0; }`},
 	{"last_element",
 		`function last(xs: i32[]): i32 { if (xs.len() < 1) { return 9; } return xs[xs.len() - 1]; } function main(): i32 { return last([1, 2, 3]); }`,
 		`function last(xs: i32[]): i32 { if (xs.len() < 0) { return 9; } return xs[xs.len() - 1]; } function main(): i32 { return last([1, 2, 3]); }`},
@@ -157,7 +157,7 @@ var guardBoundsTwins = []struct{ name, proven, unproven string }{
 		`@noinline function find(xs: i32[], n: i32): i32 { let i: i32 = 2; while (i >= 0) { if (xs[i] == n) { return i; } i = i - 1; } return 0; } function main(): i32 { return find([5, 6, 7], 6); }`},
 	{"field_guard",
 		`struct Op { imm: i32 } @noinline function slot(s: i32[], op: Op): i32 { if (op.imm < 0 || op.imm >= s.len()) { return 0; } return s[op.imm]; } function main(): i32 { return slot([4, 5], Op { imm: 1 }); }`,
-		`struct Op { imm: i32 } @noinline function slot(s: i32[], op: Op): i32 { if (op.imm < 0 || op.imm >= 2) { return 0; } return s[op.imm]; } function main(): i32 { return slot([4, 5], Op { imm: 1 }); }`},
+		`struct Op { imm: i32 } @noinline function slot(s: i32[], op: Op): i32 { if (op.imm < 0 || op.imm >= 2) { return 0; } return s[op.imm]; } function main(): i32 { return slot([4, 5], Op { imm: 1 }) + slot([4, 5], Op { imm: 5 }) * 0; }`},
 	{"masked_into_literal",
 		`@noinline function look(k: i32): i32 { let c: i32[] = [2, 3, 5, 7]; return c[k & 3]; } function main(): i32 { return look(5); }`,
 		`@noinline function look(k: i32): i32 { let c: i32[] = [2, 3, 5, 7]; return c[k % 4]; } function main(): i32 { return look(5); }`},

@@ -60,7 +60,7 @@ function test_structs(): test.TestOutcome {
       "pub struct Point { ref: usize }",
       "pub function (x: Point) as_shape(): Shape {",
       "pub struct ShapeClass { class: usize, id_area: usize }",
-      "pub function point_class(e: usize): Result[PointClass, jni.JavaError] {",
+      "// fern-lint: allow cyclomatic-complexity\npub function point_class(e: usize): Result[PointClass, jni.JavaError] {",
       "jni.find_class(e, \"dev/fern/Point\");",
       "let id_parse = jni.checked_id(e, class, jni.get_static_method_id(e, class, \"parse\", \"(Ljava/lang/String;)Ldev/fern/Point;\"))?;",
       "let id_x = jni.checked_id(e, class, jni.get_field_id(e, class, \"x\", \"I\"))?;",
@@ -192,7 +192,7 @@ function test_all_classes(): test.TestOutcome {
   return test.assert_eq(
     absent(text, [
       "pub struct Classes { point: PointClass, shape: ShapeClass }",
-      "pub function classes(e: usize): Result[Classes, jni.JavaError] {",
+      "// fern-lint: allow cyclomatic-complexity\npub function classes(e: usize): Result[Classes, jni.JavaError] {",
       "  let shape = match (shape_class(e)) {\n    Ok(c) => c,\n    Err(err) => {\n      point.release(e);\n      return Err(err);\n    },\n  };",
       "pub function (c: Classes) release(e: usize): void {\n  c.point.release(e);\n  c.shape.release(e);\n}",
     ]),

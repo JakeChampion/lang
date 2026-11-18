@@ -1,3 +1,4 @@
+import "core/cmp";
 import "./byte_input";
 import "std/string";
 import "std/array";
@@ -954,9 +955,13 @@ pub function (a: LD) cmp(b: LD): i32 {
   return c;
 }
 
+impl cmp.Ord for LD {}
+
 pub function (a: LD) eq(b: LD): boolean {
   return a.cmp(b) == 0;
 }
+
+impl cmp.Eq for LD {}
 
 pub function (a: LD) lt(b: LD): boolean {
   return a.cmp(b) == -1;

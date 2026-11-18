@@ -20,6 +20,8 @@ pub function (x: Activity) as_context(): Context {
 // The class android.app.Activity and the IDs of its members.
 pub struct ActivityClass { class: usize, id_get_local_class_name: usize, id_is_finishing: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function activity_class(e: usize): Result[ActivityClass, jni.JavaError] {
   let local = jni.find_class(e, "android/app/Activity");
   jni.check(e)?;
@@ -69,6 +71,8 @@ pub function (x: Context) object(): jni.Object {
 // The class android.content.Context and the IDs of its members.
 pub struct ContextClass { class: usize, id_get_package_manager: usize, id_get_package_name: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
   let local = jni.find_class(e, "android/content/Context");
   jni.check(e)?;
@@ -118,6 +122,8 @@ pub function (x: PackageManager) object(): jni.Object {
 // The class android.content.pm.PackageManager and the IDs of its members.
 pub struct PackageManagerClass { class: usize, id_query_intent_activities: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function package_manager_class(e: usize): Result[PackageManagerClass, jni.JavaError] {
   let local = jni.find_class(e, "android/content/pm/PackageManager");
   jni.check(e)?;
@@ -163,6 +169,8 @@ pub const INTENT_FLAG_ACTIVITY_NEW_TASK: i32 = 268435456;
 // The class android.content.Intent and the IDs of its members.
 pub struct IntentClass { class: usize, id_new: usize, id_add_category: usize, id_add_flags: usize, id_get_action: usize, id_get_flags: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function intent_class(e: usize): Result[IntentClass, jni.JavaError] {
   let local = jni.find_class(e, "android/content/Intent");
   jni.check(e)?;
@@ -249,6 +257,8 @@ pub function (x: ComponentName) object(): jni.Object {
 // The class android.content.ComponentName and the IDs of its members.
 pub struct ComponentNameClass { class: usize, id_new: usize, id_flatten_to_short_string: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function component_name_class(e: usize): Result[ComponentNameClass, jni.JavaError] {
   let local = jni.find_class(e, "android/content/ComponentName");
   jni.check(e)?;
@@ -304,6 +314,8 @@ pub function (x: Point) object(): jni.Object {
 // The class android.graphics.Point and the IDs of its members.
 pub struct PointClass { class: usize, id_new: usize, id_offset: usize, id_x: usize, id_y: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function point_class(e: usize): Result[PointClass, jni.JavaError] {
   let local = jni.find_class(e, "android/graphics/Point");
   jni.check(e)?;
@@ -371,6 +383,8 @@ pub function (x: SystemClock) object(): jni.Object {
 // The class android.os.SystemClock and the IDs of its members.
 pub struct SystemClockClass { class: usize, id_uptime_millis: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function system_clock_class(e: usize): Result[SystemClockClass, jni.JavaError] {
   let local = jni.find_class(e, "android/os/SystemClock");
   jni.check(e)?;
@@ -416,6 +430,8 @@ pub function (x: DateFormat) object(): jni.Object {
 // The class android.text.format.DateFormat and the IDs of its members.
 pub struct DateFormatClass { class: usize, id_is24_hour_format: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function date_format_class(e: usize): Result[DateFormatClass, jni.JavaError] {
   let local = jni.find_class(e, "android/text/format/DateFormat");
   jni.check(e)?;
@@ -454,6 +470,8 @@ pub function (x: File) object(): jni.Object {
 // The class java.io.File and the IDs of its members.
 pub struct FileClass { class: usize, id_new: usize, id_get_path: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function file_class(e: usize): Result[FileClass, jni.JavaError] {
   let local = jni.find_class(e, "java/io/File");
   jni.check(e)?;
@@ -512,6 +530,8 @@ pub function (x: List) object(): jni.Object {
 // The class java.util.List and the IDs of its members.
 pub struct ListClass { class: usize, id_get: usize, id_size: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function list_class(e: usize): Result[ListClass, jni.JavaError] {
   let local = jni.find_class(e, "java/util/List");
   jni.check(e)?;
@@ -562,6 +582,8 @@ pub const INTEGER_MAX_VALUE: i32 = 2147483647;
 // The class java.lang.Integer and the IDs of its members.
 pub struct IntegerClass { class: usize, id_parse_int: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function integer_class(e: usize): Result[IntegerClass, jni.JavaError] {
   let local = jni.find_class(e, "java/lang/Integer");
   jni.check(e)?;
@@ -602,6 +624,8 @@ pub function (x: Math) object(): jni.Object {
 // The class java.lang.Math and the IDs of its members.
 pub struct MathClass { class: usize, id_sqrt: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function math_class(e: usize): Result[MathClass, jni.JavaError] {
   let local = jni.find_class(e, "java/lang/Math");
   jni.check(e)?;
@@ -640,6 +664,8 @@ pub function (x: Float) object(): jni.Object {
 // The class java.lang.Float and the IDs of its members.
 pub struct FloatClass { class: usize, id_parse_float: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function float_class(e: usize): Result[FloatClass, jni.JavaError] {
   let local = jni.find_class(e, "java/lang/Float");
   jni.check(e)?;
@@ -680,6 +706,8 @@ pub function (x: System) object(): jni.Object {
 // The class java.lang.System and the IDs of its members.
 pub struct SystemClass { class: usize, id_out: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function system_class(e: usize): Result[SystemClass, jni.JavaError] {
   let local = jni.find_class(e, "java/lang/System");
   jni.check(e)?;
@@ -705,7 +733,9 @@ pub function (c: SystemClass) out(e: usize): Result[jni.Object, jni.JavaError] {
 pub struct Classes { activity: ActivityClass, context: ContextClass, package_manager: PackageManagerClass, intent: IntentClass, component_name: ComponentNameClass, point: PointClass, system_clock: SystemClockClass, date_format: DateFormatClass, file: FileClass, list: ListClass, integer: IntegerClass, math: MathClass, float: FloatClass, system: SystemClass }
 
 // Makes the struct of IDs of each class. Call it one time, and call
-// `release` when the app does not call Java again.
+// `release` when the app does not call Java again. One lookup for each
+// class, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
   let activity = match (activity_class(e)) {
     Ok(c) => c,

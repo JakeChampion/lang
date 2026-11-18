@@ -5158,7 +5158,7 @@ pub function merge_copies(f: Func): MergePlan {
   }
   let none = __alloc_bool(f.values.len());
   let defs = ssa.inst_defs(f.graph);
-  let m = MergeScan { at: ssa.block_positions(f.graph), dom: ssadeps.dominates(f.graph), home: defining_positions(f), none: none };
+  let m = MergeScan { at: ssa.block_positions(f.graph), dom: ssadeps.dominates(f.graph), home: ssa.def_sites_of(f.graph).block, none: none };
   for bi in 0..f.graph.blocks.len() {
     for ins in f.graph.blocks[bi].insts {
       if (ins.kind_tag == ssa.PHI && holds_view(f, f.values[ins.result])) {
@@ -5259,21 +5259,6 @@ function roots_outlived(f: Func, defs: ssa.SInst[], m: MergeScan, v: i32, bi: i3
     }
   }
   return false;
-}
-
-function defining_positions(f: Func): i32[] {
-  let out: i32[] = [];
-  for _ in f.values {
-    out = out.append(-1);
-  }
-  for bi in 0..f.graph.blocks.len() {
-    for ins in f.graph.blocks[bi].insts {
-      if (ins.result >= 0 && ins.result < out.len()) {
-        out = out.with(ins.result, bi);
-      }
-    }
-  }
-  return out;
 }
 
 pub function tail_recursion(own f: Func, name: string): Func {

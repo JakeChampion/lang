@@ -1,0 +1,136 @@
+{
+  "machine": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "cpu": "model name\t: AMD EPYC 9V74 80-Core Processor",
+  "scope": "Host mock: PCM conversion, ring writes, and identical flush calls. No device playback or power measurement.",
+  "compiler_sha256": "e512412fbc6f34611902fb271f03458ac6d3353cd28de43deedcf0c9180432f9",
+  "module_sha256": "c8ebe3052943ae347a79b795699c5e64de599750cf44282054b331f704b9224e",
+  "driver_sha256": "4772c6a3d58a5de758f2959bf047a67d24890e58bd2885a96001d19702decfeb",
+  "mock_sha256": "92aa0e51a98434b9bf8e30b06da0837c36fa90994436ffe7ed91f55d14ab10a7",
+  "binary_sha256": "7c2680d39b4aaea6cfd46ec30dd02ee15e2acb3e1ea33bde33f8402e33ac2650",
+  "samples_per_round": 1024,
+  "rounds": 10000,
+  "warmup_rows": [
+    {
+      "fused": false,
+      "wall_ns": 1454230,
+      "allocations": 1000,
+      "samples": 102400
+    },
+    {
+      "fused": true,
+      "wall_ns": 766605,
+      "allocations": 200,
+      "samples": 102400
+    }
+  ],
+  "rows": [
+    {
+      "fused": true,
+      "wall_ns": 78843685,
+      "allocations": 20000,
+      "samples": 10240000
+    },
+    {
+      "fused": false,
+      "wall_ns": 89973652,
+      "allocations": 100000,
+      "samples": 10240000
+    },
+    {
+      "fused": false,
+      "wall_ns": 92976475,
+      "allocations": 100000,
+      "samples": 10240000
+    },
+    {
+      "fused": true,
+      "wall_ns": 79523519,
+      "allocations": 20000,
+      "samples": 10240000
+    },
+    {
+      "fused": true,
+      "wall_ns": 78133926,
+      "allocations": 20000,
+      "samples": 10240000
+    },
+    {
+      "fused": false,
+      "wall_ns": 93828018,
+      "allocations": 100000,
+      "samples": 10240000
+    },
+    {
+      "fused": false,
+      "wall_ns": 90190138,
+      "allocations": 100000,
+      "samples": 10240000
+    },
+    {
+      "fused": true,
+      "wall_ns": 78909615,
+      "allocations": 20000,
+      "samples": 10240000
+    },
+    {
+      "fused": true,
+      "wall_ns": 78601409,
+      "allocations": 20000,
+      "samples": 10240000
+    },
+    {
+      "fused": false,
+      "wall_ns": 107268024,
+      "allocations": 100000,
+      "samples": 10240000
+    },
+    {
+      "fused": false,
+      "wall_ns": 90701759,
+      "allocations": 100000,
+      "samples": 10240000
+    },
+    {
+      "fused": true,
+      "wall_ns": 78338794,
+      "allocations": 20000,
+      "samples": 10240000
+    },
+    {
+      "fused": true,
+      "wall_ns": 78627950,
+      "allocations": 20000,
+      "samples": 10240000
+    },
+    {
+      "fused": false,
+      "wall_ns": 91248743,
+      "allocations": 100000,
+      "samples": 10240000
+    },
+    {
+      "fused": false,
+      "wall_ns": 92010350,
+      "allocations": 100000,
+      "samples": 10240000
+    },
+    {
+      "fused": true,
+      "wall_ns": 79495837,
+      "allocations": 20000,
+      "samples": 10240000
+    },
+    {
+      "fused": true,
+      "wall_ns": 79483148,
+      "allocations": 20000,
+      "samples": 10240000
+    },
+    {
+      "fused": false,
+      "wall_ns": 90772786,
+      "allocations": 100000,
+      "samples": 10240000
+    }
+  ]
+}
