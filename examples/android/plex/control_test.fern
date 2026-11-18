@@ -1084,8 +1084,8 @@ function test_tracks_sheet(): test.TestOutcome {
   let plays = count_plays(log);
   let picked = tap(sheet, log, 600i64, f, "audio:22");
   let commentary = settle(at(picked, log, 650i64, f, android.Posted(19, 0 as usize)), log, 650i64, f);
-  if (!has_url(log, "PUT https://up.example:32400/library/parts/11?audioStreamID=22&subtitleStreamID=0&allParts=1") || count_plays(log) != plays + 1 || !selected_before_start(log, "track 2")) {
-    return test.fail("the commentary did not play from the file prepared again: " + log.calls.get().join(" | "));
+  if (!has_url(log, "PUT https://up.example:32400/library/parts/11?audioStreamID=22&subtitleStreamID=0&allParts=1") || count_plays(log) != plays + 1 || !has_call(log, "audioStreamID=22") || !commentary.play.stream.transcode) {
+    return test.fail("the commentary did not play as a copy of the video with that sound: " + log.calls.get().join(" | "));
   }
   let plays_now = count_plays(log);
   let subs = tap(tap(tap(commentary, log, 700i64, f, "overlay"), log, 750i64, f, "tracks"), log, 800i64, f, "sub:31");
@@ -1116,9 +1116,9 @@ function test_tracks_sheet(): test.TestOutcome {
 }
 
 // An item of a row has no tracks, so its play starts with no choice. The
-// sound that the server remembers comes with all of its metadata, and the
-// file plays it: a play after a choice of the second sound plays that sound
-// again.
+// sound that the server remembers comes with all of its metadata. A sound
+// that is not the default of the file plays as a copy of the video with
+// that sound: a play after a choice of the second sound plays it again.
 function test_resume_takes_remembered_sound(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -1129,17 +1129,19 @@ function test_resume_takes_remembered_sound(): test.TestOutcome {
   let ready = settle(at(played, log, 1800i64, f, android.Posted(19, 0 as usize)), log, 1800i64, f);
   let sheet = tap(tap(ready, log, 1900i64, f, "overlay"), log, 2000i64, f, "tracks");
   let picked = settle(at(tap(sheet, log, 2100i64, f, "audio:22"), log, 2150i64, f, android.Posted(19, 0 as usize)), log, 2150i64, f);
-  if (!selected_before_start(log, "track 2")) {
+  if (!has_call(log, "audioStreamID=22")) {
     return test.fail("the second sound did not play: " + log.calls.get().join(" | "));
   }
+  let streams = log.calls.get().filter((c: string): boolean => c.contains("audioStreamID=22")).len();
   let back = settle(at(at(picked, log, 3000i64, f, android.Key(4, 0)), log, 3000i64, f, android.Key(4, 1)), log, 3000i64, f);
   let again = poster_of(back, "501");
   let resumed = tap(hold(back, log, 4000i64, f, again), log, 4700i64, f, "menu:play");
   let going = settle(at(resumed, log, 4800i64, f, android.Posted(19, 0 as usize)), log, 4800i64, f);
-  if (going.play.choice.audio != "22" || !selected_before_start(log, "track 2")) {
+  let again_streams = log.calls.get().filter((c: string): boolean => c.contains("audioStreamID=22")).len();
+  if (going.play.choice.audio != "22" || again_streams != streams + 1 || !going.play.stream.transcode) {
     return test.fail("the play again started with the first sound: " + going.play.choice.audio + " " + log.calls.get().join(" | "));
   }
-  return test.assert_eq(going.play.stream.transcode.to_string(), "false");
+  return test.assert_eq(going.play.stream.url.contains("audioStreamID=22").to_string(), "true");
 }
 
 // The speed button gives the next rate. The player takes it at once while

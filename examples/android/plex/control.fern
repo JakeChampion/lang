@@ -1888,7 +1888,8 @@ function got_download(own t: App, r: plex.Reply): App {
   if (saved_at(t, it.key) >= 0 || !plex.playable_kind(it.kind)) {
     return t;
   }
-  let direct = plex.direct_playable(it, t.dev.decoders);
+  // A download plays the sound that the server remembers.
+  let direct = plex.direct_with(it, t.dev.decoders, plex.remembered(it));
   let name = plex.download_name(it, !direct);
   let req = if (direct) { plex.download_request(t.client, t.base, it) } else { plex.download_transcode_request(t.client, t.base, it, plex.qualities()[t.quality], hex_id(t.dev), t.dev.decoders, plex.remembered(it)) };
   let id = t.dev.download(req, name, plex.card_title(it));
@@ -2309,8 +2310,7 @@ function follow_remembered(own s: App, choice: plex.Choice): App {
       return ask_cues(App { ...s, play: Play { ...next, stream: stream, session: session, prepared: false, video: false, overlay: true, position: pos, status: "Loading" }, dirty: true });
     }
   }
-  let first = plex.audio_tracks(p.item);
-  let playing = if (first.len() > 0) { first[0].id } else { "" };
+  let playing = plex.played_sound(p.item);
   let at = s.dev.position();
   return ask_cues(new_sound(s, next, playing, at));
 }

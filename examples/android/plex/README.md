@@ -114,13 +114,18 @@ In the intro or the credits of a video, a Skip button shows over it. The
 app asks the server for the markers of the item when it starts to play.
 
 The Tracks button of the player chooses the sound and the subtitles, and
-the server remembers the choice. The media player of Android changes the
-sound only before it starts. So a file that plays as it is prepares again
-at the same place with the new sound. A play from a row of the home
-screen takes the sound that the server remembers when all of its
-metadata comes. A transcode takes its sound from the choice that the
-server remembers. So a new transcode starts after the server has the
-choice, and the old one stops.
+the server remembers the choice.
+
+The media player of Android plays the sound that a file marks as its
+default. It does not change the sound of a stream well. So a sound that
+is not the default of the file plays as a transcode, in which the server
+copies the video and that sound. A play from a row of the home screen
+takes the sound that the server remembers when all of its metadata comes.
+A download plays that sound too.
+
+A transcode takes its sound from the choice that the server remembers. So
+a new transcode starts after the server has the choice, and the old one
+stops.
 
 The app draws text subtitles over the video itself, so the
 file plays as it is. These are SubRip, WebVTT, ASS and SSA, in a file beside
