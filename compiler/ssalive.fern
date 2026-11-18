@@ -121,19 +121,6 @@ function pred_index(b: ssa.SBlock, id: i32): i32 {
   return -1;
 }
 
-function successor(t: ssa.STerm, which: i32): i32 {
-  if (t.kind_tag == ssa.TERM_BR && which == 0) {
-    return t.target;
-  }
-  if (t.kind_tag == ssa.TERM_BRIF) {
-    if (which == 0) {
-      return t.t;
-    }
-    return t.f;
-  }
-  return -1;
-}
-
 pub function input_error(f: ssa.SFunc, dependencies: i32[][]): string {
   let why = dependency_error(f, dependencies);
   if (why != "") {
@@ -193,7 +180,7 @@ function graph_error_at(f: ssa.SFunc, at: i32[]): string {
         return "invalid predecessor";
       }
       let pt = f.blocks[pb].term;
-      if (successor(pt, 0) != b.id && successor(pt, 1) != b.id) {
+      if (ssa.successor_id(pt, 0) != b.id && ssa.successor_id(pt, 1) != b.id) {
         return "predecessor is not an edge";
       }
     }
@@ -211,7 +198,7 @@ function graph_error_at(f: ssa.SFunc, at: i32[]): string {
       }
     }
     for si in 0..2 {
-      let target = successor(b.term, si);
+      let target = ssa.successor_id(b.term, si);
       if (target >= 0) {
         let sb = ssa.position_of(at, target);
         if (sb < 0) {
@@ -511,7 +498,7 @@ function compute_prepared(f: ssa.SFunc, dependencies: i32[][], keep: boolean[], 
       let w = 0;
       let seeded = false;
       for si in 0..2 {
-        let target = successor(b.term, si);
+        let target = ssa.successor_id(b.term, si);
         if (target >= 0) {
           let sb = at[target];
           w = 0;
