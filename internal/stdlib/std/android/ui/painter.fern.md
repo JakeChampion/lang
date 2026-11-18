@@ -253,7 +253,9 @@ function draw_text(own p: Painter, c: gl.Canvas, n: scene.Node, t: Text, dy: i32
   let base = n.y + dy + text.ascent(p.fonts, t.face, t.px);
   let glyphs: gl.Glyph[] = [];
   for pl in placed {
-    if (pl.bm.width > 0) {
+    if (pl.rgba.len() > 0) {
+      q = draw_color_glyph(q, c, pl, n.x + pl.x, base + pl.y, n.clip0 + dy, n.clip1 + dy);
+    } else if (pl.bm.width > 0) {
       if (q.slots.get(pl.key).is_none()) {
         let (a, slot) = q.atlas.add(pl.bm.width, pl.bm.height, pl.bm.coverage);
         q = Painter { ...q, atlas: a, slots: q.slots.insert(pl.key, slot) };
@@ -264,6 +266,24 @@ function draw_text(own p: Painter, c: gl.Canvas, n: scene.Node, t: Text, dy: i32
     }
   }
   c.draw_glyphs(q.atlas, glyphs, t.color, 1.0, n.clip0 + dy, n.clip1 + dy);
+  return q;
+}
+
+// Draws the color glyph `pl` at (x, y) from its texture, which it makes the
+// first time.
+function draw_color_glyph(own p: Painter, c: gl.Canvas, pl: text.Placed, x: i32, y: i32, clip0: i32, clip1: i32): Painter {
+  let key = "glyph|" + pl.key.to_string();
+  let q = p;
+  if (q.images.get(key).is_none()) {
+    let fr = draw.offscreen(pl.bm.width, pl.bm.height);
+    fr.store(0, 0, pl.bm.width, pl.bm.height, 0);
+    fr.blend(0, 0, pl.bm.width, pl.bm.height, pl.rgba);
+    q = keep(q, key, Image { t: gl.texture(fr), m: 0 });
+    draw.release(fr);
+  }
+  if let Some(img) = q.images.get(key) {
+    c.draw(img.t, x, y, 1.0, clip0, clip1);
+  }
   return q;
 }
 

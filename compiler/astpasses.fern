@@ -1,0 +1,41 @@
+import "./ast";
+import "./defaultargs";
+import "./parser";
+
+pub function desugar_prepass_module(raw: parser.Module): parser.Module {
+  let mod = parser.retag_type_arg_indexes(raw);
+  let need_fda = defaultargs.needed(mod);
+  let none: string[] = [];
+  let free = defaultargs.free_funcs(mod.funcs);
+  let funcs: parser.FuncDecl[] = [];
+  for i in 0..mod.funcs.len() {
+    let fd = mod.funcs[i];
+    let body = fd.body;
+    if (parser.has_labeled_jump(body)) {
+      body = parser.resolve_labels_block(body, none);
+    }
+    if (need_fda) {
+      let (filled, diags) = defaultargs.fill_stmts(body, fd.params, free);
+      body = filled;
+    }
+    body = parser.desugar_ranges_body(body);
+    funcs = funcs.append(parser.FuncDecl { ...fd, body: body });
+  }
+  let tops = parser.resolve_labels_block(mod.top_stmts, none);
+  if (need_fda) {
+    let no_params: ast.ParamDecl[] = [];
+    let (filled, diags) = defaultargs.fill_stmts(tops, no_params, free);
+    tops = filled;
+  }
+  tops = parser.desugar_ranges_block(tops);
+  return parser.Module { ...mod, funcs: funcs, top_stmts: tops };
+}
+
+pub function module_with_builtins(mod: parser.Module): parser.Module {
+  return parser.erase_view_module(module_with_builtins_typed(mod));
+}
+
+pub function module_with_builtins_typed(mod: parser.Module): parser.Module {
+  let declared = parser.Module { ...mod, structs: parser.inject_builtin_enums(mod.structs) };
+  return parser.monomorphize_all(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.lower_defers_prepass_module(parser.hoist_local_funcs_module(desugar_prepass_module(declared)))))));
+}

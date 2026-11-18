@@ -113,7 +113,7 @@ still BAIL).
 
 Build a scratch driver with the five layers (patch `parser.fern`), patch
 `asm_load_run.fern`'s `-ir-probe` to run on
-`parser.module_with_builtins(merged)` (post-mono), then:
+`astpasses.module_with_builtins(merged)` (post-mono), then:
 `./alr t.fern internal/stdlib -ir-probe` on
 `import "core/iter"; function main(): i32 { let xs: i32[] = [1,2,3,4]; return iter.sum(iter.of(xs)); }`.
 Oracle against `/tmp/fern -interp` (10). When `ArrayIter__i32.next` reports `ir`,
@@ -157,7 +157,7 @@ spells `ArrayIter[T]`. That dangling `T` cascades:
 
 Three coordinated changes in `compiler/parser.fern`. Built and probed
 with a post-monomorphisation `-ir-probe` (patch `asm_load_run.fern`'s `-ir-probe`
-to run on `parser.module_with_builtins(merged)` instead of bare `merged`).
+to run on `astpasses.module_with_builtins(merged)` instead of bare `merged`).
 
 1. **Promote unbounded type params to the monomorphiser.** In the func-header
    type-param loop, append the param name to `bounded_tps` even when it has no

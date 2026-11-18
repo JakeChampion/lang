@@ -9,7 +9,8 @@ English texts for it, and the layout is left to right. Each glyph of a
 Hebrew, an Arabic and a Chinese word comes from a fallback font of the
 system and has pixels. The fatha of an Arabic letter is above the middle
 of the letter. The system has a font for an emoji, and the app logs the
-tags of its tables. It fails on a crash. OUT_DIR gets logcat.
+tags of its tables. The emoji draws in color, with the yellow of its face.
+It fails on a crash. OUT_DIR gets logcat.
 """
 
 import re
@@ -27,6 +28,7 @@ LINES = (
     re.compile(r"i18ntest: fallback 2/2"),
     re.compile(r"i18ntest: mark true true"),
     re.compile(r"i18ntest: font of U\+1F600 /\S+ \w"),
+    re.compile(r"i18ntest: emoji yellow true"),
 )
 CRASH = re.compile(r"Fatal signal|UnsatisfiedLinkError|java\.lang\.\w+Exception|fern: ")
 

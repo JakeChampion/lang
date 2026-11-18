@@ -6,6 +6,8 @@ This module reads TrueType fonts and draws their glyphs as coverage maps.
 
 `parse` reads the tables of a font: the character map, the horizontal metrics, the outlines, the kerning of the GPOS table, and the GSUB and GDEF tables. A variable font holds one set of outlines and the changes that each axis, such as the weight, makes to them. `at_axis` gives the font at a value on one axis. `glyph` gives the glyph of a code point, and `advance` and `kerning` give the space between glyphs in font units. `render` scales the outline of a glyph to a size in pixels and gives the part of each pixel that the outline covers.
 
+`render_color` draws a color glyph of the `COLR` table, with the colors of the `CPAL` table, as a color for each pixel.
+
 The rasterizer adds the signed area that each line of the outline covers to the cells of a buffer. The running sum of the buffer is then the coverage of each pixel. Curves become lines first, quadratic curves of TrueType and cubic curves of CFF alike. The rasterizer uses the nonzero rule, with the coverage limited to one.
 
 ## Contracts
@@ -21,6 +23,8 @@ A code point that the font does not map gives glyph 0. The kerning comes from th
 `with_advances` gives each glyph of a run its advance. Then `position_lookups` gives the GPOS lookups of a feature, and `position` applies one lookup. It reads the lookups of the types 1 to 9: single and pair adjustments, cursive joins, marks on bases, on ligatures and on marks, contexts and extensions. The contour points and the device tables of anchors and of value records have no effect.
 
 A budget limits the lookups that the contexts of one lookup apply, and a run grows to 65536 glyphs at most. The feature variations of GSUB and GPOS have no effect.
+
+`render_color` draws the glyphs of COLR versions 0 and 1, with each paint of version 1: layers, solid colors, the three gradients, glyph clips, the transforms and the composite modes. It uses the first palette. The colors of a gradient mix in premultiplied form. A paint of a variation format draws as its static format, and the variations of COLR have no effect. A glyph draws in its clip box, or else in its advance and the line metrics of the font.
 
 `at_axis` moves the outlines and the advances of a variable font, from the `gvar` and `HVAR` tables. It limits the value to the range of the axis. The kerning and the line metrics stay those of the default design. A font with no such axis stays as it is.
 
@@ -60,6 +64,8 @@ The root chunk keeps the order of the declarations.
 <<cff outlines>>
 
 <<the rasterizer>>
+
+<<color glyphs>>
 ```
 
 ### `module introduction`
@@ -73,8 +79,8 @@ import "std/f64";
 // A font in the bytes `data`, with the offsets of its tables. `cmap` is the
 // offset of the character map subtable, of format `cmap_format`. `pairs`
 // are the offsets of the GPOS pair adjustment subtables of the kern feature.
-// `gsub`, `gpos` and `gdef` are the offsets of the GSUB, GPOS and GDEF
-// tables, or -1.
+// `gsub`, `gpos`, `gdef`, `colr` and `cpal` are the offsets of the GSUB,
+// GPOS, GDEF, COLR and CPAL tables, or -1.
 // `fvar`, `avar`, `gvar` and `hvar` are the offsets of the tables of a
 // variable font, or -1. `coords` holds the place of the font on each axis,
 // from -1 to 1, and is empty at the default design.
@@ -102,6 +108,8 @@ pub struct Font {
   gsub: i32,
   gpos: i32,
   gdef: i32,
+  colr: i32,
+  cpal: i32,
   fvar: i32,
   avar: i32,
   gvar: i32,
@@ -191,7 +199,7 @@ pub function parse_index(data: u8[], index: i32): Option[Font] {
     return None;
   }
   let pairs = kern_subtables(b, table(b, base, "GPOS"));
-  return Some(Font { data: b, cmap: sub, cmap_format: format, loca: loca, glyf: glyf, hmtx: t[4], hmetrics: u16_at(b, hhea + 34), glyphs: glyphs, long_loca: i16_at(b, head + 50) != 0, units_per_em: upem, ascender: i16_at(b, hhea + 4), descender: i16_at(b, hhea + 6), line_gap: i16_at(b, hhea + 8), pairs: pairs, gsub: table(b, base, "GSUB"), gpos: table(b, base, "GPOS"), gdef: table(b, base, "GDEF"), fvar: table(b, base, "fvar"), avar: table(b, base, "avar"), gvar: table(b, base, "gvar"), hvar: table(b, base, "HVAR"), coords: [], cff: cff });
+  return Some(Font { data: b, cmap: sub, cmap_format: format, loca: loca, glyf: glyf, hmtx: t[4], hmetrics: u16_at(b, hhea + 34), glyphs: glyphs, long_loca: i16_at(b, head + 50) != 0, units_per_em: upem, ascender: i16_at(b, hhea + 4), descender: i16_at(b, hhea + 6), line_gap: i16_at(b, hhea + 8), pairs: pairs, gsub: table(b, base, "GSUB"), gpos: table(b, base, "GPOS"), gdef: table(b, base, "GDEF"), colr: table(b, base, "COLR"), cpal: table(b, base, "CPAL"), fvar: table(b, base, "fvar"), avar: table(b, base, "avar"), gvar: table(b, base, "gvar"), hvar: table(b, base, "HVAR"), coords: [], cff: cff });
 }
 
 // The offset of the table directory of the font `index` of a collection,
@@ -2967,10 +2975,9 @@ pub function (f: Font) render(g: i32, px: f64, dx: f64): Bitmap {
     acc = acc.append(0.0);
   }
   let r = Raster { w: w, h: h, acc: acc };
-  let ox = dx - left as f64;
-  let oy = 0.0 - top as f64;
+  let m = Affine { xx: scale, yx: 0.0, xy: 0.0, yy: 0.0 - scale, dx: dx - left as f64, dy: 0.0 - top as f64 };
   for c in cs {
-    r = outline(r, c, scale, ox, oy);
+    r = outline(r, c, m);
   }
   return Bitmap { width: w, height: h, left: left, top: top, coverage: shade(r) };
 }
@@ -3010,14 +3017,14 @@ function shade(r: Raster): u8[] {
 
 // Adds one contour: its lines and its curves, with the on-curve point
 // between two control points that TrueType leaves out.
-function outline(r: Raster, c: Point[], scale: f64, ox: f64, oy: f64): Raster {
+function outline(r: Raster, c: Point[], m: Affine): Raster {
   let n = c.len();
   if (n < 2) {
     return r;
   }
   let pts: Point[] = [];
   for p in c {
-    pts = pts.append(Point { ...p, x: p.x * scale + ox, y: oy - p.y * scale });
+    pts = pts.append(Point { ...p, x: m.xx * p.x + m.xy * p.y + m.dx, y: m.yx * p.x + m.yy * p.y + m.dy });
   }
   let (first, sx, sy) = start_point(pts);
   let out = r;
@@ -3069,5 +3076,610 @@ function start_point(pts: Point[]): (i32, f64, f64) {
     }
   }
   return (0, (pts[0].x + pts[1].x) / 2.0, (pts[0].y + pts[1].y) / 2.0);
+}
+```
+
+### `color glyphs`
+
+A color glyph has a paint in the `COLR` table, and its colors come from the first palette of the `CPAL` table. A glyph of version 0 is a list of layers: each layer is the outline of a glyph in one color. A glyph of version 1 is a graph of paints. A paint can fill its area with a color or a gradient. It can also clip its child to a glyph outline, move its child, put layers on top of each other, or composite two paints.
+
+`render_color` draws a color glyph into a buffer of premultiplied colors, one for each pixel of the clip box of the glyph. A paint gets the transform from its units to the pixels, and the coverage that the glyphs above it in the graph leave. A gradient finds the place of each pixel in its own units with the inverse of the transform.
+
+```fern
+<<color glyphs>>=
+// The colors of a glyph, row by row: four bytes for each pixel, red,
+// green, blue and alpha, with the color multiplied by the alpha. The box is
+// that of `Bitmap`.
+pub struct ColorBitmap { width: i32, height: i32, left: i32, top: i32, rgba: u8[] }
+
+// An affine map: x' = xx x + xy y + dx, and y' = yx x + yy y + dy.
+struct Affine { xx: f64, yx: f64, xy: f64, yy: f64, dx: f64, dy: f64 }
+
+// A buffer of premultiplied colors in the range 0 to 1, and the pixels of
+// the paint that draws into it: four values for each pixel.
+struct Layer { w: i32, h: i32, rgba: f64[] }
+
+// The most paints that the graph of one glyph can draw, and the most
+// nesting of its paints.
+const MAX_PAINTS: i32 = 65536;
+
+const MAX_PAINT_DEPTH: i32 = 64;
+
+// A palette index that takes the color of the text.
+const FOREGROUND: i32 = 65535;
+
+function u24_at(b: [u8], at: i32): i32 {
+  return u8_at(b, at) << 16 | u16_at(b, at + 1);
+}
+
+function fixed(b: [u8], at: i32): f64 {
+  return u32_at(b, at) as f64 / 65536.0;
+}
+
+// m after n: n applies first.
+function times(m: Affine, n: Affine): Affine {
+  return Affine { xx: m.xx * n.xx + m.xy * n.yx, yx: m.yx * n.xx + m.yy * n.yx, xy: m.xx * n.xy + m.xy * n.yy, yy: m.yx * n.xy + m.yy * n.yy, dx: m.xx * n.dx + m.xy * n.dy + m.dx, dy: m.yx * n.dx + m.yy * n.dy + m.dy };
+}
+
+function shifted(dx: f64, dy: f64): Affine {
+  return Affine { xx: 1.0, yx: 0.0, xy: 0.0, yy: 1.0, dx: dx, dy: dy };
+}
+
+// `t` about the center (cx, cy).
+function about(t: Affine, cx: f64, cy: f64): Affine {
+  return times(shifted(cx, cy), times(t, shifted(0.0 - cx, 0.0 - cy)));
+}
+
+// The inverse of `m`, or None when it has none.
+function inverse(m: Affine): Option[Affine] {
+  let det = m.xx * m.yy - m.xy * m.yx;
+  if (det.abs() < 1.0e-12) {
+    return None;
+  }
+  let (xx, xy, yx, yy) = (m.yy / det, 0.0 - m.xy / det, 0.0 - m.yx / det, m.xx / det);
+  return Some(Affine { xx: xx, yx: yx, xy: xy, yy: yy, dx: 0.0 - xx * m.dx - xy * m.dy, dy: 0.0 - yx * m.dx - yy * m.dy });
+}
+
+// The offset of the paint of glyph `g` in the base glyph list of COLR
+// version 1, or -1.
+function base_paint(f: Font, g: i32): i32 {
+  let b = f.data;
+  let list = if (f.colr < 0 || u16_at(b, f.colr) < 1) { 0 } else { u32_at(b, f.colr + 14) };
+  if (list == 0) {
+    return -1;
+  }
+  let at = f.colr + list;
+  let lo = 0;
+  let hi = u32_at(b, at) - 1;
+  while (lo <= hi) {
+    let mid = (lo + hi) / 2;
+    let r = at + 4 + 6 * mid;
+    let v = u16_at(b, r);
+    if (v == g) {
+      return at + u32_at(b, r + 2);
+    }
+    lo = if (v < g) { mid + 1 } else { lo };
+    hi = if (v < g) { hi } else { mid - 1 };
+  }
+  return -1;
+}
+
+// The record of glyph `g` in the base glyph records of COLR version 0, or
+// -1.
+function base_record(f: Font, g: i32): i32 {
+  let b = f.data;
+  if (f.colr < 0) {
+    return -1;
+  }
+  let at = f.colr + u32_at(b, f.colr + 4);
+  let lo = 0;
+  let hi = u16_at(b, f.colr + 2) - 1;
+  while (lo <= hi) {
+    let mid = (lo + hi) / 2;
+    let v = u16_at(b, at + 6 * mid);
+    if (v == g) {
+      return at + 6 * mid;
+    }
+    lo = if (v < g) { mid + 1 } else { lo };
+    hi = if (v < g) { hi } else { mid - 1 };
+  }
+  return -1;
+}
+
+// Whether glyph `g` has colors in COLR.
+pub function (f: Font) has_colors(g: i32): boolean {
+  return f.cpal >= 0 && (base_paint(f, g) >= 0 || base_record(f, g) >= 0);
+}
+
+// The premultiplied color of palette entry `i` of the first palette, with
+// its alpha times `alpha`. The entry 65535 takes `fg`, an ARGB color.
+function palette_color(f: Font, i: i32, alpha: f64, fg: i32): (f64, f64, f64, f64) {
+  let b = f.data;
+  let at = f.cpal + u32_at(b, f.cpal + 8) + 4 * (u16_at(b, f.cpal + 12) + i);
+  let known = i < u16_at(b, f.cpal + 2);
+  let bgra = if (known) { u32_at(b, at) } else { 0 };
+  let argb = if (i == FOREGROUND) { fg } else { bgra << 24 | (bgra >> 8 & 255) << 16 | (bgra >> 16 & 255) << 8 | bgra >> 24 & 255 };
+  let (r, g, bl, a) = (argb >> 16 & 255, argb >> 8 & 255, argb & 255, argb >> 24 & 255);
+  let al = (a as f64 / 255.0 * alpha).max(0.0).min(1.0);
+  return (r as f64 / 255.0 * al, g as f64 / 255.0 * al, bl as f64 / 255.0 * al, al);
+}
+
+// The box of glyph `g` in font units: its clip box in COLR, or else its
+// advance and the line metrics of the font.
+function color_box(f: Font, g: i32): (f64, f64, f64, f64) {
+  let b = f.data;
+  let clips = if (f.colr < 0 || u16_at(b, f.colr) < 1) { 0 } else { u32_at(b, f.colr + 22) };
+  if (clips != 0) {
+    let at = f.colr + clips;
+    for k in 0..u32_at(b, at + 1) {
+      let r = at + 5 + 7 * k;
+      if (g >= u16_at(b, r) && g <= u16_at(b, r + 2)) {
+        let box = at + u24_at(b, r + 4);
+        return (i16_at(b, box + 1) as f64, i16_at(b, box + 3) as f64, i16_at(b, box + 5) as f64, i16_at(b, box + 7) as f64);
+      }
+    }
+  }
+  return (0.0, f.descender as f64, f.advance(g) as f64, f.ascender as f64);
+}
+
+// The colors of glyph `g` at `px` pixels to the em, with its pen `dx`
+// pixels right of a pixel edge. The palette entry 65535 takes `fg`, an
+// ARGB color. A glyph with no colors gives an empty bitmap.
+pub function (f: Font) render_color(g: i32, px: f64, dx: f64, fg: i32): ColorBitmap {
+  let empty = ColorBitmap { width: 0, height: 0, left: 0, top: 0, rgba: [] };
+  if (!f.has_colors(g)) {
+    return empty;
+  }
+  let scale = px / (f.units_per_em as f64);
+  let (x0, y0, x1, y1) = color_box(f, g);
+  let left = (x0 * scale + dx).floor() as i32;
+  let top = (0.0 - y1 * scale).floor() as i32;
+  let w = (x1 * scale + dx).ceil() as i32 - left;
+  let h = (0.0 - y0 * scale).ceil() as i32 - top;
+  if (w <= 0 || h <= 0 || !((w * h) as f64 <= MAX_BITMAP_PIXELS)) {
+    return empty;
+  }
+  let m = Affine { xx: scale, yx: 0.0, xy: 0.0, yy: 0.0 - scale, dx: dx - left as f64, dy: 0.0 - top as f64 };
+  let clip = full_clip(w * h);
+  let layer = Layer { w: w, h: h, rgba: zeros(4 * w * h) };
+  let at = base_paint(f, g);
+  let out = if (at >= 0) { painted(f, at, m, clip, layer, fg, 0, MAX_PAINTS).0 } else { layers_v0(f, g, m, clip, layer, fg) };
+  let bytes: u8[] = [];
+  for v in out.rgba {
+    bytes = bytes.append((v.max(0.0).min(1.0) * 255.0 + 0.5) as u8);
+  }
+  return ColorBitmap { width: w, height: h, left: left, top: top, rgba: bytes };
+}
+
+function full_clip(n: i32): f64[] {
+  let out: f64[] = [];
+  for _ in 0..n {
+    out = out.append(1.0);
+  }
+  return out;
+}
+
+// The layers of glyph `g` of COLR version 0, each a glyph in one color.
+function layers_v0(f: Font, g: i32, m: Affine, clip: f64[], own dst: Layer, fg: i32): Layer {
+  let b = f.data;
+  let rec = base_record(f, g);
+  let layers = f.colr + u32_at(b, f.colr + 8);
+  let out = dst;
+  for k in 0..u16_at(b, rec + 4) {
+    let lr = layers + 4 * (u16_at(b, rec + 2) + k);
+    let c = palette_color(f, u16_at(b, lr + 2), 1.0, fg);
+    let cover = glyph_clip(f, u16_at(b, lr), m, clip, out.w, out.h);
+    out = solid_over(out, cover, c);
+  }
+  return out;
+}
+
+// `clip` times the coverage of the outline of glyph `g` through `m`.
+function glyph_clip(f: Font, g: i32, m: Affine, clip: f64[], w: i32, h: i32): f64[] {
+  let r = Raster { w: w, h: h, acc: zeros(w * h + 4) };
+  for c in contours(f, g) {
+    r = outline(r, c, m);
+  }
+  let out = clip;
+  let sum = 0.0;
+  for i in 0..w * h {
+    sum += r.acc[i];
+    out = out.with(i, out[i] * sum.abs().min(1.0));
+  }
+  return out;
+}
+
+// `dst` with the color `c` over it, where `cover` is above 0.
+function solid_over(own dst: Layer, cover: f64[], c: (f64, f64, f64, f64)): Layer {
+  let px = dst.rgba;
+  let (r, g, b, a) = c;
+  for i in 0..dst.w * dst.h {
+    let k = cover[i];
+    if (k > 0.0) {
+      px = blended(px, 4 * i, r * k, g * k, b * k, a * k);
+    }
+  }
+  return Layer { ...dst, rgba: px };
+}
+
+// `px` with the premultiplied color (r, g, b, a) over the pixel at `at`.
+function blended(own px: f64[], at: i32, r: f64, g: f64, b: f64, a: f64): f64[] {
+  let keep = 1.0 - a;
+  let out = px.with(at, r + px[at] * keep).with(at + 1, g + px[at + 1] * keep);
+  return out.with(at + 2, b + out[at + 2] * keep).with(at + 3, a + out[at + 3] * keep);
+}
+
+// `dst` after the paint at `at`, through the transform `m` and in the
+// coverage `clip`, and the budget of paints that is left.
+function painted(f: Font, at: i32, m: Affine, clip: f64[], own dst: Layer, fg: i32, depth: i32, budget: i32): (Layer, i32) {
+  let b = f.data;
+  let format = u8_at(b, at);
+  if (depth >= MAX_PAINT_DEPTH || budget <= 0) {
+    return (dst, 0);
+  }
+  if (format == 1) {
+    return colr_layers(f, at, m, clip, dst, fg, depth, budget - 1);
+  }
+  if (format >= 10 && format <= 31) {
+    return child_painted(f, at, format, m, clip, dst, fg, depth, budget - 1);
+  }
+  if (format == 32) {
+    return composited(f, at, m, clip, dst, fg, depth, budget - 1);
+  }
+  return (filled(f, at, format, m, clip, dst, fg), budget - 1);
+}
+
+// `dst` with a solid color or a gradient over it, or as it is for a
+// format that is not one of those.
+function filled(f: Font, at: i32, format: i32, m: Affine, clip: f64[], own dst: Layer, fg: i32): Layer {
+  let b = f.data;
+  if (format == 2 || format == 3) {
+    return solid_over(dst, clip, palette_color(f, u16_at(b, at + 1), f2dot14(b, at + 3), fg));
+  }
+  return if (format >= 4 && format <= 9) { gradient_over(f, at, m, clip, dst, fg) } else { dst };
+}
+
+// `dst` after a paint of the formats 10 to 31, which paints a child: in
+// the outline of a glyph, as another color glyph, or through a transform.
+function child_painted(f: Font, at: i32, format: i32, m: Affine, clip: f64[], own dst: Layer, fg: i32, depth: i32, budget: i32): (Layer, i32) {
+  let b = f.data;
+  if (format == 10) {
+    let cover = glyph_clip(f, u16_at(b, at + 4), m, clip, dst.w, dst.h);
+    return painted(f, at + u24_at(b, at + 1), m, cover, dst, fg, depth + 1, budget);
+  }
+  if (format == 11) {
+    let base = base_paint(f, u16_at(b, at + 1));
+    return if (base < 0) { (dst, budget) } else { painted(f, base, m, clip, dst, fg, depth + 1, budget) };
+  }
+  return painted(f, at + u24_at(b, at + 1), times(m, paint_transform(b, at, format)), clip, dst, fg, depth + 1, budget);
+}
+
+// The layers of a PaintColrLayers at `at`, from the layer list of COLR.
+function colr_layers(f: Font, at: i32, m: Affine, clip: f64[], own dst: Layer, fg: i32, depth: i32, budget: i32): (Layer, i32) {
+  let b = f.data;
+  let list = f.colr + u32_at(b, f.colr + 18);
+  let out = dst;
+  let left = budget;
+  for k in 0..u8_at(b, at + 1) {
+    let i = u32_at(b, at + 2) + k;
+    if (i < 0 || i >= u32_at(b, list)) {
+      break;
+    }
+    let (next, rest) = painted(f, list + u32_at(b, list + 4 + 4 * i), m, clip, out, fg, depth + 1, left);
+    out = next;
+    left = rest;
+  }
+  return (out, left);
+}
+
+// The transform of a paint of the formats 12 to 31. A format of a
+// variation, an odd one, has the fields of the format before it.
+function paint_transform(b: [u8], at: i32, format: i32): Affine {
+  let kind = format - (format & 1);
+  if (kind == 12) {
+    let t = at + u24_at(b, at + 4);
+    return Affine { xx: fixed(b, t), yx: fixed(b, t + 4), xy: fixed(b, t + 8), yy: fixed(b, t + 12), dx: fixed(b, t + 16), dy: fixed(b, t + 20) };
+  }
+  if (kind == 14) {
+    return shifted(i16_at(b, at + 4) as f64, i16_at(b, at + 6) as f64);
+  }
+  if (kind == 16 || kind == 18) {
+    let s = Affine { xx: f2dot14(b, at + 4), yx: 0.0, xy: 0.0, yy: f2dot14(b, at + 6), dx: 0.0, dy: 0.0 };
+    return if (kind == 18) { about(s, i16_at(b, at + 8) as f64, i16_at(b, at + 10) as f64) } else { s };
+  }
+  if (kind == 20 || kind == 22) {
+    let k = f2dot14(b, at + 4);
+    let s = Affine { xx: k, yx: 0.0, xy: 0.0, yy: k, dx: 0.0, dy: 0.0 };
+    return if (kind == 22) { about(s, i16_at(b, at + 6) as f64, i16_at(b, at + 8) as f64) } else { s };
+  }
+  return turned(b, at, kind);
+}
+
+// The rotation of a paint of the formats 24 to 27, or the skew of one of
+// the formats 28 to 31.
+function turned(b: [u8], at: i32, kind: i32): Affine {
+  let deg = 3.14159265358979323846 / 180.0;
+  if (kind == 24 || kind == 26) {
+    let a = f2dot14(b, at + 4) * 180.0 * deg;
+    let r = Affine { xx: a.cos(), yx: a.sin(), xy: 0.0 - a.sin(), yy: a.cos(), dx: 0.0, dy: 0.0 };
+    return if (kind == 26) { about(r, i16_at(b, at + 6) as f64, i16_at(b, at + 8) as f64) } else { r };
+  }
+  let s = Affine { xx: 1.0, yx: (f2dot14(b, at + 6) * 180.0 * deg).tan(), xy: 0.0 - (f2dot14(b, at + 4) * 180.0 * deg).tan(), yy: 1.0, dx: 0.0, dy: 0.0 };
+  return if (kind == 30) { about(s, i16_at(b, at + 8) as f64, i16_at(b, at + 10) as f64) } else { s };
+}
+
+// `dst` with the result of a PaintComposite over it: the source paint and
+// the backdrop paint, each drawn alone, joined with the composite mode.
+function composited(f: Font, at: i32, m: Affine, clip: f64[], own dst: Layer, fg: i32, depth: i32, budget: i32): (Layer, i32) {
+  let b = f.data;
+  let blank = Layer { w: dst.w, h: dst.h, rgba: zeros(4 * dst.w * dst.h) };
+  let (src, left) = painted(f, at + u24_at(b, at + 1), m, clip, blank, fg, depth + 1, budget);
+  let (back, rest) = painted(f, at + u24_at(b, at + 5), m, clip, Layer { ...src, rgba: zeros(4 * dst.w * dst.h) }, fg, depth + 1, left);
+  let mode = u8_at(b, at + 4);
+  let px = dst.rgba;
+  for i in 0..dst.w * dst.h {
+    let k = 4 * i;
+    let (r, g, bl, a) = joined_colors(mode, src.rgba, back.rgba, k);
+    px = blended(px, k, r, g, bl, a);
+  }
+  return (Layer { ...dst, rgba: px }, rest);
+}
+```
+
+The colors of a gradient come from its color line: a list of stops, each a place and a color, and a way to extend the line past its first and last stops. The colors between two stops mix in premultiplied form.
+
+```fern
+<<color glyphs>>=
+// `dst` with the gradient of the formats 4 to 9 at `at` over it.
+function gradient_over(f: Font, at: i32, m: Affine, clip: f64[], own dst: Layer, fg: i32): Layer {
+  let b = f.data;
+  let Some(inv) = inverse(m) else {
+    return dst;
+  };
+  let format = u8_at(b, at);
+  let line = color_stops(f, at + u24_at(b, at + 1), (format & 1) != 0, fg);
+  let px = dst.rgba;
+  for y in 0..dst.h {
+    for x in 0..dst.w {
+      let i = y * dst.w + x;
+      if (clip[i] <= 0.0) {
+        continue;
+      }
+      let (qx, qy) = (x as f64 + 0.5, y as f64 + 0.5);
+      if let Some(t) = gradient_place(b, at, format, inv.xx * qx + inv.xy * qy + inv.dx, inv.yx * qx + inv.yy * qy + inv.dy) {
+        let (r, g, bl, a) = line_color(line, t);
+        let k = clip[i];
+        px = blended(px, 4 * i, r * k, g * k, bl * k, a * k);
+      }
+    }
+  }
+  return Layer { ...dst, rgba: px };
+}
+
+// A color line: its extend mode, then each stop as five values: its place
+// and its premultiplied color, in the order of the places.
+struct ColorLine { extend: i32, stops: f64[] }
+
+function color_stops(f: Font, at: i32, var: boolean, fg: i32): ColorLine {
+  let b = f.data;
+  let size = if (var) { 10 } else { 6 };
+  let stops: f64[] = [];
+  for k in 0..u16_at(b, at + 1) {
+    let s = at + 3 + size * k;
+    let (r, g, bl, a) = palette_color(f, u16_at(b, s + 2), f2dot14(b, s + 4), fg);
+    stops = sorted_stop(stops, [f2dot14(b, s), r, g, bl, a]);
+  }
+  return ColorLine { extend: u8_at(b, at), stops: stops };
+}
+
+// `stops` with `stop` after each stop of the same or an earlier place.
+function sorted_stop(stops: f64[], stop: f64[]): f64[] {
+  let at = stops.len();
+  while (at > 0 && stops[at - 5] > stop[0]) {
+    at -= 5;
+  }
+  return stops.take(at).concat(stop).concat(stops.drop(at));
+}
+
+// The color of `line` at the place `t`.
+function line_color(line: ColorLine, t: f64): (f64, f64, f64, f64) {
+  let s = line.stops;
+  let n = s.len() / 5;
+  if (n == 0) {
+    return (0.0, 0.0, 0.0, 0.0);
+  }
+  let (lo, hi) = (s[0], s[5 * (n - 1)]);
+  let span = hi - lo;
+  let u = if (span <= 0.0 || line.extend == 0) {
+    t.max(lo).min(hi)
+  } else if (line.extend == 1) {
+    lo + ((t - lo) / span - ((t - lo) / span).floor()) * span
+  } else {
+    let q = ((t - lo) / span).abs();
+    let p = q - 2.0 * (q / 2.0).floor();
+    lo + (1.0 - (1.0 - p).abs()) * span
+  };
+  let k = 0;
+  while (k + 1 < n && s[5 * (k + 1)] < u) {
+    k += 1;
+  }
+  if (k + 1 >= n || u <= s[5 * k]) {
+    return (s[5 * k + 1], s[5 * k + 2], s[5 * k + 3], s[5 * k + 4]);
+  }
+  let (a, z) = (5 * k, 5 * (k + 1));
+  let w = (u - s[a]) / (s[z] - s[a]);
+  return (s[a + 1] + (s[z + 1] - s[a + 1]) * w, s[a + 2] + (s[z + 2] - s[a + 2]) * w, s[a + 3] + (s[z + 3] - s[a + 3]) * w, s[a + 4] + (s[z + 4] - s[a + 4]) * w);
+}
+
+// The place on the color line of the point (x, y) in the units of the
+// gradient at `at`, or None where the gradient draws nothing.
+function gradient_place(b: [u8], at: i32, format: i32, x: f64, y: f64): Option[f64] {
+  let p: f64[] = [];
+  for k in 0..6 {
+    p = p.append(i16_at(b, at + 4 + 2 * k) as f64);
+  }
+  if (format <= 5) {
+    // p0, p1 and p2: the line from p0 to p1, turned so that it is at a
+    // right angle to the line from p0 to p2.
+    let (dx, dy) = (p[4] - p[0], p[5] - p[1]);
+    let (nx, ny) = (0.0 - dy, dx);
+    let nn = nx * nx + ny * ny;
+    let along = if (nn == 0.0) { 0.0 } else { ((p[2] - p[0]) * nx + (p[3] - p[1]) * ny) / nn };
+    let (vx, vy) = (nx * along, ny * along);
+    let vv = vx * vx + vy * vy;
+    return if (vv == 0.0) { None } else { Some(((x - p[0]) * vx + (y - p[1]) * vy) / vv) };
+  }
+  if (format <= 7) {
+    return radial_place(p, x, y);
+  }
+  let deg = 180.0 / 3.14159265358979323846;
+  let start = (f2dot14(b, at + 8) + 1.0) * 180.0;
+  let end = (f2dot14(b, at + 10) + 1.0) * 180.0;
+  let angle = (y - p[1]).atan2(x - p[0]) * deg;
+  let a = if (angle < 0.0) { angle + 360.0 } else { angle };
+  return if (end == start) { None } else { Some((a - start) / (end - start)) };
+}
+
+// The largest place t of a two-circle gradient where the circle of t,
+// with a radius of 0 or more, passes through (x, y). `p` holds x0, y0,
+// r0, x1, y1 and r1.
+function radial_place(p: f64[], x: f64, y: f64): Option[f64] {
+  let (cdx, cdy, dr) = (p[3] - p[0], p[4] - p[1], p[5] - p[2]);
+  let (pdx, pdy) = (x - p[0], y - p[1]);
+  let a = cdx * cdx + cdy * cdy - dr * dr;
+  let bb = pdx * cdx + pdy * cdy + p[2] * dr;
+  let c = pdx * pdx + pdy * pdy - p[2] * p[2];
+  if (a.abs() < 1.0e-9) {
+    let t = if (bb == 0.0) { -1.0e9 } else { c / (2.0 * bb) };
+    return if (bb != 0.0 && p[2] + t * dr >= 0.0) { Some(t) } else { None };
+  }
+  let disc = bb * bb - a * c;
+  if (disc < 0.0) {
+    return None;
+  }
+  let (t1, t2) = ((bb + disc.sqrt()) / a, (bb - disc.sqrt()) / a);
+  let (hi, lo) = (t1.max(t2), t1.min(t2));
+  if (p[2] + hi * dr >= 0.0) {
+    return Some(hi);
+  }
+  return if (p[2] + lo * dr >= 0.0) { Some(lo) } else { None };
+}
+```
+
+A composite mode joins a source color with a backdrop color. The modes 0 to 12 are those of Porter and Duff. The modes 13 to 23 blend each channel. The modes 24 to 27 blend the hue, the saturation and the luminosity. The W3C compositing rules give each of these modes.
+
+```fern
+<<color glyphs>>=
+// The source of `src` and the backdrop of `back` at `k`, joined with the
+// composite mode `mode`. The colors are premultiplied.
+function joined_colors(mode: i32, src: f64[], back: f64[], k: i32): (f64, f64, f64, f64) {
+  let (sa, da) = (src[k + 3], back[k + 3]);
+  if (mode <= 12) {
+    let (fs, fd) = porter_duff(mode, sa, da);
+    let mix = (c: i32): f64 => (src[k + c] * fs + back[k + c] * fd).min(1.0);
+    return (mix(0), mix(1), mix(2), mix(3));
+  }
+  let s = unpremultiplied(src, k);
+  let d = unpremultiplied(back, k);
+  let mixed = if (mode >= 24) { hsl_blend(mode, s, d) } else { [channel_blend(mode, s[0], d[0]), channel_blend(mode, s[1], d[1]), channel_blend(mode, s[2], d[2])] };
+  let joined = (c: i32): f64 => src[k + c] * (1.0 - da) + back[k + c] * (1.0 - sa) + sa * da * mixed[c];
+  return (joined(0), joined(1), joined(2), sa + da - sa * da);
+}
+
+// The factors of the source and of the backdrop for a Porter-Duff mode.
+function porter_duff(mode: i32, sa: f64, da: f64): (f64, f64) {
+  let pairs = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0 - sa), (1.0 - da, 1.0), (da, 0.0), (0.0, sa), (1.0 - da, 0.0), (0.0, 1.0 - sa), (da, 1.0 - sa), (1.0 - da, sa), (1.0 - da, 1.0 - sa), (1.0, 1.0)];
+  return pairs[mode];
+}
+
+function unpremultiplied(px: f64[], k: i32): f64[] {
+  let a = px[k + 3];
+  if (a <= 0.0) {
+    return [0.0, 0.0, 0.0];
+  }
+  return [(px[k] / a).min(1.0), (px[k + 1] / a).min(1.0), (px[k + 2] / a).min(1.0)];
+}
+
+// The blend of the source channel `s` and the backdrop channel `d`.
+function channel_blend(mode: i32, s: f64, d: f64): f64 {
+  if (mode == 13) {
+    return s + d - s * d;
+  }
+  if (mode == 14) {
+    return hard_light(d, s);
+  }
+  if (mode == 15 || mode == 16) {
+    return if (mode == 15) { s.min(d) } else { s.max(d) };
+  }
+  if (mode == 17) {
+    return if (d == 0.0) { 0.0 } else if (s >= 1.0) { 1.0 } else { (d / (1.0 - s)).min(1.0) };
+  }
+  return more_channel_blend(mode, s, d);
+}
+
+// The blend of a channel for the modes 18 to 23.
+function more_channel_blend(mode: i32, s: f64, d: f64): f64 {
+  if (mode == 18) {
+    return if (d >= 1.0) { 1.0 } else if (s <= 0.0) { 0.0 } else { 1.0 - ((1.0 - d) / s).min(1.0) };
+  }
+  if (mode == 19) {
+    return hard_light(s, d);
+  }
+  if (mode == 20) {
+    return soft_light(s, d);
+  }
+  if (mode == 21 || mode == 22) {
+    return if (mode == 21) { (s - d).abs() } else { s + d - 2.0 * s * d };
+  }
+  return s * d;
+}
+
+function hard_light(s: f64, d: f64): f64 {
+  if (s <= 0.5) {
+    return d * 2.0 * s;
+  }
+  let t = 2.0 * s - 1.0;
+  return d + t - d * t;
+}
+
+function soft_light(s: f64, d: f64): f64 {
+  if (s <= 0.5) {
+    return d - (1.0 - 2.0 * s) * d * (1.0 - d);
+  }
+  let dd = if (d <= 0.25) { ((16.0 * d - 12.0) * d + 4.0) * d } else { d.sqrt() };
+  return d + (2.0 * s - 1.0) * (dd - d);
+}
+
+// The blend of the colors `s` and `d` by hue, saturation, color or
+// luminosity.
+function hsl_blend(mode: i32, s: f64[], d: f64[]): f64[] {
+  if (mode == 24) {
+    return with_lum(with_sat(s, sat(d)), lum(d));
+  }
+  if (mode == 25) {
+    return with_lum(with_sat(d, sat(s)), lum(d));
+  }
+  return if (mode == 26) { with_lum(s, lum(d)) } else { with_lum(d, lum(s)) };
+}
+
+function lum(c: f64[]): f64 {
+  return 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2];
+}
+
+function sat(c: f64[]): f64 {
+  return c[0].max(c[1]).max(c[2]) - c[0].min(c[1]).min(c[2]);
+}
+
+function with_lum(c: f64[], l: f64): f64[] {
+  let d = l - lum(c);
+  let m = c.map((v: f64): f64 => v + d);
+  let lm = lum(m);
+  let (lo, hi) = (m[0].min(m[1]).min(m[2]), m[0].max(m[1]).max(m[2]));
+  return m.map((v: f64): f64 => if (lo < 0.0) { lm + (v - lm) * lm / (lm - lo) } else if (hi > 1.0) { lm + (v - lm) * (1.0 - lm) / (hi - lm) } else { v });
+}
+
+function with_sat(c: f64[], s: f64): f64[] {
+  let (lo, hi) = (c[0].min(c[1]).min(c[2]), c[0].max(c[1]).max(c[2]));
+  return c.map((v: f64): f64 => if (hi > lo) { (v - lo) * s / (hi - lo) } else { 0.0 });
 }
 ```

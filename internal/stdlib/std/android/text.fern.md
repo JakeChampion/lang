@@ -16,6 +16,8 @@ A face does not have each character. For a character that the face does not have
 
 A run of Arabic letters goes to `std/shape`, which gives the joining forms of the letters and the position of each glyph. The run takes the font of its first letter. A mark sits on its base at the anchors of the font. As in Minikin, a mark takes the font of its base when that font has the mark, so that the two can attach. The run has no letter spacing, so that its letters stay joined. Outside such a run, a mark of the font has no advance.
 
+A glyph with colors in the `COLR` table of its font draws in its colors and not in the color of the text. An emoji is such a glyph. Its `Placed` holds its premultiplied colors, and a sprite holds them as a second layer that `put` draws over the text.
+
 `std/truetype` draws each glyph one time for each size, weight and quarter of a pixel. A `Cache` keeps the glyphs. It also keeps a `Sprite` for each text: the coverage of the whole text, which `put` draws on a frame in a color. `layout` gives the glyphs of a text with their positions, for a painter that draws glyphs from an atlas on the GPU.
 
 ## Contracts
@@ -621,33 +623,47 @@ function head_end(fs: Fonts, w: i32, px: i32, cs: string[], from: i32, to: i32, 
 <<sprites>>=
 // The coverage of a text, w by h. Its first pen is `left` pixels from the
 // left edge, and its baseline is row `base`.
-pub struct Sprite { w: i32, h: i32, left: i32, base: i32, cov: u8[] }
+pub struct Sprite { w: i32, h: i32, left: i32, base: i32, cov: u8[], rgba: u8[] }
 
-pub struct Cache { glyphs: Map[i64, truetype.Bitmap], sprites: Map[string, Sprite] }
+pub struct Cache { glyphs: Map[i64, truetype.Bitmap], colors: Map[i64, u8[]], sprites: Map[string, Sprite] }
 
 pub function new_cache(): Cache {
-  return Cache { glyphs: map_new(512), sprites: map_new(256) };
+  return Cache { glyphs: map_new(512), colors: map_new(64), sprites: map_new(256) };
 }
 
 function no_sprite(): Sprite {
-  return Sprite { w: 0, h: 0, left: 0, base: 0, cov: [] };
+  return Sprite { w: 0, h: 0, left: 0, base: 0, cov: [], rgba: [] };
 }
 
 // The bitmap of glyph `g` of the font `w` at `px`, with its pen `sub`
 // quarters of a pixel right of a pixel edge.
-function glyph(own c: Cache, fs: Fonts, w: i32, px: i32, g: i32, sub: i32): (Cache, truetype.Bitmap) {
+// A color glyph has the box of its colors and no coverage, and its colors
+// come third: premultiplied RGBA. The entry of the text color in its
+// palette draws black. Each other glyph has no colors.
+function glyph(own c: Cache, fs: Fonts, w: i32, px: i32, g: i32, sub: i32): (Cache, truetype.Bitmap, u8[]) {
   let key = glyph_key(w, px, g, sub);
   if let Some(bm) = c.glyphs.get(key) {
-    return (c, bm);
+    let rgba = c.colors.get(key).unwrap_or([]);
+    return (c, bm, rgba);
   }
-  let bm = font(fs, w).render(g, px as f64, sub as f64 / 4.0);
-  return (Cache { glyphs: c.glyphs.insert(key, bm), sprites: c.sprites }, bm);
+  let f = font(fs, w);
+  if (f.has_colors(g)) {
+    let cb = f.render_color(g, px as f64, sub as f64 / 4.0, BLACK);
+    let bm = truetype.Bitmap { width: cb.width, height: cb.height, left: cb.left, top: cb.top, coverage: [] };
+    return (Cache { ...c, glyphs: c.glyphs.insert(key, bm), colors: c.colors.insert(key, cb.rgba) }, bm, cb.rgba);
+  }
+  let bm = f.render(g, px as f64, sub as f64 / 4.0);
+  return (Cache { ...c, glyphs: c.glyphs.insert(key, bm) }, bm, []);
 }
+
+// Opaque black, as an ARGB color.
+const BLACK: i32 = -16777216;
 
 // A glyph of a text: `key` names its bitmap at its size and its part of a
 // pixel, and its bitmap has its left column `x` pixels right of the first
-// pen. Its top row is `y` rows below the baseline.
-pub struct Placed { key: i64, bm: truetype.Bitmap, x: i32, y: i32 }
+// pen. Its top row is `y` rows below the baseline. A color glyph has its
+// colors in `rgba`, premultiplied, and no coverage in `bm`.
+pub struct Placed { key: i64, bm: truetype.Bitmap, x: i32, y: i32, rgba: u8[] }
 
 // The glyphs of `s` in weight `w` at `px`, with the letter spacing `track`,
 // each on a quarter of a pixel.
@@ -660,11 +676,64 @@ pub function layout(own c: Cache, fs: Fonts, w: i32, px: i32, track: i32, s: str
   let out: Placed[] = [];
   for i in 0..p.glyphs.len() {
     let q = (p.at[i] * 4.0 + 0.5).floor() as i32;
-    let (next, bm) = glyph(cache, fs, p.ids[i], px, p.glyphs[i], q & 3);
+    let (next, bm, rgba) = glyph(cache, fs, p.ids[i], px, p.glyphs[i], q & 3);
     cache = next;
-    out = out.append(Placed { key: glyph_key(p.ids[i], px, p.glyphs[i], q & 3), bm: bm, x: (q >> 2) + bm.left, y: bm.top + (p.ys[i] + 0.5).floor() as i32 });
+    out = out.append(Placed { key: glyph_key(p.ids[i], px, p.glyphs[i], q & 3), bm: bm, x: (q >> 2) + bm.left, y: bm.top + (p.ys[i] + 0.5).floor() as i32, rgba: rgba });
   }
   return (cache, out);
+}
+
+// The coverage of the glyphs of `placed` that have no colors, in a box of
+// `sw` by `sh` pixels from (x0, y0).
+function coverage_layer(placed: Placed[], x0: i32, y0: i32, sw: i32, sh: i32): u8[] {
+  let cov: u8[] = [];
+  for i in 0..sw * sh {
+    cov = cov.append(0u8);
+  }
+  for pl in placed {
+    let bm = pl.bm;
+    let from_rows = if (pl.rgba.len() > 0) { 0 } else { bm.height };
+    for row in 0..from_rows {
+      let to = (pl.y - y0 + row) * sw + pl.x - x0;
+      let from = row * bm.width;
+      for col in 0..bm.width {
+        let a = bm.coverage[from + col] as i32;
+        if (a > 0) {
+          let b = cov[to + col] as i32;
+          cov = cov.with(to + col, (a + b - (a * b + 127) / 255) as u8);
+        }
+      }
+    }
+  }
+  return cov;
+}
+
+// The colors of the color glyphs of `placed` in a box of `sw` by `sh`
+// pixels from (x0, y0), premultiplied, one over another. It is empty when
+// no glyph has colors.
+function color_layer(placed: Placed[], x0: i32, y0: i32, sw: i32, sh: i32): u8[] {
+  let out: u8[] = [];
+  for pl in placed {
+    if (pl.rgba.len() == 0) {
+      continue;
+    }
+    if (out.len() == 0) {
+      for i in 0..4 * sw * sh {
+        out = out.append(0u8);
+      }
+    }
+    for row in 0..pl.bm.height {
+      for col in 0..pl.bm.width {
+        let from = 4 * (row * pl.bm.width + col);
+        let to = 4 * ((pl.y - y0 + row) * sw + pl.x - x0 + col);
+        let keep = 255 - pl.rgba[from + 3] as i32;
+        for k in 0..4 {
+          out = out.with(to + k, (pl.rgba[from + k] as i32 + (out[to + k] as i32 * keep + 127) / 255).min(255) as u8);
+        }
+      }
+    }
+  }
+  return out;
 }
 
 function glyph_key(w: i32, px: i32, g: i32, sub: i32): i64 {
@@ -694,26 +763,8 @@ pub function sprite(own c: Cache, fs: Fonts, w: i32, px: i32, track: i32, s: str
   }
   let sw = x1 - x0;
   let sh = y1 - y0;
-  let cov: u8[] = [];
-  for i in 0..sw * sh {
-    cov = cov.append(0u8);
-  }
-  for pl in placed {
-    let bm = pl.bm;
-    for row in 0..bm.height {
-      let to = (pl.y - y0 + row) * sw + pl.x - x0;
-      let from = row * bm.width;
-      for col in 0..bm.width {
-        let a = bm.coverage[from + col] as i32;
-        if (a > 0) {
-          let b = cov[to + col] as i32;
-          cov = cov.with(to + col, (a + b - (a * b + 127) / 255) as u8);
-        }
-      }
-    }
-  }
-  let sp = Sprite { w: sw, h: sh, left: -x0, base: -y0, cov: cov };
-  return (Cache { glyphs: cache.glyphs, sprites: cache.sprites.insert(key, sp) }, sp);
+  let sp = Sprite { w: sw, h: sh, left: -x0, base: -y0, cov: coverage_layer(placed, x0, y0, sw, sh), rgba: color_layer(placed, x0, y0, sw, sh) };
+  return (Cache { ...cache, sprites: cache.sprites.insert(key, sp) }, sp);
 }
 
 // The soft shadow of `s`: its sprite blurred three times by a box of radius
@@ -748,8 +799,8 @@ pub function shadow(own c: Cache, fs: Fonts, w: i32, px: i32, s: string, r: i32)
   for v in buf {
     cov = cov.append(min(v, 255) as u8);
   }
-  let sp = Sprite { w: sw, h: sh, left: text.left + pad, base: text.base + pad, cov: cov };
-  return (Cache { glyphs: cache.glyphs, sprites: cache.sprites.insert(key, sp) }, sp);
+  let sp = Sprite { w: sw, h: sh, left: text.left + pad, base: text.base + pad, cov: cov, rgba: [] };
+  return (Cache { ...cache, sprites: cache.sprites.insert(key, sp) }, sp);
 }
 
 // A box blur of radius r along the rows, or along the columns.
@@ -808,6 +859,9 @@ function max(a: i32, b: i32): i32 {
 pub function put(fr: draw.Frame, sp: Sprite, x: i32, y: i32, color: i32): void {
   if (sp.w > 0) {
     fr.mask(x - sp.left, y - sp.base, sp.w, sp.h, sp.cov, color);
+  }
+  if (sp.rgba.len() > 0) {
+    fr.blend(x - sp.left, y - sp.base, sp.w, sp.h, sp.rgba);
   }
 }
 
