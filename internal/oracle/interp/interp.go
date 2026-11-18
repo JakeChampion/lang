@@ -6304,6 +6304,39 @@ func (e *env) get(name string) (Value, bool) {
 	return nil, false
 }
 
+// swap stores v in the slot of name, as set does, and gives the value that the
+// slot held.
+func (e *env) swap(name string, v Value) Value {
+	for cur := e; cur != nil; cur = cur.parent {
+		if old, ok := cur.vars[name]; ok {
+			if slot, ok := old.(*binding); ok {
+				was := slot.value
+				slot.value = v
+				return was
+			}
+			cur.vars[name] = v
+			return old
+		}
+	}
+	e.bindValue(name, v)
+	return nil
+}
+
+// vacate leaves the slot of name empty and reports whether it did. A slot
+// that a closure captured keeps its value.
+func (e *env) vacate(name string) bool {
+	for cur := e; cur != nil; cur = cur.parent {
+		if v, ok := cur.vars[name]; ok {
+			if _, captured := v.(*binding); captured {
+				return false
+			}
+			cur.vars[name] = Void{}
+			return true
+		}
+	}
+	return false
+}
+
 func (e *env) set(name string, v Value) {
 	for cur := e; cur != nil; cur = cur.parent {
 		if old, ok := cur.vars[name]; ok {
@@ -7400,8 +7433,8 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		return String(sb.String()), nil
 	case *ast.Ident:
 		if v, ok := env.get(x.Name); ok {
-			if i.lastUse[x] {
-				i.moveOut(x.Name, v, env)
+			if arr, isArray := v.(Array); isArray && i.lastUse[x] {
+				i.moveOut(x.Name, arr, env)
 			}
 			return v, nil
 		}
@@ -7878,7 +7911,7 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("struct %s has no field %q", s.TypeName, x.Field)
 		}
-		if i.fieldLastUse[x] {
+		if s.holdsElems && s.owners == 1 && i.fieldLastUse[x] {
 			i.takeField(s, x, env)
 		}
 		return v, nil
@@ -8463,14 +8496,13 @@ func (i *Interp) assignIdent(a *ast.Assign, name string, env *env) (Value, error
 		}
 		return nil, err
 	}
-	// A read at the last use left the slot empty.
-	old, _ = env.get(name)
+	// The slot is empty when a read at the last use moved its value.
+	old = env.swap(name, v)
 	if !move {
 		arrDisown(old)
 	}
 	retainReplacing(v, old)
 	arrOwn(v)
-	env.set(name, v)
 	return v, nil
 }
 

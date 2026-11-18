@@ -23,19 +23,13 @@ func (i *Interp) analyse(fn *ast.FuncDecl) {
 	}
 }
 
-// moveOut ends the holds of the local name on the array v, which a read at
+// moveOut ends the holds of the local name on the array arr, which a read at
 // the last use of the local gives away. The local is empty after the read.
-func (i *Interp) moveOut(name string, v Value, e *env) {
-	arr, ok := v.(Array)
-	if !ok {
-		return
+func (i *Interp) moveOut(name string, arr Array, e *env) {
+	if e.vacate(name) {
+		release(arr)
+		arrDisown(arr)
 	}
-	if _, captured := e.slot(name).(*binding); captured {
-		return
-	}
-	release(arr)
-	arrDisown(arr)
-	e.set(name, Void{})
 }
 
 // returnChainMove moves the root of an update chain that a return expression
@@ -90,11 +84,11 @@ func chainMoved(rhs ast.Expr) string {
 }
 
 // takeField takes the field that x reads out of the struct s, which a read at
-// the last use of the field gives away. Only the local of x holds s, so no
-// run sees the struct without the field.
+// the last use of the field gives away. The caller has found that s holds its
+// fields and that one holder has s; that holder is the local of x, so no run
+// sees the struct without the field.
 func (i *Interp) takeField(s *Struct, x *ast.FieldAccess, e *env) {
-	id := x.Target.(*ast.Ident)
-	if !s.holdsElems || s.owners != 1 || e.slot(id.Name) != Value(s) {
+	if e.slot(x.Target.(*ast.Ident).Name) != Value(s) {
 		return
 	}
 	v := s.Fields[x.Field]
