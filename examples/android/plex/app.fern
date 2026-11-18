@@ -470,24 +470,16 @@ function device(ctx: usize, ps: Players, gpu: Cell[Option[Gpu]], media: Media): 
     hide_video: (): void => hide_video(ctx, playing(ps), playing(ps).live(), gpu),
     pause_video: (): void => pause_video(ctx, playing(ps), playing(ps).live(), gpu),
     request_frame: (): void => android.request_frame(ctx),
-    start: (): void => {
-      let ok = exoplayer.start(ctx, playing(ps));
-    },
-    pause: (): void => {
-      let ok = exoplayer.pause(ctx, playing(ps));
-    },
-    seek: (ms: i64): void => {
-      let ok = exoplayer.seek(ctx, playing(ps), ms);
-    },
+    start: (): void => { let ok = exoplayer.start(ctx, playing(ps)); },
+    pause: (): void => { let ok = exoplayer.pause(ctx, playing(ps)); },
+    seek: (ms: i64): void => { let ok = exoplayer.seek(ctx, playing(ps), ms); },
     position: (): i64 => exoplayer.position_ms(ctx, playing(ps)),
     duration: (): i64 => exoplayer.duration_ms(ctx, playing(ps)),
     stop: (): void => exoplayer.stop(ctx, playing(ps)),
     has_audio: (): boolean => exoplayer.has_audio(ctx, playing(ps)),
     audio_tracks: (): i32[] => exoplayer.audio_tracks(ctx, playing(ps)),
     select_track: (i: i32): boolean => exoplayer.select_track(ctx, playing(ps), i),
-    set_speed: (rate: i32): void => {
-      let ok = exoplayer.set_speed(ctx, playing(ps), rate as f32 / 100.0f32);
-    },
+    set_speed: (rate: i32): void => { let ok = exoplayer.set_speed(ctx, playing(ps), rate as f32 / 100.0f32); },
     pip: (on: boolean): void => pip(ctx, playing(ps), on),
     in_pip: (): boolean => android.in_pip(ctx),
     watch_next: (key: string, title: string, kind: i32, at: i64, length: i64, poster: string): void => watch_next(ctx, key, title, kind, at, length, poster),

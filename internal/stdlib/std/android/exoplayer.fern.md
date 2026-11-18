@@ -563,7 +563,7 @@ pub function select_track(ctx: usize, p: Player, index: i32): boolean {
   let Some(s) = longs(ctx, p) else {
     return false;
   };
-  return index >= 0 && (index as i64) < s[S_AUDIO] && send(ctx, p, AUDIO, index, 0 as usize);
+  return index >= 0 && index as i64 < s[S_AUDIO] && send(ctx, p, AUDIO, index, 0 as usize);
 }
 
 // Gives the player the address `next` of the item after its item, or takes
