@@ -8,9 +8,11 @@ typedef struct { int rate, channels, maximum, profile, encoding, mask, csd; char
 typedef struct { int hardware, stage; } Codec;
 typedef struct { int32_t offset, size; int64_t time; uint32_t flags; } Info;
 static int mode, live, released, queued;
+static int requested_encoding;
 static unsigned char input[16], output[16] = {99, 99, 1, 2, 3, 4, 99};
 
-void audio_mock_mode(int value) { assert(live == 0); mode = value; released = queued = 0; }
+void audio_mock_mode(int value) { assert(live == 0); mode = value; released = queued = requested_encoding = 0; }
+int audio_mock_encoding(void) { return requested_encoding; }
 int audio_mock_live(void) { return live; }
 int audio_mock_released(void) { return released; }
 int audio_mock_queued(void) { return queued; }
@@ -24,6 +26,7 @@ void AMediaFormat_setInt32(Format *f, const char *key, int32_t value) {
     if (!strcmp(key, "sample-rate")) f->rate = value;
     else if (!strcmp(key, "channel-count")) f->channels = value;
     else if (!strcmp(key, "max-input-size")) f->maximum = value;
+    else if (!strcmp(key, "pcm-encoding")) f->encoding = value;
     else { assert(!strcmp(key, "aac-profile")); f->profile = value; }
 }
 void AMediaFormat_setBuffer(Format *f, const char *key, const void *data, size_t size) {
@@ -42,6 +45,7 @@ int32_t AMediaCodec_configure(Codec *c, Format *f, void *window, void *crypto, u
     assert(c && !window && !crypto && !flags);
     assert(f->rate == 48000 && f->channels == 2 && f->maximum == 8 && f->profile == 2);
     assert(!strcmp(f->mime, "audio/mp4a-latm") && f->csd == 7);
+    requested_encoding = f->encoding;
     return mode == 3 || (mode == 4 && c->hardware) ? -1 : 0;
 }
 int32_t AMediaCodec_start(Codec *c) { assert(c); return mode == 5 ? -1 : 0; }

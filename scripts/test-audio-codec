@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 fern_audio_compiler=${FERN:-"$PWD/bin/fern-selfhost"}
 mkdir -p build/audio-codec
 source=tests/stdlib/android_audio_codec_mock_test.fern
-"$fern_audio_compiler" -target arm64-android -shared -export main -o build/audio-codec/arm64.so "$source" internal/stdlib
+"$fern_audio_compiler" -stdlib internal/stdlib -target arm64-android -shared -export main -o build/audio-codec/arm64.so "$source"
 case "$(uname -sm)" in
   'Linux x86_64') target=x86-64-android ;;
   'Linux aarch64') target=arm64-android ;;
@@ -17,7 +17,7 @@ cc -shared -fPIC -Wall -Wextra -Werror -o build/audio-codec/libandroid.so build/
 for variant in normal sanitize; do
   flags=()
   if [ "$variant" = sanitize ]; then flags=(-sanitize); fi
-  "$fern_audio_compiler" -target "$target" -shared "${flags[@]}" -export main -o "build/audio-codec/$variant.so" "$source" internal/stdlib
+  "$fern_audio_compiler" -stdlib internal/stdlib -target "$target" -shared "${flags[@]}" -export main -o "build/audio-codec/$variant.so" "$source"
 done
 LD_LIBRARY_PATH="$PWD/build/audio-codec${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" python3 - <<'PY'
 import ctypes

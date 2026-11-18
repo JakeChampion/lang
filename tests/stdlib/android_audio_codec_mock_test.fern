@@ -15,6 +15,9 @@ function released(): i32;
 @import("libmediandk.so", "audio_mock_queued")
 function queued(): i32;
 
+@import("libmediandk.so", "audio_mock_encoding")
+function requested_encoding(): i32;
+
 @import("libmediandk.so", "mock_jni_env")
 function env(): usize;
 
@@ -31,7 +34,7 @@ function jni_pending(): i32;
 function hardware_queries(): i32;
 
 function config(): codec.Config {
-  return codec.Config { request: capabilities.Request { mime: "audio/mp4a-latm", sample_rate: 48000, channels: 2, profile: 2 }, csd0: [18u8, 16u8], csd1: [18u8, 16u8], csd2: [18u8, 16u8] };
+  return codec.Config { request: capabilities.Request { mime: "audio/mp4a-latm", sample_rate: 48000, channels: 2, profile: 2 }, csd0: [18u8, 16u8], csd1: [18u8, 16u8], csd2: [18u8, 16u8], pcm_encoding: 0 };
 }
 
 function limits(): codec.Limits {
@@ -312,6 +315,50 @@ function failures(): i32 {
   return 0;
 }
 
+function output_encoding(): i32 {
+  for setting in [0, 16, 17] {
+    mode(setting);
+    let request = codec.Config { ...config(), pcm_encoding: codec.PCM_F32 };
+    let Ok(d) = codec.open_named(request, "c2.android.avc.decoder", limits()) else {
+      return 80;
+    };
+    let output = d.output(0i64);
+    let _ = d.close();
+    if (requested_encoding() != codec.PCM_F32 || live() != 0) {
+      return 81;
+    }
+    if (setting == 16) {
+      let Ok(codec.FormatChanged(format)) = output else {
+        return 82;
+      };
+      if (format.encoding != codec.PCM_F32) {
+        return 83;
+      }
+    } else {
+      let Err(frame.Unsupported) = output else {
+        return 84;
+      };
+    }
+  }
+  mode(0);
+  let request = codec.Config { ...config(), pcm_encoding: codec.PCM_I16 };
+  let Ok(d) = codec.open_named(request, "c2.android.avc.decoder", limits()) else {
+    return 85;
+  };
+  let output = d.output(0i64);
+  let _ = d.close();
+  let Ok(codec.FormatChanged(format)) = output else {
+    return 86;
+  };
+  if (requested_encoding() != codec.PCM_I16 || format.encoding != codec.PCM_I16 || live() != 0) {
+    return 87;
+  }
+  let Err(frame.Unsupported) = codec.open_named(codec.Config { ...config(), pcm_encoding: 3 }, "c2.android.avc.decoder", limits()) else {
+    return 88;
+  };
+  return 0;
+}
+
 function main(): i32 {
   let result = discovery();
   if (result != 0) {
@@ -321,5 +368,9 @@ function main(): i32 {
   if (cycle != 0) {
     return cycle;
   }
-  return failures();
+  let failed = failures();
+  if (failed != 0) {
+    return failed;
+  }
+  return output_encoding();
 }

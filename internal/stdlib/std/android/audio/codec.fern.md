@@ -17,6 +17,11 @@ PCM output is interleaved signed 16-bit or float32 in native byte order.
 `FormatChanged` gives the actual sample rate, channel count, encoding, and channel mask.
 The caller must check this format before playback. Other PCM encodings return `Unsupported`.
 
+`Config.pcm_encoding` accepts zero for the platform default, `PCM_I16`, or `PCM_F32`.
+An explicit request sets `pcm-encoding` and rejects a different output encoding.
+Float PCM can preserve 24-bit integer precision. It cannot preserve every 32-bit integer sample.
+Use the Fern decoder when exact source precision exceeds the platform output format.
+
 Limits bound each packet, each PCM buffer, codec-specific data, sample rate, and channel count.
 They do not bound allocations inside Android. Input and output each use platform backpressure.
 
@@ -36,9 +41,9 @@ import "std/video/frame";
 
 pub struct Limits { max_packet_bytes: i32, max_output_bytes: i32, max_sample_rate: i32, max_channels: i32 }
 
-pub struct Config { request: capabilities.Request, csd0: u8[], csd1: u8[], csd2: u8[] }
+pub struct Config { request: capabilities.Request, csd0: u8[], csd1: u8[], csd2: u8[], pcm_encoding: i32 }
 
-pub struct Decoder { handle: usize, scratch: usize, limits: Limits }
+pub struct Decoder { handle: usize, scratch: usize, limits: Limits, pcm_encoding: i32 }
 
 pub struct Format { sample_rate: i32, channels: i32, encoding: i32, channel_mask: i32 }
 
@@ -66,7 +71,14 @@ function valid_limits(request: capabilities.Request, limits: Limits): boolean {
   return limits.max_packet_bytes > 0 && limits.max_output_bytes > 0 && limits.max_sample_rate >= request.sample_rate && limits.max_channels >= request.channels && limits.max_channels <= 8 && limits.max_sample_rate <= 768000;
 }
 
+function valid_encoding(value: i32): boolean {
+  return value == PCM_I16 || value == PCM_F32;
+}
+
 function validate(config: Config, name: string, limits: Limits): Result[void, frame.VideoError] {
+  if (config.pcm_encoding != 0 && !valid_encoding(config.pcm_encoding)) {
+    return Err(frame.Unsupported);
+  }
   if (!capabilities.valid(config.request) || name.len() < 1 || name.len() > 512) {
     return Err(frame.Header);
   }
@@ -102,6 +114,9 @@ pub function open_named(config: Config, name: string, limits: Limits): Result[De
   shared.set_i32(format, "sample-rate", config.request.sample_rate);
   shared.set_i32(format, "channel-count", config.request.channels);
   shared.set_i32(format, "max-input-size", limits.max_packet_bytes);
+  if (config.pcm_encoding != 0) {
+    shared.set_i32(format, "pcm-encoding", config.pcm_encoding);
+  }
   if (config.request.profile > 0) {
     shared.set_i32(format, if (config.request.mime == "audio/mp4a-latm") { "aac-profile" } else { "profile" }, config.request.profile);
   }
@@ -122,7 +137,7 @@ pub function open_named(config: Config, name: string, limits: Limits): Result[De
     return Err(frame.Platform);
   }
   unsafe {
-    return Ok(Decoder { handle: handle, scratch: __alloc(32), limits: limits });
+    return Ok(Decoder { handle: handle, scratch: __alloc(32), limits: limits, pcm_encoding: config.pcm_encoding });
   }
 }
 
@@ -201,7 +216,7 @@ function output_format(decoder: Decoder): Result[Format, frame.VideoError] {
   if (result.sample_rate > decoder.limits.max_sample_rate || result.channels > decoder.limits.max_channels) {
     return Err(frame.Limit);
   }
-  if (result.encoding != PCM_I16 && result.encoding != PCM_F32) {
+  if (!valid_encoding(result.encoding) || decoder.pcm_encoding != 0 && result.encoding != decoder.pcm_encoding) {
     return Err(frame.Unsupported);
   }
   return Ok(result);
