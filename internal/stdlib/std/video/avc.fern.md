@@ -33,6 +33,7 @@ The caller's packet budget and a separate 64 KiB ceiling apply before unescaped 
 The coded-picture pixel budget also bounds the map units of the supplied sequence.
 
 The reader checks parameter-set identifiers, entropy flags, reference defaults, prediction flags, quantizers, and optional scaling lists.
+Explicit Baseline and Extended sequence profiles require CAVLC entropy mode, under H.264 clauses A.2.1 and A.2.3.
 It validates all seven slice-group map types against the supplied coded dimensions.
 Explicit map identifiers are checked without a retained map allocation.
 The result reports metadata, without scaling coefficients, map contents, or decoded samples.
@@ -818,10 +819,17 @@ function picture_prefix(input: [u8], expected: i32): Result[PicturePrefix, frame
   return Ok(PicturePrefix { at: at, id: id as i32, entropy: entropy != 0u32, bottom: bottom != 0u32 });
 }
 
+function valid_entropy(profile: i32, entropy: boolean): boolean {
+  return !entropy || profile != 66 && profile != 88;
+}
+
 pub function inspect_pps(input: [u8], sequence: Sequence, limits: frame.Limits): Result[PictureParameters, frame.VideoError] {
   let bytes = parameter_bytes(input, limits, 8u8, MAX_PPS_BYTES)?;
   let units = sequence_map_units(sequence, limits)?;
   let p = picture_prefix(bytes, sequence.sequence_id)?;
+  if (!valid_entropy(sequence.profile_idc, p.entropy)) {
+    return Err(frame.Header);
+  }
   let groups = slice_groups(bytes, p.at, units, sequence.coded.width / 16)?;
   let prediction = prediction_defaults(bytes, groups.at)?;
   let quantizers = quantizer_defaults(bytes, prediction.at, sequence.bit_depth_luma)?;

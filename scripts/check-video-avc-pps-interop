@@ -34,6 +34,15 @@ def compare(sps_path, pps_path, expected):
 with tempfile.TemporaryDirectory() as temporary:
     directory = Path(temporary)
     trace = fixtures.syntax.build_trace()
+    for name, sps, pps, allowed in fixtures.entropy_profiles():
+        expected = fixtures.reference(trace, sps, pps, directory)
+        assert expected[2] == int(name.endswith("entropy-1"))
+        sps_path = directory / (name + ".sps")
+        pps_path = directory / (name + ".pps")
+        sps_path.write_bytes(sps)
+        pps_path.write_bytes(pps)
+        compare(sps_path, pps_path, expected if allowed else [])
+    print("All eight profile/entropy controls match native/WASI admission. CBS confirms fields, without a profile-refusal claim.", flush=True)
     for name, sps, pps, expected, encoded in fixtures.vectors(directory):
         sps_path = directory / (name + ".sps")
         pps_path = directory / (name + ".pps")

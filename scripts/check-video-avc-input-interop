@@ -217,6 +217,46 @@ def reference_counts(directory, baseline, reordered):
     print("Four coded zero-reference refusals preserve exact FFmpeg extraction. Numeric CBS fields support specification-based decisions.", flush=True)
 
 
+def entropy_mode(unit, at, field):
+    raw = re.sub(b"\0\0\x03", b"\0\0", unit)
+    assert escaped(raw) == unit and field == "0"
+    bits = "".join(f"{byte:08b}" for byte in raw)
+    assert bits[at:at + 1] == field
+    changed = bits[:at] + "1" + bits[at + 1:]
+    return escaped(bytes(int(changed[i:i + 8], 2) for i in range(0, len(changed), 8)))
+
+
+def entropy_profiles(directory, baseline, main):
+    original = units(baseline.read_bytes())
+    assert all(value == 66 for _, _, value in header_fields(baseline, "profile_idc"))
+    assert all(value == 1 for _, _, value in header_fields(baseline, "direct_8x8_inference_flag"))
+    assert all(value == 77 for _, _, value in header_fields(main, "profile_idc"))
+    assert all(value == 1 for _, _, value in header_fields(main, "entropy_coding_mode_flag"))
+    changed = [unit[:1] + bytes([88]) + unit[2:] if unit[0] & 31 == 7 else unit for unit in original]
+    extended = directory / "extended-cavlc.h264"
+    extended.write_bytes(encoded_groups([changed]))
+    delimiter_extraction(extended, [changed])
+    assert all(value == 88 for _, _, value in header_fields(extended, "profile_idc"))
+    compare(extended, 18, decoded(baseline))
+    for source in (baseline, extended):
+        data = source.read_bytes()
+        packets = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_packets", "-of", "json", str(source)]))["packets"]
+        groups = [units(data[int(p["pos"]):int(p["pos"]) + int(p["size"])]) for p in packets]
+        at, field, value = header_fields(source, "entropy_coding_mode_flag")[0]
+        assert value == 0
+        positions = [i for i, group in enumerate(groups) if any(unit[0] & 31 == 8 for unit in group)]
+        assert len(positions) >= 2 and positions[0] == 0
+        for index in positions[:2]:
+            changed = [list(group) for group in groups]
+            changed[index] = [entropy_mode(unit, at, field) if unit[0] & 31 == 8 else unit for unit in changed[index]]
+            path = directory / f"profile-cabac-{source.stem}-{index}.h264"
+            path.write_bytes(encoded_groups(changed))
+            delimiter_extraction(path, changed)
+            assert any(value == 1 for _, _, value in header_fields(path, "entropy_coding_mode_flag"))
+            reject(path, path.read_bytes())
+    print("Four coded Baseline/Extended CABAC refusals preserve exact extraction. Valid Extended CAVLC preserves every decoded plane.", flush=True)
+
+
 def slice_kind(unit, at, field, value):
     raw = re.sub(b"\0\0\x03", b"\0\0", unit)
     assert escaped(raw) == unit
@@ -443,3 +483,4 @@ with tempfile.TemporaryDirectory() as temporary:
     filler_positions(directory, paths[2])
     reference_counts(directory, paths[0], paths[3])
     uniform_slices(directory, paths[2], paths[3])
+    entropy_profiles(directory, paths[2], paths[3])
