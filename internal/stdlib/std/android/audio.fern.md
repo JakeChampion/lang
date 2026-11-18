@@ -30,6 +30,12 @@ The ring keeps the last samples that the device played: `recent` gives them, for
 
 ## Contracts
 
+`Buffered.write_f32` converts normalized float PCM directly into the playback ring.
+It clips to signed 16-bit PCM and rounds ties away from zero, as `std/audio/pcm.quantize` does.
+It returns the number of accepted samples and accepts only complete channel frames.
+Only the accepted prefix needs finite samples. A non-finite sample in this prefix returns `Sample` without publication.
+The method creates no intermediate PCM array. Effects and resampling remain with the caller.
+
 A stream with `ptr` 0 did not open. Close each other stream once.
 
 `timestamp` returns a frame position and its `CLOCK_MONOTONIC` time in nanoseconds.
@@ -68,6 +74,8 @@ The timestamp query does not assign media timestamps or measure acoustic lip-syn
 import "std/ffi";
 import "std/i32";
 import "std/i64";
+import "std/audio/pcm";
+import "std/f32";
 ```
 
 ### `C functions`
@@ -598,6 +606,32 @@ pub function (m: Buffered) write(samples: [i32]): i32 {
     }
     __atomic_store_release(m.ring + WRITE_AT as usize, at + n as i64);
     return n;
+  }
+}
+
+// Convert and publish one prefix. Unpublished bytes remain in the free part of the ring.
+pub function (m: Buffered) write_f32(samples: [f32]): Result[i32, pcm.AudioError] {
+  if (m.ring == 0 as usize) {
+    return Ok(0);
+  }
+  unsafe {
+    let capacity = __load_i64(m.ring + CAPACITY_AT as usize);
+    let at = __load_i64(m.ring + WRITE_AT as usize);
+    let room = capacity - (HISTORY * m.channels) as i64 - (at - ring_next(m.ring));
+    let n = (samples.len() as i64).min(room).max(0i64) as i32 / m.channels * m.channels;
+    for k in 0..n {
+      let sample = samples[k];
+      if (!sample.is_finite()) {
+        return Err(pcm.Sample);
+      }
+      let scaled = sample as f64 * 32768.0;
+      let v = if (scaled >= 32767.0) { 32767 } else if (scaled <= -32768.0) { -32768 } else { (scaled + (if (scaled < 0.0) { -0.5 } else { 0.5 })) as i32 };
+      let to = m.ring + DATA_AT as usize + ((at + k as i64) % capacity * 2i64) as usize;
+      __store_u8(to, v & 255);
+      __store_u8(to + 1 as usize, v >> 8 & 255);
+    }
+    __atomic_store_release(m.ring + WRITE_AT as usize, at + n as i64);
+    return Ok(n);
   }
 }
 
