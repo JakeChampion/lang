@@ -129,16 +129,17 @@ func TestCrossToolchainSharesInstallDeadline(t *testing.T) {
 	body = "# Limit package setup" + strings.ReplaceAll(body, "\n        ", "\n")
 	for _, tc := range []struct {
 		name, scenario, want string
-		cached, hit          bool
+		cached, hit, mirrors bool
 		exit                 int
 	}{
-		{"cache-hit", "cache-hit", "120 dpkg\n", true, true, 0},
-		{"older-image-goes-to-apt", "retry-recovers", "300 apt-get update\n300 apt-get update\n420 apt-get install\n", true, false, 0},
-		{"retry-recovers", "retry-recovers", "300 apt-get update\n300 apt-get update\n420 apt-get install\n", false, false, 0},
-		{"updates-exhaust-budget", "slow-update", "300 apt-get update\n285 apt-get update\n", false, false, 1},
-		{"install-exhausts-budget", "slow-install", "300 apt-get update\n420 apt-get install\n165 apt-get update\n", false, false, 1},
-		{"cache-shares-budget", "slow-cache", "120 dpkg\n300 apt-get update\n165 apt-get update\n", true, true, 1},
-		{"four-fast-failures", "fast-failure", "300 apt-get update\n300 apt-get update\n300 apt-get update\n300 apt-get update\n", false, false, 1},
+		{"cache-hit", "cache-hit", "120 dpkg\n", true, true, false, 0},
+		{"older-image-goes-to-apt", "retry-recovers", "300 apt-get update\n300 apt-get update\n240 apt-get install\n", true, false, false, 0},
+		{"retry-recovers", "retry-recovers", "300 apt-get update\n300 apt-get update\n240 apt-get install\n", false, false, false, 0},
+		{"retry-asks-the-next-mirror", "retry-recovers", "300 apt-get update\n300 apt-get update\n240 apt-get install\n", false, false, true, 0},
+		{"updates-exhaust-budget", "slow-update", "300 apt-get update\n285 apt-get update\n", false, false, false, 1},
+		{"install-exhausts-budget", "slow-install", "300 apt-get update\n240 apt-get install\n300 apt-get update\n15 apt-get update\n", false, false, false, 1},
+		{"cache-shares-budget", "slow-cache", "120 dpkg\n300 apt-get update\n165 apt-get update\n", true, true, false, 1},
+		{"four-fast-failures", "fast-failure", "300 apt-get update\n300 apt-get update\n300 apt-get update\n300 apt-get update\n", false, false, false, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -167,6 +168,9 @@ sudo() {
       for a in "$@"; do
         case "$a" in "$CACHE_DIR"/*.deb) /bin/rm -f "$a" ;; esac
       done
+      return 0 ;;
+    cp)
+      case "$3" in "$CACHE_DIR"/*) /bin/cp "$2" "$3" ;; esac
       return 0 ;;
     mkdir|chown) return 0 ;;
     *) return 90 ;;
@@ -209,7 +213,16 @@ qemu-aarch64() { echo emulator; }
 			defer cancel()
 			cmd := exec.CommandContext(ctx, "bash", "-c", mocks+body)
 			trace := filepath.Join(dir, "trace")
-			cmd.Env = ciEnv("CACHE_DIR="+dir, "CACHE_HIT="+strconv.FormatBool(tc.hit), "WANT_GCC=true", "WANT_LIBC=false", "QEMU_PKG=qemu-user", "SCENARIO="+tc.scenario, "TRACE="+trace)
+			mirrors := filepath.Join(dir, "apt-mirrors.txt")
+			env := []string{"CACHE_DIR=" + dir, "CACHE_HIT=" + strconv.FormatBool(tc.hit), "WANT_GCC=true", "WANT_LIBC=false", "QEMU_PKG=qemu-user", "SCENARIO=" + tc.scenario, "TRACE=" + trace}
+			if tc.mirrors {
+				list := "http://slow.example/ubuntu/\tpriority:1\nhttp://archive.ubuntu.com/ubuntu/\tpriority:2\n"
+				if err := os.WriteFile(mirrors, []byte(list), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				env = append(env, "MIRROR_LIST="+mirrors)
+			}
+			cmd.Env = ciEnv(env...)
 			out, err := cmd.CombinedOutput()
 			exit := 0
 			if err != nil {
@@ -225,6 +238,13 @@ qemu-aarch64() { echo emulator; }
 			got, err := os.ReadFile(trace)
 			if err != nil || string(got) != tc.want {
 				t.Fatalf("command trace=%q, want %q: %v\n%s", got, tc.want, err, out)
+			}
+			if tc.mirrors {
+				list, err := os.ReadFile(mirrors)
+				want := "http://archive.ubuntu.com/ubuntu/\tpriority:1\nhttp://slow.example/ubuntu/\tpriority:2\n"
+				if err != nil || string(list) != want {
+					t.Fatalf("mirror list after a failed attempt=%q, want %q: %v", list, want, err)
+				}
 			}
 			if tc.cached && tc.exit == 0 {
 				debs, _ := filepath.Glob(filepath.Join(dir, "*.deb"))

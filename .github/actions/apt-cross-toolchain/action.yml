@@ -29,7 +29,9 @@ description: >
   packages are installed straight from the cache with dpkg, which is the
   only fix that removes the mirror from the critical path rather than
   hoping it behaves. The retry loop stays as the miss path, and the
-  cache is populated from that same fetch.
+  cache is populated from that same fetch. Each retry asks the next
+  mirror of the runner's list, so one slow mirror does not take all
+  the attempts.
 
 inputs:
   qemu-package:
@@ -111,6 +113,7 @@ runs:
       env:
         CACHE_DIR: ${{ runner.temp }}/apt-cross-cache
         CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+        MIRROR_LIST: /etc/apt/apt-mirrors.txt
         WANT_GCC: ${{ inputs.cross-gcc }}
         WANT_LIBC: ${{ inputs.cross-libc }}
         WANT_GL: ${{ inputs.host-gl }}
@@ -215,7 +218,7 @@ runs:
           while [ "$attempt" -le "$max" ]; do
             echo "::group::apt attempt $attempt/$max"
             if privileged_run 300 apt-get update -qq &&
-               privileged_run 420 apt-get install -y --no-install-recommends \
+               privileged_run 240 apt-get install -y --no-install-recommends \
                  -o "Dir::Cache::archives=$CACHE_DIR" \
                  -o APT::Keep-Downloaded-Packages=true \
                  $PACKAGES; then
@@ -227,6 +230,20 @@ runs:
             if [ "$attempt" -eq "$max" ] || [ "$remaining" -le 0 ]; then
               echo "::error::cross-toolchain setup failed after ${attempt} attempts or reached its 600-second limit. No tests ran. Check the Ubuntu mirror and apt repositories."
               exit 1
+            fi
+            # A slow mirror is no error to apt, so a retry on the same mirror
+            # crawls again. The next attempt asks the next mirror of the list.
+            # The .debs that the last attempt fetched stay in the cache dir.
+            if [ -f "${MIRROR_LIST:-}" ]; then
+              rotated="$(mktemp)"
+              awk 'NF { line[++n] = $0 }
+                   END { for (k = 1; k <= n; k++) {
+                     s = line[k % n + 1]
+                     gsub(/[ \t]*priority:[0-9]+/, "", s)
+                     print s "\tpriority:" k } }' "$MIRROR_LIST" > "$rotated" &&
+                sudo cp "$rotated" "$MIRROR_LIST" &&
+                echo "the next attempt asks $(head -n 1 "$MIRROR_LIST" | cut -f1)"
+              rm -f "$rotated"
             fi
             delay=$((attempt * 15))
             if [ "$delay" -gt "$remaining" ]; then
