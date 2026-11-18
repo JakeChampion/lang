@@ -15,6 +15,8 @@ pub function (x: Context) object(): jni.Object {
 // The class android.content.Context and the IDs of its members.
 pub struct ContextClass { class: usize, id_get_content_resolver: usize, id_get_package_manager: usize, id_get_package_name: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
   let local = jni.find_class(e, "android/content/Context");
   jni.check(e)?;
@@ -74,6 +76,8 @@ pub function (x: ContentResolver) object(): jni.Object {
 // The class android.content.ContentResolver and the IDs of its members.
 pub struct ContentResolverClass { class: usize, id_delete: usize, id_insert: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function content_resolver_class(e: usize): Result[ContentResolverClass, jni.JavaError] {
   let local = jni.find_class(e, "android/content/ContentResolver");
   jni.check(e)?;
@@ -128,6 +132,8 @@ pub function (x: ContentValues) object(): jni.Object {
 // The class android.content.ContentValues and the IDs of its members.
 pub struct ContentValuesClass { class: usize, id_new: usize, id_put_string_long: usize, id_put_string_string: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function content_values_class(e: usize): Result[ContentValuesClass, jni.JavaError] {
   let local = jni.find_class(e, "android/content/ContentValues");
   jni.check(e)?;
@@ -195,6 +201,8 @@ pub function (x: PackageManager) object(): jni.Object {
 // The class android.content.pm.PackageManager and the IDs of its members.
 pub struct PackageManagerClass { class: usize, id_has_system_feature: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function package_manager_class(e: usize): Result[PackageManagerClass, jni.JavaError] {
   let local = jni.find_class(e, "android/content/pm/PackageManager");
   jni.check(e)?;
@@ -235,6 +243,8 @@ pub function (x: Uri) object(): jni.Object {
 // The class android.net.Uri and the IDs of its members.
 pub struct UriClass { class: usize, id_get_last_path_segment: usize, id_parse: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function uri_class(e: usize): Result[UriClass, jni.JavaError] {
   let local = jni.find_class(e, "android/net/Uri");
   jni.check(e)?;
@@ -287,6 +297,8 @@ pub function (x: TvContract) object(): jni.Object {
 // The class android.media.tv.TvContract and the IDs of its members.
 pub struct TvContractClass { class: usize, id_request_channel_browsable: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function tv_contract_class(e: usize): Result[TvContractClass, jni.JavaError] {
   let local = jni.find_class(e, "android/media/tv/TvContract");
   jni.check(e)?;
@@ -326,6 +338,8 @@ pub function (x: Long) object(): jni.Object {
 // The class java.lang.Long and the IDs of its members.
 pub struct LongClass { class: usize, id_value_of: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function long_class(e: usize): Result[LongClass, jni.JavaError] {
   let local = jni.find_class(e, "java/lang/Long");
   jni.check(e)?;
@@ -354,7 +368,9 @@ pub function (c: LongClass) value_of(e: usize, a0: i64): Result[Long, jni.JavaEr
 pub struct Classes { context: ContextClass, content_resolver: ContentResolverClass, content_values: ContentValuesClass, package_manager: PackageManagerClass, uri: UriClass, tv_contract: TvContractClass, long: LongClass }
 
 // Makes the struct of IDs of each class. Call it one time, and call
-// `release` when the app does not call Java again.
+// `release` when the app does not call Java again. One lookup for each
+// class, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
   let context = match (context_class(e)) {
     Ok(c) => c,
