@@ -1,0 +1,48 @@
+// Run with scripts/audio-reference/aaudio-buffered-mock.c on the host.
+// This measures conversion and ring publication, not device playback or power.
+import "std/android/audio";
+import "std/audio/pcm";
+import "std/bench";
+
+function measure(m: audio.Buffered, samples: [f32], fused: boolean, rounds: i32): void {
+  let format = pcm.Format { sample_rate: 48000, channels: 2, bits_per_sample: 16 };
+  let allocations = bench.alloc_count();
+  let started = monotonic_ns();
+  let accepted = 0;
+  for _ in 0..rounds {
+    m.flush();
+    if (fused) {
+      accepted += m.write_f32(samples).unwrap_or(-1000000);
+    } else {
+      let Ok(block) = pcm.quantize(samples, format, pcm.default_limits()) else {
+        exit(2);
+      };
+      accepted += m.write(block.samples);
+    }
+  }
+  let elapsed = monotonic_ns() - started;
+  let count = bench.allocs_after(allocations);
+  if (accepted != rounds * samples.len()) {
+    exit(3);
+  }
+  print("{\"fused\":" + (if (fused) { "true" } else { "false" }) + ",\"wall_ns\":" + elapsed.to_string() + ",\"allocations\":" + count.to_string() + ",\"samples\":" + accepted.to_string() + "}");
+}
+
+pub function main(): i32 {
+  let m = audio.buffered(48000, 2);
+  if (m.ring == 0 as usize) {
+    return 1;
+  }
+  let samples: f32[] = [];
+  for i in 0..1024 {
+    samples = samples.append((i - 512) as f32 / 256.0f32);
+  }
+  measure(m, samples, false, 100);
+  measure(m, samples, true, 100);
+  for trial in 0..9 {
+    measure(m, samples, trial % 2 == 0, 10000);
+    measure(m, samples, trial % 2 != 0, 10000);
+  }
+  m.close();
+  return 0;
+}

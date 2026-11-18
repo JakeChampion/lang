@@ -2,6 +2,8 @@
 // (scripts/audio-reference/aaudio-buffered-mock.c). main gives 0, or the
 // number of the first check that fails.
 import "std/android/audio";
+import "std/audio/pcm";
+import "std/bench";
 
 @import("libaaudio.so", "mock_pull")
 function pull(frames: i32): i32;
@@ -37,6 +39,120 @@ function counted(n: i32, first: i32): i32[] {
     out = out.append(first + i);
   }
   return out;
+}
+
+function compare_floats(m: audio.Buffered, values: [f32]): boolean {
+  let Ok(reference) = pcm.quantize(values, pcm.Format { sample_rate: 48000, channels: 2, bits_per_sample: 16 }, pcm.default_limits()) else {
+    return false;
+  };
+  let Ok(n) = m.write_f32(values) else {
+    return false;
+  };
+  if (n != values.len() || pull(n / 2) != 0) {
+    return false;
+  }
+  for i in 0..n {
+    if (sample(i) != reference.samples[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function floats(): i32 {
+  let m = audio.buffered(48000, 2);
+  if (m.ring == 0 as usize) {
+    return 20;
+  }
+  let values: f32[] = [0.0f32, -0.0f32, 1.0f32, -1.0f32, 1.5f32, -1.5f32, 0.0000152587890625f32, -0.0000152587890625f32, 0.0000457763671875f32, -0.0000457763671875f32, 0.999969482421875f32, -0.999969482421875f32];
+  let Ok(reference) = pcm.quantize(values, pcm.Format { sample_rate: 48000, channels: 2, bits_per_sample: 16 }, pcm.default_limits()) else {
+    return 21;
+  };
+  let before = bench.alloc_count();
+  let wrote = m.write_f32(values);
+  let allocations = bench.allocs_after(before);
+  let Ok(count) = wrote else {
+    return 22;
+  };
+  if (count != values.len() || allocations != 0i64) {
+    return 23;
+  }
+  if (pull(count / 2) != 0) {
+    return 24;
+  }
+  for i in 0..count {
+    if (sample(i) != reference.samples[i]) {
+      return 25;
+    }
+  }
+  for bad in [f32_from_bits(2139095040), f32_from_bits(-8388608), f32_from_bits(2143289344)] {
+    let before_queue = m.queued();
+    let Err(pcm.Sample) = m.write_f32([0.5f32, bad]) else {
+      return 26;
+    };
+    if (m.queued() != before_queue || pull(1) != 0 || sample(0) != 0 || sample(1) != 0) {
+      return 27;
+    }
+  }
+  // Compare each signed quantization threshold and its adjacent binary32 values.
+  for block in 0..128 {
+    let thresholds: f32[] = [];
+    for i in 0..256 {
+      let midpoint = ((block * 256 + i) as f32 + 0.5f32) / 32768.0f32;
+      for delta in [-1, 0, 1] {
+        let near = f32_from_bits(f32_bits(midpoint) + delta);
+        thresholds = thresholds.append(near).append(-near);
+      }
+    }
+    if (!compare_floats(m, thresholds)) {
+      return 37;
+    }
+  }
+  let extremes: f32[] = [];
+  for exponent in 0..255 {
+    for fraction in [0, 1, 4194303, 8388607] {
+      let value = f32_from_bits(exponent << 23 | fraction);
+      extremes = extremes.append(value).append(-value);
+    }
+  }
+  if (!compare_floats(m, extremes)) {
+    return 38;
+  }
+  let values: f32[] = [];
+  for _ in 0..96002 {
+    values = values.append(0.5f32);
+  }
+  let Ok(n) = m.write_f32(values) else {
+    return 28;
+  };
+  if (n != 96000) {
+    return 29;
+  }
+  let Ok(empty) = m.write_f32([f32_from_bits(2143289344), 0.0f32]) else {
+    return 30;
+  };
+  if (empty != 0 || pull(2) != 0) {
+    return 31;
+  }
+  let Ok(part) = m.write_f32([0.25f32, -0.25f32, 0.125f32, -0.125f32, f32_from_bits(2143289344)]) else {
+    return 32;
+  };
+  if (part != 4) {
+    return 33;
+  }
+  for _ in 0..23 {
+    if (pull(2000) != 0) {
+      return 34;
+    }
+  }
+  if (pull(1998) != 0) {
+    return 35;
+  }
+  if (pull(2) != 0 || pulled(4) != "8192,-8192,4096,-4096") {
+    return 36;
+  }
+  m.close();
+  return 0;
 }
 
 pub function main(): i32 {
@@ -88,5 +204,5 @@ pub function main(): i32 {
   if (closed() != 1) {
     return 11;
   }
-  return 0;
+  return floats();
 }
