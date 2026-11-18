@@ -297,6 +297,50 @@ func TestCIQueuesPullRequests(t *testing.T) {
 	}
 }
 
+const priorityGateJob = "wait-for-priority"
+
+// TestPRSuitesWaitForAPriorityBatch pins the names that ci-suite.yml,
+// merge-queue.yml and scripts/merge-queue share for the `ci-priority` label.
+func TestPRSuitesWaitForAPriorityBatch(t *testing.T) {
+	var gate *ciJob
+	for _, j := range workflowJobs(t, ciSuiteFile) {
+		if j.id == priorityGateJob {
+			gate = &j
+		}
+	}
+	if gate == nil {
+		t.Fatalf("%s has no %q job", ciSuiteFile, priorityGateJob)
+	}
+	if gate.keys["if"] != "github.event_name == 'pull_request'" {
+		t.Errorf("%s: %s runs on `%s`; only a pull request suite waits, and a wait on main "+
+			"or on the batch itself never ends", ciSuiteFile, priorityGateJob, gate.keys["if"])
+	}
+	suite := workflowSource(t, ciSuiteFile)
+	for _, needle := range []string{`"ci-priority"`, `branch: "merge-queue/batch"`, `/^Merge pull request #(\d+) /`} {
+		if !strings.Contains(suite, needle) {
+			t.Errorf("%s: the gate script lacks %s, which scripts/merge-queue writes", ciSuiteFile, needle)
+		}
+	}
+	script, err := os.ReadFile(filepath.Join(mustRepoRoot(t), "scripts", "merge-queue"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{
+		`PRIORITY = "ci-priority"`,
+		`SUITE_JOBS = "Full suite / "`,
+		`GATE_JOB = SUITE_JOBS + "` + gate.keys["name"] + `"`,
+		`"Merge pull request #{number} from `,
+	} {
+		if !strings.Contains(string(script), needle) {
+			t.Errorf("scripts/merge-queue lacks %s: it names the label, the suite job of ci.yml, "+
+				"the gate job of %s and the merge subject that the gate reads", needle, ciSuiteFile)
+		}
+	}
+	if !strings.Contains(workflowSource(t, "merge-queue.yml"), `fromJSON('["merge-queue","ci-priority"]')`) {
+		t.Errorf("merge-queue.yml does not run on the `ci-priority` label, so the label waits for the schedule")
+	}
+}
+
 func TestMainCICoalescesPendingRuns(t *testing.T) {
 	main := workflowSource(t, ciMainFile)
 	conc, ok := topLevelBlock(main, "concurrency")
@@ -349,9 +393,10 @@ func TestCILaneFiltersMatchTheirJobs(t *testing.T) {
 			t.Errorf("%s: lane %q has no row in the lane table, so nothing decides whether "+
 				"it runs", ciFile, id)
 		}
-		// A suite lane reads the lane map ci.yml passes it; a lane ci.yml runs
-		// itself, outside the suite queue, reads the `changes` job's output.
-		wantNeeds, want := "", "fromJSON(inputs.lanes)['"+id+"']"
+		// A suite lane reads the lane map ci.yml passes it, after the gate that
+		// waits for a priority batch; a lane ci.yml runs itself, outside the
+		// suite queue, reads the `changes` job's output.
+		wantNeeds, want := "["+priorityGateJob+"]", "${{ !cancelled() && fromJSON(inputs.lanes)['"+id+"'] }}"
 		if j.file == ciFile {
 			wantNeeds, want = "[changes]", "fromJSON(needs.changes.outputs.lanes)['"+id+"']"
 		}
