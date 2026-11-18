@@ -92,19 +92,25 @@ runs:
         echo "id=$id" >> "$GITHUB_OUTPUT"
         echo "runner image: $id"
 
-    # Keyed on the runner image plus the package set. The image rolls every
+    # Keyed on the package set plus the runner image. The image rolls every
     # couple of weeks, which is the refresh signal — a cross toolchain pinned
-    # forever would drift from the image's libc.
+    # forever would drift from the image's libc. After a roll, the restore
+    # key gives the same package set from an older image. That is not a hit:
+    # apt then fetches only the packages whose version changed.
     - name: Restore cached cross-toolchain .debs
-      uses: actions/cache@v6
+      id: cache
+      uses: actions/cache/restore@v6
       with:
         path: ${{ runner.temp }}/apt-cross-cache
-        key: apt-cross-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.id }}-gcc${{ inputs.cross-gcc }}-libc${{ inputs.cross-libc }}-gl${{ inputs.host-gl }}-${{ inputs.qemu-package }}
+        key: apt-cross-v2-${{ runner.os }}-${{ runner.arch }}-gcc${{ inputs.cross-gcc }}-libc${{ inputs.cross-libc }}-gl${{ inputs.host-gl }}-${{ inputs.qemu-package }}-${{ steps.image.outputs.id }}
+        restore-keys: |
+          apt-cross-v2-${{ runner.os }}-${{ runner.arch }}-gcc${{ inputs.cross-gcc }}-libc${{ inputs.cross-libc }}-gl${{ inputs.host-gl }}-${{ inputs.qemu-package }}-
 
     - name: aarch64 cross toolchain + ${{ inputs.qemu-package }}
       shell: bash
       env:
         CACHE_DIR: ${{ runner.temp }}/apt-cross-cache
+        CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
         WANT_GCC: ${{ inputs.cross-gcc }}
         WANT_LIBC: ${{ inputs.cross-libc }}
         WANT_GL: ${{ inputs.host-gl }}
@@ -178,8 +184,12 @@ runs:
         # the mirror) is needed. A partial or stale set just falls through
         # to the fetch below, which reuses whatever .debs are still valid
         # and repairs any half-configured state on its way through.
+        # Only an exact hit goes to dpkg. The .debs of an older image are
+        # input to apt, which installs the current versions.
         dpkg_ok=1
-        if ls "$CACHE_DIR"/*.deb >/dev/null 2>&1; then
+        if [ "$CACHE_HIT" != "true" ]; then
+          dpkg_ok=0
+        elif ls "$CACHE_DIR"/*.deb >/dev/null 2>&1; then
           echo "::group::dpkg install from $(ls "$CACHE_DIR"/*.deb | wc -l) cached .debs"
           privileged_run 120 dpkg -i "$CACHE_DIR"/*.deb || dpkg_ok=0
           echo "::endgroup::"
@@ -227,7 +237,17 @@ runs:
           done
         fi
 
-        # Hand the cache dir back to the runner user so the post-job save
+        # Keep only the .debs of the versions now installed. After a restore
+        # from an older image, the set also holds the versions apt replaced.
+        for deb in "$CACHE_DIR"/*.deb; do
+          [ -e "$deb" ] || continue
+          pkg="$(dpkg-deb -f "$deb" Package):$(dpkg-deb -f "$deb" Architecture)"
+          if [ "$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null)" != "$(dpkg-deb -f "$deb" Version)" ]; then
+            sudo rm -f "$deb"
+          fi
+        done
+
+        # Hand the cache dir back to the runner user so the save step
         # can read it, and drop apt's partial-download scratch so a
         # half-fetched .deb is never archived.
         sudo rm -rf "$CACHE_DIR/partial" "$CACHE_DIR/lock"
@@ -248,3 +268,12 @@ runs:
           qemu-system) qemu-system-aarch64 --version | head -1 && qemu-system-x86_64 --version | head -1 ;;
           *) qemu-aarch64 --version | head -1 ;;
         esac
+
+    # Saved as soon as the install works, so a job that fails a test later
+    # still fills the cache for the next job on this image.
+    - name: Save the cross-toolchain .debs
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ runner.temp }}/apt-cross-cache
+        key: ${{ steps.cache.outputs.cache-primary-key }}
