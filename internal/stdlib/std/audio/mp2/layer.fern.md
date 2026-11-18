@@ -121,8 +121,20 @@ pub function read_into(input: [u8], h: header.Header, own previous: Scale): (Sca
 }
 
 pub function read(input: [u8], h: header.Header): Result[(bits.Bits, Scale), pcm.AudioError] {
-  let (scale, result) = read_into(input, h, empty());
-  return Ok((result?, scale));
+  let shape = allocation(h);
+  let (b1, values) = bitalloc(input, bits.new(input.len() * 8), shape, __alloc_u8(64));
+  let (b2, codes) = scale_codes(input, b1, values, shape.bands, __alloc_u8(64));
+  if (b2.bad) {
+    return Err(pcm.Truncated);
+  }
+  let (b3, scales) = factors(input, b2, values, codes, shape.bands, spectral.zeros(192));
+  if (b3.bad) {
+    return Err(pcm.Truncated);
+  }
+  for band in shape.stereo..shape.bands {
+    values = values.with(band * 2 + 1, 0u8);
+  }
+  return Ok((b3, Scale { bands: shape.bands, stereo: shape.stereo, allocation: values, factors: scales, codes: codes, protected: b2.pos }));
 }
 
 pub function (value: Scale) protected_bits(): i32 {

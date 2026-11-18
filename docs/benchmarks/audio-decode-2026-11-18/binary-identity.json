@@ -1,0 +1,12 @@
+{
+  "x86-64": {
+    "final_workspace_binary_sha256": "2bff9be81696df802ba8f61e0699e4bd54b0f8954b484b892cae96e584d7e655",
+    "measured_binary_sha256": "2bff9be81696df802ba8f61e0699e4bd54b0f8954b484b892cae96e584d7e655",
+    "report": "decode-results.json"
+  },
+  "arm64": {
+    "final_workspace_binary_sha256": "79d77d177a1c6b02f826fbaa01e6b49ffc6069bdfe711fceeb31fa960ea1af09",
+    "measured_binary_sha256": "79d77d177a1c6b02f826fbaa01e6b49ffc6069bdfe711fceeb31fa960ea1af09",
+    "report": "native-arm64-results.json"
+  }
+}

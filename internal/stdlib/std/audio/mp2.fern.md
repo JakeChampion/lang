@@ -102,9 +102,40 @@ function reconstruct(own d: Decoder, input: [u8], b: bits.Bits, h: header.Header
   return (Decoder { qmf: qmf, sample_rate: sample_rate, channels: channels }, Workspace { scratch: scratch, lines: lines, transform: transform, scale: scale }, Ok(Frame { sample_rate: h.sample_rate, channels: h.channels, frames: 1152, bytes_read: h.bytes, samples: output }));
 }
 
+function reconstruct_frame(own d: Decoder, input: [u8], b: bits.Bits, scale: layer.Scale, h: header.Header, own output: f32[]): (Decoder, Result[Frame, pcm.AudioError]) {
+  let Decoder { qmf, sample_rate, channels } = d;
+  let scratch = spectral.zeros(1152);
+  let lines = spectral.zeros(1728);
+  let transform = spectral.zeros(128);
+  for part in 0..3 {
+    let decoded = layer.granule_into(input, b, scale, part, scratch);
+    let (next_bits, samples) = match (decoded) {
+      Ok(value) => value,
+      Err(e) => { return (Decoder { qmf: clear(qmf), sample_rate: 0, channels: 0 }, Err(e)); },
+    };
+    b = next_bits;
+    let (next_qmf, pcm, values, synthesis_lines, transform_values) = synthesis.granule12_into(qmf, samples, h.channels, output, part * 384 * h.channels, lines, transform);
+    qmf = next_qmf;
+    output = pcm;
+    scratch = values;
+    lines = synthesis_lines;
+    transform = transform_values;
+  }
+  return (Decoder { qmf: qmf, sample_rate: sample_rate, channels: channels }, Ok(Frame { sample_rate: h.sample_rate, channels: h.channels, frames: 1152, bytes_read: h.bytes, samples: output }));
+}
+
 pub function (own d: Decoder) decode_frame_into(input: [u8], at: i32, own output: f32[], limits: pcm.Limits): (Decoder, Result[Frame, pcm.AudioError]) {
-  let (next, work, result) = d.decode_frame_with(input, at, output, workspace(), limits);
-  return (next, result);
+  let h = match (inspect(input, at, limits)) { Ok(value) => value, Err(e) => { return (d, Err(e)); } };
+  if (output.len() < 1152 * h.channels) {
+    return (d, Err(pcm.Buffer));
+  }
+  let start = at + 4 + (if (h.crc) { 2 } else { 0 });
+  let payload = input[start:at + h.bytes];
+  let (b, scale) = match (layer.read(payload, h)) { Ok(value) => value, Err(e) => { return (d.reset(), Err(e)); } };
+  if (h.crc && layer.checksum(input[at + 2:at + 4], payload, scale.protected_bits()) != wire.be(input, at + 4, 2) as i32) {
+    return (d.reset(), Err(pcm.Checksum));
+  }
+  return reconstruct_frame(prepared(d, h), payload, b, scale, h, output);
 }
 
 pub function (own d: Decoder) decode_frame_with(input: [u8], at: i32, own output: f32[], own work: Workspace, limits: pcm.Limits): (Decoder, Workspace, Result[Frame, pcm.AudioError]) {

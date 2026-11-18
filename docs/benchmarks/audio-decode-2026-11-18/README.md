@@ -31,6 +31,20 @@ The report records its header hashes, compiler hash, CPU, reference tools, and e
 Scalar minimp3 remains faster than Fern. Its SIMD implementation remains faster still.
 Fern validates protected-frame CRC. The reference timing does not perform that CRC check.
 
+## Convenience frame API
+
+The convenience frame method retains its independent scratch construction path.
+This avoids two extra workspace objects per frame compared with a wrapper around the new API.
+
+A remaining compiler boundary materializes one Scale record per frame when both decode APIs are reachable.
+The legacy comparison records 633 versus 591 allocations for the 42-frame stereo stream.
+Its median decode time still falls by 7–15% in this separate five-trial campaign.
+Use `decode_frame_with` to obtain the reported allocation reductions. Issue #16444 tracks the compiler boundary.
+
+The final convenience-path adjustment does not change the workspace benchmark binary on x86-64 or ARM64.
+Its SHA-256 matches the original measured candidate on each ISA.
+This identity check preserves the applicability of the workspace timing reports.
+
 ## Measurement scope
 
 `--timing decode` removes the per-sample checksum from the timed region.
@@ -70,7 +84,12 @@ The MP3 reference and mutation suite also passes after the shared synthesis chan
 MP2 smoke, MP2 boundaries, and MP3 reference tests pass on WASM.
 Those suites compile for Android ARM64.
 
-Native ARM64 speed measurements and physical Android playback measurements remain separate requirements.
+The native CI comparison passes on ARM64 and x86-64 in [run 44287107715](https://github.com/JakeChampion/lang/actions/runs/44287107715).
+ARM64 median time falls by 7–12%. The second x86-64 host measures 6–11% less time.
+Both hosts preserve exact scalar-reference PCM and the same allocation reductions.
+The JSON reports retain every trial.
+
+Physical Android playback measurements remain a separate requirement.
 The optional `audio_baseline` input of `perf.yml` runs this comparison on native x86-64 and ARM64 hosts.
 Hosted ARM64 results do not establish phone power use, thermal behavior, or codec hardware availability.
 
