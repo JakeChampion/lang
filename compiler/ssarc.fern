@@ -6069,16 +6069,14 @@ function function_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SIns
 
 // The operands of a call through a function value that hand their unit to
 // the callee, as call_value_supplied plans them, and whether its result holds
-// a unit.
+// a unit. The callee itself is never handed: the body of a `once` closure
+// borrows its environment, and the caller drops it after the call.
 function with_units(o: ir.Op, f: ssasem.Func, ins: ssa.SInst): ir.Op {
   if (ins.args.len() > ir.call_units_operands()) {
     return o;
   }
   let callee = f.values[ins.args[0]];
   let units = 0;
-  if (ssasem.func_once(callee)) {
-    units = 1;
-  }
   for i in 1..ins.args.len() {
     if (ssasem.func_param_own(callee, i - 1) && ssasem.counted(f, f.values[ins.args[i]])) {
       let bit = 1 << i;
