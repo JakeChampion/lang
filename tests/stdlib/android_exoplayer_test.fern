@@ -1,0 +1,98 @@
+import "std/android";
+import "std/android/exoplayer";
+import "std/android/player";
+import "std/test";
+
+function names(cs: player.Change[]): string {
+  let out: string[] = [];
+  for c in cs {
+    let name = match (c) {
+      player.Prepared => "prepared",
+      player.Completed => "completed",
+      player.Failed(what, extra) => "failed " + what.to_string() + " " + extra.to_string(),
+      player.Buffering(on) => "buffering " + on.to_string(),
+      player.Rendering => "rendering",
+      player.Seeked => "seeked",
+      player.AudioNotPlaying => "no audio",
+      player.VideoNotPlaying => "no video",
+    };
+    out = out.append(name);
+  }
+  return out.join(", ");
+}
+
+function phase(stage: i32, buffering: boolean): exoplayer.Phase {
+  return exoplayer.Phase { stage: stage, buffering: buffering };
+}
+
+function at(state: i32): exoplayer.Snapshot {
+  return exoplayer.Snapshot { state: state, failed: false, error: 0, moved_on: false, first_frame: false, video: 1, video_played: 1 };
+}
+
+function step(was: exoplayer.Phase, s: exoplayer.Snapshot): string {
+  let (now, changes) = exoplayer.follow(was, s);
+  return now.stage.to_string() + " " + now.buffering.to_string() + ": " + names(changes);
+}
+
+// An opening item is prepared once it can play, or once it ends.
+function prepared(): test.TestOutcome {
+  let opening = phase(exoplayer.OPENING, false);
+  let ready = step(opening, at(exoplayer.STATE_READY));
+  let waits = step(opening, at(exoplayer.STATE_BUFFERING));
+  let short = step(opening, at(exoplayer.STATE_ENDED));
+  let no_video = step(opening, exoplayer.Snapshot { ...at(exoplayer.STATE_READY), video: 2, video_played: 0 });
+  return test.assert_eq([ready, waits, short, no_video].join(" | "), "2 false: prepared | 1 false:  | 3 false: prepared, completed | 2 false: prepared, no video");
+}
+
+// A ready item says when it waits for data and when it plays again, once
+// each time.
+function buffering(): test.TestOutcome {
+  let ready = phase(exoplayer.READY, false);
+  let waiting = phase(exoplayer.READY, true);
+  return test.assert_eq([step(ready, at(exoplayer.STATE_BUFFERING)), step(waiting, at(exoplayer.STATE_BUFFERING)), step(waiting, at(exoplayer.STATE_READY)), step(ready, at(exoplayer.STATE_READY))].join(" | "), "2 true: buffering true | 2 true:  | 2 false: buffering false | 2 false: ");
+}
+
+// The end, an error, the chained item and the first frame.
+function endings(): test.TestOutcome {
+  let ready = phase(exoplayer.READY, false);
+  let ended = step(ready, at(exoplayer.STATE_ENDED));
+  let again = step(phase(exoplayer.ENDED, false), at(exoplayer.STATE_ENDED));
+  let failed = step(ready, exoplayer.Snapshot { ...at(exoplayer.STATE_READY), failed: true, error: 2001 });
+  let moved = step(ready, exoplayer.Snapshot { ...at(exoplayer.STATE_READY), moved_on: true });
+  let frame = step(ready, exoplayer.Snapshot { ...at(exoplayer.STATE_READY), first_frame: true });
+  let idle = step(phase(exoplayer.IDLE, false), at(exoplayer.STATE_READY));
+  return test.assert_eq([ended, again, failed, moved, frame, idle].join(" | "), "3 false: completed | 3 false:  | 4 false: failed 2001 0 | 2 false: completed | 2 false: rendering | 0 false: ");
+}
+
+// The longs of a state, from S_POSITION to S_CHAINED.
+function state(position: i64, sampled: i64, length: i64, on: i64, speed: i64): i64[] {
+  return [position, sampled, length, on, speed, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+}
+
+// The position moves on at the speed of the playback while it plays, and
+// stops at the end.
+function positions(): test.TestOutcome {
+  let paused = exoplayer.position_at(state(5000i64, 100i64, 60000i64, 0i64, 1000i64), 900i64);
+  let plays = exoplayer.position_at(state(5000i64, 100i64, 60000i64, 1i64, 1000i64), 900i64);
+  let fast = exoplayer.position_at(state(5000i64, 100i64, 60000i64, 1i64, 1500i64), 900i64);
+  let end = exoplayer.position_at(state(59900i64, 100i64, 60000i64, 1i64, 1000i64), 900i64);
+  let live = exoplayer.position_at(state(5000i64, 100i64, 0i64, 1i64, 1000i64), 900i64);
+  let short = exoplayer.position_at([1i64, 2i64], 900i64);
+  return test.assert_eq([paused, plays, fast, end, live, short].map((v: i64): string => v.to_string()).join(" "), "5000 5800 6200 60000 5800 0");
+}
+
+// A player with no object sends no event.
+function no_player(): test.TestOutcome {
+  let p = exoplayer.none();
+  return test.assert_eq(p.live().to_string() + " " + p.sent(android.Posted(19, 0 as usize)).to_string(), "false false");
+}
+
+function main(): i32 {
+  let suite = test.new("Android ExoPlayer events");
+  suite = suite.it("an opening item is prepared once", prepared);
+  suite = suite.it("a ready item waits for data and plays again", buffering);
+  suite = suite.it("the end, an error, a chained item and the first frame", endings);
+  suite = suite.it("the position moves on while the player plays", positions);
+  suite = suite.it("a player with no object", no_player);
+  return suite.finish();
+}

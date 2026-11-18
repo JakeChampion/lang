@@ -23761,7 +23761,18 @@ function lu_later_expr(e: ast.Expr, own l: LuLater): LuLater {
 // of the update literal with the base `aid`. The literal takes its base
 // after its field values run, so such a mention is not a later read.
 function lu_later_in_values(st: ast.Stmt, aid: ast.ExprIdent): boolean {
-  let all = astwalk.fold_stmt_nodes(st, LuLater { name: aid.name, line: aid.line, col: aid.col, n: 0, values: [] }, lu_later_stmt, lu_later_expr, astwalk.descend_all);
+  return lu_later_only_in_values(astwalk.fold_stmt_nodes(st, lu_later_start(aid), lu_later_stmt, lu_later_expr, astwalk.descend_all));
+}
+
+function lu_later_in_expr_values(e: ast.Expr, aid: ast.ExprIdent): boolean {
+  return lu_later_only_in_values(astwalk.fold_expr_nodes(e, lu_later_start(aid), lu_later_stmt, lu_later_expr, astwalk.descend_all));
+}
+
+function lu_later_start(aid: ast.ExprIdent): LuLater {
+  return LuLater { name: aid.name, line: aid.line, col: aid.col, n: 0, values: [] };
+}
+
+function lu_later_only_in_values(all: LuLater): boolean {
   let inside = 0;
   for v in all.values {
     inside += astwalk.fold_expr_nodes(v, LuLater { ...all, n: 0 }, lu_later_stmt, lu_later_expr, astwalk.descend_all).n;
@@ -23990,7 +24001,7 @@ function lu_mentions_at(e: ast.Expr, aid: ast.ExprIdent): boolean {
 // tag, or a read in a guard or an arm before a whole assignment. LU_SETTLED:
 // every arm assigns the local whole or leaves the statement.
 function lu_call_tag_settles(reach: LuReach, m: ast.StmtMatch, aid: ast.ExprIdent): i32 {
-  if (lu_expr_mentions(m.scrutinee, aid, true)) {
+  if (lu_expr_mentions(m.scrutinee, aid, true) && !lu_later_in_expr_values(m.scrutinee, aid)) {
     return LU_LIVE;
   }
   let settled = m.arms.len() > 0;

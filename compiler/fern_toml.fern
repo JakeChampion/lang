@@ -252,7 +252,7 @@ const ANDROID_TEXT: string[] = ["package", "label", "icon", "banner", "key", "ve
 
 const ANDROID_SWITCHES: string[] = ["home", "tv", "pip", "compress", "cleartext", "debuggable"];
 
-const ANDROID_LISTS: string[] = ["permissions", "assets", "widget"];
+const ANDROID_LISTS: string[] = ["permissions", "assets", "dex", "widget"];
 
 const ANDROID_NUMBERS: string[] = ["min_sdk", "version_code"];
 

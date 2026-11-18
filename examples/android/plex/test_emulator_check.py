@@ -48,5 +48,19 @@ class VideoScreenTests(unittest.TestCase):
                 self.assertLess(check.video_colors(width, height, pixels), 12)
 
 
+
+class DumpTests(unittest.TestCase):
+    def test_accessible_names_read_text_and_descriptions(self):
+        xml = '<node text="" content-desc="Test Pattern (2026)" /><node text="Square Tone" content-desc="" />'
+        self.assertEqual(check.accessible_names(xml), {"Test Pattern (2026)", "Square Tone"})
+
+    def test_pinned_needs_the_app_in_the_pinned_mode(self):
+        pip = "  * Task{a1 #12 type=standard A=10123:dev.fern.plex U=0 visible=true mode=pinned sz=1}"
+        full = "  * Task{a1 #12 type=standard A=10123:dev.fern.plex U=0 visible=true mode=fullscreen sz=1}"
+        other = "  * Task{b2 #13 type=standard A=10124:com.other U=0 visible=true mode=pinned sz=1}"
+        self.assertTrue(check.pinned(full + "\n" + pip))
+        self.assertFalse(check.pinned(full + "\n" + other))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,38 @@
+// A literal with base t takes t after its field values run, also in the tag
+// of a match. The reads of t in the field values do not keep t live.
+struct Queue { out: Writer, n: i32 }
+
+function wrap(own q: Queue): Option[Queue] {
+  return Some(q);
+}
+
+function bump(own q: Queue): Queue {
+  let t = q;
+  let u = wrap(Queue { ...t, n: t.n + 1 });
+  match (u) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return Queue { out: stdout(), n: 0 };
+    }
+  }
+}
+
+function step(own q: Queue, own spare: Queue): Queue {
+  let t = q;
+  match (wrap(Queue { ...t, n: t.n + 3 })) {
+    Some(u) => {
+      return u;
+    },
+    None => {
+      return spare;
+    }
+  }
+}
+
+function main(): i32 {
+  let q = step(bump(Queue { out: stdout(), n: 1 }), Queue { out: stdout(), n: 0 });
+  print(q.n);
+  return 0;
+}

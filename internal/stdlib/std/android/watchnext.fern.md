@@ -40,6 +40,7 @@ A program needs no permission: the provider keeps the programs of each app apart
 // This module puts items on the Watch Next row and on a channel row of
 // Android TV.
 import "std/android";
+import "std/android/watchnext/bindings";
 import "std/clock";
 import "std/i64";
 import "std/jni";
@@ -89,40 +90,39 @@ pub function keep(ctx: usize, p: Program): boolean {
     return false;
   }
   let e = android.env(ctx);
-  if (jni.call1(e, 19, 64 as usize) as i32 != 0) {
-    let cleared = jni.exception_clear(e);
+  let Some(tv) = open(ctx, e, 64) else {
     return false;
-  }
-  defer pop_frame(e);
-  drop_in(ctx, e, p.id);
-  let values = new_values(e);
-  if (values == 0 as usize) {
+  };
+  defer close(e, tv);
+  delete_where(e, tv, URI, "internal_provider_id=?", p.id);
+  let Some(values) = new_values(e, tv) else {
     return false;
-  }
-  put_text(e, values, "title", p.title);
-  put_text(e, values, "internal_provider_id", p.id);
-  put_text(e, values, "intent_uri", p.link);
+  };
+  put_text(e, tv, values, "title", p.title);
+  put_text(e, tv, values, "internal_provider_id", p.id);
+  put_text(e, tv, values, "intent_uri", p.link);
   if (p.poster.len() > 0) {
-    put_text(e, values, "poster_art_uri", p.poster);
+    put_text(e, tv, values, "poster_art_uri", p.poster);
   }
-  put_number(e, values, "type", p.kind as i64);
-  put_number(e, values, "watch_next_type", CONTINUE as i64);
-  put_number(e, values, "last_playback_position_millis", p.position_ms);
-  put_number(e, values, "duration_millis", p.duration_ms);
-  put_number(e, values, "last_engagement_time_utc_millis", clock.now().unix_millis());
-  return insert(ctx, e, URI, values) != 0 as usize;
+  put_number(e, tv, values, "type", p.kind as i64);
+  put_number(e, tv, values, "watch_next_type", CONTINUE as i64);
+  put_number(e, tv, values, "last_playback_position_millis", p.position_ms);
+  put_number(e, tv, values, "duration_millis", p.duration_ms);
+  put_number(e, tv, values, "last_engagement_time_utc_millis", clock.now().unix_millis());
+  return insert(e, tv, URI, values).is_some();
 }
 
 // The intent URI that starts the NativeActivity of the app with the string
 // extra `key` set to `value`. The extra must not hold ";".
 pub function app_link(ctx: usize, key: string, value: string): string {
   let e = android.env(ctx);
-  let name = jni.call_object(e, android.activity_object(ctx), "getPackageName", "()Ljava/lang/String;", []);
-  if (failed(e) || name == 0 as usize) {
+  let Some(tv) = open(ctx, e, 8) else {
     return "";
-  }
-  let package = jni.string_of(e, name);
-  let gone = jni.delete_local_ref(e, name);
+  };
+  defer close(e, tv);
+  let Ok(package) = tv.c.context.get_package_name(e, tv.app) else {
+    return "";
+  };
   return "intent:#Intent;component=" + package + "/android.app.NativeActivity;S." + key + "=" + value + ";end";
 }
 
@@ -132,17 +132,11 @@ pub function drop(ctx: usize, id: string): void {
     return;
   }
   let e = android.env(ctx);
-  if (jni.call1(e, 19, 16 as usize) as i32 != 0) {
-    let cleared = jni.exception_clear(e);
+  let Some(tv) = open(ctx, e, 16) else {
     return;
-  }
-  drop_in(ctx, e, id);
-  pop_frame(e);
-}
-
-// Deletes the Watch Next rows of the app whose internal_provider_id is `id`.
-function drop_in(ctx: usize, e: usize, id: string): void {
-  delete_where(ctx, e, URI, "internal_provider_id=?", id);
+  };
+  defer close(e, tv);
+  delete_where(e, tv, URI, "internal_provider_id=?", id);
 }
 ```
 
@@ -159,30 +153,26 @@ pub function add_channel(ctx: usize, name: string, link: string): i64 {
     return -1i64;
   }
   let e = android.env(ctx);
-  if (jni.call1(e, 19, 32 as usize) as i32 != 0) {
-    let cleared = jni.exception_clear(e);
-    return -1i64;
-  }
-  defer pop_frame(e);
-  let values = new_values(e);
-  if (values == 0 as usize) {
-    return -1i64;
-  }
-  put_text(e, values, "type", "TYPE_PREVIEW");
-  put_text(e, values, "display_name", name);
-  put_text(e, values, "app_link_intent_uri", link);
-  let row = insert(ctx, e, CHANNELS, values);
-  if (row == 0 as usize) {
-    return -1i64;
-  }
-  let segment = jni.call_object(e, row, "getLastPathSegment", "()Ljava/lang/String;", []);
-  if (failed(e) || segment == 0 as usize) {
-    return -1i64;
-  }
-  let Ok(id) = i64.parse_i64(jni.string_of(e, segment)) else {
+  let Some(tv) = open(ctx, e, 32) else {
     return -1i64;
   };
-  request_browsable(ctx, e, id);
+  defer close(e, tv);
+  let Some(values) = new_values(e, tv) else {
+    return -1i64;
+  };
+  put_text(e, tv, values, "type", "TYPE_PREVIEW");
+  put_text(e, tv, values, "display_name", name);
+  put_text(e, tv, values, "app_link_intent_uri", link);
+  let Some(row) = insert(e, tv, CHANNELS, values) else {
+    return -1i64;
+  };
+  let Ok(segment) = tv.c.uri.get_last_path_segment(e, row) else {
+    return -1i64;
+  };
+  let Ok(id) = i64.parse_i64(segment) else {
+    return -1i64;
+  };
+  let asked = tv.c.tv_contract.request_channel_browsable(e, tv.app, id);
   return id;
 }
 
@@ -194,65 +184,50 @@ pub function show_channel(ctx: usize, channel: i64, programs: Program[]): boolea
     return false;
   }
   let e = android.env(ctx);
-  if (jni.call1(e, 19, 16 as usize) as i32 != 0) {
-    let cleared = jni.exception_clear(e);
+  let Some(tv) = open(ctx, e, 16) else {
     return false;
-  }
-  delete_where(ctx, e, PREVIEWS, "channel_id=?", channel.to_string());
-  pop_frame(e);
+  };
+  defer close(e, tv);
+  delete_where(e, tv, PREVIEWS, "channel_id=?", channel.to_string());
   for p in programs {
-    if (!add_program(ctx, e, channel, p)) {
+    if (!add_program(e, tv, channel, p)) {
       return false;
     }
   }
   return true;
 }
 
-// Adds the program `p` to the channel `channel`.
-function add_program(ctx: usize, e: usize, channel: i64, p: Program): boolean {
-  if (jni.call1(e, 19, 32 as usize) as i32 != 0) {
-    let cleared = jni.exception_clear(e);
+// Adds the program `p` to the channel `channel`, in a local frame of its
+// own.
+function add_program(e: usize, tv: Tv, channel: i64, p: Program): boolean {
+  if (!push_frame(e, 32)) {
     return false;
   }
   defer pop_frame(e);
-  let values = new_values(e);
-  if (values == 0 as usize) {
+  let Some(values) = new_values(e, tv) else {
     return false;
-  }
-  put_number(e, values, "channel_id", channel);
-  put_number(e, values, "type", p.kind as i64);
-  put_text(e, values, "title", p.title);
-  put_text(e, values, "internal_provider_id", p.id);
-  put_text(e, values, "intent_uri", p.link);
+  };
+  put_number(e, tv, values, "channel_id", channel);
+  put_number(e, tv, values, "type", p.kind as i64);
+  put_text(e, tv, values, "title", p.title);
+  put_text(e, tv, values, "internal_provider_id", p.id);
+  put_text(e, tv, values, "intent_uri", p.link);
   if (p.poster.len() > 0) {
-    put_text(e, values, "poster_art_uri", p.poster);
-    put_number(e, values, "poster_art_aspect_ratio", POSTER as i64);
+    put_text(e, tv, values, "poster_art_uri", p.poster);
+    put_number(e, tv, values, "poster_art_aspect_ratio", POSTER as i64);
   }
   if (p.duration_ms > 0i64) {
-    put_number(e, values, "duration_millis", p.duration_ms);
+    put_number(e, tv, values, "duration_millis", p.duration_ms);
   }
-  return insert(ctx, e, PREVIEWS, values) != 0 as usize;
-}
-
-function request_browsable(ctx: usize, e: usize, channel: i64): void {
-  let class = jni.find_class(e, "android/media/tv/TvContract");
-  if (failed(e) || class == 0 as usize) {
-    return;
-  }
-  let id = jni.get_static_method_id(e, class, "requestChannelBrowsable", "(Landroid/content/Context;J)V");
-  if (failed(e) || id == 0 as usize) {
-    return;
-  }
-  let args = jni.jvalues([android.activity_object(ctx), channel as usize]);
-  let done = jni.call_static_void_method_a(e, class, id, args);
-  jni.free_buffer(args);
-  let cleared = failed(e);
+  return insert(e, tv, PREVIEWS, values).is_some();
 }
 ```
 
 ### `rows`
 
 A device has the rows of Android TV when it has the feature `android.software.leanback`, from API level 26.
+
+Each call goes through the typed wrappers of `std/android/watchnext/bindings`, which `std/jni/bind` wrote from `bindings.spec`. `open` finds the classes, the context of the activity and its content resolver in a local frame, and `close` lets them go.
 
 ```fern
 <<rows>>=
@@ -262,144 +237,105 @@ pub function home_rows(ctx: usize): boolean {
     return false;
   }
   let e = android.env(ctx);
-  if (jni.call1(e, 19, 8 as usize) as i32 != 0) {
-    let cleared = jni.exception_clear(e);
+  let Some(tv) = open(ctx, e, 8) else {
     return false;
-  }
-  defer pop_frame(e);
-  let manager = jni.call_object(e, android.activity_object(ctx), "getPackageManager", "()Landroid/content/pm/PackageManager;", []);
-  if (failed(e) || manager == 0 as usize) {
+  };
+  defer close(e, tv);
+  let Ok(manager) = tv.c.context.get_package_manager(e, tv.app) else {
     return false;
-  }
-  let id = jni.get_method_id(e, jni.get_object_class(e, manager), "hasSystemFeature", "(Ljava/lang/String;)Z");
-  if (failed(e) || id == 0 as usize) {
+  };
+  let Ok(has) = tv.c.package_manager.has_system_feature(e, manager, "android.software.leanback") else {
     return false;
-  }
-  let args = jni.jvalues([jni.new_string(e, "android.software.leanback")]);
-  let has = jni.call_boolean_method_a(e, manager, id, args);
-  jni.free_buffer(args);
-  return !failed(e) && (has & 255) != 0;
+  };
+  return has;
 }
 
-// A new empty ContentValues, or 0.
-function new_values(e: usize): usize {
-  let class = jni.find_class(e, "android/content/ContentValues");
-  if (failed(e) || class == 0 as usize) {
-    return 0 as usize;
+// The classes of the calls, the context of the activity, and its content
+// resolver.
+struct Tv { c: bindings.Classes, app: bindings.Context, resolver: bindings.ContentResolver }
+
+// The classes and the resolver, in a new local frame of `refs` references.
+// None when Java refuses one of them.
+function open(ctx: usize, e: usize, refs: i32): Option[Tv] {
+  if (!push_frame(e, refs)) {
+    return None;
   }
-  let none = jni.jvalues([]);
-  let values = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", "()V"), none);
-  jni.free_buffer(none);
-  if (failed(e)) {
-    return 0 as usize;
-  }
-  return values;
+  let Ok(c) = bindings.classes(e) else {
+    pop_frame(e);
+    return None;
+  };
+  let app = bindings.Context { ref: android.activity_object(ctx) };
+  let Ok(resolver) = c.context.get_content_resolver(e, app) else {
+    c.release(e);
+    pop_frame(e);
+    return None;
+  };
+  return Some(Tv { c: c, app: app, resolver: resolver });
 }
 
-// Inserts `values` at the table of the URI `table`. The URI of the new
-// row, or 0.
-function insert(ctx: usize, e: usize, table: string, values: usize): usize {
-  let resolver = resolver_of(ctx, e);
-  let uri = parse_uri(e, table);
-  if (resolver == 0 as usize || uri == 0 as usize) {
-    return 0 as usize;
+function close(e: usize, tv: Tv): void {
+  tv.c.release(e);
+  pop_frame(e);
+}
+
+// A new empty ContentValues.
+function new_values(e: usize, tv: Tv): Option[bindings.ContentValues] {
+  let Ok(values) = tv.c.content_values.new(e) else {
+    return None;
+  };
+  return Some(values);
+}
+
+// Inserts `values` at the table of the URI `table`. The URI of the new row.
+function insert(e: usize, tv: Tv, table: string, values: bindings.ContentValues): Option[bindings.Uri] {
+  let Ok(uri) = tv.c.uri.parse(e, table) else {
+    return None;
+  };
+  let Ok(row) = tv.c.content_resolver.insert(e, tv.resolver, uri, values) else {
+    return None;
+  };
+  if (row.is_null()) {
+    return None;
   }
-  let row = jni.call_object(e, resolver, "insert", "(Landroid/net/Uri;Landroid/content/ContentValues;)Landroid/net/Uri;", [uri, values]);
-  if (failed(e)) {
-    return 0 as usize;
-  }
-  return row;
+  return Some(row);
 }
 
 // Deletes the rows of the app at the table of the URI `table` where
 // `column`, such as "channel_id=?", has the value `value`.
-function delete_where(ctx: usize, e: usize, table: string, column: string, value: string): void {
-  let resolver = resolver_of(ctx, e);
-  let uri = parse_uri(e, table);
-  let where = jni.new_string(e, column);
-  let text = jni.new_string(e, value);
-  let string_class = jni.find_class(e, "java/lang/String");
-  if (failed(e) || resolver == 0 as usize || uri == 0 as usize || string_class == 0 as usize) {
+function delete_where(e: usize, tv: Tv, table: string, column: string, value: string): void {
+  let Ok(uri) = tv.c.uri.parse(e, table) else {
+    return;
+  };
+  let args = jni.string_array(e, [value]);
+  if (args == 0 as usize) {
+    let cleared = jni.exception_clear(e);
     return;
   }
-  let args = jni.new_object_array(e, 1, string_class, text);
-  if (failed(e) || args == 0 as usize) {
-    return;
-  }
-  let id_of_delete = jni.get_method_id(e, jni.get_object_class(e, resolver), "delete", "(Landroid/net/Uri;Ljava/lang/String;[Ljava/lang/String;)I");
-  if (failed(e) || id_of_delete == 0 as usize) {
-    return;
-  }
-  let call_args = jni.jvalues([uri, where, args]);
-  let deleted = jni.call_int_method_a(e, resolver, id_of_delete, call_args);
-  jni.free_buffer(call_args);
-  let cleared = failed(e);
+  let deleted = tv.c.content_resolver.delete(e, tv.resolver, uri, column, jni.Object { ref: args });
 }
 
-function resolver_of(ctx: usize, e: usize): usize {
-  let activity = android.activity_object(ctx);
-  let resolver = jni.call_object(e, activity, "getContentResolver", "()Landroid/content/ContentResolver;", []);
-  if (failed(e)) {
-    return 0 as usize;
-  }
-  return resolver;
+function put_text(e: usize, tv: Tv, values: bindings.ContentValues, key: string, value: string): void {
+  let put = tv.c.content_values.put_string_string(e, values, key, value);
 }
 
-function parse_uri(e: usize, text: string): usize {
-  let class = jni.find_class(e, "android/net/Uri");
-  if (failed(e) || class == 0 as usize) {
-    return 0 as usize;
-  }
-  let id = jni.get_static_method_id(e, class, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
-  if (failed(e) || id == 0 as usize) {
-    return 0 as usize;
-  }
-  let args = jni.jvalues([jni.new_string(e, text)]);
-  let uri = jni.call_static_object_method_a(e, class, id, args);
-  jni.free_buffer(args);
-  if (failed(e)) {
-    return 0 as usize;
-  }
-  return uri;
+function put_number(e: usize, tv: Tv, values: bindings.ContentValues, key: string, value: i64): void {
+  let Ok(boxed) = tv.c.long.value_of(e, value) else {
+    return;
+  };
+  let put = tv.c.content_values.put_string_long(e, values, key, boxed);
 }
 
-function put_text(e: usize, values: usize, key: string, value: string): void {
-  let ok = jni.call_void(e, values, "put", "(Ljava/lang/String;Ljava/lang/String;)V", [jni.new_string(e, key), jni.new_string(e, value)]);
-  let cleared = failed(e);
-}
-
-function put_number(e: usize, values: usize, key: string, value: i64): void {
-  let long_class = jni.find_class(e, "java/lang/Long");
-  if (failed(e) || long_class == 0 as usize) {
-    return;
+// Starts a local frame of `refs` references. False when Java refuses it.
+function push_frame(e: usize, refs: i32): boolean {
+  if (jni.call1(e, 19, refs as usize) as i32 != 0) {
+    let cleared = jni.exception_clear(e);
+    return false;
   }
-  let id = jni.get_static_method_id(e, long_class, "valueOf", "(J)Ljava/lang/Long;");
-  if (failed(e) || id == 0 as usize) {
-    return;
-  }
-  let args = jni.jvalues([value as usize]);
-  let boxed = jni.call_static_object_method_a(e, long_class, id, args);
-  jni.free_buffer(args);
-  if (failed(e) || boxed == 0 as usize) {
-    return;
-  }
-  let ok = jni.call_void(e, values, "put", "(Ljava/lang/String;Ljava/lang/Long;)V", [jni.new_string(e, key), boxed]);
-  let cleared = failed(e);
+  return true;
 }
 
 // Ends the local frame of references that a call started.
 function pop_frame(e: usize): void {
   let popped = jni.call1(e, 20, 0 as usize);
-}
-
-// True when a Java exception was pending, which this clears.
-function failed(e: usize): boolean {
-  let exception = jni.exception_occurred(e);
-  if (exception == 0 as usize) {
-    return false;
-  }
-  let cleared = jni.exception_clear(e);
-  let gone = jni.delete_local_ref(e, exception);
-  return true;
 }
 ```

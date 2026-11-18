@@ -838,6 +838,7 @@ own_parameter_takes_a_string_literal                 0
 own_self_reassign_move                               0
 own_struct_update_reuse                              0
 own_takes_base_of_alias_beside_replaced_field_read   0
+own_takes_base_of_alias_in_match_tag                 0
 own_takes_replaced_field_of_owned_base               0
 own_transfer                                         0
 own_tree_match                                       0

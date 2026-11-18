@@ -17,12 +17,17 @@ its intent, so it needs no sign-in at plex.tv. The check requires:
   centre key opens it;
 - a track plays on to its end after the home key sends the app away, and
   the media session of Android shows the app;
+- a link to an artist plays its two tracks, and the second one follows
+  the first with no gap, from the second media player;
+- the accessibility tree of the home screen names each poster, as
+  TalkBack reads it;
 - with VIDEO.mp4, a link shows the video on a texture that the app draws.
   The 4:3 pattern fills the width with black bars above and below it, and
   it is upright. A tap shows the controls over it with no pause, and a tap
   on the play button pauses it. Paused, the app draws the controls, and a
   tap on the play button shows the video again, upright, then the back key
-  stops it;
+  stops it. The home key during the video puts it in a picture-in-picture
+  window;
 - logcat shows no crash.
 
 OUT_DIR gets logcat, the screens and the requests that the server saw.
@@ -81,6 +86,9 @@ def item(key, kind, title, extra):
 
 
 TRACK = item("900", "track", "Square Tone", ',"parentTitle":"Test Album","grandparentTitle":"Fern","duration":3000,"Media":[{"container":"wav","audioCodec":"pcm","Part":[{"key":"/library/parts/900/tone.wav","container":"wav"}]}]')
+FIRST = item("911", "track", "First Tone", ',"parentTitle":"Test Album","grandparentTitle":"Fern","duration":2000,"Media":[{"container":"wav","audioCodec":"pcm","Part":[{"key":"/library/parts/911/tone.wav","container":"wav"}]}]')
+SECOND = item("912", "track", "Second Tone", ',"parentTitle":"Test Album","grandparentTitle":"Fern","duration":2000,"Media":[{"container":"wav","audioCodec":"pcm","Part":[{"key":"/library/parts/912/tone.wav","container":"wav"}]}]')
+ARTIST = item("920", "artist", "Fern", "")
 MOVIE = item("901", "movie", "Test Pattern", ',"year":2026,"duration":20000,"summary":"Bars and a clock.","Media":[{"container":"mp4","videoCodec":"h264","videoResolution":"240","Part":[{"key":"/library/parts/901/pattern.mp4","container":"mp4"}]}]')
 
 
@@ -94,6 +102,9 @@ ROUTES = {
     "/hubs": container('"Hub":[{"title":"Recently Added","hubIdentifier":"home.recent","Metadata":[' + MOVIE + "," + TRACK + "]}]"),
     "/library/metadata/900": container('"Metadata":[' + TRACK + "]"),
     "/library/metadata/901": container('"Metadata":[' + MOVIE + "]"),
+    "/library/metadata/920": container('"Metadata":[' + ARTIST + "]"),
+    "/library/metadata/920/children": container('"Metadata":[' + item("910", "album", "Test Album", "") + "]"),
+    "/library/metadata/920/allLeaves": container('"Metadata":[' + FIRST + "," + SECOND + "]"),
 }
 
 
@@ -361,10 +372,62 @@ def check_video(out, port):
         fail("no report that the video stopped")
 
 
+def check_gapless(out, port):
+    start(port, "920")
+    if not wait_for(lambda: "plex: prepared 911" in logcat()):
+        return fail("Play on the artist did not play its first track")
+    if not wait_for(lambda: "plex: play 912 with no gap" in logcat(), timeout=30):
+        return fail("the second track did not follow with no gap: " + " | ".join(l for l in logcat().splitlines() if "plex" in l))
+    # The scrobble goes out after the "stopped" timeline in the report queue.
+    if not wait_for(lambda: seen("/:/scrobble?identifier=com.plexapp.plugins.library&key=911"), timeout=15):
+        fail("the first track did not become watched at its end")
+
+
+# The names of the views and of the virtual views of a uiautomator dump.
+def accessible_names(xml):
+    return set(re.findall(r'(?:text|content-desc)="([^"]+)"', xml))
+
+
+def check_access(out, port):
+    start(port)
+    if not wait_for(lambda: seen("/hubs") and seen("/photo/:/transcode")):
+        return fail("the home screen asked for no hubs or no posters")
+    time.sleep(3)
+    adb("shell", "uiautomator", "dump", "/sdcard/plex-ui.xml", check=False)
+    xml = adb("shell", "cat", "/sdcard/plex-ui.xml", check=False)
+    with open(f"{out}/ui.xml", "w") as f:
+        f.write(xml)
+    names = accessible_names(xml)
+    for title in ("Test Pattern", "Square Tone"):
+        if not any(title in n for n in names):
+            fail(f"the accessibility tree of the home screen does not name {title}")
+
+
+# True when a dump of `dumpsys activity activities` shows a task of the app
+# in the pinned mode of picture-in-picture.
+def pinned(dump):
+    return any(PACKAGE in line and "mode=pinned" in line for line in dump.splitlines())
+
+
+def check_pip(out, port):
+    start(port, "901")
+    if not wait_for(lambda: count_log(r"plex: video on the window") >= 1):
+        return fail("the video for picture-in-picture did not show")
+    time.sleep(2)
+    adb("shell", "input", "keyevent", "3")
+    if not wait_for(lambda: pinned(adb("shell", "dumpsys", "activity", "activities", check=False)), timeout=15):
+        fail("the home key during a video did not open a picture-in-picture window")
+    screen(out, "pip")
+    adb("shell", "am", "force-stop", PACKAGE)
+
+
 def main(apk, out, video=None):
     os.makedirs(out, exist_ok=True)
     files = {"/library/parts/900/tone.wav": os.path.join(out, "tone.wav")}
     tone(files["/library/parts/900/tone.wav"], 3)
+    for key in ("911", "912"):
+        files[f"/library/parts/{key}/tone.wav"] = os.path.join(out, f"tone-{key}.wav")
+        tone(files[f"/library/parts/{key}/tone.wav"], 2)
     if video:
         files["/library/parts/901/pattern.mp4"] = video
     httpd = server(files)
@@ -376,8 +439,11 @@ def main(apk, out, video=None):
         check_remote(out, port)
         check_track(out, port)
         check_background(out, port)
+        check_gapless(out, port)
+        check_access(out, port)
         if video:
             check_video(out, port)
+            check_pip(out, port)
         else:
             print("no VIDEO.mp4: the video is not checked", flush=True)
     finally:

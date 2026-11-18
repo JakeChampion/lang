@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""fetch [DIR] — get the Media3 ExoPlayer of media3.lock, and dex it.
+
+Each artifact of media3.lock goes to DIR/cache, and its SHA-256 must agree
+with the lock. The classes of each AAR, and each JAR, go to DIR/jars. D8 of
+the pinned R8 writes their DEX files to DIR/dex. The default DIR is
+build/media3 under the root of the repository.
+
+The output is the comma-separated list of the DEX files, which is the value
+of -apk-dex. The JAR files are the input of jnibind for
+std/android/exoplayer. D8 needs java on the PATH.
+"""
+
+import hashlib
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+import urllib.request
+import zipfile
+
+HERE = pathlib.Path(__file__).resolve().parent
+ROOT = HERE.parent.parent
+
+
+def lock():
+    out = []
+    for line in (HERE / "media3.lock").read_text().splitlines():
+        words = line.split()
+        if words and not words[0].startswith("#"):
+            kind, url, digest = words
+            out.append((kind, url, digest))
+    return out
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def get(url, digest, cache):
+    path = cache / url.rsplit("/", 1)[1]
+    if path.exists() and sha256(path) == digest:
+        return path
+    part = path.with_suffix(path.suffix + ".part")
+    with urllib.request.urlopen(url, timeout=60) as r, open(part, "wb") as f:
+        shutil.copyfileobj(r, f)
+    got = sha256(part)
+    if got != digest:
+        part.unlink()
+        sys.exit(f"fetch: {url} has the SHA-256 {got}, and media3.lock gives {digest}")
+    part.rename(path)
+    return path
+
+
+def main():
+    out = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "build" / "media3"
+    cache, jars, dex = out / "cache", out / "jars", out / "dex"
+    cache.mkdir(parents=True, exist_ok=True)
+    for d in (jars, dex):
+        shutil.rmtree(d, ignore_errors=True)
+        d.mkdir(parents=True)
+    r8 = None
+    inputs = []
+    for kind, url, digest in lock():
+        path = get(url, digest, cache)
+        if kind == "r8":
+            r8 = path
+        elif kind == "aar":
+            jar = jars / (path.stem + ".jar")
+            with zipfile.ZipFile(path) as z:
+                jar.write_bytes(z.read("classes.jar"))
+            inputs.append(jar)
+        else:
+            jar = jars / path.name
+            shutil.copyfile(path, jar)
+            inputs.append(jar)
+    if r8 is None:
+        sys.exit("fetch: media3.lock has no r8 line")
+    cmd = ["java", "-cp", str(r8), "com.android.tools.r8.D8", "--release", "--min-api", "30", "--output", str(dex)]
+    run = subprocess.run(cmd + [str(j) for j in inputs], capture_output=True, text=True)
+    if run.returncode != 0:
+        sys.exit("fetch: D8 failed\n" + run.stdout + run.stderr)
+    files = sorted(dex.glob("classes*.dex"), key=lambda p: (len(p.name), p.name))
+    print(",".join(str(p) for p in files))
+
+
+if __name__ == "__main__":
+    main()
