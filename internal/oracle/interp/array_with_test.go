@@ -477,8 +477,8 @@ func TestReturnMovesEachCall(t *testing.T) {
 	if ip.arraySetCopies != 0 {
 		t.Errorf("copied %d elements, want 0", ip.arraySetCopies)
 	}
-	if len(ip.returnMovable) != 2 {
-		t.Errorf("analysed %d return expressions, want 2", len(ip.returnMovable))
+	if len(ip.analysed) != 2 {
+		t.Errorf("analysed %d functions, want 2", len(ip.analysed))
 	}
 }
 

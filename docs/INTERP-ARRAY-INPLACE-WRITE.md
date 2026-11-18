@@ -116,29 +116,28 @@ through all of them.
 > zero**, and copies otherwise.
 
 Zero, not one, because the in-flight receiver reference is itself counted.
-What makes the count reach zero for the shape that matters is the **move**:
-`x = <rhs>` releases the slot's array reference *before* evaluating the
-right-hand side, since the slot is about to stop holding it. That is what
-Perceus does at a last use, and it is why `x = x.with(i, v)` finds the
-buffer unshared — and, because a parameter takes ownership of its
-argument, why `x = f(x)` does too, one call deep and inside the callee.
-An alias made during the right-hand side binds (and so counts), and an
-argument already evaluated is held by `evalCall`. The slot itself is the
-exception: it still reads the old value until the store. So the move is
-taken only when every read of the slot runs before anything writes — a
-single read, or an update chain rooted at the slot whose other reads all sit
-in the root link's own arguments. `x = x.with(0, 3).with(1, x[0])` reads the
-slot after the first link has written, so it copies (#9702). A right-hand side that fails — including
-a `?` unwind or a `return` out of a value-position block, both of which
-arrive as errors — puts the reference back.
+What makes the count reach zero for the shape that matters is the **move**.
+A read at the last use of a local gives the holds of the local away, and the
+local is empty after it. `last_use.go` finds each read after which no run
+reads the local before a write or the end of its scope. A return ends every
+scope, and an assignment writes its target. Thus `x = x.with(i, v)` finds the
+buffer unshared. `let (p, b) = bit(probs, i); probs = p;` moves `probs` into
+the call and `p` into `probs`. The analysis does not move a local that a
+lambda, a nested function or a defer reads.
 
-A read at the last use of a local is also a move. `last_use.go` finds each
-read of a local after which no run reads the local before a write or the end
-of its scope. That read gives the holds of the local away, and the local is
-empty after it. Thus `let (p, b) = bit(probs, i); probs = p;` moves `probs`
-into the call and `p` into `probs`. The analysis does not move a local that
-a lambda, a nested function or a defer reads. It leaves a return expression
-to `returnMoves`.
+The move happens at the read, not before the statement. A read that runs after
+a call keeps its hold while the call runs, so the call cannot write the array
+that the read sees (`TestLaterReadKeepsItsArray`). An alias binds, and so
+counts, and an argument already evaluated is held by `evalCall`.
+
+The root of an update chain is the exception. Its other reads sit in the
+arguments of the root link, so the slot must still hold the old value while
+they run. `x = x.with(i, x[i] + 1)` therefore releases the hold of the slot
+before the right-hand side runs, and `evalCall` holds the root value while
+the other arguments run. `x = x.with(0, 3).with(1, x[0])` reads the slot after
+the first link has written, so it copies (#9702). A right-hand side that fails
+— including a `?` unwind or a `return` out of a value-position block, both of
+which arrive as errors — puts the reference back.
 
 An in-place element write is taken only when neither the array nor the
 stored value can reach a Map. A Map keeps its own count (`rc`), which is

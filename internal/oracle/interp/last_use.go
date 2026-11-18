@@ -54,8 +54,7 @@ func (i *Interp) takeField(s *Struct, x *ast.FieldAccess, e *env) {
 // lastUses finds each read of a local, or of a field of a local, in fn after
 // which no run reads it before it writes the local again or leaves the scope
 // of the local. Such a read moves the value out, as a compiled read at a last
-// use does, so the local does not stop a write in place. returnMoves moves
-// the locals of a return expression, so a return is not examined here.
+// use does, so the local does not stop a write in place.
 func lastUses(fn *ast.FuncDecl) *lastUseWalk {
 	w := &lastUseWalk{
 		idents:   map[*ast.Ident]bool{},
@@ -105,7 +104,7 @@ func (w *lastUseWalk) block(stmts []ast.Stmt, owner ast.Stmt, decls map[string]b
 
 func (w *lastUseWalk) stmt(st ast.Stmt) {
 	switch x := st.(type) {
-	case *ast.ExprStmt, *ast.Var, *ast.Destructure:
+	case *ast.ExprStmt, *ast.Var, *ast.Destructure, *ast.Return:
 		w.simple(st)
 	case *ast.Block:
 		if x != nil {
@@ -150,16 +149,22 @@ func (w *lastUseWalk) body(st ast.Stmt, owner ast.Stmt) {
 type usePath struct{ name, field string }
 
 // simple marks the reads of st that are a last use. A path qualifies when one
-// run of st reads it once and no later run reads it before a write.
+// run of st reads it once and no later run reads it before a write. A return
+// ends every scope. An assignment writes its target, so one read of the old
+// value is its last, except the root of an update chain, which assignIdent
+// moves before the chain runs.
 func (w *lastUseWalk) simple(st ast.Stmt) {
-	target := ""
+	var target *ast.Ident
+	var value ast.Expr
+	compound := false
 	if es, ok := st.(*ast.ExprStmt); ok {
 		if as, ok := es.Expr.(*ast.Assign); ok {
 			if t, ok := as.Target.(*ast.Ident); ok {
-				target = t.Name
+				target, value, compound = t, as.Value, as.Op != ""
 			}
 		}
 	}
+	_, returns := st.(*ast.Return)
 	idents := map[usePath][]*ast.Ident{}
 	fields := map[usePath][]*ast.FieldAccess{}
 	ast.Walk(st, func(n ast.Node) bool {
@@ -167,8 +172,10 @@ func (w *lastUseWalk) simple(st ast.Stmt) {
 		case *ast.Lambda, *ast.FuncDecl:
 			return false
 		case *ast.Ident:
-			p := usePath{name: x.Name}
-			idents[p] = append(idents[p], x)
+			if x != target {
+				p := usePath{name: x.Name}
+				idents[p] = append(idents[p], x)
+			}
 		case *ast.FieldAccess:
 			if id, ok := x.Target.(*ast.Ident); ok {
 				p := usePath{id.Name, x.Field}
@@ -182,8 +189,13 @@ func (w *lastUseWalk) simple(st ast.Stmt) {
 		declares[name] = true
 	}
 	qualifies := func(p usePath) bool {
-		return p.name != target && !declares[p.name] && !w.captured[p.name] &&
-			w.declLevel(p.name) >= 0 && reads(st, p) == 1 && w.deadAfter(p)
+		if declares[p.name] || w.captured[p.name] || w.declLevel(p.name) < 0 {
+			return false
+		}
+		if target != nil && p.name == target.Name {
+			return !compound && p.field == "" && reads(value, p) == 1 && !updateChain(value, p.name)
+		}
+		return reads(st, p) == 1 && (returns || w.deadAfter(p))
 	}
 	for p, list := range idents {
 		if qualifies(p) {

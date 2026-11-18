@@ -589,8 +589,6 @@ type Interp struct {
 	moving []Value
 	raw    rawMemory
 
-	// returnMovable holds movableNames of each return expression.
-	returnMovable map[ast.Expr][]string
 	// lastUse and fieldLastUse hold the reads that move their local or a
 	// field of their local (lastUses), for each function in analysed.
 	lastUse      map[*ast.Ident]bool
@@ -6676,12 +6674,7 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		if x.Value == nil {
 			return result{flow: flowReturn, val: Void{}}, nil
 		}
-		moved := i.returnMoves(x.Value, e)
 		v, err := i.evalExpr(x.Value, e)
-		i.moving = i.moving[:len(i.moving)-len(moved)]
-		for _, old := range moved {
-			arrOwn(old)
-		}
 		if err != nil {
 			return result{}, err
 		}
@@ -8445,7 +8438,10 @@ func (i *Interp) evalAssign(a *ast.Assign, env *env) (Value, error) {
 
 func (i *Interp) assignIdent(a *ast.Assign, name string, env *env) (Value, error) {
 	old, _ := env.get(name)
-	move := movesFirst(a.Value, name)
+	// An array moves at the read of its last use (lastUses). Only the root of
+	// an update chain moves first, because its other reads need the slot.
+	_, isArray := old.(Array)
+	move := movesFirst(a.Value, name) && (!isArray || updateChain(a.Value, name))
 	if move {
 		arrDisown(old)
 		i.moving = append(i.moving, old)
@@ -8460,59 +8456,15 @@ func (i *Interp) assignIdent(a *ast.Assign, name string, env *env) (Value, error
 		}
 		return nil, err
 	}
+	// A read at the last use left the slot empty.
+	old, _ = env.get(name)
+	if !move {
+		arrDisown(old)
+	}
 	retainReplacing(v, old)
 	arrOwn(v)
 	env.set(name, v)
 	return v, nil
-}
-
-// returnMoves lets a return expression write in place into an array that a
-// local of the function holds, as assignIdent does for an assignment. The
-// local dies with the return, so its hold does not stop the write. A closure
-// that captured the local, or a defer that has not run, can read the array
-// after the return, so the local keeps its hold then. The caller pops the
-// moved arrays from i.moving and owns them again after the expression.
-func (i *Interp) returnMoves(rhs ast.Expr, e *env) []Value {
-	if n := len(i.deferStack); n > 0 && len(i.deferStack[n-1]) > 0 {
-		return nil
-	}
-	names, ok := i.returnMovable[rhs]
-	if !ok {
-		if i.returnMovable == nil {
-			i.returnMovable = map[ast.Expr][]string{}
-		}
-		names = movableNames(rhs)
-		i.returnMovable[rhs] = names
-	}
-	var moved []Value
-	for _, name := range names {
-		v := e.slot(name)
-		if _, isArray := v.(Array); isArray {
-			arrDisown(v)
-			i.moving = append(i.moving, v)
-			moved = append(moved, v)
-		}
-	}
-	return moved
-}
-
-// movableNames gives each name that rhs reads and that rhs can move, once
-// each, in the order of their first reads.
-func movableNames(rhs ast.Expr) []string {
-	var names []string
-	seen := map[string]bool{}
-	ast.Walk(rhs, func(n ast.Node) bool {
-		id, ok := n.(*ast.Ident)
-		if !ok || seen[id.Name] {
-			return true
-		}
-		seen[id.Name] = true
-		if movesFirst(rhs, id.Name) {
-			names = append(names, id.Name)
-		}
-		return true
-	})
-	return names
 }
 
 func movesFirst(rhs ast.Expr, name string) bool {
@@ -8523,9 +8475,13 @@ func movesFirst(rhs ast.Expr, name string) bool {
 		}
 		return true
 	})
-	if reads <= 1 {
-		return true
-	}
+	return reads <= 1 || updateChain(rhs, name)
+}
+
+// updateChain reports whether rhs is a chain of updates rooted at name, whose
+// other reads of name are in the arguments of the root link. They run before
+// the root link writes.
+func updateChain(rhs ast.Expr, name string) bool {
 	e := rhs
 	for {
 		if fa, ok := e.(*ast.FieldAccess); ok {

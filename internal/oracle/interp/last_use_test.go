@@ -135,3 +135,36 @@ function main(): i32 {
 		t.Errorf("got %v, want 5071", v)
 	}
 }
+
+// A read of a local that runs after a call is not moved before the call, so
+// the call cannot write the array that the read sees. The callee moves its
+// parameter at its last use, and the alias of the caller still holds it.
+func TestLaterReadKeepsItsArray(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+	}{
+		{"return", `return mixed(w) + held[0];`},
+		{"assignment", `let r = 0;
+	r = mixed(w) + held[0];
+	return r;`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := `function mixed(xs: i32[]): i32 {
+	let a = xs.with(0, 7);
+	return a[0];
+}
+function main(): i32 {
+	let w: i32[] = [];
+	w = w.append(3);
+	let held = w;
+	` + tc.body + `
+}`
+			for _, mode := range []string{"", "verify", "copy"} {
+				t.Setenv("FERN_INTERP_ARRAY_COW", mode)
+				if v, _ := evalProgram(t, src); v != Number(10) {
+					t.Errorf("mode %q: got %v, want 10", mode, v)
+				}
+			}
+		})
+	}
+}
