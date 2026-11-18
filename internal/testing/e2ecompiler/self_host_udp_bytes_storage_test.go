@@ -55,7 +55,9 @@ function main(): i32 {
 				}
 				cmd := exec.Command(compiler.cli, args...)
 				if compiler.name == "primary" {
-					cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1", "FERN_SANITIZE=1")
+					// No -sanitize: its quarantine keeps each released block, so
+					// the heap would grow on each pass.
+					cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
 				}
 				if out, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("compile: %v\n%s", err, out)
