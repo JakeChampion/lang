@@ -2,6 +2,7 @@ import "./ast";
 import "./util";
 import "./lexer";
 import "./parser";
+import "./defaultargs";
 import "./astwalk";
 import "./callbackpaths";
 import "./lexical";
@@ -32512,7 +32513,7 @@ function with_mangled(out: string[], name: string, prefix: string): string[] {
 }
 
 function checked_module(raw_mod: parser.Module, entry_file: string, raw_floor: boolean): ModuleTypes {
-  let (filled, fda_diags) = parser.fill_default_args_with_diags(raw_mod);
+  let (filled, fda_diags) = defaultargs.fill_with_diags(raw_mod);
   let mod = prepared_module(filled);
   let reserved = reserved_name_diags(mod);
   if (reserved.len() > 0) {
@@ -33222,7 +33223,7 @@ pub function module_scopes(mod: parser.Module): Scope[] {
 pub struct QueryView { mod: parser.Module, env: ModuleEnv }
 
 pub function query_view(raw_mod: parser.Module): QueryView {
-  let (filled, _) = parser.fill_default_args_with_diags(raw_mod);
+  let (filled, _) = defaultargs.fill_with_diags(raw_mod);
   let mod = prepared_module(filled);
   return QueryView { mod: mod, env: module_env(mod) };
 }
@@ -33346,7 +33347,7 @@ function unknown_site_within(st: ast.Stmt, s: Scope): UnknownSite {
 }
 
 pub function ill_typed_hint(raw_mod: parser.Module): util.Diag[] {
-  let (filled, _) = parser.fill_default_args_with_diags(raw_mod);
+  let (filled, _) = defaultargs.fill_with_diags(raw_mod);
   let prepared = prepared_module(filled);
   let env = module_env(prepared);
   let mod = qualify_variants_in(prepared, env, whole_focus(prepared));

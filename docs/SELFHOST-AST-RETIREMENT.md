@@ -2873,7 +2873,7 @@ tier → leak.
 
   4. **Retire the differential — DELETE, do not re-point.** `TestSelfHostAsmIRPath`'s
      AST-vs-IR comparison cannot be re-pointed to `cmd/fern -interp`: its `cases`
-     are in the **driver dialect** (`parser.module_with_builtins` injects
+     are in the **driver dialect** (`astpasses.module_with_builtins` injects
      `map_new`/`__alloc`/casts/etc. that native interp rejects with e.g.
      `E001: Map operations require import "core/map"`). Once the IR path is
      trusted (byte-identity fixpoint + the interp-validated dedicated

@@ -1,5 +1,6 @@
 import "../lexer";
 import "../parser";
+import "../defaultargs";
 import "./rundriver";
 import "../asmcore";
 import "../wasm_ir";
@@ -47,7 +48,7 @@ function main(): i32 {
     return 1;
   }
 
-  let arity_errs = asmcore.check_call_arity(parser.fill_default_args_module(mod));
+  let arity_errs = asmcore.check_call_arity(defaultargs.fill_module(mod));
   arity_errs = util.append_diags(arity_errs, asmcore.check_call_arity(mod));
   if (arity_errs.len() > 0) {
     eprint(util.format_diags(arity_errs));

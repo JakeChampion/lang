@@ -2,6 +2,7 @@ import "std/io";
 import "../util";
 import "../lexer";
 import "../parser";
+import "../astpasses";
 import "../flatten";
 import "../modloader";
 import "../constfold";
@@ -222,7 +223,7 @@ function main(): i32 {
       merged = modloader.merge_builtins(dir, merged);
       let desc = platforms.for_target("arm64-linux");
       merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
-      merged = parser.module_with_builtins_typed(merged);
+      merged = astpasses.module_with_builtins_typed(merged);
       merged = lift.lift_lambdas_typed(merged);
       let tab = irtables.struct_tab(parser.erase_view_structs(merged.structs));
 

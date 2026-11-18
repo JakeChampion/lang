@@ -9,10 +9,11 @@ import (
 )
 
 const enumKeysDriver = `import "../parser";
+import "../astpasses";
 import "./rundriver";
 
 function main(): i32 {
-    let m: parser.Module = parser.module_with_builtins(rundriver.parse_stdin("enum_keys"));
+    let m: parser.Module = astpasses.module_with_builtins(rundriver.parse_stdin("enum_keys"));
     for e in m.enums { print(e.name + "|" + e.instance + "\n"); }
     return 0;
 }
