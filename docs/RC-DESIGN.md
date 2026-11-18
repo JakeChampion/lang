@@ -673,6 +673,17 @@ pointer that flows through the program points past the header.
   shape in its first slot.
 - A value of an enum whose variants hold no field is the index of its
   variant, and not an address (`ssasem.immediate_enum`).
+- A **variant with no field** of an enum of boxes is a static box with an
+  immortal count (`ssaunits.empty_variant`). The program has one such box for
+  each shape, with a label that does not depend on the unit
+  (`asmcore.const_agg_label`). Each unit that names the box emits it after a
+  `.weak` line, so the link of the unit files keeps one, and the merge of the
+  unit texts drops the others (`asmcore.dedupe_weak_into`). The lowering
+  refuses a construction of the variant that is not this box. On the native
+  targets the test of the variant compares the value with the address of the
+  box and loads no tag (`ir.op_static_variant_is`). When each other value of
+  the enum is one such box, the test of the variant that has fields is the
+  inverse of that compare (`ssarc.variant_test`). wasm32 loads the shape.
 - On a native target the **narrow fields of a variant share one word** when
   two or more of them fit in 64 bits (`semsource.packing`). A narrow field is
   a boolean, a `u8`, an `i32`, a `u32` or such an enum. The fields of one
