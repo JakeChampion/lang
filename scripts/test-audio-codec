@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+fern_audio_compiler=${FERN:-"$PWD/bin/fern-selfhost"}
+mkdir -p build/audio-codec
+source=tests/stdlib/android_audio_codec_mock_test.fern
+"$fern_audio_compiler" -target arm64-android -shared -export main -o build/audio-codec/arm64.so "$source" internal/stdlib
+case "$(uname -sm)" in
+  'Linux x86_64') target=x86-64-android ;;
+  'Linux aarch64') target=arm64-android ;;
+  'Darwin arm64') exit 0 ;;
+  *) echo 'unsupported host' >&2; exit 1 ;;
+esac
+cc -shared -fPIC -Wall -Wextra -Werror -DFERN_AUDIO_CODEC_MOCK -o build/audio-codec/libmediandk.so scripts/audio-reference/mediacodec-mock.c scripts/video-reference/codec-jni-mock.c
+python3 scripts/libandroid-stubs > build/audio-codec/stubs.c
+cc -shared -fPIC -Wall -Wextra -Werror -o build/audio-codec/libandroid.so build/audio-codec/stubs.c
+for variant in normal sanitize; do
+  flags=()
+  if [ "$variant" = sanitize ]; then flags=(-sanitize); fi
+  "$fern_audio_compiler" -target "$target" -shared "${flags[@]}" -export main -o "build/audio-codec/$variant.so" "$source" internal/stdlib
+done
+LD_LIBRARY_PATH="$PWD/build/audio-codec${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" python3 - <<'PY'
+import ctypes
+for variant in ('normal', 'sanitize'):
+    result = ctypes.CDLL(f'./build/audio-codec/{variant}.so').main()
+    if result:
+        raise SystemExit(f'Android audio codec {variant} failed at check {result}')
+print('Android audio codec discovery, lifecycle, fallback, limits, and ABI checks passed')
+PY

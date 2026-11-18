@@ -67,7 +67,7 @@ function admitted(info: CodecInfo, request: Request): boolean {
   return info.supported && !info.alias && info.name.len() > 0 && info.request == request;
 }
 
-function policy_rank(implementation: Implementation, policy: Policy): i32 {
+pub(package) function policy_rank(implementation: Implementation, policy: Policy): i32 {
   return match (policy) {
     HardwareOnly => if (implementation == Hardware) { 0 } else { -1 },
     SoftwareOnly => if (implementation == Software) { 0 } else { -1 },
@@ -97,11 +97,11 @@ pub function ordered(infos: [CodecInfo], request: Request, policy: Policy): Code
   return out;
 }
 
-function pop(env: usize): void {
+pub(package) function pop(env: usize): void {
   let _ = jni.call1(env, 20, 0 as usize);
 }
 
-function healthy(env: usize): boolean {
+pub(package) function healthy(env: usize): boolean {
   let exception = jni.exception_occurred(env);
   if (exception == 0 as usize) {
     return true;
@@ -135,7 +135,7 @@ function object(env: usize, obj: usize, name: string, signature: string, values:
   return Ok(value);
 }
 
-function read_boolean(env: usize, obj: usize, name: string): Result[boolean, frame.VideoError] {
+pub(package) function read_boolean(env: usize, obj: usize, name: string): Result[boolean, frame.VideoError] {
   let id = method(env, obj, name, "()Z")?;
   let value = jni.call_boolean_method_a(env, obj, id, 0 as usize);
   if (!healthy(env)) {
@@ -216,7 +216,7 @@ function format_for(env: usize, request: Request): Result[usize, frame.VideoErro
   return Ok(format);
 }
 
-function set_positive(env: usize, format: usize, key: string, value: i32): Result[void, frame.VideoError] {
+pub(package) function set_positive(env: usize, format: usize, key: string, value: i32): Result[void, frame.VideoError] {
   if (value > 0) {
     set_integer(env, format, key, value)?;
   }
@@ -280,7 +280,7 @@ function colors(env: usize, caps: usize, limits: Limits): Result[i32[], frame.Vi
   return Ok(out);
 }
 
-function push(env: usize): Result[void, frame.VideoError] {
+pub(package) function push(env: usize): Result[void, frame.VideoError] {
   if (jni.call1(env, 19, 64 as usize) as i32 != 0) {
     let _ = healthy(env);
     return Err(frame.Platform);
@@ -312,12 +312,12 @@ function supported_types(env: usize, info: usize): Result[string[], frame.VideoE
   return Ok(out);
 }
 
-function supports_type(env: usize, info: usize, mime: string): Result[boolean, frame.VideoError] {
+pub(package) function supports_type(env: usize, info: usize, mime: string): Result[boolean, frame.VideoError] {
   let types = supported_types(env, info)?;
   return Ok(types.contains(mime));
 }
 
-function codec_name(env: usize, info: usize): Result[string, frame.VideoError] {
+pub(package) function codec_name(env: usize, info: usize): Result[string, frame.VideoError] {
   let name_obj = object(env, info, "getName", "()Ljava/lang/String;", [])?;
   if (jni.get_string_utf_length(env, name_obj) > 512) {
     return Err(frame.Limit);
@@ -329,7 +329,7 @@ function codec_name(env: usize, info: usize): Result[string, frame.VideoError] {
   return Ok(name);
 }
 
-function codec_caps(env: usize, info: usize, mime: string): Result[usize, frame.VideoError] {
+pub(package) function codec_caps(env: usize, info: usize, mime: string): Result[usize, frame.VideoError] {
   let name = jni.new_string(env, mime);
   if (!healthy(env) || name == 0 as usize) {
     return Err(frame.Platform);
@@ -337,7 +337,7 @@ function codec_caps(env: usize, info: usize, mime: string): Result[usize, frame.
   return object(env, info, "getCapabilitiesForType", "(Ljava/lang/String;)Landroid/media/MediaCodecInfo$CodecCapabilities;", [name]);
 }
 
-function format_supported(env: usize, caps: usize, format: usize): Result[Option[boolean], frame.VideoError] {
+pub(package) function format_supported(env: usize, caps: usize, format: usize): Result[Option[boolean], frame.VideoError] {
   let id = method(env, caps, "isFormatSupported", "(Landroid/media/MediaFormat;)Z")?;
   let args = jni.jvalues([format]);
   let supported = jni.call_boolean_method_a(env, caps, id, args);
@@ -348,9 +348,9 @@ function format_supported(env: usize, caps: usize, format: usize): Result[Option
   return Ok(Some(supported != 0));
 }
 
-struct Attributes { implementation: Implementation, vendor: boolean, alias: boolean }
+pub(package) struct Attributes { implementation: Implementation, vendor: boolean, alias: boolean }
 
-function attributes(env: usize, info: usize, api_level: i32): Result[Attributes, frame.VideoError] {
+pub(package) function attributes(env: usize, info: usize, api_level: i32): Result[Attributes, frame.VideoError] {
   if (api_level < 29) {
     return Ok(Attributes { implementation: Unknown, vendor: false, alias: false });
   }
@@ -387,7 +387,7 @@ function inspect_codec(env: usize, info: usize, format: usize, request: Request,
   return Ok(Some(report(env, info, caps, request, supported, api_level, limits)?));
 }
 
-function codec_list(env: usize): Result[usize, frame.VideoError] {
+pub(package) function codec_list(env: usize): Result[usize, frame.VideoError] {
   let cls = jni.find_class(env, "android/media/MediaCodecList");
   if (!healthy(env) || cls == 0 as usize) {
     return Err(frame.Platform);
