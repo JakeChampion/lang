@@ -2171,10 +2171,17 @@ pub function (p: Process) image(): u8[] {
   return cpio.write(items);
 }
 
+// Allocate the packed result once so joining a large file needs only one copy.
 function join_chunks(chunks: u8[][]): u8[] {
-  let out: u8[] = [];
+  let size = 0;
   for c in chunks {
-    out = out.concat(c);
+    size += c.len();
+  }
+  let out = __alloc_u8(size);
+  let offset = 0;
+  for c in chunks {
+    out = __bytes_into(out, offset, c, 0, c.len());
+    offset += c.len();
   }
   return out;
 }

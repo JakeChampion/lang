@@ -238,6 +238,10 @@ func treeFiles(t *testing.T, root, prefix string) []cpioFile {
 // runs while the VM runs, because each one uses one core.
 const selfCompileRAMBytes = 5630 << 20
 
+// The kernel heap holds the initrd, in-memory file chunks and the contiguous
+// compiler output while it is checked. The compiler has its own user pages.
+const selfCompileHeapFrames = (384 << 20) / 4096
+
 func TestSelfHostKernelSelfCompilesOnQemu(t *testing.T) {
 	e2eharness.QemuSystem(t, "qemu-system-aarch64")
 	runner := e2eharness.Arm64Runner(t)
@@ -263,5 +267,5 @@ func TestSelfHostKernelSelfCompilesOnQemu(t *testing.T) {
 	files = append(files, treeFiles(t, e2eharness.RepoPath("compiler"), "compiler")...)
 	files = append(files, treeFiles(t, stage, "embed")...)
 	argv := []string{"/bin/fern", "-target", "arm64-linux", "-embed", "embed", "-o", "/out/fern-self", "compiler/fern_main.fern"}
-	bootCompile(t, cli, files, compileKernelSrc(argv, "/out/fern-self", 65536, false), selfCompileRAMBytes, "6G", 90*time.Minute, want, nil)
+	bootCompile(t, cli, files, compileKernelSrc(argv, "/out/fern-self", selfCompileHeapFrames, false), selfCompileRAMBytes, "6G", 90*time.Minute, want, nil)
 }

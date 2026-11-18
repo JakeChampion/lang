@@ -240,6 +240,13 @@ function spawn(b: Boot, path: string, argv: string[]): void {
       print(path + " left /out/result.txt: " + string_from_bytes_unchecked(out));
     }
   }
+  if let Some(out) = p.written("/out/large.bin") {
+    let intact = out.len() == 6291457;
+    for i in 0..out.len() {
+      intact = intact && out[i] == (i % 251) as u8;
+    }
+    print(path + " left a large file intact: " + intact.to_string());
+  }
   release(b, path, p, free);
 }
 
@@ -457,6 +464,12 @@ function main(): i32 {
   }
   ok("out", create_dir_all("/out"));
   ok("output", write_file("/out/result.txt", "made on fernos"));
+  // The 16 MiB kernel heap fits the chunks and one exact-sized copy.
+  let large = __alloc_u8(6291457);
+  for i in 0..large.len() {
+    large = large.with(i, (i % 251) as u8);
+  }
+  ok("large output", write_file_bytes("/out/large.bin", large));
   return 0;
 }
 `
@@ -629,6 +642,7 @@ func TestSelfHostKernelProcessOnQemu(t *testing.T) {
 		"/bin/writer fd 1: output ok\n",
 		"/bin/writer exit 0\n",
 		"/bin/writer left /out/result.txt: made on fernos\n",
+		"/bin/writer left a large file intact: true\n",
 	} {
 		if !strings.Contains(string(console), want) {
 			t.Errorf("console:\n%s\nwant %q", console, want)

@@ -338,6 +338,7 @@ func TestSelfHostKernelX86ProcessOnQemu(t *testing.T) {
 		"/bin/writer fd 1: b and c have their own inodes true\n",
 		"/bin/writer exit 0\n",
 		"/bin/writer left /out/result.txt: made on fernos\n",
+		"/bin/writer left a large file intact: true\n",
 		"/bin/writer gave back its frames true\n",
 	} {
 		if !strings.Contains(console, want) {
