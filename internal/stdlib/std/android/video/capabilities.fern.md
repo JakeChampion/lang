@@ -194,20 +194,20 @@ function set_integer(env: usize, format: usize, name: string, value: i32): Resul
   return Ok(());
 }
 
-function format_for(env: usize, request: Request): Result[usize, frame.VideoError] {
+pub(package) function media_format(env: usize, factory: string, kind: string, first: i32, second: i32): Result[usize, frame.VideoError] {
   let cls = jni.find_class(env, "android/media/MediaFormat");
   if (!healthy(env) || cls == 0 as usize) {
     return Err(frame.Platform);
   }
-  let id = jni.get_static_method_id(env, cls, "createVideoFormat", "(Ljava/lang/String;II)Landroid/media/MediaFormat;");
+  let id = jni.get_static_method_id(env, cls, factory, "(Ljava/lang/String;II)Landroid/media/MediaFormat;");
   if (!healthy(env) || id == 0 as usize) {
     return Err(frame.Platform);
   }
-  let mime = jni.new_string(env, request.mime);
+  let mime = jni.new_string(env, kind);
   if (!healthy(env) || mime == 0 as usize) {
     return Err(frame.Platform);
   }
-  let args = jni.jvalues([mime, request.width as usize, request.height as usize]);
+  let args = jni.jvalues([mime, first as usize, second as usize]);
   let format = jni.call_static_object_method_a(env, cls, id, args);
   jni.free_buffer(args);
   if (!healthy(env) || format == 0 as usize) {
@@ -224,7 +224,7 @@ pub(package) function set_positive(env: usize, format: usize, key: string, value
 }
 
 function request_format(env: usize, request: Request): Result[usize, frame.VideoError] {
-  let format = format_for(env, request)?;
+  let format = media_format(env, "createVideoFormat", request.mime, request.width, request.height)?;
   set_positive(env, format, "frame-rate", request.frame_rate)?;
   set_positive(env, format, "bitrate", request.bitrate)?;
   set_positive(env, format, "profile", request.profile)?;

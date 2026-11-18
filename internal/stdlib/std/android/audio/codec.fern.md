@@ -62,6 +62,10 @@ pub function default_limits(): Limits {
   return Limits { max_packet_bytes: 1048576, max_output_bytes: 1048576, max_sample_rate: 192000, max_channels: 8 };
 }
 
+function valid_limits(request: capabilities.Request, limits: Limits): boolean {
+  return limits.max_packet_bytes > 0 && limits.max_output_bytes > 0 && limits.max_sample_rate >= request.sample_rate && limits.max_channels >= request.channels && limits.max_channels <= 8 && limits.max_sample_rate <= 768000;
+}
+
 function validate(config: Config, name: string, limits: Limits): Result[void, frame.VideoError] {
   if (!capabilities.valid(config.request) || name.len() < 1 || name.len() > 512) {
     return Err(frame.Header);
@@ -71,7 +75,7 @@ function validate(config: Config, name: string, limits: Limits): Result[void, fr
       return Err(frame.Header);
     }
   }
-  if (limits.max_packet_bytes < 1 || limits.max_output_bytes < 1 || limits.max_sample_rate < config.request.sample_rate || limits.max_channels < config.request.channels || limits.max_channels > 8 || limits.max_sample_rate > 768000) {
+  if (!valid_limits(config.request, limits)) {
     return Err(frame.Limit);
   }
   let remaining = limits.max_packet_bytes;

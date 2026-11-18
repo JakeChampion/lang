@@ -57,24 +57,7 @@ pub function ordered(infos: [CodecInfo], request: Request, policy: shared.Policy
 }
 
 function request_format(env: usize, request: Request): Result[usize, frame.VideoError] {
-  let cls = jni.find_class(env, "android/media/MediaFormat");
-  if (!shared.healthy(env) || cls == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  let id = jni.get_static_method_id(env, cls, "createAudioFormat", "(Ljava/lang/String;II)Landroid/media/MediaFormat;");
-  if (!shared.healthy(env) || id == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  let mime = jni.new_string(env, request.mime);
-  if (!shared.healthy(env) || mime == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  let args = jni.jvalues([mime, request.sample_rate as usize, request.channels as usize]);
-  let format = jni.call_static_object_method_a(env, cls, id, args);
-  jni.free_buffer(args);
-  if (!shared.healthy(env) || format == 0 as usize) {
-    return Err(frame.Platform);
-  }
+  let format = shared.media_format(env, "createAudioFormat", request.mime, request.sample_rate, request.channels)?;
   shared.set_positive(env, format, if (request.mime == "audio/mp4a-latm") { "aac-profile" } else { "profile" }, request.profile)?;
   return Ok(format);
 }
@@ -93,7 +76,7 @@ function inspect(env: usize, info: usize, format: usize, request: Request, api_l
   return Ok(Some(CodecInfo { name: shared.codec_name(env, info)?, request: request, implementation: attr.implementation, vendor: attr.vendor, alias: attr.alias, supported: supported }));
 }
 
-pub function discover(env: usize, api_level: i32, request: Request, max_codecs: i32): Result[CodecInfo[], frame.VideoError] {
+function validate_discovery(env: usize, api_level: i32, request: Request, max_codecs: i32): Result[void, frame.VideoError] {
   if (env == 0 as usize || api_level < 21 || !valid(request)) {
     return Err(frame.Header);
   }
@@ -105,6 +88,11 @@ pub function discover(env: usize, api_level: i32, request: Request, max_codecs: 
     let _ = jni.delete_local_ref(env, pending);
     return Err(frame.Platform);
   }
+  return Ok(());
+}
+
+pub function discover(env: usize, api_level: i32, request: Request, max_codecs: i32): Result[CodecInfo[], frame.VideoError] {
+  validate_discovery(env, api_level, request, max_codecs)?;
   shared.push(env)?;
   defer shared.pop(env);
   let infos = shared.codec_list(env)?;
@@ -115,6 +103,10 @@ pub function discover(env: usize, api_level: i32, request: Request, max_codecs: 
   if (count < 0 || count > max_codecs) {
     return Err(frame.Limit);
   }
+  return collect(env, infos, count, request, api_level);
+}
+
+function collect(env: usize, infos: usize, count: i32, request: Request, api_level: i32): Result[CodecInfo[], frame.VideoError] {
   let format = request_format(env, request)?;
   let out: CodecInfo[] = [];
   for i in 0..count {
