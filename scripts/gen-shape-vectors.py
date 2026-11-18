@@ -38,6 +38,7 @@ an rclt lookup before a calt lookup.
 import base64
 import io
 import sys
+import unicodedata
 from pathlib import Path
 
 import uharfbuzz as hb
@@ -534,6 +535,21 @@ def shaped(data: bytes, text: str, script: str):
     return [i.codepoint for i in infos], [i.cluster for i in infos], places
 
 
+# `line` as a Fern string literal holds it: a tab and a newline as escapes,
+# and a format or space character other than the space as \u{...}, as
+# `fern -fmt` writes them.
+def literal(line: str) -> str:
+    out = []
+    for c in line:
+        if c == "\t":
+            out.append("\\t")
+        elif c != " " and unicodedata.category(c) in ("Cc", "Cf", "Zs", "Zl", "Zp"):
+            out.append("\\u{%04X}" % ord(c))
+        else:
+            out.append(c)
+    return "".join(out)
+
+
 def case(data: bytes, text: str, script: str) -> str:
     glyphs, clusters, places = shaped(data, text, script.capitalize())
     return "%s\t%s\t%s\t%s\t%s" % (script, text, ",".join(map(str, glyphs)), ",".join(map(str, clusters)), ",".join(places))
@@ -576,7 +592,7 @@ def main() -> None:
         "// glyphs, the clusters and the positions that HarfBuzz gives, in logical",
         "// order. A position is the advance, the x offset and the y offset.",
         "pub function cases(): string {",
-        '  return "%s";' % "\\n".join(l.replace("\t", "\\t") for l in lines),
+        '  return "%s";' % "\\n".join(literal(l) for l in lines),
         "}",
         "",
         "// A subset of Noto Sans Devanagari, Copyright 2022 The Noto Project",
@@ -589,13 +605,13 @@ def main() -> None:
         "",
         "// The cases of deva_font(), as those of cases().",
         "pub function deva_cases(): string {",
-        '  return "%s";' % "\\n".join(l.replace("\t", "\\t") for l in deva_lines),
+        '  return "%s";' % "\\n".join(literal(l) for l in deva_lines),
         "}",
         "",
         "// The cases of deva_font() with its script dev2 renamed dev0, for the",
         "// old Indic specification.",
         "pub function deva_old_cases(): string {",
-        '  return "%s";' % "\\n".join(l.replace("\t", "\\t") for l in old_lines),
+        '  return "%s";' % "\\n".join(literal(l) for l in old_lines),
         "}",
         "",
         "// A font with a GSUB lookup of each type and format, and no outlines.",
@@ -605,7 +621,7 @@ def main() -> None:
         "",
         "// The cases of lookup_font(), as those of cases().",
         "pub function lookup_cases(): string {",
-        '  return "%s";' % "\\n".join(l.replace("\t", "\\t") for l in built_lines),
+        '  return "%s";' % "\\n".join(literal(l) for l in built_lines),
         "}",
         "",
         "// A font with an rclt lookup before a calt lookup.",
@@ -615,7 +631,7 @@ def main() -> None:
         "",
         "// The cases of stage_font(), as those of cases().",
         "pub function stage_cases(): string {",
-        '  return "%s";' % "\\n".join(l.replace("\t", "\\t") for l in staged_lines),
+        '  return "%s";' % "\\n".join(literal(l) for l in staged_lines),
         "}",
         "",
         "// A font with a GPOS lookup of each type, and no outlines.",
@@ -625,7 +641,7 @@ def main() -> None:
         "",
         "// The cases of position_font(), as those of cases().",
         "pub function position_cases(): string {",
-        '  return "%s";' % "\\n".join(l.replace("\t", "\\t") for l in placed_lines),
+        '  return "%s";' % "\\n".join(literal(l) for l in placed_lines),
         "}",
         "",
     ]
