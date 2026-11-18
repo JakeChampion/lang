@@ -896,23 +896,6 @@ function f64_lit_reaches_1e309(s: string): boolean {
   return intdigits + exp >= 309;
 }
 
-function f64_range_prefix(): string {
-  return "float literal out of range: ";
-}
-
-pub function f64_range_kind(text: string): string {
-  return f64_range_prefix() + text;
-}
-
-pub function is_f64_range_kind(kind: string): boolean {
-  return kind.starts_with(f64_range_prefix());
-}
-
-pub function f64_range_message(kind: string): string {
-  let pre = f64_range_prefix();
-  return "invalid float literal \"" + slice_unchecked(kind, pre.len(), kind.len()) + "\": value out of range";
-}
-
 // parse_f64_bits keeps the decimal digits in buf[lo..hi]. Doubling can add a
 // digit before lo, and halving can add one at hi.
 const PF64_DIGITS: i32 = 800;

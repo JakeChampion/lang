@@ -1259,7 +1259,7 @@ function ligated(f: Font, own r: Run, ps: i32[], lig: i32): Run {
 // the least of them. The merge goes on over the glyphs after `end` that
 // have the cluster of the last one, and over those before `start` that
 // have the cluster of the first one, when that cluster changes.
-function merged_clusters(cs0: i32[], start: i32, end: i32): i32[] {
+pub function merged_clusters(cs0: i32[], start: i32, end: i32): i32[] {
   let cs = cs0;
   let cl = cs[start];
   for j in start + 1..end {

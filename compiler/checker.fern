@@ -6492,7 +6492,7 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       return t_unknown("f-string: formatter-only node");
     },
     ast.ExprUnknown(u) => {
-      return t_unknown("parser-side unknown:" + u.kind);
+      return t_unknown("parser-side unknown:" + ast.fault_text(u.fault));
     },
     ast.ExprZero(z) => {
       return s.resolve_type(z.type_name);
@@ -6804,7 +6804,7 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
     if (!is_unknown(tuple_join)) {
       first = tuple_join;
       first_lit = 0;
-      first_expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+      first_expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
       continue;
     }
     if (typeinfo.is_tuple(first) && typeinfo.is_tuple(et) && !type_eq(first, et) && prior_literals_take(a, i, et, s)) {
@@ -6825,7 +6825,7 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
     if (!is_unknown(scalar) && element_literal_kind(first_expr, gives) != 1 && (element_literal_kind(a.elements[i], gives) != 1 || wide_literal_widens(a.elements[i], et, first))) {
       first = scalar;
       first_lit = 0;
-      first_expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+      first_expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
       continue;
     }
     let lit = element_literal_kind(a.elements[i], gives);
@@ -7087,7 +7087,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
       let bare_ret = false;
       match (r.value) {
         ast.ExprUnknown(bu) => {
-          if (bu.kind == parser.BARE_RETURN) {
+          if (bu.fault.mark == parser.BARE_RETURN) {
             bare_ret = true;
           }
         },
@@ -7239,7 +7239,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
       return CheckResult { scope: s, ty: typeinfo.t_bool() };
     },
     ast.StmtUnknown(u) => {
-      return CheckResult { scope: s, ty: t_unknown("parser-side unknown stmt:" + u.kind) };
+      return CheckResult { scope: s, ty: t_unknown("parser-side unknown stmt:" + ast.fault_text(u.fault)) };
     }
   }
 }
@@ -8736,7 +8736,7 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
         let bare = false;
         match (r.value) {
           ast.ExprUnknown(u) => {
-            if (u.kind == parser.BARE_RETURN) {
+            if (u.fault.mark == parser.BARE_RETURN) {
               bare = true;
             }
           },
@@ -8883,7 +8883,7 @@ function void_return_diag(r: ast.StmtReturn, cur: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   match (r.value) {
     ast.ExprUnknown(u) => {
-      if (u.kind == parser.BARE_RETURN) {
+      if (u.fault.mark == parser.BARE_RETURN) {
         return out;
       }
     },
@@ -11161,7 +11161,7 @@ function mx_args_compatible(a: typeinfo.TypeUnion, b: typeinfo.TypeUnion, elem: 
   if (a.args.len() != b.args.len()) {
     return false;
   }
-  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
   for i in 0..a.args.len() {
     let x = a.args[i];
     let y = b.args[i];
@@ -11173,7 +11173,7 @@ function mx_args_compatible(a: typeinfo.TypeUnion, b: typeinfo.TypeUnion, elem: 
 }
 
 function mx_parts_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boolean, unions: UnionSig[], enums: parser.EnumDecl[]): boolean {
-  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
   match (a.t) {
     typeinfo.TypeTuple(ta) => {
       match (b.t) {
@@ -11255,7 +11255,7 @@ function mx_variant_beside_union(a: typeinfo.Type, b: typeinfo.Type): boolean {
 }
 
 function mx_elem_store(e: ast.Expr, elem: typeinfo.Type): VbStore {
-  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
   if let ast.ExprArray(ea) = e {
     if (ea.elements.len() > 0 && mx_unsettled_elements(ea.elements)) {
       return VbStore { t: elem, e: ea.elements[0] };
@@ -11269,7 +11269,7 @@ function mx_map_value_store(e: ast.Expr, value: typeinfo.Type): VbStore {
   if (vs.len() > 0 && mlit_is_desugared(e) && mx_unsettled_elements(vs)) {
     return VbStore { t: value, e: vs[0] };
   }
-  return VbStore { t: value, e: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+  return VbStore { t: value, e: ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 } };
 }
 
 function mlit_values(e: ast.Expr): ast.Expr[] {
@@ -11301,7 +11301,7 @@ function mx_unsettled_elements(es: ast.Expr[]): boolean {
 
 function mx_default_width(a: VbStore): VbStore {
   if (arm_unsettled(a)) {
-    return VbStore { t: typeinfo.t_i32(), e: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+    return VbStore { t: typeinfo.t_i32(), e: ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 } };
   }
   return a;
 }
@@ -11369,13 +11369,13 @@ function mx_joined_literal(el: VbStore, e: ast.Expr): ast.Expr {
   if (arm_unsettled(el)) {
     return e;
   }
-  return ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  return ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
 }
 
 struct MxFold { ok: boolean, acc: VbStore, bad: typeinfo.Type, bad_index: i32 }
 
 function mx_fold_arms(types: typeinfo.Type[], exprs: ast.Expr[], unions: UnionSig[], enums: parser.EnumDecl[], if_form: boolean, assigns: boolean): MxFold {
-  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
   let unjudged = MxFold { ok: true, acc: VbStore { t: t_unknown("value block arms unjudged"), e: none }, bad: t_unknown(""), bad_index: 0 };
   if (types.len() == 0 || types.len() != exprs.len()) {
     return unjudged;
@@ -11831,8 +11831,8 @@ function mx_expr_at(e: ast.Expr, want: typeinfo.Type, s: Scope, unions: UnionSig
       }
     },
     ast.ExprUnknown(u) => {
-      if (util.is_f64_range_kind(u.kind)) {
-        out = out.append(dg_at("P002", util.f64_range_message(u.kind), u.line, u.col));
+      if (u.fault.code == "P002") {
+        out = out.append(dg_at("P002", u.fault.message, u.line, u.col));
       }
     },
     _ => {}
@@ -19696,7 +19696,7 @@ struct OclPlaces { name: string, defs: OclDef[], names: util.NameIndex, aggregat
 struct OclContainers { names: util.NameIndex, holds: boolean[] }
 
 function ocl_unknown(name: string): OclDef {
-  return OclDef { name: name, value: ast.ExprUnknown { kind: "", line: 0, col: 0 }, spelling: "", binder: false };
+  return OclDef { name: name, value: ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 }, spelling: "", binder: false };
 }
 
 function ocl_param(param: ast.ParamDecl): OclDef {
@@ -19899,7 +19899,7 @@ function ocl_place_alias(scope: OclPlaces, name: string): ast.Expr {
       return def.value;
     }
   }
-  return ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  return ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
 }
 
 function ocl_place_scope(lm: ast.ExprLambda, decls: OwnDecls): OclPlaces {
@@ -19925,7 +19925,7 @@ function ocl_place_stmt(st: ast.Stmt, scope: OclPlaces): (ast.Stmt, OclPlaces, b
       return (st, scope, false);
     }
     if (ocl_place(alias, scope, []).1) {
-      return (ast.StmtVar { ...v, init: ast.ExprUnknown { kind: "", line: 0, col: 0 } }, scope, true);
+      return (ast.StmtVar { ...v, init: ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 } }, scope, true);
     }
   }
   return (st, scope, false);
@@ -21662,7 +21662,7 @@ function lu_sel_at(f: LuFacts, line: i32, col: i32): string {
 }
 
 function lu_destr_vars(v: ast.StmtVar, own vars: LuVar[]): LuVar[] {
-  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
   let init: ast.Expr = none;
   if (parser.destr_marker_split(v.type_name).at.len() == 0) {
     if (lu_fresh_expr(v.init)) {
@@ -21700,7 +21700,7 @@ function lu_destr_unpacked(v: ast.StmtVar, own acc: LuVar[]): LuVar[] {
 }
 
 function lu_nested_vars(group: string, own vars: LuVar[]): LuVar[] {
-  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
   for nm in split_pattern_names(slice_unchecked(group, 1, group.len() - 1).to_owned()) {
     if (util.is_tuple_type_name(nm)) {
       vars = lu_nested_vars(nm, vars);
@@ -23526,7 +23526,7 @@ function lu_mentions(st: ast.Stmt, name: string): i32 {
 }
 
 function lu_no_stmt(): ast.Stmt {
-  return ast.StmtUnknown { kind: "", line: 0, col: 0 };
+  return ast.StmtUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
 }
 
 function lu_plain_frame(stmts: ast.Stmt[]): LuFrame {
@@ -25710,7 +25710,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
   facts = lu_ended_callback_loans(fn.body, facts);
   let fx0 = LuFn { checked_params: lu_checked_params(fn), ret_own: fn.ret_own, facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, flow: lu_flow(fn.body) };
   let fx = LuFn { ...fx0, fresh: lu_fresh_names(fx0), fresh_known: true };
-  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
   let top = LuScope { frames: [], head: lu_plain_frame(fn.body), framed: true, binders: [], bindings: [], loop_depth: 0, in_loop: false, in_iife: false, in_defer: false };
   let out = lu_stmts(fn.body, top, none, false, fx, []);
   for lm in nested {
@@ -28623,7 +28623,7 @@ function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
     changed = false;
     for st in spine {
       let name = "";
-      let init: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+      let init: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
       if let ast.StmtVar(v) = st {
         name = v.name;
         init = v.init;
@@ -28851,7 +28851,7 @@ function ow_result_module(mod: parser.Module, env: ModuleEnv, dx: OwnDecls, type
       fn = parser.FuncDecl { ...fn, body: body };
     }
     if (fn.receiver_name.len() > 0) {
-      let receiver = ast.ParamDecl { name: fn.receiver_name, type_name: fn.receiver_type, own: fn.receiver_own, send: false, has_default: false, default_value: ast.ExprUnknown { kind: "", line: 0, col: 0 }, fn_ret: "", fn_param_types: "", line: fn.line, col: fn.col };
+      let receiver = ast.ParamDecl { name: fn.receiver_name, type_name: fn.receiver_type, own: fn.receiver_own, send: false, has_default: false, default_value: ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 }, fn_ret: "", fn_param_types: "", line: fn.line, col: fn.col };
       let params: ast.ParamDecl[] = [receiver];
       for p in fn.params {
         params = params.append(p);
@@ -33293,7 +33293,7 @@ function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
 }
 
 pub function first_returned(body: ast.Stmt[], scope: Scope): (ast.Expr, Scope) {
-  let none: ast.Expr = ast.ExprUnknown { kind: parser.BARE_RETURN, line: 0, col: 0 };
+  let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(parser.BARE_RETURN), line: 0, col: 0 };
   // The statements after one that ends the path do not run.
   for st in body {
     match (st) {
@@ -35368,13 +35368,13 @@ function vb_empty_arrays_fit(e: ast.Expr, want: typeinfo.Type): boolean {
 
 function vb_join(a: VbStore, b: VbStore): VbStore {
   if (owned_beside_view(a.t, b.t)) {
-    return VbStore { t: t_unknown("owned beside a view"), e: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+    return VbStore { t: t_unknown("owned beside a view"), e: ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 } };
   }
   let scalar = scalar_numeric_join(a.t, b.t);
   if (scalar_vb_joinable(a, b, scalar)) {
-    return VbStore { t: scalar, e: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+    return VbStore { t: scalar, e: ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 } };
   }
-  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
   if let typeinfo.TypeTuple(at) = a.t {
     if let typeinfo.TypeTuple(bt) = b.t {
       if (at.elements.len() != bt.elements.len()) {
@@ -35443,7 +35443,7 @@ function vb_tuple_elems(e: ast.Expr, n: i32): ast.Expr[] {
   }
   let out: ast.Expr[] = [];
   for i in 0..n {
-    out = out.append(ast.ExprUnknown { kind: "", line: 0, col: 0 });
+    out = out.append(ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 });
   }
   return out;
 }

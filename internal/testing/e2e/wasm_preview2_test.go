@@ -246,10 +246,7 @@ func TestWasmPreview2FileReadWriteAdapterFree(t *testing.T) {
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	bin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildLangBinForInterp(t)
 	componentPath := filepath.Join(dir, "rw.wasm")
 	if out, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
 		t.Fatalf("fern -target wasm32-wasi (read+write, no adapter): %v\n%s", err, out)
@@ -287,10 +284,7 @@ func TestWasmPreview2FileCloseAdapterFree(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildLangBinForInterp(t)
 	fsdir := filepath.Join(dir, "fs")
 	if err := os.Mkdir(fsdir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -598,10 +592,7 @@ function main(): i32 {
 		t.Fatalf("write src: %v", err)
 	}
 
-	bin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildLangBinForInterp(t)
 	componentPath := filepath.Join(dir, "echolog.component.wasm")
 	emit := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath)
 	var emitOut, emitErr bytes.Buffer
@@ -711,10 +702,7 @@ func TestWasmPreview2UdpSendStdoutAdapterFree(t *testing.T) {
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	bin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildLangBinForInterp(t)
 	componentPath := filepath.Join(dir, "send.component.wasm")
 	if out, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
 		t.Fatalf("fern -target wasm32-wasi (udp+print, no adapter): %v\n%s", err, out)
@@ -765,10 +753,7 @@ func TestWasmPreview2UdpSendAdapterFree(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 
-	bin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildLangBinForInterp(t)
 	componentPath := filepath.Join(dir, "send.component.wasm")
 	emit := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath)
 	if out, err := emit.CombinedOutput(); err != nil {
@@ -837,10 +822,7 @@ func TestWasmPreview2TcpUdpAdapterFree(t *testing.T) {
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	bin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildLangBinForInterp(t)
 	componentPath := filepath.Join(dir, "both.component.wasm")
 	if out, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
 		t.Fatalf("fern -target wasm32-wasi (tcp+udp, no adapter): %v\n%s", err, out)
@@ -911,10 +893,7 @@ func TestWasmPreview2UdpFileAdapterFree(t *testing.T) {
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	bin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildLangBinForInterp(t)
 	componentPath := filepath.Join(dir, "ship.component.wasm")
 	if out, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
 		t.Fatalf("fern -target wasm32-wasi (udp+files, no adapter): %v\n%s", err, out)
@@ -990,10 +969,7 @@ func TestWasmPreview2TcpFileServerAdapterFree(t *testing.T) {
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	bin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildLangBinForInterp(t)
 	componentPath := filepath.Join(dir, "srv.wasm")
 	if out, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
 		t.Fatalf("fern -target wasm32-wasi (tcp file server, no adapter): %v\n%s", err, out)
@@ -1061,10 +1037,7 @@ func TestWasmPreview2TcpFileWriteAdapterFree(t *testing.T) {
 		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
 	}
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildLangBinForInterp(t)
 	run := func(name, src, file, want string) {
 		root := filepath.Join(dir, name)
 		if err := os.Mkdir(root, 0o755); err != nil {
@@ -1150,10 +1123,7 @@ function main(): i32 {
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	bin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildLangBinForInterp(t)
 	componentPath := filepath.Join(dir, "stdin.wasm")
 	if out, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
 		t.Fatalf("fern -target wasm32-wasi (tcp+stdin, no adapter): %v\n%s", err, out)
@@ -1183,10 +1153,7 @@ func TestWasmPreview2SocketCliExtrasAdapterFree(t *testing.T) {
 		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
 	}
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildLangBinForInterp(t)
 	build := func(name, src string) string {
 		sp := filepath.Join(dir, name+".fern")
 		if err := os.WriteFile(sp, []byte(src), 0o644); err != nil {
@@ -1624,10 +1591,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 		t.Fatalf("write src: %v", err)
 	}
 
-	bin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildLangBinForInterp(t)
 
 	componentPath := filepath.Join(dir, "logger.component.wasm")
 	emit := exec.Command(bin, "-target", "wasm32-wasi-http", "-o", componentPath, srcPath)
@@ -1722,10 +1686,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	bin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
+	bin := buildLangBinForInterp(t)
 	componentPath := filepath.Join(dir, "clock.component.wasm")
 	if out, err := exec.Command(bin, "-target", "wasm32-wasi-http", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
 		t.Fatalf("fern -target wasm32-wasi-http (clock handler, no adapter): %v\n%s", err, out)
