@@ -87,6 +87,12 @@ on. A bar above the tabs shows the track, with a button that pauses and
 plays it. A tap on the bar opens the player again. Back on a video stops
 it.
 
+The back button and the back gesture of Android do what the back arrow or
+the close control of the screen does. Back first closes the menu of a
+poster, the keypad of a PIN, the sheet of tracks or the code of a sign-in.
+Then it goes to the screen before. From a tab other than Home, it goes to
+Home, and on Home it closes the app.
+
 Each play asks Android for the audio focus, so another app that plays
 stops. A call or another app that plays pauses the app. When the focus
 comes back, the play goes on, unless the person paused it.

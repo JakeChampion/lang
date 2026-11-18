@@ -1863,6 +1863,64 @@ function test_back_and_sign_out(): test.TestOutcome {
   return test.assert_eq(has_call(log, "finish").to_string(), "true");
 }
 
+// The back key of Android does what the close or back control of the screen
+// does: it closes the menu of a poster, the keypad of a PIN, the sheet of
+// tracks and the code of a sign-in, and goes back from a page. Only the home
+// screen closes the app.
+function test_system_back_is_the_app_back(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let signin = tap(shown(log, f, "", ""), log, 100i64, f, "signin");
+  let unsigned = press(signin, log, 200i64, f, 4);
+  if (node(unsigned, "cancel").is_some() || node(unsigned, "signin").is_none() || has_call(log, "finish")) {
+    return test.fail("back did not cancel the sign-in code");
+  }
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let Some(p) = node(home, "hub:0:0") else {
+    return test.fail("no poster");
+  };
+  let (x, y) = centre(p);
+  let held = at(at(home, log, 1000i64, f, android.Touch(0, x as f32, y as f32)), log, 1550i64, f, android.Tick);
+  let menu = settle(at(held, log, 1600i64, f, android.Touch(1, x as f32, y as f32)), log, 1600i64, f);
+  let opened = node(menu, "menu:close").is_some();
+  let closed = press(menu, log, 1700i64, f, 4);
+  if (!opened || node(closed, "menu:close").is_some() || closed.screen != ui.HOME || has_call(log, "finish")) {
+    return test.fail("back did not close the menu of the poster");
+  }
+  let detail = tap(closed, log, 1800i64, f, "hub:1:0");
+  let on_page = detail.screen == ui.DETAIL && node(detail, "back").is_some();
+  let returned = press(detail, log, 1900i64, f, 4);
+  if (!on_page || returned.screen != ui.HOME) {
+    return test.fail("back from a page did not go to the screen before, as the back arrow does");
+  }
+  let playing = tap(tap(returned, log, 2000i64, f, "hub:1:0"), log, 2100i64, f, "play");
+  let ready = settle(at(playing, log, 2200i64, f, android.Posted(19, 0 as usize)), log, 2200i64, f);
+  let sheet = tap(tap(ready, log, 2300i64, f, "overlay"), log, 2400i64, f, "tracks");
+  let listed = node(sheet, "audio:22").is_some();
+  let shut = press(sheet, log, 2500i64, f, 4);
+  if (!listed || node(shut, "audio:22").is_some() || shut.screen != ui.PLAYER || has_call(log, "stop")) {
+    return test.fail("back did not close the sheet of tracks: " + log.calls.get().join(" | "));
+  }
+  let left = press(shut, log, 2600i64, f, 4);
+  if (left.screen == ui.PLAYER || !has_call(log, "stop")) {
+    return test.fail("back did not leave the player");
+  }
+  let users = tap(tap(signed_in(log, f), log, 3000i64, f, "tab:3"), log, 3100i64, f, "users");
+  let pad = tap(users, log, 3200i64, f, "user:1");
+  let keyed = node(pad, "pinkey:5").is_some();
+  let no_pad = press(pad, log, 3300i64, f, 4);
+  if (!keyed || node(no_pad, "pinkey:5").is_some() || no_pad.screen != ui.USERS) {
+    return test.fail("back did not close the keypad of the PIN");
+  }
+  let settings = press(no_pad, log, 3400i64, f, 4);
+  if (settings.screen == ui.USERS || has_call(log, "finish")) {
+    return test.fail("back did not go back from the list of the users");
+  }
+  let out = press(press(settings, log, 3500i64, f, 4), log, 3600i64, f, 4);
+  return test.assert_eq(has_call(log, "finish").to_string(), "true");
+}
+
 function test_link_plays_an_item(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -1994,6 +2052,7 @@ function main(): i32 {
   r = r.it("the channel row of Android TV gets the recent items", test_channel_row);
   r = r.it("the Search key opens the search with the keyboard", test_search_key);
   r = r.it("Back keeps the music, with a bar that controls it", test_back_keeps_music);
+  r = r.it("the back key of Android does what the back control of the screen does", test_system_back_is_the_app_back);
   r = r.it("Download all of a season, and the screen of the downloads", test_download_all_and_the_screen);
   r = r.it("an album plays in order, repeats, shuffles and sleeps", test_album_queue_repeat_and_sleep);
   r = r.it("a video plays on in a picture-in-picture window", test_picture_in_picture);

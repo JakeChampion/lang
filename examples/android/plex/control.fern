@@ -3433,16 +3433,28 @@ const KEY_ENTER: i32 = 66;
 
 const KEY_DEL: i32 = 67;
 
+// The back key and the back gesture of Android run the action of the close
+// or back control that the screen shows.
 function back(own s: App): App {
   if (s.typing) {
     s.dev.hide_field();
     return App { ...s, typing: false, dirty: true };
   }
-  if (s.screen == ui.PLAYER) {
-    return leave_player(s);
+  let none = scene.node(0, 0, 0, 0, scene.Blank);
+  if (s.menu.key.len() > 0) {
+    return act(s, "menu:close", none, 0);
   }
-  if (s.stack.len() > 0) {
-    return pop(s);
+  if (s.pin_for.len() > 0) {
+    return act(s, "pinkey:cancel", none, 0);
+  }
+  if (s.screen == ui.PLAYER && s.play.sheet) {
+    return act(s, "tracks_close", none, 0);
+  }
+  if (s.screen == ui.LOGIN && s.pin.code.len() > 0) {
+    return act(s, "cancel", none, 0);
+  }
+  if (s.screen == ui.PLAYER || s.stack.len() > 0) {
+    return act(s, "back", none, 0);
   }
   if (s.screen != ui.HOME && s.screen != ui.LOGIN && s.screen != ui.SERVERS) {
     return open_tab(s, 0);
