@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
-"""Write tests/stdlib/shape_vectors.fern: a subset of Noto Naskh Arabic and
-the glyphs that HarfBuzz gives for a list of Arabic words, for the tests
-of std/shape.
+"""Write tests/stdlib/shape_vectors.fern: a subset of Noto Naskh Arabic, a
+subset of Noto Sans Devanagari, and the glyphs that HarfBuzz gives for a
+list of Arabic and Devanagari words, for the tests of std/shape.
 
-Run:  python3 scripts/gen-shape-vectors.py NotoNaskhArabic-Regular.ttf
+Run:  python3 -I scripts/gen-shape-vectors.py NotoNaskhArabic-Regular.ttf NotoSansDevanagari-Regular.ttf
 
-It needs fontTools and uharfbuzz. The font comes from the Noto project
-(notofonts.github.io, fonts/NotoNaskhArabic/hinted/ttf). It is under the
-SIL Open Font License 1.1, and the subset keeps each name of the font, so
-it keeps the notice and the license. The subset holds the space, the
-letters and the marks from U+0621 to U+0655, and the GSUB and GPOS
-features that std/shape applies.
+It needs fontTools and uharfbuzz. The fonts come from the Noto project
+(notofonts.github.io, fonts/NotoNaskhArabic/hinted/ttf and
+fonts/NotoSansDevanagari/hinted/ttf). They are under the SIL Open Font
+License 1.1, and each subset keeps each name of its font, so it keeps the
+notice and the license. The Arabic subset holds the space, the ZWNJ, the
+ZWJ, the letters and the marks from U+0621 to U+0655, and the GSUB and
+GPOS features that std/shape applies.
+
+The Devanagari subset holds the blocks Devanagari and Devanagari
+Extended, the space, the no-break space, the joiners and the dotted
+circle, with the Indic features. Its glyphs have no outlines, because the
+shaping does not read them. The old cases shape the same subset with its
+script 'dev2' renamed 'dev0', as the test renames it, so the shaper takes
+the rules of the old Indic specification.
 
 Each case is the script, the text, the glyphs in logical order, the
 cluster of each glyph (the index of its first code point), and the
@@ -21,9 +29,10 @@ HarfBuzz, with no joining forms, left to right.
 
 marks_font() is a second subset with the space and the marks alone.
 
-The script also builds two fonts of its own, with no outlines:
-lookup_font(), with a GSUB lookup of each type and format, and
-position_font(), with a GPOS lookup of each type.
+The script also builds three fonts of its own, with no outlines:
+lookup_font(), with a GSUB lookup of each type and format,
+position_font(), with a GPOS lookup of each type, and stage_font(), with
+an rclt lookup before a calt lookup.
 """
 
 import base64
@@ -43,6 +52,10 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "tests" / "stdlib" / "shape_vectors.fern"
 FEATURES = ["ccmp", "locl", "isol", "init", "medi", "fina", "rlig", "calt", "liga", "clig", "mset",
             "kern", "mark", "mkmk", "curs", "dist"]
+DEVA_FEATURES = ["rvrn", "locl", "ccmp", "nukt", "akhn", "rphf", "rkrf", "pref", "blwf", "abvf", "half", "pstf",
+                 "vatu", "cjct", "init", "pres", "abvs", "blws", "psts", "haln", "rlig", "calt", "clig", "rclt",
+                 "abvm", "blwm", "curs", "dist", "kern", "mark", "mkmk"]
+DEVA_UNICODES = [0x20, 0xA0, 0x200C, 0x200D, 0x25CC] + list(range(0x900, 0x980)) + list(range(0xA8E0, 0xA900))
 
 WORDS = [
     "ب", "بب", "ببب", "باب", "بسم", "الله", "محمد", "لا", "سلام", "العربية",
@@ -56,6 +69,29 @@ WORDS = [
 
 LATIN = ["بب", "الله", "لا", "مُحَمَّد"]
 
+# The joiners: a ZWJ joins the letters on its two sides, and stops the
+# ligature of the lam and the alef. A ZWNJ stops the join.
+JOINERS = ["ب\u200d", "\u200dب", "ب\u200cب", "ل\u200dا", "ب\u200d\u200dب", "ل\u200cا"]
+
+# Devanagari words, and the cases of each rule of the Indic shaper.
+DEVANAGARI = [
+    "क", "कि", "की", "कु", "के", "को", "कं", "कः", "कँ", "क्", "क्ष", "त्र", "ज्ञ", "श्र", "द्ध", "द्व",
+    "ट्ट", "ह्न", "ह्म", "स्त", "स्त्र", "स्त्री", "प्य", "न्य", "क्य", "क्र", "प्र", "ग्र", "ट्र", "ड्र",
+    "र्क", "र्म", "र्कि", "र्की", "र्कं", "धर्म", "कार्य", "पूर्ण", "र्त्र", "र्ष्ट्र",
+    "नमस्ते", "हिन्दी", "संस्कृत", "क्षत्रिय", "स्त्रियाँ", "श्रृंगार", "विद्यालय", "राष्ट्रीय", "द्वारा",
+    "फ़िल्म", "क़", "ज़", "ड़", "ढ़", "\u0958", "\u095b", "\u0929", "\u0928\u093c", "\u0931", "\u0930\u093c",
+    "ऱ्य", "र\u094d\u200dय", "क\u094d\u200dष", "क\u094d\u200cष", "क\u200d", "ट\u094d\u200cयि", "ट\u094d\u200dयि",
+    "अ", "आ", "ई", "ऑ", "ऋ", "र्अ", "अं", "\u0905\u093c", "ि", "्", "ं", "कि ि", "\u25cc\u093f",
+    "\u00a0ि", "१ि", "ऽ", "ऽं", "ॐ", "क।", "क॥", "\u0915\u0951", "\u0915\u0952\u0951",
+    "\u0915\u0953", "क\ua8e0", "\ua8f2", "\ua8fe", "क\ua8ff", "कि\u094d", "र्क\u094b\u094d",
+    "क\u094d\u0915\u093f", "स्ति", "स्त्रि", "क्षि", "त्रि", "कृ", "हृ", "रु", "रू", "हु", "दृ", "द्यु",
+    "क्\u200c", "क्\u200d", "र्\u200d", "र\u200d\u094d", "\u200dर्क", "क\u093c\u094d\u0937",
+    "क\u094d\u093c\u0937", "क्ष्म", "ङ्क्ष", "क्क्क्क", "र्र्र", "ड़्ड़", "ऀक", "कऀ", "क\u0900\u0901",
+    # A virama on the u matra by a lookup before the one that puts the matra
+    # on its base: the virama keeps the height of the matra at that time.
+    "ळु्", "र्ळु्",
+]
+
 
 # The bytes of `font`, with a fixed time in its head table, so that the
 # script writes the same file each time.
@@ -67,9 +103,9 @@ def saved(font: TTFont) -> bytes:
     return out.getvalue()
 
 
-def subsetted(path: str, unicodes) -> bytes:
+def subset_font(path: str, unicodes, features) -> TTFont:
     opts = subset.Options()
-    opts.layout_features = FEATURES
+    opts.layout_features = features
     opts.name_IDs = ["*"]
     opts.drop_tables += ["DSIG"]
     opts.hinting = False
@@ -77,7 +113,24 @@ def subsetted(path: str, unicodes) -> bytes:
     s = subset.Subsetter(opts)
     s.populate(unicodes=unicodes)
     s.subset(font)
-    return saved(font)
+    return font
+
+
+def subsetted(path: str, unicodes) -> bytes:
+    return saved(subset_font(path, unicodes, FEATURES))
+
+
+# The Devanagari subset with no outlines, and the same bytes with the
+# script 'dev2' of GSUB and GPOS renamed 'dev0'. The script lists stay in
+# the order of their tags.
+def devanagari(path: str):
+    font = subset_font(path, DEVA_UNICODES, DEVA_FEATURES)
+    empty = TTGlyphPen(None).glyph()
+    for name in font.getGlyphOrder():
+        font["glyf"][name] = empty
+    new = saved(font)
+    assert new.count(b"dev2") == 2
+    return new, new.replace(b"dev2", b"dev0")
 
 
 LETTERS = [chr(c) for c in range(ord("a"), ord("z") + 1)]
@@ -101,6 +154,8 @@ LOOKUP_WORDS = [
     "st",                    # type 6, format 3: a sequence, then its second glyph
     "uv",                    # type 5, format 3
     "́à",         # the flag that skips base glyphs
+    "a\u200db",              # a ZWJ in the input is skipped
+    "a\u200cb",              # a ZWNJ in the input stops the ligature
 ]
 
 
@@ -267,6 +322,25 @@ def lookup_font() -> bytes:
     fb.setupPost()
     fb.font["GSUB"] = gsub_table()
     fb.font["GDEF"] = gdef_table(order)
+    return saved(fb.font)
+
+
+# A font with the letters "a" to "z" and two GSUB lookups: "rclt" changes
+# "b" to "c", then "calt" changes "a" to "b". In Arabic the two features
+# share a stage, so "a" becomes "b" and not "c".
+def stage_font() -> bytes:
+    order = [".notdef"] + LETTERS
+    fb = FontBuilder(1000, isTTF=True)
+    fb.setupGlyphOrder(order)
+    fb.setupCharacterMap({ord(c): c for c in LETTERS})
+    empty = TTGlyphPen(None).glyph()
+    fb.setupGlyf({g: empty for g in order})
+    fb.setupHorizontalMetrics({g: (500, 0) for g in order})
+    fb.setupHorizontalHeader(ascent=800, descent=-200)
+    fb.setupNameTable({"familyName": "FernStageTest", "styleName": "Regular"})
+    fb.setupOS2()
+    fb.setupPost()
+    fb.font["GSUB"] = layout_table("GSUB", [("calt", [1]), ("rclt", [0])], [single({"b": "c"}), single({"a": "b"})])
     return saved(fb.font)
 
 
@@ -448,7 +522,7 @@ def shaped(data: bytes, text: str, script: str):
     buf.add_str(text)
     buf.direction = "rtl" if script == "Arab" else "ltr"
     buf.script = script
-    buf.language = "ar"
+    buf.language = "hi" if script == "Deva" else "ar"
     hb.shape(font, buf, {})
     infos = list(buf.glyph_infos)
     positions = list(buf.glyph_positions)
@@ -466,16 +540,21 @@ def case(data: bytes, text: str, script: str) -> str:
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
+    if len(sys.argv) != 3:
         sys.exit(__doc__)
-    data = subsetted(sys.argv[1], [0x20] + list(range(0x621, 0x656)))
+    data = subsetted(sys.argv[1], [0x20, 0x200C, 0x200D] + list(range(0x621, 0x656)))
     marks = subsetted(sys.argv[1], [0x20] + list(range(0x64B, 0x656)))
+    deva, deva_old = devanagari(sys.argv[2])
     lines = []
-    for script, words in [("arab", WORDS), ("latn", LATIN)]:
+    for script, words in [("arab", WORDS + JOINERS), ("latn", LATIN + JOINERS)]:
         for w in words:
             lines.append(case(data, w, script))
+    deva_lines = [case(deva, w, "deva") for w in DEVANAGARI]
+    old_lines = [case(deva_old, w, "deva") for w in DEVANAGARI]
     built = lookup_font()
-    built_lines = [case(built, w, "latn") for w in LOOKUP_WORDS]
+    built_lines = [case(built, w, "latn") for w in LOOKUP_WORDS] + [case(built, w, "arab") for w in ["ab", "a\u200db", "a\u200cb"]]
+    staged = stage_font()
+    staged_lines = [case(staged, w, script) for script in ["arab", "latn"] for w in ["a", "b", "ab"]]
     placed = position_font()
     placed_lines = [case(placed, w, script) for script in ["latn", "arab"] for w in POSITION_WORDS]
     parts = [
@@ -500,6 +579,25 @@ def main() -> None:
         '  return "%s";' % "\\n".join(l.replace("\t", "\\t") for l in lines),
         "}",
         "",
+        "// A subset of Noto Sans Devanagari, Copyright 2022 The Noto Project",
+        "// Authors (https://github.com/notofonts/devanagari), under the SIL Open",
+        "// Font License 1.1, with no outlines. The names of the font hold the",
+        "// notice and the license.",
+        "pub function deva_font(): string {",
+        '  return "%s";' % base64.b64encode(deva).decode("ascii"),
+        "}",
+        "",
+        "// The cases of deva_font(), as those of cases().",
+        "pub function deva_cases(): string {",
+        '  return "%s";' % "\\n".join(l.replace("\t", "\\t") for l in deva_lines),
+        "}",
+        "",
+        "// The cases of deva_font() with its script dev2 renamed dev0, for the",
+        "// old Indic specification.",
+        "pub function deva_old_cases(): string {",
+        '  return "%s";' % "\\n".join(l.replace("\t", "\\t") for l in old_lines),
+        "}",
+        "",
         "// A font with a GSUB lookup of each type and format, and no outlines.",
         "pub function lookup_font(): string {",
         '  return "%s";' % base64.b64encode(built).decode("ascii"),
@@ -508,6 +606,16 @@ def main() -> None:
         "// The cases of lookup_font(), as those of cases().",
         "pub function lookup_cases(): string {",
         '  return "%s";' % "\\n".join(l.replace("\t", "\\t") for l in built_lines),
+        "}",
+        "",
+        "// A font with an rclt lookup before a calt lookup.",
+        "pub function stage_font(): string {",
+        '  return "%s";' % base64.b64encode(staged).decode("ascii"),
+        "}",
+        "",
+        "// The cases of stage_font(), as those of cases().",
+        "pub function stage_cases(): string {",
+        '  return "%s";' % "\\n".join(l.replace("\t", "\\t") for l in staged_lines),
         "}",
         "",
         "// A font with a GPOS lookup of each type, and no outlines.",

@@ -162,7 +162,10 @@ var interpSlowStdTests = map[string]bool{
 	// Full AAC corpora exceed a minute. Independent AAC PCM smoke stays here.
 	"aac": true, "aac_boundary": true, "aac_kernel": true,
 	// The two conformance files of UAX #9 run each of their cases. The compiled gates run them.
-	"bidi":   true,
+	"bidi": true,
+	// The HarfBuzz cases shape each Devanagari word with the rules of both Indic
+	// specifications, for minutes. The compiled gates run them.
+	"shape":  true,
 	"brotli": true, "deflate": true, "flac_input": true, "flac_file": true, "ed25519": true, "http_compress": true,
 	"http_h2": true, "http_h3q": true, "http_multipart": true, "http_websocket": true,
 	"hpke": true, "mitigations": true, "mlkem768": true, "mp3": true, "mp3_input": true, "mp3_file": true, "mp3_seek": true, "montgomery": true, "opus": true, "opus_band_analysis": true,

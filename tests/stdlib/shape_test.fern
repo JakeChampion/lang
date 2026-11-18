@@ -20,6 +20,25 @@ function naskh(): Option[truetype.Font] {
   return font_of(shape_vectors.font());
 }
 
+function devanagari(): Option[truetype.Font] {
+  return font_of(shape_vectors.deva_font());
+}
+
+// The Devanagari font with its script tag dev2 renamed dev0, so that only
+// the old tag deva is left.
+function old_devanagari(): Option[truetype.Font] {
+  let Ok(b) = base64.decode(shape_vectors.deva_font()) else {
+    return None;
+  };
+  let out = b;
+  for i in 0..b.len() - 3 {
+    if (b[i] == 100 as u8 && b[i + 1] == 101 as u8 && b[i + 2] == 118 as u8 && b[i + 3] == 50 as u8) {
+      out = out.with(i + 3, 48 as u8);
+    }
+  }
+  return truetype.parse(out);
+}
+
 function joined(xs: i32[]): string {
   return xs.map((x: i32): string => x.to_string()).join(",");
 }
@@ -66,12 +85,49 @@ function test_default_shaper_matches_harfbuzz(): test.TestOutcome {
   return test.assert_eq(differences(naskh(), shape_vectors.cases(), "latn", true), "");
 }
 
+// The Indic shaper with the script tag dev2: syllables, reph, half forms,
+// below-base forms, pre-base matras, nuktas, joiners and dotted circles.
+function test_devanagari_matches_harfbuzz(): test.TestOutcome {
+  return test.assert_eq(differences(devanagari(), shape_vectors.deva_cases(), "deva", true), "");
+}
+
+// The same words with the rules of the old Indic specification.
+function test_old_devanagari_matches_harfbuzz(): test.TestOutcome {
+  return test.assert_eq(differences(old_devanagari(), shape_vectors.deva_old_cases(), "deva", true), "");
+}
+
+// The script and feature lists, and the lookups that would join a Ra and a
+// virama into a reph.
+function test_would_substitute(): test.TestOutcome {
+  let Some(f) = devanagari() else {
+    return test.fail("the font did not parse");
+  };
+  let (ra, ka, virama) = (f.glyph(0x930), f.glyph(0x915), f.glyph(0x94D));
+  let got = [f.has_script("dev2", false), f.has_script("dev2", true), f.has_script("mlm2", false), f.has_feature("dev2", "rphf"), f.has_feature("dev2", "pref"), f.would_substitute("dev2", "rphf", [ra, virama], true), f.would_substitute("dev2", "rphf", [ka, virama], true), f.would_substitute("dev2", "rphf", [ra], true), f.would_substitute("dev2", "blwf", [virama, ra], true)];
+  return test.assert_eq(got.map((b: boolean): string => if (b) { "1" } else { "0" }).join(""), "110101001");
+}
+
 // Each type and format of GSUB lookup, the flags that skip marks and
 // bases, and the lookups of a context that change the count of glyphs. The
 // font has no GPOS table, so HarfBuzz moves its marks by its own rules, and
 // the positions do not count.
 function test_each_lookup_matches_harfbuzz(): test.TestOutcome {
   return test.assert_eq(differences(font_of(shape_vectors.lookup_font()), shape_vectors.lookup_cases(), "latn", false), "");
+}
+
+// In Arabic a lookup of rclt shares the stage of calt, so it applies
+// first when its index is lower. In other scripts the two share a stage
+// too.
+function test_rclt_shares_the_stage_of_calt(): test.TestOutcome {
+  let f = font_of(shape_vectors.stage_font());
+  let cases = shape_vectors.stage_cases();
+  return test.assert_eq(differences(f, cases, "arab", true) + differences(f, cases, "latn", true), "");
+}
+
+// A ZWJ does not stop a ligature of liga in Latin, and stops it in
+// Arabic. The font has no space, so the joiners go.
+function test_joiners_in_lookups(): test.TestOutcome {
+  return test.assert_eq(differences(font_of(shape_vectors.lookup_font()), shape_vectors.lookup_cases(), "arab", true), "");
 }
 
 // Each type of GPOS lookup, left to right and right to left.
@@ -123,8 +179,13 @@ function main(): i32 {
   let r = test.new("std/shape");
   r = r.it("Arabic words give the glyphs of HarfBuzz", test_arabic_matches_harfbuzz);
   r = r.it("the default shaper gives the glyphs of HarfBuzz", test_default_shaper_matches_harfbuzz);
+  r = r.it("Devanagari words give the glyphs of HarfBuzz", test_devanagari_matches_harfbuzz);
+  r = r.it("the old Indic specification gives the glyphs of HarfBuzz", test_old_devanagari_matches_harfbuzz);
+  r = r.it("would_substitute finds the reph and the below-base forms", test_would_substitute);
   r = r.it("each type of lookup gives the glyphs of HarfBuzz", test_each_lookup_matches_harfbuzz);
   r = r.it("each type of GPOS lookup gives the positions of HarfBuzz", test_each_position_matches_harfbuzz);
+  r = r.it("rclt shares the stage of calt", test_rclt_shares_the_stage_of_calt);
+  r = r.it("the joiners stop a ligature as in HarfBuzz", test_joiners_in_lookups);
   r = r.it("feature_lookups reads the script and the feature lists", test_feature_lookups);
   r = r.it("a font with no GSUB table gives one glyph for each character", test_no_gsub);
   r = r.it("a cut font does not crash", test_a_cut_font_does_not_crash);
