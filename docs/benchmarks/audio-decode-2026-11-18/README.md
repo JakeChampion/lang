@@ -121,7 +121,7 @@ These five-trial measurements use the same local host and corrected compiler.
 They establish remaining gaps, not improvements from a matched earlier Fern build.
 
 MP3 checks three observable PCM samples per file in the timed region.
-QOA checks all output samples and uses i32 output, while its C reference uses int16.
+QOA checks two output samples and uses i32 output, while its C reference uses int16.
 These older drivers include process startup and differ from the MP2 decode-only driver.
 Do not compare ratios across codecs as a measure of relative implementation quality.
 The JSON files retain the measurements and reference identities.
