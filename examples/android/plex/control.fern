@@ -2231,9 +2231,9 @@ function pick_sound(dev: Device, p: Play): void {
 }
 
 // Plays the item with a new choice of tracks, and makes the server
-// remember it. A file that plays as it is changes its sound in place.
-// Otherwise the stream starts again where it is, once the server has the
-// choice.
+// remember it. A file that plays as it is prepares again with the new
+// sound. Otherwise the stream starts again where it is, once the server
+// has the choice.
 function choose(own s: App, choice: plex.Choice): App {
   let p = s.play;
   let part = "";
@@ -2242,27 +2242,25 @@ function choose(own s: App, choice: plex.Choice): App {
   }
   let t = s;
   let next = Play { ...p, choice: choice, cues: [], sheet: false };
+  let pos = p.position;
+  if (p.prepared) {
+    pos = t.dev.position();
+  }
   // A downloaded file holds the tracks of the sheet, so it plays on.
   if (on_disk(p)) {
     if (part.len() > 0) {
       t = report(t, SelectTracks(part, choice));
     }
-    pick_sound(t.dev, next);
-    return ask_cues(App { ...t, play: next, dirty: true });
+    return ask_cues(new_sound(t, next, p.choice.audio, pos));
   }
   let q = plex.qualities()[p.level];
   let session = hex_id(t.dev);
-  let pos = p.position;
-  if (p.prepared) {
-    pos = t.dev.position();
-  }
   let stream = plex.stream_for(t.client, t.base, p.item, q, pos, session, t.dev.decoders, choice);
   if (!stream.transcode && !p.stream.transcode) {
     if (part.len() > 0) {
       t = report(t, SelectTracks(part, choice));
     }
-    pick_sound(t.dev, next);
-    return ask_cues(App { ...t, play: next, dirty: true });
+    return ask_cues(new_sound(t, next, p.choice.audio, pos));
   }
   log.info("plex: new tracks, so the stream starts again");
   t.dev.stop();
@@ -2281,6 +2279,57 @@ function choose(own s: App, choice: plex.Choice): App {
   }
   let ok = u.dev.play(stream.url);
   return ask_cues(u);
+}
+
+// Takes the choice that the server remembers for the item that plays. An
+// item of a list has no tracks, so its choice comes with all of its
+// metadata after the play starts. A transcode took the choice already. A
+// file that plays as it is changes its sound in place, unless the sound of
+// the choice needs a transcode.
+function follow_remembered(own s: App, choice: plex.Choice): App {
+  let p = s.play;
+  let next = Play { ...p, choice: choice };
+  if (p.stream.transcode) {
+    return ask_cues(App { ...s, play: next, dirty: true });
+  }
+  if (!on_disk(p)) {
+    let pos = p.position;
+    if (p.prepared) {
+      pos = s.dev.position();
+    }
+    let session = hex_id(s.dev);
+    let stream = plex.stream_for(s.client, s.base, p.item, plex.qualities()[p.level], pos, session, s.dev.decoders, choice);
+    if (stream.transcode) {
+      log.info("plex: the remembered tracks need a transcode");
+      s.dev.stop();
+      if (p.video) {
+        s.dev.hide_video();
+      }
+      let ok = s.dev.play(stream.url);
+      return ask_cues(App { ...s, play: Play { ...next, stream: stream, session: session, prepared: false, video: false, overlay: true, position: pos, status: "Loading" }, dirty: true });
+    }
+  }
+  let first = plex.audio_tracks(p.item);
+  let playing = if (first.len() > 0) { first[0].id } else { "" };
+  let at = s.dev.position();
+  return ask_cues(new_sound(s, next, playing, at));
+}
+
+// The play `next` of a file that plays as it is, with the sound `was`
+// before. The media player selects a sound track only before it starts, so
+// a new sound prepares the file again at `pos`, and `prepared` selects the
+// track. A player that is not prepared yet selects it when it is.
+function new_sound(own s: App, next: Play, was: string, pos: i64): App {
+  if (!next.prepared || next.choice.audio.len() == 0 || next.choice.audio == was) {
+    return App { ...s, play: next, dirty: true };
+  }
+  log.info("plex: a new sound, so the file prepares again");
+  s.dev.stop();
+  if (next.video) {
+    s.dev.hide_video();
+  }
+  let ok = s.dev.play(next.stream.url);
+  return App { ...s, play: Play { ...next, stream: plex.Stream { ...next.stream, offset_ms: pos }, prepared: false, video: false, overlay: true, position: pos, status: "Loading" }, dirty: true };
 }
 
 // True when the first version of the item has a sound track.
@@ -2835,8 +2884,12 @@ function got_play_meta(own t: App, key: string, r: plex.Reply): App {
   let had = plex.thumbnail_part(t.play.item).is_some();
   let had_cues = plex.text_subtitle(t.play.item, t.play.choice).is_some();
   let item = plex.Item { ...t.play.item, markers: full.markers, media: full.media };
+  let remembered = plex.remembered(item);
+  let unchosen = t.play.choice.audio.len() == 0 && t.play.choice.subtitle.len() == 0;
   let u = App { ...t, play: Play { ...t.play, item: item } };
-  if (!had_cues) {
+  if (unchosen && (remembered.audio.len() > 0 || remembered.subtitle.len() > 0)) {
+    u = follow_remembered(u, remembered);
+  } else if (!had_cues) {
     u = ask_cues(u);
   }
   if (!had) {

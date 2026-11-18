@@ -114,8 +114,11 @@ In the intro or the credits of a video, a Skip button shows over it. The
 app asks the server for the markers of the item when it starts to play.
 
 The Tracks button of the player chooses the sound and the subtitles, and
-the server remembers the choice. A file that plays as it is changes its
-sound in place. A transcode takes its sound from the choice that the
+the server remembers the choice. The media player of Android changes the
+sound only before it starts. So a file that plays as it is prepares again
+at the same place with the new sound. A play from a row of the home
+screen takes the sound that the server remembers when all of its
+metadata comes. A transcode takes its sound from the choice that the
 server remembers. So a new transcode starts after the server has the
 choice, and the old one stops.
 
@@ -169,8 +172,8 @@ screen and plays from the phone with no server. Remove download deletes
 the file.
 
 The sheet of tracks of a download lists the tracks of its file. A file as
-it is keeps each of its sound tracks, and a choice changes the sound in
-place. A transcode keeps only the sound that it played. The download
+it is keeps each of its sound tracks, and a choice prepares the file
+again with the new sound. A transcode keeps only the sound that it played. The download
 also keeps the text of each text subtitle, so subtitles show with no
 server. An image subtitle such as PGS does not show from a file. A
 choice never stops the file to play a stream of the server.

@@ -36,7 +36,7 @@ function free_frame(own f: draw.Frame): void {
 
 const RESOURCES: string = "[{\"name\":\"Den\",\"provides\":\"server\",\"clientIdentifier\":\"abc\",\"accessToken\":\"srv\",\"owned\":true,\"connections\":[{\"uri\":\"https://down.example:32400\",\"local\":true,\"relay\":false},{\"uri\":\"https://up.example:32400\",\"local\":false,\"relay\":false}]}]";
 
-const HUBS: string = "{\"MediaContainer\":{\"Hub\":[{\"title\":\"Continue Watching\",\"hubIdentifier\":\"home.continue\",\"Metadata\":[{\"ratingKey\":\"77\",\"type\":\"episode\",\"title\":\"Pilot\",\"grandparentTitle\":\"Lost\",\"grandparentRatingKey\":\"70\",\"grandparentThumb\":\"/library/metadata/70/thumb\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"viewOffset\":100000}]},{\"title\":\"Recently Added Movies\",\"hubIdentifier\":\"home.movies.recent\",\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"thumb\":\"/library/metadata/501/thumb\"},{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Amélie\",\"year\":2001,\"thumb\":\"/library/metadata/502/thumb\"}]}]}}";
+const HUBS: string = "{\"MediaContainer\":{\"Hub\":[{\"title\":\"Continue Watching\",\"hubIdentifier\":\"home.continue\",\"Metadata\":[{\"ratingKey\":\"77\",\"type\":\"episode\",\"title\":\"Pilot\",\"grandparentTitle\":\"Lost\",\"grandparentRatingKey\":\"70\",\"grandparentThumb\":\"/library/metadata/70/thumb\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"viewOffset\":100000}]},{\"title\":\"Recently Added Movies\",\"hubIdentifier\":\"home.movies.recent\",\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"thumb\":\"/library/metadata/501/thumb\",\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\"}]}]},{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Amélie\",\"year\":2001,\"thumb\":\"/library/metadata/502/thumb\"}]}]}}";
 
 const SECTIONS: string = "{\"MediaContainer\":{\"Directory\":[{\"key\":\"1\",\"type\":\"movie\",\"title\":\"Movies\"},{\"key\":\"2\",\"type\":\"show\",\"title\":\"TV Shows\"}]}}";
 
@@ -88,7 +88,7 @@ function query_value(u: string, key: string): string {
 
 // The reply of the fake plex.tv and of the fake server. Its first address
 // does not answer, so the app tries the second.
-function reply_to(r: plex.Request): plex.Reply {
+function reply_to(r: plex.Request, sound: string): plex.Reply {
   let u = r.url;
   if (u.starts_with("https://down.example")) {
     return plex.Reply { status: 0, body: [], error: "connect: refused" };
@@ -166,7 +166,7 @@ function reply_to(r: plex.Request): plex.Reply {
     return ok(INTRO);
   }
   if (u.contains("/library/metadata/501")) {
-    return ok(MOVIE);
+    return ok(movie_with_sound(sound));
   }
   if (r.method == "PUT" && u.contains("/library/parts/11?")) {
     return ok("");
@@ -210,12 +210,33 @@ function bif_bytes(): u8[] {
   return out;
 }
 
-function reply_all(rs: plex.Request[]): plex.Reply[] {
+function reply_all(rs: plex.Request[], sound: string): plex.Reply[] {
   let out: plex.Reply[] = [];
   for r in rs {
-    out = out.append(reply_to(r));
+    out = out.append(reply_to(r, sound));
   }
   return out;
+}
+
+// The sound track of part 11 that the last PUT of the log chose, or "".
+// The fake server remembers it, as Plex does.
+function chosen_sound(log: Log): string {
+  let sound = "";
+  for u in log.urls.get() {
+    if (u.starts_with("PUT ") && u.contains("/library/parts/11?audioStreamID=")) {
+      sound = u.split("audioStreamID=")[1].split("&")[0];
+    }
+  }
+  return sound;
+}
+
+// The metadata of item 501 with the sound track `sound` chosen, as the
+// server gives it after a PUT of that track.
+function movie_with_sound(sound: string): string {
+  if (sound != "22") {
+    return MOVIE;
+  }
+  return MOVIE.replace("\"English (AAC Stereo)\",\"selected\":true", "\"English (AAC Stereo)\"").replace("\"Commentary (AAC Stereo)\"", "\"Commentary (AAC Stereo)\",\"selected\":true");
 }
 
 // What the fake device saw: the requests, the calls of the player and the
@@ -242,7 +263,8 @@ function fetch(log: Log, rs: plex.Request[]): worker.Worker[plex.Reply[]] {
   for r in rs {
     note(log.urls, r.method + " " + r.url);
   }
-  return worker.spawn_on(worker.inline(), (): plex.Reply[] => reply_all(rs));
+  let sound = chosen_sound(log);
+  return worker.spawn_on(worker.inline(), (): plex.Reply[] => reply_all(rs, sound));
 }
 
 function fake_image(w: i32, h: i32): Option[draw.Image] {
@@ -1060,12 +1082,14 @@ function test_tracks_sheet(): test.TestOutcome {
     return test.fail("no sheet of tracks");
   }
   let plays = count_plays(log);
-  let commentary = tap(sheet, log, 600i64, f, "audio:22");
-  if (!has_url(log, "PUT https://up.example:32400/library/parts/11?audioStreamID=22&subtitleStreamID=0&allParts=1") || !has_call(log, "track 2") || count_plays(log) != plays) {
-    return test.fail("the commentary did not play in place: " + log.calls.get().join(" | "));
+  let picked = tap(sheet, log, 600i64, f, "audio:22");
+  let commentary = settle(at(picked, log, 650i64, f, android.Posted(19, 0 as usize)), log, 650i64, f);
+  if (!has_url(log, "PUT https://up.example:32400/library/parts/11?audioStreamID=22&subtitleStreamID=0&allParts=1") || count_plays(log) != plays + 1 || !selected_before_start(log, "track 2")) {
+    return test.fail("the commentary did not play from the file prepared again: " + log.calls.get().join(" | "));
   }
-  let subs = tap(tap(commentary, log, 700i64, f, "tracks"), log, 800i64, f, "sub:31");
-  if (count_plays(log) != plays + 1 || !has_call(log, "subtitles=burn") || !has_call(log, "audioStreamID=22")) {
+  let plays_now = count_plays(log);
+  let subs = tap(tap(tap(commentary, log, 700i64, f, "overlay"), log, 750i64, f, "tracks"), log, 800i64, f, "sub:31");
+  if (count_plays(log) != plays_now + 1 || !has_call(log, "subtitles=burn") || !has_call(log, "audioStreamID=22")) {
     return test.fail("the subtitle did not burn in a new transcode: " + log.calls.get().join(" | "));
   }
   if (!has_url(log, "PUT https://up.example:32400/library/parts/11?audioStreamID=22&subtitleStreamID=31&allParts=1")) {
@@ -1089,6 +1113,33 @@ function test_tracks_sheet(): test.TestOutcome {
     return test.fail("the transcode of the old tracks did not stop");
   }
   return test.assert_eq(started.play.held.to_string() + " " + has_call(log, "audioStreamID=21").to_string(), "false true");
+}
+
+// An item of a row has no tracks, so its play starts with no choice. The
+// sound that the server remembers comes with all of its metadata, and the
+// file plays it: a play after a choice of the second sound plays that sound
+// again.
+function test_resume_takes_remembered_sound(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let first = poster_of(home, "501");
+  let played = tap(hold(home, log, 1000i64, f, first), log, 1700i64, f, "menu:play");
+  let ready = settle(at(played, log, 1800i64, f, android.Posted(19, 0 as usize)), log, 1800i64, f);
+  let sheet = tap(tap(ready, log, 1900i64, f, "overlay"), log, 2000i64, f, "tracks");
+  let picked = settle(at(tap(sheet, log, 2100i64, f, "audio:22"), log, 2150i64, f, android.Posted(19, 0 as usize)), log, 2150i64, f);
+  if (!selected_before_start(log, "track 2")) {
+    return test.fail("the second sound did not play: " + log.calls.get().join(" | "));
+  }
+  let back = settle(at(at(picked, log, 3000i64, f, android.Key(4, 0)), log, 3000i64, f, android.Key(4, 1)), log, 3000i64, f);
+  let again = poster_of(back, "501");
+  let resumed = tap(hold(back, log, 4000i64, f, again), log, 4700i64, f, "menu:play");
+  let going = settle(at(resumed, log, 4800i64, f, android.Posted(19, 0 as usize)), log, 4800i64, f);
+  if (going.play.choice.audio != "22" || !selected_before_start(log, "track 2")) {
+    return test.fail("the play again started with the first sound: " + going.play.choice.audio + " " + log.calls.get().join(" | "));
+  }
+  return test.assert_eq(going.play.stream.transcode.to_string(), "false");
 }
 
 // The speed button gives the next rate. The player takes it at once while
@@ -1515,13 +1566,15 @@ function test_downloaded_tracks(): test.TestOutcome {
   let fetched = log.urls.get().filter((u: string): boolean => u.contains("/library/streams/33")).len();
   let sheet = tap(tap(ready, log, 6000i64, f, "overlay"), log, 6100i64, f, "tracks");
   let listed = node(sheet, "audio:22").is_some() && node(sheet, "sub:33").is_some() && node(sheet, "sub:31").is_none();
-  let commentary = tap(sheet, log, 6200i64, f, "audio:22");
-  if (!listed || !has_call(log, "track 2") || count_plays(log) != plays || !commentary.play.stream.url.starts_with("file://")) {
-    return test.fail("the sound of the file did not change in place: " + log.calls.get().join(" | "));
+  let picked = tap(sheet, log, 6200i64, f, "audio:22");
+  let commentary = settle(at(picked, log, 6250i64, f, android.Posted(19, 0 as usize)), log, 6250i64, f);
+  if (!listed || count_plays(log) != plays + 1 || !selected_before_start(log, "track 2") || !commentary.play.stream.url.starts_with("file://")) {
+    return test.fail("the sound of the file did not change in its file: " + log.calls.get().join(" | "));
   }
-  let subs = tap(tap(commentary, log, 6300i64, f, "tracks"), log, 6400i64, f, "sub:33");
+  let plays_now = count_plays(log);
+  let subs = tap(tap(tap(commentary, log, 6300i64, f, "overlay"), log, 6350i64, f, "tracks"), log, 6400i64, f, "sub:33");
   let again = log.urls.get().filter((u: string): boolean => u.contains("/library/streams/33")).len();
-  if (subs.play.cues.len() == 0 || again != fetched || count_plays(log) != plays) {
+  if (subs.play.cues.len() == 0 || again != fetched || count_plays(log) != plays_now) {
     return test.fail("the subtitle of the file did not come from the phone");
   }
   log.decoders.set(["video/hevc", "audio/mp4a-latm"]);
@@ -1631,6 +1684,28 @@ function test_gapless_album(): test.TestOutcome {
     return test.fail("the end of the track after a failed next track did not play on: " + log.calls.get().join(" | "));
   }
   return test.pass();
+}
+
+// True when the media player selected `track` after the last play and
+// before it started: the one time that it takes a sound track.
+function selected_before_start(log: Log, track: string): boolean {
+  let calls = log.calls.get();
+  let last = -1;
+  for i in 0..calls.len() {
+    if (calls[i].starts_with("play ")) {
+      last = i;
+    }
+  }
+  let picked = -1;
+  for i in last + 1..calls.len() {
+    if (picked < 0 && calls[i] == track) {
+      picked = i;
+    }
+    if (picked >= 0 && calls[i] == "start") {
+      return true;
+    }
+  }
+  return false;
 }
 
 function count_plays(log: Log): i32 {
@@ -2119,6 +2194,7 @@ function main(): i32 {
   r = r.it("a file with no sound plays again as a transcode", test_lost_sound_transcodes);
   r = r.it("a drag on the seek bar scrubs with thumbnails", test_drag_scrubs_with_thumbnails);
   r = r.it("the sheet of tracks changes the sound and burns subtitles", test_tracks_sheet);
+  r = r.it("a play again takes the sound that the server remembers", test_resume_takes_remembered_sound);
   r = r.it("the speed button sets the rate, also after a pause", test_speed_button);
   r = r.it("Auto takes a lower quality after two stalls in a minute", test_auto_quality_steps_down);
   r = r.it("the texts are in the language of the person", test_texts_in_the_language_of_the_person);
