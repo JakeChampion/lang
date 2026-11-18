@@ -411,6 +411,16 @@ jobs:
         run: |
           FERN="$PWD/bin/fern-selfhost" python3 scripts/bench-mp3 > build/audio-pair/mp3.json
           FERN="$PWD/bin/fern-selfhost" python3 scripts/bench-audio > build/audio-pair/qoa.json
+      - name: Compare MP3 transforms across MPEG versions
+        working-directory: candidate
+        run: |
+          for spec in '48000 2' '24000 1' '8000 1'; do
+            read -r rate channels <<< "$spec"
+            python3 scripts/bench-mp3-freeformat --compiler bin/fern-selfhost \
+              --baseline-stdlib ../baseline/internal/stdlib \
+              --sample-rate "$rate" --channels "$channels" \
+              --output "build/mp3-pair/$rate-$channels" --rounds 100 --trials 9
+          done
       - name: Upload every timing
         if: always()
         uses: actions/upload-artifact@v7
@@ -419,6 +429,7 @@ jobs:
           path: |
             candidate/build/audio-pair/*.json
             candidate/build/audio-convenience/results.json
+            candidate/build/mp3-pair/*/results.json
           if-no-files-found: error
 
   native-pair:

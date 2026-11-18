@@ -7,9 +7,10 @@ import "std/i32";
 import "std/string";
 import "std/bench";
 
-function hash(samples: [f32], count: i32, previous: u32): u32 {
+function hash(samples: [f32], count: i32, previous: u32, decode_only: boolean): u32 {
   let value = previous;
-  for i in 0..count {
+  let end = if (decode_only && count > 0) { 1 } else { count };
+  for i in 0..end {
     let bits = f32_bits(samples[i]) as u32;
     for byte in 0..4 {
       value = (value ^ bits >> byte * 8 & 255u32) * 16777619u32;
@@ -18,7 +19,7 @@ function hash(samples: [f32], count: i32, previous: u32): u32 {
   return value;
 }
 
-function frames(input: [u8], previous: u32): Result[(u32, i64), pcm.AudioError] {
+function frames(input: [u8], previous: u32, decode_only: boolean): Result[(u32, i64), pcm.AudioError] {
   let codec = mp3.decoder();
   let buffer = spectral.zeros(2304);
   let at = 0;
@@ -32,7 +33,7 @@ function frames(input: [u8], previous: u32): Result[(u32, i64), pcm.AudioError] 
       return Err(pcm.Header);
     }
     let count = frame.frames * frame.channels;
-    value = hash(frame.samples, count, value);
+    value = hash(frame.samples, count, value, decode_only);
     samples += count as i64;
     at += frame.bytes_read;
     buffer = frame.samples;
@@ -40,12 +41,12 @@ function frames(input: [u8], previous: u32): Result[(u32, i64), pcm.AudioError] 
   return Ok((value, samples));
 }
 
-function decode(input: [u8], mode: string, previous: u32): Result[(u32, i64), pcm.AudioError] {
+function decode(input: [u8], mode: string, previous: u32, decode_only: boolean): Result[(u32, i64), pcm.AudioError] {
   if (mode == "frames") {
-    return frames(input, previous);
+    return frames(input, previous, decode_only);
   }
   let audio = mp3.decode_raw(input, pcm.default_limits())?;
-  return Ok((hash(audio.samples, audio.samples.len(), previous), audio.samples.len() as i64));
+  return Ok((hash(audio.samples, audio.samples.len(), previous, decode_only), audio.samples.len() as i64));
 }
 
 function peak_rss(): i32 {
@@ -67,9 +68,10 @@ function peak_rss(): i32 {
 
 function main(): i32 {
   let argv = args();
-  if (argv.len() != 5 || argv[2] != "whole" && argv[2] != "frames") {
+  if (argv.len() != 5 && argv.len() != 6 || argv[2] != "whole" && argv[2] != "frames") {
     return 1;
   }
+  let decode_only = argv.len() == 6 && argv[5] == "decode";
   let Ok(input) = io.read_input_bytes(argv[1]) else {
     return 2;
   };
@@ -78,7 +80,7 @@ function main(): i32 {
     return 3;
   }
   for _ in 0..2 {
-    if let Err(_) = decode(input, argv[2], 2166136261u32) {
+    if let Err(_) = decode(input, argv[2], 2166136261u32, decode_only) {
       return 4;
     }
   }
@@ -88,7 +90,7 @@ function main(): i32 {
   let checksum = 2166136261u32;
   let samples = 0i64;
   for _ in 0..rounds {
-    let Ok((value, count)) = decode(input, argv[2], checksum) else {
+    let Ok((value, count)) = decode(input, argv[2], checksum, decode_only) else {
       return 5;
     };
     checksum = value;

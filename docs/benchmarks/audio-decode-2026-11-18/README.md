@@ -115,7 +115,7 @@ Issues #16437, #14886, and #14516 retain the remaining performance work.
 
 ## Other decoder baselines
 
-The current MP3 whole-input benchmark takes 7.08 times the scalar minimp3 time and 9.93 times its SIMD time.
+Before the long-block change, the MP3 whole-input benchmark takes 7.08 times the scalar minimp3 time and 9.93 times its SIMD time.
 The current QOA benchmark takes 2.37 times the pinned C reference time.
 These five-trial measurements use the same local host and corrected compiler.
 They establish remaining gaps, not improvements from a matched earlier Fern build.
@@ -125,3 +125,4 @@ QOA checks two output samples and uses i32 output, while its C reference uses in
 These older drivers include process startup and differ from the MP2 decode-only driver.
 Do not compare ratios across codecs as a measure of relative implementation quality.
 The JSON files retain the measurements and reference identities.
+The [MP3 transform report](MP3-LONG-BLOCKS.md) records a further 21–26% reduction in decode time with fewer allocations.
