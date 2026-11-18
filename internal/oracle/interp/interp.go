@@ -338,7 +338,13 @@ func (i *Interp) findKey(m *Map, k Value) (int, error) {
 			}
 			continue
 		}
+		// The parameters of eq are not the only holders of the keys: the map
+		// holds kk, and the next round reads k again.
+		arrOwn(kk)
+		arrOwn(k)
 		same, err := i.callFunc(eq, []Value{kk, k})
+		arrDisown(kk)
+		arrDisown(k)
 		if err != nil {
 			return -1, err
 		}
