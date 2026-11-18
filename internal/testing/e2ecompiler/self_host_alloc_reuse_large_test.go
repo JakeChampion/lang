@@ -167,10 +167,12 @@ func checkAllocReuseDonorPAC(t *testing.T, gcc, runner, dir, assembly, frame, wa
 // 65,535 words has a header of one word, and its number of words is at -4.
 // Each other box has the header of an array, with a capacity of one less
 // than its number of words.
+// The entry records its stack as the stack of the program. Under -sanitize
+// each count operation checks that it runs on that stack.
 func allocReuseDonorProbe(target string, cap, want int, stack, quarantine, short bool) string {
 	mismatch := cap > 0 && cap != want
 	if target == "x86-64-linux" {
-		s := "_start:\n    pushq %rbp\n    movq %rsp, %rbp\n    xorq %r12, %r12\n"
+		s := "_start:\n    movq %rsp, __fern_stack_top(%rip)\n    pushq %rbp\n    movq %rsp, %rbp\n    xorq %r12, %r12\n"
 		if cap > 0 {
 			s += fmt.Sprintf("    movq $%d, %%rdi\n    call __fern_rec_box\n    movq %%rax, %%r12\n", cap)
 		}
@@ -203,7 +205,7 @@ func allocReuseDonorProbe(target string, cap, want int, stack, quarantine, short
 		}
 		return s + "    xorq %r13, %r13\n    jmp .Lprobe_report\n.Lprobe_fail:\n    movq $91, %r13\n.Lprobe_report:\n    call __fern_lc_report\n    movq %r13, %rdi\n    movq $231, %rax\n    syscall\n"
 	}
-	s := "_start:\n    mov x20, #0\n"
+	s := "_start:\n    mov x9, sp\n    adrp x10, __fern_stack_top\n    add x10, x10, :lo12:__fern_stack_top\n    str x9, [x10]\n    mov x20, #0\n"
 	if cap > 0 {
 		s += fmt.Sprintf("    movz x0, #%d\n    movk x0, #%d, lsl #16\n    bl __fern_rec_box\n    mov x20, x0\n", cap&65535, cap>>16)
 	}

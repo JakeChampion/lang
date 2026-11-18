@@ -655,6 +655,7 @@ function main(): i32 {
     if (lookup([1], 5u64, 3) != 0 - 1) { return 2; }
     if (words(b[0:1000], 3) == 0u64) { return 3; }
     if (unguarded(b[0:64], 0) == 0u64) { return 4; }
+    if (unguarded(b[0:0], 0 - 1) != 0u64) { return 4; }
     if (loose(b[0:64], 0) == 0u64) { return 5; }
     return 0;
 }

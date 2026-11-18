@@ -53,6 +53,14 @@ function long(n: i64): i32 {
 }
 `
 
+// Each call gives an index that can be negative, so no fact of a caller
+// removes the sign test.
+const guardSignShapeMain = `
+function main(): i32 {
+    return spaces("   x", 0 - 1) + zeros([0, 0, 1], 0 - 1) + wide([0i64, 0i64, 5i64], 0 - 1);
+}
+`
+
 var guardSignCases = []struct {
 	name string
 	body string
@@ -91,7 +99,7 @@ func TestSelfHostGuardLeavesASignTest(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "sign.fern")
-	prog := guardSignFuncs + "\nfunction main(): i32 {\n    " + guardSignCases[0].body + "\n}\n"
+	prog := guardSignFuncs + guardSignShapeMain
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 		t.Fatal(err)
 	}
