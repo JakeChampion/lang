@@ -1068,7 +1068,27 @@ function test_tracks_sheet(): test.TestOutcome {
   if (count_plays(log) != plays + 1 || !has_call(log, "subtitles=burn") || !has_call(log, "audioStreamID=22")) {
     return test.fail("the subtitle did not burn in a new transcode: " + log.calls.get().join(" | "));
   }
-  return test.assert_eq(has_url(log, "PUT https://up.example:32400/library/parts/11?audioStreamID=22&subtitleStreamID=31&allParts=1").to_string(), "true");
+  if (!has_url(log, "PUT https://up.example:32400/library/parts/11?audioStreamID=22&subtitleStreamID=31&allParts=1")) {
+    return test.fail("the server did not hear the burned subtitle");
+  }
+  // A transcode takes its sound from what the server remembers, so the new
+  // stream waits for the reply to the choice.
+  let again = tap(subs, log, 900i64, f, "tracks");
+  let Some(english) = node(again, "audio:21") else {
+    return test.fail("no sound tracks over the transcode");
+  };
+  let (x, y) = centre(english);
+  let plays_before = count_plays(log);
+  let picked = at(at(again, log, 1000i64, f, android.Touch(0, x as f32, y as f32)), log, 1050i64, f, android.Touch(1, x as f32, y as f32));
+  let early = count_plays(log) != plays_before;
+  let started = settle(picked, log, 1100i64, f);
+  if (early || count_plays(log) != plays_before + 1 || !has_url(log, "PUT https://up.example:32400/library/parts/11?audioStreamID=21&subtitleStreamID=31&allParts=1")) {
+    return test.fail("the transcode started before the server had the new sound: " + log.calls.get().join(" | "));
+  }
+  if (log.urls.get().filter((u: string): boolean => u.contains("/video/:/transcode/universal/stop?")).len() == 0) {
+    return test.fail("the transcode of the old tracks did not stop");
+  }
+  return test.assert_eq(started.play.held.to_string() + " " + has_call(log, "audioStreamID=21").to_string(), "false true");
 }
 
 // The speed button gives the next rate. The player takes it at once while

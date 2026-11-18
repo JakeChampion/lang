@@ -115,7 +115,11 @@ app asks the server for the markers of the item when it starts to play.
 
 The Tracks button of the player chooses the sound and the subtitles, and
 the server remembers the choice. A file that plays as it is changes its
-sound in place. The app draws text subtitles over the video itself, so the
+sound in place. A transcode takes its sound from the choice that the
+server remembers. So a new transcode starts after the server has the
+choice, and the old one stops.
+
+The app draws text subtitles over the video itself, so the
 file plays as it is. These are SubRip, WebVTT, ASS and SSA, in a file beside
 the video or inside it. The server gives the text of a track inside the
 file at the address of its stream. Other subtitles, such as PGS, burn into

@@ -248,6 +248,9 @@ struct Play {
   // True when the play paused because another app or a call took the
   // audio focus, so it goes on when the focus comes back.
   focus_paused: boolean,
+  // True when the new stream waits until the server remembers the tracks
+  // of a choice.
+  held: boolean,
 }
 
 pub struct App {
@@ -392,7 +395,7 @@ function no_server(): plex.Server {
 }
 
 function no_play(): Play {
-  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [], album: [], bif: None, scrub_ms: -1i64, scrub_seek_at: 0i64, thumb_index: -1, thumb: None, level: 0, stalls: [], choice: plex.no_choice(), cues: [], sheet: false, up_next_at: 0i64, next_off: false, tap_at: -1000i64, tap_x: 0, tap_overlay: false, badge: "", badge_until: 0i64, gesture: 0, gesture_from: 0, gesture_level: -1, gesture_max: 0, light: -1, next: plex.no_item(), next_queue: [], next_stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, next_session: "", next_ready: false, next_plan: "", next_tried: "", focus_paused: false };
+  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [], album: [], bif: None, scrub_ms: -1i64, scrub_seek_at: 0i64, thumb_index: -1, thumb: None, level: 0, stalls: [], choice: plex.no_choice(), cues: [], sheet: false, up_next_at: 0i64, next_off: false, tap_at: -1000i64, tap_x: 0, tap_overlay: false, badge: "", badge_until: 0i64, gesture: 0, gesture_from: 0, gesture_level: -1, gesture_max: 0, light: -1, next: plex.no_item(), next_queue: [], next_stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, next_session: "", next_ready: false, next_plan: "", next_tried: "", focus_paused: false, held: false };
 }
 
 function no_press(): Press {
@@ -1002,6 +1005,13 @@ function answer(own s: App, purpose: string, r: plex.Reply): App {
   }
   if (verb == "bif") {
     return got_bif(t, rest, r);
+  }
+  if (verb == "retrack") {
+    if (t.play.active && t.play.held && t.play.session == rest) {
+      let ok = t.dev.play(t.play.stream.url);
+      return App { ...t, play: Play { ...t.play, held: false } };
+    }
+    return t;
   }
   if (verb == "subfile") {
     let (key, id) = split_purpose(rest);
@@ -2222,16 +2232,21 @@ function pick_sound(dev: Device, p: Play): void {
 
 // Plays the item with a new choice of tracks, and makes the server
 // remember it. A file that plays as it is changes its sound in place.
-// Otherwise the stream starts again where it is.
+// Otherwise the stream starts again where it is, once the server has the
+// choice.
 function choose(own s: App, choice: plex.Choice): App {
   let p = s.play;
-  let t = s;
+  let part = "";
   if (p.item.media.len() > 0 && p.item.media[0].parts.len() > 0) {
-    t = report(t, SelectTracks(p.item.media[0].parts[0].id, choice));
+    part = p.item.media[0].parts[0].id;
   }
+  let t = s;
   let next = Play { ...p, choice: choice, cues: [], sheet: false };
   // A downloaded file holds the tracks of the sheet, so it plays on.
   if (on_disk(p)) {
+    if (part.len() > 0) {
+      t = report(t, SelectTracks(part, choice));
+    }
     pick_sound(t.dev, next);
     return ask_cues(App { ...t, play: next, dirty: true });
   }
@@ -2243,6 +2258,9 @@ function choose(own s: App, choice: plex.Choice): App {
   }
   let stream = plex.stream_for(t.client, t.base, p.item, q, pos, session, t.dev.decoders, choice);
   if (!stream.transcode && !p.stream.transcode) {
+    if (part.len() > 0) {
+      t = report(t, SelectTracks(part, choice));
+    }
     pick_sound(t.dev, next);
     return ask_cues(App { ...t, play: next, dirty: true });
   }
@@ -2251,8 +2269,18 @@ function choose(own s: App, choice: plex.Choice): App {
   if (p.video) {
     t.dev.hide_video();
   }
-  let ok = t.dev.play(stream.url);
-  return ask_cues(App { ...t, play: Play { ...next, stream: stream, session: session, prepared: false, video: false, overlay: true, position: pos, status: "Loading" }, dirty: true });
+  if (p.stream.transcode) {
+    t = report(t, StopTranscode(p.session));
+  }
+  let u = App { ...t, play: Play { ...next, stream: stream, session: session, prepared: false, video: false, overlay: true, position: pos, status: "Loading", held: part.len() > 0 }, dirty: true };
+  // A transcode takes its sound and its subtitles from the tracks that the
+  // server remembers for the part, so the stream starts after the server
+  // has the choice.
+  if (part.len() > 0) {
+    return ask_cues(ask(u, "retrack:" + session, SelectTracks(part, choice)));
+  }
+  let ok = u.dev.play(stream.url);
+  return ask_cues(u);
 }
 
 // True when the first version of the item has a sound track.
