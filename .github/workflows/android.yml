@@ -139,6 +139,7 @@ jobs:
           keytool -genkeypair -keystore build/bundle.p12 -storetype PKCS12 -storepass android -alias bundle -keyalg EC -groupname secp256r1 -dname CN=bundle -validity 3650
           java -jar build/bundletool.jar build-apks --bundle=build/android-stopwatch/fern-counter.aab --output=build/counter.apks --mode=universal --ks=build/bundle.p12 --ks-pass=pass:android --ks-key-alias=bundle --key-pass=pass:android
           unzip -p build/counter.apks universal.apk > build/android-stopwatch/fern-counter-bundle.apk
+      - uses: ./.github/actions/disable-chrome-apt
       - name: Check native video packets and the QTRLE comparison harness
         run: |
           sudo apt-get update
@@ -211,6 +212,7 @@ jobs:
         with:
           name: fern-stopwatch-apk
           path: build/android-stopwatch
+      - uses: ./.github/actions/disable-chrome-apt
       - name: Install the video reference tools
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Check the Plex video screen assertion
