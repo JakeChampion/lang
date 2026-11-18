@@ -7,3 +7,15 @@ h2spec/skipped	0
 h3spec/passed	86
 h3spec/failed	0
 h3spec/pending	0
+
+# lane: net-tls-interop
+tls/client/openssl.bulk_mbytes_per_s	578.5
+tls/client/openssl.handshakes_per_s	107.5
+tls/client/go.bulk_mbytes_per_s	441.5
+tls/client/go.handshakes_per_s	107.0
+tls/client/rustls.handshakes_per_s	109.3
+tls/client/bssl.handshakes_per_s	109.3
+tls/server/go.bulk_mbytes_per_s	262.1
+tls/server/curl.bulk_mbytes_per_s	293.2
+tls/server/handshakes_per_s	842.7
+tls/server/resumed_handshakes_per_s	878.0
