@@ -14,7 +14,7 @@ A face does not have each character. For a character that the face does not have
 
 `width` and `line` measure a text with no drawing. `fit` cuts a text to a width, and `wrap` breaks it into lines. `wrap_ranges` gives the lines as ranges of characters. A text field uses them to find its cursor, and `std/bidi` uses them to order each line.
 
-A run of Arabic letters or of Devanagari letters goes to `std/shape`. It gives the joining forms of the Arabic letters, the conjuncts and the reordered matras of Devanagari, and the position of each glyph. The run takes the font of its first letter.
+A run of Arabic letters, or of the letters of an Indic script, goes to `std/shape`. The Indic scripts are Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada and Malayalam. `std/shape` gives the joining forms of the Arabic letters, the conjuncts and the reordered matras of the Indic scripts, and the position of each glyph. The run takes the font of its first letter.
 
 A mark sits on its base at the anchors of the font. As in Minikin, a mark takes the font of its base when that font has the mark, so that the two can attach. The run has no letter spacing, so that its letters stay joined. Outside such a run, a mark of the font has no advance.
 
@@ -373,7 +373,7 @@ function pen_glyph(own p: Pens, id: i32, g: i32, x: f64, y: f64, next: f64): Pen
 }
 
 // The end of the run of letters to shape from `cs[i]`, the font that
-// shapes it, and its script: "arab" or "deva". The font is that of the
+// shapes it, and its script: "arab" or an Indic tag. The font is that of the
 // first letter. It is `i`, -1 and "" when no such run starts there. The run
 // can hold marks and joiners, and it holds at least one letter.
 function run_end(fs: Fonts, w: i32, cs: char[], i: i32): (i32, i32, string) {
@@ -391,7 +391,7 @@ function run_end(fs: Fonts, w: i32, cs: char[], i: i32): (i32, i32, string) {
 // `cs[i]` that can be in a run, or -1 and "".
 function run_font(fs: Fonts, w: i32, cs: char[], i: i32): (i32, string) {
   let j = i;
-  while (j < cs.len() && (in_run(cs[j], "arab") || in_run(cs[j], "deva"))) {
+  while (j < cs.len() && (in_run(cs[j], "arab") || in_run(cs[j], "deva") || indic_script(cs[j]) != "")) {
     let script = letter_script(cs[j]);
     if (script != "") {
       return (face_of(fs, w, cs[j] as i32), script);
@@ -402,13 +402,13 @@ function run_font(fs: Fonts, w: i32, cs: char[], i: i32): (i32, string) {
 }
 
 // The script of `c` when it is a letter of a run: "arab" for an Arabic
-// letter that joins, "deva" for a Devanagari character that is not a mark,
-// or "".
+// letter that joins, the tag of an Indic script for a character of its
+// block that is not a mark, or "".
 function letter_script(c: char): string {
   if (arabic(c) && unicode.joining_type(c) != JT_T) {
     return "arab";
   }
-  return if (devanagari(c) && !c.is_mark()) { "deva" } else { "" };
+  return if (c.is_mark()) { "" } else { indic_script(c) };
 }
 
 // Whether the run of the font `id` holds `c`: a letter of that font, or a
@@ -438,21 +438,27 @@ const JT_T: i32 = 5;
 
 // Whether `c` can be in a run of the script `script`. An Arabic run holds
 // the Arabic letters that join, and the characters that join with no
-// script, such as a mark. A Devanagari run holds the characters of the
-// Devanagari blocks, the marks, the ZWNJ and the ZWJ.
+// script, such as a mark. An Indic run holds the characters of the blocks
+// of its script, the marks, the ZWNJ and the ZWJ.
 function in_run(c: char, script: string): boolean {
-  if (script == "deva") {
+  if (script != "arab") {
     let n = c as i32;
-    return devanagari(c) || c.is_mark() || n == 0x200C || n == 0x200D;
+    return indic_script(c) == script || c.is_mark() || n == 0x200C || n == 0x200D;
   }
   let t = unicode.joining_type(c);
   return t == JT_C || t == JT_T || t != 0 && arabic(c);
 }
 
-// Whether `c` is in the block Devanagari or Devanagari Extended.
-function devanagari(c: char): boolean {
+// The OpenType tag of the Indic script of the block of `c`, or "". The
+// blocks from U+0900 to U+0D7F hold 128 characters each, and Devanagari
+// Extended is Devanagari.
+function indic_script(c: char): string {
   let n = c as i32;
-  return n >= 0x900 && n <= 0x97F || n >= 0xA8E0 && n <= 0xA8FF;
+  if (n >= 0xA8E0 && n <= 0xA8FF) {
+    return "deva";
+  }
+  let tags = ["deva", "beng", "guru", "gujr", "orya", "taml", "telu", "knda", "mlym"];
+  return if (n >= 0x900 && n <= 0xD7F) { tags[(n - 0x900) / 128] } else { "" };
 }
 
 // Whether `c` is in a block of the Arabic script.

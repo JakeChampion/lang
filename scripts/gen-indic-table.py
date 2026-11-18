@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Write internal/stdlib/std/shape/indic.fern: the Indic category and the
-Indic position of each character that std/shape needs for Devanagari, as
-the Indic shaper of HarfBuzz gives them.
+Indic position of each character, as the Indic shaper of HarfBuzz gives
+them.
 
-Run:  python3 -I scripts/gen-indic-table.py IndicSyllabicCategory.txt IndicPositionalCategory.txt
+Run:  python3 -I scripts/gen-indic-table.py IndicSyllabicCategory.txt IndicPositionalCategory.txt Blocks.txt
 
-The two files come from the Unicode Character Database
-(https://www.unicode.org/Public/UCD/latest/ucd/). The script maps their
-values to the categories and the positions of HarfBuzz, with the changes
-that HarfBuzz makes to them (src/gen-indic-table.py of HarfBuzz).
+The three files come from the Unicode Character Database
+(https://www.unicode.org/Public/UCD/latest/ucd/). The script follows
+src/gen-indic-table.py of HarfBuzz 15: the same blocks, the same map of
+the values, the same changes to the categories and the positions, and the
+same positions of the matras for each block. It leaves out the Khmer and
+the Myanmar characters, which have shapers of their own.
 """
 
 import re
@@ -18,11 +20,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "internal" / "stdlib" / "std" / "shape" / "indic.fern"
 
-# The blocks of the table, and the block of each one for the matras.
-BLOCKS = [(0x0900, 0x097F, "Devanagari"), (0xA8E0, 0xA8FF, "Devanagari Extended")]
+ALLOWED_SINGLES = [0x00A0, 0x25CC]
+ALLOWED_BLOCKS = [
+    "Basic Latin", "Latin-1 Supplement", "Devanagari", "Bengali", "Gurmukhi", "Gujarati", "Oriya", "Tamil",
+    "Telugu", "Kannada", "Malayalam", "Vedic Extensions", "General Punctuation", "Superscripts and Subscripts",
+    "Devanagari Extended",
+]
 
+# The numbers of std/shape for the categories and the positions.
 CATEGORIES = ["X", "C", "V", "N", "H", "ZWNJ", "ZWJ", "M", "SM", "", "A", "PLACEHOLDER", "DOTTEDCIRCLE",
-              "RS", "MPst", "Repha", "Ra", "CM", "Symbol", "CS"]
+              "RS", "MPst", "Repha", "Ra", "CM", "Symbol", "CS", "SMPst"]
 POSITIONS = ["START", "RA_TO_BECOME_REPH", "PRE_M", "PRE_C", "BASE_C", "AFTER_MAIN", "ABOVE_C", "BEFORE_SUB",
              "BELOW_C", "AFTER_SUB", "BEFORE_POST", "POST_C", "AFTER_POST", "SMVD", "END"]
 
@@ -44,20 +51,31 @@ POSITION_MAP = {
     "Bottom_And_Right": "POST_C", "Left_And_Right": "POST_C", "Top_And_Bottom": "BELOW_C",
     "Top_And_Bottom_And_Left": "BELOW_C", "Top_And_Bottom_And_Right": "POST_C", "Top_And_Left": "ABOVE_C",
     "Top_And_Left_And_Right": "POST_C", "Top_And_Right": "POST_C", "Overstruck": "AFTER_MAIN",
-    "Visual_Order_Left": "PRE_M",
+    "Visual_order_left": "PRE_M",
 }
 
-# The categories that HarfBuzz changes, for the characters of the table.
-OVERRIDES = {0x0930: "Ra", 0x0953: "SM", 0x0954: "SM"}
-OVERRIDES.update({c: "Symbol" for c in range(0xA8F2, 0xA8F8)})
+# The categories that HarfBuzz changes for the Indic shaper.
+CATEGORY_OVERRIDES = {
+    0x2015: "PLACEHOLDER", 0x2022: "PLACEHOLDER", 0x25FB: "PLACEHOLDER", 0x25FC: "PLACEHOLDER",
+    0x25FD: "PLACEHOLDER", 0x25FE: "PLACEHOLDER",
+    0x0930: "Ra", 0x09B0: "Ra", 0x09F0: "Ra", 0x0A30: "Ra", 0x0AB0: "Ra", 0x0B30: "Ra", 0x0BB0: "Ra",
+    0x0C30: "Ra", 0x0CB0: "Ra", 0x0D30: "Ra",
+    0x0953: "SM", 0x0954: "SM", 0x0A40: "MPst", 0x0A72: "C", 0x0A73: "C",
+    0x1CED: "A", 0x0A51: "M",
+    0x11301: "SM", 0x11302: "SM", 0x11303: "SM", 0x1133B: "N", 0x1133C: "N",
+    0x0AFB: "N", 0x0B55: "N", 0x09FC: "PLACEHOLDER", 0x0C80: "PLACEHOLDER", 0x0D04: "PLACEHOLDER",
+    0x25CC: "DOTTEDCIRCLE",
+}
+CATEGORY_OVERRIDES.update({c: "A" for c in range(0x1CE2, 0x1CE9)})
+CATEGORY_OVERRIDES.update({c: "Symbol" for c in list(range(0xA8F2, 0xA8F8)) + list(range(0x1CE9, 0x1CED))
+                           + list(range(0x1CEE, 0x1CF2))})
 
-# Characters out of the blocks that have a category of their own.
-EXTRA = {0x00A0: "PLACEHOLDER", 0x00D7: "PLACEHOLDER", 0x200C: "ZWNJ", 0x200D: "ZWJ",
-         0x2010: "PLACEHOLDER", 0x2011: "PLACEHOLDER", 0x2012: "PLACEHOLDER", 0x2013: "PLACEHOLDER",
-         0x2014: "PLACEHOLDER", 0x25CC: "DOTTEDCIRCLE"}
+POSITION_OVERRIDES = {0x0A51: "BELOW_C", 0x0B01: "BEFORE_SUB"}
 
+POSITIONED = ("CM", "SM", "RS", "H", "M", "MPst")
 CONSONANTS = ("C", "CS", "Ra", "CM", "V", "PLACEHOLDER", "DOTTEDCIRCLE")
-SMVD = ("SM", "A", "Symbol")
+MATRAS = ("M", "MPst")
+SMVD = ("SM", "SMPst", "VD", "A", "Symbol")
 
 
 def read(path):
@@ -73,21 +91,57 @@ def read(path):
     return out
 
 
-# The position of a matra of `side` in Devanagari: left matras go before
-# the consonants, and the others after the subjoined ones.
-def matra_position(side):
-    return "PRE_M" if side == "PRE_C" else "AFTER_SUB"
+def matra_right(u, block):
+    if block == "Devanagari":
+        return "AFTER_SUB"
+    if block in ("Bengali", "Gurmukhi", "Gujarati", "Oriya", "Tamil", "Malayalam"):
+        return "AFTER_POST"
+    if block == "Telugu":
+        return "BEFORE_SUB" if u <= 0x0C42 else "AFTER_SUB"
+    if block == "Kannada":
+        return "BEFORE_SUB" if u < 0x0CC3 or u > 0x0CD6 else "AFTER_SUB"
+    return "AFTER_SUB"
 
 
-def properties(c, cat, side):
+def matra_top(u, block):
+    return {"Devanagari": "AFTER_SUB", "Gurmukhi": "AFTER_POST", "Gujarati": "AFTER_SUB", "Oriya": "AFTER_MAIN",
+            "Tamil": "AFTER_SUB", "Telugu": "BEFORE_SUB", "Kannada": "BEFORE_SUB"}.get(block, "AFTER_SUB")
+
+
+def matra_bottom(u, block):
+    return {"Devanagari": "AFTER_SUB", "Bengali": "AFTER_SUB", "Gurmukhi": "AFTER_POST", "Gujarati": "AFTER_POST",
+            "Oriya": "AFTER_SUB", "Tamil": "AFTER_POST", "Telugu": "BEFORE_SUB", "Kannada": "BEFORE_SUB",
+            "Malayalam": "AFTER_POST"}.get(block, "AFTER_SUB")
+
+
+def matra_position(u, pos, block):
+    if pos == "PRE_C":
+        return "PRE_M"
+    if pos == "POST_C":
+        return matra_right(u, block)
+    if pos == "ABOVE_C":
+        return matra_top(u, block)
+    if pos == "BELOW_C":
+        return matra_bottom(u, block)
+    raise ValueError("no matra position %s for U+%04X" % (pos, u))
+
+
+def properties(u, cats, sides, blocks):
+    cat = CATEGORY_MAP[cats.get(u, "Other")]
+    side = sides.get(u, "Not_Applicable")
+    if cat == "SM" and side == "Not_Applicable":
+        cat = "SMPst"
+    pos = POSITION_MAP[side]
+    cat = CATEGORY_OVERRIDES.get(u, cat)
+    if cat not in POSITIONED:
+        pos = "END"
     if cat in CONSONANTS:
         pos = "BASE_C"
-    elif cat == "M":
-        pos = matra_position(side)
+    elif cat in MATRAS:
+        pos = matra_position(u, pos, blocks.get(u, "No_Block"))
     elif cat in SMVD:
         pos = "SMVD"
-    else:
-        pos = side
+    pos = POSITION_OVERRIDES.get(u, pos)
     return CATEGORIES.index(cat) | POSITIONS.index(pos) << 5
 
 
@@ -97,51 +151,57 @@ def version(path):
 
 
 def main():
-    if len(sys.argv) != 3:
+    if len(sys.argv) != 4:
         sys.exit(__doc__)
-    cats = read(sys.argv[1])
-    sides = read(sys.argv[2])
+    cats, sides, blocks = read(sys.argv[1]), read(sys.argv[2]), read(sys.argv[3])
+    default = POSITIONS.index("END") << 5
+    chars = [u for u in sorted(set(cats) | set(sides) | set(CATEGORY_OVERRIDES))
+             if u in ALLOWED_SINGLES or u in CATEGORY_OVERRIDES or blocks.get(u) in ALLOWED_BLOCKS]
+    table = {u: properties(u, cats, sides, blocks) for u in chars}
+    table = {u: v for u, v in table.items() if v != default}
+    # Runs of code points, each run from its first entry to its last one,
+    # split where 64 code points in a row take the default.
+    runs = []
+    for u in sorted(table):
+        if runs and u - runs[-1][1] < 64:
+            runs[-1][1] = u
+        else:
+            runs.append([u, u])
     lines = [
         "// Generated by scripts/gen-indic-table.py from the Unicode Character Database",
         "// %s -- do not edit by hand." % version(sys.argv[1]),
         "//",
         "// The Indic category of each character, from the bit 0, and its Indic",
-        "// position, from the bit 5, with the numbers of HarfBuzz. A character out",
+        "// position, from the bit 5, with the numbers of std/shape. A character out",
         "// of the table has the category 0 (X) and the position 14 (END).",
         "",
+        "// The first and the last code point of each run of the table.",
+        "const RUNS: i32[] = [%s];" % ", ".join("0x%04X, 0x%04X" % (lo, hi) for lo, hi in runs),
+        "",
+        "// The values of the runs, one after the other.",
+        "const VALUES: i32[] = [",
     ]
-    for lo, hi, name in BLOCKS:
-        values = []
-        for c in range(lo, hi + 1):
-            cat = OVERRIDES.get(c, CATEGORY_MAP[cats.get(c, "Other")])
-            values.append(properties(c, cat, POSITION_MAP[sides.get(c, "Not_Applicable")]))
-        const = name.upper().replace(" ", "_")
-        lines.append("// U+%04X to U+%04X." % (lo, hi))
-        lines.append("const %s: i32[] = [" % const)
-        for k in range(0, len(values), 16):
-            lines.append("  " + ", ".join(str(v) for v in values[k:k + 16]) + ",")
-        lines.append("];")
-        lines.append("")
-    extra = sorted(EXTRA.items())
-    lines.append("// The characters out of the blocks, and their properties.")
-    lines.append("const EXTRA_CHARS: i32[] = [%s];" % ", ".join("0x%04X" % c for c, _ in extra))
-    lines.append("")
-    lines.append("const EXTRA_PROPS: i32[] = [%s];" % ", ".join(str(properties(c, cat, "END")) for c, cat in extra))
-    lines.append("")
-    lines.append("// The category and the position of `c`.")
-    lines.append("pub function properties(c: i32): i32 {")
-    for lo, hi, name in BLOCKS:
-        lines.append("  if (c >= 0x%04X && c <= 0x%04X) {" % (lo, hi))
-        lines.append("    return %s[c - 0x%04X];" % (name.upper().replace(" ", "_"), lo))
-        lines.append("  }")
-    lines.append("  for k in 0..EXTRA_CHARS.len() {")
-    lines.append("    if (EXTRA_CHARS[k] == c) {")
-    lines.append("      return EXTRA_PROPS[k];")
-    lines.append("    }")
-    lines.append("  }")
-    lines.append("  return %d;" % (POSITIONS.index("END") << 5))
-    lines.append("}")
-    lines.append("")
+    values = [table.get(u, default) for lo, hi in runs for u in range(lo, hi + 1)]
+    for k in range(0, len(values), 16):
+        lines.append("  " + ", ".join(str(v) for v in values[k:k + 16]) + ",")
+    lines += [
+        "];",
+        "",
+        "// The category and the position of `c`.",
+        "pub function properties(c: i32): i32 {",
+        "  let at = 0;",
+        "  let k = 0;",
+        "  while (k + 1 < RUNS.len() && c >= RUNS[k]) {",
+        "    if (c <= RUNS[k + 1]) {",
+        "      return VALUES[at + c - RUNS[k]];",
+        "    }",
+        "    at += RUNS[k + 1] - RUNS[k] + 1;",
+        "    k += 2;",
+        "  }",
+        "  return %d;" % default,
+        "}",
+        "",
+    ]
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text("\n".join(lines))
 

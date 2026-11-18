@@ -20,7 +20,7 @@ A code point that the font does not map gives glyph 0. The kerning comes from th
 
 `feature_lookups` gives the GSUB lookups of a feature for a script, from the default language system of the script. `substitute` applies one lookup to a `Run` of glyphs. It reads the lookups of the types 1 to 8 in each format. The flags of a lookup can skip glyphs by their GDEF class, their mark attachment class or a mark glyph set. A context applies the lookups of its rule, which can change the count of glyphs, as HarfBuzz does.
 
-The matching of a lookup skips a default ignorable glyph, such as a ZWJ, when that glyph does not match. As in HarfBuzz, a ZWNJ in the input of a GSUB lookup stops the match. The flags of `substitute` can make a ZWJ stop it too. With `PER_SYLLABLE`, the input matches only in the syllable of its first glyph. `would_substitute` tells whether the lookups of a feature apply to a sequence of glyphs, as the Indic shaper of HarfBuzz asks it.
+The matching of a lookup skips a default ignorable glyph, such as a ZWJ, when that glyph does not match. As in HarfBuzz, a ZWNJ in the input of a GSUB lookup stops the match. The flags of `substitute` can make a ZWJ stop it too. With `PER_SYLLABLE`, the input matches only in the syllable of its first glyph. An input does not join marks on different parts of an earlier ligature, and a ligature merges the clusters as HarfBuzz merges them. `would_substitute` tells whether the lookups of a feature apply to a sequence of glyphs, as the Indic shaper of HarfBuzz asks it.
 
 `with_advances` gives each glyph of a run its advance. Then `position_lookups` gives the GPOS lookups of a feature, and `position` applies one lookup. It reads the lookups of the types 1 to 9: single and pair adjustments, cursive joins, marks on bases, on ligatures and on marks, contexts and extensions. The contour points and the device tables of anchors and of value records have no effect.
 
@@ -960,7 +960,8 @@ function seq_has(b: [u8], s: Seq, k: i32, g: i32): boolean {
 
 // The positions of the input glyphs that match `s` from the glyph at `i`,
 // or an empty list. With `first` the glyph at `i` matched already, and `s`
-// holds the glyphs after it.
+// holds the glyphs after it. As in HarfBuzz, the input does not join marks
+// on different parts of an earlier ligature.
 function matched_input(f: Font, r: Run, l: Lookup, mask: i32, i: i32, s: Seq, first: boolean): i32[] {
   let none: i32[] = [];
   let k0 = 0;
@@ -973,14 +974,52 @@ function matched_input(f: Font, r: Run, l: Lookup, mask: i32, i: i32, s: Seq, fi
   let m = input_matcher(r, l, mask, i);
   let out = [i];
   let j = i;
+  let base = 0;
   for k in k0..s.n {
     j = next_match(f, r, l, m, j, 1, s, k);
     if (j < 0) {
       return none;
     }
+    let (fits, b) = same_ligature(f, r, l, i, j, base);
+    if (!fits) {
+      return none;
+    }
+    base = b;
     out = out.append(j);
   }
   return out;
+}
+
+// Whether the glyph at `j` can be in one input with the glyph at `i`, as
+// match_input of HarfBuzz tells it, and what is known of the ligature base:
+// 0 when it is not checked, 1 when it cannot be skipped, and 2 when the
+// flags of `l` skip it. When `i` is on a part of a ligature, `j` must be on
+// the same part, unless the flags skip the base of the ligature. Else `j`
+// must not be on a part of another ligature.
+function same_ligature(f: Font, r: Run, l: Lookup, i: i32, j: i32, base0: i32): (boolean, i32) {
+  let (first_id, first_part) = (lig_id(r.ligs[i]), lig_part(r.ligs[i]));
+  let (this_id, this_part) = (lig_id(r.ligs[j]), lig_part(r.ligs[j]));
+  if (first_id == 0 || first_part == 0) {
+    return (this_id == 0 || this_part == 0 || this_id == first_id, base0);
+  }
+  if (first_id == this_id && first_part == this_part) {
+    return (true, base0);
+  }
+  let base = if (base0 == 0) { ligature_base(f, r, l, i, first_id) } else { base0 };
+  return (base == 2, base);
+}
+
+// 2 when a glyph before `i` that is the base of the ligature `id` is
+// skipped by the flags of `l`, else 1.
+function ligature_base(f: Font, r: Run, l: Lookup, i: i32, id: i32): i32 {
+  let k = i;
+  while (k > 0 && lig_id(r.ligs[k - 1]) == id) {
+    k -= 1;
+    if (lig_part(r.ligs[k]) == 0) {
+      return if (skipped(f, l, r.glyphs[k])) { 2 } else { 1 };
+    }
+  }
+  return 1;
 }
 
 // Whether the glyphs from `i` in the direction `step` match `s`. With
@@ -1187,13 +1226,11 @@ function merged(cs: i32[], at: i32, step: i32, old: i32, cl: i32): i32[] {
 
 // `r` with the glyphs at the positions `ps` made one ligature, from the
 // ligature table at `lig`. The glyphs that the lookup skipped between them
-// come after the ligature. Each glyph from the first position to the last
-// takes the first cluster, and so do the glyphs after the last one that
-// have its cluster. The ligature values change as HarfBuzz changes them.
+// come after the ligature. The clusters merge as `merged_clusters` merges
+// them. The ligature values change as HarfBuzz changes them.
 function ligated(f: Font, own r: Run, ps: i32[], lig: i32): Run {
   let first = ps[0];
-  let last = ps[ps.len() - 1];
-  let cl = r.clusters[first];
+  let merged = merged_clusters(r.clusters, first, ps[ps.len() - 1] + 1);
   let (serial, props) = ligature_props(f, r, ps);
   let gs: i32[] = [];
   let cs: i32[] = [];
@@ -1208,14 +1245,41 @@ function ligated(f: Font, own r: Run, ps: i32[], lig: i32): Run {
       continue;
     }
     gs = gs.append(if (j == first) { lig } else { r.glyphs[j] });
-    let joined = j >= first && (j <= last || r.clusters[j] == r.clusters[last]);
-    cs = cs.append(if (joined) { cl } else { r.clusters[j] });
+    cs = cs.append(merged[j]);
     ms = ms.append(r.masks[j]);
     ls = ls.append(props[j]);
     qs = qs.append(if (j == first) { (r.props[j] | SUBSTITUTED | LIGATED) & ~MULTIPLIED } else { r.props[j] });
     vs = vs.append(r.vars[j]);
   }
   return Run { ...r, glyphs: gs, clusters: cs, masks: ms, ligs: ls, props: qs, vars: vs, serial: serial };
+}
+
+// `cs` with the clusters from `start` to `end` merged, as the
+// merge_clusters of HarfBuzz merges them when a lookup ligates: each takes
+// the least of them. The merge goes on over the glyphs after `end` that
+// have the cluster of the last one, and over those before `start` that
+// have the cluster of the first one, when that cluster changes.
+function merged_clusters(cs0: i32[], start: i32, end: i32): i32[] {
+  let cs = cs0;
+  let cl = cs[start];
+  for j in start + 1..end {
+    cl = cl.min(cs[j]);
+  }
+  let (a, b) = (start, end);
+  if (cl != cs[b - 1]) {
+    while (b < cs.len() && cs[b - 1] == cs[b]) {
+      b += 1;
+    }
+  }
+  if (cl != cs[a]) {
+    while (a > 0 && cs[a - 1] == cs[start]) {
+      a -= 1;
+    }
+  }
+  for j in a..b {
+    cs = cs.with(j, cl);
+  }
+  return cs;
 }
 
 // The serial of `r` after the glyphs at `ps` become a ligature, and the

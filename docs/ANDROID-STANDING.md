@@ -57,8 +57,8 @@ Play, and the first is now fixed:
    an AAR. So AndroidX, Google Play services, Firebase, Play Billing and
    the SDKs of other vendors are out of reach.
 
-3. **Text and languages.** Arabic and Devanagari text is shaped, and
-   the marks sit on their bases. Emoji draw in color from the COLR font of the system.
+3. **Text and languages.** Arabic and the nine Indic scripts are shaped,
+   and the marks sit on their bases. Emoji draw in color from the COLR font of the system.
    `std/i18n` now gives localized strings.
    `std/bidi` gives right-to-left text in the order of UAX #9.
    `std/android/text` takes a character that its font does not have from
@@ -113,7 +113,7 @@ compressed.
 | Material 3 components | Colors only, few components | Full | Full | Third party |
 | Navigation | By hand | Navigation 3 | Navigator, go_router | React Navigation |
 | Accessibility | TalkBack tree, font scale | Semantics | Semantics | Native views |
-| Right-to-left text and shaping | Order, Arabic and Devanagari shaping | Yes | Yes | Yes |
+| Right-to-left text and shaping | Order, Arabic and Indic shaping | Yes | Yes | Yes |
 | UI tests on the computer | Full simulator | Robolectric | Widget tests | Jest |
 | Screenshot tests | PNG of the simulator | Paparazzi, Roborazzi | Golden tests | Third party |
 | Camera, location, push | No | Yes | Plugins | Expo modules |
@@ -162,20 +162,21 @@ The order puts first what stops a release, then what most apps need.
 6. **Java and Kotlin libraries.** Merge DEX files and manifests of a JAR
    or an AAR into the APK.
 
-7. **Text.** The shaping of the other scripts: the Indic scripts other
-   than Devanagari, Hebrew and Thai. Bengali, Gurmukhi, Gujarati, Oriya,
-   Tamil, Telugu, Kannada and Malayalam use the same Indic shaper, with a
-   table and a configuration for each script.
+7. **Text.** The shaping of Hebrew, Thai, and the scripts of the
+   Universal Shaping Engine, such as Sinhala, Khmer and Myanmar.
 
-   Devanagari shaping is done: `std/shape` follows the Indic shaper of
-   HarfBuzz. It finds the syllables, the base consonant and the reph. It
-   reorders the matras, and applies the Indic features in their stages.
-   The rules of the new and of the old Indic specification both apply.
+   Indic shaping is done: `std/shape` follows the Indic shaper of HarfBuzz
+   for Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu,
+   Kannada and Malayalam. It finds the syllables, the base consonant and
+   the reph. It reorders the matras, and applies the Indic features in
+   their stages. The rules of the new and of the old Indic specification
+   both apply, with the configuration of HarfBuzz for each script.
 
-   The Devanagari shaper puts dotted circles where HarfBuzz puts them.
-   The glyphs, the clusters and the positions are those of HarfBuzz 15,
-   for the test words and for 200,000 random strings. `std/android/text`
-   shapes each run of Devanagari letters.
+   The Indic shaper puts dotted circles where HarfBuzz puts them. The
+   glyphs, the clusters and the positions are those of HarfBuzz 15, for
+   the test words and for random strings: more than 200,000 in
+   Devanagari and 12,000 in each other script. `std/android/text` shapes
+   each run of an Indic script.
 
    Color emoji are done: `std/truetype` draws the glyphs of COLR
    versions 0 and 1, and `std/android/text` and the painter of
