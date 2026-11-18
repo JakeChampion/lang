@@ -23726,6 +23726,49 @@ function lu_later_in(st: ast.Stmt, aid: ast.ExprIdent): boolean {
   return astwalk.fold_stmt_nodes(st, lu_mention_search(aid, true), lu_mention_stmt, lu_path_mention, lu_path_descend).found;
 }
 
+struct LuLater { name: string, line: i32, col: i32, n: i32, values: ast.Expr[] }
+
+function lu_is_later(l: LuLater, name: string, line: i32, col: i32): boolean {
+  return name == l.name && (line > l.line || line == l.line && col > l.col);
+}
+
+function lu_later_stmt(st: ast.Stmt, own l: LuLater): LuLater {
+  if let ast.StmtAssign(a) = st {
+    if (lu_is_later(l, a.target, a.target_line, a.target_col)) {
+      return LuLater { ...l, n: l.n + 1 };
+    }
+  }
+  return l;
+}
+
+function lu_later_expr(e: ast.Expr, own l: LuLater): LuLater {
+  if let ast.ExprIdent(id) = e {
+    if (lu_is_later(l, id.name, id.line, id.col)) {
+      return LuLater { ...l, n: l.n + 1 };
+    }
+  }
+  if let ast.ExprStructLit(sl) = e {
+    if let ast.ExprIdent(base) = sl.base {
+      if (sl.has_base && base.name == l.name && base.line == l.line && base.col == l.col) {
+        return LuLater { ...l, values: sl.field_values };
+      }
+    }
+  }
+  return l;
+}
+
+// Each mention of the name after `aid` in the statement is in a field value
+// of the update literal with the base `aid`. The literal takes its base
+// after its field values run, so such a mention is not a later read.
+function lu_later_in_values(st: ast.Stmt, aid: ast.ExprIdent): boolean {
+  let all = astwalk.fold_stmt_nodes(st, LuLater { name: aid.name, line: aid.line, col: aid.col, n: 0, values: [] }, lu_later_stmt, lu_later_expr, astwalk.descend_all);
+  let inside = 0;
+  for v in all.values {
+    inside += astwalk.fold_expr_nodes(v, LuLater { ...all, n: 0 }, lu_later_stmt, lu_later_expr, astwalk.descend_all).n;
+  }
+  return inside == all.n;
+}
+
 function lu_expr_mentions(e: ast.Expr, aid: ast.ExprIdent, later: boolean): boolean {
   return astwalk.fold_expr_nodes(e, lu_mention_search(aid, later), lu_mention_stmt, lu_mention_expr, astwalk.descend_all).found;
 }
@@ -23916,7 +23959,7 @@ function lu_live_after(fx: LuFn, site: LuSite, call: ast.Expr, aid: ast.ExprIden
       return r == LU_LIVE || r == LU_CONTINUES && lu_live_from(fx.noret, site.frames, site.frames.len() - 1, aid.name, scope);
     }
   }
-  if (lu_later_in(st, aid)) {
+  if (lu_later_in(st, aid) && !lu_later_in_values(st, aid)) {
     return true;
   }
   if let ast.StmtReturn(_) = st {
@@ -24593,16 +24636,19 @@ function lu_owned_field_payload(fx: LuFn, name: string): boolean {
   return found;
 }
 
-// The other mentions of `aid` in the call are reads of its fields, in parts
-// before it: one part that is a field read, or parts whose every mention is
-// a read of a field that holds no handle. The ownership walk decides whether
-// a field read of another type gives a copy: its key carries "~".
+// The other mentions of `aid` in the call, or in the returned value, are
+// reads of its fields, in parts before it: one part that is a field read or
+// a replaced value, or parts whose every mention is a read of a field that
+// holds no handle. The ownership walk decides whether a field read of
+// another type gives a copy: its key carries "~".
 function lu_reads_before(fx: LuFn, call: ast.Expr, aid: ast.ExprIdent): boolean {
-  let ast.ExprCall(c) = call else {
-    return false;
-  };
+  let parts = lu_arg_parts(call, []);
+  if let ast.ExprCall(c) = call {
+    parts = lu_call_parts(c.args);
+  }
   let before = 0;
-  for a in lu_call_parts(c.args) {
+  let replaced = lu_replaced_values(fx, call, aid);
+  for a in parts {
     if let ast.ExprIdent(x) = a {
       if (x.line == aid.line && x.col == aid.col) {
         return before + 1 == astwalk.count_ident_expr(call, aid.name);
@@ -24610,10 +24656,46 @@ function lu_reads_before(fx: LuFn, call: ast.Expr, aid: ast.ExprIdent): boolean 
     }
     let n = astwalk.count_ident_expr(a, aid.name);
     if (n > 0) {
-      if (lu_copy_reads(fx, a, aid.name, I32_MAX, 0) != n && (n != 1 || !lu_reads_field_of(a, aid.name))) {
+      if (lu_copy_reads(fx, a, aid.name, I32_MAX, 0) != n && (n != 1 || !lu_reads_field_of(a, aid.name) && !lu_starts_one(replaced, a))) {
         return false;
       }
       before += n;
+    }
+  }
+  return false;
+}
+
+// The values v of the update literal `S { ...q, f: v }` whose base is the
+// mention `aid`, where v mentions q one time, in a read of q.f outside a
+// closure that is not a copy. The literal replaces q.f, so the base does not
+// take what v reads.
+function lu_replaced_values(fx: LuFn, call: ast.Expr, aid: ast.ExprIdent): ast.Expr[] {
+  function collect(e: ast.Expr, own acc: ast.Expr[]): ast.Expr[] {
+    let ast.ExprStructLit(sl) = e else {
+      return acc;
+    };
+    let ast.ExprIdent(base) = sl.base else {
+      return acc;
+    };
+    if (!sl.has_base || base.line != aid.line || base.col != aid.col) {
+      return acc;
+    }
+    for i in 0..sl.field_values.len() {
+      let v = sl.field_values[i];
+      let reads = astwalk.fold_expr_pruned(v, LuFieldReads { name: aid.name, field: sl.field_names[i], n: 0 }, lu_count_field, lu_not_closure).n;
+      if (reads == 1 && astwalk.count_ident_expr(v, aid.name) == 1 && lu_copy_reads(fx, v, aid.name, I32_MAX, 0) == 0) {
+        acc = acc.append(v);
+      }
+    }
+    return acc;
+  }
+  return astwalk.fold_expr(call, [], collect);
+}
+
+function lu_starts_one(values: ast.Expr[], e: ast.Expr): boolean {
+  for v in values {
+    if (ast.expr_line(v) == ast.expr_line(e) && ast.expr_col(v) == ast.expr_col(e)) {
+      return true;
     }
   }
   return false;
@@ -24666,10 +24748,10 @@ function lu_returns_after_reads(fx: LuFn, site: LuSite, call: ast.Expr, aid: ast
 }
 
 // "~" when the call mentions the name more than once, other than in reads
-// of fields that hold no handle.
-function lu_copy_tag(fx: LuFn, call: ast.Expr, name: string): string {
-  let n = astwalk.count_ident_expr(call, name);
-  if (n > 1 && lu_copy_reads(fx, call, name, I32_MAX, 0) != n - 1) {
+// of fields that hold no handle and in replaced values.
+function lu_copy_tag(fx: LuFn, call: ast.Expr, aid: ast.ExprIdent): string {
+  let n = astwalk.count_ident_expr(call, aid.name);
+  if (n > 1 && lu_copy_reads(fx, call, aid.name, I32_MAX, 0) + lu_replaced_values(fx, call, aid).len() != n - 1) {
     return "~";
   }
   return "";
@@ -24752,6 +24834,17 @@ function lu_count_other_field(e: ast.Expr, own r: LuFieldReads): LuFieldReads {
   if let ast.ExprFieldAccess(fa) = e {
     if let ast.ExprIdent(id) = fa.obj {
       if (id.name == r.name && fa.field != r.field) {
+        return LuFieldReads { ...r, n: r.n + 1 };
+      }
+    }
+  }
+  return r;
+}
+
+function lu_count_field(e: ast.Expr, own r: LuFieldReads): LuFieldReads {
+  if let ast.ExprFieldAccess(fa) = e {
+    if let ast.ExprIdent(id) = fa.obj {
+      if (id.name == r.name && fa.field == r.field) {
         return LuFieldReads { ...r, n: r.n + 1 };
       }
     }
@@ -25212,7 +25305,7 @@ function lu_own_arg(a: ast.Expr, e: ast.Expr, outer: ast.Expr, has_outer: boolea
   match (a) {
     ast.ExprIdent(aid) => {
       if (lu_dies(fx, e, aid, outer, has_outer, site)) {
-        acc = acc.append(lu_key(aid.line, aid.col) + lu_loose_tag(fx, site, aid.name) + lu_copy_tag(fx, e, aid.name));
+        acc = acc.append(lu_key(aid.line, aid.col) + lu_loose_tag(fx, site, aid.name) + lu_copy_tag(fx, e, aid));
       }
     },
     ast.ExprFieldAccess(fa) => {

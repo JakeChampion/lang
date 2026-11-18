@@ -831,6 +831,12 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 	markOnce := func(scope ast.Expr, name string) {
 		total := 0
 		copied := copiedArgs(scope, name, scalar)
+		// The literal replaces the field, so its base does not take the read.
+		for fa, sl := range replacedReads(scope) {
+			if base, ok := sl.Base.(*ast.Ident); ok && base.Name == name {
+				copied[fa] = true
+			}
+		}
 		ast.Walk(scope, func(m ast.Node) bool {
 			if e, ok := m.(ast.Expr); ok && copied[e] {
 				return false
@@ -2790,6 +2796,21 @@ func liveAfterBinding(info *Info, bf *bodyFrames, c ast.Node, aid *ast.Ident, or
 		}
 		return liveFrom(info, frames, len(frames)-1, aid.Name, bindingLevel(frames, aid.Name))
 	}
+	// A literal takes its base after its field values run.
+	earlier := map[*ast.Ident]bool{}
+	ast.Walk(st, func(m ast.Node) bool {
+		if sl, ok := m.(*ast.StructLit); ok && sl.Base == ast.Expr(aid) {
+			for _, f := range sl.Fields {
+				ast.Walk(f.Value, func(v ast.Node) bool {
+					if id, ok := v.(*ast.Ident); ok {
+						earlier[id] = true
+					}
+					return true
+				})
+			}
+		}
+		return true
+	})
 	later := false
 	var visit func(ast.Node) bool
 	visit = func(m ast.Node) bool {
@@ -2814,7 +2835,7 @@ func liveAfterBinding(info *Info, bf *bodyFrames, c ast.Node, aid *ast.Ident, or
 		if lm, ok := m.(*ast.Lambda); ok && !lambdaFreeNames(lm)[aid.Name] {
 			return false
 		}
-		if id, ok := m.(*ast.Ident); ok && id.Name == aid.Name && order.Idx[id] > order.Idx[aid] {
+		if id, ok := m.(*ast.Ident); ok && id.Name == aid.Name && order.Idx[id] > order.Idx[aid] && !earlier[id] {
 			later = true
 		}
 		return !later

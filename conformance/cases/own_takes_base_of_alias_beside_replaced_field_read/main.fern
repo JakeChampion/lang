@@ -1,0 +1,39 @@
+// A literal `S { ...t, f: v }` that passes to an `own` parameter takes its
+// base at the last use of the local t when v reads t only in `t.f`. The
+// literal replaces that field, and its field values run before it takes the
+// base.
+
+struct Ask { purpose: string }
+
+struct Log { out: Writer, asks: Ask[], n: i32 }
+
+function take(own l: Log): Log {
+  return l;
+}
+
+function returned(own l: Log, p: string): Log {
+  let t = l;
+  return take(Log { ...t, asks: t.asks.append(Ask { purpose: p }) });
+}
+
+function bound(own l: Log, p: string): Log {
+  let t = l;
+  let u = take(Log { ...t, asks: t.asks.append(Ask { purpose: p }) });
+  return Log { ...u, n: u.n + 1 };
+}
+
+function stored(own l: Log): Log {
+  let t = l;
+  let u = take(Log { ...t, asks: t.asks });
+  return u;
+}
+
+function main(): i32 {
+  let a = returned(Log { out: stdout(), asks: [], n: 0 }, "first");
+  let b = bound(a, "second");
+  let c = stored(b);
+  print(c.asks.len());
+  print(c.asks[1].purpose);
+  print(c.n);
+  return 0;
+}
