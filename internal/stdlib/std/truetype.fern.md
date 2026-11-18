@@ -22,7 +22,7 @@ A code point that the font does not map gives glyph 0. The kerning comes from th
 
 `with_advances` gives each glyph of a run its advance. Then `position_lookups` gives the GPOS lookups of a feature, and `position` applies one lookup. It reads the lookups of the types 1 to 9: single and pair adjustments, cursive joins, marks on bases, on ligatures and on marks, contexts and extensions. The contour points and the device tables of anchors and of value records have no effect.
 
-A budget limits the lookups that the contexts of one lookup apply, and a run grows to 65536 glyphs at most. The feature variations of GSUB and GPOS have no effect.
+The length of a run at `run_of` limits each lookup that applies to it, as HarfBuzz limits a buffer. The run grows to 64 glyphs for each glyph, with a floor of 16384 and a ceiling of 65536. The lookups have 1024 attempts for each glyph, with a floor of 16384: each glyph that a lookup tries takes one, and so does each lookup that a context applies. The feature variations of GSUB and GPOS have no effect.
 
 `render_color` draws the glyphs of COLR versions 0 and 1, with each paint of version 1: layers, solid colors, the three gradients, glyph clips, the transforms and the composite modes. It uses the first palette. The colors of a gradient mix in premultiplied form. A paint of a variation format draws as its static format, and the variations of COLR have no effect. A glyph draws in its clip box, or else in its advance and the line metrics of the font.
 
@@ -542,8 +542,9 @@ The GSUB table changes the glyphs of a run. A lookup replaces one glyph with one
 // ligature of each glyph as HarfBuzz keeps it: the ligature id from the
 // bit 5, then 16 for a ligature glyph, and its count of parts or the part
 // of a mark. `serial` gives the next ligature id. `pos` is empty until
-// `with_advances` gives each glyph its advance.
-pub struct Run { glyphs: i32[], clusters: i32[], masks: i32[], ligs: i32[], serial: i32, pos: Positions }
+// `with_advances` gives each glyph its advance. `max_len` is the most glyphs
+// that the run can grow to, and `ops` the attempts that its lookups have left.
+pub struct Run { glyphs: i32[], clusters: i32[], masks: i32[], ligs: i32[], serial: i32, pos: Positions, max_len: i32, ops: i32 }
 
 // The place of each glyph of a run in font units: its advance, and its
 // offset from its pen. A glyph that GPOS attaches has the distance to its
@@ -567,6 +568,15 @@ struct Rule { back: Seq, input: Seq, first: boolean, ahead: Seq, records: i32, c
 
 // The most glyphs that a run can grow to.
 const MAX_GLYPHS: i32 = 65536;
+
+// The limits of a run of n glyphs, as HarfBuzz sets them for a buffer: it can
+// grow to 64 glyphs for each glyph, and its lookups can make 1024 attempts for
+// each glyph, each with a floor of 16384.
+const LEN_FACTOR: i32 = 64;
+
+const OPS_FACTOR: i32 = 1024;
+
+const MIN_LIMIT: i32 = 16384;
 
 function tag_is(b: [u8], at: i32, tag: string): boolean {
   return tag.len() == 4 && u8_at(b, at) == tag[0] as i32 && u8_at(b, at + 1) == tag[1] as i32 && u8_at(b, at + 2) == tag[2] as i32 && u8_at(b, at + 3) == tag[3] as i32;
@@ -593,7 +603,8 @@ function lang_sys(b: [u8], scripts: i32, script: string): i32 {
 // `masks`, before any lookup.
 pub function run_of(glyphs: i32[], clusters: i32[], masks: i32[]): Run {
   let none: i32[] = [];
-  return Run { glyphs: glyphs, clusters: clusters, masks: masks, ligs: int_zeros(glyphs.len()), serial: 0, pos: Positions { advances: none, dx: none, dy: none, chain: none, attach: none, rtl: false } };
+  let n = glyphs.len().min(MAX_GLYPHS);
+  return Run { glyphs: glyphs, clusters: clusters, masks: masks, ligs: int_zeros(glyphs.len()), serial: 0, pos: Positions { advances: none, dx: none, dy: none, chain: none, attach: none, rtl: false }, max_len: (n * LEN_FACTOR).max(MIN_LIMIT).min(MAX_GLYPHS), ops: (n * OPS_FACTOR).max(MIN_LIMIT) };
 }
 
 function int_zeros(n: i32): i32[] {
@@ -844,7 +855,7 @@ function substituted(f: Font, own r: Run, l: Lookup, st: i32, kind: i32, cov: i3
   if (to.len() == 0) {
     return (deleted(r, i), i);
   }
-  if (r.glyphs.len() + to.len() > MAX_GLYPHS) {
+  if (r.glyphs.len() + to.len() > r.max_len) {
     return (r, -1);
   }
   let parts = to.len() > 1 && f.glyph_class(r.glyphs[i]) == 2;
@@ -1202,22 +1213,23 @@ pub function (f: Font) position(r: Run, li: i32, mask: i32): Run {
 }
 
 // `r` after `l` at each glyph whose mask has a bit of `mask`, from the first
-// glyph to the last.
+// glyph to the last. Each glyph that `l` tries takes one from the attempts of
+// the run, and the lookup stops when none are left.
 function applied_to_each(f: Font, r: Run, l: Lookup, mask: i32): Run {
   let run = r;
-  let budget = r.glyphs.len() * 64 + 16384;
+  let budget = r.ops;
   let i = 0;
-  while (i < run.glyphs.len()) {
+  while (i < run.glyphs.len() && budget > 0) {
     if ((run.masks[i] & mask) == 0 || skipped(f, l, run.glyphs[i])) {
       i += 1;
       continue;
     }
-    let (next, at, left) = applied(f, run, l, i, mask, budget);
+    let (next, at, left) = applied(f, run, l, i, mask, budget - 1);
     run = next;
     budget = left;
     i = if (at < 0) { i + 1 } else { at };
   }
-  return run;
+  return Run { ...run, ops: budget };
 }
 
 // `r` after a lookup of type 8. It goes from the last glyph to the first,
