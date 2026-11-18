@@ -419,11 +419,11 @@ function e_struct_update(type_name: string, field_names: string[], field_lines: 
 }
 
 pub function e_field_access(obj: ast.Expr, field: string): ast.Expr {
-  return ast.ExprFieldAccess { obj: obj, field: field, line: 0, col: 0, ty: "", const_read: false };
+  return ast.ExprFieldAccess { obj: obj, field: field, line: 0, col: 0, ty: "", const_read: false, display: false };
 }
 
 function e_field_access_at(obj: ast.Expr, field: string, line: i32, col: i32): ast.Expr {
-  return ast.ExprFieldAccess { obj: obj, field: field, line: line, col: col, ty: "", const_read: false };
+  return ast.ExprFieldAccess { obj: obj, field: field, line: line, col: col, ty: "", const_read: false, display: false };
 }
 
 function e_lambda_at(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], origin: string, line: i32, col: i32, ret_fn_ret: string, ret_fn_param_types: string, ret_own: boolean): ast.Expr {
@@ -2636,7 +2636,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         p = qr_p;
         base = qr_expr;
       } else {
-        base = ast.ExprFieldAccess { obj: base, field: fname, line: dline, col: dcol, ty: "", const_read: false };
+        base = ast.ExprFieldAccess { obj: base, field: fname, line: dline, col: dcol, ty: "", const_read: false, display: false };
       }
     } else if (p.peek_keyword() == "as") {
       let asline = p.peek_line();
@@ -2931,7 +2931,8 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
           if (failed) {
             return (pe, p);
           }
-          piece = e_call_at(e_field_access_at(pe, "to_string", f.line, f.col), no_args, f.line, f.col);
+          let shown: ast.Expr = ast.ExprFieldAccess { obj: pe, field: "to_string", line: f.line, col: f.col, ty: "", const_read: false, display: true };
+          piece = e_call_at(shown, no_args, f.line, f.col);
         }
         if (!has) {
           built = piece;

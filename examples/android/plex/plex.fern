@@ -946,7 +946,7 @@ pub function auto_quality(): i32 {
   return qualities().len() - 1;
 }
 
-// The containers that the media player of Android reads.
+// The containers that ExoPlayer reads.
 function direct_container(c: string): boolean {
   return c == "mp4" || c == "m4v" || c == "mov" || c == "mkv" || c == "webm" || c == "mpegts" || c == "ts" || c == "mp3" || c == "m4a" || c == "aac" || c == "flac" || c == "ogg" || c == "opus" || c == "wav";
 }
@@ -1006,7 +1006,7 @@ pub function direct_playable(it: Item, decoders: string[]): boolean {
 }
 
 // As direct_playable, with the sound of `choice`.
-function direct_with(it: Item, decoders: string[], choice: Choice): boolean {
+pub function direct_with(it: Item, decoders: string[], choice: Choice): boolean {
   if (it.media.len() == 0 || it.media[0].parts.len() == 0) {
     return false;
   }
@@ -1025,11 +1025,47 @@ pub function download_request(c: Client, b: Base, it: Item): Request {
 pub function download_name(it: Item, transcoded: boolean): string {
   let ext = "bin";
   if (transcoded) {
-    ext = "mkv";
+    ext = "transcode.mkv";
   } else if (it.media.len() > 0 && it.media[0].container.len() > 0) {
     ext = it.media[0].container;
   }
   return it.key + "." + ext;
+}
+
+// True when the download `name` of `it` is a transcode. A transcode made
+// before its name said so has the name of an MKV file of an item that is
+// not MKV.
+pub function transcoded_file(it: Item, name: string): boolean {
+  if (name.ends_with(".transcode.mkv")) {
+    return true;
+  }
+  return name.ends_with(".mkv") && (it.media.len() == 0 || it.media[0].container != "mkv");
+}
+
+// The item as its downloaded file holds it. A transcode holds one sound
+// track, the one that it played. The app draws no image subtitle from a
+// file: a transcode burned it in, and the player shows none.
+pub function file_item(it: Item, transcoded: boolean): Item {
+  if (it.media.len() == 0 || it.media[0].parts.len() == 0) {
+    return it;
+  }
+  let sounds = audio_tracks(it);
+  let sound = remembered(it).audio;
+  if (sound.len() == 0 && sounds.len() > 0) {
+    sound = sounds[0].id;
+  }
+  let kept: Track[] = [];
+  for t in it.media[0].parts[0].tracks {
+    if (t.kind == 2 && transcoded) {
+      if (t.id == sound) {
+        kept = kept.append(Track { ...t, selected: true });
+      }
+    } else if (t.kind != 3 || text_codec(t.codec)) {
+      kept = kept.append(t);
+    }
+  }
+  let part = Part { ...it.media[0].parts[0], tracks: kept };
+  return Item { ...it, media: [Media { ...it.media[0], parts: [part] }] };
 }
 
 // The address of the file of the item, which the player reads as it is.
@@ -1039,7 +1075,7 @@ pub function direct_url(b: Base, it: Item, session: string): string {
 }
 
 // What the client asks the transcoder to make: H.264 video and AAC sound,
-// which the media player of each Android device plays. A stream is HLS in
+// which each Android device decodes. A stream is HLS in
 // MPEG-TS, and a download is one Matroska file over HTTP. HEVC never goes
 // in MPEG-TS: a hardware HEVC encode into TS can change its picture
 // parameters between slices. A quality with a bitrate adds an upper bound
@@ -1271,11 +1307,16 @@ pub function text_subtitle(it: Item, choice: Choice): Option[Track] {
     return None;
   }
   for t in subtitle_tracks(it) {
-    if (t.id == choice.subtitle && ["srt", "subrip", "vtt", "webvtt", "ass", "ssa"].contains(t.codec)) {
+    if (t.id == choice.subtitle && text_codec(t.codec)) {
       return Some(t);
     }
   }
   return None;
+}
+
+// True for the codec of a subtitle that the app draws itself.
+function text_codec(codec: string): boolean {
+  return ["srt", "subrip", "vtt", "webvtt", "ass", "ssa"].contains(codec);
 }
 
 // The text of a subtitle track. The server gives a track inside the file

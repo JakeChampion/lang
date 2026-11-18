@@ -9,16 +9,11 @@ struct Loops { n: i32, header: boolean[], members: boolean[], at: i32[], succ: i
 function successor_table(f: ssa.SFunc, at: i32[]): i32[][] {
   let out: i32[][] = [];
   for b in f.blocks {
-    let t = b.term;
-    if (t.kind_tag == ssa.TERM_BR) {
-      out = out.append([ssa.position_of(at, t.target)]);
-    } else if (t.kind_tag == ssa.TERM_BRIF && t.t == t.f) {
-      out = out.append([ssa.position_of(at, t.t)]);
-    } else if (t.kind_tag == ssa.TERM_BRIF) {
-      out = out.append([ssa.position_of(at, t.t), ssa.position_of(at, t.f)]);
-    } else {
-      out = out.append([]);
+    let row: i32[] = [];
+    for id in ssa.successors(b.term) {
+      row = row.append(ssa.position_of(at, id));
     }
+    out = out.append(row);
   }
   return out;
 }

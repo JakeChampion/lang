@@ -965,7 +965,7 @@ function settings(m: Metrics, v: View): scene.Node[] {
     }
     y += row;
   }
-  let about = plex.PRODUCT + " " + plex.VERSION + ". A Plex client written in Fern, with no Java code: the screens, the network, TLS and JSON are Fern, and the video plays through the media player of Android.";
+  let about = plex.PRODUCT + " " + plex.VERSION + ". A Plex client written in Fern: the screens, the network, TLS and JSON are Fern, and the video plays through Media3 ExoPlayer.";
   out = util_append(out, wrapped(m, 16 * m.u, y + 16 * m.u, m.w - 32 * m.u, about, look.muted()));
   return out;
 }

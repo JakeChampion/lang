@@ -10,11 +10,21 @@ inputs:
   slot:
     description: >
       The job's own part of the cache key, such as its matrix leg or shard.
-      A job restores its own slot first and any other slot after that.
+      A job restores its own slot first. Then it restores a slot of the same
+      family, the part of the slot before its first hyphen, such as
+      `stdtest` or `checker`. Then it restores any other slot. A stdtest
+      shard needs interpreter verdicts, and a checker slot holds mostly
+      `-check` verdicts.
     required: true
 runs:
   using: composite
   steps:
+    - name: Name the slot family
+      id: family
+      shell: bash
+      env:
+        SLOT: ${{ inputs.slot }}
+      run: echo "family=${SLOT%%-*}" >> "$GITHUB_OUTPUT"
     - name: Restore the oracle verdicts, and save them when the job ends
       uses: actions/cache@v6
       with:
@@ -22,6 +32,7 @@ runs:
         key: oracle-verdicts-v1-${{ runner.os }}-${{ inputs.slot }}-${{ github.sha }}
         restore-keys: |
           oracle-verdicts-v1-${{ runner.os }}-${{ inputs.slot }}-
+          oracle-verdicts-v1-${{ runner.os }}-${{ steps.family.outputs.family }}-
           oracle-verdicts-v1-${{ runner.os }}-
     - name: Drop oracle verdicts no run has read for a week
       shell: bash

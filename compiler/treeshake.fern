@@ -295,7 +295,7 @@ function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
       if let ast.ExprIdent(id) = c.callee {
         if (id.name == "print" || id.name == "write" || id.name == "eprint") {
           for arg in c.args {
-            let display = ast.ExprFieldAccess { obj: arg, field: "to_string", line: c.line, col: c.col, ty: "", const_read: false };
+            let display = ast.ExprFieldAccess { obj: arg, field: "to_string", line: c.line, col: c.col, ty: "", const_read: false, display: true };
             names = typed_method_name_of(display, 0, lt, names);
           }
         }

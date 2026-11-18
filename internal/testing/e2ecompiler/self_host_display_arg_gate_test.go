@@ -18,7 +18,7 @@ func TestSelfHostDisplayArgGate(t *testing.T) {
 	}
 
 	noDisplay := func(fn, ty string) string {
-		return "argument 1 to \"" + fn + "\": " + ty + " does not implement `Display` (no `to_string(): string` in scope)"
+		return "argument 1 to \"" + fn + "\": " + ty + " does not implement `Display`"
 	}
 	rejects := []struct {
 		name string
@@ -47,6 +47,12 @@ func TestSelfHostDisplayArgGate(t *testing.T) {
 			"import \"core/cmp\";\nfunction main(): i32 {\n    let xs: i32[] = [1, 2];\n    print(xs);\n    return 0;\n}\n",
 			[]string{"E038", noDisplay("print", "i32[]")},
 		},
+		// A to_string method with no impl of Display does not make a value printable.
+		{
+			"print-plain-to-string",
+			"struct Q { a: i32 }\nfunction (q: Q) to_string(): string { return \"Q!\"; }\nfunction main(): i32 {\n    let q: Q = Q { a: 1 };\n    print(q);\n    return 0;\n}\n",
+			[]string{"E038", noDisplay("print", "Q")},
+		},
 		{
 			"nested-in-if",
 			"function main(): i32 {\n    let b: u8[] = [1 as u8];\n    if (b.len() > 0) { write(b); }\n    return 0;\n}\n",
@@ -71,8 +77,10 @@ func TestSelfHostDisplayArgGate(t *testing.T) {
 		})
 	}
 
-	const acceptSrc = `struct Q { a: i32 }
+	const acceptSrc = `import "core/cmp";
+struct Q { a: i32 }
 function (q: Q) to_string(): string { return "Q!"; }
+impl cmp.Display for Q {}
 function label(): string { return "lab"; }
 function main(): i32 {
     let q: Q = Q { a: 1 };

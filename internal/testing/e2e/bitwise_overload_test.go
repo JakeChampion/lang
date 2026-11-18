@@ -8,13 +8,20 @@ import (
 	"testing"
 )
 
-const bitwiseOverloadSrc = `struct F { b: i32 }
+const bitwiseOverloadSrc = `import "core/ops";
+struct F { b: i32 }
 function (self: F) rem(o: F): F { return F { b: self.b % o.b }; }
+impl ops.Rem for F {}
 function (self: F) bitand(o: F): F { return F { b: self.b & o.b }; }
+impl ops.BitAnd for F {}
 function (self: F) bitor(o: F): F { return F { b: self.b | o.b }; }
+impl ops.BitOr for F {}
 function (self: F) bitxor(o: F): F { return F { b: self.b ^ o.b }; }
+impl ops.BitXor for F {}
 function (self: F) shl(o: F): F { return F { b: self.b << o.b }; }
+impl ops.Shl for F {}
 function (self: F) shr(o: F): F { return F { b: self.b >> o.b }; }
+impl ops.Shr for F {}
 function main(): i32 {
     let a: F = F { b: 12 };          // 1100
     let b: F = F { b: 10 };          // 1010

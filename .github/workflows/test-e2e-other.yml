@@ -136,7 +136,7 @@ jobs:
         # and TLS ones take minutes each; by count they bunched into one shard,
         # which reached the 25m budget while another finished in 7m.
         #
-        # SELECTION IS STILL BY NEGATION. `go test -list` enumerates the whole
+        # SELECTION IS STILL BY NEGATION. The test binary enumerates the whole
         # package and CATCH_ALL_SKIP removes the lanes that have a workflow of
         # their own, so a new uncategorised test is still gated here
         # automatically — it lands in the list, and therefore in some shard,
@@ -150,7 +150,7 @@ jobs:
           set -euo pipefail
           W="$PWD/.github/other-test-weights.txt"
           mapfile -t MINE < <(
-            go test -list '.' ./internal/testing/e2e/ |
+            (cd internal/testing/e2e && "$RUNNER_TEMP/e2e-other.test" -test.list '.') |
               grep -E '^Test' |
               grep -vE "$CATCH_ALL_SKIP" |
               grep -vxE "$OWN_JOB_TESTS" |

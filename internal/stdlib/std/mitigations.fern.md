@@ -130,6 +130,8 @@ pub function (s: State) to_string(): string {
   }
   return out;
 }
+
+impl cmp.Display for State {}
 ```
 
 ### `3 pub struct Support`

@@ -57,8 +57,8 @@ Play, and the first is now fixed:
    an AAR. So AndroidX, Google Play services, Firebase, Play Billing and
    the SDKs of other vendors are out of reach.
 
-3. **Text and languages.** Arabic text is shaped, and its marks sit on
-   their bases. Emoji draw in color from the COLR font of the system.
+3. **Text and languages.** Arabic and Devanagari text is shaped, and
+   the marks sit on their bases. Emoji draw in color from the COLR font of the system.
    `std/i18n` now gives localized strings.
    `std/bidi` gives right-to-left text in the order of UAX #9.
    `std/android/text` takes a character that its font does not have from
@@ -113,7 +113,7 @@ compressed.
 | Material 3 components | Colors only, few components | Full | Full | Third party |
 | Navigation | By hand | Navigation 3 | Navigator, go_router | React Navigation |
 | Accessibility | TalkBack tree, font scale | Semantics | Semantics | Native views |
-| Right-to-left text and shaping | Order, Arabic shaping | Yes | Yes | Yes |
+| Right-to-left text and shaping | Order, Arabic and Devanagari shaping | Yes | Yes | Yes |
 | UI tests on the computer | Full simulator | Robolectric | Widget tests | Jest |
 | Screenshot tests | PNG of the simulator | Paparazzi, Roborazzi | Golden tests | Third party |
 | Camera, location, push | No | Yes | Plugins | Expo modules |
@@ -162,7 +162,20 @@ The order puts first what stops a release, then what most apps need.
 6. **Java and Kotlin libraries.** Merge DEX files and manifests of a JAR
    or an AAR into the APK.
 
-7. **Text.** The shaping of scripts other than Arabic.
+7. **Text.** The shaping of the other scripts: the Indic scripts other
+   than Devanagari, Hebrew and Thai. Bengali, Gurmukhi, Gujarati, Oriya,
+   Tamil, Telugu, Kannada and Malayalam use the same Indic shaper, with a
+   table and a configuration for each script.
+
+   Devanagari shaping is done: `std/shape` follows the Indic shaper of
+   HarfBuzz. It finds the syllables, the base consonant and the reph. It
+   reorders the matras, and applies the Indic features in their stages.
+   The rules of the new and of the old Indic specification both apply.
+
+   The Devanagari shaper puts dotted circles where HarfBuzz puts them.
+   The glyphs, the clusters and the positions are those of HarfBuzz 15,
+   for the test words and for 200,000 random strings. `std/android/text`
+   shapes each run of Devanagari letters.
 
    Color emoji are done: `std/truetype` draws the glyphs of COLR
    versions 0 and 1, and `std/android/text` and the painter of
@@ -171,8 +184,12 @@ The order puts first what stops a release, then what most apps need.
    Arabic shaping is done: `std/shape` gives each letter its joining
    form, and applies the GSUB and GPOS lookups of the font in the stages
    of HarfBuzz. The marks attach to their bases with the anchors of the
-   font. For the test words, the glyphs and their positions are those of
-   HarfBuzz. `std/android/text` shapes each run of Arabic letters.
+   font.
+
+   Characters decompose and compose as in HarfBuzz. A ZWJ and a
+   ZWNJ stop a lookup where they stop it in HarfBuzz. The glyphs and their
+   positions are those of HarfBuzz, for the test words and for 20,000
+   random strings. `std/android/text` shapes each run of Arabic letters.
 
    CFF glyphs are done:
    `std/truetype` reads CFF outlines, CID-keyed ones too, and the fonts

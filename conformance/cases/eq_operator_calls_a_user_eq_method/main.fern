@@ -1,4 +1,4 @@
-// `==` and `!=` on a struct call the `eq` method its type declares, on
+// `==` and `!=` on a struct call the `eq` method of its `cmp.Eq` impl, on
 // every engine. This `eq` compares one field, so values that differ in
 // another field are equal. A derived `Eq` compares every field.
 import "core/cmp";
@@ -8,6 +8,7 @@ struct Version { major: i32, label: string }
 function (a: Version) eq(b: Version): boolean {
     return a.major == b.major;
 }
+impl cmp.Eq for Version {}
 
 @derive(cmp.Eq)
 struct Plain { x: i32 }

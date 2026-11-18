@@ -25,7 +25,7 @@ import "./util";
 // `min_sdk` is the lowest API level it runs on. `icon` is the PNG of the
 // launcher icon, or is empty. `compress` deflates the libraries. `home`
 // makes the activity a home screen, and `assets` go under assets/.
-pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[], icon: u8[], banner: u8[], compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, tv: boolean, pip: boolean, assets: Asset[], widget: Widget }
+pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], more_dex: u8[][], permissions: string[], min_sdk: i32, services: Service[], icon: u8[], banner: u8[], compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, tv: boolean, pip: boolean, assets: Asset[], widget: Widget }
 
 // The app widget of the home screen: the Java class of its provider, which
 // extends android.appwidget.AppWidgetProvider, and the items of its row. An
@@ -57,6 +57,27 @@ pub struct Service { name: string, types: i32, permission: string, action: strin
 
 // A file of the APK under assets/, which AAssetManager reads.
 pub struct Asset { name: string, data: u8[] }
+
+// The DEX files of the app: the @jni classes, then each -apk-dex file. ART
+// reads classes.dex first, then classes2.dex, and so on.
+pub function dex_files(app: App): Asset[] {
+  let all: u8[][] = [];
+  if (app.dex.len() > 0) {
+    all = all.append(app.dex);
+  }
+  for d in app.more_dex {
+    all = all.append(d);
+  }
+  let out: Asset[] = [];
+  for k in 0..all.len() {
+    let name = "classes.dex";
+    if (k > 0) {
+      name = "classes" + (k + 1).to_string() + ".dex";
+    }
+    out = out.append(Asset { name: name, data: all[k] });
+  }
+  return out;
+}
 
 // The permission and the action of a notification listener service.
 pub const LISTENER_PERMISSION: string = "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE";
@@ -737,8 +758,8 @@ pub function write(app: App, libs: Lib[], d: [u8]): u8[] {
 
 function signed(app: App, libs: Lib[], key: ecdsa.PrivateKey): u8[] {
   let entries: Entry[] = [Entry { name: "AndroidManifest.xml", data: manifest(app), deflated: false }];
-  if (app.dex.len() > 0) {
-    entries = entries.append(Entry { name: "classes.dex", data: app.dex, deflated: false });
+  for d in dex_files(app) {
+    entries = entries.append(Entry { name: d.name, data: d.data, deflated: false });
   }
   if (has_resources(app)) {
     entries = entries.append(Entry { name: "resources.arsc", data: resource_table(app), deflated: false });

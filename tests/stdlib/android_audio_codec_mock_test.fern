@@ -1,0 +1,376 @@
+import "std/android/audio/codec";
+import "std/android/audio/capabilities";
+import "std/android/video/capabilities" as policy;
+import "std/video/frame";
+
+@import("libmediandk.so", "audio_mock_mode")
+function mode(value: i32): void;
+
+@import("libmediandk.so", "audio_mock_live")
+function live(): i32;
+
+@import("libmediandk.so", "audio_mock_released")
+function released(): i32;
+
+@import("libmediandk.so", "audio_mock_queued")
+function queued(): i32;
+
+@import("libmediandk.so", "audio_mock_encoding")
+function requested_encoding(): i32;
+
+@import("libmediandk.so", "mock_jni_env")
+function env(): usize;
+
+@import("libmediandk.so", "mock_jni_mode")
+function jni_mode(value: i32): void;
+
+@import("libmediandk.so", "mock_jni_frames")
+function jni_frames(): i32;
+
+@import("libmediandk.so", "mock_jni_pending")
+function jni_pending(): i32;
+
+@import("libmediandk.so", "mock_jni_hardware_queries")
+function hardware_queries(): i32;
+
+function config(): codec.Config {
+  return codec.Config { request: capabilities.Request { mime: "audio/mp4a-latm", sample_rate: 48000, channels: 2, profile: 2 }, csd0: [18u8, 16u8], csd1: [18u8, 16u8], csd2: [18u8, 16u8], pcm_encoding: 0 };
+}
+
+function limits(): codec.Limits {
+  return codec.Limits { max_packet_bytes: 8, max_output_bytes: 8, max_sample_rate: 48000, max_channels: 2 };
+}
+
+function discovery(): i32 {
+  let e = env();
+  jni_mode(0);
+  let Ok(infos) = capabilities.discover(e, 29, config().request, 256) else {
+    return 1;
+  };
+  let selected = capabilities.ordered(infos, config().request, policy.PreferHardware);
+  if (infos.len() != 3 || selected.len() != 2 || selected[0].implementation != policy.Hardware || selected[1].implementation != policy.Software || !infos[2].alias || jni_frames() != 0) {
+    return 2;
+  }
+  let Ok(old) = capabilities.discover(e, 28, config().request, 256) else {
+    return 3;
+  };
+  for info in old {
+    if (info.implementation != policy.Unknown) {
+      return 4;
+    }
+  }
+  jni_mode(0);
+  let _ = capabilities.discover(e, 28, config().request, 256);
+  if (hardware_queries() != 0 || capabilities.ordered(old, config().request, policy.HardwareOnly).len() != 0) {
+    return 5;
+  }
+  for failure in [1, 2] {
+    jni_mode(failure);
+    let Ok(filtered) = capabilities.discover(e, 29, config().request, 256) else {
+      return 6;
+    };
+    let chosen = capabilities.ordered(filtered, config().request, policy.PreferHardware);
+    if (chosen.len() != 1 || chosen[0].implementation != policy.Software || jni_pending() != 0 || jni_frames() != 0) {
+      return 7;
+    }
+  }
+  for failure in [4, 5, 6] {
+    jni_mode(failure);
+    if let Ok(_) = capabilities.discover(e, 29, config().request, 256) {
+      return 8;
+    }
+    if (jni_frames() != 0 || jni_pending() != (if (failure == 6) { 1 } else { 0 })) {
+      return 9;
+    }
+  }
+  jni_mode(0);
+  if let Ok(_) = capabilities.discover(e, 29, config().request, 5) {
+    return 10;
+  }
+  if let Ok(_) = capabilities.discover(e, 20, config().request, 256) {
+    return 11;
+  }
+  for mime in ["video/avc", "audio/", "audio/x\x00z"] {
+    if (capabilities.valid(capabilities.Request { mime: mime, sample_rate: 48000, channels: 2, profile: 0 })) {
+      return 12;
+    }
+  }
+  return 0;
+}
+
+function lifecycle(): i32 {
+  mode(0);
+  let Ok(selected) = codec.open_preferred(env(), 29, config(), limits()) else {
+    return 20;
+  };
+  if (selected.info.implementation != policy.Hardware || selected.attempts.len() != 0) {
+    return 21;
+  }
+  let d = selected.decoder;
+  if let Ok(_) = d.input(-1i64) {
+    return 22;
+  }
+  if let Ok(_) = d.output(-1i64) {
+    return 23;
+  }
+  let Ok(Some(slot)) = d.input(0i64) else {
+    return 24;
+  };
+  if (slot.capacity != 8) {
+    return 25;
+  }
+  if let Ok(_) = d.submit(slot, [], 123i64, 0u32) {
+    return 26;
+  }
+  if let Ok(_) = d.submit(slot, [42u8], -1i64, 0u32) {
+    return 27;
+  }
+  if let Ok(_) = d.submit(slot, [42u8], 123i64, 8u32) {
+    return 28;
+  }
+  if let Ok(_) = d.submit(slot, [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8], 123i64, 0u32) {
+    return 29;
+  }
+  if (queued() != 0) {
+    return 30;
+  }
+  if let Err(_) = d.submit(slot, [42u8, 43u8], 123i64, 0u32) {
+    return 31;
+  }
+  let Ok(Some(eos)) = d.input(0i64) else {
+    return 32;
+  };
+  if let Err(_) = d.submit(eos, [], 123i64, codec.FLAG_END_OF_STREAM) {
+    return 33;
+  }
+  let Ok(codec.FormatChanged(format)) = d.output(0i64) else {
+    return 34;
+  };
+  if (format.sample_rate != 48000 || format.channels != 2 || format.encoding != codec.PCM_I16 || format.channel_mask != 12) {
+    return 35;
+  }
+  let Ok(codec.BuffersChanged) = d.output(0i64) else {
+    return 36;
+  };
+  let Ok(codec.Buffer(buffer)) = d.output(0i64) else {
+    return 37;
+  };
+  if (buffer.presentation_time_us != 123i64 || buffer.offset != 2 || buffer.size != 4) {
+    return 38;
+  }
+  if let Ok(_) = d.copy_output(buffer, [0u8]) {
+    return 39;
+  }
+  let Ok(packet) = d.copy_output(buffer, [0u8, 0u8, 0u8, 0u8, 77u8]) else {
+    return 40;
+  };
+  if (packet.bytes != [1u8, 2u8, 3u8, 4u8, 77u8] || packet.size != 4) {
+    return 41;
+  }
+  if let Err(_) = d.release(buffer) {
+    return 42;
+  }
+  let Ok(codec.Buffer(end)) = d.output(0i64) else {
+    return 43;
+  };
+  if (end.flags != codec.FLAG_END_OF_STREAM || end.size != 0 || end.presentation_time_us != 456i64) {
+    return 44;
+  }
+  let Ok(view) = d.output_view(end) else {
+    return 45;
+  };
+  if (view.data != 0 as usize || view.size != 0) {
+    return 46;
+  }
+  let _ = d.release(end);
+  let Ok(codec.Retry) = d.output(0i64) else {
+    return 47;
+  };
+  if let Err(_) = d.flush() {
+    return 48;
+  }
+  let Ok(codec.FormatChanged(_)) = d.output(0i64) else {
+    return 49;
+  };
+  if let Err(_) = d.close() {
+    return 50;
+  }
+  if (live() != 0 || released() != 2 || queued() != 2) {
+    return 51;
+  }
+  return 0;
+}
+
+function failures(): i32 {
+  mode(0);
+  let Ok(hardware) = codec.open_preferred(env(), 29, config(), limits()) else {
+    return 78;
+  };
+  let Ok(infos) = capabilities.discover(env(), 29, config().request, 256) else {
+    return 79;
+  };
+  let Ok(software) = codec.fallback_to_software(hardware, config(), infos, limits()) else {
+    return 80;
+  };
+  if (software.info.implementation != policy.Software || live() != 1) {
+    return 81;
+  }
+  let Err(no_replacement) = codec.fallback_to_software(software, config(), infos, limits()) else {
+    return 82;
+  };
+  if (no_replacement.attempts.len() != 0 || live() != 0) {
+    return 83;
+  }
+  let invalid = codec.Limits { max_packet_bytes: 5, max_output_bytes: 8, max_sample_rate: 48000, max_channels: 2 };
+  let Err(bad_limit) = codec.open_selected(config(), infos, policy.PreferHardware, invalid) else {
+    return 84;
+  };
+  if (bad_limit.error != frame.Limit || live() != 0) {
+    return 85;
+  }
+  for failure in [1, 2, 3, 5] {
+    mode(failure);
+    if let Ok(_) = codec.open_named(config(), "c2.vendor.avc.decoder", limits()) {
+      return 60;
+    }
+    if (live() != 0) {
+      return 61;
+    }
+  }
+  mode(4);
+  let Ok(selected) = codec.open_preferred(env(), 29, config(), limits()) else {
+    return 62;
+  };
+  if (selected.info.implementation != policy.Software || selected.attempts.len() != 1 || selected.attempts[0].error != frame.Platform) {
+    return 63;
+  }
+  let _ = selected.decoder.close();
+  for failure in 6..20 {
+    mode(failure);
+    let Ok(d) = codec.open_named(config(), "c2.android.avc.decoder", limits()) else {
+      return 64;
+    };
+    if (failure == 6) {
+      if let Ok(_) = d.close() {
+        return 65;
+      }
+    } else {
+      if (failure == 7) {
+        if let Ok(_) = d.flush() {
+          return 66;
+        }
+      }
+      if (failure == 8) {
+        let Ok(None()) = d.input(0i64) else {
+          return 67;
+        };
+      }
+      if (failure == 9) {
+        let Ok(Some(slot)) = d.input(0i64) else {
+          return 68;
+        };
+        if let Ok(_) = d.submit(slot, [42u8, 43u8], 123i64, 0u32) {
+          return 69;
+        }
+      }
+      let format = d.output(0i64);
+      if (failure >= 12 && failure <= 15) {
+        let Err(_) = format else {
+          return 70;
+        };
+      } else {
+        let Ok(codec.FormatChanged(f)) = format else {
+          return 71;
+        };
+        if (f.encoding != (if (failure == 16) { codec.PCM_F32 } else { codec.PCM_I16 })) {
+          return 72;
+        }
+        let _ = d.output(0i64);
+        let output = d.output(0i64);
+        if (failure == 10 || failure == 11) {
+          let Err(_) = output else {
+            return 73;
+          };
+          if (released() != 1) {
+            return 74;
+          }
+        } else {
+          let Ok(codec.Buffer(b)) = output else {
+            return 75;
+          };
+          if (failure == 18 || failure == 19) {
+            if let Ok(_) = d.output_view(b) {
+              return 76;
+            }
+          }
+          let _ = d.release(b);
+        }
+      }
+      let _ = d.close();
+    }
+    if (live() != 0) {
+      return 77;
+    }
+  }
+  return 0;
+}
+
+function output_encoding(): i32 {
+  for setting in [0, 16, 17] {
+    mode(setting);
+    let request = codec.Config { ...config(), pcm_encoding: codec.PCM_F32 };
+    let Ok(d) = codec.open_named(request, "c2.android.avc.decoder", limits()) else {
+      return 80;
+    };
+    let output = d.output(0i64);
+    let _ = d.close();
+    if (requested_encoding() != codec.PCM_F32 || live() != 0) {
+      return 81;
+    }
+    if (setting == 16) {
+      let Ok(codec.FormatChanged(format)) = output else {
+        return 82;
+      };
+      if (format.encoding != codec.PCM_F32) {
+        return 83;
+      }
+    } else {
+      let Err(frame.Unsupported) = output else {
+        return 84;
+      };
+    }
+  }
+  mode(0);
+  let request = codec.Config { ...config(), pcm_encoding: codec.PCM_I16 };
+  let Ok(d) = codec.open_named(request, "c2.android.avc.decoder", limits()) else {
+    return 85;
+  };
+  let output = d.output(0i64);
+  let _ = d.close();
+  let Ok(codec.FormatChanged(format)) = output else {
+    return 86;
+  };
+  if (requested_encoding() != codec.PCM_I16 || format.encoding != codec.PCM_I16 || live() != 0) {
+    return 87;
+  }
+  let Err(frame.Unsupported) = codec.open_named(codec.Config { ...config(), pcm_encoding: 3 }, "c2.android.avc.decoder", limits()) else {
+    return 88;
+  };
+  return 0;
+}
+
+function main(): i32 {
+  let result = discovery();
+  if (result != 0) {
+    return result;
+  }
+  let cycle = lifecycle();
+  if (cycle != 0) {
+    return cycle;
+  }
+  let failed = failures();
+  if (failed != 0) {
+    return failed;
+  }
+  return output_encoding();
+}

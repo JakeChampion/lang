@@ -22,12 +22,16 @@ func TestPreferOfficialUbuntuAptMirror(t *testing.T) {
 			"Types: deb\nURIs: https://archive.ubuntu.com/ubuntu/\n https://security.ubuntu.com/ubuntu\nSuites: noble noble-updates\nComponents: main universe\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n",
 		},
 		"apt-mirrors.txt": {
-			"# http://azure.archive.ubuntu.com/ubuntu\nhttp://azure.archive.ubuntu.com/ubuntu priority:1\nhttps://archive.ubuntu.com/ubuntu priority:2\n",
-			"# http://azure.archive.ubuntu.com/ubuntu\nhttps://archive.ubuntu.com/ubuntu priority:1\nhttps://archive.ubuntu.com/ubuntu priority:2\n",
+			"# http://azure.archive.ubuntu.com/ubuntu\nhttp://azure.archive.ubuntu.com/ubuntu priority:1\nhttp://us-east-2.ec2.archive.ubuntu.com/ubuntu/\tpriority:2\nhttps://archive.ubuntu.com/ubuntu priority:3\n",
+			"# http://azure.archive.ubuntu.com/ubuntu\nhttps://archive.ubuntu.com/ubuntu priority:1\nhttps://archive.ubuntu.com/ubuntu/\tpriority:2\nhttps://archive.ubuntu.com/ubuntu priority:3\n",
+		},
+		"sources.list.d/ec2.sources": {
+			"Types: deb\nURIs: http://us-east-2.ec2.archive.ubuntu.com/ubuntu/\nSuites: noble noble-updates\nComponents: main universe\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n",
+			"Types: deb\nURIs: https://archive.ubuntu.com/ubuntu/\nSuites: noble noble-updates\nComponents: main universe\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n",
 		},
 		"sources.list.d/unchanged.list": {
-			"deb https://packages.microsoft.com/ubuntu/24.04/prod noble main\ndeb http://ports.ubuntu.com/ubuntu-ports noble main\ndeb https://azure.archive.ubuntu.com.example/ubuntu noble main\ndeb http://azure.archive.ubuntu.com/ubuntu-extra noble main\n",
-			"deb https://packages.microsoft.com/ubuntu/24.04/prod noble main\ndeb http://ports.ubuntu.com/ubuntu-ports noble main\ndeb https://azure.archive.ubuntu.com.example/ubuntu noble main\ndeb http://azure.archive.ubuntu.com/ubuntu-extra noble main\n",
+			"deb https://packages.microsoft.com/ubuntu/24.04/prod noble main\ndeb http://ports.ubuntu.com/ubuntu-ports noble main\ndeb https://azure.archive.ubuntu.com.example/ubuntu noble main\ndeb http://azure.archive.ubuntu.com/ubuntu-extra noble main\ndeb http://us-east-2.ec2.archive.ubuntu.com.example/ubuntu noble main\ndeb http://ec2.archive.ubuntu.com/ubuntu noble main\n",
+			"deb https://packages.microsoft.com/ubuntu/24.04/prod noble main\ndeb http://ports.ubuntu.com/ubuntu-ports noble main\ndeb https://azure.archive.ubuntu.com.example/ubuntu noble main\ndeb http://azure.archive.ubuntu.com/ubuntu-extra noble main\ndeb http://us-east-2.ec2.archive.ubuntu.com.example/ubuntu noble main\ndeb http://ec2.archive.ubuntu.com/ubuntu noble main\n",
 		},
 	}
 	root := t.TempDir()

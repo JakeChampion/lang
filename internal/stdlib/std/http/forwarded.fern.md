@@ -597,6 +597,8 @@ pub function (n: NodeId) to_string(): string {
   return name + ":" + n.port;
 }
 
+impl cmp.Display for NodeId {}
+
 pub function (h: Hop) to_string(): string {
   let parts: string[] = [];
   parts = __param(parts, "for", __node_text(h.from));
@@ -605,6 +607,8 @@ pub function (h: Hop) to_string(): string {
   parts = __param(parts, "proto", h.proto);
   return parts.join(";");
 }
+
+impl cmp.Display for Hop {}
 ```
 
 ### `14 function __node_text(n: Option[NodeId]): Option[string]`

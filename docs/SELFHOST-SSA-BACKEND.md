@@ -882,7 +882,11 @@ compiler is converging on (`docs/NATIVE-CONVERGENCE.md`), so the order is:
   traffic of a machine stack, neither of which wasm has, and native's
   `wasmssa` was retired for the same reason (#9397). An optimisation wasm
   should share lands in the IR layer (`ir.fern`, #6638), where all three
-  emitters read it.
+  emitters read it. The engine also does the work of some passes of the
+  register path. For example, `ssa.shared_lengths` gives two checked reads
+  of one array one load of its length on arm64. wasm needs no such pass:
+  wasmtime 50 compiles the two `i32.load` of the length in `a[i] + a[j]`
+  to one load on x86-64, with no write of memory between them.
 - **The Go oracle emits no code.** The Go SSA emitters were removed in
   step 5 of `docs/NATIVE-RETIREMENT.md`. The CLI routes target builds to
   the self-hosted compiler and its target-specific backend.

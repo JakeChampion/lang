@@ -9,12 +9,17 @@ import (
 )
 
 func TestFStringHoleUsesOperatorMethods(t *testing.T) {
-	prog, _, err := modload.LoadSource(`import "std/string";
+	prog, _, err := modload.LoadSource(`import "core/cmp";
+import "core/ops";
+import "std/string";
 import "std/i32";
 struct N { v: i32 }
 function (a: N) cmp(b: N): i32 { if (a.v < b.v) { return -1; } if (a.v > b.v) { return 1; } return 0; }
+impl cmp.Ord for N {}
 function (a: N) eq(b: N): boolean { return a.v == b.v; }
+impl cmp.Eq for N {}
 function (a: N) add(b: N): N { return N { v: a.v + b.v }; }
+impl ops.Add for N {}
 function main(): i32 {
     let a: N = N { v: 1 };
     let b: N = N { v: 2 };

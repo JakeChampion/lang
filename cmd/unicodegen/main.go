@@ -2322,6 +2322,17 @@ pub function combining_class(c: char): i32 {
     return _ccc_of(c);
 }
 
+// The full canonical decomposition of c, or c alone when it has none.
+pub function decomposition(c: char): char[] {
+    let none: char[] = [];
+    return _decomp_append(none, c);
+}
+
+// The primary composite of a and b, or 0 when they do not compose.
+pub function composition(a: char, b: char): i32 {
+    return _compose_pair(a, b);
+}
+
 function _wb_of(cp: char): i32 {
     let t = _wb_ranges();
     let n = cp as i32;

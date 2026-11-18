@@ -1,0 +1,23 @@
+// An arm of the match reads t after the literal takes it, so t is live and
+// the literal is borrowed.
+struct Queue { out: Writer, n: i32 }
+
+function wrap(own q: Queue): Option[Queue] {
+  return Some(q);
+}
+
+function step(own q: Queue): i32 {
+  let t = q;
+  match (wrap(Queue { ...t, n: t.n + 3 })) {
+    Some(u) => {
+      return u.n + t.n;
+    },
+    None => {
+      return t.n;
+    }
+  }
+}
+
+function main(): i32 {
+  return step(Queue { out: stdout(), n: 1 });
+}

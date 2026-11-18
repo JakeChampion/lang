@@ -157,8 +157,10 @@ function main(): i32 { let k: usize = 3; unsafe { return g(k as string); } }
 function f(x: string): string { return g(x); }
 function main(): i32 { return f("a").len(); }
 `, 1},
-	{"overload-plus-into-own", `struct V { x: i32 }
+	{"overload-plus-into-own", `import "core/ops";
+struct V { x: i32 }
 function (self: V) add(other: V): V { return V { x: self.x + other.x }; }
+impl ops.Add for V {}
 function g(own s: V): i32 { return s.x; }
 function main(): i32 { let a = V { x: 1 }; let b = V { x: 2 }; return g(a + b); }
 `, 1},

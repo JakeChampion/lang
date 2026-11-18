@@ -178,7 +178,8 @@ on a PR means `CI verdict`: Lint and every lane the change reaches
 (`docs/TEST-GATES.md`). Main runs the same suite after the merge, and
 `main-red.yml` opens an issue per red lane. **A red main is the next task for
 whoever sees it**, ahead of new work: look for a claim on its issue, and claim
-it before you start.
+it before you start. Give the fix the `ci-priority` label: the merge queue then
+tests and merges it before all other pull requests (`docs/TEST-GATES.md`).
 
 **Open the PR EARLY.** CI is faster than this dev machine: this is a 4-core
 container where `internal/testing/e2e` runs 45+ minutes in one process, while CI shards

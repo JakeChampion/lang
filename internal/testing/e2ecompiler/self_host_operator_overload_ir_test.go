@@ -14,26 +14,41 @@ type operatorOverloadIRCase struct {
 }
 
 var operatorOverloadIRCases = []operatorOverloadIRCase{
-	{"binary_add", `struct V { x: i32 }
+	{"binary_add", `import "core/ops";
+struct V { x: i32 }
 function (self: V) add(o: V): V { return V { x: self.x + o.x }; }
+impl ops.Add for V {}
 function main(): i32 { let a = V { x: 3 }; let b = V { x: 4 }; let c = a + b; return c.x; }`, 7},
-	{"all_ops", `struct V { x: i32 }
+	{"all_ops", `import "core/ops";
+struct V { x: i32 }
 function (self: V) add(o: V): V { return V { x: self.x + o.x }; }
+impl ops.Add for V {}
 function (self: V) sub(o: V): V { return V { x: self.x - o.x }; }
+impl ops.Sub for V {}
 function (self: V) mul(o: V): V { return V { x: self.x * o.x }; }
+impl ops.Mul for V {}
 function (self: V) div(o: V): V { return V { x: self.x / o.x }; }
+impl ops.Div for V {}
 function main(): i32 { let a = V { x: 20 }; let b = V { x: 4 }; let r = a + b; r = r - b; r = r * b; r = r / b; return r.x; }`, 20},
-	{"unary_neg", `struct V { x: i32 }
+	{"unary_neg", `import "core/ops";
+struct V { x: i32 }
 function (self: V) neg(): V { return V { x: 0 - self.x }; }
+impl ops.Neg for V {}
 function main(): i32 { let a = V { x: 5 }; let b = -a; return b.x + 100; }`, 95},
-	{"inline_field", `struct V { x: i32 }
+	{"inline_field", `import "core/ops";
+struct V { x: i32 }
 function (self: V) add(o: V): V { return V { x: self.x + o.x }; }
+impl ops.Add for V {}
 function main(): i32 { let a = V { x: 3 }; let b = V { x: 4 }; return (a + b).x; }`, 7},
-	{"chained", `struct V { x: i32 }
+	{"chained", `import "core/ops";
+struct V { x: i32 }
 function (self: V) add(o: V): V { return V { x: self.x + o.x }; }
+impl ops.Add for V {}
 function main(): i32 { let a = V { x: 3 }; let b = V { x: 4 }; let c = a + b; let d = c + a; return d.x; }`, 10},
-	{"named_struct", `struct Money { cents: i32, tag: i32 }
+	{"named_struct", `import "core/ops";
+struct Money { cents: i32, tag: i32 }
 function (self: Money) add(o: Money): Money { return Money { cents: self.cents + o.cents, tag: self.tag }; }
+impl ops.Add for Money {}
 function main(): i32 { let a = Money { cents: 50, tag: 1 }; let b = Money { cents: 30, tag: 2 }; let c = a + b; return c.cents; }`, 80},
 }
 

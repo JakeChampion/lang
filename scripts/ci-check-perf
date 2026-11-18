@@ -121,7 +121,7 @@ routed="$(awk -v B="$BASELINE" -v deftol="$TOLERANCE" -v label="$LABEL" '
   }
   END {
     printf "SUMMARY\t### performance (%s)\n", label
-    if (blind) printf "SUMMARY\tvalgrind was absent on this host: the dynamic (.ir) metrics were NOT measured.\n"
+    if (blind) printf "SUMMARY\tvalgrind was absent on this host: the dynamic (.ir and .dr) metrics were NOT measured.\n"
     printf "SUMMARY\t| metric | measured | baseline | delta |\n"
     printf "SUMMARY\t| --- | --- | --- | --- |\n"
     for (i = 1; i <= n; i++) {
@@ -165,7 +165,7 @@ routed="$(awk -v B="$BASELINE" -v deftol="$TOLERANCE" -v label="$LABEL" '
     nmissing = 0
     for (m in base) {
       if (m in measured) continue
-      if (blind && m ~ /\.ir$/) continue
+      if (blind && m ~ /\.(ir|dr)$/) continue
       # A baseline entry for another arch is not this job to miss.
       slash = index(m, "/")
       if (slash > 0 && !(substr(m, 1, slash - 1) in covered)) continue

@@ -90,8 +90,9 @@ jobs:
         run: scripts/perf-bench "${{ runner.temp }}/perf-report.txt"
 
       # Strict, unlike the self-host lanes below: `.text` is a static count
-      # that moves only when codegen does, and the `.ir` rows whose spread is
-      # not zero (the string-keyed map's hash seed) carry their own tolerance.
+      # that moves only when codegen does, and the `.ir` and `.dr` rows whose
+      # spread is not zero (the string-keyed map's hash seed) carry their own
+      # tolerance.
       # A batch of the merge queue is not strict. Its pull requests each
       # passed this gate alone, and the rebank-main job sets the rows that
       # they move together.

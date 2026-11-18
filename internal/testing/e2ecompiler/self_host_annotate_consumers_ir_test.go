@@ -46,26 +46,6 @@ function main(): i32 {
     if (n == 4) { return 42; }
     return n;
 }`},
-	{"bool_neg_overload", `import "core/cmp";
-struct V { b: boolean }
-function (a: V) neg(): boolean { return !a.b; }
-function main(): i32 {
-    let v: V = V { b: false };
-    let r = -v;
-    let n: i32 = r.to_string().len();
-    if (n == 4) { return 42; }
-    return n;
-}`},
-	{"bool_neg_overload_control", `import "core/cmp";
-struct V { b: boolean }
-function (a: V) neg(): boolean { return !a.b; }
-function main(): i32 {
-    let v: V = V { b: false };
-    let r: boolean = -v;
-    let n: i32 = r.to_string().len();
-    if (n == 4) { return 42; }
-    return n;
-}`},
 	{"str_tuple_elem_of_call", `enum Color { Red }
 
 function f(): (string, Color) {
@@ -86,30 +66,6 @@ function main(): i32 {
     if (n == 5) { return 42; }
     return 1;
 }`},
-	{"str_neg_overload", `struct W { s: string }
-
-function (a: W) neg(): string {
-    return a.s;
-}
-
-function main(): i32 {
-    let w: W = W { s: "hello" };
-    let n: i32 = (-w).len();
-    if (n == 5) { return 42; }
-    return 1;
-}`},
-	{"str_neg_overload_control", `struct W { s: string }
-
-function (a: W) neg(): string {
-    return a.s;
-}
-
-function main(): i32 {
-    let w: W = W { s: "hello" };
-    let n: i32 = w.neg().len();
-    if (n == 5) { return 42; }
-    return 1;
-}`},
 	{"u32_index_of_call_result", `function mk(): u32[] {
     return [2147484527u32];
 }
@@ -125,42 +81,6 @@ function main(): i32 {
 function main(): i32 {
     let xs: u32[] = mk();
     if ((xs[0] >> 1u32) == 1073742263u32) { return 42; }
-    return 1;
-}`},
-	{"u32_neg_overload_compare", `struct U { v: u32 }
-
-function (a: U) neg(): u32 {
-    return a.v;
-}
-
-function main(): i32 {
-    let u1: U = U { v: 2147483649u32 };
-    let u2: U = U { v: 5u32 };
-    if ((-u1) > (-u2)) { return 42; }
-    return 1;
-}`},
-	{"u32_neg_overload_compare_control", `struct U { v: u32 }
-
-function (a: U) neg(): u32 {
-    return a.v;
-}
-
-function main(): i32 {
-    let u1: U = U { v: 2147483649u32 };
-    let u2: U = U { v: 5u32 };
-    if (u1.neg() > u2.neg()) { return 42; }
-    return 1;
-}`},
-	{"u32_neg_overload_compare_static", `struct U { v: u32 }
-
-function (a: U) neg(): u32 {
-    return a.v;
-}
-
-function main(): i32 {
-    let u1: U = U { v: 7u32 };
-    let u2: U = U { v: 5u32 };
-    if ((-u1) > (-u2)) { return 42; }
     return 1;
 }`},
 	{"struct_elem_of_sliced_array", `struct P { x: i32 }
@@ -237,8 +157,10 @@ function main(): i32 {
     if (x == big) { return 42; }
     return 7;
 }`},
-	{"struct_overload_iife_operand", `struct V { x: i32 }
+	{"struct_overload_iife_operand", `import "core/ops";
+struct V { x: i32 }
 function (a: V) add(b: V): V { return V { x: a.x + b.x }; }
+impl ops.Add for V {}
 enum E { A(V), B(V) }
 function main(): i32 {
     let w: V = V { x: 10 };
@@ -246,8 +168,10 @@ function main(): i32 {
     let r = match (e) { A(q) => { q + w }, B(p) => { p + w } };
     return r.x;
 }`},
-	{"struct_overload_iife_operand_control", `struct V { x: i32 }
+	{"struct_overload_iife_operand_control", `import "core/ops";
+struct V { x: i32 }
 function (a: V) add(b: V): V { return V { x: a.x + b.x }; }
+impl ops.Add for V {}
 enum E { A(V), B(V) }
 function main(): i32 {
     let w: V = V { x: 10 };
