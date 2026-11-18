@@ -168,3 +168,26 @@ function main(): i32 {
 		})
 	}
 }
+
+// A return of an update chain that reads its root again in the arguments of
+// the root link writes in place, as the same chain in an assignment does.
+func TestReturnChainWritesInPlace(t *testing.T) {
+	const n = 1000
+	src := fmt.Sprintf(`function bump(own d: i32[], i: i32): i32[] { return d.with(i, d[i] + 1); }
+	function main(): i32 {
+		let a: i32[] = [];
+		for _ in 0..%d { a = a.append(0); }
+		for j in 0..%d { a = bump(a, j); }
+		return a[%d - 1];
+	}`, n, n, n)
+	for _, mode := range []string{"", "verify"} {
+		t.Setenv("FERN_INTERP_ARRAY_COW", mode)
+		v, ip := evalProgram(t, src)
+		if v != Number(1) {
+			t.Fatalf("mode %q: last element %v, want 1", mode, v)
+		}
+		if ip.arraySetCopies != 0 {
+			t.Errorf("mode %q: copied %d elements, want 0", mode, ip.arraySetCopies)
+		}
+	}
+}

@@ -132,9 +132,9 @@ counts, and an argument already evaluated is held by `evalCall`.
 
 The root of an update chain is the exception. Its other reads sit in the
 arguments of the root link, so the slot must still hold the old value while
-they run. `x = x.with(i, x[i] + 1)` therefore releases the hold of the slot
-before the right-hand side runs, and `evalCall` holds the root value while
-the other arguments run. `x = x.with(0, 3).with(1, x[0])` reads the slot after
+they run. `x = x.with(i, x[i] + 1)` and `return x.with(i, x[i] + 1)` therefore
+release the hold of the slot before the expression runs, and `evalCall` holds
+the root value while the other arguments run. `x = x.with(0, 3).with(1, x[0])` reads the slot after
 the first link has written, so it copies (#9702). A right-hand side that fails
 — including a `?` unwind or a `return` out of a value-position block, both of
 which arrive as errors — puts the reference back.

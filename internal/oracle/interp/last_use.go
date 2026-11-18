@@ -38,6 +38,57 @@ func (i *Interp) moveOut(name string, v Value, e *env) {
 	e.set(name, Void{})
 }
 
+// returnChainMove moves the root of an update chain that a return expression
+// reads more than once, before the expression runs, as assignIdent does for an
+// assignment. The caller pops it from i.moving and owns it again, because the
+// scope of the function still releases it. The last-use analysis moves a root
+// that the expression reads once.
+func (i *Interp) returnChainMove(rhs ast.Expr, e *env) (bool, Value) {
+	if n := len(i.deferStack); n > 0 && len(i.deferStack[n-1]) > 0 {
+		return false, nil
+	}
+	name, ok := i.returnRoots[rhs]
+	if !ok {
+		if i.returnRoots == nil {
+			i.returnRoots = map[ast.Expr]string{}
+		}
+		name = chainMoved(rhs)
+		i.returnRoots[rhs] = name
+	}
+	if name == "" {
+		return false, nil
+	}
+	v, isArray := e.slot(name).(Array)
+	if !isArray {
+		return false, nil
+	}
+	arrDisown(v)
+	i.moving = append(i.moving, v)
+	return true, v
+}
+
+// chainMoved gives the root of rhs when rhs is an update chain that reads
+// its root more than once, or "".
+func chainMoved(rhs ast.Expr) string {
+	e := rhs
+	for {
+		if fa, ok := e.(*ast.FieldAccess); ok {
+			e = fa.Target
+		}
+		c, ok := e.(*ast.Call)
+		if !ok || !isUpdateCall(c) {
+			return ""
+		}
+		if id, ok := c.Args[0].(*ast.Ident); ok {
+			if reads(rhs, usePath{name: id.Name}) > 1 && updateChain(rhs, id.Name) {
+				return id.Name
+			}
+			return ""
+		}
+		e = c.Args[0]
+	}
+}
+
 // takeField takes the field that x reads out of the struct s, which a read at
 // the last use of the field gives away. Only the local of x holds s, so no
 // run sees the struct without the field.

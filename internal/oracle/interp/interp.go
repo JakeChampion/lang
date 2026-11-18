@@ -594,6 +594,8 @@ type Interp struct {
 	lastUse      map[*ast.Ident]bool
 	fieldLastUse map[*ast.FieldAccess]bool
 	analysed     map[*ast.FuncDecl]bool
+	// returnRoots holds chainMoved of each return expression.
+	returnRoots map[ast.Expr]string
 }
 
 type arrayCOWMode int
@@ -6674,7 +6676,12 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		if x.Value == nil {
 			return result{flow: flowReturn, val: Void{}}, nil
 		}
+		moved, root := i.returnChainMove(x.Value, e)
 		v, err := i.evalExpr(x.Value, e)
+		if moved {
+			i.moving = i.moving[:len(i.moving)-1]
+			arrOwn(root)
+		}
 		if err != nil {
 			return result{}, err
 		}
