@@ -28,6 +28,20 @@ puts its two halves in the retry list, and `form` tests a group of that list
 before it takes new pull requests. A batch of one that fails is that pull
 request's failure: it loses the label and gets a comment with the run.
 
+A PULL REQUEST WITH THE `ci-priority` LABEL GOES FIRST. It is for a pull
+request that repairs main: while main is red, every other suite fails. `form`
+takes it before the retry list and before the other pull requests, in a batch
+with only priority pull requests, and it does not wait for its own `CI
+verdict`: the suite of the batch tests main with the pull request merged on it.
+`form` cancels a batch in flight that has no priority pull request, and `land`
+then puts that batch back at the front of the retry list. When the priority
+batch starts, `form` cancels each pull request suite that is under way and runs
+it again. The first job of each pull request suite (`ci-suite.yml`) waits while
+a priority batch is in flight, so the suites run after it. A draft and a pull
+request with `merge-queue-hold` do not go first. A priority pull request that
+the queue removed goes first again with a new commit, or when a person adds
+the `merge-queue` label.
+
 A PULL REQUEST THAT DOES NOT MERGE CLEANLY loses the label and gets a comment.
 
 A PULL REQUEST THAT LOST THE LABEL does not get it again at the same head. A
@@ -56,16 +70,24 @@ import time
 
 LABEL = "merge-queue"
 HOLD = "merge-queue-hold"
+PRIORITY = "ci-priority"
 BATCH = "merge-queue/batch"
 STATE_REF = "refs/merge-queue/state"
 WORKFLOW_BATCH = "merge-queue-batch.yml"
 WORKFLOW_FORM = "merge-queue.yml"
+WORKFLOW_CI = "ci.yml"
+# The jobs of the suite that ci.yml calls, and the first of them, which waits
+# for a priority batch (ci-suite.yml).
+SUITE_JOBS = "Full suite / "
+GATE_JOB = SUITE_JOBS + "Wait for a priority batch"
 PIN_PREFIXES = (".github/alloc-baseline.txt", ".github/certify-baseline.txt", ".github/cliff-baseline.txt",
                 ".github/perf-baseline", ".github/profile-costs-baseline.txt")
 REMOTE = os.environ.get("MERGE_QUEUE_REMOTE", "origin")
 GH = os.environ.get("MERGE_QUEUE_GH", "gh")
 MAX = int(os.environ.get("MERGE_QUEUE_BATCH", "10"))
 STALE_SECONDS = int(os.environ.get("MERGE_QUEUE_STALE_SECONDS", "900"))
+# How long `form` waits for a cancelled suite to end before it runs it again.
+KICK_SECONDS = int(os.environ.get("MERGE_QUEUE_KICK_SECONDS", "180"))
 SIGNATURE = "\n\n---\n_Posted by the merge queue (`scripts/merge-queue`)._"
 
 
@@ -116,14 +138,21 @@ def batch_head():
     return r.stdout.split()[0] if r.returncode == 0 else ""
 
 
+def batch_runs(head):
+    """The runs of the batch `head`, or None when they cannot be read."""
+    r = gh_actions("run", "list", "--workflow", WORKFLOW_BATCH, "--branch", BATCH, "--limit", "20",
+                   "--json", "databaseId,headSha,status", check=False)
+    if r.returncode != 0:
+        return None
+    return [x for x in json.loads(r.stdout or "[]") if x.get("headSha") == head]
+
+
 def batch_is_live(head):
     """True while a run of the batch `head` is going, or can still start."""
-    r = gh_actions("run", "list", "--workflow", WORKFLOW_BATCH, "--branch", BATCH, "--limit", "20",
-                   "--json", "headSha,status", check=False)
-    if r.returncode != 0:
+    runs = batch_runs(head)
+    if runs is None:
         note("cannot read the runs of the batch: the lock stays")
         return True
-    runs = [x for x in json.loads(r.stdout or "[]") if x.get("headSha") == head]
     if runs:
         return any(x.get("status") != "completed" for x in runs)
     git("fetch", "-q", REMOTE, BATCH)
@@ -152,6 +181,83 @@ def verdict_is_green(sha):
         return False
     runs = json.loads(out.stdout).get("check_runs", [])
     return any(r.get("conclusion") == "success" for r in runs)
+
+
+def priority_prs(state, prs):
+    """The pull requests with the priority label that the queue can take now.
+
+    A pull request of the retry list is not one of them: its group is tested
+    first, in the order of the list."""
+    retried = {n for group in state["retry"] for n in group}
+    return [pr for pr in prs
+            if PRIORITY in pr["labels"] and not pr["isDraft"] and HOLD not in pr["labels"]
+            and pr["number"] not in retried
+            and (LABEL in pr["labels"] or state["removed"].get(str(pr["number"])) != pr["headRefOid"])]
+
+
+def batch_has_priority(head, prs):
+    git("fetch", "-q", REMOTE, BATCH)
+    git("fetch", "-q", REMOTE, "main")
+    first = {pr["number"] for pr in prs if PRIORITY in pr["labels"]}
+    return any(n in first for n in batch_heads("FETCH_HEAD", head))
+
+
+def cancel_batch(head):
+    runs = [x for x in batch_runs(head) or [] if x.get("status") != "completed"]
+    if not runs:
+        note(f"a pull request with {PRIORITY} waits for batch {head[:8]}, which has no run to cancel yet")
+        return
+    for x in runs:
+        gh_actions("run", "cancel", str(x["databaseId"]), check=False)
+    note(f"a pull request with {PRIORITY} waits: batch {head[:8]} is cancelled, and it goes back to the retry list")
+
+
+def ci_runs():
+    """The pull request runs of ci.yml that are not complete: {id: head sha}."""
+    runs = {}
+    for status in ("queued", "in_progress"):
+        r = gh_actions("run", "list", "--workflow", WORKFLOW_CI, "--event", "pull_request", "--status", status,
+                       "--limit", "100", "--json", "databaseId,headSha", check=False)
+        if r.returncode != 0:
+            note(f"cannot read the {status} runs of {WORKFLOW_CI}")
+            continue
+        runs.update({str(x["databaseId"]): x["headSha"] for x in json.loads(r.stdout or "[]")})
+    return runs
+
+
+def suite_is_under_way(run_id):
+    r = gh_actions("api", f"repos/{{owner}}/{{repo}}/actions/runs/{run_id}/jobs?filter=latest&per_page=100",
+                   "--paginate", "--jq", ".jobs[].name", check=False)
+    return any(name.startswith(SUITE_JOBS) and name != GATE_JOB for name in r.stdout.splitlines())
+
+
+def kick_suites(batch):
+    """Cancel each pull request suite that is under way, and run it again.
+
+    The new run waits behind the batch in the first job of its suite. A run of
+    a pull request of the batch is cancelled and not run again, because the
+    batch tests that pull request."""
+    heads = {pr["headRefOid"] for pr in batch}
+    again = []
+    for run_id, sha in ci_runs().items():
+        if sha in heads:
+            gh_actions("run", "cancel", run_id, check=False)
+            note(f"run {run_id} of a pull request of the batch is cancelled")
+        elif suite_is_under_way(run_id) and gh_actions("run", "cancel", run_id, check=False).returncode == 0:
+            again.append(run_id)
+    deadline = time.time() + KICK_SECONDS
+    for run_id in again:
+        status = ""
+        while True:
+            status = gh_actions("run", "view", run_id, "--json", "status", "--jq", ".status",
+                                check=False).stdout.strip()
+            if status == "completed" or time.time() >= deadline:
+                break
+            time.sleep(5)
+        if status == "completed" and gh_actions("run", "rerun", run_id, check=False).returncode == 0:
+            note(f"run {run_id} is cancelled and runs again behind the batch")
+        else:
+            note(f"run {run_id} is cancelled, but it does not run again: it is {status or 'unknown'}")
 
 
 def failure_report():
@@ -186,10 +292,16 @@ def form():
        "--color", "0E8A16", check=False)
     gh("label", "create", HOLD, "--description", "Keep this pull request out of the merge queue",
        "--color", "FBCA04", check=False)
+    gh("label", "create", PRIORITY, "--description", "Test and merge this pull request before all others",
+       "--color", "B60205", check=False)
     head = batch_head()
     if head:
         if batch_is_live(head):
-            note("a batch is in flight")
+            prs = open_prs()
+            if priority_prs(load_state(), prs) and not batch_has_priority(head, prs):
+                cancel_batch(head)
+            else:
+                note("a batch is in flight")
             return 0
         release(f"no run of {WORKFLOW_BATCH} is going for {head[:8]}")
     state = load_state()
@@ -216,7 +328,15 @@ def form():
         state["removed"].pop(str(number), None)
         ready.append(pr)
 
-    if state["retry"]:
+    first = priority_prs(state, prs)[:MAX]
+    for pr in first:
+        note(f"#{pr['number']} has {PRIORITY}: it goes first")
+        if LABEL not in pr["labels"]:
+            gh("pr", "edit", str(pr["number"]), "--add-label", LABEL, check=False)
+        state["removed"].pop(str(pr["number"]), None)
+    if first:
+        chosen = first
+    elif state["retry"]:
         group = state["retry"].pop(0)
         labelled = {p["number"]: p for p in prs if LABEL in p["labels"]}
         chosen = [labelled[n] for n in group if n in labelled]
@@ -258,12 +378,14 @@ def form():
         return 1
     save_state(state)
     note(f"batch {merged} is in flight")
+    if first:
+        kick_suites(first)
     return 0
 
 
-def batch_heads():
+def batch_heads(base="FETCH_HEAD", tip="HEAD"):
     """The pull requests of the batch, in order: {number: head sha}."""
-    out = git("log", "--first-parent", "--merges", "--reverse", "--format=%P %s", "FETCH_HEAD..HEAD").stdout
+    out = git("log", "--first-parent", "--merges", "--reverse", "--format=%P %s", f"{base}..{tip}").stdout
     heads = {}
     for line in out.splitlines():
         _, head, subject = line.split(" ", 2)
