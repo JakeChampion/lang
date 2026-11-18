@@ -1,0 +1,121 @@
+// Tests of the Indic shaper of std/shape for the Indic scripts other than
+// Devanagari. The fonts and the glyphs that HarfBuzz gives for each case
+// come from scripts/gen-shape-indic-vectors.py.
+import "std/base64";
+import "std/shape";
+import "std/test";
+import "std/truetype";
+import "./shape_indic_vectors";
+
+function joined(xs: i32[]): string {
+  return xs.map((x: i32): string => x.to_string()).join(",");
+}
+
+// The advance, the x offset and the y offset of each glyph of `r`.
+function places(r: truetype.Run): string {
+  let out: string[] = [];
+  for i in 0..r.glyphs.len() {
+    out = out.append(r.pos.advances[i].to_string() + ":" + r.pos.dx[i].to_string() + ":" + r.pos.dy[i].to_string());
+  }
+  return out.join(",");
+}
+
+// The font of `data`, and the same font with its script tag `tag` renamed,
+// so that the font has the old tag of its script only, or none.
+function fonts_of(data: string, tag: string): Option[(truetype.Font, truetype.Font)] {
+  let Ok(b) = base64.decode(data) else {
+    return None;
+  };
+  let old = b;
+  for i in 0..b.len() - 3 {
+    if (b[i] == tag[0] && b[i + 1] == tag[1] && b[i + 2] == tag[2] && b[i + 3] == tag[3]) {
+      old = old.with(i + 3, 48 as u8);
+    }
+  }
+  let (Some(f), Some(g)) = (truetype.parse(b), truetype.parse(old)) else {
+    return None;
+  };
+  return Some((f, g));
+}
+
+// The cases of `cases` that do not give the glyphs, the clusters and the
+// positions of HarfBuzz for the script `script`, one on each line.
+function differences(data: string, tag: string, cases: string, script: string): string {
+  let Some((f, g)) = fonts_of(data, tag) else {
+    return "the font did not parse";
+  };
+  let out = "";
+  let count = 0;
+  for line in cases.split("\n") {
+    let parts = line.split("\t");
+    if (parts.len() != 5) {
+      continue;
+    }
+    count += 1;
+    let r = shape.shape(if (parts[0] == "old") { g } else { f }, parts[1], script);
+    let got = joined(r.glyphs) + " " + joined(r.clusters) + " " + places(r);
+    let want = parts[2] + " " + parts[3] + " " + parts[4];
+    if (got != want) {
+      out = out + parts[0] + " " + parts[1] + ": " + got + ", want " + want + "\n";
+    }
+  }
+  return if (count == 0) { "no cases" } else { out };
+}
+
+// Bengali: the reph after the subjoined forms, the ya-phala, the init
+// feature and U+09DF, which the shaper does not compose.
+function test_bengali(): test.TestOutcome {
+  return test.assert_eq(differences(shape_indic_vectors.beng_font(), "bng2", shape_indic_vectors.beng_cases(), "beng"), "");
+}
+
+// Gurmukhi: the reph before the subjoined forms, U+0A40 as a post-base
+// matra, and the pairs of vowels that take a dotted circle.
+function test_gurmukhi(): test.TestOutcome {
+  return test.assert_eq(differences(shape_indic_vectors.guru_font(), "gur2", shape_indic_vectors.guru_cases(), "guru"), "");
+}
+
+function test_gujarati(): test.TestOutcome {
+  return test.assert_eq(differences(shape_indic_vectors.gujr_font(), "gjr2", shape_indic_vectors.gujr_cases(), "gujr"), "");
+}
+
+// Oriya: the reph after the main consonant, and the bindu before the
+// subjoined forms.
+function test_oriya(): test.TestOutcome {
+  return test.assert_eq(differences(shape_indic_vectors.orya_font(), "ory2", shape_indic_vectors.orya_cases(), "orya"), "");
+}
+
+// Tamil: the split matras, and the pre-base matras before the base with
+// no search for a halant.
+function test_tamil(): test.TestOutcome {
+  return test.assert_eq(differences(shape_indic_vectors.taml_font(), "tml2", shape_indic_vectors.taml_cases(), "taml"), "");
+}
+
+// Telugu: a reph only with a ZWJ, the below-base forms only after the base,
+// and the length marks before the virama.
+function test_telugu(): test.TestOutcome {
+  return test.assert_eq(differences(shape_indic_vectors.telu_font(), "tel2", shape_indic_vectors.telu_cases(), "telu"), "");
+}
+
+// Kannada: a Ra, a halant and a ZWJ act as a Ra, a ZWJ and a halant.
+function test_kannada(): test.TestOutcome {
+  return test.assert_eq(differences(shape_indic_vectors.knda_font(), "knd2", shape_indic_vectors.knda_cases(), "knda"), "");
+}
+
+// Malayalam: the dot reph, the pre-base Ra of pref, the Chillus, and the
+// consonants that take no below-base form.
+function test_malayalam(): test.TestOutcome {
+  return test.assert_eq(differences(shape_indic_vectors.mlym_font(), "mlm2", shape_indic_vectors.mlym_cases(), "mlym"), "");
+}
+
+function main(): i32 {
+  let r = test.new("std/shape Indic scripts");
+  r = r.it("Bengali gives the glyphs of HarfBuzz", test_bengali);
+  r = r.it("Gurmukhi gives the glyphs of HarfBuzz", test_gurmukhi);
+  r = r.it("Gujarati gives the glyphs of HarfBuzz", test_gujarati);
+  r = r.it("Oriya gives the glyphs of HarfBuzz", test_oriya);
+  r = r.it("Tamil gives the glyphs of HarfBuzz", test_tamil);
+  r = r.it("Telugu gives the glyphs of HarfBuzz", test_telugu);
+  r = r.it("Kannada gives the glyphs of HarfBuzz", test_kannada);
+  r = r.it("Malayalam gives the glyphs of HarfBuzz", test_malayalam);
+  return r.finish();
+}

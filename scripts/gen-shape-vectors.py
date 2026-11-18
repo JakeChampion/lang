@@ -74,6 +74,11 @@ LATIN = ["بب", "الله", "لا", "مُحَمَّد"]
 # ligature of the lam and the alef. A ZWNJ stops the join.
 JOINERS = ["ب\u200d", "\u200dب", "ب\u200cب", "ل\u200dا", "ب\u200d\u200dب", "ل\u200cا"]
 
+# Spaces that the font does not have: each takes the glyph of the space,
+# with the width that HarfBuzz gives it. U+2011 takes no glyph here.
+SPACES = ["ب\u00a0ب", "ب\u2002ب", "ب\u2003ب", "ب\u2007ب", "ب\u2008ب", "ب\u2009ب", "ب\u202fب", "ب\u205fب",
+          "ب\u3000ب", "ب\u2011ب"]
+
 # Devanagari words, and the cases of each rule of the Indic shaper.
 DEVANAGARI = [
     "क", "कि", "की", "कु", "के", "को", "कं", "कः", "कँ", "क्", "क्ष", "त्र", "ज्ञ", "श्र", "द्ध", "द्व",
@@ -91,6 +96,8 @@ DEVANAGARI = [
     # A virama on the u matra by a lookup before the one that puts the matra
     # on its base: the virama keeps the height of the matra at that time.
     "ळु्", "र्ळु्",
+    # Two pre-base matras with a halant between, and a ZWNJ before the base.
+    "क\u093f\u094d\u093f", "क\u200c\u094dष",
 ]
 
 
@@ -562,7 +569,7 @@ def main() -> None:
     marks = subsetted(sys.argv[1], [0x20] + list(range(0x64B, 0x656)))
     deva, deva_old = devanagari(sys.argv[2])
     lines = []
-    for script, words in [("arab", WORDS + JOINERS), ("latn", LATIN + JOINERS)]:
+    for script, words in [("arab", WORDS + JOINERS + SPACES), ("latn", LATIN + JOINERS + SPACES)]:
         for w in words:
             lines.append(case(data, w, script))
     deva_lines = [case(deva, w, "deva") for w in DEVANAGARI]
