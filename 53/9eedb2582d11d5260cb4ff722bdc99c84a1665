@@ -515,3 +515,10 @@ profile/x86-64-linux/startup.minimal.ir	79
 profile/x86-64-linux/startup.safe.bytes	2096
 profile/x86-64-linux/startup.safe.emit	277
 profile/x86-64-linux/startup.safe.ir	79
+
+# lane: certify-census-x86_64
+x86_64/fern_main.unproved	7635
+wasm32/checker.unproved	2276
+x86_64/checker.refuted	5001
+x86_64/checker.weakened	171
+x86_64/checker.missed	477
