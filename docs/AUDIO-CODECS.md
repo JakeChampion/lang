@@ -984,7 +984,7 @@ The C builds use `cc -O3 -ffp-contract=off` and the pinned minimp3 source.
 The first scalar Fern implementation took 1.374 s on this workload.
 The vector kernels reduce that time by approximately 48 percent and retain the scalar reference PCM bits.
 
-The current result remains approximately 6.7 times the scalar C time and 9.6 times the SIMD C time.
+That result takes approximately 6.7 times the scalar C time and 9.6 times the SIMD C time.
 
 Use `scripts/bench-mp3` to reproduce the comparison. Its report records the input and compiler SHA-256 values.
 These timings include allocation and process startup. They are local baselines, not Android device measurements.
@@ -993,6 +993,15 @@ These measurements do not establish the best speed, memory use, or perceptual qu
 The performance goal requires improvements against measured reference implementations.
 Quality comparisons also require speech and music corpora, listening tests, and equal bitrate and latency settings.
 Android qualification requires device measurements of decode time, allocations, battery use, and underruns.
+
+The [2026-11-18 report](benchmarks/audio-decode-2026-11-18/README.md) records fresh measurements after compact arrays and compiler ownership fixes.
+MP2 workspace reuse reduces frame allocations by 31–34% on the tested streams.
+The combined MP2 changes reduce decode time by 7–13% locally and 7–12% on native ARM64.
+
+The [MP3 long-block report](benchmarks/audio-decode-2026-11-18/MP3-LONG-BLOCKS.md) isolates another SIMD change with no temporary transform arrays.
+It reduces decode time by 21–26% locally, with 4–10% fewer allocations.
+Native ARM64 measures 18–26% less time for the combined MP3 changes against main.
+These results preserve exact scalar-reference PCM and do not establish world-leading performance.
 
 ## Remaining codec work
 

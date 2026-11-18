@@ -52,6 +52,12 @@ These inputs do not establish a universal ranking or a phone power improvement.
 Native ARM64 comparisons run through the optional `audio_baseline` workflow input.
 The raw JSON reports include all trials, hashes, tool versions, process RSS, and allocation counters.
 
+The [native ARM64 job](https://github.com/JakeChampion/lang/actions/runs/44293138792/job/134763185720) passes with exact PCM.
+It measures 18–26% less MP3 decode time against main at `c4a7a3b9`, with the same allocation reductions.
+Unlike the local isolated comparison, this baseline precedes the shared synthesis change too.
+The three `mp3-transform-native-arm64` reports retain all trials.
+The local compiler emits a byte-identical ARM64 benchmark binary.
+
 ## Reproduce
 
 ```sh
