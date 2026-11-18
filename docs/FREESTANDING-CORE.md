@@ -751,6 +751,11 @@ only honest thing left. `__fern_report` stays defined, because call sites branch
 Only its body changes, and the backtrace code is not emitted, because nothing can write
 it. A dynamic dispatch with no matching arm also traps, for the same reason.
 
+A branch to `__fern_report` follows each trap, and `__fern_report` branches to
+itself after its trap. A board can step over a faulting instruction to resume
+after a fault. At a trap, that step thus reaches a trap again, and not the code
+after the stop.
+
 A board can give `exit` a body with an `exit` provider (below). Then `exit(code)` calls
 the provider before the trap, and a kernel's reset entry calls it with the result of
 `main`. A `FERN_LEAKCHECK` build prints its census first, through the `log` provider,

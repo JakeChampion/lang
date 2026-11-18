@@ -85,6 +85,9 @@ type arrBox struct {
 	owners int32
 	held   int // the most elements the box has had; later slots are not its own
 	maps   uint8
+	// holdsElems is true for a tuple literal, which counts as a holder of
+	// each of its elements.
+	holdsElems bool
 }
 
 // arrStore sums owners over every box on one storage.
@@ -160,6 +163,10 @@ type Struct struct {
 	TypeName string
 	Fields   map[string]Value
 	maps     uint8
+	owners   int32
+	// holdsElems is true for a struct literal, which counts as a holder of
+	// each of its fields.
+	holdsElems bool
 }
 
 type Enum struct {
@@ -262,17 +269,24 @@ func appendedTail(old, next Value) ([]Value, bool) {
 	return ne[len(oe):], true
 }
 
+// arrOwn counts a holder of an array or a struct.
 func arrOwn(v Value) {
-	if a, ok := v.(Array); ok {
-		a.b.owners++
-		a.b.st.owners++
+	switch x := v.(type) {
+	case Array:
+		x.b.owners++
+		x.b.st.owners++
+	case *Struct:
+		x.owners++
 	}
 }
 
 func arrDisown(v Value) {
-	if a, ok := v.(Array); ok {
-		a.b.owners--
-		a.b.st.owners--
+	switch x := v.(type) {
+	case Array:
+		x.b.owners--
+		x.b.st.owners--
+	case *Struct:
+		x.owners--
 	}
 }
 
@@ -324,7 +338,13 @@ func (i *Interp) findKey(m *Map, k Value) (int, error) {
 			}
 			continue
 		}
+		// The parameters of eq are not the only holders of the keys: the map
+		// holds kk, and the next round reads k again.
+		arrOwn(kk)
+		arrOwn(k)
 		same, err := i.callFunc(eq, []Value{kk, k})
+		arrDisown(kk)
+		arrDisown(k)
 		if err != nil {
 			return -1, err
 		}
@@ -575,8 +595,13 @@ type Interp struct {
 	moving []Value
 	raw    rawMemory
 
-	// returnMovable holds movableNames of each return expression.
-	returnMovable map[ast.Expr][]string
+	// lastUse and fieldLastUse hold the reads that move their local or a
+	// field of their local (lastUses), for each function in analysed.
+	lastUse      map[*ast.Ident]bool
+	fieldLastUse map[*ast.FieldAccess]bool
+	analysed     map[*ast.FuncDecl]bool
+	// returnRoots holds chainMoved of each return expression.
+	returnRoots map[ast.Expr]string
 }
 
 type arrayCOWMode int
@@ -6285,6 +6310,39 @@ func (e *env) get(name string) (Value, bool) {
 	return nil, false
 }
 
+// swap stores v in the slot of name, as set does, and gives the value that the
+// slot held.
+func (e *env) swap(name string, v Value) Value {
+	for cur := e; cur != nil; cur = cur.parent {
+		if old, ok := cur.vars[name]; ok {
+			if slot, ok := old.(*binding); ok {
+				was := slot.value
+				slot.value = v
+				return was
+			}
+			cur.vars[name] = v
+			return old
+		}
+	}
+	e.bindValue(name, v)
+	return nil
+}
+
+// vacate leaves the slot of name empty and reports whether it did. A slot
+// that a closure captured keeps its value.
+func (e *env) vacate(name string) bool {
+	for cur := e; cur != nil; cur = cur.parent {
+		if v, ok := cur.vars[name]; ok {
+			if _, captured := v.(*binding); captured {
+				return false
+			}
+			cur.vars[name] = Void{}
+			return true
+		}
+	}
+	return false
+}
+
 func (e *env) set(name string, v Value) {
 	for cur := e; cur != nil; cur = cur.parent {
 		if old, ok := cur.vars[name]; ok {
@@ -6370,6 +6428,7 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 	}
 	i.callDepth++
 	defer func() { i.callDepth-- }()
+	i.analyse(fn)
 	e := newEnv(nil)
 	for k, p := range fn.Params {
 		e.declare(p.Name, args[k])
@@ -6656,11 +6715,11 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		if x.Value == nil {
 			return result{flow: flowReturn, val: Void{}}, nil
 		}
-		moved := i.returnMoves(x.Value, e)
+		moved, root := i.returnChainMove(x.Value, e)
 		v, err := i.evalExpr(x.Value, e)
-		i.moving = i.moving[:len(i.moving)-len(moved)]
-		for _, old := range moved {
-			arrOwn(old)
+		if moved {
+			i.moving = i.moving[:len(i.moving)-1]
+			arrOwn(root)
 		}
 		if err != nil {
 			return result{}, err
@@ -6702,8 +6761,17 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		if len(arr.Elems()) != len(x.Names) {
 			return result{}, fmt.Errorf("tuple has %d elements, but %d names given", len(arr.Elems()), len(x.Names))
 		}
+		// Nothing holds the tuple after this statement, so its names take
+		// over the holds that it has on its elements.
+		handOver := arr.b.holdsElems && arr.exclusive()
 		for i2, name := range x.Names {
 			e.declare(name, arr.Elems()[i2])
+			if handOver {
+				arrDisown(arr.Elems()[i2])
+			}
+		}
+		if handOver {
+			arr.b.holdsElems = false
 		}
 		for i2 := range x.Nested {
 			if x.Nested[i2] == nil {
@@ -7371,6 +7439,9 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		return String(sb.String()), nil
 	case *ast.Ident:
 		if v, ok := env.get(x.Name); ok {
+			if arr, isArray := v.(Array); isArray && i.lastUse[x] {
+				i.moveOut(x.Name, arr, env)
+			}
 			return v, nil
 		}
 		if fn, ok := i.Funcs[x.Name]; ok {
@@ -7772,7 +7843,7 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		}
 		return nil, fmt.Errorf("interp: `?` on variant %q of %s (index %d): not a two-variant `?` shape", ev.VariantName, ev.EnumName, ev.Index)
 	case *ast.StructLit:
-		s := &Struct{TypeName: x.TypeName, Fields: map[string]Value{}}
+		s := &Struct{TypeName: x.TypeName, Fields: map[string]Value{}, holdsElems: true}
 		if x.Base != nil {
 			bv, err := i.evalExpr(x.Base, env)
 			if err != nil {
@@ -7798,6 +7869,7 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		return s, nil
 	case *ast.TupleLit:
 		out := newArray(len(x.Elems))
+		out.b.holdsElems = true
 		for i2, e := range x.Elems {
 			v, err := i.evalExpr(e, env)
 			if err != nil {
@@ -7844,6 +7916,9 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		v, ok := s.Fields[x.Field]
 		if !ok {
 			return nil, fmt.Errorf("struct %s has no field %q", s.TypeName, x.Field)
+		}
+		if s.holdsElems && s.owners == 1 && i.fieldLastUse[x] {
+			i.takeField(s, x, env)
 		}
 		return v, nil
 	}
@@ -8409,7 +8484,10 @@ func (i *Interp) evalAssign(a *ast.Assign, env *env) (Value, error) {
 
 func (i *Interp) assignIdent(a *ast.Assign, name string, env *env) (Value, error) {
 	old, _ := env.get(name)
-	move := movesFirst(a.Value, name)
+	// An array moves at the read of its last use (lastUses). Only the root of
+	// an update chain moves first, because its other reads need the slot.
+	_, isArray := old.(Array)
+	move := movesFirst(a.Value, name) && (!isArray || updateChain(a.Value, name))
 	if move {
 		arrDisown(old)
 		i.moving = append(i.moving, old)
@@ -8424,59 +8502,14 @@ func (i *Interp) assignIdent(a *ast.Assign, name string, env *env) (Value, error
 		}
 		return nil, err
 	}
+	// The slot is empty when a read at the last use moved its value.
+	old = env.swap(name, v)
+	if !move {
+		arrDisown(old)
+	}
 	retainReplacing(v, old)
 	arrOwn(v)
-	env.set(name, v)
 	return v, nil
-}
-
-// returnMoves lets a return expression write in place into an array that a
-// local of the function holds, as assignIdent does for an assignment. The
-// local dies with the return, so its hold does not stop the write. A closure
-// that captured the local, or a defer that has not run, can read the array
-// after the return, so the local keeps its hold then. The caller pops the
-// moved arrays from i.moving and owns them again after the expression.
-func (i *Interp) returnMoves(rhs ast.Expr, e *env) []Value {
-	if n := len(i.deferStack); n > 0 && len(i.deferStack[n-1]) > 0 {
-		return nil
-	}
-	names, ok := i.returnMovable[rhs]
-	if !ok {
-		if i.returnMovable == nil {
-			i.returnMovable = map[ast.Expr][]string{}
-		}
-		names = movableNames(rhs)
-		i.returnMovable[rhs] = names
-	}
-	var moved []Value
-	for _, name := range names {
-		v := e.slot(name)
-		if _, isArray := v.(Array); isArray {
-			arrDisown(v)
-			i.moving = append(i.moving, v)
-			moved = append(moved, v)
-		}
-	}
-	return moved
-}
-
-// movableNames gives each name that rhs reads and that rhs can move, once
-// each, in the order of their first reads.
-func movableNames(rhs ast.Expr) []string {
-	var names []string
-	seen := map[string]bool{}
-	ast.Walk(rhs, func(n ast.Node) bool {
-		id, ok := n.(*ast.Ident)
-		if !ok || seen[id.Name] {
-			return true
-		}
-		seen[id.Name] = true
-		if movesFirst(rhs, id.Name) {
-			names = append(names, id.Name)
-		}
-		return true
-	})
-	return names
 }
 
 func movesFirst(rhs ast.Expr, name string) bool {
@@ -8487,9 +8520,13 @@ func movesFirst(rhs ast.Expr, name string) bool {
 		}
 		return true
 	})
-	if reads <= 1 {
-		return true
-	}
+	return reads <= 1 || updateChain(rhs, name)
+}
+
+// updateChain reports whether rhs is a chain of updates rooted at name, whose
+// other reads of name are in the arguments of the root link. They run before
+// the root link writes.
+func updateChain(rhs ast.Expr, name string) bool {
 	e := rhs
 	for {
 		if fa, ok := e.(*ast.FieldAccess); ok {

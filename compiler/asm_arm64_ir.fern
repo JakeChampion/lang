@@ -4061,7 +4061,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
       s = s.write(profile_exit_asm(s));
       s = s.write("    mov x8, #94\n").svc(94);
     } else {
-      s = s.write(exit_provider_call(s, "x0") + "    brk #1\n");
+      s = s.write(exit_provider_call(s, "x0") + hostless_trap());
     }
     s = s.write("    mov x0, #0\n");
     return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
@@ -6942,7 +6942,7 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], own s: as
     s = s.write(profile_exit_asm(s));
     s = s.write("    mov x0, #134\n    mov x8, #94\n").svc(94);
   } else {
-    s = s.write("    brk #1\n");
+    s = s.write(hostless_trap());
   }
   s = s.write(dend + ":\n");
   return s;
@@ -7492,6 +7492,13 @@ function exit_provider_call(s: asmcore.EmitState, reg: string): string {
     return "";
   }
   return "    sub sp, sp, #16\n    str " + reg + ", [sp]\n    bl " + s.exit_provider + "\n    add sp, sp, #16\n";
+}
+
+// The stop of a target with no process. A handler that steps over the brk,
+// as a board does to resume after a fault, reaches the trap of
+// __fern_report and not the code after the stop.
+function hostless_trap(): string {
+  return "    brk #1\n    b __fern_report\n";
 }
 
 // The VBAR_EL1 table has 16 slots of 128 bytes. Slots 4 to 7 take an exception
@@ -10045,7 +10052,7 @@ function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_abort_134:\n    mov x0, #134\n");
   }
   if (!asmcore.process_entry(s)) {
-    return s.write("__fern_report:\n    brk #1\n.size __fern_report, .-__fern_report\n");
+    return s.write("__fern_report:\n" + hostless_trap() + ".size __fern_report, .-__fern_report\n");
   }
   s = s.write("__fern_report:\n");
   s = s.write("    mov x19, x0\n");
@@ -10319,7 +10326,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   if (asmcore.process_entry(s)) {
     s = emit_arena_map(s, darwin);
   } else {
-    s = s.write("    brk #1\n");
+    s = s.write(hostless_trap());
   }
   s = s.write(".Lalloc_inited:\n");
   if (s.harden && !darwin) {
