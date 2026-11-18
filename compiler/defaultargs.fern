@@ -307,7 +307,7 @@ function fda_fold_consts(e: ast.Expr, funcs: parser.FuncDecl[], depth: i32): ast
       return e;
     },
     ast.ExprUnary(u) => {
-      return ast.unary(u.op, fda_fold_consts(u.operand, funcs, depth), u.line, u.col, u.ty);
+      return ast.rebuild_unary(u, fda_fold_consts(u.operand, funcs, depth), u.line, u.col, u.ty);
     },
     ast.ExprBinary(b) => {
       return ast.binary(b.op, fda_fold_consts(b.left, funcs, depth), fda_fold_consts(b.right, funcs, depth), b.line, b.col, b.ty);

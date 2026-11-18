@@ -3670,8 +3670,8 @@ function infer_expr_unary_type(u: ast.ExprUnary, s: EmitState): Ty {
   if (u.op == "-") {
     return infer_expr_type(u.operand, s);
   }
-  if (u.op.len() >= 3 && u.op.starts_with("as_")) {
-    let ct = slice_unchecked(u.op, 3, u.op.len());
+  if (u.op == ast.CAST) {
+    let ct = u.cast;
     if (ct == "f64" || ct == "f32") {
       return ty_f64();
     }
@@ -3692,8 +3692,8 @@ function infer_expr_unary_type(u: ast.ExprUnary, s: EmitState): Ty {
     }
     return ty_from_name(ct);
   }
-  if (u.op.len() > 4 && u.op.starts_with("as?_")) {
-    return ty_from_name("Option[" + slice_unchecked(u.op, 4, u.op.len()) + "]");
+  if (u.op == ast.CHECKED_CAST) {
+    return ty_from_name("Option[" + u.cast + "]");
   }
   if (u.op == "try_") {
     let ot = infer_expr_type(u.operand, s);

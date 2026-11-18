@@ -95,7 +95,7 @@ function hash_element(ty: typeinfo.Type, value: ast.Expr, suffix: string): ast.S
       parser.s_assign("h", multiplied_hash()),
       parser.s_var(index, "i32", number(0)),
       parser.s_while(parser.e_binary("<", ident(index), length(value)), [
-        add_hash(parser.e_unary("as_i32", indexed(value, index))),
+        add_hash(parser.e_cast("i32", indexed(value, index))),
         increment(index),
       ]),
     ];
@@ -104,14 +104,14 @@ function hash_element(ty: typeinfo.Type, value: ast.Expr, suffix: string): ast.S
     return [parser.s_assign("h", multiplied_hash()), parser.s_if(value, [increment("h")], [])];
   }
   if (ssasem.is_wide(ty)) {
-    let high = parser.e_binary(">>", parser.e_unary("as_i64", value), parser.e_unary("as_i64", number(32)));
-    return [add_hash(parser.e_unary("as_i32", value)), add_hash(parser.e_unary("as_i32", high))];
+    let high = parser.e_binary(">>", parser.e_cast("i64", value), parser.e_cast("i64", number(32)));
+    return [add_hash(parser.e_cast("i32", value)), add_hash(parser.e_cast("i32", high))];
   }
-  return [add_hash(parser.e_unary("as_i32", value))];
+  return [add_hash(parser.e_cast("i32", value))];
 }
 
 function hash_shift(n: i32): ast.Expr {
-  return parser.e_unary("as_i32", parser.e_binary(">>", parser.e_unary("as_u32", ident("h")), parser.e_unary("as_u32", number(n))));
+  return parser.e_cast("i32", parser.e_binary(">>", parser.e_cast("u32", ident("h")), parser.e_cast("u32", number(n))));
 }
 
 function hash_mix(): ast.Stmt[] {

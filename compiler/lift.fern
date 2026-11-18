@@ -272,7 +272,7 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
     },
     ast.ExprUnary(u) => {
       let uor = lift_expr_walk(u.operand, acc, gfns);
-      return LiftExpr { expr: ast.unary(u.op, uor.expr, u.line, u.col, u.ty), acc: uor.acc };
+      return LiftExpr { expr: ast.rebuild_unary(u, uor.expr, u.line, u.col, u.ty), acc: uor.acc };
     },
     ast.ExprIndex(ix) => {
       let ixar = lift_expr_walk(ix.array, acc, gfns);
@@ -3381,7 +3381,7 @@ function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: ir
     },
     ast.ExprUnary(u) => {
       let o = wcap_expr(u.operand, fd, gfns, structs, mfuncs, acc, atargets);
-      return WCapExpr { expr: ast.unary(u.op, o.expr, u.line, u.col, u.ty), caps: o.caps, changed: o.changed };
+      return WCapExpr { expr: ast.rebuild_unary(u, o.expr, u.line, u.col, u.ty), caps: o.caps, changed: o.changed };
     },
     ast.ExprCall(c) => {
       if let ast.ExprLambda(ilm) = c.callee {

@@ -294,7 +294,7 @@ pub function is_quoted_literal(n: ast.ExprNumber): boolean {
 }
 
 pub function is_cast_op(op: string): boolean {
-  return op.len() > 3 && op.starts_with("as_");
+  return op == ast.CAST;
 }
 
 pub const BARE_RETURN: string = "bare-return";
@@ -368,6 +368,10 @@ pub function e_unary(op: string, operand: ast.Expr): ast.Expr {
 
 function e_unary_at(op: string, operand: ast.Expr, line: i32, col: i32): ast.Expr {
   return ast.unary(op, operand, line, col, "");
+}
+
+pub function e_cast(target: string, operand: ast.Expr): ast.Expr {
+  return ast.cast(operand, target, false, 0, 0, "");
 }
 
 pub function e_call(callee: ast.Expr, args: ast.Expr[]): ast.Expr {
@@ -2709,9 +2713,9 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
       p = castty_p;
       let tyname = castty_name;
       if (is_downcast) {
-        base = e_unary_at("as?_" + tyname, base, asline, ascol);
+        base = ast.cast(base, tyname, true, asline, ascol, "");
       } else {
-        base = e_unary_at("as_" + tyname, base, asline, ascol);
+        base = ast.cast(base, tyname, false, asline, ascol, "");
       }
     } else if (p.peek_punct() == "?") {
       let qline = p.peek_line();
@@ -3167,7 +3171,7 @@ function if_expr_rt(e: ast.Expr): string {
         return "boolean";
       }
       if (is_cast_op(u.op)) {
-        return slice_unchecked(u.op, 3, u.op.len()).to_owned();
+        return u.cast;
       }
       return if_expr_rt(u.operand);
     },
@@ -11182,7 +11186,7 @@ pub function settle_int_tree(e: ast.Expr, tag: string): ast.Expr {
       return ast.ExprNumber { ...n, suffix: tag, is_float: is_float, bits: literal_bits(n.text, is_float) };
     },
     ast.ExprUnary(u) => {
-      return ast.unary(u.op, settle_int_tree(u.operand, tag), u.line, u.col, tag);
+      return ast.rebuild_unary(u, settle_int_tree(u.operand, tag), u.line, u.col, tag);
     },
     ast.ExprBinary(b) => {
       return ast.binary(b.op, settle_int_tree(b.left, tag), settle_int_tree(b.right, tag), b.line, b.col, tag);
@@ -11501,10 +11505,10 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         return "boolean";
       }
       if (is_cast_op(u.op)) {
-        return slice_unchecked(u.op, 3, u.op.len()).to_owned();
+        return u.cast;
       }
-      if (u.op.len() > 4 && u.op.starts_with("as?_")) {
-        return "Option[" + slice_unchecked(u.op, 4, u.op.len()) + "]";
+      if (u.op == ast.CHECKED_CAST) {
+        return "Option[" + u.cast + "]";
       }
       if (u.op == "try_") {
         return try_payload_spelling(mono_infer(u.operand, env, funcs));
@@ -11688,7 +11692,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
     },
     ast.ExprUnary(u) => {
       let o = mono_expr(u.operand, env, funcs, ins);
-      return RExpr { rexpr: ast.unary(u.op, o.rexpr, u.line, u.col, u.ty), rins: o.rins };
+      return RExpr { rexpr: ast.rebuild_unary(u, o.rexpr, u.line, u.col, u.ty), rins: o.rins };
     },
     ast.ExprCall(c) => {
       let (nargs, cur) = mono_call_args(c, env, funcs, ins);
@@ -12676,7 +12680,7 @@ function subst_expr(e: ast.Expr, tparams: string[], cts: string[]): ast.Expr {
       return ast.binary(b.op, subst_expr(b.left, tparams, cts), subst_expr(b.right, tparams, cts), b.line, b.col, b.ty);
     },
     ast.ExprUnary(u) => {
-      return ast.unary(u.op, subst_expr(u.operand, tparams, cts), u.line, u.col, u.ty);
+      return ast.rebuild_unary(u, subst_expr(u.operand, tparams, cts), u.line, u.col, u.ty);
     },
     ast.ExprIndex(ix) => {
       return ast.ExprIndex { array: subst_expr(ix.array, tparams, cts), index: subst_expr(ix.index, tparams, cts), unchecked: ix.unchecked, ty: ix.ty, line: ix.line, col: ix.col };
@@ -14492,7 +14496,7 @@ function ms_expr(e: ast.Expr, env: MEnv, gstructs: StructDecl[], funcs: MFns, in
     },
     ast.ExprUnary(u) => {
       let o = ms_expr(u.operand, env, gstructs, funcs, ins);
-      return RExpr { rexpr: ast.unary(u.op, o.rexpr, u.line, u.col, u.ty), rins: o.rins };
+      return RExpr { rexpr: ast.rebuild_unary(u, o.rexpr, u.line, u.col, u.ty), rins: o.rins };
     },
     ast.ExprCall(c) => {
       return ms_call(c, [], env, gstructs, funcs, ins);
@@ -16265,7 +16269,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
     },
     ast.ExprUnary(u) => {
       let o = me_expr(u.operand, "", env, enums, structs, funcs, ins);
-      return RExpr { rexpr: ast.unary(u.op, o.rexpr, u.line, u.col, u.ty), rins: o.rins };
+      return RExpr { rexpr: ast.rebuild_unary(u, o.rexpr, u.line, u.col, u.ty), rins: o.rins };
     },
     ast.ExprCall(c) => {
       let vname = ctor_variant_name(c.callee, enums, env, funcs);
@@ -17615,7 +17619,7 @@ function dl_expr_with_kids(e: ast.Expr, kids: ast.Expr[]): ast.Expr {
       return ast.binary(b.op, kids[0], kids[1], b.line, b.col, b.ty);
     },
     ast.ExprUnary(u) => {
-      return ast.unary(u.op, kids[0], u.line, u.col, u.ty);
+      return ast.rebuild_unary(u, kids[0], u.line, u.col, u.ty);
     },
     ast.ExprCall(c) => {
       let args: ast.Expr[] = [];
@@ -20083,7 +20087,7 @@ function rvf_expr(e: ast.Expr, structs: StructDecl[]): ast.Expr {
       return ast.binary(b.op, rvf_expr(b.left, structs), rvf_expr(b.right, structs), b.line, b.col, b.ty);
     },
     ast.ExprUnary(u) => {
-      return ast.unary(u.op, rvf_expr(u.operand, structs), u.line, u.col, u.ty);
+      return ast.rebuild_unary(u, rvf_expr(u.operand, structs), u.line, u.col, u.ty);
     },
     ast.ExprCall(c) => {
       let args: ast.Expr[] = [];
@@ -20809,31 +20813,31 @@ function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], stru
       if (u.op == "-" || u.op == "+") {
         return irt_guess(u.operand, params, funcs, structs);
       }
-      if (u.op == "as_f64" || u.op == "as_float") {
+      if (u.op == ast.CAST && u.cast == "f64" || u.op == ast.CAST && u.cast == "float") {
         return "f64";
       }
-      if (u.op == "as_f32") {
+      if (u.op == ast.CAST && u.cast == "f32") {
         return "f32";
       }
-      if (u.op == "as_i32") {
+      if (u.op == ast.CAST && u.cast == "i32") {
         return "i32";
       }
-      if (u.op == "as_i64") {
+      if (u.op == ast.CAST && u.cast == "i64") {
         return "i64";
       }
-      if (u.op == "as_u8") {
+      if (u.op == ast.CAST && u.cast == "u8") {
         return "u8";
       }
-      if (u.op == "as_u16") {
+      if (u.op == ast.CAST && u.cast == "u16") {
         return "u16";
       }
-      if (u.op == "as_i16") {
+      if (u.op == ast.CAST && u.cast == "i16") {
         return "i16";
       }
-      if (u.op == "as_u32") {
+      if (u.op == ast.CAST && u.cast == "u32") {
         return "u32";
       }
-      if (u.op == "as_u64") {
+      if (u.op == ast.CAST && u.cast == "u64") {
         return "u64";
       }
       return "";
@@ -21200,11 +21204,7 @@ function erase_view_expr(e: ast.Expr): ast.Expr {
       return ast.ExprZero { ...z, type_name: erase_view_spelling(z.type_name) };
     },
     ast.ExprUnary(u) => {
-      let op = u.op;
-      if (op.len() > 3 && op.starts_with("as ")) {
-        op = erase_view_spelling(op);
-      }
-      return ast.unary(op, u.operand, u.line, u.col, erase_view_spelling(u.ty));
+      return ast.ExprUnary { ...ast.rebuild_unary(u, u.operand, u.line, u.col, erase_view_spelling(u.ty)), cast: erase_view_spelling(u.cast) };
     },
     ast.ExprLambda(lm) => {
       return ast.ExprLambda { ...lm, params: erase_view_params(lm.params), ret_type: erase_view_spelling(lm.ret_type), ret_fn_ret: erase_view_spelling(lm.ret_fn_ret), ret_fn_param_types: erase_view_spelling(lm.ret_fn_param_types) };
@@ -21300,7 +21300,7 @@ function spells_view_expr(e: ast.Expr, own found: boolean): boolean {
       return spells_view(z.type_name);
     },
     ast.ExprUnary(u) => {
-      return u.op.len() > 3 && u.op.starts_with("as ") && spells_view(u.op) || spells_view(u.ty);
+      return spells_view(u.cast) || spells_view(u.ty);
     },
     ast.ExprLambda(lm) => {
       return spells_view_params(lm.params) || spells_view(lm.ret_type) || spells_view(lm.ret_fn_ret) || spells_view(lm.ret_fn_param_types);
@@ -21795,7 +21795,7 @@ function rename_tv_expr(e: ast.Expr, vars: string[], cts: string[]): ast.Expr {
       return ast.binary(b.op, b.left, b.right, b.line, b.col, subst_ty(b.ty, vars, cts));
     },
     ast.ExprUnary(u) => {
-      return ast.unary(u.op, u.operand, u.line, u.col, subst_ty(u.ty, vars, cts));
+      return ast.rebuild_unary(u, u.operand, u.line, u.col, subst_ty(u.ty, vars, cts));
     },
     ast.ExprIndex(ix) => {
       return ast.ExprIndex { ...ix, ty: subst_ty(ix.ty, vars, cts) };
@@ -22893,7 +22893,7 @@ function dv_hash_stmts(hv: string, ty: string, recv: ast.Expr, sfx: string): ast
     let body: ast.Stmt[] = [s_assign(hv, e_binary(
       "+",
       e_binary("*", e_ident(hv), e_number("31", "", false)),
-      e_unary("as_i32", e_index(recv, e_ident(iv), 0, 0)),
+      e_cast("i32", e_index(recv, e_ident(iv), 0, 0)),
     ))];
     body = body.append(s_assign(iv, e_binary("+", e_ident(iv), e_number("1", "", false))));
     let out: ast.Stmt[] = [s_assign(hv, mul)];
@@ -22908,7 +22908,7 @@ function dv_hash_stmts(hv: string, ty: string, recv: ast.Expr, sfx: string): ast
   if (dv_is_num_scalar(ty)) {
     let v = recv;
     if (ty != "i32") {
-      v = e_unary("as_i32", recv);
+      v = e_cast("i32", recv);
     }
     return [s_assign(hv, e_binary("+", mul, v))];
   }
@@ -23017,12 +23017,12 @@ function cl_call(name: string, args: ast.Expr[]): ast.Expr {
 // The value of type `t` at the address `addr`.
 function cl_load(t: string, addr: ast.Expr): ast.Expr {
   return match (t) {
-    "u8" => e_unary_at("as_u8", cl_call("__load_u8", [addr]), 0, 0),
+    "u8" => e_cast("u8", cl_call("__load_u8", [addr])),
     "i32" => cl_call("__load_i32", [addr]),
-    "u32" => e_unary_at("as_u32", cl_call("__load_i32", [addr]), 0, 0),
+    "u32" => e_cast("u32", cl_call("__load_i32", [addr])),
     "f32" => cl_call("f32_from_bits", [cl_call("__load_i32", [addr])]),
     "i64" => cl_call("__load_i64", [addr]),
-    "u64" => e_unary_at("as_u64", cl_call("__load_i64", [addr]), 0, 0),
+    "u64" => e_cast("u64", cl_call("__load_i64", [addr])),
     "f64" => cl_call("f64_from_bits", [cl_call("__load_i64", [addr])]),
     _ => cl_call("__load_ptr", [addr]),
   };
@@ -23035,7 +23035,7 @@ function cl_store(t: string, addr: ast.Expr, v: ast.Expr): ast.Stmt {
     if (t == "u8") {
       name = "__store_u8";
     }
-    return s_expr(cl_call(name, [addr, e_unary_at("as_i32", v, 0, 0)]));
+    return s_expr(cl_call(name, [addr, e_cast("i32", v)]));
   }
   if (t == "i32") {
     return s_expr(cl_call("__store_i32", [addr, v]));
@@ -23047,7 +23047,7 @@ function cl_store(t: string, addr: ast.Expr, v: ast.Expr): ast.Stmt {
     return s_expr(cl_call("__store_i64", [addr, v]));
   }
   if (t == "u64") {
-    return s_expr(cl_call("__store_i64", [addr, e_unary_at("as_i64", v, 0, 0)]));
+    return s_expr(cl_call("__store_i64", [addr, e_cast("i64", v)]));
   }
   if (t == "f64") {
     return s_expr(cl_call("__store_i64", [addr, cl_call("f64_bits", [v])]));
@@ -24375,7 +24375,7 @@ function settle_float_expr(e: ast.Expr): ast.Expr {
       return ast.ExprNumber { text: n.text, suffix: n.suffix, raw: n.raw, is_float: true, bits: literal_bits(n.text, true), line: n.line, col: n.col };
     },
     ast.ExprUnary(u) => {
-      return ast.unary(u.op, settle_float_expr(u.operand), u.line, u.col, u.ty);
+      return ast.rebuild_unary(u, settle_float_expr(u.operand), u.line, u.col, u.ty);
     },
     ast.ExprBinary(b) => {
       return ast.binary(b.op, settle_float_expr(b.left), settle_float_expr(b.right), b.line, b.col, b.ty);
@@ -24745,7 +24745,7 @@ function settle_expr(e: ast.Expr, names: string[], types: string[], fns: SettleF
       return ast.binary(b.op, settle_expr(b.left, names, types, fns, structs), settle_expr(b.right, names, types, fns, structs), b.line, b.col, b.ty);
     },
     ast.ExprUnary(u) => {
-      return ast.unary(u.op, settle_expr(u.operand, names, types, fns, structs), u.line, u.col, u.ty);
+      return ast.rebuild_unary(u, settle_expr(u.operand, names, types, fns, structs), u.line, u.col, u.ty);
     },
     ast.ExprCall(c) => {
       let ptypes: string[] = [];
