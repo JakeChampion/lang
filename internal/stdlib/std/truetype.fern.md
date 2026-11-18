@@ -935,10 +935,16 @@ function match_at(f: Font, r: Run, l: Lookup, m: Matcher, j: i32, s: Seq, k: i32
   return if (maybe) { 0 } else { -1 };
 }
 
+// Whether a glyph with the properties `p` is default ignorable. As in
+// HarfBuzz, a glyph that a GSUB lookup substituted is not.
+pub function is_ignorable(p: i32): boolean {
+  return (p & IGNORABLE) != 0 && (p & SUBSTITUTED) == 0;
+}
+
 // Whether a glyph with the properties `p` is a default ignorable glyph that
 // the search can skip.
 function may_skip(p: i32, m: Matcher, gpos: boolean): boolean {
-  return (p & IGNORABLE) != 0 && (m.zwnj || (p & ZWNJ) == 0) && (m.zwj || (p & ZWJ) == 0) && (gpos || (p & HIDDEN) == 0);
+  return is_ignorable(p) && (m.zwnj || (p & ZWNJ) == 0) && (m.zwj || (p & ZWJ) == 0) && (gpos || (p & HIDDEN) == 0);
 }
 
 // The index of the glyph after `i` in the direction `step` that `m` takes

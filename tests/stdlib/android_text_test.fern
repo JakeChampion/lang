@@ -171,6 +171,16 @@ function test_thai_is_shaped(): test.TestOutcome {
   return test.assert_eq(laid_glyphs(fs, "น้ำ"), "35,32,24,44");
 }
 
+// A run of Khmer letters splits the vowel oe: its first part goes before
+// the consonant.
+function test_khmer_is_shaped(): test.TestOutcome {
+  let Some(khmer) = font_of(shape_script_vectors.khmr_font()) else {
+    return test.fail("the font did not parse");
+  };
+  let fs = text.from_faces([khmer], [400]);
+  return test.assert_eq(laid_glyphs(fs, "កើ"), "43,2,31");
+}
+
 // The font of a base64 string, or None.
 function font_of(data: string): Option[truetype.Font] {
   if let Ok(b) = base64.decode(data) {
@@ -271,6 +281,7 @@ function main(): i32 {
   r = r.it("a run of Tamil letters is shaped", test_tamil_is_shaped);
   r = r.it("a run of Hebrew letters is shaped", test_hebrew_is_shaped);
   r = r.it("a run of Thai letters is shaped", test_thai_is_shaped);
+  r = r.it("a run of Khmer letters is shaped", test_khmer_is_shaped);
   r = r.it("a mark sits on its base", test_a_mark_sits_on_its_base);
   r = r.it("a mark takes the font of its base", test_a_mark_takes_the_font_of_its_base);
   r = r.it("a color glyph keeps its colors", test_a_color_glyph);

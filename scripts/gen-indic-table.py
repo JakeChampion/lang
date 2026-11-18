@@ -9,8 +9,9 @@ The three files come from the Unicode Character Database
 (https://www.unicode.org/Public/UCD/latest/ucd/). The script follows
 src/gen-indic-table.py of HarfBuzz 15: the same blocks, the same map of
 the values, the same changes to the categories and the positions, and the
-same positions of the matras for each block. It leaves out the Khmer and
-the Myanmar characters, which have shapers of their own.
+same positions of the matras for each block. The table also holds the
+Khmer categories of the Khmer shaper. It leaves out the Myanmar
+characters.
 """
 
 import re
@@ -23,13 +24,14 @@ OUT = ROOT / "internal" / "stdlib" / "std" / "shape" / "indic.fern"
 ALLOWED_SINGLES = [0x00A0, 0x25CC]
 ALLOWED_BLOCKS = [
     "Basic Latin", "Latin-1 Supplement", "Devanagari", "Bengali", "Gurmukhi", "Gujarati", "Oriya", "Tamil",
-    "Telugu", "Kannada", "Malayalam", "Vedic Extensions", "General Punctuation", "Superscripts and Subscripts",
+    "Telugu", "Kannada", "Malayalam", "Khmer", "Vedic Extensions", "General Punctuation", "Superscripts and Subscripts",
     "Devanagari Extended",
 ]
 
 # The numbers of std/shape for the categories and the positions.
 CATEGORIES = ["X", "C", "V", "N", "H", "ZWNJ", "ZWJ", "M", "SM", "", "A", "PLACEHOLDER", "DOTTEDCIRCLE",
-              "RS", "MPst", "Repha", "Ra", "CM", "Symbol", "CS", "SMPst"]
+              "RS", "MPst", "Repha", "Ra", "CM", "Symbol", "CS", "SMPst", "VAbv", "VBlw", "VPre", "VPst",
+              "Robatic", "Xgroup", "Ygroup"]
 POSITIONS = ["START", "RA_TO_BECOME_REPH", "PRE_M", "PRE_C", "BASE_C", "AFTER_MAIN", "ABOVE_C", "BEFORE_SUB",
              "BELOW_C", "AFTER_SUB", "BEFORE_POST", "POST_C", "AFTER_POST", "SMVD", "END"]
 
@@ -65,6 +67,11 @@ CATEGORY_OVERRIDES = {
     0x11301: "SM", 0x11302: "SM", 0x11303: "SM", 0x1133B: "N", 0x1133C: "N",
     0x0AFB: "N", 0x0B55: "N", 0x09FC: "PLACEHOLDER", 0x0C80: "PLACEHOLDER", 0x0D04: "PLACEHOLDER",
     0x25CC: "DOTTEDCIRCLE",
+    # Khmer
+    0x179A: "Ra", 0x17CC: "Robatic", 0x17C9: "Robatic", 0x17CA: "Robatic",
+    0x17C6: "Xgroup", 0x17CB: "Xgroup", 0x17CD: "Xgroup", 0x17CE: "Xgroup", 0x17CF: "Xgroup", 0x17D0: "Xgroup",
+    0x17D1: "Xgroup", 0x17C7: "Ygroup", 0x17C8: "Ygroup", 0x17DD: "Ygroup", 0x17D3: "Ygroup",
+    0x17D9: "PLACEHOLDER",
 }
 CATEGORY_OVERRIDES.update({c: "A" for c in range(0x1CE2, 0x1CE9)})
 CATEGORY_OVERRIDES.update({c: "Symbol" for c in list(range(0xA8F2, 0xA8F8)) + list(range(0x1CE9, 0x1CED))
@@ -126,6 +133,10 @@ def matra_position(u, pos, block):
     raise ValueError("no matra position %s for U+%04X" % (pos, u))
 
 
+# The category of a matra of Khmer, from its position.
+SIDE_CATEGORIES = {"PRE_C": "VPre", "ABOVE_C": "VAbv", "BELOW_C": "VBlw", "POST_C": "VPst"}
+
+
 def properties(u, cats, sides, blocks):
     cat = CATEGORY_MAP[cats.get(u, "Other")]
     side = sides.get(u, "Not_Applicable")
@@ -137,6 +148,8 @@ def properties(u, cats, sides, blocks):
         pos = "END"
     if cat in CONSONANTS:
         pos = "BASE_C"
+    elif cat in MATRAS and blocks.get(u) == "Khmer":
+        cat = SIDE_CATEGORIES[pos]
     elif cat in MATRAS:
         pos = matra_position(u, pos, blocks.get(u, "No_Block"))
     elif cat in SMVD:

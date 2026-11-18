@@ -14,7 +14,7 @@ A face does not have each character. For a character that the face does not have
 
 `width` and `line` measure a text with no drawing. `fit` cuts a text to a width, and `wrap` breaks it into lines. `wrap_ranges` gives the lines as ranges of characters. A text field uses them to find its cursor, and `std/bidi` uses them to order each line.
 
-A run of Arabic letters, or of the letters of Hebrew, Thai, Lao or an Indic script, goes to `std/shape`. The Indic scripts are Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada and Malayalam. `std/shape` gives the joining forms of the Arabic letters, and the conjuncts and the reordered matras of the Indic scripts. It orders the marks of Hebrew, Thai and Lao, and gives the position of each glyph. The run takes the font of its first letter. An Arabic run and a Hebrew run go from right to left.
+A run of Arabic letters, or of the letters of Hebrew, Thai, Lao, Khmer or an Indic script, goes to `std/shape`. The Indic scripts are Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada and Malayalam. `std/shape` gives the joining forms of the Arabic letters, and the conjuncts and the reordered matras of the Indic scripts. It orders the marks of Hebrew, Thai, Lao and Khmer, and gives the position of each glyph. The run takes the font of its first letter. An Arabic run and a Hebrew run go from right to left.
 
 A mark sits on its base at the anchors of the font. As in Minikin, a mark takes the font of its base when that font has the mark, so that the two can attach. The run has no letter spacing, so that its letters stay joined. Outside such a run, a mark of the font has no advance.
 
@@ -450,7 +450,7 @@ function in_run(c: char, script: string): boolean {
 }
 
 // The OpenType tag of the script of the block of `c` that std/shape shapes
-// in a run of its own, or "": Hebrew, an Indic script, Thai or Lao. The
+// in a run of its own, or "": Hebrew, an Indic script, Thai, Lao or Khmer. The
 // Indic blocks from U+0900 to U+0D7F hold 128 characters each, and
 // Devanagari Extended is Devanagari.
 function block_script(c: char): string {
@@ -463,6 +463,9 @@ function block_script(c: char): string {
   }
   if (n >= 0xE00 && n <= 0xEFF) {
     return if (n < 0xE80) { "thai" } else { "lao " };
+  }
+  if (n >= 0x1780 && n <= 0x17FF) {
+    return "khmr";
   }
   let tags = ["deva", "beng", "guru", "gujr", "orya", "taml", "telu", "knda", "mlym"];
   return if (n >= 0x900 && n <= 0xD7F) { tags[(n - 0x900) / 128] } else { "" };

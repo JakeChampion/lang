@@ -1,4 +1,4 @@
-// Tests of std/shape for Hebrew, Thai and Lao. The fonts and the glyphs
+// Tests of std/shape for Hebrew, Thai, Lao and Khmer. The fonts and the glyphs
 // that HarfBuzz gives for each case come from
 // scripts/gen-shape-script-vectors.py.
 import "std/base64";
@@ -80,6 +80,18 @@ function test_lao(): test.TestOutcome {
   return test.assert_eq(differences(shape_script_vectors.lao_font(), "lao ", shape_script_vectors.lao_cases(), "lao "), "");
 }
 
+// Khmer: the coeng and the Ro before the base, the pre-base vowels, the
+// split vowels and the dotted circles, in the font and with no pref. A
+// ligature from a ZWJ is not default ignorable.
+function test_khmer(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.khmr_font(), "pref", shape_script_vectors.khmr_cases(), "khmr"), "");
+}
+
+// Khmer with the feature cfar, which applies after a coeng and a Ro.
+function test_khmer_cfar(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.khmr_cfar_font(), "cfar", shape_script_vectors.khmr_cfar_cases(), "khmr"), "");
+}
+
 // A presentation form that the font does not have splits by one step when
 // no mark follows it: U+FB2C becomes U+FB49 and the shin dot.
 function test_one_step_decomposition(): test.TestOutcome {
@@ -91,10 +103,12 @@ function test_one_step_decomposition(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.new("std/shape Hebrew, Thai and Lao");
+  let r = test.new("std/shape Hebrew, Thai, Lao and Khmer");
   r = r.it("Hebrew gives the glyphs of HarfBuzz", test_hebrew);
   r = r.it("Thai gives the glyphs of HarfBuzz", test_thai);
   r = r.it("Lao gives the glyphs of HarfBuzz", test_lao);
+  r = r.it("Khmer gives the glyphs of HarfBuzz", test_khmer);
+  r = r.it("Khmer with cfar gives the glyphs of HarfBuzz", test_khmer_cfar);
   r = r.it("a form splits by the fewest steps", test_one_step_decomposition);
   return r.finish();
 }

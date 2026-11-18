@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Write tests/stdlib/shape_script_vectors.fern: for Hebrew, Thai and Lao,
-a subset of a Noto Sans font and the glyphs that HarfBuzz gives for a list
+"""Write tests/stdlib/shape_script_vectors.fern: for Hebrew, Thai, Lao and
+Khmer, a subset of a Noto Sans font and the glyphs that HarfBuzz gives for a list
 of words and of random strings, for the tests of std/shape.
 
 Run:  python3 -I scripts/gen-shape-script-vectors.py FONTDIR
 
-FONTDIR holds NotoSansHebrew-Regular.ttf, NotoSansThai-Regular.ttf and
-NotoSansLao-Regular.ttf, from the Noto project (notofonts.github.io). They
+FONTDIR holds NotoSansHebrew-Regular.ttf, NotoSansThai-Regular.ttf,
+NotoSansLao-Regular.ttf and NotoSansKhmer-Regular.ttf, from the Noto project (notofonts.github.io). They
 are under the SIL Open Font License 1.1, and each subset keeps each name of
 its font, so it keeps the notice and the license. A subset holds the
 characters of its cases, and its glyphs have no outlines.
@@ -16,7 +16,8 @@ renamed, as the test renames it. For Hebrew the tag is the GPOS feature
 mark, so that the shaper composes the presentation forms. For Thai it is
 the script thai, so that the shaper uses the glyphs of the private use
 area. The Thai subset gets such glyphs, with no outlines. For Lao it is the
-script tag. The Hebrew subset does not have U+FB2C and U+FB2D, so that each
+script tag. For Khmer it is the feature pref. A second Khmer subset has its
+feature pstf renamed cfar, and the test renames cfar. The Hebrew subset does not have U+FB2C and U+FB2D, so that each
 of them decomposes by one step only. The random strings come from a fixed
 seed, so the script writes the same file each time.
 """
@@ -40,16 +41,24 @@ OUT = HERE.parent / "tests" / "stdlib" / "shape_script_vectors.fern"
 ZWJ, ZWNJ = "\u200d", "\u200c"
 
 FEATURES = ["ccmp", "locl", "rlig", "calt", "clig", "liga", "rclt", "rtla", "rtlm", "ltra", "ltrm", "kern", "mark",
-            "mkmk", "dist"]
+            "mkmk", "dist", "abvm", "blwm", "pref", "blwf", "abvf", "pstf", "cfar", "pres", "abvs", "blws", "psts"]
 
 # The code points of the private use area that old Thai fonts use.
 PUA = list(range(0xF700, 0xF71B)) + list(range(0xF884, 0xF89F))
 
-# For each script: its tag, the tag that the second font renames, its
-# HarfBuzz script, its font, the code points that its subset leaves out,
-# its words, and the alphabet of its random strings.
+# For each script: its tag, the name of its functions, the tag that the
+# second font renames, its HarfBuzz script, its font, the code points that
+# its subset leaves out, a tag of the subset to rename and its new name, its
+# words, and the alphabet of its random strings.
+KHMER_WORDS = ["ភាសាខ្មែរ", "ក្រ", "ស្ត្រី", "ក\u17be", "ក\u17c0", "ក\u17c4", "ក\u17c5", "ក្ក", "\u17c0", "ក\u17c9",
+               "ក\u200d\u17ca", "ង\u200c\u17c9", "ក្រុម", "ព្រះ", "ស\u17c0វភ\u17c5", "ក\u17cf", "ក្ស", "ក្រ\u17c5", "ឥ", "ឰ",
+               "ង្ក្រ", "ង្រ្ក",
+               # A ligature from a ZWJ is not default ignorable.
+               "\u17bc\u17be\u1799\u200d\u17ca\u200c"]
+KHMER_ALPHABET = "កខគងចជញដតនបពមយរលវសហអ" + "\u17d2" * 4 + "\u17b6\u17b7\u17b8\u17bb\u17bc\u17be\u17c0\u17c1\u17c2\u17c4\u17c6\u17c7\u17c9\u17cb" + ZWJ + ZWNJ
+
 SCRIPTS = [
-    ("hebr", "mark", "Hebr", "NotoSansHebrew", {0xFB2C, 0xFB2D},
+    ("hebr", "hebr", "mark", "Hebr", "NotoSansHebrew", {0xFB2C, 0xFB2D}, None,
      ["ש\u05b8\u05c1לו\u05b9ם", "ע\u05b4ב\u05b0ר\u05b4ית", "ב\u05b0\u05bcר\u05b5אש\u05b4\u05c1ית", "ש\u05bc\u05c1", "ש\u05bc\u05c2", "ב\u05bc", "ו\u05b9", "י\u05b4", "א\u05b7", "א\u05b8", "ײ\u05b7", "ב\u05bf", "כ\u05bf", "פ\u05bf",
       # A form that the font does not have: it decomposes by one step when
       # no mark follows it, and fully when one does.
@@ -60,15 +69,17 @@ SCRIPTS = [
       "(שלום)", "[א]", "<ב>", "{ג}", "«ש»", "בית־ספר", "א" + ZWJ + "ב", "ג\u05b5׳"],
      "אבגדהוזחטיכלמנסעפצקרשתךםןףץװױײ" + "\u05b0\u05b1\u05b2\u05b3\u05b4\u05b5\u05b6\u05b7\u05b8\u05b9\u05bb\u05bc"
      "\u05bd\u05bf\u05c1\u05c2\u0591\u05a5" + "()[]" + ZWJ + " "),
-    ("thai", "thai", "Thai", "NotoSansThai", set(),
+    ("thai", "thai", "thai", "Thai", "NotoSansThai", set(), None,
      ["ภาษาไทย", "สว\u0e31สด\u0e35", "น\u0e49ำ", "กำ", "ป\u0e48ำ", "ป\u0e34\u0e48น", "ป\u0e48", "ป\u0e31\u0e49", "ญ\u0e38", "ฐ\u0e39", "ฎ\u0e38", "ฏ\u0e39", "ก\u0e48", "ก\u0e34\u0e48ำ", "ำ", " ำ",
       "ก\u0e4d\u0e48", "ญ\u0e34", "ก\u0e3a\u0e38", "(ไทย)"],
      "กขคงจญฎฏฐณดตนบปผฝพฟมยรลวสหอฮ" + "\u0e31ำ\u0e34\u0e35\u0e36\u0e37\u0e38\u0e39\u0e3a\u0e47\u0e48\u0e49"
      "\u0e4a\u0e4b\u0e4c\u0e4d" + "าเแโใไ" + ZWJ + ZWNJ),
-    ("lao ", "lao ", "Laoo", "NotoSansLao", set(),
+    ("lao ", "lao", "lao ", "Laoo", "NotoSansLao", set(), None,
      ["ພາສາລາວ", "ສະບາຍດ\u0eb5", "ນ\u0ec9ຳ", "ກຳ", "ກ\u0eb4\u0ec9ຳ", "ຳ", "ໝ\u0eb9\u0ec8", "ຫ\u0ebcາຍ"],
      "ກຂຄງຈຊຍດຕຖທນບປຜຝພຟມຢຣລວສຫອຮ" + "\u0eb1ຳ\u0eb4\u0eb5\u0eb6\u0eb7\u0eb8\u0eb9\u0ebb\u0ebc\u0ec8\u0ec9"
      "\u0eca\u0ecb\u0ecc\u0ecd" + "າເແໂໃໄ" + ZWJ + ZWNJ),
+    ("khmr", "khmr", "pref", "Khmr", "NotoSansKhmer", set(), None, KHMER_WORDS, KHMER_ALPHABET),
+    ("khmr", "khmr_cfar", "cfar", "Khmr", "NotoSansKhmer", set(), (b"pstf", b"cfar"), KHMER_WORDS, KHMER_ALPHABET),
 ]
 
 RANDOM_CASES = 40
@@ -122,15 +133,17 @@ def main():
         sys.exit(__doc__)
     fonts = Path(sys.argv[1])
     parts = ["// Generated by scripts/gen-shape-script-vectors.py -- do not edit by hand.", ""]
-    for tag, renamed, script, name, left_out, words, alphabet in SCRIPTS:
-        rng = random.Random(tag)
+    for tag, key, renamed, script, name, left_out, edit, words, alphabet in SCRIPTS:
+        rng = random.Random(tag if key == tag.strip() else key)
         randoms = ["".join(rng.choice(alphabet) for _ in range(rng.randint(2, 8))) for _ in range(RANDOM_CASES)]
         texts = words + randoms
         data = subset(fonts / (name + "-Regular.ttf"), texts, left_out, script == "Thai")
+        if edit:
+            assert data.count(edit[0]) == 1 and data.count(edit[1]) == 0
+            data = data.replace(*edit)
         assert data.count(renamed.encode()) >= 1
         old = data.replace(renamed.encode(), (renamed[:3] + "0").encode())
         lines = [line(data, t, "new", script) for t in texts] + [line(old, t, "old", script) for t in texts]
-        key = tag.strip()
         parts += [
             "// A subset of %s, Copyright 2022 The Noto Project Authors, under the" % name,
             "// SIL Open Font License 1.1, with no outlines. The names of the font hold",
