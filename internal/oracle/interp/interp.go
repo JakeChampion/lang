@@ -85,6 +85,9 @@ type arrBox struct {
 	owners int32
 	held   int // the most elements the box has had; later slots are not its own
 	maps   uint8
+	// holdsElems is true for a tuple literal, which counts as a holder of
+	// each of its elements.
+	holdsElems bool
 }
 
 // arrStore sums owners over every box on one storage.
@@ -160,6 +163,10 @@ type Struct struct {
 	TypeName string
 	Fields   map[string]Value
 	maps     uint8
+	owners   int32
+	// holdsElems is true for a struct literal, which counts as a holder of
+	// each of its fields.
+	holdsElems bool
 }
 
 type Enum struct {
@@ -262,17 +269,24 @@ func appendedTail(old, next Value) ([]Value, bool) {
 	return ne[len(oe):], true
 }
 
+// arrOwn counts a holder of an array or a struct.
 func arrOwn(v Value) {
-	if a, ok := v.(Array); ok {
-		a.b.owners++
-		a.b.st.owners++
+	switch x := v.(type) {
+	case Array:
+		x.b.owners++
+		x.b.st.owners++
+	case *Struct:
+		x.owners++
 	}
 }
 
 func arrDisown(v Value) {
-	if a, ok := v.(Array); ok {
-		a.b.owners--
-		a.b.st.owners--
+	switch x := v.(type) {
+	case Array:
+		x.b.owners--
+		x.b.st.owners--
+	case *Struct:
+		x.owners--
 	}
 }
 
@@ -577,6 +591,11 @@ type Interp struct {
 
 	// returnMovable holds movableNames of each return expression.
 	returnMovable map[ast.Expr][]string
+	// lastUse and fieldLastUse hold the reads that move their local or a
+	// field of their local (lastUses), for each function in analysed.
+	lastUse      map[*ast.Ident]bool
+	fieldLastUse map[*ast.FieldAccess]bool
+	analysed     map[*ast.FuncDecl]bool
 }
 
 type arrayCOWMode int
@@ -6370,6 +6389,7 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 	}
 	i.callDepth++
 	defer func() { i.callDepth-- }()
+	i.analyse(fn)
 	e := newEnv(nil)
 	for k, p := range fn.Params {
 		e.declare(p.Name, args[k])
@@ -6702,8 +6722,17 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		if len(arr.Elems()) != len(x.Names) {
 			return result{}, fmt.Errorf("tuple has %d elements, but %d names given", len(arr.Elems()), len(x.Names))
 		}
+		// Nothing holds the tuple after this statement, so its names take
+		// over the holds that it has on its elements.
+		handOver := arr.b.holdsElems && arr.exclusive()
 		for i2, name := range x.Names {
 			e.declare(name, arr.Elems()[i2])
+			if handOver {
+				arrDisown(arr.Elems()[i2])
+			}
+		}
+		if handOver {
+			arr.b.holdsElems = false
 		}
 		for i2 := range x.Nested {
 			if x.Nested[i2] == nil {
@@ -7371,6 +7400,9 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		return String(sb.String()), nil
 	case *ast.Ident:
 		if v, ok := env.get(x.Name); ok {
+			if i.lastUse[x] {
+				i.moveOut(x.Name, v, env)
+			}
 			return v, nil
 		}
 		if fn, ok := i.Funcs[x.Name]; ok {
@@ -7772,7 +7804,7 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		}
 		return nil, fmt.Errorf("interp: `?` on variant %q of %s (index %d): not a two-variant `?` shape", ev.VariantName, ev.EnumName, ev.Index)
 	case *ast.StructLit:
-		s := &Struct{TypeName: x.TypeName, Fields: map[string]Value{}}
+		s := &Struct{TypeName: x.TypeName, Fields: map[string]Value{}, holdsElems: true}
 		if x.Base != nil {
 			bv, err := i.evalExpr(x.Base, env)
 			if err != nil {
@@ -7798,6 +7830,7 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		return s, nil
 	case *ast.TupleLit:
 		out := newArray(len(x.Elems))
+		out.b.holdsElems = true
 		for i2, e := range x.Elems {
 			v, err := i.evalExpr(e, env)
 			if err != nil {
@@ -7844,6 +7877,9 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		v, ok := s.Fields[x.Field]
 		if !ok {
 			return nil, fmt.Errorf("struct %s has no field %q", s.TypeName, x.Field)
+		}
+		if i.fieldLastUse[x] {
+			i.takeField(s, x, env)
 		}
 		return v, nil
 	}

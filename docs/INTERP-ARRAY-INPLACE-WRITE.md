@@ -132,6 +132,14 @@ slot after the first link has written, so it copies (#9702). A right-hand side t
 a `?` unwind or a `return` out of a value-position block, both of which
 arrive as errors — puts the reference back.
 
+A read at the last use of a local is also a move. `last_use.go` finds each
+read of a local after which no run reads the local before a write or the end
+of its scope. That read gives the holds of the local away, and the local is
+empty after it. Thus `let (p, b) = bit(probs, i); probs = p;` moves `probs`
+into the call and `p` into `probs`. The analysis does not move a local that
+a lambda, a nested function or a defer reads. It leaves a return expression
+to `returnMoves`.
+
 An in-place element write is taken only when neither the array nor the
 stored value can reach a Map. A Map keeps its own count (`rc`), which is
 the number of owning routes to it. An in-place write must move routes from
@@ -153,6 +161,11 @@ are **sticky**: the interpreter never tears a container down, so the count
 is never given back and an array that has ever been in one is copied by
 `with` from then on. That is the status quo for those arrays, and it is an
 over-count, which is free.
+
+Container stores have two exceptions. A destructure of a
+tuple literal that nothing holds gives the holds of the tuple to its names.
+A struct counts its holders. A read of a field at its last use takes the
+field out of a struct that only its local holds.
 
 The map rc's walk had that per-call shape of its own. `retain` and
 `release` go down into every value that they reach, to count the Maps below
