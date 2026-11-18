@@ -1,0 +1,70 @@
+// This host benchmark measures the handoff and PCM repack, without device playback.
+import "std/android/audio";
+import "std/android/audio/codec";
+import "std/android/audio/capabilities";
+import "std/android/audio/playback";
+import "std/android/video";
+import "std/bench";
+
+@import("libmediandk.so", "audio_mock_mode")
+function mode(value: i32): void;
+
+@import("libmediandk.so", "audio_mock_block")
+function block(first: i32, frames: i32): void;
+
+@import("libaaudio.so", "mock_write_plan")
+function plan(direct: i32, offset: i32, result: i32): void;
+
+function measure(stream: audio.Music, decoder: codec.Decoder, buffer: video.OutputBuffer, samples: [i32], direct: boolean, rounds: i32): void {
+  let format = codec.Format { sample_rate: 48000, channels: 2, encoding: codec.PCM_I16, channel_mask: 12 };
+  plan(if (direct) { 1 } else { 0 }, 0, -1);
+  let allocations = bench.alloc_count();
+  let started = monotonic_ns();
+  let accepted = 0;
+  for _ in 0..rounds {
+    if (direct) {
+      accepted += playback.write(stream, decoder, format, buffer, 0, 7).unwrap_or(-1000000);
+    } else {
+      accepted += stream.write(samples, 7) / 2;
+    }
+  }
+  let elapsed = monotonic_ns() - started;
+  let count = bench.allocs_after(allocations);
+  if (accepted != rounds * 480) {
+    exit(4);
+  }
+  print("{\"direct\":" + (if (direct) { "true" } else { "false" }) + ",\"wall_ns\":" + elapsed.to_string() + ",\"allocations\":" + count.to_string() + ",\"frames\":" + accepted.to_string() + ",\"calls\":" + rounds.to_string() + "}");
+}
+
+pub function main(): i32 {
+  mode(20);
+  block(32500, 480);
+  let config = codec.Config { request: capabilities.Request { mime: "audio/mp4a-latm", sample_rate: 48000, channels: 2, profile: 2 }, csd0: [18u8, 16u8], csd1: [18u8, 16u8], csd2: [18u8, 16u8], pcm_encoding: codec.PCM_I16 };
+  let limits = codec.Limits { max_packet_bytes: 8, max_output_bytes: 4096, max_sample_rate: 48000, max_channels: 2 };
+  let Ok(decoder) = codec.open_named(config, "c2.vendor.avc.decoder", limits) else {
+    return 1;
+  };
+  let Ok(codec.FormatChanged(_)) = decoder.output(0i64) else {
+    return 2;
+  };
+  let _ = decoder.output(0i64);
+  let Ok(codec.Buffer(buffer)) = decoder.output(0i64) else {
+    return 3;
+  };
+  let stream = audio.music(48000, 2);
+  let samples: i32[] = [];
+  for i in 0..960 {
+    let bits = 32500 + i;
+    samples = samples.append(if (bits >= 32768) { bits - 65536 } else { bits });
+  }
+  measure(stream, decoder, buffer, samples, false, 100);
+  measure(stream, decoder, buffer, samples, true, 100);
+  for trial in 0..10 {
+    measure(stream, decoder, buffer, samples, trial % 2 == 0, 100000);
+    measure(stream, decoder, buffer, samples, trial % 2 != 0, 100000);
+  }
+  let _ = decoder.release(buffer);
+  let _ = decoder.close();
+  stream.close();
+  return 0;
+}

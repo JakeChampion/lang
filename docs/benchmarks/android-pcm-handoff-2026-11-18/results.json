@@ -1,0 +1,594 @@
+{
+  "identity": {
+    "compiler_sha256": "d729360bf19991fc573cf4738a79fd5378cfc52b09e393529d6bdf9cf84394c4",
+    "shipped_compiler_sha256": "c863b8d08eb061068f98cda94e5fc398782e0b18a025a71214b6374fddedbb2f",
+    "compiler_build_commit": "feac5d1dcbc6b5b2609922f78a24bcd4e5a66d29",
+    "base_main": "b0f7429073f55eeb55fda8f4c9137a6878997f2b",
+    "host": "Linux x86_64",
+    "target": "x86-64-android shared library on the host ABI",
+    "compile_flags": [
+      "-O",
+      "-stdlib",
+      "internal/stdlib",
+      "-target",
+      "x86-64-android",
+      "-shared",
+      "-export",
+      "main"
+    ],
+    "inputs_sha256": {
+      "bench/audio/android_playback.fern": "b6aa4fda2c5c9ef110fa5f655de9148e3fa74bdc60ebd6310ab311fb3473cb58",
+      "internal/stdlib/std/android/audio/playback.fern.md": "7b8acf30fbef049cf7272d550f9b8c509e7b2159abdf2506ec39a86a79ec7fd2",
+      "internal/stdlib/std/android/audio.fern.md": "c6567c98c3f775db021793797b099baed529bedd05bb37aec25dca09275c3445",
+      "internal/stdlib/std/android/audio/codec.fern.md": "879d7baa67b800c5bda79cbd71d49eef333b789cd197a09176ef5a61844428df",
+      "internal/stdlib/std/android/video.fern.md": "2ac1b7bdb28e54f1ad4d8dedc1d3b3902789182103b8542578dfc331f1e6ee66",
+      "scripts/audio-reference/aaudio-playback-mock.c": "19a57281e358757a5e31ed0f334633b284633069e7c1f953a84f8afb83362ffa",
+      "scripts/audio-reference/aaudio-buffered-mock.c": "92aa0e51a98434b9bf8e30b06da0837c36fa90994436ffe7ed91f55d14ab10a7",
+      "scripts/audio-reference/mediacodec-mock.c": "3989fa818bc1f07d9938c75ba32cc497dbac03c4fbcf130233b9c4f64a0ae116",
+      "scripts/video-reference/codec-jni-mock.c": "80bf88c34c8575e85f2ba64876bba4b37f07afca637096a6aafeae3b56d73868",
+      "scripts/bench-audio-playback": "66f895e0c9ed2fd238bec9fb6056f271157ea382b0cc8246d706cf8af845fb4a",
+      "scripts/test-audio-playback": "b2fb9ba26114187d1521a8f89484b296fda6e037eee11edcae9bbc0cd1d6592b",
+      "tests/stdlib/android_audio_playback_mock_test.fern": "be162cdf6cc64777db0f97ff9cebae9cd2f2808db8b452f2c8d2357e5eae75a3"
+    },
+    "processes": 3,
+    "warmup_calls_per_path_per_process": 100,
+    "paired_trials_per_process": 10,
+    "calls_per_trial": 100000,
+    "frames_per_call": 480,
+    "channels": 2,
+    "sample_rate": 48000,
+    "pcm_bytes_per_call": 1920,
+    "baseline_samples_preallocated": true,
+    "mock_checks_exact_pointer_and_bytes": true,
+    "hardware_or_device_execution": false,
+    "scope": "host synchronous PCM handoff and S16 repack only"
+  },
+  "summary": [
+    {
+      "direct": false,
+      "trials": 30,
+      "median_ns_per_call": 1001.28808,
+      "min_ns_per_call": 931.57651,
+      "max_ns_per_call": 1999.31508,
+      "allocations_per_call": 1
+    },
+    {
+      "direct": true,
+      "trials": 30,
+      "median_ns_per_call": 68.76510999999999,
+      "min_ns_per_call": 62.14144,
+      "max_ns_per_call": 142.66439,
+      "allocations_per_call": 0
+    }
+  ],
+  "trials": [
+    {
+      "process": 1,
+      "direct": false,
+      "wall_ns": 89590,
+      "allocations": 100,
+      "frames": 48000,
+      "calls": 100
+    },
+    {
+      "process": 1,
+      "direct": true,
+      "wall_ns": 6826,
+      "allocations": 0,
+      "frames": 48000,
+      "calls": 100
+    },
+    {
+      "process": 1,
+      "direct": true,
+      "wall_ns": 7395870,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 1,
+      "direct": false,
+      "wall_ns": 100719795,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 1,
+      "direct": false,
+      "wall_ns": 112028137,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 1,
+      "direct": true,
+      "wall_ns": 7093679,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 1,
+      "direct": true,
+      "wall_ns": 6960030,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 1,
+      "direct": false,
+      "wall_ns": 101129394,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 1,
+      "direct": false,
+      "wall_ns": 109063592,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 1,
+      "direct": true,
+      "wall_ns": 7379058,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 1,
+      "direct": true,
+      "wall_ns": 6988528,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 1,
+      "direct": false,
+      "wall_ns": 105980901,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 1,
+      "direct": false,
+      "wall_ns": 106202312,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 1,
+      "direct": true,
+      "wall_ns": 6704544,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 1,
+      "direct": true,
+      "wall_ns": 6438117,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 1,
+      "direct": false,
+      "wall_ns": 110329904,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 1,
+      "direct": false,
+      "wall_ns": 199931508,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 1,
+      "direct": true,
+      "wall_ns": 7877660,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 1,
+      "direct": true,
+      "wall_ns": 7488904,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 1,
+      "direct": false,
+      "wall_ns": 107420489,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 1,
+      "direct": false,
+      "wall_ns": 133132716,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 1,
+      "direct": true,
+      "wall_ns": 11373096,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": false,
+      "wall_ns": 89050,
+      "allocations": 100,
+      "frames": 48000,
+      "calls": 100
+    },
+    {
+      "process": 2,
+      "direct": true,
+      "wall_ns": 6726,
+      "allocations": 0,
+      "frames": 48000,
+      "calls": 100
+    },
+    {
+      "process": 2,
+      "direct": true,
+      "wall_ns": 7031840,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": false,
+      "wall_ns": 99537821,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": false,
+      "wall_ns": 94508017,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": true,
+      "wall_ns": 6623096,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": true,
+      "wall_ns": 14266439,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": false,
+      "wall_ns": 112267386,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": false,
+      "wall_ns": 94779701,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": true,
+      "wall_ns": 6373634,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": true,
+      "wall_ns": 6588075,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": false,
+      "wall_ns": 96772348,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": false,
+      "wall_ns": 93577463,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": true,
+      "wall_ns": 6649151,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": true,
+      "wall_ns": 7285970,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": false,
+      "wall_ns": 94853759,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": false,
+      "wall_ns": 93157651,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": true,
+      "wall_ns": 7196100,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": true,
+      "wall_ns": 10849507,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": false,
+      "wall_ns": 94592931,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": false,
+      "wall_ns": 95393633,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 2,
+      "direct": true,
+      "wall_ns": 6792992,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": false,
+      "wall_ns": 88945,
+      "allocations": 100,
+      "frames": 48000,
+      "calls": 100
+    },
+    {
+      "process": 3,
+      "direct": true,
+      "wall_ns": 6955,
+      "allocations": 0,
+      "frames": 48000,
+      "calls": 100
+    },
+    {
+      "process": 3,
+      "direct": true,
+      "wall_ns": 6315103,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": false,
+      "wall_ns": 95922508,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": false,
+      "wall_ns": 103708502,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": true,
+      "wall_ns": 6433888,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": true,
+      "wall_ns": 8345508,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": false,
+      "wall_ns": 93639603,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": false,
+      "wall_ns": 98801208,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": true,
+      "wall_ns": 6980476,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": true,
+      "wall_ns": 6277996,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": false,
+      "wall_ns": 93967754,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": false,
+      "wall_ns": 94932720,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": true,
+      "wall_ns": 6561123,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": true,
+      "wall_ns": 6214144,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": false,
+      "wall_ns": 94459543,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": false,
+      "wall_ns": 103749728,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": true,
+      "wall_ns": 6730484,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": true,
+      "wall_ns": 6441792,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": false,
+      "wall_ns": 103198755,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": false,
+      "wall_ns": 144990427,
+      "allocations": 100000,
+      "frames": 48000000,
+      "calls": 100000
+    },
+    {
+      "process": 3,
+      "direct": true,
+      "wall_ns": 6265460,
+      "allocations": 0,
+      "frames": 48000000,
+      "calls": 100000
+    }
+  ]
+}

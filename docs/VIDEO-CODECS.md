@@ -65,6 +65,13 @@ The platform selects codecs and controls synchronization.
 Hardware use, format support, and stream support depend on the device.
 This path is available for an app that needs audio and video together.
 
+Plex uses `std/android/exoplayer`, which delegates managed A/V playback to Media3 ExoPlayer.
+The lower APIs also support an explicit MediaCodec and AAudio path.
+`std/android/audio/playback.write` submits borrowed signed 16-bit codec output to an AAudio `Music` stream without a PCM array or repack.
+It validates the actual PCM format and buffer bounds, accepts a frame offset, and reports partial writes.
+The caller retains each codec buffer through synchronous writes and releases it exactly once after use.
+This helper does not change transport state, assign audio timestamps, or integrate the video-only controller with audio.
+
 The platform player opens paths, file URIs, HTTP streams, and granted content URIs.
 Content sources use the activity context and Android's content resolver.
 The app must hold the URI read grant from the document picker or MediaStore.

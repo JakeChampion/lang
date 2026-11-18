@@ -27,3 +27,4 @@ for variant in ('normal', 'sanitize'):
         raise SystemExit(f'Android audio codec {variant} failed at check {result}')
 print('Android audio codec discovery, lifecycle, fallback, limits, and ABI checks passed')
 PY
+FERN="$fern_audio_compiler" bash scripts/test-audio-playback
