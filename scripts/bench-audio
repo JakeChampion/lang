@@ -30,7 +30,7 @@ with tempfile.TemporaryDirectory() as temp:
     for source, output in [('qoa.c', 'encode'), ('qoa_bench.c', 'reference')]:
         shutil.copy(root / 'scripts/audio-reference' / source, temp / source)
         subprocess.run(['cc', '-O3', '-fwrapv', '-o', str(temp / output), str(temp / source)], check=True)
-    subprocess.run([compiler, '-target', target, '-o', str(temp / 'fern'), 'bench/audio/qoa_decode.fern', 'internal/stdlib'], check=True)
+    subprocess.run([compiler, '-stdlib', 'internal/stdlib', '-target', target, '-o', str(temp / 'fern'), 'bench/audio/qoa_decode.fern'], check=True)
     samples = fixtures.sample_signal(10004, 2)
     with wave.open(str(temp / 'input.wav'), 'wb') as output:
         output.setnchannels(2)

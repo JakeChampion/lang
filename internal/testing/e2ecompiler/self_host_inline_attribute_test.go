@@ -35,10 +35,26 @@ function plain(bs: [u8], a: i32, b: i32, max: i32): i32 {
 }
 @inline
 function lends(bs: [u8]): [u8] { return bs; }
+@noinline function read_at(bs: [u8], at: i32): i32 { return bs[at] as i32; }
+@inline function forwarded(bs: [u8], at: i32): i32 {
+  let value = 0;
+  for i in at..bs.len() { value += read_at(bs, i); }
+  return value;
+}
+@noinline function text_length(s: str): i32 { return s.len(); }
+@inline function forwarded_text(s: str): i32 {
+  let value = 0;
+  for _ in 0..s.len() { value += text_length(s); }
+  return value;
+}
 @noinline function exercise(xs: u8[]): i32 {
   if (common(xs, 0, 4, 4) != plain(xs, 0, 4, 4) || common(xs, 1, 5, 2) != plain(xs, 1, 5, 2)) { return 1; }
   if (common(xs, 0, 4, 4) >> 12 != 3 || plain(xs, 1, 5, 2) >> 12 != 2) { return 2; }
   if (lends(xs)[2] != 3u8) { return 3; }
+  if (forwarded(xs[1:4], 0) != 14 || forwarded(xs[4:8], 1) != 13) { return 4; }
+  let text = "fern" + xs.len().to_string();
+  let Some(rest) = text[1:] else { return 7; };
+  if (forwarded_text(text) != 25 || forwarded_text(rest) != 16) { return 5; }
   return 0;
 }
 function main(): i32 {
@@ -81,8 +97,10 @@ func TestSelfHostInlineAttribute(t *testing.T) {
 		if target == "arm64-linux" {
 			call = "bl __fn_"
 		}
-		if strings.Contains(body, call+"common") {
-			t.Errorf("%s still calls the @inline function common", target)
+		for _, name := range []string{"common", "forwarded", "forwarded_text"} {
+			if strings.Contains(body, call+name) {
+				t.Errorf("%s still calls the @inline function %s", target, name)
+			}
 		}
 		if !strings.Contains(body, call+"plain") {
 			t.Errorf("%s spliced plain, which has two callers and no attribute", target)

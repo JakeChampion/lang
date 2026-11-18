@@ -3,6 +3,7 @@
 This module transforms reconstructed spectra into floating-point PCM.
 Its arithmetic preserves the scalar reference operation order within each lane.
 The DCT and synthesis kernels use portable four-lane float operations.
+Long blocks pair two cosine transforms and two sine transforms in four lanes without temporary arrays.
 The public decoder supplies correctly sized arrays and validated block descriptions.
 
 The implementation derives from the scalar [minimp3 reference](https://github.com/lieff/minimp3/tree/ea99364f61c14656440e8d77e9c233ccf3124633).
@@ -15,64 +16,103 @@ The module executes Fern code and needs no external codec library.
 import "std/audio/mp3/tables";
 import "std/audio/mp3/spectral";
 
-function dct9(own y: f32[]): f32[] {
-  let s0 = y[0];
-  let s2 = y[2];
-  let s4 = y[4];
-  let s6 = y[6];
-  let s8 = y[8];
-  let t0 = s0 + s6 * 0.5f32;
+function long_pair(own samples: f32[], own overlap: f32[], at: i32, other: i32, ov: i32, ov_other: i32, window: i32): (f32[], f32[]) {
+  // Lanes hold cosine and sine values for the first block, then the second block.
+  let v0 = __f32x4_of(-samples[at], samples[at + 17], -samples[other], samples[other + 17]);
+  let v1 = __f32x4_of(samples[at + 1] + samples[at + 2], samples[at + 16] - samples[at + 15], samples[other + 1] + samples[other + 2], samples[other + 16] - samples[other + 15]);
+  let v2 = __f32x4_of(-(samples[at + 3] + samples[at + 4]), samples[at + 13] - samples[at + 14], -(samples[other + 3] + samples[other + 4]), samples[other + 13] - samples[other + 14]);
+  let v3 = __f32x4_of(samples[at + 5] + samples[at + 6], samples[at + 12] - samples[at + 11], samples[other + 5] + samples[other + 6], samples[other + 12] - samples[other + 11]);
+  let v4 = __f32x4_of(-(samples[at + 7] + samples[at + 8]), samples[at + 9] - samples[at + 10], -(samples[other + 7] + samples[other + 8]), samples[other + 9] - samples[other + 10]);
+  let v5 = __f32x4_of(samples[at + 9] + samples[at + 10], samples[at + 8] - samples[at + 7], samples[other + 9] + samples[other + 10], samples[other + 8] - samples[other + 7]);
+  let v6 = __f32x4_of(-(samples[at + 11] + samples[at + 12]), samples[at + 5] - samples[at + 6], -(samples[other + 11] + samples[other + 12]), samples[other + 5] - samples[other + 6]);
+  let v7 = __f32x4_of(samples[at + 13] + samples[at + 14], samples[at + 4] - samples[at + 3], samples[other + 13] + samples[other + 14], samples[other + 4] - samples[other + 3]);
+  let v8 = __f32x4_of(-(samples[at + 15] + samples[at + 16]), samples[at + 1] - samples[at + 2], -(samples[other + 15] + samples[other + 16]), samples[other + 1] - samples[other + 2]);
+  let s0 = v0;
+  let s2 = v2;
+  let s4 = v4;
+  let s6 = v6;
+  let s8 = v8;
+  let t0 = s0 + s6 * __f32x4_splat(0.5f32);
   s0 -= s6;
-  let t4 = (s4 + s2) * 0.93969262f32;
-  let t2 = (s8 + s2) * 0.76604444f32;
-  s6 = (s4 - s8) * 0.17364818f32;
+  let t4 = (s4 + s2) * __f32x4_splat(0.93969262f32);
+  let t2 = (s8 + s2) * __f32x4_splat(0.76604444f32);
+  s6 = (s4 - s8) * __f32x4_splat(0.17364818f32);
   s4 += s8 - s2;
-  s2 = s0 - s4 * 0.5f32;
-  y = y.with(4, s4 + s0);
+  s2 = s0 - s4 * __f32x4_splat(0.5f32);
+  let out4 = s4 + s0;
   s8 = t0 - t2 + s6;
   s0 = t0 - t4 + t2;
   s4 = t0 + t4 - s6;
-  let s1 = y[1];
-  let s3 = y[3];
-  let s5 = y[5];
-  let s7 = y[7];
-  s3 *= 0.86602540f32;
-  t0 = (s5 + s1) * 0.98480775f32;
-  t4 = (s5 - s7) * 0.34202014f32;
-  t2 = (s1 + s7) * 0.64278761f32;
-  s1 = (s1 - s5 - s7) * 0.86602540f32;
+  let s1 = v1;
+  let s3 = v3;
+  let s5 = v5;
+  let s7 = v7;
+  s3 *= __f32x4_splat(0.86602540f32);
+  t0 = (s5 + s1) * __f32x4_splat(0.98480775f32);
+  t4 = (s5 - s7) * __f32x4_splat(0.34202014f32);
+  t2 = (s1 + s7) * __f32x4_splat(0.64278761f32);
+  s1 = (s1 - s5 - s7) * __f32x4_splat(0.86602540f32);
   s5 = t0 - s3 - t2;
   s7 = t4 - s3 - t0;
   s3 = t4 + s3 - t2;
-  return y.with(0, s4 - s7).with(1, s2 + s1).with(2, s0 - s3).with(3, s8 + s5).with(5, s8 - s5).with(6, s0 + s3).with(7, s2 - s1).with(8, s4 + s7);
+  let (next_samples0, next_overlap0) = long_output(s4 - s7, samples, overlap, at, other, ov, ov_other, window, 0);
+  samples = next_samples0;
+  overlap = next_overlap0;
+  let (next_samples1, next_overlap1) = long_output(s2 + s1, samples, overlap, at, other, ov, ov_other, window, 1);
+  samples = next_samples1;
+  overlap = next_overlap1;
+  let (next_samples2, next_overlap2) = long_output(s0 - s3, samples, overlap, at, other, ov, ov_other, window, 2);
+  samples = next_samples2;
+  overlap = next_overlap2;
+  let (next_samples3, next_overlap3) = long_output(s8 + s5, samples, overlap, at, other, ov, ov_other, window, 3);
+  samples = next_samples3;
+  overlap = next_overlap3;
+  let (next_samples4, next_overlap4) = long_output(out4, samples, overlap, at, other, ov, ov_other, window, 4);
+  samples = next_samples4;
+  overlap = next_overlap4;
+  let (next_samples5, next_overlap5) = long_output(s8 - s5, samples, overlap, at, other, ov, ov_other, window, 5);
+  samples = next_samples5;
+  overlap = next_overlap5;
+  let (next_samples6, next_overlap6) = long_output(s0 + s3, samples, overlap, at, other, ov, ov_other, window, 6);
+  samples = next_samples6;
+  overlap = next_overlap6;
+  let (next_samples7, next_overlap7) = long_output(s2 - s1, samples, overlap, at, other, ov, ov_other, window, 7);
+  samples = next_samples7;
+  overlap = next_overlap7;
+  let (next_samples8, next_overlap8) = long_output(s4 + s7, samples, overlap, at, other, ov, ov_other, window, 8);
+  samples = next_samples8;
+  overlap = next_overlap8;
+  return (samples, overlap);
+}
+
+@inline
+function long_output(value: f32x4, own samples: f32[], own overlap: f32[], at: i32, other: i32, ov: i32, ov_other: i32, window: i32, i: i32): (f32[], f32[]) {
+  let co = __f32x4_of(__f32x4_lane(value, 0), __f32x4_lane(value, 2), 0.0f32, 0.0f32);
+  let si = __f32x4_of(__f32x4_lane(value, 1), __f32x4_lane(value, 3), 0.0f32, 0.0f32);
+  if ((i & 1) != 0) { si = -si; }
+  let old = __f32x4_of(overlap[ov + i], overlap[ov_other + i], 0.0f32, 0.0f32);
+  let sum = co * __f32x4_splat(tables.G_TWID9[9 + i]) + si * __f32x4_splat(tables.G_TWID9[i]);
+  let next = co * __f32x4_splat(tables.G_TWID9[i]) - si * __f32x4_splat(tables.G_TWID9[9 + i]);
+  let left = old * __f32x4_splat(tables.G_MDCT_WINDOW[window + i]) - sum * __f32x4_splat(tables.G_MDCT_WINDOW[window + 9 + i]);
+  let right = old * __f32x4_splat(tables.G_MDCT_WINDOW[window + 9 + i]) + sum * __f32x4_splat(tables.G_MDCT_WINDOW[window + i]);
+  overlap = overlap.with(ov + i, __f32x4_lane(next, 0)).with(ov_other + i, __f32x4_lane(next, 1));
+  samples = samples.with(at + i, __f32x4_lane(left, 0)).with(other + i, __f32x4_lane(left, 1));
+  samples = samples.with(at + 17 - i, __f32x4_lane(right, 0)).with(other + 17 - i, __f32x4_lane(right, 1));
+  return (samples, overlap);
 }
 
 function long_blocks(own samples: f32[], own overlap: f32[], base: i32, ov_at: i32, window: i32, count: i32): (f32[], f32[]) {
-  let co = spectral.zeros(9);
-  let si = spectral.zeros(9);
-  for block in 0..count {
+  let block = 0;
+  while (block < count) {
+    let other_block = if (block + 1 < count) { block + 1 } else { block };
     let at = base + block * 18;
+    let other = base + other_block * 18;
     let ov = ov_at + block * 9;
-    co = co.with(0, -samples[at]);
-    si = si.with(0, samples[at + 17]);
-    for i in 0..4 {
-      si = si.with(8 - 2 * i, samples[at + 4 * i + 1] - samples[at + 4 * i + 2]);
-      co = co.with(1 + 2 * i, samples[at + 4 * i + 1] + samples[at + 4 * i + 2]);
-      si = si.with(7 - 2 * i, samples[at + 4 * i + 4] - samples[at + 4 * i + 3]);
-      co = co.with(2 + 2 * i, -(samples[at + 4 * i + 3] + samples[at + 4 * i + 4]));
-    }
-    co = dct9(co);
-    si = dct9(si);
-    for i in [1, 3, 5, 7] {
-      si = si.with(i, -si[i]);
-    }
-    for i in 0..9 {
-      let old = overlap[ov + i];
-      let sum = co[i] * tables.G_TWID9[9 + i] + si[i] * tables.G_TWID9[i];
-      overlap = overlap.with(ov + i, co[i] * tables.G_TWID9[i] - si[i] * tables.G_TWID9[9 + i]);
-      samples = samples.with(at + i, old * tables.G_MDCT_WINDOW[window + i] - sum * tables.G_MDCT_WINDOW[window + 9 + i]);
-      samples = samples.with(at + 17 - i, old * tables.G_MDCT_WINDOW[window + 9 + i] + sum * tables.G_MDCT_WINDOW[window + i]);
-    }
+    let ov_other = ov_at + other_block * 9;
+    let (next_samples, next_overlap) = long_pair(samples, overlap, at, other, ov, ov_other, window);
+    samples = next_samples;
+    overlap = next_overlap;
+    block += 2;
   }
   return (samples, overlap);
 }
@@ -270,24 +310,24 @@ function dct32x4_into(own samples: f32[], base: i32, groups: i32, own t: f32[]):
   return (samples, t);
 }
 
-function pair(z: [f32], at: i32): (f32, f32) {
-  let a = (z[at + 14 * 64] - z[at]) * 29.0f32;
-  a += (z[at + 64] + z[at + 13 * 64]) * 213.0f32;
-  a += (z[at + 12 * 64] - z[at + 2 * 64]) * 459.0f32;
-  a += (z[at + 3 * 64] + z[at + 11 * 64]) * 2037.0f32;
-  a += (z[at + 10 * 64] - z[at + 4 * 64]) * 5153.0f32;
-  a += (z[at + 5 * 64] + z[at + 9 * 64]) * 6574.0f32;
-  a += (z[at + 8 * 64] - z[at + 6 * 64]) * 37489.0f32;
-  a += z[at + 7 * 64] * 75038.0f32;
-  let b = z[at + 2 + 14 * 64] * 104.0f32;
-  b += z[at + 2 + 12 * 64] * 1567.0f32;
-  b += z[at + 2 + 10 * 64] * 9727.0f32;
-  b += z[at + 2 + 8 * 64] * 64019.0f32;
-  b += z[at + 2 + 6 * 64] * -9975.0f32;
-  b += z[at + 2 + 4 * 64] * -45.0f32;
-  b += z[at + 2 + 2 * 64] * 146.0f32;
-  b += z[at + 2] * -5.0f32;
-  return (a / 32768.0f32, b / 32768.0f32);
+function pair4(z: f32[], at: i32): f32x4 {
+  let a = (__f32x4_load(z, at + 14 * 64) - __f32x4_load(z, at)) * __f32x4_splat(29.0f32);
+  a += (__f32x4_load(z, at + 64) + __f32x4_load(z, at + 13 * 64)) * __f32x4_splat(213.0f32);
+  a += (__f32x4_load(z, at + 12 * 64) - __f32x4_load(z, at + 2 * 64)) * __f32x4_splat(459.0f32);
+  a += (__f32x4_load(z, at + 3 * 64) + __f32x4_load(z, at + 11 * 64)) * __f32x4_splat(2037.0f32);
+  a += (__f32x4_load(z, at + 10 * 64) - __f32x4_load(z, at + 4 * 64)) * __f32x4_splat(5153.0f32);
+  a += (__f32x4_load(z, at + 5 * 64) + __f32x4_load(z, at + 9 * 64)) * __f32x4_splat(6574.0f32);
+  a += (__f32x4_load(z, at + 8 * 64) - __f32x4_load(z, at + 6 * 64)) * __f32x4_splat(37489.0f32);
+  a += __f32x4_load(z, at + 7 * 64) * __f32x4_splat(75038.0f32);
+  let b = __f32x4_load(z, at + 14 * 64) * __f32x4_splat(104.0f32);
+  b += __f32x4_load(z, at + 12 * 64) * __f32x4_splat(1567.0f32);
+  b += __f32x4_load(z, at + 10 * 64) * __f32x4_splat(9727.0f32);
+  b += __f32x4_load(z, at + 8 * 64) * __f32x4_splat(64019.0f32);
+  b += __f32x4_load(z, at + 6 * 64) * __f32x4_splat(-9975.0f32);
+  b += __f32x4_load(z, at + 4 * 64) * __f32x4_splat(-45.0f32);
+  b += __f32x4_load(z, at + 2 * 64) * __f32x4_splat(146.0f32);
+  b += __f32x4_load(z, at) * __f32x4_splat(-5.0f32);
+  return __f32x4_of(__f32x4_lane(a, 0), __f32x4_lane(a, 1), __f32x4_lane(b, 2), __f32x4_lane(b, 3)) / __f32x4_splat(32768.0f32);
 }
 
 function synth(samples: [f32], base: i32, channels: i32, own lines: f32[], offset: i32, own output: f32[], out_at: i32): (f32[], f32[]) {
@@ -295,10 +335,11 @@ function synth(samples: [f32], base: i32, channels: i32, own lines: f32[], offse
   let z = offset + 15 * 64;
   lines = lines.with(z + 60, samples[base + 18 * 16]).with(z + 61, samples[right + 18 * 16]).with(z + 62, samples[base]).with(z + 63, samples[right]);
   lines = lines.with(z + 124, samples[base + 1 + 18 * 16]).with(z + 125, samples[right + 1 + 18 * 16]).with(z + 126, samples[base + 1]).with(z + 127, samples[right + 1]);
-  for ch in 0..channels {
-    let (a, b) = pair(lines, offset + 60 + ch);
-    let (c, d) = pair(lines, offset + 124 + ch);
-    output = output.with(out_at + ch, a).with(out_at + 16 * channels + ch, b).with(out_at + 32 * channels + ch, c).with(out_at + 48 * channels + ch, d);
+  let first = pair4(lines, offset + 60);
+  let second = pair4(lines, offset + 124);
+  output = output.with(out_at, __f32x4_lane(first, 0)).with(out_at + 16 * channels, __f32x4_lane(first, 2)).with(out_at + 32 * channels, __f32x4_lane(second, 0)).with(out_at + 48 * channels, __f32x4_lane(second, 2));
+  if (channels == 2) {
+    output = output.with(out_at + 1, __f32x4_lane(first, 1)).with(out_at + 16 * channels + 1, __f32x4_lane(first, 3)).with(out_at + 32 * channels + 1, __f32x4_lane(second, 1)).with(out_at + 48 * channels + 1, __f32x4_lane(second, 3));
   }
   let wa = 0;
   let i = 14;

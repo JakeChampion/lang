@@ -14,7 +14,7 @@ import "std/audio/mp3/bits";
 import "std/audio/mp3/spectral";
 import "std/audio/pcm";
 
-pub opaque struct Scale { bands: i32, stereo: i32, allocation: u8[], factors: f32[], protected: i32 }
+pub opaque struct Scale { bands: i32, stereo: i32, allocation: u8[], factors: f32[], codes: u8[], protected: i32 }
 
 struct Allocation { bands: i32, stereo: i32, family: i32 }
 
@@ -55,8 +55,7 @@ function code_table(family: i32, band: i32): (i32, i32) {
   return if (band < 23) { (32, 3) } else { (40, 2) };
 }
 
-function bitalloc(input: [u8], b: bits.Bits, shape: Allocation): (bits.Bits, u8[]) {
-  let output = __alloc_u8(64);
+function bitalloc(input: [u8], b: bits.Bits, shape: Allocation, own output: u8[]): (bits.Bits, u8[]) {
   for band in 0..shape.bands {
     let (offset, width) = code_table(shape.family, band);
     let (next, value) = bits.read(input, b, width);
@@ -73,8 +72,7 @@ function bitalloc(input: [u8], b: bits.Bits, shape: Allocation): (bits.Bits, u8[
   return (b, output);
 }
 
-function scale_codes(input: [u8], b: bits.Bits, allocation: [u8], bands: i32): (bits.Bits, u8[]) {
-  let codes = __alloc_u8(64);
+function scale_codes(input: [u8], b: bits.Bits, allocation: [u8], bands: i32, own codes: u8[]): (bits.Bits, u8[]) {
   for i in 0..bands * 2 {
     if (allocation[i] != 0u8) {
       let (next, code) = bits.read(input, b, 2);
@@ -85,8 +83,7 @@ function scale_codes(input: [u8], b: bits.Bits, allocation: [u8], bands: i32): (
   return (b, codes);
 }
 
-function factors(input: [u8], b: bits.Bits, allocation: [u8], codes: [u8], bands: i32): (bits.Bits, f32[]) {
-  let output = spectral.zeros(192);
+function factors(input: [u8], b: bits.Bits, allocation: [u8], codes: [u8], bands: i32, own output: f32[]): (bits.Bits, f32[]) {
   for i in 0..bands * 2 {
     let ba = allocation[i] as i32;
     let mask = if (ba != 0) { 4 + (19 >> codes[i] as i32 & 3) } else { 0 };
@@ -103,21 +100,41 @@ function factors(input: [u8], b: bits.Bits, allocation: [u8], codes: [u8], bands
   return (b, output);
 }
 
+pub function empty(): Scale {
+  return Scale { bands: 0, stereo: 0, allocation: __alloc_u8(64), factors: spectral.zeros(192), codes: __alloc_u8(64), protected: 0 };
+}
+
+pub function read_into(input: [u8], h: header.Header, own previous: Scale): (Scale, Result[bits.Bits, pcm.AudioError]) {
+  let Scale { bands, stereo, allocation: old_values, factors: old_factors, codes: old_codes, protected } = previous;
+  let shape = allocation(h);
+  let (b1, values) = bitalloc(input, bits.new(input.len() * 8), shape, old_values);
+  let (b2, codes) = scale_codes(input, b1, values, shape.bands, old_codes);
+  let (b3, scales) = factors(input, b2, values, codes, shape.bands, old_factors);
+  for band in shape.stereo..shape.bands {
+    values = values.with(band * 2 + 1, 0u8);
+  }
+  let scale = Scale { bands: shape.bands, stereo: shape.stereo, allocation: values, factors: scales, codes: codes, protected: b2.pos };
+  if (b2.bad || b3.bad) {
+    return (scale, Err(pcm.Truncated));
+  }
+  return (scale, Ok(b3));
+}
+
 pub function read(input: [u8], h: header.Header): Result[(bits.Bits, Scale), pcm.AudioError] {
   let shape = allocation(h);
-  let (b1, values) = bitalloc(input, bits.new(input.len() * 8), shape);
-  let (b2, codes) = scale_codes(input, b1, values, shape.bands);
+  let (b1, values) = bitalloc(input, bits.new(input.len() * 8), shape, __alloc_u8(64));
+  let (b2, codes) = scale_codes(input, b1, values, shape.bands, __alloc_u8(64));
   if (b2.bad) {
     return Err(pcm.Truncated);
   }
-  let (b3, scales) = factors(input, b2, values, codes, shape.bands);
+  let (b3, scales) = factors(input, b2, values, codes, shape.bands, spectral.zeros(192));
   if (b3.bad) {
     return Err(pcm.Truncated);
   }
   for band in shape.stereo..shape.bands {
     values = values.with(band * 2 + 1, 0u8);
   }
-  return Ok((b3, Scale { bands: shape.bands, stereo: shape.stereo, allocation: values, factors: scales, protected: b2.pos }));
+  return Ok((b3, Scale { bands: shape.bands, stereo: shape.stereo, allocation: values, factors: scales, codes: codes, protected: b2.pos }));
 }
 
 pub function (value: Scale) protected_bits(): i32 {
@@ -168,6 +185,7 @@ function clear_inactive(scale: Scale, own output: f32[]): f32[] {
   return output;
 }
 
+@inline
 pub function granule_into(input: [u8], b: bits.Bits, scale: Scale, part: i32, own output: f32[]): Result[(bits.Bits, f32[]), pcm.AudioError] {
   output = clear_inactive(scale, output);
   for group in 0..4 {

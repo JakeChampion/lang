@@ -1,0 +1,17 @@
+{
+  "x86-64": {
+    "final_workspace_binary_sha256": "2bff9be81696df802ba8f61e0699e4bd54b0f8954b484b892cae96e584d7e655",
+    "measured_binary_sha256": "2bff9be81696df802ba8f61e0699e4bd54b0f8954b484b892cae96e584d7e655",
+    "report": "decode-results.json",
+    "final_baseline_binary_sha256": "9653be882d160958957d2dd7b8fdeaae97d3d86dff9ba438bf74e31c410703a9",
+    "measured_baseline_binary_sha256": "9653be882d160958957d2dd7b8fdeaae97d3d86dff9ba438bf74e31c410703a9"
+  },
+  "arm64": {
+    "final_workspace_binary_sha256": "79d77d177a1c6b02f826fbaa01e6b49ffc6069bdfe711fceeb31fa960ea1af09",
+    "measured_binary_sha256": "79d77d177a1c6b02f826fbaa01e6b49ffc6069bdfe711fceeb31fa960ea1af09",
+    "report": "native-arm64-results.json",
+    "final_baseline_binary_sha256": "31d8eda100c7f07281d8fbf566e5d08d3ee0629939962825f888c9addeeff08f",
+    "measured_baseline_binary_sha256": "31d8eda100c7f07281d8fbf566e5d08d3ee0629939962825f888c9addeeff08f"
+  },
+  "verification_compiler_sha256": "d085a5b580b816ec69a6603f761b76001d971842f3f6efe04d65790905fceb1a"
+}
