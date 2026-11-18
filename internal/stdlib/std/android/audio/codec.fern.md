@@ -4,6 +4,7 @@ This module decodes audio packets through MediaCodec on Android API 21 and later
 It supports device codecs for MIME types such as `audio/mpeg`, `audio/mp4a-latm`, `audio/flac`, and `audio/opus`.
 The caller supplies complete access units, timestamps in microseconds, and codec-specific data.
 Container bytes are not access units. Use a demuxer before this API.
+
 Opus can require all three CSD buffers. AAC usually requires AudioSpecificConfig in `csd0`.
 
 `open_preferred` tries supported hardware codecs, software codecs, then codecs of unknown implementation.
@@ -18,9 +19,11 @@ The caller must check this format before playback. Other PCM encodings return `U
 
 Limits bound each packet, each PCM buffer, codec-specific data, sample rate, and channel count.
 They do not bound allocations inside Android. Input and output each use platform backpressure.
+
 Output views borrow platform memory. Release each output once after use.
 Views and input slots expire on release, flush, or close. Do not copy decoder handles or use them concurrently.
 Close each opened decoder once. After input EOS, drain output through an EOS buffer.
+
 Flush invalidates buffers and resets the stream. After seek, submit the required configuration and preroll again.
 This module does not trim encoder delay, apply replay gain, resample, or perform audio offload.
 
