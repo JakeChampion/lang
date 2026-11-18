@@ -41,6 +41,24 @@ function counted(n: i32, first: i32): i32[] {
   return out;
 }
 
+function compare_floats(m: audio.Buffered, values: [f32]): boolean {
+  let Ok(reference) = pcm.quantize(values, pcm.Format { sample_rate: 48000, channels: 2, bits_per_sample: 16 }, pcm.default_limits()) else {
+    return false;
+  };
+  let Ok(n) = m.write_f32(values) else {
+    return false;
+  };
+  if (n != values.len() || pull(n / 2) != 0) {
+    return false;
+  }
+  for i in 0..n {
+    if (sample(i) != reference.samples[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function floats(): i32 {
   let m = audio.buffered(48000, 2);
   if (m.ring == 0 as usize) {
@@ -75,6 +93,30 @@ function floats(): i32 {
     if (m.queued() != before_queue || pull(1) != 0 || sample(0) != 0 || sample(1) != 0) {
       return 27;
     }
+  }
+  // Compare each signed quantization threshold and its adjacent binary32 values.
+  for block in 0..128 {
+    let thresholds: f32[] = [];
+    for i in 0..256 {
+      let midpoint = ((block * 256 + i) as f32 + 0.5f32) / 32768.0f32;
+      for delta in [-1, 0, 1] {
+        let near = f32_from_bits(f32_bits(midpoint) + delta);
+        thresholds = thresholds.append(near).append(-near);
+      }
+    }
+    if (!compare_floats(m, thresholds)) {
+      return 37;
+    }
+  }
+  let extremes: f32[] = [];
+  for exponent in 0..255 {
+    for fraction in [0, 1, 4194303, 8388607] {
+      let value = f32_from_bits(exponent << 23 | fraction);
+      extremes = extremes.append(value).append(-value);
+    }
+  }
+  if (!compare_floats(m, extremes)) {
+    return 38;
   }
   let values: f32[] = [];
   for _ in 0..96002 {

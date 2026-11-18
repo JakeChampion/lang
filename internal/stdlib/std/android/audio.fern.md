@@ -609,6 +609,21 @@ pub function (m: Buffered) write(samples: [i32]): i32 {
   }
 }
 
+// Convert the exact binary32 significand. The caller rejects non-finite values.
+function pcm16(sample: f32): i32 {
+  let word = f32_bits(sample);
+  let magnitude = word & 2147483647;
+  if (magnitude >= 1065353216) {
+    return if (word < 0) { -32768 } else { 32767 };
+  }
+  if (magnitude < 931135488) {
+    return 0;
+  }
+  let shift = 135 - (magnitude >> 23);
+  let rounded = (magnitude & 8388607 | 8388608) + (1 << shift - 1) >> shift;
+  return if (word < 0) { -rounded } else { rounded.min(32767) };
+}
+
 // Convert and publish one prefix. Unpublished bytes remain in the free part of the ring.
 pub function (m: Buffered) write_f32(samples: [f32]): Result[i32, pcm.AudioError] {
   if (m.ring == 0 as usize) {
@@ -619,16 +634,20 @@ pub function (m: Buffered) write_f32(samples: [f32]): Result[i32, pcm.AudioError
     let at = __load_i64(m.ring + WRITE_AT as usize);
     let room = capacity - (HISTORY * m.channels) as i64 - (at - ring_next(m.ring));
     let n = (samples.len() as i64).min(room).max(0i64) as i32 / m.channels * m.channels;
+    let position = at % capacity;
     for k in 0..n {
       let sample = samples[k];
       if (!sample.is_finite()) {
         return Err(pcm.Sample);
       }
-      let scaled = sample as f64 * 32768.0;
-      let v = if (scaled >= 32767.0) { 32767 } else if (scaled <= -32768.0) { -32768 } else { (scaled + (if (scaled < 0.0) { -0.5 } else { 0.5 })) as i32 };
-      let to = m.ring + DATA_AT as usize + ((at + k as i64) % capacity * 2i64) as usize;
+      let v = pcm16(sample);
+      let to = m.ring + DATA_AT as usize + (position * 2i64) as usize;
       __store_u8(to, v & 255);
       __store_u8(to + 1 as usize, v >> 8 & 255);
+      position += 1i64;
+      if (position == capacity) {
+        position = 0i64;
+      }
     }
     __atomic_store_release(m.ring + WRITE_AT as usize, at + n as i64);
     return Ok(n);
