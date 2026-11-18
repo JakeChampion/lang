@@ -1380,11 +1380,27 @@ function main(): i32 { return 0; }`)
 }
 
 func TestCompositeArithmeticOverload(t *testing.T) {
-	const ops = `struct V { x: i32 }
+	const opTraits = `trait Add { function add(self: Self, other: Self): Self; }
+trait Sub { function sub(self: Self, other: Self): Self; }
+trait Mul { function mul(self: Self, other: Self): Self; }
+trait Div { function div(self: Self, other: Self): Self; }
+trait Rem { function rem(self: Self, other: Self): Self; }
+trait BitAnd { function bitand(self: Self, other: Self): Self; }
+trait BitOr { function bitor(self: Self, other: Self): Self; }
+trait BitXor { function bitxor(self: Self, other: Self): Self; }
+trait Shl { function shl(self: Self, other: Self): Self; }
+trait Shr { function shr(self: Self, other: Self): Self; }
+trait Neg { function neg(self: Self): Self; }
+`
+	const ops = opTraits + `struct V { x: i32 }
 function (self: V) add(o: V): V { return V { x: self.x + o.x }; }
 function (self: V) sub(o: V): V { return V { x: self.x - o.x }; }
 function (self: V) mul(o: V): V { return V { x: self.x * o.x }; }
 function (self: V) div(o: V): V { return V { x: self.x / o.x }; }
+impl Add for V {}
+impl Sub for V {}
+impl Mul for V {}
+impl Div for V {}
 `
 	if err := checkSource(t, ops+`function main(): i32 {
   let a: V = V { x: 6 };
@@ -1394,13 +1410,13 @@ function (self: V) div(o: V): V { return V { x: self.x / o.x }; }
 }`); err != nil {
 		t.Errorf("composite arithmetic with add/sub/mul/div should type-check, got: %v", err)
 	}
-	const bitOps = `struct F { b: i32 }
-function (self: F) rem(o: F): F { return F { b: self.b % o.b }; }
-function (self: F) bitand(o: F): F { return F { b: self.b & o.b }; }
-function (self: F) bitor(o: F): F { return F { b: self.b | o.b }; }
-function (self: F) bitxor(o: F): F { return F { b: self.b ^ o.b }; }
-function (self: F) shl(o: F): F { return F { b: self.b << o.b }; }
-function (self: F) shr(o: F): F { return F { b: self.b >> o.b }; }
+	const bitOps = opTraits + `struct F { b: i32 }
+impl Rem for F { function rem(self: F, o: F): F { return F { b: self.b % o.b }; } }
+impl BitAnd for F { function bitand(self: F, o: F): F { return F { b: self.b & o.b }; } }
+impl BitOr for F { function bitor(self: F, o: F): F { return F { b: self.b | o.b }; } }
+impl BitXor for F { function bitxor(self: F, o: F): F { return F { b: self.b ^ o.b }; } }
+impl Shl for F { function shl(self: F, o: F): F { return F { b: self.b << o.b }; } }
+impl Shr for F { function shr(self: F, o: F): F { return F { b: self.b >> o.b }; } }
 `
 	if err := checkSource(t, bitOps+`function main(): i32 {
   let a: F = F { b: 12 };
@@ -1415,6 +1431,13 @@ function main(): i32 { let a: W = W{x:1}; let b: W = W{x:2}; let c: W = a + b; r
 	if err == nil || !strings.Contains(err.Error(), `operator "+" is not defined for W`) {
 		t.Errorf("struct without `add` should be rejected with an operator-overload hint, got: %v", err)
 	}
+	err = checkSource(t, opTraits+`struct W { x: i32 }
+function (self: W) add(o: W): W { return W { x: self.x + o.x }; }
+function (self: W) neg(): W { return W { x: 0 - self.x }; }
+function main(): i32 { let a: W = W{x:1}; let c: W = a + a; let d: W = -a; return c.x + d.x; }`)
+	if err == nil || !strings.Contains(err.Error(), "add `impl ops.Add for W`") || !strings.Contains(err.Error(), "add `impl ops.Neg for W`") {
+		t.Errorf("an `add` or `neg` method with no impl of its trait should not bind the operator, got: %v", err)
+	}
 	if err := checkSource(t, `function main(): i32 { return 2 + 3 * 4 - 1; }`); err != nil {
 		t.Errorf("numeric arithmetic should still type-check, got: %v", err)
 	}
@@ -1422,10 +1445,10 @@ function main(): i32 { let a: W = W{x:1}; let b: W = W{x:2}; let c: W = a + b; r
 		!strings.Contains(err.Error(), "unary `-` is not defined for V") {
 		t.Errorf("unary `-` on a struct without `neg` should be rejected with a hint, got: %v", err)
 	}
-	if err := checkSource(t, `struct V { x: i32 }
-function (self: V) neg(): V { return V { x: 0 - self.x }; }
+	if err := checkSource(t, opTraits+`struct V { x: i32 }
+impl Neg for V { function neg(self: V): V { return V { x: 0 - self.x }; } }
 function main(): i32 { let a: V = V{x:5}; let b: V = -a; return b.x; }`); err != nil {
-		t.Errorf("unary `-` with a `neg` method should type-check, got: %v", err)
+		t.Errorf("unary `-` with an impl of Neg should type-check, got: %v", err)
 	}
 	if err := checkSource(t, `function main(): i32 { let x: i32 = 7; return -x; }`); err != nil {
 		t.Errorf("numeric unary minus should still type-check, got: %v", err)
@@ -6849,6 +6872,36 @@ function main(): i32 {
 	srcStr := `function main(): i32 { print("hi"); write("x"); eprint("y"); return 0; }`
 	if err := checkSource(t, srcStr); err != nil {
 		t.Errorf("print(string) should still typecheck: %v", err)
+	}
+	if err := checkSource(t, srcStruct+"\nfunction shown(p: Point): string { return f\"<{p}>\"; }"); err != nil {
+		t.Errorf("an f-string part of a Display type should typecheck: %v", err)
+	}
+	const plain = `struct Point { x: i32 }
+function (p: Point) to_string(): string { return "p"; }
+`
+	err := checkSource(t, plain+`function main(): i32 { print(Point { x: 1 }); return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "argument 1 to \"print\": Point does not implement `Display`") {
+		t.Errorf("print of a type with a to_string method and no Display impl should be rejected, got: %v", err)
+	}
+	err = checkSource(t, plain+`function main(): i32 { let p: Point = Point { x: 1 }; let s: string = f"{p}"; return s.len(); }`)
+	if err == nil || !strings.Contains(err.Error(), "an interpolated value of type Point does not implement `Display`") {
+		t.Errorf("an f-string part of a type with a to_string method and no Display impl should be rejected, got: %v", err)
+	}
+}
+
+func TestComparisonNeedsTheTrait(t *testing.T) {
+	err := checkSource(t, `struct P { x: i32 }
+function (a: P) eq(b: P): boolean { return true; }
+function (a: P) cmp(b: P): i32 { return 0; }
+function main(): i32 { let a: P = P { x: 1 }; if (a == a) { return 1; } if (a < a) { return 2; } return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "type does not implement `Eq`") || !strings.Contains(err.Error(), "type does not implement `Ord`") {
+		t.Errorf("an eq or cmp method with no impl of Eq or Ord should not bind == or <, got: %v", err)
+	}
+	err = checkSource(t, `struct P { x: i32 }
+impl cmp.Eq for P { function eq(self: P, other: P): boolean { return true; } }
+function main(): i32 { let a: P = P { x: 1 }; if (a == a) { return 1; } return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), `unknown trait "cmp.Eq" in impl`) || strings.Contains(err.Error(), "E041") || strings.Contains(err.Error(), "does not implement `Eq`") {
+		t.Errorf("an impl of an unknown trait should report its E021 and no E041 at each use, got: %v", err)
 	}
 }
 

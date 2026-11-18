@@ -85,6 +85,7 @@ import "std/result";
 import "std/time";
 import "std/headers";
 import "std/option";
+import "core/cmp";
 ```
 
 ### `3 pub struct ETag`
@@ -112,6 +113,8 @@ pub function (e: ETag) to_string(): string {
   }
   return "\"" + e.opaque + "\"";
 }
+
+impl cmp.Display for ETag {}
 
 pub function parse_etag(s: string): Result[ETag, headers.HeaderValueError] {
   match (__parse_etag(s)) {
@@ -504,6 +507,8 @@ pub function (c: CacheControl) to_string(): string {
   out = __delta(out, "stale-if-error", c.stale_if_error);
   return __join(out);
 }
+
+impl cmp.Display for CacheControl {}
 ```
 
 ### `17 function __flag(out: string[], name: string, on: boolean): string[]`
