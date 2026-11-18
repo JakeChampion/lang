@@ -4325,7 +4325,7 @@ function emit_report(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_abort_134:\n    movq $134, %rdi\n");
   }
   if (!asmcore.process_entry(s)) {
-    return s.write("__fern_report:\n    ud2\n");
+    return s.write("__fern_report:\n" + hostless_trap());
   }
   s = s.write("__fern_report:\n");
   s = s.write("    movq %rdi, %r15\n");
@@ -4530,7 +4530,7 @@ function emit_ir_runtime_part_2(s: asmcore.EmitState): asmcore.EmitState {
   if (asmcore.process_entry(s)) {
     s = emit_arena_map(s);
   } else {
-    s = s.write("    ud2\n");
+    s = s.write(hostless_trap());
   }
   s = s.write(".Lalloc_inited:\n");
   if (s.harden) {
@@ -10380,7 +10380,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
     if (asmcore.process_entry(s)) {
       s = s.write("    movq %r11, %rdi\n    movq $231, %rax\n").syscall(231);
     } else {
-      s = s.write(exit_provider_call(s, "%r11") + "    ud2\n");
+      s = s.write(exit_provider_call(s, "%r11") + hostless_trap());
     }
     s = s.write("    xorl %eax, %eax\n");
     return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
@@ -13616,7 +13616,7 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], own s: as
   if (asmcore.process_entry(s)) {
     s = s.write("    movq $231, %rax\n    movq $134, %rdi\n").syscall(231);
   } else {
-    s = s.write("    ud2\n");
+    s = s.write(hostless_trap());
   }
   s = s.write(dend + ":\n");
   return s;
@@ -14208,6 +14208,13 @@ function exit_provider_call(s: asmcore.EmitState, reg: string): string {
     return "";
   }
   return "    pushq " + reg + "\n    pushq " + reg + "\n    call " + s.exit_provider + "\n    addq $16, %rsp\n";
+}
+
+// The stop of a target with no process. A handler that steps over the ud2,
+// as a board does to resume after a fault, reaches the trap of
+// __fern_report and not the code after the stop.
+function hostless_trap(): string {
+  return "    ud2\n    jmp __fern_report\n";
 }
 
 // The IDT has 256 interrupt gates in .bss. Each one starts at the park stub,
