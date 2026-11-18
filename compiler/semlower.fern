@@ -9,6 +9,7 @@ import "./ir";
 import "./physicalbody";
 import "./lift";
 import "./parser";
+import "./astpasses";
 import "./platforms";
 import "./semsource";
 import "./ssa";
@@ -931,7 +932,7 @@ pub function gated_module(mod: parser.Module): parser.Module {
 }
 
 pub function view_escape_diags(mod: parser.Module): util.Diag[] {
-  let typed = parser.module_with_builtins_typed(checker.annotate_module(mod));
+  let typed = astpasses.module_with_builtins_typed(checker.annotate_module(mod));
   let im = gated_module(ircore.lift_lambdas_typed(typed));
   return semsource.check_views(im);
 }
@@ -996,7 +997,7 @@ struct Typed { mod: parser.Module, errs: util.Diag[] }
 function typed_for(annotated: parser.Module, target: string): Typed {
   let desc = platforms.for_target(target);
   let folded = constfold.fold_target_name(annotated, desc.environment, desc.isa);
-  let typed = parser.module_with_builtins_typed(folded);
+  let typed = astpasses.module_with_builtins_typed(folded);
   return Typed { mod: typed, errs: asmcore.entry_check_errors(checker.ensure_annotated(parser.erase_view_module(typed))) };
 }
 

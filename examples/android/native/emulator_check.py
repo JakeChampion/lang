@@ -21,7 +21,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tests" / "android"))
-from emulator import adb, count, crashes, fail, failures, finish, logcat, screen, wait_for  # noqa: E402
+from emulator import adb, count, crashes, fail, failures, finish, logcat, root, screen, wait_for  # noqa: E402
 
 GREY = (110, 110, 110)
 GREEN = (80, 200, 120)
@@ -42,8 +42,7 @@ def frame(out, name):
 def check_libs(package, libs):
     """The library is in the lib directory of the app when Android extracted
     it, and not there when Android maps it from the APK."""
-    if subprocess.run(["adb", "root"], capture_output=True).returncode == 0:
-        adb("wait-for-device")
+    root()
     base = adb("shell", "pm", "path", package).strip().removeprefix("package:")
     listing = subprocess.run(["adb", "shell", "ls", base.rsplit("/", 1)[0] + "/lib/x86_64"], capture_output=True, text=True)
     print(f"lib/x86_64: {listing.stdout.strip()!r} {listing.stderr.strip()!r}", flush=True)

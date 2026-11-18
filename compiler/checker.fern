@@ -2,6 +2,7 @@ import "./ast";
 import "./util";
 import "./lexer";
 import "./parser";
+import "./defaultargs";
 import "./astwalk";
 import "./callbackpaths";
 import "./lexical";
@@ -20597,7 +20598,7 @@ function ow_callback_capture_diags(value: ast.Expr, moved: MovedEntry[], ctx: Ow
   }
   let name = "lambda";
   if let ast.ExprIdent(id) = value {
-    if (id.builtin || ow_is_owned(ctx, id.name) || !util.has_str(ctx.bound, id.name)) {
+    if (id.builtin || ow_is_owned(ctx, id.name) || !ctx.bound.has(id.name)) {
       return [];
     }
     name = id.name;
@@ -20629,7 +20630,7 @@ function lu_has(ctx: OwnCtx, key: string): boolean {
   return lu.keys.has(key);
 }
 
-struct OwnCtx { factories: OclFactoryState, result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[], sends: string[] }
+struct OwnCtx { factories: OclFactoryState, result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: util.NameIndex, scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[], sends: string[] }
 
 function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) {
@@ -20890,7 +20891,7 @@ function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda, repeatable: boolean): Ow
   }
   if (lm.ret_own) {
     names = [];
-    for name in ctx.bound {
+    for name in ctx.bound.names {
       if (!util.has_str(borrowed, name)) {
         borrowed = borrowed.append(name);
       }
@@ -20911,8 +20912,8 @@ function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda, repeatable: boolean): Ow
   }
   let bound = ctx.bound;
   for p in params {
-    if (!util.has_str(bound, p.name)) {
-      bound = bound.append(p.name);
+    if (!bound.has(p.name)) {
+      bound = bound.added(p.name);
     }
   }
   let nested = OwnCtx { factories: ctx.factories, result_body: lm.body, ret_own: lm.ret_own, value_proofs: ctx.value_proofs, owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps(), replaced: ctx.replaced, sends: ctx.sends };
@@ -20972,7 +20973,7 @@ function ow_is_own_func(ofuncs: OwnFuncs, name: string): boolean {
 }
 
 function ow_name_bound(ctx: OwnCtx, name: string): boolean {
-  return util.has_str(ctx.bound, name) || ctx.scope.is_bound(name);
+  return ctx.bound.has(name) || ctx.scope.is_bound(name);
 }
 
 function ow_ctor_name_taken(ctx: OwnCtx, name: string): boolean {
@@ -20996,7 +20997,7 @@ function ow_variant_known(ctx: OwnCtx, name: string, owner: string): boolean {
 
 // Option's and Result's variants are not among the module's declarations.
 function ow_builtin_variant(ctx: OwnCtx, name: string): boolean {
-  return is_builtin_variant(name) && !ctx.ofuncs.funcs.has(name) && !util.has_str(ctx.bound, name);
+  return is_builtin_variant(name) && !ctx.ofuncs.funcs.has(name) && !ctx.bound.has(name);
 }
 
 function ow_struct_names(structs: parser.StructDecl[]): string[] {
@@ -21081,7 +21082,7 @@ function ow_fresh_builtin_methods(): string[] {
 function ow_qualified_ctor(callee: ast.Expr, ctx: OwnCtx): boolean {
   if let ast.ExprFieldAccess(fa) = callee {
     let owner = ow_ident_name(fa.obj);
-    return owner.len() > 0 && !util.has_str(ctx.bound, owner) && !ctx.scope.is_bound(owner)
+    return owner.len() > 0 && !ctx.bound.has(owner) && !ctx.scope.is_bound(owner)
       && !util.has_str(ctx.scope.tparams, owner) && !util.has_str(ctx.scope.tparams, "0_" + owner)
       && ow_variant_known(ctx, fa.field, owner);
   }
@@ -21401,7 +21402,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       if (ow_variant_known(ctx, id.name, "") || ow_builtin_variant(ctx, id.name)) {
         return true;
       }
-      if (!util.has_str(ctx.bound, id.name) && !ctx.scope.is_bound(id.name) && ctx.scope.sig_is_const(id.name)) {
+      if (!ctx.bound.has(id.name) && !ctx.scope.is_bound(id.name) && ctx.scope.sig_is_const(id.name)) {
         return true;
       }
       return ow_is_owned(ctx, id.name);
@@ -25803,7 +25804,7 @@ function send_call_flags(name: string, ctx: OwnCtx): (boolean[], string[]) {
 function send_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
   let out: util.Diag[] = [];
   if let ast.ExprIdent(id) = c.callee {
-    if (id.builtin || util.has_str(ctx.bound, id.name)) {
+    if (id.builtin || ctx.bound.has(id.name)) {
       return out;
     }
     let (flags, names) = send_call_flags(id.name, ctx);
@@ -26121,7 +26122,7 @@ function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWal
 
 function ow_consume_arg(a: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   if let ast.ExprIdent(id) = a {
-    if (!id.builtin && !ow_is_owned(ctx, id.name) && util.has_str(ctx.bound, id.name) && !util.has_str(ctx.borrowed, id.name) && ow_local_capture_owner(id.name, ctx)) {
+    if (!id.builtin && !ow_is_owned(ctx, id.name) && ctx.bound.has(id.name) && !util.has_str(ctx.borrowed, id.name) && ow_local_capture_owner(id.name, ctx)) {
       let read = ru_borrow(a, moved, ctx);
       return OwnWalk { ...read, moved: ow_moved_add(read.moved, id.name, id.line, id.col) };
     }
@@ -26139,7 +26140,7 @@ function ow_consume_arg(a: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk 
 function ow_call_arg_flags(callee: ast.Expr, ctx: OwnCtx): boolean[] {
   match (callee) {
     ast.ExprIdent(id) => {
-      if (!id.builtin && util.has_str(ctx.bound, id.name)) {
+      if (!id.builtin && ctx.bound.has(id.name)) {
         if let typeinfo.TypeFunc(ft) = check_expr(callee, ctx.scope) {
           return ft.param_own;
         }
@@ -27002,10 +27003,10 @@ function ow_bind_ctx(ctx: OwnCtx, name: string): OwnCtx {
   if (name.len() == 0) {
     return ctx;
   }
-  if (util.has_str(ctx.bound, name)) {
+  if (ctx.bound.has(name)) {
     return ctx;
   }
-  return OwnCtx { ...ctx, bound: ctx.bound.append(name) };
+  return OwnCtx { ...ctx, bound: ctx.bound.added(name) };
 }
 
 function ow_arm_lent_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
@@ -28837,7 +28838,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let ctx = OwnCtx { factories: factories, result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, lu_fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body), sends: send_params(fn) };
+    let ctx = OwnCtx { factories: factories, result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: util.name_index(ow_param_names(fn)), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, lu_fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body), sends: send_params(fn) };
     let nomoved: MovedEntry[] = [];
     let r = ow_stmts(fn.body, nomoved, ctx);
     out = util.append_diags(out, ow_source_diags(util.append_diags(send_param_assign_diags(fn, ctx.sends), r.diags), resolved.bindings));
@@ -32512,7 +32513,7 @@ function with_mangled(out: string[], name: string, prefix: string): string[] {
 }
 
 function checked_module(raw_mod: parser.Module, entry_file: string, raw_floor: boolean): ModuleTypes {
-  let (filled, fda_diags) = parser.fill_default_args_with_diags(raw_mod);
+  let (filled, fda_diags) = defaultargs.fill_with_diags(raw_mod);
   let mod = prepared_module(filled);
   let reserved = reserved_name_diags(mod);
   if (reserved.len() > 0) {
@@ -33222,7 +33223,7 @@ pub function module_scopes(mod: parser.Module): Scope[] {
 pub struct QueryView { mod: parser.Module, env: ModuleEnv }
 
 pub function query_view(raw_mod: parser.Module): QueryView {
-  let (filled, _) = parser.fill_default_args_with_diags(raw_mod);
+  let (filled, _) = defaultargs.fill_with_diags(raw_mod);
   let mod = prepared_module(filled);
   return QueryView { mod: mod, env: module_env(mod) };
 }
@@ -33346,7 +33347,7 @@ function unknown_site_within(st: ast.Stmt, s: Scope): UnknownSite {
 }
 
 pub function ill_typed_hint(raw_mod: parser.Module): util.Diag[] {
-  let (filled, _) = parser.fill_default_args_with_diags(raw_mod);
+  let (filled, _) = defaultargs.fill_with_diags(raw_mod);
   let prepared = prepared_module(filled);
   let env = module_env(prepared);
   let mod = qualify_variants_in(prepared, env, whole_focus(prepared));
@@ -36478,7 +36479,7 @@ function qualify_struct_lit(sl: ast.ExprStructLit, want: typeinfo.Type, s: Scope
 
 struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[], skeys: string[], snames: string[], sfirst: i32[], sargs: string[], sids: i32[], wkeys: string[], wtags: string[], eargs: string[], eids: i32[], tkeys: string[], ttypes: typeinfo.Type[], pargs: string[], ptypes: typeinfo.Type[], okeys: string[], otypes: typeinfo.Type[], ofills: typeinfo.Type[] }
 
-struct LitRewrite { keys: string[], tags: string[], cargs: string[], ctags: string[], pargs: string[], ptypes: typeinfo.Type[] }
+struct LitRewrite { keys: util.NameIndex, tags: string[], cargs: string[], ctags: string[], pargs: string[], ptypes: typeinfo.Type[] }
 
 const LIT_MARK: string = "literal local #";
 
@@ -38681,6 +38682,10 @@ function open_rewrites(st: LitInfer, own keys: string[], own tags: string[]): (s
 function lit_rewrites(st: LitInfer): LitRewrite {
   let keys: string[] = [];
   let tags: string[] = [];
+  // firsts[i] is the first local of st.keys that has keys[i], and slot is its inverse.
+  let firsts: i32[] = [];
+  let slot = util.minus_ones(st.keys.len());
+  let ix = util.name_index(st.keys);
   let k = 0;
   while (k < st.keys.len()) {
     if (st.keys[k].len() == 0) {
@@ -38692,19 +38697,21 @@ function lit_rewrites(st: LitInfer): LitRewrite {
     if (!is_unknown(w)) {
       tag = typeinfo.spelling(w);
     }
-    let at = util.index_of_str(keys, st.keys[k]);
-    if (at < 0) {
+    let first = ix.find(st.keys[k]);
+    if (first == k) {
+      slot = slot.with(k, keys.len());
       keys = keys.append(st.keys[k]);
       tags = tags.append(tag);
-    } else if (tags[at] != tag) {
-      tags = tags.with(at, "");
+      firsts = firsts.append(k);
+    } else if (tags[slot[first]] != tag) {
+      tags = tags.with(slot[first], "");
     }
     k += 1;
   }
   let ok: string[] = [];
   let ot: string[] = [];
   for i in 0..keys.len() {
-    if (tags[i].len() > 0 && (tags[i] != "i32" || !is_unknown(st.width[lit_find(st, util.index_of_str(st.keys, keys[i]))]))) {
+    if (tags[i].len() > 0 && (tags[i] != "i32" || !is_unknown(st.width[lit_find(st, firsts[i])]))) {
       ok = ok.append(keys[i]);
       ot = ot.append(tags[i]);
     }
@@ -38739,7 +38746,7 @@ function lit_rewrites(st: LitInfer): LitRewrite {
   for pt in st.ptypes {
     ptypes = ptypes.append(lit_typed_type(pt, st, false));
   }
-  return LitRewrite { keys: ok, tags: ot, cargs: ck, ctags: ct, pargs: st.pargs, ptypes: ptypes };
+  return LitRewrite { keys: util.name_index(ok), tags: ot, cargs: ck, ctags: ct, pargs: st.pargs, ptypes: ptypes };
 }
 
 function agreed_tags(keys: string[], tags: string[]): (string[], string[]) {
@@ -38775,7 +38782,7 @@ function lit_rewrite_stmt(st: ast.Stmt, rw: LitRewrite): (ast.Stmt, LitRewrite, 
       if (v.type_name.len() > 0) {
         return (st, rw, false);
       }
-      let at = util.index_of_str(rw.keys, lit_var_key(v));
+      let at = rw.keys.find(lit_var_key(v));
       if (at < 0) {
         return (st, rw, false);
       }
@@ -38787,7 +38794,7 @@ function lit_rewrite_stmt(st: ast.Stmt, rw: LitRewrite): (ast.Stmt, LitRewrite, 
         return (st, rw, false);
       }
       let bounds = lit_range_bounds(fr.iter);
-      let at2 = util.index_of_str(rw.keys, lit_for_key(fr, bounds[0]));
+      let at2 = rw.keys.find(lit_for_key(fr, bounds[0]));
       if (at2 < 0 || !lit_suffix_spelled(rw.tags[at2])) {
         return (st, rw, false);
       }
@@ -39088,7 +39095,7 @@ function lit_resolve_pending(st: LitInfer): LitInfer {
 function settle_lit_body(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
   let st = lit_resolve_pending(lit_stmts(stmts, s, LitInfer { parent: [LIT_WIDE], width: [typeinfo.t_i64()], keys: [""], cargs: [], ctags: [], pend: [], pend_id: [], pend_scope: [], skeys: [], snames: [], sfirst: [], sargs: [], sids: [], wkeys: [], wtags: [], eargs: [], eids: [], tkeys: [], ttypes: [], pargs: [], ptypes: [], okeys: [], otypes: [], ofills: [] }));
   let rw = lit_rewrites(st);
-  if (rw.keys.len() == 0 && rw.cargs.len() == 0 && rw.pargs.len() == 0) {
+  if (rw.keys.names.len() == 0 && rw.cargs.len() == 0 && rw.pargs.len() == 0) {
     return stmts;
   }
   let (out, ra) = astwalk.map_stmts_where(stmts, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.descend_all);

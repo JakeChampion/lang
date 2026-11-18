@@ -1,6 +1,8 @@
 import "./util";
 import "./lexer";
 import "./parser";
+import "./defaultargs";
+import "./astpasses";
 import "./astwalk";
 import "./flatten";
 import "./asm_ir";
@@ -3934,7 +3936,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   let merged = flatten.bundle_with_prefixes(entry_r, loaded, target, prefixes);
   merged = visibility.scope_enums(merged, prefixes, package_roots);
 
-  merged = parser.fill_default_args_module(merged);
+  merged = defaultargs.fill_module(merged);
   merged = parser.resolve_variant_fields_module(merged);
   return Bundle { entry: entry_r, entry_ident: entry_ident, root: root, loaded: loaded, merged: merged, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, errs: [] };
 }
@@ -7465,7 +7467,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     return 2;
   }
 
-  let typed = parser.module_with_builtins_typed(merged);
+  let typed = astpasses.module_with_builtins_typed(merged);
   let full = parser.erase_view_module(typed);
   let debug_lines = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-android" || target == "arm64-darwin");
   let sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), sandbox: asmcore.sandbox_on(), cover: cover_on, symbols: emit_syms, optimize: optimize, leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, quarantine: quarantine, cpu_limit: cpu_limit, pie: pie, profile: profile_name, target: target, line_maps: b.maps, ram_base: ram_base, ram_size: ram_size, interrupts: interrupt_entries(merged), early: marked_entry(merged, "early"), secondary: marked_entry(merged, "secondary"), user_mode: calls_user_run(merged) } };

@@ -51,7 +51,7 @@ The production self-host path is **AST → asm, directly**, with no IR:
 
 ```
 source → lexer.tokenize → parser.parse_module
-       → flatten.bundle → parser.module_with_builtins   (AST passes)
+       → flatten.bundle → astpasses.module_with_builtins   (AST passes)
        → asm.emit_module / asm_arm64.emit_module / wasm.emit_module
 ```
 
@@ -61,7 +61,7 @@ source → lexer.tokenize → parser.parse_module
   edit it **once**; it is not mirrored in the backends.
 - Per-backend emit (instruction selection + runtime-helper bodies):
   `asm.fern` (x86-64), `asm_arm64.fern` (arm64), `wasm.fern` (wasm).
-- The AST-pass hub is `parser.module_with_builtins`
+- The AST-pass hub is `astpasses.module_with_builtins`
   (`parser.fern:4467`): hoist local funcs → insert resource drops →
   lower defers → monomorphise funcs → monomorphise structs → inject
   builtin enums. **A Perceus AST analysis pass slots in here**, after
@@ -286,7 +286,7 @@ parity) is complete on all three IR backends.
 | Native (Go) | Self-host (Fern) | Notes |
 |---|---|---|
 | `builder` struct fields (mutable) | `EmitState` (immutable, threaded) | analyses become fields on a per-function analysis record |
-| `ir.LowerWith` pipeline | `parser.module_with_builtins` + `emit_module` | analyses run as an AST pass / per-function precompute |
+| `ir.LowerWith` pipeline | `astpasses.module_with_builtins` + `emit_module` | analyses run as an AST pass / per-function precompute |
 | `computeFreeEligible` (`ir.go:2574`) | `asmcore.fern` (shared) | pure AST analysis |
 | `inferParamEscapes` (`ir.go:1336`) | `asmcore.fern` (shared) | call-graph fixpoint |
 | `computeMovedLocals` / `markConstructionMoves` (`ir.go:3759/3903`) | `asmcore.fern` (shared) | move-on-return/alias/construction/destructure |

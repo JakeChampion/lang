@@ -116,6 +116,13 @@ def packets(path):
             for i, m in enumerate(markers)]
 
 
+def entropy_profiles():
+    for profile in (66, 77, 88, 100):
+        for entropy in (0, 1):
+            allowed = entropy == 0 or profile not in (66, 88)
+            yield f"profile-{profile}-entropy-{entropy}", syntax.make(profile=profile, poc=2), make(entropy=entropy), allowed
+
+
 def controls():
     common = syntax.make(poc=2)
     base = syntax.make(profile=66, poc=2)
@@ -141,7 +148,7 @@ def controls():
         ("five-group-explicit-map", base, make(groups=5, kind=6)),
         ("large-explicit-map", syntax.make(profile=66, width=127, height=127, poc=2),
          make(groups=8, kind=6, map=[i % 8 for i in range(16384)])),
-    ]
+    ] + [(name, sps, pps) for name, sps, pps, allowed in entropy_profiles() if allowed]
 
 
 def invalid():
@@ -203,6 +210,9 @@ def main():
     context = syntax.make(profile=66, poc=2).hex()
     for name, data, error in invalid():
         lines.append(f'    Invalid {{ name: "{name}", sequence: "{context}", bytes: "{data.hex()}", error: frame.{error} }},')
+    for name, sps, pps, allowed in entropy_profiles():
+        if not allowed:
+            lines.append(f'    Invalid {{ name: "{name}", sequence: "{sps.hex()}", bytes: "{pps.hex()}", error: frame.Header }},')
     lines += ["  ];", "}"]
     target = ROOT / "tests/stdlib/video_avc_pps_vectors.fern"
     target.write_text("\n".join(lines) + "\n")

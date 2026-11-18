@@ -6,6 +6,7 @@ import "../astwalk";
 import "../builtinsigs";
 import "../lexer";
 import "../parser";
+import "../astpasses";
 import "../typeinfo";
 import "../util";
 import "std/envflag";
@@ -76,7 +77,7 @@ function check_nested_callback_method_instances(): test.TestOutcome {
   let prefix = "enum Fut[T] { Ready(T), Gone } struct Host { n: i32 } function (h: Host) run[T](k: ((Fut[T]) => i32) => i32): i32 { return 7; } function named(f: (Fut[i32]) => i32): i32 { return f(Gone); } ";
   for call in ["h.run(k)", "h.run((f: (Fut[i32]) => i32): i32 => 1)", "h.run(named)"] {
     let source = prefix + "function main(): i32 { let h = Host { n: 1 }; let k: ((Fut[i32]) => i32) => i32 = (f: (Fut[i32]) => i32): i32 => f(Gone); return " + call + "; }";
-    let mod = parser.module_with_builtins_typed(parser.parse_module(lexer.tokenize(source)));
+    let mod = astpasses.module_with_builtins_typed(parser.parse_module(lexer.tokenize(source)));
     let found = false;
     for fd in mod.funcs {
       if (fd.name == "__smm_Host_run__i32" && fd.type_params.len() == 0) {

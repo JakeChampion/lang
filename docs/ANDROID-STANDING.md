@@ -58,7 +58,7 @@ Play, and the first is now fixed:
    the SDKs of other vendors are out of reach.
 
 3. **Text and languages.** Arabic text is shaped, and its marks sit on
-   their bases. There is no color emoji.
+   their bases. Emoji draw in color from the COLR font of the system.
    `std/i18n` now gives localized strings.
    `std/bidi` gives right-to-left text in the order of UAX #9.
    `std/android/text` takes a character that its font does not have from
@@ -162,8 +162,11 @@ The order puts first what stops a release, then what most apps need.
 6. **Java and Kotlin libraries.** Merge DEX files and manifests of a JAR
    or an AAR into the APK.
 
-7. **Text.** Color glyphs, and the shaping of scripts other than
-   Arabic.
+7. **Text.** The shaping of scripts other than Arabic.
+
+   Color emoji are done: `std/truetype` draws the glyphs of COLR
+   versions 0 and 1, and `std/android/text` and the painter of
+   `std/android/ui` draw them in their colors.
 
    Arabic shaping is done: `std/shape` gives each letter its joining
    form, and applies the GSUB and GPOS lookups of the font in the stages

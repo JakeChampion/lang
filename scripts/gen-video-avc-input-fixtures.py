@@ -104,6 +104,7 @@ def controls():
     yield from replacement_controls()
     yield from reference_controls()
     yield from uniform_controls()
+    yield from entropy_controls()
     for width in range(4, 17):
         seq = sequence(poc=2, frame_num=width - 4)
         for idr, number in ((True, 0), (False, (1 << width) - 1)):
@@ -124,6 +125,35 @@ def reference_controls():
     predicted = slice_nal(frame=1, reference=0)
     yield "cached PPS follows zero-reference SPS replacement", [[one, p, predicted], [zero, intra]]
     yield "cached PPS follows restored references", [[zero, p, intra], [one, predicted]]
+
+
+def entropy_controls():
+    for profile in (66, 77, 88, 100):
+        for entropy in (0, 1):
+            if entropy and profile in (66, 88):
+                continue
+            yield f"profile {profile} permits entropy mode {entropy}", [[
+                sequence(profile=profile, poc=2), pps.make(entropy=entropy), slice_nal(frame=0)]]
+    for profile in (66, 88):
+        yield f"CAVLC PPS replaces CABAC before profile {profile} use", [
+            [sequence(profile=77, poc=2), pps.make(entropy=1), slice_nal(frame=0)],
+            [sequence(profile=profile, poc=2), pps.make(), slice_nal(frame=1)]]
+    yield "cached CABAC PPS remains valid from Main to High", [
+        [sequence(profile=77, poc=2), pps.make(entropy=1), slice_nal(frame=0)],
+        [sequence(profile=100, poc=2), slice_nal(frame=1)]]
+    yield "cached CAVLC PPS remains valid from Baseline to Extended", [
+        [sequence(profile=66, poc=2), pps.make(), slice_nal(frame=0)],
+        [sequence(profile=88, poc=2), slice_nal(frame=1)]]
+
+
+def entropy_invalid():
+    for profile in (66, 88):
+        seq = sequence(profile=profile, poc=2)
+        cabac = pps.make(entropy=1)
+        yield f"profile {profile} rejects CABAC PPS", [seq, cabac, slice_nal(frame=0)], "Header"
+        yield f"later profile {profile} rejects CABAC PPS", [seq, pps.make(), slice_nal(frame=0), cabac, slice_nal(frame=1)], "Header"
+        yield f"cached CABAC PPS follows profile {profile} replacement", [
+            sequence(profile=77, poc=2), cabac, slice_nal(frame=0), seq, slice_nal(frame=1)], "Header"
 
 
 def uniform_controls():
@@ -220,6 +250,7 @@ def invalid():
     s, p = sequence(poc=2), pps.make()
     yield from reference_invalid()
     yield from uniform_invalid()
+    yield from entropy_invalid()
     sei = b"\x06\x05\x10" + bytes(range(1, 17)) + b"\x80"
     for prefix in ([], [b"\x09\xf0"], [s], [s, p], [sei]):
         name = "-".join(str(unit[0] & 31) for unit in prefix) or "none"

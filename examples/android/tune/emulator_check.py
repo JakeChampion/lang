@@ -35,7 +35,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tests" / "android"))
-from emulator import adb, count, crashes, fail, failures, finish, logcat, screen, wait_for  # noqa: E402
+from emulator import adb, count, crashes, fail, failures, finish, logcat, root, screen, wait_for  # noqa: E402
 
 PACKAGE = "dev.fern.tune"
 ACTIVITY = PACKAGE + "/.Main"
@@ -150,11 +150,9 @@ def main(apk, out):
     # The headphones come out: Android sends AUDIO_BECOMING_NOISY, and the
     # track stops. Only root can send that broadcast. The widget button
     # then starts the track again.
-    rooted = adb("root", check=False)
-    if "cannot run as root" in rooted:
-        fail("adb root failed, so the check cannot send AUDIO_BECOMING_NOISY: " + rooted.strip())
+    if not root():
+        fail("adb root failed, so the check cannot send AUDIO_BECOMING_NOISY")
     else:
-        adb("wait-for-device")
         adb("shell", "am", "broadcast", "-a", "android.media.AUDIO_BECOMING_NOISY")
         time.sleep(2)
         if session_state() != 2:
