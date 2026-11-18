@@ -11,8 +11,8 @@
 # a gain to bank, and a rise needs a reason in the commit that re-banks it.
 # The subjects are the compiler's own sources, so a change to those sources
 # moves the rows too, with no change to the certifier.
-x86_64/fern_main.unproved	8038	0
-wasm32/checker.unproved	2277	0
-x86_64/checker.refuted	4995	0
+x86_64/fern_main.unproved	7634	0
+wasm32/checker.unproved	2275	0
+x86_64/checker.refuted	4993	0
 x86_64/checker.weakened	170	0
-x86_64/checker.missed	481	0
+x86_64/checker.missed	477	0
