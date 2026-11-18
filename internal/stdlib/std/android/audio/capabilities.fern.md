@@ -14,6 +14,7 @@ Limits bound the codec list. They do not bound memory inside Android codecs.
 
 ```fern
 <<*>>=
+// This module discovers Android audio decoders through MediaCodecList.
 import "std/android/video/capabilities" as shared;
 import "std/video/frame";
 import "std/jni";
