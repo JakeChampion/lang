@@ -199,10 +199,9 @@ func e2eCatchAllLane(t *testing.T, root string) lane {
 	t.Helper()
 	const file = "test-e2e-other.yml"
 	src := readWorkflow(t, root, file)
-	if !strings.Contains(src, "go test -list '.' ./internal/testing/e2e/") {
-		t.Fatalf("%s no longer enumerates internal/testing/e2e with `go test -list '.'`; without "+
-			"that, selection is no longer by negation and a new uncategorised test would "+
-			"run nowhere", file)
+	if !strings.Contains(src, `go test -c -o "$RUNNER_TEMP/e2e-other.test" ./internal/testing/e2e/`) ||
+		!strings.Contains(src, `"$RUNNER_TEMP/e2e-other.test" -test.list '.'`) {
+		t.Fatalf("%s must build internal/testing/e2e and list all its tests before applying exclusions", file)
 	}
 	skip := envValue(t, src, "CATCH_ALL_SKIP")
 	if own := envValue(t, src, "OWN_JOB_TESTS"); own != "" {
