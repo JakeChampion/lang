@@ -2425,6 +2425,36 @@ pub function op_call_indirect(argc: i32): Op {
   return Op { source: 0, decl: -1, kind_tag: K_CALL_INDIRECT, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
+// The contract of a call through a function value, in the width of its op:
+// one bit says that the contract is known, one that the result holds a unit,
+// and bit j that operand j hands its unit to the callee. A raw call has none.
+pub function call_units_known(): i32 {
+  return 1 << 29;
+}
+
+pub function call_units_result(): i32 {
+  return 1 << 28;
+}
+
+// The most operands whose units the contract can name.
+pub function call_units_operands(): i32 {
+  return 28;
+}
+
+pub function with_call_units(o: Op, units: i32): Op {
+  return Op { ...o, width: units | call_units_known() };
+}
+
+// The contract of a call through a function value, or -1 when none is known.
+pub function call_units(o: Op): i32 {
+  let known = o.width & call_units_known();
+  if (o.kind_tag != K_CALL_INDIRECT || known == 0) {
+    return -1;
+  }
+  let below = call_units_known() - 1;
+  return o.width & below;
+}
+
 // `sig` is the width tag the wasm backend types the call with, and `cfi` is
 // the signature word a hardened native call compares with the callee's stub
 // (`cfi_sig_hash`). A raw call carries neither.

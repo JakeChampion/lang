@@ -664,6 +664,25 @@ function pick(name: string): Case {
         let b4: ssa.SBlock = block(4, [2, 3], [], ret(1));
         return Case { f: func(1, 6, [b0, b1, b2, b3, b4]), modes: [rccertify.borrow_mode()], returns_unit: true };
     }
+    if (name == "indirect-call-takes-its-operand") {
+        // Operand 0 of the call through v1 hands its unit to the callee.
+        let b0: ssa.SBlock = block(0, [], [fresh_box(0), const_int(1, 0), inst(56, 2, [1, 0], 0, "1"), const_int(3, 0)], ret(3));
+        return Case { f: func(0, 4, [b0]), modes: [], returns_unit: false };
+    }
+    if (name == "indirect-call-result-released" || name == "indirect-call-result-leaked") {
+        // The result of the call through v0 holds a unit (ir.call_units_result).
+        let release: ssa.SInst[] = [call(2, "__fern_rc_dec", [1])];
+        if (name == "indirect-call-result-leaked") { release = []; }
+        let insts: ssa.SInst[] = [const_int(0, 0), inst(56, 1, [0], 0, "268435456")];
+        for x in release { insts = insts.append(x); }
+        let b0: ssa.SBlock = block(0, [], insts.append(const_int(3, 0)), ret(3));
+        return Case { f: func(0, 4, [b0]), modes: [], returns_unit: false };
+    }
+    if (name == "indirect-call-with-no-contract") {
+        // A raw call names no contract, so its result is unproved.
+        let b0: ssa.SBlock = block(0, [], [const_int(0, 0), inst(56, 1, [0], 0, ""), call(2, "__fern_rc_dec", [1]), const_int(3, 0)], ret(3));
+        return Case { f: func(0, 4, [b0]), modes: [], returns_unit: false };
+    }
     if (name == "unknown-callee-refused") {
         return Case { f: one_block(0, 3, [fresh_box(0), call(1, "mystery", [0]), const_int(2, 0)], ret(2)), modes: [], returns_unit: false };
     }
@@ -805,6 +824,10 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"push-on-the-shared-arm-keeps-the-retain", []string{"of v0"}, 0},
 		{"call-result-is-the-borrow", nil, 0},
 		{"call-result-is-the-borrow-released", []string{"spent without a unit of v1"}, 1},
+		{"indirect-call-takes-its-operand", nil, 0},
+		{"indirect-call-result-released", nil, 0},
+		{"indirect-call-result-leaked", []string{"leaked at return of v1"}, 0},
+		{"indirect-call-with-no-contract", nil, 1},
 		{"unknown-callee-refused", []string{"cannot be certified: calls mystery, which has no rc signature and no ABI"}, 0},
 		{"unknown-contract-returns-a-phi-of-a-fresh-box", nil, 2},
 		{"loop-phi-borrows-a-held-box", nil, 0},
