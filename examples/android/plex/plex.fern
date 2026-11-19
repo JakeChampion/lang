@@ -825,6 +825,68 @@ pub function card_subtitle(it: Item): string {
   return "";
 }
 
+// A card of the downloads and the downloaded items that it holds: a show
+// and its episodes, an album and its tracks, or one movie.
+pub struct Shelf { card: Item, items: Item[] }
+
+// The downloads `items` on their cards, in the order of the first item of
+// each card. The episodes of a show and the tracks of an album are in
+// their order. A show card has the key of the show, so the server can
+// give its synopsis. An album card has a key that only the app knows.
+pub function shelves(items: Item[]): Shelf[] {
+  let out: Shelf[] = [];
+  for it in items {
+    let card = shelf_card(it);
+    let at = -1;
+    for k in 0..out.len() {
+      if (out[k].card.key == card.key) {
+        at = k;
+      }
+    }
+    if (at < 0) {
+      out = out.append(Shelf { card: card, items: [it] });
+    } else {
+      out = out.with(at, Shelf { ...out[at], items: in_order(out[at].items.append(it)) });
+    }
+  }
+  return out;
+}
+
+function shelf_card(it: Item): Item {
+  if (it.kind == "episode" && it.grandparent.len() > 0) {
+    let key = it.grandparent_key;
+    if (key.len() == 0) {
+      key = "saved-show:" + it.grandparent;
+    }
+    return Item { ...no_item(), key: key, kind: "show", title: it.grandparent, thumb: it.grandparent_thumb, art: it.art };
+  }
+  if (it.kind == "track" && it.parent.len() > 0) {
+    return Item { ...no_item(), key: "saved-album:" + it.grandparent + "/" + it.parent, kind: "album", title: it.parent, parent: it.grandparent, thumb: it.parent_thumb };
+  }
+  return it;
+}
+
+// True for the key of a card that only the app knows, which the server
+// has no metadata for.
+pub function app_key(key: string): boolean {
+  return key.starts_with("saved-");
+}
+
+// The items by season, then by episode or track.
+function in_order(items: Item[]): Item[] {
+  let out: Item[] = [];
+  for it in items {
+    let at = out.len();
+    for k in 0..out.len() {
+      if (at == out.len() && (it.parent_index < out[k].parent_index || it.parent_index == out[k].parent_index && it.index < out[k].index)) {
+        at = k;
+      }
+    }
+    out = out.take(at).append(it).concat(out.drop(at));
+  }
+  return out;
+}
+
 // The full name of the item, for a download: "Show · S1 E3 · Title" for an
 // episode, else its title.
 pub function full_title(it: Item): string {

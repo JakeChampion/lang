@@ -193,9 +193,19 @@ answers again.
 
 Download all in the menu of a show, a season, an artist or an album
 downloads each of its episodes or tracks. Downloads in the settings
-opens the list of the downloads, with the state of each one. A row of an
-episode shows its show, its code and its title, such as "S1 E3 · Title". A tap on a
-done download plays it, and its button removes it.
+opens the screen of the downloads. It looks like the home screen: a row
+of posters for the shows, one for the movies and one for the music. A
+show has one card for its downloaded episodes, and an album has one card
+for its tracks. Under the rows, each download that is not done shows its
+state, and its button stops it. A row of an episode shows its show, its
+code and its title, such as "S1 E3 · Title".
+
+A card opens a detail screen like that of the server, from the phone: the
+poster, the synopsis, and the episodes or tracks with their synopsis.
+With a server, the detail of a show also gets the synopsis of the show.
+
+Play on that screen plays the first episode that the person has not
+seen, or the first track. Remove download removes the files of the card.
 
 TalkBack reads each screen. The app gives the screen reader each button
 by its text and each poster by its title. A double tap presses the
