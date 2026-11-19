@@ -43,6 +43,7 @@ import "./indexsign";
 import "./aab";
 import "./apk";
 import "./dex";
+import "./dexer";
 import "./ircore";
 import "./emitforms";
 import "./semarrayreport";
@@ -1571,7 +1572,13 @@ function write_jni_dex(path: string, out_path: string, methods: JniMethod[]): st
   if (path.len() == 0 || methods.len() == 0) {
     return "";
   }
-  match (write_file_bytes(path, dex.write(jni_dex_classes(methods), jni_library(out_path)))) {
+  let bytes = match (dex.write(jni_dex_classes(methods), jni_library(out_path))) {
+    Ok(b) => b,
+    Err(e) => {
+      return "-jni-dex: " + e;
+    },
+  };
+  match (write_file_bytes(path, bytes)) {
     Err(e) => {
       return "-jni-dex: cannot write " + path + ": " + e.message();
     },
@@ -2340,6 +2347,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-export", "NAMES", "with -shared or a freestanding -target: the comma-separated functions to export, besides the @jni ones (default main)"),
       sub_flag("-jni-java", "DIR", ["-shared"], "with -shared: write the Java class of each @jni class under DIR, with its native methods and System.loadLibrary"),
       sub_flag("-jni-dex", "FILE", ["-shared"], "with -shared: write the @jni classes to the DEX file FILE, with native methods, a public constructor and System.loadLibrary; nothing is written when there is no @jni class"),
+      mode_flag("-dex", "OUT", "write the classes of each FILE, a Java class file or a JAR, to the DEX file OUT, for -apk-dex"),
       mode_flag("-apk", "OUT", "build FILE for arm64-android and x86-64-android, and write a signed NativeActivity APK to OUT, or an Android App Bundle for Google Play when OUT ends in .aab; the [android] table of the fern.toml of FILE gives the -apk- settings that no flag gives"),
       sub_flag("-apk-package", "NAME", ["-apk"], "with -apk: the Android package name (default dev.fern.LIB, where FILE is LIB.fern)"),
       sub_flag("-apk-label", "TEXT", ["-apk"], "with -apk: the name of the app on the launcher (default LIB)"),
@@ -5508,6 +5516,7 @@ struct ToolFlags {
   weave: boolean,
   html: boolean,
   doctest: boolean,
+  dex: string,
 }
 
 function tool_flag(f: CliArg): boolean {
@@ -5515,7 +5524,7 @@ function tool_flag(f: CliArg): boolean {
     || f.name == "-cover-report" || f.name == "-lcov" || f.name == "-color" || f.name == "-ascii"
     || f.name == "-q" || f.name == "-diag-format" || f.name == "-lint" || f.name == "-lint-rules" || f.name == "-lint-set"
     || f.name == "-lint-opt" || f.name == "-lint-cover" || f.name == "-weave" || f.name == "-html"
-    || f.name == "-doctest";
+    || f.name == "-doctest" || f.name == "-dex";
 }
 
 function parse_tool_flag(tf: ToolFlags, f: CliArg): (ToolFlags, i32) {
@@ -5559,6 +5568,9 @@ function parse_tool_flag(tf: ToolFlags, f: CliArg): (ToolFlags, i32) {
   }
   if (f.name == "-doctest") {
     return (ToolFlags { ...tf, doctest: f.on }, 0);
+  }
+  if (f.name == "-dex") {
+    return (ToolFlags { ...tf, dex: f.value }, 0);
   }
   if (f.name == "-lint-set") {
     return (ToolFlags { ...tf, lint_sets: tf.lint_sets.append(f.value) }, 0);
@@ -6151,6 +6163,46 @@ function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
     "-apk-run" => ApkOpts { ...o, run: true },
     _ => o,
   };
+}
+
+// fern -dex OUT FILE...: the DEX file of the class files and the JAR files.
+function run_dex(out: string, inputs: string[]): i32 {
+  if (inputs.len() == 0) {
+    eprint("fern: -dex OUT takes one or more class files or JAR files");
+    return 2;
+  }
+  let files: u8[][] = [];
+  for path in inputs {
+    let Ok(b) = read_file_bytes(path) else {
+      eprint("fern: -dex: cannot read " + path);
+      return 1;
+    };
+    match (dexer.class_files_of(path, b)) {
+      Ok(cs) => {
+        files = files.concat(cs);
+      },
+      Err(e) => {
+        eprint("fern: -dex: " + path + ": " + e);
+        return 1;
+      }
+    }
+  }
+  let dex = match (dexer.dex_of(files)) {
+    Ok(d) => d,
+    Err(e) => {
+      eprint("fern: -dex: " + e);
+      return 1;
+    },
+  };
+  match (write_file_bytes(out, dex)) {
+    Ok(_) => {
+      return 0;
+    },
+    Err(e) => {
+      eprint("fern: -dex: cannot write " + out + ": " + e.message());
+      return 1;
+    }
+  }
 }
 
 // The arguments of one -apk build: the command line without the -apk flags.
@@ -7032,7 +7084,7 @@ function parse_cli_flags(av: string[], embedded_root: string): CliFlags {
     emit: "",
     mode_check: false,
     mode_interp: false,
-    tf: ToolFlags { run_it: false, qemu: "qemu-aarch64", version: false, explain: false, explain_code: "", cover_report: false, lcov: false, color_mode: "auto", ascii: false, diag_format: diag_format_from_env(), lint: false, lint_rules: false, lint_sets: no_strs, lint_opts: no_strs, lint_cover: "", weave: false, html: false, doctest: false },
+    tf: ToolFlags { run_it: false, qemu: "qemu-aarch64", version: false, explain: false, explain_code: "", cover_report: false, lcov: false, color_mode: "auto", ascii: false, diag_format: diag_format_from_env(), lint: false, lint_rules: false, lint_sets: no_strs, lint_opts: no_strs, lint_cover: "", weave: false, html: false, doctest: false, dex: "" },
     mode_fmt: false,
     fmt_write: false,
     fmt_diff: false,
@@ -7254,6 +7306,9 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   if (tf.lint_rules) {
     write(lint.rules_listing());
     return 0;
+  }
+  if (tf.dex.len() > 0) {
+    return run_dex(tf.dex, pos);
   }
   if (tf.lint) {
     return run_lint(st, pos, tf.lint_sets, tf.lint_opts, tf.lint_cover);

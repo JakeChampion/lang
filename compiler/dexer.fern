@@ -1,0 +1,1457 @@
+// The dexer: the classes of Java class files as the classes of a DEX file,
+// as docs/DEXER-PLAN.md tells. Each slot of the operand stack and of the
+// local variables of a method becomes a register. The registers are, in
+// order: four temporaries for the instructions whose registers have four
+// bits, the register of the monitor of a synchronized method, the slots of
+// the stack, the locals after the parameters, and the parameters, which
+// ART puts in the last registers.
+import "core/map";
+import "std/classfile";
+import "std/option";
+import "std/string";
+import "std/zip";
+import "./dexfile";
+import "./util";
+
+// The kinds of the JVM opcodes.
+const K_NOP: i32 = 0;
+
+const K_CONST: i32 = 1;
+
+const K_PUSH: i32 = 2;
+
+const K_LDC: i32 = 3;
+
+const K_LOAD: i32 = 4;
+
+const K_STORE: i32 = 5;
+
+const K_ALOAD: i32 = 6;
+
+const K_ASTORE: i32 = 7;
+
+const K_STACK: i32 = 8;
+
+const K_BINOP: i32 = 9;
+
+const K_UNOP: i32 = 10;
+
+const K_IINC: i32 = 11;
+
+const K_CMP: i32 = 12;
+
+const K_IF1: i32 = 13;
+
+const K_IF2: i32 = 14;
+
+const K_GOTO: i32 = 15;
+
+const K_SWITCH: i32 = 16;
+
+const K_RETURN: i32 = 17;
+
+const K_GETSTATIC: i32 = 18;
+
+const K_PUTSTATIC: i32 = 19;
+
+const K_GETFIELD: i32 = 20;
+
+const K_PUTFIELD: i32 = 21;
+
+const K_INVOKE: i32 = 22;
+
+const K_NEW: i32 = 23;
+
+const K_NEWARRAY: i32 = 24;
+
+const K_ANEWARRAY: i32 = 25;
+
+const K_LENGTH: i32 = 26;
+
+const K_THROW: i32 = 27;
+
+const K_CHECKCAST: i32 = 28;
+
+const K_INSTANCEOF: i32 = 29;
+
+const K_MONITOR: i32 = 30;
+
+const K_MULTI: i32 = 31;
+
+enum FieldOp { GetStatic, PutStatic, GetField, PutField }
+
+enum ObjectOp { New, NewArray, RefArray, CheckCast, InstanceOf, MultiArray }
+
+// The kind of a JVM instruction. `Refused` holds the reason that the
+// dexer does not take it.
+enum Kind { Nop, Const, Push, Ldc, Load, Store, ArrayLoad, ArrayStore, Stack, Binary, Unary, Compare, Iinc, If1, If2, Goto, Switch, Return, FieldOf(FieldOp), Invoke, ObjectOf(ObjectOp), Length, Throw, Monitor, Refused(string) }
+
+// The types of the slots: none, int, float, long, double, a reference,
+// and the second slot of a long or a double.
+const T_NONE: i32 = 0;
+
+const T_INT: i32 = 1;
+
+const T_FLOAT: i32 = 2;
+
+const T_LONG: i32 = 3;
+
+const T_DOUBLE: i32 = 4;
+
+const T_REF: i32 = 5;
+
+const T_HIGH: i32 = 6;
+
+// The count of temporary registers.
+const TEMPS: i32 = 4;
+
+// The kind of each JVM opcode, as the constants K_ name them, or 32 for an
+// opcode that the dexer refuses. kind_of gives the Kind of an opcode.
+const KINDS: i32[] = [
+  0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,  // 0
+  2, 2, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,  // 16
+  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 6, 6,  // 32
+  6, 6, 6, 6, 6, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,  // 48
+  5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 7,  // 64
+  7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8,  // 80
+  9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9,  // 96
+  9, 9, 9, 9, 10, 10, 10, 10, 9, 9, 9, 9, 9, 9, 9, 9,  // 112
+  9, 9, 9, 9, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,  // 128
+  10, 10, 10, 10, 12, 12, 12, 12, 12, 13, 13, 13, 13, 13, 13, 14,  // 144
+  14, 14, 14, 14, 14, 14, 14, 15, 32, 32, 16, 16, 17, 17, 17, 17,  // 160
+  17, 17, 18, 19, 20, 21, 22, 22, 22, 22, 32, 23, 24, 25, 26, 27,  // 176
+  28, 29, 30, 30, 32, 31, 13, 13, 15, 32,  // 192
+];
+
+// The type of the value of each JVM opcode, as the constants T_ name them.
+const VALUE_TYPES: i32[] = [
+  0, 5, 1, 1, 1, 1, 1, 1, 1, 3, 3, 2, 2, 2, 4, 4,  // 0
+  1, 1, 0, 0, 0, 1, 3, 2, 4, 5, 1, 1, 1, 1, 3, 3,  // 16
+  3, 3, 2, 2, 2, 2, 4, 4, 4, 4, 5, 5, 5, 5, 1, 3,  // 32
+  2, 4, 5, 1, 1, 1, 1, 3, 2, 4, 5, 1, 1, 1, 1, 3,  // 48
+  3, 3, 3, 2, 2, 2, 2, 4, 4, 4, 4, 5, 5, 5, 5, 1,  // 64
+  3, 2, 4, 5, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 80
+  1, 3, 2, 4, 1, 3, 2, 4, 1, 3, 2, 4, 1, 3, 2, 4,  // 96
+  1, 3, 2, 4, 1, 3, 2, 4, 1, 3, 1, 3, 1, 3, 1, 3,  // 112
+  1, 3, 1, 3, 0, 1, 1, 1, 3, 3, 3, 2, 2, 2, 4, 4,  // 128
+  4, 1, 1, 1, 3, 2, 2, 4, 4, 1, 1, 1, 1, 1, 1, 1,  // 144
+  1, 1, 1, 1, 1, 5, 5, 0, 0, 0, 1, 1, 1, 3, 2, 4,  // 160
+  5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 176
+  0, 0, 5, 5, 0, 0, 5, 5, 0, 0,  // 192
+];
+
+// The Dalvik opcode of each JVM opcode, the value of a constant, or the
+// local of a load or a store of the short form, or -1.
+const DALVIK: i32[] = [
+  0, 0, -1, 0, 1, 2, 3, 4, 5, 0, 1, 0, 1, 2, 0, 1,  // 0
+  0, 0, 0, 0, 0, -1, -1, -1, -1, -1, 0, 1, 2, 3, 0, 1,  // 16
+  2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 68, 69,  // 32
+  68, 69, 70, 72, 73, 74, -1, -1, -1, -1, -1, 0, 1, 2, 3, 0,  // 48
+  1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 75,  // 64
+  76, 75, 76, 77, 79, 80, 81, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 80
+  144, 155, 166, 171, 145, 156, 167, 172, 146, 157, 168, 173, 147, 158, 169, 174,  // 96
+  148, 159, 170, 175, 123, 125, 127, 128, 152, 163, 153, 164, 154, 165, 149, 160,  // 112
+  150, 161, 151, 162, 0, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139,  // 128
+  140, 141, 142, 143, 49, 45, 46, 47, 48, 56, 57, 58, 59, 60, 61, 50,  // 144
+  51, 52, 53, 54, 55, 50, 51, 0, 0, 0, 43, 44, 15, 16, 15, 16,  // 160
+  17, 14, 0, 0, 0, 0, 116, 118, 119, 120, 0, 0, 0, 0, 0, 0,  // 176
+  0, 0, 29, 30, 0, 0, 56, 57, 0, 0,  // 192
+];
+
+// The result type of a unary operation, the shape of a stack operation, or
+// 1 for a shift of a long.
+const EXTRA: i32[] = [
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 0
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 16
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 32
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 48
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 64
+  0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8,  // 80
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 96
+  0, 0, 0, 0, 1, 3, 2, 4, 0, 1, 0, 1, 0, 1, 0, 0,  // 112
+  0, 0, 0, 0, 0, 3, 2, 4, 1, 2, 4, 1, 3, 4, 1, 3,  // 128
+  2, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 144
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 160
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 176
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 192
+];
+
+// The length of each JVM instruction, or 0 when it has its own length.
+const LENGTHS: i32[] = [
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,  // 0
+  2, 3, 2, 3, 3, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1,  // 16
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,  // 32
+  1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1,  // 48
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,  // 64
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,  // 80
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,  // 96
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,  // 112
+  1, 1, 1, 1, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,  // 128
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 3, 3,  // 144
+  3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 0, 0, 1, 1, 1, 1,  // 160
+  1, 1, 3, 3, 3, 3, 3, 3, 3, 5, 5, 3, 2, 3, 1, 1,  // 176
+  3, 3, 1, 1, 0, 4, 3, 3, 5, 5,  // 192
+];
+
+// The form of the operands of each JVM opcode: 0 none, 1 a signed byte, 2
+// a signed short, 3 an unsigned byte, 4 an unsigned short, 5 a branch of 16
+// bits, 6 a branch of 32 bits, 7 iinc, 8 multianewarray.
+const FORMS: i32[] = [
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 0
+  1, 2, 3, 4, 4, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0,  // 16
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 32
+  0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0,  // 48
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 64
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 80
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 96
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 112
+  0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 128
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 5, 5, 5, 5, 5, 5,  // 144
+  5, 5, 5, 5, 5, 5, 5, 5, 5, 3, 0, 0, 0, 0, 0, 0,  // 160
+  0, 0, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 4, 0, 0,  // 176
+  4, 4, 0, 0, 0, 8, 5, 5, 6, 6,  // 192
+];
+
+// One JVM instruction. `a` is the index of a local, a constant, an index of
+// the constant pool or the target of a branch. `b` is the constant of iinc
+// or the count of the dimensions of multianewarray. A switch holds its
+// default target first in `targets`, then the target of each of its
+// `keys`.
+struct Insn { at: i32, op: i32, a: i32, b: i32, targets: i32[], keys: i32[], next: i32 }
+
+function u8_of(b: u8[], i: i32): i32 {
+  return if (i >= 0 && i < b.len()) { b[i] as i32 } else { 0 };
+}
+
+function s8_of(b: u8[], i: i32): i32 {
+  let v = u8_of(b, i);
+  return if (v >= 128) { v - 256 } else { v };
+}
+
+function u16_of(b: u8[], i: i32): i32 {
+  return u8_of(b, i) << 8 | u8_of(b, i + 1);
+}
+
+function s16_of(b: u8[], i: i32): i32 {
+  let v = u16_of(b, i);
+  return if (v >= 32768) { v - 65536 } else { v };
+}
+
+function s32_of(b: u8[], i: i32): i32 {
+  return u16_of(b, i) << 16 | u16_of(b, i + 2);
+}
+
+// The operands `a` and `b` of the instruction at `at`, by the form of its
+// opcode `op`.
+function operands(b: u8[], at: i32, op: i32): (i32, i32) {
+  let f = FORMS[op];
+  if (f == 1) {
+    return (s8_of(b, at + 1), 0);
+  }
+  if (f == 2) {
+    return (s16_of(b, at + 1), 0);
+  }
+  if (f == 3) {
+    return (u8_of(b, at + 1), 0);
+  }
+  if (f == 4) {
+    return (u16_of(b, at + 1), 0);
+  }
+  if (f == 5) {
+    return (at + s16_of(b, at + 1), 0);
+  }
+  if (f == 6) {
+    return (at + s32_of(b, at + 1), 0);
+  }
+  return if (f == 7) { (u8_of(b, at + 1), s8_of(b, at + 2)) } else if (f == 8) { (u16_of(b, at + 1), u8_of(b, at + 3)) } else { (0, 0) };
+}
+
+// The instruction of the opcode `wide` at `at`: a load, a store, ret or
+// iinc with an index of 16 bits.
+function wide_insn(b: u8[], at: i32): Insn {
+  let op = u8_of(b, at + 1);
+  let none: i32[] = [];
+  if (op == 132) {
+    return Insn { at: at, op: op, a: u16_of(b, at + 2), b: s16_of(b, at + 4), targets: none, keys: none, next: at + 6 };
+  }
+  return Insn { at: at, op: op, a: u16_of(b, at + 2), b: 0, targets: none, keys: none, next: at + 4 };
+}
+
+// The tableswitch or the lookupswitch at `at`. Its table starts at the next
+// offset that is a multiple of four.
+function switch_insn(b: u8[], at: i32, op: i32): Result[Insn, string] {
+  let p = (at + 4) / 4 * 4;
+  let targets = [at + s32_of(b, p)];
+  let keys: i32[] = [];
+  let (count, first, step) = if (op == 170) { (s32_of(b, p + 8) - s32_of(b, p + 4) + 1, p + 12, 4) } else { (s32_of(b, p + 4), p + 8, 8) };
+  if (count < 0 || first + step * count > b.len()) {
+    return Err("a switch at " + at.to_string() + " goes past the end of the code");
+  }
+  for k in 0..count {
+    let q = first + step * k;
+    keys = keys.append(if (op == 170) { s32_of(b, p + 4) + k } else { s32_of(b, q) });
+    targets = targets.append(at + s32_of(b, if (op == 170) { q } else { q + 4 }));
+  }
+  return Ok(Insn { at: at, op: op, a: 0, b: 0, targets: targets, keys: keys, next: first + step * count });
+}
+
+function insn_at(b: u8[], at: i32): Result[Insn, string] {
+  let op = u8_of(b, at);
+  if (op == 196) {
+    return Ok(wide_insn(b, at));
+  }
+  if (op == 170 || op == 171) {
+    return switch_insn(b, at, op);
+  }
+  if (op > 201 || LENGTHS[op] == 0) {
+    return Err("the opcode " + op.to_string() + " at " + at.to_string() + " is not a JVM opcode");
+  }
+  let (a, x) = operands(b, at, op);
+  return Ok(Insn { at: at, op: op, a: a, b: x, targets: [], keys: [], next: at + LENGTHS[op] });
+}
+
+// The instructions of the bytecode `b`.
+function decode(b: u8[]): Result[Insn[], string] {
+  let out: Insn[] = [];
+  let at = 0;
+  while (at < b.len()) {
+    let i = insn_at(b, at)?;
+    out = out.append(i);
+    at = i.next;
+  }
+  return Ok(out);
+}
+
+// The kind of the opcode `op`.
+// One arm for each kind of JVM instruction.
+// fern-lint: allow cyclomatic-complexity
+function kind_of(op: i32): Kind {
+  return match (KINDS[op]) {
+    K_NOP => Nop,
+    K_CONST => Const,
+    K_PUSH => Push,
+    K_LDC => Ldc,
+    K_LOAD => Load,
+    K_STORE => Store,
+    K_ALOAD => ArrayLoad,
+    K_ASTORE => ArrayStore,
+    K_STACK => Stack,
+    K_BINOP => Binary,
+    K_UNOP => Unary,
+    K_IINC => Iinc,
+    K_CMP => Compare,
+    K_IF1 => If1,
+    K_IF2 => If2,
+    K_GOTO => Goto,
+    K_SWITCH => Switch,
+    K_RETURN => Return,
+    K_GETSTATIC => FieldOf(GetStatic),
+    K_PUTSTATIC => FieldOf(PutStatic),
+    K_GETFIELD => FieldOf(GetField),
+    K_PUTFIELD => FieldOf(PutField),
+    K_INVOKE => Invoke,
+    K_NEW => ObjectOf(New),
+    K_NEWARRAY => ObjectOf(NewArray),
+    K_ANEWARRAY => ObjectOf(RefArray),
+    K_LENGTH => Length,
+    K_THROW => Throw,
+    K_CHECKCAST => ObjectOf(CheckCast),
+    K_INSTANCEOF => ObjectOf(InstanceOf),
+    K_MONITOR => Monitor,
+    K_MULTI => ObjectOf(MultiArray),
+    _ => Refused(bad_text(op)),
+  };
+}
+
+// The local of a load, a store or iinc.
+function local_of(i: Insn): i32 {
+  let k = KINDS[i.op];
+  return if ((k == K_LOAD || k == K_STORE) && DALVIK[i.op] >= 0) { DALVIK[i.op] } else { i.a };
+}
+
+// The count of slots of a value of the type `t`.
+function slots(t: i32): i32 {
+  return if (t == T_LONG || t == T_DOUBLE) { 2 } else if (t == T_NONE) { 0 } else { 1 };
+}
+
+// The value of `values` at the index of the first letter of `d` in
+// `letters`, else `other`.
+function by_letter(d: string, letters: string, values: i32[], other: i32): i32 {
+  for k in 0..letters.len() {
+    if (letters[k] == d[0]) {
+      return values[k];
+    }
+  }
+  return other;
+}
+
+// The type of a slot that holds a value of the descriptor `d`.
+function type_of(d: string): i32 {
+  return by_letter(d, "JDFL[V", [T_LONG, T_DOUBLE, T_FLOAT, T_REF, T_REF, T_NONE], T_INT);
+}
+
+// The descriptor of the class `name` of the constant pool: an array keeps
+// its name, which is a descriptor.
+function class_desc(name: string): string {
+  return if (name.starts_with("[")) { name } else { "L" + name + ";" };
+}
+
+// The parameters and the result of the method descriptor `d`.
+function params_of(d: string): Result[(string[], string), string] {
+  let Some(s) = classfile.signature(d) else {
+    return Err(d + " is not the descriptor of a method");
+  };
+  let out: string[] = [];
+  for t in s.params {
+    out = out.append(t.descriptor());
+  }
+  return Ok((out, s.result.descriptor()));
+}
+
+function param_slots(params: string[]): i32 {
+  let n = 0;
+  for p in params {
+    n += slots(type_of(p));
+  }
+  return n;
+}
+
+// The types of the slots before an instruction, and the descriptor of each
+// reference, or "" when it is not known.
+struct Frame { stack: i32[], sdesc: string[], locals: i32[], ldesc: string[] }
+
+function pushed(f: Frame, t: i32, desc: string): Frame {
+  if (slots(t) == 2) {
+    return Frame { ...f, stack: f.stack.append(t).append(T_HIGH), sdesc: f.sdesc.append("").append("") };
+  }
+  return if (t == T_NONE) { f } else { Frame { ...f, stack: f.stack.append(t), sdesc: f.sdesc.append(desc) } };
+}
+
+function popped(f: Frame, n: i32): Frame {
+  let keep = (f.stack.len() - n).max(0);
+  return Frame { ...f, stack: f.stack.take(keep), sdesc: f.sdesc.take(keep) };
+}
+
+// `f` with the local `i` set to a value of the type `t`. A long or a
+// double that the store cuts loses its type.
+function stored(f: Frame, i: i32, t: i32, desc: string): Frame {
+  let (ls, ds) = (f.locals, f.ldesc);
+  if (i > 0 && slots(ls[i - 1]) == 2) {
+    ls = ls.with(i - 1, T_NONE);
+  }
+  let end = i + slots(t);
+  if (end < ls.len() && ls[end] == T_HIGH) {
+    ls = ls.with(end, T_NONE);
+  }
+  ls = ls.with(i, t);
+  ds = ds.with(i, desc);
+  if (slots(t) == 2) {
+    ls = ls.with(i + 1, T_HIGH);
+  }
+  return Frame { ...f, locals: ls, ldesc: ds };
+}
+
+// The frame at the start of the method `m` of `c`.
+function entry_frame(c: classfile.Class, m: classfile.Method, code: classfile.Code): Result[Frame, string] {
+  let none: string[] = [];
+  let f = Frame { stack: [], sdesc: none, locals: [], ldesc: none };
+  for _ in 0..code.max_locals {
+    f = Frame { ...f, locals: f.locals.append(T_NONE), ldesc: f.ldesc.append("") };
+  }
+  let at = 0;
+  if (!classfile.has(m.access, classfile.STATIC)) {
+    f = stored(f, 0, T_REF, class_desc(c.name));
+    at = 1;
+  }
+  let (params, _) = params_of(m.descriptor)?;
+  for p in params {
+    f = stored(f, at, type_of(p), p);
+    at += slots(type_of(p));
+  }
+  return Ok(f);
+}
+
+// A constant that ldc pushes: the bits of an int or a float, the bits of
+// a long or a double, or a string or a class. `t` is the type of its slot.
+enum Loaded { Word(i32, i32), Wide(i64, i32), Text(string), Type(string) }
+
+// The constant `index` that ldc pushes.
+function loaded(c: classfile.Class, index: i32): Result[Loaded, string] {
+  let no = "ldc of the constant " + index.to_string() + ", which is not a number, a string or a class";
+  return match (c.pool[index]) {
+    Int(n) => Ok(Word(n, T_INT)),
+    Float(x) => Ok(Word(f32_bits(x), T_FLOAT)),
+    Long(n) => Ok(Wide(n, T_LONG)),
+    Double(x) => Ok(Wide(f64_bits(x), T_DOUBLE)),
+    StringOf(s) => Ok(Text(s)),
+    ClassOf(n) => Ok(Type(class_desc(n))),
+    Unused => Err(no),
+    Utf8(_) => Err(no),
+    FieldRef(_) => Err(no),
+    MethodRef(_) => Err(no),
+    InterfaceRef(_) => Err(no),
+    NameType(_, _) => Err(no),
+    Handle(_, _) => Err("ldc of a method handle, which the dexer does not take yet"),
+    MethodType(_) => Err("ldc of a method type, which the dexer does not take yet"),
+    Dynamic(_, _, _) => Err("ldc of a dynamic constant, which the dexer does not take yet"),
+    InvokeDynamic(_, _, _) => Err(no),
+    ModuleOf(_) => Err(no),
+    PackageOf(_) => Err(no),
+  };
+}
+
+// The type and the descriptor of the slot of the constant `l`.
+function ldc_type(l: Loaded): (i32, string) {
+  return match (l) {
+    Word(_, t) => (t, ""),
+    Wide(_, t) => (t, ""),
+    Text(_) => (T_REF, "Ljava/lang/String;"),
+    Type(_) => (T_REF, "Ljava/lang/Class;"),
+  };
+}
+
+// The field or the method `index` of the constant pool.
+function ref_at(c: classfile.Class, index: i32): Result[classfile.Ref, string] {
+  return c.ref_at(index).ok_or("the constant " + index.to_string() + " is not a field or a method");
+}
+
+function class_at(c: classfile.Class, index: i32): Result[string, string] {
+  return c.class_at(index).ok_or("the constant " + index.to_string() + " is not a class");
+}
+
+// The descriptor of the arrays of the type `atype` of newarray.
+function primitive_array(atype: i32): string {
+  let letters = ["Z", "C", "F", "D", "B", "S", "I", "J"];
+  return if (atype >= 4 && atype <= 11) { "[" + letters[atype - 4] } else { "[I" };
+}
+
+// The slots of the stack operation `shape` of EXTRA: the count that it
+// takes from the top of the stack, then the slot of the input that each
+// slot of the output copies.
+function shape_of(shape: i32): (i32, i32[]) {
+  let ins = [1, 2, 1, 2, 3, 2, 3, 4, 2];
+  let outs = [[], [], [0, 0], [1, 0, 1], [2, 0, 1, 2], [0, 1, 0, 1], [1, 2, 0, 1, 2], [2, 3, 0, 1, 2, 3], [1, 0]];
+  return (ins[shape], outs[shape]);
+}
+
+function stack_effect(f: Frame, shape: i32): Frame {
+  let (n, out) = shape_of(shape);
+  let base = f.stack.len() - n;
+  let g = popped(f, n);
+  for k in out {
+    g = Frame { ...g, stack: g.stack.append(f.stack[base + k]), sdesc: g.sdesc.append(f.sdesc[base + k]) };
+  }
+  return g;
+}
+
+// The frame after the field instruction `k`.
+function field_effect(c: classfile.Class, f: Frame, i: Insn, k: FieldOp): Result[Frame, string] {
+  let r = ref_at(c, i.a)?;
+  let t = type_of(r.descriptor);
+  return Ok(match (k) {
+    GetStatic => pushed(f, t, r.descriptor),
+    PutStatic => popped(f, slots(t)),
+    GetField => pushed(popped(f, 1), t, r.descriptor),
+    PutField => popped(f, slots(t) + 1),
+  });
+}
+
+function invoke_effect(c: classfile.Class, f: Frame, i: Insn): Result[Frame, string] {
+  let r = ref_at(c, i.a)?;
+  let (params, ret) = params_of(r.descriptor)?;
+  let receiver = if (i.op == 184) { 0 } else { 1 };
+  return Ok(pushed(popped(f, param_slots(params) + receiver), type_of(ret), ret));
+}
+
+// The frame after an array load of `op`: the element of the array.
+function array_load(f: Frame, op: i32): Frame {
+  let d = f.sdesc[f.stack.len() - 2];
+  let elem = if (d.starts_with("[")) { slice_unchecked(d, 1, d.len()).to_owned() } else { "" };
+  return pushed(popped(f, 2), VALUE_TYPES[op], elem);
+}
+
+// The frame after the reference instruction `k`: new, the arrays,
+// checkcast and instanceof.
+function object_effect(c: classfile.Class, f: Frame, i: Insn, k: ObjectOp): Result[Frame, string] {
+  return Ok(match (k) {
+    New => pushed(f, T_REF, class_desc(class_at(c, i.a)?)),
+    NewArray => pushed(popped(f, 1), T_REF, primitive_array(i.a)),
+    RefArray => pushed(popped(f, 1), T_REF, "[" + class_desc(class_at(c, i.a)?)),
+    CheckCast => pushed(popped(f, 1), T_REF, class_desc(class_at(c, i.a)?)),
+    InstanceOf => pushed(popped(f, 1), T_INT, ""),
+    MultiArray => pushed(popped(f, i.b), T_REF, class_desc(class_at(c, i.a)?)),
+  });
+}
+
+// The frame after the binary operation `op`. A shift takes an int and a
+// value of the type of `op`.
+function binary_effect(f: Frame, op: i32): Frame {
+  let t = VALUE_TYPES[op];
+  let n = if (EXTRA[op] == 1) { 3 } else { 2 * slots(t) };
+  return pushed(popped(f, n), t, "");
+}
+
+// The frame after the instruction `i` from `f`.
+// One arm for each kind of JVM instruction.
+// fern-lint: allow cyclomatic-complexity
+function effect(c: classfile.Class, f: Frame, i: Insn): Result[Frame, string] {
+  let t = VALUE_TYPES[i.op];
+  return match (kind_of(i.op)) {
+    Nop => Ok(f),
+    Const => Ok(pushed(f, t, "")),
+    Push => Ok(pushed(f, T_INT, "")),
+    Ldc => {
+      let (lt, ld) = ldc_type(loaded(c, i.a)?);
+      Ok(pushed(f, lt, ld))
+    },
+    Load => Ok(pushed(f, t, f.ldesc[local_of(i)])),
+    Store => Ok(stored(popped(f, slots(t)), local_of(i), t, f.sdesc[f.stack.len() - 1])),
+    ArrayLoad => Ok(array_load(f, i.op)),
+    ArrayStore => Ok(popped(f, 2 + slots(t))),
+    Stack => Ok(stack_effect(f, EXTRA[i.op])),
+    Binary => Ok(binary_effect(f, i.op)),
+    Unary => Ok(pushed(popped(f, slots(t)), EXTRA[i.op], "")),
+    Compare => Ok(pushed(popped(f, 2 * slots(t)), T_INT, "")),
+    Iinc => Ok(f),
+    If1 => Ok(popped(f, 1)),
+    If2 => Ok(popped(f, 2)),
+    Goto => Ok(f),
+    Switch => Ok(popped(f, 1)),
+    Return => Ok(popped(f, slots(t))),
+    FieldOf(k) => field_effect(c, f, i, k),
+    Invoke => invoke_effect(c, f, i),
+    ObjectOf(k) => object_effect(c, f, i, k),
+    Length => Ok(pushed(popped(f, 1), T_INT, "")),
+    Throw => Ok(popped(f, 1)),
+    Monitor => Ok(popped(f, 1)),
+    Refused(why) => Err(why),
+  };
+}
+
+// Why the dexer does not take the opcode `op`.
+function bad_text(op: i32): string {
+  if (op == 186) {
+    return "invokedynamic, which the dexer does not take yet";
+  }
+  let ops = [168, 169, 201];
+  let names = ["jsr", "ret", "jsr_w"];
+  for k in 0..ops.len() {
+    if (ops[k] == op) {
+      return names[k] + ", which the dexer does not take";
+    }
+  }
+  return "the opcode " + op.to_string() + ", which is not a JVM opcode";
+}
+
+// The offsets that the instruction `i` can go to, in this method.
+function successors(i: Insn): i32[] {
+  let k = KINDS[i.op];
+  if (k == K_GOTO) {
+    return [i.a];
+  }
+  if (k == K_IF1 || k == K_IF2) {
+    return [i.next, i.a];
+  }
+  if (k == K_SWITCH) {
+    return i.targets;
+  }
+  return if (k == K_RETURN || k == K_THROW) { [] } else { [i.next] };
+}
+
+// The merge of two frames at the same offset, and whether `a` changed. A
+// slot whose types differ loses its type. A reference whose descriptors
+// differ loses its descriptor.
+function merged(a: Frame, b: Frame): Result[(Frame, boolean), string] {
+  if (a.stack.len() != b.stack.len()) {
+    return Err("the stack has two depths at one offset");
+  }
+  let (stack, sdesc, c1) = merged_slots(a.stack, a.sdesc, b.stack, b.sdesc);
+  let (locals, ldesc, c2) = merged_slots(a.locals, a.ldesc, b.locals, b.ldesc);
+  return Ok((Frame { stack: stack, sdesc: sdesc, locals: locals, ldesc: ldesc }, c1 || c2));
+}
+
+// The merge of the slots `at` and `ad` with `bt` and `bd`, and whether it
+// changed the slots of `a`.
+function merged_slots(at: i32[], ad: string[], bt: i32[], bd: string[]): (i32[], string[], boolean) {
+  let (ts, ds, changed) = (at, ad, false);
+  for k in 0..at.len() {
+    let t = if (at[k] == bt[k]) { at[k] } else { T_NONE };
+    let d = if (ad[k] == bd[k]) { ad[k] } else { "" };
+    if (t != at[k] || d != ad[k]) {
+      ts = ts.with(k, t);
+      ds = ds.with(k, d);
+      changed = true;
+    }
+  }
+  return (ts, ds, changed);
+}
+
+// The frames of a method, by the index of each instruction, and whether
+// each instruction is reachable.
+struct Flow { frames: Frame[], reached: boolean[] }
+
+// The index of the instruction at each offset of the code, or -1.
+function index_by_offset(insns: Insn[], size: i32): i32[] {
+  let out: i32[] = [];
+  for _ in 0..size + 1 {
+    out = out.append(-1);
+  }
+  for k in 0..insns.len() {
+    out = out.with(insns[k].at, k);
+  }
+  return out;
+}
+
+// The frame of each instruction, from the analysis of the types of the
+// stack and of the locals, as the verifier of the JVM does it.
+function analyzed(c: classfile.Class, m: classfile.Method, code: classfile.Code, insns: Insn[], index: i32[]): Result[Flow, string] {
+  let empty = entry_frame(c, m, code)?;
+  let flow = Flow { frames: [], reached: [] };
+  for _ in insns {
+    flow = Flow { frames: flow.frames.append(empty), reached: flow.reached.append(false) };
+  }
+  flow = Flow { ...flow, reached: flow.reached.with(0, true) };
+  let work = [0];
+  while (work.len() > 0) {
+    let k = work[work.len() - 1];
+    work = work.take(work.len() - 1);
+    let (next, more) = step_flow(c, code, insns, index, flow, k)?;
+    flow = next;
+    work = work.concat(more);
+  }
+  return Ok(flow);
+}
+
+// The flow after the instruction `k` gives its frame to the instructions
+// after it and to its handlers, and the instructions whose frames changed.
+function step_flow(c: classfile.Class, code: classfile.Code, insns: Insn[], index: i32[], flow0: Flow, k: i32): Result[(Flow, i32[]), string] {
+  let i = insns[k];
+  let f = flow0.frames[k];
+  let after = effect(c, f, i)?;
+  let flow = flow0;
+  let changed: i32[] = [];
+  for t in successors(i) {
+    let (next, more) = joined(flow, index, t, after)?;
+    flow = next;
+    changed = changed.concat(more);
+  }
+  for h in code.handlers {
+    if (i.at >= h.start && i.at < h.end) {
+      let caught = if (h.catch_type == "") { "Ljava/lang/Throwable;" } else { class_desc(h.catch_type) };
+      let (next, more) = joined(flow, index, h.target, Frame { ...f, stack: [T_REF], sdesc: [caught] })?;
+      flow = next;
+      changed = changed.concat(more);
+    }
+  }
+  return Ok((flow, changed));
+}
+
+// The flow with the frame `f` joined into the instruction at `target`, and
+// that instruction when its frame changed.
+function joined(flow: Flow, index: i32[], target: i32, f: Frame): Result[(Flow, i32[]), string] {
+  let j = if (target >= 0 && target < index.len()) { index[target] } else { -1 };
+  if (j < 0) {
+    return Err("a branch goes to " + target.to_string() + ", which is not an instruction");
+  }
+  if (!flow.reached[j]) {
+    return Ok((Flow { frames: flow.frames.with(j, f), reached: flow.reached.with(j, true) }, [j]));
+  }
+  let (g, changed) = merged(flow.frames[j], f)?;
+  return Ok(if (changed) { (Flow { ...flow, frames: flow.frames.with(j, g) }, [j]) } else { (flow, []) });
+}
+
+// A branch whose offset the generator writes when it knows the addresses:
+// the unit of the offset, the address of the branch, the offset of its
+// target in the JVM code, and whether the offset has 32 bits.
+struct Patch { at: i32, base: i32, target: i32, wide: boolean }
+
+// The table of a switch, which follows the code: the address of the
+// switch, the unit of the offset of the table, and the keys and the
+// targets of the switch.
+struct Table { base: i32, at: i32, packed: boolean, keys: i32[], targets: i32[] }
+
+// The code as it grows.
+struct Gen { units: i32[], fixups: dexfile.Fixup[], patches: Patch[], tables: Table[], outs: i32 }
+
+// The registers of a method: its frame, its parameters, the register of
+// its monitor, and where the slots of the stack start.
+struct Regs { count: i32, ins: i32, lock: i32, stack: i32, max_stack: i32 }
+
+function reg_stack(r: Regs, k: i32): i32 {
+  return r.stack + k;
+}
+
+function reg_local(r: Regs, i: i32): i32 {
+  return if (i < r.ins) { r.count - r.ins + i } else { r.stack + r.max_stack + i - r.ins };
+}
+
+function emit(g: Gen, units: i32[]): Gen {
+  return Gen { ...g, units: g.units.concat(units) };
+}
+
+// `g` with `units`, whose unit `rel` gets the index of a reference.
+function emit_ref(g: Gen, units: i32[], rel: i32, kind: i32, text: string, name: string, ret: string, params: string[]): Gen {
+  let f = dexfile.Fixup { at: g.units.len() + rel, kind: kind, text: text, name: name, ret: ret, params: params };
+  return Gen { ...g, units: g.units.concat(units), fixups: g.fixups.append(f) };
+}
+
+// `g` with `units`, whose unit `rel` gets the offset to the instruction at
+// the JVM offset `target`.
+function emit_branch(g: Gen, units: i32[], rel: i32, target: i32, wide: boolean): Gen {
+  let p = Patch { at: g.units.len() + rel, base: g.units.len(), target: target, wide: wide };
+  return Gen { ...g, units: g.units.concat(units), patches: g.patches.append(p) };
+}
+
+// The move of a value of the type `t` from `src` to `dst`.
+function move(g: Gen, dst: i32, src: i32, t: i32): Gen {
+  if (dst == src) {
+    return g;
+  }
+  let base = if (slots(t) == 2) { 0x04 } else if (t == T_REF) { 0x07 } else { 0x01 };
+  if (dst <= 15 && src <= 15) {
+    return emit(g, [base | (src << 4 | dst) << 8]);
+  }
+  return emit(g, [base + 1 | dst << 8, src]);
+}
+
+function const_int(g: Gen, dst: i32, v: i32): Gen {
+  if (v >= -8 && v <= 7 && dst <= 15) {
+    return emit(g, [0x12 | (dst | (v & 15) << 4) << 8]);
+  }
+  if (v >= -32768 && v <= 32767) {
+    return emit(g, [0x13 | dst << 8, v & 0xFFFF]);
+  }
+  return emit(g, [0x14 | dst << 8, v & 0xFFFF, v >> 16 & 0xFFFF]);
+}
+
+function const_wide(g: Gen, dst: i32, v: i64): Gen {
+  if (v >= -(32768 as i64) && v <= 32767 as i64) {
+    return emit(g, [0x16 | dst << 8, (v & 0xFFFF as i64) as i32]);
+  }
+  if (v >= -(2147483648 as i64) && v <= 2147483647 as i64) {
+    return emit(g, [0x17 | dst << 8, (v & 0xFFFF as i64) as i32, (v >> 16 as i64 & 0xFFFF as i64) as i32]);
+  }
+  let w = (k: i64): i32 => (v >> 16 as i64 * k & 0xFFFF as i64) as i32;
+  return emit(g, [0x18 | dst << 8, w(0 as i64), w(1 as i64), w(2 as i64), w(3 as i64)]);
+}
+
+// A low register for the operand `reg` of an instruction whose registers
+// have four bits: `reg`, or the temporary `temp` with the value moved in.
+function low_src(g: Gen, reg: i32, t: i32, temp: i32): (Gen, i32) {
+  return if (reg <= 15) { (g, reg) } else { (move(g, temp, reg, t), temp) };
+}
+
+// An instruction of the format 12x, such as neg-int or int-to-long, from
+// `src` of the type `st` to `dst` of the type `dt`.
+function op12x(g0: Gen, op: i32, dst: i32, dt: i32, src: i32, st: i32): Gen {
+  let (g, s) = low_src(g0, src, st, 0);
+  let d = if (dst <= 15) { dst } else { 2 };
+  return move(emit(g, [op | (s << 4 | d) << 8]), dst, d, dt);
+}
+
+// An instruction of the format 22c, 22s or 22t: the register `a` of the
+// type `at`, which the instruction writes with `a_out`, the register `b` of
+// the type `bt`, and the unit `extra` after them. `then` gives the
+// reference or the branch of that unit.
+function op22(g0: Gen, op: i32, a: i32, at: i32, a_out: boolean, b: i32, bt: i32, extra: i32): (Gen, i32) {
+  let (g1, rb) = low_src(g0, b, bt, 0);
+  let (g, ra) = if (a <= 15) { (g1, a) } else if (a_out) { (g1, 2) } else { low_src(g1, a, at, 2) };
+  let at_unit = g.units.len();
+  return (emit(g, [op | (rb << 4 | ra) << 8, extra]), at_unit);
+}
+
+// The move of the result of `op22` back to `a`, when it went to a
+// temporary.
+function op22_out(g: Gen, a: i32, at: i32): Gen {
+  return if (a <= 15) { g } else { move(g, a, 2, at) };
+}
+
+// An instruction of the format 22c with a reference.
+function op22c(g0: Gen, op: i32, a: i32, at: i32, a_out: boolean, b: i32, bt: i32, kind: i32, text: string, name: string, ret: string): Gen {
+  let (g, unit) = op22(g0, op, a, at, a_out, b, bt, 0);
+  let f = dexfile.Fixup { at: unit + 1, kind: kind, text: text, name: name, ret: ret, params: [] };
+  return if (a_out) { op22_out(Gen { ...g, fixups: g.fixups.append(f) }, a, at) } else { Gen { ...g, fixups: g.fixups.append(f) } };
+}
+
+// The variant of a field instruction for the descriptor `d`: 0 for an int
+// or a float, then wide, object, boolean, byte, char and short.
+function variant(d: string): i32 {
+  return by_letter(d, "JDL[ZBCS", [1, 1, 2, 2, 3, 4, 5, 6], 0);
+}
+
+// The method that the generator translates.
+struct Ctx { class: classfile.Class, method: classfile.Method, regs: Regs }
+
+// The constant of iconst, lconst, fconst, dconst or aconst_null.
+function emit_const(g: Gen, r: i32, op: i32): Gen {
+  let t = VALUE_TYPES[op];
+  let v = DALVIK[op];
+  if (t == T_FLOAT) {
+    return const_int(g, r, f32_bits(v as f32));
+  }
+  if (t == T_DOUBLE) {
+    return const_wide(g, r, f64_bits(v as f64));
+  }
+  return if (t == T_LONG) { const_wide(g, r, v as i64) } else { const_int(g, r, v) };
+}
+
+function emit_ldc(c: classfile.Class, g: Gen, r: i32, index: i32): Result[Gen, string] {
+  return Ok(match (loaded(c, index)?) {
+    Word(n, _) => const_int(g, r, n),
+    Wide(n, _) => const_wide(g, r, n),
+    Text(s) => emit_ref(g, [0x1A | r << 8, 0], 1, dexfile.STRING, s, "", "", []),
+    Type(d) => emit_ref(g, [0x1C | r << 8, 0], 1, dexfile.TYPE, d, "", "", []),
+  });
+}
+
+// An array load or store of `op` on the stack of the depth `d`. A byte
+// load or store on an array of booleans takes the instruction of the
+// booleans.
+function emit_array(x: Ctx, g: Gen, f: Frame, op: i32, store: boolean): Gen {
+  let d = f.stack.len();
+  let t = VALUE_TYPES[op];
+  let n = if (store) { slots(t) } else { 0 };
+  let array = d - 2 - n;
+  let boolean_array = f.sdesc[array] == "[Z" && (op == 51 || op == 84);
+  let dop = if (boolean_array) { DALVIK[op] - 1 } else { DALVIK[op] };
+  let value = if (store) { reg_stack(x.regs, d - n) } else { reg_stack(x.regs, array) };
+  return emit(g, [dop | value << 8, reg_stack(x.regs, array) | reg_stack(x.regs, array + 1) << 8]);
+}
+
+// The stack operation of `op`: each input goes to a temporary, then each
+// output takes its value. A long or a double moves as one value of two
+// slots.
+function emit_stack(x: Ctx, g0: Gen, f: Frame, op: i32): Gen {
+  let (n, out) = shape_of(EXTRA[op]);
+  if (out.len() == 0) {
+    return g0;
+  }
+  let base = f.stack.len() - n;
+  let g = g0;
+  let k = 0;
+  while (k < n) {
+    g = move(g, k, reg_stack(x.regs, base + k), f.stack[base + k]);
+    k += slots(f.stack[base + k]).max(1);
+  }
+  let p = 0;
+  while (p < out.len()) {
+    let t = f.stack[base + out[p]];
+    g = move(g, reg_stack(x.regs, base + p), out[p], t);
+    p += slots(t).max(1);
+  }
+  return g;
+}
+
+// A binary operation or a comparison of `op`: the result goes to the first
+// operand.
+function emit_math(x: Ctx, g: Gen, f: Frame, op: i32): Gen {
+  let d = f.stack.len();
+  let t = VALUE_TYPES[op];
+  let (a, b) = if (KINDS[op] == K_BINOP && EXTRA[op] == 1) { (d - 3, d - 1) } else { (d - 2 * slots(t), d - slots(t)) };
+  let (ra, rb) = (reg_stack(x.regs, a), reg_stack(x.regs, b));
+  return emit(g, [DALVIK[op] | ra << 8, ra | rb << 8]);
+}
+
+function emit_unop(x: Ctx, g: Gen, f: Frame, op: i32): Gen {
+  let t = VALUE_TYPES[op];
+  let r = reg_stack(x.regs, f.stack.len() - slots(t));
+  return op12x(g, DALVIK[op], r, EXTRA[op], r, t);
+}
+
+// iinc: add-int/lit8, or a constant and add-int for a larger constant.
+function emit_iinc(x: Ctx, g: Gen, i: Insn): Gen {
+  let r = reg_local(x.regs, i.a);
+  if (i.b >= -128 && i.b <= 127) {
+    return emit(g, [0xD8 | r << 8, r | (i.b & 255) << 8]);
+  }
+  return emit(const_int(g, 0, i.b), [0x90 | r << 8, r]);
+}
+
+function emit_if2(x: Ctx, g0: Gen, f: Frame, i: Insn): Gen {
+  let d = f.stack.len();
+  let t = VALUE_TYPES[i.op];
+  let (g, unit) = op22(g0, DALVIK[i.op], reg_stack(x.regs, d - 2), t, false, reg_stack(x.regs, d - 1), t, 0);
+  let p = Patch { at: unit + 1, base: unit, target: i.a, wide: false };
+  return Gen { ...g, patches: g.patches.append(p) };
+}
+
+// A switch: packed-switch or sparse-switch to its table, then a goto to its
+// default target.
+function emit_switch(x: Ctx, g: Gen, f: Frame, i: Insn): Gen {
+  let base = g.units.len();
+  let table = Table { base: base, at: base + 1, packed: i.op == 170, keys: i.keys, targets: i.targets.drop(1) };
+  let h = emit(Gen { ...g, tables: g.tables.append(table) }, [DALVIK[i.op] | reg_stack(x.regs, f.stack.len() - 1) << 8, 0, 0]);
+  return emit_branch(h, [0x2A, 0, 0], 1, i.targets[0], true);
+}
+
+function emit_return(x: Ctx, g0: Gen, f: Frame, op: i32): Gen {
+  let g = if (x.regs.lock >= 0) { emit(g0, [0x1E | x.regs.lock << 8]) } else { g0 };
+  let t = VALUE_TYPES[op];
+  return if (t == T_NONE) { emit(g, [0x0E]) } else { emit(g, [DALVIK[op] | reg_stack(x.regs, f.stack.len() - slots(t)) << 8]) };
+}
+
+function emit_field(x: Ctx, g: Gen, f: Frame, i: Insn, k: FieldOp): Result[Gen, string] {
+  let r = ref_at(x.class, i.a)?;
+  let d = f.stack.len();
+  let t = type_of(r.descriptor);
+  let v = variant(r.descriptor);
+  let cls = class_desc(r.class);
+  return Ok(match (k) {
+    GetStatic => emit_ref(g, [0x60 + v | reg_stack(x.regs, d) << 8, 0], 1, dexfile.FIELD, cls, r.name, r.descriptor, []),
+    PutStatic => emit_ref(g, [0x67 + v | reg_stack(x.regs, d - slots(t)) << 8, 0], 1, dexfile.FIELD, cls, r.name, r.descriptor, []),
+    GetField => op22c(g, 0x52 + v, reg_stack(x.regs, d - 1), t, true, reg_stack(x.regs, d - 1), T_REF, dexfile.FIELD, cls, r.name, r.descriptor),
+    PutField => op22c(g, 0x59 + v, reg_stack(x.regs, d - slots(t)), t, false, reg_stack(x.regs, d - slots(t) - 1), T_REF, dexfile.FIELD, cls, r.name, r.descriptor),
+  });
+}
+
+// Whether the class `c` has the private method `name` with the descriptor
+// `desc`, which ART calls with invoke-direct.
+function private_method(c: classfile.Class, name: string, desc: string): boolean {
+  for m in c.methods {
+    if (m.name == name && m.descriptor == desc && classfile.has(m.access, classfile.PRIVATE)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The Dalvik opcode of an invoke of `op` on the method `r`.
+function invoke_op(c: classfile.Class, op: i32, r: classfile.Ref): i32 {
+  let own = r.class == c.name && private_method(c, r.name, r.descriptor);
+  if (op == 183) {
+    return if (r.name == "<init>" || own) { 0x76 } else { 0x75 };
+  }
+  return if (op == 182 && own) { 0x76 } else { DALVIK[op] };
+}
+
+function emit_invoke(x: Ctx, g0: Gen, f: Frame, i: Insn): Result[Gen, string] {
+  let r = ref_at(x.class, i.a)?;
+  if (r.class == "java/lang/invoke/MethodHandle" || r.class == "java/lang/invoke/VarHandle") {
+    return Err("a call of " + r.class + "." + r.name + ", which needs invoke-polymorphic");
+  }
+  let (params, ret) = params_of(r.descriptor)?;
+  let count = param_slots(params) + (if (i.op == 184) { 0 } else { 1 });
+  let first = f.stack.len() - count;
+  let reg = if (count == 0) { 0 } else { reg_stack(x.regs, first) };
+  let g = emit_ref(g0, [invoke_op(x.class, i.op, r) | count << 8, 0, reg], 1, dexfile.METHOD, class_desc(r.class), r.name, ret, params);
+  g = Gen { ...g, outs: g.outs.max(count) };
+  let t = type_of(ret);
+  if (t == T_NONE) {
+    return Ok(g);
+  }
+  let result = if (slots(t) == 2) { 0x0B } else if (t == T_REF) { 0x0C } else { 0x0A };
+  return Ok(emit(g, [result | reg_stack(x.regs, first) << 8]));
+}
+
+// The class of `Array.newInstance` for the arrays of the descriptor `d`:
+// const-class for a class, and the field TYPE of the box of a primitive.
+function emit_component(g: Gen, r: i32, d: string): Gen {
+  let boxes = ["Z", "Ljava/lang/Boolean;", "B", "Ljava/lang/Byte;", "C", "Ljava/lang/Character;", "S", "Ljava/lang/Short;", "I", "Ljava/lang/Integer;", "J", "Ljava/lang/Long;", "F", "Ljava/lang/Float;", "D", "Ljava/lang/Double;"];
+  for k in 0..8 {
+    if (boxes[2 * k] == d) {
+      return emit_ref(g, [0x62 | r << 8, 0], 1, dexfile.FIELD, boxes[2 * k + 1], "TYPE", "Ljava/lang/Class;", []);
+    }
+  }
+  return emit_ref(g, [0x1C | r << 8, 0], 1, dexfile.TYPE, d, "", "", []);
+}
+
+// multianewarray: an int[] of the dimensions in v1, the class of the
+// component in v0, then Array.newInstance and check-cast.
+function emit_multi(x: Ctx, g0: Gen, f: Frame, i: Insn): Result[Gen, string] {
+  let desc = class_desc(class_at(x.class, i.a)?);
+  let first = f.stack.len() - i.b;
+  let g = const_int(g0, 2, i.b);
+  g = emit_ref(g, [0x23 | (2 << 4 | 1) << 8, 0], 1, dexfile.TYPE, "[I", "", "", []);
+  for k in 0..i.b {
+    g = emit(const_int(g, 2, k), [0x4B | reg_stack(x.regs, first + k) << 8, 1 | 2 << 8]);
+  }
+  g = emit_component(g, 0, slice_unchecked(desc, i.b, desc.len()).to_owned());
+  g = emit_ref(g, [0x77 | 2 << 8, 0, 0], 1, dexfile.METHOD, "Ljava/lang/reflect/Array;", "newInstance", "Ljava/lang/Object;", ["Ljava/lang/Class;", "[I"]);
+  let r = reg_stack(x.regs, first);
+  g = emit(Gen { ...g, outs: g.outs.max(2) }, [0x0C | r << 8]);
+  return Ok(emit_ref(g, [0x1F | r << 8, 0], 1, dexfile.TYPE, desc, "", "", []));
+}
+
+// The instructions of new, the arrays, checkcast and instanceof.
+function emit_object(x: Ctx, g: Gen, f: Frame, i: Insn, k: ObjectOp): Result[Gen, string] {
+  let d = f.stack.len();
+  let top = reg_stack(x.regs, d - 1);
+  return match (k) {
+    New => Ok(emit_ref(g, [0x22 | reg_stack(x.regs, d) << 8, 0], 1, dexfile.TYPE, class_desc(class_at(x.class, i.a)?), "", "", [])),
+    NewArray => Ok(op22c(g, 0x23, top, T_REF, true, top, T_INT, dexfile.TYPE, primitive_array(i.a), "", "")),
+    RefArray => Ok(op22c(g, 0x23, top, T_REF, true, top, T_INT, dexfile.TYPE, "[" + class_desc(class_at(x.class, i.a)?), "", "")),
+    CheckCast => Ok(emit_ref(g, [0x1F | top << 8, 0], 1, dexfile.TYPE, class_desc(class_at(x.class, i.a)?), "", "", [])),
+    InstanceOf => Ok(op22c(g, 0x20, top, T_INT, true, top, T_REF, dexfile.TYPE, class_desc(class_at(x.class, i.a)?), "", "")),
+    MultiArray => emit_multi(x, g, f, i),
+  };
+}
+
+// The Dalvik code of the instruction `i`, with the frame `f` before it.
+// One arm for each kind of JVM instruction.
+// fern-lint: allow cyclomatic-complexity
+function emit_insn(x: Ctx, g: Gen, f: Frame, i: Insn): Result[Gen, string] {
+  let d = f.stack.len();
+  let t = VALUE_TYPES[i.op];
+  return match (kind_of(i.op)) {
+    Nop => Ok(g),
+    Const => Ok(emit_const(g, reg_stack(x.regs, d), i.op)),
+    Push => Ok(const_int(g, reg_stack(x.regs, d), i.a)),
+    Ldc => emit_ldc(x.class, g, reg_stack(x.regs, d), i.a),
+    Load => Ok(move(g, reg_stack(x.regs, d), reg_local(x.regs, local_of(i)), t)),
+    Store => Ok(move(g, reg_local(x.regs, local_of(i)), reg_stack(x.regs, d - slots(t)), t)),
+    ArrayLoad => Ok(emit_array(x, g, f, i.op, false)),
+    ArrayStore => Ok(emit_array(x, g, f, i.op, true)),
+    Stack => Ok(emit_stack(x, g, f, i.op)),
+    Binary => Ok(emit_math(x, g, f, i.op)),
+    Compare => Ok(emit_math(x, g, f, i.op)),
+    Unary => Ok(emit_unop(x, g, f, i.op)),
+    Iinc => Ok(emit_iinc(x, g, i)),
+    If1 => Ok(emit_branch(g, [DALVIK[i.op] | reg_stack(x.regs, d - 1) << 8, 0], 1, i.a, false)),
+    If2 => Ok(emit_if2(x, g, f, i)),
+    Goto => Ok(emit_branch(g, [0x2A, 0, 0], 1, i.a, true)),
+    Switch => Ok(emit_switch(x, g, f, i)),
+    Return => Ok(emit_return(x, g, f, i.op)),
+    FieldOf(k) => emit_field(x, g, f, i, k),
+    Invoke => emit_invoke(x, g, f, i),
+    ObjectOf(k) => emit_object(x, g, f, i, k),
+    Length => Ok(op12x(g, 0x21, reg_stack(x.regs, d - 1), T_INT, reg_stack(x.regs, d - 1), T_REF)),
+    Throw => Ok(emit(g, [0x27 | reg_stack(x.regs, d - 1) << 8])),
+    Monitor => Ok(emit(g, [DALVIK[i.op] | reg_stack(x.regs, d - 1) << 8])),
+    Refused(why) => Err(why),
+  };
+}
+
+// Whether the instruction at `at` starts a handler of `code`.
+function handler_at(code: classfile.Code, at: i32): boolean {
+  for h in code.handlers {
+    if (h.target == at) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Whether an instruction other than a throw reaches the instruction at `at`
+// by a branch or by falling through.
+function reached_by_flow(insns: Insn[], flow: Flow, at: i32): boolean {
+  for k in 0..insns.len() {
+    if (flow.reached[k] && successors(insns[k]).contains(at)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The code of the instructions, the address of each one, and the address
+// after the last one.
+struct Body { gen: Gen, addrs: i32[], end: i32 }
+
+// The registers of the code of the method `m`.
+function regs_of(m: classfile.Method, code: classfile.Code): Result[Regs, string] {
+  let (params, _) = params_of(m.descriptor)?;
+  let ins = param_slots(params) + (if (classfile.has(m.access, classfile.STATIC)) { 0 } else { 1 });
+  let sync = classfile.has(m.access, 0x20);
+  let stack = TEMPS + (if (sync) { 1 } else { 0 });
+  return Ok(Regs { count: stack + code.max_stack + code.max_locals.max(ins), ins: ins, lock: if (sync) { TEMPS } else { -1 }, stack: stack, max_stack: code.max_stack });
+}
+
+// The start of a synchronized method: its object, or its class when it is
+// static, goes to the register of the monitor, and monitor-enter takes it.
+function prologue(x: Ctx, g: Gen): Gen {
+  if (x.regs.lock < 0) {
+    return g;
+  }
+  let lock = x.regs.lock;
+  let h = if (classfile.has(x.method.access, classfile.STATIC)) { emit_ref(g, [0x1C | lock << 8, 0], 1, dexfile.TYPE, class_desc(x.class.name), "", "", []) } else { move(g, lock, reg_local(x.regs, 0), T_REF) };
+  return emit(h, [0x1D | lock << 8]);
+}
+
+function body_of(x: Ctx, code: classfile.Code, insns: Insn[], flow: Flow): Result[Body, string] {
+  let g = prologue(x, Gen { units: [], fixups: [], patches: [], tables: [], outs: 0 });
+  let addrs: i32[] = [];
+  for k in 0..insns.len() {
+    addrs = addrs.append(g.units.len());
+    if (!flow.reached[k]) {
+      continue;
+    }
+    let i = insns[k];
+    if (handler_at(code, i.at)) {
+      if (reached_by_flow(insns, flow, i.at)) {
+        return Err("the handler at " + i.at.to_string() + " is also reached without an exception");
+      }
+      g = emit(g, [0x0D | reg_stack(x.regs, 0) << 8]);
+    }
+    g = emit_insn(x, lock_alias(x, g, insns, k, flow.frames[k]), flow.frames[k], i)?;
+  }
+  return Ok(Body { gen: g, addrs: addrs, end: g.units.len() });
+}
+
+// Java compilers take a lock with dup, astore n and monitorenter. ART
+// tracks the lock in the register of monitor-enter, and also in the
+// destination of a move-object just before it. Thus the move to local n
+// comes again just before monitor-enter, and monitor-exit can take local n.
+function lock_alias(x: Ctx, g: Gen, insns: Insn[], k: i32, f: Frame): Gen {
+  if (insns[k].op != 0xC2 || k < 2 || insns[k - 2].op != 0x59 || KINDS[insns[k - 1].op] != K_STORE) {
+    return g;
+  }
+  return move(g, reg_local(x.regs, local_of(insns[k - 1])), reg_stack(x.regs, f.stack.len() - 1), T_REF);
+}
+
+// The address of the JVM offset `at`: that of its instruction, or the end
+// of the body after the last instruction.
+function addr_of(b: Body, index: i32[], at: i32): i32 {
+  let k = if (at >= 0 && at < index.len()) { index[at] } else { -1 };
+  return if (k >= 0) { b.addrs[k] } else { b.end };
+}
+
+// The units with the offset of each branch in place.
+function branches(b: Body, index: i32[], units0: i32[]): Result[i32[], string] {
+  let units = units0;
+  for p in b.gen.patches {
+    let off = addr_of(b, index, p.target) - p.base;
+    if (!p.wide && (off < -32768 || off > 32767)) {
+      return Err("a branch goes too far for 16 bits");
+    }
+    units = if (p.wide) { units.with(p.at, off & 0xFFFF).with(p.at + 1, off >> 16 & 0xFFFF) } else { units.with(p.at, off & 0xFFFF) };
+  }
+  return Ok(units);
+}
+
+// The units with the table of each switch after them, at an even address.
+function tables(b: Body, index: i32[], units0: i32[]): i32[] {
+  let units = units0;
+  for t in b.gen.tables {
+    units = if (units.len() % 2 == 1) { units.append(0) } else { units };
+    let off = units.len() - t.base;
+    units = units.with(t.at, off & 0xFFFF).with(t.at + 1, off >> 16 & 0xFFFF);
+    let n = t.keys.len();
+    units = units.append(if (t.packed) { 0x0100 } else { 0x0200 }).append(n);
+    let keys = if (!t.packed) { t.keys } else if (n > 0) { t.keys.take(1) } else { [0] };
+    for key in keys {
+      units = units.append(key & 0xFFFF).append(key >> 16 & 0xFFFF);
+    }
+    for target in t.targets {
+      let rel = addr_of(b, index, target) - t.base;
+      units = units.append(rel & 0xFFFF).append(rel >> 16 & 0xFFFF);
+    }
+  }
+  return units;
+}
+
+// The handlers of the range of addresses from `p` to `q`: the JVM handlers
+// that cover it in their order, each class one time, until the first that
+// catches each exception. `all` is the handler of a synchronized method.
+function catch_of(b: Body, code: classfile.Code, index: i32[], p: i32, q: i32, all: i32): dexfile.Catch {
+  let out = dexfile.Catch { types: [], addrs: [], all: -1 };
+  for h in code.handlers {
+    if (addr_of(b, index, h.start) <= p && q <= addr_of(b, index, h.end) && out.all < 0) {
+      let target = addr_of(b, index, h.target);
+      if (h.catch_type == "") {
+        out = dexfile.Catch { ...out, all: target };
+      } else if (!out.types.contains(class_desc(h.catch_type))) {
+        out = dexfile.Catch { ...out, types: out.types.append(class_desc(h.catch_type)), addrs: out.addrs.append(target) };
+      }
+    }
+  }
+  return if (out.all < 0) { dexfile.Catch { ...out, all: all } } else { out };
+}
+
+function catch_key(c: dexfile.Catch): string {
+  let parts: string[] = [];
+  for k in 0..c.types.len() {
+    parts = parts.append(c.types[k] + "@" + c.addrs[k].to_string());
+  }
+  return parts.join(",") + "/" + c.all.to_string();
+}
+
+// The ranges of the code and their handlers, with no ranges that overlap,
+// in the order of their addresses. `sync` is the range and the handler of
+// the monitor of a synchronized method, or -1s.
+function tries_of(b: Body, code: classfile.Code, index: i32[], sync: (i32, i32, i32)): (dexfile.Try[], dexfile.Catch[]) {
+  let (sync_start, sync_end, sync_handler) = sync;
+  let points: i32[] = if (sync_start >= 0) { [sync_start, sync_end] } else { [] };
+  for h in code.handlers {
+    points = points.append(addr_of(b, index, h.start)).append(addr_of(b, index, h.end));
+  }
+  points = util.sorted_by(points, (a: i32, c: i32): boolean => a > c);
+  let tries: dexfile.Try[] = [];
+  let catches: dexfile.Catch[] = [];
+  let keys: string[] = [];
+  for k in 0..points.len() - 1 {
+    let (p, q) = (points[k], points[k + 1]);
+    let all = if (sync_start >= 0 && sync_start <= p && q <= sync_end) { sync_handler } else { -1 };
+    let c = if (p < q) { catch_of(b, code, index, p, q, all) } else { dexfile.Catch { types: [], addrs: [], all: -1 } };
+    if (c.types.len() == 0 && c.all < 0) {
+      continue;
+    }
+    let key = catch_key(c);
+    let at = util.index_of_str(keys, key);
+    if (at < 0) {
+      keys = keys.append(key);
+      catches = catches.append(c);
+    }
+    let ci = if (at < 0) { catches.len() - 1 } else { at };
+    tries = joined_try(tries, p, q, ci);
+  }
+  return (tries, catches);
+}
+
+// `tries` with the range from `p` to `q` of the catch `ci`, joined to the
+// range before it when they touch and share their catch. A range has at
+// most 65535 units.
+function joined_try(tries: dexfile.Try[], p: i32, q: i32, ci: i32): dexfile.Try[] {
+  let n = tries.len();
+  if (n > 0 && tries[n - 1].catch == ci && tries[n - 1].start + tries[n - 1].count == p && q - tries[n - 1].start <= 65535) {
+    return tries.with(n - 1, dexfile.Try { ...tries[n - 1], count: q - tries[n - 1].start });
+  }
+  let out = tries;
+  let start = p;
+  while (start < q) {
+    let count = (q - start).min(65535);
+    out = out.append(dexfile.Try { start: start, count: count, catch: ci });
+    start += count;
+  }
+  return out;
+}
+
+// The code of the method `m` of `c`, in Dalvik bytecode.
+function code_of(c: classfile.Class, m: classfile.Method, code: classfile.Code): Result[dexfile.Code, string] {
+  let insns = decode(code.bytes)?;
+  let index = index_by_offset(insns, code.bytes.len());
+  let flow = analyzed(c, m, code, insns, index)?;
+  let regs = regs_of(m, code)?;
+  if (regs.count > 256) {
+    return Err("the method has " + regs.count.to_string() + " registers, and the dexer takes 256 at most");
+  }
+  let x = Ctx { class: c, method: m, regs: regs };
+  let b = body_of(x, code, insns, flow)?;
+  let start = if (regs.lock >= 0) { b.addrs[0] } else { -1 };
+  let g = if (regs.lock >= 0) { emit(b.gen, [0x0D, 0x1E | regs.lock << 8, 0x27]) } else { b.gen };
+  let units = tables(b, index, branches(Body { ...b, gen: g }, index, g.units)?);
+  let (tries, catches) = tries_of(b, code, index, (start, b.end + 2, b.end));
+  return Ok(dexfile.Code { registers: regs.count, ins: regs.ins, outs: g.outs, units: units, fixups: g.fixups, tries: tries, catches: catches });
+}
+
+// The access flags of a method in a DEX file. A synchronized method that is
+// not native is declared synchronized, and its code takes the monitor.
+function method_access(m: classfile.Method): i32 {
+  let a = m.access;
+  if (classfile.has(a, 0x20) && !classfile.has(a, 0x100)) {
+    a = a & ~0x20 | dexfile.ACC_DECLARED_SYNCHRONIZED;
+  }
+  return if (m.name == "<init>" || m.name == "<clinit>") { a | dexfile.ACC_CONSTRUCTOR } else { a };
+}
+
+function method_of(c: classfile.Class, m: classfile.Method): Result[dexfile.Method, string] {
+  let (params, ret) = match (params_of(m.descriptor)) {
+    Ok(pr) => pr,
+    Err(e) => { return Err("dexer: " + c.name + "." + m.name + ": " + e); },
+  };
+  let code = match (m.code) {
+    Some(k) => match (code_of(c, m, k)) {
+      Ok(d) => Some(d),
+      Err(e) => {
+        return Err("dexer: " + c.name + "." + m.name + m.descriptor + ": " + e);
+      },
+    },
+    None => None,
+  };
+  return Ok(dexfile.Method { name: m.name, ret: ret, params: params, access: method_access(m), code: code });
+}
+
+// The value of a static field from its attribute ConstantValue.
+function field_value(f: classfile.Field): Option[dexfile.Value] {
+  if (!classfile.has(f.access, classfile.STATIC)) {
+    return None;
+  }
+  let Some(k) = f.constant else {
+    return None;
+  };
+  return Some(match (k) {
+    Int(n) => dexfile.int_value(f.descriptor, n),
+    Long(n) => Long(n),
+    Float(x) => Float(x),
+    Double(x) => Double(x),
+    Text(s) => Text(s),
+  });
+}
+
+// The class `c` of a class file as a class of a DEX file.
+pub function class_of(c: classfile.Class): Result[dexfile.Class, string] {
+  let fields: dexfile.Field[] = [];
+  for f in c.fields {
+    fields = fields.append(dexfile.Field { name: f.name, desc: f.descriptor, access: f.access, value: field_value(f) });
+  }
+  let methods: dexfile.Method[] = [];
+  for m in c.methods {
+    methods = methods.append(method_of(c, m)?);
+  }
+  let superclass = if (c.parent == "") { "" } else { class_desc(c.parent) };
+  return Ok(dexfile.Class { desc: class_desc(c.name), access: c.access & ~0x8020, superclass: superclass, interfaces: c.interfaces.map((n: string): string => class_desc(n)), source: "", fields: fields, methods: methods });
+}
+
+// The version of the DEX file for `classes`: 037 when an interface has a
+// method with code, which needs API level 24, and else 035.
+pub function version_of(classes: classfile.Class[]): string {
+  for c in classes {
+    if (!classfile.has(c.access, classfile.INTERFACE)) {
+      continue;
+    }
+    for m in c.methods {
+      if (m.code.is_some() && m.name != "<clinit>") {
+        return "037";
+      }
+    }
+  }
+  return "035";
+}
+
+// The class files of the file `path` with the bytes `b`: the file itself
+// when it ends in .class, else each class of the JAR, but module-info and
+// the classes of other Java versions under META-INF.
+pub function class_files_of(path: string, b: u8[]): Result[u8[][], string] {
+  if (path.ends_with(".class")) {
+    return Ok([b]);
+  }
+  let archive = match (zip.parse(b)) {
+    Ok(a) => a,
+    Err(e) => {
+      return Err(e.message());
+    },
+  };
+  let out: u8[][] = [];
+  for e in archive.entries {
+    if (!e.name.ends_with(".class") || e.name.starts_with("META-INF/") || e.name.ends_with("module-info.class")) {
+      continue;
+    }
+    match (zip.read(b, e)) {
+      Ok(c) => {
+        out = out.append(c);
+      },
+      Err(err) => {
+        return Err(e.name + ": " + err.message());
+      }
+    }
+  }
+  return Ok(out);
+}
+
+// The DEX file of the class files `files`.
+pub function dex_of(files: u8[][]): Result[u8[], string] {
+  let classes: classfile.Class[] = [];
+  for b in files {
+    match (classfile.parse(b)) {
+      Ok(c) => {
+        classes = classes.append(c);
+      },
+      Err(e) => {
+        return Err("dexer: " + e.message());
+      }
+    }
+  }
+  let out: dexfile.Class[] = [];
+  for c in classes {
+    out = out.append(class_of(c)?);
+  }
+  return dexfile.write(out, version_of(classes));
+}

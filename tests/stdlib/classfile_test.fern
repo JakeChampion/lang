@@ -187,6 +187,39 @@ function test_bootstraps(): test.TestOutcome {
   return test.assert_eq(got, "indy 0 getAsInt(I)Ljava/util/function/IntSupplier; | 1 handle 6 method java/lang/invoke/LambdaMetafactory.metafactory(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite; | type ()I; handle 6 method dev/fern/Flow.lambda$later$0(I)I; type ()I");
 }
 
+// class_at and ref_at give the class and the method of an index of the
+// pool, and None for an index of another kind or outside the pool.
+function test_pool_refs(): test.TestOutcome {
+  let c = flow();
+  let Handle(_, target) = c.pool[c.bootstraps[0].args[1]] else {
+    return test.fail("the second argument is not a method handle");
+  };
+  let method = match (c.ref_at(target)) {
+    Some(r) => r.class + "." + r.name + r.descriptor,
+    None => "none",
+  };
+  let classes: string[] = [];
+  let first = -1;
+  for k in 0..c.pool.len() {
+    if let Some(n) = c.class_at(k) {
+      classes = classes.append(n);
+      first = if (first < 0) { k } else { first };
+    }
+  }
+  let misses = [c.ref_at(first).is_none(), c.class_at(target).is_none(), c.class_at(0).is_none(), c.class_at(c.pool.len()).is_none(), c.ref_at(-1).is_none()];
+  let got = method + " | " + has_text(classes, "dev/fern/Flow").to_string() + " | " + misses.map((m: boolean): string => m.to_string()).join(",");
+  return test.assert_eq(got, "dev/fern/Flow.lambda$later$0(I)I | true | true,true,true,true,true");
+}
+
+function has_text(xs: string[], x: string): boolean {
+  for y in xs {
+    if (y == x) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // A method with no code: the native method of Sample.
 function test_no_code(): test.TestOutcome {
   let rows = method_named(sample(), "rows");
@@ -241,6 +274,7 @@ function main(): i32 {
   r = r.it("parse reads the code and the handlers of a method", test_code);
   r = r.it("parse reads the bootstrap methods and the constant pool", test_bootstraps);
   r = r.it("a native method has no code", test_no_code);
+  r = r.it("class_at and ref_at give the class and the method of an index", test_pool_refs);
   r = r.it("parse refuses a damaged class file", test_refusals);
   r = r.it("parse is safe on each prefix of a class file", test_each_prefix);
   return r.finish();

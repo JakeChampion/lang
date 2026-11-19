@@ -1,6 +1,8 @@
 # A DEX compiler in Fern
 
-Status: [plan] the order of the work for item 6 of `docs/ANDROID-STANDING.md`.
+Status: [plan] the order of the work for item 6 of
+`docs/ANDROID-STANDING.md`. Parts 1, 2 and 3 are done: `fern -dex OUT
+FILE...` writes one DEX file from class files and JAR files. Part 4 is next.
 
 `fern -apk` writes an APK with no Android SDK, no Gradle and no JDK. A
 Java or Kotlin library comes as a JAR or an AAR, and its classes are Java
@@ -63,13 +65,14 @@ DEX file. Then `fern -apk` takes JAR and AAR files with no other tool.
 
 - Each part has tests in Fern or in Go, with class files that `javac`
   writes for the test.
-- D8 reads each DEX file that a test writes, and makes it again. D8
-  builds the code of each method with the types of its registers, so it
-  finds a register with the wrong type and a broken file. The test skips
-  this check only where no JDK or no R8 is on the machine.
-- The emulator lane of `android.yml` runs an app with a library that the
-  dexer compiled. The app calls the library and compares each result with
-  the result of the JVM.
+- D8 reads each DEX file that a test writes, and makes it again. Thus it
+  finds a broken file. D8 copies the code of a DEX file, and it does not
+  check the types of the registers. The Android lane runs D8 on the DEX
+  file of `tests/android/dexer`.
+- The emulator lane of `android.yml` compiles `tests/android/dexer`. ART
+  runs the DEX file of `fern -dex` through `app_process`. Its verifier
+  checks the type of each register, and the output must be the output of
+  the JVM in `expected.txt`.
 
 ## The limits of the first parts
 
@@ -77,6 +80,10 @@ DEX file. Then `fern -apk` takes JAR and AAR files with no other tool.
   moves to the low registers come in the translation later.
 - `jsr` and `ret`, which no compiler of Java 7 or later writes, stop the
   dexer.
-- The dexer writes DEX 037 for an app of API level 24 or later, the
-  default of `fern -apk`, because it has the default methods of
-  interfaces.
+- The dexer writes DEX 035. It writes DEX 037 when an interface has a
+  default method or a static method, because ART reads them from API
+  level 24.
+- Java compilers take a lock with `dup`, `astore` and `monitorenter`. ART
+  tracks a lock in one register, and in a copy that comes just before
+  `monitor-enter`. The dexer writes that copy for this form. A lock in
+  other forms gives a method that ART runs more slowly.

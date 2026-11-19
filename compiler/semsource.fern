@@ -9173,18 +9173,16 @@ pub function with_analyses(b: Built): Built {
 }
 
 function analysed_rows(rows: Produced[]): Produced[] {
-  let i = 0;
-  while (i < rows.len()) {
+  for i in 0..rows.len() {
     if (rows[i].ok && !rows[i].template) {
       match (rows[i].analysis) {
         None => {
           let analysis = ssasem.analyze(rows[i].func);
           rows = rows.with(i, Produced { ...rows[i], func: ssasem.checked_schema(rows[i].func, analysis), analysis: Some(analysis) });
         },
-        _ => {}
+        Some(_) => {}
       }
     }
-    i += 1;
   }
   return rows;
 }

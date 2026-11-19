@@ -145,6 +145,7 @@ silently.
 | `fern -effects FILE` | The same report per function instead of per package. |
 | `fern -array-report FILE` | Compile `FILE` for the target and print the array decisions the compiler made: each `std/array` chain's fusion verdict and the map storage and ndarray kernel decisions, each with the reason that decided it. Writes no output, so it takes neither `-o` nor `-run`. |
 | `fern -doc FILE` | A Markdown reference page from a module's doc comments; `-o OUTDIR DIR` writes one page per module. |
+| `fern -dex OUT FILE...` | Write one DEX file from Java class files and JAR files, with no D8 and no JDK. An Android app takes it through `-apk-dex`. Lambdas and other `invokedynamic` forms are refused for now. |
 | `fern -version` | Print the commit this binary was built from and the target it was built for. |
 
 The package commands (`-add`, `-fetch`, `-resolve`, `-vendor`) are on the

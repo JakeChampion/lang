@@ -10,7 +10,7 @@ A class file starts with the magic `CAFEBABE` and a version. A constant pool fol
 
 A `Field` and a `Method` each have a name, a descriptor and access flags. The constants `PUBLIC`, `STATIC` and the others are the bits of the flags, and `has` tests one bit. A constructor is a method with the name `<init>`. A field that is a compile-time constant has its value in `constant`.
 
-A method that is not abstract or native has its `Code`: the slots of its operand stack and of its locals, its bytecode, and its handlers of exceptions. `throws` holds the classes of the attribute Exceptions. The bytecode names its classes, fields, methods and constants by their index in the constant pool. `pool` of the `Class` holds each constant, decoded, at its index. `bootstraps` holds the bootstrap methods of the class, for the instructions `invokedynamic`.
+A method that is not abstract or native has its `Code`: the slots of its operand stack and of its locals, its bytecode, and its handlers of exceptions. `throws` holds the classes of the attribute Exceptions. The bytecode names its classes, fields, methods and constants by their index in the constant pool. `pool` of the `Class` holds each constant, decoded, at its index. `class_at` gives the class of an index, and `ref_at` gives its field or its method. `bootstraps` holds the bootstrap methods of the class, for the instructions `invokedynamic`.
 
 A descriptor is the type of a field or of a method in a short text. `I` is `int`, `Ljava/lang/String;` is a class and `[J` is an array of `long`. `(ILjava/lang/String;)V` is a method that takes an `int` and a `String` and returns nothing. `field_type` reads the descriptor of a field, and `signature` reads the descriptor of a method.
 
@@ -198,6 +198,31 @@ pub struct Bootstrap { method: i32, args: i32[] }
 // Java 8. `parent` is empty for java/lang/Object. `pool` is the constant
 // pool, by index. `bootstraps` holds the bootstrap methods.
 pub struct Class { name: string, parent: string, interfaces: string[], access: i32, version: i32, fields: Field[], methods: Method[], pool: Entry[], bootstraps: Bootstrap[] }
+
+// The class of the constant `index`, or None when it is not a class.
+pub function (c: Class) class_at(index: i32): Option[string] {
+  if (index <= 0 || index >= c.pool.len()) {
+    return None;
+  }
+  return match (c.pool[index]) {
+    ClassOf(n) => Some(n),
+    _ => None,
+  };
+}
+
+// The field or the method of the constant `index`, or None when it is
+// not a field or a method.
+pub function (c: Class) ref_at(index: i32): Option[Ref] {
+  if (index <= 0 || index >= c.pool.len()) {
+    return None;
+  }
+  return match (c.pool[index]) {
+    FieldRef(r) => Some(r),
+    MethodRef(r) => Some(r),
+    InterfaceRef(r) => Some(r),
+    _ => None,
+  };
+}
 ```
 
 ### `descriptors`
@@ -210,6 +235,15 @@ pub struct Class { name: string, parent: string, interfaces: string[], access: i
 pub struct Type { base: string, class: string, dims: i32 }
 
 pub struct Signature { params: Type[], result: Type }
+
+// The descriptor of `t`, as in `[Ljava/lang/String;`.
+pub function (t: Type) descriptor(): string {
+  let out = "";
+  for _ in 0..t.dims {
+    out += "[";
+  }
+  return if (t.base == "L") { out + "L" + t.class + ";" } else { out + t.base };
+}
 
 // The letter of a primitive type, or "" for a byte that is not one.
 function primitive(c: u8): string {
@@ -505,6 +539,8 @@ function name_type(b: [u8], pool: Pool, index: i32, from: i32): Result[(string, 
 }
 
 // The constant `index` of the pool, decoded.
+// One arm for each tag of the constant pool.
+// fern-lint: allow cyclomatic-complexity
 function decoded(b: [u8], pool: Pool, index: i32): Result[Entry, ClassError] {
   let tag = pool.tags[index];
   let p = pool.at[index];
@@ -525,6 +561,8 @@ function decoded(b: [u8], pool: Pool, index: i32): Result[Entry, ClassError] {
 }
 
 // The constant with the tag `tag` from 12 whose bytes start at `p`.
+// One test for each tag of the constant pool.
+// fern-lint: allow cyclomatic-complexity
 function decoded_late(b: [u8], pool: Pool, tag: i32, p: i32): Result[Entry, ClassError] {
   if (tag == TAG_NAME_TYPE) {
     return Ok(NameType(text(b, pool, be16(b, p), p)?, text(b, pool, be16(b, p + 2), p + 2)?));

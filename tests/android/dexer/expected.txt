@@ -1,0 +1,40 @@
+int 12 22 -85 -3 2
+int bits 17 -5 -22 -18 -17
+int shifts -40 -3 15 34
+int lit 1017 5100 17 100017
+int overflow -2147483648 -2147483648
+iinc -194
+narrow 44 4464 65
+long 122469134691 124444443333 7194577391479740460 -124 987653208
+long bits 122473746948 -4612257 -122478359205 -123456789013 -123456789012
+long shifts 15802468993536 -123456791 15
+long cmp true false 1 1099511627776
+long conv -1097262572 -1097262572 1.2345679E11 -9.87654321E8
+float 1.25 1.75 -0.375 -6.0 0.0 -1.5
+double 3.751 3.749 0.00375 3750.0 9.99999999999922E-4 -3.75
+nan false false false true
+conv 3 -2 2147483647 0 3.75 1.5
+const 0.33333334 2.718281828459045 0.0 1.0 2.0
+arrays true -2 fern -300 1099511627776 0.5 2.718281828459045 null 3
+multi 3 4 9 7 3 30
+instanceof true true false
+tableswitch none sun mon tue wed thu fri sat none
+lookupswitch 12340
+string switch 1 2 -1
+try 8 finally
+try caught negative -3 code -3 finally
+length 3, not a string, null
+bounds
+divide
+multi-catch multi
+monitors 12 -1 1 2
+square 9.0 square=9.0
+round circle 3.141592653589793 round circle=3.141592653589793
+map 3 2 1 null
+cast square false true
+constants 42 fern true x -7 1234
+boxes true 1000 q 1071644672
+fib 55 2880067194370816120
+many 141
+ternary none 1
+anonymous 2
