@@ -30,14 +30,14 @@ pub function helpers(offsets: i32[], mode: i32): string {
 // The reports of -sanitize that the wasm heap runtime makes. Their texts
 // are those of the native runtime.
 pub function san_texts(): string[] {
-  return ["fern-sanitizer: rc over-release (double free)\n", "fern-sanitizer: use-after-free (touched a quarantined block)\n", "fern-sanitizer: heap-buffer-overflow (a block was written past its end)\n"];
+  return ["fern-sanitizer: rc over-release (double free)\n", "fern-sanitizer: use-after-free (touched a quarantined block)\n", "fern-sanitizer: heap-buffer-overflow (a block was written past its end)\n", "fern-sanitizer: write-after-free (a quarantined block was written)\n"];
 }
 
-// $__fern_san_over, $__fern_san_uaf and $__fern_san_hbo write their report to stderr. A core
+// $__fern_san_over, $__fern_san_uaf, $__fern_san_hbo and $__fern_san_waf write their report to stderr. A core
 // module then exits with 124, as a native program does. A component has no
 // exit status but success or failure, so it traps.
 pub function san_helpers(offsets: i32[], mode: i32): string {
-  let names: string[] = ["over", "uaf", "hbo"];
+  let names: string[] = ["over", "uaf", "hbo", "waf"];
   let messages = san_texts();
   let out = "";
   for i in 0..names.len() {
