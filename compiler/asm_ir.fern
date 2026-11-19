@@ -7471,7 +7471,7 @@ function ssa_homeless(f: ssa.SFunc, imm: ssa.Imms): boolean[] {
 
 // The operands of `f` that are immediates, with the shape tags.
 function ssa_imms(f: ssa.SFunc, s: asmcore.EmitState): ssa.Imms {
-  let imm = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left(), true);
+  let imm = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left(), true, false);
   let shapes = ssa_shape_plan(f, imm, false);
   for si in 0..shapes.vals.len() {
     imm = ssa.with_value(imm, shapes.vals[si], asmcore.shape_tag(s, shapes.names[si]));
