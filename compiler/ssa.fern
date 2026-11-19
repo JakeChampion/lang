@@ -2432,10 +2432,19 @@ pub function spill_cost(f: SFunc, reg_of: i32[], costs: SpillCosts): i32 {
 // A parameter used as an array base inside and outside a nested loop can
 // spill for the whole function. Give its reads inside the loop a separate
 // value. The allocator can then split that value around an inner loop.
-pub function loop_index_copy(f: SFunc): SFunc {
+pub function loop_index_copy(f: SFunc, reg_of: i32[]): SFunc {
   if (f.nparams == 0 || f.blocks.len() < 3) {
     return f;
   }
+  let spilled = false;
+  for p in 0..f.nparams {
+    spilled = spilled || reg_of[p] < -1;
+  }
+  if (!spilled) {
+    return f;
+  }
+  // Require three read blocks inside the loop and one outside. Two inside
+  // did not cover the cost of the split on the checker workload.
   let sites: i32[][] = [];
   let repeated = false;
   for bi in 0..f.blocks.len() {
@@ -2444,7 +2453,7 @@ pub function loop_index_copy(f: SFunc): SFunc {
         continue;
       }
       let p = ins.args[0];
-      if (p < 0 || p >= f.nparams) {
+      if (p < 0 || p >= f.nparams || reg_of[p] >= -1) {
         continue;
       }
       if (sites.len() == 0) {
@@ -2455,7 +2464,7 @@ pub function loop_index_copy(f: SFunc): SFunc {
       let bs = sites[p];
       if (bs.len() == 0 || bs[bs.len() - 1] != bi) {
         sites = sites.with(p, bs.append(bi));
-        repeated = repeated || sites[p].len() >= 3;
+        repeated = repeated || sites[p].len() >= 4;
       }
     }
   }
@@ -2465,7 +2474,7 @@ pub function loop_index_copy(f: SFunc): SFunc {
   let last = furthest_latches(f);
   let head = -1;
   let param = -1;
-  let best = 1;
+  let best = 2;
   let outer_last = -1;
   for h in 0..last.len() {
     if (last[h] <= h) {
