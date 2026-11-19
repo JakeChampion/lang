@@ -5523,6 +5523,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   s = asmcore.EmitState { ...s, dw_first: true, dw_pos: 0 };
   let formed = prepared.formed;
   let f = ssa.shared_lengths(formed.f);
+  f = ssa.shared_static_boxes(f, ssa.hard_call_positions(f, ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), false)));
   let picked = ssa_allocated(f, r, s);
   let tried = ssa.split_spilled(f, picked.alloc.reg_of, picked.floats);
   if (tried.cost > 0) {
