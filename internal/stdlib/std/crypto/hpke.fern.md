@@ -332,7 +332,9 @@ pub function mlkem768p256_encap_derand(public_key: [u8], randomness: [u8]): Resu
   };
   let ct_t = p256.base_point(eph);
   __ct_public(ct_t);
-  let ss_t = p256.scalar_mul_x(eph, ek_t);
+  let Some(ss_t) = p256.scalar_mul_x(eph, ek_t) else {
+    return Err(Point);
+  };
   let ss = __combine(pq.shared_secret, ss_t, ct_t, ek_t, MLKEM768_P256_LABEL.as_bytes());
   crypto.erase(ss_t);
   return Ok(Encapsulation { shared_secret: ss, enc: __cat(pq.ciphertext, ct_t) });
@@ -349,7 +351,10 @@ pub function mlkem768p256_decap(k: HybridP256Key, enc: [u8]): Result[u8[], HpkeE
   let Ok(ss_pq) = mlkem768.decaps(k.decapsulation_key, enc[0:1088]) else {
     return Err(Length("encapsulated key", enc.len(), MLKEM768_P256_ENC_SIZE));
   };
-  let ss_t = p256.scalar_mul_x(k.scalar, ct_t);
+  let Some(ss_t) = p256.scalar_mul_x(k.scalar, ct_t) else {
+    crypto.erase(ss_pq);
+    return Err(Point);
+  };
   let ss = __combine(ss_pq, ss_t, ct_t, k.public_key[1184:1249], MLKEM768_P256_LABEL.as_bytes());
   crypto.erase(ss_pq);
   crypto.erase(ss_t);
@@ -448,7 +453,9 @@ pub function p256_encap_derand(public_key: [u8], scalar: [u8]): Result[Encapsula
   }
   let enc = p256.base_point(scalar);
   __ct_public(enc);
-  let dh = p256.scalar_mul_x(scalar, public_key);
+  let Some(dh) = p256.scalar_mul_x(scalar, public_key) else {
+    return Err(Point);
+  };
   let ss = __p256_shared_secret(dh, enc, public_key);
   crypto.erase(dh);
   return Ok(Encapsulation { shared_secret: ss, enc: enc });
@@ -458,10 +465,9 @@ pub function p256_decap(k: P256Key, enc: [u8]): Result[u8[], HpkeError] {
   if (enc.len() != P256_ENC_SIZE) {
     return Err(Length("encapsulated key", enc.len(), P256_ENC_SIZE));
   }
-  if (!p256.on_curve(enc)) {
+  let Some(dh) = p256.scalar_mul_x(k.scalar, enc) else {
     return Err(Point);
-  }
-  let dh = p256.scalar_mul_x(k.scalar, enc);
+  };
   let ss = __p256_shared_secret(dh, enc, k.public_key);
   crypto.erase(dh);
   return Ok(ss);

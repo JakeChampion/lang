@@ -533,7 +533,10 @@ pub function (key: PrivateKey) ecdh(peer: [u8]): Result[u8[], EcdsaError] {
   }
   match (key.curve) {
     P256 => {
-      return Ok(p256.scalar_mul_x(key.d, peer));
+      let Some(x) = p256.scalar_mul_x(key.d, peer) else {
+        return Err(NotOnCurve);
+      };
+      return Ok(x);
     },
     _ => {}
   }
