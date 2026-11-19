@@ -5443,12 +5443,53 @@ function emit_ssa_function_arm64(prepared: ssaprepare.Body, label_name: string, 
   return asmcore.finish_native_text(out, h, s.capture, s.native_sites, s.retain_sites);
 }
 
+// imm, and each constant that only `and`, `or` and `xor` read and that those
+// instructions take as a bitmask immediate. Such a constant gets no register.
+function ssa_logical_imms(f: ssa.SFunc, own imm: ssa.Imms): ssa.Imms {
+  let fit = __alloc_bool(f.nvals);
+  let any = false;
+  for v in 0..f.nvals {
+    if (imm.konst[v] && !imm.is_imm[v] && arm64_native.arm64_logical_imm_any_width(imm.value[v])) {
+      fit = fit.with(v, true);
+      any = true;
+    }
+  }
+  if (!any) {
+    return imm;
+  }
+  for blk in f.blocks {
+    for ins in blk.insts {
+      let logical = ins.kind_tag == ssa.BINARY && ins.args.len() == 2 && (ins.str == "and" || ins.str == "or" || ins.str == "xor");
+      for a in 0..ins.args.len() {
+        let v = ins.args[a];
+        if (v >= 0 && fit[v] && !(logical && !imm.konst[ins.args[1 - a]])) {
+          fit = fit.with(v, false);
+        }
+      }
+    }
+    let t = blk.term;
+    if (t.kind_tag == ssa.TERM_BRIF && t.cond >= 0 && fit[t.cond]) {
+      fit = fit.with(t.cond, false);
+    }
+    if (t.kind_tag == ssa.TERM_RET && t.value >= 0 && fit[t.value]) {
+      fit = fit.with(t.value, false);
+    }
+  }
+  for v in 0..f.nvals {
+    if (fit[v]) {
+      let c = imm.value[v];
+      imm = ssa.with_value(imm, v, c);
+    }
+  }
+  return imm;
+}
+
 // The immediates, the calls and the registers of `f`.
 struct Allocated { imm: ssa.Imms, call_kinds: i32[], alloc: ssa.Alloc, floats: boolean[] }
 
 function ssa_allocated(f: ssa.SFunc, r: irtables.Lowered, s: asmcore.EmitState): Allocated {
   s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f), ssa_even: ssadeps.even_values(f) };
-  let imm = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left(), false);
+  let imm = ssa_logical_imms(f, ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left(), false));
   let call_kinds = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), false);
   let live = ssalive.lives(f, ssa.hard_call_positions(f, call_kinds));
   let floats = ssa.float_values(f, ssa_float_calls(f, s), true);
