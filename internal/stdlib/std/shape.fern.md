@@ -1,6 +1,8 @@
 # Text shaping
 
-This module gives the glyphs of a font for a text, and their positions. It substitutes the glyphs for ligatures and for marks, for the joining forms of Arabic, and for the conjuncts of Indic scripts. It follows the rules of HarfBuzz for Hebrew, Thai, Lao, Khmer and Myanmar too. Its Universal Shaping Engine shapes Sinhala, Tibetan, Javanese and about ninety other scripts. Then it moves the glyphs: for the kerning, the cursive joins and the marks on their bases.
+This module gives the glyphs of a font for a text, and their positions. It substitutes the glyphs for ligatures and for marks, for the joining forms of Arabic, and for the conjuncts of Indic scripts. It follows the rules of HarfBuzz for Hebrew, Thai, Lao, Khmer, Myanmar and Korean too. Its Universal Shaping Engine shapes Sinhala, Tibetan, Javanese and about ninety other scripts. Then it moves the glyphs: for the kerning, the cursive joins and the marks on their bases.
+
+A font with no GPOS table takes the kerning of its `kern` table. Its marks go on their bases by the boxes of the glyphs, as in HarfBuzz.
 
 ## Model
 
@@ -18,8 +20,8 @@ Shaping has these steps, in the order of HarfBuzz:
 6. Each character takes the glyph that the character map of the font gives. A space that the font does not have takes the glyph of the space, with the width that HarfBuzz gives it. U+2011 takes the glyph of U+2010.
 7. In Arabic, each letter takes a form: isolated, initial, medial or final. It is the joining form of the letter between its neighbours, from its Unicode joining type. A mark is transparent: it does not stop the letters on its two sides from joining. The Indic scripts go through the Indic shaper, which the section "Indic scripts" tells.
 8. The lookups of the GSUB features apply in stages. A lookup of a form applies only to the letters of that form.
-9. Each glyph takes its advance from the font. Then the lookups of the GPOS features apply in one stage: `abvm`, `blwm`, `curs`, `dist`, `kern`, `mark` and `mkmk`. For Hebrew, they apply only when the GPOS table has the script `hebr`.
-10. Each mark, of the GDEF class 3, has no advance, but in the Indic scripts a mark keeps its advance. A default ignorable glyph, such as a ZWJ, has no advance and no offset. Each glyph that a lookup attached takes the offsets of the glyph that it attaches to.
+9. Each glyph takes its advance from the font. Then the lookups of the GPOS features apply in one stage: `abvm`, `blwm`, `curs`, `dist`, `kern`, `mark` and `mkmk`. For Hebrew, they apply only when the GPOS table has the script `hebr`. The `kern` table applies next, unless the GPOS table has the feature `kern`.
+10. Each mark, of the GDEF class 3, has no advance, but in the Indic scripts a mark keeps its advance. In a font with no glyph classes, a mark is a character of the general category Mn. A default ignorable glyph, such as a ZWJ, has no advance and no offset. Each glyph that a lookup attached takes the offsets of the glyph that it attaches to. In a font with no GPOS table, the marks go on their bases, as the section `positions` tells.
 11. Each default ignorable glyph becomes the glyph of the space. In a font with no space, the default ignorable glyphs go, and their clusters join those next to them.
 
 A default ignorable glyph does not stop a lookup when the lookup can skip it. A glyph that a GSUB lookup substituted is not default ignorable, as in HarfBuzz. Thus a ligature that starts with a ZWJ shows. The flags of each feature tell which ZWNJ and ZWJ glyphs a lookup can skip, as in HarfBuzz.
@@ -162,11 +164,11 @@ const CALT: i32 = 65536;
 
 HarfBuzz gives each character its index as its cluster. Then a character that continues a grapheme takes the cluster of the character before it. Such a character is a mark, a ZWJ, an emoji modifier, a tag or a halfwidth katakana sound mark. A regional indicator after a regional indicator that starts a pair continues it too.
 
-A default ignorable character gets the property `IGNORABLE` of `std/truetype`. A ZWNJ and a ZWJ get their own property too. The combining grapheme joiner, the Mongolian variation selectors and the tags are `HIDDEN`: a GSUB lookup does not skip them.
+A default ignorable character gets the property `IGNORABLE` of `std/truetype`. A ZWNJ and a ZWJ get their own property too. The combining grapheme joiner, the Mongolian variation selectors and the tags are `HIDDEN`: a GSUB lookup does not skip them. After the normalization, a combining grapheme joiner that keeps no marks apart is not `HIDDEN`, as in HarfBuzz.
 
-The Indic shaper of HarfBuzz first puts a dotted circle between an independent vowel and a matra that look like another vowel together. U+0905 and U+093E are such a pair. It also puts one between a Ra and a virama, and U+0907. The pairs come from the list of invalid clusters of Microsoft, as `hb-ot-shaper-vowel-constraints.cc` of HarfBuzz holds them. The dotted circle takes the cluster of the matra.
+The Indic shaper of HarfBuzz first puts a dotted circle between an independent vowel and a matra that look like another vowel together. U+0905 and U+093E are such a pair. It also puts one between a Ra and a virama, and U+0907. The pairs come from the list of invalid clusters of Microsoft, as `hb-ot-shaper-vowel-constraints.cc` of HarfBuzz holds them. The dotted circle takes the cluster of the matra, and its Unicode properties too, as HarfBuzz copies them.
 
-The normalization of HarfBuzz comes next. A character that has a glyph and no mark after it stays whole, unless it is a mark after the first character. Each other character splits by the steps of its canonical decomposition. Each step gives a first part and a second part. It applies only when the font has a glyph for the second part.
+The normalization of HarfBuzz comes next. A character that has a glyph and no mark after it stays whole, unless it is a mark after the first character. Each other character splits by the steps of its canonical decomposition. Each step gives a first part and a second part, or one part only, as U+0341 gives U+0301. It applies only when the font has a glyph for the second part.
 
 A character that is not in a sequence of marks stops at the first step whose first part has a glyph. A character in such a sequence goes on to the last step that it can. The Indic shaper splits each character that it can, but not U+0931. When a mark follows the first character of the text, the marks go in order. Then each mark composes with the starter before it. The Indic shaper does not compose a mark with a mark.
 
@@ -174,24 +176,33 @@ A character that is not in a sequence of marks stops at the first step whose fir
 <<characters>>=
 // The characters of a text, with the cluster and the mask of each one, and
 // the code point whose glyph shows it. That code point is the character,
-// or a code point of the private use area of a Thai font.
-struct Chars { cps: char[], clusters: i32[], masks: i32[], shown: i32[] }
+// or a code point of the private use area of a Thai font. `unicode` holds
+// the character whose Unicode properties each one has, such as its general
+// category and its combining class. A character that a shaper puts in the
+// text takes those of the character that it copies, as in HarfBuzz.
+struct Chars { cps: char[], clusters: i32[], masks: i32[], shown: i32[], unicode: char[] }
 
 function no_chars(): Chars {
   let none: char[] = [];
   let zero: i32[] = [];
-  return Chars { cps: none, clusters: zero, masks: zero, shown: zero };
+  return Chars { cps: none, clusters: zero, masks: zero, shown: zero, unicode: none };
 }
 
 // `out` with the character at `i` of `cs`.
 function with_char(own out: Chars, cs: Chars, i: i32): Chars {
-  return Chars { cps: out.cps.append(cs.cps[i]), clusters: out.clusters.append(cs.clusters[i]), masks: out.masks.append(cs.masks[i]), shown: out.shown.append(cs.shown[i]) };
+  return Chars { cps: out.cps.append(cs.cps[i]), clusters: out.clusters.append(cs.clusters[i]), masks: out.masks.append(cs.masks[i]), shown: out.shown.append(cs.shown[i]), unicode: out.unicode.append(cs.unicode[i]) };
 }
 
 // `out` with the character `c`, which takes the cluster and the mask of the
 // character at `i` of `cs`.
 function with_new_char(own out: Chars, cs: Chars, i: i32, c: char): Chars {
-  return Chars { cps: out.cps.append(c), clusters: out.clusters.append(cs.clusters[i]), masks: out.masks.append(cs.masks[i]), shown: out.shown.append(c as i32) };
+  return Chars { cps: out.cps.append(c), clusters: out.clusters.append(cs.clusters[i]), masks: out.masks.append(cs.masks[i]), shown: out.shown.append(c as i32), unicode: out.unicode.append(c) };
+}
+
+// `out` with the character `c`, which takes the cluster, the mask and the
+// Unicode properties of the character at `i` of `cs`.
+function with_copied_char(own out: Chars, cs: Chars, i: i32, c: char): Chars {
+  return Chars { cps: out.cps.append(c), clusters: out.clusters.append(cs.clusters[i]), masks: out.masks.append(cs.masks[i]), shown: out.shown.append(c as i32), unicode: out.unicode.append(cs.unicode[i]) };
 }
 
 // The characters besides the marks that continue a grapheme for HarfBuzz:
@@ -226,7 +237,7 @@ function characters(text: string): Chars {
     masks = masks.append(GLOBAL);
     shown = shown.append(c as i32);
   }
-  return Chars { cps: cps, clusters: clusters, masks: masks, shown: shown };
+  return Chars { cps: cps, clusters: clusters, masks: masks, shown: shown, unicode: cps };
 }
 
 // Whether `n` is in one of the ranges of `ranges`, which holds the first
@@ -346,7 +357,7 @@ function vowel_constrained(cs: Chars, script: string): Chars {
       out = with_char(out, cs, k);
     }
     if (at != 0) {
-      out = with_char(with_new_char(out, cs, at, 0x25CC as char), cs, at);
+      out = with_char(with_copied_char(out, cs, at, 0x25CC as char), cs, at);
     }
     i = if (at == 0) { to } else { at + 1 };
   }
@@ -356,7 +367,7 @@ function vowel_constrained(cs: Chars, script: string): Chars {
 // `cs` in the order of `mark_order` for the script `script`.
 function ordered(cs: Chars, script: string): Chars {
   let out = no_chars();
-  for k in mark_order(cs.cps, script) {
+  for k in mark_order(cs.unicode, script) {
     out = with_char(out, cs, k);
   }
   return out;
@@ -392,7 +403,7 @@ function step_of(c: char, n: Normalizer): char[] {
 function normalized(f: truetype.Font, cs: Chars, n: Normalizer): Chars {
   let parts = decomposed(f, cs, n);
   for i in 1..cs.cps.len() {
-    if (cs.cps[i].is_mark()) {
+    if (cs.unicode[i].is_mark()) {
       let sorted = ordered(parts, n.script);
       return if (n.none) { sorted } else { composed(f, sorted, n) };
     }
@@ -406,7 +417,7 @@ function decomposed(f: truetype.Font, cs: Chars, n: Normalizer): Chars {
   let out = no_chars();
   for i in 0..cs.cps.len() {
     let parts = parts_of(f, cs, i, n);
-    if (parts.len() == 1) {
+    if (parts.len() == 1 && parts[0] == cs.cps[i]) {
       out = with_char(out, cs, i);
       continue;
     }
@@ -436,8 +447,8 @@ function parts_of(f: truetype.Font, cs: Chars, i: i32, n: Normalizer): char[] {
 // Whether the character at `i` of `cs` splits by the fewest steps: outside
 // a sequence of marks, or always with `n.none`.
 function shortest_at(cs: Chars, i: i32, n: Normalizer): boolean {
-  let c = cs.cps[i];
-  let next_mark = i + 1 < cs.cps.len() && cs.cps[i + 1].is_mark();
+  let c = cs.unicode[i];
+  let next_mark = i + 1 < cs.cps.len() && cs.unicode[i + 1].is_mark();
   return n.none || !n.splits_all && (i == 0 || !c.is_mark()) && !next_mark;
 }
 
@@ -479,8 +490,8 @@ function composed(f: truetype.Font, cs: Chars, n: Normalizer): Chars {
   let out = with_char(no_chars(), cs, 0);
   let starter = 0;
   for i in 1..cs.cps.len() {
-    let c = cs.cps[i];
-    let both = composite(f, out.cps, starter, c, n);
+    let c = cs.unicode[i];
+    let both = composite(f, out, starter, cs.cps[i], c, n);
     if (both != 0) {
       let cl = cs.clusters[i];
       for k in starter..out.cps.len() {
@@ -490,7 +501,7 @@ function composed(f: truetype.Font, cs: Chars, n: Normalizer): Chars {
       for k in starter..clusters.len() {
         clusters = clusters.with(k, cl);
       }
-      out = Chars { ...out, cps: out.cps.with(starter, both as char), clusters: clusters, shown: out.shown.with(starter, both) };
+      out = Chars { ...out, cps: out.cps.with(starter, both as char), clusters: clusters, shown: out.shown.with(starter, both), unicode: out.unicode.with(starter, both as char) };
       continue;
     }
     out = with_char(out, cs, i);
@@ -501,12 +512,14 @@ function composed(f: truetype.Font, cs: Chars, n: Normalizer): Chars {
   return out;
 }
 
-// The character that the mark `c` composes to with the starter at `starter`
-// of `cps`, or 0.
-function composite(f: truetype.Font, cps: char[], starter: i32, c: char, n: Normalizer): i32 {
-  let last = cps.len() - 1;
-  let free = c.is_mark() && !(n.marks_stay && cps[starter].is_mark()) && (starter == last || sort_class(cps[last]) < sort_class(c));
-  let both = if (free) { composition_of(cps[starter], c, n) } else { 0 };
+// The character that the character `c`, with the Unicode properties of
+// `props`, composes to with the starter at `starter` of `out`, or 0. Only a
+// mark composes.
+function composite(f: truetype.Font, out: Chars, starter: i32, c: char, props: char, n: Normalizer): i32 {
+  let us = out.unicode;
+  let last = us.len() - 1;
+  let free = props.is_mark() && !(n.marks_stay && us[starter].is_mark()) && (starter == last || sort_class(us[last]) < sort_class(props));
+  let both = if (free) { composition_of(out.cps[starter], c, n) } else { 0 };
   return if (both != 0 && f.glyph(both) != 0) { both } else { 0 };
 }
 
@@ -549,16 +562,68 @@ function hebrew_form(a: i32, b: i32): i32 {
 // the properties of the characters. The shaper value of each glyph holds
 // its character from the bit CP_SHIFT.
 function run_of_chars(f: truetype.Font, cs: Chars, masks: i32[]): truetype.Run {
+  let marks = if (f.has_glyph_classes()) { [] } else { nonspacing_marks() };
   let glyphs: i32[] = [];
   let props: i32[] = [];
   let vars: i32[] = [];
   for i in 0..cs.cps.len() {
     let c = cs.cps[i];
     glyphs = glyphs.append(glyph_of(f, cs.shown[i]));
-    props = props.append(char_props(c));
+    let u = cs.unicode[i];
+    let p = if (keeps_marks_apart(cs, i)) { char_props(u) } else { char_props(u) & ~truetype.HIDDEN };
+    props = props.append(p | class_of_char(u, marks) << truetype.CLASS_SHIFT);
     vars = vars.append(c as i32 << CP_SHIFT);
   }
   return truetype.Run { ...truetype.run_of(glyphs, cs.clusters, masks), props: props, vars: vars };
+}
+
+// Whether the character at `i` of `cs` is not a CGJ that HarfBuzz makes
+// skippable after the normalization: a CGJ between two characters whose
+// marks would keep their order without it.
+function keeps_marks_apart(cs: Chars, i: i32): boolean {
+  if (cs.cps[i] as i32 != 0x34F || i == 0 || i + 1 >= cs.cps.len()) {
+    return true;
+  }
+  let next = sort_class(cs.unicode[i + 1]);
+  return next != 0 && sort_class(cs.unicode[i - 1]) > next;
+}
+
+// The glyph class that HarfBuzz gives `c` in a font with no glyph classes:
+// 3, a mark, for a character of the general category Mn that is not default
+// ignorable, else 1, a base. It is 0 when `marks`, the ranges of Mn, is
+// empty.
+function class_of_char(c: char, marks: i32[]): i32 {
+  if (marks.len() == 0) {
+    return 0;
+  }
+  return if (in_sorted_ranges(c as i32, marks) && !default_ignorable(c as i32)) { 3 } else { 1 };
+}
+
+// The ranges of the general category Mn, each its first and its last code
+// point.
+function nonspacing_marks(): i32[] {
+  let Some(rs) = unicode.property_ranges("gc=Mn") else {
+    return [];
+  };
+  return rs;
+}
+
+// Whether `n` is in one of the ranges of `ranges`, which are in order and
+// hold the first and the last code point of each range.
+function in_sorted_ranges(n: i32, ranges: i32[]): boolean {
+  let lo = 0;
+  let hi = ranges.len() / 2;
+  while (lo < hi) {
+    let mid = (lo + hi) / 2;
+    if (n < ranges[2 * mid]) {
+      hi = mid;
+    } else if (n > ranges[2 * mid + 1]) {
+      lo = mid + 1;
+    } else {
+      return true;
+    }
+  }
+  return false;
 }
 
 // The glyph of `n` in `f`. A space that the font does not have takes the
@@ -1124,11 +1189,7 @@ function default_shaped(f: truetype.Font, text: string, script: string): truetyp
     r = applied_stage(f, r, script, stage, false);
   }
   let positioned = f.gpos >= 0 && (script != "hebr" || f.has_script("hebr", true));
-  r = with_space_widths(f, f.with_advances(r, rtl));
-  if (positioned) {
-    r = applied_stage(f, r, gpos_tag(f, script), position_features(), true);
-  }
-  return finished(f, r, true, positioned);
+  return placed(f, r, gpos_tag(f, script), positioned, rtl, ZERO_LATE, script != "thai" && script != "lao ");
 }
 
 // The mask of each character of `cs`, with its joining form in Arabic.
@@ -1309,7 +1370,7 @@ function with_syllables(r: truetype.Run, grammar: string): truetype.Run {
   while (i < cats.len()) {
     let (end, kind) = syllable_by(grammar, cats, i);
     for k in i..end {
-      props = props.with(k, props[k] & 255 | (serial << 4 | kind) << truetype.SYLLABLE_SHIFT);
+      props = props.with(k, props[k] & (1 << truetype.SYLLABLE_SHIFT) - 1 | (serial << 4 | kind) << truetype.SYLLABLE_SHIFT);
     }
     serial += 1;
     i = end;
@@ -1641,9 +1702,7 @@ function indic_shaped(f: truetype.Font, text: string, p: Plan): truetype.Run {
   }
   r = run_of_glyphs(r, finally_reordered(p, glyphs_of(r)));
   r = applied_stage(f, r, p.gsub, final_features(), false);
-  r = with_space_widths(f, f.with_advances(r, false));
-  r = applied_stage(f, r, p.gpos, position_features(), true);
-  return finished(f, r, false, f.gpos >= 0);
+  return placed(f, r, p.gpos, f.gpos >= 0, false, ZERO_NONE, false);
 }
 
 function glyphs_of(r: truetype.Run): Glyph[] {
@@ -2675,9 +2734,7 @@ function khmer_shaped(f: truetype.Font, text: string): truetype.Run {
   r = without_syllables(r);
   let last = ["pres", "abvs", "blws", "psts"].map((tag: string): Feature => feature(tag, GLOBAL, manual));
   r = applied_stage(f, r, "khmr", last.concat(["rlig", "calt", "clig", "rclt"].map((tag: string): Feature => feature(tag, GLOBAL, 0))), false);
-  r = with_space_widths(f, f.with_advances(r, false));
-  r = applied_stage(f, r, "khmr", position_features(), true);
-  return finished(f, r, false, f.gpos >= 0);
+  return placed(f, r, "khmr", f.gpos >= 0, false, ZERO_NONE, false);
 }
 
 // `r` with no syllables.
@@ -2903,12 +2960,7 @@ function myanmar_shaped(f: truetype.Font, text: string, gsub: string, gpos: stri
   r = without_syllables(r);
   let last = ["pres", "abvs", "blws", "psts"].map((tag: string): Feature => feature(tag, GLOBAL, truetype.MANUAL_ZWJ));
   r = applied_stage(f, r, gsub, last.concat(["rlig", "calt", "clig", "liga", "rclt"].map((tag: string): Feature => feature(tag, GLOBAL, 0))), false);
-  let positioned = f.gpos >= 0;
-  r = marks_zeroed(f, with_space_widths(f, f.with_advances(r, false)), positioned);
-  if (positioned) {
-    r = applied_stage(f, r, gpos, position_features(), true);
-  }
-  return finished(f, r, false, positioned);
+  return placed(f, r, gpos, f.gpos >= 0, false, ZERO_EARLY, false);
 }
 
 // The glyphs `gs` with a dotted circle at the start of each broken cluster,
@@ -3237,12 +3289,7 @@ function use_shaped(f: truetype.Font, text: string, script: string, gsub: string
   let zwj = truetype.MANUAL_ZWJ;
   let last = ["abvs", "blws", "haln", "pres", "psts"].map((tag: string): Feature => feature(tag, GLOBAL, zwj));
   r = applied_stage(f, r, gsub, last.concat(["rlig", "calt", "clig", "liga", "rclt"].map((tag: string): Feature => feature(tag, GLOBAL, 0))), false);
-  let positioned = f.gpos >= 0;
-  r = marks_zeroed(f, with_space_widths(f, f.with_advances(r, rtl)), positioned);
-  if (positioned) {
-    r = applied_stage(f, r, gpos, position_features(), true);
-  }
-  return finished(f, r, false, positioned);
+  return placed(f, r, gpos, f.gpos >= 0, rtl, ZERO_EARLY, false);
 }
 
 // The masks of `cs` with the joining form of each letter. In Mongolian, a
@@ -3328,7 +3375,7 @@ function with_use_syllables(r: truetype.Run): truetype.Run {
     let (end, kind) = use_syllable_from(cats, k);
     let to = if (end < kept.len()) { kept[end] } else { n };
     for i in kept[k]..to {
-      props = props.with(i, props[i] & 255 | (serial << 4 | kind) << truetype.SYLLABLE_SHIFT);
+      props = props.with(i, props[i] & (1 << truetype.SYLLABLE_SHIFT) - 1 | (serial << 4 | kind) << truetype.SYLLABLE_SHIFT);
     }
     serial += 1;
     k = end;
@@ -3710,12 +3757,7 @@ function hangul_shaped(f: truetype.Font, text: string): truetype.Run {
   let all = ["ccmp", "locl", "rlig", "clig", "liga", "rclt"].map((tag: string): Feature => feature(tag, GLOBAL, 0));
   r = applied_stage(f, r, "hang", [feature("rvrn", GLOBAL, 0)], false);
   r = applied_stage(f, r, "hang", direction_features(false).concat(jamo).concat(all).append(feature("calt", CALT, 0)), false);
-  let positioned = f.gpos >= 0;
-  r = with_space_widths(f, f.with_advances(r, false));
-  if (positioned) {
-    r = applied_stage(f, r, "hang", position_features(), true);
-  }
-  return finished(f, r, false, positioned);
+  return placed(f, r, "hang", f.gpos >= 0, false, ZERO_NONE, true);
 }
 
 // `cs` with each syllable of jamo composed when the font `f` has its glyph,
@@ -3848,8 +3890,9 @@ function jamo_of(s: i32): i32[] {
 }
 
 // `all` with the `k` characters at `pos` replaced by the characters `cps`,
-// which show the glyphs of `shown`. The new characters take the cluster
-// and the mask of the first one, after the clusters of the `k` join.
+// which show the glyphs of `shown`. The new characters take the cluster,
+// the mask and the Unicode properties of the first one, after the clusters
+// of the `k` join.
 function replaced(all0: Chars, pos: i32, k: i32, cps: char[], shown: i32[]): Chars {
   let all = Chars { ...all0, clusters: truetype.merged_clusters(all0.clusters, pos, pos + k) };
   let out = no_chars();
@@ -3857,7 +3900,8 @@ function replaced(all0: Chars, pos: i32, k: i32, cps: char[], shown: i32[]): Cha
     out = with_char(out, all, j);
   }
   for m in 0..cps.len() {
-    out = Chars { cps: out.cps.append(cps[m]), clusters: out.clusters.append(all.clusters[pos]), masks: out.masks.append(all.masks[pos]), shown: out.shown.append(shown[m]) };
+    out = with_copied_char(out, all, pos, cps[m]);
+    out = Chars { ...out, shown: out.shown.with(out.shown.len() - 1, shown[m]) };
   }
   for j in pos + k..all.cps.len() {
     out = with_char(out, all, j);
@@ -3868,20 +3912,72 @@ function replaced(all0: Chars, pos: i32, k: i32, cps: char[], shown: i32[]): Cha
 
 ### `positions`
 
-After the GPOS lookups, a mark has no advance, except in the Indic shaper. In a font with no GPOS table, a mark of a left-to-right run also moves back by its advance. Thus it stays on its base. A default ignorable glyph has no advance and no offset.
+Each glyph takes its advance from the font. Then the GPOS lookups apply, when the font has a GPOS table for the script. Then the default, the Arabic, the Hebrew and the Hangul shapers apply the `kern` table of the font. They do not apply it when the GPOS table has the feature `kern` for the script. The section `kern table` of `std/truetype` tells how.
 
-Then each glyph that a lookup attached takes an offset of the glyph that it attaches to: a mark takes the x offset, and the glyph of a cursive join the y offset. The mark took the y offset when it attached. A mark also takes the advances between the two glyphs, so that its offset is from its own pen. A right-to-left run does this from its last glyph. Last, each default ignorable glyph becomes the glyph of the space.
+A mark has no advance after the lookups. The Myanmar shaper and the Universal Shaping Engine zero the marks before the lookups. The Indic, the Khmer and the Hangul shapers do not zero them. A mark is a glyph of the GDEF class 3, or in a font with no glyph classes a character of the general category Mn.
+
+In a font with no GPOS table, a mark of a left-to-right run also moves back by its advance. Thus it stays on its base. A default ignorable glyph has no advance and no offset.
+
+Then each glyph that a lookup attached takes an offset of the glyph that it attaches to: a mark takes the x offset, and the glyph of a cursive join the y offset. The mark took the y offset when it attached. A mark also takes the advances between the two glyphs, so that its offset is from its own pen. A right-to-left run does this from its last glyph.
+
+In a font with no GPOS table, the shapers that apply the `kern` table also place the marks as HarfBuzz places them. A base and the marks after it make a cluster. Each mark of a combining class other than 0 goes on the box of the ink of its base, from `truetype.extents`, by its class: above or below, at the left, at the center or at the right. Marks of the same class stack, with a gap of 1/16 of the em.
+
+HarfBuzz first changes the classes of some marks of Hebrew, Arabic, Thai, Lao and Tibetan, so that they tell where the mark goes. A mark on a ligature goes on its part of the ligature.
+
+Last, each default ignorable glyph becomes the glyph of the space.
 
 ```fern
 <<positions>>=
 // The most glyphs in a chain of attachments.
 const MAX_CHAIN: i32 = 64;
 
-// `r` with the advance of each mark at 0 when `zero_marks`, no advance and
-// no offset for each default ignorable glyph, and each attachment added to
-// the offsets of its glyph. Without `positioned`, no GPOS lookup applied.
-function finished(f: truetype.Font, r: truetype.Run, zero_marks: boolean, positioned: boolean): truetype.Run {
-  let p = if (zero_marks) { marks_zeroed(f, r, positioned).pos } else { r.pos };
+// How a shaper of HarfBuzz zeroes the advances of the marks: not, before
+// the GPOS lookups, or after them.
+const ZERO_NONE: i32 = 0;
+
+const ZERO_EARLY: i32 = 1;
+
+const ZERO_LATE: i32 = 2;
+
+// `r` with the positions of its glyphs, as the positioning of HarfBuzz
+// gives them. With `gpos`, the GPOS lookups of the script `script` apply.
+// `zero` tells when the marks lose their advance. With `fallback`, as in
+// the default shaper, the kern table applies and the marks of a font with
+// no GPOS table go on their bases.
+function placed(f: truetype.Font, r0: truetype.Run, script: string, gpos: boolean, rtl: boolean, zero: i32, fallback: boolean): truetype.Run {
+  let kern = kern_applies(f, script, gpos, fallback);
+  let zeroing = if (kern && f.has_kern_machine()) { ZERO_NONE } else { zero };
+  let adjust = !gpos && !(kern && f.has_cross_kern());
+  let shift = adjust && !rtl;
+  let r = finished(lookups_placed(f, with_space_widths(f, f.with_advances(r0, rtl)), script, gpos, kern, zeroing, shift));
+  return hidden(f, if (adjust && fallback) { fallback_placed(f, r, shift) } else { r });
+}
+
+// Whether a shaper that can apply the kern table, with `fallback`, applies
+// it: when the GPOS table does not apply with `gpos`, or has no feature
+// `kern` for `script`.
+function kern_applies(f: truetype.Font, script: string, gpos: boolean, fallback: boolean): boolean {
+  return fallback && f.has_kern_table() && !(gpos && f.has_position_feature(script, "kern"));
+}
+
+// `r` after the GPOS lookups of `script` with `gpos`, and the kern table
+// with `kern`. The marks lose their advance before them or after them, as
+// `zeroing` tells, and with `shift` they also move back by it.
+function lookups_placed(f: truetype.Font, r0: truetype.Run, script: string, gpos: boolean, kern: boolean, zeroing: i32, shift: boolean): truetype.Run {
+  let r = if (zeroing == ZERO_EARLY) { marks_zeroed(f, r0, shift) } else { r0 };
+  if (gpos) {
+    r = applied_stage(f, r, script, position_features(), true);
+  }
+  if (kern) {
+    r = f.with_kern_table(r);
+  }
+  return if (zeroing == ZERO_LATE) { marks_zeroed(f, r, shift) } else { r };
+}
+
+// `r` with no advance and no offset for each default ignorable glyph, and
+// each attachment added to the offsets of its glyph.
+function finished(r: truetype.Run): truetype.Run {
+  let p = r.pos;
   for i in 0..r.glyphs.len() {
     if (truetype.is_ignorable(r.props[i])) {
       p = truetype.Positions { ...p, advances: p.advances.with(i, 0), dx: p.dx.with(i, 0), dy: p.dy.with(i, 0) };
@@ -3893,21 +3989,279 @@ function finished(f: truetype.Font, r: truetype.Run, zero_marks: boolean, positi
     let i = if (rtl) { n - 1 - k } else { k };
     p = propagated(p, i, MAX_CHAIN);
   }
-  return hidden(f, truetype.Run { ...r, pos: p });
+  return truetype.Run { ...r, pos: p };
 }
 
-// `r` with no advance for each mark, of the GDEF class 3. Without
-// `positioned`, a mark of a left-to-right run also moves back by its
-// advance.
-function marks_zeroed(f: truetype.Font, r: truetype.Run, positioned: boolean): truetype.Run {
+// `r` with no advance for each mark, of the class 3. With `shift`, a mark
+// also moves back by its advance.
+function marks_zeroed(f: truetype.Font, r: truetype.Run, shift: boolean): truetype.Run {
   let p = r.pos;
   for i in 0..r.glyphs.len() {
-    if (f.glyph_class(r.glyphs[i]) == 3) {
-      let back = if (!positioned && !p.rtl) { p.advances[i] } else { 0 };
+    if (f.class_at(r, i) == 3) {
+      let back = if (shift) { p.advances[i] } else { 0 };
       p = truetype.Positions { ...p, advances: p.advances.with(i, 0), dx: p.dx.with(i, p.dx[i] - back) };
     }
   }
   return truetype.Run { ...r, pos: p };
+}
+
+// The classes that the fallback positioning of HarfBuzz gives the marks of
+// Hebrew, Arabic, Thai, Lao and Tibetan: pairs of the class that sorts a
+// mark and the class that places it.
+const PLACING_CLASSES: i32[] = [22, 220, 15, 220, 16, 220, 17, 220, 23, 220, 18, 220, 19, 220, 20, 220, 21, 220, 24, 220, 25, 220, 13, 214, 10, 232, 11, 228, 14, 228, 26, 230, 28, 230, 29, 230, 31, 230, 32, 230, 27, 230, 34, 230, 35, 230, 36, 230, 30, 220, 33, 220, 3, 222, 107, 232, 118, 220, 122, 230, 129, 220, 132, 230, 131, 220];
+
+// The marks of Thai and Lao of the combining class 0 that the fallback
+// positioning places: pairs of a code point and its class.
+const THAI_PLACING: i32[] = [0xE31, 232, 0xE34, 232, 0xE35, 232, 0xE36, 232, 0xE37, 232, 0xE47, 232, 0xE4C, 232, 0xE4D, 232, 0xE4E, 232, 0xEB1, 230, 0xEB4, 230, 0xEB5, 230, 0xEB6, 230, 0xEB7, 230, 0xEBB, 230, 0xECC, 230, 0xECD, 230, 0xEBC, 220];
+
+// The combining classes of the fallback positioning.
+const CLASS_ATTACHED_BELOW_LEFT: i32 = 200;
+
+const CLASS_ATTACHED_BELOW: i32 = 202;
+
+const CLASS_ATTACHED_ABOVE: i32 = 214;
+
+const CLASS_ATTACHED_ABOVE_RIGHT: i32 = 216;
+
+const CLASS_BELOW_LEFT: i32 = 218;
+
+const CLASS_BELOW: i32 = 220;
+
+const CLASS_BELOW_RIGHT: i32 = 222;
+
+const CLASS_ABOVE_LEFT: i32 = 228;
+
+const CLASS_ABOVE: i32 = 230;
+
+const CLASS_ABOVE_RIGHT: i32 = 232;
+
+const CLASS_DOUBLE_BELOW: i32 = 233;
+
+const CLASS_DOUBLE_ABOVE: i32 = 234;
+
+// The class by which the fallback positioning places the glyph at `i` of
+// `r`, as HarfBuzz gives it: 0 for a glyph that is not a mark, and the sort
+// class of a mark, which some marks of the general category Mn change.
+// `mn` holds the ranges of Mn.
+function placing_class(r: truetype.Run, i: i32, mn: i32[]): i32 {
+  if (!is_mark_at(r, i, mn)) {
+    return 0;
+  }
+  let c = char_at(r, i);
+  let k = sort_class(c);
+  let n = c as i32;
+  if (k >= 200 || !nonspacing_at(r, i, mn)) {
+    return k;
+  }
+  if (n >> 8 == 0xE && k == 0) {
+    return pair_value(THAI_PLACING, n, 0);
+  }
+  if (n == 0xE3A) {
+    return CLASS_BELOW_RIGHT;
+  }
+  return pair_value(PLACING_CLASSES, k, k);
+}
+
+// The value after the key `key` in the pairs `pairs`, or `none`.
+function pair_value(pairs: i32[], key: i32, none: i32): i32 {
+  let k = 0;
+  while (k < pairs.len()) {
+    if (pairs[k] == key) {
+      return pairs[k + 1];
+    }
+    k += 2;
+  }
+  return none;
+}
+
+// The character whose Unicode properties the glyph at `i` of `r` has.
+function char_at(r: truetype.Run, i: i32): char {
+  return (r.vars[i] >> CP_SHIFT) as char;
+}
+
+// Whether the glyph at `i` of `r` has the general category Mn. As in
+// HarfBuzz, a ligature that starts with such a character is a letter.
+function nonspacing_at(r: truetype.Run, i: i32, mn: i32[]): boolean {
+  return in_sorted_ranges(char_at(r, i) as i32, mn) && (r.ligs[i] & 16) == 0;
+}
+
+// Whether the glyph at `i` of `r` has a general category of a mark.
+function is_mark_at(r: truetype.Run, i: i32, mn: i32[]): boolean {
+  return nonspacing_at(r, i, mn) || char_at(r, i).is_mark() && !in_sorted_ranges(char_at(r, i) as i32, mn);
+}
+
+// `r` with the marks placed on their bases by the boxes of the ink of the
+// glyphs, as the fallback positioning of HarfBuzz places them. `shift` is
+// that of `marks_zeroed`.
+function fallback_placed(f: truetype.Font, r: truetype.Run, shift: boolean): truetype.Run {
+  let mn = nonspacing_marks();
+  let p = r.pos;
+  let start = 0;
+  for i in 1..r.glyphs.len() {
+    if (!is_mark_at(r, i, mn) && !passed_over(r, i)) {
+      p = cluster_placed(f, truetype.Run { ...r, pos: p }, start, i, shift, mn);
+      start = i;
+    }
+  }
+  return truetype.Run { ...r, pos: cluster_placed(f, truetype.Run { ...r, pos: p }, start, r.glyphs.len(), shift, mn) };
+}
+
+// Whether the fallback positioning passes over the glyph at `i`: a hidden
+// or a default ignorable glyph.
+function passed_over(r: truetype.Run, i: i32): boolean {
+  return (r.props[i] & truetype.HIDDEN) != 0 || truetype.is_ignorable(r.props[i]);
+}
+
+// The positions of `r` with the marks of the cluster from `start` to `end`
+// placed on the first base of each sequence of a base and its marks.
+function cluster_placed(f: truetype.Font, r: truetype.Run, start: i32, end: i32, shift: boolean, mn: i32[]): truetype.Positions {
+  let p = r.pos;
+  if (end - start < 2) {
+    return p;
+  }
+  let i = start;
+  while (i < end) {
+    if (is_mark_at(r, i, mn)) {
+      i += 1;
+      continue;
+    }
+    let j = i + 1;
+    while (j < end && (passed_over(r, j) || is_mark_at(r, j, mn))) {
+      j += 1;
+    }
+    p = around_base(f, truetype.Run { ...r, pos: p }, i, j, shift, mn);
+    i = j;
+  }
+  return p;
+}
+
+// The positions of `r` with the marks from `base` to `end` placed on the
+// glyph at `base`.
+function around_base(f: truetype.Font, r: truetype.Run, base: i32, end: i32, shift: boolean, mn: i32[]): truetype.Positions {
+  let p = r.pos;
+  let Some(e) = f.extents(r.glyphs[base]) else {
+    return nonspacing_zeroed(r, base + 1, end, shift, mn);
+  };
+  let box = truetype.Extents { ...e, x_bearing: 0, y_bearing: e.y_bearing + p.dy[base], width: f.advance(r.glyphs[base]) };
+  let id = truetype.lig_id(r.ligs[base]);
+  let parts = truetype.lig_parts(f, r, base);
+  let (x, y) = (if (p.rtl) { 0 } else { -p.advances[base] }, 0);
+  let part_box = box;
+  let last_part = -1;
+  let last_class = 255;
+  let cluster_box = box;
+  for i in base + 1..end {
+    let cc = placing_class(r, i, mn);
+    if (cc == 0) {
+      x = if (p.rtl) { x + p.advances[i] } else { x - p.advances[i] };
+      continue;
+    }
+    if (parts > 1) {
+      let part = part_of(r, i, id, parts);
+      if (part != last_part) {
+        last_part = part;
+        last_class = 255;
+        let at = if (p.rtl) { parts - 1 - part } else { part };
+        part_box = truetype.Extents { ...box, x_bearing: box.x_bearing + at * box.width / parts, width: box.width / parts };
+      }
+    }
+    if (cc != last_class) {
+      last_class = cc;
+      cluster_box = part_box;
+    }
+    let (next_box, q) = mark_placed(f, p, cluster_box, r.glyphs[i], i, cc);
+    cluster_box = next_box;
+    p = truetype.Positions { ...q, advances: q.advances.with(i, 0), dx: q.dx.with(i, q.dx[i] + x), dy: q.dy.with(i, q.dy[i] + y) };
+  }
+  return p;
+}
+
+// The part of the ligature, from 0, that the mark at `i` goes on: its own
+// part, or the last part when it is not a part of the ligature `id` of
+// `parts` parts.
+function part_of(r: truetype.Run, i: i32, id: i32, parts: i32): i32 {
+  let part = truetype.lig_part(r.ligs[i]) - 1;
+  return if (id == 0 || id != truetype.lig_id(r.ligs[i]) || part >= parts) { parts - 1 } else { part };
+}
+
+// The positions of `r` with no advance for each glyph of a character of
+// the general category Mn from `start` to `end`. With `shift`, such a
+// glyph also moves back by its advance.
+function nonspacing_zeroed(r: truetype.Run, start: i32, end: i32, shift: boolean, mn: i32[]): truetype.Positions {
+  let p = r.pos;
+  for i in start..end {
+    if (nonspacing_at(r, i, mn)) {
+      let back = if (shift) { p.advances[i] } else { 0 };
+      p = truetype.Positions { ...p, advances: p.advances.with(i, 0), dx: p.dx.with(i, p.dx[i] - back) };
+    }
+  }
+  return p;
+}
+
+// The box `box` after the mark `g` at `i`, of the class `cc`, goes on it,
+// and `p` with the offset of the mark. A mark with no box keeps its offset.
+function mark_placed(f: truetype.Font, p: truetype.Positions, box: truetype.Extents, g: i32, i: i32, cc: i32): (truetype.Extents, truetype.Positions) {
+  let Some(m) = f.extents(g) else {
+    return (box, p);
+  };
+  let gap = f.units_per_em / 16;
+  let (b, dy) = mark_y(box, m, cc, gap);
+  return (b, truetype.Positions { ...p, dx: p.dx.with(i, mark_x(box, m, cc, p.rtl)), dy: p.dy.with(i, dy) });
+}
+
+// The x offset of the mark with the box `m` and the class `cc` on the box
+// `b`: at its center, its left or its right edge.
+function mark_x(b: truetype.Extents, m: truetype.Extents, cc: i32, rtl: boolean): i32 {
+  if (cc == CLASS_DOUBLE_BELOW || cc == CLASS_DOUBLE_ABOVE) {
+    return if (rtl) { b.x_bearing - m.width / 2 - m.x_bearing } else { b.x_bearing + b.width - m.width / 2 - m.x_bearing };
+  }
+  if (cc == CLASS_ATTACHED_BELOW_LEFT || cc == CLASS_BELOW_LEFT || cc == CLASS_ABOVE_LEFT) {
+    return b.x_bearing - m.x_bearing;
+  }
+  if (cc == CLASS_ATTACHED_ABOVE_RIGHT || cc == CLASS_BELOW_RIGHT || cc == CLASS_ABOVE_RIGHT) {
+    return b.x_bearing + b.width - m.width - m.x_bearing;
+  }
+  return b.x_bearing + (b.width - m.width) / 2 - m.x_bearing;
+}
+
+// The box `b` after the mark with the box `m` and the class `cc` goes above
+// or below it, and the y offset of the mark. `gap` is the space between
+// a mark and the box, for the classes that are not attached.
+function mark_y(b: truetype.Extents, m: truetype.Extents, cc: i32, gap: i32): (truetype.Extents, i32) {
+  let below = [CLASS_DOUBLE_BELOW, CLASS_BELOW_LEFT, CLASS_BELOW, CLASS_BELOW_RIGHT];
+  let above = [CLASS_DOUBLE_ABOVE, CLASS_ABOVE_LEFT, CLASS_ABOVE, CLASS_ABOVE_RIGHT];
+  if (holds(below, cc) || cc == CLASS_ATTACHED_BELOW_LEFT || cc == CLASS_ATTACHED_BELOW) {
+    return mark_below(if (holds(below, cc)) { truetype.Extents { ...b, height: b.height - gap } } else { b }, m, gap);
+  }
+  if (holds(above, cc) || cc == CLASS_ATTACHED_ABOVE || cc == CLASS_ATTACHED_ABOVE_RIGHT) {
+    return mark_above(if (holds(above, cc)) { truetype.Extents { ...b, y_bearing: b.y_bearing + gap, height: b.height - gap } } else { b }, m, gap);
+  }
+  return (b, 0);
+}
+
+// The box `b0` after the mark with the box `m` goes below it, and the y
+// offset of the mark. A mark below does not move up.
+function mark_below(b0: truetype.Extents, m: truetype.Extents, gap: i32): (truetype.Extents, i32) {
+  let b = b0;
+  let dy = b.y_bearing + b.height - m.y_bearing;
+  if (gap > 0 == dy > 0) {
+    b = truetype.Extents { ...b, height: b.height - dy };
+    dy = 0;
+  }
+  return (truetype.Extents { ...b, height: b.height + m.height }, dy);
+}
+
+// The box `b0` after the mark with the box `m` goes above it, and the y
+// offset of the mark. A mark above moves down by half its offset at most.
+function mark_above(b0: truetype.Extents, m: truetype.Extents, gap: i32): (truetype.Extents, i32) {
+  let b = b0;
+  let dy = b.y_bearing - m.y_bearing - m.height;
+  if (gap > 0 != dy > 0) {
+    let correction = -(dy / 2);
+    b = truetype.Extents { ...b, y_bearing: b.y_bearing + correction, height: b.height - correction };
+    dy += correction;
+  }
+  return (truetype.Extents { ...b, y_bearing: b.y_bearing - m.height, height: b.height + m.height }, dy);
 }
 
 // `r` with the glyph of the space for each default ignorable glyph, or with

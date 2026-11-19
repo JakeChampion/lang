@@ -163,11 +163,19 @@ The order puts first what stops a release, then what most apps need.
 6. **Java and Kotlin libraries.** Merge DEX files and manifests of a JAR
    or an AAR into the APK.
 
-7. **Text.** A font with no GPOS table. HarfBuzz then moves the marks
-   by their combining classes and the extents of their glyphs, and it
-   applies the `kern` table. A font with no GDEF table also takes the
-   glyph classes that HarfBuzz gives from the Unicode categories. The
-   system fonts of Android have GPOS and GDEF tables.
+7. **Text.** An Arabic font with no joining features. HarfBuzz then
+   makes the joining forms from the presentation forms of the font. The
+   state machines of an Apple `kern` table, of format 1, do not apply
+   either. The system fonts of Android have GSUB, GPOS and GDEF tables.
+
+   Fonts with no GPOS table and no GDEF table are done, as HarfBuzz
+   shapes them. The marks go on their bases by their combining classes
+   and the boxes of their glyphs. The `kern` table of OpenType or of
+   Apple applies. A font with no glyph classes takes the classes that
+   HarfBuzz gives from the Unicode categories. The tests used 19 fonts
+   with no GPOS table, no GDEF table or no `kern` table. For more than
+   38,000 random strings in them, the glyphs, the clusters and the
+   positions are those of HarfBuzz 15.
 
    Indic shaping is done: `std/shape` follows the Indic shaper of HarfBuzz
    for Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu,
