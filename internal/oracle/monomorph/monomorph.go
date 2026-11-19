@@ -182,14 +182,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		for i, tp := range gen.TypeParams {
 			sub[tp] = args[i]
 		}
-		c := *gen
-		c.Name = k.mang
-		c.TypeParams = nil
-		c.Fields = make([]ast.Param, len(gen.Fields))
-		for i, f := range gen.Fields {
-			c.Fields[i] = ast.Param{Name: f.Name, Type: substituteType(f.Type, sub)}
-		}
-		clonedStructs = append(clonedStructs, &c)
+		clonedStructs = append(clonedStructs, cloneStruct(gen, k.mang, sub))
 	}
 
 	keptEnumMethods := map[string]bool{}
@@ -281,14 +274,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 			for i, tp := range gen.TypeParams {
 				sub[tp] = args[i]
 			}
-			c := *gen
-			c.Name = k.mang
-			c.TypeParams = nil
-			c.Fields = make([]ast.Param, len(gen.Fields))
-			for i, f := range gen.Fields {
-				c.Fields[i] = ast.Param{Name: f.Name, Type: substituteType(f.Type, sub)}
-			}
-			prog.Structs = append(prog.Structs, &c)
+			prog.Structs = append(prog.Structs, cloneStruct(gen, k.mang, sub))
 		}
 		if len(structInsts) == before {
 			converged = true
@@ -548,14 +534,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 			for i, tp := range gen.TypeParams {
 				sub[tp] = args[i]
 			}
-			c := *gen
-			c.Name = k.mang
-			c.TypeParams = nil
-			c.Fields = make([]ast.Param, len(gen.Fields))
-			for i, f := range gen.Fields {
-				c.Fields[i] = ast.Param{Name: f.Name, Type: substituteType(f.Type, sub)}
-			}
-			prog.Structs = append(prog.Structs, &c)
+			prog.Structs = append(prog.Structs, cloneStruct(gen, k.mang, sub))
 			progressed = true
 		}
 		if !progressed && len(structInsts) == beforeStructs {
@@ -1273,6 +1252,20 @@ func cloneFuncDecl(fn *ast.FuncDecl) *ast.FuncDecl {
 	c.TypeParams = nil
 	c.Params = append([]ast.Param(nil), fn.Params...)
 	c.Body = ast.CloneBlock(fn.Body)
+	return &c
+}
+
+// cloneStruct instantiates gen as the struct `name`, its type parameters
+// replaced by sub.
+func cloneStruct(gen *ast.StructDecl, name string, sub map[string]ast.Type) *ast.StructDecl {
+	c := *gen
+	c.Name = name
+	c.Generic = gen.Name
+	c.TypeParams = nil
+	c.Fields = make([]ast.Param, len(gen.Fields))
+	for i, f := range gen.Fields {
+		c.Fields[i] = ast.Param{Name: f.Name, Type: substituteType(f.Type, sub)}
+	}
 	return &c
 }
 

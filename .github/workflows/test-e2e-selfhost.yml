@@ -1101,8 +1101,16 @@ jobs:
           mapfile -t MINE < <(printf '%s\n' "${SH_ALL[@]}" "${RES_ALL[@]}" | sort | scripts/shard-tests "$SHARD" "$NSHARD" "$WEIGHTS")
           SEL_SH=()
           SEL_RES=()
+          declare -A is_residual=()
+          for t in "${RES_ALL[@]}"; do
+            is_residual["$t"]=1
+          done
           for t in "${MINE[@]}"; do
-            if printf '%s\n' "${RES_ALL[@]}" | grep -qx "$t"; then SEL_RES+=("$t"); else SEL_SH+=("$t"); fi
+            if [[ ${is_residual[$t]:-} ]]; then
+              SEL_RES+=("$t")
+            else
+              SEL_SH+=("$t")
+            fi
           done
           if [ ${#SEL_SH[@]} -eq 0 ] && [ ${#SEL_RES[@]} -eq 0 ]; then
             echo "no tests for shard $SHARD/$NSHARD — the list, the filter or scripts/shard-tests is wrong" >&2; exit 1

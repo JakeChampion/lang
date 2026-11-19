@@ -314,6 +314,16 @@ function meet_twin(a: i32, b: i32): i32 {
   if (same >= 0 && apart >= 0) {
     return twin(o, same, apart);
   }
+  // A twin with one side is a plain count: it meets a twin of another key
+  // as that count.
+  if (is_twin(a) && is_twin(b) && twin_key(a) != twin_key(b)) {
+    if (flat(a) >= 0) {
+      return meet(flat(a), b);
+    }
+    if (flat(b) >= 0) {
+      return meet(a, flat(b));
+    }
+  }
   return meet(flat(a), flat(b));
 }
 
@@ -3193,6 +3203,9 @@ function twin_on_edge(own p: Progress, w: Walk, x: i32, y: i32, equal: boolean):
     return p;
   }
   let s = p.state[kx];
+  if (is_twin(s) && twin_key(s) != o && flat(s) >= 0) {
+    s = flat(s);
+  }
   if (s >= 0 && s <= cap() && o < w.f.nparams) {
     return Progress { ...p, state: p.state.with(kx, side_of_test(o, s, equal)) };
   }
@@ -3323,7 +3336,7 @@ function other_name(w: Walk, v: i32, t: i32): i32 {
   return -1;
 }
 
-function phi_input(own p: Progress, w: Walk, a: i32): Fed {
+function count_input(own p: Progress, w: Walk, a: i32): Fed {
   if (a < 0 || w.derived[a]) {
     return Fed { p: p, input: 0 };
   }
@@ -3372,6 +3385,16 @@ function phi_input(own p: Progress, w: Walk, a: i32): Fed {
   return Fed { p: p, input: 0 };
 }
 
+// A parameter is its own box: as a phi input, it meets a twin of itself side
+// by side.
+function phi_input(own p: Progress, w: Walk, a: i32): Fed {
+  let fed = count_input(p, w, a);
+  if (a >= 0 && !w.derived[a] && w.root[a] < w.f.nparams && fed.input >= 0 && fed.input <= cap()) {
+    return Fed { p: fed.p, input: twin(w.root[a], fed.input, no_side()) };
+  }
+  return fed;
+}
+
 // The box that a reuse token names: the token is a phi whose inputs are
 // that box or zero, so it is the box when it is not zero. -1 if `ins` is not
 // a token.
@@ -3409,18 +3432,21 @@ function token_fed(own p: Progress, w: Walk, ins: ssa.SInst, a: i32): Fed {
   }
   let t = w.root[ins.result];
   let kb = w.idx[box];
+  if (is_twin(p.state[kb]) && flat(p.state[kb]) >= 0) {
+    p = Progress { ...p, state: p.state.with(kb, flat(p.state[kb])) };
+  }
   if (zero_at(w, a)) {
     let held = p.state[kb];
     if (held < 0 || held > cap()) {
-      return phi_input(p, w, a);
+      return count_input(p, w, a);
     }
     p = Progress { ...p, state: p.state.with(kb, twin(t, no_side(), held)) };
     return Fed { p: p, input: twin(t, no_side(), 0) };
   }
   if (p.state[kb] < 0 || p.state[kb] > cap()) {
-    return phi_input(p, w, a);
+    return count_input(p, w, a);
   }
-  let fed = phi_input(p, w, a);
+  let fed = count_input(p, w, a);
   p = fed.p;
   let kept = p.state[kb];
   if (fed.input < 0 || fed.input > cap() || kept < 0 || kept > cap()) {

@@ -121,11 +121,41 @@ app asks the server for the markers of the item when it starts to play.
 The Tracks button of the player chooses the sound and the subtitles, and
 the server remembers the choice.
 
+With no choice of the person, the tracks follow a language. The Language
+row of the settings sets it. Its automatic value is the sound language of
+the plex.tv account, else the first language of the phone. The
+sound is the one that the server remembers when it is in that language.
+Else it is the first track in that language that is not a commentary.
+
+The Subtitles row sets the mode of the subtitles:
+
+- Off shows only the forced subtitles in the language, which give the
+  lines in a foreign language.
+- Foreign sound shows the subtitles in the language while the sound is in
+  another language.
+- Always shows the subtitles in the language.
+
+Its automatic value is the mode of the plex.tv account. An item with no
+track in the language keeps the tracks that the server remembers. A choice
+on the sheet of tracks holds for that item, and for all the episodes of its
+show.
+
 The app plays with Media3 ExoPlayer, through `std/android/exoplayer`. A
 file that plays as it is changes its sound in place, with no new start. A
 play from a row of the home screen takes the sound that the server
 remembers when all of its metadata comes. A download plays that sound
 too.
+
+Some sound outputs, such as an HDMI soundbar, take compressed sound. On
+such an output, a track in Dolby Digital, Dolby Digital Plus, DTS or Dolby
+TrueHD plays as it is. ExoPlayer sends it to the output with no decoder. A
+transcode can copy a Dolby Digital or Dolby Digital Plus track that the
+phone plays, so the surround sound stays.
+
+The app draws the video on a window in SDR. So a video in HDR10, HLG or
+Dolby Vision plays as a transcode. The server maps its colours to SDR. When the video shows, the app asks the display for the frame rate
+of the video. On Android 12 and later, a TV can then change to 24 Hz for
+a film. The settings of the device can refuse the change.
 
 A transcode takes its sound from the choice that the server remembers. So
 a new transcode starts after the server has the choice, and the old one
@@ -134,8 +164,17 @@ stops.
 The app draws text subtitles over the video itself, so the
 file plays as it is. These are SubRip, WebVTT, ASS and SSA, in a file beside
 the video or inside it. The server gives the text of a track inside the
-file at the address of its stream. Other subtitles, such as PGS, burn into
-a transcode.
+file at the address of its stream.
+
+The player shows a subtitle of images inside the file, such as PGS,
+VobSub or DVB, so the file plays as it is. ExoPlayer decodes the track,
+and the app draws each image in its place on the video. A subtitle of
+images in a file beside the video burns into a transcode.
+
+The sheet of tracks moves the lines of a text subtitle. Each tap of + shows
+them a tenth of a second later, and each tap of - a tenth earlier. The
+Subtitle size row of the settings sets the size of their text. The
+Subtitle background row puts a dark panel or a shadow behind them.
 
 The app reads the list of the decoders of the phone from Android. The
 player plays the file as it is when the phone decodes its video and its
@@ -182,9 +221,11 @@ the file.
 
 The sheet of tracks of a download lists the tracks of its file. A file as
 it is keeps each of its sound tracks, and a choice prepares the file
-again with the new sound. A transcode keeps only the sound that it played. The download
-also keeps the text of each text subtitle, so subtitles show with no
-server. An image subtitle such as PGS does not show from a file. A
+again with the new sound. A transcode keeps only the sound that it played.
+
+The download also keeps the text of each text subtitle, so subtitles show with no
+server. A file as it is also keeps each subtitle of images inside it, which
+the player shows. A transcode burned its subtitle of images in. A
 choice never stops the file to play a stream of the server.
 
 When no server hears the place where a play stopped, or that an item
@@ -192,10 +233,28 @@ was watched, the app keeps it in a file. The server hears it when it
 answers again.
 
 Download all in the menu of a show, a season, an artist or an album
-downloads each of its episodes or tracks. Downloads in the settings
-opens the list of the downloads, with the state of each one. A row of an
-episode shows its show, its code and its title, such as "S1 E3 · Title". A tap on a
-done download plays it, and its button removes it.
+downloads each of its episodes or tracks.
+
+Downloads in the settings opens the screen of the downloads. It looks like the home screen: a row
+of posters for the shows, one for the movies and one for the music. A
+show has one card for its downloaded episodes, and an album has one card
+for its tracks. Under the rows, each download that is not done shows its
+state, and its button stops it. A row of an episode shows its show, its
+code and its title, such as "S1 E3 · Title".
+
+Keep next episodes in the menu of a show turns on its smart downloads.
+Then the next episodes of the show that are not watched stay downloaded.
+The Smart downloads row of the settings sets how many: 1, 3, 5 or 10. The
+app checks each such show when the server hears that an item was watched,
+and every 30 minutes. It downloads the next episodes, and it removes the
+download of each watched episode, but not the one that plays.
+
+A card opens a detail screen like that of the server, from the phone: the
+poster, the synopsis, and the episodes or tracks with their synopsis.
+With a server, the detail of a show also gets the synopsis of the show.
+
+Play on that screen plays the first episode that the person has not
+seen, or the first track. Remove download removes the files of the card.
 
 TalkBack reads each screen. The app gives the screen reader each button
 by its text and each poster by its title. A double tap presses the
