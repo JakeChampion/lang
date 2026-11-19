@@ -169,7 +169,7 @@ jobs:
       # way, by the same utility partition: a utility's leak cases ride with
       # its parity cases, weighted by the parity row.
       #
-      # BOTH LISTS ARE DERIVED. The top-level list comes from `go test -list`
+      # BOTH LISTS ARE DERIVED. The top-level list comes from the test binary
       # and the utility list from coreutils/*.fern, diffutils/*.fern, sed/*.fern and findutils/*.fern — the same set
       # TestSelfHostCoreutilsCoverage holds the corpus registry to — so a test
       # or a utility added to the tree lands in some shard without anyone
@@ -187,9 +187,12 @@ jobs:
           GIANT=TestSelfHostCoreutilsParity
           LEAK=TestCorpusFreesWhatItAllocates
           W=.github/coreutils-test-weights.txt
+          BIN="$RUNNER_TEMP/coreutils.test"
+          go test -c -o "$BIN" ./internal/testing/coreutils/
+          list_tests() { (cd internal/testing/coreutils && "$BIN" -test.list "$1"); }
 
           mapfile -t TOPS < <(
-            go test -list '.' ./internal/testing/coreutils/ |
+            list_tests '.' |
               grep -E '^Test' | grep -v -e "^$GIANT\$" -e "^$LEAK\$" | sort |
               scripts/shard-tests "${{ matrix.shard }}" "$NSHARD" "$W"
           )
@@ -233,12 +236,12 @@ jobs:
           TOP_PAT="^($(join_alt "${TOPS_RE[@]}"))\$"
           UTIL_PAT="^($GIANT|$LEAK)\$/^($(join_alt "${UTILS_RE[@]}"))\$"
 
-          # Compile both before running either. `go test -list` parses the
+          # Compile both before running either. The test binary parses the
           # pattern and lists rather than runs, so a metacharacter added to
           # the tree later fails HERE, naming the pattern, instead of inside
           # a shard that reports a regexp error as a test failure.
           for pat in "$TOP_PAT" "$UTIL_PAT"; do
-            if ! go test -list "$pat" ./internal/testing/coreutils/ >/dev/null 2>&1; then
+            if ! list_tests "$pat" >/dev/null 2>&1; then
               echo "::error::shard ${{ matrix.shard }}/$NSHARD built an invalid -run pattern: $pat" >&2
               exit 1
             fi

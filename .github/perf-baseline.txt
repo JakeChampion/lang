@@ -136,7 +136,7 @@ aarch64/call_overhead.text	452
 aarch64/call_overhead.ir	10313038
 aarch64/closure_call.text	1309
 aarch64/closure_call.ir	46002179
-aarch64/deflate_decode.ir	29056263
+aarch64/deflate_decode.ir	26083717
 aarch64/deflate_decode.text	15384
 aarch64/deflate_encode.ir	40457097
 aarch64/deflate_encode.text	7906
@@ -191,7 +191,7 @@ x86_64/perceus_cfold.ir	36469730
 x86_64/perceus_deriv.text	3203
 x86_64/perceus_deriv.ir	50537534
 x86_64/perceus_nqueens.text	1706
-x86_64/perceus_nqueens.ir	53612868
+x86_64/perceus_nqueens.ir	58021468
 x86_64/perceus_rbtree.text	2630
 x86_64/perceus_rbtree.ir	23491818
 x86_64/perceus_rbtree_ck.text	3065
@@ -203,9 +203,9 @@ aarch64/perceus_deriv.ir	60111690
 aarch64/perceus_nqueens.text	1977
 aarch64/perceus_nqueens.ir	65931160
 aarch64/perceus_rbtree.text	3022
-aarch64/perceus_rbtree.ir	25498988
-aarch64/perceus_rbtree_ck.text	3702
-aarch64/perceus_rbtree_ck.ir	33343250
+aarch64/perceus_rbtree.ir	22550348
+aarch64/perceus_rbtree_ck.text	3479
+aarch64/perceus_rbtree_ck.ir	28912370
 x86_64/video_qtrle.text 5370
 x86_64/video_qtrle.ir 1547169520
 aarch64/video_qtrle.text 6144
@@ -259,9 +259,9 @@ aarch64/map_string.dr	10136148 2
 aarch64/ordmap_insert.dr	18665522
 aarch64/perceus_cfold.dr	11182883
 aarch64/perceus_deriv.dr	14832116
-aarch64/perceus_nqueens.dr	12023406
-aarch64/perceus_rbtree.dr	7147326
-aarch64/perceus_rbtree_ck.dr	8634563
+aarch64/perceus_nqueens.dr	8982606
+aarch64/perceus_rbtree.dr	6196606
+aarch64/perceus_rbtree_ck.dr	7236963
 aarch64/pmap_insert.dr	10552067
 aarch64/pvec_with.dr	12571597
 aarch64/record_update.dr	1639642
@@ -305,9 +305,9 @@ x86_64/map_string.dr	11581007 2
 x86_64/ordmap_insert.dr	17455427
 x86_64/perceus_cfold.dr	10209285
 x86_64/perceus_deriv.dr	15184918
-x86_64/perceus_nqueens.dr	12785008
-x86_64/perceus_rbtree.dr	6890845
-x86_64/perceus_rbtree_ck.dr	9213763
+x86_64/perceus_nqueens.dr	9744208
+x86_64/perceus_rbtree.dr	5775805
+x86_64/perceus_rbtree_ck.dr	7784323
 x86_64/pmap_insert.dr	11537935
 x86_64/pvec_with.dr	12550953
 x86_64/record_update.dr	1246
