@@ -113,9 +113,9 @@ jobs:
         run: |
           make bin/fern
           mkdir -p build/android-stopwatch build/dexer
-          javac --release 8 -nowarn -d build/dexer/classes $(find tests/android/dexer -name '*.java')
+          javac --release 8 -nowarn -d build/dexer/classes tests/android/dexer/dev/fern/dexer/Main.java
           java -cp build/dexer/classes dev.fern.dexer.Main | diff -u tests/android/dexer/expected.txt -
-          ./bin/fern -dex build/android-stopwatch/dexer.dex $(find build/dexer/classes -name '*.class')
+          find build/dexer/classes -name '*.class' -print0 | xargs -0 ./bin/fern -dex build/android-stopwatch/dexer.dex
           java -cp build/media3/cache/r8-9.5.29.jar com.android.tools.r8.D8 --min-api 24 --output build/dexer build/android-stopwatch/dexer.dex
       - name: Build the stopwatch APK and the logcat report program
         run: |

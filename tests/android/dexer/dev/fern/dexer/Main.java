@@ -7,6 +7,8 @@ import java.util.Map;
 
 // Each method prints the results of one kind of bytecode. The JVM output is
 // expected.txt, and ART must print the same lines for the DEX file of fern -dex.
+// Each float and double that it prints has a short exact decimal form, which
+// the Float.toString of each JDK and of ART prints the same.
 public class Main {
     static final int ANSWER = 42;
     static final long BIG = 1L << 40;
@@ -113,12 +115,12 @@ public class Main {
         System.out.println("long cmp " + (a > b) + " " + (a == b) + " " + Long.compare(a, b) + " " + BIG);
         int i = (int) a;
         long back = i;
-        System.out.println("long conv " + i + " " + back + " " + (float) a + " " + (double) b);
+        System.out.println("long conv " + i + " " + back + " " + (float) (a >> 24) + " " + (double) b);
     }
 
     static void floats() {
         float f = 1.5f, g = -0.25f;
-        double d = 3.75, e = 1e-3;
+        double d = 3.75, e = 0.125;
         System.out.println("float " + (f + g) + " " + (f - g) + " " + (f * g) + " " + (f / g) + " " + (f % g) + " " + (-f));
         System.out.println("double " + (d + e) + " " + (d - e) + " " + (d * e) + " " + (d / e) + " " + (d % e) + " " + (-d));
         float nan = Float.NaN;
