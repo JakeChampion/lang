@@ -2429,6 +2429,111 @@ pub function spill_cost(f: SFunc, reg_of: i32[], costs: SpillCosts): i32 {
   return total;
 }
 
+// A parameter used as an array base inside and outside a nested loop can
+// spill for the whole function. Give its reads inside the loop a separate
+// value. The allocator can then split that value around an inner loop.
+pub function loop_index_copy(f: SFunc): SFunc {
+  if (f.nparams == 0 || f.blocks.len() < 3) {
+    return f;
+  }
+  let sites: i32[][] = [];
+  let repeated = false;
+  for bi in 0..f.blocks.len() {
+    for ins in f.blocks[bi].insts {
+      if (ins.kind_tag != ARR_AT) {
+        continue;
+      }
+      let p = ins.args[0];
+      if (p < 0 || p >= f.nparams) {
+        continue;
+      }
+      if (sites.len() == 0) {
+        for i in 0..f.nparams {
+          sites = sites.append([]);
+        }
+      }
+      let bs = sites[p];
+      if (bs.len() == 0 || bs[bs.len() - 1] != bi) {
+        sites = sites.with(p, bs.append(bi));
+        repeated = repeated || sites[p].len() >= 3;
+      }
+    }
+  }
+  if (!repeated) {
+    return f;
+  }
+  let last = furthest_latches(f);
+  let head = -1;
+  let param = -1;
+  let best = 1;
+  let outer_last = -1;
+  for h in 0..last.len() {
+    if (last[h] <= h) {
+      continue;
+    }
+    if (last[h] > outer_last) {
+      outer_last = last[h];
+      continue;
+    }
+    for p in 0..sites.len() {
+      let count = 0;
+      for b in sites[p] {
+        if (h <= b && b <= last[h]) {
+          count += 1;
+        }
+      }
+      if (count > best && count < sites[p].len()) {
+        head = h;
+        param = p;
+        best = count;
+      }
+    }
+  }
+  if (head < 0) {
+    return f;
+  }
+  return copy_loop_index(f, head, last[head], param, sites[param]);
+}
+
+function copy_loop_index(f: SFunc, head: i32, last: i32, param: i32, sites: i32[]): SFunc {
+  let at = block_positions(f);
+  let idom = immediate_dominators(f, at);
+  let pre = idom[head];
+  if (pre < 0 || pre == head || f.blocks[pre].term.kind_tag != TERM_BR || f.blocks[pre].term.target != f.blocks[head].id) {
+    return f;
+  }
+  for id in f.blocks[head].preds {
+    let p = position_of(at, id);
+    if (p < 0 || p != pre && !dominates(idom, head, p)) {
+      return f;
+    }
+  }
+  for b in sites {
+    if (b >= head && b <= last && !dominates(idom, head, b)) {
+      return f;
+    }
+  }
+  let blocks = f.blocks;
+  let source = blocks[pre];
+  let copy = SInst { kind_tag: COPY, result: f.nvals, args: [param], imm: 0, str: "" };
+  blocks = blocks.with(pre, SBlock { ...source, insts: source.insts.append(copy) });
+  for b in sites {
+    if (b < head || b > last) {
+      continue;
+    }
+    let blk = blocks[b];
+    let insts = blk.insts;
+    for k in 0..insts.len() {
+      let ins = insts[k];
+      if (ins.kind_tag == ARR_AT && ins.args[0] == param) {
+        insts = insts.with(k, SInst { ...ins, args: ins.args.with(0, f.nvals) });
+      }
+    }
+    blocks = blocks.with(b, SBlock { ...blk, insts: insts });
+  }
+  return SFunc { ...f, blocks: blocks, nvals: f.nvals + 1 };
+}
+
 // A function with values split around inner loops, and the weight of the
 // stores and the loads that the split adds.
 pub struct LoopSplit { f: SFunc, cost: i32 }
