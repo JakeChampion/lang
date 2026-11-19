@@ -2350,8 +2350,13 @@ function test_android_auto(): test.TestOutcome {
   if (!has_call(log, "play https://up.example:32400/library/parts/71/file.m4a") || playing.play.queue.len() != 2) {
     return test.fail("the track did not play with its album: " + log.calls.get().join(" | "));
   }
+  log.parent.set("artist:999");
+  let lost = settle(at(playing, log, 450i64, f, android.Posted(40, 10 as usize)), log, 450i64, f);
+  if (!has_call(log, "answer 10 ") || lost.browsing.len() != 0) {
+    return test.fail("a request that the server failed got no answer: " + log.calls.get().join(" | "));
+  }
   log.parent.set(browse.ROOT);
-  let root = settle(at(playing, log, 500i64, f, android.Posted(40, 9 as usize)), log, 500i64, f);
+  let root = settle(at(lost, log, 500i64, f, android.Posted(40, 9 as usize)), log, 500i64, f);
   let music = control.browse_root([plex.Section { key: "3", kind: "artist", title: "Music" }, plex.Section { key: "1", kind: "movie", title: "Movies" }], [], "Downloads");
   return test.assert_eq(has_call(log, "answer 9 ").to_string() + " " + music.map((it: browse.Item): string => it.id + "=" + it.title).join(","), "true section:3=Music");
 }

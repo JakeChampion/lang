@@ -1101,6 +1101,10 @@ function answer(own s: App, purpose: string, r: plex.Reply): App {
     }
     return t;
   }
+  // The browser gets an answer even when the server fails.
+  if (verb == "browse") {
+    return got_browse(t, rest, r);
+  }
   if (r.status == 401 && t.client.token.len() > 0 && t.screen != ui.SERVERS) {
     return open_servers(App { ...t, error: "The server refused the sign-in. Choose a server again." });
   }
@@ -1159,9 +1163,6 @@ function got_media(own t: App, verb: string, rest: string, r: plex.Reply): App {
   }
   if (verb == "downloadall") {
     return download_all(t, plex.parse_items(r.text()).items);
-  }
-  if (verb == "browse") {
-    return got_browse(t, rest, r);
   }
   if (verb == "smart") {
     return got_smart(t, rest, r);
