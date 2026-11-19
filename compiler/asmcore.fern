@@ -5848,6 +5848,51 @@ pub function sized_rec_box_words(words: i64): boolean {
   return words >= 1i64 && words <= 255i64;
 }
 
+// The number of shape ids of the program under -sanitize: one for each
+// declaration, and one for each primitive type that a dyn box holds.
+pub function san_shape_count(s: EmitState): i32 {
+  return s.struct_decls.decls.len() + irtables.prim_type_ids().len();
+}
+
+// The name of each shape id. Id 0 is a block with no shape: an array, a
+// string or a raw block.
+pub function san_shape_names(s: EmitState): string[] {
+  let out: string[] = ["blocks with no shape"];
+  for d in s.struct_decls.decls {
+    out = out.append(san_ascii(irtables.decl_shape(d)));
+  }
+  for p in irtables.prim_type_ids() {
+    out = out.append(p);
+  }
+  return out;
+}
+
+// The number of words in the header of a box of shape id `id` (shape_tag),
+// or -1 for id 0.
+pub function san_shape_words(s: EmitState, id: i32): i64 {
+  if (id == 0) {
+    return 0i64 - 1i64;
+  }
+  if (id - 1 < s.struct_decls.decls.len()) {
+    let words = s.struct_decls.decls[id - 1].fields.len();
+    return (if (words > 0) { words } else { 1 }) as i64;
+  }
+  return 1i64;
+}
+
+// `name` with each byte that an .ascii string cannot hold as it is made `?`.
+pub function san_ascii(name: string): string {
+  let out = "";
+  for i in 0..name.len() {
+    if (name[i] >= b' ' && name[i] <= b'~' && name[i] != b'"' && name[i] != b'\\') {
+      out = out + slice_unchecked(name, i, i + 1);
+    } else {
+      out = out + "?";
+    }
+  }
+  return out;
+}
+
 // The tag of a box with the shape `name`: the high half of its header word.
 // The low 16 bits are the number of words of the box. The bits above them
 // are one more than the index of the shape in the declarations of the
