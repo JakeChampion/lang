@@ -42,6 +42,7 @@ The functions do no I/O and keep no state. A parser refuses a message that does 
 
 ```fern
 <<dependencies>>=
+import "std/array";
 import "std/crypto";
 import "std/crypto/aes_gcm";
 import "std/crypto/chacha20poly1305";
@@ -86,8 +87,8 @@ pub function suite(code: i32): Option[keyschedule.CipherSuite] {
 // suite (RFC 8422 section 5.4). ECDHE_ECDSA also permits EdDSA.
 pub function allows_signature(code: i32, scheme: i32): boolean {
   return match (code) {
-    0xc02f | 0xc030 | 0xcca8 => scheme == 0x0401 || scheme == 0x0501 || scheme == 0x0601 || scheme == 0x0804 || scheme == 0x0805 || scheme == 0x0806,
-    0xc02b | 0xc02c | 0xcca9 => scheme == 0x0403 || scheme == 0x0503 || scheme == 0x0603 || scheme == 0x0807,
+    0xc02f | 0xc030 | 0xcca8 => [0x0401, 0x0501, 0x0601, 0x0804, 0x0805, 0x0806].contains(scheme),
+    0xc02b | 0xc02c | 0xcca9 => [0x0403, 0x0503, 0x0603, 0x0807].contains(scheme),
     _ => false,
   };
 }
