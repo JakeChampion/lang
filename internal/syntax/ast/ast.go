@@ -2193,6 +2193,8 @@ type StructDecl struct {
 	// that it holds alone.
 	Secret       bool
 	SourceModule string
+	// Generic names the generic struct that a monomorph clone instantiates.
+	Generic string
 }
 
 type EnumDecl struct {
