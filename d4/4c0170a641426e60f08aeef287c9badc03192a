@@ -614,3 +614,8 @@ wasm32/checker.unproved	1284
 x86_64/checker.refuted	5049
 x86_64/checker.weakened	235
 x86_64/checker.missed	379
+
+# lane: net-h3spec
+h3spec/passed	86
+h3spec/failed	0
+h3spec/pending	0
