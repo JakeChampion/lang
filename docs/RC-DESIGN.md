@@ -584,7 +584,9 @@ against the parameter decides the side on each edge, and a join meets the
 two sides apart. A test of any value with a plain count against a parameter
 also gives a twin with one side: the box of the parameter on the equal edge,
 and another box on the other edge. A retain or a release of a twin with one
-side changes the count of that side. Another use that a twin cannot describe
+side changes the count of that side. A parameter is its own box, so as a phi
+input it is a twin of itself with one side, and a twin with one side meets a
+twin of another key as its count. Another use that a twin cannot describe
 reads the twin as one count. A reuse token is a phi whose inputs are one box
 or null, and it gives that box a twin of the token. Where the token is the
 box, the token takes the unit of the box. Where the token is null, the box
