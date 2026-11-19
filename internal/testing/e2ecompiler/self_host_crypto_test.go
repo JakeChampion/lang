@@ -165,6 +165,7 @@ func TestSelfHostCryptoApiRefusals(t *testing.T) {
   let Ok(p) = ed25519.public_key(k.public_point()) else { return 2; };
   let q = ed25519.PublicKey { ...p, bytes: [] };
   return 0;`, "E021"},
+		{"ed25519 montgomery_base outside the package", `return ed25519.montgomery_base(__alloc_u8(32)).len();`, "E087"},
 		{"control", `let c = hpke.key_schedule(hpke.KEM_P256, __alloc_u8(32), []);
   let Ok((a, next)) = c.seal([], [1u8]) else { return 1; };
   let Ok((b, _)) = next.seal([], [2u8]) else { return 2; };
