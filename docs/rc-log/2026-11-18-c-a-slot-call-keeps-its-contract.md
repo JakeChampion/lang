@@ -32,3 +32,13 @@ The emitted code is the same.
 
 The 2,749 programs under `conformance/`, `tests/`, `examples/` and the
 utilities give 0 findings on x86-64, arm64 and wasm32.
+
+The census rows, re-banked in `.github/certify-baseline.txt`:
+
+| row | before | after |
+|---|---:|---:|
+| `x86_64/fern_main.unproved` | 4,389 | 2,787 |
+| `wasm32/checker.unproved` | 1,284 | 312 |
+| `x86_64/checker.refuted` | 5,049 | 5,173 |
+| `x86_64/checker.weakened` | 235 | 235 |
+| `x86_64/checker.missed` | 379 | 255 |
