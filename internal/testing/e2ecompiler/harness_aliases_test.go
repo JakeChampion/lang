@@ -9,6 +9,7 @@ import (
 var arm64Tooling = e2eharness.Arm64Tooling
 var arm64Runner = e2eharness.Arm64Runner
 var buildBin = e2eharness.BuildBin
+var buildFernCLIBin = e2eharness.BuildLangBinForInterp
 var buildLangBinForInterp = e2eharness.BuildLangBinForInterp
 var buildModloadArm64DriverX86 = e2eharness.BuildModloadArm64DriverX86
 var buildModloadDriverX86 = e2eharness.BuildModloadDriverX86
