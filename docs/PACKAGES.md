@@ -82,7 +82,7 @@ assets = ["assets/wallpaper.jpg", "assets/Roboto-Regular.ttf"]
 
 APKs disable Android backup by default. Set `backup = true` under `[android]` or pass `-apk-backup` to enable it. Keep secrets in `android.no_backup_dir` even when the app permits backups.
 
-`dex` gives the DEX files of Java libraries that the app calls, as `-apk-dex` does. The DEX file of the @jni classes is `classes.dex` in the APK. The files of `dex` come after it, as `classes2.dex`, `classes3.dex` and so on.
+`dex` gives the DEX files of Java libraries that the app calls, as `-apk-dex` does. `fern -dex OUT FILE...` writes such a file from class files and JAR files. The DEX file of the @jni classes is `classes.dex` in the APK. The files of `dex` come after it, as `classes2.dex`, `classes3.dex` and so on.
 
 `widget` gives the app a widget of the home screen. Each string is an item of its row: `text:NAME:LABEL` is a text, and `button:NAME:LABEL` is a button. The app has one @jni class that extends `android.appwidget.AppWidgetProvider`, and `std/android/widget` gives the items their texts and the actions of their taps.
 

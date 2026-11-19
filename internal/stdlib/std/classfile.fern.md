@@ -10,15 +10,17 @@ A class file starts with the magic `CAFEBABE` and a version. A constant pool fol
 
 A `Field` and a `Method` each have a name, a descriptor and access flags. The constants `PUBLIC`, `STATIC` and the others are the bits of the flags, and `has` tests one bit. A constructor is a method with the name `<init>`. A field that is a compile-time constant has its value in `constant`.
 
+A method that is not abstract or native has its `Code`: the slots of its operand stack and of its locals, its bytecode, and its handlers of exceptions. `throws` holds the classes of the attribute Exceptions. The bytecode names its classes, fields, methods and constants by their index in the constant pool. `pool` of the `Class` holds each constant, decoded, at its index. `class_at` gives the class of an index, and `ref_at` gives its field or its method. `bootstraps` holds the bootstrap methods of the class, for the instructions `invokedynamic`.
+
 A descriptor is the type of a field or of a method in a short text. `I` is `int`, `Ljava/lang/String;` is a class and `[J` is an array of `long`. `(ILjava/lang/String;)V` is a method that takes an `int` and a `String` and returns nothing. `field_type` reads the descriptor of a field, and `signature` reads the descriptor of a method.
 
 A `Type` holds one type of a descriptor. `base` is the letter of the descriptor. For a class, `base` is `L` and `class` is the name. `dims` is the number of array dimensions.
 
 ## Contracts
 
-`parse` refuses bytes that do not start with the magic, and a constant with an unknown tag. It refuses an index that does not point to a constant of the correct kind. It also refuses a file that ends before the last method. The error gives the byte offset of the problem.
+`parse` refuses bytes that do not start with the magic, and a constant with an unknown tag. It refuses an index that does not point to a constant of the correct kind, in a member or in the constant pool. It also refuses a file that ends before the last method. The error gives the byte offset of the problem.
 
-`parse` reads the attribute `ConstantValue` of a field and no other attribute. It does not read the code of a method. It does not read the attributes of the class, so the bytes after the last method are not checked.
+`parse` reads the attribute `ConstantValue` of a field, the attributes `Code` and `Exceptions` of a method, and the attribute `BootstrapMethods` of the class. It does not read the other attributes, and it does not read the attributes of `Code`, such as the numbers of the lines. It checks that each attribute of the class is in the file. It does not check the bytecode.
 
 A class file holds text in modified UTF-8. `parse` gives each text as UTF-8, and it refuses a text that is not modified UTF-8.
 
@@ -144,11 +146,83 @@ pub enum Constant { Int(i32), Long(i64), Float(f32), Double(f64), Text(string) }
 
 pub struct Field { name: string, descriptor: string, access: i32, constant: Option[Constant] }
 
-pub struct Method { name: string, descriptor: string, access: i32 }
+// A range of the code of a method where the handler at `target` catches
+// the exceptions of the class `catch_type`, or each exception when
+// `catch_type` is empty. `start` is the first byte of the range and `end`
+// the byte after it.
+pub struct Handler { start: i32, end: i32, target: i32, catch_type: string }
+
+// The code of a method: the slots of its operand stack and of its local
+// variables, its bytecode, and its handlers in the order of the class file.
+pub struct Code { max_stack: i32, max_locals: i32, bytes: u8[], handlers: Handler[] }
+
+// A method. `code` is None for an abstract or a native method. `throws`
+// holds the classes of the attribute Exceptions.
+pub struct Method { name: string, descriptor: string, access: i32, code: Option[Code], throws: string[] }
+
+// A field, a method or an interface method that the code names: its
+// class, its name and its descriptor.
+pub struct Ref { class: string, name: string, descriptor: string }
+
+// One constant of the constant pool. A `Handle` holds the kind of the
+// method handle and the index of the constant that it refers to. A
+// `Dynamic` and an `InvokeDynamic` hold the index of their bootstrap
+// method, a name and a descriptor. `Unused` is the index 0 and the second
+// index of a `Long` or a `Double`.
+pub enum Entry {
+  Unused,
+  Utf8(string),
+  Int(i32),
+  Float(f32),
+  Long(i64),
+  Double(f64),
+  ClassOf(string),
+  StringOf(string),
+  FieldRef(Ref),
+  MethodRef(Ref),
+  InterfaceRef(Ref),
+  NameType(string, string),
+  Handle(i32, i32),
+  MethodType(string),
+  Dynamic(i32, string, string),
+  InvokeDynamic(i32, string, string),
+  ModuleOf(string),
+  PackageOf(string),
+}
+
+// A bootstrap method of the attribute BootstrapMethods: the index of its
+// method handle, and the indexes of its arguments.
+pub struct Bootstrap { method: i32, args: i32[] }
 
 // One class. `version` is the major version of the class file: 52 is
-// Java 8. `parent` is empty for java/lang/Object.
-pub struct Class { name: string, parent: string, interfaces: string[], access: i32, version: i32, fields: Field[], methods: Method[] }
+// Java 8. `parent` is empty for java/lang/Object. `pool` is the constant
+// pool, by index. `bootstraps` holds the bootstrap methods.
+pub struct Class { name: string, parent: string, interfaces: string[], access: i32, version: i32, fields: Field[], methods: Method[], pool: Entry[], bootstraps: Bootstrap[] }
+
+// The class of the constant `index`, or None when it is not a class.
+pub function (c: Class) class_at(index: i32): Option[string] {
+  if (index <= 0 || index >= c.pool.len()) {
+    return None;
+  }
+  return match (c.pool[index]) {
+    ClassOf(n) => Some(n),
+    _ => None,
+  };
+}
+
+// The field or the method of the constant `index`, or None when it is
+// not a field or a method.
+pub function (c: Class) ref_at(index: i32): Option[Ref] {
+  if (index <= 0 || index >= c.pool.len()) {
+    return None;
+  }
+  return match (c.pool[index]) {
+    FieldRef(r) => Some(r),
+    MethodRef(r) => Some(r),
+    InterfaceRef(r) => Some(r),
+    _ => None,
+  };
+}
 ```
 
 ### `descriptors`
@@ -161,6 +235,15 @@ pub struct Class { name: string, parent: string, interfaces: string[], access: i
 pub struct Type { base: string, class: string, dims: i32 }
 
 pub struct Signature { params: Type[], result: Type }
+
+// The descriptor of `t`, as in `[Ljava/lang/String;`.
+pub function (t: Type) descriptor(): string {
+  let out = "";
+  for _ in 0..t.dims {
+    out += "[";
+  }
+  return if (t.base == "L") { out + "L" + t.class + ";" } else { out + t.base };
+}
 
 // The letter of a primitive type, or "" for a byte that is not one.
 function primitive(c: u8): string {
@@ -342,6 +425,8 @@ const TAG_CLASS: i32 = 7;
 
 const TAG_STRING: i32 = 8;
 
+const TAG_NAME_TYPE: i32 = 12;
+
 // The number of bytes after the tag `tag` for a constant of a fixed size,
 // or -1.
 function fixed_size(tag: i32): i32 {
@@ -438,6 +523,72 @@ function value(b: [u8], pool: Pool, index: i32, from: i32): Result[Constant, Cla
   }
   return Err(ClassError { offset: from, reason: "the index does not point to a constant of the correct kind" });
 }
+
+// The reference of the field, the method or the interface method whose
+// bytes start at `p`: the index of its class, then of its name and type.
+function ref_of(b: [u8], pool: Pool, p: i32): Result[Ref, ClassError] {
+  let class = class_name(b, pool, be16(b, p), p)?;
+  let (name, descriptor) = name_type(b, pool, be16(b, p + 2), p + 2)?;
+  return Ok(Ref { class: class, name: name, descriptor: descriptor });
+}
+
+// The name and the descriptor of the constant NameAndType `index`.
+function name_type(b: [u8], pool: Pool, index: i32, from: i32): Result[(string, string), ClassError] {
+  let q = entry(pool, index, TAG_NAME_TYPE, from)?;
+  return Ok((text(b, pool, be16(b, q), q)?, text(b, pool, be16(b, q + 2), q + 2)?));
+}
+
+// The constant `index` of the pool, decoded.
+// One arm for each tag of the constant pool.
+// fern-lint: allow cyclomatic-complexity
+function decoded(b: [u8], pool: Pool, index: i32): Result[Entry, ClassError] {
+  let tag = pool.tags[index];
+  let p = pool.at[index];
+  return match (tag) {
+    0 => Ok(Unused),
+    1 => Ok(Utf8(standard(b[p + 2:p + 2 + be16(b, p)], p + 2)?)),
+    3 => Ok(Int(be32(b, p))),
+    4 => Ok(Float(f32_from_bits(be32(b, p)))),
+    5 => Ok(Long(be64(b, p))),
+    6 => Ok(Double(f64_from_bits(be64(b, p)))),
+    7 => Ok(ClassOf(text(b, pool, be16(b, p), p)?)),
+    8 => Ok(StringOf(text(b, pool, be16(b, p), p)?)),
+    9 => Ok(FieldRef(ref_of(b, pool, p)?)),
+    10 => Ok(MethodRef(ref_of(b, pool, p)?)),
+    11 => Ok(InterfaceRef(ref_of(b, pool, p)?)),
+    _ => decoded_late(b, pool, tag, p),
+  };
+}
+
+// The constant with the tag `tag` from 12 whose bytes start at `p`.
+// One test for each tag of the constant pool.
+// fern-lint: allow cyclomatic-complexity
+function decoded_late(b: [u8], pool: Pool, tag: i32, p: i32): Result[Entry, ClassError] {
+  if (tag == TAG_NAME_TYPE) {
+    return Ok(NameType(text(b, pool, be16(b, p), p)?, text(b, pool, be16(b, p + 2), p + 2)?));
+  }
+  if (tag == 15) {
+    return Ok(Handle(b[p] as i32, be16(b, p + 1)));
+  }
+  if (tag == 16) {
+    return Ok(MethodType(text(b, pool, be16(b, p), p)?));
+  }
+  if (tag == 17 || tag == 18) {
+    let (name, descriptor) = name_type(b, pool, be16(b, p + 2), p + 2)?;
+    return Ok(if (tag == 17) { Dynamic(be16(b, p), name, descriptor) } else { InvokeDynamic(be16(b, p), name, descriptor) });
+  }
+  let name = text(b, pool, be16(b, p), p)?;
+  return Ok(if (tag == 19) { ModuleOf(name) } else { PackageOf(name) });
+}
+
+// Each constant of the pool, decoded, by index.
+function entries(b: [u8], pool: Pool): Result[Entry[], ClassError] {
+  let out: Entry[] = [];
+  for i in 0..pool.tags.len() {
+    out = out.append(decoded(b, pool, i)?);
+  }
+  return Ok(out);
+}
 ```
 
 ### `members`
@@ -447,15 +598,16 @@ A field and a method have the same layout: the access flags, the name, the descr
 ```fern
 <<members>>=
 // One field or one method. `constant` is the index of the value of the
-// attribute ConstantValue, or 0. `next` is the offset after the member.
-struct Member { name: string, descriptor: string, access: i32, constant: i32, constant_at: i32, next: i32 }
+// attribute ConstantValue, or 0. `code` and `throws` are the offsets of the
+// attributes Code and Exceptions, or -1. `next` is the offset after the
+// member.
+struct Member { name: string, descriptor: string, access: i32, constant: i32, constant_at: i32, code: i32, throws: i32, next: i32 }
 
 function member(b: [u8], pool: Pool, at: i32): Result[Member, ClassError] {
   let p = need(b, at, 8)?;
   let name = text(b, pool, be16(b, p + 2), p + 2)?;
   let descriptor = text(b, pool, be16(b, p + 4), p + 4)?;
-  let constant = 0;
-  let constant_at = 0;
+  let (constant, constant_at, code, throws) = (0, 0, -1, -1);
   let q = p + 8;
   for k in 0..be16(b, p + 6) {
     let head = need(b, q, 6)?;
@@ -466,9 +618,68 @@ function member(b: [u8], pool: Pool, at: i32): Result[Member, ClassError] {
       constant = be16(b, body);
       constant_at = body;
     }
+    code = if (attribute == "Code") { body } else { code };
+    throws = if (attribute == "Exceptions") { body } else { throws };
     q = body + size;
   }
-  return Ok(Member { name: name, descriptor: descriptor, access: be16(b, p), constant: constant, constant_at: constant_at, next: q });
+  return Ok(Member { name: name, descriptor: descriptor, access: be16(b, p), constant: constant, constant_at: constant_at, code: code, throws: throws, next: q });
+}
+
+// The attribute Code at `at`: the sizes, the bytecode and the handlers.
+function code_of(b: [u8], pool: Pool, at: i32): Result[Code, ClassError] {
+  let head = need(b, at, 8)?;
+  let size = be32(b, at + 4);
+  let start = need(b, at + 8, size)?;
+  let table = need(b, start + size, 2)?;
+  let handlers: Handler[] = [];
+  let h = need(b, table + 2, 8 * be16(b, table))?;
+  for k in 0..be16(b, table) {
+    let e = h + 8 * k;
+    let catch_type = if (be16(b, e + 6) == 0) { "" } else { class_name(b, pool, be16(b, e + 6), e + 6)? };
+    handlers = handlers.append(Handler { start: be16(b, e), end: be16(b, e + 2), target: be16(b, e + 4), catch_type: catch_type });
+  }
+  let none: u8[] = [];
+  return Ok(Code { max_stack: be16(b, at), max_locals: be16(b, at + 2), bytes: none.concat(b[start:start + size]), handlers: handlers });
+}
+
+function method(b: [u8], pool: Pool, m: Member): Result[Method, ClassError] {
+  let code = if (m.code < 0) { None } else { Some(code_of(b, pool, m.code)?) };
+  let throws = if (m.throws < 0) { [] } else { names(b, pool, m.throws + 2, be16(b, m.throws))? };
+  return Ok(Method { name: m.name, descriptor: m.descriptor, access: m.access, code: code, throws: throws });
+}
+
+// The bootstrap methods of the attributes of the class at `at`.
+function bootstraps_of(b: [u8], pool: Pool, at: i32): Result[Bootstrap[], ClassError] {
+  let out: Bootstrap[] = [];
+  let q = need(b, at, 2)? + 2;
+  for k in 0..be16(b, at) {
+    let head = need(b, q, 6)?;
+    let size = be32(b, q + 2);
+    let body = need(b, q + 6, size)?;
+    if (text(b, pool, be16(b, q), q)? == "BootstrapMethods") {
+      out = bootstrap_list(b, body)?;
+    }
+    q = body + size;
+  }
+  return Ok(out);
+}
+
+// The list of the attribute BootstrapMethods at `at`.
+function bootstrap_list(b: [u8], at: i32): Result[Bootstrap[], ClassError] {
+  let out: Bootstrap[] = [];
+  let q = need(b, at, 2)? + 2;
+  for k in 0..be16(b, at) {
+    let head = need(b, q, 4)?;
+    let n = be16(b, q + 2);
+    let list = need(b, q + 4, 2 * n)?;
+    let args: i32[] = [];
+    for j in 0..n {
+      args = args.append(be16(b, list + 2 * j));
+    }
+    out = out.append(Bootstrap { method: be16(b, q), args: args });
+    q = list + 2 * n;
+  }
+  return Ok(out);
 }
 
 function field(b: [u8], pool: Pool, m: Member): Result[Field, ClassError] {
@@ -542,10 +753,13 @@ pub function parse(bytes: [u8]): Result[Class, ClassError] {
   let interfaces = names(bytes, pool, p + 8, count)?;
   let field_list = members(bytes, pool, p + 8 + 2 * count)?;
   let fields = fields_of(bytes, pool, field_list)?;
+  let methods_at = after(field_list, p + 8 + 2 * count);
+  let method_list = members(bytes, pool, methods_at)?;
   let methods: Method[] = [];
-  for m in members(bytes, pool, after(field_list, p + 8 + 2 * count))? {
-    methods = methods.append(Method { name: m.name, descriptor: m.descriptor, access: m.access });
+  for m in method_list {
+    methods = methods.append(method(bytes, pool, m)?);
   }
-  return Ok(Class { name: name, parent: parent, interfaces: interfaces, access: be16(bytes, p), version: be16(bytes, 6), fields: fields, methods: methods });
+  let bootstraps = bootstraps_of(bytes, pool, after(method_list, methods_at))?;
+  return Ok(Class { name: name, parent: parent, interfaces: interfaces, access: be16(bytes, p), version: be16(bytes, 6), fields: fields, methods: methods, pool: entries(bytes, pool)?, bootstraps: bootstraps });
 }
 ```

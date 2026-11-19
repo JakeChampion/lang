@@ -12,8 +12,11 @@ name: Android
 # the hardened library runs under Android's loader and app seccomp filter.
 # tests/android/dex is an app with @jni classes in the classes.dex that fern
 # -apk writes, and its check requires that ART loads, constructs and binds
-# them. tests/android/audio checks std/android/audio and a JNI call from
-# the loop thread, so the emulator runs with its audio on.
+# them. tests/android/dexer is a Java program that fern -dex compiles to a
+# DEX file, with no D8. ART runs it on the emulator through app_process, and
+# its output must be the output of the JVM. tests/android/audio checks
+# std/android/audio and a JNI call from the loop thread, so the emulator
+# runs with its audio on.
 # tests/android/video checks codec discovery, two encoder input paths, MP4
 # export, decoded pixels, and surface playback after pause and seek.
 # tests/android/player checks AAC+AVC playback, pause, seek, platform timestamps,
@@ -104,6 +107,16 @@ jobs:
           key: media3-${{ hashFiles('tools/media3/media3.lock') }}
       - name: Get Media3 ExoPlayer
         run: tools/media3/fetch
+      # The JVM output of the program must be expected.txt, and D8 must read
+      # the DEX file of fern -dex.
+      - name: Write the DEX file of the dexer test
+        run: |
+          make bin/fern
+          mkdir -p build/android-stopwatch build/dexer
+          javac --release 8 -nowarn -d build/dexer/classes tests/android/dexer/dev/fern/dexer/Main.java
+          java -cp build/dexer/classes dev.fern.dexer.Main | diff -u tests/android/dexer/expected.txt -
+          find build/dexer/classes -name '*.class' -print0 | xargs -0 ./bin/fern -dex build/android-stopwatch/dexer.dex
+          java -cp build/media3/cache/r8-9.5.29.jar com.android.tools.r8.D8 --min-api 24 --output build/dexer build/android-stopwatch/dexer.dex
       - name: Build the stopwatch APK and the logcat report program
         run: |
           make bin/fern
@@ -186,6 +199,7 @@ jobs:
             build/android-stopwatch/fern-native-compressed.apk
             build/android-stopwatch/fern-native-hardened.apk
             build/android-stopwatch/fern-dextest.apk
+            build/android-stopwatch/dexer.dex
             build/android-stopwatch/fern-audiotest.apk
             build/android-stopwatch/fern-videotest.apk
             build/android-stopwatch/fern-playertest.apk
@@ -274,6 +288,7 @@ jobs:
             python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native-compressed.apk dev.fern.nativez build/android-stopwatch/emulator/native-compressed extracted || echo "examples/android/native dev.fern.nativez" >> build/android-stopwatch/emulator/failed
             python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native-hardened.apk dev.fern.nativeh build/android-stopwatch/emulator/native-hardened mapped || echo "examples/android/native dev.fern.nativeh" >> build/android-stopwatch/emulator/failed
             python3 tests/android/dex/emulator_check.py build/android-stopwatch/fern-dextest.apk build/android-stopwatch/emulator/dex || echo "tests/android/dex" >> build/android-stopwatch/emulator/failed
+            python3 tests/android/dexer/emulator_check.py build/android-stopwatch/dexer.dex tests/android/dexer/expected.txt build/android-stopwatch/emulator/dexer || echo "tests/android/dexer" >> build/android-stopwatch/emulator/failed
             python3 tests/android/audio/emulator_check.py build/android-stopwatch/fern-audiotest.apk build/android-stopwatch/emulator/audio || echo "tests/android/audio" >> build/android-stopwatch/emulator/failed
             python3 tests/android/video/emulator_check.py build/android-stopwatch/fern-videotest.apk build/android-stopwatch/emulator/video || echo "tests/android/video" >> build/android-stopwatch/emulator/failed
             python3 tests/android/player/emulator_check.py build/android-stopwatch/fern-playertest.apk build/android-stopwatch/emulator/player build/android-stopwatch/fern-videotest.apk build/android-stopwatch/emulator/video/byte.mp4 || echo "tests/android/player" >> build/android-stopwatch/emulator/failed

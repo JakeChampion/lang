@@ -62,7 +62,7 @@
 # not link checker.fern at all, and found one irlower slice reading +6.8% or
 # +9.2% for the same absolute growth depending only on which driver divided it.
 
-fern.fern/stage2 18593232
+fern.fern/stage2 19644528
 
 # The smallest HTTP/1.1 server over TLS (scripts/net-bench.d/tls_hello.fern),
 # built by stage 1 with -size. It moves with std/serve, the TLS stack and the

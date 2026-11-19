@@ -257,6 +257,7 @@ which ones.
 | `SOTA-STDLIB-MATRIX-2026.md` | [tracker] | The execution matrix over the blueprint: verdict, prerequisite, phase and acceptance gate per row. |
 | `ATLAS-PLATFORM-PLAN.md` | [plan] | The external Atlas blueprint reconciled against Fern: SIMD, dispatch, allocator and concurrency substrate, the fused-intrinsic SIMD ABI, and a sequenced plan, partly landed. |
 | `NET-P8-HTTP3-PLAN.md` | [plan] | Networking P8: QUIC and HTTP/3, slice by slice; slices 1–7 landed, and the rest are open. |
+| `DEXER-PLAN.md` | [plan] | A DEX compiler in Fern for the Java and Kotlin libraries of an Android app: its parts, its checks and its limits; parts 1 to 3 landed. |
 | `NETWORKING-RESEARCH-2026-09.md` | [research] | The survey behind the networking plan: server performance, API ergonomics, TLS/DNS/QUIC/io_uring, simulation testing, security and operations. |
 | `ANDROID-STANDING.md` | [research] | Fern for Android apps against Kotlin, Java, Flutter, React Native, KMP and MAUI: strengths, gaps, measurements and the order of the fixes. |
 | `SOTA-STDLIB-BLUEPRINT.md` | [research] | Each stdlib primitive audited against the best known algorithm, with a verdict and recommended order. |
