@@ -5,7 +5,6 @@
 // bits, the register of the monitor of a synchronized method, the slots of
 // the stack, the locals after the parameters, and the parameters, which
 // ART puts in the last registers.
-import "core/map";
 import "std/classfile";
 import "std/option";
 import "std/string";

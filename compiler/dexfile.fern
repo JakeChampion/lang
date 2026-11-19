@@ -6,7 +6,6 @@
 // The file is the header, the sorted ID sections and the class
 // definitions, then the code, the type lists, the strings, the class data,
 // the values of the static fields and the map.
-import "core/map";
 import "std/crypto";
 import "std/option";
 import "std/utf8";
@@ -174,9 +173,20 @@ struct FieldId { class: string, name: string, desc: string }
 
 struct MethodId { class: string, name: string, proto: string }
 
-// The items of a file and their indexes. Each map gives the index of its
+// The items of a file and their indexes. Each index gives the index of its
 // item by its key.
-struct Ids { strings: string[], string_idx: Map[string, i32], types: string[], type_idx: Map[string, i32], protos: Proto[], proto_idx: Map[string, i32], fields: FieldId[], field_idx: Map[string, i32], methods: MethodId[], method_idx: Map[string, i32] }
+struct Ids { strings: string[], string_idx: util.NameIndex, types: string[], type_idx: util.NameIndex, protos: Proto[], proto_idx: util.NameIndex, fields: FieldId[], field_idx: util.NameIndex, methods: MethodId[], method_idx: util.NameIndex }
+
+// The index of `key` in `ix`, or `other`.
+function index_or(ix: util.NameIndex, key: string, other: i32): i32 {
+  let k = ix.find(key);
+  return if (k < 0) { other } else { k };
+}
+
+// `ix` with `key`, one time.
+function with_key(ix: util.NameIndex, key: string): util.NameIndex {
+  return if (ix.has(key)) { ix } else { ix.added(key) };
+}
 
 function field_key(class: string, name: string, desc: string): string {
   return class + "->" + name + ":" + desc;
@@ -186,42 +196,51 @@ function method_key(class: string, name: string, proto: string): string {
   return class + "->" + name + proto;
 }
 
-// The items that the classes name, each one time, before they sort.
-struct Wanted { strings: Map[string, i32], types: Map[string, i32], protos: Map[string, Proto], fields: Map[string, FieldId], methods: Map[string, MethodId] }
+// The items that the classes name, each one time, before they sort. Each
+// index holds the keys of the items beside it.
+struct Wanted { strings: util.NameIndex, types: util.NameIndex, proto_keys: util.NameIndex, protos: Proto[], field_keys: util.NameIndex, fields: FieldId[], method_keys: util.NameIndex, methods: MethodId[] }
 
 function want_type(w: Wanted, t: string): Wanted {
-  if (t == "" || w.types.contains(t)) {
+  if (t == "" || w.types.has(t)) {
     return w;
   }
-  return Wanted { ...w, types: w.types.insert(t, 0), strings: w.strings.insert(t, 0) };
+  return Wanted { ...w, types: w.types.added(t), strings: with_key(w.strings, t) };
 }
 
 function want_proto(w0: Wanted, ret: string, params: string[]): Wanted {
   let key = proto_key(ret, params);
-  if (w0.protos.contains(key)) {
+  if (w0.proto_keys.has(key)) {
     return w0;
   }
   let w = want_type(w0, ret);
   for p in params {
     w = want_type(w, p);
   }
-  return Wanted { ...w, protos: w.protos.insert(key, Proto { ret: ret, params: params }), strings: w.strings.insert(shorty(ret, params), 0) };
+  return Wanted { ...w, proto_keys: w.proto_keys.added(key), protos: w.protos.append(Proto { ret: ret, params: params }), strings: with_key(w.strings, shorty(ret, params)) };
 }
 
 function want_field(w0: Wanted, class: string, name: string, desc: string): Wanted {
   let w = want_type(want_type(w0, class), desc);
-  return Wanted { ...w, strings: w.strings.insert(name, 0), fields: w.fields.insert(field_key(class, name, desc), FieldId { class: class, name: name, desc: desc }) };
+  let key = field_key(class, name, desc);
+  if (w.field_keys.has(key)) {
+    return w;
+  }
+  return Wanted { ...w, strings: with_key(w.strings, name), field_keys: w.field_keys.added(key), fields: w.fields.append(FieldId { class: class, name: name, desc: desc }) };
 }
 
 function want_method(w0: Wanted, class: string, name: string, ret: string, params: string[]): Wanted {
   let w = want_proto(want_type(w0, class), ret, params);
   let proto = proto_key(ret, params);
-  return Wanted { ...w, strings: w.strings.insert(name, 0), methods: w.methods.insert(method_key(class, name, proto), MethodId { class: class, name: name, proto: proto }) };
+  let key = method_key(class, name, proto);
+  if (w.method_keys.has(key)) {
+    return w;
+  }
+  return Wanted { ...w, strings: with_key(w.strings, name), method_keys: w.method_keys.added(key), methods: w.methods.append(MethodId { class: class, name: name, proto: proto }) };
 }
 
 function want_fixup(w: Wanted, f: Fixup): Wanted {
   if (f.kind == STRING) {
-    return Wanted { ...w, strings: w.strings.insert(f.text, 0) };
+    return Wanted { ...w, strings: with_key(w.strings, f.text) };
   }
   if (f.kind == TYPE) {
     return want_type(w, f.text);
@@ -251,12 +270,12 @@ function want_class(w0: Wanted, c: Class): Wanted {
     w = want_type(w, i);
   }
   if (c.source != "") {
-    w = Wanted { ...w, strings: w.strings.insert(c.source, 0) };
+    w = Wanted { ...w, strings: with_key(w.strings, c.source) };
   }
   for f in c.fields {
     w = want_field(w, c.desc, f.name, f.desc);
     if let Some(Text(s)) = f.value {
-      w = Wanted { ...w, strings: w.strings.insert(s, 0) };
+      w = Wanted { ...w, strings: with_key(w.strings, s) };
     }
   }
   for m in c.methods {
@@ -268,18 +287,9 @@ function want_class(w0: Wanted, c: Class): Wanted {
   return w;
 }
 
-// The index of each item of `xs`, by its key.
-function index_of(keys: string[]): Map[string, i32] {
-  let out: Map[string, i32] = map_new(keys.len());
-  for k in 0..keys.len() {
-    out = out.insert(keys[k], k);
-  }
-  return out;
-}
-
 function sorted_strings(w: Wanted): string[] {
   let pairs: (i32[], string)[] = [];
-  for s in w.strings.keys() {
+  for s in w.strings.names {
     pairs = pairs.append((utf16(s), s));
   }
   let out: string[] = [];
@@ -291,24 +301,24 @@ function sorted_strings(w: Wanted): string[] {
 
 function ids_of(w: Wanted): Ids {
   let strings = sorted_strings(w);
-  let string_idx = index_of(strings);
-  let types = util.sorted_by(w.types.keys(), (a: string, b: string): boolean => string_idx.get_or(a, 0) > string_idx.get_or(b, 0));
-  let type_idx = index_of(types);
-  let protos = util.sorted_by(w.protos.values(), (a: Proto, b: Proto): boolean => proto_after(type_idx, a, b));
-  let proto_idx = index_of(protos.map((p: Proto): string => proto_key(p.ret, p.params)));
-  let fields = util.sorted_by(w.fields.values(), (a: FieldId, b: FieldId): boolean => field_after(string_idx, type_idx, a, b));
-  let methods = util.sorted_by(w.methods.values(), (a: MethodId, b: MethodId): boolean => method_after(string_idx, type_idx, proto_idx, a, b));
-  return Ids { strings: strings, string_idx: string_idx, types: types, type_idx: type_idx, protos: protos, proto_idx: proto_idx, fields: fields, field_idx: index_of(fields.map((f: FieldId): string => field_key(f.class, f.name, f.desc))), methods: methods, method_idx: index_of(methods.map((m: MethodId): string => method_key(m.class, m.name, m.proto))) };
+  let string_idx = util.name_index(strings);
+  let types = util.sorted_by(w.types.names, (a: string, b: string): boolean => index_or(string_idx, a, 0) > index_or(string_idx, b, 0));
+  let type_idx = util.name_index(types);
+  let protos = util.sorted_by(w.protos, (a: Proto, b: Proto): boolean => proto_after(type_idx, a, b));
+  let proto_idx = util.name_index(protos.map((p: Proto): string => proto_key(p.ret, p.params)));
+  let fields = util.sorted_by(w.fields, (a: FieldId, b: FieldId): boolean => field_after(string_idx, type_idx, a, b));
+  let methods = util.sorted_by(w.methods, (a: MethodId, b: MethodId): boolean => method_after(string_idx, type_idx, proto_idx, a, b));
+  return Ids { strings: strings, string_idx: string_idx, types: types, type_idx: type_idx, protos: protos, proto_idx: proto_idx, fields: fields, field_idx: util.name_index(fields.map((f: FieldId): string => field_key(f.class, f.name, f.desc))), methods: methods, method_idx: util.name_index(methods.map((m: MethodId): string => method_key(m.class, m.name, m.proto))) };
 }
 
 // Protos sort by their result, then by their parameters.
-function proto_after(type_idx: Map[string, i32], a: Proto, b: Proto): boolean {
-  let (ra, rb) = (type_idx.get_or(a.ret, 0), type_idx.get_or(b.ret, 0));
+function proto_after(type_idx: util.NameIndex, a: Proto, b: Proto): boolean {
+  let (ra, rb) = (index_or(type_idx, a.ret, 0), index_or(type_idx, b.ret, 0));
   if (ra != rb) {
     return ra > rb;
   }
   for k in 0..a.params.len().min(b.params.len()) {
-    let (pa, pb) = (type_idx.get_or(a.params[k], 0), type_idx.get_or(b.params[k], 0));
+    let (pa, pb) = (index_or(type_idx, a.params[k], 0), index_or(type_idx, b.params[k], 0));
     if (pa != pb) {
       return pa > pb;
     }
@@ -317,30 +327,31 @@ function proto_after(type_idx: Map[string, i32], a: Proto, b: Proto): boolean {
 }
 
 // Fields sort by their class, their name and their type.
-function field_after(string_idx: Map[string, i32], type_idx: Map[string, i32], a: FieldId, b: FieldId): boolean {
-  let (ca, cb) = (type_idx.get_or(a.class, 0), type_idx.get_or(b.class, 0));
+function field_after(string_idx: util.NameIndex, type_idx: util.NameIndex, a: FieldId, b: FieldId): boolean {
+  let (ca, cb) = (index_or(type_idx, a.class, 0), index_or(type_idx, b.class, 0));
   if (ca != cb) {
     return ca > cb;
   }
-  let (na, nb) = (string_idx.get_or(a.name, 0), string_idx.get_or(b.name, 0));
-  return if (na != nb) { na > nb } else { type_idx.get_or(a.desc, 0) > type_idx.get_or(b.desc, 0) };
+  let (na, nb) = (index_or(string_idx, a.name, 0), index_or(string_idx, b.name, 0));
+  return if (na != nb) { na > nb } else { index_or(type_idx, a.desc, 0) > index_or(type_idx, b.desc, 0) };
 }
 
 // Methods sort by their class, their name and their proto.
-function method_after(string_idx: Map[string, i32], type_idx: Map[string, i32], proto_idx: Map[string, i32], a: MethodId, b: MethodId): boolean {
-  let (ca, cb) = (type_idx.get_or(a.class, 0), type_idx.get_or(b.class, 0));
+function method_after(string_idx: util.NameIndex, type_idx: util.NameIndex, proto_idx: util.NameIndex, a: MethodId, b: MethodId): boolean {
+  let (ca, cb) = (index_or(type_idx, a.class, 0), index_or(type_idx, b.class, 0));
   if (ca != cb) {
     return ca > cb;
   }
-  let (na, nb) = (string_idx.get_or(a.name, 0), string_idx.get_or(b.name, 0));
-  return if (na != nb) { na > nb } else { proto_idx.get_or(a.proto, 0) > proto_idx.get_or(b.proto, 0) };
+  let (na, nb) = (index_or(string_idx, a.name, 0), index_or(string_idx, b.name, 0));
+  return if (na != nb) { na > nb } else { index_or(proto_idx, a.proto, 0) > index_or(proto_idx, b.proto, 0) };
 }
 
 // The classes in an order where a superclass or an interface that the file
 // defines comes before the classes that extend it.
 function class_order(classes: Class[]): Class[] {
-  let by_type = index_of(classes.map((c: Class): string => c.desc));
-  let done: Map[string, boolean] = map_new(classes.len());
+  let by_type = util.name_index(classes.map((c: Class): string => c.desc));
+  let empty: string[] = [];
+  let done = util.name_index(empty);
   let out: Class[] = [];
   for c in classes {
     let (next_out, next_done) = placed(classes, by_type, c, out, done, 0);
@@ -350,13 +361,14 @@ function class_order(classes: Class[]): Class[] {
   return out;
 }
 
-function placed(classes: Class[], by_type: Map[string, i32], c: Class, out0: Class[], done0: Map[string, boolean], depth: i32): (Class[], Map[string, boolean]) {
-  if (done0.contains(c.desc) || depth > classes.len()) {
+function placed(classes: Class[], by_type: util.NameIndex, c: Class, out0: Class[], done0: util.NameIndex, depth: i32): (Class[], util.NameIndex) {
+  if (done0.has(c.desc) || depth > classes.len()) {
     return (out0, done0);
   }
-  let (out, done) = (out0, done0.insert(c.desc, true));
+  let (out, done) = (out0, done0.added(c.desc));
   for t in [c.superclass].concat(c.interfaces) {
-    if let Some(k) = by_type.get(t) {
+    let k = by_type.find(t);
+    if (k >= 0) {
       let (o, d) = placed(classes, by_type, classes[k], out, done, depth + 1);
       out = o;
       done = d;
@@ -368,15 +380,15 @@ function placed(classes: Class[], by_type: Map[string, i32], c: Class, out0: Cla
 // The index of the fixup `f` in `ids`.
 function fixup_index(ids: Ids, f: Fixup): i32 {
   if (f.kind == STRING) {
-    return ids.string_idx.get_or(f.text, NO_INDEX);
+    return index_or(ids.string_idx, f.text, NO_INDEX);
   }
   if (f.kind == TYPE) {
-    return ids.type_idx.get_or(f.text, NO_INDEX);
+    return index_or(ids.type_idx, f.text, NO_INDEX);
   }
   if (f.kind == FIELD) {
-    return ids.field_idx.get_or(field_key(f.text, f.name, f.ret), NO_INDEX);
+    return index_or(ids.field_idx, field_key(f.text, f.name, f.ret), NO_INDEX);
   }
-  return ids.method_idx.get_or(method_key(f.text, f.name, proto_key(f.ret, f.params)), NO_INDEX);
+  return index_or(ids.method_idx, method_key(f.text, f.name, proto_key(f.ret, f.params)), NO_INDEX);
 }
 
 // The units of `code` with the index of each fixup in place, or an error
@@ -395,7 +407,7 @@ function patched(ids: Ids, code: Code): Result[i32[], string] {
 
 // The data section as it grows from the file offset `at`, and the offsets
 // of its items.
-struct Layout { at: i32, data: u8[], code_off: Map[string, i32], code_count: i32, lists_at: i32, lists: Map[string, i32], list_count: i32, strings_at: i32, string_off: i32[], class_data_at: i32, class_data: i32[], values_at: i32, values: i32[], value_count: i32 }
+struct Layout { at: i32, data: u8[], code_keys: util.NameIndex, code_offs: i32[], lists_at: i32, list_keys: util.NameIndex, list_offs: i32[], strings_at: i32, string_off: i32[], class_data_at: i32, class_data: i32[], values_at: i32, values: i32[], value_count: i32 }
 
 function here(l: Layout): i32 {
   return l.at + l.data.len();
@@ -409,7 +421,7 @@ function handlers(ids: Ids, code: Code): (u8[], i32[]) {
     offsets = offsets.append(out.len());
     out = sleb(out, if (c.all >= 0) { -c.types.len() } else { c.types.len() });
     for k in 0..c.types.len() {
-      out = uleb(uleb(out, ids.type_idx.get_or(c.types[k], 0)), c.addrs[k]);
+      out = uleb(uleb(out, index_or(ids.type_idx, c.types[k], 0)), c.addrs[k]);
     }
     out = if (c.all >= 0) { uleb(out, c.all) } else { out };
   }
@@ -447,7 +459,7 @@ function lay_code(l0: Layout, ids: Ids, classes: Class[]): Result[Layout, string
       if let Some(code) = m.code {
         let at = here(l);
         let data = pad4(code_item(l.data, ids, code)?);
-        l = Layout { ...l, data: data, code_off: l.code_off.insert(code_key(c, m), at), code_count: l.code_count + 1 };
+        l = Layout { ...l, data: data, code_keys: l.code_keys.added(code_key(c, m)), code_offs: l.code_offs.append(at) };
       }
     }
   }
@@ -458,15 +470,15 @@ function lay_code(l0: Layout, ids: Ids, classes: Class[]): Result[Layout, string
 // list.
 function lay_list(l: Layout, ids: Ids, ds: string[]): Layout {
   let key = ds.join(",");
-  if (ds.len() == 0 || l.lists.contains(key)) {
+  if (ds.len() == 0 || l.list_keys.has(key)) {
     return l;
   }
   let at = here(pad_layout(l));
   let data = put32(pad_layout(l).data, ds.len());
   for d in ds {
-    data = put16(data, ids.type_idx.get_or(d, 0));
+    data = put16(data, index_or(ids.type_idx, d, 0));
   }
-  return Layout { ...l, data: data, lists: l.lists.insert(key, at), list_count: l.list_count + 1 };
+  return Layout { ...l, data: data, list_keys: l.list_keys.added(key), list_offs: l.list_offs.append(at) };
 }
 
 function pad_layout(l: Layout): Layout {
@@ -474,7 +486,7 @@ function pad_layout(l: Layout): Layout {
 }
 
 function list_off(l: Layout, ds: string[]): i32 {
-  return if (ds.len() == 0) { 0 } else { l.lists.get_or(ds.join(","), 0) };
+  return if (ds.len() == 0) { 0 } else { value_of(l.list_keys, l.list_offs, ds.join(",")) };
 }
 
 function lay_lists(l0: Layout, ids: Ids, classes: Class[]): Layout {
@@ -527,15 +539,15 @@ function members_of(ids: Ids, c: Class): Members {
       virtual = virtual.append(k);
     }
   }
-  let fidx = (k: i32): i32 => ids.field_idx.get_or(field_key(c.desc, c.fields[k].name, c.fields[k].desc), 0);
-  let midx = (k: i32): i32 => ids.method_idx.get_or(code_key(c, c.methods[k]), 0);
+  let fidx = (k: i32): i32 => index_or(ids.field_idx, field_key(c.desc, c.fields[k].name, c.fields[k].desc), 0);
+  let midx = (k: i32): i32 => index_or(ids.method_idx, code_key(c, c.methods[k]), 0);
   return Members { statics: util.sorted_by(statics, (a: i32, b: i32): boolean => fidx(a) > fidx(b)), instance: util.sorted_by(instance, (a: i32, b: i32): boolean => fidx(a) > fidx(b)), direct: util.sorted_by(direct, (a: i32, b: i32): boolean => midx(a) > midx(b)), virtual: util.sorted_by(virtual, (a: i32, b: i32): boolean => midx(a) > midx(b)) };
 }
 
 function encoded_fields(out0: u8[], ids: Ids, c: Class, ks: i32[]): u8[] {
   let (out, last) = (out0, 0);
   for k in ks {
-    let idx = ids.field_idx.get_or(field_key(c.desc, c.fields[k].name, c.fields[k].desc), 0);
+    let idx = index_or(ids.field_idx, field_key(c.desc, c.fields[k].name, c.fields[k].desc), 0);
     out = uleb(uleb(out, idx - last), c.fields[k].access);
     last = idx;
   }
@@ -546,8 +558,8 @@ function encoded_methods(out0: u8[], l: Layout, ids: Ids, c: Class, ks: i32[]): 
   let (out, last) = (out0, 0);
   for k in ks {
     let m = c.methods[k];
-    let idx = ids.method_idx.get_or(code_key(c, m), 0);
-    out = uleb(uleb(uleb(out, idx - last), m.access), l.code_off.get_or(code_key(c, m), 0));
+    let idx = index_or(ids.method_idx, code_key(c, m), 0);
+    out = uleb(uleb(uleb(out, idx - last), m.access), value_of(l.code_keys, l.code_offs, code_key(c, m)));
     last = idx;
   }
   return out;
@@ -622,7 +634,7 @@ function encoded_value(out: u8[], ids: Ids, v: Value): u8[] {
     Long(x) => signed_value(out, x, 0x06),
     Float(x) => high_bytes(out, f32_bits(x) as i64 & 0xFFFFFFFF, 4, 0x10),
     Double(x) => high_bytes(out, f64_bits(x), 8, 0x11),
-    Text(s) => unsigned_value(out, ids.string_idx.get_or(s, 0) as i64, 0x17),
+    Text(s) => unsigned_value(out, index_or(ids.string_idx, s, 0) as i64, 0x17),
     Null => util.put_u8(out, 0x1E),
   };
 }
@@ -723,8 +735,8 @@ function lay_map(l0: Layout, ids: Ids, nc: i32): Layout {
     MapItem { kind: 4, count: ids.fields.len(), off: at[3] },
     MapItem { kind: 5, count: ids.methods.len(), off: at[4] },
     MapItem { kind: 6, count: nc, off: at[5] },
-    MapItem { kind: 0x2001, count: l.code_count, off: l.at },
-    MapItem { kind: 0x1001, count: l.list_count, off: l.lists_at },
+    MapItem { kind: 0x2001, count: l.code_offs.len(), off: l.at },
+    MapItem { kind: 0x1001, count: l.list_offs.len(), off: l.lists_at },
     MapItem { kind: 0x2002, count: ids.strings.len(), off: l.strings_at },
     MapItem { kind: 0x2000, count: nc, off: l.class_data_at },
     MapItem { kind: 0x2005, count: l.value_count, off: l.values_at },
@@ -738,8 +750,14 @@ function lay_map(l0: Layout, ids: Ids, nc: i32): Layout {
   return Layout { ...l, data: data };
 }
 
-function index_or_none(m: Map[string, i32], key: string): i32 {
-  return if (key == "") { NO_INDEX } else { m.get_or(key, NO_INDEX) };
+function index_or_none(ix: util.NameIndex, key: string): i32 {
+  return if (key == "") { NO_INDEX } else { index_or(ix, key, NO_INDEX) };
+}
+
+// The value beside `key` of `keys`, or 0.
+function value_of(keys: util.NameIndex, values: i32[], key: string): i32 {
+  let k = keys.find(key);
+  return if (k < 0) { 0 } else { values[k] };
 }
 
 function id_bytes(l: Layout, ids: Ids, classes: Class[]): u8[] {
@@ -748,20 +766,20 @@ function id_bytes(l: Layout, ids: Ids, classes: Class[]): u8[] {
     out = put32(out, o);
   }
   for t in ids.types {
-    out = put32(out, ids.string_idx.get_or(t, 0));
+    out = put32(out, index_or(ids.string_idx, t, 0));
   }
   for p in ids.protos {
-    out = put32(put32(put32(out, ids.string_idx.get_or(shorty(p.ret, p.params), 0)), ids.type_idx.get_or(p.ret, 0)), list_off(l, p.params));
+    out = put32(put32(put32(out, index_or(ids.string_idx, shorty(p.ret, p.params), 0)), index_or(ids.type_idx, p.ret, 0)), list_off(l, p.params));
   }
   for f in ids.fields {
-    out = put32(put16(put16(out, ids.type_idx.get_or(f.class, 0)), ids.type_idx.get_or(f.desc, 0)), ids.string_idx.get_or(f.name, 0));
+    out = put32(put16(put16(out, index_or(ids.type_idx, f.class, 0)), index_or(ids.type_idx, f.desc, 0)), index_or(ids.string_idx, f.name, 0));
   }
   for m in ids.methods {
-    out = put32(put16(put16(out, ids.type_idx.get_or(m.class, 0)), ids.proto_idx.get_or(m.proto, 0)), ids.string_idx.get_or(m.name, 0));
+    out = put32(put16(put16(out, index_or(ids.type_idx, m.class, 0)), index_or(ids.proto_idx, m.proto, 0)), index_or(ids.string_idx, m.name, 0));
   }
   for k in 0..classes.len() {
     let c = classes[k];
-    out = put32(put32(put32(put32(out, ids.type_idx.get_or(c.desc, 0)), c.access), index_or_none(ids.type_idx, c.superclass)), list_off(l, c.interfaces));
+    out = put32(put32(put32(put32(out, index_or(ids.type_idx, c.desc, 0)), c.access), index_or_none(ids.type_idx, c.superclass)), list_off(l, c.interfaces));
     out = put32(put32(put32(put32(out, index_or_none(ids.string_idx, c.source)), 0), l.class_data[k]), l.values[k]);
   }
   return out;
@@ -784,7 +802,9 @@ function header(ids: Ids, nc: i32, version: string, size: i32, data_off: i32, ma
 
 // The DEX file of `classes`, of the format `version`, such as "035".
 pub function write(classes0: Class[], version: string): Result[u8[], string] {
-  let w = Wanted { strings: map_new(64), types: map_new(64), protos: map_new(64), fields: map_new(64), methods: map_new(64) };
+  let empty: string[] = [];
+  let none = util.name_index(empty);
+  let w = Wanted { strings: none, types: none, proto_keys: none, protos: [], field_keys: none, fields: [], method_keys: none, methods: [] };
   for c in classes0 {
     w = want_class(w, c);
   }
@@ -792,7 +812,7 @@ pub function write(classes0: Class[], version: string): Result[u8[], string] {
   let classes = class_order(classes0);
   let nc = classes.len();
   let data_off = id_offsets(ids)[5] + 32 * nc;
-  let l = Layout { at: data_off, data: [], code_off: map_new(64), code_count: 0, lists_at: 0, lists: map_new(64), list_count: 0, strings_at: 0, string_off: [], class_data_at: 0, class_data: [], values_at: 0, values: [], value_count: 0 };
+  let l = Layout { at: data_off, data: [], code_keys: none, code_offs: [], lists_at: 0, list_keys: none, list_offs: [], strings_at: 0, string_off: [], class_data_at: 0, class_data: [], values_at: 0, values: [], value_count: 0 };
   l = lay_code(l, ids, classes)?;
   l = lay_values(lay_class_data(lay_strings(lay_lists(l, ids, classes), ids), ids, classes), ids, classes);
   let map_at = here(pad_layout(l));
