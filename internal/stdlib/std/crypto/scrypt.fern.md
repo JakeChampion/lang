@@ -213,9 +213,9 @@ function __refusal(n: i32, r: i32, p: i32): Option[ScryptError] {
   if (p < 1) {
     return Some(Parallelism(p));
   }
-  let block_bytes = 128i64 * r as i64;
+  let block_bytes = 128i64 * (r as i64);
   // Divide before multiplying so even the largest i32 inputs cannot wrap.
-  if (p as i64 > 2147483647i64 / block_bytes || n as i64 + 3i64 > 2147483647i64 / (16i64 * r as i64)) {
+  if (p as i64 > 2147483647i64 / block_bytes || n as i64 + 3i64 > 2147483647i64 / (16i64 * (r as i64))) {
     return Some(Memory);
   }
   return None;
@@ -231,8 +231,8 @@ pub function key_with_memory_limit(password: [u8], salt: [u8], n: i32, r: i32, p
   if let Some(e) = __refusal(n, r, p) {
     return Err(e);
   }
-  let block_bytes = 128i64 * r as i64;
-  let blocks_bytes = block_bytes * p as i64;
+  let block_bytes = 128i64 * (r as i64);
+  let blocks_bytes = block_bytes * (p as i64);
   let romix_bytes = block_bytes * (n as i64 + 3i64);
   let initial_bytes = blocks_bytes + salt.len() as i64 + 4i64;
   let final_bytes = 2i64 * blocks_bytes + 4i64 + key_len as i64;
