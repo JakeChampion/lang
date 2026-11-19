@@ -9,6 +9,7 @@ import (
 
 const selfHostReuseReportSrc = `enum List { Cons(i32, List), Nil }
 enum Opt { Has(i32), None }
+enum Tri { Node(Tri, i32, Tri), Leaf(i32, i32, i32) }
 struct Rec { a: i32, b: string, c: List, d: i32 }
 
 @noinline
@@ -22,6 +23,37 @@ function inc(xs: List): List {
 @noinline
 function push(xs: List, n: i32): List {
   return Cons(n, xs);
+}
+
+// The last use of the donor is in one arm, and a construction in that arm
+// follows it.
+@noinline
+function arm(own t: Tri, go_: boolean, k: i32): Tri {
+  let acc: Tri = Leaf(0, 0, 0);
+  if (go_) {
+    let s: i32 = first(t);
+    acc = Leaf(s, k, 1);
+  }
+  return acc;
+}
+
+// The donor has its last use before the branch, and the construction is in
+// one arm.
+@noinline
+function later(own t: Tri, go_: boolean, k: i32): Tri {
+  let s: i32 = first(t);
+  if (go_) {
+    return Leaf(s, k, 1);
+  }
+  return Leaf(0, 0, 0);
+}
+
+@noinline
+function first(t: Tri): i32 {
+  match (t) {
+    Node(l, v, r) => { return v; },
+    Leaf(a, b, c) => { return a; },
+  }
 }
 
 @noinline
@@ -62,7 +94,8 @@ function main(): i32 {
   let r: Rec = bump(Rec { a: 1, b: "b", c: l, d: 4 });
   let p: (i32, List) = pair(r.c);
   let a: i32[] = put([1, 2, 3], 1);
-  return r.a + p.0 + a[1] + put_live(0) + put_sole(2) - 33;
+  let tri: i32 = first(arm(Node(Leaf(1, 1, 1), 4, Leaf(2, 2, 2)), true, 3)) + first(later(Leaf(9, 1, 1), true, 3));
+  return r.a + p.0 + a[1] + put_live(0) + put_sole(2) + tri - 46;
 }
 `
 
@@ -137,6 +170,8 @@ func TestSelfHostReuseReport(t *testing.T) {
 		{"push", []string{"stage=Cons@", " line=", " reason=no-donor storage=fresh"}},
 		{"bump", []string{"stage=Rec@", " donor=v0 (r)", " reason=reuse storage=unique-in-place/shared-fresh"}},
 		{"main", []string{"stage=Rec@", " reason=no-donor storage=fresh"}},
+		{"arm", []string{"stage=Leaf@", " donor=v0 (t)", " reason=reuse storage=unique-in-place/shared-fresh"}},
+		{"later", []string{"stage=Leaf@", " donor=v0 (t)", " reason=reuse storage=unique-in-place/shared-fresh"}},
 	})
 	check(report, "with storage", "with", []site{
 		{"put", []string{"stage=with@", " (xs)", " line=", " reason=guarded storage=unique-in-place/shared-copy"}},
