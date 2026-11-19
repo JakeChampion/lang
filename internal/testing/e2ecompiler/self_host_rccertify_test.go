@@ -678,8 +678,13 @@ function pick(name: string): Case {
         let b0: ssa.SBlock = block(0, [], insts.append(const_int(3, 0)), ret(3));
         return Case { f: func(0, 4, [b0]), modes: [], returns_unit: false };
     }
+    if (name == "slot-call-takes-its-operand") {
+        // ssa.slot_calls keeps the contract of the call after "slot:".
+        let b0: ssa.SBlock = block(0, [], [fresh_box(0), const_int(1, 0), inst(56, 2, [1, 0], 0, "slot:1"), const_int(3, 0)], ret(3));
+        return Case { f: func(0, 4, [b0]), modes: [], returns_unit: false };
+    }
     if (name == "indirect-call-rewritten-by-a-pass") {
-        // ssa.slot_calls gives the call the text "slot", so no contract is known.
+        // A slot call with no contract after "slot" leaves its operand and its result unproved.
         let b0: ssa.SBlock = block(0, [], [param(0), const_int(1, 0), inst(56, 2, [1, 1, 0], 0, "slot"), const_int(3, 0)], ret(3));
         return Case { f: func(1, 4, [b0]), modes: [rccertify.counted_mode()], returns_unit: false };
     }
@@ -833,6 +838,7 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"indirect-call-result-released", nil, 0},
 		{"indirect-call-result-leaked", []string{"leaked at return of v1"}, 0},
 		{"indirect-call-with-no-contract", nil, 1},
+		{"slot-call-takes-its-operand", nil, 0},
 		{"indirect-call-rewritten-by-a-pass", nil, 2},
 		{"unknown-callee-refused", []string{"cannot be certified: calls mystery, which has no rc signature and no ABI"}, 0},
 		{"unknown-contract-returns-a-phi-of-a-fresh-box", nil, 2},

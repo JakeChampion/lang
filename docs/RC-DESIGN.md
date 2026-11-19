@@ -590,7 +590,9 @@ copies the box, or it keeps a box with a negative count in place. No retain
 or release changes such a box, so there the result counts as a new box. A
 call through a function value takes the contract that the lowering writes on
 its op (`ir.call_units`). An operand that the function type takes as `own`
-hands its unit to the callee, and a counted result holds a fresh unit. A raw
+hands its unit to the callee, and a counted result holds a fresh unit. A
+`once` callee keeps its unit, because the caller drops it after the call. A
+call that `ssa.slot_calls` rewrites keeps the contract after `slot:`. A raw
 call names no contract, so its operands and its result stay unproved. A phi takes one unit of an input that holds one. The exception is
 a phi that no operation touches, that no return takes, and that feeds no phi
 that is touched or returned: nothing can spend a unit of it, so its inputs
