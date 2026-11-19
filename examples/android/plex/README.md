@@ -121,6 +121,25 @@ app asks the server for the markers of the item when it starts to play.
 The Tracks button of the player chooses the sound and the subtitles, and
 the server remembers the choice.
 
+With no choice of the person, the tracks follow a language. The Language
+row of the settings sets it. Its automatic value is the sound language of
+the plex.tv account, else the first language of the phone. The
+sound is the one that the server remembers when it is in that language.
+Else it is the first track in that language that is not a commentary.
+
+The Subtitles row sets the mode of the subtitles:
+
+- Off shows only the forced subtitles in the language, which give the
+  lines in a foreign language.
+- Foreign sound shows the subtitles in the language while the sound is in
+  another language.
+- Always shows the subtitles in the language.
+
+Its automatic value is the mode of the plex.tv account. An item with no
+track in the language keeps the tracks that the server remembers. A choice
+on the sheet of tracks holds for that item, and for all the episodes of its
+show.
+
 The app plays with Media3 ExoPlayer, through `std/android/exoplayer`. A
 file that plays as it is changes its sound in place, with no new start. A
 play from a row of the home screen takes the sound that the server

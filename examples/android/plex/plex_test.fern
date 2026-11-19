@@ -315,6 +315,42 @@ const TRACKED: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"7\"
 // no E-AC-3 decoder, the AAC track plays as it is. The SubRip subtitle
 // plays with the file as it is, because the app draws it, and the PGS
 // subtitle burns in a transcode.
+// A film whose server remembers the French sound: an English commentary
+// comes before the English sound, and the subtitles are English forced,
+// English and French.
+const LANGUAGES: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"8\",\"type\":\"movie\",\"title\":\"Many Tongues\",\"Media\":[{\"container\":\"mkv\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":12,\"key\":\"/library/parts/12/1/file.mkv\",\"Stream\":[{\"id\":40,\"streamType\":1,\"codec\":\"h264\"},{\"id\":41,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Français (AAC Stereo)\",\"languageCode\":\"fre\",\"selected\":true},{\"id\":42,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English Commentary (AAC Stereo)\",\"languageCode\":\"eng\"},{\"id\":43,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"languageCode\":\"eng\"},{\"id\":51,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English Forced (SRT)\",\"languageCode\":\"eng\",\"forced\":true},{\"id\":52,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\",\"languageCode\":\"eng\"},{\"id\":53,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"Français (SRT)\",\"languageCode\":\"fra\",\"selected\":true}]}]}]}]}}";
+
+function choice_text(c: plex.Choice): string {
+  return c.audio + "/" + c.subtitle;
+}
+
+function test_preferred_tracks(): test.TestOutcome {
+  let Some(it) = plex.parse_item(LANGUAGES) else {
+    return test.fail("no item");
+  };
+  let picks = [
+    choice_text(plex.preferred(it, "en", plex.SUBS_FOREIGN)),
+    choice_text(plex.preferred(it, "en", plex.SUBS_ALWAYS)),
+    choice_text(plex.preferred(it, "en", plex.SUBS_OFF)),
+    choice_text(plex.preferred(it, "fr", plex.SUBS_FOREIGN)),
+    choice_text(plex.preferred(it, "fr", plex.SUBS_ALWAYS)),
+    choice_text(plex.preferred(it, "de", plex.SUBS_ALWAYS)),
+    choice_text(plex.preferred(it, "", plex.SUBS_OFF)),
+  ];
+  return test.assert_eq(picks.join(" "), "43/51 43/52 43/51 41/ 41/53 41/53 41/53");
+}
+
+function test_language_codes(): test.TestOutcome {
+  let codes = ["en-GB", "eng", "fre", "FR", "ger", "nob", "zh-Hans", "xx", ""].map((c: string): string => plex.language_code(c));
+  return test.assert_eq(codes.join(",") + " " + plex.language_name("fr"), "en,en,fr,fr,de,no,zh,, Français");
+}
+
+function test_account_profile(): test.TestOutcome {
+  let a = plex.parse_account("{\"friendlyName\":\"Ada\",\"profile\":{\"defaultAudioLanguage\":\"en\",\"autoSelectSubtitle\":2}}");
+  let none = plex.parse_account("{\"username\":\"bo\"}");
+  return test.assert_eq(a.name + " " + a.language + " " + a.subtitles.to_string() + " " + none.name + " " + none.language + " " + none.subtitles.to_string(), "Ada en 2 bo  -1");
+}
+
 function test_tracks(): test.TestOutcome {
   let Some(it) = plex.parse_item(TRACKED) else {
     return test.fail("no item");
@@ -505,6 +541,9 @@ function main(): i32 {
   r = r.it("the next episode", test_next_episode);
   r = r.it("the preview thumbnails of a BIF file", test_bif);
   r = r.it("the sound and subtitle tracks of a file", test_tracks);
+  r = r.it("the tracks follow the language and the mode of the subtitles", test_preferred_tracks);
+  r = r.it("language codes of two and three letters", test_language_codes);
+  r = r.it("the account gives its language and its mode of the subtitles", test_account_profile);
   r = r.it("SubRip, WebVTT, ASS and SSA cues", test_cues);
   r = r.it("subtitles inside the file that the app draws", test_embedded_subtitles);
   r = r.it("a file that needs a transcode downloads as one", test_download_transcode);
