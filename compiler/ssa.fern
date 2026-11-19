@@ -6182,7 +6182,7 @@ function pure_tail(blk: SBlock): i32 {
 
 function reads_only(ins: SInst): boolean {
   let k = ins.kind_tag;
-  return k == LD_AT || k == CONST_INT || k == CONST_BOOL || k == CONST_I64 || k == SHAPE_ADDR || k == BINARY || k == UNARY || unique_test(ins);
+  return k == LD_AT || k == CONST_INT || k == CONST_BOOL || k == CONST_I64 || k == SHAPE_ADDR || k == AGG_LIT || k == BINARY || k == UNARY || unique_test(ins);
 }
 
 // The number of edges into each block position.

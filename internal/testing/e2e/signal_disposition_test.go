@@ -45,10 +45,7 @@ func TestInterpSignalDisposition(t *testing.T) {
 		t.Skip("the SIGPIPE observable needs a POSIX signal")
 	}
 	dir := t.TempDir()
-	fern := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fern, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("go build fern: %v\n%s", err, out)
-	}
+	fern := buildLangBinForInterp(t)
 	src := filepath.Join(dir, "prog.fern")
 	if err := os.WriteFile(src, []byte(signalDispositionSrc+"\n"), 0o644); err != nil {
 		t.Fatalf("write prog.fern: %v", err)
@@ -82,10 +79,7 @@ func TestInterpSignalDispositionOutOfRangeDoesNotHang(t *testing.T) {
 		t.Skip("POSIX signal numbering")
 	}
 	dir := t.TempDir()
-	fern := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fern, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("go build fern: %v\n%s", err, out)
-	}
+	fern := buildLangBinForInterp(t)
 	for _, sig := range []string{"0 - 1", "0", "65", "99", "1000000"} {
 		for _, fn := range []string{"signal_ignore", "signal_default"} {
 			src := filepath.Join(dir, "prog.fern")

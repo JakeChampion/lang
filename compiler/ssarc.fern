@@ -783,11 +783,36 @@ function drop_dyn(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scrat
       r = emit(r, ir.op_if(0));
       r = helper(r, slot, drop_helper_name(c));
       r = emit(r, ir.op_end());
+    } else if (enum_layout(f, c) == semrecords.layout_variant()) {
+      r = drop_dyn_enum(r, slot, c, f);
     } else {
       r = helper(r, slot, drop_helper_name(c));
     }
   }
   return r;
+}
+
+// The drop of an enum `c` that a dyn value at `slot` can hold. The drop of the
+// enum assumes a value of the enum (`variant_test`), so the shape of each
+// variant with a child is tested first.
+function drop_dyn_enum(own r: irtables.LowerState, slot: i32, c: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let tested = false;
+  for v in f.enums[semrecords.find_enum(f.enums, c)].variants {
+    if (semrecords.inhabited(v) && fields_have_children(v.fields, f)) {
+      r = emit(r, ir.op_load_local(slot));
+      r = emit(r, ir.op_variant_is(member_shape(f, c, v.name)));
+      if (tested) {
+        r = emit(r, ir.op_bin("or", 0, false));
+      }
+      tested = true;
+    }
+  }
+  if (!tested) {
+    return r;
+  }
+  r = emit(r, ir.op_if(0));
+  r = helper(r, slot, drop_helper_name(c));
+  return emit(r, ir.op_end());
 }
 
 function dyn_concretes(f: ssasem.Func, t: typeinfo.Type): typeinfo.Type[] {
