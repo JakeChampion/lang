@@ -99,6 +99,7 @@ function table(): string[][] {
     ["Downloads", "Downloads", "Téléchargements", "Descargas"],
     ["{0} of {1} done", "{0} von {1} fertig", "{0} sur {1} terminés", "{0} de {1} listas"],
     ["No downloads", "Keine Downloads", "Aucun téléchargement", "No hay descargas"],
+    ["DOWNLOADING", "WIRD GELADEN", "EN COURS", "DESCARGANDO"],
     ["Waiting", "Wartet", "En attente", "En espera"],
     ["Done", "Fertig", "Terminé", "Lista"],
     ["Paused", "Pausiert", "En pause", "En pausa"],

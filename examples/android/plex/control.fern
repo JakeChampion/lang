@@ -156,7 +156,7 @@ struct Call { purpose: string, w: worker.Worker[plex.Reply[]] }
 struct Batch { keys: string[], w: worker.Worker[plex.Reply[]] }
 
 // A screen on the back stack, as the user left it.
-struct Page { screen: i32, title: string, scroll: i32, rows: i32[], items: plex.Item[], total: i32, section: plex.Section, item: plex.Item, children: plex.Item[] }
+struct Page { screen: i32, title: string, scroll: i32, rows: i32[], items: plex.Item[], total: i32, section: plex.Section, item: plex.Item, children: plex.Item[], local: boolean }
 
 // A finger on the screen. `axis` is 0 until it moves, 1 when it moves a
 // row across and 2 when it moves the screen up or down. `xs` and `ys` are
@@ -300,6 +300,9 @@ pub struct App {
   sleep_at: i64,
   // True while the screen keeps the shape of the video.
   turned: boolean,
+  // True while the detail screen shows downloads: its items play from the
+  // phone, and its second button removes them.
+  local: boolean,
   screen: i32,
   tab: i32,
   title: string,
@@ -500,7 +503,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     client: plex.Client { id: id, device: "Android", token: setting(text, "token") },
     server: no_server(), base: plex.Base { uri: setting(text, "server_uri"), token: setting(text, "server_token") },
     servers: [], states: [], probing: -1, probe_states: [], probe_at: 0i64, probes: [], rechecking: false, recheck_at: -100000i64, left: [], pin: plex.Pin { id: 0i64, code: "", token: "" }, pin_at: 0i64,
-    account: setting(text, "account"), quality: num(setting(text, "quality")), speed: speed_of(setting(text, "speed")), texts: texts.for_languages(dev.languages), shuffle: setting(text, "shuffle") == "1", repeat: num(setting(text, "repeat")) % 3, sleep: 0, sleep_at: 0i64, turned: false,
+    account: setting(text, "account"), quality: num(setting(text, "quality")), speed: speed_of(setting(text, "speed")), texts: texts.for_languages(dev.languages), shuffle: setting(text, "shuffle") == "1", repeat: num(setting(text, "repeat")) % 3, sleep: 0, sleep_at: 0i64, turned: false, local: false,
     screen: ui.LOGIN, tab: 0, title: "", scroll: 0, rows: [], stack: [],
     hubs: none, results: none, sections: [], section: no_section(), items: [], total: 0, sort: 0, unwatched: false, letters: [], item: plex.no_item(), children: [],
     query: "", typing: false, search_at: 0i64, error: "",
@@ -1400,7 +1403,7 @@ function open_home(own s: App): App {
 }
 
 function page_of(s: App): Page {
-  return Page { screen: s.screen, title: s.title, scroll: s.scroll, rows: s.rows, items: s.items, total: s.total, section: s.section, item: s.item, children: s.children };
+  return Page { screen: s.screen, title: s.title, scroll: s.scroll, rows: s.rows, items: s.items, total: s.total, section: s.section, item: s.item, children: s.children, local: s.local };
 }
 
 function push(own s: App): App {
@@ -1409,7 +1412,7 @@ function push(own s: App): App {
 }
 
 function restore(own s: App, p: Page): App {
-  return App { ...s, screen: p.screen, title: p.title, scroll: p.scroll, rows: p.rows, items: p.items, total: p.total, section: p.section, item: p.item, children: p.children, dirty: true };
+  return App { ...s, screen: p.screen, title: p.title, scroll: p.scroll, rows: p.rows, items: p.items, total: p.total, section: p.section, item: p.item, children: p.children, local: p.local, dirty: true };
 }
 
 function pop(own s: App): App {
@@ -1539,7 +1542,7 @@ function open_item(own s: App, it: plex.Item): App {
   if (it.key.len() == 0) {
     return s;
   }
-  let u = ask(App { ...push(s), screen: ui.DETAIL, title: plex.card_title(it), item: it, children: [], scroll: 0, dirty: true }, "meta:" + it.key, Meta(it.key));
+  let u = ask(App { ...push(s), screen: ui.DETAIL, title: plex.card_title(it), item: it, children: [], scroll: 0, local: false, dirty: true }, "meta:" + it.key, Meta(it.key));
   if (it.kind == "show" || it.kind == "season" || it.kind == "artist" || it.kind == "album") {
     return ask(u, "children:" + it.key, Children(it.key));
   }
@@ -1728,7 +1731,8 @@ function hold_tick(own s: App, now: i64): App {
   let Some(it) = item_at(s, n.tap.name) else {
     return s;
   };
-  if (it.key.len() == 0) {
+  // A card of the downloads holds downloads, and its detail removes them.
+  if (it.key.len() == 0 || s.screen == ui.DOWNLOADS || s.local) {
     return s;
   }
   return App { ...s, press: no_press(), menu: it, dirty: true };
@@ -1830,7 +1834,19 @@ function saved_row(s: App, d: Saved): ui.SavedRow {
   } else if (d.status == download.RUNNING) {
     state = download_percent(s, d.item.key).to_string() + "%";
   }
-  return ui.SavedRow { title: plex.card_title(d.item), detail: plex.episode_line(d.item), state: state, done: d.status == download.DONE };
+  return ui.SavedRow { title: plex.card_title(d.item), detail: plex.episode_line(d.item), state: state, done: d.status == download.DONE, at: -1 };
+}
+
+// The rows of the downloads that are not done, under the cards of the
+// downloads that are.
+function waiting_rows(s: App): ui.SavedRow[] {
+  let out: ui.SavedRow[] = [];
+  for at in 0..s.downloads.len() {
+    if (s.downloads[at].status != download.DONE) {
+      out = out.append(ui.SavedRow { ...saved_row(s, s.downloads[at]), at: at });
+    }
+  }
+  return out;
 }
 
 function download_percent(s: App, key: string): i32 {
@@ -1871,6 +1887,9 @@ function shown_hubs(s: App): plex.Hub[] {
     return s.results;
   }
   let done = s.downloads.filter((d: Saved): boolean => d.status == download.DONE).map((d: Saved): plex.Item => d.item);
+  if (s.screen == ui.DOWNLOADS) {
+    return saved_hubs(s, done);
+  }
   if (s.screen != ui.HOME || done.len() == 0) {
     return s.hubs;
   }
@@ -1881,6 +1900,90 @@ function shown_hubs(s: App): plex.Hub[] {
     return [row];
   }
   return s.hubs.append(row);
+}
+
+// The place of `x` in `xs`, or -1.
+function position_of(xs: string[], x: string): i32 {
+  for k in 0..xs.len() {
+    if (xs[k] == x) {
+      return k;
+    }
+  }
+  return -1;
+}
+
+// The rows of the screen of the downloads: a card for each show, each
+// movie and each album.
+function saved_hubs(s: App, done: plex.Item[]): plex.Hub[] {
+  let cards = plex.shelves(done).map((sh: plex.Shelf): plex.Item => sh.card);
+  let out: plex.Hub[] = [];
+  for (title, kinds) in [("SHOWS", ["show"]), ("MOVIES", ["movie"]), ("MUSIC", ["album", "track"])] {
+    let row = cards.filter((c: plex.Item): boolean => position_of(kinds, c.kind) >= 0);
+    if (row.len() > 0) {
+      out = out.append(plex.Hub { title: s.texts.text(title), ident: "saved-" + title, items: row });
+    }
+  }
+  let rest = cards.filter((c: plex.Item): boolean => c.kind != "show" && c.kind != "movie" && c.kind != "album" && c.kind != "track");
+  if (rest.len() > 0) {
+    out = out.append(plex.Hub { title: s.texts.text("Downloads"), ident: "saved-other", items: rest });
+  }
+  return out;
+}
+
+// Opens the detail screen of the card `card` of the downloads. Its items
+// come from the phone. With a server, the metadata of a card that the
+// server knows gives the synopsis.
+function open_saved(own s: App, card: plex.Item): App {
+  let done = s.downloads.filter((d: Saved): boolean => d.status == download.DONE).map((d: Saved): plex.Item => d.item);
+  let children: plex.Item[] = [];
+  for sh in plex.shelves(done) {
+    if (sh.card.key == card.key && card.kind != "movie" && card.kind != "episode") {
+      children = sh.items;
+    }
+  }
+  let no_meta = s.offline || plex.app_key(card.key);
+  let t = App { ...push(s), screen: ui.DETAIL, title: plex.card_title(card), item: card, children: children, scroll: 0, local: true, dirty: true };
+  if (no_meta) {
+    return t;
+  }
+  return ask(t, "meta:" + card.key, Meta(card.key));
+}
+
+// Plays the item of a detail screen of the downloads: the first episode
+// not seen, or the first track, with the items after it as the queue.
+function play_saved(own s: App): App {
+  let it = s.item;
+  let children = s.children;
+  if (children.len() == 0) {
+    return start_play(s, it, []);
+  }
+  let at = -1;
+  for k in 0..children.len() {
+    if (at < 0 && !(it.kind == "show" && plex.watched(children[k]))) {
+      at = k;
+    }
+  }
+  if (at < 0) {
+    at = 0;
+  }
+  return start_play(s, children[at], children.drop(at).drop(1));
+}
+
+// Removes the downloads of the detail screen of the downloads, and goes
+// back.
+function remove_saved(own s: App): App {
+  let keys = s.children.map((it: plex.Item): string => it.key);
+  if (keys.len() == 0) {
+    keys = [s.item.key];
+  }
+  let t = s;
+  for key in keys {
+    let at = saved_at(t, key);
+    if (at >= 0) {
+      t = drop_download(t, at);
+    }
+  }
+  return pop(t);
 }
 
 // Starts the download of the item of the metadata `r`. A file that the
@@ -3177,6 +3280,8 @@ function scroll_limit(s: App, m: ui.Metrics): i32 {
     h = s.sections.len() * 64 * m.u + 16 * m.u;
   } else if (s.screen == ui.SERVERS) {
     h = s.servers.len() * 72 * m.u + 160 * m.u;
+  } else if (s.screen == ui.DOWNLOADS) {
+    h = ui.downloads_height(m, v);
   }
   if (h <= visible) {
     return 0;
@@ -3486,8 +3591,14 @@ pub function act(own s: App, a: string, n: scene.Node, x: i32): App {
   if (a == "back") {
     return pop(t);
   }
+  if (a == "play" && t.local) {
+    return play_saved(t);
+  }
   if (a == "play") {
     return play_detail(t);
+  }
+  if (a == "remove" && t.local) {
+    return remove_saved(t);
   }
   if (a == "watched") {
     return toggle_watched(t);
@@ -3543,6 +3654,16 @@ pub function act(own s: App, a: string, n: scene.Node, x: i32): App {
     return sign_out(t);
   }
   if let Some(it) = item_at(t, a) {
+    if (t.screen == ui.DOWNLOADS) {
+      return open_saved(t, it);
+    }
+    if (t.local && it.kind == "track") {
+      let rest = t.children.drop(position_of(t.children.map((c: plex.Item): string => c.key), it.key)).drop(1);
+      return start_play(t, it, rest);
+    }
+    if (t.local) {
+      return App { ...push(t), screen: ui.DETAIL, title: plex.card_title(it), item: it, children: [], scroll: 0, dirty: true };
+    }
     return open_item(t, it);
   }
   return t;
@@ -3881,11 +4002,11 @@ pub function view(s: App): ui.View {
     texts: s.texts,
     top: s.top, bottom: s.bottom,
     screen: s.screen, tab: s.tab, title: s.title, scroll: s.scroll, rows: s.rows, hubs: hubs,
-    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, menu_download: download_percent(s, s.menu.key), saved: s.downloads.map((d: Saved): ui.SavedRow => saved_row(s, d)), now_playing: if (s.play.active && s.screen != ui.PLAYER) { p.item.title + " · " + p.item.grandparent } else { "" }, users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
+    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, menu_download: download_percent(s, s.menu.key), saved: waiting_rows(s), saved_done: s.downloads.filter((d: Saved): boolean => d.status == download.DONE).len(), saved_total: s.downloads.len(), now_playing: if (s.play.active && s.screen != ui.PLAYER) { p.item.title + " · " + p.item.grandparent } else { "" }, users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
     pin_code: s.pin.code, error: if (offline_home(s)) { "" } else { s.texts.text(s.error) }, offline: offline_home(s), servers: s.servers, server_states: s.states,
     query: s.query, typing: s.typing, account: s.account, server_name: s.server.name,
     quality: plex.qualities()[s.quality].name, player: pv, base: s.base,
-    loading: busy(s), cache: s.cache,
+    loading: busy(s), cache: s.cache, local: s.local,
   };
 }
 

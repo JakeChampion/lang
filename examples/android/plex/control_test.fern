@@ -52,7 +52,7 @@ const ALBUM_TRACKS: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":
 
 // Episode 503, with credits from 100 s, and the episodes of its season:
 // 503, then the movie 501, which the test plays as the next item.
-const CREDITS: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"503\",\"type\":\"episode\",\"title\":\"Pilot\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"Marker\":[{\"type\":\"credits\",\"startTimeOffset\":100000,\"endTimeOffset\":200000}],\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":13,\"key\":\"/library/parts/13/file.mp4\"}]}]}]}}";
+const CREDITS: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"503\",\"type\":\"episode\",\"title\":\"Pilot\",\"grandparentTitle\":\"Lost\",\"grandparentRatingKey\":\"70\",\"summary\":\"The plane falls.\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"Marker\":[{\"type\":\"credits\",\"startTimeOffset\":100000,\"endTimeOffset\":200000}],\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":13,\"key\":\"/library/parts/13/file.mp4\"}]}]}]}}";
 
 const EPISODES: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"503\",\"type\":\"episode\",\"title\":\"Pilot\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":13,\"key\":\"/library/parts/13/file.mp4\"}]}]},{\"ratingKey\":\"501\",\"type\":\"episode\",\"title\":\"Second\",\"index\":2,\"parentIndex\":1,\"duration\":2500000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\"}]}]}]}}";
 
@@ -1647,25 +1647,51 @@ function test_download_all_and_the_screen(): test.TestOutcome {
     return test.fail("the settings do not count the downloads");
   }
   let list = tap(settings, log, 500i64, f, "downloads");
-  if (list.screen != ui.DOWNLOADS || !says(list, "Waiting") || node(list, "saved:0").is_some() || node(list, "unsave:1").is_none()) {
-    return test.fail("the screen of the downloads");
-  }
-  // The fake server gives 501 the metadata of a movie, so the second row
-  // is a movie with its year.
-  if (!says(list, "S1 E1 · Pilot") || !says(list, "2010")) {
-    return test.fail("the rows of the downloads do not name each episode: " + list.nodes.map((n: scene.Node): string => n.say).filter((t: string): boolean => t.len() > 0).join(" | "));
+  // The fake server gives 501 the metadata of a movie.
+  if (list.screen != ui.DOWNLOADS || !says(list, "Waiting") || !says(list, "S1 E1 · Pilot") || !says(list, "2010") || node(list, "unsave:1").is_none() || node(list, "hub:0:0").is_some()) {
+    return test.fail("the rows of the downloads that are not done: " + list.nodes.map((n: scene.Node): string => n.say).filter((t: string): boolean => t.len() > 0).join(" | "));
   }
   log.progress.set(download.Progress { status: download.DONE, done: 1000i64, total: 1000i64 });
-  let done = at(list, log, 5000i64, f, android.Tick);
-  if (!says(done, "Done") || node(done, "saved:0").is_none()) {
-    return test.fail("a done download does not show as done");
+  let ticked = at(list, log, 5000i64, f, android.Tick);
+  let counted = settle(tap(tap(ticked, log, 5010i64, f, "back"), log, 5020i64, f, "tab:3"), log, 5030i64, f);
+  if (!says(counted, "2 of 2 done")) {
+    return test.fail("the settings do not count the done downloads");
   }
-  let removed = tap(done, log, 5100i64, f, "unsave:1");
-  if (!has_call(log, "download remove 43") || removed.downloads.len() != 1) {
-    return test.fail("Remove did not delete the download: " + log.calls.get().join(" | "));
+  let done = tap(counted, log, 5040i64, f, "downloads");
+  if (!says(done, "SHOWS") || !says(done, "MOVIES") || node(done, "hub:0:0").is_none() || node(done, "hub:1:0").is_none() || node(done, "unsave:0").is_some()) {
+    return test.fail("the done downloads are not on cards by kind: " + done.nodes.map((n: scene.Node): string => n.say).filter((t: string): boolean => t.len() > 0).join(" | "));
   }
+  let urls = log.urls.get().len();
+  let show = tap(done, log, 5300i64, f, "hub:0:0");
+  if (show.screen != ui.DETAIL || !show.local || show.item.title != "Lost" || show.children.len() != 1 || node(show, "remove").is_none() || node(show, "watched").is_some() || !says(show, "The plane falls.")) {
+    return test.fail("the card of a show does not open its downloads: " + show.nodes.map((n: scene.Node): string => n.say).filter((t: string): boolean => t.len() > 0).join(" | "));
+  }
+  if (log.urls.get().filter((u: string): boolean => u.contains("/children")).len() > 0 || !has_url(log, "/library/metadata/70")) {
+    return test.fail("the detail of the downloads asked the server for the episodes, or not for the synopsis: " + log.urls.get().drop(urls).join(" | "));
+  }
+  let back = tap(show, log, 5350i64, f, "back");
+  let film = tap(back, log, 5400i64, f, "hub:1:0");
+  if (!film.local || film.children.len() != 0 || node(film, "remove").is_none()) {
+    return test.fail("the card of a movie does not open its download");
+  }
+  let removed = tap(film, log, 5450i64, f, "remove");
+  if (!has_call(log, "download remove 43") || removed.screen != ui.DOWNLOADS || removed.downloads.len() != 1 || node(removed, "hub:1:0").is_some()) {
+    return test.fail("Remove download did not remove the movie: " + log.calls.get().join(" | "));
+  }
+  // A screen that the rows do not fit in scrolls.
+  let short = settle(control.App { ...removed, h: H / 3, dirty: true }, log, 5500i64, f);
+  let x = (W / 2) as f32;
+  let y0 = (H / 4) as f32;
+  let dragged = at(at(short, log, 5550i64, f, android.Touch(0, x, y0)), log, 5600i64, f, android.Touch(2, x, y0 - 200.0));
+  // The finger rests before it lifts, so the list does not fling on.
+  let rested = at(dragged, log, 6500i64, f, android.Touch(2, x, y0 - 200.0));
+  let lifted = settle(at(rested, log, 6550i64, f, android.Touch(1, x, y0 - 200.0)), log, 6550i64, f);
+  if (lifted.scroll <= 0) {
+    return test.fail("the screen of the downloads did not scroll");
+  }
+  let again = tap(settle(control.App { ...lifted, h: H, scroll: 0, dirty: true }, log, 7000i64, f), log, 7100i64, f, "hub:0:0");
   let plays = count_plays(log);
-  let played = tap(removed, log, 5200i64, f, "saved:0");
+  let played = tap(again, log, 7200i64, f, "play");
   return test.assert_eq((count_plays(log) == plays + 1 && has_call(log, "play file:///sdcard/files/") && played.screen == ui.PLAYER).to_string(), "true");
 }
 

@@ -87,8 +87,11 @@ pub struct View {
   // download that came in percent, or -1 when it has none.
   menu: plex.Item,
   menu_download: i32,
-  // The rows of the screen of the downloads.
+  // The rows of the downloads that are not done, and the numbers of the
+  // downloads that are done and of all of them.
   saved: SavedRow[],
+  saved_done: i32,
+  saved_total: i32,
   // The title of the music that plays while another screen shows, or "".
   now_playing: string,
   users: plex.HomeUser[],
@@ -101,6 +104,8 @@ pub struct View {
   error: string,
   // True on the home screen with no server, where only the downloads show.
   offline: boolean,
+  // True on a detail screen of the downloads.
+  local: boolean,
   servers: plex.Server[],
   server_states: string[],
   query: string,
@@ -123,7 +128,7 @@ pub function english(): i18n.Strings {
 }
 
 pub function empty_view(w: i32, h: i32): View {
-  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, saved: [], now_playing: "", users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", offline: false, servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english() };
+  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, saved: [], saved_done: 0, saved_total: 0, now_playing: "", users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", offline: false, servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english(), local: false };
 }
 
 // --- metrics
@@ -779,12 +784,16 @@ function detail(m: Metrics, v: View): scene.Node[] {
   if (plex.playable_kind(it.kind) || v.children.len() > 0) {
     out = util_append(out, button(m, 16 * m.u, y, play, true, "play"));
   }
-  let mark = mark_label(m, it);
-  if (buttons_stack(m, it)) {
+  let mark = second_label(m, v);
+  let act = "watched";
+  if (v.local) {
+    act = "remove";
+  }
+  if (buttons_stack(m, v)) {
     y += button_height(m) + 12 * m.u;
-    out = util_append(out, button(m, 16 * m.u, y, mark, false, "watched"));
+    out = util_append(out, button(m, 16 * m.u, y, mark, false, act));
   } else {
-    out = util_append(out, button(m, 16 * m.u + button_width(m, play) + 12 * m.u, y, mark, false, "watched"));
+    out = util_append(out, button(m, 16 * m.u + button_width(m, play) + 12 * m.u, y, mark, false, act));
   }
   y += 64 * m.u;
   if (it.summary.len() > 0) {
@@ -792,7 +801,8 @@ function detail(m: Metrics, v: View): scene.Node[] {
     y += wrapped_height(m, m.w - 32 * m.u, it.summary) + 16 * m.u;
   }
   if (v.children.len() > 0) {
-    if (it.kind == "show" || it.kind == "artist") {
+    // The children of a detail of the downloads are episodes or tracks.
+    if ((it.kind == "show" || it.kind == "artist") && !v.local) {
       let heading = tr(m, "SEASONS");
       if (it.kind == "artist") {
         heading = tr(m, "ALBUMS");
@@ -813,10 +823,19 @@ pub function mark_label(m: Metrics, it: plex.Item): string {
   return tr(m, "Mark watched");
 }
 
+// The second button of the detail screen: it removes downloads on a
+// detail of the downloads, else it marks the item.
+pub function second_label(m: Metrics, v: View): string {
+  if (v.local) {
+    return tr(m, "Remove download");
+  }
+  return mark_label(m, v.item);
+}
+
 // True when the two buttons of the detail screen do not fit on one row, so
 // the second goes below the first.
-pub function buttons_stack(m: Metrics, it: plex.Item): boolean {
-  return button_width(m, play_label(m, it)) + 12 * m.u + button_width(m, mark_label(m, it)) > m.w - 32 * m.u;
+pub function buttons_stack(m: Metrics, v: View): boolean {
+  return button_width(m, play_label(m, v.item)) + 12 * m.u + button_width(m, second_label(m, v)) > m.w - 32 * m.u;
 }
 
 // The height of the content of the detail screen, for the limit of its
@@ -825,10 +844,10 @@ pub function detail_height(m: Metrics, v: View): i32 {
   let bh = backdrop_height(m);
   let ph = 150 * m.u;
   let h = bh + ph / 2 + 84 * m.u + wrapped_height(m, m.w - 32 * m.u, v.item.summary) + 16 * m.u;
-  if (buttons_stack(m, v.item)) {
+  if (buttons_stack(m, v)) {
     h += button_height(m) + 12 * m.u;
   }
-  if (v.item.kind == "show" || v.item.kind == "artist") {
+  if ((v.item.kind == "show" || v.item.kind == "artist") && !v.local) {
     return h + matrix.height(small_pitch(m)) + 12 * m.u + grid_height(m, v.children.len());
   }
   return h + v.children.len() * episode_row_height(m) + 16 * m.u;
@@ -873,6 +892,9 @@ function episode_rows(m: Metrics, v: View, top: i32): scene.Node[] {
         line += " · watched";
       }
       out = out.append(label(m, x, y + 14 * m.u + m.th, fit(line, cells), m.ts, look.muted()));
+      if (e.summary.len() > 0) {
+        out = out.append(label(m, x, y + 18 * m.u + 2 * m.th, fit(e.summary, cells), m.ts, look.muted()));
+      }
       let p = plex.progress(e);
       if (p > 0) {
         out = util_append(out, progress_bar(x, y + rh - 18 * m.u, m.w - x - 32 * m.u, 3 * m.u, p, look.red(), look.outline()));
@@ -941,7 +963,7 @@ function settings(m: Metrics, v: View): scene.Node[] {
     (tr(m, "User"), v.account, "users"),
     (tr(m, "Server"), v.server_name, "servers"),
     (tr(m, "Quality"), v.quality, "quality"),
-    (tr(m, "Downloads"), m.texts.format("{0} of {1} done", [v.saved.filter((r: SavedRow): boolean => r.done).len().to_string(), v.saved.len().to_string()]), "downloads"),
+    (tr(m, "Downloads"), m.texts.format("{0} of {1} done", [v.saved_done.to_string(), v.saved_total.to_string()]), "downloads"),
     (tr(m, "Sign out"), "", "signout"),
   ];
   let row = 72 * m.u;
@@ -970,28 +992,30 @@ function settings(m: Metrics, v: View): scene.Node[] {
   return out;
 }
 
-// A download on the screen of the downloads: the title of its item, its
-// state, such as "42%", and whether it is done.
-pub struct SavedRow { title: string, detail: string, state: string, done: boolean }
+// A download that is not done: the title of its item, its state, such as
+// "42%", and its place `at` in the downloads.
+pub struct SavedRow { title: string, detail: string, state: string, done: boolean, at: i32 }
 
-// The downloads, one panel each: the title and the state, and a button
-// that stops the download or removes its file. A tap on a done download
-// plays it.
+// The downloads: a row of cards for the shows, the movies and the music,
+// as on the home screen. Under them, the downloads that are not done, one
+// panel each, with their state and a button that stops them.
 function downloads(m: Metrics, v: View): scene.Node[] {
   let out: scene.Node[] = [fill(0, 0, m.w, m.h, look.bg(), 0)];
-  let y = top_height(m) + 8 * m.u - v.scroll;
-  if (v.saved.len() == 0) {
-    return out.append(note(m, y + 16 * m.u, tr(m, "No downloads")));
+  let top = top_height(m) + 12 * m.u;
+  if (v.hubs.len() == 0 && v.saved.len() == 0) {
+    return out.append(note(m, top + 12 * m.u, tr(m, "No downloads")));
   }
+  out = util_append(out, hubs(m, v, top));
+  let y = top + v.hubs.len() * hub_row_height(m) - v.scroll;
+  if (v.saved.len() == 0) {
+    return out;
+  }
+  out = out.append(heading(m, 16 * m.u, y, m.w - 32 * m.u, tr(m, "DOWNLOADING"), small_pitch(m), look.muted()));
+  y += matrix.height(small_pitch(m)) + 12 * m.u;
   let row = 72 * m.u;
-  let k = 0;
   for r in v.saved {
-    let n = panel(m, 16 * m.u, y, m.w - 32 * m.u, row - 8 * m.u);
-    if (r.done) {
-      n = tap(n, "saved:" + k.to_string());
-    }
-    out = out.append(n);
-    let words = if (r.done) { tr(m, "REMOVE") } else { tr(m, "STOP") };
+    out = out.append(panel(m, 16 * m.u, y, m.w - 32 * m.u, row - 8 * m.u));
+    let words = tr(m, "STOP");
     let bw = button_width(m, words);
     let bx = m.w - 32 * m.u - bw;
     let cells = (bx - 48 * m.u) / m.cw;
@@ -1002,11 +1026,20 @@ function downloads(m: Metrics, v: View): scene.Node[] {
       below += 4 * m.u + m.th;
     }
     out = out.append(label(m, 32 * m.u, below, fit(r.state, cells), m.ts, look.muted()));
-    out = util_append(out, button(m, bx, y + (row - 8 * m.u - button_height(m)) / 2, words, false, "unsave:" + k.to_string()));
+    out = util_append(out, button(m, bx, y + (row - 8 * m.u - button_height(m)) / 2, words, false, "unsave:" + r.at.to_string()));
     y += row;
-    k += 1;
   }
   return out;
+}
+
+// The height of the content of the screen of the downloads, for the limit
+// of its scroll.
+pub function downloads_height(m: Metrics, v: View): i32 {
+  let h = v.hubs.len() * hub_row_height(m) + 16 * m.u;
+  if (v.saved.len() > 0) {
+    h += matrix.height(small_pitch(m)) + 12 * m.u + v.saved.len() * 72 * m.u;
+  }
+  return h;
 }
 
 // The users of the Plex Home, one panel each: the name, and "PIN" for a
