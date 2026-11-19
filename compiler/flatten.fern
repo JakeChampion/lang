@@ -435,7 +435,7 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
   let opts: ast.Expr = ast.ExprCall { callee: serve_ref(qual, "config"), args: [], line: 0, col: 0, type_args: [], ty: "" };
   let state: ast.Expr = init_call;
   if (init_kind == 3) {
-    body = body.append(ast.StmtVar { name: "", type_name: "", init: init_call, line: 0, col: 0, fn_ret: "", fn_param_types: "", destr: ast.tuple_destr(["__fern_opts", "__fern_state"]) });
+    body = body.append(ast.StmtVar { name: "", type_name: "", init: init_call, line: 0, col: 0, fn_ret: "", fn_param_types: "", destr: ast.tuple_destr(["__fern_opts", "__fern_state"]), header: false });
     opts = ast.ExprIdent { name: "__fern_opts", line: 0, col: 0, ty: "", builtin: false };
     state = ast.ExprIdent { name: "__fern_state", line: 0, col: 0, ty: "", builtin: false };
   } else if (init_kind == 2) {
@@ -1027,6 +1027,7 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
         fn_ret: rewrite_type_name(v.fn_ret, ctx),
         fn_param_types: rewrite_type_name_list(v.fn_param_types, ctx),
         destr: rewrite_destr(v.destr, ctx),
+        header: v.header,
       };
     },
     ast.StmtReturn(r) => {

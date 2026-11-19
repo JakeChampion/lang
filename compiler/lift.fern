@@ -313,7 +313,7 @@ function lamret_slot(rn: string, value: ast.Expr, sig: RetSig, line: i32, col: i
       init = ast.ExprLambda { ...lm, ret_type: sig.fn_ret };
     }
   }
-  return ast.StmtVar { name: rn, type_name: sig.tag, init: init, line: line, col: col, fn_ret: sig.fn_ret, fn_param_types: sig.fn_ptys, destr: ast.no_destr() };
+  return ast.StmtVar { name: rn, type_name: sig.tag, init: init, line: line, col: col, fn_ret: sig.fn_ret, fn_param_types: sig.fn_ptys, destr: ast.no_destr(), header: false };
 }
 
 function contract_spelling(tag: string, fn_ret: string, fn_ptys: string): string {
@@ -497,7 +497,7 @@ function lift_stmt(st: ast.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
     },
     ast.StmtVar(v) => {
       let e = lift_expr_walk(v.init, acc, gfns);
-      let ns: ast.Stmt = ast.StmtVar { name: v.name, type_name: v.type_name, init: e.expr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr };
+      let ns: ast.Stmt = ast.StmtVar { name: v.name, type_name: v.type_name, init: e.expr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr, header: v.header };
       return LiftStmts { stmts: [ns], acc: e.acc };
     },
     ast.StmtExpr(s) => {
@@ -1091,7 +1091,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
     if (lam.once) {
       read = ast.ExprCall { callee: ast.ExprIdent { name: "__env_take", line: 0, col: 0, ty: "", builtin: true }, args: [env, at], line: 0, col: 0, type_args: [], ty: ctys[cj] };
     }
-    bd = bd.append(ast.StmtVar { name: caps[cj], type_name: ctys[cj], init: read, line: 0, col: 0, fn_ret: "", fn_param_types: "", destr: ast.no_destr() });
+    bd = bd.append(ast.StmtVar { name: caps[cj], type_name: ctys[cj], init: read, line: 0, col: 0, fn_ret: "", fn_param_types: "", destr: ast.no_destr(), header: false });
   }
   for bk in 0..lam.body.len() {
     bd = bd.append(lam.body[bk]);
@@ -3010,7 +3010,7 @@ function ilc_stmt_at(st: ast.Stmt, acc: InlineCloAcc, fd: parser.FuncDecl, vars:
         _ => {}
       }
       let er = lift_inline_closures_expr(v.init, fd, vars, fs, ct, gfns, structs, mfuncs);
-      return (ast.StmtVar { name: v.name, type_name: v.type_name, init: er.expr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr }, InlineCloAcc { funcs: er.funcs, counter: er.counter }, true);
+      return (ast.StmtVar { name: v.name, type_name: v.type_name, init: er.expr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr, header: v.header }, InlineCloAcc { funcs: er.funcs, counter: er.counter }, true);
     },
     ast.StmtReturn(r) => {
       let rpre = r.value;
@@ -3327,13 +3327,13 @@ function wcaps_join(a: WCaps, b: WCaps): WCaps {
 
 function wcap_cell_decl(c: string, ty: string): ast.Stmt {
   let src: ast.Expr = ast.ExprIdent { name: c, line: 0, col: 0, ty: "", builtin: false };
-  return ast.StmtVar { name: wcap_cell_name(c), type_name: ty + "[]", init: ast.ExprArray { elements: [src], elem_ty: ty, line: 0, col: 0 }, line: 0, col: 0, fn_ret: "", fn_param_types: "", destr: ast.no_destr() };
+  return ast.StmtVar { name: wcap_cell_name(c), type_name: ty + "[]", init: ast.ExprArray { elements: [src], elem_ty: ty, line: 0, col: 0 }, line: 0, col: 0, fn_ret: "", fn_param_types: "", destr: ast.no_destr(), header: false };
 }
 
 function wcap_cell_read(c: string, ty: string): ast.Stmt {
   let cell: ast.Expr = ast.ExprIdent { name: wcap_cell_name(c), line: 0, col: 0, ty: "", builtin: false };
   let idx: ast.Expr = ast.ExprIndex { array: cell, index: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 };
-  return ast.StmtVar { name: c, type_name: ty, init: idx, line: 0, col: 0, fn_ret: "", fn_param_types: "", destr: ast.no_destr() };
+  return ast.StmtVar { name: c, type_name: ty, init: idx, line: 0, col: 0, fn_ret: "", fn_param_types: "", destr: ast.no_destr(), header: false };
 }
 
 function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: irtables.StructTab, mfuncs: MFuncs, acc: WCaps, atargets: string[]): WCapExpr {
@@ -3498,7 +3498,7 @@ function wcap_stmt(st: ast.Stmt, fd: parser.FuncDecl, gfns: string[], structs: i
   match (st) {
     ast.StmtVar(v) => {
       let r = wcap_expr(v.init, fd, gfns, structs, mfuncs, acc, atargets);
-      return WCapStmt { stmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: r.expr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr }, caps: r.caps, changed: r.changed };
+      return WCapStmt { stmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: r.expr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr, header: v.header }, caps: r.caps, changed: r.changed };
     },
     ast.StmtAssign(a) => {
       let r = wcap_expr(a.value, fd, gfns, structs, mfuncs, acc, atargets);

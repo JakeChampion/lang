@@ -14,7 +14,7 @@ function cell_read(name: string, line: i32, col: i32): ast.Expr {
 
 pub function cell_decl(name: string, ty: string, init: ast.Expr, line: i32, col: i32): ast.Stmt {
   let cell: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "cell_new", line: line, col: col, ty: "", builtin: false }, args: [init], line: line, col: col, type_args: [], ty: "" };
-  return ast.StmtVar { name: cell_name(name), type_name: "Cell[" + ty + "]", init: cell, line: line, col: col, fn_ret: "", fn_param_types: "", destr: ast.no_destr() };
+  return ast.StmtVar { name: cell_name(name), type_name: "Cell[" + ty + "]", init: cell, line: line, col: col, fn_ret: "", fn_param_types: "", destr: ast.no_destr(), header: false };
 }
 
 function cell_type(elem: typeinfo.Type): typeinfo.Type {
@@ -153,7 +153,7 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
       if (bxi >= 0) {
         return cell_decl(v.name, btypes[bxi], box_rewrite_expr(v.init, boxed, btypes, bsites, bound), v.line, v.col);
       }
-      return ast.StmtVar { name: v.name, type_name: v.type_name, init: box_rewrite_expr(v.init, boxed, btypes, bsites, bound), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr };
+      return ast.StmtVar { name: v.name, type_name: v.type_name, init: box_rewrite_expr(v.init, boxed, btypes, bsites, bound), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr, header: v.header };
     },
     ast.StmtAssign(a) => {
       if (util.index_of_str(boxed, a.target) >= 0 && util.index_of_str(bound, a.target) < 0) {
