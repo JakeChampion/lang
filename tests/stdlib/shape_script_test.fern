@@ -1,4 +1,5 @@
-// Tests of std/shape for Hebrew, Thai, Lao, Khmer and Myanmar. The fonts and the glyphs
+// Tests of std/shape for Hebrew, Thai, Lao, Khmer, Myanmar and scripts of the
+// Universal Shaping Engine. The fonts and the glyphs
 // that HarfBuzz gives for each case come from
 // scripts/gen-shape-script-vectors.py.
 import "std/base64";
@@ -103,6 +104,42 @@ function test_old_myanmar(): test.TestOutcome {
   return test.assert_eq(differences(shape_script_vectors.mymr_old_font(), "mymr", shape_script_vectors.mymr_old_cases(), "mymr"), "");
 }
 
+// Sinhala, with the Universal Shaping Engine: the repaya, the conjuncts with a ZWJ, the pre-base and the split vowels, and the vowels that take a dotted circle. With
+// its script tag renamed, the font takes the default shaper.
+function test_sinhala(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.sinh_font(), "sinh", shape_script_vectors.sinh_cases(), "sinh"), "");
+}
+
+// Balinese, with the Universal Shaping Engine: the repha, the pre-base vowels and the conjuncts. With
+// its script tag renamed, the font takes the default shaper.
+function test_balinese(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.bali_font(), "bali", shape_script_vectors.bali_cases(), "bali"), "");
+}
+
+// Javanese, with the Universal Shaping Engine: the repha, the medial Ra and the pre-base vowels. With
+// its script tag renamed, the font takes the default shaper.
+function test_javanese(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.java_font(), "java", shape_script_vectors.java_cases(), "java"), "");
+}
+
+// Tibetan, with the Universal Shaping Engine: the subjoined letters and the vowels. With
+// its script tag renamed, the font takes the default shaper.
+function test_tibetan(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.tibt_font(), "tibt", shape_script_vectors.tibt_cases(), "tibt"), "");
+}
+
+// Mongolian, with the Universal Shaping Engine: the joining forms and the free variation selectors. With
+// its script tag renamed, the font takes the default shaper.
+function test_mongolian(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.mong_font(), "mong", shape_script_vectors.mong_cases(), "mong"), "");
+}
+
+// N'Ko, with the Universal Shaping Engine: the joining forms from right to left. With
+// its script tag renamed, the font takes the default shaper.
+function test_nko(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.nko_font(), "nko ", shape_script_vectors.nko_cases(), "nko "), "");
+}
+
 // A presentation form that the font does not have splits by one step when
 // no mark follows it: U+FB2C becomes U+FB49 and the shin dot.
 function test_one_step_decomposition(): test.TestOutcome {
@@ -114,7 +151,7 @@ function test_one_step_decomposition(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.new("std/shape Hebrew, Thai, Lao, Khmer and Myanmar");
+  let r = test.new("std/shape Hebrew, Thai, Lao, Khmer, Myanmar and USE scripts");
   r = r.it("Hebrew gives the glyphs of HarfBuzz", test_hebrew);
   r = r.it("Thai gives the glyphs of HarfBuzz", test_thai);
   r = r.it("Lao gives the glyphs of HarfBuzz", test_lao);
@@ -122,6 +159,12 @@ function main(): i32 {
   r = r.it("Khmer with cfar gives the glyphs of HarfBuzz", test_khmer_cfar);
   r = r.it("Myanmar gives the glyphs of HarfBuzz", test_myanmar);
   r = r.it("Myanmar with the old tag gives the glyphs of HarfBuzz", test_old_myanmar);
+  r = r.it("Sinhala gives the glyphs of HarfBuzz", test_sinhala);
+  r = r.it("Balinese gives the glyphs of HarfBuzz", test_balinese);
+  r = r.it("Javanese gives the glyphs of HarfBuzz", test_javanese);
+  r = r.it("Tibetan gives the glyphs of HarfBuzz", test_tibetan);
+  r = r.it("Mongolian gives the glyphs of HarfBuzz", test_mongolian);
+  r = r.it("N'Ko gives the glyphs of HarfBuzz", test_nko);
   r = r.it("a form splits by the fewest steps", test_one_step_decomposition);
   return r.finish();
 }

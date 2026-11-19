@@ -190,6 +190,25 @@ function test_myanmar_is_shaped(): test.TestOutcome {
   return test.assert_eq(laid_glyphs(fs, "ကေ"), "129,2");
 }
 
+// A run of Sinhala letters goes through the Universal Shaping Engine: the
+// vowel sign kombuva goes before the consonant.
+function test_sinhala_is_shaped(): test.TestOutcome {
+  let Some(sinhala) = font_of(shape_script_vectors.sinh_font()) else {
+    return test.fail("the font did not parse");
+  };
+  let fs = text.from_faces([sinhala], [400]);
+  return test.assert_eq(laid_glyphs(fs, "කෙ"), "65,4");
+}
+
+// A run of N'Ko letters goes from right to left, and its letters join.
+function test_nko_is_shaped(): test.TestOutcome {
+  let Some(nko) = font_of(shape_script_vectors.nko_font()) else {
+    return test.fail("the font did not parse");
+  };
+  let fs = text.from_faces([nko], [400]);
+  return test.assert_eq(laid_glyphs(fs, "ߊߓ"), "36,62");
+}
+
 // The font of a base64 string, or None.
 function font_of(data: string): Option[truetype.Font] {
   if let Ok(b) = base64.decode(data) {
@@ -292,6 +311,8 @@ function main(): i32 {
   r = r.it("a run of Thai letters is shaped", test_thai_is_shaped);
   r = r.it("a run of Khmer letters is shaped", test_khmer_is_shaped);
   r = r.it("a run of Myanmar letters is shaped", test_myanmar_is_shaped);
+  r = r.it("a run of Sinhala letters is shaped", test_sinhala_is_shaped);
+  r = r.it("a run of N'Ko letters is shaped", test_nko_is_shaped);
   r = r.it("a mark sits on its base", test_a_mark_sits_on_its_base);
   r = r.it("a mark takes the font of its base", test_a_mark_takes_the_font_of_its_base);
   r = r.it("a color glyph keeps its colors", test_a_color_glyph);

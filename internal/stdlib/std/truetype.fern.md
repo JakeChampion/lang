@@ -1191,7 +1191,9 @@ function lig_id(p: i32): i32 {
   return p >> 5;
 }
 
-function lig_part(p: i32): i32 {
+// The component of a ligature that a glyph with the ligature value `p` is
+// on, from 1, or 0.
+pub function lig_part(p: i32): i32 {
   return if ((p & 16) != 0) { 0 } else { p & 15 };
 }
 

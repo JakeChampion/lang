@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Write tests/stdlib/shape_script_vectors.fern: for Hebrew, Thai, Lao,
-Khmer and Myanmar, a subset of a Noto Sans font and the glyphs that HarfBuzz gives for a list
-of words and of random strings, for the tests of std/shape.
+Khmer, Myanmar and six scripts of the Universal Shaping Engine, a subset of
+a Noto font and the glyphs that HarfBuzz gives for a list of words and of
+random strings, for the tests of std/shape.
 
 Run:  python3 -I scripts/gen-shape-script-vectors.py FONTDIR
 
 FONTDIR holds NotoSansHebrew-Regular.ttf, NotoSansThai-Regular.ttf,
-NotoSansLao-Regular.ttf, NotoSansKhmer-Regular.ttf and
-NotoSansMyanmar-Regular.ttf, from the Noto project (notofonts.github.io). They
+NotoSansLao-Regular.ttf, NotoSansKhmer-Regular.ttf,
+NotoSansMyanmar-Regular.ttf, NotoSansSinhala-Regular.ttf,
+NotoSansBalinese-Regular.ttf, NotoSansJavanese-Regular.ttf,
+NotoSerifTibetan-Regular.ttf, NotoSansMongolian-Regular.ttf and
+NotoSansNKo-Regular.ttf, from the Noto project (notofonts.github.io). They
 are under the SIL Open Font License 1.1, and each subset keeps each name of
 its font, so it keeps the notice and the license. A subset holds the
 characters of its cases, and its glyphs have no outlines.
@@ -21,9 +25,11 @@ script tag. For Khmer it is the feature pref. A second Khmer subset has its
 feature pstf renamed cfar, and the test renames cfar. For Myanmar it is the
 script mym2, so that the font has no script. A second Myanmar subset has
 the old script tag mymr, which takes the default shaper, and the test
-renames it. The Hebrew subset does not have U+FB2C and U+FB2D, so that each
-of them decomposes by one step only. The random strings come from a fixed
-seed, so the script writes the same file each time.
+renames it. For the scripts of the Universal Shaping Engine it is the
+script tag, so that the font takes the default shaper. The Hebrew subset
+does not have U+FB2C and U+FB2D, so that each of them decomposes by one
+step only. The random strings come from a fixed seed, so the script writes
+the same file each time.
 """
 
 import base64
@@ -45,7 +51,7 @@ OUT = HERE.parent / "tests" / "stdlib" / "shape_script_vectors.fern"
 ZWJ, ZWNJ = "\u200d", "\u200c"
 
 FEATURES = ["ccmp", "locl", "rlig", "calt", "clig", "liga", "rclt", "rtla", "rtlm", "ltra", "ltrm", "kern", "mark",
-            "mkmk", "dist", "abvm", "blwm", "rphf", "pref", "blwf", "abvf", "pstf", "cfar", "pres", "abvs", "blws", "psts"]
+            "mkmk", "dist", "abvm", "blwm", "rphf", "pref", "nukt", "akhn", "rkrf", "half", "vatu", "cjct", "haln", "isol", "init", "medi", "fina", "blwf", "abvf", "pstf", "cfar", "pres", "abvs", "blws", "psts"]
 
 # The code points of the private use area that old Thai fonts use.
 PUA = list(range(0xF700, 0xF71B)) + list(range(0xF884, 0xF89F))
@@ -64,6 +70,22 @@ KHMER_ALPHABET = "កខគងចជញដតនបពមយរលវសហអ" 
 MYANMAR_WORDS = ["မြန်မာ", "မင်္ဂလာ", "သင်္ချိုင်း", "ကျွန်ုပ်", "ကြ", "ကျ", "ကွ", "ကှ", "ကေ", "ကော်", "ကို", "ကုံ",
                  "ကြော", "ကြွေ", "ဿ", "ပ္ပ", "ဥ", "၎င်း", "က\ufe00\u1031", "\u1031", "\u103a", "ၵ\u1062", "\u200d"]
 MYANMAR_ALPHABET = "ကခဂငစဆဇညတထဒနပဖဗမယရလဝသဟအ" + "\u1039\u103a\u103b\u103c\u103d\u103e\u102b\u102c\u102d\u102e\u102f\u1030\u1031\u1032\u1036\u1037\u1038" + ZWJ
+
+# The words of the scripts of the Universal Shaping Engine, and the
+# alphabets of their random strings.
+SINHALA_WORDS = ["ශ්\u200dරී ලංකා", "ක\u0dd9", "ක\u0dda", "ක\u0ddc", "ක\u0ddd", "ක\u0dde", "ක්\u200dය", "ක්\u200dර",
+                 "ර්\u200dක", "ද්\u200dධ", "ස්ත්\u200dරී", "අ\u0dcf", "ඔ\u0dca", "\u0dca", "ක\u0dca\u200d", "ක\u034f\u0dca"]
+SINHALA_ALPHABET = "කගචජටඩතදනපබමයරලවසහළ" + "\u0dca\u0dca\u0dcf\u0dd0\u0dd1\u0dd2\u0dd3\u0dd4\u0dd6\u0dd8\u0dd9\u0dda\u0ddb\u0ddc\u0dde\u0d82\u0d83" + ZWJ + ZWNJ
+BALINESE_WORDS = ["ᬩᬮᬶ", "ᬓ\u1b3e", "ᬓ\u1b44ᬭ", "ᬭ\u1b44ᬓ", "ᬓ\u1b3f", "ᬓ\u1b40", "ᬅᬓ\u1b44ᬱᬭ", "ᬓ\u1b03", "ᬓ\u1b44ᬓ\u1b3e"]
+BALINESE_ALPHABET = "ᬓᬕᬗᬘᬚᬢᬤᬦᬧᬩᬫᬬᬭᬮᬯᬲᬳ" + "\u1b44\u1b44\u1b35\u1b36\u1b37\u1b38\u1b3a\u1b3e\u1b3f\u1b40\u1b42\u1b00\u1b01\u1b02\u1b03\u1b04\u1b34" + ZWJ + ZWNJ
+JAVANESE_WORDS = ["ꦗꦮ", "ꦏ\ua9ba", "ꦏ\ua9bd", "ꦏ\ua9c0ꦫ", "ꦫ\ua9c0ꦏ", "ꦏ\ua9bf", "ꦏ\ua9bc", "ꦏ\ua9be", "ꦏ\ua9ba\ua9b4"]
+JAVANESE_ALPHABET = "ꦏꦒꦔꦕꦗꦠꦢꦤꦥꦧꦩꦪꦫꦭꦮꦱꦲ" + "\ua9c0\ua9c0\ua9b4\ua9b6\ua9b7\ua9b8\ua9b9\ua9ba\ua9bb\ua9bc\ua9bd\ua9be\ua9bf\ua980\ua981\ua982\ua983" + ZWJ + ZWNJ
+TIBETAN_WORDS = ["བོད་", "སྐད", "ཀྵ", "ཀྐ", "ཀཱི", "ཀ\u0f39", "སྒྲ", "\u0f71", "ཀ\u0f7e\u0f72", "ཀ\u0f80\u0f71"]
+TIBETAN_ALPHABET = "ཀགངདནབམརལས" + "\u0f90\u0f92\u0fb1\u0fb2\u0f71\u0f72\u0f74\u0f7a\u0f7c\u0f7e\u0f84\u0f39"
+MONGOLIAN_WORDS = ["ᠮᠣᠩᠭᠣᠯ", "ᠠ\u180b", "ᠠᠢ", "ᠨ\u180bᠠ", "ᠠ\u180eᠠ", "ᠬᠠ", "ᠭ\u180cᠠ", "ᠨ\u180f"]
+MONGOLIAN_ALPHABET = "ᠠᠡᠢᠣᠤᠨᠬᠭᠮᠯᠰᠲ" + "\u180b\u180c\u180d\u180e\u180f\u18a9" + ZWJ + ZWNJ
+NKO_WORDS = ["ߒߞߏ", "ߊ\u07eb", "ߓߊ", "(ߓ)", "ߓ\u07f3ߊ", "ߞ\u200dߞ"]
+NKO_ALPHABET = "ߊߋߌߍߎߏߐߒߓߔߕߖߗߘߙߚߛߜߝߞߟߠߡߢߣߤ" + "\u07eb\u07ec\u07ed\u07ee\u07ef\u07f0\u07f1\u07f2\u07f3" + ZWJ + "()"
 
 SCRIPTS = [
     ("hebr", "hebr", "mark", "Hebr", "NotoSansHebrew", {0xFB2C, 0xFB2D}, None,
@@ -90,9 +112,18 @@ SCRIPTS = [
     ("khmr", "khmr_cfar", "cfar", "Khmr", "NotoSansKhmer", set(), (b"pstf", b"cfar"), KHMER_WORDS, KHMER_ALPHABET),
     ("mymr", "mymr", "mym2", "Mymr", "NotoSansMyanmar", set(), None, MYANMAR_WORDS, MYANMAR_ALPHABET),
     ("mymr", "mymr_old", "mymr", "Mymr", "NotoSansMyanmar", set(), (b"mym2", b"mymr"), MYANMAR_WORDS, MYANMAR_ALPHABET),
+    ("sinh", "sinh", "sinh", "Sinh", "NotoSansSinhala", set(), None, SINHALA_WORDS, SINHALA_ALPHABET),
+    ("bali", "bali", "bali", "Bali", "NotoSansBalinese", set(), None, BALINESE_WORDS, BALINESE_ALPHABET),
+    ("java", "java", "java", "Java", "NotoSansJavanese", set(), None, JAVANESE_WORDS, JAVANESE_ALPHABET),
+    ("tibt", "tibt", "tibt", "Tibt", "NotoSerifTibetan", set(), None, TIBETAN_WORDS, TIBETAN_ALPHABET),
+    ("mong", "mong", "mong", "Mong", "NotoSansMongolian", set(), None, MONGOLIAN_WORDS, MONGOLIAN_ALPHABET),
+    ("nko ", "nko", "nko ", "Nkoo", "NotoSansNKo", set(), None, NKO_WORDS, NKO_ALPHABET),
 ]
 
 RANDOM_CASES = 40
+
+# The scripts that go from right to left.
+RTL = ("Hebr", "Nkoo")
 
 
 # The subset of the font at `path` that holds the characters of `texts`
@@ -120,13 +151,13 @@ def shaped(data, text, script):
     font = hb.Font(hb.Face(data))
     buf = hb.Buffer()
     buf.add_str(text)
-    buf.direction = "rtl" if script == "Hebr" else "ltr"
+    buf.direction = "rtl" if script in RTL else "ltr"
     buf.script = script
     buf.language = "zxx"
     hb.shape(font, buf, {})
     infos = list(buf.glyph_infos)
     positions = list(buf.glyph_positions)
-    if script == "Hebr":
+    if script in RTL:
         infos.reverse()
         positions.reverse()
     places = ["%d:%d:%d" % (p.x_advance, p.x_offset, p.y_offset) for p in positions]

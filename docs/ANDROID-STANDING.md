@@ -113,7 +113,7 @@ compressed.
 | Material 3 components | Colors only, few components | Full | Full | Third party |
 | Navigation | By hand | Navigation 3 | Navigator, go_router | React Navigation |
 | Accessibility | TalkBack tree, font scale | Semantics | Semantics | Native views |
-| Right-to-left text and shaping | Order, Arabic, Hebrew, Thai, Khmer, Myanmar and Indic shaping | Yes | Yes | Yes |
+| Right-to-left text and shaping | Order, Arabic, Hebrew, Thai, Khmer, Myanmar, Indic and USE shaping | Yes | Yes | Yes |
 | UI tests on the computer | Full simulator | Robolectric | Widget tests | Jest |
 | Screenshot tests | PNG of the simulator | Paparazzi, Roborazzi | Golden tests | Third party |
 | Camera, location, push | No | Yes | Plugins | Expo modules |
@@ -162,8 +162,9 @@ The order puts first what stops a release, then what most apps need.
 6. **Java and Kotlin libraries.** Merge DEX files and manifests of a JAR
    or an AAR into the APK.
 
-7. **Text.** The shaping of the scripts of the Universal Shaping Engine,
-   such as Sinhala. The marks of a font with no GPOS
+7. **Text.** The Hangul shaper of HarfBuzz, which composes the jamo of
+   Korean into syllables. Korean text with syllables that Unicode composes
+   shapes correctly without it. The marks of a font with no GPOS
    table, which HarfBuzz moves by their combining classes.
 
    Indic shaping is done: `std/shape` follows the Indic shaper of HarfBuzz
@@ -199,6 +200,13 @@ The order puts first what stops a release, then what most apps need.
    a font with the old tag `mymr` takes the default shaper. The glyphs,
    the clusters and the positions are those of HarfBuzz 15 for more than
    30,000 random strings.
+
+   The Universal Shaping Engine of HarfBuzz is done, for Sinhala, Tibetan,
+   Javanese, Balinese, Mongolian, N'Ko and the other scripts that HarfBuzz
+   gives it. `scripts/gen-use-table.py` writes its table of categories, and
+   the table is that of HarfBuzz 15 for each code point. The glyphs, the
+   clusters and the positions are those of HarfBuzz 15 for Sinhala,
+   Balinese, Javanese, Tibetan, Mongolian and N'Ko.
 
    Color emoji are done: `std/truetype` draws the glyphs of COLR
    versions 0 and 1, and `std/android/text` and the painter of

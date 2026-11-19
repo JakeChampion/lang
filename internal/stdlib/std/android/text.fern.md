@@ -14,7 +14,9 @@ A face does not have each character. For a character that the face does not have
 
 `width` and `line` measure a text with no drawing. `fit` cuts a text to a width, and `wrap` breaks it into lines. `wrap_ranges` gives the lines as ranges of characters. A text field uses them to find its cursor, and `std/bidi` uses them to order each line.
 
-A run of Arabic letters, or of the letters of Hebrew, Thai, Lao, Khmer, Myanmar or an Indic script, goes to `std/shape`. The Indic scripts are Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada and Malayalam. `std/shape` gives the joining forms of the Arabic letters, and the conjuncts and the reordered matras of the Indic scripts. It orders the marks of Hebrew, Thai, Lao, Khmer and Myanmar, and gives the position of each glyph. The run takes the font of its first letter. An Arabic run and a Hebrew run go from right to left.
+A run of Arabic letters goes to `std/shape`. So does a run of the letters of Hebrew, Thai, Lao, Khmer, Myanmar, an Indic script, Sinhala, Tibetan, Mongolian, Balinese, Javanese or N'Ko.
+
+The Indic scripts are Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada and Malayalam. `std/shape` gives the joining forms of the Arabic letters, and the conjuncts and the reordered matras of the Indic scripts. It orders the marks of the other scripts, and gives the position of each glyph. The run takes the font of its first letter. An Arabic, a Hebrew and an N'Ko run go from right to left.
 
 A mark sits on its base at the anchors of the font. As in Minikin, a mark takes the font of its base when that font has the mark, so that the two can attach. The run has no letter spacing, so that its letters stay joined. Outside such a run, a mark of the font has no advance.
 
@@ -449,27 +451,23 @@ function in_run(c: char, script: string): boolean {
   return t == JT_C || t == JT_T || t != 0 && arabic(c);
 }
 
+// The blocks of the scripts that std/shape shapes in a run of their own,
+// other than the Indic blocks from U+0900 to U+0D7F: the first and the last
+// code point of each one.
+const SCRIPT_BLOCKS: i32[] = [0x590, 0x5FF, 0xFB1D, 0xFB4F, 0xA8E0, 0xA8FF, 0xE00, 0xE7F, 0xE80, 0xEFF, 0x1780, 0x17FF, 0x1000, 0x109F, 0xA9E0, 0xA9FF, 0xAA60, 0xAA7F, 0x116D0, 0x116FF, 0xD80, 0xDFF, 0xF00, 0xFFF, 0x1800, 0x18AF, 0x1B00, 0x1B7F, 0xA980, 0xA9DF, 0x7C0, 0x7FF];
+
+// The OpenType tag of the script of each block of SCRIPT_BLOCKS.
+const BLOCK_TAGS: string[] = ["hebr", "hebr", "deva", "thai", "lao ", "khmr", "mymr", "mymr", "mymr", "mymr", "sinh", "tibt", "mong", "bali", "java", "nko "];
+
 // The OpenType tag of the script of the block of `c` that std/shape shapes
-// in a run of its own, or "": Hebrew, an Indic script, Thai, Lao, Khmer or
-// Myanmar. The
-// Indic blocks from U+0900 to U+0D7F hold 128 characters each, and
-// Devanagari Extended is Devanagari.
+// in a run of its own, or "". The Indic blocks from U+0900 to U+0D7F hold
+// 128 characters each, and Devanagari Extended is Devanagari.
 function block_script(c: char): string {
   let n = c as i32;
-  if (n >= 0x590 && n <= 0x5FF || n >= 0xFB1D && n <= 0xFB4F) {
-    return "hebr";
-  }
-  if (n >= 0xA8E0 && n <= 0xA8FF) {
-    return "deva";
-  }
-  if (n >= 0xE00 && n <= 0xEFF) {
-    return if (n < 0xE80) { "thai" } else { "lao " };
-  }
-  if (n >= 0x1780 && n <= 0x17FF) {
-    return "khmr";
-  }
-  if (n >= 0x1000 && n <= 0x109F || n >= 0xA9E0 && n <= 0xA9FF || n >= 0xAA60 && n <= 0xAA7F || n >= 0x116D0 && n <= 0x116FF) {
-    return "mymr";
+  for k in 0..BLOCK_TAGS.len() {
+    if (n >= SCRIPT_BLOCKS[2 * k] && n <= SCRIPT_BLOCKS[2 * k + 1]) {
+      return BLOCK_TAGS[k];
+    }
   }
   let tags = ["deva", "beng", "guru", "gujr", "orya", "taml", "telu", "knda", "mlym"];
   return if (n >= 0x900 && n <= 0xD7F) { tags[(n - 0x900) / 128] } else { "" };
@@ -485,9 +483,9 @@ function arabic(c: char): boolean {
 // at the positions that std/shape gives. The characters are in visual
 // order. An Arabic run goes from right to left, so it is shaped from the
 // last character to the first, and its glyphs are placed from the last one
-// to the first. A Hebrew run goes so too.
+// to the first. Each run of a script from right to left goes so too.
 function shaped_run(own p: Pens, f: truetype.Font, id: i32, px: i32, cs: char[], i: i32, end: i32, script: string): Pens {
-  let rtl = script == "arab" || script == "hebr";
+  let rtl = shape.rtl(script);
   let logical = "";
   for k in 0..end - i {
     logical += cs[if (rtl) { end - 1 - k } else { i + k }].to_string();
