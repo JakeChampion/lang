@@ -5504,7 +5504,12 @@ function is_self_tail(f: Func, b: ssa.SBlock, name: string, nparams: i32, parent
   return b.term.value < 0 && typeinfo.is_void(f.result);
 }
 
-function cons_hole(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: i32[][], defs: ssa.SInst[]): i32 {
+// The position in b of the self call whose result a returned construction
+// holds, and -1 when b does not end in such a return. The construction can
+// hold the result in a chain of constructions of the result type, each one a
+// payload of the next. Between the call and the return, b can also make a
+// variant with no field.
+function cons_call(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: i32[][], defs: ssa.SInst[]): i32 {
   let n = b.insts.len();
   if (b.term.kind_tag != ssa.TERM_RET || n < 2) {
     return -1;
@@ -5515,7 +5520,7 @@ function cons_hole(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: 
   }
   let at = n - 2;
   while (at >= 0 && !(b.insts[at].kind_tag == call() && b.insts[at].str == name)) {
-    if (!reorderable(b.insts[at])) {
+    if (!reorderable(b.insts[at]) && b.insts[at].kind_tag != variant_new()) {
       return -1;
     }
     at -= 1;
@@ -5527,21 +5532,42 @@ function cons_hole(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: 
   if (c.args.len() != nparams || !args_cross(f, c.args, parents, defs)) {
     return -1;
   }
-  for i in at + 1..n - 1 {
-    if (util.index_of_i32(b.insts[i].args, c.result) >= 0) {
+  let held = c.result;
+  for i in at + 1..n {
+    let ins = b.insts[i];
+    let uses = 0;
+    for a in ins.args {
+      if (a == held) {
+        uses += 1;
+      }
+    }
+    if (uses == 0 && i < n - 1 && (reorderable(ins) || ins.kind_tag == variant_new() && ins.args.len() == 0)) {
+      continue;
+    }
+    if (uses != 1 || ins.kind_tag != variant_new() || !semtypes.equal(f.values[ins.result], f.result)) {
       return -1;
     }
+    held = ins.result;
   }
-  let uses = 0;
-  for a in cons.args {
-    if (a == c.result) {
-      uses += 1;
+  return at;
+}
+
+// The position in b of the construction that holds the result of the call at `at`.
+function hole_box(b: ssa.SBlock, at: i32): i32 {
+  for i in at + 1..b.insts.len() {
+    if (util.index_of_i32(b.insts[i].args, b.insts[at].result) >= 0) {
+      return i;
     }
   }
-  if (uses != 1) {
+  return -1;
+}
+
+function cons_hole(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: i32[][], defs: ssa.SInst[]): i32 {
+  let at = cons_call(f, b, name, nparams, parents, defs);
+  if (at < 0) {
     return -1;
   }
-  return util.index_of_i32(cons.args, c.result);
+  return util.index_of_i32(b.insts[hole_box(b, at)].args, b.insts[at].result);
 }
 
 pub function reorderable(ins: ssa.SInst): boolean {
@@ -5842,20 +5868,27 @@ function rewrite_block(own s: Splice, f: Func, b: ssa.SBlock, kind: i32, map: i3
 
 function linked(own s: Splice, f: Func, b: ssa.SBlock, map: i32[], header: i32, hole: i32, ch: Chain): Splice {
   let cons = b.insts[b.insts.len() - 1];
-  let placeholder = cons.args[hole];
+  let at = s.values.len();
+  let chain = at + 1;
+  let called = b.insts.len() - 2;
+  while (b.insts[called].kind_tag != call()) {
+    called -= 1;
+  }
+  let box = hole_box(b, called);
   let insts: ssa.SInst[] = [];
   let row: i32[] = [];
-  for ins in b.insts {
-    if (ins.result == placeholder) {
+  for i in 0..b.insts.len() {
+    let ins = b.insts[i];
+    if (i == called) {
       row = mapped_list(map, ins.args);
-      insts = insts.append(ssa.SInst { kind_tag: zero(), result: placeholder, args: [], imm: 0, str: "" });
+      insts = insts.append(ssa.SInst { kind_tag: zero(), result: ins.result, args: [], imm: 0, str: "" });
     } else {
       insts = insts.append(mapped_inst(map, ins));
     }
+    if (i == box) {
+      insts = insts.append(ssa.SInst { kind_tag: hole_at(), result: at, args: [ins.result], imm: 0, str: "" });
+    }
   }
-  let at = s.values.len();
-  let chain = at + 1;
-  insts = insts.append(ssa.SInst { kind_tag: hole_at(), result: at, args: [cons.result], imm: 0, str: "" });
   insts = insts.append(fill(ch, chain, cons.result));
   row = row.append(chain).append(at);
   let values = s.values.append(address()).append(f.result);
