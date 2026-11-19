@@ -388,6 +388,24 @@ xs = xs.append(i);`). The report is static. A `guarded` site still copies
 when an upstream retain leaves the box shared, and `FERN_CLIFF_REPORT=1`
 counts those copies at run time.
 
+The `with storage` section names every array `.with` site. It has the reasons
+of the `append storage` section, because the lowering selects the box of the
+receiver with the same cases. A site that can write the box of the receiver has
+the storage `unique-in-place/shared-copy`.
+
+The `constructor storage` section names every construction of a variant, a
+record or a tuple, and says where its box comes from:
+
+| reason | storage | meaning |
+|---|---|---|
+| `reuse` | `unique-in-place/shared-fresh` | the frame drops a value with a box of the same size, and the construction takes that box when its count is one. The row names the value as `donor=` |
+| `static` | `static` | each operand is a constant, so the value is a static box and the program allocates nothing |
+| `no-donor` | `fresh` | the frame drops no box of that size before the construction, so the allocator supplies the box |
+| `shape-unsupported` | `fresh` | no dropped box can supply this type: it has the layout of an `Option`, or it has a finalizer |
+| `reuse-disabled` | `fresh` | the construction has a donor, and `FERN_SELFHOST_NO_REUSE` or the bisect switch stops the reuse |
+
+A record that a function returns in registers has no box, so it has no row.
+
 When the program must keep the old array, write the copy with `clone`:
 
 ```fern
@@ -405,8 +423,9 @@ arguments. Its closed tags and scope are in `ARRAY-SHAPES.md` §6. A recognized
 algebra operation does not imply a kernel was selected.
 
 This report covers the map/filter/fold/reduce fusion planner, recognized
-unsupported combinators, R7 map storage, scale storage, append storage and
-ndarray kernels. It is not an all-allocation report.
+unsupported combinators, R7 map storage, scale storage, append storage, with
+storage, constructor storage and ndarray kernels. It is not an all-allocation
+report.
 
 Disabling a pass preserves each site's intrinsic refusal and failing stage.
 `disabled` or `reuse-disabled` is reported only when the site satisfies all
