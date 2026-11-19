@@ -272,6 +272,8 @@ function consume(own item: Box): i32 { return item.data.len(); }
 		src  string
 		want []string
 	}{
+		{"match-value-on-local-at-its-last-use-destructured", "struct C { seq: i32 } struct H { tag: i32[], c: C } function (own c: C) seal(): i32 { return c.seq; } function mk(n: i32): H { return H { tag: [], c: C { seq: n } }; } function f(): i32 { let r: Result[i32, string] = Ok(3); let h = match (r) { Ok(x) => mk(x), Err(_) => mk(0) }; let H { tag, c } = h; return c.seal() + tag.len(); } function main(): i32 { return f(); }", nil},
+		{"match-value-on-local-read-after", "struct C { seq: i32 } struct H { tag: i32[], c: C } function (own c: C) seal(): i32 { return c.seq; } function mk(n: i32): H { return H { tag: [], c: C { seq: n } }; } function f(): i32 { let r: Result[C, string] = Ok(C { seq: 1 }); let c = match (r) { Ok(c) => c, Err(_) => C { seq: 0 } }; let n = c.seal(); match (r) { Ok(d) => { return n + d.seq; }, Err(_) => {} } return n; } function main(): i32 { return f(); }", []string{"E051"}},
 		{"destructure-after-borrowed-assignment", destructureReassignPrelude + "function f(q: HPair): i32 { let p: HPair = mkp(); p = q; let HPair { h, n } = p; return sinkh(h) + n; }\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
 		{"destructure-after-borrowed-call-assignment", destructureReassignPrelude + "function f(q: HPair): i32 { let p: HPair = mkp(); p = keep(q); let HPair { h, n } = p; return sinkh(h) + n; }\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
 		{"destructure-after-fresh-call-assignment", destructureReassignPrelude + "function f(): i32 { let p: HPair = mkp(); p = mkp(); let HPair { h, n } = p; return sinkh(h) + n; }\nfunction main(): i32 { return 0; }\n", nil},
