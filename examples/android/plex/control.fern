@@ -8,6 +8,7 @@
 // so the loop thread never waits for the network. The loop polls the
 // workers on its timeouts.
 import "std/android";
+import "std/android/browse";
 import "std/android/download";
 import "std/android/draw";
 import "std/android/focus";
@@ -148,6 +149,14 @@ pub struct Device {
   random: () => i32,
   // The MIME types that the decoders of the phone take.
   decoders: string[],
+  // Gives the media browser of the app the token of its media session,
+  // so Android Auto shows the app.
+  browse_connect: (browse.Service) => void,
+  // The id of the parent of a request of a media browser, the answer to
+  // it, and the id of an item to play.
+  browse_parent: (browse.Request) => string,
+  browse_answer: (browse.Request, browse.Item[]) => boolean,
+  media_id: (browse.MediaId) => string,
   // The languages of the person, the first one the best.
   languages: string[],
 }
@@ -325,6 +334,10 @@ pub struct App {
   smart: string[],
   smart_count: i32,
   smart_at: i64,
+  // The requests of a media browser that wait for the server, and the
+  // tracks of the album that it showed last.
+  browsing: Browsing[],
+  browsed: plex.Item[],
   // The texts in the language of the person.
   texts: i18n.Strings,
   // Whether a list plays in a random order, and its repeat: 0 none, 1 the
@@ -548,7 +561,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     client: plex.Client { id: id, device: "Android", token: setting(text, "token") },
     server: no_server(), base: plex.Base { uri: setting(text, "server_uri"), token: setting(text, "server_token") },
     servers: [], states: [], probing: -1, probe_states: [], probe_at: 0i64, probes: [], rechecking: false, recheck_at: -100000i64, left: [], pin: plex.Pin { id: 0i64, code: "", token: "" }, pin_at: 0i64,
-    account: setting(text, "account"), quality: num(setting(text, "quality")), speed: speed_of(setting(text, "speed")), lang: plex.language_code(setting(text, "lang")), subs: mode_of(setting(text, "subs")), account_lang: setting(text, "account_lang"), account_subs: mode_of(setting(text, "account_subs")), picked: listed(setting(text, "picked")), caption_size: num(setting(text, "caption_size")) % 3, caption_box: setting(text, "caption_box") != "0", smart: listed(setting(text, "smart")), smart_count: smart_index(setting(text, "smart_count")), smart_at: -SMART_MS, texts: texts.for_languages(dev.languages), shuffle: setting(text, "shuffle") == "1", repeat: num(setting(text, "repeat")) % 3, sleep: 0, sleep_at: 0i64, turned: false, local: false,
+    account: setting(text, "account"), quality: num(setting(text, "quality")), speed: speed_of(setting(text, "speed")), lang: plex.language_code(setting(text, "lang")), subs: mode_of(setting(text, "subs")), account_lang: setting(text, "account_lang"), account_subs: mode_of(setting(text, "account_subs")), picked: listed(setting(text, "picked")), caption_size: num(setting(text, "caption_size")) % 3, caption_box: setting(text, "caption_box") != "0", smart: listed(setting(text, "smart")), smart_count: smart_index(setting(text, "smart_count")), smart_at: -SMART_MS, browsing: [], browsed: [], texts: texts.for_languages(dev.languages), shuffle: setting(text, "shuffle") == "1", repeat: num(setting(text, "repeat")) % 3, sleep: 0, sleep_at: 0i64, turned: false, local: false,
     screen: ui.LOGIN, tab: 0, title: "", scroll: 0, rows: [], stack: [],
     hubs: none, results: none, sections: [], section: no_section(), items: [], total: 0, sort: 0, unwatched: false, letters: [], item: plex.no_item(), children: [],
     query: "", typing: false, search_at: 0i64, error: "",
@@ -1146,6 +1159,9 @@ function got_media(own t: App, verb: string, rest: string, r: plex.Reply): App {
   }
   if (verb == "downloadall") {
     return download_all(t, plex.parse_items(r.text()).items);
+  }
+  if (verb == "browse") {
+    return got_browse(t, rest, r);
   }
   if (verb == "smart") {
     return got_smart(t, rest, r);
@@ -2104,6 +2120,115 @@ function download_all(own t: App, items: plex.Item[]): App {
     }
   }
   return t;
+}
+
+// --- the media browser of Android Auto
+
+// A request of a media browser for the items under the item `parent`.
+struct Browsing { parent: string, req: browse.Request }
+
+// The items of the root: each music library, and the downloaded music.
+pub function browse_root(sections: plex.Section[], saved: plex.Item[], downloads: string): browse.Item[] {
+  let out: browse.Item[] = [];
+  for sec in sections {
+    if (sec.kind == "artist") {
+      out = out.append(browse.Item { id: "section:" + sec.key, title: sec.title, subtitle: "", playable: false });
+    }
+  }
+  if (saved.any((it: plex.Item): boolean => it.kind == "track")) {
+    out = out.append(browse.Item { id: "downloads", title: downloads, subtitle: "", playable: false });
+  }
+  return out;
+}
+
+// The browser items of the items of the server: an artist or an album
+// opens, and a track plays.
+pub function browse_items(items: plex.Item[]): browse.Item[] {
+  let out: browse.Item[] = [];
+  for it in items {
+    if (it.kind == "track") {
+      out = out.append(browse.Item { id: "track:" + it.key, title: it.title, subtitle: it.grandparent, playable: true });
+    } else if (it.kind == "artist" || it.kind == "album") {
+      out = out.append(browse.Item { id: it.kind + ":" + it.key, title: it.title, subtitle: it.parent, playable: false });
+    }
+  }
+  return out;
+}
+
+function browse_event(own s: App, b: browse.Event): App {
+  match (b) {
+    browse.Connected(svc) => {
+      s.dev.browse_connect(svc);
+      return s;
+    },
+    browse.Asked(req) => {
+      let parent = s.dev.browse_parent(req);
+      return browse_asked(s, parent, req);
+    },
+    browse.PlayFrom(m) => {
+      let id = s.dev.media_id(m);
+      return browse_play(s, id);
+    }
+  }
+}
+
+// Answers a request at once from what the app has, or asks the server and
+// answers when it replies.
+function browse_asked(own s: App, parent: string, req: browse.Request): App {
+  let saved = s.downloads.filter((d: Saved): boolean => d.status == download.DONE).map((d: Saved): plex.Item => d.item);
+  if (parent == browse.ROOT && (s.sections.len() > 0 || s.base.uri.len() == 0)) {
+    let ok = s.dev.browse_answer(req, browse_root(s.sections, saved, s.texts.text("Downloads")));
+    return s;
+  }
+  if (parent == "downloads" || s.base.uri.len() == 0) {
+    let ok = s.dev.browse_answer(req, browse_items(saved.filter((it: plex.Item): boolean => it.kind == "track")));
+    return s;
+  }
+  let (kind, key) = split_purpose(parent);
+  let want = if (parent == browse.ROOT) { Sections } else if (kind == "section") { Items(key, 0, 0, false) } else { Children(key) };
+  let t = App { ...s, browsing: s.browsing.append(Browsing { parent: parent, req: req }) };
+  return ask(t, "browse:" + parent, want);
+}
+
+// The reply of the server to the request of the browser for `parent`.
+function got_browse(own t: App, parent: string, r: plex.Reply): App {
+  let waiting = t.browsing.filter((b: Browsing): boolean => b.parent == parent);
+  let u = App { ...t, browsing: t.browsing.filter((b: Browsing): boolean => b.parent != parent) };
+  let items: browse.Item[] = [];
+  if (r.ok() && parent == browse.ROOT) {
+    let sections = plex.parse_sections(r.text());
+    items = browse_root(sections, [], u.texts.text("Downloads"));
+    u = App { ...u, sections: sections };
+  } else if (r.ok()) {
+    let got = plex.parse_items(r.text()).items;
+    items = browse_items(got);
+    if (got.any((it: plex.Item): boolean => it.kind == "track")) {
+      u = App { ...u, browsed: got };
+    }
+  }
+  for b in waiting {
+    let ok = u.dev.browse_answer(b.req, items);
+  }
+  return u;
+}
+
+// Plays the track `id` of a browser, with the tracks of its album after it.
+function browse_play(own s: App, id: string): App {
+  let (kind, key) = split_purpose(id);
+  if (kind != "track") {
+    return s;
+  }
+  let at = position_of(s.browsed.map((it: plex.Item): string => it.key), key);
+  if (at >= 0) {
+    let tracks = s.browsed;
+    return play_list(s, tracks, at);
+  }
+  let saved = saved_at(s, key);
+  if (saved >= 0) {
+    let it = s.downloads[saved].item;
+    return start_play(s, it, []);
+  }
+  return ask(s, "autoplay:" + key, Meta(key));
 }
 
 // The numbers of episodes that a smart download keeps.
@@ -4460,6 +4585,9 @@ function event(own s: App, e: android.Event): App {
   }
   if let Some(c) = session.event(e) {
     return media_command(s, c);
+  }
+  if let Some(b) = browse.event(e) {
+    return browse_event(s, b);
   }
   match (e) {
     android.Start => {

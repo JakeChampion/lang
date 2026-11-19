@@ -6339,7 +6339,9 @@ function apk_permissions(list: string): string[] {
 // activity, and NativeActivity itself is the activity otherwise. Each @jni
 // class that extends Service is a service, with the foreground service
 // types that the permissions allow. Each @jni class that extends
-// NotificationListenerService is a service that only the system binds.
+// NotificationListenerService is a service that only the system binds. Each
+// @jni class that extends MediaBrowserService is an exported media browser,
+// which Android Auto binds.
 function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
   let activity = dex.subclass_of(classes, "android.app.NativeActivity");
   if (activity.len() == 0) {
@@ -6348,10 +6350,13 @@ function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
   let permissions = apk_permissions(o.permissions);
   let services: apk.Service[] = [];
   for name in dex.subclasses_of(classes, "android.app.Service") {
-    services = services.append(apk.Service { name: name, types: apk.foreground_types(permissions), permission: "", action: "" });
+    services = services.append(apk.Service { name: name, types: apk.foreground_types(permissions), permission: "", action: "", exported: false });
   }
   for name in dex.subclasses_of(classes, apk.LISTENER_ACTION) {
-    services = services.append(apk.Service { name: name, types: 0, permission: apk.LISTENER_PERMISSION, action: apk.LISTENER_ACTION });
+    services = services.append(apk.Service { name: name, types: 0, permission: apk.LISTENER_PERMISSION, action: apk.LISTENER_ACTION, exported: false });
+  }
+  for name in dex.subclasses_of(classes, "android.service.media.MediaBrowserService") {
+    services = services.append(apk.Service { name: name, types: 0, permission: "", action: apk.BROWSE_ACTION, exported: true });
   }
   let app = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, more_dex: [], permissions: permissions, min_sdk: apk.MIN_SDK, services: services, icon: [], banner: [], compress: o.compress, cleartext: o.cleartext, debuggable: o.debuggable, home: o.home, tv: o.tv, pip: o.pip, assets: [], widget: apk.no_widget() };
   if (o.min_sdk.len() > 0) {

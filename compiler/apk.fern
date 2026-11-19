@@ -52,8 +52,45 @@ pub const WIDGET_ITEM_ID: i32 = 2130968576;
 // A service of the app: its Java class, and its foreground service types as
 // the flags of android:foregroundServiceType, or 0. A service that only the
 // system binds names the permission that the binder needs and the action of
-// its intent filter, or has "" for both.
-pub struct Service { name: string, types: i32, permission: string, action: string }
+// its intent filter, or has "" for both. Other apps can bind an exported
+// service, such as a media browser that Android Auto binds.
+pub struct Service { name: string, types: i32, permission: string, action: string, exported: boolean }
+
+// The action of a media browser service, which Android Auto binds.
+pub const BROWSE_ACTION: string = "android.media.browse.MediaBrowserService";
+
+// The meta-data of the application that marks it as an app of Android
+// Auto, and the file that says that it is a media app.
+const CAR_META: string = "com.google.android.gms.car.application";
+
+pub const CAR_PATH: string = "res/xml/automotive_app_desc.xml";
+
+// True when the app has a media browser service, so Android Auto shows it.
+pub function for_car(app: App): boolean {
+  return app.services.any((sv: Service): boolean => sv.action == BROWSE_ACTION);
+}
+
+// The file of Android Auto: the app uses the media templates.
+pub function car_desc(): androidxml.Element {
+  let name = androidxml.Attr { name: "name", id: 0, kind: androidxml.STRING, data: 0, text: "media" };
+  return androidxml.element("automotiveApp", [], [androidxml.element("uses", [name], [])]);
+}
+
+// An XML file of the resources of the app, and its place in the archive.
+pub struct XmlFile { path: string, root: androidxml.Element }
+
+// The XML files of the resources: the layout and the provider file of the
+// widget, and the file of Android Auto.
+pub function xml_files(app: App): XmlFile[] {
+  let out: XmlFile[] = [];
+  if (app.widget.provider.len() > 0) {
+    out = out.append(XmlFile { path: WIDGET_LAYOUT_PATH, root: widget_layout(app.widget) }).append(XmlFile { path: WIDGET_INFO_PATH, root: widget_info() });
+  }
+  if (for_car(app)) {
+    out = out.append(XmlFile { path: CAR_PATH, root: car_desc() });
+  }
+  return out;
+}
 
 // A file of the APK under assets/, which AAssetManager reads.
 pub struct Asset { name: string, data: u8[] }
@@ -172,7 +209,7 @@ function service_element(sv: Service): androidxml.Element {
   if (sv.permission.len() > 0) {
     attrs = attrs.append(text_attr("permission", sv.permission));
   }
-  attrs = attrs.append(flag("exported", false));
+  attrs = attrs.append(flag("exported", sv.exported));
   if (sv.types != 0) {
     attrs = attrs.append(attr("foregroundServiceType", androidxml.INT_HEX, sv.types));
   }
@@ -276,6 +313,9 @@ pub function manifest_tree(app: App): androidxml.Element {
   if (app.widget.provider.len() > 0) {
     parts = parts.append(receiver_element(app.widget));
   }
+  if (for_car(app)) {
+    parts = parts.append(androidxml.element("meta-data", [text_attr("name", CAR_META), attr("resource", androidxml.REFERENCE, resource_id(app, "xml", "automotive_app_desc"))], []));
+  }
   top = top.append(androidxml.element("application", app_attrs, parts));
   let package = androidxml.Attr { name: "package", id: 0, kind: androidxml.STRING, data: 0, text: app.package };
   return androidxml.element("manifest", [attr("versionCode", androidxml.INT_DEC, app.version_code), text_attr("versionName", app.version_name), package], top);
@@ -345,20 +385,52 @@ pub function res_types(app: App): ResType[] {
   if (app.banner.len() > 0) {
     images = images.append(Res { key: "banner", path: BANNER_PATH });
   }
-  let out: ResType[] = [ResType { id: 1, name: "drawable", entries: images }];
+  let names = ["drawable"];
+  let all = [images];
+  let xml: Res[] = [];
+  let ids: Res[] = [];
   if (app.widget.provider.len() > 0) {
-    let ids: Res[] = [];
+    names = names.append("layout");
+    all = all.append([Res { key: "widget", path: WIDGET_LAYOUT_PATH }]);
+    xml = xml.append(Res { key: "widget_info", path: WIDGET_INFO_PATH });
     for item in app.widget.items {
       ids = ids.append(Res { key: item.name, path: "" });
     }
-    out = out.append(ResType { id: 2, name: "layout", entries: [Res { key: "widget", path: WIDGET_LAYOUT_PATH }] }).append(ResType { id: 3, name: "xml", entries: [Res { key: "widget_info", path: WIDGET_INFO_PATH }] }).append(ResType { id: 4, name: "id", entries: ids });
+  }
+  if (for_car(app)) {
+    xml = xml.append(Res { key: "automotive_app_desc", path: CAR_PATH });
+  }
+  if (xml.len() > 0) {
+    names = names.append("xml");
+    all = all.append(xml);
+  }
+  if (ids.len() > 0) {
+    names = names.append("id");
+    all = all.append(ids);
+  }
+  let out: ResType[] = [];
+  for k in 0..names.len() {
+    out = out.append(ResType { id: k + 1, name: names[k], entries: all[k] });
   }
   return out;
 }
 
+// The ID of the resource `key` of the type `kind`: 0x7f in the high byte,
+// then the type, then the place of the entry. It is 0 for no such resource.
+pub function resource_id(app: App, kind: string, key: string): i32 {
+  for t in res_types(app) {
+    for k in 0..t.entries.len() {
+      if (t.name == kind && t.entries[k].key == key) {
+        return 2130706432 | t.id << 16 | k;
+      }
+    }
+  }
+  return 0;
+}
+
 // True when the app has a resource.
 pub function has_resources(app: App): boolean {
-  return app.icon.len() > 0 || app.banner.len() > 0 || app.widget.provider.len() > 0;
+  return app.icon.len() > 0 || app.banner.len() > 0 || app.widget.provider.len() > 0 || for_car(app);
 }
 
 // The spec chunk and the type chunk of `t` in the default configuration.
@@ -770,8 +842,8 @@ function signed(app: App, libs: Lib[], key: ecdsa.PrivateKey): u8[] {
   if (app.banner.len() > 0) {
     entries = entries.append(Entry { name: BANNER_PATH, data: app.banner, deflated: false });
   }
-  if (app.widget.provider.len() > 0) {
-    entries = entries.append(Entry { name: WIDGET_LAYOUT_PATH, data: androidxml.binary(widget_layout(app.widget)), deflated: false }).append(Entry { name: WIDGET_INFO_PATH, data: androidxml.binary(widget_info()), deflated: false });
+  for x in xml_files(app) {
+    entries = entries.append(Entry { name: x.path, data: androidxml.binary(x.root), deflated: false });
   }
   for a in app.assets {
     entries = entries.append(Entry { name: "assets/" + a.name, data: a.data, deflated: false });
