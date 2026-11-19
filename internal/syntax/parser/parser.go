@@ -4741,9 +4741,20 @@ func prependParamDestructures(body *ast.Block, destrs []*ast.Destructure) {
 	}
 	stmts := make([]ast.Stmt, 0, len(destrs)+len(body.Stmts))
 	for _, d := range destrs {
+		markHeader(d)
 		stmts = append(stmts, d)
 	}
 	body.Stmts = append(stmts, body.Stmts...)
+}
+
+func markHeader(d *ast.Destructure) {
+	if d == nil {
+		return
+	}
+	d.Header = true
+	for _, sub := range d.Nested {
+		markHeader(sub)
+	}
 }
 
 func (p *parser) parseExpr() (ast.Expr, error) {

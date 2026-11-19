@@ -52,20 +52,26 @@ func TestSelfHostPatternNameRedeclarationDiagnostics(t *testing.T) {
 	}
 }
 
-// A parameter pattern declares its names in the body of the function.
+// A parameter pattern must not bind one name twice. The body can declare
+// its names again.
 func TestSelfHostParameterPatternNameRedeclarationDiagnostics(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	oracle := buildLangBinForInterp(t)
-	source := "function f((a, b): (i32, i32)): i32 {\n  let a = 5;\n  return a + b;\n}\nfunction main(): i32 {\n  return f((1, 2));\n}\n"
+	source := "function f((a, a): (i32, i32)): i32 {\n  let a = 5;\n  return a;\n}\nfunction main(): i32 {\n  return f((1, 2));\n}\n"
 	path := filepath.Join(t.TempDir(), "main.fern")
 	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	want := regexp.MustCompile(`:2:3: error\[E013\]: variable "a" already declared in this scope`)
+	diagnostic := regexp.MustCompile(`:(\d+:\d+): error\[(E\d+)\]: ([^\r\n]+)`)
+	want := []string{`1:12 E013 variable "a" already declared in this scope`}
 	for _, frontend := range []struct{ name, bin string }{{"Go", oracle}, {"self", cli.bin}} {
-		out, err := exec.Command(frontend.bin, "-check", path, cli.stdlib).CombinedOutput()
-		if err == nil || !want.Match(out) {
-			t.Fatalf("%s: want E013 for a at 2:3, got:\n%s", frontend.name, out)
+		out, _ := exec.Command(frontend.bin, "-check", path, cli.stdlib).CombinedOutput()
+		var got []string
+		for _, m := range diagnostic.FindAllStringSubmatch(string(out), -1) {
+			got = append(got, m[1]+" "+m[2]+" "+m[3])
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s: want %q, got %q:\n%s", frontend.name, want, got, out)
 		}
 	}
 }
