@@ -233,13 +233,21 @@ was watched, the app keeps it in a file. The server hears it when it
 answers again.
 
 Download all in the menu of a show, a season, an artist or an album
-downloads each of its episodes or tracks. Downloads in the settings
-opens the screen of the downloads. It looks like the home screen: a row
+downloads each of its episodes or tracks.
+
+Downloads in the settings opens the screen of the downloads. It looks like the home screen: a row
 of posters for the shows, one for the movies and one for the music. A
 show has one card for its downloaded episodes, and an album has one card
 for its tracks. Under the rows, each download that is not done shows its
 state, and its button stops it. A row of an episode shows its show, its
 code and its title, such as "S1 E3 · Title".
+
+Keep next episodes in the menu of a show turns on its smart downloads.
+Then the next episodes of the show that are not watched stay downloaded.
+The Smart downloads row of the settings sets how many: 1, 3, 5 or 10. The
+app checks each such show when the server hears that an item was watched,
+and every 30 minutes. It downloads the next episodes, and it removes the
+download of each watched episode, but not the one that plays.
 
 A card opens a detail screen like that of the server, from the phone: the
 poster, the synopsis, and the episodes or tracks with their synopsis.
