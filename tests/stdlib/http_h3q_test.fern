@@ -95,7 +95,7 @@ function to_server(e: Ends, d: u8[]): Ends {
     sc = sc.with_streams(100 as i64, 8 as i64, e.window, 16777216 as i64);
   }
   if (e.tickets) {
-    sc = sc.with_tickets([7u8]).with_early_data();
+    sc = sc.with_tickets(__alloc_u8(32)).with_early_data();
   }
   let Ok(h) = packet.parse(d, 0, 8) else {
     return e;
