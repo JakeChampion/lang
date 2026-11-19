@@ -40,7 +40,23 @@ pub struct ExprStructLit { type_name: string, field_names: string[], field_lines
 // f-string part, or the argument of `print`, `write` or `eprint`.
 pub struct ExprFieldAccess { obj: Expr, field: string, line: i32, col: i32, ty: string, const_read: boolean, display: boolean }
 
-pub struct ExprUnknown { kind: string, line: i32, col: i32 }
+// A parse error, or a mark where the parser has no node. A mark has no
+// code. A scoped error names the function it is in.
+pub struct Fault { mark: string, code: string, message: string, scoped: boolean }
+
+pub function fault_mark(name: string): Fault {
+  return Fault { mark: name, code: "", message: "", scoped: false };
+}
+
+// The message of an error, or the name of a mark.
+pub function fault_text(f: Fault): string {
+  if (f.code.len() > 0) {
+    return f.message;
+  }
+  return f.mark;
+}
+
+pub struct ExprUnknown { fault: Fault, line: i32, col: i32 }
 
 pub struct ExprMapLit { keys: Expr[], vals: Expr[], line: i32, col: i32 }
 
@@ -574,7 +590,7 @@ pub struct StmtBreak { tag: i32, line: i32, col: i32, label: string }
 
 pub struct StmtContinue { tag: i32, line: i32, col: i32, label: string }
 
-pub struct StmtUnknown { kind: string, line: i32, col: i32 }
+pub struct StmtUnknown { fault: Fault, line: i32, col: i32 }
 
 pub struct StmtDefer { action: Stmt, on_error: i32, line: i32 }
 

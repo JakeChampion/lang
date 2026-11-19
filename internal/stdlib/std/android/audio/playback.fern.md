@@ -51,6 +51,13 @@ import "std/android/audio/codec";
 import "std/android/video";
 import "std/video/frame";
 
+function matches_format(stream: audio.Music, format: codec.Format): boolean {
+  if (format.encoding != codec.PCM_I16 || format.sample_rate <= 0 || format.sample_rate != stream.rate || format.channels < 1 || format.channels > 2 || format.channels != stream.channels) {
+    return false;
+  }
+  return format.channel_mask == 0 || format.channel_mask == (if (format.channels == 1) { 4 } else { 12 });
+}
+
 pub function write(stream: audio.Music, decoder: codec.Decoder, format: codec.Format, buffer: video.OutputBuffer, offset_frames: i32, timeout_ms: i32): Result[i32, frame.VideoError] {
   if (stream.ptr == 0 as usize || decoder.handle == 0 as usize) {
     return Err(frame.State);
@@ -58,14 +65,15 @@ pub function write(stream: audio.Music, decoder: codec.Decoder, format: codec.Fo
   if (timeout_ms < 0 || offset_frames < 0 || (buffer.flags & codec.FLAG_CODEC_CONFIG) != 0u32) {
     return Err(frame.Header);
   }
-  if (format.encoding != codec.PCM_I16 || format.sample_rate <= 0 || format.sample_rate != stream.rate || format.channels < 1 || format.channels > 2 || format.channels != stream.channels) {
+  if (!matches_format(stream, format)) {
     return Err(frame.Unsupported);
   }
-  if (format.channel_mask != 0 && format.channel_mask != (if (format.channels == 1) { 4 } else { 12 })) {
-    return Err(frame.Unsupported);
-  }
+  return submit(stream, decoder, format.channels, buffer, offset_frames, timeout_ms);
+}
+
+function submit(stream: audio.Music, decoder: codec.Decoder, channels: i32, buffer: video.OutputBuffer, offset_frames: i32, timeout_ms: i32): Result[i32, frame.VideoError] {
   video.inspect_output(decoder.handle, decoder.scratch, decoder.limits.max_output_bytes, buffer)?;
-  let frame_bytes = format.channels * 2;
+  let frame_bytes = channels * 2;
   if (buffer.size % frame_bytes != 0 || offset_frames > buffer.size / frame_bytes) {
     return Err(frame.Buffer);
   }
