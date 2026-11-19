@@ -93,6 +93,8 @@ pub struct View {
   // download that came in percent, or -1 when it has none.
   menu: plex.Item,
   menu_download: i32,
+  // True when the show of the menu keeps its next episodes downloaded.
+  menu_smart: boolean,
   // The rows of the downloads that are not done, and the numbers of the
   // downloads that are done and of all of them.
   saved: SavedRow[],
@@ -126,6 +128,9 @@ pub struct View {
   // The size of the text subtitles and what is behind them.
   caption_size: string,
   caption_back: string,
+  // The number of episodes that a smart download keeps, as the settings
+  // show it.
+  smart: string,
   player: PlayerView,
   base: plex.Base,
   loading: boolean,
@@ -141,7 +146,7 @@ pub function english(): i18n.Strings {
 }
 
 pub function empty_view(w: i32, h: i32): View {
-  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, saved: [], saved_done: 0, saved_total: 0, now_playing: "", users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", offline: false, servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", language: "", subtitles: "", caption_size: "", caption_back: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english(), local: false };
+  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, menu_smart: false, saved: [], saved_done: 0, saved_total: 0, now_playing: "", users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", offline: false, servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", language: "", subtitles: "", caption_size: "", caption_back: "", smart: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english(), local: false };
 }
 
 // --- metrics
@@ -980,6 +985,7 @@ function settings(m: Metrics, v: View): scene.Node[] {
     (tr(m, "Subtitles"), v.subtitles, "subs"),
     (tr(m, "Subtitle size"), v.caption_size, "capsize"),
     (tr(m, "Subtitle background"), v.caption_back, "capbox"),
+    (tr(m, "Smart downloads"), v.smart, "smartcount"),
     (tr(m, "Downloads"), m.texts.format("{0} of {1} done", [v.saved_done.to_string(), v.saved_total.to_string()]), "downloads"),
     (tr(m, "Sign out"), "", "signout"),
   ];
@@ -1550,16 +1556,18 @@ pub function nodes(v: View): scene.Node[] {
   let back = v.screen == LIBRARY || v.screen == DETAIL || v.screen == USERS || v.screen == DOWNLOADS;
   let out = util_append(util_append(util_append(body, top_bar(m, v, back)), now_bar(m, v)), bottom_bar(m, v));
   if (v.menu.key.len() > 0) {
-    out = util_append(out, poster_menu(m, v.menu, v.menu_download));
+    out = util_append(out, poster_menu(m, v.menu, v.menu_download, v.menu_smart));
   }
   return out;
 }
 
 // The menu of a held poster, at the bottom over a dark veil: its title,
-// Play, its download, Download all for a group of items, Mark watched or
-// Mark unwatched, Go to show for an episode, and Cancel. `download` is the percent of its download that came,
-// or -1. A tap on the veil closes it.
-function poster_menu(m: Metrics, it: plex.Item, download: i32): scene.Node[] {
+// Play, its download, Download all for a group of items, the smart
+// downloads of a show, Mark watched or Mark unwatched, Go to show for an
+// episode, and Cancel. `download` is the percent of its download that came,
+// or -1, and `smart` is true for a show that keeps its next episodes. A tap
+// on the veil closes it.
+function poster_menu(m: Metrics, it: plex.Item, download: i32, smart: boolean): scene.Node[] {
   let rows: (string, string)[] = [];
   if (plex.playable_kind(it.kind)) {
     rows = rows.append((tr(m, "Play"), "menu:play"));
@@ -1573,6 +1581,9 @@ function poster_menu(m: Metrics, it: plex.Item, download: i32): scene.Node[] {
   }
   if (["show", "season", "artist", "album"].contains(it.kind)) {
     rows = rows.append((tr(m, "Download all"), "menu:download_all"));
+  }
+  if (it.kind == "show") {
+    rows = rows.append((tr(m, if (smart) { "Stop keeping episodes" } else { "Keep next episodes" }), "menu:smart"));
   }
   if (plex.watched(it)) {
     rows = rows.append((tr(m, "Mark unwatched"), "menu:mark"));

@@ -319,6 +319,12 @@ pub struct App {
   // whether a dark panel is behind them, else a shadow.
   caption_size: i32,
   caption_box: boolean,
+  // The shows whose next episodes that are not watched stay downloaded, the
+  // number of them as an index of `smart_counts()`, and the time of the
+  // last check.
+  smart: string[],
+  smart_count: i32,
+  smart_at: i64,
   // The texts in the language of the person.
   texts: i18n.Strings,
   // Whether a list plays in a random order, and its repeat: 0 none, 1 the
@@ -401,7 +407,7 @@ pub struct App {
 
 // A download of an item: the ID that Android gave, the item as the server
 // sent it, the name of its file, and its last state.
-struct Saved { id: i64, item: plex.Item, file: string, status: i32, done: i64, total: i64 }
+pub struct Saved { id: i64, item: plex.Item, file: string, status: i32, done: i64, total: i64 }
 
 // The time between two reads of the progress of the downloads.
 const DOWNLOAD_MS: i64 = 1000i64;
@@ -507,6 +513,8 @@ function save(s: App): void {
     "picked=" + s.picked.join(","),
     "caption_size=" + s.caption_size.to_string(),
     "caption_box=" + (if (s.caption_box) { "1" } else { "0" }),
+    "smart=" + s.smart.join(","),
+    "smart_count=" + s.smart_count.to_string(),
     "shuffle=" + (if (s.shuffle) { "1" } else { "0" }),
     "repeat=" + s.repeat.to_string(),
   ];
@@ -540,7 +548,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     client: plex.Client { id: id, device: "Android", token: setting(text, "token") },
     server: no_server(), base: plex.Base { uri: setting(text, "server_uri"), token: setting(text, "server_token") },
     servers: [], states: [], probing: -1, probe_states: [], probe_at: 0i64, probes: [], rechecking: false, recheck_at: -100000i64, left: [], pin: plex.Pin { id: 0i64, code: "", token: "" }, pin_at: 0i64,
-    account: setting(text, "account"), quality: num(setting(text, "quality")), speed: speed_of(setting(text, "speed")), lang: plex.language_code(setting(text, "lang")), subs: mode_of(setting(text, "subs")), account_lang: setting(text, "account_lang"), account_subs: mode_of(setting(text, "account_subs")), picked: listed(setting(text, "picked")), caption_size: num(setting(text, "caption_size")) % 3, caption_box: setting(text, "caption_box") != "0", texts: texts.for_languages(dev.languages), shuffle: setting(text, "shuffle") == "1", repeat: num(setting(text, "repeat")) % 3, sleep: 0, sleep_at: 0i64, turned: false, local: false,
+    account: setting(text, "account"), quality: num(setting(text, "quality")), speed: speed_of(setting(text, "speed")), lang: plex.language_code(setting(text, "lang")), subs: mode_of(setting(text, "subs")), account_lang: setting(text, "account_lang"), account_subs: mode_of(setting(text, "account_subs")), picked: listed(setting(text, "picked")), caption_size: num(setting(text, "caption_size")) % 3, caption_box: setting(text, "caption_box") != "0", smart: listed(setting(text, "smart")), smart_count: smart_index(setting(text, "smart_count")), smart_at: -SMART_MS, texts: texts.for_languages(dev.languages), shuffle: setting(text, "shuffle") == "1", repeat: num(setting(text, "repeat")) % 3, sleep: 0, sleep_at: 0i64, turned: false, local: false,
     screen: ui.LOGIN, tab: 0, title: "", scroll: 0, rows: [], stack: [],
     hubs: none, results: none, sections: [], section: no_section(), items: [], total: 0, sort: 0, unwatched: false, letters: [], item: plex.no_item(), children: [],
     query: "", typing: false, search_at: 0i64, error: "",
@@ -779,6 +787,9 @@ function poll_report(own s: App): App {
     }
     if (d.reply.status == 0) {
       next = keep_pending(App { ...next, offline: true }, d.purpose);
+    } else if (d.reply.ok() && d.purpose.starts_with("report:seen:")) {
+      let now = next.dev.mono_ms();
+      next = check_smart(next, now);
     }
   }
   return start_report(next);
@@ -1135,6 +1146,9 @@ function got_media(own t: App, verb: string, rest: string, r: plex.Reply): App {
   }
   if (verb == "downloadall") {
     return download_all(t, plex.parse_items(r.text()).items);
+  }
+  if (verb == "smart") {
+    return got_smart(t, rest, r);
   }
   if (verb == "search") {
     if (rest == t.query) {
@@ -2092,6 +2106,74 @@ function download_all(own t: App, items: plex.Item[]): App {
   return t;
 }
 
+// The numbers of episodes that a smart download keeps.
+pub function smart_counts(): i32[] {
+  return [1, 3, 5, 10];
+}
+
+// The index of `smart_counts()` in the settings file, or the one of 3.
+function smart_index(text: string): i32 {
+  if (text.len() == 0) {
+    return 1;
+  }
+  return num(text) % smart_counts().len();
+}
+
+// The time between two checks of the smart downloads.
+const SMART_MS: i64 = 1800000i64;
+
+// Asks for the episodes of each show of the smart downloads.
+function check_smart(own s: App, now: i64): App {
+  if (s.base.uri.len() == 0 || s.offline) {
+    return s;
+  }
+  let t = App { ...s, smart_at: now };
+  for show in s.smart {
+    t = ask(t, "smart:" + show, Leaves(show));
+  }
+  return t;
+}
+
+function smart_tick(own s: App, now: i64): App {
+  if (s.smart.len() == 0 || now - s.smart_at < SMART_MS) {
+    return s;
+  }
+  return check_smart(s, now);
+}
+
+// The episodes of the show `show`: the next ones that are not watched
+// download, and the downloads of the watched ones go. The file that plays
+// stays.
+function got_smart(own t: App, show: string, r: plex.Reply): App {
+  if (!r.ok() || !t.smart.contains(show)) {
+    return t;
+  }
+  let episodes = plex.parse_items(r.text()).items;
+  let wanted = episodes.filter((it: plex.Item): boolean => it.views == 0).take(smart_counts()[t.smart_count]);
+  let u = download_all(t, wanted);
+  for it in episodes {
+    let at = saved_at(u, it.key);
+    let playing = u.play.active && u.play.item.key == it.key;
+    if (it.views > 0 && at >= 0 && !playing) {
+      log.info("plex: the smart download of " + it.key + " was watched");
+      u = drop_download(u, at);
+    }
+  }
+  return u;
+}
+
+// Turns the smart downloads of the show `show` on or off.
+function toggle_smart(own s: App, show: string): App {
+  if (s.smart.contains(show)) {
+    let off = App { ...s, smart: s.smart.filter((k: string): boolean => k != show), dirty: true };
+    save(off);
+    return off;
+  }
+  let on = App { ...s, smart: s.smart.append(show), dirty: true };
+  save(on);
+  return ask(on, "smart:" + show, Leaves(show));
+}
+
 // Stops the download at `at` and deletes its file.
 function drop_download(own s: App, at: i32): App {
   let id = s.downloads[at].id;
@@ -2162,6 +2244,9 @@ function menu_act(own s: App, a: string): App {
   }
   if (a == "menu:download_all") {
     return ask(t, "downloadall:" + it.key, Leaves(it.key));
+  }
+  if (a == "menu:smart" && it.kind == "show") {
+    return toggle_smart(t, it.key);
   }
   if (a == "menu:show" && it.grandparent_key.len() > 0) {
     return open_item(t, plex.Item { ...plex.no_item(), key: it.grandparent_key, kind: "show", title: it.grandparent });
@@ -3865,6 +3950,12 @@ pub function act(own s: App, a: string, n: scene.Node, x: i32): App {
     save(u);
     return u;
   }
+  if (a == "smartcount") {
+    let u = App { ...t, smart_count: [1, 2, 3, 0][t.smart_count], dirty: true };
+    save(u);
+    let now = u.dev.mono_ms();
+    return check_smart(u, now);
+  }
   if (a == "capbox") {
     let u = App { ...t, caption_box: !t.caption_box, dirty: true };
     save(u);
@@ -4260,10 +4351,10 @@ pub function view(s: App): ui.View {
     texts: s.texts,
     top: s.top, bottom: s.bottom,
     screen: s.screen, tab: s.tab, title: s.title, scroll: s.scroll, rows: s.rows, hubs: hubs,
-    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, menu_download: download_percent(s, s.menu.key), saved: waiting_rows(s), saved_done: s.downloads.filter((d: Saved): boolean => d.status == download.DONE).len(), saved_total: s.downloads.len(), now_playing: if (s.play.active && s.screen != ui.PLAYER) { p.item.title + " · " + p.item.grandparent } else { "" }, users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
+    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, menu_download: download_percent(s, s.menu.key), menu_smart: s.smart.contains(s.menu.key), saved: waiting_rows(s), saved_done: s.downloads.filter((d: Saved): boolean => d.status == download.DONE).len(), saved_total: s.downloads.len(), now_playing: if (s.play.active && s.screen != ui.PLAYER) { p.item.title + " · " + p.item.grandparent } else { "" }, users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
     pin_code: s.pin.code, error: if (offline_home(s)) { "" } else { s.texts.text(s.error) }, offline: offline_home(s), servers: s.servers, server_states: s.states,
     query: s.query, typing: s.typing, account: s.account, server_name: s.server.name,
-    quality: plex.qualities()[s.quality].name, language: language_text(s), subtitles: subtitles_text(s), caption_size: s.texts.text(["Small", "Medium", "Large"][s.caption_size]), caption_back: s.texts.text(if (s.caption_box) { "Panel" } else { "Shadow" }), player: pv, base: s.base,
+    quality: plex.qualities()[s.quality].name, language: language_text(s), subtitles: subtitles_text(s), caption_size: s.texts.text(["Small", "Medium", "Large"][s.caption_size]), caption_back: s.texts.text(if (s.caption_box) { "Panel" } else { "Shadow" }), smart: s.texts.format("{0} episodes", [smart_counts()[s.smart_count].to_string()]), player: pv, base: s.base,
     loading: busy(s), cache: s.cache, local: s.local,
   };
 }
@@ -4552,7 +4643,7 @@ function frame(own s: App, ns: i64): App {
 // the next requests and draws the screen when it changed.
 pub function step(own s: App, e: android.Event): App {
   let now = s.dev.mono_ms();
-  let t = download_tick(hold_tick(search_tick(pin_tick(line_up(play_tick(event(s, e), now)), now), now), now), now);
+  let t = smart_tick(download_tick(hold_tick(search_tick(pin_tick(line_up(play_tick(event(s, e), now)), now), now), now), now), now);
   t = poll_probes(poll_report(poll_images(poll_api(t))));
   t = start_report(start_api(t));
   t = draw_screen(untwist(t));
