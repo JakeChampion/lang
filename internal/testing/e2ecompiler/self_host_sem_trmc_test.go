@@ -25,6 +25,28 @@ function inc_all(xs: List): List {
     }
 }
 
+// The hole is in a construction that is a payload of the returned one, and
+// two constructions deep on the Neg path.
+@noinline function stutter(xs: List): List {
+    match (xs) {
+        Cons(h, t) => { return Cons(h, Cons(h + 1, stutter(t))); },
+        Neg(h, t) => { return Neg(h, Cons(h, Neg(h + 2, stutter(t)))); },
+        Nil => { return Nil; },
+    }
+}
+
+// The hole is the first payload of a nested construction on one path and the
+// third on the other. One path makes a Tip between the call and the return.
+@noinline function grow(t: Bst, k: i32): Bst {
+    match (t) {
+        Bin(l, key, r) => {
+            if (k < key) { return Bin(Bin(grow(l, k), key - 1, Tip), key, r); }
+            return Bin(l, key, Bin(Tip, key + 1, grow(r, k)));
+        },
+        Tip => { return Bin(Tip, k, Tip); },
+    }
+}
+
 // A bare self-tail call beside the cons: the filter, whose hole stays put.
 @noinline function drop_neg(xs: List): List {
     match (xs) {
@@ -245,16 +267,21 @@ function main(): i32 {
     let z1: i32 = path_score(put(deep, n), n);
     let z2: i32 = path_score(put(put(zigzag(n), n), n), n);
     let z3: i32 = path_score(deep, n);
+    let s0: i32 = score(stutter(keep));
+    let s1: i32 = score(stutter(build(n)));
+    let w0: i32 = path_score(grow(deep, n), n);
+    let w1: i32 = path_score(grow(grow(zigzag(n), n), n + 1), n + 1);
+    let w2: i32 = path_score(deep, n);
     print("before=" + before.to_string() + " a=" + a.to_string() + " b=" + b.to_string()
         + " c=" + c.to_string() + " d=" + d.to_string() + " e=" + e.to_string()
         + " f=" + f.to_string() + " g=" + g.to_string() + " m=" + m.to_string()
         + " j=" + j.to_string() + " tail=" + tail_after.to_string() + " k=" + k.to_string()
-        + " after=" + after.to_string() + " z=" + z0.to_string() + "," + z1.to_string() + "," + z2.to_string() + "," + z3.to_string() + " underflow=" + __rc_underflow_count().to_string());
+        + " after=" + after.to_string() + " z=" + z0.to_string() + "," + z1.to_string() + "," + z2.to_string() + "," + z3.to_string() + " s=" + s0.to_string() + "," + s1.to_string() + " w=" + w0.to_string() + "," + w1.to_string() + "," + w2.to_string() + " underflow=" + __rc_underflow_count().to_string());
     return __rc_underflow_count();
 }
 `
 
-const selfHostTrmcWant = "0|before=1000021 a=3100021 b=3000000 c=999974 d=300003 e=900000 f=0 g=3100021 m=1199991 j=1000080 tail=59 k=39 after=1000021 z=1199991,2199993,2199993,1199991 underflow=0\n"
+const selfHostTrmcWant = "0|before=1000021 a=3100021 b=3000000 c=999974 d=300003 e=900000 f=0 g=3100021 m=1199991 j=1000080 tail=59 k=39 after=1000021 z=1199991,2199993,2199993,1199991 s=4200021,4200021 w=3399991,5799997,1199991 underflow=0\n"
 
 func TestSelfHostSemanticTrmc(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -288,7 +315,7 @@ func TestSelfHostSemanticTrmc(t *testing.T) {
 		}
 		// mirror keeps its first self-call. That call is between two tests of
 		// the reuse token, so each side of ssa.split_tokens has a copy of it.
-		for name, want := range map[string]int{"inc_all": 2, "drop_neg": 1, "take": 1, "to_rev": 1, "tag_all": 1, "last_of": 1, "mirror": 3, "append_to": 1, "count": 2, "put": 3} {
+		for name, want := range map[string]int{"inc_all": 2, "drop_neg": 1, "take": 1, "to_rev": 1, "tag_all": 1, "last_of": 1, "mirror": 3, "append_to": 1, "count": 2, "put": 3, "stutter": 2, "grow": 3} {
 			if got := countSelfCalls(string(asm), name); got != want {
 				t.Errorf("%d call sites to %s in the listing, want %d", got, name, want)
 			}
