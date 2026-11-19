@@ -130,6 +130,36 @@ public interface Shape {
 ''',
 }
 
+# Classes for the tests of the code of methods. They are not in the JAR.
+CODE_SOURCES = {
+    'dev/fern/Flow.java': '''package dev.fern;
+
+import java.util.function.IntSupplier;
+
+public class Flow {
+    public static int safe(int[] a, int i) throws IllegalStateException, java.io.IOException {
+        try {
+            return a[i];
+        } catch (ArrayIndexOutOfBoundsException e) {
+            return -1;
+        } catch (NullPointerException | ClassCastException e) {
+            return -2;
+        } finally {
+            a = null;
+        }
+    }
+
+    public static IntSupplier later(int x) {
+        return () -> x + 1;
+    }
+
+    public static long wide(long a, double b) {
+        return a + (long) b;
+    }
+}
+''',
+}
+
 
 def rows(data):
     out = []
@@ -142,16 +172,17 @@ def main():
     parts = ['// The class files of classfile_test.fern. scripts/gen-classfile-vectors.py\n// writes this file. Do not edit it.\n']
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / 'src'
-        for name, text in SOURCES.items():
+        for name, text in {**SOURCES, **CODE_SOURCES}.items():
             path = src / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
         out = Path(tmp) / 'out'
-        subprocess.run(['javac', '--release', '8', '-Xlint:-options', '-d', str(out)] + [str(src / n) for n in SOURCES],
+        subprocess.run(['javac', '--release', '8', '-Xlint:-options', '-d', str(out)] + [str(src / n) for n in {**SOURCES, **CODE_SOURCES}],
                        check=True, env={'PATH': '/usr/bin:/bin'})
         for fn, comment in [('sample', 'A class with constants, fields, a constructor and methods.'),
                             ('point', 'A class with public fields, overloaded methods and each kind of result.'),
-                            ('shape', 'An interface with one constant and one method.')]:
+                            ('shape', 'An interface with one constant and one method.'),
+                            ('flow', 'A class with handlers, a lambda and the attribute Exceptions.')]:
             data = (out / 'dev/fern' / (fn.capitalize() + '.class')).read_bytes()
             parts.append(f'// {comment}\npub function {fn}(): u8[] {{\n  return [\n{rows(data)}\n  ];\n}}\n')
         jar = io.BytesIO()
