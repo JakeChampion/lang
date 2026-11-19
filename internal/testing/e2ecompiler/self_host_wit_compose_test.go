@@ -22,10 +22,7 @@ func TestSelfHostComposeFromWorld(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 	const want = "hi from the self-host world"
 	progPath := filepath.Join(dir, "prog.fern")
 	if err := os.WriteFile(progPath, []byte(`function main(): i32 { write("`+want+`"); return 0; }`), 0o644); err != nil {
@@ -143,10 +140,7 @@ func TestSelfHostComposeFromUserWorld(t *testing.T) {
 	}
 	payload := extractComponentType(t, embeddedBytes)
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 	const want = "hi from a self-host user world"
 	progPath := filepath.Join(dir, "prog.fern")
 	_ = os.WriteFile(progPath, []byte(`function main(): i32 { write("`+want+`"); return 0; }`), 0o644)
