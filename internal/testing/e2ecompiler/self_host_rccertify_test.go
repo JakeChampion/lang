@@ -483,6 +483,30 @@ function pick(name: string): Case {
         let b9: ssa.SBlock = block(9, [7, 8], [fresh_box(15), store(12, 16, 15), call(16, "take", [12])], br(1));
         return Case { f: func(1, 17, [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9]), modes: [value], returns_unit: false };
     }
+    if (name == "loop-reuses-its-carried-box" || name == "loop-reuses-its-carried-box-leaked" || name == "loop-reuses-its-carried-box-released-twice") {
+        // The box that the loop carries in v2 is built again each time
+        // round, in place through its token v5, or as a copy where v5 is
+        // null. The copy arm releases the old box, and the reuse arm
+        // releases only the field that the construction writes.
+        let reused: ssa.SInst[] = [counted_load(14, 2, 16), call(15, "__fern_rc_dec", [14])];
+        let copied: ssa.SInst[] = [call(16, "__sem_release_T", [2])];
+        if (name == "loop-reuses-its-carried-box-leaked") { copied = []; }
+        if (name == "loop-reuses-its-carried-box-released-twice") { reused = reused.append(call(18, "__sem_release_T", [2])); }
+        let b0: ssa.SBlock = block(0, [], [param(0), param(1)], br(1));
+        let b1: ssa.SBlock = block(1, [0, 11], [inst(8, 2, [0, 12], 0, "")], brif(1, 2, 12));
+        let b2: ssa.SBlock = block(2, [1], [call(3, "__fern_rc_is_unique", [2])], brif(3, 3, 4));
+        let b3: ssa.SBlock = block(3, [2], [], br(5));
+        let b4: ssa.SBlock = block(4, [2], [const_int(4, 0)], br(5));
+        let b5: ssa.SBlock = block(5, [3, 4], [inst(8, 5, [2, 4], 0, ""), const_int(6, 0), inst(9, 7, [5, 6], 0, "eq")], brif(7, 6, 7));
+        let b6: ssa.SBlock = block(6, [5], [const_int(8, 2), call(9, "__fern_alloc_reuse", [5, 8]), counted_load(10, 2, 8), call(11, "__fern_rc_inc", [10]), store(9, 8, 11)], br(8));
+        let b7: ssa.SBlock = block(7, [5], [], br(8));
+        let b8: ssa.SBlock = block(8, [6, 7], [inst(8, 12, [9, 5], 0, ""), inst(9, 13, [5, 6], 0, "ne")], brif(13, 9, 10));
+        let b9: ssa.SBlock = block(9, [8], reused, br(11));
+        let b10: ssa.SBlock = block(10, [8], copied, br(11));
+        let b11: ssa.SBlock = block(11, [9, 10], [fresh_box(17), store(12, 16, 17)], br(1));
+        let b12: ssa.SBlock = block(12, [1], [], ret(2));
+        return Case { f: func(2, 19, [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12]), modes: [counted, value], returns_unit: true };
+    }
     if (name == "token-box-copied-before-its-test") {
         // The box is reached through a copy made before its test, and the
         // token's walk inherits the copy: under the token holding the box,
@@ -807,7 +831,7 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"token-retain-under-test-consumed-after-join", []string{"spent without a unit of v4"}, 0},
 		{"token-retain-under-test-released-under-test", nil, 0},
 		{"derived-token-test-skips-the-shell", nil, 0},
-		{"reuse-through-a-carried-token-writes-the-slot", nil, 2},
+		{"reuse-through-a-carried-token-writes-the-slot", nil, 1},
 		{"token-reuse-writes-the-slot-read", nil, 0},
 		{"token-reuse-takes-a-slot-of-the-reused-box", nil, 0},
 		{"token-reuse-nulls-the-slot-read", []string{"spent without a unit of v4"}, 0},
@@ -817,6 +841,9 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"reuse-of-a-loop-box-through-its-token", nil, 0},
 		{"pair-word-settled-past-its-token-test", nil, 0},
 		{"loop-box-copied-under-its-null-token", nil, 0},
+		{"loop-reuses-its-carried-box", nil, 0},
+		{"loop-reuses-its-carried-box-leaked", []string{"leaked where it dies of v2"}, 0},
+		{"loop-reuses-its-carried-box-released-twice", []string{"spent without a unit of v2"}, 0},
 		{"token-box-copied-before-its-test", nil, 0},
 		{"reuse-past-a-join-null-first", nil, 1},
 		{"null-tested-against-an-outside-null", nil, 1},

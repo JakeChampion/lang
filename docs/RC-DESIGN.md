@@ -585,7 +585,15 @@ two sides apart. A test of any value with a plain count against a parameter
 also gives a twin with one side: the box of the parameter on the equal edge,
 and another box on the other edge. A retain or a release of a twin with one
 side changes the count of that side. Another use that a twin cannot describe
-reads the twin as one count. On the arm where `__fern_rc_is_unique` found another holder, a push
+reads the twin as one count. A reuse token is a phi whose inputs are one box
+or null, and it gives that box a twin of the token. Where the token is the
+box, the token takes the unit of the box. Where the token is null, the box
+keeps its unit. A test of the token against null decides the side on each
+edge. A block that defines the token again reads each twin of the token as
+one count. Where the token is not null, the token and its box are one box.
+There, a phi input of one name can take the unit of the other name. A move
+of a unit that is held (`__fern_alloc_reuse`) acts on each side of a twin
+apart. On the arm where `__fern_rc_is_unique` found another holder, a push
 copies the box, or it keeps a box with a negative count in place. No retain
 or release changes such a box, so there the result counts as a new box. A
 call through a function value takes the contract that the lowering writes on
