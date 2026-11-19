@@ -929,7 +929,7 @@ function drop_variant_fields(own r: irtables.LowerState, slot: i32, t: typeinfo.
     if (semrecords.inhabited(v) && fields_have_children(v.fields, f)) {
       r = else_if_open(r, open);
       r = emit(r, ir.op_load_local(slot));
-      r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
+      r = variant_test(r, f, t, v.name);
       r = emit(r, ir.op_if(0));
       r = drop_record_fields(r, slot, v.fields, scratch, f, false, false, false);
       open += 1;
@@ -1347,7 +1347,7 @@ function popped(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): i
     if (!same) {
       r = else_if_open(r, opened.len());
       r = emit(r, ir.op_load_local(CHAIN_CELL));
-      r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
+      r = variant_test(r, f, t, v.name);
       r = emit(r, ir.op_if(0));
     }
     opened = opened.append(v.name);
@@ -1402,7 +1402,7 @@ function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssa
       continue;
     }
     r = emit(r, ir.op_load_local(CHAIN_NODE));
-    r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
+    r = variant_test(r, f, t, v.name);
     r = emit(r, ir.op_if(0));
     r = drop_chain_fields(r, 1, v, t, f);
     let tail = self_tail_field(v, t);
@@ -4473,12 +4473,53 @@ function variant(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, str
     return immediate_site(r, f, ins, whole);
   }
   if (ins.kind_tag == ssasem.variant_new()) {
+    if (ssaunits.empty_variant(f, whole, ins.str)) {
+      return irtables.LowerState { ...r, ok: false, why: "the variant " + ins.str + " has no field, and its construction is not the static box that its test compares with" };
+    }
     return emit(r, ir.op_struct_make(member_shape(f, whole, ins.str), ins.args.len(), decl_of(f, ins, structs)));
   }
   if (ins.kind_tag == ssasem.variant_is()) {
-    return emit(r, ir.op_variant_is(member_shape(f, whole, ins.str)));
+    return variant_test(r, f, whole, ins.str);
   }
   return field_get(r, f, ins);
+}
+
+// The test that the value on the stack is the variant `name` of `t`. A variant
+// with no field is a static box, so its test compares addresses. When each
+// other value of `t` is one such box, the test of `name` is the inverse.
+function variant_test(own r: irtables.LowerState, f: ssasem.Func, t: typeinfo.Type, name: string): irtables.LowerState {
+  let other = sole_other_variant(f, t, name);
+  if (ssaunits.empty_variant(f, t, name)) {
+    if (other != "") {
+      return emit(r, ir.op_paired_variant_is(member_shape(f, t, name)));
+    }
+    return emit(r, ir.op_static_variant_is(member_shape(f, t, name)));
+  }
+  if (other != "" && ssaunits.empty_variant(f, t, other)) {
+    r = emit(r, ir.op_paired_variant_is(member_shape(f, t, other)));
+    return emit(r, ir.op_bin("not", 0, false));
+  }
+  return emit(r, ir.op_variant_is(member_shape(f, t, name)));
+}
+
+// The one inhabited variant of `t` other than `name`, or empty when there is
+// none or more than one.
+function sole_other_variant(f: ssasem.Func, t: typeinfo.Type, name: string): string {
+  let at = semrecords.find_enum(f.enums, t);
+  if (at < 0) {
+    return "";
+  }
+  let other = "";
+  for v in f.enums[at].variants {
+    if (v.name == name || !semrecords.inhabited(v)) {
+      continue;
+    }
+    if (other != "") {
+      return "";
+    }
+    other = v.name;
+  }
+  return other;
 }
 
 // A value of an enum whose variants hold no field is the index of its variant.

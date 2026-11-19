@@ -2388,6 +2388,26 @@ pub function op_variant_is(name: string): Op {
   return Op { source: 0, decl: -1, kind_tag: K_VARIANT_IS, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
 }
 
+// The test of a variant with no field. Each value of such a variant is the one
+// static box of its shape, so a target can compare addresses and load no tag.
+pub function op_static_variant_is(name: string): Op {
+  return Op { ...op_variant_is(name), i32_imm: 1 };
+}
+
+// The static test of a variant of an enum with one other inhabited variant.
+// A value that fails the test has the shape of that other variant.
+pub function op_paired_variant_is(name: string): Op {
+  return Op { ...op_variant_is(name), i32_imm: 2 };
+}
+
+pub function is_static_variant_test(op: Op): boolean {
+  return op.kind_tag == K_VARIANT_IS && op.i32_imm >= 1;
+}
+
+pub function is_paired_variant_test(op: Op): boolean {
+  return op.kind_tag == K_VARIANT_IS && op.i32_imm == 2;
+}
+
 pub function op_call_direct(callee: string, argc: i32): Op {
   return Op { source: 0, decl: -1, kind_tag: K_CALL_DIRECT, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: callee };
 }
@@ -6215,6 +6235,9 @@ function render_op_part_3(o: Op): string {
   }
   if (o.kind_tag == K_STRUCT_SET) {
     return "struct_set " + util.i32_to_string(o.i32_imm);
+  }
+  if (is_static_variant_test(o)) {
+    return (if (is_paired_variant_test(o)) { "paired_variant_is " } else { "static_variant_is " }) + o.str;
   }
   if (o.kind_tag == K_VARIANT_IS) {
     return "variant_is " + o.str;

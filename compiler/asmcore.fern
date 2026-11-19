@@ -841,17 +841,37 @@ pub function with_funcs(s: EmitState, funcs: parser.FuncDecl[]): EmitState {
 // A body that other units can also emit starts with its `.weak` lines. A
 // body seen before is dropped through its `.cfi_endproc`, with the `.ltorg`
 // that follows it on arm64.
+// The static box of a record with no field starts with a `.weak` line too. A
+// box seen before is dropped whole.
 pub function dedupe_weak_into(asm_text: string, seen_in: string[], h: usize): string[] {
   let seen = seen_in;
   let i = 0;
   let n = asm_text.len();
   let state = 0;
+  let box_left = 0;
   while (i < n) {
     let j = i;
     while (j < n && asm_text[j] != b'\n') {
       j += 1;
     }
     let line = slice_unchecked(asm_text, i, j).to_owned();
+    if (box_left > 0) {
+      box_left -= 1;
+      i = j + 1;
+      continue;
+    }
+    if (state != 1 && line.starts_with(".weak " + static_box_prefix())) {
+      state = 0;
+      if (util.has_str(seen, line)) {
+        box_left = static_box_lines() - 1;
+      } else {
+        seen = seen.append(line);
+        buf_push(h, line);
+        buf_push(h, "\n");
+      }
+      i = j + 1;
+      continue;
+    }
     let drop = false;
     if (state == 2) {
       state = 0;
@@ -3969,11 +3989,32 @@ pub function str_box_label(s: EmitState, idx: i32): string {
   return ".SB" + s.str_ns + "_" + util.i32_to_string(idx);
 }
 
+// A record with no field has one static box for each shape tag in the whole
+// program, so its label does not depend on the unit. A variant test compares
+// a value with the address of this box.
 pub function const_agg_label(s: EmitState, idx: i32): string {
+  let e = s.const_aggs[idx];
+  if (fieldless_record(e)) {
+    return static_box_prefix() + slice_unchecked(e, 1, e.len() - 1).to_owned();
+  }
   if (s.str_ns.len() == 0) {
     return ".K" + util.i32_to_string(idx);
   }
   return ".K" + s.str_ns + "_" + util.i32_to_string(idx);
+}
+
+function fieldless_record(e: string): boolean {
+  return e.len() > 2 && e[0] == b't' && e[e.len() - 1] == b'|';
+}
+
+function static_box_prefix(): string {
+  return ".Kv";
+}
+
+// The count of lines of the block of a static box of a record with no field,
+// from its `.weak` line (`emit_const_record_block`).
+function static_box_lines(): i32 {
+  return 6;
 }
 
 pub struct ConstAggPack { state: EmitState, text: string }
@@ -5722,6 +5763,9 @@ function emit_const_agg_block(st: EmitState, i: i32, e: string, array: boolean):
 // in the header word, then its fields. A record with no field has one word,
 // which holds the tag again: the debug information of an enum reads it.
 function emit_const_record_block(st: EmitState, i: i32, tag: string, vals: string[]): EmitState {
+  if (vals.len() == 0 && st.split_units) {
+    st = st.write(".weak " + const_agg_label(st, i) + "\n");
+  }
   st = st.write("    .quad 0\n    .long -1\n    .long " + tag + "\n" + const_agg_label(st, i) + ":\n");
   for vi in 0..vals.len() {
     st = emit_const_agg_field(st, i, vi, vals[vi]);
