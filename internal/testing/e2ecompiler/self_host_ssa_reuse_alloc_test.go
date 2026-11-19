@@ -8,8 +8,8 @@ import (
 )
 
 // A reuse allocation tests its token inline (ssa.inline_reuse_call), and calls
-// the helper only for a token of another size. sink of ssaTokenKeepProg keeps
-// such an allocation for a token that is null or has another shape. bump of
+// the helper only for a token of another size. settle of ssaTokenKeepProg
+// keeps such an allocation for a token that is null or has another shape. bump of
 // ssaBoxedCountProg allocates on the null side of a test of its token
 // (ssa.fresh_boxes). Its size is a constant, so bump calls the routine of a
 // box of three words and does not test a token.
@@ -32,10 +32,10 @@ func TestSelfHostSSAReuseAllocIsInline(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			sink := tailCallBody(t, string(asm), "sink")
+			settle := tailCallBody(t, string(asm), "settle")
 			for _, want := range []string{size[target], "__fn___fern_alloc_reuse.r", "__fern_rec_box"} {
-				if !strings.Contains(sink, want) {
-					t.Fatalf("sink has no %q:\n%s", want, sink)
+				if !strings.Contains(settle, want) {
+					t.Fatalf("settle has no %q:\n%s", want, settle)
 				}
 			}
 			asm, err = os.ReadFile(cli.emit(t, fresh, target))
