@@ -259,15 +259,17 @@ function lock(window: usize): draw.Frame {
   return w.lock();
 }
 
-// The MIME types that the decoders of the phone take, or none when Android
-// does not tell them.
+// The MIME types that the decoders of the phone take, and the types that
+// its sound output takes as they are, or none when Android does not tell
+// the decoders.
 function decoders(ctx: usize): string[] {
-  if let Ok(types) = capabilities.decoder_types(android.env(ctx), capabilities.default_limits()) {
-    log.info("plex: decoders " + types.join(" "));
-    return types;
-  }
-  log.warn("plex: no list of decoders");
-  return [];
+  let Ok(types) = capabilities.decoder_types(android.env(ctx), capabilities.default_limits()) else {
+    log.warn("plex: no list of decoders");
+    return [];
+  };
+  let passthrough = exoplayer.passthrough_types(ctx).filter((t: string): boolean => !types.contains(t));
+  log.info("plex: decoders " + types.join(" ") + ", passthrough " + passthrough.join(" "));
+  return types.concat(passthrough);
 }
 
 // The GPU side of the app: a painter on a GL context, which draws each
@@ -468,6 +470,11 @@ function device(ctx: usize, ps: Players, gpu: Cell[Option[Gpu]], media: Media): 
     detach: (): void => detach_gpu(gpu),
     present: (window: usize, nodes: scene.Node[], video: boolean): boolean => present(ctx, playing(ps), gpu, window, nodes, video),
     hide_video: (): void => hide_video(ctx, playing(ps), playing(ps).live(), gpu),
+    frame_rate: (window: usize, fps: f32): void => {
+      if (window != 0 as usize && !exoplayer.match_frame_rate(ctx, android.Window { ptr: window }, fps)) {
+        log.info("plex: the display took no frame rate");
+      }
+    },
     pause_video: (): void => pause_video(ctx, playing(ps), playing(ps).live(), gpu),
     request_frame: (): void => android.request_frame(ctx),
     start: (): void => { let ok = exoplayer.start(ctx, playing(ps)); },

@@ -146,6 +146,17 @@ play from a row of the home screen takes the sound that the server
 remembers when all of its metadata comes. A download plays that sound
 too.
 
+Some sound outputs, such as an HDMI soundbar, take compressed sound. On
+such an output, a track in Dolby Digital, Dolby Digital Plus, DTS or Dolby
+TrueHD plays as it is. ExoPlayer sends it to the output with no decoder. A
+transcode can copy a Dolby Digital or Dolby Digital Plus track that the
+phone plays, so the surround sound stays.
+
+The app draws the video on a window in SDR. So a video in HDR10, HLG or
+Dolby Vision plays as a transcode. The server maps its colours to SDR. When the video shows, the app asks the display for the frame rate
+of the video. On Android 12 and later, a TV can then change to 24 Hz for
+a film. The settings of the device can refuse the change.
+
 A transcode takes its sound from the choice that the server remembers. So
 a new transcode starts after the server has the choice, and the old one
 stops.

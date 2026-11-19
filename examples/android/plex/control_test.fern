@@ -61,7 +61,7 @@ const INTRO: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"502\"
 
 // A film whose server remembers the French sound and the French subtitles.
 // It has an English sound and English forced subtitles too.
-const FRENCH: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"504\",\"type\":\"movie\",\"title\":\"Amélie\",\"duration\":7320000,\"Media\":[{\"container\":\"mkv\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":14,\"key\":\"/library/parts/14/file.mkv\",\"Stream\":[{\"id\":40,\"streamType\":1,\"codec\":\"h264\"},{\"id\":41,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Français (AAC Stereo)\",\"languageCode\":\"fra\",\"selected\":true},{\"id\":43,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"languageCode\":\"eng\"},{\"id\":51,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English Forced (SRT External)\",\"languageCode\":\"eng\",\"forced\":true,\"key\":\"/library/streams/51\"},{\"id\":53,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"Français (SRT External)\",\"languageCode\":\"fra\",\"selected\":true,\"key\":\"/library/streams/53\"}]}]}]}]}}";
+const FRENCH: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"504\",\"type\":\"movie\",\"title\":\"Amélie\",\"duration\":7320000,\"Media\":[{\"container\":\"mkv\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":14,\"key\":\"/library/parts/14/file.mkv\",\"Stream\":[{\"id\":40,\"streamType\":1,\"codec\":\"h264\",\"frameRate\":23.976},{\"id\":41,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Français (AAC Stereo)\",\"languageCode\":\"fra\",\"selected\":true},{\"id\":43,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"languageCode\":\"eng\"},{\"id\":51,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English Forced (SRT External)\",\"languageCode\":\"eng\",\"forced\":true,\"key\":\"/library/streams/51\"},{\"id\":53,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"Français (SRT External)\",\"languageCode\":\"fra\",\"selected\":true,\"key\":\"/library/streams/53\"}]}]}]}]}}";
 
 // A page of a library of 63 movies from `start`.
 // A page of the movie library of 400 items, from `start`.
@@ -342,6 +342,7 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
       return true;
     },
     hide_video: (): void => note(log.calls, "hide"),
+    frame_rate: (window: usize, fps: f32): void => note(log.calls, "rate " + window.to_string() + " " + ((fps * 1000.0f32) as i32).to_string()),
     pause_video: (): void => note(log.calls, "pause video"),
     request_frame: (): void => note(log.calls, "frame"),
     start: (): void => note(log.calls, "start"),
@@ -2139,6 +2140,9 @@ function test_language_picks_the_tracks(): test.TestOutcome {
   }
   if (!has_call(log, "track 2") || !has_url(log, "/library/streams/51")) {
     return test.fail("the English tracks did not play: " + log.calls.get().join(" | "));
+  }
+  if (!has_call(log, "rate 1 23976")) {
+    return test.fail("the display did not get the frame rate of the film: " + log.calls.get().join(" | "));
   }
   if (ready.play.choice.audio + "/" + ready.play.choice.subtitle != "43/51" || ready.play.cues.len() != 1) {
     return test.fail("the choice was " + ready.play.choice.audio + "/" + ready.play.choice.subtitle);
