@@ -243,9 +243,10 @@ func coreutilsShardLane(t *testing.T, root string) lane {
 	t.Helper()
 	const file = "test-coreutils.yml"
 	src := readWorkflow(t, root, file)
-	if !strings.Contains(src, `go test -list '.' ./internal/testing/coreutils/`) {
-		t.Fatalf("%s no longer lists the whole internal/testing/coreutils package; a test that does "+
-			"not match a narrower pattern would run in no shard, and therefore nowhere", file)
+	if !strings.Contains(src, `go test -c -o "$BIN" ./internal/testing/coreutils/`) ||
+		!strings.Contains(src, `list_tests() { (cd internal/testing/coreutils && "$BIN" -test.list "$1"); }`) ||
+		!strings.Contains(src, `list_tests '.' |`) {
+		t.Fatalf("%s must build the coreutils test binary and list all its tests before sharding", file)
 	}
 	if !strings.Contains(src, `find coreutils diffutils sed findutils -maxdepth 1 -name '*.fern'`) {
 		t.Fatalf("%s no longer derives its utility list from coreutils/*.fern, diffutils/*.fern, sed/*.fern and findutils/*.fern; an enumerated "+
@@ -263,7 +264,8 @@ func coreutilsShardLane(t *testing.T, root string) lane {
 			"coreutils/[.fern alone makes that pattern an invalid regexp and its shard "+
 			"red start to finish", file)
 	}
-	if !strings.Contains(src, `go test -list "$pat"`) {
+	if !strings.Contains(src, `for pat in "$TOP_PAT" "$UTIL_PAT"; do`) ||
+		!strings.Contains(src, `if ! list_tests "$pat"`) {
 		t.Fatalf("%s no longer compiles its -run patterns before using them; a metacharacter "+
 			"name added to the tree later would surface as a shard-wide failure rather than "+
 			"as the pattern that is wrong", file)
