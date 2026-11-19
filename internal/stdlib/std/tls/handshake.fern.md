@@ -161,6 +161,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "std/crypto";
+import "std/net";
 import "std/tls/keyschedule";
 import "std/tls/keyshare";
 import "std/tls/message";
@@ -1009,7 +1010,12 @@ pub struct ClientConfig { server_name: string, alpn: string[], suites: keyschedu
 ```fern
 <<29 pub function client_config(server_name: string): ClientConfig>>=
 pub function client_config(server_name: string): ClientConfig {
-  return ClientConfig { server_name: server_name, alpn: [], suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], shares: 1, schemes: [0x0403, 0x0503, 0x0807, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601], resume: None, chain: [], sign_schemes: [], quic: false, extensions: [], tls12: false, early_data: false };
+  // RFC 6066 section 3 permits only DNS names in the host_name entry.
+  let sni = server_name;
+  if let Ok(_) = net.ip_parse(__sni(server_name)) {
+    sni = "";
+  }
+  return ClientConfig { server_name: sni, alpn: [], suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], shares: 1, schemes: [0x0403, 0x0503, 0x0807, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601], resume: None, chain: [], sign_schemes: [], quic: false, extensions: [], tls12: false, early_data: false };
 }
 ```
 
