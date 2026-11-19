@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+fern_playback_compiler=${FERN:-"$PWD/bin/fern-selfhost"}
+FERN="$fern_playback_compiler" bash scripts/test-audio-playback
+case "$(uname -sm)" in
+  'Linux x86_64') target=x86-64-android ;;
+  'Linux aarch64') target=arm64-android ;;
+  *) echo 'unsupported host benchmark' >&2; exit 1 ;;
+esac
+"$fern_playback_compiler" -O -stdlib internal/stdlib -target "$target" -shared -export main -o build/audio-playback/bench.so bench/audio/android_playback.fern
+LD_LIBRARY_PATH="$PWD/build/audio-playback${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" python3 - <<'PY'
+import ctypes
+result = ctypes.CDLL('./build/audio-playback/bench.so').main()
+if result:
+    raise SystemExit(f'Host PCM benchmark failed at check {result}')
+PY

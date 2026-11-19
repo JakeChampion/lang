@@ -9,9 +9,21 @@ typedef struct { int hardware, stage; } Codec;
 typedef struct { int32_t offset, size; int64_t time; uint32_t flags; } Info;
 static int mode, live, released, queued;
 static int requested_encoding;
-static unsigned char input[16], output[16] = {99, 99, 1, 2, 3, 4, 99};
+static unsigned char input[16], output[4098] = {99, 99, 1, 2, 3, 4, 99};
+static int held, output_frames = 2, output_channels = 2;
 
-void audio_mock_mode(int value) { assert(live == 0); mode = value; released = queued = requested_encoding = 0; }
+const void *audio_mock_output_pointer(void) { assert(mode == 20 && held); return output + 2; }
+void audio_mock_channels(int channels) { assert(mode == 20 && !held && (channels == 1 || channels == 2)); output_channels = channels; }
+void audio_mock_block(int first, int frames) {
+    assert(mode == 20 && frames > 0 && frames <= 1024);
+    output_frames = frames;
+    for (int i = 0; i < frames * output_channels; i++) {
+        unsigned sample = (unsigned)(first + i) & 65535;
+        output[2 + i * 2] = sample & 255;
+        output[3 + i * 2] = sample >> 8;
+    }
+}
+void audio_mock_mode(int value) { assert(live == 0); mode = value; output_frames = output_channels = 2; held = released = queued = requested_encoding = 0; }
 int audio_mock_encoding(void) { return requested_encoding; }
 int audio_mock_live(void) { return live; }
 int audio_mock_released(void) { return released; }
@@ -51,7 +63,7 @@ int32_t AMediaCodec_configure(Codec *c, Format *f, void *window, void *crypto, u
 int32_t AMediaCodec_start(Codec *c) { assert(c); return mode == 5 ? -1 : 0; }
 int32_t AMediaCodec_stop(Codec *c) { assert(c); return mode == 6 ? -1 : 0; }
 int32_t AMediaCodec_delete(Codec *c) { assert(c); live--; free(c); return 0; }
-int32_t AMediaCodec_flush(Codec *c) { assert(c); c->stage = 0; return mode == 7 ? -1 : 0; }
+int32_t AMediaCodec_flush(Codec *c) { assert(c); if (mode == 20) assert(!held); c->stage = 0; return mode == 7 ? -1 : 0; }
 int64_t AMediaCodec_dequeueInputBuffer(Codec *c, int64_t timeout) {
     assert(c && timeout == 0); return mode == 8 ? -1 : 0;
 }
@@ -68,7 +80,7 @@ int64_t AMediaCodec_dequeueOutputBuffer(Codec *c, Info *info, int64_t timeout) {
     switch (c->stage++) {
     case 0: return -2;
     case 1: return -3;
-    case 2: *info = (Info){2, mode == 10 ? 20 : mode == 11 ? -1 : 4, 123, 0}; return 0;
+    case 2: held = 1; *info = (Info){2, mode == 10 ? 20 : mode == 11 ? -1 : mode == 20 ? output_frames * output_channels * 2 : 4, 123, 0}; return 0;
     case 3: *info = (Info){0, 0, 456, 4}; return 1;
     default: return -1;
     }
@@ -76,9 +88,9 @@ int64_t AMediaCodec_dequeueOutputBuffer(Codec *c, Info *info, int64_t timeout) {
 void *AMediaCodec_getOutputFormat(Codec *c) {
     assert(c); Format *f = AMediaFormat_new();
     f->rate = mode == 12 ? 96000 : mode == 13 ? 0 : 48000;
-    f->channels = mode == 14 ? 9 : 2;
+    f->channels = mode == 14 ? 9 : mode == 20 ? output_channels : 2;
     f->encoding = mode == 15 ? 3 : mode == 16 ? 4 : 2;
-    f->mask = 12; return f;
+    f->mask = mode == 20 && output_channels == 1 ? 4 : 12; return f;
 }
 uint8_t AMediaFormat_getInt32(Format *f, const char *key, int32_t *value) {
     if (!strcmp(key, "sample-rate")) *value = f->rate;
@@ -88,8 +100,10 @@ uint8_t AMediaFormat_getInt32(Format *f, const char *key, int32_t *value) {
     return 1;
 }
 void *AMediaCodec_getOutputBuffer(Codec *c, size_t index, size_t *capacity) {
-    assert(c && index == 0); *capacity = mode == 18 ? 3 : sizeof(output); return mode == 19 ? NULL : output;
+    assert(c && index == 0); *capacity = mode == 18 ? 3 : mode == 20 ? sizeof(output) : 16; return mode == 19 ? NULL : output;
 }
 int32_t AMediaCodec_releaseOutputBuffer(Codec *c, size_t index, uint8_t render) {
-    assert(c && index < 2 && render == 0); released++; return 0;
+    assert(c && index < 2 && render == 0);
+    if (mode == 20 && index == 0) { assert(held); held = 0; }
+    released++; return 0;
 }

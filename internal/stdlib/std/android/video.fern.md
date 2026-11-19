@@ -615,6 +615,15 @@ pub function fallback_to_software(config: Config, window: usize, own failed: Sel
 }
 
 pub(package) function view_output(handle: usize, scratch: usize, maximum: i32, buffer: OutputBuffer): Result[BufferView, frame.VideoError] {
+  inspect_output(handle, scratch, maximum, buffer)?;
+  unsafe {
+    let data = if (buffer.size == 0) { 0 as usize } else { __load_ptr(scratch) };
+    return Ok(BufferView { data: data, size: buffer.size });
+  }
+}
+
+// The scratch word holds the borrowed data pointer after a nonempty result.
+pub(package) function inspect_output(handle: usize, scratch: usize, maximum: i32, buffer: OutputBuffer): Result[void, frame.VideoError] {
   if (buffer.index < 0 || buffer.offset < 0 || buffer.size < 0) {
     return Err(frame.Header);
   }
@@ -622,7 +631,7 @@ pub(package) function view_output(handle: usize, scratch: usize, maximum: i32, b
     return Err(frame.Limit);
   }
   if (buffer.size == 0) {
-    return Ok(BufferView { data: 0 as usize, size: 0 });
+    return Ok(());
   }
   unsafe {
     __store_ptr(scratch, 0 as usize);
@@ -631,7 +640,8 @@ pub(package) function view_output(handle: usize, scratch: usize, maximum: i32, b
     if (data == 0 as usize || buffer.offset as usize > capacity || buffer.size as usize > capacity - buffer.offset as usize) {
       return Err(frame.Platform);
     }
-    return Ok(BufferView { data: data + buffer.offset as usize, size: buffer.size });
+    __store_ptr(scratch, data + buffer.offset as usize);
+    return Ok(());
   }
 }
 
