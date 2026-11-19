@@ -22,6 +22,10 @@ The events of the player are `Change` values of `std/android/player`. `player.ev
 
 `show_target` puts the video on a `Target` of `std/android/player`. `close_target` releases a target on the main thread, after the commands that came before it, so the player does not draw on a released surface.
 
+`passthrough_types` gives the MIME types of the compressed sound that the sound output takes as it is. An example is Dolby Digital to an HDMI soundbar. ExoPlayer sends such a track to the output with no decoder, so an app can play it with no transcode. The list comes from `AudioCapabilities` of Media3, and it changes when the output changes.
+
+`match_frame_rate` asks the display to show the window at the frame rate of the video. Then a TV can change to 24 Hz for a film. Android 12 and later take the request, and the settings of the device can refuse it. A rate of 0 takes the request away.
+
 ## Contracts
 
 Call each function except `handle` and `events` on the loop thread. Call `close` one time for each player before Destroy.
@@ -29,6 +33,8 @@ Call each function except `handle` and `events` on the loop thread. Call `close`
 `show` puts the video on the window. A window can go away while a command waits on the main thread. So a GPU app shows the video on a target of its own.
 
 Each command can fail on the main thread with no answer to the loop thread. Then the player logs the error, and the state does not change.
+
+`passthrough_types` and `match_frame_rate` can run on each thread.
 
 `open` refuses an empty address, a NUL byte, and an address longer than 8192 bytes. `seek` refuses a negative position and a position above 2,147,483,647 milliseconds.
 
@@ -45,6 +51,8 @@ Each command can fail on the main thread with no answer to the loop thread. Then
 <<the player>>
 
 <<the commands>>
+
+<<the output>>
 
 <<the main thread>>
 ```
@@ -622,6 +630,67 @@ pub function close_target(ctx: usize, p: Player, t: player.Target): void {
     }
   }
   player.close_target(ctx, t);
+}
+```
+
+### `the output`
+
+The encodings are those of `android.media.AudioFormat`. The frame rate goes to the `Surface` of the window with `FRAME_RATE_COMPATIBILITY_FIXED_SOURCE` and `CHANGE_FRAME_RATE_ALWAYS`, because the video fills the window.
+
+```fern
+<<the output>>=
+// Each encoding of android.media.AudioFormat that an output can take as it
+// is, with its MIME type.
+function passthrough_encodings(): (i32, string)[] {
+  return [(5, "audio/ac3"), (6, "audio/eac3"), (18, "audio/eac3-joc"), (7, "audio/vnd.dts"), (8, "audio/vnd.dts.hd"), (14, "audio/true-hd")];
+}
+
+// The MIME types of the sound that the output of the device takes as it is.
+pub function passthrough_types(ctx: usize): string[] {
+  let out: string[] = [];
+  let e = android.env(ctx);
+  if (!begin(e)) {
+    return out;
+  }
+  defer end(e);
+  let Ok(c) = bindings.audio_capabilities_class(e) else {
+    return out;
+  };
+  defer c.release(e);
+  let Ok(caps) = c.get_capabilities(e, bindings.Context { ref: android.activity_object(ctx) }) else {
+    return out;
+  };
+  for (code, mime) in passthrough_encodings() {
+    if let Ok(yes) = c.supports_encoding(e, caps, code) {
+      if (yes) {
+        out = out.append(mime);
+      }
+    }
+  }
+  return out;
+}
+
+const FIXED_SOURCE: i32 = 1;
+
+const CHANGE_ALWAYS: i32 = 1;
+
+// Asks the display for the frame rate `fps` of the video on window `w`, or
+// takes the request away with 0. False when the device did not take it.
+pub function match_frame_rate(ctx: usize, w: android.Window, fps: f32): boolean {
+  let e = android.env(ctx);
+  if (!(fps >= 0.0f32) || !begin(e)) {
+    return false;
+  }
+  defer end(e);
+  let surface = w.surface(e);
+  if (jni.check(e).is_err() || surface == 0 as usize) {
+    return false;
+  }
+  let Ok(c) = bindings.surface_class(e) else {
+    return false;
+  };
+  defer c.release(e);
+  return c.has_set_frame_rate() && c.set_frame_rate(e, bindings.Surface { ref: surface }, fps, FIXED_SOURCE, CHANGE_ALWAYS).is_ok();
 }
 ```
 

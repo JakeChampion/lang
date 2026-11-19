@@ -605,7 +605,9 @@ pub struct Track { id: string, kind: i32, title: string, language: string, codec
 // preview thumbnails of it.
 pub struct Part { id: string, key: string, container: string, size: i64, indexes: string, tracks: Track[] }
 
-pub struct Media { container: string, video: string, audio: string, resolution: string, bitrate: i32, width: i32, height: i32, parts: Part[] }
+// `hdr` is true for a video in HDR10, HLG or Dolby Vision, and `frame_rate`
+// is the frames of its video each second, or 0.
+pub struct Media { container: string, video: string, audio: string, resolution: string, bitrate: i32, width: i32, height: i32, hdr: boolean, frame_rate: f32, parts: Part[] }
 
 // An item of a library: a movie, a show, a season, an episode, an artist,
 // an album or a track. `key` is its ratingKey.
@@ -674,9 +676,33 @@ function media_of(d: json.Document, n: i32): Media[] {
     for p in elements(d, m, "Part") {
       parts = parts.append(Part { id: int(d, p, "id").to_string(), key: str(d, p, "key"), container: str(d, p, "container"), size: int(d, p, "size"), indexes: str(d, p, "indexes"), tracks: tracks_of(d, p) });
     }
-    out = out.append(Media { container: str(d, m, "container"), video: str(d, m, "videoCodec"), audio: str(d, m, "audioCodec"), resolution: str(d, m, "videoResolution"), bitrate: int(d, m, "bitrate") as i32, width: int(d, m, "width") as i32, height: int(d, m, "height") as i32, parts: parts });
+    let (hdr, rate) = picture_of(d, m);
+    out = out.append(Media { container: str(d, m, "container"), video: str(d, m, "videoCodec"), audio: str(d, m, "audioCodec"), resolution: str(d, m, "videoResolution"), bitrate: int(d, m, "bitrate") as i32, width: int(d, m, "width") as i32, height: int(d, m, "height") as i32, hdr: hdr, frame_rate: rate, parts: parts });
   }
   return out;
+}
+
+// Whether the video stream of the first part of the version at `m` is in
+// HDR, and its frame rate. PQ is the curve of HDR10 and HDR10+, and
+// ARIB STD-B67 is HLG.
+function picture_of(d: json.Document, m: i32): (boolean, f32) {
+  for p in elements(d, m, "Part") {
+    for t in elements(d, p, "Stream") {
+      if (int(d, t, "streamType") == 1i64) {
+        let curve = str(d, t, "colorTrc");
+        let hdr = curve == "smpte2084" || curve == "arib-std-b67" || flag(d, t, "DOVIPresent");
+        let rate = 0.0f32;
+        if let Some(v) = d.get(t, "frameRate") {
+          if let Some(f) = d.as_f64(v) {
+            rate = f as f32;
+          }
+        }
+        return (hdr, rate);
+      }
+    }
+    return (false, 0.0f32);
+  }
+  return (false, 0.0f32);
 }
 
 function rating_of(d: json.Document, n: i32): string {
@@ -1100,13 +1126,15 @@ pub function direct_playable(it: Item, decoders: string[]): boolean {
   return direct_with(it, decoders, no_choice());
 }
 
-// As direct_playable, with the sound of `choice`.
+// As direct_playable, with the sound of `choice`. The app draws the video
+// on a window in SDR, so a video in HDR plays as a transcode, in which the
+// server maps its colours to SDR.
 pub function direct_with(it: Item, decoders: string[], choice: Choice): boolean {
   if (it.media.len() == 0 || it.media[0].parts.len() == 0) {
     return false;
   }
   let m = it.media[0];
-  return direct_container(m.container) && decodes(decoders, m.video) && decodes(decoders, audio_codec(it, choice));
+  return !m.hdr && direct_container(m.container) && decodes(decoders, m.video) && decodes(decoders, audio_codec(it, choice));
 }
 
 // The request that downloads the file of the first version of the item as
@@ -1170,19 +1198,22 @@ pub function direct_url(b: Base, it: Item, session: string): string {
 }
 
 // What the client asks the transcoder to make: H.264 video and AAC sound,
-// which each Android device decodes. A stream is HLS in
+// which each Android device decodes. The sound can also be Dolby Digital
+// and Dolby Digital Plus when the device plays them, so the server copies
+// a surround track. A stream is HLS in
 // MPEG-TS, and a download is one Matroska file over HTTP. HEVC never goes
 // in MPEG-TS: a hardware HEVC encode into TS can change its picture
 // parameters between slices. A quality with a bitrate adds an upper bound
 // of the video bitrate. The server reads this value as a query of its own,
 // so the parameter escapes its characters once more.
-pub function profile_extra(q: Quality, protocol: string): string {
+pub function profile_extra(q: Quality, protocol: string, decoders: string[]): string {
   let parts = ["add-settings(DirectPlayStreamSelection=true)"];
   if (q.kbps > 0) {
     parts = parts.append("add-limitation(scope=videoCodec&scopeName=*&type=upperBound&name=video.bitrate&value=" + q.kbps.to_string() + "&replace=true)");
   }
   let container = if (protocol == "hls") { "mpegts" } else { "mkv" };
-  parts = parts.append("add-transcode-target(type=videoProfile&context=streaming&protocol=" + protocol + "&container=" + container + "&videoCodec=h264&audioCodec=aac)");
+  let sounds = ["aac", "ac3", "eac3"].filter((c: string): boolean => c == "aac" || decodes(decoders, c));
+  parts = parts.append("add-transcode-target(type=videoProfile&context=streaming&protocol=" + protocol + "&container=" + container + "&videoCodec=h264&audioCodec=" + sounds.join(",") + ")");
   return parts.join("+");
 }
 
@@ -1191,19 +1222,19 @@ pub function profile_extra(q: Quality, protocol: string): string {
 // segments at the seek: an offset at the start can leave the first segment
 // open with no data. `session` names the transcode. The client is Generic,
 // the one platform that the transcoder takes with no targets of its own.
-pub function hls_url(c: Client, b: Base, it: Item, q: Quality, session: string, choice: Choice): string {
-  return transcode_url(c, b, it, q, session, choice, "hls");
+pub function hls_url(c: Client, b: Base, it: Item, q: Quality, session: string, decoders: string[], choice: Choice): string {
+  return transcode_url(c, b, it, q, session, decoders, choice, "hls");
 }
 
 // The request of one Matroska file that the server makes from the whole
 // item, for a download. The download manager of Android cannot save HLS.
 pub function download_transcode_request(c: Client, b: Base, it: Item, q: Quality, session: string, decoders: string[], choice: Choice): Request {
-  return get(c.with_token(b.token), transcode_url(c, b, it, transcode_quality(it, q, decoders), session, choice, "http"));
+  return get(c.with_token(b.token), transcode_url(c, b, it, transcode_quality(it, q, decoders), session, decoders, choice, "http"));
 }
 
 // The address of a transcode of the whole item with `protocol`: "hls" for
 // a stream, or "http" for one file.
-function transcode_url(c: Client, b: Base, it: Item, q: Quality, session: string, choice: Choice, protocol: string): string {
+function transcode_url(c: Client, b: Base, it: Item, q: Quality, session: string, decoders: string[], choice: Choice, protocol: string): string {
   let copy = "0";
   if (q.kbps == 0) {
     copy = "1";
@@ -1225,7 +1256,7 @@ function transcode_url(c: Client, b: Base, it: Item, q: Quality, session: string
     ("session", session),
     ("X-Plex-Session-Identifier", session),
     ("X-Plex-Client-Profile-Name", "Generic"),
-    ("X-Plex-Client-Profile-Extra", profile_extra(q, protocol)),
+    ("X-Plex-Client-Profile-Extra", profile_extra(q, protocol, decoders)),
     ("X-Plex-Client-Identifier", c.id),
     ("X-Plex-Product", PRODUCT),
     ("X-Plex-Version", VERSION),
@@ -1276,7 +1307,7 @@ pub function stream_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64
 // A transcode of the item at quality `q`. At Original quality the server
 // copies H.264 video that the phone decodes, and converts the rest.
 pub function transcode_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64, session: string, decoders: string[], choice: Choice): Stream {
-  return Stream { url: hls_url(c, b, it, transcode_quality(it, q, decoders), session, choice), transcode: true, offset_ms: offset_ms };
+  return Stream { url: hls_url(c, b, it, transcode_quality(it, q, decoders), session, decoders, choice), transcode: true, offset_ms: offset_ms };
 }
 
 // The quality of a transcode at `q`. A transcode at Original or Auto

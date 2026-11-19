@@ -4,7 +4,7 @@
 android.os.Looper getMainLooper
 android.os.Handler <init>(Landroid/os/Looper;Landroid/os/Handler$Callback;)V obtainMessage(IIILjava/lang/Object;)Landroid/os/Message;
 android.os.Message sendToTarget what arg1 arg2 obj
-android.view.Surface release
+android.view.Surface release setFrameRate(FII)V?
 android.graphics.SurfaceTexture release
 android.content.Context -
 java.util.List size get(I)Ljava/lang/Object;
@@ -26,3 +26,4 @@ androidx.media3.common.TrackSelectionParameters$Builder setOverrideForType setTr
 androidx.media3.common.TrackSelectionOverride <init>(Landroidx/media3/common/TrackGroup;I)V
 androidx.media3.common.VideoSize width height
 androidx.media3.common.PlaybackException errorCode
+androidx.media3.exoplayer.audio.AudioCapabilities getCapabilities(Landroid/content/Context;)Landroidx/media3/exoplayer/audio/AudioCapabilities; supportsEncoding

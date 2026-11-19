@@ -139,6 +139,22 @@ function test_item_fields(): test.TestOutcome {
   return test.assert_eq(plex.facts(it), "2010 · 2h 28m · PG-13 · 8.7 · 1080p");
 }
 
+// A 4K film in HDR10 at 23.976 frames each second, and one in Dolby
+// Vision. The phone decodes HEVC, but the app draws in SDR.
+const HDR: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"9\",\"type\":\"movie\",\"title\":\"Bright\",\"Media\":[{\"container\":\"mkv\",\"videoCodec\":\"hevc\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":13,\"key\":\"/library/parts/13/1/file.mkv\",\"Stream\":[{\"id\":60,\"streamType\":1,\"codec\":\"hevc\",\"colorTrc\":\"smpte2084\",\"frameRate\":23.976},{\"id\":61,\"streamType\":2,\"codec\":\"aac\",\"selected\":true}]}]},{\"container\":\"mp4\",\"videoCodec\":\"hevc\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":14,\"key\":\"/library/parts/14/1/file.mp4\",\"Stream\":[{\"id\":70,\"streamType\":1,\"codec\":\"hevc\",\"DOVIPresent\":true,\"frameRate\":24}]}]},{\"container\":\"mp4\",\"videoCodec\":\"hevc\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":15,\"key\":\"/library/parts/15/1/file.mp4\",\"Stream\":[{\"id\":80,\"streamType\":1,\"codec\":\"hevc\",\"colorTrc\":\"bt709\",\"frameRate\":25}]}]}]}]}}";
+
+function test_hdr_transcodes(): test.TestOutcome {
+  let Some(it) = plex.parse_item(HDR) else {
+    return test.fail("no item");
+  };
+  let phone = ["video/avc", "video/hevc", "audio/mp4a-latm"];
+  let pictures = it.media.map((m: plex.Media): string => m.hdr.to_string() + "@" + ((m.frame_rate * 1000.0f32 + 0.5f32) as i32).to_string());
+  let sdr = plex.Item { ...it, media: [it.media[2]] };
+  let vision = plex.Item { ...it, media: [it.media[1]] };
+  let s = plex.stream_for(client(), base(), it, plex.qualities()[0], 0i64, "s1", phone, plex.no_choice());
+  return test.assert_eq(pictures.join(" ") + " " + plex.direct_playable(it, phone).to_string() + " " + plex.direct_playable(vision, phone).to_string() + " " + plex.direct_playable(sdr, phone).to_string() + " " + s.transcode.to_string(), "true@23976 true@24000 false@25000 false false true true");
+}
+
 function test_stream_choice(): test.TestOutcome {
   let Some(it) = plex.parse_item(MOVIE) else {
     return test.fail("no item");
@@ -151,7 +167,7 @@ function test_stream_choice(): test.TestOutcome {
   if (!s.transcode || s.offset_ms != 60000i64 || !s.url.contains("/video/:/transcode/universal/start.m3u8?") || s.url.contains("offset=") || !s.url.contains("session=s1") || !s.url.contains("directStream=1") || !s.url.contains("X-Plex-Platform=Generic") || s.url.contains("add-limitation")) {
     return test.fail("transcode " + s.url);
   }
-  if (!s.url.contains("X-Plex-Client-Profile-Extra=add-settings%28DirectPlayStreamSelection%3Dtrue%29%2Badd-transcode-target%28type%3DvideoProfile%26context%3Dstreaming%26protocol%3Dhls%26container%3Dmpegts%26videoCodec%3Dh264%26audioCodec%3Daac%29")) {
+  if (!s.url.contains("X-Plex-Client-Profile-Extra=add-settings%28DirectPlayStreamSelection%3Dtrue%29%2Badd-transcode-target%28type%3DvideoProfile%26context%3Dstreaming%26protocol%3Dhls%26container%3Dmpegts%26videoCodec%3Dh264%26audioCodec%3Daac%2Ceac3%29")) {
     return test.fail("profile " + s.url);
   }
   let eac3 = plex.Item { ...it, media: [plex.Media { ...it.media[0], audio: "eac3" }] };
@@ -456,7 +472,10 @@ function test_download_transcode(): test.TestOutcome {
   if (!r.url.starts_with("https://10-0-0-5.abc.plex.direct:32400/video/:/transcode/universal/start?") || !r.url.contains("&protocol=http&") || !r.url.contains("&directStream=1&") || !r.url.contains("container%3Dmkv") || r.url.contains("fastSeek")) {
     return test.fail("the download of a transcode: " + r.url);
   }
-  let hls = plex.hls_url(client(), base(), it, plex.qualities()[0], "s1", plex.remembered(it));
+  let hls = plex.hls_url(client(), base(), it, plex.qualities()[0], "s1", ["video/avc", "audio/mp4a-latm", "audio/ac3"], plex.remembered(it));
+  if (!hls.contains("audioCodec%3Daac%2Cac3%29")) {
+    return test.fail("a transcode does not copy the Dolby Digital that the phone plays: " + hls);
+  }
   return test.assert_eq((hls.contains("/start.m3u8?") && hls.contains("&protocol=hls&") && hls.contains("container%3Dmpegts") && hls.contains("&fastSeek=1&X-Plex-Incomplete-Segments=1")).to_string(), "true");
 }
 
@@ -534,6 +553,7 @@ function main(): i32 {
   r = r.it("the libraries of video and music are kept", test_sections_keep_video_and_music);
   r = r.it("an item is read with its media", test_item_fields);
   r = r.it("a stream plays the file or a transcode", test_stream_choice);
+  r = r.it("a video in HDR plays as a transcode, and the frame rate is read", test_hdr_transcodes);
   r = r.it("the hubs of the home screen", test_hubs);
   r = r.it("a page has the count of its library", test_page_total);
   r = r.it("times and durations", test_text);

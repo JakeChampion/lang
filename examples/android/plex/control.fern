@@ -54,6 +54,9 @@ pub struct Device {
   play: (string) => boolean,
   // Puts the video on the window, and false when it cannot.
   show_video: (usize) => boolean,
+  // Asks the display of the window to show it at a frame rate, or takes the
+  // request away with 0.
+  frame_rate: (usize, f32) => void,
   // Puts the GPU painter on the window, and false when the phone has none:
   // then the app draws with `lock` and `post`.
   attach: (usize) => boolean,
@@ -2634,6 +2637,9 @@ function resume(own s: App): App {
     video = s.dev.show_video(s.window);
     if (video) {
       log.info("plex: video on the window");
+      if (p.item.media.len() > 0 && p.item.media[0].frame_rate > 0.0f32) {
+        s.dev.frame_rate(s.window, p.item.media[0].frame_rate);
+      }
     }
   }
   s.dev.start();
@@ -2787,6 +2793,7 @@ function stop_play(own s: App, completed: boolean): App {
   s.dev.immersive(false);
   if (p.video) {
     s.dev.pip(false);
+    s.dev.frame_rate(s.window, 0.0f32);
   }
   if (audio(p)) {
     s.dev.media_end();

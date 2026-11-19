@@ -413,3 +413,122 @@ int main(int argc, char **argv) {
 `
 	androidJNIMockCheck(t, src, "make,act,on_message,on_events", check)
 }
+
+// The sound output and the display on a fake JNI. passthrough_types asks
+// AudioCapabilities of Media3 for each encoding of AudioFormat, and gives
+// the MIME type of each one that the output takes. match_frame_rate gives
+// the rate to the Surface of the window, with a fixed source and a change
+// that always goes. A device with no setFrameRate gets no call, and a
+// negative rate is refused. Each call ends its local frame and deletes each
+// global reference that it made.
+func TestAndroidExoplayerOutput(t *testing.T) {
+	const src = `import "std/android";
+import "std/android/exoplayer";
+pub function types(ctx: usize): i32 {
+  let t = exoplayer.passthrough_types(ctx);
+  let eac3 = if (t.contains("audio/eac3")) { 10 } else { 0 };
+  let truehd = if (t.contains("audio/true-hd")) { 1 } else { 0 };
+  return t.len() * 100 + eac3 + truehd;
+}
+pub function rate(ctx: usize, w: usize, milli: i32): i32 {
+  return if (exoplayer.match_frame_rate(ctx, android.Window { ptr: w }, milli as f32 / 1000.0f32)) { 1 } else { 0 };
+}
+`
+	const defined = `#include <stdint.h>
+uintptr_t ANativeWindow_toSurface(uintptr_t e, uintptr_t window) { return window + 7000; }
+`
+	const check = `#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <dlfcn.h>
+
+static int frames, globals, nnames, asked[32], nasked, absent, rate_calls;
+static const char *names[64];
+static uintptr_t caps_context, rate_surface;
+static float rate_fps;
+static int32_t rate_compat, rate_change;
+static void require(int ok, const char *what) { if (!ok) { fprintf(stderr, "exoplayer output: %s (frames=%d globals=%d)\n", what, frames, globals); exit(1); } }
+static uintptr_t member(const char *name) {
+  for (int k = 0; k < nnames; k++) if (!strcmp(names[k], name)) return k + 1;
+  names[nnames++] = strdup(name);
+  return nnames;
+}
+static int is(uintptr_t id, const char *name) { return id != 0 && !strcmp(names[id - 1], name); }
+static uintptr_t find_class(uintptr_t e, const char *name) { return 100; }
+static uintptr_t method(uintptr_t e, uintptr_t cls, const char *name, const char *sig) {
+  if (absent && !strcmp(name, "setFrameRate")) return 0;
+  return member(name);
+}
+static uintptr_t none(uintptr_t e) { return 0; }
+static int32_t push(uintptr_t e, int32_t n) { frames++; return 0; }
+static uintptr_t pop(uintptr_t e, uintptr_t keep) { frames--; return 0; }
+static uintptr_t new_global(uintptr_t e, uintptr_t ref) { globals++; return ref; }
+static void delete_global(uintptr_t e, uintptr_t ref) { require(globals > 0, "a global reference deleted twice"); globals--; }
+static void release(uintptr_t e, uintptr_t ref) {}
+static uintptr_t static_object(uintptr_t e, uintptr_t cls, uintptr_t id, const uint64_t *args) {
+  require(is(id, "getCapabilities"), "a static call of getCapabilities");
+  caps_context = args[0];
+  return 555;
+}
+// A jboolean leaves the bits above the low 8 of the register undefined.
+static uintptr_t bcall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
+  require(is(id, "supportsEncoding") && obj == 555 && nasked < 32, "supportsEncoding of the capabilities");
+  int32_t code = (int32_t)args[0];
+  asked[nasked++] = code;
+  return 0x300 | (code == 6 || code == 14);
+}
+static uintptr_t vcall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
+  require(is(id, "setFrameRate"), "a void call of setFrameRate");
+  uint32_t bits = (uint32_t)args[0];
+  memcpy(&rate_fps, &bits, 4);
+  rate_surface = obj;
+  rate_compat = (int32_t)args[1];
+  rate_change = (int32_t)args[2];
+  rate_calls++;
+  return 0;
+}
+int main(int argc, char **argv) {
+  void *lib = dlopen(argv[1], RTLD_NOW);
+  if (!lib) { fprintf(stderr, "%s\n", dlerror()); return 2; }
+  int32_t (*types)(uintptr_t) = dlsym(lib, "types");
+  int32_t (*rate)(uintptr_t, uintptr_t, int32_t) = dlsym(lib, "rate");
+  require(types && rate, "the entries");
+  static uintptr_t table[240];
+  static uintptr_t env;
+  uintptr_t activity[10] = {0}, ctx[40] = {0};
+  table[6] = (uintptr_t)find_class;
+  table[15] = (uintptr_t)none;
+  table[17] = (uintptr_t)none;
+  table[19] = (uintptr_t)push;
+  table[20] = (uintptr_t)pop;
+  table[21] = (uintptr_t)new_global;
+  table[22] = (uintptr_t)delete_global;
+  table[23] = (uintptr_t)release;
+  table[33] = (uintptr_t)method;
+  table[39] = (uintptr_t)bcall;
+  table[63] = (uintptr_t)vcall;
+  table[113] = (uintptr_t)method;
+  table[116] = (uintptr_t)static_object;
+  env = (uintptr_t)table;
+  activity[3] = 1234;
+  ctx[2] = (uintptr_t)activity;
+  ctx[4] = (uintptr_t)&env;
+  ctx[23] = 34;
+  uintptr_t c = (uintptr_t)ctx;
+
+  require(types(c) == 211 && frames == 0 && globals == 0, "E-AC3 and TrueHD go through, and the call cleans up");
+  require(caps_context == 1234 && nasked == 6, "the capabilities of the activity, for six encodings");
+
+  require(rate(c, 40, 23976) == 1 && frames == 0 && globals == 0, "a frame rate goes to the window");
+  require(rate_calls == 1 && rate_surface == 7040 && rate_fps > 23.975f && rate_fps < 23.977f && rate_compat == 1 && rate_change == 1, "setFrameRate on the Surface of the window, a fixed source, always");
+  require(rate(c, 40, 0) == 1 && rate_fps == 0.0f && rate_calls == 2, "a rate of 0 takes the request away");
+  require(rate(c, 40, -1000) == 0 && rate_calls == 2, "a negative rate is refused");
+  absent = 1;
+  nnames = 0;
+  require(rate(c, 40, 24000) == 0 && rate_calls == 2 && frames == 0 && globals == 0, "a device with no setFrameRate gets no call");
+  return 0;
+}
+`
+	androidMockCheck(t, src, "types,rate", check, defined)
+}
