@@ -41,7 +41,8 @@ An unavailable timestamp leaves the clock unchanged. A rejected anchor leaves th
 The existing video timeline remains active until a valid audio anchor replaces it.
 
 The method requires an active, unpaused player. It queries no codec buffers and performs no audio state or I/O operation.
-It allocates timestamp scratch memory, so it must run outside a real-time audio callback.
+Both methods reuse the decoder scratch storage for the synchronous timestamp query.
+Call them on the controller thread, outside a real-time audio callback.
 
 The app supplies a playback stream and a frame-to-media origin for that stream.
 The app keeps the audio stream open throughout each call.
@@ -95,7 +96,8 @@ pub function (own player: Player) synchronize_audio(stream: audio.Stream, origin
   if (origin.frame_position < 0i64 || origin.media_us < 0i64 || stream.rate <= 0) {
     return Tick { player: player, event: Failure(frame.Header) };
   }
-  return synchronize_timestamp(player, stream.rate, origin, stream.timestamp());
+  let timestamp = audio.read_timestamp_into(stream.ptr, player.decoder.scratch);
+  return synchronize_timestamp(player, stream.rate, origin, timestamp);
 }
 
 pub function (own player: Player) synchronize_music(music: audio.Music, origin: playback_clock.AudioOrigin): Tick {
@@ -105,7 +107,8 @@ pub function (own player: Player) synchronize_music(music: audio.Music, origin: 
   if (origin.frame_position < 0i64 || origin.media_us < 0i64 || music.rate <= 0) {
     return Tick { player: player, event: Failure(frame.Header) };
   }
-  return synchronize_timestamp(player, music.rate, origin, music.timestamp());
+  let timestamp = audio.read_timestamp_into(music.ptr, player.decoder.scratch);
+  return synchronize_timestamp(player, music.rate, origin, timestamp);
 }
 
 enum Feed { Waiting, Configuration, Submitted(i64), InputEnd }

@@ -7,11 +7,13 @@
 static int mode;
 static int calls;
 static int64_t custom_position, custom_time;
+static uintptr_t expected_slot;
 
 typedef struct AAudioStream AAudioStream;
 typedef int32_t aaudio_result_t;
 
-void mock_timestamp_mode(int value) { mode = value; calls = 0; }
+void mock_timestamp_mode(int value) { mode = value; calls = 0; expected_slot = 0; }
+void mock_timestamp_slot(uintptr_t slot) { expected_slot = slot; }
 int mock_timestamp_calls(void) { return calls; }
 void mock_timestamp_value(int64_t position, int64_t time_ns) {
     mode = 10; calls = 0; custom_position = position; custom_time = time_ns;
@@ -23,6 +25,8 @@ aaudio_result_t AAudioStream_getTimestamp(AAudioStream *stream, clockid_t clock,
     assert(stream == (AAudioStream *)123 && clock == CLOCK_MONOTONIC);
     assert(position != NULL && time_ns != NULL && position != time_ns);
     assert(time_ns == position + 1);
+    assert(expected_slot == 0 || (uintptr_t)position == expected_slot);
+    assert((uintptr_t)position % _Alignof(int64_t) == 0);
     assert(*position == -1 && *time_ns == -1);
     calls++;
     switch (mode) {

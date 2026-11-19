@@ -1,0 +1,87 @@
+// This host benchmark queries mocked AAudio anchors without device playback.
+import "std/android/audio";
+import "std/android/video/player";
+import "std/android/video/capabilities";
+import "std/video/playback_clock";
+import "std/video/frame";
+import "std/bench";
+import "std/option";
+
+@import("libmediandk.so", "mock_mode")
+function mode(value: i32): void;
+
+@import("libmediandk.so", "mock_jni_mode")
+function jni_mode(value: i32): void;
+
+@import("libmediandk.so", "mock_jni_env")
+function env(): usize;
+
+@import("libmediandk.so", "mock_live")
+function live(): i32;
+
+@import("libaaudio.so", "mock_timestamp_mode")
+function audio_mode(value: i32): void;
+
+@import("libaaudio.so", "mock_timestamp_calls")
+function audio_calls(): i32;
+
+function synchronize(own p: player.Player, channels: i32): player.Tick {
+  let origin = playback_clock.AudioOrigin { frame_position: 0i64, media_us: 0i64 };
+  if (channels == 0) {
+    return p.synchronize_audio(audio.Stream { ptr: 123 as usize, rate: 48000 }, origin);
+  }
+  return p.synchronize_music(audio.Music { ptr: 123 as usize, rate: 48000, channels: channels }, origin);
+}
+
+function measure(own p: player.Player, channels: i32, unavailable: boolean, rounds: i32): player.Player {
+  audio_mode(if (unavailable) { 2 } else { 1 });
+  let allocations = bench.alloc_count();
+  let started = monotonic_ns();
+  for _ in 0..rounds {
+    let next = synchronize(p, channels);
+    if let player.Failure(_) = next.event {
+      exit(4);
+    }
+    p = next.player;
+  }
+  let elapsed = monotonic_ns() - started;
+  let count = bench.allocs_after(allocations);
+  if (audio_calls() != rounds || p.decoder.scratch == 0 as usize || p.pending.is_some()) {
+    exit(5);
+  }
+  if (unavailable) {
+    if (p.clock.is_some()) {
+      exit(6);
+    }
+  } else {
+    let Some(clock) = p.clock else {
+      exit(7);
+    };
+    if (clock.media_us != 0i64 || clock.monotonic_ns != 0i64) {
+      exit(8);
+    }
+  }
+  print("{\"channels\":" + channels.to_string() + ",\"unavailable\":" + (if (unavailable) { "true" } else { "false" }) + ",\"calls\":" + rounds.to_string() + ",\"wall_ns\":" + elapsed.to_string() + ",\"allocations\":" + count.to_string() + "}");
+  return p;
+}
+
+pub function main(): i32 {
+  for channels in [0, 1, 2] {
+    for unavailable in [false, true] {
+      mode(17);
+      jni_mode(0);
+      let Ok(p) = player.open(env(), 29, 77, 0i64, 100i64, 123 as usize, capabilities.PreferHardware, frame.Limits { max_pixels: 128, max_packet_bytes: 512 }) else {
+        return 1;
+      };
+      p = measure(p, channels, unavailable, 100);
+      p = measure(p, channels, unavailable, 100000);
+      let Ok(_) = p.close() else {
+        return 2;
+      };
+      if (live() != 0) {
+        return 3;
+      }
+    }
+  }
+  return 0;
+}

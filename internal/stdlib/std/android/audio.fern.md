@@ -284,10 +284,21 @@ function read_timestamp(ptr: usize): Option[Timestamp] {
   unsafe {
     let bytes = Timestamp.c_size() as i32;
     let slot = __alloc(bytes);
+    let value = read_timestamp_into(ptr, slot);
+    __free(slot, bytes);
+    return value;
+  }
+}
+
+// The caller supplies aligned, writable Timestamp storage through the call.
+pub(package) function read_timestamp_into(ptr: usize, slot: usize): Option[Timestamp] {
+  if (ptr == 0 as usize || slot == 0 as usize) {
+    return None;
+  }
+  unsafe {
     Timestamp { frame_position: -1i64, monotonic_ns: -1i64 }.c_store(slot);
     let status = c_timestamp(ptr, 1, slot + Timestamp.c_offset_frame_position(), slot + Timestamp.c_offset_monotonic_ns());
     let value = Timestamp.c_load(slot);
-    __free(slot, bytes);
     if (status != 0 || value.frame_position < 0i64 || value.monotonic_ns < 0i64) {
       return None;
     }
