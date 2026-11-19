@@ -19,7 +19,7 @@ Shaping has these steps, in the order of HarfBuzz:
 5. Then a mark joins the starter before it when the two compose and the font has a glyph for the result. Thus U+064A and the hamza above become U+0626, and U+0928 and the nukta become U+0929. In a Hebrew font with no `mark` feature, a letter and a point also become their presentation form, such as U+FB2A.
 6. Each character takes the glyph that the character map of the font gives. A space that the font does not have takes the glyph of the space, with the width that HarfBuzz gives it. U+2011 takes the glyph of U+2010.
 7. In Arabic, each letter takes a form: isolated, initial, medial or final. It is the joining form of the letter between its neighbours, from its Unicode joining type. A mark is transparent: it does not stop the letters on its two sides from joining. The Indic scripts go through the Indic shaper, which the section "Indic scripts" tells.
-8. The lookups of the GSUB features apply in stages. A lookup of a form applies only to the letters of that form.
+8. The lookups of the GSUB features apply in stages. A lookup of a form applies only to the letters of that form. An Arabic font with no lookups of the forms takes the lookups that HarfBuzz makes from its presentation forms, as the section `arabic fallback` tells.
 9. Each glyph takes its advance from the font. Then the lookups of the GPOS features apply in one stage: `abvm`, `blwm`, `curs`, `dist`, `kern`, `mark` and `mkmk`. For Hebrew, they apply only when the GPOS table has the script `hebr`. The `kern` table applies next, unless the GPOS table has the feature `kern`.
 10. Each mark, of the GDEF class 3, has no advance, but in the Indic scripts a mark keeps its advance. In a font with no glyph classes, a mark is a character of the general category Mn. A default ignorable glyph, such as a ZWJ, has no advance and no offset. Each glyph that a lookup attached takes the offsets of the glyph that it attaches to. In a font with no GPOS table, the marks go on their bases, as the section `positions` tells.
 11. Each default ignorable glyph becomes the glyph of the space. In a font with no space, the default ignorable glyphs go, and their clusters join those next to them.
@@ -85,6 +85,8 @@ function main(): i32 {
 
 <<joining>>
 
+<<arabic fallback>>
+
 <<thai>>
 
 <<stages>>
@@ -110,6 +112,7 @@ function main(): i32 {
 <<module introduction>>=
 // This module gives the glyphs of a font for a text.
 import "std/shape/indic";
+import "std/shape/presentation";
 import "std/shape/universal";
 import "std/truetype";
 import "std/unicode";
@@ -908,6 +911,200 @@ function forms(cps: char[]): i32[] {
 }
 ```
 
+### `arabic fallback`
+
+An Arabic font can have the presentation forms of the letters in its character map, and no lookups of `isol`, `fina`, `medi` and `init`. HarfBuzz then makes lookups of its own from the presentation forms, and `shape` makes the same lookups. They apply after the stage of `rlig`, in this order:
+
+1. A single substitution for each of `init`, `medi`, `fina` and `isol`, which changes each letter to its form. It applies to the letters that have the mask of the form.
+2. The ligatures of three letters, such as lam, meem and hah, and then those of two letters, such as lam and alef. They skip the marks.
+3. The ligatures of the shadda with a mark.
+
+A lookup holds only the glyphs that the font has. The forms and the ligatures come from `std/shape/presentation`, which `scripts/gen-arabic-table.py` writes as HarfBuzz writes its table. HarfBuzz also has lookups for the old fonts with the glyphs of the code page Windows-1256. `shape` does not have them.
+
+```fern
+<<arabic fallback>>=
+// The masks of the single substitutions of the Arabic fallback, in the
+// order of the columns of `presentation.form`.
+const FALLBACK_MASKS: i32[] = [INIT, MEDI, FINA, ISOL];
+
+// `r` after the lookups that the Arabic fallback of HarfBuzz makes for the
+// font `f`, when the GSUB and the GPOS tables have no feature of the
+// joining forms for Arabic.
+function arabic_fallback_applied(f: truetype.Font, r: truetype.Run): truetype.Run {
+  for tag in ["isol", "fina", "medi", "init"] {
+    if (f.has_feature("arab", tag)) {
+      return r;
+    }
+  }
+  let lookups: u8[][] = [];
+  let masks: i32[] = [];
+  for k in 0..4 {
+    if let Some(l) = forms_lookup(f, k) {
+      lookups = lookups.append(l);
+      masks = masks.append(FALLBACK_MASKS[k]);
+    }
+  }
+  for kind in 0..3 {
+    if let Some(l) = ligatures_lookup(f, kind) {
+      lookups = lookups.append(l);
+      masks = masks.append(GLOBAL);
+    }
+  }
+  if (lookups.len() == 0) {
+    return r;
+  }
+  let g = truetype.Font { ...f, data: f.data.concat(gsub_of(lookups)), gsub: f.data.len() };
+  let out = r;
+  for i in 0..lookups.len() {
+    out = g.substitute(out, i, masks[i], 0);
+  }
+  return out;
+}
+
+// The single substitution that changes each letter to its form `k`, as
+// `presentation.form` numbers the forms, or None when the font has none of
+// them. It skips the marks.
+function forms_lookup(f: truetype.Font, k: i32): Option[u8[]] {
+  let (first, last) = presentation.letters();
+  let pairs: i32[] = [];
+  for u in first..last + 1 {
+    let s = presentation.form(u, k);
+    let (a, b) = (f.glyph(u), if (s == 0) { 0 } else { f.glyph(s) });
+    if (a != 0 && b != 0 && a != b) {
+      pairs = inserted_pair(pairs, a, b);
+    }
+  }
+  if (pairs.len() == 0) {
+    return None;
+  }
+  let n = pairs.len() / 2;
+  let out = lookup_head(1, 8).concat(be16([2, 6 + 2 * n, n]));
+  for k2 in 0..n {
+    out = out.concat(be16([pairs[2 * k2 + 1]]));
+  }
+  return Some(out.concat(coverage_of(pairs, 2)));
+}
+
+// `pairs`, pairs of a glyph and its substitute in the order of the glyphs,
+// with the pair `a` and `b` after the pairs of `a` and those before it. A
+// pair of a glyph that is there already does not go in.
+function inserted_pair(pairs: i32[], a: i32, b: i32): i32[] {
+  let at = 0;
+  while (at < pairs.len() && pairs[at] <= a) {
+    if (pairs[at] == a) {
+      return pairs;
+    }
+    at += 2;
+  }
+  return pairs.take(at).concat([a, b]).concat(pairs.drop(at));
+}
+
+// The ligature substitution of the ligatures of `presentation.ligatures`
+// for `kind`, with the glyphs of the font `f`, or None when the font has
+// none of them. The ligatures of letters skip the marks.
+function ligatures_lookup(f: truetype.Font, kind: i32): Option[u8[]] {
+  let table = presentation.ligatures(kind);
+  let size = if (kind == 0) { 4 } else { 3 };
+  // The glyph of each first letter, then the offset of its first entry.
+  let firsts: i32[] = [];
+  let k = 0;
+  while (k < table.len()) {
+    let g = f.glyph(table[k]);
+    if (g != 0 && (k == 0 || table[k - size] != table[k])) {
+      firsts = inserted_after(firsts, g, k);
+    }
+    k += size;
+  }
+  let sets: u8[][] = [];
+  let glyphs: i32[] = [];
+  for j in 0..firsts.len() / 2 {
+    let set = ligature_set(f, table, firsts[2 * j + 1], size);
+    if (set.len() > 0) {
+      sets = sets.append(set);
+      glyphs = glyphs.concat([firsts[2 * j], 0]);
+    }
+  }
+  if (sets.len() == 0) {
+    return None;
+  }
+  return Some(lookup_head(4, if (kind == 2) { 0 } else { 8 }).concat(offset_table(be16([1, 0, sets.len()]), sets, coverage_of(glyphs, 2))));
+}
+
+// `firsts`, pairs of a glyph and an offset in the order of the glyphs, with
+// the pair `g` and `at` after the pairs of `g`.
+function inserted_after(firsts: i32[], g: i32, at: i32): i32[] {
+  let k = 0;
+  while (k < firsts.len() && firsts[k] <= g) {
+    k += 2;
+  }
+  return firsts.take(k).concat([g, at]).concat(firsts.drop(k));
+}
+
+// The ligature set of the entries of `table` from `start` with the same
+// first letter, each of `size` values, with the ligatures that the font has.
+function ligature_set(f: truetype.Font, table: i32[], start: i32, size: i32): u8[] {
+  let ligatures: u8[][] = [];
+  let k = start;
+  while (k < table.len() && table[k] == table[start]) {
+    let parts = table.drop(k + 1).take(size - 2);
+    let glyphs = [f.glyph(table[k + size - 1])].concat(parts.map((u: i32): i32 => f.glyph(u)));
+    if (!holds(glyphs, 0)) {
+      ligatures = ligatures.append(be16([glyphs[0], size - 1]).concat(be16(glyphs.drop(1))));
+    }
+    k += size;
+  }
+  return if (ligatures.len() == 0) { [] } else { offset_table(be16([ligatures.len()]), ligatures, []) };
+}
+
+// The table `head` of 16-bit values, then an offset to each of `items` from
+// the start of the table, then `items`, then `tail`. With `tail`, the
+// second value of `head` becomes the offset of `tail`.
+function offset_table(head: u8[], items: u8[][], tail: u8[]): u8[] {
+  let at = head.len() + 2 * items.len();
+  let offsets: i32[] = [];
+  let body: u8[] = [];
+  for item in items {
+    offsets = offsets.append(at + body.len());
+    body = body.concat(item);
+  }
+  let start = if (tail.len() > 0) { head.take(2).concat(be16([at + body.len()])).concat(head.drop(4)) } else { head };
+  return start.concat(be16(offsets)).concat(body).concat(tail);
+}
+
+// The header of a GSUB lookup of the type `kind` with the flags `flag` and
+// one subtable, which follows it.
+function lookup_head(kind: i32, flag: i32): u8[] {
+  return be16([kind, flag, 1, 8]);
+}
+
+// A coverage table of format 1 of the glyphs at the even indices of
+// `pairs` that are `step` values apart, in order.
+function coverage_of(pairs: i32[], step: i32): u8[] {
+  let glyphs: i32[] = [];
+  let k = 0;
+  while (k < pairs.len()) {
+    glyphs = glyphs.append(pairs[k]);
+    k += step;
+  }
+  return be16([1, glyphs.len()]).concat(be16(glyphs));
+}
+
+// A GSUB table that holds the lookups `lookups`, with no scripts and no
+// features.
+function gsub_of(lookups: u8[][]): u8[] {
+  return be16([1, 0, 10, 12, 14, 0, 0]).concat(offset_table(be16([lookups.len()]), lookups, []));
+}
+
+// The values `xs` as 16-bit values, high byte first.
+function be16(xs: i32[]): u8[] {
+  let out: u8[] = [];
+  for x in xs {
+    out = out.append((x >> 8 & 255) as u8).append((x & 255) as u8);
+  }
+  return out;
+}
+```
+
 ### `thai`
 
 Thai and Lao take the Thai shaper of HarfBuzz. Before the normalization, each sara am, U+0E33 or U+0EB3, becomes a nikhahit and a sara aa. The nikhahit then moves back over the above-base marks before it. The clusters from the character before those marks to the sara aa join.
@@ -1187,6 +1384,7 @@ function default_shaped(f: truetype.Font, text: string, script: string): truetyp
   let r = run_of_chars(f, cs, masks_of(cs, arabic));
   for stage in stages(f, script, rtl) {
     r = applied_stage(f, r, script, stage, false);
+    r = if (arabic && stage[0].tag == "rlig") { arabic_fallback_applied(f, r) } else { r };
   }
   let positioned = f.gpos >= 0 && (script != "hebr" || f.has_script("hebr", true));
   return placed(f, r, gpos_tag(f, script), positioned, rtl, ZERO_LATE, script != "thai" && script != "lao ");
