@@ -2,6 +2,8 @@
 
 This module provides message digests, key derivation, and authentication codes.
 
+MD5 and SHA-1, including the eight-lane `Sha1x8` API, have practical collisions. Use `sha256` or `sha256_new` when collision resistance is required.
+
 ## Model
 
 Digest states are values. Every digest has the same surface: `<algorithm>_new()` builds a state, `update` borrows input bytes and returns the next state, and `finish` returns the owned digest bytes. The one-shot form is the algorithm's name, so `sha256(data)` is `sha256_new().update(data).finish()`. Hexadecimal text is `hex.encode` of the digest. `erase` consumes an owned array of any element type with a zero, such as `u8[]`, `u32[]` or `i64[]`, and zeroes its storage when that reference was the last one.
@@ -81,6 +83,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module provides message digests, key derivation, and authentication codes.
+// MD5 and SHA-1 (including Sha1x8) have practical collisions.
+// Use sha256 or sha256_new when collision resistance is required.
 import "core/ops";
 ```
 
@@ -157,6 +161,7 @@ The generator controls this chunk. Its boundary markers remain intact.
 
 // === MD5 (RFC 1321) ===
 
+// MD5 has practical collisions. Use SHA-256 when collision resistance is required.
 pub struct Md5 {
   h0: u32,
   h1: u32,
@@ -169,6 +174,7 @@ pub struct Md5 {
   out_len: i32,
 }
 
+// MD5 has practical collisions. Use SHA-256 when collision resistance is required.
 pub function md5_new(): Md5 {
   return Md5 {
     h0: 0x67452301, h1: 0xefcdab89, h2: 0x98badcfe, h3: 0x10325476,
@@ -325,6 +331,7 @@ function __md5_absorb(own h: Md5, bs: [u8]): Md5 {
 }
 
 // Use the returned state for the next update.
+// MD5 has practical collisions. Use SHA-256 when collision resistance is required.
 pub function (h: Md5) update(chunk: [u8]): Md5 {
   h = __md5_absorb(h, chunk);
   return h;
@@ -333,6 +340,7 @@ pub function (h: Md5) update(chunk: [u8]): Md5 {
 // The padded last block holds the tail of the message, so it is zeroed
 // before its release. The state's own buffer holds the same tail until the
 // state is dropped.
+// MD5 has practical collisions. Use SHA-256 when collision resistance is required.
 pub function (h: Md5) finish(): u8[] {
   let bl = h.buf_len;
   let plen = 64;
@@ -362,6 +370,7 @@ function __md5_last(own h: Md5): u8[] {
 }
 
 // md5 calculates the digest of `s`.
+// MD5 has practical collisions. Use SHA-256 when collision resistance is required.
 pub function md5(s: [u8]): u8[] {
   let last = md5_new().update(s);
   return __md5_last(last);
@@ -369,6 +378,7 @@ pub function md5(s: [u8]): u8[] {
 
 // === SHA-1 (RFC 3174) ===
 
+// SHA-1 has practical collisions. Use SHA-256 when collision resistance is required.
 pub struct Sha1 {
   h0: u32,
   h1: u32,
@@ -382,6 +392,7 @@ pub struct Sha1 {
   out_len: i32,
 }
 
+// SHA-1 has practical collisions. Use SHA-256 when collision resistance is required.
 pub function sha1_new(): Sha1 {
   return Sha1 {
     h0: 0x67452301, h1: 0xefcdab89, h2: 0x98badcfe, h3: 0x10325476, h4: 0xc3d2e1f0,
@@ -716,6 +727,7 @@ function __sha1_absorb(own h: Sha1, bs: [u8]): Sha1 {
 }
 
 // Use the returned state for the next update.
+// SHA-1 has practical collisions. Use SHA-256 when collision resistance is required.
 pub function (h: Sha1) update(chunk: [u8]): Sha1 {
   h = __sha1_absorb(h, chunk);
   return h;
@@ -724,6 +736,7 @@ pub function (h: Sha1) update(chunk: [u8]): Sha1 {
 // The padded last block holds the tail of the message, so it is zeroed
 // before its release. The state's own buffer holds the same tail until the
 // state is dropped.
+// SHA-1 has practical collisions. Use SHA-256 when collision resistance is required.
 pub function (h: Sha1) finish(): u8[] {
   let bl = h.buf_len;
   let plen = 64;
@@ -754,6 +767,7 @@ function __sha1_last(own h: Sha1): u8[] {
 }
 
 // sha1 calculates the digest of `s`.
+// SHA-1 has practical collisions. Use SHA-256 when collision resistance is required.
 pub function sha1(s: [u8]): u8[] {
   let last = sha1_new().update(s);
   return __sha1_last(last);
@@ -3372,11 +3386,13 @@ The state is word-major: word `w` of lane `k` is at byte `4 * (8 * w + k)`. A gr
 
 ```fern
 <<sha1 on eight lanes>>=
-/// Eight SHA-1 states. Word `w` of lane `k` is at byte `4 * (8 * w + k)`.
+// Eight SHA-1 states. Word `w` of lane `k` is at byte `4 * (8 * w + k)`.
+// SHA-1 has practical collisions. Use SHA-256 when collision resistance is required.
 pub struct Sha1x8 { state: u8[] }
 
-/// Eight copies of the chaining value of `h`. The bytes after the last whole
-/// block of `h` are not in the copies.
+// Eight copies of the chaining value of `h`. The bytes after the last whole
+// block of `h` are not in the copies.
+// SHA-1 has practical collisions. Use SHA-256 when collision resistance is required.
 pub function (h: Sha1) x8(): Sha1x8 {
   let words: u32[] = [h.h0, h.h1, h.h2, h.h3, h.h4];
   let st = __zero_u8(160);
@@ -3388,8 +3404,9 @@ pub function (h: Sha1) x8(): Sha1x8 {
   return Sha1x8 { state: st };
 }
 
-/// Absorbs each whole group of 512 bytes of `bs`. A group holds the block of
-/// lane `k` at byte `64 * k`. The bytes after the last whole group are ignored.
+// Absorbs each whole group of 512 bytes of `bs`. A group holds the block of
+// lane `k` at byte `64 * k`. The bytes after the last whole group are ignored.
+// SHA-1 has practical collisions. Use SHA-256 when collision resistance is required.
 pub function (h: Sha1x8) blocks(bs: [u8]): Sha1x8 {
   if (__sha1x8_hw()) {
     return Sha1x8 { state: __sha1x8_hw_blocks(h.state, bs) };
@@ -3413,7 +3430,8 @@ pub function (h: Sha1x8) blocks(bs: [u8]): Sha1x8 {
   return Sha1x8 { state: st };
 }
 
-/// Word `w` of the state of lane `lane`.
+// Word `w` of the state of lane `lane`.
+// SHA-1 has practical collisions. Use SHA-256 when collision resistance is required.
 pub function (h: Sha1x8) word(w: i32, lane: i32): u32 {
   return __get_le32(h.state, 4 * (8 * w + lane));
 }

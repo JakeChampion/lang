@@ -130,6 +130,12 @@ def load_word(i, bpw, big_endian, ty, width):
     return " | ".join(parts)
 
 
+def emit_collision_warning(p, tag):
+    algorithm = {"md5": "MD5", "sha1": "SHA-1"}.get(tag)
+    if algorithm:
+        p(f"// {algorithm} has practical collisions. Use SHA-256 when collision resistance is required.")
+
+
 def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endian, ivs, rounds_body, doc, hw=False):
     """Everything but the block function's round body: struct, constructors,
     absorb, update, finish and the one-shot wrappers. `ivs` maps a constructor
@@ -139,6 +145,7 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
     zero = "0" if width == 32 else "(0 as u64)"
     p(f"// === {doc} ===")
     p("")
+    emit_collision_warning(p, tag)
     p(f"pub struct {struct} {{")
     for i in range(nwords):
         p(f"    h{i}: {ty},")
@@ -150,6 +157,7 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
     p("}")
     p("")
     for name, (iv, out_len) in ivs.items():
+        emit_collision_warning(p, tag)
         p(f"pub function {name}(): {struct} {{")
         fields = ", ".join(f"h{i}: {const(v, width)}" for i, v in enumerate(iv))
         p(f"    return {struct} {{ {fields},")
@@ -198,6 +206,7 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
     p("// The padded last block holds the tail of the message, so it is zeroed")
     p("// before its release. The state's own buffer holds the same tail until the")
     p("// state is dropped.")
+    emit_collision_warning(p, tag)
     p(f"pub function (h: {struct}) finish(): u8[] {{")
     p("    let bl = h.buf_len;")
     p(f"    let plen = {block};")
@@ -227,6 +236,7 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
     for name in ivs:
         base = name[: -len("_new")]
         p(f"// {base} calculates the digest of `s`.")
+        emit_collision_warning(p, tag)
         p(f"pub function {base}(s: [u8]): u8[] {{")
         p(f"    let last = {name}().update(s);")
         p(f"    return __{tag}_last(last);")
@@ -263,6 +273,7 @@ def emit_hw_blocks(p, tag, struct, nwords, block):
 
 def emit_update(p, struct, tag):
     p("// Use the returned state for the next update.")
+    emit_collision_warning(p, tag)
     p(f"pub function (h: {struct}) update(chunk: [u8]): {struct} {{")
     p(f"    h = __{tag}_absorb(h, chunk);")
     p("    return h;")
