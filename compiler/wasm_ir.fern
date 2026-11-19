@@ -9251,10 +9251,10 @@ function alloc_body_name(h: WasmHeap): string {
   return "__fern_alloc";
 }
 
-// Under -sanitize each block carries a redzone: the 16 bytes after the end
-// of its size class hold the poison pattern from its allocation to its
-// release. A block grows in place only inside its class, so the end of the
-// class does not move. $__fern_san_class gives the bytes of the class of a
+// Under -sanitize each block carries a redzone: the bytes of its size class
+// past the request and the 16 bytes after the class hold the poison pattern
+// from its allocation to its release. A block grows in place only inside its
+// class, so the end of the class does not move. $__fern_san_class gives the bytes of the class of a
 // request, as the allocator rounds it. The census counts the request alone.
 function san_redzone_funcs(h: WasmHeap, flc: string): string {
   let o = "  (func $__fern_san_class (param $n i32) (result i32)\n";
@@ -9274,6 +9274,7 @@ function san_redzone_funcs(h: WasmHeap, flc: string): string {
   }
   o = o + "    (i64.store (i32.add (local.get $p) (local.get $c)) (i64.const " + san_poison64() + "))\n";
   o = o + "    (i64.store (i32.add (i32.add (local.get $p) (local.get $c)) (i32.const 8)) (i64.const " + san_poison64() + "))\n";
+  o += "    (call $__fern_san_fill (i32.add (local.get $p) (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8))) (i32.sub (local.get $c) (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8))))\n";
   o += "    (local.get $p))\n";
   // A fresh raw block holds the poison pattern, so a read of a byte that the
   // program never wrote gives the same value on each run.
@@ -9344,6 +9345,12 @@ function quarantine_funcs(h: WasmHeap, flb: string, flc: string): string {
   o += "  (func $__fern_quar (param $base i32) (param $bytes i32)\n";
   o += "    (local $e i32) (local $n i32) (local $cls i32) (local $c i32)\n";
   o += "    (local.set $c (call $__fern_san_class (local.get $bytes)))\n";
+  o += "    (local.set $e (i32.add (local.get $base) (i32.and (i32.add (local.get $bytes) (i32.const 7)) (i32.const -8))))\n";
+  o += "    (block $qs_ok (loop $qs\n";
+  o += "      (br_if $qs_ok (i32.ge_u (local.get $e) (i32.add (local.get $base) (local.get $c))))\n";
+  o = o + "      (if (i64.ne (i64.load (local.get $e)) (i64.const " + san_poison64() + ")) (then (call $__fern_san_hbo)))\n";
+  o += "      (local.set $e (i32.add (local.get $e) (i32.const 8)))\n";
+  o += "      (br $qs)))\n";
   o = o + "    (if (i32.or (i64.ne (i64.load (i32.add (local.get $base) (local.get $c))) (i64.const " + san_poison64() + ")) (i64.ne (i64.load (i32.add (i32.add (local.get $base) (local.get $c)) (i32.const 8))) (i64.const " + san_poison64() + "))) (then (call $__fern_san_hbo)))\n";
   o += "    (local.set $bytes (i32.add (local.get $c) (i32.const 16)))\n";
   o = o + "    (i32.store (local.get $base) (i32.const " + san_poison() + "))\n";

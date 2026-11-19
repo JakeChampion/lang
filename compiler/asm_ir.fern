@@ -353,10 +353,10 @@ function emit_raw_alloc_san(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    movq %rdx, (%rax,%rcx)\n    addq $8, %rcx\n    jmp .Lraw_san_fill\n.Lraw_san_filled:\n    popq %rcx\n    ret\n");
 }
 
-// Under -sanitize each block carries a redzone: the two words after the end
-// of its size class hold the poison pattern from its allocation to its
-// release. A block grows in place only inside its class, so the end of the
-// class does not move.
+// Under -sanitize each block carries a redzone: the words of its size class
+// past the request and the two words after the class hold the poison pattern
+// from its allocation to its release. A block grows in place only inside its
+// class, so the end of the class does not move.
 function san_redzone_on(s: asmcore.EmitState): boolean {
   return s.sanitize;
 }
@@ -370,19 +370,23 @@ function emit_san_class(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // The allocation side of the redzone: %rdi is the request in bytes. The
-// block takes its class and two words more, and the two words get the poison.
+// block takes its class and two words more. The two words and the words of
+// the class past the request get the poison.
 function san_redzone_alloc(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    pushq %rsi\n    leaq 7(%rdi), %rsi\n    shrq $3, %rsi\n    call __fern_san_class\n    pushq %rsi\n    leaq 16(,%rsi,8), %rdi\n");
-  s = s.write("    call __fern_alloc_inner\n    popq %rsi\n    pushq %rdx\n    movabs $" + rc_poison64() + ", %rdx\n");
-  return s.write("    movq %rdx, (%rax,%rsi,8)\n    movq %rdx, 8(%rax,%rsi,8)\n    popq %rdx\n    popq %rsi\n");
+  s = s.write("    pushq %rsi\n    leaq 7(%rdi), %rsi\n    shrq $3, %rsi\n    pushq %rsi\n    call __fern_san_class\n    pushq %rsi\n    leaq 16(,%rsi,8), %rdi\n");
+  s = s.write("    call __fern_alloc_inner\n    popq %rsi\n    pushq %rdx\n    pushq %rcx\n    movabs $" + rc_poison64() + ", %rdx\n");
+  s = s.write("    movq %rdx, (%rax,%rsi,8)\n    movq %rdx, 8(%rax,%rsi,8)\n    movq 16(%rsp), %rcx\n");
+  s = s.write(".Lsan_slack_fill:\n    cmpq %rsi, %rcx\n    jae .Lsan_slack_filled\n    movq %rdx, (%rax,%rcx,8)\n    incq %rcx\n    jmp .Lsan_slack_fill\n.Lsan_slack_filled:\n");
+  return s.write("    popq %rcx\n    popq %rdx\n    addq $8, %rsp\n    popq %rsi\n");
 }
 
-// The release side: %rdi is the block and %rsi its size in words. A word that
-// lost the pattern was written past the end of the block. %rsi then holds
+// The release side: %rdi is the block and %rsi its size in words. A word
+// past the request that lost the pattern was written past the end of the block. %rsi then holds
 // the words of the whole block, the redzone too, so that the quarantine
 // hands the block to the free list that the allocation takes from.
 function san_redzone_check(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    testq %rsi, %rsi\n    jz .Lquar_redzone_ok\n    pushq %r8\n    call __fern_san_class\n    movabs $" + rc_poison64() + ", %r8\n");
+  s = s.write("    testq %rsi, %rsi\n    jz .Lquar_redzone_ok\n    pushq %r8\n    pushq %rcx\n    movq %rsi, %rcx\n    call __fern_san_class\n    movabs $" + rc_poison64() + ", %r8\n");
+  s = s.write(".Lquar_slack:\n    cmpq %rsi, %rcx\n    jae .Lquar_slack_ok\n    cmpq %r8, (%rdi,%rcx,8)\n    jne __fern_san_abort_hbo\n    incq %rcx\n    jmp .Lquar_slack\n.Lquar_slack_ok:\n    popq %rcx\n");
   s = s.write("    cmpq %r8, (%rdi,%rsi,8)\n    jne __fern_san_abort_hbo\n    cmpq %r8, 8(%rdi,%rsi,8)\n    jne __fern_san_abort_hbo\n");
   return s.write("    addq $2, %rsi\n    popq %r8\n.Lquar_redzone_ok:\n");
 }

@@ -72,9 +72,11 @@ A block that the quarantine has already evicted to a free list is not found.
 
 Under `-sanitize` each block also carries a redzone.
 `__fern_alloc` takes the size class of the request and two words more, and fills the two words after the end of the class with the poison pattern.
-`__fern_quar_push` reads the two words at each release, and a word that lost the pattern aborts with `fern-sanitizer: heap-buffer-overflow (a block was written past its end)`, status 124.
+Above 256 words a class is larger than its request, and the words of the class past the request get the pattern too.
+`__fern_quar_push` reads those words at each release, and a word that lost the pattern aborts with `fern-sanitizer: heap-buffer-overflow (a block was written past its end)`, status 124.
 The release build keeps the plain block.
-The `redzone` case of `TestSelfHostQuarantinePolicy` pins the report for a raw block: a write one byte past the block, at the last byte of the redzone and at the first byte past the rounded size of a 13-byte block, and a clean census for a write at the last byte of the block.
+The `redzone` case of `TestSelfHostQuarantinePolicy` pins the report for a raw block: a write one byte past the block, at the last byte of the redzone, at the first byte past the rounded size of a 13-byte block, and past the request of a 3000-byte block inside its class.
+It pins a clean run for a write at the last byte of a block.
 `TestSanitizeTypedBoxOverflowReported` pins the same report for a byte array.
 
 A block of one or two words has no room for the quarantine's three words, so the free keeps it out of every list.
