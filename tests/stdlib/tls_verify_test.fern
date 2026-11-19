@@ -190,6 +190,10 @@ function test_names(): test.TestOutcome {
   }
   match (x509.parse(ec_leaf())) {
     Ok(leaf) => {
+      let empty_names = x509.Certificate { ...leaf, dns_names: ["", "."] };
+      if (verify.matches_name(empty_names, "") || verify.matches_name(empty_names, ".")) {
+        return test.fail("an empty reference name matched a DNS alternative name");
+      }
       let good: string[] = ["example.com", "EXAMPLE.com.", "a.example.org", "192.0.2.1"];
       for n in good {
         if (!verify.matches_name(leaf, n)) {

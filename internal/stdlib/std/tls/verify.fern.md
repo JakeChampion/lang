@@ -970,6 +970,9 @@ function __normal(name: string): string {
 }
 
 function __dns_match(patterns: string[], name: string): boolean {
+  if (name.len() == 0) {
+    return false;
+  }
   for p in patterns {
     let pat = __normal(p);
     if (pat == name) {
