@@ -685,7 +685,10 @@ pointer that flows through the program points past the header.
   targets the test of the variant compares the value with the address of the
   box and loads no tag (`ir.op_static_variant_is`). When each other value of
   the enum is one such box, the test of the variant that has fields is the
-  inverse of that compare (`ssarc.variant_test`). wasm32 loads the shape.
+  inverse of that compare (`ssarc.variant_test`). The static box of such an
+  enum has a mark (`ssa.PAIRED_BOX`), and a value that is not that box has the
+  shape of the other variant. The reuse pass reads this as the proof of the
+  shape of a token (`ssatokenkeep.proves_shape`). wasm32 loads the shape.
 - On a native target the **narrow fields of a variant share one word** when
   two or more of them fit in 64 bits (`semsource.packing`). A narrow field is
   a boolean, a `u8`, an `i32`, a `u32` or such an enum. The fields of one

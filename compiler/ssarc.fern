@@ -4488,12 +4488,15 @@ function variant(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, str
 // with no field is a static box, so its test compares addresses. When each
 // other value of `t` is one such box, the test of `name` is the inverse.
 function variant_test(own r: irtables.LowerState, f: ssasem.Func, t: typeinfo.Type, name: string): irtables.LowerState {
+  let other = sole_other_variant(f, t, name);
   if (ssaunits.empty_variant(f, t, name)) {
+    if (other != "") {
+      return emit(r, ir.op_paired_variant_is(member_shape(f, t, name)));
+    }
     return emit(r, ir.op_static_variant_is(member_shape(f, t, name)));
   }
-  let other = sole_other_variant(f, t, name);
   if (other != "" && ssaunits.empty_variant(f, t, other)) {
-    r = emit(r, ir.op_static_variant_is(member_shape(f, t, other)));
+    r = emit(r, ir.op_paired_variant_is(member_shape(f, t, other)));
     return emit(r, ir.op_bin("not", 0, false));
   }
   return emit(r, ir.op_variant_is(member_shape(f, t, name)));

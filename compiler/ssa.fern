@@ -108,6 +108,10 @@ pub const CALL_IND: i32 = 56;
 
 pub const AGG_LIT: i32 = 57;
 
+// The imm of an AGG_LIT that is the static box of a variant with no field,
+// in an enum that has one other inhabited variant.
+pub const PAIRED_BOX: i32 = 1;
+
 pub const SYM_ADDR: i32 = 58;
 
 pub const FLAT_OP: i32 = 59;

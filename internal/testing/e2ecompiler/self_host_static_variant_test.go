@@ -24,6 +24,10 @@ enum Shape { Dot, Line(i32), Blank }
     return acc;
 }
 
+@noinline function bump(xs: List): List {
+    return match (xs) { Cons(h, t) => Cons(h + 1, bump(t)), Nil => Nil };
+}
+
 @noinline function weight(s: Shape): i32 {
     return match (s) { Dot => 1, Line(n) => n, Blank => 100 };
 }
@@ -35,7 +39,7 @@ enum Shape { Dot, Line(i32), Blank }
 }
 
 function main(): i32 {
-    let total: i32 = length(build(7), 0) + length(Nil, 0);
+    let total: i32 = length(bump(build(7)), 0) + length(Nil, 0);
     let i: i32 = 0;
     while (i < 3) { total = total + weight(pick(i)); i = i + 1; }
     return total;
@@ -76,6 +80,11 @@ func TestSelfHostStaticVariantTestComparesAddresses(t *testing.T) {
 		}
 		if !strings.Contains(fn, ".Kv") {
 			t.Errorf("%s: length does not compare with a static box:\n%s", tg.target, fn)
+		}
+		// A value that is not Nil is a Cons, so the cell that bump takes over
+		// needs no test of its shape and no call of the allocator.
+		if bump := functionListing(string(asm), "__fn_bump"); bump == "" || strings.Contains(bump, "__fern_alloc_reuse") {
+			t.Errorf("%s: bump tests the shape of the cell that it takes over:\n%s", tg.target, bump)
 		}
 		bin := filepath.Join(dir, "static_variant-"+tg.target)
 		h.compileWith(t, tg, src, bin)
