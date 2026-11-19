@@ -113,6 +113,10 @@ pub struct View {
   account: string,
   server_name: string,
   quality: string,
+  // The language of the tracks and the mode of the subtitles, as the
+  // settings show them.
+  language: string,
+  subtitles: string,
   player: PlayerView,
   base: plex.Base,
   loading: boolean,
@@ -128,7 +132,7 @@ pub function english(): i18n.Strings {
 }
 
 pub function empty_view(w: i32, h: i32): View {
-  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, saved: [], saved_done: 0, saved_total: 0, now_playing: "", users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", offline: false, servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english(), local: false };
+  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, saved: [], saved_done: 0, saved_total: 0, now_playing: "", users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", offline: false, servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", language: "", subtitles: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english(), local: false };
 }
 
 // --- metrics
@@ -963,6 +967,8 @@ function settings(m: Metrics, v: View): scene.Node[] {
     (tr(m, "User"), v.account, "users"),
     (tr(m, "Server"), v.server_name, "servers"),
     (tr(m, "Quality"), v.quality, "quality"),
+    (tr(m, "Language"), v.language, "lang"),
+    (tr(m, "Subtitles"), v.subtitles, "subs"),
     (tr(m, "Downloads"), m.texts.format("{0} of {1} done", [v.saved_done.to_string(), v.saved_total.to_string()]), "downloads"),
     (tr(m, "Sign out"), "", "signout"),
   ];

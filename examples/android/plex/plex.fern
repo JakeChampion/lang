@@ -209,7 +209,9 @@ pub function parse_pin(body: string): Option[Pin] {
   return Some(Pin { id: id, code: str(d, r, "code"), token: str(d, r, "authToken") });
 }
 
-pub struct Account { name: string, email: string }
+// The account at plex.tv. `language` is the default language of its sound,
+// and `subtitles` is the mode of its subtitles, one of SUBS_*, or -1.
+pub struct Account { name: string, email: string, language: string, subtitles: i32 }
 
 pub function user_request(c: Client): Request {
   return get(c, PLEX_TV + "/api/v2/user");
@@ -256,7 +258,7 @@ pub function parse_switch(body: string): string {
 
 pub function parse_account(body: string): Account {
   let Ok(d) = json.parse_document(body) else {
-    return Account { name: "", email: "" };
+    return Account { name: "", email: "", language: "", subtitles: -1 };
   };
   let r = d.root();
   let name = str(d, r, "friendlyName");
@@ -266,7 +268,19 @@ pub function parse_account(body: string): Account {
   if (name.len() == 0) {
     name = str(d, r, "title");
   }
-  return Account { name: name, email: str(d, r, "email") };
+  let language = "";
+  let subtitles = -1;
+  if let Some(profile) = d.get(r, "profile") {
+    language = str(d, profile, "defaultAudioLanguage");
+    if let Some(mode) = d.get(profile, "autoSelectSubtitle") {
+      if let Some(m) = d.as_i64(mode) {
+        if (m >= 0i64 && m <= 2i64) {
+          subtitles = m as i32;
+        }
+      }
+    }
+  }
+  return Account { name: name, email: str(d, r, "email"), language: language, subtitles: subtitles };
 }
 
 // --- plex.tv: the servers of the account
@@ -583,8 +597,9 @@ pub function parse_sections(body: string): Section[] {
 // The file of a version of an item. `key` is its address on the server.
 // A sound or subtitle track of a file. `kind` is 2 for sound and 3 for
 // subtitles. `selected` is true for the track that the server remembers,
-// and `external` is true for a subtitle file beside the video.
-pub struct Track { id: string, kind: i32, title: string, language: string, codec: string, selected: boolean, external: boolean, key: string }
+// and `external` is true for a subtitle file beside the video. A `forced`
+// subtitle track has only the lines in a foreign language.
+pub struct Track { id: string, kind: i32, title: string, language: string, codec: string, selected: boolean, external: boolean, key: string, forced: boolean }
 
 // A file of a version of an item. `indexes` is "sd" when the server holds
 // preview thumbnails of it.
@@ -1283,7 +1298,7 @@ function tracks_of(d: json.Document, n: i32): Track[] {
       if (title.len() == 0) {
         title = str(d, t, "language");
       }
-      out = out.append(Track { id: int(d, t, "id").to_string(), kind: kind, title: title, language: str(d, t, "languageCode"), codec: str(d, t, "codec"), selected: flag(d, t, "selected"), external: str(d, t, "key").len() > 0, key: str(d, t, "key") });
+      out = out.append(Track { id: int(d, t, "id").to_string(), kind: kind, title: title, language: str(d, t, "languageCode"), codec: str(d, t, "codec"), selected: flag(d, t, "selected"), external: str(d, t, "key").len() > 0, key: str(d, t, "key"), forced: flag(d, t, "forced") });
     }
   }
   return out;
@@ -1327,6 +1342,107 @@ pub function no_choice(): Choice {
 // The choice that the server remembers for an item.
 pub function remembered(it: Item): Choice {
   return Choice { audio: selected_id(audio_tracks(it)), subtitle: selected_id(subtitle_tracks(it)) };
+}
+
+// A language that the settings offer: its two-letter code, the codes that
+// a server gives a track in it, and its own name.
+pub struct Language { code: string, codes: string[], name: string }
+
+pub function languages(): Language[] {
+  return [
+    Language { code: "en", codes: ["eng"], name: "English" },
+    Language { code: "fr", codes: ["fra", "fre"], name: "Français" },
+    Language { code: "de", codes: ["deu", "ger"], name: "Deutsch" },
+    Language { code: "es", codes: ["spa"], name: "Español" },
+    Language { code: "it", codes: ["ita"], name: "Italiano" },
+    Language { code: "pt", codes: ["por"], name: "Português" },
+    Language { code: "nl", codes: ["nld", "dut"], name: "Nederlands" },
+    Language { code: "sv", codes: ["swe"], name: "Svenska" },
+    Language { code: "da", codes: ["dan"], name: "Dansk" },
+    Language { code: "no", codes: ["nor", "nob", "nno"], name: "Norsk" },
+    Language { code: "fi", codes: ["fin"], name: "Suomi" },
+    Language { code: "pl", codes: ["pol"], name: "Polski" },
+    Language { code: "ru", codes: ["rus"], name: "Русский" },
+    Language { code: "ja", codes: ["jpn"], name: "日本語" },
+    Language { code: "ko", codes: ["kor"], name: "한국어" },
+    Language { code: "zh", codes: ["zho", "chi"], name: "中文" },
+  ];
+}
+
+// The two-letter code of a language code such as "en-GB" or "eng", or ""
+// for a language that the settings do not offer.
+pub function language_code(code: string): string {
+  let short = code.split("-")[0].to_ascii_lower();
+  for l in languages() {
+    if (l.code == short || l.codes.contains(short)) {
+      return l.code;
+    }
+  }
+  return "";
+}
+
+// The name of the language with the two-letter code `code`, or "".
+pub function language_name(code: string): string {
+  for l in languages() {
+    if (l.code == code) {
+      return l.name;
+    }
+  }
+  return "";
+}
+
+pub function speaks(t: Track, code: string): boolean {
+  return code.len() > 0 && language_code(t.language) == code;
+}
+
+// The modes of the subtitles: none, only while the sound is in another
+// language than the one of the settings, and always.
+pub const SUBS_OFF: i32 = 0;
+
+pub const SUBS_FOREIGN: i32 = 1;
+
+pub const SUBS_ALWAYS: i32 = 2;
+
+// The tracks for the language `lang`, a two-letter code, with the
+// subtitles of the mode `subs`. The sound is the track that the server
+// remembers when it is in `lang`, else the first track in `lang` that is
+// no commentary. A subtitle in `lang` shows always, or in SUBS_FOREIGN
+// while the sound is in another language. Otherwise a forced subtitle in
+// `lang` shows the lines in a foreign language. A wanted subtitle with
+// none in `lang` is the one that the server remembers. With no track in
+// `lang`, the choice is the one that the server remembers.
+pub function preferred(it: Item, lang: string, subs: i32): Choice {
+  let base = remembered(it);
+  let sounds = audio_tracks(it);
+  let texts = subtitle_tracks(it).filter((t: Track): boolean => speaks(t, lang));
+  if (!sounds.any((t: Track): boolean => speaks(t, lang)) && texts.len() == 0) {
+    return base;
+  }
+  let audio = base.audio;
+  if (!sounds.any((t: Track): boolean => t.id == audio && speaks(t, lang))) {
+    let in_lang = sounds.filter((t: Track): boolean => speaks(t, lang));
+    let plain = in_lang.filter((t: Track): boolean => !t.title.to_ascii_lower().contains("comment"));
+    if (plain.len() > 0) {
+      audio = plain[0].id;
+    } else if (in_lang.len() > 0) {
+      audio = in_lang[0].id;
+    }
+  }
+  let heard = sounds.any((t: Track): boolean => t.id == audio && speaks(t, lang));
+  let full = texts.filter((t: Track): boolean => !t.forced);
+  let forced = texts.filter((t: Track): boolean => t.forced);
+  let sub = "";
+  if (subs == SUBS_ALWAYS || subs == SUBS_FOREIGN && !heard) {
+    sub = base.subtitle;
+    if (full.len() > 0) {
+      sub = full[0].id;
+    } else if (forced.len() > 0) {
+      sub = forced[0].id;
+    }
+  } else if (forced.len() > 0) {
+    sub = forced[0].id;
+  }
+  return Choice { audio: audio, subtitle: sub };
 }
 
 // Makes the server remember a choice for each part of the item. A

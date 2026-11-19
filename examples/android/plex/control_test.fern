@@ -59,6 +59,10 @@ const EPISODES: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"50
 // The movie of the second poster: the movie above, with an intro marker.
 const INTRO: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Marker\":[{\"type\":\"intro\",\"startTimeOffset\":50000,\"endTimeOffset\":130000}],\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS)\"},{\"id\":33,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT External)\",\"key\":\"/library/streams/33\"}]}]}]}]}}";
 
+// A film whose server remembers the French sound and the French subtitles.
+// It has an English sound and English forced subtitles too.
+const FRENCH: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"504\",\"type\":\"movie\",\"title\":\"Amélie\",\"duration\":7320000,\"Media\":[{\"container\":\"mkv\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":14,\"key\":\"/library/parts/14/file.mkv\",\"Stream\":[{\"id\":40,\"streamType\":1,\"codec\":\"h264\"},{\"id\":41,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Français (AAC Stereo)\",\"languageCode\":\"fra\",\"selected\":true},{\"id\":43,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"languageCode\":\"eng\"},{\"id\":51,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English Forced (SRT External)\",\"languageCode\":\"eng\",\"forced\":true,\"key\":\"/library/streams/51\"},{\"id\":53,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"Français (SRT External)\",\"languageCode\":\"fra\",\"selected\":true,\"key\":\"/library/streams/53\"}]}]}]}]}}";
+
 // A page of a library of 63 movies from `start`.
 // A page of the movie library of 400 items, from `start`.
 function page(start: i32): string {
@@ -112,7 +116,10 @@ function reply_to(r: plex.Request, sound: string): plex.Reply {
     return ok("{\"id\":1,\"users\":[{\"uuid\":\"ada\",\"title\":\"Ada\",\"admin\":true},{\"uuid\":\"kid\",\"title\":\"Kid\",\"protected\":true},{\"uuid\":\"guest\",\"title\":\"Guest\"}]}");
   }
   if (u.contains("/api/v2/user")) {
-    return ok("{\"friendlyName\":\"Ada\"}");
+    if (r.headers.any((h: (string, string)): boolean => h.0 == "X-Plex-Token" && h.1 == "kid-tok")) {
+      return ok("{\"friendlyName\":\"Kid\",\"profile\":{\"defaultAudioLanguage\":\"de\",\"autoSelectSubtitle\":2}}");
+    }
+    return ok("{\"friendlyName\":\"Ada\",\"profile\":{\"defaultAudioLanguage\":\"fr\",\"autoSelectSubtitle\":1}}");
   }
   if (u.contains("/api/v2/resources")) {
     return ok(RESOURCES);
@@ -158,6 +165,15 @@ function reply_to(r: plex.Request, sound: string): plex.Reply {
   }
   if (u.contains("/library/metadata/701")) {
     return ok(ALBUM);
+  }
+  if (u.contains("/library/metadata/504")) {
+    return ok(FRENCH);
+  }
+  if (r.method == "PUT" && u.contains("/library/parts/14?")) {
+    return ok("");
+  }
+  if (u.contains("/library/streams/51")) {
+    return ok("1\n00:00:01,000 --> 00:00:03,000\nBonjour means hello\n");
   }
   if (u.contains("/library/metadata/503")) {
     return ok(CREDITS);
@@ -497,7 +513,7 @@ function test_sign_in_reaches_home(): test.TestOutcome {
   if (control.setting(settings, "token") != "tok-1" || control.setting(settings, "server_uri") != "https://up.example:32400") {
     return test.fail("settings: " + settings);
   }
-  return test.assert_eq(control.setting(settings, "account"), "Ada");
+  return test.assert_eq(control.setting(settings, "account") + " " + control.setting(settings, "account_lang") + " " + control.setting(settings, "account_subs"), "Ada fr 1");
 }
 
 function test_saved_server_opens_home(): test.TestOutcome {
@@ -621,7 +637,8 @@ function test_switch_home_user(): test.TestOutcome {
   if (done.client.token != "kid-tok" || done.account != "Kid" || done.screen != ui.HOME) {
     return test.fail("the right PIN did not switch: " + done.client.token + " " + done.account + " " + done.screen.to_string());
   }
-  return test.assert_eq(file_of(log, "/data/settings").contains("token=kid-tok").to_string(), "true");
+  let settings = file_of(log, "/data/settings");
+  return test.assert_eq(control.setting(settings, "token") + " " + control.setting(settings, "account_lang") + " " + control.setting(settings, "account_subs"), "kid-tok de 2");
 }
 
 // A track plays on when the app goes away, and the media controls of
@@ -2106,6 +2123,76 @@ function test_system_back_is_the_app_back(): test.TestOutcome {
   return test.assert_eq(has_call(log, "finish").to_string(), "true");
 }
 
+// The phone speaks English, so a film whose server remembers the French
+// sound plays the English one, with the English forced subtitles. A file
+// that plays as it is takes the choice in the player, with no word to the
+// server.
+function test_language_picks_the_tracks(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let s = at(control.new(fake(log, 0i64, f), "/data", "https://up.example:32400", "srv", "504"), log, 0i64, f, android.Start);
+  let t = settle(at(s, log, 0i64, f, android.WindowCreated(android.Window { ptr: 1 as usize })), log, 0i64, f);
+  let ready = settle(at(t, log, 100i64, f, android.Posted(19, 0 as usize)), log, 100i64, f);
+  if (!has_call(log, "play https://up.example:32400/library/parts/14/file.mkv") || has_url(log, "PUT ")) {
+    return test.fail("the file did not play as it is: " + log.urls.get().join(" | "));
+  }
+  if (!has_call(log, "track 2") || !has_url(log, "/library/streams/51")) {
+    return test.fail("the English tracks did not play: " + log.calls.get().join(" | "));
+  }
+  if (ready.play.choice.audio + "/" + ready.play.choice.subtitle != "43/51" || ready.play.cues.len() != 1) {
+    return test.fail("the choice was " + ready.play.choice.audio + "/" + ready.play.choice.subtitle);
+  }
+  // A choice on the sheet holds for the item over the language.
+  let sheet = tap(tap(ready, log, 200i64, f, "overlay"), log, 300i64, f, "tracks");
+  let french = settle(tap(sheet, log, 400i64, f, "audio:41"), log, 450i64, f);
+  return test.assert_eq(control.setting(file_of(log, "/data/settings"), "picked") + " " + french.play.choice.audio, french.play.item.key + " 41");
+}
+
+// A transcode plays the tracks that the server remembers, so a film whose
+// server remembers the French sound starts once the server has the English
+// sound.
+function test_language_holds_a_transcode(): test.TestOutcome {
+  let log = new_log();
+  log.decoders.set(["video/avc"]);
+  let f = frame();
+  defer free_frame(f);
+  let s = at(control.new(fake(log, 0i64, f), "/data", "https://up.example:32400", "srv", "504"), log, 0i64, f, android.Start);
+  let t = at(s, log, 0i64, f, android.WindowCreated(android.Window { ptr: 1 as usize }));
+  let waited = false;
+  for i in 0..30 {
+    t = at(t, log, 0i64, f, android.Tick);
+    if (t.play.held && count_plays(log) == 0) {
+      waited = true;
+    }
+  }
+  let put = has_url(log, "PUT https://up.example:32400/library/parts/14?audioStreamID=43&subtitleStreamID=51&allParts=1");
+  return test.assert_eq(waited.to_string() + " " + put.to_string() + " " + count_plays(log).to_string() + " " + t.play.stream.transcode.to_string() + " " + t.play.held.to_string() + " " + t.play.choice.audio, "true true 1 true false 43");
+}
+
+// The Language row of the settings goes from the automatic language to
+// each language, and the Subtitles row from the automatic mode through
+// each mode. Both stay in the settings.
+function test_language_settings(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let settings = tap(home, log, 100i64, f, "tab:3");
+  if (!says(settings, "Auto (English)") || !says(settings, "Auto (Foreign sound)")) {
+    return test.fail("the settings do not show the automatic choices: " + settings.nodes.map((n: scene.Node): string => n.say).join("|"));
+  }
+  let french = tap(tap(settings, log, 200i64, f, "lang"), log, 300i64, f, "lang");
+  let always = tap(tap(tap(french, log, 400i64, f, "subs"), log, 500i64, f, "subs"), log, 600i64, f, "subs");
+  if (!says(always, "Français") || !says(always, "Always")) {
+    return test.fail("the rows do not show the new choices");
+  }
+  let saved = file_of(log, "/data/settings");
+  let words = control.setting(saved, "lang") + " " + control.setting(saved, "subs") + " " + control.language(always) + " " + control.subtitle_mode(always).to_string();
+  let back = tap(always, log, 700i64, f, "subs");
+  return test.assert_eq(words + " " + back.subs.to_string(), "fr 2 fr 2 -1");
+}
+
 function test_link_plays_an_item(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -2222,6 +2309,9 @@ function main(): i32 {
   let r = test.new("plex control");
   r = r.it("a sign-in with a PIN reaches the home screen", test_sign_in_reaches_home);
   r = r.it("a saved server opens the home screen", test_saved_server_opens_home);
+  r = r.it("the language of the phone picks the sound and the subtitles", test_language_picks_the_tracks);
+  r = r.it("a transcode in another language waits for the server to take it", test_language_holds_a_transcode);
+  r = r.it("the settings choose the language and the mode of the subtitles", test_language_settings);
   r = r.it("a saved address that fails moves to one that answers", test_saved_server_moves_to_working_address);
   r = r.it("a saved address that works stays, with no reload", test_saved_server_recheck_is_quiet);
   r = r.it("an item resumes, pauses and stops", test_play_pause_and_stop);
