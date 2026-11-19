@@ -2,8 +2,10 @@ package sourcelint
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -35,6 +37,35 @@ func TestUnitLaneCoversEveryNonSlowPackage(t *testing.T) {
 		if excluded.MatchString("github.com/jakechampion/lang/internal/testing/" + pkg) {
 			t.Errorf("the unit lane excludes %s without a recursive suite", pkg)
 		}
+	}
+}
+
+func TestSelfHostShardRoutesTestsToTheirPackage(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the self-host shards run on Linux")
+	}
+	src := workflowSource(t, "test-e2e-selfhost.yml")
+	start := strings.Index(src, "SEL_SH=()")
+	end := strings.Index(src, "if [ ${#SEL_SH[@]} -eq 0 ]")
+	if start < 0 || end <= start {
+		t.Fatal("could not find the shard's package selection")
+	}
+
+	// A match at the start of a long list lets grep -q exit before printf
+	// finishes. Under pipefail that used to route the test to the wrong binary.
+	setup := `
+RES_ALL=(TestFirst)
+for ((i=0; i<20000; i++)); do RES_ALL+=("TestResidual$i"); done
+MINE=(TestFirst TestCompiler TestResidual19999)
+`
+	report := `printf '%s\n' "${SEL_SH[*]}" "${SEL_RES[*]}"`
+	cmd := exec.Command("bash", "-euo", "pipefail", "-c", setup+src[start:end]+report)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run the shard selection: %v\n%s", err, out)
+	}
+	if got, want := string(out), "TestCompiler\nTestFirst TestResidual19999\n"; got != want {
+		t.Errorf("test lists by package = %q, want %q", got, want)
 	}
 }
 
