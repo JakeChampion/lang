@@ -1005,7 +1005,7 @@ function cold_caller(saved_free: i32, cold_integer: boolean, pick: i32, cum: i32
 
 // A value spans a call when it is live after one. `crossing` gives that from
 // block liveness. Without it, any call inside the value's interval counts.
-function hard_spans(f: SFunc, cum: i32[], cold: i32[], lo: i32[], hi: i32[], weight: i32[], crossing: boolean[]): boolean[] {
+function hard_spans(f: SFunc, bw: i32[], cum: i32[], cold: i32[], lo: i32[], hi: i32[], weight: i32[], crossing: boolean[]): boolean[] {
   let out = __alloc_bool(f.nvals);
   let exact = crossing.len() == f.nvals;
   if (cold.len() == 0) {
@@ -1014,7 +1014,7 @@ function hard_spans(f: SFunc, cum: i32[], cold: i32[], lo: i32[], hi: i32[], wei
     }
     return out;
   }
-  let cost = cold_call_cost(f, cold);
+  let cost = cold_call_cost(f, cold, bw);
   for v in 0..f.nvals {
     let h: boolean = if (exact) { crossing[v] } else { spans_call(cum, lo[v], hi[v]) };
     if (!h && hi[v] > lo[v] + 1 && lo[v] + 1 < cost.len()) {
@@ -1029,8 +1029,7 @@ function hard_spans(f: SFunc, cum: i32[], cold: i32[], lo: i32[], hi: i32[], wei
   return out;
 }
 
-function cold_call_cost(f: SFunc, cold: i32[]): i32[] {
-  let bw = block_loop_weights(f);
+function cold_call_cost(f: SFunc, cold: i32[], bw: i32[]): i32[] {
   let out: i32[] = [0];
   let total = 0;
   let pos = 0;
@@ -1906,8 +1905,9 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
     cum_all = calls_before(all_calls, total_pos);
   }
   let mates = phi_mates(f, at, def_pos, hi, no_home);
-  let weight = spill_weights(f, at, costs);
-  let hard = hard_spans(f, cum, cold, lo, hi, weight, crossing);
+  let bw = block_loop_weights(f);
+  let weight = spill_weights(f, at, costs, bw);
+  let hard = hard_spans(f, bw, cum, cold, lo, hi, weight, crossing);
   let sole = sole_readers(f);
 
   let sites = ReadSites { start: [], blk: [], pos: [], succ_a: [], succ_b: [], phi_end: [], nparams: f.nparams };
@@ -2366,8 +2366,7 @@ function sole_readers(f: SFunc): i32[] {
   return out;
 }
 
-function spill_weights(f: SFunc, at: i32[], costs: SpillCosts): i32[] {
-  let bw = block_loop_weights(f);
+function spill_weights(f: SFunc, at: i32[], costs: SpillCosts, bw: i32[]): i32[] {
   let w = __alloc_i32(f.nvals);
   for bi in 0..f.blocks.len() {
     let blk = f.blocks[bi];
@@ -2419,7 +2418,7 @@ function kept_for_mate(wanted_by: i32[], reg_of: i32[], holder: i32, v: i32): bo
 // The weight of the reads and the writes of the values that `reg_of` keeps
 // in a frame slot.
 pub function spill_cost(f: SFunc, reg_of: i32[], costs: SpillCosts): i32 {
-  let w = spill_weights(f, block_positions(f), costs);
+  let w = spill_weights(f, block_positions(f), costs, block_loop_weights(f));
   let total = 0;
   for v in 0..f.nvals {
     if (v < reg_of.len() && reg_of[v] <= -2) {
@@ -2794,7 +2793,7 @@ pub function print_alloc(f: SFunc, a: Alloc): string {
 }
 
 pub function print_alloc_costs(f: SFunc, a: Alloc, costs: SpillCosts): string {
-  let w = spill_weights(f, block_positions(f), costs);
+  let w = spill_weights(f, block_positions(f), costs, block_loop_weights(f));
   let cold = cold_blocks(f);
   let out = "";
   let start = 0;
