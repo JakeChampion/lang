@@ -5445,7 +5445,7 @@ function emit_ssa_function_arm64(prepared: ssaprepare.Body, label_name: string, 
 
 // imm, and each constant that only `and`, `or` and `xor` read and that those
 // instructions take as a bitmask immediate. Such a constant gets no register.
-function ssa_logical_imms(f: ssa.SFunc, own imm: ssa.Imms): ssa.Imms {
+function ssa_logical_imms(f: ssa.SFunc, imm: ssa.Imms): ssa.Imms {
   let fit = __alloc_bool(f.nvals);
   let any = false;
   for v in 0..f.nvals {
@@ -5475,13 +5475,13 @@ function ssa_logical_imms(f: ssa.SFunc, own imm: ssa.Imms): ssa.Imms {
       fit = fit.with(t.value, false);
     }
   }
+  let is_imm = imm.is_imm;
   for v in 0..f.nvals {
     if (fit[v]) {
-      let c = imm.value[v];
-      imm = ssa.with_value(imm, v, c);
+      is_imm = is_imm.with(v, true);
     }
   }
-  return imm;
+  return ssa.Imms { ...imm, is_imm: is_imm };
 }
 
 // The immediates, the calls and the registers of `f`.
