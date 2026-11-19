@@ -636,3 +636,14 @@ wasm32/checker.unproved	158
 x86_64/checker.refuted	5190
 x86_64/checker.weakened	233
 x86_64/checker.missed	248
+
+# lane: bootstrap-arm64-linux
+bootstrap/arm64-linux/stage1.wall_s	54
+bootstrap/arm64-linux/stage1.peak_rss_mb	2032
+bootstrap/arm64-linux/stage1.size_bytes	20366824
+bootstrap/arm64-linux/stage2.wall_s	55
+bootstrap/arm64-linux/stage2.peak_rss_mb	2079
+bootstrap/arm64-linux/stage2.size_bytes	21153448
+bootstrap/arm64-linux/stage3.wall_s	54
+bootstrap/arm64-linux/stage3.peak_rss_mb	2079
+bootstrap/arm64-linux/stage3.size_bytes	21153448
