@@ -1373,8 +1373,8 @@ pub function sdk_version(ctx: usize): i32 {
 }
 
 // The directory of the private files of the app, or "" when the activity
-// gives none. Other apps cannot read the files in it. Android copies it to
-// the backups of the user and to a new device: keep secrets in
+// gives none. Other apps cannot read the files in it. Android can back up these files
+// or transfer them to a new device. Keep secrets in
 // `no_backup_dir`.
 pub function data_dir(ctx: usize): string {
   if (detached(ctx)) {
