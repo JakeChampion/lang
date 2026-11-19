@@ -578,7 +578,115 @@ pub function expr_col(e: Expr): i32 {
   }
 }
 
-pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, fn_ret: string, fn_param_types: string }
+// The pattern of a destructuring binding. A plain binding has no binds. A
+// record pattern names the field of each bind in `fields`.
+pub struct Destr { binds: DestrBind[], fields: string[], record: string, at: string, rest_written: boolean, struct_match: boolean, prelude: boolean }
+
+// One bind of a pattern: a name, or a nested tuple pattern in `nested`.
+pub struct DestrBind { name: string, nested: Destr[] }
+
+pub function no_destr(): Destr {
+  return Destr { binds: [], fields: [], record: "", at: "", rest_written: false, struct_match: false, prelude: false };
+}
+
+// A tuple pattern of plain names.
+pub function tuple_destr(names: string[]): Destr {
+  let binds: DestrBind[] = [];
+  for n in names {
+    binds = binds.append(DestrBind { name: n, nested: [] });
+  }
+  return Destr { ...no_destr(), binds: binds };
+}
+
+// The plain names that a pattern binds, nested ones included, in order.
+pub function destr_names(d: Destr): string[] {
+  let out: string[] = [];
+  for b in d.binds {
+    if (b.nested.len() > 0) {
+      for n in destr_names(b.nested[0]) {
+        out = out.append(n);
+      }
+    } else {
+      out = out.append(b.name);
+    }
+  }
+  return out;
+}
+
+pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, fn_ret: string, fn_param_types: string, destr: Destr }
+
+pub function destructures(v: StmtVar): boolean {
+  return v.destr.binds.len() > 0;
+}
+
+// A record pattern names a field for each bind. A tuple pattern names none.
+pub function record_destr(d: Destr): boolean {
+  return d.fields.len() > 0;
+}
+
+// acc with each name that `v` binds, the names of its pattern included. A
+// `_` binds nothing.
+pub function append_var_names(own acc: string[], v: StmtVar): string[] {
+  if (destructures(v)) {
+    return append_destr_names(acc, v.destr);
+  }
+  return append_bound(acc, v.name);
+}
+
+// acc with each name that the loop variable of `f` binds.
+pub function append_for_names(own acc: string[], f: StmtFor): string[] {
+  if (f.destr.binds.len() > 0) {
+    return append_destr_names(acc, f.destr);
+  }
+  return append_bound(acc, f.var_name);
+}
+
+function append_destr_names(own acc: string[], d: Destr): string[] {
+  for b in d.binds {
+    if (b.nested.len() > 0) {
+      acc = append_destr_names(acc, b.nested[0]);
+    } else {
+      acc = append_bound(acc, b.name);
+    }
+  }
+  return acc;
+}
+
+function append_bound(own acc: string[], name: string): string[] {
+  if (name.len() > 0 && name != "_") {
+    return acc.append(name);
+  }
+  return acc;
+}
+
+// The names of d as the source spells them, `a,(b,c)`, for a message.
+pub function destr_text(d: Destr): string {
+  let out = "";
+  for i in 0..d.binds.len() {
+    if (i > 0) {
+      out += ",";
+    }
+    if (d.binds[i].nested.len() > 0) {
+      out += "(" + destr_text(d.binds[i].nested[0]) + ")";
+    } else {
+      out += d.binds[i].name;
+    }
+  }
+  return out;
+}
+
+// d with each name replaced by rename(name).
+pub function rename_destr(d: Destr, rename: (string) => string): Destr {
+  let binds: DestrBind[] = [];
+  for b in d.binds {
+    if (b.nested.len() > 0) {
+      binds = binds.append(DestrBind { name: b.name, nested: [rename_destr(b.nested[0], rename)] });
+    } else {
+      binds = binds.append(DestrBind { name: rename(b.name), nested: [] });
+    }
+  }
+  return Destr { ...d, binds: binds };
+}
 
 pub struct StmtReturn { value: Expr, line: i32, col: i32 }
 
@@ -608,7 +716,7 @@ pub struct MatchArm { pattern: Pattern, body: Stmt[], line: i32, col: i32, guard
 // arms_open is the line of the brace that opens the arms of a value match.
 pub struct StmtMatch { scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, origin: string, sugar: MatchArm[], else_chained: boolean, arms_open: i32 }
 
-pub struct StmtFor { var_name: string, iter: Expr, body: Stmt[], label: string, line: i32, col: i32 }
+pub struct StmtFor { var_name: string, iter: Expr, body: Stmt[], label: string, line: i32, col: i32, destr: Destr }
 
 pub struct StmtBreak { tag: i32, line: i32, col: i32, label: string }
 

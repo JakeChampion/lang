@@ -2622,11 +2622,11 @@ function loop_label(label: string): string {
   return label + ": ";
 }
 
-function for_binder(var_name: string): string {
-  if (!util.contains(var_name, ",")) {
-    return var_name;
+function for_binder(fo: ast.StmtFor): string {
+  if (fo.destr.binds.len() == 0) {
+    return fo.var_name;
   }
-  return "(" + join_csv(var_name) + ")";
+  return "(" + tuple_pattern_text(fo.destr) + ")";
 }
 
 function drop_first_stmt(stmts: ast.Stmt[]): ast.Stmt[] {
@@ -2703,18 +2703,6 @@ function stmt_last_line(st: ast.Stmt, ln: i32, spans: parser.BlockSpans): i32 {
   }
 }
 
-function split_commas(csv: string): string[] {
-  let out: string[] = [];
-  let start = 0;
-  for i in 0..=csv.len() {
-    if (i == csv.len() || csv[i] == b',') {
-      out = out.append(slice_unchecked(csv, start, i).to_owned());
-      start = i + 1;
-    }
-  }
-  return out;
-}
-
 function written_name(name: string): string {
   if (name.starts_with("__discard_")) {
     return "_";
@@ -2722,75 +2710,53 @@ function written_name(name: string): string {
   return name;
 }
 
-function written_part(part: string): string {
-  let lead = 0;
-  while (lead < part.len() && part[lead] == b'(') {
-    lead += 1;
-  }
-  let trail = part.len();
-  while (trail > lead && part[trail - 1] == b')') {
-    trail -= 1;
-  }
-  return slice_unchecked(part, 0, lead) + written_name(slice_unchecked(part, lead, trail).to_owned()) + slice_unchecked(part, trail, part.len());
-}
-
-function join_csv(csv: string): string {
-  let parts = split_commas(csv);
+// The binds of a tuple pattern as the source writes them: `a, (b, c)`.
+function tuple_pattern_text(d: ast.Destr): string {
   let out = "";
-  for i in 0..parts.len() {
+  for i in 0..d.binds.len() {
     if (i > 0) {
       out += ", ";
     }
-    out += written_part(parts[i]);
+    if (d.binds[i].nested.len() > 0) {
+      out += "(" + tuple_pattern_text(d.binds[i].nested[0]) + ")";
+    } else {
+      out += written_name(d.binds[i].name);
+    }
   }
   return out;
 }
 
-function destr_at_prefix(type_name: string): string {
-  let at = parser.destr_marker_split(type_name).at;
-  if (at.len() == 0) {
+function destr_at_prefix(v: ast.StmtVar): string {
+  if (v.destr.at.len() == 0) {
     return "";
   }
-  return at + " @ ";
+  return v.destr.at + " @ ";
 }
 
 function print_struct_destructure(v: ast.StmtVar, depth: i32): string {
-  return "let " + destr_at_prefix(v.type_name) + struct_destr_pattern(v) + " = " + print_expr(v.init, depth) + ";";
+  return "let " + destr_at_prefix(v) + struct_destr_pattern(v) + " = " + print_expr(v.init, depth) + ";";
 }
 
 function struct_destr_pattern(v: ast.StmtVar): string {
-  let sd_marker = parser.destr_marker_split(v.type_name).tag;
-  let rest = slice_unchecked(sd_marker, 4, sd_marker.len());
-  let colon: i32 = -1;
-  for ri in 0..rest.len() {
-    if (rest[ri] == b':' && colon < 0) {
-      colon = ri;
-    }
-  }
-  if (colon < 0) {
-    return "";
-  }
-  let struct_name = slice_unchecked(rest, 0, colon);
-  let fields = split_commas(slice_unchecked(rest, colon + 1, rest.len()));
-  let binds = split_commas(v.name);
-  let out = struct_name + " { ";
+  let fields = v.destr.fields;
+  let out = v.destr.record + " { ";
   for i in 0..fields.len() {
     if (i > 0) {
       out += ", ";
     }
     out += fields[i];
-    if (i < binds.len() && binds[i] != fields[i]) {
-      out = out + ": " + written_name(binds[i]);
+    if (i < v.destr.binds.len() && v.destr.binds[i].name != fields[i]) {
+      out = out + ": " + written_name(v.destr.binds[i].name);
     }
   }
-  out += rest_suffix(parser.destr_marker_split(v.type_name).rest_written, fields.len());
+  out += rest_suffix(v.destr.rest_written, fields.len());
   return out + " }";
 }
 
 function param_pattern_from(st: ast.Stmt, holder: string): string {
   match (st) {
     ast.StmtVar(v) => {
-      if (!parser.is_param_prelude_marker(v.type_name)) {
+      if (!v.destr.prelude) {
         return "";
       }
       let from_holder = false;
@@ -2809,11 +2775,11 @@ function param_pattern_from(st: ast.Stmt, holder: string): string {
       if (!holder.starts_with("__ptuple_")) {
         at = holder + " @ ";
       }
-      if (parser.is_struct_destr_marker(v.type_name)) {
+      if (ast.record_destr(v.destr)) {
         return at + struct_destr_pattern(v);
       }
-      if (util.contains(v.name, ",")) {
-        return at + "(" + join_csv(v.name) + ")";
+      if (v.destr.binds.len() > 1) {
+        return at + "(" + tuple_pattern_text(v.destr) + ")";
       }
       return "";
     },
@@ -2907,14 +2873,14 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       return ("defer " + act, dg);
     },
     ast.StmtVar(v) => {
-      if (parser.is_struct_destr_marker(v.type_name)) {
+      if (ast.record_destr(v.destr)) {
         return (print_struct_destructure(v, depth), f);
       }
       if (v.type_name == "@fndecl") {
         return print_nested_func_decl(v, depth, f);
       }
-      if (util.contains(v.name, ",")) {
-        return ("let " + destr_at_prefix(v.type_name) + "(" + join_csv(v.name) + ") = " + print_expr(v.init, depth) + ";", f);
+      if (v.destr.binds.len() > 1) {
+        return ("let " + destr_at_prefix(v) + "(" + tuple_pattern_text(v.destr) + ") = " + print_expr(v.init, depth) + ";", f);
       }
       let ann = "";
       if (v.type_name.len() > 0) {
@@ -3007,15 +2973,15 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
     },
     ast.StmtFor(fo) => {
       let fo_body = fo.body;
-      let fo_binder = for_binder(fo.var_name);
+      let fo_binder = for_binder(fo);
       if (fo.var_name.starts_with("$forpat_") && fo.body.len() > 0) {
         match (fo.body[0]) {
           ast.StmtVar(fpv) => {
-            fo_binder = destr_at_prefix(fpv.type_name);
-            if (parser.is_struct_destr_marker(fpv.type_name)) {
+            fo_binder = destr_at_prefix(fpv);
+            if (ast.record_destr(fpv.destr)) {
               fo_binder += struct_destr_pattern(fpv);
             } else {
-              fo_binder = fo_binder + "(" + join_csv(fpv.name) + ")";
+              fo_binder = fo_binder + "(" + tuple_pattern_text(fpv.destr) + ")";
             }
             fo_body = drop_first_stmt(fo.body);
           },
