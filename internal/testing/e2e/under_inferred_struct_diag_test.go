@@ -10,7 +10,7 @@ import (
 )
 
 func TestUnderInferredGenericStructLitIsADiagnostic(t *testing.T) {
-	bin := buildLangBinForCheck(t)
+	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "stack.fern")
 	if err := os.WriteFile(src, []byte(`struct Stack[T] { items: T[] }
