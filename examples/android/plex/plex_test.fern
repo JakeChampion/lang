@@ -186,6 +186,15 @@ function test_hubs(): test.TestOutcome {
   return test.assert_eq(plex.card_title(ep) + "|" + plex.card_subtitle(ep) + "|" + plex.poster(ep), "Lost|S1 E1|/library/metadata/70/thumb/2");
 }
 
+// A download names an episode with its show, its code and its title, so
+// two episodes of one show differ. A movie keeps its title.
+function test_full_titles(): test.TestOutcome {
+  let hubs = plex.parse_hubs(HUBS);
+  let ep = hubs[0].items[0];
+  let film = hubs[1].items[0];
+  return test.assert_eq([plex.full_title(ep), plex.episode_line(ep), plex.full_title(film), plex.episode_line(film)].join("|"), "Lost · S1 E1 · Pilot|S1 E1 · Pilot|Inception|2010");
+}
+
 function test_page_total(): test.TestOutcome {
   let page = plex.parse_items("{\"MediaContainer\":{\"size\":2,\"totalSize\":340,\"offset\":0,\"Metadata\":[{\"ratingKey\":\"1\",\"type\":\"show\",\"title\":\"A\",\"leafCount\":10,\"viewedLeafCount\":10},{\"ratingKey\":\"2\",\"type\":\"show\",\"title\":\"B\",\"leafCount\":10,\"viewedLeafCount\":3}]}}");
   if (page.total != 340 || page.items.len() != 2) {
@@ -478,6 +487,7 @@ function test_markers(): test.TestOutcome {
 function main(): i32 {
   let r = test.new("plex");
   r = r.it("each request names the client", test_headers_name_the_client);
+  r = r.it("a download names the show, the code and the title of an episode", test_full_titles);
   r = r.it("a PIN is read waiting and linked", test_pin_parse);
   r = r.it("servers are read and their connections ordered", test_servers_and_connection_order);
   r = r.it("a private local connection gets a plain HTTP address", test_private_connections_get_http);
