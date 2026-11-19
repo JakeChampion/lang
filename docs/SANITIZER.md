@@ -228,8 +228,9 @@ need a host, because their abort path is a syscall.
 ## wasm: the census, the quarantine and the redzone
 
 The wasm backend carries the **leak census** and the **fill of fresh raw
-blocks**. It also makes the **rc over-release**, **use-after-free** and
-**heap-buffer-overflow** reports, with the texts of the native runtime. It has
+blocks**. It also makes the **rc over-release**, **use-after-free**,
+**write-after-free** and **heap-buffer-overflow** reports, with the texts of
+the native runtime. It has
 no second-context check, because a wasm module has one thread:
 
 ```sh
@@ -246,8 +247,9 @@ Under `-sanitize` the three releases hand the block to `__fern_quar`, a FIFO
 quarantine:
 
 - Word 0 of a released block holds the poison word `0x7EEDFACE`, word 1 its
-  size and word 2 the next block. A block of fewer than 16 bytes has no room
-  for the link. It keeps the poison and is never used again.
+  size and word 2 the next block. Each word after these holds the poison
+  word too. A block of fewer than 16 bytes has no room for the link. It keeps
+  the poison and is never used again.
 - `__fern_rc_inc`, `__fern_rc_dec` and `__fern_arr_dec` report a block whose
   count is the poison word, with `fern-sanitizer: use-after-free`.
 - A count that reaches zero a second time reports
@@ -255,8 +257,11 @@ quarantine:
 - A raw release of a block that is in the quarantine is a double free.
 
 A release past the budget (`-quarantine`, 64 MiB by default) evicts the
-oldest block to its free list. The eviction reports a block whose poison word
-was written. It does not read the payload, as the native eviction does.
+oldest block to its free list. `__fern_quar_check` first reads word 0 and
+each word of the payload. A word that lost the poison reports
+`fern-sanitizer: write-after-free`. At exit, `__fern_quar_scan` gives the same
+check to each block that is still in the quarantine. A read through a stale
+pointer gives the poison pattern, not the old byte.
 
 A core module exits with 124 after a report, as a native program does. A
 component has no exit status but success or failure, so it traps.
@@ -293,7 +298,9 @@ The redzone and the fill follow the native design:
   `__fern_san_fill`. Each fills its bytes with `0x7EEDFACE7EEDFACE`.
 
 `TestSanitizeFillsFreshRawBlocks` and `TestSanitizeTypedBoxOverflowReported`
-run on wasm32 as on the native targets.
+run on wasm32 as on the native targets. `TestWasmSanitizeReportsWriteAfterFree`
+holds the write-after-free reports at eviction and at exit, and the poison
+that a stale read gives.
 
 ## Editing notes
 
