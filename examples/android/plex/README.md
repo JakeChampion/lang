@@ -164,8 +164,17 @@ stops.
 The app draws text subtitles over the video itself, so the
 file plays as it is. These are SubRip, WebVTT, ASS and SSA, in a file beside
 the video or inside it. The server gives the text of a track inside the
-file at the address of its stream. Other subtitles, such as PGS, burn into
-a transcode.
+file at the address of its stream.
+
+The player shows a subtitle of images inside the file, such as PGS,
+VobSub or DVB, so the file plays as it is. ExoPlayer decodes the track,
+and the app draws each image in its place on the video. A subtitle of
+images in a file beside the video burns into a transcode.
+
+The sheet of tracks moves the lines of a text subtitle. Each tap of + shows
+them a tenth of a second later, and each tap of - a tenth earlier. The
+Subtitle size row of the settings sets the size of their text. The
+Subtitle background row puts a dark panel or a shadow behind them.
 
 The app reads the list of the decoders of the phone from Android. The
 player plays the file as it is when the phone decodes its video and its
@@ -212,9 +221,11 @@ the file.
 
 The sheet of tracks of a download lists the tracks of its file. A file as
 it is keeps each of its sound tracks, and a choice prepares the file
-again with the new sound. A transcode keeps only the sound that it played. The download
-also keeps the text of each text subtitle, so subtitles show with no
-server. An image subtitle such as PGS does not show from a file. A
+again with the new sound. A transcode keeps only the sound that it played.
+
+The download also keeps the text of each text subtitle, so subtitles show with no
+server. A file as it is also keeps each subtitle of images inside it, which
+the player shows. A transcode burned its subtitle of images in. A
 choice never stops the file to play a stream of the server.
 
 When no server hears the place where a play stopped, or that an item

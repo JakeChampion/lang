@@ -26,6 +26,7 @@ import "std/rand";
 import "std/worker";
 import "./control";
 import "./plex";
+import "./ui";
 
 pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
   launch.start(activity, app_main_entry());
@@ -44,6 +45,11 @@ pub function on_message(env: usize, thiz: usize, msg: usize): u8 {
 @jni("dev.fern.plex.Exo", "void onEvents(androidx.media3.common.Player, androidx.media3.common.Player$Events)")
 pub function on_events(env: usize, thiz: usize, exo: usize, events: usize): void {
   exoplayer.events(env, thiz, exo, events);
+}
+
+@jni("dev.fern.plex.Exo", "void onCues(androidx.media3.common.text.CueGroup)")
+pub function on_cues(env: usize, thiz: usize, group: usize): void {
+  exoplayer.cues(env, thiz, group);
 }
 
 // The callback of the media session: each media button of Android gives
@@ -470,6 +476,9 @@ function device(ctx: usize, ps: Players, gpu: Cell[Option[Gpu]], media: Media): 
     detach: (): void => detach_gpu(gpu),
     present: (window: usize, nodes: scene.Node[], video: boolean): boolean => present(ctx, playing(ps), gpu, window, nodes, video),
     hide_video: (): void => hide_video(ctx, playing(ps), playing(ps).live(), gpu),
+    select_text: (index: i32): boolean => exoplayer.select_text(ctx, playing(ps), index),
+    image_cues: (): ui.Picture[] => exoplayer.image_cues(ctx, playing(ps)).map((c: exoplayer.ImageCue): ui.Picture => ui.Picture { image: c.image, key: "", x: c.x, y: c.y, w: c.width, h: c.height }),
+    video_size: (): (i32, i32) => exoplayer.video_size(ctx, playing(ps)),
     frame_rate: (window: usize, fps: f32): void => {
       if (window != 0 as usize && !exoplayer.match_frame_rate(ctx, android.Window { ptr: window }, fps)) {
         log.info("plex: the display took no frame rate");

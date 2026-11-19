@@ -1166,8 +1166,9 @@ pub function transcoded_file(it: Item, name: string): boolean {
 }
 
 // The item as its downloaded file holds it. A transcode holds one sound
-// track, the one that it played. The app draws no image subtitle from a
-// file: a transcode burned it in, and the player shows none.
+// track, the one that it played, and no subtitle of images: it burned the
+// chosen one in. A file as it is keeps each subtitle of images inside it,
+// which the player draws.
 pub function file_item(it: Item, transcoded: boolean): Item {
   if (it.media.len() == 0 || it.media[0].parts.len() == 0) {
     return it;
@@ -1183,7 +1184,7 @@ pub function file_item(it: Item, transcoded: boolean): Item {
       if (t.id == sound) {
         kept = kept.append(Track { ...t, selected: true });
       }
-    } else if (t.kind != 3 || text_codec(t.codec)) {
+    } else if (t.kind != 3 || text_codec(t.codec) || !transcoded && !t.external && image_codec(t.codec)) {
       kept = kept.append(t);
     }
   }
@@ -1294,11 +1295,13 @@ pub function stop_transcode(c: Client, b: Base, session: string): Request {
 // to when it is ready.
 pub struct Stream { url: string, transcode: boolean, offset_ms: i64 }
 
-// The phone plays the file as it is with no subtitles, at Original quality,
-// when it decodes the video and the chosen sound. Subtitles burn in a
-// transcode.
+// The phone plays the file as it is at Original quality, when it decodes
+// the video and the chosen sound. The app draws a text subtitle, and the
+// player draws a subtitle of images inside the file. Other subtitles burn
+// in a transcode.
 pub function stream_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64, session: string, decoders: string[], choice: Choice): Stream {
-  if (q.kbps == 0 && (choice.subtitle.len() == 0 || text_subtitle(it, choice).is_some()) && direct_with(it, decoders, choice)) {
+  let shown = choice.subtitle.len() == 0 || text_subtitle(it, choice).is_some() || image_subtitle_index(it, choice) >= 0;
+  if (q.kbps == 0 && shown && direct_with(it, decoders, choice)) {
     return Stream { url: direct_url(b, it, session), transcode: false, offset_ms: offset_ms };
   }
   return transcode_for(c, b, it, q, offset_ms, session, decoders, choice);
@@ -1544,6 +1547,27 @@ pub function text_subtitle(it: Item, choice: Choice): Option[Track] {
 // True for the codec of a subtitle that the app draws itself.
 function text_codec(codec: string): boolean {
   return ["srt", "subrip", "vtt", "webvtt", "ass", "ssa"].contains(codec);
+}
+
+// True for the codec of a subtitle of images that the player decodes from
+// the file.
+function image_codec(codec: string): boolean {
+  return ["pgs", "hdmv_pgs_subtitle", "vobsub", "dvd_subtitle", "dvb_subtitle"].contains(codec);
+}
+
+// The place of the chosen subtitle among the subtitle tracks inside the
+// file, when it is a subtitle of images that the player shows, or -1.
+pub function image_subtitle_index(it: Item, choice: Choice): i32 {
+  if (choice.subtitle.len() == 0) {
+    return -1;
+  }
+  let inside = subtitle_tracks(it).filter((t: Track): boolean => !t.external);
+  for k in 0..inside.len() {
+    if (inside[k].id == choice.subtitle && image_codec(inside[k].codec)) {
+      return k;
+    }
+  }
+  return -1;
 }
 
 // The text of a subtitle track. The server gives a track inside the file

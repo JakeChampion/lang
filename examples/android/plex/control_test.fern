@@ -40,7 +40,7 @@ const HUBS: string = "{\"MediaContainer\":{\"Hub\":[{\"title\":\"Continue Watchi
 
 const SECTIONS: string = "{\"MediaContainer\":{\"Directory\":[{\"key\":\"1\",\"type\":\"movie\",\"title\":\"Movies\"},{\"key\":\"2\",\"type\":\"show\",\"title\":\"TV Shows\"}]}}";
 
-const MOVIE: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS)\"},{\"id\":33,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT External)\",\"key\":\"/library/streams/33\"}]}]}]}]}}";
+const MOVIE: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS External)\",\"key\":\"/library/streams/31\"},{\"id\":33,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT External)\",\"key\":\"/library/streams/33\"}]}]}]}]}}";
 
 // A track of an album, with its artist.
 const SONG: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"601\",\"type\":\"track\",\"title\":\"Song\",\"parentTitle\":\"Album\",\"grandparentTitle\":\"Band\",\"duration\":200000,\"Media\":[{\"container\":\"mp4\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":61,\"key\":\"/library/parts/61/file.m4a\"}]}]}]}}";
@@ -57,11 +57,14 @@ const CREDITS: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"503
 const EPISODES: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"503\",\"type\":\"episode\",\"title\":\"Pilot\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":13,\"key\":\"/library/parts/13/file.mp4\"}]}]},{\"ratingKey\":\"501\",\"type\":\"episode\",\"title\":\"Second\",\"index\":2,\"parentIndex\":1,\"duration\":2500000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\"}]}]}]}}";
 
 // The movie of the second poster: the movie above, with an intro marker.
-const INTRO: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Marker\":[{\"type\":\"intro\",\"startTimeOffset\":50000,\"endTimeOffset\":130000}],\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS)\"},{\"id\":33,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT External)\",\"key\":\"/library/streams/33\"}]}]}]}]}}";
+const INTRO: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Marker\":[{\"type\":\"intro\",\"startTimeOffset\":50000,\"endTimeOffset\":130000}],\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/file.mp4\",\"indexes\":\"sd\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\"},{\"id\":31,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS External)\",\"key\":\"/library/streams/31\"},{\"id\":33,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT External)\",\"key\":\"/library/streams/33\"}]}]}]}]}}";
 
 // A film whose server remembers the French sound and the French subtitles.
 // It has an English sound and English forced subtitles too.
 const FRENCH: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"504\",\"type\":\"movie\",\"title\":\"Amélie\",\"duration\":7320000,\"Media\":[{\"container\":\"mkv\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":14,\"key\":\"/library/parts/14/file.mkv\",\"Stream\":[{\"id\":40,\"streamType\":1,\"codec\":\"h264\",\"frameRate\":23.976},{\"id\":41,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Français (AAC Stereo)\",\"languageCode\":\"fra\",\"selected\":true},{\"id\":43,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"languageCode\":\"eng\"},{\"id\":51,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English Forced (SRT External)\",\"languageCode\":\"eng\",\"forced\":true,\"key\":\"/library/streams/51\"},{\"id\":53,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"Français (SRT External)\",\"languageCode\":\"fra\",\"selected\":true,\"key\":\"/library/streams/53\"}]}]}]}]}}";
+
+// A film with a PGS subtitle inside its file, which the server remembers.
+const PICTURED: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"505\",\"type\":\"movie\",\"title\":\"Signs\",\"duration\":6000000,\"Media\":[{\"container\":\"mkv\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":15,\"key\":\"/library/parts/15/file.mkv\",\"Stream\":[{\"id\":90,\"streamType\":1,\"codec\":\"h264\"},{\"id\":91,\"streamType\":2,\"codec\":\"aac\",\"selected\":true},{\"id\":92,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS)\",\"selected\":true}]}]}]}]}}";
 
 // A page of a library of 63 movies from `start`.
 // A page of the movie library of 400 items, from `start`.
@@ -165,6 +168,9 @@ function reply_to(r: plex.Request, sound: string): plex.Reply {
   }
   if (u.contains("/library/metadata/701")) {
     return ok(ALBUM);
+  }
+  if (u.contains("/library/metadata/505")) {
+    return ok(PICTURED);
   }
   if (u.contains("/library/metadata/504")) {
     return ok(FRENCH);
@@ -343,6 +349,12 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     },
     hide_video: (): void => note(log.calls, "hide"),
     frame_rate: (window: usize, fps: f32): void => note(log.calls, "rate " + window.to_string() + " " + ((fps * 1000.0f32) as i32).to_string()),
+    select_text: (index: i32): boolean => {
+      note(log.calls, "text " + index.to_string());
+      return true;
+    },
+    image_cues: (): ui.Picture[] => [ui.Picture { image: draw.Image { width: 2, height: 1, pixels: [255u8, 255u8, 255u8, 255u8, 0u8, 0u8, 0u8, 255u8] }, key: "", x: 0.25f32, y: 0.8f32, w: 0.5f32, h: 0.1f32 }],
+    video_size: (): (i32, i32) => (1920, 1080),
     pause_video: (): void => note(log.calls, "pause video"),
     request_frame: (): void => note(log.calls, "frame"),
     start: (): void => note(log.calls, "start"),
@@ -2197,6 +2209,74 @@ function test_language_settings(): test.TestOutcome {
   return test.assert_eq(words + " " + back.subs.to_string(), "fr 2 fr 2 -1");
 }
 
+function picture_nodes(s: control.App): i32 {
+  return s.nodes.filter((n: scene.Node): boolean => match (n.paint) {
+    scene.Picture(key, _, _) => key.starts_with("cue|"),
+    _ => false,
+  }).len();
+}
+
+// A PGS subtitle inside the file plays with the file as it is: the player
+// shows the track, and the app draws each image that it gives over the
+// video.
+function test_image_subtitles(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let s = at(control.new(fake(log, 0i64, f), "/data", "https://up.example:32400", "srv", "505"), log, 0i64, f, android.Start);
+  let t = settle(at(s, log, 0i64, f, android.WindowCreated(android.Window { ptr: 1 as usize })), log, 0i64, f);
+  let ready = settle(at(t, log, 100i64, f, android.Posted(19, 0 as usize)), log, 100i64, f);
+  if (!has_call(log, "play https://up.example:32400/library/parts/15/file.mkv") || !has_call(log, "text 0")) {
+    return test.fail("the file did not play as it is with its PGS track: " + log.calls.get().join(" | "));
+  }
+  let cued = settle(at(ready, log, 200i64, f, android.Posted(22, 1000 as usize)), log, 200i64, f);
+  if (cued.play.images.len() != 1 || picture_nodes(cued) != 1) {
+    return test.fail("the image of the subtitle does not show: " + cued.play.images.len().to_string());
+  }
+  let sheet = tap(tap(cued, log, 300i64, f, "overlay"), log, 400i64, f, "tracks");
+  let off = settle(tap(sheet, log, 500i64, f, "sub:"), log, 550i64, f);
+  return test.assert_eq(has_call(log, "text -1").to_string() + " " + off.play.stream.transcode.to_string(), "true false");
+}
+
+// The sheet of a text subtitle that the app draws moves its lines: each
+// tap of + shows them a tenth of a second later.
+function test_subtitle_delay(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let s = at(control.new(fake(log, 0i64, f), "/data", "https://up.example:32400", "srv", "504"), log, 0i64, f, android.Start);
+  let t = settle(at(s, log, 0i64, f, android.WindowCreated(android.Window { ptr: 1 as usize })), log, 0i64, f);
+  let ready = settle(at(t, log, 100i64, f, android.Posted(19, 0 as usize)), log, 100i64, f);
+  let sheet = tap(tap(ready, log, 200i64, f, "overlay"), log, 300i64, f, "tracks");
+  if (!says(sheet, "Delay +0.0 s")) {
+    return test.fail("no delay on the sheet of a text subtitle");
+  }
+  let later = tap(tap(tap(sheet, log, 400i64, f, "sync:+"), log, 500i64, f, "sync:+"), log, 600i64, f, "sync:+");
+  let words = says(later, "Delay +0.3 s").to_string() + " " + later.play.delay_ms.to_string();
+  let back = tap(tap(tap(tap(later, log, 700i64, f, "sync:-"), log, 800i64, f, "sync:-"), log, 900i64, f, "sync:-"), log, 1000i64, f, "sync:-");
+  return test.assert_eq(words + " " + control.delay_text(back.play.delay_ms), "true 300 -0.1 s");
+}
+
+// The settings choose the size of the text subtitles and what is behind
+// them, and they keep both. The settings scroll to their last row.
+function test_subtitle_style(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let settings = tap(shown(log, f, "https://up.example:32400", "srv"), log, 100i64, f, "tab:3");
+  let styled = tap(tap(settings, log, 200i64, f, "capsize"), log, 300i64, f, "capbox");
+  if (!says(styled, "Medium") || !says(styled, "Shadow")) {
+    return test.fail("the rows do not show the new style");
+  }
+  let saved = file_of(log, "/data/settings");
+  let x = (W / 2) as f32;
+  let y0 = (H * 3 / 4) as f32;
+  let down = at(styled, log, 1000i64, f, android.Touch(0, x, y0));
+  let moved = at(at(down, log, 1050i64, f, android.Touch(2, x, y0 - (H / 2) as f32)), log, 1100i64, f, android.Touch(2, x, y0 - (H / 2) as f32));
+  let up = settle(at(moved, log, 1150i64, f, android.Touch(1, x, y0 - (H / 2) as f32)), log, 1150i64, f);
+  return test.assert_eq(control.setting(saved, "caption_size") + " " + control.setting(saved, "caption_box") + " " + (up.scroll > 0).to_string(), "1 0 true");
+}
+
 function test_link_plays_an_item(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -2316,6 +2396,9 @@ function main(): i32 {
   r = r.it("the language of the phone picks the sound and the subtitles", test_language_picks_the_tracks);
   r = r.it("a transcode in another language waits for the server to take it", test_language_holds_a_transcode);
   r = r.it("the settings choose the language and the mode of the subtitles", test_language_settings);
+  r = r.it("the player shows a PGS subtitle inside the file", test_image_subtitles);
+  r = r.it("the sheet moves the lines of a text subtitle", test_subtitle_delay);
+  r = r.it("the settings choose the style of the subtitles, and scroll", test_subtitle_style);
   r = r.it("a saved address that fails moves to one that answers", test_saved_server_moves_to_working_address);
   r = r.it("a saved address that works stays, with no reload", test_saved_server_recheck_is_quiet);
   r = r.it("an item resumes, pauses and stops", test_play_pause_and_stop);
