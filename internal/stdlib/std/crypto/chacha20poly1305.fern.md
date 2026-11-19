@@ -68,6 +68,11 @@ import "std/crypto/aead";
 ```fern
 <<3 pub struct Key>>=
 pub struct Key { k: u8[] }
+
+// Consumes the key and zeroes its key bytes when it owns the last reference.
+pub function (own k: Key) erase(): void {
+  crypto.erase(k.k);
+}
 ```
 
 ### `4 function __le32(b: [u8], at: i32): u32`
