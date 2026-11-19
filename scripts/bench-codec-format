@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+if [ "$#" -ne 2 ]; then
+  echo 'usage: scripts/bench-codec-format BASE_LIBRARY_DIRECTORY REPORT_JSON' >&2
+  exit 2
+fi
+fern_format_base=$(realpath "$1")
+fern_format_report=$(realpath -m "$2")
+fern_format_compiler=${FERN:-"$PWD/bin/fern-selfhost"}
+case "$(uname -sm)" in
+  'Linux x86_64') target=x86-64-android ;;
+  'Linux aarch64') target=arm64-android ;;
+  *) echo 'unsupported host benchmark' >&2; exit 1 ;;
+esac
+mkdir -p build/codec-format/video build/codec-format/audio
+cc -shared -fPIC -Wall -Wextra -Werror -o build/codec-format/video/libmediandk.so scripts/video-reference/mediandk-mock.c scripts/video-reference/codec-jni-mock.c
+scripts/libandroid-stubs scripts/video-reference/mediandk-mock.c scripts/video-reference/codec-jni-mock.c > build/codec-format/video/stubs.c
+cc -shared -fPIC -Wall -Wextra -Werror -o build/codec-format/video/libandroid.so build/codec-format/video/stubs.c
+cc -shared -fPIC -Wall -Wextra -Werror -DFERN_AUDIO_CODEC_MOCK -o build/codec-format/audio/libmediandk.so scripts/audio-reference/mediacodec-mock.c scripts/video-reference/codec-jni-mock.c
+scripts/libandroid-stubs > build/codec-format/audio/stubs.c
+cc -shared -fPIC -Wall -Wextra -Werror -o build/codec-format/audio/libandroid.so build/codec-format/audio/stubs.c
+for kind in video audio; do
+  "$fern_format_compiler" -O -stdlib internal/stdlib -target "$target" -shared -export main -o "build/codec-format/$kind.so" "bench/audio/android_${kind}_format.fern"
+done
+python3 scripts/audio-reference/bench-format.py "$fern_format_base" "$PWD/build/codec-format" "$fern_format_report"

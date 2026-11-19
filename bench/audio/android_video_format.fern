@@ -1,0 +1,63 @@
+// This host benchmark reads mocked MediaCodec video output formats.
+import "std/android/video";
+import "std/video/frame";
+import "std/bench";
+
+@import("libmediandk.so", "mock_mode")
+function mode(value: i32): void;
+
+@import("libmediandk.so", "mock_output_format")
+function output_format(width: i32, height: i32, right: i32, bottom: i32): void;
+
+@import("libmediandk.so", "mock_live")
+function live(): i32;
+
+function matches(f: video.OutputFormat, profile: i32): boolean {
+  let width = if (profile == 0) { 16 } else { 8 };
+  let height = if (profile == 0) { 8 } else { 16 };
+  return f.width == width && f.height == height && f.crop_left == (if (profile == 0) { 2 } else { 0 }) && f.crop_top == 0 && f.crop_right == (if (profile == 0) { 13 } else { 7 }) && f.crop_bottom == height - 1 && f.color_standard == 1 && f.color_range == 0 && f.color_transfer == 0 && f.stride == width && f.slice_height == height && f.color_format == 0;
+}
+
+function measure(d: video.Decoder, profile: i32, rounds: i32): void {
+  let mark = bench.alloc_count();
+  let started = monotonic_ns();
+  for _ in 0..rounds {
+    let Ok(_) = d.flush() else {
+      exit(4);
+    };
+    let Ok(video.Retry) = d.output(0i64) else {
+      exit(5);
+    };
+    let Ok(video.FormatChanged(f)) = d.output(0i64) else {
+      exit(6);
+    };
+    if (!matches(f, profile) || live() != 1) {
+      exit(7);
+    }
+  }
+  let elapsed = monotonic_ns() - started;
+  let allocations = bench.allocs_after(mark);
+  print("{\"profile\":" + profile.to_string() + ",\"queries\":" + rounds.to_string() + ",\"wall_ns\":" + elapsed.to_string() + ",\"allocations\":" + allocations.to_string() + "}");
+}
+
+pub function main(): i32 {
+  for profile in [0, 1] {
+    mode(10);
+    let config = video.Config { codec: video.H264, format: frame.Format { width: 16, height: 8 }, csd0: [0, 0, 0, 1, 103], csd1: [0, 0, 0, 1, 103] };
+    let Ok(d) = video.open_named(config, 123 as usize, "c2.vendor.avc.decoder", frame.Limits { max_pixels: 128, max_packet_bytes: 64 }) else {
+      return 1;
+    };
+    if (profile == 1) {
+      output_format(8, 16, -1, -1);
+    }
+    measure(d, profile, 100);
+    measure(d, profile, 100000);
+    let Ok(_) = d.close() else {
+      return 2;
+    };
+    if (live() != 0) {
+      return 3;
+    }
+  }
+  return 0;
+}

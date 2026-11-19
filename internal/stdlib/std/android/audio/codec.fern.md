@@ -205,10 +205,10 @@ function output_format(decoder: Decoder): Result[Format, frame.VideoError] {
     return Err(frame.Platform);
   }
   let result = Format {
-    sample_rate: shared.get_i32(format, "sample-rate", 0, decoder.scratch),
-    channels: shared.get_i32(format, "channel-count", 0, decoder.scratch),
-    encoding: shared.get_i32(format, "pcm-encoding", PCM_I16, decoder.scratch),
-    channel_mask: shared.get_i32(format, "channel-mask", 0, decoder.scratch),
+    sample_rate: shared.get_i32_key(format, "sample-rate\x00", 0, decoder.scratch),
+    channels: shared.get_i32_key(format, "channel-count\x00", 0, decoder.scratch),
+    encoding: shared.get_i32_key(format, "pcm-encoding\x00", PCM_I16, decoder.scratch),
+    channel_mask: shared.get_i32_key(format, "channel-mask\x00", 0, decoder.scratch),
   };
   let _ = shared.c_format_delete(format);
   if (result.sample_rate < 1 || result.channels < 1) {

@@ -16,6 +16,9 @@ function released(): i32;
 @import("libmediandk.so", "mock_output_format")
 function output_format(width: i32, height: i32, right: i32, bottom: i32): void;
 
+@import("libmediandk.so", "mock_output_fields")
+function output_fields(value: i32): void;
+
 struct FormatCase { width: i32, height: i32, right: i32, bottom: i32, error: frame.VideoError }
 
 function rejected_formats(d: video.Decoder): i32 {
@@ -83,6 +86,53 @@ function output_limits(config: video.Config, limits: frame.Limits): i32 {
     };
     if (live() != 0) {
       return 109;
+    }
+  }
+  return 0;
+}
+
+function fields_match(f: video.OutputFormat, full: boolean): boolean {
+  return f.width == 16 && f.height == 8 && f.crop_left == 2 && f.crop_top == (if (full) { 1 } else { 0 }) && f.crop_right == 13 && f.crop_bottom == (if (full) { 6 } else { 7 }) && f.color_standard == 1 && f.color_range == (if (full) { 2 } else { 0 }) && f.color_transfer == (if (full) { 3 } else { 0 }) && f.stride == (if (full) { 32 } else { 16 }) && f.slice_height == (if (full) { 10 } else { 8 }) && f.color_format == (if (full) { 19 } else { 0 });
+}
+
+function format_fields(config: video.Config, limits: frame.Limits): i32 {
+  for full in [false, true] {
+    mode(10);
+    output_fields(if (full) { 1 } else { 2 });
+    let Ok(d) = video.open_named(config, 123 as usize, "c2.vendor.avc.decoder", limits) else {
+      return 181;
+    };
+    for _ in 0..128 {
+      let Ok(_) = d.flush() else {
+        return 182;
+      };
+      unsafe {
+        for i in 4..32 {
+          __store_u8(d.scratch + i as usize, 165);
+        }
+      }
+      let Ok(video.Retry) = d.output(0i64) else {
+        return 183;
+      };
+      let Ok(video.FormatChanged(f)) = d.output(0i64) else {
+        return 184;
+      };
+      if (!fields_match(f, full) || live() != 1) {
+        return 185;
+      }
+      unsafe {
+        for i in 4..32 {
+          if (__load_u8(d.scratch + i as usize) != 165) {
+            return 186;
+          }
+        }
+      }
+    }
+    let Ok(_) = d.close() else {
+      return 187;
+    };
+    if (live() != 0) {
+      return 188;
     }
   }
   return 0;
@@ -222,5 +272,9 @@ function main(): i32 {
   if (live() != 0) {
     return 32;
   }
-  return output_limits(config, limits);
+  let checked = output_limits(config, limits);
+  if (checked != 0) {
+    return checked;
+  }
+  return format_fields(config, limits);
 }
