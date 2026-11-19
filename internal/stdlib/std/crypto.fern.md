@@ -3591,8 +3591,9 @@ pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: 
   return __pbkdf2_core(password, salt, iterations, dk_len);
 }
 
+// Returns false for a stored hash shorter than 16 bytes or an iteration count below one.
 pub function pbkdf2_sha256_verify(password: [u8], salt: [u8], iterations: i32, expected: [u8]): boolean {
-  if (expected.len() == 0) {
+  if (expected.len() < 16 || iterations < 1) {
     return false;
   }
   return consteq(pbkdf2_sha256(password, salt, iterations, expected.len()), expected);
