@@ -174,24 +174,33 @@ A character that is not in a sequence of marks stops at the first step whose fir
 <<characters>>=
 // The characters of a text, with the cluster and the mask of each one, and
 // the code point whose glyph shows it. That code point is the character,
-// or a code point of the private use area of a Thai font.
-struct Chars { cps: char[], clusters: i32[], masks: i32[], shown: i32[] }
+// or a code point of the private use area of a Thai font. `unicode` holds
+// the character whose Unicode properties each one has, such as its general
+// category and its combining class. A character that a shaper puts in the
+// text takes those of the character that it copies, as in HarfBuzz.
+struct Chars { cps: char[], clusters: i32[], masks: i32[], shown: i32[], unicode: char[] }
 
 function no_chars(): Chars {
   let none: char[] = [];
   let zero: i32[] = [];
-  return Chars { cps: none, clusters: zero, masks: zero, shown: zero };
+  return Chars { cps: none, clusters: zero, masks: zero, shown: zero, unicode: none };
 }
 
 // `out` with the character at `i` of `cs`.
 function with_char(own out: Chars, cs: Chars, i: i32): Chars {
-  return Chars { cps: out.cps.append(cs.cps[i]), clusters: out.clusters.append(cs.clusters[i]), masks: out.masks.append(cs.masks[i]), shown: out.shown.append(cs.shown[i]) };
+  return Chars { cps: out.cps.append(cs.cps[i]), clusters: out.clusters.append(cs.clusters[i]), masks: out.masks.append(cs.masks[i]), shown: out.shown.append(cs.shown[i]), unicode: out.unicode.append(cs.unicode[i]) };
 }
 
 // `out` with the character `c`, which takes the cluster and the mask of the
 // character at `i` of `cs`.
 function with_new_char(own out: Chars, cs: Chars, i: i32, c: char): Chars {
-  return Chars { cps: out.cps.append(c), clusters: out.clusters.append(cs.clusters[i]), masks: out.masks.append(cs.masks[i]), shown: out.shown.append(c as i32) };
+  return Chars { cps: out.cps.append(c), clusters: out.clusters.append(cs.clusters[i]), masks: out.masks.append(cs.masks[i]), shown: out.shown.append(c as i32), unicode: out.unicode.append(c) };
+}
+
+// `out` with the character `c`, which takes the cluster, the mask and the
+// Unicode properties of the character at `i` of `cs`.
+function with_copied_char(own out: Chars, cs: Chars, i: i32, c: char): Chars {
+  return Chars { cps: out.cps.append(c), clusters: out.clusters.append(cs.clusters[i]), masks: out.masks.append(cs.masks[i]), shown: out.shown.append(c as i32), unicode: out.unicode.append(cs.unicode[i]) };
 }
 
 // The characters besides the marks that continue a grapheme for HarfBuzz:
@@ -226,7 +235,7 @@ function characters(text: string): Chars {
     masks = masks.append(GLOBAL);
     shown = shown.append(c as i32);
   }
-  return Chars { cps: cps, clusters: clusters, masks: masks, shown: shown };
+  return Chars { cps: cps, clusters: clusters, masks: masks, shown: shown, unicode: cps };
 }
 
 // Whether `n` is in one of the ranges of `ranges`, which holds the first
@@ -346,7 +355,7 @@ function vowel_constrained(cs: Chars, script: string): Chars {
       out = with_char(out, cs, k);
     }
     if (at != 0) {
-      out = with_char(with_new_char(out, cs, at, 0x25CC as char), cs, at);
+      out = with_char(with_copied_char(out, cs, at, 0x25CC as char), cs, at);
     }
     i = if (at == 0) { to } else { at + 1 };
   }
@@ -356,7 +365,7 @@ function vowel_constrained(cs: Chars, script: string): Chars {
 // `cs` in the order of `mark_order` for the script `script`.
 function ordered(cs: Chars, script: string): Chars {
   let out = no_chars();
-  for k in mark_order(cs.cps, script) {
+  for k in mark_order(cs.unicode, script) {
     out = with_char(out, cs, k);
   }
   return out;
@@ -392,7 +401,7 @@ function step_of(c: char, n: Normalizer): char[] {
 function normalized(f: truetype.Font, cs: Chars, n: Normalizer): Chars {
   let parts = decomposed(f, cs, n);
   for i in 1..cs.cps.len() {
-    if (cs.cps[i].is_mark()) {
+    if (cs.unicode[i].is_mark()) {
       let sorted = ordered(parts, n.script);
       return if (n.none) { sorted } else { composed(f, sorted, n) };
     }
@@ -406,7 +415,7 @@ function decomposed(f: truetype.Font, cs: Chars, n: Normalizer): Chars {
   let out = no_chars();
   for i in 0..cs.cps.len() {
     let parts = parts_of(f, cs, i, n);
-    if (parts.len() == 1) {
+    if (parts.len() == 1 && parts[0] == cs.cps[i]) {
       out = with_char(out, cs, i);
       continue;
     }
@@ -436,8 +445,8 @@ function parts_of(f: truetype.Font, cs: Chars, i: i32, n: Normalizer): char[] {
 // Whether the character at `i` of `cs` splits by the fewest steps: outside
 // a sequence of marks, or always with `n.none`.
 function shortest_at(cs: Chars, i: i32, n: Normalizer): boolean {
-  let c = cs.cps[i];
-  let next_mark = i + 1 < cs.cps.len() && cs.cps[i + 1].is_mark();
+  let c = cs.unicode[i];
+  let next_mark = i + 1 < cs.cps.len() && cs.unicode[i + 1].is_mark();
   return n.none || !n.splits_all && (i == 0 || !c.is_mark()) && !next_mark;
 }
 
@@ -479,8 +488,8 @@ function composed(f: truetype.Font, cs: Chars, n: Normalizer): Chars {
   let out = with_char(no_chars(), cs, 0);
   let starter = 0;
   for i in 1..cs.cps.len() {
-    let c = cs.cps[i];
-    let both = composite(f, out.cps, starter, c, n);
+    let c = cs.unicode[i];
+    let both = composite(f, out, starter, cs.cps[i], c, n);
     if (both != 0) {
       let cl = cs.clusters[i];
       for k in starter..out.cps.len() {
@@ -490,7 +499,7 @@ function composed(f: truetype.Font, cs: Chars, n: Normalizer): Chars {
       for k in starter..clusters.len() {
         clusters = clusters.with(k, cl);
       }
-      out = Chars { ...out, cps: out.cps.with(starter, both as char), clusters: clusters, shown: out.shown.with(starter, both) };
+      out = Chars { ...out, cps: out.cps.with(starter, both as char), clusters: clusters, shown: out.shown.with(starter, both), unicode: out.unicode.with(starter, both as char) };
       continue;
     }
     out = with_char(out, cs, i);
@@ -501,12 +510,14 @@ function composed(f: truetype.Font, cs: Chars, n: Normalizer): Chars {
   return out;
 }
 
-// The character that the mark `c` composes to with the starter at `starter`
-// of `cps`, or 0.
-function composite(f: truetype.Font, cps: char[], starter: i32, c: char, n: Normalizer): i32 {
-  let last = cps.len() - 1;
-  let free = c.is_mark() && !(n.marks_stay && cps[starter].is_mark()) && (starter == last || sort_class(cps[last]) < sort_class(c));
-  let both = if (free) { composition_of(cps[starter], c, n) } else { 0 };
+// The character that the character `c`, with the Unicode properties of
+// `props`, composes to with the starter at `starter` of `out`, or 0. Only a
+// mark composes.
+function composite(f: truetype.Font, out: Chars, starter: i32, c: char, props: char, n: Normalizer): i32 {
+  let us = out.unicode;
+  let last = us.len() - 1;
+  let free = props.is_mark() && !(n.marks_stay && us[starter].is_mark()) && (starter == last || sort_class(us[last]) < sort_class(props));
+  let both = if (free) { composition_of(out.cps[starter], c, n) } else { 0 };
   return if (both != 0 && f.glyph(both) != 0) { both } else { 0 };
 }
 
@@ -549,16 +560,68 @@ function hebrew_form(a: i32, b: i32): i32 {
 // the properties of the characters. The shaper value of each glyph holds
 // its character from the bit CP_SHIFT.
 function run_of_chars(f: truetype.Font, cs: Chars, masks: i32[]): truetype.Run {
+  let marks = if (f.has_glyph_classes()) { [] } else { nonspacing_marks() };
   let glyphs: i32[] = [];
   let props: i32[] = [];
   let vars: i32[] = [];
   for i in 0..cs.cps.len() {
     let c = cs.cps[i];
     glyphs = glyphs.append(glyph_of(f, cs.shown[i]));
-    props = props.append(char_props(c));
+    let u = cs.unicode[i];
+    let p = if (keeps_marks_apart(cs, i)) { char_props(u) } else { char_props(u) & ~truetype.HIDDEN };
+    props = props.append(p | class_of_char(u, marks) << truetype.CLASS_SHIFT);
     vars = vars.append(c as i32 << CP_SHIFT);
   }
   return truetype.Run { ...truetype.run_of(glyphs, cs.clusters, masks), props: props, vars: vars };
+}
+
+// Whether the character at `i` of `cs` is not a CGJ that HarfBuzz makes
+// skippable after the normalization: a CGJ between two characters whose
+// marks would keep their order without it.
+function keeps_marks_apart(cs: Chars, i: i32): boolean {
+  if (cs.cps[i] as i32 != 0x34F || i == 0 || i + 1 >= cs.cps.len()) {
+    return true;
+  }
+  let next = sort_class(cs.unicode[i + 1]);
+  return next != 0 && sort_class(cs.unicode[i - 1]) > next;
+}
+
+// The glyph class that HarfBuzz gives `c` in a font with no glyph classes:
+// 3, a mark, for a character of the general category Mn that is not default
+// ignorable, else 1, a base. It is 0 when `marks`, the ranges of Mn, is
+// empty.
+function class_of_char(c: char, marks: i32[]): i32 {
+  if (marks.len() == 0) {
+    return 0;
+  }
+  return if (in_sorted_ranges(c as i32, marks) && !default_ignorable(c as i32)) { 3 } else { 1 };
+}
+
+// The ranges of the general category Mn, each its first and its last code
+// point.
+function nonspacing_marks(): i32[] {
+  let Some(rs) = unicode.property_ranges("gc=Mn") else {
+    return [];
+  };
+  return rs;
+}
+
+// Whether `n` is in one of the ranges of `ranges`, which are in order and
+// hold the first and the last code point of each range.
+function in_sorted_ranges(n: i32, ranges: i32[]): boolean {
+  let lo = 0;
+  let hi = ranges.len() / 2;
+  while (lo < hi) {
+    let mid = (lo + hi) / 2;
+    if (n < ranges[2 * mid]) {
+      hi = mid;
+    } else if (n > ranges[2 * mid + 1]) {
+      lo = mid + 1;
+    } else {
+      return true;
+    }
+  }
+  return false;
 }
 
 // The glyph of `n` in `f`. A space that the font does not have takes the
@@ -1309,7 +1372,7 @@ function with_syllables(r: truetype.Run, grammar: string): truetype.Run {
   while (i < cats.len()) {
     let (end, kind) = syllable_by(grammar, cats, i);
     for k in i..end {
-      props = props.with(k, props[k] & 255 | (serial << 4 | kind) << truetype.SYLLABLE_SHIFT);
+      props = props.with(k, props[k] & ((1 << truetype.SYLLABLE_SHIFT) - 1) | (serial << 4 | kind) << truetype.SYLLABLE_SHIFT);
     }
     serial += 1;
     i = end;
@@ -3328,7 +3391,7 @@ function with_use_syllables(r: truetype.Run): truetype.Run {
     let (end, kind) = use_syllable_from(cats, k);
     let to = if (end < kept.len()) { kept[end] } else { n };
     for i in kept[k]..to {
-      props = props.with(i, props[i] & 255 | (serial << 4 | kind) << truetype.SYLLABLE_SHIFT);
+      props = props.with(i, props[i] & ((1 << truetype.SYLLABLE_SHIFT) - 1) | (serial << 4 | kind) << truetype.SYLLABLE_SHIFT);
     }
     serial += 1;
     k = end;
@@ -3848,8 +3911,9 @@ function jamo_of(s: i32): i32[] {
 }
 
 // `all` with the `k` characters at `pos` replaced by the characters `cps`,
-// which show the glyphs of `shown`. The new characters take the cluster
-// and the mask of the first one, after the clusters of the `k` join.
+// which show the glyphs of `shown`. The new characters take the cluster,
+// the mask and the Unicode properties of the first one, after the clusters
+// of the `k` join.
 function replaced(all0: Chars, pos: i32, k: i32, cps: char[], shown: i32[]): Chars {
   let all = Chars { ...all0, clusters: truetype.merged_clusters(all0.clusters, pos, pos + k) };
   let out = no_chars();
@@ -3857,7 +3921,8 @@ function replaced(all0: Chars, pos: i32, k: i32, cps: char[], shown: i32[]): Cha
     out = with_char(out, all, j);
   }
   for m in 0..cps.len() {
-    out = Chars { cps: out.cps.append(cps[m]), clusters: out.clusters.append(all.clusters[pos]), masks: out.masks.append(all.masks[pos]), shown: out.shown.append(shown[m]) };
+    out = with_copied_char(out, all, pos, cps[m]);
+    out = Chars { ...out, shown: out.shown.with(out.shown.len() - 1, shown[m]) };
   }
   for j in pos + k..all.cps.len() {
     out = with_char(out, all, j);
@@ -3902,7 +3967,7 @@ function finished(f: truetype.Font, r: truetype.Run, zero_marks: boolean, positi
 function marks_zeroed(f: truetype.Font, r: truetype.Run, positioned: boolean): truetype.Run {
   let p = r.pos;
   for i in 0..r.glyphs.len() {
-    if (f.glyph_class(r.glyphs[i]) == 3) {
+    if (f.class_at(r, i) == 3) {
       let back = if (!positioned && !p.rtl) { p.advances[i] } else { 0 };
       p = truetype.Positions { ...p, advances: p.advances.with(i, 0), dx: p.dx.with(i, p.dx[i] - back) };
     }

@@ -553,8 +553,9 @@ pub struct Run { glyphs: i32[], clusters: i32[], masks: i32[], ligs: i32[], prop
 
 // The properties of a glyph. The shaper gives IGNORABLE, ZWNJ, ZWJ and
 // HIDDEN from the character, and the lookups set the other three. The
-// syllable of the glyph is from the bit SYLLABLE_SHIFT, and 0 is no
-// syllable.
+// class of the glyph for a font with no glyph classes in GDEF is from the
+// bit CLASS_SHIFT, as `class_at` reads it. The syllable of the glyph is
+// from the bit SYLLABLE_SHIFT, and 0 is no syllable.
 pub const IGNORABLE: i32 = 1;
 
 pub const ZWNJ: i32 = 2;
@@ -571,7 +572,9 @@ pub const MULTIPLIED: i32 = 32;
 // combining grapheme joiner.
 pub const HIDDEN: i32 = 64;
 
-pub const SYLLABLE_SHIFT: i32 = 8;
+pub const CLASS_SHIFT: i32 = 7;
+
+pub const SYLLABLE_SHIFT: i32 = 9;
 
 // The flags of a lookup for `substitute` and `position`. With PER_SYLLABLE
 // a GSUB lookup matches in one syllable. With MANUAL_ZWNJ the context of a
@@ -856,20 +859,48 @@ function gdef_class(f: Font, field: i32, g: i32): i32 {
   return if (at == 0) { 0 } else { class_of(f.data, f.gdef + at, g) };
 }
 
-// Whether glyph `g` is in the mark glyph set `set` of GDEF.
-function in_mark_set(f: Font, set: i32, g: i32): boolean {
+// The offset of the mark glyph sets of GDEF, or -1.
+function mark_sets(f: Font): i32 {
   let b = f.data;
   let at = if (f.gdef < 0 || u32_at(b, f.gdef) < 65538) { 0 } else { u16_at(b, f.gdef + 12) };
-  if (at == 0) {
-    return false;
-  }
-  let sets = f.gdef + at;
-  return set < u16_at(b, sets + 2) && coverage(b, sets + u32_at(b, sets + 4 + 4 * set), g) >= 0;
+  return if (at == 0) { -1 } else { f.gdef + at };
 }
 
-// Whether the flags of `l` make it skip glyph `g`.
-function skipped(f: Font, l: Lookup, g: i32): boolean {
-  let c = f.glyph_class(g);
+// Whether GDEF has the mark glyph set `set`. A lookup whose set is not
+// there does not filter the marks, as in HarfBuzz.
+function has_mark_set(f: Font, set: i32): boolean {
+  let sets = mark_sets(f);
+  return sets >= 0 && set < u16_at(f.data, sets + 2);
+}
+
+// Whether glyph `g` is in the mark glyph set `set` of GDEF, which
+// `has_mark_set` holds.
+function in_mark_set(f: Font, set: i32, g: i32): boolean {
+  let sets = mark_sets(f);
+  return coverage(f.data, sets + u32_at(f.data, sets + 4 + 4 * set), g) >= 0;
+}
+
+// Whether the GDEF table gives the glyph classes.
+pub function (f: Font) has_glyph_classes(): boolean {
+  return f.gdef >= 0 && u16_at(f.data, f.gdef + 4) != 0;
+}
+
+// The class of the glyph at `i` of `r`, as `glyph_class` gives it. A font
+// with no glyph classes takes the class in the properties of the glyph,
+// which the shaper gives and the lookups change as HarfBuzz changes them.
+pub function (f: Font) class_at(r: Run, i: i32): i32 {
+  return if (f.has_glyph_classes()) { f.glyph_class(r.glyphs[i]) } else { r.props[i] >> CLASS_SHIFT & 3 };
+}
+
+// The properties `p` with the class `c`.
+function with_class(p: i32, c: i32): i32 {
+  return p & ~(3 << CLASS_SHIFT) | c << CLASS_SHIFT;
+}
+
+// Whether the flags of `l` make it skip the glyph at `i` of `r`.
+function skipped(f: Font, l: Lookup, r: Run, i: i32): boolean {
+  let g = r.glyphs[i];
+  let c = f.class_at(r, i);
   if (c == 1 && (l.flag & 2) != 0 || c == 2 && (l.flag & 4) != 0) {
     return true;
   }
@@ -879,7 +910,7 @@ function skipped(f: Font, l: Lookup, g: i32): boolean {
   if ((l.flag & 8) != 0) {
     return true;
   }
-  if (l.set >= 0) {
+  if (l.set >= 0 && has_mark_set(f, l.set)) {
     return !in_mark_set(f, l.set, g);
   }
   let kind = l.flag >> 8;
@@ -923,7 +954,7 @@ function next_match(f: Font, r: Run, l: Lookup, m: Matcher, i: i32, step: i32, s
 // glyph matches, 0 when the search skips it, and -1 when it stops the
 // search.
 function match_at(f: Font, r: Run, l: Lookup, m: Matcher, j: i32, s: Seq, k: i32): i32 {
-  if (skipped(f, l, r.glyphs[j])) {
+  if (skipped(f, l, r, j)) {
     return 0;
   }
   let p = r.props[j];
@@ -1022,7 +1053,7 @@ function ligature_base(f: Font, r: Run, l: Lookup, i: i32, id: i32): i32 {
   while (k > 0 && lig_id(r.ligs[k - 1]) == id) {
     k -= 1;
     if (lig_part(r.ligs[k]) == 0) {
-      return if (skipped(f, l, r.glyphs[k])) { 2 } else { 1 };
+      return if (skipped(f, l, r, k)) { 2 } else { 1 };
     }
   }
   return 1;
@@ -1104,7 +1135,10 @@ function substituted(f: Font, own r: Run, l: Lookup, st: i32, kind: i32, cov: i3
   if (r.glyphs.len() + to.len() > r.max_len) {
     return (r, -1);
   }
-  return (replaced(r, i, to, to.len() > 1), i + to.len());
+  // A ligature that splits into more glyphs gives bases, as in HarfBuzz.
+  let split = to.len() > 1 && f.class_at(r, i) == 2;
+  let from = if (split) { Run { ...r, props: r.props.with(i, with_class(r.props[i], 1)) } } else { r };
+  return (replaced(from, i, to, to.len() > 1), i + to.len());
 }
 
 // What the subtable `st` of type 1 to 4 gives at the glyph at `i`, whose
@@ -1197,8 +1231,10 @@ pub function lig_part(p: i32): i32 {
   return if ((p & 16) != 0) { 0 } else { p & 15 };
 }
 
-function lig_parts(f: Font, g: i32, p: i32): i32 {
-  return if (f.glyph_class(g) == 2 && (p & 16) != 0) { p & 15 } else { 1 };
+// The count of parts of the glyph at `q` of `r`.
+function lig_parts(f: Font, r: Run, q: i32): i32 {
+  let p = r.ligs[q];
+  return if (f.class_at(r, q) == 2 && (p & 16) != 0) { p & 15 } else { 1 };
 }
 
 // `r` with no glyph at `i`. When no glyph next to it has its cluster, the
@@ -1256,7 +1292,7 @@ function ligated(f: Font, own r: Run, ps: i32[], lig: i32): Run {
     cs = cs.append(merged[j]);
     ms = ms.append(r.masks[j]);
     ls = ls.append(props[j]);
-    qs = qs.append(if (j == first) { (r.props[j] | SUBSTITUTED | LIGATED) & ~MULTIPLIED } else { r.props[j] });
+    qs = qs.append(if (j == first) { lig_class((r.props[j] | SUBSTITUTED | LIGATED) & ~MULTIPLIED, serial != r.serial) } else { r.props[j] });
     vs = vs.append(r.vars[j]);
   }
   return Run { ...r, glyphs: gs, clusters: cs, masks: ms, ligs: ls, props: qs, vars: vs, serial: serial };
@@ -1296,12 +1332,18 @@ pub function merged_clusters(cs0: i32[], start: i32, end: i32): i32[] {
 function ligature_props(f: Font, r: Run, ps: i32[]): (i32, i32[]) {
   let marks = true;
   for k in 1..ps.len() {
-    marks = marks && f.glyph_class(r.glyphs[ps[k]]) == 3;
+    marks = marks && f.class_at(r, ps[k]) == 3;
   }
-  let c0 = f.glyph_class(r.glyphs[ps[0]]);
+  let c0 = f.class_at(r, ps[0]);
   let is_lig = !marks || c0 != 1 && c0 != 3;
   let serial = if (is_lig) { next_serial(r.serial) } else { r.serial };
   return (serial, lig_props(f, r, ps, if (is_lig) { serial & 7 } else { 0 }, marks && c0 == 3));
+}
+
+// The properties `p` of a new ligature glyph. A glyph that is not a base or
+// a mark with marks after it takes the class of a ligature.
+function lig_class(p: i32, is_lig: boolean): i32 {
+  return if (is_lig) { with_class(p, 2) } else { p };
 }
 
 // The serial after `serial` that gives a ligature id from 1 to 7.
@@ -1317,10 +1359,10 @@ function lig_props(f: Font, r: Run, ps: i32[], id: i32, mark_lig: boolean): i32[
   let ls = r.ligs;
   let total = 0;
   for q in ps {
-    total += lig_parts(f, r.glyphs[q], ls[q]);
+    total += lig_parts(f, r, q);
   }
   let out = if (id != 0) { ls.with(ps[0], id << 5 | 16 | total & 15) } else { ls };
-  let last_n = lig_parts(f, r.glyphs[ps[0]], ls[ps[0]]);
+  let last_n = lig_parts(f, r, ps[0]);
   let so_far = last_n;
   for k in 1..ps.len() {
     for j in ps[k - 1] + 1..ps[k] {
@@ -1329,7 +1371,7 @@ function lig_props(f: Font, r: Run, ps: i32[], id: i32, mark_lig: boolean): i32[
       let part = so_far - last_n + cur.min(last_n);
       out = if (id != 0) { out.with(j, id << 5 | part & 15) } else { out };
     }
-    last_n = lig_parts(f, r.glyphs[ps[k]], ls[ps[k]]);
+    last_n = lig_parts(f, r, ps[k]);
     so_far += last_n;
   }
   let last_id = lig_id(ls[ps[ps.len() - 1]]);
@@ -1508,7 +1550,7 @@ function applied_to_each(f: Font, r: Run, l: Lookup, mask: i32): Run {
   let budget = r.ops;
   let i = 0;
   while (i < run.glyphs.len() && budget > 0) {
-    if ((run.masks[i] & mask) == 0 || skipped(f, l, run.glyphs[i])) {
+    if ((run.masks[i] & mask) == 0 || skipped(f, l, run, i)) {
       i += 1;
       continue;
     }
@@ -1528,7 +1570,7 @@ function reverse_substituted(f: Font, r: Run, l: Lookup, mask: i32): Run {
   let i = run.glyphs.len() - 1;
   while (i >= 0) {
     let g = run.glyphs[i];
-    if ((run.masks[i] & mask) != 0 && !skipped(f, l, g)) {
+    if ((run.masks[i] & mask) != 0 && !skipped(f, l, run, i)) {
       for s in 0..l.count {
         let st = subtable(b, l, s).0;
         let cov = coverage(b, st + u16_at(b, st + 2), g);
@@ -1738,7 +1780,7 @@ function cross_offset(p: Positions, k: i32): i32 {
 function mark_target(f: Font, r: Run, l: Lookup, st: i32, kind: i32, i: i32, m: Matcher): i32 {
   if (kind == 6) {
     let j = next_any(f, r, Lookup { ...l, flag: l.flag & 65521 }, m, i, -1);
-    if (j < 0 || f.glyph_class(r.glyphs[j]) != 3 || !same_part(r.ligs[i], r.ligs[j])) {
+    if (j < 0 || f.class_at(r, j) != 3 || !same_part(r.ligs[i], r.ligs[j])) {
       return -1;
     }
     return j;
@@ -1766,7 +1808,7 @@ function first_part(f: Font, r: Run, j: i32): boolean {
     return true;
   }
   let h = j - 1;
-  return f.glyph_class(r.glyphs[h]) == 3 || (r.props[h] & MULTIPLIED) == 0 || lig_id(r.ligs[j]) != lig_id(r.ligs[h]) || part != lig_part(r.ligs[h]) + 1;
+  return f.class_at(r, h) == 3 || (r.props[h] & MULTIPLIED) == 0 || lig_id(r.ligs[j]) != lig_id(r.ligs[h]) || part != lig_part(r.ligs[h]) + 1;
 }
 
 // Whether two marks with the ligature values `a` and `b` are on the same
