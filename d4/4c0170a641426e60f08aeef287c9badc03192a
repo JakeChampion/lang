@@ -619,3 +619,8 @@ x86_64/checker.missed	379
 h3spec/passed	86
 h3spec/failed	0
 h3spec/pending	0
+
+# lane: net-h2spec
+h2spec/passed	146
+h2spec/failed	0
+h2spec/skipped	0
