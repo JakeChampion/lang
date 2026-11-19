@@ -1,0 +1,20 @@
+import "std/result";
+
+// The file `name` of `old`, moved into `keys` when `keys` has none. An older
+// build kept the identity and the known phones where the backups copy them.
+function move_key_file(keys: string, old: string, name: string): void {
+  if (keys.len() == 0 || old.len() == 0 || read_file_bytes(keys + "/" + name).is_ok()) {
+    return;
+  }
+  let Ok(b) = read_file_bytes(old + "/" + name) else {
+    return;
+  };
+  if (write_file_bytes(keys + "/" + name, b).is_ok()) {
+    let removed = remove_file(old + "/" + name);
+  }
+}
+
+pub function migrate(keys: string, old: string): void {
+  move_key_file(keys, old, "identity");
+  move_key_file(keys, old, "peers");
+}

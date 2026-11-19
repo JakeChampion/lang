@@ -1612,7 +1612,7 @@ func ForEachArrayLoop(fe *ForEach, iterName string) []Stmt {
 		fe.Pattern.Init = mkIdent(fe.Var)
 		innerStmts = append(innerStmts, fe.Pattern)
 	}
-	innerStmts = append(innerStmts, foreachBodyStmts(fe)...)
+	innerStmts = append(innerStmts, foreachBody(fe))
 	forLoop := &For{
 		P:     kw,
 		Cond:  &Binary{P: kw, Op: "<", Left: mkIdent(idxName), Right: mkIdent(lenName)},
@@ -1643,7 +1643,7 @@ func ForEachMapLoop(fe *ForEach, iterName string) []Stmt {
 			inner = append(inner, sub)
 		}
 	}
-	inner = append(inner, foreachBodyStmts(fe)...)
+	inner = append(inner, foreachBody(fe))
 	loop := &For{P: kw, Cond: &Binary{P: kw, Op: "<", Left: mkIdent(idxName), Right: call(keysName, "len")},
 		Step: &ExprStmt{P: kw, Expr: &Assign{P: kw, Target: mkIdent(idxName), Value: &Binary{P: kw, Op: "+", Left: mkIdent(idxName), Right: &NumberLit{P: kw, Value: 1}}}},
 		Body: &Block{P: kw, Stmts: inner}, Label: fe.Label}
@@ -1669,7 +1669,7 @@ func ForEachIteratorLoop(fe *ForEach, iterName string) []Stmt {
 		fe.Pattern.Init = mkIdent(fe.Var)
 		innerStmts = append(innerStmts, fe.Pattern)
 	}
-	innerStmts = append(innerStmts, foreachBodyStmts(fe)...)
+	innerStmts = append(innerStmts, foreachBody(fe))
 	next := &Call{P: kw, Callee: &FieldAccess{P: kw, Target: mkIdent(iterName), Field: "next", FieldPos: kw}}
 	pull := &Match{P: kw, Tag: next, Arms: []*MatchArm{
 		{P: kw, VariantName: "Some", Bindings: []string{stepName}, Body: &Block{P: kw, Stmts: innerStmts}},
@@ -1678,11 +1678,13 @@ func ForEachIteratorLoop(fe *ForEach, iterName string) []Stmt {
 	return []Stmt{&Loop{P: kw, Body: &Block{P: kw, Stmts: []Stmt{pull}}, Label: fe.Label}}
 }
 
-func foreachBodyStmts(fe *ForEach) []Stmt {
+// foreachBody is the body of fe as a block inside the one that binds the
+// loop variable, so the body can declare that name again.
+func foreachBody(fe *ForEach) Stmt {
 	if blk, ok := fe.Body.(*Block); ok {
-		return blk.Stmts
+		return blk
 	}
-	return []Stmt{fe.Body}
+	return &Block{P: fe.P, Stmts: []Stmt{fe.Body}}
 }
 
 type Break struct {
@@ -1714,7 +1716,10 @@ type Var struct {
 }
 
 type Destructure struct {
-	P           Position
+	P Position
+	// Header marks the pattern of a parameter: the body can declare its
+	// names again.
+	Header      bool
 	Names       []string
 	Fields      []string
 	StructName  string

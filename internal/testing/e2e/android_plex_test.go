@@ -79,8 +79,9 @@ func TestAndroidPlexApk(t *testing.T) {
 	for _, f := range zr.File {
 		names = append(names, f.Name)
 	}
-	// fern.toml of the app gives the banner of the launcher of Android TV.
-	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex classes2.dex resources.arsc res/drawable/banner.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
+	// fern.toml of the app gives the banner of the launcher of Android TV,
+	// and the media browser gives the file of Android Auto.
+	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex classes2.dex resources.arsc res/drawable/banner.png res/xml/automotive_app_desc.xml lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
 		t.Errorf("entries = %s", got)
 	}
 	banner, err := os.ReadFile(e2eharness.RepoPath(plexApp, "banner.png"))
@@ -91,14 +92,15 @@ func TestAndroidPlexApk(t *testing.T) {
 		t.Error("the banner in the APK is not banner.png of the app")
 	}
 	classes := readZipEntry(t, zr, "classes.dex")
-	for _, d := range []string{"Ldev/fern/plex/Exo;", "Ljava/util/concurrent/atomic/AtomicReference;", "Landroid/os/Handler$Callback;", "Landroidx/media3/common/Player$Listener;"} {
+	for _, d := range []string{"Ldev/fern/plex/Exo;", "Ljava/util/concurrent/atomic/AtomicReference;", "Landroid/os/Handler$Callback;", "Landroidx/media3/common/Player$Listener;", "Ldev/fern/plex/Browse;", "Landroid/service/media/MediaBrowserService;"} {
 		if !bytes.Contains(classes, []byte(d)) {
 			t.Errorf("classes.dex has no %s", d)
 		}
 	}
 	want := []string{"ANativeActivity_onCreate", "Java_dev_fern_plex_Exo_handleMessage", "Java_dev_fern_plex_Exo_onEvents",
 		"Java_dev_fern_plex_Controls_onPlay", "Java_dev_fern_plex_Controls_onPause", "Java_dev_fern_plex_Controls_onSeekTo",
-		"Java_dev_fern_plex_Playing_onStartCommand"}
+		"Java_dev_fern_plex_Playing_onStartCommand", "Java_dev_fern_plex_Browse_onGetRoot", "Java_dev_fern_plex_Browse_onLoadChildren",
+		"Java_dev_fern_plex_Browse_onDestroy", "Java_dev_fern_plex_Controls_onPlayFromMediaId"}
 	for _, name := range []string{"lib/arm64-v8a/libapp.so", "lib/x86_64/libapp.so"} {
 		f, err := elf.NewFile(bytes.NewReader(readZipEntry(t, zr, name)))
 		if err != nil {

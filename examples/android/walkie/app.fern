@@ -20,6 +20,7 @@ import "std/rand";
 import "std/tls/verify";
 import "./control";
 import "./internet";
+import "./key_files";
 import "./lan";
 import "./modes";
 import "./node";
@@ -183,20 +184,6 @@ function fresh_node(notice: string, id_seed: [u8], pins: u8[][], role: i32): nod
   return node.Node { ...n, notice: notice };
 }
 
-// The file `name` of `old`, moved into `keys` when `keys` has none. An older
-// build kept the identity and the known phones where the backups copy them.
-function move_key_file(keys: string, old: string, name: string): void {
-  if (keys.len() == 0 || old.len() == 0 || read_file_bytes(keys + "/" + name).is_ok()) {
-    return;
-  }
-  let Ok(b) = read_file_bytes(old + "/" + name) else {
-    return;
-  };
-  if (write_file_bytes(keys + "/" + name, b).is_ok()) {
-    let removed = remove_file(old + "/" + name);
-  }
-}
-
 // This phone's identity seed in `dir`, which the first start makes. With no
 // directory the identity lasts until the app stops.
 function identity_seed(dir: string): u8[] {
@@ -308,8 +295,7 @@ function app_main(ctx: usize): usize {
   android.keep_screen_on(ctx, true);
   let dir: string = android.data_dir(ctx);
   let keys: string = android.no_backup_dir(ctx);
-  move_key_file(keys, dir, "identity");
-  move_key_file(keys, dir, "peers");
+  key_files.migrate(keys, dir);
   let id_seed: u8[] = identity_seed(keys);
   let pins: u8[][] = load_pins(keys);
   let mode: modes.Mode = load_mode(dir);

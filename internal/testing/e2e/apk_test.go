@@ -163,6 +163,8 @@ const launchModeID = 0x0101001d
 
 const usesCleartextTrafficID = 0x010104ec
 
+const allowBackupID = 0x01010280
+
 const debuggableID = 0x0101000f
 
 const themeID = 0x01010000
@@ -199,11 +201,18 @@ func TestApkCleartext(t *testing.T) {
 func TestApkDebuggable(t *testing.T) {
 	dir := t.TempDir()
 	_, plain := buildApk(t, dir)
-	if v, ok := applicationAttr(t, readZipEntry(t, zipOf(t, plain), "AndroidManifest.xml"), debuggableID); ok {
+	plainManifest := readZipEntry(t, zipOf(t, plain), "AndroidManifest.xml")
+	if v, ok := applicationAttr(t, plainManifest, allowBackupID); !ok || v != 0 {
+		t.Errorf("android:allowBackup = %#x (set %v), want false by default", v, ok)
+	}
+	if v, ok := applicationAttr(t, plainManifest, debuggableID); ok {
 		t.Errorf("android:debuggable = %#x with no -apk-debuggable, want no attribute", v)
 	}
-	_, raw := buildApk(t, dir, "-apk-debuggable", "-apk-cleartext")
+	_, raw := buildApk(t, dir, "-apk-debuggable", "-apk-cleartext", "-apk-backup")
 	man := readZipEntry(t, zipOf(t, raw), "AndroidManifest.xml")
+	if v, ok := applicationAttr(t, man, allowBackupID); !ok || v != 0xffffffff {
+		t.Errorf("android:allowBackup = %#x (set %v), want true with -apk-backup", v, ok)
+	}
 	if v, ok := applicationAttr(t, man, debuggableID); !ok || v != 0xffffffff {
 		t.Errorf("android:debuggable = %#x (set %v), want true", v, ok)
 	}
@@ -1156,7 +1165,7 @@ func TestApkManifest(t *testing.T) {
 	write("face.fern", string(face))
 	write("data.txt", "fern")
 	write("lib.dex", "dex\n035\x00fern")
-	write("fern.toml", "[package]\nname = \"native\"\nlib = \"app.fern\"\n\n[android]\npackage = \"dev.fern.fromfile\"\nhome = true\nassets = [\"data.txt\"]\ndex = [\"lib.dex\"]\nversion_code = 7\nversion_name = \"2.1\"\n")
+	write("fern.toml", "[package]\nname = \"native\"\nlib = \"app.fern\"\n\n[android]\npackage = \"dev.fern.fromfile\"\nhome = true\nbackup = true\nassets = [\"data.txt\"]\ndex = [\"lib.dex\"]\nversion_code = 7\nversion_name = \"2.1\"\n")
 	build := func(extra ...string) ([]byte, error) {
 		out := filepath.Join(dir, "app.apk")
 		args := append([]string{"-apk", out}, extra...)
@@ -1174,6 +1183,9 @@ func TestApkManifest(t *testing.T) {
 	}
 	zr := zipOf(t, raw)
 	man := readZipEntry(t, zr, "AndroidManifest.xml")
+	if v, ok := applicationAttr(t, man, allowBackupID); !ok || v != 0xffffffff {
+		t.Errorf("android:allowBackup = %#x (set %v), want true from fern.toml", v, ok)
+	}
 	if !bytes.Contains(man, utf16le("dev.fern.flag")) || bytes.Contains(man, utf16le("dev.fern.fromfile")) {
 		t.Error("the -apk-package flag did not take priority over the package of fern.toml")
 	}
@@ -1189,11 +1201,14 @@ func TestApkManifest(t *testing.T) {
 	if got := versionCode(t, man); got != 7 || !bytes.Contains(man, utf16le("2.1")) {
 		t.Errorf("version_code and version_name of fern.toml: versionCode %d, want 7 and the name 2.1", got)
 	}
-	raw, err = build("-apk-version-code", "9", "-apk-version-name", "3.0")
+	raw, err = build("-apk-version-code", "9", "-apk-version-name", "3.0", "-apk-backup=false")
 	if err != nil {
 		t.Fatalf("fern -apk -apk-version-code: %v\n%s", err, raw)
 	}
 	man = readZipEntry(t, zipOf(t, raw), "AndroidManifest.xml")
+	if v, ok := applicationAttr(t, man, allowBackupID); !ok || v != 0 {
+		t.Errorf("android:allowBackup = %#x (set %v), want -apk-backup=false to override fern.toml", v, ok)
+	}
 	if got := versionCode(t, man); got != 9 || !bytes.Contains(man, utf16le("3.0")) || bytes.Contains(man, utf16le("2.1")) {
 		t.Errorf("the version flags did not take priority over fern.toml: versionCode %d", got)
 	}

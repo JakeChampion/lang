@@ -9601,6 +9601,27 @@ type scope struct {
 	sends map[string]bool
 	// rangeBody holds the range index whose loop body this scope is.
 	rangeBody string
+	// headers holds each name that a header pattern binds here and that no
+	// later declaration has replaced.
+	headers map[string]bool
+}
+
+// declaredHere reports whether a declaration of name conflicts with one in
+// this scope. A plain declaration can replace the name of a header pattern.
+func (s *scope) declaredHere(name string, header bool) bool {
+	_, dup := s.names[name]
+	return dup && (header || !s.headers[name])
+}
+
+func (s *scope) markHeaders(n *ast.Destructure) {
+	if s.headers == nil {
+		s.headers = map[string]bool{}
+	}
+	for _, name := range append([]string{n.AtName}, n.Names...) {
+		if _, bound := s.names[name]; bound {
+			s.headers[name] = true
+		}
+	}
 }
 
 func (s *scope) binder(name string) *scope {
@@ -9620,6 +9641,7 @@ func (s *scope) set(name string, t ast.Type) {
 	if _, bound := s.names[name]; !bound {
 		s.order = append(s.order, name)
 	}
+	delete(s.headers, name)
 	s.names[name] = t
 	delete(s.sends, name)
 }
@@ -12746,7 +12768,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			c.checkExpr(n.Expr, s)
 		}
 	case *ast.Var:
-		if _, dup := s.names[n.Name]; dup {
+		if s.declaredHere(n.Name, false) {
 			err := c.report(c.currentModule(), n.P, "E013", fmt.Sprintf("variable %q already declared in this scope", n.Name))
 			if prior := s.vars[n.Name]; prior != nil && err != nil {
 				err.Related = []diag.Label{{Pos: prior.P, Message: "previous declaration is here", Kind: diag.LabelSecondary}}
@@ -12838,6 +12860,9 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			c.beginOpenGenericCall(n)
 		}
 	case *ast.Destructure:
+		if n.Header {
+			defer s.markHeaders(n)
+		}
 		got := c.checkExpr(n.Init, s)
 		if n.Fields != nil {
 			c.checkStructDestructure(n, got, s)
@@ -12862,7 +12887,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		c.info.VarTypes[tempVar] = tup
 		c.info.Locals[c.current] = append(c.info.Locals[c.current], tempVar)
 		for i, name := range n.Names {
-			if _, dup := s.names[name]; dup {
+			if s.declaredHere(name, n.Header) {
 				c.errfCode(n.P, "E013", "variable %q already declared in this scope", name)
 				continue
 			}
@@ -12892,7 +12917,7 @@ func (c *checker) destructHolderName(n *ast.Destructure, s *scope) string {
 		n.TempName = c.destructTempName(n.P)
 		return n.TempName
 	}
-	if _, dup := s.names[n.AtName]; dup {
+	if s.declaredHere(n.AtName, n.Header) {
 		c.errfCode(n.P, "E013", "variable %q already declared in this scope", n.AtName)
 	}
 	n.TempName = n.AtName
@@ -12988,7 +13013,7 @@ func (c *checker) checkStructDestructure(n *ast.Destructure, got ast.Type, s *sc
 			s.poison(name)
 			continue
 		}
-		if _, dup := s.names[name]; dup {
+		if s.declaredHere(name, n.Header) {
 			c.errfCode(n.P, "E013", "variable %q already declared in this scope", name)
 			continue
 		}

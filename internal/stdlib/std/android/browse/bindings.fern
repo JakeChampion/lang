@@ -1,0 +1,467 @@
+// Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
+import "std/jni";
+
+// A android.service.media.MediaBrowserService.
+pub struct MediaBrowserService { ref: usize }
+
+pub function (x: MediaBrowserService) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: MediaBrowserService) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.service.media.MediaBrowserService and the IDs of its members.
+pub struct MediaBrowserServiceClass { class: usize, id_set_session_token: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function media_browser_service_class(e: usize): Result[MediaBrowserServiceClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/service/media/MediaBrowserService");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_set_session_token = jni.checked_id(e, class, jni.get_method_id(e, class, "setSessionToken", "(Landroid/media/session/MediaSession$Token;)V"))?;
+  return Ok(MediaBrowserServiceClass { class: class, id_set_session_token: id_set_session_token });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: MediaBrowserServiceClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.service.media.MediaBrowserService.setSessionToken(Landroid/media/session/MediaSession$Token;)V
+pub function (c: MediaBrowserServiceClass) set_session_token(e: usize, self: MediaBrowserService, a0: MediaSession_Token): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set_session_token, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.service.media.MediaBrowserService.BrowserRoot.
+pub struct MediaBrowserService_BrowserRoot { ref: usize }
+
+pub function (x: MediaBrowserService_BrowserRoot) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: MediaBrowserService_BrowserRoot) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.service.media.MediaBrowserService.BrowserRoot and the IDs of its members.
+pub struct MediaBrowserService_BrowserRootClass { class: usize, id_new: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function media_browser_service_browser_root_class(e: usize): Result[MediaBrowserService_BrowserRootClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/service/media/MediaBrowserService$BrowserRoot");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;Landroid/os/Bundle;)V"))?;
+  return Ok(MediaBrowserService_BrowserRootClass { class: class, id_new: id_new });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: MediaBrowserService_BrowserRootClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.service.media.MediaBrowserService.BrowserRoot.<init>(Ljava/lang/String;Landroid/os/Bundle;)V
+pub function (c: MediaBrowserService_BrowserRootClass) new(e: usize, a0: string, a1: jni.Object): Result[MediaBrowserService_BrowserRoot, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(MediaBrowserService_BrowserRoot { ref: got });
+}
+
+// A android.service.media.MediaBrowserService.Result.
+pub struct MediaBrowserService_Result { ref: usize }
+
+pub function (x: MediaBrowserService_Result) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: MediaBrowserService_Result) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.service.media.MediaBrowserService.Result and the IDs of its members.
+pub struct MediaBrowserService_ResultClass { class: usize, id_detach: usize, id_send_result: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function media_browser_service_result_class(e: usize): Result[MediaBrowserService_ResultClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/service/media/MediaBrowserService$Result");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_detach = jni.checked_id(e, class, jni.get_method_id(e, class, "detach", "()V"))?;
+  let id_send_result = jni.checked_id(e, class, jni.get_method_id(e, class, "sendResult", "(Ljava/lang/Object;)V"))?;
+  return Ok(MediaBrowserService_ResultClass { class: class, id_detach: id_detach, id_send_result: id_send_result });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: MediaBrowserService_ResultClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.service.media.MediaBrowserService.Result.detach()V
+pub function (c: MediaBrowserService_ResultClass) detach(e: usize, self: MediaBrowserService_Result): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_detach, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.service.media.MediaBrowserService.Result.sendResult(Ljava/lang/Object;)V
+pub function (c: MediaBrowserService_ResultClass) send_result(e: usize, self: MediaBrowserService_Result, a0: jni.Object): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_send_result, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.media.session.MediaSession.Token.
+pub struct MediaSession_Token { ref: usize }
+
+pub function (x: MediaSession_Token) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: MediaSession_Token) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.media.session.MediaSession.Token and the IDs of its members.
+pub struct MediaSession_TokenClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function media_session_token_class(e: usize): Result[MediaSession_TokenClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/media/session/MediaSession$Token");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  return Ok(MediaSession_TokenClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: MediaSession_TokenClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.media.browse.MediaBrowser.MediaItem.
+pub struct MediaBrowser_MediaItem { ref: usize }
+
+pub function (x: MediaBrowser_MediaItem) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: MediaBrowser_MediaItem) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.media.browse.MediaBrowser.MediaItem and the IDs of its members.
+pub struct MediaBrowser_MediaItemClass { class: usize, id_new: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function media_browser_media_item_class(e: usize): Result[MediaBrowser_MediaItemClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/media/browse/MediaBrowser$MediaItem");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Landroid/media/MediaDescription;I)V"))?;
+  return Ok(MediaBrowser_MediaItemClass { class: class, id_new: id_new });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: MediaBrowser_MediaItemClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.media.browse.MediaBrowser.MediaItem.<init>(Landroid/media/MediaDescription;I)V
+pub function (c: MediaBrowser_MediaItemClass) new(e: usize, a0: MediaDescription, a1: i32): Result[MediaBrowser_MediaItem, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(MediaBrowser_MediaItem { ref: got });
+}
+
+// A android.media.MediaDescription.
+pub struct MediaDescription { ref: usize }
+
+pub function (x: MediaDescription) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: MediaDescription) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.media.MediaDescription and the IDs of its members.
+pub struct MediaDescriptionClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function media_description_class(e: usize): Result[MediaDescriptionClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/media/MediaDescription");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  return Ok(MediaDescriptionClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: MediaDescriptionClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.media.MediaDescription.Builder.
+pub struct MediaDescription_Builder { ref: usize }
+
+pub function (x: MediaDescription_Builder) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: MediaDescription_Builder) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.media.MediaDescription.Builder and the IDs of its members.
+pub struct MediaDescription_BuilderClass { class: usize, id_new: usize, id_build: usize, id_set_media_id: usize, id_set_subtitle: usize, id_set_title: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function media_description_builder_class(e: usize): Result[MediaDescription_BuilderClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/media/MediaDescription$Builder");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "()V"))?;
+  let id_build = jni.checked_id(e, class, jni.get_method_id(e, class, "build", "()Landroid/media/MediaDescription;"))?;
+  let id_set_media_id = jni.checked_id(e, class, jni.get_method_id(e, class, "setMediaId", "(Ljava/lang/String;)Landroid/media/MediaDescription$Builder;"))?;
+  let id_set_subtitle = jni.checked_id(e, class, jni.get_method_id(e, class, "setSubtitle", "(Ljava/lang/CharSequence;)Landroid/media/MediaDescription$Builder;"))?;
+  let id_set_title = jni.checked_id(e, class, jni.get_method_id(e, class, "setTitle", "(Ljava/lang/CharSequence;)Landroid/media/MediaDescription$Builder;"))?;
+  return Ok(MediaDescription_BuilderClass { class: class, id_new: id_new, id_build: id_build, id_set_media_id: id_set_media_id, id_set_subtitle: id_set_subtitle, id_set_title: id_set_title });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: MediaDescription_BuilderClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.media.MediaDescription.Builder.<init>()V
+pub function (c: MediaDescription_BuilderClass) new(e: usize): Result[MediaDescription_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(MediaDescription_Builder { ref: got });
+}
+
+// android.media.MediaDescription.Builder.build()Landroid/media/MediaDescription;
+pub function (c: MediaDescription_BuilderClass) build(e: usize, self: MediaDescription_Builder): Result[MediaDescription, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_build, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(MediaDescription { ref: got });
+}
+
+// android.media.MediaDescription.Builder.setMediaId(Ljava/lang/String;)Landroid/media/MediaDescription$Builder;
+pub function (c: MediaDescription_BuilderClass) set_media_id(e: usize, self: MediaDescription_Builder, a0: string): Result[MediaDescription_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_media_id, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(MediaDescription_Builder { ref: got });
+}
+
+// android.media.MediaDescription.Builder.setSubtitle(Ljava/lang/CharSequence;)Landroid/media/MediaDescription$Builder;
+pub function (c: MediaDescription_BuilderClass) set_subtitle(e: usize, self: MediaDescription_Builder, a0: jni.Object): Result[MediaDescription_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_subtitle, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(MediaDescription_Builder { ref: got });
+}
+
+// android.media.MediaDescription.Builder.setTitle(Ljava/lang/CharSequence;)Landroid/media/MediaDescription$Builder;
+pub function (c: MediaDescription_BuilderClass) set_title(e: usize, self: MediaDescription_Builder, a0: jni.Object): Result[MediaDescription_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_title, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(MediaDescription_Builder { ref: got });
+}
+
+// A java.util.ArrayList.
+pub struct ArrayList { ref: usize }
+
+pub function (x: ArrayList) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ArrayList) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.util.ArrayList and the IDs of its members.
+pub struct ArrayListClass { class: usize, id_new: usize, id_add: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function array_list_class(e: usize): Result[ArrayListClass, jni.JavaError] {
+  let local = jni.find_class(e, "java/util/ArrayList");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "()V"))?;
+  let id_add = jni.checked_id(e, class, jni.get_method_id(e, class, "add", "(Ljava/lang/Object;)Z"))?;
+  return Ok(ArrayListClass { class: class, id_new: id_new, id_add: id_add });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ArrayListClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.util.ArrayList.<init>()V
+pub function (c: ArrayListClass) new(e: usize): Result[ArrayList, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(ArrayList { ref: got });
+}
+
+// java.util.ArrayList.add(Ljava/lang/Object;)Z
+pub function (c: ArrayListClass) add(e: usize, self: ArrayList, a0: jni.Object): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_add, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// The struct of IDs of each class of this module.
+pub struct Classes { media_browser_service: MediaBrowserServiceClass, media_browser_service_browser_root: MediaBrowserService_BrowserRootClass, media_browser_service_result: MediaBrowserService_ResultClass, media_session_token: MediaSession_TokenClass, media_browser_media_item: MediaBrowser_MediaItemClass, media_description: MediaDescriptionClass, media_description_builder: MediaDescription_BuilderClass, array_list: ArrayListClass }
+
+// Makes the struct of IDs of each class. Call it one time, and call
+// `release` when the app does not call Java again. One lookup for each
+// class, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function classes(e: usize): Result[Classes, jni.JavaError] {
+  let media_browser_service = match (media_browser_service_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      return Err(err);
+    },
+  };
+  let media_browser_service_browser_root = match (media_browser_service_browser_root_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      media_browser_service.release(e);
+      return Err(err);
+    },
+  };
+  let media_browser_service_result = match (media_browser_service_result_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      media_browser_service.release(e);
+      media_browser_service_browser_root.release(e);
+      return Err(err);
+    },
+  };
+  let media_session_token = match (media_session_token_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      media_browser_service.release(e);
+      media_browser_service_browser_root.release(e);
+      media_browser_service_result.release(e);
+      return Err(err);
+    },
+  };
+  let media_browser_media_item = match (media_browser_media_item_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      media_browser_service.release(e);
+      media_browser_service_browser_root.release(e);
+      media_browser_service_result.release(e);
+      media_session_token.release(e);
+      return Err(err);
+    },
+  };
+  let media_description = match (media_description_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      media_browser_service.release(e);
+      media_browser_service_browser_root.release(e);
+      media_browser_service_result.release(e);
+      media_session_token.release(e);
+      media_browser_media_item.release(e);
+      return Err(err);
+    },
+  };
+  let media_description_builder = match (media_description_builder_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      media_browser_service.release(e);
+      media_browser_service_browser_root.release(e);
+      media_browser_service_result.release(e);
+      media_session_token.release(e);
+      media_browser_media_item.release(e);
+      media_description.release(e);
+      return Err(err);
+    },
+  };
+  let array_list = match (array_list_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      media_browser_service.release(e);
+      media_browser_service_browser_root.release(e);
+      media_browser_service_result.release(e);
+      media_session_token.release(e);
+      media_browser_media_item.release(e);
+      media_description.release(e);
+      media_description_builder.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { media_browser_service: media_browser_service, media_browser_service_browser_root: media_browser_service_browser_root, media_browser_service_result: media_browser_service_result, media_session_token: media_session_token, media_browser_media_item: media_browser_media_item, media_description: media_description, media_description_builder: media_description_builder, array_list: array_list });
+}
+
+// Deletes the reference to each class. Do not use `c` after this call.
+pub function (c: Classes) release(e: usize): void {
+  c.media_browser_service.release(e);
+  c.media_browser_service_browser_root.release(e);
+  c.media_browser_service_result.release(e);
+  c.media_session_token.release(e);
+  c.media_browser_media_item.release(e);
+  c.media_description.release(e);
+  c.media_description_builder.release(e);
+  c.array_list.release(e);
+}

@@ -18,6 +18,8 @@ Other modules send their own events to the loop thread with `tell`, and the loop
 
 `keep_alive` keeps the loop running after the Destroy of its activity. A music player keeps its loop alive while a track plays: then the loop gives the events of its media session and of its service to `step` with no window. A new activity of the app takes that loop over, and `start` starts no second loop.
 
+A service of the app can start the loop when no activity runs, such as the media browser that Android Auto binds. `start_alone` starts a loop with no activity, or holds the live loop. The loop gives the events of the service to `step` with no window. `hold_loop` lets the loop go again. A loop with no activity ends when neither the app nor a service keeps it.
+
 When the loop has no activity and the app does not keep it alive, `step` gets a last Destroy event, and `run` returns. Thus Destroy is always the last event of a loop. While the loop has no activity, `activity_object` gives the Application Context, and `detached` is true.
 
 A module that makes more than one Java object of one listener class can tell their events apart with senders. `add_sender` keeps a number that names an object, such as the audio session of a media player, and gives it a slot from 0 to 7. In a callback, `sender_slot` gives the slot of the number of the object. The module puts that slot in its event. `drop_sender` frees the slot. The loop thread writes the slots, and a callback reads them with atomic loads. Thus neither one waits for a lock.
@@ -255,7 +257,7 @@ Before Android 15, the keyboard counts only for an activity with `android:window
 
 `Ready` has the ident of a source that another module added to the looper of the loop thread, when that source has data. The module reads the data when it gets the event, so the looper does not give the same data again. `std/android/sensors` adds its queue with the ident `IDENT_SENSORS`, and `std/android/camera` adds a pipe with the ident `IDENT_CAMERA`.
 
-`Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12, from 24 to 27, and 35 belong to this module. The kinds from 13 to 23 belong to `std/android/service`, `std/android/p2p`, `std/android/focus` and `std/android/player`. The kinds from 28 to 33 belong to `std/android/session`, kind 34 belongs to `std/android/noisy`, and the kinds from 36 to 38 belong to `std/android/location`. The kinds from 100 are free for the app.
+`Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12, from 24 to 27, and 35 belong to this module. The kinds from 13 to 23 belong to `std/android/service`, `std/android/p2p`, `std/android/focus` and `std/android/player`. The kinds from 28 to 33 belong to `std/android/session`, and kind 34 belongs to `std/android/noisy`. The kinds from 36 to 38 belong to `std/android/location`, and the kinds from 39 to 41 belong to `std/android/browse`. The kinds from 100 are free for the app.
 
 ```fern
 <<events>>=
@@ -391,7 +393,7 @@ Only the UI thread can change the views of the activity. `immersive` sets bit 0 
 <<the UI thread>>=
 // The context block of an activity, which both threads share.
 @derive(ffi.CLayout)
-struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize, ui_read: i32, ui_write: i32, field: usize, watcher: usize, quiet: i32, focused: i32, host: usize, provider: usize, delegate_class: usize, tree_class: usize, tree: usize, hovered: i32, sent: i64, kept: i32, app: usize, vm: usize, sdk: i32, dpi: i32, night: i32, motion: usize, back_class: usize, insets_class: usize, windowed: i32, senders: usize }
+struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize, ui_read: i32, ui_write: i32, field: usize, watcher: usize, quiet: i32, focused: i32, host: usize, provider: usize, delegate_class: usize, tree_class: usize, tree: usize, hovered: i32, sent: i64, kept: i32, app: usize, vm: usize, sdk: i32, dpi: i32, night: i32, motion: usize, back_class: usize, insets_class: usize, windowed: i32, senders: usize, held: i32 }
 
 // ANativeActivity.
 @derive(ffi.CLayout)
@@ -641,12 +643,29 @@ function ui_env(activity: usize): usize {
 // cannot open.
 function new_context(activity: usize): usize {
   unsafe {
+    let ctx = new_bare_context(activity, NativeActivity.c_load_vm(activity), NativeActivity.c_load_sdk_version(activity));
+    if (ctx == 0 as usize) {
+      return ctx;
+    }
+    if (c_pipe2(ctx + Context.c_offset_ui_read(), UI_PIPE_FLAGS) != 0) {
+      __free(ctx, Context.c_size() as i32);
+      return 0 as usize;
+    }
+    return ctx;
+  }
+}
+
+// A new context of the JavaVM `vm` with its message and reply pipes, or 0
+// when a pipe cannot open. A loop with no activity has no request pipe of
+// the UI thread until an activity takes it over.
+function new_bare_context(activity: usize, vm: usize, sdk: i32): usize {
+  unsafe {
     let ctx: usize = __alloc(Context.c_size() as i32);
-    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sent: 0i64, kept: 0, app: 0 as usize, vm: NativeActivity.c_load_vm(activity), sdk: NativeActivity.c_load_sdk_version(activity), dpi: 0, night: 0, motion: 0 as usize, back_class: 0 as usize, insets_class: 0 as usize, windowed: 0, senders: __alloc(SENDERS * 8) }.c_store(ctx);
+    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sent: 0i64, kept: 0, app: 0 as usize, vm: vm, sdk: sdk, dpi: 0, night: 0, motion: 0 as usize, back_class: 0 as usize, insets_class: 0 as usize, windowed: 0, senders: __alloc(SENDERS * 8), held: 0 }.c_store(ctx);
     for k in 0..SENDERS {
       __store_i64(Context.c_load_senders(ctx) + (k * 8) as usize, 0i64);
     }
-    let ok: i32 = c_pipe2(ctx + Context.c_offset_message_read(), 524288) | c_pipe2(ctx + Context.c_offset_reply_read(), 524288) | c_pipe2(ctx + Context.c_offset_ui_read(), UI_PIPE_FLAGS);
+    let ok: i32 = c_pipe2(ctx + Context.c_offset_message_read(), 524288) | c_pipe2(ctx + Context.c_offset_reply_read(), 524288);
     if (ok != 0) {
       __free(ctx, Context.c_size() as i32);
       return 0 as usize;
@@ -683,14 +702,7 @@ function taken_over(activity: usize, ctx: usize): boolean {
 // The Application Context of `activity`, as a global reference.
 function application(e: usize, activity: usize): usize {
   unsafe {
-    let app: usize = jni.call_object(e, NativeActivity.c_load_clazz(activity), "getApplicationContext", "()Landroid/content/Context;", []);
-    if (jni.exception_occurred(e) != 0 as usize || app == 0 as usize) {
-      let cleared: usize = jni.exception_clear(e);
-      return 0 as usize;
-    }
-    let global: usize = jni.new_global_ref(e, app);
-    let local: usize = jni.delete_local_ref(e, app);
-    return global;
+    return application_of(e, NativeActivity.c_load_clazz(activity));
   }
 }
 
@@ -727,6 +739,75 @@ pub(package) function start(activity: usize, thread_main: usize): void {
     set_property(e, LIVE, (ctx as u64).to_string());
     let freed: i32 = c_mutex_unlock(lock);
   }
+}
+
+// Starts a loop with no activity at `thread_main`, for the service
+// `service` of the app, such as the media browser that Android Auto binds
+// while no activity runs. The loop holds the Application of the service. A
+// live loop runs on, and no second loop starts. Either way the service
+// holds the loop until `hold_loop` lets it go. Call it on the UI thread, in a
+// callback of the service.
+pub(package) function start_alone(e: usize, service: usize, thread_main: usize): void {
+  let lock = made_lock(e);
+  unsafe {
+    let held: i32 = c_mutex_lock(lock);
+    let live = live_loop(e);
+    if (live != 0 as usize) {
+      Context.c_store_held(live, 1);
+      let freed: i32 = c_mutex_unlock(lock);
+      return;
+    }
+    let ctx: usize = new_bare_context(0 as usize, jni.java_vm(e), sdk_level(e));
+    if (ctx == 0 as usize) {
+      let freed: i32 = c_mutex_unlock(lock);
+      return;
+    }
+    Context.c_store_app(ctx, application_of(e, service));
+    Context.c_store_held(ctx, 1);
+    if (c_pthread_create(ctx + Context.c_offset_thread(), 0 as usize, thread_main, ctx) == 0) {
+      let ignored: i32 = c_pthread_detach(Context.c_load_thread(ctx));
+    }
+    set_property(e, LIVE, (ctx as u64).to_string());
+    let freed: i32 = c_mutex_unlock(lock);
+  }
+}
+
+// Lets the live loop go, or holds it again, for a service of the app. A
+// loop with no activity that nothing keeps then ends. Call it on the UI
+// thread.
+pub(package) function hold_loop(e: usize, on: boolean): void {
+  let lock = number_property(e, LOCK);
+  if (lock == 0 as usize) {
+    return;
+  }
+  unsafe {
+    let held: i32 = c_mutex_lock(lock);
+    let live = live_loop(e);
+    if (live != 0 as usize) {
+      Context.c_store_held(live, if (on) { 1 } else { 0 });
+    }
+    let freed: i32 = c_mutex_unlock(lock);
+  }
+}
+
+// The API level of the device.
+function sdk_level(e: usize): i32 {
+  let version = jni.find_class(e, "android/os/Build$VERSION");
+  let level = jni.get_static_int_field(e, version, jni.get_static_field_id(e, version, "SDK_INT", "I"));
+  let dropped: usize = jni.delete_local_ref(e, version);
+  return level;
+}
+
+// A global reference to the Application of the Context `context`, or 0.
+function application_of(e: usize, context: usize): usize {
+  let app: usize = jni.call_object(e, context, "getApplicationContext", "()Landroid/content/Context;", []);
+  if (jni.exception_occurred(e) != 0 as usize || app == 0 as usize) {
+    let cleared: usize = jni.exception_clear(e);
+    return 0 as usize;
+  }
+  let global: usize = jni.new_global_ref(e, app);
+  let local: usize = jni.delete_local_ref(e, app);
+  return global;
 }
 
 // Sends the message `kind` with `arg` to the loop of `ctx`, and waits for
@@ -974,10 +1055,10 @@ function frame_event(ctx: usize): Option[Event] {
 // context itself.
 struct Loop { ctx: usize, looper: usize, queue: usize, done: boolean, alone: boolean }
 
-// The app keeps the loop alive.
+// The app keeps the loop alive, or a service of the app holds it.
 function kept_flag(ctx: usize): boolean {
   unsafe {
-    return Context.c_load_kept(ctx) != 0;
+    return Context.c_load_kept(ctx) != 0 || Context.c_load_held(ctx) != 0;
   }
 }
 
@@ -985,9 +1066,7 @@ function kept_flag(ctx: usize): boolean {
 // A loop of an older activity that a new activity replaced does not stay.
 // During a Destroy event, it tells that the loop runs on after it.
 pub function kept(ctx: usize): boolean {
-  unsafe {
-    return Context.c_load_kept(ctx) != 0 && live_loop(env(ctx)) == ctx;
-  }
+  return kept_flag(ctx) && live_loop(env(ctx)) == ctx;
 }
 
 // The loop after it ends, when it has no activity and the app does not keep
@@ -1004,7 +1083,7 @@ function ended_alone(lp: Loop): Loop {
       return lp;
     }
     let out = lp;
-    if (detached(lp.ctx) && Context.c_load_kept(lp.ctx) == 0) {
+    if (detached(lp.ctx) && !kept_flag(lp.ctx)) {
       if (live_loop(e) == lp.ctx) {
         set_property(e, LIVE, "");
       }
@@ -1345,6 +1424,10 @@ pub function intent_action(e: usize, intent: usize): string {
 // The string extra `name` of the Intent that started the activity, or ""
 // when it has none. Call it on the loop thread.
 pub function intent_extra(ctx: usize, name: string): string {
+  // The Application of a loop with no activity has no Intent.
+  if (detached(ctx)) {
+    return "";
+  }
   let e: usize = env(ctx);
   let intent: usize = jni.call_object(e, activity_object(ctx), "getIntent", "()Landroid/content/Intent;", []);
   if (jni.exception_occurred(e) != 0 as usize || intent == 0 as usize) {
@@ -1373,8 +1456,8 @@ pub function sdk_version(ctx: usize): i32 {
 }
 
 // The directory of the private files of the app, or "" when the activity
-// gives none. Other apps cannot read the files in it. Android copies it to
-// the backups of the user and to a new device: keep secrets in
+// gives none. Other apps cannot read the files in it. Android can back up these files
+// or transfer them to a new device. Keep secrets in
 // `no_backup_dir`.
 pub function data_dir(ctx: usize): string {
   if (detached(ctx)) {

@@ -33,10 +33,11 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        go test -c -o e2ecompiler.test ./internal/testing/e2ecompiler/
+        packages=(./internal/testing/e2ecompiler/)
         if [ "${{ inputs.e2e }}" = "true" ]; then
-          go test -c -o e2e.test ./internal/testing/e2e/
+          packages+=(./internal/testing/e2e/)
         fi
+        go test -c -o . "${packages[@]}"
     - name: build the test worker runner
       if: inputs.workers == 'true'
       shell: bash

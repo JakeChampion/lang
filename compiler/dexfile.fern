@@ -1,0 +1,837 @@
+// The DEX writer of the compiler: a DEX file from classes with fields,
+// methods, code, handlers and the values of the static fields. Each
+// instruction names its string, type, field or method in a fixup, and the
+// writer gives the index after it sorts the sections, as the format asks.
+//
+// The file is the header, the sorted ID sections and the class
+// definitions, then the code, the type lists, the strings, the class data,
+// the values of the static fields and the map.
+import "std/crypto";
+import "std/option";
+import "std/utf8";
+import "./util";
+
+// The kinds of a fixup: the unit at `at` gets the index of a string, of a
+// type, of a field or of a method.
+pub const STRING: i32 = 1;
+
+pub const TYPE: i32 = 2;
+
+pub const FIELD: i32 = 3;
+
+pub const METHOD: i32 = 4;
+
+// A reference of the code unit `at`. A string and a type use `text`. A
+// field uses its class `text`, its `name` and its type `ret`. A method uses
+// its class `text`, its `name`, its result `ret` and its `params`.
+pub struct Fixup { at: i32, kind: i32, text: string, name: string, ret: string, params: string[] }
+
+// The handlers of a range of code: the descriptor of each class of
+// exception with the address of its handler, then the address of the
+// handler of each exception, or -1.
+pub struct Catch { types: string[], addrs: i32[], all: i32 }
+
+// A range of `count` code units from `start` whose handlers are
+// `catches[catch]` of the code.
+pub struct Try { start: i32, count: i32, catch: i32 }
+
+pub struct Code { registers: i32, ins: i32, outs: i32, units: i32[], fixups: Fixup[], tries: Try[], catches: Catch[] }
+
+// The value of a static field before its class initializer runs.
+pub enum Value { Boolean(boolean), Byte(i32), Short(i32), Char(i32), Int(i32), Long(i64), Float(f32), Double(f64), Text(string), Null }
+
+pub struct Field { name: string, desc: string, access: i32, value: Option[Value] }
+
+pub struct Method { name: string, ret: string, params: string[], access: i32, code: Option[Code] }
+
+// A class. `desc`, `superclass` and each interface are descriptors, such
+// as "Ljava/lang/Object;". `superclass` is empty for java.lang.Object.
+// `source` is the name of the source file, or empty.
+pub struct Class { desc: string, access: i32, superclass: string, interfaces: string[], source: string, fields: Field[], methods: Method[] }
+
+// The access flags of a DEX file that a class file does not have.
+pub const ACC_CONSTRUCTOR: i32 = 0x10000;
+
+pub const ACC_DECLARED_SYNCHRONIZED: i32 = 0x20000;
+
+const ACC_STATIC: i32 = 8;
+
+const ACC_PRIVATE: i32 = 2;
+
+const NO_INDEX: i32 = -1;
+
+const HEADER: i32 = 112;
+
+// Bytes, little-endian.
+
+function put16(out: u8[], v: i32): u8[] {
+  return util.put_u8(util.put_u8(out, v), v >> 8);
+}
+
+function put32(out: u8[], v: i32): u8[] {
+  return put16(put16(out, v), v >> 16);
+}
+
+// `v`, which is not negative, in unsigned LEB128.
+function uleb(out0: u8[], v: i32): u8[] {
+  let out = out0;
+  let x = v;
+  while (x >= 128) {
+    out = util.put_u8(out, x & 127 | 128);
+    x = x >> 7;
+  }
+  return util.put_u8(out, x);
+}
+
+function sleb(out0: u8[], v: i32): u8[] {
+  let out = out0;
+  let x = v;
+  while (true) {
+    let b = x & 127;
+    x = x >> 7;
+    if (x == 0 && (b & 64) == 0 || x == -1 && (b & 64) != 0) {
+      return util.put_u8(out, b);
+    }
+    out = util.put_u8(out, b | 128);
+  }
+}
+
+function pad4(out0: u8[]): u8[] {
+  let out = out0;
+  while (out.len() % 4 != 0) {
+    out = out.append(0 as u8);
+  }
+  return out;
+}
+
+function set32(b: u8[], at: i32, v: i32): u8[] {
+  return b.with(at, (v & 255) as u8).with(at + 1, (v >> 8 & 255) as u8).with(at + 2, (v >> 16 & 255) as u8).with(at + 3, (v >> 24 & 255) as u8);
+}
+
+// The UTF-16 code units of `s`, by which the strings of a DEX file sort.
+function utf16(s: string): i32[] {
+  let out: i32[] = [];
+  for c in s.chars() {
+    let n = c as i32;
+    if (n >= 0x10000) {
+      out = out.append(0xD800 + (n - 0x10000 >> 10)).append(0xDC00 + (n - 0x10000 & 0x3FF));
+    } else {
+      out = out.append(n);
+    }
+  }
+  return out;
+}
+
+function units_after(a: i32[], b: i32[]): boolean {
+  let n = a.len().min(b.len());
+  for k in 0..n {
+    if (a[k] != b[k]) {
+      return a[k] > b[k];
+    }
+  }
+  return a.len() > b.len();
+}
+
+// The string data of `s`: its count of UTF-16 code units, then its bytes
+// in modified UTF-8, then a NUL. Modified UTF-8 writes a NUL as two bytes,
+// and a character above U+FFFF as two surrogates of three bytes each.
+function string_data(out0: u8[], s: string): u8[] {
+  let out = uleb(out0, utf16(s).len());
+  for u in utf16(s) {
+    if (u >= 1 && u < 0x80) {
+      out = util.put_u8(out, u);
+    } else if (u < 0x800) {
+      out = util.put_u8(util.put_u8(out, 0xC0 | u >> 6), 0x80 | u & 0x3F);
+    } else {
+      out = util.put_u8(util.put_u8(util.put_u8(out, 0xE0 | u >> 12), 0x80 | u >> 6 & 0x3F), 0x80 | u & 0x3F);
+    }
+  }
+  return util.put_u8(out, 0);
+}
+
+// The shorty of a proto: a letter for the result and for each parameter,
+// with "L" for each reference.
+function shorty(ret: string, params: string[]): string {
+  let out = shorty_char(ret);
+  for p in params {
+    out += shorty_char(p);
+  }
+  return out;
+}
+
+function shorty_char(d: string): string {
+  return if (d[0] == b'L' || d[0] == b'[') { "L" } else { slice_unchecked(d, 0, 1).to_owned() };
+}
+
+function proto_key(ret: string, params: string[]): string {
+  return ret + "(" + params.join("") + ")";
+}
+
+struct Proto { ret: string, params: string[] }
+
+struct FieldId { class: string, name: string, desc: string }
+
+struct MethodId { class: string, name: string, proto: string }
+
+// The items of a file and their indexes. Each index gives the index of its
+// item by its key.
+struct Ids { strings: string[], string_idx: util.NameIndex, types: string[], type_idx: util.NameIndex, protos: Proto[], proto_idx: util.NameIndex, fields: FieldId[], field_idx: util.NameIndex, methods: MethodId[], method_idx: util.NameIndex }
+
+// The index of `key` in `ix`, or `other`.
+function index_or(ix: util.NameIndex, key: string, other: i32): i32 {
+  let k = ix.find(key);
+  return if (k < 0) { other } else { k };
+}
+
+// `ix` with `key`, one time.
+function with_key(ix: util.NameIndex, key: string): util.NameIndex {
+  return if (ix.has(key)) { ix } else { ix.added(key) };
+}
+
+function field_key(class: string, name: string, desc: string): string {
+  return class + "->" + name + ":" + desc;
+}
+
+function method_key(class: string, name: string, proto: string): string {
+  return class + "->" + name + proto;
+}
+
+// The items that the classes name, each one time, before they sort. Each
+// index holds the keys of the items beside it.
+struct Wanted { strings: util.NameIndex, types: util.NameIndex, proto_keys: util.NameIndex, protos: Proto[], field_keys: util.NameIndex, fields: FieldId[], method_keys: util.NameIndex, methods: MethodId[] }
+
+function want_type(w: Wanted, t: string): Wanted {
+  if (t == "" || w.types.has(t)) {
+    return w;
+  }
+  return Wanted { ...w, types: w.types.added(t), strings: with_key(w.strings, t) };
+}
+
+function want_proto(w0: Wanted, ret: string, params: string[]): Wanted {
+  let key = proto_key(ret, params);
+  if (w0.proto_keys.has(key)) {
+    return w0;
+  }
+  let w = want_type(w0, ret);
+  for p in params {
+    w = want_type(w, p);
+  }
+  return Wanted { ...w, proto_keys: w.proto_keys.added(key), protos: w.protos.append(Proto { ret: ret, params: params }), strings: with_key(w.strings, shorty(ret, params)) };
+}
+
+function want_field(w0: Wanted, class: string, name: string, desc: string): Wanted {
+  let w = want_type(want_type(w0, class), desc);
+  let key = field_key(class, name, desc);
+  if (w.field_keys.has(key)) {
+    return w;
+  }
+  return Wanted { ...w, strings: with_key(w.strings, name), field_keys: w.field_keys.added(key), fields: w.fields.append(FieldId { class: class, name: name, desc: desc }) };
+}
+
+function want_method(w0: Wanted, class: string, name: string, ret: string, params: string[]): Wanted {
+  let w = want_proto(want_type(w0, class), ret, params);
+  let proto = proto_key(ret, params);
+  let key = method_key(class, name, proto);
+  if (w.method_keys.has(key)) {
+    return w;
+  }
+  return Wanted { ...w, strings: with_key(w.strings, name), method_keys: w.method_keys.added(key), methods: w.methods.append(MethodId { class: class, name: name, proto: proto }) };
+}
+
+function want_fixup(w: Wanted, f: Fixup): Wanted {
+  if (f.kind == STRING) {
+    return Wanted { ...w, strings: with_key(w.strings, f.text) };
+  }
+  if (f.kind == TYPE) {
+    return want_type(w, f.text);
+  }
+  if (f.kind == FIELD) {
+    return want_field(w, f.text, f.name, f.ret);
+  }
+  return want_method(w, f.text, f.name, f.ret, f.params);
+}
+
+function want_code(w0: Wanted, code: Code): Wanted {
+  let w = w0;
+  for f in code.fixups {
+    w = want_fixup(w, f);
+  }
+  for c in code.catches {
+    for t in c.types {
+      w = want_type(w, t);
+    }
+  }
+  return w;
+}
+
+function want_class(w0: Wanted, c: Class): Wanted {
+  let w = want_type(want_type(w0, c.desc), c.superclass);
+  for i in c.interfaces {
+    w = want_type(w, i);
+  }
+  if (c.source != "") {
+    w = Wanted { ...w, strings: with_key(w.strings, c.source) };
+  }
+  for f in c.fields {
+    w = want_field(w, c.desc, f.name, f.desc);
+    if let Some(Text(s)) = f.value {
+      w = Wanted { ...w, strings: with_key(w.strings, s) };
+    }
+  }
+  for m in c.methods {
+    w = want_method(w, c.desc, m.name, m.ret, m.params);
+    if let Some(code) = m.code {
+      w = want_code(w, code);
+    }
+  }
+  return w;
+}
+
+function sorted_strings(w: Wanted): string[] {
+  let pairs: (i32[], string)[] = [];
+  for s in w.strings.names {
+    pairs = pairs.append((utf16(s), s));
+  }
+  let out: string[] = [];
+  for p in util.sorted_by(pairs, (a: (i32[], string), b: (i32[], string)): boolean => units_after(a.0, b.0)) {
+    out = out.append(p.1);
+  }
+  return out;
+}
+
+function ids_of(w: Wanted): Ids {
+  let strings = sorted_strings(w);
+  let string_idx = util.name_index(strings);
+  let types = util.sorted_by(w.types.names, (a: string, b: string): boolean => index_or(string_idx, a, 0) > index_or(string_idx, b, 0));
+  let type_idx = util.name_index(types);
+  let protos = util.sorted_by(w.protos, (a: Proto, b: Proto): boolean => proto_after(type_idx, a, b));
+  let proto_idx = util.name_index(protos.map((p: Proto): string => proto_key(p.ret, p.params)));
+  let fields = util.sorted_by(w.fields, (a: FieldId, b: FieldId): boolean => field_after(string_idx, type_idx, a, b));
+  let methods = util.sorted_by(w.methods, (a: MethodId, b: MethodId): boolean => method_after(string_idx, type_idx, proto_idx, a, b));
+  return Ids { strings: strings, string_idx: string_idx, types: types, type_idx: type_idx, protos: protos, proto_idx: proto_idx, fields: fields, field_idx: util.name_index(fields.map((f: FieldId): string => field_key(f.class, f.name, f.desc))), methods: methods, method_idx: util.name_index(methods.map((m: MethodId): string => method_key(m.class, m.name, m.proto))) };
+}
+
+// Protos sort by their result, then by their parameters.
+function proto_after(type_idx: util.NameIndex, a: Proto, b: Proto): boolean {
+  let (ra, rb) = (index_or(type_idx, a.ret, 0), index_or(type_idx, b.ret, 0));
+  if (ra != rb) {
+    return ra > rb;
+  }
+  for k in 0..a.params.len().min(b.params.len()) {
+    let (pa, pb) = (index_or(type_idx, a.params[k], 0), index_or(type_idx, b.params[k], 0));
+    if (pa != pb) {
+      return pa > pb;
+    }
+  }
+  return a.params.len() > b.params.len();
+}
+
+// Fields sort by their class, their name and their type.
+function field_after(string_idx: util.NameIndex, type_idx: util.NameIndex, a: FieldId, b: FieldId): boolean {
+  let (ca, cb) = (index_or(type_idx, a.class, 0), index_or(type_idx, b.class, 0));
+  if (ca != cb) {
+    return ca > cb;
+  }
+  let (na, nb) = (index_or(string_idx, a.name, 0), index_or(string_idx, b.name, 0));
+  return if (na != nb) { na > nb } else { index_or(type_idx, a.desc, 0) > index_or(type_idx, b.desc, 0) };
+}
+
+// Methods sort by their class, their name and their proto.
+function method_after(string_idx: util.NameIndex, type_idx: util.NameIndex, proto_idx: util.NameIndex, a: MethodId, b: MethodId): boolean {
+  let (ca, cb) = (index_or(type_idx, a.class, 0), index_or(type_idx, b.class, 0));
+  if (ca != cb) {
+    return ca > cb;
+  }
+  let (na, nb) = (index_or(string_idx, a.name, 0), index_or(string_idx, b.name, 0));
+  return if (na != nb) { na > nb } else { index_or(proto_idx, a.proto, 0) > index_or(proto_idx, b.proto, 0) };
+}
+
+// The classes in an order where a superclass or an interface that the file
+// defines comes before the classes that extend it.
+function class_order(classes: Class[]): Class[] {
+  let by_type = util.name_index(classes.map((c: Class): string => c.desc));
+  let empty: string[] = [];
+  let done = util.name_index(empty);
+  let out: Class[] = [];
+  for c in classes {
+    let (next_out, next_done) = placed(classes, by_type, c, out, done, 0);
+    out = next_out;
+    done = next_done;
+  }
+  return out;
+}
+
+function placed(classes: Class[], by_type: util.NameIndex, c: Class, out0: Class[], done0: util.NameIndex, depth: i32): (Class[], util.NameIndex) {
+  if (done0.has(c.desc) || depth > classes.len()) {
+    return (out0, done0);
+  }
+  let (out, done) = (out0, done0.added(c.desc));
+  for t in [c.superclass].concat(c.interfaces) {
+    let k = by_type.find(t);
+    if (k >= 0) {
+      let (o, d) = placed(classes, by_type, classes[k], out, done, depth + 1);
+      out = o;
+      done = d;
+    }
+  }
+  return (out.append(c), done);
+}
+
+// The index of the fixup `f` in `ids`.
+function fixup_index(ids: Ids, f: Fixup): i32 {
+  if (f.kind == STRING) {
+    return index_or(ids.string_idx, f.text, NO_INDEX);
+  }
+  if (f.kind == TYPE) {
+    return index_or(ids.type_idx, f.text, NO_INDEX);
+  }
+  if (f.kind == FIELD) {
+    return index_or(ids.field_idx, field_key(f.text, f.name, f.ret), NO_INDEX);
+  }
+  return index_or(ids.method_idx, method_key(f.text, f.name, proto_key(f.ret, f.params)), NO_INDEX);
+}
+
+// The units of `code` with the index of each fixup in place, or an error
+// when an index does not fit in 16 bits.
+function patched(ids: Ids, code: Code): Result[i32[], string] {
+  let units = code.units;
+  for f in code.fixups {
+    let idx = fixup_index(ids, f);
+    if (idx < 0 || idx > 0xFFFF) {
+      return Err("dexfile: the index of " + f.text + " " + f.name + " does not fit in 16 bits; the classes need more than one DEX file");
+    }
+    units = units.with(f.at, idx);
+  }
+  return Ok(units);
+}
+
+// The data section as it grows from the file offset `at`, and the offsets
+// of its items.
+struct Layout { at: i32, data: u8[], code_keys: util.NameIndex, code_offs: i32[], lists_at: i32, list_keys: util.NameIndex, list_offs: i32[], strings_at: i32, string_off: i32[], class_data_at: i32, class_data: i32[], values_at: i32, values: i32[], value_count: i32 }
+
+function here(l: Layout): i32 {
+  return l.at + l.data.len();
+}
+
+// The handler list of `code`, and the offset of each catch in it.
+function handlers(ids: Ids, code: Code): (u8[], i32[]) {
+  let out = uleb([], code.catches.len());
+  let offsets: i32[] = [];
+  for c in code.catches {
+    offsets = offsets.append(out.len());
+    out = sleb(out, if (c.all >= 0) { -c.types.len() } else { c.types.len() });
+    for k in 0..c.types.len() {
+      out = uleb(uleb(out, index_or(ids.type_idx, c.types[k], 0)), c.addrs[k]);
+    }
+    out = if (c.all >= 0) { uleb(out, c.all) } else { out };
+  }
+  return (out, offsets);
+}
+
+// The code item of `code`.
+function code_item(out0: u8[], ids: Ids, code: Code): Result[u8[], string] {
+  let units = patched(ids, code)?;
+  let out = put32(put16(put16(put16(put16(out0, code.registers), code.ins), code.outs), code.tries.len()), 0);
+  out = put32(out, units.len());
+  for u in units {
+    out = put16(out, u);
+  }
+  if (code.tries.len() == 0) {
+    return Ok(out);
+  }
+  out = if (units.len() % 2 == 1) { put16(out, 0) } else { out };
+  let (list, offsets) = handlers(ids, code);
+  for t in code.tries {
+    out = put16(put16(put32(out, t.start), t.count), offsets[t.catch]);
+  }
+  return Ok(util.append_bytes(out, list));
+}
+
+// The key of the code of method `m` of class `c`.
+function code_key(c: Class, m: Method): string {
+  return method_key(c.desc, m.name, proto_key(m.ret, m.params));
+}
+
+function lay_code(l0: Layout, ids: Ids, classes: Class[]): Result[Layout, string] {
+  let l = l0;
+  for c in classes {
+    for m in c.methods {
+      if let Some(code) = m.code {
+        let at = here(l);
+        let data = pad4(code_item(l.data, ids, code)?);
+        l = Layout { ...l, data: data, code_keys: l.code_keys.added(code_key(c, m)), code_offs: l.code_offs.append(at) };
+      }
+    }
+  }
+  return Ok(l);
+}
+
+// The type list `ds`, written one time, and its offset, or 0 for an empty
+// list.
+function lay_list(l: Layout, ids: Ids, ds: string[]): Layout {
+  let key = ds.join(",");
+  if (ds.len() == 0 || l.list_keys.has(key)) {
+    return l;
+  }
+  let at = here(pad_layout(l));
+  let data = put32(pad_layout(l).data, ds.len());
+  for d in ds {
+    data = put16(data, index_or(ids.type_idx, d, 0));
+  }
+  return Layout { ...l, data: data, list_keys: l.list_keys.added(key), list_offs: l.list_offs.append(at) };
+}
+
+function pad_layout(l: Layout): Layout {
+  return Layout { ...l, data: pad4(l.data) };
+}
+
+function list_off(l: Layout, ds: string[]): i32 {
+  return if (ds.len() == 0) { 0 } else { value_of(l.list_keys, l.list_offs, ds.join(",")) };
+}
+
+function lay_lists(l0: Layout, ids: Ids, classes: Class[]): Layout {
+  let l = Layout { ...pad_layout(l0), lists_at: here(pad_layout(l0)) };
+  for p in ids.protos {
+    l = lay_list(l, ids, p.params);
+  }
+  for c in classes {
+    l = lay_list(l, ids, c.interfaces);
+  }
+  return l;
+}
+
+function lay_strings(l0: Layout, ids: Ids): Layout {
+  let l = Layout { ...l0, strings_at: here(l0) };
+  let offs: i32[] = [];
+  let data = l.data;
+  for s in ids.strings {
+    offs = offs.append(l.at + data.len());
+    data = string_data(data, s);
+  }
+  return Layout { ...l, data: data, string_off: offs };
+}
+
+// The fields and the methods of `c` in the order of their indexes, as the
+// class data lists them.
+struct Members { statics: i32[], instance: i32[], direct: i32[], virtual: i32[] }
+
+function is_direct(m: Method): boolean {
+  return (m.access & (ACC_STATIC | ACC_PRIVATE | ACC_CONSTRUCTOR)) != 0;
+}
+
+function members_of(ids: Ids, c: Class): Members {
+  let statics: i32[] = [];
+  let instance: i32[] = [];
+  let direct: i32[] = [];
+  let virtual: i32[] = [];
+  for k in 0..c.fields.len() {
+    let f = c.fields[k];
+    if ((f.access & ACC_STATIC) != 0) {
+      statics = statics.append(k);
+    } else {
+      instance = instance.append(k);
+    }
+  }
+  for k in 0..c.methods.len() {
+    if (is_direct(c.methods[k])) {
+      direct = direct.append(k);
+    } else {
+      virtual = virtual.append(k);
+    }
+  }
+  let fidx = (k: i32): i32 => index_or(ids.field_idx, field_key(c.desc, c.fields[k].name, c.fields[k].desc), 0);
+  let midx = (k: i32): i32 => index_or(ids.method_idx, code_key(c, c.methods[k]), 0);
+  return Members { statics: util.sorted_by(statics, (a: i32, b: i32): boolean => fidx(a) > fidx(b)), instance: util.sorted_by(instance, (a: i32, b: i32): boolean => fidx(a) > fidx(b)), direct: util.sorted_by(direct, (a: i32, b: i32): boolean => midx(a) > midx(b)), virtual: util.sorted_by(virtual, (a: i32, b: i32): boolean => midx(a) > midx(b)) };
+}
+
+function encoded_fields(out0: u8[], ids: Ids, c: Class, ks: i32[]): u8[] {
+  let (out, last) = (out0, 0);
+  for k in ks {
+    let idx = index_or(ids.field_idx, field_key(c.desc, c.fields[k].name, c.fields[k].desc), 0);
+    out = uleb(uleb(out, idx - last), c.fields[k].access);
+    last = idx;
+  }
+  return out;
+}
+
+function encoded_methods(out0: u8[], l: Layout, ids: Ids, c: Class, ks: i32[]): u8[] {
+  let (out, last) = (out0, 0);
+  for k in ks {
+    let m = c.methods[k];
+    let idx = index_or(ids.method_idx, code_key(c, m), 0);
+    out = uleb(uleb(uleb(out, idx - last), m.access), value_of(l.code_keys, l.code_offs, code_key(c, m)));
+    last = idx;
+  }
+  return out;
+}
+
+function lay_class_data(l0: Layout, ids: Ids, classes: Class[]): Layout {
+  let l = Layout { ...l0, class_data_at: here(l0) };
+  let offs: i32[] = [];
+  let data = l.data;
+  for c in classes {
+    let ms = members_of(ids, c);
+    offs = offs.append(l.at + data.len());
+    data = uleb(uleb(uleb(uleb(data, ms.statics.len()), ms.instance.len()), ms.direct.len()), ms.virtual.len());
+    data = encoded_fields(encoded_fields(data, ids, c, ms.statics), ids, c, ms.instance);
+    data = encoded_methods(encoded_methods(data, l, ids, c, ms.direct), l, ids, c, ms.virtual);
+  }
+  return Layout { ...l, data: data, class_data: offs };
+}
+
+// The bytes of a signed value `v` in `size` bytes, low byte first.
+function value_bytes(out0: u8[], v: i64, size: i32): u8[] {
+  let out = out0;
+  for k in 0..size {
+    out = util.put_u8(out, (v >> (8 * k) as i64 & 255 as i64) as i32);
+  }
+  return out;
+}
+
+// The fewest bytes that hold the signed value `v`.
+function signed_size(v: i64): i32 {
+  for n in 1..8 {
+    if (v >= -(1 as i64 << (8 * n - 1) as i64) && v < 1 as i64 << (8 * n - 1) as i64) {
+      return n;
+    }
+  }
+  return 8;
+}
+
+// The fewest bytes that hold the value `v`, which is not negative, at
+// least one.
+function unsigned_size(v: i64): i32 {
+  for n in 1..8 {
+    if (v >> (8 * n) as i64 == 0 as i64) {
+      return n;
+    }
+  }
+  return 8;
+}
+
+// The bytes of `bits` from the high byte down, with the low zero bytes
+// left out, as a float and a double are written.
+function high_bytes(out0: u8[], bits: i64, size: i32, kind: i32): u8[] {
+  let n = size;
+  while (n > 1 && (bits >> (8 * (size - n)) as i64 & 255 as i64) == 0 as i64) {
+    n -= 1;
+  }
+  let skip = size - n;
+  let out = util.put_u8(out0, n - 1 << 5 | kind);
+  for k in skip..size {
+    out = util.put_u8(out, (bits >> (8 * k) as i64 & 255 as i64) as i32);
+  }
+  return out;
+}
+
+function encoded_value(out: u8[], ids: Ids, v: Value): u8[] {
+  return match (v) {
+    Boolean(b) => util.put_u8(out, (if (b) { 1 } else { 0 }) << 5 | 0x1F),
+    Byte(x) => value_bytes(util.put_u8(out, 0x00), x as i64, 1),
+    Short(x) => signed_value(out, x as i64, 0x02),
+    Char(x) => value_bytes(util.put_u8(out, unsigned_size(x as i64) - 1 << 5 | 0x03), x as i64, unsigned_size(x as i64)),
+    Int(x) => signed_value(out, x as i64, 0x04),
+    Long(x) => signed_value(out, x, 0x06),
+    Float(x) => high_bytes(out, f32_bits(x) as i64 & 0xFFFFFFFF, 4, 0x10),
+    Double(x) => high_bytes(out, f64_bits(x), 8, 0x11),
+    Text(s) => unsigned_value(out, index_or(ids.string_idx, s, 0) as i64, 0x17),
+    Null => util.put_u8(out, 0x1E),
+  };
+}
+
+function signed_value(out: u8[], v: i64, kind: i32): u8[] {
+  let n = signed_size(v);
+  return value_bytes(util.put_u8(out, n - 1 << 5 | kind), v, n);
+}
+
+function unsigned_value(out: u8[], v: i64, kind: i32): u8[] {
+  let n = unsigned_size(v);
+  return value_bytes(util.put_u8(out, n - 1 << 5 | kind), v, n);
+}
+
+// The value `n` of a static field of the type `t`, which is an int, a
+// boolean, a byte, a short or a char.
+pub function int_value(t: string, n: i32): Value {
+  return match (t) {
+    "Z" => Boolean(n != 0),
+    "B" => Byte(n),
+    "S" => Short(n),
+    "C" => Char(n),
+    _ => Int(n),
+  };
+}
+
+// The default value of a static field of the type `t`.
+function default_value(t: string): Value {
+  if (t[0] == b'L' || t[0] == b'[') {
+    return Null;
+  }
+  if (t == "J") {
+    return Long(0);
+  }
+  if (t == "F") {
+    return Float(0.0);
+  }
+  return if (t == "D") { Double(0.0) } else { int_value(t, 0) };
+}
+
+// The values of the static fields of `c` up to the last field with a
+// value, in the order of their indexes, or none.
+function static_values(ids: Ids, c: Class): Value[] {
+  let out: Value[] = [];
+  let kept = 0;
+  for k in members_of(ids, c).statics {
+    let f = c.fields[k];
+    out = out.append(f.value.unwrap_or(default_value(f.desc)));
+    kept = if (f.value.is_some()) { out.len() } else { kept };
+  }
+  return out.take(kept);
+}
+
+function lay_values(l0: Layout, ids: Ids, classes: Class[]): Layout {
+  let l = Layout { ...l0, values_at: here(l0) };
+  let offs: i32[] = [];
+  let arrays: i32[] = [];
+  let data = l.data;
+  for c in classes {
+    let vs = static_values(ids, c);
+    if (vs.len() == 0) {
+      offs = offs.append(0);
+      continue;
+    }
+    offs = offs.append(l.at + data.len());
+    arrays = arrays.append(l.at + data.len());
+    data = uleb(data, vs.len());
+    for v in vs {
+      data = encoded_value(data, ids, v);
+    }
+  }
+  return Layout { ...l, data: data, values: offs, value_count: arrays.len() };
+}
+
+// The offsets of the sections of IDs: the strings, the types, the protos,
+// the fields, the methods and the classes.
+function id_offsets(ids: Ids): i32[] {
+  let strings = HEADER;
+  let types = strings + 4 * ids.strings.len();
+  let protos = types + 4 * ids.types.len();
+  let fields = protos + 12 * ids.protos.len();
+  let methods = fields + 8 * ids.fields.len();
+  return [strings, types, protos, fields, methods, methods + 8 * ids.methods.len()];
+}
+
+struct MapItem { kind: i32, count: i32, off: i32 }
+
+// The map list, at the end of the data, with each section that is not
+// empty, in the order of their offsets.
+function lay_map(l0: Layout, ids: Ids, nc: i32): Layout {
+  let l = pad_layout(l0);
+  let at = id_offsets(ids);
+  let items: MapItem[] = [
+    MapItem { kind: 0, count: 1, off: 0 },
+    MapItem { kind: 1, count: ids.strings.len(), off: at[0] },
+    MapItem { kind: 2, count: ids.types.len(), off: at[1] },
+    MapItem { kind: 3, count: ids.protos.len(), off: at[2] },
+    MapItem { kind: 4, count: ids.fields.len(), off: at[3] },
+    MapItem { kind: 5, count: ids.methods.len(), off: at[4] },
+    MapItem { kind: 6, count: nc, off: at[5] },
+    MapItem { kind: 0x2001, count: l.code_offs.len(), off: l.at },
+    MapItem { kind: 0x1001, count: l.list_offs.len(), off: l.lists_at },
+    MapItem { kind: 0x2002, count: ids.strings.len(), off: l.strings_at },
+    MapItem { kind: 0x2000, count: nc, off: l.class_data_at },
+    MapItem { kind: 0x2005, count: l.value_count, off: l.values_at },
+    MapItem { kind: 0x1000, count: 1, off: here(l) },
+  ];
+  let kept = items.filter((it: MapItem): boolean => it.count > 0);
+  let data = put32(l.data, kept.len());
+  for it in kept {
+    data = put32(put32(put16(put16(data, it.kind), 0), it.count), it.off);
+  }
+  return Layout { ...l, data: data };
+}
+
+function index_or_none(ix: util.NameIndex, key: string): i32 {
+  return if (key == "") { NO_INDEX } else { index_or(ix, key, NO_INDEX) };
+}
+
+// The value beside `key` of `keys`, or 0.
+function value_of(keys: util.NameIndex, values: i32[], key: string): i32 {
+  let k = keys.find(key);
+  return if (k < 0) { 0 } else { values[k] };
+}
+
+function id_bytes(l: Layout, ids: Ids, classes: Class[]): u8[] {
+  let out: u8[] = [];
+  for o in l.string_off {
+    out = put32(out, o);
+  }
+  for t in ids.types {
+    out = put32(out, index_or(ids.string_idx, t, 0));
+  }
+  for p in ids.protos {
+    out = put32(put32(put32(out, index_or(ids.string_idx, shorty(p.ret, p.params), 0)), index_or(ids.type_idx, p.ret, 0)), list_off(l, p.params));
+  }
+  for f in ids.fields {
+    out = put32(put16(put16(out, index_or(ids.type_idx, f.class, 0)), index_or(ids.type_idx, f.desc, 0)), index_or(ids.string_idx, f.name, 0));
+  }
+  for m in ids.methods {
+    out = put32(put16(put16(out, index_or(ids.type_idx, m.class, 0)), index_or(ids.proto_idx, m.proto, 0)), index_or(ids.string_idx, m.name, 0));
+  }
+  for k in 0..classes.len() {
+    let c = classes[k];
+    out = put32(put32(put32(put32(out, index_or(ids.type_idx, c.desc, 0)), c.access), index_or_none(ids.type_idx, c.superclass)), list_off(l, c.interfaces));
+    out = put32(put32(put32(put32(out, index_or_none(ids.string_idx, c.source)), 0), l.class_data[k]), l.values[k]);
+  }
+  return out;
+}
+
+// The header, with zeros for the checksum and the signature.
+function header(ids: Ids, nc: i32, version: string, size: i32, data_off: i32, map_at: i32): u8[] {
+  let at = id_offsets(ids);
+  let head = util.append_bytes(util.append_bytes([], "dex\n".as_bytes()), version.as_bytes()).append(0 as u8);
+  head = put32(head, 0);
+  for k in 0..20 {
+    head = head.append(0 as u8);
+  }
+  head = put32(put32(put32(put32(head, size), HEADER), 0x12345678), 0);
+  head = put32(put32(put32(put32(head, 0), map_at), ids.strings.len()), at[0]);
+  head = put32(put32(put32(put32(head, ids.types.len()), at[1]), ids.protos.len()), at[2]);
+  head = put32(put32(put32(put32(head, ids.fields.len()), at[3]), ids.methods.len()), at[4]);
+  return put32(put32(put32(put32(head, nc), at[5]), size - data_off), data_off);
+}
+
+// The DEX file of `classes`, of the format `version`, such as "035".
+pub function write(classes0: Class[], version: string): Result[u8[], string] {
+  let empty: string[] = [];
+  let none = util.name_index(empty);
+  let w = Wanted { strings: none, types: none, proto_keys: none, protos: [], field_keys: none, fields: [], method_keys: none, methods: [] };
+  for c in classes0 {
+    w = want_class(w, c);
+  }
+  let ids = ids_of(w);
+  let classes = class_order(classes0);
+  let nc = classes.len();
+  let data_off = id_offsets(ids)[5] + 32 * nc;
+  let l = Layout { at: data_off, data: [], code_keys: none, code_offs: [], lists_at: 0, list_keys: none, list_offs: [], strings_at: 0, string_off: [], class_data_at: 0, class_data: [], values_at: 0, values: [], value_count: 0 };
+  l = lay_code(l, ids, classes)?;
+  l = lay_values(lay_class_data(lay_strings(lay_lists(l, ids, classes), ids), ids, classes), ids, classes);
+  let map_at = here(pad_layout(l));
+  l = lay_map(l, ids, nc);
+  let size = here(l);
+  let file = util.append_bytes(util.append_bytes(header(ids, nc, version, size, data_off, map_at), id_bytes(l, ids, classes)), l.data);
+  let sig = crypto.sha1(file[32:file.len()]);
+  for k in 0..20 {
+    file = file.with(12 + k, sig[k]);
+  }
+  return Ok(set32(file, 8, adler32(file[12:file.len()])));
+}
+
+function adler32(b: [u8]): i32 {
+  let a = 1 as i64;
+  let s = 0 as i64;
+  for x in b {
+    a = (a + x as i64) % (65521 as i64);
+    s = (s + a) % (65521 as i64);
+  }
+  return (s << 16 as i64 | a) as i32;
+}

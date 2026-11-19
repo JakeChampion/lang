@@ -699,6 +699,25 @@ pub function call_static_object_method_a(env: usize, clazz: usize, method: usize
   return call3(env, 116, clazz, method, args);
 }
 
+// Calls the void method `method` of the class `clazz` on `obj`, with no
+// virtual dispatch: an override in a subclass calls the method that it
+// replaces, as `super` does in Java.
+pub function call_nonvirtual_void_method_a(env: usize, obj: usize, clazz: usize, method: usize, args: usize): usize {
+  return call4(env, 93, obj, clazz, method, args);
+}
+
+// The JavaVM of the JNIEnv `env`, or 0.
+pub function java_vm(env: usize): usize {
+  unsafe {
+    let buf: usize = alloc_buffer(8);
+    __store_i64(buf, 0i64);
+    let failed: usize = call1(env, 219, buf);
+    let vm: usize = __load_ptr(buf);
+    free_buffer(buf);
+    return vm;
+  }
+}
+
 pub function call_static_int_method_a(env: usize, clazz: usize, method: usize, args: usize): i32 {
   return call3(env, 131, clazz, method, args) as i32;
 }

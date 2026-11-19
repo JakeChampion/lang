@@ -277,7 +277,7 @@ function load_dependency(ov: Overlay, m: fern_toml.Manifest, dir: string, path: 
     Err(message) => {
       return Resolved { ...res_none(), err: message };
     },
-    _ => {}
+    Ok(None()) => {}
   }
   return res_none();
 }

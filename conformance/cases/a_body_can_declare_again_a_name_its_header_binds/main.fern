@@ -1,0 +1,70 @@
+// A body can declare again each name that its header binds: a parameter
+// pattern, a loop variable or pattern, and the pattern of a match arm.
+import "core/map";
+import "core/iter";
+
+struct P { a: i32, b: i32 }
+
+function tuple_param((a, b): (i32, i32)): i32 {
+  let a = a * 10;
+  return a + b;
+}
+
+function record_param(P { a, b }: P): i32 {
+  let b = b * 10;
+  return a + b;
+}
+
+function main(): i32 {
+  print(tuple_param((1, 2)));
+  print(record_param(P { a: 1, b: 2 }));
+
+  let t = 0;
+  for k in [1, 2] {
+    let k = k * 100;
+    t += k;
+  }
+  for (x, y) in [(1, 2)] {
+    let x = x + 10;
+    t += x + y;
+  }
+  for P { a, b } in [P { a: 3, b: 4 }] {
+    let a = a + 20;
+    t += a + b;
+  }
+  for i in 0..2 {
+    let i = i + 1000;
+    t += i;
+  }
+  let m: Map[i32, i32] = map_new(4);
+  m = m.insert(5, 6);
+  for (mk, mv) in m.iter() {
+    let mk = mk + 30;
+    t += mk + mv;
+  }
+  print(t);
+
+  let p = P { a: 1, b: 2 };
+  match (p) {
+    P { a, b } => {
+      let a = a + 40;
+      print(a + b);
+    }
+  }
+  match ((7, 8)) {
+    w @ (c, d) => {
+      let c = c + 50;
+      let w = 0;
+      print(c + d + w);
+    }
+  }
+  let o: Option[i32] = Some(9);
+  match (o) {
+    Some(v) => {
+      let v = v + 60;
+      print(v);
+    },
+    None => {}
+  }
+  return 0;
+}

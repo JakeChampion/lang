@@ -1,0 +1,23 @@
+import "std/test";
+import "./key_files";
+
+function main(): i32 {
+  let r = test.new("walkie key files");
+  let (old, r1) = test.must_temp_dir(r, "walkie-old");
+  let (keys, r2) = test.must_temp_dir(r1, "walkie-keys");
+  if (old == "" || keys == "") {
+    return r2.finish();
+  }
+  let identity = write_file(old + "/identity", "identity seed");
+  let peers = write_file(old + "/peers", "known phones");
+  key_files.migrate(keys, old);
+  r2 = r2.it("identity migrated", () => test.assert_file_contents(keys + "/identity", "identity seed"));
+  r2 = r2.it("peers migrated", () => test.assert_file_contents(keys + "/peers", "known phones"));
+  r2 = r2.it("old identity removed", () => test.assert_file_not_exists(old + "/identity"));
+  r2 = r2.it("old peers removed", () => test.assert_file_not_exists(old + "/peers"));
+  let stale = write_file(old + "/peers", "stale phones");
+  r2 = r2.it("stale peer fixture written", () => test.assert_is_ok(stale));
+  key_files.migrate(keys, old);
+  r2 = r2.it("existing peers preserved", () => test.assert_file_contents(keys + "/peers", "known phones"));
+  return r2.finish();
+}

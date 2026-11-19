@@ -161,7 +161,10 @@ The order puts first what stops a release, then what most apps need.
    `tinted` gives a canvas the color of a role of the theme.
 
 6. **Java and Kotlin libraries.** Merge DEX files and manifests of a JAR
-   or an AAR into the APK.
+   or an AAR into the APK. `fern -dex` writes a DEX file from class files
+   and JAR files, with no D8 and no JDK. Lambdas, string concatenation
+   through `invokedynamic`, and `-apk-jar` and `-apk-aar` come next, in
+   the order of `docs/DEXER-PLAN.md`.
 
 7. **Text.** The state machines of an Apple `kern` table, of format 1,
    do not apply. An old Arabic font with the glyphs of the code page
