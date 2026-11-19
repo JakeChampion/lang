@@ -4256,6 +4256,7 @@ pub function with_reuse(f: ssasem.Func, p: Plan, idx: i32[][], dom: ssadeps.Dom)
 }
 
 // p with the reuse pairs of f. `off` gives a plan that pairs nothing.
+@noinline
 pub function reuse_planned(f: ssasem.Func, p: Plan, idx: i32[][], dom: ssadeps.Dom, off: boolean): Plan {
   if (!p.ok) {
     return Plan { ...p, reuse: Reuse { ...p.reuse, disabled: off } };
