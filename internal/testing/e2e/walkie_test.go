@@ -99,3 +99,7 @@ func TestWalkieUi(t *testing.T) {
 func TestWalkieModes(t *testing.T) {
 	runWalkieTest(t, "modes_test.fern")
 }
+
+func TestWalkieKeyMigration(t *testing.T) {
+	runWalkieTest(t, "key_files_test.fern")
+}
