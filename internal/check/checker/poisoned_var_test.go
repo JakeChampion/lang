@@ -91,7 +91,7 @@ function main(): i32 {
     let c: string = b;
     return f(b);
 }`,
-			want: `operator "+" requires an integer type`,
+			want: `operator "+" requires matching numeric or string operands, got i32 and string`,
 		},
 		{
 			name: "failed arithmetic, then compared and multiplied",

@@ -5,7 +5,7 @@
 13:6: error[E048]: cannot assign to field "i": fields are immutable after construction; rebuild with `T { ...old, i: value }`
 13:9: error[E003]: assignment: expected In, got i32
 14:6: error[E048]: cannot assign to field "name": fields are immutable after construction; rebuild with `T { ...old, name: value }`
-14:12: error[E009]: operator "+" requires an integer type, got string
+14:12: error[E009]: operator "+" requires matching numeric or string operands, got string and i32
 15:6: error[E048]: cannot assign to field "n": fields are immutable after construction; rebuild with `T { ...old, n: value }`
 15:11: error[E047]: literal 5000000000 does not fit in i32
 16:6: error[E048]: cannot assign to field "n": fields are immutable after construction; rebuild with `T { ...old, n: value }`
