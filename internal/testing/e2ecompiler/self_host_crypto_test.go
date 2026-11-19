@@ -141,3 +141,57 @@ function main(): i32 {
 		check(t, out, err)
 	})
 }
+
+// A misuse of a crypto API that the type of a key or a context forbids is a
+// compile error, and the same program without the misuse compiles.
+func TestSelfHostCryptoApiRefusals(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	cases := []struct {
+		name, body, code string
+	}{
+		{"hpke context sealed twice", `let c = hpke.key_schedule(hpke.KEM_P256, __alloc_u8(32), []);
+  let Ok((a, _)) = c.seal([], [1u8]) else { return 1; };
+  let Ok((b, _)) = c.seal([], [2u8]) else { return 2; };
+  return a.len() + b.len();`, "E051"},
+		{"hpke context sealed twice from a field", `let s = hpke.Sender { enc: [], context: hpke.key_schedule(hpke.KEM_P256, __alloc_u8(32), []) };
+  let Ok((a, _)) = s.context.seal([], [1u8]) else { return 1; };
+  let Ok((b, _)) = s.context.seal([], [2u8]) else { return 2; };
+  return a.len() + b.len();`, "E051"},
+		{"hpke context built from fields", `let c = hpke.Context { key: [], base_nonce: [], seq: 0 as u64, exporter_secret: [], suite: [] };
+  return 0;`, "E021"},
+		{"ed25519 private key built from fields", `let k = ed25519.PrivateKey { scalar: [], expanded: [], public: [] };
+  return k.sign([]).len();`, "E021"},
+		{"ed25519 public key built from fields", `let Ok(k) = ed25519.private_key(__alloc_u8(32)) else { return 1; };
+  let Ok(p) = ed25519.public_key(k.public_point()) else { return 2; };
+  let q = ed25519.PublicKey { ...p, bytes: [] };
+  return 0;`, "E021"},
+		{"control", `let c = hpke.key_schedule(hpke.KEM_P256, __alloc_u8(32), []);
+  let Ok((a, next)) = c.seal([], [1u8]) else { return 1; };
+  let Ok((b, _)) = next.seal([], [2u8]) else { return 2; };
+  let Ok(k) = ed25519.private_key(__alloc_u8(32)) else { return 3; };
+  return a.len() + b.len() + k.sign([]).len() - 98;`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "main.fern")
+			prog := "import \"std/crypto/ed25519\";\nimport \"std/crypto/hpke\";\n\nfunction main(): i32 {\n  " + c.body + "\n}\n"
+			if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, err := cli.compileCmd("x86-64-linux", filepath.Join(dir, "main"), src).CombinedOutput()
+			if c.code == "" {
+				if err != nil {
+					t.Fatalf("the control does not compile: %v\n%s", err, out)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("compiled, want %s", c.code)
+			}
+			if !strings.Contains(string(out), "error["+c.code+"]") {
+				t.Fatalf("want %s, got:\n%s", c.code, out)
+			}
+		})
+	}
+}
