@@ -9,7 +9,7 @@ import (
 )
 
 func TestSelfHostFixtureSourcesCheck(t *testing.T) {
-	bin := buildFernForFixtureCheck(t)
+	bin := buildFernCLIBin(t)
 	dir := copySelfHostTree(t)
 
 	for _, fx := range selfHostFixtureSources(t) {
@@ -61,14 +61,4 @@ func selfHostFixtureSources(t *testing.T) []fixtureSource {
 		out = append(out, fixtureSource{"deps_" + tc.name, "dependencyVerifySource in self_host_ssa_dependency_verify_test.go", dependencyVerifySource(t, tc)})
 	}
 	return out
-}
-
-func buildFernForFixtureCheck(t *testing.T) string {
-	t.Helper()
-	bin := filepath.Join(t.TempDir(), "fern")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build cmd/fern: %v\n%s", err, out)
-	}
-	return bin
 }
