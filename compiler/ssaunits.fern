@@ -4252,7 +4252,11 @@ pub function with_reuse(f: ssasem.Func, p: Plan, idx: i32[][], dom: ssadeps.Dom)
   if (p.reuse.pairs.len() == f.graph.blocks.len()) {
     return p;
   }
-  let off = reuse_layer_disabled(f.graph.name);
+  return reuse_planned(f, p, idx, dom, reuse_layer_disabled(f.graph.name));
+}
+
+// p with the reuse pairs of f. `off` gives a plan that pairs nothing.
+pub function reuse_planned(f: ssasem.Func, p: Plan, idx: i32[][], dom: ssadeps.Dom, off: boolean): Plan {
   if (!p.ok) {
     return Plan { ...p, reuse: Reuse { ...p.reuse, disabled: off } };
   }
@@ -4270,7 +4274,7 @@ pub function with_reuse(f: ssasem.Func, p: Plan, idx: i32[][], dom: ssadeps.Dom)
   return Plan { ...p, links: links, chained: chained_withs(f, links), reuse: Reuse { pairs: pairs, keeps: keeps, carry: carry, reads: vr, disabled: off } };
 }
 
-function static_box(p: Plan, d: i32): boolean {
+pub function static_box(p: Plan, d: i32): boolean {
   return d >= 0 && d < p.constants.len() && p.constants[d] != "";
 }
 
@@ -4539,7 +4543,8 @@ pub function known_static(vr: VariantReads, b: ssa.SBlock, d: i32): boolean {
   return false;
 }
 
-function recipient_slots(f: ssasem.Func, p: Plan, ins: ssa.SInst): i32 {
+// The slots of the box that ins constructs, and -1 when no dropped box can supply it.
+pub function recipient_slots(f: ssasem.Func, p: Plan, ins: ssa.SInst): i32 {
   if (p.constants[ins.result] != "") {
     return -1;
   }

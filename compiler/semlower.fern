@@ -797,17 +797,23 @@ function array_storage_report(mod: parser.Module, built: semsource.Built, r: Row
   let sites: semarrayreport.Site[] = [];
   let scales: semarrayreport.Site[] = [];
   let appends: semarrayreport.Site[] = [];
+  let withs: semarrayreport.Site[] = [];
+  let constructors: semarrayreport.Site[] = [];
   for i in 0..r.plans.len() {
     if (r.keep[i]) {
       let p = produced_at(built, mod, i);
       sites = util.append_all(sites, ssarc.map_report(p.func, p.modes, r.plans[i], r.pure));
       scales = util.append_all(scales, ssarc.scale_report(p.func, r.plans[i]));
       appends = util.append_all(appends, ssarc.append_report(p.func, r.plans[i]));
+      withs = util.append_all(withs, ssarc.with_report(p.func, r.plans[i]));
+      constructors = util.append_all(constructors, ssarc.constructor_report(p.func, r.plans[i]));
     }
   }
   semarrayreport.write(sink, semarrayreport.render_kind("map storage", semarrayreport.storage_reasons(), sites));
   semarrayreport.write(sink, semarrayreport.render_kind("scale storage", semarrayreport.scale_storage_reasons(), scales));
   semarrayreport.write(sink, semarrayreport.render_kind("append storage", semarrayreport.append_reasons(), appends));
+  semarrayreport.write(sink, semarrayreport.render_kind("with storage", semarrayreport.append_reasons(), withs));
+  semarrayreport.write(sink, semarrayreport.render_kind("constructor storage", semarrayreport.constructor_reasons(), constructors));
   return 0;
 }
 
