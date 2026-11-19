@@ -178,7 +178,7 @@ pub function (x: Surface) object(): jni.Object {
 }
 
 // The class android.view.Surface and the IDs of its members.
-pub struct SurfaceClass { class: usize, id_release_: usize }
+pub struct SurfaceClass { class: usize, id_release_: usize, id_set_frame_rate: usize }
 
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
@@ -188,7 +188,8 @@ pub function surface_class(e: usize): Result[SurfaceClass, jni.JavaError] {
   let class = jni.new_global_ref(e, local);
   jni.delete_local_ref(e, local);
   let id_release_ = jni.checked_id(e, class, jni.get_method_id(e, class, "release", "()V"))?;
-  return Ok(SurfaceClass { class: class, id_release_: id_release_ });
+  let id_set_frame_rate = jni.optional_id(e, jni.get_method_id(e, class, "setFrameRate", "(FII)V"));
+  return Ok(SurfaceClass { class: class, id_release_: id_release_, id_set_frame_rate: id_set_frame_rate });
 }
 
 // Deletes the reference to the class. Do not use `c` after this call.
@@ -200,6 +201,26 @@ pub function (c: SurfaceClass) release(e: usize): void {
 pub function (c: SurfaceClass) release_(e: usize, self: Surface): Result[void, jni.JavaError] {
   let args = jni.jvalue_alloc(0);
   jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_release_, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// False when the device does not have the member of `set_frame_rate`.
+pub function (c: SurfaceClass) has_set_frame_rate(): boolean {
+  return c.id_set_frame_rate != 0 as usize;
+}
+
+// android.view.Surface.setFrameRate(FII)V
+pub function (c: SurfaceClass) set_frame_rate(e: usize, self: Surface, a0: f32, a1: i32, a2: i32): Result[void, jni.JavaError] {
+  if (c.id_set_frame_rate == 0 as usize) {
+    return Err(jni.absent("android.view.Surface.setFrameRate"));
+  }
+  let args = jni.jvalue_alloc(3);
+  jni.jvalue_set_f32(args, 0, a0);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.jvalue_set_int(args, 2, a2 as usize);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set_frame_rate, args);
   jni.free_buffer(args);
   jni.check(e)?;
   return Ok(());
@@ -1402,8 +1423,231 @@ pub function (c: PlaybackExceptionClass) error_code(e: usize, self: PlaybackExce
   return Ok(got as i32);
 }
 
+// A androidx.media3.exoplayer.audio.AudioCapabilities.
+pub struct AudioCapabilities { ref: usize }
+
+pub function (x: AudioCapabilities) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: AudioCapabilities) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.exoplayer.audio.AudioCapabilities and the IDs of its members.
+pub struct AudioCapabilitiesClass { class: usize, id_get_capabilities: usize, id_supports_encoding: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function audio_capabilities_class(e: usize): Result[AudioCapabilitiesClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/exoplayer/audio/AudioCapabilities");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_capabilities = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getCapabilities", "(Landroid/content/Context;)Landroidx/media3/exoplayer/audio/AudioCapabilities;"))?;
+  let id_supports_encoding = jni.checked_id(e, class, jni.get_method_id(e, class, "supportsEncoding", "(I)Z"))?;
+  return Ok(AudioCapabilitiesClass { class: class, id_get_capabilities: id_get_capabilities, id_supports_encoding: id_supports_encoding });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: AudioCapabilitiesClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// androidx.media3.exoplayer.audio.AudioCapabilities.getCapabilities(Landroid/content/Context;)Landroidx/media3/exoplayer/audio/AudioCapabilities;
+pub function (c: AudioCapabilitiesClass) get_capabilities(e: usize, a0: Context): Result[AudioCapabilities, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_get_capabilities, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(AudioCapabilities { ref: got });
+}
+
+// androidx.media3.exoplayer.audio.AudioCapabilities.supportsEncoding(I)Z
+pub function (c: AudioCapabilitiesClass) supports_encoding(e: usize, self: AudioCapabilities, a0: i32): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_supports_encoding, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// A androidx.media3.common.text.CueGroup.
+pub struct CueGroup { ref: usize }
+
+pub function (x: CueGroup) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: CueGroup) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.common.text.CueGroup and the IDs of its members.
+pub struct CueGroupClass { class: usize, id_cues: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function cue_group_class(e: usize): Result[CueGroupClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/common/text/CueGroup");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_cues = jni.checked_id(e, class, jni.get_field_id(e, class, "cues", "Lcom/google/common/collect/ImmutableList;"))?;
+  return Ok(CueGroupClass { class: class, id_cues: id_cues });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: CueGroupClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// androidx.media3.common.text.CueGroup.cues
+pub function (c: CueGroupClass) cues(e: usize, self: CueGroup): Result[jni.Object, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_cues, 0 as usize);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// A androidx.media3.common.text.Cue.
+pub struct Cue { ref: usize }
+
+pub function (x: Cue) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Cue) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.common.text.Cue and the IDs of its members.
+pub struct CueClass { class: usize, id_bitmap: usize, id_bitmap_height: usize, id_line: usize, id_position: usize, id_size: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function cue_class(e: usize): Result[CueClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/common/text/Cue");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_bitmap = jni.checked_id(e, class, jni.get_field_id(e, class, "bitmap", "Landroid/graphics/Bitmap;"))?;
+  let id_bitmap_height = jni.checked_id(e, class, jni.get_field_id(e, class, "bitmapHeight", "F"))?;
+  let id_line = jni.checked_id(e, class, jni.get_field_id(e, class, "line", "F"))?;
+  let id_position = jni.checked_id(e, class, jni.get_field_id(e, class, "position", "F"))?;
+  let id_size = jni.checked_id(e, class, jni.get_field_id(e, class, "size", "F"))?;
+  return Ok(CueClass { class: class, id_bitmap: id_bitmap, id_bitmap_height: id_bitmap_height, id_line: id_line, id_position: id_position, id_size: id_size });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: CueClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// androidx.media3.common.text.Cue.bitmap
+pub function (c: CueClass) bitmap(e: usize, self: Cue): Result[Bitmap, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_bitmap, 0 as usize);
+  jni.check(e)?;
+  return Ok(Bitmap { ref: got });
+}
+
+// androidx.media3.common.text.Cue.bitmapHeight
+pub function (c: CueClass) bitmap_height(e: usize, self: Cue): Result[f32, jni.JavaError] {
+  let got = jni.invoke_f32(e, jni.GET_FIELD + 7, self.ref, c.id_bitmap_height, 0 as usize);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// androidx.media3.common.text.Cue.line
+pub function (c: CueClass) line(e: usize, self: Cue): Result[f32, jni.JavaError] {
+  let got = jni.invoke_f32(e, jni.GET_FIELD + 7, self.ref, c.id_line, 0 as usize);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// androidx.media3.common.text.Cue.position
+pub function (c: CueClass) position(e: usize, self: Cue): Result[f32, jni.JavaError] {
+  let got = jni.invoke_f32(e, jni.GET_FIELD + 7, self.ref, c.id_position, 0 as usize);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// androidx.media3.common.text.Cue.size
+pub function (c: CueClass) size(e: usize, self: Cue): Result[f32, jni.JavaError] {
+  let got = jni.invoke_f32(e, jni.GET_FIELD + 7, self.ref, c.id_size, 0 as usize);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// A android.graphics.Bitmap.
+pub struct Bitmap { ref: usize }
+
+pub function (x: Bitmap) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Bitmap) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.graphics.Bitmap and the IDs of its members.
+pub struct BitmapClass { class: usize, id_get_height: usize, id_get_pixels: usize, id_get_width: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function bitmap_class(e: usize): Result[BitmapClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/graphics/Bitmap");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_height = jni.checked_id(e, class, jni.get_method_id(e, class, "getHeight", "()I"))?;
+  let id_get_pixels = jni.checked_id(e, class, jni.get_method_id(e, class, "getPixels", "([IIIIIII)V"))?;
+  let id_get_width = jni.checked_id(e, class, jni.get_method_id(e, class, "getWidth", "()I"))?;
+  return Ok(BitmapClass { class: class, id_get_height: id_get_height, id_get_pixels: id_get_pixels, id_get_width: id_get_width });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: BitmapClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.graphics.Bitmap.getHeight()I
+pub function (c: BitmapClass) get_height(e: usize, self: Bitmap): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_height, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.graphics.Bitmap.getPixels([IIIIIII)V
+pub function (c: BitmapClass) get_pixels(e: usize, self: Bitmap, a0: jni.Object, a1: i32, a2: i32, a3: i32, a4: i32, a5: i32, a6: i32): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(7);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.jvalue_set_int(args, 2, a2 as usize);
+  jni.jvalue_set_int(args, 3, a3 as usize);
+  jni.jvalue_set_int(args, 4, a4 as usize);
+  jni.jvalue_set_int(args, 5, a5 as usize);
+  jni.jvalue_set_int(args, 6, a6 as usize);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_get_pixels, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.graphics.Bitmap.getWidth()I
+pub function (c: BitmapClass) get_width(e: usize, self: Bitmap): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_width, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
 // The struct of IDs of each class of this module.
-pub struct Classes { looper: LooperClass, handler: HandlerClass, message: MessageClass, surface: SurfaceClass, surface_texture: SurfaceTextureClass, context: ContextClass, list: ListClass, atomic_long_array: AtomicLongArrayClass, atomic_reference: AtomicReferenceClass, audio_attributes: AudioAttributesClass, audio_attributes_builder: AudioAttributes_BuilderClass, exo_player: ExoPlayerClass, exo_player_builder: ExoPlayer_BuilderClass, player: PlayerClass, player_listener: Player_ListenerClass, player_events: Player_EventsClass, media_item: MediaItemClass, tracks: TracksClass, tracks_group: Tracks_GroupClass, track_group: TrackGroupClass, track_selection_parameters: TrackSelectionParametersClass, track_selection_parameters_builder: TrackSelectionParameters_BuilderClass, track_selection_override: TrackSelectionOverrideClass, video_size: VideoSizeClass, playback_exception: PlaybackExceptionClass }
+pub struct Classes { looper: LooperClass, handler: HandlerClass, message: MessageClass, surface: SurfaceClass, surface_texture: SurfaceTextureClass, context: ContextClass, list: ListClass, atomic_long_array: AtomicLongArrayClass, atomic_reference: AtomicReferenceClass, audio_attributes: AudioAttributesClass, audio_attributes_builder: AudioAttributes_BuilderClass, exo_player: ExoPlayerClass, exo_player_builder: ExoPlayer_BuilderClass, player: PlayerClass, player_listener: Player_ListenerClass, player_events: Player_EventsClass, media_item: MediaItemClass, tracks: TracksClass, tracks_group: Tracks_GroupClass, track_group: TrackGroupClass, track_selection_parameters: TrackSelectionParametersClass, track_selection_parameters_builder: TrackSelectionParameters_BuilderClass, track_selection_override: TrackSelectionOverrideClass, video_size: VideoSizeClass, playback_exception: PlaybackExceptionClass, audio_capabilities: AudioCapabilitiesClass, cue_group: CueGroupClass, cue: CueClass, bitmap: BitmapClass }
 
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
@@ -1860,7 +2104,137 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       return Err(err);
     },
   };
-  return Ok(Classes { looper: looper, handler: handler, message: message, surface: surface, surface_texture: surface_texture, context: context, list: list, atomic_long_array: atomic_long_array, atomic_reference: atomic_reference, audio_attributes: audio_attributes, audio_attributes_builder: audio_attributes_builder, exo_player: exo_player, exo_player_builder: exo_player_builder, player: player, player_listener: player_listener, player_events: player_events, media_item: media_item, tracks: tracks, tracks_group: tracks_group, track_group: track_group, track_selection_parameters: track_selection_parameters, track_selection_parameters_builder: track_selection_parameters_builder, track_selection_override: track_selection_override, video_size: video_size, playback_exception: playback_exception });
+  let audio_capabilities = match (audio_capabilities_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      player.release(e);
+      player_listener.release(e);
+      player_events.release(e);
+      media_item.release(e);
+      tracks.release(e);
+      tracks_group.release(e);
+      track_group.release(e);
+      track_selection_parameters.release(e);
+      track_selection_parameters_builder.release(e);
+      track_selection_override.release(e);
+      video_size.release(e);
+      playback_exception.release(e);
+      return Err(err);
+    },
+  };
+  let cue_group = match (cue_group_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      player.release(e);
+      player_listener.release(e);
+      player_events.release(e);
+      media_item.release(e);
+      tracks.release(e);
+      tracks_group.release(e);
+      track_group.release(e);
+      track_selection_parameters.release(e);
+      track_selection_parameters_builder.release(e);
+      track_selection_override.release(e);
+      video_size.release(e);
+      playback_exception.release(e);
+      audio_capabilities.release(e);
+      return Err(err);
+    },
+  };
+  let cue = match (cue_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      player.release(e);
+      player_listener.release(e);
+      player_events.release(e);
+      media_item.release(e);
+      tracks.release(e);
+      tracks_group.release(e);
+      track_group.release(e);
+      track_selection_parameters.release(e);
+      track_selection_parameters_builder.release(e);
+      track_selection_override.release(e);
+      video_size.release(e);
+      playback_exception.release(e);
+      audio_capabilities.release(e);
+      cue_group.release(e);
+      return Err(err);
+    },
+  };
+  let bitmap = match (bitmap_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      player.release(e);
+      player_listener.release(e);
+      player_events.release(e);
+      media_item.release(e);
+      tracks.release(e);
+      tracks_group.release(e);
+      track_group.release(e);
+      track_selection_parameters.release(e);
+      track_selection_parameters_builder.release(e);
+      track_selection_override.release(e);
+      video_size.release(e);
+      playback_exception.release(e);
+      audio_capabilities.release(e);
+      cue_group.release(e);
+      cue.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { looper: looper, handler: handler, message: message, surface: surface, surface_texture: surface_texture, context: context, list: list, atomic_long_array: atomic_long_array, atomic_reference: atomic_reference, audio_attributes: audio_attributes, audio_attributes_builder: audio_attributes_builder, exo_player: exo_player, exo_player_builder: exo_player_builder, player: player, player_listener: player_listener, player_events: player_events, media_item: media_item, tracks: tracks, tracks_group: tracks_group, track_group: track_group, track_selection_parameters: track_selection_parameters, track_selection_parameters_builder: track_selection_parameters_builder, track_selection_override: track_selection_override, video_size: video_size, playback_exception: playback_exception, audio_capabilities: audio_capabilities, cue_group: cue_group, cue: cue, bitmap: bitmap });
 }
 
 // Deletes the reference to each class. Do not use `c` after this call.
@@ -1890,4 +2264,8 @@ pub function (c: Classes) release(e: usize): void {
   c.track_selection_override.release(e);
   c.video_size.release(e);
   c.playback_exception.release(e);
+  c.audio_capabilities.release(e);
+  c.cue_group.release(e);
+  c.cue.release(e);
+  c.bitmap.release(e);
 }
