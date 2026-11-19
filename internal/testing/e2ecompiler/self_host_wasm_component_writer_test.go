@@ -14,10 +14,7 @@ func TestSelfHostWasmComponentWriter(t *testing.T) {
 	}
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 	cases := []struct{ name, src string }{
 		{"stdout", `function main(): i32 {
     let w: Writer = stdout();
