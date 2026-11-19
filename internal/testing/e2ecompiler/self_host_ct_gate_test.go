@@ -377,12 +377,13 @@ function main(): i32 {
   __ct_secret(message);
   let Ok(k) = hpke.mlkem768x25519_key(seed) else { return 1; };
   let Ok(s) = hpke.setup_sender_derand(k.public_key, [], randomness) else { return 2; };
-  __ct_public(s.enc);
-  let (sealed, _) = s.context.seal([], message);
+  let hpke.Sender { enc, context } = s;
+  __ct_public(enc);
+  let Ok((sealed, _)) = context.seal([], message) else { return 8; };
   __ct_public(sealed);
-  let Ok(c) = hpke.setup_recipient(k, s.enc, []) else { return 3; };
+  let Ok(c) = hpke.setup_recipient(k, enc, []) else { return 3; };
   let Ok(opened) = c.open([], sealed) else { return 4; };
-  let bad: u8[] = s.enc.with(0, s.enc[0] ^ 1);
+  let bad: u8[] = enc.with(0, enc[0] ^ 1);
   let Ok(r) = hpke.setup_recipient(k, bad, []) else { return 5; };
   match (r.open([], sealed)) {
     Ok(_) => { return 6; },

@@ -38,7 +38,21 @@ function test_base_point(): test.TestOutcome {
 }
 
 function times_x(k: string, point: string): string {
-  return hex.encode(p256.scalar_mul_x(__codec_bytes(hex.decode(k)), __codec_bytes(hex.decode(point))));
+  return match (p256.scalar_mul_x(__codec_bytes(hex.decode(k)), __codec_bytes(hex.decode(point)))) {
+    Some(x) => hex.encode(x),
+    None => "refused",
+  };
+}
+
+// A point off the curve, a compressed point, a coordinate not below p and a
+// short scalar are refused before any arithmetic.
+function test_scalar_mul_refusals(): test.TestOutcome {
+  let off = "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f6";
+  let compressed = "036b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296";
+  let high = "04ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+  let short = "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51";
+  let got = [times_x(MIXED, off), times_x(MIXED, compressed), times_x(MIXED, high), times_x("0123456789abcdeffedcba98765432100f1e2d3c4b5a69788796a5b4c3d2e1", G), times_x(MIXED, short)];
+  return test.assert_eq_array(got, ["refused", "refused", "refused", "refused", "refused"]);
 }
 
 function test_scalar_mul(): test.TestOutcome {
@@ -156,6 +170,7 @@ function main(): i32 {
   r = r.it("verify_rs accepts only the signature of the key", test_verify_rs);
   r = r.it("[k]G", test_base_point);
   r = r.it("[k]Q", test_scalar_mul);
+  r = r.it("[k]Q refuses a point off the curve", test_scalar_mul_refusals);
   r = r.it("scalar range", test_scalar_range);
   r = r.it("scalar reduction", test_scalar_reduce);
   r = r.it("on_curve checks an uncompressed point", test_on_curve);

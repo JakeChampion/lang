@@ -22140,15 +22140,13 @@ function lu_fresh_if_value(fx: LuFn, e: ast.Expr): boolean {
 }
 
 // A match expression on a fresh value whose each arm yields a payload it
-// binds, a fresh value, or leaves.
+// binds, a fresh value, or leaves. A local is a fresh scrutinee when it was
+// set fresh and the match is its last use.
 function lu_fresh_match_value(fx: LuFn, e: ast.Expr): boolean {
   let Some(m) = lu_match_value(e) else {
     return false;
   };
-  if let ast.ExprIdent(_) = m.scrutinee {
-    return false;
-  }
-  if (m.arms.len() == 0 || !lu_fresh_value(fx, m.scrutinee)) {
+  if (m.arms.len() == 0 || !lu_fresh_scrutinee(fx, m.scrutinee)) {
     return false;
   }
   for arm in m.arms {
@@ -22157,6 +22155,26 @@ function lu_fresh_match_value(fx: LuFn, e: ast.Expr): boolean {
     }
   }
   return true;
+}
+
+// The initializer of a local that is not set again can only name earlier
+// locals, so the check ends.
+function lu_fresh_scrutinee(fx: LuFn, e: ast.Expr): boolean {
+  let ast.ExprIdent(id) = e else {
+    return lu_fresh_value(fx, e);
+  };
+  if (lu_decl_count(fx, id.name) != 1 || util.has_str(fx.facts.captured, id.name) || !lu_is_last(fx, id)) {
+    return false;
+  }
+  for a in fx.facts.assigns {
+    if (a.name == id.name) {
+      return false;
+    }
+  }
+  let Some(init) = lu_init_of(fx, id.name) else {
+    return false;
+  };
+  return lu_fresh_value(fx, init);
 }
 
 // Keep the initializer for a tuple unpack. Freshness still depends on the

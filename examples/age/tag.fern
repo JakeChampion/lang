@@ -122,11 +122,14 @@ pub function wrap(file_key: [u8], k: TagKey, randomness: [u8]): Result[format.St
       return Err("failed to set up HPKE sender: " + err.message());
     },
   };
-  let (body, _) = sender.context.seal([], file_key);
-  __ct_public(sender.enc);
+  let hpke.Sender { enc, context } = sender;
+  let Ok((body, _)) = context.seal([], file_key) else {
+    return Err("failed to seal the file key with HPKE");
+  };
+  __ct_public(enc);
   __ct_public(body);
   let kind = if (k.hybrid) { "mlkem768p256tag" } else { "p256tag" };
-  return Ok(format.Stanza { kind: kind, args: [text.b64_raw(tag_of(k, sender.enc)), text.b64_raw(sender.enc)], body: body });
+  return Ok(format.Stanza { kind: kind, args: [text.b64_raw(tag_of(k, enc)), text.b64_raw(enc)], body: body });
 }
 
 // The stanza for fresh randomness. A candidate scalar that is not in the
