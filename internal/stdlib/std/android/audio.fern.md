@@ -140,7 +140,7 @@ function c_close(stream: usize): i32;
 function c_read(stream: usize, buffer: usize, frames: i32, timeout_ns: i64): i32;
 
 @import("libaaudio.so", "AAudioStream_write")
-function c_write(stream: usize, buffer: usize, frames: i32, timeout_ns: i64): i32;
+pub(package) function c_write(stream: usize, buffer: usize, frames: i32, timeout_ns: i64): i32;
 
 @import("libaaudio.so", "AAudioStream_getSampleRate")
 function c_sample_rate(stream: usize): i32;

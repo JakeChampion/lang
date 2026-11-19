@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+fern_playback_compiler=${FERN:-"$PWD/bin/fern-selfhost"}
+out=build/audio-playback
+mkdir -p "$out"
+source=tests/stdlib/android_audio_playback_mock_test.fern
+"$fern_playback_compiler" -stdlib internal/stdlib -target arm64-android -shared -export main -o "$out/arm64.so" "$source"
+case "$(uname -sm)" in
+  'Linux x86_64') target=x86-64-android ;;
+  'Linux aarch64') target=arm64-android ;;
+  'Darwin arm64') exit 0 ;;
+  *) echo 'unsupported host' >&2; exit 1 ;;
+esac
+cc -shared -fPIC -Wall -Wextra -Werror -DFERN_AUDIO_CODEC_MOCK -o "$out/libmediandk.so" scripts/audio-reference/mediacodec-mock.c scripts/video-reference/codec-jni-mock.c
+cc -shared -fPIC -Wall -Wextra -Werror -pthread -o "$out/libaaudio.so" scripts/audio-reference/aaudio-playback-mock.c -L"$out" -lmediandk -Wl,-rpath,'$ORIGIN'
+python3 scripts/libandroid-stubs > "$out/stubs.c"
+cc -shared -fPIC -Wall -Wextra -Werror -o "$out/libandroid.so" "$out/stubs.c"
+for variant in normal sanitize; do
+  flags=()
+  if [ "$variant" = sanitize ]; then flags=(-sanitize); fi
+  "$fern_playback_compiler" -stdlib internal/stdlib -target "$target" -shared "${flags[@]}" -export main -o "$out/$variant.so" "$source"
+done
+LD_LIBRARY_PATH="$PWD/$out${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" python3 - <<'PY'
+import ctypes
+import pathlib
+import struct
+reference = b''.join(struct.pack('<h', v if v < 32768 else v - 65536) for v in range(65536))
+for variant in ('normal', 'sanitize'):
+    result = ctypes.CDLL(f'./build/audio-playback/{variant}.so').main()
+    if result:
+        raise SystemExit(f'Borrowed PCM {variant} failed at check {result}')
+    mock = ctypes.CDLL('./build/audio-playback/libaaudio.so')
+    mock.mock_capture_data.restype = ctypes.c_void_p
+    actual = ctypes.string_at(mock.mock_capture_data(), mock.mock_capture_size())
+    if actual != reference:
+        raise SystemExit(f'Borrowed PCM {variant} differs from signed 16-bit reference')
+    pathlib.Path(f'build/audio-playback/{variant}.s16le').write_bytes(actual)
+print('Borrowed PCM bytes, bounds, partial writes, lifetime, and allocation checks passed')
+PY
