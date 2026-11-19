@@ -146,6 +146,12 @@ function test_bare_font_matches_harfbuzz(): test.TestOutcome {
   return test.assert_eq(differences(font_of(shape_vectors.bare_font()), shape_vectors.bare_cases(), "latn", true), "");
 }
 
+// An Arabic font with presentation forms and no GSUB table: the lookups of
+// the Arabic fallback give the joining forms and the ligatures.
+function test_arabic_fallback_matches_harfbuzz(): test.TestOutcome {
+  return test.assert_eq(differences(font_of(shape_vectors.forms_font()), shape_vectors.forms_cases(), "arab", true), "");
+}
+
 // The init feature of the font holds two lookups, and the medi feature
 // holds one of them too.
 function test_feature_lookups(): test.TestOutcome {
@@ -195,6 +201,7 @@ function main(): i32 {
   r = r.it("each type of GPOS lookup gives the positions of HarfBuzz", test_each_position_matches_harfbuzz);
   r = r.it("rclt shares the stage of calt", test_rclt_shares_the_stage_of_calt);
   r = r.it("a font with no GDEF and no GPOS table gives the glyphs of HarfBuzz", test_bare_font_matches_harfbuzz);
+  r = r.it("an Arabic font with no GSUB table takes the forms of HarfBuzz", test_arabic_fallback_matches_harfbuzz);
   r = r.it("the joiners stop a ligature as in HarfBuzz", test_joiners_in_lookups);
   r = r.it("feature_lookups reads the script and the feature lists", test_feature_lookups);
   r = r.it("a font with no GSUB table gives one glyph for each character", test_no_gsub);
