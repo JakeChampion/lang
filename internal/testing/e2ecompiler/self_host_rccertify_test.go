@@ -507,6 +507,27 @@ function pick(name: string): Case {
         let b12: ssa.SBlock = block(12, [1], [], ret(2));
         return Case { f: func(2, 19, [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12]), modes: [counted, value], returns_unit: true };
     }
+    if (name == "push-joins-its-parameter" || name == "push-joins-its-parameter-unretained") {
+        // One arm pushes onto the borrowed v0, and the join v7 meets the push
+        // with v0 itself. A test of v7 against v0 then decides whether the
+        // next push may give up v7, and whether the result needs a retain.
+        // Without that retain, the result holds no unit where it is v0 and
+        // one unit where it is not: a return reads that as unproved.
+        let back: ssa.SInst[] = [call(13, "__fern_rc_inc", [11])];
+        if (name == "push-joins-its-parameter-unretained") { back = []; }
+        let b0: ssa.SBlock = block(0, [], [param(0), param(1), const_int(4, 7)], brif(1, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [inst(50, 5, [0, 4], 0, "arr_push_u32"), inst(9, 6, [5, 0], 0, "ne")], brif(6, 3, 4));
+        let b3: ssa.SBlock = block(3, [1], [], br(4));
+        let b4: ssa.SBlock = block(4, [1, 3], [], br(5));
+        let b2: ssa.SBlock = block(2, [0], [], br(5));
+        let b5: ssa.SBlock = block(5, [4, 2], [inst(8, 7, [5, 0], 0, ""), inst(9, 8, [7, 0], 0, "eq")], brif(8, 6, 7));
+        let b6: ssa.SBlock = block(6, [5], [inst(50, 9, [7, 4], 0, "arr_push_u32")], br(8));
+        let b7: ssa.SBlock = block(7, [5], [inst(50, 10, [7, 4], 0, "arr_push_owned_u32")], br(8));
+        let b8: ssa.SBlock = block(8, [6, 7], [inst(8, 11, [9, 10], 0, ""), inst(9, 12, [11, 0], 0, "eq")], brif(12, 9, 10));
+        let b9: ssa.SBlock = block(9, [8], back, br(10));
+        let b10: ssa.SBlock = block(10, [8, 9], [], ret(11));
+        return Case { f: func(2, 14, [b0, b1, b3, b4, b2, b5, b6, b7, b8, b9, b10]), modes: [borrow, value], returns_unit: true };
+    }
     if (name == "token-box-copied-before-its-test") {
         // The box is reached through a copy made before its test, and the
         // token's walk inherits the copy: under the token holding the box,
@@ -842,6 +863,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"pair-word-settled-past-its-token-test", nil, 0},
 		{"loop-box-copied-under-its-null-token", nil, 0},
 		{"loop-reuses-its-carried-box", nil, 0},
+		{"push-joins-its-parameter", nil, 0},
+		{"push-joins-its-parameter-unretained", nil, 1},
 		{"loop-reuses-its-carried-box-leaked", []string{"leaked where it dies of v2"}, 0},
 		{"loop-reuses-its-carried-box-released-twice", []string{"spent without a unit of v2"}, 0},
 		{"token-box-copied-before-its-test", nil, 0},
