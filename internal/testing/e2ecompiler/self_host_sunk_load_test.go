@@ -56,7 +56,8 @@ func TestSelfHostLoadMovesToItsReader(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := tailCallBody(t, string(asm), "weigh")
-	tests := regexp.MustCompile(`cmpl \$\d+, -4\(%r\w+\)`).FindAllStringIndex(body, -1)
+	// Leaf has no field, so a test of the tag is a compare with its static box.
+	tests := regexp.MustCompile(`cmpl \$\d+, -4\(%r\w+\)|leaq \.Kv\d+\(%rip\)`).FindAllStringIndex(body, -1)
 	if len(tests) < 2 {
 		t.Fatalf("weigh has %d tag tests, want 2 or more:\n%s", len(tests), body)
 	}
