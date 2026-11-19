@@ -1,0 +1,33 @@
+// A struct pattern names the generic struct, and it matches each instance
+// of it.
+struct Pair[T] { a: T, b: T }
+
+function sum(p: Pair[i32]): i32 {
+  let Pair { a, b } = p;
+  return a + b;
+}
+
+function first(Pair { a, b: _ }: Pair[string]): string {
+  return a;
+}
+
+function main(): i32 {
+  let p: Pair[i32] = Pair { a: 1, b: 2 };
+  let Pair { a: x, b: y } = p;
+  print(x + y);
+  let q = Pair { a: 10, b: 20 };
+  match (q) {
+    Pair { a, b } => { print(a * b); }
+  }
+  let ps: Pair[i32][] = [];
+  ps = ps.append(p);
+  ps = ps.append(q);
+  let total = 0;
+  for Pair { a, b } in ps {
+    total += a + b;
+  }
+  print(total);
+  print(sum(p));
+  print(first(Pair { a: "x", b: "yz" }));
+  return 0;
+}

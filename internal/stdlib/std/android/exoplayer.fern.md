@@ -16,11 +16,19 @@ The events of the player are `Change` values of `std/android/player`. `player.ev
 
 `follow` gives the changes of one event of ExoPlayer from the phase of the media item. `Prepared` comes when the item can first play. `Buffering(true)` and `Buffering(false)` come while it waits for data. `Completed` comes at its end, and `Failed` has the error code of ExoPlayer. `Seeked` comes after each `seek`, and `Rendering` comes when the first video frame shows. `VideoNotPlaying` follows `Prepared` when the stream has video and no decoder plays it.
 
-`select_track` plays the sound track with an index among the sound tracks of the stream, in the order of the file. A selection before the tracks are known waits for them. The player plays no text track: the app draws the subtitles.
+`select_track` plays the sound track with an index among the sound tracks of the stream, in the order of the file. A selection before the tracks are known waits for them.
+
+`select_text` shows the subtitle track with an index among the subtitle tracks of the file, in their order, or no track with -1. A new item shows no track. ExoPlayer decodes the track.
+
+The native `onCues` of the listener calls `cues`, which keeps the bitmaps of the cues and sends `Cues`. Then `image_cues` gives them to the loop thread as RGBA images, each with its box on the video. Image subtitles such as PGS, VobSub and DVB give bitmaps. A text cue gives no image, because the app draws text subtitles itself.
 
 `chain` gives a player the address of the item after its item. ExoPlayer plays the two with no gap. When the second one starts, `Completed` comes, and the player plays the second item.
 
 `show_target` puts the video on a `Target` of `std/android/player`. `close_target` releases a target on the main thread, after the commands that came before it, so the player does not draw on a released surface.
+
+`passthrough_types` gives the MIME types of the compressed sound that the sound output takes as it is. An example is Dolby Digital to an HDMI soundbar. ExoPlayer sends such a track to the output with no decoder, so an app can play it with no transcode. The list comes from `AudioCapabilities` of Media3, and it changes when the output changes.
+
+`match_frame_rate` asks the display to show the window at the frame rate of the video. Then a TV can change to 24 Hz for a film. Android 12 and later take the request, and the settings of the device can refuse it. A rate of 0 takes the request away.
 
 ## Contracts
 
@@ -29,6 +37,8 @@ Call each function except `handle` and `events` on the loop thread. Call `close`
 `show` puts the video on the window. A window can go away while a command waits on the main thread. So a GPU app shows the video on a target of its own.
 
 Each command can fail on the main thread with no answer to the loop thread. Then the player logs the error, and the state does not change.
+
+`passthrough_types` and `match_frame_rate` can run on each thread. Call `cues` only from the native `onCues(androidx.media3.common.text.CueGroup)` of the listener.
 
 `open` refuses an empty address, a NUL byte, and an address longer than 8192 bytes. `seek` refuses a negative position and a position above 2,147,483,647 milliseconds.
 
@@ -46,6 +56,10 @@ Each command can fail on the main thread with no answer to the loop thread. Then
 
 <<the commands>>
 
+<<the output>>
+
+<<the cues>>
+
 <<the main thread>>
 ```
 
@@ -56,6 +70,7 @@ Each command can fail on the main thread with no answer to the loop thread. Then
 // This module plays media with Media3 ExoPlayer on the main thread of the
 // app.
 import "std/android";
+import "std/android/draw";
 import "std/android/exoplayer/bindings";
 import "std/android/player";
 import "std/jni";
@@ -93,6 +108,8 @@ const DROP_TARGET: i32 = 11;
 
 const RELEASE: i32 = 12;
 
+const TEXT: i32 = 13;
+
 const S_POSITION: i32 = 0;
 
 const S_AT: i32 = 1;
@@ -123,7 +140,10 @@ const S_BUFFERING: i32 = 12;
 // 1 while the player has the item that `chain` gave it after its item.
 const S_CHAINED: i32 = 13;
 
-const LONGS: i32 = 14;
+// One more than the index of the subtitle track to show, or 0.
+const S_TEXT: i32 = 14;
+
+const LONGS: i32 = 15;
 
 pub const IDLE: i32 = 0;
 
@@ -351,7 +371,7 @@ function new_state(e: usize, listener: usize): Result[usize, jni.JavaError] {
   longs.set(e, state, S_SPEED, 1000i64)?;
   let object = jni.find_class(e, "java/lang/Object");
   jni.check(e)?;
-  let held = jni.new_object_array(e, 2, object, 0 as usize);
+  let held = jni.new_object_array(e, 3, object, 0 as usize);
   jni.check(e)?;
   jni.set_object_array_element(e, held, 0, state.ref);
   jni.check(e)?;
@@ -566,6 +586,12 @@ pub function select_track(ctx: usize, p: Player, index: i32): boolean {
   return index >= 0 && index as i64 < s[S_AUDIO] && send(ctx, p, AUDIO, index, 0 as usize);
 }
 
+// Shows the subtitle track with the index `index` among the subtitle
+// tracks, or no track with -1.
+pub function select_text(ctx: usize, p: Player, index: i32): boolean {
+  return index >= -1 && send(ctx, p, TEXT, index, 0 as usize);
+}
+
 // Gives the player the address `next` of the item after its item, or takes
 // that item away when `next` is empty.
 pub function chain(ctx: usize, p: Player, next: string): boolean {
@@ -625,6 +651,229 @@ pub function close_target(ctx: usize, p: Player, t: player.Target): void {
 }
 ```
 
+### `the output`
+
+The encodings are those of `android.media.AudioFormat`. The frame rate goes to the `Surface` of the window with `FRAME_RATE_COMPATIBILITY_FIXED_SOURCE` and `CHANGE_FRAME_RATE_ALWAYS`, because the video fills the window.
+
+```fern
+<<the output>>=
+// Each encoding of android.media.AudioFormat that an output can take as it
+// is, with its MIME type.
+function passthrough_encodings(): (i32, string)[] {
+  return [(5, "audio/ac3"), (6, "audio/eac3"), (18, "audio/eac3-joc"), (7, "audio/vnd.dts"), (8, "audio/vnd.dts.hd"), (14, "audio/true-hd")];
+}
+
+// The MIME types of the sound that the output of the device takes as it is.
+pub function passthrough_types(ctx: usize): string[] {
+  let out: string[] = [];
+  let e = android.env(ctx);
+  if (!begin(e)) {
+    return out;
+  }
+  defer end(e);
+  let Ok(c) = bindings.audio_capabilities_class(e) else {
+    return out;
+  };
+  defer c.release(e);
+  let Ok(caps) = c.get_capabilities(e, bindings.Context { ref: android.activity_object(ctx) }) else {
+    return out;
+  };
+  for (code, mime) in passthrough_encodings() {
+    if let Ok(yes) = c.supports_encoding(e, caps, code) {
+      if (yes) {
+        out = out.append(mime);
+      }
+    }
+  }
+  return out;
+}
+
+const FIXED_SOURCE: i32 = 1;
+
+const CHANGE_ALWAYS: i32 = 1;
+
+// Asks the display for the frame rate `fps` of the video on window `w`, or
+// takes the request away with 0. False when the device did not take it.
+pub function match_frame_rate(ctx: usize, w: android.Window, fps: f32): boolean {
+  let e = android.env(ctx);
+  if (!(fps >= 0.0f32) || !begin(e)) {
+    return false;
+  }
+  defer end(e);
+  let surface = w.surface(e);
+  if (jni.check(e).is_err() || surface == 0 as usize) {
+    return false;
+  }
+  let Ok(c) = bindings.surface_class(e) else {
+    return false;
+  };
+  defer c.release(e);
+  return c.has_set_frame_rate() && c.set_frame_rate(e, bindings.Surface { ref: surface }, fps, FIXED_SOURCE, CHANGE_ALWAYS).is_ok();
+}
+```
+
+### `the cues`
+
+`cues` runs on the main thread. It keeps at most `MAX_CUES` bitmaps, each with no more than `MAX_PIXELS` pixels, in the third place of the array of the listener: an int[] with six values for each bitmap, then the int[] of the pixels of each bitmap. The six values are the width and the height in pixels, then the position, the line, the size and the height of the bitmap. These four are fractions of the video in millionths, or -1 when the cue does not set them.
+
+`image_cues` reads them on the loop thread. A cue with no box shows at the bottom of the video in the middle.
+
+```fern
+<<the cues>>=
+const MAX_CUES: i32 = 4;
+
+const MAX_PIXELS: i32 = 4194304;
+
+// A subtitle image and its box on the video, as fractions of its width
+// and height.
+pub struct ImageCue { image: draw.Image, x: f32, y: f32, width: f32, height: f32 }
+
+// A fraction of the video in millionths, or -1 for Cue.DIMEN_UNSET.
+function millionths(v: f32): i32 {
+  if (!(v >= 0.0f32 && v <= 1.0f32)) {
+    return -1;
+  }
+  return (v * 1000000.0f32) as i32;
+}
+
+// The native onCues of the listener: keeps the bitmaps of the cues of
+// `group` and sends Cues.
+pub function cues(e: usize, listener: usize, group: usize): void {
+  if (!begin(e)) {
+    return;
+  }
+  defer end(e);
+  match (bindings.classes(e)) {
+    Ok(c) => {
+      if let Err(err) = keep_cues(e, c, listener, bindings.CueGroup { ref: group }) {
+        log.warn("exoplayer: the cues failed: " + err.message());
+      }
+      c.release(e);
+    },
+    Err(err) => {
+      log.warn("exoplayer: the APK has no Media3 classes: " + err.message());
+    }
+  }
+}
+
+// The int[] of the pixels of the bitmap of `cue`, and its six values, or
+// None for a cue with no bitmap or with a bitmap that is too large.
+function picture_of(e: usize, c: bindings.Classes, cue: bindings.Cue): Result[Option[(usize, i32[])], jni.JavaError] {
+  let bitmap = c.cue.bitmap(e, cue)?;
+  if (bitmap.is_null()) {
+    return Ok(None);
+  }
+  let w = c.bitmap.get_width(e, bitmap)?;
+  let h = c.bitmap.get_height(e, bitmap)?;
+  if (w <= 0 || h <= 0 || w > MAX_PIXELS / h) {
+    return Ok(None);
+  }
+  let pixels = jni.new_int_array(e, w * h);
+  jni.check(e)?;
+  c.bitmap.get_pixels(e, bitmap, jni.Object { ref: pixels }, 0, w, 0, 0, w, h)?;
+  return Ok(Some((pixels, [w, h].concat(place_of(e, c, cue)?))));
+}
+
+// The position, the line, the size and the height of the bitmap of `cue`,
+// in millionths.
+function place_of(e: usize, c: bindings.Classes, cue: bindings.Cue): Result[i32[], jni.JavaError] {
+  return Ok([millionths(c.cue.position(e, cue)?), millionths(c.cue.line(e, cue)?), millionths(c.cue.size(e, cue)?), millionths(c.cue.bitmap_height(e, cue)?)]);
+}
+
+function keep_cues(e: usize, c: bindings.Classes, listener: usize, group: bindings.CueGroup): Result[void, jni.JavaError] {
+  let list = bindings.List { ref: c.cue_group.cues(e, group)?.ref };
+  let meta: i32[] = [];
+  let pictures: usize[] = [];
+  for i in 0..c.list.size(e, list)? {
+    if (pictures.len() < MAX_CUES) {
+      if let Some((pixels, values)) = picture_of(e, c, bindings.Cue { ref: c.list.get(e, list, i)?.ref })? {
+        meta = meta.concat(values);
+        pictures = pictures.append(pixels);
+      }
+    }
+  }
+  return hold_cues(e, c, listener, meta, pictures);
+}
+
+// Puts the values and the pixels of the cues in the array of the listener,
+// and sends Cues.
+function hold_cues(e: usize, c: bindings.Classes, listener: usize, meta: i32[], pictures: usize[]): Result[void, jni.JavaError] {
+  let object = jni.find_class(e, "java/lang/Object");
+  jni.check(e)?;
+  let held = jni.new_object_array(e, pictures.len() + 1, object, 0 as usize);
+  jni.check(e)?;
+  let numbers = jni.new_int_array(e, meta.len());
+  jni.check(e)?;
+  jni.set_int_array_region(e, numbers, 0, meta);
+  jni.set_object_array_element(e, held, 0, numbers);
+  for k in 0..pictures.len() {
+    jni.set_object_array_element(e, held, k + 1, pictures[k]);
+  }
+  let b = box_of(e, c, listener)?;
+  jni.set_object_array_element(e, b.array, 2, held);
+  jni.check(e)?;
+  post(e, get(e, c, b.state, S_SLOT)? as i32, player.Cues);
+  return Ok(());
+}
+
+// The box of a cue as fractions of the video: the values that it sets,
+// and otherwise the middle of the bottom.
+function box_of_cue(w: i32, h: i32, position: i32, line: i32, size: i32, tall: i32): (f32, f32, f32, f32) {
+  let width = if (size >= 0) { size as f32 / 1000000.0f32 } else { 0.6f32 };
+  let height = if (tall >= 0) { tall as f32 / 1000000.0f32 } else { width * (h as f32) / (w as f32) };
+  let x = if (position >= 0) { position as f32 / 1000000.0f32 } else { (1.0f32 - width) / 2.0f32 };
+  let y = if (line >= 0) { line as f32 / 1000000.0f32 } else { 0.95f32 - height };
+  return (x, y, width, height);
+}
+
+// RGBA bytes of the ARGB pixels that Bitmap.getPixels gives.
+function rgba(argb: i32[]): u8[] {
+  let out: u8[] = [];
+  for v in argb {
+    out = out.append((v >> 16 & 255) as u8).append((v >> 8 & 255) as u8).append((v & 255) as u8).append((v >> 24 & 255) as u8);
+  }
+  return out;
+}
+
+// The image subtitles that show now, on the loop thread.
+pub function image_cues(ctx: usize, p: Player): ImageCue[] {
+  let out: ImageCue[] = [];
+  let e = android.env(ctx);
+  if (!p.live() || !begin(e)) {
+    return out;
+  }
+  defer end(e);
+  let Ok(refs) = bindings.atomic_reference_class(e) else {
+    return out;
+  };
+  defer refs.release(e);
+  let Ok(held) = refs.get(e, bindings.AtomicReference { ref: p.listener }) else {
+    return out;
+  };
+  let kept = jni.get_object_array_element(e, held.ref, 2);
+  if (jni.check(e).is_err() || kept == 0 as usize) {
+    return out;
+  }
+  let numbers = jni.get_object_array_element(e, kept, 0);
+  let meta = jni.int_array_region(e, numbers, 0, jni.get_array_length(e, numbers));
+  if (jni.check(e).is_err()) {
+    return out;
+  }
+  for k in 0..meta.len() / 6 {
+    let at = k * 6;
+    let w = meta[at];
+    let h = meta[at + 1];
+    let pixels = jni.int_array_region(e, jni.get_object_array_element(e, kept, k + 1), 0, w * h);
+    if (jni.check(e).is_err()) {
+      return out;
+    }
+    let (x, y, width, height) = box_of_cue(w, h, meta[at + 2], meta[at + 3], meta[at + 4], meta[at + 5]);
+    out = out.append(ImageCue { image: draw.Image { width: w, height: h, pixels: rgba(pixels) }, x: x, y: y, width: width, height: height });
+  }
+  return out;
+}
+```
+
 ### `the main thread`
 
 `handle` and `events` run on the main thread, in the native methods of the app's listener. Each one finds the classes in a local frame, and lets them go at its end. `refresh` writes the state after each command and each event. It writes it before the changes go to the loop, so the loop reads the state of each change.
@@ -633,8 +882,8 @@ A sound track to select waits in `S_WANTED` until the tracks are known. `choose_
 
 ```fern
 <<the main thread>>=
-// The listener object holds this array: the state, and the ExoPlayer once
-// CREATE made it.
+// The listener object holds this array: the state, the ExoPlayer once
+// CREATE made it, and the cues that `cues` keeps.
 struct Box { array: usize, state: bindings.AtomicLongArray, player: bindings.Player }
 
 function box_of(e: usize, c: bindings.Classes, listener: usize): Result[Box, jni.JavaError] {
@@ -730,6 +979,7 @@ function on_player(e: usize, c: bindings.Classes, b: Box, what: i32, arg: i32, o
 // Runs a command of the playback on the ExoPlayer `x`.
 function run(e: usize, c: bindings.Classes, s: bindings.AtomicLongArray, x: bindings.Player, what: i32, arg: i32, obj: jni.Object): Result[void, jni.JavaError] {
   if (what == OPEN) {
+    no_text_now(e, c, s, x)?;
     return open_item(e, c, s, x, obj);
   }
   if (what == START) {
@@ -760,12 +1010,41 @@ function run_more(e: usize, c: bindings.Classes, s: bindings.AtomicLongArray, x:
   if (what == SURFACE) {
     return c.player.set_video_surface(e, x, bindings.Surface { ref: obj.ref });
   }
+  if (what == CHAIN) {
+    return chain_item(e, c, s, x, obj);
+  }
+  return run_tracks(e, c, s, x, what, arg);
+}
+
+// Runs a command that chooses a track: the sound with AUDIO, and the
+// subtitle with TEXT.
+function run_tracks(e: usize, c: bindings.Classes, s: bindings.AtomicLongArray, x: bindings.Player, what: i32, arg: i32): Result[void, jni.JavaError] {
   if (what == AUDIO) {
     put(e, c, s, S_WANTED, arg as i64 + 1i64)?;
     return choose_audio(e, c, s, x);
   }
-  if (what == CHAIN) {
-    return chain_item(e, c, s, x, obj);
+  if (what == TEXT) {
+    put(e, c, s, S_TEXT, arg as i64 + 1i64)?;
+    return choose_text(e, c, s, x);
+  }
+  return Ok(());
+}
+
+// A new item shows no subtitle track.
+function no_text_now(e: usize, c: bindings.Classes, s: bindings.AtomicLongArray, x: bindings.Player): Result[void, jni.JavaError] {
+  if (get(e, c, s, S_TEXT)? <= 0i64) {
+    return Ok(());
+  }
+  put(e, c, s, S_TEXT, 0i64)?;
+  return no_text(e, c, x);
+}
+
+// Gives the track selector the tracks that wait, after the tracks of the
+// player changed.
+function tracks_changed(e: usize, c: bindings.Classes, s: bindings.AtomicLongArray, x: bindings.Player): Result[void, jni.JavaError] {
+  choose_audio(e, c, s, x)?;
+  if (get(e, c, s, S_TEXT)? > 0i64) {
+    return choose_text(e, c, s, x);
   }
   return Ok(());
 }
@@ -876,13 +1155,14 @@ function groups(e: usize, c: bindings.Classes, x: bindings.Player): Result[Group
   return Ok(Groups { audio: audio, audio_selected: selected, video: video, video_played: played });
 }
 
-// The group of the sound track `wanted`, counted from 1, or None.
-function audio_group(e: usize, c: bindings.Classes, x: bindings.Player, wanted: i64): Result[Option[bindings.TrackGroup], jni.JavaError] {
+// The group of the track of kind `kind` with the place `wanted` among the
+// tracks of that kind, counted from 1, or None.
+function group_of(e: usize, c: bindings.Classes, x: bindings.Player, kind: i32, wanted: i64): Result[Option[bindings.TrackGroup], jni.JavaError] {
   let list = groups_list(e, c, x)?;
   let k = 0i64;
   for i in 0..c.list.size(e, list)? {
     let g = bindings.Tracks_Group { ref: c.list.get(e, list, i)?.ref };
-    if (c.tracks_group.get_type(e, g)? == TRACK_AUDIO) {
+    if (c.tracks_group.get_type(e, g)? == kind) {
       k += 1i64;
       if (k == wanted) {
         return Ok(Some(c.tracks_group.get_media_track_group(e, g)?));
@@ -899,19 +1179,35 @@ function choose_audio(e: usize, c: bindings.Classes, s: bindings.AtomicLongArray
   if (wanted <= 0i64) {
     return Ok(());
   }
-  let Some(group) = audio_group(e, c, x, wanted)? else {
+  let Some(group) = group_of(e, c, x, TRACK_AUDIO, wanted)? else {
     return Ok(());
   };
-  select_group(e, c, x, group)?;
+  select_group(e, c, x, TRACK_AUDIO, group)?;
   return put(e, c, s, S_WANTED, 0i64);
 }
 
-// Gives the track selector an override for the first track of `group`.
-function select_group(e: usize, c: bindings.Classes, x: bindings.Player, group: bindings.TrackGroup): Result[void, jni.JavaError] {
+// Gives the track selector the subtitle track that S_TEXT names, or turns
+// the text tracks off. A track that the player does not have yet waits for
+// the next change of the tracks.
+function choose_text(e: usize, c: bindings.Classes, s: bindings.AtomicLongArray, x: bindings.Player): Result[void, jni.JavaError] {
+  let wanted = get(e, c, s, S_TEXT)?;
+  if (wanted <= 0i64) {
+    return no_text(e, c, x);
+  }
+  let Some(group) = group_of(e, c, x, TRACK_TEXT, wanted)? else {
+    return Ok(());
+  };
+  return select_group(e, c, x, TRACK_TEXT, group);
+}
+
+// Gives the track selector an override for the first track of `group`, a
+// group of the kind `kind`, and turns that kind on.
+function select_group(e: usize, c: bindings.Classes, x: bindings.Player, kind: i32, group: bindings.TrackGroup): Result[void, jni.JavaError] {
   let pick = c.track_selection_override.new(e, group, 0)?;
   let params = c.player.get_track_selection_parameters(e, x)?;
   let upon = c.track_selection_parameters.build_upon(e, params)?;
-  let chosen = c.track_selection_parameters_builder.set_override_for_type(e, upon, pick)?;
+  let on = c.track_selection_parameters_builder.set_track_type_disabled(e, upon, kind, false)?;
+  let chosen = c.track_selection_parameters_builder.set_override_for_type(e, on, pick)?;
   return c.player.set_track_selection_parameters(e, x, c.track_selection_parameters_builder.build(e, chosen)?);
 }
 
@@ -991,7 +1287,7 @@ function snapshot(e: usize, c: bindings.Classes, s: bindings.AtomicLongArray, x:
 function changed(e: usize, c: bindings.Classes, listener: usize, x: bindings.Player, ev: bindings.Player_Events): Result[void, jni.JavaError] {
   let s = box_of(e, c, listener)?.state;
   if (c.player_events.contains(e, ev, EVENT_TRACKS)?) {
-    choose_audio(e, c, s, x)?;
+    tracks_changed(e, c, s, x)?;
   }
   let changes = step(e, c, s, snapshot(e, c, s, x, ev, refresh(e, c, s, x)?)?)?;
   let slot = get(e, c, s, S_SLOT)? as i32;

@@ -12917,6 +12917,20 @@ func (c *checker) localDeclared(name string) bool {
 	return false
 }
 
+// patternNamesStruct reports whether a struct pattern that names *name
+// matches a value of type st. A pattern that names the generic struct of a
+// monomorph clone takes the name of the clone.
+func (c *checker) patternNamesStruct(name *string, st ast.StructType) bool {
+	if *name == st.Name {
+		return true
+	}
+	if sd := c.info.Structs[st.Name]; sd != nil && sd.Generic != "" && sd.Generic == *name {
+		*name = st.Name
+		return true
+	}
+	return false
+}
+
 func (c *checker) checkStructDestructure(n *ast.Destructure, got ast.Type, s *scope) {
 	st, ok := got.(ast.StructType)
 	if !ok {
@@ -12932,7 +12946,7 @@ func (c *checker) checkStructDestructure(n *ast.Destructure, got ast.Type, s *sc
 		s.poisonAll(n.Names)
 		return
 	}
-	if n.StructName != "" && n.StructName != st.Name {
+	if n.StructName != "" && !c.patternNamesStruct(&n.StructName, st) {
 		c.errfCode(n.P, "E024", "struct destructure pattern names %s, but the expression is %s", n.StructName, st.Name)
 		s.poisonAll(n.Names)
 		return
@@ -13413,7 +13427,7 @@ func (c *checker) checkTuplePatStructElem(pos ast.Position, el *ast.TuplePatElem
 		c.errfCode(pos, "E035", "struct pattern on element %d must name its fields — `%s { … }`", k, st.Name)
 		return true
 	}
-	if el.VariantName != st.Name {
+	if !c.patternNamesStruct(&el.VariantName, st) {
 		c.errfCode(pos, "E035", "struct pattern names %s, but element %d has type %s", el.VariantName, k, st.Name)
 		return true
 	}
@@ -14100,7 +14114,7 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 			c.checkBlock(arm.Body, s)
 			continue
 		}
-		if arm.VariantName != st.Name {
+		if !c.patternNamesStruct(&arm.VariantName, st) {
 			c.errfCode(arm.P, "E035", "struct pattern names %s, but the scrutinee is %s", arm.VariantName, st.Name)
 			c.checkBlock(arm.Body, s)
 			continue
@@ -14452,7 +14466,7 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 			c.errfCode(arm.P, "E035", "match on struct `%s` only accepts struct patterns `%s { … }` or `_`", st.Name, st.Name)
 			continue
 		}
-		if arm.VariantName != st.Name {
+		if !c.patternNamesStruct(&arm.VariantName, st) {
 			c.errfCode(arm.P, "E035", "struct pattern names %s, but the scrutinee is %s", arm.VariantName, st.Name)
 			continue
 		}
