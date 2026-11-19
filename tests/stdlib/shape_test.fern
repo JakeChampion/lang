@@ -137,6 +137,15 @@ function test_each_position_matches_harfbuzz(): test.TestOutcome {
   return test.assert_eq(differences(f, cases, "latn", true) + differences(f, cases, "arab", true), "");
 }
 
+// A font with no GDEF and no GPOS table: a character that decomposes into
+// one character, a CGJ that a context skips when it keeps no marks apart,
+// a mark filtering set that GDEF does not have, a ligature of the parts of
+// a multiple substitution, and the marks that the fallback positioning
+// places.
+function test_bare_font_matches_harfbuzz(): test.TestOutcome {
+  return test.assert_eq(differences(font_of(shape_vectors.bare_font()), shape_vectors.bare_cases(), "latn", true), "");
+}
+
 // The init feature of the font holds two lookups, and the medi feature
 // holds one of them too.
 function test_feature_lookups(): test.TestOutcome {
@@ -185,6 +194,7 @@ function main(): i32 {
   r = r.it("each type of lookup gives the glyphs of HarfBuzz", test_each_lookup_matches_harfbuzz);
   r = r.it("each type of GPOS lookup gives the positions of HarfBuzz", test_each_position_matches_harfbuzz);
   r = r.it("rclt shares the stage of calt", test_rclt_shares_the_stage_of_calt);
+  r = r.it("a font with no GDEF and no GPOS table gives the glyphs of HarfBuzz", test_bare_font_matches_harfbuzz);
   r = r.it("the joiners stop a ligature as in HarfBuzz", test_joiners_in_lookups);
   r = r.it("feature_lookups reads the script and the feature lists", test_feature_lookups);
   r = r.it("a font with no GSUB table gives one glyph for each character", test_no_gsub);

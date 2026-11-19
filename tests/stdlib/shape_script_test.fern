@@ -1,5 +1,5 @@
-// Tests of std/shape for Hebrew, Thai, Lao, Khmer, Myanmar and scripts of the
-// Universal Shaping Engine. The fonts and the glyphs
+// Tests of std/shape for Hebrew, Thai, Lao, Khmer, Myanmar, Korean, scripts of
+// the Universal Shaping Engine, and fonts with no GPOS table. The fonts and the glyphs
 // that HarfBuzz gives for each case come from
 // scripts/gen-shape-script-vectors.py.
 import "std/base64";
@@ -147,6 +147,43 @@ function test_hangul(): test.TestOutcome {
   return test.assert_eq(differences(shape_script_vectors.hang_font(), "hang", shape_script_vectors.hang_cases(), "hang"), "");
 }
 
+// A font with no GPOS table: Thai text with the default shaper, whose marks
+// go on their bases by the boxes of the glyphs, and the kern table of
+// OpenType, of the formats 0 and 2. With the kern table renamed, only the
+// marks move.
+function test_thai_fallback(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.thai_fallback_font(), "kern", shape_script_vectors.thai_fallback_cases(), "latn"), "");
+}
+
+// Hebrew in a font with no GPOS table and no GDEF table: the points go on
+// the letters from right to left, by the classes that HarfBuzz gives them,
+// and the kern table of Apple applies, of the formats 0 and 3 and across
+// the line. With the kern table renamed, only the marks move.
+function test_hebrew_fallback(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.hebr_fallback_font(), "kern", shape_script_vectors.hebr_fallback_cases(), "hebr"), "");
+}
+
+// The kern table of Apple in hebr_fallback_font() has a cross-stream
+// subtable and no state machine. With the length of the table cut to 12
+// bytes, its subtables go past its end, and the font has no kern table, as
+// HarfBuzz rejects it.
+function test_kern_table_flags(): test.TestOutcome {
+  let Ok(b) = base64.decode(shape_script_vectors.hebr_fallback_font()) else {
+    return test.fail("the font did not decode");
+  };
+  let cut = b;
+  for i in 0..b[4] as i32 << 8 | b[5] as i32 {
+    let r = 12 + 16 * i;
+    if (b[r] == 107u8 && b[r + 1] == 101u8 && b[r + 2] == 114u8 && b[r + 3] == 110u8) {
+      cut = cut.with(r + 12, 0u8).with(r + 13, 0u8).with(r + 14, 0u8).with(r + 15, 12u8);
+    }
+  }
+  let (Some(f), Some(g)) = (truetype.parse(b), truetype.parse(cut)) else {
+    return test.fail("the font did not parse");
+  };
+  return test.assert_eq([f.has_kern_table(), f.has_cross_kern(), f.has_kern_machine(), g.has_kern_table()].map((x: boolean): string => x.to_string()).join(","), "true,true,false,false");
+}
+
 // A presentation form that the font does not have splits by one step when
 // no mark follows it: U+FB2C becomes U+FB49 and the shin dot.
 function test_one_step_decomposition(): test.TestOutcome {
@@ -158,7 +195,7 @@ function test_one_step_decomposition(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.new("std/shape Hebrew, Thai, Lao, Khmer, Myanmar and USE scripts");
+  let r = test.new("std/shape Hebrew, Thai, Lao, Khmer, Myanmar, Korean, USE scripts and fallback positioning");
   r = r.it("Hebrew gives the glyphs of HarfBuzz", test_hebrew);
   r = r.it("Thai gives the glyphs of HarfBuzz", test_thai);
   r = r.it("Lao gives the glyphs of HarfBuzz", test_lao);
@@ -173,6 +210,9 @@ function main(): i32 {
   r = r.it("Mongolian gives the glyphs of HarfBuzz", test_mongolian);
   r = r.it("N'Ko gives the glyphs of HarfBuzz", test_nko);
   r = r.it("Hangul gives the glyphs of HarfBuzz", test_hangul);
+  r = r.it("a font with no GPOS table places the Thai marks as HarfBuzz", test_thai_fallback);
+  r = r.it("a font with no GPOS table places the Hebrew marks as HarfBuzz", test_hebrew_fallback);
+  r = r.it("the kern table gives its flags, and a cut table gives none", test_kern_table_flags);
   r = r.it("a form splits by the fewest steps", test_one_step_decomposition);
   return r.finish();
 }

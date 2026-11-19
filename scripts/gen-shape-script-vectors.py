@@ -36,6 +36,7 @@ the same file each time.
 import base64
 import importlib.util
 import random
+import struct
 import sys
 from pathlib import Path
 
@@ -45,7 +46,10 @@ gen = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gen)
 
 import uharfbuzz as hb  # noqa: E402
+from fontTools.pens.boundsPen import BoundsPen  # noqa: E402
 from fontTools.pens.ttGlyphPen import TTGlyphPen  # noqa: E402
+from fontTools.ttLib import TTFont  # noqa: E402
+from fontTools.ttLib.tables.DefaultTable import DefaultTable  # noqa: E402
 
 OUT = HERE.parent / "tests" / "stdlib" / "shape_script_vectors.fern"
 
@@ -130,6 +134,21 @@ SCRIPTS = [
 
 RANDOM_CASES = 40
 
+# The cases of the fallback positioning of HarfBuzz: subsets with no GPOS
+# table, whose glyphs are rectangles of the boxes of the glyphs of the
+# font, with a kern table that this script builds. The Thai text takes the
+# script latn, and thus the default shaper.
+THAI_FALLBACK_WORDS = ["ก\u0e34\u0e48", "ป\u0e49", "ฎ\u0e38", "ญ\u0e39", "ก\u0e3a", "กำ", "น\u0e49ำ", "ก\u0e31\u0e49", "ไทย",
+                       "ก\u0e4c", "ก\u0e47", "ก\u0e4d\u0e48", "ป\u0e38\u0e48", "ปลา ทู", "\u0e48", "ก\u0e38\u0e3a"]
+HEBREW_FALLBACK_WORDS = ["ש\u05b8\u05c1לו\u05b9ם", "ב\u05bf", "ב\u05bc\u05b8", "ש\u05bc\u05c2", "ו\u05b9", "ב\u05b8\u05bd",
+                         "ב\u05b2", "ב\u0591\u05b4", "(א\u05b7)", "ב\u05c4", "ב\u05c5", "ב\u05c7", "אבגדה"]
+FALLBACKS = [
+    ("latn", "thai_fallback", "kern", "Latn", "NotoSansThai", THAI_FALLBACK_WORDS, "กขคงจญฎฏฐณดตนบปผฝพฟมยรลวสหอฮ" + "\u0e31ำ\u0e34\u0e35\u0e36\u0e37\u0e38\u0e39\u0e3a\u0e47\u0e48\u0e49"
+     "\u0e4a\u0e4b\u0e4c\u0e4d" + "าเแโใไ" + ZWJ + " ", False),
+    ("hebr", "hebr_fallback", "kern", "Hebr", "NotoSansHebrew", HEBREW_FALLBACK_WORDS, "אבגדהוזחטיכלמנסעפצקרשתךםןףץ" + "\u05b0\u05b1\u05b2\u05b3\u05b4\u05b5\u05b6\u05b7\u05b8\u05b9\u05bb\u05bc"
+     "\u05bd\u05bf\u05c1\u05c2\u05c4\u05c5\u0591\u05a5\u05ab" + "()" + ZWJ + " ", True),
+]
+
 # The scripts that go from right to left.
 RTL = ("Hebr", "Nkoo")
 
@@ -158,6 +177,107 @@ def subset(path, texts, left_out, thai):
         for t in font["cmap"].tables:
             if t.isUnicode():
                 t.cmap.update(zip(PUA, names))
+    return gen.saved(font)
+
+
+# `font` with each glyph a rectangle of the box of its outline, and each
+# left side bearing at the left edge of that box.
+def rectangles(font):
+    glyphs = font.getGlyphSet()
+    boxes = {}
+    for name in font.getGlyphOrder():
+        pen = BoundsPen(glyphs)
+        glyphs[name].draw(pen)
+        boxes[name] = pen.bounds
+    for name, box in boxes.items():
+        pen = TTGlyphPen(None)
+        if box:
+            x0, y0, x1, y1 = (round(v) for v in box)
+            pen.moveTo((x0, y0))
+            pen.lineTo((x1, y0))
+            pen.lineTo((x1, y1))
+            pen.lineTo((x0, y1))
+            pen.closePath()
+            font["hmtx"].metrics[name] = (font["hmtx"].metrics[name][0], x0)
+        font["glyf"][name] = pen.glyph()
+
+
+# A subtable of format 0 of a kern table: the pairs, each a first glyph, a
+# second glyph and a value, in order.
+def kern_format0(pairs):
+    pairs = sorted(pairs)
+    n = len(pairs)
+    power = 1
+    while power * 2 <= n:
+        power *= 2
+    data = struct.pack(">HHHH", n, 6 * power, power.bit_length() - 1, 6 * (n - power))
+    return data + b"".join(struct.pack(">HHh", a, b, v) for a, b, v in pairs)
+
+
+# A subtable of format 2 of a kern table with a header of `head` bytes:
+# the rows of the first glyphs, the columns of the second glyphs, and the
+# values of each row. A first glyph of the class 1 is out of the table.
+def kern_format2(head, rows, cols, values, glyphs):
+    width = 2 * len(values[0])
+    left_at = head + 8
+    right_at = left_at + 4 + 2 * glyphs
+    array_at = right_at + 4 + 2 * glyphs
+    lefts = [array_at + width * rows[g] if g in rows else (1 if g % 7 == 0 else array_at) for g in range(glyphs)]
+    rights = [2 * cols.get(g, 0) for g in range(glyphs)]
+    data = struct.pack(">HHHH", width, left_at, right_at, array_at)
+    data += struct.pack(">HH", 0, glyphs) + b"".join(struct.pack(">H", v) for v in lefts)
+    data += struct.pack(">HH", 0, glyphs) + b"".join(struct.pack(">H", v) for v in rights)
+    return data + b"".join(struct.pack(">h", v) for row in values for v in row)
+
+
+# A subtable of format 3 of a kern table: the values, the class of each
+# glyph on the left and on the right, and the index of the value of each
+# pair of classes.
+def kern_format3(values, lefts, rights, indices, left_count, right_count):
+    data = struct.pack(">HBBBB", len(lefts), len(values), left_count, right_count, 0)
+    data += b"".join(struct.pack(">h", v) for v in values) + bytes(lefts) + bytes(rights)
+    return data + bytes(indices)
+
+
+# The kern table of `font`, of OpenType or of Apple. The first glyphs and
+# the values come from a generator with a fixed seed. Some pairs hold a mark,
+# which the kerning skips.
+def kern_table(font, apple):
+    rng = random.Random("kern-apple" if apple else "kern")
+    n = len(font.getGlyphOrder())
+    gids = list(range(1, n))
+    pairs = {(rng.choice(gids), rng.choice(gids)): rng.randint(-120, 120) for _ in range(6 * n)}
+    zero = [(a, b, v) for (a, b), v in pairs.items() if v != 0]
+    tables = []
+    if apple:
+        head = lambda fmt, cov, data: struct.pack(">IBBH", 8 + len(data), cov, fmt, 0) + data
+        values = [0] + [rng.randint(-90, 90) for _ in range(9)]
+        lefts = [rng.randrange(4) for _ in range(n - 3)]
+        rights = [rng.randrange(5) for _ in range(n - 3)]
+        indices = [rng.randrange(len(values) + 1) for _ in range(4 * 5)]
+        cross = [(a, b, rng.randint(-150, 150)) for a, b, _ in zero[: 2 * n]]
+        tables = [head(0, 0, kern_format0(zero)), head(3, 0, kern_format3(values, lefts, rights, indices, 4, 5)),
+                  head(0, 0x40, kern_format0(cross)), head(0, 0x80, kern_format0(zero)), head(0, 0x20, kern_format0(zero))]
+        return struct.pack(">II", 0x00010000, len(tables)) + b"".join(tables)
+    head = lambda fmt, cov, data: struct.pack(">HHBB", 0, 6 + len(data), fmt, cov) + data
+    rows = {g: rng.randrange(1, 4) for g in rng.sample(gids, n // 2)}
+    cols = {g: rng.randrange(1, 5) for g in rng.sample(gids, n // 2)}
+    values = [[0] * 5] + [[rng.randint(-80, 80) for _ in range(5)] for _ in range(3)]
+    tables = [head(0, 1, kern_format0(zero)), head(2, 1, kern_format2(6, rows, cols, values, n)), head(0, 0, kern_format0(zero))]
+    return struct.pack(">HH", 0, len(tables)) + b"".join(tables)
+
+
+# The subset of the font at `path` for the fallback positioning, as
+# FALLBACKS tells. With `no_gdef` it has no GDEF table.
+def fallback_subset(path, texts, apple, no_gdef):
+    unicodes = sorted({ord(c) for t in texts for c in t} | {0x20, 0x25CC})
+    font = gen.subset_font(str(path), unicodes, FEATURES)
+    for tag in ["GPOS"] + (["GDEF"] if no_gdef else []):
+        del font[tag]
+    rectangles(font)
+    table = DefaultTable("kern")
+    table.data = kern_table(font, apple)
+    font["kern"] = table
     return gen.saved(font)
 
 
@@ -211,6 +331,29 @@ def main():
             "// The cases of %s_font(): \"new\" or \"old\", the text, and the glyphs, the" % key,
             "// clusters and the positions that HarfBuzz gives. With \"old\" the tag",
             "// \"%s\" of the font is renamed \"%s0\"." % (renamed, renamed[:3]),
+            "pub function %s_cases(): string {" % key,
+            '  return "%s";' % "\\n".join(gen.literal(entry) for entry in lines),
+            "}",
+            "",
+        ]
+    for tag, key, renamed, script, name, words, alphabet, apple in FALLBACKS:
+        rng = random.Random(key)
+        texts = words + ["".join(rng.choice(alphabet) for _ in range(rng.randint(2, 8))) for _ in range(RANDOM_CASES)]
+        data = fallback_subset(fonts / (name + "-Regular.ttf"), texts, apple, apple)
+        assert data.count(renamed.encode()) >= 1
+        old = data.replace(renamed.encode(), (renamed[:3] + "0").encode())
+        lines = [line(data, t, "new", script) for t in texts] + [line(old, t, "old", script) for t in texts]
+        parts += [
+            "// A subset of %s, Copyright 2022 The Noto Project Authors, under the" % name,
+            "// SIL Open Font License 1.1. Each glyph is the rectangle of the box of",
+            "// its outline. The font has no GPOS table, and it has a kern table of",
+            "// %s. The names of the font hold the notice and the license." % ("Apple" if apple else "OpenType"),
+            "pub function %s_font(): string {" % key,
+            '  return "%s";' % base64.b64encode(data).decode("ascii"),
+            "}",
+            "",
+            "// The cases of %s_font(), as for the other fonts. With \"old\" the" % key,
+            "// tag \"%s\" of the font is renamed \"%s0\"." % (renamed, renamed[:3]),
             "pub function %s_cases(): string {" % key,
             '  return "%s";' % "\\n".join(gen.literal(entry) for entry in lines),
             "}",
