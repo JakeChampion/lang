@@ -903,7 +903,7 @@ function scoped_stmt_reads(st: ast.Stmt, bound: string[], own acc: string[], rea
     ast.StmtVar(v) => {
       let init_bound = bound;
       if (ast.var_binds_itself(v)) {
-        init_bound = append_bound_name(init_bound, v.name);
+        init_bound = ast.append_var_names(init_bound, v);
       }
       return scoped_reads(v.init, init_bound, acc, reads);
     },
@@ -934,7 +934,7 @@ function scoped_stmt_reads(st: ast.Stmt, bound: string[], own acc: string[], rea
       acc = scoped_reads(f.iter, bound, acc, reads);
       let loop_bound: string[] = [];
       loop_bound = util.append_all(loop_bound, bound);
-      loop_bound = append_bound_name(loop_bound, f.var_name);
+      loop_bound = ast.append_for_names(loop_bound, f);
       let (used, inner_bound) = scoped_stmts_reads(f.body, loop_bound, acc, reads);
       return used;
     },
@@ -972,7 +972,7 @@ function scoped_stmts_reads(body: ast.Stmt[], bound: string[], own acc: string[]
   for st in body {
     acc = scoped_stmt_reads(st, bound, acc, reads);
     if let ast.StmtVar(v) = st {
-      bound = append_bound_name(bound, v.name);
+      bound = ast.append_var_names(bound, v);
     }
   }
   return (acc, bound);
@@ -1225,10 +1225,10 @@ pub function pattern_binders(p: ast.Pattern, own acc: string[]): string[] {
 pub function binders_of(st: ast.Stmt, own acc: string[]): string[] {
   match (st) {
     ast.StmtVar(v) => {
-      return append_bound_name(acc, v.name);
+      return ast.append_var_names(acc, v);
     },
     ast.StmtFor(f) => {
-      return append_bound_name(acc, f.var_name);
+      return ast.append_for_names(acc, f);
     },
     ast.StmtMatch(m) => {
       for arm in m.arms {
@@ -1348,7 +1348,7 @@ pub function collect_qualrefs_body(body: ast.Stmt[], quals: string[], bound: str
   for st in body {
     acc = collect_qualrefs_stmt(st, active, acc);
     if let ast.StmtVar(v) = st {
-      active = without_qualifiers(active, append_bound_name([], v.name));
+      active = without_qualifiers(active, ast.append_var_names([], v));
     }
   }
   return acc;
@@ -1359,7 +1359,7 @@ pub function collect_qualrefs_stmt(st: ast.Stmt, quals: string[], own acc: QualR
     ast.StmtVar(v) => {
       let active = quals;
       if (ast.var_binds_itself(v)) {
-        active = without_qualifiers(active, append_bound_name([], v.name));
+        active = without_qualifiers(active, ast.append_var_names([], v));
       }
       return qualrefs_expr(v.init, active, acc);
     },
@@ -1374,7 +1374,7 @@ pub function collect_qualrefs_stmt(st: ast.Stmt, quals: string[], own acc: QualR
     },
     ast.StmtFor(f) => {
       acc = qualrefs_expr(f.iter, quals, acc);
-      return collect_qualrefs_body(f.body, quals, append_bound_name([], f.var_name), acc);
+      return collect_qualrefs_body(f.body, quals, ast.append_for_names([], f), acc);
     },
     ast.StmtMatch(m) => {
       return qualrefs_match(m, quals, acc);
@@ -1485,12 +1485,8 @@ function names_type(e: ast.Expr, types: TypeNames): boolean {
   return false;
 }
 
-function cs_bind(c: ConstSubst, packed: string): ConstSubst {
-  let bound = c.bound;
-  for name in append_bound_name([], packed) {
-    bound = bound.append(name);
-  }
-  return ConstSubst { ...c, bound: bound };
+function cs_bind(c: ConstSubst, names: string[]): ConstSubst {
+  return ConstSubst { ...c, bound: util.append_all(c.bound, names) };
 }
 
 function cs_pattern(p: ast.Pattern, c: ConstSubst): ast.Pattern {
@@ -1530,7 +1526,7 @@ function cs_expr_at(e: ast.Expr, c: ConstSubst): (ast.Expr, ConstSubst, boolean)
     ast.ExprLambda(lm) => {
       let inner = c;
       for p in lm.params {
-        inner = cs_bind(inner, p.name);
+        inner = cs_bind(inner, append_bound_name([], p.name));
       }
       return (ast.ExprLambda { ...lm, body: cs_body(lm.body, inner) }, c, true);
     },
@@ -1595,9 +1591,9 @@ function cs_stmt_at(st: ast.Stmt, c: ConstSubst): (ast.Stmt, ConstSubst, boolean
     ast.StmtVar(v) => {
       let before = c;
       if (ast.var_binds_itself(v)) {
-        before = cs_bind(before, v.name);
+        before = cs_bind(before, ast.append_var_names([], v));
       }
-      return (ast.StmtVar { ...v, init: cs_expr(v.init, before) }, cs_bind(c, v.name), true);
+      return (ast.StmtVar { ...v, init: cs_expr(v.init, before) }, cs_bind(c, ast.append_var_names([], v)), true);
     },
     ast.StmtIf(f) => {
       return (ast.StmtIf { ...f, cond: cs_expr(f.cond, c), then_body: cs_body(f.then_body, c), else_body: cs_body(f.else_body, c) }, c, true);
@@ -1606,16 +1602,14 @@ function cs_stmt_at(st: ast.Stmt, c: ConstSubst): (ast.Stmt, ConstSubst, boolean
       return (ast.StmtWhile { ...w, cond: cs_expr(w.cond, c), body: cs_body(w.body, c) }, c, true);
     },
     ast.StmtFor(f) => {
-      return (ast.StmtFor { ...f, iter: cs_expr(f.iter, c), body: cs_body(f.body, cs_bind(c, f.var_name)) }, c, true);
+      return (ast.StmtFor { ...f, iter: cs_expr(f.iter, c), body: cs_body(f.body, cs_bind(c, ast.append_for_names([], f))) }, c, true);
     },
     ast.StmtMatch(m) => {
       let arms: ast.MatchArm[] = [];
       for arm in m.arms {
         let pattern = cs_pattern(arm.pattern, c);
         let inner = c;
-        for n in pattern_binders(arm.pattern, []) {
-          inner = cs_bind(inner, n);
-        }
+        inner = cs_bind(inner, pattern_binders(arm.pattern, []));
         let guard = arm.guard;
         if (arm.has_guard) {
           guard = cs_expr(guard, inner);

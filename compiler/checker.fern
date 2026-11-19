@@ -2562,55 +2562,30 @@ function (s: Scope) defines(name: string): boolean {
 }
 
 function bind_destructure_names(s: Scope, v: ast.StmtVar): Scope {
-  if (!util.contains(v.name, ",") && !parser.is_destr_marker(v.type_name)) {
+  if (!ast.destructures(v)) {
     return s;
   }
-  let at = parser.destr_marker_split(v.type_name).at;
   let whole = check_expr(v.init, s);
   let out = s;
-  if (at.len() > 0) {
-    out = out.bind(at, whole);
+  if (v.destr.at.len() > 0) {
+    out = out.bind(v.destr.at, whole);
   }
-  if (parser.is_struct_destr_marker(v.type_name)) {
+  if (ast.record_destr(v.destr)) {
     return bind_struct_destr_fields(out, v, s);
   }
-  return bind_tuple_destr_names(out, split_pattern_names(v.name), whole);
+  return bind_tuple_destr(out, v.destr, whole);
 }
 
 function bind_struct_destr_fields(out: Scope, v: ast.StmtVar, s: Scope): Scope {
-  let (fields, ok) = struct_destr_fields(v.type_name);
-  if (!ok) {
-    return bind_names(out, v.name);
-  }
-  let names = split_pattern_names(v.name);
-  for i in 0..names.len() {
+  let fields = v.destr.fields;
+  for i in 0..v.destr.binds.len() {
     let ft = t_unknown("binding");
     if (i < fields.len()) {
       ft = check_expr(ast.ExprFieldAccess { obj: v.init, field: fields[i], line: v.line, col: v.col, ty: "", const_read: false, display: false }, s);
     }
-    out = out.bind(names[i], ft);
+    out = out.bind(v.destr.binds[i].name, ft);
   }
   return out;
-}
-
-function struct_destr_fields(type_name: string): (string[], boolean) {
-  let marker = parser.destr_marker_split(type_name).tag;
-  let rest = slice_unchecked(marker, 4, marker.len()).to_owned();
-  let colon = util.index_of_sub(rest, ":");
-  if (colon < 0) {
-    return ([], false);
-  }
-  return (split_pattern_names(slice_unchecked(rest, colon + 1, rest.len()).to_owned()), true);
-}
-
-function struct_destr_name(type_name: string): string {
-  let marker = parser.destr_marker_split(type_name).tag;
-  let rest = slice_unchecked(marker, 4, marker.len()).to_owned();
-  let colon = util.index_of_sub(rest, ":");
-  if (colon < 0) {
-    return "";
-  }
-  return slice_unchecked(rest, 0, colon).to_owned();
 }
 
 function opaque_access_diags(sig: StructSig, s: Scope, what: string, line: i32, col: i32): util.Diag[] {
@@ -2622,14 +2597,14 @@ function opaque_access_diags(sig: StructSig, s: Scope, what: string, line: i32, 
 
 function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
-  if (!parser.is_struct_destr_marker(v.type_name)) {
+  if (!ast.record_destr(v.destr)) {
     return out;
   }
-  let (fields, _) = struct_destr_fields(v.type_name);
+  let fields = v.destr.fields;
   let it = check_expr(v.init, s);
   match (it) {
     typeinfo.TypeStruct(st) => {
-      let named = struct_destr_name(v.type_name);
+      let named = v.destr.record;
       if (named.len() > 0 && named != st.name) {
         return out.append(dg_at("E024", "struct destructure pattern names " + named + ", but the expression is " + st.name, v.line, v.col));
       }
@@ -2637,7 +2612,7 @@ function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
         return out;
       };
       let access = "destructure a field of";
-      if (parser.destr_marker_split(v.type_name).struct_match) {
+      if (v.destr.struct_match) {
         access = "destructure";
       }
       out = util.append_diags(out, opaque_access_diags(sig, s, access, v.line, v.col));
@@ -2656,7 +2631,7 @@ function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
   return out;
 }
 
-function bind_tuple_destr_names(out: Scope, names: string[], whole: typeinfo.Type): Scope {
+function bind_tuple_destr(out: Scope, d: ast.Destr, whole: typeinfo.Type): Scope {
   let elems: typeinfo.Type[] = [];
   match (whole) {
     typeinfo.TypeTuple(tt) => {
@@ -2664,47 +2639,15 @@ function bind_tuple_destr_names(out: Scope, names: string[], whole: typeinfo.Typ
     },
     _ => {}
   }
-  for i in 0..names.len() {
-    let nm = names[i];
+  for i in 0..d.binds.len() {
     let et = t_unknown("binding");
     if (i < elems.len()) {
       et = elems[i];
     }
-    if (util.is_tuple_type_name(nm)) {
-      out = bind_tuple_destr_names(out, split_pattern_names(slice_unchecked(nm, 1, nm.len() - 1).to_owned()), et);
-    } else if (nm.len() > 0) {
-      out = out.bind(nm, et);
-    }
-  }
-  return out;
-}
-
-pub function split_pattern_names(encoded: string): string[] {
-  let out: string[] = [];
-  let start = 0;
-  let depth = 0;
-  for i in 0..=encoded.len() {
-    if (i == encoded.len() || encoded[i] == b',' && depth == 0) {
-      if (i > start) {
-        out = out.append(slice_unchecked(encoded, start, i).to_owned());
-      }
-      start = i + 1;
-    } else if (encoded[i] == b'(') {
-      depth += 1;
-    } else if (encoded[i] == b')') {
-      depth -= 1;
-    }
-  }
-  return out;
-}
-
-function bind_names(s: Scope, name: string): Scope {
-  let out = s;
-  for nm in split_pattern_names(name) {
-    if (util.is_tuple_type_name(nm)) {
-      out = bind_names(out, slice_unchecked(nm, 1, nm.len() - 1).to_owned());
-    } else if (nm.len() > 0) {
-      out = out.bind(nm, t_unknown("binding"));
+    if (d.binds[i].nested.len() > 0) {
+      out = bind_tuple_destr(out, d.binds[i].nested[0], et);
+    } else if (d.binds[i].name.len() > 0) {
+      out = out.bind(d.binds[i].name, et);
     }
   }
   return out;
@@ -7059,6 +7002,7 @@ function check_lambda_expr(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
 
 pub struct CheckResult { scope: Scope, ty: typeinfo.Type }
 
+// TEMPORARY drift check for the destr migration.
 pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
   match (st) {
     ast.StmtDefer(d) => {
@@ -7067,10 +7011,10 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
     ast.StmtVar(v) => {
       let init_scope = rec_local_scope(v, s);
       let t = check_expr(v.init, init_scope);
-      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
+      if (ast.destructures(v)) {
         return CheckResult { scope: bind_destructure_names(s, v), ty: t };
       }
-      if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
+      if (v.type_name.len() > 0) {
         let declared = var_declared_type(v, s);
         if (is_unknown(declared)) {
           return CheckResult { scope: s.bind(v.name, declared), ty: declared };
@@ -7250,7 +7194,7 @@ pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
       return bind_stmt(d.action, s);
     },
     ast.StmtVar(v) => {
-      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
+      if (ast.destructures(v)) {
         return bind_destructure_names(s, v);
       }
       return bind_var(v, s, var_bind_type(v, s));
@@ -10297,11 +10241,24 @@ function mc_walk_body(stmts: ast.Stmt[], s: Scope, structs: parser.StructDecl[],
   return out;
 }
 
+// The names of a for loop's variable, or of the top level of its pattern.
+function for_top_names(fr: ast.StmtFor): string[] {
+  if (fr.destr.binds.len() == 0) {
+    return [fr.var_name];
+  }
+  let out: string[] = [];
+  for b in fr.destr.binds {
+    if (b.nested.len() == 0) {
+      out = out.append(b.name);
+    }
+  }
+  return out;
+}
+
 // A for loop binds each element over its body, as a let does.
 function mc_for_bindings(fr: ast.StmtFor, body: Scope, structs: parser.StructDecl[], enums: parser.EnumDecl[]): util.Diag[] {
   let out: util.Diag[] = [];
-  for raw in split_pattern_names(fr.var_name) {
-    let name = raw.trim();
+  for name in for_top_names(fr) {
     let tn = mc_marked_type_name(typeinfo.spelling(body.lookup(name)), structs, enums);
     if (tn.len() > 0) {
       out = util.append_diags(out, mc_check_binding(fr.body, 0, name, tn, fr.line, fr.col, structs, enums));
@@ -11071,7 +11028,7 @@ function unsettled_arm_sum(a: i32, b: i32): i32 {
 function lit_locals_after(st: ast.Stmt, lits: string[]): string[] {
   if let ast.StmtVar(v) = st {
     let out = drop_lit_locals(lits, astwalk.binders_of(st, []));
-    if (v.type_name.len() == 0 && !util.contains(v.name, ",") && unsettled_tree(v.init, lits)) {
+    if (v.type_name.len() == 0 && v.destr.binds.len() <= 1 && unsettled_tree(v.init, lits)) {
       return out.append(v.name);
     }
     return out;
@@ -12211,7 +12168,7 @@ function match_leaves(m: ast.StmtMatch, jumps: boolean, bound: boolean, noret: u
 function lets_bind_exit(stmts: ast.Stmt[]): boolean {
   for st in stmts {
     if let ast.StmtVar(v) = st {
-      if (util.has_str(astwalk.append_bound_name([], v.name), "exit")) {
+      if (util.has_str(ast.append_var_names([], v), "exit")) {
         return true;
       }
     }
@@ -12606,11 +12563,10 @@ function missing_pattern_fields_diag(name: string, decl: string[], line: i32, co
 }
 
 function destructure_covers_diags(v: ast.StmtVar, structs: StructTable): util.Diag[] {
-  if (!parser.is_struct_destr_marker(v.type_name)) {
+  if (!ast.record_destr(v.destr)) {
     return [];
   }
-  let (fields, _) = struct_destr_fields(v.type_name);
-  return struct_pattern_covers_diags(struct_destr_name(v.type_name), fields, parser.destr_marker_split(v.type_name).rest_written, structs, v.line, v.col);
+  return struct_pattern_covers_diags(v.destr.record, v.destr.fields, v.destr.rest_written, structs, v.line, v.col);
 }
 
 function struct_arms_cover_diags(arms: ast.StructArm[], structs: StructTable): util.Diag[] {
@@ -13186,13 +13142,46 @@ function duplicate_var_diag(stmts: ast.Stmt[], v: ast.StmtVar): util.Diag {
   return d;
 }
 
+function destr_declared_names(d: ast.Destr): string[] {
+  let acc: string[] = [];
+  if (d.at.len() > 0) {
+    acc = acc.append(d.at);
+  }
+  return pattern_declared_names(acc, d);
+}
+
+// The names that d declares after `acc`, in the order that the binding declares them: its own names, then those of each nested pattern.
+function pattern_declared_names(own acc: string[], d: ast.Destr): string[] {
+  for b in d.binds {
+    if (b.nested.len() == 0 && b.name.len() > 0 && b.name != "_") {
+      acc = acc.append(b.name);
+    }
+  }
+  for b in d.binds {
+    if (b.nested.len() > 0) {
+      acc = pattern_declared_names(acc, b.nested[0]);
+    }
+  }
+  return acc;
+}
+
 function dupvar_diags(stmts: ast.Stmt[]): util.Diag[] {
   let out: util.Diag[] = [];
   let declared = util.name_index([]);
   for stmt in stmts {
     match (stmt) {
       ast.StmtVar(v) => {
-        if (declared.has(v.name)) {
+        if (ast.destructures(v)) {
+          if (!v.destr.struct_match) {
+            for name in destr_declared_names(v.destr) {
+              if (declared.has(name)) {
+                out = out.append(dg_at("E013", "variable \"" + name + "\" already declared in this scope", v.line, v.col));
+              } else {
+                declared = declared.added(name);
+              }
+            }
+          }
+        } else if (declared.has(v.name)) {
           if (!ast.var_binds_itself(v)) {
             out = out.append(duplicate_var_diag(stmts, v));
           }
@@ -17252,10 +17241,10 @@ function tuple_destr_diags(t: typeinfo.Type, n: i32, line: i32, col: i32): util.
 }
 
 function for_pattern_diags(fr: ast.StmtFor, s: Scope): util.Diag[] {
-  if (!util.contains(fr.var_name, ",")) {
+  if (fr.destr.binds.len() == 0) {
     return [];
   }
-  let n = split_pattern_names(fr.var_name).len();
+  let n = fr.destr.binds.len();
   if (for_iter_is_range(fr.iter)) {
     return tuple_destr_diags(range_var_type(fr.iter, s), n, fr.line, fr.col);
   }
@@ -18493,9 +18482,9 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
 
 function var_pattern_diags(v: ast.StmtVar, s: Scope, tuple_pattern: boolean): util.Diag[] {
   let out = struct_destr_diags(v, s);
-  let positions = split_pattern_names(v.name);
-  if (!tuple_pattern && positions.len() > 1 && !parser.is_struct_destr_marker(v.type_name)) {
-    out = util.append_diags(out, tuple_destr_diags(check_expr(v.init, s), positions.len(), v.line, v.col));
+  let count = v.destr.binds.len();
+  if (!tuple_pattern && count > 1 && !ast.record_destr(v.destr)) {
+    out = util.append_diags(out, tuple_destr_diags(check_expr(v.init, s), count, v.line, v.col));
   }
   return out;
 }
@@ -18526,7 +18515,7 @@ function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]
   for st in stmts {
     match (st) {
       ast.StmtVar(v) => {
-        if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name) && !vb_placeholder_decl(v)) {
+        if (v.type_name.len() > 0 && !vb_placeholder_decl(v)) {
           let declared = var_declared_type(v, cur);
           let initt = fn_value_at(v.init, declared, cur);
           if (!mlit_is_desugared(v.init)) {
@@ -21580,7 +21569,7 @@ function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
       if (v.type_name == "fn" && v.fn_ret.starts_with("own ")) {
         f = LuFacts { ...f, checked_locals: f.checked_locals.append(v.name) };
       }
-      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
+      if (ast.destructures(v)) {
         return LuFacts { ...f, vars: lu_destr_vars(v, f.vars), unpacked: lu_destr_unpacked(v, f.unpacked) };
       }
       return LuFacts { ...f, vars: f.vars.append(LuVar { name: v.name, init: v.init }) };
@@ -21666,7 +21655,7 @@ function lu_sel_at(f: LuFacts, line: i32, col: i32): string {
 function lu_destr_vars(v: ast.StmtVar, own vars: LuVar[]): LuVar[] {
   let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
   let init: ast.Expr = none;
-  if (parser.destr_marker_split(v.type_name).at.len() == 0) {
+  if (v.destr.at.len() == 0) {
     if (lu_fresh_expr(v.init)) {
       init = v.init;
     } else if let Some(_) = lu_match_value(v.init) {
@@ -21675,11 +21664,11 @@ function lu_destr_vars(v: ast.StmtVar, own vars: LuVar[]): LuVar[] {
       init = v.init;
     }
   }
-  for nm in split_pattern_names(v.name) {
-    if (util.is_tuple_type_name(nm)) {
-      vars = lu_nested_vars(nm, vars);
+  for b in v.destr.binds {
+    if (b.nested.len() > 0) {
+      vars = lu_nested_vars(b.nested[0], vars);
     } else {
-      vars = vars.append(LuVar { name: nm, init: init });
+      vars = vars.append(LuVar { name: b.name, init: init });
     }
   }
   return vars;
@@ -21689,25 +21678,25 @@ function lu_destr_vars(v: ast.StmtVar, own vars: LuVar[]): LuVar[] {
 // source. Nested groups are not unpacks of the name itself.
 function lu_destr_unpacked(v: ast.StmtVar, own acc: LuVar[]): LuVar[] {
   if let ast.ExprIdent(_) = v.init {
-    if (parser.destr_marker_split(v.type_name).at.len() > 0) {
+    if (v.destr.at.len() > 0) {
       return acc;
     }
-    for nm in split_pattern_names(v.name) {
-      if (!util.is_tuple_type_name(nm)) {
-        acc = acc.append(LuVar { name: nm, init: v.init });
+    for b in v.destr.binds {
+      if (b.nested.len() == 0) {
+        acc = acc.append(LuVar { name: b.name, init: v.init });
       }
     }
   }
   return acc;
 }
 
-function lu_nested_vars(group: string, own vars: LuVar[]): LuVar[] {
+function lu_nested_vars(group: ast.Destr, own vars: LuVar[]): LuVar[] {
   let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
-  for nm in split_pattern_names(slice_unchecked(group, 1, group.len() - 1).to_owned()) {
-    if (util.is_tuple_type_name(nm)) {
-      vars = lu_nested_vars(nm, vars);
+  for b in group.binds {
+    if (b.nested.len() > 0) {
+      vars = lu_nested_vars(b.nested[0], vars);
     } else {
-      vars = vars.append(LuVar { name: nm, init: none });
+      vars = vars.append(LuVar { name: b.name, init: none });
     }
   }
   return vars;
@@ -21993,7 +21982,7 @@ function lu_scoped_fresh(fx: LuFn, body: ast.Stmt[], e: ast.Expr): boolean {
         let ast.StmtVar(binding) = body[i] else {
           return false;
         };
-        if (parser.is_destr_marker(binding.type_name) && parser.destr_marker_split(binding.type_name).at.len() != 0) {
+        if (binding.destr.at.len() != 0) {
           return false;
         }
         return lu_scoped_fresh(fx, [], binding.init);
@@ -23789,7 +23778,7 @@ function lu_expr_mentions(e: ast.Expr, aid: ast.ExprIdent, later: boolean): bool
 // The names a let declares, as LuFacts.vars records them.
 function lu_var_names(st: ast.Stmt, own acc: string[]): string[] {
   if let ast.StmtVar(v) = st {
-    if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
+    if (ast.destructures(v)) {
       for d in lu_destr_vars(v, []) {
         acc = acc.append(d.name);
       }
@@ -24182,7 +24171,7 @@ function lu_chain_next(reach: LuReach, st: ast.Stmt, name: string, chain: LuChai
 function lu_chain_after(st: ast.Stmt, chain: LuChain): LuChain {
   if let ast.StmtVar(v) = st {
     if let ast.ExprBool(b) = v.init {
-      if (!b.value && !util.contains(v.name, ",")) {
+      if (!b.value && v.destr.binds.len() <= 1) {
         return LuChain { flag: v.name, settles: true, result: LU_NOT_ARM };
       }
     }
@@ -24904,7 +24893,7 @@ function lu_frame_binds(frames: LuFrame[], l: i32, name: string): boolean {
 
 function lu_stmt_declares(st: ast.Stmt, name: string): boolean {
   if let ast.StmtVar(v) = st {
-    if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
+    if (ast.destructures(v)) {
       return util.has_str(lu_var_names(st, []), name);
     }
     return v.name == name;
@@ -26858,7 +26847,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return OwnWalk { moved: ld.moved, diags: util.append_diags(rc.diags, ld.diags) };
     },
     ast.StmtFor(fr) => {
-      let takes = !util.contains(fr.var_name, ",") && ow_is_owned_scrutinee(fr.iter, ctx) && ow_iter_at_last_use(fr.iter, ctx);
+      let takes = fr.destr.binds.len() == 0 && ow_is_owned_scrutinee(fr.iter, ctx) && ow_iter_at_last_use(fr.iter, ctx);
       let ri = ru_borrow(fr.iter, moved, ctx);
       if (takes) {
         ri = ru_expr(fr.iter, moved, ctx);
@@ -26867,7 +26856,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       let inner = for_body_scope(fr, ctx.scope);
       // A loop over a borrowed array lends each element. An element that
       // holds no handle is a copy, so the body can give it away.
-      if (!takes && !util.contains(fr.var_name, ",") && !ow_holds_no_handle(typeinfo.spelling(inner.lookup(fr.var_name)), ctx.decls)) {
+      if (!takes && fr.destr.binds.len() == 0 && !ow_holds_no_handle(typeinfo.spelling(inner.lookup(fr.var_name)), ctx.decls)) {
         fctx = OwnCtx { ...fctx, borrowed: fctx.borrowed.append(fr.var_name) };
       }
       let ld = ow_loop(fr.label, fr.body, ri.moved, OwnCtx { ...fctx, scope: inner });
@@ -28341,7 +28330,7 @@ function ow_let_tail_borrows(arm: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string
     let ast.StmtVar(v) = arm[k] else {
       return None;
     };
-    if (util.contains(v.name, ",")) {
+    if (v.destr.binds.len() > 1) {
       return None;
     }
     let lends = ow_expr_borrows(v.init, ofuncs, inner, inner_locals, values, borrows, builtins, lenders, handles_only);
@@ -28636,7 +28625,7 @@ function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
       }
       // Scalar elements are copies. Other elements retain the iterable borrow.
       if let ast.StmtFor(f) = st {
-        if (!util.contains(f.var_name, ",") && !for_iter_is_range(f.iter) && !ow_value_element_iter(f.iter, values)) {
+        if (f.destr.binds.len() == 0 && !for_iter_is_range(f.iter) && !ow_value_element_iter(f.iter, values)) {
           name = f.var_name;
           init = f.iter;
         }
@@ -34859,7 +34848,7 @@ function annotate_block(body: ast.Stmt[], s: Scope): ast.Stmt[] {
 // is annotated before the bind, so that the bind is the last use of s.
 function annotate_bound(stmt: ast.Stmt, s: Scope): (ast.Stmt, Scope) {
   if let ast.StmtVar(v) = stmt {
-    if (!util.contains(v.name, ",") && !parser.is_destr_marker(v.type_name)) {
+    if (!ast.destructures(v)) {
       let t = var_bind_type(v, s);
       let annotated = annotate_var(v, s, t);
       return (annotated, bind_var(v, s, t));
@@ -34888,39 +34877,42 @@ function range_var_type(iter: ast.Expr, s: Scope): typeinfo.Type {
 function for_binding(fr: ast.StmtFor, s: Scope): ForBinding {
   let body = s.enter_loop();
   if (for_iter_is_range(fr.iter)) {
-    let bound = bind_for_element(body, fr.var_name, range_var_type(fr.iter, s));
+    let bound = bind_for_element(body, fr, range_var_type(fr.iter, s));
     if (bound.names.len() > body.names.len()) {
       bound = Scope { ...bound, range_indexes: bound.range_indexes.append(bound.names.len() - 1) };
     }
-    return ForBinding { scope: bound, valid: !util.contains(fr.var_name, ",") };
+    return ForBinding { scope: bound, valid: fr.destr.binds.len() == 0 };
   }
   let it = check_expr(fr.iter, s);
   match (it) {
     typeinfo.TypeString(_) => {
-      return ForBinding { scope: bind_for_element(body, fr.var_name, typeinfo.t_u8()), valid: !util.contains(fr.var_name, ",") };
+      return ForBinding { scope: bind_for_element(body, fr, typeinfo.t_u8()), valid: fr.destr.binds.len() == 0 };
     },
     typeinfo.TypeArray(ta) => {
-      return ForBinding { scope: bind_for_element(body, fr.var_name, ta.elem), valid: true };
+      return ForBinding { scope: bind_for_element(body, fr, ta.elem), valid: true };
     },
     typeinfo.TypeMap(tm) => {
-      let names = split_pattern_names(fr.var_name);
-      return ForBinding { scope: bind_tuple_destr_names(body, names, t_tuple([tm.key, tm.value])), valid: names.len() == 2 };
+      let pattern = fr.destr;
+      if (pattern.binds.len() == 0) {
+        pattern = ast.tuple_destr([fr.var_name]);
+      }
+      return ForBinding { scope: bind_tuple_destr(body, pattern, t_tuple([tm.key, tm.value])), valid: pattern.binds.len() == 2 };
     },
     _ => {
       let sub = iter_subject(it, s);
-      return ForBinding { scope: bind_for_element(body, fr.var_name, sub.elem), valid: sub.ok };
+      return ForBinding { scope: bind_for_element(body, fr, sub.elem), valid: sub.ok };
     }
   }
 }
 
-function bind_for_element(s: Scope, name: string, ty: typeinfo.Type): Scope {
-  if (util.contains(name, ",")) {
-    return bind_tuple_destr_names(s, split_pattern_names(name), ty);
+function bind_for_element(s: Scope, fr: ast.StmtFor, ty: typeinfo.Type): Scope {
+  if (fr.destr.binds.len() > 0) {
+    return bind_tuple_destr(s, fr.destr, ty);
   }
-  if (name == "_") {
+  if (fr.var_name == "_") {
     return s;
   }
-  return s.bind(name, ty);
+  return s.bind(fr.var_name, ty);
 }
 
 pub function for_body_scope(fr: ast.StmtFor, s: Scope): Scope {
@@ -35043,7 +35035,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       if let Some(lowered) = iterator_lowering(fr, s) {
         return annotate_stmt(lowered, s, after);
       }
-      return ast.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, for_body_scope(fr, s)), label: fr.label, line: fr.line, col: fr.col };
+      return ast.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, for_body_scope(fr, s)), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
     },
     ast.StmtDefer(d) => {
       return ast.StmtDefer { action: annotate_stmt(d.action, s, after), on_error: d.on_error, line: d.line };
@@ -35229,7 +35221,7 @@ function vb_local_name(body: ast.Stmt[]): string {
   let name = "";
   match (body[0]) {
     ast.StmtVar(v) => {
-      if (v.type_name.len() > 0 && !parser.is_value_local_name(v.name) || util.contains(v.name, ",")) {
+      if (v.type_name.len() > 0 && !parser.is_value_local_name(v.name) || v.destr.binds.len() > 1) {
         return "";
       }
       name = v.name;
@@ -35623,7 +35615,7 @@ function vb_retype(e: ast.Expr, s: Scope): ast.Expr {
 // takes is a member of it.
 function vb_union_dest(body: ast.Stmt[], name: string, dest: string, s: Scope): typeinfo.Type {
   let none = t_unknown("no union destination");
-  if (dest.len() == 0 || parser.is_destr_marker(dest)) {
+  if (dest.len() == 0) {
     return none;
   }
   let want = s.resolve_type(dest);
@@ -35675,7 +35667,7 @@ function vb_retype_dest(e: ast.Expr, s: Scope, dest: string): ast.Expr {
             nbody = nbody.append(ast.StmtVar { ...v, init: vb_zero_of(tag) });
           } else {
             tag = vb_annotation_of(want, s);
-            if (tag.len() == 0 && dest.len() > 0 && !parser.is_destr_marker(dest) && vb_wants_annotation(want)) {
+            if (tag.len() == 0 && dest.len() > 0 && vb_wants_annotation(want)) {
               tag = dest;
             }
             if (tag.len() == 0) {
@@ -35813,7 +35805,7 @@ function pretype_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
       let init = pretype_expr(v.init, s);
-      if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
+      if (v.type_name.len() > 0) {
         init = vb_retype_dest(init, s, v.type_name);
       }
       return ast.StmtVar { ...v, init: init };
@@ -36293,7 +36285,7 @@ function qualify_stmts(stmts: ast.Stmt[], s: Scope, coll: util.NameIndex): ast.S
 
 // var_dest_type is the type a `let` annotation expects of its initialiser.
 function var_dest_type(v: ast.StmtVar, s: Scope): typeinfo.Type {
-  if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name) && !vb_placeholder_decl(v)) {
+  if (v.type_name.len() > 0 && !vb_placeholder_decl(v)) {
     return var_declared_type(v, s);
   }
   return t_unknown("no expected type");
@@ -38515,7 +38507,7 @@ function lit_stmts(stmts: ast.Stmt[], s: Scope, st: LitInfer): LitInfer {
 function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
   match (stmt) {
     ast.StmtVar(v) => {
-      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
+      if (ast.destructures(v)) {
         return (bind_stmt(stmt, s), lit_expr(v.init, s, st));
       }
       if (v.type_name.len() > 0) {
@@ -39055,7 +39047,7 @@ function open_call_candidate(st: ast.Stmt, generics: string[]): boolean {
   let ast.ExprIdent(id) = c.callee else {
     return false;
   };
-  return v.type_name.len() == 0 && !util.contains(v.name, ",") && c.type_args.len() == 0 && util.has_str(generics, id.name);
+  return v.type_name.len() == 0 && v.destr.binds.len() <= 1 && c.type_args.len() == 0 && util.has_str(generics, id.name);
 }
 
 function lit_scan_expr(e: ast.Expr, own sc: LitScan): LitScan {
@@ -39145,7 +39137,7 @@ function lit_candidate_at(st: ast.Stmt): boolean {
       return lit_holds_int_literal(m.scrutinee);
     },
     ast.StmtVar(v) => {
-      if (v.type_name.len() > 0 || util.contains(v.name, ",")) {
+      if (v.type_name.len() > 0 || v.destr.binds.len() > 1) {
         return false;
       }
       return lit_holds_int_literal(v.init) || names_unit_variant(v.init);
