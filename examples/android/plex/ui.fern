@@ -87,8 +87,11 @@ pub struct View {
   // download that came in percent, or -1 when it has none.
   menu: plex.Item,
   menu_download: i32,
-  // The rows of the screen of the downloads.
+  // The rows of the downloads that are not done, and the numbers of the
+  // downloads that are done and of all of them.
   saved: SavedRow[],
+  saved_done: i32,
+  saved_total: i32,
   // The title of the music that plays while another screen shows, or "".
   now_playing: string,
   users: plex.HomeUser[],
@@ -125,7 +128,7 @@ pub function english(): i18n.Strings {
 }
 
 pub function empty_view(w: i32, h: i32): View {
-  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, saved: [], now_playing: "", users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", offline: false, servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english(), local: false };
+  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, saved: [], saved_done: 0, saved_total: 0, now_playing: "", users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", offline: false, servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english(), local: false };
 }
 
 // --- metrics
@@ -960,7 +963,7 @@ function settings(m: Metrics, v: View): scene.Node[] {
     (tr(m, "User"), v.account, "users"),
     (tr(m, "Server"), v.server_name, "servers"),
     (tr(m, "Quality"), v.quality, "quality"),
-    (tr(m, "Downloads"), m.texts.format("{0} of {1} done", [v.saved.filter((r: SavedRow): boolean => r.done).len().to_string(), v.saved.len().to_string()]), "downloads"),
+    (tr(m, "Downloads"), m.texts.format("{0} of {1} done", [v.saved_done.to_string(), v.saved_total.to_string()]), "downloads"),
     (tr(m, "Sign out"), "", "signout"),
   ];
   let row = 72 * m.u;
@@ -989,9 +992,8 @@ function settings(m: Metrics, v: View): scene.Node[] {
   return out;
 }
 
-// A download on the screen of the downloads: the title of its item, its
-// state, such as "42%", and whether it is done.
-// A download that is not done. `at` is its place in the downloads.
+// A download that is not done: the title of its item, its state, such as
+// "42%", and its place `at` in the downloads.
 pub struct SavedRow { title: string, detail: string, state: string, done: boolean, at: i32 }
 
 // The downloads: a row of cards for the shows, the movies and the music,

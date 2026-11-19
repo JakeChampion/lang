@@ -4002,7 +4002,7 @@ pub function view(s: App): ui.View {
     texts: s.texts,
     top: s.top, bottom: s.bottom,
     screen: s.screen, tab: s.tab, title: s.title, scroll: s.scroll, rows: s.rows, hubs: hubs,
-    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, menu_download: download_percent(s, s.menu.key), saved: waiting_rows(s), now_playing: if (s.play.active && s.screen != ui.PLAYER) { p.item.title + " · " + p.item.grandparent } else { "" }, users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
+    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, menu_download: download_percent(s, s.menu.key), saved: waiting_rows(s), saved_done: s.downloads.filter((d: Saved): boolean => d.status == download.DONE).len(), saved_total: s.downloads.len(), now_playing: if (s.play.active && s.screen != ui.PLAYER) { p.item.title + " · " + p.item.grandparent } else { "" }, users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
     pin_code: s.pin.code, error: if (offline_home(s)) { "" } else { s.texts.text(s.error) }, offline: offline_home(s), servers: s.servers, server_states: s.states,
     query: s.query, typing: s.typing, account: s.account, server_name: s.server.name,
     quality: plex.qualities()[s.quality].name, player: pv, base: s.base,

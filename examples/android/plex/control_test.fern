@@ -1652,7 +1652,12 @@ function test_download_all_and_the_screen(): test.TestOutcome {
     return test.fail("the rows of the downloads that are not done: " + list.nodes.map((n: scene.Node): string => n.say).filter((t: string): boolean => t.len() > 0).join(" | "));
   }
   log.progress.set(download.Progress { status: download.DONE, done: 1000i64, total: 1000i64 });
-  let done = at(list, log, 5000i64, f, android.Tick);
+  let ticked = at(list, log, 5000i64, f, android.Tick);
+  let counted = settle(tap(tap(ticked, log, 5010i64, f, "back"), log, 5020i64, f, "tab:3"), log, 5030i64, f);
+  if (!says(counted, "2 of 2 done")) {
+    return test.fail("the settings do not count the done downloads");
+  }
+  let done = tap(counted, log, 5040i64, f, "downloads");
   if (!says(done, "SHOWS") || !says(done, "MOVIES") || node(done, "hub:0:0").is_none() || node(done, "hub:1:0").is_none() || node(done, "unsave:0").is_some()) {
     return test.fail("the done downloads are not on cards by kind: " + done.nodes.map((n: scene.Node): string => n.say).filter((t: string): boolean => t.len() > 0).join(" | "));
   }
