@@ -37,7 +37,7 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
       return ast.binary(b.op, box_rewrite_expr(b.left, boxed, btypes, bsites, bound), box_rewrite_expr(b.right, boxed, btypes, bsites, bound), b.line, b.col, b.ty);
     },
     ast.ExprUnary(u) => {
-      return ast.unary(u.op, box_rewrite_expr(u.operand, boxed, btypes, bsites, bound), u.line, u.col, u.ty);
+      return ast.rebuild_unary(u, box_rewrite_expr(u.operand, boxed, btypes, bsites, bound), u.line, u.col, u.ty);
     },
     ast.ExprCall(c) => {
       let nargs: ast.Expr[] = [];

@@ -404,7 +404,7 @@ function elb_mark_expr(e: ast.Expr, idx: string, arr: string): ast.Expr {
       return ast.binary(b.op, elb_mark_expr(b.left, idx, arr), elb_mark_expr(b.right, idx, arr), b.line, b.col, b.ty);
     },
     ast.ExprUnary(u) => {
-      return ast.unary(u.op, elb_mark_expr(u.operand, idx, arr), u.line, u.col, u.ty);
+      return ast.rebuild_unary(u, elb_mark_expr(u.operand, idx, arr), u.line, u.col, u.ty);
     },
     ast.ExprCall(c) => {
       let na: ast.Expr[] = [];

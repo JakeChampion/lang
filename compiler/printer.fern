@@ -993,16 +993,14 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
 function print_unary_c(u: ast.ExprUnary, parent_prec: i32, depth: i32, f: Fmt): (string, Fmt) {
   // Both cast forms are written after their operand. The checked form
   // uses the same precedence and parentheses as a plain cast.
-  let checked_cast = u.op.len() > 4 && u.op.starts_with("as?_");
-  if (checked_cast || u.op.len() > 3 && u.op.starts_with("as_")) {
+  let checked_cast = u.op == ast.CHECKED_CAST;
+  if (checked_cast || u.op == ast.CAST) {
     let (co, cf) = print_expr_c(u.operand, prec_unary(), depth, f);
-    let start = 3;
     let cast_op = " as ";
     if (checked_cast) {
-      start = 4;
       cast_op = " as? ";
     }
-    let cinner = co + cast_op + slice_unchecked(u.op, start, u.op.len());
+    let cinner = co + cast_op + u.cast;
     if (parent_prec >= prec_cast()) {
       return ("(" + cinner + ")", cf);
     }
@@ -1450,7 +1448,7 @@ function first_line(e: ast.Expr): i32 {
 }
 
 function is_postfix_unary(op: string): boolean {
-  return op.starts_with("as_") || op.starts_with("as?_") || op == "try_";
+  return op == ast.CAST || op == ast.CHECKED_CAST || op == "try_";
 }
 
 function last_line(e: ast.Expr, spans: parser.BlockSpans): i32 {
