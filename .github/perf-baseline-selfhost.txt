@@ -78,9 +78,9 @@ selfhost/arm64-linux/struct_drop.emit	3075
 selfhost/arm64-linux/tokenize.emit	1531
 selfhost/arm64-linux/utf8_ingest_unchecked.emit	9300
 selfhost/arm64-linux/utf8_ingest_validated.emit	9976
-selfhost/wasm32-wasi/array_append.emit	476
+selfhost/wasm32-wasi/array_append.emit	484
 selfhost/wasm32-wasi/array_index.emit	481
-selfhost/wasm32-wasi/array_scale_f64.emit	531
+selfhost/wasm32-wasi/array_scale_f64.emit	540
 selfhost/wasm32-wasi/array_with.emit	581
 selfhost/wasm32-wasi/ascii_scan.emit	2169
 selfhost/wasm32-wasi/byte_copy_append.emit	562
