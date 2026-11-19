@@ -24,8 +24,8 @@ The raw records and exact compiler and input identities are in [results.json](re
 
 | Host path | Allocations per write | Median nanoseconds per write |
 | --- | ---: | ---: |
-| `Music.write` repack | 1 | 1040.69 |
-| Borrowed PCM | 0 | 75.16 |
+| `Music.write` repack | 1 | 1136.89 |
+| Borrowed PCM | 0 | 78.44 |
 
 These host times exclude real decoder and audio-device work.
 
