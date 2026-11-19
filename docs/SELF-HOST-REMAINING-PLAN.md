@@ -387,8 +387,8 @@ planned order:
 - ✅ **`m.keys()` / `m.values()`** — return the map box's parallel
   arrays (offset 0/8) as array_i32/array_string so array methods chain
   off them (`self_host_map_keys_test.go`).
-- ✅ **`for (k,v) in m`** destructuring iteration — parser encodes the
-  names as "k,v"; the emitter (`emit_map_kv_for`) walks the parallel
+- ✅ **`for (k,v) in m`** destructuring iteration — the parser records
+  the names in the `ast.Destr` of the loop; the emitter (`emit_map_kv_for`) walks the parallel
   keys[]/values[] arrays (`self_host_for_kv_test.go`). Adding this code
   exhausted the self-host's 256 MiB bump heap when compiling the larger
   bundle, overflowing into the adjacent output buffer and corrupting
@@ -422,8 +422,8 @@ planned order:
   the argument is a bare ident naming a function, it lowers to a
   function-value box rather than a call (`callee_param_is_fn` /
   `arg_fn_value_name`).
-- ✅ **Tuple destructuring** (`let (a, b) = …`) — parser encodes the
-  names as "a,b"; the emitter binds a = tuple.0, b = tuple.1
+- ✅ **Tuple destructuring** (`let (a, b) = …`) — the parser records the
+  names in the `ast.Destr` of the binding; the emitter binds a = tuple.0, b = tuple.1
   (`self_host_tuple_destructure_test.go`). Also fixed `count_locals` to
   account for the two bindings (and the four that `for (k,v)` binds).
 - ✅ **`?` try operator** — `expr?` desugars (parser) to the unary op

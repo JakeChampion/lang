@@ -34,7 +34,7 @@ function elb_recurse_stmt(st: ast.Stmt): ast.Stmt {
       return ast.StmtWhile { cond: w.cond, body: elide_len_bounded_body(w.body), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtFor(fr) => {
-      return ast.StmtFor { var_name: fr.var_name, iter: fr.iter, body: elide_len_bounded_body(fr.body), label: fr.label, line: fr.line, col: fr.col };
+      return ast.StmtFor { var_name: fr.var_name, iter: fr.iter, body: elide_len_bounded_body(fr.body), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
     },
     ast.StmtMatch(m) => {
       let arms: ast.MatchArm[] = [];
@@ -332,7 +332,7 @@ function elb_mark_stmts(stmts: ast.Stmt[], idx: string, arr: string): ast.Stmt[]
 function elb_mark_stmt(st: ast.Stmt, idx: string, arr: string): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
-      return ast.StmtVar { name: v.name, type_name: v.type_name, init: elb_mark_expr(v.init, idx, arr), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
+      return ast.StmtVar { name: v.name, type_name: v.type_name, init: elb_mark_expr(v.init, idx, arr), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr };
     },
     ast.StmtReturn(r) => {
       return ast.StmtReturn { value: elb_mark_expr(r.value, idx, arr), line: r.line, col: r.col };
@@ -350,7 +350,7 @@ function elb_mark_stmt(st: ast.Stmt, idx: string, arr: string): ast.Stmt {
       return ast.StmtWhile { cond: elb_mark_expr(w.cond, idx, arr), body: elb_mark_stmts(w.body, idx, arr), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtFor(fr) => {
-      return ast.StmtFor { var_name: fr.var_name, iter: elb_mark_expr(fr.iter, idx, arr), body: elb_mark_stmts(fr.body, idx, arr), label: fr.label, line: fr.line, col: fr.col };
+      return ast.StmtFor { var_name: fr.var_name, iter: elb_mark_expr(fr.iter, idx, arr), body: elb_mark_stmts(fr.body, idx, arr), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
     },
     ast.StmtMatch(m) => {
       let arms: ast.MatchArm[] = [];

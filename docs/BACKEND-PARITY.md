@@ -700,6 +700,9 @@ The constructions of one function can put the recursive result in different
 payloads, as a tree insert does for its left and its right child. The loop
 then carries the payload index of the open hole
 (`internal/testing/e2ecompiler/self_host_sem_trmc_test.go`, `put`).
+The construction that holds the recursive result can be a payload of the
+returned construction, at any depth, when each construction between them has
+the result type (`stutter` in the same test).
 
 On wasm, a call whose result the function returns with no change is a
 `return_call` or a `return_call_indirect` of the tail-call proposal. The

@@ -35,13 +35,13 @@ function body(stmts: ast.Stmt[], ctx: Context): (ast.Stmt[], Context) {
     let initctx = ctx;
     if let ast.StmtVar(v) = stmt {
       if (ast.var_binds_itself(v)) {
-        initctx = shadow(ctx, astwalk.append_bound_name([], v.name));
+        initctx = shadow(ctx, ast.append_var_names([], v));
       }
     }
     let (ns, na, nh) = astwalk.map_stmt_where(stmt, initctx, stmt_at, expr_at, astwalk.descend_all);
     out = out.append(ns);
     if let ast.StmtVar(v) = stmt {
-      ctx = shadow(ctx, astwalk.append_bound_name([], v.name));
+      ctx = shadow(ctx, ast.append_var_names([], v));
     }
   }
   return (out, ctx);
@@ -159,7 +159,7 @@ function stmt_at(st: ast.Stmt, ctx: Context): (ast.Stmt, Context, boolean) {
       return (ast.StmtWhile { ...w, cond: expr(w.cond, ctx), body: wb }, ctx, true);
     },
     ast.StmtFor(f) => {
-      let (fb, fc) = body(f.body, shadow(ctx, astwalk.append_bound_name([], f.var_name)));
+      let (fb, fc) = body(f.body, shadow(ctx, ast.append_for_names([], f)));
       return (ast.StmtFor { ...f, iter: expr(f.iter, ctx), body: fb }, ctx, true);
     },
     ast.StmtMatch(m) => {

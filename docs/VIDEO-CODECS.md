@@ -101,6 +101,8 @@ The conversion rounds down to whole microseconds without an intermediate multipl
 An unavailable timestamp preserves the previous video clock. A rejected anchor preserves the player and its pending output buffer.
 The existing video timeline remains active until a valid audio anchor replaces it.
 The method requires an active, unpaused video controller and performs no audio state or I/O operation.
+The synchronous query reuses the decoder scratch storage on the controller thread.
+It does not allocate separate timestamp scratch storage or change a pending output buffer.
 
 The app supplies PCM and coordinates pause, resume, and seek across both streams.
 A video seek or codec recovery clears the clock, so the app must supply a matching new audio anchor.

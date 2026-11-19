@@ -125,13 +125,17 @@ Real, and the reason this is opt-in:
   bypassed, since it is the helper that carries the poison check).
 - **Each block carries a redzone.** `__fern_alloc` takes the size class of
   the request and two words more. It fills the two words after the end of the
-  class with the poison pattern. The release finds the class again from the
-  size it frees, in `__fern_quar_push`. A word that lost the pattern reports
-  `fern-sanitizer: heap-buffer-overflow` with exit 124
-  (`TestSanitizeTypedBoxOverflowReported`).
-- **The redzone follows the class, not the request.** A string grows in place
-  up to the end of its class. Perceus reuse pairs boxes of one class, so a
-  reused box keeps its redzone. The leak census counts the request alone.
+  class with the poison pattern. Above 256 words a class is larger than its
+  request, and the words of the class past the request get the pattern too.
+  The release finds the class again from the size it frees, in
+  `__fern_quar_push`, and reads the words past that size. A word that lost the
+  pattern reports `fern-sanitizer: heap-buffer-overflow` with exit 124
+  (`TestSanitizeTypedBoxOverflowReported`, and the `redzone` cases of
+  `TestSelfHostQuarantinePolicy`).
+- **The size at the release decides the redzone.** A string grows in place
+  up to the end of its class, and its size grows with it. Perceus reuse takes
+  only a box of the same size. Thus the words past the size at the release
+  still hold the pattern. The leak census counts the request alone.
 - **A fresh raw block holds the poison pattern.** `__alloc(n)` fills the `n`
   bytes rounded to 8, and `__alloc_u8_uninit(n)` fills its elements. Without
   the fill, a fresh block comes from new pages and reads as zero. Thus a read
@@ -228,8 +232,9 @@ need a host, because their abort path is a syscall.
 ## wasm: the census, the quarantine and the redzone
 
 The wasm backend carries the **leak census** and the **fill of fresh raw
-blocks**. It also makes the **rc over-release**, **use-after-free** and
-**heap-buffer-overflow** reports, with the texts of the native runtime. It has
+blocks**. It also makes the **rc over-release**, **use-after-free**,
+**write-after-free** and **heap-buffer-overflow** reports, with the texts of
+the native runtime. It has
 no second-context check, because a wasm module has one thread:
 
 ```sh
@@ -246,8 +251,9 @@ Under `-sanitize` the three releases hand the block to `__fern_quar`, a FIFO
 quarantine:
 
 - Word 0 of a released block holds the poison word `0x7EEDFACE`, word 1 its
-  size and word 2 the next block. A block of fewer than 16 bytes has no room
-  for the link. It keeps the poison and is never used again.
+  size and word 2 the next block. Each word after these holds the poison
+  word too. A block of fewer than 16 bytes has no room for the link. It keeps
+  the poison and is never used again.
 - `__fern_rc_inc`, `__fern_rc_dec` and `__fern_arr_dec` report a block whose
   count is the poison word, with `fern-sanitizer: use-after-free`.
 - A count that reaches zero a second time reports
@@ -255,8 +261,11 @@ quarantine:
 - A raw release of a block that is in the quarantine is a double free.
 
 A release past the budget (`-quarantine`, 64 MiB by default) evicts the
-oldest block to its free list. The eviction reports a block whose poison word
-was written. It does not read the payload, as the native eviction does.
+oldest block to its free list. `__fern_quar_check` first reads word 0 and
+each word of the payload. A word that lost the poison reports
+`fern-sanitizer: write-after-free`. At exit, `__fern_quar_scan` gives the same
+check to each block that is still in the quarantine. A read through a stale
+pointer gives the poison pattern, not the old byte.
 
 A core module exits with 124 after a report, as a native program does. A
 component has no exit status but success or failure, so it traps.
@@ -284,16 +293,20 @@ The redzone and the fill follow the native design:
 
 - `__fern_alloc` is a wrapper under `-sanitize`. `__fern_san_class` finds the
   size class of the request as the allocator rounds it. The wrapper asks
-  `__fern_alloc_inner` for the class and 16 bytes more, and fills the 16 bytes
-  with the poison pattern. The census counts the request alone.
-- `__fern_quar` reads the 16 bytes at the end of the class of each release. It
-  keeps the block at its whole size, so eviction hands the block to the free
-  list that the allocation takes from.
+  `__fern_alloc_inner` for the class and 16 bytes more. It fills the 16 bytes
+  and the bytes of the class past the request with the poison pattern. The
+  census counts the request alone.
+- `__fern_quar` reads the bytes of the class past the size of each release,
+  and the 16 bytes after the class. It keeps the block at its whole size, so
+  eviction hands the block to the free list that the allocation takes from.
 - A user `__alloc` calls `__fern_raw_alloc_san`, and `__alloc_u8_uninit` calls
   `__fern_san_fill`. Each fills its bytes with `0x7EEDFACE7EEDFACE`.
 
 `TestSanitizeFillsFreshRawBlocks` and `TestSanitizeTypedBoxOverflowReported`
-run on wasm32 as on the native targets.
+run on wasm32 as on the native targets. `TestWasmSanitizeReportsSlackWrite`
+holds a write past the request inside its class. `TestWasmSanitizeReportsWriteAfterFree`
+holds the write-after-free reports at eviction and at exit, and the poison
+that a stale read gives.
 
 ## Editing notes
 
@@ -335,11 +348,11 @@ whose reference outlived the count.
 - **A stale reference that never touches the block again.** The detector fires
   on the `inc`/`dec`, so a dangling pointer that is only ever *read through*
   raw-memory builtins is invisible.
-- **A write inside the slack of a class, or far past a block.** The redzone
-  is 16 bytes after the end of the size class. A write between the end of the
-  request and the end of the class is not seen. A write that lands beyond the
-  redzone, or in the next block, is seen only when that block's own release
-  or count reports it. A block that is never released is never checked.
+- **A write inside the rounding of a request, or far past a block.** The
+  redzone starts at the request rounded up to 8 bytes. A write in those 7
+  bytes or fewer is not seen. A write that lands beyond the redzone, or in the
+  next block, is seen only when that block's own release or count reports it.
+  A block that is never released is never checked.
 
 - **A second context on the same thread or stack.** A raw `clone` with the
   stack of its parent, or a thread pointer that a raw `clone` copies into a

@@ -5846,21 +5846,73 @@ pub function scale_report(f: ssasem.Func, p: ssaunits.Plan): semarrayreport.Site
 }
 
 pub function append_report(f: ssasem.Func, p: ssaunits.Plan): semarrayreport.Site[] {
+  return update_report(f, p, ssasem.append(), "append");
+}
+
+pub function with_report(f: ssasem.Func, p: ssaunits.Plan): semarrayreport.Site[] {
+  return update_report(f, p, ssasem.with(), "with");
+}
+
+function update_report(f: ssasem.Func, p: ssaunits.Plan, kind: i32, label: string): semarrayreport.Site[] {
   let out: semarrayreport.Site[] = [];
   let idx = ssaunits.step_index(p);
   let q = ssaunits.without_constant_drops(ssaunits.with_reuse(f, p, idx, ssasem.dominators(f, p.analysis)));
   for b in f.graph.blocks {
     let pos = 0;
     for ins in b.insts {
-      if (ins.kind_tag == ssasem.append()) {
+      if (ins.kind_tag == kind) {
         let why = append_reason(f, q, at(q, idx, b.id, pos, -1), ins);
-        let stage = "append@v" + util.i32_to_string(ins.result) + " receiver=v" + util.i32_to_string(ins.args[0]) + bound_names(f, ins.args[0]) + append_location(f, ins.result);
-        out = out.append(semarrayreport.Site { owner: f.graph.name, stage: stage, plan: "append; ownership lowering", reason: why, storage: semarrayreport.append_storage(why) });
+        let stage = label + "@v" + util.i32_to_string(ins.result) + " receiver=v" + util.i32_to_string(ins.args[0]) + bound_names(f, ins.args[0]) + append_location(f, ins.result);
+        let storage = if (kind == ssasem.with()) { semarrayreport.with_storage(why) } else { semarrayreport.append_storage(why) };
+        out = out.append(semarrayreport.Site { owner: f.graph.name, stage: stage, plan: label + "; ownership lowering", reason: why, storage: storage });
       }
       pos += 1;
     }
   }
   return out;
+}
+
+// A row for each construction of a variant, a record or a tuple in f: the
+// box of a value that the frame drops supplies it, or the allocator does.
+pub function constructor_report(f: ssasem.Func, p: ssaunits.Plan): semarrayreport.Site[] {
+  let out: semarrayreport.Site[] = [];
+  if (!p.ok) {
+    return out;
+  }
+  let idx = ssaunits.step_index(p);
+  let off = ssaunits.reuse_layer_disabled(f.graph.name);
+  let q = ssaunits.without_constant_drops(ssaunits.reuse_planned(f, p, idx, ssasem.dominators(f, p.analysis), false));
+  for bpos in 0..f.graph.blocks.len() {
+    let b = f.graph.blocks[bpos];
+    let pairs = q.reuse.pairs[bpos];
+    for pos in 0..b.insts.len() {
+      let ins = b.insts[pos];
+      let k = ins.kind_tag;
+      if (k != ssasem.variant_new() && k != ssasem.record_new() && k != ssasem.tuple_new()) {
+        continue;
+      }
+      let donor = if (pairs.builds[pos] >= 0) { pairs.builds[pos] } else { pairs.selfs[pos] };
+      let why = semarrayreport.constructor_no_donor();
+      let stage = constructor_name(f, ins) + "@v" + util.i32_to_string(ins.result);
+      if (ssaunits.static_box(q, ins.result)) {
+        why = semarrayreport.constructor_static();
+      } else if (donor >= 0) {
+        why = if (off) { semarrayreport.constructor_reuse_disabled() } else { semarrayreport.constructor_reuse() };
+        stage = stage + " donor=v" + util.i32_to_string(donor) + bound_names(f, donor);
+      } else if (ssaunits.recipient_slots(f, q, ins) < 0) {
+        why = semarrayreport.constructor_shape_unsupported();
+      }
+      out = out.append(semarrayreport.Site { owner: f.graph.name, stage: stage + append_location(f, ins.result), plan: "constructor; ownership lowering", reason: why, storage: semarrayreport.constructor_storage(why) });
+    }
+  }
+  return out;
+}
+
+function constructor_name(f: ssasem.Func, ins: ssa.SInst): string {
+  if (ins.kind_tag == ssasem.variant_new()) {
+    return ins.str;
+  }
+  return typeinfo.spelling(f.values[ins.result]);
 }
 
 function append_location(f: ssasem.Func, value: i32): string {

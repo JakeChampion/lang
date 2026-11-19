@@ -38,6 +38,9 @@ function audio_value(position: i64, ns: i64): void;
 @import("libaaudio.so", "mock_timestamp_calls")
 function audio_calls(): i32;
 
+@import("libaaudio.so", "mock_timestamp_slot")
+function audio_slot(slot: usize): void;
+
 function origin(): playback_clock.AudioOrigin {
   return playback_clock.AudioOrigin { frame_position: 0i64, media_us: 0i64 };
 }
@@ -47,10 +50,15 @@ function stream(): audio.Stream {
 }
 
 function synchronize(own p: player.Player, source: audio.Stream, channels: i32, start: playback_clock.AudioOrigin): player.Tick {
+  audio_slot(p.decoder.scratch);
   if (channels == 0) {
-    return p.synchronize_audio(source, start);
+    let next = p.synchronize_audio(source, start);
+    audio_slot(0 as usize);
+    return next;
   }
-  return p.synchronize_music(audio.Music { ptr: source.ptr, rate: source.rate, channels: channels }, start);
+  let next = p.synchronize_music(audio.Music { ptr: source.ptr, rate: source.rate, channels: channels }, start);
+  audio_slot(0 as usize);
+  return next;
 }
 
 function opened(): Result[player.Player, frame.VideoError] {
@@ -279,8 +287,50 @@ function seek_and_zero(channels: i32): i32 {
   return after_seek(result.player, channels);
 }
 
+function scratch_reuse(channels: i32): i32 {
+  let Ok(p) = pending() else {
+    return 701;
+  };
+  let before = output_fields(p);
+  let slot = p.decoder.scratch;
+  unsafe {
+    for i in 16..32 {
+      __store_u8(slot + i as usize, 165);
+    }
+  }
+  audio_mode(1);
+  for _ in 0..512 {
+    let next = synchronize(p, stream(), channels, origin());
+    if (!idle(next.event)) {
+      return 702;
+    }
+    p = next.player;
+  }
+  if (audio_calls() != 512 || output_fields(p) != before || released() != 1) {
+    return 703;
+  }
+  unsafe {
+    for i in 16..32 {
+      if (__load_u8(slot + i as usize) != 165) {
+        return 704;
+      }
+    }
+  }
+  audio_mode(6);
+  let partial = synchronize(p, stream(), channels, origin());
+  if (!idle(partial.event) || !anchor_matches(partial.player, 0i64, 0i64) || output_fields(partial.player) != before) {
+    return 705;
+  }
+  expect_deadline(223456000i64);
+  let next = partial.player.tick(223456000i64);
+  if (!scheduled(next.event) || next.player.pending.is_some() || released() != 2) {
+    return 706;
+  }
+  return after_seek(next.player, channels);
+}
+
 function main(): i32 {
-  let checks = [deadline, rate_frames, unavailable, stale, invalid, overflow, states, seek_and_zero];
+  let checks = [deadline, rate_frames, unavailable, stale, invalid, overflow, states, seek_and_zero, scratch_reuse];
   for channels in [0, 1, 2] {
     for check in checks {
       let code = check(channels);

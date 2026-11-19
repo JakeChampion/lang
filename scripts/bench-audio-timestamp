@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+if [ "$#" -ne 2 ]; then
+  echo 'usage: scripts/bench-audio-timestamp BASE_LIBRARY REPORT_JSON' >&2
+  exit 2
+fi
+fern_timestamp_base=$(realpath "$1")
+fern_timestamp_report=$(realpath -m "$2")
+fern_timestamp_compiler=${FERN:-"$PWD/bin/fern-selfhost"}
+case "$(uname -sm)" in
+  'Linux x86_64') target=x86-64-android ;;
+  'Linux aarch64') target=arm64-android ;;
+  *) echo 'unsupported host benchmark' >&2; exit 1 ;;
+esac
+mkdir -p build/audio-timestamp
+cc -shared -fPIC -Wall -Wextra -Werror -o build/audio-timestamp/libaaudio.so scripts/audio-reference/aaudio-mock.c
+cc -shared -fPIC -Wall -Wextra -Werror -o build/audio-timestamp/libmediandk.so scripts/video-reference/mediandk-mock.c scripts/video-reference/codec-jni-mock.c
+scripts/libandroid-stubs scripts/video-reference/mediandk-mock.c scripts/video-reference/codec-jni-mock.c > build/audio-timestamp/stubs.c
+cc -shared -fPIC -Wall -Wextra -Werror -o build/audio-timestamp/libandroid.so build/audio-timestamp/stubs.c
+"$fern_timestamp_compiler" -O -stdlib internal/stdlib -target "$target" -shared -export main -o build/audio-timestamp/bench.so bench/audio/android_timestamp.fern
+LD_LIBRARY_PATH="$PWD/build/audio-timestamp${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" python3 scripts/audio-reference/bench-timestamp.py \
+  "$fern_timestamp_base" "$PWD/build/audio-timestamp/bench.so" "$fern_timestamp_report"

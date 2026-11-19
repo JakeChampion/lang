@@ -9113,7 +9113,8 @@ function lc_label(text: string): string {
   return o + "    (call $__fern_lc_wr (local.get $b) (i32.const " + util.i32_to_string(text.len()) + "))\n";
 }
 
-pub function lc_report_and_exit_wrapper(lc: boolean, sanitize: boolean, set_args: boolean, dir_off: boolean): string {
+// `quar` says that the module has the -sanitize quarantine.
+pub function lc_report_and_exit_wrapper(lc: boolean, sanitize: boolean, quar: boolean, set_args: boolean, dir_off: boolean): string {
   if (!lc) {
     return "";
   }
@@ -9121,7 +9122,7 @@ pub function lc_report_and_exit_wrapper(lc: boolean, sanitize: boolean, set_args
   if (dir_off) {
     tables = dir_off_release();
   }
-  return lc_report_funcs(sanitize, set_args, tables) + "  (func $__fern_proc_exit (param $c i32)\n    (global.set $__fern_lc_exited (i32.const 1))\n    (call $__fern_lc_report)\n    (call $__fern_proc_exit_raw (local.get $c)))\n";
+  return lc_report_funcs(sanitize, quar, set_args, tables) + "  (func $__fern_proc_exit (param $c i32)\n    (global.set $__fern_lc_exited (i32.const 1))\n    (call $__fern_lc_report)\n    (call $__fern_proc_exit_raw (local.get $c)))\n";
 }
 
 function fdt_release(): string {
@@ -9156,7 +9157,7 @@ function low_byte_wat(result: string): string {
   return "(i32.and " + result + " (i32.const 255))";
 }
 
-function component_run_entry(report: boolean, sanitize: boolean, set_args: boolean, fdt: boolean, call_main: string): string {
+function component_run_entry(report: boolean, sanitize: boolean, quar: boolean, set_args: boolean, fdt: boolean, call_main: string): string {
   if (!report) {
     return "  (func $__fern_lang_run (result i32) (i32.eqz (i32.eqz " + call_main + ")))\n";
   }
@@ -9164,10 +9165,10 @@ function component_run_entry(report: boolean, sanitize: boolean, set_args: boole
   if (fdt) {
     tables = fdt_release();
   }
-  return lc_report_funcs(sanitize, set_args, tables) + "  (func $__fern_lang_run (result i32) (local $r i32)\n    (local.set $r " + call_main + ")\n    (call $__fern_lc_report)\n    (i32.eqz (i32.eqz (local.get $r))))\n";
+  return lc_report_funcs(sanitize, quar, set_args, tables) + "  (func $__fern_lang_run (result i32) (local $r i32)\n    (local.set $r " + call_main + ")\n    (call $__fern_lc_report)\n    (i32.eqz (i32.eqz (local.get $r))))\n";
 }
 
-function lc_report_funcs(sanitize: boolean, set_args: boolean, tables: string): string {
+function lc_report_funcs(sanitize: boolean, quar: boolean, set_args: boolean, tables: string): string {
   let o = "";
   o += "  (func $__fern_lc_wr (param $p i32) (param $len i32)\n";
   o += "    (i32.store (i32.const 0) (local.get $p))\n";
@@ -9194,6 +9195,9 @@ function lc_report_funcs(sanitize: boolean, set_args: boolean, tables: string): 
   o += "    (call $__fern_lc_wr (local.get $i) (i32.sub (i32.add (local.get $buf) (i32.const 24)) (local.get $i))))\n";
   o += "  (func $__fern_lc_report\n";
   o += "    (local $b i32) (local $na i64) (local $nf i64) (local $live i64)\n";
+  if (quar) {
+    o += "    (call $__fern_quar_scan)\n";
+  }
   if (set_args) {
     o += "    (if (global.get $__fern_args_set) (then\n";
     o += "      (drop (call $__fern_arr_dec_ptr (global.get $__fern_args_set)))\n";
@@ -9247,10 +9251,10 @@ function alloc_body_name(h: WasmHeap): string {
   return "__fern_alloc";
 }
 
-// Under -sanitize each block carries a redzone: the 16 bytes after the end
-// of its size class hold the poison pattern from its allocation to its
-// release. A block grows in place only inside its class, so the end of the
-// class does not move. $__fern_san_class gives the bytes of the class of a
+// Under -sanitize each block carries a redzone: the bytes of its size class
+// past the request and the 16 bytes after the class hold the poison pattern
+// from its allocation to its release. A block grows in place only inside its
+// class, so the end of the class does not move. $__fern_san_class gives the bytes of the class of a
 // request, as the allocator rounds it. The census counts the request alone.
 function san_redzone_funcs(h: WasmHeap, flc: string): string {
   let o = "  (func $__fern_san_class (param $n i32) (result i32)\n";
@@ -9270,6 +9274,7 @@ function san_redzone_funcs(h: WasmHeap, flc: string): string {
   }
   o = o + "    (i64.store (i32.add (local.get $p) (local.get $c)) (i64.const " + san_poison64() + "))\n";
   o = o + "    (i64.store (i32.add (i32.add (local.get $p) (local.get $c)) (i32.const 8)) (i64.const " + san_poison64() + "))\n";
+  o += "    (call $__fern_san_fill (i32.add (local.get $p) (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8))) (i32.sub (local.get $c) (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8))))\n";
   o += "    (local.get $p))\n";
   // A fresh raw block holds the poison pattern, so a read of a byte that the
   // program never wrote gives the same value on each run.
@@ -9331,15 +9336,21 @@ function raw_release_san(): string {
 }
 
 // The -sanitize quarantine: a FIFO through the released blocks. Word 0 of a
-// block holds the poison, word 1 its size, and word 2 the next block. A block
-// of fewer than 16 bytes has no room for the link: it keeps the poison and
-// is never used again. A release past the budget evicts the oldest block to
-// its free list after a check that its poison word is intact.
+// block holds the poison, word 1 its size, word 2 the next block, and the
+// rest the poison pattern. A block of fewer than 16 bytes has no room for the
+// link: it keeps the poison and is never used again. A release past the
+// budget evicts the oldest block to its free list after $__fern_quar_check.
 function quarantine_funcs(h: WasmHeap, flb: string, flc: string): string {
   let o = "  (global $__fern_quar_head (mut i32) (i32.const 0))\n  (global $__fern_quar_tail (mut i32) (i32.const 0))\n  (global $__fern_quar_bytes (mut i64) (i64.const 0))\n";
   o += "  (func $__fern_quar (param $base i32) (param $bytes i32)\n";
   o += "    (local $e i32) (local $n i32) (local $cls i32) (local $c i32)\n";
   o += "    (local.set $c (call $__fern_san_class (local.get $bytes)))\n";
+  o += "    (local.set $e (i32.add (local.get $base) (i32.and (i32.add (local.get $bytes) (i32.const 7)) (i32.const -8))))\n";
+  o += "    (block $qs_ok (loop $qs\n";
+  o += "      (br_if $qs_ok (i32.ge_u (local.get $e) (i32.add (local.get $base) (local.get $c))))\n";
+  o = o + "      (if (i64.ne (i64.load (local.get $e)) (i64.const " + san_poison64() + ")) (then (call $__fern_san_hbo)))\n";
+  o += "      (local.set $e (i32.add (local.get $e) (i32.const 8)))\n";
+  o += "      (br $qs)))\n";
   o = o + "    (if (i32.or (i64.ne (i64.load (i32.add (local.get $base) (local.get $c))) (i64.const " + san_poison64() + ")) (i64.ne (i64.load (i32.add (i32.add (local.get $base) (local.get $c)) (i32.const 8))) (i64.const " + san_poison64() + "))) (then (call $__fern_san_hbo)))\n";
   o += "    (local.set $bytes (i32.add (local.get $c) (i32.const 16)))\n";
   o = o + "    (i32.store (local.get $base) (i32.const " + san_poison() + "))\n";
@@ -9351,14 +9362,21 @@ function quarantine_funcs(h: WasmHeap, flb: string, flc: string): string {
   o += "      (else (global.set $__fern_quar_head (local.get $base))))\n";
   o += "    (global.set $__fern_quar_tail (local.get $base))\n";
   o += "    (global.set $__fern_quar_bytes (i64.add (global.get $__fern_quar_bytes) (i64.extend_i32_u (local.get $bytes))))\n";
+  o += "    (local.set $e (i32.add (local.get $base) (i32.const 12)))\n";
+  o += "    (local.set $n (i32.add (local.get $base) (local.get $bytes)))\n";
+  o += "    (block $qf_done (loop $qf\n";
+  o += "      (br_if $qf_done (i32.ge_u (local.get $e) (local.get $n)))\n";
+  o = o + "      (i32.store (local.get $e) (i32.const " + san_poison() + "))\n";
+  o += "      (local.set $e (i32.add (local.get $e) (i32.const 4)))\n";
+  o += "      (br $qf)))\n";
   if (h.budget > 0i64) {
     o += "    (block $ev_done (loop $ev\n";
     o = o + "      (br_if $ev_done (i64.le_u (global.get $__fern_quar_bytes) (i64.const " + util.i64_to_string(h.budget) + ")))\n";
     o += "      (local.set $e (global.get $__fern_quar_head))\n";
     o += "      (global.set $__fern_quar_head (i32.load (i32.add (local.get $e) (i32.const 8))))\n";
     o += "      (if (i32.eqz (global.get $__fern_quar_head)) (then (global.set $__fern_quar_tail (i32.const 0))))\n";
-    o = o + "      (if (i32.ne (i32.load (local.get $e)) (i32.const " + san_poison() + ")) (then (call $__fern_san_uaf)))\n";
     o += "      (local.set $n (i32.load (i32.add (local.get $e) (i32.const 4))))\n";
+    o += "      (call $__fern_quar_check (local.get $e) (local.get $n))\n";
     o += "      (global.set $__fern_quar_bytes (i64.sub (global.get $__fern_quar_bytes) (i64.extend_i32_u (local.get $n))))\n";
     o += "      (i32.store (local.get $e) (i32.const 0))\n";
     o += "      (local.set $cls (call $__fern_capw (i32.shr_u (local.get $n) (i32.const 3))))\n";
@@ -9368,7 +9386,28 @@ function quarantine_funcs(h: WasmHeap, flb: string, flc: string): string {
     o += "      (else (call $__fern_large_push (local.get $e) (local.get $n))))\n";
     o += "      (br $ev)))\n";
   }
-  return o + "  )\n";
+  o += "  )\n";
+  // A block in the quarantine that lost its poison was written after its release.
+  o += "  (func $__fern_quar_check (param $b i32) (param $n i32)\n";
+  o += "    (local $p i32) (local $end i32)\n";
+  o = o + "    (if (i32.ne (i32.load (local.get $b)) (i32.const " + san_poison() + ")) (then (call $__fern_san_waf)))\n";
+  o += "    (local.set $p (i32.add (local.get $b) (i32.const 12)))\n";
+  o += "    (local.set $end (i32.add (local.get $b) (local.get $n)))\n";
+  o += "    (block $qc_done (loop $qc\n";
+  o += "      (br_if $qc_done (i32.ge_u (local.get $p) (local.get $end)))\n";
+  o = o + "      (if (i32.ne (i32.load (local.get $p)) (i32.const " + san_poison() + ")) (then (call $__fern_san_waf)))\n";
+  o += "      (local.set $p (i32.add (local.get $p) (i32.const 4)))\n";
+  o += "      (br $qc))))\n";
+  // At exit each block still in the quarantine gets the check of an eviction.
+  o += "  (func $__fern_quar_scan\n";
+  o += "    (local $q i32)\n";
+  o += "    (local.set $q (global.get $__fern_quar_head))\n";
+  o += "    (block $qs_done (loop $qs\n";
+  o += "      (br_if $qs_done (i32.eqz (local.get $q)))\n";
+  o += "      (call $__fern_quar_check (local.get $q) (i32.load (i32.add (local.get $q) (i32.const 4))))\n";
+  o += "      (local.set $q (i32.load (i32.add (local.get $q) (i32.const 8))))\n";
+  o += "      (br $qs))))\n";
+  return o;
 }
 
 // The layout and the switches of the wasm heap runtime. Under `san` a release
@@ -10572,7 +10611,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   let shadow = shadow_stack_bytes(needs);
   parts = parts.append(wasm_abort.helpers(abort_offsets, mode));
   if (san) {
-    parts = parts.append(wasm_abort.san_helpers([strs.offs[abort_to], strs.offs[abort_to + 1], strs.offs[abort_to + 2]], mode));
+    parts = parts.append(wasm_abort.san_helpers([strs.offs[abort_to], strs.offs[abort_to + 1], strs.offs[abort_to + 2], strs.offs[abort_to + 3]], mode));
   }
   parts = parts.append("  (memory (export \"memory\") " + util.i32_to_string(memory_min_pages(sv, cv, shadow)) + ")\n");
   if (shadow > 0) {
@@ -10616,11 +10655,14 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
       parts = parts.append("  (global $__fern_scalar_word" + util.i32_to_string(slot) + " (mut i64) (i64.const 0))\n");
     }
   }
-  if (mode == 2 || module_extern_needs_heap(mod) || needs_fd_sync(needs) || need_open_file(needs) || need_any(needs, [
+  let heaped = mode == 2 || module_extern_needs_heap(mod) || needs_fd_sync(needs) || need_open_file(needs) || need_any(needs, [
     "free", "@allocates", "@uses_i32_to_string", "@uses_i64_to_string", "@uses_u64_to_string", "@uses_u32_to_string", "@uses_buf",
     "env", "stat", "lstat", "remove_file", "create_dir_all", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "remove_dir_all", "temp_dir", "read_chunk", "read_chunk_bytes", "reader_close", "fd_stat", "reader_seek", "writer_truncate", "writer_set_times",
     "writer_write", "write_some", "write_bytes", "write_some_bytes", "wasm_poll", "tcp_connect_with", "tcp_send_bytes", "tcp_send_buf", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_addr_into", "tcp_accept", "tcp_accept_with", "tcp_local_port", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes", "udp_recvfrom", "poll", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
-  ])) {
+  ]);
+  // The quarantine is a part of the heap runtime.
+  let quar = san && heaped;
+  if (heaped) {
     let heap = WasmHeap { base: heap_base_for_strs(sv, cv, shadow), fl_base: fl_base_for_strs(sv, cv), fl_cells: fl_cells(), lfl_base: large_fl_base_for_strs(sv, cv), count: need(needs, "@heap_alloc_count"), lc: lc, san: san, budget: sw.quarantine };
     parts = parts.append(heap_alloc_helpers(heap));
     parts = parts.append(rc_runtime_helpers(heap.base, san));
@@ -10983,7 +11025,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append("  (func $main (result i32)\n    (i32.const 0))\n");
   }
   if (mode == 0) {
-    parts = parts.append(lc_report_and_exit_wrapper(lc, sw.sanitize, need(needs, "@calls_set_args"), need(needs, "reader_seek")));
+    parts = parts.append(lc_report_and_exit_wrapper(lc, sw.sanitize, quar, need(needs, "@calls_set_args"), need(needs, "reader_seek")));
     parts = parts.append(xps);
     if (lc) {
       parts = parts.append("  (func $__fern_main_reporting (result i32) (local $r i32)\n    (local.set $r " + main_result_wat(mod) + ")\n    (call $__fern_lc_report)\n    (local.get $r))\n");
@@ -11001,7 +11043,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (lifts_async(mod, mode)) {
     parts = parts.append(async_lift_wrappers(mod));
   }
-  parts = parts.append(component_run_entry(lc && !module_is_proxy(mod), sw.sanitize, need(needs, "@calls_set_args"), mode == 2 && need_fd_table(needs), low_byte_wat(main_result_wat(mod))));
+  parts = parts.append(component_run_entry(lc && !module_is_proxy(mod), sw.sanitize, quar, need(needs, "@calls_set_args"), mode == 2 && need_fd_table(needs), low_byte_wat(main_result_wat(mod))));
   parts = parts.append("  (export \"_lang_run\" (func $__fern_lang_run)))\n");
   return util.str_join_chunks(parts);
 }
