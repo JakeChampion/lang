@@ -2853,22 +2853,20 @@ function apply(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken: i32[
 
 // The contract of a call through a function value (ir.call_units), or -1.
 // The lift puts the target first, so the operand j of the contract is the
-// argument j + 1. A pass that rewrites the call, such as ssa.slot_calls,
-// replaces the text with its own, and then the contract is unknown.
+// argument j + 1. A call that ssa.slot_calls rewrote keeps the contract after
+// "slot:".
 function indirect_units(ins: ssa.SInst): i32 {
-  if (ins.kind_tag != ssa.CALL_IND || ins.str == "" || !all_digits(ins.str)) {
+  if (ins.kind_tag != ssa.CALL_IND) {
     return -1;
   }
-  return util.digits_to_i32(ins.str);
-}
-
-function all_digits(s: string): boolean {
-  for i in 0..s.len() {
-    if (s[i] < b'0' || s[i] > b'9') {
-      return false;
-    }
+  let text = ins.str;
+  if (text.starts_with("slot:")) {
+    text = slice_unchecked(text, 5, text.len()) + "";
   }
-  return true;
+  if (text.len() == 0 || !util.is_all_digits(text)) {
+    return -1;
+  }
+  return util.digits_to_i32(text);
 }
 
 function apply_indirect(own p: Progress, w: Walk, ins: ssa.SInst, block: i32): Progress {
