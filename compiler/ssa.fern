@@ -3634,7 +3634,8 @@ pub function with_sym(own imm: Imms, v: i32, sym: string): Imms {
 }
 
 // `stores` says the target stores an immediate to memory with one instruction.
-pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: string[], stores: boolean): Imms {
+// `zero_stores` says it stores only a zero so.
+pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: string[], stores: boolean, zero_stores: boolean): Imms {
   let is_imm = __alloc_bool(f.nvals);
   let konst = __alloc_bool(f.nvals);
   let value = __alloc_i64(f.nvals);
@@ -3659,7 +3660,7 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
     for ins in blk.insts {
       for a in 0..ins.args.len() {
         let v = ins.args[a];
-        if (v >= 0 && v < is_imm.len() && is_imm[v] && ins.kind_tag != PHI && !(stores && stored_value(ins, a)) && !imm_use(ins, a, konst, value[v], right, left)) {
+        if (v >= 0 && v < is_imm.len() && is_imm[v] && ins.kind_tag != PHI && !((stores || zero_stores && value[v] == 0i64) && stored_value(ins, a)) && !imm_use(ins, a, konst, value[v], right, left)) {
           is_imm = is_imm.with(v, false);
         }
       }
