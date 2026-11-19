@@ -5102,14 +5102,14 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
       return ssa_cbz(s, false, tr, tl);
     }
     if (fu.n > 0) {
-      return ssa_bcond(s, ssa_fuse_cc(fu, !fu.inverted), tl);
+      return ssa_fuse_branch(s, fr, fu, tr, !fu.inverted, tl);
     }
     return ssa_cbz(s, true, tr, tl);
   }
   if (fu.n > 0 && fu.tag == 0) {
     s = ssa_cbz(s, true, tr, fl);
   } else if (fu.n > 0) {
-    s = ssa_bcond(s, ssa_fuse_cc(fu, fu.inverted), fl);
+    s = ssa_fuse_branch(s, fr, fu, tr, fu.inverted, fl);
   } else {
     s = ssa_cbz(s, false, tr, fl);
   }
@@ -5124,7 +5124,26 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
   return ssa_jump_on(f, fr, reg_of, lp, t.t, next, s);
 }
 
+// Whether the fused test of a branch compares an integer with zero for
+// equality. The branch tests the register, so the test sets no flags.
+function ssa_fuse_zero(fr: SsaFrame, fu: SsaFuse): boolean {
+  return fu.n > 0 && (fu.tag == ir.K_EQ || fu.tag == ir.K_NE) && !fu.unique && fu.shape == "" && fu.b >= 0
+    && !fr.imm.is_imm[fu.a] && fr.imm.is_imm[fu.b] && fr.imm.sym_at[fu.b] == 0 && fr.imm.value[fu.b] == 0i64;
+}
+
+// The branch to l when the fused test is `taken`. `a` holds the left operand.
+function ssa_fuse_branch(s: asmcore.EmitState, fr: SsaFrame, fu: SsaFuse, a: string, taken: boolean, l: asmcore.Lab): asmcore.EmitState {
+  if (!ssa_fuse_zero(fr, fu)) {
+    return ssa_bcond(s, ssa_fuse_cc(fu, taken), l);
+  }
+  let reg = if (fu.narrow) { ssa_wreg(a) } else { a };
+  return ssa_cbz(s, ir_cmp_cc(fu.tag, taken) == CC_NE, reg, l);
+}
+
 function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (ssa_fuse_zero(fr, fu)) {
+    return ssa_read(reg_of, fu.a, "x4", s);
+  }
   if (!s.retain_sites || !fu.unique) {
     return ssa_fused_test_emit(fr, reg_of, fu, join, s);
   }
