@@ -113,10 +113,7 @@ func TestSelfHostWasmComponentFull(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
@@ -369,10 +366,7 @@ func TestSelfHostWasmComponentFullIO(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 	progPath := filepath.Join(dir, "prog.fern")
 	if err := os.WriteFile(progPath, []byte(`function main(): i32 { putchar(104); putchar(105); return 0; }`), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
@@ -560,10 +554,7 @@ func TestSelfHostWasmComponentFullIOFS(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 	progPath := filepath.Join(dir, "prog.fern")
 	src := `function main(): i32 { match (read_file("in.txt")) { Ok(s) => { write(s); return 0; }, Err(e) => { return 1; } } return 2; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
@@ -804,10 +795,7 @@ func TestSelfHostWasmComponentFullIOFSWrite(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 	progPath := filepath.Join(dir, "prog.fern")
 	src := `function main(): i32 { match (write_file("out.txt", "hello from fern\n")) { Err(_) => { return 1; }, Ok(_) => {} } write("wrote it\n"); return 0; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
@@ -987,10 +975,7 @@ func TestSelfHostWasmComponentFullIOFSRW(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 	progPath := filepath.Join(dir, "prog.fern")
 	src := `function main(): i32 { match (read_file("in.txt")) { Ok(s) => { match (write_file("out.txt", s)) { Err(_) => { return 1; }, Ok(_) => {} } write("done\n"); return 0; }, Err(e) => { return 2; } } return 3; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
@@ -1157,10 +1142,7 @@ func TestSelfHostWasmComponentFullIORandom(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 	progPath := filepath.Join(dir, "prog.fern")
 	src := `import "std/rand";
 function main(): i32 { let b: u8[] = rand.bytes(16); if (b.len() == 16) { write("ok\n"); return 0; } return 1; }`
@@ -1312,10 +1294,7 @@ func TestSelfHostWasmComponentFullIOEnv(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 	progPath := filepath.Join(dir, "prog.fern")
 	src := `function main(): i32 { match (env("FERN_TEST")) { Some(v) => { write(v); write("\n"); return 0; }, None => { write("none\n"); return 0; } } return 1; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
@@ -1467,10 +1446,7 @@ func TestSelfHostWasmComponentFullIOArgs(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 	progPath := filepath.Join(dir, "prog.fern")
 	src := `function main(): i32 { let a: string[] = args(); let i: i32 = 0; while (i < a.len()) { write(a[i]); write("\n"); i = i + 1; } return 0; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
@@ -1613,10 +1589,7 @@ func TestSelfHostWasmComponentFullIOClock(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 	progPath := filepath.Join(dir, "prog.fern")
 	src := `function main(): i32 { let t: i64 = now_unix_ms(); if (t > 0) { write("ok\n"); return 0; } return 1; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
@@ -1759,10 +1732,7 @@ func TestSelfHostWasmComponentFullIOClockMono(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 	progPath := filepath.Join(dir, "prog.fern")
 	src := `function main(): i32 { let t: i64 = monotonic_ns(); if (t > 0) { write("ok\n"); return 0; } return 1; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
@@ -1897,10 +1867,7 @@ func TestSelfHostWasmComponentFullIOFSReadEnv(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 	progPath := filepath.Join(dir, "prog.fern")
 	src := `function main(): i32 { match (read_file("config.txt")) { Ok(cfg) => { match (env("API_KEY")) { Some(k) => { write(cfg); write(k); return 0; }, None => { write(cfg); write("no-key"); return 0; } } }, Err(e) => { write("ERR"); return 1; } } return 2; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
@@ -2049,10 +2016,7 @@ func TestSelfHostWasmComponentFullIOFSRWEnv(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 	progPath := filepath.Join(dir, "prog.fern")
 	src := `function main(): i32 { match (read_file("in.txt")) { Ok(cfg) => { let line: string = cfg; match (env("SUFFIX")) { Some(s) => { line = line + s; }, None => {} } match (write_file("out.txt", line)) { Err(e) => { return 1; }, Ok(_) => {} } write("done\n"); return 0; }, Err(e) => { write("ERR"); return 2; } } return 3; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
@@ -2207,10 +2171,7 @@ func TestSelfHostWasmComponentFullIORandomWrite(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 	progPath := filepath.Join(dir, "prog.fern")
 	src := `import "std/rand";
 function main(): i32 { let id: u8[] = rand.bytes(8); match (write_file("id.bin", unsafe { string_from_bytes_unchecked(id) })) { Err(e) => { return 1; }, Ok(_) => {} } write("saved\n"); return 0; }`
@@ -2360,10 +2321,7 @@ func TestSelfHostWasmComponentFullIOEprint(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 	progPath := filepath.Join(dir, "prog.fern")
 	src := `function main(): i32 { write("out\n"); eprint("err\n"); return 0; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
@@ -2524,10 +2482,7 @@ func TestSelfHostWasmComponentFullIOExit(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 	progPath := filepath.Join(dir, "prog.fern")
 	src := `function main(): i32 { write("hi\n"); exit(0); return 0; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
@@ -2682,10 +2637,7 @@ func TestSelfHostWasmComponentFullIOFSArgsRead(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 	progPath := filepath.Join(dir, "prog.fern")
 	src := `function main(): i32 { let a: string[] = args(); if (a.len() < 2) { write("usage\n"); return 1; } match (read_file(a[1])) { Ok(s) => { write(s); return 0; }, Err(e) => { write("ERR\n"); return 2; } } return 3; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
@@ -2838,10 +2790,7 @@ func TestSelfHostWasmComponentFullIOFSRWArgs(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
+	fernBin := buildLangBinForInterp(t)
 	progPath := filepath.Join(dir, "prog.fern")
 	src := `function main(): i32 { let a: string[] = args(); if (a.len() < 3) { write("usage: tool IN OUT\n"); return 1; } match (read_file(a[1])) { Ok(s) => { match (write_file(a[2], s)) { Err(e) => { write("write err\n"); return 2; }, Ok(_) => {} } write("ok\n"); return 0; }, Err(e) => { write("read err\n"); return 3; } } return 4; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {

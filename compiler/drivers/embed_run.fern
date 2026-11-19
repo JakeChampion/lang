@@ -99,7 +99,7 @@ function var_init_of(mod: parser.Module): ast.Expr {
       }
     }
   }
-  return ast.ExprUnknown { kind: "none", line: 0, col: 0 };
+  return ast.ExprUnknown { fault: ast.fault_mark("none"), line: 0, col: 0 };
 }
 
 function folded_init(src: string, a: embed.Assets): (ast.Expr, string[]) {

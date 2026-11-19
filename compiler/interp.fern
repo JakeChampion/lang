@@ -5286,8 +5286,8 @@ function eval_unary_as_u32(ov: Value): Value {
   }
 }
 
-function eval_unary_as_i64(op: string, ov: Value): Value {
-  let uns = op == "as_u64";
+function eval_unary_as_i64(target: string, ov: Value): Value {
+  let uns = target == "u64";
   match (ov) {
     VInt(i) => {
       return v_wide(i.v as i64, uns);
@@ -5382,8 +5382,8 @@ function eval_unary_try(ov: Value): Value {
   }
 }
 
-function eval_unary_as_checked(op: string, ov: Value): Value {
-  let t = eval_unary("as_" + slice_unchecked(op, 4, op.len()), ov);
+function eval_unary_as_checked(target: string, ov: Value): Value {
+  let t = eval_cast(target, ov);
   if (vint_as_i64(t) == vint_as_i64(ov) && int_is_negative(t) == int_is_negative(ov)) {
     return v_variant("Some", [t]);
   }
@@ -5391,7 +5391,13 @@ function eval_unary_as_checked(op: string, ov: Value): Value {
   return v_variant("None", none);
 }
 
-function eval_unary(op: string, ov: Value): Value {
+function eval_unary(op: string, target: string, ov: Value): Value {
+  if (op == ast.CAST) {
+    return eval_cast(target, ov);
+  }
+  if (op == ast.CHECKED_CAST) {
+    return eval_checked_cast(target, ov);
+  }
   if (op == "-") {
     return eval_unary_neg(ov);
   }
@@ -5401,54 +5407,56 @@ function eval_unary(op: string, ov: Value): Value {
   if (op == "~") {
     return bitwise_not(ov);
   }
-  if (op == "as_char") {
-    return char_value(ov);
-  }
-  if (op == "as_u8" || op == "as_byte") {
-    return eval_unary_as_u8(ov);
-  }
-  if (op == "as_i32") {
-    return cast_i32_value(ov);
-  }
-  if (op == "as_usize") {
-    return cast_usize_value(ov);
-  }
-  if (op == "as_u32") {
-    return eval_unary_as_u32(ov);
-  }
-  if (op == "as_u16") {
-    return v_half(vint_as_i64(eval_unary_as_u32(ov)), false);
-  }
-  if (op == "as_i16") {
-    return v_half(vint_as_i64(cast_i32_value(ov)), true);
-  }
-  if (op == "as_i64" || op == "as_u64") {
-    return eval_unary_as_i64(op, ov);
-  }
-  if (op == "as_f64") {
-    return eval_unary_as_f64(ov);
-  }
-  if (op == "as_f32") {
-    return eval_unary_as_f32(ov);
-  }
   if (op == "try_") {
     return eval_unary_try(ov);
   }
-  let is_as_opt = op.len() > 4 && op.starts_with("as?_");
-  if (is_as_opt && util.has_str(["u8", "u16", "i16", "i32", "u32", "i64", "u64", "usize"], slice_unchecked(op, 4, op.len())) && is_int_like(ov)) {
-    return eval_unary_as_checked(op, ov);
-  }
-  if (is_as_opt) {
-    if (dispatch_type_name(ov) == util.base_type_name(slice_unchecked(op, 4, op.len()).to_owned())) {
-      return v_variant("Some", [ov]);
-    }
-    let none: Value[] = [];
-    return v_variant("None", none);
-  }
-  if (op.len() > 3 && op.starts_with("as_")) {
-    return ov;
-  }
   return v_err("unknown unary op: " + op);
+}
+
+// A cast to a type that is not a scalar here gives the value unchanged.
+function eval_cast(target: string, ov: Value): Value {
+  if (target == "char") {
+    return char_value(ov);
+  }
+  if (target == "u8" || target == "byte") {
+    return eval_unary_as_u8(ov);
+  }
+  if (target == "i32") {
+    return cast_i32_value(ov);
+  }
+  if (target == "usize") {
+    return cast_usize_value(ov);
+  }
+  if (target == "u32") {
+    return eval_unary_as_u32(ov);
+  }
+  if (target == "u16") {
+    return v_half(vint_as_i64(eval_unary_as_u32(ov)), false);
+  }
+  if (target == "i16") {
+    return v_half(vint_as_i64(cast_i32_value(ov)), true);
+  }
+  if (target == "i64" || target == "u64") {
+    return eval_unary_as_i64(target, ov);
+  }
+  if (target == "f64") {
+    return eval_unary_as_f64(ov);
+  }
+  if (target == "f32") {
+    return eval_unary_as_f32(ov);
+  }
+  return ov;
+}
+
+function eval_checked_cast(target: string, ov: Value): Value {
+  if (util.has_str(["u8", "u16", "i16", "i32", "u32", "i64", "u64", "usize"], target) && is_int_like(ov)) {
+    return eval_unary_as_checked(target, ov);
+  }
+  if (dispatch_type_name(ov) == util.base_type_name(target)) {
+    return v_variant("Some", [ov]);
+  }
+  let none: Value[] = [];
+  return v_variant("None", none);
 }
 
 function int_is_negative(v: Value): boolean {
@@ -5688,7 +5696,7 @@ function eval_expr(e: ast.Expr, env: Env): Value {
         }
       }
       // Negate the wide magnitude before conversion to the checked result width.
-      return coerce_int_width(eval_unary(u.op, ov), u.ty);
+      return coerce_int_width(eval_unary(u.op, u.cast, ov), u.ty);
     },
     ast.ExprCall(c) => {
       return eval_expr_call(c, env);
@@ -5758,10 +5766,10 @@ function eval_expr(e: ast.Expr, env: Env): Value {
       return v_err("f-string: formatter-only node");
     },
     ast.ExprUnknown(u) => {
-      if (util.is_f64_range_kind(u.kind)) {
-        return v_err("error[P002]: " + util.f64_range_message(u.kind));
+      if (u.fault.code == "P002") {
+        return v_err("error[P002]: " + u.fault.message);
       }
-      return v_err("parser-side unknown: " + u.kind);
+      return v_err("parser-side unknown: " + ast.fault_text(u.fault));
     },
     ast.ExprZero(z) => {
       return zero_value_of(env.heap, z.type_name);
@@ -10369,7 +10377,7 @@ pub function eval_stmt(st: ast.Stmt, own env: Env): StepResult {
       return eval_for_stmt(f, env);
     },
     ast.StmtUnknown(u) => {
-      return step_stop(env, v_err("parser-side unknown stmt: " + u.kind));
+      return step_stop(env, v_err("parser-side unknown stmt: " + ast.fault_text(u.fault)));
     }
   }
 }

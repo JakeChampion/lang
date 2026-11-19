@@ -3287,7 +3287,6 @@ TestSelfHostStdJPEGAgainstGo 19
 TestSelfHostStdPartitionAgreesWithNative 47
 TestSelfHostStdProcess 7
 TestSelfHostStdTLSAgainstGo 20
-TestSelfHostStdTestFewRegisters 633
 TestSelfHostStdU32X86_64 2
 TestSelfHostStdU64X86_64 2
 TestSelfHostStdinEntryDifferentialX86_64 4

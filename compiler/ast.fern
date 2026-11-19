@@ -16,7 +16,8 @@ pub struct ExprBool { value: boolean, line: i32, col: i32 }
 // each node comes from one of them.
 pub struct ExprBinary { op: string, left: Expr, right: Expr, line: i32, col: i32, ty: string, lit: i32 }
 
-pub struct ExprUnary { op: string, operand: Expr, line: i32, col: i32, ty: string, lit: i32 }
+// A cast has the op CAST or CHECKED_CAST, and `cast` holds its target type.
+pub struct ExprUnary { op: string, operand: Expr, line: i32, col: i32, ty: string, lit: i32, cast: string }
 
 pub struct ExprCall { callee: Expr, args: Expr[], line: i32, col: i32, type_args: string[], ty: string }
 
@@ -40,7 +41,23 @@ pub struct ExprStructLit { type_name: string, field_names: string[], field_lines
 // f-string part, or the argument of `print`, `write` or `eprint`.
 pub struct ExprFieldAccess { obj: Expr, field: string, line: i32, col: i32, ty: string, const_read: boolean, display: boolean }
 
-pub struct ExprUnknown { kind: string, line: i32, col: i32 }
+// A parse error, or a mark where the parser has no node. A mark has no
+// code. A scoped error names the function it is in.
+pub struct Fault { mark: string, code: string, message: string, scoped: boolean }
+
+pub function fault_mark(name: string): Fault {
+  return Fault { mark: name, code: "", message: "", scoped: false };
+}
+
+// The message of an error, or the name of a mark.
+pub function fault_text(f: Fault): string {
+  if (f.code.len() > 0) {
+    return f.message;
+  }
+  return f.mark;
+}
+
+pub struct ExprUnknown { fault: Fault, line: i32, col: i32 }
 
 pub struct ExprMapLit { keys: Expr[], vals: Expr[], line: i32, col: i32 }
 
@@ -75,8 +92,31 @@ pub function binary(op: string, left: Expr, right: Expr, line: i32, col: i32, ty
   return ExprBinary { op: op, left: left, right: right, line: line, col: col, ty: ty, lit: binary_class(op, lit_class(left) & lit_class(right)) };
 }
 
+pub const CAST: string = "as";
+
+pub const CHECKED_CAST: string = "as?";
+
 pub function unary(op: string, operand: Expr, line: i32, col: i32, ty: string): ExprUnary {
-  return ExprUnary { op: op, operand: operand, line: line, col: col, ty: ty, lit: unary_class(op, operand) };
+  return ExprUnary { op: op, operand: operand, line: line, col: col, ty: ty, lit: unary_class(op, operand), cast: "" };
+}
+
+// `operand as target`, or `operand as? target` when checked.
+pub function cast(operand: Expr, target: string, checked: boolean, line: i32, col: i32, ty: string): ExprUnary {
+  let op = CAST;
+  if (checked) {
+    op = CHECKED_CAST;
+  }
+  return ExprUnary { op: op, operand: operand, line: line, col: col, ty: ty, lit: unary_class(op, operand), cast: target };
+}
+
+// u with a new operand, position and type. The op and the cast stay.
+pub function rebuild_unary(u: ExprUnary, operand: Expr, line: i32, col: i32, ty: string): ExprUnary {
+  return ExprUnary { ...u, operand: operand, line: line, col: col, ty: ty, lit: unary_class(u.op, operand) };
+}
+
+// u with the cast target `target`. The literal class does not depend on it.
+pub function with_cast(u: ExprUnary, target: string): ExprUnary {
+  return ExprUnary { ...u, cast: target };
 }
 
 function lit_class(e: Expr): i32 {
@@ -125,7 +165,7 @@ function unary_class(op: string, operand: Expr): i32 {
   if (op == "+") {
     return inner & (LIT_INT | LIT_ARITH | LIT_FLOAT);
   }
-  if (op.starts_with("as_")) {
+  if (op == CAST) {
     return inner & LIT_OPERAND;
   }
   return 0;
@@ -574,7 +614,7 @@ pub struct StmtBreak { tag: i32, line: i32, col: i32, label: string }
 
 pub struct StmtContinue { tag: i32, line: i32, col: i32, label: string }
 
-pub struct StmtUnknown { kind: string, line: i32, col: i32 }
+pub struct StmtUnknown { fault: Fault, line: i32, col: i32 }
 
 pub struct StmtDefer { action: Stmt, on_error: i32, line: i32 }
 

@@ -163,9 +163,9 @@ var interpSlowStdTests = map[string]bool{
 	"aac": true, "aac_boundary": true, "aac_kernel": true,
 	// The two conformance files of UAX #9 run each of their cases. The compiled gates run them.
 	"bidi": true,
-	// The HarfBuzz cases shape each Indic word with the rules of both Indic
-	// specifications, for minutes. The compiled gates run them.
-	"shape": true, "shape_indic": true,
+	// The HarfBuzz cases shape each word of each script with two fonts, for
+	// more than a minute. The compiled gates run them.
+	"shape": true, "shape_indic": true, "shape_script": true,
 	"brotli": true, "deflate": true, "flac_input": true, "flac_file": true, "ed25519": true, "http_compress": true,
 	"http_h2": true, "http_h3q": true, "http_multipart": true, "http_websocket": true,
 	"hpke": true, "mitigations": true, "mlkem768": true, "mp3": true, "mp3_input": true, "mp3_file": true, "mp3_seek": true, "montgomery": true, "opus": true, "opus_band_analysis": true,
@@ -610,6 +610,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"truetype_cff", langSrcAbs(t, "tests/stdlib/truetype_cff_test.fern"), ""},
 		{"shape", langSrcAbs(t, "tests/stdlib/shape_test.fern"), ""},
 		{"shape_indic", langSrcAbs(t, "tests/stdlib/shape_indic_test.fern"), ""},
+		{"shape_script", langSrcAbs(t, "tests/stdlib/shape_script_test.fern"), ""},
 		{"truetype_color", langSrcAbs(t, "tests/stdlib/truetype_color_test.fern"), ""},
 		{"android_property", langSrcAbs(t, "tests/stdlib/android_property_test.fern"), ""},
 		{"http_forwarded", langSrcAbs(t, "tests/stdlib/http_forwarded_test.fern"), ""},
