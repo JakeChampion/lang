@@ -57,8 +57,9 @@ Play, and the first is now fixed:
    an AAR. So AndroidX, Google Play services, Firebase, Play Billing and
    the SDKs of other vendors are out of reach.
 
-3. **Text and languages.** Arabic and the nine Indic scripts are shaped,
-   and the marks sit on their bases. Emoji draw in color from the COLR font of the system.
+3. **Text and languages.** Arabic, Hebrew, the Indic scripts, Thai, Lao,
+   Khmer, Myanmar, Korean and the scripts of the Universal Shaping Engine
+   are shaped, and the marks sit on their bases. Emoji draw in color from the COLR font of the system.
    `std/i18n` now gives localized strings.
    `std/bidi` gives right-to-left text in the order of UAX #9.
    `std/android/text` takes a character that its font does not have from
@@ -162,8 +163,11 @@ The order puts first what stops a release, then what most apps need.
 6. **Java and Kotlin libraries.** Merge DEX files and manifests of a JAR
    or an AAR into the APK.
 
-7. **Text.** The marks of a font with no GPOS
-   table, which HarfBuzz moves by their combining classes.
+7. **Text.** A font with no GPOS table. HarfBuzz then moves the marks
+   by their combining classes and the extents of their glyphs, and it
+   applies the `kern` table. A font with no GDEF table also takes the
+   glyph classes that HarfBuzz gives from the Unicode categories. The
+   system fonts of Android have GPOS and GDEF tables.
 
    Indic shaping is done: `std/shape` follows the Indic shaper of HarfBuzz
    for Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu,
