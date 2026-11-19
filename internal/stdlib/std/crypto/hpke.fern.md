@@ -35,8 +35,9 @@ function main(): i32 {
   let info = "example".as_bytes();
   let Ok(k) = hpke.mlkem768x25519_key(seed) else { return 1; };
   let Ok(sender) = hpke.setup_sender_derand(k.public_key, info, randomness) else { return 2; };
-  let (sealed, _) = sender.context.seal([], "hello".as_bytes());
-  let Ok(recipient) = hpke.setup_recipient(k, sender.enc, info) else { return 3; };
+  let hpke.Sender { enc, context } = sender;
+  let Ok((sealed, _)) = context.seal([], "hello".as_bytes()) else { return 6; };
+  let Ok(recipient) = hpke.setup_recipient(k, enc, info) else { return 3; };
   let Ok(opened) = recipient.open([], sealed) else { return 4; };
   if (opened.0.len() != 5 || opened.0[0] != b'h' || opened.0[4] != b'o') { return 5; }
   return 0;
@@ -103,6 +104,8 @@ pub enum HpkeError {
   Open,
   Point,
   Scalar,
+  MessageLimit,
+  ExportLength(i32),
 }
 
 impl error.Error for HpkeError {}
@@ -121,6 +124,8 @@ pub function (e: HpkeError) message(): string {
     Open => "hpke: the message does not authenticate",
     Point => "hpke: the P-256 point is not on the curve",
     Scalar => "hpke: the P-256 scalar is zero or not below n",
+    MessageLimit => "hpke: the context has sealed or opened its last message",
+    ExportLength(n) => "hpke: the export length is " + n.to_string() + ", want 1 to 8160",
   };
 }
 ```
@@ -512,11 +517,28 @@ pub function key_schedule(kem_id: i32, shared_secret: [u8], info: [u8]): Context
 
 ### `6 pub struct Context`
 
-The nonce of a message is the base nonce with the sequence number, big-endian, in an exclusive OR on its last eight bytes. `seal` and `open` give the next `Context` with the result.
+The nonce of a message is the base nonce with the sequence number, big-endian, in an exclusive OR on its last eight bytes. `seal` and `open` consume the `Context` and give the next one with the result, so a program cannot use one nonce for two messages. A `Context` is opaque: only this module makes one or reads its fields. Its drop zeroes its keys.
+
+The sequence number is 64 bits. The context refuses to seal or open a message at the last number with `MessageLimit`, so the number does not wrap. A refused `open` ends the context.
+
+```fern test name=std-crypto-hpke-message-limit
+<<*>>
+
+function main(): i32 {
+  let c = key_schedule(KEM_MLKEM768_X25519, __alloc_u8(32), []);
+  let near = Context { ...c, seq: LAST_SEQ - 1 as u64 };
+  let Ok((_, last)) = near.seal([], [1u8]) else { return 1; };
+  let Err(MessageLimit()) = last.seal([], [1u8]) else { return 2; };
+  let r = key_schedule(KEM_MLKEM768_X25519, __alloc_u8(32), []);
+  let Err(MessageLimit()) = Context { ...r, seq: LAST_SEQ }.open([], __alloc_u8(16)) else { return 3; };
+  return 0;
+}
+```
 
 ```fern
 <<6 pub struct Context>>=
-pub struct Context {
+@secret
+pub opaque struct Context {
   key: u8[],
   base_nonce: u8[],
   seq: u64,
@@ -524,23 +546,31 @@ pub struct Context {
   suite: u8[],
 }
 
-function __next(c: Context): Context {
-  return Context { key: c.key, base_nonce: c.base_nonce, seq: c.seq + 1 as u64, exporter_secret: c.exporter_secret, suite: c.suite };
+const LAST_SEQ: u64 = 18446744073709551615u64;
+
+function __next(own c: Context): Context {
+  return Context { ...c, seq: c.seq + 1 as u64 };
 }
 
-pub function (c: Context) seal(aad: [u8], plaintext: [u8]): (u8[], Context) {
+pub function (own c: Context) seal(aad: [u8], plaintext: [u8]): Result[(u8[], Context), HpkeError] {
+  if (c.seq == LAST_SEQ) {
+    return Err(MessageLimit);
+  }
   let n = plaintext.len();
   let buf = __bytes_into(__bytes_into(__alloc_u8(n + 16 + aad.len()), 0, plaintext, 0, n), n + 16, aad, 0, aad.len());
   let Ok(k) = chacha20poly1305.key(c.key) else {
-    return ([], c);
+    return Err(Length("AEAD key", c.key.len(), 32));
   };
   let Ok(sealed) = k.seal_in_place(c.base_nonce, c.seq, buf, n + 16, aad.len(), 0, n) else {
-    return ([], c);
+    return Err(Length("message", n, 2147483647 - 16 - aad.len()));
   };
-  return (__bytes_into(__alloc_u8(n + 16), 0, sealed, 0, n + 16), __next(c));
+  return Ok((__bytes_into(__alloc_u8(n + 16), 0, sealed, 0, n + 16), __next(c)));
 }
 
-pub function (c: Context) open(aad: [u8], sealed: [u8]): Result[(u8[], Context), HpkeError] {
+pub function (own c: Context) open(aad: [u8], sealed: [u8]): Result[(u8[], Context), HpkeError] {
+  if (c.seq == LAST_SEQ) {
+    return Err(MessageLimit);
+  }
   if (sealed.len() < 16) {
     return Err(Open);
   }
@@ -556,9 +586,13 @@ pub function (c: Context) open(aad: [u8], sealed: [u8]): Result[(u8[], Context),
   return Ok((__bytes_into(__alloc_u8(n), 0, opened, 0, n), __next(c)));
 }
 
-// The secret export interface of RFC 9180 section 5.3.
-pub function (c: Context) export(exporter_context: [u8], length: i32): u8[] {
-  return __labeled_expand(c.suite, c.exporter_secret, "sec", exporter_context, length);
+// The secret export interface of RFC 9180 section 5.3. The length is 1 to
+// 255 times the hash length.
+pub function (c: Context) export(exporter_context: [u8], length: i32): Result[u8[], HpkeError] {
+  if (length < 1 || length > 8160) {
+    return Err(ExportLength(length));
+  }
+  return Ok(__labeled_expand(c.suite, c.exporter_secret, "sec", exporter_context, length));
 }
 ```
 

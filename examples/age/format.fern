@@ -495,10 +495,13 @@ pub function wrap_hybrid(file_key: [u8], public: [u8], randomness: [u8]): Result
       return Err("failed to set up HPKE sender: " + e.message());
     },
   };
-  let (body, _) = sender.context.seal([], file_key);
-  __ct_public(sender.enc);
+  let hpke.Sender { enc, context } = sender;
+  let Ok((body, _)) = context.seal([], file_key) else {
+    return Err("failed to seal the file key with HPKE");
+  };
+  __ct_public(enc);
   __ct_public(body);
-  return Ok(Stanza { kind: "mlkem768x25519", args: [text.b64_raw(sender.enc)], body: body });
+  return Ok(Stanza { kind: "mlkem768x25519", args: [text.b64_raw(enc)], body: body });
 }
 
 // The encapsulated key of an mlkem768x25519 stanza, after the checks of the
