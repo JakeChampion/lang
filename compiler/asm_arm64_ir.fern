@@ -5539,6 +5539,14 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     }
   }
   s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f), ssa_even: ssadeps.even_values(f) };
+  match (env("FERN_SSA_ALLOC")) {
+    Some(want) => {
+      if (want == label_name || want == "*") {
+        eprint("FERN_SSA_ALLOC: " + label_name + "\n" + ssa.print_func(f) + ssa.print_alloc_costs(f, picked.alloc, ssa.SpillCosts { fold_alu_rhs: false }));
+      }
+    },
+    None => {}
+  }
   let imm = picked.imm;
   let call_kinds = picked.call_kinds;
   let alloc = picked.alloc;
