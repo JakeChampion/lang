@@ -2,6 +2,8 @@
 
 This module provides ChaCha20-Poly1305 authenticated encryption.
 
+Raw `chacha20_xor` leaves ciphertext changes undetected. Raw `poly1305` requires a fresh one-time key for each message. For authenticated encryption, use `Key.seal` and `Key.open` with a unique nonce for each message sealed under a key. For a standalone MAC with a reusable key, use `crypto.hmac_sha256`.
+
 ## Model
 
 A key is built once from its 32 bytes and holds a copy of them. Sealing and opening a message pair that key with the message's nonce. ChaCha20 generates the byte stream for encryption, and Poly1305 authenticates the additional data and ciphertext. The key also exposes the raw ChaCha20 stream, and `poly1305` takes its own one-time key.
@@ -48,6 +50,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module provides ChaCha20-Poly1305 authenticated encryption.
+// Raw chacha20_xor does not authenticate ciphertext. Raw poly1305 requires a
+// fresh one-time key for every message. Use seal and open for authenticated
+// encryption, with a unique nonce for each message sealed under a key.
 ```
 
 ### `dependencies 2`
@@ -108,6 +113,7 @@ function __counter_block(iv: [u8], seq: u64, counter: u32): Result[u8[], aead.Ae
 
 ```fern
 <<6 pub function (k: Key) chacha20_xor(nonce: [u8], counter: u32, data: [u8]): Result[u8[], aead.AeadError]>>=
+// Applies the raw stream without authentication. Use seal and open to detect ciphertext changes.
 pub function (k: Key) chacha20_xor(nonce: [u8], counter: u32, data: [u8]): Result[u8[], aead.AeadError] {
   let ctr = __counter_block(nonce, 0 as u64, counter)?;
   let blocks = (data.len() as i64 + 63) / 64;
@@ -162,6 +168,7 @@ function __poly_finish(own st: u8[], s: [u8]): u8[] {
 
 ```fern
 <<9 pub function poly1305(key: [u8], msg: [u8]): Result[u8[], aead.AeadError]>>=
+// Computes a MAC with a one-time key. Reusing the key breaks authentication. Use crypto.hmac_sha256 for a reusable MAC key.
 pub function poly1305(key: [u8], msg: [u8]): Result[u8[], aead.AeadError] {
   if (key.len() != 32) {
     return Err(aead.KeyLength(key.len()));

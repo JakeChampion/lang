@@ -2,6 +2,8 @@
 
 This module implements the AES block cipher of FIPS 197 for 128-bit, 192-bit and 256-bit keys, and the CBC mode of NIST SP 800-38A. It is for the formats that still use CBC, such as encrypted PEM files and OpenSSH keys with `aes256-cbc`. New designs use `std/crypto/aes_gcm`.
 
+CBC operates on whole blocks and supplies neither padding nor a message authentication code (MAC). Ciphertext changes can go undetected. Use `std/crypto/aes_gcm` for authenticated encryption.
+
 ## Model
 
 `cipher` expands a key into the round keys. `encrypt_block` and `decrypt_block` transform one 16-byte block. `cbc_encrypt` and `cbc_decrypt` transform a sequence of whole blocks after an initialization vector, with no padding.
@@ -57,6 +59,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<module introduction>>=
 // This module implements the AES block cipher (FIPS 197) and the CBC mode
 // (NIST SP 800-38A), in constant time.
+// CBC provides neither padding nor authentication. Use std/crypto/aes_gcm
+// for authenticated encryption.
 ```
 
 ### `dependencies 2`
@@ -278,6 +282,7 @@ function __checked(key: [u8], iv: [u8], data: [u8]): Result[Cipher, AesError] {
   return cipher(key);
 }
 
+// Encrypts whole blocks without padding or a MAC. Use std/crypto/aes_gcm for authenticated encryption.
 pub function cbc_encrypt(key: [u8], iv: [u8], data: [u8]): Result[u8[], AesError] {
   let c = __checked(key, iv, data)?;
   let out = __alloc_u8(data.len());
@@ -294,6 +299,7 @@ pub function cbc_encrypt(key: [u8], iv: [u8], data: [u8]): Result[u8[], AesError
   return Ok(out);
 }
 
+// Decrypts whole blocks without checking a MAC or removing padding. Use std/crypto/aes_gcm to detect tampering.
 pub function cbc_decrypt(key: [u8], iv: [u8], data: [u8]): Result[u8[], AesError] {
   let c = __checked(key, iv, data)?;
   let out = __alloc_u8(data.len());
