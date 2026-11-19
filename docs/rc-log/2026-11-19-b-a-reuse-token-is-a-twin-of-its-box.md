@@ -49,8 +49,8 @@ The census rows, re-banked in `.github/certify-baseline.txt`:
 |---|---:|---:|
 | `x86_64/fern_main.unproved` | 2,787 | 1,169 |
 | `wasm32/checker.unproved` | 312 | 158 |
-| `x86_64/checker.refuted` | 5,173 | 5,178 |
-| `x86_64/checker.weakened` | 235 | 235 |
+| `x86_64/checker.refuted` | 5,179 | 5,184 |
+| `x86_64/checker.weakened` | 233 | 233 |
 | `x86_64/checker.missed` | 255 | 250 |
 
 The certifier finds nothing over `fern_main`.

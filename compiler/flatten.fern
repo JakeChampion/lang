@@ -693,16 +693,6 @@ function resolve_bare(name: string, ctx: RewriteCtx, as_value: boolean): string 
   return name;
 }
 
-function rewrite_unary_op(op: string, ctx: RewriteCtx): string {
-  if (op.starts_with("as?_")) {
-    return "as?_" + rewrite_type_name(slice_unchecked(op, 4, op.len()), ctx);
-  }
-  if (op.starts_with("as_")) {
-    return "as_" + rewrite_type_name(slice_unchecked(op, 3, op.len()), ctx);
-  }
-  return op;
-}
-
 function rewrite_written(w: string, ctx: RewriteCtx): string {
   if (w.len() == 0) {
     return w;
@@ -931,7 +921,11 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       return ast.binary(b.op, rewrite_expr(b.left, ctx), rewrite_expr(b.right, ctx), b.line, b.col, b.ty);
     },
     ast.ExprUnary(u) => {
-      return ast.unary(rewrite_unary_op(u.op, ctx), rewrite_expr(u.operand, ctx), u.line, u.col, u.ty);
+      let cast = u.cast;
+      if (cast.len() > 0) {
+        cast = rewrite_type_name(cast, ctx);
+      }
+      return ast.with_cast(ast.rebuild_unary(u, rewrite_expr(u.operand, ctx), u.line, u.col, u.ty), cast);
     },
     ast.ExprIndex(x) => {
       return ast.ExprIndex {
