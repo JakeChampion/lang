@@ -288,3 +288,7 @@ aarch64/utf8_validate.dr	29588157
 aarch64/video_qtrle.text	6115
 aarch64/video_qtrle.ir	1161418179
 aarch64/video_qtrle.dr	91328867
+
+# lane: append-cliff-x86_64
+x86_64/checker.cliff_bytes	45217624
+x86_64/checker.cliff_count	592801
