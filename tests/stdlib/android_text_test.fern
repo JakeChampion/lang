@@ -209,6 +209,16 @@ function test_nko_is_shaped(): test.TestOutcome {
   return test.assert_eq(laid_glyphs(fs, "ߊߓ"), "36,62");
 }
 
+// A run of Korean jamo composes into the syllable that the font has: the
+// jamo of HAN give the glyph of U+D55C.
+function test_korean_jamo_compose(): test.TestOutcome {
+  let Some(korean) = font_of(shape_script_vectors.hang_font()) else {
+    return test.fail("the font did not parse");
+  };
+  let fs = text.from_faces([korean], [400]);
+  return test.assert_eq(laid_glyphs(fs, "한") + " " + laid_glyphs(fs, "한"), "70 70");
+}
+
 // The font of a base64 string, or None.
 function font_of(data: string): Option[truetype.Font] {
   if let Ok(b) = base64.decode(data) {
@@ -313,6 +323,7 @@ function main(): i32 {
   r = r.it("a run of Myanmar letters is shaped", test_myanmar_is_shaped);
   r = r.it("a run of Sinhala letters is shaped", test_sinhala_is_shaped);
   r = r.it("a run of N'Ko letters is shaped", test_nko_is_shaped);
+  r = r.it("Korean jamo compose into a syllable", test_korean_jamo_compose);
   r = r.it("a mark sits on its base", test_a_mark_sits_on_its_base);
   r = r.it("a mark takes the font of its base", test_a_mark_takes_the_font_of_its_base);
   r = r.it("a color glyph keeps its colors", test_a_color_glyph);

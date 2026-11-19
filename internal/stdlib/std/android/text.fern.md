@@ -14,7 +14,7 @@ A face does not have each character. For a character that the face does not have
 
 `width` and `line` measure a text with no drawing. `fit` cuts a text to a width, and `wrap` breaks it into lines. `wrap_ranges` gives the lines as ranges of characters. A text field uses them to find its cursor, and `std/bidi` uses them to order each line.
 
-A run of Arabic letters goes to `std/shape`. So does a run of the letters of Hebrew, Thai, Lao, Khmer, Myanmar, an Indic script, Sinhala, Tibetan, Mongolian, Balinese, Javanese or N'Ko.
+A run of Arabic letters goes to `std/shape`. So does a run of the letters of Hebrew, Thai, Lao, Khmer, Myanmar, an Indic script, Sinhala, Tibetan, Mongolian, Balinese, Javanese, N'Ko or Korean.
 
 The Indic scripts are Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada and Malayalam. `std/shape` gives the joining forms of the Arabic letters, and the conjuncts and the reordered matras of the Indic scripts. It orders the marks of the other scripts, and gives the position of each glyph. The run takes the font of its first letter. An Arabic, a Hebrew and an N'Ko run go from right to left.
 
@@ -454,10 +454,10 @@ function in_run(c: char, script: string): boolean {
 // The blocks of the scripts that std/shape shapes in a run of their own,
 // other than the Indic blocks from U+0900 to U+0D7F: the first and the last
 // code point of each one.
-const SCRIPT_BLOCKS: i32[] = [0x590, 0x5FF, 0xFB1D, 0xFB4F, 0xA8E0, 0xA8FF, 0xE00, 0xE7F, 0xE80, 0xEFF, 0x1780, 0x17FF, 0x1000, 0x109F, 0xA9E0, 0xA9FF, 0xAA60, 0xAA7F, 0x116D0, 0x116FF, 0xD80, 0xDFF, 0xF00, 0xFFF, 0x1800, 0x18AF, 0x1B00, 0x1B7F, 0xA980, 0xA9DF, 0x7C0, 0x7FF];
+const SCRIPT_BLOCKS: i32[] = [0x590, 0x5FF, 0xFB1D, 0xFB4F, 0xA8E0, 0xA8FF, 0xE00, 0xE7F, 0xE80, 0xEFF, 0x1780, 0x17FF, 0x1000, 0x109F, 0xA9E0, 0xA9FF, 0xAA60, 0xAA7F, 0x116D0, 0x116FF, 0xD80, 0xDFF, 0xF00, 0xFFF, 0x1800, 0x18AF, 0x1B00, 0x1B7F, 0xA980, 0xA9DF, 0x7C0, 0x7FF, 0x1100, 0x11FF, 0xA960, 0xA97F, 0xAC00, 0xD7FF];
 
 // The OpenType tag of the script of each block of SCRIPT_BLOCKS.
-const BLOCK_TAGS: string[] = ["hebr", "hebr", "deva", "thai", "lao ", "khmr", "mymr", "mymr", "mymr", "mymr", "sinh", "tibt", "mong", "bali", "java", "nko "];
+const BLOCK_TAGS: string[] = ["hebr", "hebr", "deva", "thai", "lao ", "khmr", "mymr", "mymr", "mymr", "mymr", "sinh", "tibt", "mong", "bali", "java", "nko ", "hang", "hang", "hang"];
 
 // The OpenType tag of the script of the block of `c` that std/shape shapes
 // in a run of its own, or "". The Indic blocks from U+0900 to U+0D7F hold

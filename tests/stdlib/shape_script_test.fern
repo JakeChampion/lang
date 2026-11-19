@@ -140,6 +140,13 @@ function test_nko(): test.TestOutcome {
   return test.assert_eq(differences(shape_script_vectors.nko_font(), "nko ", shape_script_vectors.nko_cases(), "nko "), "");
 }
 
+// Hangul: the jamo that compose into a syllable, the old jamo with the
+// features ljmo, vjmo and tjmo, and the tone marks. With its script tag
+// renamed, the font takes the lookups of DFLT.
+function test_hangul(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.hang_font(), "hang", shape_script_vectors.hang_cases(), "hang"), "");
+}
+
 // A presentation form that the font does not have splits by one step when
 // no mark follows it: U+FB2C becomes U+FB49 and the shin dot.
 function test_one_step_decomposition(): test.TestOutcome {
@@ -165,6 +172,7 @@ function main(): i32 {
   r = r.it("Tibetan gives the glyphs of HarfBuzz", test_tibetan);
   r = r.it("Mongolian gives the glyphs of HarfBuzz", test_mongolian);
   r = r.it("N'Ko gives the glyphs of HarfBuzz", test_nko);
+  r = r.it("Hangul gives the glyphs of HarfBuzz", test_hangul);
   r = r.it("a form splits by the fewest steps", test_one_step_decomposition);
   return r.finish();
 }

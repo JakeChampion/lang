@@ -30,7 +30,7 @@ The Arabic stages are `rvrn`, then the features of the direction, then `ccmp` an
 
 ## Hebrew, Thai and Lao
 
-Hebrew (`hebr`) goes from right to left. Thai (`thai`) and Lao (`lao `, with a space) go from left to right, and take the stages of the default shaper. The differences from the default shaper are in the steps 2, 4, 5 and 9 above, and in the section `thai`. Khmer (`khmr`) and Myanmar (`mymr`) take shapers of their own, which the sections `khmer` and `myanmar` tell. The section `use` tells the Universal Shaping Engine. `shape` does not have the Hangul shaper of HarfBuzz, which composes the jamo of Korean into syllables.
+Hebrew (`hebr`) goes from right to left. Thai (`thai`) and Lao (`lao `, with a space) go from left to right, and take the stages of the default shaper. The differences from the default shaper are in the steps 2, 4, 5 and 9 above, and in the section `thai`. Khmer (`khmr`) and Myanmar (`mymr`) take shapers of their own, which the sections `khmer` and `myanmar` tell. The section `use` tells the Universal Shaping Engine, and the section `hangul` the Hangul shaper of Korean.
 
 ## Indic scripts
 
@@ -50,7 +50,7 @@ The clusters join as HarfBuzz joins them when glyphs move. The tags of the Unive
 
 ## Contracts
 
-The glyphs, the clusters and the positions are those of HarfBuzz. That is true for the GSUB lookups of the types 1 to 8 and the GPOS lookups of the types 1 to 9. The test `tests/stdlib/shape_test.fern` compares them for a set of Arabic and Devanagari words. `tests/stdlib/shape_indic_test.fern` compares them for the other Indic scripts, and `tests/stdlib/shape_script_test.fern` for Hebrew, Thai, Lao, Khmer, Myanmar, Sinhala, Balinese, Javanese, Tibetan, Mongolian and N'Ko.
+The glyphs, the clusters and the positions are those of HarfBuzz. That is true for the GSUB lookups of the types 1 to 8 and the GPOS lookups of the types 1 to 9. The test `tests/stdlib/shape_test.fern` compares them for a set of Arabic and Devanagari words. `tests/stdlib/shape_indic_test.fern` compares them for the other Indic scripts, and `tests/stdlib/shape_script_test.fern` for Hebrew, Thai, Lao, Khmer, Myanmar, Sinhala, Balinese, Javanese, Tibetan, Mongolian, N'Ko and Korean.
 
 An Arabic run and a Hebrew run go from right to left. So does a run of each script of the Universal Shaping Engine that HarfBuzz writes from right to left, such as N'Ko. A run of another script goes from left to right.
 
@@ -96,6 +96,8 @@ function main(): i32 {
 <<myanmar>>
 
 <<use>>
+
+<<hangul>>
 
 <<positions>>
 ```
@@ -146,6 +148,14 @@ const POS_SHIFT: i32 = 6;
 const CP_SHIFT: i32 = 10;
 
 const CFAR: i32 = 4096;
+
+const LJMO: i32 = 8192;
+
+const VJMO: i32 = 16384;
+
+const TJMO: i32 = 32768;
+
+const CALT: i32 = 65536;
 ```
 
 ### `characters`
@@ -355,13 +365,14 @@ function ordered(cs: Chars, script: string): Chars {
 // How a shaper normalizes: the tag of its script, whether it is the Indic
 // shaper, whether it composes the Hebrew presentation forms, whether it
 // splits each character that it can, and whether it composes no mark with a
-// mark.
-struct Normalizer { script: string, indic: boolean, forms: boolean, splits_all: boolean, marks_stay: boolean }
+// mark. With `none`, as for Hangul, a character that has a glyph stays
+// whole, and no mark composes.
+struct Normalizer { script: string, indic: boolean, forms: boolean, splits_all: boolean, marks_stay: boolean, none: boolean }
 
 // The normalizer of the shapers of the syllabic scripts, other than the
 // Indic shaper, for the script `script`.
 function syllabic_normalizer(script: string, marks_stay: boolean): Normalizer {
-  return Normalizer { script: script, indic: false, forms: false, splits_all: true, marks_stay: marks_stay };
+  return Normalizer { script: script, indic: false, forms: false, splits_all: true, marks_stay: marks_stay, none: false };
 }
 
 // The split vowels of Khmer, which split into U+17C1 and themselves.
@@ -382,7 +393,8 @@ function normalized(f: truetype.Font, cs: Chars, n: Normalizer): Chars {
   let parts = decomposed(f, cs, n);
   for i in 1..cs.cps.len() {
     if (cs.cps[i].is_mark()) {
-      return composed(f, ordered(parts, n.script), n);
+      let sorted = ordered(parts, n.script);
+      return if (n.none) { sorted } else { composed(f, sorted, n) };
     }
   }
   return parts;
@@ -414,12 +426,19 @@ function parts_of(f: truetype.Font, cs: Chars, i: i32, n: Normalizer): char[] {
   if (n.indic && holds(KEPT_WHOLE, c as i32)) {
     return [c];
   }
-  let next_mark = i + 1 < cs.cps.len() && cs.cps[i + 1].is_mark();
-  let shortest = !n.splits_all && (i == 0 || !c.is_mark()) && !next_mark;
+  let shortest = shortest_at(cs, i, n);
   if (shortest && f.glyph(c as i32) != 0) {
     return [c];
   }
   return if let Some(parts) = steps_of(f, c, shortest, n) { parts } else { [c] };
+}
+
+// Whether the character at `i` of `cs` splits by the fewest steps: outside
+// a sequence of marks, or always with `n.none`.
+function shortest_at(cs: Chars, i: i32, n: Normalizer): boolean {
+  let c = cs.cps[i];
+  let next_mark = i + 1 < cs.cps.len() && cs.cps[i + 1].is_mark();
+  return n.none || !n.splits_all && (i == 0 || !c.is_mark()) && !next_mark;
 }
 
 // The decomposition of `c`, one step at a time, while the font `f` has the
@@ -1063,11 +1082,14 @@ pub function shape(f: truetype.Font, text: string, script: string): truetype.Run
   return default_shaped(f, text, script);
 }
 
-// The glyphs of `text` from the Khmer, the Myanmar, the Universal or the
-// Indic shaper, or None when the default shaper shapes it.
+// The glyphs of `text` from the Khmer, the Hangul, the Myanmar, the
+// Universal or the Indic shaper, or None when the default shaper shapes it.
 function shaped_apart(f: truetype.Font, text: string, script: string): Option[truetype.Run] {
   if (script == "khmr") {
     return Some(khmer_shaped(f, text));
+  }
+  if (script == "hang") {
+    return Some(hangul_shaped(f, text));
   }
   if (script == "mymr") {
     if let Some((gsub, gpos)) = myanmar_tags(f) {
@@ -1095,7 +1117,7 @@ pub function rtl(script: string): boolean {
 function default_shaped(f: truetype.Font, text: string, script: string): truetype.Run {
   let arabic = script == "arab";
   let rtl = rtl(script);
-  let n = Normalizer { script: script, indic: false, forms: script == "hebr" && !f.has_feature(script, "mark"), splits_all: false, marks_stay: false };
+  let n = Normalizer { script: script, indic: false, forms: script == "hebr" && !f.has_feature(script, "mark"), splits_all: false, marks_stay: false, none: false };
   let cs = normalized(f, preprocessed(f, characters(text), script, rtl), n);
   let r = run_of_chars(f, cs, masks_of(cs, arabic));
   for stage in stages(f, script, rtl) {
@@ -1600,7 +1622,7 @@ function final_features(): Feature[] {
 
 // The glyphs of the text `text` of an Indic script in the font `f`.
 function indic_shaped(f: truetype.Font, text: string, p: Plan): truetype.Run {
-  let cs = normalized(f, vowel_constrained(characters(text), p.config.script), Normalizer { script: p.config.script, indic: true, forms: false, splits_all: true, marks_stay: true });
+  let cs = normalized(f, vowel_constrained(characters(text), p.config.script), Normalizer { script: p.config.script, indic: true, forms: false, splits_all: true, marks_stay: true, none: false });
   let vars: i32[] = [];
   let masks: i32[] = [];
   for c in cs.cps {
@@ -3625,6 +3647,222 @@ function use_pre_bases_moved(gs0: Glyph[], start: i32, end: i32): Glyph[] {
     }
   }
   return gs;
+}
+```
+
+### `hangul`
+
+Hangul (`hang`) takes the Hangul shaper of HarfBuzz. Before the normalization, each syllable of jamo composes into its Unicode syllable when the font has its glyph. Else it splits into its jamo, and they get the masks of `ljmo`, `vjmo` and `tjmo`.
+
+A tone mark after a syllable moves before it, unless the glyph of the tone mark has no advance. A tone mark with no syllable gets a dotted circle. The normalization keeps each character that has a glyph, and composes nothing. The stages are those of the default shaper, with `ljmo`, `vjmo` and `tjmo`, and `calt` does not apply to the jamo. A mark keeps its advance.
+
+```fern
+<<hangul>>=
+// The jamo and the syllables of Hangul that compose, as
+// hb-ot-shaper-hangul.cc gives them.
+const L_BASE: i32 = 0x1100;
+
+const V_BASE: i32 = 0x1161;
+
+const T_BASE: i32 = 0x11A7;
+
+const S_BASE: i32 = 0xAC00;
+
+const N_COUNT: i32 = 588;
+
+const T_COUNT: i32 = 28;
+
+// The ranges of the leading, the vowel and the trailing jamo.
+const L_JAMO: i32[] = [0x1100, 0x115F, 0xA960, 0xA97C];
+
+const V_JAMO: i32[] = [0x1160, 0x11A7, 0xD7B0, 0xD7C6];
+
+const T_JAMO: i32[] = [0x11A8, 0x11FF, 0xD7CB, 0xD7FB];
+
+// Whether `u` is a jamo.
+function is_jamo(u: i32): boolean {
+  return in_ranges(u, L_JAMO) || in_ranges(u, V_JAMO) || in_ranges(u, T_JAMO);
+}
+
+// Whether the leading jamo `l`, the vowel jamo `v` and the trailing jamo
+// `t`, or 0, compose into a syllable of Unicode.
+function jamo_compose(l: i32, v: i32, t: i32): boolean {
+  let t_ok = t == 0 || t > T_BASE && t < T_BASE + T_COUNT;
+  return l >= L_BASE && l < L_BASE + 19 && v >= V_BASE && v < V_BASE + 21 && t_ok;
+}
+
+// Whether the glyph of `u` in the font `f` has no advance.
+function zero_width(f: truetype.Font, u: i32): boolean {
+  let g = f.glyph(u);
+  return g != 0 && f.advance(g) == 0;
+}
+
+// The glyphs of the Hangul text `text` in the font `f`.
+function hangul_shaped(f: truetype.Font, text: string): truetype.Run {
+  let n = Normalizer { script: "hang", indic: false, forms: false, splits_all: false, marks_stay: false, none: true };
+  let cs = normalized(f, hangul_preprocessed(f, characters(text)), n);
+  let masks: i32[] = [];
+  for i in 0..cs.cps.len() {
+    masks = masks.append(cs.masks[i] | (if (is_jamo(cs.cps[i] as i32)) { 0 } else { CALT }));
+  }
+  let r = run_of_chars(f, cs, masks);
+  let jamo = [feature("ljmo", LJMO, 0), feature("vjmo", VJMO, 0), feature("tjmo", TJMO, 0)];
+  let all = ["ccmp", "locl", "rlig", "clig", "liga", "rclt"].map((tag: string): Feature => feature(tag, GLOBAL, 0));
+  r = applied_stage(f, r, "hang", [feature("rvrn", GLOBAL, 0)], false);
+  r = applied_stage(f, r, "hang", direction_features(false).concat(jamo).concat(all).append(feature("calt", CALT, 0)), false);
+  let positioned = f.gpos >= 0;
+  r = with_space_widths(f, f.with_advances(r, false));
+  if (positioned) {
+    r = applied_stage(f, r, "hang", position_features(), true);
+  }
+  return finished(f, r, false, positioned);
+}
+
+// `cs` with each syllable of jamo composed when the font `f` has its glyph,
+// or else split into its jamo with their masks, and each tone mark before
+// its syllable, as HarfBuzz does.
+function hangul_preprocessed(f: truetype.Font, cs: Chars): Chars {
+  let all = cs;
+  let pos = 0;
+  let start = 0;
+  let end = 0;
+  while (pos < all.cps.len()) {
+    if (in_ranges(all.cps[pos] as i32, [0x302E, 0x302F])) {
+      let (next, at) = tone_placed(f, all, pos, start, end);
+      all = next;
+      pos = at;
+      start = pos;
+      end = pos;
+      continue;
+    }
+    start = pos;
+    let (next, at, last) = hangul_syllable(f, all, pos);
+    all = next;
+    pos = at;
+    end = last;
+  }
+  return all;
+}
+
+// `all` with the tone mark at `pos` moved before the syllable from `start`
+// to `end` before it, or with a dotted circle when it has no syllable, and
+// the place after it.
+function tone_placed(f: truetype.Font, all: Chars, pos: i32, start: i32, end: i32): (Chars, i32) {
+  let u = all.cps[pos] as i32;
+  if (start < end && end == pos) {
+    if (zero_width(f, u)) {
+      return (all, pos + 1);
+    }
+    return (char_moved(Chars { ...all, clusters: truetype.merged_clusters(all.clusters, start, end + 1) }, end, start), pos + 1);
+  }
+  if (f.glyph(0x25CC) == 0) {
+    return (all, pos + 1);
+  }
+  let shown = if (zero_width(f, u)) { [0x25CC, u] } else { [u, 0x25CC] };
+  return (replaced(all, pos, 1, [u as char, u as char], shown), pos + 2);
+}
+
+// `all` with the syllable at `pos` composed or split, the place after it,
+// and the end of the syllable, or `pos` when no syllable starts there.
+function hangul_syllable(f: truetype.Font, all: Chars, pos: i32): (Chars, i32, i32) {
+  let u = all.cps[pos] as i32;
+  if (in_ranges(u, L_JAMO) && pos + 1 < all.cps.len() && in_ranges(all.cps[pos + 1] as i32, V_JAMO)) {
+    return jamo_syllable(f, all, pos);
+  }
+  if (u >= S_BASE && u < S_BASE + 19 * N_COUNT) {
+    return syllable_split(f, all, pos);
+  }
+  return (all, pos + 1, pos);
+}
+
+// `all` with the leading and the vowel jamo at `pos`, and a trailing jamo
+// after them, composed, or else with their masks.
+function jamo_syllable(f: truetype.Font, all: Chars, pos: i32): (Chars, i32, i32) {
+  let l = all.cps[pos] as i32;
+  let v = all.cps[pos + 1] as i32;
+  let t = if (pos + 2 < all.cps.len() && in_ranges(all.cps[pos + 2] as i32, T_JAMO)) { all.cps[pos + 2] as i32 } else { 0 };
+  let k = if (t != 0) { 3 } else { 2 };
+  if (jamo_compose(l, v, t)) {
+    let s = S_BASE + (l - L_BASE) * N_COUNT + (v - V_BASE) * T_COUNT + (if (t != 0) { t - T_BASE } else { 0 });
+    if (f.glyph(s) != 0) {
+      return (replaced(all, pos, k, [s as char], [s]), pos + 1, pos + 1);
+    }
+  }
+  return (jamo_masked(all, pos, k), pos + k, pos + k);
+}
+
+// `all` with the masks of ljmo, vjmo and tjmo on the `k` jamo at `pos`,
+// and their clusters joined.
+function jamo_masked(all: Chars, pos: i32, k: i32): Chars {
+  let bits = [LJMO, VJMO, TJMO];
+  let masks = all.masks;
+  for j in 0..k {
+    masks = masks.with(pos + j, masks[pos + j] | bits[j]);
+  }
+  return Chars { ...all, masks: masks, clusters: truetype.merged_clusters(all.clusters, pos, pos + k) };
+}
+
+// `all` with the syllable of Unicode at `pos` and a trailing jamo after it
+// composed, or the syllable split into its jamo when the font `f` does not
+// have it or a trailing jamo that does not compose follows it.
+function syllable_split(f: truetype.Font, all: Chars, pos: i32): (Chars, i32, i32) {
+  if let Some(done) = lv_t_composed(f, all, pos) {
+    return done;
+  }
+  let s = all.cps[pos] as i32;
+  let has = f.glyph(s) != 0;
+  let parts = jamo_of(s);
+  if (split_wanted(all, pos, has) && parts.all((c: i32): boolean => f.glyph(c) != 0)) {
+    let k = parts.len() + (if (has && parts.len() == 2) { 1 } else { 0 });
+    let out = replaced(all, pos, 1, parts.map((c: i32): char => c as char), parts);
+    return (jamo_masked(out, pos, k), pos + k, pos + k);
+  }
+  return (all, pos + 1, if (has) { pos + 1 } else { pos });
+}
+
+// `all` with the syllable of Unicode with no trailing jamo at `pos` and
+// the trailing jamo after it composed, when the font `f` has the result.
+function lv_t_composed(f: truetype.Font, all: Chars, pos: i32): Option[(Chars, i32, i32)] {
+  let s = all.cps[pos] as i32;
+  let next = if (pos + 1 < all.cps.len()) { all.cps[pos + 1] as i32 } else { 0 };
+  let with_t = s + next - T_BASE;
+  if ((s - S_BASE) % T_COUNT != 0 || next <= T_BASE || next >= T_BASE + T_COUNT || f.glyph(with_t) == 0) {
+    return None;
+  }
+  return Some((replaced(all, pos, 2, [with_t as char], [with_t]), pos + 1, pos + 1));
+}
+
+// Whether the syllable of Unicode at `pos` of `all` splits: when the font
+// does not have it, by `has`, or a trailing jamo follows a syllable with
+// none.
+function split_wanted(all: Chars, pos: i32, has: boolean): boolean {
+  let t = (all.cps[pos] as i32 - S_BASE) % T_COUNT;
+  return !has || t == 0 && pos + 1 < all.cps.len() && in_ranges(all.cps[pos + 1] as i32, T_JAMO);
+}
+
+// The jamo of the syllable of Unicode `s`.
+function jamo_of(s: i32): i32[] {
+  let t = (s - S_BASE) % T_COUNT;
+  let parts = [L_BASE + (s - S_BASE) / N_COUNT, V_BASE + (s - S_BASE) % N_COUNT / T_COUNT];
+  return if (t != 0) { parts.append(T_BASE + t) } else { parts };
+}
+
+// `all` with the `k` characters at `pos` replaced by the characters `cps`,
+// which show the glyphs of `shown`. The new characters take the cluster
+// and the mask of the first one, after the clusters of the `k` join.
+function replaced(all0: Chars, pos: i32, k: i32, cps: char[], shown: i32[]): Chars {
+  let all = Chars { ...all0, clusters: truetype.merged_clusters(all0.clusters, pos, pos + k) };
+  let out = no_chars();
+  for j in 0..pos {
+    out = with_char(out, all, j);
+  }
+  for m in 0..cps.len() {
+    out = Chars { cps: out.cps.append(cps[m]), clusters: out.clusters.append(all.clusters[pos]), masks: out.masks.append(all.masks[pos]), shown: out.shown.append(shown[m]) };
+  }
+  for j in pos + k..all.cps.len() {
+    out = with_char(out, all, j);
+  }
+  return out;
 }
 ```
 

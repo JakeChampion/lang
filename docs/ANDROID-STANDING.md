@@ -113,7 +113,7 @@ compressed.
 | Material 3 components | Colors only, few components | Full | Full | Third party |
 | Navigation | By hand | Navigation 3 | Navigator, go_router | React Navigation |
 | Accessibility | TalkBack tree, font scale | Semantics | Semantics | Native views |
-| Right-to-left text and shaping | Order, Arabic, Hebrew, Thai, Khmer, Myanmar, Indic and USE shaping | Yes | Yes | Yes |
+| Right-to-left text and shaping | Order, Arabic, Hebrew, Thai, Khmer, Myanmar, Indic, USE and Hangul shaping | Yes | Yes | Yes |
 | UI tests on the computer | Full simulator | Robolectric | Widget tests | Jest |
 | Screenshot tests | PNG of the simulator | Paparazzi, Roborazzi | Golden tests | Third party |
 | Camera, location, push | No | Yes | Plugins | Expo modules |
@@ -162,9 +162,7 @@ The order puts first what stops a release, then what most apps need.
 6. **Java and Kotlin libraries.** Merge DEX files and manifests of a JAR
    or an AAR into the APK.
 
-7. **Text.** The Hangul shaper of HarfBuzz, which composes the jamo of
-   Korean into syllables. Korean text with syllables that Unicode composes
-   shapes correctly without it. The marks of a font with no GPOS
+7. **Text.** The marks of a font with no GPOS
    table, which HarfBuzz moves by their combining classes.
 
    Indic shaping is done: `std/shape` follows the Indic shaper of HarfBuzz
@@ -207,6 +205,12 @@ The order puts first what stops a release, then what most apps need.
    the table is that of HarfBuzz 15 for each code point. The glyphs, the
    clusters and the positions are those of HarfBuzz 15 for Sinhala,
    Balinese, Javanese, Tibetan, Mongolian and N'Ko.
+
+   The Hangul shaper of HarfBuzz is done. The jamo of Korean compose into
+   the syllables that the font has, or get the features `ljmo`, `vjmo` and
+   `tjmo`. The tone marks move before their syllable. The glyphs, the
+   clusters and the positions are those of HarfBuzz 15 for more than 19,000
+   random strings in Noto Sans CJK KR.
 
    Color emoji are done: `std/truetype` draws the glyphs of COLR
    versions 0 and 1, and `std/android/text` and the painter of

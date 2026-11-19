@@ -11,7 +11,8 @@ NotoSansLao-Regular.ttf, NotoSansKhmer-Regular.ttf,
 NotoSansMyanmar-Regular.ttf, NotoSansSinhala-Regular.ttf,
 NotoSansBalinese-Regular.ttf, NotoSansJavanese-Regular.ttf,
 NotoSerifTibetan-Regular.ttf, NotoSansMongolian-Regular.ttf and
-NotoSansNKo-Regular.ttf, from the Noto project (notofonts.github.io). They
+NotoSansNKo-Regular.ttf, from the Noto project (notofonts.github.io), and
+NotoSansCJKkr-Regular.otf, from github.com/notofonts/noto-cjk. They
 are under the SIL Open Font License 1.1, and each subset keeps each name of
 its font, so it keeps the notice and the license. A subset holds the
 characters of its cases, and its glyphs have no outlines.
@@ -51,7 +52,7 @@ OUT = HERE.parent / "tests" / "stdlib" / "shape_script_vectors.fern"
 ZWJ, ZWNJ = "\u200d", "\u200c"
 
 FEATURES = ["ccmp", "locl", "rlig", "calt", "clig", "liga", "rclt", "rtla", "rtlm", "ltra", "ltrm", "kern", "mark",
-            "mkmk", "dist", "abvm", "blwm", "rphf", "pref", "nukt", "akhn", "rkrf", "half", "vatu", "cjct", "haln", "isol", "init", "medi", "fina", "blwf", "abvf", "pstf", "cfar", "pres", "abvs", "blws", "psts"]
+            "mkmk", "dist", "abvm", "blwm", "rphf", "pref", "nukt", "akhn", "rkrf", "half", "vatu", "cjct", "haln", "isol", "init", "medi", "fina", "ljmo", "vjmo", "tjmo", "blwf", "abvf", "pstf", "cfar", "pres", "abvs", "blws", "psts"]
 
 # The code points of the private use area that old Thai fonts use.
 PUA = list(range(0xF700, 0xF71B)) + list(range(0xF884, 0xF89F))
@@ -87,6 +88,12 @@ MONGOLIAN_ALPHABET = "ᠠᠡᠢᠣᠤᠨᠬᠭᠮᠯᠰᠲ" + "\u180b\u180c\u180
 NKO_WORDS = ["ߒߞߏ", "ߊ\u07eb", "ߓߊ", "(ߓ)", "ߓ\u07f3ߊ", "ߞ\u200dߞ"]
 NKO_ALPHABET = "ߊߋߌߍߎߏߐߒߓߔߕߖߗߘߙߚߛߜߝߞߟߠߡߢߣߤ" + "\u07eb\u07ec\u07ed\u07ee\u07ef\u07f0\u07f1\u07f2\u07f3" + ZWJ + "()"
 
+HANGUL_WORDS = ["한국어", "\u1112\u1161\u11ab", "\u1100\u119e", "\u1112\u119e\u11ab", "가\u302e", "\u302e", "\u302f\u302e",
+                "가\u11a8", "가\u11c3", "\u1100\u1161\u11c3", "\ua960\u1161", "\u1100\ud7b0", "한\u302f"]
+HANGUL_ALPHABET = ("\u1100\u1102\u1103\u1105\u1106\u1107\u1109\u110b\u110c\u1112\u1113\u111d\u1140\ua960"
+                   "\u1161\u1165\u1169\u116e\u1173\u1175\u119e\u11a1\ud7b0"
+                   "\u11a8\u11ab\u11af\u11b7\u11b8\u11bc\u11c3\u11eb\ud7cb" "가나다한국\u302e\u302f")
+
 SCRIPTS = [
     ("hebr", "hebr", "mark", "Hebr", "NotoSansHebrew", {0xFB2C, 0xFB2D}, None,
      ["ש\u05b8\u05c1לו\u05b9ם", "ע\u05b4ב\u05b0ר\u05b4ית", "ב\u05b0\u05bcר\u05b5אש\u05b4\u05c1ית", "ש\u05bc\u05c1", "ש\u05bc\u05c2", "ב\u05bc", "ו\u05b9", "י\u05b4", "א\u05b7", "א\u05b8", "ײ\u05b7", "ב\u05bf", "כ\u05bf", "פ\u05bf",
@@ -118,6 +125,7 @@ SCRIPTS = [
     ("tibt", "tibt", "tibt", "Tibt", "NotoSerifTibetan", set(), None, TIBETAN_WORDS, TIBETAN_ALPHABET),
     ("mong", "mong", "mong", "Mong", "NotoSansMongolian", set(), None, MONGOLIAN_WORDS, MONGOLIAN_ALPHABET),
     ("nko ", "nko", "nko ", "Nkoo", "NotoSansNKo", set(), None, NKO_WORDS, NKO_ALPHABET),
+    ("hang", "hang", "hang", "Hang", "NotoSansCJKkr", set(), None, HANGUL_WORDS, HANGUL_ALPHABET),
 ]
 
 RANDOM_CASES = 40
@@ -133,8 +141,14 @@ def subset(path, texts, left_out, thai):
     unicodes = sorted(({ord(c) for t in texts for c in t} | {0x20, 0x25CC}) - left_out)
     font = gen.subset_font(str(path), unicodes, FEATURES)
     empty = TTGlyphPen(None).glyph()
-    for name in font.getGlyphOrder():
-        font["glyf"][name] = empty
+    if "glyf" in font:
+        for name in font.getGlyphOrder():
+            font["glyf"][name] = empty
+    else:
+        # A CFF font: each charstring draws nothing. The advances stay in hmtx.
+        strings = font["CFF "].cff.topDictIndex[0].CharStrings
+        for name in strings.keys():
+            strings[name].program = ["endchar"]
     if thai:
         names = ["pua%04X" % u for u in PUA]
         font.setGlyphOrder(font.getGlyphOrder() + names)
@@ -178,7 +192,8 @@ def main():
         rng = random.Random(tag if key == tag.strip() else key)
         randoms = ["".join(rng.choice(alphabet) for _ in range(rng.randint(2, 8))) for _ in range(RANDOM_CASES)]
         texts = words + randoms
-        data = subset(fonts / (name + "-Regular.ttf"), texts, left_out, script == "Thai")
+        path = fonts / (name + "-Regular.ttf")
+        data = subset(path if path.exists() else path.with_suffix(".otf"), texts, left_out, script == "Thai")
         if edit:
             assert data.count(edit[0]) >= 1
             data = data.replace(*edit)
