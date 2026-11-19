@@ -29,10 +29,12 @@ HarfBuzz, with no joining forms, left to right.
 
 marks_font() is a second subset with the space and the marks alone.
 
-The script also builds three fonts of its own, with no outlines:
+The script also builds five fonts of its own, with no outlines:
 lookup_font(), with a GSUB lookup of each type and format,
-position_font(), with a GPOS lookup of each type, and stage_font(), with
-an rclt lookup before a calt lookup.
+position_font(), with a GPOS lookup of each type, stage_font(), with
+an rclt lookup before a calt lookup, bare_font(), with no GDEF and no
+GPOS table, and forms_font(), with Arabic presentation forms and no GSUB
+table.
 """
 
 import base64
@@ -352,6 +354,85 @@ def stage_font() -> bytes:
     return saved(fb.font)
 
 
+# The characters of bare_font() and their glyphs.
+BARE_CMAP = {0x20: "space", 0x47: "G", 0x61: "a", 0x64: "d", 0x69: "i", 0x78: "x", 0x1F4: "Gacute", 0xEF: "idieresis",
+             0x300: "gravecomb", 0x301: "acutecomb", 0x306: "brevecomb", 0x308: "dieresiscomb", 0x313: "commaabovecomb",
+             0x315: "commaaboverightcomb", 0x316: "gravebelowcomb", 0x34F: "cgj"}
+BARE_ORDER = [".notdef"] + list(BARE_CMAP.values()) + ["acute.alt", "dieresis.alt"]
+
+# The text of each case of bare_font(), and what it tests.
+BARE_WORDS = [
+    "G\u0341", "a\u0343", "\u0343",     # a decomposition into one character
+    "d\u034f\u0308",                     # a CGJ that keeps no marks apart
+    "d\u0315\u034f\u0308",              # a CGJ that keeps two marks apart
+    "\u0301", "a\u0301",                 # a mark filtering set that GDEF does not have
+    "\u00ef\u0306", "i\u0308\u0306",   # a ligature of the parts of a multiple substitution
+    "a\u0300\u0316", "G\u0306\u0306",  # marks above and below, and stacked
+    "xa", "d x\u0315",
+]
+
+
+# A font with no GDEF and no GPOS table, and empty glyphs. Its marks take
+# their classes from Unicode, and their places from the fallback
+# positioning. Its GSUB lookups: a single substitution of the acute with a
+# mark filtering set that GDEF does not have, a context of "d" before the
+# dieresis, and a multiple substitution of "idieresis" whose parts make a
+# ligature again.
+def bare_font() -> bytes:
+    fb = FontBuilder(1000, isTTF=True)
+    fb.setupGlyphOrder(BARE_ORDER)
+    fb.setupCharacterMap(BARE_CMAP)
+    empty = TTGlyphPen(None).glyph()
+    fb.setupGlyf({g: empty for g in BARE_ORDER})
+    fb.setupHorizontalMetrics({g: (150 if g.endswith("comb") or g.endswith(".alt") else 301 if g == "idieresis" else 500, 0)
+                               for g in BARE_ORDER})
+    fb.setupHorizontalHeader(ascent=800, descent=-200)
+    fb.setupNameTable({"familyName": "FernBareTest", "styleName": "Regular"})
+    fb.setupOS2()
+    fb.setupPost()
+    filtered = single({"acutecomb": "acute.alt"})
+    filtered.LookupFlag = 0x10
+    filtered.MarkFilteringSet = 3
+    context = lookup(6, [subst(ot.ChainContextSubst, 3, BacktrackCoverage=[coverage(["d"])], InputCoverage=[coverage(["dieresiscomb"])],
+                               LookAheadCoverage=[], SubstLookupRecord=[record(0, 4)], SubstCount=1)])
+    split = lookup(2, [otl.buildMultipleSubstSubtable({"idieresis": ["i", "dieresiscomb"]})])
+    join = lookup(4, [otl.buildLigatureSubstSubtable({("i", "dieresiscomb"): "idieresis"})])
+    fb.font["GSUB"] = layout_table("GSUB", [("ccmp", [0, 1, 2, 3])], [filtered, context, split, join, single({"dieresiscomb": "dieresis.alt"})])
+    return saved(fb.font)
+
+
+# The characters of forms_font(): Arabic letters and marks, and their
+# presentation forms, which the Arabic fallback of HarfBuzz uses.
+FORMS_CHARS = [0x20, 0x627, 0x628, 0x62D, 0x644, 0x645, 0x647, 0x64B, 0x64E, 0x651] + list(range(0xFE8D, 0xFE93)) + \
+    list(range(0xFEA1, 0xFEA5)) + list(range(0xFEDD, 0xFEED)) + [0xFEFB, 0xFEFC, 0xFC08, 0xFC9F, 0xFD88, 0xF201, 0xFC60, 0xF2EE]
+
+# The text of each case of forms_font(), and what it tests.
+FORMS_WORDS = [
+    "ب", "بب", "ببب", "ه",               # the four forms
+    "لا", "بلا",                          # lam and alef
+    "بم", "بمب", "لمح", "لمحب", "لله",   # the ligatures of two and of three letters
+    "بّ", "بَّ", "بًّ", "بَ",              # the shadda with a mark
+    "ب ب", "ب\u200dب", "ب\u200cب",     # the joiners
+]
+
+
+# A font with Arabic letters, marks and presentation forms, no GSUB, GDEF
+# or GPOS table, and empty glyphs. Each glyph has its own advance.
+def forms_font() -> bytes:
+    order = [".notdef"] + ["u%04X" % u for u in FORMS_CHARS]
+    fb = FontBuilder(1000, isTTF=True)
+    fb.setupGlyphOrder(order)
+    fb.setupCharacterMap({u: "u%04X" % u for u in FORMS_CHARS})
+    empty = TTGlyphPen(None).glyph()
+    fb.setupGlyf({g: empty for g in order})
+    fb.setupHorizontalMetrics({g: (0 if g in ("u064B", "u064E", "u0651") else 300 + 7 * k, 0) for k, g in enumerate(order)})
+    fb.setupHorizontalHeader(ascent=800, descent=-200)
+    fb.setupNameTable({"familyName": "FernFormsTest", "styleName": "Regular"})
+    fb.setupOS2()
+    fb.setupPost()
+    return saved(fb.font)
+
+
 GPOS_MARKS = {0x301: "acute", 0x300: "grave"}
 GPOS_ORDER = [".notdef"] + LETTERS + list(GPOS_MARKS.values()) + ["fi"]
 
@@ -580,6 +661,10 @@ def main() -> None:
     staged_lines = [case(staged, w, script) for script in ["arab", "latn"] for w in ["a", "b", "ab"]]
     placed = position_font()
     placed_lines = [case(placed, w, script) for script in ["latn", "arab"] for w in POSITION_WORDS]
+    bare = bare_font()
+    bare_lines = [case(bare, w, "latn") for w in BARE_WORDS]
+    forms = forms_font()
+    forms_lines = [case(forms, w, "arab") for w in FORMS_WORDS]
     parts = [
         "// Generated by scripts/gen-shape-vectors.py -- do not edit by hand.",
         "// A subset of Noto Naskh Arabic, Copyright 2022 The Noto Project Authors",
@@ -649,6 +734,28 @@ def main() -> None:
         "// The cases of position_font(), as those of cases().",
         "pub function position_cases(): string {",
         '  return "%s";' % "\\n".join(literal(l) for l in placed_lines),
+        "}",
+        "",
+        "// A font with no GDEF and no GPOS table, a few GSUB lookups, and no",
+        "// outlines.",
+        "pub function bare_font(): string {",
+        '  return "%s";' % base64.b64encode(bare).decode("ascii"),
+        "}",
+        "",
+        "// The cases of bare_font(), as those of cases().",
+        "pub function bare_cases(): string {",
+        '  return "%s";' % "\\n".join(literal(l) for l in bare_lines),
+        "}",
+        "",
+        "// A font with Arabic letters and their presentation forms, no GSUB, GDEF",
+        "// or GPOS table, and no outlines.",
+        "pub function forms_font(): string {",
+        '  return "%s";' % base64.b64encode(forms).decode("ascii"),
+        "}",
+        "",
+        "// The cases of forms_font(), as those of cases().",
+        "pub function forms_cases(): string {",
+        '  return "%s";' % "\\n".join(literal(l) for l in forms_lines),
         "}",
         "",
     ]
