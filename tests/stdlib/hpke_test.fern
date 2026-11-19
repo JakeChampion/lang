@@ -322,6 +322,10 @@ function test_p256_context(): test.TestOutcome {
   };
   let c = context_of(hpke.sender_of(hpke.KEM_P256, e, b(A51_INFO)));
   let r = hpke.key_schedule(hpke.KEM_P256, b(A51_SHARED_SECRET), b(A51_INFO));
+  return check_p256_messages(c, r);
+}
+
+function check_p256_messages(own c: hpke.Context, own r: hpke.Context): test.TestOutcome {
   for i in 0..3 {
     let aad = ("Count-" + i.to_string()).as_bytes();
     let Ok((ct, next)) = c.seal(aad, b(A51_PT)) else {
