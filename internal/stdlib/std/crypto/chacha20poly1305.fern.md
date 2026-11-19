@@ -16,7 +16,7 @@ Seal and open run in the kernels `__chacha20_poly1305_seal_into` and `__chacha20
 
 ## Contracts
 
-Building a key checks its length, and each message checks its nonce length. Open returns an error when authentication fails. The caller supplies the nonce for each message.
+Building a key checks its length, and each message checks its nonce length. Open returns an error when authentication fails. For the RFC 8439 methods, the caller supplies a unique 12-byte nonce for each message. For data at rest, `seal_random` draws a 24-byte nonce from the operating system and prefixes it to the XChaCha20-Poly1305 ciphertext and tag. Pass this format and the same additional data to `open_prefixed`. With independent random 192-bit nonces, limit a key to 2^80 messages for a nonce collision probability below 2^-32 (draft-irtf-cfrg-xchacha-03 §2.1). The explicit-nonce methods `seal_xchacha` and `open_xchacha` use the same construction with the nonce stored separately. Each explicit nonce must be unique under its key.
 
 ## Module assembly
 
@@ -43,6 +43,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<9 pub function poly1305(key: [u8], msg: [u8]): Result[u8[], aead.AeadError]>>
 
 <<10 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]>>
+
+<<XChaCha20-Poly1305>>
 ```
 
 ### `module introduction`
@@ -60,6 +62,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "std/crypto";
+import "std/rand";
+import "std/array";
 import "std/crypto/aead";
 ```
 
@@ -232,5 +236,76 @@ pub function (k: Key) open_in_place(iv: [u8], seq: u64, own buf: u8[], aad_at: i
     return Err(aead.Forged);
   }
   return Ok(buf);
+}
+```
+
+### XChaCha20-Poly1305
+
+HChaCha20 uses the same 20 rounds as the ChaCha20 block function. To reuse the kernel, subtract its feed-forward additions from the first and last rows. Those rows start with the public ChaCha constant and the first 16 nonce bytes. The remaining eight nonce bytes follow four zero bytes in the IETF ChaCha20-Poly1305 nonce.
+
+```fern
+<<XChaCha20-Poly1305>>=
+function __hchacha20(k: Key, input: u8[]): Key {
+  let block = __chacha20_xor_into(k.k, input, __alloc_u8(64), 0, 64);
+  let constant = "expand 32-byte k".as_bytes();
+  let subkey = __alloc_u8(32);
+  for i in 0..4 {
+    let at = i * 4;
+    subkey = __put_le32(subkey, at, __le32(block, at) - __le32(constant, at));
+    subkey = __put_le32(subkey, 16 + at, __le32(block, 48 + at) - __le32(input, at));
+  }
+  crypto.erase(block);
+  return Key { k: subkey };
+}
+
+function __xparameters(k: Key, nonce: [u8]): Result[(Key, u8[]), aead.AeadError] {
+  if (nonce.len() != 24) {
+    return Err(aead.ExtendedNonceLength(nonce.len()));
+  }
+  return Ok((__hchacha20(k, __bytes_owned(nonce[0:16])), __bytes_into(__alloc_u8(12), 4, nonce, 16, 8)));
+}
+
+pub function (k: Key) seal_xchacha(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
+  let (subkey, iv) = __xparameters(k, nonce)?;
+  let sealed = subkey.seal(iv, plaintext, aad);
+  crypto.erase(subkey.k);
+  return sealed;
+}
+
+pub function (k: Key) open_xchacha(nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
+  let (subkey, iv) = __xparameters(k, nonce)?;
+  let opened = subkey.open(iv, sealed, aad);
+  crypto.erase(subkey.k);
+  return opened;
+}
+
+pub function (k: Key) seal_random(plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
+  let nonce = rand.bytes(24);
+  let sealed = k.seal_xchacha(nonce, plaintext, aad)?;
+  return Ok(nonce.concat(sealed));
+}
+
+pub function (k: Key) open_prefixed(message: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
+  if (message.len() < 24 + 16) {
+    return Err(aead.Forged);
+  }
+  return k.open_xchacha(message[0:24], message[24:], aad);
+}
+```
+
+The HChaCha20 subkey matches draft-irtf-cfrg-xchacha-03 §2.2.1.
+
+```fern test name=hchacha20-subkey
+<<*>>
+import "std/hex";
+
+function main(): i32 {
+  let bytes = __alloc_u8(32);
+  for i in 0..32 { bytes = bytes.with(i, i as u8); }
+  let Ok(k) = key(bytes) else { return 1; };
+  let Ok(input) = hex.decode("000000090000004a0000000031415927") else { return 2; };
+  let got = __hchacha20(k, input);
+  if (hex.encode(got.k) != "82413b4227b27bfed30e42508a877d73a0f9e4d58a74a853c12ec41326d3ecdc") { return 3; }
+  return 0;
 }
 ```
