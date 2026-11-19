@@ -61,6 +61,7 @@ function table(): string[][] {
     ["PIN", "PIN", "PIN", "PIN"],
     ["ADMIN", "ADMIN", "ADMIN", "ADMIN"],
     ["Tracks", "Spuren", "Pistes", "Pistas"],
+    ["Full screen", "Vollbild", "Plein écran", "Pantalla completa"],
     ["UP NEXT IN {0}", "ALS NAECHSTES IN {0}", "ENSUITE DANS {0}", "SIGUIENTE EN {0}"],
     ["SOUND", "TON", "SON", "SONIDO"],
     ["SUBTITLES", "UNTERTITEL", "SOUS-TITRES", "SUBTITULOS"],

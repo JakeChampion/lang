@@ -40,6 +40,9 @@ pub struct Device {
   finish: () => void,
   keep_screen_on: (boolean) => void,
   immersive: (boolean) => void,
+  // Turns the screen to the wide side of the video, or gives the turn back
+  // to the device.
+  turn: (boolean) => void,
   show_field: (string) => void,
   set_field: (string) => void,
   hide_field: () => void,
@@ -295,6 +298,8 @@ pub struct App {
   repeat: i32,
   sleep: i32,
   sleep_at: i64,
+  // True while the screen keeps the shape of the video.
+  turned: boolean,
   screen: i32,
   tab: i32,
   title: string,
@@ -495,7 +500,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     client: plex.Client { id: id, device: "Android", token: setting(text, "token") },
     server: no_server(), base: plex.Base { uri: setting(text, "server_uri"), token: setting(text, "server_token") },
     servers: [], states: [], probing: -1, probe_states: [], probe_at: 0i64, probes: [], rechecking: false, recheck_at: -100000i64, left: [], pin: plex.Pin { id: 0i64, code: "", token: "" }, pin_at: 0i64,
-    account: setting(text, "account"), quality: num(setting(text, "quality")), speed: speed_of(setting(text, "speed")), texts: texts.for_languages(dev.languages), shuffle: setting(text, "shuffle") == "1", repeat: num(setting(text, "repeat")) % 3, sleep: 0, sleep_at: 0i64,
+    account: setting(text, "account"), quality: num(setting(text, "quality")), speed: speed_of(setting(text, "speed")), texts: texts.for_languages(dev.languages), shuffle: setting(text, "shuffle") == "1", repeat: num(setting(text, "repeat")) % 3, sleep: 0, sleep_at: 0i64, turned: false,
     screen: ui.LOGIN, tab: 0, title: "", scroll: 0, rows: [], stack: [],
     hubs: none, results: none, sections: [], section: no_section(), items: [], total: 0, sort: 0, unwatched: false, letters: [], item: plex.no_item(), children: [],
     query: "", typing: false, search_at: 0i64, error: "",
@@ -1825,7 +1830,7 @@ function saved_row(s: App, d: Saved): ui.SavedRow {
   } else if (d.status == download.RUNNING) {
     state = download_percent(s, d.item.key).to_string() + "%";
   }
-  return ui.SavedRow { title: plex.card_title(d.item), state: state, done: d.status == download.DONE };
+  return ui.SavedRow { title: plex.card_title(d.item), detail: plex.episode_line(d.item), state: state, done: d.status == download.DONE };
 }
 
 function download_percent(s: App, key: string): i32 {
@@ -1892,7 +1897,7 @@ function got_download(own t: App, r: plex.Reply): App {
   let direct = plex.direct_with(it, t.dev.decoders, plex.remembered(it));
   let name = plex.download_name(it, !direct);
   let req = if (direct) { plex.download_request(t.client, t.base, it) } else { plex.download_transcode_request(t.client, t.base, it, plex.qualities()[t.quality], hex_id(t.dev), t.dev.decoders, plex.remembered(it)) };
-  let id = t.dev.download(req, name, plex.card_title(it));
+  let id = t.dev.download(req, name, plex.full_title(it));
   if (id < 0i64) {
     return App { ...t, error: "Android refused the download" };
   }
@@ -3108,6 +3113,10 @@ function player_control(own s: App, act: string, n: scene.Node, x: i32): App {
   if (act == "speed") {
     return cycle_speed(s);
   }
+  if (act == "turn") {
+    s.dev.turn(!s.turned);
+    return App { ...s, turned: !s.turned, dirty: true };
+  }
   if (act == "shuffle") {
     return toggle_shuffle(s);
   }
@@ -3866,7 +3875,7 @@ function pin_tick(own s: App, now: i64): App {
 pub function view(s: App): ui.View {
   let hubs = shown_hubs(s);
   let p = s.play;
-  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(s.texts, p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, skip: s.texts.text(skip_label(p)), up_next: next_title(p), up_next_secs: up_next_secs(p, s.dev.mono_ms()), badge: p.badge, sheet: p.sheet, sounds: plex.audio_tracks(p.item), subtitles: plex.subtitle_tracks(p.item), choice: p.choice, speed: speed_text(s.speed), shuffle: s.shuffle, repeat: repeat_text(s.texts, s.repeat), sleep: sleep_text(s.texts, s.sleep), has_next: p.queue.len() > 0, caption: plex.cue_at(p.cues, p.position), scrub_ms: p.scrub_ms, thumb: p.thumb, thumb_key: "bif|" + p.item.key + "|" + p.thumb_index.to_string(), art: art_of(p.item), audio: audio(p), status: s.texts.text(p.status) };
+  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(s.texts, p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, skip: s.texts.text(skip_label(p)), up_next: next_title(p), up_next_secs: up_next_secs(p, s.dev.mono_ms()), badge: p.badge, sheet: p.sheet, sounds: plex.audio_tracks(p.item), subtitles: plex.subtitle_tracks(p.item), choice: p.choice, speed: speed_text(s.speed), shuffle: s.shuffle, repeat: repeat_text(s.texts, s.repeat), sleep: sleep_text(s.texts, s.sleep), has_next: p.queue.len() > 0, caption: plex.cue_at(p.cues, p.position), scrub_ms: p.scrub_ms, thumb: p.thumb, thumb_key: "bif|" + p.item.key + "|" + p.thumb_index.to_string(), art: art_of(p.item), audio: audio(p), status: s.texts.text(p.status), turned: s.turned };
   return ui.View {
     ...ui.empty_view(s.w, s.h),
     texts: s.texts,
@@ -4167,8 +4176,18 @@ pub function step(own s: App, e: android.Event): App {
   let t = download_tick(hold_tick(search_tick(pin_tick(line_up(play_tick(event(s, e), now)), now), now), now), now);
   t = poll_probes(poll_report(poll_images(poll_api(t))));
   t = start_report(start_api(t));
-  t = draw_screen(t);
+  t = draw_screen(untwist(t));
   return start_images(t);
+}
+
+// The screen that `turn` kept in the shape of the video follows the device
+// again once the player is gone.
+function untwist(own s: App): App {
+  if (!s.turned || s.screen == ui.PLAYER) {
+    return s;
+  }
+  s.dev.turn(false);
+  return App { ...s, turned: false };
 }
 
 // Joins the workers that still run, and stops the player.

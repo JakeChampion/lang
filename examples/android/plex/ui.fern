@@ -58,10 +58,10 @@ pub function tab_screens(): i32[] {
 // with `choice` marked. `scrub_ms` is the time under a finger on the seek
 // bar, or -1, and `thumb` the preview thumbnail of that time, by
 // `thumb_key`.
-pub struct PlayerView { title: string, subtitle: string, position_ms: i64, duration_ms: i64, paused: boolean, buffering: boolean, overlay: boolean, over_video: boolean, skip: string, up_next: string, up_next_secs: i32, badge: string, sheet: boolean, sounds: plex.Track[], subtitles: plex.Track[], choice: plex.Choice, speed: string, shuffle: boolean, repeat: string, sleep: string, has_next: boolean, caption: string, scrub_ms: i64, thumb: Option[draw.Image], thumb_key: string, art: string, audio: boolean, status: string }
+pub struct PlayerView { title: string, subtitle: string, position_ms: i64, duration_ms: i64, paused: boolean, buffering: boolean, overlay: boolean, over_video: boolean, skip: string, up_next: string, up_next_secs: i32, badge: string, sheet: boolean, sounds: plex.Track[], subtitles: plex.Track[], choice: plex.Choice, speed: string, shuffle: boolean, repeat: string, sleep: string, has_next: boolean, caption: string, scrub_ms: i64, thumb: Option[draw.Image], thumb_key: string, art: string, audio: boolean, status: string, turned: boolean }
 
 pub function no_player(): PlayerView {
-  return PlayerView { title: "", subtitle: "", position_ms: 0i64, duration_ms: 0i64, paused: false, buffering: false, overlay: false, over_video: false, skip: "", up_next: "", up_next_secs: -1, badge: "", sheet: false, sounds: [], subtitles: [], choice: plex.no_choice(), speed: "1x", shuffle: false, repeat: "", sleep: "", has_next: false, caption: "", scrub_ms: -1i64, thumb: None, thumb_key: "", art: "", audio: false, status: "" };
+  return PlayerView { title: "", subtitle: "", position_ms: 0i64, duration_ms: 0i64, paused: false, buffering: false, overlay: false, over_video: false, skip: "", up_next: "", up_next_secs: -1, badge: "", sheet: false, sounds: [], subtitles: [], choice: plex.no_choice(), speed: "1x", shuffle: false, repeat: "", sleep: "", has_next: false, caption: "", scrub_ms: -1i64, thumb: None, thumb_key: "", art: "", audio: false, status: "", turned: false };
 }
 
 pub struct View {
@@ -972,7 +972,7 @@ function settings(m: Metrics, v: View): scene.Node[] {
 
 // A download on the screen of the downloads: the title of its item, its
 // state, such as "42%", and whether it is done.
-pub struct SavedRow { title: string, state: string, done: boolean }
+pub struct SavedRow { title: string, detail: string, state: string, done: boolean }
 
 // The downloads, one panel each: the title and the state, and a button
 // that stops the download or removes its file. A tap on a done download
@@ -996,7 +996,12 @@ function downloads(m: Metrics, v: View): scene.Node[] {
     let bx = m.w - 32 * m.u - bw;
     let cells = (bx - 48 * m.u) / m.cw;
     out = out.append(label(m, 32 * m.u, y + 10 * m.u, fit(r.title, cells), m.ts, look.ink()));
-    out = out.append(label(m, 32 * m.u, y + 14 * m.u + m.th, fit(r.state, cells), m.ts, look.muted()));
+    let below = y + 14 * m.u + m.th;
+    if (r.detail.len() > 0) {
+      out = out.append(label(m, 32 * m.u, below, fit(r.detail, cells), m.ts, look.ink()));
+      below += 4 * m.u + m.th;
+    }
+    out = out.append(label(m, 32 * m.u, below, fit(r.state, cells), m.ts, look.muted()));
     out = util_append(out, button(m, bx, y + (row - 8 * m.u - button_height(m)) / 2, words, false, "unsave:" + k.to_string()));
     y += row;
     k += 1;
@@ -1166,8 +1171,12 @@ function player(m: Metrics, v: View): scene.Node[] {
   out = out.append(dots(bar.x, bar.y + bar.h + 6 * m.u, at, sp, look.ink()));
   let total = plex.clock_text(p.duration_ms);
   out = out.append(dots(bar.x + bar.w - matrix.width(total, sp), bar.y + bar.h + 6 * m.u, total, sp, look.muted()));
+  let below = bar.y + bar.h + matrix.height(sp) + 24 * m.u;
   if (p.audio) {
-    out = util_append(out, music_row(m, p, bar.y + bar.h + matrix.height(sp) + 24 * m.u));
+    out = util_append(out, music_row(m, p, below));
+  } else {
+    let words = tr(m, "Full screen");
+    out = util_append(out, button(m, bar.x + bar.w - button_width(m, words), below, words, p.turned, "turn"));
   }
   out = util_append(util_append(util_append(util_append(out, caption(m, p, bar.y - 64 * m.u)), skip_button(m, p)), up_next_card(m, p)), badge(m, p));
   let right = m.w - 16 * m.u;

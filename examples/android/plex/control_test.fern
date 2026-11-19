@@ -342,6 +342,7 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     },
     set_speed: (rate: i32): void => note(log.calls, "speed " + rate.to_string()),
     pip: (on: boolean): void => note(log.calls, "pip " + on.to_string()),
+    turn: (on: boolean): void => note(log.calls, "turn " + on.to_string()),
     in_pip: (): boolean => log.pip.get(),
     watch_next: (key: string, title: string, kind: i32, at: i64, length: i64, poster: string): void => note(log.calls, "watch next " + key + " " + title + " kind=" + kind.to_string() + " at=" + at.to_string() + " poster=" + poster),
     watch_next_drop: (key: string): void => note(log.calls, "watch next drop " + key),
@@ -1146,6 +1147,31 @@ function test_resume_takes_remembered_sound(): test.TestOutcome {
 // The speed button gives the next rate. The player takes it at once while
 // it plays. A paused player takes it at the next start, because a rate
 // starts a paused player. The rate stays in the settings.
+// The Full screen button keeps the screen in the shape of the video, and a
+// second tap gives the turn back to the device. Back from a turned player
+// gives it back too.
+function test_full_screen_button(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let playing = tap(video_drawn(log, f), log, 400i64, f, "overlay");
+  if (node(playing, "turn").is_none()) {
+    return test.fail("no Full screen button over a video");
+  }
+  let turned = tap(playing, log, 500i64, f, "turn");
+  if (!has_call(log, "turn true") || !turned.turned) {
+    return test.fail("Full screen did not turn the screen: " + log.calls.get().join(" | "));
+  }
+  let back = tap(turned, log, 600i64, f, "turn");
+  if (!has_call(log, "turn false") || back.turned) {
+    return test.fail("a second tap did not give the turn back: " + log.calls.get().join(" | "));
+  }
+  let again = tap(back, log, 700i64, f, "turn");
+  let left = settle(at(at(again, log, 800i64, f, android.Key(4, 0)), log, 800i64, f, android.Key(4, 1)), log, 800i64, f);
+  let gave = log.calls.get().filter((c: string): boolean => c == "turn false").len();
+  return test.assert_eq((left.screen != ui.PLAYER && !left.turned && gave == 2).to_string(), "true");
+}
+
 function test_speed_button(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -1623,6 +1649,11 @@ function test_download_all_and_the_screen(): test.TestOutcome {
   let list = tap(settings, log, 500i64, f, "downloads");
   if (list.screen != ui.DOWNLOADS || !says(list, "Waiting") || node(list, "saved:0").is_some() || node(list, "unsave:1").is_none()) {
     return test.fail("the screen of the downloads");
+  }
+  // The fake server gives 501 the metadata of a movie, so the second row
+  // is a movie with its year.
+  if (!says(list, "S1 E1 · Pilot") || !says(list, "2010")) {
+    return test.fail("the rows of the downloads do not name each episode: " + list.nodes.map((n: scene.Node): string => n.say).filter((t: string): boolean => t.len() > 0).join(" | "));
   }
   log.progress.set(download.Progress { status: download.DONE, done: 1000i64, total: 1000i64 });
   let done = at(list, log, 5000i64, f, android.Tick);
@@ -2174,6 +2205,7 @@ function main(): i32 {
   r = r.it("the sheet of tracks changes the sound and burns subtitles", test_tracks_sheet);
   r = r.it("a play again takes the sound that the server remembers", test_resume_takes_remembered_sound);
   r = r.it("the speed button sets the rate, also after a pause", test_speed_button);
+  r = r.it("Full screen turns the screen to the video, and back", test_full_screen_button);
   r = r.it("Auto takes a lower quality after two stalls in a minute", test_auto_quality_steps_down);
   r = r.it("the texts are in the language of the person", test_texts_in_the_language_of_the_person);
   r = r.it("Play on an artist plays all of its tracks", test_artist_plays_all);

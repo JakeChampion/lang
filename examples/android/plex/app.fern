@@ -481,6 +481,7 @@ function device(ctx: usize, ps: Players, gpu: Cell[Option[Gpu]], media: Media): 
     select_track: (i: i32): boolean => exoplayer.select_track(ctx, playing(ps), i),
     set_speed: (rate: i32): void => { let ok = exoplayer.set_speed(ctx, playing(ps), rate as f32 / 100.0f32); },
     pip: (on: boolean): void => pip(ctx, playing(ps), on),
+    turn: (on: boolean): void => turn(ctx, playing(ps), on),
     in_pip: (): boolean => android.in_pip(ctx),
     watch_next: (key: string, title: string, kind: i32, at: i64, length: i64, poster: string): void => watch_next(ctx, key, title, kind, at, length, poster),
     watch_next_drop: (key: string): void => watchnext.drop(ctx, key),
@@ -600,6 +601,21 @@ function program_kind(kind: string): i32 {
     return watchnext.ARTIST;
   }
   return watchnext.MOVIE;
+}
+
+// Keeps the screen in the shape of the video: landscape for a wide one,
+// portrait for a tall one. Off, the screen follows the device again.
+function turn(ctx: usize, p: exoplayer.Player, on: boolean): void {
+  if (!on) {
+    android.orientation(ctx, android.ORIENTATION_ANY);
+    return;
+  }
+  let (w, h) = exoplayer.video_size(ctx, p);
+  if (h > w) {
+    android.orientation(ctx, android.ORIENTATION_PORTRAIT);
+    return;
+  }
+  android.orientation(ctx, android.ORIENTATION_LANDSCAPE);
 }
 
 // Gives Android the shape of the video for a picture-in-picture window.

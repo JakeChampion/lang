@@ -62,6 +62,11 @@ Playback:
   0.75x. The pitch of the sound stays the same. Each tap gives the next
   speed, and the app keeps it for the next items.
 
+- The Full screen button under the seek bar turns the screen to the wide
+  side of the video: landscape for a wide video, portrait for a tall one.
+  The screen stays turned for the next episode. A second tap, or the end
+  of the player, gives the turn back to the device.
+
 An album plays its tracks in order, and the Next button goes to the next
 track. Shuffle plays the tracks
 that wait in a random order. Repeat plays the album again after its last
@@ -188,7 +193,8 @@ answers again.
 
 Download all in the menu of a show, a season, an artist or an album
 downloads each of its episodes or tracks. Downloads in the settings
-opens the list of the downloads, with the state of each one. A tap on a
+opens the list of the downloads, with the state of each one. A row of an
+episode shows its show, its code and its title, such as "S1 E3 · Title". A tap on a
 done download plays it, and its button removes it.
 
 TalkBack reads each screen. The app gives the screen reader each button

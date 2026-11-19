@@ -825,6 +825,24 @@ pub function card_subtitle(it: Item): string {
   return "";
 }
 
+// The full name of the item, for a download: "Show · S1 E3 · Title" for an
+// episode, else its title.
+pub function full_title(it: Item): string {
+  if (it.kind == "episode" && it.grandparent.len() > 0) {
+    return it.grandparent + " · " + episode_line(it);
+  }
+  return it.title;
+}
+
+// The line under the name of an item in a list: the code and the title of
+// an episode, else the second line of its card.
+pub function episode_line(it: Item): string {
+  if (it.kind == "episode") {
+    return episode_code(it) + " · " + it.title;
+  }
+  return card_subtitle(it);
+}
+
 pub function episode_code(it: Item): string {
   return "S" + it.parent_index.to_string() + " E" + it.index.to_string();
 }
