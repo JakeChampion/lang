@@ -58,6 +58,10 @@ function main(): i32 {
 
 var shapeTestRe = regexp.MustCompile(`cmp[lq] \$(\d+), `)
 
+// The test of a variant with no field compares a value with the address of
+// its static box, whose label holds its shape.
+var staticTestRe = regexp.MustCompile(`leaq \.Kv(\d+)\(%rip\)`)
+
 // A narrow enum field shares a word with its neighbours, so a match tests its index with a byte compare.
 var indexTestRe = regexp.MustCompile(`cmpb \$(\d+), `)
 
@@ -78,7 +82,8 @@ func variantTests(body string, index []string) map[string]int {
 		names[(i+1)<<16|shape.words] = shape.name
 	}
 	out := map[string]int{}
-	for _, m := range shapeTestRe.FindAllStringSubmatch(body, -1) {
+	matches := append(shapeTestRe.FindAllStringSubmatch(body, -1), staticTestRe.FindAllStringSubmatch(body, -1)...)
+	for _, m := range matches {
 		tag, _ := strconv.Atoi(m[1])
 		if name, ok := names[tag]; ok {
 			out[name]++
@@ -100,9 +105,11 @@ func variantTests(body string, index []string) map[string]int {
 func TestSelfHostDecidedBranchShapeX86_64(t *testing.T) {
 	emit, run := x86ShapeHarness(t)
 	asm := emit(t, decidedBranchShapeSrc)
+	// Leaf and Blank have no field, so the test of Node and of Patch is the
+	// compare with their static box.
 	want := map[string]map[string]int{
-		"kind":   {"Tree$Node": 1, "Color$Red": 1},
-		"weight": {"Swatch$Patch": 1, "Shade$Light": 1, "Shade$Mid": 1},
+		"kind":   {"Tree$Leaf": 1, "Color$Red": 1},
+		"weight": {"Swatch$Blank": 1, "Shade$Light": 1, "Shade$Mid": 1},
 	}
 	index := map[string][]string{
 		"kind":   {"Color$Red", "Color$Black"},
