@@ -78,9 +78,11 @@ import "std/jni";
 
 The kinds from 19 to 23 belong to this module. The bits above the low 8 of the kind hold the slot of the player. A `Failed` event packs `what` in the high 32 bits of its argument and `extra` in the low 32 bits. An `Info` event has `what` as its argument.
 
+`Cues` comes only from `std/android/exoplayer`, when the image subtitles change. Its `Info` code is 1000, which MediaPlayer does not use.
+
 ```fern
 <<events>>=
-pub enum Change { Prepared, Completed, Failed(i32, i32), Buffering(boolean), Rendering, Seeked, AudioNotPlaying, VideoNotPlaying }
+pub enum Change { Prepared, Completed, Failed(i32, i32), Buffering(boolean), Rendering, Seeked, AudioNotPlaying, VideoNotPlaying, Cues }
 
 const PREPARED: i32 = 19;
 
@@ -105,6 +107,8 @@ const INFO_AUDIO_NOT_PLAYING: i32 = 804;
 
 const INFO_VIDEO_NOT_PLAYING: i32 = 805;
 
+const INFO_CUES: i32 = 1000;
+
 function info_change(what: i32): Option[Change] {
   if (what == INFO_RENDERING) {
     return Some(Rendering);
@@ -120,6 +124,9 @@ function info_change(what: i32): Option[Change] {
   }
   if (what == INFO_VIDEO_NOT_PLAYING) {
     return Some(VideoNotPlaying);
+  }
+  if (what == INFO_CUES) {
+    return Some(Cues);
   }
   return None;
 }
@@ -153,6 +160,9 @@ pub function posted(c: Change, slot: i32): (i32, usize) {
     },
     VideoNotPlaying => {
       return (INFO | tag, INFO_VIDEO_NOT_PLAYING as usize);
+    },
+    Cues => {
+      return (INFO | tag, INFO_CUES as usize);
     }
   }
 }

@@ -209,7 +209,9 @@ pub function parse_pin(body: string): Option[Pin] {
   return Some(Pin { id: id, code: str(d, r, "code"), token: str(d, r, "authToken") });
 }
 
-pub struct Account { name: string, email: string }
+// The account at plex.tv. `language` is the default language of its sound,
+// and `subtitles` is the mode of its subtitles, one of SUBS_*, or -1.
+pub struct Account { name: string, email: string, language: string, subtitles: i32 }
 
 pub function user_request(c: Client): Request {
   return get(c, PLEX_TV + "/api/v2/user");
@@ -256,7 +258,7 @@ pub function parse_switch(body: string): string {
 
 pub function parse_account(body: string): Account {
   let Ok(d) = json.parse_document(body) else {
-    return Account { name: "", email: "" };
+    return Account { name: "", email: "", language: "", subtitles: -1 };
   };
   let r = d.root();
   let name = str(d, r, "friendlyName");
@@ -266,7 +268,19 @@ pub function parse_account(body: string): Account {
   if (name.len() == 0) {
     name = str(d, r, "title");
   }
-  return Account { name: name, email: str(d, r, "email") };
+  let language = "";
+  let subtitles = -1;
+  if let Some(profile) = d.get(r, "profile") {
+    language = str(d, profile, "defaultAudioLanguage");
+    if let Some(mode) = d.get(profile, "autoSelectSubtitle") {
+      if let Some(m) = d.as_i64(mode) {
+        if (m >= 0i64 && m <= 2i64) {
+          subtitles = m as i32;
+        }
+      }
+    }
+  }
+  return Account { name: name, email: str(d, r, "email"), language: language, subtitles: subtitles };
 }
 
 // --- plex.tv: the servers of the account
@@ -583,14 +597,17 @@ pub function parse_sections(body: string): Section[] {
 // The file of a version of an item. `key` is its address on the server.
 // A sound or subtitle track of a file. `kind` is 2 for sound and 3 for
 // subtitles. `selected` is true for the track that the server remembers,
-// and `external` is true for a subtitle file beside the video.
-pub struct Track { id: string, kind: i32, title: string, language: string, codec: string, selected: boolean, external: boolean, key: string }
+// and `external` is true for a subtitle file beside the video. A `forced`
+// subtitle track has only the lines in a foreign language.
+pub struct Track { id: string, kind: i32, title: string, language: string, codec: string, selected: boolean, external: boolean, key: string, forced: boolean }
 
 // A file of a version of an item. `indexes` is "sd" when the server holds
 // preview thumbnails of it.
 pub struct Part { id: string, key: string, container: string, size: i64, indexes: string, tracks: Track[] }
 
-pub struct Media { container: string, video: string, audio: string, resolution: string, bitrate: i32, width: i32, height: i32, parts: Part[] }
+// `hdr` is true for a video in HDR10, HLG or Dolby Vision, and `frame_rate`
+// is the frames of its video each second, or 0.
+pub struct Media { container: string, video: string, audio: string, resolution: string, bitrate: i32, width: i32, height: i32, hdr: boolean, frame_rate: f32, parts: Part[] }
 
 // An item of a library: a movie, a show, a season, an episode, an artist,
 // an album or a track. `key` is its ratingKey.
@@ -659,9 +676,33 @@ function media_of(d: json.Document, n: i32): Media[] {
     for p in elements(d, m, "Part") {
       parts = parts.append(Part { id: int(d, p, "id").to_string(), key: str(d, p, "key"), container: str(d, p, "container"), size: int(d, p, "size"), indexes: str(d, p, "indexes"), tracks: tracks_of(d, p) });
     }
-    out = out.append(Media { container: str(d, m, "container"), video: str(d, m, "videoCodec"), audio: str(d, m, "audioCodec"), resolution: str(d, m, "videoResolution"), bitrate: int(d, m, "bitrate") as i32, width: int(d, m, "width") as i32, height: int(d, m, "height") as i32, parts: parts });
+    let (hdr, rate) = picture_of(d, m);
+    out = out.append(Media { container: str(d, m, "container"), video: str(d, m, "videoCodec"), audio: str(d, m, "audioCodec"), resolution: str(d, m, "videoResolution"), bitrate: int(d, m, "bitrate") as i32, width: int(d, m, "width") as i32, height: int(d, m, "height") as i32, hdr: hdr, frame_rate: rate, parts: parts });
   }
   return out;
+}
+
+// Whether the video stream of the first part of the version at `m` is in
+// HDR, and its frame rate. PQ is the curve of HDR10 and HDR10+, and
+// ARIB STD-B67 is HLG.
+function picture_of(d: json.Document, m: i32): (boolean, f32) {
+  for p in elements(d, m, "Part") {
+    for t in elements(d, p, "Stream") {
+      if (int(d, t, "streamType") == 1i64) {
+        let curve = str(d, t, "colorTrc");
+        let hdr = curve == "smpte2084" || curve == "arib-std-b67" || flag(d, t, "DOVIPresent");
+        let rate = 0.0f32;
+        if let Some(v) = d.get(t, "frameRate") {
+          if let Some(f) = d.as_f64(v) {
+            rate = f as f32;
+          }
+        }
+        return (hdr, rate);
+      }
+    }
+    return (false, 0.0f32);
+  }
+  return (false, 0.0f32);
 }
 
 function rating_of(d: json.Document, n: i32): string {
@@ -1085,13 +1126,15 @@ pub function direct_playable(it: Item, decoders: string[]): boolean {
   return direct_with(it, decoders, no_choice());
 }
 
-// As direct_playable, with the sound of `choice`.
+// As direct_playable, with the sound of `choice`. The app draws the video
+// on a window in SDR, so a video in HDR plays as a transcode, in which the
+// server maps its colours to SDR.
 pub function direct_with(it: Item, decoders: string[], choice: Choice): boolean {
   if (it.media.len() == 0 || it.media[0].parts.len() == 0) {
     return false;
   }
   let m = it.media[0];
-  return direct_container(m.container) && decodes(decoders, m.video) && decodes(decoders, audio_codec(it, choice));
+  return !m.hdr && direct_container(m.container) && decodes(decoders, m.video) && decodes(decoders, audio_codec(it, choice));
 }
 
 // The request that downloads the file of the first version of the item as
@@ -1123,8 +1166,9 @@ pub function transcoded_file(it: Item, name: string): boolean {
 }
 
 // The item as its downloaded file holds it. A transcode holds one sound
-// track, the one that it played. The app draws no image subtitle from a
-// file: a transcode burned it in, and the player shows none.
+// track, the one that it played, and no subtitle of images: it burned the
+// chosen one in. A file as it is keeps each subtitle of images inside it,
+// which the player draws.
 pub function file_item(it: Item, transcoded: boolean): Item {
   if (it.media.len() == 0 || it.media[0].parts.len() == 0) {
     return it;
@@ -1140,7 +1184,7 @@ pub function file_item(it: Item, transcoded: boolean): Item {
       if (t.id == sound) {
         kept = kept.append(Track { ...t, selected: true });
       }
-    } else if (t.kind != 3 || text_codec(t.codec)) {
+    } else if (t.kind != 3 || text_codec(t.codec) || !transcoded && !t.external && image_codec(t.codec)) {
       kept = kept.append(t);
     }
   }
@@ -1155,19 +1199,22 @@ pub function direct_url(b: Base, it: Item, session: string): string {
 }
 
 // What the client asks the transcoder to make: H.264 video and AAC sound,
-// which each Android device decodes. A stream is HLS in
+// which each Android device decodes. The sound can also be Dolby Digital
+// and Dolby Digital Plus when the device plays them, so the server copies
+// a surround track. A stream is HLS in
 // MPEG-TS, and a download is one Matroska file over HTTP. HEVC never goes
 // in MPEG-TS: a hardware HEVC encode into TS can change its picture
 // parameters between slices. A quality with a bitrate adds an upper bound
 // of the video bitrate. The server reads this value as a query of its own,
 // so the parameter escapes its characters once more.
-pub function profile_extra(q: Quality, protocol: string): string {
+pub function profile_extra(q: Quality, protocol: string, decoders: string[]): string {
   let parts = ["add-settings(DirectPlayStreamSelection=true)"];
   if (q.kbps > 0) {
     parts = parts.append("add-limitation(scope=videoCodec&scopeName=*&type=upperBound&name=video.bitrate&value=" + q.kbps.to_string() + "&replace=true)");
   }
   let container = if (protocol == "hls") { "mpegts" } else { "mkv" };
-  parts = parts.append("add-transcode-target(type=videoProfile&context=streaming&protocol=" + protocol + "&container=" + container + "&videoCodec=h264&audioCodec=aac)");
+  let sounds = ["aac", "ac3", "eac3"].filter((c: string): boolean => c == "aac" || decodes(decoders, c));
+  parts = parts.append("add-transcode-target(type=videoProfile&context=streaming&protocol=" + protocol + "&container=" + container + "&videoCodec=h264&audioCodec=" + sounds.join(",") + ")");
   return parts.join("+");
 }
 
@@ -1176,19 +1223,19 @@ pub function profile_extra(q: Quality, protocol: string): string {
 // segments at the seek: an offset at the start can leave the first segment
 // open with no data. `session` names the transcode. The client is Generic,
 // the one platform that the transcoder takes with no targets of its own.
-pub function hls_url(c: Client, b: Base, it: Item, q: Quality, session: string, choice: Choice): string {
-  return transcode_url(c, b, it, q, session, choice, "hls");
+pub function hls_url(c: Client, b: Base, it: Item, q: Quality, session: string, decoders: string[], choice: Choice): string {
+  return transcode_url(c, b, it, q, session, decoders, choice, "hls");
 }
 
 // The request of one Matroska file that the server makes from the whole
 // item, for a download. The download manager of Android cannot save HLS.
 pub function download_transcode_request(c: Client, b: Base, it: Item, q: Quality, session: string, decoders: string[], choice: Choice): Request {
-  return get(c.with_token(b.token), transcode_url(c, b, it, transcode_quality(it, q, decoders), session, choice, "http"));
+  return get(c.with_token(b.token), transcode_url(c, b, it, transcode_quality(it, q, decoders), session, decoders, choice, "http"));
 }
 
 // The address of a transcode of the whole item with `protocol`: "hls" for
 // a stream, or "http" for one file.
-function transcode_url(c: Client, b: Base, it: Item, q: Quality, session: string, choice: Choice, protocol: string): string {
+function transcode_url(c: Client, b: Base, it: Item, q: Quality, session: string, decoders: string[], choice: Choice, protocol: string): string {
   let copy = "0";
   if (q.kbps == 0) {
     copy = "1";
@@ -1210,7 +1257,7 @@ function transcode_url(c: Client, b: Base, it: Item, q: Quality, session: string
     ("session", session),
     ("X-Plex-Session-Identifier", session),
     ("X-Plex-Client-Profile-Name", "Generic"),
-    ("X-Plex-Client-Profile-Extra", profile_extra(q, protocol)),
+    ("X-Plex-Client-Profile-Extra", profile_extra(q, protocol, decoders)),
     ("X-Plex-Client-Identifier", c.id),
     ("X-Plex-Product", PRODUCT),
     ("X-Plex-Version", VERSION),
@@ -1248,11 +1295,13 @@ pub function stop_transcode(c: Client, b: Base, session: string): Request {
 // to when it is ready.
 pub struct Stream { url: string, transcode: boolean, offset_ms: i64 }
 
-// The phone plays the file as it is with no subtitles, at Original quality,
-// when it decodes the video and the chosen sound. Subtitles burn in a
-// transcode.
+// The phone plays the file as it is at Original quality, when it decodes
+// the video and the chosen sound. The app draws a text subtitle, and the
+// player draws a subtitle of images inside the file. Other subtitles burn
+// in a transcode.
 pub function stream_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64, session: string, decoders: string[], choice: Choice): Stream {
-  if (q.kbps == 0 && (choice.subtitle.len() == 0 || text_subtitle(it, choice).is_some()) && direct_with(it, decoders, choice)) {
+  let shown = choice.subtitle.len() == 0 || text_subtitle(it, choice).is_some() || image_subtitle_index(it, choice) >= 0;
+  if (q.kbps == 0 && shown && direct_with(it, decoders, choice)) {
     return Stream { url: direct_url(b, it, session), transcode: false, offset_ms: offset_ms };
   }
   return transcode_for(c, b, it, q, offset_ms, session, decoders, choice);
@@ -1261,7 +1310,7 @@ pub function stream_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64
 // A transcode of the item at quality `q`. At Original quality the server
 // copies H.264 video that the phone decodes, and converts the rest.
 pub function transcode_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64, session: string, decoders: string[], choice: Choice): Stream {
-  return Stream { url: hls_url(c, b, it, transcode_quality(it, q, decoders), session, choice), transcode: true, offset_ms: offset_ms };
+  return Stream { url: hls_url(c, b, it, transcode_quality(it, q, decoders), session, decoders, choice), transcode: true, offset_ms: offset_ms };
 }
 
 // The quality of a transcode at `q`. A transcode at Original or Auto
@@ -1283,7 +1332,7 @@ function tracks_of(d: json.Document, n: i32): Track[] {
       if (title.len() == 0) {
         title = str(d, t, "language");
       }
-      out = out.append(Track { id: int(d, t, "id").to_string(), kind: kind, title: title, language: str(d, t, "languageCode"), codec: str(d, t, "codec"), selected: flag(d, t, "selected"), external: str(d, t, "key").len() > 0, key: str(d, t, "key") });
+      out = out.append(Track { id: int(d, t, "id").to_string(), kind: kind, title: title, language: str(d, t, "languageCode"), codec: str(d, t, "codec"), selected: flag(d, t, "selected"), external: str(d, t, "key").len() > 0, key: str(d, t, "key"), forced: flag(d, t, "forced") });
     }
   }
   return out;
@@ -1327,6 +1376,107 @@ pub function no_choice(): Choice {
 // The choice that the server remembers for an item.
 pub function remembered(it: Item): Choice {
   return Choice { audio: selected_id(audio_tracks(it)), subtitle: selected_id(subtitle_tracks(it)) };
+}
+
+// A language that the settings offer: its two-letter code, the codes that
+// a server gives a track in it, and its own name.
+pub struct Language { code: string, codes: string[], name: string }
+
+pub function languages(): Language[] {
+  return [
+    Language { code: "en", codes: ["eng"], name: "English" },
+    Language { code: "fr", codes: ["fra", "fre"], name: "Français" },
+    Language { code: "de", codes: ["deu", "ger"], name: "Deutsch" },
+    Language { code: "es", codes: ["spa"], name: "Español" },
+    Language { code: "it", codes: ["ita"], name: "Italiano" },
+    Language { code: "pt", codes: ["por"], name: "Português" },
+    Language { code: "nl", codes: ["nld", "dut"], name: "Nederlands" },
+    Language { code: "sv", codes: ["swe"], name: "Svenska" },
+    Language { code: "da", codes: ["dan"], name: "Dansk" },
+    Language { code: "no", codes: ["nor", "nob", "nno"], name: "Norsk" },
+    Language { code: "fi", codes: ["fin"], name: "Suomi" },
+    Language { code: "pl", codes: ["pol"], name: "Polski" },
+    Language { code: "ru", codes: ["rus"], name: "Русский" },
+    Language { code: "ja", codes: ["jpn"], name: "日本語" },
+    Language { code: "ko", codes: ["kor"], name: "한국어" },
+    Language { code: "zh", codes: ["zho", "chi"], name: "中文" },
+  ];
+}
+
+// The two-letter code of a language code such as "en-GB" or "eng", or ""
+// for a language that the settings do not offer.
+pub function language_code(code: string): string {
+  let short = code.split("-")[0].to_ascii_lower();
+  for l in languages() {
+    if (l.code == short || l.codes.contains(short)) {
+      return l.code;
+    }
+  }
+  return "";
+}
+
+// The name of the language with the two-letter code `code`, or "".
+pub function language_name(code: string): string {
+  for l in languages() {
+    if (l.code == code) {
+      return l.name;
+    }
+  }
+  return "";
+}
+
+pub function speaks(t: Track, code: string): boolean {
+  return code.len() > 0 && language_code(t.language) == code;
+}
+
+// The modes of the subtitles: none, only while the sound is in another
+// language than the one of the settings, and always.
+pub const SUBS_OFF: i32 = 0;
+
+pub const SUBS_FOREIGN: i32 = 1;
+
+pub const SUBS_ALWAYS: i32 = 2;
+
+// The tracks for the language `lang`, a two-letter code, with the
+// subtitles of the mode `subs`. The sound is the track that the server
+// remembers when it is in `lang`, else the first track in `lang` that is
+// no commentary. A subtitle in `lang` shows always, or in SUBS_FOREIGN
+// while the sound is in another language. Otherwise a forced subtitle in
+// `lang` shows the lines in a foreign language. A wanted subtitle with
+// none in `lang` is the one that the server remembers. With no track in
+// `lang`, the choice is the one that the server remembers.
+pub function preferred(it: Item, lang: string, subs: i32): Choice {
+  let base = remembered(it);
+  let sounds = audio_tracks(it);
+  let texts = subtitle_tracks(it).filter((t: Track): boolean => speaks(t, lang));
+  if (!sounds.any((t: Track): boolean => speaks(t, lang)) && texts.len() == 0) {
+    return base;
+  }
+  let audio = base.audio;
+  if (!sounds.any((t: Track): boolean => t.id == audio && speaks(t, lang))) {
+    let in_lang = sounds.filter((t: Track): boolean => speaks(t, lang));
+    let plain = in_lang.filter((t: Track): boolean => !t.title.to_ascii_lower().contains("comment"));
+    if (plain.len() > 0) {
+      audio = plain[0].id;
+    } else if (in_lang.len() > 0) {
+      audio = in_lang[0].id;
+    }
+  }
+  let heard = sounds.any((t: Track): boolean => t.id == audio && speaks(t, lang));
+  let full = texts.filter((t: Track): boolean => !t.forced);
+  let forced = texts.filter((t: Track): boolean => t.forced);
+  let sub = "";
+  if (subs == SUBS_ALWAYS || subs == SUBS_FOREIGN && !heard) {
+    sub = base.subtitle;
+    if (full.len() > 0) {
+      sub = full[0].id;
+    } else if (forced.len() > 0) {
+      sub = forced[0].id;
+    }
+  } else if (forced.len() > 0) {
+    sub = forced[0].id;
+  }
+  return Choice { audio: audio, subtitle: sub };
 }
 
 // Makes the server remember a choice for each part of the item. A
@@ -1397,6 +1547,27 @@ pub function text_subtitle(it: Item, choice: Choice): Option[Track] {
 // True for the codec of a subtitle that the app draws itself.
 function text_codec(codec: string): boolean {
   return ["srt", "subrip", "vtt", "webvtt", "ass", "ssa"].contains(codec);
+}
+
+// True for the codec of a subtitle of images that the player decodes from
+// the file.
+function image_codec(codec: string): boolean {
+  return ["pgs", "hdmv_pgs_subtitle", "vobsub", "dvd_subtitle", "dvb_subtitle"].contains(codec);
+}
+
+// The place of the chosen subtitle among the subtitle tracks inside the
+// file, when it is a subtitle of images that the player shows, or -1.
+pub function image_subtitle_index(it: Item, choice: Choice): i32 {
+  if (choice.subtitle.len() == 0) {
+    return -1;
+  }
+  let inside = subtitle_tracks(it).filter((t: Track): boolean => !t.external);
+  for k in 0..inside.len() {
+    if (inside[k].id == choice.subtitle && image_codec(inside[k].codec)) {
+      return k;
+    }
+  }
+  return -1;
 }
 
 // The text of a subtitle track. The server gives a track inside the file

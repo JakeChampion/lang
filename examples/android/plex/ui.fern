@@ -57,11 +57,17 @@ pub function tab_screens(): i32[] {
 // `sheet` is true when the sheet of the sound and subtitle tracks shows,
 // with `choice` marked. `scrub_ms` is the time under a finger on the seek
 // bar, or -1, and `thumb` the preview thumbnail of that time, by
-// `thumb_key`.
-pub struct PlayerView { title: string, subtitle: string, position_ms: i64, duration_ms: i64, paused: boolean, buffering: boolean, overlay: boolean, over_video: boolean, skip: string, up_next: string, up_next_secs: i32, badge: string, sheet: boolean, sounds: plex.Track[], subtitles: plex.Track[], choice: plex.Choice, speed: string, shuffle: boolean, repeat: string, sleep: string, has_next: boolean, caption: string, scrub_ms: i64, thumb: Option[draw.Image], thumb_key: string, art: string, audio: boolean, status: string, turned: boolean }
+// `thumb_key`. `pictures` are the subtitles of images that show over the
+// video of `video_w` by `video_h` pixels. `delay` is the delay of the text
+// subtitle as the sheet shows it, or "" with no text subtitle.
+// `caption_size` is the size of the text of the subtitles: small, middle
+// or large. `caption_box` puts a dark panel behind them, else a shadow.
+pub struct Picture { image: draw.Image, key: string, x: f32, y: f32, w: f32, h: f32 }
+
+pub struct PlayerView { title: string, subtitle: string, position_ms: i64, duration_ms: i64, paused: boolean, buffering: boolean, overlay: boolean, over_video: boolean, skip: string, up_next: string, up_next_secs: i32, badge: string, sheet: boolean, sounds: plex.Track[], subtitles: plex.Track[], choice: plex.Choice, speed: string, shuffle: boolean, repeat: string, sleep: string, has_next: boolean, caption: string, scrub_ms: i64, thumb: Option[draw.Image], thumb_key: string, art: string, audio: boolean, status: string, turned: boolean, pictures: Picture[], video_w: i32, video_h: i32, delay: string, caption_size: i32, caption_box: boolean }
 
 pub function no_player(): PlayerView {
-  return PlayerView { title: "", subtitle: "", position_ms: 0i64, duration_ms: 0i64, paused: false, buffering: false, overlay: false, over_video: false, skip: "", up_next: "", up_next_secs: -1, badge: "", sheet: false, sounds: [], subtitles: [], choice: plex.no_choice(), speed: "1x", shuffle: false, repeat: "", sleep: "", has_next: false, caption: "", scrub_ms: -1i64, thumb: None, thumb_key: "", art: "", audio: false, status: "", turned: false };
+  return PlayerView { title: "", subtitle: "", position_ms: 0i64, duration_ms: 0i64, paused: false, buffering: false, overlay: false, over_video: false, skip: "", up_next: "", up_next_secs: -1, badge: "", sheet: false, sounds: [], subtitles: [], choice: plex.no_choice(), speed: "1x", shuffle: false, repeat: "", sleep: "", has_next: false, caption: "", scrub_ms: -1i64, thumb: None, thumb_key: "", art: "", audio: false, status: "", turned: false, pictures: [], video_w: 0, video_h: 0, delay: "", caption_size: 0, caption_box: true };
 }
 
 pub struct View {
@@ -87,6 +93,8 @@ pub struct View {
   // download that came in percent, or -1 when it has none.
   menu: plex.Item,
   menu_download: i32,
+  // True when the show of the menu keeps its next episodes downloaded.
+  menu_smart: boolean,
   // The rows of the downloads that are not done, and the numbers of the
   // downloads that are done and of all of them.
   saved: SavedRow[],
@@ -113,6 +121,16 @@ pub struct View {
   account: string,
   server_name: string,
   quality: string,
+  // The language of the tracks and the mode of the subtitles, as the
+  // settings show them.
+  language: string,
+  subtitles: string,
+  // The size of the text subtitles and what is behind them.
+  caption_size: string,
+  caption_back: string,
+  // The number of episodes that a smart download keeps, as the settings
+  // show it.
+  smart: string,
   player: PlayerView,
   base: plex.Base,
   loading: boolean,
@@ -128,7 +146,7 @@ pub function english(): i18n.Strings {
 }
 
 pub function empty_view(w: i32, h: i32): View {
-  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, saved: [], saved_done: 0, saved_total: 0, now_playing: "", users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", offline: false, servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english(), local: false };
+  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, menu_smart: false, saved: [], saved_done: 0, saved_total: 0, now_playing: "", users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", offline: false, servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", language: "", subtitles: "", caption_size: "", caption_back: "", smart: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english(), local: false };
 }
 
 // --- metrics
@@ -963,6 +981,11 @@ function settings(m: Metrics, v: View): scene.Node[] {
     (tr(m, "User"), v.account, "users"),
     (tr(m, "Server"), v.server_name, "servers"),
     (tr(m, "Quality"), v.quality, "quality"),
+    (tr(m, "Language"), v.language, "lang"),
+    (tr(m, "Subtitles"), v.subtitles, "subs"),
+    (tr(m, "Subtitle size"), v.caption_size, "capsize"),
+    (tr(m, "Subtitle background"), v.caption_back, "capbox"),
+    (tr(m, "Smart downloads"), v.smart, "smartcount"),
     (tr(m, "Downloads"), m.texts.format("{0} of {1} done", [v.saved_done.to_string(), v.saved_total.to_string()]), "downloads"),
     (tr(m, "Sign out"), "", "signout"),
   ];
@@ -1034,6 +1057,15 @@ function downloads(m: Metrics, v: View): scene.Node[] {
 
 // The height of the content of the screen of the downloads, for the limit
 // of its scroll.
+// The height of the content of the settings, from the top of the list.
+pub function settings_height(m: Metrics, v: View): i32 {
+  let bottom = 0;
+  for n in settings(m, View { ...v, scroll: 0 }) {
+    bottom = bottom.max(n.y + n.h);
+  }
+  return bottom - top_height(m) + 16 * m.u;
+}
+
 pub function downloads_height(m: Metrics, v: View): i32 {
   let h = v.hubs.len() * hub_row_height(m) + 16 * m.u;
   if (v.saved.len() > 0) {
@@ -1131,14 +1163,15 @@ pub function thumb_size(m: Metrics): (i32, i32) {
 function player(m: Metrics, v: View): scene.Node[] {
   let p = v.player;
   if (!p.overlay) {
-    return util_append(util_append(util_append(util_append([mk(0, 0, m.w, m.h, scene.Blank, "overlay", "")], caption(m, p, m.h - m.bottom - 24 * m.u)), skip_button(m, p)), up_next_card(m, p)), badge(m, p));
+    let under = util_append([mk(0, 0, m.w, m.h, scene.Blank, "overlay", "")], pictures(m, p));
+    return util_append(util_append(util_append(util_append(under, caption(m, p, m.h - m.bottom - 24 * m.u)), skip_button(m, p)), up_next_card(m, p)), badge(m, p));
   }
   // Over the video, a dark veil keeps the controls readable, and a tap
   // outside them hides them. Over the art, such a tap plays.
   let out: scene.Node[] = [];
   let outside = "toggle";
   if (p.over_video) {
-    out = [fill(0, 0, m.w, m.h, draw.rgba(0, 0, 0, 110), 0)];
+    out = pictures(m, p).append(fill(0, 0, m.w, m.h, draw.rgba(0, 0, 0, 110), 0));
     outside = "hide";
   } else {
     out = [fill(0, 0, m.w, m.h, look.bg(), 0)];
@@ -1276,24 +1309,58 @@ function music_height(m: Metrics, p: PlayerView): i32 {
   return rows * (button_height(m) + gap);
 }
 
+// The size of a video of w by h pixels that fills a box of bw by bh with
+// its shape kept, as the GPU draws it.
+pub function fit_size(w: i32, h: i32, bw: i32, bh: i32): (i32, i32) {
+  if (w <= 0 || h <= 0) {
+    return (bw, bh);
+  }
+  if (w as i64 * (bh as i64) > bw as i64 * (h as i64)) {
+    return (bw, (bw as i64 * (h as i64) / (w as i64)) as i32);
+  }
+  return ((bh as i64 * (w as i64) / (h as i64)) as i32, bh);
+}
+
+// The subtitles of images, each in its box on the video. They take no tap.
+function pictures(m: Metrics, p: PlayerView): scene.Node[] {
+  let out: scene.Node[] = [];
+  if (p.video_w <= 0 || p.video_h <= 0) {
+    return out;
+  }
+  let (vw, vh) = fit_size(p.video_w, p.video_h, m.w, m.h);
+  let vx = (m.w - vw) / 2;
+  let vy = (m.h - vh) / 2;
+  for pic in p.pictures {
+    let x = vx + (pic.x * (vw as f32)) as i32;
+    let y = vy + (pic.y * (vh as f32)) as i32;
+    out = out.append(scene.node(x, y, (pic.w * (vw as f32)) as i32, (pic.h * (vh as f32)) as i32, scene.Picture(pic.key, pic.image, 0)));
+  }
+  return out;
+}
+
 // The lines of the subtitle that shows, in the middle above `bottom`, in a
-// dark panel. It takes no tap.
+// dark panel or with a shadow. It takes no tap.
 function caption(m: Metrics, p: PlayerView, bottom: i32): scene.Node[] {
   if (p.caption.len() == 0) {
     return [];
   }
+  let scale = [m.ts, m.ts * 3 / 2, m.ts * 2][p.caption_size];
   let lines = p.caption.split("\n");
-  let line_h = m.th + 4 * m.u;
+  let line_h = draw.text_height(scale) + 4 * m.u;
   let top = bottom - lines.len() * line_h - 8 * m.u;
   let out: scene.Node[] = [];
   let k = 0;
   for line in lines {
-    let text = fit(line, (m.w - 48 * m.u) / m.cw);
-    let w = draw.text_width(text, m.ts);
+    let text = fit(line, (m.w - 48 * m.u) / (m.cw * scale / m.ts));
+    let w = draw.text_width(text, scale);
     let x = (m.w - w) / 2;
     let y = top + 4 * m.u + k * line_h;
-    out = out.append(fill(x - 8 * m.u, y - 2 * m.u, w + 16 * m.u, line_h, draw.rgba(0, 0, 0, 170), 6 * m.u));
-    out = out.append(label(m, x, y, text, m.ts, look.ink()));
+    if (p.caption_box) {
+      out = out.append(fill(x - 8 * m.u, y - 2 * m.u, w + 16 * m.u, line_h, draw.rgba(0, 0, 0, 170), 6 * m.u));
+    } else {
+      out = out.append(label(m, x + 2 * m.u, y + 2 * m.u, text, scale, draw.rgb(0, 0, 0)));
+    }
+    out = out.append(label(m, x, y, text, scale, look.ink()));
     k += 1;
   }
   return out;
@@ -1352,6 +1419,9 @@ function track_sheet(m: Metrics, p: PlayerView): scene.Node[] {
   let row = 44 * m.u;
   let head = 32 * m.u;
   let rows = p.sounds.len() + 1 + p.subtitles.len();
+  if (p.delay.len() > 0) {
+    rows += 1;
+  }
   let h = 2 * head + rows * row + 16 * m.u;
   let x = 16 * m.u;
   let w = m.w - 32 * m.u;
@@ -1376,6 +1446,21 @@ function track_sheet(m: Metrics, p: PlayerView): scene.Node[] {
     out = util_append(out, track_row(m, x, at, w, row, t.title, t.id == p.choice.subtitle, "sub:" + t.id));
     at += row;
   }
+  if (p.delay.len() > 0) {
+    out = util_append(out, delay_row(m, x, at, w, row, p.delay));
+  }
+  return out;
+}
+
+// The delay of the text subtitle, with a button that shows the lines
+// earlier and one that shows them later.
+function delay_row(m: Metrics, x: i32, y: i32, w: i32, h: i32, delay: string): scene.Node[] {
+  let out: scene.Node[] = [fill(x, y, w, h, look.surface(), 0)];
+  out = out.append(label(m, x + 36 * m.u, y + (h - m.th) / 2, m.texts.format("Delay {0}", [delay]), m.ts, look.ink()));
+  let by = y + (h - button_height(m)) / 2;
+  let later = x + w - 16 * m.u - button_width(m, "+");
+  out = util_append(out, button(m, later - 12 * m.u - button_width(m, "-"), by, "-", false, "sync:-"));
+  out = util_append(out, button(m, later, by, "+", false, "sync:+"));
   return out;
 }
 
@@ -1471,16 +1556,18 @@ pub function nodes(v: View): scene.Node[] {
   let back = v.screen == LIBRARY || v.screen == DETAIL || v.screen == USERS || v.screen == DOWNLOADS;
   let out = util_append(util_append(util_append(body, top_bar(m, v, back)), now_bar(m, v)), bottom_bar(m, v));
   if (v.menu.key.len() > 0) {
-    out = util_append(out, poster_menu(m, v.menu, v.menu_download));
+    out = util_append(out, poster_menu(m, v.menu, v.menu_download, v.menu_smart));
   }
   return out;
 }
 
 // The menu of a held poster, at the bottom over a dark veil: its title,
-// Play, its download, Download all for a group of items, Mark watched or
-// Mark unwatched, Go to show for an episode, and Cancel. `download` is the percent of its download that came,
-// or -1. A tap on the veil closes it.
-function poster_menu(m: Metrics, it: plex.Item, download: i32): scene.Node[] {
+// Play, its download, Download all for a group of items, the smart
+// downloads of a show, Mark watched or Mark unwatched, Go to show for an
+// episode, and Cancel. `download` is the percent of its download that came,
+// or -1, and `smart` is true for a show that keeps its next episodes. A tap
+// on the veil closes it.
+function poster_menu(m: Metrics, it: plex.Item, download: i32, smart: boolean): scene.Node[] {
   let rows: (string, string)[] = [];
   if (plex.playable_kind(it.kind)) {
     rows = rows.append((tr(m, "Play"), "menu:play"));
@@ -1494,6 +1581,9 @@ function poster_menu(m: Metrics, it: plex.Item, download: i32): scene.Node[] {
   }
   if (["show", "season", "artist", "album"].contains(it.kind)) {
     rows = rows.append((tr(m, "Download all"), "menu:download_all"));
+  }
+  if (it.kind == "show") {
+    rows = rows.append((tr(m, if (smart) { "Stop keeping episodes" } else { "Keep next episodes" }), "menu:smart"));
   }
   if (plex.watched(it)) {
     rows = rows.append((tr(m, "Mark unwatched"), "menu:mark"));

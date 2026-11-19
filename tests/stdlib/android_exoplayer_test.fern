@@ -15,6 +15,7 @@ function names(cs: player.Change[]): string {
       player.Seeked => "seeked",
       player.AudioNotPlaying => "no audio",
       player.VideoNotPlaying => "no video",
+      player.Cues => "cues",
     };
     out = out.append(name);
   }
@@ -64,9 +65,9 @@ function endings(): test.TestOutcome {
   return test.assert_eq([ended, again, failed, moved, frame, idle].join(" | "), "3 false: completed | 3 false:  | 4 false: failed 2001 0 | 2 false: completed | 2 false: rendering | 0 false: ");
 }
 
-// The longs of a state, from S_POSITION to S_CHAINED.
+// The longs of a state, from S_POSITION to S_TEXT.
 function state(position: i64, sampled: i64, length: i64, on: i64, speed: i64): i64[] {
-  return [position, sampled, length, on, speed, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+  return [position, sampled, length, on, speed, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
 }
 
 // The position moves on at the speed of the playback while it plays, and
