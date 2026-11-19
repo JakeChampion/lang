@@ -326,11 +326,6 @@ function test_thumbnail_part(): test.TestOutcome {
 
 const TRACKED: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"7\",\"type\":\"movie\",\"title\":\"Two Tracks\",\"Media\":[{\"container\":\"mkv\",\"videoCodec\":\"h264\",\"audioCodec\":\"eac3\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/1/file.mkv\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"eac3\",\"displayTitle\":\"English (EAC3 5.1)\",\"languageCode\":\"eng\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\",\"languageCode\":\"eng\"},{\"id\":31,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT External)\",\"key\":\"/library/streams/31\",\"selected\":true},{\"id\":32,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS)\"}]}]}]}]}}";
 
-// A file with E-AC-3 and AAC sound, an external SubRip subtitle and a PGS
-// subtitle: the server remembers the first sound and the SubRip one. With
-// no E-AC-3 decoder, the AAC track plays as it is. The SubRip subtitle
-// plays with the file as it is, because the app draws it, and the PGS
-// subtitle burns in a transcode.
 // A film whose server remembers the French sound: an English commentary
 // comes before the English sound, and the subtitles are English forced,
 // English and French.
@@ -367,6 +362,12 @@ function test_account_profile(): test.TestOutcome {
   return test.assert_eq(a.name + " " + a.language + " " + a.subtitles.to_string() + " " + none.name + " " + none.language + " " + none.subtitles.to_string(), "Ada en 2 bo  -1");
 }
 
+// A file with E-AC-3 and AAC sound, an external SubRip subtitle and a PGS
+// subtitle inside the file: the server remembers the first sound and the
+// SubRip one. With no E-AC-3 decoder, the AAC track plays as it is. The
+// SubRip subtitle plays with the file as it is, because the app draws it.
+// The PGS subtitle plays with the file as it is too, because the player
+// draws it, and it burns in a transcode.
 function test_tracks(): test.TestOutcome {
   let Some(it) = plex.parse_item(TRACKED) else {
     return test.fail("no item");
@@ -402,16 +403,22 @@ function test_tracks(): test.TestOutcome {
   if (!in_transcode.url.contains("subtitles=none")) {
     return test.fail("a transcode burned the subtitle that the app draws: " + in_transcode.url);
   }
-  let burn = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, plex.Choice { audio: "22", subtitle: "32" });
-  return test.assert_eq((burn.transcode && burn.url.contains("subtitles=burn") && burn.url.contains("audioStreamID=22")).to_string(), "true");
+  let pgs = plex.Choice { audio: "22", subtitle: "32" };
+  let shown = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, pgs);
+  if (shown.transcode || plex.image_subtitle_index(it, pgs) != 0) {
+    return test.fail("the PGS subtitle inside the file did not play with the file as it is: " + shown.url);
+  }
+  let burn = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, plex.Choice { audio: "21", subtitle: "32" });
+  return test.assert_eq((burn.transcode && burn.url.contains("subtitles=burn") && burn.url.contains("audioStreamID=21")).to_string(), "true");
 }
 
-const EMBEDDED: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"8\",\"type\":\"movie\",\"title\":\"Inside\",\"Media\":[{\"container\":\"mkv\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":12,\"key\":\"/library/parts/12/1/file.mkv\",\"Stream\":[{\"id\":40,\"streamType\":1,\"codec\":\"h264\"},{\"id\":41,\"streamType\":2,\"codec\":\"aac\",\"selected\":true},{\"id\":42,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"},{\"id\":43,\"streamType\":3,\"codec\":\"ass\",\"displayTitle\":\"English (ASS)\"},{\"id\":44,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS)\"}]}]}]}]}}";
+const EMBEDDED: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"8\",\"type\":\"movie\",\"title\":\"Inside\",\"Media\":[{\"container\":\"mkv\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":12,\"key\":\"/library/parts/12/1/file.mkv\",\"Stream\":[{\"id\":40,\"streamType\":1,\"codec\":\"h264\"},{\"id\":41,\"streamType\":2,\"codec\":\"aac\",\"selected\":true},{\"id\":42,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"},{\"id\":43,\"streamType\":3,\"codec\":\"ass\",\"displayTitle\":\"English (ASS)\"},{\"id\":44,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS)\"},{\"id\":45,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS External)\",\"key\":\"/library/streams/45\"}]}]}]}]}}";
 
 // The SubRip and ASS subtitles inside a file play with the file as it is,
 // because the app draws them. The app asks the server for the text of each
-// one at the address of its stream. A PGS subtitle inside the file still
-// burns in a transcode.
+// one at the address of its stream. The player draws a PGS subtitle inside
+// the file, the third subtitle there. A PGS file beside the video burns in
+// a transcode.
 function test_embedded_subtitles(): test.TestOutcome {
   let Some(it) = plex.parse_item(EMBEDDED) else {
     return test.fail("no item");
@@ -432,15 +439,18 @@ function test_embedded_subtitles(): test.TestOutcome {
       return test.fail("the text of the subtitle " + id + " is not asked for at its stream: " + r.url);
     }
   }
-  let burn = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, plex.Choice { audio: "41", subtitle: "44" });
-  return test.assert_eq((burn.transcode && burn.url.contains("subtitles=burn")).to_string(), "true");
+  let inside = plex.Choice { audio: "41", subtitle: "44" };
+  let beside = plex.Choice { audio: "41", subtitle: "45" };
+  let shown = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, inside);
+  let burn = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, beside);
+  let places = plex.image_subtitle_index(it, inside).to_string() + " " + plex.image_subtitle_index(it, beside).to_string();
+  return test.assert_eq(places + " " + shown.transcode.to_string() + " " + (burn.transcode && burn.url.contains("subtitles=burn")).to_string(), "2 -1 false true");
 }
 
-// A file with E-AC-3 sound does not play as it is on a phone with no
-// E-AC-3 decoder, so it downloads as one Matroska file over HTTP. At
 // A download holds the tracks of its file. A transcode holds the sound
-// that it played, and a file gives no image subtitle. A transcode that was
-// named before its name said so is a .mkv of an item that is not MKV.
+// that it played, and no image subtitle. A file as it is keeps the image
+// subtitle inside it. A transcode that was named before its name said so
+// is a .mkv of an item that is not MKV.
 function test_file_item(): test.TestOutcome {
   let Some(it) = plex.parse_item(TRACKED) else {
     return test.fail("no item");
@@ -448,7 +458,7 @@ function test_file_item(): test.TestOutcome {
   let ids = (ts: plex.Track[]): string => ts.map((t: plex.Track): string => t.id).join(",");
   let whole = plex.file_item(it, false);
   let copy = plex.file_item(it, true);
-  if (ids(plex.audio_tracks(whole)) != "21,22" || ids(plex.subtitle_tracks(whole)) != "31") {
+  if (ids(plex.audio_tracks(whole)) != "21,22" || ids(plex.subtitle_tracks(whole)) != "31,32") {
     return test.fail("the tracks of the file as it is: " + ids(plex.audio_tracks(whole)) + " " + ids(plex.subtitle_tracks(whole)));
   }
   if (ids(plex.audio_tracks(copy)) != "21" || ids(plex.subtitle_tracks(copy)) != "31" || plex.remembered(copy).audio != "21") {
@@ -458,6 +468,8 @@ function test_file_item(): test.TestOutcome {
   return test.assert_eq([plex.transcoded_file(it, "7.transcode.mkv"), plex.transcoded_file(it, "7.mkv"), plex.transcoded_file(mp4, "7.mkv"), plex.transcoded_file(mp4, "7.mp4")].map((b: boolean): string => b.to_string()).join(","), "true,false,true,false");
 }
 
+// A file with E-AC-3 sound does not play as it is on a phone with no
+// E-AC-3 decoder, so it downloads as one Matroska file over HTTP. At
 // Original, the transcode copies the H.264 video. A stream of the same
 // file is HLS, which seeks fast.
 function test_download_transcode(): test.TestOutcome {

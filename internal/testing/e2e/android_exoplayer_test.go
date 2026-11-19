@@ -11,7 +11,10 @@ import "testing"
 // select_track gives the track selector the second sound group. chain adds
 // the next item, and the move to it takes the first item away. A target
 // goes on the main thread, after the commands before it. close releases
-// the ExoPlayer, and a later command does nothing. Each call ends each
+// the ExoPlayer, and a later command does nothing. select_text gives the
+// track selector the text group and turns text on. onCues keeps the bitmap
+// of the image cue and not the text cue, and image_cues gives it to the
+// loop as RGBA with its box. Each call ends each
 // local frame that it starts, and the player keeps three global references
 // until close.
 func TestAndroidExoplayer(t *testing.T) {
@@ -66,6 +69,12 @@ pub function act(ctx: usize, l: usize, h: usize, s: usize, slot: i32, what: i32)
   if (what == 11) {
     return if (exoplayer.set_speed(ctx, p, 1.5f32) && exoplayer.start(ctx, p)) { 1i64 } else { 0i64 };
   }
+  if (what == 13) {
+    return if (exoplayer.select_text(ctx, p, 0)) { 1i64 } else { 0i64 };
+  }
+  if (what == 14) {
+    return if (exoplayer.select_text(ctx, p, -2)) { 1i64 } else { 0i64 };
+  }
   exoplayer.close(ctx, p);
   return 1i64;
 }
@@ -75,6 +84,23 @@ pub function on_message(e: usize, l: usize, m: usize): u8 {
 pub function on_events(e: usize, l: usize, x: usize, ev: usize): void {
   exoplayer.events(e, l, x, ev);
 }
+pub function on_cues(e: usize, l: usize, g: usize): void {
+  exoplayer.cues(e, l, g);
+}
+// The size, the red and the alpha of the first pixel, and the box of the
+// one image cue, or the number of cues.
+pub function pictures(ctx: usize, l: usize, h: usize, s: usize, slot: i32): i64 {
+  let got = exoplayer.image_cues(ctx, of(l, h, s, slot));
+  if (got.len() != 1) {
+    return got.len() as i64;
+  }
+  let c = got[0];
+  let px = c.image.pixels;
+  let size = (c.image.width * 10 + c.image.height) as i64 * 1000000000i64;
+  let first = px[0] as i64 * 1000000i64 + px[3] as i64 * 1000i64;
+  let box = ((c.x * 10.0f32 + 0.5f32) as i64) * 100i64 + ((c.y * 10.0f32 + 0.5f32) as i64) * 10i64 + ((c.width * 10.0f32 + 0.5f32) as i64);
+  return size + first + box;
+}
 `
 	const check = `#include <stdint.h>
 #include <stdio.h>
@@ -82,7 +108,7 @@ pub function on_events(e: usize, l: usize, x: usize, ev: usize): void {
 #include <string.h>
 #include <dlfcn.h>
 
-enum { LISTENER_CLASS = 900, TRACKS = 1500, GROUPS = 1600, SIZE = 1700, ERROR = 1800, GROUP = 2000, TRACK_GROUP = 3000 };
+enum { LISTENER_CLASS = 900, TRACKS = 1500, GROUPS = 1600, SIZE = 1700, ERROR = 1800, GROUP = 2000, TRACK_GROUP = 3000, CUE_GROUP = 4000, CUES = 4010, CUE = 4100, BITMAP = 4200 };
 static int frames, globals, next = 5000, nnames, nstrings, nclasses, queued, head;
 static char log_[32768];
 static const char *names[512], *sigs[512];
@@ -94,7 +120,9 @@ static uintptr_t queue[64];
 static struct { uintptr_t id; uintptr_t items[4]; } arrays[16];
 static int narrays;
 static uintptr_t listener, handler, state, held, exo;
-static int64_t longs[14];
+static int64_t longs[15];
+static struct { uintptr_t id; int32_t n, v[64]; } ints[16];
+static int nints;
 static int types[4] = {2, 1, 1, 3}, selected[4] = {1, 1, 0, 0}, ngroups = 4;
 static int playback = 2, playing, item_index, item_count = 1, events_mask;
 static int64_t position = 5000, duration = 60000;
@@ -114,6 +142,10 @@ static uintptr_t text(const char *s) {
 static const char *class_of(uintptr_t id) {
   for (int k = 0; k < nclasses; k++) if (classes[k].id == id) return classes[k].name;
   return "";
+}
+static int32_t *ints_of(uintptr_t id, int32_t *n) {
+  for (int k = 0; k < nints; k++) if (ints[k].id == id) { *n = ints[k].n; return ints[k].v; }
+  return 0;
 }
 static uintptr_t *array_of(uintptr_t id) {
   for (int k = 0; k < narrays; k++) if (arrays[k].id == id) return arrays[k].items;
@@ -189,6 +221,7 @@ static uintptr_t object(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t
   }
   note_call(name_of(id), args, arities[id - 1]);
   if (is(id, "get") && arities[id - 1] == 0) return obj == listener ? held : 0;
+  if (is(id, "get") && obj == CUES) return CUE + (uintptr_t)args[0];
   if (is(id, "get")) return GROUP + (uintptr_t)args[0];
   if (is(id, "getCurrentTracks")) return TRACKS;
   if (is(id, "getGroups")) return GROUPS;
@@ -215,7 +248,9 @@ static uintptr_t bcall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t 
 }
 static int32_t icall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
   note_call(name_of(id), args, arities[id - 1]);
-  if (is(id, "size")) return ngroups;
+  if (is(id, "size")) return obj == CUES ? 2 : ngroups;
+  if (is(id, "getWidth")) return 3;
+  if (is(id, "getHeight")) return 2;
   if (is(id, "getType")) return types[obj - GROUP];
   if (is(id, "getPlaybackState")) return playback;
   if (is(id, "getCurrentMediaItemIndex")) return item_index;
@@ -223,15 +258,20 @@ static int32_t icall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *a
   return 0;
 }
 static int64_t lcall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
-  if (is(id, "get")) { require(obj == state && args[0] < 14, "a long of the state"); return longs[args[0]]; }
+  if (is(id, "get")) { require(obj == state && args[0] < 15, "a long of the state"); return longs[args[0]]; }
   note_call(name_of(id), args, arities[id - 1]);
   if (is(id, "getCurrentPosition")) return position;
   if (is(id, "getDuration")) return duration;
   return 0;
 }
 static uintptr_t vcall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
-  if (is(id, "set") && arities[id - 1] == 2) { require(obj == state && args[0] < 14, "a long of the state"); longs[args[0]] = (int64_t)args[1]; return 0; }
+  if (is(id, "set") && arities[id - 1] == 2) { require(obj == state && args[0] < 15, "a long of the state"); longs[args[0]] = (int64_t)args[1]; return 0; }
   if (is(id, "set")) { require(obj == listener, "the state of the listener"); held = args[0]; return 0; }
+  if (is(id, "getPixels")) {
+    int32_t n, *px = ints_of(args[0], &n);
+    require(px && n == 6 && obj == BITMAP, "getPixels fills an int[] of the bitmap");
+    for (int k = 0; k < n; k++) px[k] = (int32_t)0x80FF0000u;
+  }
   if (is(id, "sendToTarget")) { char line[64]; snprintf(line, sizeof line, "send %d;", messages[queued - 1].what); strcat(log_, line); return 0; }
   note_call(name_of(id), args, arities[id - 1]);
   return 0;
@@ -249,8 +289,28 @@ static int32_t int_field(uintptr_t e, uintptr_t obj, uintptr_t id) {
 }
 static uintptr_t object_field(uintptr_t e, uintptr_t obj, uintptr_t id) {
   for (int k = 0; k < queued; k++) if (messages[k].id == obj && is(id, "obj")) return messages[k].obj;
+  if (is(id, "cues") && obj == CUE_GROUP) return CUES;
+  if (is(id, "bitmap")) return obj == CUE ? BITMAP : 0;
   return 0;
 }
+// The image cue sets its box. The text cue has no bitmap.
+static float float_field(uintptr_t e, uintptr_t obj, uintptr_t id) {
+  if (is(id, "position")) return 0.1f;
+  if (is(id, "line")) return 0.8f;
+  if (is(id, "size")) return 0.5f;
+  if (is(id, "bitmapHeight")) return 0.1f;
+  return 0.0f;
+}
+static uintptr_t new_ints(uintptr_t e, int32_t n) {
+  require(nints < 16 && n <= 64, "a short int[]");
+  ints[nints].id = fresh();
+  ints[nints].n = n;
+  memset(ints[nints].v, 0, sizeof ints[nints].v);
+  return ints[nints++].id;
+}
+static int32_t length(uintptr_t e, uintptr_t array) { int32_t n; require(ints_of(array, &n) != 0, "the length of an int[]"); return n; }
+static void get_ints(uintptr_t e, uintptr_t array, int32_t start, int32_t n, int32_t *buf) { int32_t have, *v = ints_of(array, &have); require(v && start + n <= have, "a region of an int[]"); memcpy(buf, v + start, 4 * n); }
+static void set_ints(uintptr_t e, uintptr_t array, int32_t start, int32_t n, const int32_t *buf) { int32_t have, *v = ints_of(array, &have); require(v && start + n <= have, "a region of an int[]"); memcpy(v + start, buf, 4 * n); }
 static uintptr_t new_array(uintptr_t e, int32_t n, uintptr_t cls, uintptr_t init) {
   require(narrays < 16 && n <= 4, "a short array");
   uintptr_t id = fresh();
@@ -302,7 +362,9 @@ int main(int argc, char **argv) {
   int64_t (*act)(uintptr_t, uintptr_t, uintptr_t, uintptr_t, int32_t, int32_t) = dlsym(lib, "act");
   handle = dlsym(lib, "on_message");
   events = dlsym(lib, "on_events");
-  require(make && act && handle && events, "the entries");
+  void (*on_cues)(uintptr_t, uintptr_t, uintptr_t) = dlsym(lib, "on_cues");
+  int64_t (*pictures)(uintptr_t, uintptr_t, uintptr_t, uintptr_t, int32_t) = dlsym(lib, "pictures");
+  require(make && act && handle && events && on_cues && pictures, "the entries");
   static uintptr_t table[240];
   uintptr_t activity[10] = {0}, ctx[40] = {0};
   int64_t senders[8] = {0};
@@ -325,6 +387,11 @@ int main(int argc, char **argv) {
   table[94] = (uintptr_t)field;
   table[95] = (uintptr_t)object_field;
   table[100] = (uintptr_t)int_field;
+  table[102] = (uintptr_t)float_field;
+  table[171] = (uintptr_t)length;
+  table[179] = (uintptr_t)new_ints;
+  table[203] = (uintptr_t)get_ints;
+  table[211] = (uintptr_t)set_ints;
   table[113] = (uintptr_t)method;
   table[116] = (uintptr_t)static_object;
   table[163] = (uintptr_t)new_string;
@@ -390,6 +457,16 @@ int main(int argc, char **argv) {
   require(has("seekTo(90000);") && count("getProperty(") >= 1, "SEEK goes to the place and tells Seeked");
 
   log_[0] = 0;
+  require(act(c, listener, handler, state, slot, 13) == 1 && act(c, listener, handler, state, slot, 14) == 0, "select_text sends TEXT, and an index below -1 is refused");
+  drain();
+  require(has("new TrackSelectionOverride(3003,0);") && has("setTrackTypeDisabled(3,0);") && longs[14] == 1, "TEXT gives the text group and turns text on");
+  require(pictures(c, listener, handler, state, slot) == 0 && frames == 0, "no cues before onCues");
+  log_[0] = 0;
+  on_cues((uintptr_t)&env, listener, CUE_GROUP);
+  require(frames == 0 && count("getPixels(") == 1 && has("getProperty("), "onCues keeps the one bitmap and tells the loop");
+  require(array_of(held)[2] != 0 && pictures(c, listener, handler, state, slot) == 32255128185LL && frames == 0, "image_cues gives the RGBA image and its box");
+
+  log_[0] = 0;
   globals += 2;
   act(c, listener, handler, state, slot, 10);
   require(globals == 3 && has("send 11;") && !has("release();"), "close_target deletes the references after the command goes");
@@ -411,7 +488,7 @@ int main(int argc, char **argv) {
   return 0;
 }
 `
-	androidJNIMockCheck(t, src, "make,act,on_message,on_events", check)
+	androidJNIMockCheck(t, src, "make,act,on_message,on_events,on_cues,pictures", check)
 }
 
 // The sound output and the display on a fake JNI. passthrough_types asks

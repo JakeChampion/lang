@@ -57,6 +57,13 @@ pub struct Device {
   // Asks the display of the window to show it at a frame rate, or takes the
   // request away with 0.
   frame_rate: (usize, f32) => void,
+  // Shows the subtitle track of the file with an index among its subtitle
+  // tracks, or none with -1. The player draws the subtitles of images.
+  select_text: (i32) => boolean,
+  // The subtitles of images that show now, with no keys.
+  image_cues: () => ui.Picture[],
+  // The width and the height of the video in pixels, or (0, 0).
+  video_size: () => (i32, i32),
   // Puts the GPU painter on the window, and false when the phone has none:
   // then the app draws with `lock` and `post`.
   attach: (usize) => boolean,
@@ -219,6 +226,10 @@ struct Play {
   choice: plex.Choice,
   cues: plex.Cue[],
   sheet: boolean,
+  // The subtitles of images that the player shows now, and the delay of
+  // the text subtitles: a positive delay shows each line later.
+  images: ui.Picture[],
+  delay_ms: i64,
   // The time that the card of the next item came, or 0, and whether the
   // user turned the next item off.
   up_next_at: i64,
@@ -304,6 +315,10 @@ pub struct App {
   // The items and the shows whose tracks the person chose. They keep the
   // tracks that the server remembers.
   picked: string[],
+  // The size of the text subtitles, an index of `caption_sizes()`, and
+  // whether a dark panel is behind them, else a shadow.
+  caption_size: i32,
+  caption_box: boolean,
   // The texts in the language of the person.
   texts: i18n.Strings,
   // Whether a list plays in a random order, and its repeat: 0 none, 1 the
@@ -418,7 +433,7 @@ function no_server(): plex.Server {
 }
 
 function no_play(): Play {
-  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [], album: [], bif: None, scrub_ms: -1i64, scrub_seek_at: 0i64, thumb_index: -1, thumb: None, level: 0, stalls: [], choice: plex.no_choice(), cues: [], sheet: false, up_next_at: 0i64, next_off: false, tap_at: -1000i64, tap_x: 0, tap_overlay: false, badge: "", badge_until: 0i64, gesture: 0, gesture_from: 0, gesture_level: -1, gesture_max: 0, light: -1, next: plex.no_item(), next_queue: [], next_stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, next_session: "", next_ready: false, next_plan: "", next_tried: "", focus_paused: false, held: false };
+  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [], album: [], bif: None, scrub_ms: -1i64, scrub_seek_at: 0i64, thumb_index: -1, thumb: None, level: 0, stalls: [], choice: plex.no_choice(), cues: [], sheet: false, images: [], delay_ms: 0i64, up_next_at: 0i64, next_off: false, tap_at: -1000i64, tap_x: 0, tap_overlay: false, badge: "", badge_until: 0i64, gesture: 0, gesture_from: 0, gesture_level: -1, gesture_max: 0, light: -1, next: plex.no_item(), next_queue: [], next_stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, next_session: "", next_ready: false, next_plan: "", next_tried: "", focus_paused: false, held: false };
 }
 
 function no_press(): Press {
@@ -490,6 +505,8 @@ function save(s: App): void {
     "account_lang=" + s.account_lang,
     "account_subs=" + s.account_subs.to_string(),
     "picked=" + s.picked.join(","),
+    "caption_size=" + s.caption_size.to_string(),
+    "caption_box=" + (if (s.caption_box) { "1" } else { "0" }),
     "shuffle=" + (if (s.shuffle) { "1" } else { "0" }),
     "repeat=" + s.repeat.to_string(),
   ];
@@ -523,7 +540,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     client: plex.Client { id: id, device: "Android", token: setting(text, "token") },
     server: no_server(), base: plex.Base { uri: setting(text, "server_uri"), token: setting(text, "server_token") },
     servers: [], states: [], probing: -1, probe_states: [], probe_at: 0i64, probes: [], rechecking: false, recheck_at: -100000i64, left: [], pin: plex.Pin { id: 0i64, code: "", token: "" }, pin_at: 0i64,
-    account: setting(text, "account"), quality: num(setting(text, "quality")), speed: speed_of(setting(text, "speed")), lang: plex.language_code(setting(text, "lang")), subs: mode_of(setting(text, "subs")), account_lang: setting(text, "account_lang"), account_subs: mode_of(setting(text, "account_subs")), picked: listed(setting(text, "picked")), texts: texts.for_languages(dev.languages), shuffle: setting(text, "shuffle") == "1", repeat: num(setting(text, "repeat")) % 3, sleep: 0, sleep_at: 0i64, turned: false, local: false,
+    account: setting(text, "account"), quality: num(setting(text, "quality")), speed: speed_of(setting(text, "speed")), lang: plex.language_code(setting(text, "lang")), subs: mode_of(setting(text, "subs")), account_lang: setting(text, "account_lang"), account_subs: mode_of(setting(text, "account_subs")), picked: listed(setting(text, "picked")), caption_size: num(setting(text, "caption_size")) % 3, caption_box: setting(text, "caption_box") != "0", texts: texts.for_languages(dev.languages), shuffle: setting(text, "shuffle") == "1", repeat: num(setting(text, "repeat")) % 3, sleep: 0, sleep_at: 0i64, turned: false, local: false,
     screen: ui.LOGIN, tab: 0, title: "", scroll: 0, rows: [], stack: [],
     hubs: none, results: none, sections: [], section: no_section(), items: [], total: 0, sort: 0, unwatched: false, letters: [], item: plex.no_item(), children: [],
     query: "", typing: false, search_at: 0i64, error: "",
@@ -2464,6 +2481,7 @@ function prepared(own s: App): App {
   }
   if (!silent && !p.stream.transcode) {
     pick_sound(s.dev, p);
+    pick_text(s.dev, p);
   }
   let t = App { ...s, play: p, dirty: true };
   if (silent) {
@@ -2471,6 +2489,12 @@ function prepared(own s: App): App {
   } else {
     return resume(t);
   }
+}
+
+// Shows the chosen subtitle of images of a file that plays as it is, or no
+// subtitle track of the player.
+function pick_text(dev: Device, p: Play): void {
+  let ok = dev.select_text(plex.image_subtitle_index(p.item, p.choice));
 }
 
 // Plays the chosen sound track of a file that plays as it is. The sound
@@ -2595,6 +2619,7 @@ function follow_remembered(own s: App, choice: plex.Choice): App {
 function sound_now(own s: App, next: Play): App {
   if (next.prepared) {
     pick_sound(s.dev, next);
+    pick_text(s.dev, next);
   }
   return App { ...s, play: next, dirty: true };
 }
@@ -3065,10 +3090,45 @@ function player_event(own s: App, c: player.Change): App {
     player.Rendering => {
       return s;
     },
+    player.Cues => {
+      return App { ...s, play: Play { ...s.play, images: with_keys(s.dev.image_cues(), s.dev.mono_ms()) }, dirty: true };
+    },
     player.Seeked => {
       return App { ...s, play: Play { ...s.play, position: s.dev.position() }, dirty: true };
     }
   }
+}
+
+// The subtitles of images, each with a key of its own for its texture.
+function with_keys(pictures: ui.Picture[], now: i64): ui.Picture[] {
+  let out: ui.Picture[] = [];
+  for k in 0..pictures.len() {
+    out = out.append(ui.Picture { ...pictures[k], key: "cue|" + now.to_string() + "|" + k.to_string() });
+  }
+  return out;
+}
+
+// The step of the delay of the text subtitles.
+const DELAY_STEP: i64 = 100i64;
+
+// The delay as the sheet shows it, such as "+0.3 s".
+pub function delay_text(ms: i64): string {
+  let sign = if (ms < 0i64) { "-" } else { "+" };
+  let tenths = ms.abs() / DELAY_STEP;
+  return sign + (tenths / 10i64).to_string() + "." + (tenths % 10i64).to_string() + " s";
+}
+
+// The line of the text subtitle at the place of the playback.
+function caption_of(p: Play): string {
+  return plex.cue_at(p.cues, p.position - p.delay_ms);
+}
+
+// The delay of the sheet for a text subtitle that the app draws, or "".
+function delay_shown(p: Play): string {
+  if (plex.text_subtitle(p.item, p.choice).is_none()) {
+    return "";
+  }
+  return delay_text(p.delay_ms);
 }
 
 // Keeps the position on the overlay and the server up to date. While the
@@ -3107,13 +3167,13 @@ function play_tick(own s: App, now: i64): App {
     every = 100i64;
   }
   if (now - p.updated_at >= every) {
-    let before = skip_label(t.play) + "|" + up_next_secs(t.play, now - 500i64).to_string() + "|" + plex.cue_at(t.play.cues, t.play.position);
+    let before = skip_label(t.play) + "|" + up_next_secs(t.play, now - 500i64).to_string() + "|" + caption_of(t.play);
     let moved = Play { ...t.play, position: t.dev.position(), updated_at: now };
     let from = up_next_from(moved);
     if (moved.up_next_at == 0i64 && from >= 0i64 && moved.position >= from) {
       moved = Play { ...moved, up_next_at: now };
     }
-    let after = skip_label(moved) + "|" + up_next_secs(moved, now).to_string() + "|" + plex.cue_at(moved.cues, moved.position);
+    let after = skip_label(moved) + "|" + up_next_secs(moved, now).to_string() + "|" + caption_of(moved);
     t = App { ...t, play: moved, dirty: t.dirty || t.play.overlay || before != after };
     if (moved.up_next_at > 0i64 && now - moved.up_next_at >= UP_NEXT_MS) {
       return play_next(t);
@@ -3416,6 +3476,10 @@ function player_control(own s: App, act: string, n: scene.Node, x: i32): App {
   if (act.starts_with("sub:")) {
     return choose(s, plex.Choice { ...p.choice, subtitle: act.drop(4).to_owned() });
   }
+  if (act == "sync:-" || act == "sync:+") {
+    let step = if (act == "sync:+") { DELAY_STEP } else { -DELAY_STEP };
+    return App { ...s, play: Play { ...p, delay_ms: p.delay_ms + step }, dirty: true };
+  }
   if (act == "rew") {
     return seek_by(s, -10000i64);
   }
@@ -3457,6 +3521,8 @@ function scroll_limit(s: App, m: ui.Metrics): i32 {
     h = s.servers.len() * 72 * m.u + 160 * m.u;
   } else if (s.screen == ui.DOWNLOADS) {
     h = ui.downloads_height(m, v);
+  } else if (s.screen == ui.SETTINGS) {
+    h = ui.settings_height(m, v);
   }
   if (h <= visible) {
     return 0;
@@ -3793,6 +3859,16 @@ pub function act(own s: App, a: string, n: scene.Node, x: i32): App {
   }
   if (a == "subs") {
     return cycle_subtitles(t);
+  }
+  if (a == "capsize") {
+    let u = App { ...t, caption_size: [1, 2, 0][t.caption_size], dirty: true };
+    save(u);
+    return u;
+  }
+  if (a == "capbox") {
+    let u = App { ...t, caption_box: !t.caption_box, dirty: true };
+    save(u);
+    return u;
   }
   if (a == "users") {
     return open_users(t);
@@ -4177,7 +4253,8 @@ function pin_tick(own s: App, now: i64): App {
 pub function view(s: App): ui.View {
   let hubs = shown_hubs(s);
   let p = s.play;
-  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(s.texts, p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, skip: s.texts.text(skip_label(p)), up_next: next_title(p), up_next_secs: up_next_secs(p, s.dev.mono_ms()), badge: p.badge, sheet: p.sheet, sounds: plex.audio_tracks(p.item), subtitles: plex.subtitle_tracks(p.item), choice: p.choice, speed: speed_text(s.speed), shuffle: s.shuffle, repeat: repeat_text(s.texts, s.repeat), sleep: sleep_text(s.texts, s.sleep), has_next: p.queue.len() > 0, caption: plex.cue_at(p.cues, p.position), scrub_ms: p.scrub_ms, thumb: p.thumb, thumb_key: "bif|" + p.item.key + "|" + p.thumb_index.to_string(), art: art_of(p.item), audio: audio(p), status: s.texts.text(p.status), turned: s.turned };
+  let (vw, vh) = if (p.images.len() > 0) { s.dev.video_size() } else { (0, 0) };
+  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(s.texts, p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, skip: s.texts.text(skip_label(p)), up_next: next_title(p), up_next_secs: up_next_secs(p, s.dev.mono_ms()), badge: p.badge, sheet: p.sheet, sounds: plex.audio_tracks(p.item), subtitles: plex.subtitle_tracks(p.item), choice: p.choice, speed: speed_text(s.speed), shuffle: s.shuffle, repeat: repeat_text(s.texts, s.repeat), sleep: sleep_text(s.texts, s.sleep), has_next: p.queue.len() > 0, caption: caption_of(p), scrub_ms: p.scrub_ms, thumb: p.thumb, thumb_key: "bif|" + p.item.key + "|" + p.thumb_index.to_string(), art: art_of(p.item), audio: audio(p), status: s.texts.text(p.status), turned: s.turned, pictures: p.images, video_w: vw, video_h: vh, delay: delay_shown(p), caption_size: s.caption_size, caption_box: s.caption_box };
   return ui.View {
     ...ui.empty_view(s.w, s.h),
     texts: s.texts,
@@ -4186,7 +4263,7 @@ pub function view(s: App): ui.View {
     sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, menu_download: download_percent(s, s.menu.key), saved: waiting_rows(s), saved_done: s.downloads.filter((d: Saved): boolean => d.status == download.DONE).len(), saved_total: s.downloads.len(), now_playing: if (s.play.active && s.screen != ui.PLAYER) { p.item.title + " · " + p.item.grandparent } else { "" }, users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
     pin_code: s.pin.code, error: if (offline_home(s)) { "" } else { s.texts.text(s.error) }, offline: offline_home(s), servers: s.servers, server_states: s.states,
     query: s.query, typing: s.typing, account: s.account, server_name: s.server.name,
-    quality: plex.qualities()[s.quality].name, language: language_text(s), subtitles: subtitles_text(s), player: pv, base: s.base,
+    quality: plex.qualities()[s.quality].name, language: language_text(s), subtitles: subtitles_text(s), caption_size: s.texts.text(["Small", "Medium", "Large"][s.caption_size]), caption_back: s.texts.text(if (s.caption_box) { "Panel" } else { "Shadow" }), player: pv, base: s.base,
     loading: busy(s), cache: s.cache, local: s.local,
   };
 }

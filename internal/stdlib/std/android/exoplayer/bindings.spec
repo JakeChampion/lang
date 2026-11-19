@@ -27,3 +27,6 @@ androidx.media3.common.TrackSelectionOverride <init>(Landroidx/media3/common/Tra
 androidx.media3.common.VideoSize width height
 androidx.media3.common.PlaybackException errorCode
 androidx.media3.exoplayer.audio.AudioCapabilities getCapabilities(Landroid/content/Context;)Landroidx/media3/exoplayer/audio/AudioCapabilities; supportsEncoding
+androidx.media3.common.text.CueGroup cues
+androidx.media3.common.text.Cue bitmap position line size bitmapHeight
+android.graphics.Bitmap getWidth getHeight getPixels
