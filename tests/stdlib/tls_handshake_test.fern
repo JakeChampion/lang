@@ -1407,6 +1407,32 @@ function test_quic_early_data(): test.TestOutcome {
   return test.assert_eq(line, "taken 2 true true 32; server 3 false false 0; ticket 3 false false 0; alpn 3 false false 0; unasked 0 false false 0; ");
 }
 
+function test_quic_ip_sni(): test.TestOutcome {
+  for name in ["192.0.2.7", "2001:db8::7", "tls.example"] {
+    let cfg = handshake.ClientConfig { ...handshake.client_config(name), quic: true, alpn: ["h3"] };
+    let Ok(step) = handshake.client_start(cfg, pattern(1, handshake.client_entropy(cfg))) else {
+      return test.fail("cannot start QUIC for " + name);
+    };
+    let raw = message.Raw { kind: message.CLIENT_HELLO, bytes: crypto_at(step.events, 0) };
+    let Ok(message.ClientHelloMsg(hello)) = message.decode(raw) else {
+      return test.fail("cannot decode ClientHello for " + name);
+    };
+    match (message.find(hello.extensions, message.EXT_SERVER_NAME)) {
+      Some(data) => {
+        if (name != "tls.example" || message.server_name(data).unwrap_or("") != name) {
+          return test.fail("unexpected SNI for " + name);
+        }
+      },
+      None => {
+        if (name == "tls.example") {
+          return test.fail("missing DNS name in SNI");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
 function test_quic_handshake(): test.TestOutcome {
   match (quic_between(quic_client(["h3"], [transport_parameters([1 as u8, 2 as u8])]), quic_server(["h3"], [transport_parameters([9 as u8])]))) {
     Ok(p) => {
@@ -1539,6 +1565,7 @@ function main(): i32 {
   r = r.it("resumption refusals", test_resumption_refusals);
   r = r.it("client certificate", test_client_certificate);
   r = r.it("client certificate and resumption", test_client_certificate_resumed);
+  r = r.it("QUIC sends SNI only for DNS names", test_quic_ip_sni);
   r = r.it("the handshake under QUIC", test_quic_handshake);
   r = r.it("early data under QUIC", test_quic_early_data);
   r = r.it("QUIC refusals", test_quic_refusals);

@@ -169,11 +169,7 @@ pub function entropy(config: Config): i32 {
 }
 
 function __hello(config: Config): handshake.ClientConfig {
-  let sni = config.server_name;
-  if (__is_address(sni)) {
-    sni = "";
-  }
-  let hc = handshake.ClientConfig { ...handshake.client_config(sni), alpn: config.alpn, tls12: true };
+  let hc = handshake.ClientConfig { ...handshake.client_config(config.server_name), alpn: config.alpn, tls12: true };
   match (config.identity) {
     Some(id) => {
       return handshake.ClientConfig { ...hc, chain: id.chain, sign_schemes: [id.key.scheme()] };
@@ -217,18 +213,6 @@ pub function offered(t: Ticket, server_name: string, now: time.Timestamp): Optio
     }
   }
   return None;
-}
-
-function __is_address(name: string): boolean {
-  match (net.ip_parse(name)) {
-    Ok(_) => {
-      return true;
-    },
-    Err(_) => {
-      return false;
-    }
-  }
-  return false;
 }
 ```
 
