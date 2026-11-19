@@ -8618,8 +8618,9 @@ function emit_san_class(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // The allocation side of the redzone. The block takes its class and two
-// words more, and the two words get the poison. The census counts the
-// request alone. It uses x0 to x4, as the allocator does.
+// words more. The two words and the words of the class past the request get
+// the poison. The census counts the request alone. It uses x0 to x4, as the
+// allocator does.
 function emit_san_redzone_alloc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(rt_frame_of(s, 32) + "    mov x29, sp\n    str x0, [sp, #16]\n    add x1, x0, #7\n    lsr x1, x1, #3\n    bl __fern_san_class\n    str x1, [sp, #24]\n");
   s = s.write("    add x0, x1, #2\n    lsl x0, x0, #3\n    bl __fern_alloc_inner\n    ldr x1, [sp, #24]\n");
@@ -8628,15 +8629,19 @@ function emit_san_redzone_alloc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    adrp x2, __fern_lc_alloc_bytes\n    add x2, x2, :lo12:__fern_lc_alloc_bytes\n    ldr x4, [x2]\n    sub x4, x4, x3, lsl #3\n    str x4, [x2]\n");
   }
   s = s.write("    add x3, x0, x1, lsl #3\n" + rc_poison_into("w2") + "    orr x2, x2, x2, lsl #32\n    str x2, [x3]\n    str x2, [x3, #8]\n");
+  s = s.write("    ldr x4, [sp, #16]\n    add x4, x4, #7\n    lsr x4, x4, #3\n.Lsan_slack_fill:\n    cmp x4, x1\n    b.hs .Lsan_slack_filled\n");
+  s = s.write("    str x2, [x0, x4, lsl #3]\n    add x4, x4, #1\n    b .Lsan_slack_fill\n.Lsan_slack_filled:\n");
   return s.write(rt_unframe_of(s, 32) + "    ret\n");
 }
 
-// The release side: x0 is the block and x1 its size in words. A word that
-// lost the pattern was written past the end of the block. x1 then holds the
+// The release side: x0 is the block and x1 its size in words. A word past
+// the request that lost the pattern was written past the end of the block.
+// It uses x9 to x12. x1 then holds the
 // words of the whole block, the redzone too, so that the quarantine hands
 // the block to the free list that the allocation takes from.
 function san_redzone_check(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    cbz x1, .Lquar_redzone_ok\n    str x30, [sp, #-16]!\n    bl __fern_san_class\n    add x9, x0, x1, lsl #3\n" + rc_poison_into("w10") + "    orr x10, x10, x10, lsl #32\n");
+  s = s.write("    cbz x1, .Lquar_redzone_ok\n    str x30, [sp, #-16]!\n    mov x12, x1\n    bl __fern_san_class\n    add x9, x0, x1, lsl #3\n" + rc_poison_into("w10") + "    orr x10, x10, x10, lsl #32\n");
+  s = s.write(".Lquar_slack:\n    cmp x12, x1\n    b.hs .Lquar_slack_ok\n    ldr x11, [x0, x12, lsl #3]\n    cmp x11, x10\n    b.ne __fern_san_abort_hbo\n    add x12, x12, #1\n    b .Lquar_slack\n.Lquar_slack_ok:\n");
   s = s.write("    ldr x11, [x9]\n    cmp x11, x10\n    b.ne __fern_san_abort_hbo\n    ldr x11, [x9, #8]\n    cmp x11, x10\n    b.ne __fern_san_abort_hbo\n");
   return s.write("    add x1, x1, #2\n    ldr x30, [sp], #16\n.Lquar_redzone_ok:\n");
 }

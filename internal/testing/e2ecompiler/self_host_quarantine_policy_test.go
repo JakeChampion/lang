@@ -119,6 +119,19 @@ const redzoneInBoundsSrc = `function main(): i32 {
 }
 `
 
+// A 3000-byte block takes a class of 384 words. A write at byte 3008 lands
+// in the class past the request, and a write at byte 2999 is in bounds.
+const redzoneSlackSrc = `function main(): i32 {
+  unsafe {
+    let p: usize = __alloc(3000);
+    __store_u8(p + OFFSET, 7);
+    __free(p, 3000);
+  }
+  print("survived");
+  return 0;
+}
+`
+
 // A 13-byte block written at byte 16, the first byte after its rounded size.
 const redzoneRoundedSrc = `function main(): i32 {
   unsafe {
@@ -341,7 +354,8 @@ func TestSelfHostQuarantinePolicy(t *testing.T) {
 			})
 			t.Run("redzone", func(t *testing.T) {
 				const report = "fern-sanitizer: heap-buffer-overflow (a block was written past its end)"
-				for name, src := range map[string]string{"past-the-end": redzoneWriteSrc, "last-redzone-byte": redzoneLastByteSrc, "past-the-rounded-size": redzoneRoundedSrc} {
+				past := strings.Replace(redzoneSlackSrc, "OFFSET", "3008", 1)
+				for name, src := range map[string]string{"past-the-end": redzoneWriteSrc, "last-redzone-byte": redzoneLastByteSrc, "past-the-rounded-size": redzoneRoundedSrc, "past-the-request": past} {
 					r := quarantineBuild(t, cli, qemu, target, src, []string{"-sanitize"})
 					if r.code != 124 || !strings.Contains(r.stderr, report) || strings.Contains(r.stdout, "survived") {
 						t.Fatalf("%s: exit %d, want 124 with the heap-buffer-overflow report\n%s%s", name, r.code, r.stdout, r.stderr)
@@ -350,6 +364,10 @@ func TestSelfHostQuarantinePolicy(t *testing.T) {
 					if plain.code != 0 || !strings.Contains(plain.stdout, "survived") {
 						t.Fatalf("%s release build: exit %d\n%s%s", name, plain.code, plain.stdout, plain.stderr)
 					}
+				}
+				inside := quarantineBuild(t, cli, qemu, target, strings.Replace(redzoneSlackSrc, "OFFSET", "2999", 1), []string{"-sanitize"})
+				if inside.code != 0 || !strings.Contains(inside.stdout, "survived") || strings.Contains(inside.stderr, "fern-sanitizer") {
+					t.Fatalf("last byte of a large request: exit %d, want a clean run\n%s%s", inside.code, inside.stdout, inside.stderr)
 				}
 				r := quarantineBuild(t, cli, qemu, target, redzoneInBoundsSrc, []string{"-sanitize"})
 				if r.code != 0 || !strings.Contains(r.stdout, "survived") || strings.Contains(r.stderr, "fern-sanitizer") || !strings.Contains(r.stdout+r.stderr, "allocs=2 frees=2 live_bytes=0") {

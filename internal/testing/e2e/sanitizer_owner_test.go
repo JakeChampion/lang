@@ -306,6 +306,31 @@ const sanWasmPayloadReadSrc = `function main(): i32 {
   return 0;
 }`
 
+// A 3000-byte block takes a class of 3072 bytes. A write at byte 3008 lands
+// in the class past the request, and a write at byte 2999 is in bounds.
+const sanWasmSlackSrc = `function main(): i32 {
+  unsafe {
+    let p: usize = __alloc(3000);
+    __store_u8(p + OFFSET, 7);
+    __free(p, 3000);
+  }
+  print("survived");
+  return 0;
+}`
+
+// The release of a block checks the bytes of its class past the request, as
+// the native release does.
+func TestWasmSanitizeReportsSlackWrite(t *testing.T) {
+	stdout, stderr, code := runSanitizeWasm(t, strings.Replace(sanWasmSlackSrc, "OFFSET", "3008", 1), "FERN_SANITIZE=1")
+	if code != e2eharness.ExitSanitizer || !strings.Contains(stderr, "fern-sanitizer: heap-buffer-overflow (a block was written past its end)") || strings.Contains(stdout, "survived") {
+		t.Errorf("past the request: exit=%d, want %d with the report\nstdout: %s\nstderr: %s", code, e2eharness.ExitSanitizer, stdout, stderr)
+	}
+	stdout, stderr, code = runSanitizeWasm(t, strings.Replace(sanWasmSlackSrc, "OFFSET", "2999", 1), "FERN_SANITIZE=1")
+	if code != 0 || !strings.Contains(stdout, "survived") || strings.Contains(stderr, "fern-sanitizer:") {
+		t.Errorf("last byte of the request: exit=%d, want a clean run\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+}
+
 // The wasm quarantine fills a released block with the poison pattern and
 // checks it at eviction and at exit, as the native quarantine does.
 func TestWasmSanitizeReportsWriteAfterFree(t *testing.T) {
