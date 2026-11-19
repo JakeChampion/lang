@@ -1035,8 +1035,8 @@ function check_visibility_and_destructuring(): test.TestOutcome {
   }
   match (rtTd.funcs[mti].body[0]) {
     ast.StmtVar(v) => {
-      if (v.name != "a,b") {
-        return test.fail("v.name != \"a,b\"");
+      if (ast.destr_text(v.destr) != "a,b" || v.name.len() != 0) {
+        return test.fail("ast.destr_text(v.destr) != \"a,b\" || v.name.len() != 0");
       }
       if (v.type_name.len() != 0) {
         return test.fail("v.type_name.len() != 0");
@@ -1054,11 +1054,11 @@ function check_visibility_and_destructuring(): test.TestOutcome {
   }
   match (rtSd.funcs[msi].body[0]) {
     ast.StmtVar(v) => {
-      if (v.name != "x,bb") {
-        return test.fail("v.name != \"x,bb\"");
+      if (ast.destr_text(v.destr) != "x,bb" || v.name.len() != 0) {
+        return test.fail("ast.destr_text(v.destr) != \"x,bb\" || v.name.len() != 0");
       }
-      if (v.type_name != "@sd:P:x,y") {
-        return test.fail("v.type_name != \"@sd:P:x,y\"");
+      if (v.destr.prelude || v.destr.record != "P" || v.destr.fields.len() != 2 || v.destr.fields[0] != "x" || v.type_name.len() != 0) {
+        return test.fail("v.destr.prelude || v.destr.record != \"P\" || v.destr.fields.len() != 2 || v.destr.fields[0] != \"x\" || v.type_name.len() != 0");
       }
     },
     _ => {
