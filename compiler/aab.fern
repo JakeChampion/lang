@@ -88,8 +88,8 @@ pub function files(app: apk.App, libs: apk.Lib[]): apk.Entry[] {
   if (app.banner.len() > 0) {
     out = out.append(entry(BASE + apk.BANNER_PATH, app.banner));
   }
-  if (app.widget.provider.len() > 0) {
-    out = out.append(entry(BASE + apk.WIDGET_LAYOUT_PATH, androidxml.proto(apk.widget_layout(app.widget)))).append(entry(BASE + apk.WIDGET_INFO_PATH, androidxml.proto(apk.widget_info())));
+  for x in apk.xml_files(app) {
+    out = out.append(entry(BASE + x.path, androidxml.proto(x.root)));
   }
   for a in app.assets {
     out = out.append(entry(BASE + "assets/" + a.name, a.data));

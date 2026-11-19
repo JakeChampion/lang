@@ -160,3 +160,60 @@ func TestApkWidget(t *testing.T) {
 		t.Errorf("-apk-widget with no provider class: want a refusal, got %v\n%s", err, o)
 	}
 }
+
+// fern -apk gives an app with a media browser class an exported service
+// with the intent filter of a media browser, the meta-data of Android Auto,
+// and the file that says the app uses the media templates.
+func TestApkCar(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "cartest.apk")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-package", "dev.fern.cartest", e2eharness.RepoPath("tests/android/car", "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if o, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -apk: %v\n%s", err, o)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr := zipOf(t, raw)
+	var names []string
+	for _, f := range zr.File {
+		names = append(names, f.Name)
+	}
+	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex resources.arsc res/xml/automotive_app_desc.xml lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
+		t.Errorf("entries = %s", got)
+	}
+	man := readZipEntry(t, zr, "AndroidManifest.xml")
+	xmlElements(t, "AndroidManifest.xml", man)
+	for _, s := range []string{"service", "dev.fern.cartest.Browse", "android.media.browse.MediaBrowserService", "com.google.android.gms.car.application", "resource", "exported"} {
+		if !bytes.Contains(man, utf16le(s)) {
+			t.Errorf("the manifest has no string %q", s)
+		}
+	}
+	// The meta-data names the file of Android Auto, 0x7f020000: the xml
+	// type follows the drawable type.
+	if !bytes.Contains(man, []byte{8, 0, 0, 1, 0, 0, 2, 0x7f}) {
+		t.Error("the manifest has no reference to the resource 0x7f020000")
+	}
+	// The service is exported: a boolean attribute with the value true.
+	if !bytes.Contains(man, []byte{8, 0, 0, 18, 0xff, 0xff, 0xff, 0xff}) {
+		t.Error("the manifest has no attribute that is true")
+	}
+	table := readZipEntry(t, zr, "resources.arsc")
+	for _, s := range []string{"res/xml/automotive_app_desc.xml", "xml", "automotive_app_desc", "dev.fern.cartest"} {
+		if !bytes.Contains(table, utf16le(s)) {
+			t.Errorf("the resource table has no string %q", s)
+		}
+	}
+	desc := readZipEntry(t, zr, "res/xml/automotive_app_desc.xml")
+	if n := xmlElements(t, "res/xml/automotive_app_desc.xml", desc); n != 2 {
+		t.Errorf("the file of Android Auto has %d elements, want 2", n)
+	}
+	for _, s := range []string{"automotiveApp", "uses", "name", "media"} {
+		if !bytes.Contains(desc, utf16le(s)) {
+			t.Errorf("the file of Android Auto has no string %q", s)
+		}
+	}
+	verifyApkV2(t, raw)
+}

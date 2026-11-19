@@ -190,6 +190,15 @@ from the same place as a transcode that converts the sound. It does this
 when the player selects no sound track, or when it reports that the sound
 stopped. The player shows "Direct play" or "Transcode" after the title.
 
+The app is a media app of Android Auto. Its media browser, a
+`MediaBrowserService` of `std/android/browse`, starts the loop of the app
+when no window shows. The car then gets the token of the media session.
+
+The root lists each music library, and the downloaded music. A library
+opens to its artists, an artist to its albums, and an album to its tracks.
+A track plays with the tracks of its album after it. With no server, the
+car shows only the downloads.
+
 The app runs on Android TV. `fern.toml` sets `tv`, so the app is on the
 launcher of the TV, with `banner.png` as its banner, and it needs no touch
 screen. The D-pad of the remote

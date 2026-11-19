@@ -134,9 +134,10 @@ const PAUSED: i32 = 2;
 
 const PLAYING: i32 = 3;
 
-// ACTION_STOP, PAUSE, PLAY, SKIP_TO_PREVIOUS, SKIP_TO_NEXT, SEEK_TO and
-// PLAY_PAUSE of PlaybackState.
-const ACTIONS: i32 = 823;
+// ACTION_STOP, PAUSE, PLAY, SKIP_TO_PREVIOUS, SKIP_TO_NEXT, SEEK_TO,
+// PLAY_PAUSE and PLAY_FROM_MEDIA_ID of PlaybackState. A browser such as
+// Android Auto plays an item of `std/android/browse` with the last one.
+const ACTIONS: i32 = 1847;
 
 // The bits of the float 1.0, the speed of a player that plays.
 const SPEED_ONE: i32 = 1065353216;

@@ -1,0 +1,16 @@
+// A NativeActivity app with a @jni class that extends MediaBrowserService,
+// for the check that fern -apk declares an exported media browser and
+// marks the app as a media app of Android Auto.
+import "std/android/browse";
+
+@jni("dev.fern.cartest.Browse extends android.service.media.MediaBrowserService", "android.service.media.MediaBrowserService$BrowserRoot onGetRoot(java.lang.String, int, android.os.Bundle)")
+pub function on_get_root(env: usize, thiz: usize, client: usize, uid: i32, hints: usize): usize {
+  return browse.root(env, thiz, 0 as usize);
+}
+
+@jni("dev.fern.cartest.Browse", "void onLoadChildren(java.lang.String, android.service.media.MediaBrowserService$Result)")
+pub function on_load_children(env: usize, thiz: usize, parent: usize, result: usize): void {
+  browse.children(env, thiz, parent, result);
+}
+
+pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {}
