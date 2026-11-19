@@ -1533,8 +1533,8 @@ function check_fstrings(): test.TestOutcome {
     ast.StmtReturn(r) => {
       match (r.value) {
         ast.ExprUnknown(u) => {
-          if (u.kind != "f-string interpolation: unexpected trailing tokens after expression") {
-            return test.fail("u.kind != \"f-string interpolation: unexpected trailing tokens after expression\"");
+          if (u.fault.code != "P001" || u.fault.message != "f-string interpolation: unexpected trailing tokens after expression") {
+            return test.fail("u.fault != P001 \"f-string interpolation: unexpected trailing tokens after expression\"");
           }
           if (u.line != 1 || u.col != 17) {
             return test.fail("u.line != 1 || u.col != 17");
@@ -1676,11 +1676,11 @@ function check_struct_patterns(): test.TestOutcome {
   }
   match (modSP.funcs[0].body[0]) {
     ast.StmtVar(v) => {
-      if (v.name != "x,y") {
-        return test.fail("v.name != \"x,y\"");
+      if (ast.destr_text(v.destr) != "x,y" || v.name.len() != 0) {
+        return test.fail("ast.destr_text(v.destr) != \"x,y\" || v.name.len() != 0");
       }
-      if (v.type_name != "@pp;@sd:Point:x,y") {
-        return test.fail("v.type_name != \"@pp;@sd:Point:x,y\"");
+      if (!v.destr.prelude || v.destr.record != "Point" || v.destr.fields.len() != 2 || v.destr.fields[0] != "x" || v.type_name.len() != 0) {
+        return test.fail("!v.destr.prelude || v.destr.record != \"Point\" || v.destr.fields.len() != 2 || v.destr.fields[0] != \"x\" || v.type_name.len() != 0");
       }
       match (v.init) {
         ast.ExprIdent(id) => {
@@ -1705,11 +1705,11 @@ function check_struct_patterns(): test.TestOutcome {
   }
   match (modSPR.funcs[0].body[0]) {
     ast.StmtVar(v) => {
-      if (v.name != "a,y") {
-        return test.fail("v.name != \"a,y\"");
+      if (ast.destr_text(v.destr) != "a,y" || v.name.len() != 0) {
+        return test.fail("ast.destr_text(v.destr) != \"a,y\" || v.name.len() != 0");
       }
-      if (v.type_name != "@pp;@sd:Point:x,y") {
-        return test.fail("v.type_name != \"@pp;@sd:Point:x,y\"");
+      if (!v.destr.prelude || v.destr.record != "Point" || v.destr.fields.len() != 2 || v.destr.fields[0] != "x" || v.type_name.len() != 0) {
+        return test.fail("!v.destr.prelude || v.destr.record != \"Point\" || v.destr.fields.len() != 2 || v.destr.fields[0] != \"x\" || v.type_name.len() != 0");
       }
     },
     _ => {
@@ -1730,8 +1730,8 @@ function check_struct_patterns(): test.TestOutcome {
   }
   match (modSPA.funcs[0].body[0]) {
     ast.StmtVar(v) => {
-      if (v.type_name != "@pp;@sd:Point:x,y") {
-        return test.fail("v.type_name != \"@pp;@sd:Point:x,y\"");
+      if (!v.destr.prelude || v.destr.record != "Point" || v.destr.fields.len() != 2 || v.destr.fields[0] != "x" || v.type_name.len() != 0) {
+        return test.fail("!v.destr.prelude || v.destr.record != \"Point\" || v.destr.fields.len() != 2 || v.destr.fields[0] != \"x\" || v.type_name.len() != 0");
       }
       match (v.init) {
         ast.ExprIdent(id) => {
@@ -1772,11 +1772,11 @@ function check_struct_patterns(): test.TestOutcome {
           }
           match (lm.body[0]) {
             ast.StmtVar(dv) => {
-              if (dv.name != "x,y") {
-                return test.fail("dv.name != \"x,y\"");
+              if (ast.destr_text(dv.destr) != "x,y" || dv.name.len() != 0) {
+                return test.fail("ast.destr_text(dv.destr) != \"x,y\" || dv.name.len() != 0");
               }
-              if (dv.type_name != "@pp;@sd:Point:x,y") {
-                return test.fail("dv.type_name != \"@pp;@sd:Point:x,y\"");
+              if (!dv.destr.prelude || dv.destr.record != "Point" || dv.destr.fields.len() != 2 || dv.destr.fields[0] != "x" || dv.type_name.len() != 0) {
+                return test.fail("!dv.destr.prelude || dv.destr.record != \"Point\" || dv.destr.fields.len() != 2 || dv.destr.fields[0] != \"x\" || dv.type_name.len() != 0");
               }
               match (dv.init) {
                 ast.ExprIdent(id) => {
@@ -1815,8 +1815,8 @@ function check_struct_patterns(): test.TestOutcome {
           }
           match (lm.body[0]) {
             ast.StmtVar(dv) => {
-              if (dv.type_name != "@pp;@sd:Point:x,y") {
-                return test.fail("dv.type_name != \"@pp;@sd:Point:x,y\"");
+              if (!dv.destr.prelude || dv.destr.record != "Point" || dv.destr.fields.len() != 2 || dv.destr.fields[0] != "x" || dv.type_name.len() != 0) {
+                return test.fail("!dv.destr.prelude || dv.destr.record != \"Point\" || dv.destr.fields.len() != 2 || dv.destr.fields[0] != \"x\" || dv.type_name.len() != 0");
               }
             },
             _ => {

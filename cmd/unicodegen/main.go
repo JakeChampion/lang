@@ -774,6 +774,8 @@ func parseNormData() (cccs []cccRun, decomps []decomp, prims []primary) {
 				d.to[i] = rune(mustHex(p))
 			}
 			decomps = append(decomps, d)
+		case "S":
+			// One-step decompositions; parseNormSteps reads them.
 		case "P":
 			parts := strings.Fields(f[2])
 			if len(parts) != 2 {
@@ -806,6 +808,93 @@ func parseNormData() (cccs []cccRun, decomps []decomp, prims []primary) {
 		return prims[i].b < prims[j].b
 	})
 	return cccs, decomps, prims
+}
+
+// A one-step canonical decomposition that is not the full expansion: a,
+// then b or 0 for a singleton.
+type normStep struct {
+	cp, a, b rune
+}
+
+const stepChars = 3 * fieldChars
+
+func parseNormSteps() (steps []normStep) {
+	for _, line := range strings.Split(normData, "\n") {
+		if !strings.HasPrefix(line, "S;") {
+			continue
+		}
+		f := strings.Split(line, ";")
+		parts := strings.Fields(f[2])
+		if len(parts) == 0 || len(parts) > 2 {
+			panic("unicodegen: one-step decomposition arity out of range: " + line)
+		}
+		st := normStep{cp: rune(mustHex(f[1])), a: rune(mustHex(parts[0]))}
+		if len(parts) == 2 {
+			st.b = rune(mustHex(parts[1]))
+		}
+		steps = append(steps, st)
+	}
+	sort.Slice(steps, func(i, j int) bool { return steps[i].cp < steps[j].cp })
+	return steps
+}
+
+func encodeSteps(steps []normStep) string {
+	var b strings.Builder
+	for _, st := range steps {
+		encField(&b, int(st.cp))
+		encField(&b, int(st.a))
+		encField(&b, int(st.b))
+	}
+	return b.String()
+}
+
+func decodeStep(t string, cp int) (a, b rune, ok bool) {
+	lo, hi := 0, len(t)/stepChars-1
+	for lo <= hi {
+		mid := lo + (hi-lo)/2
+		base := mid * stepChars
+		switch from := decField(t, base); {
+		case cp < from:
+			hi = mid - 1
+		case cp > from:
+			lo = mid + 1
+		default:
+			return rune(decField(t, base+fieldChars)), rune(decField(t, base+2*fieldChars)), true
+		}
+	}
+	return 0, 0, false
+}
+
+// verifySteps checks the table, and that each step expands to the full
+// decomposition of its code point.
+func verifySteps(stepT string, steps []normStep, decomps []decomp) {
+	full := make(map[rune][]rune, len(decomps))
+	for _, d := range decomps {
+		for _, r := range d.to {
+			if r != 0 {
+				full[d.cp] = append(full[d.cp], r)
+			}
+		}
+	}
+	expand := func(r rune) []rune {
+		if f, ok := full[r]; ok {
+			return f
+		}
+		return []rune{r}
+	}
+	for _, st := range steps {
+		a, b, ok := decodeStep(stepT, int(st.cp))
+		if !ok || a != st.a || b != st.b {
+			panic(fmt.Sprintf("unicodegen: step(U+%04X) = %04X %04X (%v), want %04X %04X", st.cp, a, b, ok, st.a, st.b))
+		}
+		got := expand(st.a)
+		if st.b != 0 {
+			got = append(append([]rune{}, got...), expand(st.b)...)
+		}
+		if fmt.Sprint(got) != fmt.Sprint(full[st.cp]) {
+			panic(fmt.Sprintf("unicodegen: step of U+%04X expands to %X, want %X", st.cp, got, full[st.cp]))
+		}
+	}
 }
 
 func mustHex(s string) int64 {
@@ -1421,6 +1510,9 @@ func generate() (string, genStats) {
 	cccs, decomps, prims := parseNormData()
 	cccT, decompT, composeT := encodeCCC(cccs), encodeDecomp(decomps), encodeCompose(prims)
 	verifyNorm(cccT, decompT, composeT, cccs, decomps, prims)
+	steps := parseNormSteps()
+	stepT := encodeSteps(steps)
+	verifySteps(stepT, steps, decomps)
 
 	decomposes := make(map[rune]bool, len(decomps))
 	for _, d := range decomps {
@@ -1440,7 +1532,7 @@ func generate() (string, genStats) {
 	}
 	nfcMaybe := coalesce(func(r rune) bool { return combinesLeft[r] })
 
-	stats.tableBytes += len(cccT) + len(decompT) + len(composeT) +
+	stats.tableBytes += len(cccT) + len(decompT) + len(stepT) + len(composeT) +
 		len(encodeRanges(nfcNo)) + len(encodeRanges(nfcMaybe)) + len(encodeRanges(nfdNo))
 
 	gcbs, extPict, gcbVersion := parseGCBData()
@@ -1484,6 +1576,7 @@ import "std/utf8" as utf8;
 
 	emitTable(&b, "_ccc_ranges", cccT)
 	emitTable(&b, "_decomp_table", decompT)
+	emitTable(&b, "_decomp_step_table", stepT)
 	emitTable(&b, "_compose_table", composeT)
 	emitTable(&b, "_nfc_no_ranges", encodeRanges(nfcNo))
 	emitTable(&b, "_nfc_maybe_ranges", encodeRanges(nfcMaybe))
@@ -2320,6 +2413,45 @@ pub function joining_type(c: char): i32 {
 // The Canonical_Combining_Class of c, from 0 to 254.
 pub function combining_class(c: char): i32 {
     return _ccc_of(c);
+}
+
+// The full canonical decomposition of c, or c alone when it has none.
+pub function decomposition(c: char): char[] {
+    let none: char[] = [];
+    return _decomp_append(none, c);
+}
+
+// The canonical decomposition of c by one step: one or two characters,
+// or c alone when it has none. A Hangul syllable with a final consonant
+// gives the syllable without it, then the final consonant.
+pub function decomposition_step(c: char): char[] {
+    let n = c as i32;
+    if (n >= 44032 && n < 55204 && (n - 44032) % 28 != 0) {
+        return [(n - (n - 44032) % 28) as char, (4519 + (n - 44032) % 28) as char];
+    }
+    let t = _decomp_step_table();
+    let lo = 0;
+    let hi = t.len() / 12 - 1;
+    while (lo <= hi) {
+        let mid = lo + (hi - lo) / 2;
+        let base = mid * 12;
+        let from = _fld(t, base);
+        if (n < from) {
+            hi = mid - 1;
+        } else if (n > from) {
+            lo = mid + 1;
+        } else {
+            let a = _fld(t, base + 4) as char;
+            let b = _fld(t, base + 8);
+            return if (b == 0) { [a] } else { [a, b as char] };
+        }
+    }
+    return decomposition(c);
+}
+
+// The primary composite of a and b, or 0 when they do not compose.
+pub function composition(a: char, b: char): i32 {
+    return _compose_pair(a, b);
 }
 
 function _wb_of(cp: char): i32 {

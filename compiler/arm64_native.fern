@@ -1824,6 +1824,12 @@ function arm64_logical_imm_ok(imm: i64, w: boolean): boolean {
   return arm64_logical_imm_bits(imm, w).ok;
 }
 
+// Whether and, orr and eor take imm as an immediate in the 64-bit form and
+// in the 32-bit form.
+pub function arm64_logical_imm_any_width(imm: i64): boolean {
+  return arm64_logical_imm_ok(imm, false) && arm64_logical_imm_ok(imm, true);
+}
+
 function arm64_logical_imm_word(base: i64, w: boolean, rd: i32, rn: i32, imm: i64): i64 {
   let bm = arm64_logical_imm_bits(imm, w);
   let b = base;

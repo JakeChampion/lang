@@ -9,19 +9,8 @@ import (
 	"testing"
 )
 
-func buildLangBinForCheck(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "fern")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
-	return bin
-}
-
 func TestCheckCleanProgram(t *testing.T) {
-	bin := buildLangBinForCheck(t)
+	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
 	if err := os.WriteFile(src, []byte(`function add(a: i32, b: i32): i32 {
@@ -50,7 +39,7 @@ function main(): i32 {
 }
 
 func TestCheckTypeError(t *testing.T) {
-	bin := buildLangBinForCheck(t)
+	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "bad.fern")
 	if err := os.WriteFile(src, []byte(`function main(): i32 {
@@ -77,7 +66,7 @@ func TestCheckTypeError(t *testing.T) {
 }
 
 func TestCheckLibraryNoMain(t *testing.T) {
-	bin := buildLangBinForCheck(t)
+	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "lib.fern")
 	if err := os.WriteFile(src, []byte(`function helper(n: i32): i32 {
@@ -97,7 +86,7 @@ func TestCheckLibraryNoMain(t *testing.T) {
 }
 
 func TestCheckStdin(t *testing.T) {
-	bin := buildLangBinForCheck(t)
+	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-check", "-")
 	cmd.Stdin = strings.NewReader(`function f(n: i32): i32 { return n + 1; }`)
 	var out, errb bytes.Buffer
@@ -110,7 +99,7 @@ func TestCheckStdin(t *testing.T) {
 }
 
 func TestCheckStdinTypeError(t *testing.T) {
-	bin := buildLangBinForCheck(t)
+	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-check", "-")
 	cmd.Stdin = strings.NewReader(`function f(): i32 { return "x"; }`)
 	var out, errb bytes.Buffer
@@ -126,7 +115,7 @@ func TestCheckStdinTypeError(t *testing.T) {
 }
 
 func TestCheckFollowsImports(t *testing.T) {
-	bin := buildLangBinForCheck(t)
+	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
 	lib := filepath.Join(dir, "lib.fern")
 	if err := os.WriteFile(lib, []byte(`pub function broken(): i32 {
@@ -157,7 +146,7 @@ function main(): i32 {
 }
 
 func TestCheckAttributesAnImportsSyntaxError(t *testing.T) {
-	bin := buildLangBinForCheck(t)
+	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
 	entry := filepath.Join(dir, "main.fern")
 	helper := filepath.Join(dir, "util.fern")

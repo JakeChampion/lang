@@ -30,6 +30,12 @@ The ring keeps the last samples that the device played: `recent` gives them, for
 
 ## Contracts
 
+`Buffered.write_f32` converts normalized float PCM directly into the playback ring.
+It clips to signed 16-bit PCM and rounds ties away from zero, as `std/audio/pcm.quantize` does.
+It returns the number of accepted samples and accepts only complete channel frames.
+Only the accepted prefix needs finite samples. A non-finite sample in this prefix returns `Sample` without publication.
+The method creates no intermediate PCM array. Effects and resampling remain with the caller.
+
 A stream with `ptr` 0 did not open. Close each other stream once.
 
 `timestamp` returns a frame position and its `CLOCK_MONOTONIC` time in nanoseconds.
@@ -68,6 +74,8 @@ The timestamp query does not assign media timestamps or measure acoustic lip-syn
 import "std/ffi";
 import "std/i32";
 import "std/i64";
+import "std/audio/pcm";
+import "std/f32";
 ```
 
 ### `C functions`
@@ -132,7 +140,7 @@ function c_close(stream: usize): i32;
 function c_read(stream: usize, buffer: usize, frames: i32, timeout_ns: i64): i32;
 
 @import("libaaudio.so", "AAudioStream_write")
-function c_write(stream: usize, buffer: usize, frames: i32, timeout_ns: i64): i32;
+pub(package) function c_write(stream: usize, buffer: usize, frames: i32, timeout_ns: i64): i32;
 
 @import("libaaudio.so", "AAudioStream_getSampleRate")
 function c_sample_rate(stream: usize): i32;
@@ -276,10 +284,21 @@ function read_timestamp(ptr: usize): Option[Timestamp] {
   unsafe {
     let bytes = Timestamp.c_size() as i32;
     let slot = __alloc(bytes);
+    let value = read_timestamp_into(ptr, slot);
+    __free(slot, bytes);
+    return value;
+  }
+}
+
+// The caller supplies aligned, writable Timestamp storage through the call.
+pub(package) function read_timestamp_into(ptr: usize, slot: usize): Option[Timestamp] {
+  if (ptr == 0 as usize || slot == 0 as usize) {
+    return None;
+  }
+  unsafe {
     Timestamp { frame_position: -1i64, monotonic_ns: -1i64 }.c_store(slot);
     let status = c_timestamp(ptr, 1, slot + Timestamp.c_offset_frame_position(), slot + Timestamp.c_offset_monotonic_ns());
     let value = Timestamp.c_load(slot);
-    __free(slot, bytes);
     if (status != 0 || value.frame_position < 0i64 || value.monotonic_ns < 0i64) {
       return None;
     }
@@ -598,6 +617,51 @@ pub function (m: Buffered) write(samples: [i32]): i32 {
     }
     __atomic_store_release(m.ring + WRITE_AT as usize, at + n as i64);
     return n;
+  }
+}
+
+// Convert the exact binary32 significand. The caller rejects non-finite values.
+function pcm16(sample: f32): i32 {
+  let word = f32_bits(sample);
+  let magnitude = word & 2147483647;
+  if (magnitude >= 1065353216) {
+    return if (word < 0) { -32768 } else { 32767 };
+  }
+  if (magnitude < 931135488) {
+    return 0;
+  }
+  let shift = 135 - (magnitude >> 23);
+  let rounded = (magnitude & 8388607 | 8388608) + (1 << shift - 1) >> shift;
+  return if (word < 0) { -rounded } else { rounded.min(32767) };
+}
+
+// Convert and publish one prefix. Unpublished bytes remain in the free part of the ring.
+pub function (m: Buffered) write_f32(samples: [f32]): Result[i32, pcm.AudioError] {
+  if (m.ring == 0 as usize) {
+    return Ok(0);
+  }
+  unsafe {
+    let capacity = __load_i64(m.ring + CAPACITY_AT as usize);
+    let at = __load_i64(m.ring + WRITE_AT as usize);
+    let room = capacity - (HISTORY * m.channels) as i64 - (at - ring_next(m.ring));
+    let n = (samples.len() as i64).min(room).max(0i64) as i32 / m.channels * m.channels;
+    let position = at % capacity;
+    for k in 0..n {
+      let sample = samples[k];
+      if (!sample.is_finite()) {
+        return Err(pcm.Sample);
+      }
+      let v = pcm16(sample);
+      let to = m.ring + DATA_AT as usize + (position * 2i64) as usize;
+      __store_u8(to, v & 255);
+      __store_u8(to + 1 as usize, v >> 8 & 255);
+      position += 1i64;
+      if (position == capacity) {
+        position = 0i64;
+      }
+    }
+    __atomic_store_release(m.ring + WRITE_AT as usize, at + n as i64);
+    return Ok(n);
   }
 }
 

@@ -841,17 +841,37 @@ pub function with_funcs(s: EmitState, funcs: parser.FuncDecl[]): EmitState {
 // A body that other units can also emit starts with its `.weak` lines. A
 // body seen before is dropped through its `.cfi_endproc`, with the `.ltorg`
 // that follows it on arm64.
+// The static box of a record with no field starts with a `.weak` line too. A
+// box seen before is dropped whole.
 pub function dedupe_weak_into(asm_text: string, seen_in: string[], h: usize): string[] {
   let seen = seen_in;
   let i = 0;
   let n = asm_text.len();
   let state = 0;
+  let box_left = 0;
   while (i < n) {
     let j = i;
     while (j < n && asm_text[j] != b'\n') {
       j += 1;
     }
     let line = slice_unchecked(asm_text, i, j).to_owned();
+    if (box_left > 0) {
+      box_left -= 1;
+      i = j + 1;
+      continue;
+    }
+    if (state != 1 && line.starts_with(".weak " + static_box_prefix())) {
+      state = 0;
+      if (util.has_str(seen, line)) {
+        box_left = static_box_lines() - 1;
+      } else {
+        seen = seen.append(line);
+        buf_push(h, line);
+        buf_push(h, "\n");
+      }
+      i = j + 1;
+      continue;
+    }
     let drop = false;
     if (state == 2) {
       state = 0;
@@ -2918,6 +2938,9 @@ pub function ty_friendly(t: Ty): string {
     TyBool(_) => {
       return "boolean";
     },
+    TyStructNamed(x) => {
+      return x.name;
+    },
     _ => {
       return ty_tag(t);
     }
@@ -3667,8 +3690,8 @@ function infer_expr_unary_type(u: ast.ExprUnary, s: EmitState): Ty {
   if (u.op == "-") {
     return infer_expr_type(u.operand, s);
   }
-  if (u.op.len() >= 3 && u.op.starts_with("as_")) {
-    let ct = slice_unchecked(u.op, 3, u.op.len());
+  if (u.op == ast.CAST) {
+    let ct = u.cast;
     if (ct == "f64" || ct == "f32") {
       return ty_f64();
     }
@@ -3689,8 +3712,8 @@ function infer_expr_unary_type(u: ast.ExprUnary, s: EmitState): Ty {
     }
     return ty_from_name(ct);
   }
-  if (u.op.len() > 4 && u.op.starts_with("as?_")) {
-    return ty_from_name("Option[" + slice_unchecked(u.op, 4, u.op.len()) + "]");
+  if (u.op == ast.CHECKED_CAST) {
+    return ty_from_name("Option[" + u.cast + "]");
   }
   if (u.op == "try_") {
     let ot = infer_expr_type(u.operand, s);
@@ -3966,11 +3989,32 @@ pub function str_box_label(s: EmitState, idx: i32): string {
   return ".SB" + s.str_ns + "_" + util.i32_to_string(idx);
 }
 
+// A record with no field has one static box for each shape tag in the whole
+// program, so its label does not depend on the unit. A variant test compares
+// a value with the address of this box.
 pub function const_agg_label(s: EmitState, idx: i32): string {
+  let e = s.const_aggs[idx];
+  if (fieldless_record(e)) {
+    return static_box_prefix() + slice_unchecked(e, 1, e.len() - 1).to_owned();
+  }
   if (s.str_ns.len() == 0) {
     return ".K" + util.i32_to_string(idx);
   }
   return ".K" + s.str_ns + "_" + util.i32_to_string(idx);
+}
+
+function fieldless_record(e: string): boolean {
+  return e.len() > 2 && e[0] == b't' && e[e.len() - 1] == b'|';
+}
+
+function static_box_prefix(): string {
+  return ".Kv";
+}
+
+// The count of lines of the block of a static box of a record with no field,
+// from its `.weak` line (`emit_const_record_block`).
+function static_box_lines(): i32 {
+  return 6;
 }
 
 pub struct ConstAggPack { state: EmitState, text: string }
@@ -4490,84 +4534,12 @@ pub function assignable(want: Ty, got: Ty): boolean {
   return true;
 }
 
-function parse_unknown_error(where: string, kind: string, line: i32, col: i32): util.Diag {
-  let lex = kind;
-  if (lex.starts_with("stmt: ")) {
-    lex = slice_unchecked(lex, 6, lex.len()).to_owned();
+function parse_unknown_error(where: string, f: ast.Fault, line: i32, col: i32): util.Diag {
+  let message = f.message;
+  if (f.scoped) {
+    message = where + ": " + message;
   }
-  if (lex.starts_with("lex:")) {
-    return util.Diag { related: [], length: 0, code: slice_unchecked(lex, 4, 8).to_owned(), message: slice_unchecked(lex, 9, lex.len()).to_owned(), line: line, col: col, fix: None };
-  }
-  if (lex.starts_with("code:")) {
-    return util.Diag { related: [], length: 0, code: slice_unchecked(lex, 5, 9).to_owned(), message: where + ": " + slice_unchecked(lex, 10, lex.len()), line: line, col: col, fix: None };
-  }
-  if (util.is_f64_range_kind(kind)) {
-    return util.Diag { related: [], length: 0, code: "P002", message: where + ": " + util.f64_range_message(kind), line: line, col: col, fix: None };
-  }
-  if (kind == "nest:too-deep" || kind == "stmt: nest:too-deep") {
-    return util.Diag { related: [], length: 0, code: "P005", message: where + ": input nests deeper than " + util.i32_to_string(parser.MAX_NEST_DEPTH) + " levels", line: line, col: col, fix: None };
-  }
-  let decl = decl_sentinel_text(kind);
-  if (decl.len() > 0) {
-    return util.Diag { related: [], length: 0, code: "P001", message: where + ": " + decl, line: line, col: col, fix: None };
-  }
-  return util.Diag { related: [], length: 0, code: "P001", message: where + ": " + sentinel_message(kind), line: line, col: col, fix: None };
-}
-
-function sentinel_message(kind: string): string {
-  let k = kind;
-  if (k.starts_with("stmt: ")) {
-    k = slice_unchecked(k, 6, k.len()).to_owned();
-  }
-  if (k.starts_with("punct:")) {
-    return "expected an expression, got \"" + slice_unchecked(k, 6, k.len()) + "\"";
-  }
-  if (k.starts_with("keyword:")) {
-    return "expected an expression, got \"" + slice_unchecked(k, 8, k.len()) + "\"";
-  }
-  if (k.starts_with("missing ")) {
-    return missing_message(slice_unchecked(k, 8, k.len()).to_owned());
-  }
-  return match (k) {
-    "eof" => "expected an expression, got the end of the file",
-    "primary" => "expected an expression",
-    "lambda: bad destructuring param" => "expected a parameter name or a destructuring pattern",
-    "bad tuple pattern" => "expected a tuple pattern",
-    _ => k,
-  };
-}
-
-function missing_message(what: string): string {
-  return match (what) {
-    "= in let" => "expected \"=\" after the name in this declaration",
-    "`in` in for" => "expected \"in\" after the `for` pattern",
-    "for-let name" => "expected a name after \"let\" in this `for` loop",
-    "binding name" => "expected a name to bind",
-    "statement in braceless body" => "expected a statement",
-    "{ in block" => "expected \"{\" to open a block",
-    "{ in lambda body" => "expected \"{\" to open the lambda body",
-    "{ in branch body" => "expected \"{\" to open the branch body",
-    "field name in struct lit" => "expected a field name in this struct literal",
-    ": in struct lit" => "expected \":\" after the field name in this struct literal",
-    "} in struct lit" => "expected \"}\" to close this struct literal",
-    "} in struct update" => "expected \"}\" to close this struct update",
-    ") in call" => "expected \")\" to close this call",
-    "] in slice" => "expected \"]\" to close this slice",
-    "] in index" => "expected \"]\" to close this index",
-    "] in array literal" => "expected \"]\" to close this array literal",
-    "field name after ." => "expected a field or method name after \".\"",
-    _ => "expected " + what,
-  };
-}
-
-function decl_sentinel_text(kind: string): string {
-  if (kind.starts_with("decl:")) {
-    return slice_unchecked(kind, 5, kind.len()).to_owned();
-  }
-  if (kind.starts_with("stmt: decl:")) {
-    return slice_unchecked(kind, 11, kind.len()).to_owned();
-  }
-  return "";
+  return util.Diag { related: [], length: 0, code: f.code, message: message, line: line, col: col, fix: None };
 }
 
 struct UnkScan { where: string, errs: util.Diag[] }
@@ -4578,10 +4550,10 @@ function unknown_error_stmt_at(st: ast.Stmt, own a: UnkScan): UnkScan {
       return a;
     },
     ast.StmtUnknown(u) => {
-      if (u.kind == parser.REPORTED || u.kind == parser.MISSING_TAIL) {
+      if (u.fault.code.len() == 0) {
         return a;
       }
-      return UnkScan { ...a, errs: a.errs.append(parse_unknown_error(a.where, "stmt: " + u.kind, u.line, u.col)) };
+      return UnkScan { ...a, errs: a.errs.append(parse_unknown_error(a.where, u.fault, u.line, u.col)) };
     },
     ast.StmtDefer(_) => {
       return a;
@@ -4622,10 +4594,10 @@ function unknown_error_expr_at(e: ast.Expr, own a: UnkScan): UnkScan {
       return a;
     },
     ast.ExprUnknown(u) => {
-      if (u.kind == parser.BARE_RETURN || u.kind == parser.REPORTED) {
+      if (u.fault.code.len() == 0) {
         return a;
       }
-      return UnkScan { ...a, errs: a.errs.append(parse_unknown_error(a.where, u.kind, u.line, u.col)) };
+      return UnkScan { ...a, errs: a.errs.append(parse_unknown_error(a.where, u.fault, u.line, u.col)) };
     },
     ast.ExprIdent(_) => {
       return a;
@@ -4757,8 +4729,7 @@ function display_arg_errs(e: ast.Expr, fname: string, st: EmitState): util.Diag[
               related: [],
               code: "E038", message: "in fn '" + fname + "': argument 1 to \""
                 + id.name + "\": " + an
-                + " does not implement `Display` (no `to_string(): string` in scope)"
-                + " — give " + an + " a `to_string(): string` method, or "
+                + " does not implement `Display` — "
                 + util.derive_hint(tn, "cmp.Display", "cmp.Display"),
               line: id.line, col: id.col,
               fix: None,
@@ -5792,6 +5763,9 @@ function emit_const_agg_block(st: EmitState, i: i32, e: string, array: boolean):
 // in the header word, then its fields. A record with no field has one word,
 // which holds the tag again: the debug information of an enum reads it.
 function emit_const_record_block(st: EmitState, i: i32, tag: string, vals: string[]): EmitState {
+  if (vals.len() == 0 && st.split_units) {
+    st = st.write(".weak " + const_agg_label(st, i) + "\n");
+  }
   st = st.write("    .quad 0\n    .long -1\n    .long " + tag + "\n" + const_agg_label(st, i) + ":\n");
   for vi in 0..vals.len() {
     st = emit_const_agg_field(st, i, vi, vals[vi]);
@@ -5872,6 +5846,51 @@ pub function sized_rec_box(words: i32): string {
 // A box of 1 to 255 words has a free list of its own block size.
 pub function sized_rec_box_words(words: i64): boolean {
   return words >= 1i64 && words <= 255i64;
+}
+
+// The number of shape ids of the program under -sanitize: one for each
+// declaration, and one for each primitive type that a dyn box holds.
+pub function san_shape_count(s: EmitState): i32 {
+  return s.struct_decls.decls.len() + irtables.prim_type_ids().len();
+}
+
+// The name of each shape id. Id 0 is a block with no shape: an array, a
+// string or a raw block.
+pub function san_shape_names(s: EmitState): string[] {
+  let out: string[] = ["blocks with no shape"];
+  for d in s.struct_decls.decls {
+    out = out.append(san_ascii(irtables.decl_shape(d)));
+  }
+  for p in irtables.prim_type_ids() {
+    out = out.append(p);
+  }
+  return out;
+}
+
+// The number of words in the header of a box of shape id `id` (shape_tag),
+// or -1 for id 0.
+pub function san_shape_words(s: EmitState, id: i32): i64 {
+  if (id == 0) {
+    return 0i64 - 1i64;
+  }
+  if (id - 1 < s.struct_decls.decls.len()) {
+    let words = s.struct_decls.decls[id - 1].fields.len();
+    return (if (words > 0) { words } else { 1 }) as i64;
+  }
+  return 1i64;
+}
+
+// `name` with each byte that an .ascii string cannot hold as it is made `?`.
+pub function san_ascii(name: string): string {
+  let out = "";
+  for i in 0..name.len() {
+    if (name[i] >= b' ' && name[i] <= b'~' && name[i] != b'"' && name[i] != b'\\') {
+      out = out + slice_unchecked(name, i, i + 1);
+    } else {
+      out = out + "?";
+    }
+  }
+  return out;
 }
 
 // The tag of a box with the shape `name`: the high half of its header word.

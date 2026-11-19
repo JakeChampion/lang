@@ -57,8 +57,9 @@ Play, and the first is now fixed:
    an AAR. So AndroidX, Google Play services, Firebase, Play Billing and
    the SDKs of other vendors are out of reach.
 
-3. **Text and languages.** Arabic text is shaped, and its marks sit on
-   their bases. Emoji draw in color from the COLR font of the system.
+3. **Text and languages.** Arabic, Hebrew, the Indic scripts, Thai, Lao,
+   Khmer, Myanmar, Korean and the scripts of the Universal Shaping Engine
+   are shaped, and the marks sit on their bases. Emoji draw in color from the COLR font of the system.
    `std/i18n` now gives localized strings.
    `std/bidi` gives right-to-left text in the order of UAX #9.
    `std/android/text` takes a character that its font does not have from
@@ -113,7 +114,7 @@ compressed.
 | Material 3 components | Colors only, few components | Full | Full | Third party |
 | Navigation | By hand | Navigation 3 | Navigator, go_router | React Navigation |
 | Accessibility | TalkBack tree, font scale | Semantics | Semantics | Native views |
-| Right-to-left text and shaping | Order, Arabic shaping | Yes | Yes | Yes |
+| Right-to-left text and shaping | Order, Arabic, Hebrew, Thai, Khmer, Myanmar, Indic, USE and Hangul shaping | Yes | Yes | Yes |
 | UI tests on the computer | Full simulator | Robolectric | Widget tests | Jest |
 | Screenshot tests | PNG of the simulator | Paparazzi, Roborazzi | Golden tests | Third party |
 | Camera, location, push | No | Yes | Plugins | Expo modules |
@@ -162,7 +163,72 @@ The order puts first what stops a release, then what most apps need.
 6. **Java and Kotlin libraries.** Merge DEX files and manifests of a JAR
    or an AAR into the APK.
 
-7. **Text.** The shaping of scripts other than Arabic.
+7. **Text.** The state machines of an Apple `kern` table, of format 1,
+   do not apply. An old Arabic font with the glyphs of the code page
+   Windows-1256 does not take the lookups that HarfBuzz has for it. The
+   system fonts of Android have GSUB, GPOS and GDEF tables.
+
+   Arabic fonts with no joining features are done. `std/shape` makes the
+   joining forms and the ligatures from the presentation forms of the
+   font, as HarfBuzz makes them. The glyphs, the clusters and the
+   positions are those of HarfBuzz 15 for 14,000 random strings in four
+   fonts with no Arabic joining features.
+
+   Fonts with no GPOS table and no GDEF table are done, as HarfBuzz
+   shapes them. The marks go on their bases by their combining classes
+   and the boxes of their glyphs. The `kern` table of OpenType or of
+   Apple applies. A font with no glyph classes takes the classes that
+   HarfBuzz gives from the Unicode categories. The tests used 19 fonts
+   with no GPOS table, no GDEF table or no `kern` table. For more than
+   38,000 random strings in them, the glyphs, the clusters and the
+   positions are those of HarfBuzz 15.
+
+   Indic shaping is done: `std/shape` follows the Indic shaper of HarfBuzz
+   for Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu,
+   Kannada and Malayalam. It finds the syllables, the base consonant and
+   the reph. It reorders the matras, and applies the Indic features in
+   their stages. The rules of the new and of the old Indic specification
+   both apply, with the configuration of HarfBuzz for each script.
+
+   The Indic shaper puts dotted circles where HarfBuzz puts them. The
+   glyphs, the clusters and the positions are those of HarfBuzz 15, for
+   the test words and for random strings: more than 200,000 in
+   Devanagari and 12,000 in each other script. `std/android/text` shapes
+   each run of an Indic script.
+
+   Hebrew, Thai and Lao shaping is done, with the shapers of HarfBuzz for
+   them. A Hebrew run goes from right to left, and a bracket in it takes
+   the glyph of its mirror. Hebrew sorts its points as HarfBuzz sorts
+   them, and composes the presentation forms for a font with no mark
+   positioning. Thai and Lao split the sara am. A Thai font with no Thai
+   GSUB script uses the glyphs of the private use area that old fonts
+   have. The glyphs, the clusters and the positions are those of HarfBuzz
+   15 for more than 8,000 random strings in each script.
+
+   Khmer shaping is done, with the Khmer shaper of HarfBuzz. A coeng and a
+   Ro, and a pre-base vowel, move before the base, and the split vowels
+   split. The glyphs, the clusters and the positions are those of
+   HarfBuzz 15 for more than 30,000 random strings, also with the feature
+   `cfar`.
+
+   Myanmar shaping is done, with the Myanmar shaper of HarfBuzz. The
+   kinzi, the medial Ra and the pre-base vowels take their positions, and
+   a font with the old tag `mymr` takes the default shaper. The glyphs,
+   the clusters and the positions are those of HarfBuzz 15 for more than
+   30,000 random strings.
+
+   The Universal Shaping Engine of HarfBuzz is done, for Sinhala, Tibetan,
+   Javanese, Balinese, Mongolian, N'Ko and the other scripts that HarfBuzz
+   gives it. `scripts/gen-use-table.py` writes its table of categories, and
+   the table is that of HarfBuzz 15 for each code point. The glyphs, the
+   clusters and the positions are those of HarfBuzz 15 for Sinhala,
+   Balinese, Javanese, Tibetan, Mongolian and N'Ko.
+
+   The Hangul shaper of HarfBuzz is done. The jamo of Korean compose into
+   the syllables that the font has, or get the features `ljmo`, `vjmo` and
+   `tjmo`. The tone marks move before their syllable. The glyphs, the
+   clusters and the positions are those of HarfBuzz 15 for more than 19,000
+   random strings in Noto Sans CJK KR.
 
    Color emoji are done: `std/truetype` draws the glyphs of COLR
    versions 0 and 1, and `std/android/text` and the painter of
@@ -171,8 +237,12 @@ The order puts first what stops a release, then what most apps need.
    Arabic shaping is done: `std/shape` gives each letter its joining
    form, and applies the GSUB and GPOS lookups of the font in the stages
    of HarfBuzz. The marks attach to their bases with the anchors of the
-   font. For the test words, the glyphs and their positions are those of
-   HarfBuzz. `std/android/text` shapes each run of Arabic letters.
+   font.
+
+   Characters decompose and compose as in HarfBuzz. A ZWJ and a
+   ZWNJ stop a lookup where they stop it in HarfBuzz. The glyphs and their
+   positions are those of HarfBuzz, for the test words and for 20,000
+   random strings. `std/android/text` shapes each run of Arabic letters.
 
    CFF glyphs are done:
    `std/truetype` reads CFF outlines, CID-keyed ones too, and the fonts

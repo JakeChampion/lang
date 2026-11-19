@@ -314,6 +314,16 @@ function meet_twin(a: i32, b: i32): i32 {
   if (same >= 0 && apart >= 0) {
     return twin(o, same, apart);
   }
+  // A twin with one side is a plain count: it meets a twin of another key
+  // as that count.
+  if (is_twin(a) && is_twin(b) && twin_key(a) != twin_key(b)) {
+    if (flat(a) >= 0) {
+      return meet(flat(a), b);
+    }
+    if (flat(b) >= 0) {
+      return meet(a, flat(b));
+    }
+  }
   return meet(flat(a), flat(b));
 }
 
@@ -1296,7 +1306,15 @@ function simple_origin(w: Walk, ins: ssa.SInst): i32 {
     return org_none();
   }
   if (k == ssa.CALL_IND || k == ssa.DYN_DISPATCH) {
-    return org_unknown();
+    let units = indirect_units(ins);
+    let result = units & ir.call_units_result();
+    if (units < 0) {
+      return org_unknown();
+    }
+    if (result != 0) {
+      return org_fresh();
+    }
+    return org_none();
   }
   if (is_named_op(k) && ins.str != "call_word") {
     return named_origin(w, ins);
@@ -2401,7 +2419,7 @@ function live_of(w: Walk, takes: Takes): Live {
   return live_edges(w, live_rows(w, fl, takes));
 }
 
-struct Progress { out: i32[], done: boolean[], phi_at: i32[], phin: i32[], state: i32[], findings: Finding[], opaque: string[], unproved: boolean[], maybe_at: i32[], ulog: i32[], mlog: i32[] }
+struct Progress { out: i32[], done: boolean[], phi_at: i32[], phin: i32[], state: i32[], findings: Finding[], opaque: string[], unproved: boolean[], maybe_at: i32[], ulog: i32[], mlog: i32[], keyed: boolean[], condkey: boolean[] }
 
 function filled(n: i32, v: i32): i32[] {
   let out = __alloc_i32(n);
@@ -2500,7 +2518,19 @@ function spend_if_held(own p: Progress, w: Walk, v: i32): Progress {
     return p;
   }
   let before = p.state[k];
+  if (is_twin(before)) {
+    let o = twin_key(before);
+    return Progress { ...p, state: p.state.with(k, twin(o, held_after_move(twin_same(before)), held_after_move(twin_apart(before)))) };
+  }
   return one_sided(spend_held_count(p, w, v), k, before);
+}
+
+// The units of one side of a twin after a move of a unit if it holds one.
+function held_after_move(side: i32): i32 {
+  if (side == no_side() || side == 0) {
+    return side;
+  }
+  return side - 1;
 }
 
 function spend_held_count(own p: Progress, w: Walk, v: i32): Progress {
@@ -2609,6 +2639,7 @@ function define(own p: Progress, w: Walk, v: i32, block: i32): Progress {
   if (units(flat(p.state[k])) > 0) {
     p = found(p, w, "redefined while held", v, block, "the previous value's unit was never spent");
   }
+  p = forget_key(p, v);
   return Progress { ...p, state: p.state.with(k, initial_count(w.origin[v])) };
 }
 
@@ -2748,14 +2779,15 @@ function push_twin(own p: Progress, w: Walk, ins: ssa.SInst, s: rcsigs.Sig, oper
     return Progress { ...p, state: p.state.with(kr, 1) };
   }
   let target = -1;
-  if (is_twin(operand) && twin_apart(operand) == no_side()) {
+  if (is_twin(operand) && twin_apart(operand) == no_side() && box_key(p, w, twin_key(operand))) {
     target = twin_key(operand);
-  } else if (r < w.f.nparams) {
+  } else if (box_key(p, w, r)) {
     target = r;
   }
   if (target < 0) {
     return p;
   }
+  p = keyed(p, target);
   return Progress { ...p, state: p.state.with(kr, twin(target, 0, 1)) };
 }
 
@@ -2770,6 +2802,12 @@ function apply_store(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken
   }
   if (zero_at(w, val)) {
     for r in taken {
+      let kn = named_box(p, r);
+      if (kn >= 0) {
+        let s = p.state[kn];
+        p = Progress { ...p, state: p.state.with(kn, twin(twin_key(s), twin_same(s) + 1, no_side())) };
+        continue;
+      }
       let k = w.idx[r];
       if (k >= 0 && flat(p.state[k]) != maybe()) {
         let s = flat(p.state[k]);
@@ -2838,8 +2876,41 @@ function apply(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken: i32[
     return apply_store(p, w, ins, block, taken);
   }
   if (k == ssa.CALL_IND || k == ssa.DYN_DISPATCH) {
+    return apply_indirect(p, w, ins, block);
+  }
+  return define(p, w, ins.result, block);
+}
+
+// The contract of a call through a function value (ir.call_units), or -1.
+// The lift puts the target first, so the operand j of the contract is the
+// argument j + 1. A call that ssa.slot_calls rewrote keeps the contract after
+// "slot:".
+function indirect_units(ins: ssa.SInst): i32 {
+  if (ins.kind_tag != ssa.CALL_IND) {
+    return -1;
+  }
+  let text = ins.str;
+  if (text.starts_with("slot:")) {
+    text = slice_unchecked(text, 5, text.len()) + "";
+  }
+  if (text.len() == 0 || !util.is_all_digits(text)) {
+    return -1;
+  }
+  return util.digits_to_i32(text);
+}
+
+function apply_indirect(own p: Progress, w: Walk, ins: ssa.SInst, block: i32): Progress {
+  let units = indirect_units(ins);
+  if (units < 0) {
     p = poison_all(p, w, ins.args);
     return define(p, w, ins.result, block);
+  }
+  for i in 1..ins.args.len() {
+    let bit = 1 << i - 1;
+    let handed = units & bit;
+    if (handed != 0) {
+      p = spend(p, w, ins.args[i], block, "moved into a call through a function value");
+    }
   }
   return define(p, w, ins.result, block);
 }
@@ -2943,11 +3014,20 @@ function entry_row(own p: Progress, w: Walk, lv: Live, bi: i32): Progress {
       bases = bases.append(edge_base(w, lv, pb, b.id));
     }
   }
+  let sides = edge_sides(w, b, bases.len(), p);
+  let c = join_key(w, bi);
   let j = 0;
   while (j < lv.in_n[bi]) {
     let s = absent();
     for base in bases {
       s = meet(s, p.out[base + j]);
+    }
+    if (s == maybe() && sides.len() == bases.len() && c >= 0) {
+      let t = side_twin(p, bases, sides, j, c);
+      if (t != maybe()) {
+        s = t;
+        p = cond_key(p, c);
+      }
     }
     let k = lv.slots[lv.in_at[bi] + j];
     if (s == maybe()) {
@@ -2957,6 +3037,112 @@ function entry_row(own p: Progress, w: Walk, lv: Live, bi: i32): Progress {
     j += 1;
   }
   return p;
+}
+
+// The word that the immediate dominator of block `bi` tests, if its two
+// arms reach the block apart. -1 if there is none, or if the word keys
+// twins of another kind.
+function join_key(w: Walk, bi: i32): i32 {
+  let d = w.dom.idom[bi];
+  if (d < 0 || d == bi) {
+    return -1;
+  }
+  let t = w.f.blocks[d].term;
+  if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f) {
+    return -1;
+  }
+  let ts = tested(w, t.cond);
+  if (ts.word < 0 || w.derived[ts.word]) {
+    return -1;
+  }
+  let c = w.root[ts.word];
+  if (c < w.f.nparams || token_key(w, c)) {
+    return -1;
+  }
+  return c;
+}
+
+// For each edge into `b` that entry_row meets, in the same order: 1 if the
+// edge comes from the arm of the test of the immediate dominator where the
+// word is not zero, 0 if from the other arm. Empty if an edge is in neither
+// arm alone.
+function edge_sides(w: Walk, b: ssa.SBlock, n: i32, p: Progress): i32[] {
+  let none: i32[] = [];
+  let bi = w.at[b.id];
+  let d = w.dom.idom[bi];
+  if (d < 0 || d == bi) {
+    return none;
+  }
+  let t = w.f.blocks[d].term;
+  if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f) {
+    return none;
+  }
+  let ts = tested(w, t.cond);
+  let out: i32[] = [];
+  for pid in b.preds {
+    let pb = w.at[pid];
+    if (pb >= 0 && p.done[pb]) {
+      let side = arm_of(w, d, t, pb, b.id);
+      if (side < 0) {
+        return none;
+      }
+      let nonzero = side == 1 == ts.on_true;
+      if (nonzero) {
+        out = out.append(1);
+      } else {
+        out = out.append(0);
+      }
+    }
+  }
+  if (out.len() != n) {
+    return none;
+  }
+  return out;
+}
+
+// 1 if the edge from `pb` into `id` lies in the true arm of the branch of
+// block `d`, 0 if in the false arm, -1 if in neither alone.
+function arm_of(w: Walk, d: i32, t: ssa.STerm, pb: i32, id: i32): i32 {
+  if (pb == d) {
+    if (ssa.successor_id(t, 0) == id) {
+      return 1;
+    }
+    return 0;
+  }
+  let tb = w.at[t.t];
+  let fb = w.at[t.f];
+  if (tb >= 0 && t.t != id && w.f.blocks[tb].preds.len() == 1 && ssadeps.dom_holds(w.dom, pb, tb)) {
+    return 1;
+  }
+  if (fb >= 0 && t.f != id && w.f.blocks[fb].preds.len() == 1 && ssadeps.dom_holds(w.dom, pb, fb)) {
+    return 0;
+  }
+  return -1;
+}
+
+// The counts that the edges bring, met side by side as a twin of the word
+// `c`, or maybe if a side is not a plain count.
+function side_twin(p: Progress, bases: i32[], sides: i32[], j: i32, c: i32): i32 {
+  let same = no_side();
+  let apart = no_side();
+  for i in 0..bases.len() {
+    let s = flat(p.out[bases[i] + j]);
+    if (s == absent()) {
+      continue;
+    }
+    if (s < 0 || s > cap()) {
+      return maybe();
+    }
+    if (sides[i] == 1) {
+      same = side_meet(same, s);
+    } else {
+      apart = side_meet(apart, s);
+    }
+    if (same == -1 || apart == -1) {
+      return maybe();
+    }
+  }
+  return twin(c, same, apart);
 }
 
 function met_maybe(own p: Progress, k: i32, bi: i32): Progress {
@@ -3056,6 +3242,7 @@ function settle_edge(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {
     p = Progress { ...p, state: p.state.with(w.idx[w.root[null_v]], absent()) };
   }
   p = same_box_on_edge(p, w, bi, sid);
+  p = token_side_on_edge(p, w, bi, sid);
   if (w.pair_words.len() > 0) {
     p = settle_pair_words(p, w, bi, sid);
   }
@@ -3139,10 +3326,13 @@ function twin_on_edge(own p: Progress, w: Walk, x: i32, y: i32, equal: boolean):
     return p;
   }
   let s = p.state[kx];
+  if (is_twin(s) && twin_key(s) != o && flat(s) >= 0) {
+    s = flat(s);
+  }
   if (s >= 0 && s <= cap() && o < w.f.nparams) {
     return Progress { ...p, state: p.state.with(kx, side_of_test(o, s, equal)) };
   }
-  if (!is_twin(s) || twin_key(s) != o) {
+  if (!is_twin(s) || twin_key(s) != o || !box_key(p, w, o)) {
     return p;
   }
   if (!equal) {
@@ -3253,7 +3443,23 @@ function kept_side(side: i32, taken: i32): i32 {
   return side - taken;
 }
 
-function phi_input(own p: Progress, w: Walk, a: i32): Fed {
+// Where a token is not zero, the token and its box are one box. The other
+// name of `v` there, or -1 if `t` is not a token of `v` or `v` itself.
+function other_name(w: Walk, v: i32, t: i32): i32 {
+  let box = token_box(w, def_of(w.f, w.defs, t));
+  if (box < 0) {
+    return -1;
+  }
+  if (v == box) {
+    return w.idx[t];
+  }
+  if (v == t) {
+    return w.idx[box];
+  }
+  return -1;
+}
+
+function count_input(own p: Progress, w: Walk, a: i32): Fed {
   if (a < 0 || w.derived[a]) {
     return Fed { p: p, input: 0 };
   }
@@ -3265,6 +3471,14 @@ function phi_input(own p: Progress, w: Walk, a: i32): Fed {
     return Fed { p: p, input: 0 };
   }
   let st = p.state[k];
+  if (is_twin(st) && twin_same(st) == 0 && twin_apart(st) == no_side()) {
+    let kn = other_name(w, w.root[a], twin_key(st));
+    if (kn >= 0 && is_twin(p.state[kn]) && twin_key(p.state[kn]) == twin_key(st) && twin_apart(p.state[kn]) == no_side() && twin_same(p.state[kn]) > 0) {
+      let o = twin_key(st);
+      p = Progress { ...p, state: p.state.with(kn, twin(o, twin_same(p.state[kn]) - 1, no_side())) };
+      return Fed { p: p, input: twin(o, 1, no_side()) };
+    }
+  }
   if (is_twin(st)) {
     let o = twin_key(st);
     let same = twin_same(st);
@@ -3294,6 +3508,175 @@ function phi_input(own p: Progress, w: Walk, a: i32): Fed {
   return Fed { p: p, input: 0 };
 }
 
+// A parameter is its own box: as a phi input, it meets a twin of itself side
+// by side.
+function phi_input(own p: Progress, w: Walk, a: i32): Fed {
+  let fed = count_input(p, w, a);
+  if (a >= 0 && !w.derived[a] && w.root[a] < w.f.nparams && fed.input >= 0 && fed.input <= cap()) {
+    return Fed { p: fed.p, input: twin(w.root[a], fed.input, no_side()) };
+  }
+  return fed;
+}
+
+// The box that a reuse token names: the token is a phi whose inputs are
+// that box or zero, so it is the box when it is not zero. -1 if `ins` is not
+// a token.
+function token_box(w: Walk, ins: ssa.SInst): i32 {
+  if (ins.kind_tag != ssa.PHI || ins.result < 0) {
+    return -1;
+  }
+  let box = -1;
+  let zero = false;
+  for a in ins.args {
+    if (a < 0 || w.derived[a]) {
+      return -1;
+    }
+    if (zero_at(w, a)) {
+      zero = true;
+    } else if (box >= 0 && w.root[a] != box) {
+      return -1;
+    } else {
+      box = w.root[a];
+    }
+  }
+  if (!zero || box < 0 || box == w.root[ins.result] || w.idx[box] < 0) {
+    return -1;
+  }
+  return box;
+}
+
+// A token input makes its box a twin keyed on the token: on the edge where
+// the token is the box, the token takes the unit of the box, and on the edge
+// where the token is zero, the box keeps it.
+function token_fed(own p: Progress, w: Walk, ins: ssa.SInst, a: i32): Fed {
+  let box = token_box(w, ins);
+  if (box < 0) {
+    return phi_input(p, w, a);
+  }
+  let t = w.root[ins.result];
+  let kb = w.idx[box];
+  if (is_twin(p.state[kb]) && flat(p.state[kb]) >= 0) {
+    p = Progress { ...p, state: p.state.with(kb, flat(p.state[kb])) };
+  }
+  if (zero_at(w, a)) {
+    let held = p.state[kb];
+    if (held < 0 || held > cap()) {
+      return count_input(p, w, a);
+    }
+    p = Progress { ...p, state: p.state.with(kb, twin(t, no_side(), held)) };
+    return Fed { p: p, input: twin(t, no_side(), 0) };
+  }
+  if (p.state[kb] < 0 || p.state[kb] > cap()) {
+    return count_input(p, w, a);
+  }
+  let fed = count_input(p, w, a);
+  p = fed.p;
+  let kept = p.state[kb];
+  if (fed.input < 0 || fed.input > cap() || kept < 0 || kept > cap()) {
+    return Fed { p: p, input: fed.input };
+  }
+  p = Progress { ...p, state: p.state.with(kb, twin(t, kept, no_side())) };
+  return Fed { p: p, input: twin(t, fed.input, no_side()) };
+}
+
+// A token that a block defines again ends what the twins keyed on its last
+// value knew.
+function forget_tokens(own p: Progress, w: Walk, b: ssa.SBlock): Progress {
+  for ins in b.insts {
+    if (ins.kind_tag == ssa.PHI && ins.result >= 0 && (token_box(w, ins) >= 0 || ins.result < p.keyed.len() && p.keyed[w.root[ins.result]])) {
+      p = flatten_key(p, w.root[ins.result]);
+    }
+  }
+  return p;
+}
+
+function flatten_key(own p: Progress, t: i32): Progress {
+  for k in 0..p.state.len() {
+    if (is_twin(p.state[k]) && twin_key(p.state[k]) == t) {
+      p = Progress { ...p, state: p.state.with(k, flat(p.state[k])) };
+    }
+  }
+  return p;
+}
+
+// A box that keys a twin, and is not a parameter, can be defined again.
+function keyed(own p: Progress, t: i32): Progress {
+  if (t < 0 || t >= p.keyed.len()) {
+    return p;
+  }
+  return Progress { ...p, keyed: p.keyed.with(t, true) };
+}
+
+// A box defined again ends what the twins keyed on its last value knew.
+function forget_key(own p: Progress, v: i32): Progress {
+  if (v < 0 || v >= p.keyed.len() || !p.keyed[v]) {
+    return p;
+  }
+  return flatten_key(p, v);
+}
+
+function token_key(w: Walk, o: i32): boolean {
+  return o >= 0 && token_box(w, def_of(w.f, w.defs, o)) >= 0;
+}
+
+// A key whose twins tell whether a value is the box of the key, and not
+// whether the key is zero.
+function box_key(p: Progress, w: Walk, o: i32): boolean {
+  return o >= 0 && !token_key(w, o) && (o >= p.condkey.len() || !p.condkey[o]);
+}
+
+function cond_key(own p: Progress, c: i32): Progress {
+  if (c < 0 || c >= p.condkey.len()) {
+    return p;
+  }
+  return Progress { ...p, condkey: p.condkey.with(c, true), keyed: p.keyed.with(c, true) };
+}
+
+// The value that is the box `r` on this path: a twin of `r` with one side,
+// the side where it is that box. -1 if no value is.
+function named_box(p: Progress, r: i32): i32 {
+  if (r < 0 || r >= p.keyed.len() || !p.keyed[r]) {
+    return -1;
+  }
+  for k in 0..p.state.len() {
+    let s = p.state[k];
+    if (is_twin(s) && twin_key(s) == r && twin_apart(s) == no_side() && twin_same(s) < cap()) {
+      return k;
+    }
+  }
+  return -1;
+}
+
+// A test of a token against zero decides the side of each twin keyed on
+// the token.
+function token_side_on_edge(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {
+  let t = w.f.blocks[bi].term;
+  if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f) {
+    return p;
+  }
+  let ts = tested(w, t.cond);
+  if (ts.word < 0) {
+    return p;
+  }
+  let tok = w.root[ts.word];
+  if (token_box(w, def_of(w.f, w.defs, tok)) < 0 && (tok >= p.condkey.len() || !p.condkey[tok])) {
+    return p;
+  }
+  let is_box = sid == t.t == ts.on_true;
+  for k in 0..p.state.len() {
+    let s = p.state[k];
+    if (is_twin(s) && twin_key(s) == tok) {
+      if (is_box) {
+        s = twin(tok, twin_same(s), no_side());
+      } else {
+        s = twin(tok, no_side(), twin_apart(s));
+      }
+      p = Progress { ...p, state: p.state.with(k, s) };
+    }
+  }
+  return p;
+}
+
 function feed(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {
   let si = w.at[sid];
   if (si < 0) {
@@ -3305,11 +3688,12 @@ function feed(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {
   if (pi < 0) {
     return p;
   }
+  p = forget_tokens(p, w, s);
   for ins in s.insts {
     if (ins.kind_tag != ssa.PHI || ins.result < 0 || w.idx[ins.result] < 0 || pi >= ins.args.len()) {
       continue;
     }
-    let fed = phi_input(p, w, ins.args[pi]);
+    let fed = token_fed(p, w, ins, ins.args[pi]);
     p = fed.p;
     p = Progress { ...p, phin: p.phin.with(p.phi_at[ins.result] + pi, fed.input) };
   }
@@ -3448,6 +3832,9 @@ function apply_block(own p: Progress, w: Walk, bi: i32, takes: Takes): Progress 
   for i in 0..b.insts.len() {
     let ins = b.insts[i];
     if (ins.kind_tag != ssa.PHI && ins.kind_tag != ssa.PARAM) {
+      if (ins.result >= 0) {
+        p = forget_key(p, w.root[ins.result]);
+      }
       p = apply(p, w, ins, b.id, taken_at(takes, bi, i));
     }
     if (is_exit(ins)) {
@@ -3717,7 +4104,7 @@ function progress_of(w: Walk, lv: Live): Progress {
       }
     }
   }
-  return Progress { out: filled(lv.nout, absent()), done: __alloc_bool(f.blocks.len()), phi_at: phi_at, phin: filled(nphin, absent()), state: filled(w.tracked, absent()), findings: [], opaque: [], unproved: __alloc_bool(w.tracked), maybe_at: util.minus_ones(w.tracked), ulog: [], mlog: [] };
+  return Progress { out: filled(lv.nout, absent()), done: __alloc_bool(f.blocks.len()), phi_at: phi_at, phin: filled(nphin, absent()), state: filled(w.tracked, absent()), findings: [], opaque: [], unproved: __alloc_bool(w.tracked), maybe_at: util.minus_ones(w.tracked), ulog: [], mlog: [], keyed: __alloc_bool(f.nvals), condkey: __alloc_bool(f.nvals) };
 }
 
 struct Settled { p: Progress, changed: boolean, rounds: i32 }

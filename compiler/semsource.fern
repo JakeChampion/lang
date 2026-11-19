@@ -1010,7 +1010,7 @@ function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type)
 
 function constant_byte_element(e: ast.Expr): i32 {
   if let ast.ExprUnary(u) = e {
-    if (u.op == "as_u8") {
+    if (u.op == ast.CAST && u.cast == "u8") {
       return constant_byte_element(u.operand);
     }
     return -1;
@@ -2006,7 +2006,7 @@ function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type)
   if (u.op == "try_") {
     return try_expr(u, s, expected);
   }
-  if (u.op.len() > 4 && u.op.starts_with("as?_")) {
+  if (u.op == ast.CHECKED_CAST) {
     return downcast(e, u, s);
   }
   if (parser.is_cast_op(u.op)) {
@@ -2258,7 +2258,7 @@ function downcast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
   if (!typeinfo.is_dyn(s.values[v.id])) {
     return refused(s, "downcast of a value that is not dyn");
   }
-  let target = slice_unchecked(u.op, 4, u.op.len()).to_owned();
+  let target = u.cast;
   let concrete = resolved(s.scope.resolve_type(target), s.template, s.binding, s.scope);
   if (struct_name(concrete) != target && typeinfo.union_name(concrete) != target) {
     return refused(s, "downcast target: " + target);
@@ -2294,7 +2294,7 @@ function downcast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
 
 function checked_int_cast(u: ast.ExprUnary, v: Value, s: State): Value {
   let source = s.values[v.id];
-  let target = resolved(s.scope.resolve_type(slice_unchecked(u.op, 4, u.op.len()).to_owned()), s.template, s.binding, s.scope);
+  let target = resolved(s.scope.resolve_type(u.cast), s.template, s.binding, s.scope);
   if (!ssasem.is_integer(target)) {
     return refused(s, "checked conversion to " + typeinfo.spelling(target));
   }
@@ -4342,17 +4342,7 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
   }
 }
 
-function destructures(v: ast.StmtVar): boolean {
-  for i in 0..v.name.len() {
-    if (v.name[i] == b',') {
-      return true;
-    }
-  }
-  return parser.is_destr_marker(v.type_name);
-}
-
 function declare_tuple(st: ast.Stmt, v: ast.StmtVar, s: State): State {
-  let marker = parser.destr_marker_split(v.type_name);
   let ty = checked(v.init, s);
   let after = checker.bind_stmt(st, s.scope);
   let whole = expr(v.init, s, ty);
@@ -4363,13 +4353,13 @@ function declare_tuple(st: ast.Stmt, v: ast.StmtVar, s: State): State {
   if (!semtypes.equal(s.values[whole.id], ty)) {
     return fail(s, mismatch(v.name, ty, s.values[whole.id]));
   }
-  if (marker.at.len() > 0) {
-    s = bind_projection(s, marker.at, whole.id, after);
+  if (v.destr.at.len() > 0) {
+    s = bind_projection(s, v.destr.at, whole.id, after);
   }
-  if (marker.tag.len() > 0) {
-    s = destructure_record(v.name, marker.tag, whole.id, s, after);
+  if (ast.record_destr(v.destr)) {
+    s = destructure_record(v.destr, whole.id, s, after);
   } else {
-    s = destructure_tuple(v.name, whole.id, s, after);
+    s = destructure_tuple(v.destr, whole.id, s, after);
   }
   if (!s.ok) {
     return s;
@@ -4388,23 +4378,22 @@ function bind_projection(s: State, name: string, id: i32, after: checker.Scope):
   return bind_var(s, name, id);
 }
 
-function destructure_tuple(encoded: string, whole: i32, s: State, after: checker.Scope): State {
-  let names = pattern_names(encoded);
+function destructure_tuple(d: ast.Destr, whole: i32, s: State, after: checker.Scope): State {
   let ty = s.values[whole];
-  if (names.len() == 0 || tuple_arity(ty) != names.len()) {
+  if (d.binds.len() == 0 || tuple_arity(ty) != d.binds.len()) {
     return fail(s, "unsupported destructuring declaration");
   }
-  for i in 0..names.len() {
+  for i in 0..d.binds.len() {
     let elem = tuple_element_type(ty, i);
     if (!semtypes.concrete(elem, true)) {
       return fail(s, "tuple projection contract");
     }
     let part = define(s, ssasem.tuple_get(), [whole], i, "", elem);
     s = part.s;
-    if (names[i].len() > 0 && names[i][0] == b'(') {
-      s = destructure_tuple(slice_unchecked(names[i], 1, names[i].len() - 1).to_owned(), part.id, s, after);
+    if (d.binds[i].nested.len() > 0) {
+      s = destructure_tuple(d.binds[i].nested[0], part.id, s, after);
     } else {
-      s = bind_projection(s, names[i], part.id, after);
+      s = bind_projection(s, d.binds[i].name, part.id, after);
     }
     if (!s.ok) {
       return s;
@@ -4413,27 +4402,20 @@ function destructure_tuple(encoded: string, whole: i32, s: State, after: checker
   return s;
 }
 
-function destructure_record(encoded: string, tag: string, whole: i32, s: State, after: checker.Scope): State {
-  let rest = slice_unchecked(tag, 4, tag.len()).to_owned();
-  let colon = util.index_of_sub(rest, ":");
-  if (colon < 0) {
-    return fail(s, "unsupported destructuring declaration");
-  }
-  let names = pattern_names(encoded);
-  let fields = pattern_names(slice_unchecked(rest, colon + 1, rest.len()).to_owned());
+function destructure_record(d: ast.Destr, whole: i32, s: State, after: checker.Scope): State {
   let Some(sig) = record_sig(s.values[whole], s) else {
     return fail(s, "unsupported destructuring declaration");
   };
-  if (!util.str_range_eq(rest, 0, colon, sig.name) || fields.len() != names.len()) {
+  if (d.record != sig.name || d.fields.len() != d.binds.len()) {
     return fail(s, "unsupported destructuring declaration");
   }
-  for i in 0..names.len() {
-    let at = util.index_of_str(sig.field_names, fields[i]);
+  for i in 0..d.binds.len() {
+    let at = util.index_of_str(sig.field_names, d.fields[i]);
     if (at < 0 || !semtypes.concrete(sig.field_types[at], false)) {
       return fail(s, "record projection contract");
     }
-    let part = field_read(s, whole, at, fields[i], sig.field_types[at]);
-    s = bind_projection(part.s, names[i], part.id, after);
+    let part = field_read(s, whole, at, d.fields[i], sig.field_types[at]);
+    s = bind_projection(part.s, d.binds[i].name, part.id, after);
     if (!s.ok) {
       return s;
     }
@@ -4448,31 +4430,12 @@ function tuple_arity(t: typeinfo.Type): i32 {
   return -1;
 }
 
-function pattern_names(encoded: string): string[] {
-  let out: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for i in 0..encoded.len() {
-    if (encoded[i] == b'(') {
-      depth += 1;
-    }
-    if (encoded[i] == b')') {
-      depth -= 1;
-    }
-    if (encoded[i] == b',' && depth == 0) {
-      out = out.append(slice_unchecked(encoded, start, i).to_owned());
-      start = i + 1;
-    }
-  }
-  return out.append(slice_unchecked(encoded, start, encoded.len()).to_owned());
-}
-
 function mismatch(name: string, declared: typeinfo.Type, value: typeinfo.Type): string {
   return "binding " + name + " declared " + typeinfo.spelling(declared) + " holds a semantic value of " + typeinfo.spelling(value);
 }
 
 function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
-  if (destructures(v)) {
+  if (ast.destructures(v)) {
     return declare_tuple(st, v, s);
   }
   let after = checker.bind_stmt(st, s.scope);
@@ -5436,7 +5399,7 @@ function index_name(): string {
 }
 
 function iterate_array(fo: ast.StmtFor, s: State): State {
-  if (fo.var_name == "") {
+  if (fo.var_name == "" && fo.destr.binds.len() == 0) {
     return fail(s, "unsupported loop binding");
   }
   let produced = expr(fo.iter, s, typeinfo.unchecked());
@@ -5509,16 +5472,19 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
   }
   let item = define(opened, read, [it, at], 1, "", elem);
   let inner = checker.for_body_scope(fo, scope);
-  let body_state = bind_var(item.s, fo.var_name, item.id);
+  let body_state = item.s;
+  if (fo.destr.binds.len() == 0) {
+    body_state = bind_var(item.s, fo.var_name, item.id);
+  }
   if (vals >= 0) {
-    let names = checker.split_pattern_names(fo.var_name);
-    if (names.len() != 2) {
+    let binds = fo.destr.binds;
+    if (binds.len() != 2) {
       return fail(body_state, "unsupported loop binding");
     }
     let vitem = define(item.s, ssasem.array_get(), [vals, at], 1, "", vtype);
-    body_state = bind_position(bind_position(vitem.s, names[0], item.id, inner), names[1], vitem.id, inner);
-  } else if (util.contains(fo.var_name, ",")) {
-    body_state = destructure_tuple(fo.var_name, item.id, item.s, inner);
+    body_state = bind_position(bind_position(vitem.s, binds[0], item.id, inner), binds[1], vitem.id, inner);
+  } else if (fo.destr.binds.len() > 0) {
+    body_state = destructure_tuple(fo.destr, item.id, item.s, inner);
   }
   if (!body_state.ok) {
     return body_state;
@@ -5568,11 +5534,11 @@ function step_index(s: State, step_id: i32, header: i32, continues: Exit[], coun
   return complete_header(s, header, [back]);
 }
 
-function bind_position(s: State, name: string, id: i32, after: checker.Scope): State {
-  if (name.len() > 0 && name[0] == b'(') {
-    return destructure_tuple(slice_unchecked(name, 1, name.len() - 1).to_owned(), id, s, after);
+function bind_position(s: State, b: ast.DestrBind, id: i32, after: checker.Scope): State {
+  if (b.nested.len() > 0) {
+    return destructure_tuple(b.nested[0], id, s, after);
   }
-  return bind_var(s, name, id);
+  return bind_var(s, b.name, id);
 }
 
 function prefix_loops(xs: Loop[], n: i32): Loop[] {
@@ -6202,10 +6168,7 @@ function arm_local_uses(st: ast.Stmt, own acc: string[]): string[] {
 function for_local_uses(st: ast.Stmt, own acc: string[]): string[] {
   if let ast.StmtFor(fr) = st {
     let local = uses_in(fr.body, []);
-    for n in header_names(fr.var_name) {
-      if (n == "" || n == "_") {
-        continue;
-      }
+    for n in ast.append_for_names([], fr) {
       acc = acc.append("=" + n);
       for u in local {
         if (u == n) {
@@ -6215,20 +6178,6 @@ function for_local_uses(st: ast.Stmt, own acc: string[]): string[] {
     }
   }
   return acc;
-}
-
-function header_names(encoded: string): string[] {
-  let out: string[] = [];
-  for n in checker.split_pattern_names(encoded) {
-    if (n.len() > 1 && n[0] == b'(') {
-      for m in header_names(slice_unchecked(n, 1, n.len() - 1).to_owned()) {
-        out = out.append(m);
-      }
-    } else {
-      out = out.append(n);
-    }
-  }
-  return out;
 }
 
 function var_local_uses(st: ast.Stmt, own acc: string[]): string[] {
@@ -6261,7 +6210,7 @@ function list_var_uses(stmts: ast.Stmt[], own acc: string[]): string[] {
   let names: string[] = [];
   for st in stmts {
     if let ast.StmtVar(v) = st {
-      if (!destructures(v)) {
+      if (!ast.destructures(v)) {
         names = names.append(v.name);
       }
     }
@@ -9380,7 +9329,7 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
     own_row = own_row.append(ownership.find(rows, ix, names[i]));
     i += 1;
   }
-  let readers = row_readers(all, own_row, rows, ix);
+  let dependents = row_dependents(all, own_row, rows, ix);
   let work: i32[] = [];
   let queued = __alloc_bool(own_row.len());
   i = 0;
@@ -9409,7 +9358,7 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
       }
     }
     for row in again {
-      let next = with_queued(Worklist { work: work, queued: queued }, util.append_all(readers[row], row_owners(own_row, row)));
+      let next = with_queued(Worklist { work: work, queued: queued }, dependents[row]);
       work = next.work;
       queued = next.queued;
     }
@@ -9446,18 +9395,7 @@ function without_kept_alive(own rows: ownership.Escapes[], ix: ownership.Index, 
   return Lazy { rows: rows, again: again };
 }
 
-// The functions that have this row.
-function row_owners(own_row: i32[], row: i32): i32[] {
-  let out: i32[] = [];
-  for i in 0..own_row.len() {
-    if (own_row[i] == row) {
-      out = out.append(i);
-    }
-  }
-  return out;
-}
-
-function row_readers(all: Produced[], own_row: i32[], rows: ownership.Escapes[], ix: ownership.Index): i32[][] {
+function row_dependents(all: Produced[], own_row: i32[], rows: ownership.Escapes[], ix: ownership.Index): i32[][] {
   let out: i32[][] = [];
   let last = util.minus_ones(rows.len());
   while (out.len() < rows.len()) {
@@ -9476,6 +9414,12 @@ function row_readers(all: Produced[], own_row: i32[], rows: ownership.Escapes[],
           }
         }
       }
+    }
+  }
+  for i in 0..own_row.len() {
+    let row = own_row[i];
+    if (row >= 0) {
+      out = out.with(row, out[row].append(i));
     }
   }
   return out;

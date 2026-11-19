@@ -1899,10 +1899,13 @@ function (s: Scope) has_cmp_method(verb: string, t: typeinfo.Type): boolean {
   } else if (receiver_key(t) != "") {
     found = s.lookup_method(verb, receiver_key(t));
   }
-  if let Some(m) = found {
-    return impl_of_holds(s, t, m.impl_trait);
+  if (found.is_none()) {
+    return false;
   }
-  return false;
+  if (verb == "eq") {
+    return s.trait_holds(t, "Eq");
+  }
+  return s.trait_holds(t, "Ord");
 }
 
 function (s: Scope) binop_overload_ret(op: string, lt: typeinfo.Type): typeinfo.Type {
@@ -1924,11 +1927,36 @@ function (s: Scope) overload_ret(method: string, t: typeinfo.Type): typeinfo.Typ
   if (recv == "") {
     return t_unknown("operand is not a nominal type");
   }
+  if (!s.trait_holds(t, ast.operator_trait(method))) {
+    return t_unknown("no impl of the operator trait");
+  }
   let Some(ms) = s.lookup_method(method, recv) else {
     return t_unknown("no such method");
   };
   let no_type_args: string[] = [];
   return generic_method_ret(ms, receiver_binding(ms, no_type_args, t, s), s);
+}
+
+// trait_holds says whether t implements the trait named tr, by an impl whose
+// bounds t meets or by a derive.
+function (s: Scope) trait_holds(t: typeinfo.Type, tr: string): boolean {
+  let tn = impl_type_name(t);
+  if (tn.len() > 0) {
+    for imp in s.impls {
+      if (imp.trait_name == tr && impl_receiver(imp) == tn) {
+        return impl_bounds_hold(s, imp, t);
+      }
+    }
+  }
+  let recv = cmp_method_receiver(t);
+  return recv.len() > 0 && derives_trait(s, recv, tr);
+}
+
+// operator_trait_hint is the E009 advice for an operator on a nominal type
+// that does not implement the trait of the operator.
+function operator_trait_hint(method: string, t: typeinfo.Type): string {
+  let label = util.demangle(type_label(t));
+  return "add `impl ops." + ast.operator_trait(method) + " for " + label + "`, which requires `import \"core/ops\";`";
 }
 
 function downcast_operand_ok(t: typeinfo.Type): boolean {
@@ -2534,55 +2562,30 @@ function (s: Scope) defines(name: string): boolean {
 }
 
 function bind_destructure_names(s: Scope, v: ast.StmtVar): Scope {
-  if (!util.contains(v.name, ",") && !parser.is_destr_marker(v.type_name)) {
+  if (!ast.destructures(v)) {
     return s;
   }
-  let at = parser.destr_marker_split(v.type_name).at;
   let whole = check_expr(v.init, s);
   let out = s;
-  if (at.len() > 0) {
-    out = out.bind(at, whole);
+  if (v.destr.at.len() > 0) {
+    out = out.bind(v.destr.at, whole);
   }
-  if (parser.is_struct_destr_marker(v.type_name)) {
+  if (ast.record_destr(v.destr)) {
     return bind_struct_destr_fields(out, v, s);
   }
-  return bind_tuple_destr_names(out, split_pattern_names(v.name), whole);
+  return bind_tuple_destr(out, v.destr, whole);
 }
 
 function bind_struct_destr_fields(out: Scope, v: ast.StmtVar, s: Scope): Scope {
-  let (fields, ok) = struct_destr_fields(v.type_name);
-  if (!ok) {
-    return bind_names(out, v.name);
-  }
-  let names = split_pattern_names(v.name);
-  for i in 0..names.len() {
+  let fields = v.destr.fields;
+  for i in 0..v.destr.binds.len() {
     let ft = t_unknown("binding");
     if (i < fields.len()) {
-      ft = check_expr(ast.ExprFieldAccess { obj: v.init, field: fields[i], line: v.line, col: v.col, ty: "", const_read: false }, s);
+      ft = check_expr(ast.ExprFieldAccess { obj: v.init, field: fields[i], line: v.line, col: v.col, ty: "", const_read: false, display: false }, s);
     }
-    out = out.bind(names[i], ft);
+    out = out.bind(v.destr.binds[i].name, ft);
   }
   return out;
-}
-
-function struct_destr_fields(type_name: string): (string[], boolean) {
-  let marker = parser.destr_marker_split(type_name).tag;
-  let rest = slice_unchecked(marker, 4, marker.len()).to_owned();
-  let colon = util.index_of_sub(rest, ":");
-  if (colon < 0) {
-    return ([], false);
-  }
-  return (split_pattern_names(slice_unchecked(rest, colon + 1, rest.len()).to_owned()), true);
-}
-
-function struct_destr_name(type_name: string): string {
-  let marker = parser.destr_marker_split(type_name).tag;
-  let rest = slice_unchecked(marker, 4, marker.len()).to_owned();
-  let colon = util.index_of_sub(rest, ":");
-  if (colon < 0) {
-    return "";
-  }
-  return slice_unchecked(rest, 0, colon).to_owned();
 }
 
 function opaque_access_diags(sig: StructSig, s: Scope, what: string, line: i32, col: i32): util.Diag[] {
@@ -2594,14 +2597,14 @@ function opaque_access_diags(sig: StructSig, s: Scope, what: string, line: i32, 
 
 function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
-  if (!parser.is_struct_destr_marker(v.type_name)) {
+  if (!ast.record_destr(v.destr)) {
     return out;
   }
-  let (fields, _) = struct_destr_fields(v.type_name);
+  let fields = v.destr.fields;
   let it = check_expr(v.init, s);
   match (it) {
     typeinfo.TypeStruct(st) => {
-      let named = struct_destr_name(v.type_name);
+      let named = v.destr.record;
       if (named.len() > 0 && named != st.name) {
         return out.append(dg_at("E024", "struct destructure pattern names " + named + ", but the expression is " + st.name, v.line, v.col));
       }
@@ -2609,7 +2612,7 @@ function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
         return out;
       };
       let access = "destructure a field of";
-      if (parser.destr_marker_split(v.type_name).struct_match) {
+      if (v.destr.struct_match) {
         access = "destructure";
       }
       out = util.append_diags(out, opaque_access_diags(sig, s, access, v.line, v.col));
@@ -2628,7 +2631,7 @@ function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
   return out;
 }
 
-function bind_tuple_destr_names(out: Scope, names: string[], whole: typeinfo.Type): Scope {
+function bind_tuple_destr(out: Scope, d: ast.Destr, whole: typeinfo.Type): Scope {
   let elems: typeinfo.Type[] = [];
   match (whole) {
     typeinfo.TypeTuple(tt) => {
@@ -2636,47 +2639,15 @@ function bind_tuple_destr_names(out: Scope, names: string[], whole: typeinfo.Typ
     },
     _ => {}
   }
-  for i in 0..names.len() {
-    let nm = names[i];
+  for i in 0..d.binds.len() {
     let et = t_unknown("binding");
     if (i < elems.len()) {
       et = elems[i];
     }
-    if (util.is_tuple_type_name(nm)) {
-      out = bind_tuple_destr_names(out, split_pattern_names(slice_unchecked(nm, 1, nm.len() - 1).to_owned()), et);
-    } else if (nm.len() > 0) {
-      out = out.bind(nm, et);
-    }
-  }
-  return out;
-}
-
-pub function split_pattern_names(encoded: string): string[] {
-  let out: string[] = [];
-  let start = 0;
-  let depth = 0;
-  for i in 0..=encoded.len() {
-    if (i == encoded.len() || encoded[i] == b',' && depth == 0) {
-      if (i > start) {
-        out = out.append(slice_unchecked(encoded, start, i).to_owned());
-      }
-      start = i + 1;
-    } else if (encoded[i] == b'(') {
-      depth += 1;
-    } else if (encoded[i] == b')') {
-      depth -= 1;
-    }
-  }
-  return out;
-}
-
-function bind_names(s: Scope, name: string): Scope {
-  let out = s;
-  for nm in split_pattern_names(name) {
-    if (util.is_tuple_type_name(nm)) {
-      out = bind_names(out, slice_unchecked(nm, 1, nm.len() - 1).to_owned());
-    } else if (nm.len() > 0) {
-      out = out.bind(nm, t_unknown("binding"));
+    if (d.binds[i].nested.len() > 0) {
+      out = bind_tuple_destr(out, d.binds[i].nested[0], et);
+    } else if (d.binds[i].name.len() > 0) {
+      out = out.bind(d.binds[i].name, et);
     }
   }
   return out;
@@ -3349,18 +3320,6 @@ function impl_parts(t: typeinfo.Type): typeinfo.Type[] {
       return [];
     }
   }
-}
-
-// impl_of_holds says whether the impl of trait_name that t takes its method
-// from has its bounds met by the parts of t.
-function impl_of_holds(s: Scope, t: typeinfo.Type, trait_name: string): boolean {
-  let tn = impl_type_name(t);
-  for imp in s.impls {
-    if (impl_receiver(imp) == tn && imp.trait_name == trait_name) {
-      return impl_bounds_hold(s, imp, t);
-    }
-  }
-  return true;
 }
 
 function impl_receiver(imp: parser.ImplInfo): string {
@@ -6476,7 +6435,7 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       return t_unknown("f-string: formatter-only node");
     },
     ast.ExprUnknown(u) => {
-      return t_unknown("parser-side unknown:" + u.kind);
+      return t_unknown("parser-side unknown:" + ast.fault_text(u.fault));
     },
     ast.ExprZero(z) => {
       return s.resolve_type(z.type_name);
@@ -6684,7 +6643,7 @@ function bitwise_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.
 
 function check_unary_expr(u: ast.ExprUnary, s: Scope): typeinfo.Type {
   // The type of a cast comes from its target only.
-  if (u.op.starts_with("as_") || u.op.starts_with("as?_")) {
+  if (u.op == ast.CAST || u.op == ast.CHECKED_CAST) {
     return unary_result_type(u, typeinfo.unchecked(), s);
   }
   return unary_result_type(u, check_expr(u.operand, s), s);
@@ -6718,14 +6677,14 @@ function unary_result_type(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope): typei
   if (u.op == "~") {
     return bitwise_not_type(ot);
   }
-  if (u.op.len() > 3 && u.op.starts_with("as_")) {
-    return s.resolve_type(slice_unchecked(u.op, 3, u.op.len()).to_owned());
+  if (u.op == ast.CAST) {
+    return s.resolve_type(u.cast);
   }
   if (u.op == "try_") {
     return try_success_type(s, ot);
   }
-  if (u.op.len() > 4 && u.op.starts_with("as?_")) {
-    return typeinfo.TypeUnion { name: "Option", args: [s.resolve_type(slice_unchecked(u.op, 4, u.op.len()).to_owned())] };
+  if (u.op == ast.CHECKED_CAST) {
+    return typeinfo.TypeUnion { name: "Option", args: [s.resolve_type(u.cast)] };
   }
   return t_unknown("unknown unary op:" + u.op);
 }
@@ -6788,7 +6747,7 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
     if (!is_unknown(tuple_join)) {
       first = tuple_join;
       first_lit = 0;
-      first_expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+      first_expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
       continue;
     }
     if (typeinfo.is_tuple(first) && typeinfo.is_tuple(et) && !type_eq(first, et) && prior_literals_take(a, i, et, s)) {
@@ -6809,7 +6768,7 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
     if (!is_unknown(scalar) && element_literal_kind(first_expr, gives) != 1 && (element_literal_kind(a.elements[i], gives) != 1 || wide_literal_widens(a.elements[i], et, first))) {
       first = scalar;
       first_lit = 0;
-      first_expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+      first_expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
       continue;
     }
     let lit = element_literal_kind(a.elements[i], gives);
@@ -7043,6 +7002,7 @@ function check_lambda_expr(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
 
 pub struct CheckResult { scope: Scope, ty: typeinfo.Type }
 
+// TEMPORARY drift check for the destr migration.
 pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
   match (st) {
     ast.StmtDefer(d) => {
@@ -7051,10 +7011,10 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
     ast.StmtVar(v) => {
       let init_scope = rec_local_scope(v, s);
       let t = check_expr(v.init, init_scope);
-      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
+      if (ast.destructures(v)) {
         return CheckResult { scope: bind_destructure_names(s, v), ty: t };
       }
-      if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
+      if (v.type_name.len() > 0) {
         let declared = var_declared_type(v, s);
         if (is_unknown(declared)) {
           return CheckResult { scope: s.bind(v.name, declared), ty: declared };
@@ -7071,7 +7031,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
       let bare_ret = false;
       match (r.value) {
         ast.ExprUnknown(bu) => {
-          if (bu.kind == parser.BARE_RETURN) {
+          if (bu.fault.mark == parser.BARE_RETURN) {
             bare_ret = true;
           }
         },
@@ -7223,7 +7183,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
       return CheckResult { scope: s, ty: typeinfo.t_bool() };
     },
     ast.StmtUnknown(u) => {
-      return CheckResult { scope: s, ty: t_unknown("parser-side unknown stmt:" + u.kind) };
+      return CheckResult { scope: s, ty: t_unknown("parser-side unknown stmt:" + ast.fault_text(u.fault)) };
     }
   }
 }
@@ -7234,7 +7194,7 @@ pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
       return bind_stmt(d.action, s);
     },
     ast.StmtVar(v) => {
-      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
+      if (ast.destructures(v)) {
         return bind_destructure_names(s, v);
       }
       return bind_var(v, s, var_bind_type(v, s));
@@ -8720,7 +8680,7 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
         let bare = false;
         match (r.value) {
           ast.ExprUnknown(u) => {
-            if (u.kind == parser.BARE_RETURN) {
+            if (u.fault.mark == parser.BARE_RETURN) {
               bare = true;
             }
           },
@@ -8867,7 +8827,7 @@ function void_return_diag(r: ast.StmtReturn, cur: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   match (r.value) {
     ast.ExprUnknown(u) => {
-      if (u.kind == parser.BARE_RETURN) {
+      if (u.fault.mark == parser.BARE_RETURN) {
         return out;
       }
     },
@@ -10281,11 +10241,24 @@ function mc_walk_body(stmts: ast.Stmt[], s: Scope, structs: parser.StructDecl[],
   return out;
 }
 
+// The names of a for loop's variable, or of the top level of its pattern.
+function for_top_names(fr: ast.StmtFor): string[] {
+  if (fr.destr.binds.len() == 0) {
+    return [fr.var_name];
+  }
+  let out: string[] = [];
+  for b in fr.destr.binds {
+    if (b.nested.len() == 0) {
+      out = out.append(b.name);
+    }
+  }
+  return out;
+}
+
 // A for loop binds each element over its body, as a let does.
 function mc_for_bindings(fr: ast.StmtFor, body: Scope, structs: parser.StructDecl[], enums: parser.EnumDecl[]): util.Diag[] {
   let out: util.Diag[] = [];
-  for raw in split_pattern_names(fr.var_name) {
-    let name = raw.trim();
+  for name in for_top_names(fr) {
     let tn = mc_marked_type_name(typeinfo.spelling(body.lookup(name)), structs, enums);
     if (tn.len() > 0) {
       out = util.append_diags(out, mc_check_binding(fr.body, 0, name, tn, fr.line, fr.col, structs, enums));
@@ -11055,7 +11028,7 @@ function unsettled_arm_sum(a: i32, b: i32): i32 {
 function lit_locals_after(st: ast.Stmt, lits: string[]): string[] {
   if let ast.StmtVar(v) = st {
     let out = drop_lit_locals(lits, astwalk.binders_of(st, []));
-    if (v.type_name.len() == 0 && !util.contains(v.name, ",") && unsettled_tree(v.init, lits)) {
+    if (v.type_name.len() == 0 && v.destr.binds.len() <= 1 && unsettled_tree(v.init, lits)) {
       return out.append(v.name);
     }
     return out;
@@ -11145,7 +11118,7 @@ function mx_args_compatible(a: typeinfo.TypeUnion, b: typeinfo.TypeUnion, elem: 
   if (a.args.len() != b.args.len()) {
     return false;
   }
-  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
   for i in 0..a.args.len() {
     let x = a.args[i];
     let y = b.args[i];
@@ -11157,7 +11130,7 @@ function mx_args_compatible(a: typeinfo.TypeUnion, b: typeinfo.TypeUnion, elem: 
 }
 
 function mx_parts_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boolean, unions: UnionSig[], enums: parser.EnumDecl[]): boolean {
-  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
   match (a.t) {
     typeinfo.TypeTuple(ta) => {
       match (b.t) {
@@ -11239,7 +11212,7 @@ function mx_variant_beside_union(a: typeinfo.Type, b: typeinfo.Type): boolean {
 }
 
 function mx_elem_store(e: ast.Expr, elem: typeinfo.Type): VbStore {
-  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
   if let ast.ExprArray(ea) = e {
     if (ea.elements.len() > 0 && mx_unsettled_elements(ea.elements)) {
       return VbStore { t: elem, e: ea.elements[0] };
@@ -11253,7 +11226,7 @@ function mx_map_value_store(e: ast.Expr, value: typeinfo.Type): VbStore {
   if (vs.len() > 0 && mlit_is_desugared(e) && mx_unsettled_elements(vs)) {
     return VbStore { t: value, e: vs[0] };
   }
-  return VbStore { t: value, e: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+  return VbStore { t: value, e: ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 } };
 }
 
 function mlit_values(e: ast.Expr): ast.Expr[] {
@@ -11285,7 +11258,7 @@ function mx_unsettled_elements(es: ast.Expr[]): boolean {
 
 function mx_default_width(a: VbStore): VbStore {
   if (arm_unsettled(a)) {
-    return VbStore { t: typeinfo.t_i32(), e: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+    return VbStore { t: typeinfo.t_i32(), e: ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 } };
   }
   return a;
 }
@@ -11353,13 +11326,13 @@ function mx_joined_literal(el: VbStore, e: ast.Expr): ast.Expr {
   if (arm_unsettled(el)) {
     return e;
   }
-  return ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  return ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
 }
 
 struct MxFold { ok: boolean, acc: VbStore, bad: typeinfo.Type, bad_index: i32 }
 
 function mx_fold_arms(types: typeinfo.Type[], exprs: ast.Expr[], unions: UnionSig[], enums: parser.EnumDecl[], if_form: boolean, assigns: boolean): MxFold {
-  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
   let unjudged = MxFold { ok: true, acc: VbStore { t: t_unknown("value block arms unjudged"), e: none }, bad: t_unknown(""), bad_index: 0 };
   if (types.len() == 0 || types.len() != exprs.len()) {
     return unjudged;
@@ -11815,8 +11788,8 @@ function mx_expr_at(e: ast.Expr, want: typeinfo.Type, s: Scope, unions: UnionSig
       }
     },
     ast.ExprUnknown(u) => {
-      if (util.is_f64_range_kind(u.kind)) {
-        out = out.append(dg_at("P002", util.f64_range_message(u.kind), u.line, u.col));
+      if (u.fault.code == "P002") {
+        out = out.append(dg_at("P002", u.fault.message, u.line, u.col));
       }
     },
     _ => {}
@@ -12195,7 +12168,7 @@ function match_leaves(m: ast.StmtMatch, jumps: boolean, bound: boolean, noret: u
 function lets_bind_exit(stmts: ast.Stmt[]): boolean {
   for st in stmts {
     if let ast.StmtVar(v) = st {
-      if (util.has_str(astwalk.append_bound_name([], v.name), "exit")) {
+      if (util.has_str(ast.append_var_names([], v), "exit")) {
         return true;
       }
     }
@@ -12590,11 +12563,10 @@ function missing_pattern_fields_diag(name: string, decl: string[], line: i32, co
 }
 
 function destructure_covers_diags(v: ast.StmtVar, structs: StructTable): util.Diag[] {
-  if (!parser.is_struct_destr_marker(v.type_name)) {
+  if (!ast.record_destr(v.destr)) {
     return [];
   }
-  let (fields, _) = struct_destr_fields(v.type_name);
-  return struct_pattern_covers_diags(struct_destr_name(v.type_name), fields, parser.destr_marker_split(v.type_name).rest_written, structs, v.line, v.col);
+  return struct_pattern_covers_diags(v.destr.record, v.destr.fields, v.destr.rest_written, structs, v.line, v.col);
 }
 
 function struct_arms_cover_diags(arms: ast.StructArm[], structs: StructTable): util.Diag[] {
@@ -13170,13 +13142,46 @@ function duplicate_var_diag(stmts: ast.Stmt[], v: ast.StmtVar): util.Diag {
   return d;
 }
 
+function destr_declared_names(d: ast.Destr): string[] {
+  let acc: string[] = [];
+  if (d.at.len() > 0) {
+    acc = acc.append(d.at);
+  }
+  return pattern_declared_names(acc, d);
+}
+
+// The names that d declares after `acc`, in the order that the binding declares them: its own names, then those of each nested pattern.
+function pattern_declared_names(own acc: string[], d: ast.Destr): string[] {
+  for b in d.binds {
+    if (b.nested.len() == 0 && b.name.len() > 0 && b.name != "_") {
+      acc = acc.append(b.name);
+    }
+  }
+  for b in d.binds {
+    if (b.nested.len() > 0) {
+      acc = pattern_declared_names(acc, b.nested[0]);
+    }
+  }
+  return acc;
+}
+
 function dupvar_diags(stmts: ast.Stmt[]): util.Diag[] {
   let out: util.Diag[] = [];
   let declared = util.name_index([]);
   for stmt in stmts {
     match (stmt) {
       ast.StmtVar(v) => {
-        if (declared.has(v.name)) {
+        if (ast.destructures(v)) {
+          if (!v.destr.struct_match) {
+            for name in destr_declared_names(v.destr) {
+              if (declared.has(name)) {
+                out = out.append(dg_at("E013", "variable \"" + name + "\" already declared in this scope", v.line, v.col));
+              } else {
+                declared = declared.added(name);
+              }
+            }
+          }
+        } else if (declared.has(v.name)) {
           if (!ast.var_binds_itself(v)) {
             out = out.append(duplicate_var_diag(stmts, v));
           }
@@ -14760,7 +14765,7 @@ function display_resolves(t: typeinfo.Type, s: Scope): boolean {
   if (tn.len() == 0) {
     return false;
   }
-  return s.has_method("to_string", tn) || conforms_by_impl_or_derive(s, tn, "Display") || !is_unknown(builtin_method_sig(tn, "to_string"));
+  return !is_unknown(builtin_method_sig(tn, "to_string")) || s.trait_holds(t, "Display");
 }
 
 function display_unjudged(t: typeinfo.Type): boolean {
@@ -14813,8 +14818,16 @@ function display_rewrite(c: ast.ExprCall, nargs: ast.Expr[], s: Scope): ast.Expr
   }
   let ln = expr_line(c.args[0]);
   let cl = expr_col(c.args[0]);
-  let callee: ast.Expr = ast.ExprFieldAccess { obj: nargs[0], field: "to_string", line: ln, col: cl, ty: "", const_read: false };
+  let callee: ast.Expr = ast.ExprFieldAccess { obj: nargs[0], field: "to_string", line: ln, col: cl, ty: "", const_read: false, display: true };
   return [ast.ExprCall { callee: callee, args: [], line: ln, col: cl, type_args: [], ty: "string" }];
+}
+
+// display_advice tells how t can come to implement `Display`.
+function display_advice(t: typeinfo.Type): string {
+  if (cmp_method_receiver(t) == "" || cmp_parts(t).is_some()) {
+    return cmp_hint(t, "cmp.Display");
+  }
+  return util.derive_hint(display_dispatch_name(t), "cmp.Display", "cmp.Display");
 }
 
 function display_arg_diags(c: ast.ExprCall, s: Scope): util.Diag[] {
@@ -14826,13 +14839,8 @@ function display_arg_diags(c: ast.ExprCall, s: Scope): util.Diag[] {
   if (display_unjudged(at) || display_resolves(at, s)) {
     return [];
   }
-  let label = type_label(at);
-  let advice = "give " + label + " a `to_string(): string` method, or " + util.derive_hint(display_dispatch_name(at), "cmp.Display", "cmp.Display");
-  if (cmp_method_receiver(at) == "" || cmp_parts(at).is_some()) {
-    advice = cmp_hint(at, "cmp.Display");
-  }
   return [dg_at(
-    "E038", "argument 1 to \"" + name + "\": " + label + " does not implement `Display` (no `to_string(): string` in scope) — " + advice,
+    "E038", "argument 1 to \"" + name + "\": " + type_label(at) + " does not implement `Display` — " + display_advice(at),
     expr_line(c.args[0]), expr_col(c.args[0]),
   )];
 }
@@ -15192,6 +15200,12 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
     },
     ast.ExprFieldAccess(mfa) => {
       let recv = check_expr(mfa.obj, s);
+      if (mfa.display && !display_unjudged(recv) && !display_resolves(recv, s)) {
+        return out.append(dg_at(
+          "E038", "an interpolated value of type " + type_label(recv) + " does not implement `Display` — " + display_advice(recv),
+          expr_line(mfa.obj), expr_col(mfa.obj),
+        ));
+      }
       match (recv) {
         typeinfo.TypeTuple(tup) => {
           if (tuple_element_field(recv, mfa.field)) {
@@ -15555,6 +15569,11 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
   if (typeinfo.is_lanes(blt) || typeinfo.is_lanes(brt)) {
     return (util.append_diags(out, lanes_operator_diags(b, blt, brt)), binary_result_type(b, blt, brt, s));
   }
+  let method = ast.operator_method(b.op);
+  if (method.len() > 0 && cmp_method_receiver(blt).len() > 0 && type_eq(blt, brt) && is_unknown(s.binop_overload_ret(b.op, blt))) {
+    let msg = "operator \"" + b.op + "\" is not defined for " + util.demangle(type_label(blt)) + " — " + operator_trait_hint(method, blt);
+    return (out.append(dg_at("E009", msg, b.line, b.col)), blt);
+  }
   if (b.op == "&&" || b.op == "||") {
     if (!is_unknown(blt) && !type_eq(blt, typeinfo.t_bool())) {
       out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires boolean, got " + type_label(blt), b.line, b.col));
@@ -15583,6 +15602,8 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
       if (!oks && !oki2 && !okf2 && !okov2) {
         if (both_int) {
           out = out.append(mixed_int_diag(b.op, pl, pr, b.line, b.col));
+        } else if (typeinfo.is_text(pl) || typeinfo.is_text(pr)) {
+          out = out.append(dg_at("E009", "operator \"+\" requires matching numeric or string operands, got " + type_label(pl) + " and " + type_label(pr), b.line, b.col));
         } else {
           out = util.append_diags(out, numeric_operand_diags(b.op, pl, pr, b.line, b.col));
         }
@@ -15694,6 +15715,9 @@ function unary_operator_diags(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope, out
   }
   out = util.append_diags(out, tvar_neg_diags(u, ot, s));
   out = bitwise_not_diags(u, ot, out);
+  if (u.op == "-" && cmp_method_receiver(ot).len() > 0 && is_unknown(s.unop_overload_ret(u.op, ot))) {
+    return out.append(dg_at("E009", "unary `-` is not defined for " + util.demangle(type_label(ot)) + " — " + operator_trait_hint("neg", ot), u.line, u.col));
+  }
   if (u.op == "-") {
     let nok = !is_unknown(s.unop_overload_ret(u.op, ot));
     if (!operand_open(ot) && !is_integer(ot) && !is_float(ot) && !typeinfo.is_lanes(ot) && !nok) {
@@ -15703,8 +15727,8 @@ function unary_operator_diags(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope, out
       out = out.append(dg_at("E009", "operator \"-\" is not available for " + type_label(ot) + ": its lanes have no sign", u.line, u.col));
     }
   }
-  if (u.op.len() > 3 && u.op.starts_with("as_")) {
-    if (u.op == "as_char") {
+  if (u.op == ast.CAST) {
+    if (u.cast == "char") {
       match (u.operand) {
         ast.ExprNumber(cn) => {
           if (!cn.is_float && !lit_is_scalar_value(cn.text)) {
@@ -15714,18 +15738,18 @@ function unary_operator_diags(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope, out
         _ => {}
       }
     }
-    let target_errors = cast_target_diags(slice_unchecked(u.op, 3, u.op.len()).to_owned(), u, s);
+    let target_errors = cast_target_diags(u.cast, u, s);
     if (target_errors.len() > 0) {
       return util.append_diags(out, target_errors);
     }
-    let tgt = s.resolve_type(slice_unchecked(u.op, 3, u.op.len()).to_owned());
+    let tgt = s.resolve_type(u.cast);
     if (bare_numeric_literal(u.operand)) {
       out = util.append_diags(out, int_dest_range_diags(u.operand, tgt));
     }
     out = util.append_diags(out, cast_diags(u, tgt, ot, s));
   }
-  if (u.op.len() > 4 && u.op.starts_with("as?_")) {
-    let target = slice_unchecked(u.op, 4, u.op.len()).to_owned();
+  if (u.op == ast.CHECKED_CAST) {
+    let target = u.cast;
     let target_errors = cast_target_diags(target, u, s);
     if (target_errors.len() > 0) {
       return util.append_diags(out, target_errors);
@@ -16098,7 +16122,7 @@ function int_read(e: ast.Expr): ast.Expr {
     }
   }
   if let ast.ExprUnary(u) = e {
-    return ast.unary(u.op, int_read(u.operand), u.line, u.col, u.ty);
+    return ast.rebuild_unary(u, int_read(u.operand), u.line, u.col, u.ty);
   }
   if let ast.ExprBinary(b) = e {
     return ast.binary(b.op, int_read(b.left), int_read(b.right), b.line, b.col, b.ty);
@@ -17217,10 +17241,10 @@ function tuple_destr_diags(t: typeinfo.Type, n: i32, line: i32, col: i32): util.
 }
 
 function for_pattern_diags(fr: ast.StmtFor, s: Scope): util.Diag[] {
-  if (!util.contains(fr.var_name, ",")) {
+  if (fr.destr.binds.len() == 0) {
     return [];
   }
-  let n = split_pattern_names(fr.var_name).len();
+  let n = fr.destr.binds.len();
   if (for_iter_is_range(fr.iter)) {
     return tuple_destr_diags(range_var_type(fr.iter, s), n, fr.line, fr.col);
   }
@@ -17348,14 +17372,14 @@ function iterator_lowering(fr: ast.StmtFor, s: Scope): Option[ast.Stmt] {
   let col = expr_col(fr.iter);
   let subject = fr.iter;
   if (sub.via_iter) {
-    subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: fr.iter, field: "iter", line: line, col: col, ty: "", const_read: false }, args: [], line: line, col: col, type_args: [], ty: "" };
+    subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: fr.iter, field: "iter", line: line, col: col, ty: "", const_read: false, display: false }, args: [], line: line, col: col, type_args: [], ty: "" };
   }
   return Some(parser.iterator_loop(fr, subject, col));
 }
 
 function probe_method(t: typeinfo.Type, name: string, s: Scope): typeinfo.Type {
   let recv: ast.Expr = ast.ExprIdent { name: "__for_iter", line: 0, col: 0, ty: "", builtin: false };
-  let call: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: name, line: 0, col: 0, ty: "", const_read: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
+  let call: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: name, line: 0, col: 0, ty: "", const_read: false, display: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
   return check_expr(call, s.bind("__for_iter", t));
 }
 
@@ -18458,9 +18482,9 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
 
 function var_pattern_diags(v: ast.StmtVar, s: Scope, tuple_pattern: boolean): util.Diag[] {
   let out = struct_destr_diags(v, s);
-  let positions = split_pattern_names(v.name);
-  if (!tuple_pattern && positions.len() > 1 && !parser.is_struct_destr_marker(v.type_name)) {
-    out = util.append_diags(out, tuple_destr_diags(check_expr(v.init, s), positions.len(), v.line, v.col));
+  let count = v.destr.binds.len();
+  if (!tuple_pattern && count > 1 && !ast.record_destr(v.destr)) {
+    out = util.append_diags(out, tuple_destr_diags(check_expr(v.init, s), count, v.line, v.col));
   }
   return out;
 }
@@ -18491,7 +18515,7 @@ function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]
   for st in stmts {
     match (st) {
       ast.StmtVar(v) => {
-        if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name) && !vb_placeholder_decl(v)) {
+        if (v.type_name.len() > 0 && !vb_placeholder_decl(v)) {
           let declared = var_declared_type(v, cur);
           let initt = fn_value_at(v.init, declared, cur);
           if (!mlit_is_desugared(v.init)) {
@@ -18799,7 +18823,7 @@ function const_literal(e: ast.Expr): boolean {
 }
 
 function const_unary_err(u: ast.ExprUnary, earlier: string[]): string {
-  if (u.op.starts_with("as_")) {
+  if (u.op == ast.CAST) {
     return "expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)";
   }
   return const_expr_err(u.operand, earlier);
@@ -19663,7 +19687,7 @@ struct OclPlaces { name: string, defs: OclDef[], names: util.NameIndex, aggregat
 struct OclContainers { names: util.NameIndex, holds: boolean[] }
 
 function ocl_unknown(name: string): OclDef {
-  return OclDef { name: name, value: ast.ExprUnknown { kind: "", line: 0, col: 0 }, spelling: "", binder: false };
+  return OclDef { name: name, value: ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 }, spelling: "", binder: false };
 }
 
 function ocl_param(param: ast.ParamDecl): OclDef {
@@ -19866,7 +19890,7 @@ function ocl_place_alias(scope: OclPlaces, name: string): ast.Expr {
       return def.value;
     }
   }
-  return ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  return ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
 }
 
 function ocl_place_scope(lm: ast.ExprLambda, decls: OwnDecls): OclPlaces {
@@ -19892,7 +19916,7 @@ function ocl_place_stmt(st: ast.Stmt, scope: OclPlaces): (ast.Stmt, OclPlaces, b
       return (st, scope, false);
     }
     if (ocl_place(alias, scope, []).1) {
-      return (ast.StmtVar { ...v, init: ast.ExprUnknown { kind: "", line: 0, col: 0 } }, scope, true);
+      return (ast.StmtVar { ...v, init: ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 } }, scope, true);
     }
   }
   return (st, scope, false);
@@ -21545,7 +21569,7 @@ function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
       if (v.type_name == "fn" && v.fn_ret.starts_with("own ")) {
         f = LuFacts { ...f, checked_locals: f.checked_locals.append(v.name) };
       }
-      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
+      if (ast.destructures(v)) {
         return LuFacts { ...f, vars: lu_destr_vars(v, f.vars), unpacked: lu_destr_unpacked(v, f.unpacked) };
       }
       return LuFacts { ...f, vars: f.vars.append(LuVar { name: v.name, init: v.init }) };
@@ -21629,9 +21653,9 @@ function lu_sel_at(f: LuFacts, line: i32, col: i32): string {
 }
 
 function lu_destr_vars(v: ast.StmtVar, own vars: LuVar[]): LuVar[] {
-  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
   let init: ast.Expr = none;
-  if (parser.destr_marker_split(v.type_name).at.len() == 0) {
+  if (v.destr.at.len() == 0) {
     if (lu_fresh_expr(v.init)) {
       init = v.init;
     } else if let Some(_) = lu_match_value(v.init) {
@@ -21640,11 +21664,11 @@ function lu_destr_vars(v: ast.StmtVar, own vars: LuVar[]): LuVar[] {
       init = v.init;
     }
   }
-  for nm in split_pattern_names(v.name) {
-    if (util.is_tuple_type_name(nm)) {
-      vars = lu_nested_vars(nm, vars);
+  for b in v.destr.binds {
+    if (b.nested.len() > 0) {
+      vars = lu_nested_vars(b.nested[0], vars);
     } else {
-      vars = vars.append(LuVar { name: nm, init: init });
+      vars = vars.append(LuVar { name: b.name, init: init });
     }
   }
   return vars;
@@ -21654,25 +21678,25 @@ function lu_destr_vars(v: ast.StmtVar, own vars: LuVar[]): LuVar[] {
 // source. Nested groups are not unpacks of the name itself.
 function lu_destr_unpacked(v: ast.StmtVar, own acc: LuVar[]): LuVar[] {
   if let ast.ExprIdent(_) = v.init {
-    if (parser.destr_marker_split(v.type_name).at.len() > 0) {
+    if (v.destr.at.len() > 0) {
       return acc;
     }
-    for nm in split_pattern_names(v.name) {
-      if (!util.is_tuple_type_name(nm)) {
-        acc = acc.append(LuVar { name: nm, init: v.init });
+    for b in v.destr.binds {
+      if (b.nested.len() == 0) {
+        acc = acc.append(LuVar { name: b.name, init: v.init });
       }
     }
   }
   return acc;
 }
 
-function lu_nested_vars(group: string, own vars: LuVar[]): LuVar[] {
-  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
-  for nm in split_pattern_names(slice_unchecked(group, 1, group.len() - 1).to_owned()) {
-    if (util.is_tuple_type_name(nm)) {
-      vars = lu_nested_vars(nm, vars);
+function lu_nested_vars(group: ast.Destr, own vars: LuVar[]): LuVar[] {
+  let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
+  for b in group.binds {
+    if (b.nested.len() > 0) {
+      vars = lu_nested_vars(b.nested[0], vars);
     } else {
-      vars = vars.append(LuVar { name: nm, init: none });
+      vars = vars.append(LuVar { name: b.name, init: none });
     }
   }
   return vars;
@@ -21958,7 +21982,7 @@ function lu_scoped_fresh(fx: LuFn, body: ast.Stmt[], e: ast.Expr): boolean {
         let ast.StmtVar(binding) = body[i] else {
           return false;
         };
-        if (parser.is_destr_marker(binding.type_name) && parser.destr_marker_split(binding.type_name).at.len() != 0) {
+        if (binding.destr.at.len() != 0) {
           return false;
         }
         return lu_scoped_fresh(fx, [], binding.init);
@@ -23511,7 +23535,7 @@ function lu_mentions(st: ast.Stmt, name: string): i32 {
 }
 
 function lu_no_stmt(): ast.Stmt {
-  return ast.StmtUnknown { kind: "", line: 0, col: 0 };
+  return ast.StmtUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
 }
 
 function lu_plain_frame(stmts: ast.Stmt[]): LuFrame {
@@ -23746,7 +23770,18 @@ function lu_later_expr(e: ast.Expr, own l: LuLater): LuLater {
 // of the update literal with the base `aid`. The literal takes its base
 // after its field values run, so such a mention is not a later read.
 function lu_later_in_values(st: ast.Stmt, aid: ast.ExprIdent): boolean {
-  let all = astwalk.fold_stmt_nodes(st, LuLater { name: aid.name, line: aid.line, col: aid.col, n: 0, values: [] }, lu_later_stmt, lu_later_expr, astwalk.descend_all);
+  return lu_later_only_in_values(astwalk.fold_stmt_nodes(st, lu_later_start(aid), lu_later_stmt, lu_later_expr, astwalk.descend_all));
+}
+
+function lu_later_in_expr_values(e: ast.Expr, aid: ast.ExprIdent): boolean {
+  return lu_later_only_in_values(astwalk.fold_expr_nodes(e, lu_later_start(aid), lu_later_stmt, lu_later_expr, astwalk.descend_all));
+}
+
+function lu_later_start(aid: ast.ExprIdent): LuLater {
+  return LuLater { name: aid.name, line: aid.line, col: aid.col, n: 0, values: [] };
+}
+
+function lu_later_only_in_values(all: LuLater): boolean {
   let inside = 0;
   for v in all.values {
     inside += astwalk.fold_expr_nodes(v, LuLater { ...all, n: 0 }, lu_later_stmt, lu_later_expr, astwalk.descend_all).n;
@@ -23761,7 +23796,7 @@ function lu_expr_mentions(e: ast.Expr, aid: ast.ExprIdent, later: boolean): bool
 // The names a let declares, as LuFacts.vars records them.
 function lu_var_names(st: ast.Stmt, own acc: string[]): string[] {
   if let ast.StmtVar(v) = st {
-    if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
+    if (ast.destructures(v)) {
       for d in lu_destr_vars(v, []) {
         acc = acc.append(d.name);
       }
@@ -23975,7 +24010,7 @@ function lu_mentions_at(e: ast.Expr, aid: ast.ExprIdent): boolean {
 // tag, or a read in a guard or an arm before a whole assignment. LU_SETTLED:
 // every arm assigns the local whole or leaves the statement.
 function lu_call_tag_settles(reach: LuReach, m: ast.StmtMatch, aid: ast.ExprIdent): i32 {
-  if (lu_expr_mentions(m.scrutinee, aid, true)) {
+  if (lu_expr_mentions(m.scrutinee, aid, true) && !lu_later_in_expr_values(m.scrutinee, aid)) {
     return LU_LIVE;
   }
   let settled = m.arms.len() > 0;
@@ -24154,7 +24189,7 @@ function lu_chain_next(reach: LuReach, st: ast.Stmt, name: string, chain: LuChai
 function lu_chain_after(st: ast.Stmt, chain: LuChain): LuChain {
   if let ast.StmtVar(v) = st {
     if let ast.ExprBool(b) = v.init {
-      if (!b.value && !util.contains(v.name, ",")) {
+      if (!b.value && v.destr.binds.len() <= 1) {
         return LuChain { flag: v.name, settles: true, result: LU_NOT_ARM };
       }
     }
@@ -24876,7 +24911,7 @@ function lu_frame_binds(frames: LuFrame[], l: i32, name: string): boolean {
 
 function lu_stmt_declares(st: ast.Stmt, name: string): boolean {
   if let ast.StmtVar(v) = st {
-    if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
+    if (ast.destructures(v)) {
       return util.has_str(lu_var_names(st, []), name);
     }
     return v.name == name;
@@ -25684,7 +25719,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
   facts = lu_ended_callback_loans(fn.body, facts);
   let fx0 = LuFn { checked_params: lu_checked_params(fn), ret_own: fn.ret_own, facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, flow: lu_flow(fn.body) };
   let fx = LuFn { ...fx0, fresh: lu_fresh_names(fx0), fresh_known: true };
-  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
   let top = LuScope { frames: [], head: lu_plain_frame(fn.body), framed: true, binders: [], bindings: [], loop_depth: 0, in_loop: false, in_iife: false, in_defer: false };
   let out = lu_stmts(fn.body, top, none, false, fx, []);
   for lm in nested {
@@ -26830,7 +26865,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return OwnWalk { moved: ld.moved, diags: util.append_diags(rc.diags, ld.diags) };
     },
     ast.StmtFor(fr) => {
-      let takes = !util.contains(fr.var_name, ",") && ow_is_owned_scrutinee(fr.iter, ctx) && ow_iter_at_last_use(fr.iter, ctx);
+      let takes = fr.destr.binds.len() == 0 && ow_is_owned_scrutinee(fr.iter, ctx) && ow_iter_at_last_use(fr.iter, ctx);
       let ri = ru_borrow(fr.iter, moved, ctx);
       if (takes) {
         ri = ru_expr(fr.iter, moved, ctx);
@@ -26839,7 +26874,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       let inner = for_body_scope(fr, ctx.scope);
       // A loop over a borrowed array lends each element. An element that
       // holds no handle is a copy, so the body can give it away.
-      if (!takes && !util.contains(fr.var_name, ",") && !ow_holds_no_handle(typeinfo.spelling(inner.lookup(fr.var_name)), ctx.decls)) {
+      if (!takes && fr.destr.binds.len() == 0 && !ow_holds_no_handle(typeinfo.spelling(inner.lookup(fr.var_name)), ctx.decls)) {
         fctx = OwnCtx { ...fctx, borrowed: fctx.borrowed.append(fr.var_name) };
       }
       let ld = ow_loop(fr.label, fr.body, ri.moved, OwnCtx { ...fctx, scope: inner });
@@ -28313,7 +28348,7 @@ function ow_let_tail_borrows(arm: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string
     let ast.StmtVar(v) = arm[k] else {
       return None;
     };
-    if (util.contains(v.name, ",")) {
+    if (v.destr.binds.len() > 1) {
       return None;
     }
     let lends = ow_expr_borrows(v.init, ofuncs, inner, inner_locals, values, borrows, builtins, lenders, handles_only);
@@ -28597,7 +28632,7 @@ function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
     changed = false;
     for st in spine {
       let name = "";
-      let init: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+      let init: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
       if let ast.StmtVar(v) = st {
         name = v.name;
         init = v.init;
@@ -28608,7 +28643,7 @@ function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
       }
       // Scalar elements are copies. Other elements retain the iterable borrow.
       if let ast.StmtFor(f) = st {
-        if (!util.contains(f.var_name, ",") && !for_iter_is_range(f.iter) && !ow_value_element_iter(f.iter, values)) {
+        if (f.destr.binds.len() == 0 && !for_iter_is_range(f.iter) && !ow_value_element_iter(f.iter, values)) {
           name = f.var_name;
           init = f.iter;
         }
@@ -28825,7 +28860,7 @@ function ow_result_module(mod: parser.Module, env: ModuleEnv, dx: OwnDecls, type
       fn = parser.FuncDecl { ...fn, body: body };
     }
     if (fn.receiver_name.len() > 0) {
-      let receiver = ast.ParamDecl { name: fn.receiver_name, type_name: fn.receiver_type, own: fn.receiver_own, send: false, has_default: false, default_value: ast.ExprUnknown { kind: "", line: 0, col: 0 }, fn_ret: "", fn_param_types: "", line: fn.line, col: fn.col };
+      let receiver = ast.ParamDecl { name: fn.receiver_name, type_name: fn.receiver_type, own: fn.receiver_own, send: false, has_default: false, default_value: ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 }, fn_ret: "", fn_param_types: "", line: fn.line, col: fn.col };
       let params: ast.ParamDecl[] = [receiver];
       for p in fn.params {
         params = params.append(p);
@@ -31957,12 +31992,12 @@ function e060_e062_stmts(stmts: ast.Stmt[], dyns: DynLocals, mod: parser.Module,
   function at_node(n: ast.Expr, own out: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprUnary(u) => {
-        if (u.op.len() > 4 && u.op.starts_with("as?_")) {
+        if (u.op == ast.CHECKED_CAST) {
           match (u.operand) {
             ast.ExprIdent(id) => {
               let set = e060_set_of_name(dyns, id.name);
               if (set.len() > 0) {
-                let tgt = slice_unchecked(u.op, 4, u.op.len());
+                let tgt = u.cast;
                 // The type tag of a trait object names the declaration, not its type arguments.
                 if (e060_is_primitive_name(tgt) || util.contains(tgt, "[")) {
                   return out.append(dg_at("E060", "'as?' downcast target must be a concrete struct or enum type (slice 1), got " + tgt, u.line, u.col));
@@ -33267,7 +33302,7 @@ function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
 }
 
 pub function first_returned(body: ast.Stmt[], scope: Scope): (ast.Expr, Scope) {
-  let none: ast.Expr = ast.ExprUnknown { kind: parser.BARE_RETURN, line: 0, col: 0 };
+  let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(parser.BARE_RETURN), line: 0, col: 0 };
   // The statements after one that ends the path do not run.
   for st in body {
     match (st) {
@@ -34491,7 +34526,7 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
     ast.ExprUnary(u) => {
       let oa = annotate_typed(u.operand, s);
       let ut = unary_result_type(u, typed_type(oa, u.operand, s), s);
-      return Typed { e: ast.unary(u.op, oa.e, u.line, u.col, type_to_irtag(ut)), ty: ut, known: true };
+      return Typed { e: ast.rebuild_unary(u, oa.e, u.line, u.col, type_to_irtag(ut)), ty: ut, known: true };
     },
     ast.ExprCall(c) => {
       let nargs: ast.Expr[] = [];
@@ -34831,7 +34866,7 @@ function annotate_block(body: ast.Stmt[], s: Scope): ast.Stmt[] {
 // is annotated before the bind, so that the bind is the last use of s.
 function annotate_bound(stmt: ast.Stmt, s: Scope): (ast.Stmt, Scope) {
   if let ast.StmtVar(v) = stmt {
-    if (!util.contains(v.name, ",") && !parser.is_destr_marker(v.type_name)) {
+    if (!ast.destructures(v)) {
       let t = var_bind_type(v, s);
       let annotated = annotate_var(v, s, t);
       return (annotated, bind_var(v, s, t));
@@ -34860,39 +34895,42 @@ function range_var_type(iter: ast.Expr, s: Scope): typeinfo.Type {
 function for_binding(fr: ast.StmtFor, s: Scope): ForBinding {
   let body = s.enter_loop();
   if (for_iter_is_range(fr.iter)) {
-    let bound = bind_for_element(body, fr.var_name, range_var_type(fr.iter, s));
+    let bound = bind_for_element(body, fr, range_var_type(fr.iter, s));
     if (bound.names.len() > body.names.len()) {
       bound = Scope { ...bound, range_indexes: bound.range_indexes.append(bound.names.len() - 1) };
     }
-    return ForBinding { scope: bound, valid: !util.contains(fr.var_name, ",") };
+    return ForBinding { scope: bound, valid: fr.destr.binds.len() == 0 };
   }
   let it = check_expr(fr.iter, s);
   match (it) {
     typeinfo.TypeString(_) => {
-      return ForBinding { scope: bind_for_element(body, fr.var_name, typeinfo.t_u8()), valid: !util.contains(fr.var_name, ",") };
+      return ForBinding { scope: bind_for_element(body, fr, typeinfo.t_u8()), valid: fr.destr.binds.len() == 0 };
     },
     typeinfo.TypeArray(ta) => {
-      return ForBinding { scope: bind_for_element(body, fr.var_name, ta.elem), valid: true };
+      return ForBinding { scope: bind_for_element(body, fr, ta.elem), valid: true };
     },
     typeinfo.TypeMap(tm) => {
-      let names = split_pattern_names(fr.var_name);
-      return ForBinding { scope: bind_tuple_destr_names(body, names, t_tuple([tm.key, tm.value])), valid: names.len() == 2 };
+      let pattern = fr.destr;
+      if (pattern.binds.len() == 0) {
+        pattern = ast.tuple_destr([fr.var_name]);
+      }
+      return ForBinding { scope: bind_tuple_destr(body, pattern, t_tuple([tm.key, tm.value])), valid: pattern.binds.len() == 2 };
     },
     _ => {
       let sub = iter_subject(it, s);
-      return ForBinding { scope: bind_for_element(body, fr.var_name, sub.elem), valid: sub.ok };
+      return ForBinding { scope: bind_for_element(body, fr, sub.elem), valid: sub.ok };
     }
   }
 }
 
-function bind_for_element(s: Scope, name: string, ty: typeinfo.Type): Scope {
-  if (util.contains(name, ",")) {
-    return bind_tuple_destr_names(s, split_pattern_names(name), ty);
+function bind_for_element(s: Scope, fr: ast.StmtFor, ty: typeinfo.Type): Scope {
+  if (fr.destr.binds.len() > 0) {
+    return bind_tuple_destr(s, fr.destr, ty);
   }
-  if (name == "_") {
+  if (fr.var_name == "_") {
     return s;
   }
-  return s.bind(name, ty);
+  return s.bind(fr.var_name, ty);
 }
 
 pub function for_body_scope(fr: ast.StmtFor, s: Scope): Scope {
@@ -35015,7 +35053,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       if let Some(lowered) = iterator_lowering(fr, s) {
         return annotate_stmt(lowered, s, after);
       }
-      return ast.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, for_body_scope(fr, s)), label: fr.label, line: fr.line, col: fr.col };
+      return ast.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, for_body_scope(fr, s)), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
     },
     ast.StmtDefer(d) => {
       return ast.StmtDefer { action: annotate_stmt(d.action, s, after), on_error: d.on_error, line: d.line };
@@ -35201,7 +35239,7 @@ function vb_local_name(body: ast.Stmt[]): string {
   let name = "";
   match (body[0]) {
     ast.StmtVar(v) => {
-      if (v.type_name.len() > 0 && !parser.is_value_local_name(v.name) || util.contains(v.name, ",")) {
+      if (v.type_name.len() > 0 && !parser.is_value_local_name(v.name) || v.destr.binds.len() > 1) {
         return "";
       }
       name = v.name;
@@ -35342,13 +35380,13 @@ function vb_empty_arrays_fit(e: ast.Expr, want: typeinfo.Type): boolean {
 
 function vb_join(a: VbStore, b: VbStore): VbStore {
   if (owned_beside_view(a.t, b.t)) {
-    return VbStore { t: t_unknown("owned beside a view"), e: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+    return VbStore { t: t_unknown("owned beside a view"), e: ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 } };
   }
   let scalar = scalar_numeric_join(a.t, b.t);
   if (scalar_vb_joinable(a, b, scalar)) {
-    return VbStore { t: scalar, e: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+    return VbStore { t: scalar, e: ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 } };
   }
-  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
   if let typeinfo.TypeTuple(at) = a.t {
     if let typeinfo.TypeTuple(bt) = b.t {
       if (at.elements.len() != bt.elements.len()) {
@@ -35417,7 +35455,7 @@ function vb_tuple_elems(e: ast.Expr, n: i32): ast.Expr[] {
   }
   let out: ast.Expr[] = [];
   for i in 0..n {
-    out = out.append(ast.ExprUnknown { kind: "", line: 0, col: 0 });
+    out = out.append(ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 });
   }
   return out;
 }
@@ -35581,7 +35619,7 @@ function vb_zero_of(tag: string): ast.Expr {
     "string" => ast.ExprString { value: "", line: 0, col: 0 },
     "boolean" => ast.ExprBool { value: false, line: 0, col: 0 },
     "f64" => ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: true, bits: 0, line: 0, col: 0 },
-    "f32" => ast.unary("as_f32", vb_zero_of("f64"), 0, 0, "f32"),
+    "f32" => ast.cast(vb_zero_of("f64"), "f32", false, 0, 0, "f32"),
     "i32" => ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 },
     _ => ast.ExprNumber { text: "0", suffix: tag, raw: "", is_float: false, bits: 0, line: 0, col: 0 },
   };
@@ -35595,7 +35633,7 @@ function vb_retype(e: ast.Expr, s: Scope): ast.Expr {
 // takes is a member of it.
 function vb_union_dest(body: ast.Stmt[], name: string, dest: string, s: Scope): typeinfo.Type {
   let none = t_unknown("no union destination");
-  if (dest.len() == 0 || parser.is_destr_marker(dest)) {
+  if (dest.len() == 0) {
     return none;
   }
   let want = s.resolve_type(dest);
@@ -35647,7 +35685,7 @@ function vb_retype_dest(e: ast.Expr, s: Scope, dest: string): ast.Expr {
             nbody = nbody.append(ast.StmtVar { ...v, init: vb_zero_of(tag) });
           } else {
             tag = vb_annotation_of(want, s);
-            if (tag.len() == 0 && dest.len() > 0 && !parser.is_destr_marker(dest) && vb_wants_annotation(want)) {
+            if (tag.len() == 0 && dest.len() > 0 && vb_wants_annotation(want)) {
               tag = dest;
             }
             if (tag.len() == 0) {
@@ -35785,7 +35823,7 @@ function pretype_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
       let init = pretype_expr(v.init, s);
-      if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
+      if (v.type_name.len() > 0) {
         init = vb_retype_dest(init, s, v.type_name);
       }
       return ast.StmtVar { ...v, init: init };
@@ -36265,7 +36303,7 @@ function qualify_stmts(stmts: ast.Stmt[], s: Scope, coll: util.NameIndex): ast.S
 
 // var_dest_type is the type a `let` annotation expects of its initialiser.
 function var_dest_type(v: ast.StmtVar, s: Scope): typeinfo.Type {
-  if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name) && !vb_placeholder_decl(v)) {
+  if (v.type_name.len() > 0 && !vb_placeholder_decl(v)) {
     return var_declared_type(v, s);
   }
   return t_unknown("no expected type");
@@ -36471,7 +36509,7 @@ function qualified_variant_ref(id: ast.ExprIdent, want: typeinfo.Type, s: Scope)
   if (member.len() == 0) {
     return ast.ExprIdent { ...id };
   }
-  return ast.ExprFieldAccess { obj: ast.ExprIdent { ...id, name: du.name, ty: "" }, field: member, line: id.line, col: id.col, ty: "", const_read: false };
+  return ast.ExprFieldAccess { obj: ast.ExprIdent { ...id, name: du.name, ty: "" }, field: member, line: id.line, col: id.col, ty: "", const_read: false, display: false };
 }
 
 function qualify_call(c: ast.ExprCall, want: typeinfo.Type, s: Scope, coll: util.NameIndex): ast.Expr {
@@ -38487,7 +38525,7 @@ function lit_stmts(stmts: ast.Stmt[], s: Scope, st: LitInfer): LitInfer {
 function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
   match (stmt) {
     ast.StmtVar(v) => {
-      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
+      if (ast.destructures(v)) {
         return (bind_stmt(stmt, s), lit_expr(v.init, s, st));
       }
       if (v.type_name.len() > 0) {
@@ -38951,7 +38989,7 @@ function lit_float_read(e: ast.Expr, want: parser.TypeRef): ast.Expr {
   if (want.is_tuple) {
     let elems: ast.Expr[] = [];
     for i in 0..want.args.len() {
-      let part: ast.Expr = ast.ExprFieldAccess { obj: e, field: util.i32_to_string(i), line: expr_line(e), col: expr_col(e), ty: "", const_read: false };
+      let part: ast.Expr = ast.ExprFieldAccess { obj: e, field: util.i32_to_string(i), line: expr_line(e), col: expr_col(e), ty: "", const_read: false, display: false };
       elems = elems.append(lit_float_read(part, want.args[i]));
     }
     return ast.ExprTuple { elements: elems, line: expr_line(e), col: expr_col(e) };
@@ -38967,10 +39005,10 @@ function lit_float_read(e: ast.Expr, want: parser.TypeRef): ast.Expr {
   }
   if let ast.ExprUnary(u) = e {
     if (u.op == "-" || u.op == "+") {
-      return ast.unary(u.op, lit_float_read(u.operand, want), u.line, u.col, want.base);
+      return ast.rebuild_unary(u, lit_float_read(u.operand, want), u.line, u.col, want.base);
     }
   }
-  return ast.unary("as_" + want.base, e, expr_line(e), expr_col(e), want.base);
+  return ast.cast(e, want.base, false, expr_line(e), expr_col(e), want.base);
 }
 
 function lit_call_settled(c: ast.ExprCall, rw: LitRewrite): boolean {
@@ -39027,7 +39065,7 @@ function open_call_candidate(st: ast.Stmt, generics: string[]): boolean {
   let ast.ExprIdent(id) = c.callee else {
     return false;
   };
-  return v.type_name.len() == 0 && !util.contains(v.name, ",") && c.type_args.len() == 0 && util.has_str(generics, id.name);
+  return v.type_name.len() == 0 && v.destr.binds.len() <= 1 && c.type_args.len() == 0 && util.has_str(generics, id.name);
 }
 
 function lit_scan_expr(e: ast.Expr, own sc: LitScan): LitScan {
@@ -39117,7 +39155,7 @@ function lit_candidate_at(st: ast.Stmt): boolean {
       return lit_holds_int_literal(m.scrutinee);
     },
     ast.StmtVar(v) => {
-      if (v.type_name.len() > 0 || util.contains(v.name, ",")) {
+      if (v.type_name.len() > 0 || v.destr.binds.len() > 1) {
         return false;
       }
       return lit_holds_int_literal(v.init) || names_unit_variant(v.init);
@@ -39314,7 +39352,7 @@ function binary_numeric_join(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.
 
 function widen_binary_operand(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type, line: i32, col: i32): ast.Expr {
   if (!int_literal_tree(e) && !is_unknown(to) && typeinfo.lossless_widen(from, to)) {
-    return ast.unary("as_" + typeinfo.spelling(to), e, line, col, type_to_irtag(to));
+    return ast.cast(e, typeinfo.spelling(to), false, line, col, type_to_irtag(to));
   }
   return e;
 }

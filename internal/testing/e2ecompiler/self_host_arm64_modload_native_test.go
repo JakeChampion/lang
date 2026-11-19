@@ -83,12 +83,3 @@ type buildErr struct {
 }
 
 func (e *buildErr) Error() string { return e.err.Error() + "\n" + string(e.out) }
-
-func buildFernCLIBin(t *testing.T) string {
-	t.Helper()
-	bin := filepath.Join(t.TempDir(), "fern")
-	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("go build fern: %v\n%s", err, out)
-	}
-	return bin
-}

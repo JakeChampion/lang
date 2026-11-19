@@ -1,0 +1,218 @@
+// Tests of std/shape for Hebrew, Thai, Lao, Khmer, Myanmar, Korean, scripts of
+// the Universal Shaping Engine, and fonts with no GPOS table. The fonts and the glyphs
+// that HarfBuzz gives for each case come from
+// scripts/gen-shape-script-vectors.py.
+import "std/base64";
+import "std/shape";
+import "std/test";
+import "std/truetype";
+import "./shape_script_vectors";
+
+function joined(xs: i32[]): string {
+  return xs.map((x: i32): string => x.to_string()).join(",");
+}
+
+// The advance, the x offset and the y offset of each glyph of `r`.
+function places(r: truetype.Run): string {
+  let out: string[] = [];
+  for i in 0..r.glyphs.len() {
+    out = out.append(r.pos.advances[i].to_string() + ":" + r.pos.dx[i].to_string() + ":" + r.pos.dy[i].to_string());
+  }
+  return out.join(",");
+}
+
+// The font of `data`, and the same font with each `tag` in it renamed with
+// a last letter "0".
+function fonts_of(data: string, tag: string): Option[(truetype.Font, truetype.Font)] {
+  let Ok(b) = base64.decode(data) else {
+    return None;
+  };
+  let old = b;
+  for i in 0..b.len() - 3 {
+    if (b[i] == tag[0] && b[i + 1] == tag[1] && b[i + 2] == tag[2] && b[i + 3] == tag[3]) {
+      old = old.with(i + 3, 48 as u8);
+    }
+  }
+  let (Some(f), Some(g)) = (truetype.parse(b), truetype.parse(old)) else {
+    return None;
+  };
+  return Some((f, g));
+}
+
+// The cases of `cases` that do not give the glyphs, the clusters and the
+// positions of HarfBuzz for the script `script`, one on each line.
+function differences(data: string, tag: string, cases: string, script: string): string {
+  let Some((f, g)) = fonts_of(data, tag) else {
+    return "the font did not parse";
+  };
+  let out = "";
+  let count = 0;
+  for line in cases.split("\n") {
+    let parts = line.split("\t");
+    if (parts.len() != 5) {
+      continue;
+    }
+    count += 1;
+    let r = shape.shape(if (parts[0] == "old") { g } else { f }, parts[1], script);
+    let got = joined(r.glyphs) + " " + joined(r.clusters) + " " + places(r);
+    let want = parts[2] + " " + parts[3] + " " + parts[4];
+    if (got != want) {
+      out = out + parts[0] + " " + parts[1] + ": " + got + ", want " + want + "\n";
+    }
+  }
+  return if (count == 0) { "no cases" } else { out };
+}
+
+// Hebrew: right to left, with the mirrors of the brackets, the swap of a
+// sheva or a hiriq after a meteg, and the presentation forms in the font
+// with no mark feature.
+function test_hebrew(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.hebr_font(), "mark", shape_script_vectors.hebr_cases(), "hebr"), "");
+}
+
+// Thai: the split of the sara am, and the glyphs of the private use area
+// in the font with no Thai script.
+function test_thai(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.thai_font(), "thai", shape_script_vectors.thai_cases(), "thai"), "");
+}
+
+// Lao: the split of the sara am.
+function test_lao(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.lao_font(), "lao ", shape_script_vectors.lao_cases(), "lao "), "");
+}
+
+// Khmer: the coeng and the Ro before the base, the pre-base vowels, the
+// split vowels and the dotted circles, in the font and with no pref. A
+// ligature from a ZWJ is not default ignorable.
+function test_khmer(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.khmr_font(), "pref", shape_script_vectors.khmr_cases(), "khmr"), "");
+}
+
+// Khmer with the feature cfar, which applies after a coeng and a Ro.
+function test_khmer_cfar(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.khmr_cfar_font(), "cfar", shape_script_vectors.khmr_cfar_cases(), "khmr"), "");
+}
+
+// Myanmar: the kinzi, the medial Ra and the pre-base vowels, in the font
+// and in the font with no script.
+function test_myanmar(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.mymr_font(), "mym2", shape_script_vectors.mymr_cases(), "mymr"), "");
+}
+
+// Myanmar with the old script tag mymr, which takes the default shaper.
+function test_old_myanmar(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.mymr_old_font(), "mymr", shape_script_vectors.mymr_old_cases(), "mymr"), "");
+}
+
+// Sinhala, with the Universal Shaping Engine: the repaya, the conjuncts with a ZWJ, the pre-base and the split vowels, and the vowels that take a dotted circle. With
+// its script tag renamed, the font takes the default shaper.
+function test_sinhala(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.sinh_font(), "sinh", shape_script_vectors.sinh_cases(), "sinh"), "");
+}
+
+// Balinese, with the Universal Shaping Engine: the repha, the pre-base vowels and the conjuncts. With
+// its script tag renamed, the font takes the default shaper.
+function test_balinese(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.bali_font(), "bali", shape_script_vectors.bali_cases(), "bali"), "");
+}
+
+// Javanese, with the Universal Shaping Engine: the repha, the medial Ra and the pre-base vowels. With
+// its script tag renamed, the font takes the default shaper.
+function test_javanese(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.java_font(), "java", shape_script_vectors.java_cases(), "java"), "");
+}
+
+// Tibetan, with the Universal Shaping Engine: the subjoined letters and the vowels. With
+// its script tag renamed, the font takes the default shaper.
+function test_tibetan(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.tibt_font(), "tibt", shape_script_vectors.tibt_cases(), "tibt"), "");
+}
+
+// Mongolian, with the Universal Shaping Engine: the joining forms and the free variation selectors. With
+// its script tag renamed, the font takes the default shaper.
+function test_mongolian(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.mong_font(), "mong", shape_script_vectors.mong_cases(), "mong"), "");
+}
+
+// N'Ko, with the Universal Shaping Engine: the joining forms from right to left. With
+// its script tag renamed, the font takes the default shaper.
+function test_nko(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.nko_font(), "nko ", shape_script_vectors.nko_cases(), "nko "), "");
+}
+
+// Hangul: the jamo that compose into a syllable, the old jamo with the
+// features ljmo, vjmo and tjmo, and the tone marks. With its script tag
+// renamed, the font takes the lookups of DFLT.
+function test_hangul(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.hang_font(), "hang", shape_script_vectors.hang_cases(), "hang"), "");
+}
+
+// A font with no GPOS table: Thai text with the default shaper, whose marks
+// go on their bases by the boxes of the glyphs, and the kern table of
+// OpenType, of the formats 0 and 2. With the kern table renamed, only the
+// marks move.
+function test_thai_fallback(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.thai_fallback_font(), "kern", shape_script_vectors.thai_fallback_cases(), "latn"), "");
+}
+
+// Hebrew in a font with no GPOS table and no GDEF table: the points go on
+// the letters from right to left, by the classes that HarfBuzz gives them,
+// and the kern table of Apple applies, of the formats 0 and 3 and across
+// the line. With the kern table renamed, only the marks move.
+function test_hebrew_fallback(): test.TestOutcome {
+  return test.assert_eq(differences(shape_script_vectors.hebr_fallback_font(), "kern", shape_script_vectors.hebr_fallback_cases(), "hebr"), "");
+}
+
+// The kern table of Apple in hebr_fallback_font() has a cross-stream
+// subtable and no state machine. With the length of the table cut to 12
+// bytes, its subtables go past its end, and the font has no kern table, as
+// HarfBuzz rejects it.
+function test_kern_table_flags(): test.TestOutcome {
+  let Ok(b) = base64.decode(shape_script_vectors.hebr_fallback_font()) else {
+    return test.fail("the font did not decode");
+  };
+  let cut = b;
+  for i in 0..b[4] as i32 << 8 | b[5] as i32 {
+    let r = 12 + 16 * i;
+    if (b[r] == 107u8 && b[r + 1] == 101u8 && b[r + 2] == 114u8 && b[r + 3] == 110u8) {
+      cut = cut.with(r + 12, 0u8).with(r + 13, 0u8).with(r + 14, 0u8).with(r + 15, 12u8);
+    }
+  }
+  let (Some(f), Some(g)) = (truetype.parse(b), truetype.parse(cut)) else {
+    return test.fail("the font did not parse");
+  };
+  return test.assert_eq([f.has_kern_table(), f.has_cross_kern(), f.has_kern_machine(), g.has_kern_table()].map((x: boolean): string => x.to_string()).join(","), "true,true,false,false");
+}
+
+// A presentation form that the font does not have splits by one step when
+// no mark follows it: U+FB2C becomes U+FB49 and the shin dot.
+function test_one_step_decomposition(): test.TestOutcome {
+  let Some((f, _)) = fonts_of(shape_script_vectors.hebr_font(), "mark") else {
+    return test.fail("the font did not parse");
+  };
+  let r = shape.shape(f, "שּׁ", "hebr");
+  return test.assert_eq(joined(r.glyphs), joined([f.glyph(0xFB49), f.glyph(0x5C1)]));
+}
+
+function main(): i32 {
+  let r = test.new("std/shape Hebrew, Thai, Lao, Khmer, Myanmar, Korean, USE scripts and fallback positioning");
+  r = r.it("Hebrew gives the glyphs of HarfBuzz", test_hebrew);
+  r = r.it("Thai gives the glyphs of HarfBuzz", test_thai);
+  r = r.it("Lao gives the glyphs of HarfBuzz", test_lao);
+  r = r.it("Khmer gives the glyphs of HarfBuzz", test_khmer);
+  r = r.it("Khmer with cfar gives the glyphs of HarfBuzz", test_khmer_cfar);
+  r = r.it("Myanmar gives the glyphs of HarfBuzz", test_myanmar);
+  r = r.it("Myanmar with the old tag gives the glyphs of HarfBuzz", test_old_myanmar);
+  r = r.it("Sinhala gives the glyphs of HarfBuzz", test_sinhala);
+  r = r.it("Balinese gives the glyphs of HarfBuzz", test_balinese);
+  r = r.it("Javanese gives the glyphs of HarfBuzz", test_javanese);
+  r = r.it("Tibetan gives the glyphs of HarfBuzz", test_tibetan);
+  r = r.it("Mongolian gives the glyphs of HarfBuzz", test_mongolian);
+  r = r.it("N'Ko gives the glyphs of HarfBuzz", test_nko);
+  r = r.it("Hangul gives the glyphs of HarfBuzz", test_hangul);
+  r = r.it("a font with no GPOS table places the Thai marks as HarfBuzz", test_thai_fallback);
+  r = r.it("a font with no GPOS table places the Hebrew marks as HarfBuzz", test_hebrew_fallback);
+  r = r.it("the kern table gives its flags, and a cut table gives none", test_kern_table_flags);
+  r = r.it("a form splits by the fewest steps", test_one_step_decomposition);
+  return r.finish();
+}

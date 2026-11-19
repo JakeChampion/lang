@@ -22,6 +22,8 @@ pub const POINT_ORIGIN: string = "0,0";
 // The class dev.fern.Point and the IDs of its members.
 pub struct PointClass { class: usize, id_new: usize, id_new_int_string: usize, id_area: usize, id_half: usize, id_letter: usize, id_low: usize, id_match_: usize, id_middle: usize, id_parse: usize, id_parts: usize, id_release_: usize, id_set_int: usize, id_set_string_long: usize, id_label: usize, id_made: usize, id_outline: usize, id_weights: usize, id_x: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function point_class(e: usize): Result[PointClass, jni.JavaError] {
   let local = jni.find_class(e, "dev/fern/Point");
   jni.check(e)?;
@@ -238,6 +240,8 @@ pub const SHAPE_SIDES: i32 = 4;
 // The class dev.fern.Shape and the IDs of its members.
 pub struct ShapeClass { class: usize, id_area: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function shape_class(e: usize): Result[ShapeClass, jni.JavaError] {
   let local = jni.find_class(e, "dev/fern/Shape");
   jni.check(e)?;
@@ -279,6 +283,8 @@ pub const SAMPLE_NAME: string = "fern é 🌿 \x00 end";
 // The class dev.fern.Sample and the IDs of its members.
 pub struct SampleClass { class: usize, id_new: usize, id_size: usize, id_total: usize }
 
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function sample_class(e: usize): Result[SampleClass, jni.JavaError] {
   let local = jni.find_class(e, "dev/fern/Sample");
   jni.check(e)?;
@@ -344,7 +350,9 @@ pub function (c: SampleClass) total(e: usize, a0: jni.Object, a1: f64, a2: jni.O
 pub struct Classes { point: PointClass, shape: ShapeClass, sample: SampleClass }
 
 // Makes the struct of IDs of each class. Call it one time, and call
-// `release` when the app does not call Java again.
+// `release` when the app does not call Java again. One lookup for each
+// class, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
   let point = match (point_class(e)) {
     Ok(c) => c,

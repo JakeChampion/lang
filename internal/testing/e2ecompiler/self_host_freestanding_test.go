@@ -93,6 +93,13 @@ func TestSelfHostFreestandingEmitsNoHost(t *testing.T) {
 			if !strings.Contains(asm, "__fern_report:\n    "+freestandingTrap[target]+"\n") {
 				t.Errorf("__fern_report is not a %s trap", freestandingTrap[target])
 			}
+			// A board that steps over a trap, to resume after a fault, must
+			// reach a trap again and not the code after the stop.
+			trap := "    " + freestandingTrap[target] + "\n"
+			stop := trap + "    " + map[string]string{"x86-64-freestanding": "jmp", "arm64-freestanding": "b"}[target] + " __fern_report\n"
+			if traps, stops := strings.Count(asm, trap), strings.Count(asm, stop); traps != stops {
+				t.Errorf("%d of %d traps are not followed by a branch to __fern_report", traps-stops, traps)
+			}
 		})
 	}
 }

@@ -12,60 +12,10 @@ var annotateBinaryCases = []struct {
 	name string
 	src  string
 }{
-	{"overload_mul_f64", `struct V { x: f64, y: f64 }
-function (a: V) mul(b: V): f64 { return a.x * b.x + a.y * b.y; }
-function main(): i32 {
-  let p: V = V { x: 3.0, y: 4.0 };
-  let q: V = V { x: 2.0, y: 5.0 };
-  let d: f64 = p * q;
-  return (d * 2.0) as i32;
-}`},
-	{"overload_mul_f64_direct", `struct V { x: f64, y: f64 }
-function (a: V) mul(b: V): f64 { return a.x * b.x + a.y * b.y; }
-function main(): i32 {
-  let p: V = V { x: 3.0, y: 4.0 };
-  let q: V = V { x: 2.0, y: 5.0 };
-  return ((p * q) * 2.0) as i32;
-}`},
-	{"overload_add_i64", `struct C { n: i32 }
-function (a: C) add(b: C): i64 { return (a.n as i64) * 1000000000i64 + (b.n as i64); }
-function main(): i32 {
-  let p: C = C { n: 5 };
-  let q: C = C { n: 7 };
-  return ((p + q) % 100i64) as i32;
-}`},
-	{"overload_neg_i64", `struct C { n: i32 }
-function (a: C) neg(): i64 { return (a.n as i64) * 1000000000i64; }
-function main(): i32 {
-  let p: C = C { n: 5 };
-  return (((-p) / 1000000000i64) + 37i64) as i32;
-}`},
-	{"overload_add_string", `struct N { n: i32 }
-function (a: N) add(b: N): string { return "ab"; }
-function main(): i32 {
-  let p: N = N { n: 1 };
-  let q: N = N { n: 2 };
-  let s: string = p + q;
-  return s.len() as i32;
-}`},
-	{"overload_neg_f64", `struct V { x: f64 }
-function (a: V) neg(): f64 { return 0.0 - a.x; }
-function main(): i32 {
-  let p: V = V { x: 21.0 };
-  let d: f64 = -p;
-  return (d * 0.0 - d) as i32;
-}`},
-	{"overload_rem_boolean", `struct V { x: i32 }
-function (a: V) rem(b: V): boolean { return a.x > b.x; }
-function main(): i32 {
-  let p: V = V { x: 20 };
-  let q: V = V { x: 22 };
-  if (p % q) { return 7; }
-  return 42;
-}`},
-
-	{"overload_add_struct", `struct V { x: i32 }
+	{"overload_add_struct", `import "core/ops";
+struct V { x: i32 }
 function (a: V) add(b: V): V { return V { x: a.x + b.x }; }
+impl ops.Add for V {}
 function main(): i32 {
   let p: V = V { x: 20 };
   let q: V = V { x: 22 };
@@ -169,16 +119,25 @@ func TestSelfHostAnnotateBinaryWasm(t *testing.T) {
 
 var annotateBinaryRejectCases = []struct {
 	name string
+	code string
 	src  string
 }{
-	{"binary_without_method", `struct W { x: i32 }
+	{"binary_without_method", "E009", `struct W { x: i32 }
 function main(): i32 {
   let a: W = W { x: 1 };
   let b: W = W { x: 2 };
   let c: W = a + b;
   return c.x;
 }`},
-	{"unary_without_method", `struct W { x: i32 }
+	{"binary_with_a_scalar_result", "E021", `import "core/ops";
+struct V { x: f64, y: f64 }
+function (a: V) mul(b: V): f64 { return a.x * b.x + a.y * b.y; }
+impl ops.Mul for V {}
+function main(): i32 {
+  let p: V = V { x: 3.0, y: 4.0 };
+  return (p * p) as i32;
+}`},
+	{"unary_without_method", "E009", `struct W { x: i32 }
 function main(): i32 {
   let a: W = W { x: 1 };
   let c: W = -a;
@@ -204,8 +163,8 @@ func TestSelfHostAnnotateBinaryRejectsX86_64(t *testing.T) {
 				t.Fatalf("write main.fern: %v", err)
 			}
 			out, _ := runX86_64Bin(runner, fernBin, "-check", mainPath, stdlibRoot).CombinedOutput()
-			if !strings.Contains(string(out), "E009") {
-				t.Errorf("%s: want E009 from the self-host checker, got:\n%s", tc.name, out)
+			if !strings.Contains(string(out), tc.code) {
+				t.Errorf("%s: want %s from the self-host checker, got:\n%s", tc.name, tc.code, out)
 			}
 		})
 	}

@@ -16,7 +16,8 @@ pub struct ExprBool { value: boolean, line: i32, col: i32 }
 // each node comes from one of them.
 pub struct ExprBinary { op: string, left: Expr, right: Expr, line: i32, col: i32, ty: string, lit: i32 }
 
-pub struct ExprUnary { op: string, operand: Expr, line: i32, col: i32, ty: string, lit: i32 }
+// A cast has the op CAST or CHECKED_CAST, and `cast` holds its target type.
+pub struct ExprUnary { op: string, operand: Expr, line: i32, col: i32, ty: string, lit: i32, cast: string }
 
 pub struct ExprCall { callee: Expr, args: Expr[], line: i32, col: i32, type_args: string[], ty: string }
 
@@ -36,9 +37,27 @@ pub struct ExprSlice { array: Expr, start: Expr, end: Expr, ty: string, open_end
 
 pub struct ExprStructLit { type_name: string, field_names: string[], field_lines: i32[], field_cols: i32[], field_values: Expr[], has_base: boolean, base: Expr, line: i32, col: i32, written: string }
 
-pub struct ExprFieldAccess { obj: Expr, field: string, line: i32, col: i32, ty: string, const_read: boolean }
+// display marks a `to_string` callee that binds through `cmp.Display`: an
+// f-string part, or the argument of `print`, `write` or `eprint`.
+pub struct ExprFieldAccess { obj: Expr, field: string, line: i32, col: i32, ty: string, const_read: boolean, display: boolean }
 
-pub struct ExprUnknown { kind: string, line: i32, col: i32 }
+// A parse error, or a mark where the parser has no node. A mark has no
+// code. A scoped error names the function it is in.
+pub struct Fault { mark: string, code: string, message: string, scoped: boolean }
+
+pub function fault_mark(name: string): Fault {
+  return Fault { mark: name, code: "", message: "", scoped: false };
+}
+
+// The message of an error, or the name of a mark.
+pub function fault_text(f: Fault): string {
+  if (f.code.len() > 0) {
+    return f.message;
+  }
+  return f.mark;
+}
+
+pub struct ExprUnknown { fault: Fault, line: i32, col: i32 }
 
 pub struct ExprMapLit { keys: Expr[], vals: Expr[], line: i32, col: i32 }
 
@@ -73,8 +92,31 @@ pub function binary(op: string, left: Expr, right: Expr, line: i32, col: i32, ty
   return ExprBinary { op: op, left: left, right: right, line: line, col: col, ty: ty, lit: binary_class(op, lit_class(left) & lit_class(right)) };
 }
 
+pub const CAST: string = "as";
+
+pub const CHECKED_CAST: string = "as?";
+
 pub function unary(op: string, operand: Expr, line: i32, col: i32, ty: string): ExprUnary {
-  return ExprUnary { op: op, operand: operand, line: line, col: col, ty: ty, lit: unary_class(op, operand) };
+  return ExprUnary { op: op, operand: operand, line: line, col: col, ty: ty, lit: unary_class(op, operand), cast: "" };
+}
+
+// `operand as target`, or `operand as? target` when checked.
+pub function cast(operand: Expr, target: string, checked: boolean, line: i32, col: i32, ty: string): ExprUnary {
+  let op = CAST;
+  if (checked) {
+    op = CHECKED_CAST;
+  }
+  return ExprUnary { op: op, operand: operand, line: line, col: col, ty: ty, lit: unary_class(op, operand), cast: target };
+}
+
+// u with a new operand, position and type. The op and the cast stay.
+pub function rebuild_unary(u: ExprUnary, operand: Expr, line: i32, col: i32, ty: string): ExprUnary {
+  return ExprUnary { ...u, operand: operand, line: line, col: col, ty: ty, lit: unary_class(u.op, operand) };
+}
+
+// u with the cast target `target`. The literal class does not depend on it.
+pub function with_cast(u: ExprUnary, target: string): ExprUnary {
+  return ExprUnary { ...u, cast: target };
 }
 
 function lit_class(e: Expr): i32 {
@@ -123,7 +165,7 @@ function unary_class(op: string, operand: Expr): i32 {
   if (op == "+") {
     return inner & (LIT_INT | LIT_ARITH | LIT_FLOAT);
   }
-  if (op.starts_with("as_")) {
+  if (op == CAST) {
     return inner & LIT_OPERAND;
   }
   return 0;
@@ -536,7 +578,115 @@ pub function expr_col(e: Expr): i32 {
   }
 }
 
-pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, fn_ret: string, fn_param_types: string }
+// The pattern of a destructuring binding. A plain binding has no binds. A
+// record pattern names the field of each bind in `fields`.
+pub struct Destr { binds: DestrBind[], fields: string[], record: string, at: string, rest_written: boolean, struct_match: boolean, prelude: boolean }
+
+// One bind of a pattern: a name, or a nested tuple pattern in `nested`.
+pub struct DestrBind { name: string, nested: Destr[] }
+
+pub function no_destr(): Destr {
+  return Destr { binds: [], fields: [], record: "", at: "", rest_written: false, struct_match: false, prelude: false };
+}
+
+// A tuple pattern of plain names.
+pub function tuple_destr(names: string[]): Destr {
+  let binds: DestrBind[] = [];
+  for n in names {
+    binds = binds.append(DestrBind { name: n, nested: [] });
+  }
+  return Destr { ...no_destr(), binds: binds };
+}
+
+// The plain names that a pattern binds, nested ones included, in order.
+pub function destr_names(d: Destr): string[] {
+  let out: string[] = [];
+  for b in d.binds {
+    if (b.nested.len() > 0) {
+      for n in destr_names(b.nested[0]) {
+        out = out.append(n);
+      }
+    } else {
+      out = out.append(b.name);
+    }
+  }
+  return out;
+}
+
+pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, fn_ret: string, fn_param_types: string, destr: Destr }
+
+pub function destructures(v: StmtVar): boolean {
+  return v.destr.binds.len() > 0;
+}
+
+// A record pattern names a field for each bind. A tuple pattern names none.
+pub function record_destr(d: Destr): boolean {
+  return d.fields.len() > 0;
+}
+
+// acc with each name that `v` binds, the names of its pattern included. A
+// `_` binds nothing.
+pub function append_var_names(own acc: string[], v: StmtVar): string[] {
+  if (destructures(v)) {
+    return append_destr_names(acc, v.destr);
+  }
+  return append_bound(acc, v.name);
+}
+
+// acc with each name that the loop variable of `f` binds.
+pub function append_for_names(own acc: string[], f: StmtFor): string[] {
+  if (f.destr.binds.len() > 0) {
+    return append_destr_names(acc, f.destr);
+  }
+  return append_bound(acc, f.var_name);
+}
+
+function append_destr_names(own acc: string[], d: Destr): string[] {
+  for b in d.binds {
+    if (b.nested.len() > 0) {
+      acc = append_destr_names(acc, b.nested[0]);
+    } else {
+      acc = append_bound(acc, b.name);
+    }
+  }
+  return acc;
+}
+
+function append_bound(own acc: string[], name: string): string[] {
+  if (name.len() > 0 && name != "_") {
+    return acc.append(name);
+  }
+  return acc;
+}
+
+// The names of d as the source spells them, `a,(b,c)`, for a message.
+pub function destr_text(d: Destr): string {
+  let out = "";
+  for i in 0..d.binds.len() {
+    if (i > 0) {
+      out += ",";
+    }
+    if (d.binds[i].nested.len() > 0) {
+      out += "(" + destr_text(d.binds[i].nested[0]) + ")";
+    } else {
+      out += d.binds[i].name;
+    }
+  }
+  return out;
+}
+
+// d with each name replaced by rename(name).
+pub function rename_destr(d: Destr, rename: (string) => string): Destr {
+  let binds: DestrBind[] = [];
+  for b in d.binds {
+    if (b.nested.len() > 0) {
+      binds = binds.append(DestrBind { name: b.name, nested: [rename_destr(b.nested[0], rename)] });
+    } else {
+      binds = binds.append(DestrBind { name: rename(b.name), nested: [] });
+    }
+  }
+  return Destr { ...d, binds: binds };
+}
 
 pub struct StmtReturn { value: Expr, line: i32, col: i32 }
 
@@ -566,13 +716,13 @@ pub struct MatchArm { pattern: Pattern, body: Stmt[], line: i32, col: i32, guard
 // arms_open is the line of the brace that opens the arms of a value match.
 pub struct StmtMatch { scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, origin: string, sugar: MatchArm[], else_chained: boolean, arms_open: i32 }
 
-pub struct StmtFor { var_name: string, iter: Expr, body: Stmt[], label: string, line: i32, col: i32 }
+pub struct StmtFor { var_name: string, iter: Expr, body: Stmt[], label: string, line: i32, col: i32, destr: Destr }
 
 pub struct StmtBreak { tag: i32, line: i32, col: i32, label: string }
 
 pub struct StmtContinue { tag: i32, line: i32, col: i32, label: string }
 
-pub struct StmtUnknown { kind: string, line: i32, col: i32 }
+pub struct StmtUnknown { fault: Fault, line: i32, col: i32 }
 
 pub struct StmtDefer { action: Stmt, on_error: i32, line: i32 }
 
@@ -601,6 +751,18 @@ pub function operator_method(op: string): string {
     ">>" => "shr",
     _ => "",
   };
+}
+
+// operator_trait names the core/ops trait that an operator method binds through.
+pub function operator_trait(method: string): string {
+  let methods: string[] = ["add", "sub", "mul", "div", "rem", "neg", "bitand", "bitor", "bitxor", "shl", "shr"];
+  let traits: string[] = ["Add", "Sub", "Mul", "Div", "Rem", "Neg", "BitAnd", "BitOr", "BitXor", "Shl", "Shr"];
+  for i in 0..methods.len() {
+    if (methods[i] == method) {
+      return traits[i];
+    }
+  }
+  return "";
 }
 
 pub function is_operator_method(name: string): boolean {

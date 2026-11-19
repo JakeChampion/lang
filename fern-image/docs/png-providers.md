@@ -81,7 +81,7 @@ Seven targeted cases cover all five filters in RGB and RGBA, input windows, pref
 They cover 32 format, nearest/bilinear, and fusion schedules against eager rows and cropped pixels.
 They also cover exact admission, codec errors, malformed final filters, input/output ownership, every cancellation poll, and heap consumer errors.
 All seven pass on native Linux, Wasm, and ARM64 under QEMU with zero final live bytes.
-Native and ARM64 checks use heap sanitization. Wasm supplies the leak census and the use-after-free checks.
+Native and ARM64 checks use heap sanitization. Wasm supplies the same checks.
 
 The [PNG qualification record](png-qualification.md) describes the finite independent corpus and its exclusions.
 The provider campaign also compares full graph rows and middle cropped tiles through legacy and fused execution.

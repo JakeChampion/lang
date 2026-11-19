@@ -143,7 +143,7 @@ pub const COLOR_YUV420_SEMIPLANAR: i32 = 21;
 pub const COLOR_SURFACE: i32 = 2130708361;
 
 @import("libmediandk.so", "AMediaCodec_createCodecByName")
-function c_create_name(name: usize): usize;
+pub(package) function c_create_name(name: usize): usize;
 
 @import("libmediandk.so", "AMediaCodec_setOutputSurface")
 function c_output_surface(codec: usize, window: usize): i32;
@@ -170,13 +170,13 @@ function c_window_release(window: usize): void;
 function c_parameters(codec: usize, format: usize): i32;
 
 @import("libmediandk.so", "AMediaFormat_new")
-function c_format_new(): usize;
+pub(package) function c_format_new(): usize;
 
 @import("libmediandk.so", "AMediaFormat_delete")
-function c_format_delete(format: usize): i32;
+pub(package) function c_format_delete(format: usize): i32;
 
 @import("libmediandk.so", "AMediaFormat_setString")
-function c_set_string(format: usize, name: usize, value: usize): void;
+pub(package) function c_set_string(format: usize, name: usize, value: usize): void;
 
 @import("libmediandk.so", "AMediaFormat_setInt32")
 function c_set_i32(format: usize, name: usize, value: i32): void;
@@ -191,19 +191,19 @@ function c_get_i32(format: usize, name: usize, value: usize): u8;
 function c_create(mime: usize): usize;
 
 @import("libmediandk.so", "AMediaCodec_configure")
-function c_configure(codec: usize, format: usize, window: usize, crypto: usize, flags: u32): i32;
+pub(package) function c_configure(codec: usize, format: usize, window: usize, crypto: usize, flags: u32): i32;
 
 @import("libmediandk.so", "AMediaCodec_start")
-function c_start(codec: usize): i32;
+pub(package) function c_start(codec: usize): i32;
 
 @import("libmediandk.so", "AMediaCodec_stop")
 function c_stop(codec: usize): i32;
 
 @import("libmediandk.so", "AMediaCodec_flush")
-function c_flush(codec: usize): i32;
+pub(package) function c_flush(codec: usize): i32;
 
 @import("libmediandk.so", "AMediaCodec_delete")
-function c_delete(codec: usize): i32;
+pub(package) function c_delete(codec: usize): i32;
 
 @import("libmediandk.so", "AMediaCodec_dequeueInputBuffer")
 function c_dequeue_input(codec: usize, timeout_us: i64): i64;
@@ -215,18 +215,18 @@ function c_input_buffer(codec: usize, index: usize, capacity: usize): usize;
 function c_queue(codec: usize, index: usize, offset: usize, size: usize, time_us: u64, flags: u32): i32;
 
 @import("libmediandk.so", "AMediaCodec_dequeueOutputBuffer")
-function c_dequeue_output(codec: usize, info: usize, timeout_us: i64): i64;
+pub(package) function c_dequeue_output(codec: usize, info: usize, timeout_us: i64): i64;
 
 @import("libmediandk.so", "AMediaCodec_getOutputFormat")
-function c_output_format(codec: usize): usize;
+pub(package) function c_output_format(codec: usize): usize;
 
 @import("libmediandk.so", "AMediaCodec_releaseOutputBuffer")
-function c_release(codec: usize, index: usize, render: u8): i32;
+pub(package) function c_release(codec: usize, index: usize, render: u8): i32;
 
 @import("libmediandk.so", "AMediaCodec_releaseOutputBufferAtTime")
 function c_release_at(codec: usize, index: usize, time_ns: i64): i32;
 
-function c_string(value: string): usize {
+pub(package) function c_string(value: string): usize {
   let bytes = value.as_bytes();
   unsafe {
     let data = __alloc(bytes.len() + 1);
@@ -236,19 +236,19 @@ function c_string(value: string): usize {
   }
 }
 
-function free_string(data: usize, value: string): void {
+pub(package) function free_string(data: usize, value: string): void {
   unsafe {
     __free(data, value.len() + 1);
   }
 }
 
-function set_i32(format: usize, name: string, value: i32): void {
+pub(package) function set_i32(format: usize, name: string, value: i32): void {
   let key = c_string(name);
   c_set_i32(format, key, value);
   free_string(key, name);
 }
 
-function get_i32(format: usize, name: string, fallback: i32, scratch: usize): i32 {
+pub(package) function get_i32(format: usize, name: string, fallback: i32, scratch: usize): i32 {
   let key = c_string(name);
   let found = c_get_i32(format, key, scratch);
   free_string(key, name);
@@ -260,7 +260,7 @@ function get_i32(format: usize, name: string, fallback: i32, scratch: usize): i3
   return fallback;
 }
 
-function set_buffer(format: usize, name: string, bytes: [u8]): void {
+pub(package) function set_buffer(format: usize, name: string, bytes: [u8]): void {
   if (bytes.len() == 0) {
     return;
   }
@@ -383,12 +383,12 @@ pub function open_format_named(format: CodecFormat, window: usize, name: string,
 }
 
 // The output buffer `index`, from the AMediaCodecBufferInfo at `scratch`.
-function output_buffer(index: i32, scratch: usize): OutputBuffer {
+pub(package) function output_buffer(index: i32, scratch: usize): OutputBuffer {
   let info = unsafe { BufferInfo.c_load(scratch) };
   return OutputBuffer { index: index, offset: info.offset, size: info.size, presentation_time_us: info.presentation_time_us, flags: info.flags };
 }
 
-function close_handle(handle: usize, scratch: usize): Result[void, frame.VideoError] {
+pub(package) function close_handle(handle: usize, scratch: usize): Result[void, frame.VideoError] {
   let stopped = c_stop(handle);
   let deleted = c_delete(handle);
   unsafe {
@@ -411,7 +411,7 @@ pub function (decoder: Decoder) flush(): Result[void, frame.VideoError] {
   return Ok(());
 }
 
-function input_handle(handle: usize, scratch: usize, max_packet_bytes: i32, timeout_us: i64): Result[Option[InputBuffer], frame.VideoError] {
+pub(package) function input_handle(handle: usize, scratch: usize, max_packet_bytes: i32, timeout_us: i64): Result[Option[InputBuffer], frame.VideoError] {
   if (timeout_us < 0i64) {
     return Err(frame.Header);
   }
@@ -458,7 +458,7 @@ function empty_input_valid(size: i32, flags: u32): boolean {
   return size > 0 || (flags & FLAG_END_OF_STREAM) != 0u32;
 }
 
-function submit_handle(handle: usize, max_packet_bytes: i32, slot: InputBuffer, bytes: [u8], presentation_time_us: i64, flags: u32): Result[void, frame.VideoError] {
+pub(package) function submit_handle(handle: usize, max_packet_bytes: i32, slot: InputBuffer, bytes: [u8], presentation_time_us: i64, flags: u32): Result[void, frame.VideoError] {
   validate_input(slot, bytes.len(), presentation_time_us, flags, max_packet_bytes)?;
   if (!empty_input_valid(bytes.len(), flags)) {
     return Err(frame.Header);
@@ -614,7 +614,16 @@ pub function fallback_to_software(config: Config, window: usize, own failed: Sel
   return open_selected(config, window, failed.info.request, candidates, capabilities.SoftwareOnly, limits);
 }
 
-function view_output(handle: usize, scratch: usize, maximum: i32, buffer: OutputBuffer): Result[BufferView, frame.VideoError] {
+pub(package) function view_output(handle: usize, scratch: usize, maximum: i32, buffer: OutputBuffer): Result[BufferView, frame.VideoError] {
+  inspect_output(handle, scratch, maximum, buffer)?;
+  unsafe {
+    let data = if (buffer.size == 0) { 0 as usize } else { __load_ptr(scratch) };
+    return Ok(BufferView { data: data, size: buffer.size });
+  }
+}
+
+// The scratch word holds the borrowed data pointer after a nonempty result.
+pub(package) function inspect_output(handle: usize, scratch: usize, maximum: i32, buffer: OutputBuffer): Result[void, frame.VideoError] {
   if (buffer.index < 0 || buffer.offset < 0 || buffer.size < 0) {
     return Err(frame.Header);
   }
@@ -622,7 +631,7 @@ function view_output(handle: usize, scratch: usize, maximum: i32, buffer: Output
     return Err(frame.Limit);
   }
   if (buffer.size == 0) {
-    return Ok(BufferView { data: 0 as usize, size: 0 });
+    return Ok(());
   }
   unsafe {
     __store_ptr(scratch, 0 as usize);
@@ -631,7 +640,8 @@ function view_output(handle: usize, scratch: usize, maximum: i32, buffer: Output
     if (data == 0 as usize || buffer.offset as usize > capacity || buffer.size as usize > capacity - buffer.offset as usize) {
       return Err(frame.Platform);
     }
-    return Ok(BufferView { data: data + buffer.offset as usize, size: buffer.size });
+    __store_ptr(scratch, data + buffer.offset as usize);
+    return Ok(());
   }
 }
 
@@ -639,7 +649,7 @@ pub function (decoder: Decoder) output_view(buffer: OutputBuffer): Result[Buffer
   return view_output(decoder.handle, decoder.scratch, decoder.max_packet_bytes, buffer);
 }
 
-function copy_view(view: BufferView, buffer: OutputBuffer, own bytes: u8[]): Result[Packet, frame.VideoError] {
+pub(package) function copy_view(view: BufferView, buffer: OutputBuffer, own bytes: u8[]): Result[Packet, frame.VideoError] {
   if (bytes.len() < view.size) {
     return Err(frame.Buffer);
   }

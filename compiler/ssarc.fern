@@ -416,8 +416,6 @@ function helper(own r: irtables.LowerState, slot: i32, name: string): irtables.L
 }
 
 function supplies(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, defer0: boolean, kept: i32[], late: i32[], token: i32): irtables.LowerState {
-  let scratch_start = r.scratch_start;
-  let j = 0;
   for supply in step.supplies {
     if (supply.mode == ssaunits.retain_unit() && !(defer0 && supply.slot == 0) && !p.literal[supply.value]
       && util.index_of_i32(late, supply.value) < 0) {
@@ -428,24 +426,21 @@ function supplies(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, 
       }
     }
     if (supply.mode == ssaunits.steal_unit()) {
-      r = steal(r, f, supply.value, scratch_start + j);
-      j += 1;
+      r = steal(r, f, supply.value);
     }
   }
   return r;
 }
 
-function steal(own r: irtables.LowerState, f: ssasem.Func, v: i32, unique: i32): irtables.LowerState {
+function steal(own r: irtables.LowerState, f: ssasem.Func, v: i32): irtables.LowerState {
   let get = defining(f, v);
-  r = reserve(r, unique + 1);
   r = emit(r, ir.op_load_local(get.args[0]));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
-  r = emit(r, ir.op_store_local(unique));
-  r = emit(r, ir.op_load_local(unique));
   r = emit(r, ir.op_if(0));
   r = cleared_slot(r, f, get);
-  r = emit(r, ir.op_end());
-  return unless_unique(r, unique, v, "__fern_rc_inc");
+  r = emit(r, ir.op_else());
+  r = helper(r, v, "__fern_rc_inc");
+  return emit(r, ir.op_end());
 }
 
 // A take in a tested run: the token slot holds the donor's one uniqueness read.
@@ -788,11 +783,36 @@ function drop_dyn(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scrat
       r = emit(r, ir.op_if(0));
       r = helper(r, slot, drop_helper_name(c));
       r = emit(r, ir.op_end());
+    } else if (enum_layout(f, c) == semrecords.layout_variant()) {
+      r = drop_dyn_enum(r, slot, c, f);
     } else {
       r = helper(r, slot, drop_helper_name(c));
     }
   }
   return r;
+}
+
+// The drop of an enum `c` that a dyn value at `slot` can hold. The drop of the
+// enum assumes a value of the enum (`variant_test`), so the shape of each
+// variant with a child is tested first.
+function drop_dyn_enum(own r: irtables.LowerState, slot: i32, c: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let tested = false;
+  for v in f.enums[semrecords.find_enum(f.enums, c)].variants {
+    if (semrecords.inhabited(v) && fields_have_children(v.fields, f)) {
+      r = emit(r, ir.op_load_local(slot));
+      r = emit(r, ir.op_variant_is(member_shape(f, c, v.name)));
+      if (tested) {
+        r = emit(r, ir.op_bin("or", 0, false));
+      }
+      tested = true;
+    }
+  }
+  if (!tested) {
+    return r;
+  }
+  r = emit(r, ir.op_if(0));
+  r = helper(r, slot, drop_helper_name(c));
+  return emit(r, ir.op_end());
 }
 
 function dyn_concretes(f: ssasem.Func, t: typeinfo.Type): typeinfo.Type[] {
@@ -934,7 +954,7 @@ function drop_variant_fields(own r: irtables.LowerState, slot: i32, t: typeinfo.
     if (semrecords.inhabited(v) && fields_have_children(v.fields, f)) {
       r = else_if_open(r, open);
       r = emit(r, ir.op_load_local(slot));
-      r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
+      r = variant_test(r, f, t, v.name);
       r = emit(r, ir.op_if(0));
       r = drop_record_fields(r, slot, v.fields, scratch, f, false, false, false);
       open += 1;
@@ -1352,7 +1372,7 @@ function popped(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): i
     if (!same) {
       r = else_if_open(r, opened.len());
       r = emit(r, ir.op_load_local(CHAIN_CELL));
-      r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
+      r = variant_test(r, f, t, v.name);
       r = emit(r, ir.op_if(0));
     }
     opened = opened.append(v.name);
@@ -1407,7 +1427,7 @@ function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssa
       continue;
     }
     r = emit(r, ir.op_load_local(CHAIN_NODE));
-    r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
+    r = variant_test(r, f, t, v.name);
     r = emit(r, ir.op_if(0));
     r = drop_chain_fields(r, 1, v, t, f);
     let tail = self_tail_field(v, t);
@@ -4478,12 +4498,53 @@ function variant(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, str
     return immediate_site(r, f, ins, whole);
   }
   if (ins.kind_tag == ssasem.variant_new()) {
+    if (ssaunits.empty_variant(f, whole, ins.str)) {
+      return irtables.LowerState { ...r, ok: false, why: "the variant " + ins.str + " has no field, and its construction is not the static box that its test compares with" };
+    }
     return emit(r, ir.op_struct_make(member_shape(f, whole, ins.str), ins.args.len(), decl_of(f, ins, structs)));
   }
   if (ins.kind_tag == ssasem.variant_is()) {
-    return emit(r, ir.op_variant_is(member_shape(f, whole, ins.str)));
+    return variant_test(r, f, whole, ins.str);
   }
   return field_get(r, f, ins);
+}
+
+// The test that the value on the stack is the variant `name` of `t`. A variant
+// with no field is a static box, so its test compares addresses. When each
+// other value of `t` is one such box, the test of `name` is the inverse.
+function variant_test(own r: irtables.LowerState, f: ssasem.Func, t: typeinfo.Type, name: string): irtables.LowerState {
+  let other = sole_other_variant(f, t, name);
+  if (ssaunits.empty_variant(f, t, name)) {
+    if (other != "") {
+      return emit(r, ir.op_paired_variant_is(member_shape(f, t, name)));
+    }
+    return emit(r, ir.op_static_variant_is(member_shape(f, t, name)));
+  }
+  if (other != "" && ssaunits.empty_variant(f, t, other)) {
+    r = emit(r, ir.op_paired_variant_is(member_shape(f, t, other)));
+    return emit(r, ir.op_bin("not", 0, false));
+  }
+  return emit(r, ir.op_variant_is(member_shape(f, t, name)));
+}
+
+// The one inhabited variant of `t` other than `name`, or empty when there is
+// none or more than one.
+function sole_other_variant(f: ssasem.Func, t: typeinfo.Type, name: string): string {
+  let at = semrecords.find_enum(f.enums, t);
+  if (at < 0) {
+    return "";
+  }
+  let other = "";
+  for v in f.enums[at].variants {
+    if (v.name == name || !semrecords.inhabited(v)) {
+      continue;
+    }
+    if (other != "") {
+      return "";
+    }
+    other = v.name;
+  }
+  return other;
 }
 
 // A value of an enum whose variants hold no field is the index of its variant.
@@ -5143,11 +5204,10 @@ function took(own r: irtables.LowerState, p: ssaunits.Plan, ins: ssa.SInst): irt
 }
 
 function took_payload(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerState {
-  let scratch_start = r.scratch_start;
   if (!ssaunits.payload_taken(f, p, ins)) {
     return r;
   }
-  return steal(r, f, ins.result, scratch_start);
+  return steal(r, f, ins.result);
 }
 
 function sole_owned_base(own r: irtables.LowerState, f: ssasem.Func, base: i32, scratch: i32, keep: i32): irtables.LowerState {
@@ -5811,21 +5871,73 @@ pub function scale_report(f: ssasem.Func, p: ssaunits.Plan): semarrayreport.Site
 }
 
 pub function append_report(f: ssasem.Func, p: ssaunits.Plan): semarrayreport.Site[] {
+  return update_report(f, p, ssasem.append(), "append");
+}
+
+pub function with_report(f: ssasem.Func, p: ssaunits.Plan): semarrayreport.Site[] {
+  return update_report(f, p, ssasem.with(), "with");
+}
+
+function update_report(f: ssasem.Func, p: ssaunits.Plan, kind: i32, label: string): semarrayreport.Site[] {
   let out: semarrayreport.Site[] = [];
   let idx = ssaunits.step_index(p);
   let q = ssaunits.without_constant_drops(ssaunits.with_reuse(f, p, idx, ssasem.dominators(f, p.analysis)));
   for b in f.graph.blocks {
     let pos = 0;
     for ins in b.insts {
-      if (ins.kind_tag == ssasem.append()) {
+      if (ins.kind_tag == kind) {
         let why = append_reason(f, q, at(q, idx, b.id, pos, -1), ins);
-        let stage = "append@v" + util.i32_to_string(ins.result) + " receiver=v" + util.i32_to_string(ins.args[0]) + bound_names(f, ins.args[0]) + append_location(f, ins.result);
-        out = out.append(semarrayreport.Site { owner: f.graph.name, stage: stage, plan: "append; ownership lowering", reason: why, storage: semarrayreport.append_storage(why) });
+        let stage = label + "@v" + util.i32_to_string(ins.result) + " receiver=v" + util.i32_to_string(ins.args[0]) + bound_names(f, ins.args[0]) + append_location(f, ins.result);
+        let storage = if (kind == ssasem.with()) { semarrayreport.with_storage(why) } else { semarrayreport.append_storage(why) };
+        out = out.append(semarrayreport.Site { owner: f.graph.name, stage: stage, plan: label + "; ownership lowering", reason: why, storage: storage });
       }
       pos += 1;
     }
   }
   return out;
+}
+
+// A row for each construction of a variant, a record or a tuple in f: the
+// box of a value that the frame drops supplies it, or the allocator does.
+pub function constructor_report(f: ssasem.Func, p: ssaunits.Plan): semarrayreport.Site[] {
+  let out: semarrayreport.Site[] = [];
+  if (!p.ok) {
+    return out;
+  }
+  let idx = ssaunits.step_index(p);
+  let off = ssaunits.reuse_layer_disabled(f.graph.name);
+  let q = ssaunits.without_constant_drops(ssaunits.reuse_planned(f, p, idx, ssasem.dominators(f, p.analysis), false));
+  for bpos in 0..f.graph.blocks.len() {
+    let b = f.graph.blocks[bpos];
+    let pairs = q.reuse.pairs[bpos];
+    for pos in 0..b.insts.len() {
+      let ins = b.insts[pos];
+      let k = ins.kind_tag;
+      if (k != ssasem.variant_new() && k != ssasem.record_new() && k != ssasem.tuple_new()) {
+        continue;
+      }
+      let donor = if (pairs.builds[pos] >= 0) { pairs.builds[pos] } else { pairs.selfs[pos] };
+      let why = semarrayreport.constructor_no_donor();
+      let stage = constructor_name(f, ins) + "@v" + util.i32_to_string(ins.result);
+      if (ssaunits.static_box(q, ins.result)) {
+        why = semarrayreport.constructor_static();
+      } else if (donor >= 0) {
+        why = if (off) { semarrayreport.constructor_reuse_disabled() } else { semarrayreport.constructor_reuse() };
+        stage = stage + " donor=v" + util.i32_to_string(donor) + bound_names(f, donor);
+      } else if (ssaunits.recipient_slots(f, q, ins) < 0) {
+        why = semarrayreport.constructor_shape_unsupported();
+      }
+      out = out.append(semarrayreport.Site { owner: f.graph.name, stage: stage + append_location(f, ins.result), plan: "constructor; ownership lowering", reason: why, storage: semarrayreport.constructor_storage(why) });
+    }
+  }
+  return out;
+}
+
+function constructor_name(f: ssasem.Func, ins: ssa.SInst): string {
+  if (ins.kind_tag == ssasem.variant_new()) {
+    return ins.str;
+  }
+  return typeinfo.spelling(f.values[ins.result]);
 }
 
 function append_location(f: ssasem.Func, value: i32): string {
@@ -6070,7 +6182,28 @@ function function_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SIns
     return emit(r, ir.op_call_direct(callee.str, ins.args.len()));
   }
   r = body_address(r, ins.args[0]);
-  return emit(r, call_value_op(ins.args.len(), f.values[ins.args[0]]));
+  return emit(r, with_units(call_value_op(ins.args.len(), f.values[ins.args[0]]), f, ins));
+}
+
+// The operands of a call through a function value that hand their unit to
+// the callee, and whether its result holds a unit. A `once` callee keeps its
+// unit: the caller drops it after the call (instruction_body).
+function with_units(o: ir.Op, f: ssasem.Func, ins: ssa.SInst): ir.Op {
+  if (ins.args.len() > ir.call_units_operands()) {
+    return o;
+  }
+  let callee = f.values[ins.args[0]];
+  let units = 0;
+  for i in 1..ins.args.len() {
+    if (ssasem.func_param_own(callee, i - 1) && ssasem.counted(f, f.values[ins.args[i]])) {
+      let bit = 1 << i;
+      units = units | bit;
+    }
+  }
+  if (ins.result >= 0 && ssasem.counted(f, f.values[ins.result])) {
+    units = units | ir.call_units_result();
+  }
+  return ir.with_call_units(o, units);
 }
 
 // A call through a function value of type `sig`: the wasm type tag and the

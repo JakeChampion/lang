@@ -2026,12 +2026,11 @@ function sanitize_warning(target: string): string {
   if (is_native_target(target)) {
     return "";
   }
-  let carries = "the leak census and the rc over-release and use-after-free detectors, not the heap-buffer-overflow redzone or the fill of fresh raw blocks";
   if (target == "wasm32-wasi") {
-    return "fern: warning: -sanitize on -target " + target + " carries " + carries;
+    return "";
   }
   if (target == "wasm32-wasi-http") {
-    return "fern: warning: -sanitize on -target " + target + " carries " + carries + " — and the census prints at process exit, which a request handler never reaches";
+    return "fern: warning: -sanitize on -target " + target + " prints the leak census at process exit, which a request handler never reaches";
   }
   return "fern: warning: -sanitize has no effect on -target " + target + " (the detectors are native x86-64 and arm64 and wasm); this build carries no checks";
 }
@@ -2347,6 +2346,7 @@ function flag_groups(): FlagGroup[] {
       sub_flag("-apk-permission", "NAMES", ["-apk"], "with -apk: the comma-separated permissions the app uses, such as RECORD_AUDIO; a name with no dot is in android.permission; each FOREGROUND_SERVICE_TYPE permission, such as FOREGROUND_SERVICE_MICROPHONE, gives that foreground service type to each @jni class that extends android.app.Service"),
       sub_flag("-apk-icon", "FILE", ["-apk"], "with -apk: the PNG of the launcher icon (default: the icon of the system)"),
       sub_flag("-apk-banner", "FILE", ["-apk"], "with -apk: the PNG of the banner on the launcher of Android TV, 320 by 180 pixels"),
+      sub_flag("-apk-dex", "FILES", ["-apk"], "with -apk: the comma-separated DEX files of Java libraries that the app calls, such as the output of tools/media3/fetch, after the DEX file of the @jni classes"),
       sub_flag("-apk-min-sdk", "LEVEL", ["-apk"], "with -apk: the lowest Android API level the app runs on (default 24)"),
       sub_flag("-apk-version-code", "N", ["-apk"], "with -apk: the version number of the app (android:versionCode), which must go up with each release that Google Play takes (default 1)"),
       sub_flag("-apk-version-name", "TEXT", ["-apk"], "with -apk: the version that the app shows to people (android:versionName, default 1.0)"),
@@ -6114,10 +6114,10 @@ function cli_backend_refusal(backend: string, target: string): string {
 
 // The Android flags: -jni-java, and the output, package, label, icon and key
 // file of -apk.
-struct ApkOpts { jni_java: string, jni_dex: string, out: string, package: string, label: string, icon: string, banner: string, key: string, permissions: string, min_sdk: string, version_code: string, version_name: string, compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, tv: boolean, pip: boolean, assets: string, widget: string, run: boolean }
+struct ApkOpts { jni_java: string, jni_dex: string, out: string, package: string, label: string, icon: string, banner: string, dex: string, key: string, permissions: string, min_sdk: string, version_code: string, version_name: string, compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, tv: boolean, pip: boolean, assets: string, widget: string, run: boolean }
 
 function is_android_flag(name: string): boolean {
-  return util.has_str(["-jni-java", "-jni-dex", "-apk", "-apk-package", "-apk-label", "-apk-icon", "-apk-banner", "-apk-key", "-apk-permission", "-apk-min-sdk", "-apk-version-code", "-apk-version-name", "-apk-compress", "-apk-cleartext", "-apk-debuggable", "-apk-home", "-apk-tv", "-apk-pip", "-apk-asset", "-apk-widget", "-apk-run"], name);
+  return util.has_str(["-jni-java", "-jni-dex", "-apk", "-apk-package", "-apk-label", "-apk-icon", "-apk-banner", "-apk-dex", "-apk-key", "-apk-permission", "-apk-min-sdk", "-apk-version-code", "-apk-version-name", "-apk-compress", "-apk-cleartext", "-apk-debuggable", "-apk-home", "-apk-tv", "-apk-pip", "-apk-asset", "-apk-widget", "-apk-run"], name);
 }
 
 // The -apk flags that take no value.
@@ -6134,6 +6134,7 @@ function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
     "-apk-label" => ApkOpts { ...o, label: f.value },
     "-apk-icon" => ApkOpts { ...o, icon: f.value },
     "-apk-banner" => ApkOpts { ...o, banner: f.value },
+    "-apk-dex" => ApkOpts { ...o, dex: f.value },
     "-apk-key" => ApkOpts { ...o, key: f.value },
     "-apk-permission" => ApkOpts { ...o, permissions: f.value },
     "-apk-min-sdk" => ApkOpts { ...o, min_sdk: f.value },
@@ -6352,7 +6353,7 @@ function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
   for name in dex.subclasses_of(classes, apk.LISTENER_ACTION) {
     services = services.append(apk.Service { name: name, types: 0, permission: apk.LISTENER_PERMISSION, action: apk.LISTENER_ACTION });
   }
-  let app = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, permissions: permissions, min_sdk: apk.MIN_SDK, services: services, icon: [], banner: [], compress: o.compress, cleartext: o.cleartext, debuggable: o.debuggable, home: o.home, tv: o.tv, pip: o.pip, assets: [], widget: apk.no_widget() };
+  let app = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, more_dex: [], permissions: permissions, min_sdk: apk.MIN_SDK, services: services, icon: [], banner: [], compress: o.compress, cleartext: o.cleartext, debuggable: o.debuggable, home: o.home, tv: o.tv, pip: o.pip, assets: [], widget: apk.no_widget() };
   if (o.min_sdk.len() > 0) {
     app = apk.App { ...app, min_sdk: size_bytes(o.min_sdk) as i32 };
   }
@@ -6438,6 +6439,30 @@ function apk_widget(list: string, classes: u8[]): (apk.Widget, string) {
   return (apk.Widget { provider: providers[0], items: items }, "");
 }
 
+// The files of the -apk-dex list, in order. The second value is the error
+// when a file cannot be read, or when it is not a DEX file.
+function apk_dex(list: string): (u8[][], string) {
+  let out: u8[][] = [];
+  if (list.len() == 0) {
+    return (out, "");
+  }
+  for item in list.split(",") {
+    let path = item.trim();
+    match (read_file_bytes(path)) {
+      Ok(data) => {
+        if (data.len() < 8 || data[0] != b'd' || data[1] != b'e' || data[2] != b'x' || data[3] != 10u8) {
+          return (out, "fern: the -apk-dex file " + path + " is not a DEX file");
+        }
+        out = out.append(data);
+      },
+      Err(e) => {
+        return (out, "fern: cannot read the -apk-dex file " + path + ": " + e.message());
+      }
+    }
+  }
+  return (out, "");
+}
+
 // The files of the -apk-asset list, each under its own file name. The second
 // value is the error when a file cannot be read, or when two files have one
 // name.
@@ -6512,22 +6537,14 @@ function apk_with_manifest(o: ApkOpts, entry_path: string): (ApkOpts, string) {
     return (o, fern_toml.diagnostic(g.dir + "fern.toml", g.man));
   }
   let m = g.man;
-  let assets = o.assets;
-  if (assets.len() == 0) {
-    let paths: string[] = [];
-    for a in util.split_char(fern_toml.android(m, "assets"), b',') {
-      if (a.len() > 0) {
-        paths = paths.append(android_path(g.dir, a));
-      }
-    }
-    assets = paths.join(",");
-  }
+  let assets = or_text(o.assets, android_paths(g.dir, fern_toml.android(m, "assets")));
   return (ApkOpts {
     ...o,
     package: or_text(o.package, fern_toml.android(m, "package")),
     label: or_text(o.label, fern_toml.android(m, "label")),
     icon: or_text(o.icon, android_path(g.dir, fern_toml.android(m, "icon"))),
     banner: or_text(o.banner, android_path(g.dir, fern_toml.android(m, "banner"))),
+    dex: or_text(o.dex, android_paths(g.dir, fern_toml.android(m, "dex"))),
     key: or_text(o.key, android_path(g.dir, fern_toml.android(m, "key"))),
     permissions: or_text(o.permissions, fern_toml.android(m, "permissions")),
     min_sdk: or_text(o.min_sdk, fern_toml.android(m, "min_sdk")),
@@ -6549,6 +6566,18 @@ function or_text(flag: string, file: string): string {
     return flag;
   }
   return file;
+}
+
+// Each path of the comma-separated `list` from a manifest in the directory
+// `dir`.
+function android_paths(dir: string, list: string): string {
+  let paths: string[] = [];
+  for a in util.split_char(list, b',') {
+    if (a.len() > 0) {
+      paths = paths.append(android_path(dir, a));
+    }
+  }
+  return paths.join(",");
 }
 
 // `path` from a manifest in the directory `dir`, which is "" or ends in a
@@ -6596,6 +6625,11 @@ function run_apk(av: string[], flags: ApkOpts, entry_path: string, embedded_root
     eprint(assets_bad);
     return 2;
   }
+  let (more_dex, dex_bad) = apk_dex(o.dex);
+  if (dex_bad.len() > 0) {
+    eprint(dex_bad);
+    return 2;
+  }
   let bundle = o.out.ends_with(".aab");
   if (bundle && o.run) {
     eprint("fern: -apk-run installs an APK, so OUT cannot end in .aab");
@@ -6631,7 +6665,7 @@ function run_apk(av: string[], flags: ApkOpts, entry_path: string, embedded_root
     eprint(widget_bad);
     return 2;
   }
-  let app = apk.App { ...apk_app(o, lib, classes), icon: icon, banner: banner, assets: assets, widget: widget };
+  let app = apk.App { ...apk_app(o, lib, classes), more_dex: more_dex, icon: icon, banner: banner, assets: assets, widget: widget };
   let package = apk.write(app, libs, d);
   if (bundle) {
     package = aab.write(app, libs, d);
@@ -7032,7 +7066,7 @@ function parse_cli_flags(av: string[], embedded_root: string): CliFlags {
     sanitize_flag: false,
     shared: false,
     export_list: "",
-    apk_opts: ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", banner: "", key: "", permissions: "", min_sdk: "", version_code: "", version_name: "", compress: false, cleartext: false, debuggable: false, home: false, tv: false, pip: false, assets: "", widget: "", run: false },
+    apk_opts: ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", banner: "", dex: "", key: "", permissions: "", min_sdk: "", version_code: "", version_name: "", compress: false, cleartext: false, debuggable: false, home: false, tv: false, pip: false, assets: "", widget: "", run: false },
     harden: false,
     heap_limit_text: "",
     cpu_limit_text: "",

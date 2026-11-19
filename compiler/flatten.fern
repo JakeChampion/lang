@@ -435,7 +435,7 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
   let opts: ast.Expr = ast.ExprCall { callee: serve_ref(qual, "config"), args: [], line: 0, col: 0, type_args: [], ty: "" };
   let state: ast.Expr = init_call;
   if (init_kind == 3) {
-    body = body.append(ast.StmtVar { name: "__fern_opts,__fern_state", type_name: "", init: init_call, line: 0, col: 0, fn_ret: "", fn_param_types: "" });
+    body = body.append(ast.StmtVar { name: "", type_name: "", init: init_call, line: 0, col: 0, fn_ret: "", fn_param_types: "", destr: ast.tuple_destr(["__fern_opts", "__fern_state"]) });
     opts = ast.ExprIdent { name: "__fern_opts", line: 0, col: 0, ty: "", builtin: false };
     state = ast.ExprIdent { name: "__fern_state", line: 0, col: 0, ty: "", builtin: false };
   } else if (init_kind == 2) {
@@ -585,7 +585,7 @@ function serve_ref(qual: string, name: string): ast.Expr {
   if (qual.len() == 0) {
     return ast.ExprIdent { name: name, line: 0, col: 0, ty: "", builtin: false };
   }
-  return ast.ExprFieldAccess { obj: ast.ExprIdent { name: qual, line: 0, col: 0, ty: "", builtin: false }, field: name, line: 0, col: 0, ty: "", const_read: false };
+  return ast.ExprFieldAccess { obj: ast.ExprIdent { name: qual, line: 0, col: 0, ty: "", builtin: false }, field: name, line: 0, col: 0, ty: "", const_read: false, display: false };
 }
 
 function import_prefixes(mod: parser.Module, ids: string[], pfxs: string[]): string[] {
@@ -691,16 +691,6 @@ function resolve_bare(name: string, ctx: RewriteCtx, as_value: boolean): string 
     return iv.mangled;
   }
   return name;
-}
-
-function rewrite_unary_op(op: string, ctx: RewriteCtx): string {
-  if (op.starts_with("as?_")) {
-    return "as?_" + rewrite_type_name(slice_unchecked(op, 4, op.len()), ctx);
-  }
-  if (op.starts_with("as_")) {
-    return "as_" + rewrite_type_name(slice_unchecked(op, 3, op.len()), ctx);
-  }
-  return op;
 }
 
 function rewrite_written(w: string, ctx: RewriteCtx): string {
@@ -931,7 +921,11 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       return ast.binary(b.op, rewrite_expr(b.left, ctx), rewrite_expr(b.right, ctx), b.line, b.col, b.ty);
     },
     ast.ExprUnary(u) => {
-      return ast.unary(rewrite_unary_op(u.op, ctx), rewrite_expr(u.operand, ctx), u.line, u.col, u.ty);
+      let cast = u.cast;
+      if (cast.len() > 0) {
+        cast = rewrite_type_name(cast, ctx);
+      }
+      return ast.with_cast(ast.rebuild_unary(u, rewrite_expr(u.operand, ctx), u.line, u.col, u.ty), cast);
     },
     ast.ExprIndex(x) => {
       return ast.ExprIndex {
@@ -1006,7 +1000,7 @@ pub function rewrite_block(stmts: ast.Stmt[], ctx: RewriteCtx): ast.Stmt[] {
     out = out.append(rewrite_stmt(st, scope));
     match (st) {
       ast.StmtVar(v) => {
-        scope = RewriteCtx { ...scope, locals: astwalk.append_bound_name(scope.locals, v.name) };
+        scope = RewriteCtx { ...scope, locals: ast.append_var_names(scope.locals, v) };
       },
       _ => {}
     }
@@ -1014,17 +1008,12 @@ pub function rewrite_block(stmts: ast.Stmt[], ctx: RewriteCtx): ast.Stmt[] {
   return out;
 }
 
-function rewrite_var_type(tn: string, ctx: RewriteCtx): string {
-  if (!parser.is_struct_destr_marker(tn)) {
-    return rewrite_type_name(tn, ctx);
+// The struct name of a record pattern is a type name.
+function rewrite_destr(d: ast.Destr, ctx: RewriteCtx): ast.Destr {
+  if (d.record.len() == 0) {
+    return d;
   }
-  let at = util.index_of_sub(tn, "@sd:") + 4;
-  let rest = slice_unchecked(tn, at, tn.len()).to_owned();
-  let colon = util.index_of_sub(rest, ":");
-  if (colon < 0) {
-    return tn;
-  }
-  return slice_unchecked(tn, 0, at) + rewrite_type_name(slice_unchecked(rest, 0, colon).to_owned(), ctx) + slice_unchecked(rest, colon, rest.len());
+  return ast.Destr { ...d, record: rewrite_type_name(d.record, ctx) };
 }
 
 function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
@@ -1032,11 +1021,12 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
     ast.StmtVar(v) => {
       return ast.StmtVar {
         name: v.name,
-        type_name: rewrite_var_type(v.type_name, ctx),
+        type_name: rewrite_type_name(v.type_name, ctx),
         init: rewrite_expr(v.init, ctx),
         line: v.line, col: v.col,
         fn_ret: rewrite_type_name(v.fn_ret, ctx),
         fn_param_types: rewrite_type_name_list(v.fn_param_types, ctx),
+        destr: rewrite_destr(v.destr, ctx),
       };
     },
     ast.StmtReturn(r) => {
@@ -1065,10 +1055,11 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
       return ast.StmtFor {
         var_name: f.var_name,
         iter: rewrite_expr(f.iter, ctx),
-        body: rewrite_block(f.body, RewriteCtx { ...ctx, locals: astwalk.append_bound_name(loop_locals, f.var_name) }),
+        body: rewrite_block(f.body, RewriteCtx { ...ctx, locals: ast.append_for_names(loop_locals, f) }),
         label: f.label,
         line: f.line,
         col: f.col,
+        destr: f.destr,
       };
     },
     ast.StmtMatch(m) => {

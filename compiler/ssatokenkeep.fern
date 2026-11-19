@@ -151,7 +151,7 @@ function proven(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], site: Site): Site {
   if (shape == "" || defs[ins.args[1]].kind_tag != ssa.CONST_INT || stores_to(f, at, site)) {
     return no_site();
   }
-  let out = Site { ...site, shape: shape, tested: tested_shape(f, at, defs, site.p, site.box) == shape };
+  let out = Site { ...site, shape: shape, tested: proves_shape(f, at, defs, site.p, site.box, shape) };
   if (!out.tested && !keeps_word(f, out, defs, b)) {
     return no_site();
   }
@@ -248,30 +248,35 @@ function neighbours(b: ssa.SBlock, down: boolean): i32[] {
   return [];
 }
 
-// The shape that a block above p proved for box: the block ends in a compare
-// of the first word of box with a shape address, and only its true side
-// leads to p. "" when no such block is in the eight blocks above p.
-function tested_shape(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], p: i32, box: i32): string {
+// Whether a block above p proved that box has `shape`: the block ends in a
+// branch that only one side of leads to p, and that side is the true side of
+// a compare of the first word of box with the address of `shape`, or the side
+// where box is not the static box of the other variant of the enum of
+// `shape`. False when no such block is in the eight blocks above p.
+function proves_shape(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], p: i32, box: i32, shape: string): boolean {
   let cur = p;
   for steps in 0..8 {
     let b = f.blocks[cur];
     if (b.preds.len() != 1) {
-      return "";
+      return false;
     }
     let up = ssa.position_of(at, b.preds[0]);
     if (up < 0) {
-      return "";
+      return false;
     }
     let term = f.blocks[up].term;
-    if (term.kind_tag == ssa.TERM_BRIF && term.t == b.id && term.f != b.id) {
-      let shape = compared_shape(defs, defs[term.cond], box);
-      if (shape != "") {
-        return shape;
+    if (term.kind_tag == ssa.TERM_BRIF && term.t != term.f) {
+      let c = defs[term.cond];
+      if (term.t == b.id && compared_shape(defs, c, box) != "") {
+        return compared_shape(defs, c, box) == shape;
+      }
+      if (excludes_pair(defs, c, box, shape, term.t == b.id)) {
+        return true;
       }
     }
     cur = up;
   }
-  return "";
+  return false;
 }
 
 function compared_shape(defs: ssa.SInst[], c: ssa.SInst, box: i32): string {
@@ -284,6 +289,50 @@ function compared_shape(defs: ssa.SInst[], c: ssa.SInst, box: i32): string {
     return shape.str;
   }
   return "";
+}
+
+// Whether the side `taken` of a branch on c is the side where box is not the
+// static box of the variant that pairs with `shape`. c compares box with that
+// static box, directly or through one `not`.
+function excludes_pair(defs: ssa.SInst[], c: ssa.SInst, box: i32, shape: string, taken: boolean): boolean {
+  if (c.kind_tag == ssa.UNARY && c.str == "!" && c.args.len() == 1) {
+    return excludes_pair(defs, defs[c.args[0]], box, shape, !taken);
+  }
+  if (c.kind_tag != ssa.BINARY || c.args.len() != 2 || c.args[0] != box) {
+    return false;
+  }
+  if (!(c.str == "eq" && !taken || c.str == "ne" && taken)) {
+    return false;
+  }
+  let lit = defs[c.args[1]];
+  if (lit.kind_tag != ssa.AGG_LIT || lit.imm != ssa.PAIRED_BOX) {
+    return false;
+  }
+  return pairs_with(lit.str, shape);
+}
+
+// Whether the static box with the key `key` is of the enum of `shape` and of
+// another variant. A key is the shape and a `|`, and the shape of a variant
+// is the name of its enum, a `$` and the name of the variant.
+function pairs_with(key: string, shape: string): boolean {
+  let owner = shape.len() - 1;
+  while (owner > 0 && shape[owner] != 36) {
+    owner -= 1;
+  }
+  if (owner == 0 || key.len() <= owner + 1 || key[owner] != 36) {
+    return false;
+  }
+  for i in 0..owner {
+    if (key[i] != shape[i]) {
+      return false;
+    }
+  }
+  for i in owner + 1..key.len() {
+    if (key[i] == 36) {
+      return false;
+    }
+  }
+  return key != shape + "|";
 }
 
 function stores_at(b: ssa.SBlock, base: i32, offset: i32): i32 {

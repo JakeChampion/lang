@@ -14,7 +14,8 @@ import (
 // and unary minus. None of those can reach the two methods, so the C
 // import is not reachable, and the program builds as an executable, which
 // has no dynamic loader for a C import.
-const treeshakeAritySrc = `import "std/array";
+const treeshakeAritySrc = `import "core/ops";
+import "std/array";
 
 @import("libc.so.6", "getpid")
 function c_getpid(): i32;
@@ -36,6 +37,7 @@ struct Money { cents: i64 }
 pub function (a: Money) add(b: Money): Money {
   return Money { cents: a.cents + b.cents };
 }
+impl ops.Add for Money {}
 
 function main(): i32 {
   let xs = [1, 2, 3].add([4, 5, 6]);

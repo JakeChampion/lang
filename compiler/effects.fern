@@ -49,10 +49,12 @@ function bind_stmt(st: ast.Stmt, own w: Walk): Walk {
         },
         _ => {}
       }
-      return Walk { ...w, s: Scan { ...s, locals: bound(s.locals, v.name) } };
+      let locals = s.locals;
+      return Walk { ...w, s: Scan { ...s, locals: ast.append_var_names(locals, v) } };
     },
     ast.StmtFor(f) => {
-      return Walk { ...w, s: Scan { ...w.s, locals: bound(w.s.locals, f.var_name) } };
+      let locals = w.s.locals;
+      return Walk { ...w, s: Scan { ...w.s, locals: ast.append_for_names(locals, f) } };
     },
     ast.StmtMatch(m) => {
       let locals = w.s.locals;
@@ -64,14 +66,6 @@ function bind_stmt(st: ast.Stmt, own w: Walk): Walk {
     _ => {}
   }
   return w;
-}
-
-function bound(locals: string[], binder: string): string[] {
-  let out = locals;
-  for n in astwalk.append_bound_name([], binder) {
-    out = out.append(n);
-  }
-  return out;
 }
 
 function bind_expr(e: ast.Expr, own w: Walk): Walk {

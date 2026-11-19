@@ -184,7 +184,7 @@ func TestInterpSysinfo(t *testing.T) {
 }
 
 func TestWasmSysinfoIsRefused(t *testing.T) {
-	bin := buildLangBinForCheck(t)
+	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
 	for _, tc := range []struct{ name, call, capability string }{
 		{"uname_field", "let n: i32 = uname_field(0).len()", "sysinfo"},

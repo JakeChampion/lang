@@ -133,6 +133,28 @@ function slot_events(): test.TestOutcome {
   return test.assert_eq([second.sent(prepared), first.sent(prepared), first.sent(android.Posted(20, 0 as usize)), second.sent(other), second.sent(android.Tick)].map((b: boolean): string => b.to_string()).join(" "), "true false true false false");
 }
 
+// `posted` gives the kind and the argument that `event` decodes again, and
+// the slot that `sent_by` reads.
+function posted_events(): test.TestOutcome {
+  let out: string[] = [];
+  for c in [player.Prepared, player.Completed, player.Failed(2001, -3), player.Buffering(true), player.Buffering(false), player.Rendering, player.Seeked, player.AudioNotPlaying, player.VideoNotPlaying, player.Cues] {
+    let (kind, arg) = player.posted(c, 3);
+    let e = android.Posted(kind, arg);
+    let back = match (player.event(e)) {
+      Some(player.Failed(what, extra)) => "failed " + what.to_string() + " " + extra.to_string(),
+      Some(player.Buffering(on)) => "buffering " + on.to_string(),
+      Some(_) => "same",
+      None => "none",
+    };
+    out = out.append(back + " " + player.sent_by(e, 3).to_string() + " " + player.sent_by(e, 0).to_string());
+  }
+  let (kind, arg) = player.posted(player.Prepared, -1);
+  out = out.append(player.sent_by(android.Posted(kind, arg), 0).to_string());
+  // Posted carries a pointer-width argument. Android targets use 64 bits.
+  let what = if (4294967296u64 as usize == 0 as usize) { "0" } else { "2001" };
+  return test.assert_eq(out.join(", "), "same true false, same true false, failed " + what + " -3 true false, buffering true true false, buffering false true false, same true false, same true false, same true false, same true false, same true false, true");
+}
+
 function main(): i32 {
   let suite = test.new("Android media player events");
   suite = suite.it("prepared, completion, and seek", simple_events);
@@ -140,5 +162,6 @@ function main(): i32 {
   suite = suite.it("signed platform error codes", error_events);
   suite = suite.it("a target holds a frame once its transform turns", target_frames);
   suite = suite.it("the slot of the player that sent an event", slot_events);
+  suite = suite.it("posted changes decode again", posted_events);
   return suite.finish();
 }

@@ -42,8 +42,13 @@ parameter the caller passed narrowed out of a struct-union becomes a payload
 read of the union (`scrutinee_reads`), the form the source lowering gives a
 member binding's field read. It splices a function or an impl method
 declared `@inline` at every call, as it splices a function called once. The function must not be
-recursive, must have at most 400 instructions, and must only read its view
-parameters (`seminline.forced_spliceable`). A function called once from a
+recursive and must have at most 400 instructions.
+It uses the same view restrictions as a function with one call.
+It can forward a view to another function.
+It cannot return a view, accept a record with a view, or rebind a string view in a loop
+(`seminline.forced_spliceable`).
+
+A function called once from a
 function that calls itself, directly or through other functions, is spliced
 only when it has at most 100 instructions: each level of the recursion pays
 for the frame of the spliced body (`seminline.called_from_cycle`,
@@ -572,17 +577,38 @@ than a finding. A call that returns its operand or a fresh box
 unit and gives the result a fresh one. On the edge where a test finds the two
 are one box, the result takes the operand's units and the fresh unit goes. A
 push (`arr_push`) also grows its array in place or returns a new box. A push
-onto a parameter, or onto a value that a test found to be the box of a
-parameter, gives a twin of that parameter. A twin holds no unit if it is the
+onto a box, or onto a value that a test found to be that box, gives a twin
+of that box. A store of null can clear the slot that the box was read from.
+Then the unit of the slot goes to the value that is the box on that path. A twin holds no unit if it is the
 box of the parameter, and one unit if it is a new box. A test of the twin
 against the parameter decides the side on each edge, and a join meets the
 two sides apart. A test of any value with a plain count against a parameter
 also gives a twin with one side: the box of the parameter on the equal edge,
 and another box on the other edge. A retain or a release of a twin with one
-side changes the count of that side. Another use that a twin cannot describe
-reads the twin as one count. On the arm where `__fern_rc_is_unique` found another holder, a push
+side changes the count of that side. A parameter is its own box, so as a phi
+input it is a twin of itself with one side. A twin with one side meets a twin
+of another key as its count. Another use that a twin cannot describe
+reads the twin as one count. A reuse token is a phi whose inputs are one box
+or null, and it gives that box a twin of the token. Where the token is the
+box, the token takes the unit of the box. Where the token is null, the box
+keeps its unit. A test of the token against null decides the side on each
+edge. A block that defines the token again reads each twin of the token as
+one count. Where the token is not null, the token and its box are one box.
+There, a phi input of one name can take the unit of the other name. A move
+of a unit that is held (`__fern_alloc_reuse`) acts on each side of a twin
+apart. The two arms of a test can reach a join apart. There, a count that the
+arms disagree on is a twin of the word that the test reads. A later test of
+that word against zero decides the side on each edge. A definition of the
+word again, as a loop does, reads each twin of the word as one count. On the
+arm where `__fern_rc_is_unique` found another holder, a push
 copies the box, or it keeps a box with a negative count in place. No retain
-or release changes such a box, so there the result counts as a new box. A phi takes one unit of an input that holds one. The exception is
+or release changes such a box, so there the result counts as a new box. A
+call through a function value takes the contract that the lowering writes on
+its op (`ir.call_units`). An operand that the function type takes as `own`
+hands its unit to the callee, and a counted result holds a fresh unit. A
+`once` callee keeps its unit, because the caller drops it after the call. A
+call that `ssa.slot_calls` rewrites keeps the contract after `slot:`. A raw
+call names no contract, so its operands and its result stay unproved. A phi takes one unit of an input that holds one. The exception is
 a phi that no operation touches, that no return takes, and that feeds no phi
 that is touched or returned: nothing can spend a unit of it, so its inputs
 keep their units (`spent_phis`). The slot of a loop that borrows is such a
@@ -664,6 +690,20 @@ pointer that flows through the program points past the header.
   shape in its first slot.
 - A value of an enum whose variants hold no field is the index of its
   variant, and not an address (`ssasem.immediate_enum`).
+- A **variant with no field** of an enum of boxes is a static box with an
+  immortal count (`ssaunits.empty_variant`). The program has one such box for
+  each shape, with a label that does not depend on the unit
+  (`asmcore.const_agg_label`). Each unit that names the box emits it after a
+  `.weak` line, so the link of the unit files keeps one, and the merge of the
+  unit texts drops the others (`asmcore.dedupe_weak_into`). The lowering
+  refuses a construction of the variant that is not this box. On the native
+  targets the test of the variant compares the value with the address of the
+  box and loads no tag (`ir.op_static_variant_is`). When each other value of
+  the enum is one such box, the test of the variant that has fields is the
+  inverse of that compare (`ssarc.variant_test`). The static box of such an
+  enum has a mark (`ssa.PAIRED_BOX`), and a value that is not that box has the
+  shape of the other variant. The reuse pass reads this as the proof of the
+  shape of a token (`ssatokenkeep.proves_shape`). wasm32 loads the shape.
 - On a native target the **narrow fields of a variant share one word** when
   two or more of them fit in 64 bits (`semsource.packing`). A narrow field is
   a boolean, a `u8`, an `i32`, a `u32` or such an enum. The fields of one

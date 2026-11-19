@@ -717,8 +717,8 @@ function evident_type(e: ast.Expr): string {
       return sl.type_name;
     },
     ast.ExprUnary(u) => {
-      if (u.op.starts_with("as_")) {
-        return slice_unchecked(u.op, 3, u.op.len()).to_owned();
+      if (u.op == ast.CAST) {
+        return u.cast;
       }
     },
     _ => {}

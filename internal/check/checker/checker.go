@@ -94,15 +94,18 @@ type Info struct {
 	// in registration order; a call resolves among the ones its module sees.
 	InherentMethods map[string][]InherentMethod
 	// the inline-IR `Array.push`, and the built-in string
-	MethodSources       map[string]string
-	ModuleImports       map[string]map[string]bool
-	DirectImports       map[string]map[string]bool
-	EnumConstructions   map[ast.Expr]EnumConstruction
-	GenericFuncs        map[string]*ast.FuncDecl
-	GenericStructs      map[string]*ast.StructDecl
-	Generics            map[string]ast.GenericDecl
-	Traits              map[string]*ast.TraitDecl
-	Impls               map[string]map[string]bool
+	MethodSources     map[string]string
+	ModuleImports     map[string]map[string]bool
+	DirectImports     map[string]map[string]bool
+	EnumConstructions map[ast.Expr]EnumConstruction
+	GenericFuncs      map[string]*ast.FuncDecl
+	GenericStructs    map[string]*ast.StructDecl
+	Generics          map[string]ast.GenericDecl
+	Traits            map[string]*ast.TraitDecl
+	Impls             map[string]map[string]bool
+	// UnresolvedImpls holds, by simple trait name, each type with an impl whose
+	// trait is unknown. That impl has its E021, so its uses report nothing more.
+	UnresolvedImpls     map[string]map[string]bool
 	ImplDecls           map[string]map[string]*ast.ImplDecl // the declaration of each Impls entry
 	ImplTraitArgs       map[string]map[string][]ast.Type
 	ImplForPattern      map[string]map[string]ast.Type
@@ -2826,6 +2829,17 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		td, ok := c.info.Traits[impl.Trait]
 		if !ok {
 			c.errfCode(impl.TraitPos, "E021", "unknown trait %q in impl", demangle(impl.Trait))
+			simple := SimpleTraitName(impl.Trait)
+			if i := strings.LastIndex(simple, "."); i >= 0 {
+				simple = simple[i+1:]
+			}
+			if c.info.UnresolvedImpls == nil {
+				c.info.UnresolvedImpls = map[string]map[string]bool{}
+			}
+			if c.info.UnresolvedImpls[simple] == nil {
+				c.info.UnresolvedImpls[simple] = map[string]bool{}
+			}
+			c.info.UnresolvedImpls[simple][typeName] = true
 			continue
 		}
 		if impl.Trait == SendTrait {
@@ -4242,7 +4256,7 @@ func displayHint(t ast.Type) string {
 	if _, ok := cmpParts(t); ok || tn == "" {
 		return cmpHint(t, "cmp.Display", "cmp.Display")
 	}
-	return fmt.Sprintf("give %s a `to_string(): string` method, or %s", t, deriveHint(tn, "cmp.Display", "cmp.Display"))
+	return deriveHint(tn, "cmp.Display", "cmp.Display")
 }
 
 func deriveHint(tn, derive, trait string) string {
@@ -5967,11 +5981,10 @@ func (c *checker) typeImplementsDisplay(t ast.Type) bool {
 	if tn == "" {
 		return false
 	}
-	if mangled, _, ok := c.resolveMethod(tn, "to_string", []string{"Display"}); ok && (c.methodVisibleHere(mangled) || c.methodImplementsTrait(tn, "to_string")) {
+	if _, builtin := builtinScalarMethod(tn, "to_string"); builtin {
 		return true
 	}
-	_, builtin := builtinScalarMethod(tn, "to_string")
-	return builtin
+	return c.implementsNamed(t, "Display")
 }
 
 func builtinScalarMethod(typeName, name string) (string, bool) {
@@ -6108,7 +6121,9 @@ type checker struct {
 
 	elemHint ast.Type
 
-	typedRecv     ast.Expr
+	typedRecv ast.Expr
+	// interpolated holds each `to_string` call that an f-string part desugars to.
+	interpolated  map[*ast.Call]bool
 	typedRecvType ast.Type
 
 	expectedType ast.Type
@@ -6961,8 +6976,15 @@ var arithOpMethod = map[string]string{
 	"&": "bitand", "|": "bitor", "^": "bitxor", "<<": "shl", ">>": "shr",
 }
 
+// arithOpTrait names the trait that each operator method binds through.
 var arithOpTrait = map[string]string{
-	"add": "Add", "sub": "Sub", "mul": "Mul", "div": "Div", "neg": "Neg",
+	"add": "Add", "sub": "Sub", "mul": "Mul", "div": "Div", "rem": "Rem", "neg": "Neg",
+	"bitand": "BitAnd", "bitor": "BitOr", "bitxor": "BitXor", "shl": "Shl", "shr": "Shr",
+}
+
+// opTraitHint tells how a type gets the operator that method names.
+func opTraitHint(typeName, method string) string {
+	return fmt.Sprintf("add `impl ops.%s for %s`, which requires `import \"core/ops\";`", arithOpTrait[method], demangle(typeName))
 }
 
 func (c *checker) paramComparable(lt, rt ast.Type, method string) bool {
@@ -7192,13 +7214,13 @@ func (c *checker) compositeOpOverload(n *ast.Binary, lt, rt ast.Type, s *scope) 
 		return nil, false
 	}
 	tn, _ := methodTypeName(lt)
-	if mangled, _, ok := c.resolveMethod(tn, opMethod, []string{arithOpTrait[opMethod]}); ok && c.methodVisibleHere(mangled) {
+	if c.implementsNamed(lt, arithOpTrait[opMethod]) {
 		call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: opMethod}, Args: []ast.Expr{n.Right}}
 		rtt := c.checkExpr(call, s)
 		n.ArithCall = call
 		return rtt, true
 	}
-	c.errfCode(n.P, "E009", "operator %q is not defined for %s — implement `function (self: %s) %s(other: %s): %s` to overload it", n.Op, lt, tn, opMethod, tn, tn)
+	c.errfCode(n.P, "E009", "operator %q is not defined for %s — %s", n.Op, lt, opTraitHint(tn, opMethod))
 	return lt, true
 }
 
@@ -7604,6 +7626,19 @@ func (c *checker) checkTypeArgBounds(genericFn *ast.FuncDecl, args []ast.Type, s
 			}
 		}
 	}
+}
+
+// implementsNamed reports whether t implements a trait whose simple name is name.
+func (c *checker) implementsNamed(t ast.Type, name string) bool {
+	if tn, ok := receiverNamespace(t); ok && c.info.UnresolvedImpls[name][tn] {
+		return true
+	}
+	for trait := range c.info.Impls {
+		if SimpleTraitName(trait) == name && c.implements(t, trait) {
+			return true
+		}
+	}
+	return false
 }
 
 // implements reports whether t implements trait. A parametric impl such as
@@ -12882,6 +12917,20 @@ func (c *checker) localDeclared(name string) bool {
 	return false
 }
 
+// patternNamesStruct reports whether a struct pattern that names *name
+// matches a value of type st. A pattern that names the generic struct of a
+// monomorph clone takes the name of the clone.
+func (c *checker) patternNamesStruct(name *string, st ast.StructType) bool {
+	if *name == st.Name {
+		return true
+	}
+	if sd := c.info.Structs[st.Name]; sd != nil && sd.Generic != "" && sd.Generic == *name {
+		*name = st.Name
+		return true
+	}
+	return false
+}
+
 func (c *checker) checkStructDestructure(n *ast.Destructure, got ast.Type, s *scope) {
 	st, ok := got.(ast.StructType)
 	if !ok {
@@ -12897,7 +12946,7 @@ func (c *checker) checkStructDestructure(n *ast.Destructure, got ast.Type, s *sc
 		s.poisonAll(n.Names)
 		return
 	}
-	if n.StructName != "" && n.StructName != st.Name {
+	if n.StructName != "" && !c.patternNamesStruct(&n.StructName, st) {
 		c.errfCode(n.P, "E024", "struct destructure pattern names %s, but the expression is %s", n.StructName, st.Name)
 		s.poisonAll(n.Names)
 		return
@@ -13378,7 +13427,7 @@ func (c *checker) checkTuplePatStructElem(pos ast.Position, el *ast.TuplePatElem
 		c.errfCode(pos, "E035", "struct pattern on element %d must name its fields — `%s { … }`", k, st.Name)
 		return true
 	}
-	if el.VariantName != st.Name {
+	if !c.patternNamesStruct(&el.VariantName, st) {
 		c.errfCode(pos, "E035", "struct pattern names %s, but element %d has type %s", el.VariantName, k, st.Name)
 		return true
 	}
@@ -14065,7 +14114,7 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 			c.checkBlock(arm.Body, s)
 			continue
 		}
-		if arm.VariantName != st.Name {
+		if !c.patternNamesStruct(&arm.VariantName, st) {
 			c.errfCode(arm.P, "E035", "struct pattern names %s, but the scrutinee is %s", arm.VariantName, st.Name)
 			c.checkBlock(arm.Body, s)
 			continue
@@ -14417,7 +14466,7 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 			c.errfCode(arm.P, "E035", "match on struct `%s` only accepts struct patterns `%s { … }` or `_`", st.Name, st.Name)
 			continue
 		}
-		if arm.VariantName != st.Name {
+		if !c.patternNamesStruct(&arm.VariantName, st) {
 			c.errfCode(arm.P, "E035", "struct pattern names %s, but the scrutinee is %s", arm.VariantName, st.Name)
 			continue
 		}
@@ -15424,7 +15473,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				for _, part := range n.Parts {
 					var piece ast.Expr
 					if part.Expr != nil {
-						piece = &ast.Call{
+						call := &ast.Call{
 							P: n.P,
 							Callee: &ast.FieldAccess{
 								P:      n.P,
@@ -15432,6 +15481,11 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 								Field:  "to_string",
 							},
 						}
+						if c.interpolated == nil {
+							c.interpolated = map[*ast.Call]bool{}
+						}
+						c.interpolated[call] = true
+						piece = call
 					} else {
 						piece = &ast.StringLit{P: n.P, Value: part.Lit}
 					}
@@ -15763,7 +15817,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				}
 				if !c.typeImplementsDisplay(at) {
 					c.errfCode(n.Args[0].Pos(), "E038",
-						"argument 1 to %q: %s does not implement `Display` (no `to_string(): string` in scope) — %s",
+						"argument 1 to %q: %s does not implement `Display` — %s",
 						id.Name, at, displayHint(at))
 					return ast.VoidType{}
 				}
@@ -16103,6 +16157,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			recvFA, recvType = fa, tt
 			if tt == nil {
 				return nil
+			}
+			if c.interpolated[n] && !isStringLike(tt) && !c.typeImplementsDisplay(tt) {
+				c.errfCode(fa.Target.Pos(), "E038", "an interpolated value of type %s does not implement `Display` — %s", tt, displayHint(tt))
+				return ast.StringType{}
 			}
 			if at, ok := tt.(ast.ArrayType); ok && at.Elem == nil {
 				for _, arg := range n.Args {
@@ -16680,6 +16738,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			if rtt, handled := c.compositeOpOverload(n, lt, rt, s); handled {
 				return rtt
 			}
+			if n.Op == "+" && lt != nil && rt != nil && (isStringLike(lt) || isStringLike(rt)) {
+				c.errfCode(n.P, "E009", "operator %q requires matching numeric or string operands, got %s and %s", n.Op, lt, rt)
+				return nil
+			}
 			if isFloat(lt) || isFloat(rt) {
 				c.requireFloat(n.P, lt, n.Op)
 				c.requireFloat(n.P, rt, n.Op)
@@ -16833,8 +16895,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			if lt != nil && rt != nil && ast.Equal(lt, rt) {
 				switch lt.(type) {
 				case ast.StructType, ast.EnumType, ast.ArrayType, ast.SliceType, ast.TupleType:
-					tn, _ := receiverNamespace(lt)
-					if mangled, owner, ok := c.resolveMethod(tn, "cmp", []string{"Ord"}); ok && c.methodVisibleHere(mangled) && c.implBoundsHold(lt, owner) {
+					if c.implementsNamed(lt, "Ord") {
 						cmpCall := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: "cmp"}, Args: []ast.Expr{n.Right}}
 						if rt2 := c.checkExpr(cmpCall, s); rt2 != nil {
 							if nt, isNum := rt2.(ast.NumberType); !isNum || nt.NormalWidth() != 32 {
@@ -16932,8 +16993,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			if lt != nil && rt != nil && ast.Equal(lt, rt) {
 				switch lt.(type) {
 				case ast.StructType, ast.EnumType, ast.ArrayType, ast.SliceType, ast.TupleType:
-					tn, _ := receiverNamespace(lt)
-					if mangled, owner, ok := c.resolveMethod(tn, "eq", []string{"Eq"}); ok && c.methodVisibleHere(mangled) && c.implBoundsHold(lt, owner) {
+					if c.implementsNamed(lt, "Eq") {
 						eqCall := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: "eq"}, Args: []ast.Expr{n.Right}}
 						if rt2 := c.checkExpr(eqCall, s); rt2 != nil {
 							if _, isBool := rt2.(ast.BoolType); !isBool {
@@ -16998,14 +17058,14 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			switch t.(type) {
 			case ast.StructType, ast.EnumType:
 				tn, _ := methodTypeName(t)
-				if mangled, _, ok := c.resolveMethod(tn, "neg", []string{arithOpTrait["neg"]}); ok && c.methodVisibleHere(mangled) {
+				if c.implementsNamed(t, arithOpTrait["neg"]) {
 					call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Operand, Field: "neg"}, Args: nil}
 					rtt := c.checkExpr(call, s)
 					n.NegCall = call
 					n.CheckedType = rtt
 					return rtt
 				}
-				c.errfCode(n.P, "E009", "unary `-` is not defined for %s — implement `function (self: %s) neg(): %s` to overload it", t, tn, tn)
+				c.errfCode(n.P, "E009", "unary `-` is not defined for %s — %s", t, opTraitHint(tn, "neg"))
 				return t
 			}
 			c.requireInteger(n.P, t, n.Op)

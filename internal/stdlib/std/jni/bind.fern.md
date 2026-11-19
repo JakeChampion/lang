@@ -17,6 +17,8 @@ The result is the text of one Fern module. For a class such as `android/content/
 
 The module also has a struct `Classes` with the struct of IDs of each class. `classes` makes it, and its `release` deletes each reference. An app makes it one time and gives it to the functions that call Java.
 
+Each lookup of `intent_class` and of `classes` can fail, so each one is a branch. These functions have an `allow` comment of the linter for their complexity.
+
 The members of a class are in the order of their names, so the module does not change with the order of the JAR. A function has the name of its Java member in snake case. A constructor has the name `new`. Two methods of a request can have one name. Each function then also has the types of its parameters, as in `put_extra_string_int`.
 
 The primitive types change as follows. A Java `boolean` is a `boolean`. A `byte`, a `short`, a `char` and an `int` are each an `i32`. A `long` is an `i64`, a `float` is an `f32` and a `double` is an `f64`.
@@ -556,6 +558,7 @@ function class_struct(c: classfile.Class, members: Bound[]): string {
     finds += "  let id_" + m.name + " = " + lookup(m) + ";\n";
   }
   let out = "// The class " + java_name(c.name) + " and the IDs of its members.\npub struct " + t + "Class { " + fields + " }\n\n";
+  out += "// One lookup for each member, and each one can fail.\n// fern-lint: allow cyclomatic-complexity\n";
   out += "pub function " + snake(t) + "_class(e: usize): Result[" + t + "Class, jni.JavaError] {\n";
   out += "  let local = jni.find_class(e, " + quoted(c.name) + ");\n  jni.check(e)?;\n";
   out += "  let class = jni.new_global_ref(e, local);\n  jni.delete_local_ref(e, local);\n";
@@ -833,7 +836,7 @@ function all_classes(bound: string[]): string {
     names = names.append(name);
   }
   let out = "// The struct of IDs of each class of this module.\npub struct Classes { " + fields + " }\n\n";
-  out += "// Makes the struct of IDs of each class. Call it one time, and call\n// `release` when the app does not call Java again.\n";
+  out += "// Makes the struct of IDs of each class. Call it one time, and call\n// `release` when the app does not call Java again. One lookup for each\n// class, and each one can fail.\n// fern-lint: allow cyclomatic-complexity\n";
   out += "pub function classes(e: usize): Result[Classes, jni.JavaError] {\n" + makes + "  return Ok(Classes { " + values + " });\n}\n\n";
   return out + "// Deletes the reference to each class. Do not use `c` after this call.\npub function (c: Classes) release(e: usize): void {\n" + releases + "}\n\n";
 }

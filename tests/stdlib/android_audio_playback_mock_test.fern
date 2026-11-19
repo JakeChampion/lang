@@ -1,0 +1,196 @@
+import "std/android/audio";
+import "std/android/audio/codec";
+import "std/android/audio/capabilities";
+import "std/android/audio/playback";
+import "std/android/video";
+import "std/video/frame";
+import "std/bench";
+
+@import("libmediandk.so", "audio_mock_mode")
+function mode(value: i32): void;
+
+@import("libmediandk.so", "audio_mock_block")
+function block(first: i32, frames: i32): void;
+
+@import("libmediandk.so", "audio_mock_channels")
+function channels(count: i32): void;
+
+@import("libmediandk.so", "audio_mock_live")
+function live(): i32;
+
+@import("libmediandk.so", "audio_mock_released")
+function released(): i32;
+
+@import("libaaudio.so", "mock_write_plan")
+function plan(direct: i32, offset: i32, result: i32): void;
+
+@import("libaaudio.so", "mock_write_calls")
+function calls(): i32;
+
+@import("libaaudio.so", "mock_written_sample")
+function sample(index: i32): i32;
+
+@import("libaaudio.so", "mock_capture_begin")
+function capture(): void;
+
+@import("libaaudio.so", "mock_capture_end")
+function capture_end(): void;
+
+function config(): codec.Config {
+  return codec.Config { request: capabilities.Request { mime: "audio/mp4a-latm", sample_rate: 48000, channels: 2, profile: 2 }, csd0: [18u8, 16u8], csd1: [18u8, 16u8], csd2: [18u8, 16u8], pcm_encoding: codec.PCM_I16 };
+}
+
+function buffer(decoder: codec.Decoder): Result[video.OutputBuffer, frame.VideoError] {
+  let Ok(codec.FormatChanged(_)) = decoder.output(0i64) else {
+    return Err(frame.State);
+  };
+  let Ok(codec.BuffersChanged) = decoder.output(0i64) else {
+    return Err(frame.State);
+  };
+  let Ok(codec.Buffer(value)) = decoder.output(0i64) else {
+    return Err(frame.State);
+  };
+  return Ok(value);
+}
+
+function error(value: Result[i32, frame.VideoError], expected: frame.VideoError): boolean {
+  let Err(actual) = value else {
+    return false;
+  };
+  return actual == expected;
+}
+
+pub function main(): i32 {
+  mode(20);
+  let limits = codec.Limits { max_packet_bytes: 8, max_output_bytes: 4096, max_sample_rate: 48000, max_channels: 2 };
+  let Ok(decoder) = codec.open_named(config(), "c2.vendor.avc.decoder", limits) else {
+    return 1;
+  };
+  let stream = audio.music(48000, 2);
+  let format = codec.Format { sample_rate: 48000, channels: 2, encoding: codec.PCM_I16, channel_mask: 12 };
+  block(32766, 2);
+  let Ok(value) = buffer(decoder) else {
+    return 2;
+  };
+  plan(1, 0, 1);
+  let mark = bench.alloc_count();
+  let Ok(first) = playback.write(stream, decoder, format, value, 0, 7) else {
+    return 3;
+  };
+  let allocations = bench.allocs_after(mark);
+  if (first != 1 || allocations != 0i64 || calls() != 1 || sample(0) != 32766 || sample(1) != 32767 || released() != 0) {
+    return 3;
+  }
+  plan(1, 1, -1);
+  if (playback.write(stream, decoder, format, value, 1, 7).unwrap_or(-1) != 1 || sample(0) != -32768 || sample(1) != -32767 || released() != 0) {
+    return 4;
+  }
+  plan(1, 0, 0);
+  if (playback.write(stream, decoder, format, value, 0, 7).unwrap_or(-1) != 0 || calls() != 1) {
+    return 5;
+  }
+  plan(1, 0, -899);
+  if (!error(playback.write(stream, decoder, format, value, 0, 7), frame.Platform)) {
+    return 6;
+  }
+  plan(1, 0, 3);
+  if (!error(playback.write(stream, decoder, format, value, 0, 7), frame.Platform)) {
+    return 7;
+  }
+  plan(1, 0, -1);
+  if (playback.write(stream, decoder, format, value, 2, 7).unwrap_or(-1) != 0 || calls() != 0) {
+    return 8;
+  }
+  for offset in [-1, 3, 2147483647] {
+    if let Ok(_) = playback.write(stream, decoder, format, value, offset, 7) {
+      return 9;
+    }
+  }
+  if (!error(playback.write(stream, decoder, format, value, 0, -1), frame.Header) || calls() != 0) {
+    return 10;
+  }
+  if (!error(playback.write(stream, decoder, format, video.OutputBuffer { ...value, flags: codec.FLAG_CODEC_CONFIG }, 0, 7), frame.Header) || calls() != 0) {
+    return 28;
+  }
+  for wrong in [codec.Format { ...format, encoding: codec.PCM_F32 }, codec.Format { ...format, sample_rate: 44100 }, codec.Format { ...format, channels: 1 }, codec.Format { ...format, channels: 0 }, codec.Format { ...format, channels: 3 }, codec.Format { ...format, channel_mask: 4 }, codec.Format { ...format, channel_mask: -1 }] {
+    if (!error(playback.write(stream, decoder, wrong, value, 0, 7), frame.Unsupported)) {
+      return 11;
+    }
+  }
+  for size in [1, 2, 3, 5, 6, 7] {
+    if (!error(playback.write(stream, decoder, format, video.OutputBuffer { ...value, size: size }, 0, 7), frame.Buffer)) {
+      return 12;
+    }
+  }
+  for wrong in [video.OutputBuffer { ...value, offset: -1 }, video.OutputBuffer { ...value, size: -1 }, video.OutputBuffer { ...value, index: -1 }] {
+    if (!error(playback.write(stream, decoder, format, wrong, 0, 7), frame.Header)) {
+      return 13;
+    }
+  }
+  if (!error(playback.write(stream, decoder, format, video.OutputBuffer { ...value, offset: 4096 }, 0, 7), frame.Platform)) {
+    return 14;
+  }
+  if (!error(playback.write(stream, decoder, format, video.OutputBuffer { ...value, size: 4100 }, 0, 7), frame.Limit)) {
+    return 15;
+  }
+  if (!error(playback.write(audio.Music { ...stream, ptr: 0 as usize }, decoder, format, value, 0, 7), frame.State) || calls() != 0) {
+    return 16;
+  }
+  if (playback.write(stream, decoder, codec.Format { ...format, channel_mask: 0 }, value, 0, 7).unwrap_or(-1) != 2) {
+    return 27;
+  }
+  plan(1, 0, -1);
+  if let Err(_) = decoder.release(value) {
+    return 17;
+  }
+  let Ok(codec.Buffer(end)) = decoder.output(0i64) else {
+    return 18;
+  };
+  if (playback.write(stream, decoder, format, end, 0, 7).unwrap_or(-1) != 0 || calls() != 0) {
+    return 19;
+  }
+  let _ = decoder.release(end);
+  capture();
+  for part in 0..64 {
+    let _ = decoder.flush();
+    block(part * 1024, 512);
+    let Ok(value) = buffer(decoder) else {
+      return 20;
+    };
+    plan(1, 0, -1);
+    if (playback.write(stream, decoder, format, value, 0, 7).unwrap_or(-1) != 512) {
+      return 21;
+    }
+    for i in 0..1024 {
+      let bits = part * 1024 + i;
+      let expected = if (bits >= 32768) { bits - 65536 } else { bits };
+      if (sample(i) != expected) {
+        return 22;
+      }
+    }
+    let _ = decoder.release(value);
+  }
+  capture_end();
+  if (released() != 66) {
+    return 23;
+  }
+  let _ = decoder.flush();
+  channels(1);
+  block(32767, 2);
+  let mono = audio.music(48000, 1);
+  let Ok(value) = buffer(decoder) else {
+    return 25;
+  };
+  plan(1, 0, -1);
+  if (playback.write(mono, decoder, codec.Format { ...format, channels: 1, channel_mask: 4 }, value, 0, 7).unwrap_or(-1) != 2 || sample(0) != 32767 || sample(1) != -32768) {
+    return 26;
+  }
+  let _ = decoder.release(value);
+  mono.close();
+  let _ = decoder.close();
+  stream.close();
+  if (live() != 0) {
+    return 24;
+  }
+  return 0;
+}

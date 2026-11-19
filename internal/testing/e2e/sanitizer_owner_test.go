@@ -164,7 +164,10 @@ const sanUninitSrc = `function main(): i32 {
 // pattern, so a read of memory that the program never wrote gives the same
 // value on each run.
 func TestSanitizeFillsFreshRawBlocks(t *testing.T) {
-	for name, run := range map[string]func(*testing.T, string) (string, string, int){"x86-64": runSanitizeX86_64, "arm64": runSanitizeArm64} {
+	wasm := func(t *testing.T, src string) (string, string, int) {
+		return runSanitizeWasm(t, src, "FERN_SANITIZE=1")
+	}
+	for name, run := range map[string]func(*testing.T, string) (string, string, int){"x86-64": runSanitizeX86_64, "arm64": runSanitizeArm64, "wasm32": wasm} {
 		t.Run(name, func(t *testing.T) {
 			_, stderr, code := run(t, sanUninitSrc)
 			if code != 42 || strings.Contains(stderr, "fern-sanitizer:") {
@@ -190,7 +193,10 @@ const sanBoxOverflowSrc = `function main(): i32 {
 // A write inside the box is not.
 func TestSanitizeTypedBoxOverflowReported(t *testing.T) {
 	const report = "fern-sanitizer: heap-buffer-overflow (a block was written past its end)"
-	for name, run := range map[string]func(*testing.T, string, ...string) (string, string, int){"x86-64": runSanitizeX86_64With, "arm64": runSanitizeArm64With} {
+	wasm := func(t *testing.T, src string, env ...string) (string, string, int) {
+		return runSanitizeWasm(t, src, append([]string{"FERN_SANITIZE=1"}, env...)...)
+	}
+	for name, run := range map[string]func(*testing.T, string, ...string) (string, string, int){"x86-64": runSanitizeX86_64With, "arm64": runSanitizeArm64With, "wasm32": wasm} {
 		t.Run(name, func(t *testing.T) {
 			_, stderr, code := run(t, strings.Replace(sanBoxOverflowSrc, "OFFSET", "24", 1), uncertified)
 			if code != e2eharness.ExitSanitizer || !strings.Contains(stderr, report) {
@@ -254,5 +260,106 @@ func TestWasmSanitizeReportsFreedBlocks(t *testing.T) {
 		if code == 0 || !strings.Contains(stderr, "fern: release of memory that is already free") {
 			t.Errorf("%v: raw double free: exit=%d, want the report\nstderr: %s", env, code, stderr)
 		}
+	}
+}
+
+// A write into a released block. The churn of 72 MiB passes the default
+// budget of the quarantine, so its eviction finds the write before the
+// program prints. Offset 0 is the count word, and offset 40 is the payload.
+const sanWasmEvictWriteSrc = `function main(): i32 {
+  unsafe {
+    let keep: usize = __alloc(64);
+    __free(keep, 64);
+    __store_u8(keep + OFFSET, 7);
+    let i: i32 = 0;
+    while (i < 1100) {
+      let p: usize = __alloc(65536);
+      __free(p, 65536);
+      i = i + 1;
+    }
+  }
+  print("survived");
+  return 0;
+}`
+
+// A write into a released block with no release after it: the block is
+// still in the quarantine when the program exits.
+const sanWasmExitWriteSrc = `function main(): i32 {
+  unsafe {
+    let p: usize = __alloc(64);
+    __free(p, 64);
+    __store_u8(p + 40, 7);
+  }
+  print("survived");
+  return 0;
+}`
+
+// A read through a dangling pointer gives the poison pattern of the
+// quarantine, not the byte that the block held.
+const sanWasmPayloadReadSrc = `function main(): i32 {
+  unsafe {
+    let p: usize = __alloc(64);
+    __store_u8(p + 40, 7);
+    __free(p, 64);
+    print(__load_u8(p + 40).to_string());
+  }
+  return 0;
+}`
+
+// A 3000-byte block takes a class of 3072 bytes. A write at byte 3008 lands
+// in the class past the request, and a write at byte 2999 is in bounds.
+const sanWasmSlackSrc = `function main(): i32 {
+  unsafe {
+    let p: usize = __alloc(3000);
+    __store_u8(p + OFFSET, 7);
+    __free(p, 3000);
+  }
+  print("survived");
+  return 0;
+}`
+
+// The release of a block checks the bytes of its class past the request, as
+// the native release does.
+func TestWasmSanitizeReportsSlackWrite(t *testing.T) {
+	stdout, stderr, code := runSanitizeWasm(t, strings.Replace(sanWasmSlackSrc, "OFFSET", "3008", 1), "FERN_SANITIZE=1")
+	if code != e2eharness.ExitSanitizer || !strings.Contains(stderr, "fern-sanitizer: heap-buffer-overflow (a block was written past its end)") || strings.Contains(stdout, "survived") {
+		t.Errorf("past the request: exit=%d, want %d with the report\nstdout: %s\nstderr: %s", code, e2eharness.ExitSanitizer, stdout, stderr)
+	}
+	stdout, stderr, code = runSanitizeWasm(t, strings.Replace(sanWasmSlackSrc, "OFFSET", "2999", 1), "FERN_SANITIZE=1")
+	if code != 0 || !strings.Contains(stdout, "survived") || strings.Contains(stderr, "fern-sanitizer:") {
+		t.Errorf("last byte of the request: exit=%d, want a clean run\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+}
+
+// The wasm quarantine fills a released block with the poison pattern and
+// checks it at eviction and at exit, as the native quarantine does.
+func TestWasmSanitizeReportsWriteAfterFree(t *testing.T) {
+	const report = "fern-sanitizer: write-after-free (a quarantined block was written)"
+	for _, offset := range []string{"0", "40"} {
+		src := strings.Replace(sanWasmEvictWriteSrc, "OFFSET", offset, 1)
+		stdout, stderr, code := runSanitizeWasm(t, src, "FERN_SANITIZE=1")
+		if code != e2eharness.ExitSanitizer || !strings.Contains(stderr, report) || strings.Contains(stdout, "survived") {
+			t.Errorf("eviction, offset %s: exit=%d, want %d with the report before the print\nstdout: %s\nstderr: %s", offset, code, e2eharness.ExitSanitizer, stdout, stderr)
+		}
+		stdout, _, code = runSanitizeWasm(t, src)
+		if code != 0 || !strings.Contains(stdout, "survived") {
+			t.Errorf("eviction, offset %s, no flag: exit=%d\nstdout: %s", offset, code, stdout)
+		}
+	}
+	stdout, stderr, code := runSanitizeWasm(t, sanWasmExitWriteSrc, "FERN_SANITIZE=1")
+	if code != e2eharness.ExitSanitizer || !strings.Contains(stderr, report) {
+		t.Errorf("at exit: exit=%d, want %d with the report\nstdout: %s\nstderr: %s", code, e2eharness.ExitSanitizer, stdout, stderr)
+	}
+	stdout, _, code = runSanitizeWasm(t, sanWasmExitWriteSrc)
+	if code != 0 || !strings.Contains(stdout, "survived") {
+		t.Errorf("at exit, no flag: exit=%d\nstdout: %s", code, stdout)
+	}
+	stdout, stderr, code = runSanitizeWasm(t, sanWasmPayloadReadSrc, "FERN_SANITIZE=1")
+	if code != 0 || strings.TrimSpace(stdout) != "206" {
+		t.Errorf("read after free: exit=%d, printed %q; want the poison byte 206\nstderr: %s", code, stdout, stderr)
+	}
+	stdout, _, code = runSanitizeWasm(t, sanWasmPayloadReadSrc)
+	if code != 0 || strings.TrimSpace(stdout) != "7" {
+		t.Errorf("read after free, no flag: exit=%d, printed %q; want the stale byte 7", code, stdout)
 	}
 }

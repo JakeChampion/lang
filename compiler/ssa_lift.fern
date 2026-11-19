@@ -571,7 +571,11 @@ function lift_call_indirect_prod(op: ir.Op, lv: LiftVals): LiftVals {
     stack = util.drop_last_i32(stack);
   }
   let v = lv.nvals;
-  let insts = lv.insts.append(ssa.SInst { kind_tag: ssa.CALL_IND, result: v, args: args, imm: op.i64_imm as i32, str: "" });
+  let units = "";
+  if (ir.call_units(op) >= 0) {
+    units = util.i32_to_string(ir.call_units(op));
+  }
+  let insts = lv.insts.append(ssa.SInst { kind_tag: ssa.CALL_IND, result: v, args: args, imm: op.i64_imm as i32, str: units });
   return LiftVals { nvals: v + 1, stack: stack.append(v), insts: insts, ok: true };
 }
 
@@ -714,6 +718,11 @@ function lift_struct_set_shape_prod(op: ir.Op, lv: LiftVals): LiftVals {
 }
 
 function lift_variant_is_prod(op: ir.Op, lv: LiftVals): LiftVals {
+  if (ir.is_static_variant_test(op)) {
+    let paired = if (ir.is_paired_variant_test(op)) { ssa.PAIRED_BOX } else { 0 };
+    let box = lift_pop_push(lv, 0, ssa.AGG_LIT, paired, ir.op_const_struct(op.str, 0, "").str);
+    return lift_pop_push(box, 2, ssa.BINARY, 64, "eq");
+  }
   let tag = lift_pop_push(lv, 1, 40, ssa.tag_offset(), "u32");
   if (!tag.ok) {
     return tag;

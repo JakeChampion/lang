@@ -51,13 +51,17 @@ func TestAndroidPlexControl(t *testing.T) {
 	runPlexSuite(t, "control_test.fern")
 }
 
-// fern -apk builds the app: a NativeActivity with no Java code of its own,
-// whose classes.dex holds the listener of the media player.
+// fern -apk builds the app: a NativeActivity with no Java code of its own.
+// Its classes.dex holds the listener of the ExoPlayer, and classes2.dex is
+// the DEX file of Media3. Here a small file stands in for that one.
 func TestAndroidPlexApk(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "plex.apk")
-	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-package", "dev.fern.plex", "-apk-label", "Fern for Plex",
-		"-apk-min-sdk", "30", "-apk-permission", "INTERNET,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MEDIA_PLAYBACK,POST_NOTIFICATIONS,WAKE_LOCK", "-apk-cleartext",
+	media3 := filepath.Join(dir, "media3.dex")
+	if err := os.WriteFile(media3, []byte("dex\n035\x00media3"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-dex", media3,
 		e2eharness.RepoPath(plexApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t))
 	cmd.Env = e2eharness.ChildEnv()
 	if o, err := cmd.CombinedOutput(); err != nil {
@@ -76,7 +80,7 @@ func TestAndroidPlexApk(t *testing.T) {
 		names = append(names, f.Name)
 	}
 	// fern.toml of the app gives the banner of the launcher of Android TV.
-	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex resources.arsc res/drawable/banner.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
+	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex classes2.dex resources.arsc res/drawable/banner.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
 		t.Errorf("entries = %s", got)
 	}
 	banner, err := os.ReadFile(e2eharness.RepoPath(plexApp, "banner.png"))
@@ -86,8 +90,13 @@ func TestAndroidPlexApk(t *testing.T) {
 	if !bytes.Equal(readZipEntry(t, zr, "res/drawable/banner.png"), banner) {
 		t.Error("the banner in the APK is not banner.png of the app")
 	}
-	want := []string{"ANativeActivity_onCreate", "Java_dev_fern_plex_Media_onPrepared", "Java_dev_fern_plex_Media_onCompletion",
-		"Java_dev_fern_plex_Media_onError", "Java_dev_fern_plex_Media_onInfo", "Java_dev_fern_plex_Media_onSeekComplete",
+	classes := readZipEntry(t, zr, "classes.dex")
+	for _, d := range []string{"Ldev/fern/plex/Exo;", "Ljava/util/concurrent/atomic/AtomicReference;", "Landroid/os/Handler$Callback;", "Landroidx/media3/common/Player$Listener;"} {
+		if !bytes.Contains(classes, []byte(d)) {
+			t.Errorf("classes.dex has no %s", d)
+		}
+	}
+	want := []string{"ANativeActivity_onCreate", "Java_dev_fern_plex_Exo_handleMessage", "Java_dev_fern_plex_Exo_onEvents",
 		"Java_dev_fern_plex_Controls_onPlay", "Java_dev_fern_plex_Controls_onPause", "Java_dev_fern_plex_Controls_onSeekTo",
 		"Java_dev_fern_plex_Playing_onStartCommand"}
 	for _, name := range []string{"lib/arm64-v8a/libapp.so", "lib/x86_64/libapp.so"} {

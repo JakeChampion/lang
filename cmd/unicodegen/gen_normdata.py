@@ -115,6 +115,7 @@ def main() -> None:
     out.write("# C;<cp>;<ccc>        canonical combining class (nonzero only)\n")
     out.write("# D;<cp>;<cp> ...     canonical decomposition, fully expanded (NFD)\n")
     out.write("# P;<cp>;<a> <b>      primary composite: a+b recompose to cp under NFC\n")
+    out.write("# S;<cp>;<a> [<b>]    one-step canonical decomposition, when it is not the D record\n")
 
     for cp in sorted(ccc):
         out.write("C;%04X;%d\n" % (cp, ccc[cp]))
@@ -135,6 +136,10 @@ def main() -> None:
         parts = decomp[cp]
         if len(parts) == 2 and cp not in excluded:
             out.write("P;%04X;%04X %04X\n" % (cp, parts[0], parts[1]))
+        # A shaper that decomposes one step at a time, as HarfBuzz does,
+        # needs the one-step mapping where it is not the full expansion.
+        if parts != nfd(cp, ccc, decomp):
+            out.write("S;%04X;%s\n" % (cp, " ".join("%04X" % c for c in parts)))
 
 
 if __name__ == "__main__":

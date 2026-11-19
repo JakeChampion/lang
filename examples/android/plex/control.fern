@@ -27,17 +27,22 @@ import "./ui";
 
 // The input and output of the app. `read` gives "" for a file that does not
 // exist. `fetch` starts a worker that sends the requests in turn. The player
-// functions drive the one media player of the app.
+// functions drive the player of the item that plays.
 pub struct Device {
   mono_ms: () => i64,
   read: (string) => string,
   write: (string, string) => void,
+  // Deletes the file at the path.
+  remove: (string) => void,
   size: (usize) => (i32, i32),
   lock: (usize) => draw.Frame,
   post: (draw.Frame) => void,
   finish: () => void,
   keep_screen_on: (boolean) => void,
   immersive: (boolean) => void,
+  // Turns the screen to the wide side of the video, or gives the turn back
+  // to the device.
+  turn: (boolean) => void,
   show_field: (string) => void,
   set_field: (string) => void,
   hide_field: () => void,
@@ -49,6 +54,16 @@ pub struct Device {
   play: (string) => boolean,
   // Puts the video on the window, and false when it cannot.
   show_video: (usize) => boolean,
+  // Asks the display of the window to show it at a frame rate, or takes the
+  // request away with 0.
+  frame_rate: (usize, f32) => void,
+  // Shows the subtitle track of the file with an index among its subtitle
+  // tracks, or none with -1. The player draws the subtitles of images.
+  select_text: (i32) => boolean,
+  // The subtitles of images that show now, with no keys.
+  image_cues: () => ui.Picture[],
+  // The width and the height of the video in pixels, or (0, 0).
+  video_size: () => (i32, i32),
   // Puts the GPU painter on the window, and false when the phone has none:
   // then the app draws with `lock` and `post`.
   attach: (usize) => boolean,
@@ -151,7 +166,7 @@ struct Call { purpose: string, w: worker.Worker[plex.Reply[]] }
 struct Batch { keys: string[], w: worker.Worker[plex.Reply[]] }
 
 // A screen on the back stack, as the user left it.
-struct Page { screen: i32, title: string, scroll: i32, rows: i32[], items: plex.Item[], total: i32, section: plex.Section, item: plex.Item, children: plex.Item[] }
+struct Page { screen: i32, title: string, scroll: i32, rows: i32[], items: plex.Item[], total: i32, section: plex.Section, item: plex.Item, children: plex.Item[], local: boolean }
 
 // A finger on the screen. `axis` is 0 until it moves, 1 when it moves a
 // row across and 2 when it moves the screen up or down. `xs` and `ys` are
@@ -211,6 +226,10 @@ struct Play {
   choice: plex.Choice,
   cues: plex.Cue[],
   sheet: boolean,
+  // The subtitles of images that the player shows now, and the delay of
+  // the text subtitles: a positive delay shows each line later.
+  images: ui.Picture[],
+  delay_ms: i64,
   // The time that the card of the next item came, or 0, and whether the
   // user turned the next item off.
   up_next_at: i64,
@@ -246,6 +265,9 @@ struct Play {
   // True when the play paused because another app or a call took the
   // audio focus, so it goes on when the focus comes back.
   focus_paused: boolean,
+  // True when the new stream waits until the server remembers the tracks
+  // of a choice.
+  held: boolean,
 }
 
 pub struct App {
@@ -281,6 +303,28 @@ pub struct App {
   quality: i32,
   // The rate of the playback in hundredths, one of `speeds()`.
   speed: i32,
+  // The language of the tracks, a two-letter code, or "" for the one of
+  // the account or the phone. The mode of the subtitles is one of
+  // plex.SUBS_*, or -1 for the one of the account.
+  lang: string,
+  subs: i32,
+  // The language and the mode of the subtitles of the plex.tv account, ""
+  // and -1 when it gives none.
+  account_lang: string,
+  account_subs: i32,
+  // The items and the shows whose tracks the person chose. They keep the
+  // tracks that the server remembers.
+  picked: string[],
+  // The size of the text subtitles, an index of `caption_sizes()`, and
+  // whether a dark panel is behind them, else a shadow.
+  caption_size: i32,
+  caption_box: boolean,
+  // The shows whose next episodes that are not watched stay downloaded, the
+  // number of them as an index of `smart_counts()`, and the time of the
+  // last check.
+  smart: string[],
+  smart_count: i32,
+  smart_at: i64,
   // The texts in the language of the person.
   texts: i18n.Strings,
   // Whether a list plays in a random order, and its repeat: 0 none, 1 the
@@ -290,6 +334,11 @@ pub struct App {
   repeat: i32,
   sleep: i32,
   sleep_at: i64,
+  // True while the screen keeps the shape of the video.
+  turned: boolean,
+  // True while the detail screen shows downloads: its items play from the
+  // phone, and its second button removes them.
+  local: boolean,
   screen: i32,
   tab: i32,
   title: string,
@@ -358,7 +407,7 @@ pub struct App {
 
 // A download of an item: the ID that Android gave, the item as the server
 // sent it, the name of its file, and its last state.
-struct Saved { id: i64, item: plex.Item, file: string, status: i32, done: i64, total: i64 }
+pub struct Saved { id: i64, item: plex.Item, file: string, status: i32, done: i64, total: i64 }
 
 // The time between two reads of the progress of the downloads.
 const DOWNLOAD_MS: i64 = 1000i64;
@@ -390,7 +439,7 @@ function no_server(): plex.Server {
 }
 
 function no_play(): Play {
-  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [], album: [], bif: None, scrub_ms: -1i64, scrub_seek_at: 0i64, thumb_index: -1, thumb: None, level: 0, stalls: [], choice: plex.no_choice(), cues: [], sheet: false, up_next_at: 0i64, next_off: false, tap_at: -1000i64, tap_x: 0, tap_overlay: false, badge: "", badge_until: 0i64, gesture: 0, gesture_from: 0, gesture_level: -1, gesture_max: 0, light: -1, next: plex.no_item(), next_queue: [], next_stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, next_session: "", next_ready: false, next_plan: "", next_tried: "", focus_paused: false };
+  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [], album: [], bif: None, scrub_ms: -1i64, scrub_seek_at: 0i64, thumb_index: -1, thumb: None, level: 0, stalls: [], choice: plex.no_choice(), cues: [], sheet: false, images: [], delay_ms: 0i64, up_next_at: 0i64, next_off: false, tap_at: -1000i64, tap_x: 0, tap_overlay: false, badge: "", badge_until: 0i64, gesture: 0, gesture_from: 0, gesture_level: -1, gesture_max: 0, light: -1, next: plex.no_item(), next_queue: [], next_stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, next_session: "", next_ready: false, next_plan: "", next_tried: "", focus_paused: false, held: false };
 }
 
 function no_press(): Press {
@@ -457,6 +506,15 @@ function save(s: App): void {
     "server_uri=" + s.base.uri,
     "quality=" + s.quality.to_string(),
     "speed=" + s.speed.to_string(),
+    "lang=" + s.lang,
+    "subs=" + s.subs.to_string(),
+    "account_lang=" + s.account_lang,
+    "account_subs=" + s.account_subs.to_string(),
+    "picked=" + s.picked.join(","),
+    "caption_size=" + s.caption_size.to_string(),
+    "caption_box=" + (if (s.caption_box) { "1" } else { "0" }),
+    "smart=" + s.smart.join(","),
+    "smart_count=" + s.smart_count.to_string(),
     "shuffle=" + (if (s.shuffle) { "1" } else { "0" }),
     "repeat=" + s.repeat.to_string(),
   ];
@@ -490,7 +548,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     client: plex.Client { id: id, device: "Android", token: setting(text, "token") },
     server: no_server(), base: plex.Base { uri: setting(text, "server_uri"), token: setting(text, "server_token") },
     servers: [], states: [], probing: -1, probe_states: [], probe_at: 0i64, probes: [], rechecking: false, recheck_at: -100000i64, left: [], pin: plex.Pin { id: 0i64, code: "", token: "" }, pin_at: 0i64,
-    account: setting(text, "account"), quality: num(setting(text, "quality")), speed: speed_of(setting(text, "speed")), texts: texts.for_languages(dev.languages), shuffle: setting(text, "shuffle") == "1", repeat: num(setting(text, "repeat")) % 3, sleep: 0, sleep_at: 0i64,
+    account: setting(text, "account"), quality: num(setting(text, "quality")), speed: speed_of(setting(text, "speed")), lang: plex.language_code(setting(text, "lang")), subs: mode_of(setting(text, "subs")), account_lang: setting(text, "account_lang"), account_subs: mode_of(setting(text, "account_subs")), picked: listed(setting(text, "picked")), caption_size: num(setting(text, "caption_size")) % 3, caption_box: setting(text, "caption_box") != "0", smart: listed(setting(text, "smart")), smart_count: smart_index(setting(text, "smart_count")), smart_at: -SMART_MS, texts: texts.for_languages(dev.languages), shuffle: setting(text, "shuffle") == "1", repeat: num(setting(text, "repeat")) % 3, sleep: 0, sleep_at: 0i64, turned: false, local: false,
     screen: ui.LOGIN, tab: 0, title: "", scroll: 0, rows: [], stack: [],
     hubs: none, results: none, sections: [], section: no_section(), items: [], total: 0, sort: 0, unwatched: false, letters: [], item: plex.no_item(), children: [],
     query: "", typing: false, search_at: 0i64, error: "",
@@ -729,6 +787,9 @@ function poll_report(own s: App): App {
     }
     if (d.reply.status == 0) {
       next = keep_pending(App { ...next, offline: true }, d.purpose);
+    } else if (d.reply.ok() && d.purpose.starts_with("report:seen:")) {
+      let now = next.dev.mono_ms();
+      next = check_smart(next, now);
     }
   }
   return start_report(next);
@@ -977,7 +1038,7 @@ function answer(own s: App, purpose: string, r: plex.Reply): App {
   if (verb == "user") {
     if (r.ok()) {
       let a = plex.parse_account(r.text());
-      let u = App { ...t, account: a.name };
+      let u = App { ...t, account: a.name, account_lang: a.language, account_subs: a.subtitles };
       save(u);
       return u;
     }
@@ -1000,6 +1061,20 @@ function answer(own s: App, purpose: string, r: plex.Reply): App {
   }
   if (verb == "bif") {
     return got_bif(t, rest, r);
+  }
+  if (verb == "retrack") {
+    if (t.play.active && t.play.held && t.play.session == rest) {
+      let ok = t.dev.play(t.play.stream.url);
+      return App { ...t, play: Play { ...t.play, held: false } };
+    }
+    return t;
+  }
+  if (verb == "subfile") {
+    let (key, id) = split_purpose(rest);
+    if (r.ok() && t.dir.len() > 0 && saved_at(t, key) >= 0) {
+      t.dev.write(download_subtitle_path(t.dir, key, id), r.text());
+    }
+    return t;
   }
   if (verb == "subtitle") {
     if (r.ok() && t.play.active && t.play.choice.subtitle == rest) {
@@ -1071,6 +1146,9 @@ function got_media(own t: App, verb: string, rest: string, r: plex.Reply): App {
   }
   if (verb == "downloadall") {
     return download_all(t, plex.parse_items(r.text()).items);
+  }
+  if (verb == "smart") {
+    return got_smart(t, rest, r);
   }
   if (verb == "search") {
     if (rest == t.query) {
@@ -1214,7 +1292,7 @@ function got_switch(own t: App, title: string, r: plex.Reply): App {
   let u = App { ...t, client: t.client.with_token(token), account: title, server: no_server(), base: plex.Base { uri: "", token: "" }, hubs: [], sections: [], results: [], users: [], pin_for: "", pin_digits: "", error: "" };
   save(u);
   log.info("plex: switched to the user " + title);
-  return open_servers(u);
+  return ask(open_servers(u), "user", User);
 }
 
 function open_servers(own s: App): App {
@@ -1376,7 +1454,7 @@ function open_home(own s: App): App {
 }
 
 function page_of(s: App): Page {
-  return Page { screen: s.screen, title: s.title, scroll: s.scroll, rows: s.rows, items: s.items, total: s.total, section: s.section, item: s.item, children: s.children };
+  return Page { screen: s.screen, title: s.title, scroll: s.scroll, rows: s.rows, items: s.items, total: s.total, section: s.section, item: s.item, children: s.children, local: s.local };
 }
 
 function push(own s: App): App {
@@ -1385,7 +1463,7 @@ function push(own s: App): App {
 }
 
 function restore(own s: App, p: Page): App {
-  return App { ...s, screen: p.screen, title: p.title, scroll: p.scroll, rows: p.rows, items: p.items, total: p.total, section: p.section, item: p.item, children: p.children, dirty: true };
+  return App { ...s, screen: p.screen, title: p.title, scroll: p.scroll, rows: p.rows, items: p.items, total: p.total, section: p.section, item: p.item, children: p.children, local: p.local, dirty: true };
 }
 
 function pop(own s: App): App {
@@ -1515,7 +1593,7 @@ function open_item(own s: App, it: plex.Item): App {
   if (it.key.len() == 0) {
     return s;
   }
-  let u = ask(App { ...push(s), screen: ui.DETAIL, title: plex.card_title(it), item: it, children: [], scroll: 0, dirty: true }, "meta:" + it.key, Meta(it.key));
+  let u = ask(App { ...push(s), screen: ui.DETAIL, title: plex.card_title(it), item: it, children: [], scroll: 0, local: false, dirty: true }, "meta:" + it.key, Meta(it.key));
   if (it.kind == "show" || it.kind == "season" || it.kind == "artist" || it.kind == "album") {
     return ask(u, "children:" + it.key, Children(it.key));
   }
@@ -1704,7 +1782,8 @@ function hold_tick(own s: App, now: i64): App {
   let Some(it) = item_at(s, n.tap.name) else {
     return s;
   };
-  if (it.key.len() == 0) {
+  // A card of the downloads holds downloads, and its detail removes them.
+  if (it.key.len() == 0 || s.screen == ui.DOWNLOADS || s.local) {
     return s;
   }
   return App { ...s, press: no_press(), menu: it, dirty: true };
@@ -1745,6 +1824,12 @@ function download_meta_path(dir: string, key: string): string {
   return dir + "/download-" + key + ".json";
 }
 
+// The file that keeps the text of the subtitle track `id` of the download
+// of the item `key`.
+function download_subtitle_path(dir: string, key: string, id: string): string {
+  return dir + "/download-" + key + "-" + id + ".sub";
+}
+
 // The downloads that the files of `dir` list. Each line of the list holds
 // the ID, the key, the file, the status and the place to play from. The
 // metadata of each item is in a file of its own.
@@ -1757,7 +1842,8 @@ function load_downloads(dev: Device, dir: string): Saved[] {
     let f = line.split("\t");
     if (f.len() == 5) {
       if let Some(it) = plex.parse_item(dev.read(download_meta_path(dir, f[1]))) {
-        out = out.append(Saved { id: num64(f[0]), item: plex.Item { ...it, offset_ms: num64(f[4]) }, file: f[2], status: num(f[3]), done: 0i64, total: -1i64 });
+        let held = plex.file_item(it, plex.transcoded_file(it, f[2]));
+        out = out.append(Saved { id: num64(f[0]), item: plex.Item { ...held, offset_ms: num64(f[4]) }, file: f[2], status: num(f[3]), done: 0i64, total: -1i64 });
       }
     }
   }
@@ -1799,7 +1885,19 @@ function saved_row(s: App, d: Saved): ui.SavedRow {
   } else if (d.status == download.RUNNING) {
     state = download_percent(s, d.item.key).to_string() + "%";
   }
-  return ui.SavedRow { title: plex.card_title(d.item), state: state, done: d.status == download.DONE };
+  return ui.SavedRow { title: plex.card_title(d.item), detail: plex.episode_line(d.item), state: state, done: d.status == download.DONE, at: -1 };
+}
+
+// The rows of the downloads that are not done, under the cards of the
+// downloads that are.
+function waiting_rows(s: App): ui.SavedRow[] {
+  let out: ui.SavedRow[] = [];
+  for at in 0..s.downloads.len() {
+    if (s.downloads[at].status != download.DONE) {
+      out = out.append(ui.SavedRow { ...saved_row(s, s.downloads[at]), at: at });
+    }
+  }
+  return out;
 }
 
 function download_percent(s: App, key: string): i32 {
@@ -1840,6 +1938,9 @@ function shown_hubs(s: App): plex.Hub[] {
     return s.results;
   }
   let done = s.downloads.filter((d: Saved): boolean => d.status == download.DONE).map((d: Saved): plex.Item => d.item);
+  if (s.screen == ui.DOWNLOADS) {
+    return saved_hubs(s, done);
+  }
   if (s.screen != ui.HOME || done.len() == 0) {
     return s.hubs;
   }
@@ -1852,6 +1953,90 @@ function shown_hubs(s: App): plex.Hub[] {
   return s.hubs.append(row);
 }
 
+// The place of `x` in `xs`, or -1.
+function position_of(xs: string[], x: string): i32 {
+  for k in 0..xs.len() {
+    if (xs[k] == x) {
+      return k;
+    }
+  }
+  return -1;
+}
+
+// The rows of the screen of the downloads: a card for each show, each
+// movie and each album.
+function saved_hubs(s: App, done: plex.Item[]): plex.Hub[] {
+  let cards = plex.shelves(done).map((sh: plex.Shelf): plex.Item => sh.card);
+  let out: plex.Hub[] = [];
+  for (title, kinds) in [("SHOWS", ["show"]), ("MOVIES", ["movie"]), ("MUSIC", ["album", "track"])] {
+    let row = cards.filter((c: plex.Item): boolean => position_of(kinds, c.kind) >= 0);
+    if (row.len() > 0) {
+      out = out.append(plex.Hub { title: s.texts.text(title), ident: "saved-" + title, items: row });
+    }
+  }
+  let rest = cards.filter((c: plex.Item): boolean => c.kind != "show" && c.kind != "movie" && c.kind != "album" && c.kind != "track");
+  if (rest.len() > 0) {
+    out = out.append(plex.Hub { title: s.texts.text("Downloads"), ident: "saved-other", items: rest });
+  }
+  return out;
+}
+
+// Opens the detail screen of the card `card` of the downloads. Its items
+// come from the phone. With a server, the metadata of a card that the
+// server knows gives the synopsis.
+function open_saved(own s: App, card: plex.Item): App {
+  let done = s.downloads.filter((d: Saved): boolean => d.status == download.DONE).map((d: Saved): plex.Item => d.item);
+  let children: plex.Item[] = [];
+  for sh in plex.shelves(done) {
+    if (sh.card.key == card.key && card.kind != "movie" && card.kind != "episode") {
+      children = sh.items;
+    }
+  }
+  let no_meta = s.offline || plex.app_key(card.key);
+  let t = App { ...push(s), screen: ui.DETAIL, title: plex.card_title(card), item: card, children: children, scroll: 0, local: true, dirty: true };
+  if (no_meta) {
+    return t;
+  }
+  return ask(t, "meta:" + card.key, Meta(card.key));
+}
+
+// Plays the item of a detail screen of the downloads: the first episode
+// not seen, or the first track, with the items after it as the queue.
+function play_saved(own s: App): App {
+  let it = s.item;
+  let children = s.children;
+  if (children.len() == 0) {
+    return start_play(s, it, []);
+  }
+  let at = -1;
+  for k in 0..children.len() {
+    if (at < 0 && !(it.kind == "show" && plex.watched(children[k]))) {
+      at = k;
+    }
+  }
+  if (at < 0) {
+    at = 0;
+  }
+  return start_play(s, children[at], children.drop(at).drop(1));
+}
+
+// Removes the downloads of the detail screen of the downloads, and goes
+// back.
+function remove_saved(own s: App): App {
+  let keys = s.children.map((it: plex.Item): string => it.key);
+  if (keys.len() == 0) {
+    keys = [s.item.key];
+  }
+  let t = s;
+  for key in keys {
+    let at = saved_at(t, key);
+    if (at >= 0) {
+      t = drop_download(t, at);
+    }
+  }
+  return pop(t);
+}
+
 // Starts the download of the item of the metadata `r`. A file that the
 // phone does not play as it is downloads as a transcode at the quality of
 // the settings.
@@ -1862,18 +2047,25 @@ function got_download(own t: App, r: plex.Reply): App {
   if (saved_at(t, it.key) >= 0 || !plex.playable_kind(it.kind)) {
     return t;
   }
-  let direct = plex.direct_playable(it, t.dev.decoders);
+  // A download plays the sound that the server remembers.
+  let direct = plex.direct_with(it, t.dev.decoders, plex.remembered(it));
   let name = plex.download_name(it, !direct);
   let req = if (direct) { plex.download_request(t.client, t.base, it) } else { plex.download_transcode_request(t.client, t.base, it, plex.qualities()[t.quality], hex_id(t.dev), t.dev.decoders, plex.remembered(it)) };
-  let id = t.dev.download(req, name, plex.card_title(it));
+  let id = t.dev.download(req, name, plex.full_title(it));
   if (id < 0i64) {
     return App { ...t, error: "Android refused the download" };
   }
   if (t.dir.len() > 0) {
     t.dev.write(download_meta_path(t.dir, it.key), r.text());
   }
-  let u = App { ...t, downloads: t.downloads.append(Saved { id: id, item: it, file: name, status: download.PENDING, done: 0i64, total: -1i64 }), downloads_at: 0i64, error: "" };
+  let held = plex.file_item(it, !direct);
+  let u = App { ...t, downloads: t.downloads.append(Saved { id: id, item: held, file: name, status: download.PENDING, done: 0i64, total: -1i64 }), downloads_at: 0i64, error: "" };
   save_downloads(u);
+  // The text of each subtitle comes with the file, so it shows with no
+  // server.
+  for track in plex.subtitle_tracks(held) {
+    u = ask(u, "subfile:" + held.key + ":" + track.id, Subtitle(track));
+  }
   return u;
 }
 
@@ -1914,10 +2106,85 @@ function download_all(own t: App, items: plex.Item[]): App {
   return t;
 }
 
+// The numbers of episodes that a smart download keeps.
+pub function smart_counts(): i32[] {
+  return [1, 3, 5, 10];
+}
+
+// The index of `smart_counts()` in the settings file, or the one of 3.
+function smart_index(text: string): i32 {
+  if (text.len() == 0) {
+    return 1;
+  }
+  return num(text) % smart_counts().len();
+}
+
+// The time between two checks of the smart downloads.
+const SMART_MS: i64 = 1800000i64;
+
+// Asks for the episodes of each show of the smart downloads.
+function check_smart(own s: App, now: i64): App {
+  if (s.base.uri.len() == 0 || s.offline) {
+    return s;
+  }
+  let t = App { ...s, smart_at: now };
+  for show in s.smart {
+    t = ask(t, "smart:" + show, Leaves(show));
+  }
+  return t;
+}
+
+function smart_tick(own s: App, now: i64): App {
+  if (s.smart.len() == 0 || now - s.smart_at < SMART_MS) {
+    return s;
+  }
+  return check_smart(s, now);
+}
+
+// The episodes of the show `show`: the next ones that are not watched
+// download, and the downloads of the watched ones go. The file that plays
+// stays.
+function got_smart(own t: App, show: string, r: plex.Reply): App {
+  if (!r.ok() || !t.smart.contains(show)) {
+    return t;
+  }
+  let episodes = plex.parse_items(r.text()).items;
+  let wanted = episodes.filter((it: plex.Item): boolean => it.views == 0).take(smart_counts()[t.smart_count]);
+  let u = download_all(t, wanted);
+  for it in episodes {
+    let at = saved_at(u, it.key);
+    let playing = u.play.active && u.play.item.key == it.key;
+    if (it.views > 0 && at >= 0 && !playing) {
+      log.info("plex: the smart download of " + it.key + " was watched");
+      u = drop_download(u, at);
+    }
+  }
+  return u;
+}
+
+// Turns the smart downloads of the show `show` on or off.
+function toggle_smart(own s: App, show: string): App {
+  if (s.smart.contains(show)) {
+    let off = App { ...s, smart: s.smart.filter((k: string): boolean => k != show), dirty: true };
+    save(off);
+    return off;
+  }
+  let on = App { ...s, smart: s.smart.append(show), dirty: true };
+  save(on);
+  return ask(on, "smart:" + show, Leaves(show));
+}
+
 // Stops the download at `at` and deletes its file.
 function drop_download(own s: App, at: i32): App {
   let id = s.downloads[at].id;
   s.dev.download_remove(id);
+  if (s.dir.len() > 0) {
+    let it = s.downloads[at].item;
+    s.dev.remove(download_meta_path(s.dir, it.key));
+    for track in plex.subtitle_tracks(it) {
+      s.dev.remove(download_subtitle_path(s.dir, it.key, track.id));
+    }
+  }
   let kept = s.downloads.filter((d: Saved): boolean => d.id != id);
   let t = App { ...s, downloads: kept, dirty: true };
   save_downloads(t);
@@ -1978,6 +2245,9 @@ function menu_act(own s: App, a: string): App {
   if (a == "menu:download_all") {
     return ask(t, "downloadall:" + it.key, Leaves(it.key));
   }
+  if (a == "menu:smart" && it.kind == "show") {
+    return toggle_smart(t, it.key);
+  }
   if (a == "menu:show" && it.grandparent_key.len() > 0) {
     return open_item(t, plex.Item { ...plex.no_item(), key: it.grandparent_key, kind: "show", title: it.grandparent });
   }
@@ -2006,6 +2276,69 @@ function speed_of(text: string): i32 {
     }
   }
   return 100;
+}
+
+// A mode of the subtitles from the settings file, or -1 for none.
+function mode_of(text: string): i32 {
+  if (text.len() == 0 || text.starts_with("-")) {
+    return -1;
+  }
+  return num(text) % 3;
+}
+
+// The items of a list in the settings file, with commas between them.
+function listed(text: string): string[] {
+  if (text.len() == 0) {
+    return [];
+  }
+  return text.split(",");
+}
+
+// The language of the tracks to play: the one of the settings, else the
+// one of the account, else the first language of the phone.
+pub function language(s: App): string {
+  if (s.lang.len() > 0) {
+    return s.lang;
+  }
+  let account = plex.language_code(s.account_lang);
+  if (account.len() > 0 || s.dev.languages.len() == 0) {
+    return account;
+  }
+  return plex.language_code(s.dev.languages[0]);
+}
+
+// The mode of the subtitles: the one of the settings, else the one of the
+// account, else subtitles for the sound in another language.
+pub function subtitle_mode(s: App): i32 {
+  if (s.subs >= 0) {
+    return s.subs;
+  }
+  if (s.account_subs >= 0) {
+    return s.account_subs;
+  }
+  return plex.SUBS_FOREIGN;
+}
+
+// The key that a choice of tracks keeps: the show of an episode, so that
+// a choice holds for all of its episodes.
+function pick_key(it: plex.Item): string {
+  if (it.kind == "episode" && it.grandparent_key.len() > 0) {
+    return "show:" + it.grandparent_key;
+  }
+  return it.key;
+}
+
+// The tracks to play for `it`. A choice of the person holds, and else the
+// tracks follow the language of the settings.
+function tracks_for(s: App, it: plex.Item): plex.Choice {
+  if (s.picked.contains(pick_key(it))) {
+    return plex.remembered(it);
+  }
+  return plex.preferred(it, language(s), subtitle_mode(s));
+}
+
+function same_choice(a: plex.Choice, b: plex.Choice): boolean {
+  return a.audio == b.audio && a.subtitle == b.subtitle;
 }
 
 // A rate in hundredths as the button shows it, such as "1.25x".
@@ -2089,17 +2422,81 @@ function cycle_quality(own s: App): App {
   return t;
 }
 
+// The next language of the settings: automatic, then each language.
+function cycle_language(own s: App): App {
+  let codes = plex.languages().map((l: plex.Language): string => l.code);
+  let at = position_of(codes, s.lang);
+  let lang = "";
+  if (at < 0) {
+    lang = codes[0];
+  } else if (at < codes.len() - 1) {
+    lang = codes.drop(at).drop(1)[0];
+  }
+  let t = App { ...s, lang: lang, dirty: true };
+  save(t);
+  return t;
+}
+
+// The next mode of the subtitles: automatic, then off, with a foreign
+// sound, and always.
+function cycle_subtitles(own s: App): App {
+  let subs = plex.SUBS_OFF;
+  if (s.subs >= 0) {
+    subs = [plex.SUBS_FOREIGN, plex.SUBS_ALWAYS, -1][s.subs];
+  }
+  let t = App { ...s, subs: subs, dirty: true };
+  save(t);
+  return t;
+}
+
+function language_text(s: App): string {
+  let name = plex.language_name(language(s));
+  if (s.lang.len() > 0) {
+    return name;
+  }
+  if (name.len() == 0) {
+    name = s.texts.text("Off");
+  }
+  return s.texts.format("Auto ({0})", [name]);
+}
+
+function subtitles_text(s: App): string {
+  let names = ["Off", "Foreign sound", "Always"];
+  let name = s.texts.text(names[subtitle_mode(s)]);
+  if (s.subs >= 0) {
+    return name;
+  }
+  return s.texts.format("Auto ({0})", [name]);
+}
+
 // --- playback
 
 // The item to play, with all of its metadata when it is downloaded, its
-// stream at quality `q`, and whether the stream is the downloaded file.
-function stream_of(s: App, it: plex.Item, session: string, q: plex.Quality): (plex.Item, plex.Stream, boolean) {
+// stream at quality `q`, and its tracks.
+function stream_of(s: App, it: plex.Item, session: string, q: plex.Quality): (plex.Item, plex.Stream, plex.Choice) {
   let saved = saved_at(s, it.key);
   if (saved >= 0 && s.downloads[saved].status == download.DONE && s.dev.downloads_dir.len() > 0) {
     let d = s.downloads[saved];
-    return (plex.Item { ...d.item, offset_ms: it.offset_ms }, plex.Stream { url: "file://" + s.dev.downloads_dir + "/" + d.file, transcode: false, offset_ms: it.offset_ms }, true);
+    let held = plex.Item { ...d.item, offset_ms: it.offset_ms };
+    let choice = tracks_for(s, held);
+    return (held, plex.Stream { url: "file://" + s.dev.downloads_dir + "/" + d.file, transcode: false, offset_ms: it.offset_ms }, choice);
   }
-  return (it, plex.stream_for(s.client, s.base, it, q, it.offset_ms, session, s.dev.decoders, plex.remembered(it)), false);
+  let choice = tracks_for(s, it);
+  return (it, plex.stream_for(s.client, s.base, it, q, it.offset_ms, session, s.dev.decoders, choice), choice);
+}
+
+// The id of the first part of the first version of the item, or "".
+function part_of(it: plex.Item): string {
+  if (it.media.len() > 0 && it.media[0].parts.len() > 0) {
+    return it.media[0].parts[0].id;
+  }
+  return "";
+}
+
+// True when a transcode of `it` with `choice` waits for the server to take
+// the choice: a transcode plays the tracks that the server remembers.
+function needs_retrack(it: plex.Item, stream: plex.Stream, choice: plex.Choice): boolean {
+  return stream.transcode && part_of(it).len() > 0 && !same_choice(choice, plex.remembered(it));
 }
 
 function start_play(own s: App, first: plex.Item, queue: plex.Item[]): App {
@@ -2108,11 +2505,15 @@ function start_play(own s: App, first: plex.Item, queue: plex.Item[]): App {
   }
   let session = hex_id(s.dev);
   let level = first_level(s.quality);
-  let (it, stream, _) = stream_of(s, first, session, plex.qualities()[level]);
-  let choice = plex.remembered(it);
+  let (it, stream, choice) = stream_of(s, first, session, plex.qualities()[level]);
+  let retrack = needs_retrack(it, stream, choice);
+  let part = part_of(it);
   let p = Play { ...no_play(), active: true, item: it, stream: stream, session: session, overlay: true, status: "Loading", queue: queue, position: it.offset_ms, duration: it.duration_ms, level: level, choice: choice };
   let t = player_screen(s, p);
   log.info("plex: play " + it.key + " transcode=" + stream.transcode.to_string());
+  if (retrack) {
+    return ask(App { ...t, play: Play { ...t.play, held: true } }, "retrack:" + session, SelectTracks(part, choice));
+  }
   if (!t.dev.play(stream.url)) {
     return App { ...t, play: Play { ...t.play, status: "The player refused the stream" } };
   }
@@ -2165,6 +2566,7 @@ function prepared(own s: App): App {
   }
   if (!silent && !p.stream.transcode) {
     pick_sound(s.dev, p);
+    pick_text(s.dev, p);
   }
   let t = App { ...s, play: p, dirty: true };
   if (silent) {
@@ -2172,6 +2574,12 @@ function prepared(own s: App): App {
   } else {
     return resume(t);
   }
+}
+
+// Shows the chosen subtitle of images of a file that plays as it is, or no
+// subtitle track of the player.
+function pick_text(dev: Device, p: Play): void {
+  let ok = dev.select_text(plex.image_subtitle_index(p.item, p.choice));
 }
 
 // Plays the chosen sound track of a file that plays as it is. The sound
@@ -2193,32 +2601,112 @@ function pick_sound(dev: Device, p: Play): void {
 
 // Plays the item with a new choice of tracks, and makes the server
 // remember it. A file that plays as it is changes its sound in place.
-// Otherwise the stream starts again where it is.
+// Otherwise the stream starts again where it is, once the server has the
+// choice.
+// The tracks that the person chose. The choice holds for the item, and
+// for all the episodes of its show.
 function choose(own s: App, choice: plex.Choice): App {
-  let p = s.play;
-  let t = s;
-  if (p.item.media.len() > 0 && p.item.media[0].parts.len() > 0) {
-    t = report(t, SelectTracks(p.item.media[0].parts[0].id, choice));
+  let key = pick_key(s.play.item);
+  if (s.picked.contains(key)) {
+    return switch_tracks(s, choice);
   }
-  let q = plex.qualities()[p.level];
-  let session = hex_id(t.dev);
+  let picked = s.picked.append(key);
+  if (picked.len() > PICKS) {
+    picked = picked.drop(picked.len() - PICKS);
+  }
+  let t = App { ...s, picked: picked };
+  save(t);
+  return switch_tracks(t, choice);
+}
+
+// The number of choices of tracks that the app keeps.
+const PICKS: i32 = 200;
+
+// Plays the item that plays with the tracks of `choice`.
+function switch_tracks(own s: App, choice: plex.Choice): App {
+  let p = s.play;
+  let part = part_of(p.item);
+  let t = s;
+  let next = Play { ...p, choice: choice, cues: [], sheet: false };
   let pos = p.position;
   if (p.prepared) {
     pos = t.dev.position();
   }
+  // A downloaded file holds the tracks of the sheet, so it plays on.
+  if (on_disk(p)) {
+    if (part.len() > 0) {
+      t = report(t, SelectTracks(part, choice));
+    }
+    return ask_cues(sound_now(t, next));
+  }
+  let q = plex.qualities()[p.level];
+  let session = hex_id(t.dev);
   let stream = plex.stream_for(t.client, t.base, p.item, q, pos, session, t.dev.decoders, choice);
-  let next = Play { ...p, choice: choice, cues: [], sheet: false };
   if (!stream.transcode && !p.stream.transcode) {
-    pick_sound(t.dev, next);
-    return ask_cues(App { ...t, play: next, dirty: true });
+    if (part.len() > 0) {
+      t = report(t, SelectTracks(part, choice));
+    }
+    return ask_cues(sound_now(t, next));
   }
   log.info("plex: new tracks, so the stream starts again");
   t.dev.stop();
   if (p.video) {
     t.dev.hide_video();
   }
-  let ok = t.dev.play(stream.url);
-  return ask_cues(App { ...t, play: Play { ...next, stream: stream, session: session, prepared: false, video: false, overlay: true, position: pos, status: "Loading" }, dirty: true });
+  if (p.stream.transcode) {
+    t = report(t, StopTranscode(p.session));
+  }
+  let u = App { ...t, play: Play { ...next, stream: stream, session: session, prepared: false, video: false, overlay: true, position: pos, status: "Loading", held: part.len() > 0 }, dirty: true };
+  // A transcode takes its sound and its subtitles from the tracks that the
+  // server remembers for the part, so the stream starts after the server
+  // has the choice.
+  if (part.len() > 0) {
+    return ask_cues(ask(u, "retrack:" + session, SelectTracks(part, choice)));
+  }
+  let ok = u.dev.play(stream.url);
+  return ask_cues(u);
+}
+
+// Takes the choice that the server remembers for the item that plays. An
+// item of a list has no tracks, so its choice comes with all of its
+// metadata after the play starts. A transcode took the choice already. A
+// file that plays as it is changes its sound in place, unless the sound of
+// the choice needs a transcode.
+function follow_remembered(own s: App, choice: plex.Choice): App {
+  let p = s.play;
+  let next = Play { ...p, choice: choice };
+  if (p.stream.transcode) {
+    return ask_cues(App { ...s, play: next, dirty: true });
+  }
+  if (!on_disk(p)) {
+    let pos = p.position;
+    if (p.prepared) {
+      pos = s.dev.position();
+    }
+    let session = hex_id(s.dev);
+    let stream = plex.stream_for(s.client, s.base, p.item, plex.qualities()[p.level], pos, session, s.dev.decoders, choice);
+    if (stream.transcode) {
+      log.info("plex: the remembered tracks need a transcode");
+      s.dev.stop();
+      if (p.video) {
+        s.dev.hide_video();
+      }
+      let ok = s.dev.play(stream.url);
+      return ask_cues(App { ...s, play: Play { ...next, stream: stream, session: session, prepared: false, video: false, overlay: true, position: pos, status: "Loading" }, dirty: true });
+    }
+  }
+  return ask_cues(sound_now(s, next));
+}
+
+// The play `next` of a file that plays as it is. The player changes its
+// sound in place, and `prepared` selects it for a player that is not
+// prepared yet.
+function sound_now(own s: App, next: Play): App {
+  if (next.prepared) {
+    pick_sound(s.dev, next);
+    pick_text(s.dev, next);
+  }
+  return App { ...s, play: next, dirty: true };
 }
 
 // True when the first version of the item has a sound track.
@@ -2259,6 +2747,9 @@ function resume(own s: App): App {
     video = s.dev.show_video(s.window);
     if (video) {
       log.info("plex: video on the window");
+      if (p.item.media.len() > 0 && p.item.media[0].frame_rate > 0.0f32) {
+        s.dev.frame_rate(s.window, p.item.media[0].frame_rate);
+      }
     }
   }
   s.dev.start();
@@ -2412,6 +2903,7 @@ function stop_play(own s: App, completed: boolean): App {
   s.dev.immersive(false);
   if (p.video) {
     s.dev.pip(false);
+    s.dev.frame_rate(s.window, 0.0f32);
   }
   if (audio(p)) {
     s.dev.media_end();
@@ -2547,8 +3039,8 @@ function line_up(own s: App): App {
     return App { ...s, play: Play { ...p, next_tried: plan } };
   }
   let session = hex_id(s.dev);
-  let (item, stream, kept) = stream_of(s, it, session, plex.qualities()[p.level]);
-  if (!s.dev.queue_next(stream.url)) {
+  let (item, stream, choice) = stream_of(s, it, session, plex.qualities()[p.level]);
+  if (needs_retrack(item, stream, choice) || !s.dev.queue_next(stream.url)) {
     return App { ...s, play: Play { ...p, next_tried: plan } };
   }
   return App { ...s, play: Play { ...p, next: item, next_queue: queue, next_stream: stream, next_session: session, next_plan: plan, next_ready: false } };
@@ -2612,7 +3104,7 @@ function carry_on(own s: App): App {
     t = report(t, StopTranscode(p.session));
   }
   t = keep_place(report(t, Scrobble(p.item.key, true)), p.item.key, 0i64);
-  let np = Play { ...no_play(), active: true, item: p.next, stream: p.next_stream, session: p.next_session, overlay: true, queue: p.next_queue, album: p.album, duration: p.next.duration_ms, level: p.level, choice: plex.remembered(p.next) };
+  let np = Play { ...no_play(), active: true, item: p.next, stream: p.next_stream, session: p.next_session, overlay: true, queue: p.next_queue, album: p.album, duration: p.next.duration_ms, level: p.level, choice: tracks_for(t, p.next) };
   return prepared(App { ...t, play: np, dirty: true });
 }
 
@@ -2623,7 +3115,7 @@ function take_next(own s: App): App {
   let t = stop_play(App { ...s, play: Play { ...p, next: plex.no_item() } }, true);
   t.dev.swap();
   log.info("plex: play " + p.next.key + " from the second player");
-  let np = Play { ...no_play(), active: true, item: p.next, stream: p.next_stream, session: p.next_session, overlay: true, queue: p.next_queue, album: p.album, position: p.next.offset_ms, duration: p.next.duration_ms, level: p.level, choice: plex.remembered(p.next) };
+  let np = Play { ...no_play(), active: true, item: p.next, stream: p.next_stream, session: p.next_session, overlay: true, queue: p.next_queue, album: p.album, position: p.next.offset_ms, duration: p.next.duration_ms, level: p.level, choice: tracks_for(t, p.next) };
   return prepared(player_screen(t, np));
 }
 
@@ -2683,10 +3175,45 @@ function player_event(own s: App, c: player.Change): App {
     player.Rendering => {
       return s;
     },
+    player.Cues => {
+      return App { ...s, play: Play { ...s.play, images: with_keys(s.dev.image_cues(), s.dev.mono_ms()) }, dirty: true };
+    },
     player.Seeked => {
       return App { ...s, play: Play { ...s.play, position: s.dev.position() }, dirty: true };
     }
   }
+}
+
+// The subtitles of images, each with a key of its own for its texture.
+function with_keys(pictures: ui.Picture[], now: i64): ui.Picture[] {
+  let out: ui.Picture[] = [];
+  for k in 0..pictures.len() {
+    out = out.append(ui.Picture { ...pictures[k], key: "cue|" + now.to_string() + "|" + k.to_string() });
+  }
+  return out;
+}
+
+// The step of the delay of the text subtitles.
+const DELAY_STEP: i64 = 100i64;
+
+// The delay as the sheet shows it, such as "+0.3 s".
+pub function delay_text(ms: i64): string {
+  let sign = if (ms < 0i64) { "-" } else { "+" };
+  let tenths = ms.abs() / DELAY_STEP;
+  return sign + (tenths / 10i64).to_string() + "." + (tenths % 10i64).to_string() + " s";
+}
+
+// The line of the text subtitle at the place of the playback.
+function caption_of(p: Play): string {
+  return plex.cue_at(p.cues, p.position - p.delay_ms);
+}
+
+// The delay of the sheet for a text subtitle that the app draws, or "".
+function delay_shown(p: Play): string {
+  if (plex.text_subtitle(p.item, p.choice).is_none()) {
+    return "";
+  }
+  return delay_text(p.delay_ms);
 }
 
 // Keeps the position on the overlay and the server up to date. While the
@@ -2725,13 +3252,13 @@ function play_tick(own s: App, now: i64): App {
     every = 100i64;
   }
   if (now - p.updated_at >= every) {
-    let before = skip_label(t.play) + "|" + up_next_secs(t.play, now - 500i64).to_string() + "|" + plex.cue_at(t.play.cues, t.play.position);
+    let before = skip_label(t.play) + "|" + up_next_secs(t.play, now - 500i64).to_string() + "|" + caption_of(t.play);
     let moved = Play { ...t.play, position: t.dev.position(), updated_at: now };
     let from = up_next_from(moved);
     if (moved.up_next_at == 0i64 && from >= 0i64 && moved.position >= from) {
       moved = Play { ...moved, up_next_at: now };
     }
-    let after = skip_label(moved) + "|" + up_next_secs(moved, now).to_string() + "|" + plex.cue_at(moved.cues, moved.position);
+    let after = skip_label(moved) + "|" + up_next_secs(moved, now).to_string() + "|" + caption_of(moved);
     t = App { ...t, play: moved, dirty: t.dirty || t.play.overlay || before != after };
     if (moved.up_next_at > 0i64 && now - moved.up_next_at >= UP_NEXT_MS) {
       return play_next(t);
@@ -2749,10 +3276,16 @@ const CONTROLS_MS: i64 = 4000i64;
 
 // Asks for the file of the chosen subtitle track when the app draws it.
 function ask_cues(own s: App): App {
-  if let Some(track) = plex.text_subtitle(s.play.item, s.play.choice) {
-    return ask(s, "subtitle:" + track.id, Subtitle(track));
+  let Some(track) = plex.text_subtitle(s.play.item, s.play.choice) else {
+    return s;
+  };
+  if (on_disk(s.play) && s.dir.len() > 0) {
+    let text = s.dev.read(download_subtitle_path(s.dir, s.play.item.key, track.id));
+    if (text.len() > 0) {
+      return App { ...s, play: Play { ...s.play, cues: plex.parse_cues(text) }, dirty: true };
+    }
   }
-  return s;
+  return ask(s, "subtitle:" + track.id, Subtitle(track));
 }
 
 // The markers and the media of the item that plays, from all of its
@@ -2767,8 +3300,15 @@ function got_play_meta(own t: App, key: string, r: plex.Reply): App {
   let had = plex.thumbnail_part(t.play.item).is_some();
   let had_cues = plex.text_subtitle(t.play.item, t.play.choice).is_some();
   let item = plex.Item { ...t.play.item, markers: full.markers, media: full.media };
+  let want = tracks_for(t, item);
+  let same = same_choice(want, plex.remembered(item));
+  let unchosen = t.play.choice.audio.len() == 0 && t.play.choice.subtitle.len() == 0;
   let u = App { ...t, play: Play { ...t.play, item: item } };
-  if (!had_cues) {
+  if (unchosen && same && (want.audio.len() > 0 || want.subtitle.len() > 0)) {
+    u = follow_remembered(u, want);
+  } else if (unchosen && !same) {
+    u = switch_tracks(u, want);
+  } else if (!had_cues) {
     u = ask_cues(u);
   }
   if (!had) {
@@ -2996,6 +3536,10 @@ function player_control(own s: App, act: string, n: scene.Node, x: i32): App {
   if (act == "speed") {
     return cycle_speed(s);
   }
+  if (act == "turn") {
+    s.dev.turn(!s.turned);
+    return App { ...s, turned: !s.turned, dirty: true };
+  }
   if (act == "shuffle") {
     return toggle_shuffle(s);
   }
@@ -3016,6 +3560,10 @@ function player_control(own s: App, act: string, n: scene.Node, x: i32): App {
   }
   if (act.starts_with("sub:")) {
     return choose(s, plex.Choice { ...p.choice, subtitle: act.drop(4).to_owned() });
+  }
+  if (act == "sync:-" || act == "sync:+") {
+    let step = if (act == "sync:+") { DELAY_STEP } else { -DELAY_STEP };
+    return App { ...s, play: Play { ...p, delay_ms: p.delay_ms + step }, dirty: true };
   }
   if (act == "rew") {
     return seek_by(s, -10000i64);
@@ -3056,6 +3604,10 @@ function scroll_limit(s: App, m: ui.Metrics): i32 {
     h = s.sections.len() * 64 * m.u + 16 * m.u;
   } else if (s.screen == ui.SERVERS) {
     h = s.servers.len() * 72 * m.u + 160 * m.u;
+  } else if (s.screen == ui.DOWNLOADS) {
+    h = ui.downloads_height(m, v);
+  } else if (s.screen == ui.SETTINGS) {
+    h = ui.settings_height(m, v);
   }
   if (h <= visible) {
     return 0;
@@ -3365,8 +3917,14 @@ pub function act(own s: App, a: string, n: scene.Node, x: i32): App {
   if (a == "back") {
     return pop(t);
   }
+  if (a == "play" && t.local) {
+    return play_saved(t);
+  }
   if (a == "play") {
     return play_detail(t);
+  }
+  if (a == "remove" && t.local) {
+    return remove_saved(t);
   }
   if (a == "watched") {
     return toggle_watched(t);
@@ -3380,6 +3938,28 @@ pub function act(own s: App, a: string, n: scene.Node, x: i32): App {
   }
   if (a == "quality") {
     return cycle_quality(t);
+  }
+  if (a == "lang") {
+    return cycle_language(t);
+  }
+  if (a == "subs") {
+    return cycle_subtitles(t);
+  }
+  if (a == "capsize") {
+    let u = App { ...t, caption_size: [1, 2, 0][t.caption_size], dirty: true };
+    save(u);
+    return u;
+  }
+  if (a == "smartcount") {
+    let u = App { ...t, smart_count: [1, 2, 3, 0][t.smart_count], dirty: true };
+    save(u);
+    let now = u.dev.mono_ms();
+    return check_smart(u, now);
+  }
+  if (a == "capbox") {
+    let u = App { ...t, caption_box: !t.caption_box, dirty: true };
+    save(u);
+    return u;
   }
   if (a == "users") {
     return open_users(t);
@@ -3422,6 +4002,16 @@ pub function act(own s: App, a: string, n: scene.Node, x: i32): App {
     return sign_out(t);
   }
   if let Some(it) = item_at(t, a) {
+    if (t.screen == ui.DOWNLOADS) {
+      return open_saved(t, it);
+    }
+    if (t.local && it.kind == "track") {
+      let rest = t.children.drop(position_of(t.children.map((c: plex.Item): string => c.key), it.key)).drop(1);
+      return start_play(t, it, rest);
+    }
+    if (t.local) {
+      return App { ...push(t), screen: ui.DETAIL, title: plex.card_title(it), item: it, children: [], scroll: 0, dirty: true };
+    }
     return open_item(t, it);
   }
   return t;
@@ -3433,16 +4023,28 @@ const KEY_ENTER: i32 = 66;
 
 const KEY_DEL: i32 = 67;
 
+// The back key and the back gesture of Android run the action of the close
+// or back control that the screen shows.
 function back(own s: App): App {
   if (s.typing) {
     s.dev.hide_field();
     return App { ...s, typing: false, dirty: true };
   }
-  if (s.screen == ui.PLAYER) {
-    return leave_player(s);
+  let none = scene.node(0, 0, 0, 0, scene.Blank);
+  if (s.menu.key.len() > 0) {
+    return act(s, "menu:close", none, 0);
   }
-  if (s.stack.len() > 0) {
-    return pop(s);
+  if (s.pin_for.len() > 0) {
+    return act(s, "pinkey:cancel", none, 0);
+  }
+  if (s.screen == ui.PLAYER && s.play.sheet) {
+    return act(s, "tracks_close", none, 0);
+  }
+  if (s.screen == ui.LOGIN && s.pin.code.len() > 0) {
+    return act(s, "cancel", none, 0);
+  }
+  if (s.screen == ui.PLAYER || s.stack.len() > 0) {
+    return act(s, "back", none, 0);
   }
   if (s.screen != ui.HOME && s.screen != ui.LOGIN && s.screen != ui.SERVERS) {
     return open_tab(s, 0);
@@ -3742,17 +4344,18 @@ function pin_tick(own s: App, now: i64): App {
 pub function view(s: App): ui.View {
   let hubs = shown_hubs(s);
   let p = s.play;
-  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(s.texts, p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, skip: s.texts.text(skip_label(p)), up_next: next_title(p), up_next_secs: up_next_secs(p, s.dev.mono_ms()), badge: p.badge, sheet: p.sheet, sounds: plex.audio_tracks(p.item), subtitles: plex.subtitle_tracks(p.item), choice: p.choice, speed: speed_text(s.speed), shuffle: s.shuffle, repeat: repeat_text(s.texts, s.repeat), sleep: sleep_text(s.texts, s.sleep), has_next: p.queue.len() > 0, caption: plex.cue_at(p.cues, p.position), scrub_ms: p.scrub_ms, thumb: p.thumb, thumb_key: "bif|" + p.item.key + "|" + p.thumb_index.to_string(), art: art_of(p.item), audio: audio(p), status: s.texts.text(p.status) };
+  let (vw, vh) = if (p.images.len() > 0) { s.dev.video_size() } else { (0, 0) };
+  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(s.texts, p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, skip: s.texts.text(skip_label(p)), up_next: next_title(p), up_next_secs: up_next_secs(p, s.dev.mono_ms()), badge: p.badge, sheet: p.sheet, sounds: plex.audio_tracks(p.item), subtitles: plex.subtitle_tracks(p.item), choice: p.choice, speed: speed_text(s.speed), shuffle: s.shuffle, repeat: repeat_text(s.texts, s.repeat), sleep: sleep_text(s.texts, s.sleep), has_next: p.queue.len() > 0, caption: caption_of(p), scrub_ms: p.scrub_ms, thumb: p.thumb, thumb_key: "bif|" + p.item.key + "|" + p.thumb_index.to_string(), art: art_of(p.item), audio: audio(p), status: s.texts.text(p.status), turned: s.turned, pictures: p.images, video_w: vw, video_h: vh, delay: delay_shown(p), caption_size: s.caption_size, caption_box: s.caption_box };
   return ui.View {
     ...ui.empty_view(s.w, s.h),
     texts: s.texts,
     top: s.top, bottom: s.bottom,
     screen: s.screen, tab: s.tab, title: s.title, scroll: s.scroll, rows: s.rows, hubs: hubs,
-    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, menu_download: download_percent(s, s.menu.key), saved: s.downloads.map((d: Saved): ui.SavedRow => saved_row(s, d)), now_playing: if (s.play.active && s.screen != ui.PLAYER) { p.item.title + " · " + p.item.grandparent } else { "" }, users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
+    sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, menu_download: download_percent(s, s.menu.key), menu_smart: s.smart.contains(s.menu.key), saved: waiting_rows(s), saved_done: s.downloads.filter((d: Saved): boolean => d.status == download.DONE).len(), saved_total: s.downloads.len(), now_playing: if (s.play.active && s.screen != ui.PLAYER) { p.item.title + " · " + p.item.grandparent } else { "" }, users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
     pin_code: s.pin.code, error: if (offline_home(s)) { "" } else { s.texts.text(s.error) }, offline: offline_home(s), servers: s.servers, server_states: s.states,
     query: s.query, typing: s.typing, account: s.account, server_name: s.server.name,
-    quality: plex.qualities()[s.quality].name, player: pv, base: s.base,
-    loading: busy(s), cache: s.cache,
+    quality: plex.qualities()[s.quality].name, language: language_text(s), subtitles: subtitles_text(s), caption_size: s.texts.text(["Small", "Medium", "Large"][s.caption_size]), caption_back: s.texts.text(if (s.caption_box) { "Panel" } else { "Shadow" }), smart: s.texts.format("{0} episodes", [smart_counts()[s.smart_count].to_string()]), player: pv, base: s.base,
+    loading: busy(s), cache: s.cache, local: s.local,
   };
 }
 
@@ -4040,11 +4643,21 @@ function frame(own s: App, ns: i64): App {
 // the next requests and draws the screen when it changed.
 pub function step(own s: App, e: android.Event): App {
   let now = s.dev.mono_ms();
-  let t = download_tick(hold_tick(search_tick(pin_tick(line_up(play_tick(event(s, e), now)), now), now), now), now);
+  let t = smart_tick(download_tick(hold_tick(search_tick(pin_tick(line_up(play_tick(event(s, e), now)), now), now), now), now), now);
   t = poll_probes(poll_report(poll_images(poll_api(t))));
   t = start_report(start_api(t));
-  t = draw_screen(t);
+  t = draw_screen(untwist(t));
   return start_images(t);
+}
+
+// The screen that `turn` kept in the shape of the video follows the device
+// again once the player is gone.
+function untwist(own s: App): App {
+  if (!s.turned || s.screen == ui.PLAYER) {
+    return s;
+  }
+  s.dev.turn(false);
+  return App { ...s, turned: false };
 }
 
 // Joins the workers that still run, and stops the player.

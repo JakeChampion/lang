@@ -1072,6 +1072,67 @@ func TestApkAsset(t *testing.T) {
 	}
 }
 
+// -apk-dex puts each DEX file after the DEX file of the @jni classes, as
+// classes2.dex, classes3.dex and so on, stored. A file that is not a DEX
+// file, or that is not there, is refused.
+func TestApkDex(t *testing.T) {
+	dir := t.TempDir()
+	one := filepath.Join(dir, "one.dex")
+	two := filepath.Join(dir, "two.dex")
+	oneDex := append([]byte("dex\n035\x00"), 1, 2, 3)
+	twoDex := append([]byte("dex\n039\x00"), 4, 5)
+	for path, data := range map[string][]byte{one: oneDex, two: twoDex} {
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, raw := buildApk(t, dir, "-apk-dex", one+","+two)
+	zr := zipOf(t, raw)
+	var names []string
+	for _, f := range zr.File {
+		names = append(names, f.Name)
+		if strings.HasSuffix(f.Name, ".dex") && f.Method != zip.Store {
+			t.Errorf("%s: method %d, want stored", f.Name, f.Method)
+		}
+	}
+	if got, want := strings.Join(names, " "), "AndroidManifest.xml classes.dex classes2.dex classes3.dex"; !strings.HasPrefix(got, want) {
+		t.Errorf("entries = %s, want them to start with %s", got, want)
+	}
+	if got := readZipEntry(t, zr, "classes2.dex"); !bytes.Equal(got, oneDex) {
+		t.Error("classes2.dex is not the first -apk-dex file")
+	}
+	if got := readZipEntry(t, zr, "classes3.dex"); !bytes.Equal(got, twoDex) {
+		t.Error("classes3.dex is not the second -apk-dex file")
+	}
+	verifyApkV2(t, raw)
+	text := filepath.Join(dir, "text.dex")
+	if err := os.WriteFile(text, []byte("not a dex file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, list := range []string{text, filepath.Join(dir, "missing.dex")} {
+		cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", filepath.Join(dir, "bad.apk"), "-apk-dex", list,
+			e2eharness.RepoPath(nativeApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+		cmd.Env = e2eharness.ChildEnv()
+		o, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(o), "-apk-dex") {
+			t.Errorf("-apk-dex %s: %v\n%s, want a refusal that names -apk-dex", list, err, o)
+		}
+	}
+	bundle := filepath.Join(dir, "app.aab")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", bundle, "-apk-dex", one, e2eharness.RepoPath(nativeApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if o, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -apk %s: %v\n%s", bundle, err, o)
+	}
+	braw, err := os.ReadFile(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readZipEntry(t, zipOf(t, braw), "base/dex/classes2.dex"); !bytes.Equal(got, oneDex) {
+		t.Error("the bundle has no base/dex/classes2.dex with the -apk-dex file")
+	}
+}
+
 // fern -apk takes the settings that no flag gives from the [android] table
 // of the fern.toml of the app, with each path relative to that file. A
 // flag takes priority over the table, and a bad table is refused.
@@ -1094,7 +1155,8 @@ func TestApkManifest(t *testing.T) {
 	write("app.fern", string(src))
 	write("face.fern", string(face))
 	write("data.txt", "fern")
-	write("fern.toml", "[package]\nname = \"native\"\nlib = \"app.fern\"\n\n[android]\npackage = \"dev.fern.fromfile\"\nhome = true\nassets = [\"data.txt\"]\nversion_code = 7\nversion_name = \"2.1\"\n")
+	write("lib.dex", "dex\n035\x00fern")
+	write("fern.toml", "[package]\nname = \"native\"\nlib = \"app.fern\"\n\n[android]\npackage = \"dev.fern.fromfile\"\nhome = true\nassets = [\"data.txt\"]\ndex = [\"lib.dex\"]\nversion_code = 7\nversion_name = \"2.1\"\n")
 	build := func(extra ...string) ([]byte, error) {
 		out := filepath.Join(dir, "app.apk")
 		args := append([]string{"-apk", out}, extra...)
@@ -1120,6 +1182,9 @@ func TestApkManifest(t *testing.T) {
 	}
 	if got := string(readZipEntry(t, zr, "assets/data.txt")); got != "fern" {
 		t.Errorf("assets/data.txt = %q, want the file next to fern.toml", got)
+	}
+	if got := string(readZipEntry(t, zr, "classes2.dex")); got != "dex\n035\x00fern" {
+		t.Errorf("classes2.dex = %q, want the dex file next to fern.toml", got)
 	}
 	if got := versionCode(t, man); got != 7 || !bytes.Contains(man, utf16le("2.1")) {
 		t.Errorf("version_code and version_name of fern.toml: versionCode %d, want 7 and the name 2.1", got)

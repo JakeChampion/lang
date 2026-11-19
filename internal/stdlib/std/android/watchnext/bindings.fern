@@ -1,0 +1,450 @@
+// Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
+import "std/jni";
+
+// A android.content.Context.
+pub struct Context { ref: usize }
+
+pub function (x: Context) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Context) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.Context and the IDs of its members.
+pub struct ContextClass { class: usize, id_get_content_resolver: usize, id_get_package_manager: usize, id_get_package_name: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/Context");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_content_resolver = jni.checked_id(e, class, jni.get_method_id(e, class, "getContentResolver", "()Landroid/content/ContentResolver;"))?;
+  let id_get_package_manager = jni.checked_id(e, class, jni.get_method_id(e, class, "getPackageManager", "()Landroid/content/pm/PackageManager;"))?;
+  let id_get_package_name = jni.checked_id(e, class, jni.get_method_id(e, class, "getPackageName", "()Ljava/lang/String;"))?;
+  return Ok(ContextClass { class: class, id_get_content_resolver: id_get_content_resolver, id_get_package_manager: id_get_package_manager, id_get_package_name: id_get_package_name });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ContextClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.Context.getContentResolver()Landroid/content/ContentResolver;
+pub function (c: ContextClass) get_content_resolver(e: usize, self: Context): Result[ContentResolver, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_content_resolver, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(ContentResolver { ref: got });
+}
+
+// android.content.Context.getPackageManager()Landroid/content/pm/PackageManager;
+pub function (c: ContextClass) get_package_manager(e: usize, self: Context): Result[PackageManager, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_package_manager, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(PackageManager { ref: got });
+}
+
+// android.content.Context.getPackageName()Ljava/lang/String;
+pub function (c: ContextClass) get_package_name(e: usize, self: Context): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_package_name, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// A android.content.ContentResolver.
+pub struct ContentResolver { ref: usize }
+
+pub function (x: ContentResolver) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ContentResolver) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.ContentResolver and the IDs of its members.
+pub struct ContentResolverClass { class: usize, id_delete: usize, id_insert: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function content_resolver_class(e: usize): Result[ContentResolverClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/ContentResolver");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_delete = jni.checked_id(e, class, jni.get_method_id(e, class, "delete", "(Landroid/net/Uri;Ljava/lang/String;[Ljava/lang/String;)I"))?;
+  let id_insert = jni.checked_id(e, class, jni.get_method_id(e, class, "insert", "(Landroid/net/Uri;Landroid/content/ContentValues;)Landroid/net/Uri;"))?;
+  return Ok(ContentResolverClass { class: class, id_delete: id_delete, id_insert: id_insert });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ContentResolverClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.ContentResolver.delete(Landroid/net/Uri;Ljava/lang/String;[Ljava/lang/String;)I
+pub function (c: ContentResolverClass) delete(e: usize, self: ContentResolver, a0: Uri, a1: string, a2: jni.Object): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(3);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let s1 = jni.new_string(e, a1);
+  jni.jvalue_set_int(args, 1, s1);
+  jni.jvalue_set_int(args, 2, a2.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_delete, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s1);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.content.ContentResolver.insert(Landroid/net/Uri;Landroid/content/ContentValues;)Landroid/net/Uri;
+pub function (c: ContentResolverClass) insert(e: usize, self: ContentResolver, a0: Uri, a1: ContentValues): Result[Uri, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_insert, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Uri { ref: got });
+}
+
+// A android.content.ContentValues.
+pub struct ContentValues { ref: usize }
+
+pub function (x: ContentValues) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ContentValues) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.ContentValues and the IDs of its members.
+pub struct ContentValuesClass { class: usize, id_new: usize, id_put_string_long: usize, id_put_string_string: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function content_values_class(e: usize): Result[ContentValuesClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/ContentValues");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "()V"))?;
+  let id_put_string_long = jni.checked_id(e, class, jni.get_method_id(e, class, "put", "(Ljava/lang/String;Ljava/lang/Long;)V"))?;
+  let id_put_string_string = jni.checked_id(e, class, jni.get_method_id(e, class, "put", "(Ljava/lang/String;Ljava/lang/String;)V"))?;
+  return Ok(ContentValuesClass { class: class, id_new: id_new, id_put_string_long: id_put_string_long, id_put_string_string: id_put_string_string });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ContentValuesClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.ContentValues.<init>()V
+pub function (c: ContentValuesClass) new(e: usize): Result[ContentValues, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(ContentValues { ref: got });
+}
+
+// android.content.ContentValues.put(Ljava/lang/String;Ljava/lang/Long;)V
+pub function (c: ContentValuesClass) put_string_long(e: usize, self: ContentValues, a0: string, a1: Long): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_put_string_long, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.content.ContentValues.put(Ljava/lang/String;Ljava/lang/String;)V
+pub function (c: ContentValuesClass) put_string_string(e: usize, self: ContentValues, a0: string, a1: string): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let s1 = jni.new_string(e, a1);
+  jni.jvalue_set_int(args, 1, s1);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_put_string_string, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.delete_local_ref(e, s1);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.content.pm.PackageManager.
+pub struct PackageManager { ref: usize }
+
+pub function (x: PackageManager) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: PackageManager) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.pm.PackageManager and the IDs of its members.
+pub struct PackageManagerClass { class: usize, id_has_system_feature: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function package_manager_class(e: usize): Result[PackageManagerClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/pm/PackageManager");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_has_system_feature = jni.checked_id(e, class, jni.get_method_id(e, class, "hasSystemFeature", "(Ljava/lang/String;)Z"))?;
+  return Ok(PackageManagerClass { class: class, id_has_system_feature: id_has_system_feature });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: PackageManagerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.pm.PackageManager.hasSystemFeature(Ljava/lang/String;)Z
+pub function (c: PackageManagerClass) has_system_feature(e: usize, self: PackageManager, a0: string): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_has_system_feature, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// A android.net.Uri.
+pub struct Uri { ref: usize }
+
+pub function (x: Uri) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Uri) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.net.Uri and the IDs of its members.
+pub struct UriClass { class: usize, id_get_last_path_segment: usize, id_parse: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function uri_class(e: usize): Result[UriClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/net/Uri");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_last_path_segment = jni.checked_id(e, class, jni.get_method_id(e, class, "getLastPathSegment", "()Ljava/lang/String;"))?;
+  let id_parse = jni.checked_id(e, class, jni.get_static_method_id(e, class, "parse", "(Ljava/lang/String;)Landroid/net/Uri;"))?;
+  return Ok(UriClass { class: class, id_get_last_path_segment: id_get_last_path_segment, id_parse: id_parse });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: UriClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.net.Uri.getLastPathSegment()Ljava/lang/String;
+pub function (c: UriClass) get_last_path_segment(e: usize, self: Uri): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_last_path_segment, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// android.net.Uri.parse(Ljava/lang/String;)Landroid/net/Uri;
+pub function (c: UriClass) parse(e: usize, a0: string): Result[Uri, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_parse, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(Uri { ref: got });
+}
+
+// A android.media.tv.TvContract.
+pub struct TvContract { ref: usize }
+
+pub function (x: TvContract) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: TvContract) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.media.tv.TvContract and the IDs of its members.
+pub struct TvContractClass { class: usize, id_request_channel_browsable: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function tv_contract_class(e: usize): Result[TvContractClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/media/tv/TvContract");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_request_channel_browsable = jni.checked_id(e, class, jni.get_static_method_id(e, class, "requestChannelBrowsable", "(Landroid/content/Context;J)V"))?;
+  return Ok(TvContractClass { class: class, id_request_channel_browsable: id_request_channel_browsable });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: TvContractClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.media.tv.TvContract.requestChannelBrowsable(Landroid/content/Context;J)V
+pub function (c: TvContractClass) request_channel_browsable(e: usize, a0: Context, a1: i64): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_long(args, 1, a1);
+  jni.invoke(e, jni.CALL_STATIC + 27, c.class, c.id_request_channel_browsable, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A java.lang.Long.
+pub struct Long { ref: usize }
+
+pub function (x: Long) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Long) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.lang.Long and the IDs of its members.
+pub struct LongClass { class: usize, id_value_of: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function long_class(e: usize): Result[LongClass, jni.JavaError] {
+  let local = jni.find_class(e, "java/lang/Long");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_value_of = jni.checked_id(e, class, jni.get_static_method_id(e, class, "valueOf", "(J)Ljava/lang/Long;"))?;
+  return Ok(LongClass { class: class, id_value_of: id_value_of });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: LongClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.lang.Long.valueOf(J)Ljava/lang/Long;
+pub function (c: LongClass) value_of(e: usize, a0: i64): Result[Long, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_long(args, 0, a0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_value_of, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Long { ref: got });
+}
+
+// The struct of IDs of each class of this module.
+pub struct Classes { context: ContextClass, content_resolver: ContentResolverClass, content_values: ContentValuesClass, package_manager: PackageManagerClass, uri: UriClass, tv_contract: TvContractClass, long: LongClass }
+
+// Makes the struct of IDs of each class. Call it one time, and call
+// `release` when the app does not call Java again. One lookup for each
+// class, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function classes(e: usize): Result[Classes, jni.JavaError] {
+  let context = match (context_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      return Err(err);
+    },
+  };
+  let content_resolver = match (content_resolver_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      return Err(err);
+    },
+  };
+  let content_values = match (content_values_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      content_resolver.release(e);
+      return Err(err);
+    },
+  };
+  let package_manager = match (package_manager_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      content_resolver.release(e);
+      content_values.release(e);
+      return Err(err);
+    },
+  };
+  let uri = match (uri_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      content_resolver.release(e);
+      content_values.release(e);
+      package_manager.release(e);
+      return Err(err);
+    },
+  };
+  let tv_contract = match (tv_contract_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      content_resolver.release(e);
+      content_values.release(e);
+      package_manager.release(e);
+      uri.release(e);
+      return Err(err);
+    },
+  };
+  let long = match (long_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      content_resolver.release(e);
+      content_values.release(e);
+      package_manager.release(e);
+      uri.release(e);
+      tv_contract.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { context: context, content_resolver: content_resolver, content_values: content_values, package_manager: package_manager, uri: uri, tv_contract: tv_contract, long: long });
+}
+
+// Deletes the reference to each class. Do not use `c` after this call.
+pub function (c: Classes) release(e: usize): void {
+  c.context.release(e);
+  c.content_resolver.release(e);
+  c.content_values.release(e);
+  c.package_manager.release(e);
+  c.uri.release(e);
+  c.tv_contract.release(e);
+  c.long.release(e);
+}

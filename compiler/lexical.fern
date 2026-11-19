@@ -49,9 +49,16 @@ function bind(s: Scope, name: string, line: i32, col: i32): Scope {
   return Scope { ...s, bindings: s.bindings.append(b), visible: s.visible.append(id) };
 }
 
-function bind_names(s: Scope, packed: string, line: i32, col: i32): Scope {
+function bind_one(s: Scope, name: string, line: i32, col: i32): Scope {
+  if (name.len() == 0 || name == "_") {
+    return s;
+  }
+  return bind(s, name, line, col);
+}
+
+function bind_all(s: Scope, bound: string[], line: i32, col: i32): Scope {
   let out = s;
-  for name in astwalk.append_bound_name([], packed) {
+  for name in bound {
     out = bind(out, name, line, col);
   }
   return out;
@@ -110,7 +117,7 @@ function params(ps: ast.ParamDecl[], s: Scope, line: i32, col: i32): (ast.ParamD
       d = nd;
       cur = tail;
     }
-    cur = bind_names(cur, p.name, line, col);
+    cur = bind_one(cur, p.name, line, col);
     out = out.append(ast.ParamDecl { ...p, name: names(cur, p.name), default_value: d });
   }
   return (out, cur);
@@ -187,7 +194,7 @@ function bind_mutual(stmts: ast.Stmt[], s: Scope): (Scope, string[]) {
   for st in stmts {
     if let ast.StmtVar(v) = st {
       if (ast.var_binds_itself(v) && parser.nested_fn_cycle(fns, v.name).len() > 1) {
-        out = bind_names(out, v.name, v.line, v.col);
+        out = bind_all(out, ast.append_var_names([], v), v.line, v.col);
         names = names.append(v.name);
       }
     }
@@ -199,13 +206,13 @@ function var_at(v: ast.StmtVar, s: Scope, mutual: string[]): (ast.Stmt, Scope) {
   let before = s;
   let recursive = ast.var_binds_itself(v) && !util.has_str(mutual, v.name);
   if (recursive) {
-    before = bind_names(before, v.name, v.line, v.col);
+    before = bind_all(before, ast.append_var_names([], v), v.line, v.col);
   }
   let (init, tail) = expr(v.init, before);
   if (!recursive && !util.has_str(mutual, v.name)) {
-    tail = bind_names(tail, v.name, v.line, v.col);
+    tail = bind_all(tail, ast.append_var_names([], v), v.line, v.col);
   }
-  return (ast.StmtVar { ...v, name: names(tail, v.name), init: init }, tail);
+  return (ast.StmtVar { ...v, name: lookup(tail, v.name), init: init, destr: ast.rename_destr(v.destr, (n: string): string => lookup(tail, n)) }, tail);
 }
 
 function stmt_at(st: ast.Stmt, s: Scope): (ast.Stmt, Scope, boolean) {
@@ -232,9 +239,9 @@ function stmt_at(st: ast.Stmt, s: Scope): (ast.Stmt, Scope, boolean) {
     },
     ast.StmtFor(f) => {
       let (iter, cs) = expr(f.iter, s);
-      let inner = bind_names(cs, f.var_name, f.line, 0);
+      let inner = bind_all(cs, ast.append_for_names([], f), f.line, 0);
       let (bs, tail) = body(f.body, inner);
-      return (ast.StmtFor { ...f, var_name: names(inner, f.var_name), iter: iter, body: bs }, leave(tail, s), true);
+      return (ast.StmtFor { ...f, var_name: lookup(inner, f.var_name), iter: iter, body: bs, destr: ast.rename_destr(f.destr, (n: string): string => lookup(inner, n)) }, leave(tail, s), true);
     },
     ast.StmtMatch(m) => {
       let (scrutinee, cur) = expr(m.scrutinee, s);
@@ -242,7 +249,7 @@ function stmt_at(st: ast.Stmt, s: Scope): (ast.Stmt, Scope, boolean) {
       for arm in m.arms {
         let inner = cur;
         for n in astwalk.pattern_binders(arm.pattern, []) {
-          inner = bind_names(inner, n, arm.line, arm.col);
+          inner = bind_one(inner, n, arm.line, arm.col);
         }
         let p = pattern(arm.pattern, inner);
         let guard = arm.guard;
@@ -277,7 +284,7 @@ function written_literals(sugar: ast.MatchSugar, s: Scope): ast.MatchSugar {
   let (scrut, cur) = expr(sugar.scrut, s);
   let lits: ast.LitArm[] = [];
   for arm in sugar.lits {
-    let inner = bind_names(cur, arm.at_binding, arm.line, arm.col);
+    let inner = bind_one(cur, arm.at_binding, arm.line, arm.col);
     let guard = arm.guard;
     if (arm.has_guard) {
       let (g, gs) = expr(guard, inner);

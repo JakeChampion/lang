@@ -1,10 +1,7 @@
 name: Build the e2e test binaries
 description: >
-  Build the `go test -c` binaries the self-host lane's jobs run through
-  `go tool test2json`, into e2ecompiler.test (always) and e2e.test (on
-  request) in the working directory, plus cmd/ci-test-workers, the runner
-  that executes a selection in isolated worker processes, into
-  $RUNNER_TEMP/ci-test-workers.
+  Build e2ecompiler.test in the working directory. Jobs can also request
+  e2e.test and the test runner at $RUNNER_TEMP/ci-test-workers.
 
   Every job compiles its own binaries rather than downloading ones a build
   job published. Compiling once is cheaper in CPU and much more expensive in
@@ -24,6 +21,10 @@ inputs:
       else does, and it is a separate ~20 s of compile, so it is opt-in.
     required: false
     default: "false"
+  workers:
+    description: Build the runner for jobs that execute tests in separate worker processes.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -36,4 +37,7 @@ runs:
         if [ "${{ inputs.e2e }}" = "true" ]; then
           go test -c -o e2e.test ./internal/testing/e2e/
         fi
-        go build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers
+    - name: build the test worker runner
+      if: inputs.workers == 'true'
+      shell: bash
+      run: go build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers

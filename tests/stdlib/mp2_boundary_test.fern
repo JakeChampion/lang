@@ -198,6 +198,50 @@ function malformed_payloads(): test.TestOutcome {
   return test.pass();
 }
 
+function workspace_recovery(): test.TestOutcome {
+  let vector = mp2_smoke_vectors.vector();
+  let Ok(input) = ref.unpack(vector.encoded) else {
+    return test.fail("fixture");
+  };
+  let Ok(expected) = ref.unpack(vector.pcm) else {
+    return test.fail("PCM fixture");
+  };
+  let state = mp2.decoder();
+  let work = mp2.workspace();
+  for corrupt in [false, true, false, true, false] {
+    let bytes = if (corrupt) { changed(input, 4, input[4] ^ 1u8) } else { changed(input, 4, input[4]) };
+    let (next, scratch, result) = state.decode_frame_with(bytes, 0, spectral.zeros(2304), work, pcm.default_limits());
+    state = next;
+    work = scratch;
+    if (corrupt) {
+      let Err(pcm.Checksum) = result else {
+        return test.fail("workspace CRC error");
+      };
+    } else {
+      let Ok(decoded) = result else {
+        return test.fail("workspace recovery");
+      };
+      if let Err(e) = mp2_check.samples(decoded.samples, 1152 * decoded.channels, expected, 0) {
+        return test.fail(e);
+      }
+    }
+  }
+  let (next, scratch, result) = state.decode_frame_with(input, 0, [], work, pcm.default_limits());
+  state = next;
+  work = scratch;
+  let Err(pcm.Buffer) = result else {
+    return test.fail("workspace output limit");
+  };
+  let (next, scratch, result) = state.reset().decode_frame_with(input, 0, spectral.zeros(2304), work, pcm.default_limits());
+  let Ok(decoded) = result else {
+    return test.fail("workspace retry");
+  };
+  if let Err(e) = mp2_check.samples(decoded.samples, 1152 * decoded.channels, expected, 0) {
+    return test.fail(e);
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let runner = test.new("MPEG Layer II boundaries and state");
   runner = runner.it("frame prefixes and invalid offsets", prefixes);
@@ -207,5 +251,6 @@ function main(): i32 {
   runner = runner.it("output-size retry and explicit reset preserve exact history", history_and_storage);
   runner = runner.it("rate and channel changes reset the synthesis filter", format_transition);
   runner = runner.it("payload mutations remain finite and bounded", malformed_payloads);
+  runner = runner.it("workspace reuse after checksum and output errors", workspace_recovery);
   return runner.finish();
 }

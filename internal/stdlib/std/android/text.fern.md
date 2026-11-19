@@ -14,7 +14,11 @@ A face does not have each character. For a character that the face does not have
 
 `width` and `line` measure a text with no drawing. `fit` cuts a text to a width, and `wrap` breaks it into lines. `wrap_ranges` gives the lines as ranges of characters. A text field uses them to find its cursor, and `std/bidi` uses them to order each line.
 
-A run of Arabic letters goes to `std/shape`, which gives the joining forms of the letters and the position of each glyph. The run takes the font of its first letter. A mark sits on its base at the anchors of the font. As in Minikin, a mark takes the font of its base when that font has the mark, so that the two can attach. The run has no letter spacing, so that its letters stay joined. Outside such a run, a mark of the font has no advance.
+A run of Arabic letters goes to `std/shape`. So does a run of the letters of Hebrew, Thai, Lao, Khmer, Myanmar, an Indic script, Sinhala, Tibetan, Mongolian, Balinese, Javanese, N'Ko or Korean.
+
+The Indic scripts are Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada and Malayalam. `std/shape` gives the joining forms of the Arabic letters, and the conjuncts and the reordered matras of the Indic scripts. It orders the marks of the other scripts, and gives the position of each glyph. The run takes the font of its first letter. An Arabic, a Hebrew and an N'Ko run go from right to left.
+
+A mark sits on its base at the anchors of the font. As in Minikin, a mark takes the font of its base when that font has the mark, so that the two can attach. The run has no letter spacing, so that its letters stay joined. Outside such a run, a mark of the font has no advance.
 
 A glyph with colors in the `COLR` table of its font draws in its colors and not in the color of the text. An emoji is such a glyph. Its `Placed` holds its premultiplied colors, and a sprite holds them as a second layer that `put` draws over the text.
 
@@ -335,11 +339,11 @@ function pens(fs: Fonts, w: i32, px: i32, track: i32, s: string): Pens {
   let prev_id = -1;
   let i = 0;
   while (i < cs.len()) {
-    let (end, run_id) = cursive_end(fs, w, cs, i);
+    let (end, run_id, script) = run_end(fs, w, cs, i);
     let id = if (end > i) { run_id } else { mark_face(fs, w, cs[i], prev_id) };
     let f = font(fs, id);
     if (end > i) {
-      p = shaped_run(p, f, id, px, cs, i, end);
+      p = shaped_run(p, f, id, px, cs, i, end, script);
       prev = -1;
       i = end;
     } else {
@@ -370,47 +374,53 @@ function pen_glyph(own p: Pens, id: i32, g: i32, x: f64, y: f64, next: f64): Pen
   return Pens { ids: p.ids.append(id), glyphs: p.glyphs.append(g), at: p.at.append(x), ys: p.ys.append(y), pen: next };
 }
 
-// The end of the run of Arabic letters from `cs[i]`, and the font that
-// shapes it: the font of its first letter. It is `i` and -1 when no such
-// run starts there. The run can hold marks and joiners, and it holds at
-// least one letter.
-function cursive_end(fs: Fonts, w: i32, cs: char[], i: i32): (i32, i32) {
-  let id = run_font(fs, w, cs, i);
+// The end of the run of letters to shape from `cs[i]`, the font that
+// shapes it, and its script: "arab" or the tag of block_script. The font is that of the
+// first letter. It is `i`, -1 and "" when no such run starts there. The run
+// can hold marks and joiners, and it holds at least one letter.
+function run_end(fs: Fonts, w: i32, cs: char[], i: i32): (i32, i32, string) {
+  let (id, script) = run_font(fs, w, cs, i);
   let k = i;
   let letters = 0;
-  while (id >= 0 && k < cs.len() && in_run(cs[k]) && run_face(fs, w, cs[k], id)) {
-    letters += if (letter(cs[k])) { 1 } else { 0 };
+  while (id >= 0 && k < cs.len() && in_run(cs[k], script) && run_face(fs, w, cs[k], id, script)) {
+    letters += if (letter_script(cs[k]) == script) { 1 } else { 0 };
     k += 1;
   }
-  return if (letters > 0) { (k, id) } else { (i, -1) };
+  return if (letters > 0) { (k, id, script) } else { (i, -1, "") };
 }
 
-// The font of the first letter of the characters from `cs[i]` that can be
-// in a run, or -1.
-function run_font(fs: Fonts, w: i32, cs: char[], i: i32): i32 {
+// The font and the script of the first letter of the characters from
+// `cs[i]` that can be in a run, or -1 and "".
+function run_font(fs: Fonts, w: i32, cs: char[], i: i32): (i32, string) {
   let j = i;
-  while (j < cs.len() && in_run(cs[j])) {
-    if (letter(cs[j])) {
-      return face_of(fs, w, cs[j] as i32);
+  while (j < cs.len() && (in_run(cs[j], "arab") || in_run(cs[j], "deva") || block_script(cs[j]) != "")) {
+    let script = letter_script(cs[j]);
+    if (script != "") {
+      return (face_of(fs, w, cs[j] as i32), script);
     }
     j += 1;
   }
-  return -1;
+  return (-1, "");
 }
 
-// An Arabic letter that joins.
-function letter(c: char): boolean {
-  return arabic(c) && unicode.joining_type(c) != JT_T;
+// The script of `c` when it is a letter of a run: "arab" for an Arabic
+// letter that joins, the tag of block_script for a character that is not a
+// mark, or "".
+function letter_script(c: char): string {
+  if (arabic(c) && unicode.joining_type(c) != JT_T) {
+    return "arab";
+  }
+  return if (c.is_mark()) { "" } else { block_script(c) };
 }
 
 // Whether the run of the font `id` holds `c`: a letter of that font, or a
 // mark or a joiner that the font has. A mark takes the font of its letter,
 // as Minikin gives it.
-function run_face(fs: Fonts, w: i32, c: char, id: i32): boolean {
+function run_face(fs: Fonts, w: i32, c: char, id: i32, script: string): boolean {
   if (face_of(fs, w, c as i32) == id) {
     return true;
   }
-  return !letter(c) && font(fs, id).glyph(c as i32) != 0;
+  return letter_script(c) != script && font(fs, id).glyph(c as i32) != 0;
 }
 
 // The font of `c`: the font `prev` of the character before it when `c` is
@@ -428,11 +438,39 @@ const JT_C: i32 = 1;
 
 const JT_T: i32 = 5;
 
-// Whether `c` can be in a run of Arabic letters: an Arabic letter that
-// joins, or a character that joins with no script, such as a mark.
-function in_run(c: char): boolean {
+// Whether `c` can be in a run of the script `script`. An Arabic run holds
+// the Arabic letters that join, and the characters that join with no
+// script, such as a mark. A run of another script holds the characters of
+// the blocks of its script, the marks, the ZWNJ and the ZWJ.
+function in_run(c: char, script: string): boolean {
+  if (script != "arab") {
+    let n = c as i32;
+    return block_script(c) == script || c.is_mark() || n == 0x200C || n == 0x200D;
+  }
   let t = unicode.joining_type(c);
   return t == JT_C || t == JT_T || t != 0 && arabic(c);
+}
+
+// The blocks of the scripts that std/shape shapes in a run of their own,
+// other than the Indic blocks from U+0900 to U+0D7F: the first and the last
+// code point of each one.
+const SCRIPT_BLOCKS: i32[] = [0x590, 0x5FF, 0xFB1D, 0xFB4F, 0xA8E0, 0xA8FF, 0xE00, 0xE7F, 0xE80, 0xEFF, 0x1780, 0x17FF, 0x1000, 0x109F, 0xA9E0, 0xA9FF, 0xAA60, 0xAA7F, 0x116D0, 0x116FF, 0xD80, 0xDFF, 0xF00, 0xFFF, 0x1800, 0x18AF, 0x1B00, 0x1B7F, 0xA980, 0xA9DF, 0x7C0, 0x7FF, 0x1100, 0x11FF, 0xA960, 0xA97F, 0xAC00, 0xD7FF];
+
+// The OpenType tag of the script of each block of SCRIPT_BLOCKS.
+const BLOCK_TAGS: string[] = ["hebr", "hebr", "deva", "thai", "lao ", "khmr", "mymr", "mymr", "mymr", "mymr", "sinh", "tibt", "mong", "bali", "java", "nko ", "hang", "hang", "hang"];
+
+// The OpenType tag of the script of the block of `c` that std/shape shapes
+// in a run of its own, or "". The Indic blocks from U+0900 to U+0D7F hold
+// 128 characters each, and Devanagari Extended is Devanagari.
+function block_script(c: char): string {
+  let n = c as i32;
+  for k in 0..BLOCK_TAGS.len() {
+    if (n >= SCRIPT_BLOCKS[2 * k] && n <= SCRIPT_BLOCKS[2 * k + 1]) {
+      return BLOCK_TAGS[k];
+    }
+  }
+  let tags = ["deva", "beng", "guru", "gujr", "orya", "taml", "telu", "knda", "mlym"];
+  return if (n >= 0x900 && n <= 0xD7F) { tags[(n - 0x900) / 128] } else { "" };
 }
 
 // Whether `c` is in a block of the Arabic script.
@@ -441,26 +479,26 @@ function arabic(c: char): boolean {
   return n >= 0x600 && n <= 0x6FF || n >= 0x750 && n <= 0x77F || n >= 0x870 && n <= 0x8FF || n >= 0xFB50 && n <= 0xFDFF || n >= 0xFE70 && n <= 0xFEFF;
 }
 
-// `p` with the glyphs of the Arabic letters `cs[i..end]`. They are in
-// visual order, so they are shaped from the last one to the first, and
-// their glyphs are placed from the last one to the first, at the positions
-// that std/shape gives.
-function shaped_run(own p: Pens, f: truetype.Font, id: i32, px: i32, cs: char[], i: i32, end: i32): Pens {
+// `p` with the glyphs of the letters `cs[i..end]` of the script `script`,
+// at the positions that std/shape gives. The characters are in visual
+// order. An Arabic run goes from right to left, so it is shaped from the
+// last character to the first, and its glyphs are placed from the last one
+// to the first. Each run of a script from right to left goes so too.
+function shaped_run(own p: Pens, f: truetype.Font, id: i32, px: i32, cs: char[], i: i32, end: i32, script: string): Pens {
+  let rtl = shape.rtl(script);
   let logical = "";
-  let k = end - 1;
-  while (k >= i) {
-    logical += cs[k].to_string();
-    k -= 1;
+  for k in 0..end - i {
+    logical += cs[if (rtl) { end - 1 - k } else { i + k }].to_string();
   }
-  let run = shape.shape(f, logical, "arab");
+  let run = shape.shape(f, logical, script);
   let scale = px as f64 / (f.units_per_em as f64);
   let out = p;
-  let j = run.glyphs.len() - 1;
-  while (j >= 0) {
+  let n = run.glyphs.len();
+  for k in 0..n {
+    let j = if (rtl) { n - 1 - k } else { k };
     let x = out.pen + run.pos.dx[j] as f64 * scale;
     let next = out.pen + run.pos.advances[j] as f64 * scale;
     out = pen_glyph(out, id, run.glyphs[j], x, -(run.pos.dy[j] as f64) * scale, next);
-    j -= 1;
   }
   return out;
 }

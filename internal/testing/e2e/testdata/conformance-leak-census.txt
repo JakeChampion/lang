@@ -61,6 +61,7 @@ a_specialised_callee_keeps_its_record_update_donor                      0
 a_struct_literal_from_a_module_takes_its_type_arguments_from_its_fields 0
 a_struct_literal_takes_its_type_argument_from_a_returned_function 0
 a_struct_name_call_wraps_a_union_member_across_modules 0
+a_struct_pattern_matches_an_instance_of_a_generic_struct 0
 a_three_trait_bound_in_an_imported_module            0
 a_two_parameter_enum_takes_generic_instances_as_arguments 0
 a_type_parameter_is_inferred_from_an_expected_type   0
@@ -838,6 +839,7 @@ own_parameter_takes_a_string_literal                 0
 own_self_reassign_move                               0
 own_struct_update_reuse                              0
 own_takes_base_of_alias_beside_replaced_field_read   0
+own_takes_base_of_alias_in_match_tag                 0
 own_takes_replaced_field_of_owned_base               0
 own_transfer                                         0
 own_tree_match                                       0

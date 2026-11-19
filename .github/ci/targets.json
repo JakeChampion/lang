@@ -86,7 +86,8 @@
     "android": {
       "inputs": [
         "examples/android/**",
-        "tests/android/**"
+        "tests/android/**",
+        "tools/media3/**"
       ]
     },
     "editor": {

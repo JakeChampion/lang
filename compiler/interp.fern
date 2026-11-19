@@ -484,78 +484,58 @@ function vint_bits(v: Value): i32 {
   }
 }
 
-function split_binding_names(csv: string): string[] {
-  let out: string[] = [];
-  let start = 0;
-  let depth = 0;
-  for i in 0..=csv.len() {
-    if (i == csv.len() || csv[i] == b',' && depth == 0) {
-      out = out.append(slice_unchecked(csv, start, i).to_owned());
-      start = i + 1;
-    } else if (csv[i] == b'(') {
-      depth += 1;
-    } else if (csv[i] == b')') {
-      depth -= 1;
-    }
-  }
-  return out;
-}
-
 @noinline
 function destructure_step(env: Env, v: ast.StmtVar, val: Value): StepResult {
-  let (denv, derr) = bind_destructure(env, v.name, v.type_name, val);
+  let (denv, derr) = bind_destructure(env, v.destr, val);
   if (is_err(derr)) {
     return step_stop(env, derr);
   }
   return step_none(denv);
 }
 
-function bind_destructure(env: Env, names: string, marker: string, val: Value): (Env, Value) {
-  let dm = parser.destr_marker_split(marker);
+function bind_destructure(env: Env, d: ast.Destr, val: Value): (Env, Value) {
+  let text = ast.destr_text(d);
   let out = env;
-  if (dm.at.len() > 0) {
-    out = out.bind(dm.at, val);
+  if (d.at.len() > 0) {
+    out = out.bind(d.at, val);
   }
-  let binds = split_binding_names(names);
-  if (dm.tag.starts_with("@sd:")) {
-    let colon = util.index_of_sub(slice_unchecked(dm.tag, 4, dm.tag.len()).to_owned(), ":");
-    let fields = split_binding_names(slice_unchecked(dm.tag, 4 + colon + 1, dm.tag.len()).to_owned());
+  let binds = d.binds;
+  if (ast.record_destr(d)) {
     if let VStruct(sv) = val {
       let i = 0;
-      while (i < binds.len() && i < fields.len()) {
-        let fi = util.index_of_str(sv.field_names, fields[i]);
+      while (i < binds.len() && i < d.fields.len()) {
+        let fi = util.index_of_str(sv.field_names, d.fields[i]);
         if (fi < 0) {
-          return (env, v_err("destructuring `" + names + "`: struct " + sv.type_name + " has no field `" + fields[i] + "`"));
+          return (env, v_err("destructuring `" + text + "`: struct " + sv.type_name + " has no field `" + d.fields[i] + "`"));
         }
-        out = out.bind(binds[i], sv.field_values[fi]);
+        out = out.bind(binds[i].name, sv.field_values[fi]);
         i += 1;
       }
       return (out, v_void());
     }
-    return (env, v_err("destructuring `" + names + "`: initialiser is not a struct"));
+    return (env, v_err("destructuring `" + text + "`: initialiser is not a struct"));
   }
-  if (binds.len() == 1 && !names.starts_with("(")) {
-    return (out.bind(names, val), v_void());
+  if (binds.len() == 1 && binds[0].nested.len() == 0) {
+    return (out.bind(binds[0].name, val), v_void());
   }
   if let VTuple(tv) = val {
     if (tv.elements.len() != binds.len()) {
-      return (env, v_err("destructuring `" + names + "`: tuple has " + util.i32_to_string(tv.elements.len()) + " element(s)"));
+      return (env, v_err("destructuring `" + text + "`: tuple has " + util.i32_to_string(tv.elements.len()) + " element(s)"));
     }
     for i in 0..binds.len() {
-      let b = binds[i];
-      if (b.starts_with("(")) {
-        let (inner, err) = bind_destructure(out, slice_unchecked(b, 1, b.len() - 1).to_owned(), "", tv.elements[i]);
+      if (binds[i].nested.len() > 0) {
+        let (inner, err) = bind_destructure(out, binds[i].nested[0], tv.elements[i]);
         if (is_err(err)) {
           return (env, err);
         }
         out = inner;
       } else {
-        out = out.bind(b, tv.elements[i]);
+        out = out.bind(binds[i].name, tv.elements[i]);
       }
     }
     return (out, v_void());
   }
-  return (env, v_err("destructuring `" + names + "`: initialiser is not a tuple"));
+  return (env, v_err("destructuring `" + text + "`: initialiser is not a tuple"));
 }
 
 function is_i32_arg(v: Value): boolean {
@@ -5286,8 +5266,8 @@ function eval_unary_as_u32(ov: Value): Value {
   }
 }
 
-function eval_unary_as_i64(op: string, ov: Value): Value {
-  let uns = op == "as_u64";
+function eval_unary_as_i64(target: string, ov: Value): Value {
+  let uns = target == "u64";
   match (ov) {
     VInt(i) => {
       return v_wide(i.v as i64, uns);
@@ -5382,8 +5362,8 @@ function eval_unary_try(ov: Value): Value {
   }
 }
 
-function eval_unary_as_checked(op: string, ov: Value): Value {
-  let t = eval_unary("as_" + slice_unchecked(op, 4, op.len()), ov);
+function eval_unary_as_checked(target: string, ov: Value): Value {
+  let t = eval_cast(target, ov);
   if (vint_as_i64(t) == vint_as_i64(ov) && int_is_negative(t) == int_is_negative(ov)) {
     return v_variant("Some", [t]);
   }
@@ -5391,7 +5371,13 @@ function eval_unary_as_checked(op: string, ov: Value): Value {
   return v_variant("None", none);
 }
 
-function eval_unary(op: string, ov: Value): Value {
+function eval_unary(op: string, target: string, ov: Value): Value {
+  if (op == ast.CAST) {
+    return eval_cast(target, ov);
+  }
+  if (op == ast.CHECKED_CAST) {
+    return eval_checked_cast(target, ov);
+  }
   if (op == "-") {
     return eval_unary_neg(ov);
   }
@@ -5401,54 +5387,56 @@ function eval_unary(op: string, ov: Value): Value {
   if (op == "~") {
     return bitwise_not(ov);
   }
-  if (op == "as_char") {
-    return char_value(ov);
-  }
-  if (op == "as_u8" || op == "as_byte") {
-    return eval_unary_as_u8(ov);
-  }
-  if (op == "as_i32") {
-    return cast_i32_value(ov);
-  }
-  if (op == "as_usize") {
-    return cast_usize_value(ov);
-  }
-  if (op == "as_u32") {
-    return eval_unary_as_u32(ov);
-  }
-  if (op == "as_u16") {
-    return v_half(vint_as_i64(eval_unary_as_u32(ov)), false);
-  }
-  if (op == "as_i16") {
-    return v_half(vint_as_i64(cast_i32_value(ov)), true);
-  }
-  if (op == "as_i64" || op == "as_u64") {
-    return eval_unary_as_i64(op, ov);
-  }
-  if (op == "as_f64") {
-    return eval_unary_as_f64(ov);
-  }
-  if (op == "as_f32") {
-    return eval_unary_as_f32(ov);
-  }
   if (op == "try_") {
     return eval_unary_try(ov);
   }
-  let is_as_opt = op.len() > 4 && op.starts_with("as?_");
-  if (is_as_opt && util.has_str(["u8", "u16", "i16", "i32", "u32", "i64", "u64", "usize"], slice_unchecked(op, 4, op.len())) && is_int_like(ov)) {
-    return eval_unary_as_checked(op, ov);
-  }
-  if (is_as_opt) {
-    if (dispatch_type_name(ov) == util.base_type_name(slice_unchecked(op, 4, op.len()).to_owned())) {
-      return v_variant("Some", [ov]);
-    }
-    let none: Value[] = [];
-    return v_variant("None", none);
-  }
-  if (op.len() > 3 && op.starts_with("as_")) {
-    return ov;
-  }
   return v_err("unknown unary op: " + op);
+}
+
+// A cast to a type that is not a scalar here gives the value unchanged.
+function eval_cast(target: string, ov: Value): Value {
+  if (target == "char") {
+    return char_value(ov);
+  }
+  if (target == "u8" || target == "byte") {
+    return eval_unary_as_u8(ov);
+  }
+  if (target == "i32") {
+    return cast_i32_value(ov);
+  }
+  if (target == "usize") {
+    return cast_usize_value(ov);
+  }
+  if (target == "u32") {
+    return eval_unary_as_u32(ov);
+  }
+  if (target == "u16") {
+    return v_half(vint_as_i64(eval_unary_as_u32(ov)), false);
+  }
+  if (target == "i16") {
+    return v_half(vint_as_i64(cast_i32_value(ov)), true);
+  }
+  if (target == "i64" || target == "u64") {
+    return eval_unary_as_i64(target, ov);
+  }
+  if (target == "f64") {
+    return eval_unary_as_f64(ov);
+  }
+  if (target == "f32") {
+    return eval_unary_as_f32(ov);
+  }
+  return ov;
+}
+
+function eval_checked_cast(target: string, ov: Value): Value {
+  if (util.has_str(["u8", "u16", "i16", "i32", "u32", "i64", "u64", "usize"], target) && is_int_like(ov)) {
+    return eval_unary_as_checked(target, ov);
+  }
+  if (dispatch_type_name(ov) == util.base_type_name(target)) {
+    return v_variant("Some", [ov]);
+  }
+  let none: Value[] = [];
+  return v_variant("None", none);
 }
 
 function int_is_negative(v: Value): boolean {
@@ -5688,7 +5676,7 @@ function eval_expr(e: ast.Expr, env: Env): Value {
         }
       }
       // Negate the wide magnitude before conversion to the checked result width.
-      return coerce_int_width(eval_unary(u.op, ov), u.ty);
+      return coerce_int_width(eval_unary(u.op, u.cast, ov), u.ty);
     },
     ast.ExprCall(c) => {
       return eval_expr_call(c, env);
@@ -5758,10 +5746,10 @@ function eval_expr(e: ast.Expr, env: Env): Value {
       return v_err("f-string: formatter-only node");
     },
     ast.ExprUnknown(u) => {
-      if (util.is_f64_range_kind(u.kind)) {
-        return v_err("error[P002]: " + util.f64_range_message(u.kind));
+      if (u.fault.code == "P002") {
+        return v_err("error[P002]: " + u.fault.message);
       }
-      return v_err("parser-side unknown: " + u.kind);
+      return v_err("parser-side unknown: " + ast.fault_text(u.fault));
     },
     ast.ExprZero(z) => {
       return zero_value_of(env.heap, z.type_name);
@@ -6261,7 +6249,7 @@ function settled_field(type_name: string, field: string, fv: Value, env: Env): V
 }
 
 function eval_var_init(v: ast.StmtVar, env: Env): Value {
-  if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
+  if (v.type_name.len() > 0) {
     if let ast.ExprCall(c) = v.init {
       return eval_expr_call_expect(c, env, bound_type_spelling(v.type_name, env));
     }
@@ -10259,7 +10247,7 @@ function eval_for_stmt(f: ast.StmtFor, own env: Env): StepResult {
   let cur = env;
   let i = 0;
   while (i < elems.len()) {
-    let iter_env = bind_element(scope_env(Env { ...cur }, true), f.var_name, elems[i], elem_ty);
+    let iter_env = bind_element(scope_env(Env { ...cur }, true), f, elems[i], elem_ty);
     let step = eval_block(f.body, unsafe { share_unchecked(iter_env) });
     if (step.sig == 2) {
       return step_none(trim_env(unsafe { share_unchecked(step.env) }, base));
@@ -10296,7 +10284,7 @@ pub function eval_stmt(st: ast.Stmt, own env: Env): StepResult {
           val = VFunc { ...f, self_name: v.name };
         }
       }
-      if (util.contains(v.name, ",") || parser.is_destr_marker(v.type_name)) {
+      if (ast.destructures(v)) {
         return destructure_step(env, v, val);
       }
       let declared = v.type_name;
@@ -10369,7 +10357,7 @@ pub function eval_stmt(st: ast.Stmt, own env: Env): StepResult {
       return eval_for_stmt(f, env);
     },
     ast.StmtUnknown(u) => {
-      return step_stop(env, v_err("parser-side unknown stmt: " + u.kind));
+      return step_stop(env, v_err("parser-side unknown stmt: " + ast.fault_text(u.fault)));
     }
   }
 }
@@ -10502,14 +10490,14 @@ function for_elements(iv: Value): Option[Value[]] {
   }
 }
 
-function bind_element(env: Env, header: string, elem: Value, elem_ty: string): Env {
-  if (util.contains(header, ",")) {
-    let (out, err) = bind_destructure(env, header, "", elem);
+function bind_element(env: Env, f: ast.StmtFor, elem: Value, elem_ty: string): Env {
+  if (f.destr.binds.len() > 0) {
+    let (out, err) = bind_destructure(env, f.destr, elem);
     if (!is_err(err)) {
       return out;
     }
   }
-  return env.bind_decl(header, elem, elem_ty);
+  return env.bind_decl(f.var_name, elem, elem_ty);
 }
 
 function eval_iterator_for(f: ast.StmtFor, iv: Value, own env: Env): StepResult {
@@ -10519,7 +10507,7 @@ function eval_iterator_for(f: ast.StmtFor, iv: Value, own env: Env): StepResult 
     if (!receiver_has_method(env.funcs, iv, "iter")) {
       return step_stop(env, v_err("for-in iter is not iterable"));
     }
-    subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: held, field: "iter", line: 0, col: 0, ty: "", const_read: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
+    subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: held, field: "iter", line: 0, col: 0, ty: "", const_read: false, display: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
   }
   let base = env.depth;
   let step = eval_stmt(parser.iterator_loop(f, subject, 0), unsafe { share_unchecked(scope_env(env, true).bind("$for_subject", iv)) });

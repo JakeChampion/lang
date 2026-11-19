@@ -1,0 +1,2271 @@
+// Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
+import "std/jni";
+
+// A android.os.Looper.
+pub struct Looper { ref: usize }
+
+pub function (x: Looper) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Looper) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.os.Looper and the IDs of its members.
+pub struct LooperClass { class: usize, id_get_main_looper: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function looper_class(e: usize): Result[LooperClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/os/Looper");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_main_looper = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getMainLooper", "()Landroid/os/Looper;"))?;
+  return Ok(LooperClass { class: class, id_get_main_looper: id_get_main_looper });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: LooperClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.os.Looper.getMainLooper()Landroid/os/Looper;
+pub function (c: LooperClass) get_main_looper(e: usize): Result[Looper, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_get_main_looper, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Looper { ref: got });
+}
+
+// A android.os.Handler.
+pub struct Handler { ref: usize }
+
+pub function (x: Handler) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Handler) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.os.Handler and the IDs of its members.
+pub struct HandlerClass { class: usize, id_new: usize, id_obtain_message: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function handler_class(e: usize): Result[HandlerClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/os/Handler");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Landroid/os/Looper;Landroid/os/Handler$Callback;)V"))?;
+  let id_obtain_message = jni.checked_id(e, class, jni.get_method_id(e, class, "obtainMessage", "(IIILjava/lang/Object;)Landroid/os/Message;"))?;
+  return Ok(HandlerClass { class: class, id_new: id_new, id_obtain_message: id_obtain_message });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: HandlerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.os.Handler.<init>(Landroid/os/Looper;Landroid/os/Handler$Callback;)V
+pub function (c: HandlerClass) new(e: usize, a0: Looper, a1: jni.Object): Result[Handler, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Handler { ref: got });
+}
+
+// android.os.Handler.obtainMessage(IIILjava/lang/Object;)Landroid/os/Message;
+pub function (c: HandlerClass) obtain_message(e: usize, self: Handler, a0: i32, a1: i32, a2: i32, a3: jni.Object): Result[Message, jni.JavaError] {
+  let args = jni.jvalue_alloc(4);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.jvalue_set_int(args, 2, a2 as usize);
+  jni.jvalue_set_int(args, 3, a3.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_obtain_message, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Message { ref: got });
+}
+
+// A android.os.Message.
+pub struct Message { ref: usize }
+
+pub function (x: Message) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Message) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.os.Message and the IDs of its members.
+pub struct MessageClass { class: usize, id_send_to_target: usize, id_arg1: usize, id_arg2: usize, id_obj: usize, id_what: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function message_class(e: usize): Result[MessageClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/os/Message");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_send_to_target = jni.checked_id(e, class, jni.get_method_id(e, class, "sendToTarget", "()V"))?;
+  let id_arg1 = jni.checked_id(e, class, jni.get_field_id(e, class, "arg1", "I"))?;
+  let id_arg2 = jni.checked_id(e, class, jni.get_field_id(e, class, "arg2", "I"))?;
+  let id_obj = jni.checked_id(e, class, jni.get_field_id(e, class, "obj", "Ljava/lang/Object;"))?;
+  let id_what = jni.checked_id(e, class, jni.get_field_id(e, class, "what", "I"))?;
+  return Ok(MessageClass { class: class, id_send_to_target: id_send_to_target, id_arg1: id_arg1, id_arg2: id_arg2, id_obj: id_obj, id_what: id_what });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: MessageClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.os.Message.sendToTarget()V
+pub function (c: MessageClass) send_to_target(e: usize, self: Message): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_send_to_target, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.os.Message.arg1
+pub function (c: MessageClass) arg1(e: usize, self: Message): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_arg1, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.os.Message.arg2
+pub function (c: MessageClass) arg2(e: usize, self: Message): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_arg2, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.os.Message.obj
+pub function (c: MessageClass) obj(e: usize, self: Message): Result[jni.Object, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_obj, 0 as usize);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// android.os.Message.what
+pub function (c: MessageClass) what(e: usize, self: Message): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_what, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// A android.view.Surface.
+pub struct Surface { ref: usize }
+
+pub function (x: Surface) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Surface) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.view.Surface and the IDs of its members.
+pub struct SurfaceClass { class: usize, id_release_: usize, id_set_frame_rate: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function surface_class(e: usize): Result[SurfaceClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/view/Surface");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_release_ = jni.checked_id(e, class, jni.get_method_id(e, class, "release", "()V"))?;
+  let id_set_frame_rate = jni.optional_id(e, jni.get_method_id(e, class, "setFrameRate", "(FII)V"));
+  return Ok(SurfaceClass { class: class, id_release_: id_release_, id_set_frame_rate: id_set_frame_rate });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: SurfaceClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.view.Surface.release()V
+pub function (c: SurfaceClass) release_(e: usize, self: Surface): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_release_, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// False when the device does not have the member of `set_frame_rate`.
+pub function (c: SurfaceClass) has_set_frame_rate(): boolean {
+  return c.id_set_frame_rate != 0 as usize;
+}
+
+// android.view.Surface.setFrameRate(FII)V
+pub function (c: SurfaceClass) set_frame_rate(e: usize, self: Surface, a0: f32, a1: i32, a2: i32): Result[void, jni.JavaError] {
+  if (c.id_set_frame_rate == 0 as usize) {
+    return Err(jni.absent("android.view.Surface.setFrameRate"));
+  }
+  let args = jni.jvalue_alloc(3);
+  jni.jvalue_set_f32(args, 0, a0);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.jvalue_set_int(args, 2, a2 as usize);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set_frame_rate, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.graphics.SurfaceTexture.
+pub struct SurfaceTexture { ref: usize }
+
+pub function (x: SurfaceTexture) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: SurfaceTexture) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.graphics.SurfaceTexture and the IDs of its members.
+pub struct SurfaceTextureClass { class: usize, id_release_: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function surface_texture_class(e: usize): Result[SurfaceTextureClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/graphics/SurfaceTexture");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_release_ = jni.checked_id(e, class, jni.get_method_id(e, class, "release", "()V"))?;
+  return Ok(SurfaceTextureClass { class: class, id_release_: id_release_ });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: SurfaceTextureClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.graphics.SurfaceTexture.release()V
+pub function (c: SurfaceTextureClass) release_(e: usize, self: SurfaceTexture): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_release_, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.content.Context.
+pub struct Context { ref: usize }
+
+pub function (x: Context) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Context) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.Context and the IDs of its members.
+pub struct ContextClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/Context");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  return Ok(ContextClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ContextClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A java.util.List.
+pub struct List { ref: usize }
+
+pub function (x: List) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: List) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.util.List and the IDs of its members.
+pub struct ListClass { class: usize, id_get: usize, id_size: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function list_class(e: usize): Result[ListClass, jni.JavaError] {
+  let local = jni.find_class(e, "java/util/List");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get = jni.checked_id(e, class, jni.get_method_id(e, class, "get", "(I)Ljava/lang/Object;"))?;
+  let id_size = jni.checked_id(e, class, jni.get_method_id(e, class, "size", "()I"))?;
+  return Ok(ListClass { class: class, id_get: id_get, id_size: id_size });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ListClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.util.List.get(I)Ljava/lang/Object;
+pub function (c: ListClass) get(e: usize, self: List, a0: i32): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// java.util.List.size()I
+pub function (c: ListClass) size(e: usize, self: List): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_size, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// A java.util.concurrent.atomic.AtomicLongArray.
+pub struct AtomicLongArray { ref: usize }
+
+pub function (x: AtomicLongArray) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: AtomicLongArray) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.util.concurrent.atomic.AtomicLongArray and the IDs of its members.
+pub struct AtomicLongArrayClass { class: usize, id_new: usize, id_get: usize, id_set: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function atomic_long_array_class(e: usize): Result[AtomicLongArrayClass, jni.JavaError] {
+  let local = jni.find_class(e, "java/util/concurrent/atomic/AtomicLongArray");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(I)V"))?;
+  let id_get = jni.checked_id(e, class, jni.get_method_id(e, class, "get", "(I)J"))?;
+  let id_set = jni.checked_id(e, class, jni.get_method_id(e, class, "set", "(IJ)V"))?;
+  return Ok(AtomicLongArrayClass { class: class, id_new: id_new, id_get: id_get, id_set: id_set });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: AtomicLongArrayClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.util.concurrent.atomic.AtomicLongArray.<init>(I)V
+pub function (c: AtomicLongArrayClass) new(e: usize, a0: i32): Result[AtomicLongArray, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(AtomicLongArray { ref: got });
+}
+
+// java.util.concurrent.atomic.AtomicLongArray.get(I)J
+pub function (c: AtomicLongArrayClass) get(e: usize, self: AtomicLongArray, a0: i32): Result[i64, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 18, self.ref, c.id_get, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i64);
+}
+
+// java.util.concurrent.atomic.AtomicLongArray.set(IJ)V
+pub function (c: AtomicLongArrayClass) set(e: usize, self: AtomicLongArray, a0: i32, a1: i64): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_long(args, 1, a1);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A java.util.concurrent.atomic.AtomicReference.
+pub struct AtomicReference { ref: usize }
+
+pub function (x: AtomicReference) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: AtomicReference) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.util.concurrent.atomic.AtomicReference and the IDs of its members.
+pub struct AtomicReferenceClass { class: usize, id_get: usize, id_set: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function atomic_reference_class(e: usize): Result[AtomicReferenceClass, jni.JavaError] {
+  let local = jni.find_class(e, "java/util/concurrent/atomic/AtomicReference");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get = jni.checked_id(e, class, jni.get_method_id(e, class, "get", "()Ljava/lang/Object;"))?;
+  let id_set = jni.checked_id(e, class, jni.get_method_id(e, class, "set", "(Ljava/lang/Object;)V"))?;
+  return Ok(AtomicReferenceClass { class: class, id_get: id_get, id_set: id_set });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: AtomicReferenceClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.util.concurrent.atomic.AtomicReference.get()Ljava/lang/Object;
+pub function (c: AtomicReferenceClass) get(e: usize, self: AtomicReference): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// java.util.concurrent.atomic.AtomicReference.set(Ljava/lang/Object;)V
+pub function (c: AtomicReferenceClass) set(e: usize, self: AtomicReference, a0: jni.Object): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A androidx.media3.common.AudioAttributes.
+pub struct AudioAttributes { ref: usize }
+
+pub function (x: AudioAttributes) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: AudioAttributes) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.common.AudioAttributes and the IDs of its members.
+pub struct AudioAttributesClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function audio_attributes_class(e: usize): Result[AudioAttributesClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/common/AudioAttributes");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  return Ok(AudioAttributesClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: AudioAttributesClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A androidx.media3.common.AudioAttributes.Builder.
+pub struct AudioAttributes_Builder { ref: usize }
+
+pub function (x: AudioAttributes_Builder) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: AudioAttributes_Builder) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.common.AudioAttributes.Builder and the IDs of its members.
+pub struct AudioAttributes_BuilderClass { class: usize, id_new: usize, id_build: usize, id_set_content_type: usize, id_set_usage: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function audio_attributes_builder_class(e: usize): Result[AudioAttributes_BuilderClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/common/AudioAttributes$Builder");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "()V"))?;
+  let id_build = jni.checked_id(e, class, jni.get_method_id(e, class, "build", "()Landroidx/media3/common/AudioAttributes;"))?;
+  let id_set_content_type = jni.checked_id(e, class, jni.get_method_id(e, class, "setContentType", "(I)Landroidx/media3/common/AudioAttributes$Builder;"))?;
+  let id_set_usage = jni.checked_id(e, class, jni.get_method_id(e, class, "setUsage", "(I)Landroidx/media3/common/AudioAttributes$Builder;"))?;
+  return Ok(AudioAttributes_BuilderClass { class: class, id_new: id_new, id_build: id_build, id_set_content_type: id_set_content_type, id_set_usage: id_set_usage });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: AudioAttributes_BuilderClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// androidx.media3.common.AudioAttributes.Builder.<init>()V
+pub function (c: AudioAttributes_BuilderClass) new(e: usize): Result[AudioAttributes_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(AudioAttributes_Builder { ref: got });
+}
+
+// androidx.media3.common.AudioAttributes.Builder.build()Landroidx/media3/common/AudioAttributes;
+pub function (c: AudioAttributes_BuilderClass) build(e: usize, self: AudioAttributes_Builder): Result[AudioAttributes, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_build, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(AudioAttributes { ref: got });
+}
+
+// androidx.media3.common.AudioAttributes.Builder.setContentType(I)Landroidx/media3/common/AudioAttributes$Builder;
+pub function (c: AudioAttributes_BuilderClass) set_content_type(e: usize, self: AudioAttributes_Builder, a0: i32): Result[AudioAttributes_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_content_type, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(AudioAttributes_Builder { ref: got });
+}
+
+// androidx.media3.common.AudioAttributes.Builder.setUsage(I)Landroidx/media3/common/AudioAttributes$Builder;
+pub function (c: AudioAttributes_BuilderClass) set_usage(e: usize, self: AudioAttributes_Builder, a0: i32): Result[AudioAttributes_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_usage, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(AudioAttributes_Builder { ref: got });
+}
+
+// A androidx.media3.exoplayer.ExoPlayer.
+pub struct ExoPlayer { ref: usize }
+
+pub function (x: ExoPlayer) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ExoPlayer) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub function (x: ExoPlayer) as_player(): Player {
+  return Player { ref: x.ref };
+}
+
+// The class androidx.media3.exoplayer.ExoPlayer and the IDs of its members.
+pub struct ExoPlayerClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function exo_player_class(e: usize): Result[ExoPlayerClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/exoplayer/ExoPlayer");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  return Ok(ExoPlayerClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ExoPlayerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A androidx.media3.exoplayer.ExoPlayer.Builder.
+pub struct ExoPlayer_Builder { ref: usize }
+
+pub function (x: ExoPlayer_Builder) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ExoPlayer_Builder) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.exoplayer.ExoPlayer.Builder and the IDs of its members.
+pub struct ExoPlayer_BuilderClass { class: usize, id_new: usize, id_build: usize, id_set_audio_attributes: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function exo_player_builder_class(e: usize): Result[ExoPlayer_BuilderClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/exoplayer/ExoPlayer$Builder");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Landroid/content/Context;)V"))?;
+  let id_build = jni.checked_id(e, class, jni.get_method_id(e, class, "build", "()Landroidx/media3/exoplayer/ExoPlayer;"))?;
+  let id_set_audio_attributes = jni.checked_id(e, class, jni.get_method_id(e, class, "setAudioAttributes", "(Landroidx/media3/common/AudioAttributes;Z)Landroidx/media3/exoplayer/ExoPlayer$Builder;"))?;
+  return Ok(ExoPlayer_BuilderClass { class: class, id_new: id_new, id_build: id_build, id_set_audio_attributes: id_set_audio_attributes });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ExoPlayer_BuilderClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// androidx.media3.exoplayer.ExoPlayer.Builder.<init>(Landroid/content/Context;)V
+pub function (c: ExoPlayer_BuilderClass) new(e: usize, a0: Context): Result[ExoPlayer_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(ExoPlayer_Builder { ref: got });
+}
+
+// androidx.media3.exoplayer.ExoPlayer.Builder.build()Landroidx/media3/exoplayer/ExoPlayer;
+pub function (c: ExoPlayer_BuilderClass) build(e: usize, self: ExoPlayer_Builder): Result[ExoPlayer, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_build, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(ExoPlayer { ref: got });
+}
+
+// androidx.media3.exoplayer.ExoPlayer.Builder.setAudioAttributes(Landroidx/media3/common/AudioAttributes;Z)Landroidx/media3/exoplayer/ExoPlayer$Builder;
+pub function (c: ExoPlayer_BuilderClass) set_audio_attributes(e: usize, self: ExoPlayer_Builder, a0: AudioAttributes, a1: boolean): Result[ExoPlayer_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, jni.jbool(a1));
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_audio_attributes, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(ExoPlayer_Builder { ref: got });
+}
+
+// A androidx.media3.common.Player.
+pub struct Player { ref: usize }
+
+pub function (x: Player) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Player) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.common.Player and the IDs of its members.
+pub struct PlayerClass { class: usize, id_add_listener: usize, id_add_media_item: usize, id_clear_media_items: usize, id_clear_video_surface: usize, id_get_current_media_item_index: usize, id_get_current_position: usize, id_get_current_tracks: usize, id_get_duration: usize, id_get_media_item_count: usize, id_get_play_when_ready: usize, id_get_playback_state: usize, id_get_player_error: usize, id_get_track_selection_parameters: usize, id_get_video_size: usize, id_is_playing: usize, id_pause: usize, id_play: usize, id_prepare: usize, id_release_: usize, id_remove_media_items: usize, id_seek_to: usize, id_set_media_item: usize, id_set_playback_speed: usize, id_set_track_selection_parameters: usize, id_set_video_surface: usize, id_stop: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function player_class(e: usize): Result[PlayerClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/common/Player");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_add_listener = jni.checked_id(e, class, jni.get_method_id(e, class, "addListener", "(Landroidx/media3/common/Player$Listener;)V"))?;
+  let id_add_media_item = jni.checked_id(e, class, jni.get_method_id(e, class, "addMediaItem", "(Landroidx/media3/common/MediaItem;)V"))?;
+  let id_clear_media_items = jni.checked_id(e, class, jni.get_method_id(e, class, "clearMediaItems", "()V"))?;
+  let id_clear_video_surface = jni.checked_id(e, class, jni.get_method_id(e, class, "clearVideoSurface", "()V"))?;
+  let id_get_current_media_item_index = jni.checked_id(e, class, jni.get_method_id(e, class, "getCurrentMediaItemIndex", "()I"))?;
+  let id_get_current_position = jni.checked_id(e, class, jni.get_method_id(e, class, "getCurrentPosition", "()J"))?;
+  let id_get_current_tracks = jni.checked_id(e, class, jni.get_method_id(e, class, "getCurrentTracks", "()Landroidx/media3/common/Tracks;"))?;
+  let id_get_duration = jni.checked_id(e, class, jni.get_method_id(e, class, "getDuration", "()J"))?;
+  let id_get_media_item_count = jni.checked_id(e, class, jni.get_method_id(e, class, "getMediaItemCount", "()I"))?;
+  let id_get_play_when_ready = jni.checked_id(e, class, jni.get_method_id(e, class, "getPlayWhenReady", "()Z"))?;
+  let id_get_playback_state = jni.checked_id(e, class, jni.get_method_id(e, class, "getPlaybackState", "()I"))?;
+  let id_get_player_error = jni.checked_id(e, class, jni.get_method_id(e, class, "getPlayerError", "()Landroidx/media3/common/PlaybackException;"))?;
+  let id_get_track_selection_parameters = jni.checked_id(e, class, jni.get_method_id(e, class, "getTrackSelectionParameters", "()Landroidx/media3/common/TrackSelectionParameters;"))?;
+  let id_get_video_size = jni.checked_id(e, class, jni.get_method_id(e, class, "getVideoSize", "()Landroidx/media3/common/VideoSize;"))?;
+  let id_is_playing = jni.checked_id(e, class, jni.get_method_id(e, class, "isPlaying", "()Z"))?;
+  let id_pause = jni.checked_id(e, class, jni.get_method_id(e, class, "pause", "()V"))?;
+  let id_play = jni.checked_id(e, class, jni.get_method_id(e, class, "play", "()V"))?;
+  let id_prepare = jni.checked_id(e, class, jni.get_method_id(e, class, "prepare", "()V"))?;
+  let id_release_ = jni.checked_id(e, class, jni.get_method_id(e, class, "release", "()V"))?;
+  let id_remove_media_items = jni.checked_id(e, class, jni.get_method_id(e, class, "removeMediaItems", "(II)V"))?;
+  let id_seek_to = jni.checked_id(e, class, jni.get_method_id(e, class, "seekTo", "(J)V"))?;
+  let id_set_media_item = jni.checked_id(e, class, jni.get_method_id(e, class, "setMediaItem", "(Landroidx/media3/common/MediaItem;J)V"))?;
+  let id_set_playback_speed = jni.checked_id(e, class, jni.get_method_id(e, class, "setPlaybackSpeed", "(F)V"))?;
+  let id_set_track_selection_parameters = jni.checked_id(e, class, jni.get_method_id(e, class, "setTrackSelectionParameters", "(Landroidx/media3/common/TrackSelectionParameters;)V"))?;
+  let id_set_video_surface = jni.checked_id(e, class, jni.get_method_id(e, class, "setVideoSurface", "(Landroid/view/Surface;)V"))?;
+  let id_stop = jni.checked_id(e, class, jni.get_method_id(e, class, "stop", "()V"))?;
+  return Ok(PlayerClass { class: class, id_add_listener: id_add_listener, id_add_media_item: id_add_media_item, id_clear_media_items: id_clear_media_items, id_clear_video_surface: id_clear_video_surface, id_get_current_media_item_index: id_get_current_media_item_index, id_get_current_position: id_get_current_position, id_get_current_tracks: id_get_current_tracks, id_get_duration: id_get_duration, id_get_media_item_count: id_get_media_item_count, id_get_play_when_ready: id_get_play_when_ready, id_get_playback_state: id_get_playback_state, id_get_player_error: id_get_player_error, id_get_track_selection_parameters: id_get_track_selection_parameters, id_get_video_size: id_get_video_size, id_is_playing: id_is_playing, id_pause: id_pause, id_play: id_play, id_prepare: id_prepare, id_release_: id_release_, id_remove_media_items: id_remove_media_items, id_seek_to: id_seek_to, id_set_media_item: id_set_media_item, id_set_playback_speed: id_set_playback_speed, id_set_track_selection_parameters: id_set_track_selection_parameters, id_set_video_surface: id_set_video_surface, id_stop: id_stop });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: PlayerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// androidx.media3.common.Player.addListener(Landroidx/media3/common/Player$Listener;)V
+pub function (c: PlayerClass) add_listener(e: usize, self: Player, a0: Player_Listener): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_add_listener, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// androidx.media3.common.Player.addMediaItem(Landroidx/media3/common/MediaItem;)V
+pub function (c: PlayerClass) add_media_item(e: usize, self: Player, a0: MediaItem): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_add_media_item, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// androidx.media3.common.Player.clearMediaItems()V
+pub function (c: PlayerClass) clear_media_items(e: usize, self: Player): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_clear_media_items, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// androidx.media3.common.Player.clearVideoSurface()V
+pub function (c: PlayerClass) clear_video_surface(e: usize, self: Player): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_clear_video_surface, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// androidx.media3.common.Player.getCurrentMediaItemIndex()I
+pub function (c: PlayerClass) get_current_media_item_index(e: usize, self: Player): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_current_media_item_index, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// androidx.media3.common.Player.getCurrentPosition()J
+pub function (c: PlayerClass) get_current_position(e: usize, self: Player): Result[i64, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 18, self.ref, c.id_get_current_position, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i64);
+}
+
+// androidx.media3.common.Player.getCurrentTracks()Landroidx/media3/common/Tracks;
+pub function (c: PlayerClass) get_current_tracks(e: usize, self: Player): Result[Tracks, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_current_tracks, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Tracks { ref: got });
+}
+
+// androidx.media3.common.Player.getDuration()J
+pub function (c: PlayerClass) get_duration(e: usize, self: Player): Result[i64, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 18, self.ref, c.id_get_duration, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i64);
+}
+
+// androidx.media3.common.Player.getMediaItemCount()I
+pub function (c: PlayerClass) get_media_item_count(e: usize, self: Player): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_media_item_count, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// androidx.media3.common.Player.getPlayWhenReady()Z
+pub function (c: PlayerClass) get_play_when_ready(e: usize, self: Player): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_get_play_when_ready, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// androidx.media3.common.Player.getPlaybackState()I
+pub function (c: PlayerClass) get_playback_state(e: usize, self: Player): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_playback_state, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// androidx.media3.common.Player.getPlayerError()Landroidx/media3/common/PlaybackException;
+pub function (c: PlayerClass) get_player_error(e: usize, self: Player): Result[PlaybackException, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_player_error, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(PlaybackException { ref: got });
+}
+
+// androidx.media3.common.Player.getTrackSelectionParameters()Landroidx/media3/common/TrackSelectionParameters;
+pub function (c: PlayerClass) get_track_selection_parameters(e: usize, self: Player): Result[TrackSelectionParameters, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_track_selection_parameters, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(TrackSelectionParameters { ref: got });
+}
+
+// androidx.media3.common.Player.getVideoSize()Landroidx/media3/common/VideoSize;
+pub function (c: PlayerClass) get_video_size(e: usize, self: Player): Result[VideoSize, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_video_size, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(VideoSize { ref: got });
+}
+
+// androidx.media3.common.Player.isPlaying()Z
+pub function (c: PlayerClass) is_playing(e: usize, self: Player): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_is_playing, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// androidx.media3.common.Player.pause()V
+pub function (c: PlayerClass) pause(e: usize, self: Player): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_pause, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// androidx.media3.common.Player.play()V
+pub function (c: PlayerClass) play(e: usize, self: Player): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_play, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// androidx.media3.common.Player.prepare()V
+pub function (c: PlayerClass) prepare(e: usize, self: Player): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_prepare, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// androidx.media3.common.Player.release()V
+pub function (c: PlayerClass) release_(e: usize, self: Player): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_release_, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// androidx.media3.common.Player.removeMediaItems(II)V
+pub function (c: PlayerClass) remove_media_items(e: usize, self: Player, a0: i32, a1: i32): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_remove_media_items, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// androidx.media3.common.Player.seekTo(J)V
+pub function (c: PlayerClass) seek_to(e: usize, self: Player, a0: i64): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_long(args, 0, a0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_seek_to, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// androidx.media3.common.Player.setMediaItem(Landroidx/media3/common/MediaItem;J)V
+pub function (c: PlayerClass) set_media_item(e: usize, self: Player, a0: MediaItem, a1: i64): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_long(args, 1, a1);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set_media_item, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// androidx.media3.common.Player.setPlaybackSpeed(F)V
+pub function (c: PlayerClass) set_playback_speed(e: usize, self: Player, a0: f32): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_f32(args, 0, a0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set_playback_speed, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// androidx.media3.common.Player.setTrackSelectionParameters(Landroidx/media3/common/TrackSelectionParameters;)V
+pub function (c: PlayerClass) set_track_selection_parameters(e: usize, self: Player, a0: TrackSelectionParameters): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set_track_selection_parameters, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// androidx.media3.common.Player.setVideoSurface(Landroid/view/Surface;)V
+pub function (c: PlayerClass) set_video_surface(e: usize, self: Player, a0: Surface): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set_video_surface, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// androidx.media3.common.Player.stop()V
+pub function (c: PlayerClass) stop(e: usize, self: Player): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_stop, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A androidx.media3.common.Player.Listener.
+pub struct Player_Listener { ref: usize }
+
+pub function (x: Player_Listener) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Player_Listener) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.common.Player.Listener and the IDs of its members.
+pub struct Player_ListenerClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function player_listener_class(e: usize): Result[Player_ListenerClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/common/Player$Listener");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  return Ok(Player_ListenerClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: Player_ListenerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A androidx.media3.common.Player.Events.
+pub struct Player_Events { ref: usize }
+
+pub function (x: Player_Events) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Player_Events) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.common.Player.Events and the IDs of its members.
+pub struct Player_EventsClass { class: usize, id_contains: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function player_events_class(e: usize): Result[Player_EventsClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/common/Player$Events");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_contains = jni.checked_id(e, class, jni.get_method_id(e, class, "contains", "(I)Z"))?;
+  return Ok(Player_EventsClass { class: class, id_contains: id_contains });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: Player_EventsClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// androidx.media3.common.Player.Events.contains(I)Z
+pub function (c: Player_EventsClass) contains(e: usize, self: Player_Events, a0: i32): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_contains, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// A androidx.media3.common.MediaItem.
+pub struct MediaItem { ref: usize }
+
+pub function (x: MediaItem) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: MediaItem) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.common.MediaItem and the IDs of its members.
+pub struct MediaItemClass { class: usize, id_from_uri: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function media_item_class(e: usize): Result[MediaItemClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/common/MediaItem");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_from_uri = jni.checked_id(e, class, jni.get_static_method_id(e, class, "fromUri", "(Ljava/lang/String;)Landroidx/media3/common/MediaItem;"))?;
+  return Ok(MediaItemClass { class: class, id_from_uri: id_from_uri });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: MediaItemClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// androidx.media3.common.MediaItem.fromUri(Ljava/lang/String;)Landroidx/media3/common/MediaItem;
+pub function (c: MediaItemClass) from_uri(e: usize, a0: string): Result[MediaItem, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_from_uri, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(MediaItem { ref: got });
+}
+
+// A androidx.media3.common.Tracks.
+pub struct Tracks { ref: usize }
+
+pub function (x: Tracks) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Tracks) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.common.Tracks and the IDs of its members.
+pub struct TracksClass { class: usize, id_get_groups: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function tracks_class(e: usize): Result[TracksClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/common/Tracks");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_groups = jni.checked_id(e, class, jni.get_method_id(e, class, "getGroups", "()Lcom/google/common/collect/ImmutableList;"))?;
+  return Ok(TracksClass { class: class, id_get_groups: id_get_groups });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: TracksClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// androidx.media3.common.Tracks.getGroups()Lcom/google/common/collect/ImmutableList;
+pub function (c: TracksClass) get_groups(e: usize, self: Tracks): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_groups, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// A androidx.media3.common.Tracks.Group.
+pub struct Tracks_Group { ref: usize }
+
+pub function (x: Tracks_Group) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Tracks_Group) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.common.Tracks.Group and the IDs of its members.
+pub struct Tracks_GroupClass { class: usize, id_get_media_track_group: usize, id_get_type: usize, id_is_selected: usize, id_is_supported: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function tracks_group_class(e: usize): Result[Tracks_GroupClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/common/Tracks$Group");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_media_track_group = jni.checked_id(e, class, jni.get_method_id(e, class, "getMediaTrackGroup", "()Landroidx/media3/common/TrackGroup;"))?;
+  let id_get_type = jni.checked_id(e, class, jni.get_method_id(e, class, "getType", "()I"))?;
+  let id_is_selected = jni.checked_id(e, class, jni.get_method_id(e, class, "isSelected", "()Z"))?;
+  let id_is_supported = jni.checked_id(e, class, jni.get_method_id(e, class, "isSupported", "()Z"))?;
+  return Ok(Tracks_GroupClass { class: class, id_get_media_track_group: id_get_media_track_group, id_get_type: id_get_type, id_is_selected: id_is_selected, id_is_supported: id_is_supported });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: Tracks_GroupClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// androidx.media3.common.Tracks.Group.getMediaTrackGroup()Landroidx/media3/common/TrackGroup;
+pub function (c: Tracks_GroupClass) get_media_track_group(e: usize, self: Tracks_Group): Result[TrackGroup, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_media_track_group, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(TrackGroup { ref: got });
+}
+
+// androidx.media3.common.Tracks.Group.getType()I
+pub function (c: Tracks_GroupClass) get_type(e: usize, self: Tracks_Group): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_type, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// androidx.media3.common.Tracks.Group.isSelected()Z
+pub function (c: Tracks_GroupClass) is_selected(e: usize, self: Tracks_Group): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_is_selected, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// androidx.media3.common.Tracks.Group.isSupported()Z
+pub function (c: Tracks_GroupClass) is_supported(e: usize, self: Tracks_Group): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_is_supported, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// A androidx.media3.common.TrackGroup.
+pub struct TrackGroup { ref: usize }
+
+pub function (x: TrackGroup) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: TrackGroup) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.common.TrackGroup and the IDs of its members.
+pub struct TrackGroupClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function track_group_class(e: usize): Result[TrackGroupClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/common/TrackGroup");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  return Ok(TrackGroupClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: TrackGroupClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A androidx.media3.common.TrackSelectionParameters.
+pub struct TrackSelectionParameters { ref: usize }
+
+pub function (x: TrackSelectionParameters) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: TrackSelectionParameters) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.common.TrackSelectionParameters and the IDs of its members.
+pub struct TrackSelectionParametersClass { class: usize, id_build_upon: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function track_selection_parameters_class(e: usize): Result[TrackSelectionParametersClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/common/TrackSelectionParameters");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_build_upon = jni.checked_id(e, class, jni.get_method_id(e, class, "buildUpon", "()Landroidx/media3/common/TrackSelectionParameters$Builder;"))?;
+  return Ok(TrackSelectionParametersClass { class: class, id_build_upon: id_build_upon });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: TrackSelectionParametersClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// androidx.media3.common.TrackSelectionParameters.buildUpon()Landroidx/media3/common/TrackSelectionParameters$Builder;
+pub function (c: TrackSelectionParametersClass) build_upon(e: usize, self: TrackSelectionParameters): Result[TrackSelectionParameters_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_build_upon, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(TrackSelectionParameters_Builder { ref: got });
+}
+
+// A androidx.media3.common.TrackSelectionParameters.Builder.
+pub struct TrackSelectionParameters_Builder { ref: usize }
+
+pub function (x: TrackSelectionParameters_Builder) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: TrackSelectionParameters_Builder) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.common.TrackSelectionParameters.Builder and the IDs of its members.
+pub struct TrackSelectionParameters_BuilderClass { class: usize, id_build: usize, id_set_override_for_type: usize, id_set_track_type_disabled: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function track_selection_parameters_builder_class(e: usize): Result[TrackSelectionParameters_BuilderClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/common/TrackSelectionParameters$Builder");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_build = jni.checked_id(e, class, jni.get_method_id(e, class, "build", "()Landroidx/media3/common/TrackSelectionParameters;"))?;
+  let id_set_override_for_type = jni.checked_id(e, class, jni.get_method_id(e, class, "setOverrideForType", "(Landroidx/media3/common/TrackSelectionOverride;)Landroidx/media3/common/TrackSelectionParameters$Builder;"))?;
+  let id_set_track_type_disabled = jni.checked_id(e, class, jni.get_method_id(e, class, "setTrackTypeDisabled", "(IZ)Landroidx/media3/common/TrackSelectionParameters$Builder;"))?;
+  return Ok(TrackSelectionParameters_BuilderClass { class: class, id_build: id_build, id_set_override_for_type: id_set_override_for_type, id_set_track_type_disabled: id_set_track_type_disabled });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: TrackSelectionParameters_BuilderClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// androidx.media3.common.TrackSelectionParameters.Builder.build()Landroidx/media3/common/TrackSelectionParameters;
+pub function (c: TrackSelectionParameters_BuilderClass) build(e: usize, self: TrackSelectionParameters_Builder): Result[TrackSelectionParameters, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_build, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(TrackSelectionParameters { ref: got });
+}
+
+// androidx.media3.common.TrackSelectionParameters.Builder.setOverrideForType(Landroidx/media3/common/TrackSelectionOverride;)Landroidx/media3/common/TrackSelectionParameters$Builder;
+pub function (c: TrackSelectionParameters_BuilderClass) set_override_for_type(e: usize, self: TrackSelectionParameters_Builder, a0: TrackSelectionOverride): Result[TrackSelectionParameters_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_override_for_type, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(TrackSelectionParameters_Builder { ref: got });
+}
+
+// androidx.media3.common.TrackSelectionParameters.Builder.setTrackTypeDisabled(IZ)Landroidx/media3/common/TrackSelectionParameters$Builder;
+pub function (c: TrackSelectionParameters_BuilderClass) set_track_type_disabled(e: usize, self: TrackSelectionParameters_Builder, a0: i32, a1: boolean): Result[TrackSelectionParameters_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, jni.jbool(a1));
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_track_type_disabled, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(TrackSelectionParameters_Builder { ref: got });
+}
+
+// A androidx.media3.common.TrackSelectionOverride.
+pub struct TrackSelectionOverride { ref: usize }
+
+pub function (x: TrackSelectionOverride) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: TrackSelectionOverride) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.common.TrackSelectionOverride and the IDs of its members.
+pub struct TrackSelectionOverrideClass { class: usize, id_new: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function track_selection_override_class(e: usize): Result[TrackSelectionOverrideClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/common/TrackSelectionOverride");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Landroidx/media3/common/TrackGroup;I)V"))?;
+  return Ok(TrackSelectionOverrideClass { class: class, id_new: id_new });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: TrackSelectionOverrideClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// androidx.media3.common.TrackSelectionOverride.<init>(Landroidx/media3/common/TrackGroup;I)V
+pub function (c: TrackSelectionOverrideClass) new(e: usize, a0: TrackGroup, a1: i32): Result[TrackSelectionOverride, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(TrackSelectionOverride { ref: got });
+}
+
+// A androidx.media3.common.VideoSize.
+pub struct VideoSize { ref: usize }
+
+pub function (x: VideoSize) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: VideoSize) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.common.VideoSize and the IDs of its members.
+pub struct VideoSizeClass { class: usize, id_height: usize, id_width: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function video_size_class(e: usize): Result[VideoSizeClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/common/VideoSize");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_height = jni.checked_id(e, class, jni.get_field_id(e, class, "height", "I"))?;
+  let id_width = jni.checked_id(e, class, jni.get_field_id(e, class, "width", "I"))?;
+  return Ok(VideoSizeClass { class: class, id_height: id_height, id_width: id_width });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: VideoSizeClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// androidx.media3.common.VideoSize.height
+pub function (c: VideoSizeClass) height(e: usize, self: VideoSize): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_height, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// androidx.media3.common.VideoSize.width
+pub function (c: VideoSizeClass) width(e: usize, self: VideoSize): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_width, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// A androidx.media3.common.PlaybackException.
+pub struct PlaybackException { ref: usize }
+
+pub function (x: PlaybackException) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: PlaybackException) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.common.PlaybackException and the IDs of its members.
+pub struct PlaybackExceptionClass { class: usize, id_error_code: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function playback_exception_class(e: usize): Result[PlaybackExceptionClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/common/PlaybackException");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_error_code = jni.checked_id(e, class, jni.get_field_id(e, class, "errorCode", "I"))?;
+  return Ok(PlaybackExceptionClass { class: class, id_error_code: id_error_code });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: PlaybackExceptionClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// androidx.media3.common.PlaybackException.errorCode
+pub function (c: PlaybackExceptionClass) error_code(e: usize, self: PlaybackException): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_error_code, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// A androidx.media3.exoplayer.audio.AudioCapabilities.
+pub struct AudioCapabilities { ref: usize }
+
+pub function (x: AudioCapabilities) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: AudioCapabilities) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.exoplayer.audio.AudioCapabilities and the IDs of its members.
+pub struct AudioCapabilitiesClass { class: usize, id_get_capabilities: usize, id_supports_encoding: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function audio_capabilities_class(e: usize): Result[AudioCapabilitiesClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/exoplayer/audio/AudioCapabilities");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_capabilities = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getCapabilities", "(Landroid/content/Context;)Landroidx/media3/exoplayer/audio/AudioCapabilities;"))?;
+  let id_supports_encoding = jni.checked_id(e, class, jni.get_method_id(e, class, "supportsEncoding", "(I)Z"))?;
+  return Ok(AudioCapabilitiesClass { class: class, id_get_capabilities: id_get_capabilities, id_supports_encoding: id_supports_encoding });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: AudioCapabilitiesClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// androidx.media3.exoplayer.audio.AudioCapabilities.getCapabilities(Landroid/content/Context;)Landroidx/media3/exoplayer/audio/AudioCapabilities;
+pub function (c: AudioCapabilitiesClass) get_capabilities(e: usize, a0: Context): Result[AudioCapabilities, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_get_capabilities, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(AudioCapabilities { ref: got });
+}
+
+// androidx.media3.exoplayer.audio.AudioCapabilities.supportsEncoding(I)Z
+pub function (c: AudioCapabilitiesClass) supports_encoding(e: usize, self: AudioCapabilities, a0: i32): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_supports_encoding, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// A androidx.media3.common.text.CueGroup.
+pub struct CueGroup { ref: usize }
+
+pub function (x: CueGroup) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: CueGroup) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.common.text.CueGroup and the IDs of its members.
+pub struct CueGroupClass { class: usize, id_cues: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function cue_group_class(e: usize): Result[CueGroupClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/common/text/CueGroup");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_cues = jni.checked_id(e, class, jni.get_field_id(e, class, "cues", "Lcom/google/common/collect/ImmutableList;"))?;
+  return Ok(CueGroupClass { class: class, id_cues: id_cues });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: CueGroupClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// androidx.media3.common.text.CueGroup.cues
+pub function (c: CueGroupClass) cues(e: usize, self: CueGroup): Result[jni.Object, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_cues, 0 as usize);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// A androidx.media3.common.text.Cue.
+pub struct Cue { ref: usize }
+
+pub function (x: Cue) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Cue) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class androidx.media3.common.text.Cue and the IDs of its members.
+pub struct CueClass { class: usize, id_bitmap: usize, id_bitmap_height: usize, id_line: usize, id_position: usize, id_size: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function cue_class(e: usize): Result[CueClass, jni.JavaError] {
+  let local = jni.find_class(e, "androidx/media3/common/text/Cue");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_bitmap = jni.checked_id(e, class, jni.get_field_id(e, class, "bitmap", "Landroid/graphics/Bitmap;"))?;
+  let id_bitmap_height = jni.checked_id(e, class, jni.get_field_id(e, class, "bitmapHeight", "F"))?;
+  let id_line = jni.checked_id(e, class, jni.get_field_id(e, class, "line", "F"))?;
+  let id_position = jni.checked_id(e, class, jni.get_field_id(e, class, "position", "F"))?;
+  let id_size = jni.checked_id(e, class, jni.get_field_id(e, class, "size", "F"))?;
+  return Ok(CueClass { class: class, id_bitmap: id_bitmap, id_bitmap_height: id_bitmap_height, id_line: id_line, id_position: id_position, id_size: id_size });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: CueClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// androidx.media3.common.text.Cue.bitmap
+pub function (c: CueClass) bitmap(e: usize, self: Cue): Result[Bitmap, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_bitmap, 0 as usize);
+  jni.check(e)?;
+  return Ok(Bitmap { ref: got });
+}
+
+// androidx.media3.common.text.Cue.bitmapHeight
+pub function (c: CueClass) bitmap_height(e: usize, self: Cue): Result[f32, jni.JavaError] {
+  let got = jni.invoke_f32(e, jni.GET_FIELD + 7, self.ref, c.id_bitmap_height, 0 as usize);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// androidx.media3.common.text.Cue.line
+pub function (c: CueClass) line(e: usize, self: Cue): Result[f32, jni.JavaError] {
+  let got = jni.invoke_f32(e, jni.GET_FIELD + 7, self.ref, c.id_line, 0 as usize);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// androidx.media3.common.text.Cue.position
+pub function (c: CueClass) position(e: usize, self: Cue): Result[f32, jni.JavaError] {
+  let got = jni.invoke_f32(e, jni.GET_FIELD + 7, self.ref, c.id_position, 0 as usize);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// androidx.media3.common.text.Cue.size
+pub function (c: CueClass) size(e: usize, self: Cue): Result[f32, jni.JavaError] {
+  let got = jni.invoke_f32(e, jni.GET_FIELD + 7, self.ref, c.id_size, 0 as usize);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// A android.graphics.Bitmap.
+pub struct Bitmap { ref: usize }
+
+pub function (x: Bitmap) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Bitmap) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.graphics.Bitmap and the IDs of its members.
+pub struct BitmapClass { class: usize, id_get_height: usize, id_get_pixels: usize, id_get_width: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function bitmap_class(e: usize): Result[BitmapClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/graphics/Bitmap");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_height = jni.checked_id(e, class, jni.get_method_id(e, class, "getHeight", "()I"))?;
+  let id_get_pixels = jni.checked_id(e, class, jni.get_method_id(e, class, "getPixels", "([IIIIIII)V"))?;
+  let id_get_width = jni.checked_id(e, class, jni.get_method_id(e, class, "getWidth", "()I"))?;
+  return Ok(BitmapClass { class: class, id_get_height: id_get_height, id_get_pixels: id_get_pixels, id_get_width: id_get_width });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: BitmapClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.graphics.Bitmap.getHeight()I
+pub function (c: BitmapClass) get_height(e: usize, self: Bitmap): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_height, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.graphics.Bitmap.getPixels([IIIIIII)V
+pub function (c: BitmapClass) get_pixels(e: usize, self: Bitmap, a0: jni.Object, a1: i32, a2: i32, a3: i32, a4: i32, a5: i32, a6: i32): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(7);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.jvalue_set_int(args, 2, a2 as usize);
+  jni.jvalue_set_int(args, 3, a3 as usize);
+  jni.jvalue_set_int(args, 4, a4 as usize);
+  jni.jvalue_set_int(args, 5, a5 as usize);
+  jni.jvalue_set_int(args, 6, a6 as usize);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_get_pixels, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.graphics.Bitmap.getWidth()I
+pub function (c: BitmapClass) get_width(e: usize, self: Bitmap): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_width, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// The struct of IDs of each class of this module.
+pub struct Classes { looper: LooperClass, handler: HandlerClass, message: MessageClass, surface: SurfaceClass, surface_texture: SurfaceTextureClass, context: ContextClass, list: ListClass, atomic_long_array: AtomicLongArrayClass, atomic_reference: AtomicReferenceClass, audio_attributes: AudioAttributesClass, audio_attributes_builder: AudioAttributes_BuilderClass, exo_player: ExoPlayerClass, exo_player_builder: ExoPlayer_BuilderClass, player: PlayerClass, player_listener: Player_ListenerClass, player_events: Player_EventsClass, media_item: MediaItemClass, tracks: TracksClass, tracks_group: Tracks_GroupClass, track_group: TrackGroupClass, track_selection_parameters: TrackSelectionParametersClass, track_selection_parameters_builder: TrackSelectionParameters_BuilderClass, track_selection_override: TrackSelectionOverrideClass, video_size: VideoSizeClass, playback_exception: PlaybackExceptionClass, audio_capabilities: AudioCapabilitiesClass, cue_group: CueGroupClass, cue: CueClass, bitmap: BitmapClass }
+
+// Makes the struct of IDs of each class. Call it one time, and call
+// `release` when the app does not call Java again. One lookup for each
+// class, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function classes(e: usize): Result[Classes, jni.JavaError] {
+  let looper = match (looper_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      return Err(err);
+    },
+  };
+  let handler = match (handler_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      return Err(err);
+    },
+  };
+  let message = match (message_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      return Err(err);
+    },
+  };
+  let surface = match (surface_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      return Err(err);
+    },
+  };
+  let surface_texture = match (surface_texture_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      return Err(err);
+    },
+  };
+  let context = match (context_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      return Err(err);
+    },
+  };
+  let list = match (list_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      return Err(err);
+    },
+  };
+  let atomic_long_array = match (atomic_long_array_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      return Err(err);
+    },
+  };
+  let atomic_reference = match (atomic_reference_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      return Err(err);
+    },
+  };
+  let audio_attributes = match (audio_attributes_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      return Err(err);
+    },
+  };
+  let audio_attributes_builder = match (audio_attributes_builder_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      return Err(err);
+    },
+  };
+  let exo_player = match (exo_player_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      return Err(err);
+    },
+  };
+  let exo_player_builder = match (exo_player_builder_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      return Err(err);
+    },
+  };
+  let player = match (player_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      return Err(err);
+    },
+  };
+  let player_listener = match (player_listener_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      player.release(e);
+      return Err(err);
+    },
+  };
+  let player_events = match (player_events_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      player.release(e);
+      player_listener.release(e);
+      return Err(err);
+    },
+  };
+  let media_item = match (media_item_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      player.release(e);
+      player_listener.release(e);
+      player_events.release(e);
+      return Err(err);
+    },
+  };
+  let tracks = match (tracks_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      player.release(e);
+      player_listener.release(e);
+      player_events.release(e);
+      media_item.release(e);
+      return Err(err);
+    },
+  };
+  let tracks_group = match (tracks_group_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      player.release(e);
+      player_listener.release(e);
+      player_events.release(e);
+      media_item.release(e);
+      tracks.release(e);
+      return Err(err);
+    },
+  };
+  let track_group = match (track_group_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      player.release(e);
+      player_listener.release(e);
+      player_events.release(e);
+      media_item.release(e);
+      tracks.release(e);
+      tracks_group.release(e);
+      return Err(err);
+    },
+  };
+  let track_selection_parameters = match (track_selection_parameters_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      player.release(e);
+      player_listener.release(e);
+      player_events.release(e);
+      media_item.release(e);
+      tracks.release(e);
+      tracks_group.release(e);
+      track_group.release(e);
+      return Err(err);
+    },
+  };
+  let track_selection_parameters_builder = match (track_selection_parameters_builder_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      player.release(e);
+      player_listener.release(e);
+      player_events.release(e);
+      media_item.release(e);
+      tracks.release(e);
+      tracks_group.release(e);
+      track_group.release(e);
+      track_selection_parameters.release(e);
+      return Err(err);
+    },
+  };
+  let track_selection_override = match (track_selection_override_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      player.release(e);
+      player_listener.release(e);
+      player_events.release(e);
+      media_item.release(e);
+      tracks.release(e);
+      tracks_group.release(e);
+      track_group.release(e);
+      track_selection_parameters.release(e);
+      track_selection_parameters_builder.release(e);
+      return Err(err);
+    },
+  };
+  let video_size = match (video_size_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      player.release(e);
+      player_listener.release(e);
+      player_events.release(e);
+      media_item.release(e);
+      tracks.release(e);
+      tracks_group.release(e);
+      track_group.release(e);
+      track_selection_parameters.release(e);
+      track_selection_parameters_builder.release(e);
+      track_selection_override.release(e);
+      return Err(err);
+    },
+  };
+  let playback_exception = match (playback_exception_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      player.release(e);
+      player_listener.release(e);
+      player_events.release(e);
+      media_item.release(e);
+      tracks.release(e);
+      tracks_group.release(e);
+      track_group.release(e);
+      track_selection_parameters.release(e);
+      track_selection_parameters_builder.release(e);
+      track_selection_override.release(e);
+      video_size.release(e);
+      return Err(err);
+    },
+  };
+  let audio_capabilities = match (audio_capabilities_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      player.release(e);
+      player_listener.release(e);
+      player_events.release(e);
+      media_item.release(e);
+      tracks.release(e);
+      tracks_group.release(e);
+      track_group.release(e);
+      track_selection_parameters.release(e);
+      track_selection_parameters_builder.release(e);
+      track_selection_override.release(e);
+      video_size.release(e);
+      playback_exception.release(e);
+      return Err(err);
+    },
+  };
+  let cue_group = match (cue_group_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      player.release(e);
+      player_listener.release(e);
+      player_events.release(e);
+      media_item.release(e);
+      tracks.release(e);
+      tracks_group.release(e);
+      track_group.release(e);
+      track_selection_parameters.release(e);
+      track_selection_parameters_builder.release(e);
+      track_selection_override.release(e);
+      video_size.release(e);
+      playback_exception.release(e);
+      audio_capabilities.release(e);
+      return Err(err);
+    },
+  };
+  let cue = match (cue_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      player.release(e);
+      player_listener.release(e);
+      player_events.release(e);
+      media_item.release(e);
+      tracks.release(e);
+      tracks_group.release(e);
+      track_group.release(e);
+      track_selection_parameters.release(e);
+      track_selection_parameters_builder.release(e);
+      track_selection_override.release(e);
+      video_size.release(e);
+      playback_exception.release(e);
+      audio_capabilities.release(e);
+      cue_group.release(e);
+      return Err(err);
+    },
+  };
+  let bitmap = match (bitmap_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      message.release(e);
+      surface.release(e);
+      surface_texture.release(e);
+      context.release(e);
+      list.release(e);
+      atomic_long_array.release(e);
+      atomic_reference.release(e);
+      audio_attributes.release(e);
+      audio_attributes_builder.release(e);
+      exo_player.release(e);
+      exo_player_builder.release(e);
+      player.release(e);
+      player_listener.release(e);
+      player_events.release(e);
+      media_item.release(e);
+      tracks.release(e);
+      tracks_group.release(e);
+      track_group.release(e);
+      track_selection_parameters.release(e);
+      track_selection_parameters_builder.release(e);
+      track_selection_override.release(e);
+      video_size.release(e);
+      playback_exception.release(e);
+      audio_capabilities.release(e);
+      cue_group.release(e);
+      cue.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { looper: looper, handler: handler, message: message, surface: surface, surface_texture: surface_texture, context: context, list: list, atomic_long_array: atomic_long_array, atomic_reference: atomic_reference, audio_attributes: audio_attributes, audio_attributes_builder: audio_attributes_builder, exo_player: exo_player, exo_player_builder: exo_player_builder, player: player, player_listener: player_listener, player_events: player_events, media_item: media_item, tracks: tracks, tracks_group: tracks_group, track_group: track_group, track_selection_parameters: track_selection_parameters, track_selection_parameters_builder: track_selection_parameters_builder, track_selection_override: track_selection_override, video_size: video_size, playback_exception: playback_exception, audio_capabilities: audio_capabilities, cue_group: cue_group, cue: cue, bitmap: bitmap });
+}
+
+// Deletes the reference to each class. Do not use `c` after this call.
+pub function (c: Classes) release(e: usize): void {
+  c.looper.release(e);
+  c.handler.release(e);
+  c.message.release(e);
+  c.surface.release(e);
+  c.surface_texture.release(e);
+  c.context.release(e);
+  c.list.release(e);
+  c.atomic_long_array.release(e);
+  c.atomic_reference.release(e);
+  c.audio_attributes.release(e);
+  c.audio_attributes_builder.release(e);
+  c.exo_player.release(e);
+  c.exo_player_builder.release(e);
+  c.player.release(e);
+  c.player_listener.release(e);
+  c.player_events.release(e);
+  c.media_item.release(e);
+  c.tracks.release(e);
+  c.tracks_group.release(e);
+  c.track_group.release(e);
+  c.track_selection_parameters.release(e);
+  c.track_selection_parameters_builder.release(e);
+  c.track_selection_override.release(e);
+  c.video_size.release(e);
+  c.playback_exception.release(e);
+  c.audio_capabilities.release(e);
+  c.cue_group.release(e);
+  c.cue.release(e);
+  c.bitmap.release(e);
+}

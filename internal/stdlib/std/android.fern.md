@@ -383,7 +383,7 @@ function message_event(kind: i32, arg: usize): Event {
 
 The context block that `start` hangs off `ANativeActivity.instance` is a `Context`. It holds the two pipes, the activity, the thread handle, the JNIEnv of the loop thread, the window flags, the time of the last vsync, the frame flags, the Choreographer of the loop thread, and the motion event of the `Touch` step that runs. Each thread reads and writes one field at a time, so a write of one thread does not overwrite a field of the other.
 
-Only the UI thread can change the views of the activity. `immersive` sets bit 0 for hidden bars and bit 1 for an explicit request, and sends a request to the UI thread through the pipe of the text fields. The UI thread applies the bits through its JNIEnv, which the activity holds. The focus callback applies them again, because Android shows the bars again while another window has the focus. The window gets the focus after it shows, and again each time the user returns to it. `brightness` goes to the UI thread in the same way, because it changes the attributes of the window. `pip_auto` goes there too: it gives the activity the `PictureInPictureParams` of a video, so Android shows the activity in a small window when the user leaves it. `in_pip` tells whether the activity shows in that window.
+Only the UI thread can change the views of the activity. `immersive` sets bit 0 for hidden bars and bit 1 for an explicit request, and sends a request to the UI thread through the pipe of the text fields. The UI thread applies the bits through its JNIEnv, which the activity holds. The focus callback applies them again, because Android shows the bars again while another window has the focus. The window gets the focus after it shows, and again each time the user returns to it. `brightness` goes to the UI thread in the same way, because it changes the attributes of the window. `pip_auto` goes there too: it gives the activity the `PictureInPictureParams` of a video, so Android shows the activity in a small window when the user leaves it. `orientation` goes there too: it calls `setRequestedOrientation` of the activity. `in_pip` tells whether the activity shows in that window.
 
 `NativeActivity` and `Callbacks` have the fields of `ANativeActivity` and `ANativeActivityCallbacks` in `android/native_activity.h`, in their order. `@derive(ffi.CLayout)` gives each field its C offset.
 
@@ -1616,6 +1616,24 @@ pub function pip_auto(ctx: usize, on: boolean, w: i32, h: i32): void {
   ui_request(ctx, UiRequest { op: op, a: w, b: h, data: 0 as usize });
 }
 
+// Turns the activity to `which`. ORIENTATION_LANDSCAPE and
+// ORIENTATION_PORTRAIT keep that shape in each direction of the device.
+// ORIENTATION_ANY follows the device and the setting of the user again.
+pub function orientation(ctx: usize, which: i32): void {
+  ui_request(ctx, UiRequest { op: ORIENTATION, a: which, b: 0, data: 0 as usize });
+}
+
+// Does the request of `orientation` on the UI thread.
+function apply_orientation(ctx: usize, which: i32): void {
+  unsafe {
+    let activity: usize = Context.c_load_activity(ctx);
+    let e: usize = NativeActivity.c_load_env(activity);
+    let obj: usize = NativeActivity.c_load_clazz(activity);
+    let set = jni.call_void(e, obj, "setRequestedOrientation", "(I)V", [which as usize]);
+    let cleared: usize = jni.exception_clear(e);
+  }
+}
+
 // True while the activity shows in a picture-in-picture window.
 pub function in_pip(ctx: usize): boolean {
   if (sdk_version(ctx) < 26) {
@@ -1917,6 +1935,18 @@ const PIP_ON: i32 = 11;
 
 const PIP_OFF: i32 = 12;
 
+// The request of `orientation`: `a` is a value of
+// ActivityInfo.SCREEN_ORIENTATION_.
+const ORIENTATION: i32 = 13;
+
+// ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED, SENSOR_LANDSCAPE and
+// SENSOR_PORTRAIT.
+pub const ORIENTATION_ANY: i32 = -1;
+
+pub const ORIENTATION_LANDSCAPE: i32 = 6;
+
+pub const ORIENTATION_PORTRAIT: i32 = 7;
+
 // InputType.TYPE_CLASS_TEXT: text with the suggestions of the keyboard.
 pub const INPUT_TEXT: i32 = 1;
 
@@ -2045,6 +2075,10 @@ function do_request(ctx: usize, r: UiRequest): boolean {
   }
   if (r.op == PIP_ON || r.op == PIP_OFF) {
     apply_pip(ctx, r.op == PIP_ON, r.a, r.b);
+    return false;
+  }
+  if (r.op == ORIENTATION) {
+    apply_orientation(ctx, r.a);
     return false;
   }
   if (r.op > FIELD_HIDE) {

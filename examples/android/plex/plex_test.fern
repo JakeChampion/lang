@@ -139,6 +139,22 @@ function test_item_fields(): test.TestOutcome {
   return test.assert_eq(plex.facts(it), "2010 · 2h 28m · PG-13 · 8.7 · 1080p");
 }
 
+// A 4K film in HDR10 at 23.976 frames each second, and one in Dolby
+// Vision. The phone decodes HEVC, but the app draws in SDR.
+const HDR: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"9\",\"type\":\"movie\",\"title\":\"Bright\",\"Media\":[{\"container\":\"mkv\",\"videoCodec\":\"hevc\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":13,\"key\":\"/library/parts/13/1/file.mkv\",\"Stream\":[{\"id\":60,\"streamType\":1,\"codec\":\"hevc\",\"colorTrc\":\"smpte2084\",\"frameRate\":23.976},{\"id\":61,\"streamType\":2,\"codec\":\"aac\",\"selected\":true}]}]},{\"container\":\"mp4\",\"videoCodec\":\"hevc\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":14,\"key\":\"/library/parts/14/1/file.mp4\",\"Stream\":[{\"id\":70,\"streamType\":1,\"codec\":\"hevc\",\"DOVIPresent\":true,\"frameRate\":24}]}]},{\"container\":\"mp4\",\"videoCodec\":\"hevc\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":15,\"key\":\"/library/parts/15/1/file.mp4\",\"Stream\":[{\"id\":80,\"streamType\":1,\"codec\":\"hevc\",\"colorTrc\":\"bt709\",\"frameRate\":25}]}]}]}]}}";
+
+function test_hdr_transcodes(): test.TestOutcome {
+  let Some(it) = plex.parse_item(HDR) else {
+    return test.fail("no item");
+  };
+  let phone = ["video/avc", "video/hevc", "audio/mp4a-latm"];
+  let pictures = it.media.map((m: plex.Media): string => m.hdr.to_string() + "@" + ((m.frame_rate * 1000.0f32 + 0.5f32) as i32).to_string());
+  let sdr = plex.Item { ...it, media: [it.media[2]] };
+  let vision = plex.Item { ...it, media: [it.media[1]] };
+  let s = plex.stream_for(client(), base(), it, plex.qualities()[0], 0i64, "s1", phone, plex.no_choice());
+  return test.assert_eq(pictures.join(" ") + " " + plex.direct_playable(it, phone).to_string() + " " + plex.direct_playable(vision, phone).to_string() + " " + plex.direct_playable(sdr, phone).to_string() + " " + s.transcode.to_string(), "true@23976 true@24000 false@25000 false false true true");
+}
+
 function test_stream_choice(): test.TestOutcome {
   let Some(it) = plex.parse_item(MOVIE) else {
     return test.fail("no item");
@@ -151,7 +167,7 @@ function test_stream_choice(): test.TestOutcome {
   if (!s.transcode || s.offset_ms != 60000i64 || !s.url.contains("/video/:/transcode/universal/start.m3u8?") || s.url.contains("offset=") || !s.url.contains("session=s1") || !s.url.contains("directStream=1") || !s.url.contains("X-Plex-Platform=Generic") || s.url.contains("add-limitation")) {
     return test.fail("transcode " + s.url);
   }
-  if (!s.url.contains("X-Plex-Client-Profile-Extra=add-settings%28DirectPlayStreamSelection%3Dtrue%29%2Badd-transcode-target%28type%3DvideoProfile%26context%3Dstreaming%26protocol%3Dhls%26container%3Dmpegts%26videoCodec%3Dh264%26audioCodec%3Daac%29")) {
+  if (!s.url.contains("X-Plex-Client-Profile-Extra=add-settings%28DirectPlayStreamSelection%3Dtrue%29%2Badd-transcode-target%28type%3DvideoProfile%26context%3Dstreaming%26protocol%3Dhls%26container%3Dmpegts%26videoCodec%3Dh264%26audioCodec%3Daac%2Ceac3%29")) {
     return test.fail("profile " + s.url);
   }
   let eac3 = plex.Item { ...it, media: [plex.Media { ...it.media[0], audio: "eac3" }] };
@@ -184,6 +200,15 @@ function test_hubs(): test.TestOutcome {
   }
   let ep = hubs[0].items[0];
   return test.assert_eq(plex.card_title(ep) + "|" + plex.card_subtitle(ep) + "|" + plex.poster(ep), "Lost|S1 E1|/library/metadata/70/thumb/2");
+}
+
+// A download names an episode with its show, its code and its title, so
+// two episodes of one show differ. A movie keeps its title.
+function test_full_titles(): test.TestOutcome {
+  let hubs = plex.parse_hubs(HUBS);
+  let ep = hubs[0].items[0];
+  let film = hubs[1].items[0];
+  return test.assert_eq([plex.full_title(ep), plex.episode_line(ep), plex.full_title(film), plex.episode_line(film)].join("|"), "Lost · S1 E1 · Pilot|S1 E1 · Pilot|Inception|2010");
 }
 
 function test_page_total(): test.TestOutcome {
@@ -301,11 +326,48 @@ function test_thumbnail_part(): test.TestOutcome {
 
 const TRACKED: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"7\",\"type\":\"movie\",\"title\":\"Two Tracks\",\"Media\":[{\"container\":\"mkv\",\"videoCodec\":\"h264\",\"audioCodec\":\"eac3\",\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/1/file.mkv\",\"Stream\":[{\"id\":20,\"streamType\":1,\"codec\":\"h264\"},{\"id\":21,\"streamType\":2,\"codec\":\"eac3\",\"displayTitle\":\"English (EAC3 5.1)\",\"languageCode\":\"eng\",\"selected\":true},{\"id\":22,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Commentary (AAC Stereo)\",\"languageCode\":\"eng\"},{\"id\":31,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT External)\",\"key\":\"/library/streams/31\",\"selected\":true},{\"id\":32,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS)\"}]}]}]}]}}";
 
+// A film whose server remembers the French sound: an English commentary
+// comes before the English sound, and the subtitles are English forced,
+// English and French.
+const LANGUAGES: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"8\",\"type\":\"movie\",\"title\":\"Many Tongues\",\"Media\":[{\"container\":\"mkv\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":12,\"key\":\"/library/parts/12/1/file.mkv\",\"Stream\":[{\"id\":40,\"streamType\":1,\"codec\":\"h264\"},{\"id\":41,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"Français (AAC Stereo)\",\"languageCode\":\"fre\",\"selected\":true},{\"id\":42,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English Commentary (AAC Stereo)\",\"languageCode\":\"eng\"},{\"id\":43,\"streamType\":2,\"codec\":\"aac\",\"displayTitle\":\"English (AAC Stereo)\",\"languageCode\":\"eng\"},{\"id\":51,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English Forced (SRT)\",\"languageCode\":\"eng\",\"forced\":true},{\"id\":52,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\",\"languageCode\":\"eng\"},{\"id\":53,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"Français (SRT)\",\"languageCode\":\"fra\",\"selected\":true}]}]}]}]}}";
+
+function choice_text(c: plex.Choice): string {
+  return c.audio + "/" + c.subtitle;
+}
+
+function test_preferred_tracks(): test.TestOutcome {
+  let Some(it) = plex.parse_item(LANGUAGES) else {
+    return test.fail("no item");
+  };
+  let picks = [
+    choice_text(plex.preferred(it, "en", plex.SUBS_FOREIGN)),
+    choice_text(plex.preferred(it, "en", plex.SUBS_ALWAYS)),
+    choice_text(plex.preferred(it, "en", plex.SUBS_OFF)),
+    choice_text(plex.preferred(it, "fr", plex.SUBS_FOREIGN)),
+    choice_text(plex.preferred(it, "fr", plex.SUBS_ALWAYS)),
+    choice_text(plex.preferred(it, "de", plex.SUBS_ALWAYS)),
+    choice_text(plex.preferred(it, "", plex.SUBS_OFF)),
+  ];
+  return test.assert_eq(picks.join(" "), "43/51 43/52 43/51 41/ 41/53 41/53 41/53");
+}
+
+function test_language_codes(): test.TestOutcome {
+  let codes = ["en-GB", "eng", "fre", "FR", "ger", "nob", "zh-Hans", "xx", ""].map((c: string): string => plex.language_code(c));
+  return test.assert_eq(codes.join(",") + " " + plex.language_name("fr"), "en,en,fr,fr,de,no,zh,, Français");
+}
+
+function test_account_profile(): test.TestOutcome {
+  let a = plex.parse_account("{\"friendlyName\":\"Ada\",\"profile\":{\"defaultAudioLanguage\":\"en\",\"autoSelectSubtitle\":2}}");
+  let none = plex.parse_account("{\"username\":\"bo\"}");
+  return test.assert_eq(a.name + " " + a.language + " " + a.subtitles.to_string() + " " + none.name + " " + none.language + " " + none.subtitles.to_string(), "Ada en 2 bo  -1");
+}
+
 // A file with E-AC-3 and AAC sound, an external SubRip subtitle and a PGS
-// subtitle: the server remembers the first sound and the SubRip one. With
-// no E-AC-3 decoder, the AAC track plays as it is. The SubRip subtitle
-// plays with the file as it is, because the app draws it, and the PGS
-// subtitle burns in a transcode.
+// subtitle inside the file: the server remembers the first sound and the
+// SubRip one. With no E-AC-3 decoder, the AAC track plays as it is. The
+// SubRip subtitle plays with the file as it is, because the app draws it.
+// The PGS subtitle plays with the file as it is too, because the player
+// draws it, and it burns in a transcode.
 function test_tracks(): test.TestOutcome {
   let Some(it) = plex.parse_item(TRACKED) else {
     return test.fail("no item");
@@ -341,16 +403,22 @@ function test_tracks(): test.TestOutcome {
   if (!in_transcode.url.contains("subtitles=none")) {
     return test.fail("a transcode burned the subtitle that the app draws: " + in_transcode.url);
   }
-  let burn = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, plex.Choice { audio: "22", subtitle: "32" });
-  return test.assert_eq((burn.transcode && burn.url.contains("subtitles=burn") && burn.url.contains("audioStreamID=22")).to_string(), "true");
+  let pgs = plex.Choice { audio: "22", subtitle: "32" };
+  let shown = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, pgs);
+  if (shown.transcode || plex.image_subtitle_index(it, pgs) != 0) {
+    return test.fail("the PGS subtitle inside the file did not play with the file as it is: " + shown.url);
+  }
+  let burn = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, plex.Choice { audio: "21", subtitle: "32" });
+  return test.assert_eq((burn.transcode && burn.url.contains("subtitles=burn") && burn.url.contains("audioStreamID=21")).to_string(), "true");
 }
 
-const EMBEDDED: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"8\",\"type\":\"movie\",\"title\":\"Inside\",\"Media\":[{\"container\":\"mkv\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":12,\"key\":\"/library/parts/12/1/file.mkv\",\"Stream\":[{\"id\":40,\"streamType\":1,\"codec\":\"h264\"},{\"id\":41,\"streamType\":2,\"codec\":\"aac\",\"selected\":true},{\"id\":42,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"},{\"id\":43,\"streamType\":3,\"codec\":\"ass\",\"displayTitle\":\"English (ASS)\"},{\"id\":44,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS)\"}]}]}]}]}}";
+const EMBEDDED: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"8\",\"type\":\"movie\",\"title\":\"Inside\",\"Media\":[{\"container\":\"mkv\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"Part\":[{\"id\":12,\"key\":\"/library/parts/12/1/file.mkv\",\"Stream\":[{\"id\":40,\"streamType\":1,\"codec\":\"h264\"},{\"id\":41,\"streamType\":2,\"codec\":\"aac\",\"selected\":true},{\"id\":42,\"streamType\":3,\"codec\":\"srt\",\"displayTitle\":\"English (SRT)\"},{\"id\":43,\"streamType\":3,\"codec\":\"ass\",\"displayTitle\":\"English (ASS)\"},{\"id\":44,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS)\"},{\"id\":45,\"streamType\":3,\"codec\":\"pgs\",\"displayTitle\":\"English (PGS External)\",\"key\":\"/library/streams/45\"}]}]}]}]}}";
 
 // The SubRip and ASS subtitles inside a file play with the file as it is,
 // because the app draws them. The app asks the server for the text of each
-// one at the address of its stream. A PGS subtitle inside the file still
-// burns in a transcode.
+// one at the address of its stream. The player draws a PGS subtitle inside
+// the file, the third subtitle there. A PGS file beside the video burns in
+// a transcode.
 function test_embedded_subtitles(): test.TestOutcome {
   let Some(it) = plex.parse_item(EMBEDDED) else {
     return test.fail("no item");
@@ -371,8 +439,33 @@ function test_embedded_subtitles(): test.TestOutcome {
       return test.fail("the text of the subtitle " + id + " is not asked for at its stream: " + r.url);
     }
   }
-  let burn = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, plex.Choice { audio: "41", subtitle: "44" });
-  return test.assert_eq((burn.transcode && burn.url.contains("subtitles=burn")).to_string(), "true");
+  let inside = plex.Choice { audio: "41", subtitle: "44" };
+  let beside = plex.Choice { audio: "41", subtitle: "45" };
+  let shown = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, inside);
+  let burn = plex.stream_for(client(), base(), it, original, 0i64, "s1", phone, beside);
+  let places = plex.image_subtitle_index(it, inside).to_string() + " " + plex.image_subtitle_index(it, beside).to_string();
+  return test.assert_eq(places + " " + shown.transcode.to_string() + " " + (burn.transcode && burn.url.contains("subtitles=burn")).to_string(), "2 -1 false true");
+}
+
+// A download holds the tracks of its file. A transcode holds the sound
+// that it played, and no image subtitle. A file as it is keeps the image
+// subtitle inside it. A transcode that was named before its name said so
+// is a .mkv of an item that is not MKV.
+function test_file_item(): test.TestOutcome {
+  let Some(it) = plex.parse_item(TRACKED) else {
+    return test.fail("no item");
+  };
+  let ids = (ts: plex.Track[]): string => ts.map((t: plex.Track): string => t.id).join(",");
+  let whole = plex.file_item(it, false);
+  let copy = plex.file_item(it, true);
+  if (ids(plex.audio_tracks(whole)) != "21,22" || ids(plex.subtitle_tracks(whole)) != "31,32") {
+    return test.fail("the tracks of the file as it is: " + ids(plex.audio_tracks(whole)) + " " + ids(plex.subtitle_tracks(whole)));
+  }
+  if (ids(plex.audio_tracks(copy)) != "21" || ids(plex.subtitle_tracks(copy)) != "31" || plex.remembered(copy).audio != "21") {
+    return test.fail("the tracks of the transcode: " + ids(plex.audio_tracks(copy)) + " " + ids(plex.subtitle_tracks(copy)));
+  }
+  let mp4 = plex.Item { ...it, media: [plex.Media { ...it.media[0], container: "mp4" }] };
+  return test.assert_eq([plex.transcoded_file(it, "7.transcode.mkv"), plex.transcoded_file(it, "7.mkv"), plex.transcoded_file(mp4, "7.mkv"), plex.transcoded_file(mp4, "7.mp4")].map((b: boolean): string => b.to_string()).join(","), "true,false,true,false");
 }
 
 // A file with E-AC-3 sound does not play as it is on a phone with no
@@ -384,14 +477,17 @@ function test_download_transcode(): test.TestOutcome {
     return test.fail("no item");
   };
   let phone = ["video/avc", "audio/mp4a-latm"];
-  if (plex.direct_playable(it, phone) || plex.download_name(it, true) != "7.mkv" || plex.download_name(it, false) != "7.mkv") {
+  if (plex.direct_playable(it, phone) || plex.download_name(it, true) != "7.transcode.mkv" || plex.download_name(it, false) != "7.mkv") {
     return test.fail("the name of the download");
   }
   let r = plex.download_transcode_request(client(), base(), it, plex.qualities()[0], "s1", phone, plex.remembered(it));
   if (!r.url.starts_with("https://10-0-0-5.abc.plex.direct:32400/video/:/transcode/universal/start?") || !r.url.contains("&protocol=http&") || !r.url.contains("&directStream=1&") || !r.url.contains("container%3Dmkv") || r.url.contains("fastSeek")) {
     return test.fail("the download of a transcode: " + r.url);
   }
-  let hls = plex.hls_url(client(), base(), it, plex.qualities()[0], "s1", plex.remembered(it));
+  let hls = plex.hls_url(client(), base(), it, plex.qualities()[0], "s1", ["video/avc", "audio/mp4a-latm", "audio/ac3"], plex.remembered(it));
+  if (!hls.contains("audioCodec%3Daac%2Cac3%29")) {
+    return test.fail("a transcode does not copy the Dolby Digital that the phone plays: " + hls);
+  }
   return test.assert_eq((hls.contains("/start.m3u8?") && hls.contains("&protocol=hls&") && hls.contains("container%3Dmpegts") && hls.contains("&fastSeek=1&X-Plex-Incomplete-Segments=1")).to_string(), "true");
 }
 
@@ -458,6 +554,7 @@ function test_markers(): test.TestOutcome {
 function main(): i32 {
   let r = test.new("plex");
   r = r.it("each request names the client", test_headers_name_the_client);
+  r = r.it("a download names the show, the code and the title of an episode", test_full_titles);
   r = r.it("a PIN is read waiting and linked", test_pin_parse);
   r = r.it("servers are read and their connections ordered", test_servers_and_connection_order);
   r = r.it("a private local connection gets a plain HTTP address", test_private_connections_get_http);
@@ -468,6 +565,7 @@ function main(): i32 {
   r = r.it("the libraries of video and music are kept", test_sections_keep_video_and_music);
   r = r.it("an item is read with its media", test_item_fields);
   r = r.it("a stream plays the file or a transcode", test_stream_choice);
+  r = r.it("a video in HDR plays as a transcode, and the frame rate is read", test_hdr_transcodes);
   r = r.it("the hubs of the home screen", test_hubs);
   r = r.it("a page has the count of its library", test_page_total);
   r = r.it("times and durations", test_text);
@@ -475,9 +573,13 @@ function main(): i32 {
   r = r.it("the next episode", test_next_episode);
   r = r.it("the preview thumbnails of a BIF file", test_bif);
   r = r.it("the sound and subtitle tracks of a file", test_tracks);
+  r = r.it("the tracks follow the language and the mode of the subtitles", test_preferred_tracks);
+  r = r.it("language codes of two and three letters", test_language_codes);
+  r = r.it("the account gives its language and its mode of the subtitles", test_account_profile);
   r = r.it("SubRip, WebVTT, ASS and SSA cues", test_cues);
   r = r.it("subtitles inside the file that the app draws", test_embedded_subtitles);
   r = r.it("a file that needs a transcode downloads as one", test_download_transcode);
+  r = r.it("a download holds the tracks of its file", test_file_item);
   r = r.it("the name of a kept image", test_cache_name);
   r = r.it("the intro and credits markers of an item", test_markers);
   r = r.it("a part with preview thumbnails", test_thumbnail_part);

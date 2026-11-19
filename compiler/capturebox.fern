@@ -9,12 +9,12 @@ pub function cell_name(name: string): string {
 
 function cell_read(name: string, line: i32, col: i32): ast.Expr {
   let cell: ast.Expr = ast.ExprIdent { name: cell_name(name), line: line, col: col, ty: "", builtin: false };
-  return ast.ExprCall { callee: ast.ExprFieldAccess { obj: cell, field: "get", line: line, col: col, ty: "", const_read: false }, args: [], line: line, col: col, type_args: [], ty: "" };
+  return ast.ExprCall { callee: ast.ExprFieldAccess { obj: cell, field: "get", line: line, col: col, ty: "", const_read: false, display: false }, args: [], line: line, col: col, type_args: [], ty: "" };
 }
 
 pub function cell_decl(name: string, ty: string, init: ast.Expr, line: i32, col: i32): ast.Stmt {
   let cell: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "cell_new", line: line, col: col, ty: "", builtin: false }, args: [init], line: line, col: col, type_args: [], ty: "" };
-  return ast.StmtVar { name: cell_name(name), type_name: "Cell[" + ty + "]", init: cell, line: line, col: col, fn_ret: "", fn_param_types: "" };
+  return ast.StmtVar { name: cell_name(name), type_name: "Cell[" + ty + "]", init: cell, line: line, col: col, fn_ret: "", fn_param_types: "", destr: ast.no_destr() };
 }
 
 function cell_type(elem: typeinfo.Type): typeinfo.Type {
@@ -37,7 +37,7 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
       return ast.binary(b.op, box_rewrite_expr(b.left, boxed, btypes, bsites, bound), box_rewrite_expr(b.right, boxed, btypes, bsites, bound), b.line, b.col, b.ty);
     },
     ast.ExprUnary(u) => {
-      return ast.unary(u.op, box_rewrite_expr(u.operand, boxed, btypes, bsites, bound), u.line, u.col, u.ty);
+      return ast.rebuild_unary(u, box_rewrite_expr(u.operand, boxed, btypes, bsites, bound), u.line, u.col, u.ty);
     },
     ast.ExprCall(c) => {
       let nargs: ast.Expr[] = [];
@@ -153,12 +153,12 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
       if (bxi >= 0) {
         return cell_decl(v.name, btypes[bxi], box_rewrite_expr(v.init, boxed, btypes, bsites, bound), v.line, v.col);
       }
-      return ast.StmtVar { name: v.name, type_name: v.type_name, init: box_rewrite_expr(v.init, boxed, btypes, bsites, bound), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
+      return ast.StmtVar { name: v.name, type_name: v.type_name, init: box_rewrite_expr(v.init, boxed, btypes, bsites, bound), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr };
     },
     ast.StmtAssign(a) => {
       if (util.index_of_str(boxed, a.target) >= 0 && util.index_of_str(bound, a.target) < 0) {
         let recv: ast.Expr = ast.ExprIdent { name: cell_name(a.target), line: a.target_line, col: a.target_col, ty: "", builtin: false };
-        let scall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "set", line: a.line, col: a.col, ty: "", const_read: false }, args: [box_rewrite_expr(a.value, boxed, btypes, bsites, bound)], line: a.line, col: a.col, type_args: [], ty: "" };
+        let scall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "set", line: a.line, col: a.col, ty: "", const_read: false, display: false }, args: [box_rewrite_expr(a.value, boxed, btypes, bsites, bound)], line: a.line, col: a.col, type_args: [], ty: "" };
         return ast.StmtExpr { value: scall, line: a.line, op: "" };
       }
       return ast.StmtAssign { ...a, value: box_rewrite_expr(a.value, boxed, btypes, bsites, bound) };
@@ -177,8 +177,8 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
     },
     ast.StmtFor(fr) => {
       let fb = bound;
-      fb = astwalk.append_bound_name(fb, fr.var_name);
-      return ast.StmtFor { var_name: fr.var_name, iter: box_rewrite_expr(fr.iter, boxed, btypes, bsites, bound), body: box_rewrite_stmts(fr.body, boxed, btypes, bsites, fb), label: fr.label, line: fr.line, col: fr.col };
+      fb = ast.append_for_names(fb, fr);
+      return ast.StmtFor { var_name: fr.var_name, iter: box_rewrite_expr(fr.iter, boxed, btypes, bsites, bound), body: box_rewrite_stmts(fr.body, boxed, btypes, bsites, fb), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
     },
     ast.StmtMatch(m) => {
       let na: ast.MatchArm[] = [];
@@ -237,7 +237,7 @@ pub function box_rewrite_stmts(stmts: ast.Stmt[], boxed: string[], btypes: strin
 function shadow_after(stmt: ast.Stmt, boxed: string[], bsites: string[], bound: string[]): string[] {
   let out = bound;
   if let ast.StmtVar(v) = stmt {
-    let names = astwalk.append_bound_name([], v.name);
+    let names = ast.append_var_names([], v);
     for name in names {
       let i = util.index_of_str(boxed, name);
       if (i >= 0 && !util.has_str(out, name) && site_key(v.name, v.line, v.col) != bsites[i]) {

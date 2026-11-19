@@ -96,7 +96,7 @@ function lambda_value(fd: parser.FuncDecl): ast.Expr {
       }
     }
   }
-  return ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  return ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
 }
 
 function main(): i32 {

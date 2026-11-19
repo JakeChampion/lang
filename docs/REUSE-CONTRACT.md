@@ -29,9 +29,9 @@ may rely on them firing for the described patterns. Koka's
 constructor site is reuse-paired (R1–R4 below) or within the
 allowance — `fern -explain E068` for the exact contract,
 `compiler/irfipverify.fern` for the pass, which runs on every
-compile path. Still open: the drop-guided source selection default (plan E3 —
-evaluated, kept off). Where a shape has known non-firing edges,
-they are listed under "taints".
+compile path. The selection is drop-guided: a token starts at the drop of
+a donor (see "Drop-guided selection" below). Where a shape has known
+non-firing edges, they are listed under "taints".
 
 ## The two-layer model
 
@@ -351,6 +351,14 @@ the nine `emitAliasInc` call sites is gated on `moveSites`
   is identical under both strategies by construction (shared
   gates + is_unique guard + degrade path; a 224-seed differential
   on the native compiler agreed).
+  **The self-host compiler selects drop-guided** (`reuse_pairs` and
+  `carried_pairs` in `compiler/ssaunits.fern`). A token starts at the step
+  that drops the donor. A later construction of the same size in that block
+  takes the token, or the token goes along an edge to a construction in a
+  later block. So the shape above pairs: `arm` and `later` in
+  `TestSelfHostReuseReport` pin it through the `constructor storage` rows
+  of `fern -array-report`. No pass proves a bound on the tokens that a frame
+  holds.
 - **Visibility** (`fip`/`fbip` verify-and-enable): **CLOSED** (plan
   item **E2'**, 2026-07-13). `fbip` / `fbip(n)` / `fip(n)` make the
   pairing programmer-visible: the IR op-scan

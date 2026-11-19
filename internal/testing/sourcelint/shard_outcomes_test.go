@@ -278,6 +278,41 @@ func TestOtherWorkflowOwnJobTestsEachHaveAJob(t *testing.T) {
 	ownJobTestsEachHaveAJob(t, "test-e2e-other.yml", "other-test-weights.txt")
 }
 
+// Each suite that the selfhost-stdtest job runs is in OWN_JOB_TESTS. A suite
+// that is not there also runs whole in a general shard, where it can take
+// the most of a worker's budget.
+func TestSelfHostStdTestJobSuitesAreOwnJobTests(t *testing.T) {
+	wf, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "test-e2e-selfhost.yml"))
+	if err != nil {
+		t.Fatalf("read workflow: %v", err)
+	}
+	src := string(wf)
+	m := regexp.MustCompile(`(?m)^\s*OWN_JOB_TESTS:\s*"([^"]*)"`).FindStringSubmatch(src)
+	if m == nil {
+		t.Fatal("workflow does not define OWN_JOB_TESTS — did the env block change?")
+	}
+	own := map[string]bool{}
+	for _, name := range strings.Split(m[1], "|") {
+		own[name] = true
+	}
+	_, job, ok := strings.Cut(src, "\n  selfhost-stdtest:\n")
+	if !ok {
+		t.Fatal("workflow has no selfhost-stdtest job")
+	}
+	if end := regexp.MustCompile(`\n  [a-z0-9-]+:\n`).FindStringIndex(job); end != nil {
+		job = job[:end[0]]
+	}
+	suites := regexp.MustCompile(`-test\.run '\^([A-Za-z0-9_]+)\$'`).FindAllStringSubmatch(job, -1)
+	if len(suites) == 0 {
+		t.Fatal("the selfhost-stdtest job runs no suite")
+	}
+	for _, s := range suites {
+		if !own[s[1]] {
+			t.Errorf("the selfhost-stdtest job runs %s, but OWN_JOB_TESTS does not name it, so a general shard runs it too", s[1])
+		}
+	}
+}
+
 func ownJobTestsEachHaveAJob(t *testing.T, workflow, weightsFile string) {
 	t.Helper()
 	wf, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", workflow))

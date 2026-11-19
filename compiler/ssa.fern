@@ -108,6 +108,10 @@ pub const CALL_IND: i32 = 56;
 
 pub const AGG_LIT: i32 = 57;
 
+// The imm of an AGG_LIT that is the static box of a variant with no field,
+// in an enum that has one other inhabited variant.
+pub const PAIRED_BOX: i32 = 1;
+
 pub const SYM_ADDR: i32 = 58;
 
 pub const FLAT_OP: i32 = 59;
@@ -2884,6 +2888,17 @@ pub function successors(t: STerm): i32[] {
   return [];
 }
 
+// The number of distinct blocks a terminator can jump to.
+pub function successor_count(t: STerm): i32 {
+  if (t.kind_tag == TERM_BR || t.kind_tag == TERM_BRIF && t.t == t.f) {
+    return 1;
+  }
+  if (t.kind_tag == TERM_BRIF) {
+    return 2;
+  }
+  return 0;
+}
+
 pub function successor_id(t: STerm, which: i32): i32 {
   if (t.kind_tag == TERM_BR && which == 0) {
     return t.target;
@@ -3619,7 +3634,8 @@ pub function with_sym(own imm: Imms, v: i32, sym: string): Imms {
 }
 
 // `stores` says the target stores an immediate to memory with one instruction.
-pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: string[], stores: boolean): Imms {
+// `zero_stores` says it stores only a zero so.
+pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: string[], stores: boolean, zero_stores: boolean): Imms {
   let is_imm = __alloc_bool(f.nvals);
   let konst = __alloc_bool(f.nvals);
   let value = __alloc_i64(f.nvals);
@@ -3644,7 +3660,7 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
     for ins in blk.insts {
       for a in 0..ins.args.len() {
         let v = ins.args[a];
-        if (v >= 0 && v < is_imm.len() && is_imm[v] && ins.kind_tag != PHI && !(stores && stored_value(ins, a)) && !imm_use(ins, a, konst, value[v], right, left)) {
+        if (v >= 0 && v < is_imm.len() && is_imm[v] && ins.kind_tag != PHI && !((stores || zero_stores && value[v] == 0i64) && stored_value(ins, a)) && !imm_use(ins, a, konst, value[v], right, left)) {
           is_imm = is_imm.with(v, false);
         }
       }
@@ -6166,7 +6182,7 @@ function pure_tail(blk: SBlock): i32 {
 
 function reads_only(ins: SInst): boolean {
   let k = ins.kind_tag;
-  return k == LD_AT || k == CONST_INT || k == CONST_BOOL || k == CONST_I64 || k == SHAPE_ADDR || k == BINARY || k == UNARY || unique_test(ins);
+  return k == LD_AT || k == CONST_INT || k == CONST_BOOL || k == CONST_I64 || k == SHAPE_ADDR || k == AGG_LIT || k == BINARY || k == UNARY || unique_test(ins);
 }
 
 // The number of edges into each block position.
@@ -6635,8 +6651,19 @@ function without_lines(f: SFunc): SFunc {
   return SFunc { ...f, blocks: blocks };
 }
 
+// A call that reads its target out of its own environment. The text is
+// "slot", or "slot:" and the contract of the call (ir.call_units).
 pub function slot_call(ins: SInst): boolean {
-  return ins.kind_tag == CALL_IND && ins.str == "slot";
+  return ins.kind_tag == CALL_IND && (ins.str == "slot" || ins.str.starts_with("slot:"));
+}
+
+// The text of a call that reads its target out of its own environment, with
+// the contract that `text` holds.
+function slot_text(text: string): string {
+  if (text.len() == 0) {
+    return "slot";
+  }
+  return "slot:" + text;
 }
 
 function slot_calls(f: SFunc): SFunc {
@@ -6707,7 +6734,7 @@ function slot_block(blk: SBlock, env_of: i32[], uses: i32[], dropped: boolean[])
   let insts: SInst[] = [];
   for ins in blk.insts {
     if (reads_own_slot(ins, env_of, uses)) {
-      insts = insts.append(SInst { ...ins, args: ins.args.with(0, ins.args[1]), str: "slot" });
+      insts = insts.append(SInst { ...ins, args: ins.args.with(0, ins.args[1]), str: slot_text(ins.str) });
     } else if (ins.kind_tag != ARR_AT || !dropped[ins.result]) {
       insts = insts.append(ins);
     }
@@ -6801,6 +6828,120 @@ pub function shared_lengths(f: SFunc): SFunc {
     return f;
   }
   return SFunc { ...f, blocks: blocks, nvals: f.nvals + made.len() };
+}
+
+// Each AGG_LIT of one constant gives the same address. Where one of them
+// reaches another on each path with no call between them, the second reads
+// the value of the first, so a target forms the address once. `hard` says
+// which positions are calls, as hard_call_positions gives them. A value that
+// lives across a call needs a register that the call keeps, so a call ends
+// the reach.
+pub function shared_static_boxes(f: SFunc, hard: boolean[]): SFunc {
+  let keys: string[] = [];
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == AGG_LIT && ins.result >= 0 && !util.has_str(keys, ins.str)) {
+        keys = keys.append(ins.str);
+      }
+    }
+  }
+  if (keys.len() == 0) {
+    return f;
+  }
+  let at = block_positions(f);
+  let first: i32[] = [];
+  let pos = 0;
+  for blk in f.blocks {
+    first = first.append(pos);
+    pos += blk.insts.len() + 1;
+  }
+  let flat: i32[] = [];
+  for v in 0..f.nvals {
+    flat = flat.append(v);
+  }
+  let shared = false;
+  for key in keys {
+    let outs = box_reach(f, at, first, hard, key);
+    for bi in 0..f.blocks.len() {
+      let cur = box_reach_in(f, at, outs, bi);
+      let blk = f.blocks[bi];
+      for k in 0..blk.insts.len() {
+        let ins = blk.insts[k];
+        if (hard[first[bi] + k]) {
+          cur = -1;
+        }
+        if (ins.kind_tag == AGG_LIT && ins.result >= 0 && ins.str == key) {
+          if (cur >= 0) {
+            flat = flat.with(ins.result, cur);
+            shared = true;
+          } else {
+            cur = ins.result;
+          }
+        }
+      }
+    }
+  }
+  if (!shared) {
+    return f;
+  }
+  return rewrite_through(f, flat);
+}
+
+// The AGG_LIT of `key` that reaches the end of each block, -1 for none, and
+// -2 for a block that the walk did not reach.
+function box_reach(f: SFunc, at: i32[], first: i32[], hard: boolean[], key: string): i32[] {
+  let outs: i32[] = [];
+  for blk in f.blocks {
+    outs = outs.append(-2);
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for bi in 0..f.blocks.len() {
+      let cur = box_reach_in(f, at, outs, bi);
+      let blk = f.blocks[bi];
+      for k in 0..blk.insts.len() {
+        if (hard[first[bi] + k]) {
+          cur = -1;
+        }
+        let ins = blk.insts[k];
+        if (cur < 0 && ins.kind_tag == AGG_LIT && ins.result >= 0 && ins.str == key) {
+          cur = ins.result;
+        }
+      }
+      if (cur != outs[bi]) {
+        outs = outs.with(bi, cur);
+        changed = true;
+      }
+    }
+  }
+  return outs;
+}
+
+// The value that each predecessor of the block at bi gives. A predecessor
+// that the walk did not reach yet gives no opinion.
+function box_reach_in(f: SFunc, at: i32[], outs: i32[], bi: i32): i32 {
+  let blk = f.blocks[bi];
+  if (bi == 0 || blk.preds.len() == 0) {
+    return -1;
+  }
+  let cur = -2;
+  for p in blk.preds {
+    let pi = position_of(at, p);
+    if (pi < 0) {
+      return -1;
+    }
+    let o = outs[pi];
+    if (o == -2) {
+      continue;
+    }
+    if (cur == -2) {
+      cur = o;
+    } else if (cur != o) {
+      return -1;
+    }
+  }
+  return if (cur == -2) { -1 } else { cur };
 }
 
 // `used[v]` is true when an instruction or a terminator reads value v.

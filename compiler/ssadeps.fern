@@ -336,18 +336,21 @@ function uses_error(f: ssa.SFunc, dependencies: i32[][], g: Facts): string {
 // one when each count of it comes after a load from it: a load in the same
 // block before the count, or a load in a block that dominates the count. The
 // load already read the box, so the value is not null and holds no tag bit.
+// The test of a variant with no field counts as a load: its operand is a live
+// value of an enum of boxes, which is a box or a static box.
 pub function boxed_values(f: ssa.SFunc): boolean[] {
   let counted = counted_values(f);
   if (counted.len() == 0) {
     return counted;
   }
   let dom = dominates_at(f, ssa.block_positions(f));
-  let loads = load_blocks(f, counted);
+  let lits = static_boxes(f);
+  let loads = load_blocks(f, counted, lits);
   let out = counted;
   for bi in 0..f.blocks.len() {
     let insts = f.blocks[bi].insts;
     for k in 0..insts.len() {
-      if (counts_box(insts[k]) && out[insts[k].args[0]] && !loaded_before(insts, k, insts[k].args[0]) && !loaded_above(dom, loads, insts[k].args[0], bi)) {
+      if (counts_box(insts[k]) && out[insts[k].args[0]] && !loaded_before(insts, k, insts[k].args[0], lits) && !loaded_above(dom, loads, insts[k].args[0], bi)) {
         out = out.with(insts[k].args[0], false);
       }
     }
@@ -395,19 +398,38 @@ function counts_box(ins: ssa.SInst): boolean {
     && (ins.str == "__fern_rc_inc" || ins.str == "__fern_rc_is_unique" || ins.str == "__fern_rc_dec" || ssa.inline_release(ins) || ssa.shared_dec(ins));
 }
 
-function loads_from(ins: ssa.SInst, v: i32): boolean {
-  return ins.kind_tag == ssa.LD_AT && ins.args.len() == 1 && ins.args[0] == v && ins.imm >= ssa.tag_offset();
+function loads_from(ins: ssa.SInst, v: i32, lits: boolean[]): boolean {
+  return ins.kind_tag == ssa.LD_AT && ins.args.len() == 1 && ins.args[0] == v && ins.imm >= ssa.tag_offset() || static_test(ins, lits) && ins.args[0] == v;
+}
+
+// The compare of a value with the address of a static box, which is the test
+// of a variant with no field (`ssa_lift.lift_variant_is_prod`).
+function static_test(ins: ssa.SInst, lits: boolean[]): boolean {
+  return ins.kind_tag == ssa.BINARY && ins.str == "eq" && ins.imm == 64 && ins.args.len() == 2 && ins.args[0] >= 0 && ins.args[1] >= 0 && lits[ins.args[1]];
+}
+
+// The values that are the address of a static box.
+function static_boxes(f: ssa.SFunc): boolean[] {
+  let out = __alloc_bool(f.nvals);
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == ssa.AGG_LIT && ins.result >= 0) {
+        out = out.with(ins.result, true);
+      }
+    }
+  }
+  return out;
 }
 
 // The loads from counted values: values[k] is loaded from in the block at position blocks[k].
 struct LoadSites { values: i32[], blocks: i32[] }
 
-function load_blocks(f: ssa.SFunc, counted: boolean[]): LoadSites {
+function load_blocks(f: ssa.SFunc, counted: boolean[], lits: boolean[]): LoadSites {
   let values: i32[] = [];
   let blocks: i32[] = [];
   for bi in 0..f.blocks.len() {
     for ins in f.blocks[bi].insts {
-      if (ins.kind_tag == ssa.LD_AT && ins.args.len() == 1 && ins.imm >= ssa.tag_offset() && ins.args[0] >= 0 && counted[ins.args[0]]) {
+      if (ins.args.len() > 0 && ins.args[0] >= 0 && counted[ins.args[0]] && loads_from(ins, ins.args[0], lits)) {
         values = values.append(ins.args[0]);
         blocks = blocks.append(bi);
       }
@@ -416,9 +438,9 @@ function load_blocks(f: ssa.SFunc, counted: boolean[]): LoadSites {
   return LoadSites { values: values, blocks: blocks };
 }
 
-function loaded_before(insts: ssa.SInst[], k: i32, v: i32): boolean {
+function loaded_before(insts: ssa.SInst[], k: i32, v: i32, lits: boolean[]): boolean {
   for j in 0..k {
-    if (loads_from(insts[j], v)) {
+    if (loads_from(insts[j], v, lits)) {
       return true;
     }
   }

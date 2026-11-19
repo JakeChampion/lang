@@ -12,6 +12,9 @@ name: Merge queue
 # `merge-queue/batch`, and dispatches merge-queue-batch.yml there. That
 # workflow runs the full suite and moves main to the tested commit.
 #
+# A pull request with the `ci-priority` label goes before all others, and
+# it does not wait for its own `CI verdict` (scripts/merge-queue).
+#
 # It runs when something can make a pull request ready: a label, the end of a
 # CI run, the end of a batch (merge-queue-batch.yml dispatches it), and a
 # schedule that catches a lost event.
@@ -49,7 +52,7 @@ jobs:
   form:
     name: Form the next batch
     if: >-
-      ${{ (github.event_name != 'pull_request_target' || github.event.label.name == 'merge-queue')
+      ${{ (github.event_name != 'pull_request_target' || contains(fromJSON('["merge-queue","ci-priority"]'), github.event.label.name))
           && (github.event_name != 'workflow_run' || github.event.workflow_run.event == 'pull_request') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10

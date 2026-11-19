@@ -375,19 +375,6 @@ function step(block: i32, point: i32, target: i32): Step {
   return Step { block: block, point: point, target: target, supplies: [], drops: [], hand_roots: [], hand_fields: [] };
 }
 
-function successor_count(b: ssa.SBlock): i32 {
-  if (b.term.kind_tag == ssa.TERM_BR) {
-    return 1;
-  }
-  if (b.term.kind_tag == ssa.TERM_BRIF) {
-    if (b.term.t == b.term.f) {
-      return 1;
-    }
-    return 2;
-  }
-  return 0;
-}
-
 function unit_free(t: typeinfo.Type): boolean {
   if (semtypes.is_never(t) || typeinfo.is_lanes(t)) {
     return true;
@@ -2282,7 +2269,7 @@ function hold_at(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], flows: F
 }
 
 function hold_along(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned: boolean[], flows: Flows, own out: boolean[], b: ssa.SBlock, bi: i32): boolean[] {
-  for which in 0..successor_count(b) {
+  for which in 0..ssa.successor_count(b.term) {
     let target = ssa.successor_id(b.term, which);
     let si = ssalive.position(a.flow, target);
     let along = edge_supplies(f, b, si, owned);
@@ -2628,7 +2615,7 @@ function named_after(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: 
       continue;
     }
     let from = f.graph.blocks[at];
-    for which in 0..successor_count(from) {
+    for which in 0..ssa.successor_count(from.term) {
       let id = ssa.successor_id(from.term, which);
       let k = ssalive.position(a.flow, id);
       if (k >= 0) {
@@ -3164,7 +3151,7 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
       if (b.term.kind_tag == ssa.TERM_RET || b.term.kind_tag == ssa.TERM_UNREACHABLE) {
         steps = steps.append(choose_ids(step(b.id, return_point(), -1), return_supplies(f, b), term_uses, owned, ids, []));
       }
-      for which in 0..successor_count(b) {
+      for which in 0..ssa.successor_count(b.term) {
         let target = ssa.successor_id(b.term, which);
         let si = ssalive.position(analysis.flow, target);
         entry_kept = entry_kept_of(f, analysis, b, si, entry_kept);
@@ -4164,7 +4151,7 @@ function verify_block(f: ssasem.Func, bi: i32, p: Plan, idx: ReplayIndex, owned:
       return BlockProgress { why: why, count: 0 };
     }
   }
-  let targets = successor_count(b);
+  let targets = ssa.successor_count(b.term);
   if (targets == 2) {
     let first = copy_row(state);
     let why = verify_edge(f, b, ssa.successor_id(b.term, 0), p, idx, first, operations.held, owned, ids, analysis);
@@ -4265,7 +4252,12 @@ pub function with_reuse(f: ssasem.Func, p: Plan, idx: i32[][], dom: ssadeps.Dom)
   if (p.reuse.pairs.len() == f.graph.blocks.len()) {
     return p;
   }
-  let off = reuse_layer_disabled(f.graph.name);
+  return reuse_planned(f, p, idx, dom, reuse_layer_disabled(f.graph.name));
+}
+
+// p with the reuse pairs of f. `off` gives a plan that pairs nothing.
+@noinline
+pub function reuse_planned(f: ssasem.Func, p: Plan, idx: i32[][], dom: ssadeps.Dom, off: boolean): Plan {
   if (!p.ok) {
     return Plan { ...p, reuse: Reuse { ...p.reuse, disabled: off } };
   }
@@ -4283,7 +4275,7 @@ pub function with_reuse(f: ssasem.Func, p: Plan, idx: i32[][], dom: ssadeps.Dom)
   return Plan { ...p, links: links, chained: chained_withs(f, links), reuse: Reuse { pairs: pairs, keeps: keeps, carry: carry, reads: vr, disabled: off } };
 }
 
-function static_box(p: Plan, d: i32): boolean {
+pub function static_box(p: Plan, d: i32): boolean {
   return d >= 0 && d < p.constants.len() && p.constants[d] != "";
 }
 
@@ -4552,7 +4544,8 @@ pub function known_static(vr: VariantReads, b: ssa.SBlock, d: i32): boolean {
   return false;
 }
 
-function recipient_slots(f: ssasem.Func, p: Plan, ins: ssa.SInst): i32 {
+// The slots of the box that ins constructs, and -1 when no dropped box can supply it.
+pub function recipient_slots(f: ssasem.Func, p: Plan, ins: ssa.SInst): i32 {
   if (p.constants[ins.result] != "") {
     return -1;
   }
@@ -4709,7 +4702,7 @@ function carry_routes(f: ssasem.Func, g: RouteGraph, h: Holds, own m: RouteMarks
       work = work.append(h.edges[si]);
     } else {
       let term = f.graph.blocks[g.at[id]].term;
-      for which in 0..successor_count(f.graph.blocks[g.at[id]]) {
+      for which in 0..ssa.successor_count(f.graph.blocks[g.at[id]].term) {
         let s = ssa.successor_id(term, which);
         work = work.append(s);
       }
@@ -4727,7 +4720,7 @@ function carry_routes(f: ssasem.Func, g: RouteGraph, h: Holds, own m: RouteMarks
     if (claims_slots(g, k, slots)) {
       builds = builds.append(id);
     } else {
-      for which in 0..successor_count(f.graph.blocks[k]) {
+      for which in 0..ssa.successor_count(f.graph.blocks[k].term) {
         let s = ssa.successor_id(f.graph.blocks[k].term, which);
         work = work.append(s);
       }
@@ -4814,7 +4807,7 @@ function dying_unclaimed(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], vr
       }
     }
   }
-  for which in 0..successor_count(b) {
+  for which in 0..ssa.successor_count(b.term) {
     let target = ssa.successor_id(b.term, which);
     let si = step_at(p, idx, b.id, edge_point(), target);
     if (si >= 0) {
@@ -4854,7 +4847,7 @@ function holds_of(f: ssasem.Func, vr: VariantReads, dying: Dying[], holding: boo
 }
 
 function can_hold(b: ssa.SBlock): boolean {
-  return successor_count(b) > 0;
+  return ssa.successor_count(b.term) > 0;
 }
 
 function carried_pairs(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], off: boolean, vr: VariantReads): Carry {
@@ -4941,7 +4934,7 @@ function served_by(f: ssasem.Func, p: Plan, idx: i32[][], g: RouteGraph, own c: 
   }
   for id in leaving {
     let term = f.graph.blocks[g.at[id]].term;
-    for which in 0..successor_count(f.graph.blocks[g.at[id]]) {
+    for which in 0..ssa.successor_count(f.graph.blocks[g.at[id]].term) {
       let s = ssa.successor_id(term, which);
       if (util.index_of_i32(targets, s) < 0 && util.index_of_i32(inside, s) < 0) {
         c = Carry { ...c, exit_from: c.exit_from.append(id), exit_to: c.exit_to.append(s), dropped: c.dropped.append(d) };
@@ -6044,7 +6037,7 @@ function verify_carry(f: ssasem.Func, p: Plan, idx: ReplayIndex, r: Reuse, reach
       return "a token is held in an unreachable block";
     }
     let b = f.graph.blocks[k];
-    if (successor_count(b) == 0) {
+    if (ssa.successor_count(b.term) == 0) {
       return "a block that leaves the function holds a token";
     }
     if (util.index_of_i32(replayed_step(p, idx, b, c.drop_at[i]).drops, c.held[i]) < 0 || static_box(p, c.held[i])) {
@@ -6080,7 +6073,7 @@ function verify_carry(f: ssasem.Func, p: Plan, idx: ReplayIndex, r: Reuse, reach
           return why;
         }
         let out = tokens_out(c, b, entry[k]);
-        let next = successor_count(b);
+        let next = ssa.successor_count(b.term);
         if (next == 0 && out.len() > 0) {
           return "a carried token is held where the function leaves";
         }

@@ -355,7 +355,7 @@ function check_expr(e: ast.Expr, cx: Ctx, own out: util.Diag[]): util.Diag[] {
       return check_expr(b.right, cx, out);
     },
     ast.ExprUnary(u) => {
-      if (u.op.starts_with("as") && !scalar(u.ty)) {
+      if ((u.op == ast.CAST || u.op == ast.CHECKED_CAST) && !scalar(u.ty)) {
         out = bad(cx, "casts to " + util.demangle(u.ty) + ", which is not a scalar", u.line, u.col, out);
       }
       return check_expr(u.operand, cx, out);

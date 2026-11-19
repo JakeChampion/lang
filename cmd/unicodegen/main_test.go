@@ -89,8 +89,8 @@ func TestTablesAreStringsNotArrays(t *testing.T) {
 		t.Error("generated module declares an array table; tables must be string literals")
 	}
 	tables := regexp.MustCompile(`(?m)^function (_\w+(?:_table|_ranges))\(\)`).FindAllStringSubmatch(src, -1)
-	if len(tables) != 28 {
-		t.Fatalf("generated %d table functions, want 28", len(tables))
+	if len(tables) != 29 {
+		t.Fatalf("generated %d table functions, want 29", len(tables))
 	}
 	for _, table := range tables {
 		name := table[1]
@@ -451,5 +451,20 @@ func TestHangulConstants(t *testing.T) {
 	}
 	if hangulNCount != 21*hangulTCount {
 		t.Errorf("NCount %d must equal VCount*TCount", hangulNCount)
+	}
+}
+
+func TestNormStepsRoundTrip(t *testing.T) {
+	_, decomps, _ := parseNormData()
+	steps := parseNormSteps()
+	stepT := encodeSteps(steps)
+	verifySteps(stepT, steps, decomps)
+	for _, c := range []struct{ cp, a, b rune }{{0xFB2C, 0xFB49, 0x05C1}, {0x212B, 0x00C5, 0}, {0x1EC7, 0x1EB9, 0x0302}} {
+		if a, b, ok := decodeStep(stepT, int(c.cp)); !ok || a != c.a || b != c.b {
+			t.Errorf("step(U+%04X) = %04X %04X (%v), want %04X %04X", c.cp, a, b, ok, c.a, c.b)
+		}
+	}
+	if _, _, ok := decodeStep(stepT, 0x00E9); ok {
+		t.Errorf("U+00E9 decomposes in one step to its full expansion, so it must not be in the step table")
 	}
 }
