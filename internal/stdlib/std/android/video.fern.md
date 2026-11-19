@@ -61,6 +61,8 @@ Audio synchronization and HDR display configuration remain with the app.
 Resource limits bound Fern buffers, not internal codec memory or process RSS.
 
 Each decoder preserves its pixel limit for output format changes.
+Output format reads borrow fixed keys with explicit zero terminators.
+They retain the integer result in the decoder scratch storage.
 An output format above this limit returns `Limit`, even when its crop fits.
 Invalid dimensions or crop return `Platform`.
 These checks occur after MediaCodec reports its format, without control over earlier platform allocations.
@@ -250,8 +252,24 @@ pub(package) function set_i32(format: usize, name: string, value: i32): void {
 
 pub(package) function get_i32(format: usize, name: string, fallback: i32, scratch: usize): i32 {
   let key = c_string(name);
-  let found = c_get_i32(format, key, scratch);
+  let value = read_i32(format, key, fallback, scratch);
   free_string(key, name);
+  return value;
+}
+
+// The key includes its final zero byte and remains valid through the call.
+pub(package) function get_i32_key(format: usize, key: string, fallback: i32, scratch: usize): i32 {
+  let bytes = key.as_bytes();
+  if (bytes.len() == 0 || bytes[bytes.len() - 1] != 0u8) {
+    return fallback;
+  }
+  unsafe {
+    return read_i32(format, __bytes_data(bytes), fallback, scratch);
+  }
+}
+
+function read_i32(format: usize, key: usize, fallback: i32, scratch: usize): i32 {
+  let found = c_get_i32(format, key, scratch);
   if (found != 0u8) {
     unsafe {
       return __load_i32(scratch);
@@ -498,24 +516,24 @@ function output_format(decoder: Decoder): Result[OutputFormat, frame.VideoError]
     return Err(frame.Platform);
   }
   let scratch = decoder.scratch;
-  let width = get_i32(format, "width", 0, scratch);
-  let height = get_i32(format, "height", 0, scratch);
+  let width = get_i32_key(format, "width\x00", 0, scratch);
+  let height = get_i32_key(format, "height\x00", 0, scratch);
   if (width <= 0 || height <= 0) {
     let _ = c_format_delete(format);
     return Err(frame.Platform);
   }
   let result = OutputFormat {
     width: width, height: height,
-    crop_left: get_i32(format, "crop-left", 0, scratch),
-    crop_top: get_i32(format, "crop-top", 0, scratch),
-    crop_right: get_i32(format, "crop-right", width - 1, scratch),
-    crop_bottom: get_i32(format, "crop-bottom", height - 1, scratch),
-    color_standard: get_i32(format, "color-standard", 0, scratch),
-    color_range: get_i32(format, "color-range", 0, scratch),
-    color_transfer: get_i32(format, "color-transfer", 0, scratch),
-    stride: get_i32(format, "stride", width, scratch),
-    slice_height: get_i32(format, "slice-height", height, scratch),
-    color_format: get_i32(format, "color-format", 0, scratch),
+    crop_left: get_i32_key(format, "crop-left\x00", 0, scratch),
+    crop_top: get_i32_key(format, "crop-top\x00", 0, scratch),
+    crop_right: get_i32_key(format, "crop-right\x00", width - 1, scratch),
+    crop_bottom: get_i32_key(format, "crop-bottom\x00", height - 1, scratch),
+    color_standard: get_i32_key(format, "color-standard\x00", 0, scratch),
+    color_range: get_i32_key(format, "color-range\x00", 0, scratch),
+    color_transfer: get_i32_key(format, "color-transfer\x00", 0, scratch),
+    stride: get_i32_key(format, "stride\x00", width, scratch),
+    slice_height: get_i32_key(format, "slice-height\x00", height, scratch),
+    color_format: get_i32_key(format, "color-format\x00", 0, scratch),
   };
   let _ = c_format_delete(format);
   if (!valid_crop(result)) {

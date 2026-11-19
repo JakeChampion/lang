@@ -27,4 +27,12 @@ for variant in ('normal', 'sanitize'):
         raise SystemExit(f'Android audio codec {variant} failed at check {result}')
 print('Android audio codec discovery, lifecycle, fallback, limits, and ABI checks passed')
 PY
+"$fern_audio_compiler" -O -stdlib internal/stdlib -target "$target" -shared -export main -o build/audio-codec/format-alloc.so bench/audio/android_audio_format.fern
+LD_LIBRARY_PATH="$PWD/build/audio-codec${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" python3 - <<'PY'
+import ctypes
+import runpy
+invoke = runpy.run_path('scripts/audio-reference/bench-format.py')['invoke']
+invoke(ctypes.CDLL('./build/audio-codec/format-alloc.so'), 2)
+print('Audio output format loops use two Fern allocations per query')
+PY
 FERN="$fern_audio_compiler" bash scripts/test-audio-playback
