@@ -14,7 +14,7 @@ pub struct SBlock { id: i32, insts: SInst[], term: STerm, preds: i32[] }
 
 pub struct SFunc { name: string, nparams: i32, nvals: i32, blocks: SBlock[], entry: i32, takes_env: boolean }
 
-// The kinds of SInst. Negative kinds are the semantic ones in ssasem.fern.
+// The kinds of SInst. Negative kinds describe semantic instructions.
 // NONE is the kind of no_inst().
 pub const NONE: i32 = 0;
 
@@ -167,9 +167,118 @@ pub function t_brif(cond: i32, t: i32, f: i32): STerm {
   return STerm { kind_tag: TERM_BRIF, cond: cond, target: 0, t: t, f: f, value: 0 };
 }
 
+// Semantic instruction kinds. Negative IDs index SEMANTIC_KIND_NAMES.
+pub const SEM_ARRAY_NEW: i32 = -1;
+
+pub const SEM_TUPLE_NEW: i32 = -2;
+
+pub const SEM_ARRAY_GET: i32 = -3;
+
+pub const SEM_TUPLE_GET: i32 = -4;
+
+pub const SEM_RECORD_NEW: i32 = -5;
+
+pub const SEM_RECORD_GET: i32 = -6;
+
+pub const SEM_CALL: i32 = -7;
+
+pub const SEM_VARIANT_NEW: i32 = -8;
+
+pub const SEM_VARIANT_IS: i32 = -9;
+
+pub const SEM_VARIANT_GET: i32 = -10;
+
+pub const SEM_VARIANT_UP: i32 = -11;
+
+pub const SEM_VARIANT_AS: i32 = -12;
+
+pub const SEM_LENGTH: i32 = -13;
+
+pub const SEM_APPEND: i32 = -14;
+
+pub const SEM_SLICE: i32 = -15;
+
+pub const SEM_STR_INDEX: i32 = -16;
+
+pub const SEM_CAST: i32 = -17;
+
+pub const SEM_STR_AS: i32 = -18;
+
+pub const SEM_WITH: i32 = -19;
+
+pub const SEM_CLOSURE_NEW: i32 = -20;
+
+pub const SEM_CALL_VALUE: i32 = -21;
+
+pub const SEM_CELL_NEW: i32 = -22;
+
+pub const SEM_CELL_GET: i32 = -23;
+
+pub const SEM_CELL_SET: i32 = -24;
+
+pub const SEM_MAP_NEW: i32 = -25;
+
+pub const SEM_MAP_INSERT: i32 = -26;
+
+pub const SEM_MAP_HAS: i32 = -27;
+
+pub const SEM_MAP_GET_OR: i32 = -28;
+
+pub const SEM_MAP_LEN: i32 = -29;
+
+pub const SEM_MAP_GET: i32 = -30;
+
+pub const SEM_MAP_KEYS: i32 = -31;
+
+pub const SEM_MAP_VALUES: i32 = -32;
+
+pub const SEM_MAP_DELETE: i32 = -33;
+
+pub const SEM_MAP_CLEARED: i32 = -34;
+
+pub const SEM_ZERO: i32 = -35;
+
+pub const SEM_STR_BYTES: i32 = -36;
+
+pub const SEM_ARR_JOIN: i32 = -37;
+
+pub const SEM_ARR_SLICE: i32 = -38;
+
+pub const SEM_DYN_UP: i32 = -44;
+
+pub const SEM_DYN_BOX: i32 = -45;
+
+pub const SEM_DYN_IS: i32 = -46;
+
+pub const SEM_DYN_AS: i32 = -47;
+
+pub const SEM_HOLE_AT: i32 = -48;
+
+pub const SEM_HOLE_FILL: i32 = -49;
+
+pub const SEM_ARRAY_LEND: i32 = -50;
+
+pub const SEM_STR_BYTE_VIEW: i32 = -51;
+
+pub const SEM_APPEND_RANGE: i32 = -52;
+
+pub const SEM_ARRAY_RESERVE: i32 = -53;
+
+pub const SEM_ARR_CONCAT: i32 = -54;
+
+pub const SEM_BYTES_NEW: i32 = -55;
+
+pub const SEM_TRUNCATE: i32 = -56;
+
+pub const SEM_CHECKED_PRESENT: i32 = -57;
+
+pub const SEM_CHECKED_VALUE: i32 = -58;
+
+pub const SEM_ARRAY_ZERO: i32 = -59;
+
 function semantic_names_symbol(id: i32): boolean {
-  return id == -7 || id == -8 || id == -9 || id == -10
-    || id == -11 || id == -12 || id == -20;
+  return id == SEM_CALL || id == SEM_VARIANT_NEW || id == SEM_VARIANT_IS || id == SEM_VARIANT_GET
+    || id == SEM_VARIANT_UP || id == SEM_VARIANT_AS || id == SEM_CLOSURE_NEW;
 }
 
 pub function plain_str(ins: SInst): string {
@@ -198,7 +307,7 @@ pub function plain_imm(ins: SInst): i32 {
 }
 
 function carries_imm(kind: i32): boolean {
-  return kind == CONST_INT || kind == CONST_BOOL || kind == PARAM || kind == -4 || kind == -6 || kind == -10 || kind == -49;
+  return kind == CONST_INT || kind == CONST_BOOL || kind == PARAM || kind == SEM_TUPLE_GET || kind == SEM_RECORD_GET || kind == SEM_VARIANT_GET || kind == SEM_HOLE_FILL;
 }
 
 function carries_str(kind: i32): boolean {
@@ -322,6 +431,7 @@ const KIND_NAMES: string[] = [
   "ternary",  // 61
   "lane_store",  // 62
   "frame_cell",  // 63
+  "bound",  // 64
 ];
 
 // The name of each semantic kind. Semantic ids run from -1 downward, so the

@@ -1584,7 +1584,7 @@ function block_of(f: ssasem.Func, id: i32): ssa.SBlock {
       return b;
     }
   }
-  return ssa.SBlock { id: -1, insts: [], term: ssa.STerm { kind_tag: 0, cond: 0, target: 0, t: 0, f: 0, value: 0 }, preds: [] };
+  return ssa.SBlock { id: -1, insts: [], term: ssa.STerm { kind_tag: ssa.TERM_NONE, cond: 0, target: 0, t: 0, f: 0, value: 0 }, preds: [] };
 }
 
 function links_none(links: i32[], d: i32): boolean {

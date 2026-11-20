@@ -1,29 +1,29 @@
 import "../ssa";
 
 function jump(target: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: 2, cond: 0, target: target, t: 0, f: 0, value: 0 };
+  return ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: target, t: 0, f: 0, value: 0 };
 }
 
 function returned(value: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: value };
+  return ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: value };
 }
 
 function graph(value: i32, trivial: boolean): ssa.SFunc {
   let entry: ssa.SBlock = ssa.SBlock {
     id: 0, preds: [], insts: [
-      ssa.SInst { kind_tag: 1, result: 0, args: [], imm: 7, str: "" },
-      ssa.SInst { kind_tag: 2, result: 1, args: [], imm: 1, str: "" },
-      ssa.SInst { kind_tag: 1, result: 3, args: [], imm: 9, str: "" },
+      ssa.SInst { kind_tag: ssa.CONST_INT, result: 0, args: [], imm: 7, str: "" },
+      ssa.SInst { kind_tag: ssa.CONST_BOOL, result: 1, args: [], imm: 1, str: "" },
+      ssa.SInst { kind_tag: ssa.CONST_INT, result: 3, args: [], imm: 9, str: "" },
     ],
-    term: ssa.STerm { kind_tag: 3, cond: 1, target: 0, t: 1, f: 2, value: 0 },
+    term: ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: 1, target: 0, t: 1, f: 2, value: 0 },
   };
   let left = ssa.SBlock { id: 1, preds: [0], insts: [], term: jump(3) };
   let right = ssa.SBlock { id: 2, preds: [0], insts: [], term: jump(3) };
   let other: i32 = if (trivial) { 0 } else { 3 };
   let join: ssa.SBlock = ssa.SBlock {
     id: 3, preds: [1, 2], insts: [
-      ssa.SInst { kind_tag: 8, result: 2, args: [0, other], imm: 0, str: "" },
-      ssa.SInst { kind_tag: 11, result: -1, args: [2], imm: 0, str: "observe" },
+      ssa.SInst { kind_tag: ssa.PHI, result: 2, args: [0, other], imm: 0, str: "" },
+      ssa.SInst { kind_tag: ssa.CALL, result: -1, args: [2], imm: 0, str: "observe" },
     ],
     term: returned(value),
   };
@@ -36,7 +36,7 @@ function main(): i32 {
   if (folded.repl.len() != 4 || folded.repl[2] != 0 || join.insts.len() != 1 || join.insts[0].args[0] != 0) {
     return 1;
   }
-  if (join.term.kind_tag != 1 || join.term.value != -1) {
+  if (join.term.kind_tag != ssa.TERM_RET || join.term.value != -1) {
     return 2;
   }
   let returning = ssa.prune_trivial_phis(graph(2, true));

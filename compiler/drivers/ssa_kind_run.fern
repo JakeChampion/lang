@@ -58,6 +58,8 @@ function main(): i32 {
   out = out + "select=" + util.i32_to_string(ssa.kind_id("select")) + "\n";
   out = out + "carry=" + util.i32_to_string(ssa.kind_id("carry")) + "\n";
 
+  out = out + "bound_kind=" + ssa.kind_name(ssa.BOUND) + "\n";
+
   let tn = ssa.term_count();
   let tfailures = 0;
   let tok = 0;

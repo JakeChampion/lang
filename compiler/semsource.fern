@@ -6938,7 +6938,7 @@ function word_source(s: State, id: i32): ssa.SInst {
       }
     }
   }
-  return ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
+  return ssa.no_inst();
 }
 
 // The value as a word with its bits at `shift` and zero in each other bit.

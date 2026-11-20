@@ -6,36 +6,36 @@ function inst(kind: i32, v: i32, args: i32[], str: string): ssa.SInst {
 }
 
 function jump(to: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: 2, cond: 0, target: to, t: 0, f: 0, value: 0 };
+  return ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: to, t: 0, f: 0, value: 0 };
 }
 
 function branch(cond: i32, t: i32, f: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: 3, cond: cond, target: 0, t: t, f: f, value: 0 };
+  return ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: cond, target: 0, t: t, f: f, value: 0 };
 }
 
 function ret(v: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: v };
+  return ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: v };
 }
 
 // A counter that a wrap keeps in range, read after the loop through an
 // extension, and a parameter read through one.
 function counted(): ssa.SFunc {
-  let b0 = ssa.SBlock { id: 0, insts: [inst(6, 0, [], ""), inst(1, 1, [], "")], term: jump(1), preds: [] };
-  let b1 = ssa.SBlock { id: 1, insts: [inst(8, 2, [1, 4], ""), inst(9, 5, [2, 0], "lt_s")], term: branch(5, 2, 3), preds: [0, 2] };
-  let b2 = ssa.SBlock { id: 2, insts: [inst(9, 3, [2, 0], "add"), inst(10, 4, [3], "int_wrap")], term: jump(1), preds: [1] };
-  let tail: ssa.SInst[] = [inst(10, 6, [2], "int_extend"), inst(10, 7, [0], "int_extend"), inst(9, 8, [6, 7], "add"), inst(9, 9, [8, 1], "and"), inst(10, 10, [9], "int_cast:u8")];
+  let b0 = ssa.SBlock { id: 0, insts: [inst(ssa.PARAM, 0, [], ""), inst(ssa.CONST_INT, 1, [], "")], term: jump(1), preds: [] };
+  let b1 = ssa.SBlock { id: 1, insts: [inst(ssa.PHI, 2, [1, 4], ""), inst(ssa.BINARY, 5, [2, 0], "lt_s")], term: branch(5, 2, 3), preds: [0, 2] };
+  let b2 = ssa.SBlock { id: 2, insts: [inst(ssa.BINARY, 3, [2, 0], "add"), inst(ssa.UNARY, 4, [3], "int_wrap")], term: jump(1), preds: [1] };
+  let tail: ssa.SInst[] = [inst(ssa.UNARY, 6, [2], "int_extend"), inst(ssa.UNARY, 7, [0], "int_extend"), inst(ssa.BINARY, 8, [6, 7], "add"), inst(ssa.BINARY, 9, [8, 1], "and"), inst(ssa.UNARY, 10, [9], "int_cast:u8")];
   let b3 = ssa.SBlock { id: 3, insts: tail, term: ret(10), preds: [1] };
   return ssa.SFunc { name: "counted", nparams: 1, nvals: 11, blocks: [b0, b1, b2, b3], entry: 0, takes_env: false };
 }
 
 function konst(v: i32, c: i32): ssa.SInst {
-  return ssa.SInst { kind_tag: 1, result: v, args: [], imm: c, str: "" };
+  return ssa.SInst { kind_tag: ssa.CONST_INT, result: v, args: [], imm: c, str: "" };
 }
 
 // Blocks 3 and 4 each end two loops. Block 3 also branches to itself.
 function shared_latches(): ssa.SFunc {
   let blocks: ssa.SBlock[] = [
-    ssa.SBlock { id: 6, insts: [inst(6, 0, [], "")], term: jump(0), preds: [] },
+    ssa.SBlock { id: 6, insts: [inst(ssa.PARAM, 0, [], "")], term: jump(0), preds: [] },
     ssa.SBlock { id: 0, insts: [], term: branch(0, 1, 5), preds: [6, 4] },
     ssa.SBlock { id: 1, insts: [], term: jump(2), preds: [0, 4] },
     ssa.SBlock { id: 2, insts: [], term: branch(0, 3, 4), preds: [1, 3] },
@@ -50,12 +50,12 @@ function shared_latches(): ssa.SFunc {
 // wrap, and a u32 shifted by 32, each read through an extension.
 function shifted(): ssa.SFunc {
   let insts: ssa.SInst[] = [
-    inst(6, 0, [], ""), konst(1, 17), inst(10, 2, [0], "u32_wrap"),
-    inst(9, 3, [2, 1], "shr_u"), inst(10, 4, [3], "int_cast:i32"),
-    konst(5, 24), inst(9, 6, [2, 5], "shr_u"), inst(10, 7, [6], "int_cast:u8"),
-    inst(9, 8, [0, 1], "shr_u"), inst(10, 9, [8], "int_cast:i32"),
-    konst(10, 32), inst(9, 11, [2, 10], "shr_u"), inst(10, 12, [11], "int_cast:i32"),
-    inst(9, 13, [4, 7], "add"), inst(9, 14, [13, 9], "add"), inst(9, 15, [14, 12], "add"),
+    inst(ssa.PARAM, 0, [], ""), konst(1, 17), inst(ssa.UNARY, 2, [0], "u32_wrap"),
+    inst(ssa.BINARY, 3, [2, 1], "shr_u"), inst(ssa.UNARY, 4, [3], "int_cast:i32"),
+    konst(5, 24), inst(ssa.BINARY, 6, [2, 5], "shr_u"), inst(ssa.UNARY, 7, [6], "int_cast:u8"),
+    inst(ssa.BINARY, 8, [0, 1], "shr_u"), inst(ssa.UNARY, 9, [8], "int_cast:i32"),
+    konst(10, 32), inst(ssa.BINARY, 11, [2, 10], "shr_u"), inst(ssa.UNARY, 12, [11], "int_cast:i32"),
+    inst(ssa.BINARY, 13, [4, 7], "add"), inst(ssa.BINARY, 14, [13, 9], "add"), inst(ssa.BINARY, 15, [14, 12], "add"),
   ];
   let b0 = ssa.SBlock { id: 0, insts: insts, term: ret(15), preds: [] };
   return ssa.SFunc { name: "shifted", nparams: 1, nvals: 16, blocks: [b0], entry: 0, takes_env: false };
@@ -65,12 +65,12 @@ function shifted(): ssa.SFunc {
 // and a product read by a raw load, each through an i32 cast.
 function indexed(): ssa.SFunc {
   let insts: ssa.SInst[] = [
-    inst(6, 0, [], ""), inst(6, 1, [], ""), inst(6, 2, [], ""),
-    inst(9, 3, [1, 2], "add"), inst(10, 4, [3], "int_cast:i32"), inst(42, 5, [0, 4], "u8"),
-    inst(9, 6, [1, 2], "sub"), inst(10, 7, [6], "int_cast:i32"), inst(42, 8, [0, 7], "u8"),
-    inst(9, 9, [8, 7], "add"), inst(9, 10, [5, 9], "add"),
-    inst(9, 11, [1, 2], "mul"), inst(10, 12, [11], "int_cast:i32"), inst(54, 13, [0, 12], ""),
-    inst(9, 14, [10, 13], "add"),
+    inst(ssa.PARAM, 0, [], ""), inst(ssa.PARAM, 1, [], ""), inst(ssa.PARAM, 2, [], ""),
+    inst(ssa.BINARY, 3, [1, 2], "add"), inst(ssa.UNARY, 4, [3], "int_cast:i32"), inst(ssa.ARR_AT, 5, [0, 4], "u8"),
+    inst(ssa.BINARY, 6, [1, 2], "sub"), inst(ssa.UNARY, 7, [6], "int_cast:i32"), inst(ssa.ARR_AT, 8, [0, 7], "u8"),
+    inst(ssa.BINARY, 9, [8, 7], "add"), inst(ssa.BINARY, 10, [5, 9], "add"),
+    inst(ssa.BINARY, 11, [1, 2], "mul"), inst(ssa.UNARY, 12, [11], "int_cast:i32"), inst(ssa.LD_BYTE, 13, [0, 12], ""),
+    inst(ssa.BINARY, 14, [10, 13], "add"),
   ];
   let b0 = ssa.SBlock { id: 0, insts: insts, term: ret(14), preds: [] };
   return ssa.SFunc { name: "indexed", nparams: 3, nvals: 15, blocks: [b0], entry: 0, takes_env: false };
@@ -79,9 +79,9 @@ function indexed(): ssa.SFunc {
 // A counter that counts down while it is greater than zero, or while it is
 // less than zero, and wraps each step.
 function counted_down(test: string): ssa.SFunc {
-  let b0 = ssa.SBlock { id: 0, insts: [inst(6, 0, [], ""), konst(1, 1), konst(2, 0)], term: jump(1), preds: [] };
-  let b1 = ssa.SBlock { id: 1, insts: [inst(8, 3, [0, 5], ""), inst(9, 6, [3, 2], test)], term: branch(6, 2, 3), preds: [0, 2] };
-  let b2 = ssa.SBlock { id: 2, insts: [inst(9, 4, [3, 1], "sub"), inst(10, 5, [4], "int_wrap")], term: jump(1), preds: [1] };
+  let b0 = ssa.SBlock { id: 0, insts: [inst(ssa.PARAM, 0, [], ""), konst(1, 1), konst(2, 0)], term: jump(1), preds: [] };
+  let b1 = ssa.SBlock { id: 1, insts: [inst(ssa.PHI, 3, [0, 5], ""), inst(ssa.BINARY, 6, [3, 2], test)], term: branch(6, 2, 3), preds: [0, 2] };
+  let b2 = ssa.SBlock { id: 2, insts: [inst(ssa.BINARY, 4, [3, 1], "sub"), inst(ssa.UNARY, 5, [4], "int_wrap")], term: jump(1), preds: [1] };
   let b3 = ssa.SBlock { id: 3, insts: [], term: ret(3), preds: [1] };
   return ssa.SFunc { name: "counted_down", nparams: 1, nvals: 7, blocks: [b0, b1, b2, b3], entry: 0, takes_env: false };
 }
@@ -91,12 +91,12 @@ function counted_down(test: string): ssa.SFunc {
 // `wide`, the function also returns the first parameter.
 function stepped(callee: string, wide: boolean): ssa.SFunc {
   let insts: ssa.SInst[] = [
-    inst(6, 0, [], ""), ssa.SInst { ...inst(6, 1, [], ""), imm: 1 }, konst(2, 255), inst(9, 3, [0, 2], "and"),
-    konst(4, 1), inst(9, 5, [0, 4], "add"), inst(10, 6, [5], "int_cast:i32"),
+    inst(ssa.PARAM, 0, [], ""), ssa.SInst { ...inst(ssa.PARAM, 1, [], ""), imm: 1 }, konst(2, 255), inst(ssa.BINARY, 3, [0, 2], "and"),
+    konst(4, 1), inst(ssa.BINARY, 5, [0, 4], "add"), inst(ssa.UNARY, 6, [5], "int_cast:i32"),
   ];
   let b0 = ssa.SBlock { id: 0, insts: insts, term: branch(1, 1, 2), preds: [] };
   let b1 = ssa.SBlock { id: 1, insts: [], term: ret(if (wide) { 0 } else { 3 }), preds: [0] };
-  let b2 = ssa.SBlock { id: 2, insts: [inst(11, 7, [6, 1], callee)], term: ret(7), preds: [0] };
+  let b2 = ssa.SBlock { id: 2, insts: [inst(ssa.CALL, 7, [6, 1], callee)], term: ret(7), preds: [0] };
   return ssa.SFunc { name: "stepped", nparams: 2, nvals: 8, blocks: [b0, b1, b2], entry: 0, takes_env: false };
 }
 
@@ -104,10 +104,10 @@ function stepped(callee: string, wide: boolean): ssa.SFunc {
 // a parameter, and one on the null whose result is read.
 function counted_nulls(): ssa.SFunc {
   let insts: ssa.SInst[] = [
-    inst(6, 0, [], ""), konst(1, 0),
-    inst(11, 2, [1], "__fern_rc_inc"), inst(11, 3, [1], "__fern_rc_dec"),
-    inst(11, 4, [0], "__fern_rc_dec"), inst(11, 5, [1], "__fern_rc_dec"),
-    inst(9, 6, [5, 0], "add"),
+    inst(ssa.PARAM, 0, [], ""), konst(1, 0),
+    inst(ssa.CALL, 2, [1], "__fern_rc_inc"), inst(ssa.CALL, 3, [1], "__fern_rc_dec"),
+    inst(ssa.CALL, 4, [0], "__fern_rc_dec"), inst(ssa.CALL, 5, [1], "__fern_rc_dec"),
+    inst(ssa.BINARY, 6, [5, 0], "add"),
   ];
   let b0 = ssa.SBlock { id: 0, insts: insts, term: ret(6), preds: [] };
   return ssa.SFunc { name: "counted_nulls", nparams: 1, nvals: 7, blocks: [b0], entry: 0, takes_env: false };
@@ -166,7 +166,7 @@ function main(): i32 {
   let w = ssa.block_loop_weights(counted());
   failures = check(w[0] == 1 && w[1] == 8 && w[2] == 8 && w[3] == 1, "a loop weighs 8", failures);
   let f = counted();
-  let b1 = ssa.SBlock { ...f.blocks[1], insts: [inst(8, 2, [1, 4, 4], ""), inst(9, 5, [2, 0], "lt_s")], preds: [0, 2, 3] };
+  let b1 = ssa.SBlock { ...f.blocks[1], insts: [inst(ssa.PHI, 2, [1, 4, 4], ""), inst(ssa.BINARY, 5, [2, 0], "lt_s")], preds: [0, 2, 3] };
   let b3 = ssa.SBlock { ...f.blocks[3], term: branch(9, 1, 4) };
   let b4 = ssa.SBlock { id: 4, insts: [], term: ret(9), preds: [3] };
   let twice = ssa.SFunc { ...f, blocks: [f.blocks[0], b1, f.blocks[2], b3, b4] };

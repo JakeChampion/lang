@@ -311,31 +311,31 @@ function uses_of(f: Func): Uses {
 }
 
 pub function param(): i32 {
-  return 6;
+  return ssa.PARAM;
 }
 
 pub function array_new(): i32 {
-  return -1;
+  return ssa.SEM_ARRAY_NEW;
 }
 
 pub function bytes_new(): i32 {
-  return -55;
+  return ssa.SEM_BYTES_NEW;
 }
 
 pub function array_reserve(): i32 {
-  return -53;
+  return ssa.SEM_ARRAY_RESERVE;
 }
 
 pub function array_zero(): i32 {
-  return -59;
+  return ssa.SEM_ARRAY_ZERO;
 }
 
 pub function tuple_new(): i32 {
-  return -2;
+  return ssa.SEM_TUPLE_NEW;
 }
 
 pub function array_get(): i32 {
-  return -3;
+  return ssa.SEM_ARRAY_GET;
 }
 
 pub function check_only(): i32 {
@@ -353,11 +353,11 @@ pub function below_proven(): i32 {
 }
 
 pub function tuple_get(): i32 {
-  return -4;
+  return ssa.SEM_TUPLE_GET;
 }
 
 pub function record_new(): i32 {
-  return -5;
+  return ssa.SEM_RECORD_NEW;
 }
 
 pub function update_base(ins: ssa.SInst): i32 {
@@ -368,11 +368,11 @@ pub function update_base(ins: ssa.SInst): i32 {
 }
 
 pub function record_get(): i32 {
-  return -6;
+  return ssa.SEM_RECORD_GET;
 }
 
 pub function call(): i32 {
-  return -7;
+  return ssa.SEM_CALL;
 }
 
 // The call semunique places before a loop: the array itself when only this
@@ -448,171 +448,171 @@ pub function scalar_primitive(name: string): boolean {
 }
 
 pub function variant_new(): i32 {
-  return -8;
+  return ssa.SEM_VARIANT_NEW;
 }
 
 pub function variant_is(): i32 {
-  return -9;
+  return ssa.SEM_VARIANT_IS;
 }
 
 pub function variant_get(): i32 {
-  return -10;
+  return ssa.SEM_VARIANT_GET;
 }
 
 pub function variant_up(): i32 {
-  return -11;
+  return ssa.SEM_VARIANT_UP;
 }
 
 pub function variant_as(): i32 {
-  return -12;
+  return ssa.SEM_VARIANT_AS;
 }
 
 pub function length(): i32 {
-  return -13;
+  return ssa.SEM_LENGTH;
 }
 
 pub function append(): i32 {
-  return -14;
+  return ssa.SEM_APPEND;
 }
 
 pub function slice(): i32 {
-  return -15;
+  return ssa.SEM_SLICE;
 }
 
 pub function str_index(): i32 {
-  return -16;
+  return ssa.SEM_STR_INDEX;
 }
 
 pub function cast(): i32 {
-  return -17;
+  return ssa.SEM_CAST;
 }
 
 pub function str_as(): i32 {
-  return -18;
+  return ssa.SEM_STR_AS;
 }
 
 pub function with(): i32 {
-  return -19;
+  return ssa.SEM_WITH;
 }
 
 pub function closure_new(): i32 {
-  return -20;
+  return ssa.SEM_CLOSURE_NEW;
 }
 
 pub function call_value(): i32 {
-  return -21;
+  return ssa.SEM_CALL_VALUE;
 }
 
 pub function cell_new(): i32 {
-  return -22;
+  return ssa.SEM_CELL_NEW;
 }
 
 pub function cell_get(): i32 {
-  return -23;
+  return ssa.SEM_CELL_GET;
 }
 
 pub function cell_set(): i32 {
-  return -24;
+  return ssa.SEM_CELL_SET;
 }
 
 pub function map_new(): i32 {
-  return -25;
+  return ssa.SEM_MAP_NEW;
 }
 
 pub function map_insert(): i32 {
-  return -26;
+  return ssa.SEM_MAP_INSERT;
 }
 
 pub function map_has(): i32 {
-  return -27;
+  return ssa.SEM_MAP_HAS;
 }
 
 pub function map_get_or(): i32 {
-  return -28;
+  return ssa.SEM_MAP_GET_OR;
 }
 
 pub function map_len(): i32 {
-  return -29;
+  return ssa.SEM_MAP_LEN;
 }
 
 pub function map_get(): i32 {
-  return -30;
+  return ssa.SEM_MAP_GET;
 }
 
 pub function map_keys(): i32 {
-  return -31;
+  return ssa.SEM_MAP_KEYS;
 }
 
 pub function map_values(): i32 {
-  return -32;
+  return ssa.SEM_MAP_VALUES;
 }
 
 pub function map_delete(): i32 {
-  return -33;
+  return ssa.SEM_MAP_DELETE;
 }
 
 pub function map_cleared(): i32 {
-  return -34;
+  return ssa.SEM_MAP_CLEARED;
 }
 
 pub function zero(): i32 {
-  return -35;
+  return ssa.SEM_ZERO;
 }
 
 pub function str_bytes(): i32 {
-  return -36;
+  return ssa.SEM_STR_BYTES;
 }
 
 pub function arr_join(): i32 {
-  return -37;
+  return ssa.SEM_ARR_JOIN;
 }
 
 pub function arr_slice(): i32 {
-  return -38;
+  return ssa.SEM_ARR_SLICE;
 }
 
 pub function arr_concat(): i32 {
-  return -54;
+  return ssa.SEM_ARR_CONCAT;
 }
 
 pub function truncate(): i32 {
-  return -56;
+  return ssa.SEM_TRUNCATE;
 }
 
 pub function dyn_up(): i32 {
-  return -44;
+  return ssa.SEM_DYN_UP;
 }
 
 pub function dyn_box(): i32 {
-  return -45;
+  return ssa.SEM_DYN_BOX;
 }
 
 pub function dyn_is(): i32 {
-  return -46;
+  return ssa.SEM_DYN_IS;
 }
 
 pub function dyn_as(): i32 {
-  return -47;
+  return ssa.SEM_DYN_AS;
 }
 
 pub function hole_at(): i32 {
-  return -48;
+  return ssa.SEM_HOLE_AT;
 }
 
 pub function hole_fill(): i32 {
-  return -49;
+  return ssa.SEM_HOLE_FILL;
 }
 
 pub function array_lend(): i32 {
-  return -50;
+  return ssa.SEM_ARRAY_LEND;
 }
 
 pub function str_byte_view(): i32 {
-  return -51;
+  return ssa.SEM_STR_BYTE_VIEW;
 }
 
 pub function append_range(): i32 {
-  return -52;
+  return ssa.SEM_APPEND_RANGE;
 }
 
 pub function is_hole_op(kind: i32): boolean {
@@ -2927,11 +2927,11 @@ pub function checked_arith(op: string): boolean {
 }
 
 pub function checked_present(): i32 {
-  return -57;
+  return ssa.SEM_CHECKED_PRESENT;
 }
 
 pub function checked_value(): i32 {
-  return -58;
+  return ssa.SEM_CHECKED_VALUE;
 }
 
 function checked_scalar_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {

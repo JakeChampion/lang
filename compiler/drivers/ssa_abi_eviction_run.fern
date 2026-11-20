@@ -6,20 +6,20 @@ function ins(k: i32, id: i32, args: i32[], text: string): ssa.SInst {
 }
 
 function probe(op: string, fixed: boolean, regs: i32): i32 {
-  let ops: ssa.SInst[] = [ins(1, 0, [], ""), ins(1, 1, [], "")];
+  let ops: ssa.SInst[] = [ins(ssa.CONST_INT, 0, [], ""), ins(ssa.CONST_INT, 1, [], "")];
   let i = 2;
   while (i < 12) {
-    ops = ops.append(ins(10, i, [1], "clz"));
+    ops = ops.append(ins(ssa.UNARY, i, [1], "clz"));
     i += 1;
   }
-  ops = ops.append(ins(10, 23, [0], "clz"));
-  ops = ops.append(ins(9, 12, [1, 1], op));
+  ops = ops.append(ins(ssa.UNARY, 23, [0], "clz"));
+  ops = ops.append(ins(ssa.BINARY, 12, [1, 1], op));
   i = 13;
   while (i < 23) {
-    ops = ops.append(ins(10, i, [1], "clz"));
+    ops = ops.append(ins(ssa.UNARY, i, [1], "clz"));
     i += 1;
   }
-  let f = ssa.SFunc { name: "probe", nparams: 0, nvals: 24, entry: 0, takes_env: false, blocks: [ssa.SBlock { id: 0, insts: ops, preds: [], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 1 } }] };
+  let f = ssa.SFunc { name: "probe", nparams: 0, nvals: 24, entry: 0, takes_env: false, blocks: [ssa.SBlock { id: 0, insts: ops, preds: [], term: ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: 1 } }] };
   let nh: boolean[] = [false, false];
   for i in 2..24 {
     nh = nh.append(true);
