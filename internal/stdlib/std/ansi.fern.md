@@ -31,8 +31,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<*>>=
 <<dependencies 1>>
 
-<<2 function __esc(): string>>
-
 <<3 pub function sgr(code: string, s: string): string>>
 
 <<4 pub function fg_rgb(r: i32, g: i32, b: i32, s: string): string>>
@@ -46,23 +44,12 @@ The root chunk preserves the declaration order. The chunks below contain the com
 import "std/i32";
 ```
 
-### `2 function __esc(): string`
-
-```fern
-<<2 function __esc(): string>>=
-function __esc(): string {
-  let b: u8[] = [27 as u8];
-  return unsafe { string_from_bytes_unchecked(b) };
-}
-```
-
 ### `3 pub function sgr(code: string, s: string): string`
 
 ```fern
 <<3 pub function sgr(code: string, s: string): string>>=
 pub function sgr(code: string, s: string): string {
-  let e = __esc();
-  return e + "[" + code + "m" + s + e + "[0m";
+  return "\x1b[" + code + "m" + s + "\x1b[0m";
 }
 
 pub function black(s: string): string {
