@@ -814,7 +814,10 @@ function ligature_would_apply(b: [u8], st: i32, cov: i32, gs: i32[]): boolean {
 
 // Whether a rule of the context subtable `st` has the input `gs`.
 function context_would_apply(b: [u8], st: i32, kind: i32, cov: i32, gs: i32[], zero_context: boolean): boolean {
-  for rule in rules_of(b, st, kind, cov, gs[0]) {
+  let format = u16_at(b, st);
+  let set = rule_set(b, st, kind, cov, gs[0], format);
+  for k in 0..rule_count(b, set, format) {
+    let rule = context_rule(b, st, set, kind, format, k);
     let from = if (rule.first) { 1 } else { 0 };
     let bare = rule.back.n == 0 && rule.ahead.n == 0;
     if ((bare || !zero_context) && rule.input.n + from == gs.len() && seq_matches(b, rule.input, gs, from)) {
@@ -1431,7 +1434,10 @@ function following_parts(out: i32[], ls: i32[], from: i32, last_id: i32, id: i32
 // `r` after the first rule of the context subtable at `st` that matches at
 // `i`, and the index of the glyph after its input, or -1.
 function contextual(f: Font, own r: Run, l: Lookup, st: i32, kind: i32, cov: i32, i: i32, mask: i32, budget: i32): (Run, i32, i32) {
-  for rule in rules_of(f.data, st, kind, cov, r.glyphs[i]) {
+  let format = u16_at(f.data, st);
+  let set = rule_set(f.data, st, kind, cov, r.glyphs[i], format);
+  for k in 0..rule_count(f.data, set, format) {
+    let rule = context_rule(f.data, st, set, kind, format, k);
     let ps = matched_input(f, r, l, mask, i, rule.input, rule.first);
     // HarfBuzz keeps the glyphs before the input in the syllable only while
     // the lookup has not changed the count of glyphs, and the glyphs after
@@ -1444,54 +1450,50 @@ function contextual(f: Font, own r: Run, l: Lookup, st: i32, kind: i32, cov: i32
   return (r, -1, budget);
 }
 
-// The rules of the context subtable at `st` to try for the glyph `g`, whose
-// coverage index is `cov`.
-function rules_of(b: [u8], st: i32, kind: i32, cov: i32, g: i32): Rule[] {
-  let format = u16_at(b, st);
-  let rules: Rule[] = [];
+// The rule-set offset for glyph g in context formats 1 and 2, or zero
+// when absent. Format 3 stores its single rule directly in the subtable.
+function rule_set(b: [u8], st: i32, kind: i32, cov: i32, g: i32, format: i32): i32 {
+  let sets = st + 6;
+  let index = cov;
+  if (format == 2) {
+    let input = if (kind == 5) { st + 4 } else { st + 6 };
+    index = class_of(b, st + u16_at(b, input), g);
+    sets += if (kind == 5) { 2 } else { 6 };
+  } else if (format != 1) {
+    return 0;
+  }
+  if (index >= u16_at(b, sets - 2)) {
+    return 0;
+  }
+  let offset = u16_at(b, sets + 2 * index);
+  return if (offset == 0) { 0 } else { st + offset };
+}
+
+function rule_count(b: [u8], set: i32, format: i32): i32 {
   if (format == 3) {
-    return [format3_rule(b, st, kind)];
+    return 1;
   }
-  let cdefs = class_defs(b, st, kind, format);
-  let sets = st + 6 + 2 * cdefs.filter((c: i32): boolean => c != 0).len();
-  let index = if (format == 1) { cov } else { class_of(b, cdefs[1], g) };
-  let set = if (format >= 1 && format <= 2 && index < u16_at(b, sets - 2)) { u16_at(b, sets + 2 * index) } else { 0 };
-  if (set == 0) {
-    return rules;
-  }
-  for k in 0..u16_at(b, st + set) {
-    rules = rules.append(rule_at(b, st + set + u16_at(b, st + set + 2 + 2 * k), kind, format - 1, cdefs));
-  }
-  return rules;
+  return if (set == 0) { 0 } else { u16_at(b, set) };
 }
 
-// The offsets of the class definitions of a context subtable of format 2:
-// for the glyphs before the input, the input, and the glyphs after it. A
-// subtable of format 1, or of type 5, has 0 for those that it does not have.
-function class_defs(b: [u8], st: i32, kind: i32, format: i32): i32[] {
-  if (format != 2) {
-    return [0, 0, 0];
+function context_rule(b: [u8], st: i32, set: i32, kind: i32, format: i32, k: i32): Rule {
+  if (format == 3) {
+    return format3_rule(b, st, kind);
   }
-  if (kind == 5) {
-    return [0, st + u16_at(b, st + 4), 0];
-  }
-  return [st + u16_at(b, st + 4), st + u16_at(b, st + 6), st + u16_at(b, st + 8)];
-}
-
-// The rule of format 1 or 2 at `at`, with values of `kind` 0 or 1. A rule
-// of type 5 has no glyphs before or after its input.
-function rule_at(b: [u8], at: i32, kind: i32, values: i32, cdefs: i32[]): Rule {
+  let at = set + u16_at(b, set + 2 + 2 * k);
+  let values = format - 1;
+  let input_class = if (format == 2) { st + u16_at(b, st + (if (kind == 5) { 4 } else { 6 })) } else { 0 };
   let empty = Seq { kind: 0, table: 0, at: 0, n: 0 };
   if (kind == 5) {
     let n = u16_at(b, at);
-    return Rule { back: empty, input: Seq { kind: values, table: cdefs[1], at: at + 4, n: n - 1 }, first: true, ahead: empty, records: at + 4 + 2 * (n - 1), count: u16_at(b, at + 2) };
+    return Rule { back: empty, input: Seq { kind: values, table: input_class, at: at + 4, n: n - 1 }, first: true, ahead: empty, records: at + 4 + 2 * (n - 1), count: u16_at(b, at + 2) };
   }
   let nb = u16_at(b, at);
   let ni = at + 2 + 2 * nb;
   let n = u16_at(b, ni);
   let na = ni + 2 * n;
   let rc = na + 2 + 2 * u16_at(b, na);
-  return Rule { back: Seq { kind: values, table: cdefs[0], at: at + 2, n: nb }, input: Seq { kind: values, table: cdefs[1], at: ni + 2, n: n - 1 }, first: true, ahead: Seq { kind: values, table: cdefs[2], at: na + 2, n: u16_at(b, na) }, records: rc + 2, count: u16_at(b, rc) };
+  return Rule { back: Seq { kind: values, table: if (format == 2) { st + u16_at(b, st + 4) } else { 0 }, at: at + 2, n: nb }, input: Seq { kind: values, table: input_class, at: ni + 2, n: n - 1 }, first: true, ahead: Seq { kind: values, table: if (format == 2) { st + u16_at(b, st + 8) } else { 0 }, at: na + 2, n: u16_at(b, na) }, records: rc + 2, count: u16_at(b, rc) };
 }
 
 // The rule of the subtable of format 3 at `st`, with coverage tables.
