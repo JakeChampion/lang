@@ -21533,7 +21533,7 @@ struct LuSel { obj: string, field: string, line: i32, col: i32 }
 // nested field of a primitive type or of an array of one: an array can reach
 // a borrowed parameter as a view, so such a read is not always a copy.
 // scalar_sels holds the reads of a field of a scalar type, which are copies.
-struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], value_sels: string[], scalar_sels: string[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[], rebinds: LuRebind[] }
+struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], value_sels: i64[], scalar_sels: i64[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[], rebinds: LuRebind[] }
 
 // fresh names the fresh locals once lu_fresh_names has decided them; until
 // then fresh_known is false and lu_fresh_init_in decides from the facts.
@@ -21773,13 +21773,28 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
   }
 }
 
+// Each coordinate keeps all 32 bits, including for generated source positions.
+function lu_selection_pos(line: i32, col: i32): i64 {
+  return line as i64 << 32 | col as i64 & 4294967295i64;
+}
+
+function lu_has_selection(positions: i64[], line: i32, col: i32): boolean {
+  let wanted = lu_selection_pos(line, col);
+  for pos in positions {
+    if (pos == wanted) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function lu_value_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
   if (!lu_copy_type(fa.ty)) {
     return f;
   }
   let enclosing = ow_enclosing_field(fa);
   if let ast.ExprIdent(id) = enclosing.obj {
-    return LuFacts { ...f, value_sels: f.value_sels.append(lu_key(id.line, id.col)) };
+    return LuFacts { ...f, value_sels: f.value_sels.append(lu_selection_pos(id.line, id.col)) };
   }
   return f;
 }
@@ -21792,7 +21807,7 @@ function lu_scalar_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
   }
   let enclosing = ow_enclosing_field(fa);
   if let ast.ExprIdent(id) = enclosing.obj {
-    return LuFacts { ...f, scalar_sels: f.scalar_sels.append(lu_key(id.line, id.col)) };
+    return LuFacts { ...f, scalar_sels: f.scalar_sels.append(lu_selection_pos(id.line, id.col)) };
   }
   return f;
 }
@@ -24746,7 +24761,7 @@ function lu_starts_one(values: ast.Expr[], e: ast.Expr): boolean {
 
 const I32_MAX: i32 = 2147483647;
 
-struct LuCopyReads { keys: string[], name: string, line: i32, col: i32, n: i32 }
+struct LuCopyReads { keys: i64[], name: string, line: i32, col: i32, n: i32 }
 
 // The mentions of `name` in `e`, before line `line` and column `col`, that
 // read a field of a scalar type. Such a read is a copy, and it ends before
@@ -24757,7 +24772,7 @@ function lu_copy_reads(fx: LuFn, e: ast.Expr, name: string, line: i32, col: i32)
 
 function lu_count_copy_read(e: ast.Expr, own r: LuCopyReads): LuCopyReads {
   if let ast.ExprIdent(id) = e {
-    if (id.name == r.name && (id.line < r.line || id.line == r.line && id.col < r.col) && util.has_str(r.keys, lu_key(id.line, id.col))) {
+    if (id.name == r.name && (id.line < r.line || id.line == r.line && id.col < r.col) && lu_has_selection(r.keys, id.line, id.col)) {
       return LuCopyReads { ...r, n: r.n + 1 };
     }
   }
@@ -25183,7 +25198,7 @@ function lu_exclusive_owned_field(fx: LuFn, name: string, field: string): boolea
       if (selected.len() == 0) {
         return false;
       }
-      if (selected == field && !util.has_str(fx.facts.value_sels, lu_key(o.line, o.col))) {
+      if (selected == field && !lu_has_selection(fx.facts.value_sels, o.line, o.col)) {
         reads += 1;
       }
     }
