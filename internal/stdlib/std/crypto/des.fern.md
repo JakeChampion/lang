@@ -61,6 +61,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "std/crypto";
 import "core/error";
 import "core/cmp";
 ```
@@ -166,6 +167,11 @@ The schedule of FIPS 46-3. PC-1 gives two halves of 28 bits, and each round rota
 ```fern
 <<5 the key schedule>>=
 pub struct Cipher { keys: u64[] }
+
+// Consumes the key and zeroes its round keys when it owns the last reference.
+pub function (own c: Cipher) erase(): void {
+  crypto.erase(c.keys);
+}
 
 function __load(b: [u8], at: i32): u64 {
   let v = 0u64;

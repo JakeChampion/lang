@@ -551,7 +551,14 @@ pub function unwrap_hybrid(st: Stanza, k: hpke.HybridKey): Unwrapped {
 // The wrapping key of an scrypt stanza: scrypt with N = 2^log_n, r = 8 and
 // p = 1, and the label before the salt.
 function scrypt_key(passphrase: [u8], salt: [u8], log_n: i32): Result[chacha20poly1305.Key, string] {
-  let k = match (scrypt.key(passphrase, SCRYPT_LABEL.bytes().concat(salt), 1 << log_n, 8, 1, 32)) {
+  if (log_n < 1 || log_n > 30) {
+    return Err(f"scrypt work factor out of range: {log_n}");
+  }
+  // The recipient chooses this factor when wrapping. Unwrapping checks the
+  // stored factor against the identity's maximum before deriving the key.
+  let n = 1 << log_n;
+  let max_bytes = 1024i64 * (n as i64 + 4i64);
+  let k = match (scrypt.key_with_memory_limit(passphrase, SCRYPT_LABEL.bytes().concat(salt), n, 8, 1, 32, max_bytes)) {
     Ok(k) => k,
     Err(e) => {
       return Err("failed to generate scrypt hash: " + e.message());

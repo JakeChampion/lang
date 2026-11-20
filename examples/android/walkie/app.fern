@@ -11,6 +11,9 @@ import "std/android/launch";
 import "std/android/audio";
 import "std/android/focus";
 import "std/android/keyboard";
+import "std/android/keystore";
+import "std/jni";
+import "std/result";
 import "std/android/p2p";
 import "std/android/service";
 import "std/hex";
@@ -20,6 +23,7 @@ import "std/rand";
 import "std/tls/verify";
 import "./control";
 import "./internet";
+import "./identity_store";
 import "./key_files";
 import "./lan";
 import "./modes";
@@ -184,22 +188,11 @@ function fresh_node(notice: string, id_seed: [u8], pins: u8[][], role: i32): nod
   return node.Node { ...n, notice: notice };
 }
 
-// This phone's identity seed in `dir`, which the first start makes. With no
-// directory the identity lasts until the app stops.
-function identity_seed(dir: string): u8[] {
-  let path: string = dir + "/identity";
-  if (dir.len() > 0) {
-    if let Ok(b) = read_file_bytes(path) {
-      if (b.len() == 32) {
-        return b;
-      }
-    }
-  }
-  let seed: u8[] = rand.bytes(32);
-  if (dir.len() > 0) {
-    let written = write_file_bytes(path, seed);
-  }
-  return seed;
+const IDENTITY_ALIAS: string = "walkie.identity.v1";
+
+function seal_seed(e: usize, seed: u8[]): Result[u8[], string] {
+  keystore.ensure_key(e, IDENTITY_ALIAS).map_err((err: jni.JavaError): string => err.message())?;
+  return keystore.seal(e, IDENTITY_ALIAS, seed).map_err((err: jni.JavaError): string => err.message());
 }
 
 // The identities of the phones that a user confirmed, 32 bytes each.
@@ -282,6 +275,21 @@ function save_pins(s: App): App {
 }
 
 function app_main(ctx: usize): usize {
+  let dir = android.data_dir(ctx);
+  let keys = android.no_backup_dir(ctx);
+  let e = android.env(ctx);
+  let wrap = (seed: u8[]): Result[u8[], string] => seal_seed(e, seed);
+  let unwrap = (sealed: u8[]): Result[u8[], string] => keystore.open(e, IDENTITY_ALIAS, sealed).map_err((err: jni.JavaError): string => err.message());
+  let loaded = identity_store.load(keys, dir, wrap, unwrap);
+  let id_seed = match (loaded) {
+    Ok(seed) => seed,
+    Err(err) => {
+      log.warn("walkie: cannot load identity: " + err);
+      android.finish(ctx);
+      return 0 as usize;
+    },
+  };
+  key_files.migrate(keys, dir);
   let spk: audio.Stream = audio.playback(voice.RATE);
   let started: boolean = spk.start();
   let (sock, port) = open_socket();
@@ -293,10 +301,6 @@ function app_main(ctx: usize): usize {
     notice = "no network: ports " + lan.PORT.to_string() + " and " + lan.SECOND_PORT.to_string() + " are busy";
   }
   android.keep_screen_on(ctx, true);
-  let dir: string = android.data_dir(ctx);
-  let keys: string = android.no_backup_dir(ctx);
-  key_files.migrate(keys, dir);
-  let id_seed: u8[] = identity_seed(keys);
   let pins: u8[][] = load_pins(keys);
   let mode: modes.Mode = load_mode(dir);
   let server: string = load_server(dir);

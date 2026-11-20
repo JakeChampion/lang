@@ -59,7 +59,8 @@ are not accepted. The handshake counts against `recv_deadline`, so a
 client that never completes one is closed when it passes.
 
 `server.config(id, key)` turns on session tickets sealed under `key`
-with a two-hour lifetime. A key from `rand.bytes(32)` serves one
+with a two-hour lifetime. Starting a ticket-enabled server requires at least
+32 bytes of secret key material. A key from `rand.bytes(32)` serves one
 process; behind a load balancer, give every instance the same key so a
 client can resume on any of them, or turn tickets off with
 `without_tickets()`.

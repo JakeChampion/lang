@@ -114,6 +114,45 @@ function test_roots_dir(dir: string): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+function test_disabled_roots(dir: string): test.TestOutcome {
+  let system = dir + "/system";
+  let removed = dir + "/removed";
+  let Ok(_) = create_dir_all(system) else {
+    return test.fail("create system directory");
+  };
+  let Ok(_) = write_file(system + "/roots", pem.encode("CERTIFICATE", ec_root()) + pem.encode("CERTIFICATE", rsa_root())) else {
+    return test.fail("write roots");
+  };
+  let Ok(all) = verify.roots_from_dir_excluding(system, removed) else {
+    return test.fail("missing removal directory");
+  };
+  if (all.certs.len() != 2) {
+    return test.fail("lost system roots");
+  }
+  let Ok(_) = create_dir_all(removed) else {
+    return test.fail("create removal directory");
+  };
+  let Ok(_) = write_file_bytes(removed + "/different-name.0", rsa_root()) else {
+    return test.fail("write disabled DER");
+  };
+  let Ok(one) = verify.roots_from_dir_excluding(system, removed) else {
+    return test.fail("load filtered roots");
+  };
+  if (one.certs.len() != 1 || one.distrust_after.len() != 1) {
+    return test.fail("expected one retained root");
+  }
+  if (outcome(verify.server([ec_leaf(), ec_int()], one, "example.com", time.timestamp_from_unix(1780000000))) != "ok example.com") {
+    return test.fail("lost the enabled EC root");
+  }
+  let Ok(_) = write_file(removed + "/second", pem.encode("CERTIFICATE", ec_root())) else {
+    return test.fail("write disabled PEM");
+  };
+  let Ok(none) = verify.roots_from_dir_excluding(system, removed) else {
+    return test.fail("all roots disabled");
+  };
+  return test.assert_eq(none.certs.len(), 0);
+}
+
 function test_roots_dir_empty(dir: string): test.TestOutcome {
   match (verify.roots_from_dir(dir + "/no-such-dir")) {
     Ok(_) => {
@@ -148,6 +187,7 @@ function main(): i32 {
   rr = rr.it("a file with no roots", () => test_unreadable(dir));
   rr = rr.it("roots from a directory of files", () => test_roots_dir(dir));
   rr = rr.it("a directory with no roots", () => test_roots_dir_empty(dir));
+  rr = rr.it("user-disabled roots", () => test_disabled_roots(dir));
   rr = rr.it("the system's roots", test_system_roots);
   return rr.finish();
 }

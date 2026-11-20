@@ -244,7 +244,10 @@ that took them and changes the traffic can still take part in a rekey.
 Each phone keeps an Ed25519 identity key. While the users compare the
 string, each phone sends a tag in a sealed frame: the hash of its public
 key and a value of this exchange. Only a phone that knows the key can
-match the tag, and the tag changes with each exchange.
+match the tag, and the tag changes with each exchange. Tags and proofs carry
+a counter nonce. Each direction advances its own counter whenever it seals
+a frame, and the receiver can open frames that arrive out of order. Both
+phones need this frame format for automatic recognition.
 
 A phone that matches the tag of a known phone sends its proof: its public
 key and a signature of the exchange. So a stranger does not learn the
@@ -263,10 +266,11 @@ control channel, each one signed for the exchange. Each phone then adds
 the other phone to its list of known phones. FORGET PHONES on the settings
 screen clears the list, so each phone shows the string again.
 
-The app keeps the seed of the identity key and the list of known phones in
-a private directory. Android does not copy that directory to a backup or to
-a new device. The two files are not in the Android Keystore. So a party that can read the
-private files of the app can copy the identity of the phone.
+Walkie seals the Ed25519 identity seed with a non-exportable AES key in the
+Android Keystore. The sealed seed and list of known phones live in the app's
+no-backup directory. On upgrade, Walkie keeps the existing identity, verifies
+the sealed seed, and removes the old plaintext files. If the key is unavailable
+or the sealed seed fails authentication, the app stops before connecting.
 
 Control frames and voice frames have their own keys in each direction, and
 ChaCha20-Poly1305 seals them. Both go over datagrams, so a frame can be lost

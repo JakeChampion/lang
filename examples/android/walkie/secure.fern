@@ -74,7 +74,7 @@ pub struct Handshake { initiator: boolean, private: Cell[u8[]], kem: Cell[u8[]],
 
 // `binding` names this exchange for the proofs of identity, and the two id
 // keys seal them, one in each direction.
-pub struct Keys { send_ctl: Cell[u8[]], recv_ctl: Cell[u8[]], send_voice: Cell[u8[]], recv_voice: Cell[u8[]], sas: string, binding: u8[], send_id: Cell[u8[]], recv_id: Cell[u8[]] }
+pub struct Keys { send_ctl: Cell[u8[]], recv_ctl: Cell[u8[]], send_voice: Cell[u8[]], recv_voice: Cell[u8[]], sas: string, binding: u8[], send_id: Cell[u8[]], recv_id: Cell[u8[]], next_id: Cell[i64] }
 
 // One direction of one channel: its key and its sequence state. For a voice
 // receiver, `high` is the highest number seen and `seen` marks the numbers
@@ -293,8 +293,8 @@ pub function keys(h: Handshake): Option[Keys] {
   let r2i_voice = crypto.hkdf_sha256_expand(prk, text("r2i voice"), 32);
   let sas_bytes = crypto.hkdf_sha256_expand(prk, text("sas"), 4);
   let binding = crypto.hkdf_sha256_expand(prk, text("identity binding"), 32);
-  let i2r_id = crypto.hkdf_sha256_expand(prk, text("i2r identity"), 32);
-  let r2i_id = crypto.hkdf_sha256_expand(prk, text("r2i identity"), 32);
+  let i2r_id = crypto.hkdf_sha256_expand(prk, text("i2r identity v2"), 32);
+  let r2i_id = crypto.hkdf_sha256_expand(prk, text("r2i identity v2"), 32);
   crypto.erase(prk);
   let n: i64 = (sas_bytes[0] as i64 << 24 as i64 | sas_bytes[1] as i64 << 16 as i64 | sas_bytes[2] as i64 << 8 as i64 | sas_bytes[3] as i64) % (1000000 as i64);
   let sas = n.to_string();
@@ -302,9 +302,9 @@ pub function keys(h: Handshake): Option[Keys] {
     sas = "0" + sas;
   }
   if (h.initiator) {
-    return Some(Keys { send_ctl: cell_new(i2r_ctl), recv_ctl: cell_new(r2i_ctl), send_voice: cell_new(i2r_voice), recv_voice: cell_new(r2i_voice), sas: sas, binding: binding, send_id: cell_new(i2r_id), recv_id: cell_new(r2i_id) });
+    return Some(Keys { send_ctl: cell_new(i2r_ctl), recv_ctl: cell_new(r2i_ctl), send_voice: cell_new(i2r_voice), recv_voice: cell_new(r2i_voice), sas: sas, binding: binding, send_id: cell_new(i2r_id), recv_id: cell_new(r2i_id), next_id: cell_new(0i64) });
   }
-  return Some(Keys { send_ctl: cell_new(r2i_ctl), recv_ctl: cell_new(i2r_ctl), send_voice: cell_new(r2i_voice), recv_voice: cell_new(i2r_voice), sas: sas, binding: binding, send_id: cell_new(r2i_id), recv_id: cell_new(i2r_id) });
+  return Some(Keys { send_ctl: cell_new(r2i_ctl), recv_ctl: cell_new(i2r_ctl), send_voice: cell_new(r2i_voice), recv_voice: cell_new(i2r_voice), sas: sas, binding: binding, send_id: cell_new(r2i_id), recv_id: cell_new(i2r_id), next_id: cell_new(0i64) });
 }
 
 function way(own key: u8[]): Way {
@@ -528,8 +528,8 @@ function erase_way(own w: Way): void {
   crypto.erase(chain);
 }
 
-// An identity frame is a kind byte and then, sealed with the id key of the
-// direction, its body. Each kind has its own nonce. A TAG body is the hash
+// An identity frame carries its kind, a 12-byte counter nonce, and the sealed
+// body. Copies of the sending keys share one counter for both kinds. A TAG body is the hash
 // of the binding and the Ed25519 public key of this side: only a phone that
 // knows the key can match it, and it changes with each exchange. A PROOF
 // body is the public key and a signature of the binding and the key. A phone
@@ -539,13 +539,7 @@ pub const TAG: u8 = 0u8;
 
 pub const PROOF: u8 = 1u8;
 
-function identity_nonce(kind: u8): u8[] {
-  let out: u8[] = [kind];
-  for k in 0..11 {
-    out = out.append(0 as u8);
-  }
-  return out;
-}
+const IDENTITY_HEAD: i32 = 13;
 
 function identity_tag(binding: [u8], public: [u8]): u8[] {
   return crypto.sha256(cat(cat(text("walkie identity tag"), binding), public));
@@ -555,21 +549,28 @@ function seal_identity(k: Keys, kind: u8, body: [u8]): u8[] {
   let Ok(key) = chacha20poly1305.key(k.send_id.get()) else {
     return [];
   };
-  let Ok(sealed) = key.seal(identity_nonce(kind), body, cat(text("walkie identity"), [kind])) else {
+  let seq = k.next_id.get();
+  if (seq < 0i64 || seq == MAX_SEQUENCE) {
+    return [];
+  }
+  k.next_id.set(seq + 1i64);
+  let iv = nonce(seq);
+  let header = cat([kind], iv);
+  let Ok(sealed) = key.seal(iv, body, cat(text("walkie identity"), header)) else {
     return [];
   };
-  return cat([kind], sealed);
+  return cat(header, sealed);
 }
 
 // The kind and the body of an identity frame from the peer of `k`.
 function open_identity(k: Keys, frame: [u8]): Option[(u8, u8[])] {
-  if (frame.len() < 1 + 16 || frame[0] > PROOF) {
+  if (frame.len() < IDENTITY_HEAD + 16 || frame[0] > PROOF) {
     return None;
   }
   let Ok(key) = chacha20poly1305.key(k.recv_id.get()) else {
     return None;
   };
-  let Ok(body) = key.open(identity_nonce(frame[0]), frame[1:frame.len()], cat(text("walkie identity"), [frame[0]])) else {
+  let Ok(body) = key.open(frame[1:IDENTITY_HEAD], frame[IDENTITY_HEAD:], cat(text("walkie identity"), frame[0:IDENTITY_HEAD])) else {
     return None;
   };
   return Some((frame[0], body));

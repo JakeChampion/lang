@@ -450,6 +450,36 @@ func TestSelfHostAESGCMKernelsWasm(t *testing.T) {
 	if code, stderr := exitOf(t, exec.Command(wasmtime, "run", cli.wasmComponent(t, src, "FERN_STRICT_IR=1"))); code != 0 {
 		t.Fatalf("wasmtime run exited %d, want 0 (see aesGCMKernelsProg for what each code means)\n%s", code, stderr)
 	}
+	// Inspect the live scratch allocation at each release while the vectors run.
+	watPath := cli.emit(t, src, "wasm32-wasi", "FERN_STRICT_IR=1")
+	data, err := os.ReadFile(watPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wat := string(data)
+	for _, kernel := range []string{"$__fern_aes_expand_key", "$__fern_aes_ctr_at"} {
+		bodies := wasmFuncBodies(wat, kernel+" ")
+		const release = "(drop (call $__fern_arr_dec (local.get $tmp)))"
+		if len(bodies) != 1 || strings.Count(bodies[0], release) != 1 {
+			t.Fatalf("cannot locate scratch release in %s", kernel)
+		}
+		body := strings.Replace(bodies[0], release, "(call $check_zero (local.get $tmp)) "+release, 1)
+		wat = strings.Replace(wat, bodies[0], body, 1)
+	}
+	const check = `(func $check_zero (param $buf i32) (local $i i32)
+		(loop $bytes
+			(if (i32.ge_u (local.get $i) (i32.load (local.get $buf))) (then return))
+			(if (i32.load8_u offset=8 (i32.add (local.get $buf) (local.get $i))) (then unreachable))
+			(local.set $i (i32.add (local.get $i) (i32.const 1)))
+			(br $bytes)))`
+	end := strings.LastIndex(wat, ")")
+	if err := os.WriteFile(watPath, []byte(wat[:end]+check+wat[end:]), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(wasmtime, "run", "-W", "unknown-imports-trap", "--invoke", "main", watPath)
+	if out, err := cmd.Output(); err != nil || strings.TrimSpace(string(out)) != "0" {
+		t.Fatalf("AES kernel scratch check: %v, output %q", err, out)
+	}
 }
 
 func TestSelfHostInterpAESGCMKernels(t *testing.T) {

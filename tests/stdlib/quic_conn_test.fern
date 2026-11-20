@@ -329,7 +329,10 @@ function test_handshake(): test.TestOutcome {
 // report it. A server with another secret, and a ticket past its lifetime,
 // each give a full handshake instead.
 function test_resumption(): test.TestOutcome {
-  let sc = server_config(["h3"]).with_tickets([7u8, 7u8, 7u8]);
+  if (server_config(["h3"]).with_tickets(__alloc_u8(31)).ticket_key.len() != 0) {
+    return test.fail("short secret enabled QUIC tickets");
+  }
+  let sc = server_config(["h3"]).with_tickets("77777777777777777777777777777777".as_bytes());
   let Ok(p0) = start(client_config("tls.example", ["h3"]), sc) else {
     return test.fail("the first handshake did not start");
   };
@@ -340,7 +343,7 @@ function test_resumption(): test.TestOutcome {
   }
   let cc = client_config("tls.example", ["h3"]).with_ticket(tickets[0]);
   let line = "first " + first.client.connected().to_string() + " " + first.client.resumed().to_string() + " " + tickets.len().to_string();
-  let cases: (conn.Config, i64, string)[] = [(sc, 60000 as i64, "same"), (server_config(["h3"]).with_tickets([8u8]), 60000 as i64, "other"), (sc, 7300000 as i64, "expired")];
+  let cases: (conn.Config, i64, string)[] = [(sc, 60000 as i64, "same"), (server_config(["h3"]).with_tickets("88888888888888888888888888888888".as_bytes()), 60000 as i64, "other"), (sc, 7300000 as i64, "expired")];
   for (scfg, later, name) in cases {
     let Ok(q0) = start_at(cc, scfg, WALL_MS + later) else {
       return test.fail(name + ": did not start");
@@ -357,7 +360,7 @@ function test_resumption(): test.TestOutcome {
 // sends the stream again in 1-RTT once the handshake is done.
 function test_zero_rtt(): test.TestOutcome {
   let (cc0, sc0) = stream_configs();
-  let taking = sc0.with_tickets([5u8]).with_early_data();
+  let taking = sc0.with_tickets("55555555555555555555555555555555".as_bytes()).with_early_data();
   let cc = cc0.with_early_data();
   let Ok(p0) = start(cc, taking) else {
     return test.fail("the first handshake did not start");
@@ -367,8 +370,19 @@ function test_zero_rtt(): test.TestOutcome {
   if (tickets.len() == 0) {
     return test.fail("no ticket");
   }
+  let untrusted = conn.config(["h3"]).client_side("tls.example", verify.no_roots()).with_early_data().with_ticket(tickets[0]);
+  let Ok(blocked) = start_at(untrusted, taking, WALL_MS + 60000 as i64) else {
+    return test.fail("full handshake did not start");
+  };
+  if (blocked.client.open_stream(false).is_ok()) {
+    return test.fail("early data under a different trust policy");
+  }
+  let rejected = settle(blocked, 12, 10000 * MS);
+  if (rejected.client.connected() || rejected.client.resumed()) {
+    return test.fail("untrusted peer connected");
+  }
   let line = "max " + tickets[0].tls.max_early.to_string();
-  let cases: (conn.Config, string)[] = [(taking, "taken"), (sc0.with_tickets([5u8]), "refused")];
+  let cases: (conn.Config, string)[] = [(taking, "taken"), (sc0.with_tickets("55555555555555555555555555555555".as_bytes()), "refused")];
   for (scfg, name) in cases {
     let Ok(q0) = start_at(cc.with_ticket(tickets[0]), scfg, WALL_MS + 60000 as i64) else {
       return test.fail(name + ": did not start");

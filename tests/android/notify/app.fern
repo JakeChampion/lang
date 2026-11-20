@@ -1,10 +1,12 @@
 // A NativeActivity app for the emulator check of std/android/notify. At the
 // first Resume it makes a channel and posts a notification, then posts it
 // again with a progress bar. Five seconds later it cancels it. The app logs
-// each step and finishes.
+// each step and finishes. The POST_HELD action posts once and returns to
+// Paper so its emulator check can tap the held notification.
 import "std/android";
 import "std/android/launch";
 import "std/android/notify";
+import "std/android/shortcuts";
 import "std/log";
 
 const ID: i32 = 7;
@@ -49,6 +51,12 @@ function step(s: App, e: android.Event): App {
 
 function post(s: App): App {
   notify.channel(s.ctx, notify.Channel { id: "fern-test", name: "Fern test", importance: notify.DEFAULT });
+  if (shortcuts.action(s.ctx) == "dev.fern.notifytest.POST_HELD") {
+    let held = notify.note(ID, "fern-test", "Fern intent probe", "Paper held intent probe");
+    log.warn("notifytest: held probe " + notify.post(s.ctx, held).to_string());
+    android.finish(s.ctx);
+    return App { ...s, posted_ns: monotonic_ns(), done: true };
+  }
   log.warn("notifytest: allowed " + notify.allowed(s.ctx).to_string());
   let n = notify.note(ID, "fern-test", "Fern notify test", "posted by std/android/notify");
   log.warn("notifytest: posted " + notify.post(s.ctx, n).to_string());
