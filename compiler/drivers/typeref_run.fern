@@ -64,6 +64,16 @@ function main(): i32 {
     + " args=" + util.i32_to_string(ar.args.len())
     + " depth=" + util.i32_to_string(ar.array_depth) + "\n";
 
+  for view in ["[u8]", "[[i32]]", "[u8[]]", "[(T) => U]"] {
+    if (!parser.spelling_is_view(view)) {
+      bad += 1;
+    }
+  }
+  for other in ["", "[]", "[u8][]", "[u8][i32]", "Map[T, U]", "() => [u8]"] {
+    if (parser.spelling_is_view(other)) {
+      bad += 1;
+    }
+  }
   let vw = parser.parse_type_ref("[u8][]");
   out = out + "struct viewarr view=" + b2s(vw.is_view)
     + " depth=" + util.i32_to_string(vw.array_depth)

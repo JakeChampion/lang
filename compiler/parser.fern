@@ -9531,7 +9531,7 @@ pub function parse_type_ref(sin: string): TypeRef {
     depth += 1;
     s = slice_unchecked(s, 0, s.len() - 2).to_owned();
   }
-  if (s.len() >= 2 && s[0] == b'[' && matching_bracket(s, 0) == s.len() - 1) {
+  if (spelling_is_view(s)) {
     return TypeRef { base: "", args: [parse_type_ref(slice_unchecked(s, 1, s.len() - 1).to_owned())], array_depth: depth, is_tuple: false, is_fn: false, is_view: true, is_once: false };
   }
   if (s.len() >= 2 && s[0] == b'(' && s[s.len() - 1] == b')') {
@@ -9782,8 +9782,8 @@ pub function ref_is_fn_value(r: TypeRef): boolean {
 }
 
 pub function spelling_is_view(spelling: string): boolean {
-  let r = parse_type_ref(spelling);
-  return r.is_view && r.array_depth == 0;
+  return spelling.len() > 2 && spelling[0] == b'[' && spelling[spelling.len() - 1] == b']'
+    && matching_bracket(spelling, 0) == spelling.len() - 1;
 }
 
 pub function spelling_is_own(spelling: string): boolean {
