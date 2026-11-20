@@ -748,13 +748,13 @@ function feature_tables(b: [u8], t: i32, script: string, feature: string): i32[]
     return out;
   }
   let features = t + u16_at(b, t + 6);
-  let indices = [u16_at(b, ls + 2)];
-  for k in 0..u16_at(b, ls + 4) {
-    indices = indices.append(u16_at(b, ls + 6 + 2 * k));
-  }
-  for fi in indices {
+  let count = u16_at(b, features);
+  // The required feature precedes the count and the optional feature indices.
+  for k in 0..1 + u16_at(b, ls + 4) {
+    let at = if (k == 0) { ls + 2 } else { ls + 4 + 2 * k };
+    let fi = u16_at(b, at);
     let r = features + 2 + 6 * fi;
-    if (fi < u16_at(b, features) && tag_is(b, r, feature)) {
+    if (fi < count && tag_is(b, r, feature)) {
       out = out.append(features + u16_at(b, r + 4));
     }
   }
@@ -835,20 +835,25 @@ function seq_matches(b: [u8], s: Seq, gs: i32[], from: i32): boolean {
 }
 
 // The sorted `xs` with `v`, when it does not hold `v`.
-function inserted(xs: i32[], v: i32): i32[] {
-  let out: i32[] = [];
-  let put = false;
-  for x in xs {
-    if (x == v) {
-      return xs;
-    }
-    if (!put && x > v) {
-      out = out.append(v);
-      put = true;
-    }
-    out = out.append(x);
+function inserted(own xs: i32[], v: i32): i32[] {
+  let n = xs.len();
+  let at = n;
+  while (at > 0 && xs[at - 1] > v) {
+    at -= 1;
   }
-  return if (put) { out } else { out.append(v) };
+  if (at > 0 && xs[at - 1] == v) {
+    return xs;
+  }
+  if (at == n) {
+    return xs.append(v);
+  }
+  xs = xs.append(v);
+  let k = n;
+  while (k > at) {
+    xs = xs.with(k, xs[k - 1]);
+    k -= 1;
+  }
+  return xs.with(at, v);
 }
 
 // The lookup `li` of the GSUB or GPOS table at `t`.
