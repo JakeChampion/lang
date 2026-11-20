@@ -252,6 +252,20 @@ function main(): i32 {
     let resource_world: i32[] = [1, 65, 1, 1, 65, 3, 3, 0, 1, 114, 3, 1, 1, 66, 0, 3, 0, 1, 120, 5, 1];
     let Some(off) = wit_iface_instance_offset(resource_world, "x") else { return 12; };
     if (off != 13) { return 13; }
+    // The second interface refers to the first interface's exported list
+    // through a world type alias. The resource import occupies slot zero.
+    let alias_world: i32[] = [
+        1, 65, 1, 1, 65, 6,
+        3, 0, 1, 114, 3, 1,
+        1, 66, 2, 1, 112, 125, 4, 0, 1, 116, 3, 0, 0,
+        3, 0, 1, 97, 5, 1,
+        2, 3, 0, 0, 1, 116,
+        1, 66, 1, 2, 3, 2, 1, 2,
+        3, 0, 1, 98, 5, 3,
+    ];
+    let Some(second) = wit_iface_instance_offset(alias_world, "b") else { return 14; };
+    let alias_scope = wit_iface_scope(alias_world, second);
+    if (alias_scope.offs.len() != 1 || alias_scope.offs[0] != 16 || alias_scope.owners[0] != 13) { return 15; }
     return 0;
 }
 `
