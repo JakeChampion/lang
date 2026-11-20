@@ -85,7 +85,7 @@ function main(): i32 {
 func semanticDumpOf(t *testing.T, h ssaBackendHost, src, name string) string {
 	t.Helper()
 	cmd := exec.Command(h.cli, "-O", "-target", "x86-64-linux", "-emit", "asm", "-o", filepath.Join(t.TempDir(), "out.s"), src, h.stdlib)
-	cmd.Env = append(os.Environ(), "FERN_SEM_DUMP="+name)
+	cmd.Env = append(os.Environ(), "FERN_DEBUG_SEM_DUMP="+name)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("dumping %s: %v\n%s", name, err, out)

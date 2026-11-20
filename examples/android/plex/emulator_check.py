@@ -28,6 +28,8 @@ its intent, so it needs no sign-in at plex.tv. The check requires:
   tap on the play button shows the video again, upright, then the back key
   stops it. The home key during the video puts it in a picture-in-picture
   window;
+- downloading Square Tone from its poster menu fetches the authenticated
+  media file and changes the menu to Remove download;
 - logcat shows no crash.
 
 OUT_DIR gets logcat, the screens and the requests that the server saw.
@@ -42,6 +44,7 @@ import sys
 import threading
 import time
 import wave
+import xml.etree.ElementTree as ET
 import zlib
 
 PACKAGE = "dev.fern.plex"
@@ -108,6 +111,9 @@ ROUTES = {
 }
 
 
+DOWNLOAD_PATH = "/library/parts/900/tone.wav?download=1"
+
+
 def server(files):
     poster = png(200, 300, POSTER)
 
@@ -143,6 +149,8 @@ def server(files):
         def do_GET(self):
             requests.append(self.command + " " + self.path)
             path = self.path.split("?")[0]
+            if self.path == DOWNLOAD_PATH and self.headers.get("X-Plex-Token") != "srv":
+                return self.send(403, b"", "text/plain")
             if path in ROUTES:
                 return self.send(200, ROUTES[path].encode(), "application/json")
             if path == "/photo/:/transcode":
@@ -421,6 +429,67 @@ def check_pip(out, port):
     adb("shell", "am", "force-stop", PACKAGE)
 
 
+def node_center(xml, label, long_click=False):
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return None
+    for node in root.iter("node"):
+        if node.get("package") != PACKAGE or label not in (node.get("text"), node.get("content-desc")):
+            continue
+        if long_click and node.get("long-clickable") != "true":
+            continue
+        bounds = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node.get("bounds", ""))
+        if bounds:
+            x, y, right, bottom = map(int, bounds.groups())
+            if right > x and bottom > y:
+                return (str((x + right) // 2), str((y + bottom) // 2))
+    return None
+
+
+def download_node(out, label, long_click=False):
+    path = "/sdcard/plex-download.xml"
+    deadline = time.monotonic() + 25
+    while time.monotonic() < deadline:
+        # An unsuccessful dump must not reuse the preceding screen.
+        adb("shell", "rm", "-f", path)
+        adb("shell", "uiautomator", "dump", path, check=False)
+        xml = adb("shell", "cat", path, check=False)
+        with open(f"{out}/download-ui.xml", "w") as f:
+            f.write(xml)
+        point = node_center(xml, label, long_click)
+        if point:
+            return point
+        time.sleep(0.5)
+    return None
+
+
+def check_download(out, port):
+    start(port)
+
+    def hold_track():
+        point = download_node(out, "Square Tone", long_click=True)
+        if point:
+            adb("shell", "input", "swipe", *point, *point, "800")
+        return point
+
+    if not hold_track():
+        return fail("the home screen has no Square Tone poster to hold")
+    button = download_node(out, "Download")
+    if not button:
+        return fail("holding the track did not offer Download")
+    before = len(requests)
+    adb("shell", "input", "tap", *button)
+    if not wait_for(lambda: "GET " + DOWNLOAD_PATH in requests[before:]):
+        return fail("Android did not request the track from the download URL")
+    if not hold_track():
+        return fail("the downloaded track disappeared from the home screen")
+    remove = download_node(out, "Remove download")
+    if not remove:
+        return fail("Android did not complete the track download")
+    adb("shell", "input", "tap", *remove)
+
+
 def main(apk, out, video=None):
     os.makedirs(out, exist_ok=True)
     files = {"/library/parts/900/tone.wav": os.path.join(out, "tone.wav")}
@@ -446,6 +515,7 @@ def main(apk, out, video=None):
             check_pip(out, port)
         else:
             print("no VIDEO.mp4: the video is not checked", flush=True)
+        check_download(out, port)
     finally:
         log = logcat()
         with open(f"{out}/logcat.txt", "w") as f:

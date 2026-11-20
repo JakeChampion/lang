@@ -895,10 +895,9 @@ pub function lock_path_of(entries: LockEntry[], name: string): Option[string] {
 }
 
 pub function lock_hash_of(entries: LockEntry[], name: string): Option[string] {
-  let i = 0;
-  while (i < entries.len()) {
-    if (entries[i].name == name && entries[i].hash.len() > 0) {
-      return Some(entries[i].hash + "");
+  for entry in entries {
+    if (entry.name == name && entry.hash.len() > 0) {
+      return Some(entry.hash + "");
     }
   }
   return None;

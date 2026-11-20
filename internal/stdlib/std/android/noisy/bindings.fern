@@ -18,10 +18,7 @@ pub struct ContextClass { class: usize, id_get_application_context: usize, id_ge
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/content/Context");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/content/Context")?;
   let id_get_application_context = jni.checked_id(e, class, jni.get_method_id(e, class, "getApplicationContext", "()Landroid/content/Context;"))?;
   let id_get_class_loader = jni.checked_id(e, class, jni.get_method_id(e, class, "getClassLoader", "()Ljava/lang/ClassLoader;"))?;
   let id_register_receiver = jni.checked_id(e, class, jni.get_method_id(e, class, "registerReceiver", "(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;)Landroid/content/Intent;"))?;
@@ -90,10 +87,7 @@ pub struct BroadcastReceiverClass { class: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function broadcast_receiver_class(e: usize): Result[BroadcastReceiverClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/content/BroadcastReceiver");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/content/BroadcastReceiver")?;
   return Ok(BroadcastReceiverClass { class: class });
 }
 
@@ -119,10 +113,7 @@ pub struct IntentFilterClass { class: usize, id_new: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function intent_filter_class(e: usize): Result[IntentFilterClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/content/IntentFilter");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/content/IntentFilter")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;)V"))?;
   return Ok(IntentFilterClass { class: class, id_new: id_new });
 }
@@ -161,10 +152,7 @@ pub struct ClassClass { class: usize, id_new_instance: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function class_class(e: usize): Result[ClassClass, jni.JavaError] {
-  let local = jni.find_class(e, "java/lang/Class");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "java/lang/Class")?;
   let id_new_instance = jni.checked_id(e, class, jni.get_method_id(e, class, "newInstance", "()Ljava/lang/Object;"))?;
   return Ok(ClassClass { class: class, id_new_instance: id_new_instance });
 }
@@ -200,10 +188,7 @@ pub struct ClassLoaderClass { class: usize, id_load_class: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function class_loader_class(e: usize): Result[ClassLoaderClass, jni.JavaError] {
-  let local = jni.find_class(e, "java/lang/ClassLoader");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "java/lang/ClassLoader")?;
   let id_load_class = jni.checked_id(e, class, jni.get_method_id(e, class, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;"))?;
   return Ok(ClassLoaderClass { class: class, id_load_class: id_load_class });
 }

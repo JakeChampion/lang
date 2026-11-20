@@ -325,7 +325,7 @@ function __matrix(rho: [u8], transposed: boolean): i32[] {
 }
 
 function __cbd(own f: i32[], at: i32, s: [u8], n: i32): i32[] {
-  let b = crypto.shake256(__bytes_into(__alloc_u8(33), 0, s, 0, 32).with(32, n as u8), 128);
+  let b = crypto.shake256_new().update(__bytes_into(__alloc_u8(33), 0, s, 0, 32).with(32, n as u8)).reader().squeeze(128).0;
   let i = 0;
   while (i < 128) {
     let x = b[i] as i32;

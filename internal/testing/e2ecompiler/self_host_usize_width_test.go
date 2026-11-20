@@ -83,7 +83,7 @@ func TestSelfHostWasmRefusesAUsizeLiteralPast32Bits(t *testing.T) {
 	if err == nil {
 		t.Fatalf("wasm32 accepted a usize literal past u32::MAX:\n%s", msg)
 	}
-	if want := "literal 4294967296 does not fit in usize on wasm32"; !strings.Contains(string(msg), want) {
+	if want := "fern: error: literal 4294967296 does not fit in usize on wasm32"; !strings.Contains(string(msg), want) {
 		t.Fatalf("diagnostic %q does not say %q", msg, want)
 	}
 }

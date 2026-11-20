@@ -34,6 +34,8 @@ A status is one of `PENDING`, `RUNNING`, `PAUSED`, `DONE` and `FAILED`, the valu
 // This module downloads files through the DownloadManager of Android.
 import "std/android";
 import "std/jni";
+import "std/android/download/bindings";
+import "std/result";
 ```
 
 ### `states`
@@ -56,10 +58,6 @@ pub const FAILED: i32 = 16;
 // or -1.
 pub struct Progress { status: i32, done: i64, total: i64 }
 
-const REQUEST: string = "android/app/DownloadManager$Request";
-
-const QUERY: string = "android/app/DownloadManager$Query";
-
 // DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED.
 const NOTIFY_COMPLETED: i32 = 1;
 ```
@@ -68,228 +66,147 @@ const NOTIFY_COMPLETED: i32 = 1;
 
 ```fern
 <<calls>>=
-// Downloads `url`, with the request headers `headers`, to the file `name`
-// in `dir(ctx)`. The notification shows `title`. Gives the ID of the
-// download, or -1.
+// Downloads the file, or gives -1 if Android refuses it.
 pub function start(ctx: usize, url: string, headers: (string, string)[], name: string, title: string): i64 {
-  let e = android.env(ctx);
-  if (!push_frame(e)) {
+  let Some(s) = session(ctx) else {
     return -1i64;
-  }
-  defer pop_frame(e);
-  let manager = manager_of(ctx, e);
-  let uri = parse_uri(e, url);
-  let class = jni.find_class(e, REQUEST);
-  if (failed(e) || manager == 0 as usize || uri == 0 as usize || class == 0 as usize) {
-    return -1i64;
-  }
-  let args = jni.jvalues([uri]);
-  let request = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", "(Landroid/net/Uri;)V"), args);
-  jni.free_buffer(args);
-  if (failed(e) || request == 0 as usize) {
-    return -1i64;
-  }
-  let returns = ")L" + REQUEST + ";";
-  for h in headers {
-    let added = jni.call_object(e, request, "addRequestHeader", "(Ljava/lang/String;Ljava/lang/String;" + returns, [jni.new_string(e, h.0), jni.new_string(e, h.1)]);
-  }
-  let titled = jni.call_object(e, request, "setTitle", "(Ljava/lang/CharSequence;" + returns, [jni.new_string(e, title)]);
-  let shown = jni.call_object(e, request, "setNotificationVisibility", "(I" + returns, [NOTIFY_COMPLETED as usize]);
-  let placed = jni.call_object(e, request, "setDestinationInExternalFilesDir", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;" + returns, [android.activity_object(ctx), 0 as usize, jni.new_string(e, name)]);
-  if (failed(e)) {
-    return -1i64;
-  }
-  let enqueue = jni.get_method_id(e, jni.get_object_class(e, manager), "enqueue", "(L" + REQUEST + ";)J");
-  let values = jni.jvalues([request]);
-  let id = jni.call_long_method_a(e, manager, enqueue, values) as i64;
-  jni.free_buffer(values);
-  if (failed(e)) {
-    return -1i64;
-  }
-  return id;
+  };
+  defer close(s);
+  return enqueue(s, url, headers, name, title).unwrap_or(-1i64);
 }
 
-// The state of the download `id`.
+function enqueue(s: Session, url: string, headers: (string, string)[], name: string, title: string): Result[i64, jni.JavaError] {
+  let manager = manager_of(s)?;
+  let uri = s.c.uri.parse(s.e, url)?;
+  let r = s.c.download_manager_request;
+  let request = r.new(s.e, uri)?;
+  for h in headers {
+    let added = r.add_request_header(s.e, request, h.0, h.1)?;
+    jni.delete_local_ref(s.e, added.ref);
+  }
+  let label = jni.new_string(s.e, title);
+  jni.check(s.e)?;
+  r.set_title(s.e, request, jni.Object { ref: label })?;
+  r.set_notification_visibility(s.e, request, NOTIFY_COMPLETED)?;
+  r.set_destination_in_external_files_dir(s.e, request, s.app, None, name)?;
+  return s.c.download_manager.enqueue(s.e, manager, request);
+}
+
 pub function progress(ctx: usize, id: i64): Progress {
   let gone = Progress { status: GONE, done: 0i64, total: -1i64 };
-  let e = android.env(ctx);
-  if (!push_frame(e)) {
+  let Some(s) = session(ctx) else {
+    return gone;
+  };
+  defer close(s);
+  let Ok(cursor) = query(s, id) else {
+    return gone;
+  };
+  if (cursor.is_null()) {
     return gone;
   }
-  defer pop_frame(e);
-  let manager = manager_of(ctx, e);
-  let class = jni.find_class(e, QUERY);
-  if (failed(e) || manager == 0 as usize || class == 0 as usize) {
+  defer close_cursor(s, cursor);
+  if (!s.c.cursor.move_to_first(s.e, cursor).unwrap_or(false)) {
     return gone;
   }
-  let none = jni.jvalues([]);
-  let query = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", "()V"), none);
-  jni.free_buffer(none);
-  let ids = ids_of(e, id);
-  if (failed(e) || query == 0 as usize || ids == 0 as usize) {
-    return gone;
-  }
-  let filtered = jni.call_object(e, query, "setFilterById", "([J)L" + QUERY + ";", [ids]);
-  let cursor = jni.call_object(e, manager, "query", "(L" + QUERY + ";)Landroid/database/Cursor;", [query]);
-  if (failed(e) || cursor == 0 as usize) {
-    return gone;
-  }
-  defer close_cursor(e, cursor);
-  let cursor_class = jni.get_object_class(e, cursor);
-  let empty = jni.jvalues([]);
-  let first = jni.call_boolean_method_a(e, cursor, jni.get_method_id(e, cursor_class, "moveToFirst", "()Z"), empty);
-  jni.free_buffer(empty);
-  if (failed(e) || first == 0) {
-    return gone;
-  }
-  let status = column_int(e, cursor, cursor_class, "status");
-  let done = column_long(e, cursor, cursor_class, "bytes_so_far");
-  let total = column_long(e, cursor, cursor_class, "total_size");
-  if (failed(e)) {
-    return gone;
-  }
-  if (total <= 0i64) {
-    total = -1i64;
-  }
-  return Progress { status: status, done: done, total: total };
+  return row(s, cursor).unwrap_or(gone);
 }
 
-// Stops the download `id` and deletes its file.
+function query(s: Session, id: i64): Result[bindings.Cursor, jni.JavaError] {
+  let manager = manager_of(s)?;
+  let q = s.c.download_manager_query.new(s.e)?;
+  s.c.download_manager_query.set_filter_by_id(s.e, q, ids_of(s.e, id)?)?;
+  return s.c.download_manager.query(s.e, manager, q);
+}
+
+function row(s: Session, cursor: bindings.Cursor): Result[Progress, jni.JavaError] {
+  let c = s.c.cursor;
+  let at = c.get_column_index(s.e, cursor, "status")?;
+  let status = if (at < 0) { 0 } else { c.get_int(s.e, cursor, at)? };
+  let done = long_column(s, cursor, "bytes_so_far")?;
+  let total = long_column(s, cursor, "total_size")?;
+  return Ok(Progress { status: status, done: done, total: if (total > 0i64) { total } else { -1i64 } });
+}
+
+function long_column(s: Session, cursor: bindings.Cursor, name: string): Result[i64, jni.JavaError] {
+  let at = s.c.cursor.get_column_index(s.e, cursor, name)?;
+  if (at < 0) {
+    return Ok(0i64);
+  }
+  return s.c.cursor.get_long(s.e, cursor, at);
+}
+
 pub function remove(ctx: usize, id: i64): void {
-  let e = android.env(ctx);
-  if (!push_frame(e)) {
+  let Some(s) = session(ctx) else {
     return;
-  }
-  defer pop_frame(e);
-  let manager = manager_of(ctx, e);
-  let ids = ids_of(e, id);
-  if (failed(e) || manager == 0 as usize || ids == 0 as usize) {
+  };
+  defer close(s);
+  let Ok(manager) = manager_of(s) else {
     return;
-  }
-  let args = jni.jvalues([ids]);
-  let removed = jni.call_int_method_a(e, manager, jni.get_method_id(e, jni.get_object_class(e, manager), "remove", "([J)I"), args);
-  jni.free_buffer(args);
-  let cleared = failed(e);
+  };
+  let Ok(ids) = ids_of(s.e, id) else {
+    return;
+  };
+  let removed = s.c.download_manager.remove(s.e, manager, ids);
 }
 
-// The directory that the files of `start` go to, or "" when the storage
-// is not there.
 pub function dir(ctx: usize): string {
-  let e = android.env(ctx);
-  if (!push_frame(e)) {
+  let Some(s) = session(ctx) else {
+    return "";
+  };
+  defer close(s);
+  let Ok(files) = s.c.context.get_external_files_dir(s.e, s.app, None) else {
+    return "";
+  };
+  if (files.is_null()) {
     return "";
   }
-  defer pop_frame(e);
-  let files = jni.call_object(e, android.activity_object(ctx), "getExternalFilesDir", "(Ljava/lang/String;)Ljava/io/File;", [0 as usize]);
-  if (failed(e) || files == 0 as usize) {
-    return "";
-  }
-  let path = jni.call_object(e, files, "getAbsolutePath", "()Ljava/lang/String;", []);
-  if (failed(e) || path == 0 as usize) {
-    return "";
-  }
-  return jni.string_of(e, path);
+  return s.c.file.get_absolute_path(s.e, files).unwrap_or("");
 }
 ```
 
-### `helpers`
+### Helpers
 
-Each call makes its local references in one frame, and the end of the call frees them all.
+Each operation holds its local references in one frame and releases the global class references before popping that frame.
 
 ```fern
 <<helpers>>=
-function manager_of(ctx: usize, e: usize): usize {
-  let manager = jni.call_object(e, android.activity_object(ctx), "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [jni.new_string(e, "download")]);
-  if (failed(e)) {
-    return 0 as usize;
+struct Session { e: usize, app: bindings.Context, c: bindings.Classes }
+
+function session(ctx: usize): Option[Session] {
+  let e = android.env(ctx);
+  if (jni.call1(e, 19, 64 as usize) as i32 != 0) {
+    jni.exception_clear(e);
+    return None;
   }
-  return manager;
+  let Ok(c) = bindings.classes(e) else {
+    jni.call1(e, 20, 0 as usize);
+    return None;
+  };
+  return Some(Session { e: e, app: bindings.Context { ref: android.activity_object(ctx) }, c: c });
 }
 
-function parse_uri(e: usize, text: string): usize {
-  let class = jni.find_class(e, "android/net/Uri");
-  if (failed(e) || class == 0 as usize) {
-    return 0 as usize;
-  }
-  let id = jni.get_static_method_id(e, class, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
-  if (failed(e) || id == 0 as usize) {
-    return 0 as usize;
-  }
-  let args = jni.jvalues([jni.new_string(e, text)]);
-  let uri = jni.call_static_object_method_a(e, class, id, args);
-  jni.free_buffer(args);
-  if (failed(e)) {
-    return 0 as usize;
-  }
-  return uri;
+function close(s: Session): void {
+  s.c.release(s.e);
+  jni.call1(s.e, 20, 0 as usize);
 }
 
-// A long[] that holds `id`.
-function ids_of(e: usize, id: i64): usize {
+function close_cursor(s: Session, cursor: bindings.Cursor): void {
+  let closed = s.c.cursor.close(s.e, cursor);
+}
+
+function manager_of(s: Session): Result[bindings.DownloadManager, jni.JavaError] {
+  let service = s.c.context.get_system_service(s.e, s.app, "download")?;
+  if (service.is_null()) {
+    return Err(jni.absent("download service"));
+  }
+  return Ok(bindings.DownloadManager { ref: service.ref });
+}
+
+function ids_of(e: usize, id: i64): Result[jni.Object, jni.JavaError] {
   let ids = jni.new_long_array(e, 1);
-  if (failed(e) || ids == 0 as usize) {
-    return 0 as usize;
-  }
+  jni.check(e)?;
   jni.set_long_array_region(e, ids, 0, [id]);
-  return ids;
-}
-
-function column_of(e: usize, cursor: usize, class: usize, name: string): i32 {
-  let args = jni.jvalues([jni.new_string(e, name)]);
-  let at = jni.call_int_method_a(e, cursor, jni.get_method_id(e, class, "getColumnIndex", "(Ljava/lang/String;)I"), args);
-  jni.free_buffer(args);
-  return at;
-}
-
-function column_int(e: usize, cursor: usize, class: usize, name: string): i32 {
-  let at = column_of(e, cursor, class, name);
-  if (failed(e) || at < 0) {
-    return 0;
-  }
-  let args = jni.jvalues([at as usize]);
-  let value = jni.call_int_method_a(e, cursor, jni.get_method_id(e, class, "getInt", "(I)I"), args);
-  jni.free_buffer(args);
-  return value;
-}
-
-function column_long(e: usize, cursor: usize, class: usize, name: string): i64 {
-  let at = column_of(e, cursor, class, name);
-  if (failed(e) || at < 0) {
-    return 0i64;
-  }
-  let args = jni.jvalues([at as usize]);
-  let value = jni.call_long_method_a(e, cursor, jni.get_method_id(e, class, "getLong", "(I)J"), args) as i64;
-  jni.free_buffer(args);
-  return value;
-}
-
-function close_cursor(e: usize, cursor: usize): void {
-  let closed = jni.call_void(e, cursor, "close", "()V", []);
-  let cleared = failed(e);
-}
-
-// Starts a local frame of references. False when Java has no memory for it.
-function push_frame(e: usize): boolean {
-  if (jni.call1(e, 19, 32 as usize) as i32 != 0) {
-    let cleared = jni.exception_clear(e);
-    return false;
-  }
-  return true;
-}
-
-// Ends the local frame of references that a call started.
-function pop_frame(e: usize): void {
-  let popped = jni.call1(e, 20, 0 as usize);
-}
-
-// True when a Java exception was pending, which this clears.
-function failed(e: usize): boolean {
-  let exception = jni.exception_occurred(e);
-  if (exception == 0 as usize) {
-    return false;
-  }
-  let cleared = jni.exception_clear(e);
-  let gone = jni.delete_local_ref(e, exception);
-  return true;
+  jni.check(e)?;
+  return Ok(jni.Object { ref: ids });
 }
 ```

@@ -8,6 +8,8 @@ A font with no GPOS table takes the kerning of its `kern` table. Its marks go on
 
 `shape` takes a text in logical order and the OpenType tag of its script, such as `"arab"`, `"deva"` or `"taml"`. It gives a `truetype.Run`: the glyphs in logical order, with the cluster of each glyph and its position. A cluster is the index of the first character that the glyph shows. A mark has the cluster of its base.
 
+For repeated text runs in an Indic script, call `prepare_indic(font, script)` once and use `plan.shape(text)` for each word. The plan retains its font and its substitution and positioning stages. Each prepared lookup summarizes the glyphs it can cover, so a miss skips the subtable search. A result of `None` means the Indic shaper does not apply to that font and script.
+
 A position is the advance of the glyph and its offset from its pen, in font units. A glyph goes at its pen and its offset, and the pen then moves by its advance. In a right-to-left run, the glyph that is last in logical order goes first, at the left.
 
 Shaping has these steps, in the order of HarfBuzz:
@@ -1361,10 +1363,8 @@ function shaped_apart(f: truetype.Font, text: string, script: string): Option[tr
   if let Some((gsub, gpos)) = use_tags(f, script) {
     return Some(use_shaped(f, text, script, gsub, gpos));
   }
-  if let Some(c) = indic_config(script) {
-    if let Some(p) = indic_plan(f, c) {
-      return Some(indic_shaped(f, text, p));
-    }
+  if let Some(plan) = make_indic_plan(f, script, false) {
+    return Some(plan.shape(text));
   }
   return None;
 }
@@ -1439,6 +1439,12 @@ function mirrored(f: truetype.Font, cs: Chars): Chars {
 // `r` after the lookups of the features `features`, in the order of their
 // indices: those of GPOS with `gpos`, else those of GSUB.
 function applied_stage(f: truetype.Font, r: truetype.Run, script: string, features: Feature[], gpos: boolean): truetype.Run {
+  return apply_lookups(f, r, stage_lookups(f, script, features, gpos, false), gpos);
+}
+
+struct Stage { lookups: i32[], masks: i32[], opts: i32[], prepared: truetype.PreparedLookup[] }
+
+function stage_lookups(f: truetype.Font, script: string, features: Feature[], gpos: boolean, cache: boolean): Stage {
   let lookups: i32[] = [];
   let masks: i32[] = [];
   let opts: i32[] = [];
@@ -1458,22 +1464,40 @@ function applied_stage(f: truetype.Font, r: truetype.Run, script: string, featur
       opts = inserted_at(opts, at, ft.opts);
     }
   }
+  let prepared: truetype.PreparedLookup[] = [];
+  if (cache) {
+    for li in lookups {
+      prepared = prepared.append(f.prepare_lookup(li, gpos));
+    }
+  }
+  return Stage { lookups: lookups, masks: masks, opts: opts, prepared: prepared };
+}
+
+function apply_lookups(f: truetype.Font, r: truetype.Run, stage: Stage, gpos: boolean): truetype.Run {
   let run = r;
-  for k in 0..lookups.len() {
-    run = if (gpos) { f.position(run, lookups[k], masks[k], opts[k]) } else { f.substitute(run, lookups[k], masks[k], opts[k]) };
+  for k in 0..stage.prepared.len() {
+    run = stage.prepared[k].apply(run, stage.masks[k], stage.opts[k]);
+  }
+  if (stage.prepared.len() > 0) {
+    return run;
+  }
+  for k in 0..stage.lookups.len() {
+    run = if (gpos) { f.position(run, stage.lookups[k], stage.masks[k], stage.opts[k]) } else { f.substitute(run, stage.lookups[k], stage.masks[k], stage.opts[k]) };
   }
   return run;
 }
 
-function inserted_at(xs: i32[], at: i32, v: i32): i32[] {
-  let out: i32[] = [];
-  for k in 0..xs.len() {
-    if (k == at) {
-      out = out.append(v);
-    }
-    out = out.append(xs[k]);
+function inserted_at(own xs: i32[], at: i32, v: i32): i32[] {
+  let k = xs.len();
+  xs = xs.append(v);
+  if (at == k) {
+    return xs;
   }
-  return if (at >= xs.len()) { out.append(v) } else { out };
+  while (k > at) {
+    xs = xs.with(k, xs[k - 1]);
+    k -= 1;
+  }
+  return xs.with(at, v);
 }
 ```
 
@@ -1817,7 +1841,21 @@ const KEPT_WHOLE: i32[] = [0x931, 0x9DC, 0x9DD, 0xB94];
 // specification apply, whether a context with glyphs around its input is
 // left out when the shaper asks which lookups apply, the glyph of the
 // virama, and whether the font has the features rphf and pref.
-struct Plan { config: Config, gsub: string, gpos: string, old_spec: boolean, zero: boolean, virama: i32, rphf: boolean, pref: boolean }
+struct Plan {
+  config: Config,
+  gsub: string,
+  gpos: string,
+  old_spec: boolean,
+  zero: boolean,
+  virama: i32,
+  rphf: boolean,
+  pref: boolean,
+  blwf_lookups: i32[],
+  vatu_lookups: i32[],
+  pstf_lookups: i32[],
+  pref_lookups: i32[],
+  rphf_lookups: i32[],
+}
 
 // A glyph of a run, with its fields of the run. `key` holds the place of
 // the glyph before a sort.
@@ -1850,7 +1888,13 @@ function indic_plan(f: truetype.Font, c: Config): Option[Plan] {
   }
   let gpos = if (f.has_script(c.tag, true)) { c.tag } else { c.script };
   let old_spec = gsub != c.tag;
-  return Some(Plan { config: c, gsub: gsub, gpos: gpos, old_spec: old_spec, zero: !old_spec && c.script != "mlym", virama: f.glyph(c.virama), rphf: f.has_feature(gsub, "rphf"), pref: f.has_feature(gsub, "pref") });
+  return Some(Plan {
+    config: c, gsub: gsub, gpos: gpos, old_spec: old_spec, zero: !old_spec && c.script != "mlym",
+    virama: f.glyph(c.virama), rphf: f.has_feature(gsub, "rphf"), pref: f.has_feature(gsub, "pref"),
+    blwf_lookups: f.feature_lookups(gsub, "blwf"), vatu_lookups: f.feature_lookups(gsub, "vatu"),
+    pstf_lookups: f.feature_lookups(gsub, "pstf"), pref_lookups: f.feature_lookups(gsub, "pref"),
+    rphf_lookups: f.feature_lookups(gsub, "rphf"),
+  });
 }
 
 // The features of the Indic shaper between the two reorderings, one stage
@@ -1879,8 +1923,43 @@ function final_features(): Feature[] {
   return out;
 }
 
-// The glyphs of the text `text` of an Indic script in the font `f`.
-function indic_shaped(f: truetype.Font, text: string, p: Plan): truetype.Run {
+pub struct IndicPlan {
+  font: truetype.Font,
+  indic: Plan,
+  variation: Stage,
+  direction: Stage,
+  composition: Stage,
+  basic: Stage[],
+  final: Stage,
+  positioning: Stage,
+}
+
+// Prepare the lookups and reordering rules for repeated runs in one font.
+pub function prepare_indic(f: truetype.Font, script: string): Option[IndicPlan] {
+  return make_indic_plan(f, script, true);
+}
+
+function make_indic_plan(f: truetype.Font, script: string, cache: boolean): Option[IndicPlan] {
+  let c = indic_config(script)?;
+  let p = indic_plan(f, c)?;
+  let basic: Stage[] = [];
+  for ft in basic_features() {
+    basic = basic.append(stage_lookups(f, p.gsub, [ft], false, cache));
+  }
+  let per = truetype.PER_SYLLABLE;
+  return Some(IndicPlan {
+    font: f, indic: p, basic: basic,
+    variation: stage_lookups(f, p.gsub, [feature("rvrn", GLOBAL, 0)], false, cache),
+    direction: stage_lookups(f, p.gsub, direction_features(false), false, cache),
+    composition: stage_lookups(f, p.gsub, [feature("locl", GLOBAL, per), feature("ccmp", GLOBAL, per)], false, cache),
+    final: stage_lookups(f, p.gsub, final_features(), false, cache),
+    positioning: stage_lookups(f, p.gpos, position_features(), true, cache),
+  });
+}
+
+pub function (plan: IndicPlan) shape(text: string): truetype.Run {
+  let f = plan.font;
+  let p = plan.indic;
   let cs = normalized(f, vowel_constrained(characters(text), p.config.script), Normalizer { script: p.config.script, indic: true, forms: false, splits_all: true, marks_stay: true, none: false });
   let vars: i32[] = [];
   let masks: i32[] = [];
@@ -1889,18 +1968,18 @@ function indic_shaped(f: truetype.Font, text: string, p: Plan): truetype.Run {
     masks = masks.append(GLOBAL);
   }
   let r = truetype.Run { ...run_of_chars(f, cs, masks), vars: vars };
-  r = applied_stage(f, r, p.gsub, [feature("rvrn", GLOBAL, 0)], false);
-  r = applied_stage(f, r, p.gsub, direction_features(false), false);
+  r = apply_lookups(f, r, plan.variation, false);
+  r = apply_lookups(f, r, plan.direction, false);
   r = with_syllables(r, "indic");
-  let per = truetype.PER_SYLLABLE;
-  r = applied_stage(f, r, p.gsub, [feature("locl", GLOBAL, per), feature("ccmp", GLOBAL, per)], false);
+  r = apply_lookups(f, r, plan.composition, false);
   r = run_of_glyphs(r, initially_reordered(f, p, glyphs_of(r)));
-  for ft in basic_features() {
-    r = applied_stage(f, r, p.gsub, [ft], false);
+  for stage in plan.basic {
+    r = apply_lookups(f, r, stage, false);
   }
   r = run_of_glyphs(r, finally_reordered(p, glyphs_of(r)));
-  r = applied_stage(f, r, p.gsub, final_features(), false);
-  return placed(f, r, p.gpos, f.gpos >= 0, false, ZERO_NONE, false);
+  r = apply_lookups(f, r, plan.final, false);
+  r = with_space_widths(f, f.with_advances(r, false));
+  return hidden(f, finished(apply_lookups(f, r, plan.positioning, true)));
 }
 
 function glyphs_of(r: truetype.Run): Glyph[] {
@@ -2079,19 +2158,19 @@ function with_consonant_positions(f: truetype.Font, p: Plan, gs0: Glyph[]): Glyp
 }
 
 function consonant_position(f: truetype.Font, p: Plan, g: i32): i32 {
-  if (with_virama(f, p, "blwf", g) || with_virama(f, p, "vatu", g)) {
+  if (with_virama(f, p, p.blwf_lookups, g) || with_virama(f, p, p.vatu_lookups, g)) {
     return POS_BELOW_C;
   }
-  if (with_virama(f, p, "pstf", g) || with_virama(f, p, "pref", g)) {
+  if (with_virama(f, p, p.pstf_lookups, g) || with_virama(f, p, p.pref_lookups, g)) {
     return POS_POST_C;
   }
   return POS_BASE_C;
 }
 
-// Whether a lookup of `tag` joins the virama and the glyph `g`, in either
+// Whether one of the lookups joins the virama and the glyph `g`, in either
 // order: some fonts have the order of the old specification in new tables.
-function with_virama(f: truetype.Font, p: Plan, tag: string, g: i32): boolean {
-  return f.would_substitute(p.gsub, tag, [p.virama, g], p.zero) || f.would_substitute(p.gsub, tag, [g, p.virama], p.zero);
+function with_virama(f: truetype.Font, p: Plan, lookups: i32[], g: i32): boolean {
+  return f.would_substitute_lookups(lookups, [p.virama, g], p.zero) || f.would_substitute_lookups(lookups, [g, p.virama], p.zero);
 }
 
 // `gs` with a dotted circle at the start of each syllable of the type
@@ -2153,9 +2232,9 @@ function reph_limit(f: truetype.Font, p: Plan, gs: Glyph[], start: i32, end: i32
 function reph_formed(f: truetype.Font, p: Plan, gs: Glyph[], start: i32): boolean {
   let two = [gs[start].id, gs[start + 1].id];
   if (p.config.reph_mode == MODE_IMPLICIT) {
-    return !is_one_of(gs[start + 2], joiner_bits()) && f.would_substitute(p.gsub, "rphf", two, p.zero);
+    return !is_one_of(gs[start + 2], joiner_bits()) && f.would_substitute_lookups(p.rphf_lookups, two, p.zero);
   }
-  return cat_of(gs[start + 2]) == CAT_ZWJ && (f.would_substitute(p.gsub, "rphf", two, p.zero) || f.would_substitute(p.gsub, "rphf", two.append(gs[start + 2].id), p.zero));
+  return cat_of(gs[start + 2]) == CAT_ZWJ && (f.would_substitute_lookups(p.rphf_lookups, two, p.zero) || f.would_substitute_lookups(p.rphf_lookups, two.append(gs[start + 2].id), p.zero));
 }
 
 // The base from the end of the syllable back to `limit`: the last consonant
@@ -2447,7 +2526,7 @@ function eyelash_masked(gs0: Glyph[], start: i32, base: i32): Glyph[] {
 // `gs` with pref on the first two glyphs after the base that pref joins.
 function pref_masked(f: truetype.Font, p: Plan, gs: Glyph[], base: i32, end: i32): Glyph[] {
   for k in base + 1..end - 1 {
-    if (f.would_substitute(p.gsub, "pref", [gs[k].id, gs[k + 1].id], p.zero)) {
+    if (f.would_substitute_lookups(p.pref_lookups, [gs[k].id, gs[k + 1].id], p.zero)) {
       return with_mask(with_mask(gs, k, PREF), k + 1, PREF);
     }
   }

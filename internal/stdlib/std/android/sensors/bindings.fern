@@ -18,10 +18,7 @@ pub struct ContextClass { class: usize, id_get_package_name: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/content/Context");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/content/Context")?;
   let id_get_package_name = jni.checked_id(e, class, jni.get_method_id(e, class, "getPackageName", "()Ljava/lang/String;"))?;
   return Ok(ContextClass { class: class, id_get_package_name: id_get_package_name });
 }
