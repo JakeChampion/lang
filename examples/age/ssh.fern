@@ -867,12 +867,16 @@ function key_of(own k: u8[]): Result[chacha20poly1305.Key, string] {
 // The wrapping key of an ssh-ed25519 stanza. shared is the X25519 shared
 // secret, and the tweak of the SSH key multiplies it.
 function ed25519_key(shared: [u8], share: [u8], public: [u8], wire: [u8]): Result[chacha20poly1305.Key, string] {
-  let tweak = crypto.hkdf_sha256(wire, [], ED25519_LABEL.as_bytes(), 32);
+  let tweak_prk = crypto.hkdf_sha256_extract(wire, []);
+  let tweak = crypto.hkdf_sha256_expand_block(tweak_prk, ED25519_LABEL.as_bytes());
+  crypto.erase(tweak_prk);
   let tweaked = match (x25519.x25519(tweak, shared)) {
     Ok(t) => t,
     Err(_) => [],
   };
-  let k = crypto.hkdf_sha256(text.copy(share).concat(public), tweaked, ED25519_LABEL.as_bytes(), 32);
+  let k_prk = crypto.hkdf_sha256_extract(text.copy(share).concat(public), tweaked);
+  let k = crypto.hkdf_sha256_expand_block(k_prk, ED25519_LABEL.as_bytes());
+  crypto.erase(k_prk);
   crypto.erase(tweaked);
   return key_of(k);
 }

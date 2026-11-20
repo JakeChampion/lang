@@ -384,6 +384,45 @@ that does not change the paths.
 `index-pack` gives each CPU one part of the packfile, with about the same
 count of bytes. A worker of `std/worker` makes the names of its part.
 
+### Comparison with gitoxide
+
+On the zstd v1.5.7 history, Fern walked the log faster than gitoxide and
+built the pack index slower. Git built the same index in 2.326 seconds,
+Fern in 1.295 seconds and gitoxide in 0.548 seconds.
+
+| Operation | Git wall / CPU (s) | Fern wall / CPU (s) | gitoxide wall / CPU (s) |
+|---|---:|---:|---:|
+| Full log, abbreviated ID and subject | 0.067 / 0.066 | 0.087 / 0.087 | 0.149 / 0.149 |
+| Build a new pack index, four threads | 2.326 / 5.486 | 1.295 / 3.048 | 0.548 / 1.440 |
+| Read all objects with `cat-file --batch` | 1.939 / 1.935 | 1.839 / 1.832 | unavailable |
+
+These are medians of three timed runs after one warm-up per tool and
+operation, rotating the starting tool each round. All commands ran on the
+same four logical CPUs of an AMD EPYC 9V74 Linux host with stdout sent to
+`/dev/null`. CPU time includes user and system time. The executables were
+Git 2.52.0, the Fern port built with `-O` at `9f606a99da`, and the
+gitoxide v0.61.0 `max-pure` x86-64 GNU/Linux release.
+
+The corpus was a single-branch clone of facebook/zstd at
+`f8745da6ff1ad1e7bab384bd1f9d742439278e99`, with 11,125 commits and
+61,756 objects in one 38,962,986-byte pack
+(`pack-bfdef7f520cef6e37689e060e5947dab6e6a109f`). To repeat each row:
+
+- Run `git log --oneline --abbrev=8`, the Fern port with the same arguments,
+  and `gix log`. Git and Fern produced identical bytes. All three emitted
+  the same commit IDs. Some subjects and ordering differed in the gix output.
+- Hard-link the pack into a fresh temporary directory for each trial.
+  Run Git and Fern with `index-pack --threads=4 "$tmp/input.pack"`.
+  Run gitoxide with `gix --threads 4 free pack index create -p "$tmp/input.pack" "$tmp"`.
+  Compare the generated index with the original after timing. All three
+  produced byte-identical indexes in every trial.
+- Write the input list with `git cat-file --batch-all-objects --batch-check='%(objectname)'`.
+  Feed that file to Git and Fern in separate `cat-file --batch` runs.
+  Both output streams had SHA-256
+  `b22301de6a18c7258f00f3fe6e228a488dbcc15e8546ffadcf5efea6a2aacd12`.
+  The gitoxide CLI accepts a single revision per `gix cat` invocation and
+  has no equivalent batch command.
+
 ## Tests
 
 - `git_test.fern` holds the unit cases. It runs on x86-64, arm64 and

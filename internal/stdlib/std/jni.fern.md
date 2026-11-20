@@ -333,6 +333,18 @@ pub function exception_clear(env: usize): usize {
   return call0(env, 17);
 }
 
+// Clears a pending exception and releases the local throwable reference
+// returned by ExceptionOccurred.
+function clear_if_thrown(env: usize): boolean {
+  let thrown = exception_occurred(env);
+  if (thrown == 0 as usize) {
+    return false;
+  }
+  exception_clear(env);
+  delete_local_ref(env, thrown);
+  return true;
+}
+
 pub function new_global_ref(env: usize, obj: usize): usize {
   return call1(env, 21, obj);
 }
@@ -746,11 +758,7 @@ pub function call_void(env: usize, obj: usize, name: string, sig: string, values
   let done: usize = call_void_method_a(env, obj, get_method_id(env, class, name, sig), args);
   free_buffer(args);
   let dropped: usize = delete_local_ref(env, class);
-  if (exception_occurred(env) != 0 as usize) {
-    exception_clear(env);
-    return false;
-  }
-  return true;
+  return !clear_if_thrown(env);
 }
 
 // The class `name`, in the Java form "a.b.C", loaded through the class
@@ -765,21 +773,31 @@ pub function load_class(env: usize, obj: usize, name: string): usize {
   return class;
 }
 
-// The text of the Java string `jstr`, or "" for null. JNI gives modified
-// UTF-8, and a byte that is not UTF-8 becomes U+FFFD.
+// The text of the Java string `jstr`, or "" for null. An unpaired
+// UTF-16 surrogate becomes U+FFFD.
 pub function string_of(env: usize, jstr: usize): string {
   if (jstr == 0 as usize) {
     return "";
   }
   let n: i32 = get_string_utf_length(env, jstr);
   let chars: usize = get_string_utf_chars(env, jstr, 0 as usize);
+  if (chars == 0 as usize) {
+    return "";
+  }
+  // Only C0 (NUL) and ED (a possible surrogate) need a second pass.
+  let modified = false;
   let bytes: u8[] = [];
   unsafe {
     for i in 0..n {
-      bytes = bytes.append(__load_u8(chars + i as usize) as u8);
+      let byte = __load_u8(chars + i as usize) as u8;
+      bytes = bytes.append(byte);
+      modified = modified || byte == 0xc0 as u8 || byte == 0xed as u8;
     }
   }
   let released: usize = release_string_utf_chars(env, jstr, chars);
+  if (modified) {
+    bytes = utf8.normalize_modified(bytes, true);
+  }
   return utf8.from_bytes_lossy(bytes);
 }
 ```
@@ -840,9 +858,7 @@ pub function check(env: usize): Result[void, JavaError] {
   exception_clear(env);
   let text = call_object(env, thrown, "toString", "()Ljava/lang/String;", []);
   let out = "";
-  if (exception_occurred(env) != 0 as usize) {
-    exception_clear(env);
-  } else {
+  if (!clear_if_thrown(env)) {
     out = string_of(env, text);
     delete_local_ref(env, text);
   }
@@ -853,11 +869,10 @@ pub function check(env: usize): Result[void, JavaError] {
 // The ID `id` that a lookup gave, or 0 when the lookup threw. It clears
 // the exception. Use it for a member that an older device does not have.
 pub function optional_id(env: usize, id: usize): usize {
-  if (exception_occurred(env) == 0 as usize) {
-    return id;
+  if (clear_if_thrown(env)) {
+    return 0 as usize;
   }
-  exception_clear(env);
-  return 0 as usize;
+  return id;
 }
 
 // The error for a call of `member`, which the device does not have.

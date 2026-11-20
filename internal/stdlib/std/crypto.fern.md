@@ -12,6 +12,8 @@ Digest states are values. Every digest has the same surface: `<algorithm>_new()`
 
 The one-shot SHAKE functions require a positive output length in bytes. They return `InvalidOutputLength` with the supplied length for zero or negative requests.
 
+HKDF expansion and combined extraction/expansion return an error when the requested output is below one byte or above 255 hash blocks (8160 bytes for SHA-256 and 12240 for SHA-384). The error carries the requested length.
+
 The same state must receive each returned update value. Authentication helpers compare codes without ordinary string equality. Generated digest cores remain in one generator-controlled chunk. `erase` takes an owned array, which the checker accepts only at its last use.
 
 ## Executable example
@@ -2451,22 +2453,20 @@ pub struct Blake2b {
   out_len: i32,
 }
 
+pub enum Blake2bError { InvalidDigestLength(i32) }
+
 // blake2b_new constructs a digest state for `out_len` bytes, from 1 through 64.
 // The default length for `b2sum` is 64 bytes. Its `-l` option accepts bits.
-pub function blake2b_new(out_len: i32): Blake2b {
-  let n = out_len;
-  if (n < 1) {
-    n = 1;
-  }
-  if (n > 64) {
-    n = 64;
+pub function blake2b_new(out_len: i32): Result[Blake2b, Blake2bError] {
+  if (out_len < 1 || out_len > 64) {
+    return Err(InvalidDigestLength(out_len));
   }
   let h: Blake2b = Blake2b {
     h0: 0x6a09e667f3bcc908 as u64, h1: 0xbb67ae8584caa73b as u64, h2: 0x3c6ef372fe94f82b as u64, h3: 0xa54ff53a5f1d36f1 as u64, h4: 0x510e527fade682d1 as u64, h5: 0x9b05688c2b3e6c1f as u64, h6: 0x1f83d9abfb41bd6b as u64, h7: 0x5be0cd19137e2179 as u64,
-    buf: __zero_u8(128), buf_len: 0, total: 0 as u64, out_len: n,
+    buf: __zero_u8(128), buf_len: 0, total: 0 as u64, out_len: out_len,
   };
   // Parameter block word 0: digest length, key length 0, fanout 1, depth 1.
-  return Blake2b { ...h, h0: h.h0 ^ 0x01010000 as u64 ^ n as u64 };
+  return Ok(Blake2b { ...h, h0: h.h0 ^ 0x01010000 as u64 ^ out_len as u64 });
 }
 
 // __blake2b_blocks compresses `nblocks` blocks from byte `from`.
@@ -3372,9 +3372,10 @@ function __blake2b_last(own h: Blake2b): u8[] {
 }
 
 // blake2b calculates an `out_len`-byte digest of `s`.
-pub function blake2b(s: [u8], out_len: i32): u8[] {
-  let last = blake2b_new(out_len).update(s);
-  return __blake2b_last(last);
+pub function blake2b(s: [u8], out_len: i32): Result[u8[], Blake2bError] {
+  let h = blake2b_new(out_len)?;
+  let last = h.update(s);
+  return Ok(__blake2b_last(last));
 }
 
 // <<< generated
@@ -3593,8 +3594,9 @@ pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: 
   return __pbkdf2_core(password, salt, iterations, dk_len);
 }
 
+// Returns false for a stored hash shorter than 16 bytes or an iteration count below one.
 pub function pbkdf2_sha256_verify(password: [u8], salt: [u8], iterations: i32, expected: [u8]): boolean {
-  if (expected.len() == 0) {
+  if (expected.len() < 16 || iterations < 1) {
     return false;
   }
   return consteq(pbkdf2_sha256(password, salt, iterations, expected.len()), expected);
@@ -3612,12 +3614,19 @@ function __hkdf_extract(hlen: i32, salt: [u8], ikm: [u8]): u8[] {
   return __hmac(hlen, salt, ikm);
 }
 
-// RFC 5869 section 2.3 limits the output to 255 blocks, because the block
-// counter is one byte. A longer request stops the program with status 134.
-function __hkdf_expand(hlen: i32, prk: [u8], info: [u8], length: i32): u8[] {
-  if (length > 255 * hlen) {
-    exit(134);
+pub enum HkdfError {
+  InvalidHkdfLength(i32),
+}
+
+// RFC 5869 section 2.3 encodes the block counter in one byte.
+function __hkdf_expand(hlen: i32, prk: [u8], info: [u8], length: i32): Result[u8[], HkdfError] {
+  if (length < 1 || length > 255 * hlen) {
+    return Err(InvalidHkdfLength(length));
   }
+  return Ok(__hkdf_expand_valid(hlen, prk, info, length));
+}
+
+function __hkdf_expand_valid(hlen: i32, prk: [u8], info: [u8], length: i32): u8[] {
   let okm = __alloc_u8(length);
   let t: u8[] = [];
   let offset = 0;
@@ -3652,11 +3661,16 @@ pub function hkdf_sha256_extract(salt: [u8], ikm: [u8]): u8[] {
   return __hkdf_extract(32, salt, ikm);
 }
 
-pub function hkdf_sha256_expand(prk: [u8], info: [u8], length: i32): u8[] {
+// The first expand block is HMAC(PRK, info || 0x01).
+pub function hkdf_sha256_expand_block(prk: [u8], info: [u8]): u8[] {
+  return __hkdf_expand_valid(32, prk, info, 32);
+}
+
+pub function hkdf_sha256_expand(prk: [u8], info: [u8], length: i32): Result[u8[], HkdfError] {
   return __hkdf_expand(32, prk, info, length);
 }
 
-pub function hkdf_sha256(salt: [u8], ikm: [u8], info: [u8], length: i32): u8[] {
+pub function hkdf_sha256(salt: [u8], ikm: [u8], info: [u8], length: i32): Result[u8[], HkdfError] {
   let prk = __hkdf_extract(32, salt, ikm);
   let okm = __hkdf_expand(32, prk, info, length);
   erase(prk);
@@ -3667,11 +3681,11 @@ pub function hkdf_sha384_extract(salt: [u8], ikm: [u8]): u8[] {
   return __hkdf_extract(48, salt, ikm);
 }
 
-pub function hkdf_sha384_expand(prk: [u8], info: [u8], length: i32): u8[] {
+pub function hkdf_sha384_expand(prk: [u8], info: [u8], length: i32): Result[u8[], HkdfError] {
   return __hkdf_expand(48, prk, info, length);
 }
 
-pub function hkdf_sha384(salt: [u8], ikm: [u8], info: [u8], length: i32): u8[] {
+pub function hkdf_sha384(salt: [u8], ikm: [u8], info: [u8], length: i32): Result[u8[], HkdfError] {
   let prk = __hkdf_extract(48, salt, ikm);
   let okm = __hkdf_expand(48, prk, info, length);
   erase(prk);

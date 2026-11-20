@@ -314,7 +314,9 @@ pub function marshal(h: Header): string {
 }
 
 pub function header_mac(file_key: [u8], h: Header): u8[] {
-  let key = crypto.hkdf_sha256([], file_key, "header".as_bytes(), 32);
+  let key_prk = crypto.hkdf_sha256_extract([], file_key);
+  let key = crypto.hkdf_sha256_expand_block(key_prk, "header".as_bytes());
+  crypto.erase(key_prk);
   let mac = crypto.hmac_sha256(key, marshal_without_mac(h).as_bytes());
   crypto.erase(key);
   return mac;
@@ -356,7 +358,9 @@ pub const ZERO_IV: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
 
 // The key of the payload STREAM: HKDF-SHA256 with the payload nonce as salt.
 pub function payload_key(file_key: [u8], nonce: [u8]): Result[chacha20poly1305.Key, aead.AeadError] {
-  let k = crypto.hkdf_sha256(nonce, file_key, "payload".as_bytes(), 32);
+  let k_prk = crypto.hkdf_sha256_extract(nonce, file_key);
+  let k = crypto.hkdf_sha256_expand_block(k_prk, "payload".as_bytes());
+  crypto.erase(k_prk);
   let key = chacha20poly1305.key(k);
   crypto.erase(k);
   return key;
@@ -385,7 +389,9 @@ pub function open_chunk(k: chacha20poly1305.Key, index: i64, last: boolean, own 
 }
 
 function wrap_key(shared: [u8], share: [u8], recipient: [u8]): Result[chacha20poly1305.Key, aead.AeadError] {
-  let k = crypto.hkdf_sha256(text.copy(share).concat(recipient), shared, X25519_LABEL.as_bytes(), 32);
+  let k_prk = crypto.hkdf_sha256_extract(text.copy(share).concat(recipient), shared);
+  let k = crypto.hkdf_sha256_expand_block(k_prk, X25519_LABEL.as_bytes());
+  crypto.erase(k_prk);
   let key = chacha20poly1305.key(k);
   crypto.erase(k);
   return key;
@@ -551,7 +557,14 @@ pub function unwrap_hybrid(st: Stanza, k: hpke.HybridKey): Unwrapped {
 // The wrapping key of an scrypt stanza: scrypt with N = 2^log_n, r = 8 and
 // p = 1, and the label before the salt.
 function scrypt_key(passphrase: [u8], salt: [u8], log_n: i32): Result[chacha20poly1305.Key, string] {
-  let k = match (scrypt.key(passphrase, SCRYPT_LABEL.bytes().concat(salt), 1 << log_n, 8, 1, 32)) {
+  if (log_n < 1 || log_n > 30) {
+    return Err(f"scrypt work factor out of range: {log_n}");
+  }
+  // The recipient chooses this factor when wrapping. Unwrapping checks the
+  // stored factor against the identity's maximum before deriving the key.
+  let n = 1 << log_n;
+  let max_bytes = 1024i64 * (n as i64 + 4i64);
+  let k = match (scrypt.key_with_memory_limit(passphrase, SCRYPT_LABEL.bytes().concat(salt), n, 8, 1, 32, max_bytes)) {
     Ok(k) => k,
     Err(e) => {
       return Err("failed to generate scrypt hash: " + e.message());

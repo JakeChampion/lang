@@ -1,6 +1,6 @@
 # HPKE with the MLKEM768-X25519, MLKEM768-P256 and P-256 KEMs
 
-This module implements Hybrid Public Key Encryption (HPKE, RFC 9180) in the base mode. It has three KEMs: MLKEM768-X25519 of draft-ietf-hpke-pq, also known as X-Wing, MLKEM768-P256 of draft-ietf-hpke-pq, and DHKEM(P-256, HKDF-SHA256) of RFC 9180. The KDF is HKDF-SHA256 and the AEAD is ChaCha20Poly1305.
+This module implements Hybrid Public Key Encryption (HPKE, RFC 9180) in Base and PSK modes. P-256 also supports Auth and AuthPSK. It has three KEMs: MLKEM768-X25519 of draft-ietf-hpke-pq, also known as X-Wing, MLKEM768-P256 of draft-ietf-hpke-pq, and DHKEM(P-256, HKDF-SHA256) of RFC 9180. The KDF is HKDF-SHA256 and the AEAD is ChaCha20Poly1305.
 
 ## Model
 
@@ -15,6 +15,8 @@ The MLKEM768-P256 shared secret is SHA3-256 of five values. They are the ML-KEM-
 A P-256 key is a scalar in the range 1 to n - 1, and its public key is the uncompressed point. `p256_derive_key_pair` is the DeriveKeyPair of RFC 9180 section 7.1.3. `enc` is the ephemeral point. ExtractAndExpand of RFC 9180 section 4.1 gives the shared secret. Its input is the x coordinate of the secret point, and its context is `enc` and then the public key.
 
 The key schedule of RFC 9180 turns the shared secret and the `info` bytes into a `Context`. A `Context` seals or opens messages in sequence. Each message uses the next nonce.
+
+For PSK mode, pass the KEM shared secret, PSK and its identifier to `psk_key_schedule`. For P-256 sender authentication, use `p256_auth_sender_derand` and `p256_auth_recipient`. Pass `Auth` for sender authentication alone or `AuthPSK(psk, id)` to also bind the PSK. The recipient supplies the expected sender public key. PSK modes require a nonempty PSK and identifier. Use a PSK with at least 32 bytes of entropy.
 
 ## Contracts
 
@@ -73,7 +75,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<module introduction>>=
-// This module implements HPKE (RFC 9180) in the base mode with the
+// This module implements HPKE (RFC 9180) with the
 // MLKEM768-X25519 and MLKEM768-P256 KEMs of draft-ietf-hpke-pq, and
 // DHKEM(P-256, HKDF-SHA256), with HKDF-SHA256 and ChaCha20Poly1305.
 ```
@@ -106,6 +108,7 @@ pub enum HpkeError {
   Scalar,
   MessageLimit,
   ExportLength(i32),
+  PskInputs,
 }
 
 impl error.Error for HpkeError {}
@@ -125,6 +128,7 @@ pub function (e: HpkeError) message(): string {
     Point => "hpke: the P-256 point is not on the curve",
     Scalar => "hpke: the P-256 scalar is zero or not below n",
     MessageLimit => "hpke: the context has sealed or opened its last message",
+    PskInputs => "hpke: PSK mode requires a nonempty key and identifier",
     ExportLength(n) => "hpke: the export length is " + n.to_string() + ", want 1 to 8160",
   };
 }
@@ -397,13 +401,18 @@ function __kem_suite(kem_id: i32): u8[] {
   return __bytes_into(__alloc_u8(5), 0, "KEM".as_bytes(), 0, 3).with(3, (kem_id >> 8 & 255) as u8).with(4, (kem_id & 255) as u8);
 }
 
-pub function p256_key(scalar: [u8]): Result[P256Key, HpkeError] {
+function __check_scalar(scalar: [u8]): Result[void, HpkeError] {
   if (scalar.len() != 32) {
     return Err(Length("P-256 scalar", scalar.len(), 32));
   }
   if (!__p256_scalar_ok(scalar)) {
     return Err(Scalar);
   }
+  return Ok(());
+}
+
+pub function p256_key(scalar: [u8]): Result[P256Key, HpkeError] {
+  __check_scalar(scalar)?;
   let public_key = p256.base_point(scalar);
   __ct_public(public_key);
   return Ok(P256Key { scalar: __bytes_into(__alloc_u8(32), 0, scalar, 0, 32), public_key: public_key });
@@ -434,10 +443,10 @@ pub function p256_check_public_key(public_key: [u8]): Result[void, HpkeError] {
   return Ok(());
 }
 
-function __p256_shared_secret(dh: [u8], enc: [u8], public_key: [u8]): u8[] {
+function __p256_shared_secret(dh: [u8], kem_context: [u8]): u8[] {
   let suite = __kem_suite(KEM_P256);
   let prk = __labeled_extract(suite, [], "eae_prk", dh);
-  let ss = __labeled_expand(suite, prk, "shared_secret", __cat(enc, public_key), 32);
+  let ss = __labeled_expand(suite, prk, "shared_secret", kem_context, 32);
   crypto.erase(prk);
   return ss;
 }
@@ -445,18 +454,13 @@ function __p256_shared_secret(dh: [u8], enc: [u8], public_key: [u8]): u8[] {
 // Encapsulation with a caller-supplied ephemeral scalar.
 pub function p256_encap_derand(public_key: [u8], scalar: [u8]): Result[Encapsulation, HpkeError] {
   p256_check_public_key(public_key)?;
-  if (scalar.len() != 32) {
-    return Err(Length("P-256 scalar", scalar.len(), 32));
-  }
-  if (!__p256_scalar_ok(scalar)) {
-    return Err(Scalar);
-  }
+  __check_scalar(scalar)?;
   let enc = p256.base_point(scalar);
   __ct_public(enc);
   let Some(dh) = p256.scalar_mul_x(scalar, public_key) else {
     return Err(Point);
   };
-  let ss = __p256_shared_secret(dh, enc, public_key);
+  let ss = __p256_shared_secret(dh, __cat(enc, public_key));
   crypto.erase(dh);
   return Ok(Encapsulation { shared_secret: ss, enc: enc });
 }
@@ -468,7 +472,7 @@ pub function p256_decap(k: P256Key, enc: [u8]): Result[u8[], HpkeError] {
   let Some(dh) = p256.scalar_mul_x(k.scalar, enc) else {
     return Err(Point);
   };
-  let ss = __p256_shared_secret(dh, enc, k.public_key);
+  let ss = __p256_shared_secret(dh, __cat(enc, k.public_key));
   crypto.erase(dh);
   return Ok(ss);
 }
@@ -503,16 +507,36 @@ function __labeled_extract(suite: [u8], salt: [u8], label: string, ikm: [u8]): u
 function __labeled_expand(suite: [u8], prk: [u8], label: string, info: [u8], length: i32): u8[] {
   let prefix = __alloc_u8(2).with(0, (length >> 8 & 255) as u8).with(1, (length & 255) as u8);
   let labeled = __cat(__cat(__cat(__cat(prefix, "HPKE-v1".as_bytes()), suite), label.as_bytes()), info);
-  return crypto.hkdf_sha256_expand(prk, labeled, length);
+  // The key schedule uses fixed lengths. export validates the caller-supplied length.
+  let Ok(bytes) = crypto.hkdf_sha256_expand(prk, labeled, length) else {
+    exit(134);
+  };
+  return bytes;
 }
 
 // The base mode of RFC 9180: no PSK and no PSK identifier.
 pub function key_schedule(kem_id: i32, shared_secret: [u8], info: [u8]): Context {
+  return __schedule(kem_id, shared_secret, info, 0 as u8, [], []);
+}
+
+// Both parties supply the same PSK and identifier with the KEM shared secret.
+pub function psk_key_schedule(kem_id: i32, shared_secret: [u8], info: [u8], psk: [u8], psk_id: [u8]): Result[Context, HpkeError] {
+  return __psk_schedule(kem_id, shared_secret, info, 1 as u8, psk, psk_id);
+}
+
+function __psk_schedule(kem_id: i32, shared_secret: [u8], info: [u8], mode: u8, psk: [u8], psk_id: [u8]): Result[Context, HpkeError] {
+  if (psk.len() == 0 || psk_id.len() == 0) {
+    return Err(PskInputs);
+  }
+  return Ok(__schedule(kem_id, shared_secret, info, mode, psk, psk_id));
+}
+
+function __schedule(kem_id: i32, shared_secret: [u8], info: [u8], mode: u8, psk: [u8], psk_id: [u8]): Context {
   let suite = __suite_id(kem_id);
-  let psk_id_hash = __labeled_extract(suite, [], "psk_id_hash", []);
+  let psk_id_hash = __labeled_extract(suite, [], "psk_id_hash", psk_id);
   let info_hash = __labeled_extract(suite, [], "info_hash", info);
-  let context = __cat(__cat(__alloc_u8(1).with(0, 0 as u8), psk_id_hash), info_hash);
-  let secret = __labeled_extract(suite, shared_secret, "secret", []);
+  let context = __cat(__cat(__alloc_u8(1).with(0, mode), psk_id_hash), info_hash);
+  let secret = __labeled_extract(suite, shared_secret, "secret", psk);
   let key = __labeled_expand(suite, secret, "key", context, 32);
   let base_nonce = __labeled_expand(suite, secret, "base_nonce", context, 12);
   let exporter = __labeled_expand(suite, secret, "exp", context, 32);
@@ -631,5 +655,64 @@ pub function setup_recipient(k: HybridKey, enc: [u8], info: [u8]): Result[Contex
   let context = key_schedule(KEM_MLKEM768_X25519, ss, info);
   crypto.erase(ss);
   return Ok(context);
+}
+
+pub enum AuthMode {
+  Auth,
+  AuthPSK(u8[], u8[]),
+}
+
+function __auth_schedule(mode: AuthMode, ss: [u8], info: [u8]): Result[Context, HpkeError] {
+  return match (mode) {
+    Auth => Ok(__schedule(KEM_P256, ss, info, 2 as u8, [], [])),
+    AuthPSK(psk, id) => __psk_schedule(KEM_P256, ss, info, 3 as u8, psk, id),
+  };
+}
+
+function __auth_secret(own ephemeral_dh: u8[], own static_dh: u8[], enc: [u8], recipient: [u8], sender: [u8]): u8[] {
+  let dh = __cat(ephemeral_dh, static_dh);
+  crypto.erase(ephemeral_dh);
+  crypto.erase(static_dh);
+  let ss = __p256_shared_secret(dh, __cat(__cat(enc, recipient), sender));
+  crypto.erase(dh);
+  return ss;
+}
+
+// Use a fresh ephemeral scalar for each encapsulation.
+pub function p256_auth_sender_derand(sender: P256Key, recipient: [u8], scalar: [u8], info: [u8], mode: AuthMode): Result[Sender, HpkeError] {
+  p256_check_public_key(recipient)?;
+  __check_scalar(scalar)?;
+  let enc = p256.base_point(scalar);
+  __ct_public(enc);
+  let Some(dh_e) = p256.scalar_mul_x(scalar, recipient) else {
+    return Err(Point);
+  };
+  let Some(dh_s) = p256.scalar_mul_x(sender.scalar, recipient) else {
+    crypto.erase(dh_e);
+    return Err(Point);
+  };
+  let ss = __auth_secret(dh_e, dh_s, enc, recipient, sender.public_key);
+  let result = __auth_schedule(mode, ss, info);
+  crypto.erase(ss);
+  return Ok(Sender { enc: enc, context: result? });
+}
+
+// Supply the expected sender public key from a trusted source.
+pub function p256_auth_recipient(recipient: P256Key, sender: [u8], enc: [u8], info: [u8], mode: AuthMode): Result[Context, HpkeError] {
+  if (enc.len() != P256_ENC_SIZE) {
+    return Err(Length("encapsulated key", enc.len(), P256_ENC_SIZE));
+  }
+  p256_check_public_key(sender)?;
+  let Some(dh_e) = p256.scalar_mul_x(recipient.scalar, enc) else {
+    return Err(Point);
+  };
+  let Some(dh_s) = p256.scalar_mul_x(recipient.scalar, sender) else {
+    crypto.erase(dh_e);
+    return Err(Point);
+  };
+  let ss = __auth_secret(dh_e, dh_s, enc, recipient.public_key, sender);
+  let result = __auth_schedule(mode, ss, info);
+  crypto.erase(ss);
+  return result;
 }
 ```

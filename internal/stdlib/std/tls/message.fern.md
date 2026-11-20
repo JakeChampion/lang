@@ -38,7 +38,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<11 pub function encode(m: Message): u8[]>>
 
-<<12 struct Span>>
+<<12 struct VectorSpan>>
 
 <<13 function __decode_error(what: string): MsgError>>
 
@@ -429,11 +429,11 @@ pub function encode(m: Message): u8[] {
 }
 ```
 
-### `12 struct Span`
+### `12 struct VectorSpan`
 
 ```fern
-<<12 struct Span>>=
-struct Span { from: i32, to: i32 }
+<<12 struct VectorSpan>>=
+struct VectorSpan { from: i32, to: i32 }
 ```
 
 ### `13 function __decode_error(what: string): MsgError`
@@ -463,7 +463,7 @@ function __get32(b: [u8], at: i32): u32 {
   return b[at] as u32 << 24 | b[at + 1] as u32 << 16 | b[at + 2] as u32 << 8 | b[at + 3] as u32;
 }
 
-function __vec(b: [u8], at: i32, n: i32, min: i32, max: i32, what: string): Result[Span, MsgError] {
+function __vec(b: [u8], at: i32, n: i32, min: i32, max: i32, what: string): Result[VectorSpan, MsgError] {
   let from = __need(b, at, n, what)?;
   let len = b[at] as i32;
   if (n == 2) {
@@ -476,10 +476,10 @@ function __vec(b: [u8], at: i32, n: i32, min: i32, max: i32, what: string): Resu
     return Err(__decode_error(what));
   }
   let to = __need(b, from, len, what)?;
-  return Ok(Span { from: from, to: to });
+  return Ok(VectorSpan { from: from, to: to });
 }
 
-function __whole(b: [u8], n: i32, min: i32, max: i32, what: string): Result[Span, MsgError] {
+function __whole(b: [u8], n: i32, min: i32, max: i32, what: string): Result[VectorSpan, MsgError] {
   let s = __vec(b, 0, n, min, max, what)?;
   if (s.to != b.len()) {
     return Err(__decode_error(what));
@@ -530,7 +530,7 @@ function __read_exts(b: [u8]): Result[Extension[], MsgError] {
   return Ok(out);
 }
 
-function __hello_head(b: [u8], what: string): Result[Span, MsgError] {
+function __hello_head(b: [u8], what: string): Result[VectorSpan, MsgError] {
   __need(b, 0, 34, what)?;
   let v = __get16(b, 0);
   if (v != LEGACY_VERSION) {
@@ -996,21 +996,27 @@ pub function binders_length(binders: u8[][]): i32 {
   return 2 + __binders(binders).len();
 }
 
+// Parse only the contents of the identities vector (RFC 8446 section 4.2.11).
+function __psk_identities(data: [u8]): Result[PskIdentity[], MsgError] {
+  let identities: PskIdentity[] = [];
+  let at = 0;
+  while (at < data.len()) {
+    let id = __vec(data, at, 2, 1, 65535, "psk_identity")?;
+    at = __need(data, id.to, 4, "obfuscated_ticket_age")?;
+    identities = identities.append(PskIdentity { identity: __copy(data, id.from, id.to), obfuscated_age: __get32(data, id.to) });
+  }
+  return Ok(identities);
+}
+
 pub function pre_shared_key(d: [u8]): Result[OfferedPsks, MsgError] {
   let ids = __vec(d, 0, 2, 7, 65535, "pre_shared_key identities")?;
   let binders = __vec(d, ids.to, 2, 33, 65535, "pre_shared_key binders")?;
   if (binders.to != d.len()) {
     return Err(__decode_error("pre_shared_key"));
   }
-  let out = OfferedPsks { identities: [], binders: [] };
-  let at = ids.from;
-  while (at < ids.to) {
-    let id = __vec(d, at, 2, 1, 65535, "psk_identity")?;
-    __need(d, id.to, 4, "obfuscated_ticket_age")?;
-    out = OfferedPsks { ...out, identities: out.identities.append(PskIdentity { identity: __copy(d, id.from, id.to), obfuscated_age: __get32(d, id.to) }) };
-    at = id.to + 4;
-  }
-  at = binders.from;
+  let identities = __psk_identities(d[ids.from:ids.to])?;
+  let out = OfferedPsks { identities: identities, binders: [] };
+  let at = binders.from;
   while (at < binders.to) {
     let b = __vec(d, at, 1, 32, 255, "psk_binder")?;
     out = OfferedPsks { ...out, binders: out.binders.append(__copy(d, b.from, b.to)) };
@@ -1072,5 +1078,21 @@ pub function psk_modes(d: [u8]): Result[i32[], MsgError] {
     i += 1;
   }
   return Ok(out);
+}
+```
+
+An identity must fit entirely in its vector, including its length and ticket age.
+
+```fern test name=tls-psk-identity-vector-boundaries
+<<*>>
+
+function main(): i32 {
+  let identity = __u32(__vec16([], "ticket".as_bytes()), 123u32);
+  for end in 1..identity.len() {
+    if let Ok(_) = __psk_identities(identity[0:end]) { return 1; }
+  }
+  let Ok(ids) = __psk_identities(identity) else { return 2; };
+  if (ids.len() != 1 || ids[0].obfuscated_age != 123u32) { return 3; }
+  return 0;
 }
 ```

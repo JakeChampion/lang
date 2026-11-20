@@ -1,4 +1,5 @@
 import "std/test";
+import "std/result";
 import "std/hex";
 import "std/codec";
 import "std/crypto/x25519";
@@ -99,7 +100,7 @@ function test_hkdf_expand_label(): test.TestOutcome {
   let none: u8[] = [];
   let early = keyschedule.early_secret(keyschedule.Sha256, none).secret;
   return test.assert_eq(
-    shown(keyschedule.hkdf_expand_label(keyschedule.Sha256, early, "derived", keyschedule.Sha256.digest(none), 32)),
+    shown(keyschedule.hkdf_expand_label(keyschedule.Sha256, early, "derived", keyschedule.Sha256.digest(none), 32).unwrap_or([])),
     "6f2615a108c702c5678f54fc9dbab69716c076189c48250cebeac3576c3611ba",
   );
 }

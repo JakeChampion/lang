@@ -12,20 +12,20 @@ import (
 var cryptoForkCases = []struct {
 	name, constructor, abc, abd string
 }{
-	{"md5", "md5_new()", "900150983cd24fb0d6963f7d28e17f72", "4911e516e5aa21d327512e0c8b197616"},
-	{"sha1", "sha1_new()", "a9993e364706816aba3e25717850c26c9cd0d89d", "cb4cc28df0fdbe0ecf9d9662e294b118092a5735"},
-	{"sha224", "sha224_new()", "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7", "9a7b7e67edba75ffa6c9f139c319ca3b5e9cf99cb36979d3c33bf2c8"},
-	{"sha256", "sha256_new()", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "a52d159f262b2c6ddb724a61840befc36eb30c88877a4030b65cbe86298449c9"},
-	{"sha384", "sha384_new()", "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7", "5d15bcebb965fa77926c23471c96e3a326b363f5f105c3ef17cfd033b9734fa46556f81a26bb3044d2dda50481325ef7"},
-	{"sha512", "sha512_new()", "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f", "1a9840c27a5cf22dab060cdd8a83da2b0fbcb1aeb52d4f9d3894b639083e205a5ab3f6afaeeb21b8e99b5e0fe93daafaabeef274da5d6eadcc9db36e5b6f64c4"},
-	{"blake2b", "blake2b_new(64)", "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923", "61ce80f69e6b4300540c5e78254055cb41fefc8dc87af2322bc777db0b9e4f44e03f8cddee63b505060746d5dd86b70a4e3faaf1a2c5d1fd6bf10bed761d4e0d"},
+	{"md5", "let h = crypto.md5_new();", "900150983cd24fb0d6963f7d28e17f72", "4911e516e5aa21d327512e0c8b197616"},
+	{"sha1", "let h = crypto.sha1_new();", "a9993e364706816aba3e25717850c26c9cd0d89d", "cb4cc28df0fdbe0ecf9d9662e294b118092a5735"},
+	{"sha224", "let h = crypto.sha224_new();", "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7", "9a7b7e67edba75ffa6c9f139c319ca3b5e9cf99cb36979d3c33bf2c8"},
+	{"sha256", "let h = crypto.sha256_new();", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "a52d159f262b2c6ddb724a61840befc36eb30c88877a4030b65cbe86298449c9"},
+	{"sha384", "let h = crypto.sha384_new();", "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7", "5d15bcebb965fa77926c23471c96e3a326b363f5f105c3ef17cfd033b9734fa46556f81a26bb3044d2dda50481325ef7"},
+	{"sha512", "let h = crypto.sha512_new();", "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f", "1a9840c27a5cf22dab060cdd8a83da2b0fbcb1aeb52d4f9d3894b639083e205a5ab3f6afaeeb21b8e99b5e0fe93daafaabeef274da5d6eadcc9db36e5b6f64c4"},
+	{"blake2b", "let Ok(h) = crypto.blake2b_new(64) else { return 3; };", "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923", "61ce80f69e6b4300540c5e78254055cb41fefc8dc87af2322bc777db0b9e4f44e03f8cddee63b505060746d5dd86b70a4e3faaf1a2c5d1fd6bf10bed761d4e0d"},
 }
 
 func cryptoForkSource(constructor, abc, abd string) string {
 	return fmt.Sprintf(`import "std/crypto";
 import "std/hex";
 function exercise(): i32 {
-    let h = crypto.%s;
+    %s
     h = h.update("ab".as_bytes());
     let keep = h;
     h = h.update("c".as_bytes());
