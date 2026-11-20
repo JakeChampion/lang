@@ -15,12 +15,12 @@ pub function path(base: string, part: string): string {
 
 pub function path_head(projection: string): string {
   let at = util.index_of_sub(projection, "/");
-  return if (at < 0) { projection } else { slice_unchecked(projection, 0, at) + "" };
+  return if (at < 0) { projection } else { slice_unchecked(projection, 0, at).to_owned() };
 }
 
 pub function path_tail(projection: string): string {
   let at = util.index_of_sub(projection, "/");
-  return if (at < 0) { "" } else { slice_unchecked(projection, at + 1, projection.len()) + "" };
+  return if (at < 0) { "" } else { slice_unchecked(projection, at + 1, projection.len()).to_owned() };
 }
 
 pub function selectors_match(a: string, b: string): boolean {
@@ -50,7 +50,7 @@ pub function field(name: string): string {
 function type_name(ty: string): string {
   let at = util.index_of_sub(ty, "[");
   if (at > 0) {
-    return slice_unchecked(ty, 0, at) + "";
+    return slice_unchecked(ty, 0, at).to_owned();
   }
   return ty;
 }
@@ -58,7 +58,7 @@ function type_name(ty: string): string {
 function type_args(ty: string): string[] {
   let at = util.index_of_sub(ty, "[");
   if (at > 0 && ty[ty.len() - 1] == b']') {
-    return parser.split_top_commas(slice_unchecked(ty, at + 1, ty.len() - 1) + "");
+    return parser.split_top_commas(slice_unchecked(ty, at + 1, ty.len() - 1).to_owned());
   }
   return [];
 }
@@ -75,23 +75,23 @@ function declaration(structs: parser.StructDecl[], name: string): Option[parser.
 function projection_type_in(structs: parser.StructDecl[], ty: string, part: string): string {
   let group = util.index_of_sub(part, "|");
   if (group >= 0) {
-    part = slice_unchecked(part, 0, group) + "";
+    part = slice_unchecked(part, 0, group).to_owned();
   }
   let arrow = parser.top_arrow_at(ty);
   if (part == "r:*" && arrow >= 0) {
-    return (slice_unchecked(ty, arrow + 2, ty.len()) + "").trim();
+    return slice_unchecked(ty, arrow + 2, ty.len()).to_owned().trim();
   }
   if (part.starts_with("a:")) {
     if (ty.len() > 2 && ty[ty.len() - 1] == b']' && ty[ty.len() - 2] == b'[') {
-      return slice_unchecked(ty, 0, ty.len() - 2) + "";
+      return slice_unchecked(ty, 0, ty.len() - 2).to_owned();
     }
     if (ty.len() > 2 && ty[0] == b'[') {
-      return slice_unchecked(ty, 1, ty.len() - 1) + "";
+      return slice_unchecked(ty, 1, ty.len() - 1).to_owned();
     }
   }
   if (part.starts_with("t:") && ty.len() > 2 && ty[0] == b'(') {
-    let parts = parser.split_top_commas(slice_unchecked(ty, 1, ty.len() - 1) + "");
-    let index = util.lit_to_i32(slice_unchecked(part, 2, part.len()) + "");
+    let parts = parser.split_top_commas(slice_unchecked(ty, 1, ty.len() - 1).to_owned());
+    let index = util.lit_to_i32(slice_unchecked(part, 2, part.len()).to_owned());
     if (index >= 0 && index < parts.len()) {
       return parts[index];
     }
