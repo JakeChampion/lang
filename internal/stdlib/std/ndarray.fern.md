@@ -14,6 +14,8 @@ Use `try_from_flat` and `try_reshape` for caller-supplied dimensions. They retur
 
 `try_broadcast_shape` checks whether two shapes have a representable common shape. `try_zip_with` applies an elementwise operation to that shape and returns `None` before invoking the callback if broadcasting fails.
 
+The checked view methods `try_permute`, `try_reverse`, `try_slice`, and `try_select` return `None` for an invalid axis, permutation, range, or index. A successful call shares the underlying array storage.
+
 ## Executable example
 
 ```fern test name=std-ndarray-example
@@ -275,8 +277,20 @@ pub function (a: NdArray[T]) transpose(): NdArray[T] {
 }
 
 pub function (a: NdArray[T]) permute(axes: i32[]): NdArray[T] {
+  match (a.try_permute(axes)) {
+    Some(view) => {
+      return view;
+    },
+    None => {
+      shape_error();
+    }
+  }
+  return a;
+}
+
+pub function (a: NdArray[T]) try_permute(axes: i32[]): Option[NdArray[T]] {
   if (axes.len() != a.shape.len()) {
-    shape_error();
+    return None;
   }
   let seen: boolean[] = [];
   let shape: i32[] = [];
@@ -288,42 +302,83 @@ pub function (a: NdArray[T]) permute(axes: i32[]): NdArray[T] {
   }
   k = 0;
   while (k < axes.len()) {
-    check_axis(a, axes[k]);
-    if (seen[axes[k]]) {
-      shape_error();
+    if (axes[k] < 0 || axes[k] >= axes.len() || seen[axes[k]]) {
+      return None;
     }
     seen = seen.with(axes[k], true);
     shape = shape.append(a.shape[axes[k]]);
     strides = strides.append(a.strides[axes[k]]);
     k += 1;
   }
-  return NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset };
+  return Some(NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset });
 }
 
 pub function (a: NdArray[T]) reverse(axis: i32): NdArray[T] {
-  check_axis(a, axis);
+  match (a.try_reverse(axis)) {
+    Some(view) => {
+      return view;
+    },
+    None => {
+      shape_error();
+    }
+  }
+  return a;
+}
+
+pub function (a: NdArray[T]) try_reverse(axis: i32): Option[NdArray[T]] {
+  if (axis < 0 || axis >= a.rank()) {
+    return None;
+  }
   let n = a.shape[axis];
   let s = a.strides[axis];
   let offset = a.offset;
   if (n > 0) {
     offset += (n - 1) * s;
   }
-  return NdArray { data: a.data, shape: a.shape, strides: a.strides.with(axis, 0 - s), offset: offset };
+  return Some(NdArray { data: a.data, shape: a.shape, strides: a.strides.with(axis, 0 - s), offset: offset });
 }
 
 pub function (a: NdArray[T]) slice(axis: i32, lo: i32, hi: i32): NdArray[T] {
-  check_axis(a, axis);
+  match (a.try_slice(axis, lo, hi)) {
+    Some(view) => {
+      return view;
+    },
+    None => {
+      shape_error();
+    }
+  }
+  return a;
+}
+
+pub function (a: NdArray[T]) try_slice(axis: i32, lo: i32, hi: i32): Option[NdArray[T]] {
+  if (axis < 0 || axis >= a.rank()) {
+    return None;
+  }
   if (lo < 0 || lo > hi || hi > a.shape[axis]) {
-    shape_error();
+    return None;
   }
   let offset = a.offset + lo * a.strides[axis];
-  return NdArray { data: a.data, shape: a.shape.with(axis, hi - lo), strides: a.strides, offset: offset };
+  return Some(NdArray { data: a.data, shape: a.shape.with(axis, hi - lo), strides: a.strides, offset: offset });
 }
 
 pub function (a: NdArray[T]) select(axis: i32, i: i32): NdArray[T] {
-  check_axis(a, axis);
+  match (a.try_select(axis, i)) {
+    Some(view) => {
+      return view;
+    },
+    None => {
+      shape_error();
+    }
+  }
+  return a;
+}
+
+pub function (a: NdArray[T]) try_select(axis: i32, i: i32): Option[NdArray[T]] {
+  if (axis < 0 || axis >= a.rank()) {
+    return None;
+  }
   if (i < 0 || i >= a.shape[axis]) {
-    shape_error();
+    return None;
   }
   let shape: i32[] = [];
   let strides: i32[] = [];
@@ -335,7 +390,7 @@ pub function (a: NdArray[T]) select(axis: i32, i: i32): NdArray[T] {
     }
     k += 1;
   }
-  return NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset + i * a.strides[axis] };
+  return Some(NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset + i * a.strides[axis] });
 }
 
 pub function (a: NdArray[T]) reshape(shape: i32[]): NdArray[T] {
