@@ -170,3 +170,17 @@ func seqSeeds(n uint64) []uint64 {
 	}
 	return out
 }
+
+func TestEMIKeepsLocalFunctionInScope(t *testing.T) {
+	const src = `function value(): i32 { return 1; }
+function main(): i32 {
+  function value(): i32 { return 2; }
+  return value();
+}`
+	for seed := uint64(0); seed < 32; seed++ {
+		mutant, _ := fernsmith.EMI(src, seed, 8, func(s string) bool { return checkGenerated(t, s) == nil })
+		if got := emiExit(t, mutant); got != 2 {
+			t.Fatalf("seed %d called the wrong function: got %d, want 2\n%s", seed, got, mutant)
+		}
+	}
+}

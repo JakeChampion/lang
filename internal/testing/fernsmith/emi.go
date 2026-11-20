@@ -203,7 +203,7 @@ func emiUseCallback(s ast.Stmt) bool {
 // end of the block, and neither does a defer, which runs at that end.
 func emiWrappable(s ast.Stmt) bool {
 	switch s := s.(type) {
-	case *ast.Var, *ast.Destructure, *ast.Defer:
+	case *ast.Var, *ast.Destructure, *ast.FuncDecl, *ast.Defer:
 		return false
 	case *ast.Match:
 		return s.Origin != ast.OriginLetElse
