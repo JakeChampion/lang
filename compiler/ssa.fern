@@ -1401,10 +1401,8 @@ pub function block_loop_weights(f: SFunc): i32[] {
   let latch = furthest_latches(f);
   let depth = __alloc_i32(f.blocks.len());
   for h in 0..f.blocks.len() {
-    let k = h;
-    while (k <= latch[h]) {
+    for k in h..=latch[h] {
       depth = depth.with(k, depth[k] + 1);
-      k += 1;
     }
   }
   let out: i32[] = [];
