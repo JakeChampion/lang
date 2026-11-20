@@ -765,21 +765,31 @@ pub function load_class(env: usize, obj: usize, name: string): usize {
   return class;
 }
 
-// The text of the Java string `jstr`, or "" for null. JNI gives modified
-// UTF-8, and a byte that is not UTF-8 becomes U+FFFD.
+// The text of the Java string `jstr`, or "" for null. An unpaired
+// UTF-16 surrogate becomes U+FFFD.
 pub function string_of(env: usize, jstr: usize): string {
   if (jstr == 0 as usize) {
     return "";
   }
   let n: i32 = get_string_utf_length(env, jstr);
   let chars: usize = get_string_utf_chars(env, jstr, 0 as usize);
+  if (chars == 0 as usize) {
+    return "";
+  }
+  // Only C0 (NUL) and ED (a possible surrogate) need a second pass.
+  let modified = false;
   let bytes: u8[] = [];
   unsafe {
     for i in 0..n {
-      bytes = bytes.append(__load_u8(chars + i as usize) as u8);
+      let byte = __load_u8(chars + i as usize) as u8;
+      bytes = bytes.append(byte);
+      modified = modified || byte == 0xc0 as u8 || byte == 0xed as u8;
     }
   }
   let released: usize = release_string_utf_chars(env, jstr, chars);
+  if (modified) {
+    bytes = utf8.normalize_modified(bytes, true);
+  }
   return utf8.from_bytes_lossy(bytes);
 }
 ```

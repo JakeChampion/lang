@@ -81,6 +81,13 @@ function intent_part(e: usize, act: bindings.Activity): Result[void, jni.JavaErr
   let contexts = bindings.context_class(e)?;
   let managers = bindings.package_manager_class(e)?;
   let lists = bindings.list_class(e)?;
+  let unicode_action = "fern.🌿\x00end";
+  let unicode_intent = intents.new(e, unicode_action)?;
+  defer jni.delete_local_ref(e, unicode_intent.ref);
+  let returned = intents.get_action(e, unicode_intent)?;
+  if (returned != unicode_action) {
+    return Err(jni.JavaError { text: "Intent.getAction changed the Unicode string" });
+  }
   let intent = intents.new(e, bindings.INTENT_ACTION_MAIN)?;
   let same = intents.add_category(e, intent, bindings.INTENT_CATEGORY_LAUNCHER)?;
   let flagged = intents.add_flags(e, intent, bindings.INTENT_FLAG_ACTIVITY_NEW_TASK)?;
