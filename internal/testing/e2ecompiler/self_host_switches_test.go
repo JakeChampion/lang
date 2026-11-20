@@ -15,7 +15,7 @@ func TestSelfHostExplicitSwitchesIgnoreTheEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("FERN_LEAKCHECK", "1")
-	t.Setenv("FERN_RC_FREE_DEBUG", "1")
+	t.Setenv("FERN_DEBUG_RC_FREE", "1")
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			stderr, code := cli.exitOfFile(t, path, target, nil, "FERN_STRICT_IR=1")

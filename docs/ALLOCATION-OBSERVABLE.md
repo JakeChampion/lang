@@ -233,7 +233,7 @@ not express one.
 ## Such a case must declare itself
 
 Every conformance case is also run under the quarantine
-(`TestFernFixturesSelfHostX86_64Quarantine`: `FERN_RC_FREE_DEBUG=1`, so no
+(`TestFernFixturesSelfHostX86_64Quarantine`: `FERN_DEBUG_RC_FREE=1`, so no
 block is recycled and a release or retain that touches a freed block aborts
 with the sanitizer's report). That leg is what turns an rc bug into a
 visible failure instead of a leak nobody measures, and it rests on the

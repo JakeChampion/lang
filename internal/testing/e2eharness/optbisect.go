@@ -33,7 +33,7 @@ func ParseOptTrace(out string) []OptDecision {
 }
 
 func OptBisectEnv(env []string, bound uint64) []string {
-	return append(append([]string{}, env...), "FERN_OPT_BISECT="+strconv.FormatUint(bound, 10))
+	return append(append([]string{}, env...), "FERN_DEBUG_OPT_BISECT="+strconv.FormatUint(bound, 10))
 }
 
 func BisectOptDecisions(ds []OptDecision, agrees func(bound uint64) bool) (culprit OptDecision, ok bool) {

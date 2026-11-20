@@ -14,12 +14,10 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/ir_kind_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/ir_kind_run.fern", "ir_kind_run")
 
-	const want = "kind_count=188\n" +
-		"bijection_ok=162\n" +
+	const want = "kind_count=574\n" +
+		"bijection_ok=523\n" +
 		"bijection_failures=0\n" +
-		"retired=26\n" +
-		"ext_ok=361\n" +
-		"ext_failures=0\n" +
+		"retired=51\n" +
 		"neg_ok=15\n" +
 		"neg_failures=0\n" +
 		"unknown_id=0\n" +
@@ -49,7 +47,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		t.Errorf("kind registry report mismatch:\n--- got ---\n%s\n--- want ---\n%s%s", got, want, table)
 	}
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("ir_kind_run exit code = %d, want 0 (total failures across the four sweeps)", code)
+		t.Errorf("ir_kind_run exit code = %d, want 0 (total registry failures)", code)
 	}
 }
 

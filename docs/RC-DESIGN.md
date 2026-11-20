@@ -177,7 +177,11 @@ into a container or box, stored into a cell or map, handed to a callee's
 counted slot, or used as the base of a record update, which reuses its box)
 is counted, and the caller hands over a unit the callee releases. A parameter
 the frame only reads stays borrowed, because a retain and a release on a value
-that cannot outlive the call would cancel. It is a greatest fixpoint over the
+that cannot outlive the call would cancel. A value that the frame takes apart
+is consumed too when the frame builds a variant of the same type
+(`ownership.reusable`): its box can then supply the construction, and a box
+that the frame does not own cannot. A caller that keeps such a value pays a
+retain, and the callee then finds each box shared and copies. It is a greatest fixpoint over the
 module's produced graphs: every parameter starts consumed and is demoted when
 a round finds no escaping use, so a recursive traversal that rebuilds keeps
 its parameter counted and a quiet cycle (functions returning no reference)
@@ -819,7 +823,7 @@ In the order they are usually reached for:
    chain for an attribution by function, and a watchpoint on the box's count
    word for the holder's exact retain and release.
 6. `__rc_underflow_count()` from Fern, `FERN_RC_UNDERFLOW_TRAP=1` to make the
-   first over-release fatal at its dec, and `FERN_RC_FREE_DEBUG=1` for the
+   first over-release fatal at its dec, and `FERN_DEBUG_RC_FREE=1` for the
    quarantine alone.
 
 Which suite proves what, and which look authoritative and are not:

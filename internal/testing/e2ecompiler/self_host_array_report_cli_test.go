@@ -104,15 +104,15 @@ func TestSelfHostArrayReportCLI(t *testing.T) {
 				}
 			}
 			out := filepath.Join(t.TempDir(), "prog")
-			compiled, viaEnv, code := arrayReportCLI(t, tc.src, []string{"FERN_ARRAY_REPORT=1"}, "-target", "arm64-linux", "-o", out)
+			compiled, viaEnv, code := arrayReportCLI(t, tc.src, []string{"FERN_DEBUG_ARRAY_REPORT=1"}, "-target", "arm64-linux", "-o", out)
 			if code != 0 || compiled != "" {
-				t.Fatalf("FERN_ARRAY_REPORT=1 compile: exit %d, stdout:\n%s\nstderr:\n%s", code, compiled, viaEnv)
+				t.Fatalf("FERN_DEBUG_ARRAY_REPORT=1 compile: exit %d, stdout:\n%s\nstderr:\n%s", code, compiled, viaEnv)
 			}
 			if report != viaEnv {
-				t.Errorf("-array-report and FERN_ARRAY_REPORT=1 disagree\n-array-report:\n%s\nFERN_ARRAY_REPORT=1:\n%s", report, viaEnv)
+				t.Errorf("-array-report and FERN_DEBUG_ARRAY_REPORT=1 disagree\n-array-report:\n%s\nFERN_DEBUG_ARRAY_REPORT=1:\n%s", report, viaEnv)
 			}
 			if entries, _ := os.ReadDir(filepath.Dir(out)); len(entries) != 1 {
-				t.Errorf("the FERN_ARRAY_REPORT=1 compile wrote %d files, want the one binary", len(entries))
+				t.Errorf("the FERN_DEBUG_ARRAY_REPORT=1 compile wrote %d files, want the one binary", len(entries))
 			}
 		})
 	}
@@ -120,7 +120,7 @@ func TestSelfHostArrayReportCLI(t *testing.T) {
 
 func TestSelfHostArrayReportCLITargetAndEnv(t *testing.T) {
 	src := arrayReportCLICases[0].src
-	report, stderr, code := arrayReportCLI(t, src, []string{"FERN_ARRAY_REPORT=1"}, "-array-report", "-target", "x86-64-linux")
+	report, stderr, code := arrayReportCLI(t, src, []string{"FERN_DEBUG_ARRAY_REPORT=1"}, "-array-report", "-target", "x86-64-linux")
 	if code != 0 || stderr != "" {
 		t.Fatalf("fern -array-report -target x86-64-linux: exit %d, stderr:\n%s", code, stderr)
 	}

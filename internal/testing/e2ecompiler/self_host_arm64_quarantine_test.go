@@ -87,7 +87,7 @@ func emitArm64Asm(t *testing.T, h ssaBackendHost, dir, src, name string, env []s
 	t.Helper()
 	out := filepath.Join(dir, name+".s")
 	cmd := exec.Command(h.cli, "-target", "arm64-linux", "-emit", "asm", "-o", out, src, h.stdlib)
-	cmd.Env = append(append(os.Environ(), uncertified), env...)
+	cmd.Env = append(e2eharness.ChildEnv(uncertified), env...)
 	if combined, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("emitting %s: %v\n%s", name, err, combined)
 	}
@@ -106,7 +106,11 @@ func TestSelfHostUafQuarantineAsmContractArm64(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	on := emitArm64Asm(t, h, dir, src, "on", []string{"FERN_RC_FREE_DEBUG=1"})
+	on := emitArm64Asm(t, h, dir, src, "on", []string{"FERN_RC_FREE_DEBUG=0", "FERN_DEBUG_RC_FREE=1"})
+	legacy := emitArm64Asm(t, h, dir, src, "legacy", []string{"FERN_RC_FREE_DEBUG=1"})
+	if legacy != on {
+		t.Fatal("the two spellings of the quarantine switch emitted different assembly")
+	}
 	if !mustMatch(t, armPoisonPair+`\n\s+stur w\d+, \[x\d+, #-8\]`, on) {
 		t.Error("flag-on asm has no quarantine store")
 	}
@@ -149,6 +153,10 @@ func TestSelfHostUafQuarantineAsmContractArm64(t *testing.T) {
 	}
 
 	off := emitArm64Asm(t, h, dir, src, "off", nil)
+	override := emitArm64Asm(t, h, dir, src, "override", []string{"FERN_RC_FREE_DEBUG=1", "FERN_DEBUG_RC_FREE=0"})
+	if override != off {
+		t.Fatal("an explicit zero did not override the legacy quarantine switch")
+	}
 	if mustMatch(t, armPoisonPair, off) {
 		t.Error("flag-off asm materialises the poison — the detector is not fully gated")
 	}

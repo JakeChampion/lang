@@ -281,7 +281,7 @@ Ownership planning accounts for the output array through its loop phi.
 A scan in the middle of a chain ends one fused loop and can feed another.
 Its observable prefix array remains materialized. Effectful callbacks, shared
 intermediates and non-scalar accumulators retain the existing refusal rules.
-`FERN_ARRAY_REPORT=1` identifies fused scans with
+`FERN_DEBUG_ARRAY_REPORT=1` identifies fused scans with
 `storage=no-intermediate-arrays/one-output-buffer`.
 
 `TestSelfHostArrayFusionScan*` checks values, callback effects, scalar widths,
@@ -407,7 +407,7 @@ refuses an element function that is not a closure built in the same body, or
 whose body reaches an effect; an intermediate read by anything but the next
 stage; and stages and a sink that do not sit in one block with nothing between
 them that calls anything.
-`fern -array-report`, or `FERN_ARRAY_REPORT=1` on a compile, prints this
+`fern -array-report`, or `FERN_DEBUG_ARRAY_REPORT=1` on a compile, prints this
 pass's fusion decisions and the final R7 map storage decisions. See
 `ARRAY-ALGEBRA.md` for the closed refusal tags.
 The primary fusion report recognizes `map`, `filter`, `fold`, `reduce`,

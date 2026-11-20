@@ -996,7 +996,7 @@ pub function certify_mode(): i32 {
 }
 
 pub function arr_push_cliff_report(who: string, code: i32): i32 {
-  if (envflag.on("FERN_CLIFF_REPORT")) {
+  if (debug_flag("FERN_DEBUG_CLIFF_REPORT", "FERN_CLIFF_REPORT")) {
     let copied = __arr_push_shared_bytes();
     eprint(who + ": arr_push_shared_count=" + i32_to_string(__arr_push_shared_count())
       + " arr_push_shared_bytes=" + i64_to_string(copied)

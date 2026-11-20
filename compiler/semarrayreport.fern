@@ -1,5 +1,4 @@
 import "./util";
-import "std/envflag";
 
 pub struct Site { owner: string, stage: string, plan: string, reason: i32, storage: string }
 
@@ -16,7 +15,7 @@ pub function to_stdout(): i32 {
 }
 
 pub function from_env(): i32 {
-  if (envflag.on("FERN_ARRAY_REPORT")) {
+  if (util.debug_flag("FERN_DEBUG_ARRAY_REPORT", "FERN_ARRAY_REPORT")) {
     return to_stderr();
   }
   return off();

@@ -2388,7 +2388,7 @@ function flag_groups(): FlagGroup[] {
       mode_flag("-check", "", "type-check FILE, - for stdin, or the package or workspace under DIR"),
       mode_flag("-capabilities", "", "the capabilities each package of the program reaches"),
       mode_flag("-effects", "", "the effect row of every function"),
-      mode_flag("-array-report", "", "the array decisions compiling FILE makes, on stdout, writing no output (also FERN_ARRAY_REPORT=1 on stderr)"),
+      mode_flag("-array-report", "", "the array decisions compiling FILE makes, on stdout, writing no output (also FERN_DEBUG_ARRAY_REPORT=1 on stderr)"),
       mode_flag("-targets", "", "list the supported targets and what each provides"),
       mode_flag("-manifest", "", "print the build manifest stamped into the native image FILE: its target, profile and flags"),
     ] },

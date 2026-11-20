@@ -941,6 +941,10 @@ function with_class(p: i32, c: i32): i32 {
 
 // Whether the flags of `l` make it skip the glyph at `i` of `r`.
 function skipped(f: Font, l: Lookup, r: Run, i: i32): boolean {
+  // The right-to-left flag alone does not filter any glyph class.
+  if ((l.flag & ~1) == 0 && l.set < 0) {
+    return false;
+  }
   let g = r.glyphs[i];
   let c = f.class_at(r, i);
   if (c == 1 && (l.flag & 2) != 0 || c == 2 && (l.flag & 4) != 0) {
