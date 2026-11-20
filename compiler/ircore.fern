@@ -18,7 +18,6 @@ import "./ssasem";
 import "./semrecords";
 import "./physicalbody";
 import "./ssaprepare";
-import "std/envflag";
 import "std/string";
 
 pub function release_entry(r: irtables.Lowered, architecture: string, debug: boolean, entries: irtables.SigReg): ssaprepare.ReleaseEntry {
@@ -187,7 +186,7 @@ pub function ir_helper_symbol(name: string): string {
 }
 
 pub function strict_ir_on(): boolean {
-  return envflag.on("FERN_STRICT_IR");
+  return util.debug_flag("FERN_DEBUG_STRICT_IR", "FERN_STRICT_IR");
 }
 
 pub function ssa_report_on(): boolean {

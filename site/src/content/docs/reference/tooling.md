@@ -94,8 +94,9 @@ the run.
 | `FERN_CACHE_DIR` | Where `fern` keeps its cache, in place of the user cache directory. |
 | `FERN_KTLS`, `FERN_IO_URING` | Read at run time by a program using `std/fetch` or `std/serve`; see [protocols](../../http/protocols/). |
 
-The compiler accepts the following switches for debugging register allocation and
-semantic passes. Each switch also accepts its older spelling without `DEBUG_`.
+The compiler accepts the following switches for debugging register allocation,
+semantic passes and compiler verification. Each switch also accepts its older
+spelling without `DEBUG_`.
 When both names are set, the debug-prefixed value takes precedence, including
 an empty value.
 
@@ -106,6 +107,15 @@ an empty value.
 | `FERN_DEBUG_SEM_INLINE`, `FERN_DEBUG_SEM_REUSE` | Set to zero or an empty value to disable semantic inlining or reuse of previously lowered rows. Both passes run by default. |
 | `FERN_DEBUG_NO_SEM_REACH`, `FERN_DEBUG_NO_SCALE_KERNEL`, `FERN_DEBUG_NO_PRODUCT_KERNEL`, `FERN_DEBUG_NO_ARRAY_FUSION` | Disable the named pass when enabled. |
 | `FERN_DEBUG_SELFHOST_NO_REUSE` | Disable allocation reuse in the self-host compiler's generated code. |
+| `FERN_DEBUG_HIGH_HEAP` | Request a high heap address on ARM64 Linux for pointer-width testing. |
+| `FERN_DEBUG_IR_VERIFY` | Verify IR by default. Use `quiet` to verify without printing a report, `1` to print it, or `0` to disable verification. |
+| `FERN_DEBUG_RC_CERTIFY` | Select the reference-count certifier mode. Accepts the same values as `FERN_RC_CERTIFY`, including `report` and `mutate`. |
+| `FERN_DEBUG_RC_CERTIFY_MEMO` | Select the certifier memo directory, or use `0` to disable the memo. |
+| `FERN_DEBUG_STRICT_IR` | Refuse operations the selected IR lowering cannot handle. |
+| `FERN_DEBUG_STRICT_IMPORTS` | Refuse unresolved imports in compiler test drivers without a module loader. |
+
+The semantic census driver also accepts `FERN_DEBUG_CENSUS_LIST` to list
+functions with a given refusal reason. It falls back to `FERN_CENSUS_LIST`.
 
 ### Diagnostics as JSON
 

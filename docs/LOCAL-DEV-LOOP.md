@@ -831,7 +831,7 @@ program correctly.
 The heap's address regime is not what breaks the darwin stage 3. XNU ignores
 the arena's mmap hint and maps it above the 4 GiB `__PAGEZERO`, so on darwin
 every heap pointer has a non-zero high half from the first allocation, where
-Linux honours the 256 MiB hint. `FERN_HIGH_HEAP=1` makes the self-host arm64
+Linux honours the 256 MiB hint. `FERN_DEBUG_HIGH_HEAP=1` makes the self-host arm64
 emitter raise the hint to 8 GiB (`asm_arm64_ir.fern`), and qemu-aarch64 honours
 it. The former Go `arm64codegen.Options.HighHeapProbe` is retired. Measured
 2026-09-29 on the 4-core x86-64 container: an aarch64 self-host compiler
@@ -842,7 +842,7 @@ default-hint compiler's (517 s, 5.4 GB). The gate for the shapes is
 `bin/fern-selfhost` built by `make selfhost-cli`:
 
 ```
-FERN_HIGH_HEAP=1 $W/bin/fern-selfhost -target arm64-linux -emit asm -o $B/fern_hh.s $W/compiler/fern.fern $W/internal/stdlib
+FERN_DEBUG_HIGH_HEAP=1 $W/bin/fern-selfhost -target arm64-linux -emit asm -o $B/fern_hh.s $W/compiler/fern.fern $W/internal/stdlib
 aarch64-linux-gnu-gcc -static -nostdlib -o $B/fern_hh $B/fern_hh.s
 qemu-aarch64 $B/fern_hh -target arm64-linux -o $B/fern_s2 $W/compiler/fern.fern $W/internal/stdlib
 ```
@@ -876,7 +876,7 @@ the row in `docs/TEST-GATES.md`), through a memo of the functions each target
 has certified clean: `~/.cache/fern/certified/<version>-<target>.txt`, or
 under `$FERN_CACHE_DIR`, or `$XDG_CACHE_HOME/fern` off macOS, when set. A cold compile of
 the compiler pays about 15% for it; a warm one pays a digest per function.
-`FERN_IR_VERIFY=1` prints `FERN_RC_CERTIFY: memo hits=… misses=…` at the end
+`FERN_DEBUG_IR_VERIFY=1` prints `FERN_RC_CERTIFY: memo hits=… misses=…` at the end
 of a compile. An entry names the bytes of the compiler that wrote it, so a compiler
 built from changed sources certifies every function again. An entry is two
 64-bit digests. Before a compile writes the memo, it reads the entries on
@@ -884,8 +884,8 @@ disk again. It writes a file beside the memo and renames that file over it.
 Thus two compiles at the same time keep the entries of both. `stamps-<version>.txt`
 beside the memo maps a binary's inode and modification time to that digest,
 so a compiler hashes its own bytes only on its first compile. To certify everything again, delete the directory or set
-`FERN_RC_CERTIFY_MEMO=0`; to keep a test's memo apart, point
-`FERN_RC_CERTIFY_MEMO` at a directory. `FERN_RC_CERTIFY=0` turns the
+`FERN_DEBUG_RC_CERTIFY_MEMO=0`; to keep a test's memo apart, point
+`FERN_DEBUG_RC_CERTIFY_MEMO` at a directory. `FERN_DEBUG_RC_CERTIFY=0` turns the
 certifier off for a bisect that suspects it. The benches under `scripts/`
 that measure what the lowering allocates or copies set it off themselves.
 
