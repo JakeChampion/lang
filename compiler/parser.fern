@@ -12198,7 +12198,7 @@ function pat_variant_bare(vname: string): string {
   return bare;
 }
 
-function type_args_of(ty: string): string[] {
+pub function type_args_of(ty: string): string[] {
   let out: string[] = [];
   let lb = first_bracket(ty);
   if (lb <= 0 || !ty.ends_with("]")) {
@@ -19519,24 +19519,7 @@ function collect_dropped_resources(stmts: ast.Stmt[], body: ast.Stmt[], resource
   return res_out;
 }
 
-pub function lower_defers_prepass_module(mod: Module): Module {
-  let funcs = mod.funcs;
-  let changed = true;
-  while (changed) {
-    changed = false;
-    let pi = 0;
-    while (pi < funcs.len()) {
-      let pfd = funcs[pi];
-      if (pfd.ret_type == "" && pfd.body.len() > 0 && pfd.receiver_type.len() == 0 && pfd.all_type_params.len() == 0) {
-        let inferred = irt_infer_func(pfd, funcs, mod.structs);
-        if (inferred != "") {
-          funcs = funcs.with(pi, FuncDecl { ...pfd, ret_type: inferred });
-          changed = true;
-        }
-      }
-      pi += 1;
-    }
-  }
+pub function lower_defers_prepass_module(mod: Module, funcs: FuncDecl[]): Module {
   let resources = registered_resources(mod);
   let has_res = resources.len() > 0;
   let out_funcs: FuncDecl[] = [];
@@ -20338,11 +20321,7 @@ function irt_is_cmp(op: string): boolean {
     || op == "==" || op == "!=" || op == "&&" || op == "||";
 }
 
-function irt_is_option(s: string): boolean {
-  return s.len() >= 7 && s.starts_with("Option[");
-}
-
-function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], structs: StructDecl[]): string {
+pub function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], structs: StructDecl[]): string {
   match (e) {
     ast.ExprNumber(n) => {
       if (n.is_float) {
@@ -20521,168 +20500,6 @@ function irt_passthrough_arg_index(funcs: FuncDecl[], name: string): i32 {
     }
   }
   return -1;
-}
-
-function irt_unify(a: string, b: string): string {
-  if (a == b) {
-    return a;
-  }
-  if (irt_is_option(a) && b == "Option") {
-    return a;
-  }
-  if (irt_is_option(b) && a == "Option") {
-    return b;
-  }
-  return "";
-}
-
-function irt_collect_returns(stmts: ast.Stmt[], acc: ast.Expr[]): ast.Expr[] {
-  let out = acc;
-  for i in 0..stmts.len() {
-    out = irt_collect_stmt(stmts[i], out);
-  }
-  return out;
-}
-
-function irt_collect_stmt(st: ast.Stmt, acc: ast.Expr[]): ast.Expr[] {
-  match (st) {
-    ast.StmtReturn(r) => {
-      return acc.append(r.value);
-    },
-    ast.StmtIf(f) => {
-      let a = irt_collect_returns(f.then_body, acc);
-      return irt_collect_returns(f.else_body, a);
-    },
-    ast.StmtWhile(w) => {
-      return irt_collect_returns(w.body, acc);
-    },
-    ast.StmtFor(fr) => {
-      return irt_collect_returns(fr.body, acc);
-    },
-    ast.StmtMatch(m) => {
-      let a = acc;
-      for i in 0..m.arms.len() {
-        a = irt_collect_returns(m.arms[i].body, a);
-      }
-      return a;
-    },
-    _ => {
-      return acc;
-    }
-  }
-}
-
-function irt_payload_of(scrut_ty: string): string {
-  if (scrut_ty.len() == 0) {
-    return "";
-  }
-  for b in 0..scrut_ty.len() {
-    if (scrut_ty[b] == b'[') {
-      let inner = slice_unchecked(scrut_ty, b + 1, scrut_ty.len() - 1).to_owned();
-      for c in 0..inner.len() {
-        if (inner[c] == b',') {
-          return slice_unchecked(inner, 0, c).to_owned();
-        }
-      }
-      return inner;
-    }
-  }
-  if (irt_is_scalar_ty(scrut_ty)) {
-    return scrut_ty;
-  }
-  return "";
-}
-
-function irt_is_scalar_ty(t: string): boolean {
-  return t == "i32" || t == "i64" || t == "u32" || t == "u64" || t == "u8" || t == "u16" || t == "i16"
-    || t == "usize" || t == "f64" || t == "f32";
-}
-
-function irt_arm_bindings(stmts: ast.Stmt[], params: ast.ParamDecl[], funcs: FuncDecl[], structs: StructDecl[], acc: ast.ParamDecl[]): ast.ParamDecl[] {
-  let out = acc;
-  for i in 0..stmts.len() {
-    match (stmts[i]) {
-      ast.StmtMatch(m) => {
-        let st = irt_payload_of(irt_guess(m.scrutinee, params, funcs, structs));
-        for a in 0..m.arms.len() {
-          match (m.arms[a].pattern) {
-            ast.PatVariant(pv) => {
-              if (st.len() > 0 && pv.binding.len() > 0 && pv.binding != "_") {
-                out = out.append(ast.ParamDecl { name: pv.binding, type_name: st, own: false, send: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-              }
-            },
-            _ => {}
-          }
-          out = irt_arm_bindings(m.arms[a].body, params, funcs, structs, out);
-        }
-      },
-      ast.StmtIf(f) => {
-        out = irt_arm_bindings(f.then_body, params, funcs, structs, out);
-        out = irt_arm_bindings(f.else_body, params, funcs, structs, out);
-      },
-      ast.StmtWhile(w) => {
-        out = irt_arm_bindings(w.body, params, funcs, structs, out);
-      },
-      ast.StmtFor(fr) => {
-        out = irt_arm_bindings(fr.body, params, funcs, structs, out);
-      },
-      _ => {}
-    }
-  }
-  return out;
-}
-
-function irt_infer_func(fd: FuncDecl, funcs: FuncDecl[], structs: StructDecl[]): string {
-  let empty: ast.Expr[] = [];
-  let rets = irt_collect_returns(fd.body, empty);
-  if (rets.len() == 0) {
-    return "";
-  }
-  let scope = irt_arm_bindings(fd.body, fd.params, funcs, structs, fd.params);
-  let unified = "";
-  for i in 0..rets.len() {
-    let g = irt_guess(rets[i], scope, funcs, structs);
-    if (g == "") {
-      return "";
-    }
-    if (unified == "") {
-      unified = g;
-    } else {
-      unified = irt_unify(unified, g);
-      if (unified == "") {
-        return "";
-      }
-    }
-  }
-  return unified;
-}
-
-pub function infer_ret_types_module(mod: Module): Module {
-  let funcs = mod.funcs;
-  let changed = true;
-  while (changed) {
-    changed = false;
-    let i = 0;
-    while (i < funcs.len()) {
-      let fd = funcs[i];
-      if (fd.ret_type == "" && fd.body.len() > 0 && fd.receiver_type.len() == 0 && fd.all_type_params.len() == 0) {
-        let inferred = irt_infer_func(fd, funcs, mod.structs);
-        if (inferred != "") {
-          funcs = funcs.with(i, FuncDecl { ...fd, ret_type: inferred });
-          changed = true;
-        }
-      } else if (fd.ret_type == "i32" && fd.body.len() > 0 && fd.receiver_type.len() == 0
-        && fd.all_type_params.len() == 0 && fd.name.len() > 6 && fd.name.starts_with("__lam_")) {
-        let winf = irt_infer_func(fd, funcs, mod.structs);
-        if (winf == "i64" || winf == "u64" || winf == "f64") {
-          funcs = funcs.with(i, FuncDecl { ...fd, ret_type: winf });
-          changed = true;
-        }
-      }
-      i += 1;
-    }
-  }
-  return Module { ...mod, funcs: funcs };
 }
 
 pub function erase_view_spelling(ty: string): string {

@@ -1,6 +1,7 @@
 import "core/map";
 import "./ast";
 import "./parser";
+import "./returninfer";
 import "./rtmodule";
 import "./util";
 import "./ir";
@@ -4101,7 +4102,7 @@ pub function lift_lambdas_parts(mods: parser.Module[]): parser.Module[] {
   let view = lift.module_sig_view(mods);
   let out: parser.Module[] = [];
   for i in 0..mods.len() {
-    out = out.append(parser.infer_ret_types_module(lift.lift_lambdas_view(mods[i], view)));
+    out = out.append(returninfer.infer_ret_types_module(lift.lift_lambdas_view(mods[i], view)));
   }
   return out;
 }
@@ -5581,7 +5582,7 @@ function emit_function_ir_named(ns: string, r: irtables.Lowered, fn_name: string
 }
 
 pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables.LowerResult[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, physical: physicalbody.Collection, san: boolean): string {
-  mod = parser.infer_ret_types_module(mod);
+  mod = returninfer.infer_ret_types_module(mod);
   let strs = placed_strs(str_values(cache));
   let caggs = placed_caggs(const_agg_values(cache), 0);
   let ft = fn_value_index(cache);
@@ -5602,7 +5603,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
 }
 
 pub function emit_functions_ns(ns: string, mod: parser.Module, cache: irtables.LowerResult[], physical: physicalbody.Collection, san: boolean): string {
-  let im = parser.infer_ret_types_module(mod);
+  let im = returninfer.infer_ret_types_module(mod);
   return emit_functions_view(ns, im, cache, im.funcs, irtables.struct_tab(im.structs), physical, san);
 }
 
