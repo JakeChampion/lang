@@ -1413,7 +1413,7 @@ function weights_from_latches(latch: i32[]): i32[] {
     }
     let ending = out[i];
     let levels = if (depth < 3) { depth } else { 3 };
-    out = out.with(i, 1 << (levels * 3));
+    out = out.with(i, 1 << levels * 3);
     depth -= ending;
   }
   return out;
