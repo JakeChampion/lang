@@ -30,8 +30,9 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 	}
 	bodies := map[string][]copyOf{}
 	var free []string
-	// The wide reference rows and wide range checks have independent contracts.
+	// These functions share names across modules but implement independent contracts.
 	independent := map[string]bool{
+		"ssacondition.unknown_flags":   true, // Comparison flags differ from decrement-count flags.
 		"ssalargepushwidecases.rows":   true,
 		"ssalargepushwideranges.valid": true,
 	}
@@ -65,7 +66,7 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 	sort.Strings(free)
 	wantFree := []string{
 		"aborts", "aesref", "builtins", "capvocab", "docprintable", "rtbundle", "rttemplates", "rtwasm",
-		"sourcepos", "ssadecrementcount", "ssafixed", "ssalargepushwidecases", "ssalargepushwideranges", "stdlib_methods", "wit_fern_world", "wit_proxy_world",
+		"sourcepos", "ssacondition", "ssadecrementcount", "ssafixed", "ssalargepushwidecases", "ssalargepushwideranges", "stdlib_methods", "wit_fern_world", "wit_proxy_world",
 	}
 	if strings.Join(free, ",") != strings.Join(wantFree, ",") {
 		t.Errorf("the import-free module set changed.\n  got:  %v\n  want: %v\n"+
