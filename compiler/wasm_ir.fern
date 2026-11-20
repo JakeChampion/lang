@@ -156,7 +156,7 @@ pub function need_ops(): string[] {
 }
 
 pub function needs_of(cache: irtables.LowerResult[]): string[] {
-  let kinds = op_kinds(cache);
+  let (kinds, calls) = runtime_ops(cache);
   let out: string[] = [];
   let ops = need_ops();
   for oi in 0..ops.len() {
@@ -179,7 +179,7 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (has_kind(kinds, "udp_bind_with") && !has_kind(kinds, "udp_bind")) {
     out = out.append("udp_bind");
   }
-  if (module_calls_direct(cache, "__fern_set_args")) {
+  if (calls.contains("__fern_set_args")) {
     out = out.append("@calls_set_args");
   }
   if (has_kind(kinds, "heap_alloc_count")) {
@@ -193,7 +193,7 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   }
   if (has_kind(kinds, "arr_get") || has_kind(kinds, "arr_set")
     || has_kind(kinds, "vget") || has_kind(kinds, "vset")
-    || module_calls_direct(cache, "__fern_alloc_size_abort")) {
+    || calls.contains("__fern_alloc_size_abort")) {
     out = out.append("@abort_checks");
   }
   if (module_uses_arr_slice(cache)) {
@@ -207,23 +207,23 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
       out = out.append("@uses_arr_slice" + sfx);
     }
   }
-  out = array_helper_needs(cache, out);
+  out = array_helper_needs(calls, out);
   if (module_uses_divrem(cache)) {
     out = out.append("@uses_divrem");
   }
-  if (module_uses_i32_to_string(cache)) {
+  if (calls.contains("__fern_i32_to_string")) {
     out = out.append("@uses_i32_to_string");
   }
   if (module_uses_task(cache)) {
     out = out.append("@uses_task");
   }
-  if (module_uses_i64_to_string(cache)) {
+  if (calls.contains("__fern_i64_to_string")) {
     out = out.append("@uses_i64_to_string");
   }
-  if (module_uses_u64_to_string(cache) || module_uses_u32_to_string(cache)) {
+  if (calls.contains("__fern_u64_to_string") || calls.contains("__fern_u32_to_string")) {
     out = out.append("@uses_u64_to_string");
   }
-  if (module_uses_u32_to_string(cache)) {
+  if (calls.contains("__fern_u32_to_string")) {
     out = out.append("@uses_u32_to_string");
   }
   if (module_uses_i64_divrem(cache)) {
@@ -268,7 +268,7 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (has_kind(kinds, "str_slice")) {
     out = out.append("@uses_str_slice");
   }
-  if (module_calls_direct(cache, "__fern_str_borrow")) {
+  if (calls.contains("__fern_str_borrow")) {
     out = out.append("@uses_str_borrow");
   }
   if (module_uses_frame_window(cache)) {
@@ -390,11 +390,15 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   return out;
 }
 
-// op_kinds marks, by kind tag, each op kind that some body of the module emits.
-function op_kinds(cache: irtables.LowerResult[]): i32[] {
+// Record the operation kinds and direct runtime calls used by the lowered bodies.
+function runtime_ops(cache: irtables.LowerResult[]): (i32[], Map[string, boolean]) {
+  let calls: Map[string, boolean] = map_new(32);
   let seen: i32[] = [];
   for r in cache {
     for o in r.ops {
+      if (o.kind_tag == ir.K_CALL_DIRECT && o.str.starts_with("__fern_")) {
+        calls = calls.insert(o.str, true);
+      }
       if (o.kind_tag < 0) {
         continue;
       }
@@ -404,7 +408,7 @@ function op_kinds(cache: irtables.LowerResult[]): i32[] {
       seen = seen.with(o.kind_tag, 1);
     }
   }
-  return seen;
+  return (seen, calls);
 }
 
 function has_kind(seen: i32[], kind: string): boolean {
@@ -1080,13 +1084,6 @@ function is_frame_window(o: ir.Op): boolean {
   return ir.frame_box_base(o) >= 0 && o.kind_tag == ir.K_RAW_STRING;
 }
 
-pub function module_calls_direct(cache: irtables.LowerResult[], name: string): boolean {
-  function is_call_to(o: ir.Op): boolean {
-    return o.kind_tag == ir.K_CALL_DIRECT && o.str == name;
-  }
-  return any_op(cache, is_call_to);
-}
-
 pub function module_uses_task(cache: irtables.LowerResult[]): boolean {
   function is_task_call(o: ir.Op): boolean {
     // A close counts in the table of the task runtime.
@@ -1318,51 +1315,35 @@ pub function task_funcs(lc: boolean, count: boolean): string {
     + "    (i32.wrap_i64 (i64.load (i32.add (i32.wrap_i64 (i64.load offset=32 (local.get $r))) (i32.shl (local.get $len) (i32.const 3))))))\n";
 }
 
-pub function module_uses_i32_to_string(cache: irtables.LowerResult[]): boolean {
-  return module_calls_direct(cache, "__fern_i32_to_string");
-}
-
-pub function module_uses_i64_to_string(cache: irtables.LowerResult[]): boolean {
-  return module_calls_direct(cache, "__fern_i64_to_string");
-}
-
-pub function module_uses_u64_to_string(cache: irtables.LowerResult[]): boolean {
-  return module_calls_direct(cache, "__fern_u64_to_string");
-}
-
-pub function module_uses_u32_to_string(cache: irtables.LowerResult[]): boolean {
-  return module_calls_direct(cache, "__fern_u32_to_string");
-}
-
-function array_helper_needs(cache: irtables.LowerResult[], own out: string[]): string[] {
-  if (module_calls_direct(cache, "__fern_arr_str_join")) {
+function array_helper_needs(calls: Map[string, boolean], own out: string[]): string[] {
+  if (calls.contains("__fern_arr_str_join")) {
     out = out.append("@uses_arr_str_join");
     out = out.append("@abort_checks");
   }
-  if (module_calls_direct(cache, "__fern_arr_concat")) {
+  if (calls.contains("__fern_arr_concat")) {
     out = out.append("@uses_arr_concat");
   }
-  if (module_calls_direct(cache, "__fern_bytes_owned")) {
+  if (calls.contains("__fern_bytes_owned")) {
     out = out.append("@uses_bytes_owned");
   }
-  if (module_calls_direct(cache, "__fern_bytes_append_range")) {
+  if (calls.contains("__fern_bytes_append_range")) {
     out = out.append("@uses_byte_append");
   }
-  if (module_calls_direct(cache, "__fern_bytes_write_range")) {
+  if (calls.contains("__fern_bytes_write_range")) {
     out = out.append("@uses_byte_write");
   }
-  if (module_calls_direct(cache, "__fern_bytes_append_back")) {
+  if (calls.contains("__fern_bytes_append_back")) {
     out = out.append("@uses_byte_back");
   }
   for name in rtbytecopy.kernel_names() {
-    if (module_calls_direct(cache, name)) {
+    if (calls.contains(name)) {
       out = out.append("@uses" + name);
     }
   }
-  if (module_calls_direct(cache, "__fern_bytes_range")) {
+  if (calls.contains("__fern_bytes_range")) {
     out = out.append("@uses_bytes_range");
   }
-  if (module_calls_direct(cache, "__fern_bytes_into")) {
+  if (calls.contains("__fern_bytes_into")) {
     out = out.append("@uses_bytes_into");
   }
   return out;
