@@ -12220,13 +12220,18 @@ function mono_variant_field_tys(sty: string, vname: string, fns: MFns): string[]
   if (sty.len() == 0 || hides_var(sty, fns)) {
     return none;
   }
+  return variant_field_types(sty, vname, fns.enums, fns.structs, []);
+}
+
+pub function variant_field_types(sty: string, vname: string, enums: EnumDecl[], structs: StructDecl[], field_names: string[]): string[] {
+  let none: string[] = [];
   let base = strip_struct_base(sty);
   let ei: i32 = -1;
   let i = 0;
-  while (i < fns.enums.len()) {
-    if (fns.enums[i].name == base) {
+  while (i < enums.len()) {
+    if (enums[i].name == base) {
       ei = i;
-      i = fns.enums.len();
+      i = enums.len();
     } else {
       i += 1;
     }
@@ -12234,16 +12239,26 @@ function mono_variant_field_tys(sty: string, vname: string, fns: MFns): string[]
   if (ei < 0) {
     return none;
   }
-  let ed = fns.enums[ei];
+  let ed = enums[ei];
   let cts = type_args_of(sty);
   if (cts.len() != ed.type_params.len()) {
     return none;
   }
-  let Some(vi) = variant_struct_index(fns.structs, pat_variant_bare(vname), ed.name) else {
+  let Some(vi) = variant_struct_index(structs, pat_variant_bare(vname), ed.name) else {
     return none;
   };
-  let fields = fns.structs[vi].fields;
+  let fields = structs[vi].fields;
   let out: string[] = [];
+  if (field_names.len() > 0) {
+    for name in field_names {
+      let at = util.index_of_str(structs[vi].variant_field_names, name);
+      if (at < 0 || at >= fields.len()) {
+        return none;
+      }
+      out = out.append(subst_ty(fields[at].type_name, ed.type_params, cts));
+    }
+    return out;
+  }
   for fi in 0..fields.len() {
     out = out.append(subst_ty(fields[fi].type_name, ed.type_params, cts));
   }

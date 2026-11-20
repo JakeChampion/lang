@@ -19,35 +19,35 @@ function irt_unify(a: string, b: string): string {
   return "";
 }
 
-function irt_collect_returns(stmts: ast.Stmt[], params: ast.ParamDecl[], funcs: parser.FuncDecl[], structs: parser.StructDecl[], acc: string[]): string[] {
+function irt_collect_returns(stmts: ast.Stmt[], params: ast.ParamDecl[], mod: parser.Module, acc: string[]): string[] {
   let out = acc;
   for i in 0..stmts.len() {
-    out = irt_collect_stmt(stmts[i], params, funcs, structs, out);
+    out = irt_collect_stmt(stmts[i], params, mod, out);
   }
   return out;
 }
 
-function irt_collect_stmt(st: ast.Stmt, params: ast.ParamDecl[], funcs: parser.FuncDecl[], structs: parser.StructDecl[], acc: string[]): string[] {
+function irt_collect_stmt(st: ast.Stmt, params: ast.ParamDecl[], mod: parser.Module, acc: string[]): string[] {
   match (st) {
     ast.StmtReturn(r) => {
-      return acc.append(parser.irt_guess(r.value, params, funcs, structs));
+      return acc.append(parser.irt_guess(r.value, params, mod.funcs, mod.structs));
     },
     ast.StmtIf(f) => {
-      let a = irt_collect_returns(f.then_body, params, funcs, structs, acc);
-      return irt_collect_returns(f.else_body, params, funcs, structs, a);
+      let a = irt_collect_returns(f.then_body, params, mod, acc);
+      return irt_collect_returns(f.else_body, params, mod, a);
     },
     ast.StmtWhile(w) => {
-      return irt_collect_returns(w.body, params, funcs, structs, acc);
+      return irt_collect_returns(w.body, params, mod, acc);
     },
     ast.StmtFor(fr) => {
-      return irt_collect_returns(fr.body, params, funcs, structs, acc);
+      return irt_collect_returns(fr.body, params, mod, acc);
     },
     ast.StmtMatch(m) => {
       let a = acc;
-      let scrut_ty = parser.irt_guess(m.scrutinee, params, funcs, structs);
+      let scrut_ty = parser.irt_guess(m.scrutinee, params, mod.funcs, mod.structs);
       for arm in m.arms {
-        let scope = irt_arm_scope(arm.pattern, scrut_ty, params);
-        a = irt_collect_returns(arm.body, scope, funcs, structs, a);
+        let scope = irt_arm_scope(arm.pattern, scrut_ty, params, mod);
+        a = irt_collect_returns(arm.body, scope, mod, a);
       }
       return a;
     },
@@ -57,44 +57,48 @@ function irt_collect_stmt(st: ast.Stmt, params: ast.ParamDecl[], funcs: parser.F
   }
 }
 
-function irt_payload_of(scrut_ty: string, variant: string): string {
-  if (scrut_ty.starts_with("Option[") || scrut_ty.starts_with("Result[")) {
-    return parser.builtin_variant_payload_type(scrut_ty, variant);
-  }
-  if (irt_is_scalar_ty(scrut_ty)) {
-    return scrut_ty;
-  }
-  let args = parser.type_args_of(scrut_ty);
-  if (args.len() > 0) {
-    return args[0];
-  }
-  return "";
-}
-
 function irt_is_scalar_ty(t: string): boolean {
   return t == "i32" || t == "i64" || t == "u32" || t == "u64" || t == "u8" || t == "u16" || t == "i16"
     || t == "usize" || t == "f64" || t == "f32";
 }
 
-function irt_arm_scope(pattern: ast.Pattern, scrut_ty: string, params: ast.ParamDecl[]): ast.ParamDecl[] {
+function irt_arm_scope(pattern: ast.Pattern, scrut_ty: string, params: ast.ParamDecl[], mod: parser.Module): ast.ParamDecl[] {
   if let ast.PatVariant(pv) = pattern {
-    if (pv.binding.len() > 0 && pv.binding != "_") {
-      let ty = irt_payload_of(scrut_ty, pv.type_name);
-      let binding = ast.ParamDecl { name: pv.binding, type_name: ty, own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 };
-      for i in 0..params.len() {
-        if (params[i].name == pv.binding) {
-          return params.with(i, binding);
-        }
+    if (pv.binding == "" && pv.extra_bindings.len() == 0) {
+      return params;
+    }
+    let types: string[] = [];
+    if (scrut_ty.starts_with("Option[") || scrut_ty.starts_with("Result[")) {
+      types = [parser.builtin_variant_payload_type(scrut_ty, pv.type_name)];
+    } else if (irt_is_scalar_ty(scrut_ty)) {
+      types = [scrut_ty];
+    } else {
+      types = parser.variant_field_types(scrut_ty, pv.type_name, mod.enums, mod.structs, pv.field_names);
+    }
+    for i in 0..pv.extra_bindings.len() + 1 {
+      let name = parser.payload_binder(pv, i);
+      if (name != "" && name != "_") {
+        let ty = if (i < types.len()) { types[i] } else { "" };
+        params = irt_bind_param(params, name, ty);
       }
-      return params.append(binding);
     }
   }
   return params;
 }
 
-function irt_infer_func(fd: parser.FuncDecl, funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string {
+function irt_bind_param(params: ast.ParamDecl[], name: string, ty: string): ast.ParamDecl[] {
+  let binding = ast.ParamDecl { name: name, type_name: ty, own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 };
+  for i in 0..params.len() {
+    if (params[i].name == name) {
+      return params.with(i, binding);
+    }
+  }
+  return params.append(binding);
+}
+
+function irt_infer_func(fd: parser.FuncDecl, mod: parser.Module): string {
   let empty: string[] = [];
-  let rets = irt_collect_returns(fd.body, fd.params, funcs, structs, empty);
+  let rets = irt_collect_returns(fd.body, fd.params, mod, empty);
   let unified = "";
   for g in rets {
     if (g == "") {
@@ -125,7 +129,7 @@ pub function infer_func_returns(mod: parser.Module, widen_lambdas: boolean): par
       if (fd.ret_type != "" && !(widen_lambdas && fd.ret_type == "i32" && fd.name.len() > 6 && fd.name.starts_with("__lam_"))) {
         continue;
       }
-      let inferred = irt_infer_func(fd, funcs, mod.structs);
+      let inferred = irt_infer_func(fd, parser.Module { ...mod, funcs: funcs });
       if (inferred != "" && (fd.ret_type == "" || inferred == "i64" || inferred == "u64" || inferred == "f64")) {
         funcs = funcs.with(i, parser.FuncDecl { ...fd, ret_type: inferred });
         changed = true;
