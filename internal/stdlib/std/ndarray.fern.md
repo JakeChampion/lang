@@ -113,7 +113,7 @@ function shape_count(shape: i32[]): i32 {
   let k = 0;
   while (k < shape.len()) {
     let extent = shape[k];
-    if (extent < 0 || (extent != 0 && n > 2147483647 / extent)) {
+    if (extent < 0 || extent != 0 && n > 2147483647 / extent) {
       return -1;
     }
     n *= extent;
@@ -456,8 +456,12 @@ function same_shape(x: i32[], y: i32[]): boolean {
 <<12 pub function broadcast_shape(x: i32[], y: i32[]): i32[]>>=
 pub function broadcast_shape(x: i32[], y: i32[]): i32[] {
   match (try_broadcast_shape(x, y)) {
-    Some(shape) => { return shape; },
-    None => { shape_error(); }
+    Some(shape) => {
+      return shape;
+    },
+    None => {
+      shape_error();
+    }
   }
   return [];
 }
@@ -516,8 +520,12 @@ pub function (a: NdArray[T]) try_broadcast_to(shape: i32[]): Option[NdArray[T]] 
 
 pub function (a: NdArray[T]) broadcast_to(shape: i32[]): NdArray[T] {
   match (a.try_broadcast_to(shape)) {
-    Some(view) => { return view; },
-    None => { shape_error(); }
+    Some(view) => {
+      return view;
+    },
+    None => {
+      shape_error();
+    }
   }
   return a;
 }
@@ -528,8 +536,12 @@ pub function (a: NdArray[T]) zip_with[U, V](b: NdArray[U], f: (T, U) => V): NdAr
 
 pub function (a: NdArray[T]) try_zip_with[U, V](b: NdArray[U], f: (T, U) => V): Option[NdArray[V]] {
   match (try_broadcast_shape(a.shape, b.shape)) {
-    Some(shape) => { return Some(zip_to_shape(a, b, shape, f)); },
-    None => { return None; }
+    Some(shape) => {
+      return Some(zip_to_shape(a, b, shape, f));
+    },
+    None => {
+      return None;
+    }
   }
 }
 
