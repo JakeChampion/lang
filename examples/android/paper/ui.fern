@@ -774,14 +774,15 @@ function dialog(m: Metrics, f: face.Fonts, s: Sheet): scene.Node[] {
   for r in s.rows {
     let rh = row_height(m, f, r);
     if (ry + rh > r0 && ry < r1) {
-      ns = ns.append(in_list(tap(node(left, ry, w, rh, scene.Blank), r.act), "sheet", r0, r1));
+      let lines = row_lines(r);
+      let button = tap(node(left, ry, w, rh, scene.Blank), r.act);
+      ns = ns.append(in_list(scene.Node { ...button, say: lines.join(", ") }, "sheet", r0, r1));
       let tx = x;
       if (r.check >= 0) {
         let c = dp(m, 18.0);
         ns = ns.append(in_list(check_node(m, x, ry + (rh - c) / 2, c, c, r.check == 1), "sheet", r0, r1));
         tx = x + dp(m, 32.0) + dp(m, 2.0);
       }
-      let lines = row_lines(r);
       let lh = face.line(f, face.REGULAR, rpx);
       let ly = ry + (rh - lines.len() * lh) / 2;
       for k in 0..lines.len() {

@@ -259,6 +259,23 @@ function test_sheet(): test.TestOutcome {
   return test.assert_eq(n.tap.name + " " + out.tap.name, "rename dismiss");
 }
 
+function test_sheet_row_access(): test.TestOutcome {
+  let title = "A notification title much wider than the row can display on the screen";
+  let body = "The text of the notification must still be available to the reader";
+  let r = ui.Row { text: title + "\n" + body, sub: "", check: -1, act: "held:0" };
+  let sheet = ui.Sheet { ...app_menu(), rows: [r] };
+  let v = ui.View { ...home_view(), sheet: Some(sheet) };
+  let ns = ui.nodes(fonts(), v);
+  for it in scene.access_items(ns) {
+    if let Some(n) = scene.access_node(ns, it.id) {
+      if (n.tap.name == r.act) {
+        return test.assert_eq(it.text, title + ", " + body);
+      }
+    }
+  }
+  return test.fail("missing held notification row");
+}
+
 function test_rename_sheet(): test.TestOutcome {
   let s = ui.Sheet { title: "Rename Chrome", rows: [], buttons: [ui.Row { text: "Use Chrome", sub: "", check: -1, act: "reset" }, ui.Row { text: "Cancel", sub: "", check: -1, act: "cancel" }, ui.Row { text: "Save", sub: "", check: -1, act: "save" }], field: true, text: "Web browser", hint: "Chrome", scroll: 0 };
   let v = ui.View { ...home_view(), sheet: Some(s), m: ui.Metrics { ...metrics(), bottom: 900 } };
@@ -381,6 +398,7 @@ function main(): i32 {
   r = r.it("the letter index of the app list", test_letter_index);
   r = r.it("app list search", test_drawer_search);
   r = r.it("app menu sheet", test_sheet);
+  r = r.it("sheet rows expose their full text", test_sheet_row_access);
   r = r.it("rename sheet above the keyboard", test_rename_sheet);
   r = r.it("home apps sheet", test_pick_sheet);
   r = r.it("pause before an app", test_pause);
