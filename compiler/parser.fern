@@ -19539,7 +19539,7 @@ pub function lower_defers_prepass_module(mod: Module): Module {
       if (pfd.ret_type == "" && pfd.body.len() > 0 && pfd.receiver_type.len() == 0 && pfd.all_type_params.len() == 0) {
         let inferred = irt_infer_func(pfd, funcs, mod.structs);
         if (inferred != "") {
-          funcs = irt_set_ret(funcs, pi, inferred);
+          funcs = funcs.with(pi, FuncDecl { ...pfd, ret_type: inferred });
           changed = true;
         }
       }
@@ -20961,19 +20961,6 @@ function irt_infer_func(fd: FuncDecl, funcs: FuncDecl[], structs: StructDecl[]):
   return unified;
 }
 
-function irt_set_ret(funcs: FuncDecl[], idx: i32, rt: string): FuncDecl[] {
-  let out: FuncDecl[] = [];
-  for i in 0..funcs.len() {
-    if (i == idx) {
-      let f = funcs[i];
-      out = out.append(FuncDecl { ...f, ret_type: rt });
-    } else {
-      out = out.append(funcs[i]);
-    }
-  }
-  return out;
-}
-
 pub function infer_ret_types_module(mod: Module): Module {
   let funcs = mod.funcs;
   let changed = true;
@@ -20985,14 +20972,14 @@ pub function infer_ret_types_module(mod: Module): Module {
       if (fd.ret_type == "" && fd.body.len() > 0 && fd.receiver_type.len() == 0 && fd.all_type_params.len() == 0) {
         let inferred = irt_infer_func(fd, funcs, mod.structs);
         if (inferred != "") {
-          funcs = irt_set_ret(funcs, i, inferred);
+          funcs = funcs.with(i, FuncDecl { ...fd, ret_type: inferred });
           changed = true;
         }
       } else if (fd.ret_type == "i32" && fd.body.len() > 0 && fd.receiver_type.len() == 0
         && fd.all_type_params.len() == 0 && fd.name.len() > 6 && fd.name.starts_with("__lam_")) {
         let winf = irt_infer_func(fd, funcs, mod.structs);
         if (winf == "i64" || winf == "u64" || winf == "f64") {
-          funcs = irt_set_ret(funcs, i, winf);
+          funcs = funcs.with(i, FuncDecl { ...fd, ret_type: winf });
           changed = true;
         }
       }
