@@ -53,7 +53,7 @@ pub function act(env: usize, thiz: usize, id: i32, action: i32): i32 {
 static int locals, globals, next = 1000, nnames, nstrings;
 static char log_[16384];
 static uintptr_t ctx_field;
-static const char *names[256];
+static char names[256][64];
 static struct { uintptr_t id; char text[64]; } strings[256];
 static void require(int ok, const char *what) { if (!ok) { fprintf(stderr, "access: %s (locals=%d globals=%d)\nlog: %s\n", what, locals, globals, log_); exit(1); } }
 static uintptr_t fresh(void) { locals++; return next++; }
@@ -86,7 +86,8 @@ static int arities[256];
 static uintptr_t method(uintptr_t e, uintptr_t cls, const char *name, const char *sig) {
   require(nnames < 256, "too many method ids");
   arities[nnames] = arity(sig);
-  names[nnames++] = name;
+  require(strlen(name) < sizeof names[0], "method name too long");
+  strcpy(names[nnames++], name);
   return nnames;
 }
 static uintptr_t find_class(uintptr_t e, const char *name) { char line[160]; snprintf(line, sizeof line, "class %s;", name); strcat(log_, line); return fresh(); }
