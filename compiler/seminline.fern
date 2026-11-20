@@ -440,20 +440,36 @@ function resource_owners(funcs: ssasem.Func[]): ResourceOwners {
 // it returns, but in a spliced body the caller can release the owner after
 // its last read, before a call that uses the word.
 function read_word_values(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners): u8[] {
-  if (!has_word_seed(f, funcs, ix, words, owners)) {
+  if (!may_have_word_seed(f, funcs, ix, words, owners)) {
     return [];
   }
   // Bit 0 marks eligible values. Bit 1 marks words read from memory.
   let read = __alloc_u8(f.values.len());
+  let managed: u8[] = [];
+  let seeded = false;
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (ins.result >= 0 && (read[ins.result] & 2u8) == 0u8 && can_hold_word(f.values[ins.result]) && !copied_load(ins, f)) {
-        read = read.with(ins.result, 1u8);
-        if (memory_read(ins, f, funcs, ix, words, owners) || reads_any(ins.args, read)) {
-          read = read.with(ins.result, 3u8);
+      if (ins.result < 0 || !can_hold_word(f.values[ins.result])) {
+        continue;
+      }
+      if (numeric_load(ins, f)) {
+        if (managed.len() == 0) {
+          managed = managed_addresses(f);
+        }
+        if (marked_address(managed, ins.args[0])) {
+          continue;
         }
       }
+      read = read.with(ins.result, 1u8);
+      let seed = memory_read(ins, f, funcs, ix, words, owners);
+      seeded = seeded || seed;
+      if (seed || reads_any(ins.args, read)) {
+        read = read.with(ins.result, 3u8);
+      }
     }
+  }
+  if (!seeded) {
+    return [];
   }
   let more = true;
   while (more) {
@@ -470,10 +486,10 @@ function read_word_values(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameInd
   return read;
 }
 
-function has_word_seed(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners): boolean {
+function may_have_word_seed(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners): boolean {
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (ins.result >= 0 && can_hold_word(f.values[ins.result]) && !copied_load(ins, f) && memory_read(ins, f, funcs, ix, words, owners)) {
+      if (ins.result >= 0 && can_hold_word(f.values[ins.result]) && memory_read(ins, f, funcs, ix, words, owners)) {
         return true;
       }
     }
@@ -481,40 +497,51 @@ function has_word_seed(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex,
   return false;
 }
 
-// A numeric load copies its value from an address in managed array storage.
-function copied_load(ins: ssa.SInst, f: ssasem.Func): boolean {
-  return ins.kind_tag == ssasem.call() && !util.has_str(f.shadows, ins.str) && (ins.str == "__load_i32" || ins.str == "__load_i64")
-    && ins.args.len() > 0 && !ssasem.is_usize(f.values[ins.result]) && managed_address(f, ins.args[0], f.values.len());
+function numeric_load(ins: ssa.SInst, f: ssasem.Func): boolean {
+  return ins.kind_tag == ssasem.call() && (ins.str == "__load_i32" || ins.str == "__load_i64") && !util.has_str(f.shadows, ins.str)
+    && ins.args.len() > 0 && !ssasem.is_usize(f.values[ins.result]);
 }
 
-function managed_address(f: ssasem.Func, value: i32, fuel: i32): boolean {
-  if (fuel <= 0) {
-    return false;
+function marked_address(managed: u8[], value: i32): boolean {
+  return value >= 0 && value < managed.len() && managed[value] != 0u8;
+}
+
+// Start from addresses in managed storage. A phi needs proof for every
+// input, so a cycle alone cannot establish that its address is managed.
+function managed_addresses(f: ssasem.Func): u8[] {
+  let managed = __alloc_u8(f.values.len());
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for b in f.graph.blocks {
+      for ins in b.insts {
+        if (ins.result >= 0 && managed[ins.result] == 0u8 && makes_managed_address(ins, f, managed)) {
+          managed = managed.with(ins.result, 1u8);
+          changed = true;
+        }
+      }
+    }
   }
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      if (ins.result == value) {
-        if (ins.kind_tag == ssasem.call() && (ins.str == "__raw_arr_ptr" || ins.str == "__raw_data") && !util.has_str(f.shadows, ins.str)
-          && ins.args.len() > 0 && !can_hold_word(f.values[ins.args[0]])) {
-          return true;
-        }
-        if (ins.kind_tag == ssa.COPY || ins.kind_tag == ssasem.cast()) {
-          return ins.args.len() == 1 && managed_address(f, ins.args[0], fuel - 1);
-        }
-        if (ins.kind_tag == ssa.BINARY && (ins.str == "+" || ins.str == "-")) {
-          return ins.args.len() == 2 && (managed_address(f, ins.args[0], fuel - 1) || ins.str == "+" && managed_address(f, ins.args[1], fuel - 1));
-        }
-        if (ins.kind_tag == ssa.PHI && ins.args.len() > 0) {
-          for a in ins.args {
-            if (!managed_address(f, a, fuel - 1)) {
-              return false;
-            }
-          }
-          return true;
-        }
+  return managed;
+}
+
+function makes_managed_address(ins: ssa.SInst, f: ssasem.Func, managed: u8[]): boolean {
+  if (ins.kind_tag == ssasem.call() && (ins.str == "__raw_arr_ptr" || ins.str == "__raw_data")) {
+    return !util.has_str(f.shadows, ins.str) && ins.args.len() > 0 && !can_hold_word(f.values[ins.args[0]]);
+  }
+  if (ins.kind_tag == ssa.COPY || ins.kind_tag == ssasem.cast()) {
+    return ins.args.len() == 1 && marked_address(managed, ins.args[0]);
+  }
+  if (ins.kind_tag == ssa.BINARY && (ins.str == "+" || ins.str == "-")) {
+    return ins.args.len() == 2 && (marked_address(managed, ins.args[0]) || ins.str == "+" && marked_address(managed, ins.args[1]));
+  }
+  if (ins.kind_tag == ssa.PHI && ins.args.len() > 0) {
+    for a in ins.args {
+      if (!marked_address(managed, a)) {
         return false;
       }
     }
+    return true;
   }
   return false;
 }
