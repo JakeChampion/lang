@@ -95,7 +95,10 @@ zero wraps to the type's maximum.
 A `usize` literal can be anything up to `u64::MAX`; on wasm32 one past
 `u32::MAX` does not fit and the wasm backend refuses it. A cast into
 `usize` extends the source to 64 bits by its own signedness and wraps
-that to the pointer width.
+that to the pointer width. A checked cast (`as? usize`) accepts only
+values representable at that width. For example, `4294967296u64 as? usize`
+gives `None` on wasm32 and `Some(4294967296usize)` on x86-64 and arm64.
+A negative signed value gives `None` at either width.
 
 The interpreters model the pointer width of the machine they run on, as
 `target_arch()` answers with it: `internal/oracle/interp` and `fern
