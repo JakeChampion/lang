@@ -18,6 +18,8 @@ is a fluid simulation that runs in its own OpenGL ES shaders. [`stopwatch/`](sto
 and [`paper/`](paper/README.md), a home screen, are complete apps. They share the dot font of
 `matrix.fern` and the look of `look.fern`.
 
+[Story Deck](yoto/README.md) uses `std/android/ui` to browse and control Yoto players.
+
 Fern also compiles to a native, position-independent shared object that an
 Android app with Java code loads with `System.loadLibrary`. This directory
 shows the smallest JNI library.

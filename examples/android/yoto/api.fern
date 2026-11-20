@@ -1,0 +1,136 @@
+import "std/fetch";
+import "std/http";
+import "std/json";
+import "std/time";
+import "std/url";
+import "./oauth";
+
+const API: string = "https://api.yotoplay.com";
+
+pub struct Player { id: string, name: string, online: boolean }
+
+pub struct Card { id: string, title: string }
+
+pub struct Failure { message: string, expired: boolean }
+
+pub struct Library { players: Player[], cards: Card[] }
+
+pub enum Command { Play(string), Pause, Resume, Stop }
+
+pub function failure(message: string): Failure {
+  return Failure { message: message, expired: false };
+}
+
+function send(req: fetch.Request): Result[json.JsonValue, Failure] {
+  let seconds = time.duration_seconds(10i64);
+  let opts = fetch.Timeouts { connect: seconds, inactivity: seconds, total: seconds };
+  let Ok(resp) = fetch.send(req.with_redirects(0).with_timeouts(opts)) else {
+    return Err(failure("Could not reach Yoto. Check your connection and try again."));
+  };
+  if (resp.status == 401) {
+    return Err(Failure { message: "Your Yoto session expired. Connect again.", expired: true });
+  }
+  if (resp.status == 403) {
+    return Err(failure("Yoto denied access. Check the permissions for this client."));
+  }
+  if (resp.status == 429) {
+    return Err(failure("Yoto received too many requests. Try again in a moment."));
+  }
+  if (resp.status != 200) {
+    return Err(failure("Yoto returned HTTP " + resp.status.to_string() + "."));
+  }
+  let Ok(value) = json.parse(resp.body_text_lossy()) else {
+    return Err(failure("Yoto returned an invalid response."));
+  };
+  return Ok(value);
+}
+
+pub function exchange(client: string, verifier: string, code: string): Result[string, Failure] {
+  let form = url.query_encode([
+    ("grant_type", "authorization_code"),
+    ("client_id", client),
+    ("code_verifier", verifier),
+    ("code", code),
+    ("redirect_uri", oauth.REDIRECT),
+  ]);
+  let response = send(fetch.request("POST", oauth.LOGIN + "/oauth/token").with_header("Content-Type", "application/x-www-form-urlencoded").with_text(form))?;
+  let token = json.get_string(response, "access_token").unwrap_or("");
+  if (token.len() == 0) {
+    return Err(failure("Yoto did not return a session token."));
+  }
+  return Ok(token);
+}
+
+function request(token: string, method: string, path: string): fetch.Request {
+  return fetch.request(method, API + path).with_header("Authorization", "Bearer " + token);
+}
+
+pub function parse_players(value: json.JsonValue): Result[Player[], Failure] {
+  let Some(items) = json.get_array(value, "devices") else {
+    return Err(failure("Yoto did not return a player list."));
+  };
+  let out: Player[] = [];
+  for item in items {
+    let id = json.get_string(item, "deviceId").unwrap_or("");
+    if (id.len() > 0) {
+      let name = json.get_string(item, "name").unwrap_or("Yoto player");
+      let online = json.get_bool(item, "online").unwrap_or(false);
+      out = out.append(Player { id: id, name: name, online: online });
+    }
+  }
+  return Ok(out);
+}
+
+pub function parse_cards(value: json.JsonValue): Result[Card[], Failure] {
+  let Some(items) = json.get_array(value, "cards") else {
+    return Err(failure("Yoto did not return a card list."));
+  };
+  let out: Card[] = [];
+  for item in items {
+    let id = json.get_string(item, "cardId").unwrap_or("");
+    if (id.len() > 0 && !json.get_bool(item, "deleted").unwrap_or(false)) {
+      out = out.append(Card { id: id, title: json.get_string(item, "title").unwrap_or("Untitled card") });
+    }
+  }
+  return Ok(out);
+}
+
+pub function library(token: string): Result[Library, Failure] {
+  let players = parse_players(send(request(token, "GET", "/device-v2/devices/mine"))?)?;
+  let cards = parse_cards(send(request(token, "GET", "/content/mine"))?)?;
+  return Ok(Library { players: players, cards: cards });
+}
+
+pub function command_name(c: Command): string {
+  match (c) {
+    Play(_) => {
+      return "card/start";
+    },
+    Pause => {
+      return "card/pause";
+    },
+    Resume => {
+      return "card/resume";
+    },
+    Stop => {
+      return "card/stop";
+    }
+  }
+}
+
+pub function command_body(c: Command): string {
+  if let Play(id) = c {
+    return "{\"uri\":" + json.encode(json.JString("https://yoto.io/" + url.encode(id))) + "}";
+  }
+  return "{}";
+}
+
+pub function send_command(token: string, player: string, c: Command): Result[void, Failure] {
+  let path = "/device-v2/" + url.encode(player) + "/command/" + command_name(c);
+  let req = request(token, "POST", path).with_header("Content-Type", "application/json").with_text(command_body(c));
+  let response = send(req)?;
+  if (json.get_string(response, "status").unwrap_or("") != "ok") {
+    return Err(failure("Yoto did not accept the playback request."));
+  }
+  return Ok(());
+}

@@ -1,0 +1,122 @@
+import "std/android/draw";
+import "std/android/fonts";
+import "std/android/testkit";
+import "std/android/text";
+import "std/android/ui";
+import "std/android/ui/sim";
+import "std/json";
+import "std/test";
+import "./api";
+import "./deck";
+import "./oauth";
+
+function test_pkce(): test.TestOutcome {
+  let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+  return test.assert_eq(oauth.challenge(verifier), "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+}
+
+function callback(target: string): oauth.Callback {
+  return oauth.callback("GET " + target + " HTTP/1.1\r\nHost: 127.0.0.1:8787\r\n\r\n", "expected");
+}
+
+function test_callback_matches_state(): test.TestOutcome {
+  let oauth.Ignore = callback("/callback?state=other&code=abc") else {
+    return test.fail("the callback accepted a different state");
+  };
+  let oauth.Ignore = callback("/callback?state=expected&state=other&code=abc") else {
+    return test.fail("the callback accepted two state values");
+  };
+  let oauth.Ignore = callback("/other?state=expected&code=abc") else {
+    return test.fail("the callback accepted a different path");
+  };
+  let oauth.Denied = callback("/callback?state=expected&error=access_denied") else {
+    return test.fail("the callback missed the sign-in denial");
+  };
+  let oauth.Code(code) = callback("/callback?state=expected&code=A%2BB") else {
+    return test.fail("the callback missed the authorization code");
+  };
+  return test.assert_eq(code, "A+B");
+}
+
+function test_service_responses(): test.TestOutcome {
+  let p = json.parse("{\"devices\":[{\"deviceId\":\"a\",\"name\":\"Bedroom\",\"online\":true},{\"name\":\"Missing ID\"}]}").unwrap_or(json.JNull);
+  let c = json.parse("{\"cards\":[{\"cardId\":\"one\",\"title\":\"Woodland Walk\"},{\"cardId\":\"two\",\"deleted\":true}]}").unwrap_or(json.JNull);
+  let Ok(players) = api.parse_players(p) else {
+    return test.fail("the player response must parse");
+  };
+  let Ok(cards) = api.parse_cards(c) else {
+    return test.fail("the card response must parse");
+  };
+  if (players.len() != 1 || cards.len() != 1) {
+    return test.fail("the lists must omit incomplete and deleted entries");
+  }
+  return test.assert_eq(players[0].name + "|" + players[0].online.to_string() + "|" + cards[0].title, "Bedroom|true|Woodland Walk");
+}
+
+function test_playback_requests(): test.TestOutcome {
+  return test.assert_eq_array(
+    [api.command_name(api.Play("card")), api.command_body(api.Play("card")), api.command_name(api.Pause), api.command_name(api.Resume), api.command_name(api.Stop)],
+    ["card/start", "{\"uri\":\"https://yoto.io/card\"}", "card/pause", "card/resume", "card/stop"],
+  );
+}
+
+function test_fonts(): text.Fonts {
+  let dir = "examples/android/paper/testfonts";
+  if (read_file_bytes(dir + "/Roboto-Regular.ttf").is_err()) {
+    dir = "../paper/testfonts";
+  }
+  let weights = [400, 500, 700];
+  let found = weights.map((weight: i32): Option[fonts.Found] => fonts.find_in(dir, "Roboto", weight));
+  return text.load(found, weights, (path: string): u8[] => read_file_bytes(path).unwrap_or([]));
+}
+
+function preview(s: sim.Sim[deck.Model, deck.Msg], name: string): void {
+  if let Some(dir) = env("STORY_DECK_UI_PNG") {
+    let frame = sim.picture(s);
+    let saved = testkit.save_png(frame, dir + "/" + name + ".png");
+    draw.release(frame);
+  }
+}
+
+function simulator(own model: deck.Model): sim.Sim[deck.Model, deck.Msg] {
+  let real = deck.program((address: string): boolean => false);
+  let dry = ui.program(deck.view, deck.update).with_theme_of(real.theme);
+  return sim.start(model, dry, test_fonts(), 720, 1600, 2.0);
+}
+
+function test_player_selection(): test.TestOutcome {
+  let model = deck.Model {
+    ...deck.start(),
+    token: "test session",
+    players: [api.Player { id: "first", name: "Bedroom", online: false }, api.Player { id: "second", name: "Living room", online: true }],
+    cards: [api.Card { id: "card", title: "Woodland Walk" }],
+  };
+  let sign_in = simulator(deck.start());
+  preview(sign_in, "connect");
+  let s = sim.scaled(sim.themed(simulator(model), true), 1.0);
+  s = sim.tap(s, "Bedroom, Offline");
+  s = sim.tap(s, "Cards");
+  if (sim.says(s, "Play Woodland Walk") || !sim.shows(s, "Bedroom is offline.")) {
+    return test.fail("an offline player must not offer playback");
+  }
+  s = sim.tap(s, "Players");
+  s = sim.tap(s, "Living room, Online");
+  preview(s, "players");
+  s = sim.tap(s, "Cards");
+  preview(s, "cards");
+  if (!sim.says(s, "Play Woodland Walk")) {
+    return test.fail("the card must offer playback for the selected online player");
+  }
+  s = sim.tap(s, "Play Woodland Walk");
+  return test.assert_eq(s.shell.app.busy && s.shell.app.job.is_some() && s.shell.app.selected == "second", true);
+}
+
+function main(): i32 {
+  let r = test.new("Story Deck");
+  r = r.it("PKCE matches the standard example", test_pkce);
+  r = r.it("the callback requires the correct path and state", test_callback_matches_state);
+  r = r.it("parse lists of players and cards", test_service_responses);
+  r = r.it("the player commands follow the API format", test_playback_requests);
+  r = r.it("cards can play on a selected online player", test_player_selection);
+  return r.finish();
+}

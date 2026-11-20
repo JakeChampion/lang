@@ -1,0 +1,355 @@
+import "std/android/draw";
+import "std/android/ui";
+import "std/kv";
+import "std/string";
+import "std/worker";
+import "./api";
+import "./oauth";
+
+enum Job { Exchange(string, string, string), Load(string), Send(string, string, api.Command) }
+
+pub struct Model {
+  client: string,
+  token: string,
+  players: api.Player[],
+  cards: api.Card[],
+  selected: string,
+  tab: i32,
+  note: string,
+  library_loaded: boolean,
+  busy: boolean,
+  open_login: boolean,
+  flow: Option[oauth.Flow],
+  job: Option[Job],
+}
+
+pub enum Msg {
+  EditClient(string),
+  Connect,
+  Cancel,
+  PollLogin,
+  SignedIn(Result[string, api.Failure]),
+  LibraryLoaded(Result[api.Library, api.Failure]),
+  CommandSent(Result[void, api.Failure]),
+  Refresh,
+  SignOut,
+  SelectPlayer(string),
+  SelectTab(i32),
+  Control(api.Command),
+}
+
+pub function start(): Model {
+  return Model { client: "", token: "", players: [], cards: [], selected: "", tab: 0, note: "", library_loaded: false, busy: false, open_login: false, flow: None, job: None };
+}
+
+function selected(m: Model): Option[api.Player] {
+  for player in m.players {
+    if (player.id == m.selected) {
+      return Some(player);
+    }
+  }
+  return None;
+}
+
+function can_control(m: Model): boolean {
+  if let Some(player) = selected(m) {
+    return player.online && !m.busy;
+  }
+  return false;
+}
+
+function connect(own m: Model): Model {
+  let client = m.client.trim().to_owned();
+  if (client.len() == 0) {
+    return Model { ...m, note: "Enter a public client ID from the Yoto developer dashboard." };
+  }
+  return Model { ...m, client: client, note: "Continue sign-in in your browser.", open_login: true, busy: true };
+}
+
+function cancel(own m: Model): Model {
+  if let Some(flow) = m.flow {
+    oauth.close(flow);
+  }
+  return Model { ...m, flow: None, open_login: false, busy: false, note: "" };
+}
+
+function poll_login(own m: Model): Model {
+  let next = Model { ...m, flow: None };
+  let Some(flow) = m.flow else {
+    return next;
+  };
+  match (oauth.poll(flow, monotonic_ns() / 1000000i64)) {
+    oauth.Waiting(waiting) => {
+      return Model { ...next, flow: Some(waiting) };
+    },
+    oauth.Authorized(verifier, code) => {
+      return Model { ...next, job: Some(Exchange(next.client, verifier, code)), note: "Completing sign-in…" };
+    },
+    oauth.Failed(note) => {
+      return Model { ...next, busy: false, note: note };
+    }
+  }
+}
+
+function failed(own m: Model, err: api.Failure): Model {
+  if (err.expired) {
+    return Model { ...start(), client: m.client, note: err.message };
+  }
+  return Model { ...m, busy: false, note: err.message };
+}
+
+function reload(own m: Model): Model {
+  return Model { ...m, busy: true, note: "Loading players and cards…", job: Some(Load(m.token)) };
+}
+
+function loaded(own m: Model, result: Result[api.Library, api.Failure]): Model {
+  match (result) {
+    Ok(library) => {
+      let t = Model { ...m, players: library.players, cards: library.cards, library_loaded: true, busy: false, note: "" };
+      if (selected(t).is_none()) {
+        return Model { ...t, selected: "" };
+      }
+      return t;
+    },
+    Err(err) => {
+      return failed(m, err);
+    }
+  }
+}
+
+function control(own m: Model, command: api.Command): Model {
+  if (!can_control(m)) {
+    return m;
+  }
+  return Model { ...m, busy: true, note: "Sending playback request…", job: Some(Send(m.token, m.selected, command)) };
+}
+
+pub function update(own m: Model, msg: Msg): Model {
+  match (msg) {
+    EditClient(text) => {
+      if (!m.busy) {
+        return Model { ...m, client: text, note: "" };
+      }
+      return m;
+    },
+    Connect => {
+      if (!m.busy) {
+        return connect(m);
+      }
+      return m;
+    },
+    Cancel => {
+      if (m.flow.is_some()) {
+        return cancel(m);
+      }
+      return m;
+    },
+    PollLogin => {
+      return poll_login(m);
+    },
+    SignedIn(result) => {
+      match (result) {
+        Ok(token) => {
+          return reload(Model { ...m, token: token });
+        },
+        Err(err) => {
+          return failed(m, err);
+        }
+      }
+    },
+    LibraryLoaded(result) => {
+      return loaded(m, result);
+    },
+    CommandSent(result) => {
+      match (result) {
+        Ok(_) => {
+          return Model { ...m, busy: false, note: "Playback request sent." };
+        },
+        Err(err) => {
+          return failed(m, err);
+        }
+      }
+    },
+    Refresh => {
+      if (!m.busy && m.token.len() > 0) {
+        return reload(m);
+      }
+      return m;
+    },
+    SignOut => {
+      if (!m.busy) {
+        return Model { ...start(), client: m.client };
+      }
+      return m;
+    },
+    SelectPlayer(id) => {
+      return Model { ...m, selected: id };
+    },
+    SelectTab(tab) => {
+      return Model { ...m, tab: tab };
+    },
+    Control(command) => {
+      return control(m, command);
+    }
+  }
+}
+
+function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
+  let Some(job) = m.job else {
+    return [];
+  };
+  return [worker.spawn((): Msg => {
+    match (job) {
+      Exchange(client, verifier, code) => {
+        return SignedIn(api.exchange(client, verifier, code));
+      },
+      Load(token) => {
+        return LibraryLoaded(api.library(token));
+      },
+      Send(token, player, command) => {
+        return CommandSent(api.send_command(token, player, command));
+      }
+    }
+  })];
+}
+
+function effects(m: Model, open_browser: (string) => boolean): Model {
+  let t = Model { ...m, job: None };
+  if (!t.open_login) {
+    return t;
+  }
+  let ready = Model { ...t, open_login: false };
+  match (oauth.begin(ready.client, monotonic_ns() / 1000000i64)) {
+    Ok((flow, address)) => {
+      if (open_browser(address)) {
+        return Model { ...ready, flow: Some(flow) };
+      }
+      oauth.close(flow);
+      return Model { ...ready, busy: false, note: "Could not open your browser." };
+    },
+    Err(note) => {
+      return Model { ...ready, busy: false, note: note };
+    }
+  }
+}
+
+function sign_in(m: Model): ui.El[Msg] {
+  let items: ui.El[Msg][] = [
+    ui.text("Works with Yoto").sized(16.0).colored(ui.MUTED),
+    ui.text("Connect your account to see your players and Make Your Own cards.").sized(20.0).weighted(600),
+  ];
+  if (!m.busy) {
+    items = items.append(ui.text("Public client ID").weighted(500));
+    items = items.append(ui.field("client", m.client, "Yoto developer client ID").on_edit((text: string): Msg => EditClient(text)).on_submit(Msg.Connect));
+    items = items.append(ui.button("Connect to Yoto", Msg.Connect));
+  }
+  if (m.flow.is_some()) {
+    items = items.append(ui.outlined_button("Cancel sign-in", Cancel));
+  }
+  if (m.note.len() > 0) {
+    items = items.append(ui.text(m.note).colored(ui.MUTED));
+  }
+  return ui.card(items).spaced(14.0).wide();
+}
+
+function player_row(player: api.Player, active: boolean): ui.El[Msg] {
+  let state = "Offline";
+  if (player.online) {
+    state = "Online";
+  }
+  if (active) {
+    state += " · Selected";
+  }
+  let row = ui.card[Msg]([
+    ui.text(player.name).sized(17.0).weighted(600).clamped(1),
+    ui.text(state).colored(ui.MUTED),
+  ]).spaced(4.0).wide().on_tap(SelectPlayer(player.id)).described(player.name + ", " + state);
+  if (active) {
+    row = row.border(ui.PRIMARY, 1.0);
+  }
+  return ui.column([row]).padding_xy(0.0, 4.0).wide();
+}
+
+function player_list(m: Model): ui.El[Msg] {
+  let picker = ui.space[Msg]();
+  if (m.players.len() > 0) {
+    let players = m.players;
+    let id = m.selected;
+    picker = ui.list("players", players.len(), 96.0, (i: i32): ui.El[Msg] => player_row(players[i], id == players[i].id));
+  } else if (m.library_loaded) {
+    picker = ui.text[Msg]("No players linked to this account.").colored(ui.MUTED);
+  }
+  let items: ui.El[Msg][] = [ui.text("Your players").sized(23.0).weighted(700)];
+  if (can_control(m)) {
+    items = items.append(ui.row([
+      ui.text_button("Pause", Control(api.Pause)),
+      ui.text_button("Resume", Control(api.Resume)),
+      ui.text_button("Stop", Control(api.Stop)),
+    ]).spaced(4.0));
+  }
+  return ui.column(items.append(picker)).spaced(10.0).wide().tall();
+}
+
+function card_row(card: api.Card, ready: boolean): ui.El[Msg] {
+  let title = ui.text[Msg](card.title).sized(17.0).weighted(600).clamped(2).wide();
+  let content: ui.El[Msg][] = [title];
+  if (ready) {
+    content = content.append(ui.text_button("Play", Control(api.Play(card.id))).described("Play " + card.title));
+  }
+  return ui.row(content).padding_xy(14.0, 8.0).aligned(ui.CENTER).spaced(8.0).wide().background(ui.SURFACE).rounded(12.0);
+}
+
+function card_list(m: Model): ui.El[Msg] {
+  let target = "Select a player on the Players tab.";
+  if let Some(player) = selected(m) {
+    target = "Play on " + player.name;
+    if (!player.online) {
+      target = player.name + " is offline.";
+    }
+  }
+  let list = ui.space[Msg]();
+  if (m.cards.len() > 0) {
+    let cards = m.cards;
+    let ready = can_control(m);
+    list = ui.list("cards", cards.len(), 72.0, (i: i32): ui.El[Msg] => card_row(cards[i], ready));
+  } else if (m.library_loaded) {
+    list = ui.text[Msg]("No Make Your Own cards in this account.").colored(ui.MUTED);
+  }
+  return ui.column([
+    ui.text("Make Your Own").sized(23.0).weighted(700),
+    ui.text(target).colored(ui.MUTED).clamped(2),
+    list,
+  ]).spaced(10.0).wide().tall();
+}
+
+pub function view(m: Model, screen: ui.Screen): ui.El[Msg] {
+  let title = ui.text[Msg]("Story Deck").sized(30.0).weighted(700).wide();
+  if (m.token.len() == 0) {
+    return ui.column([title, sign_in(m)]).spaced(20.0).padding(20.0).wide().tall().scroll("connection");
+  }
+  let top: ui.El[Msg][] = [title];
+  if (!m.busy) {
+    top = top.append(ui.text_button("Refresh", Refresh)).append(ui.text_button("Sign out", SignOut));
+  }
+  let body = player_list(m);
+  if (m.tab == 1) {
+    body = card_list(m);
+  }
+  let items = [ui.row(top).aligned(ui.CENTER), ui.tabs(["Players", "Cards"], m.tab, (tab: i32): Msg => SelectTab(tab))];
+  if (m.note.len() > 0) {
+    items = items.append(ui.text(m.note).colored(ui.MUTED));
+  }
+  return ui.column(items.append(body)).spaced(14.0).padding(16.0).wide().tall();
+}
+
+pub function program(open_browser: (string) => boolean): ui.Program[Model, Msg] {
+  return ui.program(view, update).with_effects((m: Model): Model => effects(m, open_browser)).with_jobs(start_job).with_tick((m: Model): i32 => {
+    if (m.flow.is_some()) {
+      return 150;
+    }
+    return -1;
+  }, PollLogin).with_close((own m: Model): own Model => cancel(m)).with_state(
+    (m: Model, k: kv.Store): kv.Store => k.set("client_id", m.client),
+    (own m: Model, k: kv.Store): own Model => Model { ...m, client: k.get("client_id").unwrap_or("") },
+  ).with_theme((dark: boolean): ui.Theme => ui.seeded(draw.rgb(90, 87, 165), dark));
+}

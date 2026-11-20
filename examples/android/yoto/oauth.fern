@@ -1,0 +1,174 @@
+import "std/base64";
+import "std/crypto";
+import "std/http";
+import "std/net";
+import "std/rand";
+import "std/string";
+import "std/url";
+import "std/utf8";
+
+pub const LOGIN: string = "https://login.yotoplay.com";
+
+pub const REDIRECT: string = "http://127.0.0.1:8787/callback";
+
+const PORT: i32 = 8787;
+
+const MAX_HEADER: i32 = 8192;
+
+pub struct Flow {
+  listener: Socket,
+  client: Option[Socket],
+  received: string,
+  client_until: i64,
+  until: i64,
+  verifier: string,
+  state: string,
+}
+
+pub enum Callback { Ignore, Denied, Code(string) }
+
+pub enum Poll { Waiting(Flow), Authorized(string, string), Failed(string) }
+
+pub function challenge(verifier: string): string {
+  return base64.encode_url(crypto.sha256(verifier.bytes())).trim_end_matches("=");
+}
+
+function authorization_url(client: string, verifier: string, state: string): string {
+  return LOGIN + "/authorize?" + url.query_encode([
+    ("audience", "https://api.yotoplay.com"),
+    ("scope", "family:devices:view family:devices:control user:content:view"),
+    ("response_type", "code"),
+    ("client_id", client),
+    ("code_challenge", challenge(verifier)),
+    ("code_challenge_method", "S256"),
+    ("redirect_uri", REDIRECT),
+    ("state", state),
+  ]);
+}
+
+pub function begin(client: string, now: i64): Result[(Flow, string), string] {
+  let addr = net.socket_addr(net.ipv4_loopback(), PORT);
+  let Ok(listener) = net.listen_at(addr, net.listen_options()) else {
+    return Err("Could not open the local sign-in callback. Try again.");
+  };
+  if let Err(_) = net.set_nonblocking(listener, true) {
+    let closed = net.close(listener);
+    return Err("Could not start the local sign-in callback.");
+  }
+  let verifier = base64.encode_url(rand.bytes(32)).trim_end_matches("=");
+  let state = base64.encode_url(rand.bytes(32)).trim_end_matches("=");
+  let flow = Flow { listener: listener, client: None, received: "", client_until: 0i64, until: now + 300000i64, verifier: verifier, state: state };
+  return Ok((flow, authorization_url(client, verifier, state)));
+}
+
+pub function callback(raw: string, state: string): Callback {
+  let Ok(req) = http.parse_request(raw) else {
+    return Ignore;
+  };
+  let (path, _) = req.path.split_at(req.path.index_of("?").unwrap_or(req.path.len()));
+  if (req.method != "GET" || path != "/callback") {
+    return Ignore;
+  }
+  let states = req.query_all("state");
+  if (states.len() != 1 || states[0] != state) {
+    return Ignore;
+  }
+  if (req.query("error").is_some()) {
+    return Denied;
+  }
+  let codes = req.query_all("code");
+  if (codes.len() != 1 || codes[0].len() == 0) {
+    return Ignore;
+  }
+  return Code(codes[0]);
+}
+
+function close_client(own flow: Flow): Flow {
+  if let Some(client) = flow.client {
+    let closed = net.close(client);
+  }
+  return Flow { ...flow, client: None, received: "" };
+}
+
+pub function close(own flow: Flow): void {
+  let cleared = close_client(flow);
+  let closed = net.close(cleared.listener);
+}
+
+function response(client: Socket, status: i32, message: string): void {
+  let reply = http.text(status, message).with_header("Cache-Control", "no-store");
+  let sent = net.write(client, http.serialize_response_bytes(reply));
+}
+
+function complete(own flow: Flow, client: Socket): Poll {
+  match (callback(flow.received, flow.state)) {
+    Code(code) => {
+      response(client, 200, "Sign-in response received. Return to Story Deck.");
+      let verifier = flow.verifier.to_owned();
+      close(flow);
+      return Authorized(verifier, code);
+    },
+    Denied => {
+      response(client, 200, "Sign-in canceled. Return to Story Deck.");
+      close(flow);
+      return Failed("Yoto did not authorize sign-in.");
+    },
+    Ignore => {
+      response(client, 400, "This request does not match the current Story Deck sign-in.");
+      return Waiting(close_client(flow));
+    }
+  }
+}
+
+pub function poll(own flow: Flow, now: i64): Poll {
+  if (now >= flow.until) {
+    close(flow);
+    return Failed("Sign-in timed out. Connect again.");
+  }
+  if (flow.client.is_some()) {
+    return read_callback(flow, now);
+  }
+  match (net.accept(flow.listener)) {
+    Ok(client) => {
+      if let Err(_) = net.set_nonblocking(client, true) {
+        let closed = net.close(client);
+        return Waiting(flow);
+      }
+      return read_callback(Flow { ...flow, client: Some(client), client_until: now + 2000i64 }, now);
+    },
+    Err(net.WouldBlock) => {
+      return Waiting(flow);
+    },
+    Err(_) => {
+      close(flow);
+      return Failed("The local sign-in callback stopped. Connect again.");
+    }
+  }
+}
+
+function read_callback(own flow: Flow, now: i64): Poll {
+  let Some(client) = flow.client else {
+    return Waiting(flow);
+  };
+  if (now >= flow.client_until || flow.received.len() >= MAX_HEADER) {
+    return Waiting(close_client(flow));
+  }
+  match (net.read_up_to(client, MAX_HEADER - flow.received.len())) {
+    Ok(chunk) => {
+      if (chunk.len() == 0) {
+        return Waiting(close_client(flow));
+      }
+      let received = flow.received + utf8.from_bytes_lossy(chunk);
+      if (received.contains("\r\n\r\n")) {
+        return complete(Flow { ...flow, received: received }, client);
+      }
+      return Waiting(Flow { ...flow, received: received });
+    },
+    Err(net.WouldBlock) => {
+      return Waiting(flow);
+    },
+    Err(_) => {
+      return Waiting(close_client(flow));
+    }
+  }
+}
