@@ -1384,8 +1384,7 @@ function __json_escape_end(s: string, i: i32): i32 {
   return h + 4;
 }
 
-function __json_t_scalar(s: string, i: i32, own tape: u64[]): (u64[], i32) {
-  let b = __json_byte(s, i);
+function __json_t_scalar(s: string, i: i32, b: i32, own tape: u64[]): (u64[], i32) {
   if (b == 34) {
     return __json_t_string(s, i, tape);
   }
@@ -1455,7 +1454,7 @@ function __json_t_kind(tape: u64[], node: i32): i32 {
 function __json_t_value(s: string, i: i32, own tape: u64[], depth: i32): (u64[], i32) {
   let b = __json_byte(s, i);
   if (b != 91 && b != 123) {
-    return __json_t_scalar(s, i, tape);
+    return __json_t_scalar(s, i, b, tape);
   }
   if (depth >= 128) {
     return (tape, -1 - i);
