@@ -655,8 +655,8 @@ import "std/hex";
 function main(): i32 {
   let secret = [1u8, 2u8, 3u8, 4u8];
   __ct_secret(secret);
-  let a = crypto.hkdf_sha256("salt".as_bytes(), secret, "info".as_bytes(), 56);
-  let b = crypto.hkdf_sha384("salt".as_bytes(), secret, "info".as_bytes(), 56);
+  let Ok(a) = crypto.hkdf_sha256("salt".as_bytes(), secret, "info".as_bytes(), 56) else { return 1; };
+  let Ok(b) = crypto.hkdf_sha384("salt".as_bytes(), secret, "info".as_bytes(), 56) else { return 1; };
   __ct_public(a);
   if (hex.encode(a) != "9359a1ebf38c25ebceddfd1184c2ad46a434ec2d71c0fb5e1eed9070b0eae5a5f0d40d3c670931f1fff952d68959cd56bf1394afe0254d4f") { return 1; }
   __ct_public(b);

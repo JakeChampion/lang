@@ -41,7 +41,7 @@ A `?` after a member is the mark of a member that an older device does not have,
 
 A `string` argument is never the Java value `null`. A `?` before `Ljava/lang/String;` in the descriptor of a member is the mark of a parameter that can be `null`, as in `setAction(?Ljava/lang/String;)Landroid/content/Intent;`. That parameter is an `Option[string]`, and `None` is `null`.
 
-`generate` gives an error for a request whose class is not in the classes, and for a member that the class does not have. It also gives an error for two requests whose classes have one simple name. It writes no setter for a field, and no constant for a `float` or a `double`.
+`generate` gives an error for a request whose class is not in the classes, and for a member that the class does not have. It also gives an error for two requests whose classes have one simple name. It writes a getter for each nonconstant field. Floating-point constants preserve signed zero and infinities. Java NaNs become Fern NaNs.
 
 ## Module assembly
 
@@ -519,9 +519,24 @@ function constant_line(owner: string, f: classfile.Field): string {
   return match (f.constant) {
     Some(Int(n)) => int_constant(name, f.descriptor, n),
     Some(Long(n)) => "pub const " + name + ": i64 = " + n.to_string() + ";\n\n",
+    Some(Float(n)) => float_constant(name, "f32", n.to_string(), f32_bits(n) < 0),
+    Some(Double(n)) => float_constant(name, "f64", n.to_string(), f64_bits(n) < 0),
     Some(Text(s)) => "pub const " + name + ": string = " + quoted(s) + ";\n\n",
     _ => "",
   };
+}
+
+// The formatter gives the shortest round-trip decimal. Spell whole numbers
+// as floats so that the parser never treats a large significand as an integer.
+function float_constant(name: string, kind: string, text: string, negative: boolean): string {
+  let value = match (text) {
+    "NaN" => "0.0 / 0.0",
+    "Inf" => "1.0 / 0.0",
+    "-Inf" => "-1.0 / 0.0",
+    "0" => if (negative) { "-0.0" } else { "0.0" },
+    _ => if (text.contains(".") || text.contains("e")) { text } else { text + ".0" },
+  };
+  return "pub const " + name + ": " + kind + " = " + value + ";\n\n";
 }
 
 function int_constant(name: string, descriptor: string, n: i32): string {

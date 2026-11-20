@@ -27,6 +27,7 @@ android.text.format.DateFormat is24HourFormat(Landroid/content/Context;)Z
 android.view.View setSystemUiVisibility(I)V SYSTEM_UI_FLAG_LIGHT_STATUS_BAR SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
 android.view.Window getDecorView
 java.io.File getAbsolutePath()Ljava/lang/String;
+java.lang.CharSequence toString()Ljava/lang/String;
 java.util.HashMap <init>()V put(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object; remove(Ljava/lang/Object;)Ljava/lang/Object;
 java.util.List size get
 java.util.Locale getDefault()Ljava/util/Locale; getCountry()Ljava/lang/String;

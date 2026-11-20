@@ -27,6 +27,7 @@ static const char *names[] = {"c2.vendor.avc.decoder", "c2.android.avc.decoder",
 static Object name_objects[6], avc = {STRING,0,MOCK_MIME}, hevc = {STRING,0,"video/hevc"};
 static struct { Object obj; char bytes[513]; } strings[512];
 static int string_count, frame_count, saved_strings[16], pending, mode, hardware_queries;
+static Object *live_types[16];
 static void *table[235];
 static void **env_table = table;
 
@@ -60,7 +61,11 @@ static Object *object_call(void *env, Object *obj, void *method, Value *args) {
     (void)env;
     switch ((uintptr_t)method) {
     case GET_INFOS: assert(obj == &list); return &infos_array;
-    case GET_TYPES: assert(obj->kind == INFO); return types + obj->id;
+    case GET_TYPES:
+        assert(frame_count > 0 && obj->kind == INFO);
+        assert(!live_types[frame_count - 1]);
+        live_types[frame_count - 1] = types + obj->id;
+        return types + obj->id;
     case GET_NAME: assert(obj->kind == INFO); return name_objects + obj->id;
     case GET_CAPABILITIES: assert(obj->kind == INFO && !strcmp(((Object *)args[0].l)->text,MOCK_MIME)); return caps + obj->id;
     default: assert(0); return NULL;
@@ -125,7 +130,7 @@ static int32_t array_length(void *env, Object *array) {
     (void)env;
     switch (array->kind) {
     case INFOS: return 6;
-    case TYPES: return 1;
+    case TYPES: return mode == 7 ? 257 : 1;
     case PROFILES: return mode == 3 ? 300 : 1;
     case COLORS: return 2;
     default: assert(0); return 0;
@@ -146,10 +151,24 @@ static int32_t push_frame(void *env, int32_t capacity) {
     if (mode == 5) { pending = 1; return -1; }
     assert(frame_count < 16); saved_strings[frame_count++] = string_count; return 0;
 }
-static Object *pop_frame(void *env, Object *result) { (void)env; assert(frame_count > 0 && !result); string_count = saved_strings[--frame_count]; return NULL; }
+static Object *pop_frame(void *env, Object *result) {
+    (void)env;
+    assert(frame_count > 0 && !result);
+    --frame_count;
+    live_types[frame_count] = NULL;
+    string_count = saved_strings[frame_count];
+    return NULL;
+}
 static Object *exception_occurred(void *env) { (void)env; return pending ? &exception : NULL; }
 static void exception_clear(void *env) { (void)env; pending = 0; }
-static void delete_ref(void *env, Object *obj) { (void)env; assert(obj); }
+static void delete_ref(void *env, Object *obj) {
+    (void)env;
+    assert(obj);
+    if (obj->kind == TYPES) {
+        assert(frame_count > 0 && live_types[frame_count - 1] == obj);
+        live_types[frame_count - 1] = NULL;
+    }
+}
 void *mock_jni_env(void) {
     for (int i=0; i<6; i++) { infos[i] = (Object){INFO,i,0}; caps[i] = (Object){CAPS,i,0}; types[i] = (Object){TYPES,i,0}; name_objects[i] = (Object){STRING,i,names[i]}; }
     table[6]=(void *)find_class; table[15]=(void *)exception_occurred; table[17]=(void *)exception_clear;

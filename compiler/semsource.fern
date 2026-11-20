@@ -697,34 +697,18 @@ function integer_literal(text: string): boolean {
 }
 
 function literal_type(suffix: string): typeinfo.Type {
-  if (suffix == "u8") {
-    return typeinfo.t_u8();
-  }
-  if (suffix == "u16") {
-    return typeinfo.t_u16();
-  }
-  if (suffix == "i16") {
-    return typeinfo.t_i16();
-  }
-  if (suffix == "char") {
-    return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: true, polymorphic: false };
-  }
-  if (suffix == "u32") {
-    return typeinfo.t_u32();
-  }
-  if (suffix == "i64") {
-    return typeinfo.t_i64();
-  }
-  if (suffix == "u64") {
-    return typeinfo.t_u64();
-  }
-  if (suffix == "usize") {
-    return typeinfo.t_usize();
-  }
-  if (suffix == "" || suffix == "i32") {
-    return typeinfo.t_i32();
-  }
-  return typeinfo.unchecked();
+  return match (suffix) {
+    "u8" => typeinfo.t_u8(),
+    "u16" => typeinfo.t_u16(),
+    "i16" => typeinfo.t_i16(),
+    "char" => typeinfo.t_char(),
+    "u32" => typeinfo.t_u32(),
+    "i64" => typeinfo.t_i64(),
+    "u64" => typeinfo.t_u64(),
+    "usize" => typeinfo.t_usize(),
+    "" | "i32" => typeinfo.t_i32(),
+    _ => typeinfo.unchecked(),
+  };
 }
 
 function float_number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
@@ -4336,7 +4320,7 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
     ast.ExprZero(_) => {
       return zero_value(e, s, expected);
     },
-    _ => {
+    ast.ExprLambda(_) | ast.ExprMapLit(_) | ast.ExprFString(_) | ast.ExprUnknown(_) => {
       return refused(s, "unsupported expression");
     }
   }
