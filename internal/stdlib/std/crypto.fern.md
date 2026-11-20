@@ -414,7 +414,10 @@ function __sha1_blocks(st: Sha1, bs: [u8], from: i32, nblocks: i32): Sha1 {
   words = __put_le32(words, 12, st.h3);
   words = __put_le32(words, 16, st.h4);
   let out = __sha1_hw_blocks(words, bs[from:from + nblocks * 64]);
-  return Sha1 { ...st, h0: __get_le32(out, 0), h1: __get_le32(out, 4), h2: __get_le32(out, 8), h3: __get_le32(out, 12), h4: __get_le32(out, 16) };
+  let next = Sha1 { ...st, h0: __get_le32(out, 0), h1: __get_le32(out, 4), h2: __get_le32(out, 8), h3: __get_le32(out, 12), h4: __get_le32(out, 16) };
+  erase(words);
+  erase(out);
+  return next;
 }
 
 // __sha1_soft_blocks updates the state from `nblocks` blocks at byte `from`.
@@ -822,7 +825,10 @@ function __sha256_blocks(st: Sha256, bs: [u8], from: i32, nblocks: i32): Sha256 
   words = __put_le32(words, 24, st.h6);
   words = __put_le32(words, 28, st.h7);
   let out = __sha256_hw_blocks(words, bs[from:from + nblocks * 64]);
-  return Sha256 { ...st, h0: __get_le32(out, 0), h1: __get_le32(out, 4), h2: __get_le32(out, 8), h3: __get_le32(out, 12), h4: __get_le32(out, 16), h5: __get_le32(out, 20), h6: __get_le32(out, 24), h7: __get_le32(out, 28) };
+  let next = Sha256 { ...st, h0: __get_le32(out, 0), h1: __get_le32(out, 4), h2: __get_le32(out, 8), h3: __get_le32(out, 12), h4: __get_le32(out, 16), h5: __get_le32(out, 20), h6: __get_le32(out, 24), h7: __get_le32(out, 28) };
+  erase(words);
+  erase(out);
+  return next;
 }
 
 // __sha256_soft_blocks updates the state from `nblocks` blocks at byte `from`.
