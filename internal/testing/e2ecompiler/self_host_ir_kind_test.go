@@ -106,9 +106,6 @@ func TestSelfHostIRKindConstants(t *testing.T) {
 	}
 	konst := regexp.MustCompile(`(?m)^pub const K_(\w+): i32 = (\d+);`)
 	matches := konst.FindAllStringSubmatch(string(src), -1)
-	if len(matches) < 60 {
-		t.Fatalf("found %d K_ constants in ir.fern, want at least 60 — the pattern no longer matches", len(matches))
-	}
 	for _, m := range matches {
 		kind := strings.ToLower(m[1])
 		want, ok := ids[kind]
@@ -119,5 +116,9 @@ func TestSelfHostIRKindConstants(t *testing.T) {
 		if m[2] != want {
 			t.Errorf("K_%s is %s, but %s is %s", m[1], m[2], kind, want)
 		}
+		delete(ids, kind)
+	}
+	for kind := range ids {
+		t.Errorf("IR kind %q lacks its named constant K_%s", kind, strings.ToUpper(kind))
 	}
 }

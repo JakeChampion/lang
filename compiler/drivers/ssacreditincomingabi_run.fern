@@ -1,3 +1,4 @@
+import "../ssa";
 import "./ssacreditboxed" as boxed;
 import "../semlower";
 import "../ircore";
@@ -22,7 +23,7 @@ function site_matches(b: irtables.LowerResult, site: incoming.Site): i32 {
   for block in lifted.func.blocks {
     for op in block.insts {
       if (block.id == site.block && op.result == site.call) {
-        require(op.kind_tag == 11 && op.str == site.consumer && op.args.len() == 2 && op.args[0] == site.argument && op.args[1] == site.incoming, 94);
+        require(op.kind_tag == ssa.CALL && op.str == site.consumer && op.args.len() == 2 && op.args[0] == site.argument && op.args[1] == site.incoming, 94);
         found += 1;
       }
     }

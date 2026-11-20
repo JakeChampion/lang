@@ -12,7 +12,7 @@ pub function rename(f: ssa.SFunc): ssa.SFunc {
   let pivot = -1;
   for b in f.blocks {
     for op in b.insts {
-      if (pivot < 0 && op.kind_tag == 11) {
+      if (pivot < 0 && op.kind_tag == ssa.CALL) {
         pivot = op.result;
       }
     }
@@ -31,10 +31,10 @@ pub function rename(f: ssa.SFunc): ssa.SFunc {
       insts = insts.append(ssa.SInst { ...op, result: id(op.result, f.nvals, pivot), args: args });
     }
     let term = b.term;
-    if (term.kind_tag == 1) {
+    if (term.kind_tag == ssa.TERM_RET) {
       term = ssa.STerm { ...term, value: id(term.value, f.nvals, pivot) };
     }
-    if (term.kind_tag == 3) {
+    if (term.kind_tag == ssa.TERM_BRIF) {
       term = ssa.STerm { ...term, cond: id(term.cond, f.nvals, pivot) };
     }
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: term });
@@ -47,10 +47,10 @@ pub function hole(f: ssa.SFunc, mode: i32): ssa.SFunc {
   for b in f.blocks {
     let insts: ssa.SInst[] = [];
     for op in b.insts {
-      let corrupt = mode == 0 && op.kind_tag == 11 || mode == 1 && op.kind_tag == 8;
+      let corrupt = mode == 0 && op.kind_tag == ssa.CALL || mode == 1 && op.kind_tag == ssa.PHI;
       insts = insts.append(if (corrupt) { ssa.SInst { ...op, args: op.args.with(0, 0) } } else { op });
     }
-    let term = if (mode == 2 && b.term.kind_tag == 1) { ssa.STerm { ...b.term, value: 0 } } else { b.term };
+    let term = if (mode == 2 && b.term.kind_tag == ssa.TERM_RET) { ssa.STerm { ...b.term, value: 0 } } else { b.term };
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: term });
   }
   return ssa.SFunc { ...f, blocks: blocks };

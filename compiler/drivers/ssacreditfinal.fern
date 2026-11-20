@@ -47,9 +47,9 @@ function assertion_names(fs: ssa.SFunc[]): string[] {
 
 function ownership_effect(name: string, op: ssa.SInst): boolean {
   if (name == "parent") {
-    return op.kind_tag == 41;
+    return op.kind_tag == ssa.ST_AT;
   }
-  if (op.kind_tag != 11) {
+  if (op.kind_tag != ssa.CALL) {
     return false;
   }
   if (name == "replace") {
@@ -65,19 +65,19 @@ function damaged(f: ssa.SFunc): ssa.SFunc {
     let insts: ssa.SInst[] = [];
     for op in b.insts {
       if (!changed && ownership_effect(f.name, op)) {
-        insts = insts.append(ssa.SInst { kind_tag: 1, result: op.result, args: [], imm: 0, str: "" });
+        insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: op.result, args: [], imm: 0, str: "" });
         changed = true;
       } else {
         insts = insts.append(op);
       }
     }
     let term = b.term;
-    if (f.name == "handoff" && term.kind_tag == 1) {
+    if (f.name == "handoff" && term.kind_tag == ssa.TERM_RET) {
       term = ssa.STerm { ...term, value: 1 };
       changed = true;
     }
     if (f.name == "require" && !changed) {
-      insts = insts.append(ssa.SInst { kind_tag: 11, result: f.nvals, args: [], imm: 0, str: "unknown_effect" });
+      insts = insts.append(ssa.SInst { kind_tag: ssa.CALL, result: f.nvals, args: [], imm: 0, str: "unknown_effect" });
       changed = true;
     }
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: term });

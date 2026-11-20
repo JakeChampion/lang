@@ -68,14 +68,14 @@ function mutations(output: ssaprepare.Output, f: ssa.SFunc): void {
   let load = position(ops, 40, "", 0);
   let bad = ssa.SInst { ...ops[release], str: "__fern_rc_inc" };
   checked(output, with_ops(f, ops.with(release, bad)), false, "unknown retain");
-  checked(output, with_ops(f, ops.with(release, ssa.SInst { ...ops[release], kind_tag: 1, args: [], imm: 0, str: "" })), false, "leak");
+  checked(output, with_ops(f, ops.with(release, ssa.SInst { ...ops[release], kind_tag: ssa.CONST_INT, args: [], imm: 0, str: "" })), false, "leak");
   checked(output, with_ops(f, ops.with(second, ssa.SInst { ...ops[second], args: ops[release].args })), false, "double release");
   checked(output, with_ops(f, ops.with(call, ssa.SInst { ...ops[call], args: [ops[call].result] })), false, "self use");
   for offset in [-2147483647 - 1, -8, -4, 4, 16, 2147483647] {
     checked(output, with_ops(f, ops.with(load, ssa.SInst { ...ops[load], imm: offset })), false, "field bounds");
   }
   checked(output, with_ops(f, ops.with(load, ssa.SInst { ...ops[load], args: [ops[0].result] })), false, "scalar pointer");
-  checked(output, with_ops(f, ops.with(load, ssa.SInst { ...ops[load], kind_tag: 41 })), false, "store refused");
+  checked(output, with_ops(f, ops.with(load, ssa.SInst { ...ops[load], kind_tag: ssa.ST_AT })), false, "store refused");
   let reordered = ops.with(load, ops[release]).with(release, ops[load]);
   checked(output, with_ops(f, reordered), false, "load after release");
 }
@@ -92,7 +92,7 @@ function aliases(output: ssaprepare.Output, f: ssa.SFunc): void {
     }
     ops = ops.append(ssa.SInst { ...op, args: args });
     if (op.result == root) {
-      ops = ops.append(ssa.SInst { kind_tag: 7, result: f.nvals, args: [root], imm: 0, str: "" });
+      ops = ops.append(ssa.SInst { kind_tag: ssa.COPY, result: f.nvals, args: [root], imm: 0, str: "" });
     }
   }
   let copied = ssa.SFunc { ...with_ops(f, ops), nvals: f.nvals + 1 };
@@ -143,7 +143,7 @@ function relations(output: ssaprepare.Output, f: ssa.SFunc, single: boolean): vo
   let relation = flow.derive(replaced(output, with_ops(f, reordered)), "caller", "parent");
   require(relation.error == "" && relation.events[1].kind == 0 && relation.events[2].kind == 1, "overlapping live allocations");
   let b = f.blocks[0];
-  let literal = ssa.SInst { kind_tag: 1, result: f.nvals, args: [], imm: -2147483647 - 1, str: "" };
+  let literal = ssa.SInst { kind_tag: ssa.CONST_INT, result: f.nvals, args: [], imm: -2147483647 - 1, str: "" };
   let constant = ssa.SFunc { ...f, nvals: f.nvals + 1, blocks: [ssa.SBlock { ...b, insts: ops.append(literal), term: ssa.STerm { ...b.term, value: f.nvals } }] };
   relation = flow.derive(replaced(output, constant), "caller", "parent");
   require(relation.error == "" && relation.result.kind == 0 && relation.result.identity == -2147483647 - 1, "literal result");

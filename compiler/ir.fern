@@ -150,9 +150,75 @@ pub function op_f32_from_bits(): Op {
   return op0(K_F32_FROM_BITS);
 }
 
-pub const LANE_KIND_FIRST: i32 = 447;
+pub const K_VSPLAT: i32 = 447;
 
-pub const LANE_KIND_LAST: i32 = 479;
+pub const K_VEXTRACT: i32 = 448;
+
+pub const K_VREPLACE: i32 = 449;
+
+pub const K_VADD: i32 = 450;
+
+pub const K_VSUB: i32 = 451;
+
+pub const K_VMUL: i32 = 452;
+
+pub const K_VDIV: i32 = 453;
+
+pub const K_VMIN: i32 = 454;
+
+pub const K_VMAX: i32 = 455;
+
+pub const K_VFMA: i32 = 456;
+
+pub const K_VSQRT: i32 = 457;
+
+pub const K_VABS: i32 = 458;
+
+pub const K_VNEG: i32 = 459;
+
+pub const K_VFLOOR: i32 = 460;
+
+pub const K_VCEIL: i32 = 461;
+
+pub const K_VTRUNC: i32 = 462;
+
+pub const K_VROUND: i32 = 463;
+
+pub const K_VEQ: i32 = 464;
+
+pub const K_VNE: i32 = 465;
+
+pub const K_VLT: i32 = 466;
+
+pub const K_VLE: i32 = 467;
+
+pub const K_VGT: i32 = 468;
+
+pub const K_VGE: i32 = 469;
+
+pub const K_VAND: i32 = 470;
+
+pub const K_VOR: i32 = 471;
+
+pub const K_VXOR: i32 = 472;
+
+pub const K_VANDNOT: i32 = 473;
+
+pub const K_VSELECT: i32 = 474;
+
+pub const K_VLOAD: i32 = 475;
+
+pub const K_VSTORE: i32 = 476;
+
+pub const K_VGET: i32 = 477;
+
+pub const K_VSET: i32 = 478;
+
+pub const K_VBITMASK: i32 = 479;
+
+pub const LANE_KIND_FIRST: i32 = K_VSPLAT;
+
+pub const LANE_KIND_LAST: i32 = K_VBITMASK;
 
 pub const K_VPACK: i32 = 512;
 
@@ -167,11 +233,47 @@ pub const K_VLOAD_F32: i32 = 520;
 // The ops on integer lanes. The width of an op is the width of a lane.
 // The fifteen binary ops come first, then the two unary ops, then the
 // ops that take or give a scalar.
-pub const LANE_INT_FIRST: i32 = 526;
+pub const K_VIADD: i32 = 526;
 
-pub const LANE_INT_LAST: i32 = 551;
+pub const K_VISUB: i32 = 527;
+
+pub const K_VIADDS: i32 = 528;
+
+pub const K_VIADDU: i32 = 529;
+
+pub const K_VISUBS: i32 = 530;
+
+pub const K_VISUBU: i32 = 531;
+
+pub const K_VIMINS: i32 = 532;
+
+pub const K_VIMINU: i32 = 533;
+
+pub const K_VIMAXS: i32 = 534;
+
+pub const K_VIMAXU: i32 = 535;
+
+pub const K_VIAVG: i32 = 536;
+
+pub const K_VIEQ: i32 = 537;
+
+pub const K_VINE: i32 = 538;
+
+pub const K_VILTS: i32 = 539;
+
+pub const K_VILTU: i32 = 540;
 
 pub const K_VINEG: i32 = 541;
+
+pub const K_VIABS: i32 = 542;
+
+pub const K_VISPLAT: i32 = 543;
+
+pub const K_VIEXTRACTS: i32 = 544;
+
+pub const K_VIEXTRACTU: i32 = 545;
+
+pub const K_VIBITMASK: i32 = 546;
 
 pub const K_VIREPLACE: i32 = 547;
 
@@ -179,6 +281,14 @@ pub const K_VIREPLACE: i32 = 547;
 pub const K_VIMUL: i32 = 548;
 
 pub const K_VISHL: i32 = 549;
+
+pub const K_VISHRS: i32 = 550;
+
+pub const K_VISHRU: i32 = 551;
+
+pub const LANE_INT_FIRST: i32 = K_VIADD;
+
+pub const LANE_INT_LAST: i32 = K_VISHRU;
 
 pub function is_lane_int_kind(id: i32): boolean {
   return id >= LANE_INT_FIRST && id <= LANE_INT_LAST;
@@ -188,11 +298,23 @@ pub function is_lane_int_kind(id: i32): boolean {
 // come first and take one value. The two that narrow and the swizzle take
 // two values. The width of an op is the width of a lane of its first
 // value.
-pub const LANE_SHAPE_FIRST: i32 = 561;
+pub const K_VIWIDENLOS: i32 = 561;
 
-pub const LANE_SHAPE_LAST: i32 = 567;
+pub const K_VIWIDENLOU: i32 = 562;
+
+pub const K_VIWIDENHIS: i32 = 563;
+
+pub const K_VIWIDENHIU: i32 = 564;
 
 pub const K_VINARROWS: i32 = 565;
+
+pub const K_VINARROWU: i32 = 566;
+
+pub const K_VISWIZZLE: i32 = 567;
+
+pub const LANE_SHAPE_FIRST: i32 = K_VIWIDENLOS;
+
+pub const LANE_SHAPE_LAST: i32 = K_VISWIZZLE;
 
 pub function is_lane_shape_kind(id: i32): boolean {
   return id >= LANE_SHAPE_FIRST && id <= LANE_SHAPE_LAST;
@@ -218,7 +340,7 @@ function lane_kind_pops(): i32[] {
 }
 
 pub function lane_writes(id: i32): boolean {
-  return id == LANE_KIND_FIRST + 29 || id == LANE_KIND_FIRST + 31;
+  return id == K_VSTORE || id == K_VSET;
 }
 
 pub function is_lane_kind(id: i32): boolean {

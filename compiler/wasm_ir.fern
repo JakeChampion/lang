@@ -4251,7 +4251,7 @@ function emit_map_hash_seed_wat(): string {
 
 function is_host_op_kind(tag: i32): boolean {
   return tag == ir.K_PRINT_STR || tag == ir.K_EPRINT_STR || tag == ir.K_MONOTONIC_NS || tag == ir.K_NOW_UNIX_MS
-    || tag == ir.K_NOW_NS || tag == ir.K_CLOCK_RESOLUTION || tag == ir.K_CLOCK_SET || tag == 209 || tag == ir.K_READ_FILE || tag == ir.K_READ_FILE_BYTES || tag == ir.K_WRITE_FILE || tag == ir.K_WRITE_FILE_BYTES
+    || tag == ir.K_NOW_NS || tag == ir.K_CLOCK_RESOLUTION || tag == ir.K_CLOCK_SET || tag == ir.K_READ_FILE || tag == ir.K_READ_FILE_BYTES || tag == ir.K_WRITE_FILE || tag == ir.K_WRITE_FILE_BYTES
     || tag == ir.K_OPEN_FILE || tag == ir.K_OPEN_READER_WITH || tag == ir.K_OPEN_WRITER_WITH || tag == ir.K_WRITER_WRITE || tag == ir.K_WRITE_SOME || tag == ir.K_ENV || tag == ir.K_STAT || tag == ir.K_LSTAT || tag == ir.K_REMOVE_FILE || tag == ir.K_CREATE_DIR_ALL
     || tag == ir.K_READ_DIR || tag == ir.K_READ_DIR_ALL || tag == ir.K_READ_DIR_INO || tag == ir.K_READ_DIR_INO_ALL || tag == ir.K_REMOVE_DIR_ALL || tag == ir.K_ARGS || tag == ir.K_ENVIRON || tag == ir.K_EXIT
     || tag == ir.K_CREATE_DIR || tag == ir.K_REMOVE_DIR || tag == ir.K_CREATE_LINK || tag == ir.K_CREATE_SYMLINK || tag == ir.K_READ_LINK
@@ -4524,16 +4524,16 @@ function emit_wasm_lane_int(o: ir.Op): string {
 // An op that changes the shape of integer lanes. The width of the op is
 // the width of a lane of its first value.
 function emit_wasm_lane_shape(o: ir.Op): string {
-  let k = ir.kind_name(o.kind_tag);
+  let k = o.kind_tag;
   let w = o.width;
-  if (k == "viswizzle" && w == 8) {
+  if (k == ir.K_VISWIZZLE && w == 8) {
     return "    i8x16.swizzle\n";
   }
-  let sign = if (k.ends_with("s")) { "_s" } else { "_u" };
-  if (o.kind_tag < ir.K_VINARROWS && (w == 8 || w == 16)) {
-    return "    " + wasm_lane_widen(k.starts_with("viwidenlo"), w) + sign + "\n";
+  let sign = if (k == ir.K_VIWIDENLOS || k == ir.K_VIWIDENHIS || k == ir.K_VINARROWS) { "_s" } else { "_u" };
+  if (k < ir.K_VINARROWS && (w == 8 || w == 16)) {
+    return "    " + wasm_lane_widen(k == ir.K_VIWIDENLOS || k == ir.K_VIWIDENLOU, w) + sign + "\n";
   }
-  if (o.kind_tag >= ir.K_VINARROWS && k != "viswizzle" && (w == 16 || w == 32)) {
+  if ((k == ir.K_VINARROWS || k == ir.K_VINARROWU) && (w == 16 || w == 32)) {
     return "    " + (if (w == 16) { "i8x16.narrow_i16x8" } else { "i16x8.narrow_i32x4" }) + sign + "\n";
   }
   return ircore.unsupported_op_refuse(o.kind_tag, "wasm");

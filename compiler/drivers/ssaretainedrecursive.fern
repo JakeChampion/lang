@@ -1,3 +1,4 @@
+import "../ssa";
 import "../asmcore";
 import "../asm_ir";
 import "../asm_arm64_ir";
@@ -91,7 +92,7 @@ function loaded_link(row: ssaprepare.Emitted): void {
   let calls = 0;
   for block in row.body.formed.f.blocks {
     for op in block.insts {
-      if (op.kind_tag == 11 && op.str == "__fern_rc_is_unique") {
+      if (op.kind_tag == ssa.CALL && op.str == "__fern_rc_is_unique") {
         require(op.args.len() == 1, 203);
         require(loaded_value(row, op.args[0]), 204);
         calls += 1;

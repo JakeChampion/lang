@@ -28,6 +28,13 @@ func TestSelfHostSSAKindRegistry(t *testing.T) {
 		"write_file=27\n" +
 		"select=36\n" +
 		"carry=37\n" +
+		"buffer_kind=buf_new\n" +
+		"buffer_kind=buf_push\n" +
+		"buffer_kind=buf_push_range\n" +
+		"buffer_kind=buf_push_byte\n" +
+		"buffer_kind=buf_len\n" +
+		"buffer_kind=buf_take\n" +
+		"buffer_kind=buf_free\n" +
 		"bound_kind=bound\n" +
 		"term_count=4\n" +
 		"term_bijection_ok=4\n" +

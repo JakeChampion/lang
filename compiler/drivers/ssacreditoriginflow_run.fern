@@ -27,7 +27,7 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
     let term = b.term;
     for original in b.insts {
       let op = original;
-      if (op.kind_tag == 11) {
+      if (op.kind_tag == ssa.CALL) {
         if (mode == 0) {
           op = ssa.SInst { ...op, str: "unknown" };
         }
@@ -50,13 +50,13 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
           op = ssa.SInst { ...op, result: 0 };
         }
         if (mode == 12) {
-          op = ssa.SInst { ...op, kind_tag: 7, args: [op.args[0]], imm: 0, str: "" };
+          op = ssa.SInst { ...op, kind_tag: ssa.COPY, args: [op.args[0]], imm: 0, str: "" };
         }
         if (mode == 20) {
           op = ssa.SInst { ...op, str: "renamed_producer" };
         }
       }
-      if (op.kind_tag == 8) {
+      if (op.kind_tag == ssa.PHI) {
         if (mode == 8) {
           op = ssa.SInst { ...op, args: [op.args[1], op.args[0]] };
         }
@@ -70,9 +70,9 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
           op = ssa.SInst { ...op, args: [] };
         }
       }
-      if (op.kind_tag == 6 && op.imm == 2) {
+      if (op.kind_tag == ssa.PARAM && op.imm == 2) {
         if (mode == 17) {
-          op = ssa.SInst { ...op, kind_tag: 1, imm: 0 };
+          op = ssa.SInst { ...op, kind_tag: ssa.CONST_INT, imm: 0 };
         }
         if (mode == 18) {
           op = ssa.SInst { ...op, imm: 1 };
@@ -80,21 +80,21 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
       }
       if (op.result == 3) {
         if (mode == 11) {
-          op = ssa.SInst { ...op, kind_tag: 11, str: "parent", args: [1, 2] };
+          op = ssa.SInst { ...op, kind_tag: ssa.CALL, str: "parent", args: [1, 2] };
         }
         if (mode == 14) {
           op = ssa.SInst { ...op, imm: 17 };
         }
         if (mode == 16) {
-          op = ssa.SInst { ...op, kind_tag: 50, str: "rc_dec", args: [1] };
+          op = ssa.SInst { ...op, kind_tag: ssa.RT_CALL, str: "rc_dec", args: [1] };
         }
       }
       insts = insts.append(op);
     }
-    if (term.kind_tag == 1 && mode == 7) {
+    if (term.kind_tag == ssa.TERM_RET && mode == 7) {
       term = ssa.STerm { ...term, value: 1 };
     }
-    if (term.kind_tag == 3) {
+    if (term.kind_tag == ssa.TERM_BRIF) {
       if (mode == 13) {
         term = ssa.STerm { ...term, cond: 1 };
       }
@@ -116,17 +116,17 @@ function copies(f: ssa.SFunc): ssa.SFunc {
     let insts: ssa.SInst[] = [];
     let term = b.term;
     for op in b.insts {
-      if (op.kind_tag == 11) {
+      if (op.kind_tag == ssa.CALL) {
         insts = insts.append(ssa.SInst { ...op, args: [if (op.args[0] == 1) { f.nvals } else { 2 }, if (op.args[1] == 1) { f.nvals } else { 2 }] });
       } else {
         insts = insts.append(op);
       }
     }
     if (b.id == f.entry) {
-      insts = insts.append(ssa.SInst { kind_tag: 7, result: f.nvals, args: [1], imm: 0, str: "" });
+      insts = insts.append(ssa.SInst { kind_tag: ssa.COPY, result: f.nvals, args: [1], imm: 0, str: "" });
     }
-    if (term.kind_tag == 1) {
-      insts = insts.append(ssa.SInst { kind_tag: 7, result: f.nvals + 1, args: [term.value], imm: 0, str: "" });
+    if (term.kind_tag == ssa.TERM_RET) {
+      insts = insts.append(ssa.SInst { kind_tag: ssa.COPY, result: f.nvals + 1, args: [term.value], imm: 0, str: "" });
       term = ssa.STerm { ...term, value: f.nvals + 1 };
     }
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: term });
@@ -145,10 +145,10 @@ function sparse(f: ssa.SFunc): ssa.SFunc {
       preds = preds.append(2147483647 - p);
     }
     let term = b.term;
-    if (term.kind_tag == 2) {
+    if (term.kind_tag == ssa.TERM_BR) {
       term = ssa.STerm { ...term, target: 2147483647 - term.target };
     }
-    if (term.kind_tag == 3) {
+    if (term.kind_tag == ssa.TERM_BRIF) {
       term = ssa.STerm { ...term, t: 2147483647 - term.t, f: 2147483647 - term.f };
     }
     blocks = blocks.append(ssa.SBlock { ...b, id: 2147483647 - b.id, preds: preds, term: term });
@@ -165,7 +165,7 @@ function phi_controls(f: ssa.SFunc, producer: ssa.SFunc): void {
     let extra: ssa.SInst[] = [];
     let preds = b.preds;
     for op in b.insts {
-      if (op.kind_tag == 8) {
+      if (op.kind_tag == ssa.PHI) {
         insts = insts.append(ssa.SInst { ...op, args: [op.args[1], op.args[0]] });
         preds = [b.preds[1], b.preds[0]];
         extra = extra.append(op);
@@ -184,18 +184,18 @@ function phi_controls(f: ssa.SFunc, producer: ssa.SFunc): void {
   expect(ssa.SFunc { ...f, blocks: chained, nvals: f.nvals + 1 }, [producer], "unavailable caller origin phi", 52);
   expect(sparse_ids.rename(ssa.SFunc { ...f, blocks: chained, nvals: f.nvals + 1 }), [producer], "unavailable caller origin phi", 52);
   expect(ssa.SFunc { ...f, blocks: duplicate }, [producer], "invalid caller origin graph", 53);
-  let cyclic_block = ssa.SBlock { id: 2147483647, insts: [], preds: [2147483647], term: ssa.STerm { kind_tag: 2, cond: -1, target: 2147483647, t: -1, f: -1, value: -1 } };
+  let cyclic_block = ssa.SBlock { id: 2147483647, insts: [], preds: [2147483647], term: ssa.STerm { kind_tag: ssa.TERM_BR, cond: -1, target: 2147483647, t: -1, f: -1, value: -1 } };
   expect(ssa.SFunc { ...f, blocks: f.blocks.append(cyclic_block) }, [producer], "unsupported caller origin cycle", 54);
   expect(changed(copies(f), 1), [producer], "invalid caller origin credit transfer", 55);
   let dead: ssa.SBlock[] = [];
   for b in f.blocks {
     let term = b.term;
-    if (term.kind_tag == 3) {
+    if (term.kind_tag == ssa.TERM_BRIF) {
       term = ssa.STerm { ...term, cond: 3 };
     }
     let insts: ssa.SInst[] = [];
     for op in b.insts {
-      insts = insts.append(if (op.kind_tag == 11 && op.args[0] == 1) { ssa.SInst { ...op, str: "unknown" } } else { op });
+      insts = insts.append(if (op.kind_tag == ssa.CALL && op.args[0] == 1) { ssa.SInst { ...op, str: "unknown" } } else { op });
     }
     dead = dead.append(ssa.SBlock { ...b, insts: insts, term: term });
   }
@@ -216,7 +216,7 @@ function controls(f: ssa.SFunc, producer: ssa.SFunc): void {
   let pb = producer.blocks[0];
   let insts: ssa.SInst[] = [];
   for op in pb.insts {
-    insts = insts.append(if (op.kind_tag == 48) { ssa.SInst { ...op, imm: 4 } } else { op });
+    insts = insts.append(if (op.kind_tag == ssa.ARR_BOX) { ssa.SInst { ...op, imm: 4 } } else { op });
   }
   expect(f, [ssa.SFunc { ...producer, blocks: [ssa.SBlock { ...pb, insts: insts }] }], "unproved caller allocation producer", 42);
   expect(f, [ssa.SFunc { ...producer, name: "wrong_binding" }], "caller origin producer binding", 43);

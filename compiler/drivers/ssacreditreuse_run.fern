@@ -81,7 +81,7 @@ function sparse_checks(f: ssa.SFunc, d: ssa.SFunc, r: ssa.SFunc): void {
   let changed = false;
   for b in mapped.blocks {
     let term = b.term;
-    if (!changed && term.kind_tag == 3) {
+    if (!changed && term.kind_tag == ssa.TERM_BRIF) {
       term = ssa.STerm { ...term, cond: 0 };
       changed = true;
     }
@@ -100,37 +100,37 @@ function physical_mutation(f: ssa.SFunc, mode: i32): ssa.SFunc {
     let ops: ssa.SInst[] = [];
     for op in b.insts {
       let changed = op;
-      if (mode == 0 && op.kind_tag == 46) {
+      if (mode == 0 && op.kind_tag == ssa.SHAPE_ADDR) {
         changed = ssa.SInst { ...op, str: "Other" };
         hits += 1;
-      } else if (mode == 1 && op.kind_tag == 6 && op.imm == 1) {
+      } else if (mode == 1 && op.kind_tag == ssa.PARAM && op.imm == 1) {
         changed = ssa.SInst { ...op, imm: 0 };
         hits += 1;
-      } else if (mode == 2 && op.kind_tag == 11 && op.str == "__fern_rc_inc") {
+      } else if (mode == 2 && op.kind_tag == ssa.CALL && op.str == "__fern_rc_inc") {
         changed = ssa.SInst { ...op, str: "unknown_credit_effect" };
         hits += 1;
-      } else if (mode == 3 && op.kind_tag == 11 && op.str == "__fern_alloc_reuse") {
+      } else if (mode == 3 && op.kind_tag == ssa.CALL && op.str == "__fern_alloc_reuse") {
         ops = ops.append(op);
         changed = ssa.SInst { ...op, result: f.nvals };
         nvals = f.nvals + 1;
         hits += 1;
-      } else if (mode == 4 && op.kind_tag == 41 && op.imm == ssa.tag_offset()) {
-        changed = ssa.SInst { kind_tag: 1, result: op.result, args: [], imm: 0, str: "" };
+      } else if (mode == 4 && op.kind_tag == ssa.ST_AT && op.imm == ssa.tag_offset()) {
+        changed = ssa.SInst { kind_tag: ssa.CONST_INT, result: op.result, args: [], imm: 0, str: "" };
         hits += 1;
-      } else if (mode == 5 && op.kind_tag == 41 && op.imm == 0) {
+      } else if (mode == 5 && op.kind_tag == ssa.ST_AT && op.imm == 0) {
         changed = ssa.SInst { ...op, imm: 8 };
         hits += 1;
-      } else if (mode == 6 && op.kind_tag == 8 && hits == 0) {
+      } else if (mode == 6 && op.kind_tag == ssa.PHI && hits == 0) {
         changed = ssa.SInst { ...op, args: op.args.with(0, op.result) };
         hits += 1;
-      } else if (mode == 7 && op.kind_tag == 41 && op.imm == ssa.tag_offset()) {
+      } else if (mode == 7 && op.kind_tag == ssa.ST_AT && op.imm == ssa.tag_offset()) {
         ops = ops.append(op);
-        changed = ssa.SInst { kind_tag: 7, result: f.nvals, args: [op.result], imm: 0, str: "" };
+        changed = ssa.SInst { kind_tag: ssa.COPY, result: f.nvals, args: [op.result], imm: 0, str: "" };
         nvals = f.nvals + 1;
         hits += 1;
-      } else if (mode == 8 && op.kind_tag == 40 && op.imm == 0) {
+      } else if (mode == 8 && op.kind_tag == ssa.LD_AT && op.imm == 0) {
         ops = ops.append(op);
-        changed = ssa.SInst { kind_tag: 9, result: f.nvals, args: [1, op.result], imm: 0, str: "eq" };
+        changed = ssa.SInst { kind_tag: ssa.BINARY, result: f.nvals, args: [1, op.result], imm: 0, str: "eq" };
         nvals = f.nvals + 1;
         hits += 1;
       }
@@ -461,7 +461,7 @@ function target_checks(target: string): void {
   for b in f.blocks {
     let ops: ssa.SInst[] = [];
     for op in b.insts {
-      if (op.kind_tag == 8 && hits == 0) {
+      if (op.kind_tag == ssa.PHI && hits == 0) {
         require(op.args.len() == 2, 31);
         ops = ops.append(ssa.SInst { ...op, args: [op.args[1], op.args[0]] });
         hits += 1;
@@ -500,7 +500,7 @@ function target_checks(target: string): void {
   }
   expect(ssa.SFunc { ...f, nvals: 2147483647 }, d, r, false, "invalid reuse boundary", 49);
   expect(ssa.SFunc { ...f, nparams: 1 }, d, r, false, "invalid reuse boundary", 50);
-  let orphan = ssa.SBlock { id: 2147483647, insts: [], preds: [], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 0 } };
+  let orphan = ssa.SBlock { id: 2147483647, insts: [], preds: [], term: ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: 0 } };
   expect(ssa.SFunc { ...f, blocks: f.blocks.append(orphan) }, d, r, false, "unsupported reuse cycle or unreachable block", 51);
   expect(f, d, r, true, "proved guarded two-child partial replacement", 37);
 }

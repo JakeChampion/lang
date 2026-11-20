@@ -4,9 +4,9 @@ import "../util";
 
 function effect(name: string, op: ssa.SInst): boolean {
   if (name == "parent") {
-    return op.kind_tag == 41;
+    return op.kind_tag == ssa.ST_AT;
   }
-  if (op.kind_tag != 11) {
+  if (op.kind_tag != ssa.CALL) {
     return false;
   }
   if (name == "replace") {
@@ -16,7 +16,7 @@ function effect(name: string, op: ssa.SInst): boolean {
 }
 
 function wrapper_return(name: string, term: ssa.STerm): boolean {
-  return name == "handoff" && term.kind_tag == 1;
+  return name == "handoff" && term.kind_tag == ssa.TERM_RET;
 }
 
 pub function damaged(row: ssaprepare.Emitted): ssaprepare.Emitted {
@@ -27,7 +27,7 @@ pub function damaged(row: ssaprepare.Emitted): ssaprepare.Emitted {
     let insts: ssa.SInst[] = [];
     for op in b.insts {
       if (!changed && effect(f.name, op)) {
-        insts = insts.append(ssa.SInst { kind_tag: 1, result: op.result, args: [], imm: 0, str: "" });
+        insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: op.result, args: [], imm: 0, str: "" });
         changed = true;
       } else {
         insts = insts.append(op);
@@ -39,7 +39,7 @@ pub function damaged(row: ssaprepare.Emitted): ssaprepare.Emitted {
       changed = true;
     }
     if (f.name == "require" && !changed) {
-      insts = insts.append(ssa.SInst { kind_tag: 11, result: f.nvals, args: [], imm: 0, str: "unknown_effect" });
+      insts = insts.append(ssa.SInst { kind_tag: ssa.CALL, result: f.nvals, args: [], imm: 0, str: "unknown_effect" });
       changed = true;
     }
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: term });
@@ -64,7 +64,7 @@ pub function renamed(rows: ssaprepare.Emitted[], names: string[]): ssaprepare.Em
     for b in f.blocks {
       let insts: ssa.SInst[] = [];
       for op in b.insts {
-        insts = insts.append(if (op.kind_tag == 11) { ssa.SInst { ...op, str: name_of(op.str, names) } } else { op });
+        insts = insts.append(if (op.kind_tag == ssa.CALL) { ssa.SInst { ...op, str: name_of(op.str, names) } } else { op });
       }
       blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
     }

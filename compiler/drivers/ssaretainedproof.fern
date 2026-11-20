@@ -61,9 +61,9 @@ function effects(row: ssaprepare.Emitted, architecture: string): void {
   let hits = 0;
   let insts: ssa.SInst[] = [];
   for op in b.insts {
-    if (op.kind_tag == 41) {
+    if (op.kind_tag == ssa.ST_AT) {
       hits += 1;
-      insts = insts.append(ssa.SInst { kind_tag: 1, result: op.result, args: [], imm: 0, str: "" });
+      insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: op.result, args: [], imm: 0, str: "" });
     } else {
       insts = insts.append(op);
     }

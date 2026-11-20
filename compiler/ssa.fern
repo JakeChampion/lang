@@ -66,6 +66,20 @@ pub const READ_FILE: i32 = 26;
 
 pub const WRITE_FILE: i32 = 27;
 
+pub const BUF_NEW: i32 = 28;
+
+pub const BUF_PUSH: i32 = 29;
+
+pub const BUF_PUSH_RANGE: i32 = 30;
+
+pub const BUF_PUSH_BYTE: i32 = 31;
+
+pub const BUF_LEN: i32 = 32;
+
+pub const BUF_TAKE: i32 = 33;
+
+pub const BUF_FREE: i32 = 34;
+
 pub const LINE: i32 = 35;
 
 pub const SELECT: i32 = 36;

@@ -55,7 +55,7 @@ function value(kind: i32, identity: i32, available: i32): phi.Value {
 }
 
 function inst(result: i32, args: i32[]): ssa.SInst {
-  return ssa.SInst { kind_tag: 8, result: result, args: args, imm: 0, str: "" };
+  return ssa.SInst { kind_tag: ssa.PHI, result: result, args: args, imm: 0, str: "" };
 }
 
 function sparse_id(id: i32, nvals: i32): i32 {
@@ -128,7 +128,7 @@ function both(a: guard.Arena, block: ssa.SBlock, edges: phi.Edge[], nvals: i32):
 function mapping_checks(): void {
   let zero = guard.constant(guard.empty(), 0);
   let one = guard.constant(zero.arena, 1);
-  let block = ssa.SBlock { id: 2, preds: [1], insts: [inst(2147483646, [17])], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 2147483646 } };
+  let block = ssa.SBlock { id: 2, preds: [1], insts: [inst(2147483646, [17])], term: ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: 2147483646 } };
   let edge = phi.Edge { predecessor: 1, path: one.id, values: [value(0, zero.id, one.id), value(-1, -1, zero.id)] };
   let ids: i32[] = [17, 2147483646];
   let got = must(phi.merge_mapped(one.arena, block, [edge], 2147483647, ids), 63);
@@ -156,7 +156,7 @@ function unit_checks(): void {
   let shared = built(guard.combine(u.arena, 1, one.id, u.id));
   let old = guard.constant(shared.arena, 17);
   let fresh = guard.constant(old.arena, 29);
-  let block = ssa.SBlock { id: 2147483647, preds: [7, 19], insts: [inst(2, [0, 1])], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 2 } };
+  let block = ssa.SBlock { id: 2147483647, preds: [7, 19], insts: [inst(2, [0, 1])], term: ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: 2 } };
   let unique_values = blank(3).with(0, value(1, old.id, u.id));
   let shared_values = blank(3).with(1, value(0, zero.id, shared.id));
   let yes = phi.Edge { predecessor: 7, path: u.id, values: unique_values };
@@ -210,7 +210,7 @@ function unit_checks(): void {
   reject(both(swapped.arena, block, [phi.Edge { ...yes, values: blank(2) }, no], 3), "invalid phi predecessor", 30);
   reject(both(swapped.arena, block, [phi.Edge { ...yes, predecessor: -1 }, no], 3), "invalid phi predecessor", 31);
   reject(both(swapped.arena, ssa.SBlock { ...block, preds: [7, 7] }, [yes, no], 3), "invalid phi predecessor", 32);
-  let nonphi = ssa.SInst { kind_tag: 1, result: 3, args: [], imm: 0, str: "" };
+  let nonphi = ssa.SInst { kind_tag: ssa.CONST_INT, result: 3, args: [], imm: 0, str: "" };
   reject(both(swapped.arena, ssa.SBlock { ...pair, insts: [nonphi, pair.insts[0]] }, [pair_yes, pair_no], 4), "phi predecessor arity or position", 33);
   reject(both(swapped.arena, block, [phi.Edge { ...yes, values: unique_values.with(0, value(1, old.id, old.id)) }, no], 3), "non-Boolean guarded mask", 34);
   require(is_failed(phi.is_null(swapped.arena, value(1, -1, one.id), one.id)), 35);
@@ -239,11 +239,11 @@ function actual_checks(target: string): void {
   let blocks: ssa.SBlock[] = [];
   let fresh_value = -1;
   for b in graph.blocks {
-    if (b.insts.len() > 0 && b.insts[0].kind_tag == 8) {
+    if (b.insts.len() > 0 && b.insts[0].kind_tag == ssa.PHI) {
       blocks = blocks.append(b);
     }
     for op in b.insts {
-      if (op.kind_tag == 11 && op.str == "__fern_alloc_reuse") {
+      if (op.kind_tag == ssa.CALL && op.str == "__fern_alloc_reuse") {
         fresh_value = op.result;
       }
     }

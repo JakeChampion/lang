@@ -58,6 +58,9 @@ function main(): i32 {
   out = out + "select=" + util.i32_to_string(ssa.kind_id("select")) + "\n";
   out = out + "carry=" + util.i32_to_string(ssa.kind_id("carry")) + "\n";
 
+  for id in [ssa.BUF_NEW, ssa.BUF_PUSH, ssa.BUF_PUSH_RANGE, ssa.BUF_PUSH_BYTE, ssa.BUF_LEN, ssa.BUF_TAKE, ssa.BUF_FREE] {
+    out += "buffer_kind=" + ssa.kind_name(id) + "\n";
+  }
   out = out + "bound_kind=" + ssa.kind_name(ssa.BOUND) + "\n";
 
   let tn = ssa.term_count();
