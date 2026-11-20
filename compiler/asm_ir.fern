@@ -8573,7 +8573,7 @@ function ssa_unary_known(what: string): boolean {
   if (what == "int_cast:u8" || what == "int_cast:u16" || what == "int_cast:i16" || what == "int_cast:u32" || what == "int_cast:i32") {
     return true;
   }
-  return what.starts_with("rotr:") || asmcore.ssa_funary_known(what) || ssa_bits_asm(what, "%rax") != "";
+  return ssa.rotr_count(what) >= 0 || asmcore.ssa_funary_known(what) || ssa_bits_asm(what, "%rax") != "";
 }
 
 function ssa_inst_known(ins: ssa.SInst): boolean {

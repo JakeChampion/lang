@@ -6209,7 +6209,7 @@ pub function ssa_funary_known(what: string): boolean {
       return true;
     }
   }
-  return what.starts_with("i32_to_f64:");
+  return what == "i32_to_f64:32" || what == "i32_to_f64:64";
 }
 
 pub function ssa_fused_loc(source: ssaprepare.SourceLines, blk: ssa.SBlock, begin: i32, tailed: boolean, s: EmitState): EmitState {

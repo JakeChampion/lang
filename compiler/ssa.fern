@@ -9001,10 +9001,22 @@ pub function rotr_width(what: string): i32 {
   return 32;
 }
 
+// A rotate immediate is a decimal bit index in its operand width.
 pub function rotr_count(what: string): i32 {
+  if (what.len() <= 8 || !(what.starts_with("rotr:32:") || what.starts_with("rotr:64:"))) {
+    return -1;
+  }
+  let width = rotr_width(what);
   let n = 0;
   for i in 8..what.len() {
-    n = n * 10 + (what[i] as i32 - 48);
+    let digit = what[i];
+    if (digit < b'0' || digit > b'9') {
+      return -1;
+    }
+    n = n * 10 + (digit as i32 - 48);
+    if (n >= width) {
+      return -1;
+    }
   }
   return n;
 }
