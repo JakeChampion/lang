@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -424,28 +425,78 @@ func emittedFunction(t *testing.T, cli *selfHostCLI, program, target, fn string)
 	return strings.Join(out, "\n")
 }
 
-var ssaLabelRe = regexp.MustCompile(`\.Lssa_[A-Za-z0-9_]+`)
-
-// hasLoop reports a WAT loop, or a branch to a label defined above it.
+// hasLoop reports a WAT loop or a reachable cycle in the native function.
+// Block layout can put a shared return before one of its predecessors.
 func hasLoop(body, target string) bool {
-	seen := map[string]bool{}
-	for _, line := range strings.Split(body, "\n") {
+	lines := strings.Split(body, "\n")
+	labels := make(map[string]int)
+	numeric := make(map[string][]int)
+	for i, line := range lines {
 		line = strings.TrimSpace(line)
 		if target == "wasm32-wasi" {
 			if line == "loop" || strings.HasPrefix(line, "loop ") || strings.HasPrefix(line, "(loop") {
 				return true
 			}
-			continue
-		}
-		if strings.HasSuffix(line, ":") {
-			seen[strings.TrimSuffix(line, ":")] = true
-			continue
-		}
-		for _, label := range ssaLabelRe.FindAllString(line, -1) {
-			if seen[label] {
-				return true
+		} else if name, ok := strings.CutSuffix(line, ":"); ok {
+			if len(name) > 0 && name[0] >= '0' && name[0] <= '9' {
+				numeric[name] = append(numeric[name], i)
+			} else {
+				labels[name] = i
 			}
 		}
 	}
-	return false
+	if target == "wasm32-wasi" {
+		return false
+	}
+
+	const (
+		unseen = iota
+		visiting
+		done
+	)
+	state := make([]int, len(lines))
+	var cycle func(int) bool
+	cycle = func(i int) bool {
+		if i == len(lines) || state[i] != unseen {
+			return i < len(lines) && state[i] == visiting
+		}
+		state[i] = visiting
+		fields := strings.Fields(lines[i])
+		fallthroughEdge := true
+		if len(fields) > 0 {
+			op := fields[0]
+			switch {
+			case op == "ret" || op == "retq" || op == "br":
+				fallthroughEdge = false
+			case op == "b" || strings.HasPrefix(op, "b.") || strings.HasPrefix(op, "j") ||
+				op == "cbz" || op == "cbnz" || op == "tbz" || op == "tbnz":
+				name := fields[len(fields)-1]
+				dest, ok := labels[name]
+				if len(name) > 1 {
+					targets := numeric[name[:len(name)-1]]
+					next := sort.SearchInts(targets, i+1)
+					switch name[len(name)-1] {
+					case 'f':
+						if next < len(targets) {
+							dest, ok = targets[next], true
+						}
+					case 'b':
+						if next > 0 {
+							dest, ok = targets[next-1], true
+						}
+					}
+				}
+				if ok && cycle(dest) {
+					return true
+				}
+				fallthroughEdge = op != "b" && op != "jmp" && op != "jmpq"
+			}
+		}
+		if fallthroughEdge && cycle(i+1) {
+			return true
+		}
+		state[i] = done
+		return false
+	}
+	return cycle(0)
 }
