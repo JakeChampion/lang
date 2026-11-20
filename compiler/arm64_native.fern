@@ -825,7 +825,7 @@ function arm64_asm_vacant(): Arm64Asm {
   };
 }
 
-function arm64_name_bucket(name: string): i32 {
+function arm64_name_hash(name: string): i32 {
   let h = 0;
   let i = 0;
   let n = name.len();
@@ -833,15 +833,47 @@ function arm64_name_bucket(name: string): i32 {
     h = h * 131 + name[i] as i32 & 8388607;
     i += 1;
   }
-  return h % gas.label_buckets();
+  return h;
+}
+
+function arm64_name_bucket(name: string): i32 {
+  return arm64_name_hash(name) % gas.label_buckets();
+}
+
+// The label table of `a` with eight times its buckets. Each chain keeps the
+// order in which its labels came, so a lookup finds the first of a name.
+function arm64_asm_more_buckets(own a: Arm64Asm): Arm64Asm {
+  let n = a.lab_head.len() * 8 + 3;
+  let head = __alloc_i32(n);
+  let tail = __alloc_i32(n);
+  for b in 0..n {
+    head = head.with(b, -1);
+    tail = tail.with(b, -1);
+  }
+  let next = a.lab_next;
+  for at in 0..a.lab_names.len() {
+    let b = arm64_name_hash(a.lab_names[at]) % n;
+    next = next.with(at, -1);
+    if (tail[b] < 0) {
+      head = head.with(b, at);
+    } else {
+      next = next.with(tail[b], at);
+    }
+    tail = tail.with(b, at);
+  }
+  return Arm64Asm { ...a, lab_head: head, lab_next: next, lab_tail: tail };
 }
 
 function arm64_asm_label(own a: Arm64Asm, name: string): Arm64Asm {
   if (arm64_asm_label_off(a, name) >= 0) {
     a = Arm64Asm { ...a, twice: a.twice.append(name) };
   }
+  // A chain of more than four labels for each bucket makes each lookup slow.
+  if (a.lab_names.len() >= a.lab_head.len() * 4) {
+    a = arm64_asm_more_buckets(a);
+  }
   let at = a.lab_names.len();
-  let b = arm64_name_bucket(name);
+  let b = arm64_name_hash(name) % a.lab_head.len();
   let prev = a.lab_tail[b];
   a = Arm64Asm { ...a, lab_names: a.lab_names.append(name) };
   a = Arm64Asm { ...a, lab_offs: a.lab_offs.append(buf_len(a.code)) };
@@ -856,7 +888,7 @@ function arm64_asm_label(own a: Arm64Asm, name: string): Arm64Asm {
 }
 
 pub function arm64_asm_label_off(a: Arm64Asm, name: string): i32 {
-  let i = a.lab_head[arm64_name_bucket(name)];
+  let i = a.lab_head[arm64_name_hash(name) % a.lab_head.len()];
   while (i >= 0) {
     if (a.lab_names[i] == name) {
       return a.lab_offs[i];
