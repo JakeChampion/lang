@@ -8,7 +8,7 @@ This module derives keys from passwords with scrypt under RFC 7914.
 
 ## Contracts
 
-N is a power of 2 that is more than 1. The block size r and the parallelization p are 1 or more. Parameters that need more than 2^31 - 1 slots give `Memory`. `key` caps the variable-sized working buffers at 32 MiB. Use `key_with_memory_limit` to supply a byte limit. The check counts the ROMix array and parallel blocks together, and the PBKDF2 output and salt copy while each derivation runs. It excludes caller-owned inputs, fixed-size hash state and allocator overhead. scrypt reads its memory at an index that depends on the password. That index is the only value that the module makes public under the constant-time gate.
+N is a power of 2 that is more than 1. The block size r and the parallelization p are 1 or more. The derived key length must be at least one byte. Zero and negative lengths give `KeyLength` with the supplied value. Parameters that need more than 2^31 - 1 slots give `Memory`. `key` caps the variable-sized working buffers at 32 MiB. Use `key_with_memory_limit` to supply a byte limit. The check counts the ROMix array and parallel blocks together, and the PBKDF2 output and salt copy while each derivation runs. It excludes caller-owned inputs, fixed-size hash state and allocator overhead. scrypt reads its memory at an index that depends on the password. That index is the only value that the module makes public under the constant-time gate.
 
 ## Executable example
 
@@ -72,6 +72,7 @@ pub enum ScryptError {
   Cost(i32),
   BlockSize(i32),
   Parallelism(i32),
+  KeyLength(i32),
   Memory,
   MemoryLimit(i64),
 }
@@ -94,6 +95,9 @@ pub function (e: ScryptError) message(): string {
     },
     Parallelism(p) => {
       return "scrypt: the parallelization p is " + p.to_string() + ", want 1 or more";
+    },
+    KeyLength(n) => {
+      return f"scrypt: the key length is {n}, want 1 or more";
     },
     MemoryLimit(limit) => {
       return f"scrypt: working memory exceeds the limit of {limit} bytes";
@@ -231,12 +235,15 @@ pub function key_with_memory_limit(password: [u8], salt: [u8], n: i32, r: i32, p
   if let Some(e) = __refusal(n, r, p) {
     return Err(e);
   }
+  if (key_len < 1) {
+    return Err(KeyLength(key_len));
+  }
   let block_bytes = 128i64 * (r as i64);
   let blocks_bytes = block_bytes * (p as i64);
   let romix_bytes = block_bytes * (n as i64 + 3i64);
   let initial_bytes = blocks_bytes + salt.len() as i64 + 4i64;
   let final_bytes = 2i64 * blocks_bytes + 4i64 + key_len as i64;
-  if (blocks_bytes + romix_bytes > max_bytes || initial_bytes > max_bytes || key_len > 0 && final_bytes > max_bytes) {
+  if (blocks_bytes + romix_bytes > max_bytes || initial_bytes > max_bytes || final_bytes > max_bytes) {
     return Err(MemoryLimit(max_bytes));
   }
   let h = 16 * r;
