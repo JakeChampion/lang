@@ -5261,6 +5261,69 @@ function roots_outlived(f: Func, defs: ssa.SInst[], m: MergeScan, v: i32, bi: i3
   return false;
 }
 
+// A construction of a variant whose each payload is the read of that payload
+// from one value of the same type gives that value again, as `Cons(y, yt)`
+// does in an arm that matched `ys` as `Cons(y, yt)`. Each use of the
+// construction reads the value, and the construction goes. The frame then
+// keeps the box, where it dropped the box and filled another one.
+pub function rebuilt_variants(own f: Func): Func {
+  let defs = ssa.inst_defs(f.graph);
+  let map: i32[] = [];
+  for v in 0..f.graph.nvals {
+    map = map.append(v);
+  }
+  let found = false;
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      let source = rebuilt_from(f, defs, ins);
+      if (source >= 0) {
+        map = map.with(ins.result, source);
+        found = true;
+      }
+    }
+  }
+  if (!found) {
+    return f;
+  }
+  let blocks: ssa.SBlock[] = [];
+  for b in f.graph.blocks {
+    let insts: ssa.SInst[] = [];
+    for ins in b.insts {
+      if (ins.result < 0 || map[ins.result] == ins.result) {
+        insts = insts.append(mapped_inst(map, ins));
+      }
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: mapped_ret_term(map, b.term) });
+  }
+  return Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } };
+}
+
+// The value that the construction `ins` builds again, or -1.
+function rebuilt_from(f: Func, defs: ssa.SInst[], ins: ssa.SInst): i32 {
+  if (ins.kind_tag != variant_new() || ins.result < 0 || ins.args.len() == 0) {
+    return -1;
+  }
+  let whole = f.values[ins.result];
+  if (variant_known(f, whole, ins.str) != "" || variant_fields(f, whole, ins.str).len() != ins.args.len()) {
+    return -1;
+  }
+  let source = -1;
+  for i in 0..ins.args.len() {
+    let read = defs[ins.args[i]];
+    if (read.kind_tag != variant_get() || read.imm != i || read.str != ins.str || read.args.len() != 1) {
+      return -1;
+    }
+    if (i > 0 && read.args[0] != source) {
+      return -1;
+    }
+    source = read.args[0];
+  }
+  if (!semtypes.equal(f.values[source], whole)) {
+    return -1;
+  }
+  return source;
+}
+
 pub function tail_recursion(own f: Func, name: string): Func {
   if (name.len() == 0 || f.graph.blocks.len() == 0) {
     return f;
