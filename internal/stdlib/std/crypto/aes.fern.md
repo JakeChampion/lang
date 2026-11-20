@@ -67,6 +67,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "std/crypto";
 import "core/error";
 import "core/cmp";
 ```
@@ -147,6 +148,11 @@ function __inverse_sbox(y: i32): i32 {
 ```fern
 <<5 the key expansion>>=
 pub struct Cipher { rounds: i32, keys: u8[] }
+
+// Consumes the key and zeroes its round keys when it owns the last reference.
+pub function (own c: Cipher) erase(): void {
+  crypto.erase(c.keys);
+}
 
 pub function cipher(key: [u8]): Result[Cipher, AesError] {
   let nk = key.len() / 4;

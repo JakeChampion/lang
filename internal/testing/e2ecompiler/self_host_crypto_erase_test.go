@@ -20,6 +20,10 @@ import (
 // the scan sees a stale copy.
 const cryptoEraseSrc = `import "std/crypto";
 import "std/crypto/aes_gcm";
+import "std/crypto/aes";
+import "std/crypto/des";
+import "std/hex";
+import "std/result";
 import "std/crypto/chacha20poly1305";
 import "std/crypto/ed25519";
 import "std/crypto/ecdsa";
@@ -148,6 +152,21 @@ function run(mode: string, key: [u8], msg: [u8], nonce12: [u8]): i32 {
     let Ok(k) = ed25519.private_key(key) else { return 9; };
     return k.sign(msg).len() - 64;
   }
+  if (mode == "chacha-key" || mode == "chacha-key-drop") {
+    let Ok(k) = chacha20poly1305.key("DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD".as_bytes()) else { return 9; };
+    if (mode == "chacha-key") { k.erase(); }
+    return 0;
+  }
+  if (mode == "aes-cipher" || mode == "aes-cipher-drop") {
+    let Ok(c) = aes.cipher(filled(16, 0 as u8)) else { return 9; };
+    if (mode == "aes-cipher") { c.erase(); }
+    return 0;
+  }
+  if (mode == "des-cipher" || mode == "des-cipher-drop") {
+    let Ok(c) = des.cipher([0x13u8, 0x34u8, 0x57u8, 0x79u8, 0x9bu8, 0xbcu8, 0xdfu8, 0xf1u8]) else { return 9; };
+    if (mode == "des-cipher") { c.erase(); }
+    return 0;
+  }
   if (mode == "aes-key") { return aes_key(true); }
   if (mode == "aes-key-drop") { return aes_key(false); }
   if (mode == "ed25519-key") { return ed25519_key(true); }
@@ -190,6 +209,17 @@ function needles_of(mode: string, key: [u8], msg: [u8], nonce12: [u8]): u8[][] {
     let nonce: u8[] = crypto.sha512_new().update(expanded[32:64]).update(msg).finish();
     crypto.erase(expanded);
     return [nonce];
+  }
+  if (mode == "chacha-key" || mode == "chacha-key-drop") {
+    return [filled(32, 68 as u8)];
+  }
+  if (mode == "aes-cipher" || mode == "aes-cipher-drop") {
+    // The final round key for AES-128 with an all-zero input key.
+    return [hex.decode("b4ef5bcb3e92e21123e951cf6f8f188e").unwrap_or([])];
+  }
+  if (mode == "des-cipher" || mode == "des-cipher-drop") {
+    // The first two round keys for 0x133457799bbcdff1, stored as little-endian u64s.
+    return [hex.decode("7270fcef021b0000e5c9dbd9ae790000").unwrap_or([])];
   }
   if (mode == "aes-key" || mode == "aes-key-drop") {
     return [__aes_expand_key(filled(16, 65 as u8))];
@@ -274,7 +304,7 @@ func TestSelfHostPrimitivesEraseKeyMaterial(t *testing.T) {
 					t.Errorf("%s: %d stale copies of key material in the arena after the primitive returned, want 0", mode, got)
 				}
 			}
-			for _, mode := range []string{"aes-key", "ed25519-key", "ecdsa-key"} {
+			for _, mode := range []string{"aes-key", "ed25519-key", "ecdsa-key", "chacha-key", "aes-cipher", "des-cipher"} {
 				if got := run(mode + "-drop"); got < 1 {
 					t.Fatalf("%s-drop: a dropped key left %d copies of its secret in the arena, want at least 1: the control does not see the dropped key", mode, got)
 				}

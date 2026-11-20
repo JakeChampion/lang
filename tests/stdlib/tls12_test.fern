@@ -333,6 +333,20 @@ function test_hello_offers_tls12(): test.TestOutcome {
   return test.assert_true(contains(plain, bytes("002b0003020304")));
 }
 
+function test_suite_signatures(): test.TestOutcome {
+  for code in [0xc02f, 0xc030, 0xcca8] {
+    if (!tls12.allows_signature(code, 0x0401) || !tls12.allows_signature(code, 0x0804) || tls12.allows_signature(code, 0x0403) || tls12.allows_signature(code, 0x0807)) {
+      return test.fail("ECDHE_RSA signature schemes");
+    }
+  }
+  for code in [0xc02b, 0xc02c, 0xcca9] {
+    if (!tls12.allows_signature(code, 0x0403) || !tls12.allows_signature(code, 0x0807) || tls12.allows_signature(code, 0x0401) || tls12.allows_signature(code, 0x0804)) {
+      return test.fail("ECDHE_ECDSA signature schemes");
+    }
+  }
+  return test.pass();
+}
+
 function test_server_hello12(): test.TestOutcome {
   let ems = [message.Extension { kind: 23, data: [] }];
   if (alert_after(started(true).client, server_hello(server_random(), 0xc02f, ems)) != 0) {
@@ -340,8 +354,8 @@ function test_server_hello12(): test.TestOutcome {
   }
   // A ServerHello that leaves out its extensions: legacy_version, random, an empty session_id, the suite, no compression.
   let bare = record.frame(record.Handshake, 0x0303, bytes("02000026").concat(bytes("0303")).concat(server_random()).concat(bytes("00c02f00")));
-  if (alert_after(started(true).client, bare) != 0) {
-    return test.fail("a ServerHello with no extensions");
+  if (alert_after(started(true).client, bare) != 40) {
+    return test.fail("a ServerHello without extended_master_secret must fail the handshake");
   }
   let marked = filled(24, 7).concat(bytes("444f574e47524401"));
   if (alert_after(started(true).client, server_hello(marked, 0xc02f, ems)) != 47) {
@@ -358,6 +372,7 @@ function test_server_hello12(): test.TestOutcome {
 
 function main(): i32 {
   let r = test.new("std/tls/tls12");
+  r = r.it("signature schemes match suite authentication", test_suite_signatures);
   r = r.it("PRF with SHA-256 and SHA-384", test_prf);
   r = r.it("master secret and extended master secret", test_master_secret);
   r = r.it("Finished verify_data", test_verify_data);
