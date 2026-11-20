@@ -56,22 +56,12 @@ function irt_collect_stmt(st: ast.Stmt, acc: ast.Expr[]): ast.Expr[] {
 }
 
 function irt_payload_of(scrut_ty: string): string {
-  if (scrut_ty.len() == 0) {
-    return "";
-  }
-  for b in 0..scrut_ty.len() {
-    if (scrut_ty[b] == b'[') {
-      let inner = slice_unchecked(scrut_ty, b + 1, scrut_ty.len() - 1).to_owned();
-      for c in 0..inner.len() {
-        if (inner[c] == b',') {
-          return slice_unchecked(inner, 0, c).to_owned();
-        }
-      }
-      return inner;
-    }
-  }
   if (irt_is_scalar_ty(scrut_ty)) {
     return scrut_ty;
+  }
+  let args = parser.type_args_of(scrut_ty);
+  if (args.len() > 0) {
+    return args[0];
   }
   return "";
 }

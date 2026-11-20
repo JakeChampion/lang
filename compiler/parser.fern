@@ -12198,7 +12198,7 @@ function pat_variant_bare(vname: string): string {
   return bare;
 }
 
-function type_args_of(ty: string): string[] {
+pub function type_args_of(ty: string): string[] {
   let out: string[] = [];
   let lb = first_bracket(ty);
   if (lb <= 0 || !ty.ends_with("]")) {
