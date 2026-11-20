@@ -5090,7 +5090,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append(emit_host_op_wat(o));
   } else if (o.kind_tag == ir.K_PUTCHAR) {
     parts = emit_wasm_putchar(eltmp, parts);
-  } else if (o.kind_tag >= ir.K_BUF_NEW && o.kind_tag <= ir.K_BUF_FREE || o.kind_tag == ir.K_BUF_PUSH_U64 || o.kind_tag == ir.K_BUF_PUSH_DECIMAL || o.kind_tag >= ir.K_BUF_PUSH_BASE64 && o.kind_tag <= ir.K_BUF_DECODE_BASE32 || o.kind_tag == ir.K_BUF_PUSH_MAPPED || o.kind_tag == ir.K_BUF_PUSH_FILTERED || o.kind_tag == ir.K_BUF_PUSH_EXPANDED || o.kind_tag == ir.K_BUF_TAKE_BYTES || o.kind_tag == ir.K_BUF_PUSH_BYTES_RANGE || o.kind_tag == ir.K_BUF_PUSH_BYTES_MAPPED || o.kind_tag == ir.K_BUF_PUSH_BYTES_FILTERED || o.kind_tag == ir.K_BUF_PUSH_BYTES_EXPANDED || o.kind_tag == ir.K_BUF_CLEAR) {
+  } else if (ir.buf_arity(o.kind_tag) > 0) {
     parts = emit_wasm_buf_op(o, parts);
   } else if (o.kind_tag == ir.K_STRUCT_MAKE) {
     parts = emit_wasm_struct_make(arrtmp, eltmp, f64tmp, i64tmp, o, structs, parts);
@@ -7526,67 +7526,11 @@ pub function arr_slice_helper(): string {
 }
 
 function emit_wasm_buf_op(o: ir.Op, parts: string[]): string[] {
-  if (o.kind_tag == ir.K_BUF_PUSH_BYTES_MAPPED) {
-    return parts.append("    call $__fern_buf_push_bytes_mapped\n    i32.const 0\n");
+  let call = "    call $" + asmcore.buf_helper(o.kind_tag) + "\n";
+  if (o.kind_tag == ir.K_BUF_NEW || o.kind_tag == ir.K_BUF_LEN || o.kind_tag == ir.K_BUF_TAKE || o.kind_tag == ir.K_BUF_TAKE_BYTES || o.kind_tag == ir.K_BUF_DECODE_BASE32) {
+    return parts.append(call);
   }
-  if (o.kind_tag == ir.K_BUF_PUSH_BYTES_FILTERED) {
-    return parts.append("    call $__fern_buf_push_bytes_filtered\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_BYTES_EXPANDED) {
-    return parts.append("    call $__fern_buf_push_bytes_expanded\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_TAKE_BYTES) {
-    return parts.append("    call $__fern_buf_take_bytes\n");
-  }
-  if (o.kind_tag == ir.K_BUF_NEW) {
-    return parts.append("    call $__fern_buf_new\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH) {
-    return parts.append("    call $__fern_buf_push\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_RANGE) {
-    return parts.append("    call $__fern_buf_push_range\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_BYTES_RANGE) {
-    return parts.append("    call $__fern_buf_push_bytes_range\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_MAPPED) {
-    return parts.append("    call $__fern_buf_push_mapped\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_FILTERED) {
-    return parts.append("    call $__fern_buf_push_filtered\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_EXPANDED) {
-    return parts.append("    call $__fern_buf_push_expanded\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_BYTE) {
-    return parts.append("    call $__fern_buf_push_byte\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_U64) {
-    return parts.append("    call $__fern_buf_push_u64\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_DECIMAL) {
-    return parts.append("    call $__fern_buf_push_decimal\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_BASE64) {
-    return parts.append("    call $__fern_buf_push_base64\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_BASE32) {
-    return parts.append("    call $__fern_buf_push_base32\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_DECODE_BASE32) {
-    return parts.append("    call $__fern_buf_decode_base32\n");
-  }
-  if (o.kind_tag == ir.K_BUF_LEN) {
-    return parts.append("    call $__fern_buf_len\n");
-  }
-  if (o.kind_tag == ir.K_BUF_CLEAR) {
-    return parts.append("    call $__fern_buf_clear\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_TAKE) {
-    return parts.append("    call $__fern_buf_take\n");
-  }
-  return parts.append("    call $__fern_buf_free\n    i32.const 0\n");
+  return parts.append(call + "    i32.const 0\n");
 }
 
 // Four alphabet characters for each whole group of three bytes in a[lo..hi).

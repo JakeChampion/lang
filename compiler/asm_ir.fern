@@ -10494,7 +10494,7 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], r: irtables.Lowered, s: asmc
     return ssa_store(reg_of, ins.result, d, s);
   }
 
-  if (asmcore.buf_helper(r.ops[ins.imm].kind_tag) != "") {
+  if (ir.buf_arity(r.ops[ins.imm].kind_tag) > 0) {
     return ssa_buf_call(ins, reg_of, asmcore.buf_table_helper(r.ops[ins.imm].kind_tag, ir.is_packed(r.ops[ins.imm])), s);
   }
   s = asmcore.ssa_x0_forget(s);

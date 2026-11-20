@@ -4219,32 +4219,33 @@ function pops3(t: i32): boolean {
     || t == K_UTF8_BLOCKS;
 }
 
-function pops_buf(t: i32): Option[i32] {
+// All buffer operations consume at least one operand. Other kinds return zero.
+pub function buf_arity(t: i32): i32 {
   if (t >= K_BUF_PUSH_BASE64 && t <= K_BUF_DECODE_BASE32) {
-    return Some(5);
+    return 5;
   }
   if (t == K_BUF_PUSH_BYTES_RANGE) {
-    return Some(4);
+    return 4;
   }
   if (t == K_BUF_TAKE_BYTES || t == K_BUF_CLEAR) {
-    return Some(1);
+    return 1;
   }
   if (t == K_BUF_PUSH_U64 || t == K_BUF_PUSH_DECIMAL) {
-    return Some(2);
+    return 2;
   }
   if (t == K_BUF_PUSH_MAPPED || t == K_BUF_PUSH_FILTERED || t == K_BUF_PUSH_EXPANDED || t == K_BUF_PUSH_BYTES_MAPPED || t == K_BUF_PUSH_BYTES_FILTERED || t == K_BUF_PUSH_BYTES_EXPANDED) {
-    return Some(3);
+    return 3;
   }
-  if (t < 291 || t > 297) {
-    return None;
+  if (t < K_BUF_NEW || t > K_BUF_FREE) {
+    return 0;
   }
   if (t == K_BUF_PUSH_RANGE) {
-    return Some(4);
+    return 4;
   }
   if (t == K_BUF_PUSH || t == K_BUF_PUSH_BYTE) {
-    return Some(2);
+    return 2;
   }
-  return Some(1);
+  return 1;
 }
 
 function pops_dir(t: i32): i32 {
@@ -4316,7 +4317,8 @@ function kind_pops(t: i32): i32 {
   if (is_lane_kind(t)) {
     return lane_kind_pops()[t - LANE_KIND_FIRST];
   }
-  if let Some(bufn) = pops_buf(t) {
+  let bufn = buf_arity(t);
+  if (bufn > 0) {
     return bufn;
   }
   if (t >= K_OPEN_DIR && t <= K_DIR_OPEN_FILE) {
