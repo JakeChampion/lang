@@ -20237,15 +20237,6 @@ function irt_param_type(params: ast.ParamDecl[], name: string): string {
   return "";
 }
 
-function irt_func_ret(funcs: FuncDecl[], name: string): string {
-  for i in 0..funcs.len() {
-    if (funcs[i].name == name && funcs[i].receiver_type.len() == 0) {
-      return funcs[i].ret_type;
-    }
-  }
-  return "";
-}
-
 function stamp_lambda_ret(e: ast.Expr, fn_ret: string): ast.Expr {
   if (fn_ret.len() == 0) {
     return e;
@@ -20481,11 +20472,7 @@ pub function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], 
           if (cid.name == "Ok" || cid.name == "Err") {
             return "";
           }
-          let pth = irt_passthrough_arg_index(funcs, cid.name);
-          if (pth >= 0 && pth < c.args.len()) {
-            return irt_guess(c.args[pth], params, funcs, structs);
-          }
-          return irt_func_ret(funcs, cid.name);
+          return irt_call_ret(cid.name, c, params, funcs, structs);
         },
         ast.ExprFieldAccess(mfa) => {
           let rt2 = irt_guess(mfa.obj, params, funcs, structs);
@@ -20505,20 +20492,26 @@ pub function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], 
   }
 }
 
-function irt_passthrough_arg_index(funcs: FuncDecl[], name: string): i32 {
-  for i in 0..funcs.len() {
-    if (funcs[i].name == name && funcs[i].receiver_type.len() == 0 && funcs[i].all_type_params.len() > 0) {
-      let p = 0;
-      while (p < funcs[i].params.len()) {
-        if (funcs[i].params[p].type_name.len() > 0 && funcs[i].params[p].type_name == funcs[i].ret_type) {
-          return p;
-        }
-        p += 1;
-      }
-      return -1;
+function irt_call_ret(name: string, call: ast.ExprCall, params: ast.ParamDecl[], funcs: FuncDecl[], structs: StructDecl[]): string {
+  for fd in funcs {
+    if (fd.name != name || fd.receiver_type != "") {
+      continue;
     }
+    let vars = fd.all_type_params;
+    if (vars.len() == 0 || !spelling_mentions_tparam(fd.ret_type, vars)) {
+      return fd.ret_type;
+    }
+    if (call.type_args.len() == vars.len()) {
+      return subst_ty(fd.ret_type, vars, call.type_args);
+    }
+    for i in 0..fd.params.len().min(call.args.len()) {
+      if (fd.params[i].type_name == fd.ret_type) {
+        return irt_guess(call.args[i], params, funcs, structs);
+      }
+    }
+    return fd.ret_type;
   }
-  return -1;
+  return "";
 }
 
 pub function erase_view_spelling(ty: string): string {
