@@ -1,0 +1,55 @@
+import "std/android/keystore";
+import "std/base64";
+import "std/kv";
+import "std/result";
+import "std/utf8";
+import "./api";
+
+const KEY: string = "story-deck.yoto-session.v1";
+
+const FILE: string = "/yoto-session";
+
+pub function load(dir: string, env: usize): Result[Option[api.Session], string] {
+  if (dir.len() == 0) {
+    return Err("Saved sign-in storage is unavailable.");
+  }
+  let Ok(store) = kv.open(dir + FILE) else {
+    return Err("Could not read the saved Yoto sign-in.");
+  };
+  let Some(sealed) = store.get("session") else {
+    return Ok(None);
+  };
+  let Ok(bytes) = base64.decode(sealed) else {
+    return Err("Could not open the saved Yoto sign-in.");
+  };
+  let Ok(clear) = keystore.open(env, KEY, bytes) else {
+    return Err("Could not open the saved Yoto sign-in.");
+  };
+  let Ok(values) = kv.decode("", utf8.from_bytes_lossy(clear)) else {
+    return Err("Could not read the saved Yoto sign-in.");
+  };
+  let client = values.get("client").unwrap_or("");
+  let refresh = values.get("refresh").unwrap_or("");
+  if (client.len() == 0 || refresh.len() == 0) {
+    return Err("The saved Yoto sign-in is incomplete.");
+  }
+  return Ok(Some(api.Session { client: client, refresh: refresh }));
+}
+
+pub function save(dir: string, env: usize, remembered: Option[api.Session]): boolean {
+  if (dir.len() == 0) {
+    return false;
+  }
+  let store = kv.empty(dir + FILE);
+  if let Some(value) = remembered {
+    let clear = kv.empty("").set("client", value.client).set("refresh", value.refresh).encode().bytes();
+    if (keystore.ensure_key(env, KEY).is_err()) {
+      return false;
+    }
+    let Ok(sealed) = keystore.seal(env, KEY, clear) else {
+      return false;
+    };
+    store = store.set("session", base64.encode(sealed));
+  }
+  return store.save().is_ok();
+}

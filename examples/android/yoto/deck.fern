@@ -6,14 +6,17 @@ import "std/worker";
 import "./api";
 import "./oauth";
 import "./search";
+import "./player_status";
 
 enum Job {
-  Exchange(string, string, string),
   Load(string),
   Send(i64, string, string, api.Command),
   Tracks(i64, i32, string, api.Card),
   Cover(i64, string),
+  ReadPlayback(i64, i64, string, string),
 }
+
+enum Storage { SaveSession, ClearSession }
 
 struct Shelf {
   hits: search.Hit[],
@@ -31,15 +34,30 @@ struct Shelf {
   received: Option[(string, u8[])],
 }
 
+struct NowPlaying {
+  revision: i64,
+  requested: boolean,
+  running: boolean,
+  playback: Option[player_status.Playback],
+  note: string,
+}
+
 pub struct Model {
   client: string,
   token: string,
+  refresh: string,
+  reconnect: boolean,
+  auth: worker.Worker[Result[api.Tokens, api.Failure]][],
+  storage: Option[Storage],
+  session_note: string,
+  load_after_auth: boolean,
   players: api.Player[],
   cards: api.Card[],
   shelf: Shelf,
   generation: i64,
   background_busy: boolean,
   selected: string,
+  now_playing: NowPlaying,
   tab: i32,
   note: string,
   library_loaded: boolean,
@@ -61,7 +79,8 @@ pub enum Msg {
   CloseCard,
   TracksLoaded(i64, i32, Result[api.Card, api.Failure]),
   CoverLoaded(i64, string, u8[]),
-  SignedIn(Result[string, api.Failure]),
+  PlaybackLoaded(i64, i64, Result[player_status.Playback, string]),
+  RetrySignIn,
   LibraryLoaded(Result[api.Library, api.Failure]),
   CommandSent(i64, Result[void, api.Failure]),
   Refresh,
@@ -76,11 +95,102 @@ function empty_shelf(): Shelf {
 }
 
 pub function start(): Model {
-  return Model { client: "", token: "", players: [], cards: [], shelf: empty_shelf(), generation: 0i64, background_busy: false, selected: "", tab: 0, note: "", library_loaded: false, busy: false, open_login: false, flow: None, job: None };
+  return Model { client: "", token: "", refresh: "", reconnect: false, auth: [], storage: None, session_note: "", load_after_auth: false, players: [], cards: [], shelf: empty_shelf(), generation: 0i64, background_busy: false, selected: "", now_playing: NowPlaying { revision: 0i64, requested: false, running: false, playback: None, note: "" }, tab: 0, note: "", library_loaded: false, busy: false, open_login: false, flow: None, job: None };
 }
 
 function signed_out(m: Model, note: string): Model {
-  return Model { ...start(), client: m.client, generation: m.generation + 1i64, background_busy: m.background_busy, note: note };
+  let first = start();
+  return Model { ...first, client: m.client, generation: m.generation + 1i64, background_busy: m.background_busy, now_playing: NowPlaying { ...first.now_playing, running: m.now_playing.running }, note: note };
+}
+
+pub function restored(saved: Result[Option[api.Session], string]): Model {
+  let m = start();
+  match (saved) {
+    Ok(Some(session)) => {
+      return Model { ...m, client: session.client, refresh: session.refresh, reconnect: true, note: "Reconnecting to Yoto…" };
+    },
+    Err(note) => {
+      return Model { ...m, note: note };
+    },
+    _ => {
+      return m;
+    }
+  }
+}
+
+function forget(m: Model, note: string): Model {
+  if (m.refresh.len() > 0) {
+    return Model { ...m, reconnect: false, note: note, storage: Some(ClearSession) };
+  }
+  return signed_out(m, note);
+}
+
+function renew(m: Model): Model {
+  let session = api.Session { client: m.client, refresh: m.refresh };
+  let works = [worker.spawn((): Result[api.Tokens, api.Failure] => api.renew(session))];
+  return Model { ...m, token: "", reconnect: false, auth: works, generation: m.generation + 1i64, busy: true, note: "Reconnecting to Yoto…" };
+}
+
+function accept_auth(m: Model, result: Result[api.Tokens, api.Failure]): Model {
+  match (result) {
+    Ok(tokens) => {
+      let note = if (tokens.refresh.len() == 0) { "This Yoto sign-in is available for this session only." } else { "" };
+      return Model { ...m, token: tokens.access, refresh: tokens.refresh, storage: Some(SaveSession), session_note: note, load_after_auth: true };
+    },
+    Err(err) => {
+      if (err.expired) {
+        return forget(Model { ...m, busy: false }, err.message);
+      }
+      return Model { ...m, busy: false, note: err.message };
+    }
+  }
+}
+
+function poll_auth(own m: Model): Model {
+  let next = Model { ...m, auth: [] };
+  for work in m.auth {
+    match (work.poll()) {
+      worker.Running(again) => {
+        return Model { ...next, auth: [again] };
+      },
+      worker.Finished(result) => {
+        return accept_auth(next, result);
+      }
+    }
+  }
+  return next;
+}
+
+function save_session(m: Model, persist: (Option[api.Session]) => boolean): Model {
+  let Some(action) = m.storage else {
+    return m;
+  };
+  let next = Model { ...m, storage: None };
+  if let ClearSession = action {
+    if (persist(None)) {
+      return signed_out(next, next.note);
+    }
+    return Model { ...next, note: "Could not clear the saved sign-in. Try signing out again." };
+  }
+  let remembered: Option[api.Session] = None;
+  if (next.refresh.len() > 0) {
+    remembered = Some(api.Session { client: next.client, refresh: next.refresh });
+  }
+  if (!persist(remembered)) {
+    return Model { ...next, session_note: "Could not save this sign-in on your device." };
+  }
+  return next;
+}
+
+function close_app(own m: Model, persist: (Option[api.Session]) => boolean): Model {
+  let clean = cancel(m);
+  let next = Model { ...clean, auth: [] };
+  for work in clean.auth {
+    // A refresh token can rotate while Android closes the activity.
+    let done = save_session(accept_auth(next, work.join()), persist);
+    return Model { ...done, load_after_auth: false, busy: false };
+  }
+  return next;
 }
 
 function found(own m: Model): Model {
@@ -175,7 +285,7 @@ function track_result(own m: Model, generation: i64, index: i32, result: Result[
     },
     Err(err) => {
       if (err.expired) {
-        return signed_out(current, err.message);
+        return failed(Model { ...current }, err);
       }
       if (err.pause_index) {
         return Model { ...current, shelf: Shelf { ...current.shelf, paused: err.message } };
@@ -216,6 +326,42 @@ function selected(m: Model): Option[api.Player] {
   return None;
 }
 
+function request_playback(m: Model): Model {
+  let now = m.now_playing;
+  let Some(player) = selected(m) else {
+    return Model { ...m, now_playing: NowPlaying { ...now, revision: now.revision + 1i64, requested: false, playback: None, note: "" } };
+  };
+  let note = if (player.online) { "Checking playback…" } else { "" };
+  return Model { ...m, now_playing: NowPlaying { ...now, revision: now.revision + 1i64, requested: player.online, playback: None, note: note } };
+}
+
+function should_read_playback(m: Model): boolean {
+  return m.now_playing.requested && !m.now_playing.running && !m.busy && m.token.len() > 0;
+}
+
+function read_playback(m: Model): Model {
+  let now = m.now_playing;
+  if (!should_read_playback(m)) {
+    return m;
+  }
+  return Model { ...m, now_playing: NowPlaying { ...now, requested: false, running: true }, job: Some(ReadPlayback(m.generation, now.revision, m.token, m.selected)) };
+}
+
+function playback_result(m: Model, generation: i64, revision: i64, result: Result[player_status.Playback, string]): Model {
+  let now = NowPlaying { ...m.now_playing, running: false };
+  if (generation != m.generation || revision != now.revision) {
+    return Model { ...m, now_playing: now };
+  }
+  match (result) {
+    Ok(playback) => {
+      return Model { ...m, now_playing: NowPlaying { ...now, playback: Some(playback), note: "" } };
+    },
+    Err(_) => {
+      return Model { ...m, now_playing: NowPlaying { ...now, playback: None, note: "Playback status unavailable." } };
+    }
+  }
+}
+
 function can_control(m: Model): boolean {
   if let Some(player) = selected(m) {
     return player.online && !m.busy;
@@ -248,7 +394,9 @@ function poll_login(own m: Model): Model {
       return Model { ...next, flow: Some(waiting) };
     },
     oauth.Authorized(verifier, code) => {
-      return Model { ...next, job: Some(Exchange(next.client, verifier, code)), note: "Completing sign-in…" };
+      let client = next.client;
+      let works = [worker.spawn((): Result[api.Tokens, api.Failure] => api.exchange(client, verifier, code))];
+      return Model { ...next, auth: works, note: "Completing sign-in…" };
     },
     oauth.Failed(note) => {
       return Model { ...next, busy: false, note: note };
@@ -258,7 +406,13 @@ function poll_login(own m: Model): Model {
 
 function failed(own m: Model, err: api.Failure): Model {
   if (err.expired) {
-    return signed_out(m, err.message);
+    if (m.refresh.len() == 0) {
+      return signed_out(m, err.message);
+    }
+    if (m.library_loaded) {
+      return renew(Model { ...m, library_loaded: false });
+    }
+    return Model { ...m, token: "", busy: false, note: "Yoto could not restore access to your library. Try again." };
   }
   return Model { ...m, busy: false, note: err.message };
 }
@@ -273,9 +427,9 @@ function loaded(own m: Model, result: Result[api.Library, api.Failure]): Model {
       let shelf = Shelf { ...m.shelf, next: 0, paused: "", attempted: map_new(64), note: library.note, opened: "", track_page: 0 };
       let t = found(Model { ...m, players: library.players, cards: library.cards, shelf: shelf, library_loaded: true, busy: false, note: "" });
       if (selected(t).is_none()) {
-        return Model { ...t, selected: "" };
+        return request_playback(Model { ...t, selected: "" });
       }
-      return t;
+      return request_playback(t);
     },
     Err(err) => {
       return failed(m, err);
@@ -314,6 +468,18 @@ pub function update(own m: Model, msg: Msg): Model {
       if (m.flow.is_some()) {
         return poll_login(m);
       }
+      if (m.auth.len() > 0) {
+        return poll_auth(m);
+      }
+      if (m.reconnect) {
+        return renew(m);
+      }
+      if (m.load_after_auth) {
+        return reload(Model { ...m, load_after_auth: false });
+      }
+      if (should_read_playback(m)) {
+        return read_playback(m);
+      }
       return prepare_background(m);
     },
     Search(query) => {
@@ -340,15 +506,14 @@ pub function update(own m: Model, msg: Msg): Model {
     CoverLoaded(generation, address, data) => {
       return cover_result(m, generation, address, data);
     },
-    SignedIn(result) => {
-      match (result) {
-        Ok(token) => {
-          return reload(Model { ...m, token: token });
-        },
-        Err(err) => {
-          return failed(m, err);
-        }
+    PlaybackLoaded(generation, revision, result) => {
+      return playback_result(m, generation, revision, result);
+    },
+    RetrySignIn => {
+      if (!m.busy && m.refresh.len() > 0) {
+        return renew(m);
       }
+      return m;
     },
     LibraryLoaded(result) => {
       return loaded(m, result);
@@ -359,7 +524,7 @@ pub function update(own m: Model, msg: Msg): Model {
       }
       match (result) {
         Ok(_) => {
-          return Model { ...m, busy: false, note: "Playback request sent." };
+          return request_playback(Model { ...m, busy: false, note: "Playback request sent." });
         },
         Err(err) => {
           return failed(m, err);
@@ -374,12 +539,12 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     SignOut => {
       if (!m.busy) {
-        return signed_out(m, "");
+        return forget(m, "");
       }
       return m;
     },
     SelectPlayer(id) => {
-      return Model { ...m, selected: id };
+      return read_playback(request_playback(Model { ...m, selected: id }));
     },
     SelectTab(tab) => {
       return Model { ...m, tab: tab };
@@ -396,9 +561,6 @@ function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
   };
   return [worker.spawn((): Msg => {
     match (job) {
-      Exchange(client, verifier, code) => {
-        return SignedIn(api.exchange(client, verifier, code));
-      },
       Load(token) => {
         return LibraryLoaded(api.library(token));
       },
@@ -410,13 +572,16 @@ function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
       },
       Cover(generation, address) => {
         return CoverLoaded(generation, address, api.cover_bytes(address));
+      },
+      ReadPlayback(generation, revision, token, id) => {
+        return PlaybackLoaded(generation, revision, player_status.playback(token, id));
       }
     }
   })];
 }
 
-function effects(m: Model, open_browser: (string) => boolean, decode: (u8[]) => Option[draw.Image]): Model {
-  let t = store_cover(Model { ...m, job: None }, decode);
+function effects(m: Model, open_browser: (string) => boolean, decode: (u8[]) => Option[draw.Image], persist: (Option[api.Session]) => boolean): Model {
+  let t = save_session(store_cover(Model { ...m, job: None }, decode), persist);
   if (!t.open_login) {
     return t;
   }
@@ -436,6 +601,13 @@ function effects(m: Model, open_browser: (string) => boolean, decode: (u8[]) => 
 }
 
 function sign_in(m: Model): ui.El[Msg] {
+  if (m.refresh.len() > 0) {
+    let actions: ui.El[Msg][] = [ui.text(m.note).colored(ui.MUTED)];
+    if (!m.busy && !m.reconnect) {
+      actions = actions.append(ui.button("Try again", RetrySignIn)).append(ui.text_button("Sign out", SignOut));
+    }
+    return ui.card(actions).spaced(12.0).wide();
+  }
   let items: ui.El[Msg][] = [
     ui.text("Works with Yoto").sized(16.0).colored(ui.MUTED),
     ui.text("Connect your account to see your players and library.").sized(20.0).weighted(600),
@@ -472,6 +644,36 @@ function player_row(player: api.Player, active: boolean): ui.El[Msg] {
   return ui.column([row]).padding_xy(0.0, 4.0).wide();
 }
 
+function playing_info(m: Model): ui.El[Msg][] {
+  let now = m.now_playing;
+  if (now.note.len() > 0) {
+    return [ui.text(now.note).colored(ui.MUTED)];
+  }
+  let Some(playback) = now.playback else {
+    return [];
+  };
+  if (playback.state != "playing" && playback.state != "paused") {
+    return [];
+  }
+  let state = if (playback.state == "paused") { "Paused" } else { "Playing" };
+  let items: ui.El[Msg][] = [ui.text(state).colored(ui.PRIMARY).weighted(600)];
+  let any_title = "";
+  for card in m.cards {
+    if (card.id == playback.card) {
+      any_title = card.title;
+      break;
+    }
+  }
+  let detail = if (playback.track.len() > 0) { playback.track } else { playback.chapter };
+  if (any_title.len() > 0) {
+    items = items.append(ui.text(any_title).sized(17.0).weighted(600).clamped(2));
+  }
+  if (detail.len() > 0 && detail != any_title) {
+    items = items.append(ui.text(detail).colored(ui.MUTED).clamped(2));
+  }
+  return [ui.card(items).spaced(4.0).wide()];
+}
+
 function player_list(m: Model): ui.El[Msg] {
   let picker = ui.space[Msg]();
   if (m.players.len() > 0) {
@@ -481,7 +683,7 @@ function player_list(m: Model): ui.El[Msg] {
   } else if (m.library_loaded) {
     picker = ui.text[Msg]("No players linked to this account.").colored(ui.MUTED);
   }
-  let items: ui.El[Msg][] = [ui.text("Your players").sized(23.0).weighted(700)];
+  let items: ui.El[Msg][] = [ui.text[Msg]("Your players").sized(23.0).weighted(700)].concat(playing_info(m));
   if (can_control(m)) {
     items = items.append(ui.row([
       ui.text_button("Pause", Control(api.Pause)),
@@ -590,19 +792,22 @@ function card_details(m: Model, card: api.Card): ui.El[Msg] {
   return ui.column(items).spaced(12.0).wide().tall();
 }
 
-function library_status(m: Model): string {
+function library_status(m: Model, has_matches: boolean): string {
   if (!m.library_loaded) {
     return "";
   }
   let ready = m.cards.filter((c: api.Card): boolean => c.indexed).len();
   let total = m.cards.len();
   if (m.shelf.paused.len() > 0) {
+    if (has_matches) {
+      return "";
+    }
     return "Track search is incomplete. " + m.shelf.paused;
   }
   if (m.shelf.next < total || m.background_busy && ready < total) {
     return "Track search: " + ready.to_string() + " of " + total.to_string() + " titles indexed";
   }
-  if (ready < total) {
+  if (ready < total && !has_matches) {
     return "Track information is unavailable for " + (total - ready).to_string() + " titles.";
   }
   return "";
@@ -625,8 +830,9 @@ function card_list(m: Model): ui.El[Msg] {
     ui.tabs(["All", "Cards", "MYO", "Podcasts", "Radio"], shelf.filter, (at: i32): Msg => Filter(at)),
     ui.text(target).colored(ui.MUTED).clamped(2),
   ];
-  let status = library_status(m);
-  if (shelf.note.len() > 0) {
+  let has_matches = shelf.query.trim().len() > 0 && shelf.hits.len() > 0;
+  let status = library_status(m, has_matches);
+  if (shelf.note.len() > 0 && !has_matches) {
     fields = fields.append(ui.text(shelf.note).colored(ui.MUTED));
   }
   if (status.len() > 0) {
@@ -662,10 +868,19 @@ pub function view(m: Model, screen: ui.Screen): ui.El[Msg] {
   if (m.note.len() > 0) {
     items = items.append(ui.text(m.note).colored(ui.MUTED));
   }
+  if (m.session_note.len() > 0) {
+    items = items.append(ui.text(m.session_note).colored(ui.MUTED));
+  }
   return ui.column(items.append(body)).spaced(14.0).padding(16.0).wide().tall();
 }
 
 function wait(m: Model): i32 {
+  if (m.reconnect || m.load_after_auth || should_read_playback(m)) {
+    return 0;
+  }
+  if (m.auth.len() > 0) {
+    return 100;
+  }
   if (m.flow.is_some()) {
     return 150;
   }
@@ -676,14 +891,14 @@ function wait(m: Model): i32 {
   return -1;
 }
 
-pub function program(open_browser: (string) => boolean, decode: (u8[]) => Option[draw.Image]): ui.Program[Model, Msg] {
-  return ui.program(view, update).with_effects((m: Model): Model => effects(m, open_browser, decode)).with_jobs(start_job).with_tick(wait, Msg.Tick).with_back((m: Model): Option[Msg] => {
+pub function program(open_browser: (string) => boolean, decode: (u8[]) => Option[draw.Image], persist: (Option[api.Session]) => boolean): ui.Program[Model, Msg] {
+  return ui.program(view, update).with_effects((m: Model): Model => effects(m, open_browser, decode, persist)).with_jobs(start_job).with_tick(wait, Msg.Tick).with_back((m: Model): Option[Msg] => {
     if (m.tab == 1 && m.shelf.opened.len() > 0) {
       return Some(CloseCard);
     }
     return None;
-  }).with_close((own m: Model): own Model => cancel(m)).with_state(
+  }).with_close((own m: Model): own Model => close_app(m, persist)).with_state(
     (m: Model, k: kv.Store): kv.Store => k.set("client_id", m.client),
-    (own m: Model, k: kv.Store): own Model => Model { ...m, client: k.get("client_id").unwrap_or("") },
+    (own m: Model, k: kv.Store): own Model => Model { ...m, client: if (m.refresh.len() > 0) { m.client } else { k.get("client_id").unwrap_or(m.client) } },
   ).with_theme((dark: boolean): ui.Theme => ui.seeded(draw.rgb(90, 87, 165), dark));
 }

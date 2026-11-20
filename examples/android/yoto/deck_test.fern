@@ -1,3 +1,4 @@
+import "std/android";
 import "std/android/draw";
 import "std/android/fonts";
 import "std/android/testkit";
@@ -6,10 +7,12 @@ import "std/android/ui";
 import "std/android/ui/sim";
 import "std/json";
 import "std/test";
+import "std/worker";
 import "./api";
 import "./deck";
 import "./oauth";
 import "./search";
+import "./player_status";
 
 function test_pkce(): test.TestOutcome {
   let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
@@ -128,7 +131,7 @@ function preview(s: sim.Sim[deck.Model, deck.Msg], name: string): void {
 }
 
 function simulator(own model: deck.Model): sim.Sim[deck.Model, deck.Msg] {
-  let real = deck.program((address: string): boolean => false, (data: u8[]): Option[draw.Image] => None);
+  let real = deck.program((address: string): boolean => false, (data: u8[]): Option[draw.Image] => None, (saved: Option[api.Session]): boolean => true);
   let dry = ui.program(deck.view, deck.update).with_theme_of(real.theme);
   return sim.start(model, dry, test_fonts(), 720, 1600, 2.0);
 }
@@ -173,6 +176,89 @@ function test_search_in_ui(): test.TestOutcome {
   return test.assert_eq(sim.shows(s, "Back to library") && sim.shows(s, "Fox at dusk"), true);
 }
 
+function test_saved_session(): test.TestOutcome {
+  let original = api.Session { client: "client", refresh: "first" };
+  let saved = cell_new(Some(original));
+  let p = deck.program(
+    (address: string): boolean => false,
+    (data: u8[]): Option[draw.Image] => None,
+    (current: Option[api.Session]): boolean => {
+      saved.set(current);
+      return true;
+    },
+  );
+  let m = deck.restored(Ok(Some(original)));
+  if (p.wait(m) != 0 || m.client != "client") {
+    return test.fail("the saved account must reconnect on launch");
+  }
+  let rotated = api.token_reply(200, json.parse("{\"access_token\":\"access\",\"refresh_token\":\"second\"}").unwrap_or(json.JNull));
+  let auth = [worker.spawn((): Result[api.Tokens, api.Failure] => rotated)];
+  let closed = p.close(deck.Model { ...m, reconnect: false, auth: auth, busy: true });
+  let Some(token) = saved.get() else {
+    return test.fail("the new refresh token must be saved during close");
+  };
+  let signed_out = p.effects(deck.update(deck.restored(Ok(Some(token))), deck.SignOut));
+  return test.assert_eq(token.refresh == "second" && saved.get().is_none() && signed_out.refresh.len() == 0, true);
+}
+
+function test_token_errors(): test.TestOutcome {
+  let revoked = json.parse("{\"error\":\"invalid_grant\"}").unwrap_or(json.JNull);
+  let Err(expired) = api.token_reply(400, revoked) else {
+    return test.fail("a revoked refresh token must require a new sign-in");
+  };
+  let Err(temporary) = api.token_reply(503, json.JNull) else {
+    return test.fail("a server failure must report a retryable sign-in");
+  };
+  return test.assert_eq(expired.expired && !temporary.expired, true);
+}
+
+function library_sim(): sim.Sim[deck.Model, deck.Msg] {
+  let players = [api.Player { id: "one", name: "Bedroom", online: true }, api.Player { id: "two", name: "Living room", online: true }];
+  let m = deck.Model { ...deck.start(), token: "test session" };
+  let library = api.Library { players: players, cards: fixture_cards(), note: "" };
+  return simulator(deck.update(m, deck.LibraryLoaded(Ok(library))));
+}
+
+function test_held_backspace(): test.TestOutcome {
+  let s = sim.tap(library_sim(), "Library");
+  s = sim.type_in(s, "library-search", "woodland");
+  s = sim.event(s, android.Key(67, 0));
+  s = sim.after(s, 700i64);
+  let remaining = s.shell.app.shelf.query;
+  s = sim.event(s, android.Key(67, 1));
+  s = sim.after(s, 800i64);
+  return test.assert_eq(remaining == "wood" && s.shell.app.shelf.query == remaining, true);
+}
+
+function test_successful_search_hides_sync_error(): test.TestOutcome {
+  let s = sim.tap(library_sim(), "Library");
+  let problem = api.Failure { ...api.failure("Network unavailable."), pause_index: true };
+  let generation = s.shell.app.generation;
+  s = sim.send(s, deck.TracksLoaded(generation, 0, Err(problem)));
+  s = sim.type_in(s, "library-search", "woodland");
+  if (!sim.shows(s, "Woodland Walk") || sim.shows(s, "Track search is incomplete. Network unavailable.")) {
+    return test.fail("a search with matches must show the results without the sync error");
+  }
+  s = sim.type_in(s, "library-search", "no result");
+  return test.assert_eq(sim.shows(s, "Track search is incomplete. Network unavailable."), true);
+}
+
+function test_player_playback(): test.TestOutcome {
+  let Some(playing) = player_status.event("{\"playbackStatus\":\"playing\",\"cardId\":\"book\",\"trackTitle\":\"Fox at dusk\"}".bytes()) else {
+    return test.fail("the player playback event must parse");
+  };
+  let s = sim.tap(library_sim(), "Bedroom, Online");
+  let before = s.shell.app;
+  s = sim.tap(s, "Living room, Online");
+  s = sim.send(s, deck.PlaybackLoaded(before.generation, before.now_playing.revision, Ok(playing)));
+  if (sim.shows(s, "Playing")) {
+    return test.fail("a late status from the previous player must be ignored");
+  }
+  let state = s.shell.app;
+  s = sim.send(s, deck.PlaybackLoaded(state.generation, state.now_playing.revision, Ok(player_status.Playback { ...playing, state: "paused" })));
+  return test.assert_eq(sim.shows(s, "Paused") && sim.shows(s, "Woodland Walk") && sim.shows(s, "Fox at dusk"), true);
+}
+
 function main(): i32 {
   let r = test.new("Story Deck");
   r = r.it("PKCE matches the standard example", test_pkce);
@@ -184,5 +270,10 @@ function main(): i32 {
   r = r.it("track playback addresses the exact chapter and track", test_exact_track);
   r = r.it("the search box opens a matching track's card", test_search_in_ui);
   r = r.it("cards can play on a selected online player", test_player_selection);
+  r = r.it("save a rotated session before close and clear it on sign-out", test_saved_session);
+  r = r.it("distinguish token rejection from a retryable error", test_token_errors);
+  r = r.it("hold Backspace in search and stop on release", test_held_backspace);
+  r = r.it("a search with matches keeps the sync error out of the results", test_successful_search_hides_sync_error);
+  r = r.it("show the selected player's paused track", test_player_playback);
   return r.finish();
 }

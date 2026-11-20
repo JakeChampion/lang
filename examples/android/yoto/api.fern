@@ -28,6 +28,10 @@ pub struct Card {
 
 pub struct Failure { message: string, expired: boolean, pause_index: boolean }
 
+pub struct Tokens { access: string, refresh: string }
+
+pub struct Session { client: string, refresh: string }
+
 pub struct Library { players: Player[], cards: Card[], note: string }
 
 pub enum Command { Play(string), PlayTrack(string, string, string), Pause, Resume, Stop }
@@ -36,12 +40,17 @@ pub function failure(message: string): Failure {
   return Failure { message: message, expired: false, pause_index: false };
 }
 
-function send(req: fetch.Request): Result[json.JsonValue, Failure] {
-  let seconds = time.duration_seconds(10i64);
+function response(req: fetch.Request, limit: i64): Result[HttpResponse, Failure] {
+  let seconds = time.duration_seconds(limit);
   let opts = fetch.Timeouts { connect: seconds, inactivity: seconds, total: seconds };
   let Ok(resp) = fetch.send(req.with_redirects(0).with_timeouts(opts)) else {
     return Err(Failure { ...failure("Could not reach Yoto. Check your connection and try again."), pause_index: true });
   };
+  return Ok(resp);
+}
+
+function send(req: fetch.Request): Result[json.JsonValue, Failure] {
+  let resp = response(req, 10i64)?;
   if (resp.status == 401) {
     return Err(Failure { message: "Your Yoto session expired. Connect again.", expired: true, pause_index: true });
   }
@@ -60,20 +69,42 @@ function send(req: fetch.Request): Result[json.JsonValue, Failure] {
   return Ok(value);
 }
 
-pub function exchange(client: string, verifier: string, code: string): Result[string, Failure] {
-  let form = url.query_encode([
+pub function token_reply(status: i32, value: json.JsonValue): Result[Tokens, Failure] {
+  if (status != 200) {
+    if ((status == 400 || status == 401 || status == 403) && json.get_string(value, "error").unwrap_or("") == "invalid_grant") {
+      return Err(Failure { ...failure("Your Yoto sign-in expired. Connect again."), expired: true });
+    }
+    return Err(failure("Yoto could not complete sign-in (HTTP " + status.to_string() + "). Try again."));
+  }
+  let access = json.get_string(value, "access_token").unwrap_or("");
+  if (access.len() == 0) {
+    return Err(failure("Yoto did not return a session token."));
+  }
+  return Ok(Tokens { access: access, refresh: json.get_string(value, "refresh_token").unwrap_or("") });
+}
+
+function token_request(fields: (string, string)[]): Result[Tokens, Failure] {
+  let req = fetch.request("POST", oauth.LOGIN + "/oauth/token").with_header("Content-Type", "application/x-www-form-urlencoded").with_text(url.query_encode(fields));
+  let resp = response(req, 5i64)?;
+  return token_reply(resp.status, json.parse(resp.body_text_lossy()).unwrap_or(json.JNull));
+}
+
+pub function exchange(client: string, verifier: string, code: string): Result[Tokens, Failure] {
+  return token_request([
     ("grant_type", "authorization_code"),
     ("client_id", client),
     ("code_verifier", verifier),
     ("code", code),
     ("redirect_uri", oauth.REDIRECT),
   ]);
-  let response = send(fetch.request("POST", oauth.LOGIN + "/oauth/token").with_header("Content-Type", "application/x-www-form-urlencoded").with_text(form))?;
-  let token = json.get_string(response, "access_token").unwrap_or("");
-  if (token.len() == 0) {
-    return Err(failure("Yoto did not return a session token."));
-  }
-  return Ok(token);
+}
+
+pub function renew(saved: Session): Result[Tokens, Failure] {
+  return token_request([
+    ("grant_type", "refresh_token"),
+    ("client_id", saved.client),
+    ("refresh_token", saved.refresh),
+  ]);
 }
 
 function request(token: string, method: string, path: string): fetch.Request {

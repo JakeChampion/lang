@@ -3,7 +3,8 @@
 Story Deck is an independent Fern companion for Yoto players. The family library
 shows cover art for purchased cards, linked cards, Make Your Own cards, saved
 podcasts, and saved radio. Select an online player to play a title, pause, resume,
-or stop playback.
+or stop playback. Select a player to check the title and track when it plays or
+pauses.
 
 ## Browse and search
 
@@ -25,10 +26,11 @@ or stop playback.
    browser receives the sign-in response.
 
 Enable `family:library:view` for the public client to read the family library.
-Sign out and connect again to grant this permission after an upgrade. Story
-Deck also requests access to Make Your Own cards and player playback. It keeps
-the access token in memory for the session and saves the public client ID on
-the device. Use **Sign out** to clear the session and the library.
+Story Deck also requests access to Make Your Own cards and player playback.
+Sign in once after an upgrade to grant `offline_access`. Story Deck uses
+Android Keystore to save the refresh token on this device. It restores the
+session when you open the app. Use **Sign out** to clear the saved session and
+the library.
 
 ## Build and test
 
@@ -48,3 +50,4 @@ registered public client and access to a Yoto player.
 - [Yoto public-client sign-in](https://yoto.dev/authentication/headless-cli-auth/)
 - [Yoto library permissions](https://yoto.dev/authentication/scopes/)
 - [Yoto player and playback commands](https://yoto.dev/players-mqtt/mqtt-docs/)
+- [Yoto player status](https://yoto.dev/players-mqtt/getting-player-status/)

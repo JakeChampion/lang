@@ -1,0 +1,225 @@
+import "std/base64";
+import "std/http";
+import "std/http/websocket" as ws;
+import "std/json";
+import "std/rand";
+import "std/string";
+import "std/time";
+import "std/tls/client" as tls;
+import "std/tls/verify";
+import "std/utf8";
+
+const HOST: string = "aqrphjqbp3u2z-ats.iot.eu-west-2.amazonaws.com";
+
+const LIMIT: i32 = 65536;
+
+pub struct Playback { state: string, card: string, chapter: string, track: string }
+
+struct Wire { conn: tls.Connection, input: u8[], mqtt: u8[] }
+
+struct Frame { code: i32, data: u8[], end: i32 }
+
+struct Packet { header: i32, data: u8[], end: i32 }
+
+pub function event(bytes: u8[]): Option[Playback] {
+  let Ok(value) = json.parse(utf8.from_bytes_lossy(bytes)) else {
+    return None;
+  };
+  let state = json.get_string(value, "playbackStatus").unwrap_or("");
+  if (state.len() == 0) {
+    return None;
+  }
+  return Some(Playback {
+    state: state,
+    card: json.get_string(value, "cardId").unwrap_or(""),
+    chapter: json.get_string(value, "chapterTitle").unwrap_or(""),
+    track: json.get_string(value, "trackTitle").unwrap_or(""),
+  });
+}
+
+function write(w: Wire, data: u8[]): Result[Wire, string] {
+  let Ok(conn) = w.conn.write(data) else {
+    return Err("Could not send the player status request.");
+  };
+  return Ok(Wire { ...w, conn: conn });
+}
+
+function read(w: Wire, until: i64): Result[Wire, string] {
+  let left = until - monotonic_ns();
+  if (left <= 0i64) {
+    return Err("The player did not report playback status.");
+  }
+  let Ok(got) = w.conn.read(time.duration_nanos(left)) else {
+    return Err("Could not read the player status.");
+  };
+  let input = w.input.concat(got.data);
+  if (got.data.len() == 0 || input.len() > LIMIT) {
+    return Err("The player did not report playback status.");
+  }
+  return Ok(Wire { ...w, conn: got.conn, input: input });
+}
+
+function upgrade(w: Wire, until: i64): Result[Wire, string] {
+  let key = base64.encode(rand.bytes(16));
+  let req = "GET /mqtt HTTP/1.1\r\nHost: " + HOST + "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: mqtt\r\nSec-WebSocket-Key: " + key + "\r\n\r\n";
+  let state = write(w, req.bytes())?;
+  let limit = http.HttpLimits { ...http.limits(), header_bytes: 8192 };
+  while (true) {
+    match (http.parse_response_framed(state.input, "GET", false, limit)) {
+      http.Complete(reply) => {
+        let response = reply.response;
+        if (response.status != 101 || response.headers.get("sec-websocket-accept").unwrap_or("") != ws.accept_key(key) || response.headers.get("sec-websocket-protocol").unwrap_or("") != "mqtt") {
+          return Err("Yoto could not open the player status channel.");
+        }
+        return Ok(Wire { ...state, input: state.input.drop(reply.len) });
+      },
+      http.Incomplete => {
+        state = read(state, until)?;
+      },
+      http.Malformed(_) => {
+        return Err("Yoto returned an invalid player status response.");
+      }
+    }
+  }
+  return Err("Could not open the player status channel.");
+}
+
+function frame(input: u8[]): Result[Option[Frame], string] {
+  if (input.len() < 2) {
+    return Ok(None);
+  }
+  if ((input[0] as i32 & 112) != 0 || (input[1] as i32 & 128) != 0) {
+    return Err("Yoto returned an invalid player status frame.");
+  }
+  let size = input[1] as i32;
+  let start = 2;
+  if (size == 127) {
+    return Err("The player status response is too large.");
+  }
+  if (size == 126) {
+    if (input.len() < 4) {
+      return Ok(None);
+    }
+    size = input[2] as i32 << 8 | input[3] as i32;
+    start = 4;
+  }
+  let end = start + size;
+  if (end > input.len()) {
+    return Ok(None);
+  }
+  return Ok(Some(Frame { code: input[0] as i32 & 15, data: input.drop(start).take(size), end: end }));
+}
+
+function packet(input: u8[]): Result[Option[Packet], string] {
+  let size = 0;
+  let scale = 1;
+  for i in 1..5 {
+    if (i >= input.len()) {
+      return Ok(None);
+    }
+    let v = input[i] as i32;
+    size += (v & 127) * scale;
+    if (size > LIMIT) {
+      return Err("The player status response is too large.");
+    }
+    if ((v & 128) == 0) {
+      let end = i + 1 + size;
+      if (end > input.len()) {
+        return Ok(None);
+      }
+      return Ok(Some(Packet { header: input[0] as i32, data: input.drop(i + 1).take(size), end: end }));
+    }
+    scale *= 128;
+  }
+  return Err("Yoto returned an invalid player status packet.");
+}
+
+function next_packet(w: Wire, until: i64): Result[(Wire, Packet), string] {
+  let state = w;
+  while (monotonic_ns() < until) {
+    if let Some(p) = packet(state.mqtt)? {
+      return Ok((Wire { ...state, mqtt: state.mqtt.drop(p.end) }, p));
+    }
+    let Some(f) = frame(state.input)? else {
+      state = read(state, until)?;
+      continue;
+    };
+    state = Wire { ...state, input: state.input.drop(f.end) };
+    if (f.code == 8) {
+      return Err("Yoto closed the player status channel.");
+    }
+    if (f.code == 9) {
+      state = write(state, ws.frame(true, 10, f.data, rand.bytes(4)))?;
+    }
+    if (f.code == 0 || f.code == 2) {
+      let incoming = state.mqtt.concat(f.data);
+      if (incoming.len() > LIMIT) {
+        return Err("The player status response is too large.");
+      }
+      state = Wire { ...state, mqtt: incoming };
+    }
+  }
+  return Err("The player did not report playback status.");
+}
+
+function text(s: string): u8[] {
+  return [(s.len() >> 8) as u8, s.len() as u8].concat(s.bytes());
+}
+
+function send(w: Wire, kind: u8, payload: u8[]): Result[Wire, string] {
+  let head = [kind];
+  let length = payload.len();
+  while (length >= 128) {
+    head = head.append((128 | length & 127) as u8);
+    length = length >> 7;
+  }
+  return write(w, ws.frame(true, 2, head.append(length as u8).concat(payload), rand.bytes(4)));
+}
+
+function listen(w: Wire, token: string, id: string, until: i64): Result[Playback, string] {
+  let client = "STORY" + base64.encode_url(rand.bytes(12));
+  let user = id + "?x-amz-customauthorizer-name=PublicJWTAuthorizer";
+  let connect: u8[] = [0, 4, 77, 81, 84, 84, 4, 194, 0, 30];
+  let begun = send(w, 16u8, connect.concat(text(client)).concat(text(user)).concat(text(token)))?;
+  let (active, connected) = next_packet(begun, until)?;
+  if (connected.header != 32 || connected.data != [0u8, 0u8]) {
+    return Err("Yoto denied the player status request.");
+  }
+  let topic = "device/" + id + "/data/events";
+  let sent = send(active, 130u8, [0u8, 1u8].concat(text(topic)).append(0u8))?;
+  let (ready, subscribed) = next_packet(sent, until)?;
+  if (subscribed.header != 144 || subscribed.data != [0u8, 1u8, 0u8]) {
+    return Err("Yoto denied access to player events.");
+  }
+  let current = send(ready, 48u8, text("device/" + id + "/command/events/request"))?;
+  let prefix = text(topic);
+  while (monotonic_ns() < until) {
+    let (next, p) = next_packet(current, until)?;
+    current = next;
+    if (p.header != 48 || p.data.take(prefix.len()) != prefix) {
+      continue;
+    }
+    if let Some(state) = event(p.data.drop(prefix.len())) {
+      let closed = current.conn.close();
+      return Ok(state);
+    }
+  }
+  return Err("The player did not report playback status.");
+}
+
+pub function playback(token: string, id: string): Result[Playback, string] {
+  if (id.len() == 0 || id.len() > 100 || !id.contains_only("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") || token.len() == 0 || token.len() > 16000) {
+    return Err("The player status request is incomplete.");
+  }
+  let Some(roots) = verify.system_roots() else {
+    return Err("Device certificates are unavailable.");
+  };
+  let config = tls.config(HOST, roots);
+  let Ok(conn) = tls.connect(HOST, 443, config, time.duration_seconds(5i64)) else {
+    return Err("Could not connect to the player status service.");
+  };
+  defer conn.close();
+  let until = monotonic_ns() + 8000000000i64;
+  let wire = upgrade(Wire { conn: conn, input: [], mqtt: [] }, until)?;
+  return listen(wire, token, id, until);
+}
