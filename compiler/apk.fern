@@ -259,10 +259,10 @@ pub function manifest_tree(app: App): androidxml.Element {
     activity_attrs = activity_attrs.append(attr("icon", androidxml.REFERENCE, ICON_ID));
   }
   app_attrs = app_attrs.append(flag("hasCode", app.dex.len() > 0));
-  app_attrs = app_attrs.append(flag("allowBackup", app.backup));
   if (app.debuggable) {
     app_attrs = app_attrs.append(flag("debuggable", true));
   }
+  app_attrs = app_attrs.append(flag("allowBackup", app.backup));
   if (app.banner.len() > 0) {
     app_attrs = app_attrs.append(attr("banner", androidxml.REFERENCE, banner_id(app)));
   }
