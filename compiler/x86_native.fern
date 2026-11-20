@@ -2203,7 +2203,7 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
 // prefix, then a ModRM and SIB with no base and no index, then a 32-bit DISP.
 function x86_gas_movq_fs(own a: X86Asm, src: string, dst: string): X86Asm {
   let r = x86_gas_reg64(dst);
-  let at = slice_unchecked(src, 4, src.len()) + "";
+  let at = slice_unchecked(src, 4, src.len()).to_owned();
   if (r < 0 || x86_gas_has_paren(at)) {
     return x86_gas_bad(a, "movq " + src + ", " + dst);
   }
