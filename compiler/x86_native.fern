@@ -988,9 +988,33 @@ function x86_align4(n: i32): i32 {
   return p;
 }
 
+// The label table of `a` with eight times its buckets. Each chain keeps the
+// order in which its labels came, so a lookup finds the first of a name.
+function x86_more_buckets(own a: X86Asm): X86Asm {
+  let n = a.lab_head.len() * 8 + 3;
+  let head = util.minus_ones(n);
+  let tail = util.minus_ones(n);
+  let next = a.lab_next;
+  for at in 0..a.lab_names.len() {
+    let b = util.hash_bucket(a.lab_names[at], n);
+    next = next.with(at, -1);
+    if (tail[b] < 0) {
+      head = head.with(b, at);
+    } else {
+      next = next.with(tail[b], at);
+    }
+    tail = tail.with(b, at);
+  }
+  return X86Asm { ...a, lab_head: head, lab_next: next, lab_tail: tail };
+}
+
 function x86_add_label(own a: X86Asm, name: string, sec: i32, off: i32): X86Asm {
+  // A chain of more than four labels for each bucket makes each lookup slow.
+  if (a.lab_names.len() >= a.lab_head.len() * 4) {
+    a = x86_more_buckets(a);
+  }
   let at = a.lab_names.len();
-  let b = util.hash_bucket(name, 4093);
+  let b = util.hash_bucket(name, a.lab_head.len());
   let prev = a.lab_tail[b];
   a = X86Asm { ...a, lab_names: a.lab_names.append(name) };
   a = X86Asm { ...a, lab_secs: a.lab_secs.append(sec) };
@@ -1114,7 +1138,7 @@ function x86_bss_skip(own a: X86Asm, n: i32): X86Asm {
 }
 
 function x86_label_idx(a: X86Asm, name: string): i32 {
-  let i = a.lab_head[util.hash_bucket(name, 4093)];
+  let i = a.lab_head[util.hash_bucket(name, a.lab_head.len())];
   while (i >= 0) {
     if (a.lab_names[i] == name) {
       return i;
@@ -6434,8 +6458,9 @@ struct GasLabels {
 
 function x86_gas_label_table(pl: GasLine[], nids: i32): GasLabels {
   let names: string[] = [];
-  let head = gas.empty_buckets();
-  let tail = gas.empty_buckets();
+  // A line has one label at most, so the chains stay short.
+  let head = util.minus_ones(gas.label_buckets() + pl.len() / 2);
+  let tail = util.minus_ones(head.len());
   let next: i32[] = [];
   let twice: string[] = [];
   let li = 0;
@@ -6449,7 +6474,7 @@ function x86_gas_label_table(pl: GasLine[], nids: i32): GasLabels {
       twice = twice.append(name);
     }
     let at = names.len();
-    let b = util.hash_bucket(name, 4093);
+    let b = util.hash_bucket(name, head.len());
     let prev = tail[b];
     names = names.append(name);
     next = next.append(-1);
@@ -6480,7 +6505,7 @@ function x86_gas_number_label(name: string): boolean {
 }
 
 function x86_bucket_find(names: string[], head: i32[], next: i32[], name: string): i32 {
-  let i = head[util.hash_bucket(name, 4093)];
+  let i = head[util.hash_bucket(name, head.len())];
   while (i >= 0) {
     if (names[i] == name) {
       return i;
