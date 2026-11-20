@@ -452,25 +452,25 @@ function io_error_shape(variant: string): string {
 
 pub function tid_globals_section(structs: irtables.StructTab): string {
   let parts: string[] = [];
-  let seen: string[] = [];
+  let seen = util.name_index([]);
   for i in 0..structs.decls.len() {
     let shape = irtables.decl_shape(structs.decls[i]);
-    if (util.index_of_str(seen, shape) < 0) {
-      seen = seen.append(shape);
+    if (!seen.has(shape)) {
+      seen = seen.added(shape);
       parts = parts.append("  (global " + tid_global(shape) + " i32 (i32.const " + util.i32_to_string(i) + "))\n");
     }
   }
   let prims = irtables.prim_type_ids();
   for p in 0..prims.len() {
-    if (util.index_of_str(seen, prims[p]) < 0) {
-      seen = seen.append(prims[p]);
+    if (!seen.has(prims[p])) {
+      seen = seen.added(prims[p]);
       parts = parts.append("  (global " + tid_global(prims[p]) + " i32 (i32.const " + util.i32_to_string(irtables.prim_type_id(structs, prims[p])) + "))\n");
     }
   }
   let named = tid_named();
   for n in 0..named.len() {
-    if (util.index_of_str(seen, named[n]) < 0) {
-      seen = seen.append(named[n]);
+    if (!seen.has(named[n])) {
+      seen = seen.added(named[n]);
       parts = parts.append("  (global " + tid_global(named[n]) + " i32 (i32.const " + util.i32_to_string(struct_type_id(structs, named[n])) + "))\n");
     }
   }
