@@ -10,6 +10,8 @@ An array combines flat storage with a shape, strides, and an offset. These field
 
 A view can have different strides from a packed row-major array. Operations that require packed data must use the layout contract rather than shape alone.
 
+Use `try_from_flat` and `try_reshape` for caller-supplied dimensions. They return `None` for a negative extent, an overflowing element count, or a count that differs from the data length. A successful reshape preserves logical element order, including for a transposed view. `try_broadcast_to` returns `None` if the target has fewer axes, an invalid count, or a trailing extent incompatible with the source.
+
 ## Executable example
 
 ```fern test name=std-ndarray-example
@@ -104,30 +106,30 @@ function shape_error(): void {
   exit(134);
 }
 
-function check_shape(shape: i32[]): void {
+function shape_count(shape: i32[]): i32 {
   let n = 1;
   let k = 0;
   while (k < shape.len()) {
-    if (shape[k] < 0) {
-      shape_error();
+    let extent = shape[k];
+    if (extent < 0 || (extent != 0 && n > 2147483647 / extent)) {
+      return -1;
     }
-    if (shape[k] != 0 && n > 2147483647 / shape[k]) {
-      shape_error();
-    }
-    n *= shape[k];
-    k += 1;
-  }
-}
-
-function count_of(shape: i32[]): i32 {
-  check_shape(shape);
-  let n = 1;
-  let k = 0;
-  while (k < shape.len()) {
-    n *= shape[k];
+    n *= extent;
     k += 1;
   }
   return n;
+}
+
+function count_of(shape: i32[]): i32 {
+  let n = shape_count(shape);
+  if (n < 0) {
+    shape_error();
+  }
+  return n;
+}
+
+function check_shape(shape: i32[]): void {
+  count_of(shape);
 }
 
 function row_major(shape: i32[]): i32[] {
@@ -152,11 +154,22 @@ function row_major(shape: i32[]): i32[] {
 
 ```fern
 <<4 pub function from_flat[T](data: T[], shape: i32[]): NdArray[T]>>=
+function flat_array[T](data: T[], shape: i32[]): NdArray[T] {
+  return NdArray { data: data, shape: shape, strides: row_major(shape), offset: 0 };
+}
+
+pub function try_from_flat[T](data: T[], shape: i32[]): Option[NdArray[T]] {
+  if (shape_count(shape) != data.len()) {
+    return None;
+  }
+  return Some(flat_array(data, shape));
+}
+
 pub function from_flat[T](data: T[], shape: i32[]): NdArray[T] {
-  if (count_of(shape) != data.len()) {
+  if (shape_count(shape) != data.len()) {
     shape_error();
   }
-  return NdArray { data: data, shape: shape, strides: row_major(shape), offset: 0 };
+  return flat_array(data, shape);
 }
 
 pub function (a: NdArray[T]) shape(): i32[] {
@@ -324,13 +337,24 @@ pub function (a: NdArray[T]) select(axis: i32, i: i32): NdArray[T] {
 }
 
 pub function (a: NdArray[T]) reshape(shape: i32[]): NdArray[T] {
-  if (count_of(shape) != a.len()) {
+  if (shape_count(shape) != a.len()) {
     shape_error();
   }
+  return reshaped(a, shape);
+}
+
+pub function (a: NdArray[T]) try_reshape(shape: i32[]): Option[NdArray[T]] {
+  if (shape_count(shape) != a.len()) {
+    return None;
+  }
+  return Some(reshaped(a, shape));
+}
+
+function reshaped[T](a: NdArray[T], shape: i32[]): NdArray[T] {
   if (a.is_row_major()) {
     return NdArray { data: a.data, shape: shape, strides: row_major(shape), offset: a.offset };
   }
-  return from_flat(copy_flat(a), shape);
+  return flat_array(copy_flat(a), shape);
 }
 
 pub function (a: NdArray[T]) packed(): NdArray[T] {
@@ -459,11 +483,10 @@ pub function broadcast_shape(x: i32[], y: i32[]): i32[] {
   return out;
 }
 
-pub function (a: NdArray[T]) broadcast_to(shape: i32[]): NdArray[T] {
-  check_shape(shape);
+pub function (a: NdArray[T]) try_broadcast_to(shape: i32[]): Option[NdArray[T]] {
   let pad = shape.len() - a.shape.len();
-  if (pad < 0) {
-    shape_error();
+  if (pad < 0 || shape_count(shape) < 0) {
+    return None;
   }
   let strides = zeros(shape.len());
   let k = 0;
@@ -471,11 +494,19 @@ pub function (a: NdArray[T]) broadcast_to(shape: i32[]): NdArray[T] {
     if (a.shape[k] == shape[pad + k]) {
       strides = strides.with(pad + k, a.strides[k]);
     } else if (a.shape[k] != 1) {
-      shape_error();
+      return None;
     }
     k += 1;
   }
-  return NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset };
+  return Some(NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset });
+}
+
+pub function (a: NdArray[T]) broadcast_to(shape: i32[]): NdArray[T] {
+  match (a.try_broadcast_to(shape)) {
+    Some(view) => { return view; },
+    None => { shape_error(); }
+  }
+  return a;
 }
 
 pub function (a: NdArray[T]) zip_with[U, V](b: NdArray[U], f: (T, U) => V): NdArray[V] {

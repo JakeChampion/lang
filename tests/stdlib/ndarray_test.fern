@@ -44,6 +44,29 @@ function test_get_is_none_out_of_range(): test.TestOutcome {
   return test.assert_true(a.get([1]).is_none() && a.get([0, 0, 0]).is_none());
 }
 
+function test_checked_shapes(): test.TestOutcome {
+  let a = grid();
+  let empty: i32[] = [];
+  if (ndarray.try_from_flat(empty, [-1]).is_some() || ndarray.try_from_flat(empty, [65536, 65536]).is_some()) {
+    return test.fail("invalid extent or overflowing count");
+  }
+  if (ndarray.try_from_flat([1], [2]).is_some() || ndarray.try_from_flat(empty, [3, 0]).is_none()) {
+    return test.fail("flat input count");
+  }
+  if (a.try_reshape([3]).is_some() || a.try_reshape([-1]).is_some() || a.try_reshape([65536, 65536]).is_some()) {
+    return test.fail("invalid reshape");
+  }
+  if (a.try_broadcast_to([12]).is_some() || a.try_broadcast_to([4, 3]).is_some() || a.try_broadcast_to([-1, 3, 4]).is_some()) {
+    return test.fail("invalid broadcast");
+  }
+  let wide = a.try_broadcast_to([2, 3, 4]).unwrap_or(a);
+  if (wide.rank() != 3 || wide.get_unchecked([1, 2, 3]) != 11) {
+    return test.fail("broadcast across leading axis");
+  }
+  let flat = a.transpose().try_reshape([12]).unwrap_or(a);
+  return test.assert_true(flat.rank() == 1 && flat.get_unchecked([1]) == 4);
+}
+
 function test_transpose_swaps_indices(): test.TestOutcome {
   let t = grid().transpose();
   if (t.shape()[0] != 4 || t.shape()[1] != 3) {
@@ -363,6 +386,7 @@ function main(): i32 {
   let r = test.new("std/ndarray");
   r = r.it("from_flat indexes row-major", test_from_flat_indexes_row_major);
   r = r.it("get is None out of range", test_get_is_none_out_of_range);
+  r = r.it("checked construction and reshape", test_checked_shapes);
   r = r.it("transpose swaps indices", test_transpose_swaps_indices);
   r = r.it("permute is the general transpose", test_permute_is_the_general_transpose);
   r = r.it("reverse flips one axis", test_reverse_flips_one_axis);
