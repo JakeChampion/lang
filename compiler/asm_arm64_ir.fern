@@ -351,10 +351,10 @@ function shift_imm_asm(tag: i32, width: i32, count: i64, d: string, a: string): 
     k = count as i32 & 63;
   }
   let imm = " " + d + ", " + a + ", #" + util.i32_to_string(k) + "\n";
-  if (tag == 31) {
+  if (tag == ir.K_SHL) {
     return "    lsl" + imm;
   }
-  if (tag == 32) {
+  if (tag == ir.K_SHR_S) {
     return "    asr" + imm;
   }
   return "    lsr" + imm;
@@ -1316,15 +1316,29 @@ function ssa_save_runs(saved: i32[]): i32[][] {
   return [ints, fls];
 }
 
+// The saved registers go to fixed slots below x29, which is sp here. No
+// store or load of a slot moves sp, so none waits for another.
 function ssa_save(saved: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (saved.len() == 0) {
+    return s;
+  }
+  return ssa_saved_slots(saved, false, ssa_addsub_imm(s, true, "sp", "sp", ssa_save_bytes(saved)));
+}
+
+// A store or a load of each saved register at its slot below x29.
+function ssa_saved_slots(saved: i32[], load: boolean, s: asmcore.EmitState): asmcore.EmitState {
+  let m = if (load) { "    ldp " } else { "    stp " };
+  let off = 0;
   for run in ssa_save_runs(saved) {
     let i = 0;
     while (i + 1 < run.len() && run[i] < ssa_fbase()) {
-      s = ssa_pair(s, false, 3, ssa_reg(run[i]), ssa_reg(run[i + 1]), -16);
+      off -= 16;
+      s = s.write(m + ssa_reg(run[i]) + ", " + ssa_reg(run[i + 1]) + ", [x29, #" + util.i32_to_string(off) + "]\n");
       i += 2;
     }
     while (i < run.len()) {
-      s = ssa_ldst_wb(s, false, true, ssa_reg(run[i]), -16);
+      off -= 16;
+      s = ssa_ldst(s, load, ssa_reg(run[i]), "x29", off);
       i += 1;
     }
   }
@@ -1370,30 +1384,8 @@ function ssa_emit_unwind(saved: i32[], canary: i32, s: asmcore.EmitState, tail: 
     s = s.write("    adrp x16, __fern_canary\n    ldr x16, [x16, :lo12:__fern_canary]\n    cmp x16, x17\n    b.eq " + ok.name + "\n    b __fern_canary_fail\n" + ok.name + ":\n");
   }
   s = ssa_cfi(s, 7, "", 0);
-  if (saved.len() == 0) {
-    s = ssa_mov_rr(s, "sp", "x29");
-  } else {
-    s = ssa_addsub_imm(s, true, "sp", "x29", ssa_save_bytes(saved));
-    let runs = ssa_save_runs(saved);
-    let ri = runs.len();
-    while (ri > 0) {
-      ri -= 1;
-      let run = runs[ri];
-      let i = run.len();
-      while (i > 0 && run[0] >= ssa_fbase()) {
-        i -= 1;
-        s = ssa_ldst_wb(s, true, false, ssa_reg(run[i]), 16);
-      }
-      if (i % 2 == 1) {
-        i -= 1;
-        s = ssa_ldst_wb(s, true, false, ssa_reg(run[i]), 16);
-      }
-      while (i >= 2) {
-        i -= 2;
-        s = ssa_pair(s, true, 1, ssa_reg(run[i]), ssa_reg(run[i + 1]), 16);
-      }
-    }
-  }
+  s = ssa_saved_slots(saved, true, s);
+  s = ssa_mov_rr(s, "sp", "x29");
   s = ssa_pair(s, true, 1, "x29", "x30", 16);
   s = ssa_cfi(s, 5, "sp", 0);
   s = ssa_sign_ra(s, "autiasp");
@@ -2164,8 +2156,8 @@ function ssa_bin_sized(ins: ssa.SInst, v: i32, size: i32, reg_of: i32[], fr: Ssa
     s = s.write(shift_imm_asm(tag, ins.imm, fr.imm.value[b], dh, ssa_src(reg_of, a, "x4")));
     return ssa_store(reg_of, v, dh, s);
   }
-  if (s.records() && (tag == 21 || tag == 22)) {
-    let w = ssa_addsub_word(tag == 22, dh, ssa_src(reg_of, a, "x4"), fr, reg_of, b, bx);
+  if (s.records() && (tag == ir.K_ADD || tag == ir.K_SUB)) {
+    let w = ssa_addsub_word(tag == ir.K_SUB, dh, ssa_src(reg_of, a, "x4"), fr, reg_of, b, bx);
     if (w >= 0) {
       return ssa_store(reg_of, v, dh, s.word(w));
     }
@@ -5300,8 +5292,10 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
   }
   if (t.kind_tag == ssa.TERM_BR) {
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.target, s);
-    if (ssa_rotates(f, fr, ssa.block_index(fr.blk_pos, blk.id), t.target)) {
-      let h = f.blocks[ssa.block_index(fr.blk_pos, t.target)];
+    // A jump to a block of phis that only jumps on reaches the test behind it.
+    let head = ssa.forward_target(f, fr.blk_pos, fr.imm, reg_of, t.target);
+    if (ssa_rotates(f, fr, ssa.block_index(fr.blk_pos, blk.id), head)) {
+      let h = f.blocks[ssa.block_index(fr.blk_pos, head)];
       let hfu = ssa_fuse(ssa_fuse_view(fr), h);
       return ssa_brif(f, fr, h, reg_of, lp, next, hfu, ssa_fused_test(fr, reg_of, hfu, asmcore.ssa_join(lp, blk.id), s));
     }
@@ -5527,7 +5521,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let seen_slots = prepared.seen_slots;
   s = asmcore.EmitState { ...s, dw_first: true, dw_pos: 0 };
   let formed = prepared.formed;
-  let f = ssa.shared_lengths(formed.f);
+  let f = ssa.hoisted_static_boxes(ssa.shared_lengths(formed.f));
   f = ssa.shared_static_boxes(f, ssa.hard_call_positions(f, ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), false)));
   let picked = ssa_allocated(f, r, s);
   let tried = ssa.split_spilled(f, picked.alloc.reg_of, picked.floats);
@@ -5600,6 +5594,10 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let cfi_framed = false;
   if (split.early.len() > 0) {
     s = ssa_cfi(s, 7, "", 0);
+  } else if (!leaf && saved.len() > 0 && drop > 0 && ssa_save_bytes(saved) + drop <= 4095) {
+    // One step of sp makes room for the saved registers and the frame.
+    s = ssa_saved_slots(saved, false, ssa_addsub_imm(ssa_frame_record(s), true, "sp", "sp", ssa_save_bytes(saved) + drop));
+    drop = 0;
   } else if (!leaf) {
     s = ssa_save(saved, ssa_frame_record(s));
   }
@@ -5613,13 +5611,21 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   s = asmcore.EmitState { ...s, ssa_frame: frame + save, ssa_save: save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes) };
   s = ssa_load_params(f, if (split.early.len() > 0) { early_homes.entry } else { reg_of }, fr.fmask, s);
   let frame_homes = reg_of;
-  let pos = 0;
   let pool_insts = 0;
-  for bi in 0..f.blocks.len() {
+  let order = ssa_emit_order(f, fr, reg_of);
+  let starts: i32[] = [];
+  let end = 0;
+  for blk in f.blocks {
+    starts = starts.append(end);
+    end += blk.insts.len() + 1;
+  }
+  for oi in 0..order.len() {
+    let bi = order[oi];
+    let pos = starts[bi];
     let blk = f.blocks[bi];
     let next: i32 = -1;
-    if (bi + 1 < f.blocks.len()) {
-      next = f.blocks[bi + 1].id;
+    if (oi + 1 < order.len()) {
+      next = f.blocks[order[oi + 1]].id;
     }
     s = asmcore.ssa_x0_forget(s);
     s = s.lab_def(ssa_blab(fr, lp, blk.id));
@@ -5667,9 +5673,8 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     if (!tailed) {
       s = ssa_term(f, if (early) { fr_early } else { fr }, blk, reg_of, lp, next, fu, s);
     }
-    pos = pos + blk.insts.len() + 1;
   }
-  s = asmcore.dbg_label(s, dbg, fn_label, pos);
+  s = asmcore.dbg_label(s, dbg, fn_label, end);
   if (split.early.len() > 0) {
     s = ssa_cfi(s, 8, "", 0);
   }
@@ -5687,6 +5692,25 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   s = asmcore.EmitState { ...s, ssa_frame: 0, ssa_save: 0, ssa_lane_slots: [] };
   s = asmcore.dbg_rows(ssa_cfi(s, 2, "", 0), dbg).write("    .ltorg\n");
   return ssa_retain_allocation(s, prepared, label_name, context, entry, alloc, fr, frame, framed, fusions);
+}
+
+// The order in which the blocks of f go to the text. A block that emits no
+// instruction, has no move on its edge and only jumps on goes last. In place it is one jump between
+// a conditional branch and the other target of that branch, so the path
+// that does not go through it pays a taken branch over it.
+function ssa_emit_order(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[]): i32[] {
+  let order: i32[] = [];
+  let last: i32[] = [];
+  for bi in 0..f.blocks.len() {
+    let blk = f.blocks[bi];
+    if (bi > 0 && blk.term.kind_tag == ssa.TERM_BR && blk.insts.all((ins: ssa.SInst): boolean => ssa.static_release(ins))
+      && !ssa.edge_moves(f, fr.blk_pos, fr.imm, reg_of, blk.id, blk.term.target)) {
+      last = last.append(bi);
+    } else {
+      order = order.append(bi);
+    }
+  }
+  return util.append_all(order, last);
 }
 
 // A frame above one page touches every page it crosses, so it cannot step
@@ -5718,8 +5742,11 @@ function ssa_frame_split(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], early: Early
     let blk = f.blocks[bi];
     ok = ok.append(ssa_frameless(f, fr, reg_of, early, blk));
     let to: i32 = -1;
-    if (blk.term.kind_tag == ssa.TERM_BR && ssa_rotates(f, fr, bi, blk.term.target)) {
-      to = ssa.block_index(fr.blk_pos, blk.term.target);
+    if (blk.term.kind_tag == ssa.TERM_BR) {
+      let head = ssa.forward_target(f, fr.blk_pos, fr.imm, reg_of, blk.term.target);
+      if (ssa_rotates(f, fr, bi, head)) {
+        to = ssa.block_index(fr.blk_pos, head);
+      }
     }
     tied = tied.append(to);
   }

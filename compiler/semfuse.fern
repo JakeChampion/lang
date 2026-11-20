@@ -202,8 +202,8 @@ function report_verb(cx: Context, callee: string): string {
 }
 
 function pure_kind(k: i32): boolean {
-  if (k >= 1) {
-    return k <= 10;
+  if (k >= ssa.CONST_INT) {
+    return k <= ssa.UNARY;
   }
   if (k == ssasem.call_value() || k == ssasem.cell_set()) {
     return false;

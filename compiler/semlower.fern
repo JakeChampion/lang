@@ -46,7 +46,7 @@ struct Rows {
 }
 
 pub function sem_report_on(): boolean {
-  return envflag.on("FERN_SEM_IR_REPORT");
+  return util.debug_flag("FERN_DEBUG_SEM_IR_REPORT", "FERN_SEM_IR_REPORT");
 }
 
 function sem_reuse_on(): boolean {

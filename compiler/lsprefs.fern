@@ -226,10 +226,7 @@ function enum_declared(p: lspquery.Program, q: lspquery.Query, toks: lspquery.To
 }
 
 function local_declared(q: lspquery.Query, toks: lspquery.Tok[], m: i32): Option[Target] {
-  let fi = lspquery.enclosing(q.v.mod, toks, m, q.site.line, q.site.col);
-  if (fi < 0) {
-    return None;
-  }
+  let fi = lspquery.enclosing(q.v.mod, toks, m, q.site.line, q.site.col)?;
   let fd = q.v.mod.funcs[fi];
   for b in lexical.resolve_func(fd).bindings {
     if (b.name == q.site.name) {
@@ -566,8 +563,10 @@ function type_marks(p: lspquery.Program, t: Target, m: i32, toks: lspquery.Tok[]
   let values: Read[] = [];
   let scanned = false;
   for i in 0..toks.len() {
-    let at = type_ref_at(toks, i, t.spelled, quals);
-    if (at >= 0 && !(i + 1 < toks.len() && !toks[i + 1].ident && toks[i + 1].text == "(")) {
+    if let Some(at) = type_ref_at(toks, i, t.spelled, quals) {
+      if (i + 1 < toks.len() && !toks[i + 1].ident && toks[i + 1].text == "(") {
+        continue;
+      }
       if (!scanned) {
         values = value_idents(lspquery.view_of(p).types.mod.funcs, m, t.spelled);
         scanned = true;
@@ -580,20 +579,20 @@ function type_marks(p: lspquery.Program, t: Target, m: i32, toks: lspquery.Tok[]
   return marks;
 }
 
-function type_ref_at(toks: lspquery.Tok[], i: i32, name: string, quals: string[]): i32 {
+function type_ref_at(toks: lspquery.Tok[], i: i32, name: string, quals: string[]): Option[i32] {
   if (!toks[i].ident || toks[i].text != name) {
-    return -1;
+    return None;
   }
   if (!lspquery.punct_before(toks, i, ".")) {
     if (util.has_str(quals, "")) {
-      return i;
+      return Some(i);
     }
-    return -1;
+    return None;
   }
   if (i >= 2 && toks[i - 2].text.len() > 0 && util.has_str(quals, toks[i - 2].text) && !lspquery.punct_before(toks, i - 2, ".")) {
-    return i - 2;
+    return Some(i - 2);
   }
-  return -1;
+  return None;
 }
 
 struct Read { line: i32, col: i32, value: boolean }

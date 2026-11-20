@@ -2004,7 +2004,7 @@ function negation(ins: ssa.SInst): boolean {
 }
 
 function line_mark(k: i32): boolean {
-  return k == 35;
+  return k == ssa.LINE;
 }
 
 function construction_kind(k: i32): boolean {
@@ -2012,7 +2012,7 @@ function construction_kind(k: i32): boolean {
 }
 
 function literal_kind(k: i32): boolean {
-  return k >= 1 && k <= 5;
+  return k >= ssa.CONST_INT && k <= ssa.CONST_STR;
 }
 
 function calls_constructors(f: ssasem.Func, ix: util.NameIndex, ctors: boolean[], self: i32): boolean {
@@ -2651,7 +2651,7 @@ function reads_parts(g: ssa.SFunc): boolean {
 
 function splittable(f: ssasem.Func, defs: Defs, v: i32): boolean {
   let k = def_inst(defs, ssa.copy_root(defs.insts, v)).kind_tag;
-  if (!builds(k) && k != 8) {
+  if (!builds(k) && k != ssa.PHI) {
     return false;
   }
   return !ssasem.holds_view(f, f.values[v]) && !ssasem.has_finalizer(f, f.values[v]);

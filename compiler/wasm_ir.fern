@@ -579,34 +579,8 @@ pub function const_agg_block_bytes(packed: string): i32 {
   return 16 + ir.const_struct_values(packed).len() * 8;
 }
 
-pub function const_agg_rel(cv: string[], idx: i32): i32 {
-  let off = 0;
-  for i in 0..idx {
-    off += const_agg_block_bytes(cv[i]);
-  }
-  return off;
-}
-
-pub function const_agg_region_base(sv: string[]): i32 {
-  return (str_offset(sv, sv.len()) + 7) / 8 * 8;
-}
-
-pub function fl_base_for_strs(sv: string[], cv: string[]): i32 {
-  return const_agg_region_base(sv) + const_agg_rel(cv, cv.len());
-}
-
-pub function large_fl_base_for_strs(sv: string[], cv: string[]): i32 {
-  return fl_base_for_strs(sv, cv) + fl_cells() * 4;
-}
-
 function heap_align8(n: i32): i32 {
   return (n + 7) / 8 * 8;
-}
-
-// The shadow stack, when the module has frame windows, sits between the free
-// lists and the heap.
-pub function shadow_lo_for_strs(sv: string[], cv: string[]): i32 {
-  return heap_align8(large_fl_base_for_strs(sv, cv) + large_fl_cells() * 4);
 }
 
 // 1 MiB, twice wasmtime's default call stack, so a recursion deep enough to
@@ -618,12 +592,8 @@ pub function shadow_stack_bytes(needs: string[]): i32 {
   return 0;
 }
 
-pub function heap_base_for_strs(sv: string[], cv: string[], shadow: i32): i32 {
-  return shadow_lo_for_strs(sv, cv) + shadow;
-}
-
-pub function memory_min_pages(sv: string[], cv: string[], shadow: i32): i32 {
-  let need: i32 = (heap_base_for_strs(sv, cv, shadow) + 65535) / 65536;
+function memory_min_pages(heap_base: i32): i32 {
+  let need: i32 = (heap_base + 65535) / 65536;
   if (need < 16) {
     return 16;
   }
@@ -9281,10 +9251,7 @@ pub function heap_alloc_helpers(h: WasmHeap): string {
   let count = h.count;
   let lc = h.lc;
   let hb = util.i32_to_string(heap_base);
-  let pages: i32 = (heap_base + 65535) / 65536;
-  if (pages < 16) {
-    pages = 16;
-  }
+  let pages = memory_min_pages(heap_base);
   let flb = util.i32_to_string(fl_base);
   let flc = util.i32_to_string(fl_cells);
   let lflb = util.i32_to_string(lfl_base);
@@ -10475,17 +10442,21 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     crc32_table = strs.offs[crc32_at] + 4;
   }
   let cv = unit_caggs(units);
-  let caggs = placed_caggs(cv, const_agg_region_base(sv));
+  let caggs = placed_caggs(cv, heap_align8(strs.offs[sv.len()]));
+  let fl_base = caggs.offs[cv.len()];
+  let lfl_base = fl_base + fl_cells() * 4;
+  // The shadow stack sits between the free lists and the heap.
+  let shadow_lo = heap_align8(lfl_base + large_fl_cells() * 4);
   let shadow = shadow_stack_bytes(needs);
+  let heap_base = shadow_lo + shadow;
   parts = parts.append(wasm_abort.helpers(abort_offsets, mode));
   if (san) {
     parts = parts.append(wasm_abort.san_helpers([strs.offs[abort_to], strs.offs[abort_to + 1], strs.offs[abort_to + 2], strs.offs[abort_to + 3]], mode));
   }
-  parts = parts.append("  (memory (export \"memory\") " + util.i32_to_string(memory_min_pages(sv, cv, shadow)) + ")\n");
+  parts = parts.append("  (memory (export \"memory\") " + util.i32_to_string(memory_min_pages(heap_base)) + ")\n");
   if (shadow > 0) {
-    let lo = shadow_lo_for_strs(sv, cv);
-    parts = parts.append("  (global $__fern_shadow_lo i32 (i32.const " + util.i32_to_string(lo) + "))\n");
-    parts = parts.append("  (global $__fern_shadow_sp (mut i32) (i32.const " + util.i32_to_string(lo + shadow) + "))\n");
+    parts = parts.append("  (global $__fern_shadow_lo i32 (i32.const " + util.i32_to_string(shadow_lo) + "))\n");
+    parts = parts.append("  (global $__fern_shadow_sp (mut i32) (i32.const " + util.i32_to_string(heap_base) + "))\n");
   }
   if (sv.len() > 0) {
     let sbi = 0;
@@ -10531,7 +10502,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // The quarantine is a part of the heap runtime.
   let quar = san && heaped;
   if (heaped) {
-    let heap = WasmHeap { base: heap_base_for_strs(sv, cv, shadow), fl_base: fl_base_for_strs(sv, cv), fl_cells: fl_cells(), lfl_base: large_fl_base_for_strs(sv, cv), count: need(needs, "@heap_alloc_count"), lc: lc, san: san, budget: sw.quarantine };
+    let heap = WasmHeap { base: heap_base, fl_base: fl_base, fl_cells: fl_cells(), lfl_base: lfl_base, count: need(needs, "@heap_alloc_count"), lc: lc, san: san, budget: sw.quarantine };
     parts = parts.append(heap_alloc_helpers(heap));
     parts = parts.append(rc_runtime_helpers(heap.base, san));
   }
@@ -10837,7 +10808,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(arr_push_helper());
   }
   if (need_push_owned(needs, mode) || split_emits_push) {
-    parts = parts.append(arr_push_owned_helper(heap_base_for_strs(sv, cv, shadow)));
+    parts = parts.append(arr_push_owned_helper(heap_base));
   }
   if (need(needs, "arr_push_i64") || need(needs, "arr_push_owned_i64")) {
     parts = parts.append(arr_push_i64_helper());
@@ -10846,22 +10817,22 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(arr_push_f64_helper());
   }
   if (need(needs, "arr_push_owned_i64")) {
-    parts = parts.append(arr_push_owned_wide_helper("i64", "i64", heap_base_for_strs(sv, cv, shadow)));
+    parts = parts.append(arr_push_owned_wide_helper("i64", "i64", heap_base));
   }
   if (need(needs, "arr_push_owned_f64")) {
-    parts = parts.append(arr_push_owned_wide_helper("f64", "f64", heap_base_for_strs(sv, cv, shadow)));
+    parts = parts.append(arr_push_owned_wide_helper("f64", "f64", heap_base));
   }
   if (need(needs, "arr_push_u8") || need(needs, "arr_push_owned_u8")) {
     parts = parts.append(arr_push_u8_helper());
   }
   if (need(needs, "arr_push_owned_u8")) {
-    parts = parts.append(arr_push_owned_wide_helper("u8", "i32", heap_base_for_strs(sv, cv, shadow)));
+    parts = parts.append(arr_push_owned_wide_helper("u8", "i32", heap_base));
   }
   if (need(needs, "arr_push_u16") || need(needs, "arr_push_owned_u16")) {
     parts = parts.append(arr_push_u16_helper());
   }
   if (need(needs, "arr_push_owned_u16")) {
-    parts = parts.append(arr_push_owned_wide_helper("u16", "i32", heap_base_for_strs(sv, cv, shadow)));
+    parts = parts.append(arr_push_owned_wide_helper("u16", "i32", heap_base));
   }
   if (mode != 2 && need(needs, "random_bytes")) {
     parts = parts.append(random_bytes_ir_func());
