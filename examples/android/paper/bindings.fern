@@ -714,13 +714,13 @@ pub function (c: PackageManagerClass) get_application_info(e: usize, self: Packa
 }
 
 // android.content.pm.PackageManager.getApplicationLabel(Landroid/content/pm/ApplicationInfo;)Ljava/lang/CharSequence;
-pub function (c: PackageManagerClass) get_application_label(e: usize, self: PackageManager, a0: ApplicationInfo): Result[jni.Object, jni.JavaError] {
+pub function (c: PackageManagerClass) get_application_label(e: usize, self: PackageManager, a0: ApplicationInfo): Result[CharSequence, jni.JavaError] {
   let args = jni.jvalue_alloc(1);
   jni.jvalue_set_int(args, 0, a0.ref);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_application_label, args);
   jni.free_buffer(args);
   jni.check(e)?;
-  return Ok(jni.Object { ref: got });
+  return Ok(CharSequence { ref: got });
 }
 
 // android.content.pm.PackageManager.getLaunchIntentForPackage(Ljava/lang/String;)Landroid/content/Intent;
@@ -789,13 +789,13 @@ pub function (c: ResolveInfoClass) release(e: usize): void {
 }
 
 // android.content.pm.ResolveInfo.loadLabel(Landroid/content/pm/PackageManager;)Ljava/lang/CharSequence;
-pub function (c: ResolveInfoClass) load_label(e: usize, self: ResolveInfo, a0: PackageManager): Result[jni.Object, jni.JavaError] {
+pub function (c: ResolveInfoClass) load_label(e: usize, self: ResolveInfo, a0: PackageManager): Result[CharSequence, jni.JavaError] {
   let args = jni.jvalue_alloc(1);
   jni.jvalue_set_int(args, 0, a0.ref);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_load_label, args);
   jni.free_buffer(args);
   jni.check(e)?;
-  return Ok(jni.Object { ref: got });
+  return Ok(CharSequence { ref: got });
 }
 
 // android.content.pm.ResolveInfo.activityInfo
@@ -990,7 +990,7 @@ pub function (c: BundleClass) release(e: usize): void {
 }
 
 // android.os.Bundle.getCharSequence(Ljava/lang/String;)Ljava/lang/CharSequence;
-pub function (c: BundleClass) get_char_sequence(e: usize, self: Bundle, a0: string): Result[jni.Object, jni.JavaError] {
+pub function (c: BundleClass) get_char_sequence(e: usize, self: Bundle, a0: string): Result[CharSequence, jni.JavaError] {
   let args = jni.jvalue_alloc(1);
   let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
@@ -998,7 +998,7 @@ pub function (c: BundleClass) get_char_sequence(e: usize, self: Bundle, a0: stri
   jni.free_buffer(args);
   jni.delete_local_ref(e, s0);
   jni.check(e)?;
-  return Ok(jni.Object { ref: got });
+  return Ok(CharSequence { ref: got });
 }
 
 // A android.provider.Settings.Secure.
@@ -1442,6 +1442,47 @@ pub function (c: FileClass) get_absolute_path(e: usize, self: File): Result[stri
   return Ok(text);
 }
 
+// A java.lang.CharSequence.
+pub struct CharSequence { ref: usize }
+
+pub function (x: CharSequence) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: CharSequence) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.lang.CharSequence and the IDs of its members.
+pub struct CharSequenceClass { class: usize, id_to_string: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function char_sequence_class(e: usize): Result[CharSequenceClass, jni.JavaError] {
+  let local = jni.find_class(e, "java/lang/CharSequence");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_to_string = jni.checked_id(e, class, jni.get_method_id(e, class, "toString", "()Ljava/lang/String;"))?;
+  return Ok(CharSequenceClass { class: class, id_to_string: id_to_string });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: CharSequenceClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.lang.CharSequence.toString()Ljava/lang/String;
+pub function (c: CharSequenceClass) to_string(e: usize, self: CharSequence): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_to_string, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
 // A java.util.HashMap.
 pub struct HashMap { ref: usize }
 
@@ -1606,7 +1647,7 @@ pub function (c: LocaleClass) get_default(e: usize): Result[Locale, jni.JavaErro
 }
 
 // The struct of IDs of each class of this module.
-pub struct Classes { activity: ActivityClass, activity_options: ActivityOptionsClass, notification: NotificationClass, pending_intent: PendingIntentClass, component_name: ComponentNameClass, content_resolver: ContentResolverClass, context: ContextClass, intent: IntentClass, activity_info: ActivityInfoClass, application_info: ApplicationInfoClass, package_item_info: PackageItemInfoClass, package_manager: PackageManagerClass, resolve_info: ResolveInfoClass, location: LocationClass, location_manager: LocationManagerClass, uri: UriClass, bundle: BundleClass, settings_secure: Settings_SecureClass, telephony_sms: Telephony_SmsClass, notification_listener_service: NotificationListenerServiceClass, status_bar_notification: StatusBarNotificationClass, telecom_manager: TelecomManagerClass, date_format: DateFormatClass, view: ViewClass, window: WindowClass, file: FileClass, hash_map: HashMapClass, list: ListClass, locale: LocaleClass }
+pub struct Classes { activity: ActivityClass, activity_options: ActivityOptionsClass, notification: NotificationClass, pending_intent: PendingIntentClass, component_name: ComponentNameClass, content_resolver: ContentResolverClass, context: ContextClass, intent: IntentClass, activity_info: ActivityInfoClass, application_info: ApplicationInfoClass, package_item_info: PackageItemInfoClass, package_manager: PackageManagerClass, resolve_info: ResolveInfoClass, location: LocationClass, location_manager: LocationManagerClass, uri: UriClass, bundle: BundleClass, settings_secure: Settings_SecureClass, telephony_sms: Telephony_SmsClass, notification_listener_service: NotificationListenerServiceClass, status_bar_notification: StatusBarNotificationClass, telecom_manager: TelecomManagerClass, date_format: DateFormatClass, view: ViewClass, window: WindowClass, file: FileClass, char_sequence: CharSequenceClass, hash_map: HashMapClass, list: ListClass, locale: LocaleClass }
 
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
@@ -2094,6 +2135,38 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       return Err(err);
     },
   };
+  let char_sequence = match (char_sequence_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      notification.release(e);
+      pending_intent.release(e);
+      component_name.release(e);
+      content_resolver.release(e);
+      context.release(e);
+      intent.release(e);
+      activity_info.release(e);
+      application_info.release(e);
+      package_item_info.release(e);
+      package_manager.release(e);
+      resolve_info.release(e);
+      location.release(e);
+      location_manager.release(e);
+      uri.release(e);
+      bundle.release(e);
+      settings_secure.release(e);
+      telephony_sms.release(e);
+      notification_listener_service.release(e);
+      status_bar_notification.release(e);
+      telecom_manager.release(e);
+      date_format.release(e);
+      view.release(e);
+      window.release(e);
+      file.release(e);
+      return Err(err);
+    },
+  };
   let hash_map = match (hash_map_class(e)) {
     Ok(c) => c,
     Err(err) => {
@@ -2123,6 +2196,7 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       view.release(e);
       window.release(e);
       file.release(e);
+      char_sequence.release(e);
       return Err(err);
     },
   };
@@ -2155,6 +2229,7 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       view.release(e);
       window.release(e);
       file.release(e);
+      char_sequence.release(e);
       hash_map.release(e);
       return Err(err);
     },
@@ -2188,12 +2263,13 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       view.release(e);
       window.release(e);
       file.release(e);
+      char_sequence.release(e);
       hash_map.release(e);
       list.release(e);
       return Err(err);
     },
   };
-  return Ok(Classes { activity: activity, activity_options: activity_options, notification: notification, pending_intent: pending_intent, component_name: component_name, content_resolver: content_resolver, context: context, intent: intent, activity_info: activity_info, application_info: application_info, package_item_info: package_item_info, package_manager: package_manager, resolve_info: resolve_info, location: location, location_manager: location_manager, uri: uri, bundle: bundle, settings_secure: settings_secure, telephony_sms: telephony_sms, notification_listener_service: notification_listener_service, status_bar_notification: status_bar_notification, telecom_manager: telecom_manager, date_format: date_format, view: view, window: window, file: file, hash_map: hash_map, list: list, locale: locale });
+  return Ok(Classes { activity: activity, activity_options: activity_options, notification: notification, pending_intent: pending_intent, component_name: component_name, content_resolver: content_resolver, context: context, intent: intent, activity_info: activity_info, application_info: application_info, package_item_info: package_item_info, package_manager: package_manager, resolve_info: resolve_info, location: location, location_manager: location_manager, uri: uri, bundle: bundle, settings_secure: settings_secure, telephony_sms: telephony_sms, notification_listener_service: notification_listener_service, status_bar_notification: status_bar_notification, telecom_manager: telecom_manager, date_format: date_format, view: view, window: window, file: file, char_sequence: char_sequence, hash_map: hash_map, list: list, locale: locale });
 }
 
 // Deletes the reference to each class. Do not use `c` after this call.
@@ -2224,6 +2300,7 @@ pub function (c: Classes) release(e: usize): void {
   c.view.release(e);
   c.window.release(e);
   c.file.release(e);
+  c.char_sequence.release(e);
   c.hash_map.release(e);
   c.list.release(e);
   c.locale.release(e);
