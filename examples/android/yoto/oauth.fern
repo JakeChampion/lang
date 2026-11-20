@@ -36,7 +36,7 @@ pub function challenge(verifier: string): string {
 function authorization_url(client: string, verifier: string, state: string): string {
   return LOGIN + "/authorize?" + url.query_encode([
     ("audience", "https://api.yotoplay.com"),
-    ("scope", "family:devices:view family:devices:control user:content:view"),
+    ("scope", "family:devices:view family:devices:control family:library:view user:content:view"),
     ("response_type", "code"),
     ("client_id", client),
     ("code_challenge", challenge(verifier)),
