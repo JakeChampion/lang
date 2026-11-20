@@ -44,6 +44,8 @@ A `Nav` is the stack of the pages of an app. `push` opens a page over the top pa
 
 An element gives the messages of `on_tap`, `on_long`, `on_slide`, `on_edit` and `on_submit`, and a list gives the messages of `on_move` and `on_swipe`. A program gives the others. `with_tick` gives a message each time the time of its `wait` goes by. `with_frames` gives a message for each frame while its `animating` is true, with the time of the frame. `with_back` gives a message for the back key, or lets the back key close the app. `with_system` gives a message for an event of `std/android` that this module does not use itself.
 
+`with_visible` can give a message after layout. Use the list boxes and offsets to find rows that come into view.
+
 `with_close` takes the final state during the Destroy that ends the loop, and returns its closed state. The callback runs before Android frees the context or detaches the loop thread from the JVM. A Destroy that `android.keep_alive` keeps the loop through does not close the state: the app runs on with no window, and a later Destroy closes it.
 
 `with_theme` gives the colors for the light system and for the dark system. `with_theme_of` gives them for the state of the program also.
@@ -2388,6 +2390,7 @@ pub struct Program[S, M] {
   frame: Option[(i64) => M],
   back: (S) => Option[M],
   system: (android.Event) => Option[M],
+  visible: Option[(S, Screen, Layout, Input) => Option[M]],
   effects: (S) => S,
   close: (own S) => own S,
   save: (S, kv.Store) => kv.Store,
@@ -2401,7 +2404,7 @@ pub struct Program[S, M] {
 // A program with no messages of its own, which the back key closes, in the
 // colors of `theme`.
 pub function program[S, M](view: (S, Screen) => El[M], update: (own S, M) => S): Program[S, M] {
-  return Program { view: view, update: update, wait: (s: S): i32 => -1, tick: None, animating: (s: S): boolean => false, frame: None, back: (s: S): Option[M] => None, system: (e: android.Event): Option[M] => None, effects: (s: S): S => s, close: (own s: S): own S => s, save: (s: S, k: kv.Store): kv.Store => k, restore: (own s: S, k: kv.Store): own S => s, start: (s: S, m: M): own worker.Worker[M][] => [], poll: (own ws: worker.Worker[M][]): (worker.Worker[M][], M[]) => (ws, []), theme: (s: S, dark: boolean): Theme => theme(dark), meter: false };
+  return Program { view: view, update: update, wait: (s: S): i32 => -1, tick: None, animating: (s: S): boolean => false, frame: None, back: (s: S): Option[M] => None, system: (e: android.Event): Option[M] => None, visible: None, effects: (s: S): S => s, close: (own s: S): own S => s, save: (s: S, k: kv.Store): kv.Store => k, restore: (own s: S, k: kv.Store): own S => s, start: (s: S, m: M): own worker.Worker[M][] => [], poll: (own ws: worker.Worker[M][]): (worker.Worker[M][], M[]) => (ws, []), theme: (s: S, dark: boolean): Theme => theme(dark), meter: false };
 }
 
 // After each message, the shell gives the state to `effects`, which does
@@ -2483,6 +2486,12 @@ pub function (p: Program[S, M]) with_back(back: (S) => Option[M]): Program[S, M]
 
 pub function (p: Program[S, M]) with_system(system: (android.Event) => Option[M]): Program[S, M] {
   return Program { ...p, system: system };
+}
+
+// After a frame, the program can give a message for a change in the
+// rows that show. Return None if the state already has this range.
+pub function (p: Program[S, M]) with_visible(visible: (S, Screen, Layout, Input) => Option[M]): Program[S, M] {
+  return Program { ...p, visible: Some(visible) };
 }
 
 // The program in the colors that `theme` gives for the light system and
@@ -2758,7 +2767,12 @@ function drawn[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M]
   if (p.meter) {
     over = meter(host.fonts, screen, host.cost);
   }
-  return Shell { app: s.app, host: painted(host, built.layout(), over, screen, animating, cost), said: built.messages(), jobs: s.jobs };
+  let lay = built.layout();
+  let msg: Option[M] = None;
+  if let Some(visible) = p.visible {
+    msg = visible(s.app, screen, lay, host.input);
+  }
+  return told_maybe(Shell { app: s.app, host: painted(host, lay, over, screen, animating, cost), said: built.messages(), jobs: s.jobs }, p, msg);
 }
 
 function frame[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M] {

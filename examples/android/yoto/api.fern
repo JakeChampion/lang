@@ -14,6 +14,8 @@ pub enum Kind { Standard, Myo, Podcast, Radio }
 
 pub struct Track { title: string, chapter: string, chapter_key: string, track_key: string, search: string }
 
+pub struct Stream { title: string, url: string }
+
 pub struct Card {
   id: string,
   title: string,
@@ -257,12 +259,17 @@ pub function library(token: string): Result[Library, Failure] {
   return Ok(Library { players: players, cards: merge_cards(family.unwrap_or([]), mine.unwrap_or([])), note: note });
 }
 
-pub function details(token: string, summary: Card): Result[Card, Failure] {
+function card_reply(token: string, summary: Card, query: string): Result[json.JsonValue, Failure] {
   let path = if (summary.myo) { "/content/" } else { "/card/" };
-  let response = send(request(token, "GET", path + url.encode(summary.id)))?;
+  let response = send(request(token, "GET", path + url.encode(summary.id) + query))?;
   let Some(value) = json.get_object(response, "card") else {
     return Err(failure("Yoto did not return track information."));
   };
+  return Ok(value);
+}
+
+pub function details(token: string, summary: Card): Result[Card, Failure] {
+  let value = card_reply(token, summary, "")?;
   let item = card(value, json.JNull, summary.myo);
   if (!item.indexed) {
     return Err(failure("Yoto did not return track information."));
@@ -274,6 +281,33 @@ pub function details(token: string, summary: Card): Result[Card, Failure] {
     _ => summary.kind,
   };
   return Ok(Card { ...summary, cover: art, kind: category, search: summary.search + " " + item.search, tracks: item.tracks, indexed: true });
+}
+
+pub function parse_streams(value: json.JsonValue, chapter_key: string, track_key: string): Result[Stream[], Failure] {
+  let out: Stream[] = [];
+  let found = chapter_key.len() == 0;
+  for chapter in entries(object(value, "content"), "chapters") {
+    let key = field(chapter, "key");
+    for track in entries(chapter, "tracks") {
+      if (!found && key == chapter_key && (track_key.len() == 0 || field(track, "key") == track_key)) {
+        found = true;
+      }
+      if (found) {
+        let address = field(track, "trackUrl");
+        let link = if (address.starts_with("https://")) { address } else { "" };
+        out = out.append(Stream { title: json.get_string(track, "title").unwrap_or(field(chapter, "title")), url: link });
+      }
+    }
+  }
+  if (out.len() == 0 || out[0].url.len() == 0) {
+    return Err(failure("Yoto did not provide playable audio for this selection."));
+  }
+  return Ok(out);
+}
+
+pub function streams(token: string, summary: Card, chapter: string, track: string): Result[Stream[], Failure] {
+  let value = card_reply(token, summary, "?playable=true")?;
+  return parse_streams(value, chapter, track);
 }
 
 pub function cover_bytes(address: string): u8[] {

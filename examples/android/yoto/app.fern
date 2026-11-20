@@ -1,12 +1,16 @@
 import "std/android";
 import "std/android/launch";
 import "std/android/draw";
+import "std/android/player";
 import "std/android/ui/app";
 import "std/jni";
 import "./deck";
 import "./cover";
 import "./api";
 import "./session";
+import "./phone";
+
+const LISTENER: string = "dev.fern.storydeck.PhoneListener";
 
 pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
   launch.start(activity, app_main_entry());
@@ -14,6 +18,42 @@ pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size:
 
 @callback("app_main")
 function app_main_entry(): usize;
+
+@jni("dev.fern.storydeck.PhoneListener implements android.media.MediaPlayer$OnPreparedListener, android.media.MediaPlayer$OnCompletionListener, android.media.MediaPlayer$OnErrorListener, android.media.MediaPlayer$OnInfoListener, android.media.MediaPlayer$OnSeekCompleteListener", "void onPrepared(android.media.MediaPlayer)")
+pub function prepared(env: usize, listener: usize, media: usize): void {
+  player.prepared(env, listener, media);
+}
+
+@jni("dev.fern.storydeck.PhoneListener", "void onCompletion(android.media.MediaPlayer)")
+pub function completed(env: usize, listener: usize, media: usize): void {
+  player.completed(env, listener, media);
+}
+
+@jni("dev.fern.storydeck.PhoneListener", "boolean onError(android.media.MediaPlayer, int, int)")
+pub function failed(env: usize, listener: usize, media: usize, what: i32, extra: i32): u8 {
+  return player.failed(env, listener, media, what, extra);
+}
+
+@jni("dev.fern.storydeck.PhoneListener", "boolean onInfo(android.media.MediaPlayer, int, int)")
+pub function media_info(env: usize, listener: usize, media: usize, what: i32, extra: i32): u8 {
+  return player.info(env, listener, media, what, extra);
+}
+
+@jni("dev.fern.storydeck.PhoneListener", "void onSeekComplete(android.media.MediaPlayer)")
+pub function seeked(env: usize, listener: usize, media: usize): void {
+  player.seeked(env, listener, media);
+}
+
+function open_stream(ctx: usize, address: string): Option[player.Player] {
+  let Some(media) = player.new(ctx, LISTENER) else {
+    return None;
+  };
+  if (!player.open(ctx, media, address)) {
+    player.close(ctx, media);
+    return None;
+  }
+  return Some(media);
+}
 
 function open_browser(ctx: usize, address: string): boolean {
   let e = android.env(ctx);
@@ -54,6 +94,12 @@ function app_main(ctx: usize): usize {
     (address: string): boolean => open_browser(ctx, address),
     (data: u8[]): Option[draw.Image] => cover.decode(android.env(ctx), data),
     (value: Option[api.Session]): boolean => session.save(dir, env, value),
+    phone.Output {
+      open: (address: string): Option[player.Player] => open_stream(ctx, address),
+      start: (media: player.Player): boolean => player.start(ctx, media),
+      pause: (media: player.Player): boolean => player.pause(ctx, media),
+      close: (media: player.Player): void => player.close(ctx, media),
+    },
   );
   let closed = app.run(ctx, deck.restored(saved), p);
   return 0 as usize;

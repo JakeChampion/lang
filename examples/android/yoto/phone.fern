@@ -1,0 +1,148 @@
+import "std/android";
+import "std/android/player";
+import "./api";
+
+pub enum Phase { Idle, Loading, Preparing, Playing, Paused }
+
+enum Action { Open, Start, Pause, Close }
+
+pub struct State {
+  revision: i64,
+  title: string,
+  queue: api.Stream[],
+  at: i32,
+  phase: Phase,
+  note: string,
+  media: Option[player.Player],
+  action: Option[Action],
+}
+
+pub struct Output {
+  open: (string) => Option[player.Player],
+  start: (player.Player) => boolean,
+  pause: (player.Player) => boolean,
+  close: (player.Player) => void,
+}
+
+pub function empty(): State {
+  return State { revision: 0i64, title: "", queue: [], at: 0, phase: Idle, note: "", media: None, action: None };
+}
+
+pub function stop(s: State): State {
+  return State { ...empty(), revision: s.revision + 1i64, media: s.media, action: Some(Close) };
+}
+
+pub function loading(s: State, title: string): State {
+  return State { ...stop(s), title: title, phase: Loading };
+}
+
+function prepare(s: State, at: i32): State {
+  if (at >= s.queue.len()) {
+    return stop(s);
+  }
+  if (s.queue[at].url.len() == 0) {
+    return State { ...stop(s), note: "Yoto did not provide playable audio for the next track." };
+  }
+  return State { ...s, at: at, phase: Preparing, action: Some(Open) };
+}
+
+pub function received(s: State, revision: i64, result: Result[api.Stream[], api.Failure]): State {
+  if (s.revision != revision) {
+    return s;
+  }
+  match (result) {
+    Ok(queue) => {
+      return prepare(State { ...s, queue: queue }, 0);
+    },
+    Err(error) => {
+      return State { ...stop(s), note: error.message };
+    }
+  }
+}
+
+pub function control(s: State, command: api.Command): State {
+  match (command) {
+    api.Pause => {
+      if let Playing = s.phase {
+        return State { ...s, action: Some(Pause) };
+      }
+    },
+    api.Resume => {
+      if let Paused = s.phase {
+        return State { ...s, action: Some(Start) };
+      }
+    },
+    api.Stop => {
+      return stop(s);
+    },
+    _ => {}
+  }
+  return s;
+}
+
+pub function event(s: State, event: android.Event): State {
+  let Some(media) = s.media else {
+    return s;
+  };
+  if (!media.sent(event)) {
+    return s;
+  }
+  match (player.event(event)) {
+    Some(player.Prepared) => {
+      if let Preparing = s.phase {
+        return State { ...s, action: Some(Start) };
+      }
+    },
+    Some(player.Completed) => {
+      return prepare(s, s.at + 1);
+    },
+    Some(player.Failed(_, _)) => {
+      return unavailable(s);
+    },
+    _ => {}
+  }
+  return s;
+}
+
+pub function close(s: State, output: Output): void {
+  if let Some(media) = s.media {
+    output.close(media);
+  }
+}
+
+function unavailable(s: State): State {
+  return State { ...stop(s), note: "Could not play this track on your phone. Check your connection and try again." };
+}
+
+pub function apply(s: State, output: Output): State {
+  let Some(action) = s.action else {
+    return s;
+  };
+  let next = State { ...s, action: None };
+  match (action) {
+    Close => {
+      close(s, output);
+      return State { ...next, media: None };
+    },
+    Open => {
+      let media = output.open(s.queue[s.at].url);
+      close(s, output);
+      if (media.is_none()) {
+        return State { ...unavailable(next), media: None, action: None };
+      }
+      return State { ...next, media: media };
+    },
+    _ => {}
+  }
+  if let Some(media) = s.media {
+    if let Start = action {
+      if (output.start(media)) {
+        return State { ...next, phase: Playing };
+      }
+    } else if (output.pause(media)) {
+      return State { ...next, phase: Paused };
+    }
+  }
+  close(s, output);
+  return State { ...unavailable(next), media: None, action: None };
+}
