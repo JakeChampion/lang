@@ -6,7 +6,7 @@ MD5 and SHA-1, including the eight-lane `Sha1x8` API, have practical collisions.
 
 ## Model
 
-Digest states are values. Every digest has the same surface: `<algorithm>_new()` builds a state, `update` borrows input bytes and returns the next state, and `finish` returns the owned digest bytes. The one-shot form is the algorithm's name, so `sha256(data)` is `sha256_new().update(data).finish()`. Hexadecimal text is `hex.encode` of the digest. `erase` consumes an owned array of any element type with a zero, such as `u8[]`, `u32[]` or `i64[]`, and zeroes its storage when that reference was the last one.
+Digest states are values. Every digest has the same surface: `<algorithm>_new()` builds a state, `update` borrows input bytes and returns the next state, and `finish` returns the owned digest bytes. The one-shot form is the algorithm's name, so `sha256(data)` is `sha256_new().update(data).finish()`. Generic code can use the `crypto.Digest` bound to update and finish any of these states. Hexadecimal text is `hex.encode` of the digest. `erase` consumes an owned array of any element type with a zero, such as `u8[]`, `u32[]` or `i64[]`, and zeroes its storage when that reference was the last one.
 
 ## Contracts
 
@@ -20,8 +20,12 @@ The same state must receive each returned update value. Authentication helpers c
 import "std/crypto";
 import "std/hex";
 
+function hash_parts[D: crypto.Digest](state: D, first: [u8], second: [u8]): u8[] {
+  return state.update(first).update(second).finish();
+}
+
 function main(): i32 {
-  let digest = hex.encode(crypto.sha256("abc".as_bytes()));
+  let digest = hex.encode(hash_parts(crypto.sha256_new(), "a".as_bytes(), "bc".as_bytes()));
   if (digest != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") { return 1; }
   return 0;
 }
@@ -88,6 +92,26 @@ The root chunk preserves the declaration order. The chunks below contain the com
 // MD5 and SHA-1 (including Sha1x8) have practical collisions.
 // Use sha256 or sha256_new when collision resistance is required.
 import "core/ops";
+
+// An incremental message digest. Each update returns the next state.
+pub trait Digest {
+  function update(self: Self, chunk: [u8]): Self;
+  function finish(self: Self): u8[];
+}
+
+impl Digest for Md5 {}
+
+impl Digest for Sha1 {}
+
+impl Digest for Sha256 {}
+
+impl Digest for Sha512 {}
+
+impl Digest for Sm3 {}
+
+impl Digest for Blake2b {}
+
+impl Digest for Sha3 {}
 ```
 
 ### `2 function __zero_u8(n: i32): u8[]`
