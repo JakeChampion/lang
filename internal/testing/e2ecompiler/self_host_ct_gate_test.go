@@ -643,7 +643,7 @@ import "std/hex";
 function main(): i32 {
   let secret = [1u8, 2u8, 3u8, 4u8];
   __ct_secret(secret);
-  let out = crypto.pbkdf2_sha256(secret, "salt".as_bytes(), 2, 40);
+  let Ok(out) = crypto.pbkdf2_sha256(secret, "salt".as_bytes(), 2, 40) else { return 1; };
   __ct_public(out);
   if (hex.encode(out) != "5967ce026df98cfd9b8d2bd3753398501cbbf643626a9cbf9dd55d87750a5b692297bcb14c7dd205") { return 1; }
   return 0;
