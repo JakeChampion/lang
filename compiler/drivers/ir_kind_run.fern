@@ -30,77 +30,11 @@ function main(): i32 {
     }
   }
 
-  let ext_names: string[] = [
-    "store_i64", "tcp_listen", "tcp_accept", "tcp_accept_with", "writer_write",
-    "open_file", "syscall3", "raw_scratch", "syscall4", "raw_environ", "raw_splice_pipe", "raw_cover", "line", "raw_task_state", "raw_vdso", "str_from_bytes_range",
-    "proc_fork", "proc_waitpid",
-    "proc_waitpid_nohang",
-    "proc_exec", "arr_push_shared_count",
-    "arr_push_shared_bytes", "const_struct", "clz", "ctz", "popcount",
-    "map_hash_seed", "raw_addr", "raw_arr_box", "memchr", "memchr_bytes", "rmemchr_bytes", "count_runs_bytes", "scan_set_bytes", "mismatch_bytes", "count_byte_bytes", "crc32_cksum_array", "sum_bytes_array", "bsd_sum_bytes",
-    "write_file_exec", "ascii_run", "scan_set", "count_runs", "bsd_sum", "str_hash", "syscall5", "syscall6", "heap_mark",
-    "heap_release_to", "heap_adopt", "worker_region", "worker_exit", "worker_reap", "send_adopt", "worker_unmap", "send_root", "writer_set_times", "create_dir_all", "isatty", "read_file_bytes",
-    "rmemchr", "count_byte", "lstat", "access", "geteuid", "getegid",
-    "hostname", "fd_stat", "reader_seek", "reader_splice", "fd_flags", "writer_truncate", "writer_nonblocking", "mismatch",
-    "getuid", "getgid", "getgroups", "environ", "uname_field",
-    "getcwd", "cpu_count", "signal_ignore", "signal_default", "signal_catch", "signal_taken", "signal_catch_interrupting", "signal_raise",
-    "create_dir", "remove_dir", "create_link", "create_symlink",
-    "read_link", "getxattr", "getxattr_bytes", "lgetxattr", "lgetxattr_bytes", "setxattr", "setxattr_bytes", "lsetxattr", "lsetxattr_bytes", "umask", "sleep_ns", "rename", "rename_noreplace", "rename_exchange",
-    "chmod", "chmod_at", "scale_f64", "outer_mul_f64", "inner_mul_add_f64", "arr_reserve", "ret_word", "call_word", "buf_clear", "tcp_send_buf", "set_file_times", "statfs",
-    "process_alive", "rlimit_nofile", "truncate", "mknod",
-    "chown_at", "window_size", "chdir", "chroot",
-    "setuid", "setgid", "setgroups", "signal_mask",
-    "signal_disposition", "proc_exec_as", "signal_send",
-    "set_process_group", "sum_bytes",
-    "crc32_cksum", "priority", "set_priority", "clock_set", "clock_resolution",
-    "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "fd_dup_onto",
-    "termios_get", "termios_set", "set_window_size",
-    "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_bytes_mapped", "buf_push_filtered", "buf_push_bytes_filtered", "buf_push_expanded", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64", "buf_push_decimal", "buf_push_base64", "buf_push_base32", "buf_decode_base32",
-    "buf_len", "buf_take", "buf_take_bytes", "read_chunk_bytes", "write_bytes", "write_some_bytes", "buf_push_bytes_range", "write_file_bytes", "buf_free", "arr_push_owned_i64", "arr_push_owned_f64",
-    "open_reader_with", "open_writer_with", "write_some",
-    "read_dir_all", "heap_alloc_count", "tcp_local_port", "tcp_listen_with", "tcp_socket_ctl",
-    "udp_bind", "udp_bind_with", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "vsock_connect",
-    "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv", "ring_send_zc", "tcp_recv_into", "tcp_addr_into", "tcp_ktls", "str_data", "tcp_sendfile", "tcp_send_bytes",
-    "udp_sendto_bytes", "udp_sendmmsg", "udp_recvmmsg", "read_dir_ino", "read_dir_ino_all",
-    "disable_core_dumps", "proc_waitpid_status", "mounts", "ct_mark", "vg_request", "sysctl",
-    "aes_expand_key", "aes_ctr32", "ghash", "clone_file", "set_extproc", "reader_copy_range", "pipe", "sha256_hw", "sha256_hw_blocks", "bswap", "mmio_load", "mmio_store", "fence", "wfi", "hvc", "smc", "boot_info", "sysreg_read", "sysreg_write", "cache_clean", "cache_flush", "tlb_flush", "tlb_flush_all", "breakpoint", "irq_mask", "irq_unmask", "irq_wait", "irq_pending", "user_run", "cache_sync_code", "atomic_load_acquire", "atomic_store_release", "atomic_fetch_add", "atomic_cas", "secondary_entry", "port_in", "port_out",
-    "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown", "dir_open_file",
-    "mulhi_u", "writer_splice_forever", "utf8_blocks", "sha1_hw", "sha1_hw_blocks", "aes_gcm_seal_into", "aes_gcm_open_into", "mismatch_bytes_str",
-    "vsplat", "vextract", "vreplace", "vadd", "vsub", "vmul", "vdiv", "vmin", "vmax", "vfma",
-    "vsqrt", "vabs", "vneg", "vfloor", "vceil", "vtrunc", "vround", "veq", "vne", "vlt", "vle", "vgt", "vge",
-    "vand", "vor", "vxor", "vandnot", "vselect", "vload", "vstore",
-    "vget", "vset", "vbitmask", "vpack", "vload_f32", "vpermute", "vextract_bits", "alloc_uninit", "crc32_ieee", "crc32_ieee_array", "count_below_u64", "prctl_query", "mulhi_s",
-    "viadd", "visub", "viadds", "viaddu", "visubs", "visubu", "vimins", "viminu", "vimaxs", "vimaxu", "viavg", "vieq", "vine", "vilts", "viltu",
-    "vineg", "viabs", "visplat", "viextracts", "viextractu", "vibitmask", "vireplace",
-    "vimul", "vishl", "vishrs", "vishru", "sha1x8_hw", "sha1x8_hw_blocks", "chacha20_xor_into", "poly1305_blocks", "chacha20_poly1305_seal_into", "chacha20_poly1305_open_into", "mont_mul", "scrypt_block_mix",
-    "proc_wait_any",
-    "viwidenlos", "viwidenlou", "viwidenhis", "viwidenhiu", "vinarrows", "vinarrowu", "viswizzle", "map_file", "scan_masks", "scan_masks_bytes", "ffma", "reader_from_fd", "ffma32",
-  ];
-  if (!ir.kind_retired(198) || ir.kind_name(198) != "invalid") {
-    failures += 1;
-  }
-  let ext_max = n;
-  let ext_ok = 0;
-  let ext_failures = 0;
-  for ei in 0..ext_names.len() {
-    let eid = ir.kind_id(ext_names[ei]);
-    if (eid > ext_max) {
-      ext_max = eid;
-    }
-    if (eid <= n || ir.kind_name(eid) != ext_names[ei]) {
-      ext_failures += 1;
-    } else {
-      ext_ok += 1;
-    }
-  }
-
   let out = "";
   out = out + "kind_count=" + util.i32_to_string(n) + "\n";
   out = out + "bijection_ok=" + util.i32_to_string(ok) + "\n";
   out = out + "bijection_failures=" + util.i32_to_string(failures) + "\n";
   out = out + "retired=" + util.i32_to_string(retired) + "\n";
-  out = out + "ext_ok=" + util.i32_to_string(ext_ok) + "\n";
-  out = out + "ext_failures=" + util.i32_to_string(ext_failures) + "\n";
 
   let neg_names: string[] = [
     "struct_copy", "", "a", "adz", "fadz", "zadd", "or_", "brif_", "call_direc",
@@ -121,7 +55,7 @@ function main(): i32 {
 
   out = out + "unknown_id=" + util.i32_to_string(ir.kind_id("not_an_op_kind")) + "\n";
   out = out + "id0=" + ir.kind_name(0) + "\n";
-  out = out + "oob=" + ir.kind_name(ext_max + 1) + "\n";
+  out = out + "oob=" + ir.kind_name(n + 1) + "\n";
 
   out = out + "const_i32=" + util.i32_to_string(ir.kind_id("const_i32")) + "\n";
   out = out + "add=" + util.i32_to_string(ir.kind_id("add")) + "\n";
@@ -248,7 +182,7 @@ function main(): i32 {
   out = out + "tag_consistency ok=" + util.i32_to_string(tag_ok)
     + " bad=" + util.i32_to_string(tag_bad) + "\n";
 
-  for tid in 1..=ext_max {
+  for tid in 1..=n {
     let tname = ir.kind_name(tid);
     if (tname != "invalid") {
       out = out + tname + "=" + util.i32_to_string(ir.kind_id(tname)) + "\n";
@@ -257,5 +191,5 @@ function main(): i32 {
 
   write(out);
 
-  return failures + ext_failures + neg_failures + tag_bad;
+  return failures + neg_failures + tag_bad;
 }

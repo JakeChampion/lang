@@ -28,13 +28,14 @@ func TestSelfHostSSAKindRegistry(t *testing.T) {
 		"write_file=27\n" +
 		"select=36\n" +
 		"carry=37\n" +
-		"term_count=3\n" +
-		"term_bijection_ok=3\n" +
+		"term_count=4\n" +
+		"term_bijection_ok=4\n" +
 		"term_bijection_failures=0\n" +
 		"term_none_id=0\n" +
 		"term_none_name_len=0\n" +
 		"ret=1\n" +
 		"brif=3\n" +
+		"unreachable=4\n" +
 		"semantic1=array_new\n" +
 		"semantic2=tuple_new\n" +
 		"semantic3=array_get\n" +
