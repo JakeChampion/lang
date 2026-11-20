@@ -114,7 +114,7 @@ func strengthPairs(t *testing.T, cli, target, src string) ([]tv.Pair, error) {
 		return nil, err
 	}
 	cmd := exec.Command(cli, "-target", target, "-emit", "asm", "-o", filepath.Join(dir, "prog.s"), srcPath, e2eharness.SelfHostStdlibRoot(t))
-	cmd.Env = e2eharness.SelfHostChildEnv("FERN_TV_DUMP=strength")
+	cmd.Env = e2eharness.SelfHostChildEnv("FERN_DEBUG_TV_DUMP=strength")
 	var stdout, stderr strings.Builder
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {

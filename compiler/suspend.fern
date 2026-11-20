@@ -898,7 +898,7 @@ function open_scope(t: Tx, r: irtables.LowerState, set: Set, ops: ir.Op[], at: i
 }
 
 pub function dump_state_if_asked(r: irtables.LowerState, stage: string): void {
-  match (env("FERN_SUSPEND_DUMP")) {
+  match (util.debug_env("FERN_DEBUG_SUSPEND_DUMP", "FERN_SUSPEND_DUMP")) {
     Some(name) => {
       if (name != r.name) {
         return;

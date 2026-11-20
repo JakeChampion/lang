@@ -109,7 +109,7 @@ func TestSelfHostSuspendShapes(t *testing.T) {
 		{"first", false},
 	} {
 		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "x86-64-linux", "-emit", "asm", "-o", filepath.Join(t.TempDir(), "out.s"), src, cli.stdlib)
-		cmd.Env = append(os.Environ(), "FERN_SUSPEND_DUMP="+c.fn)
+		cmd.Env = append(os.Environ(), "FERN_DEBUG_SUSPEND_DUMP="+c.fn)
 		msg, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("self-host CLI: %v\n%s", err, msg)
