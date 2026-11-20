@@ -8,7 +8,7 @@ A font with no GPOS table takes the kerning of its `kern` table. Its marks go on
 
 `shape` takes a text in logical order and the OpenType tag of its script, such as `"arab"`, `"deva"` or `"taml"`. It gives a `truetype.Run`: the glyphs in logical order, with the cluster of each glyph and its position. A cluster is the index of the first character that the glyph shows. A mark has the cluster of its base.
 
-For repeated text runs in an Indic script, call `prepare_indic(font, script)` once and use `plan.shape(text)` for each word. The plan retains its font and its substitution and positioning stages. A result of `None` means the Indic shaper does not apply to that font and script.
+For repeated text runs in an Indic script, call `prepare_indic(font, script)` once and use `plan.shape(text)` for each word. The plan retains its font and its substitution and positioning stages. Each prepared lookup summarizes the glyphs it can cover, so a miss skips the subtable search. A result of `None` means the Indic shaper does not apply to that font and script.
 
 A position is the advance of the glyph and its offset from its pen, in font units. A glyph goes at its pen and its offset, and the pen then moves by its advance. In a right-to-left run, the glyph that is last in logical order goes first, at the left.
 
@@ -1363,7 +1363,7 @@ function shaped_apart(f: truetype.Font, text: string, script: string): Option[tr
   if let Some((gsub, gpos)) = use_tags(f, script) {
     return Some(use_shaped(f, text, script, gsub, gpos));
   }
-  if let Some(plan) = prepare_indic(f, script) {
+  if let Some(plan) = make_indic_plan(f, script, false) {
     return Some(plan.shape(text));
   }
   return None;
@@ -1439,12 +1439,12 @@ function mirrored(f: truetype.Font, cs: Chars): Chars {
 // `r` after the lookups of the features `features`, in the order of their
 // indices: those of GPOS with `gpos`, else those of GSUB.
 function applied_stage(f: truetype.Font, r: truetype.Run, script: string, features: Feature[], gpos: boolean): truetype.Run {
-  return apply_lookups(f, r, stage_lookups(f, script, features, gpos), gpos);
+  return apply_lookups(f, r, stage_lookups(f, script, features, gpos, false), gpos);
 }
 
-struct Stage { lookups: i32[], masks: i32[], opts: i32[] }
+struct Stage { lookups: i32[], masks: i32[], opts: i32[], prepared: truetype.PreparedLookup[] }
 
-function stage_lookups(f: truetype.Font, script: string, features: Feature[], gpos: boolean): Stage {
+function stage_lookups(f: truetype.Font, script: string, features: Feature[], gpos: boolean, cache: boolean): Stage {
   let lookups: i32[] = [];
   let masks: i32[] = [];
   let opts: i32[] = [];
@@ -1464,11 +1464,23 @@ function stage_lookups(f: truetype.Font, script: string, features: Feature[], gp
       opts = inserted_at(opts, at, ft.opts);
     }
   }
-  return Stage { lookups: lookups, masks: masks, opts: opts };
+  let prepared: truetype.PreparedLookup[] = [];
+  if (cache) {
+    for li in lookups {
+      prepared = prepared.append(f.prepare_lookup(li, gpos));
+    }
+  }
+  return Stage { lookups: lookups, masks: masks, opts: opts, prepared: prepared };
 }
 
 function apply_lookups(f: truetype.Font, r: truetype.Run, stage: Stage, gpos: boolean): truetype.Run {
   let run = r;
+  for k in 0..stage.prepared.len() {
+    run = stage.prepared[k].apply(run, stage.masks[k], stage.opts[k]);
+  }
+  if (stage.prepared.len() > 0) {
+    return run;
+  }
   for k in 0..stage.lookups.len() {
     run = if (gpos) { f.position(run, stage.lookups[k], stage.masks[k], stage.opts[k]) } else { f.substitute(run, stage.lookups[k], stage.masks[k], stage.opts[k]) };
   }
@@ -1922,20 +1934,24 @@ pub struct IndicPlan {
 
 // Prepare the lookups and reordering rules for repeated runs in one font.
 pub function prepare_indic(f: truetype.Font, script: string): Option[IndicPlan] {
+  return make_indic_plan(f, script, true);
+}
+
+function make_indic_plan(f: truetype.Font, script: string, cache: boolean): Option[IndicPlan] {
   let c = indic_config(script)?;
   let p = indic_plan(f, c)?;
   let basic: Stage[] = [];
   for ft in basic_features() {
-    basic = basic.append(stage_lookups(f, p.gsub, [ft], false));
+    basic = basic.append(stage_lookups(f, p.gsub, [ft], false, cache));
   }
   let per = truetype.PER_SYLLABLE;
   return Some(IndicPlan {
     font: f, indic: p, basic: basic,
-    variation: stage_lookups(f, p.gsub, [feature("rvrn", GLOBAL, 0)], false),
-    direction: stage_lookups(f, p.gsub, direction_features(false), false),
-    composition: stage_lookups(f, p.gsub, [feature("locl", GLOBAL, per), feature("ccmp", GLOBAL, per)], false),
-    final: stage_lookups(f, p.gsub, final_features(), false),
-    positioning: stage_lookups(f, p.gpos, position_features(), true),
+    variation: stage_lookups(f, p.gsub, [feature("rvrn", GLOBAL, 0)], false, cache),
+    direction: stage_lookups(f, p.gsub, direction_features(false), false, cache),
+    composition: stage_lookups(f, p.gsub, [feature("locl", GLOBAL, per), feature("ccmp", GLOBAL, per)], false, cache),
+    final: stage_lookups(f, p.gsub, final_features(), false, cache),
+    positioning: stage_lookups(f, p.gpos, position_features(), true, cache),
   });
 }
 
