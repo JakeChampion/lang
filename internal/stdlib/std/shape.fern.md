@@ -1487,15 +1487,17 @@ function apply_lookups(f: truetype.Font, r: truetype.Run, stage: Stage, gpos: bo
   return run;
 }
 
-function inserted_at(xs: i32[], at: i32, v: i32): i32[] {
-  let out: i32[] = [];
-  for k in 0..xs.len() {
-    if (k == at) {
-      out = out.append(v);
-    }
-    out = out.append(xs[k]);
+function inserted_at(own xs: i32[], at: i32, v: i32): i32[] {
+  let k = xs.len();
+  xs = xs.append(v);
+  if (at == k) {
+    return xs;
   }
-  return if (at >= xs.len()) { out.append(v) } else { out };
+  while (k > at) {
+    xs = xs.with(k, xs[k - 1]);
+    k -= 1;
+  }
+  return xs.with(at, v);
 }
 ```
 
