@@ -1,3 +1,4 @@
+import "./ssacondition" as condition;
 import "./ssacapacityisa" as isa;
 import "./ssacapacityvalue" as value;
 
@@ -5,7 +6,7 @@ struct Half { kind: i32, identity: i32, part: i32, number: value.Value }
 
 struct Word { low: Half, high: Half }
 
-struct State { regs: Word[], cells: Half[], flags: value.Comparison, ok: boolean }
+struct State { regs: Word[], cells: Half[], flags: condition.Comparison, ok: boolean }
 
 function token(kind: i32, identity: i32, part: i32): Half {
   return Half { kind: kind, identity: identity, part: part, number: value.unknown() };
@@ -67,10 +68,6 @@ function same_word(a: Word, b: Word): boolean {
   return same_half(a.low, b.low) && same_half(a.high, b.high);
 }
 
-function unknown_flags(): value.Comparison {
-  return value.Comparison { less: -1, equal: -1, less_equal: -1 };
-}
-
 function initial(r: value.Interval): State {
   let regs: Word[] = [];
   let cells: Half[] = [];
@@ -84,7 +81,7 @@ function initial(r: value.Interval): State {
   }
   let argument = numeric(r, value.original(r));
   cells = cells.append(token(4, 0, 0)).append(token(4, 0, 1)).append(argument.low).append(argument.high);
-  return State { regs: regs, cells: cells, flags: unknown_flags(), ok: true };
+  return State { regs: regs, cells: cells, flags: condition.unknown_order(), ok: true };
 }
 
 function write(s: State, reg: i32, w: Word): State {
@@ -198,7 +195,7 @@ function shifted(s: State, r: value.Interval, op: isa.Op): State {
     return State { ...s, ok: false };
   }
   let masked = value.number(r, count.offset % (op.width as i64));
-  let flags = if (masked.offset == 0) { s.flags } else { unknown_flags() };
+  let flags = if (masked.offset == 0) { s.flags } else { condition.unknown_order() };
   let v = number(r, s.regs[op.destination], op.width);
   let result = if (masked.offset == 0) { narrowed(r, s.regs[op.destination], op.width) } else { numeric(r, shift(r, v, masked, op.kind == 13)) };
   return write(State { ...s, flags: flags }, op.destination, result);
@@ -230,7 +227,7 @@ function arithmetic(s: State, r: value.Interval, op: isa.Op): State {
     v = calculated(s, r, op);
   }
   let w = narrowed(r, numeric(r, v), op.width);
-  return write(State { ...s, flags: unknown_flags() }, op.destination, w);
+  return write(State { ...s, flags: condition.unknown_order() }, op.destination, w);
 }
 
 function lea(s: State, r: value.Interval, op: isa.Op): State {
@@ -246,7 +243,7 @@ function lea(s: State, r: value.Interval, op: isa.Op): State {
 function comparison(s: State, r: value.Interval, op: isa.Op): State {
   let v = number(r, s.regs[op.source], op.width);
   if (!nonnegative(r, v) || op.immediate < 0) {
-    return State { ...s, flags: unknown_flags() };
+    return State { ...s, flags: condition.unknown_order() };
   }
   return State { ...s, flags: value.compare(r, v, op.immediate as i64) };
 }
@@ -268,43 +265,6 @@ function step(s: State, r: value.Interval, op: isa.Op): State {
     return comparison(s, r, op);
   }
   return State { ...s, ok: false };
-}
-
-function invert(v: i32): i32 {
-  return if (v < 0) { -1 } else { 1 - v };
-}
-
-function ordered(f: value.Comparison, name: string): i32 {
-  if (name == "jb" || name == "jc" || name == "jnae") {
-    return f.less;
-  }
-  if (name == "jae" || name == "jnb" || name == "jnc") {
-    return invert(f.less);
-  }
-  return inclusive(f, name);
-}
-
-function inclusive(f: value.Comparison, name: string): i32 {
-  if (name == "jbe" || name == "jna") {
-    return f.less_equal;
-  }
-  if (name == "ja" || name == "jnbe") {
-    return invert(f.less_equal);
-  }
-  return -1;
-}
-
-function branch(f: value.Comparison, name: string): i32 {
-  if (name == "jmp") {
-    return 1;
-  }
-  if (name == "je" || name == "jz") {
-    return f.equal;
-  }
-  if (name == "jne" || name == "jnz") {
-    return invert(f.equal);
-  }
-  return ordered(f, name);
 }
 
 function finished(s: State, r: value.Interval): boolean {
@@ -340,7 +300,7 @@ function path(p: isa.Program, r: value.Interval): boolean {
       return finished(s, r);
     }
     if (op.kind == 17) {
-      let taken = branch(s.flags, op.condition);
+      let taken = condition.unsigned_branch(s.flags, op.condition);
       if (taken < 0) {
         return false;
       }

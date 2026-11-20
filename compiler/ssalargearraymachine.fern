@@ -1,3 +1,4 @@
+import "./ssacondition" as condition;
 import "./ssacapacityisa" as isa;
 import "./ssalargearrayvalue" as value;
 import "./ssalargepushwidemachine" as large;
@@ -6,9 +7,7 @@ struct Half { kind: i32, identity: i32, part: i32, number: value.Value }
 
 struct Word { low: Half, high: Half }
 
-struct Flags { order: value.Comparison, signed: value.Comparison, sign: i32 }
-
-struct State { regs: Word[], cells: Half[], flags: Flags, ok: boolean, zeros: i32, links: i32, slots: i32, call_return: i32 }
+struct State { regs: Word[], cells: Half[], flags: condition.Flags, ok: boolean, zeros: i32, links: i32, slots: i32, call_return: i32 }
 
 function token(kind: i32, identity: i32, part: i32): Half {
   return Half { kind: kind, identity: identity, part: part, number: value.unknown() };
@@ -57,14 +56,6 @@ function same_word(a: Word, b: Word): boolean {
   return same_half(a.low, b.low) && same_half(a.high, b.high);
 }
 
-function unknown_order(): value.Comparison {
-  return value.Comparison { less: -1, equal: -1, less_equal: -1 };
-}
-
-function unknown_flags(): Flags {
-  return Flags { order: unknown_order(), signed: unknown_order(), sign: -1 };
-}
-
 function initial(r: value.Interval, register_entry: boolean): State {
   let regs: Word[] = [];
   for i in 0..16 {
@@ -76,7 +67,7 @@ function initial(r: value.Interval, register_entry: boolean): State {
   let cells: Half[] = [numeric_half(value.capacity(r)), token(5, 1, 0), numeric_half(value.number(r, 1 as i64)), token(5, 3, 0), token(5, 4, 0), token(5, 5, 0), token(4, 0, 0), token(4, 0, 1)];
   let argument = if (register_entry) { identity(5, 8) } else { identity(6, 0) };
   cells = cells.append(argument.low).append(argument.high).append(token(8, 0, 0)).append(token(8, 0, 1));
-  return State { regs: regs, cells: cells, flags: unknown_flags(), ok: true, zeros: 0, links: 0, slots: 0, call_return: -1 };
+  return State { regs: regs, cells: cells, flags: condition.unknown_flags(), ok: true, zeros: 0, links: 0, slots: 0, call_return: -1 };
 }
 
 function write(s: State, reg: i32, w: Word): State {
@@ -166,7 +157,7 @@ function arithmetic(s: State, r: value.Interval, op: isa.Op): State {
   if (!nonnegative(r, v)) {
     return State { ...s, ok: false };
   }
-  return write(State { ...s, flags: unknown_flags() }, op.destination, narrowed(r, numeric(r, v), op.width));
+  return write(State { ...s, flags: condition.unknown_flags() }, op.destination, narrowed(r, numeric(r, v), op.width));
 }
 
 function lea(s: State, r: value.Interval, op: isa.Op): State {
@@ -195,26 +186,26 @@ function pointer_lea(s: State, op: isa.Op): State {
 function comparison(s: State, r: value.Interval, op: isa.Op): State {
   let w = s.regs[op.source];
   if (op.width == 64 && same_word(w, identity(6, 0)) && op.immediate == 65536) {
-    let f = value.Comparison { less: 0, equal: -1, less_equal: -1 };
-    return State { ...s, flags: Flags { order: f, signed: unknown_order(), sign: 0 } };
+    let f = condition.Comparison { less: 0, equal: -1, less_equal: -1 };
+    return State { ...s, flags: condition.Flags { order: f, signed: condition.unknown_order(), sign: 0 } };
   }
   let v = number(r, w, op.width);
   if (!nonnegative(r, v) || op.immediate < 0) {
-    return State { ...s, flags: unknown_flags() };
+    return State { ...s, flags: condition.unknown_flags() };
   }
   let order = value.compare(r, v, op.immediate as i64);
   let high = v.factor as i64 * (r.high as i64) + v.offset;
-  let signed = if (high <= 2147483647 as i64) { order } else { unknown_order() };
-  return State { ...s, flags: Flags { order: order, signed: signed, sign: signed.less } };
+  let signed = if (high <= 2147483647 as i64) { order } else { condition.unknown_order() };
+  return State { ...s, flags: condition.Flags { order: order, signed: signed, sign: signed.less } };
 }
 
 function test(s: State, r: value.Interval, op: isa.Op): State {
   let v = number(r, s.regs[op.source], 32);
   if (!nonnegative(r, v) || v.factor as i64 * (r.high as i64) + v.offset > 2147483647 as i64) {
-    return State { ...s, flags: unknown_flags() };
+    return State { ...s, flags: condition.unknown_flags() };
   }
   let cmp = value.compare(r, v, 0 as i64);
-  return State { ...s, flags: Flags { order: value.Comparison { less: 0, equal: cmp.equal, less_equal: cmp.equal }, signed: cmp, sign: 0 } };
+  return State { ...s, flags: condition.Flags { order: condition.Comparison { less: 0, equal: cmp.equal, less_equal: cmp.equal }, signed: cmp, sign: 0 } };
 }
 
 function words(r: value.Interval): value.Value {
@@ -246,7 +237,7 @@ function dependency_call(s: State, r: value.Interval, pc: i32, op: isa.Op): Stat
     called = write(write(called, 1, old), 2, identity(7, 0));
     called = State { ...called, links: 1, slots: 1 };
   }
-  return State { ...called, call_return: pc + 1, flags: unknown_flags() };
+  return State { ...called, call_return: pc + 1, flags: condition.unknown_flags() };
 }
 
 function extended(s: State, r: value.Interval, pc: i32, op: isa.Op): State {
@@ -282,69 +273,6 @@ function step(s: State, r: value.Interval, pc: i32, op: isa.Op): State {
     return comparison(s, r, op);
   }
   return extended(s, r, pc, op);
-}
-
-function invert(v: i32): i32 {
-  return if (v < 0) { -1 } else { 1 - v };
-}
-
-function ordered(f: value.Comparison, name: string): i32 {
-  if (name == "jb" || name == "jc" || name == "jnae") {
-    return f.less;
-  }
-  if (name == "jae" || name == "jnb" || name == "jnc") {
-    return invert(f.less);
-  }
-  return inclusive(f, name);
-}
-
-function inclusive(f: value.Comparison, name: string): i32 {
-  if (name == "jbe" || name == "jna") {
-    return f.less_equal;
-  }
-  if (name == "ja" || name == "jnbe") {
-    return invert(f.less_equal);
-  }
-  return -1;
-}
-
-function unsigned_branch(f: value.Comparison, name: string): i32 {
-  if (name == "jmp") {
-    return 1;
-  }
-  if (name == "je" || name == "jz") {
-    return f.equal;
-  }
-  if (name == "jne" || name == "jnz") {
-    return invert(f.equal);
-  }
-  return ordered(f, name);
-}
-
-function branch(f: Flags, name: string): i32 {
-  if (name == "js") {
-    return f.sign;
-  }
-  if (name == "jns") {
-    return invert(f.sign);
-  }
-  return signed_branch(f, name);
-}
-
-function signed_branch(f: Flags, name: string): i32 {
-  if (name == "jl" || name == "jnge") {
-    return f.signed.less;
-  }
-  if (name == "jge" || name == "jnl") {
-    return invert(f.signed.less);
-  }
-  if (name == "jle" || name == "jng") {
-    return f.signed.less_equal;
-  }
-  if (name == "jg" || name == "jnle") {
-    return invert(f.signed.less_equal);
-  }
-  return unsigned_branch(f.order, name);
 }
 
 function expected_register(r: value.Interval, reg: i32): Word {
@@ -410,7 +338,7 @@ function unguarded(s: State, original: State, r: value.Interval): State {
       return State { ...s, ok: false };
     }
   }
-  return State { ...s, regs: regs, flags: unknown_flags(), ok: s.ok && s.zeros == 0 && s.links == 0 && s.slots == 0 && s.call_return == -1 };
+  return State { ...s, regs: regs, flags: condition.unknown_flags(), ok: s.ok && s.zeros == 0 && s.links == 0 && s.slots == 0 && s.call_return == -1 };
 }
 
 function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean): boolean {
@@ -434,7 +362,7 @@ function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean): 
       return s.ok && (!register_entry || visited[p.unguarded_entry]) && finished(s, r, register_entry);
     }
     if (op.kind == 17) {
-      let taken = branch(s.flags, op.condition);
+      let taken = condition.branch(s.flags, op.condition);
       if (taken < 0) {
         return false;
       }
