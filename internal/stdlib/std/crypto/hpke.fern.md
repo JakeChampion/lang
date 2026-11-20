@@ -503,7 +503,9 @@ function __labeled_extract(suite: [u8], salt: [u8], label: string, ikm: [u8]): u
 function __labeled_expand(suite: [u8], prk: [u8], label: string, info: [u8], length: i32): u8[] {
   let prefix = __alloc_u8(2).with(0, (length >> 8 & 255) as u8).with(1, (length & 255) as u8);
   let labeled = __cat(__cat(__cat(__cat(prefix, "HPKE-v1".as_bytes()), suite), label.as_bytes()), info);
-  return crypto.hkdf_sha256_expand(prk, labeled, length);
+  // The key schedule uses fixed lengths. export validates the caller-supplied length.
+  let Ok(bytes) = crypto.hkdf_sha256_expand(prk, labeled, length) else { exit(134); };
+  return bytes;
 }
 
 // The base mode of RFC 9180: no PSK and no PSK identifier.

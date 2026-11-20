@@ -212,7 +212,7 @@ pub function hkdf_extract(h: Hash, salt: [u8], ikm: [u8]): u8[] {
   return [];
 }
 
-pub function hkdf_expand_label(h: Hash, secret: [u8], label: string, context: [u8], length: i32): u8[] {
+pub function hkdf_expand_label(h: Hash, secret: [u8], label: string, context: [u8], length: i32): Result[u8[], crypto.HkdfError] {
   let full = label.as_bytes();
   let info = __alloc_u8(10 + full.len() + context.len());
   info = info.with(0, (length >> 8 & 255) as u8).with(1, (length & 255) as u8).with(2, (6 + full.len()) as u8);
@@ -228,11 +228,17 @@ pub function hkdf_expand_label(h: Hash, secret: [u8], label: string, context: [u
       return crypto.hkdf_sha384_expand(secret, info, length);
     }
   }
-  return [];
+  return Err(crypto.InvalidHkdfLength(length));
+}
+
+// Internal callers take their lengths from the TLS cipher suite or RFC 8446.
+function __protocol_label(h: Hash, secret: [u8], label: string, context: [u8], length: i32): u8[] {
+  let Ok(bytes) = hkdf_expand_label(h, secret, label, context, length) else { exit(134); };
+  return bytes;
 }
 
 pub function derive_secret(h: Hash, secret: [u8], label: string, transcript_hash: [u8]): u8[] {
-  return hkdf_expand_label(h, secret, label, transcript_hash, h.size());
+  return __protocol_label(h, secret, label, transcript_hash, h.size());
 }
 ```
 
@@ -299,7 +305,7 @@ pub function (e: EarlySecret) client_early_traffic(client_hello_hash: [u8]): u8[
 }
 
 pub function resumption_psk(h: Hash, resumption_master_secret: [u8], ticket_nonce: [u8]): u8[] {
-  return hkdf_expand_label(h, resumption_master_secret, "resumption", ticket_nonce, h.size());
+  return __protocol_label(h, resumption_master_secret, "resumption", ticket_nonce, h.size());
 }
 
 pub function (e: EarlySecret) handshake_secret(shared_secret: [u8]): HandshakeSecret {
@@ -350,14 +356,14 @@ pub function traffic_keys(suite: CipherSuite, traffic_secret: [u8]): TrafficKeys
   let none: u8[] = [];
   let h = suite.hash();
   return TrafficKeys {
-    key: hkdf_expand_label(h, traffic_secret, "key", none, suite.aead().key_len()),
-    iv: hkdf_expand_label(h, traffic_secret, "iv", none, 12),
+    key: __protocol_label(h, traffic_secret, "key", none, suite.aead().key_len()),
+    iv: __protocol_label(h, traffic_secret, "iv", none, 12),
   };
 }
 
 pub function finished_verify_data(h: Hash, base_key: [u8], transcript_hash: [u8]): u8[] {
   let none: u8[] = [];
-  let finished_key = hkdf_expand_label(h, base_key, "finished", none, h.size());
+  let finished_key = __protocol_label(h, base_key, "finished", none, h.size());
   match (h) {
     Sha256 => {
       return crypto.hmac_sha256(finished_key, transcript_hash);
@@ -375,6 +381,6 @@ pub function verify_finished(h: Hash, base_key: [u8], transcript_hash: [u8], ver
 
 pub function next_traffic_secret(h: Hash, traffic_secret: [u8]): u8[] {
   let none: u8[] = [];
-  return hkdf_expand_label(h, traffic_secret, "traffic upd", none, h.size());
+  return __protocol_label(h, traffic_secret, "traffic upd", none, h.size());
 }
 ```

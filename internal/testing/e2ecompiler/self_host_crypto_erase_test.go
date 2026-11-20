@@ -118,13 +118,13 @@ function run(mode: string, key: [u8], msg: [u8], nonce12: [u8]): i32 {
     return crypto.hmac_sha256(key, msg).len() - 32;
   }
   if (mode == "hkdf") {
-    let okm: u8[] = crypto.hkdf_sha256_expand(key, msg, 80);
+    let Ok(okm) = crypto.hkdf_sha256_expand(key, msg, 80) else { exit(1); };
     let n: i32 = okm.len();
     crypto.erase(okm);
     return n - 80;
   }
   if (mode == "hkdf-full") {
-    let okm: u8[] = crypto.hkdf_sha256(nonce12, key, msg, 80);
+    let Ok(okm) = crypto.hkdf_sha256(nonce12, key, msg, 80) else { exit(1); };
     let n: i32 = okm.len();
     crypto.erase(okm);
     return n - 80;
@@ -163,7 +163,7 @@ function copy_of(b: [u8], from: i32, n: i32): u8[] {
 // runs so that no needle takes a block the primitive released.
 function needles_of(mode: string, key: [u8], msg: [u8], nonce12: [u8]): u8[][] {
   if (mode == "hkdf") {
-    let okm: u8[] = crypto.hkdf_sha256_expand(key, msg, 80);
+    let Ok(okm) = crypto.hkdf_sha256_expand(key, msg, 80) else { exit(1); };
     let out: u8[][] = [copy_of(okm, 0, 32), copy_of(okm, 32, 32)];
     crypto.erase(okm);
     return out;

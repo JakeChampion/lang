@@ -287,16 +287,17 @@ pub function keys(h: Handshake): Option[Keys] {
   let transcript = crypto.sha256(cat(cat(cat(cat(text("walkie v2"), h.ek), h.ct), first_part), second_part));
   let prk = crypto.hkdf_sha256_extract(transcript, shared);
   crypto.erase(shared);
-  let i2r_ctl = crypto.hkdf_sha256_expand(prk, text("i2r control"), 32);
-  let r2i_ctl = crypto.hkdf_sha256_expand(prk, text("r2i control"), 32);
-  let i2r_voice = crypto.hkdf_sha256_expand(prk, text("i2r voice"), 32);
-  let r2i_voice = crypto.hkdf_sha256_expand(prk, text("r2i voice"), 32);
-  let sas_bytes = crypto.hkdf_sha256_expand(prk, text("sas"), 4);
-  let binding = crypto.hkdf_sha256_expand(prk, text("identity binding"), 32);
-  let i2r_id = crypto.hkdf_sha256_expand(prk, text("i2r identity"), 32);
-  let r2i_id = crypto.hkdf_sha256_expand(prk, text("r2i identity"), 32);
+  let i2r_ctl = crypto.hkdf_sha256_expand_block(prk, text("i2r control"));
+  let r2i_ctl = crypto.hkdf_sha256_expand_block(prk, text("r2i control"));
+  let i2r_voice = crypto.hkdf_sha256_expand_block(prk, text("i2r voice"));
+  let r2i_voice = crypto.hkdf_sha256_expand_block(prk, text("r2i voice"));
+  let sas_bytes = crypto.hkdf_sha256_expand_block(prk, text("sas"));
+  let binding = crypto.hkdf_sha256_expand_block(prk, text("identity binding"));
+  let i2r_id = crypto.hkdf_sha256_expand_block(prk, text("i2r identity"));
+  let r2i_id = crypto.hkdf_sha256_expand_block(prk, text("r2i identity"));
   crypto.erase(prk);
   let n: i64 = (sas_bytes[0] as i64 << 24 as i64 | sas_bytes[1] as i64 << 16 as i64 | sas_bytes[2] as i64 << 8 as i64 | sas_bytes[3] as i64) % (1000000 as i64);
+  crypto.erase(sas_bytes);
   let sas = n.to_string();
   while (sas.len() < 6) {
     sas = "0" + sas;
@@ -317,8 +318,8 @@ function way(own key: u8[]): Way {
     crypto.erase(key);
     return Way { key: [], next: 0 as i64, high: 0 - 1 as i64, seen: seen, epoch: 0, old: [], chain: [] };
   }
-  let first = crypto.hkdf_sha256_expand(key, text("key"), 32);
-  let chain = crypto.hkdf_sha256_expand(key, text("chain"), 32);
+  let first = crypto.hkdf_sha256_expand_block(key, text("key"));
+  let chain = crypto.hkdf_sha256_expand_block(key, text("chain"));
   crypto.erase(key);
   return Way { key: first, next: 0 as i64, high: 0 - 1 as i64, seen: seen, epoch: 0, old: [], chain: chain };
 }
@@ -679,8 +680,8 @@ function next_epoch(chain: [u8], epoch: i32, own shared: u8[], speaker: [u8], li
   let prk = crypto.hkdf_sha256_extract(chain, shared);
   crypto.erase(shared);
   let info = cat(cat(be32(epoch), speaker), listener);
-  let next = crypto.hkdf_sha256_expand(prk, cat(text("walkie rekey chain"), info), 32);
-  let key = crypto.hkdf_sha256_expand(prk, cat(text("walkie rekey key"), info), 32);
+  let next = crypto.hkdf_sha256_expand_block(prk, cat(text("walkie rekey chain"), info));
+  let key = crypto.hkdf_sha256_expand_block(prk, cat(text("walkie rekey key"), info));
   crypto.erase(prk);
   return (next, key);
 }
