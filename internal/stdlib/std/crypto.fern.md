@@ -95,6 +95,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 // This module provides message digests, key derivation, and authentication codes.
 // MD5 and SHA-1 (including Sha1x8) have practical collisions.
 // Use sha256 or sha256_new when collision resistance is required.
+import "core/cmp";
+import "core/error";
 import "core/ops";
 
 // An incremental message digest. Each update returns the next state.
@@ -2487,6 +2489,20 @@ pub struct Blake2b {
 
 pub enum Blake2bError { InvalidDigestLength(i32) }
 
+impl error.Error for Blake2bError {}
+
+impl cmp.Display for Blake2bError {}
+
+pub function (e: Blake2bError) message(): string {
+  return match (e) {
+    InvalidDigestLength(n) => "BLAKE2b digest length must be 1 to 64 bytes, got " + n.to_string(),
+  };
+}
+
+pub function (e: Blake2bError) to_string(): string {
+  return e.message();
+}
+
 // blake2b_new constructs a digest state for `out_len` bytes, from 1 through 64.
 // The default length for `b2sum` is 64 bytes. Its `-l` option accepts bits.
 pub function blake2b_new(out_len: i32): Result[Blake2b, Blake2bError] {
@@ -3681,6 +3697,21 @@ pub enum Pbkdf2Error {
   InvalidKeyLength(i32),
 }
 
+impl error.Error for Pbkdf2Error {}
+
+impl cmp.Display for Pbkdf2Error {}
+
+pub function (e: Pbkdf2Error) message(): string {
+  return match (e) {
+    InvalidIterations(n) => "PBKDF2 iteration count must be positive, got " + n.to_string(),
+    InvalidKeyLength(n) => "PBKDF2 key length must be positive, got " + n.to_string(),
+  };
+}
+
+pub function (e: Pbkdf2Error) to_string(): string {
+  return e.message();
+}
+
 pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: i32): Result[u8[], Pbkdf2Error] {
   if (iterations < 1) {
     return Err(InvalidIterations(iterations));
@@ -3718,6 +3749,20 @@ function __hkdf_extract(hlen: i32, salt: [u8], ikm: [u8]): u8[] {
 
 pub enum HkdfError {
   InvalidHkdfLength(i32),
+}
+
+impl error.Error for HkdfError {}
+
+impl cmp.Display for HkdfError {}
+
+pub function (e: HkdfError) message(): string {
+  return match (e) {
+    InvalidHkdfLength(n) => "HKDF output length in bytes must be positive and at most 255 times the hash length, got " + n.to_string(),
+  };
+}
+
+pub function (e: HkdfError) to_string(): string {
+  return e.message();
 }
 
 // RFC 5869 section 2.3 encodes the block counter in one byte.
@@ -4295,6 +4340,20 @@ pub function (r: ShakeReader) squeeze(n: i32): (u8[], ShakeReader) {
 
 pub enum ShakeError {
   InvalidOutputLength(i32),
+}
+
+impl error.Error for ShakeError {}
+
+impl cmp.Display for ShakeError {}
+
+pub function (e: ShakeError) message(): string {
+  return match (e) {
+    InvalidOutputLength(n) => "SHAKE output length must be positive, got " + n.to_string(),
+  };
+}
+
+pub function (e: ShakeError) to_string(): string {
+  return e.message();
 }
 
 pub function shake128(data: [u8], out_len: i32): Result[u8[], ShakeError] {

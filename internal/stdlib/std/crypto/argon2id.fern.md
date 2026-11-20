@@ -23,6 +23,7 @@ This module implements Argon2id version 19 from RFC 9106. The default parameters
 ```fern
 <<parameters>>=
 // Derive password-based keys with Argon2id version 19 (RFC 9106).
+import "core/cmp";
 import "core/error";
 import "std/binary";
 import "std/result";
@@ -39,12 +40,18 @@ pub enum ArgonError { Parameters, SaltLength, MemoryLimit }
 
 impl error.Error for ArgonError {}
 
+impl cmp.Display for ArgonError {}
+
 pub function (e: ArgonError) message(): string {
   return match (e) {
     Parameters => "argon2id: invalid memory, passes, lanes or tag length",
     SaltLength => "argon2id: the salt needs at least 8 bytes",
     MemoryLimit => "argon2id: the requested allocation exceeds the memory limit",
   };
+}
+
+pub function (e: ArgonError) to_string(): string {
+  return e.message();
 }
 ```
 
