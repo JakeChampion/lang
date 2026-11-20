@@ -118,12 +118,12 @@ pub function (c: ContextClass) release(e: usize): void {
 
 // android.content.Context.getSystemService(Ljava/lang/String;)Ljava/lang/Object;
 pub function (c: ContextClass) get_system_service(e: usize, self: Context, a0: string): Result[jni.Object, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_system_service, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(jni.Object { ref: got });
 }
@@ -160,12 +160,12 @@ pub function (c: IntentClass) release(e: usize): void {
 
 // android.content.Intent.<init>(Ljava/lang/String;)V
 pub function (c: IntentClass) new(e: usize, a0: string): Result[Intent, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, 30, c.class, c.id_new, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(Intent { ref: got });
 }
@@ -183,15 +183,15 @@ pub function (c: IntentClass) get_action(e: usize, self: Intent): Result[string,
 
 // android.content.Intent.setAction(Ljava/lang/String;)Landroid/content/Intent;
 pub function (c: IntentClass) set_action(e: usize, self: Intent, a0: Option[string]): Result[Intent, jni.JavaError] {
-  let args = jni.jvalue_alloc(1);
   let s0 = 0 as usize;
   if let Some(t0) = a0 {
-    s0 = jni.new_string(e, t0);
+    s0 = jni.checked_string(e, t0)?;
   }
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_action, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(Intent { ref: got });
 }
@@ -264,13 +264,13 @@ pub function (c: ShortcutInfo_BuilderClass) release(e: usize): void {
 
 // android.content.pm.ShortcutInfo.Builder.<init>(Landroid/content/Context;Ljava/lang/String;)V
 pub function (c: ShortcutInfo_BuilderClass) new(e: usize, a0: Context, a1: string): Result[ShortcutInfo_Builder, jni.JavaError] {
+  let s1 = jni.checked_string(e, a1)?;
+  defer jni.delete_local_ref(e, s1);
   let args = jni.jvalue_alloc(2);
   jni.jvalue_set_int(args, 0, a0.ref);
-  let s1 = jni.new_string(e, a1);
   jni.jvalue_set_int(args, 1, s1);
   let got = jni.invoke(e, 30, c.class, c.id_new, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s1);
   jni.check(e)?;
   return Ok(ShortcutInfo_Builder { ref: got });
 }
