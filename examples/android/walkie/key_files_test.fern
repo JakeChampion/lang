@@ -10,7 +10,9 @@ function seal(seed: u8[]): Result[u8[], string] {
 }
 
 function open(bytes: u8[]): Result[u8[], string] {
-  if (bytes.len() != 33 || bytes[0] != 1u8) { return Err("invalid test envelope"); }
+  if (bytes.len() != 33 || bytes[0] != 1u8) {
+    return Err("invalid test envelope");
+  }
   return Ok(bytes.drop(1));
 }
 
@@ -19,7 +21,9 @@ function unavailable(bytes: u8[]): Result[u8[], string] {
 }
 
 function same(seed: Result[u8[], string]): test.TestOutcome {
-  let Ok(bytes) = seed else { return test.fail("could not load identity"); };
+  let Ok(bytes) = seed else {
+    return test.fail("could not load identity");
+  };
   return test.assert_true(crypto.consteq(bytes, SEED.as_bytes()));
 }
 
@@ -56,8 +60,12 @@ function main(): i32 {
   r2 = r2.it("damaged envelope is preserved", () => test.assert_file_contents(keys + "/identity.sealed", "bad envelope"));
   let clear = remove_file(keys + "/identity.sealed");
   r2 = r2.it("fresh install keeps the same seed after restart", () => {
-    let Ok(first) = identity_store.load(keys, old, seal, open) else { return test.fail("first install"); };
-    let Ok(next) = identity_store.load(keys, old, unavailable, open) else { return test.fail("restart"); };
+    let Ok(first) = identity_store.load(keys, old, seal, open) else {
+      return test.fail("first install");
+    };
+    let Ok(next) = identity_store.load(keys, old, unavailable, open) else {
+      return test.fail("restart");
+    };
     return test.assert_true(first.len() == 32 && crypto.consteq(first, next));
   });
   return r2.finish();
