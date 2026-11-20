@@ -21,7 +21,6 @@ import "./ssafixed";
 import "./ssa_lift";
 import "./physicalbody";
 import "./ssaprepare";
-import "std/envflag";
 import "std/string";
 
 function emit_ir_map_hash_seed(s: asmcore.EmitState): asmcore.EmitState {
@@ -200,11 +199,11 @@ function any_ccall_need(s: asmcore.EmitState): boolean {
 }
 
 function rc_trace_on(): boolean {
-  return envflag.on("FERN_RC_TRACE");
+  return util.debug_flag("FERN_DEBUG_RC_TRACE", "FERN_RC_TRACE");
 }
 
 function rc_trace_deep_on(): boolean {
-  return envflag.on("FERN_RC_TRACE_DEEP");
+  return util.debug_flag("FERN_DEBUG_RC_TRACE_DEEP", "FERN_RC_TRACE_DEEP");
 }
 
 function fused_marker(): i32 {
