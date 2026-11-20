@@ -4047,7 +4047,7 @@ pub function kind_id(name: string): i32 {
 }
 
 pub function kind_count(): i32 {
-  return 188;
+  return KIND_NAMES.len() - 1;
 }
 
 pub function kind_retired(id: i32): boolean {
