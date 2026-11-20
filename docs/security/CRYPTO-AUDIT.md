@@ -11,16 +11,20 @@ No module defines a cipher, a hash or a signature scheme of its own.
 
 | Module | Standard | Vectors in `tests/stdlib` | Negative cases |
 |---|---|---|---|
-| `std/crypto/sha2`, `std/hash` | SHA-1, SHA-224, SHA-256, SHA-384, SHA-512, CRC32, cksum, BSD and SysV sums | the digest suites and `hash_checksums` | none needed, a digest has no verdict |
-| `std/crypto` | HMAC-SHA-256, PBKDF2, HKDF, SHA3-224 to SHA3-512, SHAKE128 and SHAKE256 | `crypto` | none needed |
+| `std/crypto` | MD5, SHA-1, SHA-224, SHA-256, SHA-384, SHA-512, SM3, BLAKE2b, SHA-3 and SHAKE | `digest_*`, `crypto` | digest and output-length vectors |
+| `std/crypto/sha2` | selects SHA-256, SHA-384 or SHA-512 and dispatches to `std/crypto` | SHA-2 signature vectors in `rsa` and `ecdsa` | unsupported signing hashes are covered in `ecdsa` |
+| `std/hash` and checksum submodules | XXH64, CRC32, cksum, BSD and SysV sums | `hash_checksums` | noncryptographic checksums |
+| `std/crypto` | HMAC and HKDF with SHA-256 or SHA-384, PBKDF2-HMAC-SHA256, HOTP and TOTP with SHA-256 | `crypto` | verification and parameter tests |
+| `std/crypto/scrypt` | scrypt (RFC 7914) | `scrypt` | invalid costs, block sizes and parallelism |
 | `std/crypto/aes_gcm` | AES-GCM with the processor's AES and carry-less multiply instructions | `aes_gcm` | a flipped tag, ciphertext or additional-data bit is refused, and a wrong key length is refused |
 | `std/crypto/chacha20poly1305` | RFC 8439 | `chacha20poly1305` | a flipped tag or ciphertext bit is refused, and a wrong key length is refused |
 | `std/crypto/x25519` | RFC 7748 | `x25519` | the low-order points answer an error |
 | `std/crypto/ed25519` | RFC 8032 | `ed25519` | a flipped signature bit, a flipped message, a non-canonical `S`, wrong lengths and undecodable keys are refused |
 | `std/crypto/ecdsa`, `std/crypto/p256` | ECDSA over P-256 and P-384 with SHA-2, ECDH | `ecdsa`, `p256` | a flipped bit, another message, another key, another digest and malformed keys are refused |
-| `std/crypto/rsa` | RSASSA-PKCS1-v1_5 and RSASSA-PSS verification | `rsa` | a flipped bit and malformed keys are refused |
+| `std/crypto/rsa` | RSASSA-PKCS1-v1_5 and RSASSA-PSS verification, RSAES-OAEP encryption and decryption | `rsa` | malformed keys, invalid signatures and OAEP decoding failures |
 | `std/crypto/mlkem768` | ML-KEM-768 (FIPS 203) | `mlkem768` | implicit rejection of a changed ciphertext, modulus and hash checks on the keys |
-| `std/tls` | TLS 1.3 | the `tls_*` suites | the record, handshake and certificate suites refuse malformed and unauthenticated input |
+| `std/crypto/hpke` | HPKE base mode with X-Wing, MLKEM768-P256 or DHKEM(P-256), HKDF-SHA256 and ChaCha20-Poly1305 | `hpke` | invalid public keys, lengths and ciphertexts |
+| `std/tls` | TLS 1.3 and client-side TLS 1.2 | the `tls_*` suites | the record, handshake and certificate suites refuse malformed and unauthenticated input |
 
 The random source is `random_bytes`, which reads the kernel's entropy service and never returns a short result ([ENTROPY.md](ENTROPY.md)).
 `std/rand` provides a seeded PCG32 generator, which its document describes as a reproducible sequence, not an entropy source.
@@ -53,13 +57,14 @@ The AEAD open folds the tag difference into one byte, marks that byte public wit
 
 `__ct_secret(b)` tells Valgrind's memcheck that the bytes of `b` are undefined, and `__ct_public(b)` that they are defined again.
 Memcheck then reports every branch and every address that depends on a secret byte.
-`TestSelfHostCtGateX86_64` and `TestSelfHostCtGateArm64` run a program per primitive under memcheck. They require a clean run for AES-GCM, ChaCha20-Poly1305, X25519, ML-KEM-768, the TLS key share, Ed25519, ECDSA and P-256 ECDH.
-Memcheck must report five small programs that branch or index on a secret, which proves the gate sees what it looks for.
+`TestSelfHostCtGateX86_64` and `TestSelfHostCtGateArm64` run a program per primitive under memcheck. They require a clean run for AES-GCM, ChaCha20-Poly1305, X25519, ML-KEM-768, the TLS key share, Ed25519, ECDSA, P-256 ECDH, HPKE on the X-Wing path, and HOTP-SHA256.
+The gate also checks equal-length matching and mismatching inputs to `consteq`, multi-block PBKDF2-HMAC-SHA256 and HKDF-SHA256/SHA384 outputs, and scrypt with a secret password. In ROMix the implementation marks the password-dependent lookup index public before reading its table.
+Memcheck must report the control programs that branch or index on a secret, which proves the gate sees what it looks for.
 
 ## Remaining limits
 
 - The constant-time gate observes one execution under memcheck. It does not prove the absence of a data-dependent timing in the processor's own instructions, such as a variable-latency multiply.
-- RSA is verification only. There is no RSA signing and no RSA encryption.
+- RSA supports signature verification and OAEP encryption and decryption. RSA signing is unavailable. The gate above does not cover RSA private-key construction.
 - `crypto.erase` wipes an owned array the caller passes, and the three key types that hold secret arrays wipe them on `erase()`: `aes_gcm.Key`, `ed25519.PrivateKey` and `ecdsa.PrivateKey`. A key the program drops without that call keeps its bytes until the allocator reuses the block. A copy the compiler made is not wiped.
 - The primitives zero the key material they copy. HMAC zeroes its two pad blocks and a hashed long key. HKDF and PBKDF2 zero each output block and each message that carries one. ChaCha20-Poly1305 zeroes the one-time Poly1305 key. X25519 zeroes the clamped scalar of `public_key`. Ed25519 zeroes the nonce hash and the nonce scalar of a signature, and the limb array of each reduction. The ECDSA signer zeroes each nonce, and the key, the value and every message of its HMAC-DRBG. `TestSelfHostPrimitivesEraseKeyMaterial` scans the arena after each primitive for the copy it used to leave.
 - The limb arithmetic of P-256, the generic Weierstrass curves and ML-KEM allocates an array for each intermediate product. A product of a secret is not zeroed. In the release build they stay in their released blocks until the allocator reuses them. Under `-harden` the allocator zeroes each block at its release ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)).
