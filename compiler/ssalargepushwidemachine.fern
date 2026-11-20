@@ -1,3 +1,4 @@
+import "./ssacondition" as condition;
 import "./ssacapacityisa" as isa;
 import "./ssalargepushwidevalue" as value;
 import "./ssalargepushwideranges" as ranges;
@@ -9,7 +10,7 @@ struct Word { low: Half, high: Half, full: value.Value }
 
 struct Flow { state: State, next: i32 }
 
-struct State { regs: Word[], cells: Half[], flags: value.Comparison, ok: boolean, oversized: boolean, block_writes: i32, slot_writes: i32 }
+struct State { regs: Word[], cells: Half[], flags: condition.Comparison, ok: boolean, oversized: boolean, block_writes: i32, slot_writes: i32 }
 
 function token(kind: i32, identity: i32, part: i32): Half {
   return Half { kind: kind, identity: identity, part: part, number: value.unknown() };
@@ -59,10 +60,6 @@ function same_word(a: Word, b: Word): boolean {
   return same_half(a.low, b.low) && same_half(a.high, b.high) && a.full.factor == b.full.factor && a.full.offset == b.full.offset;
 }
 
-function unknown_flags(): value.Comparison {
-  return value.Comparison { less: -1, equal: -1, less_equal: -1 };
-}
-
 function initial_register(r: ranges.Interval, reg: i32, oversized: boolean): Word {
   return match (reg) {
     4 => identity(3, 0),
@@ -79,7 +76,7 @@ function initial(r: ranges.Interval, oversized: boolean, duplicate: boolean): St
   }
   let head = identity(if (duplicate) { 8 } else { 6 }, 0);
   let cells = [token(5, 0, 0), token(5, 0, 1), head.low, head.high, token(4, 0, 0), token(4, 0, 1)];
-  return State { regs: regs, cells: cells, flags: unknown_flags(), ok: true, oversized: oversized, block_writes: 0, slot_writes: 0 };
+  return State { regs: regs, cells: cells, flags: condition.unknown_order(), ok: true, oversized: oversized, block_writes: 0, slot_writes: 0 };
 }
 
 function write(s: State, r: ranges.Interval, reg: i32, w: Word): State {
@@ -191,7 +188,7 @@ function shifted(s: State, r: ranges.Interval, op: isa.Op): State {
     return State { ...s, ok: false };
   }
   let masked = value.number(r, count.offset % (op.width as i64));
-  let flags = if (masked.offset == 0) { s.flags } else { unknown_flags() };
+  let flags = if (masked.offset == 0) { s.flags } else { condition.unknown_order() };
   let v = number(r, s.regs[op.destination], op.width);
   let result = if (masked.offset == 0) { narrowed(r, s.regs[op.destination], op.width) } else { numeric(r, shift(r, v, masked, op.kind == 13 || op.kind == 20)) };
   return write(State { ...s, flags: flags }, r, op.destination, result);
@@ -223,7 +220,7 @@ function arithmetic(s: State, r: ranges.Interval, op: isa.Op): State {
     v = calculated(s, r, op);
   }
   let w = narrowed(r, numeric(r, v), op.width);
-  return write(State { ...s, flags: unknown_flags() }, r, op.destination, w);
+  return write(State { ...s, flags: condition.unknown_order() }, r, op.destination, w);
 }
 
 function lea(s: State, r: ranges.Interval, op: isa.Op): State {
@@ -241,23 +238,23 @@ function comparison(s: State, r: ranges.Interval, op: isa.Op): State {
     let a = s.regs[op.destination];
     let b = s.regs[op.source];
     if (a.low.kind != 0 && a.high.kind != 0 && same_word(a, b)) {
-      return State { ...s, flags: value.Comparison { less: 0, equal: 1, less_equal: 1 } };
+      return State { ...s, flags: condition.Comparison { less: 0, equal: 1, less_equal: 1 } };
     }
     if (same_word(a, identity(6, 0)) && same_word(b, identity(8, 0)) || same_word(a, identity(8, 0)) && same_word(b, identity(6, 0))) {
-      return State { ...s, flags: value.Comparison { less: -1, equal: 0, less_equal: -1 } };
+      return State { ...s, flags: condition.Comparison { less: -1, equal: 0, less_equal: -1 } };
     }
   }
   let operand = if (op.kind == 16) { op.source } else { op.destination };
   let threshold = if (op.kind == 16) { value.number(r, op.immediate as i64) } else { number(r, s.regs[op.source], op.width) };
   if (!nonnegative(r, threshold) || threshold.factor != 0) {
-    return State { ...s, flags: unknown_flags() };
+    return State { ...s, flags: condition.unknown_order() };
   }
   if (op.width == 64 && same_word(s.regs[operand], identity(7, 0)) && threshold.offset <= 17179869184 as i64) {
-    return State { ...s, flags: value.Comparison { less: 0, equal: 0, less_equal: 0 } };
+    return State { ...s, flags: condition.Comparison { less: 0, equal: 0, less_equal: 0 } };
   }
   let v = number(r, s.regs[operand], op.width);
   if (!nonnegative(r, v)) {
-    return State { ...s, flags: unknown_flags() };
+    return State { ...s, flags: condition.unknown_order() };
   }
   return State { ...s, flags: value.compare(r, v, threshold.offset) };
 }
@@ -286,43 +283,6 @@ function addressing_or_comparison(s: State, r: ranges.Interval, op: isa.Op): Sta
     return comparison(s, r, op);
   }
   return State { ...s, ok: false };
-}
-
-function invert(v: i32): i32 {
-  return if (v < 0) { -1 } else { 1 - v };
-}
-
-function ordered(f: value.Comparison, name: string): i32 {
-  if (name == "jb" || name == "jc" || name == "jnae") {
-    return f.less;
-  }
-  if (name == "jae" || name == "jnb" || name == "jnc") {
-    return invert(f.less);
-  }
-  return inclusive(f, name);
-}
-
-function inclusive(f: value.Comparison, name: string): i32 {
-  if (name == "jbe" || name == "jna") {
-    return f.less_equal;
-  }
-  if (name == "ja" || name == "jnbe") {
-    return invert(f.less_equal);
-  }
-  return -1;
-}
-
-function branch(f: value.Comparison, name: string): i32 {
-  if (name == "jmp") {
-    return 1;
-  }
-  if (name == "je" || name == "jz") {
-    return f.equal;
-  }
-  if (name == "jne" || name == "jnz") {
-    return invert(f.equal);
-  }
-  return ordered(f, name);
 }
 
 function final_register(s: State, r: ranges.Interval, reg: i32): Word {
@@ -355,12 +315,12 @@ function finished(s: State, r: ranges.Interval): boolean {
 function execute(s: State, r: ranges.Interval, item: decoder.WideOp, pc: i32, duplicate: boolean): Flow {
   let op = item.instruction;
   if (op.kind == 35) {
-    let taken = branch(s.flags, op.condition);
+    let taken = condition.unsigned_branch(s.flags, op.condition);
     let abort = taken == 1 && duplicate && !s.oversized && s.block_writes == 0 && s.slot_writes == 0;
     return Flow { state: State { ...s, ok: s.ok && (taken == 0 || abort) }, next: if (taken == 1) { -1 } else { pc + 1 } };
   }
   if (op.kind == 17) {
-    let taken = branch(s.flags, op.condition);
+    let taken = condition.unsigned_branch(s.flags, op.condition);
     return Flow { state: State { ...s, ok: s.ok && taken >= 0 }, next: if (taken == 1) { op.target } else { pc + 1 } };
   }
   let next = if (op.kind == 41) { write(s, r, op.destination, numeric(r, value.number(r, item.immediate))) } else { step(s, r, op) };

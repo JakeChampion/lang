@@ -95,7 +95,10 @@ zero wraps to the type's maximum.
 A `usize` literal can be anything up to `u64::MAX`; on wasm32 one past
 `u32::MAX` does not fit and the wasm backend refuses it. A cast into
 `usize` extends the source to 64 bits by its own signedness and wraps
-that to the pointer width.
+that to the pointer width. A checked cast (`as? usize`) accepts only
+values representable at that width. For example, `4294967296u64 as? usize`
+gives `None` on wasm32 and `Some(4294967296usize)` on x86-64 and arm64.
+A negative signed value gives `None` at either width.
 
 The interpreters model the pointer width of the machine they run on, as
 `target_arch()` answers with it: `internal/oracle/interp` and `fern
@@ -439,4 +442,6 @@ operators, the saturating operators, the checked operators, `as` and `as?`.
 The compiler's interpreter, x86-64, arm64 and wasm must print the same
 results. Each result is computed two times, from operands that the compiler
 cannot see and from operands that it can fold, and the two must be equal.
-The lines of `usize` are compared only between the targets of 64 bits.
+For `usize` arithmetic on wasm32, the matrix uses the interpreter’s `u32`
+results for the same operands. Casts from `usize` use inputs that fit in
+32 bits and are compared across all targets.

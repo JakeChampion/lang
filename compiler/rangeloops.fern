@@ -1,0 +1,298 @@
+import "./ast";
+import "./astwalk";
+import "./parser";
+import "./util";
+
+function iter_range_args(iter: ast.Expr): ast.Expr[] {
+  if (range_call_name(iter) == "") {
+    return [];
+  }
+  if let ast.ExprCall(c) = iter {
+    return c.args;
+  }
+  return [];
+}
+
+function range_call_name(iter: ast.Expr): string {
+  if let ast.ExprCall(c) = iter {
+    if (c.args.len() != 2) {
+      return "";
+    }
+    if let ast.ExprIdent(id) = c.callee {
+      if (id.name == "__range" || id.name == "__range_incl") {
+        return id.name;
+      }
+    }
+  }
+  return "";
+}
+
+function range_bound_type(bounds: ast.Expr[]): string {
+  for bound in bounds {
+    let t = literal_suffix_of(bound);
+    if (t.len() > 0) {
+      return t;
+    }
+  }
+  return "i32";
+}
+
+function literal_suffix_of(e: ast.Expr): string {
+  match (e) {
+    ast.ExprNumber(n) => {
+      if (n.is_float || n.suffix == "char") {
+        return "";
+      }
+      return n.suffix;
+    },
+    ast.ExprUnary(u) => {
+      if (u.op == "-" || u.op == "+") {
+        return literal_suffix_of(u.operand);
+      }
+      return "";
+    },
+    ast.ExprBinary(b) => {
+      if (b.op != "+" && b.op != "-" && b.op != "*" && b.op != "/" && b.op != "%") {
+        return "";
+      }
+      let l = literal_suffix_of(b.left);
+      if (l.len() > 0) {
+        return l;
+      }
+      return literal_suffix_of(b.right);
+    },
+    _ => {
+      return "";
+    }
+  }
+}
+
+function makes_closure(stmts: ast.Stmt[]): boolean {
+  let found = false;
+  for st in stmts {
+    found = astwalk.fold_stmt_nodes(st, found, keep_found, lambda_found, astwalk.descend_all);
+  }
+  return found;
+}
+
+function keep_found(st: ast.Stmt, own found: boolean): boolean {
+  return found;
+}
+
+function lambda_found(e: ast.Expr, own found: boolean): boolean {
+  if let ast.ExprLambda(_) = e {
+    return true;
+  }
+  return found;
+}
+
+function inclusive_range_loop(fr: ast.StmtFor, dbody: ast.Stmt[], lovar: ast.Stmt, ivar: ast.Stmt, hivar: ast.Stmt, hi_name: string): ast.Stmt[] {
+  let v = fr.var_name;
+  let go_name = "$go_" + v;
+  let one = parser.e_number("1", "", false);
+  let govar = parser.s_var(go_name, "boolean", parser.e_binary("<=", parser.e_ident(v), parser.e_ident(hi_name)));
+  let back = parser.s_assign(v, parser.e_binary("-", parser.e_ident(v), one));
+  let incr = parser.s_assign(v, parser.e_binary("+", parser.e_ident(v), one));
+  let last = parser.s_assign(go_name, parser.e_binary("!=", parser.e_ident(v), parser.e_ident(hi_name)));
+  let wbody: ast.Stmt[] = [incr, last];
+  for st in dbody {
+    wbody = wbody.append(st);
+  }
+  return [lovar, hivar, ivar, govar, back, parser.with_loop_label(parser.s_while(parser.e_ident(go_name), wbody), fr.label)];
+}
+
+// A counted loop steps at its latch, as a `while` written by hand does, so a
+// `continue` that targets the loop takes the step with it. `shadowed` records a
+// body that rebinds the counter or defers work, where the step stays at the head.
+struct StepCtx { step: ast.Stmt, var_name: string, label: string, depth: i32, shadowed: boolean }
+
+function step_continues(body: ast.Stmt[], ctx: StepCtx): (ast.Stmt[], StepCtx) {
+  return astwalk.map_stmts_where(body, ctx, step_continue_stmt, step_continue_expr, astwalk.descend_all);
+}
+
+function step_continue_stmt(st: ast.Stmt, ctx: StepCtx): (ast.Stmt, StepCtx, boolean) {
+  match (st) {
+    ast.StmtContinue(c) => {
+      if (c.label.len() == 0 && ctx.depth == 0 || c.label.len() > 0 && c.label == ctx.label) {
+        return (parser.s_block([ctx.step, st]), ctx, true);
+      }
+    },
+    ast.StmtWhile(w) => {
+      let (body, inner) = step_continues(w.body, nested_step(ctx, w.label));
+      return (ast.StmtWhile { ...w, body: body }, StepCtx { ...ctx, shadowed: inner.shadowed }, true);
+    },
+    ast.StmtFor(f) => {
+      let (body, inner) = step_continues(f.body, nested_step(ctx, f.label));
+      let shadowed = inner.shadowed || util.has_str(astwalk.binders_of(st, []), ctx.var_name);
+      return (ast.StmtFor { ...f, body: body }, StepCtx { ...ctx, shadowed: shadowed }, true);
+    },
+    ast.StmtDefer(_) => {
+      return (st, StepCtx { ...ctx, shadowed: true }, true);
+    },
+    _ => {
+      if (util.has_str(astwalk.binders_of(st, []), ctx.var_name)) {
+        return (st, StepCtx { ...ctx, shadowed: true }, false);
+      }
+    }
+  }
+  return (st, ctx, false);
+}
+
+function nested_step(ctx: StepCtx, label: string): StepCtx {
+  if (label == ctx.label) {
+    return StepCtx { ...ctx, label: "", depth: ctx.depth + 1 };
+  }
+  return StepCtx { ...ctx, depth: ctx.depth + 1 };
+}
+
+// A `continue` in a value block is a jump of the loop around the block. A
+// lambda that the program wrote has its own loops.
+function step_continue_expr(e: ast.Expr, ctx: StepCtx): (ast.Expr, StepCtx, boolean) {
+  if let ast.ExprLambda(lm) = e {
+    return (e, ctx, parser.is_written_lambda_origin(lm.origin));
+  }
+  return (e, ctx, false);
+}
+
+function dr_expr(e: ast.Expr): ast.Expr {
+  match (e) {
+    ast.ExprLambda(lm) => {
+      return ast.ExprLambda { ...lm, body: desugar_ranges_block(lm.body) };
+    },
+    _ => {
+      return dr_expr_kids(e);
+    }
+  }
+}
+
+function dr_expr_kids(e: ast.Expr): ast.Expr {
+  return parser.map_expr_kids(e, dr_expr);
+}
+
+pub function desugar_ranges_block(body: ast.Stmt[]): ast.Stmt[] {
+  let out: ast.Stmt[] = [];
+  for i in 0..body.len() {
+    let r = desugar_ranges_one(body[i]);
+    for j in 0..r.len() {
+      out = out.append(r[j]);
+    }
+  }
+  return out;
+}
+
+// The `while` loop of the range loop `written`, with the body `body` and
+// the bounds `rargs`.
+function range_loop(written: ast.StmtFor, body: ast.Stmt[], rargs: ast.Expr[]): ast.Stmt[] {
+  let dbody = body;
+  // A nested `for _` must not step this counter.
+  let fr = ast.StmtFor { ...written, var_name: parser.discard_name(written.var_name, written.line, written.col, 0) };
+  let rty = range_bound_type(rargs);
+  if (makes_closure(dbody)) {
+    // Each turn binds its own index, so a closure keeps the index of its turn.
+    let counter = "$turn_" + fr.var_name;
+    let turn: ast.Stmt[] = [parser.s_var(fr.var_name, rty, parser.e_ident(counter))];
+    for st in dbody {
+      turn = turn.append(st);
+    }
+    dbody = turn;
+    fr = ast.StmtFor { ...fr, var_name: counter };
+  }
+  let lo_name = "$lo_" + fr.var_name;
+  let lovar = parser.s_var(lo_name, rty, rargs[0]);
+  let hi_name = "$hi_" + fr.var_name;
+  let hivar = parser.s_var(hi_name, rty, rargs[1]);
+  if (range_call_name(fr.iter) == "__range_incl") {
+    return [parser.s_block(inclusive_range_loop(fr, dbody, lovar, parser.s_var(fr.var_name, rty, parser.e_ident(lo_name)), hivar, hi_name))];
+  }
+  let incr = parser.s_assign(fr.var_name, parser.e_binary("+", parser.e_ident(fr.var_name), parser.e_number("1", "", false)));
+  let (stepped, plain) = step_continues(dbody, StepCtx { step: incr, var_name: fr.var_name, label: fr.label, depth: 0, shadowed: false });
+  if (!plain.shadowed) {
+    let cond = parser.e_binary("<", parser.e_ident(fr.var_name), parser.e_ident(hi_name));
+    return [parser.s_block([lovar, hivar, parser.s_var(fr.var_name, rty, parser.e_ident(lo_name)), parser.with_loop_label(parser.s_while(cond, stepped.append(incr)), fr.label)])];
+  }
+  let ivar = parser.s_var(fr.var_name, rty, parser.e_binary("-", parser.e_ident(lo_name), parser.e_number("1", "", false)));
+  let brk = parser.s_if(parser.e_binary(">=", parser.e_ident(fr.var_name), parser.e_ident(hi_name)), [parser.s_break()], []);
+  let wbody: ast.Stmt[] = [incr, brk];
+  for k in 0..dbody.len() {
+    wbody = wbody.append(dbody[k]);
+  }
+  return [parser.s_block([lovar, hivar, ivar, parser.with_loop_label(parser.s_while(parser.e_bool(true), wbody), fr.label)])];
+}
+
+function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
+  match (st) {
+    ast.StmtFor(written) => {
+      let dbody = desugar_ranges_block(written.body);
+      let rargs = iter_range_args(written.iter);
+      if (rargs.len() == 2) {
+        return range_loop(written, dbody, rargs);
+      }
+      return [ast.StmtFor { ...written, iter: dr_expr(written.iter), body: dbody }];
+    },
+    ast.StmtIf(f) => {
+      return [ast.StmtIf { ...f, cond: dr_expr(f.cond), then_body: desugar_ranges_block(f.then_body), else_body: desugar_ranges_block(f.else_body) }];
+    },
+    ast.StmtWhile(w) => {
+      return [ast.StmtWhile { ...w, cond: dr_expr(w.cond), body: desugar_ranges_block(w.body) }];
+    },
+    ast.StmtMatch(m) => {
+      let arms: ast.MatchArm[] = [];
+      for arm in m.arms {
+        arms = arms.append(ast.MatchArm { ...arm, body: desugar_ranges_block(arm.body), guard: dr_expr(arm.guard) });
+      }
+      return [ast.StmtMatch { ...m, scrutinee: dr_expr(m.scrutinee), arms: arms }];
+    },
+    ast.StmtDefer(d) => {
+      return [ast.StmtDefer { action: desugar_ranges_one(d.action)[0], on_error: d.on_error, line: d.line }];
+    },
+    ast.StmtVar(v) => {
+      return [ast.StmtVar { ...v, init: dr_expr(v.init) }];
+    },
+    ast.StmtReturn(r2) => {
+      return [ast.StmtReturn { ...r2, value: dr_expr(r2.value) }];
+    },
+    ast.StmtExpr(x) => {
+      return [ast.StmtExpr { ...x, value: dr_expr(x.value) }];
+    },
+    ast.StmtAssign(a) => {
+      return [ast.StmtAssign { ...a, value: dr_expr(a.value) }];
+    },
+    _ => {
+      return [st];
+    }
+  }
+}
+
+function desugar_ranges_func(fd: parser.FuncDecl): parser.FuncDecl {
+  return parser.FuncDecl { ...fd, body: desugar_ranges_body(fd.body) };
+}
+
+pub function desugar_ranges_body(body: ast.Stmt[]): ast.Stmt[] {
+  if (!has_range_for(body)) {
+    return body;
+  }
+  return desugar_ranges_block(body);
+}
+
+function has_range_for(stmts: ast.Stmt[]): boolean {
+  let found = false;
+  for st in stmts {
+    found = astwalk.fold_stmt_nodes(st, found, range_for_at, astwalk.keep_flag, astwalk.descend_all);
+  }
+  return found;
+}
+
+function range_for_at(st: ast.Stmt, own acc: boolean): boolean {
+  if let ast.StmtFor(fr) = st {
+    return acc || range_call_name(fr.iter) != "";
+  }
+  return acc;
+}
+
+pub function desugar_ranges_module(mod: parser.Module): parser.Module {
+  let funcs: parser.FuncDecl[] = [];
+  for i in 0..mod.funcs.len() {
+    funcs = funcs.append(desugar_ranges_func(mod.funcs[i]));
+  }
+  return parser.Module { ...mod, funcs: funcs, top_stmts: desugar_ranges_block(mod.top_stmts) };
+}

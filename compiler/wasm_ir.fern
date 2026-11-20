@@ -4251,7 +4251,7 @@ function emit_map_hash_seed_wat(): string {
 
 function is_host_op_kind(tag: i32): boolean {
   return tag == ir.K_PRINT_STR || tag == ir.K_EPRINT_STR || tag == ir.K_MONOTONIC_NS || tag == ir.K_NOW_UNIX_MS
-    || tag == ir.K_NOW_NS || tag == ir.K_CLOCK_RESOLUTION || tag == ir.K_CLOCK_SET || tag == 209 || tag == ir.K_READ_FILE || tag == ir.K_READ_FILE_BYTES || tag == ir.K_WRITE_FILE || tag == ir.K_WRITE_FILE_BYTES
+    || tag == ir.K_NOW_NS || tag == ir.K_CLOCK_RESOLUTION || tag == ir.K_CLOCK_SET || tag == ir.K_READ_FILE || tag == ir.K_READ_FILE_BYTES || tag == ir.K_WRITE_FILE || tag == ir.K_WRITE_FILE_BYTES
     || tag == ir.K_OPEN_FILE || tag == ir.K_OPEN_READER_WITH || tag == ir.K_OPEN_WRITER_WITH || tag == ir.K_WRITER_WRITE || tag == ir.K_WRITE_SOME || tag == ir.K_ENV || tag == ir.K_STAT || tag == ir.K_LSTAT || tag == ir.K_REMOVE_FILE || tag == ir.K_CREATE_DIR_ALL
     || tag == ir.K_READ_DIR || tag == ir.K_READ_DIR_ALL || tag == ir.K_READ_DIR_INO || tag == ir.K_READ_DIR_INO_ALL || tag == ir.K_REMOVE_DIR_ALL || tag == ir.K_ARGS || tag == ir.K_ENVIRON || tag == ir.K_EXIT
     || tag == ir.K_CREATE_DIR || tag == ir.K_REMOVE_DIR || tag == ir.K_CREATE_LINK || tag == ir.K_CREATE_SYMLINK || tag == ir.K_READ_LINK
@@ -4524,16 +4524,16 @@ function emit_wasm_lane_int(o: ir.Op): string {
 // An op that changes the shape of integer lanes. The width of the op is
 // the width of a lane of its first value.
 function emit_wasm_lane_shape(o: ir.Op): string {
-  let k = ir.kind_name(o.kind_tag);
+  let k = o.kind_tag;
   let w = o.width;
-  if (k == "viswizzle" && w == 8) {
+  if (k == ir.K_VISWIZZLE && w == 8) {
     return "    i8x16.swizzle\n";
   }
-  let sign = if (k.ends_with("s")) { "_s" } else { "_u" };
-  if (o.kind_tag < ir.K_VINARROWS && (w == 8 || w == 16)) {
-    return "    " + wasm_lane_widen(k.starts_with("viwidenlo"), w) + sign + "\n";
+  let sign = if (k == ir.K_VIWIDENLOS || k == ir.K_VIWIDENHIS || k == ir.K_VINARROWS) { "_s" } else { "_u" };
+  if (k < ir.K_VINARROWS && (w == 8 || w == 16)) {
+    return "    " + wasm_lane_widen(k == ir.K_VIWIDENLOS || k == ir.K_VIWIDENLOU, w) + sign + "\n";
   }
-  if (o.kind_tag >= ir.K_VINARROWS && k != "viswizzle" && (w == 16 || w == 32)) {
+  if ((k == ir.K_VINARROWS || k == ir.K_VINARROWU) && (w == 16 || w == 32)) {
     return "    " + (if (w == 16) { "i8x16.narrow_i16x8" } else { "i16x8.narrow_i32x4" }) + sign + "\n";
   }
   return ircore.unsupported_op_refuse(o.kind_tag, "wasm");
@@ -5090,7 +5090,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append(emit_host_op_wat(o));
   } else if (o.kind_tag == ir.K_PUTCHAR) {
     parts = emit_wasm_putchar(eltmp, parts);
-  } else if (o.kind_tag >= ir.K_BUF_NEW && o.kind_tag <= ir.K_BUF_FREE || o.kind_tag == ir.K_BUF_PUSH_U64 || o.kind_tag == ir.K_BUF_PUSH_DECIMAL || o.kind_tag >= ir.K_BUF_PUSH_BASE64 && o.kind_tag <= ir.K_BUF_DECODE_BASE32 || o.kind_tag == ir.K_BUF_PUSH_MAPPED || o.kind_tag == ir.K_BUF_PUSH_FILTERED || o.kind_tag == ir.K_BUF_PUSH_EXPANDED || o.kind_tag == ir.K_BUF_TAKE_BYTES || o.kind_tag == ir.K_BUF_PUSH_BYTES_RANGE || o.kind_tag == ir.K_BUF_PUSH_BYTES_MAPPED || o.kind_tag == ir.K_BUF_PUSH_BYTES_FILTERED || o.kind_tag == ir.K_BUF_PUSH_BYTES_EXPANDED || o.kind_tag == ir.K_BUF_CLEAR) {
+  } else if (ir.buf_arity(o.kind_tag) > 0) {
     parts = emit_wasm_buf_op(o, parts);
   } else if (o.kind_tag == ir.K_STRUCT_MAKE) {
     parts = emit_wasm_struct_make(arrtmp, eltmp, f64tmp, i64tmp, o, structs, parts);
@@ -7526,67 +7526,11 @@ pub function arr_slice_helper(): string {
 }
 
 function emit_wasm_buf_op(o: ir.Op, parts: string[]): string[] {
-  if (o.kind_tag == ir.K_BUF_PUSH_BYTES_MAPPED) {
-    return parts.append("    call $__fern_buf_push_bytes_mapped\n    i32.const 0\n");
+  let call = "    call $" + asmcore.buf_helper(o.kind_tag) + "\n";
+  if (o.kind_tag == ir.K_BUF_NEW || o.kind_tag == ir.K_BUF_LEN || o.kind_tag == ir.K_BUF_TAKE || o.kind_tag == ir.K_BUF_TAKE_BYTES || o.kind_tag == ir.K_BUF_DECODE_BASE32) {
+    return parts.append(call);
   }
-  if (o.kind_tag == ir.K_BUF_PUSH_BYTES_FILTERED) {
-    return parts.append("    call $__fern_buf_push_bytes_filtered\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_BYTES_EXPANDED) {
-    return parts.append("    call $__fern_buf_push_bytes_expanded\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_TAKE_BYTES) {
-    return parts.append("    call $__fern_buf_take_bytes\n");
-  }
-  if (o.kind_tag == ir.K_BUF_NEW) {
-    return parts.append("    call $__fern_buf_new\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH) {
-    return parts.append("    call $__fern_buf_push\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_RANGE) {
-    return parts.append("    call $__fern_buf_push_range\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_BYTES_RANGE) {
-    return parts.append("    call $__fern_buf_push_bytes_range\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_MAPPED) {
-    return parts.append("    call $__fern_buf_push_mapped\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_FILTERED) {
-    return parts.append("    call $__fern_buf_push_filtered\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_EXPANDED) {
-    return parts.append("    call $__fern_buf_push_expanded\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_BYTE) {
-    return parts.append("    call $__fern_buf_push_byte\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_U64) {
-    return parts.append("    call $__fern_buf_push_u64\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_DECIMAL) {
-    return parts.append("    call $__fern_buf_push_decimal\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_BASE64) {
-    return parts.append("    call $__fern_buf_push_base64\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_PUSH_BASE32) {
-    return parts.append("    call $__fern_buf_push_base32\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_DECODE_BASE32) {
-    return parts.append("    call $__fern_buf_decode_base32\n");
-  }
-  if (o.kind_tag == ir.K_BUF_LEN) {
-    return parts.append("    call $__fern_buf_len\n");
-  }
-  if (o.kind_tag == ir.K_BUF_CLEAR) {
-    return parts.append("    call $__fern_buf_clear\n    i32.const 0\n");
-  }
-  if (o.kind_tag == ir.K_BUF_TAKE) {
-    return parts.append("    call $__fern_buf_take\n");
-  }
-  return parts.append("    call $__fern_buf_free\n    i32.const 0\n");
+  return parts.append(call + "    i32.const 0\n");
 }
 
 // Four alphabet characters for each whole group of three bytes in a[lo..hi).

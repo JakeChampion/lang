@@ -1,6 +1,8 @@
+import "./viewerase";
 import "./ast";
 import "./defaultargs";
 import "./parser";
+import "./rangeloops";
 
 pub function desugar_prepass_module(raw: parser.Module): parser.Module {
   let mod = parser.retag_type_arg_indexes(raw);
@@ -18,7 +20,7 @@ pub function desugar_prepass_module(raw: parser.Module): parser.Module {
       let (filled, diags) = defaultargs.fill_stmts(body, fd.params, free);
       body = filled;
     }
-    body = parser.desugar_ranges_body(body);
+    body = rangeloops.desugar_ranges_body(body);
     funcs = funcs.append(parser.FuncDecl { ...fd, body: body });
   }
   let tops = parser.resolve_labels_block(mod.top_stmts, none);
@@ -27,12 +29,12 @@ pub function desugar_prepass_module(raw: parser.Module): parser.Module {
     let (filled, diags) = defaultargs.fill_stmts(tops, no_params, free);
     tops = filled;
   }
-  tops = parser.desugar_ranges_block(tops);
+  tops = rangeloops.desugar_ranges_block(tops);
   return parser.Module { ...mod, funcs: funcs, top_stmts: tops };
 }
 
 pub function module_with_builtins(mod: parser.Module): parser.Module {
-  return parser.erase_view_module(module_with_builtins_typed(mod));
+  return viewerase.erase_view_module(module_with_builtins_typed(mod));
 }
 
 pub function module_with_builtins_typed(mod: parser.Module): parser.Module {

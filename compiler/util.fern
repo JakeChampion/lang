@@ -965,7 +965,7 @@ pub function debug_flag(name: string, legacy: string): boolean {
 }
 
 pub function verify_on(): boolean {
-  match (env("FERN_IR_VERIFY")) {
+  match (debug_env("FERN_DEBUG_IR_VERIFY", "FERN_IR_VERIFY")) {
     Some(v) => {
       return envflag.value_on(v);
     },
@@ -976,7 +976,7 @@ pub function verify_on(): boolean {
 }
 
 pub function certify_mode(): i32 {
-  match (env("FERN_RC_CERTIFY")) {
+  match (debug_env("FERN_DEBUG_RC_CERTIFY", "FERN_RC_CERTIFY")) {
     Some(v) => {
       if (v == "report") {
         return 1;

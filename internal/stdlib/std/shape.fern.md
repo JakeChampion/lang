@@ -1613,17 +1613,31 @@ function syllable_by(grammar: string, cats: i32[], i: i32): (i32, i32) {
 // a syllable of no type, before the broken clusters.
 function syllable_from(cats: i32[], i: i32): (i32, i32) {
   let at = [i];
-  let ends = [consonant_syllable(cats, at), vowel_syllable(cats, at), standalone_cluster(cats, at), symbol_cluster(cats, at), broken_cluster(cats, at)];
+  // Only the consonant production can consume an ordinary consonant first.
+  // Ra has its own category and may instead start a reph.
+  if (cats[i] == CAT_C) {
+    let consonant = consonant_syllable(cats, at);
+    return (consonant[consonant.len() - 1], 0);
+  }
   let best = i;
   let kind = SYL_OTHER;
-  for k in 0..ends.len() {
-    let e = ends[k];
+  for k in 0..=SYL_BROKEN {
+    let e = match (k) {
+      0 => consonant_syllable(cats, at),
+      1 => vowel_syllable(cats, at),
+      2 => standalone_cluster(cats, at),
+      SYL_SYMBOL => symbol_cluster(cats, at),
+      _ => broken_cluster(cats, at),
+    };
     if (k == SYL_BROKEN && cats[i] == CAT_SMPST && best == i) {
       best = i + 1;
     }
     if (e.len() > 0 && e[e.len() - 1] > best) {
       best = e[e.len() - 1];
       kind = k;
+      if (best == cats.len()) {
+        return (best, kind);
+      }
     }
   }
   return if (best == i) { (i + 1, SYL_OTHER) } else { (best, kind) };

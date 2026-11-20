@@ -81,7 +81,7 @@ pub function report_census(g: Gate): void {
 }
 
 pub function report_on(): boolean {
-  match (env("FERN_IR_VERIFY")) {
+  match (util.debug_env("FERN_DEBUG_IR_VERIFY", "FERN_IR_VERIFY")) {
     Some(v) => {
       return envflag.value_on(v) && v != "quiet";
     },

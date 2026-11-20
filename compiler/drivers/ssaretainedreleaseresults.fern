@@ -28,8 +28,8 @@ function results(pair: ssaprepare.Emitted[], row_index: i32, arch: string): void
   for b in f.blocks {
     let oi = 0;
     for op in b.insts {
-      if (op.kind_tag == 11 && op.str == "__fern_rc_dec") {
-        require(b.term.kind_tag == 1, 228);
+      if (op.kind_tag == ssa.CALL && op.str == "__fern_rc_dec") {
+        require(b.term.kind_tag == ssa.TERM_RET, 228);
         let fresh = ssa.SInst { ...op, result: f.nvals };
         let block = ssa.SBlock { ...b, insts: b.insts.with(oi, fresh) };
         let renamed = ssa.SFunc { ...f, nvals: f.nvals + 1, blocks: f.blocks.with(bi, block) };
@@ -38,7 +38,7 @@ function results(pair: ssaprepare.Emitted[], row_index: i32, arch: string): void
         let bad = ssa.SFunc { ...renamed, blocks: renamed.blocks.with(bi, returned) };
         let error = if (row.label_name == "__sem_drop_Parent") { "drop return mismatch" } else { "release return mismatch" };
         check(pair.with(row_index, changed(row, bad)), arch, row.label_name + ": " + error);
-        if (oi + 1 < b.insts.len() && b.insts[oi + 1].kind_tag == 40) {
+        if (oi + 1 < b.insts.len() && b.insts[oi + 1].kind_tag == ssa.LD_AT) {
           let load = ssa.SInst { ...b.insts[oi + 1], args: [fresh.result] };
           let used = ssa.SBlock { ...block, insts: block.insts.with(oi + 1, load) };
           bad = ssa.SFunc { ...renamed, blocks: renamed.blocks.with(bi, used) };

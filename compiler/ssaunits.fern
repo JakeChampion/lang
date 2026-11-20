@@ -11,7 +11,6 @@ import "./semtypes";
 import "./typeinfo";
 import "./util";
 import "./optbisect";
-import "std/envflag";
 import "std/string";
 
 pub function value_mode(): i32 {
@@ -4245,7 +4244,7 @@ pub function no_reuse(): Reuse {
 }
 
 pub function reuse_layer_disabled(name: string): boolean {
-  return envflag.on("FERN_SELFHOST_NO_REUSE") || !optbisect.allowed("reuse", name);
+  return util.debug_flag("FERN_DEBUG_SELFHOST_NO_REUSE", "FERN_SELFHOST_NO_REUSE") || !optbisect.allowed("reuse", name);
 }
 
 pub function with_reuse(f: ssasem.Func, p: Plan, idx: i32[][], dom: ssadeps.Dom): Plan {

@@ -21,7 +21,6 @@ import "./ssafixed";
 import "./ssa_lift";
 import "./physicalbody";
 import "./ssaprepare";
-import "std/envflag";
 import "std/string";
 
 function fr_sub_imm(s: asmcore.EmitState, dst: string, base: string, imm: i32): asmcore.EmitState {
@@ -2275,7 +2274,7 @@ function ssa_unary_known(what: string): boolean {
   if (what == "int_cast:u8" || what == "int_cast:u16" || what == "int_cast:i16" || what == "int_cast:u32" || what == "int_cast:i32") {
     return true;
   }
-  return what.starts_with("rotr:") || asmcore.ssa_funary_known(what) || ssa_bits_asm(what, "x4") != "";
+  return ssa.rotr_count(what) >= 0 || asmcore.ssa_funary_known(what) || ssa_bits_asm(what, "x4") != "";
 }
 
 function ssa_inst_known(ins: ssa.SInst): boolean {
@@ -5533,7 +5532,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     }
   }
   s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f), ssa_even: ssadeps.even_values(f) };
-  match (env("FERN_SSA_ALLOC")) {
+  match (util.debug_env("FERN_DEBUG_SSA_ALLOC", "FERN_SSA_ALLOC")) {
     Some(want) => {
       if (want == label_name || want == "*") {
         eprint("FERN_SSA_ALLOC: " + label_name + "\n" + ssa.print_func(f) + ssa.print_alloc_costs(f, picked.alloc, ssa.SpillCosts { fold_alu_rhs: false }));
@@ -6543,7 +6542,7 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], r: irtables.Lowered, s: asmc
     return ssa_store(reg_of, ins.result, d, s);
   }
 
-  if (asmcore.buf_helper(r.ops[ins.imm].kind_tag) != "") {
+  if (ir.buf_arity(r.ops[ins.imm].kind_tag) > 0) {
     return ssa_buf_call(ins, reg_of, asmcore.buf_table_helper(r.ops[ins.imm].kind_tag, ir.is_packed(r.ops[ins.imm])), s);
   }
   s = asmcore.ssa_x0_forget(s);
@@ -9458,7 +9457,7 @@ function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function high_heap_probe_on(): boolean {
-  return envflag.on("FERN_HIGH_HEAP");
+  return util.debug_flag("FERN_DEBUG_HIGH_HEAP", "FERN_HIGH_HEAP");
 }
 
 function alloc_count_bump(s: asmcore.EmitState): asmcore.EmitState {

@@ -24,7 +24,10 @@ function descriptors(): i32;
 function verify(fd: i32, offset: i64, length: i64): i32;
 
 function errors(e: usize, ctx: usize): i32 {
-  for value in 1..21 {
+  for value in 1..25 {
+    if (value == 21 || value == 22) {
+      continue;
+    }
     mode(value);
     let before = descriptors();
     let expected_error = match (value) { 15 => frame.Header, 16 => frame.Header, 17 => frame.Truncated, 18 => frame.Unsupported, _ => frame.Platform };
@@ -42,7 +45,7 @@ function errors(e: usize, ctx: usize): i32 {
     if (clean() != 1 || descriptors() != before) {
       return 200 + value;
     }
-    let expected = if (value >= 11) { 1 } else { 0 };
+    let expected = if (value >= 11 && value <= 20 && value != 14) { 1 } else { 0 };
     if (closed() != expected) {
       return 300 + value;
     }

@@ -23,7 +23,7 @@ pub function off(): Memo {
 }
 
 function root(): string {
-  match (env("FERN_RC_CERTIFY_MEMO")) {
+  match (util.debug_env("FERN_DEBUG_RC_CERTIFY_MEMO", "FERN_RC_CERTIFY_MEMO")) {
     Some(v) => {
       if (!envflag.value_on(v)) {
         return "";

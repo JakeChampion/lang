@@ -183,7 +183,7 @@ func TestSelfHostArm64HighHeapProbeRaisesTheHint(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			src := writeTempFern(t, t.TempDir(), "main.fern", c.src)
 			low := read(t, src)
-			high := read(t, src, "FERN_HIGH_HEAP=1")
+			high := read(t, src, "FERN_HIGH_HEAP=0", "FERN_DEBUG_HIGH_HEAP=1")
 			if !strings.Contains(low, "    mov x0, #1\n"+shift) {
 				t.Errorf("the default emit does not carry the 256 MiB arena hint (mov x0, #1; lsl #28)")
 			}
@@ -201,7 +201,7 @@ func TestSelfHostArm64HighHeapProbeRaisesTheHint(t *testing.T) {
 	t.Run("constant-array-needs-no-heap", func(t *testing.T) {
 		src := writeTempFern(t, t.TempDir(), "main.fern", `function main(): i32 { let a: i32[] = [1, 2, 3]; return a[0] - 1; }`)
 		low := read(t, src)
-		high := read(t, src, "FERN_HIGH_HEAP=1")
+		high := read(t, src, "FERN_HIGH_HEAP=0", "FERN_DEBUG_HIGH_HEAP=1")
 		if low != high {
 			t.Error("heap-free output changed with FERN_HIGH_HEAP")
 		}

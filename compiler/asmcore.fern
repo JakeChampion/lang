@@ -699,10 +699,10 @@ pub function new_state(): EmitState {
   return with_switches(s, env_switches());
 }
 
-// FERN_SSA_DENY=<mask> keeps the SSA allocator off each register whose bit
+// FERN_DEBUG_SSA_DENY=<mask> keeps the SSA allocator off each register whose bit
 // is set. A test uses it to run a program with few registers, or with none.
 function ssa_deny_env(): i64 {
-  match (env("FERN_SSA_DENY")) {
+  match (util.debug_env("FERN_DEBUG_SSA_DENY", "FERN_SSA_DENY")) {
     Some(v) => {
       return util.digits_to_i64(v);
     },
@@ -943,43 +943,11 @@ function buf_call_need(sym: string): string {
   return "";
 }
 
-// The runtime helper each buffer op calls, by IR kind.
-const BUF_KINDS: i32[] = [372, 371, 370, 347, 351, 291, 292, 293, 294, 295, 296, 297, 386, 306, 485, 487, 488, 489, 325, 326, 328];
-
-// The operands each of those ops pops.
-const BUF_ARITIES: i32[] = [3, 3, 3, 1, 4, 1, 2, 4, 2, 1, 1, 1, 1, 2, 2, 5, 5, 5, 3, 3, 3];
-
-const BUF_HELPERS: string[] = [
-  "__fern_buf_push_bytes_expanded",
-  "__fern_buf_push_bytes_filtered",
-  "__fern_buf_push_bytes_mapped",
-  "__fern_buf_take_bytes",
-  "__fern_buf_push_bytes_range",
-  "__fern_buf_new",
-  "__fern_buf_push",
-  "__fern_buf_push_range",
-  "__fern_buf_push_byte",
-  "__fern_buf_len",
-  "__fern_buf_take",
-  "__fern_buf_free",
-  "__fern_buf_clear",
-  "__fern_buf_push_u64",
-  "__fern_buf_push_decimal",
-  "__fern_buf_push_base64",
-  "__fern_buf_push_base32",
-  "__fern_buf_decode_base32",
-  "__fern_buf_push_mapped",
-  "__fern_buf_push_filtered",
-  "__fern_buf_push_expanded",
-];
-
 pub function buf_helper(kind: i32): string {
-  for k in 0..BUF_KINDS.len() {
-    if (BUF_KINDS[k] == kind) {
-      return BUF_HELPERS[k];
-    }
+  if (ir.buf_arity(kind) == 0) {
+    return "";
   }
-  return "";
+  return "__fern_" + ir.kind_name(kind);
 }
 
 pub function buf_table_helper(kind: i32, packed: boolean): string {
@@ -995,15 +963,6 @@ pub function buf_table_helper(kind: i32, packed: boolean): string {
 // The 200 bytes "00" "01" ... "99": the two digits of each value below 100.
 pub function decimal_pairs(): string {
   return "00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899";
-}
-
-pub function buf_arity(kind: i32): i32 {
-  for k in 0..BUF_KINDS.len() {
-    if (BUF_KINDS[k] == kind) {
-      return BUF_ARITIES[k];
-    }
-  }
-  return 0;
 }
 
 pub function (s: EmitState) write(text: string): EmitState {
@@ -6209,7 +6168,7 @@ pub function ssa_funary_known(what: string): boolean {
       return true;
     }
   }
-  return what.starts_with("i32_to_f64:");
+  return what == "i32_to_f64:32" || what == "i32_to_f64:64";
 }
 
 pub function ssa_fused_loc(source: ssaprepare.SourceLines, blk: ssa.SBlock, begin: i32, tailed: boolean, s: EmitState): EmitState {

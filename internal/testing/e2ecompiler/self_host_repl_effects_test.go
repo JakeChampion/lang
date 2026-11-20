@@ -1,6 +1,7 @@
 package e2ecompiler
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,8 +58,7 @@ func TestSelfHostREPL(t *testing.T) {
 		"> side",
 		"> > in f",
 		"> > [1, 2]",
-		"> error: in fn '__repl': expected an expression, got \";\"",
-		"> > 6",
+		"> > > 6",
 		"> > 6",
 		"> 2.5",
 		"> 0.30000000000000004",
@@ -77,9 +77,40 @@ func TestSelfHostREPL(t *testing.T) {
 	}, "\n")
 	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-repl", e2eharness.SelfHostStdlibRoot(t))
 	cmd.Stdin = strings.NewReader(in)
-	out, err := cmd.CombinedOutput()
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if got := stderr.String(); !strings.Contains(got, `<stdin>:12:14: error[P001]:`) || !strings.Contains(got, `expected an expression`) {
+		t.Errorf("unexpected parse diagnostic: %q", got)
+	}
 	if err != nil || string(out) != want {
 		t.Errorf("%v\n--- got ---\n%s\n--- want ---\n%s", err, out, want)
+	}
+}
+
+func TestSelfHostREPLDiagnosticsJSON(t *testing.T) {
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-repl", "-diag-format", "json", e2eharness.SelfHostStdlibRoot(t))
+	cmd.Stdin = strings.NewReader("\n  let y: i32 = ;\nbogus_name\n1+2\n")
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil || string(out) != "fern REPL — Ctrl+D to exit\n> > > > 3\n> \n" {
+		t.Fatalf("REPL stdout %q, err %v", out, err)
+	}
+	lines := strings.Split(strings.TrimSpace(stderr.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected two diagnostics, got %q", stderr.String())
+	}
+	var parse struct {
+		File, Code string
+		Line, Col  int
+	}
+	if err := json.Unmarshal([]byte(lines[0]), &parse); err != nil || parse.File != "<stdin>" || parse.Line != 2 || parse.Col != 16 || parse.Code != "P001" {
+		t.Errorf("unexpected parse diagnostic %s (%v)", lines[0], err)
+	}
+	var runtime struct{ Message string }
+	if err := json.Unmarshal([]byte(lines[1]), &runtime); err != nil || !strings.Contains(runtime.Message, "undefined identifier: bogus_name") {
+		t.Errorf("unexpected evaluation diagnostic %s (%v)", lines[1], err)
 	}
 }
 

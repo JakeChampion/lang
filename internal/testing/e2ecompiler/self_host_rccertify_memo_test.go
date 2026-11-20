@@ -61,7 +61,7 @@ func TestSelfHostRcCertifyMemo(t *testing.T) {
 	if hits != 0 || misses == 0 {
 		t.Fatalf("a fresh memo: hits=%d misses=%d, want no hits and some misses", hits, misses)
 	}
-	out, code = compileCapturing(t, cli, src, memo, "FERN_IR_VERIFY=1")
+	out, code = compileCapturing(t, cli, src, "FERN_RC_CERTIFY_MEMO=0", "FERN_DEBUG_RC_CERTIFY_MEMO="+filepath.Join(dir, "memo"), "FERN_IR_VERIFY=0", "FERN_DEBUG_IR_VERIFY=1")
 	if code != 0 {
 		t.Fatalf("second compile: exit %d\n%s", code, out)
 	}

@@ -1,3 +1,4 @@
+import "./viewerase";
 import "./asm_arm64_ir";
 import "./asm_ir";
 import "./asmcore";
@@ -361,7 +362,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   merged = treeshake.treeshake(merged);
 
   let typed = astpasses.module_with_builtins_typed(merged);
-  let full = parser.erase_view_module(typed);
+  let full = viewerase.erase_view_module(typed);
   let sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(false, false, true, semarrayreport.off())), switches: asmcore.Switches { ...asmcore.env_switches(), target: target } };
   if (report_diags(sub.refused, files)) {
     return 1;

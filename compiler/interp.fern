@@ -2,6 +2,7 @@ import "./ast";
 import "./lexer";
 import "./lexical";
 import "./parser";
+import "./rangeloops";
 import "./defaultargs";
 import "./util";
 import "./aborts";
@@ -6719,13 +6720,25 @@ function receiver_arg_names(fd: parser.FuncDecl): string[] {
   return names;
 }
 
+// Const arguments are decimal tokens. Digits in names such as i32 and Vec4
+// cannot supply a const binding.
+function has_const_token(spelling: string): boolean {
+  for i in 0..spelling.len() {
+    let ch = spelling[i];
+    if (ch >= b'0' && ch <= b'9' && (i == 0 || !parser.ident_byte(spelling[i - 1] as i32))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // bind_receiver_consts binds each name of a receiver spelling that the
 // receiver's static type fills with a const argument: N in
 // `function (r: Ring[N, T]) cap()` called on a `Ring[4, string]`. A struct
 // value does not carry its type arguments, so the call site gives the type.
 function bind_receiver_consts(env: Env, receiver_type: string, recv_type: string, names: string[]): Env {
   let e = env;
-  if (recv_type.len() == 0) {
+  if (!has_const_token(recv_type)) {
     return e;
   }
   for name in names {
@@ -10748,7 +10761,7 @@ function lowered(raw: parser.Module): parser.Module {
     funcs = funcs.append(lexical.resolve_func(fd).func);
   }
   let resolved = parser.Module { ...typed, funcs: funcs };
-  return defaultargs.fill_module(parser.desugar_ranges_module(parser.lower_defers_module(resolved)));
+  return defaultargs.fill_module(rangeloops.desugar_ranges_module(parser.lower_defers_module(resolved)));
 }
 
 pub function (s: Session) declare(m: parser.Module): Session {

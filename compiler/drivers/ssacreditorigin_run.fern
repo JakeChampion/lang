@@ -32,24 +32,24 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
   }
   for original in b.insts {
     let op = original;
-    if (op.kind_tag == 48) {
+    if (op.kind_tag == ssa.ARR_BOX) {
       if (mode == 0) {
         op = ssa.SInst { ...op, imm: op.imm + 1 };
       }
       if (mode == 1) {
-        op = ssa.SInst { ...op, kind_tag: 11, str: "unknown" };
+        op = ssa.SInst { ...op, kind_tag: ssa.CALL, str: "unknown" };
       }
       if (mode == 2) {
-        op = ssa.SInst { ...op, kind_tag: 7, args: [0], imm: 0 };
+        op = ssa.SInst { ...op, kind_tag: ssa.COPY, args: [0], imm: 0 };
       }
       if (mode == 17) {
         op = ssa.SInst { ...op, args: [0] };
       }
     }
-    if (op.kind_tag == 46 && mode == 3) {
+    if (op.kind_tag == ssa.SHAPE_ADDR && mode == 3) {
       op = ssa.SInst { ...op, str: "Wrong" };
     }
-    if (op.kind_tag == 6 && op.imm == 0) {
+    if (op.kind_tag == ssa.PARAM && op.imm == 0) {
       if (mode == 4) {
         op = ssa.SInst { ...op, imm: -1 };
       }
@@ -57,9 +57,9 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
         op = ssa.SInst { ...op, imm: 2147483647 };
       }
     }
-    if (op.kind_tag == 41 && op.imm == 0) {
+    if (op.kind_tag == ssa.ST_AT && op.imm == 0) {
       if (mode == 6) {
-        op = ssa.SInst { ...op, kind_tag: 1, args: [], imm: 0 };
+        op = ssa.SInst { ...op, kind_tag: ssa.CONST_INT, args: [], imm: 0 };
       }
       if (mode == 7) {
         op = ssa.SInst { ...op, imm: 2147483647 };
@@ -90,8 +90,8 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
         op = ssa.SInst { ...op, imm: -2147483647 };
       }
     }
-    if (op.kind_tag == 41 && op.imm == ssa.tag_offset() && mode == 15) {
-      op = ssa.SInst { ...op, kind_tag: 1, args: [], imm: 0, str: "" };
+    if (op.kind_tag == ssa.ST_AT && op.imm == ssa.tag_offset() && mode == 15) {
+      op = ssa.SInst { ...op, kind_tag: ssa.CONST_INT, args: [], imm: 0, str: "" };
     }
     if (op.kind_tag == ssa.CONST_INT && !used && mode == 16) {
       op = ssa.SInst { ...box, result: op.result };
@@ -122,7 +122,7 @@ function controls(f: ssa.SFunc, shape: string, refs: boolean[]): void {
   expect(ssa.SFunc { ...f, name: "__fern_spoof" }, shape, refs, "unsupported allocation producer boundary", 46);
   expect(ssa.SFunc { ...f, blocks: [b, b] }, shape, refs, "unsupported allocation producer boundary", 47);
   expect(ssa.SFunc { ...f, blocks: [ssa.SBlock { ...b, preds: [b.id] }] }, shape, refs, "unsupported allocation producer graph", 48);
-  let copied = b.insts.append(ssa.SInst { kind_tag: 7, result: f.nvals, args: [b.term.value], imm: 0, str: "" });
+  let copied = b.insts.append(ssa.SInst { kind_tag: ssa.COPY, result: f.nvals, args: [b.term.value], imm: 0, str: "" });
   expect(ssa.SFunc { ...f, name: "renamed", entry: 2147483647, nvals: f.nvals + 1, blocks: [ssa.SBlock { ...b, id: 2147483647, insts: copied, term: ssa.STerm { ...b.term, value: f.nvals } }] }, shape, refs, "", 49);
   expect(f, shape, refs, "", 50);
 }
@@ -147,7 +147,7 @@ function sparse_controls(f: ssa.SFunc, shape: string, refs: boolean[]): void {
   let renamed = sparse(formed);
   expect(renamed, shape, refs, "", 53);
   let b = renamed.blocks[0];
-  let copy = ssa.SInst { kind_tag: 7, result: renamed.nvals, args: [0], imm: 0, str: "" };
+  let copy = ssa.SInst { kind_tag: ssa.COPY, result: renamed.nvals, args: [0], imm: 0, str: "" };
   let term = ssa.STerm { ...b.term, value: renamed.nvals };
   let extended = ssa.SFunc { ...renamed, nvals: renamed.nvals + 1, blocks: [ssa.SBlock { ...b, insts: b.insts.append(copy), term: term }] };
   expect(extended, shape, refs, "unavailable allocation producer operand", 54);

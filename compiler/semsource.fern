@@ -6938,7 +6938,7 @@ function word_source(s: State, id: i32): ssa.SInst {
       }
     }
   }
-  return ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
+  return ssa.no_inst();
 }
 
 // The value as a word with its bits at `shift` and zero in each other bit.
@@ -9427,13 +9427,19 @@ pub struct PassSwitches { reach: boolean, inline: boolean, scale_kernel: boolean
 
 pub function env_passes(): PassSwitches {
   let inline = true;
-  match (env("FERN_SEM_INLINE")) {
+  match (util.debug_env("FERN_DEBUG_SEM_INLINE", "FERN_SEM_INLINE")) {
     Some(v) => {
       inline = envflag.value_on(v);
     },
     None => {}
   }
-  return PassSwitches { reach: !envflag.on("FERN_NO_SEM_REACH"), inline: inline, scale_kernel: !envflag.on("FERN_NO_SCALE_KERNEL"), product_kernel: !envflag.on("FERN_NO_PRODUCT_KERNEL"), fusion: !envflag.on("FERN_NO_ARRAY_FUSION") };
+  return PassSwitches {
+    reach: !util.debug_flag("FERN_DEBUG_NO_SEM_REACH", "FERN_NO_SEM_REACH"),
+    inline: inline,
+    scale_kernel: !util.debug_flag("FERN_DEBUG_NO_SCALE_KERNEL", "FERN_NO_SCALE_KERNEL"),
+    product_kernel: !util.debug_flag("FERN_DEBUG_NO_PRODUCT_KERNEL", "FERN_NO_PRODUCT_KERNEL"),
+    fusion: !util.debug_flag("FERN_DEBUG_NO_ARRAY_FUSION", "FERN_NO_ARRAY_FUSION"),
+  };
 }
 
 // shape_slot says a record of the target keeps its shape in a slot of its box.

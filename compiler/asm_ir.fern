@@ -8573,7 +8573,7 @@ function ssa_unary_known(what: string): boolean {
   if (what == "int_cast:u8" || what == "int_cast:u16" || what == "int_cast:i16" || what == "int_cast:u32" || what == "int_cast:i32") {
     return true;
   }
-  return what.starts_with("rotr:") || asmcore.ssa_funary_known(what) || ssa_bits_asm(what, "%rax") != "";
+  return ssa.rotr_count(what) >= 0 || asmcore.ssa_funary_known(what) || ssa_bits_asm(what, "%rax") != "";
 }
 
 function ssa_inst_known(ins: ssa.SInst): boolean {
@@ -10494,7 +10494,7 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], r: irtables.Lowered, s: asmc
     return ssa_store(reg_of, ins.result, d, s);
   }
 
-  if (asmcore.buf_helper(r.ops[ins.imm].kind_tag) != "") {
+  if (ir.buf_arity(r.ops[ins.imm].kind_tag) > 0) {
     return ssa_buf_call(ins, reg_of, asmcore.buf_table_helper(r.ops[ins.imm].kind_tag, ir.is_packed(r.ops[ins.imm])), s);
   }
   s = asmcore.ssa_x0_forget(s);
@@ -12171,7 +12171,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
       s = s2;
     }
   }
-  match (env("FERN_SSA_ALLOC")) {
+  match (util.debug_env("FERN_DEBUG_SSA_ALLOC", "FERN_SSA_ALLOC")) {
     Some(want) => {
       if (want == label_name || want == "*") {
         eprint("FERN_SSA_ALLOC: " + label_name + "\n" + ssa.print_func(f) + ssa.print_alloc_costs(f, alloc, ssa.SpillCosts { fold_alu_rhs: true }));

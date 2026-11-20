@@ -414,8 +414,8 @@ built. Citations are to the paper that introduced the technique.
    escapes: control bytes, `\xNN` and `\u{…}` scalars of two to four bytes).
 4. **Pass-configuration differential with a fuel-bisectable chaos mode**
    (Cranelift's `cranelift-control`, LLVM's opt-bisect-limit). The compiler has
-   switches (`FERN_SELFHOST_NO_REUSE`, `FERN_SEM_INLINE`,
-   `FERN_NO_ARRAY_FUSION`, ...). Done: the differential legs flip them per
+   switches (`FERN_DEBUG_SELFHOST_NO_REUSE`, `FERN_DEBUG_SEM_INLINE`,
+   `FERN_DEBUG_NO_ARRAY_FUSION`, ...). Done: the differential legs flip them per
    generated program, and a failure bisects to the one (pass, function)
    decision that caused it. The key is a hash rather than a running count, so
    the compiler needs no mutable state, and the key of a decision does not

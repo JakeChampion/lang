@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// FERN_SSA_ALLOC=name prints the register form and the homes of the values
+// FERN_DEBUG_SSA_ALLOC=name prints the register form and the homes of the values
 // of that function on each native target, and nothing for another name.
 func TestSelfHostSSAAllocDump(t *testing.T) {
 	h := selfHostCLIForHost(t)
@@ -19,16 +19,16 @@ func TestSelfHostSSAAllocDump(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tg := range h.targets {
-		for name, want := range map[string]bool{"twice": true, "absent": false} {
+		for name, want := range map[string]bool{"twice": true, "absent": false, "": false} {
 			cmd := exec.Command(h.cli, "-target", tg.target, "-o", filepath.Join(dir, "dump-"+tg.target), src, h.stdlib)
-			cmd.Env = append(os.Environ(), "FERN_SSA_ALLOC="+name)
+			cmd.Env = append(os.Environ(), "FERN_SSA_ALLOC=twice", "FERN_DEBUG_SSA_ALLOC="+name)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("%s: %v\n%s", tg.target, err, out)
 			}
 			got := strings.Contains(string(out), "FERN_SSA_ALLOC: twice\n") && strings.Contains(string(out), " reg ")
 			if got != want {
-				t.Errorf("%s: FERN_SSA_ALLOC=%s printed the dump of twice: %v, want %v\n%s", tg.target, name, got, want, out)
+				t.Errorf("%s: FERN_DEBUG_SSA_ALLOC=%s printed the dump of twice: %v, want %v\n%s", tg.target, name, got, want, out)
 			}
 		}
 	}

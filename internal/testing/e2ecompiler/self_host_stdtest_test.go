@@ -101,7 +101,7 @@ func TestSelfHostStdTestHarden(t *testing.T) {
 // that reads an operand to a scratch register that holds a different
 // operand gives a crash or a failed assertion here.
 func TestSelfHostStdTestFewRegisters(t *testing.T) {
-	stdTestVerdictUnder(t, "with FERN_SSA_DENY=16319", nil, []string{"FERN_SSA_DENY=16319"})
+	stdTestVerdictUnder(t, "with FERN_DEBUG_SSA_DENY=16319", nil, []string{"FERN_DEBUG_SSA_DENY=16319"})
 }
 
 func stdTestVerdictUnder(t *testing.T, what string, flags, env []string) {

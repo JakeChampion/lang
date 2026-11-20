@@ -10,6 +10,14 @@ function wide(a: i64): usize {
     return a as usize;
 }
 
+@noinline function checked_unsigned(n: u64): Option[usize] {
+    return n as? usize;
+}
+
+@noinline function checked_signed(n: i64): Option[usize] {
+    return n as? usize;
+}
+
 function main(): i32 {
     let past_i32: usize = 2147483648;
     let u32_max: usize = 4294967295;
@@ -35,5 +43,10 @@ function main(): i32 {
         print("a borrow reads unsigned");
     }
     print(f"{past_i32 - 1}");
+    if let Some(n) = checked_unsigned(4294967295u64) {
+        if (n != 4294967295usize) { return 1; }
+    } else { return 2; }
+    if let Some(n) = checked_signed(0 - 1) { return 3; }
+    if let Some(n) = checked_unsigned(4294967296u64) { return 4; }
     return 0;
 }

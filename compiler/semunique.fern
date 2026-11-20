@@ -157,7 +157,7 @@ function def_of(f: ssasem.Func, v: i32): ssa.SInst {
       }
     }
   }
-  return ssa.SInst { kind_tag: 0 - 1000, result: -1, args: [], imm: 0, str: "" };
+  return ssa.no_inst();
 }
 
 function fresh(f: ssasem.Func, v: i32): boolean {

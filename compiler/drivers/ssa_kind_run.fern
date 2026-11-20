@@ -1,6 +1,23 @@
 import "../ssa";
 import "../util";
 
+function rotate_operands_match(): boolean {
+  for width in [32, 64] {
+    for count in 0..width {
+      let op = "rotr:" + util.i32_to_string(width) + ":" + util.i32_to_string(count);
+      if (ssa.rotr_count(op) != count) {
+        return false;
+      }
+    }
+  }
+  for op in ["rotr:16:1", "rotr:32:", "rotr:64:x", "rotr:32:-1", "rotr:32:32", "rotr:64:64", "rotr:32:4294967296"] {
+    if (ssa.rotr_count(op) >= 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function main(): i32 {
   let n = ssa.kind_count();
 
@@ -41,6 +58,11 @@ function main(): i32 {
   out = out + "select=" + util.i32_to_string(ssa.kind_id("select")) + "\n";
   out = out + "carry=" + util.i32_to_string(ssa.kind_id("carry")) + "\n";
 
+  for id in [ssa.BUF_NEW, ssa.BUF_PUSH, ssa.BUF_PUSH_RANGE, ssa.BUF_PUSH_BYTE, ssa.BUF_LEN, ssa.BUF_TAKE, ssa.BUF_FREE] {
+    out += "buffer_kind=" + ssa.kind_name(id) + "\n";
+  }
+  out = out + "bound_kind=" + ssa.kind_name(ssa.BOUND) + "\n";
+
   let tn = ssa.term_count();
   let tfailures = 0;
   let tok = 0;
@@ -63,14 +85,17 @@ function main(): i32 {
   out = out + "brif=" + util.i32_to_string(ssa.term_id("brif")) + "\n";
   out = out + "unreachable=" + util.i32_to_string(ssa.term_id("unreachable")) + "\n";
 
-  let sid = 1;
-  while (sid <= ssa.semantic_kind_count()) {
+  let semantic_count = ssa.semantic_kind_count();
+  for sid in 1..semantic_count + 1 {
     out = out + "semantic" + util.i32_to_string(sid) + "=" + ssa.kind_name(-sid) + "\n";
-    sid += 1;
   }
-  out = out + "semantic_count=" + util.i32_to_string(sid - 1) + "\n";
+  out = out + "semantic_count=" + util.i32_to_string(semantic_count) + "\n";
 
   write(out);
 
+  if (!rotate_operands_match()) {
+    print("rotate operand mismatch");
+    return 1;
+  }
   return failures + tfailures;
 }

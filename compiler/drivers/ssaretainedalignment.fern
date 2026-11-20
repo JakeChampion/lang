@@ -222,7 +222,7 @@ function annotations(row: ssaprepare.Emitted): void {
     let ops = block.insts;
     let j = 0;
     for op in ops {
-      if (op.kind_tag == 11 && op.str == "__fern_rc_is_unique") {
+      if (op.kind_tag == ssa.CALL && op.str == "__fern_rc_is_unique") {
         require(op.imm == 4);
         ops = ops.with(j, ssa.SInst { ...op, imm: 0 });
         hits += 1;

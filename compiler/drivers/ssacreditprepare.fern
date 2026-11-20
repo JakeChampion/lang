@@ -32,7 +32,7 @@ function calls(f: ssa.SFunc): i32 {
   let n = 0;
   for b in f.blocks {
     for op in b.insts {
-      if (op.kind_tag == 11) {
+      if (op.kind_tag == ssa.CALL) {
         n += 1;
       }
     }
@@ -43,8 +43,8 @@ function calls(f: ssa.SFunc): i32 {
 function returned(p: ssaprepare.Body, value: i32): void {
   require(p.formed.f.name == "actual" && calls(p.formed.f) == 0, 191);
   let b = p.formed.f.blocks[p.formed.f.entry];
-  require(b.insts.len() == 2 && b.insts[0].kind_tag == 1 && b.insts[0].imm == value, 192);
-  require(b.insts[1].kind_tag == 7 && b.insts[1].args.len() == 1 && b.insts[1].args[0] == b.insts[0].result && b.term.value == b.insts[1].result, 199);
+  require(b.insts.len() == 2 && b.insts[0].kind_tag == ssa.CONST_INT && b.insts[0].imm == value, 192);
+  require(b.insts[1].kind_tag == ssa.COPY && b.insts[1].args.len() == 1 && b.insts[1].args[0] == b.insts[0].result && b.term.value == b.insts[1].result, 199);
 }
 
 function prepared(base: irtables.Lowered, selected: physicalbody.Selected, leaves: ssa.Leaves, value: i32, debug: boolean): void {

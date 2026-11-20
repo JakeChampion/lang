@@ -104,8 +104,8 @@ function graph(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
   let at = 0;
   let changed_count = 0;
   for op in b.insts {
-    if (op.kind_tag == 41 || op.kind_tag == 46 || op.kind_tag == 48) {
-      let bad = ssa.SInst { ...op, kind_tag: 1, args: [], imm: 0, str: "" };
+    if (op.kind_tag == ssa.ST_AT || op.kind_tag == ssa.SHAPE_ADDR || op.kind_tag == ssa.ARR_BOX) {
+      let bad = ssa.SInst { ...op, kind_tag: ssa.CONST_INT, args: [], imm: 0, str: "" };
       let formed = ssa.Formed { ...row.body.formed, f: ssa.SFunc { ...f, blocks: [ssa.SBlock { ...b, insts: b.insts.with(at, bad) }] } };
       check(ssaprepare.Output { ...output, bodies: [ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, formed: formed } }] }, false, "same formed origin, old body cannot rescue");
       changed_count += 1;

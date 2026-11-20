@@ -20,13 +20,13 @@ function fixture(name: string, callee: string, slot: i32): ssasem.Func {
     arguments = [slot];
   }
   let insts: ssa.SInst[] = [
-    ssa.SInst { kind_tag: 6, result: 0, args: [], imm: 0, str: "" },
-    ssa.SInst { kind_tag: 6, result: 1, args: [], imm: 1, str: "" },
+    ssa.SInst { kind_tag: ssa.PARAM, result: 0, args: [], imm: 0, str: "" },
+    ssa.SInst { kind_tag: ssa.PARAM, result: 1, args: [], imm: 1, str: "" },
     ssa.SInst { kind_tag: ssasem.call(), result: 2, args: arguments, imm: 0, str: callee },
   ];
   return ssasem.Func {
     graph: ssa.SFunc { name: name, nparams: 2, nvals: 3, entry: 0, takes_env: false, blocks: [
-      ssa.SBlock { id: 0, preds: [], insts: insts, term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 2 } },
+      ssa.SBlock { id: 0, preds: [], insts: insts, term: ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: 2 } },
     ] },
     values: [array, array, size], params: [array, array], result: size,
     records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [],
@@ -58,10 +58,10 @@ function returned_storage(): void {
     graph: ssa.SFunc { name: "make", nparams: 0, nvals: 2, entry: 0, takes_env: false, blocks: [
       ssa.SBlock {
         id: 0, preds: [], insts: [
-          ssa.SInst { kind_tag: 1, result: 0, args: [], imm: 0, str: "" },
+          ssa.SInst { kind_tag: ssa.CONST_INT, result: 0, args: [], imm: 0, str: "" },
           ssa.SInst { kind_tag: ssasem.array_new(), result: 1, args: [0, 0], imm: 0, str: "" },
         ],
-        term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 1 },
+        term: ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: 1 },
       },
     ] },
   };
@@ -73,7 +73,7 @@ function returned_storage(): void {
           ssa.SInst { kind_tag: ssasem.call(), result: 0, args: [], imm: 0, str: "make" },
           ssa.SInst { kind_tag: ssasem.call(), result: 1, args: [0], imm: 0, str: "__raw_arr_ptr" },
         ],
-        term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 1 },
+        term: ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: 1 },
       },
     ] },
   };

@@ -106,15 +106,7 @@ function template_stage(key: string, instances: semsource.Produced[], stages: St
 }
 
 function listed_leaf(): string {
-  match (env("FERN_CENSUS_LIST")) {
-    Some(v) => {
-      return v;
-    },
-    None => {
-      return "";
-    }
-  }
-  return "";
+  return util.debug_env("FERN_DEBUG_CENSUS_LIST", "FERN_CENSUS_LIST").unwrap_or("");
 }
 
 function measured_build(merged: parser.Module): semsource.Built {

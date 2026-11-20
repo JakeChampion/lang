@@ -76,6 +76,24 @@ class WorkerEvidenceTests(unittest.TestCase):
         self.assertTrue(sample["removed"])
         self.assertIn(("rm", "-f", "owned-container"), docker.commands)
 
+    def test_log_failure_preserves_primary_oom_state(self):
+        class UnavailableLogsDocker(FakeDocker):
+            def call(self, *args, **kwargs):
+                if args[0] == "logs":
+                    raise RuntimeError("logs unavailable")
+                return super().call(*args, **kwargs)
+
+        docker = UnavailableLogsDocker(delayed_oom=True)
+        with self.assertRaises(qualification.WorkerFailure) as caught:
+            qualification.run_worker(docker, "image", "oom", 2)
+        sample = caught.exception.observation
+        self.assertEqual(sample["failure"], "logs unavailable")
+        self.assertEqual(sample["state"]["ExitCode"], 137)
+        self.assertFalse(sample["state"]["OOMKilled"])
+        self.assertFalse(sample["collector_killed"])
+        self.assertTrue(sample["state_after_failure"]["OOMKilled"])
+        self.assertTrue(sample["removed"])
+
     def test_later_oom_flag_does_not_waive_original_failure(self):
         docker = FakeDocker(delayed_oom=True)
         with self.assertRaises(qualification.WorkerFailure) as caught:

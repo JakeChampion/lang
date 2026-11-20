@@ -1,0 +1,1 @@
+main.fern:13:15: error[E051]: argument to owned parameter cannot take the spread: field "d" uses spread source "s" beyond a borrow or copy

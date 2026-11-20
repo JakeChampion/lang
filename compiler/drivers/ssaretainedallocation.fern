@@ -251,7 +251,7 @@ function compare_fusion(row: ssaprepare.Emitted, mode: i32): void {
 function compare_operands(blk: ssa.SBlock, fu: ssaprepare.Fusion, mode: i32): void {
   require(!fu.unique && !fu.aligned && fu.inverted == (mode == 1) && fu.n == (if (mode == 1) { 2 } else { 1 }), 132);
   let cmp = blk.insts[blk.insts.len() - fu.n];
-  require(cmp.kind_tag == 9 && cmp.str == "gt_s", 133);
+  require(cmp.kind_tag == ssa.BINARY && cmp.str == "gt_s", 133);
   require(fu.tag == ir.kind_id(if (mode == 2) { "lt_s" } else { "gt_s" }), 134);
   let first = if (mode == 2) { 1 } else { 0 };
   require(fu.a == cmp.args[first] && fu.b == cmp.args[1 - first], 135);

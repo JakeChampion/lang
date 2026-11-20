@@ -65,8 +65,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<13 pub function (s: CliSpec) completion(shell: string): Option[string]>>
 
-<<14 function __cli_sgr(code: string, s: string): string>>
-
 <<15 pub function red(s: string): string>>
 
 <<16 function __cli_kdl(s: string): string>>
@@ -80,6 +78,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<dependencies 1>>=
 // This module parses command-line arguments.
 import "std/string";
+import "std/ansi";
 import "std/utf8" as utf8;
 import "core/map";
 import "core/error";
@@ -690,52 +689,40 @@ pub function color_enabled(): boolean {
 }
 ```
 
-### `14 function __cli_sgr(code: string, s: string): string`
-
-```fern
-<<14 function __cli_sgr(code: string, s: string): string>>=
-function __cli_sgr(code: string, s: string): string {
-  if (!color_enabled()) {
-    return s;
-  }
-  return "\x1b[" + code + "m" + s + "\x1b[0m";
-}
-```
-
 ### `15 pub function red(s: string): string`
 
 ```fern
 <<15 pub function red(s: string): string>>=
 pub function red(s: string): string {
-  return __cli_sgr("31", s);
+  return if (color_enabled()) { ansi.red(s) } else { s };
 }
 
 pub function green(s: string): string {
-  return __cli_sgr("32", s);
+  return if (color_enabled()) { ansi.green(s) } else { s };
 }
 
 pub function yellow(s: string): string {
-  return __cli_sgr("33", s);
+  return if (color_enabled()) { ansi.yellow(s) } else { s };
 }
 
 pub function blue(s: string): string {
-  return __cli_sgr("34", s);
+  return if (color_enabled()) { ansi.blue(s) } else { s };
 }
 
 pub function magenta(s: string): string {
-  return __cli_sgr("35", s);
+  return if (color_enabled()) { ansi.magenta(s) } else { s };
 }
 
 pub function cyan(s: string): string {
-  return __cli_sgr("36", s);
+  return if (color_enabled()) { ansi.cyan(s) } else { s };
 }
 
 pub function bold(s: string): string {
-  return __cli_sgr("1", s);
+  return if (color_enabled()) { ansi.bold(s) } else { s };
 }
 
 pub function dim(s: string): string {
-  return __cli_sgr("2", s);
+  return if (color_enabled()) { ansi.dim(s) } else { s };
 }
 ```
 

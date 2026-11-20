@@ -23189,18 +23189,24 @@ function lu_spread_source(fx: LuFn, e: ast.Expr): Option[ast.ExprIdent] {
   if (!sl.has_base) {
     return None;
   }
+  let (last, refused) = lu_spread_reads(fx, sl, src);
+  return if (refused == "") { Some(last) } else { None };
+}
+
+function lu_spread_reads(fx: LuFn, sl: ast.ExprStructLit, src: ast.ExprIdent): (ast.ExprIdent, string) {
   let last = src;
-  for v in sl.field_values {
+  for i in 0..sl.field_values.len() {
+    let v = sl.field_values[i];
     let names = astwalk.fold_expr_nodes(v, [], lu_name_stmt, lu_name_expr, astwalk.descend_all);
     let mentions = util.count_str(names, src.name);
     if (mentions > 0) {
       if (lu_source_reads(fx, v, src.name, sl.field_names) != mentions) {
-        return None;
+        return (last, sl.field_names[i]);
       }
       last = lu_later_mention(v, last);
     }
   }
-  return Some(last);
+  return (last, "");
 }
 
 // The mentions of `name` in `v` that read it before the literal takes it: a
@@ -25746,6 +25752,10 @@ function lu_ended_callback_loans(body: ast.Stmt[], own facts: LuFacts): LuFacts 
   return LuFacts { ...facts, captured: lu_without_names(facts.captured, ended), escaping: lu_without_names(facts.escaping, ended) };
 }
 
+function lu_function(fn: parser.FuncDecl, facts: LuFacts, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): LuFn {
+  return LuFn { checked_params: lu_checked_params(fn), ret_own: fn.ret_own, facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, flow: lu_flow(fn.body) };
+}
+
 // `fn` is resolved with lu_resolved.
 function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): string[] {
   let facts = lu_empty_facts();
@@ -25755,7 +25765,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
     nested = astwalk.fold_stmt_nodes(st, nested, astwalk.keep_lambdas, astwalk.collect_lambda, not_lambda);
   }
   facts = lu_ended_callback_loans(fn.body, facts);
-  let fx0 = LuFn { checked_params: lu_checked_params(fn), ret_own: fn.ret_own, facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, flow: lu_flow(fn.body) };
+  let fx0 = lu_function(fn, facts, ofuncs, borrows, lenders, builtins, noret);
   let fx = LuFn { ...fx0, fresh: lu_fresh_names(fx0), fresh_known: true };
   let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
   let top = LuScope { frames: [], head: lu_plain_frame(fn.body), framed: true, binders: [], bindings: [], loop_depth: 0, in_loop: false, in_iife: false, in_defer: false };
@@ -25951,6 +25961,52 @@ function ow_once_callee(c: ast.ExprCall, ctx: OwnCtx): boolean {
   return false;
 }
 
+// Explain the failed ownership check using the same typed reads as last-use
+// analysis. Match a local use by position so shadowed declarations stay distinct.
+function ow_spread_refusal(arg: ast.Expr, ctx: OwnCtx): string {
+  if (ow_ident_name(arg) == "" && !struct_lit_arg(arg)) {
+    return "";
+  }
+  let lu = ctx.last_use.get();
+  let fn = lu_resolved(lu.typed_fn);
+  let facts = lu_empty_facts();
+  for st in fn.body {
+    facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  }
+  let fx = lu_function(fn, facts, lu.ofuncs, lu.borrows, lu.lenders, lu.builtins, lu.noret);
+  let value = arg;
+  if let ast.ExprIdent(id) = arg {
+    for occ in facts.occ {
+      if (occ.line == id.line && occ.col == id.col) {
+        for a in facts.assigns {
+          if (a.name == occ.name) {
+            return "";
+          }
+        }
+        let Some(init) = lu_init_of(fx, occ.name) else {
+          return "";
+        };
+        value = init;
+        break;
+      }
+    }
+  }
+  let ast.ExprStructLit(sl) = value else {
+    return "";
+  };
+  let ast.ExprIdent(src) = sl.base else {
+    return "";
+  };
+  if (!sl.has_base) {
+    return "";
+  }
+  let (_, field) = lu_spread_reads(fx, sl, src);
+  if (field == "") {
+    return "";
+  }
+  return "argument to owned parameter cannot take the spread: field \"" + field + "\" uses spread source \"" + lexical.source_name(src.name) + "\" beyond a borrow or copy";
+}
+
 function ow_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
   let out: util.Diag[] = [];
   if (ow_once_callee(c, ctx) && !ow_is_owned_expr(c.callee, ctx)) {
@@ -25966,7 +26022,11 @@ function ow_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
         aline = c.line;
         acol = c.col;
       }
-      out = out.append(dg_at("E051", "argument to owned parameter must be an owned value (a fresh construction, another `own` parameter, or a local at its last use), not a borrowed one", aline, acol));
+      let message = ow_spread_refusal(oc.args[i], ctx);
+      if (message == "") {
+        message = "argument to owned parameter must be an owned value (a fresh construction, another `own` parameter, or a local at its last use), not a borrowed one";
+      }
+      out = out.append(dg_at("E051", message, aline, acol));
     }
     i += 1;
   }

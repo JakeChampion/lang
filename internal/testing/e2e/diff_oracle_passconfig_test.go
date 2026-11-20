@@ -13,12 +13,12 @@ import (
 )
 
 var selfHostPassSwitches = []string{
-	"FERN_SELFHOST_NO_REUSE=1",
-	"FERN_SEM_REUSE=",
-	"FERN_SEM_INLINE=",
-	"FERN_NO_ARRAY_FUSION=1",
-	"FERN_NO_SCALE_KERNEL=1",
-	"FERN_NO_PRODUCT_KERNEL=1",
+	"FERN_DEBUG_SELFHOST_NO_REUSE=1",
+	"FERN_DEBUG_SEM_REUSE=",
+	"FERN_DEBUG_SEM_INLINE=",
+	"FERN_DEBUG_NO_ARRAY_FUSION=1",
+	"FERN_DEBUG_NO_SCALE_KERNEL=1",
+	"FERN_DEBUG_NO_PRODUCT_KERNEL=1",
 }
 
 func selfHostPassConfig(seed uint64) []string {
@@ -55,7 +55,7 @@ func selfHostCompileCmd(fernBin string, env []string, args ...string) *exec.Cmd 
 
 func TestSelfHostCompileCmdVerifiesTheIR(t *testing.T) {
 	verify := func() string {
-		for _, kv := range selfHostCompileCmd("fern", []string{"FERN_SEM_INLINE="}).Environ() {
+		for _, kv := range selfHostCompileCmd("fern", []string{"FERN_DEBUG_SEM_INLINE="}).Environ() {
 			if v, ok := strings.CutPrefix(kv, "FERN_IR_VERIFY="); ok {
 				return v
 			}

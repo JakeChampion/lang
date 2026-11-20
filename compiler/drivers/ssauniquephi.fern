@@ -35,7 +35,7 @@ function sparse(f: ssa.SFunc): ssa.SFunc {
       preds = preds.append(p + 100000);
     }
     let t = b.term;
-    t = ssa.STerm { ...t, value: if (t.kind_tag == 1) { 2147483646 - t.value } else { t.value }, cond: if (t.kind_tag == 3) { 2147483646 - t.cond } else { t.cond }, target: t.target + 100000, t: t.t + 100000, f: t.f + 100000 };
+    t = ssa.STerm { ...t, value: if (t.kind_tag == ssa.TERM_RET) { 2147483646 - t.value } else { t.value }, cond: if (t.kind_tag == ssa.TERM_BRIF) { 2147483646 - t.cond } else { t.cond }, target: t.target + 100000, t: t.t + 100000, f: t.f + 100000 };
     blocks = blocks.append(ssa.SBlock { ...b, id: b.id + 100000, preds: preds, insts: insts, term: t });
   }
   return ssa.SFunc { ...f, nvals: 2147483647, entry: f.entry + 100000, blocks: blocks };
@@ -63,7 +63,7 @@ function block_controls(row: ssaprepare.Emitted, f: ssa.SFunc): void {
   check(row, ssa.SFunc { ...high, entry: 2147483647 }, false);
   check(row, ssa.SFunc { ...high, blocks: high.blocks.with(1, ssa.SBlock { ...high.blocks[1], id: high.blocks[0].id }) }, false);
   let b = high.blocks[0];
-  check(row, ssa.SFunc { ...high, blocks: high.blocks.with(0, ssa.SBlock { ...b, term: ssa.STerm { ...b.term, kind_tag: 2, target: 2147483647 } }) }, false);
+  check(row, ssa.SFunc { ...high, blocks: high.blocks.with(0, ssa.SBlock { ...b, term: ssa.STerm { ...b.term, kind_tag: ssa.TERM_BR, target: 2147483647 } }) }, false);
 }
 
 function index_controls(row: ssaprepare.Emitted, f: ssa.SFunc, join: i32): void {
@@ -73,7 +73,7 @@ function index_controls(row: ssaprepare.Emitted, f: ssa.SFunc, join: i32): void 
   let i = 0;
   while (i < 65) {
     let id = 2147483646 - i * 17;
-    insts = insts.append(ssa.SInst { kind_tag: 7, result: id, args: [last], imm: 0, str: "" });
+    insts = insts.append(ssa.SInst { kind_tag: ssa.COPY, result: id, args: [last], imm: 0, str: "" });
     last = id;
     i += 1;
   }
@@ -85,11 +85,11 @@ function index_controls(row: ssaprepare.Emitted, f: ssa.SFunc, join: i32): void 
   let blocks = copied.blocks;
   let prior = blocks[join].id;
   let ret = blocks[join].term;
-  blocks = blocks.with(join, ssa.SBlock { ...blocks[join], term: ssa.STerm { ...ret, kind_tag: 2, target: 100000 } });
+  blocks = blocks.with(join, ssa.SBlock { ...blocks[join], term: ssa.STerm { ...ret, kind_tag: ssa.TERM_BR, target: 100000 } });
   i = 0;
   while (i < 65) {
     let id = 100000 + i * 31;
-    let term = if (i == 64) { ret } else { ssa.STerm { ...ret, kind_tag: 2, target: id + 31 } };
+    let term = if (i == 64) { ret } else { ssa.STerm { ...ret, kind_tag: ssa.TERM_BR, target: id + 31 } };
     blocks = blocks.append(ssa.SBlock { ...b, id: id, insts: [], preds: [prior], term: term });
     prior = id;
     i += 1;
@@ -108,9 +108,9 @@ function index_controls(row: ssaprepare.Emitted, f: ssa.SFunc, join: i32): void 
 
 function queue_controls(row: ssaprepare.Emitted, f: ssa.SFunc, join: i32): void {
   let b = f.blocks[join];
-  let branch = ssa.SInst { kind_tag: 2, result: f.nvals, args: [], imm: 1, str: "" };
-  let split = ssa.SBlock { ...b, insts: b.insts.append(branch), term: ssa.STerm { ...b.term, kind_tag: 3, cond: branch.result, t: 10000, f: 10001 } };
-  let left = ssa.SBlock { id: 10000, insts: [], preds: [b.id], term: ssa.STerm { ...b.term, kind_tag: 2, target: 10002 } };
+  let branch = ssa.SInst { kind_tag: ssa.CONST_BOOL, result: f.nvals, args: [], imm: 1, str: "" };
+  let split = ssa.SBlock { ...b, insts: b.insts.append(branch), term: ssa.STerm { ...b.term, kind_tag: ssa.TERM_BRIF, cond: branch.result, t: 10000, f: 10001 } };
+  let left = ssa.SBlock { id: 10000, insts: [], preds: [b.id], term: ssa.STerm { ...b.term, kind_tag: ssa.TERM_BR, target: 10002 } };
   let right = ssa.SBlock { ...left, id: 10001 };
   let tail = ssa.SBlock { ...b, id: 10002, insts: [], preds: [left.id, right.id] };
   let blocks = [tail, right, left];
@@ -119,7 +119,7 @@ function queue_controls(row: ssaprepare.Emitted, f: ssa.SFunc, join: i32): void 
   }
   let diamond = ssa.SFunc { ...f, nvals: f.nvals + 1, blocks: blocks };
   check(row, diamond, true);
-  let copy = ssa.SInst { kind_tag: 7, result: f.nvals + 1, args: [b.term.value], imm: 0, str: "" };
+  let copy = ssa.SInst { kind_tag: ssa.COPY, result: f.nvals + 1, args: [b.term.value], imm: 0, str: "" };
   let bad = blocks.with(2, ssa.SBlock { ...left, insts: [copy] });
   bad = bad.with(0, ssa.SBlock { ...tail, term: ssa.STerm { ...tail.term, value: copy.result } });
   check(row, ssa.SFunc { ...diamond, nvals: f.nvals + 2, blocks: bad }, false);
@@ -135,8 +135,8 @@ function queue_controls(row: ssaprepare.Emitted, f: ssa.SFunc, join: i32): void 
 
 function predecessor_graph(f: ssa.SFunc, join: i32, take_first: boolean): ssa.SFunc {
   let b = f.blocks[join];
-  let branch = ssa.SInst { kind_tag: 2, result: f.nvals, args: [], imm: if (take_first) { 1 } else { 0 }, str: "" };
-  let blocks = f.blocks.with(join, ssa.SBlock { ...b, insts: b.insts.append(branch), term: ssa.STerm { ...b.term, kind_tag: 2, target: 200000 } });
+  let branch = ssa.SInst { kind_tag: ssa.CONST_BOOL, result: f.nvals, args: [], imm: if (take_first) { 1 } else { 0 }, str: "" };
+  let blocks = f.blocks.with(join, ssa.SBlock { ...b, insts: b.insts.append(branch), term: ssa.STerm { ...b.term, kind_tag: ssa.TERM_BR, target: 200000 } });
   let preds: i32[] = [];
   let args: i32[] = [];
   let i = 65;
@@ -144,14 +144,14 @@ function predecessor_graph(f: ssa.SFunc, join: i32, take_first: boolean): ssa.SF
     i -= 1;
     let leaf = 100000 + i * 31;
     let spine = 200000 + i * 31;
-    let copy = ssa.SInst { kind_tag: 7, result: f.nvals + 1 + i, args: [b.term.value], imm: 0, str: "" };
-    let term = if (i == 64) { ssa.STerm { ...b.term, kind_tag: 2, target: leaf } } else { ssa.STerm { ...b.term, kind_tag: 3, cond: branch.result, t: leaf, f: spine + 31 } };
-    blocks = blocks.append(ssa.SBlock { id: leaf, insts: [copy], preds: [spine], term: ssa.STerm { ...b.term, kind_tag: 2, target: 300000 } });
+    let copy = ssa.SInst { kind_tag: ssa.COPY, result: f.nvals + 1 + i, args: [b.term.value], imm: 0, str: "" };
+    let term = if (i == 64) { ssa.STerm { ...b.term, kind_tag: ssa.TERM_BR, target: leaf } } else { ssa.STerm { ...b.term, kind_tag: ssa.TERM_BRIF, cond: branch.result, t: leaf, f: spine + 31 } };
+    blocks = blocks.append(ssa.SBlock { id: leaf, insts: [copy], preds: [spine], term: ssa.STerm { ...b.term, kind_tag: ssa.TERM_BR, target: 300000 } });
     blocks = blocks.append(ssa.SBlock { id: spine, insts: [], preds: [if (i == 0) { b.id } else { spine - 31 }], term: term });
     preds = preds.append(leaf);
     args = args.append(copy.result);
   }
-  let phi = ssa.SInst { kind_tag: 8, result: f.nvals + 66, args: args, imm: 0, str: "" };
+  let phi = ssa.SInst { kind_tag: ssa.PHI, result: f.nvals + 66, args: args, imm: 0, str: "" };
   blocks = blocks.append(ssa.SBlock { id: 300000, insts: [phi], preds: preds, term: ssa.STerm { ...b.term, value: phi.result } });
   return ssa.SFunc { ...f, nvals: f.nvals + 67, blocks: blocks };
 }
@@ -186,7 +186,7 @@ pub function run(out: ssaprepare.Output): void {
   let join = -1;
   let i = 0;
   for b in f.blocks {
-    if (b.insts.len() == 1 && b.insts[0].kind_tag == 8) {
+    if (b.insts.len() == 1 && b.insts[0].kind_tag == ssa.PHI) {
       join = i;
     }
     i += 1;
@@ -210,14 +210,14 @@ pub function run(out: ssaprepare.Output): void {
   check(row, replace(f, join, ssa.SInst { ...phi, args: [phi.args[0]] }, b.preds), false);
   check(row, replace(f, join, ssa.SInst { ...phi, args: [phi.result, phi.args[1]] }, b.preds), false);
   check(row, replace(f, join, ssa.SInst { ...phi, args: [f.nvals, phi.args[1]] }, b.preds), false);
-  check(row, replace(f, join, ssa.SInst { ...phi, kind_tag: 7 }, b.preds), false);
+  check(row, replace(f, join, ssa.SInst { ...phi, kind_tag: ssa.COPY }, b.preds), false);
   let extra = ssa.SInst { ...phi, result: f.nvals };
   let two = ssa.SFunc { ...f, nvals: f.nvals + 1, blocks: f.blocks.with(join, ssa.SBlock { ...b, insts: [extra, phi] }) };
   check(row, two, true);
   check(row, ssa.SFunc { ...two, blocks: two.blocks.with(join, ssa.SBlock { ...b, insts: [extra, ssa.SInst { ...phi, args: [extra.result, phi.args[1]] }] }) }, false);
-  let copy = ssa.SInst { kind_tag: 7, result: f.nvals, args: [phi.result], imm: 0, str: "" };
+  let copy = ssa.SInst { kind_tag: ssa.COPY, result: f.nvals, args: [phi.result], imm: 0, str: "" };
   let copied = ssa.SFunc { ...f, nvals: f.nvals + 1, blocks: f.blocks.with(join, ssa.SBlock { ...b, insts: [phi, copy], term: ssa.STerm { ...b.term, value: copy.result } }) };
   check(row, copied, true);
   check(row, ssa.SFunc { ...copied, blocks: copied.blocks.with(join, ssa.SBlock { ...b, insts: [copy, phi] }) }, false);
-  check(row, ssa.SFunc { ...f, blocks: f.blocks.with(join, ssa.SBlock { ...b, term: ssa.STerm { ...b.term, kind_tag: 2, target: b.id }, preds: b.preds.append(b.id), insts: [ssa.SInst { ...phi, args: phi.args.append(phi.result) }] }) }, false);
+  check(row, ssa.SFunc { ...f, blocks: f.blocks.with(join, ssa.SBlock { ...b, term: ssa.STerm { ...b.term, kind_tag: ssa.TERM_BR, target: b.id }, preds: b.preds.append(b.id), insts: [ssa.SInst { ...phi, args: phi.args.append(phi.result) }] }) }, false);
 }

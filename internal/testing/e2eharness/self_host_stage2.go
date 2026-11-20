@@ -34,11 +34,11 @@ func RunCaptureStrictIR(t *testing.T, gcc string, runner []string, bin string, s
 	}
 	cmd.Env = []string{}
 	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "FERN_STRICT_IR=") {
+		if !strings.HasPrefix(kv, "FERN_STRICT_IR=") && !strings.HasPrefix(kv, "FERN_DEBUG_STRICT_IR=") {
 			cmd.Env = append(cmd.Env, kv)
 		}
 	}
-	cmd.Env = append(cmd.Env, "FERN_STRICT_IR=1")
+	cmd.Env = append(cmd.Env, "FERN_STRICT_IR=1", "FERN_DEBUG_STRICT_IR=1")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

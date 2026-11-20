@@ -27,6 +27,7 @@ Use the bytes with the existing native packet readers. This module does not deco
 <<*>>=
 // This module opens bounded content assets for the Android video packet path.
 import "std/jni";
+import "std/android/video/source/bindings";
 import "std/video/frame";
 
 pub struct Source { fd: i32, offset: i64, length: i64 }
@@ -158,85 +159,6 @@ function end(e: usize): void {
   let _ = jni.call1(e, 20, 0 as usize);
 }
 
-function method(e: usize, obj: usize, name: string, sig: string): Result[usize, frame.VideoError] {
-  if (obj == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  let class = jni.get_object_class(e, obj);
-  if (cleared(e) || class == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  let id = jni.get_method_id(e, class, name, sig);
-  if (cleared(e) || id == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  return Ok(id);
-}
-
-function object(e: usize, obj: usize, name: string, sig: string, args: usize[]): Result[usize, frame.VideoError] {
-  let id = method(e, obj, name, sig)?;
-  let values = jni.jvalues(args);
-  let result = jni.call_object_method_a(e, obj, id, values);
-  jni.free_buffer(values);
-  if (cleared(e) || result == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  return Ok(result);
-}
-
-function long(e: usize, obj: usize, name: string): Result[i64, frame.VideoError] {
-  let id = method(e, obj, name, "()J")?;
-  let result = jni.call_long_method_a(e, obj, id, 0 as usize) as i64;
-  if (cleared(e)) {
-    return Err(frame.Platform);
-  }
-  return Ok(result);
-}
-
-function text(e: usize, value: string): Result[usize, frame.VideoError] {
-  let result = jni.new_string(e, value);
-  if (cleared(e) || result == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  return Ok(result);
-}
-
-function parse(e: usize, uri: string): Result[usize, frame.VideoError] {
-  let value = text(e, uri)?;
-  let class = jni.find_class(e, "android/net/Uri");
-  if (cleared(e) || class == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  let id = jni.get_static_method_id(e, class, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
-  if (cleared(e) || id == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  let values = jni.jvalues([value]);
-  let result = jni.call_static_object_method_a(e, class, id, values);
-  jni.free_buffer(values);
-  if (cleared(e) || result == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  return Ok(result);
-}
-
-function close_method(e: usize): Result[usize, frame.VideoError] {
-  let class = jni.find_class(e, "android/content/res/AssetFileDescriptor");
-  if (cleared(e) || class == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  let id = jni.get_method_id(e, class, "close", "()V");
-  if (cleared(e) || id == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  return Ok(id);
-}
-
-function close_asset(e: usize, asset: usize, id: usize): boolean {
-  let _ = jni.call_void_method_a(e, asset, id, 0 as usize);
-  return !cleared(e);
-}
-
 function duplicate(fd: i32, offset: i64, length: i64, maximum: i64): Result[Source, frame.VideoError] {
   // F_DUPFD_CLOEXEC is 1030 on both supported Android ABIs.
   let owned = c_duplicate(fd, 1030, 0);
@@ -265,15 +187,22 @@ function duplicate(fd: i32, offset: i64, length: i64, maximum: i64): Result[Sour
   }
 }
 
-function from_asset(e: usize, asset: usize, maximum: i64): Result[Source, frame.VideoError] {
-  let offset = long(e, asset, "getStartOffset")?;
-  let length = long(e, asset, "getDeclaredLength")?;
-  let parcel = object(e, asset, "getParcelFileDescriptor", "()Landroid/os/ParcelFileDescriptor;", [])?;
-  let id = method(e, parcel, "getFd", "()I")?;
-  let fd = jni.call_int_method_a(e, parcel, id, 0 as usize);
-  if (cleared(e)) {
+function from_asset(e: usize, c: bindings.Classes, asset: bindings.AssetFileDescriptor, maximum: i64): Result[Source, frame.VideoError] {
+  let Ok(offset) = c.asset_file_descriptor.get_start_offset(e, asset) else {
+    return Err(frame.Platform);
+  };
+  let Ok(length) = c.asset_file_descriptor.get_declared_length(e, asset) else {
+    return Err(frame.Platform);
+  };
+  let Ok(parcel) = c.asset_file_descriptor.get_parcel_file_descriptor(e, asset) else {
+    return Err(frame.Platform);
+  };
+  if (parcel.is_null()) {
     return Err(frame.Platform);
   }
+  let Ok(fd) = c.parcel_file_descriptor.get_fd(e, parcel) else {
+    return Err(frame.Platform);
+  };
   return duplicate(fd, offset, length, maximum);
 }
 
@@ -300,17 +229,34 @@ pub function open(env: usize, context: usize, uri: string, maximum_bytes: i64): 
     return Err(frame.Platform);
   }
   defer end(env);
-  let close_id = close_method(env)?;
-  let parsed = parse(env, uri)?;
-  let resolver = object(env, context, "getContentResolver", "()Landroid/content/ContentResolver;", [])?;
-  let mode = text(env, "r")?;
-  let asset = object(env, resolver, "openAssetFileDescriptor", "(Landroid/net/Uri;Ljava/lang/String;)Landroid/content/res/AssetFileDescriptor;", [parsed, mode])?;
-  return consume_asset(env, asset, close_id, maximum_bytes);
+  let Ok(c) = bindings.classes(env) else {
+    return Err(frame.Platform);
+  };
+  defer c.release(env);
+  return open_asset(env, c, bindings.Context { ref: context }, uri, maximum_bytes);
 }
 
-function consume_asset(env: usize, asset: usize, close_id: usize, maximum_bytes: i64): Result[Source, frame.VideoError] {
-  let result = from_asset(env, asset, maximum_bytes);
-  if (!close_asset(env, asset, close_id)) {
+function open_asset(env: usize, c: bindings.Classes, context: bindings.Context, uri: string, maximum: i64): Result[Source, frame.VideoError] {
+  let Ok(parsed) = c.uri.parse(env, uri) else {
+    return Err(frame.Platform);
+  };
+  if (parsed.is_null()) {
+    return Err(frame.Platform);
+  }
+  let Ok(resolver) = c.context.get_content_resolver(env, context) else {
+    return Err(frame.Platform);
+  };
+  if (resolver.is_null()) {
+    return Err(frame.Platform);
+  }
+  let Ok(asset) = c.content_resolver.open_asset_file_descriptor(env, resolver, parsed, "r") else {
+    return Err(frame.Platform);
+  };
+  if (asset.is_null()) {
+    return Err(frame.Platform);
+  }
+  let result = from_asset(env, c, asset, maximum);
+  if let Err(_) = c.asset_file_descriptor.close(env, asset) {
     match (result) {
       Ok(source) => {
         let _ = source.close();

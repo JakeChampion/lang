@@ -54,19 +54,19 @@ function check(sub: ircore.Sub, wrapper: ssa.SFunc): helper.Proof {
 function consumer_call(f: ssa.SFunc): ssa.SInst {
   for b in f.blocks {
     for op in b.insts {
-      if (op.kind_tag == 11 && op.str == "replace") {
+      if (op.kind_tag == ssa.CALL && op.str == "replace") {
         return op;
       }
     }
   }
   exit(3);
-  return ssa.SInst { kind_tag: 0, result: 0, args: [], imm: 0, str: "" };
+  return ssa.SInst { kind_tag: ssa.NONE, result: 0, args: [], imm: 0, str: "" };
 }
 
 function parameter(f: ssa.SFunc, index: i32): i32 {
   for b in f.blocks {
     for op in b.insts {
-      if (op.kind_tag == 6 && op.imm == index) {
+      if (op.kind_tag == ssa.PARAM && op.imm == index) {
         return op.result;
       }
     }
@@ -76,12 +76,12 @@ function parameter(f: ssa.SFunc, index: i32): i32 {
 }
 
 function copy(result: i32, arg: i32): ssa.SInst {
-  return ssa.SInst { kind_tag: 7, result: result, args: [arg], imm: 0, str: "" };
+  return ssa.SInst { kind_tag: ssa.COPY, result: result, args: [arg], imm: 0, str: "" };
 }
 
 function suffix_instruction(f: ssa.SFunc, call: ssa.SInst, result: i32, mode: i32): ssa.SInst {
   return match (mode) {
-    2 => ssa.SInst { kind_tag: 1, result: result, args: [], imm: 0, str: "" },
+    2 => ssa.SInst { kind_tag: ssa.CONST_INT, result: result, args: [], imm: 0, str: "" },
     3 => ssa.SInst { ...call, result: result },
     4 => ssa.SInst { ...call, result: result, str: "parent", args: [parameter(f, 1), parameter(f, 2)] },
     5 => copy(result, call.args[0]),
@@ -98,7 +98,7 @@ function straight(f: ssa.SFunc, mode: i32): ssa.SFunc {
   for b in f.blocks {
     let insts = b.insts;
     let term = b.term;
-    if (term.kind_tag == 1) {
+    if (term.kind_tag == ssa.TERM_RET) {
       changed += 1;
       if (mode < 2) {
         term = ssa.STerm { ...term, value: call.args[mode] };
@@ -133,18 +133,18 @@ function branched(f: ssa.SFunc, mode: i32): ssa.SFunc {
   let blocks: ssa.SBlock[] = [];
   let changed = 0;
   for b in f.blocks {
-    if (b.term.kind_tag != 1) {
+    if (b.term.kind_tag != ssa.TERM_RET) {
       blocks = blocks.append(b);
     } else {
       changed += 1;
       let condition = if (mode == 4) { call.result } else { parameter(f, 0) };
-      blocks = blocks.append(ssa.SBlock { ...b, term: ssa.STerm { ...b.term, kind_tag: 3, cond: condition, t: next, f: next + 1 } });
-      let jump = ssa.STerm { kind_tag: 2, value: 0, target: next + 2, cond: 0, t: 0, f: 0 };
+      blocks = blocks.append(ssa.SBlock { ...b, term: ssa.STerm { ...b.term, kind_tag: ssa.TERM_BRIF, cond: condition, t: next, f: next + 1 } });
+      let jump = ssa.STerm { kind_tag: ssa.TERM_BR, value: 0, target: next + 2, cond: 0, t: 0, f: 0 };
       let left = ssa.SBlock { id: next, insts: [copy(f.nvals, call.result)], term: jump, preds: [b.id] };
       let right_arg = if (mode == 1) { call.args[0] } else { call.result };
       let right = ssa.SBlock { id: next + 1, insts: [copy(f.nvals + 1, right_arg)], term: jump, preds: [b.id] };
       let right_phi = if (mode == 2) { call.args[1] } else { if (mode == 3) { f.nvals + 2 } else { f.nvals + 1 } };
-      let phi = ssa.SInst { kind_tag: 8, result: f.nvals + 2, args: [f.nvals, right_phi], imm: 0, str: "" };
+      let phi = ssa.SInst { kind_tag: ssa.PHI, result: f.nvals + 2, args: [f.nvals, right_phi], imm: 0, str: "" };
       let second = ssa.SInst { ...phi, result: f.nvals + 3, args: [f.nvals, f.nvals + 1] };
       let join = ssa.SBlock { id: next + 2, insts: [phi, second], term: ssa.STerm { ...b.term, value: f.nvals + 3 }, preds: [next, next + 1] };
       blocks = util.append_all(blocks, if (mode == 5) { [join, right, left] } else { [left, right, join] });
@@ -189,8 +189,8 @@ function cycling(f: ssa.SFunc): ssa.SFunc {
   }
   let blocks: ssa.SBlock[] = [];
   for b in f.blocks {
-    if (b.term.kind_tag == 1) {
-      let jump = ssa.STerm { ...b.term, kind_tag: 2, target: next };
+    if (b.term.kind_tag == ssa.TERM_RET) {
+      let jump = ssa.STerm { ...b.term, kind_tag: ssa.TERM_BR, target: next };
       blocks = blocks.append(ssa.SBlock { ...b, term: jump });
       blocks = blocks.append(ssa.SBlock { id: next, insts: [], term: jump, preds: [b.id, next] });
     } else {

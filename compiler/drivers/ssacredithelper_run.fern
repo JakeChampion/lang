@@ -120,7 +120,7 @@ function target_checks(target: string): void {
   for b in r.blocks {
     let ops: ssa.SInst[] = [];
     for op in b.insts {
-      if (op.kind_tag == 11 && op.str == "__fern_rc_dec") {
+      if (op.kind_tag == ssa.CALL && op.str == "__fern_rc_dec") {
         ops = ops.append(ssa.SInst { ...op, args: [op.result] });
       } else {
         ops = ops.append(op);
@@ -351,7 +351,7 @@ function optimized_release(r: ssa.SFunc, d: ssa.SFunc, layout: proof.FlatChildre
       if (b.id == r.entry) {
         blocks = blocks.append(guard_mutation(b, mode));
       } else {
-        if (b.term.kind_tag == 2) {
+        if (b.term.kind_tag == ssa.TERM_BR) {
           blocks = blocks.append(unique_mutation(b, r.entry, mode));
         } else {
           blocks = blocks.append(join_mutation(b, r, d.name, mode));

@@ -9,9 +9,9 @@
 #include <unistd.h>
 
 typedef union { void *l; int32_t i; int64_t j; } Value;
-enum { CONTEXT, RESOLVER, URI, ASSET, PARCEL, CLASS, STRING, EXCEPTION, URI_CLASS, ASSET_CLASS };
+enum { CONTEXT, RESOLVER, URI, ASSET, PARCEL, CLASS, STRING, EXCEPTION, URI_CLASS, ASSET_CLASS, CONTEXT_CLASS, RESOLVER_CLASS, PARCEL_CLASS };
 enum { CLOSE=1, PARSE, RESOLVE, OPEN, START, LENGTH, GET_PARCEL, GET_FD };
-static int objects[10], mode, pending, locals, frames, original = -1, closed;
+static int objects[PARCEL_CLASS + 1], globals[PARCEL_CLASS + 1], mode, pending, locals, frames, original = -1, closed;
 static void *table[235], **env_table = table;
 static int asset_seed = -1;
 static int64_t asset_offset, asset_bytes;
@@ -21,6 +21,19 @@ static void *local(int kind) { locals++; assert(locals < 32); return objects + k
 static void *exception(void *e) { (void)e; return pending ? local(EXCEPTION) : 0; }
 static void clear(void *e) { (void)e; pending = 0; }
 static void delete_local(void *e, void *obj) { (void)e; assert(obj && locals > 0); locals--; }
+static void *retain(void *e, int *cls) {
+    (void)e; assert(cls >= objects + URI_CLASS && cls <= objects + PARCEL_CLASS);
+    if (mode == 23 && cls == objects + PARCEL_CLASS) { pending = 1; return 0; }
+    globals[cls - objects]++; return cls;
+}
+static void release(void *e, int *cls) {
+    (void)e; assert(cls >= objects + URI_CLASS && cls <= objects + PARCEL_CLASS);
+    assert(globals[cls - objects] > 0); globals[cls - objects]--;
+}
+static int no_globals(void) {
+    for (int i = URI_CLASS; i <= PARCEL_CLASS; i++) if (globals[i]) return 0;
+    return 1;
+}
 static int push(void *e, int capacity) {
     (void)e; assert(!pending && !frames && !locals && capacity == 32);
     if (mode == 1) { pending = 1; return -1; }
@@ -33,17 +46,25 @@ static void *find(void *e, const char *name) {
     (void)e; assert(!pending);
     if (mode == 3) { pending = 1; return 0; }
     if (!strcmp(name, "android/net/Uri")) return local(URI_CLASS);
-    assert(!strcmp(name, "android/content/res/AssetFileDescriptor")); return local(ASSET_CLASS);
+    if (!strcmp(name, "android/content/res/AssetFileDescriptor")) return local(ASSET_CLASS);
+    if (!strcmp(name, "android/content/Context")) return local(CONTEXT_CLASS);
+    if (!strcmp(name, "android/content/ContentResolver")) return local(RESOLVER_CLASS);
+    assert(!strcmp(name, "android/os/ParcelFileDescriptor")); return local(PARCEL_CLASS);
 }
 static void *get_class(void *e, void *obj) {
     (void)e; assert(obj && !pending);
-    if (mode == 13 && obj == objects + ASSET) { pending = 1; return 0; }
+    assert(obj == objects + EXCEPTION);
     return local(CLASS);
 }
 static void *method(void *e, void *cls, const char *name, const char *sig) {
     (void)e; assert(cls && !pending);
+    if (cls == objects + CLASS) {
+        assert(!strcmp(name, "toString") && !strcmp(sig, "()Ljava/lang/String;"));
+        return (void *)(uintptr_t)(GET_FD + 1);
+    }
+    const int classes[] = {0, ASSET_CLASS, URI_CLASS, CONTEXT_CLASS, RESOLVER_CLASS, ASSET_CLASS, ASSET_CLASS, ASSET_CLASS, PARCEL_CLASS};
     for (int i=1; i<=GET_FD; i++) if (!strcmp(name, names[i])) {
-        assert(!strcmp(sig, sigs[i]));
+        assert(cls == objects + classes[i] && !strcmp(sig, sigs[i]));
         if ((mode == 4 && i == CLOSE) || (mode == 14 && i == GET_FD)) { pending = 1; return 0; }
         return (void *)(uintptr_t)i;
     }
@@ -89,16 +110,17 @@ static void create_file(void) {
 static void *object_call(void *e, void *obj, void *id, Value *args) {
     (void)e; assert(obj && id && !pending);
     switch ((uintptr_t)id) {
+    case GET_FD + 1: assert(obj == objects + EXCEPTION); pending = 1; return 0;
     case RESOLVE:
         assert(obj == objects + CONTEXT);
         if (mode == 8) { pending = 1; return 0; }
-        return local(RESOLVER);
+        return mode == 24 ? 0 : local(RESOLVER);
     case OPEN:
         assert(obj == objects + RESOLVER && args[0].l == objects + URI && args[1].l);
         if (mode == 9) { pending = 1; return 0; }
         if (mode == 10) return 0;
         create_file(); return local(ASSET);
-    case GET_PARCEL: assert(obj == objects + ASSET); return local(PARCEL);
+    case GET_PARCEL: assert(obj == objects + ASSET); return mode == 13 ? 0 : local(PARCEL);
     default: assert(0); return 0;
     }
 }
@@ -131,7 +153,7 @@ int mock_source_descriptors(void) {
 void mock_source_mode(int value) {
     assert(!frames && !locals && original == -1); mode = value; pending = value == 2; closed = 0;
 }
-int mock_source_clean(void) { return !frames && !locals && original == -1 && pending == (mode == 2); }
+int mock_source_clean(void) { return no_globals() && !frames && !locals && original == -1 && pending == (mode == 2); }
 int mock_source_closed(void) { return closed; }
 int mock_source_verify(int fd, int64_t offset, int64_t length) {
     if (offset != 8 || length != (mode == 21 ? 32 : 16)) return 0;
@@ -143,7 +165,7 @@ int mock_source_verify(int fd, int64_t offset, int64_t length) {
 void *mock_source_context(void) { return objects + CONTEXT; }
 void *mock_source_env(void) {
     table[6] = find; table[15] = exception; table[17] = clear; table[19] = push; table[20] = pop;
-    table[23] = delete_local; table[31] = get_class; table[33] = method; table[36] = object_call;
+    table[21] = retain; table[22] = release; table[23] = delete_local; table[31] = get_class; table[33] = method; table[36] = object_call;
     table[51] = int_call; table[54] = long_call; table[63] = void_call; table[113] = method;
     table[116] = parse; table[163] = new_string;
     return &env_table;

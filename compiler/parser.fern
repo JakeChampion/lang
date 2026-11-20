@@ -6,7 +6,6 @@ import "./util";
 import "./lexer";
 import "./builtinsigs";
 import "./typeinfo";
-import "std/envflag";
 import "std/option";
 
 struct ParamDestr { pattern: ast.Destr, synth: string, line: i32, col: i32 }
@@ -39,7 +38,7 @@ pub function warn_unresolved_imports(mod: Module, driver: string): boolean {
   eprint("warning: " + driver + " has no module loader; UNRESOLVED imports: " + paths);
   eprint("warning: any verdict below (ir/refused, exit code, eligibility bail) describes a BROKEN program, not the language.");
   eprint("warning: to judge this program use a loading driver: `fern <prog> <stdlib-root>`, or asm_load_run.");
-  if (envflag.on("FERN_STRICT_IMPORTS")) {
+  if (util.debug_flag("FERN_DEBUG_STRICT_IMPORTS", "FERN_STRICT_IMPORTS")) {
     eprint("error: FERN_STRICT_IMPORTS refuses an unresolvable-import run");
     exit(3);
   }
@@ -678,7 +677,7 @@ function s_if_tagged(body: ast.Stmt[], origin: string): ast.Stmt {
   return ast.StmtIf { cond: e_bool(true), then_body: body, else_body: no_else, line: 0, else_chained: false, sugar: no_match_sugar(), origin: origin };
 }
 
-function s_block(body: ast.Stmt[]): ast.Stmt {
+pub function s_block(body: ast.Stmt[]): ast.Stmt {
   return s_if_tagged(body, "block");
 }
 
@@ -690,7 +689,7 @@ function s_for(var_name: string, iter: ast.Expr, body: ast.Stmt[]): ast.Stmt {
   return ast.StmtFor { var_name: var_name, iter: iter, body: body, label: "", line: 0, col: 0, destr: ast.no_destr() };
 }
 
-function with_loop_label(st: ast.Stmt, label: string): ast.Stmt {
+pub function with_loop_label(st: ast.Stmt, label: string): ast.Stmt {
   if (label.len() == 0) {
     return st;
   }
@@ -727,7 +726,7 @@ function with_loop_label(st: ast.Stmt, label: string): ast.Stmt {
   }
 }
 
-function s_break(): ast.Stmt {
+pub function s_break(): ast.Stmt {
   return ast.StmtBreak { tag: 0, line: 0, col: 0, label: "" };
 }
 
@@ -17600,7 +17599,7 @@ function dl_expr_with_kids(e: ast.Expr, kids: ast.Expr[]): ast.Expr {
   }
 }
 
-function map_expr_kids(e: ast.Expr, f: (ast.Expr) => ast.Expr): ast.Expr {
+pub function map_expr_kids(e: ast.Expr, f: (ast.Expr) => ast.Expr): ast.Expr {
   let kids = dl_expr_kids(e);
   if (kids.len() == 0) {
     return e;
@@ -19540,7 +19539,7 @@ pub function lower_defers_prepass_module(mod: Module): Module {
       if (pfd.ret_type == "" && pfd.body.len() > 0 && pfd.receiver_type.len() == 0 && pfd.all_type_params.len() == 0) {
         let inferred = irt_infer_func(pfd, funcs, mod.structs);
         if (inferred != "") {
-          funcs = irt_set_ret(funcs, pi, inferred);
+          funcs = funcs.with(pi, FuncDecl { ...pfd, ret_type: inferred });
           changed = true;
         }
       }
@@ -19584,292 +19583,6 @@ pub function lower_defers_prepass_module(mod: Module): Module {
   return Module { ...mod, funcs: out_funcs };
 }
 
-function iter_range_args(iter: ast.Expr): ast.Expr[] {
-  if (range_call_name(iter) == "") {
-    return [];
-  }
-  if let ast.ExprCall(c) = iter {
-    return c.args;
-  }
-  return [];
-}
-
-function range_call_name(iter: ast.Expr): string {
-  if let ast.ExprCall(c) = iter {
-    if (c.args.len() != 2) {
-      return "";
-    }
-    if let ast.ExprIdent(id) = c.callee {
-      if (id.name == "__range" || id.name == "__range_incl") {
-        return id.name;
-      }
-    }
-  }
-  return "";
-}
-
-function range_bound_type(bounds: ast.Expr[]): string {
-  for bound in bounds {
-    let t = literal_suffix_of(bound);
-    if (t.len() > 0) {
-      return t;
-    }
-  }
-  return "i32";
-}
-
-function literal_suffix_of(e: ast.Expr): string {
-  match (e) {
-    ast.ExprNumber(n) => {
-      if (n.is_float || n.suffix == "char") {
-        return "";
-      }
-      return n.suffix;
-    },
-    ast.ExprUnary(u) => {
-      if (u.op == "-" || u.op == "+") {
-        return literal_suffix_of(u.operand);
-      }
-      return "";
-    },
-    ast.ExprBinary(b) => {
-      if (b.op != "+" && b.op != "-" && b.op != "*" && b.op != "/" && b.op != "%") {
-        return "";
-      }
-      let l = literal_suffix_of(b.left);
-      if (l.len() > 0) {
-        return l;
-      }
-      return literal_suffix_of(b.right);
-    },
-    _ => {
-      return "";
-    }
-  }
-}
-
-function makes_closure(stmts: ast.Stmt[]): boolean {
-  let found = false;
-  for st in stmts {
-    found = astwalk.fold_stmt_nodes(st, found, keep_found, lambda_found, astwalk.descend_all);
-  }
-  return found;
-}
-
-function keep_found(st: ast.Stmt, own found: boolean): boolean {
-  return found;
-}
-
-function lambda_found(e: ast.Expr, own found: boolean): boolean {
-  if let ast.ExprLambda(_) = e {
-    return true;
-  }
-  return found;
-}
-
-function inclusive_range_loop(fr: ast.StmtFor, dbody: ast.Stmt[], lovar: ast.Stmt, ivar: ast.Stmt, hivar: ast.Stmt, hi_name: string): ast.Stmt[] {
-  let v = fr.var_name;
-  let go_name = "$go_" + v;
-  let one = e_number("1", "", false);
-  let govar = s_var(go_name, "boolean", e_binary("<=", e_ident(v), e_ident(hi_name)));
-  let back = s_assign(v, e_binary("-", e_ident(v), one));
-  let incr = s_assign(v, e_binary("+", e_ident(v), one));
-  let last = s_assign(go_name, e_binary("!=", e_ident(v), e_ident(hi_name)));
-  let wbody: ast.Stmt[] = [incr, last];
-  for st in dbody {
-    wbody = wbody.append(st);
-  }
-  return [lovar, hivar, ivar, govar, back, with_loop_label(s_while(e_ident(go_name), wbody), fr.label)];
-}
-
-// A counted loop steps at its latch, as a `while` written by hand does, so a
-// `continue` that targets the loop takes the step with it. `shadowed` records a
-// body that rebinds the counter or defers work, where the step stays at the head.
-struct StepCtx { step: ast.Stmt, var_name: string, label: string, depth: i32, shadowed: boolean }
-
-function step_continues(body: ast.Stmt[], ctx: StepCtx): (ast.Stmt[], StepCtx) {
-  return astwalk.map_stmts_where(body, ctx, step_continue_stmt, step_continue_expr, astwalk.descend_all);
-}
-
-function step_continue_stmt(st: ast.Stmt, ctx: StepCtx): (ast.Stmt, StepCtx, boolean) {
-  match (st) {
-    ast.StmtContinue(c) => {
-      if (c.label.len() == 0 && ctx.depth == 0 || c.label.len() > 0 && c.label == ctx.label) {
-        return (s_block([ctx.step, st]), ctx, true);
-      }
-    },
-    ast.StmtWhile(w) => {
-      let (body, inner) = step_continues(w.body, nested_step(ctx, w.label));
-      return (ast.StmtWhile { ...w, body: body }, StepCtx { ...ctx, shadowed: inner.shadowed }, true);
-    },
-    ast.StmtFor(f) => {
-      let (body, inner) = step_continues(f.body, nested_step(ctx, f.label));
-      let shadowed = inner.shadowed || util.has_str(astwalk.binders_of(st, []), ctx.var_name);
-      return (ast.StmtFor { ...f, body: body }, StepCtx { ...ctx, shadowed: shadowed }, true);
-    },
-    ast.StmtDefer(_) => {
-      return (st, StepCtx { ...ctx, shadowed: true }, true);
-    },
-    _ => {
-      if (util.has_str(astwalk.binders_of(st, []), ctx.var_name)) {
-        return (st, StepCtx { ...ctx, shadowed: true }, false);
-      }
-    }
-  }
-  return (st, ctx, false);
-}
-
-function nested_step(ctx: StepCtx, label: string): StepCtx {
-  if (label == ctx.label) {
-    return StepCtx { ...ctx, label: "", depth: ctx.depth + 1 };
-  }
-  return StepCtx { ...ctx, depth: ctx.depth + 1 };
-}
-
-// A `continue` in a value block is a jump of the loop around the block. A
-// lambda that the program wrote has its own loops.
-function step_continue_expr(e: ast.Expr, ctx: StepCtx): (ast.Expr, StepCtx, boolean) {
-  if let ast.ExprLambda(lm) = e {
-    return (e, ctx, is_written_lambda_origin(lm.origin));
-  }
-  return (e, ctx, false);
-}
-
-function dr_expr(e: ast.Expr): ast.Expr {
-  match (e) {
-    ast.ExprLambda(lm) => {
-      return ast.ExprLambda { ...lm, body: desugar_ranges_block(lm.body) };
-    },
-    _ => {
-      return dr_expr_kids(e);
-    }
-  }
-}
-
-function dr_expr_kids(e: ast.Expr): ast.Expr {
-  return map_expr_kids(e, dr_expr);
-}
-
-pub function desugar_ranges_block(body: ast.Stmt[]): ast.Stmt[] {
-  let out: ast.Stmt[] = [];
-  for i in 0..body.len() {
-    let r = desugar_ranges_one(body[i]);
-    for j in 0..r.len() {
-      out = out.append(r[j]);
-    }
-  }
-  return out;
-}
-
-// The `while` loop of the range loop `written`, with the body `body` and
-// the bounds `rargs`.
-function range_loop(written: ast.StmtFor, body: ast.Stmt[], rargs: ast.Expr[]): ast.Stmt[] {
-  let dbody = body;
-  // A nested `for _` must not step this counter.
-  let fr = ast.StmtFor { ...written, var_name: discard_name(written.var_name, written.line, written.col, 0) };
-  let rty = range_bound_type(rargs);
-  if (makes_closure(dbody)) {
-    // Each turn binds its own index, so a closure keeps the index of its turn.
-    let counter = "$turn_" + fr.var_name;
-    let turn: ast.Stmt[] = [s_var(fr.var_name, rty, e_ident(counter))];
-    for st in dbody {
-      turn = turn.append(st);
-    }
-    dbody = turn;
-    fr = ast.StmtFor { ...fr, var_name: counter };
-  }
-  let lo_name = "$lo_" + fr.var_name;
-  let lovar = s_var(lo_name, rty, rargs[0]);
-  let hi_name = "$hi_" + fr.var_name;
-  let hivar = s_var(hi_name, rty, rargs[1]);
-  if (range_call_name(fr.iter) == "__range_incl") {
-    return [s_block(inclusive_range_loop(fr, dbody, lovar, s_var(fr.var_name, rty, e_ident(lo_name)), hivar, hi_name))];
-  }
-  let incr = s_assign(fr.var_name, e_binary("+", e_ident(fr.var_name), e_number("1", "", false)));
-  let (stepped, plain) = step_continues(dbody, StepCtx { step: incr, var_name: fr.var_name, label: fr.label, depth: 0, shadowed: false });
-  if (!plain.shadowed) {
-    let cond = e_binary("<", e_ident(fr.var_name), e_ident(hi_name));
-    return [s_block([lovar, hivar, s_var(fr.var_name, rty, e_ident(lo_name)), with_loop_label(s_while(cond, stepped.append(incr)), fr.label)])];
-  }
-  let ivar = s_var(fr.var_name, rty, e_binary("-", e_ident(lo_name), e_number("1", "", false)));
-  let brk = s_if(e_binary(">=", e_ident(fr.var_name), e_ident(hi_name)), [s_break()], []);
-  let wbody: ast.Stmt[] = [incr, brk];
-  for k in 0..dbody.len() {
-    wbody = wbody.append(dbody[k]);
-  }
-  return [s_block([lovar, hivar, ivar, with_loop_label(s_while(e_bool(true), wbody), fr.label)])];
-}
-
-function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
-  match (st) {
-    ast.StmtFor(written) => {
-      let dbody = desugar_ranges_block(written.body);
-      let rargs = iter_range_args(written.iter);
-      if (rargs.len() == 2) {
-        return range_loop(written, dbody, rargs);
-      }
-      return [ast.StmtFor { ...written, iter: dr_expr(written.iter), body: dbody }];
-    },
-    ast.StmtIf(f) => {
-      return [ast.StmtIf { ...f, cond: dr_expr(f.cond), then_body: desugar_ranges_block(f.then_body), else_body: desugar_ranges_block(f.else_body) }];
-    },
-    ast.StmtWhile(w) => {
-      return [ast.StmtWhile { ...w, cond: dr_expr(w.cond), body: desugar_ranges_block(w.body) }];
-    },
-    ast.StmtMatch(m) => {
-      let arms: ast.MatchArm[] = [];
-      for arm in m.arms {
-        arms = arms.append(ast.MatchArm { ...arm, body: desugar_ranges_block(arm.body), guard: dr_expr(arm.guard) });
-      }
-      return [ast.StmtMatch { ...m, scrutinee: dr_expr(m.scrutinee), arms: arms }];
-    },
-    ast.StmtDefer(d) => {
-      return [ast.StmtDefer { action: desugar_ranges_one(d.action)[0], on_error: d.on_error, line: d.line }];
-    },
-    ast.StmtVar(v) => {
-      return [ast.StmtVar { ...v, init: dr_expr(v.init) }];
-    },
-    ast.StmtReturn(r2) => {
-      return [ast.StmtReturn { ...r2, value: dr_expr(r2.value) }];
-    },
-    ast.StmtExpr(x) => {
-      return [ast.StmtExpr { ...x, value: dr_expr(x.value) }];
-    },
-    ast.StmtAssign(a) => {
-      return [ast.StmtAssign { ...a, value: dr_expr(a.value) }];
-    },
-    _ => {
-      return [st];
-    }
-  }
-}
-
-pub function desugar_ranges_func(fd: FuncDecl): FuncDecl {
-  return FuncDecl { ...fd, body: desugar_ranges_body(fd.body) };
-}
-
-pub function desugar_ranges_body(body: ast.Stmt[]): ast.Stmt[] {
-  if (!has_range_for(body)) {
-    return body;
-  }
-  return desugar_ranges_block(body);
-}
-
-function has_range_for(stmts: ast.Stmt[]): boolean {
-  let found = false;
-  for st in stmts {
-    found = astwalk.fold_stmt_nodes(st, found, range_for_at, astwalk.keep_flag, astwalk.descend_all);
-  }
-  return found;
-}
-
-function range_for_at(st: ast.Stmt, own acc: boolean): boolean {
-  if let ast.StmtFor(fr) = st {
-    return acc || range_call_name(fr.iter) != "";
-  }
-  return acc;
-}
-
 pub function iterator_loop(fr: ast.StmtFor, subject: ast.Expr, col: i32): ast.Stmt {
   let at = util.i32_to_string(fr.line) + "_" + util.i32_to_string(col);
   let it = "$it_" + at;
@@ -19890,14 +19603,6 @@ pub function iterator_loop(fr: ast.StmtFor, subject: ast.Expr, col: i32): ast.St
   let pull = s_match(e_call(e_field_access(e_ident(it), "next"), []), arms);
   let walk: ast.Stmt = ast.StmtWhile { cond: e_bool(true), body: [pull], label: fr.label, line: fr.line, is_loop: false };
   return s_block([s_var(it, "", subject), walk]);
-}
-
-pub function desugar_ranges_module(mod: Module): Module {
-  let funcs: FuncDecl[] = [];
-  for i in 0..mod.funcs.len() {
-    funcs = funcs.append(desugar_ranges_func(mod.funcs[i]));
-  }
-  return Module { ...mod, funcs: funcs, top_stmts: desugar_ranges_block(mod.top_stmts) };
 }
 
 function variant_field_names_of(structs: StructDecl[], name: string): string[] {
@@ -20962,19 +20667,6 @@ function irt_infer_func(fd: FuncDecl, funcs: FuncDecl[], structs: StructDecl[]):
   return unified;
 }
 
-function irt_set_ret(funcs: FuncDecl[], idx: i32, rt: string): FuncDecl[] {
-  let out: FuncDecl[] = [];
-  for i in 0..funcs.len() {
-    if (i == idx) {
-      let f = funcs[i];
-      out = out.append(FuncDecl { ...f, ret_type: rt });
-    } else {
-      out = out.append(funcs[i]);
-    }
-  }
-  return out;
-}
-
 pub function infer_ret_types_module(mod: Module): Module {
   let funcs = mod.funcs;
   let changed = true;
@@ -20986,14 +20678,14 @@ pub function infer_ret_types_module(mod: Module): Module {
       if (fd.ret_type == "" && fd.body.len() > 0 && fd.receiver_type.len() == 0 && fd.all_type_params.len() == 0) {
         let inferred = irt_infer_func(fd, funcs, mod.structs);
         if (inferred != "") {
-          funcs = irt_set_ret(funcs, i, inferred);
+          funcs = funcs.with(i, FuncDecl { ...fd, ret_type: inferred });
           changed = true;
         }
       } else if (fd.ret_type == "i32" && fd.body.len() > 0 && fd.receiver_type.len() == 0
         && fd.all_type_params.len() == 0 && fd.name.len() > 6 && fd.name.starts_with("__lam_")) {
         let winf = irt_infer_func(fd, funcs, mod.structs);
         if (winf == "i64" || winf == "u64" || winf == "f64") {
-          funcs = irt_set_ret(funcs, i, winf);
+          funcs = funcs.with(i, FuncDecl { ...fd, ret_type: winf });
           changed = true;
         }
       }
@@ -21101,71 +20793,7 @@ pub function receiver_namespace(receiver: string): string {
   return receiver_base(receiver);
 }
 
-function erase_view_list(tys: string[]): string[] {
-  let out: string[] = [];
-  for t in tys {
-    out = out.append(erase_view_spelling(t));
-  }
-  return out;
-}
-
-function erase_view_params(ps: ast.ParamDecl[]): ast.ParamDecl[] {
-  let out: ast.ParamDecl[] = [];
-  for p in ps {
-    out = out.append(ast.ParamDecl { ...p, type_name: erase_view_spelling(p.type_name), fn_ret: erase_view_spelling(p.fn_ret), fn_param_types: erase_view_spelling(p.fn_param_types) });
-  }
-  return out;
-}
-
-function erase_view_expr(e: ast.Expr): ast.Expr {
-  match (e) {
-    ast.ExprCall(c) => {
-      return ast.ExprCall { ...c, type_args: erase_view_list(c.type_args), ty: erase_view_spelling(c.ty) };
-    },
-    ast.ExprArray(a) => {
-      return ast.ExprArray { ...a, elem_ty: erase_view_spelling(a.elem_ty) };
-    },
-    ast.ExprStructLit(sl) => {
-      return ast.ExprStructLit { ...sl, type_name: erase_view_spelling(sl.type_name), written: erase_view_spelling(sl.written) };
-    },
-    ast.ExprZero(z) => {
-      return ast.ExprZero { ...z, type_name: erase_view_spelling(z.type_name) };
-    },
-    ast.ExprUnary(u) => {
-      return ast.with_cast(ast.rebuild_unary(u, u.operand, u.line, u.col, erase_view_spelling(u.ty)), erase_view_spelling(u.cast));
-    },
-    ast.ExprLambda(lm) => {
-      return ast.ExprLambda { ...lm, params: erase_view_params(lm.params), ret_type: erase_view_spelling(lm.ret_type), ret_fn_ret: erase_view_spelling(lm.ret_fn_ret), ret_fn_param_types: erase_view_spelling(lm.ret_fn_param_types) };
-    },
-    ast.ExprIdent(id) => {
-      return ast.ExprIdent { ...id, ty: erase_view_spelling(id.ty) };
-    },
-    ast.ExprBinary(b) => {
-      return ast.binary(b.op, b.left, b.right, b.line, b.col, erase_view_spelling(b.ty));
-    },
-    ast.ExprIndex(ix) => {
-      return ast.ExprIndex { ...ix, ty: erase_view_spelling(ix.ty) };
-    },
-    ast.ExprSlice(sl2) => {
-      return ast.ExprSlice { ...sl2, ty: erase_view_spelling(sl2.ty) };
-    },
-    ast.ExprFieldAccess(fa) => {
-      return ast.ExprFieldAccess { ...fa, ty: erase_view_spelling(fa.ty) };
-    },
-    _ => {
-      return e;
-    }
-  }
-}
-
-function erase_view_stmt(st: ast.Stmt): ast.Stmt[] {
-  if let ast.StmtVar(v) = st {
-    return [ast.StmtVar { ...v, type_name: erase_view_spelling(v.type_name), fn_ret: erase_view_spelling(v.fn_ret), fn_param_types: erase_view_spelling(v.fn_param_types) }];
-  }
-  return [st];
-}
-
-function spells_view(ty: string): boolean {
+pub function spells_view(ty: string): boolean {
   let i = 0;
   let n = ty.len();
   while (i < n) {
@@ -21182,97 +20810,6 @@ function spells_view(ty: string): boolean {
   return false;
 }
 
-function spells_view_any(tys: string[]): boolean {
-  for t in tys {
-    if (spells_view(t)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function spells_view_params(ps: ast.ParamDecl[]): boolean {
-  for p in ps {
-    if (spells_view(p.type_name) || spells_view(p.fn_ret) || spells_view(p.fn_param_types)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function spells_view_stmt(st: ast.Stmt, own found: boolean): boolean {
-  if (found) {
-    return true;
-  }
-  if let ast.StmtVar(v) = st {
-    return spells_view(v.type_name) || spells_view(v.fn_ret) || spells_view(v.fn_param_types);
-  }
-  return false;
-}
-
-function spells_view_expr(e: ast.Expr, own found: boolean): boolean {
-  if (found) {
-    return true;
-  }
-  match (e) {
-    ast.ExprCall(c) => {
-      return spells_view_any(c.type_args) || spells_view(c.ty);
-    },
-    ast.ExprArray(a) => {
-      return spells_view(a.elem_ty);
-    },
-    ast.ExprStructLit(sl) => {
-      return spells_view(sl.type_name) || spells_view(sl.written);
-    },
-    ast.ExprZero(z) => {
-      return spells_view(z.type_name);
-    },
-    ast.ExprUnary(u) => {
-      return spells_view(u.cast) || spells_view(u.ty);
-    },
-    ast.ExprLambda(lm) => {
-      return spells_view_params(lm.params) || spells_view(lm.ret_type) || spells_view(lm.ret_fn_ret) || spells_view(lm.ret_fn_param_types);
-    },
-    ast.ExprIdent(id) => {
-      return spells_view(id.ty);
-    },
-    ast.ExprBinary(b) => {
-      return spells_view(b.ty);
-    },
-    ast.ExprIndex(ix) => {
-      return spells_view(ix.ty);
-    },
-    ast.ExprSlice(sl2) => {
-      return spells_view(sl2.ty);
-    },
-    ast.ExprFieldAccess(fa) => {
-      return spells_view(fa.ty);
-    },
-    _ => {
-      return false;
-    }
-  }
-}
-
-function erase_view_body(body: ast.Stmt[]): ast.Stmt[] {
-  let found = false;
-  for st in body {
-    found = astwalk.fold_stmt_nodes(st, found, spells_view_stmt, spells_view_expr, astwalk.descend_all);
-  }
-  if (!found) {
-    return body;
-  }
-  return astwalk.splice_stmts(astwalk.map_stmts(body, erase_view_expr), erase_view_stmt);
-}
-
-function erase_view_funcs(fds: FuncDecl[]): FuncDecl[] {
-  let out: FuncDecl[] = [];
-  for fd in fds {
-    out = out.append(FuncDecl { ...fd, receiver_type: erase_view_spelling(fd.receiver_type), params: erase_view_params(fd.params), ret_type: erase_view_spelling(fd.ret_type), ret_fn_ret: erase_view_spelling(fd.ret_fn_ret), ret_fn_param_types: erase_view_spelling(fd.ret_fn_param_types), body: erase_view_body(fd.body) });
-  }
-  return out;
-}
-
 pub function erase_view_structs(sds: StructDecl[]): StructDecl[] {
   let out: StructDecl[] = [];
   for sd in sds {
@@ -21287,27 +20824,6 @@ function erase_view_struct(sd: StructDecl): StructDecl {
     fields = fields.append(StructFieldDecl { ...f, type_name: erase_view_spelling(f.type_name), fn_ret: erase_view_spelling(f.fn_ret), fn_param_types: erase_view_spelling(f.fn_param_types) });
   }
   return StructDecl { ...sd, fields: fields };
-}
-
-pub function erase_view_module(mod: Module): Module {
-  let structs = erase_view_structs(mod.structs);
-  let aliases: TypeAlias[] = [];
-  for al in mod.aliases {
-    aliases = aliases.append(TypeAlias { ...al, variants: erase_view_list(al.variants), variant_args: erase_view_list(al.variant_args) });
-  }
-  let impls: ImplInfo[] = [];
-  for im in mod.impls {
-    impls = impls.append(ImplInfo { ...im, impl_type: erase_view_spelling(im.impl_type), trait_spelling: erase_view_spelling(im.trait_spelling), trait_ref: erase_view_spelling(im.trait_ref), assoc_values: erase_view_list(im.assoc_values) });
-  }
-  let reqs: TraitReq[] = [];
-  for tr in mod.trait_reqs {
-    reqs = reqs.append(TraitReq { ...tr, req_sigs: erase_view_funcs(tr.req_sigs), assoc_sigs: erase_view_funcs(tr.assoc_sigs), default_sigs: erase_view_funcs(tr.default_sigs) });
-  }
-  let tdecls: TraitDecl[] = [];
-  for td in mod.trait_decls {
-    tdecls = tdecls.append(TraitDecl { ...td, methods: erase_view_funcs(td.methods) });
-  }
-  return Module { ...mod, funcs: erase_view_funcs(mod.funcs), structs: structs, aliases: aliases, top_stmts: erase_view_body(mod.top_stmts), impls: impls, trait_reqs: reqs, trait_decls: tdecls };
 }
 
 function tvar_spelling(name: string): string {
