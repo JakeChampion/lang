@@ -1,0 +1,279 @@
+// Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
+import "std/jni";
+
+// A android.content.Context.
+pub struct Context { ref: usize }
+
+pub function (x: Context) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Context) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.Context and the IDs of its members.
+pub struct ContextClass { class: usize, id_get_content_resolver: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/Context")?;
+  let id_get_content_resolver = jni.checked_id(e, class, jni.get_method_id(e, class, "getContentResolver", "()Landroid/content/ContentResolver;"))?;
+  return Ok(ContextClass { class: class, id_get_content_resolver: id_get_content_resolver });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ContextClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.Context.getContentResolver()Landroid/content/ContentResolver;
+pub function (c: ContextClass) get_content_resolver(e: usize, self: Context): Result[ContentResolver, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_content_resolver, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(ContentResolver { ref: got });
+}
+
+// A android.content.ContentResolver.
+pub struct ContentResolver { ref: usize }
+
+pub function (x: ContentResolver) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ContentResolver) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.ContentResolver and the IDs of its members.
+pub struct ContentResolverClass { class: usize, id_open_asset_file_descriptor: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function content_resolver_class(e: usize): Result[ContentResolverClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/ContentResolver")?;
+  let id_open_asset_file_descriptor = jni.checked_id(e, class, jni.get_method_id(e, class, "openAssetFileDescriptor", "(Landroid/net/Uri;Ljava/lang/String;)Landroid/content/res/AssetFileDescriptor;"))?;
+  return Ok(ContentResolverClass { class: class, id_open_asset_file_descriptor: id_open_asset_file_descriptor });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ContentResolverClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.ContentResolver.openAssetFileDescriptor(Landroid/net/Uri;Ljava/lang/String;)Landroid/content/res/AssetFileDescriptor;
+pub function (c: ContentResolverClass) open_asset_file_descriptor(e: usize, self: ContentResolver, a0: Uri, a1: string): Result[AssetFileDescriptor, jni.JavaError] {
+  let s1 = jni.checked_string(e, a1)?;
+  defer jni.delete_local_ref(e, s1);
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, s1);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_open_asset_file_descriptor, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(AssetFileDescriptor { ref: got });
+}
+
+// A android.content.res.AssetFileDescriptor.
+pub struct AssetFileDescriptor { ref: usize }
+
+pub function (x: AssetFileDescriptor) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: AssetFileDescriptor) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.res.AssetFileDescriptor and the IDs of its members.
+pub struct AssetFileDescriptorClass { class: usize, id_close: usize, id_get_declared_length: usize, id_get_parcel_file_descriptor: usize, id_get_start_offset: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function asset_file_descriptor_class(e: usize): Result[AssetFileDescriptorClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/res/AssetFileDescriptor")?;
+  let id_close = jni.checked_id(e, class, jni.get_method_id(e, class, "close", "()V"))?;
+  let id_get_declared_length = jni.checked_id(e, class, jni.get_method_id(e, class, "getDeclaredLength", "()J"))?;
+  let id_get_parcel_file_descriptor = jni.checked_id(e, class, jni.get_method_id(e, class, "getParcelFileDescriptor", "()Landroid/os/ParcelFileDescriptor;"))?;
+  let id_get_start_offset = jni.checked_id(e, class, jni.get_method_id(e, class, "getStartOffset", "()J"))?;
+  return Ok(AssetFileDescriptorClass { class: class, id_close: id_close, id_get_declared_length: id_get_declared_length, id_get_parcel_file_descriptor: id_get_parcel_file_descriptor, id_get_start_offset: id_get_start_offset });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: AssetFileDescriptorClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.res.AssetFileDescriptor.close()V
+pub function (c: AssetFileDescriptorClass) close(e: usize, self: AssetFileDescriptor): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_close, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.content.res.AssetFileDescriptor.getDeclaredLength()J
+pub function (c: AssetFileDescriptorClass) get_declared_length(e: usize, self: AssetFileDescriptor): Result[i64, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 18, self.ref, c.id_get_declared_length, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i64);
+}
+
+// android.content.res.AssetFileDescriptor.getParcelFileDescriptor()Landroid/os/ParcelFileDescriptor;
+pub function (c: AssetFileDescriptorClass) get_parcel_file_descriptor(e: usize, self: AssetFileDescriptor): Result[ParcelFileDescriptor, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_parcel_file_descriptor, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(ParcelFileDescriptor { ref: got });
+}
+
+// android.content.res.AssetFileDescriptor.getStartOffset()J
+pub function (c: AssetFileDescriptorClass) get_start_offset(e: usize, self: AssetFileDescriptor): Result[i64, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 18, self.ref, c.id_get_start_offset, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i64);
+}
+
+// A android.net.Uri.
+pub struct Uri { ref: usize }
+
+pub function (x: Uri) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Uri) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.net.Uri and the IDs of its members.
+pub struct UriClass { class: usize, id_parse: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function uri_class(e: usize): Result[UriClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/net/Uri")?;
+  let id_parse = jni.checked_id(e, class, jni.get_static_method_id(e, class, "parse", "(Ljava/lang/String;)Landroid/net/Uri;"))?;
+  return Ok(UriClass { class: class, id_parse: id_parse });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: UriClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.net.Uri.parse(Ljava/lang/String;)Landroid/net/Uri;
+pub function (c: UriClass) parse(e: usize, a0: string): Result[Uri, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_parse, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Uri { ref: got });
+}
+
+// A android.os.ParcelFileDescriptor.
+pub struct ParcelFileDescriptor { ref: usize }
+
+pub function (x: ParcelFileDescriptor) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ParcelFileDescriptor) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.os.ParcelFileDescriptor and the IDs of its members.
+pub struct ParcelFileDescriptorClass { class: usize, id_get_fd: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function parcel_file_descriptor_class(e: usize): Result[ParcelFileDescriptorClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/os/ParcelFileDescriptor")?;
+  let id_get_fd = jni.checked_id(e, class, jni.get_method_id(e, class, "getFd", "()I"))?;
+  return Ok(ParcelFileDescriptorClass { class: class, id_get_fd: id_get_fd });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ParcelFileDescriptorClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.os.ParcelFileDescriptor.getFd()I
+pub function (c: ParcelFileDescriptorClass) get_fd(e: usize, self: ParcelFileDescriptor): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_fd, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// The struct of IDs of each class of this module.
+pub struct Classes { context: ContextClass, content_resolver: ContentResolverClass, asset_file_descriptor: AssetFileDescriptorClass, uri: UriClass, parcel_file_descriptor: ParcelFileDescriptorClass }
+
+// Makes the struct of IDs of each class. Call it one time, and call
+// `release` when the app does not call Java again. One lookup for each
+// class, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function classes(e: usize): Result[Classes, jni.JavaError] {
+  let context = match (context_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      return Err(err);
+    },
+  };
+  let content_resolver = match (content_resolver_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      return Err(err);
+    },
+  };
+  let asset_file_descriptor = match (asset_file_descriptor_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      content_resolver.release(e);
+      return Err(err);
+    },
+  };
+  let uri = match (uri_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      content_resolver.release(e);
+      asset_file_descriptor.release(e);
+      return Err(err);
+    },
+  };
+  let parcel_file_descriptor = match (parcel_file_descriptor_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      content_resolver.release(e);
+      asset_file_descriptor.release(e);
+      uri.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { context: context, content_resolver: content_resolver, asset_file_descriptor: asset_file_descriptor, uri: uri, parcel_file_descriptor: parcel_file_descriptor });
+}
+
+// Deletes the reference to each class. Do not use `c` after this call.
+pub function (c: Classes) release(e: usize): void {
+  c.context.release(e);
+  c.content_resolver.release(e);
+  c.asset_file_descriptor.release(e);
+  c.uri.release(e);
+  c.parcel_file_descriptor.release(e);
+}
