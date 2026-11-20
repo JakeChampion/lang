@@ -3108,7 +3108,8 @@ function read_outside_steps(g: ssa.SFunc): boolean[] {
         read = marked_all(read, ins.args);
       }
     }
-    read = marked_all(read, [b.term.cond, b.term.value]);
+    read = mark_read(read, b.term.cond);
+    read = mark_read(read, b.term.value);
   }
   return read;
 }
@@ -3128,9 +3129,14 @@ function read_by_steps(g: ssa.SFunc): boolean[] {
 
 function marked_all(own read: boolean[], values: i32[]): boolean[] {
   for v in values {
-    if (v >= 0 && v < read.len()) {
-      read = read.with(v, true);
-    }
+    read = mark_read(read, v);
+  }
+  return read;
+}
+
+function mark_read(own read: boolean[], v: i32): boolean[] {
+  if (v >= 0 && v < read.len()) {
+    return read.with(v, true);
   }
   return read;
 }
