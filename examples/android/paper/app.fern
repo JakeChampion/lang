@@ -51,44 +51,6 @@ function drop(e: usize, r: usize): void {
   }
 }
 
-function text_of(e: usize, obj: usize): string {
-  if (obj == 0 as usize) {
-    return "";
-  }
-  let s = jni.call_object(e, obj, "toString", "()Ljava/lang/String;", []);
-  if (failed(e)) {
-    return "";
-  }
-  let out = jni.string_of(e, s);
-  drop(e, s);
-  return out;
-}
-
-function object_field(e: usize, obj: usize, name: string, sig: string): usize {
-  let c = jni.get_object_class(e, obj);
-  let got = jni.get_object_field(e, obj, jni.get_field_id(e, c, name, sig));
-  drop(e, c);
-  if (failed(e)) {
-    return 0 as usize;
-  }
-  return got;
-}
-
-function object_method(e: usize, obj: usize, name: string, sig: string, args: usize[]): usize {
-  let got = jni.call_object(e, obj, name, sig, args);
-  if (failed(e)) {
-    return 0 as usize;
-  }
-  return got;
-}
-
-function system_service(e: usize, context: usize, name: string): usize {
-  let n = jni.new_string(e, name);
-  let got = object_method(e, context, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [n]);
-  drop(e, n);
-  return got;
-}
-
 // --- the typed wrappers of bindings.fern
 
 // The value of `r`, or `d` when the Java code threw.
@@ -115,6 +77,17 @@ function done(r: Result[void, jni.JavaError]): boolean {
       return false;
     }
   }
+}
+
+// Convert a label or notification extra and release its local reference.
+function text_of(e: usize, j: bindings.Classes, result: Result[bindings.CharSequence, jni.JavaError]): string {
+  let cs = value_or(result, bindings.CharSequence { ref: 0 as usize });
+  if (cs.is_null()) {
+    return "";
+  }
+  let text = value_or(j.char_sequence.to_string(e, cs), "");
+  drop(e, cs.ref);
+  return text;
 }
 
 function no_intent(): bindings.Intent {
@@ -175,12 +148,10 @@ function query_apps(ctx: usize, labels: boolean): paper.Entry[] {
     let (pkg, cls) = activity_of(e, j, ri);
     let label = pkg;
     if (labels) {
-      let cs = value_or(j.resolve_info.load_label(e, ri, pm), jni.Object { ref: 0 as usize });
-      let t = text_of(e, cs.ref).trim();
+      let t = text_of(e, j, j.resolve_info.load_label(e, ri, pm)).trim();
       if (t.len() > 0) {
         label = t;
       }
-      drop(e, cs.ref);
     }
     if (pkg.len() > 0 && cls.len() > 0) {
       out = out.append(paper.entry(pkg, cls, label, ""));
@@ -337,10 +308,14 @@ function open(ctx: usize, what: string, arg: string): boolean {
 // is not in the SDK, so some phones refuse it, and then nothing happens.
 function expand_notifications(ctx: usize): void {
   let e = android.env(ctx);
-  let sbm = system_service(e, android.activity_object(ctx), "statusbar");
-  if (sbm != 0 as usize) {
-    let ok = jni.call_void(e, sbm, "expandNotificationsPanel", "()V", []);
-    drop(e, sbm);
+  let Ok(c) = bindings.context_class(e) else {
+    return;
+  };
+  defer c.release(e);
+  let sbm = value_or(c.get_system_service(e, context(ctx), "statusbar"), jni.Object { ref: 0 as usize });
+  if (sbm.ref != 0 as usize) {
+    let ok = jni.call_void(e, sbm.ref, "expandNotificationsPanel", "()V", []);
+    drop(e, sbm.ref);
   }
   let cleared = failed(e);
 }
@@ -615,12 +590,10 @@ function app_label_of(e: usize, j: bindings.Classes, context: usize, pkg: string
   let pm = value_or(j.context.get_package_manager(e, bindings.Context { ref: context }), bindings.PackageManager { ref: 0 as usize });
   let info = value_or(j.package_manager.get_application_info(e, pm, pkg, 0), bindings.ApplicationInfo { ref: 0 as usize });
   if (!info.is_null()) {
-    let cs = value_or(j.package_manager.get_application_label(e, pm, info), jni.Object { ref: 0 as usize });
-    let t = text_of(e, cs.ref);
+    let t = text_of(e, j, j.package_manager.get_application_label(e, pm, info));
     if (t.len() > 0) {
       out = t;
     }
-    drop(e, cs.ref);
     drop(e, info.ref);
   }
   drop(e, pm.ref);
@@ -631,10 +604,7 @@ function extra_text(e: usize, j: bindings.Classes, extras: bindings.Bundle, name
   if (extras.is_null()) {
     return "";
   }
-  let cs = value_or(j.bundle.get_char_sequence(e, extras, name), jni.Object { ref: 0 as usize });
-  let out = text_of(e, cs.ref);
-  drop(e, cs.ref);
-  return out;
+  return text_of(e, j, j.bundle.get_char_sequence(e, extras, name));
 }
 
 // Notification.FLAG_AUTOGROUP_SUMMARY, which the SDK hides: the summary
