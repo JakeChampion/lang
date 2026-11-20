@@ -237,7 +237,7 @@ function favourites(s: App): paper.Entry[] {
 }
 
 function results(s: App): paper.Entry[] {
-  return paper.search(s.apps, s.query, s.settings.hidden);
+  return paper.search(s.apps, s.query, s.settings);
 }
 
 // The keys to show dimmed in the app list: the hidden apps, and the blocked
@@ -405,6 +405,10 @@ function settings_menu(own s: App): App {
   if (st.auto_open) {
     auto = "on";
   }
+  let search_hidden = "off";
+  if (st.search_hidden) {
+    search_hidden = "on";
+  }
   let rows = [
     row("Choose home apps", "pick-home"),
     row("Music button: " + music, "pick-music"),
@@ -412,6 +416,7 @@ function settings_menu(own s: App): App {
     row("Apps that can notify (" + st.allowed.len().to_string() + ")", "pick-allow"),
     row("Temperature: " + units, "units"),
     row("Open a single search match: " + auto, "auto"),
+    row("Search hidden apps: " + search_hidden, "search-hidden"),
     row("Hidden apps (" + st.hidden.len().to_string() + ")", "hidden"),
     row("Make Paper the home app", "home-settings"),
   ];
@@ -645,6 +650,9 @@ function settings_act(own s: App, a: string): App {
   }
   if (a == "auto") {
     return set(s, paper.Settings { ...st, auto_open: !st.auto_open });
+  }
+  if (a == "search-hidden") {
+    return set(s, paper.Settings { ...st, search_hidden: !st.search_hidden });
   }
   if (a == "hidden") {
     if (st.hidden.len() == 0) {

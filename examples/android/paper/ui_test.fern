@@ -212,7 +212,7 @@ function test_letter_index(): test.TestOutcome {
 
 function test_drawer_search(): test.TestOutcome {
   let apps = sample_apps();
-  let v = ui.View { ...home_view(), layer: ui.DRAWER, query: "chrome", typing: true, results: paper.search(apps, "chrome", []) };
+  let v = ui.View { ...home_view(), layer: ui.DRAWER, query: "chrome", typing: true, results: paper.search(apps, "chrome", paper.defaults()) };
   let f = draw_view(v, "drawer-search");
   let ns = ui.nodes(fonts(), v);
   return test.assert_eq(node_of(ns, "open:com.android.chrome/Main").y > 0 && node_of(ns, "open:com.whatsapp/Main").y < 0, true);
