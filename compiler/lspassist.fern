@@ -37,13 +37,11 @@ pub function completion(p: lspquery.Program, line: i32, col: i32): Item[] {
   let m = util.pos_file_index(line);
   let toks = lspquery.module_toks(p, m);
   let quals = lspquery.quals_of(v, m);
-  let dot = member_dot(toks, line, col);
-  if (dot >= 0) {
+  if let Some(dot) = member_dot(toks, line, col) {
     return sorted(written_items(quals, members(v.types, toks, quals, m, dot)));
   }
   let items: Item[] = [];
-  let f = lspquery.enclosing(v.types.mod, toks, m, line, col);
-  if (f >= 0) {
+  if let Some(f) = lspquery.enclosing(v.types.mod, toks, m, line, col) {
     items = bound_items(bound_in_func(v.types, v.types.mod.funcs[f]));
   }
   items = global_items(checker.module_scope(v.types), v.types.mod, m, quals.own, items);
@@ -141,15 +139,15 @@ function type_text(t: typeinfo.Type): string {
   return util.show_type_vars(checker.type_label(t));
 }
 
-function member_dot(toks: lspquery.Tok[], line: i32, col: i32): i32 {
+function member_dot(toks: lspquery.Tok[], line: i32, col: i32): Option[i32] {
   let i = lspquery.after(toks, line, col) - 1;
   if (i >= 0 && toks[i].ident && toks[i].line == line && col <= toks[i].col + toks[i].text.len()) {
     i -= 1;
   }
   if (i >= 1 && !toks[i].ident && toks[i].text == ".") {
-    return i;
+    return Some(i);
   }
-  return -1;
+  return None;
 }
 
 function members(v: checker.QueryView, toks: lspquery.Tok[], quals: flatten.Qualifiers, m: i32, dot: i32): Item[] {
@@ -213,11 +211,8 @@ function variant_items(s: checker.Scope, u: checker.UnionSig): Item[] {
 
 function value_members(v: checker.QueryView, toks: lspquery.Tok[], m: i32, dot: i32): Item[] {
   let d = toks[dot];
-  let f = lspquery.enclosing(v.mod, toks, m, d.line, d.col);
   let out: Item[] = [];
-  if (f < 0) {
-    return out;
-  }
+  let f: i32 = match (lspquery.enclosing(v.mod, toks, m, d.line, d.col)) { Some(i) => i, None => { return out; } };
   let fd = v.mod.funcs[f];
   for st in fd.body {
     for fa in astwalk.fold_stmt_nodes(st, [], skip_stmt, collect_access, astwalk.descend_all) {
