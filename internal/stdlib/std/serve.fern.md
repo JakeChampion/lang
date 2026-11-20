@@ -3038,7 +3038,8 @@ function __serve_send[D: async.Driver](drv: D, own c: __Conns, at: i32, payload:
       c = __Conns { ...c, tls: c.tls.with(at, Plain) };
       match (sess.write(payload)) {
         Ok(step) => {
-          return __serve_send_raw(drv, __Conns { ...c, tls: c.tls.with(at, Secured(step.session)) }, at, step.output, opts);
+          c = __Conns { ...c, tls: c.tls.with(at, Secured(step.session)) };
+          return __serve_send_raw(drv, c, at, step.output, opts);
         },
         Err(_) => {
           return (c, Failed);
@@ -3146,7 +3147,8 @@ function __serve_send_out[D: async.Driver](drv: D, own c: __Conns, at: i32, opts
       c = __Conns { ...c, tls: c.tls.with(at, Plain) };
       match (sess.write_framed(framed)) {
         Ok(step) => {
-          return __serve_send_raw(drv, __Conns { ...c, tls: c.tls.with(at, Secured(step.session)) }, at, step.output, opts);
+          c = __Conns { ...c, tls: c.tls.with(at, Secured(step.session)) };
+          return __serve_send_raw(drv, c, at, step.output, opts);
         },
         Err(_) => {
           return (c, Failed);
