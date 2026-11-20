@@ -94,6 +94,13 @@ func TestSelfHostOptBisectFindsTheDecision(t *testing.T) {
 	if reused >= fresh {
 		t.Fatalf("reuse saves nothing here (%d allocations, %d without it), so the probe tests nothing", reused, fresh)
 	}
+	const legacy = "FERN_OPT_BISECT=4294967296"
+	if got := allocs([]string{legacy}); got != fresh {
+		t.Fatalf("legacy bisect ceiling: got %d allocations, want %d", got, fresh)
+	}
+	if got := allocs([]string{legacy, "FERN_DEBUG_OPT_BISECT=0"}); got != reused {
+		t.Fatalf("explicit zero ceiling: got %d allocations, want %d", got, reused)
+	}
 	got, ok := e2eharness.BisectOptDecisions(ds, func(bound uint64) bool {
 		return allocs(e2eharness.OptBisectEnv(nil, bound)) == fresh
 	})
@@ -138,7 +145,7 @@ func TestSelfHostOptBisectGatesTheCleanups(t *testing.T) {
 				return string(out), cmd.ProcessState.ExitCode()
 			}
 			want, wantExit := run(nil)
-			got, gotExit := run([]string{"FERN_OPT_BISECT=4294967296"})
+			got, gotExit := run([]string{"FERN_DEBUG_OPT_BISECT=4294967296"})
 			if got != want || gotExit != wantExit {
 				t.Errorf("every decision declined: exit %d, stdout %q; every decision taken: exit %d, stdout %q", gotExit, got, wantExit, want)
 			}

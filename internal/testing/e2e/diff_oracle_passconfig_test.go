@@ -128,7 +128,7 @@ func bisectSelfHostSeed(t *testing.T, fernBin, stdlibRoot, target, src string, f
 	if !ok {
 		return fmt.Sprintf("decision bisect: the failure stays with all %d decisions declined, so no one pass decision causes it", len(ds)), "none"
 	}
-	return fmt.Sprintf("decision bisect: the failure follows `%s` (FERN_OPT_BISECT=%d agrees, FERN_OPT_BISECT=%d does not)", d, d.Hash+1, d.Hash), d.Pass
+	return fmt.Sprintf("decision bisect: the failure follows `%s` (FERN_DEBUG_OPT_BISECT=%d agrees, FERN_DEBUG_OPT_BISECT=%d does not)", d, d.Hash+1, d.Hash), d.Pass
 }
 
 func seedRunAgrees(r *selfHostRun, gap string, want int, src string) bool {

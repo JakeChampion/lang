@@ -122,7 +122,7 @@ if [ -n "$FERN_DEBUG_OPT_TRACE" ]; then
   echo "opt-decision 30 fuse c" >&2
 fi
 code=7
-if [ "${FERN_OPT_BISECT:-0}" -gt 20 ]; then code=0; fi
+if [ "${FERN_DEBUG_OPT_BISECT:-0}" -gt 20 ]; then code=0; fi
 printf '.globl _start\n_start:\n mov $60, %%eax\n mov $%s, %%edi\n syscall\n' $code > "$out"
 `
 	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
@@ -133,7 +133,7 @@ printf '.globl _start\n_start:\n mov $60, %%eax\n mov $%s, %%edi\n syscall\n' $c
 		r, gap := runSelfHostSeed(t, fake, t.TempDir(), src, nil, env, func(string, ...any) {})
 		return seedRunAgrees(r, gap, 0, src)
 	})
-	if want := "follows `reuse b` (FERN_OPT_BISECT=21 agrees, FERN_OPT_BISECT=20 does not)"; !strings.Contains(got, want) || pass != "reuse" {
+	if want := "follows `reuse b` (FERN_DEBUG_OPT_BISECT=21 agrees, FERN_DEBUG_OPT_BISECT=20 does not)"; !strings.Contains(got, want) || pass != "reuse" {
 		t.Fatalf("got %q (pass %q), want it to contain %q (pass reuse)", got, pass, want)
 	}
 }
