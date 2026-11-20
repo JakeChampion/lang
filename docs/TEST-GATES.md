@@ -2012,7 +2012,7 @@ The compiler dump variables `FERN_DEBUG_SEM_DUMP`, `FERN_DEBUG_RC_CERTIFY_DUMP`,
   locates a bug; the counter only detects it. (It used to be a bare `ud2` and
   a SIGILL you had to be under gdb to interpret — `break __fern_report` gets
   you that stop back if you want the live registers.)
-- **`FERN_RC_FREE_DEBUG=1`** — quarantines freed array/map/box blocks and
+- **`FERN_DEBUG_RC_FREE=1`** — quarantines freed array/map/box blocks and
   reports `fern-sanitizer: use-after-free` on a later touch. Complementary,
   not redundant: it sees an over-release that went through a free, and is
   blind to a plain dec taking a count 1 → 0 (which frees nothing) followed by

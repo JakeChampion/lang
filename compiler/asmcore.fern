@@ -827,7 +827,7 @@ pub function emit_build_manifest(s: EmitState): EmitState {
 }
 
 pub function rc_free_debug_on(): boolean {
-  return envflag.on("FERN_RC_FREE_DEBUG");
+  return util.debug_flag("FERN_DEBUG_RC_FREE", "FERN_RC_FREE_DEBUG");
 }
 
 pub function with_funcs(s: EmitState, funcs: parser.FuncDecl[]): EmitState {
