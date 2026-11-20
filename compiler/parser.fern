@@ -12131,6 +12131,10 @@ function mono_variant_payload_ty(sty: string, vname: string, fns: MFns): string 
   if (hides_var(sty, fns)) {
     return "";
   }
+  return builtin_variant_payload_type(sty, vname);
+}
+
+pub function builtin_variant_payload_type(sty: string, vname: string): string {
   let bare = pat_variant_bare(vname);
   let n = sty.len();
   if (n >= 8 && sty.starts_with("Option[") && sty[n - 1] == b']') {

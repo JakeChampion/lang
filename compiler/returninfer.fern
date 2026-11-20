@@ -19,33 +19,35 @@ function irt_unify(a: string, b: string): string {
   return "";
 }
 
-function irt_collect_returns(stmts: ast.Stmt[], acc: ast.Expr[]): ast.Expr[] {
+function irt_collect_returns(stmts: ast.Stmt[], params: ast.ParamDecl[], funcs: parser.FuncDecl[], structs: parser.StructDecl[], acc: string[]): string[] {
   let out = acc;
   for i in 0..stmts.len() {
-    out = irt_collect_stmt(stmts[i], out);
+    out = irt_collect_stmt(stmts[i], params, funcs, structs, out);
   }
   return out;
 }
 
-function irt_collect_stmt(st: ast.Stmt, acc: ast.Expr[]): ast.Expr[] {
+function irt_collect_stmt(st: ast.Stmt, params: ast.ParamDecl[], funcs: parser.FuncDecl[], structs: parser.StructDecl[], acc: string[]): string[] {
   match (st) {
     ast.StmtReturn(r) => {
-      return acc.append(r.value);
+      return acc.append(parser.irt_guess(r.value, params, funcs, structs));
     },
     ast.StmtIf(f) => {
-      let a = irt_collect_returns(f.then_body, acc);
-      return irt_collect_returns(f.else_body, a);
+      let a = irt_collect_returns(f.then_body, params, funcs, structs, acc);
+      return irt_collect_returns(f.else_body, params, funcs, structs, a);
     },
     ast.StmtWhile(w) => {
-      return irt_collect_returns(w.body, acc);
+      return irt_collect_returns(w.body, params, funcs, structs, acc);
     },
     ast.StmtFor(fr) => {
-      return irt_collect_returns(fr.body, acc);
+      return irt_collect_returns(fr.body, params, funcs, structs, acc);
     },
     ast.StmtMatch(m) => {
       let a = acc;
-      for i in 0..m.arms.len() {
-        a = irt_collect_returns(m.arms[i].body, a);
+      let scrut_ty = parser.irt_guess(m.scrutinee, params, funcs, structs);
+      for arm in m.arms {
+        let scope = irt_arm_scope(arm.pattern, scrut_ty, params);
+        a = irt_collect_returns(arm.body, scope, funcs, structs, a);
       }
       return a;
     },
@@ -55,7 +57,10 @@ function irt_collect_stmt(st: ast.Stmt, acc: ast.Expr[]): ast.Expr[] {
   }
 }
 
-function irt_payload_of(scrut_ty: string): string {
+function irt_payload_of(scrut_ty: string, variant: string): string {
+  if (scrut_ty.starts_with("Option[") || scrut_ty.starts_with("Result[")) {
+    return parser.builtin_variant_payload_type(scrut_ty, variant);
+  }
   if (irt_is_scalar_ty(scrut_ty)) {
     return scrut_ty;
   }
@@ -71,50 +76,27 @@ function irt_is_scalar_ty(t: string): boolean {
     || t == "usize" || t == "f64" || t == "f32";
 }
 
-function irt_arm_bindings(stmts: ast.Stmt[], params: ast.ParamDecl[], funcs: parser.FuncDecl[], structs: parser.StructDecl[], acc: ast.ParamDecl[]): ast.ParamDecl[] {
-  let out = acc;
-  for i in 0..stmts.len() {
-    match (stmts[i]) {
-      ast.StmtMatch(m) => {
-        let st = irt_payload_of(parser.irt_guess(m.scrutinee, params, funcs, structs));
-        for a in 0..m.arms.len() {
-          match (m.arms[a].pattern) {
-            ast.PatVariant(pv) => {
-              if (st.len() > 0 && pv.binding.len() > 0 && pv.binding != "_") {
-                out = out.append(ast.ParamDecl { name: pv.binding, type_name: st, own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 });
-              }
-            },
-            _ => {}
-          }
-          out = irt_arm_bindings(m.arms[a].body, params, funcs, structs, out);
+function irt_arm_scope(pattern: ast.Pattern, scrut_ty: string, params: ast.ParamDecl[]): ast.ParamDecl[] {
+  if let ast.PatVariant(pv) = pattern {
+    if (pv.binding.len() > 0 && pv.binding != "_") {
+      let ty = irt_payload_of(scrut_ty, pv.type_name);
+      let binding = ast.ParamDecl { name: pv.binding, type_name: ty, own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 };
+      for i in 0..params.len() {
+        if (params[i].name == pv.binding) {
+          return params.with(i, binding);
         }
-      },
-      ast.StmtIf(f) => {
-        out = irt_arm_bindings(f.then_body, params, funcs, structs, out);
-        out = irt_arm_bindings(f.else_body, params, funcs, structs, out);
-      },
-      ast.StmtWhile(w) => {
-        out = irt_arm_bindings(w.body, params, funcs, structs, out);
-      },
-      ast.StmtFor(fr) => {
-        out = irt_arm_bindings(fr.body, params, funcs, structs, out);
-      },
-      _ => {}
+      }
+      return params.append(binding);
     }
   }
-  return out;
+  return params;
 }
 
 function irt_infer_func(fd: parser.FuncDecl, funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string {
-  let empty: ast.Expr[] = [];
-  let rets = irt_collect_returns(fd.body, empty);
-  if (rets.len() == 0) {
-    return "";
-  }
-  let scope = irt_arm_bindings(fd.body, fd.params, funcs, structs, fd.params);
+  let empty: string[] = [];
+  let rets = irt_collect_returns(fd.body, fd.params, funcs, structs, empty);
   let unified = "";
-  for i in 0..rets.len() {
-    let g = parser.irt_guess(rets[i], scope, funcs, structs);
+  for g in rets {
     if (g == "") {
       return "";
     }

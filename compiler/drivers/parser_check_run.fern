@@ -43,6 +43,7 @@ function main(): i32 {
   r = r.it("invalid ownership prefixes", check_invalid_ownership_prefixes);
   r = r.it("struct patterns", check_struct_patterns);
   r = r.it("return types of nested match payloads", check_nested_payload_returns);
+  r = r.it("result payload return types", check_result_payload_returns);
   return r.finish();
 }
 
@@ -1870,6 +1871,28 @@ function check_nested_payload_returns(): test.TestOutcome {
     let inferred = returninfer.infer_ret_types_module(parser.Module { ...mod, funcs: [missing] });
     if (inferred.funcs[0].ret_type != payload) {
       return test.fail("expected " + payload + ", got " + inferred.funcs[0].ret_type);
+    }
+  }
+  return test.pass();
+}
+
+function check_result_payload_returns(): test.TestOutcome {
+  let cases = [
+    ("Result[i32, string]", "match (x) { Ok(value) => { return fallback; }, Err(value) => { return value; } }"),
+    ("Result[i32, string]", "match (x) { Result.Err(value) => { return value; }, Result.Ok(value) => { return fallback; } }"),
+    ("Result[string, i32]", "match (x) { Err(value) => { return fallback; }, Ok(value) => { return value; } }"),
+    ("Result[i32, Option[string]]", "match (x) { Ok(value) => { return fallback; }, Err(value) => { match (value) { Some(inner) => { return inner; }, None => { return fallback; } } } }"),
+  ];
+  for fixture in cases {
+    let source = "function pick(x: " + fixture.0 + ", fallback: string): string { " + fixture.1 + " }";
+    let mod = parser.parse_module(lexer.tokenize(source));
+    if (mod.funcs.len() != 1) {
+      return test.fail("expected one function");
+    }
+    let missing = parser.FuncDecl { ...mod.funcs[0], ret_type: "" };
+    let inferred = returninfer.infer_ret_types_module(parser.Module { ...mod, funcs: [missing] });
+    if (inferred.funcs[0].ret_type != "string") {
+      return test.fail("expected string in " + fixture.1 + ", got " + inferred.funcs[0].ret_type);
     }
   }
   return test.pass();
