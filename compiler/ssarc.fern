@@ -6665,76 +6665,32 @@ function handle_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "open_dir" || ins.str.starts_with("Dir.")) {
     return dir_site(r, ins);
   }
-  if (ins.str == "stdin") {
-    return Lowered { found: true, r: emit(r, ir.op_const_i32(0)) };
-  }
-  if (ins.str == "stdout") {
-    return Lowered { found: true, r: emit(r, ir.op_const_i32(1)) };
-  }
-  if (ins.str == "stderr") {
-    return Lowered { found: true, r: emit(r, ir.op_const_i32(2)) };
-  }
-  if (ins.str == "open_reader") {
-    return Lowered { found: true, r: emit(r, ir.op_open_file(0)) };
-  }
-  if (ins.str == "open_writer") {
-    return Lowered { found: true, r: emit(r, ir.op_open_file(577)) };
-  }
-  if (ins.str == "open_appender") {
-    return Lowered { found: true, r: emit(r, ir.op_open_file(1089)) };
-  }
-  if (ins.str == "open_exclusive") {
-    return Lowered { found: true, r: emit(r, ir.op_open_file(193)) };
-  }
-  if (ins.str == "open_reader_with") {
-    return Lowered { found: true, r: emit(r, ir.op_open_reader_with()) };
-  }
-  if (ins.str == "open_writer_with") {
-    return Lowered { found: true, r: emit(r, ir.op_open_writer_with()) };
-  }
-  if (ins.str == "reader_from_fd") {
-    return Lowered { found: true, r: emit(r, ir.op_reader_from_fd()) };
-  }
-  if (ins.str == "Reader.read_chunk") {
-    return Lowered { found: true, r: emit(r, ir.op_read_chunk()) };
-  }
-  if (ins.str == "Reader.read_chunk_bytes") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_read_chunk_bytes())) };
-  }
-  if (ins.str == "Reader.close" || ins.str == "Writer.close") {
-    return Lowered { found: true, r: emit(r, ir.op_reader_close()) };
-  }
-  if (ins.str == "Writer.write_bytes") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_write_bytes())) };
-  }
-  if (ins.str == "Writer.write_some_bytes") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_write_some_bytes())) };
-  }
-  if (ins.str == "Writer.write") {
-    return Lowered { found: true, r: emit(r, ir.op_writer_write()) };
-  }
-  if (ins.str == "Writer.write_some") {
-    return Lowered { found: true, r: emit(r, ir.op_write_some()) };
-  }
-  if (ins.str == "Writer.splice_forever") {
-    return Lowered { found: true, r: emit(r, ir.op_writer_splice_forever()) };
-  }
-  if (ins.str == "Reader.splice_to") {
-    return Lowered { found: true, r: emit(r, ir.op_reader_splice()) };
-  }
-  if (ins.str == "Reader.copy_range_to") {
-    return Lowered { found: true, r: emit(r, ir.op_reader_copy_range()) };
-  }
-  if (ins.str == "Writer.truncate") {
-    return Lowered { found: true, r: emit(r, ir.op_writer_truncate()) };
-  }
-  if (ins.str == "Writer.set_nonblocking") {
-    return Lowered { found: true, r: emit(r, ir.op_writer_nonblocking()) };
-  }
-  if (ins.str == "Writer.set_times") {
-    return Lowered { found: true, r: emit(r, ir.op_writer_set_times()) };
-  }
-  return handle_metadata_site(r, ins);
+  return match (ins.str) {
+    "stdin" => Lowered { found: true, r: emit(r, ir.op_const_i32(0)) },
+    "stdout" => Lowered { found: true, r: emit(r, ir.op_const_i32(1)) },
+    "stderr" => Lowered { found: true, r: emit(r, ir.op_const_i32(2)) },
+    "open_reader" => Lowered { found: true, r: emit(r, ir.op_open_file(0)) },
+    "open_writer" => Lowered { found: true, r: emit(r, ir.op_open_file(577)) },
+    "open_appender" => Lowered { found: true, r: emit(r, ir.op_open_file(1089)) },
+    "open_exclusive" => Lowered { found: true, r: emit(r, ir.op_open_file(193)) },
+    "open_reader_with" => Lowered { found: true, r: emit(r, ir.op_open_reader_with()) },
+    "open_writer_with" => Lowered { found: true, r: emit(r, ir.op_open_writer_with()) },
+    "reader_from_fd" => Lowered { found: true, r: emit(r, ir.op_reader_from_fd()) },
+    "Reader.read_chunk" => Lowered { found: true, r: emit(r, ir.op_read_chunk()) },
+    "Reader.read_chunk_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_read_chunk_bytes())) },
+    "Reader.close" | "Writer.close" => Lowered { found: true, r: emit(r, ir.op_reader_close()) },
+    "Writer.write_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_write_bytes())) },
+    "Writer.write_some_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_write_some_bytes())) },
+    "Writer.write" => Lowered { found: true, r: emit(r, ir.op_writer_write()) },
+    "Writer.write_some" => Lowered { found: true, r: emit(r, ir.op_write_some()) },
+    "Writer.splice_forever" => Lowered { found: true, r: emit(r, ir.op_writer_splice_forever()) },
+    "Reader.splice_to" => Lowered { found: true, r: emit(r, ir.op_reader_splice()) },
+    "Reader.copy_range_to" => Lowered { found: true, r: emit(r, ir.op_reader_copy_range()) },
+    "Writer.truncate" => Lowered { found: true, r: emit(r, ir.op_writer_truncate()) },
+    "Writer.set_nonblocking" => Lowered { found: true, r: emit(r, ir.op_writer_nonblocking()) },
+    "Writer.set_times" => Lowered { found: true, r: emit(r, ir.op_writer_set_times()) },
+    _ => handle_metadata_site(r, ins),
+  };
 }
 
 function handle_metadata_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
@@ -6776,40 +6732,20 @@ function handle_method(name: string): string {
 }
 
 function union_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
-  if (ins.str == "env" || ins.str == "config_get") {
-    return Lowered { found: true, r: emit(r, ir.op_env()) };
-  }
-  if (ins.str == "read_file") {
-    return Lowered { found: true, r: emit(r, ir.op_read_file()) };
-  }
-  if (ins.str == "read_file_bytes") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_read_file_bytes())) };
-  }
-  if (ins.str == "read_dir_bytes") {
-    return Lowered { found: true, r: emit(r, ir.bytes_payload(ir.op_read_dir())) };
-  }
-  if (ins.str == "read_dir") {
-    return Lowered { found: true, r: emit(r, ir.op_read_dir()) };
-  }
-  if (ins.str == "read_dir_all") {
-    return Lowered { found: true, r: emit(r, ir.op_read_dir_all()) };
-  }
-  if (ins.str == "read_dir_ino") {
-    return Lowered { found: true, r: emit(r, ir.op_read_dir_ino()) };
-  }
-  if (ins.str == "read_dir_ino_bytes") {
-    return Lowered { found: true, r: emit(r, ir.bytes_payload(ir.op_read_dir_ino())) };
-  }
-  if (ins.str == "read_dir_ino_all") {
-    return Lowered { found: true, r: emit(r, ir.op_read_dir_ino_all()) };
-  }
-  if (ins.str == "stat") {
-    return Lowered { found: true, r: emit(r, ir.op_stat()) };
-  }
-  if (ins.str == "lstat") {
-    return Lowered { found: true, r: emit(r, ir.op_lstat()) };
-  }
-  return outcome_builtin_site(r, ins);
+  return match (ins.str) {
+    "env" | "config_get" => Lowered { found: true, r: emit(r, ir.op_env()) },
+    "read_file" => Lowered { found: true, r: emit(r, ir.op_read_file()) },
+    "read_file_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_read_file_bytes())) },
+    "read_dir_bytes" => Lowered { found: true, r: emit(r, ir.bytes_payload(ir.op_read_dir())) },
+    "read_dir" => Lowered { found: true, r: emit(r, ir.op_read_dir()) },
+    "read_dir_all" => Lowered { found: true, r: emit(r, ir.op_read_dir_all()) },
+    "read_dir_ino" => Lowered { found: true, r: emit(r, ir.op_read_dir_ino()) },
+    "read_dir_ino_bytes" => Lowered { found: true, r: emit(r, ir.bytes_payload(ir.op_read_dir_ino())) },
+    "read_dir_ino_all" => Lowered { found: true, r: emit(r, ir.op_read_dir_ino_all()) },
+    "stat" => Lowered { found: true, r: emit(r, ir.op_stat()) },
+    "lstat" => Lowered { found: true, r: emit(r, ir.op_lstat()) },
+    _ => outcome_builtin_site(r, ins),
+  };
 }
 
 function outcome_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
