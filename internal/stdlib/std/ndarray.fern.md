@@ -16,6 +16,12 @@ Use `try_from_flat` and `try_reshape` for caller-supplied dimensions. They retur
 
 The checked view methods `try_permute`, `try_reverse`, `try_slice`, and `try_select` return `None` for an invalid axis, permutation, range, or index. A successful call shares the underlying array storage.
 
+`try_reduce_axis` returns `None` for an invalid axis or an unrepresentable result shape. `try_scan_axis` checks the axis and keeps the input shape. On an empty input, a reduction fills the result with its initial value and a scan returns an empty array. Neither calls the callback.
+
+`try_map_rank` returns `None` for an invalid cell rank, inconsistent mapped cell shapes, or an overflowing result shape. An empty frame produces no callback calls.
+
+`try_inner` checks that both operands have a contraction axis and that their extents match. Both `try_inner` and `try_outer` check the result shape before applying the element functions.
+
 ## Executable example
 
 ```fern test name=std-ndarray-example
@@ -648,6 +654,22 @@ function packed_zip[T, U, V](x: T[], y: U[], f: (T, U) => V): V[] {
 pub function (a: NdArray[T]) outer[U, V](b: NdArray[U], f: (T, U) => V): NdArray[V] {
   let shape = join(a.shape, b.shape);
   check_shape(shape);
+  return outer_to_shape(a, b, shape, f);
+}
+
+pub function (a: NdArray[T]) try_outer[U, V](b: NdArray[U], f: (T, U) => V): Option[NdArray[V]] {
+  let shape = join(a.shape, b.shape);
+  if (shape_count(shape) < 0) {
+    return None;
+  }
+  return Some(outer_to_shape(a, b, shape, f));
+}
+
+function outer_to_shape[T, U, V](a: NdArray[T], b: NdArray[U], shape: i32[], f: (T, U) => V): NdArray[V] {
+  if (a.len() == 0 || b.len() == 0) {
+    let empty: V[] = [];
+    return flat_array(empty, shape);
+  }
   if (a.is_packed() && b.is_packed()) {
     return packed_outer(a.data, b.data, shape, f);
   }
@@ -721,14 +743,29 @@ function base_of[T](a: NdArray[T], idx: i32[], idx_from: i32, axis_from: i32, co
 ```fern
 <<16 pub function (a: NdArray[T]) inner[A](b: NdArray[T], init: A, mul: (T, T)>>=
 pub function (a: NdArray[T]) inner[A](b: NdArray[T], init: A, mul: (T, T) => A, add: (A, A) => A): NdArray[A] {
+  let shape = inner_shape(a.shape, b.shape);
+  return inner_to_shape(a, b, shape, count_of(shape), init, mul, add);
+}
+
+pub function (a: NdArray[T]) try_inner[A](b: NdArray[T], init: A, mul: (T, T) => A, add: (A, A) => A): Option[NdArray[A]] {
+  if (!can_contract(a.shape, b.shape)) {
+    return None;
+  }
+  let shape = join(drop_axis(a.shape, a.rank() - 1), drop_axis(b.shape, 0));
+  let total = shape_count(shape);
+  if (total < 0) {
+    return None;
+  }
+  return Some(inner_to_shape(a, b, shape, total, init, mul, add));
+}
+
+function inner_to_shape[T, A](a: NdArray[T], b: NdArray[T], shape: i32[], total: i32, init: A, mul: (T, T) => A, add: (A, A) => A): NdArray[A] {
   let ra = a.shape.len();
   let rb = b.shape.len();
-  let shape = inner_shape(a.shape, b.shape);
   let n = a.shape[ra - 1];
   let sa = a.strides[ra - 1];
   let sb = b.strides[0];
   let out: A[] = [];
-  let total = count_of(shape);
   if (total == 0) {
     return from_flat(out, shape);
   }
@@ -758,8 +795,12 @@ pub function (a: NdArray[T]) inner[A](b: NdArray[T], init: A, mul: (T, T) => A, 
 
 ```fern
 <<17 function inner_shape(a: i32[], b: i32[]): i32[]>>=
+function can_contract(a: i32[], b: i32[]): boolean {
+  return a.len() > 0 && b.len() > 0 && a[a.len() - 1] == b[0];
+}
+
 function inner_shape(a: i32[], b: i32[]): i32[] {
-  if (a.len() < 1 || b.len() < 1 || a[a.len() - 1] != b[0]) {
+  if (!can_contract(a, b)) {
     shape_error();
   }
   return join(drop_axis(a, a.len() - 1), drop_axis(b, 0));
@@ -944,7 +985,26 @@ function packed_scan[T, A](data: T[], outer: i32, extent: i32, inner: i32, init:
 pub function (a: NdArray[T]) reduce_axis[A](axis: i32, init: A, f: (A, T) => A): NdArray[A] {
   check_axis(a, axis);
   let rshape = drop_axis(a.shape, axis);
-  let lane_strides = row_major(rshape);
+  return reduce_to_shape(a, axis, rshape, count_of(rshape), init, f);
+}
+
+pub function (a: NdArray[T]) try_reduce_axis[A](axis: i32, init: A, f: (A, T) => A): Option[NdArray[A]] {
+  if (axis < 0 || axis >= a.rank()) {
+    return None;
+  }
+  let rshape = drop_axis(a.shape, axis);
+  let count = shape_count(rshape);
+  if (count < 0) {
+    return None;
+  }
+  return Some(reduce_to_shape(a, axis, rshape, count, init, f));
+}
+
+function reduce_to_shape[T, A](a: NdArray[T], axis: i32, rshape: i32[], count: i32, init: A, f: (A, T) => A): NdArray[A] {
+  let n = a.len();
+  if (n == 0) {
+    return from_flat(lanes(count, init), rshape);
+  }
   if (a.is_packed()) {
     return from_flat(
       packed_reduce(
@@ -954,8 +1014,8 @@ pub function (a: NdArray[T]) reduce_axis[A](axis: i32, init: A, f: (A, T) => A):
       rshape,
     );
   }
-  let accs = lanes(count_of(rshape), init);
-  let n = a.len();
+  let lane_strides = row_major(rshape);
+  let accs = lanes(count, init);
   let idx = zeros(a.shape.len());
   let i = 0;
   while (i < n) {
@@ -969,8 +1029,23 @@ pub function (a: NdArray[T]) reduce_axis[A](axis: i32, init: A, f: (A, T) => A):
 
 pub function (a: NdArray[T]) scan_axis[A](axis: i32, init: A, f: (A, T) => A): NdArray[A] {
   check_axis(a, axis);
+  return scan_valid_axis(a, axis, init, f);
+}
+
+pub function (a: NdArray[T]) try_scan_axis[A](axis: i32, init: A, f: (A, T) => A): Option[NdArray[A]] {
+  if (axis < 0 || axis >= a.rank()) {
+    return None;
+  }
+  return Some(scan_valid_axis(a, axis, init, f));
+}
+
+function scan_valid_axis[T, A](a: NdArray[T], axis: i32, init: A, f: (A, T) => A): NdArray[A] {
+  let n = a.len();
+  if (n == 0) {
+    let empty: A[] = [];
+    return from_flat(empty, a.shape);
+  }
   let rshape = drop_axis(a.shape, axis);
-  let lane_strides = row_major(rshape);
   if (a.is_packed()) {
     return from_flat(
       packed_scan(
@@ -980,9 +1055,9 @@ pub function (a: NdArray[T]) scan_axis[A](axis: i32, init: A, f: (A, T) => A): N
       a.shape,
     );
   }
+  let lane_strides = row_major(rshape);
   let accs = lanes(count_of(rshape), init);
   let out: A[] = [];
-  let n = a.len();
   let idx = zeros(a.shape.len());
   let i = 0;
   while (i < n) {
@@ -997,8 +1072,21 @@ pub function (a: NdArray[T]) scan_axis[A](axis: i32, init: A, f: (A, T) => A): N
 }
 
 pub function (a: NdArray[T]) map_rank[U](k: i32, f: (NdArray[T]) => NdArray[U]): NdArray[U] {
+  match (a.try_map_rank(k, f)) {
+    Some(result) => {
+      return result;
+    },
+    None => {
+      shape_error();
+    }
+  }
+  let empty: U[] = [];
+  return flat_array(empty, [0]);
+}
+
+pub function (a: NdArray[T]) try_map_rank[U](k: i32, f: (NdArray[T]) => NdArray[U]): Option[NdArray[U]] {
   if (k < 0 || k > a.shape.len()) {
-    shape_error();
+    return None;
   }
   let fr = a.shape.len() - k;
   let frame: i32[] = [];
@@ -1009,7 +1097,11 @@ pub function (a: NdArray[T]) map_rank[U](k: i32, f: (NdArray[T]) => NdArray[U]):
   }
   let cells = count_of(frame);
   let out: U[] = [];
+  if (cells == 0) {
+    return Some(flat_array(out, frame));
+  }
   let cshape: i32[] = [];
+  let shape: i32[] = [];
   let idx = zeros(fr);
   let packed = a.is_packed();
   let cshape_in: i32[] = [];
@@ -1037,9 +1129,13 @@ pub function (a: NdArray[T]) map_rank[U](k: i32, f: (NdArray[T]) => NdArray[U]):
     let r = f(cell);
     if (i == 0) {
       cshape = r.shape();
+      shape = join(frame, cshape);
+      if (shape_count(shape) < 0) {
+        return None;
+      }
     } else {
       if (!same_shape(r.shape(), cshape)) {
-        shape_error();
+        return None;
       }
     }
     let flat = r.to_flat();
@@ -1050,7 +1146,7 @@ pub function (a: NdArray[T]) map_rank[U](k: i32, f: (NdArray[T]) => NdArray[U]):
     }
     i += 1;
   }
-  return from_flat(out, join(frame, cshape));
+  return Some(from_flat(out, shape));
 }
 ```
 
