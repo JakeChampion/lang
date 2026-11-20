@@ -58,9 +58,9 @@ selfhost/arm64-linux/deflate_encode.emit	7906
 selfhost/arm64-linux/enum_match.emit	1273
 selfhost/arm64-linux/http_hello.emit	17632
 selfhost/arm64-linux/int_loop.emit	376
-selfhost/arm64-linux/map_int.emit	8712
-selfhost/arm64-linux/map_probe_chain.emit	8722
-selfhost/arm64-linux/map_string.emit	9741
+selfhost/arm64-linux/map_int.emit	8808
+selfhost/arm64-linux/map_probe_chain.emit	8818
+selfhost/arm64-linux/map_string.emit	9841
 selfhost/arm64-linux/ordmap_insert.emit	6525
 selfhost/arm64-linux/pmap_insert.emit	3952
 selfhost/arm64-linux/pvec_with.emit	3827
@@ -97,7 +97,7 @@ selfhost/wasm32-wasi/map_probe_chain.emit	13521
 selfhost/wasm32-wasi/map_string.emit	14287
 selfhost/wasm32-wasi/ordmap_insert.emit	6710
 selfhost/wasm32-wasi/pmap_insert.emit	3573
-selfhost/wasm32-wasi/pvec_with.emit	2813
+selfhost/wasm32-wasi/pvec_with.emit	2764
 selfhost/wasm32-wasi/record_update.emit	581
 selfhost/wasm32-wasi/sort_inplace.emit	1013
 selfhost/wasm32-wasi/sort_ints.emit	2381
@@ -131,7 +131,7 @@ selfhost/x86-64-linux/map_probe_chain.emit	8895
 selfhost/x86-64-linux/map_string.emit	9772
 selfhost/x86-64-linux/ordmap_insert.emit	6096
 selfhost/x86-64-linux/pmap_insert.emit	3683
-selfhost/x86-64-linux/pvec_with.emit	3537
+selfhost/x86-64-linux/pvec_with.emit	3489
 selfhost/x86-64-linux/record_update.emit	1109
 selfhost/x86-64-linux/sort_inplace.emit	1650
 selfhost/x86-64-linux/sort_ints.emit	2339
@@ -153,10 +153,10 @@ selfhost/x86-64-linux/perceus_deriv.emit	3203
 selfhost/arm64-linux/perceus_deriv.emit	3563
 selfhost/wasm32-wasi/perceus_deriv.emit	3294
 selfhost/x86-64-linux/perceus_nqueens.emit	1706
-selfhost/arm64-linux/perceus_nqueens.emit	1977
+selfhost/arm64-linux/perceus_nqueens.emit	1999
 selfhost/wasm32-wasi/perceus_nqueens.emit	1579
 selfhost/x86-64-linux/perceus_rbtree.emit	2630
-selfhost/arm64-linux/perceus_rbtree.emit	3022
+selfhost/arm64-linux/perceus_rbtree.emit	3058
 selfhost/wasm32-wasi/perceus_rbtree.emit	3763
 selfhost/x86-64-linux/perceus_rbtree_ck.emit	3065
 selfhost/arm64-linux/perceus_rbtree_ck.emit	3479
@@ -178,7 +178,7 @@ selfhost/arm64-linux/base64_decode.emit	3349
 selfhost/wasm32-wasi/base64_decode.emit	4465
 selfhost/x86-64-linux/gather_many.emit	6164
 selfhost/arm64-linux/gather_many.emit	6715
-selfhost/wasm32-wasi/gather_many.emit	6659
+selfhost/wasm32-wasi/gather_many.emit	6571
 selfhost/x86-64-linux/utf8_validate.emit	2633
 selfhost/arm64-linux/utf8_validate.emit	2882
 selfhost/wasm32-wasi/utf8_validate.emit	2231
