@@ -490,8 +490,7 @@ function bracketed(f: ssasem.Func, a: ssasem.Analysis, step: ssaunits.Step, ins:
     return out;
   }
   let modes = ssasem.callee_modes(f, ins);
-  let i = 0;
-  while (i < ins.args.len() && i < modes.len()) {
+  for i in 0..ins.args.len().min(modes.len()) {
     let v = ins.args[i];
     let last = util.index_of_i32(step.drops, v) >= 0 && ssaunits.occurrences(ins.args, v) == 1 && !ssaunits.lends_view_of(f, a, ins.args, v);
     if (modes[i] == ssaunits.borrow_mode() && !last) {
@@ -512,7 +511,6 @@ function bracketed(f: ssasem.Func, a: ssasem.Analysis, step: ssaunits.Step, ins:
         }
       }
     }
-    i += 1;
   }
   return out;
 }
@@ -1827,8 +1825,7 @@ function reuse_construct(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SI
   let kept: boolean[] = [];
   if (at >= 0) {
     kept = k.slots[at];
-    let ki = 0;
-    while (ki < ins.args.len() && ki < fields.len()) {
+    for ki in 0..ins.args.len().min(fields.len()) {
       if (ki < kept.len() && kept[ki]) {
         r = emit(r, ir.op_load_local(ins.result));
         if (util.index_of_i32(k.late[at], ins.args[ki]) >= 0) {
@@ -1842,7 +1839,6 @@ function reuse_construct(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SI
         }
         r = field_store(r, fields, ki);
       }
-      ki += 1;
     }
     r = emit(r, ir.op_else());
     r = emit(r, ir.op_load_local(token));
@@ -1850,24 +1846,20 @@ function reuse_construct(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SI
     r = emit(r, ir.op_end());
     r = keep_release(r, f, k.donors[at], fields, either(kept, k.freed[at]), token, stable);
   }
-  let i = 0;
-  while (i < ins.args.len() && i < fields.len()) {
+  for i in 0..ins.args.len().min(fields.len()) {
     if (!(i < kept.len() && kept[i])) {
       r = emit(r, ir.op_load_local(ins.result));
       r = emit(r, ir.op_load_local(ins.args[i]));
       r = field_store(r, fields, i);
     }
-    i += 1;
   }
   return r;
 }
 
 function either(a: boolean[], b: boolean[]): boolean[] {
   let out: boolean[] = [];
-  let i = 0;
-  while (i < a.len() || i < b.len()) {
+  for i in 0..a.len().max(b.len()) {
     out = out.append(i < a.len() && a[i] || i < b.len() && b[i]);
-    i += 1;
   }
   return out;
 }
@@ -1885,8 +1877,7 @@ function reuse_tuple(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst,
   r = emit(r, ir.op_const_i32(elems.len()));
   r = emit(r, ir.op_call_direct("__fern_alloc_reuse", 2));
   r = emit(r, ir.op_store_local(ins.result));
-  let i = 0;
-  while (i < ins.args.len() && i < elems.len()) {
+  for i in 0..ins.args.len().min(elems.len()) {
     r = emit(r, ir.op_load_local(ins.result));
     r = emit(r, ir.op_load_local(ins.args[i]));
     let kind = tuple_kind(elems[i]);
@@ -1897,7 +1888,6 @@ function reuse_tuple(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst,
     } else {
       r = emit(r, ir.op_tuple_set(i));
     }
-    i += 1;
   }
   return r;
 }
@@ -2032,8 +2022,7 @@ function enum_walk(e: semrecords.Enum, f: ssasem.Func): boolean {
 
 function schema_types_error(f: ssasem.Func, view: ssaunits.SchemaView): string {
   let fits = ssaunits.view_fits(view, f);
-  let i = 0;
-  while (i < f.records.list.len()) {
+  for i in 0..f.records.list.len() {
     let ok = false;
     if (fits) {
       ok = view.rec_walk[i];
@@ -2043,7 +2032,6 @@ function schema_types_error(f: ssasem.Func, view: ssaunits.SchemaView): string {
     if (!ok) {
       return "unsupported physical RC record field type";
     }
-    i += 1;
   }
   for i in 0..f.enums.len() {
     let ok = false;
@@ -5984,8 +5972,7 @@ function append_reason(f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, in
 
 function bound_names(f: ssasem.Func, v: i32): string {
   let out = "";
-  let i = 0;
-  while (i < f.dbg_vals.len() && i < f.dbg_names.len()) {
+  for i in 0..f.dbg_vals.len().min(f.dbg_names.len()) {
     if (f.dbg_vals[i] == v) {
       if (out == "") {
         out = " (";
@@ -5994,7 +5981,6 @@ function bound_names(f: ssasem.Func, v: i32): string {
       }
       out += f.dbg_names[i];
     }
-    i += 1;
   }
   if (out == "") {
     return "";
