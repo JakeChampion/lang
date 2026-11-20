@@ -1,6 +1,8 @@
 // Three passes over the HarfBuzz reference words with one parsed font.
+// Pass --prepared to reuse one Indic plan and report nanoseconds per word.
 import "std/base64";
 import "std/i64";
+import "std/option";
 import "std/shape";
 import "std/string";
 import "std/truetype";
@@ -23,18 +25,29 @@ function main(): i32 {
   if (words.len() == 0) {
     return 1;
   }
+  let argv = args();
+  let plan = if (argv.len() == 2 && argv[1] == "--prepared") { shape.prepare_indic(font, "deva") } else { None };
+  if (argv.len() > 1 && plan.is_none()) {
+    return 1;
+  }
   let checksum = 0i64;
   let start = __heap_alloc_count();
-  for pass in 0..3 {
+  let passes = 3;
+  let started = monotonic_ns();
+  for pass in 0..passes {
     for word in words {
-      let run = shape.shape(font, word, "deva");
+      let run = match (plan) { Some(p) => p.shape(word), None => shape.shape(font, word, "deva") };
       for glyph in run.glyphs {
         checksum += glyph as i64;
       }
     }
   }
+  let elapsed = monotonic_ns() - started;
   let allocations = __heap_alloc_count() - start;
   print(allocations.to_string());
   print(checksum.to_string());
+  if (plan.is_some()) {
+    print("ns_per_word=" + (elapsed / ((passes * words.len()) as i64)).to_string());
+  }
   return 0;
 }

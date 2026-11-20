@@ -2170,6 +2170,9 @@ function consonant_position(f: truetype.Font, p: Plan, g: i32): i32 {
 // Whether one of the lookups joins the virama and the glyph `g`, in either
 // order: some fonts have the order of the old specification in new tables.
 function with_virama(f: truetype.Font, p: Plan, lookups: i32[], g: i32): boolean {
+  if (lookups.len() == 0) {
+    return false;
+  }
   return f.would_substitute_lookups(lookups, [p.virama, g], p.zero) || f.would_substitute_lookups(lookups, [g, p.virama], p.zero);
 }
 
@@ -2177,13 +2180,23 @@ function with_virama(f: truetype.Font, p: Plan, lookups: i32[], g: i32): boolean
 // `broken`, after the glyphs of the category `repha`, when the font has the
 // glyph. The circle has the shaper value `value`.
 function with_dotted_circles(f: truetype.Font, gs: Glyph[], broken: i32, value: i32, repha: i32): Glyph[] {
+  let first = 0;
+  while (first < gs.len() && (syllable_of(gs[first]) & 15) != broken) {
+    first += 1;
+  }
+  if (first == gs.len()) {
+    return gs;
+  }
   let circle = f.glyph(0x25CC);
   if (circle == 0) {
     return gs;
   }
   let out: Glyph[] = [];
+  for i in 0..first {
+    out = out.append(gs[i]);
+  }
   let last = 0;
-  let i = 0;
+  let i = first;
   while (i < gs.len()) {
     let s = syllable_of(gs[i]);
     if (s == last || (s & 15) != broken) {
