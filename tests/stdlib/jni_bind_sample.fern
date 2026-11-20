@@ -278,7 +278,11 @@ pub function (x: Sample) object(): jni.Object {
 
 pub const SAMPLE_COUNT: i32 = -7;
 
+pub const SAMPLE_HALF: f32 = 0.5;
+
 pub const SAMPLE_NAME: string = "fern é 🌿 \x00 end";
+
+pub const SAMPLE_THIRD: f64 = 0.25;
 
 // The class dev.fern.Sample and the IDs of its members.
 pub struct SampleClass { class: usize, id_new: usize, id_size: usize, id_total: usize }

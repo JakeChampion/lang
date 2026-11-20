@@ -290,6 +290,7 @@ pub(package) function push(env: usize): Result[void, frame.VideoError] {
 
 function supported_types(env: usize, info: usize): Result[string[], frame.VideoError] {
   let types = object(env, info, "getSupportedTypes", "()[Ljava/lang/String;", [])?;
+  defer jni.delete_local_ref(env, types);
   let count = jni.get_array_length(env, types);
   if (!healthy(env)) {
     return Err(frame.Platform);
