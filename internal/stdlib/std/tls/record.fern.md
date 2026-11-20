@@ -457,7 +457,7 @@ function __seal_failed(p: Protection, e: aead.AeadError): RecordError {
     aead.KeyLength(n) => {
       return BadKeys(n, p.iv.len());
     },
-    aead.NonceLength(n) => {
+    aead.NonceLength(n) | aead.ExtendedNonceLength(n) => {
       return BadKeys(p.key.len(), n);
     },
     aead.Forged => {
