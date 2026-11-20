@@ -34560,18 +34560,16 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
     },
     ast.ExprFieldAccess(fa) => {
       let oa = annotate_typed(fa.obj, s);
+      let receiver = typed_type(oa, fa.obj, s);
       let vqu = qual_variant_union(fa, s);
-      let ft = t_union(vqu);
-      if (vqu.len() == 0) {
-        ft = field_access_result_type(fa, typed_type(oa, fa.obj, s), s);
-      }
+      let ft = if (vqu.len() > 0) { t_union(vqu) } else { field_access_result_type(fa, receiver, s) };
       let member = fa.field;
       if (member == "iter" && s.has_method("__iterator", "Map")) {
-        if let typeinfo.TypeMap(_) = typed_type(oa, fa.obj, s) {
+        if let typeinfo.TypeMap(_) = receiver {
           member = "__iterator";
         }
       }
-      member = s.resolved_member(member, typed_type(oa, fa.obj, s));
+      member = s.resolved_member(member, receiver);
       return Typed { e: ast.ExprFieldAccess { ...fa, obj: oa.e, field: member, ty: type_to_irtag(ft) }, ty: ft, known: true };
     },
     ast.ExprIndex(x) => {
