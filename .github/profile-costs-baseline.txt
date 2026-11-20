@@ -123,13 +123,13 @@ profile/x86-64-linux/deflate_decode.diagnostic.emit	15059
 profile/x86-64-linux/deflate_decode.diagnostic.ir	32631395
 profile/x86-64-linux/deflate_decode.hardened.bytes	61504
 profile/x86-64-linux/deflate_decode.hardened.emit	14035
-profile/x86-64-linux/deflate_decode.hardened.ir	27700351
+profile/x86-64-linux/deflate_decode.hardened.ir	27403303
 profile/x86-64-linux/deflate_decode.minimal.bytes	50832
 profile/x86-64-linux/deflate_decode.minimal.emit	11857
 profile/x86-64-linux/deflate_decode.minimal.ir	29553039
 profile/x86-64-linux/deflate_decode.safe.bytes	58336
 profile/x86-64-linux/deflate_decode.safe.emit	13652
-profile/x86-64-linux/deflate_decode.safe.ir	27239117
+profile/x86-64-linux/deflate_decode.safe.ir	26942125
 profile/x86-64-linux/enum_match.diagnostic.bytes	11920
 profile/x86-64-linux/enum_match.diagnostic.emit	1496
 profile/x86-64-linux/enum_match.diagnostic.ir	29250233

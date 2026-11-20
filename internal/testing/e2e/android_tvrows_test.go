@@ -43,10 +43,12 @@ pub function keep_one(ctx: usize): i32 {
 #include <dlfcn.h>
 
 static int frames, globals, next = 1000, nnames, nstrings, tv = 1, inserts = 1;
+static const char *reject_key;
+static uintptr_t pending;
 static int fail_global_after = -1;
 static char log_[16384];
-static const char *names[256];
-static int arities[256];
+static const char *names[512];
+static int arities[512];
 static struct { uintptr_t id; char text[96]; } strings[512];
 static void require(int ok, const char *what) { if (!ok) { fprintf(stderr, "tvrows: %s (frames=%d)\nlog: %s\n", what, frames, log_); exit(1); } }
 static uintptr_t fresh(void) { return next++; }
@@ -84,7 +86,7 @@ static int arity(const char *sig) {
 }
 static uintptr_t method(uintptr_t e, uintptr_t cls, const char *name, const char *sig) {
   require(cls != 0, "method lookup on a null class");
-  require(nnames < 256, "too many method ids");
+  require(nnames < 512, "too many method ids");
   arities[nnames] = arity(sig);
   names[nnames++] = strdup(name);
   return nnames;
@@ -95,6 +97,7 @@ static uintptr_t get_class(uintptr_t e, uintptr_t obj) { return fresh(); }
 static uintptr_t new_object(uintptr_t e, uintptr_t cls, uintptr_t ctor, const uint64_t *args) { note_call("new", args, arities[ctor - 1]); return fresh(); }
 static uintptr_t object(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
   note_call(name_of(id), args, arities[id - 1]);
+  if (!strcmp(name_of(id), "toString")) return text("write failed");
   if (!strcmp(name_of(id), "getLastPathSegment")) return text("77");
   if (!strcmp(name_of(id), "insert") && !inserts) return 0;
   return fresh();
@@ -104,7 +107,11 @@ static uintptr_t static_void(uintptr_t e, uintptr_t cls, uintptr_t id, const uin
 // A jboolean leaves the bits above the low 8 of the register undefined.
 static uintptr_t bcall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) { note_call(name_of(id), args, arities[id - 1]); return tv ? 0x301 : 0x200; }
 static int32_t icall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) { note_call(name_of(id), args, arities[id - 1]); return 1; }
-static uintptr_t vcall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) { note_call(name_of(id), args, arities[id - 1]); return 0; }
+static uintptr_t vcall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
+  note_call(name_of(id), args, arities[id - 1]);
+  if (reject_key && !strcmp(name_of(id), "put") && !strcmp(string_of(args[0]), reject_key)) pending = fresh();
+  return 0;
+}
 static uintptr_t new_array(uintptr_t e, int32_t n, uintptr_t cls, uintptr_t init) { uint64_t args[1] = {(uint64_t)n}; note_call("array", args, 1); return fresh(); }
 static void set_element(uintptr_t e, uintptr_t array, int32_t index, uintptr_t value) { uint64_t args[1] = {value}; note_call("element", args, 1); }
 static uintptr_t new_global(uintptr_t e, uintptr_t ref) {
@@ -130,7 +137,8 @@ static const char *utf_chars(uintptr_t e, uintptr_t s, uintptr_t copy) { return 
 static void utf_release(uintptr_t e, uintptr_t s, const char *chars) {}
 static int32_t push(uintptr_t e, int32_t n) { frames++; return 0; }
 static uintptr_t pop(uintptr_t e, uintptr_t keep) { frames--; return 0; }
-static uintptr_t none(uintptr_t e) { return 0; }
+static uintptr_t occurred(uintptr_t e) { return pending; }
+static void clear(uintptr_t e) { pending = 0; }
 static void release(uintptr_t e, uintptr_t ref) { if (tracked_key && ref == tracked_key) released_key++; }
 static int has(const char *part) { return strstr(log_, part) != 0; }
 static int count(const char *part) {
@@ -148,8 +156,8 @@ int main(int argc, char **argv) {
   require(has_rows && add_one && show_two && keep_one, "the entries");
   uintptr_t table[240] = {0}, activity[10] = {0}, ctx[40] = {0};
   table[6] = (uintptr_t)find_class;
-  table[15] = (uintptr_t)none;
-  table[17] = (uintptr_t)none;
+  table[15] = (uintptr_t)occurred;
+  table[17] = (uintptr_t)clear;
   table[19] = (uintptr_t)push;
   table[20] = (uintptr_t)pop;
   table[21] = (uintptr_t)new_global;
@@ -215,6 +223,15 @@ int main(int argc, char **argv) {
   require(keep_one((uintptr_t)ctx) == 1 && frames == 0 && globals == 0, "keep adds a Watch Next program");
   require(has("parse('content://android.media.tv/watch_next_program');") && has("'internal_provider_id=?'") && has("put('title','Pilot');put('internal_provider_id','503');put('intent_uri','intent:c');"), "the Watch Next program");
   require(has("valueOf(120);put('last_playback_position_millis',") && has("valueOf(900);put('duration_millis',") && has("put('watch_next_type',") && !has("preview_program"), "the place of the Watch Next program");
+  log_[0] = 0;
+  reject_key = "display_name";
+  require(add_one((uintptr_t)ctx) == -1 && !has("insert(") && !has("requestChannelBrowsable("), "a rejected channel name aborts publication");
+  log_[0] = 0;
+  reject_key = "duration_millis";
+  require(show_two((uintptr_t)ctx, 77) == 0 && !has("insert("), "a rejected preview duration aborts the row");
+  log_[0] = 0;
+  require(keep_one((uintptr_t)ctx) == 0 && !has("delete(") && !has("insert("), "a rejected replacement keeps the existing Watch Next row");
+  require(!pending && frames == 0 && globals == 0, "failed writes release JNI resources");
   return 0;
 }
 `

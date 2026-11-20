@@ -57,7 +57,7 @@ x86_64/call_overhead.text	370
 x86_64/call_overhead.ir	7238001
 x86_64/closure_call.text	1065
 x86_64/closure_call.ir	41178167
-x86_64/deflate_decode.ir	27239117
+x86_64/deflate_decode.ir	26942125
 x86_64/deflate_decode.text	13652
 x86_64/deflate_encode.ir	41015265
 x86_64/deflate_encode.text	7282
