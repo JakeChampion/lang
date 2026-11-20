@@ -1,0 +1,62 @@
+import "std/test";
+import "std/hex";
+import "std/crypto/argon2id";
+
+function filled(n: i32, value: u8): u8[] {
+  let b = __alloc_u8(n);
+  for i in 0..n {
+    b = b.with(i, value);
+  }
+  return b;
+}
+
+function shown(r: Result[u8[], argon2id.ArgonError]): string {
+  return match (r) { Ok(bytes) => hex.encode(bytes), Err(e) => e.message() };
+}
+
+function test_rfc(): test.TestOutcome {
+  let p = argon2id.Params { ...argon2id.defaults(), memory_kib: 32, limit_kib: 36 };
+  let tag = argon2id.derive(filled(32, 1u8), filled(16, 2u8), filled(8, 3u8), filled(12, 4u8), p);
+  return test.assert_eq(shown(tag), "0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659");
+}
+
+function hash(p: argon2id.Params): string {
+  return shown(argon2id.key("password".as_bytes(), "somesalt".as_bytes(), p));
+}
+
+// The Argon2 reference implementation gives these tags.
+function test_long_tag(): test.TestOutcome {
+  let p = argon2id.Params { ...argon2id.defaults(), memory_kib: 37, lanes: 2, passes: 2, tag_len: 80, limit_kib: 36 };
+  return test.assert_eq(hash(p), "b092558be7d44e96b8f2bae751d5d7bb3b50d63ca8803a703e60df7f4a1285ea50bf0fcf903fff50b907e14720be00d6dc2553c24f39c6557198ec46ca7812c2bda34f6248ea0d75a3f44a0606c8a75a");
+}
+
+function test_addresses(): test.TestOutcome {
+  let p = argon2id.Params { ...argon2id.defaults(), memory_kib: 520, passes: 1, lanes: 1 };
+  return test.assert_eq(hash(p), "4a2e4ab948938db07c43f4b16e6919c3aa4f9dc6da0af0d9e1a7c8f128329feb");
+}
+
+function test_limits(): test.TestOutcome {
+  let p = argon2id.Params { ...argon2id.defaults(), memory_kib: 32, limit_kib: 36 };
+  let memory = argon2id.MemoryLimit.message();
+  let invalid = argon2id.Parameters.message();
+  let got = [
+    hash(argon2id.Params { ...p, limit_kib: 35 }),
+    hash(argon2id.Params { ...p, tag_len: 36865 }),
+    hash(argon2id.Params { ...p, memory_kib: 2147483647, limit_kib: 2147483647 }),
+    hash(argon2id.Params { ...p, lanes: 2147483647 }),
+    hash(argon2id.Params { ...p, memory_kib: 31 }),
+    hash(argon2id.Params { ...p, tag_len: 3 }),
+    hash(argon2id.Params { ...p, passes: 0 }),
+    shown(argon2id.key([], [0u8], p)),
+  ];
+  return test.assert_eq_array(got, [memory, memory, memory, invalid, invalid, invalid, invalid, argon2id.SaltLength.message()]);
+}
+
+function main(): i32 {
+  let r = test.new("std/crypto/argon2id");
+  r = r.it("RFC 9106 section 5.3", test_rfc);
+  r = r.it("rounded matrix size and a long tag", test_long_tag);
+  r = r.it("a second address block in one segment", test_addresses);
+  r = r.it("parameter and memory limits", test_limits);
+  return r.finish();
+}
