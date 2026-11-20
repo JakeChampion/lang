@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// FERN_SSA_DENY keeps the allocator off the registers of its mask. The
+// FERN_DEBUG_SSA_DENY keeps the allocator off the registers of its mask. The
 // program of TestSelfHostCompareFromMemoryKeepsItsBase has more live values
 // than registers, so each mask gives a different home to its values, and
 // each build must compute the same result.
@@ -26,7 +26,7 @@ func TestSelfHostAllocatorDenyMask(t *testing.T) {
 		t.Fatal("over uses no saved register with no mask, so the mask test proves nothing")
 	}
 	// 16383 is each integer register of x86-64.
-	denied, err := os.ReadFile(cli.emit(t, src, "x86-64-linux", "FERN_SSA_DENY=16383"))
+	denied, err := os.ReadFile(cli.emit(t, src, "x86-64-linux", "FERN_SSA_DENY=0", "FERN_DEBUG_SSA_DENY=16383"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,8 +41,8 @@ func TestSelfHostAllocatorDenyMask(t *testing.T) {
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		for _, mask := range masks[target] {
-			if stderr, code := cli.exitOf(t, loadCompareSpilledProg, target, "FERN_SSA_DENY="+mask); code != 0 {
-				t.Errorf("%s FERN_SSA_DENY=%s: exit %d, want 0\n%s", target, mask, code, stderr)
+			if stderr, code := cli.exitOf(t, loadCompareSpilledProg, target, "FERN_DEBUG_SSA_DENY="+mask); code != 0 {
+				t.Errorf("%s FERN_DEBUG_SSA_DENY=%s: exit %d, want 0\n%s", target, mask, code, stderr)
 			}
 		}
 	}

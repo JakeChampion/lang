@@ -219,7 +219,7 @@ a soundness property on a refcount is the wrong way round.
 
 **Taints**: a borrowed receiver; any capture; a type-changing
 `map`; an element function that can reach the world; a donor
-whose decrement is not in the epilogue. `FERN_SELFHOST_NO_REUSE=1`
+whose decrement is not in the epilogue. `FERN_DEBUG_SELFHOST_NO_REUSE=1`
 turns the shape off. Each taint is a row of `fern -array-report`'s
 `map storage` verdicts (`receiver-not-consumed-param`,
 `receiver-still-live`, `element-fn-captures`, …), read from the same
@@ -237,7 +237,7 @@ a source unit already owned by the frame when the plan drops it at the call.
 A guarded record-field take can supply that unit from a consumed ndarray.
 The buffer must also pass a runtime uniqueness test. Shared inputs use the
 fresh-output kernel directly; metadata construction still allocates as needed.
-The final `scale storage` report and `FERN_SELFHOST_NO_REUSE` switch cover this
+The final `scale storage` report and `FERN_DEBUG_SELFHOST_NO_REUSE` switch cover this
 path. See `ARRAY-SHAPES.md` for its layout and refusal contracts.
 
 **Visibility.** `fip` / `fbip` reach the shape: E053 admits
@@ -257,14 +257,14 @@ capture-free element function that reaches no effect
 (`semlower.pure_rows`, native's `effectfulFuncs`), an unchanged
 64-bit integer element — and the same once-per-call uniqueness
 test, which copies a shared donor before the first write.
-`FERN_SELFHOST_NO_REUSE=1` turns it off with the rest of that
+`FERN_DEBUG_SELFHOST_NO_REUSE=1` turns it off with the rest of that
 compiler's reuse layer. Its E068 counts a `map` it declines as
 fresh, listing the conditions rather than naming the one that
 failed.
 
 Locked by: `internal/testing/e2ecompiler/self_host_array_report_test.go`
 (the `guarded-reuse` verdict matches the emitted uniqueness test and
-shared copy, and `FERN_SELFHOST_NO_REUSE=1` reports `reuse-disabled`),
+shared copy, and `FERN_DEBUG_SELFHOST_NO_REUSE=1` reports `reuse-disabled`),
 `self_host_array_report_tags_test.go` (every map storage tag's ordinal
 and spelling), `internal/testing/e2e/array_inplace_test.go` (the same answers
 as a hand-written loop, four backends),

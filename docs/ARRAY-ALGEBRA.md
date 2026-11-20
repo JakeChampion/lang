@@ -341,7 +341,7 @@ including zero counts, with these closed tags:
 | `result-escapes` | A materializing stage returns its array. |
 | `no-reduction-sink` | A remaining producer has no fusible fold, reduce or scan consumer. |
 | `operator-outside-algebra` | A recognized combinator, such as reverse, is outside this pass. |
-| `disabled` | `FERN_NO_ARRAY_FUSION=1` prevented rewriting. |
+| `disabled` | `FERN_DEBUG_NO_ARRAY_FUSION=1` prevented rewriting. |
 | `element-fn-may-abort` | A stage ahead of a `take` or `take_while` can abort, and the stop would skip its applications (§2 rule 3). |
 
 `storage=no-intermediate-arrays` describes the eliminated arrays, not closure
@@ -402,7 +402,7 @@ record or a tuple, and says where its box comes from:
 | `static` | `static` | each operand is a constant, so the value is a static box and the program allocates nothing |
 | `no-donor` | `fresh` | the frame drops no box of that size before the construction, so the allocator supplies the box |
 | `shape-unsupported` | `fresh` | no dropped box can supply this type: it has the layout of an `Option`, or it has a finalizer |
-| `reuse-disabled` | `fresh` | the construction has a donor, and `FERN_SELFHOST_NO_REUSE` or the bisect switch stops the reuse |
+| `reuse-disabled` | `fresh` | the construction has a donor, and `FERN_DEBUG_SELFHOST_NO_REUSE` or the bisect switch stops the reuse |
 
 A record that a function returns in registers has no box, so it has no row.
 

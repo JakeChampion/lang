@@ -409,7 +409,7 @@ staying green (the self-compile must remain byte-identical).
   `TestSelfHostModloadFixpointX86_64`, which retired with the AST emitters in
   #3457 slice 5 — a merged whole-compiler bundle is past the 512-function IR
   budget, so there was nothing left to compile it.) (d) the whole reuse layer can be switched off
-  (`FERN_SELFHOST_NO_REUSE=1`, §6.5), and
+  (`FERN_DEBUG_SELFHOST_NO_REUSE=1`, §6.5), and
   `TestSelfHostReuseDifferentialX86_64` and
   `TestSelfHostSemanticReuseDifferentialX86_64` assert reuse-on vs reuse-off
   are observationally identical, over every family's shapes and over the
@@ -422,7 +422,7 @@ staying green (the self-compile must remain byte-identical).
 - **Fixpoint sensitivity.** Because the self-hosted compiler's own source is
   compiled *with* reuse on, a subtle bug surfaces as a fixpoint divergence (or
   a crash compiling the compiler). When bisecting such a failure,
-  `FERN_SELFHOST_NO_REUSE=1` (§6.5) removes the whole reuse layer in one
+  `FERN_DEBUG_SELFHOST_NO_REUSE=1` (§6.5) removes the whole reuse layer in one
   switch — if the divergence disappears, the regression is in a reuse
   pairing/emitter; if not, look elsewhere.
 
@@ -521,7 +521,7 @@ detector/corruption-probe/fixpoint coverage, and (as of #4350) each carrying
 the runtime `is_unique` token guard.
 
 The reuse-on/off switch exists as `ssaunits.reuse_layer_disabled()`: setting
-**`FERN_SELFHOST_NO_REUSE=1`** in the compiler's environment empties every
+**`FERN_DEBUG_SELFHOST_NO_REUSE=1`** in the compiler's environment empties every
 donor-based pairing (self-overwrite / cross-struct / cross-tuple / enum-donor
 / enum-cross / in-arm — the site lists stay empty, so their donor-free
 suppressions never fire either) and drops the ENUMRE in-place reassign

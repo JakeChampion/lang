@@ -2894,7 +2894,7 @@ pub function spill_slot(code: i32): i32 {
 }
 
 // One line per value with a home: its interval, its spill weight and the
-// register index or frame slot it took. FERN_SSA_ALLOC=<function> prints it,
+// register index or frame slot it took. FERN_DEBUG_SSA_ALLOC=<function> prints it,
 // and `*` prints each function.
 pub function print_alloc(f: SFunc, a: Alloc): string {
   return print_alloc_costs(f, a, SpillCosts { fold_alu_rhs: false });

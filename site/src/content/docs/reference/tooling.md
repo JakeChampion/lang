@@ -94,6 +94,19 @@ the run.
 | `FERN_CACHE_DIR` | Where `fern` keeps its cache, in place of the user cache directory. |
 | `FERN_KTLS`, `FERN_IO_URING` | Read at run time by a program using `std/fetch` or `std/serve`; see [protocols](../../http/protocols/). |
 
+The compiler accepts the following switches for debugging register allocation and
+semantic passes. Each switch also accepts its older spelling without `DEBUG_`.
+When both names are set, the debug-prefixed value takes precedence, including
+an empty value.
+
+| Variable | Meaning |
+| --- | --- |
+| `FERN_DEBUG_SSA_ALLOC` | Dump register allocation for the named native function, or for every function with `*`. |
+| `FERN_DEBUG_SSA_DENY` | Exclude registers selected by the numeric mask from native register allocation. |
+| `FERN_DEBUG_SEM_INLINE`, `FERN_DEBUG_SEM_REUSE` | Set to zero or an empty value to disable semantic inlining or reuse of previously lowered rows. Both passes run by default. |
+| `FERN_DEBUG_NO_SEM_REACH`, `FERN_DEBUG_NO_SCALE_KERNEL`, `FERN_DEBUG_NO_PRODUCT_KERNEL`, `FERN_DEBUG_NO_ARRAY_FUSION` | Disable the named pass when enabled. |
+| `FERN_DEBUG_SELFHOST_NO_REUSE` | Disable allocation reuse in the self-host compiler's generated code. |
+
 ### Diagnostics as JSON
 
 `-diag-format json` prints each diagnostic of the checker, the parser and

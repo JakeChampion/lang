@@ -174,7 +174,7 @@ scalar combinators. Their closed refusal tags are:
 
 | Tag | Planner gate |
 | --- | --- |
-| `disabled` | An otherwise eligible site was disabled by `FERN_NO_SCALE_KERNEL=1` (map) or `FERN_NO_PRODUCT_KERNEL=1` (outer or inner). |
+| `disabled` | An otherwise eligible site was disabled by `FERN_DEBUG_NO_SCALE_KERNEL=1` (map) or `FERN_DEBUG_NO_PRODUCT_KERNEL=1` (outer or inner). |
 | `layout-unknown` | Packed layout was not proved. |
 | `layout-strided` | A metadata transform prevents a packed proof. |
 | `layout-row-major` | Row-major order is known, but packed storage is not. |
@@ -204,9 +204,9 @@ Buffer reuse does not promise that the whole operation allocates nothing.
 `scale storage` uses these closed reasons: `guarded-reuse`, `reuse-disabled`,
 `receiver-borrowed`, `receiver-still-live`, `receiver-supplied`,
 `borrow-linked-result`, `builtin-shadowed`, and `shape-unsupported`.
-`FERN_SELFHOST_NO_REUSE=1` disables donation while retaining the fresh-buffer
-SIMD kernel; `FERN_NO_SCALE_KERNEL=1` disables the ndarray scale rewrite.
-`FERN_NO_PRODUCT_KERNEL=1` disables the outer and inner rewrites. Intrinsic refusal
+`FERN_DEBUG_SELFHOST_NO_REUSE=1` disables donation while retaining the fresh-buffer
+SIMD kernel; `FERN_DEBUG_NO_SCALE_KERNEL=1` disables the ndarray scale rewrite.
+`FERN_DEBUG_NO_PRODUCT_KERNEL=1` disables the outer and inner rewrites. Intrinsic refusal
 reasons survive both switches; only otherwise eligible sites report `disabled`.
 
 Layout facts come from the same interprocedural analysis that gates rewrites.
@@ -323,7 +323,7 @@ the left input, and both import orders alongside the real stdlib.
 
 Captured factors and unresolved element functions still use scalar maps.
 These are coverage limits, not claims that those cases cannot be optimized.
-`FERN_NO_SCALE_KERNEL=1` disables this rewrite. The primary gate
+`FERN_DEBUG_NO_SCALE_KERNEL=1` disables this rewrite. The primary gate
 checks emitted instructions as well as values: a packed map emits the SIMD
 scale, while mixed callers, indirect calls, exports and unproven recursive
 returns retain their map calls. Broader element-function proofs remain
@@ -331,7 +331,7 @@ part of #9727.
 
 Measured on arm64-darwin on 2026-10-05 with
 `examples/array_pipeline/ndarray_scale.fern`: the same candidate compiler,
-kernel enabled versus `FERN_NO_SCALE_KERNEL=1`, 1,000 elements, 200 rounds
+kernel enabled versus `FERN_DEBUG_NO_SCALE_KERNEL=1`, 1,000 elements, 200 rounds
 per process, nine alternating runs of each build. Median time per map was
 253 ns enabled and 2,235 ns disabled (8.83x). Every checksum agreed. The
 enabled build used 6 cold allocator calls and 8,288 fresh bytes; the disabled
@@ -476,7 +476,7 @@ and WebAssembly.
 
 For the final ndarray rewrite, the same machine, inputs and nine alternating
 processes measured 279 ns per outer product (259-295) with rewriting enabled
-versus 2,554 ns (2,489-2,715) with `FERN_NO_PRODUCT_KERNEL=1`. Both builds ran
+versus 2,554 ns (2,489-2,715) with `FERN_DEBUG_NO_PRODUCT_KERNEL=1`. Both builds ran
 the ordinary stdlib-call mode, with every output and both inputs checked
 outside the timer. Over 200 rounds, allocator calls were 1,600 versus 3,600
 and fresh bytes 10,472 versus 20,016. The two-round pilot changed only its
@@ -535,7 +535,7 @@ contraction validation, output-shape prefix overflow, arbitrary initial values
 and the early empty-output return. Geometry comes from shapes even when the
 contracted extent is zero. The result has canonical packed metadata, including
 when an input's extent-one strides are noncanonical. The rewrite respects
-builtin shadowing and `FERN_NO_PRODUCT_KERNEL=1`.
+builtin shadowing and `FERN_DEBUG_NO_PRODUCT_KERNEL=1`.
 
 With automatic selection, the same ordinary `inner` source measured a median
 of 6,311 ns (6,081-8,294) enabled and 133,321 ns (128,254-181,689) disabled on
@@ -548,7 +548,7 @@ for the checked adapter and kernel, with unchanged data size.
 After integrating the later fusion passes, ready-successor block layout and
 typed-contract retirement, a fresh compiler repeated both ordinary-call
 benchmarks on the same Apple M3 Pro. A two-round pilot preceded 200 rounds,
-with nine alternating processes and only `FERN_NO_PRODUCT_KERNEL` changed
+with nine alternating processes and only `FERN_DEBUG_NO_PRODUCT_KERNEL` changed
 between builds. The outer inputs were 32-by-32 and the inner geometry was
 32-by-32-by-32, with the same 0.25 initial accumulator:
 

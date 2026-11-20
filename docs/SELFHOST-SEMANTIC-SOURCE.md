@@ -88,7 +88,7 @@ Unsupported constructs refuse the whole function with a reason.
     variant-layout enum's is the null word, which is no variant.
     Neither makes its type opaque. An option- or member-layout enum's
     zero is a real variant, so it still does.
-  - `FERN_NO_SEM_REACH=1` turns the pass off.
+  - `FERN_DEBUG_NO_SEM_REACH=1` turns the pass off.
 - Record literals as `record_new` and named-field projections as
   `record_get`. A record is a declared struct with no type parameters and no
   enum owner; its schema (`semrecords.Record`) is the declaration's field

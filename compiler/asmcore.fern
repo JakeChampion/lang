@@ -699,10 +699,10 @@ pub function new_state(): EmitState {
   return with_switches(s, env_switches());
 }
 
-// FERN_SSA_DENY=<mask> keeps the SSA allocator off each register whose bit
+// FERN_DEBUG_SSA_DENY=<mask> keeps the SSA allocator off each register whose bit
 // is set. A test uses it to run a program with few registers, or with none.
 function ssa_deny_env(): i64 {
-  match (env("FERN_SSA_DENY")) {
+  match (util.debug_env("FERN_DEBUG_SSA_DENY", "FERN_SSA_DENY")) {
     Some(v) => {
       return util.digits_to_i64(v);
     },

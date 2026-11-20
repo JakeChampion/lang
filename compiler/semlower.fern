@@ -50,7 +50,7 @@ pub function sem_report_on(): boolean {
 }
 
 function sem_reuse_on(): boolean {
-  match (env("FERN_SEM_REUSE")) {
+  match (util.debug_env("FERN_DEBUG_SEM_REUSE", "FERN_SEM_REUSE")) {
     Some(v) => {
       return envflag.value_on(v);
     },

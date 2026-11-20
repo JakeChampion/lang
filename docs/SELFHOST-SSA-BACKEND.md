@@ -136,13 +136,16 @@ function and the op (`ircore.ssa_refuse`, exit 3), never a fall-through:
 there is no other emitter. Every op the lowering produces has an arm, so
 that refusal is a compiler bug report. `FERN_DEBUG_SSA_REPORT=1` prints, on
 stderr, one line per function whose lift or emit took over 200 ms, with both
-times and its op and slot counts. `FERN_SSA_ALLOC=<function>` prints that
+times and its op and slot counts. `FERN_DEBUG_SSA_ALLOC=<function>` prints that
 function's register form, each block with its position and whether it is
 cold, each call with its cold kind, and each value's interval, spill weight
-and home (`ssa.print_alloc`). `FERN_SSA_ALLOC=*` prints each function of
+and home (`ssa.print_alloc`). `FERN_DEBUG_SSA_ALLOC=*` prints each function of
 the module. Nothing about the emitted program changes with it.
+The compiler also accepts the older names `FERN_SSA_ALLOC` and
+`FERN_SSA_DENY`. Each debug-prefixed name takes precedence when set,
+including when its value is empty.
 
-`FERN_SSA_DENY=<mask>` keeps the allocator off each register whose bit is
+`FERN_DEBUG_SSA_DENY=<mask>` keeps the allocator off each register whose bit is
 set, on x86-64 and on arm64. The bit of a register is its allocator index.
 On x86-64 the integer registers have the indexes 0 to 13:
 
