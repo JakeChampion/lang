@@ -380,7 +380,7 @@ function main(): i32 {
     return n;
 }
 `,
-		want:   map[string][]string{"x86-64-linux": {`pushq %rbx`, `movl \$1, %eax`}, "arm64-linux": {`str x19, \[sp, #-16\]!`, `mov x0, #1\b`}},
+		want:   map[string][]string{"x86-64-linux": {`pushq %rbx`, `movl \$1, %eax`}, "arm64-linux": {`str x19, \[x29, #-16\]`, `mov x0, #1\b`}},
 		forbid: map[string][]string{"x86-64-linux": {`pushq %r12`}, "arm64-linux": {`\bx20\b`}}},
 	{name: "imul_reads_operand_in_place", fn: "poly", exit: 87, src: `
 @noinline function poly(s: string): i32 {

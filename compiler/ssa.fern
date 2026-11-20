@@ -1402,21 +1402,19 @@ pub function block_loop_weights(f: SFunc): i32[] {
 }
 
 function weights_from_latches(latch: i32[]): i32[] {
-  let depth = __alloc_i32(latch.len());
-  for h in 0..latch.len() {
-    for k in h..=latch[h] {
-      depth = depth.with(k, depth[k] + 1);
+  let out = __alloc_i32(latch.len());
+  let depth = 0;
+  for i in 0..latch.len() {
+    let last = latch[i];
+    if (last >= i) {
+      depth += 1;
+      // Until the scan reaches a latch, its slot counts the loops ending there.
+      out = out.with(last, out[last] + 1);
     }
-  }
-  let out: i32[] = [];
-  for d in depth {
-    let w = 1;
-    let n = 0;
-    while (n < d && n < 3) {
-      w *= 8;
-      n += 1;
-    }
-    out = out.append(w);
+    let ending = out[i];
+    let levels = if (depth < 3) { depth } else { 3 };
+    out = out.with(i, 1 << levels * 3);
+    depth -= ending;
   }
   return out;
 }

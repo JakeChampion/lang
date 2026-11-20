@@ -32,6 +32,20 @@ function konst(v: i32, c: i32): ssa.SInst {
   return ssa.SInst { kind_tag: 1, result: v, args: [], imm: c, str: "" };
 }
 
+// Blocks 3 and 4 each end two loops. Block 3 also branches to itself.
+function shared_latches(): ssa.SFunc {
+  let blocks: ssa.SBlock[] = [
+    ssa.SBlock { id: 6, insts: [inst(6, 0, [], "")], term: jump(0), preds: [] },
+    ssa.SBlock { id: 0, insts: [], term: branch(0, 1, 5), preds: [6, 4] },
+    ssa.SBlock { id: 1, insts: [], term: jump(2), preds: [0, 4] },
+    ssa.SBlock { id: 2, insts: [], term: branch(0, 3, 4), preds: [1, 3] },
+    ssa.SBlock { id: 3, insts: [], term: branch(0, 2, 3), preds: [2, 3] },
+    ssa.SBlock { id: 4, insts: [], term: branch(0, 0, 1), preds: [2] },
+    ssa.SBlock { id: 5, insts: [], term: ret(0), preds: [0] },
+  ];
+  return ssa.SFunc { name: "shared_latches", nparams: 1, nvals: 1, blocks: blocks, entry: 6, takes_env: false };
+}
+
 // A u32 shifted right by 17 and by 24, a parameter shifted without a u32
 // wrap, and a u32 shifted by 32, each read through an extension.
 function shifted(): ssa.SFunc {
@@ -158,6 +172,8 @@ function main(): i32 {
   let twice = ssa.SFunc { ...f, blocks: [f.blocks[0], b1, f.blocks[2], b3, b4] };
   let tw = ssa.block_loop_weights(twice);
   failures = check(tw[1] == 8 && tw[2] == 8 && tw[3] == 8 && tw[4] == 1, "a loop with two back edges weighs 8", failures);
+  let nested = ssa.block_loop_weights(shared_latches());
+  failures = check(nested[0] == 1 && nested[1] == 8 && nested[2] == 64 && nested[3] == 512 && nested[4] == 512 && nested[5] == 64 && nested[6] == 1, "shared latches end all their loops after the block", failures);
   let nulls = ssa.form(counted_nulls(), false).f;
   failures = check(!has(nulls, 2), "a count taken on a constant null goes", failures);
   failures = check(!has(nulls, 3), "a count given back on a constant null goes", failures);
