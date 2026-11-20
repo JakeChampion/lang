@@ -872,7 +872,7 @@ path_join                                            0
 payload_binding_is_a_local                           0
 payload_struct_patterns                              0
 # The program stops through exit(134), which does not unwind. One buffer is live.
-pbkdf2_without_an_iteration_stops                    1
+pbkdf2_parameter_errors                             0
 pipe_hole_named_argument                             0
 prim_recv_array_method                               0
 primitive_byte_receiver_identity                     0

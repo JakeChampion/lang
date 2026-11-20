@@ -10,6 +10,8 @@ Digest states are values. Every digest has the same surface: `<algorithm>_new()`
 
 ## Contracts
 
+PBKDF2-SHA256 requires at least one iteration and at least one output byte. Its error carries the rejected count or length.
+
 The same state must receive each returned update value. Authentication helpers compare codes without ordinary string equality. Generated digest cores remain in one generator-controlled chunk. `erase` takes an owned array, which the checker accepts only at its last use.
 
 ## Executable example
@@ -45,7 +47,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<6 function __pbkdf2_core(pw: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[]>>
 
-<<7 pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[]>>
+<<7 pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: i32): Result[u8[], Pbkdf2Error]>>
 
 <<8 function __hkdf_extract(hlen: i32, salt: [u8], ikm: [u8]): u8[]>>
 
@@ -3533,12 +3535,7 @@ pub function hmac_sha256_verify(key: [u8], msg: [u8], mac: [u8]): boolean {
 
 ```fern
 <<6 function __pbkdf2_core(pw: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[]>>=
-// RFC 8018 section 5.2 requires an iteration count of 1 or more. A smaller
-// count stops the program with status 134.
 function __pbkdf2_core(pw: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[] {
-  if (iterations < 1) {
-    exit(134);
-  }
   let hLen = 32;
   let dk = __alloc_u8(dk_len);
   let offset = 0;
@@ -3571,31 +3568,44 @@ function __pbkdf2_core(pw: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[]
     }
     erase(u);
     let k = 0;
-    while (k < hLen && offset + k < dk_len) {
+    while (k < hLen && k < dk_len - offset) {
       dk = dk.with(offset + k, t[k]);
       k += 1;
     }
     erase(t);
-    offset += hLen;
+    offset += k;
     block_index += 1;
   }
   return dk;
 }
 ```
 
-### `7 pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[]`
+### `7 pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: i32): Result[u8[], Pbkdf2Error]`
 
 ```fern
-<<7 pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[]>>=
-pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[] {
-  return __pbkdf2_core(password, salt, iterations, dk_len);
+<<7 pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: i32): Result[u8[], Pbkdf2Error]>>=
+pub enum Pbkdf2Error {
+  InvalidIterations(i32),
+  InvalidKeyLength(i32),
+}
+
+pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: i32): Result[u8[], Pbkdf2Error] {
+  if (iterations < 1) {
+    return Err(InvalidIterations(iterations));
+  }
+  if (dk_len < 1) {
+    return Err(InvalidKeyLength(dk_len));
+  }
+  return Ok(__pbkdf2_core(password, salt, iterations, dk_len));
 }
 
 pub function pbkdf2_sha256_verify(password: [u8], salt: [u8], iterations: i32, expected: [u8]): boolean {
-  if (expected.len() == 0) {
+  let Ok(key) = pbkdf2_sha256(password, salt, iterations, expected.len()) else {
     return false;
-  }
-  return consteq(pbkdf2_sha256(password, salt, iterations, expected.len()), expected);
+  };
+  let matches = consteq(key, expected);
+  erase(key);
+  return matches;
 }
 ```
 

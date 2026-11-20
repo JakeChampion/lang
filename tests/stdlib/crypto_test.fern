@@ -1,6 +1,7 @@
 import "std/test";
 import "std/crypto" as crypto;
 import "std/hex";
+import "std/result";
 import "std/codec";
 import "std/string";
 
@@ -72,21 +73,21 @@ function test_hmac_verify_rejects_one_bit(): test.TestOutcome {
 
 function test_pbkdf2_c1(): test.TestOutcome {
   return test.assert_eq(
-    hex.encode(crypto.pbkdf2_sha256("password".as_bytes(), "salt".bytes(), 1, 32)),
+    hex.encode(crypto.pbkdf2_sha256("password".as_bytes(), "salt".bytes(), 1, 32).unwrap_or([])),
     "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b",
   );
 }
 
 function test_pbkdf2_c2(): test.TestOutcome {
   return test.assert_eq(
-    hex.encode(crypto.pbkdf2_sha256("password".as_bytes(), "salt".bytes(), 2, 32)),
+    hex.encode(crypto.pbkdf2_sha256("password".as_bytes(), "salt".bytes(), 2, 32).unwrap_or([])),
     "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43",
   );
 }
 
 function test_pbkdf2_truncated(): test.TestOutcome {
   return test.assert_eq(
-    hex.encode(crypto.pbkdf2_sha256("password".as_bytes(), "salt".bytes(), 1, 16)),
+    hex.encode(crypto.pbkdf2_sha256("password".as_bytes(), "salt".bytes(), 1, 16).unwrap_or([])),
     "120fb6cffcf8b32c43e7225256c4f837",
   );
 }
