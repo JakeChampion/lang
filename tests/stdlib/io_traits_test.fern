@@ -1,0 +1,95 @@
+import "std/hex";
+import "std/rand";
+import "std/io/traits";
+import "std/io_buffered" as buffered;
+import "std/option";
+import "std/stream";
+import "std/test";
+
+function take[R: traits.Read](own r: R): Result[(Option[u8[]], R), traits.ReadError] {
+  return r.pull_bytes();
+}
+
+function put[W: traits.Write](own w: W, bytes: u8[]): Result[W, IoError] {
+  return w.put_bytes(bytes);
+}
+
+function test_memory(): test.TestOutcome {
+  let Ok((Some(bytes), rest)) = take(stream.from_string("ab")) else {
+    return test.fail("stream bytes");
+  };
+  let Ok((end, _)) = take(rest) else {
+    return test.fail("stream ended with a fault");
+  };
+  let Ok(w) = put(buffered.bytes_writer_new(), bytes) else {
+    return test.fail("memory writer");
+  };
+  let Ok(w2) = put(w, [255 as u8]) else {
+    return test.fail("second write");
+  };
+  let out = w2.into_bytes();
+  return test.assert_true(end.is_none() && out.len() == 3 && out[0] == b'a' && out[1] == b'b' && out[2] == 255 as u8);
+}
+
+function test_fault(): test.TestOutcome {
+  let fault: Option[StreamFault] = Some(StreamTooLarge);
+  let src = BodySource { next: (): Option[u8[]] => None, fault: cell_new(fault), send: (bytes: u8[]): i32 => -95 };
+  if let Err(traits.ReadStream(StreamTooLarge())) = take(stream.from_source(src)) {
+    return test.assert_true(true);
+  }
+  return test.fail("lost source fault");
+}
+
+function test_handles(): test.TestOutcome {
+  let path = "fern-io-traits-" + hex.encode(rand.bytes(8));
+  let Ok(file) = open_exclusive(path) else {
+    return test.fail("temp file");
+  };
+  defer { remove_file(path); }
+  let Ok(w) = put(file, "abcd".bytes()) else {
+    return test.fail("file write");
+  };
+  let Ok(_) = w.close() else {
+    return test.fail("close writer");
+  };
+  let Ok(r) = open_reader(path) else {
+    return test.fail("open reader");
+  };
+  let Ok((Some(bytes), r2)) = take(r) else {
+    return test.fail("file bytes");
+  };
+  let Ok((end, r3)) = take(r2) else {
+    return test.fail("file EOF");
+  };
+  let Ok(_) = r3.close() else {
+    return test.fail("close reader");
+  };
+  let Ok(raw) = open_writer(path) else {
+    return test.fail("open buffered writer");
+  };
+  let Ok(b) = put(buffered.buf_writer_new(raw, 16), bytes) else {
+    return test.fail("buffered write");
+  };
+  let Ok(_) = b.close() else {
+    return test.fail("flush and close");
+  };
+  let Ok(raw_in) = open_reader(path) else {
+    return test.fail("open buffered reader");
+  };
+  let Ok((Some(first), next)) = take(buffered.byte_line_reader_new(raw_in, 10, 2)) else {
+    return test.fail("first chunk");
+  };
+  let Ok((Some(second), _)) = take(next) else {
+    return test.fail("second chunk");
+  };
+  return test.assert_true(end.is_none() && first.len() == 2 && second.len() == 2 && first[0] == b'a' && second[1] == b'd');
+}
+
+function main(): i32 {
+  let r = test.new("std/io/traits");
+  r = r.it("write successive chunks and distinguish end of input", test_memory);
+  r = r.it("preserve the source fault", test_fault);
+  r = r.it("read and write through raw and buffered handles", test_handles);
+  r.finish();
+  return 0;
+}
