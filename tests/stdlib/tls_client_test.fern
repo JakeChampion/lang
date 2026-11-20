@@ -168,7 +168,7 @@ function exchanged(s: client.Session, server: handshake.Server): string {
 }
 
 function ticket(n: i32): client.Ticket {
-  return client.Ticket { identity: [n as u8], psk: [], suite: 0, lifetime: time.duration_seconds(60), age_add: 0 as u32, received: time.timestamp_from_unix(0), server_name: "", max_early: 0 as u32 };
+  return client.Ticket { identity: [n as u8], psk: [], suite: 0, lifetime: time.duration_seconds(60), age_add: 0 as u32, received: time.timestamp_from_unix(0), server_name: "", max_early: 0 as u32, verified_chain: [] };
 }
 
 function test_tickets_have_a_limit(): test.TestOutcome {
@@ -461,6 +461,37 @@ function connect_resumed(cfg: client.Config, psk: u8[]): Result[Pair, tls.TlsErr
   return Ok(Pair { session: c1.session, server: s3.server });
 }
 
+function test_ticket_authentication(): test.TestOutcome {
+  let cfg = client.config("tls.example", roots(ROOT));
+  let Ok(unchecked) = connect(cfg.without_verification(), [], false) else {
+    return test.fail("unchecked handshake");
+  };
+  let Ok(saved) = issued(unchecked, 7200u32) else {
+    return test.fail("unchecked ticket");
+  };
+  if (outcome(connect_resumed(cfg.with_ticket(saved.0), saved.1)) != "tls handshake: no ticket offered called out of turn") {
+    return test.fail("offered an unverified ticket");
+  }
+  if (connect_resumed(cfg.without_verification().with_ticket(saved.0), saved.1).is_err()) {
+    return test.fail("unchecked resumption");
+  }
+  let Ok(checked) = connect(cfg, [], false) else {
+    return test.fail("verified handshake");
+  };
+  let Ok(got) = issued(checked, 7200u32) else {
+    return test.fail("verified ticket");
+  };
+  let last = time.timestamp_from_unix_millis(NOT_AFTER_MS);
+  let ticket = client.Ticket { ...got.0, received: last };
+  if (client.offered_for(ticket, cfg.server_name, last, cfg.roots, true).is_none()) {
+    return test.fail("certificate still valid");
+  }
+  if (client.offered_for(ticket, cfg.server_name, time.timestamp_from_unix_millis(NOT_AFTER_MS + 1000), cfg.roots, true).is_some()) {
+    return test.fail("offered a ticket after certificate expiry");
+  }
+  return test.pass();
+}
+
 function test_resumption(): test.TestOutcome {
   match (connect(client.config("tls.example", roots(ROOT)), [], false)) {
     Ok(p) => {
@@ -480,8 +511,18 @@ function test_resumption(): test.TestOutcome {
           if (t.server_name != "tls.example" || t.suite != keyschedule.Aes128GcmSha256.code() || !t.lifetime.eq(time.duration_seconds(7200)) || hex.encode(t.psk) != hex.encode(got.1)) {
             return test.fail("the ticket kept");
           }
-          match (connect_resumed(client.config("tls.example", roots(OTHER_ROOT)).with_ticket(t), got.1)) {
+          let refused = client.config("tls.example", roots(OTHER_ROOT)).with_ticket(t);
+          if (outcome(connect_resumed(refused, got.1)) != "tls handshake: no ticket offered called out of turn") {
+            return test.fail("the client offered a ticket under another root");
+          }
+          match (connect_resumed(client.config("tls.example", roots(ROOT)).with_ticket(t), got.1)) {
             Ok(r) => {
+              let Ok(renewed) = issued(r, 7200 as u32) else {
+                return test.fail("renewed ticket");
+              };
+              if (connect_resumed(client.config("tls.example", roots(ROOT)).with_ticket(renewed.0), renewed.1).is_err()) {
+                return test.fail("the renewed ticket lost the verified chain");
+              }
               if (exchanged(r.session, r.server) != "ping pong") {
                 return test.fail("after resuming");
               }
@@ -636,6 +677,7 @@ function main(): i32 {
   r = r.it("save and restore", test_save_restore);
   r = r.it("close_notify", test_close);
   r = r.it("a close_notify before the handshake ends is an error", test_a_close_before_the_handshake_ends);
+  r = r.it("ticket authentication and certificate expiry", test_ticket_authentication);
   r = r.it("resumption", test_resumption);
   r = r.it("an identity", test_identity);
   return r.finish();

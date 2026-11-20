@@ -363,39 +363,9 @@ function need(b: [u8], at: i32, n: i32): Result[i32, ClassError] {
   return Ok(at);
 }
 
-// True when two surrogates of three bytes each start at byte `i` of `m`.
-function pair_at(m: [u8], i: i32): boolean {
-  if (i + 5 >= m.len() || m[i] != 0xed as u8 || m[i + 3] != 0xed as u8) {
-    return false;
-  }
-  return (m[i + 1] as i32 & 0xf0) == 0xa0 && (m[i + 4] as i32 & 0xf0) == 0xb0;
-}
-
-// The UTF-8 text of the modified UTF-8 bytes `m`, which start at byte
-// `at` of the file. Modified UTF-8 holds a NUL as two bytes, and a
-// character above U+FFFF as two surrogates of three bytes each.
+// Converts a class-file string and reports errors at the constant pool entry.
 function standard(m: [u8], at: i32): Result[string, ClassError] {
-  let out: u8[] = [];
-  let i = 0;
-  while (i < m.len()) {
-    let c = m[i] as i32;
-    if (c == 0xc0 && i + 1 < m.len() && m[i + 1] == 0x80 as u8) {
-      out = out.append(0 as u8);
-      i += 2;
-    } else if (pair_at(m, i)) {
-      let high = (m[i + 1] as i32 & 0x0f) << 6 | m[i + 2] as i32 & 0x3f;
-      let low = (m[i + 4] as i32 & 0x0f) << 6 | m[i + 5] as i32 & 0x3f;
-      let cp = 0x10000 + (high << 10 | low);
-      out = out.append((0xf0 | cp >> 18) as u8);
-      out = out.append((0x80 | cp >> 12 & 0x3f) as u8);
-      out = out.append((0x80 | cp >> 6 & 0x3f) as u8);
-      out = out.append((0x80 | cp & 0x3f) as u8);
-      i += 6;
-    } else {
-      out = out.append(m[i]);
-      i += 1;
-    }
-  }
+  let out = utf8.normalize_modified(m, false);
   let Ok(text) = utf8.from_bytes(out) else {
     return Err(ClassError { offset: at, reason: "the text is not modified UTF-8" });
   };

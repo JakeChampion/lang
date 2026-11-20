@@ -22,7 +22,8 @@ LINES = (
     re.compile(r"jnibind: uptime true int -12345 max 2147483647 sqrt 1\.5 float 0\.5 out true"),
     re.compile(r"jnibind: thrown java: java\.lang\.NumberFormatException: .*fern.* then 7"),
     re.compile(r"jnibind: null x empty x parent parent/x has true lost true then true"),
-    re.compile(r"jnibind: done 6"),
+    re.compile(r"jnibind: keystore roundtrip true fresh iv true refused true"),
+    re.compile(r"jnibind: done 7"),
 )
 CRASH = re.compile(r"Fatal signal|UnsatisfiedLinkError|AndroidRuntime|fern: ")
 

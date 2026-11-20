@@ -261,6 +261,8 @@ pub struct Config {
   proxy_protocol: boolean,
   metrics: metrics.Registry,
   metrics_port: i32,
+  // Called after the exporter binds. With port zero, opt in to a kernel-assigned port.
+  on_metrics_listen: Option[(i32) => void],
   h2: boolean,
   io_uring: boolean,
   io_uring_zc_bytes: i32,
@@ -276,7 +278,7 @@ pub struct Config {
 ```fern
 <<5 pub function config(): Config>>=
 pub function config(): Config {
-  return Config { backlog: 65535, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false, metrics: metrics.registry(), metrics_port: 0, h2: false, io_uring: false, io_uring_zc_bytes: 3072, ktls: false, h3: false, h3_sock: 0 - 1, h3_retry_above: 32 };
+  return Config { backlog: 65535, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false, metrics: metrics.registry(), metrics_port: 0, on_metrics_listen: None, h2: false, io_uring: false, io_uring_zc_bytes: 3072, ktls: false, h3: false, h3_sock: 0 - 1, h3_retry_above: 32 };
 }
 
 pub function (c: Config) with_tls(cfg: server.Config): Config {
@@ -3038,7 +3040,8 @@ function __serve_send[D: async.Driver](drv: D, own c: __Conns, at: i32, payload:
       c = __Conns { ...c, tls: c.tls.with(at, Plain) };
       match (sess.write(payload)) {
         Ok(step) => {
-          return __serve_send_raw(drv, __Conns { ...c, tls: c.tls.with(at, Secured(step.session)) }, at, step.output, opts);
+          c = __Conns { ...c, tls: c.tls.with(at, Secured(step.session)) };
+          return __serve_send_raw(drv, c, at, step.output, opts);
         },
         Err(_) => {
           return (c, Failed);
@@ -3146,7 +3149,8 @@ function __serve_send_out[D: async.Driver](drv: D, own c: __Conns, at: i32, opts
       c = __Conns { ...c, tls: c.tls.with(at, Plain) };
       match (sess.write_framed(framed)) {
         Ok(step) => {
-          return __serve_send_raw(drv, __Conns { ...c, tls: c.tls.with(at, Secured(step.session)) }, at, step.output, opts);
+          c = __Conns { ...c, tls: c.tls.with(at, Secured(step.session)) };
+          return __serve_send_raw(drv, c, at, step.output, opts);
         },
         Err(_) => {
           return (c, Failed);
@@ -5391,7 +5395,7 @@ function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[
           },
           None => {}
         }
-        if (opts.metrics_port > 0 && !__exporter_up(ex) && sup.pids.len() == 1) {
+        if (__metrics_enabled(opts) && !__exporter_up(ex) && sup.pids.len() == 1) {
           match (__exporter(drv, opts, None)) {
             Ok(opened) => {
               ex = opened;
@@ -5549,8 +5553,12 @@ function __supervisor_fork(drv: async.RealDriver, own: __Listen, listener: i32, 
   return (__Supervisor { ...sup, pids: sup.pids.append(pid), spawned: sup.spawned.append(now_unix_ms()), pipes: sup.pipes.append(read_end), readers: sup.readers.append(reader), partial: sup.partial.append(""), snaps: sup.snaps.append(""), quic: sup.quic.append(h3_sock), h3_free: __without_index_i32(sup.h3_free, 0), tcp: sup.tcp.append(held), tcp_free: free }, None);
 }
 
+function __metrics_enabled(opts: Config): boolean {
+  return opts.metrics_port > 0 || opts.metrics_port == 0 && opts.on_metrics_listen.is_some();
+}
+
 function __snapshot_pipe(opts: Config): Option[Pipe] {
-  if (opts.metrics_port <= 0) {
+  if (!__metrics_enabled(opts)) {
     return None;
   }
   match (pipe()) {
@@ -5631,11 +5639,14 @@ function __merged_of(snaps: string[]): () => string {
 }
 
 function __exporter(drv: async.RealDriver, opts: Config, snap: Option[Writer]): Result[Option[metrics.Exporter], ListenError] {
-  if (opts.metrics_port <= 0 || __snapshot_timeout(snap, 0 - 1) >= 0) {
+  if (!__metrics_enabled(opts) || __snapshot_timeout(snap, 0 - 1) >= 0) {
     return Ok(None);
   }
   match (metrics.listen(drv, opts.metrics_port)) {
     Ok(e) => {
+      if let Some(report) = opts.on_metrics_listen {
+        report(e.port());
+      }
       return Ok(Some(e));
     },
     Err(e) => {
