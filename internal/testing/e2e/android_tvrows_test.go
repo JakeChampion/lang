@@ -44,7 +44,7 @@ pub function keep_one(ctx: usize): i32 {
 
 static int frames, globals, next = 1000, nnames, nstrings, tv = 1, inserts = 1;
 static const char *reject_key;
-static int reject_delete;
+static int reject_delete, reject_query, cursor_row;
 static uintptr_t pending;
 static int fail_global_after = -1;
 static char log_[16384];
@@ -99,17 +99,43 @@ static uintptr_t new_object(uintptr_t e, uintptr_t cls, uintptr_t ctor, const ui
 static uintptr_t object(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
   note_call(name_of(id), args, arities[id - 1]);
   if (!strcmp(name_of(id), "toString")) return text("write failed");
+  if (!strcmp(name_of(id), "getPackageName")) return text("dev.fern.plex");
+  if (!strcmp(name_of(id), "query")) {
+    require(args[1] && !args[2] && !args[3] && !args[4], "query uses a projection and no selection");
+    cursor_row = 0;
+    if (reject_query) pending = fresh();
+  }
+  if (!strcmp(name_of(id), "getString")) {
+    if (args[0] == 1) return text(cursor_row == 1 ? "other" : "503");
+    require(args[0] == 2, "package name column");
+    return text(cursor_row == 2 ? "other.app" : "dev.fern.plex");
+  }
   if (!strcmp(name_of(id), "getLastPathSegment")) return text("77");
   if (!strcmp(name_of(id), "insert") && !inserts) return 0;
   return fresh();
 }
-static uintptr_t static_object(uintptr_t e, uintptr_t cls, uintptr_t id, const uint64_t *args) { note_call(name_of(id), args, arities[id - 1]); return fresh(); }
+static uintptr_t static_object(uintptr_t e, uintptr_t cls, uintptr_t id, const uint64_t *args) {
+  note_call(name_of(id), args, arities[id - 1]);
+  if (!strcmp(name_of(id), "parse")) return args[0];
+  return fresh();
+}
 static uintptr_t static_void(uintptr_t e, uintptr_t cls, uintptr_t id, const uint64_t *args) { note_call(name_of(id), args, arities[id - 1]); return 0; }
 // A jboolean leaves the bits above the low 8 of the register undefined.
-static uintptr_t bcall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) { note_call(name_of(id), args, arities[id - 1]); return tv ? 0x301 : 0x200; }
+static uintptr_t bcall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
+  note_call(name_of(id), args, arities[id - 1]);
+  if (!strcmp(name_of(id), "moveToNext")) return ++cursor_row <= 3;
+  return tv ? 0x301 : 0x200;
+}
+static int64_t lcall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
+  require(!strcmp(name_of(id), "getLong") && !args[0] && cursor_row == 3, "ID of the matching row");
+  return 73;
+}
 static int32_t icall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
   note_call(name_of(id), args, arities[id - 1]);
-  if (reject_delete && !strcmp(name_of(id), "delete")) pending = fresh();
+  if (!strcmp(name_of(id), "delete")) {
+    require(!args[1] && !args[2], "the TV provider rejects SQL selections");
+    if (reject_delete) pending = fresh();
+  }
   return 0;
 }
 static uintptr_t vcall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
@@ -174,6 +200,7 @@ int main(int argc, char **argv) {
   table[36] = (uintptr_t)object;
   table[39] = (uintptr_t)bcall;
   table[51] = (uintptr_t)icall;
+  table[54] = (uintptr_t)lcall;
   table[63] = (uintptr_t)vcall;
   table[113] = (uintptr_t)method;
   table[116] = (uintptr_t)static_object;
@@ -216,8 +243,8 @@ int main(int argc, char **argv) {
 
   log_[0] = 0;
   require(show_two((uintptr_t)ctx, 77) == 1 && frames == 0 && globals == 0, "show_channel adds the programs");
-  require(has("parse('content://android.media.tv/preview_program');class java/lang/String;array(1);element('77');delete(") && has("'channel_id=?'"), "the delete of the programs before");
-  require(count("valueOf(77);") == 2 && count("parse('content://android.media.tv/preview_program');") == 3 && count("insert(") == 2, "two programs in the channel");
+  require(has("delete('content://android.media.tv/preview_program?channel=77',0,0);"), "the delete of the programs before");
+  require(count("valueOf(77);") == 2 && count("parse('content://android.media.tv/preview_program');") == 2 && count("insert(") == 2, "two programs in the channel");
   require(has("put('title','Film');put('internal_provider_id','501');put('intent_uri','intent:a');put('poster_art_uri','https://p/1.jpg');valueOf(4);put('poster_art_aspect_ratio',") && has("valueOf(6000);put('duration_millis',"), "a program with its poster and its length");
   require(has("valueOf(1);") && has("put('title','Show');put('internal_provider_id','600');put('intent_uri','intent:b');") && count("poster_art_uri") == 1 && count("duration_millis") == 1, "a program of a series with no poster and no length");
   inserts = 0;
@@ -226,7 +253,7 @@ int main(int argc, char **argv) {
 
   log_[0] = 0;
   require(keep_one((uintptr_t)ctx) == 1 && frames == 0 && globals == 0, "keep adds a Watch Next program");
-  require(has("parse('content://android.media.tv/watch_next_program');") && has("'internal_provider_id=?'") && has("put('title','Pilot');put('internal_provider_id','503');put('intent_uri','intent:c');"), "the Watch Next program");
+  require(has("parse('content://android.media.tv/watch_next_program');") && has("close();parse('content://android.media.tv/watch_next_program/73');delete(") && count("delete(") == 1 && has("put('title','Pilot');put('internal_provider_id','503');put('intent_uri','intent:c');"), "the Watch Next program");
   require(has("valueOf(120);put('last_playback_position_millis',") && has("valueOf(900);put('duration_millis',") && has("put('watch_next_type',") && !has("preview_program"), "the place of the Watch Next program");
   log_[0] = 0;
   reject_key = "display_name";
@@ -238,6 +265,10 @@ int main(int argc, char **argv) {
   require(keep_one((uintptr_t)ctx) == 0 && !has("delete(") && !has("insert("), "a rejected replacement keeps the existing Watch Next row");
   require(!pending && frames == 0 && globals == 0, "failed writes release JNI resources");
   reject_key = 0;
+  reject_query = 1;
+  log_[0] = 0;
+  require(keep_one((uintptr_t)ctx) == 0 && !has("delete(") && !has("insert("), "a rejected query preserves the existing rows");
+  reject_query = 0;
   reject_delete = 1;
   log_[0] = 0;
   require(keep_one((uintptr_t)ctx) == 0 && has("delete(") && !has("insert("), "a rejected Watch Next delete stops the replacement");

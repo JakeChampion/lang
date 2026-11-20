@@ -101,7 +101,7 @@ pub function keep(ctx: usize, p: Program): boolean {
   if (!watch_values(e, tv, values, p).is_ok()) {
     return false;
   }
-  if (!delete_where(e, tv, URI, "internal_provider_id=?", p.id)) {
+  if (!delete_watch_programs(e, tv, p.id)) {
     return false;
   }
   return insert(e, tv, URI, values).is_some();
@@ -151,7 +151,7 @@ pub function drop(ctx: usize, id: string): void {
     return;
   };
   defer close(e, tv);
-  let _ = delete_where(e, tv, URI, "internal_provider_id=?", id);
+  let _ = delete_watch_programs(e, tv, id);
 }
 ```
 
@@ -209,7 +209,7 @@ pub function show_channel(ctx: usize, channel: i64, programs: Program[]): boolea
     return false;
   };
   defer close(e, tv);
-  if (!delete_where(e, tv, PREVIEWS, "channel_id=?", channel.to_string())) {
+  if (!delete_uri(e, tv, PREVIEWS + "?channel=" + channel.to_string())) {
     return false;
   }
   for p in programs {
@@ -327,18 +327,73 @@ function insert(e: usize, tv: Tv, table: string, values: bindings.ContentValues)
   return Some(row);
 }
 
-// Deletes the rows of the app at the table of the URI `table` where
-// `column`, such as "channel_id=?", has the value `value`.
-function delete_where(e: usize, tv: Tv, table: string, column: string, value: string): boolean {
-  let Ok(uri) = tv.c.uri.parse(e, table) else {
+// Apps can delete their rows by URI. The TV provider reserves SQL selections
+// for callers with access to all EPG data.
+function delete_uri(e: usize, tv: Tv, address: string): boolean {
+  let Ok(uri) = tv.c.uri.parse(e, address) else {
     return false;
   };
-  let args = jni.string_array(e, [value]);
-  if (args == 0 as usize) {
-    let cleared = jni.exception_clear(e);
+  defer jni.delete_local_ref(e, uri.ref);
+  return tv.c.content_resolver.delete(e, tv.resolver, uri, None, jni.Object { ref: 0 as usize }).is_ok();
+}
+
+// Match the app's own Watch Next rows by their internal ID, then delete
+// their individual row URIs after the cursor has closed.
+function delete_watch_programs(e: usize, tv: Tv, id: string): boolean {
+  let Some(rows) = watch_rows(e, tv, id) else {
     return false;
+  };
+  for row in rows {
+    if (!delete_uri(e, tv, URI + "/" + row.to_string())) {
+      return false;
+    }
   }
-  return tv.c.content_resolver.delete(e, tv.resolver, uri, column, jni.Object { ref: args }).is_ok();
+  return true;
+}
+
+function watch_rows(e: usize, tv: Tv, id: string): Option[i64[]] {
+  let Ok(package) = tv.c.context.get_package_name(e, tv.app) else {
+    return None;
+  };
+  let Ok(uri) = tv.c.uri.parse(e, URI) else {
+    return None;
+  };
+  let columns = jni.string_array(e, ["_id", "internal_provider_id", "package_name"]);
+  if (columns == 0 as usize) {
+    let cleared = jni.exception_clear(e);
+    return None;
+  }
+  let Ok(cursor) = tv.c.content_resolver.query(e, tv.resolver, uri, jni.Object { ref: columns }, None, jni.Object { ref: 0 as usize }, None) else {
+    return None;
+  };
+  if (cursor.is_null()) {
+    return None;
+  }
+  defer tv.c.cursor.close(e, cursor);
+  let rows: i64[] = [];
+  while (true) {
+    let Ok(more) = tv.c.cursor.move_to_next(e, cursor) else {
+      return None;
+    };
+    if (!more) {
+      break;
+    }
+    let Ok(key) = tv.c.cursor.get_string(e, cursor, 1) else {
+      return None;
+    };
+    if (key == id) {
+      let Ok(owner) = tv.c.cursor.get_string(e, cursor, 2) else {
+        return None;
+      };
+      if (owner == package) {
+        let Ok(row) = tv.c.cursor.get_long(e, cursor, 0) else {
+          return None;
+        };
+        rows = rows.append(row);
+      }
+    }
+  }
+  return Some(rows);
 }
 
 function put_text(e: usize, tv: Tv, values: bindings.ContentValues, key: string, value: string): Result[void, jni.JavaError] {

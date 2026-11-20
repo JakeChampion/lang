@@ -1,5 +1,6 @@
 // Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
 import "std/jni";
+import "std/option";
 
 // A android.content.Context.
 pub struct Context { ref: usize }
@@ -71,7 +72,7 @@ pub function (x: ContentResolver) object(): jni.Object {
 }
 
 // The class android.content.ContentResolver and the IDs of its members.
-pub struct ContentResolverClass { class: usize, id_delete: usize, id_insert: usize }
+pub struct ContentResolverClass { class: usize, id_delete: usize, id_insert: usize, id_query: usize }
 
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
@@ -79,7 +80,8 @@ pub function content_resolver_class(e: usize): Result[ContentResolverClass, jni.
   let class = jni.global_class(e, "android/content/ContentResolver")?;
   let id_delete = jni.checked_id(e, class, jni.get_method_id(e, class, "delete", "(Landroid/net/Uri;Ljava/lang/String;[Ljava/lang/String;)I"))?;
   let id_insert = jni.checked_id(e, class, jni.get_method_id(e, class, "insert", "(Landroid/net/Uri;Landroid/content/ContentValues;)Landroid/net/Uri;"))?;
-  return Ok(ContentResolverClass { class: class, id_delete: id_delete, id_insert: id_insert });
+  let id_query = jni.checked_id(e, class, jni.get_method_id(e, class, "query", "(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;"))?;
+  return Ok(ContentResolverClass { class: class, id_delete: id_delete, id_insert: id_insert, id_query: id_query });
 }
 
 // Deletes the reference to the class. Do not use `c` after this call.
@@ -88,8 +90,11 @@ pub function (c: ContentResolverClass) release(e: usize): void {
 }
 
 // android.content.ContentResolver.delete(Landroid/net/Uri;Ljava/lang/String;[Ljava/lang/String;)I
-pub function (c: ContentResolverClass) delete(e: usize, self: ContentResolver, a0: Uri, a1: string, a2: jni.Object): Result[i32, jni.JavaError] {
-  let s1 = jni.checked_string(e, a1)?;
+pub function (c: ContentResolverClass) delete(e: usize, self: ContentResolver, a0: Uri, a1: Option[string], a2: jni.Object): Result[i32, jni.JavaError] {
+  let s1 = 0 as usize;
+  if let Some(t1) = a1 {
+    s1 = jni.checked_string(e, t1)?;
+  }
   defer jni.delete_local_ref(e, s1);
   let args = jni.jvalue_alloc(3);
   jni.jvalue_set_int(args, 0, a0.ref);
@@ -110,6 +115,30 @@ pub function (c: ContentResolverClass) insert(e: usize, self: ContentResolver, a
   jni.free_buffer(args);
   jni.check(e)?;
   return Ok(Uri { ref: got });
+}
+
+// android.content.ContentResolver.query(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;
+pub function (c: ContentResolverClass) query(e: usize, self: ContentResolver, a0: Uri, a1: jni.Object, a2: Option[string], a3: jni.Object, a4: Option[string]): Result[Cursor, jni.JavaError] {
+  let s2 = 0 as usize;
+  if let Some(t2) = a2 {
+    s2 = jni.checked_string(e, t2)?;
+  }
+  defer jni.delete_local_ref(e, s2);
+  let s4 = 0 as usize;
+  if let Some(t4) = a4 {
+    s4 = jni.checked_string(e, t4)?;
+  }
+  defer jni.delete_local_ref(e, s4);
+  let args = jni.jvalue_alloc(5);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  jni.jvalue_set_int(args, 2, s2);
+  jni.jvalue_set_int(args, 3, a3.ref);
+  jni.jvalue_set_int(args, 4, s4);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_query, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Cursor { ref: got });
 }
 
 // A android.content.ContentValues.
@@ -212,6 +241,76 @@ pub function (c: PackageManagerClass) has_system_feature(e: usize, self: Package
   let args = jni.jvalue_alloc(1);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_has_system_feature, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// A android.database.Cursor.
+pub struct Cursor { ref: usize }
+
+pub function (x: Cursor) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Cursor) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.database.Cursor and the IDs of its members.
+pub struct CursorClass { class: usize, id_close: usize, id_get_long: usize, id_get_string: usize, id_move_to_next: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function cursor_class(e: usize): Result[CursorClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/database/Cursor")?;
+  let id_close = jni.checked_id(e, class, jni.get_method_id(e, class, "close", "()V"))?;
+  let id_get_long = jni.checked_id(e, class, jni.get_method_id(e, class, "getLong", "(I)J"))?;
+  let id_get_string = jni.checked_id(e, class, jni.get_method_id(e, class, "getString", "(I)Ljava/lang/String;"))?;
+  let id_move_to_next = jni.checked_id(e, class, jni.get_method_id(e, class, "moveToNext", "()Z"))?;
+  return Ok(CursorClass { class: class, id_close: id_close, id_get_long: id_get_long, id_get_string: id_get_string, id_move_to_next: id_move_to_next });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: CursorClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.database.Cursor.close()V
+pub function (c: CursorClass) close(e: usize, self: Cursor): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_close, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.database.Cursor.getLong(I)J
+pub function (c: CursorClass) get_long(e: usize, self: Cursor, a0: i32): Result[i64, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 18, self.ref, c.id_get_long, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i64);
+}
+
+// android.database.Cursor.getString(I)Ljava/lang/String;
+pub function (c: CursorClass) get_string(e: usize, self: Cursor, a0: i32): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_string, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// android.database.Cursor.moveToNext()Z
+pub function (c: CursorClass) move_to_next(e: usize, self: Cursor): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_move_to_next, args);
   jni.free_buffer(args);
   jni.check(e)?;
   return Ok((got & 255 as usize) != 0 as usize);
@@ -344,7 +443,7 @@ pub function (c: LongClass) value_of(e: usize, a0: i64): Result[Long, jni.JavaEr
 }
 
 // The struct of IDs of each class of this module.
-pub struct Classes { context: ContextClass, content_resolver: ContentResolverClass, content_values: ContentValuesClass, package_manager: PackageManagerClass, uri: UriClass, tv_contract: TvContractClass, long: LongClass }
+pub struct Classes { context: ContextClass, content_resolver: ContentResolverClass, content_values: ContentValuesClass, package_manager: PackageManagerClass, cursor: CursorClass, uri: UriClass, tv_contract: TvContractClass, long: LongClass }
 
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
@@ -381,6 +480,16 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       return Err(err);
     },
   };
+  let cursor = match (cursor_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      content_resolver.release(e);
+      content_values.release(e);
+      package_manager.release(e);
+      return Err(err);
+    },
+  };
   let uri = match (uri_class(e)) {
     Ok(c) => c,
     Err(err) => {
@@ -388,6 +497,7 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       content_resolver.release(e);
       content_values.release(e);
       package_manager.release(e);
+      cursor.release(e);
       return Err(err);
     },
   };
@@ -398,6 +508,7 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       content_resolver.release(e);
       content_values.release(e);
       package_manager.release(e);
+      cursor.release(e);
       uri.release(e);
       return Err(err);
     },
@@ -409,12 +520,13 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       content_resolver.release(e);
       content_values.release(e);
       package_manager.release(e);
+      cursor.release(e);
       uri.release(e);
       tv_contract.release(e);
       return Err(err);
     },
   };
-  return Ok(Classes { context: context, content_resolver: content_resolver, content_values: content_values, package_manager: package_manager, uri: uri, tv_contract: tv_contract, long: long });
+  return Ok(Classes { context: context, content_resolver: content_resolver, content_values: content_values, package_manager: package_manager, cursor: cursor, uri: uri, tv_contract: tv_contract, long: long });
 }
 
 // Deletes the reference to each class. Do not use `c` after this call.
@@ -423,6 +535,7 @@ pub function (c: Classes) release(e: usize): void {
   c.content_resolver.release(e);
   c.content_values.release(e);
   c.package_manager.release(e);
+  c.cursor.release(e);
   c.uri.release(e);
   c.tv_contract.release(e);
   c.long.release(e);
