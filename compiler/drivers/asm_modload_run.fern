@@ -1,6 +1,7 @@
 import "../util";
 import "../lexer";
 import "../parser";
+import "../returninfer";
 import "../flatten";
 import "../treeshake";
 import "../checker";
@@ -26,7 +27,7 @@ function verify_provided_module(merged: parser.Module, target: string): i32 {
   let names: string[] = [];
   let bodies: ir.Op[][] = [];
   let declared: string[] = [];
-  let im = ircore.with_records(parser.infer_ret_types_module(ircore.script_normalized(ircore.sub_lifted(d.sub, d.full))), d.sub);
+  let im = ircore.with_records(returninfer.infer_ret_types_module(ircore.script_normalized(ircore.sub_lifted(d.sub, d.full))), d.sub);
   for i in 0..im.funcs.len() {
     declared = declared.append(parser.decl_key(im.funcs[i]));
     let r = ircore.produced(d.sub.bodies, i, im.funcs[i]);

@@ -1,5 +1,6 @@
 import "../lexer";
 import "../parser";
+import "../returninfer";
 import "../defaultargs";
 import "./rundriver";
 import "../asmcore";
@@ -55,7 +56,7 @@ function main(): i32 {
   }
 
   let d = semlower.driven(mod, "wasm32-wasi");
-  let im = ircore.with_records(parser.infer_ret_types_module(wasm_ir.route_normalized(d.full)), d.sub);
+  let im = ircore.with_records(returninfer.infer_ret_types_module(wasm_ir.route_normalized(d.full)), d.sub);
 
   let n = im.funcs.len();
   if (n < 2) {

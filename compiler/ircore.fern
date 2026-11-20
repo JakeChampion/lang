@@ -2,6 +2,7 @@ import "./viewerase";
 import "./sourcepos";
 import "core/map";
 import "./parser";
+import "./returninfer";
 import "./asmcore";
 import "./util";
 import "./rtbytecopy";
@@ -557,7 +558,7 @@ pub struct Gated {
 }
 
 pub function gate_program(lifted: parser.Module, sub: Sub): Option[Gated] {
-  let im = with_records(parser.infer_ret_types_module(script_normalized(lifted)), sub);
+  let im = with_records(returninfer.infer_ret_types_module(script_normalized(lifted)), sub);
   let stab = irtables.struct_tab(im.structs);
   let g = match (gate(im, sub)) { Some(g) => g, None => { return None; } };
   return Some(Gated { im: im, stab: stab, cache: g.cache, physical: g.physical });

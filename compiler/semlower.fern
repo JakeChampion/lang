@@ -10,6 +10,7 @@ import "./ir";
 import "./physicalbody";
 import "./lift";
 import "./parser";
+import "./returninfer";
 import "./astpasses";
 import "./platforms";
 import "./semsource";
@@ -867,7 +868,7 @@ pub function runtime_lowering(src: string): physicalbody.Lowered {
 }
 
 pub function runtime_module_lowering(source: parser.Module): physicalbody.Lowered {
-  let parsed = parser.infer_ret_types_module(source);
+  let parsed = returninfer.infer_ret_types_module(source);
   let mod = parser.Module { ...parsed, structs: parser.inject_builtin_enums(unpositioned(parsed.structs)) };
   let diags = checker.build_runtime_gate_diags(mod);
   if (diags.len() > 0) {
@@ -935,7 +936,7 @@ function first_name(mod: parser.Module): string {
 }
 
 pub function gated_module(mod: parser.Module): parser.Module {
-  return parser.infer_ret_types_module(ircore.script_normalized(mod));
+  return returninfer.infer_ret_types_module(ircore.script_normalized(mod));
 }
 
 pub function view_escape_diags(mod: parser.Module): util.Diag[] {

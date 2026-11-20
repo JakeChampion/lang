@@ -3,6 +3,7 @@ import "./astwalk";
 import "./constfold";
 import "./lexer";
 import "./parser";
+import "./returninfer";
 import "./rtbundle";
 import "./rtprofile";
 import "./rttemplates";
@@ -114,7 +115,7 @@ function load_files(files: Files, roots: string, keys: string[], values: ast.Exp
     }
   }
   let configured = constfold.fold_module(configure(mod, keys, values));
-  return parser.infer_ret_types_module(treeshake.treeshake_roots(configured, requested));
+  return returninfer.infer_ret_types_module(treeshake.treeshake_roots(configured, requested));
 }
 
 function declared(mod: parser.Module, name: string): boolean {
