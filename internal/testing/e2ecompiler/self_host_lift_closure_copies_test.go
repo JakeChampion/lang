@@ -31,7 +31,7 @@ var gatedBytesRe = regexp.MustCompile(`(?m)^sem:gated: arr_push_shared_count=\d+
 func gatedCopiedBytes(t *testing.T, h ssaBackendHost, src string) int {
 	t.Helper()
 	cmd := exec.Command(h.cli, "-target", "x86-64-linux", "-o", filepath.Join(t.TempDir(), "out"), src, h.stdlib)
-	cmd.Env = append(os.Environ(), "FERN_CLIFF_REPORT=1", "FERN_RC_CERTIFY=0")
+	cmd.Env = append(os.Environ(), "FERN_DEBUG_CLIFF_REPORT=1", "FERN_RC_CERTIFY=0")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("compiling %s: %v\n%s", src, err, out)

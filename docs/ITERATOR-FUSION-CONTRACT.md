@@ -121,7 +121,7 @@ nothing at all. A `flat_map` chain still allocates the arrays its function
 returns, as the eager stage does. A call counts as an adapter, root or sink only when its body
 came from core/iter, as the eager pass trusts only std/array's.
 
-These are not fused yet, and `FERN_ARRAY_REPORT` names each one (clause 4):
+These are not fused yet, and `FERN_DEBUG_ARRAY_REPORT` names each one (clause 4):
 
 - `skip`, `enumerate` and `zip`;
 - the `collect`, `find`, `any` and `all` sinks;

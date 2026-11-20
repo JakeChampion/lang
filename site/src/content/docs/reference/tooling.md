@@ -87,7 +87,7 @@ the run.
 | `FERN_SANITIZE` | The same as `-sanitize`. |
 | `FERN_LEAKCHECK` | The leak census of `-sanitize` on its own. |
 | `FERN_COVER` | The same as `-cover`. |
-| `FERN_ARRAY_REPORT` | Print the `-array-report` report on stderr during an ordinary compile. |
+| `FERN_DEBUG_ARRAY_REPORT` | Print the `-array-report` report on stderr during an ordinary compile. |
 | `FERN_PROFILE` | `cpu`, `alloc`, `cpu-pprof` or `alloc-pprof`: build a self-profiling executable. `FERN_PROFILE_FILE` names the pprof output. |
 | `FERN_DIAG_FORMAT` | The default for `-diag-format`: `terse` or `json`. Any other value is ignored. |
 | `FERN_CACHE_DIR` | Where `fern` keeps its cache, in place of the user cache directory. |
