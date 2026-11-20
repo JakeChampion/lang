@@ -333,6 +333,18 @@ pub function exception_clear(env: usize): usize {
   return call0(env, 17);
 }
 
+// Clears a pending exception and releases the local throwable reference
+// returned by ExceptionOccurred.
+function clear_if_thrown(env: usize): boolean {
+  let thrown = exception_occurred(env);
+  if (thrown == 0 as usize) {
+    return false;
+  }
+  exception_clear(env);
+  delete_local_ref(env, thrown);
+  return true;
+}
+
 pub function new_global_ref(env: usize, obj: usize): usize {
   return call1(env, 21, obj);
 }
@@ -746,11 +758,7 @@ pub function call_void(env: usize, obj: usize, name: string, sig: string, values
   let done: usize = call_void_method_a(env, obj, get_method_id(env, class, name, sig), args);
   free_buffer(args);
   let dropped: usize = delete_local_ref(env, class);
-  if (exception_occurred(env) != 0 as usize) {
-    exception_clear(env);
-    return false;
-  }
-  return true;
+  return !clear_if_thrown(env);
 }
 
 // The class `name`, in the Java form "a.b.C", loaded through the class
@@ -840,9 +848,7 @@ pub function check(env: usize): Result[void, JavaError] {
   exception_clear(env);
   let text = call_object(env, thrown, "toString", "()Ljava/lang/String;", []);
   let out = "";
-  if (exception_occurred(env) != 0 as usize) {
-    exception_clear(env);
-  } else {
+  if (!clear_if_thrown(env)) {
     out = string_of(env, text);
     delete_local_ref(env, text);
   }
@@ -853,11 +859,10 @@ pub function check(env: usize): Result[void, JavaError] {
 // The ID `id` that a lookup gave, or 0 when the lookup threw. It clears
 // the exception. Use it for a member that an older device does not have.
 pub function optional_id(env: usize, id: usize): usize {
-  if (exception_occurred(env) == 0 as usize) {
-    return id;
+  if (clear_if_thrown(env)) {
+    return 0 as usize;
   }
-  exception_clear(env);
-  return 0 as usize;
+  return id;
 }
 
 // The error for a call of `member`, which the device does not have.
