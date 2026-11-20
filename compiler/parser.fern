@@ -21100,71 +21100,7 @@ pub function receiver_namespace(receiver: string): string {
   return receiver_base(receiver);
 }
 
-function erase_view_list(tys: string[]): string[] {
-  let out: string[] = [];
-  for t in tys {
-    out = out.append(erase_view_spelling(t));
-  }
-  return out;
-}
-
-function erase_view_params(ps: ast.ParamDecl[]): ast.ParamDecl[] {
-  let out: ast.ParamDecl[] = [];
-  for p in ps {
-    out = out.append(ast.ParamDecl { ...p, type_name: erase_view_spelling(p.type_name), fn_ret: erase_view_spelling(p.fn_ret), fn_param_types: erase_view_spelling(p.fn_param_types) });
-  }
-  return out;
-}
-
-function erase_view_expr(e: ast.Expr): ast.Expr {
-  match (e) {
-    ast.ExprCall(c) => {
-      return ast.ExprCall { ...c, type_args: erase_view_list(c.type_args), ty: erase_view_spelling(c.ty) };
-    },
-    ast.ExprArray(a) => {
-      return ast.ExprArray { ...a, elem_ty: erase_view_spelling(a.elem_ty) };
-    },
-    ast.ExprStructLit(sl) => {
-      return ast.ExprStructLit { ...sl, type_name: erase_view_spelling(sl.type_name), written: erase_view_spelling(sl.written) };
-    },
-    ast.ExprZero(z) => {
-      return ast.ExprZero { ...z, type_name: erase_view_spelling(z.type_name) };
-    },
-    ast.ExprUnary(u) => {
-      return ast.with_cast(ast.rebuild_unary(u, u.operand, u.line, u.col, erase_view_spelling(u.ty)), erase_view_spelling(u.cast));
-    },
-    ast.ExprLambda(lm) => {
-      return ast.ExprLambda { ...lm, params: erase_view_params(lm.params), ret_type: erase_view_spelling(lm.ret_type), ret_fn_ret: erase_view_spelling(lm.ret_fn_ret), ret_fn_param_types: erase_view_spelling(lm.ret_fn_param_types) };
-    },
-    ast.ExprIdent(id) => {
-      return ast.ExprIdent { ...id, ty: erase_view_spelling(id.ty) };
-    },
-    ast.ExprBinary(b) => {
-      return ast.binary(b.op, b.left, b.right, b.line, b.col, erase_view_spelling(b.ty));
-    },
-    ast.ExprIndex(ix) => {
-      return ast.ExprIndex { ...ix, ty: erase_view_spelling(ix.ty) };
-    },
-    ast.ExprSlice(sl2) => {
-      return ast.ExprSlice { ...sl2, ty: erase_view_spelling(sl2.ty) };
-    },
-    ast.ExprFieldAccess(fa) => {
-      return ast.ExprFieldAccess { ...fa, ty: erase_view_spelling(fa.ty) };
-    },
-    _ => {
-      return e;
-    }
-  }
-}
-
-function erase_view_stmt(st: ast.Stmt): ast.Stmt[] {
-  if let ast.StmtVar(v) = st {
-    return [ast.StmtVar { ...v, type_name: erase_view_spelling(v.type_name), fn_ret: erase_view_spelling(v.fn_ret), fn_param_types: erase_view_spelling(v.fn_param_types) }];
-  }
-  return [st];
-}
-
-function spells_view(ty: string): boolean {
+pub function spells_view(ty: string): boolean {
   let i = 0;
   let n = ty.len();
   while (i < n) {
@@ -21181,97 +21117,6 @@ function spells_view(ty: string): boolean {
   return false;
 }
 
-function spells_view_any(tys: string[]): boolean {
-  for t in tys {
-    if (spells_view(t)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function spells_view_params(ps: ast.ParamDecl[]): boolean {
-  for p in ps {
-    if (spells_view(p.type_name) || spells_view(p.fn_ret) || spells_view(p.fn_param_types)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function spells_view_stmt(st: ast.Stmt, own found: boolean): boolean {
-  if (found) {
-    return true;
-  }
-  if let ast.StmtVar(v) = st {
-    return spells_view(v.type_name) || spells_view(v.fn_ret) || spells_view(v.fn_param_types);
-  }
-  return false;
-}
-
-function spells_view_expr(e: ast.Expr, own found: boolean): boolean {
-  if (found) {
-    return true;
-  }
-  match (e) {
-    ast.ExprCall(c) => {
-      return spells_view_any(c.type_args) || spells_view(c.ty);
-    },
-    ast.ExprArray(a) => {
-      return spells_view(a.elem_ty);
-    },
-    ast.ExprStructLit(sl) => {
-      return spells_view(sl.type_name) || spells_view(sl.written);
-    },
-    ast.ExprZero(z) => {
-      return spells_view(z.type_name);
-    },
-    ast.ExprUnary(u) => {
-      return spells_view(u.cast) || spells_view(u.ty);
-    },
-    ast.ExprLambda(lm) => {
-      return spells_view_params(lm.params) || spells_view(lm.ret_type) || spells_view(lm.ret_fn_ret) || spells_view(lm.ret_fn_param_types);
-    },
-    ast.ExprIdent(id) => {
-      return spells_view(id.ty);
-    },
-    ast.ExprBinary(b) => {
-      return spells_view(b.ty);
-    },
-    ast.ExprIndex(ix) => {
-      return spells_view(ix.ty);
-    },
-    ast.ExprSlice(sl2) => {
-      return spells_view(sl2.ty);
-    },
-    ast.ExprFieldAccess(fa) => {
-      return spells_view(fa.ty);
-    },
-    _ => {
-      return false;
-    }
-  }
-}
-
-function erase_view_body(body: ast.Stmt[]): ast.Stmt[] {
-  let found = false;
-  for st in body {
-    found = astwalk.fold_stmt_nodes(st, found, spells_view_stmt, spells_view_expr, astwalk.descend_all);
-  }
-  if (!found) {
-    return body;
-  }
-  return astwalk.splice_stmts(astwalk.map_stmts(body, erase_view_expr), erase_view_stmt);
-}
-
-function erase_view_funcs(fds: FuncDecl[]): FuncDecl[] {
-  let out: FuncDecl[] = [];
-  for fd in fds {
-    out = out.append(FuncDecl { ...fd, receiver_type: erase_view_spelling(fd.receiver_type), params: erase_view_params(fd.params), ret_type: erase_view_spelling(fd.ret_type), ret_fn_ret: erase_view_spelling(fd.ret_fn_ret), ret_fn_param_types: erase_view_spelling(fd.ret_fn_param_types), body: erase_view_body(fd.body) });
-  }
-  return out;
-}
-
 pub function erase_view_structs(sds: StructDecl[]): StructDecl[] {
   let out: StructDecl[] = [];
   for sd in sds {
@@ -21286,27 +21131,6 @@ function erase_view_struct(sd: StructDecl): StructDecl {
     fields = fields.append(StructFieldDecl { ...f, type_name: erase_view_spelling(f.type_name), fn_ret: erase_view_spelling(f.fn_ret), fn_param_types: erase_view_spelling(f.fn_param_types) });
   }
   return StructDecl { ...sd, fields: fields };
-}
-
-pub function erase_view_module(mod: Module): Module {
-  let structs = erase_view_structs(mod.structs);
-  let aliases: TypeAlias[] = [];
-  for al in mod.aliases {
-    aliases = aliases.append(TypeAlias { ...al, variants: erase_view_list(al.variants), variant_args: erase_view_list(al.variant_args) });
-  }
-  let impls: ImplInfo[] = [];
-  for im in mod.impls {
-    impls = impls.append(ImplInfo { ...im, impl_type: erase_view_spelling(im.impl_type), trait_spelling: erase_view_spelling(im.trait_spelling), trait_ref: erase_view_spelling(im.trait_ref), assoc_values: erase_view_list(im.assoc_values) });
-  }
-  let reqs: TraitReq[] = [];
-  for tr in mod.trait_reqs {
-    reqs = reqs.append(TraitReq { ...tr, req_sigs: erase_view_funcs(tr.req_sigs), assoc_sigs: erase_view_funcs(tr.assoc_sigs), default_sigs: erase_view_funcs(tr.default_sigs) });
-  }
-  let tdecls: TraitDecl[] = [];
-  for td in mod.trait_decls {
-    tdecls = tdecls.append(TraitDecl { ...td, methods: erase_view_funcs(td.methods) });
-  }
-  return Module { ...mod, funcs: erase_view_funcs(mod.funcs), structs: structs, aliases: aliases, top_stmts: erase_view_body(mod.top_stmts), impls: impls, trait_reqs: reqs, trait_decls: tdecls };
 }
 
 function tvar_spelling(name: string): string {

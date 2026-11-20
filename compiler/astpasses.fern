@@ -1,3 +1,4 @@
+import "./viewerase";
 import "./ast";
 import "./defaultargs";
 import "./parser";
@@ -32,7 +33,7 @@ pub function desugar_prepass_module(raw: parser.Module): parser.Module {
 }
 
 pub function module_with_builtins(mod: parser.Module): parser.Module {
-  return parser.erase_view_module(module_with_builtins_typed(mod));
+  return viewerase.erase_view_module(module_with_builtins_typed(mod));
 }
 
 pub function module_with_builtins_typed(mod: parser.Module): parser.Module {

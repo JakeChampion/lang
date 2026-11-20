@@ -1,3 +1,4 @@
+import "./viewerase";
 import "./asmcore";
 import "./caps";
 import "./ircore";
@@ -986,7 +987,7 @@ pub function driven_shaken(annotated: parser.Module, target: string): Driven {
 
 function driven_with(annotated: parser.Module, target: string, opts: semsource.BuildOpts): Driven {
   let typed = checked_typed(annotated, target);
-  return Driven { full: parser.erase_view_module(typed), sub: ircore.Sub { ...target_substitution(typed, target, opts), checked: true } };
+  return Driven { full: viewerase.erase_view_module(typed), sub: ircore.Sub { ...target_substitution(typed, target, opts), checked: true } };
 }
 
 function checked_typed(annotated: parser.Module, target: string): parser.Module {
@@ -1004,7 +1005,7 @@ function typed_for(annotated: parser.Module, target: string): Typed {
   let desc = platforms.for_target(target);
   let folded = constfold.fold_target_name(annotated, desc.environment, desc.isa);
   let typed = astpasses.module_with_builtins_typed(folded);
-  return Typed { mod: typed, errs: asmcore.entry_check_errors(checker.ensure_annotated(parser.erase_view_module(typed))) };
+  return Typed { mod: typed, errs: asmcore.entry_check_errors(checker.ensure_annotated(viewerase.erase_view_module(typed))) };
 }
 
 pub struct Verdict { ok: boolean, errors: util.Diag[], rows: VerdictRow[] }

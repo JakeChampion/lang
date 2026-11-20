@@ -1,3 +1,4 @@
+import "./viewerase";
 import "./ast";
 import "./parser";
 import "./defaultargs";
@@ -4089,7 +4090,7 @@ pub function prepare_lambda_parts(mods: parser.Module[]): parser.Module[] {
 }
 
 pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]): parser.Module {
-  return parser.erase_view_module(lift_lambdas_view_typed(raw_mod, view));
+  return viewerase.erase_view_module(lift_lambdas_view_typed(raw_mod, view));
 }
 
 pub function lift_lambdas_typed(raw_mod: parser.Module): parser.Module {
