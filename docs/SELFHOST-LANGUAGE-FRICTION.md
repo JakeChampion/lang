@@ -64,7 +64,7 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) | — |
 | stdlib (`std/*`, `core/*`) | 61 modules | **`std/io` only** (19 imports) | — |
 | `while` + manual index | — | **2,076** loops, **2,293** `x = x + 1` — includes the bounded, variable-step store-group search (#15085), the worklist cursor of the immutable-data proof (#15162) and the two chain-link counters of the parser (#14977) | no growth of the increments |
-| `-1` as "absent" | — | **247** `return 0 - 1` | logged |
+| Literal minus-one returns | — | **879** in 130 modules, counting both `return -1;` and `return 0 - 1;`. This includes arithmetic results and absence sentinels. | logged |
 | String-tagged side tables (`"SFRRECV:"`, `"BORROW:"`, …) | — | **65** distinct tag namespaces | — |
 | Magic ASCII byte constants (`== 91`, `== 44`) | — | **342** | — |
 | Explicit `as` casts | — | **715** | logged |

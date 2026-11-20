@@ -12,6 +12,8 @@ Digest states are values. Every digest has the same surface: `<algorithm>_new()`
 
 PBKDF2-SHA256 requires at least one iteration and at least one output byte. Its error carries the rejected count or length.
 
+HKDF expansion and combined extraction/expansion return an error when the requested output is below one byte or above 255 hash blocks (8160 bytes for SHA-256 and 12240 for SHA-384). The error carries the requested length.
+
 The same state must receive each returned update value. Authentication helpers compare codes without ordinary string equality. Generated digest cores remain in one generator-controlled chunk. `erase` takes an owned array, which the checker accepts only at its last use.
 
 ## Executable example
@@ -3682,12 +3684,19 @@ function __hkdf_extract(hlen: i32, salt: [u8], ikm: [u8]): u8[] {
   return __hmac(hlen, salt, ikm);
 }
 
-// RFC 5869 section 2.3 limits the output to 255 blocks, because the block
-// counter is one byte. A longer request stops the program with status 134.
-function __hkdf_expand(hlen: i32, prk: [u8], info: [u8], length: i32): u8[] {
-  if (length > 255 * hlen) {
-    exit(134);
+pub enum HkdfError {
+  InvalidHkdfLength(i32),
+}
+
+// RFC 5869 section 2.3 encodes the block counter in one byte.
+function __hkdf_expand(hlen: i32, prk: [u8], info: [u8], length: i32): Result[u8[], HkdfError] {
+  if (length < 1 || length > 255 * hlen) {
+    return Err(InvalidHkdfLength(length));
   }
+  return Ok(__hkdf_expand_valid(hlen, prk, info, length));
+}
+
+function __hkdf_expand_valid(hlen: i32, prk: [u8], info: [u8], length: i32): u8[] {
   let okm = __alloc_u8(length);
   let t: u8[] = [];
   let offset = 0;
@@ -3722,11 +3731,16 @@ pub function hkdf_sha256_extract(salt: [u8], ikm: [u8]): u8[] {
   return __hkdf_extract(32, salt, ikm);
 }
 
-pub function hkdf_sha256_expand(prk: [u8], info: [u8], length: i32): u8[] {
+// The first expand block is HMAC(PRK, info || 0x01).
+pub function hkdf_sha256_expand_block(prk: [u8], info: [u8]): u8[] {
+  return __hkdf_expand_valid(32, prk, info, 32);
+}
+
+pub function hkdf_sha256_expand(prk: [u8], info: [u8], length: i32): Result[u8[], HkdfError] {
   return __hkdf_expand(32, prk, info, length);
 }
 
-pub function hkdf_sha256(salt: [u8], ikm: [u8], info: [u8], length: i32): u8[] {
+pub function hkdf_sha256(salt: [u8], ikm: [u8], info: [u8], length: i32): Result[u8[], HkdfError] {
   let prk = __hkdf_extract(32, salt, ikm);
   let okm = __hkdf_expand(32, prk, info, length);
   erase(prk);
@@ -3737,11 +3751,11 @@ pub function hkdf_sha384_extract(salt: [u8], ikm: [u8]): u8[] {
   return __hkdf_extract(48, salt, ikm);
 }
 
-pub function hkdf_sha384_expand(prk: [u8], info: [u8], length: i32): u8[] {
+pub function hkdf_sha384_expand(prk: [u8], info: [u8], length: i32): Result[u8[], HkdfError] {
   return __hkdf_expand(48, prk, info, length);
 }
 
-pub function hkdf_sha384(salt: [u8], ikm: [u8], info: [u8], length: i32): u8[] {
+pub function hkdf_sha384(salt: [u8], ikm: [u8], info: [u8], length: i32): Result[u8[], HkdfError] {
   let prk = __hkdf_extract(48, salt, ikm);
   let okm = __hkdf_expand(48, prk, info, length);
   erase(prk);

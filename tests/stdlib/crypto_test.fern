@@ -1,5 +1,6 @@
 import "std/test";
 import "std/crypto" as crypto;
+import "std/result";
 import "std/hex";
 import "std/result";
 import "std/codec";
@@ -134,7 +135,7 @@ function test_hkdf_tc1(): test.TestOutcome {
     245 as u8, 246 as u8, 247 as u8, 248 as u8, 249 as u8,
   ];
   return test.assert_eq(
-    hex.encode(crypto.hkdf_sha256(salt, ikm, info, 42)),
+    hex.encode(crypto.hkdf_sha256(salt, ikm, info, 42).unwrap_or([])),
     "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865",
   );
 }
@@ -143,7 +144,7 @@ function test_hkdf_tc3_empty(): test.TestOutcome {
   let ikm = __hkdf_byte_rep(11, 22);
   let e: u8[] = [];
   return test.assert_eq(
-    hex.encode(crypto.hkdf_sha256(e, ikm, e, 42)),
+    hex.encode(crypto.hkdf_sha256(e, ikm, e, 42).unwrap_or([])),
     "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d9d201395faa4b61a96c8",
   );
 }
@@ -153,10 +154,13 @@ function test_hkdf_expand_matches_oneshot(): test.TestOutcome {
   let salt = __hkdf_byte_rep(0, 13);
   let info = __hkdf_byte_rep(255, 4);
   let prk = crypto.hkdf_sha256_extract(salt, ikm);
-  return test.assert_true(crypto.consteq(
-    crypto.hkdf_sha256_expand(prk, info, 40),
-    crypto.hkdf_sha256(salt, ikm, info, 40),
-  ));
+  let Ok(expanded) = crypto.hkdf_sha256_expand(prk, info, 40) else {
+    return test.fail("expand refused 40 bytes");
+  };
+  let Ok(combined) = crypto.hkdf_sha256(salt, ikm, info, 40) else {
+    return test.fail("combined HKDF refused 40 bytes");
+  };
+  return test.assert_true(crypto.consteq(expanded, combined));
 }
 
 function test_hmac_sha384_rfc4231(): test.TestOutcome {
@@ -187,7 +191,7 @@ function test_hkdf_sha384(): test.TestOutcome {
   if (hex.encode(prk) != "704b39990779ce1dc548052c7dc39f303570dd13fb39f7acc564680bef80e8dec70ee9a7e1f3e293ef68eceb072a5ade") {
     return test.fail("extract");
   }
-  if (hex.encode(crypto.hkdf_sha384(salt, ikm, info, 42)) != "9b5097a86038b805309076a44b3a9f38063e25b516dcbf369f394cfab43685f748b6457763e4f0204fc5") {
+  if (hex.encode(crypto.hkdf_sha384(salt, ikm, info, 42).unwrap_or([])) != "9b5097a86038b805309076a44b3a9f38063e25b516dcbf369f394cfab43685f748b6457763e4f0204fc5") {
     return test.fail("42 bytes");
   }
   let e: u8[] = [];
@@ -195,7 +199,7 @@ function test_hkdf_sha384(): test.TestOutcome {
     return test.fail("empty salt");
   }
   return test.assert_eq(
-    hex.encode(crypto.hkdf_sha384_expand(prk, info, 100)),
+    hex.encode(crypto.hkdf_sha384_expand(prk, info, 100).unwrap_or([])),
     "9b5097a86038b805309076a44b3a9f38063e25b516dcbf369f394cfab43685f748b6457763e4f0204fc5d95d1da3e62587b22eb8943d0fab6bb631a2fe9df1a68c6ce5d56116a52005b3f122b88b39b7251fcd6c44d3ef25f20ed96802bf1b2c1d98bf74",
   );
 }

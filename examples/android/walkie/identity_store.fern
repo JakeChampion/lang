@@ -1,0 +1,92 @@
+// The loop thread owns this store. Commit a sealed seed before removing either
+// legacy file. A failed open must never replace the identity with a new one.
+import "core/error";
+import "std/crypto";
+import "std/rand";
+import "std/result";
+
+function read_optional(path: string): Result[Option[u8[]], string] {
+  return match (read_file_bytes(path)) {
+    Ok(bytes) => Ok(Some(bytes)),
+    Err(NotFound(_)) => Ok(None),
+    Err(e) => Err(e.message()),
+  };
+}
+
+function legacy(keys: string, old: string): Result[u8[], string] {
+  if let Some(seed) = read_optional(keys + "/identity")? {
+    return Ok(seed);
+  }
+  if (old != "" && old != keys) {
+    if let Some(seed) = read_optional(old + "/identity")? {
+      return Ok(seed);
+    }
+  }
+  return Ok(rand.bytes(32));
+}
+
+function sync_dir(dir: string): Result[void, string] {
+  let reader = open_reader(dir).map_err((e: IoError): string => e.message())?;
+  let synced = reader.fsync();
+  let closed = reader.close();
+  synced.map_err((e: IoError): string => e.message())?;
+  return closed.map_err((e: IoError): string => e.message());
+}
+
+function commit(path: string, bytes: [u8]): Result[void, string] {
+  let temp = path + ".next";
+  let writer = open_writer(temp).map_err((e: IoError): string => e.message())?;
+  if let Err(e) = writer.write_bytes(bytes) {
+    let closed = writer.close();
+    return Err(e.message());
+  }
+  let synced = writer.fsync();
+  let closed = writer.close();
+  synced.map_err((e: IoError): string => e.message())?;
+  closed.map_err((e: IoError): string => e.message())?;
+  return rename(temp, path).map_err((e: IoError): string => e.message());
+}
+
+function remove_plain(dir: string): Result[void, string] {
+  return match (remove_file(dir + "/identity")) {
+    Ok(_) => sync_dir(dir),
+    Err(NotFound(_)) => Ok(()),
+    Err(e) => Err(e.message()),
+  };
+}
+
+function load_seed(keys: string, old: string, seal: (u8[]) => Result[u8[], string], open: (u8[]) => Result[u8[], string]): Result[u8[], string] {
+  let path = keys + "/identity.sealed";
+  if let Some(envelope) = read_optional(path)? {
+    return open(envelope);
+  }
+  let seed = legacy(keys, old)?;
+  if (seed.len() != 32) {
+    return Err("invalid legacy identity");
+  }
+  let sealed = seal(seed)?;
+  let verified = open(sealed)?;
+  if (!crypto.consteq(verified, seed)) {
+    return Err("sealed identity does not match the original");
+  }
+  commit(path, sealed)?;
+  return Ok(seed);
+}
+
+pub function load(keys: string, old: string, seal: (u8[]) => Result[u8[], string], open: (u8[]) => Result[u8[], string]): Result[u8[], string] {
+  if (keys == "") {
+    return Err("no identity storage directory");
+  }
+  let seed = load_seed(keys, old, seal, open)?;
+  if (seed.len() != 32) {
+    return Err("invalid sealed identity");
+  }
+  // Repeat cleanup after an interrupted upgrade. Sync before unlinking in
+  // case the previous run stopped between the rename and directory fsync.
+  sync_dir(keys)?;
+  remove_plain(keys)?;
+  if (old != "" && old != keys) {
+    remove_plain(old)?;
+  }
+  return Ok(seed);
+}

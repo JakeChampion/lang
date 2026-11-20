@@ -1,0 +1,50 @@
+import "std/crypto";
+
+function rejects(r: Result[u8[], crypto.HkdfError], want: i32): boolean {
+  let Err(e) = r else {
+    return false;
+  };
+  let InvalidHkdfLength(got) = e else {
+    return false;
+  };
+  return got == want;
+}
+
+function main(): i32 {
+  for n in [-1, 0, 8161] {
+    if (!rejects(crypto.hkdf_sha256_expand([], [], n), n) || !rejects(crypto.hkdf_sha256([], [], [], n), n)) {
+      return 1;
+    }
+  }
+  for n in [-1, 0, 12241] {
+    if (!rejects(crypto.hkdf_sha384_expand([], [], n), n) || !rejects(crypto.hkdf_sha384([], [], [], n), n)) {
+      return 2;
+    }
+  }
+  let Ok(a) = crypto.hkdf_sha256([], [], [], 8160) else {
+    return 3;
+  };
+  let Ok(b) = crypto.hkdf_sha384([], [], [], 12240) else {
+    return 4;
+  };
+  if (a.len() != 8160 || a[8159] != 206 as u8 || b.len() != 12240 || b[12239] != 239 as u8) {
+    return 5;
+  }
+  let Ok(single) = crypto.hkdf_sha256_expand([], [], 32) else {
+    return 6;
+  };
+  if (!crypto.consteq(single, crypto.hkdf_sha256_expand_block([], []))) {
+    return 7;
+  }
+  let Ok(one256) = crypto.hkdf_sha256([], [], [], 1) else {
+    return 8;
+  };
+  let Ok(one384) = crypto.hkdf_sha384([], [], [], 1) else {
+    return 9;
+  };
+  if (one256.len() != 1 || one256[0] != a[0] || one384.len() != 1 || one384[0] != b[0]) {
+    return 10;
+  }
+  print("passed");
+  return 0;
+}

@@ -4,6 +4,7 @@ import "testing"
 
 const hkdfProg = `
 import "std/crypto" as crypto;
+import "std/result";
 import "std/hex" as hex;
 function rep(b: i32, n: i32): u8[] {
     let a: u8[] = [];
@@ -17,10 +18,10 @@ function main(): i32 {
     let info: u8[] = [240 as u8,241 as u8,242 as u8,243 as u8,244 as u8,245 as u8,246 as u8,247 as u8,248 as u8,249 as u8];
     if (hex.encode(crypto.hkdf_sha256_extract(salt, ikm)) !=
         "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5") { return 1; }
-    if (hex.encode(crypto.hkdf_sha256(salt, ikm, info, 42)) !=
+    if (hex.encode(crypto.hkdf_sha256(salt, ikm, info, 42).unwrap_or([])) !=
         "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865") { return 2; }
     let e: u8[] = [];
-    if (hex.encode(crypto.hkdf_sha256(e, ikm, e, 42)) !=
+    if (hex.encode(crypto.hkdf_sha256(e, ikm, e, 42).unwrap_or([])) !=
         "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d9d201395faa4b61a96c8") { return 3; }
     return 42;
 }

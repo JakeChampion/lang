@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Drives the Paper APK on a running Android device or emulator.
 
-Usage: emulator_check.py APK OUT_DIR
+Usage: emulator_check.py PAPER_APK NOTIFY_TEST_APK OUT_DIR
 
-It installs the APK, which fern -apk wrote, makes Paper the home app, and
+It installs Paper and the notification test app, makes Paper the home app, and
 presses the home key. The app draws its own pixels, so the check reads the
 log lines of the app and the colours of the screen. It requires the home
 screen in the paper colour above the wallpaper, a tap on the time that
@@ -14,7 +14,8 @@ shows the keyboard again after the back key hid it, a search for "pap" that
 finds Paper and opens it, Back that hides the keyboard, then Back that goes
 home, a frame section in the system trace while the list slides, the
 notification filter that takes a new notification out of the shade and
-shows it as held, a tap that opens the held notification, and no crash in
+shows it as held, a tap that sends an app-provided PendingIntent and brings
+the posting activity to the front, and no crash in
 logcat. OUT_DIR gets the frames, logcat and the trace.
 """
 
@@ -380,8 +381,38 @@ def clear_shade():
         fail("the check left its notification in the shade")
 
 
-def main(apk, out):
+def check_held_intent(out):
+    package = "dev.fern.notifytest"
+    activity = package + "/android.app.NativeActivity"
+    adb("shell", "am", "start", "-S", "-W", "-a", package + ".POST_HELD", "-n", activity)
+    if not wait_for("notifytest: held probe true"):
+        fail("the notification test app did not post its intent")
+        return
+    held = wait_for_node(out, "ui-intent-home", r"\d+ held notifications?")
+    if not held:
+        fail("Paper did not show its held notifications after the probe")
+        return
+    tap(held)
+    row = wait_for_node(out, "ui-intent-list", '[^"]*Paper held intent probe[^"]*')
+    if not row:
+        fail("the held list has no notification from the intent probe")
+        return
+    tap(row)
+    if not wait_for("paper: sent held intent " + re.escape(package)):
+        fail("Paper did not send the held PendingIntent")
+        return
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        resumed = adb("shell", "dumpsys", "activity", "activities")
+        if re.search(r"(mResumedActivity|topResumedActivity).*" + re.escape(activity), resumed):
+            return
+        time.sleep(0.2)
+    fail("the held PendingIntent did not bring the notification test app to the front")
+
+
+def main(apk, notify_apk, out):
     subprocess.run(["mkdir", "-p", out], check=True)
+    adb("install", "-r", "-g", notify_apk)
     adb("install", "-r", "-g", apk)
     adb("logcat", "-c")
     adb("shell", "cmd", "package", "set-home-activity", ACTIVITY, check=False)
@@ -440,6 +471,8 @@ def main(apk, out):
         fail(f"the home screen after Back has {part:.3f} of the paper colour, not paper above the wallpaper")
 
     check_filter(out, width, height)
+    check_held_intent(out)
+    adb("shell", "am", "force-stop", "dev.fern.notifytest")
     clear_shade()
 
     log = early + logcat()
@@ -452,6 +485,6 @@ def main(apk, out):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
+    if len(sys.argv) != 4:
         sys.exit(__doc__)
     main(*sys.argv[1:])

@@ -4,6 +4,7 @@ import "testing"
 
 const cryptoBytesProgram = `
 import "std/crypto" as crypto;
+import "std/result";
 import "std/hex" as hex;
 import "std/base32" as b32;
 import "std/utf8" as utf8;
@@ -58,11 +59,11 @@ function main(): i32 {
     if (hex.encode(prk) != "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5") { return 17; }
     // extract's output feeds expand's prk directly — the coupling that
     // made this slice indivisible.
-    let okm: u8[] = crypto.hkdf_sha256_expand(prk, info, 42);
+    let okm: u8[] = crypto.hkdf_sha256_expand(prk, info, 42).unwrap_or([]);
     if (okm.len() != 42) { return 18; }
     if (hex.encode(okm) != "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865") { return 19; }
-    if (!crypto.consteq(okm, crypto.hkdf_sha256(salt, ikm, info, 42))) { return 20; }
-    if (hex.encode(crypto.hkdf_sha256(salt, ikm, info, 42)) != hex.encode(okm)) { return 21; }
+    if (!crypto.consteq(okm, crypto.hkdf_sha256(salt, ikm, info, 42).unwrap_or([]))) { return 20; }
+    if (hex.encode(crypto.hkdf_sha256(salt, ikm, info, 42).unwrap_or([])) != hex.encode(okm)) { return 21; }
 
     // TOTP: a base32-decoded secret is exactly what the key parameter
     // wants now, with no conversion in between (RFC 6238 App. B).

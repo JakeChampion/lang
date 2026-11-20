@@ -8,6 +8,7 @@ import "./lspquery";
 import "./parser";
 import "./typeinfo";
 import "./util";
+import "std/option";
 import "std/string";
 import "./ferndoc";
 
@@ -559,13 +560,11 @@ function decl_symbol(toks: lspquery.Tok[], line: i32, col: i32, name: string, de
     start -= 1;
   }
   let at = lspquery.first_ident(toks, start, name);
-  let end: i32 = -1;
-  if (statement) {
-    end = statement_end(toks, start);
-  } else {
+  let end: Option[i32] = None;
+  if (!statement) {
     end = lspquery.body_end(toks, start);
   }
-  if (end < 0) {
+  if (end.is_none()) {
     end = statement_end(toks, start);
   }
   let s = Symbol { name: name, detail: detail, kind: kind, line: line, col: col, end_line: line, end_col: col + 1, name_line: line, name_col: col, children: [] };
@@ -575,8 +574,8 @@ function decl_symbol(toks: lspquery.Tok[], line: i32, col: i32, name: string, de
   if let Some(i) = at {
     s = Symbol { ...s, name_line: toks[i].line, name_col: toks[i].col };
   }
-  if (end >= 0) {
-    s = Symbol { ...s, end_line: toks[end].line, end_col: toks[end].col + tok_len(toks[end]) };
+  if let Some(i) = end {
+    s = Symbol { ...s, end_line: toks[i].line, end_col: toks[i].col + tok_len(toks[i]) };
   }
   return s;
 }
@@ -588,7 +587,7 @@ function tok_len(t: lspquery.Tok): i32 {
   return 1;
 }
 
-function statement_end(toks: lspquery.Tok[], from: i32): i32 {
+function statement_end(toks: lspquery.Tok[], from: i32): Option[i32] {
   let depth = 0;
   for i in from..toks.len() {
     let t = punct(toks[i]);
@@ -597,10 +596,10 @@ function statement_end(toks: lspquery.Tok[], from: i32): i32 {
     } else if (t == ")" || t == "]" || t == "}") {
       depth -= 1;
     } else if (t == ";" && depth == 0) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 function member_symbol(toks: lspquery.Tok[], i: i32, name: string, detail: string, kind: i32): Symbol {
@@ -687,8 +686,10 @@ pub function inlay_hints(p: lspquery.Program, m: i32, lo: i32, hi: i32): Hint[] 
   let out: Hint[] = [];
   for fd in v.types.mod.funcs {
     if (lspquery.declared_in(fd.line, m) && fd.line <= hi) {
-      let close = lspquery.body_end(toks, lspquery.after(toks, fd.line, fd.col));
-      if (close >= 0 && toks[close].line >= lo) {
+      let Some(close) = lspquery.body_end(toks, lspquery.after(toks, fd.line, fd.col)) else {
+        continue;
+      };
+      if (toks[close].line >= lo) {
         out = func_hints(toks, quals, bound_in_func(v.types, fd), out);
       }
     }

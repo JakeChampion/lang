@@ -197,7 +197,7 @@ var censusRows = []censusRow{
 	{"arrow tokens", `=>`, "=>"},
 	{"while loops", `\bwhile\s*\(`, "while"},
 	{"as casts", `\bas\b`, "as"},
-	{"minus-one sentinel returns", `\breturn\s+0\s*-\s*1\b`, "return"},
+	{"literal minus-one returns", `\breturn\b\s*(?:0\s*)?-\s*1\s*;`, "return"},
 	{"method decls", `\bfunction\s*\([^()]*\)\s*[A-Za-z_]`, "function"},
 	{"annotated let decls", `\blet\s+[A-Za-z_][A-Za-z0-9_]*\s*:`, "let"},
 	{"inferred let decls", `\blet\s+[A-Za-z_][A-Za-z0-9_]*\s*=`, "let"},
@@ -405,6 +405,24 @@ func assertNoLiteralResidue(t *testing.T, srcs []strippedSource) {
 			if bad != "" {
 				t.Errorf("%s:%d: %s literal survived the strip, so every count below it is unsound: %s", s.name, i+1, bad, ln)
 			}
+		}
+	}
+}
+
+func TestFeatureCensusMinusOneReturns(t *testing.T) {
+	for _, tc := range []struct {
+		line string
+		want int
+	}{
+		{"return -1;", 1},
+		{"return 0 - 1;", 1},
+		{"return -10;", 0},
+		{"return -1 + offset;", 0},
+		{"return0 - 1;", 0},
+	} {
+		src := strippedSource{name: "probe.fern", lines: []string{tc.line}}
+		if got := takeCensus(t, []strippedSource{src}).n("literal minus-one returns"); got != tc.want {
+			t.Errorf("minus-one returns in %q = %d, want %d", tc.line, got, tc.want)
 		}
 	}
 }
