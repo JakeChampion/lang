@@ -427,7 +427,7 @@ function __offered(c: Config, unix_ms: i64): Option[handshake.Resumption] {
   let Some(t) = c.resume else {
     return None;
   };
-  return tlsclient.offered(t.tls, c.server_name, time.timestamp_from_unix_millis(unix_ms));
+  return tlsclient.offered_for(t.tls, c.server_name, time.timestamp_from_unix_millis(unix_ms), c.roots, c.verify);
 }
 
 function __early_wanted(c: Config): boolean {
@@ -441,7 +441,8 @@ function __client(c: Config, entropy: [u8], now: i64, unix_ms: i64): Result[Conn
   let scid = __bytes_range(entropy, 0, c.cid_len);
   let dcid = __bytes_range(entropy, c.cid_len, c.cid_len + 8);
   let p = params.Params { ...c.params, initial_source_connection_id: Some(scid) };
-  let cc = handshake.ClientConfig { ...__tls_client_config(c, scid, params.encode(p, false)), resume: __offered(c, unix_ms), early_data: __early_wanted(c) };
+  let resume = __offered(c, unix_ms);
+  let cc = handshake.ClientConfig { ...__tls_client_config(c, scid, params.encode(p, false)), resume: resume, early_data: resume.is_some() && __early_wanted(c) };
   let secret = __bytes_range(entropy, c.cid_len + 8, c.cid_len + 8 + CID_SECRET);
   match (handshake.client_start(cc, entropy[c.cid_len + 8 + CID_SECRET:entropy.len()])) {
     Ok(step) => {
@@ -2097,7 +2098,8 @@ function (c: Conn) __tls_question(e: handshake.Event, now: i64): Conn {
           return c.__client_step(t.verdict(__trusted(c.config, v, (now + c.wall_offset) / 1000000000)), now);
         },
         handshake.Ticket(nst) => {
-          match (tlsclient.ticket_from(t, nst, c.config.server_name, time.timestamp_from_unix_millis(c.__wall_ms(now)))) {
+          let prior: u8[][] = match (c.config.resume) { Some(previous) => previous.tls.verified_chain, None => [] };
+          match (tlsclient.ticket_from_peer(t, nst, c.config.server_name, time.timestamp_from_unix_millis(c.__wall_ms(now)), c.config.verify, prior)) {
             Some(kept) => {
               let Some(p) = c.peer_params else {
                 return c;
