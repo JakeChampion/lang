@@ -34,11 +34,16 @@ func TestAndroidStoryDeckApk(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest := readZipEntry(t, z, "AndroidManifest.xml")
-	for _, want := range []string{"dev.fern.storydeck", "Story Deck", "android.permission.INTERNET"} {
+	for _, want := range []string{
+		"dev.fern.storydeck", "Story Deck", "android.permission.INTERNET",
+		"dev.fern.storydeck.CarBrowse", "android.media.browse.MediaBrowserService",
+		"com.google.android.gms.car.application", "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+	} {
 		if !bytes.Contains(manifest, utf16le(want)) {
 			t.Errorf("the manifest has no string %q", want)
 		}
 	}
+	readZipEntry(t, z, "res/xml/automotive_app_desc.xml")
 	readZipEntry(t, z, "lib/arm64-v8a/libapp.so")
 	readZipEntry(t, z, "lib/x86_64/libapp.so")
 	verifyApkV2(t, raw)

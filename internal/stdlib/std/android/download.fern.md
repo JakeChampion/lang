@@ -6,7 +6,7 @@ This module downloads a file through the `DownloadManager` of Android, into the 
 
 `start` gives a download to Android, and gives its ID. Android downloads the file in its own process, so a large file does not go through the memory of the app. Android continues the download after a lost connection and after the app stops, and it shows the progress in a notification. The file goes to `dir(ctx)` with the name that the app gives.
 
-`progress` gives the state of a download: its status, the bytes that came, and the size of the file, or -1 when the server did not tell it. `remove` stops a download and deletes its file.
+`progress` gives the state of a download: its status, the bytes that came, and the size of the file, or -1 when the server did not tell it. `remove` stops a download and deletes its file. `remove_many` removes several downloads in one request.
 
 ## Contracts
 
@@ -114,7 +114,7 @@ pub function progress(ctx: usize, id: i64): Progress {
 function query(s: Session, id: i64): Result[bindings.Cursor, jni.JavaError] {
   let manager = manager_of(s)?;
   let q = s.c.download_manager_query.new(s.e)?;
-  s.c.download_manager_query.set_filter_by_id(s.e, q, ids_of(s.e, id)?)?;
+  s.c.download_manager_query.set_filter_by_id(s.e, q, ids_of(s.e, [id])?)?;
   return s.c.download_manager.query(s.e, manager, q);
 }
 
@@ -136,17 +136,25 @@ function long_column(s: Session, cursor: bindings.Cursor, name: string): Result[
 }
 
 pub function remove(ctx: usize, id: i64): void {
+  let removed = remove_many(ctx, [id]);
+}
+
+// Removes the files for the IDs in one request. A missing ID is already removed.
+pub function remove_many(ctx: usize, ids: i64[]): boolean {
+  if (ids.len() == 0) {
+    return true;
+  }
   let Some(s) = session(ctx) else {
-    return;
+    return false;
   };
   defer close(s);
   let Ok(manager) = manager_of(s) else {
-    return;
+    return false;
   };
-  let Ok(ids) = ids_of(s.e, id) else {
-    return;
+  let Ok(array) = ids_of(s.e, ids) else {
+    return false;
   };
-  let removed = s.c.download_manager.remove(s.e, manager, ids);
+  return s.c.download_manager.remove(s.e, manager, array).is_ok();
 }
 
 pub function dir(ctx: usize): string {
@@ -202,10 +210,10 @@ function manager_of(s: Session): Result[bindings.DownloadManager, jni.JavaError]
   return Ok(bindings.DownloadManager { ref: service.ref });
 }
 
-function ids_of(e: usize, id: i64): Result[jni.Object, jni.JavaError] {
-  let ids = jni.new_long_array(e, 1);
+function ids_of(e: usize, input: i64[]): Result[jni.Object, jni.JavaError] {
+  let ids = jni.new_long_array(e, input.len());
   jni.check(e)?;
-  jni.set_long_array_region(e, ids, 0, [id]);
+  jni.set_long_array_region(e, ids, 0, input);
   jni.check(e)?;
   return Ok(jni.Object { ref: ids });
 }

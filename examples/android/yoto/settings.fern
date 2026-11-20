@@ -3,12 +3,15 @@ import "std/i32";
 import "std/json";
 import "std/string";
 import "./api";
+import "./light_colour";
 
-enum Kind { Text, ClockTime, Colour, Brightness, Limit, Seconds, Switch, ClockFormat, Shortcut }
+enum Kind { Text, ClockTime, Colour, Brightness, Limit, Duration, Switch, ClockFormat, Shortcut, PlayerInfo }
 
 pub enum AlarmEdit { Add, Remove(i32), Toggle(i32) }
 
 struct Field { key: string, label: string, kind: Kind }
+
+pub struct Choice { label: string, value: string }
 
 function fields(): (string, Field[])[] {
   return [
@@ -27,11 +30,11 @@ function fields(): (string, Field[])[] {
     ]),
     ("Display and power", [
       Field { key: "displayDimBrightness", label: "Dimmed display brightness", kind: Brightness },
-      Field { key: "displayDimTimeout", label: "Dim display after (seconds)", kind: Seconds },
-      Field { key: "shutdownTimeout", label: "Power off after (seconds)", kind: Seconds },
+      Field { key: "displayDimTimeout", label: "Dim display after", kind: Duration },
+      Field { key: "shutdownTimeout", label: "Power off after", kind: Duration },
       Field { key: "hourFormat", label: "24-hour clock", kind: ClockFormat },
-      Field { key: "clockFace", label: "Clock face", kind: Text },
-      Field { key: "locale", label: "Player language code", kind: Text },
+      Field { key: "clockFace", label: "Clock face", kind: PlayerInfo },
+      Field { key: "locale", label: "Player language", kind: PlayerInfo },
     ]),
     ("Sound and Bluetooth", [
       Field { key: "headphonesVolumeLimited", label: "Limit headphone volume", kind: Switch },
@@ -46,6 +49,125 @@ function fields(): (string, Field[])[] {
       Field { key: "nightYotoRadio", label: "Night second press", kind: Shortcut },
     ]),
   ];
+}
+
+function field_for(key: string): Option[Field] {
+  for section in fields() {
+    for field in section.1 {
+      if (field.key == key) {
+        return Some(field);
+      }
+    }
+  }
+  return None;
+}
+
+pub function label(key: string): string {
+  if let Some(field) = field_for(key) {
+    return field.label;
+  }
+  return "";
+}
+
+pub function is_shortcut(key: string): boolean {
+  if let Some(field) = field_for(key) {
+    if let Shortcut = field.kind {
+      return true;
+    }
+  }
+  return false;
+}
+
+pub function light_key(key: string): boolean {
+  return key == "ambientColour" || key == "nightAmbientColour";
+}
+
+pub function choices(key: string): Choice[] {
+  if (key == "displayDimTimeout") {
+    return [Choice { label: "1 minute", value: "60" }, Choice { label: "5 minutes", value: "300" }];
+  }
+  if (key == "shutdownTimeout") {
+    return [Choice { label: "15 minutes", value: "900" }, Choice { label: "30 minutes", value: "1800" }, Choice { label: "1 hour", value: "3600" }];
+  }
+  if (is_shortcut(key)) {
+    return [
+      Choice { label: "Yoto Daily", value: "3nC80/daily/<yyyymmdd>" },
+      Choice { label: "Yoto Radio", value: "3nC80/radio-day/01" },
+      Choice { label: "Yoto Sleep Radio", value: "3nC80/radio-night/01" },
+    ];
+  }
+  return [];
+}
+
+pub function shortcut_track(track: api.Track): boolean {
+  return track.chapter_key.len() > 0 && !track.chapter_key.contains("/") && !track.track_key.contains("/");
+}
+
+pub function shortcut_value(card: api.Card, track: api.Track): string {
+  return card.id + "/" + track.chapter_key + "/" + track.track_key;
+}
+
+pub function setting_value(config: api.PlayerConfig, draft: Map[string, string], key: string): string {
+  if let Some(value) = draft.get(key) {
+    return value;
+  }
+  return as_text(original(config, key).unwrap_or(json.JNull));
+}
+
+pub function choice_caption(key: string, value: string, cards: api.Card[]): string {
+  for item in choices(key) {
+    if (item.value == value) {
+      return item.label;
+    }
+  }
+  if (key == "clockFace" && value == "digital-sun") {
+    return "Digital clock with sun and moon";
+  }
+  if (key == "locale") {
+    match (value) {
+      "en" => {
+        return "English";
+      },
+      "fr" => {
+        return "French";
+      },
+      "es" => {
+        return "Spanish";
+      },
+      _ => {}
+    }
+  }
+  if (is_shortcut(key)) {
+    if (value.len() == 0) {
+      return "No shortcut";
+    }
+    let parts = value.split("/");
+    if (parts.len() == 3) {
+      for card in cards {
+        if (card.id == parts[0]) {
+          for track in card.tracks {
+            if (track.chapter_key == parts[1] && track.track_key == parts[2] && track.title != card.title) {
+              return card.title + " · " + track.title;
+            }
+          }
+          return card.title;
+        }
+      }
+    }
+    return "Custom shortcut";
+  }
+  if (key == "displayDimTimeout" || key == "shutdownTimeout") {
+    if let Ok(seconds) = i32.parse_i32(value) {
+      if (seconds > 0 && seconds % 3600 == 0) {
+        return (seconds / 3600).to_string() + " hours";
+      }
+      if (seconds > 0 && seconds % 60 == 0) {
+        return (seconds / 60).to_string() + " minutes";
+      }
+      return seconds.to_string() + " seconds";
+    }
+  }
+  return "Current player setting";
 }
 
 function as_text(value: json.JsonValue): string {
@@ -89,7 +211,7 @@ function valid(field: Field, text: string): boolean {
       return clock_time(text);
     },
     Colour => {
-      return text.len() == 7 && text.starts_with("#") && text.drop(1).is_hex_string();
+      return light_colour.parse(text).is_some();
     },
     Brightness => {
       return n >= 0 && n <= 100 || text == "auto" && field.key != "displayDimBrightness";
@@ -97,8 +219,8 @@ function valid(field: Field, text: string): boolean {
     Limit => {
       return n >= 0 && n <= 16;
     },
-    Seconds => {
-      return n >= 0;
+    Duration => {
+      return choices(field.key).any((item: Choice): boolean => item.value == text);
     },
     Switch => {
       return text == "0" || text == "1";
@@ -109,6 +231,9 @@ function valid(field: Field, text: string): boolean {
     Shortcut => {
       let parts = text.split("/");
       return text.len() == 0 || parts.len() == 3 && parts[0].len() > 0 && parts[1].len() > 0;
+    },
+    PlayerInfo => {
+      return false;
     }
   }
 }
@@ -144,6 +269,14 @@ pub function changes(config: api.PlayerConfig, draft: Map[string, string]): Resu
   return Ok(out);
 }
 
+function named_field[M](field: Field, caption: string, action: string, choose: (string) => M): ui.El[M] {
+  let description: ui.El[M] = ui.column([ui.text[M](field.label), ui.text[M](caption).colored(ui.MUTED).clamped(2)]).wide().spaced(4.0);
+  if let PlayerInfo = field.kind {
+    return description;
+  }
+  return ui.row([description, ui.text_button("Choose", choose(field.key)).described(action)]).aligned(ui.CENTER).spaced(6.0);
+}
+
 function field_view[M](field: Field, value: string, edit: (string, string) => M): ui.El[M] {
   let label = field.label;
   let key = field.key;
@@ -167,20 +300,17 @@ function field_view[M](field: Field, value: string, edit: (string, string) => M)
   }
   let hint = match (field.kind) {
     ClockTime => "HH:MM",
-    Colour => "#RRGGBB",
-    Shortcut => "Card ID / chapter / track",
     _ => label,
   };
-  let items = [ui.text[M](label), ui.field[M]("config:" + key, value, hint).on_edit((text: string): M => edit(key, text))];
-  if let Colour = field.kind {
-    items = items.append(ui.row([
-      ui.text_button("Off", edit(key, "#000000")).described(label + " off"),
-      ui.text_button("Warm", edit(key, "#ff7300")).described(label + " warm"),
-      ui.text_button("Red", edit(key, "#ff0000")).described(label + " red"),
-      ui.text_button("Blue", edit(key, "#0000ff")).described(label + " blue"),
-    ]).spaced(2.0));
+  return ui.column([ui.text[M](label), ui.field[M]("config:" + key, value, hint).on_edit((text: string): M => edit(key, text))]).spaced(4.0).wide();
+}
+
+function light_field[M](field: Field, value: string, choose: (string) => M): ui.El[M] {
+  let row: ui.El[M][] = [ui.text[M](field.label).wide()];
+  if let Some(colour) = light_colour.parse(value) {
+    row = row.append(light_colour.swatch[M](colour).width(32.0).height(32.0));
   }
-  return ui.column(items).spaced(4.0).wide();
+  return ui.row(row.append(ui.text_button("Choose", choose(field.key)).described("Choose " + field.label))).aligned(ui.CENTER).spaced(6.0);
 }
 
 pub function alarms(config: api.PlayerConfig, draft: Map[string, string]): Option[json.JsonValue[]] {
@@ -234,13 +364,20 @@ pub function alarm_change(config: api.PlayerConfig, draft: Map[string, string], 
   return Ok(draft.insert("alarms", json.encode(json.JArray(next))));
 }
 
-pub function controls[M](config: api.PlayerConfig, draft: Map[string, string], edit: (string, string) => M): ui.El[M][] {
+pub function controls[M](config: api.PlayerConfig, draft: Map[string, string], cards: api.Card[], edit: (string, string) => M, choose: (string) => M): ui.El[M][] {
   let out: ui.El[M][] = [];
   for section in fields() {
     let rows: ui.El[M][] = [];
     for field in section.1 {
       if let Some(raw) = original(config, field.key) {
-        rows = rows.append(field_view(field, draft.get(field.key).unwrap_or(as_text(raw)), edit));
+        let value = draft.get(field.key).unwrap_or(as_text(raw));
+        if let Colour = field.kind {
+          rows = rows.append(light_field(field, value, choose));
+        } else if let Duration | Shortcut | PlayerInfo = field.kind {
+          rows = rows.append(named_field(field, choice_caption(field.key, value, cards), "Choose " + field.label.to_lower(), choose));
+        } else {
+          rows = rows.append(field_view(field, value, edit));
+        }
       }
     }
     if (rows.len() > 0) {

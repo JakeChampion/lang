@@ -6,4 +6,4 @@ lib = "app.fern"
 package = "dev.fern.storydeck"
 label = "Story Deck"
 min_sdk = 26
-permissions = ["INTERNET"]
+permissions = ["INTERNET", "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_MEDIA_PLAYBACK", "WAKE_LOCK"]

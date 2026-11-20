@@ -1,0 +1,137 @@
+import "std/json";
+import "std/kv";
+import "std/string";
+import "./offline";
+
+pub struct Item { id: string, title: string }
+
+pub struct Bookmark { item: Item, chapter: string, key: string, position: i64 }
+
+pub struct Saved { queue: Item[], marks: Bookmark[], pins: Bookmark[] }
+
+pub struct Trip { title: string, expected: i32, present: i32 }
+
+pub function empty(): Saved {
+  return Saved { queue: [], marks: [], pins: [] };
+}
+
+function item(value: json.JsonValue): Item {
+  return Item { id: json.get_string(value, "id").unwrap_or(""), title: json.get_string(value, "title").unwrap_or("Untitled card") };
+}
+
+function decoded_marks(raw: string): Bookmark[] {
+  let found: Bookmark[] = [];
+  let json.JArray(marks) = json.parse(raw).unwrap_or(json.JNull) else {
+    return found;
+  };
+  for value in marks {
+    let card = item(value);
+    if (card.id.len() > 0) {
+      found = found.append(Bookmark { item: card, chapter: json.get_string(value, "chapter").unwrap_or(""), key: json.get_string(value, "key").unwrap_or(""), position: json.get_i64(value, "position").unwrap_or(0i64).max(0i64) });
+    }
+  }
+  return found;
+}
+
+pub function load(dir: string): Saved {
+  if (dir.len() == 0) {
+    return empty();
+  }
+  let Ok(k) = kv.open(dir + "/yoto-listening") else {
+    return empty();
+  };
+  let queue: Item[] = [];
+  if let Ok(json.JArray(items)) = json.parse(k.get("queue").unwrap_or("[]")) {
+    queue = items.map(item).filter((i: Item): boolean => i.id.len() > 0);
+  }
+  return Saved { queue: queue, marks: decoded_marks(k.get("marks").unwrap_or("[]")), pins: decoded_marks(k.get("pins").unwrap_or("[]")) };
+}
+
+function encode_marks(marks: Bookmark[]): string {
+  let items = marks.map((b: Bookmark): json.JsonValue => json.JObject(json.from([
+    ("id", json.JString(b.item.id)), ("title", json.JString(b.item.title)), ("chapter", json.JString(b.chapter)),
+    ("key", json.JString(b.key)), ("position", json.JNumber(b.position.to_string())),
+  ])));
+  return json.encode(json.JArray(items));
+}
+
+pub function save(dir: string, value: Saved): boolean {
+  if (dir.len() == 0) {
+    return false;
+  }
+  let queue = value.queue.map((i: Item): json.JsonValue => json.JObject(json.from([("id", json.JString(i.id)), ("title", json.JString(i.title))])));
+  return kv.empty(dir + "/yoto-listening").set("queue", json.encode(json.JArray(queue))).set("marks", encode_marks(value.marks)).set("pins", encode_marks(value.pins)).save().is_ok();
+}
+
+pub function mark(saved: Saved, id: string): Option[Bookmark] {
+  for entry in saved.marks {
+    if (entry.item.id == id) {
+      return Some(entry);
+    }
+  }
+  return None;
+}
+
+pub function without(saved: Saved, id: string): Saved {
+  return Saved { ...saved, marks: saved.marks.filter((entry: Bookmark): boolean => entry.item.id != id) };
+}
+
+pub function remember(saved: Saved, pin: Bookmark): Saved {
+  let others = without(saved, pin.item.id);
+  return Saved { ...saved, marks: [pin].concat(others.marks) };
+}
+
+pub function unpin(saved: Saved, id: string): Saved {
+  return Saved { ...saved, pins: saved.pins.filter((entry: Bookmark): boolean => entry.item.id != id) };
+}
+
+pub function pin(saved: Saved, mark: Bookmark): Saved {
+  let remaining = unpin(saved, mark.item.id);
+  return Saved { ...saved, pins: [mark].concat(remaining.pins) };
+}
+
+function audio_header(bytes: u8[]): boolean {
+  if (bytes.len() < 32) {
+    return false;
+  }
+  if (bytes[0] == 255u8 && (bytes[1] & 224u8) == 224u8) {
+    return true;
+  }
+  let prefix = bytes.take(4);
+  return prefix == "OggS".bytes() || prefix == "fLaC".bytes()
+    || prefix == "RIFF".bytes() && bytes.drop(8).take(4) == "WAVE".bytes()
+    || prefix == "FORM".bytes() || prefix.take(3) == "ID3".bytes()
+    || bytes.drop(4).take(4) == "ftyp".bytes();
+}
+
+function readable(path: string): boolean {
+  let Ok(file) = open_reader(path) else {
+    return false;
+  };
+  defer file.close();
+  return audio_header(file.read_chunk_bytes(64).unwrap_or([]));
+}
+
+pub function check_trip(catalog: offline.Catalog, items: Item[]): Trip[] {
+  let report: Trip[] = [];
+  let entries: Map[string, offline.Entry] = map_new(32);
+  for entry in catalog.entries {
+    entries = entries.insert(entry.id, entry);
+  }
+  for item in items {
+    let expected = 0;
+    let present = 0;
+    if let Some(entry) = entries.get(item.id) {
+      expected = entry.tracks.len();
+      if (entry.ready) {
+        for track in entry.tracks {
+          if (readable(catalog.dir + "/" + track.name)) {
+            present += 1;
+          }
+        }
+      }
+    }
+    report = report.append(Trip { title: item.title, expected: expected, present: present });
+  }
+  return report;
+}

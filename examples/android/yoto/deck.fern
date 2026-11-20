@@ -2,6 +2,7 @@ import "std/android";
 import "std/android/draw";
 import "std/android/player";
 import "std/json";
+import "std/i64";
 import "std/android/ui";
 import "std/kv";
 import "std/string";
@@ -12,6 +13,8 @@ import "./offline";
 import "./phone";
 import "./search";
 import "./settings";
+import "./light_colour";
+import "./listening";
 import "./player_status";
 
 enum Job {
@@ -23,7 +26,9 @@ enum Job {
   Streams(i64, string, api.Card, string, string),
   ReadConfig(i64, string, api.Player),
   WriteConfig(i64, string, api.Player, api.PlayerConfig, (string, json.JsonValue)[]),
+  ReadShortcutTracks(i64, string, api.Card),
   GetDownload(i64, string, api.Card),
+  TripCheck(offline.Catalog, listening.Item[]),
 }
 
 enum Storage { SaveSession, ClearSession }
@@ -32,6 +37,8 @@ struct Shelf {
   hits: search.Hit[],
   query: string,
   filter: i32,
+  downloaded_only: boolean,
+  search_scope: i32,
   search_revision: i64,
   opened: string,
   first_art: i32,
@@ -53,6 +60,8 @@ struct NowPlaying {
   note: string,
 }
 
+enum ConfigPicker { AlarmCards, SettingChoices(string), ShortcutCards(string), ShortcutTracks(string, string), LightColour(string, light_colour.Hsv) }
+
 struct ConfigPanel {
   revision: i64,
   device: Option[api.Player],
@@ -60,8 +69,20 @@ struct ConfigPanel {
   draft: Map[string, string],
   working: boolean,
   note: string,
-  picking_alarm: boolean,
-  alarm_query: string,
+  picker: Option[ConfigPicker],
+  query: string,
+}
+
+struct PlaybackTools {
+  saved: listening.Saved,
+  dirty: boolean,
+  sample: boolean,
+  bookmark_now: boolean,
+  sample_at: i64,
+  sleep_at: i64,
+  trip_running: boolean,
+  trip: listening.Trip[],
+  note: string,
 }
 
 pub struct Model {
@@ -82,6 +103,7 @@ pub struct Model {
   selected: string,
   on_phone: boolean,
   phone: phone.State,
+  playback_tools: PlaybackTools,
   now_playing: NowPlaying,
   config_panel: ConfigPanel,
   downloads: offline.State,
@@ -102,6 +124,8 @@ pub enum Msg {
   Tick,
   Search(string),
   Filter(i32),
+  DownloadedOnly,
+  SearchScope(i32),
   PostersVisible(i32, i32),
   OpenCard(string),
   CloseCard,
@@ -123,8 +147,16 @@ pub enum Msg {
   SaveSettings,
   EditAlarm(settings.AlarmEdit),
   ChooseAlarmCard,
-  FilterAlarmCards(string),
-  SetAlarmCard(string),
+  ChooseSetting(string),
+  ChooseSettingValue(string),
+  AdjustLightColour(light_colour.Hsv),
+  UseLightColour,
+  ChooseShortcutLibrary,
+  FilterSettingCards(string),
+  PickSettingCard(string),
+  PickShortcutTrack(i32),
+  ShortcutTracksLoaded(i64, Result[api.Card, api.Failure]),
+  BackToSettings,
   ConfigLoaded(i64, boolean, Result[api.PlayerConfig, api.Failure]),
   Download(string),
   DownloadPrepared(i64, Result[api.DownloadPlan, api.Failure]),
@@ -133,30 +165,53 @@ pub enum Msg {
   RemoveDownload(string),
   OpenDownload(string),
   PlayDownload(string, i32),
+  QueueCard(string),
+  DropQueued(i32),
+  StartQueue,
+  ResumeCard(string),
+  BookmarkHere,
+  ResumeBookmark(listening.Bookmark),
+  RemoveBookmark(string),
+  SetSleep(i32),
+  CheckTrip,
+  TripChecked(listening.Trip[]),
+  PhoneNext,
+  PhonePrevious,
+  PhoneSeek(i64),
+  PhoneResume,
+  PhoneControl(api.Command),
   SelectTab(i32),
   Control(api.Command),
 }
 
 function empty_shelf(): Shelf {
-  return Shelf { hits: [], query: "", filter: 0, search_revision: 0i64, opened: "", first_art: 0, last_art: 0, next: 0, paused: "", attempted: map_new(64), note: "", covers: map_new(48), cover_order: [], received: None };
+  return Shelf { hits: [], query: "", filter: 0, downloaded_only: false, search_scope: search.ALL, search_revision: 0i64, opened: "", first_art: 0, last_art: 0, next: 0, paused: "", attempted: map_new(64), note: "", covers: map_new(48), cover_order: [], received: None };
 }
 
 function panel(revision: i64): ConfigPanel {
-  return ConfigPanel { revision: revision, device: None, config: None, draft: map_new(24), working: false, note: "", picking_alarm: false, alarm_query: "" };
+  return ConfigPanel { revision: revision, device: None, config: None, draft: map_new(24), working: false, note: "", picker: None, query: "" };
+}
+
+function tools(saved: listening.Saved): PlaybackTools {
+  return PlaybackTools { saved: saved, dirty: false, sample: false, bookmark_now: false, sample_at: 0i64, sleep_at: 0i64, trip_running: false, trip: [], note: "" };
 }
 
 pub function start(): Model {
-  let downloads = offline.empty(offline.Catalog { dir: "", entries: [], note: "" });
-  return Model { client: "", token: "", refresh: "", reconnect: false, auth: [], storage: None, session_note: "", load_after_auth: false, players: [], cards: [], shelf: empty_shelf(), generation: 0i64, background_busy: false, cover_busy: false, selected: "", on_phone: false, phone: phone.empty(), now_playing: NowPlaying { revision: 0i64, requested: false, running: false, playback: None, note: "" }, config_panel: panel(0i64), downloads: downloads, offline_open: "", tab: 0, note: "", library_loaded: false, busy: false, open_login: false, flow: None, job: None };
+  let downloads = offline.empty(offline.Catalog { dir: "", entries: [], cleanup: [], note: "" });
+  return Model { client: "", token: "", refresh: "", reconnect: false, auth: [], storage: None, session_note: "", load_after_auth: false, players: [], cards: [], shelf: empty_shelf(), generation: 0i64, background_busy: false, cover_busy: false, selected: "", on_phone: false, phone: phone.empty(), playback_tools: tools(listening.empty()), now_playing: NowPlaying { revision: 0i64, requested: false, running: false, playback: None, note: "" }, config_panel: panel(0i64), downloads: downloads, offline_open: "", tab: 0, note: "", library_loaded: false, busy: false, open_login: false, flow: None, job: None };
 }
 
 function signed_out(m: Model, note: string): Model {
   let first = start();
-  return Model { ...first, client: m.client, generation: m.generation + 1i64, background_busy: m.background_busy, cover_busy: m.cover_busy, phone: phone.stop(m.phone), now_playing: NowPlaying { ...first.now_playing, running: m.now_playing.running }, config_panel: panel(m.config_panel.revision + 1i64), downloads: offline.clear(m.downloads), note: note };
+  return Model { ...first, client: m.client, generation: m.generation + 1i64, background_busy: m.background_busy, cover_busy: m.cover_busy, phone: phone.stop(m.phone), playback_tools: PlaybackTools { ...first.playback_tools, dirty: true }, now_playing: NowPlaying { ...first.now_playing, running: m.now_playing.running }, config_panel: panel(m.config_panel.revision + 1i64), downloads: offline.clear(m.downloads), note: note };
 }
 
 pub function with_downloads(m: Model, catalog: offline.Catalog): Model {
   return Model { ...m, downloads: offline.empty(catalog), tab: if (catalog.entries.len() > 0) { 2 } else { m.tab } };
+}
+
+pub function with_listening(m: Model, saved: listening.Saved): Model {
+  return Model { ...m, playback_tools: tools(saved) };
 }
 
 pub function restored(saved: Result[Option[api.Session], string]): Model {
@@ -249,21 +304,34 @@ function close_app(own m: Model, persist: (Option[api.Session]) => boolean): Mod
   return next;
 }
 
-function found(own m: Model): Model {
+function found(m: Model): Model {
   let shelf = m.shelf;
-  let hits = search.find(m.cards, shelf.query, shelf.filter);
+  let hits = search.find_in(m.cards, shelf.query, shelf.filter, shelf.search_scope);
+  if (shelf.downloaded_only) {
+    let ready: Map[string, boolean] = map_new(48);
+    for entry in m.downloads.catalog.entries {
+      if (entry.ready) {
+        ready = ready.insert(entry.id, true);
+      }
+    }
+    hits = hits.filter((hit: search.Hit): boolean => ready.contains(m.cards[hit.card].id));
+  }
   return Model { ...m, shelf: Shelf { ...shelf, hits: hits } };
 }
 
-function opened_index(m: Model): i32 {
-  if (m.shelf.opened.len() > 0) {
+function card_index(m: Model, id: string): i32 {
+  if (id.len() > 0) {
     for i in 0..m.cards.len() {
-      if (m.cards[i].id == m.shelf.opened) {
+      if (m.cards[i].id == id) {
         return i;
       }
     }
   }
   return -1;
+}
+
+function opened_index(m: Model): i32 {
+  return card_index(m, m.shelf.opened);
 }
 
 function opened_card(m: Model): Option[api.Card] {
@@ -306,8 +374,11 @@ function next_cover(m: Model): string {
 
 function grid_name(shelf: Shelf): string {
   let base = "library:" + shelf.filter.to_string();
+  if (shelf.downloaded_only) {
+    base += ":downloads";
+  }
   if (shelf.query.trim().len() > 0) {
-    return base + ":search:" + shelf.search_revision.to_string();
+    return base + ":search:" + shelf.search_revision.to_string() + ":" + shelf.search_scope.to_string();
   }
   return base;
 }
@@ -463,6 +534,10 @@ function can_control(m: Model): boolean {
   return false;
 }
 
+function can_play_card(m: Model, id: string): boolean {
+  return can_control(m) || (m.on_phone || m.selected.len() == 0) && offline.saved(m.downloads, id).is_some();
+}
+
 function connect(own m: Model): Model {
   let client = m.client.trim().to_owned();
   if (client.len() == 0) {
@@ -532,18 +607,23 @@ function loaded(own m: Model, result: Result[api.Library, api.Failure]): Model {
 }
 
 function control(own m: Model, command: api.Command): Model {
-  if (m.on_phone) {
+  if (m.on_phone || m.selected.len() == 0) {
     match (command) {
       api.Play(id) => {
-        return stream_card(m, id, "", "");
+        if (can_play_card(m, id)) {
+          return stream_card(m, id, "", "");
+        }
       },
       api.PlayTrack(id, chapter, track) => {
-        return stream_card(m, id, chapter, track);
+        if (can_play_card(m, id)) {
+          return stream_card(m, id, chapter, track);
+        }
       },
       _ => {
-        return Model { ...m, phone: phone.control(m.phone, command) };
+        return Model { ...m, phone: phone.control(m.phone, command), playback_tools: PlaybackTools { ...m.playback_tools, sample: true } };
       }
     }
+    return m;
   }
   if (!can_control(m)) {
     return m;
@@ -552,21 +632,33 @@ function control(own m: Model, command: api.Command): Model {
 }
 
 function stream_card(m: Model, id: string, chapter: string, track: string): Model {
+  if (chapter.len() == 0) {
+    if let Some(pin) = listening.mark(m.playback_tools.saved, id) {
+      let resumed = stream_at(m, id, pin.chapter, pin.key, pin.position);
+      if (resumed.phone.revision != m.phone.revision) {
+        return resumed;
+      }
+    }
+  }
+  return stream_at(m, id, chapter, track, 0i64);
+}
+
+function stream_at(m: Model, id: string, chapter: string, track: string, position: i64): Model {
   if let Some(entry) = offline.saved(m.downloads, id) {
     if (chapter.len() == 0) {
-      return play_download(m, entry, 0);
+      return play_download_at(m, entry, 0, position);
     }
     for i in 0..entry.tracks.len() {
       let item = entry.tracks[i];
       if (item.chapter == chapter && (track.len() == 0 || item.key == track)) {
-        return play_download(m, entry, i);
+        return play_download_at(m, entry, i, position);
       }
     }
   }
   if (can_control(m)) {
     for card in m.cards {
       if (card.id == id) {
-        let state = phone.loading(m.phone, card.title);
+        let state = phone.loading(m.phone, card.id, card.title, position);
         return Model { ...m, phone: state, job: Some(Streams(state.revision, m.token, card, chapter, track)) };
       }
     }
@@ -575,13 +667,73 @@ function stream_card(m: Model, id: string, chapter: string, track: string): Mode
 }
 
 function play_download(m: Model, entry: offline.Entry, from: i32): Model {
+  return play_download_at(m, entry, from, 0i64);
+}
+
+function play_download_at(m: Model, entry: offline.Entry, from: i32, position: i64): Model {
   let tracks = offline.playlist(m.downloads, entry, from);
   if (tracks.len() == 0) {
     return m;
   }
-  let state = phone.loading(m.phone, entry.title);
+  let state = phone.loading(m.phone, entry.id, entry.title, position);
   let ready = phone.received(state, state.revision, Ok(tracks));
   return request_playback(Model { ...m, selected: "", on_phone: true, phone: ready });
+}
+
+function phone_target(m: Model): Model {
+  return Model { ...m, selected: "", on_phone: true };
+}
+
+function queue_item(m: Model, id: string): Option[listening.Item] {
+  if let Some(entry) = offline.saved(m.downloads, id) {
+    return Some(listening.Item { id: id, title: entry.title });
+  }
+  let index = card_index(m, id);
+  if (index >= 0) {
+    return Some(listening.Item { id: id, title: m.cards[index].title });
+  }
+  return None;
+}
+
+function play_queued(m: Model): Model {
+  let tools = m.playback_tools;
+  if (tools.saved.queue.len() == 0) {
+    return m;
+  }
+  let first = tools.saved.queue[0];
+  let next = stream_card(phone_target(m), first.id, "", "");
+  if (next.phone.revision == m.phone.revision) {
+    return Model { ...m, playback_tools: PlaybackTools { ...tools, note: "Connect to play " + first.title + " or save it before the trip." } };
+  }
+  let saved = listening.Saved { ...tools.saved, queue: tools.saved.queue.drop(1) };
+  return Model { ...next, playback_tools: PlaybackTools { ...tools, saved: saved, dirty: true, note: "" } };
+}
+
+function finished_phone(m: Model, next: phone.State): Model {
+  if (m.phone.card.len() > 0 && next.card.len() == 0 && next.note.len() == 0) {
+    let tools = m.playback_tools;
+    let saved = listening.without(tools.saved, m.phone.card);
+    return play_queued(Model { ...m, phone: next, playback_tools: PlaybackTools { ...tools, saved: saved, dirty: true } });
+  }
+  return Model { ...m, phone: next };
+}
+
+pub function playback_tick(m: Model, now: i64): Model {
+  let tools = m.playback_tools;
+  if (tools.sleep_at > 0i64 && now >= tools.sleep_at) {
+    let state = match (m.phone.phase) {
+      phone.Playing => phone.control(m.phone, api.Pause),
+      phone.Loading | phone.Preparing => phone.stop(m.phone),
+      _ => m.phone,
+    };
+    return Model { ...m, phone: state, playback_tools: PlaybackTools { ...tools, sleep_at: 0i64, sample: true, note: "Sleep timer ended." } };
+  }
+  if (now - tools.sample_at >= 2000000000i64) {
+    if let phone.Playing = m.phone.phase {
+      return Model { ...m, playback_tools: PlaybackTools { ...tools, sample: true, sample_at: now } };
+    }
+  }
+  return m;
 }
 
 function pending_download(m: Model): Option[api.Card] {
@@ -645,6 +797,59 @@ function config_result(own m: Model, revision: i64, saved: boolean, result: Resu
   }
 }
 
+function picked_setting(m: Model, key: string, value: string): Model {
+  let p = m.config_panel;
+  return Model { ...m, config_panel: ConfigPanel { ...p, picker: None, query: "", working: false, draft: p.draft.insert(key, value), note: "" } };
+}
+
+function prepare_shortcut(m: Model, key: string, card: api.Card): Model {
+  let p = m.config_panel;
+  let revision = p.revision + 1i64;
+  let state = ConfigPanel { ...p, revision: revision, picker: Some(ShortcutTracks(key, card.id)), working: !card.indexed, note: "" };
+  if (card.indexed) {
+    return Model { ...m, config_panel: state };
+  }
+  return Model { ...m, config_panel: state, job: Some(ReadShortcutTracks(revision, m.token, card)) };
+}
+
+function shortcut_result(own m: Model, revision: i64, result: Result[api.Card, api.Failure]): Model {
+  let p = m.config_panel;
+  let Some(ShortcutTracks(_, id)) = p.picker else {
+    return m;
+  };
+  if (revision != p.revision) {
+    return m;
+  }
+  let state = ConfigPanel { ...p, working: false };
+  match (result) {
+    Ok(card) => {
+      let index = card_index(m, id);
+      if (index >= 0 && card.id == id) {
+        return found(Model { ...m, cards: m.cards.with(index, card), config_panel: state });
+      }
+      return Model { ...m, config_panel: state };
+    },
+    Err(err) => {
+      return Model { ...m, config_panel: ConfigPanel { ...state, note: err.message } };
+    }
+  }
+}
+
+function back_from_picker(m: Model): Model {
+  let p = m.config_panel;
+  let picker: Option[ConfigPicker] = None;
+  match (p.picker) {
+    Some(ShortcutTracks(key, _)) => {
+      picker = Some(ShortcutCards(key));
+    },
+    Some(ShortcutCards(key)) => {
+      picker = Some(SettingChoices(key));
+    },
+    _ => {}
+  }
+  return Model { ...m, config_panel: ConfigPanel { ...p, picker: picker, working: false, note: "" } };
+}
+
 pub function update(own m: Model, msg: Msg): Model {
   match (msg) {
     EditClient(text) => {
@@ -666,6 +871,7 @@ pub function update(own m: Model, msg: Msg): Model {
       return m;
     },
     Tick => {
+      m = playback_tick(m, monotonic_ns());
       m = Model { ...m, downloads: offline.check(m.downloads) };
       if (m.flow.is_some()) {
         return poll_login(m);
@@ -693,6 +899,13 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     Filter(filter) => {
       return found(Model { ...m, shelf: Shelf { ...m.shelf, filter: filter, first_art: 0, last_art: 0 } });
+    },
+    DownloadedOnly => {
+      let shelf = m.shelf;
+      return found(Model { ...m, shelf: Shelf { ...shelf, downloaded_only: !shelf.downloaded_only, first_art: 0, last_art: 0 } });
+    },
+    SearchScope(scope) => {
+      return found(Model { ...m, shelf: Shelf { ...m.shelf, search_scope: scope, first_art: 0, last_art: 0 } });
     },
     PostersVisible(first, last) => {
       return Model { ...m, shelf: Shelf { ...m.shelf, first_art: first, last_art: last } };
@@ -725,7 +938,7 @@ pub function update(own m: Model, msg: Msg): Model {
       return next;
     },
     PhoneEvent(tagged, arg) => {
-      return Model { ...m, phone: phone.event(m.phone, android.Posted(tagged, arg)) };
+      return finished_phone(m, phone.event(m.phone, android.Posted(tagged, arg)));
     },
     RetrySignIn => {
       if (!m.busy && m.refresh.len() > 0) {
@@ -801,15 +1014,94 @@ pub function update(own m: Model, msg: Msg): Model {
       return m;
     },
     ChooseAlarmCard => {
-      return Model { ...m, config_panel: ConfigPanel { ...m.config_panel, picking_alarm: true, alarm_query: "" } };
+      return Model { ...m, config_panel: ConfigPanel { ...m.config_panel, picker: Some(AlarmCards), query: "" } };
     },
-    FilterAlarmCards(query) => {
-      return Model { ...m, config_panel: ConfigPanel { ...m.config_panel, alarm_query: query } };
-    },
-    SetAlarmCard(id) => {
+    ChooseSetting(key) => {
       let p = m.config_panel;
-      let draft = if (id.len() == 0) { p.draft } else { p.draft.insert("alarm-card", id) };
-      return Model { ...m, config_panel: ConfigPanel { ...p, draft: draft, picking_alarm: false } };
+      if (settings.light_key(key) && !p.working) {
+        if let Some(config) = p.config {
+          let value = settings.setting_value(config, p.draft, key);
+          let colour = light_colour.parse(value).unwrap_or(light_colour.Hsv { hue: 0.1, saturation: 0.47, brightness: 1.0 });
+          return Model { ...m, config_panel: ConfigPanel { ...p, picker: Some(LightColour(key, colour)), note: "" } };
+        }
+      }
+      if (!p.working && p.config.is_some() && settings.choices(key).len() > 0) {
+        return Model { ...m, config_panel: ConfigPanel { ...p, picker: Some(SettingChoices(key)), note: "" } };
+      }
+      return m;
+    },
+    ChooseSettingValue(value) => {
+      let p = m.config_panel;
+      if let Some(SettingChoices(key)) = p.picker {
+        if (settings.choices(key).any((item: settings.Choice): boolean => item.value == value)) {
+          return picked_setting(m, key, value);
+        }
+      }
+      return m;
+    },
+    AdjustLightColour(colour) => {
+      let p = m.config_panel;
+      if let Some(LightColour(key, _)) = p.picker {
+        return Model { ...m, config_panel: ConfigPanel { ...p, picker: Some(LightColour(key, colour)) } };
+      }
+      return m;
+    },
+    UseLightColour => {
+      if let Some(LightColour(key, colour)) = m.config_panel.picker {
+        return picked_setting(m, key, light_colour.hex(colour));
+      }
+      return m;
+    },
+    ChooseShortcutLibrary => {
+      let p = m.config_panel;
+      if let Some(SettingChoices(key)) = p.picker {
+        if (settings.is_shortcut(key)) {
+          return Model { ...m, config_panel: ConfigPanel { ...p, picker: Some(ShortcutCards(key)), query: "" } };
+        }
+      }
+      return m;
+    },
+    FilterSettingCards(query) => {
+      return Model { ...m, config_panel: ConfigPanel { ...m.config_panel, query: query } };
+    },
+    PickSettingCard(id) => {
+      let index = card_index(m, id);
+      if (index < 0) {
+        return m;
+      }
+      let Some(picker) = m.config_panel.picker else {
+        return m;
+      };
+      match (picker) {
+        AlarmCards => {
+          return picked_setting(m, "alarm-card", id);
+        },
+        ShortcutCards(key) | ShortcutTracks(key, _) => {
+          return prepare_shortcut(m, key, m.cards[index]);
+        },
+        _ => {
+          return m;
+        }
+      }
+    },
+    PickShortcutTrack(index) => {
+      if let Some(ShortcutTracks(key, id)) = m.config_panel.picker {
+        let at = card_index(m, id);
+        if (at >= 0 && index >= 0 && index < m.cards[at].tracks.len()) {
+          let card = m.cards[at];
+          let track = card.tracks[index];
+          if (settings.shortcut_track(track)) {
+            return picked_setting(m, key, settings.shortcut_value(card, track));
+          }
+        }
+      }
+      return m;
+    },
+    ShortcutTracksLoaded(revision, result) => {
+      return shortcut_result(m, revision, result);
+    },
+    BackToSettings => {
+      return back_from_picker(m);
     },
     ConfigLoaded(revision, saved, result) => {
       return config_result(m, revision, saved, result);
@@ -817,7 +1109,7 @@ pub function update(own m: Model, msg: Msg): Model {
     Download(id) => {
       if (m.token.len() > 0) {
         let cards = m.cards.filter((card: api.Card): boolean => id.len() == 0 || card.id == id);
-        return Model { ...m, downloads: offline.enqueue(m.downloads, cards), tab: 2, offline_open: "" };
+        return Model { ...m, downloads: offline.enqueue(m.downloads, cards) };
       }
       return m;
     },
@@ -856,6 +1148,81 @@ pub function update(own m: Model, msg: Msg): Model {
         return play_download(m, entry, at);
       }
       return m;
+    },
+    QueueCard(id) => {
+      if let Some(item) = queue_item(m, id) {
+        let tools = m.playback_tools;
+        let saved = listening.Saved { ...tools.saved, queue: [item].concat(tools.saved.queue) };
+        return Model { ...m, playback_tools: PlaybackTools { ...tools, saved: saved, dirty: true, trip: [], note: item.title + " will play next." } };
+      }
+      return m;
+    },
+    DropQueued(index) => {
+      let tools = m.playback_tools;
+      if (index >= 0 && index < tools.saved.queue.len()) {
+        let saved = listening.Saved { ...tools.saved, queue: tools.saved.queue.take(index).concat(tools.saved.queue.drop(index + 1)) };
+        return Model { ...m, playback_tools: PlaybackTools { ...tools, saved: saved, dirty: true, trip: [], note: "" } };
+      }
+      return m;
+    },
+    StartQueue => {
+      return play_queued(m);
+    },
+    ResumeCard(id) => {
+      return stream_card(phone_target(m), id, "", "");
+    },
+    BookmarkHere => {
+      return Model { ...m, playback_tools: PlaybackTools { ...m.playback_tools, sample: true, bookmark_now: true } };
+    },
+    ResumeBookmark(mark) => {
+      return stream_at(phone_target(m), mark.item.id, mark.chapter, mark.key, mark.position);
+    },
+    RemoveBookmark(id) => {
+      let tools = m.playback_tools;
+      return Model { ...m, playback_tools: PlaybackTools { ...tools, saved: listening.unpin(tools.saved, id), dirty: true, note: "" } };
+    },
+    SetSleep(minutes) => {
+      let end = if (minutes > 0) { monotonic_ns() + minutes as i64 * 60000000000i64 } else { 0i64 };
+      return Model { ...m, playback_tools: PlaybackTools { ...m.playback_tools, sleep_at: end, note: "" } };
+    },
+    CheckTrip => {
+      let tools = m.playback_tools;
+      if (tools.trip_running) {
+        return m;
+      }
+      let items = tools.saved.queue;
+      if (items.len() == 0) {
+        items = m.downloads.catalog.entries.filter((e: offline.Entry): boolean => e.ready).map((e: offline.Entry): listening.Item => listening.Item { id: e.id, title: e.title });
+      }
+      return Model { ...m, playback_tools: PlaybackTools { ...tools, trip_running: true, trip: [], note: "" }, job: Some(TripCheck(m.downloads.catalog, items)) };
+    },
+    TripChecked(report) => {
+      let tools = m.playback_tools;
+      if (tools.trip_running) {
+        return Model { ...m, playback_tools: PlaybackTools { ...tools, trip_running: false, trip: report, note: if (report.len() == 0) { "No cards to check." } else { "" } } };
+      }
+      return m;
+    },
+    PhoneNext => {
+      if (m.phone.card.len() == 0) {
+        return play_queued(m);
+      }
+      return finished_phone(m, phone.next(m.phone));
+    },
+    PhonePrevious => {
+      return Model { ...m, phone: phone.previous(m.phone) };
+    },
+    PhoneSeek(ms) => {
+      return Model { ...m, phone: phone.seek(m.phone, ms) };
+    },
+    PhoneResume => {
+      if let phone.Idle = m.phone.phase {
+        return play_queued(m);
+      }
+      return Model { ...m, phone: phone.control(m.phone, api.Resume) };
+    },
+    PhoneControl(command) => {
+      return Model { ...m, phone: phone.control(m.phone, command), playback_tools: PlaybackTools { ...m.playback_tools, sample: true } };
     },
     SelectTab(tab) => {
       return Model { ...m, tab: tab };
@@ -896,17 +1263,52 @@ function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
       WriteConfig(revision, token, player, config, edits) => {
         return ConfigLoaded(revision, true, api.save_config(token, player, config, edits));
       },
+      ReadShortcutTracks(revision, token, card) => {
+        return ShortcutTracksLoaded(revision, api.details(token, card));
+      },
       GetDownload(revision, token, card) => {
         return DownloadPrepared(revision, api.download_plan(token, card));
+      },
+      TripCheck(catalog, items) => {
+        return TripChecked(listening.check_trip(catalog, items));
       }
     }
   })];
 }
 
-function effects(m: Model, open_browser: (string) => boolean, decode: (u8[]) => Option[draw.Image], persist: (Option[api.Session]) => boolean, output: phone.Output, disk: offline.Output): Model {
+function save_listening(m: Model, output: phone.Output, store: (listening.Saved) => boolean, force: boolean): Model {
+  let state = m.playback_tools;
+  let phone = m.phone;
+  if ((state.sample || force) && phone.card.len() > 0 && phone.at < phone.queue.len()) {
+    if let Some(media) = phone.media {
+      if let phone.Playing | phone.Paused = phone.phase {
+        let track = phone.queue[phone.at];
+        let ms = output.position(media).max(0i64);
+        let before = listening.mark(state.saved, phone.card);
+        let changed = before.is_none() || before.map((mark: listening.Bookmark): boolean => mark.chapter != track.chapter || mark.key != track.key || (mark.position - ms).abs() >= 5000i64).unwrap_or(false);
+        if (force || state.bookmark_now || changed) {
+          let item = listening.Item { id: phone.card, title: phone.title };
+          let mark = listening.Bookmark { item: item, chapter: track.chapter, key: track.key, position: ms };
+          let saved = if (state.bookmark_now) { listening.pin(state.saved, mark) } else { listening.remember(state.saved, mark) };
+          state = PlaybackTools { ...state, dirty: true, saved: saved };
+        }
+      }
+    }
+  }
+  if (state.dirty && store(state.saved)) {
+    let note = if (state.bookmark_now) { "Bookmark saved." } else { state.note };
+    state = PlaybackTools { ...state, dirty: false, note: note };
+  }
+  return Model { ...m, playback_tools: PlaybackTools { ...state, sample: false, bookmark_now: false } };
+}
+
+function effects(m: Model, open_browser: (string) => boolean, decode: (u8[]) => Option[draw.Image], persist: (Option[api.Session]) => boolean, output: phone.Output, disk: offline.Output, store: (listening.Saved) => boolean): Model {
   let saved = save_session(store_cover(Model { ...m, job: None }, decode), persist);
   let audio = phone.apply(saved.phone, output);
-  let t = Model { ...saved, phone: audio, downloads: offline.apply(saved.downloads, disk) };
+  let t = save_listening(Model { ...saved, phone: audio, downloads: offline.apply(saved.downloads, disk) }, output, store, false);
+  if (t.shelf.downloaded_only && ready_downloads(saved.downloads) != ready_downloads(t.downloads)) {
+    t = found(t);
+  }
   if (!t.open_login) {
     return t;
   }
@@ -923,6 +1325,10 @@ function effects(m: Model, open_browser: (string) => boolean, decode: (u8[]) => 
       return Model { ...ready, busy: false, note: note };
     }
   }
+}
+
+function ready_downloads(s: offline.State): i32 {
+  return s.catalog.entries.filter((entry: offline.Entry): boolean => entry.ready).len();
 }
 
 function sign_in(m: Model): ui.El[Msg] {
@@ -1031,19 +1437,73 @@ function player_list(m: Model): ui.El[Msg] {
   return ui.column(items.append(picker)).spaced(10.0).wide().tall();
 }
 
-function alarm_card_picker(m: Model): ui.El[Msg] {
-  let query = m.config_panel.alarm_query;
+function settings_card_picker(m: Model, heading: string): ui.El[Msg] {
+  let query = m.config_panel.query;
   let terms = query.trim().to_lower().to_owned();
   let cards = m.cards.filter((card: api.Card): boolean => card.search.contains(terms));
   let inputs: ui.El[Msg][] = [
-    ui.text_button("Back to settings", SetAlarmCard("")),
-    ui.field[Msg]("alarm-card-search", query, "Find a card for the alarm").on_edit((text: string): Msg => FilterAlarmCards(text)),
-    ui.list("alarm-cards:" + query, cards.len(), 52.0, (at: i32): ui.El[Msg] => {
+    ui.text_button("Back", BackToSettings),
+    ui.text[Msg](heading).sized(24.0).weighted(700),
+    ui.field[Msg]("settings-card-search", query, "Search your library").on_edit((text: string): Msg => FilterSettingCards(text)),
+    ui.list("settings-cards:" + heading + ":" + query, cards.len(), 60.0, (at: i32): ui.El[Msg] => {
       let card = cards[at];
-      return ui.text_button(card.title, SetAlarmCard(card.id)).wide();
+      return ui.row([ui.text[Msg](card.title).clamped(2).wide()]).padding_xy(12.0, 8.0).wide().on_tap(PickSettingCard(card.id)).described(card.title);
     }),
   ];
   return ui.column(inputs).spaced(10.0).padding(16.0).wide().tall();
+}
+
+function setting_choices(m: Model, key: string): ui.El[Msg] {
+  let p = m.config_panel;
+  let current = "";
+  if let Some(config) = p.config {
+    current = settings.setting_value(config, p.draft, key);
+  }
+  let rows: ui.El[Msg][] = [ui.text_button("Back to settings", BackToSettings), ui.text[Msg](settings.label(key)).sized(24.0).weighted(700)];
+  for item in settings.choices(key) {
+    let action = ChooseSettingValue(item.value);
+    let row = ui.card([ui.row([ui.radio(current == item.value, item.label, action), ui.text[Msg](item.label).wide()]).aligned(ui.CENTER)]).wide().on_tap(action).described(item.label);
+    rows = rows.append(row);
+  }
+  if (settings.is_shortcut(key)) {
+    rows = rows.append(ui.outlined_button("Choose from library", ChooseShortcutLibrary));
+  }
+  return ui.column(rows).spaced(10.0).padding(16.0).wide().tall().scroll("setting-choices:" + key);
+}
+
+function shortcut_tracks(m: Model, id: string): ui.El[Msg] {
+  let p = m.config_panel;
+  let rows: ui.El[Msg][] = [ui.text_button("Back to cards", BackToSettings)];
+  let index = card_index(m, id);
+  if (index >= 0) {
+    let card = m.cards[index];
+    rows = rows.append(ui.text[Msg](card.title).sized(24.0).weighted(700).clamped(2));
+    let tracks: i32[] = [];
+    for i in 0..card.tracks.len() {
+      if (settings.shortcut_track(card.tracks[i])) {
+        tracks = tracks.append(i);
+      }
+    }
+    if (tracks.len() > 0) {
+      rows = rows.append(ui.text[Msg]("Choose where the shortcut starts").colored(ui.MUTED));
+      rows = rows.append(ui.list("shortcut-tracks:" + id, tracks.len(), 64.0, (at: i32): ui.El[Msg] => {
+        let i = tracks[at];
+        let track = card.tracks[i];
+        let labels: ui.El[Msg][] = [ui.text[Msg](track.title).clamped(2).weighted(600)];
+        if (track.chapter.len() > 0 && track.chapter != track.title) {
+          labels = labels.append(ui.text[Msg](track.chapter).clamped(1).colored(ui.MUTED));
+        }
+        return ui.column(labels).padding_xy(12.0, 6.0).wide().on_tap(PickShortcutTrack(i)).described(track.title);
+      }));
+    } else if (p.working) {
+      rows = rows.append(ui.text[Msg]("Loading tracks…").colored(ui.MUTED));
+    } else if (p.note.len() > 0) {
+      rows = rows.append(ui.text[Msg](p.note).colored(ui.MUTED)).append(ui.text_button("Try again", PickSettingCard(id)));
+    } else {
+      rows = rows.append(ui.text[Msg]("Yoto did not provide tracks for a shortcut on this card.").colored(ui.MUTED));
+    }
+  }
+  return ui.column(rows).spaced(10.0).padding(16.0).wide().tall();
 }
 
 function alarm_card_title(m: Model, id: string): string {
@@ -1090,10 +1550,30 @@ function alarm_controls(m: Model, config: api.PlayerConfig): ui.El[Msg][] {
   return [ui.card(rows).spaced(8.0).wide()];
 }
 
-function settings_panel(m: Model, player: api.Player): ui.El[Msg] {
+function settings_panel(m: Model, player: api.Player, screen: ui.Screen): ui.El[Msg] {
   let p = m.config_panel;
-  if (p.picking_alarm) {
-    return alarm_card_picker(m);
+  if let Some(picker) = p.picker {
+    match (picker) {
+      AlarmCards => {
+        return settings_card_picker(m, "Choose an alarm card");
+      },
+      SettingChoices(key) => {
+        return setting_choices(m, key);
+      },
+      ShortcutCards(_) => {
+        return settings_card_picker(m, "Choose a shortcut card");
+      },
+      ShortcutTracks(_, id) => {
+        return shortcut_tracks(m, id);
+      },
+      LightColour(key, colour) => {
+        let controls = [
+          ui.row([ui.text_button("Cancel", BackToSettings), ui.button("Use colour", UseLightColour)]).spaced(8.0),
+          ui.text[Msg](settings.label(key)).sized(24.0).weighted(700),
+        ].concat(light_colour.controls(colour, (colour: light_colour.Hsv): Msg => AdjustLightColour(colour), screen.d));
+        return ui.column(controls).spaced(8.0).padding(16.0).wide().tall().scroll("light-colour");
+      }
+    }
   }
   let actions = [ui.text_button("Back to players", CloseSettings)];
   if (!p.working && !m.busy && p.config.is_some() && p.draft.len() > 0) {
@@ -1123,7 +1603,7 @@ function settings_panel(m: Model, player: api.Player): ui.El[Msg] {
     items = items.append(ui.text_button("Cancel sign-in", Cancel));
   }
   if let Some(config) = p.config {
-    let controls = settings.controls(config, p.draft, (key: string, value: string): Msg => EditSetting(key, value)).concat(alarm_controls(m, config));
+    let controls = settings.controls(config, p.draft, m.cards, (key: string, value: string): Msg => EditSetting(key, value), (key: string): Msg => ChooseSetting(key)).concat(alarm_controls(m, config));
     items = items.append(ui.column(controls).spaced(12.0).wide().tall().scroll("settings:" + player.id));
   } else if (!p.working && !m.busy) {
     items = items.append(ui.text_button("Reload settings", OpenSettings(player)));
@@ -1178,7 +1658,7 @@ function poster(m: Model, hit: search.Hit, size: f64, caption_height: f64): ui.E
   let command = Some(api.Play(card.id));
   if (hit.track >= 0) {
     let track = card.tracks[hit.track];
-    title = track.title;
+    title = if (m.shelf.search_scope == search.CHAPTERS) { track.chapter } else { track.title };
     subtitle = card.title;
     if (track.chapter != title) {
       chapter = track.chapter;
@@ -1195,10 +1675,21 @@ function poster(m: Model, hit: search.Hit, size: f64, caption_height: f64): ui.E
   let items = [
     ui.column([art(m.shelf, card.cover, size), ui.column(caption).height(caption_height).spaced(2.0).padding_xy(6.0, 6.0).wide()]).wide().on_tap(OpenCard(card.id)).described("Tracks for " + title),
   ];
-  if (can_control(m)) {
+  let actions: ui.El[Msg][] = [];
+  if (can_play_card(m, card.id)) {
     if let Some(play) = command {
-      items = items.append(play_button(title, play));
+      actions = actions.append(play_button(title, play).padding_xy(8.0, 0.0));
     }
+  }
+  if (offline.saved(m.downloads, card.id).is_some()) {
+    actions = actions.append(ui.text[Msg]("Saved").colored(ui.MUTED).padding_xy(6.0, 0.0));
+  } else if (offline.contains(m.downloads, card.id)) {
+    actions = actions.append(ui.text[Msg]("Queued").colored(ui.MUTED).padding_xy(6.0, 0.0));
+  } else if (m.downloads.catalog.dir.len() > 0) {
+    actions = actions.append(ui.text_button("Download", Download(card.id)).padding_xy(8.0, 0.0).described("Download " + card.title));
+  }
+  if (actions.len() > 0) {
+    items = items.append(ui.row(actions).aligned(ui.CENTER).wide());
   }
   return ui.column(items).width(size).background(ui.SURFACE).rounded(10.0);
 }
@@ -1209,7 +1700,7 @@ function poster_grid(m: Model, screen: ui.Screen): ui.El[Msg] {
   let size = ((screen.width() - 32.0 - (cols - 1) as f64 * gap) / (cols as f64)).floor().max(1.0);
   let lines = if (m.shelf.query.trim().len() > 0) { 78.0 } else { 59.0 };
   let caption = 12.0 + lines * screen.font.max(1.0);
-  let actions = if (can_control(m)) { 48.0 } else { 0.0 };
+  let actions = if (can_control(m) || m.downloads.catalog.dir.len() > 0) { 48.0 } else { 0.0 };
   let count = m.shelf.hits.len();
   return ui.list(grid_name(m.shelf), (count + cols - 1) / cols, size + caption + actions + gap, (i: i32): ui.El[Msg] => {
     let tiles: ui.El[Msg][] = [];
@@ -1240,12 +1731,15 @@ function track_row(id: string, track: api.Track, ready: boolean): ui.El[Msg] {
 function card_details(m: Model, card: api.Card, screen: ui.Screen): ui.El[Msg] {
   let items: ui.El[Msg][] = [ui.text_button("Back to library", CloseCard)];
   let header = [ui.text[Msg](card.title).sized(22.0).weighted(700).clamped(3).wide()];
-  if (can_control(m)) {
+  if (can_play_card(m, card.id)) {
     header = header.append(play_button(card.title, api.Play(card.id)));
   }
+  header = header.append(ui.text_button("Play next", QueueCard(card.id)));
   if (offline.saved(m.downloads, card.id).is_some()) {
     header = header.append(ui.text_button("Saved offline", SelectTab(2)));
-  } else if (!offline.busy(m.downloads) && m.downloads.catalog.dir.len() > 0) {
+  } else if (offline.contains(m.downloads, card.id)) {
+    header = header.append(ui.text[Msg]("Download queued").colored(ui.MUTED));
+  } else if (m.downloads.catalog.dir.len() > 0) {
     header = header.append(ui.text_button("Download to phone", Download(card.id)));
   }
   let size = (screen.width() * 0.4).min(screen.height() * 0.23).min(180.0);
@@ -1259,7 +1753,7 @@ function card_details(m: Model, card: api.Card, screen: ui.Screen): ui.El[Msg] {
     return ui.column(items.append(ui.text(note).colored(ui.MUTED))).spaced(12.0).wide().tall();
   }
   let tracks = card.tracks;
-  let ready = can_control(m);
+  let ready = can_play_card(m, card.id);
   let id = card.id;
   let list = ui.list("tracks:" + id, tracks.len(), 52.0, (i: i32): ui.El[Msg] => track_row(id, tracks[i], ready));
   return ui.column(items.append(list)).spaced(12.0).wide().tall();
@@ -1271,7 +1765,7 @@ function download_row(entry: offline.Entry): ui.El[Msg] {
     label = label.append(ui.text(entry.creator).colored(ui.MUTED).clamped(1));
   }
   let title = ui.column(label).wide().on_tap(OpenDownload(entry.id)).described("Tracks for " + entry.title);
-  let play = ui.text_button("Play", PlayDownload(entry.id, 0)).described("Play " + entry.title);
+  let play = ui.text_button("Play", ResumeCard(entry.id)).described("Play " + entry.title);
   return ui.column([ui.card([ui.row([title, play]).aligned(ui.CENTER).spaced(8.0)]).wide()]).padding_xy(0.0, 4.0).wide();
 }
 
@@ -1292,7 +1786,7 @@ function download_list(m: Model): ui.El[Msg] {
       let play = ui.text_button("Play", PlayDownload(entry.id, at)).described("Play " + name);
       return ui.row([ui.text[Msg](name).clamped(2).wide(), play]).aligned(ui.CENTER);
     });
-    return ui.column([tools, title].concat(fields).append(tracks)).spaced(8.0).wide().tall();
+    return ui.column([tools, title, ui.text_button("Play next", QueueCard(entry.id))].concat(fields).append(tracks)).spaced(8.0).wide().tall();
   }
   if (offline.busy(m.downloads)) {
     let controls: ui.El[Msg][] = [ui.text_button("Cancel downloads", CancelDownload)];
@@ -1311,6 +1805,63 @@ function download_list(m: Model): ui.El[Msg] {
     fields = fields.append(ui.list("downloads", entries.len(), 94.0, (at: i32): ui.El[Msg] => download_row(entries[at])));
   }
   return ui.column(fields).spaced(8.0).wide().tall();
+}
+
+function playback_queue(m: Model): ui.El[Msg] {
+  let tools = m.playback_tools;
+  let rows = phone_controls(m.phone);
+  if let phone.Playing | phone.Paused = m.phone.phase {
+    rows = rows.append(ui.text_button("Bookmark this spot", BookmarkHere));
+  }
+  let minutes = ((tools.sleep_at - monotonic_ns()).max(0i64) + 59999999999i64) / 60000000000i64;
+  let timer = if (minutes > 0i64) { "Phone sleep timer · " + minutes.to_string() + " min left" } else { "Phone sleep timer" };
+  rows = rows.append(ui.card([
+    ui.text[Msg](timer).sized(18.0).weighted(650),
+    ui.row([ui.text_button("15 min", SetSleep(15)), ui.text_button("30 min", SetSleep(30)), ui.text_button("60 min", SetSleep(60)), ui.text_button("Off", SetSleep(0))]),
+  ]).wide());
+  if (tools.saved.marks.len() > 0) {
+    rows = rows.append(ui.text[Msg]("Continue listening").sized(18.0).weighted(650));
+    for mark in tools.saved.marks.take(4) {
+      rows = rows.append(ui.text_button(mark.item.title, ResumeCard(mark.item.id)).described("Resume " + mark.item.title));
+    }
+  }
+  if (tools.saved.pins.len() > 0) {
+    rows = rows.append(ui.text[Msg]("Bookmarks").sized(18.0).weighted(650));
+    for mark in tools.saved.pins {
+      let resume = ui.text_button(mark.item.title, ResumeBookmark(mark)).wide().described("Play bookmark for " + mark.item.title);
+      let remove = ui.text_button("Remove", RemoveBookmark(mark.item.id)).described("Remove bookmark for " + mark.item.title);
+      rows = rows.append(ui.row([resume, remove]).aligned(ui.CENTER));
+    }
+  }
+  rows = rows.append(ui.text[Msg]("Up next").sized(18.0).weighted(650));
+  if (tools.saved.queue.len() == 0) {
+    rows = rows.append(ui.text[Msg]("Use Play next on a card to add it here.").colored(ui.MUTED));
+  } else {
+    rows = rows.append(ui.button("Play queue", StartQueue));
+    for i in 0..tools.saved.queue.len() {
+      let item = tools.saved.queue[i];
+      let remove = ui.text_button("Remove", DropQueued(i)).described("Remove " + item.title + " from queue");
+      rows = rows.append(ui.row([ui.text[Msg](item.title).clamped(2).wide(), remove]).aligned(ui.CENTER));
+    }
+  }
+  rows = rows.append(ui.text[Msg]("Ready for the trip").sized(18.0).weighted(650));
+  if (tools.trip_running) {
+    rows = rows.append(ui.text[Msg]("Checking saved tracks…").colored(ui.MUTED));
+  } else {
+    let check = if (tools.saved.queue.len() > 0) { "Check queued cards" } else { "Check downloaded cards" };
+    rows = rows.append(ui.outlined_button(check, CheckTrip));
+  }
+  for item in tools.trip {
+    let status = "No complete download";
+    if (item.expected > 0) {
+      status = if (item.present == item.expected) { "Ready offline" } else { item.present.to_string() + "/" + item.expected.to_string() + " audio files found" };
+    }
+    rows = rows.append(ui.row([ui.text[Msg](item.title).wide().clamped(2), ui.text[Msg](status).colored(ui.MUTED).clamped(2)]).aligned(ui.CENTER).spaced(8.0));
+  }
+  if (tools.note.len() > 0) {
+    rows = rows.append(ui.text[Msg](tools.note).colored(ui.MUTED));
+  }
+  return ui.column(rows).spaced(10.0).wide().tall().scroll("playback-queue");
 }
 
 function library_status(m: Model, has_matches: boolean): string {
@@ -1349,15 +1900,22 @@ function card_list(m: Model, screen: ui.Screen): ui.El[Msg] {
     }
   }
   let shelf = m.shelf;
+  let downloaded = ui.row([
+    ui.checkbox(shelf.downloaded_only, "Downloaded only", DownloadedOnly),
+    ui.text[Msg]("Downloaded only").on_tap(DownloadedOnly),
+  ]).aligned(ui.CENTER);
+  let searching = shelf.query.trim().len() > 0;
   let fields: ui.El[Msg][] = [
     ui.field("library-search", shelf.query, "Search titles, tracks and episodes").on_edit((text: string): Msg => Search(text)),
     ui.tabs(["All", "Cards", "MYO", "Podcasts", "Radio"], shelf.filter, (at: i32): Msg => Filter(at)),
-    ui.text(target).colored(ui.MUTED).clamped(2),
   ];
+  if (searching) {
+    fields = fields.append(ui.tabs(["Matches", "Titles", "Chapters", "Tracks"], shelf.search_scope, (at: i32): Msg => SearchScope(at)));
+  }
+  fields = fields.append(ui.row([ui.text[Msg](target).colored(ui.MUTED).clamped(2).wide(), downloaded]).aligned(ui.CENTER).spaced(6.0));
   if (m.on_phone) {
     fields = fields.concat(phone_controls(m.phone));
   }
-  let searching = shelf.query.trim().len() > 0;
   let has_matches = searching && shelf.hits.len() > 0;
   let status = if (searching) { library_status(m, has_matches) } else { "" };
   if (shelf.note.len() > 0 && !has_matches) {
@@ -1369,7 +1927,7 @@ function card_list(m: Model, screen: ui.Screen): ui.El[Msg] {
   if (shelf.hits.len() > 0) {
     fields = fields.append(poster_grid(m, screen));
   } else if (m.library_loaded) {
-    let hint = if (searching) { "No matches in the current index." } else { "No titles in this view." };
+    let hint = if (shelf.downloaded_only) { "No downloaded cards in this view." } else if (searching) { "No matches in the current index." } else { "No titles in this view." };
     fields = fields.append(ui.text(hint).colored(ui.MUTED));
   }
   return ui.column(fields).spaced(8.0).wide().tall();
@@ -1378,18 +1936,23 @@ function card_list(m: Model, screen: ui.Screen): ui.El[Msg] {
 pub function view(m: Model, screen: ui.Screen): ui.El[Msg] {
   let title = ui.text[Msg]("Story Deck").sized(30.0).weighted(700).wide();
   if (m.token.len() == 0) {
-    if (m.tab == 2) {
+    if (m.tab == 2 || m.tab == 3) {
       let header = ui.row([title, ui.text_button("Sign-in", SelectTab(0))]).aligned(ui.CENTER);
-      return ui.column([header, ui.text[Msg]("Downloads").sized(24.0).weighted(700), download_list(m)]).spaced(14.0).padding(16.0).wide().tall();
+      let tabs = ui.tabs(["Downloads", "Queue"], m.tab - 2, (at: i32): Msg => SelectTab(at + 2));
+      let body = if (m.tab == 3) { playback_queue(m) } else { download_list(m) };
+      return ui.column([header, tabs, body]).spaced(14.0).padding(16.0).wide().tall();
     }
     let items = [title, sign_in(m)];
     if (m.downloads.catalog.entries.len() > 0) {
       items = items.append(ui.text_button("Downloads", SelectTab(2)));
     }
+    if (m.playback_tools.saved.queue.len() > 0 || m.playback_tools.saved.marks.len() > 0 || m.playback_tools.saved.pins.len() > 0) {
+      items = items.append(ui.text_button("Queue", SelectTab(3)));
+    }
     return ui.column(items).spaced(20.0).padding(20.0).wide().tall().scroll("connection");
   }
   if let Some(player) = m.config_panel.device {
-    return settings_panel(m, player);
+    return settings_panel(m, player, screen);
   }
   let top: ui.El[Msg][] = [title];
   if (!m.busy) {
@@ -1400,8 +1963,10 @@ pub function view(m: Model, screen: ui.Screen): ui.El[Msg] {
     body = card_list(m, screen);
   } else if (m.tab == 2) {
     body = download_list(m);
+  } else if (m.tab == 3) {
+    body = playback_queue(m);
   }
-  let items = [ui.row(top).aligned(ui.CENTER), ui.tabs(["Players", "Library", "Downloads"], m.tab, (tab: i32): Msg => SelectTab(tab))];
+  let items = [ui.row(top).aligned(ui.CENTER), ui.tabs(["Players", "Library", "Downloads", "Queue"], m.tab, (tab: i32): Msg => SelectTab(tab))];
   if (m.note.len() > 0) {
     items = items.append(ui.text(m.note).colored(ui.MUTED));
   }
@@ -1427,8 +1992,15 @@ function wait(m: Model): i32 {
   if (m.library_loaded && !m.busy && !m.background_busy && m.shelf.paused.len() == 0 && m.shelf.next < m.cards.len()) {
     return 400;
   }
-  if (offline.checking(m.downloads)) {
-    return 750;
+  let offline_wait = offline.work_interval(m.downloads);
+  if (offline_wait >= 0) {
+    return offline_wait;
+  }
+  if (m.playback_tools.sleep_at > 0i64) {
+    return 500;
+  }
+  if let phone.Playing = m.phone.phase {
+    return 2000;
   }
   return -1;
 }
@@ -1438,7 +2010,7 @@ function system(event: android.Event): Option[Msg] {
     return None;
   };
   match (player.event(event)) {
-    Some(player.Prepared) | Some(player.Completed) | Some(player.Failed(_, _)) => {
+    Some(player.Prepared) | Some(player.Completed) | Some(player.Failed(_, _)) | Some(player.Seeked) => {
       return Some(PhoneEvent(tagged, arg));
     },
     _ => {
@@ -1447,11 +2019,11 @@ function system(event: android.Event): Option[Msg] {
   }
 }
 
-pub function program(open_browser: (string) => boolean, decode: (u8[]) => Option[draw.Image], persist: (Option[api.Session]) => boolean, output: phone.Output, disk: offline.Output): ui.Program[Model, Msg] {
-  return ui.program(view, update).with_visible(visible_posters).with_system(system).with_effects((m: Model): Model => effects(m, open_browser, decode, persist, output, disk)).with_jobs(start_job).with_tick(wait, Msg.Tick).with_back((m: Model): Option[Msg] => {
+pub function program(open_browser: (string) => boolean, decode: (u8[]) => Option[draw.Image], persist: (Option[api.Session]) => boolean, output: phone.Output, disk: offline.Output, store: (listening.Saved) => boolean): ui.Program[Model, Msg] {
+  return ui.program(view, update).with_visible(visible_posters).with_system(system).with_effects((m: Model): Model => effects(m, open_browser, decode, persist, output, disk, store)).with_jobs(start_job).with_tick(wait, Msg.Tick).with_back((m: Model): Option[Msg] => {
     if (m.config_panel.device.is_some()) {
-      if (m.config_panel.picking_alarm) {
-        return Some(SetAlarmCard(""));
+      if (m.config_panel.picker.is_some()) {
+        return Some(BackToSettings);
       }
       return Some(CloseSettings);
     }
@@ -1463,8 +2035,9 @@ pub function program(open_browser: (string) => boolean, decode: (u8[]) => Option
     }
     return None;
   }).with_close((own m: Model): own Model => {
-    phone.close(m.phone, output);
-    return close_app(m, persist);
+    let saved = save_listening(m, output, store, true);
+    phone.close(saved.phone, output);
+    return close_app(Model { ...saved }, persist);
   }).with_state(
     (m: Model, k: kv.Store): kv.Store => k.set("client_id", m.client),
     (own m: Model, k: kv.Store): own Model => Model { ...m, client: if (m.refresh.len() > 0) { m.client } else { k.get("client_id").unwrap_or(m.client) } },
