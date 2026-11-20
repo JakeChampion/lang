@@ -1643,6 +1643,12 @@ function step(cats: i32[], xs: i32[], set: i64): i32[] {
 
 // The positions of `xs` and `ys`, in order, each one time.
 function either(xs: i32[], ys: i32[]): i32[] {
+  if (xs.len() == 0) {
+    return ys;
+  }
+  if (ys.len() == 0) {
+    return xs;
+  }
   let out: i32[] = [];
   let (i, j) = (0, 0);
   while (i < xs.len() || j < ys.len()) {
@@ -1667,13 +1673,21 @@ function optional(cats: i32[], xs: i32[], set: i64): i32[] {
 
 // The positions after any count of characters of `set`.
 function any_of(cats: i32[], xs: i32[], set: i64): i32[] {
-  let all = xs;
-  let next = xs;
-  while (next.len() > 0) {
-    next = step(cats, next, set);
-    all = either(all, next);
+  let out: i32[] = [];
+  let end = -1;
+  for start in xs {
+    // An earlier match already reached every position through end.
+    if (start <= end) {
+      continue;
+    }
+    end = start;
+    out = out.append(end);
+    while (end < cats.len() && (set >> cats[end] as i64 & 1i64) != 0i64) {
+      end += 1;
+      out = out.append(end);
+    }
   }
-  return all;
+  return out;
 }
 
 function joiner_bits(): i64 {
@@ -1736,6 +1750,9 @@ function halant_or_matra_group(cats: i32[], xs: i32[]): i32[] {
 
 // complex_syllable_tail = (halant_group cn)* CM? halant_or_matra_group syllable_tail
 function complex_tail(cats: i32[], xs: i32[]): i32[] {
+  if (xs.len() == 0) {
+    return xs;
+  }
   let all = xs;
   let next = xs;
   while (next.len() > 0) {
