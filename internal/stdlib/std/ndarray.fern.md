@@ -12,6 +12,8 @@ A view can have different strides from a packed row-major array. Operations that
 
 Use `try_from_flat` and `try_reshape` for caller-supplied dimensions. They return `None` for a negative extent, an overflowing element count, or a count that differs from the data length. A successful reshape preserves logical element order, including for a transposed view. `try_broadcast_to` returns `None` if the target has fewer axes, an invalid count, or a trailing extent incompatible with the source.
 
+`try_broadcast_shape` checks whether two shapes have a representable common shape. `try_zip_with` applies an elementwise operation to that shape and returns `None` before invoking the callback if broadcasting fails.
+
 ## Executable example
 
 ```fern test name=std-ndarray-example
@@ -453,8 +455,17 @@ function same_shape(x: i32[], y: i32[]): boolean {
 ```fern
 <<12 pub function broadcast_shape(x: i32[], y: i32[]): i32[]>>=
 pub function broadcast_shape(x: i32[], y: i32[]): i32[] {
-  check_shape(x);
-  check_shape(y);
+  match (try_broadcast_shape(x, y)) {
+    Some(shape) => { return shape; },
+    None => { shape_error(); }
+  }
+  return [];
+}
+
+pub function try_broadcast_shape(x: i32[], y: i32[]): Option[i32[]] {
+  if (shape_count(x) < 0 || shape_count(y) < 0) {
+    return None;
+  }
   let rank = x.len();
   if (y.len() > rank) {
     rank = y.len();
@@ -475,12 +486,14 @@ pub function broadcast_shape(x: i32[], y: i32[]): i32[] {
     } else if (ex == 1) {
       out = out.with(k, ey);
     } else {
-      shape_error();
+      return None;
     }
     k += 1;
   }
-  check_shape(out);
-  return out;
+  if (shape_count(out) < 0) {
+    return None;
+  }
+  return Some(out);
 }
 
 pub function (a: NdArray[T]) try_broadcast_to(shape: i32[]): Option[NdArray[T]] {
@@ -510,7 +523,17 @@ pub function (a: NdArray[T]) broadcast_to(shape: i32[]): NdArray[T] {
 }
 
 pub function (a: NdArray[T]) zip_with[U, V](b: NdArray[U], f: (T, U) => V): NdArray[V] {
-  let shape = broadcast_shape(a.shape, b.shape);
+  return zip_to_shape(a, b, broadcast_shape(a.shape, b.shape), f);
+}
+
+pub function (a: NdArray[T]) try_zip_with[U, V](b: NdArray[U], f: (T, U) => V): Option[NdArray[V]] {
+  match (try_broadcast_shape(a.shape, b.shape)) {
+    Some(shape) => { return Some(zip_to_shape(a, b, shape, f)); },
+    None => { return None; }
+  }
+}
+
+function zip_to_shape[T, U, V](a: NdArray[T], b: NdArray[U], shape: i32[], f: (T, U) => V): NdArray[V] {
   let x = a;
   let y = b;
   if (!same_shape(a.shape, shape)) {

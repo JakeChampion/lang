@@ -67,6 +67,28 @@ function test_checked_shapes(): test.TestOutcome {
   return test.assert_true(flat.rank() == 1 && flat.get_unchecked([1]) == 4);
 }
 
+function unexpected_zip_element(x: i32, y: i32): i32 {
+  exit(1);
+  return 0;
+}
+
+function test_checked_broadcast_shape_and_zip(): test.TestOutcome {
+  if (ndarray.try_broadcast_shape([50000, 1], [1, 50000]).is_some() || ndarray.try_broadcast_shape([-1], [1]).is_some()) {
+    return test.fail("invalid or overflowing broadcast shape");
+  }
+  let a = grid();
+  let row = ndarray.from_flat([10, 11, 12, 13], [4]);
+  let result = a.try_zip_with(row, (x: i32, y: i32): i32 => x + y).unwrap_or(row);
+  if (result.rank() != 2 || result.get_unchecked([2, 3]) != 24) {
+    return test.fail("broadcast zip");
+  }
+  let empty = ndarray.from_flat([] as i32[], [0, 4]);
+  if (empty.try_zip_with(row, unexpected_zip_element).is_none()) {
+    return test.fail("empty broadcast");
+  }
+  return test.assert_true(a.transpose().try_zip_with(row, unexpected_zip_element).is_none());
+}
+
 function test_transpose_swaps_indices(): test.TestOutcome {
   let t = grid().transpose();
   if (t.shape()[0] != 4 || t.shape()[1] != 3) {
@@ -387,6 +409,7 @@ function main(): i32 {
   r = r.it("from_flat indexes row-major", test_from_flat_indexes_row_major);
   r = r.it("get is None out of range", test_get_is_none_out_of_range);
   r = r.it("checked construction and reshape", test_checked_shapes);
+  r = r.it("checked broadcast shape and zip", test_checked_broadcast_shape_and_zip);
   r = r.it("transpose swaps indices", test_transpose_swaps_indices);
   r = r.it("permute is the general transpose", test_permute_is_the_general_transpose);
   r = r.it("reverse flips one axis", test_reverse_flips_one_axis);
