@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -268,13 +269,19 @@ func elementAttr(t *testing.T, man []byte, marker uint32, id uint32) (uint32, bo
 			}
 		case 0x102:
 			attrs := map[uint32]uint32{}
+			var ids []uint32
 			for k := 0; k < int(le.Uint16(man[off+28:])); k++ {
 				a := off + 36 + 20*k
 				if name := int(le.Uint32(man[a+4:])); name < len(resmap) {
+					ids = append(ids, resmap[name])
 					attrs[resmap[name]] = le.Uint32(man[a+16:])
 				}
 			}
 			if _, ok := attrs[marker]; ok {
+				// Android looks up framework attributes in resource ID order.
+				if !slices.IsSorted(ids) {
+					t.Fatalf("manifest attributes out of resource ID order: %#x", ids)
+				}
 				v, ok := attrs[id]
 				return v, ok
 			}
