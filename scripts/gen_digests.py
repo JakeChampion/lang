@@ -266,7 +266,10 @@ def emit_hw_blocks(p, tag, struct, nwords, block):
         p(f"    words = __put_le32(words, {4 * i}, st.h{i});")
     p(f"    let out = __{tag}_hw_blocks(words, bs[from:from + nblocks * {block}]);")
     fields = ", ".join(f"h{i}: __get_le32(out, {4 * i})" for i in range(nwords))
-    p(f"    return {struct} {{ ...st, {fields} }};")
+    p(f"    let next = {struct} {{ ...st, {fields} }};")
+    p("    erase(words);")
+    p("    erase(out);")
+    p("    return next;")
     p("}")
     p("")
 
