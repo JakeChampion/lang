@@ -479,9 +479,9 @@ function forward_empty_joins(g0: ssa.SFunc, stack_phi_joins: boolean): Forwarded
   let g = g0;
   let changed = 0;
   let dom = ssadeps.Dom { pre: [], post: [], idom: [], by_clock: [] };
+  let at = ssa.block_positions(g);
   for round in 0..64 {
-    let at = ssa.block_positions(g);
-    let found = first_forwardable(g, at, ssa.use_counts(g), stack_phi_joins, dom);
+    let found = first_forwardable(g, at, stack_phi_joins, dom);
     dom = found.dom;
     let yi = found.at;
     if (yi < 0) {
@@ -500,12 +500,21 @@ function forward_empty_joins(g0: ssa.SFunc, stack_phi_joins: boolean): Forwarded
 // A block with phis is not forwarded into a loop header it is the latch of.
 struct Forwardable { at: i32, dom: ssadeps.Dom }
 
-function first_forwardable(g: ssa.SFunc, at: i32[], uses: i32[], stack_phi_joins: boolean, own dom: ssadeps.Dom): Forwardable {
+function first_forwardable(g: ssa.SFunc, at: i32[], stack_phi_joins: boolean, own dom: ssadeps.Dom): Forwardable {
+  let uses: i32[] = [];
   for yi in 0..g.blocks.len() {
-    if (forwardable(g, at, uses, yi, stack_phi_joins)) {
+    if (forwardable(g, at, yi, stack_phi_joins)) {
       let y = g.blocks[yi];
       if (y.insts.len() == 0) {
         return Forwardable { at: yi, dom: dom };
+      }
+      // Empty blocks need no value-use proof. Count uses only when a
+      // candidate carries phis, and refresh after forwarding changes edges.
+      if (uses.len() == 0) {
+        uses = ssa.use_counts(g);
+      }
+      if (!phis_read_on_edge(y, g.blocks[at[y.term.target]], uses)) {
+        continue;
       }
       if (dom.pre.len() == 0) {
         dom = ssadeps.dominates(g);
@@ -518,7 +527,7 @@ function first_forwardable(g: ssa.SFunc, at: i32[], uses: i32[], stack_phi_joins
   return Forwardable { at: -1, dom: dom };
 }
 
-function forwardable(g: ssa.SFunc, at: i32[], uses: i32[], yi: i32, stack_phi_joins: boolean): boolean {
+function forwardable(g: ssa.SFunc, at: i32[], yi: i32, stack_phi_joins: boolean): boolean {
   let y = g.blocks[yi];
   if (y.term.kind_tag != ssa.TERM_BR || y.preds.len() == 0 || y.id == g.entry) {
     return false;
@@ -528,7 +537,10 @@ function forwardable(g: ssa.SFunc, at: i32[], uses: i32[], yi: i32, stack_phi_jo
     return false;
   }
   let xb = g.blocks[at[x]];
-  if (!has_phi(xb) || util.index_of_i32(xb.preds, y.id) < 0 || !phis_read_on_edge(y, xb, uses)) {
+  if (y.insts.len() > 0 && y.insts[0].kind_tag != ssa.PHI) {
+    return false;
+  }
+  if (!has_phi(xb) || util.index_of_i32(xb.preds, y.id) < 0) {
     return false;
   }
   if (!join_cost_allows(g, at, yi, at[x], stack_phi_joins)) {
