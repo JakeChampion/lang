@@ -181,7 +181,7 @@ struct Page { screen: i32, title: string, scroll: i32, rows: i32[], items: plex.
 // row across and 2 when it moves the screen up or down. `xs` and `ys` are
 // its recent positions, for the speed of a fling. `caught` is true when the
 // finger stopped a fling, and then it is no tap.
-struct Press { active: boolean, x0: f32, y0: f32, x: f32, y: f32, axis: i32, group: string, scroll0: i32, row0: i32, xs: motion.Sample[], ys: motion.Sample[], caught: boolean }
+struct Press { active: boolean, down_ms: i64, x0: f32, y0: f32, x: f32, y: f32, axis: i32, group: string, scroll0: i32, row0: i32, xs: motion.Sample[], ys: motion.Sample[], caught: boolean }
 
 // A list that moves on after the finger leaves: "list" for the screen, or
 // the group of a row of posters. The group is "" when nothing moves.
@@ -456,7 +456,7 @@ function no_play(): Play {
 }
 
 function no_press(): Press {
-  return Press { active: false, x0: 0.0, y0: 0.0, x: 0.0, y: 0.0, axis: 0, group: "", scroll0: 0, row0: 0, xs: [], ys: [], caught: false };
+  return Press { active: false, down_ms: 0i64, x0: 0.0, y0: 0.0, x: 0.0, y: 0.0, axis: 0, group: "", scroll0: 0, row0: 0, xs: [], ys: [], caught: false };
 }
 
 // The value of `key` in the lines of `key=value` of `text`, or "".
@@ -1780,10 +1780,10 @@ const HOLD_MS: i64 = 500i64;
 // The time that the finger of a press that may hold came down, or -1.
 function hold_from(s: App): i64 {
   let p = s.press;
-  if (!p.active || p.axis != 0 || p.caught || p.xs.len() == 0 || s.menu.key.len() > 0 || s.screen == ui.PLAYER) {
+  if (!p.active || p.axis != 0 || p.caught || s.menu.key.len() > 0 || s.screen == ui.PLAYER) {
     return -1i64;
   }
-  return p.xs[0].t / 1000000i64;
+  return p.down_ms;
 }
 
 // Opens the menu of the poster under a finger that rests there for
@@ -3788,13 +3788,14 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
   let m = ui.metrics(s.w, s.h, s.top, s.bottom);
   let slop = (8 * m.u) as f32;
   let p = s.press;
-  let t_ns = s.dev.mono_ms() * 1000000i64;
+  let now = s.dev.mono_ms();
+  let t_ns = now * 1000000i64;
   if (action == 0) {
     let group = scene.group_at(s.nodes, x as i32, y as i32);
     let xs = [motion.Sample { t: t_ns, y: x as f64 }];
     let ys = [motion.Sample { t: t_ns, y: y as f64 }];
     let caught = s.fling.group.len() > 0;
-    let pressed = Press { active: true, x0: x, y0: y, x: x, y: y, axis: 0, group: group, scroll0: s.scroll, row0: row_offset(s.rows, row_index(group)), xs: xs, ys: ys, caught: caught };
+    let pressed = Press { active: true, down_ms: now, x0: x, y0: y, x: x, y: y, axis: 0, group: group, scroll0: s.scroll, row0: row_offset(s.rows, row_index(group)), xs: xs, ys: ys, caught: caught };
     if (group == "seek" && s.screen == ui.PLAYER) {
       return scrub(App { ...s, fling: no_fling(), press: pressed }, x as i32, false);
     }
