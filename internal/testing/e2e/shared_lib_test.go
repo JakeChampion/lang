@@ -1170,7 +1170,7 @@ int main(int c,char**v){
 
 // The static calls take the class, the method and the jvalues at entries
 // 116, 131 and 143. jni.string_of reads the modified UTF-8 of a string, keeps
-// a multibyte character, gives "" for null, and releases the chars.
+// NUL and supplementary scalars, replaces unpaired surrogates, and releases the chars.
 func TestStdJNIStaticCallsAndStringOf(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -1192,7 +1192,7 @@ function p_void(env: usize, cls: usize, j: usize, k: usize, m: usize): i32 {
 }
 function p_str(env: usize, cls: usize, j: usize, s: usize, m: usize): i32 {
     let text: string = jni.string_of(j, s);
-    if (text != "h\u{e9}llo" || jni.string_of(j, 0 as usize) != "") {
+    if (text != "h\u{e9}llo\x00🌿�X�" || jni.string_of(j, 0 as usize) != "") {
         return 0 - text.len();
     }
     return text.len();
@@ -1210,8 +1210,10 @@ static long g_class, g_method, g_void, g_released;
 static long cso(void*e,long k,long m,long long* a){(void)e; g_class=k; g_method=m; return (long)(a[0]*a[1]); }
 static long csi(void*e,long k,long m,long long* a){(void)e;(void)k;(void)m; return (long)(a[0]+a[1]); }
 static long csv(void*e,long k,long m,long long* a){(void)e;(void)k;(void)m; g_void=(long)a[0]; return 0; }
-static const char text[] = "h\xc3\xa9llo";
-static long sul(void*e,long s){(void)e;(void)s; return 6; }
+static const char text[] = "h\xc3\xa9llo" "\xc0\x80"    /* NUL */
+                           "\xed\xa0\xbc\xed\xbc\xbf"       /* U+1F33F */
+                           "\xed\xa0\x80" "X" "\xed\xb0\x80"; /* unpaired surrogates */
+static long sul(void*e,long s){(void)e;(void)s; return sizeof(text)-1; }
 static long suc(void*e,long s,long c){(void)e;(void)s;(void)c; return (long)text; }
 static long rsu(void*e,long s,long c){(void)e;(void)s; if(c==(long)text) g_released++; return 0; }
 int main(int c,char**v){
@@ -1223,7 +1225,7 @@ int main(int c,char**v){
   ((int(*)(long,long,long,long,long))dlsym(h,"p_void"))(0,0,L,1,2);
   if(g_void != 9) return 3;
   int n=((int(*)(long,long,long,long,long))dlsym(h,"p_str"))(0,0,L,1234,0);
-  if(n != 6) { fprintf(stderr,"string_of: %d\n",n); return 4; }
+  if(n != 18) { fprintf(stderr,"string_of: %d\n",n); return 4; }
   if(g_released != 1) return 5;
   return 42;
 }`

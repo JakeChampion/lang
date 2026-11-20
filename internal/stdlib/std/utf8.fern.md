@@ -337,6 +337,59 @@ pub function from_bytes(b: [u8]): Result[string, Utf8Error] {
   return Err(Utf8Error { offset: valid });
 }
 
+// Returns the ten payload bits of a three-byte UTF-16 surrogate, or -1.
+function surrogate_bits(bytes: [u8], i: i32, prefix: i32): i32 {
+  if (bytes.len() - i < 3 || bytes[i] != 0xed as u8) {
+    return -1;
+  }
+  let middle = bytes[i + 1] as i32;
+  let last = bytes[i + 2] as i32;
+  if ((middle & 0xf0) != prefix || (last & 0xc0) != 0x80) {
+    return -1;
+  }
+  return (middle & 15) << 6 | last & 63;
+}
+
+// Java modified UTF-8 encodes NUL in two bytes and a supplementary
+// scalar as two three-byte surrogate units. Leave other bytes for the
+// caller's UTF-8 validator. A Java string can contain an unpaired
+// surrogate. Replace it for lossy conversion or leave it for rejection.
+pub(package) function normalize_modified(bytes: [u8], replace_unpaired: boolean): u8[] {
+  let out: u8[] = [];
+  let i = 0;
+  while (i < bytes.len()) {
+    let b = bytes[i];
+    if (b == 0xc0 as u8 && i + 1 < bytes.len() && bytes[i + 1] == 0x80 as u8) {
+      out = out.append(0u8);
+      i += 2;
+      continue;
+    }
+    if (b == 0xed as u8) {
+      let high = surrogate_bits(bytes, i, 0xa0);
+      if (high >= 0) {
+        let low = surrogate_bits(bytes, i + 3, 0xb0);
+        if (low >= 0) {
+          let cp = 0x10000 + (high << 10 | low);
+          out = out.append((0xf0 | cp >> 18) as u8);
+          out = out.append((0x80 | cp >> 12 & 63) as u8);
+          out = out.append((0x80 | cp >> 6 & 63) as u8);
+          out = out.append((0x80 | cp & 63) as u8);
+          i += 6;
+          continue;
+        }
+      }
+      if (replace_unpaired && (high >= 0 || surrogate_bits(bytes, i, 0xb0) >= 0)) {
+        out = out.append(0xef as u8).append(0xbf as u8).append(0xbd as u8);
+        i += 3;
+        continue;
+      }
+    }
+    out = out.append(b);
+    i += 1;
+  }
+  return out;
+}
+
 pub function from_bytes_lossy(b: [u8]): string {
   let s = "";
   unsafe {
