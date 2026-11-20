@@ -1102,42 +1102,47 @@ pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[
 
 // The program's functions in declaration order, indexed by the name a call
 // uses: the declared name, except that a Map `__iterator` is `iter`.
+// `iterator_decls` keeps every declaration spelled `__iterator` in source order.
 // `receivers` holds the runtime_receiver_name of each declaration, `cells`
 // its body_needs_cells, and `cleanups` the actions for a try exit.
 // `receiver_args` holds the receiver argument names to check for const bindings.
 // `plain` is true for a function with no receiver whose name no builtin takes.
-pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex, receivers: string[], receiver_args: string[][], cells: boolean[], cleanups: ast.Stmt[][], plain: boolean[] }
+pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex, iterator_decls: i32[], receivers: string[], receiver_args: string[][], cells: boolean[], cleanups: ast.Stmt[][], plain: boolean[] }
 
 function funcs_of(decls: parser.FuncDecl[]): Funcs {
   let names: string[] = [];
+  let iterator_decls: i32[] = [];
   let receivers: string[] = [];
   let receiver_args: string[][] = [];
   let cleanups: ast.Stmt[][] = [];
   let cells: boolean[] = [];
   let plain: boolean[] = [];
   for fd in decls {
-    names = names.append(runtime_method_name(fd));
-    receivers = receivers.append(runtime_receiver_name(fd.receiver_type));
+    let receiver = runtime_receiver_name(fd.receiver_type);
+    let name = fd.name;
+    if (name == "__iterator") {
+      iterator_decls = iterator_decls.append(names.len());
+      if (receiver == "Map") {
+        name = "iter";
+      }
+    }
+    names = names.append(name);
+    receivers = receivers.append(receiver);
     receiver_args = receiver_args.append(receiver_arg_names(fd));
     cells = cells.append(body_needs_cells(fd.body));
     cleanups = cleanups.append(parser.try_cleanup(fd.body));
     plain = plain.append(fd.receiver_type.len() == 0 && !builtin_takes_name(fd.name));
   }
-  return Funcs { decls: decls, runtime_names: util.name_index(names), receivers: receivers, receiver_args: receiver_args, cells: cells, cleanups: cleanups, plain: plain };
+  return Funcs { decls: decls, runtime_names: util.name_index(names), iterator_decls: iterator_decls, receivers: receivers, receiver_args: receiver_args, cells: cells, cleanups: cleanups, plain: plain };
 }
 
 // The positions of the functions that a call of `name` can reach, in
 // declaration order: those declared or called as `name`.
 function (f: Funcs) named(name: string): i32[] {
-  let out: i32[] = [];
   if (name == "__iterator") {
-    for k in 0..f.decls.len() {
-      if (f.decls[k].name == name) {
-        out = out.append(k);
-      }
-    }
-    return out;
+    return f.iterator_decls;
   }
+  let out: i32[] = [];
   let i = f.runtime_names.chain(name);
   while (i >= 0) {
     if (f.runtime_names.names[i] == name) {
@@ -6791,13 +6796,6 @@ function value_type_name(v: Value): string {
       return "";
     }
   }
-}
-
-function runtime_method_name(fd: parser.FuncDecl): string {
-  if (fd.name == "__iterator" && runtime_receiver_name(fd.receiver_type) == "Map") {
-    return "iter";
-  }
-  return fd.name;
 }
 
 function receiver_method_index(funcs: Funcs, candidates: i32[], recv_type: string): i32 {
