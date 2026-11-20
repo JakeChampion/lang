@@ -139,7 +139,7 @@ function manager_of(ctx: usize): usize {
       let cleared = jni.exception_clear(e);
       return 0 as usize;
     }
-    defer jni.call1(e, 20, 0 as usize); // PopLocalFrame
+    defer jni.call1(e, 20, 0 as usize);  // PopLocalFrame
     let Ok(c) = bindings.context_class(e) else {
       return 0 as usize;
     };
