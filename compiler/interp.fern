@@ -353,7 +353,7 @@ function coerce_to_declared(val: Value, type_name: string): Value {
       return val;
     },
     VArr(a) => {
-      if (a.elem.len() > 0 && !a.view && name_ends_with(type_name, "[]")) {
+      if (a.elem.len() > 0 && (if (a.view) { parser.spelling_is_view(type_name) } else { name_ends_with(type_name, "[]") })) {
         return val;
       }
       let ty = parser.parse_type_ref(type_name);

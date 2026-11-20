@@ -182,7 +182,7 @@ unrolling a counted loop, fusing a pipeline, a
 byte-copy loop, an ndarray kernel, reuse in one function's rc lowering, and
 each of the six cleanups after inlining (`fold-constants`, `thread`, `hoist`,
 `sink`, `cse` and `prune`). The decision's key is the pass
-and the function's name. `FERN_OPT_TRACE=1` lists every decision with its key's
+and the function's name. `FERN_DEBUG_OPT_TRACE=1` lists every decision with its key's
 hash, and `FERN_OPT_BISECT=h` declines each one hashing below `h`. Declining
 a decision leaves the function as it was, so the answer must not change.
 When a differential leg fails a seed, or the typed lowering refuses one, it

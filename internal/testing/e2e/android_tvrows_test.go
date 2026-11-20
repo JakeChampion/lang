@@ -44,6 +44,7 @@ pub function keep_one(ctx: usize): i32 {
 
 static int frames, globals, next = 1000, nnames, nstrings, tv = 1, inserts = 1;
 static const char *reject_key;
+static int reject_delete;
 static uintptr_t pending;
 static int fail_global_after = -1;
 static char log_[16384];
@@ -106,7 +107,11 @@ static uintptr_t static_object(uintptr_t e, uintptr_t cls, uintptr_t id, const u
 static uintptr_t static_void(uintptr_t e, uintptr_t cls, uintptr_t id, const uint64_t *args) { note_call(name_of(id), args, arities[id - 1]); return 0; }
 // A jboolean leaves the bits above the low 8 of the register undefined.
 static uintptr_t bcall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) { note_call(name_of(id), args, arities[id - 1]); return tv ? 0x301 : 0x200; }
-static int32_t icall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) { note_call(name_of(id), args, arities[id - 1]); return 1; }
+static int32_t icall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
+  note_call(name_of(id), args, arities[id - 1]);
+  if (reject_delete && !strcmp(name_of(id), "delete")) pending = fresh();
+  return 0;
+}
 static uintptr_t vcall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
   note_call(name_of(id), args, arities[id - 1]);
   if (reject_key && !strcmp(name_of(id), "put") && !strcmp(string_of(args[0]), reject_key)) pending = fresh();
@@ -232,6 +237,13 @@ int main(int argc, char **argv) {
   log_[0] = 0;
   require(keep_one((uintptr_t)ctx) == 0 && !has("delete(") && !has("insert("), "a rejected replacement keeps the existing Watch Next row");
   require(!pending && frames == 0 && globals == 0, "failed writes release JNI resources");
+  reject_key = 0;
+  reject_delete = 1;
+  log_[0] = 0;
+  require(keep_one((uintptr_t)ctx) == 0 && has("delete(") && !has("insert("), "a rejected Watch Next delete stops the replacement");
+  log_[0] = 0;
+  require(show_two((uintptr_t)ctx, 77) == 0 && has("delete(") && !has("insert("), "a rejected preview delete stops the replacement");
+  require(!pending && frames == 0 && globals == 0, "failed deletes release JNI resources");
   return 0;
 }
 `

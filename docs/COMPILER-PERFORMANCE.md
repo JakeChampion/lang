@@ -9,6 +9,8 @@ The [profiling reference](PROFILING.md) describes the native CPU and allocation 
 
 ## Measurements
 
+The November 20 comparison measures the last native Go CLI and the Fern compiler on the same October compiler source. It also measures the current self-build and a shared x86 assembler workload. [Results and raw samples](benchmarks/compiler-retirement-comparison-2026-11-20/README.md)
+
 The [receiver membership experiment](benchmarks/compiler-receiver-union-index-2026-11-10/README.md) rejects an existing-index shortcut in two receiver queries.
 Eight fixed balanced pairs per workload and proof-cache mode retain every sample.
 Cold checker CPU medians increase from 11.8509315 to 13.118910 seconds, or 10.7%, with seven of eight candidate pairs slower.

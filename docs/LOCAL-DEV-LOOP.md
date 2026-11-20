@@ -15,7 +15,7 @@ attempt.
 ## `FERN_*` switches: one reading of on and off
 
 Every on/off `FERN_*` variable — the user-facing ones, the compiler's
-diagnostic modes (`FERN_STRICT_IR`, `FERN_RC_TRACE`, …) and the test and CI
+diagnostic modes (`FERN_STRICT_IR`, `FERN_DEBUG_RC_TRACE`, …) and the test and CI
 knobs — follows the rule in "Environment variables" in
 `site/src/content/docs/reference/tooling.md`. Each language reads it through
 one helper: `std/envflag`'s `on` / `value_on` in the compiler and the
