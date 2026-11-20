@@ -86,6 +86,13 @@ function test_pbkdf2_c2(): test.TestOutcome {
 }
 
 function test_pbkdf2_truncated(): test.TestOutcome {
+  // Cross both the HMAC key block and the derived-key block boundary.
+  let Ok(key) = crypto.pbkdf2_sha256("password".repeat(10).as_bytes(), "salt".repeat(17).as_bytes(), 5, 47) else {
+    return test.fail("valid parameters refused");
+  };
+  if (hex.encode(key) != "0848a03d7a18ead19929bff9c8d55af922c9a3c8ea43337611eedd9a675853837e14a164f925e21f3f1fb7fc7f2637") {
+    return test.fail("long password, long salt and partial second block");
+  }
   return test.assert_eq(
     hex.encode(crypto.pbkdf2_sha256("password".as_bytes(), "salt".bytes(), 1, 16).unwrap_or([])),
     "120fb6cffcf8b32c43e7225256c4f837",
