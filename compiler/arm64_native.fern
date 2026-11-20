@@ -6551,7 +6551,7 @@ function arm64_gas_bad_ext_fp(fam: i32, mnem: string, ops: string[]): string {
     if (t2.len() > 0) {
       return t2;
     }
-    return arm64_gas_bad_nzcv_cond(ops);
+    return arm64_gas_bad_nzcv(ops[2]);
   }
   return "";
 }
@@ -6661,9 +6661,9 @@ function arm64_gas_bad_shift4(ops: string[]): string {
   return "";
 }
 
-// AArch64 bit positions and widths fit in 0..64. Stop before an invalid
+// Bit counts, conditional immediates and NZCV fields fit in 0..64. Stop before an invalid
 // literal can wrap around into that range.
-function arm64_gas_bit_count(tok: string): i32 {
+function arm64_gas_small_imm(tok: string): i32 {
   let i = if (tok.starts_with("#")) { 1 } else { 0 };
   let negative = i < tok.len() && tok[i] == b'-';
   if (negative || i < tok.len() && tok[i] == b'+') {
@@ -6711,7 +6711,7 @@ function arm64_gas_bad_bitfield(mnem: string, ops: string[]): string {
   let size = if (w) { 32 } else { 64 };
   if (rotate) {
     if (register_count == 2) {
-      let shift = arm64_gas_bit_count(ops[2]);
+      let shift = arm64_gas_small_imm(ops[2]);
       if (shift < 0 || shift >= size) {
         return "range";
       }
@@ -6719,14 +6719,14 @@ function arm64_gas_bad_bitfield(mnem: string, ops: string[]): string {
     return "";
   }
   if (mnem == "extr") {
-    let lsb = arm64_gas_bit_count(ops[3]);
+    let lsb = arm64_gas_small_imm(ops[3]);
     if (lsb < 0 || lsb >= size) {
       return "range";
     }
     return "";
   }
-  let flsb = arm64_gas_bit_count(ops[2]);
-  let fw = arm64_gas_bit_count(ops[3]);
+  let flsb = arm64_gas_small_imm(ops[2]);
+  let fw = arm64_gas_small_imm(ops[3]);
   if (flsb < 0 || fw < 1 || flsb + fw > size) {
     return "range";
   }
@@ -6744,22 +6744,34 @@ function arm64_gas_bad_condsel(mnem: string, ops: string[]): string {
   if (ops.len() != want) {
     return "arity";
   }
-  if (mnem != "ccmp" && mnem != "ccmn") {
-    return "";
+  let compare = mnem == "ccmp" || mnem == "ccmn";
+  let regs = want - 1;
+  if (compare) {
+    regs = 2;
+    if (!arm64_gas_data_gp(ops[1])) {
+      regs = 1;
+      let imm5 = arm64_gas_small_imm(ops[1]);
+      if (imm5 < 0 || imm5 > 31) {
+        return "imm5";
+      }
+    }
   }
-  return arm64_gas_bad_nzcv_cond(ops);
+  let w = arm64_gas_is_w(ops[0]);
+  for i in 0..regs {
+    if (!arm64_gas_data_gp(ops[i]) || arm64_gas_is_w(ops[i]) != w) {
+      return "register";
+    }
+  }
+  if (compare) {
+    return arm64_gas_bad_nzcv(ops[2]);
+  }
+  return "";
 }
 
-function arm64_gas_bad_nzcv_cond(ops: string[]): string {
-  let nzcv = arm64_gas_imm(ops[2]);
+function arm64_gas_bad_nzcv(tok: string): string {
+  let nzcv = arm64_gas_small_imm(tok);
   if (nzcv < 0 || nzcv > 15) {
     return "nzcv";
-  }
-  if (ops[1].len() > 0 && ops[1][0] == b'#') {
-    let imm5 = arm64_gas_imm(ops[1]);
-    if (imm5 < 0 || imm5 > 31) {
-      return "imm5";
-    }
   }
   return "";
 }
@@ -7111,8 +7123,8 @@ function arm64_gas_emit_bitfield(own a: Arm64Asm, mnem: string, ops: string[]): 
   if (w) {
     size = 32;
   }
-  let lsb = arm64_gas_bit_count(ops[2]);
-  let width = arm64_gas_bit_count(ops[3]);
+  let lsb = arm64_gas_small_imm(ops[2]);
+  let width = arm64_gas_small_imm(ops[3]);
   if (lsb < 0 || width < 1 || lsb + width > size) {
     return a;
   }
@@ -7131,14 +7143,14 @@ function arm64_gas_emit_extr_ror(own a: Arm64Asm, mnem: string, ops: string[]): 
     if (ops.len() < 4) {
       return a;
     }
-    util.push_bytes(a.code, arm64_extr([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_bit_count(ops[3]), arm64_gas_is_w(ops[0])));
+    util.push_bytes(a.code, arm64_extr([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_small_imm(ops[3]), arm64_gas_is_w(ops[0])));
     return a;
   }
   if (ops.len() < 3) {
     return a;
   }
   if (!arm64_gas_data_gp(ops[2])) {
-    util.push_bytes(a.code, arm64_extr([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[1]), arm64_gas_bit_count(ops[2]), arm64_gas_is_w(ops[0])));
+    util.push_bytes(a.code, arm64_extr([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[1]), arm64_gas_small_imm(ops[2]), arm64_gas_is_w(ops[0])));
     return a;
   }
   util.push_bytes(a.code, arm64_rrr([], 0x9ac02c00, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_is_w(ops[0])));
@@ -7179,13 +7191,13 @@ function arm64_gas_emit_condcmp(own a: Arm64Asm, mnem: string, ops: string[]): A
   }
   let base = arm64_condsel_base(mnem);
   let rm5 = 0;
-  if (ops[1].len() > 0 && ops[1][0] == b'#') {
+  if (!arm64_gas_data_gp(ops[1])) {
     base = base | 0x800;
-    rm5 = arm64_gas_imm(ops[1]);
+    rm5 = arm64_gas_small_imm(ops[1]);
   } else {
     rm5 = arm64_gas_reg(ops[1]);
   }
-  util.push_bytes(a.code, arm64_condcmp([], base, arm64_gas_reg(ops[0]), rm5, arm64_gas_imm(ops[2]), arm64_gas_cond(ops[3]), arm64_gas_is_w(ops[0])));
+  util.push_bytes(a.code, arm64_condcmp([], base, arm64_gas_reg(ops[0]), rm5, arm64_gas_small_imm(ops[2]), arm64_gas_cond(ops[3]), arm64_gas_is_w(ops[0])));
   return a;
 }
 
@@ -7353,7 +7365,7 @@ function arm64_gas_emit_fpx(own a: Arm64Asm, mnem: string, ops: string[]): Arm64
     util.push_bytes(a.code, arm64_fcsel([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_cond(ops[3]), arm64_gas_is_sreg(ops[0])));
     return a;
   }
-  util.push_bytes(a.code, arm64_fccmp([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_cond(ops[3]), arm64_gas_is_sreg(ops[0])));
+  util.push_bytes(a.code, arm64_fccmp([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_small_imm(ops[2]), arm64_gas_cond(ops[3]), arm64_gas_is_sreg(ops[0])));
   return a;
 }
 
@@ -7508,8 +7520,8 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
     let bfw = arm64_gas_is_w(ops[0]);
     let bfd = arm64_gas_reg(ops[0]);
     let bfn = arm64_gas_reg(ops[1]);
-    let bfl = arm64_gas_bit_count(ops[2]);
-    let bfc = arm64_gas_bit_count(ops[3]);
+    let bfl = arm64_gas_small_imm(ops[2]);
+    let bfc = arm64_gas_small_imm(ops[3]);
     if (mnem == "sbfx") {
       util.push_bytes(a.code, arm64_sbfx([], bfd, bfn, bfl, bfc, bfw));
       return a;

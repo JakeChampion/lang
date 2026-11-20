@@ -236,7 +236,8 @@ func arm64FormCases() []string {
 		"ngc wzr, w1", "madd w0, w1, w2, wzr", "smaddl x0, w1, w2, x3",
 		"sbfiz x0, xzr, #63, #1", "ror w0, wzr, w1", "extr lr, fp, xzr, #0",
 		"ror x0, x1, 010", "extr w0, w1, w2, #0b101", "bfi x0, x1, +0x10, 040",
-		"ubfx x0, x1, #-0, #64", "sbfiz w0, w1, #0X1F, #1")
+		"ubfx x0, x1, #-0, #64", "sbfiz w0, w1, #0X1F, #1",
+		"ccmn w0, 037, #0b1010, ne", "fccmp s0, s1, #010, gt", "ccmp lr, fp, 0xf, eq")
 	return out
 }
 
@@ -318,6 +319,8 @@ func TestSelfHostArm64RefusesUnencodableImmediates(t *testing.T) {
 		"bfi x0, x1, #2147483647, #1",
 		"sbfx x0, x1, #0, #4294967297",
 		"ror w0, w1, #08",
+		"ccmp x0, #4294967296, #0, eq",
+		"fccmp d0, d1, #4294967297, eq",
 		"ubfx w0, w1, #2, #0xg",
 	}
 	for _, ln := range lines {
@@ -355,6 +358,10 @@ func TestSelfHostArm64RefusesMisplacedRegisters(t *testing.T) {
 		"bfi sp, x1, #2, #4",
 		"ubfx w0, x1, #2, #8",
 		"bfxil w0, s1, #4, #2",
+		"csel x0, w1, x2, eq",
+		"cset sp, ne",
+		"ccmp w0, x1, #1, eq",
+		"ccmn d1, #2, #3, gt",
 	}
 	for _, ln := range lines {
 		if _, rejected := gas.program(t, ".text\n"+ln+"\n"); rejected == "" {
