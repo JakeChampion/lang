@@ -93,7 +93,7 @@ way to report it.
 
 ## What it does NOT turn on
 
-`FERN_RC_TRACE=1` — one stderr line per heap event — stays separate. It is a
+`FERN_DEBUG_RC_TRACE=1` — one stderr line per heap event — stays separate. It is a
 tool you point at a reduced repro after the sanitizer has told you there is
 something to look for, not something a standing mode can afford. Compose them
 by hand when you want both.
@@ -191,7 +191,7 @@ a target with no instrumentation at all, it says that the build carries no
 checks.
 
 The **self-host** compiler takes `-sanitize` as native does, and reads
-`FERN_SANITIZE=1` at emit time (its `FERN_LEAKCHECK` / `FERN_RC_TRACE` ports
+`FERN_SANITIZE=1` at emit time (its `FERN_LEAKCHECK` / `FERN_DEBUG_RC_TRACE` ports
 have the same shape), so either goes to the compiler process, not to the
 program it produces; the flag prints the same per-target coverage note:
 
@@ -339,7 +339,7 @@ holds the lines on x86-64 and arm64. The wasm census prints the verdict line
 only.
 
 The verdict does not say where a block was made. Pair it with
-`FERN_RC_TRACE=1` on the same build to get one `rctrace a …` line per
+`FERN_DEBUG_RC_TRACE=1` on the same build to get one `rctrace a …` line per
 allocation carrying its call site AND the frame above it; the allocs that
 never match an `f` line by pointer are the leak, attributed to the code that
 made them. Read the second frame whenever the first names a runtime helper or

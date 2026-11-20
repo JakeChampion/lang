@@ -960,6 +960,10 @@ pub function debug_env(name: string, legacy: string): Option[string] {
   return match (env(name)) { Some(value) => Some(value), None => env(legacy) };
 }
 
+pub function debug_flag(name: string, legacy: string): boolean {
+  return match (debug_env(name, legacy)) { Some(value) => envflag.value_on(value), None => false };
+}
+
 pub function verify_on(): boolean {
   match (env("FERN_IR_VERIFY")) {
     Some(v) => {

@@ -1608,9 +1608,9 @@ Worth knowing so you do not assume coverage you do not have:
   reading of the manual) is what keeps it fixed.
 - **Over-retains.** The rc detector counts over-*releases* only. A leak reads
   as a clean 0. `FERN_LEAKCHECK=1` sees that a leak happened and
-  `FERN_RC_TRACE=1` names the alloc site it came from (both below). The rc
+  `FERN_DEBUG_RC_TRACE=1` names the alloc site it came from (both below). The rc
   corpus runs a leakcheck leg on x86-64 and arm64 (above), so a leak appearing in one of
-  its clean cases fails; `FERN_RC_TRACE` is still the tool you reach for by
+  its clean cases fails; `FERN_DEBUG_RC_TRACE` is still the tool you reach for by
   hand once it does, and everything outside that corpus is still unwatched. Partial exception:
   `TestSelfHostLeakMatrixX86_64` runs the leakcheck differential over a
   GENERATED kind × scope × consumption × origin grid and pins each cell's
@@ -1952,7 +1952,7 @@ answer, these are the tools, in the order they are usually reached for:
   backtrace, and the two fatal checks exit 124. Both natives carry all three,
   with identical message text and status, so a finding does not depend on which
   backend built it. The **self-host x86-64 compiler reads `FERN_SANITIZE=1`
-  too** (emit-time, like its `FERN_LEAKCHECK` / `FERN_RC_TRACE` ports), giving
+  too** (emit-time, like its `FERN_LEAKCHECK` / `FERN_DEBUG_RC_TRACE` ports), giving
   all three as well — which is what puts the mode on the long-running
   allocation-heavy program it was argued for. **wasm carries the leak census
   only** (#7912): the same line, the same verdict text, at the synthesised
@@ -1992,6 +1992,8 @@ answer, these are the tools, in the order they are usually reached for:
   `FERN_IR_VERIFY=1` adds the coverage line; `FERN_IR_VERIFY=quiet` is the
   default's spelling, which the test harness sets for every self-host compile
   (`e2eharness.SelfHostVerify`).
+
+Set `FERN_DEBUG_OPT_TRACE=1` to print optimization decisions and `FERN_DEBUG_ENTRY_CHECK_TRACE=1` to trace entry checks. The RC trace switches are `FERN_DEBUG_RC_TRACE` and `FERN_DEBUG_RC_TRACE_DEEP`. All four accept their older names without `DEBUG_`. An explicit value for the new name takes precedence, including an empty value.
 
 The compiler dump variables `FERN_DEBUG_SEM_DUMP`, `FERN_DEBUG_RC_CERTIFY_DUMP`, `FERN_DEBUG_SUSPEND_DUMP` and `FERN_DEBUG_TV_DUMP` also accept their older spellings without `DEBUG_`. The new spelling takes precedence when both are set.
 
@@ -2099,7 +2101,7 @@ The compiler dump variables `FERN_DEBUG_SEM_DUMP`, `FERN_DEBUG_RC_CERTIFY_DUMP`,
   `rounds`). Reach for it when a construction allocates where its donor
   should have served it: the graph says whether the two are still in one
   body and what lies between them, which the asm no longer does.
-- **`FERN_RC_TRACE=1`** — one stderr line per heap event:
+- **`FERN_DEBUG_RC_TRACE=1`** — one stderr line per heap event:
   `rctrace <a|f> <ptr> <size> <site> <caller>`, all four numbers fixed-width
   16-hex, `site` being the *caller's* return address and `caller` one frame
   above it. Without `caller` (#7954) a leak through a shared runtime helper
@@ -2136,7 +2138,7 @@ The compiler dump variables `FERN_DEBUG_SEM_DUMP`, `FERN_DEBUG_RC_CERTIFY_DUMP`,
 
   The tracer is emitted by `asm_ir.fern`; the arm64 and wasm emitters do not
   have it. It is how a missed reuse is found: compile one program before and
-  after a change under `FERN_RC_TRACE=1`, pair both traces, and an `a` line
+  after a change under `FERN_DEBUG_RC_TRACE=1`, pair both traces, and an `a` line
   only one side emits is the reuse that side missed, attributed to the
   construction site that missed it. Three things to expect when reading it:
   - Sizes come from an **8-byte-granular** heap, and both hooks report the

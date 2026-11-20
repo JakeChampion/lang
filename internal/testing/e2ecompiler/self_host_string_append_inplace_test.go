@@ -76,7 +76,7 @@ func TestSelfHostStringAppendInPlaceCensus(t *testing.T) {
 		env    []string
 	}{
 		{"x86-64-linux", []string{"FERN_LEAKCHECK=1"}},
-		{"x86-64-linux", []string{"FERN_LEAKCHECK=1", "FERN_RC_TRACE=1"}},
+		{"x86-64-linux", []string{"FERN_LEAKCHECK=1", "FERN_DEBUG_RC_TRACE=1"}},
 		{"arm64-linux", []string{"FERN_LEAKCHECK=1"}},
 		{"wasm32-wasi", []string{"FERN_LEAKCHECK=1"}},
 	}

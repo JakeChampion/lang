@@ -75,7 +75,7 @@ func censusFetchRun(t *testing.T, cli *selfHostCLI, rounds int) map[censusSite]i
 	if err := os.WriteFile(src, []byte(e2eharness.ServeFetchAllocsServerSource(0, rounds)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bin := cli.x86Binary(t, src, "FERN_STRICT_IR=1", "FERN_RC_TRACE=1")
+	bin := cli.x86Binary(t, src, "FERN_STRICT_IR=1", "FERN_DEBUG_RC_TRACE=1")
 	cmd := runX86_64Bin(cli.runner, bin)
 	cmd.Env = append(os.Environ(), "http_proxy=http://u@"+up.Listener.Addr().String())
 	addr, stderrPath := e2eharness.StartInheritedServer(t, cmd)
@@ -104,7 +104,7 @@ func censusRun(t *testing.T, cli *selfHostCLI, mux bool, rounds int) map[censusS
 	if err := os.WriteFile(clientSrc, []byte(clientText), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bin := cli.x86Binary(t, src, "FERN_STRICT_IR=1", "FERN_RC_TRACE=1")
+	bin := cli.x86Binary(t, src, "FERN_STRICT_IR=1", "FERN_DEBUG_RC_TRACE=1")
 	client := cli.x86Binary(t, clientSrc, "FERN_STRICT_IR=1")
 	addr, stderrPath := e2eharness.StartInheritedServer(t, runX86_64Bin(cli.runner, bin))
 	_, port, err := net.SplitHostPort(addr)

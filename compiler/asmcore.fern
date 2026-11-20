@@ -4988,7 +4988,7 @@ pub function check_func(fd: parser.FuncDecl, s: EmitState): util.Diag[] {
 }
 
 pub function entry_check_errors(tm: parser.Module): util.Diag[] {
-  if (envflag.on("FERN_ENTRY_CHECK_TRACE")) {
+  if (util.debug_flag("FERN_DEBUG_ENTRY_CHECK_TRACE", "FERN_ENTRY_CHECK_TRACE")) {
     eprint("entry check\n");
   }
   let s = new_state();

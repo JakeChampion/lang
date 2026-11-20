@@ -16,7 +16,7 @@ var rcTraceLineRe = regexp.MustCompile(`^rctrace ([afu]) ([0-9a-f]{16}) ([0-9a-f
 func buildTracedX86_64(t *testing.T, entry, dir string) (string, error) {
 	bin := filepath.Join(dir, "prog")
 	cmd := e2eharness.SelfHostCompileCmd(t, e2eharness.TargetX86_64Linux, entry, bin)
-	cmd.Env = e2eharness.ChildEnv("FERN_RC_TRACE=1")
+	cmd.Env = e2eharness.ChildEnv("FERN_DEBUG_RC_TRACE=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("self-host compile: %v\n%s", err, out)
 	}
