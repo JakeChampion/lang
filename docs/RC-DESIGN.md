@@ -160,6 +160,11 @@ unit. The closure of those chains
 validated by `ssadeps`): a container is live wherever a value anchored to it
 is. The analysis refuses a cyclic chain and a graph `ssadeps` cannot place.
 
+A construction of a variant whose each payload is the read of that payload
+from one value of the same type is that value (`ssasem.rebuilt_variants`). In
+an arm that matched `ys` as `Cons(y, yt)`, `Cons(y, yt)` reads `ys`, so the
+frame keeps the box where it dropped the box and filled another one.
+
 What later stages may assume: the graph is well formed SSA over a reducible
 control-flow graph, every value has a type, and the dependency chains are
 transitive and acyclic.

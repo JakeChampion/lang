@@ -413,23 +413,21 @@ pub function call_parts(v: checker.QueryView, site: Site): Option[Option[Parts]]
   return Some(None);
 }
 
-pub function enclosing(mod: parser.Module, toks: Tok[], m: i32, line: i32, col: i32): i32 {
-  let best: i32 = -1;
+pub function enclosing(mod: parser.Module, toks: Tok[], m: i32, line: i32, col: i32): Option[i32] {
+  let best: Option[i32] = None;
   for i in 0..mod.funcs.len() {
     let fd = mod.funcs[i];
-    if (declared_in(fd.line, m) && before(fd.line, fd.col, line, col) && (best < 0 || before(mod.funcs[best].line, mod.funcs[best].col, fd.line, fd.col))) {
-      best = i;
+    if (declared_in(fd.line, m) && before(fd.line, fd.col, line, col) && match (best) { Some(prev) => before(mod.funcs[prev].line, mod.funcs[prev].col, fd.line, fd.col), None => true }) {
+      best = Some(i);
     }
   }
-  if (best < 0) {
-    return best;
-  }
-  if let Some(close) = body_end(toks, after(toks, mod.funcs[best].line, mod.funcs[best].col)) {
+  let i = best?;
+  if let Some(close) = body_end(toks, after(toks, mod.funcs[i].line, mod.funcs[i].col)) {
     if (!before(toks[close].line, toks[close].col, line, col)) {
       return best;
     }
   }
-  return -1;
+  return None;
 }
 
 pub function declared_in(line: i32, m: i32): boolean {

@@ -1611,7 +1611,7 @@ feeds `caller_sigs` to the remaining AST callers is below.
 `compiler/semlower.fern` is where a whole-program emit path asks for
 this pipeline instead of a test driver. It is the only lowering a
 whole-program emit has: a module is produced whole or the compile fails
-(exit 3), and the emit reads the produced bodies (`ircore.gate`). `FERN_SEM_IR_REPORT=1` prints a per-module tally.
+(exit 3), and the emit reads the produced bodies (`ircore.gate`). `FERN_DEBUG_SEM_IR_REPORT=1` prints a per-module tally.
 
 All three whole-program paths take one: `asm_ir`, `asm_arm64_ir` and `wasm_ir`
 each thread an `ircore.Sub` through their gated entry. The registry set
@@ -2300,7 +2300,7 @@ function type nested in a function value's signature.
 
 The typed path is the only lowering a compile has, and a refusal is a compile
 error, for a program's module and for each runtime helper it appends: the
-refusals are printed as `FERN_SEM_IR_REPORT` would print them, and the compile
+refusals are printed as `FERN_DEBUG_SEM_IR_REPORT` would print them, and the compile
 exits 3. There is no off switch and no bisect knob, and no AST lowering: every
 emit path and the FIP claim checks read the produced body of each
 declaration, and a declaration without one is an internal error that exits 3
@@ -2349,7 +2349,7 @@ contracts, records and finalizers in `physicalbody.Lowered`; each backend
 uses its bodies for emission. `runtime_bodies` remains a bodies-only
 projection of the same lowering. A source that does not type-check, or that
 the typed path does not produce whole, fails the compile, and so does a helper appended by a driver
-that set no `rt_lower` (`asmcore.no_rt_lower`). `FERN_SEM_IR_REPORT` prints `runtime <name>: produced` for each
+that set no `rt_lower` (`asmcore.no_rt_lower`). `FERN_DEBUG_SEM_IR_REPORT` prints `runtime <name>: produced` for each
 helper it took. Wasm compiles no
 Fern-source helper; it serves them as hand-written WAT.
 

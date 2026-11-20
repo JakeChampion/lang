@@ -191,7 +191,7 @@ pub function strict_ir_on(): boolean {
 }
 
 pub function ssa_report_on(): boolean {
-  return envflag.on("FERN_SSA_REPORT");
+  return util.debug_flag("FERN_DEBUG_SSA_REPORT", "FERN_SSA_REPORT");
 }
 
 // The monotonic clock when a report needs it, and 0 otherwise.
