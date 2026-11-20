@@ -354,6 +354,118 @@ function test_p256_context(): test.TestOutcome {
   ]);
 }
 
+// RFC 9180 Appendix A.5 uses DHKEM(P-256), HKDF-SHA256 and ChaCha20Poly1305.
+function check_mode_vector(own sender: hpke.Context, own recipient: hpke.Context, ct: string, exported: string): test.TestOutcome {
+  let aad = "Count-0".as_bytes();
+  let Ok(value) = recipient.export([], 32) else {
+    return test.fail("export");
+  };
+  if (hex.encode(value) != exported) {
+    return test.fail("export value");
+  }
+  let Ok((sealed, _)) = sender.seal(aad, b(A51_PT)) else {
+    return test.fail("seal");
+  };
+  if (hex.encode(sealed) != ct) {
+    return test.fail("ciphertext");
+  }
+  let Ok((plain, _)) = recipient.open(aad, sealed) else {
+    return test.fail("open");
+  };
+  return test.assert_eq(hex.encode(plain), A51_PT);
+}
+
+function test_p256_psk_mode(): test.TestOutcome {
+  let Ok(r) = hpke.p256_key(b("12ecde2c8bc2d5d7ed2219c71f27e3943d92b344174436af833337c557c300b3")) else {
+    return test.fail("recipient key");
+  };
+  let Ok(e) = hpke.p256_encap_derand(r.public_key, b("7d6e4e006cee68af9b3fdd583a0ee8962df9d59fab029997ee3f456cbc857904")) else {
+    return test.fail("encap");
+  };
+  let Ok(ss) = hpke.p256_decap(r, e.enc) else {
+    return test.fail("decap");
+  };
+  let psk = b("0247fd33b913760fa1fa51e1892d9f307fbe65eb171e8132c2af18555a738b82");
+  let id = b("456e6e796e20447572696e206172616e204d6f726961");
+  let Ok(sender) = hpke.psk_key_schedule(hpke.KEM_P256, e.shared_secret, b(A51_INFO), psk, id) else {
+    return test.fail("sender");
+  };
+  let Ok(recipient) = hpke.psk_key_schedule(hpke.KEM_P256, ss, b(A51_INFO), psk, id) else {
+    return test.fail("recipient");
+  };
+  return check_mode_vector(sender, recipient, "21433eaff24d7706f3ed5b9b2e709b07230e2b11df1f2b1fe07b3c70d5948a53d6fa5c8bed194020bd9df0877b", "530bbc2f68f078dccc89cc371b4f4ade372c9472bafe4601a8432cbb934f528d");
+}
+
+function test_p256_auth_mode(): test.TestOutcome {
+  let Ok(r) = hpke.p256_key(b("3cb2c125b8c5a81d165a333048f5dcae29a2ab2072625adad66dbb0f48689af9")) else {
+    return test.fail("recipient key");
+  };
+  let Ok(s) = hpke.p256_key(b("39b19402e742d48d319d24d68e494daa4492817342e593285944830320912519")) else {
+    return test.fail("sender key");
+  };
+  let mode = hpke.Auth;
+  let Ok(pair) = hpke.p256_auth_sender_derand(s, r.public_key, b("085fd5d5e6ce6497c79df960cac93710006b76217d8bcfafbd2bb2c20ea03c42"), b(A51_INFO), mode) else {
+    return test.fail("sender");
+  };
+  if (hex.encode(pair.enc) != "040d5176aedba55bc41709261e9195c5146bb62d783031280775f32e507d79b5cbc5748b6be6359760c73cfe10ca19521af704ca6d91ff32fc0739527b9385d415") {
+    return test.fail("encapsulated key");
+  }
+  let Ok(recipient) = hpke.p256_auth_recipient(r, s.public_key, pair.enc, b(A51_INFO), mode) else {
+    return test.fail("recipient");
+  };
+  let ciphertext = "25881f219935eec5ba70d7b421f13c35005734f3e4d959680270f55d71e2f5cb3bd2daced2770bf3d9d4916872";
+  let Ok(wrong) = hpke.p256_auth_recipient(r, r.public_key, pair.enc, b(A51_INFO), mode) else {
+    return test.fail("other sender setup");
+  };
+  if (wrong.open("Count-0".as_bytes(), b(ciphertext)).is_ok()) {
+    return test.fail("accepted another sender");
+  }
+  let sender = context_of(pair);
+  return check_mode_vector(sender, recipient, ciphertext, "56c4d6c1d3a46c70fd8f4ecda5d27c70886e348efb51bd5edeaa39ff6ce34389");
+}
+
+function test_p256_auth_psk_mode(): test.TestOutcome {
+  let Ok(r) = hpke.p256_key(b("c29fc577b7e74d525c0043f1c27540a1248e4f2c8d297298e99010a92e94865c")) else {
+    return test.fail("recipient key");
+  };
+  let Ok(s) = hpke.p256_key(b("53541bd995f874a67f8bfd8038afa67fd68876801f42ff47d0dc2a4deea067ae")) else {
+    return test.fail("sender key");
+  };
+  let mode = hpke.AuthPSK(b("0247fd33b913760fa1fa51e1892d9f307fbe65eb171e8132c2af18555a738b82"), b("456e6e796e20447572696e206172616e204d6f726961"));
+  let Ok(pair) = hpke.p256_auth_sender_derand(s, r.public_key, b("11b7e4de2d919240616a31ab14944cced79bc2372108bb98f6792e3b645fe546"), b(A51_INFO), mode) else {
+    return test.fail("sender");
+  };
+  if (hex.encode(pair.enc) != "043539917ee26f8ae0aa5f784a387981b13de33124a3cde88b94672030183110f331400115855808244ff0c5b6ca6104483ac95724481d41bdcd9f15b430ad16f6") {
+    return test.fail("encapsulated key");
+  }
+  let Ok(recipient) = hpke.p256_auth_recipient(r, s.public_key, pair.enc, b(A51_INFO), mode) else {
+    return test.fail("recipient");
+  };
+  let wrong_mode = hpke.AuthPSK([1u8], [2u8]);
+  let Ok(wrong) = hpke.p256_auth_recipient(r, s.public_key, pair.enc, b(A51_INFO), wrong_mode) else {
+    return test.fail("other PSK setup");
+  };
+  let ciphertext = "9eadfa0f954835e7e920ffe56dec6b31a046271cf71fdda55db72926e1d8fae94cc6280fcfabd8db71eaa65c05";
+  if (wrong.open("Count-0".as_bytes(), b(ciphertext)).is_ok()) {
+    return test.fail("accepted another PSK");
+  }
+  return check_mode_vector(context_of(pair), recipient, ciphertext, "c52b4592cd33dd38b2a3613108ddda28dcf7f03d30f2a09703f758bfa8029c9a");
+}
+
+function test_psk_inputs(): test.TestOutcome {
+  let ss = b(A51_SHARED_SECRET);
+  if (hpke.psk_key_schedule(hpke.KEM_P256, ss, [], [], []).is_ok()) {
+    return test.fail("empty PSK and id");
+  }
+  if (hpke.psk_key_schedule(hpke.KEM_P256, ss, [], [], [1u8]).is_ok()) {
+    return test.fail("empty PSK");
+  }
+  if (hpke.psk_key_schedule(hpke.KEM_P256, ss, [], [1u8], []).is_ok()) {
+    return test.fail("empty id");
+  }
+  return test.pass();
+}
+
 function test_p256_refusals(): test.TestOutcome {
   let pk = b(A51_PK_R);
   let off_curve = pk.with(64, pk[64] ^ 1u8);
@@ -489,6 +601,10 @@ function main(): i32 {
   r = r.it("P-256 encapsulation and decapsulation of RFC 9180 A.5.1", test_p256_encap_decap);
   r = r.it("P-256 seal, open and export of RFC 9180 A.5.1", test_p256_context);
   r = r.it("an export length outside 1 to 8160 is refused", test_export_lengths);
+  r = r.it("RFC 9180 A.5.2 psk mode", test_p256_psk_mode);
+  r = r.it("RFC 9180 A.5.3 auth mode", test_p256_auth_mode);
+  r = r.it("RFC 9180 A.5.4 auth_psk mode", test_p256_auth_psk_mode);
+  r = r.it("PSK inputs must both be present", test_psk_inputs);
   r = r.it("P-256 refusals", test_p256_refusals);
   r = r.it("MLKEM768-P256 public key and decapsulation", test_pq256_vector);
   r = r.it("MLKEM768-P256 seal and open", test_pq256_round_trip);
