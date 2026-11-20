@@ -50,9 +50,15 @@ function fields(): (string, Field[])[] {
 
 function as_text(value: json.JsonValue): string {
   match (value) {
-    json.JBool(on) => { return if (on) { "1" } else { "0" }; },
-    json.JString(text) | json.JNumber(text) => { return text; },
-    _ => { return ""; }
+    json.JBool(on) => {
+      return if (on) { "1" } else { "0" };
+    },
+    json.JString(text) | json.JNumber(text) => {
+      return text;
+    },
+    _ => {
+      return "";
+    }
   }
 }
 
@@ -76,18 +82,34 @@ function clock_time(s: string): boolean {
 function valid(field: Field, text: string): boolean {
   let n = i32.parse_i32(text).unwrap_or(-1);
   match (field.kind) {
-    Text => { return text.len() > 0 && text.len() <= 80; },
-    ClockTime => { return clock_time(text); },
-    Colour => { return text.len() == 7 && text.starts_with("#") && text.drop(1).is_hex_string(); },
-    Brightness => { return n >= 0 && n <= 100 || text == "auto" && field.key != "displayDimBrightness"; },
-    Limit => { return n >= 0 && n <= 16; },
-    Seconds => { return n >= 0; },
-    Switch => { return text == "0" || text == "1"; },
-    ClockFormat => { return text == "12" || text == "24"; },
+    Text => {
+      return text.len() > 0 && text.len() <= 80;
+    },
+    ClockTime => {
+      return clock_time(text);
+    },
+    Colour => {
+      return text.len() == 7 && text.starts_with("#") && text.drop(1).is_hex_string();
+    },
+    Brightness => {
+      return n >= 0 && n <= 100 || text == "auto" && field.key != "displayDimBrightness";
+    },
+    Limit => {
+      return n >= 0 && n <= 16;
+    },
+    Seconds => {
+      return n >= 0;
+    },
+    Switch => {
+      return text == "0" || text == "1";
+    },
+    ClockFormat => {
+      return text == "12" || text == "24";
+    },
     Shortcut => {
       let parts = text.split("/");
       return text.len() == 0 || parts.len() == 3 && parts[0].len() > 0 && parts[1].len() > 0;
-    },
+    }
   }
 }
 
@@ -140,7 +162,7 @@ function field_view[M](field: Field, value: string, edit: (string, string) => M)
     }
     return ui.column([
       ui.row(head).aligned(ui.CENTER).spaced(6.0),
-      ui.slider(at as f64 / max as f64, (part: f64): M => edit(field.key, ((part * max as f64 + 0.5) as i32).to_string())).described(field.label),
+      ui.slider(at as f64 / (max as f64), (part: f64): M => edit(field.key, ((part * (max as f64) + 0.5) as i32).to_string())).described(field.label),
     ]).wide();
   }
   let hint = match (field.kind) {
@@ -207,7 +229,7 @@ pub function alarm_change(config: api.PlayerConfig, draft: Map[string, string], 
           }
         }
       }
-    },
+    }
   }
   return Ok(draft.insert("alarms", json.encode(json.JArray(next))));
 }
