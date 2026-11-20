@@ -197,6 +197,23 @@ class NotificationTalkTest(unittest.TestCase):
             walkie.talk_from_notice("101", "202", ".")
         self.assertTrue(stopped)
 
+    def test_reopens_shade_if_the_previous_action_closed_it(self):
+        screens = iter([
+            '<node package="dev.fern.walkie" text="" />',
+            '<node package="com.android.systemui" text="Stop talking" bounds="[2,4][10,12]" />',
+        ])
+
+        def adb(*args):
+            if args[:2] == ("shell", "cat"):
+                return next(screens)
+            return ""
+
+        with mock.patch.object(walkie, "adb", side_effect=adb) as device, mock.patch.object(walkie.time, "sleep"):
+            walkie.tap_notice_button("Stop talking", ".")
+        expand = mock.call("shell", "cmd", "statusbar", "expand-notifications")
+        self.assertEqual(device.call_args_list.count(expand), 2)
+        device.assert_any_call("shell", "input", "tap", "6", "8")
+
     def test_listener_audio_before_or_after_the_talk_log_read(self):
         for talker in ["101", "202"]:
             for same_flush in [False, True]:
