@@ -955,6 +955,11 @@ pub function rc_underflow_guard(who: string, code: i32): i32 {
   return RC_UNDERFLOW_EXIT;
 }
 
+// An explicitly set debug name takes precedence, including an empty value.
+pub function debug_env(name: string, legacy: string): Option[string] {
+  return match (env(name)) { Some(value) => Some(value), None => env(legacy) };
+}
+
 pub function verify_on(): boolean {
   match (env("FERN_IR_VERIFY")) {
     Some(v) => {

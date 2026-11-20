@@ -276,7 +276,7 @@ func TestSelfHostRecordUpdateDonorMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "x86-64-linux", "-emit", "asm", "-o", filepath.Join(dir, "main.s"), src, cli.stdlib)
-	cmd.Env = childEnv("FERN_SEM_DUMP=main")
+	cmd.Env = childEnv("FERN_DEBUG_SEM_DUMP=main")
 	dump, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("compile: %v: %s", err, dump)

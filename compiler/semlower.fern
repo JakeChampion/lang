@@ -114,7 +114,7 @@ function refusal(p: semsource.Produced, body: Result[Option[irtables.Lowered], i
 }
 
 function dump_if_asked(p: semsource.Produced): void {
-  match (env("FERN_SEM_DUMP")) {
+  match (util.debug_env("FERN_DEBUG_SEM_DUMP", "FERN_SEM_DUMP")) {
     Some(want) => {
       let name = p.func.graph.name;
       if (want == name || want.ends_with("*") && name.starts_with(slice_unchecked(want, 0, want.len() - 1))) {

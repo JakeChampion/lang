@@ -30,7 +30,7 @@ func TestSelfHostRcCertifyInPlaceScale(t *testing.T) {
 	if err := os.WriteFile(src, []byte(rcCertifyInPlaceScaleSrc), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, code := compileCapturing(t, cli, src, "FERN_RC_CERTIFY=report", "FERN_IR_VERIFY=1", "FERN_RC_CERTIFY_DUMP=main")
+	out, code := compileCapturing(t, cli, src, "FERN_RC_CERTIFY=report", "FERN_IR_VERIFY=1", "FERN_DEBUG_RC_CERTIFY_DUMP=main")
 	if code != 0 {
 		t.Fatalf("report-mode compile exited %d:\n%s", code, out)
 	}
