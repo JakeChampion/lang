@@ -83,7 +83,7 @@ function file_code(files: literate.FileResult[], path: string): string {
 }
 
 function test_chunks(): test.TestOutcome {
-  let s1 = "# Title\n\nProse.\n\n```fern\n<<*>>=\nfn main() {}\n```\n";
+  let s1 = "# Title\n\nProse.\n\n```fern\n \t\n  <<*>>=  \nfn main() {}\n```\n";
   if (tangle_code(s1) != "fn main() {}") {
     return test.fail("root chunk output");
   }
@@ -108,7 +108,7 @@ function test_chunks(): test.TestOutcome {
     return test.fail("nested indentation");
   }
 
-  let s5: string = "```fern\nnot a chunk, illustrative only\n```\n"
+  let s5: string = "```fern\nnot a chunk, illustrative only\n<<*>>=\nignored\n```\n"
     + "```fern\n<<*>>=\nfn main() {}\n```\n";
   if (tangle_code(s5) != "fn main() {}") {
     return test.fail("illustrative fence changed the root");
