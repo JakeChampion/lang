@@ -183,11 +183,24 @@ pub function (c: NotificationClass) category(e: usize, self: Notification): Resu
   return Ok(text);
 }
 
+pub function (c: NotificationClass) set_category(e: usize, self: Notification, value: string): Result[void, jni.JavaError] {
+  let text = jni.new_string(e, value);
+  jni.check(e)?;
+  defer jni.delete_local_ref(e, text);
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_category, text);
+  return jni.check(e);
+}
+
 // android.app.Notification.contentIntent
 pub function (c: NotificationClass) content_intent(e: usize, self: Notification): Result[PendingIntent, jni.JavaError] {
   let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_content_intent, 0 as usize);
   jni.check(e)?;
   return Ok(PendingIntent { ref: got });
+}
+
+pub function (c: NotificationClass) set_content_intent(e: usize, self: Notification, value: PendingIntent): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_content_intent, value.ref);
+  return jni.check(e);
 }
 
 // android.app.Notification.extras
@@ -197,11 +210,21 @@ pub function (c: NotificationClass) extras(e: usize, self: Notification): Result
   return Ok(Bundle { ref: got });
 }
 
+pub function (c: NotificationClass) set_extras(e: usize, self: Notification, value: Bundle): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_extras, value.ref);
+  return jni.check(e);
+}
+
 // android.app.Notification.flags
 pub function (c: NotificationClass) flags(e: usize, self: Notification): Result[i32, jni.JavaError] {
   let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_flags, 0 as usize);
   jni.check(e)?;
   return Ok(got as i32);
+}
+
+pub function (c: NotificationClass) set_flags(e: usize, self: Notification, value: i32): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 5, self.ref, c.id_flags, value as usize);
+  return jni.check(e);
 }
 
 // A android.app.PendingIntent.
@@ -655,6 +678,14 @@ pub function (c: PackageItemInfoClass) name(e: usize, self: PackageItemInfo): Re
   return Ok(text);
 }
 
+pub function (c: PackageItemInfoClass) set_name(e: usize, self: PackageItemInfo, value: string): Result[void, jni.JavaError] {
+  let text = jni.new_string(e, value);
+  jni.check(e)?;
+  defer jni.delete_local_ref(e, text);
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_name, text);
+  return jni.check(e);
+}
+
 // android.content.pm.PackageItemInfo.packageName
 pub function (c: PackageItemInfoClass) package_name(e: usize, self: PackageItemInfo): Result[string, jni.JavaError] {
   let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_package_name, 0 as usize);
@@ -662,6 +693,14 @@ pub function (c: PackageItemInfoClass) package_name(e: usize, self: PackageItemI
   let text = jni.string_of(e, got);
   jni.delete_local_ref(e, got);
   return Ok(text);
+}
+
+pub function (c: PackageItemInfoClass) set_package_name(e: usize, self: PackageItemInfo, value: string): Result[void, jni.JavaError] {
+  let text = jni.new_string(e, value);
+  jni.check(e)?;
+  defer jni.delete_local_ref(e, text);
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_package_name, text);
+  return jni.check(e);
 }
 
 // A android.content.pm.PackageManager.
@@ -803,6 +842,11 @@ pub function (c: ResolveInfoClass) activity_info(e: usize, self: ResolveInfo): R
   let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_activity_info, 0 as usize);
   jni.check(e)?;
   return Ok(ActivityInfo { ref: got });
+}
+
+pub function (c: ResolveInfoClass) set_activity_info(e: usize, self: ResolveInfo, value: ActivityInfo): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_activity_info, value.ref);
+  return jni.check(e);
 }
 
 // A android.location.Location.

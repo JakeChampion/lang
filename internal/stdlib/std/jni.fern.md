@@ -827,6 +827,12 @@ pub const CALL_STATIC: i32 = 116;
 // The entry of GetObjectField.
 pub const GET_FIELD: i32 = 95;
 
+// The entry of SetObjectField.
+pub const SET_FIELD: i32 = 104;
+
+// The entry of SetStaticObjectField.
+pub const SET_STATIC_FIELD: i32 = 154;
+
 // The entry of GetStaticObjectField.
 pub const GET_STATIC_FIELD: i32 = 145;
 

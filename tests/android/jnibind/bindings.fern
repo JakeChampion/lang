@@ -362,11 +362,21 @@ pub function (c: PointClass) x(e: usize, self: Point): Result[i32, jni.JavaError
   return Ok(got as i32);
 }
 
+pub function (c: PointClass) set_x(e: usize, self: Point, value: i32): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 5, self.ref, c.id_x, value as usize);
+  return jni.check(e);
+}
+
 // android.graphics.Point.y
 pub function (c: PointClass) y(e: usize, self: Point): Result[i32, jni.JavaError] {
   let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_y, 0 as usize);
   jni.check(e)?;
   return Ok(got as i32);
+}
+
+pub function (c: PointClass) set_y(e: usize, self: Point, value: i32): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 5, self.ref, c.id_y, value as usize);
+  return jni.check(e);
 }
 
 // A android.os.SystemClock.
