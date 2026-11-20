@@ -90,9 +90,9 @@ class BackNavigationTests(unittest.TestCase):
                             wait_for_keyboard=lambda shown, timeout=5.0: device.keyboard == shown,
                             wait_for=device.wait_for, paper_part=device.frame,
                             open_clock=lambda: None, finish=lambda out=None: None,
-                            check_filter=lambda out, width, height: None,
+                            check_filter=lambda out, width, height: None, check_held_intent=lambda out: None,
                             fail=device.failures.append), patch.object(check.time, "sleep"):
-            check.main("paper.apk", out)
+            check.main("paper.apk", "notify.apk", out)
         return device.failures
 
     def test_keyboard_hide_waits_for_the_state_change(self):
@@ -441,6 +441,31 @@ class FilterTests(unittest.TestCase):
         x, y = check.free_point(dump, 320, 640)
         self.assertGreater(y, 300)
         self.assertIsNone(check.free_point(node("all", (0, 0, 320, 640)), 320, 640))
+
+
+
+
+class HeldIntentTests(unittest.TestCase):
+    def run_probe(self, sent, resumed):
+        failures = []
+        with patch.multiple(check, adb=lambda *args: resumed,
+                            wait_for=lambda pattern: sent if "sent held" in pattern else True,
+                            wait_for_node=lambda *args: (100, 200, ""), tap=lambda point: None,
+                            fail=failures.append), patch.object(check.time, "sleep"), \
+                patch.object(check.time, "monotonic", side_effect=range(20)):
+            check.check_held_intent(".")
+        return failures
+
+    def test_successful_send_brings_the_activity_forward(self):
+        self.assertEqual(self.run_probe(True, "topResumedActivity dev.fern.notifytest/android.app.NativeActivity"), [])
+
+    def test_package_launch_fallback_fails_even_if_activity_opens(self):
+        self.assertEqual(self.run_probe(False, "topResumedActivity dev.fern.notifytest/android.app.NativeActivity"),
+                         ["Paper did not send the held PendingIntent"])
+
+    def test_successful_send_without_activity_launch_fails(self):
+        self.assertEqual(self.run_probe(True, "topResumedActivity dev.fern.paper/.Home"),
+                         ["the held PendingIntent did not bring the notification test app to the front"])
 
 
 if __name__ == "__main__":
