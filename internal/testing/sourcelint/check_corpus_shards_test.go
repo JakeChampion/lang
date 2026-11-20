@@ -81,7 +81,7 @@ func TestStdTestCorpusMatrixCoversEveryShard(t *testing.T) {
 			t.Errorf("stdlib corpus jobs omit %q", required)
 		}
 	}
-	expected := map[string]int{"x86-64": 8, "arm64": 8, "interp": 4, "x86-64-tls": 1, "x86-64-harden": 2, "x86-64-few-registers": 2, "arm64-tls": 1, "crypto-wasm": 1}
+	expected := map[string]int{"x86-64": 8, "arm64": 8, "arm64-bidi": 1, "interp": 4, "x86-64-tls": 1, "x86-64-harden": 2, "x86-64-few-registers": 2, "arm64-tls": 1, "crypto-wasm": 1}
 	rows := regexp.MustCompile(`\{ leg: ([a-z0-9-]+), shard: ([0-9]+), count: ([0-9]+) \}`).FindAllStringSubmatch(job, -1)
 	seen := map[string]bool{}
 	for _, row := range rows {
