@@ -473,7 +473,7 @@ function list_html(lines: string[], i: i32, unordered: boolean): (string, i32) {
   return (s + "</" + tag + ">\n", k);
 }
 
-function run_len(t: string, c: u8): i32 {
+function run_len(t: str, c: u8): i32 {
   let n = 0;
   while (n < t.len() && t[n] == c) {
     n += 1;
@@ -532,9 +532,8 @@ pub function inline_markdown(s: string): string {
       out += emphasis(slice_unchecked(s, i, j).to_owned());
       i = j;
     } else {
-      let n = run_len(slice_unchecked(s, i, s.len()).to_owned(), b'`');
-      let close = find_closer(s, i + n, n);
-      if (close >= 0) {
+      let n = run_len(slice_unchecked(s, i, s.len()), b'`');
+      if let Some(close) = find_closer(s, i + n, n) {
         out = out + "<code>" + html_escape(trim_code_span(slice_unchecked(s, i + n, close).to_owned())) + "</code>";
         i = close + n;
       } else {
@@ -546,20 +545,20 @@ pub function inline_markdown(s: string): string {
   return out;
 }
 
-function find_closer(s: string, from: i32, want: i32): i32 {
+function find_closer(s: string, from: i32, want: i32): Option[i32] {
   let i = from;
   while (i < s.len()) {
     if (s[i] == b'`') {
-      let run = run_len(slice_unchecked(s, i, s.len()).to_owned(), b'`');
+      let run = run_len(slice_unchecked(s, i, s.len()), b'`');
       if (run == want) {
-        return i;
+        return Some(i);
       }
       i += run;
     } else {
       i += 1;
     }
   }
-  return -1;
+  return None;
 }
 
 function trim_code_span(c: string): string {
@@ -606,9 +605,13 @@ function links(s: string): string {
   let i = 0;
   while (i < s.len()) {
     if (s[i] == b'[') {
-      let tc = index_from(s, i + 1, b']');
+      let Some(tc) = index_from(s, i + 1, b']') else {
+        break;
+      };
       if (tc > i + 1 && tc + 1 < s.len() && s[tc + 1] == b'(') {
-        let uc = index_from(s, tc + 2, b')');
+        let Some(uc) = index_from(s, tc + 2, b')') else {
+          break;
+        };
         if (uc > tc + 2) {
           let text = slice_unchecked(s, i + 1, tc).to_owned();
           let url = slice_unchecked(s, tc + 2, uc).to_owned();
@@ -623,19 +626,21 @@ function links(s: string): string {
           continue;
         }
       }
+      // Every opening bracket before this closing bracket has the same suffix.
+      i = tc;
     }
     i += 1;
   }
   return out + slice_unchecked(s, run, s.len());
 }
 
-function index_from(s: string, from: i32, c: u8): i32 {
+function index_from(s: string, from: i32, c: u8): Option[i32] {
   for i in from..s.len() {
     if (s[i] == c) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 // A browser drops leading control bytes and spaces, and every tab and line
