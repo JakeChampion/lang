@@ -501,6 +501,12 @@ pub function test_word_flow_checks(): i32 {
   let first = word_flow_probe_block(10, [0], [word_flow_probe_op(7, 2, [1], "")], word_flow_probe_jump(20));
   let chain = word_flow_probe_func([entry, tail, middle, first, dead]);
   let cycle = word_flow_probe_func([entry, word_flow_probe_block(20, [10], [word_flow_probe_op(7, 3, [2], "")], word_flow_probe_jump(10)), word_flow_probe_block(10, [0, 20], [word_flow_probe_op(8, 2, [1, 3], ""), word_flow_probe_op(7, 4, [2], "")], word_flow_probe_jump(20)), dead]);
+  let addresses = managed_addresses(chain);
+  let cyclic = managed_addresses(cycle);
+  for v in 0..addresses.len() {
+    if ((addresses[v] != 0u8) != (v >= 1 && v <= 4)) { print("managed address chain"); return 101; }
+    if ((cyclic[v] != 0u8) != (v == 1)) { print("managed address cycle"); return 102; }
+  }
   let const_ret = ssa.STerm { ...ret, value: 8 };
   let const_tail = word_flow_probe_block(30, [20], [word_flow_probe_op(7, 4, [3], ""), word_flow_probe_op(ssasem.call(), -1, [8], "consume_word")], const_ret);
   let mixed = word_flow_probe_func([entry, const_tail, middle, first, dead]);
