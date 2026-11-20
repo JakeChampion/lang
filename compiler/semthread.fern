@@ -642,8 +642,10 @@ function forward_block(g: ssa.SFunc, at: i32[], yi: i32): ssa.SFunc {
       let args: i32[] = [];
       for k in 0..ins.args.len() {
         if (k == slot) {
+          let v = ins.args[k];
+          let phi = phi_of(y, v);
           for qk in 0..y.preds.len() {
-            args = args.append(operand_on_edge(y, ins.args[k], qk));
+            args = args.append(if (phi.kind_tag == ssa.PHI) { phi.args[qk] } else { v });
           }
         } else {
           args = args.append(ins.args[k]);
@@ -661,15 +663,6 @@ function forward_block(g: ssa.SFunc, at: i32[], yi: i32): ssa.SFunc {
   }
   blocks = blocks.with(yi, ssa.SBlock { ...y, insts: [], preds: [] });
   return ssa.SFunc { ...g, blocks: blocks };
-}
-
-// What v is on the edge from the qk-th predecessor of y.
-function operand_on_edge(y: ssa.SBlock, v: i32, qk: i32): i32 {
-  let p = phi_of(y, v);
-  if (p.kind_tag == ssa.PHI) {
-    return p.args[qk];
-  }
-  return v;
 }
 
 // A join that reaches the branch on its phi through empty blocks, each
