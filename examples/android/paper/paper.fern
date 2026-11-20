@@ -543,10 +543,9 @@ function first_number(d: json.Document, n: i32, key: string): Option[f64] {
   if (!d.is_array(a)) {
     return None;
   }
-  let c = d.first(a);
-  if (c < 0) {
+  let Some(c) = d.first(a) else {
     return None;
-  }
+  };
   return d.as_f64(c);
 }
 
