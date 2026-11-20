@@ -29,6 +29,7 @@ Call `start` and `stop` on the loop thread. Call `stop` before the loop ends.
 <<module introduction>>=
 // This module tells when the sound of the phone becomes noisy.
 import "std/android";
+import "std/android/noisy/bindings";
 import "std/jni";
 ```
 
@@ -58,40 +59,85 @@ pub struct Noisy { context: usize, receiver: usize }
 
 const ACTION: string = "android.media.AUDIO_BECOMING_NOISY";
 
-const RECEIVER_SIG: string = "Landroid/content/BroadcastReceiver;";
-
-function new_object(e: usize, class: usize, sig: string, args: usize[]): usize {
-  let values: usize = jni.jvalues(args);
-  let obj: usize = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", sig), values);
-  jni.free_buffer(values);
-  return obj;
+function push_frame(e: usize): boolean {
+  if (jni.call1(e, 19, 32 as usize) as i32 != 0) {
+    let cleared = jni.exception_clear(e);
+    return false;
+  }
+  return true;
 }
 
-// Registers one receiver of `class`, the Java name of the app's @jni
-// subclass of BroadcastReceiver. It is None when Android gives no
-// application context or refuses the receiver.
+function pop_frame(e: usize): void {
+  let popped = jni.call1(e, 20, 0 as usize);
+}
+
+// The app's receiver has a public no-argument constructor. Load it through
+// the app's class loader because the loop runs on a native thread.
+function new_receiver(e: usize, c: bindings.Classes, activity: bindings.Context, name: string): Result[bindings.BroadcastReceiver, jni.JavaError] {
+  let loader = c.context.get_class_loader(e, activity)?;
+  let class = c.class_loader.load_class(e, loader, name)?;
+  let instance = c.class.new_instance(e, class)?;
+  return Ok(bindings.BroadcastReceiver { ref: instance.ref });
+}
+
+// Registers one receiver of the app's @jni class. A successful registration
+// may return a null sticky intent.
 pub function start(ctx: usize, class: string): Option[Noisy] {
-  let e: usize = android.env(ctx);
-  let obj: usize = android.activity_object(ctx);
-  let context: usize = jni.call_object(e, obj, "getApplicationContext", "()Landroid/content/Context;", []);
-  if (context == 0 as usize) {
+  let e = android.env(ctx);
+  if (!push_frame(e)) {
     return None;
   }
-  let receiver: usize = new_object(e, jni.load_class(e, obj, class), "()V", []);
-  let filter: usize = new_object(e, jni.find_class(e, "android/content/IntentFilter"), "(Ljava/lang/String;)V", [jni.new_string(e, ACTION)]);
-  if (receiver == 0 as usize || filter == 0 as usize) {
+  defer pop_frame(e);
+  let Ok(c) = bindings.classes(e) else {
+    return None;
+  };
+  defer c.release(e);
+  let activity = bindings.Context { ref: android.activity_object(ctx) };
+  let Ok(context) = c.context.get_application_context(e, activity) else {
+    return None;
+  };
+  if (context.is_null()) {
     return None;
   }
-  let sticky: usize = jni.call_object(e, context, "registerReceiver", "(" + RECEIVER_SIG + "Landroid/content/IntentFilter;)Landroid/content/Intent;", [receiver, filter]);
-  return Some(Noisy { context: jni.new_global_ref(e, context), receiver: jni.new_global_ref(e, receiver) });
+  let Ok(receiver) = new_receiver(e, c, activity, class) else {
+    return None;
+  };
+  let Ok(filter) = c.intent_filter.new(e, ACTION) else {
+    return None;
+  };
+  let app = jni.new_global_ref(e, context.ref);
+  if (app == 0 as usize) {
+    let cleared = jni.exception_clear(e);
+    return None;
+  }
+  let kept = jni.new_global_ref(e, receiver.ref);
+  if (kept == 0 as usize) {
+    let cleared = jni.exception_clear(e);
+    jni.delete_global_ref(e, app);
+    return None;
+  }
+  let Ok(_) = c.context.register_receiver(e, context, receiver, filter) else {
+    jni.delete_global_ref(e, kept);
+    jni.delete_global_ref(e, app);
+    return None;
+  };
+  return Some(Noisy { context: app, receiver: kept });
 }
 
-// Unregisters the receiver and frees its references.
+// Unregisters the receiver and releases the references retained by start.
 pub function stop(ctx: usize, n: Noisy): void {
-  let e: usize = android.env(ctx);
-  let unregistered: boolean = jni.call_void(e, n.context, "unregisterReceiver", "(" + RECEIVER_SIG + ")V", [n.receiver]);
-  jni.delete_global_ref(e, n.receiver);
-  jni.delete_global_ref(e, n.context);
+  let e = android.env(ctx);
+  defer jni.delete_global_ref(e, n.context);
+  defer jni.delete_global_ref(e, n.receiver);
+  if (!push_frame(e)) {
+    return;
+  }
+  defer pop_frame(e);
+  let Ok(c) = bindings.context_class(e) else {
+    return;
+  };
+  defer c.release(e);
+  let removed = c.unregister_receiver(e, bindings.Context { ref: n.context }, bindings.BroadcastReceiver { ref: n.receiver });
 }
 
 // The onReceive of the app's receiver: `env`, `receiver` and `intent` are
