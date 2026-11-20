@@ -165,7 +165,7 @@ pub function mlkem768x25519_key(seed: [u8]): Result[HybridKey, HpkeError] {
   if (seed.len() != SEED_SIZE) {
     return Err(Length("seed", seed.len(), SEED_SIZE));
   }
-  let full = crypto.shake256(seed, 96);
+  let full = crypto.shake256_new().update(seed).reader().squeeze(96).0;
   let Ok(pq) = mlkem768.keygen_derand(full[0:32], full[32:64]) else {
     return Err(Length("seed", seed.len(), SEED_SIZE));
   };
@@ -266,7 +266,7 @@ pub function mlkem768p256_key(seed: [u8]): Result[HybridP256Key, HpkeError] {
   if (seed.len() != SEED_SIZE) {
     return Err(Length("seed", seed.len(), SEED_SIZE));
   }
-  let full = crypto.shake256(seed, 64 + 32 * P256_CANDIDATES);
+  let full = crypto.shake256_new().update(seed).reader().squeeze(64 + 32 * P256_CANDIDATES).0;
   let Ok(pq) = mlkem768.keygen_derand(full[0:32], full[32:64]) else {
     return Err(Length("seed", seed.len(), SEED_SIZE));
   };
@@ -292,7 +292,7 @@ pub function mlkem768p256_derive_key_pair(ikm: [u8]): Result[HybridP256Key, Hpke
   let prefix = __alloc_u8(2).with(1, label.len() as u8);
   let length = __alloc_u8(2).with(1, SEED_SIZE as u8);
   let input = __cat(__cat(__cat(__cat(__cat(ikm, "HPKE-v1".as_bytes()), __kem_suite(KEM_MLKEM768_P256)), prefix), label), length);
-  let seed = crypto.shake256(input, SEED_SIZE);
+  let seed = crypto.shake256_new().update(input).reader().squeeze(SEED_SIZE).0;
   crypto.erase(input);
   let k = mlkem768p256_key(seed);
   crypto.erase(seed);

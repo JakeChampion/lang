@@ -10,6 +10,8 @@ Digest states are values. Every digest has the same surface: `<algorithm>_new()`
 
 ## Contracts
 
+The one-shot SHAKE functions require a positive output length in bytes. They return `InvalidOutputLength` with the supplied length for zero or negative requests.
+
 The same state must receive each returned update value. Authentication helpers compare codes without ordinary string equality. Generated digest cores remain in one generator-controlled chunk. `erase` takes an owned array, which the checker accepts only at its last use.
 
 ## Executable example
@@ -4175,12 +4177,22 @@ pub function (r: ShakeReader) squeeze(n: i32): (u8[], ShakeReader) {
   return (out, ShakeReader { sponge: st });
 }
 
-pub function shake128(data: [u8], out_len: i32): u8[] {
-  return shake128_new().update(data).reader().squeeze(out_len).0;
+pub enum ShakeError {
+  InvalidOutputLength(i32),
 }
 
-pub function shake256(data: [u8], out_len: i32): u8[] {
-  return shake256_new().update(data).reader().squeeze(out_len).0;
+pub function shake128(data: [u8], out_len: i32): Result[u8[], ShakeError] {
+  if (out_len < 1) {
+    return Err(InvalidOutputLength(out_len));
+  }
+  return Ok(shake128_new().update(data).reader().squeeze(out_len).0);
+}
+
+pub function shake256(data: [u8], out_len: i32): Result[u8[], ShakeError] {
+  if (out_len < 1) {
+    return Err(InvalidOutputLength(out_len));
+  }
+  return Ok(shake256_new().update(data).reader().squeeze(out_len).0);
 }
 ```
 
