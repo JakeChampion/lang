@@ -259,7 +259,6 @@ function elb_assigns_stmt(st: ast.Stmt, name: string): boolean {
         return false;
       }
     }
-    return false;
   }
   return astwalk.fold_stmt_spine(st, false, vs);
 }
@@ -293,7 +292,6 @@ function elb_idx_monotonic_stmts(stmts: ast.Stmt[], idx: string): boolean {
         return true;
       }
     }
-    return true;
   }
   let ok = true;
   for st in stmts {

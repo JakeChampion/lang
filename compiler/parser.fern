@@ -718,7 +718,6 @@ pub function with_loop_label(st: ast.Stmt, label: string): ast.Stmt {
           return st;
         }
       }
-      return st;
     },
     _ => {
       return st;
@@ -11543,7 +11542,6 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           return stamped_type(c.ty);
         }
       }
-      return "";
     },
     ast.ExprIndex(ix) => {
       let at = mono_infer(ix.array, env, funcs);
@@ -16546,7 +16544,6 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
           return "";
         }
       }
-      return "";
     },
     ast.ExprIndex(ix) => {
       let at = me_scrutinee_type(ix.array, env, enums, structs, funcs, ins);
@@ -17393,8 +17390,6 @@ function dl_expr_kids(e: ast.Expr): ast.Expr[] {
       return none;
     }
   }
-  let none2: ast.Expr[] = [];
-  return none2;
 }
 
 function dl_stmts_have_defer(stmts: ast.Stmt[]): boolean {
@@ -17419,7 +17414,6 @@ function dl_stmts_have_defer_deep(stmts: ast.Stmt[]): boolean {
         return false;
       }
     }
-    return false;
   }
   function ve(e: ast.Expr, own hit: boolean): boolean {
     return hit;
@@ -18170,7 +18164,6 @@ function hl_collect_var_names(stmts: ast.Stmt[]): string[] {
         return acc;
       }
     }
-    return acc;
   }
   let out: string[] = [];
   for st in stmts {
@@ -19105,8 +19098,6 @@ pub function vb_body(c: ast.ExprCall): ast.Stmt[] {
       return none;
     }
   }
-  let none2: ast.Stmt[] = [];
-  return none2;
 }
 
 function dl_ll_expr_kids(e: ast.Expr): ast.Expr {
@@ -19916,7 +19907,6 @@ pub function default_nonconst_reason(e: ast.Expr): (string, boolean) {
           return ("is a call", true);
         }
       }
-      return ("is a call", true);
     },
     ast.ExprFieldAccess(fa) => {
       return ("is a field access", true);
@@ -24026,7 +24016,6 @@ function settle_to_type(e: ast.Expr, t: TypeRef): ast.Expr {
         return e;
       }
     }
-    return e;
   }
   if (t.is_tuple) {
     match (e) {
@@ -24045,7 +24034,6 @@ function settle_to_type(e: ast.Expr, t: TypeRef): ast.Expr {
         return e;
       }
     }
-    return e;
   }
   if (is_float_type_name(t.base)) {
     return settle_float_expr(e);

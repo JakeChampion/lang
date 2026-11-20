@@ -68,7 +68,6 @@ function fn_local_spelling_for(v: ast.StmtVar, funcs: parser.FuncDecl[]): string
           return "";
         }
       }
-      return "";
     },
     _ => {
       return "";

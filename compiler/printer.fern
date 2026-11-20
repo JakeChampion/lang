@@ -610,7 +610,6 @@ function print_expr_iife(c: ast.ExprCall, parent_prec: i32, depth: i32, f: Fmt):
           return ("", f);
         }
       }
-      return ("", f);
     },
     _ => {
       return ("", f);
@@ -693,7 +692,6 @@ function print_value_local_iife(c: ast.ExprCall, depth: i32, f: Fmt): (string, F
           return ("", f);
         }
       }
-      return ("", f);
     },
     _ => {
       return ("", f);
