@@ -1420,11 +1420,11 @@ pub function op_send_root(): Op {
 }
 
 function worker_pops1(t: i32): boolean {
-  return t == 492 || t == 494 || t == 495 || t == 497;
+  return t == K_WORKER_REGION || t == K_WORKER_REAP || t == K_SEND_ADOPT || t == K_SEND_ROOT;
 }
 
 function worker_pops2(t: i32): boolean {
-  return t == 491 || t == 493;
+  return t == K_HEAP_ADOPT || t == K_WORKER_EXIT;
 }
 
 pub function op_clz(width: i32): Op {
@@ -2060,11 +2060,11 @@ pub function is_byte_kernel_op(tag: i32): boolean {
 }
 
 pub function is_sha_hw_op(tag: i32): boolean {
-  return tag == 409 || tag == 440 || tag == 552;
+  return tag == K_SHA256_HW || tag == K_SHA1_HW || tag == K_SHA1X8_HW;
 }
 
 pub function is_sha_blocks_op(tag: i32): boolean {
-  return tag == 410 || tag == 441 || tag == 553;
+  return tag == K_SHA256_HW_BLOCKS || tag == K_SHA1_HW_BLOCKS || tag == K_SHA1X8_HW_BLOCKS;
 }
 
 // The runtime need of a byte kernel that each native backend calls by
@@ -2126,7 +2126,7 @@ pub function kernel_arity(tag: i32): i32 {
 
 // The cksum and IEEE CRC-32 updates, each in its string and its array form.
 pub function is_crc32_op(tag: i32): boolean {
-  return tag == 309 || tag == 373 || tag == 480 || tag == 481;
+  return tag == K_CRC32_CKSUM || tag == K_CRC32_CKSUM_ARRAY || tag == K_CRC32_IEEE || tag == K_CRC32_IEEE_ARRAY;
 }
 
 pub function sha_builtin_tag(name: string): i32 {
@@ -4055,34 +4055,34 @@ pub function kind_retired(id: i32): boolean {
 }
 
 function pops0(t: i32): boolean {
-  return t == 1 || t == 2 || t == 3 || t == 4 || t == 5 || t == 6
-    || t == 18
-    || t == 385
-    || t == 79 || t == 80 || t == 315
+  return t == K_CONST_I32 || t == K_CONST_I32_TEXT || t == K_CONST_I64 || t == K_CONST_F64 || t == K_CONST_STR || t == K_CONST_FUNC
+    || t == K_LOAD_LOCAL
+    || t == K_CALL_WORD
+    || t == K_PTR_WIDTH || t == K_HEAP_BUMP_BYTES || t == K_HEAP_ALLOC_COUNT
     || is_sha_hw_op(t)
-    || t == 341
-    || t == 229
-    || t == 147
-    || t == 152 || t == 153 || t == 155 || t == 156 || t == 157 || t == 414
-    || t == 180
-    || t == 182 || t == 183 || t == 184
-    || t == 186
-    || t == 207 || t == 211 || t == 408
-    || t == 331
-    || t == 287
-    || t == 288
-    || t == 367
-    || t == 443
-    || t == 216 || t == 217 || t == 218
-    || t == 222
-    || t == 238 || t == 239 || t == 240
-    || t == 246 || t == 247 || t == 248 || t == 249
-    || t == 251 || t == 252
-    || t == 272 || t == 282
-    || t == 389
-    || t == 398
+    || t == K_REACTOR_NEW
+    || t == K_HEAP_MARK
+    || t == K_DYN_DISPATCH
+    || t == K_BLOCK || t == K_LOOP || t == K_ELSE || t == K_END || t == K_BR || t == K_FENCE
+    || t == K_ARGS
+    || t == K_MONOTONIC_NS || t == K_NOW_NS || t == K_NOW_UNIX_MS
+    || t == K_RANDOM_I32
+    || t == K_RAW_ENVIRON || t == K_PROC_FORK || t == K_PIPE
+    || t == K_RAW_SPLICE_PIPE
+    || t == K_RAW_COVER
+    || t == K_LINE
+    || t == K_RAW_TASK_STATE
+    || t == K_RAW_VDSO
+    || t == K_ARR_PUSH_SHARED_COUNT || t == K_ARR_PUSH_SHARED_BYTES || t == K_CONST_STRUCT
+    || t == K_MAP_HASH_SEED
+    || t == K_GETEUID || t == K_GETEGID || t == K_HOSTNAME
+    || t == K_GETUID || t == K_GETGID || t == K_GETGROUPS || t == K_ENVIRON
+    || t == K_GETCWD || t == K_CPU_COUNT
+    || t == K_RLIMIT_NOFILE || t == K_PRIORITY
+    || t == K_CLOCK_RESOLUTION
+    || t == K_MOUNTS
     || process_pops0(t)
-    || t == 298;
+    || t == K_SYNC;
 }
 
 function process_pops0(t: i32): boolean {
@@ -4090,174 +4090,174 @@ function process_pops0(t: i32): boolean {
 }
 
 function pops1_conv(t: i32): boolean {
-  return t == 7 || t == 8 || t == 9 || t == 10 || t == 11 || t == 12 || t == 13
-    || t == 14 || t == 15 || t == 16 || t == 17
-    || t == 19 || t == 20
-    || t == 34
-    || t >= 55 && t <= 61
-    || t == 219 || t == 220 || t == 221
-    || t == 411;
+  return t == K_INT_EXTEND || t == K_INT_WRAP || t == K_INT_CAST || t == K_U32_WRAP || t == K_I32_TO_F64 || t == K_F64_TO_I32 || t == K_F64_TO_I64
+    || t == K_F32_BITS || t == K_F32_FROM_BITS || t == K_F64_BITS || t == K_F64_FROM_BITS
+    || t == K_STORE_LOCAL || t == K_TEE_LOCAL
+    || t == K_NOT
+    || t >= K_FNEG && t <= K_FROUND
+    || t == K_CLZ || t == K_CTZ || t == K_POPCOUNT
+    || t == K_BSWAP;
 }
 
 function pops1_mem(t: i32): boolean {
-  return t == 67 || t == 69 || t == 70 || t == 71
-    || t == 76 || t == 77
-    || t == 81 || t == 205 || t == 224 || t == 383
-    || t == 90 || t == 91
-    || t == 97 || t == 103 || t == 104 || t == 345
-    || t == 253 || t == 368
-    || t == 106 || t == 107 || t == 109
-    || t == 113
-    || t == 120 || t == 122 || t == 123
-    || t == 139 || t == 141 || t == 143 || t == 145
-    || t == 146 || t == 412 || t == 418;
+  return t == K_LOAD || t == K_LOAD_I32 || t == K_LOAD_I64 || t == K_LOAD_PTR
+    || t == K_ALLOC || t == K_ALLOC_U8
+    || t == K_RAW_ALLOC || t == K_RAW_SCRATCH || t == K_RAW_ARR_BOX || t == K_ARR_RESERVE
+    || t == K_ARR_LEN || t == K_ARR_RC
+    || t == K_STR_LEN || t == K_STR_FROM_BYTES || t == K_STR_BYTES || t == K_STR_DATA
+    || t == K_SUM_BYTES || t == K_SUM_BYTES_ARRAY
+    || t == K_STR_TO_UPPER || t == K_STR_TO_LOWER || t == K_STR_TRIM
+    || t == K_STR_LINES
+    || t == K_OPT_MAKE || t == K_OPT_TAG || t == K_OPT_PAYLOAD
+    || t == K_STRUCT_GET || t == K_STRUCT_SET_SHAPE || t == K_TUPLE_GET || t == K_VARIANT_IS
+    || t == K_DYN_BOX || t == K_MMIO_LOAD || t == K_PORT_IN;
 }
 
 function pops1_io(t: i32): boolean {
-  return t == 154 || t == 158 || t == 159 || t == 160 || worker_pops1(t)
-    || t == 384
-    || t == 434
-    || t == 163 || t == 164 || t == 165 || t == 166
-    || t == 169 || t == 233 || t == 171 || t == 172 || t == 173
-    || t == 340
-    || t == 310 || t == 391 || t == 432
-    || t == 174 || t == 175 || t == 236 || t == 176 || t == 179 || t == 181
-    || t == 266
-    || t == 231 || t == 232
-    || t == 243 || t == 244
-    || t == 392 || t == 393 || t == 394
-    || t == 395
-    || t == 277 || t == 279
-    || t == 241 || t == 250 || t == 307 || t == 483 || t == K_READER_FROM_FD
-    || t == 299 || t == 300 || t == 301
-    || t == 261 || t == 264 || t == 265 || t == 568
-    || t == 283
-    || t == 270 || t == 271
-    || t == 401
-    || t == 276 || t == 312
-    || t == 185 || t == 212
-    || t == 286
-    || t == 397
-    || t == 399 || t == 400
-    || t == 402
-    || t == 188 || t == 148 || t == 161 || t == 162 || t == 167
-    || t == 116 || t == 112 || t == 200 || t == 201 || t == 203
-    || t == 320
-    || t == 230
-    || t == 316 || t == 317 || t == 318 || t == 319;
+  return t == K_IF || t == K_BRIF || t == K_DROP || t == K_RETURN || worker_pops1(t)
+    || t == K_RET_WORD
+    || t == K_RING_NEW
+    || t == K_PRINT_STR || t == K_EPRINT_STR || t == K_PUTCHAR || t == K_EXIT
+    || t == K_READ_FILE || t == K_READ_FILE_BYTES || t == K_READ_DIR || t == K_REMOVE_DIR_ALL || t == K_REMOVE_FILE
+    || t == K_UNIX_CONNECT
+    || t == K_READ_DIR_ALL || t == K_READ_DIR_INO || t == K_READ_DIR_INO_ALL
+    || t == K_TEMP_DIR || t == K_STAT || t == K_LSTAT || t == K_ENV || t == K_READER_CLOSE || t == K_SLEEP_MS
+    || t == K_SLEEP_NS
+    || t == K_CREATE_DIR_ALL || t == K_ISATTY
+    || t == K_SIGNAL_IGNORE || t == K_SIGNAL_DEFAULT
+    || t == K_SIGNAL_CATCH || t == K_SIGNAL_TAKEN || t == K_SIGNAL_CATCH_INTERRUPTING
+    || t == K_SIGNAL_RAISE
+    || t == K_CHDIR || t == K_SIGNAL_DISPOSITION
+    || t == K_FD_STAT || t == K_UNAME_FIELD || t == K_FD_FLAGS || t == K_PRCTL_QUERY || t == K_READER_FROM_FD
+    || t == K_FD_FSYNC || t == K_FD_FDATASYNC || t == K_FD_SYNCFS
+    || t == K_REMOVE_DIR || t == K_READ_LINK || t == K_UMASK || t == K_MAP_FILE
+    || t == K_SET_PRIORITY
+    || t == K_STATFS || t == K_PROCESS_ALIVE
+    || t == K_SYSCTL
+    || t == K_WINDOW_SIZE || t == K_TERMIOS_GET
+    || t == K_RANDOM_BYTES || t == K_PROC_WAITPID
+    || t == K_PROC_WAITPID_NOHANG
+    || t == K_PROC_WAITPID_STATUS
+    || t == K_CT_MARK || t == K_VG_REQUEST
+    || t == K_AES_EXPAND_KEY
+    || t == K_TIMER_FD || t == K_WASM_TIMER_POLLABLE || t == K_WASM_POLLABLE_DROP || t == K_WASM_BLOCK || t == K_WASM_POLL
+    || t == K_TCP_CLOSE || t == K_TCP_POLLABLE || t == K_TCP_LISTEN || t == K_TCP_ACCEPT || t == K_OPEN_FILE
+    || t == K_TCP_LOCAL_PORT
+    || t == K_HEAP_RELEASE_TO
+    || t == K_CHROOT || t == K_SETUID || t == K_SETGID || t == K_SETGROUPS;
 }
 
 function pops2_arith(t: i32): boolean {
-  return t >= 21 && t <= 33 || t >= 35 && t <= 54 || t == 430 || t == 484;
+  return t >= K_ADD && t <= K_SHR_U || t >= K_EQ && t <= K_FGE || t == K_MULHI_U || t == K_MULHI_S;
 }
 
 function pops2_kernel(t: i32): boolean {
-  return t == 227 || t == 235
-    || t == 329 || t == 369
-    || t == 390
+  return t == K_ASCII_RUN || t == K_COUNT_BYTE
+    || t == K_BSD_SUM || t == K_BSD_SUM_BYTES
+    || t == K_STR_HASH
     || is_crc32_op(t)
-    || t == 322 || t == 381
+    || t == K_SCALE_F64 || t == K_OUTER_MUL_F64
     || is_sha_blocks_op(t);
 }
 
 function pops2_mem(t: i32): boolean {
-  return t == 359 || t == 482 || t == 72 || t == 73 || t == 199
-    || t == 78
-    || t == 83 || t == 85 || t == 86 || t == 223 || worker_pops2(t)
-    || t == 88
-    || t == 92 || t == 93 || t == 94 || t == 95 || t == 302 || t == 303
-    || t == 98 || t == 99 || t == 100 || t == 101
-    || t == 105 || t == 108
+  return t == K_COUNT_BYTE_BYTES || t == K_COUNT_BELOW_U64 || t == K_STORE_I32 || t == K_STORE_PTR || t == K_STORE_I64
+    || t == K_FREE
+    || t == K_RAW_LOAD8 || t == K_RAW_LOAD_PTR || t == K_RAW_STRING || t == K_RAW_ADDR || worker_pops2(t)
+    || t == K_ARR_GET
+    || t == K_ARR_PUSH || t == K_ARR_PUSH_OWNED || t == K_ARR_PUSH_I64 || t == K_ARR_PUSH_F64 || t == K_ARR_PUSH_OWNED_I64 || t == K_ARR_PUSH_OWNED_F64
+    || t == K_STR_CONCAT || t == K_STR_EQ || t == K_STR_CMP || t == K_STR_INDEX
+    || t == K_STR_SPLIT || t == K_STR_REPEAT
     || pops2_kernel(t)
-    || t == 124 || t == 140 || t == 144 || t == 413 || t == 419;
+    || t == K_OPT_SET_PAYLOAD || t == K_STRUCT_SET || t == K_TUPLE_SET || t == K_MMIO_STORE || t == K_PORT_OUT;
 }
 
 function pops2_io(t: i32): boolean {
-  return t == 170 || t == 226 || t == 352 || t == 511
-    || t == 237
-    || t == 260 || t == 262 || t == 263 || t == 267 || t == 268
-    || t == 356 || t == 357
-    || t == 405
-    || t == 406
-    || t == 362 || t == 363 || t == 374 || t == 375
-    || t == 273
-    || t == 304 || t == 305
-    || t == 281 || t == 490
-    || t == 285
-    || t == 284
-    || t == 311
-    || t == 178 || t == 348 || t == 349 || t == 350 || t == 187
-    || t == 353 || t == 334 || t == 339 || t == K_VSOCK_CONNECT
-    || t == 344
-    || t == 202 || t == 213 || t == 308 || t == 431
-    || t == 278
-    || t == 388;
+  return t == K_WRITE_FILE || t == K_WRITE_FILE_EXEC || t == K_WRITE_FILE_BYTES || t == K_TCP_ACCEPT_WITH
+    || t == K_ACCESS
+    || t == K_CREATE_DIR || t == K_CREATE_LINK || t == K_CREATE_SYMLINK || t == K_RENAME || t == K_CHMOD
+    || t == K_RENAME_NOREPLACE || t == K_RENAME_EXCHANGE
+    || t == K_CLONE_FILE
+    || t == K_SET_EXTPROC
+    || t == K_GETXATTR || t == K_LGETXATTR || t == K_GETXATTR_BYTES || t == K_LGETXATTR_BYTES
+    || t == K_TRUNCATE
+    || t == K_OPEN_READER_WITH || t == K_OPEN_WRITER_WITH
+    || t == K_WRITER_TRUNCATE || t == K_WRITER_NONBLOCKING
+    || t == K_SIGNAL_SEND
+    || t == K_SET_PROCESS_GROUP
+    || t == K_FD_DUP_ONTO
+    || t == K_READ_CHUNK || t == K_READ_CHUNK_BYTES || t == K_WRITE_BYTES || t == K_WRITE_SOME_BYTES || t == K_POLL
+    || t == K_TCP_SEND_BYTES || t == K_UDP_BIND || t == K_UNIX_LISTEN || t == K_VSOCK_CONNECT
+    || t == K_TCP_RECV_INTO
+    || t == K_WRITER_WRITE || t == K_PROC_EXEC || t == K_WRITE_SOME || t == K_WRITER_SPLICE_FOREVER
+    || t == K_SIGNAL_MASK
+    || t == K_CLOCK_SET;
 }
 
 function pops3(t: i32): boolean {
-  return t == 496 || t == 379 || t == 361 || t == 360 || t == 358 || t == 74 || t == 75
-    || t == 82 || t == 84
-    || t == 89 || t == 96 || t == 102 || t == 111
-    || t == 177 || t == 225 || t == 234
-    || t == 333 || t == 335 || t == 337 || t == 338
-    || t == 442 || t == 486
-    || t == 346 || t == K_MONT_MUL
-    || t == 387
-    || t == 343 || t == 436
-    || t == 438
-    || t == 242
-    || t == 330
-    || t == 407
-    || t == 280
-    || t == 313
-    || t == 314
-    || t == 324 || t == K_SCAN_MASKS || t == K_SCAN_MASKS_BYTES || t == K_FFMA || t == K_FFMA32
-    || t == 327
-    || t == 364 || t == 365 || t == 376 || t == 377
-    || t == 366 || t == 380
-    || t == 403 || t == 404
-    || t == 433;
+  return t == K_WORKER_UNMAP || t == K_COUNT_RUNS_BYTES || t == K_SCAN_SET_BYTES || t == K_RMEMCHR_BYTES || t == K_MEMCHR_BYTES || t == K_MEMCPY || t == K_MEMSET
+    || t == K_RAW_STORE8 || t == K_RAW_STORE_PTR
+    || t == K_ARR_SET || t == K_ARR_SLICE || t == K_STR_SLICE || t == K_STR_REPLACE
+    || t == K_SUBPROCESS || t == K_MEMCHR || t == K_RMEMCHR
+    || t == K_TCP_SOCKET_CTL || t == K_UDP_CONNECT || t == K_UDP_RECVFROM || t == K_TCP_CONNECT_WITH
+    || t == K_UDP_BIND_WITH || t == K_TCP_ADDR_INTO
+    || t == K_TCP_SENDFILE || t == K_MONT_MUL
+    || t == K_TCP_SEND_BUF
+    || t == K_REACTOR_WAIT || t == K_RING_WAIT
+    || t == K_RING_RECV
+    || t == K_READER_SEEK
+    || t == K_READER_SPLICE
+    || t == K_READER_COPY_RANGE
+    || t == K_PROC_EXEC_AS
+    || t == K_TERMIOS_SET
+    || t == K_SET_WINDOW_SIZE
+    || t == K_SCAN_SET || t == K_SCAN_MASKS || t == K_SCAN_MASKS_BYTES || t == K_FFMA || t == K_FFMA32
+    || t == K_COUNT_RUNS
+    || t == K_SETXATTR || t == K_LSETXATTR || t == K_SETXATTR_BYTES || t == K_LSETXATTR_BYTES
+    || t == K_FD_DROP_CACHE || t == K_STR_FROM_BYTES_RANGE
+    || t == K_AES_CTR32 || t == K_GHASH
+    || t == K_UTF8_BLOCKS;
 }
 
 function pops_buf(t: i32): Option[i32] {
-  if (t >= 487 && t <= 489) {
+  if (t >= K_BUF_PUSH_BASE64 && t <= K_BUF_DECODE_BASE32) {
     return Some(5);
   }
-  if (t == 351) {
+  if (t == K_BUF_PUSH_BYTES_RANGE) {
     return Some(4);
   }
-  if (t == 347 || t == 386) {
+  if (t == K_BUF_TAKE_BYTES || t == K_BUF_CLEAR) {
     return Some(1);
   }
-  if (t == 306 || t == 485) {
+  if (t == K_BUF_PUSH_U64 || t == K_BUF_PUSH_DECIMAL) {
     return Some(2);
   }
-  if (t == 325 || t == 326 || t == 328 || t == 370 || t == 371 || t == 372) {
+  if (t == K_BUF_PUSH_MAPPED || t == K_BUF_PUSH_FILTERED || t == K_BUF_PUSH_EXPANDED || t == K_BUF_PUSH_BYTES_MAPPED || t == K_BUF_PUSH_BYTES_FILTERED || t == K_BUF_PUSH_BYTES_EXPANDED) {
     return Some(3);
   }
   if (t < 291 || t > 297) {
     return None;
   }
-  if (t == 293) {
+  if (t == K_BUF_PUSH_RANGE) {
     return Some(4);
   }
-  if (t == 292 || t == 294) {
+  if (t == K_BUF_PUSH || t == K_BUF_PUSH_BYTE) {
     return Some(2);
   }
   return Some(1);
 }
 
 function pops_dir(t: i32): i32 {
-  if (t == 420 || t == 422) {
+  if (t == K_OPEN_DIR || t == K_DIR_ENTRIES) {
     return 1;
   }
-  if (t == 424 || t == 428) {
+  if (t == K_DIR_ACCESS || t == K_DIR_OPEN_FILE) {
     return 3;
   }
-  if (t == 426) {
+  if (t == K_DIR_CHMOD) {
     return 4;
   }
-  if (t == 427) {
+  if (t == K_DIR_CHOWN) {
     return 5;
   }
   return 2;
@@ -4319,7 +4319,7 @@ function kind_pops(t: i32): i32 {
   if let Some(bufn) = pops_buf(t) {
     return bufn;
   }
-  if (t >= 420 && t <= 428) {
+  if (t >= K_OPEN_DIR && t <= K_DIR_OPEN_FILE) {
     return pops_dir(t);
   }
   if (is_privileged_kind(t)) {
@@ -4337,43 +4337,43 @@ function kind_pops(t: i32): i32 {
   if (pops3(t)) {
     return 3;
   }
-  if (t == 204) {
+  if (t == K_SYSCALL3) {
     return 4;
   }
-  if (t == 332) {
+  if (t == K_TCP_LISTEN_WITH) {
     return 4;
   }
-  if (t == 336 || t == 355 || t == 516 || t == 517) {
+  if (t == K_UDP_SENDTO || t == K_UDP_SENDTO_BYTES || t == K_UDP_SENDMMSG || t == K_UDP_RECVMMSG) {
     return 4;
   }
-  if (t == 342 || t == 435 || t == 437 || t == 439 || t == K_POLY1305_BLOCKS) {
+  if (t == K_REACTOR_CTL || t == K_RING_CTL || t == K_TCP_KTLS || t == K_RING_SEND_ZC || t == K_POLY1305_BLOCKS) {
     return 4;
   }
-  if (t == 206 || t == K_CHACHA20_XOR_INTO || t == K_SCRYPT_BLOCK_MIX) {
+  if (t == K_SYSCALL4 || t == K_CHACHA20_XOR_INTO || t == K_SCRYPT_BLOCK_MIX) {
     return 5;
   }
-  if (t == 245 || t == 378 || t == 446) {
+  if (t == K_MISMATCH || t == K_MISMATCH_BYTES || t == K_MISMATCH_BYTES_STR) {
     return 5;
   }
-  if (t == 444 || t == 445) {
+  if (t == K_AES_GCM_SEAL_INTO || t == K_AES_GCM_OPEN_INTO) {
     return 9;
   }
-  if (t == 228 || t == 382) {
+  if (t == K_SYSCALL5 || t == K_INNER_MUL_ADD_F64) {
     return 6;
   }
-  if (t == 323 || is_chacha20_poly1305_op(t)) {
+  if (t == K_SYSCALL6 || is_chacha20_poly1305_op(t)) {
     return 7;
   }
-  if (t == 269 || t == 498) {
+  if (t == K_SET_FILE_TIMES || t == K_WRITER_SET_TIMES) {
     return 6;
   }
-  if (t == 274) {
+  if (t == K_MKNOD) {
     return 4;
   }
-  if (t == 275) {
+  if (t == K_CHOWN_AT) {
     return 4;
   }
-  if (t == 321) {
+  if (t == K_CHMOD_AT) {
     return 3;
   }
   return -1;

@@ -188,7 +188,7 @@ function arrives(ins: ssa.SInst, result: typeinfo.Type, ix: util.NameIndex, usab
 // An Option or a Result that a built-in makes, such as the Some of a map
 // lookup, has no variant_new.
 function moves_option(k: i32): boolean {
-  return k == ssasem.variant_new() || k == ssasem.call_value() || k == ssasem.record_get() || k == ssasem.tuple_get() || k == ssasem.array_get() || k == ssasem.variant_get() || k == ssasem.cell_get() || k == 6 || k == 7 || k == 8 || k == 36;
+  return k == ssasem.variant_new() || k == ssasem.call_value() || k == ssasem.record_get() || k == ssasem.tuple_get() || k == ssasem.array_get() || k == ssasem.variant_get() || k == ssasem.cell_get() || k == ssa.PARAM || k == ssa.COPY || k == ssa.PHI || k == ssa.SELECT;
 }
 
 function call_arrives(ins: ssa.SInst, ix: util.NameIndex, usable: boolean[]): boolean {
