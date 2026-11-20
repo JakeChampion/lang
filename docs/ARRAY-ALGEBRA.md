@@ -309,7 +309,7 @@ This is the same stance as the fusion contract's clause 4, "failure is
 visible, not silent", and as `REUSE-CONTRACT.md`'s specified-not-
 best-effort framing.
 
-**Primary compiler.** Set `FERN_ARRAY_REPORT=1` on a normal compile to print
+**Primary compiler.** Set `FERN_DEBUG_ARRAY_REPORT=1` on a normal compile to print
 the primary Fern compiler's typed semantic fusion decisions to stderr. The
 report identifies its compiler. Enabling it leaves the emitted program
 unchanged. A successful entry is recorded by the pass performing the rewrite:
@@ -385,7 +385,7 @@ its result and receiver values. Under `-g` it also names the statement's line
 and every source binding of the receiver, so the binding whose later read
 forces the copy is in the list (`(xs, keep)` for `let keep = xs;
 xs = xs.append(i);`). The report is static. A `guarded` site still copies
-when an upstream retain leaves the box shared, and `FERN_CLIFF_REPORT=1`
+when an upstream retain leaves the box shared, and `FERN_DEBUG_CLIFF_REPORT=1`
 counts those copies at run time.
 
 The `with storage` section names every array `.with` site. It has the reasons

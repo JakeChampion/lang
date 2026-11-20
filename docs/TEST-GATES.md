@@ -1995,6 +1995,8 @@ answer, these are the tools, in the order they are usually reached for:
 
 Set `FERN_DEBUG_OPT_TRACE=1` to print optimization decisions and `FERN_DEBUG_ENTRY_CHECK_TRACE=1` to trace entry checks. The RC trace switches are `FERN_DEBUG_RC_TRACE` and `FERN_DEBUG_RC_TRACE_DEEP`. Use `FERN_DEBUG_SEM_IR_REPORT=1` for the semantic lowering tally and `FERN_DEBUG_SSA_REPORT=1` for the native SSA backend report. All six switches accept their older names without `DEBUG_`. An explicit value for the new name takes precedence, including an empty value.
 
+Use `FERN_DEBUG_ARRAY_REPORT=1` for array decisions and `FERN_DEBUG_CLIFF_REPORT=1` for shared-append counters. Both accept the older spelling without `DEBUG_`. An explicit value for the new name takes precedence, including an empty value.
+
 The compiler dump variables `FERN_DEBUG_SEM_DUMP`, `FERN_DEBUG_RC_CERTIFY_DUMP`, `FERN_DEBUG_SUSPEND_DUMP` and `FERN_DEBUG_TV_DUMP` also accept their older spellings without `DEBUG_`. The new spelling takes precedence when both are set.
 
 - **`FERN_DEBUG_SEM_DUMP=<function>`** — prints the semantic graph of that
@@ -2052,7 +2054,7 @@ The compiler dump variables `FERN_DEBUG_SEM_DUMP`, `FERN_DEBUG_RC_CERTIFY_DUMP`,
   one threaded accumulator over 20k appends crosses ~20k times and copies
   **2.3 GB**. Two rounds of accumulator work were scoped against the unweighted
   count and aimed at sites that could not have paid. The compiler's own readout
-  (`FERN_CLIFF_REPORT=1`, `util.arr_push_cliff_report`) prints both.
+  (`FERN_DEBUG_CLIFF_REPORT=1`, `util.arr_push_cliff_report`) prints both.
 - **Attributing a crossing to a function** needs no flag: build with `-g`, find
   the counter-bump instruction inside `__fern_arr_push_grow`
   (`objdump -d --disassemble=__fern_arr_push_grow`), break on it under gdb and
