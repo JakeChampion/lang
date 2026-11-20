@@ -1,0 +1,90 @@
+import "std/android/draw";
+import "std/jni";
+import "std/result";
+
+const PUSH_LOCAL_FRAME: i32 = 19;
+
+const POP_LOCAL_FRAME: i32 = 20;
+
+function bitmap(e: usize, factory: usize, bytes: usize, n: i32, opts: usize): usize {
+  let decode = jni.get_static_method_id(e, factory, "decodeByteArray", "([BIILandroid/graphics/BitmapFactory$Options;)Landroid/graphics/Bitmap;");
+  let args = jni.jvalues([bytes, 0 as usize, n as usize, opts]);
+  let image = jni.call_static_object_method_a(e, factory, decode, args);
+  jni.free_buffer(args);
+  return image;
+}
+
+function dimension(e: usize, bitmap: usize, cls: usize, name: string): i32 {
+  let method = jni.get_method_id(e, cls, name, "()I");
+  return jni.call_int_method_a(e, bitmap, method, 0 as usize);
+}
+
+function pixels(e: usize, image: usize): Option[draw.Image] {
+  let cls = jni.get_object_class(e, image);
+  let w = dimension(e, image, cls, "getWidth");
+  let h = dimension(e, image, cls, "getHeight");
+  if (w < 1 || h < 1 || w > 512 || h > 512) {
+    return None;
+  }
+  let buffer = jni.new_int_array(e, w * h);
+  if (buffer == 0 as usize || !jni.call_void(e, image, "getPixels", "([IIIIIII)V", [buffer, 0 as usize, w as usize, 0 as usize, 0 as usize, w as usize, h as usize])) {
+    return None;
+  }
+  let argb = jni.int_array_region(e, buffer, 0, w * h);
+  let rgba: u8[] = [];
+  for c in argb {
+    let a = c >> 24 & 255;
+    rgba = rgba.append(((c >> 16 & 255) * a / 255) as u8).append(((c >> 8 & 255) * a / 255) as u8).append(((c & 255) * a / 255) as u8).append(a as u8);
+  }
+  return Some(draw.Image { width: w, height: h, pixels: rgba });
+}
+
+function decode_in_frame(e: usize, data: u8[]): Option[draw.Image] {
+  let factory = jni.find_class(e, "android/graphics/BitmapFactory");
+  let options = jni.find_class(e, "android/graphics/BitmapFactory$Options");
+  let args = jni.jvalues([]);
+  let opts = jni.new_object_a(e, options, jni.get_method_id(e, options, "<init>", "()V"), args);
+  jni.free_buffer(args);
+  let bytes = jni.new_byte_array(e, data.len());
+  if (jni.check(e).is_err() || bytes == 0 as usize || opts == 0 as usize) {
+    return None;
+  }
+  jni.set_byte_array_region(e, bytes, 0, data);
+  let bounds = jni.get_field_id(e, options, "inJustDecodeBounds", "Z");
+  jni.set_boolean_field(e, opts, bounds, 1 as usize);
+  let ignored = bitmap(e, factory, bytes, data.len(), opts);
+  if (jni.check(e).is_err()) {
+    return None;
+  }
+  let w = jni.get_int_field(e, opts, jni.get_field_id(e, options, "outWidth", "I"));
+  let h = jni.get_int_field(e, opts, jni.get_field_id(e, options, "outHeight", "I"));
+  if (w < 1 || h < 1 || w > 8192 || h > 8192) {
+    return None;
+  }
+  let sample = 1;
+  while (w.max(h) / sample > 256) {
+    sample *= 2;
+  }
+  jni.set_boolean_field(e, opts, bounds, 0 as usize);
+  let sampling = jni.get_field_id(e, options, "inSampleSize", "I");
+  jni.set_int_field(e, opts, sampling, sample as usize);
+  let image = bitmap(e, factory, bytes, data.len(), opts);
+  if (jni.check(e).is_err() || image == 0 as usize) {
+    return None;
+  }
+  return pixels(e, image);
+}
+
+pub function decode(e: usize, data: u8[]): Option[draw.Image] {
+  if (data.len() == 0 || jni.call1(e, PUSH_LOCAL_FRAME, 16 as usize) as i32 != 0) {
+    let ignored = jni.check(e);
+    return None;
+  }
+  let image = decode_in_frame(e, data);
+  let err = jni.check(e);
+  let ignored = jni.call1(e, POP_LOCAL_FRAME, 0 as usize);
+  if (err.is_err()) {
+    return None;
+  }
+  return image;
+}

@@ -2,6 +2,7 @@ import "std/fetch";
 import "std/http";
 import "std/json";
 import "std/time";
+import "std/string";
 import "std/url";
 import "./oauth";
 
@@ -9,35 +10,49 @@ const API: string = "https://api.yotoplay.com";
 
 pub struct Player { id: string, name: string, online: boolean }
 
-pub struct Card { id: string, title: string }
+pub enum Kind { Standard, Myo, Podcast, Radio }
 
-pub struct Failure { message: string, expired: boolean }
+pub struct Track { title: string, chapter: string, chapter_key: string, track_key: string, search: string }
 
-pub struct Library { players: Player[], cards: Card[] }
+pub struct Card {
+  id: string,
+  title: string,
+  creator: string,
+  cover: string,
+  kind: Kind,
+  myo: boolean,
+  search: string,
+  tracks: Track[],
+  indexed: boolean,
+}
 
-pub enum Command { Play(string), Pause, Resume, Stop }
+pub struct Failure { message: string, expired: boolean, pause_index: boolean }
+
+pub struct Library { players: Player[], cards: Card[], note: string }
+
+pub enum Command { Play(string), PlayTrack(string, string, string), Pause, Resume, Stop }
 
 pub function failure(message: string): Failure {
-  return Failure { message: message, expired: false };
+  return Failure { message: message, expired: false, pause_index: false };
 }
 
 function send(req: fetch.Request): Result[json.JsonValue, Failure] {
   let seconds = time.duration_seconds(10i64);
   let opts = fetch.Timeouts { connect: seconds, inactivity: seconds, total: seconds };
   let Ok(resp) = fetch.send(req.with_redirects(0).with_timeouts(opts)) else {
-    return Err(failure("Could not reach Yoto. Check your connection and try again."));
+    return Err(Failure { ...failure("Could not reach Yoto. Check your connection and try again."), pause_index: true });
   };
   if (resp.status == 401) {
-    return Err(Failure { message: "Your Yoto session expired. Connect again.", expired: true });
+    return Err(Failure { message: "Your Yoto session expired. Connect again.", expired: true, pause_index: true });
   }
   if (resp.status == 403) {
     return Err(failure("Yoto denied access. Check the permissions for this client."));
   }
   if (resp.status == 429) {
-    return Err(failure("Yoto received too many requests. Try again in a moment."));
+    return Err(Failure { ...failure("Yoto is limiting requests. Refresh the library later to retry."), pause_index: true });
   }
   if (resp.status != 200) {
-    return Err(failure("Yoto returned HTTP " + resp.status.to_string() + "."));
+    return Err(Failure { ...failure("Yoto returned HTTP " + resp.status.to_string() + "."), pause_index: resp.status >= 500 });
   }
   let Ok(value) = json.parse(resp.body_text_lossy()) else {
     return Err(failure("Yoto returned an invalid response."));
@@ -81,29 +96,174 @@ pub function parse_players(value: json.JsonValue): Result[Player[], Failure] {
   return Ok(out);
 }
 
-pub function parse_cards(value: json.JsonValue): Result[Card[], Failure] {
+function field(value: json.JsonValue, key: string): string {
+  return json.get_string(value, key).unwrap_or("");
+}
+
+function object(value: json.JsonValue, key: string): json.JsonValue {
+  return json.get_object(value, key).unwrap_or(json.JNull);
+}
+
+function entries(value: json.JsonValue, key: string): json.JsonValue[] {
+  return json.get_array(value, key).unwrap_or([]);
+}
+
+function kind(category: string, feed: string, myo: boolean): Kind {
+  if (category == "radio" || category == "radio-station") {
+    return Radio;
+  }
+  if (category.starts_with("podcast") || feed.len() > 0) {
+    return Podcast;
+  }
+  if (myo) {
+    return Myo;
+  }
+  return Standard;
+}
+
+function cover(card: json.JsonValue, metadata: json.JsonValue, content: json.JsonValue): string {
+  for value in [metadata, content, card] {
+    let image = object(value, "cover");
+    for key in ["imageL", "imageM", "imageS"] {
+      let link = field(image, key);
+      if (link.starts_with("https://")) {
+        return link;
+      }
+    }
+  }
+  return "";
+}
+
+function tracks(chapters: json.JsonValue[]): Track[] {
+  let out: Track[] = [];
+  for c in chapters {
+    let name = field(c, "title");
+    let chapter_key = field(c, "key");
+    let items = entries(c, "tracks");
+    if (items.len() == 0 && name.len() > 0) {
+      out = out.append(Track { title: name, chapter: "", chapter_key: chapter_key, track_key: "", search: name.to_lower() });
+    }
+    for t in items {
+      let title = json.get_string(t, "title").unwrap_or(name);
+      let meta = object(t, "metadata");
+      let search = [
+        title, name, field(t, "description"), field(t, "artist"), field(t, "author"),
+        field(t, "narrator"), field(meta, "description"), field(meta, "artist"), field(meta, "author"),
+      ].join(" ").to_lower();
+      let key = field(t, "key");
+      let start = if (items.len() > 1 && key.len() == 0) { "" } else { chapter_key };
+      out = out.append(Track { title: title, chapter: name, chapter_key: start, track_key: key, search: search });
+    }
+  }
+  return out;
+}
+
+function card(value: json.JsonValue, entry: json.JsonValue, myo: boolean): Card {
+  let meta = object(value, "metadata");
+  let content = object(value, "content");
+  let chapters = json.get_array(content, "chapters");
+  let id = json.get_string(value, "cardId").unwrap_or(field(entry, "cardId"));
+  let title = json.get_string(value, "title").unwrap_or("Untitled card");
+  let creator = field(meta, "author");
+  let category = field(meta, "category").to_lower();
+  let search = [title, creator, category, field(meta, "description"), field(meta, "readBy"), field(meta, "seriestitle")].join(" ").to_lower();
+  return Card { id: id, title: title, creator: creator, cover: cover(value, meta, content), kind: kind(category, field(meta, "feedUrl"), myo), myo: myo, search: search, tracks: tracks(chapters.unwrap_or([])), indexed: chapters.is_some() };
+}
+
+pub function parse_cards(value: json.JsonValue, mine: boolean): Result[Card[], Failure] {
   let Some(items) = json.get_array(value, "cards") else {
     return Err(failure("Yoto did not return a card list."));
   };
   let out: Card[] = [];
-  for item in items {
-    let id = json.get_string(item, "cardId").unwrap_or("");
-    if (id.len() > 0 && !json.get_bool(item, "deleted").unwrap_or(false)) {
-      out = out.append(Card { id: id, title: json.get_string(item, "title").unwrap_or("Untitled card") });
+  for entry in items {
+    let value = json.get_object(entry, "card").unwrap_or(entry);
+    if (json.get_bool(value, "deleted").unwrap_or(false) || !json.get_bool(entry, "inFamilyLibrary").unwrap_or(true)) {
+      continue;
+    }
+    let myo = mine || field(entry, "reason") == "myo-content-add" || field(entry, "shareType") == "myo";
+    let item = card(value, entry, myo);
+    if (item.id.len() > 0) {
+      out = out.append(Card { ...item, indexed: item.tracks.len() > 0 });
     }
   }
   return Ok(out);
 }
 
+pub function merge_cards(family: Card[], mine: Card[]): Card[] {
+  let found: Map[string, boolean] = map_new(64);
+  let out: Card[] = [];
+  for c in family.concat(mine) {
+    if (found.get(c.id).is_none()) {
+      found = found.insert(c.id, true);
+      out = out.append(c);
+    }
+  }
+  return out;
+}
+
+function load_cards(token: string, path: string, mine: boolean): Result[Card[], Failure] {
+  return parse_cards(send(request(token, "GET", path))?, mine);
+}
+
 pub function library(token: string): Result[Library, Failure] {
   let players = parse_players(send(request(token, "GET", "/device-v2/devices/mine"))?)?;
-  let cards = parse_cards(send(request(token, "GET", "/content/mine"))?)?;
-  return Ok(Library { players: players, cards: cards });
+  let family = load_cards(token, "/card/family/library", false);
+  if let Err(err) = family {
+    if (err.expired || err.pause_index) {
+      return Err(err);
+    }
+  }
+  let mine = load_cards(token, "/content/mine", true);
+  let note = "";
+  for result in [family, mine] {
+    if let Err(err) = result {
+      if (err.expired || err.pause_index) {
+        return Err(err);
+      }
+      note = "Some cards are unavailable. " + err.message;
+    }
+  }
+  return Ok(Library { players: players, cards: merge_cards(family.unwrap_or([]), mine.unwrap_or([])), note: note });
+}
+
+pub function details(token: string, summary: Card): Result[Card, Failure] {
+  let path = if (summary.myo) { "/content/" } else { "/card/" };
+  let response = send(request(token, "GET", path + url.encode(summary.id)))?;
+  let Some(value) = json.get_object(response, "card") else {
+    return Err(failure("Yoto did not return track information."));
+  };
+  let item = card(value, json.JNull, summary.myo);
+  if (!item.indexed) {
+    return Err(failure("Yoto did not return track information."));
+  }
+  let art = if (summary.cover.len() > 0) { summary.cover } else { item.cover };
+  let category = match (item.kind) {
+    Podcast => Podcast,
+    Radio => Radio,
+    _ => summary.kind,
+  };
+  return Ok(Card { ...summary, cover: art, kind: category, search: summary.search + " " + item.search, tracks: item.tracks, indexed: true });
+}
+
+pub function cover_bytes(address: string): u8[] {
+  if (!address.starts_with("https://")) {
+    return [];
+  }
+  let seconds = time.duration_seconds(6i64);
+  let opts = fetch.Timeouts { connect: seconds, inactivity: seconds, total: seconds };
+  let cap = http.HttpLimits { ...http.limits(), body: 2000000 };
+  let req = fetch.get(address).with_limits(cap).with_timeouts(opts).with_redirects(2);
+  if let Ok(resp) = fetch.send_public(req) {
+    if (resp.status == 200) {
+      return resp.body_bytes();
+    }
+  }
+  return [];
 }
 
 pub function command_name(c: Command): string {
   match (c) {
-    Play(_) => {
+    Play(_) | PlayTrack(_, _, _) => {
       return "card/start";
     },
     Pause => {
@@ -121,6 +281,13 @@ pub function command_name(c: Command): string {
 pub function command_body(c: Command): string {
   if let Play(id) = c {
     return "{\"uri\":" + json.encode(json.JString("https://yoto.io/" + url.encode(id))) + "}";
+  }
+  if let PlayTrack(id, chapter, track) = c {
+    let fields = [("uri", json.JString("https://yoto.io/" + url.encode(id))), ("chapterKey", json.JString(chapter))];
+    if (track.len() > 0) {
+      fields = fields.append(("trackKey", json.JString(track)));
+    }
+    return json.encode(json.JObject(json.from(fields)));
   }
   return "{}";
 }

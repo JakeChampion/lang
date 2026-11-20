@@ -1,0 +1,72 @@
+import "std/string";
+import "./api";
+
+pub const PAGE_SIZE: i32 = 16;
+
+pub struct Hit { card: i32, track: i32 }
+
+pub function category(kind: api.Kind): i32 {
+  match (kind) {
+    api.Standard => {
+      return 1;
+    },
+    api.Myo => {
+      return 2;
+    },
+    api.Podcast => {
+      return 3;
+    },
+    api.Radio => {
+      return 4;
+    }
+  }
+}
+
+function matches(terms: string[], card: string, track: string): boolean {
+  for term in terms {
+    if (!card.contains(term) && !track.contains(term)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function track_matches(terms: string[], card: string, track: string): boolean {
+  for term in terms {
+    if (track.contains(term)) {
+      return matches(terms, card, track);
+    }
+  }
+  return false;
+}
+
+pub function find(cards: api.Card[], query: string, filter: i32): Hit[] {
+  let terms = query.to_lower().replace("\t", " ").replace("\n", " ").split(" ").filter((word: string): boolean => word.len() > 0);
+  let titles: Hit[] = [];
+  let tracks: Hit[] = [];
+  for i in 0..cards.len() {
+    let card = cards[i];
+    if (filter != 0 && category(card.kind) != filter) {
+      continue;
+    }
+    if (matches(terms, card.search, "")) {
+      titles = titles.append(Hit { card: i, track: -1 });
+    }
+    if (terms.len() > 0) {
+      for j in 0..card.tracks.len() {
+        if (track_matches(terms, card.search, card.tracks[j].search)) {
+          tracks = tracks.append(Hit { card: i, track: j });
+        }
+      }
+    }
+  }
+  return titles.concat(tracks);
+}
+
+pub function page_count(count: i32): i32 {
+  return (count + PAGE_SIZE - 1) / PAGE_SIZE;
+}
+
+pub function page(hits: Hit[], at: i32): Hit[] {
+  return hits.drop(at * PAGE_SIZE).take(PAGE_SIZE);
+}

@@ -9,6 +9,7 @@ import "std/test";
 import "./api";
 import "./deck";
 import "./oauth";
+import "./search";
 
 function test_pkce(): test.TestOutcome {
   let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
@@ -44,7 +45,7 @@ function test_service_responses(): test.TestOutcome {
   let Ok(players) = api.parse_players(p) else {
     return test.fail("the player response must parse");
   };
-  let Ok(cards) = api.parse_cards(c) else {
+  let Ok(cards) = api.parse_cards(c, true) else {
     return test.fail("the card response must parse");
   };
   if (players.len() != 1 || cards.len() != 1) {
@@ -57,6 +58,54 @@ function test_playback_requests(): test.TestOutcome {
   return test.assert_eq_array(
     [api.command_name(api.Play("card")), api.command_body(api.Play("card")), api.command_name(api.Pause), api.command_name(api.Resume), api.command_name(api.Stop)],
     ["card/start", "{\"uri\":\"https://yoto.io/card\"}", "card/pause", "card/resume", "card/stop"],
+  );
+}
+
+// These fixtures use invented titles and the same keys as the Yoto responses.
+function fixture_cards(): api.Card[] {
+  let family = "{\"cards\":["
+    + "{\"cardId\":\"book\",\"inFamilyLibrary\":true,\"card\":{\"title\":\"Woodland Walk\",\"metadata\":{\"author\":\"A. Writer\",\"readBy\":\"M. Reader\",\"cover\":{\"imageL\":\"https://example.com/cover.jpg\"}},\"content\":{\"chapters\":[{\"key\":\"01\",\"title\":\"Forest\",\"tracks\":[{\"key\":\"03\",\"title\":\"Fox at dusk\"}]}]}}},"
+    + "{\"cardId\":\"pod\",\"card\":{\"title\":\"Sky Journal\",\"metadata\":{\"category\":\"podcast\"},\"content\":{\"chapters\":[{\"key\":\"204\",\"title\":\"Comet night\",\"tracks\":[{\"key\":\"1\",\"description\":\"Watch for ice\"}]}]}}},"
+    + "{\"cardId\":\"radio\",\"card\":{\"title\":\"Night Radio\",\"metadata\":{\"category\":\"radio\"}}},"
+    + "{\"cardId\":\"old\",\"inFamilyLibrary\":false,\"card\":{\"title\":\"Removed title\"}}]}";
+  let mine = "{\"cards\":[{\"cardId\":\"book\",\"title\":\"Duplicate\"},{\"cardId\":\"myo\",\"title\":\"My stories\"}]}";
+  let f = api.parse_cards(json.parse(family).unwrap_or(json.JNull), false).unwrap_or([]);
+  let m = api.parse_cards(json.parse(mine).unwrap_or(json.JNull), true).unwrap_or([]);
+  return api.merge_cards(f, m);
+}
+
+function test_family_library(): test.TestOutcome {
+  let cards = fixture_cards();
+  if (cards.len() != 4 || cards[0].tracks.len() != 1) {
+    return test.fail("family and Make Your Own cards must merge by ID");
+  }
+  return test.assert_eq_array(
+    [cards[0].title, cards[0].cover, search.category(cards[1].kind).to_string(), search.category(cards[2].kind).to_string(), search.category(cards[3].kind).to_string()],
+    ["Woodland Walk", "https://example.com/cover.jpg", "3", "4", "2"],
+  );
+}
+
+function test_search(): test.TestOutcome {
+  let cards = fixture_cards();
+  let track = search.find(cards, "WOODLAND  dusk", 0);
+  let podcast = search.find(cards, "ice", 3);
+  let station = search.find(cards, "night", 4);
+  let narrator = search.find(cards, "M. Reader", 0);
+  if (track.len() != 1 || podcast.len() != 1 || station.len() != 1 || narrator.len() != 1) {
+    return test.fail("track, episode, station and narrator queries must each return one match");
+  }
+  return test.assert_eq_array(
+    [track[0].card, track[0].track, podcast[0].card, podcast[0].track, station[0].card, station[0].track, narrator[0].card, narrator[0].track],
+    [0, 0, 1, 0, 2, -1, 0, -1],
+  );
+}
+
+function test_exact_track(): test.TestOutcome {
+  let command = api.PlayTrack("book", "01", "03");
+  let payload = json.parse(api.command_body(command)).unwrap_or(json.JNull);
+  return test.assert_eq_array(
+    [api.command_name(command), json.get_string(payload, "uri").unwrap_or(""), json.get_string(payload, "chapterKey").unwrap_or(""), json.get_string(payload, "trackKey").unwrap_or("")],
+    ["card/start", "https://yoto.io/book", "01", "03"],
   );
 }
 
@@ -79,7 +128,7 @@ function preview(s: sim.Sim[deck.Model, deck.Msg], name: string): void {
 }
 
 function simulator(own model: deck.Model): sim.Sim[deck.Model, deck.Msg] {
-  let real = deck.program((address: string): boolean => false);
+  let real = deck.program((address: string): boolean => false, (data: u8[]): Option[draw.Image] => None);
   let dry = ui.program(deck.view, deck.update).with_theme_of(real.theme);
   return sim.start(model, dry, test_fonts(), 720, 1600, 2.0);
 }
@@ -89,20 +138,20 @@ function test_player_selection(): test.TestOutcome {
     ...deck.start(),
     token: "test session",
     players: [api.Player { id: "first", name: "Bedroom", online: false }, api.Player { id: "second", name: "Living room", online: true }],
-    cards: [api.Card { id: "card", title: "Woodland Walk" }],
   };
   let sign_in = simulator(deck.start());
   preview(sign_in, "connect");
-  let s = sim.scaled(sim.themed(simulator(model), true), 1.0);
+  let library = api.Library { players: model.players, cards: fixture_cards(), note: "" };
+  let s = sim.scaled(sim.themed(simulator(deck.update(model, deck.LibraryLoaded(Ok(library)))), true), 1.0);
   s = sim.tap(s, "Bedroom, Offline");
-  s = sim.tap(s, "Cards");
+  s = sim.tap(s, "Library");
   if (sim.says(s, "Play Woodland Walk") || !sim.shows(s, "Bedroom is offline.")) {
     return test.fail("an offline player must not offer playback");
   }
   s = sim.tap(s, "Players");
   s = sim.tap(s, "Living room, Online");
   preview(s, "players");
-  s = sim.tap(s, "Cards");
+  s = sim.tap(s, "Library");
   preview(s, "cards");
   if (!sim.says(s, "Play Woodland Walk")) {
     return test.fail("the card must offer playback for the selected online player");
@@ -111,12 +160,29 @@ function test_player_selection(): test.TestOutcome {
   return test.assert_eq(s.shell.app.busy && s.shell.app.job.is_some() && s.shell.app.selected == "second", true);
 }
 
+function test_search_in_ui(): test.TestOutcome {
+  let m = deck.Model { ...deck.start(), token: "test session" };
+  let library = api.Library { players: [], cards: fixture_cards(), note: "" };
+  let s = simulator(deck.update(m, deck.LibraryLoaded(Ok(library))));
+  s = sim.tap(s, "Library");
+  s = sim.type_in(s, "library-search", "woodland dusk");
+  if (!sim.shows(s, "Fox at dusk") || !sim.shows(s, "Woodland Walk · Forest")) {
+    return test.fail("the search result must show the matching track and its card");
+  }
+  s = sim.tap(s, "Tracks for Fox at dusk");
+  return test.assert_eq(sim.shows(s, "Back to library") && sim.shows(s, "Fox at dusk"), true);
+}
+
 function main(): i32 {
   let r = test.new("Story Deck");
   r = r.it("PKCE matches the standard example", test_pkce);
   r = r.it("the callback requires the correct path and state", test_callback_matches_state);
   r = r.it("parse lists of players and cards", test_service_responses);
   r = r.it("the player commands follow the API format", test_playback_requests);
+  r = r.it("family and Make Your Own cards merge with cover data", test_family_library);
+  r = r.it("search covers tracks, episodes, stations and card metadata", test_search);
+  r = r.it("track playback addresses the exact chapter and track", test_exact_track);
+  r = r.it("the search box opens a matching track's card", test_search_in_ui);
   r = r.it("cards can play on a selected online player", test_player_selection);
   return r.finish();
 }
