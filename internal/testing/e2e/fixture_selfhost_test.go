@@ -103,7 +103,7 @@ func TestFernFixturesSelfHostX86_64(t *testing.T) {
 }
 
 func TestFernFixturesSelfHostX86_64Quarantine(t *testing.T) {
-	runSelfHostFixtureLegX86_64(t, "x86-64-linux", "x86_64", nil, []string{"FERN_RC_FREE_DEBUG=1"})
+	runSelfHostFixtureLegX86_64(t, "x86-64-linux", "x86_64", nil, []string{"FERN_DEBUG_RC_FREE=1"})
 }
 
 // Under -harden a released block is zero, so a read of released storage

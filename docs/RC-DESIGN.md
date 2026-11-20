@@ -819,7 +819,7 @@ In the order they are usually reached for:
    chain for an attribution by function, and a watchpoint on the box's count
    word for the holder's exact retain and release.
 6. `__rc_underflow_count()` from Fern, `FERN_RC_UNDERFLOW_TRAP=1` to make the
-   first over-release fatal at its dec, and `FERN_RC_FREE_DEBUG=1` for the
+   first over-release fatal at its dec, and `FERN_DEBUG_RC_FREE=1` for the
    quarantine alone.
 
 Which suite proves what, and which look authoritative and are not:

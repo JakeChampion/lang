@@ -1,6 +1,6 @@
 // An explicit asmcore.Switches is the whole emit configuration: the leak
 // census and the free-debug quarantine it sets do not follow FERN_LEAKCHECK
-// or FERN_RC_FREE_DEBUG in the environment the emitter runs in. The test runs
+// or FERN_DEBUG_RC_FREE in the environment the emitter runs in. The test runs
 // this with both set.
 import "../asmcore";
 import "../wasm_ir";
