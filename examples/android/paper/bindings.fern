@@ -236,21 +236,21 @@ pub function (c: PendingIntentClass) release(e: usize): void {
 
 // android.app.PendingIntent.send(Landroid/content/Context;ILandroid/content/Intent;Landroid/app/PendingIntent$OnFinished;Landroid/os/Handler;Ljava/lang/String;Landroid/os/Bundle;)V
 pub function (c: PendingIntentClass) send(e: usize, self: PendingIntent, a0: Context, a1: i32, a2: Intent, a3: jni.Object, a4: jni.Object, a5: Option[string], a6: Bundle): Result[void, jni.JavaError] {
+  let s5 = 0 as usize;
+  if let Some(t5) = a5 {
+    s5 = jni.checked_string(e, t5)?;
+  }
+  defer jni.delete_local_ref(e, s5);
   let args = jni.jvalue_alloc(7);
   jni.jvalue_set_int(args, 0, a0.ref);
   jni.jvalue_set_int(args, 1, a1 as usize);
   jni.jvalue_set_int(args, 2, a2.ref);
   jni.jvalue_set_int(args, 3, a3.ref);
   jni.jvalue_set_int(args, 4, a4.ref);
-  let s5 = 0 as usize;
-  if let Some(t5) = a5 {
-    s5 = jni.new_string(e, t5);
-  }
   jni.jvalue_set_int(args, 5, s5);
   jni.jvalue_set_int(args, 6, a6.ref);
   jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_send, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s5);
   jni.check(e)?;
   return Ok(());
 }
@@ -287,12 +287,12 @@ pub function (c: ComponentNameClass) release(e: usize): void {
 
 // android.content.ComponentName.unflattenFromString(Ljava/lang/String;)Landroid/content/ComponentName;
 pub function (c: ComponentNameClass) unflatten_from_string(e: usize, a0: string): Result[ComponentName, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_unflatten_from_string, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(ComponentName { ref: got });
 }
@@ -389,12 +389,12 @@ pub function (c: ContextClass) get_package_manager(e: usize, self: Context): Res
 
 // android.content.Context.getSystemService(Ljava/lang/String;)Ljava/lang/Object;
 pub function (c: ContextClass) get_system_service(e: usize, self: Context, a0: string): Result[jni.Object, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_system_service, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(jni.Object { ref: got });
 }
@@ -464,37 +464,37 @@ pub function (c: IntentClass) release(e: usize): void {
 
 // android.content.Intent.<init>(Ljava/lang/String;)V
 pub function (c: IntentClass) new_string(e: usize, a0: string): Result[Intent, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, 30, c.class, c.id_new_string, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(Intent { ref: got });
 }
 
 // android.content.Intent.<init>(Ljava/lang/String;Landroid/net/Uri;)V
 pub function (c: IntentClass) new_string_uri(e: usize, a0: string, a1: Uri): Result[Intent, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(2);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   jni.jvalue_set_int(args, 1, a1.ref);
   let got = jni.invoke(e, 30, c.class, c.id_new_string_uri, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(Intent { ref: got });
 }
 
 // android.content.Intent.addCategory(Ljava/lang/String;)Landroid/content/Intent;
 pub function (c: IntentClass) add_category(e: usize, self: Intent, a0: string): Result[Intent, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_add_category, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(Intent { ref: got });
 }
@@ -511,30 +511,30 @@ pub function (c: IntentClass) add_flags(e: usize, self: Intent, a0: i32): Result
 
 // android.content.Intent.makeMainSelectorActivity(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;
 pub function (c: IntentClass) make_main_selector_activity(e: usize, a0: string, a1: string): Result[Intent, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let s1 = jni.checked_string(e, a1)?;
+  defer jni.delete_local_ref(e, s1);
   let args = jni.jvalue_alloc(2);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
-  let s1 = jni.new_string(e, a1);
   jni.jvalue_set_int(args, 1, s1);
   let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_make_main_selector_activity, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
-  jni.delete_local_ref(e, s1);
   jni.check(e)?;
   return Ok(Intent { ref: got });
 }
 
 // android.content.Intent.putExtra(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;
 pub function (c: IntentClass) put_extra(e: usize, self: Intent, a0: string, a1: string): Result[Intent, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let s1 = jni.checked_string(e, a1)?;
+  defer jni.delete_local_ref(e, s1);
   let args = jni.jvalue_alloc(2);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
-  let s1 = jni.new_string(e, a1);
   jni.jvalue_set_int(args, 1, s1);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_put_extra, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
-  jni.delete_local_ref(e, s1);
   jni.check(e)?;
   return Ok(Intent { ref: got });
 }
@@ -702,13 +702,13 @@ pub function (c: PackageManagerClass) release(e: usize): void {
 
 // android.content.pm.PackageManager.getApplicationInfo(Ljava/lang/String;I)Landroid/content/pm/ApplicationInfo;
 pub function (c: PackageManagerClass) get_application_info(e: usize, self: PackageManager, a0: string, a1: i32): Result[ApplicationInfo, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(2);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   jni.jvalue_set_int(args, 1, a1 as usize);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_application_info, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(ApplicationInfo { ref: got });
 }
@@ -725,12 +725,12 @@ pub function (c: PackageManagerClass) get_application_label(e: usize, self: Pack
 
 // android.content.pm.PackageManager.getLaunchIntentForPackage(Ljava/lang/String;)Landroid/content/Intent;
 pub function (c: PackageManagerClass) get_launch_intent_for_package(e: usize, self: PackageManager, a0: string): Result[Intent, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_launch_intent_for_package, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(Intent { ref: got });
 }
@@ -897,12 +897,12 @@ pub function (c: LocationManagerClass) release(e: usize): void {
 
 // android.location.LocationManager.getLastKnownLocation(Ljava/lang/String;)Landroid/location/Location;
 pub function (c: LocationManagerClass) get_last_known_location(e: usize, self: LocationManager, a0: string): Result[Location, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_last_known_location, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(Location { ref: got });
 }
@@ -949,12 +949,12 @@ pub function (c: UriClass) release(e: usize): void {
 
 // android.net.Uri.parse(Ljava/lang/String;)Landroid/net/Uri;
 pub function (c: UriClass) parse(e: usize, a0: string): Result[Uri, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_parse, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(Uri { ref: got });
 }
@@ -991,12 +991,12 @@ pub function (c: BundleClass) release(e: usize): void {
 
 // android.os.Bundle.getCharSequence(Ljava/lang/String;)Ljava/lang/CharSequence;
 pub function (c: BundleClass) get_char_sequence(e: usize, self: Bundle, a0: string): Result[CharSequence, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_char_sequence, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(CharSequence { ref: got });
 }
@@ -1033,13 +1033,13 @@ pub function (c: Settings_SecureClass) release(e: usize): void {
 
 // android.provider.Settings.Secure.getString(Landroid/content/ContentResolver;Ljava/lang/String;)Ljava/lang/String;
 pub function (c: Settings_SecureClass) get_string(e: usize, a0: ContentResolver, a1: string): Result[string, jni.JavaError] {
+  let s1 = jni.checked_string(e, a1)?;
+  defer jni.delete_local_ref(e, s1);
   let args = jni.jvalue_alloc(2);
   jni.jvalue_set_int(args, 0, a0.ref);
-  let s1 = jni.new_string(e, a1);
   jni.jvalue_set_int(args, 1, s1);
   let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_get_string, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s1);
   jni.check(e)?;
   let text = jni.string_of(e, got);
   jni.delete_local_ref(e, got);
@@ -1125,12 +1125,12 @@ pub function (c: NotificationListenerServiceClass) release(e: usize): void {
 
 // android.service.notification.NotificationListenerService.cancelNotification(Ljava/lang/String;)V
 pub function (c: NotificationListenerServiceClass) cancel_notification(e: usize, self: NotificationListenerService, a0: string): Result[void, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_cancel_notification, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(());
 }

@@ -191,24 +191,24 @@ pub function (c: IntentClass) release(e: usize): void {
 
 // android.content.Intent.<init>(Ljava/lang/String;)V
 pub function (c: IntentClass) new(e: usize, a0: string): Result[Intent, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, 30, c.class, c.id_new, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(Intent { ref: got });
 }
 
 // android.content.Intent.addCategory(Ljava/lang/String;)Landroid/content/Intent;
 pub function (c: IntentClass) add_category(e: usize, self: Intent, a0: string): Result[Intent, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_add_category, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(Intent { ref: got });
 }
@@ -276,15 +276,15 @@ pub function (c: ComponentNameClass) release(e: usize): void {
 
 // android.content.ComponentName.<init>(Ljava/lang/String;Ljava/lang/String;)V
 pub function (c: ComponentNameClass) new(e: usize, a0: string, a1: string): Result[ComponentName, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let s1 = jni.checked_string(e, a1)?;
+  defer jni.delete_local_ref(e, s1);
   let args = jni.jvalue_alloc(2);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
-  let s1 = jni.new_string(e, a1);
   jni.jvalue_set_int(args, 1, s1);
   let got = jni.invoke(e, 30, c.class, c.id_new, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
-  jni.delete_local_ref(e, s1);
   jni.check(e)?;
   return Ok(ComponentName { ref: got });
 }
@@ -489,18 +489,18 @@ pub function (c: FileClass) release(e: usize): void {
 
 // java.io.File.<init>(Ljava/lang/String;Ljava/lang/String;)V
 pub function (c: FileClass) new(e: usize, a0: Option[string], a1: string): Result[File, jni.JavaError] {
-  let args = jni.jvalue_alloc(2);
   let s0 = 0 as usize;
   if let Some(t0) = a0 {
-    s0 = jni.new_string(e, t0);
+    s0 = jni.checked_string(e, t0)?;
   }
+  defer jni.delete_local_ref(e, s0);
+  let s1 = jni.checked_string(e, a1)?;
+  defer jni.delete_local_ref(e, s1);
+  let args = jni.jvalue_alloc(2);
   jni.jvalue_set_int(args, 0, s0);
-  let s1 = jni.new_string(e, a1);
   jni.jvalue_set_int(args, 1, s1);
   let got = jni.invoke(e, 30, c.class, c.id_new, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
-  jni.delete_local_ref(e, s1);
   jni.check(e)?;
   return Ok(File { ref: got });
 }
@@ -600,12 +600,12 @@ pub function (c: IntegerClass) release(e: usize): void {
 
 // java.lang.Integer.parseInt(Ljava/lang/String;)I
 pub function (c: IntegerClass) parse_int(e: usize, a0: string): Result[i32, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_STATIC + 15, c.class, c.id_parse_int, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(got as i32);
 }
@@ -682,12 +682,12 @@ pub function (c: FloatClass) release(e: usize): void {
 
 // java.lang.Float.parseFloat(Ljava/lang/String;)F
 pub function (c: FloatClass) parse_float(e: usize, a0: string): Result[f32, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke_f32(e, jni.CALL_STATIC + 21, c.class, c.id_parse_float, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(got);
 }

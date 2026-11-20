@@ -66,13 +66,13 @@ pub function (c: PointClass) new(e: usize): Result[Point, jni.JavaError] {
 
 // dev.fern.Point.<init>(ILjava/lang/String;)V
 pub function (c: PointClass) new_int_string(e: usize, a0: i32, a1: string): Result[Point, jni.JavaError] {
+  let s1 = jni.checked_string(e, a1)?;
+  defer jni.delete_local_ref(e, s1);
   let args = jni.jvalue_alloc(2);
   jni.jvalue_set_int(args, 0, a0 as usize);
-  let s1 = jni.new_string(e, a1);
   jni.jvalue_set_int(args, 1, s1);
   let got = jni.invoke(e, 30, c.class, c.id_new_int_string, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s1);
   jni.check(e)?;
   return Ok(Point { ref: got });
 }
@@ -135,12 +135,12 @@ pub function (c: PointClass) middle(e: usize, self: Point): Result[i32, jni.Java
 
 // dev.fern.Point.parse(Ljava/lang/String;)Ldev/fern/Point;
 pub function (c: PointClass) parse(e: usize, a0: string): Result[Point, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_parse, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(Point { ref: got });
 }
@@ -176,13 +176,13 @@ pub function (c: PointClass) set_int(e: usize, self: Point, a0: i32): Result[voi
 
 // dev.fern.Point.set(Ljava/lang/String;J)V
 pub function (c: PointClass) set_string_long(e: usize, self: Point, a0: string, a1: i64): Result[void, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(2);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   jni.jvalue_set_long(args, 1, a1);
   jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set_string_long, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(());
 }
@@ -307,16 +307,16 @@ pub function (c: SampleClass) release(e: usize): void {
 
 // dev.fern.Sample.<init>(Ljava/lang/String;I)V
 pub function (c: SampleClass) new(e: usize, a0: Option[string], a1: i32): Result[Sample, jni.JavaError] {
-  let args = jni.jvalue_alloc(2);
   let s0 = 0 as usize;
   if let Some(t0) = a0 {
-    s0 = jni.new_string(e, t0);
+    s0 = jni.checked_string(e, t0)?;
   }
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(2);
   jni.jvalue_set_int(args, 0, s0);
   jni.jvalue_set_int(args, 1, a1 as usize);
   let got = jni.invoke(e, 30, c.class, c.id_new, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(Sample { ref: got });
 }

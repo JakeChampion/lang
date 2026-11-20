@@ -866,6 +866,16 @@ pub function check(env: usize): Result[void, JavaError] {
   return Err(JavaError { text: out });
 }
 
+// Makes a Java string for a method argument. The caller owns the local reference.
+pub function checked_string(env: usize, value: string): Result[usize, JavaError] {
+  let ref = new_string(env, value);
+  if (ref == 0 as usize) {
+    check(env)?;
+    return Err(JavaError { text: "cannot allocate Java string" });
+  }
+  return Ok(ref);
+}
+
 // The ID `id` that a lookup gave, or 0 when the lookup threw. It clears
 // the exception. Use it for a member that an older device does not have.
 pub function optional_id(env: usize, id: usize): usize {
