@@ -6001,14 +6001,7 @@ function method_target_index(name: string, recv: Value, env: Env): i32 {
   if let VType(tv) = recv {
     return assoc_index(env.funcs, tv.name, name);
   }
-  let rt = value_type_name(recv);
-  for at in env.funcs.named(name) {
-    let fd = env.funcs.decls[at];
-    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && env.funcs.receivers[at] == rt) {
-      return at;
-    }
-  }
-  return -1;
+  return receiver_method_index(env.funcs, env.funcs.named(name), value_type_name(recv));
 }
 
 function free_target_index(name: string, env: Env): i32 {
@@ -6793,14 +6786,13 @@ function runtime_method_name(fd: parser.FuncDecl): string {
   return fd.name;
 }
 
-function has_receiver_method(funcs: Funcs, recv_type: string, name: string): boolean {
-  for at in funcs.named(name) {
-    let fd = funcs.decls[at];
-    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && funcs.receivers[at] == recv_type) {
-      return true;
+function receiver_method_index(funcs: Funcs, candidates: i32[], recv_type: string): i32 {
+  for at in candidates {
+    if (funcs.receivers[at] == recv_type && funcs.decls[at].receiver_name.len() > 0) {
+      return at;
     }
   }
-  return false;
+  return -1;
 }
 
 function runtime_receiver_name(spelling: string): string {
@@ -7144,8 +7136,9 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
   if (recv_type.len() == 0) {
     return v_err("method `" + name + "`: receiver has no type name to dispatch on");
   }
-  let own_method = has_receiver_method(funcs, recv_type, name);
-  for at in funcs.named(name) {
+  let candidates = funcs.named(name);
+  let own_method = receiver_method_index(funcs, candidates, recv_type) >= 0;
+  for at in candidates {
     let fd = funcs.decls[at];
     let receiver_base = funcs.receivers[at];
     let rt_match = receiver_base == recv_type;
@@ -7155,7 +7148,7 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
     if (!rt_match && recv_type == "Array" && is_array_recv_type(fd.receiver_type)) {
       rt_match = true;
     }
-    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && rt_match) {
+    if (fd.receiver_name.len() > 0 && rt_match) {
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling method `" + name + "`");
       }
@@ -10515,14 +10508,7 @@ function eval_iterator_for(f: ast.StmtFor, iv: Value, own env: Env): StepResult 
 }
 
 function receiver_has_method(funcs: Funcs, recv: Value, name: string): boolean {
-  let rt = value_type_name(recv);
-  for at in funcs.named(name) {
-    let fd = funcs.decls[at];
-    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && funcs.receivers[at] == rt) {
-      return true;
-    }
-  }
-  return false;
+  return receiver_method_index(funcs, funcs.named(name), value_type_name(recv)) >= 0;
 }
 
 function body_binds(body: ast.Stmt[]): boolean {
