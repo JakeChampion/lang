@@ -1,0 +1,530 @@
+// Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
+import "std/jni";
+
+// A android.content.Context.
+pub struct Context { ref: usize }
+
+pub function (x: Context) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Context) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.Context and the IDs of its members.
+pub struct ContextClass { class: usize, id_get_class_loader: usize, id_get_system_service: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/Context");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_class_loader = jni.checked_id(e, class, jni.get_method_id(e, class, "getClassLoader", "()Ljava/lang/ClassLoader;"))?;
+  let id_get_system_service = jni.checked_id(e, class, jni.get_method_id(e, class, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;"))?;
+  return Ok(ContextClass { class: class, id_get_class_loader: id_get_class_loader, id_get_system_service: id_get_system_service });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ContextClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.Context.getClassLoader()Ljava/lang/ClassLoader;
+pub function (c: ContextClass) get_class_loader(e: usize, self: Context): Result[ClassLoader, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_class_loader, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(ClassLoader { ref: got });
+}
+
+// android.content.Context.getSystemService(Ljava/lang/String;)Ljava/lang/Object;
+pub function (c: ContextClass) get_system_service(e: usize, self: Context, a0: string): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_system_service, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// A java.lang.ClassLoader.
+pub struct ClassLoader { ref: usize }
+
+pub function (x: ClassLoader) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ClassLoader) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.lang.ClassLoader and the IDs of its members.
+pub struct ClassLoaderClass { class: usize, id_load_class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function class_loader_class(e: usize): Result[ClassLoaderClass, jni.JavaError] {
+  let local = jni.find_class(e, "java/lang/ClassLoader");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_load_class = jni.checked_id(e, class, jni.get_method_id(e, class, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;"))?;
+  return Ok(ClassLoaderClass { class: class, id_load_class: id_load_class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ClassLoaderClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.lang.ClassLoader.loadClass(Ljava/lang/String;)Ljava/lang/Class;
+pub function (c: ClassLoaderClass) load_class(e: usize, self: ClassLoader, a0: string): Result[Class, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_load_class, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(Class { ref: got });
+}
+
+// A java.lang.Class.
+pub struct Class { ref: usize }
+
+pub function (x: Class) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Class) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.lang.Class and the IDs of its members.
+pub struct ClassClass { class: usize, id_new_instance: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function class_class(e: usize): Result[ClassClass, jni.JavaError] {
+  let local = jni.find_class(e, "java/lang/Class");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_new_instance = jni.checked_id(e, class, jni.get_method_id(e, class, "newInstance", "()Ljava/lang/Object;"))?;
+  return Ok(ClassClass { class: class, id_new_instance: id_new_instance });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ClassClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.lang.Class.newInstance()Ljava/lang/Object;
+pub function (c: ClassClass) new_instance(e: usize, self: Class): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_new_instance, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// A android.media.AudioManager.
+pub struct AudioManager { ref: usize }
+
+pub function (x: AudioManager) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: AudioManager) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.media.AudioManager and the IDs of its members.
+pub struct AudioManagerClass { class: usize, id_abandon_audio_focus_request: usize, id_request_audio_focus: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function audio_manager_class(e: usize): Result[AudioManagerClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/media/AudioManager");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_abandon_audio_focus_request = jni.checked_id(e, class, jni.get_method_id(e, class, "abandonAudioFocusRequest", "(Landroid/media/AudioFocusRequest;)I"))?;
+  let id_request_audio_focus = jni.checked_id(e, class, jni.get_method_id(e, class, "requestAudioFocus", "(Landroid/media/AudioFocusRequest;)I"))?;
+  return Ok(AudioManagerClass { class: class, id_abandon_audio_focus_request: id_abandon_audio_focus_request, id_request_audio_focus: id_request_audio_focus });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: AudioManagerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.media.AudioManager.abandonAudioFocusRequest(Landroid/media/AudioFocusRequest;)I
+pub function (c: AudioManagerClass) abandon_audio_focus_request(e: usize, self: AudioManager, a0: AudioFocusRequest): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_abandon_audio_focus_request, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.media.AudioManager.requestAudioFocus(Landroid/media/AudioFocusRequest;)I
+pub function (c: AudioManagerClass) request_audio_focus(e: usize, self: AudioManager, a0: AudioFocusRequest): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_request_audio_focus, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// A android.media.AudioManager.OnAudioFocusChangeListener.
+pub struct AudioManager_OnAudioFocusChangeListener { ref: usize }
+
+pub function (x: AudioManager_OnAudioFocusChangeListener) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: AudioManager_OnAudioFocusChangeListener) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.media.AudioManager.OnAudioFocusChangeListener and the IDs of its members.
+pub struct AudioManager_OnAudioFocusChangeListenerClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function audio_manager_on_audio_focus_change_listener_class(e: usize): Result[AudioManager_OnAudioFocusChangeListenerClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/media/AudioManager$OnAudioFocusChangeListener");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  return Ok(AudioManager_OnAudioFocusChangeListenerClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: AudioManager_OnAudioFocusChangeListenerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.media.AudioFocusRequest.
+pub struct AudioFocusRequest { ref: usize }
+
+pub function (x: AudioFocusRequest) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: AudioFocusRequest) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.media.AudioFocusRequest and the IDs of its members.
+pub struct AudioFocusRequestClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function audio_focus_request_class(e: usize): Result[AudioFocusRequestClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/media/AudioFocusRequest");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  return Ok(AudioFocusRequestClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: AudioFocusRequestClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.media.AudioFocusRequest.Builder.
+pub struct AudioFocusRequest_Builder { ref: usize }
+
+pub function (x: AudioFocusRequest_Builder) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: AudioFocusRequest_Builder) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.media.AudioFocusRequest.Builder and the IDs of its members.
+pub struct AudioFocusRequest_BuilderClass { class: usize, id_new: usize, id_build: usize, id_set_audio_attributes: usize, id_set_on_audio_focus_change_listener: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function audio_focus_request_builder_class(e: usize): Result[AudioFocusRequest_BuilderClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/media/AudioFocusRequest$Builder");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(I)V"))?;
+  let id_build = jni.checked_id(e, class, jni.get_method_id(e, class, "build", "()Landroid/media/AudioFocusRequest;"))?;
+  let id_set_audio_attributes = jni.checked_id(e, class, jni.get_method_id(e, class, "setAudioAttributes", "(Landroid/media/AudioAttributes;)Landroid/media/AudioFocusRequest$Builder;"))?;
+  let id_set_on_audio_focus_change_listener = jni.checked_id(e, class, jni.get_method_id(e, class, "setOnAudioFocusChangeListener", "(Landroid/media/AudioManager$OnAudioFocusChangeListener;)Landroid/media/AudioFocusRequest$Builder;"))?;
+  return Ok(AudioFocusRequest_BuilderClass { class: class, id_new: id_new, id_build: id_build, id_set_audio_attributes: id_set_audio_attributes, id_set_on_audio_focus_change_listener: id_set_on_audio_focus_change_listener });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: AudioFocusRequest_BuilderClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.media.AudioFocusRequest.Builder.<init>(I)V
+pub function (c: AudioFocusRequest_BuilderClass) new(e: usize, a0: i32): Result[AudioFocusRequest_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(AudioFocusRequest_Builder { ref: got });
+}
+
+// android.media.AudioFocusRequest.Builder.build()Landroid/media/AudioFocusRequest;
+pub function (c: AudioFocusRequest_BuilderClass) build(e: usize, self: AudioFocusRequest_Builder): Result[AudioFocusRequest, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_build, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(AudioFocusRequest { ref: got });
+}
+
+// android.media.AudioFocusRequest.Builder.setAudioAttributes(Landroid/media/AudioAttributes;)Landroid/media/AudioFocusRequest$Builder;
+pub function (c: AudioFocusRequest_BuilderClass) set_audio_attributes(e: usize, self: AudioFocusRequest_Builder, a0: AudioAttributes): Result[AudioFocusRequest_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_audio_attributes, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(AudioFocusRequest_Builder { ref: got });
+}
+
+// android.media.AudioFocusRequest.Builder.setOnAudioFocusChangeListener(Landroid/media/AudioManager$OnAudioFocusChangeListener;)Landroid/media/AudioFocusRequest$Builder;
+pub function (c: AudioFocusRequest_BuilderClass) set_on_audio_focus_change_listener(e: usize, self: AudioFocusRequest_Builder, a0: AudioManager_OnAudioFocusChangeListener): Result[AudioFocusRequest_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_on_audio_focus_change_listener, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(AudioFocusRequest_Builder { ref: got });
+}
+
+// A android.media.AudioAttributes.
+pub struct AudioAttributes { ref: usize }
+
+pub function (x: AudioAttributes) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: AudioAttributes) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.media.AudioAttributes and the IDs of its members.
+pub struct AudioAttributesClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function audio_attributes_class(e: usize): Result[AudioAttributesClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/media/AudioAttributes");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  return Ok(AudioAttributesClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: AudioAttributesClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.media.AudioAttributes.Builder.
+pub struct AudioAttributes_Builder { ref: usize }
+
+pub function (x: AudioAttributes_Builder) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: AudioAttributes_Builder) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.media.AudioAttributes.Builder and the IDs of its members.
+pub struct AudioAttributes_BuilderClass { class: usize, id_new: usize, id_build: usize, id_set_content_type: usize, id_set_usage: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function audio_attributes_builder_class(e: usize): Result[AudioAttributes_BuilderClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/media/AudioAttributes$Builder");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "()V"))?;
+  let id_build = jni.checked_id(e, class, jni.get_method_id(e, class, "build", "()Landroid/media/AudioAttributes;"))?;
+  let id_set_content_type = jni.checked_id(e, class, jni.get_method_id(e, class, "setContentType", "(I)Landroid/media/AudioAttributes$Builder;"))?;
+  let id_set_usage = jni.checked_id(e, class, jni.get_method_id(e, class, "setUsage", "(I)Landroid/media/AudioAttributes$Builder;"))?;
+  return Ok(AudioAttributes_BuilderClass { class: class, id_new: id_new, id_build: id_build, id_set_content_type: id_set_content_type, id_set_usage: id_set_usage });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: AudioAttributes_BuilderClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.media.AudioAttributes.Builder.<init>()V
+pub function (c: AudioAttributes_BuilderClass) new(e: usize): Result[AudioAttributes_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(AudioAttributes_Builder { ref: got });
+}
+
+// android.media.AudioAttributes.Builder.build()Landroid/media/AudioAttributes;
+pub function (c: AudioAttributes_BuilderClass) build(e: usize, self: AudioAttributes_Builder): Result[AudioAttributes, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_build, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(AudioAttributes { ref: got });
+}
+
+// android.media.AudioAttributes.Builder.setContentType(I)Landroid/media/AudioAttributes$Builder;
+pub function (c: AudioAttributes_BuilderClass) set_content_type(e: usize, self: AudioAttributes_Builder, a0: i32): Result[AudioAttributes_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_content_type, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(AudioAttributes_Builder { ref: got });
+}
+
+// android.media.AudioAttributes.Builder.setUsage(I)Landroid/media/AudioAttributes$Builder;
+pub function (c: AudioAttributes_BuilderClass) set_usage(e: usize, self: AudioAttributes_Builder, a0: i32): Result[AudioAttributes_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_usage, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(AudioAttributes_Builder { ref: got });
+}
+
+// The struct of IDs of each class of this module.
+pub struct Classes { context: ContextClass, class_loader: ClassLoaderClass, class: ClassClass, audio_manager: AudioManagerClass, audio_manager_on_audio_focus_change_listener: AudioManager_OnAudioFocusChangeListenerClass, audio_focus_request: AudioFocusRequestClass, audio_focus_request_builder: AudioFocusRequest_BuilderClass, audio_attributes: AudioAttributesClass, audio_attributes_builder: AudioAttributes_BuilderClass }
+
+// Makes the struct of IDs of each class. Call it one time, and call
+// `release` when the app does not call Java again. One lookup for each
+// class, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function classes(e: usize): Result[Classes, jni.JavaError] {
+  let context = match (context_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      return Err(err);
+    },
+  };
+  let class_loader = match (class_loader_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      return Err(err);
+    },
+  };
+  let class = match (class_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      return Err(err);
+    },
+  };
+  let audio_manager = match (audio_manager_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      return Err(err);
+    },
+  };
+  let audio_manager_on_audio_focus_change_listener = match (audio_manager_on_audio_focus_change_listener_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      audio_manager.release(e);
+      return Err(err);
+    },
+  };
+  let audio_focus_request = match (audio_focus_request_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      audio_manager.release(e);
+      audio_manager_on_audio_focus_change_listener.release(e);
+      return Err(err);
+    },
+  };
+  let audio_focus_request_builder = match (audio_focus_request_builder_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      audio_manager.release(e);
+      audio_manager_on_audio_focus_change_listener.release(e);
+      audio_focus_request.release(e);
+      return Err(err);
+    },
+  };
+  let audio_attributes = match (audio_attributes_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      audio_manager.release(e);
+      audio_manager_on_audio_focus_change_listener.release(e);
+      audio_focus_request.release(e);
+      audio_focus_request_builder.release(e);
+      return Err(err);
+    },
+  };
+  let audio_attributes_builder = match (audio_attributes_builder_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      audio_manager.release(e);
+      audio_manager_on_audio_focus_change_listener.release(e);
+      audio_focus_request.release(e);
+      audio_focus_request_builder.release(e);
+      audio_attributes.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { context: context, class_loader: class_loader, class: class, audio_manager: audio_manager, audio_manager_on_audio_focus_change_listener: audio_manager_on_audio_focus_change_listener, audio_focus_request: audio_focus_request, audio_focus_request_builder: audio_focus_request_builder, audio_attributes: audio_attributes, audio_attributes_builder: audio_attributes_builder });
+}
+
+// Deletes the reference to each class. Do not use `c` after this call.
+pub function (c: Classes) release(e: usize): void {
+  c.context.release(e);
+  c.class_loader.release(e);
+  c.class.release(e);
+  c.audio_manager.release(e);
+  c.audio_manager_on_audio_focus_change_listener.release(e);
+  c.audio_focus_request.release(e);
+  c.audio_focus_request_builder.release(e);
+  c.audio_attributes.release(e);
+  c.audio_attributes_builder.release(e);
+}

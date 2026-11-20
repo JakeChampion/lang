@@ -38,6 +38,7 @@ Call each function except `changed` on the loop thread. Call `close` before Dest
 // This module asks Android for the audio focus.
 import "std/android";
 import "std/jni";
+import "std/android/focus/bindings";
 ```
 
 ### `events`
@@ -101,24 +102,52 @@ const USAGE_VOICE_COMMUNICATION: i32 = 2;
 
 const CONTENT_SPEECH: i32 = 1;
 
-const ATTRS: string = "android/media/AudioAttributes$Builder";
-
-const BUILDER: string = "android/media/AudioFocusRequest$Builder";
-
-const LISTENER_SIG: string = "Landroid/media/AudioManager$OnAudioFocusChangeListener;";
-
-function new_object(e: usize, class: usize, sig: string, args: usize[]): usize {
-  let values: usize = jni.jvalues(args);
-  let obj: usize = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", sig), values);
-  jni.free_buffer(values);
-  return obj;
+function push_frame(e: usize): boolean {
+  if (jni.call1(e, 19, 64 as usize) as i32 != 0) {
+    jni.exception_clear(e);
+    return false;
+  }
+  return true;
 }
 
-function attributes(e: usize, purpose: i32, kind: i32): usize {
-  let b: usize = new_object(e, jni.find_class(e, ATTRS), "()V", []);
-  let usage: usize = jni.call_object(e, b, "setUsage", "(I)L" + ATTRS + ";", [purpose as usize]);
-  let content: usize = jni.call_object(e, b, "setContentType", "(I)L" + ATTRS + ";", [kind as usize]);
-  return jni.call_object(e, b, "build", "()Landroid/media/AudioAttributes;", []);
+function pop_frame(e: usize): void {
+  jni.call1(e, 20, 0 as usize);
+}
+
+// Promote only the references that survive the local frame.
+function keep(e: usize, obj: usize): Result[usize, jni.JavaError] {
+  let ref = jni.new_global_ref(e, obj);
+  if (ref == 0 as usize) {
+    jni.check(e)?;
+    return Err(jni.JavaError { text: "audio focus reference is null" });
+  }
+  return Ok(ref);
+}
+
+function make_focus(e: usize, activity: bindings.Context, name: string, gain: i32, purpose: i32, kind: i32): Result[Focus, jni.JavaError] {
+  let c = bindings.classes(e)?;
+  defer c.release(e);
+  let manager = c.context.get_system_service(e, activity, "audio")?;
+  if (manager.ref == 0 as usize) {
+    return Err(jni.JavaError { text: "audio service unavailable" });
+  }
+  let loader = c.context.get_class_loader(e, activity)?;
+  let class = c.class_loader.load_class(e, loader, name)?;
+  let listener = c.class.new_instance(e, class)?;
+  let attrs = c.audio_attributes_builder.new(e)?;
+  let usage = c.audio_attributes_builder.set_usage(e, attrs, purpose)?;
+  let content = c.audio_attributes_builder.set_content_type(e, usage, kind)?;
+  let attributes = c.audio_attributes_builder.build(e, content)?;
+  let builder = c.audio_focus_request_builder.new(e, gain)?;
+  let configured = c.audio_focus_request_builder.set_audio_attributes(e, builder, attributes)?;
+  let ready = c.audio_focus_request_builder.set_on_audio_focus_change_listener(e, configured, bindings.AudioManager_OnAudioFocusChangeListener { ref: listener.ref })?;
+  let request = c.audio_focus_request_builder.build(e, ready)?;
+  let m = keep(e, manager.ref)?;
+  errdefer jni.delete_global_ref(e, m);
+  let r = keep(e, request.ref)?;
+  errdefer jni.delete_global_ref(e, r);
+  let l = keep(e, listener.ref)?;
+  return Ok(Focus { manager: m, request: r, listener: l });
 }
 
 // A focus request with one listener of `class`, the Java name of the app's
@@ -136,38 +165,46 @@ pub function music(ctx: usize, class: string): Option[Focus] {
 }
 
 function made(ctx: usize, class: string, gain: i32, purpose: i32, kind: i32): Option[Focus] {
-  let e: usize = android.env(ctx);
-  let obj: usize = android.activity_object(ctx);
-  let manager: usize = jni.call_object(e, obj, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [jni.new_string(e, "audio")]);
-  if (manager == 0 as usize) {
+  let e = android.env(ctx);
+  if (!push_frame(e)) {
     return None;
   }
-  let listener: usize = new_object(e, jni.load_class(e, obj, class), "()V", []);
-  let b: usize = new_object(e, jni.find_class(e, BUILDER), "(I)V", [gain as usize]);
-  let with_attrs: usize = jni.call_object(e, b, "setAudioAttributes", "(Landroid/media/AudioAttributes;)L" + BUILDER + ";", [attributes(e, purpose, kind)]);
-  let with_listener: usize = jni.call_object(e, b, "setOnAudioFocusChangeListener", "(" + LISTENER_SIG + ")L" + BUILDER + ";", [listener]);
-  let request: usize = jni.call_object(e, b, "build", "()Landroid/media/AudioFocusRequest;", []);
-  if (request == 0 as usize) {
+  defer pop_frame(e);
+  let Ok(f) = make_focus(e, bindings.Context { ref: android.activity_object(ctx) }, class, gain, purpose, kind) else {
     return None;
-  }
-  return Some(Focus { manager: jni.new_global_ref(e, manager), request: jni.new_global_ref(e, request), listener: jni.new_global_ref(e, listener) });
-}
-
-function call_int(e: usize, obj: usize, name: string, sig: string, arg: usize): i32 {
-  let values: usize = jni.jvalues([arg]);
-  let got: i32 = jni.call_int_method_a(e, obj, jni.get_method_id(e, jni.get_object_class(e, obj), name, sig), values);
-  jni.free_buffer(values);
-  return got;
+  };
+  return Some(f);
 }
 
 // Asks for the focus. It is false when Android refuses, as during a call.
 pub function request(ctx: usize, f: Focus): boolean {
-  return call_int(android.env(ctx), f.manager, "requestAudioFocus", "(Landroid/media/AudioFocusRequest;)I", f.request) == 1;
+  let e = android.env(ctx);
+  if (!push_frame(e)) {
+    return false;
+  }
+  defer pop_frame(e);
+  let Ok(c) = bindings.audio_manager_class(e) else {
+    return false;
+  };
+  defer c.release(e);
+  let Ok(result) = c.request_audio_focus(e, bindings.AudioManager { ref: f.manager }, bindings.AudioFocusRequest { ref: f.request }) else {
+    return false;
+  };
+  return result == 1;
 }
 
 // Gives the focus back.
 pub function release(ctx: usize, f: Focus): void {
-  let released: i32 = call_int(android.env(ctx), f.manager, "abandonAudioFocusRequest", "(Landroid/media/AudioFocusRequest;)I", f.request);
+  let e = android.env(ctx);
+  if (!push_frame(e)) {
+    return;
+  }
+  defer pop_frame(e);
+  let Ok(c) = bindings.audio_manager_class(e) else {
+    return;
+  };
+  defer c.release(e);
+  let result = c.abandon_audio_focus_request(e, bindings.AudioManager { ref: f.manager }, bindings.AudioFocusRequest { ref: f.request });
 }
 
 // Gives the focus back and frees the request. Call it before Destroy.
