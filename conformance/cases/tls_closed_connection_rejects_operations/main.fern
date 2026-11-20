@@ -26,7 +26,7 @@ function main(): i32 {
   let Ok(cs) = client.start(cc, zeros(client.entropy(cc)), time.timestamp_from_unix_millis(0 as i64)) else {
     return 1;
   };
-  let cfg = server.config(identity.Identity { chain: [[0u8]], key: identity.Ed25519Seed(zeros(32)) }, []);
+  let cfg = server.config(identity.Identity { chain: [[0u8]], key: identity.Ed25519Seed(zeros(32)) }, zeros(32));
   let Ok(ss) = server.start(cfg, zeros(server.entropy(cfg))) else {
     return 2;
   };

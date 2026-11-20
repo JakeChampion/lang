@@ -84,6 +84,7 @@ import "std/crypto/rsa";
 import "std/hex";
 import "std/net";
 import "std/string";
+import "std/utf8";
 import "std/tls/pem";
 import "std/tls/x509";
 import "core/error";
@@ -310,8 +311,11 @@ pub function system_roots(): Option[Roots] {
 }
 
 function android_roots(): Option[Roots] {
+  // Android allocates a range of 100000 UIDs to each user profile.
+  let user = getuid() / 100000u32;
+  let removed = "/data/misc/user/" + user.to_string() + "/cacerts-removed";
   for dir in ANDROID_ROOT_DIRS {
-    if let Ok(r) = roots_from_dir(dir) {
+    if let Ok(r) = roots_from_dir_excluding(dir, removed) {
       return Some(r);
     }
   }
@@ -335,6 +339,42 @@ pub function roots_from_dir(dir: string): Result[Roots, VerifyError] {
     return Err(RootsUnreadable(dir));
   }
   return Ok(roots(ders));
+}
+
+// Reads system roots and excludes certificates present in the user's
+// removal directory. Android stores removed certificates as DER files.
+pub function roots_from_dir_excluding(dir: string, removed: string): Result[Roots, VerifyError] {
+  let system = roots_from_dir(dir)?;
+  let Ok(names) = read_dir(removed) else {
+    return Ok(system);
+  };
+  let excluded: u8[][] = [];
+  for name in names {
+    if let Ok(data) = read_file_bytes(removed + "/" + name) {
+      if (data.len() > 0 && data[0] == 0x30u8) {
+        excluded = excluded.append(data);
+      } else if let Ok(certs) = pem.certificates(utf8.from_bytes_lossy(data)) {
+        excluded = excluded.concat(certs);
+      }
+    }
+  }
+  if (excluded.len() == 0) {
+    return Ok(system);
+  }
+  let kept = no_roots();
+  for i in 0..system.certs.len() {
+    let disabled = false;
+    for der in excluded {
+      if (__same_bytes(system.certs[i].raw, der)) {
+        disabled = true;
+        break;
+      }
+    }
+    if (!disabled) {
+      kept = Roots { certs: kept.certs.append(system.certs[i]), distrust_after: kept.distrust_after.append(system.distrust_after[i]) };
+    }
+  }
+  return Ok(kept);
 }
 ```
 

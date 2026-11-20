@@ -622,6 +622,60 @@ function main(): i32 {
 }
 `, false},
 	// RFC 4226 takes the window of the code at an offset that comes from the MAC.
+	{"consteq", `import "std/crypto";
+
+function main(): i32 {
+  let a = [1u8, 2u8, 3u8, 4u8];
+  let b = [1u8, 2u8, 3u8, 4u8];
+  let c = [9u8, 2u8, 3u8, 4u8];
+  __ct_secret(a);
+  __ct_secret(b);
+  __ct_secret(c);
+  let verdicts = [if (crypto.consteq(a, b)) { 1u8 } else { 0u8 }, if (crypto.consteq(a, c)) { 1u8 } else { 0u8 }];
+  __ct_public(verdicts);
+  if (verdicts[0] != 1u8 || verdicts[1] != 0u8) { return 1; }
+  return 0;
+}
+`, false},
+	{"pbkdf2", `import "std/crypto";
+import "std/hex";
+
+function main(): i32 {
+  let secret = [1u8, 2u8, 3u8, 4u8];
+  __ct_secret(secret);
+  let Ok(out) = crypto.pbkdf2_sha256(secret, "salt".as_bytes(), 2, 40) else { return 1; };
+  __ct_public(out);
+  if (hex.encode(out) != "5967ce026df98cfd9b8d2bd3753398501cbbf643626a9cbf9dd55d87750a5b692297bcb14c7dd205") { return 1; }
+  return 0;
+}
+`, false},
+	{"hkdf", `import "std/crypto";
+import "std/hex";
+
+function main(): i32 {
+  let secret = [1u8, 2u8, 3u8, 4u8];
+  __ct_secret(secret);
+  let a = crypto.hkdf_sha256("salt".as_bytes(), secret, "info".as_bytes(), 56);
+  let b = crypto.hkdf_sha384("salt".as_bytes(), secret, "info".as_bytes(), 56);
+  __ct_public(a);
+  if (hex.encode(a) != "9359a1ebf38c25ebceddfd1184c2ad46a434ec2d71c0fb5e1eed9070b0eae5a5f0d40d3c670931f1fff952d68959cd56bf1394afe0254d4f") { return 1; }
+  __ct_public(b);
+  if (hex.encode(b) != "f0bf686e22d7330b135c6cc1615b72061fbe49a0744925a93dda20304525e8123770a7f4bc95b184109f3719339dcd4dc9dba464a823e996") { return 1; }
+  return 0;
+}
+`, false},
+	{"scrypt", `import "std/crypto/scrypt";
+import "std/hex";
+
+function main(): i32 {
+  let secret = [1u8, 2u8, 3u8, 4u8];
+  __ct_secret(secret);
+  let Ok(out) = scrypt.key(secret, "salt".as_bytes(), 16, 1, 1, 32) else { return 2; };
+  __ct_public(out);
+  if (hex.encode(out) != "79637f4217892e213de7567fafdefe379a184234e03cf4b96360fa9cb87fd33e") { return 1; }
+  return 0;
+}
+`, false},
 	{"hotp", `import "std/crypto";
 
 function main(): i32 {

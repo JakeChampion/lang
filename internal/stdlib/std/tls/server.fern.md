@@ -108,12 +108,18 @@ pub struct Config { identity: identity.Identity, alpn: string[], tickets: boolea
 
 ```fern
 <<4 pub function config(id: identity.Identity, ticket_key: [u8]): Config>>=
+// Supply at least 32 bytes from a cryptographic random source for session tickets.
+// A shorter secret is accepted at startup only with without_tickets().
 pub function config(id: identity.Identity, ticket_key: [u8]): Config {
   return Config { identity: id, alpn: [], tickets: true, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: ticket_key_of(ticket_key), client_roots: None };
 }
 
-// ticket_key_of is the key that seals tickets for the caller's secret.
+// Derives a ticket key from at least 32 bytes of secret material. A shorter
+// secret yields no key.
 pub function ticket_key_of(secret: [u8]): u8[] {
+  if (secret.len() < 32) {
+    return [];
+  }
   return crypto.sha256_new().update(secret).finish();
 }
 
@@ -148,6 +154,9 @@ pub struct Step { session: Session, output: u8[], data: u8[], closed: boolean, r
 ```fern
 <<6 pub function start(config: Config, entropy: [u8]): Result[Step, tls.TlsError]>>=
 pub function start(config: Config, entropy: [u8]): Result[Step, tls.TlsError] {
+  if (config.tickets && config.ticket_key.len() != 32) {
+    return Err(tls.HandshakeFailed(handshake.Misuse("session tickets require a secret of at least 32 bytes")));
+  }
   let sc = __handshake_config(config);
   let n = handshake.server_entropy(sc);
   if (entropy.len() != n + TICKET_ENTROPY) {

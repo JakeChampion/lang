@@ -1,4 +1,5 @@
 import "std/test";
+import "std/result";
 import "std/hex";
 import "std/codec";
 import "std/crypto";
@@ -589,6 +590,18 @@ function how(r: Result[Pair, string]): string {
   return "";
 }
 
+function test_ticket_secret_length(): test.TestOutcome {
+  let id = identity_of(ED_LEAF, ED_PKCS8);
+  for n in [0, 1, 31, 32, 48] {
+    let cfg = server.config(id, drawn(n, 1 as i64));
+    let valid = n >= 32;
+    if (listening(cfg).is_ok() != valid) {
+      return test.fail("ticket secret of " + n.to_string() + " bytes");
+    }
+  }
+  return test.assert_true(listening(server.config(id, []).without_tickets()).is_ok());
+}
+
 function test_resumption(): test.TestOutcome {
   let sc = server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)).with_alpn(["http/1.1"]);
   let cc = client.config("tls.example", roots()).with_alpn(["h2", "http/1.1"]);
@@ -1135,6 +1148,7 @@ function test_start_refuses_short_entropy(): test.TestOutcome {
 
 function main(): i32 {
   let r = test.new("std/tls/server");
+  r = r.it("ticket secret length", test_ticket_secret_length);
   r = r.it("start gives a Step with no output", test_start_is_a_step);
   r = r.it("start refuses short entropy", test_start_refuses_short_entropy);
   r = r.it("keys from PKCS #8 and SEC 1", test_keys);
