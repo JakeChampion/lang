@@ -150,6 +150,16 @@ function decoders(): i32 {
   if (jni_pending() != 0 || jni_frames() != 0) {
     return 154;
   }
+  jni_mode(7);
+  match (capabilities.decoder_types(env, capabilities.default_limits())) {
+    Err(frame.Limit) => {},
+    _ => {
+      return 155;
+    }
+  }
+  if (jni_pending() != 0 || jni_frames() != 0) {
+    return 156;
+  }
   return 0;
 }
 

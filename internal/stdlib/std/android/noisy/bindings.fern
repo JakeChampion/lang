@@ -1,0 +1,286 @@
+// Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
+import "std/jni";
+
+// A android.content.Context.
+pub struct Context { ref: usize }
+
+pub function (x: Context) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Context) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.Context and the IDs of its members.
+pub struct ContextClass { class: usize, id_get_application_context: usize, id_get_class_loader: usize, id_register_receiver: usize, id_unregister_receiver: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/Context");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_application_context = jni.checked_id(e, class, jni.get_method_id(e, class, "getApplicationContext", "()Landroid/content/Context;"))?;
+  let id_get_class_loader = jni.checked_id(e, class, jni.get_method_id(e, class, "getClassLoader", "()Ljava/lang/ClassLoader;"))?;
+  let id_register_receiver = jni.checked_id(e, class, jni.get_method_id(e, class, "registerReceiver", "(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;)Landroid/content/Intent;"))?;
+  let id_unregister_receiver = jni.checked_id(e, class, jni.get_method_id(e, class, "unregisterReceiver", "(Landroid/content/BroadcastReceiver;)V"))?;
+  return Ok(ContextClass { class: class, id_get_application_context: id_get_application_context, id_get_class_loader: id_get_class_loader, id_register_receiver: id_register_receiver, id_unregister_receiver: id_unregister_receiver });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ContextClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.Context.getApplicationContext()Landroid/content/Context;
+pub function (c: ContextClass) get_application_context(e: usize, self: Context): Result[Context, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_application_context, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Context { ref: got });
+}
+
+// android.content.Context.getClassLoader()Ljava/lang/ClassLoader;
+pub function (c: ContextClass) get_class_loader(e: usize, self: Context): Result[ClassLoader, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_class_loader, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(ClassLoader { ref: got });
+}
+
+// android.content.Context.registerReceiver(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;)Landroid/content/Intent;
+pub function (c: ContextClass) register_receiver(e: usize, self: Context, a0: BroadcastReceiver, a1: IntentFilter): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_register_receiver, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// android.content.Context.unregisterReceiver(Landroid/content/BroadcastReceiver;)V
+pub function (c: ContextClass) unregister_receiver(e: usize, self: Context, a0: BroadcastReceiver): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_unregister_receiver, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.content.BroadcastReceiver.
+pub struct BroadcastReceiver { ref: usize }
+
+pub function (x: BroadcastReceiver) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: BroadcastReceiver) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.BroadcastReceiver and the IDs of its members.
+pub struct BroadcastReceiverClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function broadcast_receiver_class(e: usize): Result[BroadcastReceiverClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/BroadcastReceiver");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  return Ok(BroadcastReceiverClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: BroadcastReceiverClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.content.IntentFilter.
+pub struct IntentFilter { ref: usize }
+
+pub function (x: IntentFilter) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: IntentFilter) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.IntentFilter and the IDs of its members.
+pub struct IntentFilterClass { class: usize, id_new: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function intent_filter_class(e: usize): Result[IntentFilterClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/IntentFilter");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;)V"))?;
+  return Ok(IntentFilterClass { class: class, id_new: id_new });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: IntentFilterClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.IntentFilter.<init>(Ljava/lang/String;)V
+pub function (c: IntentFilterClass) new(e: usize, a0: string): Result[IntentFilter, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(IntentFilter { ref: got });
+}
+
+// A java.lang.Class.
+pub struct Class { ref: usize }
+
+pub function (x: Class) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Class) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.lang.Class and the IDs of its members.
+pub struct ClassClass { class: usize, id_new_instance: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function class_class(e: usize): Result[ClassClass, jni.JavaError] {
+  let local = jni.find_class(e, "java/lang/Class");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_new_instance = jni.checked_id(e, class, jni.get_method_id(e, class, "newInstance", "()Ljava/lang/Object;"))?;
+  return Ok(ClassClass { class: class, id_new_instance: id_new_instance });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ClassClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.lang.Class.newInstance()Ljava/lang/Object;
+pub function (c: ClassClass) new_instance(e: usize, self: Class): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_new_instance, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// A java.lang.ClassLoader.
+pub struct ClassLoader { ref: usize }
+
+pub function (x: ClassLoader) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ClassLoader) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.lang.ClassLoader and the IDs of its members.
+pub struct ClassLoaderClass { class: usize, id_load_class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function class_loader_class(e: usize): Result[ClassLoaderClass, jni.JavaError] {
+  let local = jni.find_class(e, "java/lang/ClassLoader");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_load_class = jni.checked_id(e, class, jni.get_method_id(e, class, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;"))?;
+  return Ok(ClassLoaderClass { class: class, id_load_class: id_load_class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ClassLoaderClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.lang.ClassLoader.loadClass(Ljava/lang/String;)Ljava/lang/Class;
+pub function (c: ClassLoaderClass) load_class(e: usize, self: ClassLoader, a0: string): Result[Class, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_load_class, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(Class { ref: got });
+}
+
+// The struct of IDs of each class of this module.
+pub struct Classes { context: ContextClass, broadcast_receiver: BroadcastReceiverClass, intent_filter: IntentFilterClass, class: ClassClass, class_loader: ClassLoaderClass }
+
+// Makes the struct of IDs of each class. Call it one time, and call
+// `release` when the app does not call Java again. One lookup for each
+// class, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function classes(e: usize): Result[Classes, jni.JavaError] {
+  let context = match (context_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      return Err(err);
+    },
+  };
+  let broadcast_receiver = match (broadcast_receiver_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      return Err(err);
+    },
+  };
+  let intent_filter = match (intent_filter_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      broadcast_receiver.release(e);
+      return Err(err);
+    },
+  };
+  let class = match (class_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      broadcast_receiver.release(e);
+      intent_filter.release(e);
+      return Err(err);
+    },
+  };
+  let class_loader = match (class_loader_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      broadcast_receiver.release(e);
+      intent_filter.release(e);
+      class.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { context: context, broadcast_receiver: broadcast_receiver, intent_filter: intent_filter, class: class, class_loader: class_loader });
+}
+
+// Deletes the reference to each class. Do not use `c` after this call.
+pub function (c: Classes) release(e: usize): void {
+  c.context.release(e);
+  c.broadcast_receiver.release(e);
+  c.intent_filter.release(e);
+  c.class.release(e);
+  c.class_loader.release(e);
+}
