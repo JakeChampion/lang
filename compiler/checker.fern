@@ -36722,9 +36722,11 @@ function qualify_struct_lit(sl: ast.ExprStructLit, want: typeinfo.Type, s: Scope
   return ast.ExprStructLit { ...sl, field_values: values, base: qualify_expr(sl.base, none, s, coll) };
 }
 
-struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[], skeys: string[], snames: string[], sfirst: i32[], sargs: string[], sids: i32[], wkeys: string[], wtags: string[], eargs: string[], eids: i32[], tkeys: string[], ttypes: typeinfo.Type[], pargs: string[], ptypes: typeinfo.Type[], okeys: string[], otypes: typeinfo.Type[], ofills: typeinfo.Type[] }
+struct LitArgSite { line: i32, col: i32, arg: i32 }
 
-struct LitRewrite { keys: util.NameIndex, tags: string[], cargs: string[], ctags: string[], pargs: string[], ptypes: typeinfo.Type[] }
+struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[], skeys: string[], snames: string[], sfirst: i32[], sargs: string[], sids: i32[], wkeys: string[], wtags: string[], eargs: string[], eids: i32[], tkeys: string[], ttypes: typeinfo.Type[], pargs: LitArgSite[], ptypes: typeinfo.Type[], okeys: string[], otypes: typeinfo.Type[], ofills: typeinfo.Type[] }
+
+struct LitRewrite { keys: util.NameIndex, tags: string[], cargs: string[], ctags: string[], pargs: LitArgSite[], ptypes: typeinfo.Type[] }
 
 const LIT_MARK: string = "literal local #";
 
@@ -37523,7 +37525,7 @@ function lit_array_demand(e: ast.Expr, wa: typeinfo.TypeArray, s: Scope, st: Lit
     let (recv, arg, step) = array_step(c);
     if (step && (lit_array_rooted(recv) && (is_integer(wa.elem) || is_float(wa.elem)) || empty_array_rooted(recv))) {
       let out = lit_demand(arg, wa.elem, s, lit_array_demand(recv, wa, s, lit_step_index(c, s, st)));
-      return LitInfer { ...out, pargs: out.pargs.append(gcall_arg_key(c, LIT_STEP_RECV)), ptypes: out.ptypes.append(wa) };
+      return LitInfer { ...out, pargs: out.pargs.append(LitArgSite { line: c.line, col: c.col, arg: LIT_STEP_RECV }), ptypes: out.ptypes.append(wa) };
     }
     if let ast.ExprIdent(id) = array_step_root(e) {
       st = lit_type_demand(s.lookup(id.name), wa, st);
@@ -38283,7 +38285,7 @@ function lit_composite_local(e: ast.Expr, s: Scope, st: LitInfer): (typeinfo.Typ
         }
         let (part, more, found) = lit_composite_local(arg, s, next);
         let linked = lit_type_link(ra.elem, part, more);
-        return (whole, LitInfer { ...linked, pargs: linked.pargs.append(gcall_arg_key(c, LIT_STEP_RECV)), ptypes: linked.ptypes.append(whole) }, any || found);
+        return (whole, LitInfer { ...linked, pargs: linked.pargs.append(LitArgSite { line: c.line, col: c.col, arg: LIT_STEP_RECV }), ptypes: linked.ptypes.append(whole) }, any || found);
       }
     }
   }
@@ -38765,7 +38767,7 @@ function lit_enum_local(c: ast.ExprCall, s: Scope, st: LitInfer): (typeinfo.Type
         let (shape, next) = lit_payload_shape(c, p, u.name, s, out);
         if (shape.slot >= 0 && shape.slot < args.len()) {
           args = args.with(shape.slot, shape.param);
-          out = LitInfer { ...next, pargs: next.pargs.append(gcall_arg_key(c, p)), ptypes: next.ptypes.append(shape.arg) };
+          out = LitInfer { ...next, pargs: next.pargs.append(LitArgSite { line: c.line, col: c.col, arg: p }), ptypes: next.ptypes.append(shape.arg) };
         }
       }
       if (slot >= 0 && slot < args.len() && seed) {
@@ -39107,12 +39109,22 @@ function lit_float_read(e: ast.Expr, want: parser.TypeRef): ast.Expr {
   return ast.cast(e, want.base, false, expr_line(e), expr_col(e), want.base);
 }
 
+function lit_arg_index(sites: LitArgSite[], c: ast.ExprCall, arg: i32): i32 {
+  for i in 0..sites.len() {
+    let site = sites[i];
+    if (site.line == c.line && site.col == c.col && site.arg == arg) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 function lit_call_settled(c: ast.ExprCall, rw: LitRewrite): boolean {
-  if (util.index_of_str(rw.pargs, gcall_arg_key(c, LIT_STEP_RECV)) >= 0) {
+  if (lit_arg_index(rw.pargs, c, LIT_STEP_RECV) >= 0) {
     return true;
   }
   for k in 0..c.args.len() {
-    if (util.index_of_str(rw.cargs, gcall_arg_key(c, k)) >= 0 || util.index_of_str(rw.pargs, gcall_arg_key(c, k)) >= 0) {
+    if (util.index_of_str(rw.cargs, gcall_arg_key(c, k)) >= 0 || lit_arg_index(rw.pargs, c, k) >= 0) {
       return true;
     }
   }
@@ -39127,7 +39139,7 @@ function lit_rewrite_call(c: ast.ExprCall, rw: LitRewrite): ast.Expr {
     if (at >= 0) {
       a = settle_int_tree(a, rw.ctags[at]);
     }
-    let pt = util.index_of_str(rw.pargs, gcall_arg_key(c, k));
+    let pt = lit_arg_index(rw.pargs, c, k);
     if (pt >= 0) {
       a = settle_wide_literals(a, rw.ptypes[pt]);
     }
@@ -39135,7 +39147,7 @@ function lit_rewrite_call(c: ast.ExprCall, rw: LitRewrite): ast.Expr {
     args = args.append(ae);
   }
   let (ce, ca, ch) = astwalk.map_expr_where(c.callee, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.descend_all);
-  let rt = util.index_of_str(rw.pargs, gcall_arg_key(c, LIT_STEP_RECV));
+  let rt = lit_arg_index(rw.pargs, c, LIT_STEP_RECV);
   if (rt >= 0) {
     return settle_array_step(ast.ExprCall { ...c, callee: ce, args: args }, rw.ptypes[rt]);
   }
