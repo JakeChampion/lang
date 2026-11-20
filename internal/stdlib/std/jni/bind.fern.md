@@ -640,16 +640,24 @@ A function puts its arguments in a jvalue array. It calls the entry of the JNI t
 
 ```fern
 <<members>>=
+// Make the string before allocating the jvalue array. Each earlier
+// reference is released if a later argument fails.
+function string_argument(i: i32, nullable: boolean): string {
+  let n = i.to_string();
+  let release = "  defer jni.delete_local_ref(e, s" + n + ");\n";
+  if (nullable) {
+    return "  let s" + n + " = 0 as usize;\n  if let Some(t" + n + ") = a" + n + " {\n    s" + n + " = jni.checked_string(e, t" + n + ")?;\n  }\n" + release;
+  }
+  return "  let s" + n + " = jni.checked_string(e, a" + n + ")?;\n" + release;
+}
+
 // The lines that put argument `i`, of the type `t`, in the jvalue array.
-function argument(i: i32, t: classfile.Type, nullable: boolean): string {
+function argument(i: i32, t: classfile.Type): string {
   let n = i.to_string();
   let a = "a" + n;
   let set = "  jni.jvalue_set_int(args, " + n + ", ";
-  if (is_string(t) && nullable) {
-    return "  let s" + n + " = 0 as usize;\n  if let Some(t" + n + ") = " + a + " {\n    s" + n + " = jni.new_string(e, t" + n + ");\n  }\n" + set + "s" + n + ");\n";
-  }
   if (is_string(t)) {
-    return "  let s" + n + " = jni.new_string(e, " + a + ");\n" + set + "s" + n + ");\n";
+    return set + "s" + n + ");\n";
   }
   if (t.dims > 0 || t.base == "L") {
     return set + a + ".ref);\n";
@@ -753,16 +761,18 @@ function method_function(c: classfile.Class, m: Bound, sig: classfile.Signature,
   }
   let out = "// " + java_name(c.name) + "." + m.java + m.descriptor + "\n";
   out += "pub function (c: " + t + "Class) " + m.name + "(" + parameters(t, m, sig.params, bound) + "): Result[" + fern_type(result, bound) + ", jni.JavaError] {\n";
-  out += absent_lines(c, m) + "  let args = jni.jvalue_alloc(" + sig.params.len().to_string() + ");\n";
-  let frees = "  jni.free_buffer(args);\n";
+  out += absent_lines(c, m);
   for i in 0..sig.params.len() {
-    out += argument(i, sig.params[i], has_place(m.nullable, i));
     if (is_string(sig.params[i])) {
-      frees += "  jni.delete_local_ref(e, s" + i.to_string() + ");\n";
+      out += string_argument(i, has_place(m.nullable, i));
     }
   }
+  out += "  let args = jni.jvalue_alloc(" + sig.params.len().to_string() + ");\n";
+  for i in 0..sig.params.len() {
+    out += argument(i, sig.params[i]);
+  }
   out += call_start(result) + entry + ", " + target(m) + ", c.id_" + m.name + ", args);\n";
-  return out + frees + ending(result, bound);
+  return out + "  jni.free_buffer(args);\n" + ending(result, bound);
 }
 
 function field_setter(c: classfile.Class, m: Bound, kind: classfile.Type, bound: string[]): string {
@@ -778,7 +788,7 @@ function field_setter(c: classfile.Class, m: Bound, kind: classfile.Type, bound:
   } else {
     let value = "value as usize";
     if (is_string(kind)) {
-      out += "  let text = jni.new_string(e, value);\n  jni.check(e)?;\n  defer jni.delete_local_ref(e, text);\n";
+      out += "  let text = jni.checked_string(e, value)?;\n  defer jni.delete_local_ref(e, text);\n";
       value = "text";
     } else if (slot == 0) {
       value = "value.ref";

@@ -112,12 +112,18 @@ static uintptr_t new_global(uintptr_t e, uintptr_t ref) {
   globals++; return ref;
 }
 static void delete_global(uintptr_t e, uintptr_t ref) { require(globals > 0, "a global reference deleted twice"); globals--; }
+static const char *fail_string;
+static uintptr_t tracked_key;
+static int released_key;
 static uintptr_t new_string(uintptr_t e, const uint16_t *units, uintptr_t n) {
   char s[96];
   require(n < 96, "a short string");
   for (uintptr_t i = 0; i < n; i++) s[i] = (char)units[i];
   s[n] = 0;
-  return text(s);
+  if (fail_string && !strcmp(s, fail_string)) return 0;
+  uintptr_t ref = text(s);
+  if (fail_string && !strcmp(s, "type")) tracked_key = ref;
+  return ref;
 }
 static int32_t utf_length(uintptr_t e, uintptr_t s) { return (int32_t)strlen(string_of(s)); }
 static const char *utf_chars(uintptr_t e, uintptr_t s, uintptr_t copy) { return string_of(s); }
@@ -125,7 +131,7 @@ static void utf_release(uintptr_t e, uintptr_t s, const char *chars) {}
 static int32_t push(uintptr_t e, int32_t n) { frames++; return 0; }
 static uintptr_t pop(uintptr_t e, uintptr_t keep) { frames--; return 0; }
 static uintptr_t none(uintptr_t e) { return 0; }
-static void release(uintptr_t e, uintptr_t ref) {}
+static void release(uintptr_t e, uintptr_t ref) { if (tracked_key && ref == tracked_key) released_key++; }
 static int has(const char *part) { return strstr(log_, part) != 0; }
 static int count(const char *part) {
   int n = 0;
@@ -173,6 +179,14 @@ int main(int argc, char **argv) {
   ctx[23] = 25;
   require(has_rows((uintptr_t)ctx) == 0 && add_one((uintptr_t)ctx) == -1 && show_two((uintptr_t)ctx, 77) == 0 && log_[0] == 0, "no rows below API level 26");
   ctx[23] = 26;
+  log_[0] = 0;
+  fail_string = "android.software.leanback";
+  require(has_rows((uintptr_t)ctx) == 0 && !has("hasSystemFeature(") && frames == 0 && globals == 0, "failed string allocation skips the Java call and releases the classes and frame");
+  fail_string = "TYPE_PREVIEW";
+  add_one((uintptr_t)ctx);
+  require(tracked_key && released_key == 1 && !has("put('type',") && frames == 0 && globals == 0, "failed second string releases the first and skips the put");
+  fail_string = 0;
+  log_[0] = 0;
   tv = 0;
   require(has_rows((uintptr_t)ctx) == 0 && add_one((uintptr_t)ctx) == -1 && frames == 0 && globals == 0, "no rows with no leanback");
   require(has("getPackageManager();hasSystemFeature('android.software.leanback');") && !has("insert("), "the feature of the rows");

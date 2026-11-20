@@ -19,10 +19,7 @@ pub struct ContextClass { class: usize, id_get_external_files_dir: usize, id_get
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/content/Context");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/content/Context")?;
   let id_get_external_files_dir = jni.checked_id(e, class, jni.get_method_id(e, class, "getExternalFilesDir", "(Ljava/lang/String;)Ljava/io/File;"))?;
   let id_get_system_service = jni.checked_id(e, class, jni.get_method_id(e, class, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;"))?;
   return Ok(ContextClass { class: class, id_get_external_files_dir: id_get_external_files_dir, id_get_system_service: id_get_system_service });
@@ -35,27 +32,27 @@ pub function (c: ContextClass) release(e: usize): void {
 
 // android.content.Context.getExternalFilesDir(Ljava/lang/String;)Ljava/io/File;
 pub function (c: ContextClass) get_external_files_dir(e: usize, self: Context, a0: Option[string]): Result[File, jni.JavaError] {
-  let args = jni.jvalue_alloc(1);
   let s0 = 0 as usize;
   if let Some(t0) = a0 {
-    s0 = jni.new_string(e, t0);
+    s0 = jni.checked_string(e, t0)?;
   }
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_external_files_dir, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(File { ref: got });
 }
 
 // android.content.Context.getSystemService(Ljava/lang/String;)Ljava/lang/Object;
 pub function (c: ContextClass) get_system_service(e: usize, self: Context, a0: string): Result[jni.Object, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_system_service, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(jni.Object { ref: got });
 }
@@ -77,10 +74,7 @@ pub struct DownloadManagerClass { class: usize, id_enqueue: usize, id_query: usi
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function download_manager_class(e: usize): Result[DownloadManagerClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/app/DownloadManager");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/app/DownloadManager")?;
   let id_enqueue = jni.checked_id(e, class, jni.get_method_id(e, class, "enqueue", "(Landroid/app/DownloadManager$Request;)J"))?;
   let id_query = jni.checked_id(e, class, jni.get_method_id(e, class, "query", "(Landroid/app/DownloadManager$Query;)Landroid/database/Cursor;"))?;
   let id_remove = jni.checked_id(e, class, jni.get_method_id(e, class, "remove", "([J)I"))?;
@@ -139,10 +133,7 @@ pub struct DownloadManager_RequestClass { class: usize, id_new: usize, id_add_re
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function download_manager_request_class(e: usize): Result[DownloadManager_RequestClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/app/DownloadManager$Request");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/app/DownloadManager$Request")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Landroid/net/Uri;)V"))?;
   let id_add_request_header = jni.checked_id(e, class, jni.get_method_id(e, class, "addRequestHeader", "(Ljava/lang/String;Ljava/lang/String;)Landroid/app/DownloadManager$Request;"))?;
   let id_set_destination_in_external_files_dir = jni.checked_id(e, class, jni.get_method_id(e, class, "setDestinationInExternalFilesDir", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Landroid/app/DownloadManager$Request;"))?;
@@ -168,34 +159,34 @@ pub function (c: DownloadManager_RequestClass) new(e: usize, a0: Uri): Result[Do
 
 // android.app.DownloadManager.Request.addRequestHeader(Ljava/lang/String;Ljava/lang/String;)Landroid/app/DownloadManager$Request;
 pub function (c: DownloadManager_RequestClass) add_request_header(e: usize, self: DownloadManager_Request, a0: string, a1: string): Result[DownloadManager_Request, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let s1 = jni.checked_string(e, a1)?;
+  defer jni.delete_local_ref(e, s1);
   let args = jni.jvalue_alloc(2);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
-  let s1 = jni.new_string(e, a1);
   jni.jvalue_set_int(args, 1, s1);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_add_request_header, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
-  jni.delete_local_ref(e, s1);
   jni.check(e)?;
   return Ok(DownloadManager_Request { ref: got });
 }
 
 // android.app.DownloadManager.Request.setDestinationInExternalFilesDir(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Landroid/app/DownloadManager$Request;
 pub function (c: DownloadManager_RequestClass) set_destination_in_external_files_dir(e: usize, self: DownloadManager_Request, a0: Context, a1: Option[string], a2: string): Result[DownloadManager_Request, jni.JavaError] {
-  let args = jni.jvalue_alloc(3);
-  jni.jvalue_set_int(args, 0, a0.ref);
   let s1 = 0 as usize;
   if let Some(t1) = a1 {
-    s1 = jni.new_string(e, t1);
+    s1 = jni.checked_string(e, t1)?;
   }
+  defer jni.delete_local_ref(e, s1);
+  let s2 = jni.checked_string(e, a2)?;
+  defer jni.delete_local_ref(e, s2);
+  let args = jni.jvalue_alloc(3);
+  jni.jvalue_set_int(args, 0, a0.ref);
   jni.jvalue_set_int(args, 1, s1);
-  let s2 = jni.new_string(e, a2);
   jni.jvalue_set_int(args, 2, s2);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_destination_in_external_files_dir, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s1);
-  jni.delete_local_ref(e, s2);
   jni.check(e)?;
   return Ok(DownloadManager_Request { ref: got });
 }
@@ -237,10 +228,7 @@ pub struct DownloadManager_QueryClass { class: usize, id_new: usize, id_set_filt
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function download_manager_query_class(e: usize): Result[DownloadManager_QueryClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/app/DownloadManager$Query");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/app/DownloadManager$Query")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "()V"))?;
   let id_set_filter_by_id = jni.checked_id(e, class, jni.get_method_id(e, class, "setFilterById", "([J)Landroid/app/DownloadManager$Query;"))?;
   return Ok(DownloadManager_QueryClass { class: class, id_new: id_new, id_set_filter_by_id: id_set_filter_by_id });
@@ -287,10 +275,7 @@ pub struct CursorClass { class: usize, id_close: usize, id_get_column_index: usi
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function cursor_class(e: usize): Result[CursorClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/database/Cursor");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/database/Cursor")?;
   let id_close = jni.checked_id(e, class, jni.get_method_id(e, class, "close", "()V"))?;
   let id_get_column_index = jni.checked_id(e, class, jni.get_method_id(e, class, "getColumnIndex", "(Ljava/lang/String;)I"))?;
   let id_get_int = jni.checked_id(e, class, jni.get_method_id(e, class, "getInt", "(I)I"))?;
@@ -315,12 +300,12 @@ pub function (c: CursorClass) close(e: usize, self: Cursor): Result[void, jni.Ja
 
 // android.database.Cursor.getColumnIndex(Ljava/lang/String;)I
 pub function (c: CursorClass) get_column_index(e: usize, self: Cursor, a0: string): Result[i32, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_column_index, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(got as i32);
 }
@@ -371,10 +356,7 @@ pub struct UriClass { class: usize, id_parse: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function uri_class(e: usize): Result[UriClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/net/Uri");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/net/Uri")?;
   let id_parse = jni.checked_id(e, class, jni.get_static_method_id(e, class, "parse", "(Ljava/lang/String;)Landroid/net/Uri;"))?;
   return Ok(UriClass { class: class, id_parse: id_parse });
 }
@@ -386,12 +368,12 @@ pub function (c: UriClass) release(e: usize): void {
 
 // android.net.Uri.parse(Ljava/lang/String;)Landroid/net/Uri;
 pub function (c: UriClass) parse(e: usize, a0: string): Result[Uri, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_parse, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(Uri { ref: got });
 }
@@ -413,10 +395,7 @@ pub struct FileClass { class: usize, id_get_absolute_path: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function file_class(e: usize): Result[FileClass, jni.JavaError] {
-  let local = jni.find_class(e, "java/io/File");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "java/io/File")?;
   let id_get_absolute_path = jni.checked_id(e, class, jni.get_method_id(e, class, "getAbsolutePath", "()Ljava/lang/String;"))?;
   return Ok(FileClass { class: class, id_get_absolute_path: id_get_absolute_path });
 }

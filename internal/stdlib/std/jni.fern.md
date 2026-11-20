@@ -872,6 +872,16 @@ pub function check(env: usize): Result[void, JavaError] {
   return Err(JavaError { text: out });
 }
 
+// Makes a Java string for a method argument. The caller owns the local reference.
+pub function checked_string(env: usize, value: string): Result[usize, JavaError] {
+  let ref = new_string(env, value);
+  if (ref == 0 as usize) {
+    check(env)?;
+    return Err(JavaError { text: "cannot allocate Java string" });
+  }
+  return Ok(ref);
+}
+
 // Find a class and promote its local reference for use in generated bindings.
 pub function global_class(env: usize, name: string): Result[usize, JavaError] {
   let local = find_class(env, name);

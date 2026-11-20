@@ -67,13 +67,13 @@ pub function (c: MediaBrowserService_BrowserRootClass) release(e: usize): void {
 
 // android.service.media.MediaBrowserService.BrowserRoot.<init>(Ljava/lang/String;Landroid/os/Bundle;)V
 pub function (c: MediaBrowserService_BrowserRootClass) new(e: usize, a0: string, a1: jni.Object): Result[MediaBrowserService_BrowserRoot, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(2);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   jni.jvalue_set_int(args, 1, a1.ref);
   let got = jni.invoke(e, 30, c.class, c.id_new, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(MediaBrowserService_BrowserRoot { ref: got });
 }
@@ -266,12 +266,12 @@ pub function (c: MediaDescription_BuilderClass) build(e: usize, self: MediaDescr
 
 // android.media.MediaDescription.Builder.setMediaId(Ljava/lang/String;)Landroid/media/MediaDescription$Builder;
 pub function (c: MediaDescription_BuilderClass) set_media_id(e: usize, self: MediaDescription_Builder, a0: string): Result[MediaDescription_Builder, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_media_id, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(MediaDescription_Builder { ref: got });
 }
