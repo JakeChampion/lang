@@ -825,6 +825,14 @@ func TestStdJNIExceptionAndRefWrappers(t *testing.T) {
 		t.Skip("host is not amd64")
 	}
 	src := `import "std/jni";
+function p_checked(env: usize, cls: usize, j: usize): i32 {
+    match (jni.check(j)) { Err(_) => { return 1; }, Ok(_) => { return 0; } }
+}
+function p_void_failed(env: usize, cls: usize, j: usize): i32 {
+    if (jni.call_void(j, 44 as usize, "run", "()V", [])) { return 0; }
+    return 1;
+}
+function p_optional(env: usize, cls: usize, j: usize): usize { return jni.optional_id(j, 99 as usize); }
 function p_throw(env: usize, cls: usize, j: usize): i32 { return jni.throw(j, 0 as usize); }
 function p_thrownew(env: usize, cls: usize, j: usize): i32 { return jni.throw_new(j, 0 as usize, "boom"); }
 function p_excocc(env: usize, cls: usize, j: usize): i32 { return jni.exception_occurred(j) as i32; }
@@ -853,7 +861,7 @@ function main(): i32 { return 0; }`
 	for i, p := range probes {
 		exps[i] = p.fn
 	}
-	so := selfHostSharedX86(t, src, exps...)
+	so := selfHostSharedX86(t, src, append(exps, "p_optional", "p_checked", "p_void_failed")...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -868,11 +876,37 @@ function main(): i32 { return 0; }`
 	}
 	loader := `#include <dlfcn.h>
 #include <stdio.h>
+static long pending, released, secondary_released;
+static long object_class(void* env, long obj) { return 66; }
+static long method(void* env, long cls, const char* name, const char* sig) { return 55; }
+static long throws(void* env, long obj, long method, void* args) { pending = 88; return 0; }
+static long occurred(void* env) { return pending; }
+static long clear(void* env) { pending = 0; return 0; }
+static long drop(void* env, long ref) {
+  if (ref == 77 && !pending) released++;
+  if (ref == 88 && !pending) secondary_released++;
+  return 0;
+}
 ` + fns + `int main(int c, char** v){
   void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
   void* table[256] = {0};
 ` + slotInit + `  void* tptr = table; void* env = &tptr;
-` + checks + `  return 42;
+` + checks + `  table[15] = (void*)occurred;
+  table[17] = (void*)clear;
+  table[23] = (void*)drop;
+  long (*optional)(long,long,long) = dlsym(h,"p_optional");
+  pending = 77;
+  if (optional(0,0,(long)env) != 0 || pending || released != 1) return 50;
+  if (optional(0,0,(long)env) != 99 || released != 1) return 51;
+  table[31] = (void*)object_class;
+  table[33] = (void*)method;
+  table[36] = table[63] = (void*)throws;
+  int (*checked)(long,long,long) = dlsym(h,"p_checked");
+  int (*void_failed)(long,long,long) = dlsym(h,"p_void_failed");
+  pending = 77;
+  if (!checked(0,0,(long)env) || pending || released != 2 || secondary_released != 1) return 52;
+  if (!void_failed(0,0,(long)env) || pending || secondary_released != 2) return 53;
+  return 42;
 }`
 	cPath := filepath.Join(dir, "loader.c")
 	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
