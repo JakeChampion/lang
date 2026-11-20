@@ -78,8 +78,13 @@ func TestSelfHostECDSASuite(t *testing.T) {
 	src := langSrcAbs(t, "tests/stdlib/ecdsa_test.fern")
 	check := func(t *testing.T, out []byte, err error) {
 		t.Helper()
-		if err != nil || !strings.Contains(string(out), "# pass 10\n# fail 0\n") {
+		if err != nil {
 			t.Fatalf("ecdsa suite: %v\n%s", err, out)
+		}
+		tap := string(out)
+		e2eharness.CheckTAPPlan(t, tap)
+		if strings.Contains(tap, "\n# skip ") {
+			t.Fatalf("ecdsa suite skipped a case:\n%s", tap)
 		}
 	}
 	t.Run("x86-64", func(t *testing.T) {
