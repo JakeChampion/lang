@@ -68,7 +68,7 @@ function load_files(files: Files, roots: string, keys: string[], values: ast.Exp
   let index = files.index;
   let indices = files.indices;
   if (indices.len() == 0) {
-    eprint("internal error: no runtime module for " + files.target);
+    eprint("fern: internal error: no runtime module for " + files.target);
     exit(3);
   }
   let pending: string[] = [];
@@ -76,7 +76,7 @@ function load_files(files: Files, roots: string, keys: string[], values: ast.Exp
     if (root.len() > 0) {
       let at = index.find(root);
       if (at < 0 || indices[at] < 0) {
-        eprint("internal error: no runtime declaration " + root + " for " + files.target);
+        eprint("fern: internal error: no runtime declaration " + root + " for " + files.target);
         exit(3);
       }
       pending = pending.append(root);

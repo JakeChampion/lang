@@ -203,13 +203,13 @@ pub function report_clock(on: boolean): i64 {
 }
 
 pub function ssa_refuse(name: string, why: string): i32 {
-  eprint("error: internal: " + name + " did not lift to SSA: " + why + " — the register path is the only native emitter and every op the lowering produces must reach it");
+  eprint("fern: error: internal: " + name + " did not lift to SSA: " + why + " — the register path is the only native emitter and every op the lowering produces must reach it");
   exit(3);
   return 0;
 }
 
 pub function flat_arm_missing(o: ir.Op): i32 {
-  eprint("error: internal: no stack-machine arm for op " + ir.kind_name(o.kind_tag) + " — the register path bridges it through emit_stack_op, which has no arm for it");
+  eprint("fern: error: internal: no stack-machine arm for op " + ir.kind_name(o.kind_tag) + " — the register path bridges it through emit_stack_op, which has no arm for it");
   exit(3);
   return 0;
 }
@@ -221,7 +221,7 @@ pub function strict_ir_refuse(what: string): i32 {
 }
 
 pub function ssa_block_id_collision(name: string, id: i32): i32 {
-  eprint("error: internal: the SSA lift returned block " + util.i32_to_string(id) + " twice in " + name + " — one `.Lssa_` label would be written twice; this is a compiler bug (#9688)");
+  eprint("fern: error: internal: the SSA lift returned block " + util.i32_to_string(id) + " twice in " + name + " — one `.Lssa_` label would be written twice; this is a compiler bug (#9688)");
   exit(3);
   return 0;
 }
@@ -430,7 +430,7 @@ pub function script_normalized(mod: parser.Module): parser.Module {
 }
 
 pub function eprint_ir_ineligible(): void {
-  eprint("error: module is not IR-eligible; the AST emitter is no longer reachable from this driver (set FERN_STRICT_IR=1 to name the bail site)");
+  eprint("fern: error: module is not IR-eligible; the AST emitter is no longer reachable from this driver (set FERN_STRICT_IR=1 to name the bail site)");
 }
 
 // The host-call name of a cache or TLB op.
@@ -440,13 +440,13 @@ pub function maintenance_op(name: string): boolean {
 
 // A register that the checker knows, but that belongs to another ISA.
 pub function sysreg_refuse(name: string, isa: string): i32 {
-  eprint("error: the system register " + name + " does not exist on " + isa);
+  eprint("fern: error: the system register " + name + " does not exist on " + isa);
   exit(3);
   return 0;
 }
 
 pub function unsupported_op_refuse(tag: i32, backend: string): string {
-  eprint("error: no instruction selection for IR op " + ir.kind_name(tag) + " (kind " + util.i32_to_string(tag) + ") on the " + backend + " backend — refusing to emit a silently dropped operation (#6917)");
+  eprint("fern: error: no instruction selection for IR op " + ir.kind_name(tag) + " (kind " + util.i32_to_string(tag) + ") on the " + backend + " backend — refusing to emit a silently dropped operation (#6917)");
   exit(3);
   return "";
 }
@@ -455,7 +455,7 @@ pub function lower_failed_refuse(name: string, r: irtables.LowerResult): i32 {
   if (r.ok) {
     return 0;
   }
-  eprint("error: " + name + " did not lower: " + r.why + " — the IR path bailed in this function and there is no AST emitter to fall back to (#8590)");
+  eprint("fern: error: " + name + " did not lower: " + r.why + " — the IR path bailed in this function and there is no AST emitter to fall back to (#8590)");
   exit(3);
   return 0;
 }
@@ -501,7 +501,7 @@ pub function produced(bodies: irtables.LowerResult[], i: i32, fd: parser.FuncDec
   if (i < bodies.len() && bodies[i].ok) {
     return bodies[i];
   }
-  eprint("error: internal: no typed body for " + parser.decl_key(fd) + " — every declaration the emit reads is produced by the typed lowering or refused before it");
+  eprint("fern: error: internal: no typed body for " + parser.decl_key(fd) + " — every declaration the emit reads is produced by the typed lowering or refused before it");
   exit(3);
   return bodies[0];
 }
@@ -860,7 +860,7 @@ function cull_spliced_leaves(mod: parser.Module, cache: irtables.LowerResult[], 
 
 pub function body_for_emit(name: string, r: irtables.LowerResult): irtables.Lowered {
   lower_failed_refuse(name, r);
-  return match (irtables.body_payload(r)) { Some(body) => body, None => { eprint("error: internal: superseded body reached emission: " + name); exit(3); } };
+  return match (irtables.body_payload(r)) { Some(body) => body, None => { eprint("fern: error: internal: superseded body reached emission: " + name); exit(3); } };
 }
 
 function inline_leaf(fd: parser.FuncDecl, r: irtables.LowerResult): boolean {

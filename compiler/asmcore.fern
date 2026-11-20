@@ -239,7 +239,7 @@ pub function seccomp_allowlist(s: EmitState): i32[] {
     return [];
   }
   if (seccomp_filter_len(s, s.syscalls) > 260) {
-    eprint("internal error: the seccomp filter has " + util.i32_to_string(seccomp_filter_len(s, s.syscalls)) + " instructions; the u8 jump offset caps it at 260");
+    eprint("fern: internal error: the seccomp filter has " + util.i32_to_string(seccomp_filter_len(s, s.syscalls)) + " instructions; the u8 jump offset caps it at 260");
     exit(3);
     return [];
   }
@@ -424,7 +424,7 @@ pub function with_runtime_unit(s: EmitState, roots: string, m: parser.Module, lo
 }
 
 pub function no_rt_lower(mod: parser.Module): physicalbody.Lowered {
-  eprint("internal error: a runtime helper was appended with no typed lowering to lower it");
+  eprint("fern: internal error: a runtime helper was appended with no typed lowering to lower it");
   exit(3);
   return physicalbody.empty();
 }
@@ -1110,7 +1110,7 @@ pub function sysno(t: string, name: string): string {
     unknown_rt_key(t);
   }
   if (n == "-1") {
-    eprint("error: internal: a runtime body asks for the " + t + " syscall number of " + name + ", which the sysno table has no row for");
+    eprint("fern: error: internal: a runtime body asks for the " + t + " syscall number of " + name + ", which the sysno table has no row for");
     exit(3);
   }
   return n;
@@ -1523,7 +1523,7 @@ pub function oflag(t: string, name: string): string {
 }
 
 function unknown_rt_key(t: string): void {
-  eprint("error: internal: a runtime body is built for \"" + t + "\", which is not a runtime key (x86-64-linux, arm64-linux, arm64-darwin)");
+  eprint("fern: error: internal: a runtime body is built for \"" + t + "\", which is not a runtime key (x86-64-linux, arm64-linux, arm64-darwin)");
   exit(3);
 }
 
@@ -3910,7 +3910,7 @@ pub function with_cfi_stub(s: EmitState, target: string, sig: i32): EmitState {
   let at = util.index_of_str(s.cfi_stubs, target);
   if (at >= 0) {
     if (s.cfi_sigs[at] != sig) {
-      eprint("internal error: the CFI stub of " + target + " takes signature words " + util.i32_to_string(s.cfi_sigs[at]) + " and " + util.i32_to_string(sig));
+      eprint("fern: internal error: the CFI stub of " + target + " takes signature words " + util.i32_to_string(s.cfi_sigs[at]) + " and " + util.i32_to_string(sig));
       exit(3);
     }
     return s;
