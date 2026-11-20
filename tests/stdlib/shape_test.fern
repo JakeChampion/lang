@@ -59,6 +59,10 @@ function differences(font: Option[truetype.Font], cases: string, script: string,
   let Some(f) = font else {
     return "the font did not parse";
   };
+  let plan = shape.prepare_indic(f, script);
+  if (script == "deva" && plan.is_none()) {
+    return "missing Devanagari shaping plan";
+  }
   let out = "";
   let count = 0;
   for line in cases.split("\n") {
@@ -67,7 +71,7 @@ function differences(font: Option[truetype.Font], cases: string, script: string,
       continue;
     }
     count += 1;
-    let r = shape.shape(f, parts[1], script);
+    let r = match (plan) { Some(p) => p.shape(parts[1]), None => shape.shape(f, parts[1], script) };
     let got = joined(r.glyphs) + " " + joined(r.clusters) + (if (placed) { " " + places(r) } else { "" });
     let want = parts[2] + " " + parts[3] + (if (placed) { " " + parts[4] } else { "" });
     if (got != want) {
@@ -173,6 +177,25 @@ function test_no_gsub(): test.TestOutcome {
   return test.assert_eq(joined(r.glyphs) + " " + joined(r.clusters), plain.glyph(0x628).to_string() + "," + plain.glyph(0x628).to_string() + " 0,1");
 }
 
+// The coverage range crosses bit 63 of the digest. Glyph 126 collides
+// with 62, and glyph 12 misses; both must retain their original glyph ID.
+function test_prepared_coverage_range(): test.TestOutcome {
+  let Some(base) = devanagari() else {
+    return test.fail("the font did not parse");
+  };
+  let data: u8[] = [
+    0, 1, 0, 0, 0, 0, 0, 0, 0, 10,  // GSUB header
+    0, 1, 0, 4, 0, 1, 0, 0, 0, 1, 0, 8,  // one substitution lookup
+    0, 1, 0, 6, 0, 1,  // single substitution, delta +1
+    0, 2, 0, 1, 0, 62, 0, 65, 0, 0,  // coverage range 62..=65
+  ];
+  let font = truetype.Font { ...base, data: data, gsub: 0, gdef: -1 };
+  let input = truetype.run_of([62, 63, 64, 65, 126, 12], [0, 1, 2, 3, 4, 5], [1, 1, 1, 1, 1, 1]);
+  let run = font.prepare_lookup(0, false).apply(input, 1, 0);
+  let ordinary = font.substitute(input, 0, 1, 0);
+  return test.assert_eq(joined(run.glyphs) + " " + (ordinary.ops - run.ops).to_string(), "63,64,65,66,126,12 0");
+}
+
 // Each start of the bytes of the font parses, or gives None, and each
 // font that parses shapes a word with no crash.
 function test_a_cut_font_does_not_crash(): test.TestOutcome {
@@ -206,5 +229,6 @@ function main(): i32 {
   r = r.it("feature_lookups reads the script and the feature lists", test_feature_lookups);
   r = r.it("a font with no GSUB table gives one glyph for each character", test_no_gsub);
   r = r.it("a cut font does not crash", test_a_cut_font_does_not_crash);
+  r = r.it("prepared coverage preserves matches, collisions and the operation budget", test_prepared_coverage_range);
   return r.finish();
 }
