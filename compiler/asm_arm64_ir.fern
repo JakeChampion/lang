@@ -351,10 +351,10 @@ function shift_imm_asm(tag: i32, width: i32, count: i64, d: string, a: string): 
     k = count as i32 & 63;
   }
   let imm = " " + d + ", " + a + ", #" + util.i32_to_string(k) + "\n";
-  if (tag == 31) {
+  if (tag == ir.K_SHL) {
     return "    lsl" + imm;
   }
-  if (tag == 32) {
+  if (tag == ir.K_SHR_S) {
     return "    asr" + imm;
   }
   return "    lsr" + imm;
@@ -2156,8 +2156,8 @@ function ssa_bin_sized(ins: ssa.SInst, v: i32, size: i32, reg_of: i32[], fr: Ssa
     s = s.write(shift_imm_asm(tag, ins.imm, fr.imm.value[b], dh, ssa_src(reg_of, a, "x4")));
     return ssa_store(reg_of, v, dh, s);
   }
-  if (s.records() && (tag == 21 || tag == 22)) {
-    let w = ssa_addsub_word(tag == 22, dh, ssa_src(reg_of, a, "x4"), fr, reg_of, b, bx);
+  if (s.records() && (tag == ir.K_ADD || tag == ir.K_SUB)) {
+    let w = ssa_addsub_word(tag == ir.K_SUB, dh, ssa_src(reg_of, a, "x4"), fr, reg_of, b, bx);
     if (w >= 0) {
       return ssa_store(reg_of, v, dh, s.word(w));
     }

@@ -6333,7 +6333,7 @@ pub function ssa_sext32(what: string, unsigned: boolean): boolean {
 }
 
 pub function ssa_shift_tag(tag: i32): boolean {
-  return tag == 31 || tag == 32 || tag == 33;
+  return tag == ir.K_SHL || tag == ir.K_SHR_S || tag == ir.K_SHR_U;
 }
 
 pub function ssa_still_read(srcs: string[], done: boolean[], reg: string, self: i32): boolean {

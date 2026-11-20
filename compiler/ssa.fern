@@ -6869,10 +6869,10 @@ function share_shape_loads(f: SFunc): Formed {
   for blk in f.blocks {
     for ins in blk.insts {
       let k = ins.kind_tag;
-      if (k == 16 || k == 53 || k == 55) {
+      if (k == STORE_ELEM || k == ST_IDX || k == ST_BYTE) {
         return Formed { f: f, repl: [] };
       }
-      if ((k == 41 && ins.imm <= 0 || k == 43) && ins.args.len() > 0 && ins.args[0] >= 0 && ins.args[0] < f.nvals) {
+      if ((k == ST_AT && ins.imm <= 0 || k == ARR_ST) && ins.args.len() > 0 && ins.args[0] >= 0 && ins.args[0] < f.nvals) {
         stored = stored.with(ins.args[0], true);
       }
       if (shape_load(ins, f.nvals)) {
