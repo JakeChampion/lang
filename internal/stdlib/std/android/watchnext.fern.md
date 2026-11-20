@@ -44,6 +44,7 @@ import "std/android/watchnext/bindings";
 import "std/clock";
 import "std/i64";
 import "std/jni";
+import "std/result";
 ```
 
 ### `programs`
@@ -94,22 +95,34 @@ pub function keep(ctx: usize, p: Program): boolean {
     return false;
   };
   defer close(e, tv);
-  delete_where(e, tv, URI, "internal_provider_id=?", p.id);
   let Some(values) = new_values(e, tv) else {
     return false;
   };
-  put_text(e, tv, values, "title", p.title);
-  put_text(e, tv, values, "internal_provider_id", p.id);
-  put_text(e, tv, values, "intent_uri", p.link);
-  if (p.poster.len() > 0) {
-    put_text(e, tv, values, "poster_art_uri", p.poster);
+  if (!watch_values(e, tv, values, p).is_ok()) {
+    return false;
   }
-  put_number(e, tv, values, "type", p.kind as i64);
-  put_number(e, tv, values, "watch_next_type", CONTINUE as i64);
-  put_number(e, tv, values, "last_playback_position_millis", p.position_ms);
-  put_number(e, tv, values, "duration_millis", p.duration_ms);
-  put_number(e, tv, values, "last_engagement_time_utc_millis", clock.now().unix_millis());
+  delete_where(e, tv, URI, "internal_provider_id=?", p.id);
   return insert(e, tv, URI, values).is_some();
+}
+
+function watch_values(e: usize, tv: Tv, values: bindings.ContentValues, p: Program): Result[void, jni.JavaError] {
+  program_text(e, tv, values, p)?;
+  put_number(e, tv, values, "type", p.kind as i64)?;
+  put_number(e, tv, values, "watch_next_type", CONTINUE as i64)?;
+  put_number(e, tv, values, "last_playback_position_millis", p.position_ms)?;
+  put_number(e, tv, values, "duration_millis", p.duration_ms)?;
+  put_number(e, tv, values, "last_engagement_time_utc_millis", clock.now().unix_millis())?;
+  return Ok(());
+}
+
+function program_text(e: usize, tv: Tv, values: bindings.ContentValues, p: Program): Result[void, jni.JavaError] {
+  put_text(e, tv, values, "title", p.title)?;
+  put_text(e, tv, values, "internal_provider_id", p.id)?;
+  put_text(e, tv, values, "intent_uri", p.link)?;
+  if (p.poster.len() > 0) {
+    put_text(e, tv, values, "poster_art_uri", p.poster)?;
+  }
+  return Ok(());
 }
 
 // The intent URI that starts the NativeActivity of the app with the string
@@ -160,9 +173,9 @@ pub function add_channel(ctx: usize, name: string, link: string): i64 {
   let Some(values) = new_values(e, tv) else {
     return -1i64;
   };
-  put_text(e, tv, values, "type", "TYPE_PREVIEW");
-  put_text(e, tv, values, "display_name", name);
-  put_text(e, tv, values, "app_link_intent_uri", link);
+  if (!channel_values(e, tv, values, name, link).is_ok()) {
+    return -1i64;
+  }
   let Some(row) = insert(e, tv, CHANNELS, values) else {
     return -1i64;
   };
@@ -174,6 +187,12 @@ pub function add_channel(ctx: usize, name: string, link: string): i64 {
   };
   let asked = tv.c.tv_contract.request_channel_browsable(e, tv.app, id);
   return id;
+}
+
+function channel_values(e: usize, tv: Tv, values: bindings.ContentValues, name: string, link: string): Result[void, jni.JavaError] {
+  put_text(e, tv, values, "type", "TYPE_PREVIEW")?;
+  put_text(e, tv, values, "display_name", name)?;
+  return put_text(e, tv, values, "app_link_intent_uri", link);
 }
 
 // Gives the channel `channel` the programs `programs`, in their order, in
@@ -207,19 +226,23 @@ function add_program(e: usize, tv: Tv, channel: i64, p: Program): boolean {
   let Some(values) = new_values(e, tv) else {
     return false;
   };
-  put_number(e, tv, values, "channel_id", channel);
-  put_number(e, tv, values, "type", p.kind as i64);
-  put_text(e, tv, values, "title", p.title);
-  put_text(e, tv, values, "internal_provider_id", p.id);
-  put_text(e, tv, values, "intent_uri", p.link);
-  if (p.poster.len() > 0) {
-    put_text(e, tv, values, "poster_art_uri", p.poster);
-    put_number(e, tv, values, "poster_art_aspect_ratio", POSTER as i64);
-  }
-  if (p.duration_ms > 0i64) {
-    put_number(e, tv, values, "duration_millis", p.duration_ms);
+  if (!preview_values(e, tv, values, channel, p).is_ok()) {
+    return false;
   }
   return insert(e, tv, PREVIEWS, values).is_some();
+}
+
+function preview_values(e: usize, tv: Tv, values: bindings.ContentValues, channel: i64, p: Program): Result[void, jni.JavaError] {
+  put_number(e, tv, values, "channel_id", channel)?;
+  put_number(e, tv, values, "type", p.kind as i64)?;
+  program_text(e, tv, values, p)?;
+  if (p.poster.len() > 0) {
+    put_number(e, tv, values, "poster_art_aspect_ratio", POSTER as i64)?;
+  }
+  if (p.duration_ms > 0i64) {
+    put_number(e, tv, values, "duration_millis", p.duration_ms)?;
+  }
+  return Ok(());
 }
 ```
 
@@ -314,15 +337,13 @@ function delete_where(e: usize, tv: Tv, table: string, column: string, value: st
   let deleted = tv.c.content_resolver.delete(e, tv.resolver, uri, column, jni.Object { ref: args });
 }
 
-function put_text(e: usize, tv: Tv, values: bindings.ContentValues, key: string, value: string): void {
-  let put = tv.c.content_values.put_string_string(e, values, key, value);
+function put_text(e: usize, tv: Tv, values: bindings.ContentValues, key: string, value: string): Result[void, jni.JavaError] {
+  return tv.c.content_values.put_string_string(e, values, key, value);
 }
 
-function put_number(e: usize, tv: Tv, values: bindings.ContentValues, key: string, value: i64): void {
-  let Ok(boxed) = tv.c.long.value_of(e, value) else {
-    return;
-  };
-  let put = tv.c.content_values.put_string_long(e, values, key, boxed);
+function put_number(e: usize, tv: Tv, values: bindings.ContentValues, key: string, value: i64): Result[void, jni.JavaError] {
+  let boxed = tv.c.long.value_of(e, value)?;
+  return tv.c.content_values.put_string_long(e, values, key, boxed);
 }
 
 // Starts a local frame of `refs` references. False when Java refuses it.
