@@ -1736,14 +1736,16 @@ func moveAdmission(info *Info, scalar map[ast.Expr]bool, body *ast.Block, isPara
 // literal replaces, and it can borrow or copy each other part of src. The
 // result is the last mention of src in the literal: the literal takes src
 // there.
-func spreadSource(info *Info, scalar map[ast.Expr]bool, e ast.Expr) (*ast.Ident, bool) {
-	sl, ok := e.(*ast.StructLit)
-	if !ok {
-		return nil, false
-	}
+func spreadSource(info *Info, scalar map[ast.Expr]bool, sl *ast.StructLit) (*ast.Ident, bool) {
+	last, field := spreadSourceRead(info, scalar, sl)
+	return last, last != nil && field == ""
+}
+
+// A nonempty field names the first value that prevents a spread from taking its base.
+func spreadSourceRead(info *Info, scalar map[ast.Expr]bool, sl *ast.StructLit) (*ast.Ident, string) {
 	src, ok := sl.Base.(*ast.Ident)
 	if !ok {
-		return nil, false
+		return nil, ""
 	}
 	replaced := map[string]bool{}
 	for _, f := range sl.Fields {
@@ -1753,13 +1755,13 @@ func spreadSource(info *Info, scalar map[ast.Expr]bool, e ast.Expr) (*ast.Ident,
 	for _, f := range sl.Fields {
 		mention, ok := lastSourceRead(info, scalar, f.Value, src.Name, replaced)
 		if !ok {
-			return nil, false
+			return src, f.Name
 		}
 		if mention != nil && identAfter(mention, last) {
 			last = mention
 		}
 	}
-	return last, true
+	return last, ""
 }
 
 // lastSourceRead is the last mention of name in e, or nil. Each mention must

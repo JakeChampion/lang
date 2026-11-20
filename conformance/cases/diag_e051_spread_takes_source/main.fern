@@ -1,0 +1,18 @@
+struct A { sock: Option[Socket], d: string }
+
+function take(own a: A): A {
+  return a;
+}
+
+function name(own a: A): string {
+  return a.d;
+}
+
+function f(own s: A): A {
+  let t: A = A { ...s, d: name(s) };
+  return take(t);
+}
+
+function main(): i32 {
+  return 0;
+}

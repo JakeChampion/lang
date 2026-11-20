@@ -3533,10 +3533,13 @@ function main(): i32 { return 0; }`)
 	wantE051(t, "base-read-later", spreadSrc+`
 function f(own s: A): A { let t: A = A { ...s, d: "x" }; print(s.d); return take(t); }
 function main(): i32 { return 0; }`)
-	wantE051(t, "field-moves-whole-base", spreadSrc+`
+	err := checkSource(t, spreadSrc+`
 function name(own a: A): string { return a.d; }
 function f(own s: A): A { let t: A = A { ...s, d: name(s) }; return take(t); }
 function main(): i32 { return 0; }`)
+	if !hasCode(err, "E051") || !strings.Contains(err.Error(), `field "d" uses spread source "s"`) {
+		t.Fatalf("expected the field and spread source in E051, got %v", err)
+	}
 }
 
 func TestOwnGuardAllowsSeveralScalarFieldReadsBeforeTheMove(t *testing.T) {

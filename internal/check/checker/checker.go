@@ -11410,6 +11410,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		return false
 	}
+	frames := newBodyFrames(fn.Body)
 	guardCallArgs := func(x *ast.Call) {
 		if c.onceCalls[x] && !isOwnedExpr(x.Callee) {
 			c.errfCode(x.Callee.Pos(), "E051", "a call of a `once` function consumes it: call an owned value (an `own` parameter, or a local at its last use), not a borrowed one")
@@ -11426,6 +11427,17 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		for i := 0; i < len(x.Args) && i < len(flags); i++ {
 			if flags[i] && !isOwnedExpr(x.Args[i]) {
+				arg := x.Args[i]
+				value := arg
+				if id, ok := arg.(*ast.Ident); ok && len(frames.assignsTo(id.Name)) == 0 {
+					value = initOf(bindingVar(frames, x, id.Name))
+				}
+				if sl, ok := value.(*ast.StructLit); ok {
+					if src, field := spreadSourceRead(c.info, c.scalarArgs, sl); field != "" {
+						c.errfCode(arg.Pos(), "E051", "argument to owned parameter cannot take the spread: field %q uses spread source %q beyond a borrow or copy", field, src.Name)
+						continue
+					}
+				}
 				c.errfCode(x.Args[i].Pos(), "E051", "argument to owned parameter must be an owned value (a fresh construction, another `own` parameter, or a local at its last use), not a borrowed one")
 			}
 		}
