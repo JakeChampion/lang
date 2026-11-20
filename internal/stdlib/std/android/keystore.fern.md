@@ -21,6 +21,7 @@ The Android JNI test app provisions the same alias twice, seals and opens a valu
 
 ```fern
 <<session>>=
+// Seal and open small values with an AES-GCM key held in Android Keystore.
 import "std/android/keystore/bindings";
 import "std/jni";
 import "std/result";
