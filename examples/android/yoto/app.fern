@@ -1,6 +1,7 @@
 import "std/android";
 import "std/android/launch";
 import "std/android/draw";
+import "std/android/download";
 import "std/android/player";
 import "std/android/ui/app";
 import "std/jni";
@@ -9,6 +10,7 @@ import "./cover";
 import "./api";
 import "./session";
 import "./phone";
+import "./offline";
 
 const LISTENER: string = "dev.fern.storydeck.PhoneListener";
 
@@ -90,6 +92,7 @@ function app_main(ctx: usize): usize {
   let dir = android.no_backup_dir(ctx);
   let env = android.env(ctx);
   let saved = session.load(dir, env);
+  let catalog = offline.load(dir, download.dir(ctx));
   let p = deck.program(
     (address: string): boolean => open_browser(ctx, address),
     (data: u8[]): Option[draw.Image] => cover.decode(android.env(ctx), data),
@@ -100,7 +103,13 @@ function app_main(ctx: usize): usize {
       pause: (media: player.Player): boolean => player.pause(ctx, media),
       close: (media: player.Player): void => player.close(ctx, media),
     },
+    offline.Output {
+      start: (address: string, name: string, title: string): i64 => download.start(ctx, address, [], name, title),
+      status: (id: i64): i32 => download.progress(ctx, id).status,
+      remove: (id: i64): void => download.remove(ctx, id),
+      save: (entries: offline.Entry[]): boolean => offline.save(dir, entries),
+    },
   );
-  let closed = app.run(ctx, deck.restored(saved), p);
+  let closed = app.run(ctx, deck.with_downloads(deck.restored(saved), catalog), p);
   return 0 as usize;
 }
