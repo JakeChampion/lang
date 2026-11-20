@@ -10,6 +10,8 @@ Tree values represent JSON data as enums and ordered objects. A document instead
 
 Parsing and typed decoding return typed errors. Syntax errors retain their source positions. Shape errors retain field, index, or variant context.
 
+Document traversal returns an optional node index. `first(parent)` returns `None` for an empty container or a scalar. Given a child of that parent, `next(parent, child)` returns `None` after the last child. For objects, each child is a key node and `value(key)` gives its value node.
+
 ## Executable example
 
 ```fern test name=std-json-example
@@ -1621,14 +1623,29 @@ pub function (d: Document) len(n: i32): i32 {
   return 0;
 }
 
-pub function (d: Document) first(n: i32): i32 {
+function __json_t_cursor(index: i32): Option[i32] {
+  if (index < 0) {
+    return None;
+  }
+  return Some(index);
+}
+
+pub function (d: Document) first(n: i32): Option[i32] {
+  return __json_t_cursor(__json_t_first(d, n));
+}
+
+pub function (d: Document) next(parent: i32, c: i32): Option[i32] {
+  return __json_t_cursor(__json_t_next(d, parent, c));
+}
+
+function __json_t_first(d: Document, n: i32): i32 {
   if (d.len(n) == 0) {
     return -1;
   }
   return n + 1;
 }
 
-pub function (d: Document) next(parent: i32, c: i32): i32 {
+function __json_t_next(d: Document, parent: i32, c: i32): i32 {
   let after = __json_t_after(d, c);
   if (__json_t_kind(d.tape, parent) == JSON_T_OBJECT) {
     after = __json_t_after(d, after);
@@ -1661,12 +1678,12 @@ pub function (d: Document) get(n: i32, key: string): Option[i32] {
     return None;
   }
   let found = -1;
-  let c = d.first(n);
+  let c = __json_t_first(d, n);
   while (c >= 0) {
     if (__json_t_key_is(d, c, key)) {
       found = c + 1;
     }
-    c = d.next(n, c);
+    c = __json_t_next(d, n, c);
   }
   if (found < 0) {
     return None;
@@ -1774,10 +1791,10 @@ pub function (d: Document) to_value(n: i32): JsonValue {
 <<38 function __json_t_elements(d: Document, n: i32): JsonValue[]>>=
 function __json_t_elements(d: Document, n: i32): JsonValue[] {
   let arr: JsonValue[] = [];
-  let c = d.first(n);
+  let c = __json_t_first(d, n);
   while (c >= 0) {
     arr = arr.append(d.to_value(c));
-    c = d.next(n, c);
+    c = __json_t_next(d, n, c);
   }
   return arr;
 }
@@ -1785,11 +1802,11 @@ function __json_t_elements(d: Document, n: i32): JsonValue[] {
 function __json_t_members(d: Document, n: i32): JsonObject {
   let keys: string[] = [];
   let values: JsonValue[] = [];
-  let c = d.first(n);
+  let c = __json_t_first(d, n);
   while (c >= 0) {
     keys = keys.append(__json_t_text(d, c));
     values = values.append(d.to_value(c + 1));
-    c = d.next(n, c);
+    c = __json_t_next(d, n, c);
   }
   return object_of(keys, values);
 }
