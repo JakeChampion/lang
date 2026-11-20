@@ -28,8 +28,8 @@ text over an illustrated wallpaper. The app is in Fern only. It is a NativeActiv
   opens.
 - "Block for a while" closes an app for 15 minutes, 1 hour, 4 hours or the
   rest of the day.
-- In the dark theme of the system, the paper is dark and the ink is light.
-  The sky of the wallpaper above the ridge takes the dark paper.
+- Paper uses a near-black background and light text in both Android themes.
+  The wallpaper uses the same background color for the sky and dims the landscape.
 
 Paper also does these things:
 

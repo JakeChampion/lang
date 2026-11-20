@@ -46,7 +46,7 @@ pub function wallpaper(w: i32): draw.Image {
 }
 
 pub function metrics(): ui.Metrics {
-  return ui.Metrics { w: W, h: H, d: 2.75, top: 66, bottom: 132, pal: ui.palette(false) };
+  return ui.Metrics { w: W, h: H, d: 2.75, top: 66, bottom: 132, pal: ui.palette() };
 }
 
 function sample_apps(): paper.Entry[] {
@@ -98,10 +98,6 @@ function node_of(ns: scene.Node[], act: string): scene.Node {
   return scene.Node { ...scene.node(-1, -1, 0, 0, scene.Blank), clip1: 0 };
 }
 
-function dark(p: i32): boolean {
-  return (p & 255) + (p >> 8 & 255) + (p >> 16 & 255) < 150;
-}
-
 function test_home_layout(): test.TestOutcome {
   let v = home_view();
   let f = draw_view(v, "home");
@@ -113,7 +109,7 @@ function test_home_layout(): test.TestOutcome {
   // and the clock has ink in its middle row.
   let ink_in_clock = false;
   for x in clock.x..clock.x + clock.w {
-    if (dark(f.pixel(x, clock.y + clock.h / 2))) {
+    if (f.pixel(x, clock.y + clock.h / 2) == v.m.pal.ink) {
       ink_in_clock = true;
     }
   }
@@ -167,34 +163,23 @@ function test_drawer(): test.TestOutcome {
   let ns = ui.nodes(fonts(), v);
   let paper_row = node_of(ns, "open:dev.fern.paper/android.app.NativeActivity");
   let first = node_of(ns, "open:com.android.camera/Main");
-  return test.assert_eq((paper_row.y > 0).to_string() + " " + (first.y < paper_row.y).to_string() + " " + (f.pixel(5, H / 2) == ui.palette(false).paper).to_string(), "true true true");
-}
-
-// The app list in the dark theme: dark paper, and labels in the dark ink.
-function test_dark_drawer(): test.TestOutcome {
-  let dark = ui.palette(true);
-  let base = home_view();
-  let v = ui.View { ...base, layer: ui.DRAWER, query: "", typing: true, m: ui.Metrics { ...base.m, pal: dark } };
-  let f = draw_view(v, "drawer-dark");
   let inked = false;
-  for n in ui.nodes(fonts(), v) {
+  for n in ns {
     if let scene.Label(_, _, _, _, color) = n.paint {
-      inked = inked || color == dark.ink;
+      inked = inked || color == v.m.pal.ink;
     }
   }
-  return test.assert_eq((f.pixel(5, H / 2) == dark.paper).to_string() + " " + inked.to_string(), "true true");
+  return test.assert_eq((paper_row.y > 0).to_string() + " " + (first.y < paper_row.y).to_string() + " " + (f.pixel(5, H / 2) == draw.rgb(8, 9, 12)).to_string() + " " + inked.to_string(), "true true true true");
 }
 
-// The dark theme moves the light paper of the wallpaper to the dark paper,
-// a pixel near it most of the way, and leaves the ridge. The light theme
-// leaves the wallpaper as it is.
+// The wallpaper keeps texture in the sky and detail below it.
 function test_dark_wallpaper(): test.TestOutcome {
-  let dark = ui.palette(true);
-  let img = draw.Image { width: 3, height: 1, pixels: [255u8, 244u8, 230u8, 255u8, 250u8, 240u8, 226u8, 255u8, 227u8, 180u8, 0u8, 255u8] };
-  let lit = ui.themed(img, ui.palette(false));
-  let t = ui.themed(img, dark);
-  let near = t.pixel(1, 0) & 255;
-  return test.assert_eq((lit.pixel(0, 0) == draw.rgb(255, 244, 230)).to_string() + " " + (t.pixel(0, 0) == dark.paper).to_string() + " " + (near < 60).to_string() + " " + (t.pixel(2, 0) == draw.rgb(227, 180, 0)).to_string(), "true true true true");
+  let img = draw.Image { width: 4, height: 1, pixels: [255u8, 244u8, 230u8, 255u8, 250u8, 240u8, 226u8, 255u8, 227u8, 180u8, 0u8, 255u8, 24u8, 52u8, 60u8, 255u8] };
+  let t = ui.darken_wallpaper(img);
+  return test.assert_eq_array(
+    [t.pixel(0, 0), t.pixel(1, 0), t.pixel(2, 0), t.pixel(3, 0)],
+    [draw.rgb(8, 9, 12), draw.rgb(7, 8, 11), draw.rgb(56, 45, 0), draw.rgb(6, 13, 15)],
+  );
 }
 
 // The app list has a column of the first letters of the apps on each edge,
@@ -359,9 +344,9 @@ function channel_gap(a: i32, b: i32): i32 {
 function test_node_images_match(): test.TestOutcome {
   let fs = fonts();
   let m = metrics();
-  let bg = ui.palette(false).dialog;
+  let bg = ui.palette().dialog;
   let nodes = [
-    scene.node(0, 0, 400, 90, scene.Label("Spotify", 60, face.MEDIUM, 0, ui.palette(false).ink)),
+    scene.node(0, 0, 400, 90, scene.Label("Spotify", 60, face.MEDIUM, 0, ui.palette().ink)),
     scene.node(0, 0, 300, 120, scene.Fill(draw.rgb(40, 90, 200), 40)),
     ui.check_node(m, 0, 0, 60, 60, true),
     ui.weather_node(m, 0, 0, 120, 120, paper.Rain),
@@ -384,7 +369,7 @@ function test_node_images_match(): test.TestOutcome {
     draw.release(img);
     draw.release(direct);
   }
-  return test.assert_eq((worst <= 3).to_string() + " " + scene.paint_key(nodes[0]), "true label|60|" + face.MEDIUM.to_string() + "|0|" + ui.palette(false).ink.to_string() + "|Spotify|400x90");
+  return test.assert_eq((worst <= 3).to_string() + " " + scene.paint_key(nodes[0]), "true label|60|" + face.MEDIUM.to_string() + "|0|" + ui.palette().ink.to_string() + "|Spotify|400x90");
 }
 
 function main(): i32 {
@@ -393,8 +378,7 @@ function main(): i32 {
   r = r.it("home app long press", test_home_long_press);
   r = r.it("home for an accessibility service", test_home_access);
   r = r.it("app list lists Paper", test_drawer);
-  r = r.it("the app list in the dark theme", test_dark_drawer);
-  r = r.it("the wallpaper in the dark theme", test_dark_wallpaper);
+  r = r.it("the wallpaper uses near-black colors", test_dark_wallpaper);
   r = r.it("the letter index of the app list", test_letter_index);
   r = r.it("app list search", test_drawer_search);
   r = r.it("app menu sheet", test_sheet);

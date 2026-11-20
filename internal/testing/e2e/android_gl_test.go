@@ -80,7 +80,7 @@ func TestAndroidGLFrameTimes(t *testing.T) {
 }
 
 // The GPU painter of Paper draws home, the app list sliding in over home,
-// a dialog, and home in the dark theme as the CPU draws them.
+// a dialog, and home with an empty wallpaper layer as the CPU draws them.
 func TestAndroidPaperGPU(t *testing.T) {
 	runGLCheck(t, "examples/android/paper/gpu_test.fern", "1111")
 }

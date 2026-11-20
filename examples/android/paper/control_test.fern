@@ -133,7 +133,7 @@ function fake(dir: string, now: i64): control.Device {
     set_field: (text: string): void => field_line(dir, "set " + text),
     hide_field: (): void => field_line(dir, "hide"),
     access: (items: android.AccessItem[]): void => access_line(dir, items),
-    bars: (top: boolean, bottom: boolean): void => {},
+    bars: (): void => {},
     has_location: (): boolean => false,
     ask_location: (): void => {},
     location: (): Option[(f64, f64)] => None,
@@ -292,7 +292,7 @@ function test_letter_index_jumps(): test.TestOutcome {
   t = at(t, 30, android.Touch(2, (m.x + m.w / 2) as f32, (m.y + m.h / 2) as f32));
   let at_m = t.s.list_scroll;
   t = at(t, 30, android.Touch(1, (W / 2) as f32, (m.y + m.h / 2) as f32));
-  let mt = ui.Metrics { w: t.s.w, h: t.s.h, d: t.s.d, top: t.s.top, bottom: t.s.bottom, pal: ui.palette(false) };
+  let mt = ui.Metrics { w: t.s.w, h: t.s.h, d: t.s.d, top: t.s.top, bottom: t.s.bottom, pal: ui.palette() };
   let apps = paper.search(t.s.apps, "", t.s.settings.hidden);
   let limit = ui.list_scroll_limit(mt, ui_test.fonts(), apps.len());
   let row = ui.list_row(mt, ui_test.fonts());

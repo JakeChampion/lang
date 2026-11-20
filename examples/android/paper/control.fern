@@ -66,7 +66,7 @@ pub struct Device {
   set_field: (string) => void,
   hide_field: () => void,
   access: (android.AccessItem[]) => void,
-  bars: (boolean, boolean) => void,
+  bars: () => void,
   has_location: () => boolean,
   ask_location: () => void,
   location: () => Option[(f64, f64)],
@@ -141,8 +141,7 @@ pub struct App {
   minute: i64,
   nodes: scene.Node[],
   dirty: boolean,
-  bars: i32,
-  dark: boolean,
+  bars_set: boolean,
 }
 
 function no_press(): Press {
@@ -165,17 +164,11 @@ function path(s: App, name: string): string {
 pub function new(dev: Device, dir: string, fonts: face.Fonts): App {
   let settings = paper.parse_settings(dev.read(dir + "/" + SETTINGS_FILE));
   let held = paper.parse_held(dev.read(dir + "/" + HELD_FILE));
-  return load_weather(App { dev: dev, dir: dir, fonts: fonts, window: 0 as usize, w: 0, h: 0, d: 2.0, top: 0, bottom: 0, painter: painter.new(fonts), wall: draw.offscreen(0, 0), slide: no_slide(), frame_ns: 0i64, frames: trace.frames(), drawn_ns: 0i64, overlay: false, settings: settings, installed: [], apps: [], held: held, layer: ui.HOME, query: "", typing: false, list_scroll: 0, fav_scroll: 0, sheet: None, sheet_kind: "", sheet_key: "", pick_keys: [], pause_key: "", pause_at: 0i64, press: no_press(), fling: no_fling(), weather: None, weather_at: 0i64, job: None, wall_job: None, wall_for: 0, note: "", note_until: 0i64, shown: false, minute: -1i64, nodes: [], dirty: true, bars: -1, dark: false });
+  return load_weather(App { dev: dev, dir: dir, fonts: fonts, window: 0 as usize, w: 0, h: 0, d: 2.0, top: 0, bottom: 0, painter: painter.new(fonts), wall: draw.offscreen(0, 0), slide: no_slide(), frame_ns: 0i64, frames: trace.frames(), drawn_ns: 0i64, overlay: false, settings: settings, installed: [], apps: [], held: held, layer: ui.HOME, query: "", typing: false, list_scroll: 0, fav_scroll: 0, sheet: None, sheet_kind: "", sheet_key: "", pick_keys: [], pause_key: "", pause_at: 0i64, press: no_press(), fling: no_fling(), weather: None, weather_at: 0i64, job: None, wall_job: None, wall_for: 0, note: "", note_until: 0i64, shown: false, minute: -1i64, nodes: [], dirty: true, bars_set: false });
 }
 
 pub function with_density(own s: App, dpi: i32): App {
   return App { ...s, d: dpi as f64 / 160.0 };
-}
-
-// The app in the dark theme when `dark` is true. Android starts the
-// activity again when the theme of the system changes.
-pub function with_theme(own s: App, dark: boolean): App {
-  return App { ...s, dark: dark };
 }
 
 function load_weather(own s: App): App {
@@ -198,7 +191,7 @@ function set(own s: App, settings: paper.Settings): App {
 }
 
 function metrics(s: App): ui.Metrics {
-  return ui.Metrics { w: s.w, h: s.h, d: s.d, top: s.top, bottom: s.bottom, pal: ui.palette(s.dark) };
+  return ui.Metrics { w: s.w, h: s.h, d: s.d, top: s.top, bottom: s.bottom, pal: ui.palette() };
 }
 
 function now_ms(s: App): i64 {
@@ -1275,7 +1268,7 @@ function poll_wall(own s: App): App {
     return wanted_wall(App { ...t, wall_for: 0 });
   }
   draw.release(t.wall);
-  return App { ...t, wall: ui.wallpaper_layer(ui.themed(img, ui.palette(t.dark))), dirty: true };
+  return App { ...t, wall: ui.wallpaper_layer(img), dirty: true };
 }
 
 function event(own s: App, e: android.Event): App {
@@ -1408,23 +1401,13 @@ pub function view(s: App, ns: i64): ui.View {
   return ui.View { m: metrics(s), layer: s.layer, date: paper.date_text(local), time: paper.time_text(local, s.dev.is_24h()), weather: s.weather, weather_note: weather_note, favourites: favourites(s), fav_scroll: s.fav_scroll, held: s.held.len(), hint: s.installed.len() > 0, query: s.query, typing: s.typing, results: results(s), dim: dimmed(s), list_scroll: s.list_scroll, sheet: s.sheet, pause: pause_view(s, ns), note: s.note, wall: s.wall };
 }
 
-// Dark icons on a bar over a light part of the screen. In the dark theme no
-// part is light.
+// Set light icons on the system bars when the app starts.
 function sync_bars(own s: App): App {
-  let light_top = !s.dark && (s.layer == ui.HOME || s.layer == ui.DRAWER);
-  let light_bottom = !s.dark && (s.layer == ui.DRAWER || s.sheet.is_some());
-  let code = 0;
-  if (light_top) {
-    code |= 1;
-  }
-  if (light_bottom) {
-    code |= 2;
-  }
-  if (code == s.bars) {
+  if (s.bars_set) {
     return s;
   }
-  s.dev.bars(light_top, light_bottom);
-  return App { ...s, bars: code };
+  s.dev.bars();
+  return App { ...s, bars_set: true };
 }
 
 // Draws the frame at the time `ns`. While the app list slides, the frame is
@@ -1451,7 +1434,7 @@ function draw_frame(own s: App, ns: i64): App {
     passes = [scene.Pass { nodes: shown, dy: 0, alpha: 1.0 }];
   }
   let framed = with_overlay(s, passes);
-  let p = s.dev.present(s.painter, framed, ui.palette(s.dark).paper);
+  let p = s.dev.present(s.painter, framed, v.m.pal.paper);
   // The list keeps its items while it slides.
   if (!s.slide.active) {
     s.dev.access(scene.access_items(shown));
