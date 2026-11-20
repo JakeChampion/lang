@@ -70,10 +70,10 @@ profile/arm64-linux/map_string.diagnostic.bytes	146320
 profile/arm64-linux/map_string.diagnostic.emit	11902
 profile/arm64-linux/map_string.hardened.bytes	51448
 profile/arm64-linux/map_string.hardened.emit	11761
-profile/arm64-linux/map_string.minimal.bytes	42344
-profile/arm64-linux/map_string.minimal.emit	9531
+profile/arm64-linux/map_string.minimal.bytes	42792
+profile/arm64-linux/map_string.minimal.emit	9643
 profile/arm64-linux/map_string.safe.bytes	43464
-profile/arm64-linux/map_string.safe.emit	9741
+profile/arm64-linux/map_string.safe.emit	9841
 profile/arm64-linux/startup.diagnostic.bytes	5144
 profile/arm64-linux/startup.diagnostic.emit	555
 profile/arm64-linux/startup.hardened.bytes	2744
