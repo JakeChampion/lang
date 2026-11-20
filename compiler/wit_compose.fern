@@ -119,10 +119,9 @@ function wire_import(w: WorldWired, tbody: i32[], asy: watbin.AsyncSurface, ifac
     return wire_async_lower(w, asy.lowers, iface, name);
   }
   if (iface == task_return_iface()) {
-    let vt = task_return_result(asy.lifts, name);
-    if (vt < -1) {
+    let Some(vt) = task_return_result(asy.lifts, name) else {
       return refuse(w, "core imports " + name + " from " + iface + " for no async export");
-    }
+    };
     return WorldWired { ...w, kinds: w.kinds.append(4), insts: w.insts.append(0), rts: w.rts.append(vt) };
   }
   let Some(inst) = wit_decode.wit_import_instance_index(tbody, w.plan, iface) else {
@@ -148,47 +147,54 @@ function wire_import(w: WorldWired, tbody: i32[], asy: watbin.AsyncSurface, ifac
   return WorldWired { ...w, kinds: w.kinds.append(kind), insts: w.insts.append(inst), rts: w.rts.append(rt) };
 }
 
-function stream_op(name: string): (i32, string) {
+function stream_op(name: string): Option[(i32, string)] {
   let ops: string[] = ["[stream-read]", "[stream-write]", "[stream-new]", "[stream-drop-readable]", "[stream-drop-writable]"];
   for j in 0..ops.len() {
     let pre = ops[j];
     if (name.len() > pre.len() && name.starts_with(pre)) {
-      return (9 + j, name_from(name, pre.len()));
+      return Some((9 + j, name_from(name, pre.len())));
     }
   }
-  return (-1, "");
+  return None;
 }
 
-function wit_elem_valtype(e: string): i32 {
+function wit_elem_valtype(e: string): Option[i32] {
   let names: string[] = ["bool", "u8", "s32", "u32", "s64", "u64", "f32", "f64"];
   let vts: i32[] = [127, 125, 122, 121, 120, 119, 118, 117];
   for i in 0..names.len() {
     if (names[i] == e) {
-      return vts[i];
+      return Some(vts[i]);
     }
   }
-  return -1;
+  return None;
 }
 
 function define_stream_types(w: WorldWired, ci: wit_decode.WitCoreImports): WorldWired {
-  let k = 0;
-  while (k < ci.names.len() && w.refused.len() == 0) {
-    let (op, e) = stream_op(ci.names[k]);
-    if (ci.ifaces[k] == intrinsic_iface() && op >= 0 && !util.has_str(w.stream_elems, e)) {
-      let vt = wit_elem_valtype(e);
-      if (vt < 0) {
-        return refuse(w, "core imports " + ci.names[k] + ", a stream of no element type the composer knows");
-      }
-      w = WorldWired { ...w, o: util.append_all(w.o, watbin.comp_type_stream(vt)), n_type: w.n_type + 1, stream_elems: w.stream_elems.append(e), stream_types: w.stream_types.append(w.n_type) };
+  if (w.refused.len() > 0) {
+    return w;
+  }
+  for k in 0..ci.names.len() {
+    if (ci.ifaces[k] != intrinsic_iface()) {
+      continue;
     }
-    k += 1;
+    let Some(stream) = stream_op(ci.names[k]) else {
+      continue;
+    };
+    let (_, e) = stream;
+    if (util.has_str(w.stream_elems, e)) {
+      continue;
+    }
+    let Some(vt) = wit_elem_valtype(e) else {
+      return refuse(w, "core imports " + ci.names[k] + ", a stream of no element type the composer knows");
+    };
+    w = WorldWired { ...w, o: util.append_all(w.o, watbin.comp_type_stream(vt)), n_type: w.n_type + 1, stream_elems: w.stream_elems.append(e), stream_types: w.stream_types.append(w.n_type) };
   }
   return w;
 }
 
 function wire_intrinsic(w: WorldWired, name: string): WorldWired {
-  let (op, e) = stream_op(name);
-  if (op >= 0) {
+  if let Some(stream) = stream_op(name) {
+    let (op, e) = stream;
     let t = w.stream_types[util.index_of_str(w.stream_elems, e)];
     return WorldWired { ...w, kinds: w.kinds.append(op), insts: w.insts.append(0), rts: w.rts.append(t) };
   }
@@ -231,16 +237,14 @@ function task_return_iface(): string {
   return "[export]$root";
 }
 
-function task_return_result(lifts: watbin.AsyncLift[], name: string): i32 {
+// The task.return encoder takes -1 for a matched export with no result.
+function task_return_result(lifts: watbin.AsyncLift[], name: string): Option[i32] {
   for l in lifts {
-    if ("[task-return]" + l.core_name == name && l.result.len() == 0) {
-      return -1;
-    }
     if ("[task-return]" + l.core_name == name) {
-      return l.result[0];
+      return Some(if (l.result.len() == 0) { -1 } else { l.result[0] });
     }
   }
-  return -2;
+  return None;
 }
 
 pub function compose_run(tbody: i32[], core: i32[], asy: watbin.AsyncSurface): Composed {
