@@ -6567,20 +6567,27 @@ function arm64_gas_bad_carrymul(mnem: string, ops: string[]): string {
   if (ops.len() != want) {
     return "arity";
   }
+  let widening = arm64_gas_is_widening(mnem);
   let i = 0;
   while (i < ops.len()) {
     if (ops[i].len() > 0 && ops[i][0] == b'#') {
       return "imm";
     }
+    if (!arm64_gas_data_gp(ops[i])) {
+      return "register";
+    }
+    if (!widening && arm64_gas_is_w(ops[i]) != arm64_gas_is_w(ops[0])) {
+      return "width";
+    }
     i += 1;
   }
   if (mnem == "umulh" || mnem == "smulh") {
-    if (arm64_gas_is_w(ops[0]) || arm64_gas_is_w(ops[1]) || arm64_gas_is_w(ops[2])) {
+    if (arm64_gas_is_w(ops[0])) {
       return "w";
     }
     return "";
   }
-  if (arm64_gas_is_widening(mnem)) {
+  if (widening) {
     return arm64_gas_bad_widening(ops);
   }
   return "";
@@ -6943,8 +6950,8 @@ function arm64_gas_bad_fp_mix(ops: string[], n: i32): string {
   let s0 = arm64_gas_is_sreg(ops[0]);
   let i = 0;
   while (i < n) {
-    if (!arm64_gas_is_d(ops[i]) && !arm64_gas_is_sreg(ops[i])) {
-      return arm64_gas_trim(ops[i]);
+    if (arm64_gas_reg(ops[i]) < 0 || !arm64_gas_is_d(ops[i]) && !arm64_gas_is_sreg(ops[i])) {
+      return "fpreg";
     }
     if (arm64_gas_is_sreg(ops[i]) != s0) {
       return "fpwidth";
@@ -6963,7 +6970,7 @@ function arm64_gas_bad_fcmp(ops: string[]): string {
     if (t != "#0.0" && t != "#0") {
       return "imm";
     }
-    return "";
+    return arm64_gas_bad_fp_mix(ops, 1);
   }
   return arm64_gas_bad_fp_mix(ops, 2);
 }
@@ -8451,15 +8458,13 @@ function arm64_gas_has_page_off(rest: string): boolean {
   return util.index_of_sub(rest, "@PAGEOFF") >= 0 || util.index_of_sub(rest, ":lo12:") >= 0;
 }
 
-function arm64_gas_page_gp(tok: string, base: boolean): boolean {
+function arm64_gas_data_gp(tok: string): boolean {
+  return arm64_gas_reg(tok) >= 0 && (tok.starts_with("x") || tok.starts_with("w") || tok == "fp" || tok == "lr");
+}
+
+function arm64_gas_page_base(tok: string): boolean {
   let r = arm64_gas_reg(tok);
-  if (r < 0 || r >= 32) {
-    return false;
-  }
-  if (base) {
-    return tok == "sp" || r < 31 && (tok.starts_with("x") || tok == "fp" || tok == "lr");
-  }
-  return tok.starts_with("x") || tok.starts_with("w") || tok == "fp" || tok == "lr";
+  return tok == "sp" || r >= 0 && r < 31 && (tok.starts_with("x") || tok == "fp" || tok == "lr");
 }
 
 function arm64_gas_page_load_symbol(ops: string[]): string {
@@ -8474,7 +8479,7 @@ function arm64_gas_page_load_symbol(ops: string[]): string {
   if (parts.len() != 2) {
     return "";
   }
-  if (!arm64_gas_page_gp(arm64_gas_trim(ops[0]), false) || !arm64_gas_page_gp(arm64_gas_trim(parts[0]), true)) {
+  if (!arm64_gas_data_gp(arm64_gas_trim(ops[0])) || !arm64_gas_page_base(arm64_gas_trim(parts[0]))) {
     return "";
   }
   return arm64_gas_strip_lo12(arm64_gas_strip_at(parts[1]));

@@ -232,6 +232,8 @@ func arm64FormCases() []string {
 	} {
 		add("%s", f)
 	}
+	out = append(out, "fcmp s31, #0.0", "fcmpe d1, #0.0", "adc x0, xzr, lr",
+		"ngc wzr, w1", "madd w0, w1, w2, wzr", "smaddl x0, w1, w2, x3")
 	return out
 }
 
@@ -318,7 +320,7 @@ func TestSelfHostArm64RefusesUnencodableImmediates(t *testing.T) {
 	checkRefusedSelfHost(t, bin, runner, lines)
 }
 
-func TestSelfHostArm64RefusesMisplacedQRegisters(t *testing.T) {
+func TestSelfHostArm64RefusesMisplacedRegisters(t *testing.T) {
 	gas := gnuArm64Oracle(t)
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
@@ -329,6 +331,15 @@ func TestSelfHostArm64RefusesMisplacedQRegisters(t *testing.T) {
 		"ldpsw q0, q1, [x2]",
 		"ldp q0, d1, [x2]",
 		"ldr q32, [x1]",
+		"fcmp x0, #0.0",
+		"fcmp dummy, #0.0",
+		"fcmpe w3, #0",
+		"adc x0, w1, x2",
+		"ngc w0, x1",
+		"madd w0, w1, w2, x3",
+		"sbc x0, d1, x2",
+		"adcs x0, sp, x2",
+		"smaddl x0, s1, w2, x3",
 	}
 	for _, ln := range lines {
 		if _, rejected := gas.program(t, ".text\n"+ln+"\n"); rejected == "" {
