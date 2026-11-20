@@ -101,7 +101,9 @@ pub function keep(ctx: usize, p: Program): boolean {
   if (!watch_values(e, tv, values, p).is_ok()) {
     return false;
   }
-  delete_where(e, tv, URI, "internal_provider_id=?", p.id);
+  if (!delete_where(e, tv, URI, "internal_provider_id=?", p.id)) {
+    return false;
+  }
   return insert(e, tv, URI, values).is_some();
 }
 
@@ -149,7 +151,7 @@ pub function drop(ctx: usize, id: string): void {
     return;
   };
   defer close(e, tv);
-  delete_where(e, tv, URI, "internal_provider_id=?", id);
+  let _ = delete_where(e, tv, URI, "internal_provider_id=?", id);
 }
 ```
 
@@ -207,7 +209,9 @@ pub function show_channel(ctx: usize, channel: i64, programs: Program[]): boolea
     return false;
   };
   defer close(e, tv);
-  delete_where(e, tv, PREVIEWS, "channel_id=?", channel.to_string());
+  if (!delete_where(e, tv, PREVIEWS, "channel_id=?", channel.to_string())) {
+    return false;
+  }
   for p in programs {
     if (!add_program(e, tv, channel, p)) {
       return false;
@@ -325,16 +329,16 @@ function insert(e: usize, tv: Tv, table: string, values: bindings.ContentValues)
 
 // Deletes the rows of the app at the table of the URI `table` where
 // `column`, such as "channel_id=?", has the value `value`.
-function delete_where(e: usize, tv: Tv, table: string, column: string, value: string): void {
+function delete_where(e: usize, tv: Tv, table: string, column: string, value: string): boolean {
   let Ok(uri) = tv.c.uri.parse(e, table) else {
-    return;
+    return false;
   };
   let args = jni.string_array(e, [value]);
   if (args == 0 as usize) {
     let cleared = jni.exception_clear(e);
-    return;
+    return false;
   }
-  let deleted = tv.c.content_resolver.delete(e, tv.resolver, uri, column, jni.Object { ref: args });
+  return tv.c.content_resolver.delete(e, tv.resolver, uri, column, jni.Object { ref: args }).is_ok();
 }
 
 function put_text(e: usize, tv: Tv, values: bindings.ContentValues, key: string, value: string): Result[void, jni.JavaError] {
