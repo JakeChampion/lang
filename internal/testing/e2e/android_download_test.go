@@ -6,8 +6,8 @@ import "testing"
 // notification and its file name in the external files directory, and the
 // ID of enqueue comes back. The state of a download reads the columns of the
 // row of its ID, and an ID with no row is GONE. A jboolean is its low 8
-// bits. Each call closes its cursor
-// and ends each local frame that it starts.
+// bits. Each call closes its cursor and releases its global class references
+// before popping the local frame, including when the service is unavailable.
 func TestAndroidDownload(t *testing.T) {
 	const src = `import "std/android/download";
 pub function start_one(ctx: usize): i64 {
@@ -30,7 +30,7 @@ pub function dir_is(ctx: usize): i32 {
 #include <string.h>
 #include <dlfcn.h>
 
-static int frames, next = 1000, nnames, nstrings, rows = 1, closes;
+static int frames, next = 1000, nnames, nstrings, rows = 1, closes, service = 1;
 static int64_t region;
 static char log_[8192];
 static const char *names[256];
@@ -72,7 +72,7 @@ static int arity(const char *sig) {
 static uintptr_t method(uintptr_t e, uintptr_t cls, const char *name, const char *sig) {
   require(nnames < 256, "too many method ids");
   arities[nnames] = arity(sig);
-  names[nnames++] = name;
+  names[nnames++] = strdup(name);
   return nnames;
 }
 static const char *name_of(uintptr_t id) { return names[id - 1]; }
@@ -81,6 +81,7 @@ static uintptr_t get_class(uintptr_t e, uintptr_t obj) { return fresh(); }
 static uintptr_t new_object(uintptr_t e, uintptr_t cls, uintptr_t ctor, const uint64_t *args) { note_call("new", args, arities[ctor - 1]); return fresh(); }
 static uintptr_t object(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
   note_call(name_of(id), args, arities[id - 1]);
+  if (!strcmp(name_of(id), "getSystemService") && !service) return 0;
   if (!strcmp(name_of(id), "getAbsolutePath")) return text("/sdcard/files");
   if (!strcmp(name_of(id), "query") && !rows) return 0;
   return fresh();
@@ -121,7 +122,10 @@ static void utf_release(uintptr_t e, uintptr_t s, const char *chars) {}
 static uintptr_t new_long_array(uintptr_t e, uintptr_t n) { require(n == 1, "one id"); return fresh(); }
 static void long_region(uintptr_t e, uintptr_t array, uintptr_t start, uintptr_t n, const int64_t *buf) { require(start == 0 && n == 1, "the region of one id"); region = buf[0]; }
 static int32_t push(uintptr_t e, int32_t n) { frames++; return 0; }
-static uintptr_t pop(uintptr_t e, uintptr_t keep) { frames--; return 0; }
+static int globals;
+static uintptr_t global_ref(uintptr_t e, uintptr_t ref) { globals++; return ref; }
+static void drop_global(uintptr_t e, uintptr_t ref) { require(globals > 0, "live global"); globals--; }
+static uintptr_t pop(uintptr_t e, uintptr_t keep) { require(globals == 0, "class references released before pop"); frames--; return 0; }
 static uintptr_t none(uintptr_t e) { return 0; }
 static void release(uintptr_t e, uintptr_t ref) {}
 static int has(const char *part) { return strstr(log_, part) != 0; }
@@ -141,6 +145,8 @@ int main(int argc, char **argv) {
   table[17] = (uintptr_t)none;
   table[19] = (uintptr_t)push;
   table[20] = (uintptr_t)pop;
+  table[21] = (uintptr_t)global_ref;
+  table[22] = (uintptr_t)drop_global;
   table[23] = (uintptr_t)release;
   table[30] = (uintptr_t)new_object;
   table[31] = (uintptr_t)get_class;
@@ -182,6 +188,8 @@ int main(int argc, char **argv) {
   remove_one((uintptr_t)ctx, 42);
   require(has("remove(") && region == 42 && frames == 0, "remove names the id");
   require(dir_is((uintptr_t)ctx) == 1 && has("getExternalFilesDir(0);") && frames == 0, "the external files directory");
+  service = 0;
+  require(start_one((uintptr_t)ctx) == -1 && frames == 0, "missing service refuses enqueue");
   return 0;
 }
 `

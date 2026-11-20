@@ -117,7 +117,9 @@ function main(): i32 {
   }
   let password: [u8] = "password".as_bytes();
   let salt: [u8] = "salt".as_bytes();
-  let derived: u8[] = crypto.pbkdf2_sha256(password, salt, 1, 32);
+  let Ok(derived) = crypto.pbkdf2_sha256(password, salt, 1, 32) else {
+    return 51;
+  };
   if (hex.encode(derived) != "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b" || !crypto.pbkdf2_sha256_verify(password, salt, 1, derived)) {
     return 51;
   }

@@ -48,7 +48,7 @@ function main(): i32 {
 }
 `
 
-// semDumpBody is the printed graph of one function from a FERN_SEM_DUMP run.
+// semDumpBody is the printed graph of one function from a FERN_DEBUG_SEM_DUMP run.
 func semDumpBody(t *testing.T, dump, name string) string {
 	t.Helper()
 	start := strings.Index(dump, "func "+name+" {\n")
@@ -71,7 +71,7 @@ func TestSelfHostSemanticUnrollCountedLoops(t *testing.T) {
 	}
 	bin := filepath.Join(dir, "main")
 	cmd := runX86_64Bin(c.runner, c.bin, "-target", "x86-64-linux", "-o", bin, src, c.stdlib)
-	cmd.Env = append(os.Environ(), "FERN_SEM_DUMP=*")
+	cmd.Env = append(os.Environ(), "FERN_DEBUG_SEM_DUMP=*")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("compile: %v\n%s", err, out)

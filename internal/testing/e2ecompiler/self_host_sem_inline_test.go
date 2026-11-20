@@ -190,7 +190,7 @@ func TestSelfHostSplicedUpdateNamesItsBase(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := runX86_64Bin(c.runner, c.bin, "-target", "x86-64-linux", "-emit", "asm", "-o", filepath.Join(t.TempDir(), "out.s"), src, c.stdlib)
-	cmd.Env = append(os.Environ(), "FERN_SEM_DUMP=run")
+	cmd.Env = append(os.Environ(), "FERN_DEBUG_SEM_DUMP=run")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("compile: %v\n%s", err, out)
@@ -256,7 +256,7 @@ func TestSelfHostBuilderUpdateBuildsOneRecord(t *testing.T) {
 	}
 	dump := func(fn string) []byte {
 		cmd := runX86_64Bin(c.runner, c.bin, "-target", "x86-64-linux", "-emit", "asm", "-o", filepath.Join(t.TempDir(), "out.s"), src, c.stdlib)
-		cmd.Env = append(os.Environ(), "FERN_SEM_DUMP="+fn)
+		cmd.Env = append(os.Environ(), "FERN_DEBUG_SEM_DUMP="+fn)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("compile: %v\n%s", err, out)

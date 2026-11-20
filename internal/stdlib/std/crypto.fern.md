@@ -10,6 +10,8 @@ Digest states are values. Every digest has the same surface: `<algorithm>_new()`
 
 ## Contracts
 
+PBKDF2-SHA256 requires at least one iteration and at least one output byte. Its error carries the rejected count or length.
+
 The one-shot SHAKE functions require a positive output length in bytes. They return `InvalidOutputLength` with the supplied length for zero or negative requests.
 
 HKDF expansion and combined extraction/expansion return an error when the requested output is below one byte or above 255 hash blocks (8160 bytes for SHA-256 and 12240 for SHA-384). The error carries the requested length.
@@ -53,7 +55,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<6 function __pbkdf2_core(pw: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[]>>
 
-<<7 pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[]>>
+<<7 pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: i32): Result[u8[], Pbkdf2Error]>>
 
 <<8 function __hkdf_extract(hlen: i32, salt: [u8], ikm: [u8]): u8[]>>
 
@@ -3566,70 +3568,140 @@ pub function hmac_sha256_verify(key: [u8], msg: [u8], mac: [u8]): boolean {
 
 ```fern
 <<6 function __pbkdf2_core(pw: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[]>>=
-// RFC 8018 section 5.2 requires an iteration count of 1 or more. A smaller
-// count stops the program with status 134.
-function __pbkdf2_core(pw: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[] {
-  if (iterations < 1) {
-    exit(134);
+// Cache the eight chaining words after the HMAC key pad. The native SHA
+// kernel takes words in little-endian order.
+function __pbkdf2_pad_state(key: [u8], byte: i32): u8[] {
+  let pad = __pad_block(64, key, byte);
+  let st = __sha256_soft_blocks(sha256_new(), pad, 0, 1);
+  erase(pad);
+  let words = __alloc_u8(32);
+  words = __put_le32(words, 0, st.h0);
+  words = __put_le32(words, 4, st.h1);
+  words = __put_le32(words, 8, st.h2);
+  words = __put_le32(words, 12, st.h3);
+  words = __put_le32(words, 16, st.h4);
+  words = __put_le32(words, 20, st.h5);
+  words = __put_le32(words, 24, st.h6);
+  words = __put_le32(words, 28, st.h7);
+  return words;
+}
+
+function __pbkdf2_start(words: [u8], own tail: u8[]): Sha256 {
+  return Sha256 {
+    h0: __get_le32(words, 0),
+    h1: __get_le32(words, 4),
+    h2: __get_le32(words, 8),
+    h3: __get_le32(words, 12),
+    h4: __get_le32(words, 16),
+    h5: __get_le32(words, 20),
+    h6: __get_le32(words, 24),
+    h7: __get_le32(words, 28),
+    buf: tail, buf_len: 0, total: 64 as u64, out_len: 32,
+  };
+}
+
+// After the 64-byte pad, each 32-byte digest needs one more block.
+// Replace its first 32 bytes with the next digest and keep the padding.
+function __pbkdf2_digest_block(words: [u8], own block: u8[]): u8[] {
+  if (__sha256_hw()) {
+    let out = __sha256_hw_blocks(words, block);
+    for i in 0..8 {
+      block = __put_be32(block, 4 * i, __get_le32(out, 4 * i));
+    }
+    erase(out);
+    return block;
   }
+  let st = __sha256_soft_blocks(__pbkdf2_start(words, []), block, 0, 1);
+  block = __put_be32(block, 0, st.h0);
+  block = __put_be32(block, 4, st.h1);
+  block = __put_be32(block, 8, st.h2);
+  block = __put_be32(block, 12, st.h3);
+  block = __put_be32(block, 16, st.h4);
+  block = __put_be32(block, 20, st.h5);
+  block = __put_be32(block, 24, st.h6);
+  block = __put_be32(block, 28, st.h7);
+  return block;
+}
+
+function __pbkdf2_core(pw: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[] {
+  if (pw.len() > 64) {
+    let hashed = sha256(pw);
+    let dk = __pbkdf2_core(hashed, salt, iterations, dk_len);
+    erase(hashed);
+    return dk;
+  }
+  let inner = __pbkdf2_pad_state(pw, 0x36);
+  let outer = __pbkdf2_pad_state(pw, 0x5c);
+  // SHA-256 padding encodes (64 pad bytes + 32 digest bytes) * 8 bits.
+  let block = __put_be64(__zero_u8(64).with(32, 128 as u8), 56, 768 as u64);
   let hLen = 32;
   let dk = __alloc_u8(dk_len);
   let offset = 0;
   let block_index = 1;
   while (offset < dk_len) {
-    let msg = __alloc_u8(salt.len() + 4);
-    let s = 0;
-    while (s < salt.len()) {
-      msg = msg.with(s, salt[s]);
-      s += 1;
-    }
-    msg = msg.with(salt.len(), (block_index >> 24 & 255) as u8);
-    msg = msg.with(salt.len() + 1, (block_index >> 16 & 255) as u8);
-    msg = msg.with(salt.len() + 2, (block_index >> 8 & 255) as u8);
-    msg = msg.with(salt.len() + 3, (block_index & 255) as u8);
-    let u = __hmac(32, pw, msg);
+    let msg = __bytes_into(__alloc_u8(salt.len() + 4), 0, salt, 0, salt.len());
+    msg = __put_be32(msg, salt.len(), block_index as u32);
+    let digest = __sha256_last(__pbkdf2_start(inner, __zero_u8(64)).update(msg));
     erase(msg);
-    let t = __bytes_into(__alloc_u8(hLen), 0, u, 0, hLen);
+    block = __bytes_into(block, 0, digest, 0, hLen);
+    erase(digest);
+    block = __pbkdf2_digest_block(outer, block);
+    let t = __bytes_into(__alloc_u8(hLen), 0, block, 0, hLen);
     let c = 1;
     while (c < iterations) {
-      let nu = __hmac(32, pw, u);
-      erase(u);
-      u = nu;
-      let x = 0;
-      while (x < hLen) {
-        t = t.with(x, (t[x] as i32 ^ u[x] as i32) as u8);
-        x += 1;
+      block = __pbkdf2_digest_block(inner, block);
+      block = __pbkdf2_digest_block(outer, block);
+      for x in 0..32 {
+        t = t.with(x, t[x] ^ block[x]);
       }
       c += 1;
     }
-    erase(u);
     let k = 0;
-    while (k < hLen && offset + k < dk_len) {
+    while (k < hLen && k < dk_len - offset) {
       dk = dk.with(offset + k, t[k]);
       k += 1;
     }
     erase(t);
-    offset += hLen;
+    offset += k;
     block_index += 1;
   }
+  erase(block);
+  erase(outer);
+  erase(inner);
   return dk;
 }
 ```
 
-### `7 pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[]`
+### `7 pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: i32): Result[u8[], Pbkdf2Error]`
 
 ```fern
-<<7 pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[]>>=
-pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[] {
-  return __pbkdf2_core(password, salt, iterations, dk_len);
+<<7 pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: i32): Result[u8[], Pbkdf2Error]>>=
+pub enum Pbkdf2Error {
+  InvalidIterations(i32),
+  InvalidKeyLength(i32),
+}
+
+pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: i32): Result[u8[], Pbkdf2Error] {
+  if (iterations < 1) {
+    return Err(InvalidIterations(iterations));
+  }
+  if (dk_len < 1) {
+    return Err(InvalidKeyLength(dk_len));
+  }
+  return Ok(__pbkdf2_core(password, salt, iterations, dk_len));
 }
 
 // Returns false for a stored hash shorter than 16 bytes or an iteration count below one.
 pub function pbkdf2_sha256_verify(password: [u8], salt: [u8], iterations: i32, expected: [u8]): boolean {
-  if (expected.len() < 16 || iterations < 1) {
+  if (expected.len() < 16) {
     return false;
   }
-  return consteq(pbkdf2_sha256(password, salt, iterations, expected.len()), expected);
+  let Ok(key) = pbkdf2_sha256(password, salt, iterations, expected.len()) else {
+    return false;
+  };
+  let matches = consteq(key, expected);
+  erase(key);
+  return matches;
 }
 ```
 

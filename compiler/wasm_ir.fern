@@ -1625,12 +1625,12 @@ pub function wasm_unsupported_import(mod: parser.Module): string {
     let f = mod.funcs[i];
     if (is_sync_extern(f)) {
       if (is_struct_type(stab, f.ret_type) && !extern_record_result_supported(mod, f.ret_type)) {
-        return "error: @import " + f.name + " returns record " + f.ret_type + ", which wasm cannot lower: its" + why;
+        return "fern: error: @import " + f.name + " returns record " + f.ret_type + ", which wasm cannot lower: its" + why;
       }
       for p in 0..f.params.len() {
         let pt = f.params[p].type_name;
         if (is_struct_type(stab, pt) && !extern_record_param_supported(mod, pt)) {
-          return "error: @import " + f.name + " takes record " + pt + ", which wasm cannot lower: its" + why;
+          return "fern: error: @import " + f.name + " takes record " + pt + ", which wasm cannot lower: its" + why;
         }
       }
     }
@@ -3185,7 +3185,7 @@ pub function emit_core_or_error_sub(mod: parser.Module, component: boolean, io: 
     return EmittedCore { wat: emit_ir_module_mode(lm, cache, mode, sub.switches, g.physical, sub.rt_lower), needs: runtime_needs(lm, needs_of(cache)) };
   }
   if (component && wasm_ir_deferrals_ok(cache)) {
-    eprint("error: " + component_refused_need(needs_of(cache), io, module_is_proxy(lm))
+    eprint("fern: error: " + component_refused_need(needs_of(cache), io, module_is_proxy(lm))
       + " is not supported in a wasm component: the component framing has no import for it (build with -emit core-module for a preview1 module)");
     exit(1);
   }
@@ -4879,7 +4879,7 @@ function wasm_text_const(o: ir.Op): string {
     fits = ast.magnitude_fits(o.str, 2, "ffffffff");
   }
   if (!fits) {
-    eprint("error: literal " + o.str + " does not fit in usize on wasm32, where usize is 32 bits");
+    eprint("fern: error: literal " + o.str + " does not fit in usize on wasm32, where usize is 32 bits");
     exit(1);
   }
   return o.str;
@@ -5512,7 +5512,7 @@ function produced_result_wat(r: irtables.Lowered): string {
   if (r.result_kind == irtables.result_v128()) {
     return " (result v128)\n";
   }
-  eprint("error: produced body " + r.name + " carries no result kind");
+  eprint("fern: error: produced body " + r.name + " carries no result kind");
   exit(3);
   return "";
 }

@@ -57,44 +57,56 @@ function field(h: crypto.Blake2b, data: [u8]): crypto.Blake2b {
   return h.update(binary.append_u32_le([], data.len() as u32)).update(data);
 }
 
-function initial(p: Params, password: [u8], salt: [u8], secret: [u8], data: [u8]): u8[] {
+function initial(p: Params, password: [u8], salt: [u8], secret: [u8], data: [u8]): Result[u8[], ArgonError] {
   let header: u8[] = [];
   for word in [p.lanes, p.tag_len, p.memory_kib, p.passes, 19, 2] {
     header = binary.append_u32_le(header, word as u32);
   }
-  let h = crypto.blake2b_new(64).update(header);
+  let Ok(state) = crypto.blake2b_new(64) else {
+    return Err(Parameters);
+  };
+  let h = state.update(header);
   h = field(field(field(field(h, password), salt), secret), data);
   let digest = h.finish();
   crypto.erase(h.buf);
-  return digest;
+  return Ok(digest);
+}
+
+function digest(own input: u8[], length: i32): Result[u8[], ArgonError] {
+  let out = crypto.blake2b(input, length);
+  crypto.erase(input);
+  return match (out) { Ok(bytes) => Ok(bytes), Err(_) => Err(Parameters) };
 }
 
 // Variable-length hash H' from RFC 9106 section 3.3.
-function expand(data: [u8], length: i32): u8[] {
+function expand(data: [u8], length: i32): Result[u8[], ArgonError] {
   let input = binary.append_u32_le([], length as u32).concat(data);
   if (length <= 64) {
-    let out = crypto.blake2b(input, length);
-    crypto.erase(input);
-    return out;
+    return digest(input, length);
   }
-  let v = crypto.blake2b(input, 64);
-  crypto.erase(input);
+  let v = digest(input, 64)?;
   let out = __alloc_u8(length);
   let at = 0;
   while (length - at > 64) {
     out = __bytes_into(out, at, v, 0, 32);
     at += 32;
     if (length - at > 64) {
-      let next = crypto.blake2b(v, 64);
-      crypto.erase(v);
-      v = next;
+      let next = digest(v, 64);
+      let Ok(bytes) = next else {
+        crypto.erase(out);
+        return Err(Parameters);
+      };
+      v = bytes;
     }
   }
-  let tail = crypto.blake2b(v, length - at);
-  crypto.erase(v);
+  let end = digest(v, length - at);
+  let Ok(tail) = end else {
+    crypto.erase(out);
+    return Err(Parameters);
+  };
   out = __bytes_into(out, at, tail, 0, tail.len());
   crypto.erase(tail);
-  return out;
+  return Ok(out);
 }
 ```
 
@@ -250,7 +262,7 @@ function segment_length(p: Params, salt_len: i32): Result[i32, ArgonError] {
   return Ok(segment);
 }
 
-function initialize(own h0: u8[], segment: i32, lanes: i32): i64[] {
+function initialize(own h0: u8[], segment: i32, lanes: i32): Result[i64[], ArgonError] {
   let blocks = 4 * lanes * segment;
   let m = __alloc_i64((blocks + 4) * 128);
   // Address generation uses one zero block and a zero-padded input block.
@@ -260,8 +272,13 @@ function initialize(own h0: u8[], segment: i32, lanes: i32): i64[] {
   for lane in 0..lanes {
     for i in 0..2 {
       let seed = h0.concat(binary.append_u32_le(binary.append_u32_le([], i as u32), lane as u32));
-      let bytes = expand(seed, 1024);
+      let expanded = expand(seed, 1024);
       crypto.erase(seed);
+      let Ok(bytes) = expanded else {
+        crypto.erase(m);
+        crypto.erase(h0);
+        return Err(Parameters);
+      };
       for j in 0..128 {
         m = m.with((lane * 4 * segment + i) * 128 + j, binary.read_u64_le(bytes, j * 8).unwrap_or(0u64) as i64);
       }
@@ -269,10 +286,10 @@ function initialize(own h0: u8[], segment: i32, lanes: i32): i64[] {
     }
   }
   crypto.erase(h0);
-  return m;
+  return Ok(m);
 }
 
-function finish(own m: i64[], p: Params, segment: i32): u8[] {
+function finish(own m: i64[], p: Params, segment: i32): Result[u8[], ArgonError] {
   let last: u8[] = [];
   for j in 0..128 {
     let word = 0i64;
@@ -289,7 +306,8 @@ function finish(own m: i64[], p: Params, segment: i32): u8[] {
 
 pub function derive(password: [u8], salt: [u8], secret: [u8], data: [u8], p: Params): Result[u8[], ArgonError] {
   let segment = segment_length(p, salt.len())?;
-  let m = initialize(initial(p, password, salt, secret, data), segment, p.lanes);
+  let h0 = initial(p, password, salt, secret, data)?;
+  let m = initialize(h0, segment, p.lanes)?;
   for pass in 0..p.passes {
     for slice in 0..4 {
       for lane in 0..p.lanes {
@@ -297,6 +315,6 @@ pub function derive(password: [u8], salt: [u8], secret: [u8], data: [u8], p: Par
       }
     }
   }
-  return Ok(finish(m, p, segment));
+  return finish(m, p, segment);
 }
 ```

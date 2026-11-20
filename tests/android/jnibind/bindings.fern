@@ -23,10 +23,7 @@ pub struct ActivityClass { class: usize, id_get_local_class_name: usize, id_is_f
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function activity_class(e: usize): Result[ActivityClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/app/Activity");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/app/Activity")?;
   let id_get_local_class_name = jni.checked_id(e, class, jni.get_method_id(e, class, "getLocalClassName", "()Ljava/lang/String;"))?;
   let id_is_finishing = jni.checked_id(e, class, jni.get_method_id(e, class, "isFinishing", "()Z"))?;
   return Ok(ActivityClass { class: class, id_get_local_class_name: id_get_local_class_name, id_is_finishing: id_is_finishing });
@@ -74,10 +71,7 @@ pub struct ContextClass { class: usize, id_get_package_manager: usize, id_get_pa
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/content/Context");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/content/Context")?;
   let id_get_package_manager = jni.checked_id(e, class, jni.get_method_id(e, class, "getPackageManager", "()Landroid/content/pm/PackageManager;"))?;
   let id_get_package_name = jni.checked_id(e, class, jni.get_method_id(e, class, "getPackageName", "()Ljava/lang/String;"))?;
   return Ok(ContextClass { class: class, id_get_package_manager: id_get_package_manager, id_get_package_name: id_get_package_name });
@@ -125,10 +119,7 @@ pub struct PackageManagerClass { class: usize, id_query_intent_activities: usize
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function package_manager_class(e: usize): Result[PackageManagerClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/content/pm/PackageManager");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/content/pm/PackageManager")?;
   let id_query_intent_activities = jni.checked_id(e, class, jni.get_method_id(e, class, "queryIntentActivities", "(Landroid/content/Intent;I)Ljava/util/List;"))?;
   return Ok(PackageManagerClass { class: class, id_query_intent_activities: id_query_intent_activities });
 }
@@ -172,10 +163,7 @@ pub struct IntentClass { class: usize, id_new: usize, id_add_category: usize, id
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function intent_class(e: usize): Result[IntentClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/content/Intent");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/content/Intent")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;)V"))?;
   let id_add_category = jni.checked_id(e, class, jni.get_method_id(e, class, "addCategory", "(Ljava/lang/String;)Landroid/content/Intent;"))?;
   let id_add_flags = jni.checked_id(e, class, jni.get_method_id(e, class, "addFlags", "(I)Landroid/content/Intent;"))?;
@@ -260,10 +248,7 @@ pub struct ComponentNameClass { class: usize, id_new: usize, id_flatten_to_short
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function component_name_class(e: usize): Result[ComponentNameClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/content/ComponentName");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/content/ComponentName")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;Ljava/lang/String;)V"))?;
   let id_flatten_to_short_string = jni.checked_id(e, class, jni.get_method_id(e, class, "flattenToShortString", "()Ljava/lang/String;"))?;
   return Ok(ComponentNameClass { class: class, id_new: id_new, id_flatten_to_short_string: id_flatten_to_short_string });
@@ -317,10 +302,7 @@ pub struct PointClass { class: usize, id_new: usize, id_offset: usize, id_x: usi
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function point_class(e: usize): Result[PointClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/graphics/Point");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/graphics/Point")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(II)V"))?;
   let id_offset = jni.checked_id(e, class, jni.get_method_id(e, class, "offset", "(II)V"))?;
   let id_x = jni.checked_id(e, class, jni.get_field_id(e, class, "x", "I"))?;
@@ -362,11 +344,21 @@ pub function (c: PointClass) x(e: usize, self: Point): Result[i32, jni.JavaError
   return Ok(got as i32);
 }
 
+pub function (c: PointClass) set_x(e: usize, self: Point, value: i32): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 5, self.ref, c.id_x, value as usize);
+  return jni.check(e);
+}
+
 // android.graphics.Point.y
 pub function (c: PointClass) y(e: usize, self: Point): Result[i32, jni.JavaError] {
   let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_y, 0 as usize);
   jni.check(e)?;
   return Ok(got as i32);
+}
+
+pub function (c: PointClass) set_y(e: usize, self: Point, value: i32): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 5, self.ref, c.id_y, value as usize);
+  return jni.check(e);
 }
 
 // A android.os.SystemClock.
@@ -386,10 +378,7 @@ pub struct SystemClockClass { class: usize, id_uptime_millis: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function system_clock_class(e: usize): Result[SystemClockClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/os/SystemClock");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/os/SystemClock")?;
   let id_uptime_millis = jni.optional_id(e, jni.get_static_method_id(e, class, "uptimeMillis", "()J"));
   return Ok(SystemClockClass { class: class, id_uptime_millis: id_uptime_millis });
 }
@@ -433,10 +422,7 @@ pub struct DateFormatClass { class: usize, id_is24_hour_format: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function date_format_class(e: usize): Result[DateFormatClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/text/format/DateFormat");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/text/format/DateFormat")?;
   let id_is24_hour_format = jni.checked_id(e, class, jni.get_static_method_id(e, class, "is24HourFormat", "(Landroid/content/Context;)Z"))?;
   return Ok(DateFormatClass { class: class, id_is24_hour_format: id_is24_hour_format });
 }
@@ -473,10 +459,7 @@ pub struct FileClass { class: usize, id_new: usize, id_get_path: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function file_class(e: usize): Result[FileClass, jni.JavaError] {
-  let local = jni.find_class(e, "java/io/File");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "java/io/File")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;Ljava/lang/String;)V"))?;
   let id_get_path = jni.checked_id(e, class, jni.get_method_id(e, class, "getPath", "()Ljava/lang/String;"))?;
   return Ok(FileClass { class: class, id_new: id_new, id_get_path: id_get_path });
@@ -533,10 +516,7 @@ pub struct ListClass { class: usize, id_get: usize, id_size: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function list_class(e: usize): Result[ListClass, jni.JavaError] {
-  let local = jni.find_class(e, "java/util/List");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "java/util/List")?;
   let id_get = jni.checked_id(e, class, jni.get_method_id(e, class, "get", "(I)Ljava/lang/Object;"))?;
   let id_size = jni.checked_id(e, class, jni.get_method_id(e, class, "size", "()I"))?;
   return Ok(ListClass { class: class, id_get: id_get, id_size: id_size });
@@ -585,10 +565,7 @@ pub struct IntegerClass { class: usize, id_parse_int: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function integer_class(e: usize): Result[IntegerClass, jni.JavaError] {
-  let local = jni.find_class(e, "java/lang/Integer");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "java/lang/Integer")?;
   let id_parse_int = jni.checked_id(e, class, jni.get_static_method_id(e, class, "parseInt", "(Ljava/lang/String;)I"))?;
   return Ok(IntegerClass { class: class, id_parse_int: id_parse_int });
 }
@@ -627,10 +604,7 @@ pub struct MathClass { class: usize, id_sqrt: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function math_class(e: usize): Result[MathClass, jni.JavaError] {
-  let local = jni.find_class(e, "java/lang/Math");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "java/lang/Math")?;
   let id_sqrt = jni.checked_id(e, class, jni.get_static_method_id(e, class, "sqrt", "(D)D"))?;
   return Ok(MathClass { class: class, id_sqrt: id_sqrt });
 }
@@ -667,10 +641,7 @@ pub struct FloatClass { class: usize, id_parse_float: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function float_class(e: usize): Result[FloatClass, jni.JavaError] {
-  let local = jni.find_class(e, "java/lang/Float");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "java/lang/Float")?;
   let id_parse_float = jni.checked_id(e, class, jni.get_static_method_id(e, class, "parseFloat", "(Ljava/lang/String;)F"))?;
   return Ok(FloatClass { class: class, id_parse_float: id_parse_float });
 }
@@ -709,10 +680,7 @@ pub struct SystemClass { class: usize, id_out: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function system_class(e: usize): Result[SystemClass, jni.JavaError] {
-  let local = jni.find_class(e, "java/lang/System");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "java/lang/System")?;
   let id_out = jni.checked_id(e, class, jni.get_static_field_id(e, class, "out", "Ljava/io/PrintStream;"))?;
   return Ok(SystemClass { class: class, id_out: id_out });
 }

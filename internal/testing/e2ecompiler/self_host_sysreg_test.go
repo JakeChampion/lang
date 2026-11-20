@@ -169,7 +169,7 @@ func TestSelfHostSysregOfAnotherISA(t *testing.T) {
 			t.Fatal(err)
 		}
 		msg, err := cli.compileCmd(c.target, filepath.Join(dir, c.isa+".elf"), src, "-ram", c.ram).CombinedOutput()
-		want := "the system register " + c.reg + " does not exist on " + c.isa
+		want := "fern: error: the system register " + c.reg + " does not exist on " + c.isa
 		if err == nil || !strings.Contains(string(msg), want) {
 			t.Errorf("%s: err %v; want %q in:\n%s", c.target, err, want, msg)
 		}
