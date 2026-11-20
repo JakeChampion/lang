@@ -1993,7 +1993,7 @@ answer, these are the tools, in the order they are usually reached for:
   default's spelling, which the test harness sets for every self-host compile
   (`e2eharness.SelfHostVerify`).
 
-Set `FERN_DEBUG_OPT_TRACE=1` to print optimization decisions and `FERN_DEBUG_ENTRY_CHECK_TRACE=1` to trace entry checks. The RC trace switches are `FERN_DEBUG_RC_TRACE` and `FERN_DEBUG_RC_TRACE_DEEP`. All four accept their older names without `DEBUG_`. An explicit value for the new name takes precedence, including an empty value.
+Set `FERN_DEBUG_OPT_TRACE=1` to print optimization decisions and `FERN_DEBUG_ENTRY_CHECK_TRACE=1` to trace entry checks. The RC trace switches are `FERN_DEBUG_RC_TRACE` and `FERN_DEBUG_RC_TRACE_DEEP`. Use `FERN_DEBUG_SEM_IR_REPORT=1` for the semantic lowering tally and `FERN_DEBUG_SSA_REPORT=1` for the native SSA backend report. All six switches accept their older names without `DEBUG_`. An explicit value for the new name takes precedence, including an empty value.
 
 The compiler dump variables `FERN_DEBUG_SEM_DUMP`, `FERN_DEBUG_RC_CERTIFY_DUMP`, `FERN_DEBUG_SUSPEND_DUMP` and `FERN_DEBUG_TV_DUMP` also accept their older spellings without `DEBUG_`. The new spelling takes precedence when both are set.
 

@@ -97,7 +97,7 @@ func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoo
 		args = []string{"-target", target, "-emit", "asm", "-o", out, src, stdlibRoot}
 	}
 	cmd := runX86_64Bin(runner, fernBin, args...)
-	cmd.Env = append(os.Environ(), "FERN_SEM_IR_REPORT=1")
+	cmd.Env = append(os.Environ(), "FERN_DEBUG_SEM_IR_REPORT=1")
 	if sanitize {
 		cmd.Env = append(cmd.Env, "FERN_SANITIZE=1")
 	}
