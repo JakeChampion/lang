@@ -22,6 +22,7 @@ This module implements Argon2id version 19 from RFC 9106. The default parameters
 
 ```fern
 <<parameters>>=
+// Derive password-based keys with Argon2id version 19 (RFC 9106).
 import "core/error";
 import "std/binary";
 import "std/result";
