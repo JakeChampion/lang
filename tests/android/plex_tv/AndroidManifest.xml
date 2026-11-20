@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.fern.plex.rows">
+    <application android:label="Plex TV row check" />
+    <instrumentation android:name=".Rows" android:targetPackage="dev.fern.plex" />
+</manifest>

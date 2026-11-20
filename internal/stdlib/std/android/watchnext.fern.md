@@ -16,7 +16,7 @@ A `Program` has the ID of the app for the item, its title and its kind. It also 
 
 Call each function on the loop thread, with the context that `launch.start` gave the loop. The provider is on Android TV from API level 26. On a phone there is no such provider. Then `keep`, `drop` and `show_channel` change nothing, `keep` and `show_channel` give false, and `add_channel` gives -1. `show_channel` also gives false when the person removed the channel. Then add a new channel.
 
-A program needs no permission: the provider keeps the programs of each app apart.
+Declare `com.android.providers.tv.permission.WRITE_EPG_DATA` in the app manifest to publish rows. The provider keeps the programs of each app apart.
 
 ## Module assembly
 

@@ -326,6 +326,38 @@ jobs:
           name: fern-stopwatch-emulator
           path: build/android-stopwatch/emulator
 
+  tv:
+    name: android-plex-tv
+    needs: [apk]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: fern-stopwatch-apk
+          path: build/android-stopwatch
+      - uses: ./.github/actions/disable-chrome-apt
+      - name: Prepare the test APKs and video
+        run: |
+          sdkmanager 'platforms;android-34' 'build-tools;35.0.0'
+          tests/android/plex_tv/build build/android-stopwatch/fern-plex.apk build/android-tv
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          ffmpeg -loglevel error -f lavfi -i testsrc=size=320x240:rate=25 -t 20 -c:v libx264 -g 25 -bf 0 -pix_fmt yuv420p -movflags +faststart build/android-tv/pattern.mp4
+      - name: Let the emulator use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Check the Plex preview channel and Watch Next row
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: android-tv
+          arch: x86_64
+          disable-animations: true
+          script: python3 examples/android/plex/tv_emulator_check.py build/android-tv
+
   # Each syscall that an Android image of a fixture can make, against the app
   # seccomp filter that bionic generates at the AOSP tag in
   # scripts/android-app-syscalls.py. A syscall outside it kills an app with
