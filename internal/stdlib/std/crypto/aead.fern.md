@@ -51,6 +51,7 @@ import "core/cmp";
 pub enum AeadError {
   KeyLength(i32),
   NonceLength(i32),
+  ExtendedNonceLength(i32),
   Forged,
   CounterRange,
   Overlap,
@@ -86,6 +87,9 @@ pub function (e: AeadError) message(): string {
     },
     NonceLength(n) => {
       return "aead: the nonce is " + n.to_string() + " bytes, want 12";
+    },
+    ExtendedNonceLength(n) => {
+      return "aead: the nonce is " + n.to_string() + " bytes, want 24";
     },
     Forged => {
       return "aead: the message does not verify";

@@ -825,6 +825,14 @@ func TestStdJNIExceptionAndRefWrappers(t *testing.T) {
 		t.Skip("host is not amd64")
 	}
 	src := `import "std/jni";
+function p_checked(env: usize, cls: usize, j: usize): i32 {
+    match (jni.check(j)) { Err(_) => { return 1; }, Ok(_) => { return 0; } }
+}
+function p_void_failed(env: usize, cls: usize, j: usize): i32 {
+    if (jni.call_void(j, 44 as usize, "run", "()V", [])) { return 0; }
+    return 1;
+}
+function p_optional(env: usize, cls: usize, j: usize): usize { return jni.optional_id(j, 99 as usize); }
 function p_throw(env: usize, cls: usize, j: usize): i32 { return jni.throw(j, 0 as usize); }
 function p_thrownew(env: usize, cls: usize, j: usize): i32 { return jni.throw_new(j, 0 as usize, "boom"); }
 function p_excocc(env: usize, cls: usize, j: usize): i32 { return jni.exception_occurred(j) as i32; }
@@ -853,7 +861,7 @@ function main(): i32 { return 0; }`
 	for i, p := range probes {
 		exps[i] = p.fn
 	}
-	so := selfHostSharedX86(t, src, exps...)
+	so := selfHostSharedX86(t, src, append(exps, "p_optional", "p_checked", "p_void_failed")...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -868,11 +876,37 @@ function main(): i32 { return 0; }`
 	}
 	loader := `#include <dlfcn.h>
 #include <stdio.h>
+static long pending, released, secondary_released;
+static long object_class(void* env, long obj) { return 66; }
+static long method(void* env, long cls, const char* name, const char* sig) { return 55; }
+static long throws(void* env, long obj, long method, void* args) { pending = 88; return 0; }
+static long occurred(void* env) { return pending; }
+static long clear(void* env) { pending = 0; return 0; }
+static long drop(void* env, long ref) {
+  if (ref == 77 && !pending) released++;
+  if (ref == 88 && !pending) secondary_released++;
+  return 0;
+}
 ` + fns + `int main(int c, char** v){
   void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
   void* table[256] = {0};
 ` + slotInit + `  void* tptr = table; void* env = &tptr;
-` + checks + `  return 42;
+` + checks + `  table[15] = (void*)occurred;
+  table[17] = (void*)clear;
+  table[23] = (void*)drop;
+  long (*optional)(long,long,long) = dlsym(h,"p_optional");
+  pending = 77;
+  if (optional(0,0,(long)env) != 0 || pending || released != 1) return 50;
+  if (optional(0,0,(long)env) != 99 || released != 1) return 51;
+  table[31] = (void*)object_class;
+  table[33] = (void*)method;
+  table[36] = table[63] = (void*)throws;
+  int (*checked)(long,long,long) = dlsym(h,"p_checked");
+  int (*void_failed)(long,long,long) = dlsym(h,"p_void_failed");
+  pending = 77;
+  if (!checked(0,0,(long)env) || pending || released != 2 || secondary_released != 1) return 52;
+  if (!void_failed(0,0,(long)env) || pending || secondary_released != 2) return 53;
+  return 42;
 }`
 	cPath := filepath.Join(dir, "loader.c")
 	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
@@ -1170,7 +1204,7 @@ int main(int c,char**v){
 
 // The static calls take the class, the method and the jvalues at entries
 // 116, 131 and 143. jni.string_of reads the modified UTF-8 of a string, keeps
-// a multibyte character, gives "" for null, and releases the chars.
+// NUL and supplementary scalars, replaces unpaired surrogates, and releases the chars.
 func TestStdJNIStaticCallsAndStringOf(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -1192,7 +1226,7 @@ function p_void(env: usize, cls: usize, j: usize, k: usize, m: usize): i32 {
 }
 function p_str(env: usize, cls: usize, j: usize, s: usize, m: usize): i32 {
     let text: string = jni.string_of(j, s);
-    if (text != "h\u{e9}llo" || jni.string_of(j, 0 as usize) != "") {
+    if (text != "h\u{e9}llo\x00🌿�X�" || jni.string_of(j, 0 as usize) != "") {
         return 0 - text.len();
     }
     return text.len();
@@ -1210,8 +1244,10 @@ static long g_class, g_method, g_void, g_released;
 static long cso(void*e,long k,long m,long long* a){(void)e; g_class=k; g_method=m; return (long)(a[0]*a[1]); }
 static long csi(void*e,long k,long m,long long* a){(void)e;(void)k;(void)m; return (long)(a[0]+a[1]); }
 static long csv(void*e,long k,long m,long long* a){(void)e;(void)k;(void)m; g_void=(long)a[0]; return 0; }
-static const char text[] = "h\xc3\xa9llo";
-static long sul(void*e,long s){(void)e;(void)s; return 6; }
+static const char text[] = "h\xc3\xa9llo" "\xc0\x80"    /* NUL */
+                           "\xed\xa0\xbc\xed\xbc\xbf"       /* U+1F33F */
+                           "\xed\xa0\x80" "X" "\xed\xb0\x80"; /* unpaired surrogates */
+static long sul(void*e,long s){(void)e;(void)s; return sizeof(text)-1; }
 static long suc(void*e,long s,long c){(void)e;(void)s;(void)c; return (long)text; }
 static long rsu(void*e,long s,long c){(void)e;(void)s; if(c==(long)text) g_released++; return 0; }
 int main(int c,char**v){
@@ -1223,7 +1259,7 @@ int main(int c,char**v){
   ((int(*)(long,long,long,long,long))dlsym(h,"p_void"))(0,0,L,1,2);
   if(g_void != 9) return 3;
   int n=((int(*)(long,long,long,long,long))dlsym(h,"p_str"))(0,0,L,1234,0);
-  if(n != 6) { fprintf(stderr,"string_of: %d\n",n); return 4; }
+  if(n != 18) { fprintf(stderr,"string_of: %d\n",n); return 4; }
   if(g_released != 1) return 5;
   return 42;
 }`

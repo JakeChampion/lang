@@ -1,4 +1,5 @@
 import "std/test";
+import "std/result";
 import "std/crypto" as crypto;
 import "std/hex";
 import "std/string";
@@ -24,26 +25,41 @@ function __thousand_a(): string {
 }
 
 function test_empty(): test.TestOutcome {
-  return test.assert_eq(hex.encode(crypto.blake2b_new(64).finish()), "786a02f742015903c6c6fd852552d272912f4740e15847618a86e217f71f5419d25e1031afee585313896444934eb04b903a685b1448b755d56f701afe9be2ce");
+  let Ok(state) = crypto.blake2b_new(64) else {
+    return test.fail("rejected valid digest length");
+  };
+  return test.assert_eq(hex.encode(state.finish()), "786a02f742015903c6c6fd852552d272912f4740e15847618a86e217f71f5419d25e1031afee585313896444934eb04b903a685b1448b755d56f701afe9be2ce");
 }
 
 function test_abc(): test.TestOutcome {
-  return test.assert_eq(hex.encode(crypto.blake2b_new(64).update("abc".as_bytes()).finish()), "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923");
+  let Ok(state) = crypto.blake2b_new(64) else {
+    return test.fail("rejected valid digest length");
+  };
+  return test.assert_eq(hex.encode(state.update("abc".as_bytes()).finish()), "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923");
 }
 
 function test_multiblock(): test.TestOutcome {
+  let Ok(state) = crypto.blake2b_new(64) else {
+    return test.fail("rejected valid digest length");
+  };
   return test.assert_eq(
-    hex.encode(crypto.blake2b_new(64).update("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu".as_bytes()).finish()),
+    hex.encode(state.update("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu".as_bytes()).finish()),
     "ce741ac5930fe346811175c5227bb7bfcd47f42612fae46c0809514f9e0e3a11ee1773287147cdeaeedff50709aa716341fe65240f4ad6777d6bfaf9726e5e52",
   );
 }
 
 function test_bytes_len(): test.TestOutcome {
-  return test.assert_eq(crypto.blake2b_new(64).update("abc".as_bytes()).finish().len(), 64);
+  let Ok(state) = crypto.blake2b_new(64) else {
+    return test.fail("rejected valid digest length");
+  };
+  return test.assert_eq(state.update("abc".as_bytes()).finish().len(), 64);
 }
 
 function test_million_a_chunked(): test.TestOutcome {
-  let h = crypto.blake2b_new(64);
+  let Ok(state) = crypto.blake2b_new(64) else {
+    return test.fail("rejected valid digest length");
+  };
+  let h = state;
   let chunk = __thousand_a();
   let i = 0;
   while (i < 1000) {
@@ -54,8 +70,11 @@ function test_million_a_chunked(): test.TestOutcome {
 }
 
 function test_seven_byte_updates(): test.TestOutcome {
+  let Ok(state) = crypto.blake2b_new(64) else {
+    return test.fail("rejected valid digest length");
+  };
   let msg = __pseudo();
-  let h = crypto.blake2b_new(64);
+  let h = state;
   let i = 0;
   while (i + 7 <= 10003) {
     h = h.update(msg[i:i + 7]);
@@ -63,7 +82,7 @@ function test_seven_byte_updates(): test.TestOutcome {
   }
   h = h.update(msg[i:10003]);
   let chunked = hex.encode(h.finish());
-  let whole = hex.encode(crypto.blake2b_new(64).update(msg).finish());
+  let whole = hex.encode(state.update(msg).finish());
   if (chunked != "6088e8a2fde1d069eb0051accb83d114530aeb1a3ccd94ed6765a6d05d793de246a85a5b86a9725270b6403edf2f0db75189b920a4ad4ce54efb03a99df700c0") {
     return test.fail("chunked: " + chunked);
   }
@@ -71,25 +90,40 @@ function test_seven_byte_updates(): test.TestOutcome {
 }
 
 function test_update_bytes_and_oneshot(): test.TestOutcome {
-  let via_bytes = hex.encode(crypto.blake2b_new(64).update("abc".bytes()).finish());
-  if (via_bytes != hex.encode(crypto.blake2b("abc".as_bytes(), 64))) {
+  let Ok(state) = crypto.blake2b_new(64) else {
+    return test.fail("rejected valid digest length");
+  };
+  let via_bytes = hex.encode(state.update("abc".bytes()).finish());
+  if (via_bytes != hex.encode(crypto.blake2b("abc".as_bytes(), 64).unwrap_or([]))) {
     return test.fail("one-shot differs: " + via_bytes);
   }
   return test.assert_eq(via_bytes, "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923");
 }
 
 function test_digest_lengths(): test.TestOutcome {
-  if (hex.encode(crypto.blake2b("abc".as_bytes(), 20)) != "384264f676f39536840523f284921cdc68b6846b") {
+  let Ok(state) = crypto.blake2b_new(32) else {
+    return test.fail("rejected valid digest length");
+  };
+  if (hex.encode(crypto.blake2b("abc".as_bytes(), 20).unwrap_or([])) != "384264f676f39536840523f284921cdc68b6846b") {
     return test.fail("len 20");
   }
-  if (hex.encode(crypto.blake2b("abc".as_bytes(), 32)) != "bddd813c634239723171ef3fee98579b94964e3bb1cb3e427262c8c068d52319") {
+  if (hex.encode(crypto.blake2b("abc".as_bytes(), 32).unwrap_or([])) != "bddd813c634239723171ef3fee98579b94964e3bb1cb3e427262c8c068d52319") {
     return test.fail("len 32");
   }
-  if (hex.encode(crypto.blake2b("abc".as_bytes(), 1)) != "6b") {
+  if (hex.encode(crypto.blake2b("abc".as_bytes(), 1).unwrap_or([])) != "6b") {
     return test.fail("len 1");
   }
-  if (crypto.blake2b_new(32).update("abc".as_bytes()).finish().len() != 32) {
+  if (state.update("abc".as_bytes()).finish().len() != 32) {
     return test.fail("finish len");
+  }
+  return test.pass();
+}
+
+function test_invalid_lengths(): test.TestOutcome {
+  for length in [-1, 0, 65, 100] {
+    if (!crypto.blake2b_new(length).is_err() || !crypto.blake2b("abc".as_bytes(), length).is_err()) {
+      return test.fail("accepted invalid digest length");
+    }
   }
   return test.pass();
 }
@@ -104,5 +138,6 @@ function main(): i32 {
   r = r.it("7-byte updates", test_seven_byte_updates);
   r = r.it("update_bytes + one-shot", test_update_bytes_and_oneshot);
   r = r.it("digest lengths", test_digest_lengths);
+  r = r.it("invalid digest lengths", test_invalid_lengths);
   return r.finish();
 }

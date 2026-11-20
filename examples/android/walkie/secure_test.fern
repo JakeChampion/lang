@@ -39,7 +39,7 @@ function channels(a: secure.Handshake, b: secure.Handshake): (secure.Channel, se
     },
     None => {}
   }
-  return (secure.channel(secure.Keys { send_ctl: cell_new([]), recv_ctl: cell_new([]), send_voice: cell_new([]), recv_voice: cell_new([]), sas: "", binding: [], send_id: cell_new([]), recv_id: cell_new([]) }), secure.channel(secure.Keys { send_ctl: cell_new([]), recv_ctl: cell_new([]), send_voice: cell_new([]), recv_voice: cell_new([]), sas: "x", binding: [], send_id: cell_new([]), recv_id: cell_new([]) }));
+  return (secure.channel(secure.Keys { send_ctl: cell_new([]), recv_ctl: cell_new([]), send_voice: cell_new([]), recv_voice: cell_new([]), sas: "", binding: [], send_id: cell_new([]), recv_id: cell_new([]), next_id: cell_new(0i64) }), secure.channel(secure.Keys { send_ctl: cell_new([]), recv_ctl: cell_new([]), send_voice: cell_new([]), recv_voice: cell_new([]), sas: "x", binding: [], send_id: cell_new([]), recv_id: cell_new([]), next_id: cell_new(0i64) }));
 }
 
 // The text and the sequence number of an opened voice frame.
@@ -574,6 +574,34 @@ function test_identity_tag_needs_the_key(): test.TestOutcome {
   return test.assert_eq(shown(known, ida.public_point()) + " " + shown(strange, ida.public_point()) + " " + shown(moved, ida.public_point()) + " " + shown(not_proof, ida.public_point()), "true refused refused refused");
 }
 
+function test_identity_nonces(): test.TestOutcome {
+  let Some((ka, kb)) = bundles("alice", "bob") else {
+    return test.fail("no keys");
+  };
+  let Some(alice) = id_key("alice") else {
+    return test.fail("no identity");
+  };
+  let Some(other) = id_key("other") else {
+    return test.fail("no other identity");
+  };
+  let copy = ka;
+  let a = secure.announce(ka, alice);
+  let b = secure.announce(copy, other);
+  let proof = secure.prove(ka, alice);
+  if (a.len() < 13 || b.len() < 13 || proof.len() < 13) {
+    return test.fail("missing identity header");
+  }
+  if (a[12] != 0u8 || b[12] != 1u8 || proof[12] != 2u8) {
+    return test.fail("identity nonce sequence");
+  }
+  let pins = [alice.public_point(), other.public_point()];
+  if (shown(secure.recognize(kb, b, pins), pins[1]) != "true" || shown(secure.recognize(kb, a, pins), pins[0]) != "true") {
+    return test.fail("reordered tags");
+  }
+  ka.next_id.set(9223372036854775807i64);
+  return test.assert_eq(secure.announce(copy, alice).len(), 0);
+}
+
 // The identity on the channel is signed for the exchange of the channel.
 function test_pin_message_is_bound_to_its_channel(): test.TestOutcome {
   let Some((ka, kb)) = bundles("alice", "bob") else {
@@ -683,5 +711,6 @@ function main(): i32 {
   r = r.it("sequence boundaries leave the replay window intact", test_sequence_boundaries_do_not_change_the_window);
   r = r.it("a key reply before the commitment is ignored", test_initiator_must_commit_before_a_key_reply);
   r = r.it("handshake aliases cannot reuse a key reply", test_handshake_aliases_cannot_reuse_a_key_reply);
+  r = r.it("identity frames share a sending counter", test_identity_nonces);
   return r.finish();
 }

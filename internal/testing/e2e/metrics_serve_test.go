@@ -27,16 +27,6 @@ import "core/int";
 
 function main(): i32 {
   let hits: metrics.Counter = metrics.counter("hits_total", "Requests the handler saw.");
-  let port: i32 = 0;
-  match (env("METRICS_PORT")) {
-    Some(p) => {
-      match (i32.parse_i32_radix(p, 10)) {
-        Ok(n) => { port = n; },
-        Err(_) => {}
-      }
-    },
-    None => {}
-  }
   let workers: i32 = 1;
   match (env("WORKERS")) {
     Some(w) => {
@@ -47,7 +37,7 @@ function main(): i32 {
     },
     None => {}
   }
-  let cfg: serve.Config = serve.Config { ...serve.config(), workers: workers, metrics: metrics.registry().with_counter(hits), metrics_port: port };
+  let cfg: serve.Config = serve.Config { ...serve.config(), workers: workers, metrics: metrics.registry().with_counter(hits), on_metrics_listen: Some((port: i32): void => { print(port.to_string()); }) };
   return serve.exit_code(serve.supervise(0, cfg, (req: HttpRequest, plat: platform.Host): HttpResponse => {
     hits.inc();
     if (req.path == "/missing") {
@@ -70,12 +60,9 @@ func writeMetricsServeSource(t *testing.T) string {
 func TestMetricsServeInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := writeMetricsServeSource(t)
-	ln := e2eharness.ListenInherited(t)
-	port := freeLoopbackPort(t)
 	cmd := exec.Command(bin, "-interp", src)
-	cmd.Env = append(os.Environ(), fmt.Sprintf("METRICS_PORT=%d", port), "WORKERS=1")
-	addr, _ := ln.Start(t, cmd)
-	checkMetricsServe(t, addr, fmt.Sprintf("127.0.0.1:%d", port), 1)
+	addr, metricsAddr, _ := startMetricsServe(t, cmd, 1)
+	checkMetricsServe(t, addr, metricsAddr, 1)
 }
 
 func TestMetricsSupervisedServeX86_64(t *testing.T) {
@@ -86,28 +73,39 @@ func TestMetricsSupervisedServeX86_64(t *testing.T) {
 	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", out, src).CombinedOutput(); err != nil {
 		t.Fatalf("build failed: %v\n%s", err, o)
 	}
-	ln := e2eharness.ListenInherited(t)
-	port := freeLoopbackPort(t)
 	cmd := runX86Bin(qemu, out)
-	cmd.Env = append(os.Environ(), fmt.Sprintf("METRICS_PORT=%d", port), "WORKERS=2")
-	addr, stderrPath := ln.Start(t, cmd)
-	checkMetricsServe(t, addr, fmt.Sprintf("127.0.0.1:%d", port), 2)
+	addr, metricsAddr, stderrPath := startMetricsServe(t, cmd, 2)
+	checkMetricsServe(t, addr, metricsAddr, 2)
 	if b, _ := os.ReadFile(stderrPath); strings.Contains(string(b), "worker died") {
 		t.Fatalf("a worker died:\n%s", b)
 	}
 }
 
-// freeLoopbackPort gives a port that no socket holds now. Another socket can
-// take it before the server binds it (#16213).
-func freeLoopbackPort(t *testing.T) int {
+// The application inherits its listener and reports the metrics port after binding it.
+func startMetricsServe(t *testing.T, cmd *exec.Cmd, workers int) (addr, metricsAddr, stderrPath string) {
 	t.Helper()
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	out, writer, err := os.Pipe()
 	if err != nil {
-		t.Fatalf("no free TCP port: %v", err)
+		t.Fatal(err)
 	}
-	port := probe.Addr().(*net.TCPAddr).Port
-	probe.Close()
-	return port
+	defer out.Close()
+	defer writer.Close()
+	cmd.Stdout = writer
+	cmd.Env = append(os.Environ(), fmt.Sprintf("WORKERS=%d", workers))
+	addr, stderrPath = e2eharness.StartInheritedServer(t, cmd)
+	writer.Close()
+	if err := out.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	line, err := bufio.NewReader(out).ReadString('\n')
+	if err != nil {
+		t.Fatalf("read metrics port: %v", err)
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil || port < 1 || port > 65535 {
+		t.Fatalf("invalid metrics listener port %q", line)
+	}
+	return addr, fmt.Sprintf("127.0.0.1:%d", port), stderrPath
 }
 
 func checkMetricsServe(t *testing.T, addr, metricsAddr string, workers int) {

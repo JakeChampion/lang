@@ -181,7 +181,11 @@ function ctx_new(kind: i32, bits: i32): Ctx {
     }
     return CSha3(crypto.sha3_512_new());
   }
-  return CB2(crypto.blake2b_new(bits / 8));
+  let Ok(h) = crypto.blake2b_new(bits / 8) else {
+    gnu.error("invalid BLAKE2b digest length");
+    exit(1);
+  };
+  return CB2(h);
 }
 
 function ctx_update(c: Ctx, chunk: u8[]): Ctx {
