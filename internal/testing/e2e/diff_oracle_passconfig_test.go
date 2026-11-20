@@ -117,7 +117,7 @@ func bisectSelfHostSeed(t *testing.T, fernBin, stdlibRoot, target, src string, f
 		t.Fatalf("write src: %v", err)
 	}
 	args := append(append([]string{"-target", target}, flags...), "-emit", "asm", "-o", filepath.Join(dir, "prog.s"), srcPath, stdlibRoot)
-	out, hung, _ := compileSelfHostSeed(fernBin, append(append([]string{}, env...), "FERN_OPT_TRACE=1"), args...)
+	out, hung, _ := compileSelfHostSeed(fernBin, append(append([]string{}, env...), "FERN_DEBUG_OPT_TRACE=1"), args...)
 	if hung {
 		return "decision bisect: the traced compile hung", "unbisected"
 	}

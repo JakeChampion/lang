@@ -62,7 +62,7 @@ func TestSelfHostOptBisectFindsTheDecision(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := e2eharness.SelfHostCompileCmd(t, target, src, filepath.Join(t.TempDir(), "prog"))
-	cmd.Env = e2eharness.SelfHostChildEnv("FERN_OPT_TRACE=1")
+	cmd.Env = e2eharness.SelfHostChildEnv("FERN_DEBUG_OPT_TRACE=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("traced compile: %v\n%s", err, out)
@@ -73,7 +73,7 @@ func TestSelfHostOptBisectFindsTheDecision(t *testing.T) {
 		traced = traced || d.String() == "reuse incr"
 	}
 	if !traced {
-		t.Fatalf("FERN_OPT_TRACE does not list `reuse incr`:\n%s", out)
+		t.Fatalf("FERN_DEBUG_OPT_TRACE does not list `reuse incr`:\n%s", out)
 	}
 
 	allocs := func(env []string) int64 {
@@ -117,7 +117,7 @@ func TestSelfHostOptBisectGatesTheCleanups(t *testing.T) {
 		t.Run(c.name+"/"+c.pass, func(t *testing.T) {
 			src := e2eharness.RepoPath("conformance", "cases", c.name, "main.fern")
 			cmd := e2eharness.SelfHostCompileCmd(t, target, src, filepath.Join(t.TempDir(), "prog"))
-			cmd.Env = e2eharness.SelfHostChildEnv("FERN_OPT_TRACE=1")
+			cmd.Env = e2eharness.SelfHostChildEnv("FERN_DEBUG_OPT_TRACE=1")
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("traced compile: %v\n%s", err, out)
@@ -127,7 +127,7 @@ func TestSelfHostOptBisectGatesTheCleanups(t *testing.T) {
 				traced = traced || d.Pass == c.pass
 			}
 			if !traced {
-				t.Fatalf("FERN_OPT_TRACE lists no %s decision:\n%s", c.pass, out)
+				t.Fatalf("FERN_DEBUG_OPT_TRACE lists no %s decision:\n%s", c.pass, out)
 			}
 			run := func(env []string) (string, int) {
 				cmd := exec.Command(e2eharness.CompileSelfHostFile(t, target, src, env))

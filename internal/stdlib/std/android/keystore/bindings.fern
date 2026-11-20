@@ -1,0 +1,395 @@
+// Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
+import "std/jni";
+
+// A java.security.KeyStore.
+pub struct KeyStore { ref: usize }
+
+pub function (x: KeyStore) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: KeyStore) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.security.KeyStore and the IDs of its members.
+pub struct KeyStoreClass { class: usize, id_get_instance: usize, id_get_key: usize, id_load: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function key_store_class(e: usize): Result[KeyStoreClass, jni.JavaError] {
+  let class = jni.global_class(e, "java/security/KeyStore")?;
+  let id_get_instance = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getInstance", "(Ljava/lang/String;)Ljava/security/KeyStore;"))?;
+  let id_get_key = jni.checked_id(e, class, jni.get_method_id(e, class, "getKey", "(Ljava/lang/String;[C)Ljava/security/Key;"))?;
+  let id_load = jni.checked_id(e, class, jni.get_method_id(e, class, "load", "(Ljava/security/KeyStore$LoadStoreParameter;)V"))?;
+  return Ok(KeyStoreClass { class: class, id_get_instance: id_get_instance, id_get_key: id_get_key, id_load: id_load });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: KeyStoreClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.security.KeyStore.getInstance(Ljava/lang/String;)Ljava/security/KeyStore;
+pub function (c: KeyStoreClass) get_instance(e: usize, a0: string): Result[KeyStore, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_get_instance, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(KeyStore { ref: got });
+}
+
+// java.security.KeyStore.getKey(Ljava/lang/String;[C)Ljava/security/Key;
+pub function (c: KeyStoreClass) get_key(e: usize, self: KeyStore, a0: string, a1: jni.Object): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_key, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// java.security.KeyStore.load(Ljava/security/KeyStore$LoadStoreParameter;)V
+pub function (c: KeyStoreClass) load(e: usize, self: KeyStore, a0: jni.Object): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_load, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A javax.crypto.KeyGenerator.
+pub struct KeyGenerator { ref: usize }
+
+pub function (x: KeyGenerator) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: KeyGenerator) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class javax.crypto.KeyGenerator and the IDs of its members.
+pub struct KeyGeneratorClass { class: usize, id_generate_key: usize, id_get_instance: usize, id_init: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function key_generator_class(e: usize): Result[KeyGeneratorClass, jni.JavaError] {
+  let class = jni.global_class(e, "javax/crypto/KeyGenerator")?;
+  let id_generate_key = jni.checked_id(e, class, jni.get_method_id(e, class, "generateKey", "()Ljavax/crypto/SecretKey;"))?;
+  let id_get_instance = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getInstance", "(Ljava/lang/String;Ljava/lang/String;)Ljavax/crypto/KeyGenerator;"))?;
+  let id_init = jni.checked_id(e, class, jni.get_method_id(e, class, "init", "(Ljava/security/spec/AlgorithmParameterSpec;)V"))?;
+  return Ok(KeyGeneratorClass { class: class, id_generate_key: id_generate_key, id_get_instance: id_get_instance, id_init: id_init });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: KeyGeneratorClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// javax.crypto.KeyGenerator.generateKey()Ljavax/crypto/SecretKey;
+pub function (c: KeyGeneratorClass) generate_key(e: usize, self: KeyGenerator): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_generate_key, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// javax.crypto.KeyGenerator.getInstance(Ljava/lang/String;Ljava/lang/String;)Ljavax/crypto/KeyGenerator;
+pub function (c: KeyGeneratorClass) get_instance(e: usize, a0: string, a1: string): Result[KeyGenerator, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let s1 = jni.new_string(e, a1);
+  jni.jvalue_set_int(args, 1, s1);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_get_instance, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.delete_local_ref(e, s1);
+  jni.check(e)?;
+  return Ok(KeyGenerator { ref: got });
+}
+
+// javax.crypto.KeyGenerator.init(Ljava/security/spec/AlgorithmParameterSpec;)V
+pub function (c: KeyGeneratorClass) init(e: usize, self: KeyGenerator, a0: jni.Object): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_init, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.security.keystore.KeyGenParameterSpec.Builder.
+pub struct KeyGenParameterSpec_Builder { ref: usize }
+
+pub function (x: KeyGenParameterSpec_Builder) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: KeyGenParameterSpec_Builder) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.security.keystore.KeyGenParameterSpec.Builder and the IDs of its members.
+pub struct KeyGenParameterSpec_BuilderClass { class: usize, id_new: usize, id_build: usize, id_set_block_modes: usize, id_set_encryption_paddings: usize, id_set_key_size: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function key_gen_parameter_spec_builder_class(e: usize): Result[KeyGenParameterSpec_BuilderClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/security/keystore/KeyGenParameterSpec$Builder")?;
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;I)V"))?;
+  let id_build = jni.checked_id(e, class, jni.get_method_id(e, class, "build", "()Landroid/security/keystore/KeyGenParameterSpec;"))?;
+  let id_set_block_modes = jni.checked_id(e, class, jni.get_method_id(e, class, "setBlockModes", "([Ljava/lang/String;)Landroid/security/keystore/KeyGenParameterSpec$Builder;"))?;
+  let id_set_encryption_paddings = jni.checked_id(e, class, jni.get_method_id(e, class, "setEncryptionPaddings", "([Ljava/lang/String;)Landroid/security/keystore/KeyGenParameterSpec$Builder;"))?;
+  let id_set_key_size = jni.checked_id(e, class, jni.get_method_id(e, class, "setKeySize", "(I)Landroid/security/keystore/KeyGenParameterSpec$Builder;"))?;
+  return Ok(KeyGenParameterSpec_BuilderClass { class: class, id_new: id_new, id_build: id_build, id_set_block_modes: id_set_block_modes, id_set_encryption_paddings: id_set_encryption_paddings, id_set_key_size: id_set_key_size });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: KeyGenParameterSpec_BuilderClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.security.keystore.KeyGenParameterSpec.Builder.<init>(Ljava/lang/String;I)V
+pub function (c: KeyGenParameterSpec_BuilderClass) new(e: usize, a0: string, a1: i32): Result[KeyGenParameterSpec_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(KeyGenParameterSpec_Builder { ref: got });
+}
+
+// android.security.keystore.KeyGenParameterSpec.Builder.build()Landroid/security/keystore/KeyGenParameterSpec;
+pub function (c: KeyGenParameterSpec_BuilderClass) build(e: usize, self: KeyGenParameterSpec_Builder): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_build, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// android.security.keystore.KeyGenParameterSpec.Builder.setBlockModes([Ljava/lang/String;)Landroid/security/keystore/KeyGenParameterSpec$Builder;
+pub function (c: KeyGenParameterSpec_BuilderClass) set_block_modes(e: usize, self: KeyGenParameterSpec_Builder, a0: jni.Object): Result[KeyGenParameterSpec_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_block_modes, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(KeyGenParameterSpec_Builder { ref: got });
+}
+
+// android.security.keystore.KeyGenParameterSpec.Builder.setEncryptionPaddings([Ljava/lang/String;)Landroid/security/keystore/KeyGenParameterSpec$Builder;
+pub function (c: KeyGenParameterSpec_BuilderClass) set_encryption_paddings(e: usize, self: KeyGenParameterSpec_Builder, a0: jni.Object): Result[KeyGenParameterSpec_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_encryption_paddings, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(KeyGenParameterSpec_Builder { ref: got });
+}
+
+// android.security.keystore.KeyGenParameterSpec.Builder.setKeySize(I)Landroid/security/keystore/KeyGenParameterSpec$Builder;
+pub function (c: KeyGenParameterSpec_BuilderClass) set_key_size(e: usize, self: KeyGenParameterSpec_Builder, a0: i32): Result[KeyGenParameterSpec_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_key_size, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(KeyGenParameterSpec_Builder { ref: got });
+}
+
+// A javax.crypto.Cipher.
+pub struct Cipher { ref: usize }
+
+pub function (x: Cipher) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Cipher) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class javax.crypto.Cipher and the IDs of its members.
+pub struct CipherClass { class: usize, id_do_final: usize, id_get_iv: usize, id_get_instance: usize, id_init_int_key: usize, id_init_int_key_algorithm_parameter_spec: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function cipher_class(e: usize): Result[CipherClass, jni.JavaError] {
+  let class = jni.global_class(e, "javax/crypto/Cipher")?;
+  let id_do_final = jni.checked_id(e, class, jni.get_method_id(e, class, "doFinal", "([B)[B"))?;
+  let id_get_iv = jni.checked_id(e, class, jni.get_method_id(e, class, "getIV", "()[B"))?;
+  let id_get_instance = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getInstance", "(Ljava/lang/String;)Ljavax/crypto/Cipher;"))?;
+  let id_init_int_key = jni.checked_id(e, class, jni.get_method_id(e, class, "init", "(ILjava/security/Key;)V"))?;
+  let id_init_int_key_algorithm_parameter_spec = jni.checked_id(e, class, jni.get_method_id(e, class, "init", "(ILjava/security/Key;Ljava/security/spec/AlgorithmParameterSpec;)V"))?;
+  return Ok(CipherClass { class: class, id_do_final: id_do_final, id_get_iv: id_get_iv, id_get_instance: id_get_instance, id_init_int_key: id_init_int_key, id_init_int_key_algorithm_parameter_spec: id_init_int_key_algorithm_parameter_spec });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: CipherClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// javax.crypto.Cipher.doFinal([B)[B
+pub function (c: CipherClass) do_final(e: usize, self: Cipher, a0: jni.Object): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_do_final, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// javax.crypto.Cipher.getIV()[B
+pub function (c: CipherClass) get_iv(e: usize, self: Cipher): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_iv, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// javax.crypto.Cipher.getInstance(Ljava/lang/String;)Ljavax/crypto/Cipher;
+pub function (c: CipherClass) get_instance(e: usize, a0: string): Result[Cipher, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_get_instance, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(Cipher { ref: got });
+}
+
+// javax.crypto.Cipher.init(ILjava/security/Key;)V
+pub function (c: CipherClass) init_int_key(e: usize, self: Cipher, a0: i32, a1: jni.Object): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_init_int_key, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// javax.crypto.Cipher.init(ILjava/security/Key;Ljava/security/spec/AlgorithmParameterSpec;)V
+pub function (c: CipherClass) init_int_key_algorithm_parameter_spec(e: usize, self: Cipher, a0: i32, a1: jni.Object, a2: jni.Object): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(3);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  jni.jvalue_set_int(args, 2, a2.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_init_int_key_algorithm_parameter_spec, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A javax.crypto.spec.GCMParameterSpec.
+pub struct GCMParameterSpec { ref: usize }
+
+pub function (x: GCMParameterSpec) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: GCMParameterSpec) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class javax.crypto.spec.GCMParameterSpec and the IDs of its members.
+pub struct GCMParameterSpecClass { class: usize, id_new: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function gcmparameter_spec_class(e: usize): Result[GCMParameterSpecClass, jni.JavaError] {
+  let class = jni.global_class(e, "javax/crypto/spec/GCMParameterSpec")?;
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(I[B)V"))?;
+  return Ok(GCMParameterSpecClass { class: class, id_new: id_new });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: GCMParameterSpecClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// javax.crypto.spec.GCMParameterSpec.<init>(I[B)V
+pub function (c: GCMParameterSpecClass) new(e: usize, a0: i32, a1: jni.Object): Result[GCMParameterSpec, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(GCMParameterSpec { ref: got });
+}
+
+// The struct of IDs of each class of this module.
+pub struct Classes { key_store: KeyStoreClass, key_generator: KeyGeneratorClass, key_gen_parameter_spec_builder: KeyGenParameterSpec_BuilderClass, cipher: CipherClass, gcmparameter_spec: GCMParameterSpecClass }
+
+// Makes the struct of IDs of each class. Call it one time, and call
+// `release` when the app does not call Java again. One lookup for each
+// class, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function classes(e: usize): Result[Classes, jni.JavaError] {
+  let key_store = match (key_store_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      return Err(err);
+    },
+  };
+  let key_generator = match (key_generator_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      key_store.release(e);
+      return Err(err);
+    },
+  };
+  let key_gen_parameter_spec_builder = match (key_gen_parameter_spec_builder_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      key_store.release(e);
+      key_generator.release(e);
+      return Err(err);
+    },
+  };
+  let cipher = match (cipher_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      key_store.release(e);
+      key_generator.release(e);
+      key_gen_parameter_spec_builder.release(e);
+      return Err(err);
+    },
+  };
+  let gcmparameter_spec = match (gcmparameter_spec_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      key_store.release(e);
+      key_generator.release(e);
+      key_gen_parameter_spec_builder.release(e);
+      cipher.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { key_store: key_store, key_generator: key_generator, key_gen_parameter_spec_builder: key_gen_parameter_spec_builder, cipher: cipher, gcmparameter_spec: gcmparameter_spec });
+}
+
+// Deletes the reference to each class. Do not use `c` after this call.
+pub function (c: Classes) release(e: usize): void {
+  c.key_store.release(e);
+  c.key_generator.release(e);
+  c.key_gen_parameter_spec_builder.release(e);
+  c.cipher.release(e);
+  c.gcmparameter_spec.release(e);
+}

@@ -1231,7 +1231,7 @@ function ssa_arg_loc(mask: string, p: i32): i32 {
 }
 
 function ssa_lane_refuse(what: string): void {
-  eprint("error: " + what + ": a lane value crosses a call only as one of the first " + util.i32_to_string(ssa_nargs()) + " arguments of a direct call, or as its result");
+  eprint("fern: error: " + what + ": a lane value crosses a call only as one of the first " + util.i32_to_string(ssa_nargs()) + " arguments of a direct call, or as its result");
   exit(3);
 }
 
@@ -5533,6 +5533,14 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     }
   }
   s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f), ssa_even: ssadeps.even_values(f) };
+  match (env("FERN_SSA_ALLOC")) {
+    Some(want) => {
+      if (want == label_name || want == "*") {
+        eprint("FERN_SSA_ALLOC: " + label_name + "\n" + ssa.print_func(f) + ssa.print_alloc_costs(f, picked.alloc, ssa.SpillCosts { fold_alu_rhs: false }));
+      }
+    },
+    None => {}
+  }
   let imm = picked.imm;
   let call_kinds = picked.call_kinds;
   let alloc = picked.alloc;
@@ -8262,6 +8270,10 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_lc_adopt_lo: .quad 0\n");
     s = s.write("__fern_lc_adopt_hi: .quad 0\n");
   }
+  if (s.sanitize) {
+    s = s.write("__fern_san_live: .quad 0\n");
+    s = s.write("__fern_san_census: .skip " + util.i32_to_string(16 * (asmcore.san_shape_count(s) + 1)) + "\n");
+  }
   s = s.write("    .section .rodata\n");
   s = s.write(".Llc_a:\n    .ascii \"leakcheck: allocs=\"\n");
   s = s.write(".Llc_f:\n    .ascii \" frees=\"\n");
@@ -8272,6 +8284,9 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Lsan_leak:\n    .ascii \"fern-sanitizer: leak \"\n");
     s = s.write(".Lsan_bytesin:\n    .ascii \" bytes in \"\n");
     s = s.write(".Lsan_blocks:\n    .ascii \" blocks\"\n");
+    s = s.write(".Lsan_row:\n    .ascii \"fern-sanitizer:   \"\n");
+    s = s.write(".Lsan_row_bytes:\n    .ascii \", bytes\\n\"\n");
+    s = san_shape_table(s);
   }
   s = s.write("    .text\n");
   s = s.write("    .globl __fern_lc_report_exit\n");
@@ -8377,6 +8392,7 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    add x1, x1, :lo12:.Llc_nl\n");
     s = s.write("    mov x2, #1\n");
     s = s.write("    bl .Llc_write\n");
+    s = san_census(s);
     s = s.write(".Lsan_leak_done:\n");
   }
   s = s.write(rt_unframe(s));
@@ -8649,33 +8665,82 @@ function emit_san_class(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    lsr x1, x1, #3\n.Lsan_class_done:\n    ldp x2, x3, [sp, #16]\n    ldp x29, x30, [sp], #32\n    ret\n");
 }
 
-// The allocation side of the redzone. The block takes its class and two
-// words more. The two words and the words of the class past the request get
-// the poison. The census counts the request alone. It uses x0 to x4, as the
-// allocator does.
+// The allocation side of the redzone. The block takes its class and six
+// words more. The two words after the class and the words of the class past
+// the request get the poison. The four words after them link the block into
+// __fern_san_live: the next and the previous link, the words of the class and
+// the words of the request. The census counts the request alone. It uses x0
+// to x4, as the allocator does.
 function emit_san_redzone_alloc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(rt_frame_of(s, 32) + "    mov x29, sp\n    str x0, [sp, #16]\n    add x1, x0, #7\n    lsr x1, x1, #3\n    bl __fern_san_class\n    str x1, [sp, #24]\n");
-  s = s.write("    add x0, x1, #2\n    lsl x0, x0, #3\n    bl __fern_alloc_inner\n    ldr x1, [sp, #24]\n");
+  s = s.write("    add x0, x1, #6\n    lsl x0, x0, #3\n    bl __fern_alloc_inner\n    ldr x1, [sp, #24]\n");
   if (s.leak_check) {
-    s = s.write("    ldr x2, [sp, #16]\n    add x2, x2, #7\n    lsr x2, x2, #3\n    add x3, x1, #2\n    sub x3, x3, x2\n");
+    s = s.write("    ldr x2, [sp, #16]\n    add x2, x2, #7\n    lsr x2, x2, #3\n    add x3, x1, #6\n    sub x3, x3, x2\n");
     s = s.write("    adrp x2, __fern_lc_alloc_bytes\n    add x2, x2, :lo12:__fern_lc_alloc_bytes\n    ldr x4, [x2]\n    sub x4, x4, x3, lsl #3\n    str x4, [x2]\n");
   }
   s = s.write("    add x3, x0, x1, lsl #3\n" + rc_poison_into("w2") + "    orr x2, x2, x2, lsl #32\n    str x2, [x3]\n    str x2, [x3, #8]\n");
   s = s.write("    ldr x4, [sp, #16]\n    add x4, x4, #7\n    lsr x4, x4, #3\n.Lsan_slack_fill:\n    cmp x4, x1\n    b.hs .Lsan_slack_filled\n");
   s = s.write("    str x2, [x0, x4, lsl #3]\n    add x4, x4, #1\n    b .Lsan_slack_fill\n.Lsan_slack_filled:\n");
+  s = s.write("    add x3, x0, x1, lsl #3\n    add x3, x3, #16\n    str x1, [x3, #16]\n    ldr x4, [sp, #16]\n    add x4, x4, #7\n    lsr x4, x4, #3\n    str x4, [x3, #24]\n");
+  s = s.write("    adrp x2, __fern_san_live\n    add x2, x2, :lo12:__fern_san_live\n    ldr x4, [x2]\n    str x4, [x3]\n    str xzr, [x3, #8]\n");
+  s = s.write("    cbz x4, .Lsan_live_first\n    str x3, [x4, #8]\n.Lsan_live_first:\n    str x3, [x2]\n");
   return s.write(rt_unframe_of(s, 32) + "    ret\n");
 }
 
 // The release side: x0 is the block and x1 its size in words. A word past
 // the request that lost the pattern was written past the end of the block.
-// It uses x9 to x12. x1 then holds the
-// words of the whole block, the redzone too, so that the quarantine hands
-// the block to the free list that the allocation takes from.
+// The block leaves __fern_san_live when its links agree with the list, so a
+// block that a worker made is left alone. It uses x9 to x12. x1 then holds
+// the words of the whole block, so that the quarantine hands the block to the
+// free list that the allocation takes from.
 function san_redzone_check(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cbz x1, .Lquar_redzone_ok\n    str x30, [sp, #-16]!\n    mov x12, x1\n    bl __fern_san_class\n    add x9, x0, x1, lsl #3\n" + rc_poison_into("w10") + "    orr x10, x10, x10, lsl #32\n");
   s = s.write(".Lquar_slack:\n    cmp x12, x1\n    b.hs .Lquar_slack_ok\n    ldr x11, [x0, x12, lsl #3]\n    cmp x11, x10\n    b.ne __fern_san_abort_hbo\n    add x12, x12, #1\n    b .Lquar_slack\n.Lquar_slack_ok:\n");
   s = s.write("    ldr x11, [x9]\n    cmp x11, x10\n    b.ne __fern_san_abort_hbo\n    ldr x11, [x9, #8]\n    cmp x11, x10\n    b.ne __fern_san_abort_hbo\n");
-  return s.write("    add x1, x1, #2\n    ldr x30, [sp], #16\n.Lquar_redzone_ok:\n");
+  s = s.write("    add x9, x0, x1, lsl #3\n    add x9, x9, #16\n    ldr x10, [x9]\n    ldr x11, [x9, #8]\n    cbz x11, .Lsan_unlink_head\n");
+  s = s.write("    ldr x12, [x11]\n    cmp x12, x9\n    b.ne .Lsan_unlink_done\n    b .Lsan_unlink_next\n");
+  s = s.write(".Lsan_unlink_head:\n    adrp x12, __fern_san_live\n    add x12, x12, :lo12:__fern_san_live\n    ldr x12, [x12]\n    cmp x12, x9\n    b.ne .Lsan_unlink_done\n");
+  s = s.write(".Lsan_unlink_next:\n    cbz x10, .Lsan_unlink\n    ldr x12, [x10, #8]\n    cmp x12, x9\n    b.ne .Lsan_unlink_done\n");
+  s = s.write(".Lsan_unlink:\n    cbz x11, .Lsan_unlink_first\n    str x10, [x11]\n    b .Lsan_unlink_back\n");
+  s = s.write(".Lsan_unlink_first:\n    adrp x12, __fern_san_live\n    add x12, x12, :lo12:__fern_san_live\n    str x10, [x12]\n");
+  s = s.write(".Lsan_unlink_back:\n    cbz x10, .Lsan_unlink_done\n    str x11, [x10, #8]\n.Lsan_unlink_done:\n");
+  return s.write("    add x1, x1, #6\n    ldr x30, [sp], #16\n.Lquar_redzone_ok:\n");
+}
+
+// The name of each shape id, its length and the words of its box
+// (asmcore.san_shape_names).
+function san_shape_table(s: asmcore.EmitState): asmcore.EmitState {
+  let names = asmcore.san_shape_names(s);
+  for id in 0..names.len() {
+    s = s.write(".Lsan_sn_" + util.i32_to_string(id) + ":\n    .ascii \"" + names[id] + "\"\n");
+  }
+  s = s.write("    .data\n    .align 3\n.Lsan_shapes:\n");
+  for id in 0..names.len() {
+    s = s.write("    .quad .Lsan_sn_" + util.i32_to_string(id) + "\n    .quad " + util.i32_to_string(names[id].len()) + "\n    .quad " + util.i64_to_string(asmcore.san_shape_words(s, id)) + "\n");
+  }
+  return s.write("    .section .rodata\n");
+}
+
+// After a leak verdict: each block still in __fern_san_live is counted under
+// the shape id in its header, and each shape that leaked gets a line with its
+// number of blocks and bytes. A header whose number of words is not that of
+// its shape counts as a block with no shape.
+function san_census(s: asmcore.EmitState): asmcore.EmitState {
+  let n = mov_imm64("x12", asmcore.san_shape_count(s) as i64);
+  s = s.write("    stp x19, x20, [sp, #-32]!\n    str x21, [sp, #16]\n    adrp x19, __fern_san_live\n    add x19, x19, :lo12:__fern_san_live\n    ldr x19, [x19]\n");
+  s = s.write(".Lsan_cen_walk:\n    cbz x19, .Lsan_cen_print\n    ldr x9, [x19, #16]\n    add x9, x9, #2\n    lsl x9, x9, #3\n    sub x20, x19, x9\n");
+  s = s.write("    ldr w9, [x20, #4]\n    lsr w10, w9, #16\n    and w11, w9, #0xffff\n" + n + "    cmp x10, x12\n    b.hi .Lsan_cen_none\n");
+  s = s.write("    adrp x12, .Lsan_shapes\n    add x12, x12, :lo12:.Lsan_shapes\n    mov x13, #24\n    madd x13, x10, x13, x12\n    ldr x14, [x13, #16]\n    cmp x14, x11\n    b.eq .Lsan_cen_have\n");
+  s = s.write(".Lsan_cen_none:\n    mov x10, #0\n.Lsan_cen_have:\n    adrp x12, __fern_san_census\n    add x12, x12, :lo12:__fern_san_census\n    add x12, x12, x10, lsl #4\n");
+  s = s.write("    ldr x13, [x12]\n    add x13, x13, #1\n    str x13, [x12]\n    ldr x13, [x19, #24]\n    ldr x14, [x12, #8]\n    add x14, x14, x13, lsl #3\n    str x14, [x12, #8]\n");
+  s = s.write("    ldr x19, [x19]\n    b .Lsan_cen_walk\n.Lsan_cen_print:\n    mov x19, #0\n");
+  s = s.write(".Lsan_cen_loop:\n" + n + "    cmp x19, x12\n    b.hi .Lsan_cen_end\n    adrp x20, __fern_san_census\n    add x20, x20, :lo12:__fern_san_census\n    add x20, x20, x19, lsl #4\n");
+  s = s.write("    ldr x9, [x20]\n    cbz x9, .Lsan_cen_next\n    adrp x1, .Lsan_row\n    add x1, x1, :lo12:.Lsan_row\n    mov x2, #17\n    bl .Llc_write\n    ldr x0, [x20]\n    bl .Llc_wrnum\n");
+  s = s.write("    adrp x1, .Lsan_row\n    add x1, x1, :lo12:.Lsan_row\n    add x1, x1, #16\n    mov x2, #1\n    bl .Llc_write\n");
+  s = s.write("    adrp x21, .Lsan_shapes\n    add x21, x21, :lo12:.Lsan_shapes\n    mov x9, #24\n    madd x21, x19, x9, x21\n    ldr x1, [x21]\n    ldr x2, [x21, #8]\n    bl .Llc_write\n");
+  s = s.write("    adrp x1, .Lsan_row_bytes\n    add x1, x1, :lo12:.Lsan_row_bytes\n    mov x2, #2\n    bl .Llc_write\n    ldr x0, [x20, #8]\n    bl .Llc_wrnum\n");
+  s = s.write("    adrp x1, .Lsan_row_bytes\n    add x1, x1, :lo12:.Lsan_row_bytes\n    add x1, x1, #1\n    mov x2, #7\n    bl .Llc_write\n");
+  return s.write(".Lsan_cen_next:\n    add x19, x19, #1\n    b .Lsan_cen_loop\n.Lsan_cen_end:\n    ldr x21, [sp, #16]\n    ldp x19, x20, [sp], #32\n");
 }
 
 function emit_san_hbo_abort(s: asmcore.EmitState): asmcore.EmitState {

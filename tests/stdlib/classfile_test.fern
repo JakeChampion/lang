@@ -123,6 +123,109 @@ function test_field_type(): test.TestOutcome {
   return test.assert_eq(got, "I*0 Ljava/util/List*2 none none none none");
 }
 
+function flow(): classfile.Class {
+  let Ok(c) = classfile.parse(classfile_vectors.flow()) else {
+    exit(91);
+  };
+  return c;
+}
+
+// The method `name` of `c`.
+function method_named(c: classfile.Class, name: string): classfile.Method {
+  for m in c.methods {
+    if (m.name == name) {
+      return m;
+    }
+  }
+  exit(92);
+}
+
+// The code of Flow.safe: the sizes, the length of the bytecode, and the
+// handlers that javap -c gives, with the class "any" for a finally.
+function test_code(): test.TestOutcome {
+  let m = method_named(flow(), "safe");
+  let Some(code) = m.code else {
+    return test.fail("safe has no code");
+  };
+  let out: string[] = [];
+  for h in code.handlers {
+    out = out.append(h.start.to_string() + "-" + h.end.to_string() + ">" + h.target.to_string() + " " + (if (h.catch_type == "") { "any" } else { h.catch_type }));
+  }
+  let got = code.max_stack.to_string() + " " + code.max_locals.to_string() + " " + (code.bytes[0] as i32).to_string() + " | " + out.join(", ") + " | " + m.throws.join(",");
+  return test.assert_eq(got, "2 5 42 | 0-4>8 java/lang/ArrayIndexOutOfBoundsException, 0-4>15 java/lang/NullPointerException, 0-4>15 java/lang/ClassCastException, 0-4>23 any, 8-11>23 any, 15-19>23 any, 23-25>23 any | java/lang/IllegalStateException,java/io/IOException");
+}
+
+// The text of the constant `index` of `c`.
+function entry_text(c: classfile.Class, index: i32): string {
+  return match (c.pool[index]) {
+    Unused => "unused",
+    Utf8(t) => "utf8 " + t,
+    ClassOf(n) => "class " + n,
+    MethodRef(r) => "method " + r.class + "." + r.name + r.descriptor,
+    Handle(kind, target) => "handle " + kind.to_string() + " " + entry_text(c, target),
+    MethodType(d) => "type " + d,
+    InvokeDynamic(b, name, d) => "indy " + b.to_string() + " " + name + d,
+    _ => "other",
+  };
+}
+
+// The lambda of Flow.later: its constant InvokeDynamic, and the bootstrap
+// method LambdaMetafactory.metafactory with its three arguments.
+function test_bootstraps(): test.TestOutcome {
+  let c = flow();
+  let Some(code) = method_named(c, "later").code else {
+    return test.fail("later has no code");
+  };
+  // The bytecode is iload_0, then invokedynamic with a 2-byte index.
+  let indy = code.bytes[2] as i32 << 8 | code.bytes[3] as i32;
+  let b = c.bootstraps[0];
+  let args: string[] = [];
+  for a in b.args {
+    args = args.append(entry_text(c, a));
+  }
+  let got = entry_text(c, indy) + " | " + c.bootstraps.len().to_string() + " " + entry_text(c, b.method) + " | " + args.join("; ");
+  return test.assert_eq(got, "indy 0 getAsInt(I)Ljava/util/function/IntSupplier; | 1 handle 6 method java/lang/invoke/LambdaMetafactory.metafactory(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite; | type ()I; handle 6 method dev/fern/Flow.lambda$later$0(I)I; type ()I");
+}
+
+// class_at and ref_at give the class and the method of an index of the
+// pool, and None for an index of another kind or outside the pool.
+function test_pool_refs(): test.TestOutcome {
+  let c = flow();
+  let Handle(_, target) = c.pool[c.bootstraps[0].args[1]] else {
+    return test.fail("the second argument is not a method handle");
+  };
+  let method = match (c.ref_at(target)) {
+    Some(r) => r.class + "." + r.name + r.descriptor,
+    None => "none",
+  };
+  let classes: string[] = [];
+  let first = -1;
+  for k in 0..c.pool.len() {
+    if let Some(n) = c.class_at(k) {
+      classes = classes.append(n);
+      first = if (first < 0) { k } else { first };
+    }
+  }
+  let misses = [c.ref_at(first).is_none(), c.class_at(target).is_none(), c.class_at(0).is_none(), c.class_at(c.pool.len()).is_none(), c.ref_at(-1).is_none()];
+  let got = method + " | " + has_text(classes, "dev/fern/Flow").to_string() + " | " + misses.map((m: boolean): string => m.to_string()).join(",");
+  return test.assert_eq(got, "dev/fern/Flow.lambda$later$0(I)I | true | true,true,true,true,true");
+}
+
+function has_text(xs: string[], x: string): boolean {
+  for y in xs {
+    if (y == x) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// A method with no code: the native method of Sample.
+function test_no_code(): test.TestOutcome {
+  let rows = method_named(sample(), "rows");
+  return test.assert_eq(rows.code.is_none().to_string() + " " + method_named(sample(), "size").code.is_some().to_string(), "true true");
+}
+
 function refusal(bytes: [u8]): string {
   return match (classfile.parse(bytes)) {
     Ok(c) => "ok " + c.name,
@@ -146,18 +249,15 @@ function test_each_prefix(): test.TestOutcome {
   let Ok(whole) = classfile.parse(good) else {
     return test.fail("the class does not parse");
   };
-  let parsed = 0;
+  // The attributes of the class end the file, and parse reads them, so no
+  // prefix parses.
+  let parsed: i32[] = [];
   for n in 0..good.len() {
     if let Ok(c) = classfile.parse(good[0:n]) {
-      // The attributes of the class come after the last method, and parse
-      // does not read them.
-      if (c.methods.len() != whole.methods.len()) {
-        return test.fail("a prefix of " + n.to_string() + " bytes gave a different class");
-      }
-      parsed += 1;
+      parsed = parsed.append(n);
     }
   }
-  return test.assert_true(parsed < 200);
+  return test.assert_eq(parsed.len().to_string() + " " + whole.methods.len().to_string(), "0 9");
 }
 
 function main(): i32 {
@@ -171,6 +271,10 @@ function main(): i32 {
   r = r.it("signature reads the descriptor of a method", test_signature);
   r = r.it("signature refuses a text that is not a descriptor", test_signature_refusals);
   r = r.it("field_type reads the descriptor of a field", test_field_type);
+  r = r.it("parse reads the code and the handlers of a method", test_code);
+  r = r.it("parse reads the bootstrap methods and the constant pool", test_bootstraps);
+  r = r.it("a native method has no code", test_no_code);
+  r = r.it("class_at and ref_at give the class and the method of an index", test_pool_refs);
   r = r.it("parse refuses a damaged class file", test_refusals);
   r = r.it("parse is safe on each prefix of a class file", test_each_prefix);
   return r.finish();

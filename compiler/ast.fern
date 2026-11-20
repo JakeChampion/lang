@@ -613,7 +613,10 @@ pub function destr_names(d: Destr): string[] {
   return out;
 }
 
-pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, fn_ret: string, fn_param_types: string, destr: Destr }
+// A header binding comes from the header of the block that holds it: a
+// parameter pattern, a loop variable or a match-arm pattern. The block can
+// declare its names again.
+pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, fn_ret: string, fn_param_types: string, destr: Destr, header: boolean }
 
 pub function destructures(v: StmtVar): boolean {
   return v.destr.binds.len() > 0;

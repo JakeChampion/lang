@@ -12,8 +12,11 @@ name: Android
 # the hardened library runs under Android's loader and app seccomp filter.
 # tests/android/dex is an app with @jni classes in the classes.dex that fern
 # -apk writes, and its check requires that ART loads, constructs and binds
-# them. tests/android/audio checks std/android/audio and a JNI call from
-# the loop thread, so the emulator runs with its audio on.
+# them. tests/android/dexer is a Java program that fern -dex compiles to a
+# DEX file, with no D8. ART runs it on the emulator through app_process, and
+# its output must be the output of the JVM. tests/android/audio checks
+# std/android/audio and a JNI call from the loop thread, so the emulator
+# runs with its audio on.
 # tests/android/video checks codec discovery, two encoder input paths, MP4
 # export, decoded pixels, and surface playback after pause and seek.
 # tests/android/player checks AAC+AVC playback, pause, seek, platform timestamps,
@@ -104,6 +107,16 @@ jobs:
           key: media3-${{ hashFiles('tools/media3/media3.lock') }}
       - name: Get Media3 ExoPlayer
         run: tools/media3/fetch
+      # The JVM output of the program must be expected.txt, and D8 must read
+      # the DEX file of fern -dex.
+      - name: Write the DEX file of the dexer test
+        run: |
+          make bin/fern
+          mkdir -p build/android-stopwatch build/dexer
+          javac --release 8 -nowarn -d build/dexer/classes tests/android/dexer/dev/fern/dexer/Main.java
+          java -cp build/dexer/classes dev.fern.dexer.Main | diff -u tests/android/dexer/expected.txt -
+          find build/dexer/classes -name '*.class' -print0 | xargs -0 ./bin/fern -dex build/android-stopwatch/dexer.dex
+          java -cp build/media3/cache/r8-9.5.29.jar com.android.tools.r8.D8 --min-api 24 --output build/dexer build/android-stopwatch/dexer.dex
       - name: Build the stopwatch APK and the logcat report program
         run: |
           make bin/fern
@@ -186,6 +199,7 @@ jobs:
             build/android-stopwatch/fern-native-compressed.apk
             build/android-stopwatch/fern-native-hardened.apk
             build/android-stopwatch/fern-dextest.apk
+            build/android-stopwatch/dexer.dex
             build/android-stopwatch/fern-audiotest.apk
             build/android-stopwatch/fern-videotest.apk
             build/android-stopwatch/fern-playertest.apk
@@ -274,6 +288,7 @@ jobs:
             python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native-compressed.apk dev.fern.nativez build/android-stopwatch/emulator/native-compressed extracted || echo "examples/android/native dev.fern.nativez" >> build/android-stopwatch/emulator/failed
             python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native-hardened.apk dev.fern.nativeh build/android-stopwatch/emulator/native-hardened mapped || echo "examples/android/native dev.fern.nativeh" >> build/android-stopwatch/emulator/failed
             python3 tests/android/dex/emulator_check.py build/android-stopwatch/fern-dextest.apk build/android-stopwatch/emulator/dex || echo "tests/android/dex" >> build/android-stopwatch/emulator/failed
+            python3 tests/android/dexer/emulator_check.py build/android-stopwatch/dexer.dex tests/android/dexer/expected.txt build/android-stopwatch/emulator/dexer || echo "tests/android/dexer" >> build/android-stopwatch/emulator/failed
             python3 tests/android/audio/emulator_check.py build/android-stopwatch/fern-audiotest.apk build/android-stopwatch/emulator/audio || echo "tests/android/audio" >> build/android-stopwatch/emulator/failed
             python3 tests/android/video/emulator_check.py build/android-stopwatch/fern-videotest.apk build/android-stopwatch/emulator/video || echo "tests/android/video" >> build/android-stopwatch/emulator/failed
             python3 tests/android/player/emulator_check.py build/android-stopwatch/fern-playertest.apk build/android-stopwatch/emulator/player build/android-stopwatch/fern-videotest.apk build/android-stopwatch/emulator/video/byte.mp4 || echo "tests/android/player" >> build/android-stopwatch/emulator/failed
@@ -289,7 +304,11 @@ jobs:
             chmod +x build/android-stopwatch/jnibind
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" tests/android/jnibind/bindings.spec | diff -u tests/android/jnibind/bindings.fern - || echo "bindings of tests/android/jnibind" >> build/android-stopwatch/emulator/failed
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" examples/android/paper/bindings.spec | diff -u examples/android/paper/bindings.fern - || echo "bindings of examples/android/paper" >> build/android-stopwatch/emulator/failed
+            build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/focus/bindings.spec | diff -u internal/stdlib/std/android/focus/bindings.fern - || echo "bindings of std/android/focus" >> build/android-stopwatch/emulator/failed
+            build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/noisy/bindings.spec | diff -u internal/stdlib/std/android/noisy/bindings.fern - || echo "bindings of std/android/noisy" >> build/android-stopwatch/emulator/failed
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/watchnext/bindings.spec | diff -u internal/stdlib/std/android/watchnext/bindings.fern - || echo "bindings of std/android/watchnext" >> build/android-stopwatch/emulator/failed
+            build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/download/bindings.spec | diff -u internal/stdlib/std/android/download/bindings.fern - || echo "bindings of std/android/download" >> build/android-stopwatch/emulator/failed
+            build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/keystore/bindings.spec | diff -u internal/stdlib/std/android/keystore/bindings.fern - || echo "bindings of std/android/keystore" >> build/android-stopwatch/emulator/failed
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" build/media3/jars/*.jar internal/stdlib/std/android/exoplayer/bindings.spec | diff -u internal/stdlib/std/android/exoplayer/bindings.fern - || echo "bindings of std/android/exoplayer" >> build/android-stopwatch/emulator/failed
             python3 examples/android/counter/emulator_check.py build/android-stopwatch/fern-counter.apk build/android-stopwatch/emulator/counter || echo "examples/android/counter" >> build/android-stopwatch/emulator/failed
             adb uninstall dev.fern.counter || true
@@ -297,7 +316,7 @@ jobs:
             python3 examples/android/todo/emulator_check.py build/android-stopwatch/fern-todo.apk build/android-stopwatch/emulator/todo || echo "examples/android/todo" >> build/android-stopwatch/emulator/failed
             python3 examples/android/fluid/emulator_check.py build/android-stopwatch/fern-fluid.apk build/android-stopwatch/emulator/fluid || echo "examples/android/fluid" >> build/android-stopwatch/emulator/failed
             python3 examples/android/tune/emulator_check.py build/android-stopwatch/fern-tune.apk build/android-stopwatch/emulator/tune || echo "examples/android/tune" >> build/android-stopwatch/emulator/failed
-            python3 examples/android/paper/emulator_check.py build/android-stopwatch/fern-paper.apk build/android-stopwatch/emulator/paper || echo "examples/android/paper" >> build/android-stopwatch/emulator/failed
+            python3 examples/android/paper/emulator_check.py build/android-stopwatch/fern-paper.apk build/android-stopwatch/fern-notifytest.apk build/android-stopwatch/emulator/paper || echo "examples/android/paper" >> build/android-stopwatch/emulator/failed
             python3 examples/android/plex/emulator_check.py build/android-stopwatch/fern-plex.apk build/android-stopwatch/emulator/plex build/android-stopwatch/pattern.mp4 || echo "examples/android/plex" >> build/android-stopwatch/emulator/failed
             python3 tests/android/tz/emulator_check.py build/android-stopwatch/zone build/android-stopwatch/emulator/tz || echo "tests/android/tz" >> build/android-stopwatch/emulator/failed
             python3 examples/android/walkie/emulator_check.py build/android-stopwatch/fern-walkie.apk build/android-stopwatch/fern-walkie2.apk build/android-stopwatch/emulator/walkie || echo "examples/android/walkie" >> build/android-stopwatch/emulator/failed
@@ -307,6 +326,37 @@ jobs:
         with:
           name: fern-stopwatch-emulator
           path: build/android-stopwatch/emulator
+
+  tv:
+    name: android-plex-tv
+    needs: [apk]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: fern-stopwatch-apk
+          path: build/android-stopwatch
+      - uses: ./.github/actions/disable-chrome-apt
+      - name: Prepare the test APKs and video
+        run: |
+          tests/android/plex_tv/build build/android-stopwatch/fern-plex.apk build/android-tv
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          ffmpeg -loglevel error -f lavfi -i testsrc=size=320x240:rate=25 -t 20 -c:v libx264 -g 25 -bf 0 -pix_fmt yuv420p -movflags +faststart build/android-tv/pattern.mp4
+      - name: Let the emulator use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Check the Plex preview channel and Watch Next row
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: android-tv
+          arch: x86_64
+          disable-animations: true
+          script: python3 examples/android/plex/tv_emulator_check.py build/android-tv
 
   # Each syscall that an Android image of a fixture can make, against the app
   # seccomp filter that bionic generates at the AOSP tag in

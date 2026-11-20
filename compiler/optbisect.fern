@@ -1,5 +1,4 @@
 import "./util";
-import "std/envflag";
 
 pub function key_hash(pass: string, name: string): i64 {
   return util.roll_text(util.roll_text(util.digest_start(), pass), name) & 4294967295i64;
@@ -8,7 +7,7 @@ pub function key_hash(pass: string, name: string): i64 {
 pub struct Switches { trace: boolean, bisect: boolean, floor: i64 }
 
 pub function switches(): Switches {
-  let trace = envflag.on("FERN_OPT_TRACE");
+  let trace = util.debug_flag("FERN_DEBUG_OPT_TRACE", "FERN_OPT_TRACE");
   match (env("FERN_OPT_BISECT")) {
     Some(v) => {
       return Switches { trace: trace, bisect: true, floor: util.digits_to_i64(v) };

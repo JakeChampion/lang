@@ -124,7 +124,9 @@ function test_p384(): test.TestOutcome {
 
 const P256_POINT: string = "0460fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb67903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299";
 
-const P256_SHA256_SAMPLE: string = "3046022100efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716022100f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8";
+// The vectors of RFC 6979 A.2.5 and A.2.6, with s replaced by n - s where s is
+// above n / 2: signing gives the low form.
+const P256_SHA256_SAMPLE: string = "3045022100efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf371602200834e36ad29a83bf2bc9385e491d6099c8fdf9d1ed67aa7ea5f51f93782857a9";
 
 const P256_SHA256_TEST: string = "3045022100f1abb023518351cd71d881567b1ea663ed3efcf6c5132b354f28d3b0b7d383670220019f4113742a2b14bd25926b49c649155f267e60d3814b4c0cc84250e46f0083";
 
@@ -134,7 +136,7 @@ const P384_D: string = "6b9d3dad2e1b8c1c05b19875b6659f4de23c3b667bf297ba9aa47740
 
 const P384_POINT: string = "04ec3a4e415b4e19a4568618029f427fa5da9a8bc4ae92e02e06aae5286b300c64def8f0ea9055866064a254515480bc138015d9b72d7d57244ea8ef9ac0c621896708a59367f9dfb9f54ca84b3f1c9db1288b231c3ae0d4fe7344fd2533264720";
 
-const P384_SHA384_SAMPLE: string = "306602310094edbb92a5ecb8aad4736e56c691916b3f88140666ce9fa73d64c4ea95ad133c81a648152e44acf96e36dd1e80fabe4602310099ef4aeb15f178cea1fe40db2603138f130e740a19624526203b6351d0a3a94fa329c145786e679e7b82c71a38628ac8";
+const P384_SHA384_SAMPLE: string = "306502310094edbb92a5ecb8aad4736e56c691916b3f88140666ce9fa73d64c4ea95ad133c81a648152e44acf96e36dd1e80fabe4602306610b514ea0e87315e01bf24d9fcec70ecf18bf5e69dbad9a727ea302393848fb4f04c6cd0423fdc7169525094629eab";
 
 const P384_SHA256_TEST: string = "306402306d6defac9ab64dabafe36c6bf510352a4cc27001263638e5b16d9bb51d451559f918eedaf2293be5b475cc8f0188636b02302d46f3becbcc523d5f1a1256bf0c9b024d879ba9e838144c8ba6baeb4b53b47d51ab373f9845c0514eefb14024787265";
 
@@ -176,6 +178,12 @@ function test_signing(): test.TestOutcome {
     return test.fail("P-384 SHA-384: " + signed(ecdsa.P384, P384_D, P384_POINT, sha2.Sha384, "sample"));
   }
   return test.assert_eq(signed(ecdsa.P384, P384_D, P384_POINT, sha2.Sha256, "test"), P384_SHA256_TEST);
+}
+
+// The high form of RFC 6979 A.2.5 verifies, as each other signer may give it.
+function test_high_s_verifies(): test.TestOutcome {
+  let high = "3046022100efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716022100f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8";
+  return test.assert_true(verified_on(ecdsa.P256, P256_POINT, sha2.Sha256, "sample".bytes(), high));
 }
 
 function key_refusal(curve: ecdsa.Curve, d: string): string {
@@ -300,6 +308,7 @@ function main(): i32 {
   r = r.it("refusals", test_refusals);
   r = r.it("malformed keys", test_bad_keys);
   r = r.it("signing", test_signing);
+  r = r.it("a signature in the high form verifies", test_high_s_verifies);
   r = r.it("signing refusals", test_signing_refusals);
   r = r.it("ECDH", test_ecdh);
   r = r.it("erase consumes a private key", test_erase_key);

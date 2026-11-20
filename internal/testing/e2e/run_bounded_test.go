@@ -116,7 +116,7 @@ while [ $# -gt 0 ]; do
   if [ "$1" = -o ]; then out=$2; fi
   shift
 done
-if [ -n "$FERN_OPT_TRACE" ]; then
+if [ -n "$FERN_DEBUG_OPT_TRACE" ]; then
   echo "opt-decision 10 inline a" >&2
   echo "opt-decision 20 reuse b" >&2
   echo "opt-decision 30 fuse c" >&2

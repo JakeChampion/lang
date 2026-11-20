@@ -14,7 +14,7 @@ def digest(path):
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
 
 
-def invoke(library):
+def capture(library):
     with tempfile.TemporaryFile() as capture:
         saved = os.dup(1)
         try:
@@ -26,6 +26,11 @@ def invoke(library):
         assert result == 0, result
         capture.seek(0)
         rows = [json.loads(line) for line in capture.read().decode().splitlines()]
+    return rows
+
+
+def invoke(library):
+    rows = capture(library)
     assert len(rows) == 12
     assert {(r['channels'], r['unavailable'], r['calls']) for r in rows} == {
         (c, u, n) for c in (0, 1, 2) for u in (False, True) for n in (100, 100000)

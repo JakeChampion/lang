@@ -78,9 +78,11 @@ permissions = ["INTERNET", "ACCESS_COARSE_LOCATION"]
 assets = ["assets/wallpaper.jpg", "assets/Roboto-Regular.ttf"]
 ```
 
-`fern -apk OUT FILE` reads the table of the `fern.toml` that governs FILE. A flag on the command line takes priority over the table. The paths of `icon`, `banner`, `key`, `assets` and `dex` are relative to the directory of `fern.toml`. The keys are `package`, `label`, `icon`, `banner`, `key` and `version_name` (strings), `min_sdk` and `version_code` (numbers), `home`, `tv`, `pip`, `compress`, `cleartext` and `debuggable` (true or false), and `permissions`, `assets`, `dex` and `widget` (arrays of strings). Any other key is a manifest error.
+`fern -apk OUT FILE` reads the table of the `fern.toml` that governs FILE. A flag on the command line takes priority over the table. The paths of `icon`, `banner`, `key`, `assets` and `dex` are relative to the directory of `fern.toml`. The keys are `package`, `label`, `icon`, `banner`, `key` and `version_name` (strings), `min_sdk` and `version_code` (numbers), `home`, `tv`, `pip`, `compress`, `cleartext`, `backup` and `debuggable` (true or false), and `permissions`, `assets`, `dex` and `widget` (arrays of strings). Any other key is a manifest error.
 
-`dex` gives the DEX files of Java libraries that the app calls, as `-apk-dex` does. The DEX file of the @jni classes is `classes.dex` in the APK. The files of `dex` come after it, as `classes2.dex`, `classes3.dex` and so on.
+APKs disable Android backup by default. Set `backup = true` under `[android]` or pass `-apk-backup` to enable it. Keep secrets in `android.no_backup_dir` even when the app permits backups.
+
+`dex` gives the DEX files of Java libraries that the app calls, as `-apk-dex` does. `fern -dex OUT FILE...` writes such a file from class files and JAR files. The DEX file of the @jni classes is `classes.dex` in the APK. The files of `dex` come after it, as `classes2.dex`, `classes3.dex` and so on.
 
 `widget` gives the app a widget of the home screen. Each string is an item of its row: `text:NAME:LABEL` is a text, and `button:NAME:LABEL` is a button. The app has one @jni class that extends `android.appwidget.AppWidgetProvider`, and `std/android/widget` gives the items their texts and the actions of their taps.
 

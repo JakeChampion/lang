@@ -130,6 +130,12 @@ def load_word(i, bpw, big_endian, ty, width):
     return " | ".join(parts)
 
 
+def emit_collision_warning(p, tag):
+    algorithm = {"md5": "MD5", "sha1": "SHA-1"}.get(tag)
+    if algorithm:
+        p(f"// {algorithm} has practical collisions. Use SHA-256 when collision resistance is required.")
+
+
 def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endian, ivs, rounds_body, doc, hw=False):
     """Everything but the block function's round body: struct, constructors,
     absorb, update, finish and the one-shot wrappers. `ivs` maps a constructor
@@ -139,6 +145,7 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
     zero = "0" if width == 32 else "(0 as u64)"
     p(f"// === {doc} ===")
     p("")
+    emit_collision_warning(p, tag)
     p(f"pub struct {struct} {{")
     for i in range(nwords):
         p(f"    h{i}: {ty},")
@@ -150,6 +157,7 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
     p("}")
     p("")
     for name, (iv, out_len) in ivs.items():
+        emit_collision_warning(p, tag)
         p(f"pub function {name}(): {struct} {{")
         fields = ", ".join(f"h{i}: {const(v, width)}" for i, v in enumerate(iv))
         p(f"    return {struct} {{ {fields},")
@@ -198,6 +206,7 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
     p("// The padded last block holds the tail of the message, so it is zeroed")
     p("// before its release. The state's own buffer holds the same tail until the")
     p("// state is dropped.")
+    emit_collision_warning(p, tag)
     p(f"pub function (h: {struct}) finish(): u8[] {{")
     p("    let bl = h.buf_len;")
     p(f"    let plen = {block};")
@@ -227,6 +236,7 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
     for name in ivs:
         base = name[: -len("_new")]
         p(f"// {base} calculates the digest of `s`.")
+        emit_collision_warning(p, tag)
         p(f"pub function {base}(s: [u8]): u8[] {{")
         p(f"    let last = {name}().update(s);")
         p(f"    return __{tag}_last(last);")
@@ -256,13 +266,17 @@ def emit_hw_blocks(p, tag, struct, nwords, block):
         p(f"    words = __put_le32(words, {4 * i}, st.h{i});")
     p(f"    let out = __{tag}_hw_blocks(words, bs[from:from + nblocks * {block}]);")
     fields = ", ".join(f"h{i}: __get_le32(out, {4 * i})" for i in range(nwords))
-    p(f"    return {struct} {{ ...st, {fields} }};")
+    p(f"    let next = {struct} {{ ...st, {fields} }};")
+    p("    erase(words);")
+    p("    erase(out);")
+    p("    return next;")
     p("}")
     p("")
 
 
 def emit_update(p, struct, tag):
     p("// Use the returned state for the next update.")
+    emit_collision_warning(p, tag)
     p(f"pub function (h: {struct}) update(chunk: [u8]): {struct} {{")
     p(f"    h = __{tag}_absorb(h, chunk);")
     p("    return h;")
@@ -455,17 +469,17 @@ def emit_blake2b(p):
     p("    out_len: i32")
     p("}")
     p("")
+    p("pub enum Blake2bError { InvalidDigestLength(i32) }")
+    p("")
     p("// blake2b_new constructs a digest state for `out_len` bytes, from 1 through 64.")
     p("// The default length for `b2sum` is 64 bytes. Its `-l` option accepts bits.")
-    p("pub function blake2b_new(out_len: i32): Blake2b {")
-    p("    let n = out_len;")
-    p("    if (n < 1) { n = 1; }")
-    p("    if (n > 64) { n = 64; }")
+    p("pub function blake2b_new(out_len: i32): Result[Blake2b, Blake2bError] {")
+    p("    if (out_len < 1 || out_len > 64) { return Err(InvalidDigestLength(out_len)); }")
     fields = ", ".join(f"h{i}: {u64(v)}" for i, v in enumerate(SHA512_IV))
     p(f"    let h: Blake2b = Blake2b {{ {fields},")
-    p("        buf: __zero_u8(128), buf_len: 0, total: 0 as u64, out_len: n };")
+    p("        buf: __zero_u8(128), buf_len: 0, total: 0 as u64, out_len: out_len };")
     p("    // Parameter block word 0: digest length, key length 0, fanout 1, depth 1.")
-    p("    return Blake2b { ...h, h0: h.h0 ^ (0x01010000 as u64) ^ (n as u64) };")
+    p("    return Ok(Blake2b { ...h, h0: h.h0 ^ (0x01010000 as u64) ^ (out_len as u64) });")
     p("}")
     p("")
     p("// __blake2b_blocks compresses `nblocks` blocks from byte `from`.")
@@ -554,9 +568,10 @@ def emit_blake2b(p):
     p("")
     emit_last(p, "blake2b", "Blake2b")
     p("// blake2b calculates an `out_len`-byte digest of `s`.")
-    p("pub function blake2b(s: [u8], out_len: i32): u8[] {")
-    p("    let last = blake2b_new(out_len).update(s);")
-    p("    return __blake2b_last(last);")
+    p("pub function blake2b(s: [u8], out_len: i32): Result[u8[], Blake2bError] {")
+    p("    let h = blake2b_new(out_len)?;")
+    p("    let last = h.update(s);")
+    p("    return Ok(__blake2b_last(last));")
     p("}")
     p("")
 

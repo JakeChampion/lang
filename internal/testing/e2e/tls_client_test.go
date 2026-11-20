@@ -224,7 +224,7 @@ function socket(roots: verify.Roots): string {
 
 // connected is a handshake with the echo server.
 function connected(cfg: client.Config): Result[client.Connection, tls.TlsError] {
-  return client.connect("localhost", @ECHO@, cfg, time.duration_seconds(10 as i64));
+  return client.connect("localhost", @ECHO@, cfg, time.duration_seconds(@TOTAL@ as i64));
 }
 
 // mtls echoes a line at the server requiring a client certificate, with
@@ -261,7 +261,7 @@ function mtls(roots: verify.Roots): string {
 }
 
 function echoed(cfg: client.Config): string {
-  match (client.connect("localhost", @MTLS@, cfg, time.duration_seconds(10 as i64))) {
+  match (client.connect("localhost", @MTLS@, cfg, time.duration_seconds(@TOTAL@ as i64))) {
     Ok(c) => {
       match (c.write("hello\n".bytes())) {
         Ok(sent) => {
@@ -364,7 +364,7 @@ function greeted(roots: verify.Roots): string {
 
 // cut reads from a server that closes with no close_notify.
 function cut(roots: verify.Roots): string {
-  match (client.connect("localhost", @CUT@, client.config("localhost", roots), time.duration_seconds(10 as i64))) {
+  match (client.connect("localhost", @CUT@, client.config("localhost", roots), time.duration_seconds(@TOTAL@ as i64))) {
     Ok(c) => {
       match (c.write("cut\n".bytes())) {
         Ok(sent) => {

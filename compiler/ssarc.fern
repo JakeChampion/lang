@@ -426,32 +426,31 @@ function supplies(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, 
       }
     }
     if (supply.mode == ssaunits.steal_unit()) {
-      r = steal(r, f, supply.value);
+      r = steal(r, f, p.defs[supply.value]);
     }
   }
   return r;
 }
 
-function steal(own r: irtables.LowerState, f: ssasem.Func, v: i32): irtables.LowerState {
-  let get = defining(f, v);
+function steal(own r: irtables.LowerState, f: ssasem.Func, get: ssa.SInst): irtables.LowerState {
   r = emit(r, ir.op_load_local(get.args[0]));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
   r = emit(r, ir.op_if(0));
   r = cleared_slot(r, f, get);
   r = emit(r, ir.op_else());
-  r = helper(r, v, "__fern_rc_inc");
+  r = helper(r, get.result, "__fern_rc_inc");
   return emit(r, ir.op_end());
 }
 
 // A take in a tested run: the token slot holds the donor's one uniqueness read.
-function tested_take(own r: irtables.LowerState, f: ssasem.Func, v: i32, token: i32): irtables.LowerState {
+function tested_take(own r: irtables.LowerState, f: ssasem.Func, get: ssa.SInst, token: i32): irtables.LowerState {
   r = emit(r, ir.op_load_local(token));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_bin("ne", 0, false));
   r = emit(r, ir.op_if(0));
-  r = cleared_slot(r, f, defining(f, v));
+  r = cleared_slot(r, f, get);
   r = emit(r, ir.op_else());
-  r = helper(r, v, "__fern_rc_inc");
+  r = helper(r, get.result, "__fern_rc_inc");
   return emit(r, ir.op_end());
 }
 
@@ -1715,10 +1714,10 @@ function keep_release(own r: irtables.LowerState, f: ssasem.Func, donor: i32, fi
   return emit(r, ir.op_store_local(donor));
 }
 
-function classified_death(own r: irtables.LowerState, f: ssasem.Func, k: ssaunits.Keeps, at: i32, token: i32, held: boolean, stable: boolean): irtables.LowerState {
+function classified_death(own r: irtables.LowerState, f: ssasem.Func, defs: ssa.SInst[], k: ssaunits.Keeps, at: i32, token: i32, held: boolean, stable: boolean): irtables.LowerState {
   let scratch_start = r.scratch_start;
   let donor = k.donors[at];
-  let fields = donor_fields(f, k.moved[at][0], donor);
+  let fields = donor_fields(f, defs[k.moved[at][0]], donor);
   r = emit(r, ir.op_load_local(token));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_bin("ne", 0, false));
@@ -1776,8 +1775,7 @@ function null_slots(own r: irtables.LowerState, box: i32, slots: boolean[]): irt
   return r;
 }
 
-function donor_fields(f: ssasem.Func, taken: i32, donor: i32): semrecords.Field[] {
-  let get = defining(f, taken);
+function donor_fields(f: ssasem.Func, get: ssa.SInst, donor: i32): semrecords.Field[] {
   if (get.kind_tag == ssasem.record_get()) {
     return ssasem.record_fields(f.values[donor], f);
   }
@@ -4930,7 +4928,7 @@ function instruction_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunit
   r = took(r, p, ins);
   if (token >= 0 && ssaunits.payload_taken(f, p, ins)) {
     if (tested) {
-      r = tested_take(r, f, ins.result, token);
+      r = tested_take(r, f, ins, token);
     } else {
       r = unless_unique(r, token, ins.result, "__fern_rc_inc");
     }
@@ -5207,7 +5205,7 @@ function took_payload(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Pl
   if (!ssaunits.payload_taken(f, p, ins)) {
     return r;
   }
-  return steal(r, f, ins.result);
+  return steal(r, f, ins);
 }
 
 function sole_owned_base(own r: irtables.LowerState, f: ssasem.Func, base: i32, scratch: i32, keep: i32): irtables.LowerState {
@@ -7891,14 +7889,14 @@ function block_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
       }
       for row in 0..keeps.donors.len() {
         if (classified_end(keeps, row, pos) && keeps.donors[row] == pairs.tokens[pos]) {
-          r = classified_death(r, f, keeps, row, first + slots[row], true, ssaunits.count_holds(f, p, idx, b, pairs, keeps, row));
+          r = classified_death(r, f, p.defs, keeps, row, first + slots[row], true, ssaunits.count_holds(f, p, idx, b, pairs, keeps, row));
         }
       }
       let held_on = ssaunits.carry_held(carry, b.id, pos);
       for row in 0..keeps.donors.len() {
         let dies = keeps.donors[row];
         if (classified_end(keeps, row, pos) && dies != pairs.tokens[pos] && dies != held_on) {
-          r = classified_death(r, f, keeps, row, first + slots[row], false, ssaunits.count_holds(f, p, idx, b, pairs, keeps, row));
+          r = classified_death(r, f, p.defs, keeps, row, first + slots[row], false, ssaunits.count_holds(f, p, idx, b, pairs, keeps, row));
           step = ssaunits.Step { ...step, drops: without(step.drops, dies) };
         }
       }
@@ -7906,7 +7904,7 @@ function block_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
       let ended = false;
       for row in 0..keeps.donors.len() {
         if (classified_end(keeps, row, pos) && keeps.donors[row] == held_on) {
-          r = classified_death(r, f, keeps, row, first + slots[row], true, ssaunits.count_holds(f, p, idx, b, pairs, keeps, row));
+          r = classified_death(r, f, p.defs, keeps, row, first + slots[row], true, ssaunits.count_holds(f, p, idx, b, pairs, keeps, row));
           ended = true;
         }
       }
@@ -8109,62 +8107,6 @@ function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layo
   return e;
 }
 
-function built_record(f: ssasem.Func, plan: ssaunits.Plan): boolean {
-  if let typeinfo.TypeStruct(_) = f.result {
-    return built_result(f, plan);
-  }
-  return false;
-}
-
-function built_result(f: ssasem.Func, plan: ssaunits.Plan): boolean {
-  if (!plan.ok) {
-    return false;
-  }
-  let boxes = returned_records(f);
-  if (boxes.len() == 0) {
-    return false;
-  }
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      if (!box_use_ok(ins, boxes)) {
-        return false;
-      }
-    }
-  }
-  for step in plan.steps {
-    for item in step.supplies {
-      if (item.mode == ssaunits.retain_unit() && util.index_of_i32(boxes, item.value) >= 0) {
-        return false;
-      }
-    }
-  }
-  return true;
-}
-
-function returned_records(f: ssasem.Func): i32[] {
-  let out: i32[] = [];
-  for b in f.graph.blocks {
-    if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0 && util.index_of_i32(out, b.term.value) < 0) {
-      out = out.append(b.term.value);
-    }
-  }
-  let at = 0;
-  while (at < out.len()) {
-    let def = defining(f, out[at]);
-    if (def.kind_tag == ssa.COPY || def.kind_tag == ssa.PHI) {
-      for arg in def.args {
-        if (util.index_of_i32(out, arg) < 0) {
-          out = out.append(arg);
-        }
-      }
-    } else if (def.kind_tag != ssasem.record_new()) {
-      return [];
-    }
-    at += 1;
-  }
-  return out;
-}
-
 function defining(f: ssasem.Func, v: i32): ssa.SInst {
   for b in f.graph.blocks {
     for ins in b.insts {
@@ -8174,21 +8116,6 @@ function defining(f: ssasem.Func, v: i32): ssa.SInst {
     }
   }
   return ssa.no_inst();
-}
-
-function box_use_ok(ins: ssa.SInst, boxes: i32[]): boolean {
-  if (ins.kind_tag == ssasem.record_get()) {
-    return true;
-  }
-  if ((ins.kind_tag == ssa.COPY || ins.kind_tag == ssa.PHI) && util.index_of_i32(boxes, ins.result) >= 0) {
-    return true;
-  }
-  for arg in ins.args {
-    if (util.index_of_i32(boxes, arg) >= 0) {
-      return false;
-    }
-  }
-  return true;
 }
 
 function place_views(own r: irtables.LowerState): irtables.LowerState {

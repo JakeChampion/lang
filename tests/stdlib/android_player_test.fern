@@ -137,7 +137,7 @@ function slot_events(): test.TestOutcome {
 // the slot that `sent_by` reads.
 function posted_events(): test.TestOutcome {
   let out: string[] = [];
-  for c in [player.Prepared, player.Completed, player.Failed(2001, -3), player.Buffering(true), player.Buffering(false), player.Rendering, player.Seeked, player.AudioNotPlaying, player.VideoNotPlaying] {
+  for c in [player.Prepared, player.Completed, player.Failed(2001, -3), player.Buffering(true), player.Buffering(false), player.Rendering, player.Seeked, player.AudioNotPlaying, player.VideoNotPlaying, player.Cues] {
     let (kind, arg) = player.posted(c, 3);
     let e = android.Posted(kind, arg);
     let back = match (player.event(e)) {
@@ -152,7 +152,7 @@ function posted_events(): test.TestOutcome {
   out = out.append(player.sent_by(android.Posted(kind, arg), 0).to_string());
   // Posted carries a pointer-width argument. Android targets use 64 bits.
   let what = if (4294967296u64 as usize == 0 as usize) { "0" } else { "2001" };
-  return test.assert_eq(out.join(", "), "same true false, same true false, failed " + what + " -3 true false, buffering true true false, buffering false true false, same true false, same true false, same true false, same true false, true");
+  return test.assert_eq(out.join(", "), "same true false, same true false, failed " + what + " -3 true false, buffering true true false, buffering false true false, same true false, same true false, same true false, same true false, same true false, true");
 }
 
 function main(): i32 {

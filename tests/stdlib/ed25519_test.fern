@@ -243,13 +243,37 @@ function test_erase_shared_key(): test.TestOutcome {
   return test.assert_true(public.verify(msg, sig));
 }
 
-function test_public_keys_that_do_not_decode(): test.TestOutcome {
+// The eight points of order 1, 2, 4 and 8 decode but verify nothing. Under the
+// identity, R = B and S = 1 satisfies the cofactorless equation for every
+// message.
+function test_small_order_public_keys(): test.TestOutcome {
   let msg = __codec_bytes(hex.decode("616263"));
   let sig: u8[] = __codec_bytes(hex.decode("5866666666666666666666666666666666666666666666666666666666666666"
     + "0100000000000000000000000000000000000000000000000000000000000000"));
-  if (!verifies(__codec_bytes(hex.decode("0100000000000000000000000000000000000000000000000000000000000000")), msg, sig)) {
-    return test.fail("the canonical identity did not verify");
+  let points = [
+    "0100000000000000000000000000000000000000000000000000000000000000",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000080",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+  ];
+  let got: string[] = [];
+  let want: string[] = [];
+  for p in points {
+    let verdict = match (ed25519.public_key(__codec_bytes(hex.decode(p)))) {
+      Ok(k) => if (k.verify(msg, sig)) { "verifies" } else { "verifies nothing" },
+      Err(e) => e.message(),
+    };
+    got = got.append(verdict);
+    want = want.append("verifies nothing");
   }
+  return test.assert_eq_array(got, want);
+}
+
+function test_public_keys_that_do_not_decode(): test.TestOutcome {
   let bad = "ed25519: the public key does not encode a curve point";
   if (refused(ed25519.public_key(__codec_bytes(hex.decode("eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f")))) != bad) {
     return test.fail("y = p + 1 was built");
@@ -295,6 +319,7 @@ function main(): i32 {
   r = r.it("non-canonical S", test_non_canonical_s);
   r = r.it("seed, key and signature lengths", test_lengths);
   r = r.it("public keys that do not decode", test_public_keys_that_do_not_decode);
+  r = r.it("the eight small-order public keys are refused", test_small_order_public_keys);
   r = r.it("the Montgomery form of a public key", test_montgomery);
   r = r.it("a key built once signs and verifies many messages", test_key_reused);
   r = r.it("erase consumes a private key", test_erase_key);

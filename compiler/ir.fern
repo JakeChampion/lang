@@ -5184,7 +5184,7 @@ pub function reduce_strength_ex(ops: Op[]): StrengthResult {
 }
 
 function tv_dump(pass: string, before: Op[], after: Op[]): void {
-  match (env("FERN_TV_DUMP")) {
+  match (util.debug_env("FERN_DEBUG_TV_DUMP", "FERN_TV_DUMP")) {
     Some(want) => {
       if (want == pass) {
         eprint("fern-tv " + pass + "\n" + tv_ops("before", before) + tv_ops("after", after) + "fern-tv end");

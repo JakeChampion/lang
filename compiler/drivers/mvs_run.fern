@@ -316,8 +316,15 @@ function main(): i32 {
   if (rc != 0) {
     return rc;
   }
-  let oklock: fern_toml.LockEntry[] = match (fern_toml.parse_lock("[[package]]\nname = \"evil\"\nversion = \"1.0.0\"\n"
+  let oklock: fern_toml.LockEntry[] = match (fern_toml.parse_lock("[[package]]\nname = \"local\"\nversion = \"1.0.0\"\npath = \"../local\"\n"
+    + "[[package]]\nname = \"evil\"\nversion = \"1.0.0\"\n"
     + "url = \"https://example.invalid/x.tar.gz\"\nhash = \"sha256:" + hex64() + "\"\n")) { Ok(lock) => lock.entries, Err(_) => { return 31; } };
+  for name in ["local", "absent"] {
+    if let Some(_) = fern_toml.lock_hash_of(oklock, name) {
+      print("unexpected lock hash for " + name);
+      return 36;
+    }
+  }
   let lockhash = "none";
   match (fern_toml.lock_hash_of(oklock, "evil")) {
     Some(h) => {

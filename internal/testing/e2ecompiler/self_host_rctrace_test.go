@@ -178,13 +178,13 @@ func TestSelfHostRcTracePairsX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := hevCompile(t, runner, driverBin, hevBalancedSrc, []string{"FERN_RC_TRACE=1"})
+	asm := hevCompile(t, runner, driverBin, hevBalancedSrc, []string{"FERN_DEBUG_RC_TRACE=1"})
 	progBin := buildBin(t, gcc, dir, "hev_pairs", asm)
 	stderr, _ := hevRun(t, runner, progBin)
 
 	evs, _ := parseHev(t, stderr)
 	if len(evs) == 0 {
-		t.Fatal("FERN_RC_TRACE=1 produced no rctrace lines")
+		t.Fatal("FERN_DEBUG_RC_TRACE=1 produced no rctrace lines")
 	}
 
 	live := map[uint64]hevEvent{}
@@ -241,7 +241,7 @@ func TestSelfHostLeakCheckAgreesX86_64(t *testing.T) {
 		{"unreclaimed_at_exit", hevExitLeakSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_RC_TRACE=1", "FERN_LEAKCHECK=1"})
+			asm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_DEBUG_RC_TRACE=1", "FERN_LEAKCHECK=1"})
 			progBin := buildBin(t, gcc, dir, "hev_agree_"+tc.name, asm)
 			stderr, _ := hevRun(t, runner, progBin)
 
@@ -280,7 +280,7 @@ func TestSelfHostRcTraceLocatesLeakX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := hevCompile(t, runner, driverBin, hevExitLeakSrc, []string{"FERN_RC_TRACE=1", "FERN_LEAKCHECK=1"})
+	asm := hevCompile(t, runner, driverBin, hevExitLeakSrc, []string{"FERN_DEBUG_RC_TRACE=1", "FERN_LEAKCHECK=1"})
 	progBin := buildBin(t, gcc, dir, "hev_leak", asm)
 	stderr, exit := hevRun(t, runner, progBin)
 	if exit != 3 {
@@ -340,7 +340,7 @@ func TestSelfHostHeapEventFlagOffX86_64(t *testing.T) {
 		}
 	}
 
-	on := hevCompile(t, runner, driverBin, hevBalancedSrc, []string{"FERN_RC_TRACE=1", "FERN_LEAKCHECK=1"})
+	on := hevCompile(t, runner, driverBin, hevBalancedSrc, []string{"FERN_DEBUG_RC_TRACE=1", "FERN_LEAKCHECK=1"})
 	for _, marker := range []string{"__fern_hev_a", "__fern_hev_f", "__fern_lc_report", "__fern_alloc_inner"} {
 		if !strings.Contains(on, marker) {
 			t.Errorf("flag-on asm is missing %q", marker)
@@ -422,13 +422,13 @@ func TestSelfHostRcTraceCallerX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	asm := hevCompile(t, runner, driverBin, hevTwoAppendSrc, []string{"FERN_RC_TRACE=1"})
+	asm := hevCompile(t, runner, driverBin, hevTwoAppendSrc, []string{"FERN_DEBUG_RC_TRACE=1"})
 	progBin := buildBin(t, gcc, dir, "hev_caller", asm)
 	stderr, _ := hevRun(t, runner, progBin)
 
 	evs, _ := parseHev(t, stderr)
 	if len(evs) == 0 {
-		t.Fatal("FERN_RC_TRACE=1 produced no rctrace lines")
+		t.Fatal("FERN_DEBUG_RC_TRACE=1 produced no rctrace lines")
 	}
 
 	perSite := map[uint64]map[uint64]bool{}
@@ -468,18 +468,18 @@ func TestSelfHostRcTraceDeepX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	plain := hevCompile(t, runner, driverBin, hevTwoAppendSrc, []string{"FERN_RC_TRACE=1"})
+	plain := hevCompile(t, runner, driverBin, hevTwoAppendSrc, []string{"FERN_DEBUG_RC_TRACE=1"})
 	plainBin := buildBin(t, gcc, dir, "hev_deep_off", plain)
 	if _, err := hevRows(t, runner, plainBin, 6); err != nil {
-		t.Fatalf("FERN_RC_TRACE alone: %v", err)
+		t.Fatalf("FERN_DEBUG_RC_TRACE alone: %v", err)
 	}
 
 	deep := hevCompile(t, runner, driverBin, hevTwoAppendSrc,
-		[]string{"FERN_RC_TRACE=1", "FERN_RC_TRACE_DEEP=1"})
+		[]string{"FERN_DEBUG_RC_TRACE=1", "FERN_DEBUG_RC_TRACE_DEEP=1"})
 	deepBin := buildBin(t, gcc, dir, "hev_deep_on", deep)
 	rows, err := hevRows(t, runner, deepBin, 7)
 	if err != nil {
-		t.Fatalf("FERN_RC_TRACE_DEEP: %v", err)
+		t.Fatalf("FERN_DEBUG_RC_TRACE_DEEP: %v", err)
 	}
 
 	const caller, caller2 = 3, 4

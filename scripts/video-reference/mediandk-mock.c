@@ -16,6 +16,7 @@ static int live_muxers, muxer_started, muxer_writes, muxer_token;
 static int live_extractors, extractor_token, sample_position, sample_reads;
 static int format_token, codec_token;
 static int output_width = 16, output_height = 8, output_right, output_bottom, custom_output;
+static int output_fields;
 static int custom_deadline;
 static int64_t expected_deadline, last_deadline;
 static int surface_calls, surface_status, flush_calls;
@@ -27,7 +28,7 @@ void mock_mode(int m) {
     assert(live_muxers == 0 && surfaces == 0 && live_extractors == 0);
     output_step = queued = released = active_encoder = named_hardware = parameter_calls = fail_queue = muxer_writes = 0;
     allow_hardware = 0; last_seek_time = -1;
-    output_width = 16; output_height = 8; custom_output = 0;
+    output_width = 16; output_height = 8; custom_output = output_fields = 0;
     custom_deadline = 0; last_deadline = -1;
     surface_calls = surface_status = flush_calls = 0;
     current_window = configured_window = render_window = expected_window = NULL;
@@ -45,6 +46,7 @@ void mock_output_format(int width, int height, int right, int bottom) {
     output_width = width; output_height = height; output_right = right; output_bottom = bottom;
     custom_output = 1; output_step = 1;
 }
+void mock_output_fields(int value) { output_fields = value; }
 int mock_live(void) { return live_formats + live_codecs + live_muxers + surfaces + live_extractors; }
 int mock_queued(void) { return queued; }
 int mock_released(void) { return released; }
@@ -82,6 +84,15 @@ void AMediaFormat_setBuffer(void *f, const char *key, const void *data, size_t s
 }
 bool AMediaFormat_getInt32(void *f, const char *key, int32_t *out) {
     assert(f == &format_token);
+    if (output_fields == 1) {
+        if (strcmp(key, "crop-top") == 0) { *out = 1; return true; }
+        if (strcmp(key, "crop-bottom") == 0) { *out = 6; return true; }
+        if (strcmp(key, "color-range") == 0) { *out = 2; return true; }
+        if (strcmp(key, "color-transfer") == 0) { *out = 3; return true; }
+        if (strcmp(key, "stride") == 0) { *out = 32; return true; }
+        if (strcmp(key, "slice-height") == 0) { *out = 10; return true; }
+        if (strcmp(key, "color-format") == 0) { *out = 19; return true; }
+    }
     if (strcmp(key, "width") == 0) *out = output_width;
     else if (strcmp(key, "height") == 0) *out = output_height;
     else if (strcmp(key, "crop-left") == 0) *out = custom_output ? 0 : 2;
@@ -94,7 +105,7 @@ bool AMediaFormat_getInt32(void *f, const char *key, int32_t *out) {
         *out = output_bottom;
     }
     else if (strcmp(key, "color-standard") == 0) *out = 1;
-    else return false;
+    else { if (output_fields == 2) *out = -777; return false; }
     return true;
 }
 void *AMediaCodec_createDecoderByType(const char *mime) {

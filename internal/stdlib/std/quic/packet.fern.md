@@ -113,10 +113,18 @@ function __initial_salt(): u8[] {
 
 ```fern
 <<5 pub function keys(suite: keyschedule.CipherSuite, secret: [u8]): Keys>>=
+// QUIC uses the cipher suite's key size, hash size, or a 12-byte IV.
+function __protocol_label(h: keyschedule.Hash, secret: [u8], label: string, context: [u8], length: i32): u8[] {
+  let Ok(bytes) = keyschedule.hkdf_expand_label(h, secret, label, context, length) else {
+    exit(134);
+  };
+  return bytes;
+}
+
 pub function keys(suite: keyschedule.CipherSuite, secret: [u8]): Keys {
   let h = suite.hash();
   let n = suite.aead().key_len();
-  let hp = keyschedule.hkdf_expand_label(h, secret, "quic hp", [], n);
+  let hp = __protocol_label(h, secret, "quic hp", [], n);
   let rk: u8[] = [];
   match (suite.aead()) {
     keyschedule.ChaCha20Poly1305 => {},
@@ -124,8 +132,8 @@ pub function keys(suite: keyschedule.CipherSuite, secret: [u8]): Keys {
       rk = __aes_expand_key(hp);
     }
   }
-  let key = keyschedule.hkdf_expand_label(h, secret, "quic key", [], n);
-  return Keys { suite: suite, secret: __copy(secret), key: key, iv: keyschedule.hkdf_expand_label(h, secret, "quic iv", [], 12), hp: hp, hp_round_keys: rk, hp_chacha: __chacha(suite, hp), gcm: __gcm(suite, key), chacha: __chacha(suite, key) };
+  let key = __protocol_label(h, secret, "quic key", [], n);
+  return Keys { suite: suite, secret: __copy(secret), key: key, iv: __protocol_label(h, secret, "quic iv", [], 12), hp: hp, hp_round_keys: rk, hp_chacha: __chacha(suite, hp), gcm: __gcm(suite, key), chacha: __chacha(suite, key) };
 }
 ```
 
@@ -176,9 +184,9 @@ pub function initial_secret(dcid: [u8], client: boolean): u8[] {
   let h = keyschedule.Sha256;
   let base = keyschedule.hkdf_extract(h, __initial_salt(), dcid);
   if (client) {
-    return keyschedule.hkdf_expand_label(h, base, "client in", [], 32);
+    return __protocol_label(h, base, "client in", [], 32);
   }
-  return keyschedule.hkdf_expand_label(h, base, "server in", [], 32);
+  return __protocol_label(h, base, "server in", [], 32);
 }
 
 pub function initial_keys(dcid: [u8], client: boolean): Keys {
@@ -187,10 +195,10 @@ pub function initial_keys(dcid: [u8], client: boolean): Keys {
 
 pub function (k: Keys) updated(): Keys {
   let h = k.suite.hash();
-  let secret = keyschedule.hkdf_expand_label(h, k.secret, "quic ku", [], h.size());
+  let secret = __protocol_label(h, k.secret, "quic ku", [], h.size());
   let n = k.suite.aead().key_len();
-  let key = keyschedule.hkdf_expand_label(h, secret, "quic key", [], n);
-  return Keys { ...k, secret: secret, key: key, iv: keyschedule.hkdf_expand_label(h, secret, "quic iv", [], 12), gcm: __gcm(k.suite, key), chacha: __chacha(k.suite, key) };
+  let key = __protocol_label(h, secret, "quic key", [], n);
+  return Keys { ...k, secret: secret, key: key, iv: __protocol_label(h, secret, "quic iv", [], 12), gcm: __gcm(k.suite, key), chacha: __chacha(k.suite, key) };
 }
 
 pub function pn_len(pn: i64, largest_acked: i64): i32 {

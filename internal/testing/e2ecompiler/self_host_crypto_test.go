@@ -14,7 +14,7 @@ func TestSelfHostCryptoSuitesWasm(t *testing.T) {
 	wasmtime := e2eharness.Wasmtime(t)
 	cli := buildSelfHostCLI(t)
 	interp := buildLangBinForInterp(t)
-	for _, suite := range []string{"chacha20poly1305", "aes_gcm", "aes", "des", "field25519", "x25519", "ed25519", "mlkem768", "hpke", "montgomery", "p256", "rsa", "scrypt", "tls_client", "tls_der", "tls_handshake", "tls_keyschedule", "tls_keyshare", "tls_message", "tls_mozilla", "tls_record", "tls_server", "tls_identity_shared_key", "tls_verify", "tls_x509"} {
+	for _, suite := range []string{"chacha20poly1305", "aes_gcm", "aes", "des", "field25519", "x25519", "ed25519", "mlkem768", "hpke", "montgomery", "p256", "rsa", "scrypt", "argon2id", "tls_client", "tls_der", "tls_handshake", "tls_keyschedule", "tls_keyshare", "tls_message", "tls_mozilla", "tls_record", "tls_server", "tls_identity_shared_key", "tls_verify", "tls_x509"} {
 		t.Run(suite, func(t *testing.T) {
 			src := langSrcAbs(t, "tests/stdlib/"+suite+"_test.fern")
 			want, exit := e2eharness.InterpVerdict(t, interp, src)
@@ -78,8 +78,13 @@ func TestSelfHostECDSASuite(t *testing.T) {
 	src := langSrcAbs(t, "tests/stdlib/ecdsa_test.fern")
 	check := func(t *testing.T, out []byte, err error) {
 		t.Helper()
-		if err != nil || !strings.Contains(string(out), "# pass 10\n# fail 0\n") {
+		if err != nil {
 			t.Fatalf("ecdsa suite: %v\n%s", err, out)
+		}
+		tap := string(out)
+		e2eharness.CheckTAPPlan(t, tap)
+		if strings.Contains(tap, "\n# skip ") {
+			t.Fatalf("ecdsa suite skipped a case:\n%s", tap)
 		}
 	}
 	t.Run("x86-64", func(t *testing.T) {
@@ -140,4 +145,59 @@ function main(): i32 {
 		out, err := exec.Command(e2eharness.Wasmtime(t), "run", cli.wasmComponent(t, src, "FERN_STRICT_IR=1")).Output()
 		check(t, out, err)
 	})
+}
+
+// A misuse of a crypto API that the type of a key or a context forbids is a
+// compile error, and the same program without the misuse compiles.
+func TestSelfHostCryptoApiRefusals(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	cases := []struct {
+		name, body, code string
+	}{
+		{"hpke context sealed twice", `let c = hpke.key_schedule(hpke.KEM_P256, __alloc_u8(32), []);
+  let Ok((a, _)) = c.seal([], [1u8]) else { return 1; };
+  let Ok((b, _)) = c.seal([], [2u8]) else { return 2; };
+  return a.len() + b.len();`, "E051"},
+		{"hpke context sealed twice from a field", `let s = hpke.Sender { enc: [], context: hpke.key_schedule(hpke.KEM_P256, __alloc_u8(32), []) };
+  let Ok((a, _)) = s.context.seal([], [1u8]) else { return 1; };
+  let Ok((b, _)) = s.context.seal([], [2u8]) else { return 2; };
+  return a.len() + b.len();`, "E051"},
+		{"hpke context built from fields", `let c = hpke.Context { key: [], base_nonce: [], seq: 0 as u64, exporter_secret: [], suite: [] };
+  return 0;`, "E021"},
+		{"ed25519 private key built from fields", `let k = ed25519.PrivateKey { scalar: [], expanded: [], public: [] };
+  return k.sign([]).len();`, "E021"},
+		{"ed25519 public key built from fields", `let Ok(k) = ed25519.private_key(__alloc_u8(32)) else { return 1; };
+  let Ok(p) = ed25519.public_key(k.public_point()) else { return 2; };
+  let q = ed25519.PublicKey { ...p, bytes: [] };
+  return 0;`, "E021"},
+		{"ed25519 montgomery_base outside the package", `return ed25519.montgomery_base(__alloc_u8(32)).len();`, "E087"},
+		{"control", `let c = hpke.key_schedule(hpke.KEM_P256, __alloc_u8(32), []);
+  let Ok((a, next)) = c.seal([], [1u8]) else { return 1; };
+  let Ok((b, _)) = next.seal([], [2u8]) else { return 2; };
+  let Ok(k) = ed25519.private_key(__alloc_u8(32)) else { return 3; };
+  return a.len() + b.len() + k.sign([]).len() - 98;`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "main.fern")
+			prog := "import \"std/crypto/ed25519\";\nimport \"std/crypto/hpke\";\n\nfunction main(): i32 {\n  " + c.body + "\n}\n"
+			if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, err := cli.compileCmd("x86-64-linux", filepath.Join(dir, "main"), src).CombinedOutput()
+			if c.code == "" {
+				if err != nil {
+					t.Fatalf("the control does not compile: %v\n%s", err, out)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("compiled, want %s", c.code)
+			}
+			if !strings.Contains(string(out), "error["+c.code+"]") {
+				t.Fatalf("want %s, got:\n%s", c.code, out)
+			}
+		})
+	}
 }

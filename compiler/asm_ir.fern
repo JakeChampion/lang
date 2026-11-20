@@ -21,7 +21,6 @@ import "./ssafixed";
 import "./ssa_lift";
 import "./physicalbody";
 import "./ssaprepare";
-import "std/envflag";
 import "std/string";
 
 function emit_ir_map_hash_seed(s: asmcore.EmitState): asmcore.EmitState {
@@ -200,11 +199,11 @@ function any_ccall_need(s: asmcore.EmitState): boolean {
 }
 
 function rc_trace_on(): boolean {
-  return envflag.on("FERN_RC_TRACE");
+  return util.debug_flag("FERN_DEBUG_RC_TRACE", "FERN_RC_TRACE");
 }
 
 function rc_trace_deep_on(): boolean {
-  return envflag.on("FERN_RC_TRACE_DEEP");
+  return util.debug_flag("FERN_DEBUG_RC_TRACE_DEEP", "FERN_RC_TRACE_DEEP");
 }
 
 function fused_marker(): i32 {
@@ -370,25 +369,75 @@ function emit_san_class(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // The allocation side of the redzone: %rdi is the request in bytes. The
-// block takes its class and two words more. The two words and the words of
-// the class past the request get the poison.
+// block takes its class and six words more. The two words after the class
+// and the words of the class past the request get the poison. The four words
+// after them link the block into __fern_san_live: the next and the previous
+// link, the words of the class and the words of the request.
 function san_redzone_alloc(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    pushq %rsi\n    leaq 7(%rdi), %rsi\n    shrq $3, %rsi\n    pushq %rsi\n    call __fern_san_class\n    pushq %rsi\n    leaq 16(,%rsi,8), %rdi\n");
+  s = s.write("    pushq %rsi\n    leaq 7(%rdi), %rsi\n    shrq $3, %rsi\n    pushq %rsi\n    call __fern_san_class\n    pushq %rsi\n    leaq 48(,%rsi,8), %rdi\n");
   s = s.write("    call __fern_alloc_inner\n    popq %rsi\n    pushq %rdx\n    pushq %rcx\n    movabs $" + rc_poison64() + ", %rdx\n");
   s = s.write("    movq %rdx, (%rax,%rsi,8)\n    movq %rdx, 8(%rax,%rsi,8)\n    movq 16(%rsp), %rcx\n");
   s = s.write(".Lsan_slack_fill:\n    cmpq %rsi, %rcx\n    jae .Lsan_slack_filled\n    movq %rdx, (%rax,%rcx,8)\n    incq %rcx\n    jmp .Lsan_slack_fill\n.Lsan_slack_filled:\n");
+  s = s.write("    leaq 16(%rax,%rsi,8), %rcx\n    movq %rsi, 16(%rcx)\n    movq 16(%rsp), %rdx\n    movq %rdx, 24(%rcx)\n");
+  s = s.write("    movq __fern_san_live(%rip), %rdx\n    movq %rdx, (%rcx)\n    movq $0, 8(%rcx)\n    testq %rdx, %rdx\n    jz .Lsan_live_first\n    movq %rcx, 8(%rdx)\n");
+  s = s.write(".Lsan_live_first:\n    movq %rcx, __fern_san_live(%rip)\n");
   return s.write("    popq %rcx\n    popq %rdx\n    addq $8, %rsp\n    popq %rsi\n");
 }
 
 // The release side: %rdi is the block and %rsi its size in words. A word
-// past the request that lost the pattern was written past the end of the block. %rsi then holds
-// the words of the whole block, the redzone too, so that the quarantine
-// hands the block to the free list that the allocation takes from.
+// past the request that lost the pattern was written past the end of the
+// block. The block leaves __fern_san_live when its links agree with the list,
+// so a block that a worker made is left alone. %rsi then holds the words of
+// the whole block, so that the quarantine hands the block to the free list
+// that the allocation takes from.
 function san_redzone_check(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    testq %rsi, %rsi\n    jz .Lquar_redzone_ok\n    pushq %r8\n    pushq %rcx\n    movq %rsi, %rcx\n    call __fern_san_class\n    movabs $" + rc_poison64() + ", %r8\n");
-  s = s.write(".Lquar_slack:\n    cmpq %rsi, %rcx\n    jae .Lquar_slack_ok\n    cmpq %r8, (%rdi,%rcx,8)\n    jne __fern_san_abort_hbo\n    incq %rcx\n    jmp .Lquar_slack\n.Lquar_slack_ok:\n    popq %rcx\n");
+  s = s.write(".Lquar_slack:\n    cmpq %rsi, %rcx\n    jae .Lquar_slack_ok\n    cmpq %r8, (%rdi,%rcx,8)\n    jne __fern_san_abort_hbo\n    incq %rcx\n    jmp .Lquar_slack\n.Lquar_slack_ok:\n");
   s = s.write("    cmpq %r8, (%rdi,%rsi,8)\n    jne __fern_san_abort_hbo\n    cmpq %r8, 8(%rdi,%rsi,8)\n    jne __fern_san_abort_hbo\n");
-  return s.write("    addq $2, %rsi\n    popq %r8\n.Lquar_redzone_ok:\n");
+  s = s.write("    pushq %rax\n    leaq 16(%rdi,%rsi,8), %r8\n    movq (%r8), %rcx\n    movq 8(%r8), %rax\n");
+  s = s.write("    testq %rax, %rax\n    jz .Lsan_unlink_head\n    cmpq %r8, (%rax)\n    jne .Lsan_unlink_done\n    jmp .Lsan_unlink_next\n");
+  s = s.write(".Lsan_unlink_head:\n    cmpq %r8, __fern_san_live(%rip)\n    jne .Lsan_unlink_done\n");
+  s = s.write(".Lsan_unlink_next:\n    testq %rcx, %rcx\n    jz .Lsan_unlink\n    cmpq %r8, 8(%rcx)\n    jne .Lsan_unlink_done\n");
+  s = s.write(".Lsan_unlink:\n    testq %rax, %rax\n    jz .Lsan_unlink_first\n    movq %rcx, (%rax)\n    jmp .Lsan_unlink_back\n");
+  s = s.write(".Lsan_unlink_first:\n    movq %rcx, __fern_san_live(%rip)\n.Lsan_unlink_back:\n    testq %rcx, %rcx\n    jz .Lsan_unlink_done\n    movq %rax, 8(%rcx)\n");
+  return s.write(".Lsan_unlink_done:\n    popq %rax\n    popq %rcx\n    addq $6, %rsi\n    popq %r8\n.Lquar_redzone_ok:\n");
+}
+
+// The name of each shape id, its length and the words of its box
+// (asmcore.san_shape_names).
+function san_shape_table(s: asmcore.EmitState): asmcore.EmitState {
+  let names = asmcore.san_shape_names(s);
+  for id in 0..names.len() {
+    s = s.write(".Lsan_sn_" + util.i32_to_string(id) + ":\n    .ascii \"" + names[id] + "\"\n");
+  }
+  s = s.write("    .section .data\n    .align 8\n.Lsan_shapes:\n");
+  for id in 0..names.len() {
+    s = s.write("    .quad .Lsan_sn_" + util.i32_to_string(id) + ", " + util.i32_to_string(names[id].len()) + ", " + util.i64_to_string(asmcore.san_shape_words(s, id)) + "\n");
+  }
+  return s.write("    .section .rodata\n");
+}
+
+// After a leak verdict: each block still in __fern_san_live is counted under
+// the shape id in its header, and each shape that leaked gets a line with its
+// number of blocks and bytes. A header whose number of words is not that of
+// its shape counts as a block with no shape.
+function san_census(s: asmcore.EmitState): asmcore.EmitState {
+  let n = util.i32_to_string(asmcore.san_shape_count(s));
+  s = s.write("    pushq %r12\n    pushq %r13\n    pushq %r14\n    movq __fern_san_live(%rip), %r12\n");
+  s = s.write(".Lsan_cen_walk:\n    testq %r12, %r12\n    jz .Lsan_cen_print\n    movq 16(%r12), %rax\n    leaq 16(,%rax,8), %rax\n    movq %r12, %r13\n    subq %rax, %r13\n");
+  s = s.write("    movl 4(%r13), %eax\n    movl %eax, %ecx\n    shrl $16, %eax\n    andl $65535, %ecx\n    cmpq $" + n + ", %rax\n    ja .Lsan_cen_none\n");
+  s = s.write("    imulq $24, %rax, %r14\n    leaq .Lsan_shapes(%rip), %rdx\n    cmpq 16(%rdx,%r14), %rcx\n    je .Lsan_cen_have\n");
+  s = s.write(".Lsan_cen_none:\n    xorl %eax, %eax\n.Lsan_cen_have:\n    shlq $4, %rax\n    leaq __fern_san_census(%rip), %rdx\n    incq (%rdx,%rax)\n");
+  s = s.write("    movq 24(%r12), %rcx\n    shlq $3, %rcx\n    addq %rcx, 8(%rdx,%rax)\n    movq (%r12), %r12\n    jmp .Lsan_cen_walk\n");
+  s = s.write(".Lsan_cen_print:\n    xorl %r12d, %r12d\n.Lsan_cen_loop:\n    cmpq $" + n + ", %r12\n    ja .Lsan_cen_end\n");
+  s = s.write("    movq %r12, %r13\n    shlq $4, %r13\n    leaq __fern_san_census(%rip), %rax\n    addq %rax, %r13\n    cmpq $0, (%r13)\n    je .Lsan_cen_next\n");
+  s = s.write("    leaq .Lsan_row(%rip), %rsi\n    movq $17, %rdx\n    call .Lhev_w\n    movq (%r13), %rdi\n    call .Llc_num\n");
+  s = s.write("    leaq .Lsan_row(%rip), %rsi\n    addq $16, %rsi\n    movq $1, %rdx\n    call .Lhev_w\n");
+  s = s.write("    imulq $24, %r12, %r14\n    leaq .Lsan_shapes(%rip), %rax\n    movq (%rax,%r14), %rsi\n    movq 8(%rax,%r14), %rdx\n    call .Lhev_w\n");
+  s = s.write("    leaq .Lsan_row_bytes(%rip), %rsi\n    movq $2, %rdx\n    call .Lhev_w\n    movq 8(%r13), %rdi\n    call .Llc_num\n");
+  s = s.write("    leaq .Lsan_row_bytes(%rip), %rsi\n    addq $1, %rsi\n    movq $7, %rdx\n    call .Lhev_w\n");
+  s = s.write(".Lsan_cen_next:\n    incq %r12\n    jmp .Lsan_cen_loop\n.Lsan_cen_end:\n    popq %r14\n    popq %r13\n    popq %r12\n");
+  return s;
 }
 
 // The same fill for the elements of a byte array that `__alloc_u8_uninit`
@@ -1299,6 +1348,10 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .align 8\n");
   s = s.write("__fern_lc_exited: .quad 0\n");
   s = s.write("    .align 8\n");
+  if (s.sanitize) {
+    s = s.write("__fern_san_live: .quad 0\n    .align 8\n");
+    s = s.write("__fern_san_census: .skip " + util.i32_to_string(16 * (asmcore.san_shape_count(s) + 1)) + "\n    .align 8\n");
+  }
   if (s.has_need("heap_adopt")) {
     s = s.write("__fern_lc_adopt_lo: .quad 0\n");
     s = s.write("    .align 8\n");
@@ -1325,6 +1378,9 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Lsan_leak:\n    .ascii \"fern-sanitizer: leak \"\n");
     s = s.write(".Lsan_bytesin:\n    .ascii \" bytes in \"\n");
     s = s.write(".Lsan_blocks:\n    .ascii \" blocks\"\n");
+    s = s.write(".Lsan_row:\n    .ascii \"fern-sanitizer:   \"\n");
+    s = s.write(".Lsan_row_bytes:\n    .ascii \", bytes\\n\"\n");
+    s = san_shape_table(s);
   }
   s = s.write("    .section .text\n");
   s = s.write("    .globl __fern_hev_a\n");
@@ -1529,6 +1585,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
       s = s.write("    leaq .Lhev_nl(%rip), %rsi\n");
       s = s.write("    movq $1, %rdx\n");
       s = s.write("    call .Lhev_w\n");
+      s = san_census(s);
       s = s.write(".Lsan_leak_done:\n");
     }
     s = s.write("    ret\n");
@@ -11938,7 +11995,7 @@ function ssa_lane_ret(): i32 {
 }
 
 function ssa_lane_refuse(what: string): void {
-  eprint("error: " + what + ": a lane value crosses a call only as one of the first " + util.i32_to_string(ssa_nargs()) + " arguments of a direct call, or as its result");
+  eprint("fern: error: " + what + ": a lane value crosses a call only as one of the first " + util.i32_to_string(ssa_nargs()) + " arguments of a direct call, or as its result");
   exit(3);
 }
 
@@ -12095,6 +12152,13 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let imm = ssa_imms(f, s);
   s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f), ssa_even: ssadeps.even_values(f) };
   let alloc = ssa_allocate(f, imm, prepared.lowered.ops, s);
+  let indexed = ssa.loop_index_copy(f, alloc.reg_of);
+  if (indexed.nvals != f.nvals) {
+    f = indexed;
+    imm = ssa_imms(f, s);
+    s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f), ssa_even: ssadeps.even_values(f) };
+    alloc = ssa_allocate(f, imm, prepared.lowered.ops, s);
+  }
   let tried = ssa.split_spilled(f, alloc.reg_of, ssa.float_values(f, [], false));
   if (tried.cost > 0) {
     let imm2 = ssa_imms(tried.f, s);

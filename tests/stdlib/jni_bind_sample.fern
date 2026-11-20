@@ -25,10 +25,7 @@ pub struct PointClass { class: usize, id_new: usize, id_new_int_string: usize, i
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function point_class(e: usize): Result[PointClass, jni.JavaError] {
-  let local = jni.find_class(e, "dev/fern/Point");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "dev/fern/Point")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "()V"))?;
   let id_new_int_string = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(ILjava/lang/String;)V"))?;
   let id_area = jni.checked_id(e, class, jni.get_method_id(e, class, "area", "()D"))?;
@@ -196,11 +193,24 @@ pub function (c: PointClass) label(e: usize, self: Point): Result[string, jni.Ja
   return Ok(text);
 }
 
+pub function (c: PointClass) set_label(e: usize, self: Point, value: string): Result[void, jni.JavaError] {
+  let text = jni.new_string(e, value);
+  jni.check(e)?;
+  defer jni.delete_local_ref(e, text);
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_label, text);
+  return jni.check(e);
+}
+
 // dev.fern.Point.made
 pub function (c: PointClass) made(e: usize): Result[i64, jni.JavaError] {
   let got = jni.invoke(e, jni.GET_STATIC_FIELD + 6, c.class, c.id_made, 0 as usize);
   jni.check(e)?;
   return Ok(got as i64);
+}
+
+pub function (c: PointClass) set_made(e: usize, value: i64): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_STATIC_FIELD + 6, c.class, c.id_made, value as usize);
+  return jni.check(e);
 }
 
 // dev.fern.Point.outline
@@ -210,6 +220,11 @@ pub function (c: PointClass) outline(e: usize, self: Point): Result[Shape, jni.J
   return Ok(Shape { ref: got });
 }
 
+pub function (c: PointClass) set_outline(e: usize, self: Point, value: Shape): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_outline, value.ref);
+  return jni.check(e);
+}
+
 // dev.fern.Point.weights
 pub function (c: PointClass) weights(e: usize, self: Point): Result[jni.Object, jni.JavaError] {
   let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_weights, 0 as usize);
@@ -217,11 +232,21 @@ pub function (c: PointClass) weights(e: usize, self: Point): Result[jni.Object, 
   return Ok(jni.Object { ref: got });
 }
 
+pub function (c: PointClass) set_weights(e: usize, self: Point, value: jni.Object): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_weights, value.ref);
+  return jni.check(e);
+}
+
 // dev.fern.Point.x
 pub function (c: PointClass) x(e: usize, self: Point): Result[i32, jni.JavaError] {
   let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_x, 0 as usize);
   jni.check(e)?;
   return Ok(got as i32);
+}
+
+pub function (c: PointClass) set_x(e: usize, self: Point, value: i32): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 5, self.ref, c.id_x, value as usize);
+  return jni.check(e);
 }
 
 // A dev.fern.Shape.
@@ -243,10 +268,7 @@ pub struct ShapeClass { class: usize, id_area: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function shape_class(e: usize): Result[ShapeClass, jni.JavaError] {
-  let local = jni.find_class(e, "dev/fern/Shape");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "dev/fern/Shape")?;
   let id_area = jni.checked_id(e, class, jni.get_method_id(e, class, "area", "()D"))?;
   return Ok(ShapeClass { class: class, id_area: id_area });
 }
@@ -278,7 +300,11 @@ pub function (x: Sample) object(): jni.Object {
 
 pub const SAMPLE_COUNT: i32 = -7;
 
+pub const SAMPLE_HALF: f32 = 0.5;
+
 pub const SAMPLE_NAME: string = "fern é 🌿 \x00 end";
+
+pub const SAMPLE_THIRD: f64 = 0.25;
 
 // The class dev.fern.Sample and the IDs of its members.
 pub struct SampleClass { class: usize, id_new: usize, id_size: usize, id_total: usize }
@@ -286,10 +312,7 @@ pub struct SampleClass { class: usize, id_new: usize, id_size: usize, id_total: 
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function sample_class(e: usize): Result[SampleClass, jni.JavaError] {
-  let local = jni.find_class(e, "dev/fern/Sample");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "dev/fern/Sample")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;I)V"))?;
   let id_size = jni.optional_id(e, jni.get_method_id(e, class, "size", "()I"));
   let id_total = jni.checked_id(e, class, jni.get_static_method_id(e, class, "total", "([JD[Ljava/lang/Object;)J"))?;

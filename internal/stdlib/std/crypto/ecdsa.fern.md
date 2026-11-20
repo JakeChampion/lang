@@ -88,6 +88,7 @@ pub enum EcdsaError {
   NotOnCurve,
   ScalarRange,
   SigningHash,
+  SignatureCheck,
 }
 ```
 
@@ -126,6 +127,9 @@ pub function (e: EcdsaError) message(): string {
     },
     SigningHash => {
       return "ecdsa: signing takes SHA-256 or SHA-384";
+    },
+    SignatureCheck => {
+      return "ecdsa: the generated signature failed verification";
     }
   }
   return "";
@@ -533,7 +537,10 @@ pub function (key: PrivateKey) ecdh(peer: [u8]): Result[u8[], EcdsaError] {
   }
   match (key.curve) {
     P256 => {
-      return Ok(p256.scalar_mul_x(key.d, peer));
+      let Some(x) = p256.scalar_mul_x(key.d, peer) else {
+        return Err(NotOnCurve);
+      };
+      return Ok(x);
     },
     _ => {}
   }
@@ -550,20 +557,64 @@ pub function (key: PrivateKey) sign(hash: sha2.Hash, msg: [u8]): Result[u8[], Ec
     _ => {}
   }
   let digest = hash.digest(msg);
+  let n = __hex_bytes(__curve_data(key.curve).n);
+  let sig: u8[] = [];
   match (key.curve) {
     P256 => {
       let e = p256.scalar_reduce(digest[0:32]);
-      return Ok(__sign_loop(hash, key.d, e, (k: u8[]): i64 => p256.in_scalar_range(k), (k: u8[]): (u8[], u8[]) => p256.sign_rs(key.d, e, k)));
+      sig = __sign_loop(hash, key.d, e, (k: u8[]): i64 => p256.in_scalar_range(k), (k: u8[]): (u8[], u8[]) => p256.sign_rs(key.d, e, k), n);
     },
-    _ => {}
+    _ => {
+      let s = __signer(key.curve);
+      let take = digest.len();
+      if (take > s.bytes) {
+        take = s.bytes;
+      }
+      let e = mont.from_bytes(s.fn, digest[0:take]);
+      sig = __sign_loop(hash, key.d, mont.to_bytes(s.fn, e), (k: u8[]): i64 => mont.in_range(s.fn, k), (k: u8[]): (u8[], u8[]) => __sign_with(s, key.d, e, k), n);
+    }
   }
-  let s = __signer(key.curve);
-  let take = digest.len();
-  if (take > s.bytes) {
-    take = s.bytes;
+  let point = key.public_point();
+  __ct_public(point);
+  return __checked_signature(key.curve, point, hash, msg, sig);
+}
+
+function __checked_signature(curve: Curve, point: [u8], hash: sha2.Hash, msg: [u8], own sig: u8[]): Result[u8[], EcdsaError] {
+  let Ok(public) = public_key(curve, point) else {
+    crypto.erase(sig);
+    return Err(SignatureCheck);
+  };
+  if (!public.verify(hash, msg, sig)) {
+    crypto.erase(sig);
+    return Err(SignatureCheck);
   }
-  let e = mont.from_bytes(s.fn, digest[0:take]);
-  return Ok(__sign_loop(hash, key.d, mont.to_bytes(s.fn, e), (k: u8[]): i64 => mont.in_range(s.fn, k), (k: u8[]): (u8[], u8[]) => __sign_with(s, key.d, e, k)));
+  return Ok(sig);
+}
+```
+
+The signer normalizes `s` to the low half of the group order. It verifies the final DER signature against the original message and its derived public point before returning it. A failed self-check returns `SignatureCheck`.
+
+```fern test name=std-crypto-ecdsa-signature-check
+<<*>>
+
+function main(): i32 {
+  let Ok(key) = private_key(P256, __alloc_u8(32).with(31, 1u8)) else { return 1; };
+  let Ok(sig) = key.sign(sha2.Sha256, "first".as_bytes()) else { return 2; };
+  match (__checked_signature(P256, key.public_point(), sha2.Sha256, "second".as_bytes(), sig)) {
+    Err(SignatureCheck()) => { return 0; },
+    _ => { return 3; }
+  }
+}
+```
+
+```fern test name=std-crypto-ecdsa-low-s
+<<*>>
+
+function main(): i32 {
+  let order = __hex_bytes(__curve_data(P256).n);
+  let high = __alloc_u8(32).with(0, 0xff as u8);
+  if (__low_s(high, order)[0] != 0u8 || __low_s([1u8], [3u8])[0] != 1u8 || __low_s([2u8], [3u8])[0] != 1u8) { return 5; }
+  return 0;
 }
 ```
 
@@ -571,7 +622,7 @@ pub function (key: PrivateKey) sign(hash: sha2.Hash, msg: [u8]): Result[u8[], Ec
 
 ```fern
 <<18 function __sign_loop(hash: sha2.Hash, d: [u8], e: [u8], in_range: (u8[])>>=
-function __sign_loop(hash: sha2.Hash, d: [u8], e: [u8], in_range: (u8[]) => i64, rs_of: (u8[]) => (u8[], u8[])): u8[] {
+function __sign_loop(hash: sha2.Hash, d: [u8], e: [u8], in_range: (u8[]) => i64, rs_of: (u8[]) => (u8[], u8[]), n: [u8]): u8[] {
   let drbg = __drbg_new(hash, d, e);
   while (true) {
     let next = __drbg_next(drbg, d.len());
@@ -584,13 +635,60 @@ function __sign_loop(hash: sha2.Hash, d: [u8], e: [u8], in_range: (u8[]) => i64,
       if (!__all_zero(rs.0) && !__all_zero(rs.1)) {
         crypto.erase(k);
         __drbg_erase(drbg);
-        return __der(rs.0, rs.1);
+        return __der(rs.0, __low_s(rs.1, n));
       }
     }
     crypto.erase(k);
     drbg = __drbg_reseed(drbg);
   }
   return [];
+}
+
+// s, or n - s when s is above n / 2, so that each signature has one form. s
+// and n are big-endian of one length, and s is public.
+function __low_s(s: [u8], n: [u8]): u8[] {
+  let half = __alloc_u8(n.len());
+  let carry = 0;
+  for i in 0..n.len() {
+    half = half.with(i, (carry << 7 | n[i] as i32 >> 1) as u8);
+    carry = n[i] as i32 & 1;
+  }
+  let above = false;
+  let decided = false;
+  for i in 0..n.len() {
+    if (!decided && s[i] != half[i]) {
+      above = s[i] > half[i];
+      decided = true;
+    }
+  }
+  if (!above) {
+    return __bytes_owned(s);
+  }
+  let out = __alloc_u8(n.len());
+  let borrow = 0;
+  let i = n.len() - 1;
+  while (i >= 0) {
+    let d = n[i] as i32 - s[i] as i32 - borrow;
+    borrow = if (d < 0) { 1 } else { 0 };
+    out = out.with(i, (d + 256 * borrow) as u8);
+    i -= 1;
+  }
+  return out;
+}
+
+function __hex_bytes(h: string): u8[] {
+  let out = __alloc_u8(h.len() / 2);
+  for i in 0..h.len() / 2 {
+    out = out.with(i, (__hex_digit(h[2 * i]) << 4 | __hex_digit(h[2 * i + 1])) as u8);
+  }
+  return out;
+}
+
+function __hex_digit(c: u8): i32 {
+  if (c >= b'a') {
+    return c as i32 - b'a' as i32 + 10;
+  }
+  return c as i32 - b'0' as i32;
 }
 
 function __sign_with(s: Signer, d: [u8], e: [i64], k: [u8]): (u8[], u8[]) {

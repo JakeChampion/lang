@@ -28,7 +28,7 @@ func TestSelfHostSocketsAllocateOnlyTheCloseTableX86_64(t *testing.T) {
 	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := runX86_64Bin(cli.runner, cli.x86Binary(t, src, "FERN_RC_TRACE=1"))
+	cmd := runX86_64Bin(cli.runner, cli.x86Binary(t, src, "FERN_DEBUG_RC_TRACE=1"))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("run: %v\n%s", err, out)

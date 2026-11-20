@@ -87,7 +87,7 @@ func TestSelfHostSuspendSiteFreeConstructs(t *testing.T) {
 	}
 	asm := filepath.Join(t.TempDir(), "out.s")
 	cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "x86-64-linux", "-emit", "asm", "-o", asm, src, cli.stdlib)
-	cmd.Env = append(os.Environ(), "FERN_SUSPEND_DUMP=scan")
+	cmd.Env = append(os.Environ(), "FERN_DEBUG_SUSPEND_DUMP=scan")
 	msg, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("self-host CLI: %v\n%s", err, msg)
@@ -118,7 +118,7 @@ func TestSelfHostSuspendSiteFreeConstructs(t *testing.T) {
 	}
 }
 
-// suspendIfs counts the if ops in one stage of a FERN_SUSPEND_DUMP listing.
+// suspendIfs counts the if ops in one stage of a FERN_DEBUG_SUSPEND_DUMP listing.
 func suspendIfs(dump, stage string) int {
 	n, in := 0, false
 	for _, line := range strings.Split(dump, "\n") {

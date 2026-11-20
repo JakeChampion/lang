@@ -24,7 +24,7 @@ changes the code the backend emits — so it goes on the build, not on the run.
 | use-after-free | an `inc`/`dec` touches a quarantined block | `fern-sanitizer: use-after-free (touched a quarantined block)` + backtrace, exit 124 |
 | heap-buffer-overflow | a release finds that the redzone after a block was written | `fern-sanitizer: heap-buffer-overflow (a block was written past its end)` + backtrace, exit 124 |
 | second context | a context that does not own the heap allocates or releases a block | `fern-sanitizer: second context (a thread or stack that does not own the heap used it)` + backtrace, exit 124 |
-| leak census | `main` returns with live bytes outstanding | `leakcheck: …` summary + `fern-sanitizer: leak <K> bytes in <N> blocks` |
+| leak census | `main` returns with live bytes outstanding | `leakcheck: …` summary + `fern-sanitizer: leak <K> bytes in <N> blocks`, then one line for each shape that leaked |
 
 A run that the `exit()` builtin ends prints the census, marked ` from=exit`,
 but no leak verdict. The frames above the call are never unwound, so the
@@ -93,7 +93,7 @@ way to report it.
 
 ## What it does NOT turn on
 
-`FERN_RC_TRACE=1` — one stderr line per heap event — stays separate. It is a
+`FERN_DEBUG_RC_TRACE=1` — one stderr line per heap event — stays separate. It is a
 tool you point at a reduced repro after the sanitizer has told you there is
 something to look for, not something a standing mode can afford. Compose them
 by hand when you want both.
@@ -191,7 +191,7 @@ a target with no instrumentation at all, it says that the build carries no
 checks.
 
 The **self-host** compiler takes `-sanitize` as native does, and reads
-`FERN_SANITIZE=1` at emit time (its `FERN_LEAKCHECK` / `FERN_RC_TRACE` ports
+`FERN_SANITIZE=1` at emit time (its `FERN_LEAKCHECK` / `FERN_DEBUG_RC_TRACE` ports
 have the same shape), so either goes to the compiler process, not to the
 program it produces; the flag prints the same per-target coverage note:
 
@@ -318,8 +318,28 @@ treatment, or a stale reference walks straight past the detector.
 
 ## Reading a finding
 
-A leak verdict says how much and how many, not where. Pair it with
-`FERN_RC_TRACE=1` on the same build to get one `rctrace a …` line per
+A leak verdict says how much and how many, and of which shape:
+
+```
+fern-sanitizer: leak 184 bytes in 3 blocks
+fern-sanitizer:  1 Chain$Link, 16 bytes
+fern-sanitizer:  2 blocks with no shape, 168 bytes
+```
+
+Each block that the sanitizer allocates goes into a list through four words
+after its redzone, and its release takes it out. At the verdict, each block
+still in the list counts under the shape id in its header word
+(`asmcore.shape_tag`), with the bytes of its request.
+
+A header that does not
+hold a shape of the program, with its number of words, counts as a block with
+no shape: an array, a string or a raw block. The names come from a table that
+only a `-sanitize` build carries. `TestSelfHostSanitizeCensusNamesTheShape`
+holds the lines on x86-64 and arm64. The wasm census prints the verdict line
+only.
+
+The verdict does not say where a block was made. Pair it with
+`FERN_DEBUG_RC_TRACE=1` on the same build to get one `rctrace a …` line per
 allocation carrying its call site AND the frame above it; the allocs that
 never match an `f` line by pointer are the leak, attributed to the code that
 made them. Read the second frame whenever the first names a runtime helper or
@@ -337,9 +357,10 @@ whose reference outlived the count.
 
 ## What this does not catch
 
-- **Cycles.** A reference cycle is a leak the census reports as live bytes
-  with no further attribution. Identifying cycle members (trial-decrement over
-  the leak set) is the unbuilt half of #5362.
+- **Cycles.** The checker rejects the constructs that could close a
+  reference cycle (E048, E057, `docs/CYCLE-COLLECTION-ANALYSIS.md`). A cycle
+  is thus a compiler bug, and the census names the shapes of its blocks but
+  not which of them make the cycle.
 - **Uninitialised reads.** The fill makes a read of unwritten raw memory give
   the poison pattern, but nothing reports the read. A report must tell an
   unwritten byte from a byte that holds the pattern, and that needs shadow

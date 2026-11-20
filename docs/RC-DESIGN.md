@@ -577,14 +577,17 @@ than a finding. A call that returns its operand or a fresh box
 unit and gives the result a fresh one. On the edge where a test finds the two
 are one box, the result takes the operand's units and the fresh unit goes. A
 push (`arr_push`) also grows its array in place or returns a new box. A push
-onto a parameter, or onto a value that a test found to be the box of a
-parameter, gives a twin of that parameter. A twin holds no unit if it is the
+onto a box, or onto a value that a test found to be that box, gives a twin
+of that box. A store of null can clear the slot that the box was read from.
+Then the unit of the slot goes to the value that is the box on that path. A twin holds no unit if it is the
 box of the parameter, and one unit if it is a new box. A test of the twin
 against the parameter decides the side on each edge, and a join meets the
 two sides apart. A test of any value with a plain count against a parameter
 also gives a twin with one side: the box of the parameter on the equal edge,
 and another box on the other edge. A retain or a release of a twin with one
-side changes the count of that side. Another use that a twin cannot describe
+side changes the count of that side. A parameter is its own box, so as a phi
+input it is a twin of itself with one side. A twin with one side meets a twin
+of another key as its count. Another use that a twin cannot describe
 reads the twin as one count. A reuse token is a phi whose inputs are one box
 or null, and it gives that box a twin of the token. Where the token is the
 box, the token takes the unit of the box. Where the token is null, the box
@@ -593,7 +596,11 @@ edge. A block that defines the token again reads each twin of the token as
 one count. Where the token is not null, the token and its box are one box.
 There, a phi input of one name can take the unit of the other name. A move
 of a unit that is held (`__fern_alloc_reuse`) acts on each side of a twin
-apart. On the arm where `__fern_rc_is_unique` found another holder, a push
+apart. The two arms of a test can reach a join apart. There, a count that the
+arms disagree on is a twin of the word that the test reads. A later test of
+that word against zero decides the side on each edge. A definition of the
+word again, as a loop does, reads each twin of the word as one count. On the
+arm where `__fern_rc_is_unique` found another holder, a push
 copies the box, or it keeps a box with a negative count in place. No retain
 or release changes such a box, so there the result counts as a new box. A
 call through a function value takes the contract that the lowering writes on
@@ -636,7 +643,7 @@ function with a frame and no such body is a refusal.
 `FERN_RC_CERTIFY=report` turns refusals into a census line for each
 function. The line gives the tracked and the unproved values and the
 findings. An `at=` field names each unproved value as
-`FERN_RC_CERTIFY_DUMP` prints it. The line also gives the most rounds a walk
+`FERN_DEBUG_RC_CERTIFY_DUMP` prints it. The line also gives the most rounds a walk
 took to settle, and any failure or opaque callee. A runtime unit's gate prints its census too.
 
 `FERN_RC_CERTIFY=mutate` adds three mutants of each function that passes: its
@@ -793,10 +800,10 @@ In the order they are usually reached for:
    rather than where the machine code falls over.
 3. `FERN_RC_CERTIFY=report` with `FERN_RC_CERTIFY_MEMO=0`: the certifier's
    census over every function (`FERN_RC_CERTIFY=mutate` adds the mutant
-   outcomes), and `FERN_RC_CERTIFY_DUMP=<name>` (or a
+   outcomes), and `FERN_DEBUG_RC_CERTIFY_DUMP=<name>` (or a
    `<prefix>*`) to print the lifted SSA it read, under the report mode and at
    a refusal.
-4. `FERN_SEM_DUMP=<function>`: the semantic graph as the inliner leaves it,
+4. `FERN_DEBUG_SEM_DUMP=<function>`: the semantic graph as the inliner leaves it,
    before the plan.
 5. `FERN_CLIFF_REPORT=1` on a run of the compiled program: how many appends
    found their array shared with room to spare and how many bytes they copied

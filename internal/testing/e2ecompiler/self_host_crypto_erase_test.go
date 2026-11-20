@@ -19,7 +19,12 @@ import (
 // block of the HMAC inner pad pattern without erasing it, which shows that
 // the scan sees a stale copy.
 const cryptoEraseSrc = `import "std/crypto";
+import "std/hex";
 import "std/crypto/aes_gcm";
+import "std/crypto/aes";
+import "std/crypto/des";
+import "std/hex";
+import "std/result";
 import "std/crypto/chacha20poly1305";
 import "std/crypto/ed25519";
 import "std/crypto/ecdsa";
@@ -118,16 +123,24 @@ function run(mode: string, key: [u8], msg: [u8], nonce12: [u8]): i32 {
     return crypto.hmac_sha256(key, msg).len() - 32;
   }
   if (mode == "hkdf") {
-    let okm: u8[] = crypto.hkdf_sha256_expand(key, msg, 80);
+    let Ok(okm) = crypto.hkdf_sha256_expand(key, msg, 80) else { exit(1); };
     let n: i32 = okm.len();
     crypto.erase(okm);
     return n - 80;
   }
   if (mode == "hkdf-full") {
-    let okm: u8[] = crypto.hkdf_sha256(nonce12, key, msg, 80);
+    let Ok(okm) = crypto.hkdf_sha256(nonce12, key, msg, 80) else { exit(1); };
     let n: i32 = okm.len();
     crypto.erase(okm);
     return n - 80;
+  }
+  if (mode == "sha1-block") {
+    let state = crypto.sha1_new().update(filled(64, 0 as u8));
+    return if (state.h0 == 0x92b404e5 as u32) { 0 } else { 1 };
+  }
+  if (mode == "sha256-block") {
+    let state = crypto.sha256_new().update(filled(64, 0 as u8));
+    return if (state.h0 == 0xda5698be as u32) { 0 } else { 1 };
   }
   if (mode == "sha256") {
     let secret: u8[] = mixed(40);
@@ -148,6 +161,21 @@ function run(mode: string, key: [u8], msg: [u8], nonce12: [u8]): i32 {
     let Ok(k) = ed25519.private_key(key) else { return 9; };
     return k.sign(msg).len() - 64;
   }
+  if (mode == "chacha-key" || mode == "chacha-key-drop") {
+    let Ok(k) = chacha20poly1305.key("DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD".as_bytes()) else { return 9; };
+    if (mode == "chacha-key") { k.erase(); }
+    return 0;
+  }
+  if (mode == "aes-cipher" || mode == "aes-cipher-drop") {
+    let Ok(c) = aes.cipher(filled(16, 0 as u8)) else { return 9; };
+    if (mode == "aes-cipher") { c.erase(); }
+    return 0;
+  }
+  if (mode == "des-cipher" || mode == "des-cipher-drop") {
+    let Ok(c) = des.cipher([0x13u8, 0x34u8, 0x57u8, 0x79u8, 0x9bu8, 0xbcu8, 0xdfu8, 0xf1u8]) else { return 9; };
+    if (mode == "des-cipher") { c.erase(); }
+    return 0;
+  }
   if (mode == "aes-key") { return aes_key(true); }
   if (mode == "aes-key-drop") { return aes_key(false); }
   if (mode == "ed25519-key") { return ed25519_key(true); }
@@ -163,13 +191,24 @@ function copy_of(b: [u8], from: i32, n: i32): u8[] {
 // runs so that no needle takes a block the primitive released.
 function needles_of(mode: string, key: [u8], msg: [u8], nonce12: [u8]): u8[][] {
   if (mode == "hkdf") {
-    let okm: u8[] = crypto.hkdf_sha256_expand(key, msg, 80);
+    let Ok(okm) = crypto.hkdf_sha256_expand(key, msg, 80) else { exit(1); };
     let out: u8[][] = [copy_of(okm, 0, 32), copy_of(okm, 32, 32)];
     crypto.erase(okm);
     return out;
   }
   if (mode == "hkdf-full") {
     return [crypto.hkdf_sha256_extract(nonce12, key)];
+  }
+  // The initial state and the state after one all-zero block, in kernel byte order.
+  if (mode == "sha1-block") {
+    let Ok(input) = hex.decode("0123456789abcdeffedcba9876543210f0e1d2c3") else { exit(9); };
+    let Ok(output) = hex.decode("e504b492ed8c58564ecd1a6c683f05bf933af709") else { exit(9); };
+    return [input, output];
+  }
+  if (mode == "sha256-block") {
+    let Ok(input) = hex.decode("67e6096a85ae67bb72f36e3c3af54fa57f520e518c68059babd9831f19cde05b") else { exit(9); };
+    let Ok(output) = hex.decode("be9856da69b4b91799573362cabe9f7791d4e58c4362d2c0eaf9febad8a93718") else { exit(9); };
+    return [input, output];
   }
   if (mode == "sha256") {
     let secret: u8[] = mixed(40);
@@ -190,6 +229,17 @@ function needles_of(mode: string, key: [u8], msg: [u8], nonce12: [u8]): u8[][] {
     let nonce: u8[] = crypto.sha512_new().update(expanded[32:64]).update(msg).finish();
     crypto.erase(expanded);
     return [nonce];
+  }
+  if (mode == "chacha-key" || mode == "chacha-key-drop") {
+    return [filled(32, 68 as u8)];
+  }
+  if (mode == "aes-cipher" || mode == "aes-cipher-drop") {
+    // The final round key for AES-128 with an all-zero input key.
+    return [hex.decode("b4ef5bcb3e92e21123e951cf6f8f188e").unwrap_or([])];
+  }
+  if (mode == "des-cipher" || mode == "des-cipher-drop") {
+    // The first two round keys for 0x133457799bbcdff1, stored as little-endian u64s.
+    return [hex.decode("7270fcef021b0000e5c9dbd9ae790000").unwrap_or([])];
   }
   if (mode == "aes-key" || mode == "aes-key-drop") {
     return [__aes_expand_key(filled(16, 65 as u8))];
@@ -269,12 +319,12 @@ func TestSelfHostPrimitivesEraseKeyMaterial(t *testing.T) {
 			if got := run("plant"); got < 1 {
 				t.Fatalf("plant: the scan found %d stale copies of a released block, want at least 1: the scan does not see the arena", got)
 			}
-			for _, mode := range []string{"hmac", "hkdf", "hkdf-full", "sha256", "x25519", "chacha", "ed25519"} {
+			for _, mode := range []string{"hmac", "hkdf", "hkdf-full", "sha1-block", "sha256-block", "sha256", "x25519", "chacha", "ed25519"} {
 				if got := run(mode); got != 0 {
 					t.Errorf("%s: %d stale copies of key material in the arena after the primitive returned, want 0", mode, got)
 				}
 			}
-			for _, mode := range []string{"aes-key", "ed25519-key", "ecdsa-key"} {
+			for _, mode := range []string{"aes-key", "ed25519-key", "ecdsa-key", "chacha-key", "aes-cipher", "des-cipher"} {
 				if got := run(mode + "-drop"); got < 1 {
 					t.Fatalf("%s-drop: a dropped key left %d copies of its secret in the arena, want at least 1: the control does not see the dropped key", mode, got)
 				}

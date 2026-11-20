@@ -347,13 +347,10 @@ function scalar_code(t: string): i32 {
 function coerce_to_declared(val: Value, type_name: string): Value {
   match (val) {
     VCell(c) => {
-      if (parser.parse_type_ref(type_name).base == "Cell") {
-        return cell_as_declared(c, type_name);
-      }
-      return val;
+      return cell_as_declared(c, parser.parse_type_ref(type_name));
     },
     VArr(a) => {
-      if (a.elem.len() > 0 && !a.view && name_ends_with(type_name, "[]")) {
+      if (a.elem.len() > 0 && (if (a.view) { parser.spelling_is_view(type_name) } else { name_ends_with(type_name, "[]") })) {
         return val;
       }
       let ty = parser.parse_type_ref(type_name);
@@ -362,9 +359,11 @@ function coerce_to_declared(val: Value, type_name: string): Value {
         return val;
       }
       let elem = a.elem;
-      let declared = parser.array_method_element(type_name);
-      if (elem.len() == 0 && parser.type_str_vars(declared, []).len() == 0) {
-        elem = declared;
+      if (elem.len() == 0) {
+        let declared = if (is_view) { parser.render_type_ref(ty.args[0]) } else { parser.elem_spelling(type_name) };
+        if (parser.type_str_vars(declared, []).len() == 0) {
+          elem = declared;
+        }
       }
       return arr_retyped(a, elem, is_view);
     },
@@ -1104,22 +1103,27 @@ pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[
 // The program's functions in declaration order, indexed by the name a call
 // uses: the declared name, except that a Map `__iterator` is `iter`.
 // `receivers` holds the runtime_receiver_name of each declaration, `cells`
-// its body_needs_cells, and `plain` is true for a function with no receiver
-// whose name no builtin takes.
-pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex, receivers: string[], cells: boolean[], plain: boolean[] }
+// its body_needs_cells, and `cleanups` the actions for a try exit.
+// `receiver_args` holds the receiver argument names to check for const bindings.
+// `plain` is true for a function with no receiver whose name no builtin takes.
+pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex, receivers: string[], receiver_args: string[][], cells: boolean[], cleanups: ast.Stmt[][], plain: boolean[] }
 
 function funcs_of(decls: parser.FuncDecl[]): Funcs {
   let names: string[] = [];
   let receivers: string[] = [];
+  let receiver_args: string[][] = [];
+  let cleanups: ast.Stmt[][] = [];
   let cells: boolean[] = [];
   let plain: boolean[] = [];
   for fd in decls {
     names = names.append(runtime_method_name(fd));
     receivers = receivers.append(runtime_receiver_name(fd.receiver_type));
+    receiver_args = receiver_args.append(receiver_arg_names(fd));
     cells = cells.append(body_needs_cells(fd.body));
+    cleanups = cleanups.append(parser.try_cleanup(fd.body));
     plain = plain.append(fd.receiver_type.len() == 0 && !builtin_takes_name(fd.name));
   }
-  return Funcs { decls: decls, runtime_names: util.name_index(names), receivers: receivers, cells: cells, plain: plain };
+  return Funcs { decls: decls, runtime_names: util.name_index(names), receivers: receivers, receiver_args: receiver_args, cells: cells, cleanups: cleanups, plain: plain };
 }
 
 // The positions of the functions that a call of `name` can reach, in
@@ -1581,13 +1585,12 @@ function cell_kind_of(elem: string): string {
 // its initial value, so `cell_new(2)` is an i32 cell until the declaration
 // settles it, as the literal itself settles. Only a numeric cell changes
 // kind; the cell comes back unchanged when the kinds agree.
-function cell_as_declared(c: VCell, type_name: string): Value {
-  let ref = parser.parse_type_ref(type_name);
-  if (ref.args.len() != 1) {
+function cell_as_declared(c: VCell, ref: parser.TypeRef): Value {
+  if (ref.base != "Cell" || ref.args.len() != 1) {
     return VCell { ...c };
   }
   let want = cell_kind_of(parser.render_type_ref(ref.args[0]));
-  if (!cell_kind_numeric(want) || !cell_kind_numeric(c.kind) || want == c.kind) {
+  if (want == c.kind || !cell_kind_numeric(want) || !cell_kind_numeric(c.kind)) {
     return VCell { ...c };
   }
   let encoded = encoded_value(coerce_int_width(managed_cell_value(c.root), want), c.root.heap);
@@ -6001,14 +6004,7 @@ function method_target_index(name: string, recv: Value, env: Env): i32 {
   if let VType(tv) = recv {
     return assoc_index(env.funcs, tv.name, name);
   }
-  let rt = value_type_name(recv);
-  for at in env.funcs.named(name) {
-    let fd = env.funcs.decls[at];
-    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && env.funcs.receivers[at] == rt) {
-      return at;
-    }
-  }
-  return -1;
+  return receiver_method_index(env.funcs, env.funcs.named(name), value_type_name(recv));
 }
 
 function free_target_index(name: string, env: Env): i32 {
@@ -6549,7 +6545,7 @@ function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args
   if (args.len() != fd.params.len()) {
     return v_err("arity mismatch calling `" + type_name + "." + name + "`");
   }
-  let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: parser.try_cleanup(fd.body), cells: funcs.cells[ai] };
+  let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: funcs.cleanups[ai], cells: funcs.cells[ai] };
   let targs = parser.parse_type_ref(type_name).args;
   let tps = fd.type_params;
   if (tps.len() == 0) {
@@ -6709,21 +6705,32 @@ function bind_tyargs(env: Env, fd: parser.FuncDecl, has_recv: boolean, recv: Val
   return e;
 }
 
+// A receiver method can bind its simple type arguments to constants at a call.
+function receiver_arg_names(fd: parser.FuncDecl): string[] {
+  let names: string[] = [];
+  if (fd.receiver_name.len() > 0) {
+    for a in parser.parse_type_ref(fd.receiver_type).args {
+      if (a.args.len() == 0) {
+        names = names.append(a.base);
+      }
+    }
+  }
+  return names;
+}
+
 // bind_receiver_consts binds each name of a receiver spelling that the
 // receiver's static type fills with a const argument: N in
 // `function (r: Ring[N, T]) cap()` called on a `Ring[4, string]`. A struct
 // value does not carry its type arguments, so the call site gives the type.
-function bind_receiver_consts(env: Env, receiver_type: string, recv_type: string): Env {
+function bind_receiver_consts(env: Env, receiver_type: string, recv_type: string, names: string[]): Env {
   let e = env;
   if (recv_type.len() == 0) {
     return e;
   }
-  for a in parser.parse_type_ref(receiver_type).args {
-    if (a.args.len() == 0) {
-      let concrete = tyarg_match_names(receiver_type, a.base, recv_type);
-      if (parser.is_const_arg(concrete)) {
-        e = e.bind(a.base, v_int(util.digits_to_i32(concrete)));
-      }
+  for name in names {
+    let concrete = tyarg_match_names(receiver_type, name, recv_type);
+    if (parser.is_const_arg(concrete)) {
+      e = e.bind(name, v_int(util.digits_to_i32(concrete)));
     }
   }
   return e;
@@ -6793,14 +6800,13 @@ function runtime_method_name(fd: parser.FuncDecl): string {
   return fd.name;
 }
 
-function has_receiver_method(funcs: Funcs, recv_type: string, name: string): boolean {
-  for at in funcs.named(name) {
-    let fd = funcs.decls[at];
-    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && funcs.receivers[at] == recv_type) {
-      return true;
+function receiver_method_index(funcs: Funcs, candidates: i32[], recv_type: string): i32 {
+  for at in candidates {
+    if (funcs.receivers[at] == recv_type && funcs.decls[at].receiver_name.len() > 0) {
+      return at;
     }
   }
-  return false;
+  return -1;
 }
 
 function runtime_receiver_name(spelling: string): string {
@@ -7144,8 +7150,9 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
   if (recv_type.len() == 0) {
     return v_err("method `" + name + "`: receiver has no type name to dispatch on");
   }
-  let own_method = has_receiver_method(funcs, recv_type, name);
-  for at in funcs.named(name) {
+  let candidates = funcs.named(name);
+  let own_method = receiver_method_index(funcs, candidates, recv_type) >= 0;
+  for at in candidates {
     let fd = funcs.decls[at];
     let receiver_base = funcs.receivers[at];
     let rt_match = receiver_base == recv_type;
@@ -7155,13 +7162,16 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
     if (!rt_match && recv_type == "Array" && is_array_recv_type(fd.receiver_type)) {
       rt_match = true;
     }
-    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && rt_match) {
+    if (fd.receiver_name.len() > 0 && rt_match) {
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling method `" + name + "`");
       }
-      let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: parser.try_cleanup(fd.body), cells: funcs.cells[at] };
+      let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: funcs.cleanups[at], cells: funcs.cells[at] };
       env = bind_tyargs(env, fd, true, recv, args, type_args, "");
-      env = bind_receiver_consts(env, fd.receiver_type, recv_static);
+      let receiver_args = funcs.receiver_args[at];
+      if (receiver_args.len() > 0) {
+        env = bind_receiver_consts(env, fd.receiver_type, recv_static, receiver_args);
+      }
       env = env.bind(fd.receiver_name, recv);
       for j in 0..fd.params.len() {
         env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
@@ -9611,7 +9621,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   if (fd.import_iface.len() > 0 && fd.import_iface != parser.CALLBACK_IFACE) {
     return v_err(import_refusal(name, fd.import_wit, fd.import_iface));
   }
-  let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: parser.try_cleanup(fd.body), cells: funcs.cells[at] };
+  let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: funcs.cleanups[at], cells: funcs.cells[at] };
   let no_recv = v_absent();
   env = bind_tyargs(env, fd, false, no_recv, args, type_args, expect);
   for j in 0..fd.params.len() {
@@ -10515,14 +10525,7 @@ function eval_iterator_for(f: ast.StmtFor, iv: Value, own env: Env): StepResult 
 }
 
 function receiver_has_method(funcs: Funcs, recv: Value, name: string): boolean {
-  let rt = value_type_name(recv);
-  for at in funcs.named(name) {
-    let fd = funcs.decls[at];
-    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && funcs.receivers[at] == rt) {
-      return true;
-    }
-  }
-  return false;
+  return receiver_method_index(funcs, funcs.named(name), value_type_name(recv)) >= 0;
 }
 
 function body_binds(body: ast.Stmt[]): boolean {

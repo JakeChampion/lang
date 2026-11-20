@@ -4,6 +4,7 @@
 // workers, the image decoder and the ExoPlayer.
 import "std/android";
 import "std/android/access";
+import "std/android/browse";
 import "std/android/download";
 import "std/android/focus";
 import "std/android/launch";
@@ -26,6 +27,7 @@ import "std/rand";
 import "std/worker";
 import "./control";
 import "./plex";
+import "./ui";
 
 pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
   launch.start(activity, app_main_entry());
@@ -44,6 +46,11 @@ pub function on_message(env: usize, thiz: usize, msg: usize): u8 {
 @jni("dev.fern.plex.Exo", "void onEvents(androidx.media3.common.Player, androidx.media3.common.Player$Events)")
 pub function on_events(env: usize, thiz: usize, exo: usize, events: usize): void {
   exoplayer.events(env, thiz, exo, events);
+}
+
+@jni("dev.fern.plex.Exo", "void onCues(androidx.media3.common.text.CueGroup)")
+pub function on_cues(env: usize, thiz: usize, group: usize): void {
+  exoplayer.cues(env, thiz, group);
 }
 
 // The callback of the media session: each media button of Android gives
@@ -76,6 +83,29 @@ pub function controls_stop(env: usize, thiz: usize): void {
 @jni("dev.fern.plex.Controls", "void onSeekTo(long)")
 pub function controls_seek(env: usize, thiz: usize, ms: i64): void {
   session.seek_to(env, ms);
+}
+
+// A media browser, such as Android Auto, plays an item that it showed.
+@jni("dev.fern.plex.Controls", "void onPlayFromMediaId(java.lang.String, android.os.Bundle)")
+pub function controls_play_from(env: usize, thiz: usize, id: usize, extras: usize): void {
+  browse.play_from(env, id);
+}
+
+// The media browser that Android Auto binds. It can start the loop of the
+// app while no window shows.
+@jni("dev.fern.plex.Browse extends android.service.media.MediaBrowserService", "android.service.media.MediaBrowserService$BrowserRoot onGetRoot(java.lang.String, int, android.os.Bundle)")
+pub function browse_root(env: usize, thiz: usize, client: usize, uid: i32, hints: usize): usize {
+  return browse.root(env, thiz, app_main_entry());
+}
+
+@jni("dev.fern.plex.Browse", "void onLoadChildren(java.lang.String, android.service.media.MediaBrowserService$Result)")
+pub function browse_children(env: usize, thiz: usize, parent: usize, result: usize): void {
+  browse.children(env, thiz, parent, result);
+}
+
+@jni("dev.fern.plex.Browse", "void onDestroy()")
+pub function browse_destroyed(env: usize, thiz: usize): void {
+  browse.destroyed(env, thiz);
 }
 
 // The foreground service that keeps the music at work while the window of
@@ -259,15 +289,17 @@ function lock(window: usize): draw.Frame {
   return w.lock();
 }
 
-// The MIME types that the decoders of the phone take, or none when Android
-// does not tell them.
+// The MIME types that the decoders of the phone take, and the types that
+// its sound output takes as they are, or none when Android does not tell
+// the decoders.
 function decoders(ctx: usize): string[] {
-  if let Ok(types) = capabilities.decoder_types(android.env(ctx), capabilities.default_limits()) {
-    log.info("plex: decoders " + types.join(" "));
-    return types;
-  }
-  log.warn("plex: no list of decoders");
-  return [];
+  let Ok(types) = capabilities.decoder_types(android.env(ctx), capabilities.default_limits()) else {
+    log.warn("plex: no list of decoders");
+    return [];
+  };
+  let passthrough = exoplayer.passthrough_types(ctx).filter((t: string): boolean => !types.contains(t));
+  log.info("plex: decoders " + types.join(" ") + ", passthrough " + passthrough.join(" "));
+  return types.concat(passthrough);
 }
 
 // The GPU side of the app: a painter on a GL context, which draws each
@@ -434,6 +466,18 @@ function close_gpu(gpu: Cell[Option[Gpu]]): void {
 
 // The device of the phone. A player with no object, when Android gave
 // none, plays nothing.
+// Gives the media browser the token of the media session. With no
+// session, the browser does not connect.
+function browse_connect(ctx: usize, media: Media, svc: browse.Service): void {
+  let Some(s) = media.session else {
+    log.warn("plex: no media session for the browser");
+    return;
+  };
+  if (!browse.connect(ctx, svc, session.token(ctx, s))) {
+    log.warn("plex: the browser did not take the session");
+  }
+}
+
 function device(ctx: usize, ps: Players, gpu: Cell[Option[Gpu]], media: Media): control.Device {
   let posters = android.cache_dir(ctx) + "/posters";
   return control.Device {
@@ -468,6 +512,14 @@ function device(ctx: usize, ps: Players, gpu: Cell[Option[Gpu]], media: Media): 
     detach: (): void => detach_gpu(gpu),
     present: (window: usize, nodes: scene.Node[], video: boolean): boolean => present(ctx, playing(ps), gpu, window, nodes, video),
     hide_video: (): void => hide_video(ctx, playing(ps), playing(ps).live(), gpu),
+    select_text: (index: i32): boolean => exoplayer.select_text(ctx, playing(ps), index),
+    image_cues: (): ui.Picture[] => exoplayer.image_cues(ctx, playing(ps)).map((c: exoplayer.ImageCue): ui.Picture => ui.Picture { image: c.image, key: "", x: c.x, y: c.y, w: c.width, h: c.height }),
+    video_size: (): (i32, i32) => exoplayer.video_size(ctx, playing(ps)),
+    frame_rate: (window: usize, fps: f32): void => {
+      if (window != 0 as usize && !exoplayer.match_frame_rate(ctx, android.Window { ptr: window }, fps)) {
+        log.info("plex: the display took no frame rate");
+      }
+    },
     pause_video: (): void => pause_video(ctx, playing(ps), playing(ps).live(), gpu),
     request_frame: (): void => android.request_frame(ctx),
     start: (): void => { let ok = exoplayer.start(ctx, playing(ps)); },
@@ -497,6 +549,10 @@ function device(ctx: usize, ps: Players, gpu: Cell[Option[Gpu]], media: Media): 
     from_next: (e: android.Event): boolean => waiting(ps).sent(e),
     random: (): i32 => rand.next_i32() & 2147483647,
     decoders: decoders(ctx),
+    browse_connect: (svc: browse.Service): void => browse_connect(ctx, media, svc),
+    browse_parent: (r: browse.Request): string => browse.parent(ctx, r),
+    browse_answer: (r: browse.Request, items: browse.Item[]): boolean => browse.answer(ctx, r, items),
+    media_id: (m: browse.MediaId): string => browse.media_id(ctx, m),
     languages: android.languages(ctx),
   };
 }
@@ -557,7 +613,9 @@ function swap(ctx: usize, ps: Players): void {
 // no such row, and this changes nothing.
 function watch_next(ctx: usize, key: string, title: string, kind: i32, at: i64, length: i64, poster: string): void {
   let link = watchnext.app_link(ctx, "play", key);
-  let kept = watchnext.keep(ctx, watchnext.Program { id: key, title: title, kind: kind, position_ms: at, duration_ms: length, poster: poster, link: link });
+  if (watchnext.keep(ctx, watchnext.Program { id: key, title: title, kind: kind, position_ms: at, duration_ms: length, poster: poster, link: link })) {
+    log.info("plex: published Watch Next");
+  }
 }
 
 // Gives the channel row of the app on Android TV the cards. The file `path`
@@ -577,7 +635,9 @@ function fill_channel(ctx: usize, path: string, cards: control.Card[]): void {
     return;
   }
   write_text(path, made.to_string());
-  let shown = watchnext.show_channel(ctx, made, programs);
+  if (watchnext.show_channel(ctx, made, programs)) {
+    log.info("plex: published preview channel");
+  }
 }
 
 // The kind of a program of the channel for the kind of a Plex item.

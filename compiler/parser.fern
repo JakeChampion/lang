@@ -451,15 +451,23 @@ pub function e_unknown_at(f: ast.Fault, line: i32, col: i32): ast.Expr {
 }
 
 pub function s_var(name: string, type_name: string, init: ast.Expr): ast.Stmt {
-  return ast.StmtVar { name: name, type_name: type_name, init: init, line: 0, col: 0, fn_ret: "", fn_param_types: "", destr: ast.no_destr() };
+  return ast.StmtVar { name: name, type_name: type_name, init: init, line: 0, col: 0, fn_ret: "", fn_param_types: "", destr: ast.no_destr(), header: false };
 }
 
 function s_var_at(name: string, type_name: string, init: ast.Expr, line: i32, col: i32): ast.Stmt {
-  return ast.StmtVar { name: name, type_name: type_name, init: init, line: line, col: col, fn_ret: "", fn_param_types: "", destr: ast.no_destr() };
+  return ast.StmtVar { name: name, type_name: type_name, init: init, line: line, col: col, fn_ret: "", fn_param_types: "", destr: ast.no_destr(), header: false };
 }
 
 function s_destr_at(d: ast.Destr, init: ast.Expr, line: i32, col: i32): ast.Stmt {
-  return ast.StmtVar { name: "", type_name: "", init: init, line: line, col: col, fn_ret: "", fn_param_types: "", destr: d };
+  return ast.StmtVar { name: "", type_name: "", init: init, line: line, col: col, fn_ret: "", fn_param_types: "", destr: d, header: false };
+}
+
+// st, marked as a binding that the header of its block makes.
+function as_header(st: ast.Stmt): ast.Stmt {
+  if let ast.StmtVar(v) = st {
+    return ast.StmtVar { ...v, header: true };
+  }
+  return st;
 }
 
 function record_pattern(record: string, binds: string[], fields: string[], at: string, rest_written: boolean): ast.Destr {
@@ -3299,7 +3307,7 @@ function build_literal_match(scrut: ast.Expr, arms: ast.LitArm[], mkline: i32, m
       let pat = literal_pattern(la);
       let lbody = la.body;
       if (la.at_binding.len() > 0) {
-        lbody = prepend_stmt(s_var_at(la.at_binding, "", scrut, la.line, la.col), la.body);
+        lbody = prepend_stmt(as_header(s_var_at(la.at_binding, "", scrut, la.line, la.col)), la.body);
       }
       marms = marms.append(ast.MatchArm { pattern: pat, body: lbody, line: la.line, col: la.col, guard: la.guard, has_guard: la.has_guard, alt_cont: false });
     }
@@ -3353,7 +3361,7 @@ function literal_arm_chain(arms: ast.LitArm[], first: i32, last: i32, scrut: ast
   let aguard = a.guard;
   let at = shared_at_binding(arms, first, last);
   if (at.len() > 0) {
-    abody = prepend_stmt(s_var_at(at, "", scrut, a.line, a.col), a.body);
+    abody = prepend_stmt(as_header(s_var_at(at, "", scrut, a.line, a.col)), a.body);
     if let ast.ExprIdent(sid) = scrut {
       aguard = astwalk.subst_ident_expr(a.guard, at, sid.name);
     }
@@ -3535,7 +3543,7 @@ function wrap_tuple_elems(path: ast.Stmt[], kinds: i32[], pats: ast.Pattern[], p
       let body: ast.Stmt[] = [];
       for bk in 0..nk.len() {
         if (nk[bk] == 0) {
-          body = body.append(s_var_at(nb[bk], "", e_ident_at(en + "_e" + util.i32_to_string(bk), line, col), line, col));
+          body = body.append(as_header(s_var_at(nb[bk], "", e_ident_at(en + "_e" + util.i32_to_string(bk), line, col), line, col)));
         }
       }
       for si in 0..sub.len() {
@@ -3659,11 +3667,11 @@ pub function build_tuple_match_sized(scrut: ast.Expr, arms: ast.TupArm[], n_elem
     }
     let binds: ast.Stmt[] = [];
     if (a.at_binding.len() > 0) {
-      binds = binds.append(s_var_at(a.at_binding, "", e_ident_at(whole, a.line, a.col), a.line, a.col));
+      binds = binds.append(as_header(s_var_at(a.at_binding, "", e_ident_at(whole, a.line, a.col), a.line, a.col)));
     }
     for ek in 0..a.elem_kinds.len() {
       if (a.elem_kinds[ek] == 0) {
-        binds = binds.append(s_var_at(a.binds[ek], "", e_ident_at(base + "_e" + util.i32_to_string(ek), a.line, a.col), a.line, a.col));
+        binds = binds.append(as_header(s_var_at(a.binds[ek], "", e_ident_at(base + "_e" + util.i32_to_string(ek), a.line, a.col), a.line, a.col)));
       }
     }
     if (a.has_guard) {
@@ -3790,17 +3798,17 @@ function struct_match_literal_cond(cond: ast.Expr, a: ast.StructArm, tmp: string
 function struct_match_bindings(a: ast.StructArm, tmp: string, record: boolean): ast.Stmt[] {
   let binds: ast.Stmt[] = [];
   if (a.at_binding.len() > 0) {
-    binds = binds.append(s_var_at(a.at_binding, "", e_ident(tmp), a.line, a.col));
+    binds = binds.append(as_header(s_var_at(a.at_binding, "", e_ident(tmp), a.line, a.col)));
   }
   let bk = 0;
   if (record && a.fields.len() > 0) {
     let pattern = record_pattern(a.type_name, record_binding_list(a.binds, a.line, a.col), a.fields, "", a.rest_written);
-    binds = binds.append(s_destr_at(ast.Destr { ...pattern, struct_match: true }, e_ident(tmp), a.line, a.col));
+    binds = binds.append(as_header(s_destr_at(ast.Destr { ...pattern, struct_match: true }, e_ident(tmp), a.line, a.col)));
     bk = a.binds.len();
   }
   while (bk < a.binds.len()) {
     if (a.binds[bk].len() > 0) {
-      binds = binds.append(s_var_at(a.binds[bk], "", e_field_access_at(e_ident(tmp), a.fields[bk], a.line, a.col), a.line, a.col));
+      binds = binds.append(as_header(s_var_at(a.binds[bk], "", e_field_access_at(e_ident(tmp), a.fields[bk], a.line, a.col), a.line, a.col)));
     }
     bk += 1;
   }
@@ -3874,7 +3882,7 @@ function wrap_struct_fields(path: ast.Stmt[], a: ast.StructArm, tmp: string): as
       mk_arms = mk_arms.append(ast.MatchArm { pattern: p_wildcard(), body: mk_skip, line: a.line, col: a.col, guard: e_bool(true), has_guard: false, alt_cont: false });
       let fv = tmp + "_f" + util.i32_to_string(wi);
       let mk_wrap: ast.Stmt[] = [];
-      mk_wrap = mk_wrap.append(s_var_at(fv, "", e_field_access_at(e_ident(tmp), a.fields[wi], a.line, a.col), a.line, a.col));
+      mk_wrap = mk_wrap.append(as_header(s_var_at(fv, "", e_field_access_at(e_ident(tmp), a.fields[wi], a.line, a.col), a.line, a.col)));
       mk_wrap = mk_wrap.append(s_match_origin(e_ident_at(fv, a.line, a.col), mk_arms, a.line, a.col, ORIGIN_PATTERN_PROBE));
       cur = mk_wrap;
     }
@@ -5579,7 +5587,7 @@ function build_merged_arm(vn: string, arms: ast.MatchArm[], lo: i32, hi: i32, fa
       if (gv.nested.len() > 0) {
         inner_pat = gv.nested[0];
       } else if (gv.binding.len() > 0 && gv.binding != "_") {
-        inner_body = prepend_stmt(s_var(gv.binding, "", e_ident(tmp)), g.body);
+        inner_body = prepend_stmt(as_header(s_var(gv.binding, "", e_ident(tmp))), g.body);
       }
     }
     if (pattern_is_wildcard(inner_pat) && !g.has_guard) {
@@ -5609,7 +5617,7 @@ function build_merged_arm(vn: string, arms: ast.MatchArm[], lo: i32, hi: i32, fa
         } else {
           let b2 = ga.body;
           if (gv2.binding.len() > 0 && gv2.binding != "_") {
-            b2 = prepend_stmt(s_var(gv2.binding, "", e_ident(tmp)), ga.body);
+            b2 = prepend_stmt(as_header(s_var(gv2.binding, "", e_ident(tmp))), ga.body);
           }
           if (!ga.has_guard) {
             tuple_covers = true;
@@ -6035,7 +6043,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
       if (!fpok || fpcount < 2) {
         return for_refused(p, parse_fault("for pattern needs at least 2 binders"));
       }
-      fpre = [s_destr_at(ast.Destr { ...fpdestr, at: fp_at }, fp_init, fp_line, fp_col)];
+      fpre = [as_header(s_destr_at(ast.Destr { ...fpdestr, at: fp_at }, fp_init, fp_line, fp_col))];
     } else {
       let (fp_struct, fp_head) = parse_record_pattern_head(p);
       p = fp_head;
@@ -6044,7 +6052,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
       if (!fpfields_ok || fpbinds.len() == 0) {
         return (s_unknown(p, parse_fault("a struct destructuring pattern binds field names")), p);
       }
-      fpre = [s_destr_at(record_pattern(fp_struct, fpbinds, fpfields, fp_at, fpfields_rest), fp_init, fp_line, fp_col)];
+      fpre = [as_header(s_destr_at(record_pattern(fp_struct, fpbinds, fpfields, fp_at, fpfields_rest), fp_init, fp_line, fp_col))];
     }
     fvar = fp_elem;
   } else {
@@ -6193,7 +6201,7 @@ function parse_let_value(p: Par, name: string, vline: i32, vcol: i32): (ast.Stmt
     init_expr = stamp_lambda_ret(init_expr, v_fn_ret);
     init_expr = stamp_value_block_ret(init_expr, type_name);
   }
-  return (ast.StmtVar { name: discard_name(name, vline, vcol, 0), type_name: type_name, init: init_expr, line: vline, col: vcol, fn_ret: v_fn_ret, fn_param_types: v_fn_ptys, destr: ast.no_destr() }, p);
+  return (ast.StmtVar { name: discard_name(name, vline, vcol, 0), type_name: type_name, init: init_expr, line: vline, col: vcol, fn_ret: v_fn_ret, fn_param_types: v_fn_ptys, destr: ast.no_destr(), header: false }, p);
 }
 
 function parse_let_stmt(p: Par): (ast.Stmt, Par) {
@@ -7745,7 +7753,7 @@ function prepend_param_destrs(body: ast.Stmt[], destrs: ParamDestr[]): ast.Stmt[
   let out: ast.Stmt[] = [];
   for i in 0..destrs.len() {
     let d = destrs[i];
-    out = out.append(s_destr_at(d.pattern, e_ident_at(d.synth, d.line, d.col), d.line, d.col));
+    out = out.append(as_header(s_destr_at(d.pattern, e_ident_at(d.synth, d.line, d.col), d.line, d.col)));
   }
   for j in 0..body.len() {
     out = out.append(body[j]);
@@ -9523,7 +9531,7 @@ pub function parse_type_ref(sin: string): TypeRef {
     depth += 1;
     s = slice_unchecked(s, 0, s.len() - 2).to_owned();
   }
-  if (s.len() >= 2 && s[0] == b'[' && matching_bracket(s, 0) == s.len() - 1) {
+  if (spelling_is_view(s)) {
     return TypeRef { base: "", args: [parse_type_ref(slice_unchecked(s, 1, s.len() - 1).to_owned())], array_depth: depth, is_tuple: false, is_fn: false, is_view: true, is_once: false };
   }
   if (s.len() >= 2 && s[0] == b'(' && s[s.len() - 1] == b')') {
@@ -9774,8 +9782,8 @@ pub function ref_is_fn_value(r: TypeRef): boolean {
 }
 
 pub function spelling_is_view(spelling: string): boolean {
-  let r = parse_type_ref(spelling);
-  return r.is_view && r.array_depth == 0;
+  return spelling.len() > 2 && spelling[0] == b'[' && spelling[spelling.len() - 1] == b']'
+    && matching_bracket(spelling, 0) == spelling.len() - 1;
 }
 
 pub function spelling_is_own(spelling: string): boolean {
@@ -12341,7 +12349,7 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
       if (ty.len() == 0) {
         ty = mono_infer(v.init, env, funcs);
       }
-      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: iv.rexpr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr }, renv: menv_bind_destructure(env.ebind(v.name, ty), v.destr, ty), rins2: iv.rins };
+      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: iv.rexpr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr, header: v.header }, renv: menv_bind_destructure(env.ebind(v.name, ty), v.destr, ty), rins2: iv.rins };
     },
     ast.StmtReturn(r) => {
       let rv = mono_call_expected(r.value, ret_ty, env, funcs, ins);
@@ -12630,7 +12638,7 @@ function subst_stmts(stmts: ast.Stmt[], tparams: string[], cts: string[]): ast.S
     let st = stmts[i];
     match (st) {
       ast.StmtVar(v) => {
-        out = out.append(ast.StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: subst_expr(v.init, tparams, cts), line: v.line, col: v.col, fn_ret: subst_ty(v.fn_ret, tparams, cts), fn_param_types: subst_ty_list(v.fn_param_types, tparams, cts), destr: v.destr });
+        out = out.append(ast.StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: subst_expr(v.init, tparams, cts), line: v.line, col: v.col, fn_ret: subst_ty(v.fn_ret, tparams, cts), fn_param_types: subst_ty_list(v.fn_param_types, tparams, cts), destr: v.destr, header: v.header });
       },
       ast.StmtReturn(r) => {
         out = out.append(ast.StmtReturn { value: subst_expr(r.value, tparams, cts), line: r.line, col: r.col });
@@ -15030,7 +15038,7 @@ function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, i
       let ninit = retype_assoc_ctor(iv.rexpr, ta.ty, gstructs, funcs);
       let vr = mg_ty(v.fn_ret, gstructs, iv.rins);
       let vl = mg_ty_list(v.fn_param_types, gstructs, vr.mins);
-      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, fn_ret: vr.ty, fn_param_types: vl.ty, destr: destr }, renv: env.ebind(v.name, ms_var_ty(ta.ty, v.init, ninit, env, gstructs, funcs)), rins2: vl.mins };
+      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, fn_ret: vr.ty, fn_param_types: vl.ty, destr: destr, header: v.header }, renv: env.ebind(v.name, ms_var_ty(ta.ty, v.init, ninit, env, gstructs, funcs)), rins2: vl.mins };
     },
     ast.StmtReturn(r) => {
       let rv = ms_expr_to(r.value, ret_ty, env, gstructs, funcs, ins);
@@ -16653,7 +16661,7 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
         vty = me_scrutinee_type(v.init, env, enums, structs, funcs, ins);
       }
       let ninit = retype_enum_assoc(iv.rexpr, nslot.ty, enums, funcs);
-      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: nslot.ty, init: ninit, line: v.line, col: v.col, fn_ret: nslot.fn_ret, fn_param_types: nslot.fn_params, destr: v.destr }, renv: me_bind_var(env, v, vty, enums, structs, funcs, ins), rins2: cins };
+      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: nslot.ty, init: ninit, line: v.line, col: v.col, fn_ret: nslot.fn_ret, fn_param_types: nslot.fn_params, destr: v.destr, header: v.header }, renv: me_bind_var(env, v, vty, enums, structs, funcs, ins), rins2: cins };
     },
     ast.StmtReturn(r) => {
       let rv = me_expr(r.value, ret_ty, env, enums, structs, funcs, ins);
@@ -17700,7 +17708,7 @@ function dl_expand_loop_edges(stmts: ast.Stmt[], actions: ast.Stmt[], flags: i32
       ast.StmtVar(v) => {
         let vve = dl_edges_expr(v.init, actions, flags, start, armed, label, own_level);
         armed = vve.armed;
-        out = out.append(ast.StmtVar { name: v.name, type_name: v.type_name, init: vve.expr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr });
+        out = out.append(ast.StmtVar { name: v.name, type_name: v.type_name, init: vve.expr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr, header: v.header });
       },
       ast.StmtExpr(x) => {
         let xve = dl_edges_expr(x.value, actions, flags, start, armed, label, own_level);
@@ -17864,7 +17872,7 @@ function dl_collect_stmt(st: ast.Stmt, actions: ast.Stmt[], flags: i32[]): Defer
     },
     ast.StmtVar(v) => {
       let ir = dl_collect_expr(v.init, actions, flags);
-      let one: ast.Stmt[] = [ast.StmtVar { name: v.name, type_name: v.type_name, init: ir.expr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr }];
+      let one: ast.Stmt[] = [ast.StmtVar { name: v.name, type_name: v.type_name, init: ir.expr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr, header: v.header }];
       return DeferAcc { stmts: one, actions: ir.actions, flags: ir.flags };
     },
     ast.StmtReturn(r) => {
@@ -18100,7 +18108,7 @@ function dl_expand_return_stmt(st: ast.Stmt, actions: ast.Stmt[], flags: i32[], 
       return dl_expand_return(r, actions, flags, armed);
     },
     ast.StmtVar(v) => {
-      let one: ast.Stmt[] = [ast.StmtVar { name: v.name, type_name: v.type_name, init: dl_return_expr(v.init, actions, flags, armed), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr }];
+      let one: ast.Stmt[] = [ast.StmtVar { name: v.name, type_name: v.type_name, init: dl_return_expr(v.init, actions, flags, armed), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr, header: v.header }];
       return one;
     },
     ast.StmtExpr(x) => {
@@ -18878,7 +18886,7 @@ function dl_defret_decl(ret: string, fn_ret: string, fn_param_types: string): as
   if (!dl_zeroable(ret)) {
     return s_var("__defret", "", e_number("0", "", false));
   }
-  return ast.StmtVar { name: "__defret", type_name: ret, init: dl_zero_of(ret), line: 0, col: 0, fn_ret: fn_ret, fn_param_types: fn_param_types, destr: ast.no_destr() };
+  return ast.StmtVar { name: "__defret", type_name: ret, init: dl_zero_of(ret), line: 0, col: 0, fn_ret: fn_ret, fn_param_types: fn_param_types, destr: ast.no_destr(), header: false };
 }
 
 function dl_param_names(params: ast.ParamDecl[]): string[] {
@@ -19868,9 +19876,9 @@ pub function iterator_loop(fr: ast.StmtFor, subject: ast.Expr, col: i32): ast.St
   let step = "$at_" + at;
   let body: ast.Stmt[] = [s_assign(it, e_field_access(e_ident(step), "1"))];
   if (fr.destr.binds.len() > 0) {
-    body = body.append(s_destr_at(fr.destr, e_field_access(e_ident(step), "0"), 0, 0));
+    body = body.append(as_header(s_destr_at(fr.destr, e_field_access(e_ident(step), "0"), 0, 0)));
   } else if (fr.var_name != "_") {
-    body = body.append(s_var(fr.var_name, "", e_field_access(e_ident(step), "0")));
+    body = body.append(as_header(s_var(fr.var_name, "", e_field_access(e_ident(step), "0"))));
   }
   for st in fr.body {
     body = body.append(st);
@@ -20062,7 +20070,7 @@ function rvf_expr(e: ast.Expr, structs: StructDecl[]): ast.Expr {
 function rvf_stmt(st: ast.Stmt, structs: StructDecl[]): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
-      return ast.StmtVar { name: v.name, type_name: v.type_name, init: rvf_expr(v.init, structs), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr };
+      return ast.StmtVar { name: v.name, type_name: v.type_name, init: rvf_expr(v.init, structs), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr, header: v.header };
     },
     ast.StmtReturn(r) => {
       return ast.StmtReturn { value: rvf_expr(r.value, structs), line: r.line, col: r.col };
@@ -24751,7 +24759,7 @@ function settle_stmt(st: ast.Stmt, ret_type: string, names: string[], types: str
   match (st) {
     ast.StmtVar(v) => {
       let init = settle_to_name(settle_expr(v.init, names, types, fns, structs), v.type_name);
-      return ast.StmtVar { name: v.name, type_name: v.type_name, init: init, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr };
+      return ast.StmtVar { name: v.name, type_name: v.type_name, init: init, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr, header: v.header };
     },
     ast.StmtReturn(r) => {
       return ast.StmtReturn { value: settle_to_name(settle_expr(r.value, names, types, fns, structs), ret_type), line: r.line, col: r.col };

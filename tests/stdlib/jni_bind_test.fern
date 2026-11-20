@@ -61,7 +61,7 @@ function test_structs(): test.TestOutcome {
       "pub function (x: Point) as_shape(): Shape {",
       "pub struct ShapeClass { class: usize, id_area: usize }",
       "// fern-lint: allow cyclomatic-complexity\npub function point_class(e: usize): Result[PointClass, jni.JavaError] {",
-      "jni.find_class(e, \"dev/fern/Point\");",
+      "jni.global_class(e, \"dev/fern/Point\")?;",
       "let id_parse = jni.checked_id(e, class, jni.get_static_method_id(e, class, \"parse\", \"(Ljava/lang/String;)Ldev/fern/Point;\"))?;",
       "let id_x = jni.checked_id(e, class, jni.get_field_id(e, class, \"x\", \"I\"))?;",
       "let id_made = jni.checked_id(e, class, jni.get_static_field_id(e, class, \"made\", \"J\"))?;",
@@ -129,26 +129,81 @@ function test_calls(): test.TestOutcome {
   );
 }
 
+function test_field_setters(): test.TestOutcome {
+  let point = classes()[2];
+  let field = classfile.Field { name: "ratio", descriptor: "F", access: classfile.PUBLIC, constant: None };
+  let fields = [
+    field,
+    classfile.Field { ...field, name: "scale", descriptor: "D", access: classfile.PUBLIC | classfile.STATIC },
+    classfile.Field { ...field, name: "fixed", access: classfile.PUBLIC | classfile.FINAL },
+    classfile.Field { ...field, name: "setRatio", descriptor: "Z" },
+  ];
+  let request = bind.Request { class: point.name, members: ["ratio?", "scale", "fixed", "setRatio"] };
+  let Ok(text) = bind.generate([classfile.Class { ...point, fields: fields }], [request]) else {
+    return test.fail("field binding generation");
+  };
+  if (text.contains(") set_fixed(")) {
+    return test.fail("setter for final field");
+  }
+  return test.assert_eq(
+    absent(text, [
+      // The setRatio field owns the set_ratio getter. The ratio setter gets a distinct name.
+      "set_ratio_(e: usize, self: Point, value: f32): Result[void, jni.JavaError] {\n  if (c.id_ratio == 0 as usize)",
+      "jni.set_float_field(e, self.ref, c.id_ratio, value);",
+      "jni.set_static_double_field(e, c.class, c.id_scale, value);",
+      "jni.invoke(e, jni.SET_FIELD + 1, self.ref, c.id_set_ratio, jni.jbool(value));",
+    ]),
+    "",
+  );
+}
+
 function test_constants(): test.TestOutcome {
   let text = generated([all("dev/fern/Sample"), all("dev/fern/Point"), all("dev/fern/Shape")]);
   let lost = absent(text, [
     "pub const SAMPLE_COUNT: i32 = -7;",
     "pub const SAMPLE_BIG: i64 = 5000000000;",
+    "pub const SAMPLE_HALF: f32 = 0.5;",
+    "pub const SAMPLE_THIRD: f64 = 0.25;",
     "pub const SAMPLE_ON: boolean = true;",
     "pub const SAMPLE_LETTER: i32 = 65;",
     "pub const POINT_ORIGIN: string = \"0,0\";",
     "pub const SHAPE_SIDES: i32 = 4;",
   ]);
-  // A float has no constant, and a constant has no function.
-  if (text.contains("SAMPLE_HALF") || text.contains("id_count")) {
+  // Reading a constant needs no cached field ID.
+  if (text.contains("get_static_field_id(e, class, \"HALF\"") || text.contains("id_count")) {
     return test.fail("a constant that the module must not have");
   }
-  return test.assert_eq(lost, "");
+  let sample = classes()[0];
+  let half = sample.fields[2];
+  let third = sample.fields[3];
+  let fields = [
+    classfile.Field { ...half, name: "MINUS_ZERO", constant: Some(Float(-0.0f32)) },
+    classfile.Field { ...third, name: "POS_INF", constant: Some(Double(1.0 / 0.0)) },
+    classfile.Field { ...half, name: "NEG_INF", constant: Some(Float(-1.0f32 / 0.0f32)) },
+    classfile.Field { ...third, name: "NOT_A_NUMBER", constant: Some(Double(0.0 / 0.0)) },
+    classfile.Field { ...third, name: "WHOLE", constant: Some(Double(42.0)) },
+  ];
+  let Ok(special) = bind.generate([classfile.Class { ...sample, fields: fields }], [all(sample.name)]) else {
+    return test.fail("floating-point constants could not be generated");
+  };
+  return test.assert_eq(
+    lost + absent(special, [
+      "SAMPLE_MINUS_ZERO: f32 = -0.0;",
+      "SAMPLE_POS_INF: f64 = 1.0 / 0.0;",
+      "SAMPLE_NEG_INF: f32 = -1.0 / 0.0;",
+      "SAMPLE_NOT_A_NUMBER: f64 = 0.0 / 0.0;",
+      "SAMPLE_WHOLE: f64 = 42.0;",
+    ]),
+    "",
+  );
 }
 
 // The module of the sample has the values of the Java constants. The text
 // has a character of two bytes, a character above U+FFFF and a NUL.
 function test_sample_module(): test.TestOutcome {
+  if (jni_bind_sample.SAMPLE_HALF != 0.5f32 || jni_bind_sample.SAMPLE_THIRD != 0.25) {
+    return test.fail("floating-point sample constants");
+  }
   let null = jni_bind_sample.Point { ref: 0 as usize };
   let got = jni_bind_sample.SAMPLE_COUNT.to_string() + " " + jni_bind_sample.POINT_ORIGIN + " " + jni_bind_sample.SHAPE_SIDES.to_string() + " " + null.is_null().to_string() + " " + null.as_shape().is_null().to_string() + " " + (jni_bind_sample.SAMPLE_NAME == "fern é 🌿 \x00 end").to_string();
   return test.assert_eq(got, "-7 0,0 4 true true true");
@@ -256,6 +311,7 @@ function main(): i32 {
   r = r.it("a class with no request is a jni.Object", test_unbound_class);
   r = r.it("a function has the Fern types of its Java member", test_signatures);
   r = r.it("a function calls the entry for its kind of result", test_calls);
+  r = r.it("mutable fields share the getter ID with typed setters", test_field_setters);
   r = r.it("a constant field is a constant of the module", test_constants);
   r = r.it("the module of the sample has its constants", test_sample_module);
   r = r.it("a request with members binds only them", test_members);

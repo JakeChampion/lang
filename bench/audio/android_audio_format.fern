@@ -1,0 +1,48 @@
+// This host benchmark reads mocked MediaCodec audio output formats.
+import "std/android/audio/codec";
+import "std/android/audio/capabilities";
+import "std/bench";
+
+@import("libmediandk.so", "audio_mock_mode")
+function mode(value: i32): void;
+
+@import("libmediandk.so", "audio_mock_live")
+function live(): i32;
+
+function measure(d: codec.Decoder, profile: i32, rounds: i32): void {
+  let mark = bench.alloc_count();
+  let started = monotonic_ns();
+  for _ in 0..rounds {
+    let Ok(_) = d.flush() else {
+      exit(4);
+    };
+    let Ok(codec.FormatChanged(f)) = d.output(0i64) else {
+      exit(5);
+    };
+    if (f.sample_rate != 48000 || f.channels != 2 || f.encoding != codec.PCM_I16 || f.channel_mask != 12 || live() != 1) {
+      exit(6);
+    }
+  }
+  let elapsed = monotonic_ns() - started;
+  let allocations = bench.allocs_after(mark);
+  print("{\"profile\":" + profile.to_string() + ",\"queries\":" + rounds.to_string() + ",\"wall_ns\":" + elapsed.to_string() + ",\"allocations\":" + allocations.to_string() + "}");
+}
+
+pub function main(): i32 {
+  for profile in [0, 1] {
+    mode(if (profile == 0) { 0 } else { 17 });
+    let config = codec.Config { request: capabilities.Request { mime: "audio/mp4a-latm", sample_rate: 48000, channels: 2, profile: 2 }, csd0: [18u8, 16u8], csd1: [18u8, 16u8], csd2: [18u8, 16u8], pcm_encoding: 0 };
+    let Ok(d) = codec.open_named(config, "c2.vendor.avc.decoder", codec.Limits { max_packet_bytes: 8, max_output_bytes: 8, max_sample_rate: 48000, max_channels: 2 }) else {
+      return 1;
+    };
+    measure(d, profile, 100);
+    measure(d, profile, 100000);
+    let Ok(_) = d.close() else {
+      return 2;
+    };
+    if (live() != 0) {
+      return 3;
+    }
+  }
+  return 0;
+}

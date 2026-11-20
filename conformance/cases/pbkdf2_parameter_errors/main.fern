@@ -1,0 +1,32 @@
+import "std/crypto";
+
+function main(): i32 {
+  for n in [0, -1] {
+    let Err(e) = crypto.pbkdf2_sha256([], [], n, 32) else {
+      return 1;
+    };
+    let InvalidIterations(count) = e else {
+      return 2;
+    };
+    if (count != n) {
+      return 3;
+    }
+    let Err(bad_length) = crypto.pbkdf2_sha256([], [], 1, n) else {
+      return 4;
+    };
+    let InvalidKeyLength(length) = bad_length else {
+      return 5;
+    };
+    if (length != n) {
+      return 6;
+    }
+  }
+  let Ok(key) = crypto.pbkdf2_sha256([], [], 1, 1) else {
+    return 7;
+  };
+  if (key.len() != 1 || crypto.pbkdf2_sha256_verify([], [], 0, key)) {
+    return 8;
+  }
+  print("passed");
+  return 0;
+}

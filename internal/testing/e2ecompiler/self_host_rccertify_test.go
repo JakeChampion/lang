@@ -245,10 +245,14 @@ function pick(name: string): Case {
         let b2: ssa.SBlock = block(2, [0, 1], [const_int(4, 0)], ret(4));
         return Case { f: func(1, 5, [b0, b1, b2]), modes: [borrow], returns_unit: false };
     }
-    if (name == "retained-on-one-arm-released-on-another") {
+    if (name == "retained-on-one-arm-released-on-another" || name == "retained-on-one-arm-released-on-the-other-side") {
+        // The second test of v1 decides the side of the twin that the join
+        // of the first test gave v0.
+        let second: ssa.STerm = brif(1, 3, 4);
+        if (name == "retained-on-one-arm-released-on-the-other-side") { second = brif(1, 4, 3); }
         let b0: ssa.SBlock = block(0, [], [param(0), const_int(1, 1)], brif(1, 1, 2));
         let b1: ssa.SBlock = block(1, [0], [call(2, "__fern_rc_inc", [0])], br(2));
-        let b2: ssa.SBlock = block(2, [0, 1], [], brif(1, 3, 4));
+        let b2: ssa.SBlock = block(2, [0, 1], [], second);
         let b3: ssa.SBlock = block(3, [2], [call(3, "__fern_rc_dec", [0])], br(4));
         let b4: ssa.SBlock = block(4, [2, 3], [const_int(4, 0)], ret(4));
         return Case { f: func(1, 5, [b0, b1, b2, b3, b4]), modes: [borrow], returns_unit: false };
@@ -506,6 +510,44 @@ function pick(name: string): Case {
         let b11: ssa.SBlock = block(11, [9, 10], [fresh_box(17), store(12, 16, 17)], br(1));
         let b12: ssa.SBlock = block(12, [1], [], ret(2));
         return Case { f: func(2, 19, [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12]), modes: [counted, value], returns_unit: true };
+    }
+    if (name == "push-joins-its-parameter" || name == "push-joins-its-parameter-unretained") {
+        // One arm pushes onto the borrowed v0, and the join v7 meets the push
+        // with v0 itself. A test of v7 against v0 then decides whether the
+        // next push may give up v7, and whether the result needs a retain.
+        // Without that retain, the result holds no unit where it is v0 and
+        // one unit where it is not: a return reads that as unproved.
+        let back: ssa.SInst[] = [call(13, "__fern_rc_inc", [11])];
+        if (name == "push-joins-its-parameter-unretained") { back = []; }
+        let b0: ssa.SBlock = block(0, [], [param(0), param(1), const_int(4, 7)], brif(1, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [inst(50, 5, [0, 4], 0, "arr_push_u32"), inst(9, 6, [5, 0], 0, "ne")], brif(6, 3, 4));
+        let b3: ssa.SBlock = block(3, [1], [], br(4));
+        let b4: ssa.SBlock = block(4, [1, 3], [], br(5));
+        let b2: ssa.SBlock = block(2, [0], [], br(5));
+        let b5: ssa.SBlock = block(5, [4, 2], [inst(8, 7, [5, 0], 0, ""), inst(9, 8, [7, 0], 0, "eq")], brif(8, 6, 7));
+        let b6: ssa.SBlock = block(6, [5], [inst(50, 9, [7, 4], 0, "arr_push_u32")], br(8));
+        let b7: ssa.SBlock = block(7, [5], [inst(50, 10, [7, 4], 0, "arr_push_owned_u32")], br(8));
+        let b8: ssa.SBlock = block(8, [6, 7], [inst(8, 11, [9, 10], 0, ""), inst(9, 12, [11, 0], 0, "eq")], brif(12, 9, 10));
+        let b9: ssa.SBlock = block(9, [8], back, br(10));
+        let b10: ssa.SBlock = block(10, [8, 9], [], ret(11));
+        return Case { f: func(2, 14, [b0, b1, b3, b4, b2, b5, b6, b7, b8, b9, b10]), modes: [borrow, value], returns_unit: true };
+    }
+    if (name == "push-onto-a-field-clears-its-slot" || name == "push-onto-a-field-keeps-its-slot") {
+        // A push onto the field v11 of the borrowed v0, retained and released
+        // around the push where v0 has another holder. Where the push keeps
+        // the box, the slot is cleared and its unit goes to the result v16.
+        // A slot left uncleared leaves v16 with no unit on that side, which
+        // the store reads as unproved.
+        let clear: ssa.SInst[] = [const_int(21, 0), store(0, 0, 21)];
+        if (name == "push-onto-a-field-keeps-its-slot") { clear = []; }
+        let b0: ssa.SBlock = block(0, [], [param(0), param(1), counted_load(11, 0, 0), call(12, "__fern_rc_is_unique", [0]), const_int(13, 0), inst(9, 14, [12, 13], 0, "eq")], brif(14, 1, 3));
+        let b1: ssa.SBlock = block(1, [0], [call(15, "__fern_arr_share_inc", [11])], br(3));
+        let b3: ssa.SBlock = block(3, [0, 1], [inst(50, 16, [11, 1], 0, "arr_push_u32"), const_int(17, 0), inst(9, 18, [12, 17], 0, "eq")], brif(18, 4, 6));
+        let b4: ssa.SBlock = block(4, [3], [call(19, "__fern_arr_share_dec", [11])], br(6));
+        let b6: ssa.SBlock = block(6, [3, 4], [inst(9, 20, [16, 11], 0, "eq")], brif(20, 7, 9));
+        let b7: ssa.SBlock = block(7, [6], clear, br(9));
+        let b9: ssa.SBlock = block(9, [6, 7], [fresh_box(27), store(27, 0, 16)], ret(27));
+        return Case { f: func(2, 28, [b0, b1, b3, b4, b6, b7, b9]), modes: [borrow, value], returns_unit: true };
     }
     if (name == "token-box-copied-before-its-test") {
         // The box is reached through a copy made before its test, and the
@@ -818,7 +860,10 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"take-from-a-dominating-load", nil, 0},
 		{"take-for-the-load-read-after", nil, 0},
 		{"released-on-one-arm", []string{"leaked where it dies of v1"}, 0},
-		{"retained-on-one-arm-released-on-another", nil, 1},
+		{"retained-on-one-arm-released-on-another", nil, 0},
+		{"push-onto-a-field-clears-its-slot", nil, 0},
+		{"push-onto-a-field-keeps-its-slot", nil, 1},
+		{"retained-on-one-arm-released-on-the-other-side", []string{"leaked where it dies of v0", "spent without a unit of v0"}, 0},
 		{"literal-phi-released", nil, 0},
 		{"literal-phi-returned", nil, 0},
 		{"literal-phi-leaked", []string{"leaked where it dies of v2"}, 0},
@@ -842,6 +887,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"pair-word-settled-past-its-token-test", nil, 0},
 		{"loop-box-copied-under-its-null-token", nil, 0},
 		{"loop-reuses-its-carried-box", nil, 0},
+		{"push-joins-its-parameter", nil, 0},
+		{"push-joins-its-parameter-unretained", nil, 1},
 		{"loop-reuses-its-carried-box-leaked", []string{"leaked where it dies of v2"}, 0},
 		{"loop-reuses-its-carried-box-released-twice", []string{"spent without a unit of v2"}, 0},
 		{"token-box-copied-before-its-test", nil, 0},
@@ -899,8 +946,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 			if named := strings.Count(lines[len(lines)-1], " at=v"); named != tc.unproved {
 				t.Errorf("want the summary to name %d unproved value(s), got %q", tc.unproved, lines[len(lines)-1])
 			}
-			if tc.name == "retained-on-one-arm-released-on-another" && !strings.Contains(lines[len(lines)-1], " at=v0 ") {
-				t.Errorf("want the unproved value v0 named, got %q", lines[len(lines)-1])
+			if tc.name == "borrow-phi-released" && !strings.Contains(lines[len(lines)-1], " at=v4 ") {
+				t.Errorf("want the unproved value v4 named, got %q", lines[len(lines)-1])
 			}
 		})
 	}

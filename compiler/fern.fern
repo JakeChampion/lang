@@ -43,6 +43,7 @@ import "./indexsign";
 import "./aab";
 import "./apk";
 import "./dex";
+import "./dexer";
 import "./ircore";
 import "./emitforms";
 import "./semarrayreport";
@@ -58,6 +59,7 @@ import "std/hex";
 import "std/json";
 import "std/crypto/ed25519";
 import "std/io";
+import "std/option";
 import "core/error";
 import "std/rand";
 import "std/string";
@@ -1571,7 +1573,13 @@ function write_jni_dex(path: string, out_path: string, methods: JniMethod[]): st
   if (path.len() == 0 || methods.len() == 0) {
     return "";
   }
-  match (write_file_bytes(path, dex.write(jni_dex_classes(methods), jni_library(out_path)))) {
+  let bytes = match (dex.write(jni_dex_classes(methods), jni_library(out_path))) {
+    Ok(b) => b,
+    Err(e) => {
+      return "-jni-dex: " + e;
+    },
+  };
+  match (write_file_bytes(path, bytes)) {
     Err(e) => {
       return "-jni-dex: cannot write " + path + ": " + e.message();
     },
@@ -2340,6 +2348,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-export", "NAMES", "with -shared or a freestanding -target: the comma-separated functions to export, besides the @jni ones (default main)"),
       sub_flag("-jni-java", "DIR", ["-shared"], "with -shared: write the Java class of each @jni class under DIR, with its native methods and System.loadLibrary"),
       sub_flag("-jni-dex", "FILE", ["-shared"], "with -shared: write the @jni classes to the DEX file FILE, with native methods, a public constructor and System.loadLibrary; nothing is written when there is no @jni class"),
+      mode_flag("-dex", "OUT", "write the classes of each FILE, a Java class file or a JAR, to the DEX file OUT, for -apk-dex"),
       mode_flag("-apk", "OUT", "build FILE for arm64-android and x86-64-android, and write a signed NativeActivity APK to OUT, or an Android App Bundle for Google Play when OUT ends in .aab; the [android] table of the fern.toml of FILE gives the -apk- settings that no flag gives"),
       sub_flag("-apk-package", "NAME", ["-apk"], "with -apk: the Android package name (default dev.fern.LIB, where FILE is LIB.fern)"),
       sub_flag("-apk-label", "TEXT", ["-apk"], "with -apk: the name of the app on the launcher (default LIB)"),
@@ -2352,6 +2361,7 @@ function flag_groups(): FlagGroup[] {
       sub_flag("-apk-version-name", "TEXT", ["-apk"], "with -apk: the version that the app shows to people (android:versionName, default 1.0)"),
       sub_flag("-apk-compress", "", ["-apk"], "with -apk: deflate the libraries, so the APK is smaller, and Android extracts them at install (default: store them, so Android maps them from the APK)"),
       sub_flag("-apk-cleartext", "", ["-apk"], "with -apk: let the app's Java networking, such as the media player, use http:// with no TLS (android:usesCleartextTraffic); the Fern sockets of the app do not need it"),
+      sub_flag("-apk-backup", "", ["-apk"], "with -apk: allow Android to back up the private files of the app"),
       sub_flag("-apk-debuggable", "", ["-apk"], "with -apk: mark the app debuggable (android:debuggable), so adb run-as can read its files; do not ship such an APK"),
       sub_flag("-apk-key", "FILE", ["-apk"], "with -apk: the P-256 signing key, a PEM file; a new key is written there when FILE does not exist (default OUT with .key.pem for .apk or .aab); sign each release of a bundle with the same key, the upload key of Google Play"),
       sub_flag("-apk-home", "", ["-apk"], "with -apk: make the app a home screen: Android offers it as the home app, keeps one task of it, and shows the wallpaper behind it"),
@@ -5508,6 +5518,7 @@ struct ToolFlags {
   weave: boolean,
   html: boolean,
   doctest: boolean,
+  dex: string,
 }
 
 function tool_flag(f: CliArg): boolean {
@@ -5515,7 +5526,7 @@ function tool_flag(f: CliArg): boolean {
     || f.name == "-cover-report" || f.name == "-lcov" || f.name == "-color" || f.name == "-ascii"
     || f.name == "-q" || f.name == "-diag-format" || f.name == "-lint" || f.name == "-lint-rules" || f.name == "-lint-set"
     || f.name == "-lint-opt" || f.name == "-lint-cover" || f.name == "-weave" || f.name == "-html"
-    || f.name == "-doctest";
+    || f.name == "-doctest" || f.name == "-dex";
 }
 
 function parse_tool_flag(tf: ToolFlags, f: CliArg): (ToolFlags, i32) {
@@ -5559,6 +5570,9 @@ function parse_tool_flag(tf: ToolFlags, f: CliArg): (ToolFlags, i32) {
   }
   if (f.name == "-doctest") {
     return (ToolFlags { ...tf, doctest: f.on }, 0);
+  }
+  if (f.name == "-dex") {
+    return (ToolFlags { ...tf, dex: f.value }, 0);
   }
   if (f.name == "-lint-set") {
     return (ToolFlags { ...tf, lint_sets: tf.lint_sets.append(f.value) }, 0);
@@ -6114,15 +6128,15 @@ function cli_backend_refusal(backend: string, target: string): string {
 
 // The Android flags: -jni-java, and the output, package, label, icon and key
 // file of -apk.
-struct ApkOpts { jni_java: string, jni_dex: string, out: string, package: string, label: string, icon: string, banner: string, dex: string, key: string, permissions: string, min_sdk: string, version_code: string, version_name: string, compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, tv: boolean, pip: boolean, assets: string, widget: string, run: boolean }
+struct ApkOpts { jni_java: string, jni_dex: string, out: string, package: string, label: string, icon: string, banner: string, dex: string, key: string, permissions: string, min_sdk: string, version_code: string, version_name: string, compress: boolean, cleartext: boolean, backup: Option[boolean], debuggable: boolean, home: boolean, tv: boolean, pip: boolean, assets: string, widget: string, run: boolean }
 
 function is_android_flag(name: string): boolean {
-  return util.has_str(["-jni-java", "-jni-dex", "-apk", "-apk-package", "-apk-label", "-apk-icon", "-apk-banner", "-apk-dex", "-apk-key", "-apk-permission", "-apk-min-sdk", "-apk-version-code", "-apk-version-name", "-apk-compress", "-apk-cleartext", "-apk-debuggable", "-apk-home", "-apk-tv", "-apk-pip", "-apk-asset", "-apk-widget", "-apk-run"], name);
+  return util.has_str(["-jni-java", "-jni-dex", "-apk", "-apk-package", "-apk-label", "-apk-icon", "-apk-banner", "-apk-dex", "-apk-key", "-apk-permission", "-apk-min-sdk", "-apk-version-code", "-apk-version-name", "-apk-compress", "-apk-cleartext", "-apk-backup", "-apk-debuggable", "-apk-home", "-apk-tv", "-apk-pip", "-apk-asset", "-apk-widget", "-apk-run"], name);
 }
 
 // The -apk flags that take no value.
 function apk_switch(name: string): boolean {
-  return util.has_str(["-apk-compress", "-apk-cleartext", "-apk-debuggable", "-apk-home", "-apk-tv", "-apk-pip", "-apk-run"], name);
+  return util.has_str(["-apk-compress", "-apk-cleartext", "-apk-backup", "-apk-debuggable", "-apk-home", "-apk-tv", "-apk-pip", "-apk-run"], name);
 }
 
 function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
@@ -6142,6 +6156,7 @@ function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
     "-apk-version-name" => ApkOpts { ...o, version_name: f.value },
     "-apk-compress" => ApkOpts { ...o, compress: true },
     "-apk-cleartext" => ApkOpts { ...o, cleartext: true },
+    "-apk-backup" => ApkOpts { ...o, backup: Some(f.on) },
     "-apk-debuggable" => ApkOpts { ...o, debuggable: true },
     "-apk-home" => ApkOpts { ...o, home: true },
     "-apk-tv" => ApkOpts { ...o, tv: true },
@@ -6151,6 +6166,46 @@ function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
     "-apk-run" => ApkOpts { ...o, run: true },
     _ => o,
   };
+}
+
+// fern -dex OUT FILE...: the DEX file of the class files and the JAR files.
+function run_dex(out: string, inputs: string[]): i32 {
+  if (inputs.len() == 0) {
+    eprint("fern: -dex OUT takes one or more class files or JAR files");
+    return 2;
+  }
+  let files: u8[][] = [];
+  for path in inputs {
+    let Ok(b) = read_file_bytes(path) else {
+      eprint("fern: -dex: cannot read " + path);
+      return 1;
+    };
+    match (dexer.class_files_of(path, b)) {
+      Ok(cs) => {
+        files = files.concat(cs);
+      },
+      Err(e) => {
+        eprint("fern: -dex: " + path + ": " + e);
+        return 1;
+      }
+    }
+  }
+  let dex = match (dexer.dex_of(files)) {
+    Ok(d) => d,
+    Err(e) => {
+      eprint("fern: -dex: " + e);
+      return 1;
+    },
+  };
+  match (write_file_bytes(out, dex)) {
+    Ok(_) => {
+      return 0;
+    },
+    Err(e) => {
+      eprint("fern: -dex: cannot write " + out + ": " + e.message());
+      return 1;
+    }
+  }
 }
 
 // The arguments of one -apk build: the command line without the -apk flags.
@@ -6339,7 +6394,9 @@ function apk_permissions(list: string): string[] {
 // activity, and NativeActivity itself is the activity otherwise. Each @jni
 // class that extends Service is a service, with the foreground service
 // types that the permissions allow. Each @jni class that extends
-// NotificationListenerService is a service that only the system binds.
+// NotificationListenerService is a service that only the system binds. Each
+// @jni class that extends MediaBrowserService is an exported media browser,
+// which Android Auto binds.
 function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
   let activity = dex.subclass_of(classes, "android.app.NativeActivity");
   if (activity.len() == 0) {
@@ -6348,12 +6405,15 @@ function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
   let permissions = apk_permissions(o.permissions);
   let services: apk.Service[] = [];
   for name in dex.subclasses_of(classes, "android.app.Service") {
-    services = services.append(apk.Service { name: name, types: apk.foreground_types(permissions), permission: "", action: "" });
+    services = services.append(apk.Service { name: name, types: apk.foreground_types(permissions), permission: "", action: "", exported: false });
   }
   for name in dex.subclasses_of(classes, apk.LISTENER_ACTION) {
-    services = services.append(apk.Service { name: name, types: 0, permission: apk.LISTENER_PERMISSION, action: apk.LISTENER_ACTION });
+    services = services.append(apk.Service { name: name, types: 0, permission: apk.LISTENER_PERMISSION, action: apk.LISTENER_ACTION, exported: false });
   }
-  let app = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, more_dex: [], permissions: permissions, min_sdk: apk.MIN_SDK, services: services, icon: [], banner: [], compress: o.compress, cleartext: o.cleartext, debuggable: o.debuggable, home: o.home, tv: o.tv, pip: o.pip, assets: [], widget: apk.no_widget() };
+  for name in dex.subclasses_of(classes, "android.service.media.MediaBrowserService") {
+    services = services.append(apk.Service { name: name, types: 0, permission: "", action: apk.BROWSE_ACTION, exported: true });
+  }
+  let app = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, more_dex: [], permissions: permissions, min_sdk: apk.MIN_SDK, services: services, icon: [], banner: [], compress: o.compress, cleartext: o.cleartext, backup: o.backup.unwrap_or(false), debuggable: o.debuggable, home: o.home, tv: o.tv, pip: o.pip, assets: [], widget: apk.no_widget() };
   if (o.min_sdk.len() > 0) {
     app = apk.App { ...app, min_sdk: size_bytes(o.min_sdk) as i32 };
   }
@@ -6552,6 +6612,7 @@ function apk_with_manifest(o: ApkOpts, entry_path: string): (ApkOpts, string) {
     version_name: or_text(o.version_name, fern_toml.android(m, "version_name")),
     compress: o.compress || fern_toml.android(m, "compress") == "true",
     cleartext: o.cleartext || fern_toml.android(m, "cleartext") == "true",
+    backup: Some(o.backup.unwrap_or(fern_toml.android(m, "backup") == "true")),
     debuggable: o.debuggable || fern_toml.android(m, "debuggable") == "true",
     home: o.home || fern_toml.android(m, "home") == "true",
     tv: o.tv || fern_toml.android(m, "tv") == "true",
@@ -7032,7 +7093,7 @@ function parse_cli_flags(av: string[], embedded_root: string): CliFlags {
     emit: "",
     mode_check: false,
     mode_interp: false,
-    tf: ToolFlags { run_it: false, qemu: "qemu-aarch64", version: false, explain: false, explain_code: "", cover_report: false, lcov: false, color_mode: "auto", ascii: false, diag_format: diag_format_from_env(), lint: false, lint_rules: false, lint_sets: no_strs, lint_opts: no_strs, lint_cover: "", weave: false, html: false, doctest: false },
+    tf: ToolFlags { run_it: false, qemu: "qemu-aarch64", version: false, explain: false, explain_code: "", cover_report: false, lcov: false, color_mode: "auto", ascii: false, diag_format: diag_format_from_env(), lint: false, lint_rules: false, lint_sets: no_strs, lint_opts: no_strs, lint_cover: "", weave: false, html: false, doctest: false, dex: "" },
     mode_fmt: false,
     fmt_write: false,
     fmt_diff: false,
@@ -7066,7 +7127,7 @@ function parse_cli_flags(av: string[], embedded_root: string): CliFlags {
     sanitize_flag: false,
     shared: false,
     export_list: "",
-    apk_opts: ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", banner: "", dex: "", key: "", permissions: "", min_sdk: "", version_code: "", version_name: "", compress: false, cleartext: false, debuggable: false, home: false, tv: false, pip: false, assets: "", widget: "", run: false },
+    apk_opts: ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", banner: "", dex: "", key: "", permissions: "", min_sdk: "", version_code: "", version_name: "", compress: false, cleartext: false, backup: None, debuggable: false, home: false, tv: false, pip: false, assets: "", widget: "", run: false },
     harden: false,
     heap_limit_text: "",
     cpu_limit_text: "",
@@ -7254,6 +7315,9 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   if (tf.lint_rules) {
     write(lint.rules_listing());
     return 0;
+  }
+  if (tf.dex.len() > 0) {
+    return run_dex(tf.dex, pos);
   }
   if (tf.lint) {
     return run_lint(st, pos, tf.lint_sets, tf.lint_opts, tf.lint_cover);

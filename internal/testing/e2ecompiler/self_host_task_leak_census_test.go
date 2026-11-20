@@ -177,7 +177,7 @@ func TestSelfHostTaskRuntimeKeepsOnlyItsPoolX86_64(t *testing.T) {
 			if err := os.WriteFile(src, []byte(p.src), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			cmd := runX86_64Bin(cli.runner, cli.x86Binary(t, src, "FERN_STRICT_IR=1", "FERN_RC_TRACE=1"))
+			cmd := runX86_64Bin(cli.runner, cli.x86Binary(t, src, "FERN_STRICT_IR=1", "FERN_DEBUG_RC_TRACE=1"))
 			var errb bytes.Buffer
 			cmd.Stderr = &errb
 			if err := cmd.Run(); err != nil {

@@ -10,6 +10,27 @@ A QUIC connection coordinates packets, TLS, transport parameters, streams, and r
 
 The caller performs I/O and sends produced datagrams. Configuration separates client and server identity requirements. Deadlines determine when timer progress is due.
 
+## Version negotiation
+
+A client considers a version list only when it answers the original Initial.
+A Retry ends that opportunity, even before a protected server packet arrives.
+
+```fern test name=quic-version-negotiation
+<<*>>
+
+function main(): i32 {
+  let c = __base(config([]), false, [1u8], [2u8], [2u8], 0);
+  let reply = packet.Header { kind: packet.VersionNegotiation, version: 0, dcid: c.scid, scid: c.odcid, token: [], tag: [], versions: [2i64], at: 0, pn_at: 0, end: 0 };
+  if (c.__version_negotiation(reply, 0).state != CLOSED) { return 1; }
+  for other in [packet.Header { ...reply, dcid: [] }, packet.Header { ...reply, scid: [] }, packet.Header { ...reply, versions: [packet.VERSION_1] }] {
+    if (c.__version_negotiation(other, 0).state != HANDSHAKING) { return 2; }
+  }
+  let retried = Conn { ...c, retry_scid: Some([3u8]), dcid: [3u8] };
+  if (retried.__version_negotiation(reply, 0).state != HANDSHAKING) { return 3; }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.
@@ -203,7 +224,8 @@ pub function (c: Config) server_side(id: identity.Identity): Config {
 
 // with_tickets has a server issue a session ticket on each connection,
 // sealed under a key derived from `secret`, and resume the tickets that any
-// server with the same secret issued.
+// server with the same secret issued. A secret shorter than 32 bytes
+// disables ticket issuance and resumption.
 pub function (c: Config) with_tickets(secret: [u8]): Config {
   return Config { ...c, ticket_key: tlsserver.ticket_key_of(secret) };
 }
@@ -405,7 +427,7 @@ function __offered(c: Config, unix_ms: i64): Option[handshake.Resumption] {
   let Some(t) = c.resume else {
     return None;
   };
-  return tlsclient.offered(t.tls, c.server_name, time.timestamp_from_unix_millis(unix_ms));
+  return tlsclient.offered_for(t.tls, c.server_name, time.timestamp_from_unix_millis(unix_ms), c.roots, c.verify);
 }
 
 function __early_wanted(c: Config): boolean {
@@ -419,7 +441,8 @@ function __client(c: Config, entropy: [u8], now: i64, unix_ms: i64): Result[Conn
   let scid = __bytes_range(entropy, 0, c.cid_len);
   let dcid = __bytes_range(entropy, c.cid_len, c.cid_len + 8);
   let p = params.Params { ...c.params, initial_source_connection_id: Some(scid) };
-  let cc = handshake.ClientConfig { ...__tls_client_config(c, scid, params.encode(p, false)), resume: __offered(c, unix_ms), early_data: __early_wanted(c) };
+  let resume = __offered(c, unix_ms);
+  let cc = handshake.ClientConfig { ...__tls_client_config(c, scid, params.encode(p, false)), resume: resume, early_data: resume.is_some() && __early_wanted(c) };
   let secret = __bytes_range(entropy, c.cid_len + 8, c.cid_len + 8 + CID_SECRET);
   match (handshake.client_start(cc, entropy[c.cid_len + 8 + CID_SECRET:entropy.len()])) {
     Ok(step) => {
@@ -1199,7 +1222,9 @@ function (c: Conn) __zero_rtt(datagram: [u8], h: packet.Header, now: i64): Conn 
 }
 
 function (c: Conn) __version_negotiation(h: packet.Header, now: i64): Conn {
-  if (c.server || c.peer_seen || h.versions.contains(packet.VERSION_1)) {
+  // RFC 9000 sections 6.2 and 17.2.1: only the first flight can negotiate,
+  // and both IDs must echo the client Initial with source and destination reversed.
+  if (c.server || c.peer_seen || c.retried() || !__same(h.dcid, c.scid) || !__same(h.scid, c.odcid) || h.versions.contains(packet.VERSION_1)) {
     return c;
   }
   let why = Close { code: frames.NO_ERROR, frame_type: 0 as i64, reason: "no version in common", app: false, remote: true };
@@ -2073,7 +2098,8 @@ function (c: Conn) __tls_question(e: handshake.Event, now: i64): Conn {
           return c.__client_step(t.verdict(__trusted(c.config, v, (now + c.wall_offset) / 1000000000)), now);
         },
         handshake.Ticket(nst) => {
-          match (tlsclient.ticket_from(t, nst, c.config.server_name, time.timestamp_from_unix_millis(c.__wall_ms(now)))) {
+          let prior: u8[][] = match (c.config.resume) { Some(previous) => previous.tls.verified_chain, None => [] };
+          match (tlsclient.ticket_from_peer(t, nst, c.config.server_name, time.timestamp_from_unix_millis(c.__wall_ms(now)), c.config.verify, prior)) {
             Some(kept) => {
               let Some(p) = c.peer_params else {
                 return c;

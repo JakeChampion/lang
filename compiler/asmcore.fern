@@ -239,7 +239,7 @@ pub function seccomp_allowlist(s: EmitState): i32[] {
     return [];
   }
   if (seccomp_filter_len(s, s.syscalls) > 260) {
-    eprint("internal error: the seccomp filter has " + util.i32_to_string(seccomp_filter_len(s, s.syscalls)) + " instructions; the u8 jump offset caps it at 260");
+    eprint("fern: internal error: the seccomp filter has " + util.i32_to_string(seccomp_filter_len(s, s.syscalls)) + " instructions; the u8 jump offset caps it at 260");
     exit(3);
     return [];
   }
@@ -424,7 +424,7 @@ pub function with_runtime_unit(s: EmitState, roots: string, m: parser.Module, lo
 }
 
 pub function no_rt_lower(mod: parser.Module): physicalbody.Lowered {
-  eprint("internal error: a runtime helper was appended with no typed lowering to lower it");
+  eprint("fern: internal error: a runtime helper was appended with no typed lowering to lower it");
   exit(3);
   return physicalbody.empty();
 }
@@ -1110,7 +1110,7 @@ pub function sysno(t: string, name: string): string {
     unknown_rt_key(t);
   }
   if (n == "-1") {
-    eprint("error: internal: a runtime body asks for the " + t + " syscall number of " + name + ", which the sysno table has no row for");
+    eprint("fern: error: internal: a runtime body asks for the " + t + " syscall number of " + name + ", which the sysno table has no row for");
     exit(3);
   }
   return n;
@@ -1523,7 +1523,7 @@ pub function oflag(t: string, name: string): string {
 }
 
 function unknown_rt_key(t: string): void {
-  eprint("error: internal: a runtime body is built for \"" + t + "\", which is not a runtime key (x86-64-linux, arm64-linux, arm64-darwin)");
+  eprint("fern: error: internal: a runtime body is built for \"" + t + "\", which is not a runtime key (x86-64-linux, arm64-linux, arm64-darwin)");
   exit(3);
 }
 
@@ -3910,7 +3910,7 @@ pub function with_cfi_stub(s: EmitState, target: string, sig: i32): EmitState {
   let at = util.index_of_str(s.cfi_stubs, target);
   if (at >= 0) {
     if (s.cfi_sigs[at] != sig) {
-      eprint("internal error: the CFI stub of " + target + " takes signature words " + util.i32_to_string(s.cfi_sigs[at]) + " and " + util.i32_to_string(sig));
+      eprint("fern: internal error: the CFI stub of " + target + " takes signature words " + util.i32_to_string(s.cfi_sigs[at]) + " and " + util.i32_to_string(sig));
       exit(3);
     }
     return s;
@@ -4988,7 +4988,7 @@ pub function check_func(fd: parser.FuncDecl, s: EmitState): util.Diag[] {
 }
 
 pub function entry_check_errors(tm: parser.Module): util.Diag[] {
-  if (envflag.on("FERN_ENTRY_CHECK_TRACE")) {
+  if (util.debug_flag("FERN_DEBUG_ENTRY_CHECK_TRACE", "FERN_ENTRY_CHECK_TRACE")) {
     eprint("entry check\n");
   }
   let s = new_state();
@@ -5846,6 +5846,51 @@ pub function sized_rec_box(words: i32): string {
 // A box of 1 to 255 words has a free list of its own block size.
 pub function sized_rec_box_words(words: i64): boolean {
   return words >= 1i64 && words <= 255i64;
+}
+
+// The number of shape ids of the program under -sanitize: one for each
+// declaration, and one for each primitive type that a dyn box holds.
+pub function san_shape_count(s: EmitState): i32 {
+  return s.struct_decls.decls.len() + irtables.prim_type_ids().len();
+}
+
+// The name of each shape id. Id 0 is a block with no shape: an array, a
+// string or a raw block.
+pub function san_shape_names(s: EmitState): string[] {
+  let out: string[] = ["blocks with no shape"];
+  for d in s.struct_decls.decls {
+    out = out.append(san_ascii(irtables.decl_shape(d)));
+  }
+  for p in irtables.prim_type_ids() {
+    out = out.append(p);
+  }
+  return out;
+}
+
+// The number of words in the header of a box of shape id `id` (shape_tag),
+// or -1 for id 0.
+pub function san_shape_words(s: EmitState, id: i32): i64 {
+  if (id == 0) {
+    return 0i64 - 1i64;
+  }
+  if (id - 1 < s.struct_decls.decls.len()) {
+    let words = s.struct_decls.decls[id - 1].fields.len();
+    return (if (words > 0) { words } else { 1 }) as i64;
+  }
+  return 1i64;
+}
+
+// `name` with each byte that an .ascii string cannot hold as it is made `?`.
+pub function san_ascii(name: string): string {
+  let out = "";
+  for i in 0..name.len() {
+    if (name[i] >= b' ' && name[i] <= b'~' && name[i] != b'"' && name[i] != b'\\') {
+      out = out + slice_unchecked(name, i, i + 1);
+    } else {
+      out = out + "?";
+    }
+  }
+  return out;
 }
 
 // The tag of a box with the shape `name`: the high half of its header word.

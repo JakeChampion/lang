@@ -31,7 +31,7 @@ func TestAndroidKeysMatchCompiler(t *testing.T) {
 		}
 	}
 	_, err = androidValue("colour", `"red"`)
-	if err == nil || !strings.Contains(err.Error(), "package, label, icon, banner, key, version_name, min_sdk, version_code, home, tv, pip, compress, cleartext, debuggable, permissions, assets, dex, widget") {
+	if err == nil || !strings.Contains(err.Error(), "package, label, icon, banner, key, version_name, min_sdk, version_code, home, tv, pip, compress, cleartext, backup, debuggable, permissions, assets, dex, widget") {
 		t.Errorf("the refusal of an unknown key does not list the keys: %v", err)
 	}
 }

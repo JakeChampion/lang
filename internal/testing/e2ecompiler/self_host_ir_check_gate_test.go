@@ -104,7 +104,7 @@ func TestSelfHostIRCheckGateRunsOnce(t *testing.T) {
 		cmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
 	}
 	cmd.Stdin = bytes.NewReader([]byte("function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(2, 3); }"))
-	cmd.Env = append(os.Environ(), "FERN_ENTRY_CHECK_TRACE=1")
+	cmd.Env = append(os.Environ(), "FERN_DEBUG_ENTRY_CHECK_TRACE=1")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if _, err := cmd.Output(); err != nil {

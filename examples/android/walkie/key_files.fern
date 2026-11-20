@@ -1,0 +1,14 @@
+import "std/result";
+
+// Move the previous list of known phones into the no-backup directory.
+pub function migrate(keys: string, old: string): void {
+  if (keys.len() == 0 || old.len() == 0 || read_file_bytes(keys + "/peers").is_ok()) {
+    return;
+  }
+  let Ok(b) = read_file_bytes(old + "/peers") else {
+    return;
+  };
+  if (write_file_bytes(keys + "/peers", b).is_ok()) {
+    let removed = remove_file(old + "/peers");
+  }
+}

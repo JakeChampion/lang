@@ -169,7 +169,7 @@ function main(): i32 {
 func certifierDumpOf(t *testing.T, h ssaBackendHost, src, name string) string {
 	t.Helper()
 	cmd := exec.Command(h.cli, "-O", "-target", "x86-64-linux", "-emit", "asm", "-o", filepath.Join(t.TempDir(), "out.s"), src, h.stdlib)
-	cmd.Env = append(os.Environ(), "FERN_RC_CERTIFY=report", "FERN_RC_CERTIFY_DUMP="+name)
+	cmd.Env = append(os.Environ(), "FERN_RC_CERTIFY=report", "FERN_DEBUG_RC_CERTIFY_DUMP="+name)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("dumping %s: %v\n%s", name, err, out)
