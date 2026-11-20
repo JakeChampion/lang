@@ -896,8 +896,12 @@ pub function (f: Font) glyph_class(g: i32): i32 {
 
 // The class of `g` in the class definition at the offset `field` of GDEF.
 function gdef_class(f: Font, field: i32, g: i32): i32 {
-  let at = if (f.gdef < 0) { 0 } else { u16_at(f.data, f.gdef + field) };
+  let at = gdef_offset(f, field);
   return if (at == 0) { 0 } else { class_of(f.data, f.gdef + at, g) };
+}
+
+function gdef_offset(f: Font, field: i32): i32 {
+  return if (f.gdef < 0) { 0 } else { u16_at(f.data, f.gdef + field) };
 }
 
 // The offset of the mark glyph sets of GDEF, or -1.
@@ -923,14 +927,15 @@ function in_mark_set(f: Font, set: i32, g: i32): boolean {
 
 // Whether the GDEF table gives the glyph classes.
 pub function (f: Font) has_glyph_classes(): boolean {
-  return f.gdef >= 0 && u16_at(f.data, f.gdef + 4) != 0;
+  return gdef_offset(f, 4) != 0;
 }
 
 // The class of the glyph at `i` of `r`, as `glyph_class` gives it. A font
 // with no glyph classes takes the class in the properties of the glyph,
 // which the shaper gives and the lookups change as HarfBuzz changes them.
 pub function (f: Font) class_at(r: Run, i: i32): i32 {
-  return if (f.has_glyph_classes()) { f.glyph_class(r.glyphs[i]) } else { r.props[i] >> CLASS_SHIFT & 3 };
+  let at = gdef_offset(f, 4);
+  return if (at == 0) { r.props[i] >> CLASS_SHIFT & 3 } else { class_of(f.data, f.gdef + at, r.glyphs[i]) };
 }
 
 // The properties `p` with the class `c`.
@@ -1114,9 +1119,12 @@ function matched_context(f: Font, r: Run, l: Lookup, i: i32, s: Seq, step: i32, 
 // `l` applied to the glyph at `i` of `r`, and the index of the glyph to
 // try next, or -1 when no subtable applies. Each lookup that a context
 // applies takes one from `budget`, and the budget that is left comes last.
-function applied(f: Font, own r: Run, l: Lookup, i: i32, mask: i32, budget: i32): (Run, i32, i32) {
+function applied(f: Font, own r: Run, l: Lookup, i: i32, mask: i32, budget: i32, sub_digests: [u64]): (Run, i32, i32) {
   let b = f.data;
   for s in 0..l.count {
+    if (s < sub_digests.len() && (sub_digests[s] & 1u64 << (r.glyphs[i] & 63) as u64) == 0u64) {
+      continue;
+    }
     let (st, kind) = subtable(b, l, s);
     let ctx = context_kind(l, kind);
     let cov = first_coverage(b, st, ctx, r.glyphs[i]);
@@ -1548,7 +1556,7 @@ function records_applied(f: Font, own r: Run, l: Lookup, ps0: i32[], rule: Rule,
     }
     let before = run.glyphs.len();
     let nested = Lookup { ...lookup_of(f, l.table, l.gpos, u16_at(b, rule.records + 4 * k + 2)), opts: l.opts, base: l.base };
-    let (next, at, rest) = applied(f, run, nested, ps[idx], mask, left - 1);
+    let (next, at, rest) = applied(f, run, nested, ps[idx], mask, left - 1, []);
     run = next;
     left = rest;
     let delta = run.glyphs.len() - before;
@@ -1583,34 +1591,40 @@ function moved_positions(ps: i32[], idx: i32, delta: i32): i32[] {
 }
 
 // Cache a lookup and its first-glyph coverage for use across text runs.
-pub struct PreparedLookup { font: Font, lookup: Lookup, digest: u64 }
+pub struct PreparedLookup { font: Font, lookup: Lookup, digest: u64, sub_digests: u64[] }
 
 pub function (f: Font) prepare_lookup(li: i32, gpos: boolean): PreparedLookup {
   let table = if (gpos) { f.gpos } else { f.gsub };
   let l = lookup_of(f, table, gpos, li);
-  return PreparedLookup { font: f, lookup: l, digest: lookup_digest(f.data, l) };
+  let (digest, sub_digests) = lookup_digests(f.data, l);
+  return PreparedLookup { font: f, lookup: l, digest: digest, sub_digests: sub_digests };
 }
 
 // A set bit allows an exact coverage check. Collisions only cost a check.
-// Use an unrestricted digest when a table would be expensive to summarize.
-function lookup_digest(b: [u8], l: Lookup): u64 {
-  let bits = 0u64;
+// The combined filter applies to the whole lookup. For a lookup with several
+// subtables, keep one filter per subtable scanned within the shared budget.
+// If the budget runs out, the remaining subtables use exact coverage checks.
+function lookup_digests(b: [u8], l: Lookup): (u64, u64[]) {
+  let combined = 0u64;
+  let subtables: u64[] = [];
   let full = 0xffffffffffffffffu64;
   let left = 256;
   if (l.count > left) {
-    return full;
+    return (full, subtables);
   }
   for sub in 0..l.count {
     let (st, kind) = subtable(b, l, sub);
     let Some(cov) = first_coverage_table(b, st, context_kind(l, kind)) else {
+      subtables = subtables.append(0u64);
       continue;
     };
     let fmt = u16_at(b, cov);
     let n = u16_at(b, cov + 2);
     if (fmt != 1 && fmt != 2 || n > left) {
-      return full;
+      return (full, subtables);
     }
     left -= n;
+    let bits = 0u64;
     for k in 0..n {
       if (fmt == 1) {
         bits |= 1u64 << (u16_at(b, cov + 4 + 2 * k) & 63) as u64;
@@ -1619,17 +1633,18 @@ function lookup_digest(b: [u8], l: Lookup): u64 {
         let lo = u16_at(b, at);
         let hi = u16_at(b, at + 2);
         if (hi < lo || hi - lo >= 63) {
-          return full;
+          return (full, subtables);
         }
         let mask = (1u64 << (hi - lo + 1) as u64) - 1u64;
         bits |= mask.rotate_left(lo & 63);
       }
     }
-    if (bits == full) {
-      return full;
+    combined |= bits;
+    if (l.count > 1) {
+      subtables = subtables.append(bits);
     }
   }
-  return bits;
+  return (combined, subtables);
 }
 
 pub function (p: PreparedLookup) apply(r: Run, mask: i32, opts: i32): Run {
@@ -1637,7 +1652,7 @@ pub function (p: PreparedLookup) apply(r: Run, mask: i32, opts: i32): Run {
   if (!l.gpos && l.count > 0 && subtable(p.font.data, l, 0).1 == 8) {
     return reverse_substituted(p.font, r, l, mask);
   }
-  return applied_to_each(p.font, r, l, mask, p.digest);
+  return applied_to_each(p.font, r, l, mask, p.digest, p.sub_digests);
 }
 
 // `r` after the GSUB lookup `li` at each glyph whose mask has a bit of
@@ -1647,19 +1662,19 @@ pub function (f: Font) substitute(r: Run, li: i32, mask: i32, opts: i32): Run {
   if (l.count > 0 && subtable(f.data, l, 0).1 == 8) {
     return reverse_substituted(f, r, l, mask);
   }
-  return applied_to_each(f, r, l, mask, 0xffffffffffffffffu64);
+  return applied_to_each(f, r, l, mask, 0xffffffffffffffffu64, []);
 }
 
 // `r` after the GPOS lookup `li` at each glyph whose mask has a bit of
 // `mask`, with the flags `opts`. `r` has its advances from `with_advances`.
 pub function (f: Font) position(r: Run, li: i32, mask: i32, opts: i32): Run {
-  return applied_to_each(f, r, Lookup { ...lookup_of(f, f.gpos, true, li), opts: opts, base: r.glyphs.len() }, mask, 0xffffffffffffffffu64);
+  return applied_to_each(f, r, Lookup { ...lookup_of(f, f.gpos, true, li), opts: opts, base: r.glyphs.len() }, mask, 0xffffffffffffffffu64, []);
 }
 
 // `r` after `l` at each glyph whose mask has a bit of `mask`, from the first
 // glyph to the last. Each glyph that `l` tries takes one from the attempts of
 // the run, and the lookup stops when none are left.
-function applied_to_each(f: Font, r: Run, l: Lookup, mask: i32, digest: u64): Run {
+function applied_to_each(f: Font, r: Run, l: Lookup, mask: i32, digest: u64, sub_digests: [u64]): Run {
   let run = r;
   let budget = r.ops;
   let i = 0;
@@ -1673,7 +1688,7 @@ function applied_to_each(f: Font, r: Run, l: Lookup, mask: i32, digest: u64): Ru
       i += 1;
       continue;
     }
-    let (next, at, left) = applied(f, run, l, i, mask, budget - 1);
+    let (next, at, left) = applied(f, run, l, i, mask, budget - 1, sub_digests);
     run = next;
     budget = left;
     i = if (at < 0) { i + 1 } else { at };
