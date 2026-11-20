@@ -2891,7 +2891,7 @@ function indirect_units(ins: ssa.SInst): i32 {
   }
   let text = ins.str;
   if (text.starts_with("slot:")) {
-    text = slice_unchecked(text, 5, text.len()) + "";
+    text = slice_unchecked(text, 5, text.len()).to_owned();
   }
   if (text.len() == 0 || !util.is_all_digits(text)) {
     return -1;
