@@ -390,14 +390,14 @@ pub function parse_download(reply: json.JsonValue, summary: Card): Result[Downlo
   }
   let access = object(reply, "ownership");
   if (!json.get_bool(access, "canAccess").unwrap_or(true) || json.get_bool(access, "previewAccessOnly").unwrap_or(false)
-      || json.get_bool(access, "isAccessibleUsingSubscription").unwrap_or(false)) {
+    || json.get_bool(access, "isAccessibleUsingSubscription").unwrap_or(false)) {
     return Err(failure("Yoto did not give offline access to the full card."));
   }
   let content = object(value, "content");
   let config = object(content, "config");
   let meta = object(value, "metadata");
   if (json.get_bool(config, "onlineOnly").unwrap_or(false)
-      || json.get_bool(content, "restricted").unwrap_or(false) || json.get_bool(object(meta, "media"), "hasStreams").unwrap_or(false)) {
+    || json.get_bool(content, "restricted").unwrap_or(false) || json.get_bool(object(meta, "media"), "hasStreams").unwrap_or(false)) {
     return Err(failure("This title is unavailable for offline download."));
   }
   let out: DownloadTrack[] = [];

@@ -715,7 +715,7 @@ function shortcut_result(own m: Model, revision: i64, result: Result[api.Card, a
     },
     Err(err) => {
       return Model { ...m, config_panel: ConfigPanel { ...state, note: err.message } };
-    },
+    }
   }
 }
 
@@ -1310,10 +1310,18 @@ function settings_panel(m: Model, player: api.Player): ui.El[Msg] {
   let p = m.config_panel;
   if let Some(picker) = p.picker {
     match (picker) {
-      AlarmCards => { return settings_card_picker(m, "Choose an alarm card"); },
-      SettingChoices(key) => { return setting_choices(m, key); },
-      ShortcutCards(_) => { return settings_card_picker(m, "Choose a shortcut card"); },
-      ShortcutTracks(_, id) => { return shortcut_tracks(m, id); },
+      AlarmCards => {
+        return settings_card_picker(m, "Choose an alarm card");
+      },
+      SettingChoices(key) => {
+        return setting_choices(m, key);
+      },
+      ShortcutCards(_) => {
+        return settings_card_picker(m, "Choose a shortcut card");
+      },
+      ShortcutTracks(_, id) => {
+        return shortcut_tracks(m, id);
+      }
     }
   }
   let actions = [ui.text_button("Back to players", CloseSettings)];
@@ -1414,8 +1422,7 @@ function poster(m: Model, hit: search.Hit, size: f64, caption_height: f64): ui.E
     caption = caption.append(ui.text(chapter).colored(ui.MUTED).clamped(1));
   }
   let items = [
-    ui.column([art(m.shelf, card.cover, size), ui.column(caption).height(caption_height).spaced(2.0).padding_xy(6.0, 6.0).wide()])
-      .wide().on_tap(OpenCard(card.id)).described("Tracks for " + title),
+    ui.column([art(m.shelf, card.cover, size), ui.column(caption).height(caption_height).spaced(2.0).padding_xy(6.0, 6.0).wide()]).wide().on_tap(OpenCard(card.id)).described("Tracks for " + title),
   ];
   let actions: ui.El[Msg][] = [];
   if (can_play_card(m, card.id)) {
@@ -1439,7 +1446,7 @@ function poster(m: Model, hit: search.Hit, size: f64, caption_height: f64): ui.E
 function poster_grid(m: Model, screen: ui.Screen): ui.El[Msg] {
   let cols = poster_columns(screen);
   let gap = 12.0;
-  let size = ((screen.width() - 32.0 - (cols - 1) as f64 * gap) / cols as f64).floor().max(1.0);
+  let size = ((screen.width() - 32.0 - (cols - 1) as f64 * gap) / (cols as f64)).floor().max(1.0);
   let lines = if (m.shelf.query.trim().len() > 0) { 78.0 } else { 59.0 };
   let caption = 12.0 + lines * screen.font.max(1.0);
   let actions = if (can_control(m) || m.downloads.catalog.dir.len() > 0) { 48.0 } else { 0.0 };

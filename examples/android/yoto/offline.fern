@@ -221,7 +221,7 @@ pub function received(s: State, revision: i64, result: Result[api.DownloadPlan, 
         return State { ...next, paused: !error.expired, queue: [card].concat(next.queue), note: error.message };
       }
       return State { ...next, failed: next.failed + 1, note: card.title + " · " + error.message };
-    },
+    }
   }
 }
 
@@ -295,11 +295,13 @@ function install(s: State, setup: Install, output: Output): State {
     installing = None;
   }
   match (with_catalog(s, entries, pending, output)) {
-    Ok(next) => { return State { ...next, installing: installing, checked: 0 }; },
+    Ok(next) => {
+      return State { ...next, installing: installing, checked: 0 };
+    },
     Err(note) => {
       let removed = output.remove(ids);
       return State { ...s, installing: None, failed: s.failed + 1, note: note };
-    },
+    }
   }
 }
 
@@ -313,8 +315,12 @@ function removed(s: State, entries: Entry[], output: Output): State {
     pending = pending.concat(entry.tracks.map((track: Track): i64 => track.id));
   }
   match (with_catalog(s, keep, pending, output)) {
-    Ok(next) => { return next; },
-    Err(note) => { return State { ...s, note: note }; },
+    Ok(next) => {
+      return next;
+    },
+    Err(note) => {
+      return State { ...s, note: note };
+    }
   }
 }
 
@@ -350,8 +356,12 @@ function checked(s: State, output: Output): State {
   let ready = Entry { ...entry, ready: true };
   let entries = s.catalog.entries.map((e: Entry): Entry => if (e.id == entry.id) { ready } else { e });
   match (with_catalog(s, entries, cleanup, output)) {
-    Ok(next) => { return State { ...next, checked: 0 }; },
-    Err(note) => { return State { ...s, note: note }; },
+    Ok(next) => {
+      return State { ...next, checked: 0 };
+    },
+    Err(note) => {
+      return State { ...s, note: note };
+    }
   }
 }
 
@@ -361,12 +371,18 @@ pub function apply(s: State, output: Output): State {
   };
   let next = State { ...s, action: None };
   match (action) {
-    Check => { return checked(next, output); },
-    Remove(id) => { return removed(next, next.catalog.entries.filter((e: Entry): boolean => e.id == id), output); },
-    Clear => { return removed(next, next.catalog.entries, output); },
+    Check => {
+      return checked(next, output);
+    },
+    Remove(id) => {
+      return removed(next, next.catalog.entries.filter((e: Entry): boolean => e.id == id), output);
+    },
+    Clear => {
+      return removed(next, next.catalog.entries, output);
+    },
     Cancel => {
       return removed(State { ...next, checked: 0, note: "Download canceled." }, next.catalog.entries.filter((e: Entry): boolean => !e.ready), output);
-    },
+    }
   }
 }
 

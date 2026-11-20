@@ -585,9 +585,12 @@ function test_settings_choices(): test.TestOutcome {
   s = sim.tap(s, "Woodland Walk");
   s = sim.tap(s, "Fox at dusk");
   let edited = s.shell.app.config_panel.draft;
-  return test.assert_eq(edited.get("shutdownTimeout").unwrap_or("") == "3600"
-    && edited.get("nightYotoDaily").unwrap_or("") == "3nC80/radio-day/01"
-    && edited.get("dayYotoDaily").unwrap_or("") == "book/01/03", true);
+  return test.assert_eq(
+    edited.get("shutdownTimeout").unwrap_or("") == "3600"
+      && edited.get("nightYotoDaily").unwrap_or("") == "3nC80/radio-day/01"
+      && edited.get("dayYotoDaily").unwrap_or("") == "book/01/03",
+    true,
+  );
 }
 
 function main(): i32 {

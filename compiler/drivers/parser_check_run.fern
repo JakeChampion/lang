@@ -45,6 +45,8 @@ function main(): i32 {
   r = r.it("return types of nested match payloads", check_nested_payload_returns);
   r = r.it("result payload return types", check_result_payload_returns);
   r = r.it("declared enum payload returns", check_declared_payload_returns);
+  r = r.it("generic call return types", check_generic_call_returns);
+  r = r.it("generic result substitution", check_generic_result_substitution);
   return r.finish();
 }
 
@@ -1909,6 +1911,42 @@ function check_declared_payload_returns(): test.TestOutcome {
     let out = returninfer.infer_ret_types_module(parser.Module { ...mod, funcs: [missing] });
     if (out.funcs[0].ret_type != "string") {
       return test.fail("expected string from " + pattern + ", got " + out.funcs[0].ret_type);
+    }
+  }
+  return test.pass();
+}
+
+function check_generic_call_returns(): test.TestOutcome {
+  let prefix = "function fixed[T](key: T, value: i64): i64 { return value; } function second[A, B](left: A, right: B): B { return right; }";
+  for fixture in [("fixed(true, 1)", "i64"), ("second(1, true)", "boolean"), ("second[boolean, i64](true, 1)", "i64")] {
+    let source = prefix + " function run(): " + fixture.1 + " { return " + fixture.0 + "; }";
+    let mod = parser.parse_module(lexer.tokenize(source));
+    if (mod.funcs.len() != 3) {
+      return test.fail("expected both callees and the caller");
+    }
+    let missing = parser.FuncDecl { ...mod.funcs[2], ret_type: "" };
+    let out = returninfer.infer_ret_types_module(parser.Module { ...mod, funcs: mod.funcs.with(2, missing) });
+    if (out.funcs[2].ret_type != fixture.1) {
+      return test.fail("expected " + fixture.1 + " from " + fixture.0 + ", got " + out.funcs[2].ret_type);
+    }
+  }
+  return test.pass();
+}
+
+function check_generic_result_substitution(): test.TestOutcome {
+  let prefix = "function wrap[T](value: T): Option[T] { return Some(value); }"
+    + " function first[T](xs: T[]): T { return xs[0]; }"
+    + " function both[A, B](a: A, b: B): (B, A) { return (b, a); }";
+  for fixture in [("wrap(true)", "Option[boolean]"), ("first([true])", "boolean"), ("first([[true]])", "boolean[]"), ("both(1, true)", "(boolean, i32)")] {
+    let source = prefix + " function run(): " + fixture.1 + " { return " + fixture.0 + "; }";
+    let mod = parser.parse_module(lexer.tokenize(source));
+    if (mod.funcs.len() != 4) {
+      return test.fail("expected three generic functions and their caller");
+    }
+    let missing = parser.FuncDecl { ...mod.funcs[3], ret_type: "" };
+    let out = returninfer.infer_ret_types_module(parser.Module { ...mod, funcs: mod.funcs.with(3, missing) });
+    if (out.funcs[3].ret_type != fixture.1) {
+      return test.fail("expected " + fixture.1 + " from " + fixture.0 + ", got " + out.funcs[3].ret_type);
     }
   }
   return test.pass();
