@@ -30,7 +30,7 @@ function irt_collect_returns(stmts: ast.Stmt[], params: ast.ParamDecl[], mod: pa
 function irt_collect_stmt(st: ast.Stmt, params: ast.ParamDecl[], mod: parser.Module, acc: string[]): string[] {
   match (st) {
     ast.StmtReturn(r) => {
-      return acc.append(parser.irt_guess(r.value, params, mod.funcs, mod.structs));
+      return acc.append(parser.irt_guess(r.value, params, mod.funcs, mod.structs, mod.enums));
     },
     ast.StmtIf(f) => {
       let a = irt_collect_returns(f.then_body, params, mod, acc);
@@ -44,7 +44,7 @@ function irt_collect_stmt(st: ast.Stmt, params: ast.ParamDecl[], mod: parser.Mod
     },
     ast.StmtMatch(m) => {
       let a = acc;
-      let scrut_ty = parser.irt_guess(m.scrutinee, params, mod.funcs, mod.structs);
+      let scrut_ty = parser.irt_guess(m.scrutinee, params, mod.funcs, mod.structs, mod.enums);
       for arm in m.arms {
         let scope = irt_arm_scope(arm.pattern, scrut_ty, params, mod);
         a = irt_collect_returns(arm.body, scope, mod, a);

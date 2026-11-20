@@ -10179,6 +10179,10 @@ function spelling_mentions_tparam(name: string, tparams: string[]): boolean {
 }
 
 function bind_unify(pattern: string, concrete: string, tparams: string[], binds: MEnv, funcs: MFns): MEnv {
+  return bind_argument_types(pattern, concrete, tparams, binds, funcs.structs, funcs.enums);
+}
+
+function bind_argument_types(pattern: string, concrete: string, tparams: string[], binds: MEnv, structs: StructDecl[], enums: EnumDecl[]): MEnv {
   if (tp_index(pattern, tparams) >= 0) {
     if (binds.elook(pattern).len() == 0 && concrete.len() > 0) {
       return binds.ebind(pattern, concrete);
@@ -10186,12 +10190,12 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
     return binds;
   }
   if (type_ends_arr(pattern) && type_ends_arr(concrete)) {
-    return bind_unify(elem_spelling(pattern), elem_spelling(concrete), tparams, binds, funcs);
+    return bind_argument_types(elem_spelling(pattern), elem_spelling(concrete), tparams, binds, structs, enums);
   }
   if (spelling_is_view(pattern)) {
     let elem = array_method_element(concrete);
     if (elem.len() > 0) {
-      return bind_unify(array_method_element(pattern), elem, tparams, binds, funcs);
+      return bind_argument_types(array_method_element(pattern), elem, tparams, binds, structs, enums);
     }
   }
   if (util.is_tuple_type_name(pattern) && pattern.ends_with(")")
@@ -10201,7 +10205,7 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
     if (tpparts.len() == tcparts.len()) {
       let tb = binds;
       for tj in 0..tpparts.len() {
-        tb = bind_unify(tpparts[tj], tcparts[tj], tparams, tb, funcs);
+        tb = bind_argument_types(tpparts[tj], tcparts[tj], tparams, tb, structs, enums);
       }
       return tb;
     }
@@ -10212,9 +10216,9 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
     if (fpp.len() == fcp.len()) {
       let fb = binds;
       for fj in 0..fpp.len() {
-        fb = bind_unify(fpp[fj], fcp[fj], tparams, fb, funcs);
+        fb = bind_argument_types(fpp[fj], fcp[fj], tparams, fb, structs, enums);
       }
-      return bind_unify(callable_ret_spelling(pattern), callable_ret_spelling(concrete), tparams, fb, funcs);
+      return bind_argument_types(callable_ret_spelling(pattern), callable_ret_spelling(concrete), tparams, fb, structs, enums);
     }
   }
   let pb = first_bracket(pattern);
@@ -10226,7 +10230,7 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
       if (pparts.len() == cparts.len()) {
         let b = binds;
         for j in 0..pparts.len() {
-          b = bind_unify(pparts[j], cparts[j], tparams, b, funcs);
+          b = bind_argument_types(pparts[j], cparts[j], tparams, b, structs, enums);
         }
         return b;
       }
@@ -10238,11 +10242,11 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
     if (concrete.len() > mpfx.len() && concrete.starts_with(mpfx)) {
       let pp = split_top_commas(slice_unchecked(pattern, pb + 1, pattern.len() - 1));
       let ckey = slice_unchecked(concrete, mpfx.len(), concrete.len());
-      let cp = split_key(ckey + "", pp.len(), funcs.structs, funcs.enums);
+      let cp = split_key(ckey + "", pp.len(), structs, enums);
       if (pp.len() == cp.len()) {
         let b2 = binds;
         for j2 in 0..pp.len() {
-          b2 = bind_unify(pp[j2], cp[j2], tparams, b2, funcs);
+          b2 = bind_argument_types(pp[j2], cp[j2], tparams, b2, structs, enums);
         }
         return b2;
       }
@@ -20331,7 +20335,7 @@ function irt_is_cmp(op: string): boolean {
     || op == "==" || op == "!=" || op == "&&" || op == "||";
 }
 
-pub function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], structs: StructDecl[]): string {
+pub function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]): string {
   match (e) {
     ast.ExprNumber(n) => {
       if (n.is_float) {
@@ -20358,7 +20362,7 @@ pub function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], 
       if (irt_is_cmp(b.op)) {
         return "boolean";
       }
-      return irt_guess(b.left, params, funcs, structs);
+      return irt_guess(b.left, params, funcs, structs, enums);
     },
     ast.ExprStructLit(s) => {
       return s.type_name;
@@ -20367,7 +20371,7 @@ pub function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], 
       if (al.elements.len() == 0) {
         return "";
       }
-      let el = irt_guess(al.elements[0], params, funcs, structs);
+      let el = irt_guess(al.elements[0], params, funcs, structs, enums);
       if (el == "") {
         return "";
       }
@@ -20376,7 +20380,7 @@ pub function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], 
     ast.ExprTuple(tl) => {
       let parts = "";
       for ti in 0..tl.elements.len() {
-        let tt = irt_guess(tl.elements[ti], params, funcs, structs);
+        let tt = irt_guess(tl.elements[ti], params, funcs, structs, enums);
         if (tt == "") {
           return "";
         }
@@ -20388,7 +20392,7 @@ pub function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], 
       return "(" + parts + ")";
     },
     ast.ExprIndex(ix) => {
-      let at = irt_guess(ix.array, params, funcs, structs);
+      let at = irt_guess(ix.array, params, funcs, structs, enums);
       if (at.len() >= 3 && at.ends_with("[]")) {
         return slice_unchecked(at, 0, at.len() - 2).to_owned();
       }
@@ -20398,7 +20402,7 @@ pub function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], 
       return "";
     },
     ast.ExprSlice(sl) => {
-      let st2 = irt_guess(sl.array, params, funcs, structs);
+      let st2 = irt_guess(sl.array, params, funcs, structs, enums);
       if (st2.len() >= 3 && st2.ends_with("[]")) {
         return "[" + slice_unchecked(st2, 0, st2.len() - 2) + "]";
       }
@@ -20408,7 +20412,7 @@ pub function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], 
       return "";
     },
     ast.ExprFieldAccess(fa) => {
-      let ot = irt_guess(fa.obj, params, funcs, structs);
+      let ot = irt_guess(fa.obj, params, funcs, structs, enums);
       if (ot.len() == 0) {
         return "";
       }
@@ -20423,7 +20427,7 @@ pub function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], 
         return "boolean";
       }
       if (u.op == "-" || u.op == "+") {
-        return irt_guess(u.operand, params, funcs, structs);
+        return irt_guess(u.operand, params, funcs, structs, enums);
       }
       if (u.op == ast.CAST && u.cast == "f64" || u.op == ast.CAST && u.cast == "float") {
         return "f64";
@@ -20459,7 +20463,7 @@ pub function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], 
         ast.ExprIdent(cid) => {
           if (cid.name == "Some") {
             if (c.args.len() == 1) {
-              let inner = irt_guess(c.args[0], params, funcs, structs);
+              let inner = irt_guess(c.args[0], params, funcs, structs, enums);
               if (inner != "") {
                 return "Option[" + inner + "]";
               }
@@ -20472,10 +20476,10 @@ pub function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], 
           if (cid.name == "Ok" || cid.name == "Err") {
             return "";
           }
-          return irt_call_ret(cid.name, c, params, funcs, structs);
+          return irt_call_ret(cid.name, c, params, funcs, structs, enums);
         },
         ast.ExprFieldAccess(mfa) => {
-          let rt2 = irt_guess(mfa.obj, params, funcs, structs);
+          let rt2 = irt_guess(mfa.obj, params, funcs, structs, enums);
           if (rt2.len() == 0) {
             return "";
           }
@@ -20492,7 +20496,7 @@ pub function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], 
   }
 }
 
-function irt_call_ret(name: string, call: ast.ExprCall, params: ast.ParamDecl[], funcs: FuncDecl[], structs: StructDecl[]): string {
+function irt_call_ret(name: string, call: ast.ExprCall, params: ast.ParamDecl[], funcs: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]): string {
   for fd in funcs {
     if (fd.name != name || fd.receiver_type != "") {
       continue;
@@ -20504,12 +20508,22 @@ function irt_call_ret(name: string, call: ast.ExprCall, params: ast.ParamDecl[],
     if (call.type_args.len() == vars.len()) {
       return subst_ty(fd.ret_type, vars, call.type_args);
     }
+    let binds = MEnv { mnames: [], mtypes: [] };
     for i in 0..fd.params.len().min(call.args.len()) {
-      if (fd.params[i].type_name == fd.ret_type) {
-        return irt_guess(call.args[i], params, funcs, structs);
+      let formal = fd.params[i].type_name;
+      if (spelling_mentions_tparam(formal, vars)) {
+        let actual = irt_guess(call.args[i], params, funcs, structs, enums);
+        if (actual != "") {
+          binds = bind_argument_types(formal, actual, vars, binds, structs, enums);
+        }
       }
     }
-    return fd.ret_type;
+    for v in vars {
+      if (binds.elook(v) == "" && spelling_mentions_tparam(fd.ret_type, [v])) {
+        return "";
+      }
+    }
+    return subst_ty(fd.ret_type, binds.mnames, binds.mtypes);
   }
   return "";
 }
@@ -24317,14 +24331,14 @@ function const_value(fd: FuncDecl, value: ast.Expr): ast.Expr {
   return value;
 }
 
-function settle_const_types(funcs: FuncDecl[], structs: StructDecl[]): FuncDecl[] {
+function settle_const_types(funcs: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]): FuncDecl[] {
   let known: ast.ParamDecl[] = [];
   let out: FuncDecl[] = [];
   for fd in funcs {
     let f = fd;
     if (f.is_const && f.ret_type == "" && f.body.len() == 1) {
       if let ast.StmtReturn(r) = f.body[0] {
-        f = FuncDecl { ...f, ret_type: irt_guess(r.value, known, funcs, structs) };
+        f = FuncDecl { ...f, ret_type: irt_guess(r.value, known, funcs, structs, enums) };
       }
     }
     if (f.is_const && f.ret_type.len() > 0) {
@@ -24664,7 +24678,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     let nothing: string[] = [];
     parsed = substitute_const_refs(parsed, inferred_const_table(funcs, inferred, ConstTable { names: nothing, values: [] }));
     parsed = rewrite_assoc_const_reads(parsed);
-    parsed = Module { ...parsed, funcs: settle_const_types(parsed.funcs, structs), substituted_consts: inferred };
+    parsed = Module { ...parsed, funcs: settle_const_types(parsed.funcs, structs, parsed.enums), substituted_consts: inferred };
     parsed = desugar_union_aliases(desugar_trait_params(parsed, trait_decl_names(traits), false));
   }
   let labelled = resolve_labels_module(resolve_assoc_projections(parsed));
