@@ -1165,6 +1165,13 @@ pub function diag_after(a: Diag, b: Diag): boolean {
 
 // A stable bottom-up merge sort: `after(a, b)` says that a sorts after b.
 pub function sorted_by[T](xs: T[], after: (T, T) => boolean): T[] {
+  let i = 1;
+  while (i < xs.len() && !after(xs[i - 1], xs[i])) {
+    i += 1;
+  }
+  if (i >= xs.len()) {
+    return xs;
+  }
   let src = xs;
   let width = 1;
   while (width < src.len()) {
