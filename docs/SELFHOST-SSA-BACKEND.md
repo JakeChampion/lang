@@ -134,7 +134,7 @@ lowered function it:
 A function the lift or the emitter cannot take is a **refusal** naming the
 function and the op (`ircore.ssa_refuse`, exit 3), never a fall-through:
 there is no other emitter. Every op the lowering produces has an arm, so
-that refusal is a compiler bug report. `FERN_SSA_REPORT=1` prints, on
+that refusal is a compiler bug report. `FERN_DEBUG_SSA_REPORT=1` prints, on
 stderr, one line per function whose lift or emit took over 200 ms, with both
 times and its op and slot counts. `FERN_SSA_ALLOC=<function>` prints that
 function's register form, each block with its position and whether it is
