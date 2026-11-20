@@ -106,8 +106,8 @@ function app_main(ctx: usize): usize {
     offline.Output {
       start: (address: string, name: string, title: string): i64 => download.start(ctx, address, [], name, title),
       status: (id: i64): i32 => download.progress(ctx, id).status,
-      remove: (id: i64): void => download.remove(ctx, id),
-      save: (entries: offline.Entry[]): boolean => offline.save(dir, entries),
+      remove: (ids: i64[]): boolean => download.remove_many(ctx, ids),
+      save: (entries: offline.Entry[], cleanup: i64[]): boolean => offline.save(dir, entries, cleanup),
     },
   );
   let closed = app.run(ctx, deck.with_downloads(deck.restored(saved), catalog), p);

@@ -149,8 +149,8 @@ function no_downloads(): offline.Output {
   return offline.Output {
     start: (address: string, name: string, title: string): i64 => -1i64,
     status: (id: i64): i32 => 0,
-    remove: (id: i64): void => {},
-    save: (entries: offline.Entry[]): boolean => true,
+    remove: (ids: i64[]): boolean => true,
+    save: (entries: offline.Entry[], cleanup: i64[]): boolean => true,
   };
 }
 
@@ -453,8 +453,11 @@ function test_offline_download(): test.TestOutcome {
   let disk = offline.Output {
     start: (address: string, name: string, title: string): i64 => 17i64,
     status: (id: i64): i32 => status.get(),
-    remove: (id: i64): void => removed.set(removed.get() + 1),
-    save: (entries: offline.Entry[]): boolean => offline.save(dir, entries),
+    remove: (ids: i64[]): boolean => {
+      removed.set(removed.get() + ids.len());
+      return true;
+    },
+    save: (entries: offline.Entry[], cleanup: i64[]): boolean => offline.save(dir, entries, cleanup),
   };
   let state = offline.empty(offline.load(dir, dir));
   let busy = offline.fetching(offline.enqueue(state, [card]), card);
@@ -475,7 +478,116 @@ function test_offline_download(): test.TestOutcome {
     return test.fail("open a local audio file in airplane mode");
   }
   let cleared = offline.apply(offline.remove(ready, card.id), disk);
-  return test.assert_eq(removed.get() == 1 && cleared.catalog.entries.len() == 0 && offline.load(dir, dir).entries.len() == 0, true);
+  let clean = offline.apply(offline.check(cleared), disk);
+  return test.assert_eq(removed.get() == 1 && clean.catalog.entries.len() == 0 && offline.load(dir, dir).entries.len() == 0, true);
+}
+
+function test_download_work_batches(): test.TestOutcome {
+  let Ok(dir) = temp_dir("story-deck-batch") else {
+    return test.fail("make an isolated download store");
+  };
+  let enqueued = cell_new(0);
+  let queried = cell_new(0);
+  let removed = cell_new(0);
+  let disk = offline.Output {
+    start: (address: string, name: string, title: string): i64 => {
+      let id = enqueued.get() + 1;
+      enqueued.set(id);
+      return id as i64;
+    },
+    status: (id: i64): i32 => {
+      queried.set(queried.get() + 1);
+      return download.DONE;
+    },
+    remove: (ids: i64[]): boolean => {
+      removed.set(removed.get() + ids.len());
+      return ids.len() <= 8;
+    },
+    save: (entries: offline.Entry[], cleanup: i64[]): boolean => offline.save(dir, entries, cleanup),
+  };
+  let card = fixture_cards()[0];
+  let tracks: api.DownloadTrack[] = [];
+  for i in 0..52 {
+    tracks = tracks.append(api.DownloadTrack { title: i.to_string(), chapter: "01", key: i.to_string(), url: "https://example.com/track" });
+  }
+  let plan = api.DownloadPlan { id: card.id, title: card.title, creator: card.creator, tracks: tracks };
+  let state = offline.fetching(offline.empty(offline.load(dir, dir)), card);
+  state = offline.apply(offline.received(state, state.revision, Ok(plan)), disk);
+  if (enqueued.get() > 4 || state.catalog.entries.len() != 0 || offline.load(dir, dir).cleanup.len() != enqueued.get()) {
+    return test.fail("enqueue only a few tracks per turn and record unfinished setup for cleanup");
+  }
+  for i in 0..53 {
+    if (offline.saved(state, card.id).is_some()) {
+      break;
+    }
+    let starts = enqueued.get();
+    let checks = queried.get();
+    state = offline.apply(offline.check(state), disk);
+    if (enqueued.get() - starts > 4 || queried.get() - checks > 4) {
+      return test.fail("keep every download turn bounded");
+    }
+  }
+  if (offline.saved(state, card.id).is_none() || removed.get() != 0) {
+    return test.fail("commit all 52 tracks before marking the card ready");
+  }
+  state = offline.apply(offline.remove(state, card.id), disk);
+  if (removed.get() != 0 || offline.saved(state, card.id).is_some()) {
+    return test.fail("remove the card from the UI before calling Android to delete tracks");
+  }
+  state = offline.empty(offline.load(dir, dir));
+  for i in 0..8 {
+    state = offline.apply(offline.check(state), disk);
+  }
+  return test.assert_eq(removed.get() == 52 && offline.load(dir, dir).cleanup.len() == 0, true);
+}
+
+function test_library_download_filter(): test.TestOutcome {
+  let cards = fixture_cards();
+  let card = cards[0];
+  let file = offline.Track { id: 1i64, name: "yoto-offline-sample.audio", title: "Fox at dusk", chapter: "01", key: "03" };
+  let entry = offline.Entry { id: card.id, title: card.title, creator: card.creator, tracks: [file], ready: true };
+  let catalog = offline.Catalog { dir: "/media", entries: [entry], cleanup: [], note: "" };
+  let state = deck.with_downloads(deck.Model { ...deck.start(), token: "test session" }, catalog);
+  let m = deck.update(state, deck.LibraryLoaded(Ok(api.Library { players: [], cards: cards, note: "" })));
+  let s = sim.tap(simulator(m), "Library");
+  s = sim.tap(s, "Download Sky Journal");
+  let queued = s.shell.app.downloads.queue;
+  if (queued.len() != 1 || queued[0].title != "Sky Journal" || s.shell.app.tab != 1) {
+    return test.fail("queue just the chosen card and stay in the library");
+  }
+  s = sim.tap(s, "Downloaded only, not checked");
+  if (!sim.says(s, "Play Woodland Walk") || sim.says(s, "Tracks for Sky Journal")) {
+    return test.fail("show only cards with a complete download in the filtered grid");
+  }
+  s = sim.tap(s, "Play Woodland Walk");
+  let played = s.shell.app;
+  return test.assert_eq(played.job.is_none() && played.phone.queue.len() == 1 && played.phone.queue[0].url == "file:///media/yoto-offline-sample.audio", true);
+}
+
+function test_settings_choices(): test.TestOutcome {
+  let s = sim.tap(library_sim(), "Settings for Bedroom");
+  let panel = s.shell.app.config_panel;
+  let device = panel.device.unwrap_or(api.Player { id: "", name: "", online: false });
+  let reply = json.parse("{\"device\":{\"config\":{\"clockFace\":\"digital-sun\",\"locale\":\"en\",\"shutdownTimeout\":\"900\",\"dayYotoDaily\":\"3nC80/daily/<yyyymmdd>\",\"nightYotoDaily\":\"3nC80/radio-night/01\"}}}").unwrap_or(json.JNull);
+  let Ok(config) = api.parse_config(reply, device) else {
+    return test.fail("parse the player settings fixture");
+  };
+  s = sim.send(s, deck.ConfigLoaded(panel.revision, false, Ok(config)));
+  if (!sim.shows(s, "15 minutes") || !sim.shows(s, "English") || sim.shows(s, "digital-sun")) {
+    return test.fail("show readable player setting values");
+  }
+  s = sim.tap(s, "Choose power off after");
+  s = sim.tap(s, "1 hour");
+  s = sim.tap(s, "Choose night first press");
+  s = sim.tap(s, "Yoto Radio");
+  s = sim.tap(s, "Choose day first press");
+  s = sim.tap(s, "Choose from library");
+  s = sim.tap(s, "Woodland Walk");
+  s = sim.tap(s, "Fox at dusk");
+  let edited = s.shell.app.config_panel.draft;
+  return test.assert_eq(edited.get("shutdownTimeout").unwrap_or("") == "3600"
+    && edited.get("nightYotoDaily").unwrap_or("") == "3nC80/radio-day/01"
+    && edited.get("dayYotoDaily").unwrap_or("") == "book/01/03", true);
 }
 
 function main(): i32 {
@@ -499,5 +611,8 @@ function main(): i32 {
   r = r.it("select the phone and advance, pause, resume, and stop its audio", test_phone_playback);
   r = r.it("load and save settings for the selected player", test_player_settings);
   r = r.it("save a family card and open it without a Yoto session after restart", test_offline_download);
+  r = r.it("queue, check, and remove 52-track downloads in bounded turns", test_download_work_batches);
+  r = r.it("download one library card, filter saved cards, and prefer local playback", test_library_download_filter);
+  r = r.it("choose named player settings, services, and library tracks", test_settings_choices);
   return r.finish();
 }

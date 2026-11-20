@@ -1,5 +1,6 @@
 import "std/android/download";
 import "std/base64";
+import "std/i64";
 import "std/json";
 import "std/kv";
 import "std/rand";
@@ -10,21 +11,24 @@ pub struct Track { id: i64, name: string, title: string, chapter: string, key: s
 
 pub struct Entry { id: string, title: string, creator: string, tracks: Track[], ready: boolean }
 
-pub struct Catalog { dir: string, entries: Entry[], note: string }
+pub struct Catalog { dir: string, entries: Entry[], cleanup: i64[], note: string }
 
 pub struct Output {
   start: (string, string, string) => i64,
   status: (i64) => i32,
-  remove: (i64) => void,
-  save: (Entry[]) => boolean,
+  remove: (i64[]) => boolean,
+  save: (Entry[], i64[]) => boolean,
 }
 
-enum Action { Install(api.DownloadPlan), Check, Remove(string), Clear, Cancel }
+enum Action { Check, Remove(string), Clear, Cancel }
+
+struct Install { plan: api.DownloadPlan, entry: Entry, prefix: string }
 
 pub struct State {
   catalog: Catalog,
   queue: api.Card[],
   fetching: Option[api.Card],
+  installing: Option[Install],
   revision: i64,
   checked: i32,
   failed: i32,
@@ -35,8 +39,12 @@ pub struct State {
 
 const PREFIX: string = "yoto-offline-";
 
+const BATCH: i32 = 4;
+
+const REMOVE_BATCH: i32 = 8;
+
 pub function empty(catalog: Catalog): State {
-  return State { catalog: catalog, queue: [], fetching: None, revision: 0i64, checked: 0, failed: 0, paused: false, note: catalog.note, action: None };
+  return State { catalog: catalog, queue: [], fetching: None, installing: None, revision: 0i64, checked: 0, failed: 0, paused: false, note: catalog.note, action: None };
 }
 
 function safe_name(name: string): boolean {
@@ -90,7 +98,7 @@ function encode_entry(entry: Entry): json.JsonValue {
 }
 
 pub function load(store_dir: string, media_dir: string): Catalog {
-  let blank = Catalog { dir: media_dir, entries: [], note: "" };
+  let blank = Catalog { dir: media_dir, entries: [], cleanup: [], note: "" };
   if (store_dir.len() == 0 || media_dir.len() == 0) {
     return Catalog { ...blank, dir: "", note: "Download storage is unavailable." };
   }
@@ -107,15 +115,28 @@ pub function load(store_dir: string, media_dir: string): Catalog {
       entries = entries.append(entry);
     }
   }
-  return Catalog { ...blank, entries: entries };
+  let cleanup: i64[] = [];
+  let ids = json.parse(store.get("cleanup").unwrap_or("[]")).unwrap_or(json.JNull);
+  if let json.JArray(items) = ids {
+    for item in items {
+      if let json.JNumber(raw) = item {
+        let id = i64.parse_i64(raw).unwrap_or(-1i64);
+        if (id >= 0i64) {
+          cleanup = cleanup.append(id);
+        }
+      }
+    }
+  }
+  return Catalog { ...blank, entries: entries, cleanup: cleanup };
 }
 
-pub function save(dir: string, entries: Entry[]): boolean {
+pub function save(dir: string, entries: Entry[], cleanup: i64[]): boolean {
   if (dir.len() == 0) {
     return false;
   }
   let data = json.encode(json.JArray(entries.map(encode_entry)));
-  return kv.empty(dir + "/yoto-downloads").set("titles", data).save().is_ok();
+  let pending = json.encode(json.JArray(cleanup.map((id: i64): json.JsonValue => json.JNumber(id.to_string()))));
+  return kv.empty(dir + "/yoto-downloads").set("titles", data).set("cleanup", pending).save().is_ok();
 }
 
 pub function saved(s: State, id: string): Option[Entry] {
@@ -137,15 +158,20 @@ function active(s: State): Option[Entry] {
 }
 
 pub function busy(s: State): boolean {
-  return s.fetching.is_some() || s.queue.len() > 0 || active(s).is_some();
+  return s.fetching.is_some() || s.installing.is_some() || s.queue.len() > 0 || active(s).is_some();
 }
 
-function contains(s: State, id: string): boolean {
+pub function contains(s: State, id: string): boolean {
   if (s.catalog.entries.any((entry: Entry): boolean => entry.id == id)) {
     return true;
   }
   if let Some(card) = s.fetching {
     if (card.id == id) {
+      return true;
+    }
+  }
+  if let Some(install) = s.installing {
+    if (install.plan.id == id) {
       return true;
     }
   }
@@ -166,7 +192,7 @@ pub function enqueue(s: State, cards: api.Card[]): State {
 }
 
 pub function next(s: State): Option[api.Card] {
-  if (!s.paused && s.queue.len() > 0 && s.fetching.is_none() && active(s).is_none()) {
+  if (!s.paused && s.queue.len() > 0 && s.fetching.is_none() && s.installing.is_none() && active(s).is_none()) {
     return Some(s.queue[0]);
   }
   return None;
@@ -185,7 +211,11 @@ pub function received(s: State, revision: i64, result: Result[api.DownloadPlan, 
   }
   let next = State { ...s, fetching: None };
   match (result) {
-    Ok(plan) => { return State { ...next, action: Some(Install(plan)) }; },
+    Ok(plan) => {
+      let entry = Entry { id: plan.id, title: plan.title, creator: plan.creator, tracks: [], ready: false };
+      let setup = Install { plan: plan, entry: entry, prefix: PREFIX + base64.encode_url(rand.bytes(12)) + "-" };
+      return State { ...next, installing: Some(setup), action: Some(Check) };
+    },
     Err(error) => {
       if (error.pause_index) {
         return State { ...next, paused: !error.expired, queue: [card].concat(next.queue), note: error.message };
@@ -196,86 +226,115 @@ pub function received(s: State, revision: i64, result: Result[api.DownloadPlan, 
 }
 
 pub function check(s: State): State {
-  if (active(s).is_some()) {
+  if (work_interval(s) >= 0) {
     return State { ...s, action: Some(Check) };
   }
   return s;
 }
 
 pub function clear(s: State): State {
-  return State { ...s, queue: [], fetching: None, paused: false, revision: s.revision + 1i64, action: Some(Clear) };
+  return State { ...s, queue: [], fetching: None, installing: None, paused: false, revision: s.revision + 1i64, action: Some(Clear) };
 }
 
 pub function cancel(s: State): State {
-  return State { ...s, queue: [], fetching: None, paused: false, revision: s.revision + 1i64, action: Some(Cancel) };
+  return State { ...s, queue: [], fetching: None, installing: None, paused: false, revision: s.revision + 1i64, action: Some(Cancel) };
 }
 
 pub function resume(s: State): State {
   return State { ...s, paused: false, note: "" };
 }
 
-pub function checking(s: State): boolean {
-  return active(s).is_some();
+pub function work_interval(s: State): i32 {
+  if (s.installing.is_some() || s.catalog.cleanup.len() > 0) {
+    return 100;
+  }
+  if (active(s).is_some()) {
+    return 750;
+  }
+  return -1;
 }
 
 pub function remove(s: State, id: string): State {
   return State { ...s, action: Some(Remove(id)) };
 }
 
-function with_entries(s: State, entries: Entry[], output: Output): Result[State, string] {
-  if (!output.save(entries)) {
+function with_catalog(s: State, entries: Entry[], cleanup: i64[], output: Output): Result[State, string] {
+  if (!output.save(entries, cleanup)) {
     return Err("Could not save the download list.");
   }
-  return Ok(State { ...s, catalog: Catalog { ...s.catalog, entries: entries } });
+  return Ok(State { ...s, catalog: Catalog { ...s.catalog, entries: entries, cleanup: cleanup } });
 }
 
-function delete(entry: Entry, output: Output): void {
-  for track in entry.tracks {
-    output.remove(track.id);
-  }
-}
-
-function install(s: State, plan: api.DownloadPlan, output: Output): State {
-  let prefix = PREFIX + base64.encode_url(rand.bytes(12)) + "-";
-  let entry = Entry { id: plan.id, title: plan.title, creator: plan.creator, tracks: [], ready: false };
-  for i in 0..plan.tracks.len() {
+function install(s: State, setup: Install, output: Output): State {
+  let entry = setup.entry;
+  let plan = setup.plan;
+  let ids: i64[] = [];
+  let first = entry.tracks.len();
+  for i in first..(first + BATCH).min(plan.tracks.len()) {
     let track = plan.tracks[i];
-    let name = prefix + i.to_string() + ".audio";
-    let id = output.start(track.url, name, plan.title);
+    let name = setup.prefix + i.to_string() + ".audio";
+    let id = output.start(track.url, name, entry.title);
     if (id < 0i64) {
-      delete(entry, output);
-      return State { ...s, failed: s.failed + 1, note: "Android could not start the download for " + plan.title + "." };
+      let removed = output.remove(ids);
+      return State { ...s, installing: None, failed: s.failed + 1, note: "Android could not start the download for " + entry.title + "." };
     }
+    ids = ids.append(id);
     entry = Entry { ...entry, tracks: entry.tracks.append(Track { id: id, name: name, title: track.title, chapter: track.chapter, key: track.key }) };
   }
-  match (with_entries(s, s.catalog.entries.append(entry), output)) {
-    Ok(next) => { return State { ...next, checked: 0 }; },
+  // Keep the Android IDs in the cleanup list until every track is queued.
+  let pending = s.catalog.cleanup.concat(ids);
+  let entries = s.catalog.entries;
+  let installing = Some(Install { ...setup, entry: entry });
+  if (entry.tracks.len() == plan.tracks.len()) {
+    let committed: Map[i64, boolean] = map_new(entry.tracks.len());
+    for track in entry.tracks {
+      committed = committed.insert(track.id, true);
+    }
+    pending = pending.filter((download_id: i64): boolean => !committed.contains(download_id));
+    entries = entries.append(entry);
+    installing = None;
+  }
+  match (with_catalog(s, entries, pending, output)) {
+    Ok(next) => { return State { ...next, installing: installing, checked: 0 }; },
     Err(note) => {
-      delete(entry, output);
-      return State { ...s, failed: s.failed + 1, note: note };
+      let removed = output.remove(ids);
+      return State { ...s, installing: None, failed: s.failed + 1, note: note };
     },
   }
 }
 
 function removed(s: State, entries: Entry[], output: Output): State {
+  if (entries.len() == 0) {
+    return s;
+  }
   let keep = s.catalog.entries.filter((entry: Entry): boolean => !entries.any((drop: Entry): boolean => drop.id == entry.id));
-  match (with_entries(s, keep, output)) {
-    Ok(next) => {
-      for entry in entries {
-        delete(entry, output);
-      }
-      return next;
-    },
+  let pending = s.catalog.cleanup;
+  for entry in entries {
+    pending = pending.concat(entry.tracks.map((track: Track): i64 => track.id));
+  }
+  match (with_catalog(s, keep, pending, output)) {
+    Ok(next) => { return next; },
     Err(note) => { return State { ...s, note: note }; },
   }
 }
 
 function checked(s: State, output: Output): State {
+  if let Some(setup) = s.installing {
+    return install(s, setup, output);
+  }
+  let cleanup = s.catalog.cleanup;
+  if (cleanup.len() > 0) {
+    if (output.remove(cleanup.take(REMOVE_BATCH))) {
+      return with_catalog(s, s.catalog.entries, cleanup.drop(REMOVE_BATCH), output).unwrap_or(s);
+    }
+    return s;
+  }
   let Some(entry) = active(s) else {
     return s;
   };
   let n = s.checked;
-  for i in n..entry.tracks.len() {
+  let limit = (n + BATCH).min(entry.tracks.len());
+  for i in n..limit {
     let status = output.status(entry.tracks[i].id);
     if (status == download.FAILED || status == download.GONE) {
       let failed = removed(s, [entry], output);
@@ -285,9 +344,12 @@ function checked(s: State, output: Output): State {
       return State { ...s, checked: i };
     }
   }
+  if (limit < entry.tracks.len()) {
+    return State { ...s, checked: limit };
+  }
   let ready = Entry { ...entry, ready: true };
   let entries = s.catalog.entries.map((e: Entry): Entry => if (e.id == entry.id) { ready } else { e });
-  match (with_entries(s, entries, output)) {
+  match (with_catalog(s, entries, cleanup, output)) {
     Ok(next) => { return State { ...next, checked: 0 }; },
     Err(note) => { return State { ...s, note: note }; },
   }
@@ -299,7 +361,6 @@ pub function apply(s: State, output: Output): State {
   };
   let next = State { ...s, action: None };
   match (action) {
-    Install(plan) => { return install(next, plan, output); },
     Check => { return checked(next, output); },
     Remove(id) => { return removed(next, next.catalog.entries.filter((e: Entry): boolean => e.id == id), output); },
     Clear => { return removed(next, next.catalog.entries, output); },
@@ -312,6 +373,9 @@ pub function apply(s: State, output: Output): State {
 pub function message(s: State): string {
   if let Some(card) = s.fetching {
     return "Preparing " + card.title + "…";
+  }
+  if let Some(setup) = s.installing {
+    return "Preparing " + setup.entry.title + " · " + setup.entry.tracks.len().to_string() + "/" + setup.plan.tracks.len().to_string() + " tracks";
   }
   if let Some(entry) = active(s) {
     return "Downloading " + entry.title + " · " + s.checked.to_string() + "/" + entry.tracks.len().to_string() + " tracks";

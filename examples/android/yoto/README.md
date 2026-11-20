@@ -19,8 +19,11 @@ You can pause, resume, or stop playback from Story Deck.
 
 ## Listen offline
 
-- While online, open a card and select **Download to phone**. To save several
-  titles, open **Downloads** and select **Download all cards**.
+- While online, select **Download** under a cover in **Library**. You can also
+  open the card and select **Download to phone**. To save the library at once,
+  open **Downloads** and select **Download all cards**.
+- Turn on **Downloaded only** in **Library** to see the cards saved on the phone.
+  When you play on the phone, Story Deck uses saved audio first.
 - Wait for the cards to appear in **Downloads**. Test playback with airplane mode
   on before you travel.
 - Open **Downloads** to play the saved audio without a connection. To delete a
@@ -36,7 +39,7 @@ Open **Players** and select **Settings** next to a player. Edit the day and nigh
 display brightness, nightlight color, volume limits, or schedule. The available
 controls depend on the player. You can also set Bluetooth preferences, when the
 display dims, automatic power-off, clock format, alarms, and right button
-shortcuts.
+shortcuts. Pick a service or choose a track from your library for a shortcut.
 Select **Save** to send the changes to Yoto.
 
 Enable `family:devices:manage` for the public client. If Story Deck prompts you to
