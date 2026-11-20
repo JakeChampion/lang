@@ -1,0 +1,98 @@
+import "std/android/draw";
+import "std/android/ui";
+import "std/i32";
+import "std/string";
+
+pub struct Hsv { hue: f64, saturation: f64, brightness: f64 }
+
+pub function parse(value: string): Option[Hsv] {
+  if (value.len() != 7 || !value.starts_with("#") || !value.drop(1).is_hex_string()) {
+    return None;
+  }
+  let code = i32.parse_i32_radix(value.drop(1), 16).unwrap_or(0);
+  let r = (code >> 16 & 255) as f64;
+  let g = (code >> 8 & 255) as f64;
+  let b = (code & 255) as f64;
+  let top = r.max(g).max(b);
+  let delta = top - r.min(g).min(b);
+  let hue = 0.0;
+  if (delta > 0.0) {
+    if (top == r) {
+      hue = (g - b) / delta;
+    } else if (top == g) {
+      hue = (b - r) / delta + 2.0;
+    } else {
+      hue = (r - g) / delta + 4.0;
+    }
+    if (hue < 0.0) {
+      hue += 6.0;
+    }
+  }
+  return Some(Hsv { hue: hue / 6.0, saturation: if (top > 0.0) { delta / top } else { 0.0 }, brightness: top / 255.0 });
+}
+
+function channels(c: Hsv): (i32, i32, i32) {
+  let level = c.brightness * 255.0;
+  let chroma = level * c.saturation;
+  let low = level - chroma;
+  let h = c.hue * 6.0;
+  let (r, g, b) = (low + chroma * ((h - 3.0).abs() - 1.0).min(1.0).max(0.0), low + chroma * (2.0 - (h - 2.0).abs()).min(1.0).max(0.0), low + chroma * (2.0 - (h - 4.0).abs()).min(1.0).max(0.0));
+  return (r.round() as i32, g.round() as i32, b.round() as i32);
+}
+
+pub function hex(c: Hsv): string {
+  let (r, g, b) = channels(c);
+  return (r << 16 | g << 8 | b).to_rgb_hex();
+}
+
+function pixel(c: Hsv): i32 {
+  let (r, g, b) = channels(c);
+  return draw.rgb(r, g, b);
+}
+
+pub function swatch[M](c: Hsv): ui.El[M] {
+  return ui.box[M]().background(pixel(c)).rounded(10.0).border(ui.OUTLINE, 1.0);
+}
+
+function gradient[M](name: string, part: f64, colour: (f64) => i32, slide: (f64) => M, density: f64): ui.El[M] {
+  let key = name + ":" + (part * 10000.0).round().to_string() + ":" + colour(0.0).to_string() + ":" + colour(1.0).to_string();
+  let band = ui.canvas[M](key, (frame: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => {
+    let radius = (10.0 * density) as i32;
+    let left = x + radius;
+    let span = (w - 2 * radius).max(1);
+    let center = y + h / 2;
+    let thickness = (18.0 * density).round() as i32;
+    let steps = 96.min(span);
+    for i in 0..steps {
+      let x0 = i * span / steps;
+      let x1 = (i + 1) * span / steps;
+      frame.fill(left + x0, center - thickness / 2, x1 - x0, thickness, colour(i as f64 / ((steps - 1).max(1) as f64)));
+    }
+    let thumb = left + (part * (span as f64)) as i32;
+    frame.disc(thumb, center, radius, draw.rgb(15, 15, 18));
+    frame.disc(thumb, center, (radius - 2).max(1), draw.rgb(255, 255, 255));
+    frame.disc(thumb, center, (radius - 4).max(1), colour(part));
+  });
+  return band.wide().height(48.0).on_slide(slide).described(name);
+}
+
+pub function controls[M](c: Hsv, select: (Hsv) => M, density: f64): ui.El[M][] {
+  return [
+    swatch[M](c).wide().height(100.0).described("Colour preview"),
+    ui.text[M]("Hue").weighted(600),
+    gradient("Hue", c.hue, (p: f64): i32 => pixel(Hsv { hue: p, saturation: 1.0, brightness: 1.0 }), (p: f64): M => {
+      let saturation = if (c.saturation == 0.0) { 1.0 } else { c.saturation };
+      let brightness = if (c.brightness == 0.0) { 1.0 } else { c.brightness };
+      return select(Hsv { hue: p, saturation: saturation, brightness: brightness });
+    }, density),
+    ui.text[M]("Saturation").weighted(600),
+    gradient("Saturation", c.saturation, (p: f64): i32 => pixel(Hsv { ...c, saturation: p, brightness: 1.0 }), (p: f64): M => select(Hsv { ...c, saturation: p }), density),
+    ui.text[M]("Backlight brightness").weighted(600),
+    gradient("Backlight brightness", c.brightness, (p: f64): i32 => pixel(Hsv { ...c, brightness: p }), (p: f64): M => select(Hsv { ...c, brightness: p }), density),
+    ui.row([
+      ui.text_button("Off", select(Hsv { ...c, brightness: 0.0 })).described("Turn light off"),
+      ui.text_button("Warm white", select(Hsv { hue: 0.1, saturation: 0.47, brightness: 1.0 })),
+      ui.text_button("White", select(Hsv { ...c, saturation: 0.0, brightness: 1.0 })),
+    ]).spaced(4.0),
+  ];
+}

@@ -3,6 +3,14 @@ import "./api";
 
 pub struct Hit { card: i32, track: i32 }
 
+pub const ALL: i32 = 0;
+
+pub const TITLES: i32 = 1;
+
+pub const CHAPTERS: i32 = 2;
+
+pub const TRACKS: i32 = 3;
+
 pub function category(kind: api.Kind): i32 {
   match (kind) {
     api.Standard => {
@@ -39,6 +47,10 @@ function track_matches(terms: string[], card: string, track: string): boolean {
 }
 
 pub function find(cards: api.Card[], query: string, filter: i32): Hit[] {
+  return find_in(cards, query, filter, ALL);
+}
+
+pub function find_in(cards: api.Card[], query: string, filter: i32, scope: i32): Hit[] {
   let terms = query.to_lower().replace("\t", " ").replace("\n", " ").split(" ").filter((word: string): boolean => word.len() > 0);
   let titles: Hit[] = [];
   let tracks: Hit[] = [];
@@ -47,12 +59,20 @@ pub function find(cards: api.Card[], query: string, filter: i32): Hit[] {
     if (filter != 0 && category(card.kind) != filter) {
       continue;
     }
-    if (matches(terms, card.search, "")) {
+    if ((terms.len() == 0 || scope == ALL || scope == TITLES) && matches(terms, card.search, "")) {
       titles = titles.append(Hit { card: i, track: -1 });
     }
-    if (terms.len() > 0) {
+    if (terms.len() > 0 && scope != TITLES) {
+      let chapters: Map[string, boolean] = map_new(16);
       for j in 0..card.tracks.len() {
-        if (track_matches(terms, card.search, card.tracks[j].search)) {
+        let track = card.tracks[j];
+        if (scope == CHAPTERS) {
+          let key = if (track.chapter_key.len() > 0) { track.chapter_key } else { track.chapter };
+          if (track.chapter.len() > 0 && !chapters.contains(key) && track_matches(terms, card.search, track.chapter.to_lower())) {
+            chapters = chapters.insert(key, true);
+            tracks = tracks.append(Hit { card: i, track: j });
+          }
+        } else if (track_matches(terms, card.search, track.search)) {
           tracks = tracks.append(Hit { card: i, track: j });
         }
       }

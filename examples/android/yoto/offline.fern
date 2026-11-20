@@ -408,7 +408,7 @@ pub function playlist(s: State, entry: Entry, from: i32): api.Stream[] {
     return tracks;
   }
   for track in entry.tracks.drop(from) {
-    tracks = tracks.append(api.Stream { title: track.title, url: "file://" + s.catalog.dir + "/" + track.name });
+    tracks = tracks.append(api.Stream { title: track.title, url: "file://" + s.catalog.dir + "/" + track.name, chapter: track.chapter, key: track.key });
   }
   return tracks;
 }

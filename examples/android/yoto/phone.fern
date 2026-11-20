@@ -5,10 +5,11 @@ import "./api";
 
 pub enum Phase { Idle, Loading, Preparing, Playing, Paused }
 
-enum Action { Open, Start, Pause, Close }
+enum Action { Open, Start, Pause, Close, Seek(i64) }
 
 pub struct State {
   revision: i64,
+  card: string,
   title: string,
   queue: api.Stream[],
   at: i32,
@@ -16,6 +17,7 @@ pub struct State {
   note: string,
   media: Option[player.Player],
   action: Option[Action],
+  resume_ms: i64,
 }
 
 pub struct Output {
@@ -23,18 +25,20 @@ pub struct Output {
   start: (player.Player) => boolean,
   pause: (player.Player) => boolean,
   close: (player.Player) => void,
+  seek: (player.Player, i64) => boolean,
+  position: (player.Player) => i64,
 }
 
 pub function empty(): State {
-  return State { revision: 0i64, title: "", queue: [], at: 0, phase: Idle, note: "", media: None, action: None };
+  return State { revision: 0i64, card: "", title: "", queue: [], at: 0, phase: Idle, note: "", media: None, action: None, resume_ms: 0i64 };
 }
 
 pub function stop(s: State): State {
   return State { ...empty(), revision: s.revision + 1i64, media: s.media, action: Some(Close) };
 }
 
-pub function loading(s: State, title: string): State {
-  return State { ...stop(s), title: title, phase: Loading };
+pub function loading(s: State, card: string, title: string, resume_ms: i64): State {
+  return State { ...stop(s), card: card, title: title, phase: Loading, resume_ms: resume_ms };
 }
 
 function prepare(s: State, at: i32): State {
@@ -45,6 +49,27 @@ function prepare(s: State, at: i32): State {
     return State { ...stop(s), note: "Yoto did not provide playable audio for the next track." };
   }
   return State { ...s, at: at, phase: Preparing, action: Some(Open) };
+}
+
+pub function next(s: State): State {
+  if (s.queue.len() > 0) {
+    return prepare(s, s.at + 1);
+  }
+  return s;
+}
+
+pub function previous(s: State): State {
+  if (s.queue.len() > 0) {
+    return prepare(s, (s.at - 1).max(0));
+  }
+  return s;
+}
+
+pub function seek(s: State, ms: i64): State {
+  if let Playing | Paused = s.phase {
+    return State { ...s, action: Some(Seek(ms.max(0i64))) };
+  }
+  return s;
 }
 
 pub function received(s: State, revision: i64, result: Result[api.Stream[], api.Failure]): State {
@@ -95,10 +120,13 @@ pub function event(s: State, event: android.Event): State {
       }
     },
     Some(player.Completed) => {
-      return prepare(s, s.at + 1);
+      return next(s);
     },
     Some(player.Failed(_, _)) => {
       return unavailable(s);
+    },
+    Some(player.Seeked) => {
+      return State { ...s, revision: s.revision + 1i64 };
     },
     _ => {}
   }
@@ -137,12 +165,21 @@ pub function apply(s: State, output: Output): State {
       }
       return State { ...next, media: media };
     },
+    Seek(ms) => {
+      if let Some(media) = s.media {
+        let located = output.seek(media, ms);
+      }
+      return next;
+    },
     _ => {}
   }
   if let Some(media) = s.media {
     if let Start = action {
+      if (s.resume_ms > 0i64) {
+        let located = output.seek(media, s.resume_ms);
+      }
       if (output.start(media)) {
-        return State { ...next, phase: Playing };
+        return State { ...next, phase: Playing, resume_ms: 0i64 };
       }
     } else if (output.pause(media)) {
       return State { ...next, phase: Paused };

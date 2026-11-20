@@ -18,6 +18,8 @@ import "./offline";
 import "./phone";
 import "./search";
 import "./settings";
+import "./light_colour";
+import "./listening";
 import "./player_status";
 
 function test_pkce(): test.TestOutcome {
@@ -142,6 +144,8 @@ function no_audio(): phone.Output {
     start: (media: player.Player): boolean => false,
     pause: (media: player.Player): boolean => false,
     close: (media: player.Player): void => {},
+    seek: (media: player.Player, ms: i64): boolean => false,
+    position: (media: player.Player): i64 => 0i64,
   };
 }
 
@@ -155,7 +159,7 @@ function no_downloads(): offline.Output {
 }
 
 function simulator(own model: deck.Model): sim.Sim[deck.Model, deck.Msg] {
-  let real = deck.program((address: string): boolean => false, (data: u8[]): Option[draw.Image] => None, (saved: Option[api.Session]): boolean => true, no_audio(), no_downloads());
+  let real = deck.program((address: string): boolean => false, (data: u8[]): Option[draw.Image] => None, (saved: Option[api.Session]): boolean => true, no_audio(), no_downloads(), (state: listening.Saved): boolean => true);
   let dry = ui.program(deck.view, deck.update).with_theme_of(real.theme).with_visible(deck.visible_posters);
   return sim.start(model, dry, test_fonts(), 720, 1600, 2.0);
 }
@@ -212,6 +216,7 @@ function test_saved_session(): test.TestOutcome {
     },
     no_audio(),
     no_downloads(),
+    (state: listening.Saved): boolean => true,
   );
   let m = deck.restored(Ok(Some(original)));
   if (p.wait(m) != 0 || m.client != "client") {
@@ -356,7 +361,7 @@ function test_phone_playback(): test.TestOutcome {
     pause: (media: player.Player): boolean => true,
     close: (media: player.Player): void => closes.set(closes.get() + 1),
   };
-  let queue = [api.Stream { title: "Intro", url: "https://example.com/intro" }, api.Stream { title: "Fox at dusk", url: "https://example.com/fox" }];
+  let queue = [api.Stream { title: "Intro", url: "https://example.com/intro", chapter: "01", key: "01" }, api.Stream { title: "Fox at dusk", url: "https://example.com/fox", chapter: "01", key: "03" }];
   let state = phone.apply(phone.received(m.phone, m.phone.revision, Ok(queue)), output);
   let (prepared, arg) = player.posted(player.Prepared, 0);
   state = phone.apply(phone.event(state, android.Posted(prepared, arg)), output);
@@ -593,6 +598,90 @@ function test_settings_choices(): test.TestOutcome {
   );
 }
 
+function test_light_picker(): test.TestOutcome {
+  for value in ["#000000", "#ffffff", "#112233", "#ff7300", "#2244aa", "#a3279c"] {
+    let Some(colour) = light_colour.parse(value) else {
+      return test.fail("read the player backlight colour");
+    };
+    if (light_colour.hex(colour) != value) {
+      return test.fail("keep the exact colour when opening the picker");
+    }
+  }
+  let s = sim.tap(library_sim(), "Settings for Bedroom");
+  let panel = s.shell.app.config_panel;
+  let device = panel.device.unwrap_or(api.Player { id: "", name: "", online: false });
+  let reply = json.parse("{\"device\":{\"config\":{\"ambientColour\":\"#ff0000\",\"nightAmbientColour\":\"#112233\"}}}").unwrap_or(json.JNull);
+  let Ok(config) = api.parse_config(reply, device) else {
+    return test.fail("parse the player backlight settings");
+  };
+  s = sim.send(s, deck.ConfigLoaded(panel.revision, false, Ok(config)));
+  s = sim.tap(s, "Choose Morning light color");
+  s = sim.slide(s, "Hue", 0.5);
+  s = sim.tap(s, "Cancel");
+  if (s.shell.app.config_panel.draft.len() != 0) {
+    return test.fail("cancel the preview without editing settings");
+  }
+  s = sim.tap(s, "Choose Nightlight color");
+  preview(s, "light-colour");
+  s = sim.tap(s, "Turn light off");
+  s = sim.tap(s, "Use colour");
+  let draft = s.shell.app.config_panel.draft;
+  let changes = settings.changes(config, draft).unwrap_or([]);
+  return test.assert_eq(changes.len() == 1 && changes[0].0 == "nightAmbientColour" && json.encode(changes[0].1) == "\"#000000\"", true);
+}
+
+function test_playback_tools(): test.TestOutcome {
+  let Ok(dir) = temp_dir("story-deck-trip") else {
+    return test.fail("create an isolated playback store");
+  };
+  let saved_track = offline.Track { id: 1i64, name: "yoto-offline-ready.audio", title: "Fox at dusk", chapter: "01", key: "03" };
+  let missing = offline.Track { ...saved_track, id: 2i64, name: "yoto-offline-missing.audio", key: "04" };
+  let ready = offline.Entry { id: "book", title: "Woodland Walk", creator: "A. Writer", tracks: [saved_track], ready: true };
+  let incomplete = offline.Entry { id: "pod", title: "Sky Journal", creator: "", tracks: [missing], ready: true };
+  let catalog = offline.Catalog { dir: dir, entries: [ready, incomplete], cleanup: [], note: "" };
+  let written = write_file_bytes(dir + "/" + saved_track.name, "RIFF    WAVEfmt                     data    ".bytes());
+  let item = listening.Item { id: ready.id, title: ready.title };
+  let queued = listening.Item { id: incomplete.id, title: incomplete.title };
+  let report = listening.check_trip(catalog, [item, queued]);
+  if (written.is_err() || report.len() != 2 || report[0].present != 1 || report[1].present != 0) {
+    return test.fail("mark only readable saved audio as ready for the trip");
+  }
+  let pin = listening.Bookmark { item: item, chapter: "01", key: "03", position: 38257i64 };
+  let marked = listening.pin(listening.Saved { queue: [queued], marks: [], pins: [] }, listening.Bookmark { ...pin, position: 1234i64 });
+  let store = listening.remember(marked, pin);
+  if (!listening.save(dir, store)) {
+    return test.fail("save the bookmark and queue");
+  }
+  let first = deck.with_downloads(deck.start(), catalog);
+  let restored = listening.load(dir);
+  let m = deck.update(deck.with_listening(first, restored), deck.ResumeCard(item.id));
+  if (m.phone.resume_ms != 38257i64 || m.phone.card != "book" || m.job.is_some() || restored.pins[0].position != 1234i64) {
+    return test.fail("restore exact local track and position after restart");
+  }
+  let media = player.Player { obj: 1 as usize, listener: 1 as usize, slot: 0 };
+  let playing = deck.Model { ...m, phone: phone.State { ...m.phone, media: Some(media), phase: phone.Playing } };
+  let timed = deck.update(playing, deck.SetSleep(1));
+  let left = deck.playback_tick(timed, timed.playback_tools.sleep_at);
+  if (left.playback_tools.sleep_at != 0i64 || left.playback_tools.note != "Sleep timer ended." || left.phone.action.is_none()) {
+    return test.fail("schedule a pause when the sleep timer ends");
+  }
+  let (ended, value) = player.posted(player.Completed, 0);
+  let advanced = deck.update(timed, deck.PhoneEvent(ended, value));
+  return test.assert_eq(advanced.phone.card == "pod" && advanced.playback_tools.saved.queue.len() == 0 && listening.mark(advanced.playback_tools.saved, item.id).is_none(), true);
+}
+
+function test_search_scope(): test.TestOutcome {
+  let cards = fixture_cards();
+  let chapters = search.find_in(cards, "forest", 1, search.CHAPTERS);
+  let titles = search.find_in(cards, "forest", 1, search.TITLES);
+  let tracks = search.find_in(cards, "fox", 1, search.TRACKS);
+  return test.assert_eq(
+    chapters.len() == 1 && cards[chapters[0].card].tracks[chapters[0].track].chapter == "Forest"
+      && titles.len() == 0 && tracks.len() == 1 && cards[tracks[0].card].tracks[tracks[0].track].title == "Fox at dusk",
+    true,
+  );
+}
+
 function main(): i32 {
   let r = test.new("Story Deck");
   r = r.it("PKCE matches the standard example", test_pkce);
@@ -617,5 +706,8 @@ function main(): i32 {
   r = r.it("queue, check, and remove 52-track downloads in bounded turns", test_download_work_batches);
   r = r.it("download one library card, filter saved cards, and prefer local playback", test_library_download_filter);
   r = r.it("choose named player settings, services, and library tracks", test_settings_choices);
+  r = r.it("preview and apply the selected day or night light colour", test_light_picker);
+  r = r.it("check trip files, restore a bookmark, and advance the queue with a sleep timer", test_playback_tools);
+  r = r.it("find the exact chapter or track with search filters", test_search_scope);
   return r.finish();
 }

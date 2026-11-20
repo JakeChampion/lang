@@ -3,6 +3,7 @@ import "std/i32";
 import "std/json";
 import "std/string";
 import "./api";
+import "./light_colour";
 
 enum Kind { Text, ClockTime, Colour, Brightness, Limit, Duration, Switch, ClockFormat, Shortcut, PlayerInfo }
 
@@ -75,6 +76,10 @@ pub function is_shortcut(key: string): boolean {
     }
   }
   return false;
+}
+
+pub function light_key(key: string): boolean {
+  return key == "ambientColour" || key == "nightAmbientColour";
 }
 
 pub function choices(key: string): Choice[] {
@@ -206,7 +211,7 @@ function valid(field: Field, text: string): boolean {
       return clock_time(text);
     },
     Colour => {
-      return text.len() == 7 && text.starts_with("#") && text.drop(1).is_hex_string();
+      return light_colour.parse(text).is_some();
     },
     Brightness => {
       return n >= 0 && n <= 100 || text == "auto" && field.key != "displayDimBrightness";
@@ -295,19 +300,17 @@ function field_view[M](field: Field, value: string, edit: (string, string) => M)
   }
   let hint = match (field.kind) {
     ClockTime => "HH:MM",
-    Colour => "#RRGGBB",
     _ => label,
   };
-  let items = [ui.text[M](label), ui.field[M]("config:" + key, value, hint).on_edit((text: string): M => edit(key, text))];
-  if let Colour = field.kind {
-    items = items.append(ui.row([
-      ui.text_button("Off", edit(key, "#000000")).described(label + " off"),
-      ui.text_button("Warm", edit(key, "#ff7300")).described(label + " warm"),
-      ui.text_button("Red", edit(key, "#ff0000")).described(label + " red"),
-      ui.text_button("Blue", edit(key, "#0000ff")).described(label + " blue"),
-    ]).spaced(2.0));
+  return ui.column([ui.text[M](label), ui.field[M]("config:" + key, value, hint).on_edit((text: string): M => edit(key, text))]).spaced(4.0).wide();
+}
+
+function light_field[M](field: Field, value: string, choose: (string) => M): ui.El[M] {
+  let row: ui.El[M][] = [ui.text[M](field.label).wide()];
+  if let Some(colour) = light_colour.parse(value) {
+    row = row.append(light_colour.swatch[M](colour).width(32.0).height(32.0));
   }
-  return ui.column(items).spaced(4.0).wide();
+  return ui.row(row.append(ui.text_button("Choose", choose(field.key)).described("Choose " + field.label))).aligned(ui.CENTER).spaced(6.0);
 }
 
 pub function alarms(config: api.PlayerConfig, draft: Map[string, string]): Option[json.JsonValue[]] {
@@ -368,7 +371,9 @@ pub function controls[M](config: api.PlayerConfig, draft: Map[string, string], c
     for field in section.1 {
       if let Some(raw) = original(config, field.key) {
         let value = draft.get(field.key).unwrap_or(as_text(raw));
-        if let Duration | Shortcut | PlayerInfo = field.kind {
+        if let Colour = field.kind {
+          rows = rows.append(light_field(field, value, choose));
+        } else if let Duration | Shortcut | PlayerInfo = field.kind {
           rows = rows.append(named_field(field, choice_caption(field.key, value, cards), "Choose " + field.label.to_lower(), choose));
         } else {
           rows = rows.append(field_view(field, value, edit));

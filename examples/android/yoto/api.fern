@@ -16,7 +16,7 @@ pub enum Kind { Standard, Myo, Podcast, Radio }
 
 pub struct Track { title: string, chapter: string, chapter_key: string, track_key: string, search: string }
 
-pub struct Stream { title: string, url: string }
+pub struct Stream { title: string, url: string, chapter: string, key: string }
 
 pub struct DownloadTrack { title: string, chapter: string, key: string, url: string }
 
@@ -366,7 +366,7 @@ pub function parse_streams(value: json.JsonValue, chapter_key: string, track_key
       if (found) {
         let address = field(track, "trackUrl");
         let link = if (address.starts_with("https://")) { address } else { "" };
-        out = out.append(Stream { title: json.get_string(track, "title").unwrap_or(field(chapter, "title")), url: link });
+        out = out.append(Stream { title: json.get_string(track, "title").unwrap_or(field(chapter, "title")), url: link, chapter: key, key: field(track, "key") });
       }
     }
   }
