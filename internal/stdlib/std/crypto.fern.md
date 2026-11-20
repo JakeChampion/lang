@@ -2489,20 +2489,6 @@ pub struct Blake2b {
 
 pub enum Blake2bError { InvalidDigestLength(i32) }
 
-impl error.Error for Blake2bError {}
-
-impl cmp.Display for Blake2bError {}
-
-pub function (e: Blake2bError) message(): string {
-  return match (e) {
-    InvalidDigestLength(n) => "BLAKE2b digest length must be 1 to 64 bytes, got " + n.to_string(),
-  };
-}
-
-pub function (e: Blake2bError) to_string(): string {
-  return e.message();
-}
-
 // blake2b_new constructs a digest state for `out_len` bytes, from 1 through 64.
 // The default length for `b2sum` is 64 bytes. Its `-l` option accepts bits.
 pub function blake2b_new(out_len: i32): Result[Blake2b, Blake2bError] {
@@ -3427,6 +3413,20 @@ pub function blake2b(s: [u8], out_len: i32): Result[u8[], Blake2bError] {
 }
 
 // <<< generated
+
+impl error.Error for Blake2bError {}
+
+impl cmp.Display for Blake2bError {}
+
+pub function (e: Blake2bError) message(): string {
+  return match (e) {
+    InvalidDigestLength(n) => "BLAKE2b digest length must be 1 to 64 bytes, got " + n.to_string(),
+  };
+}
+
+pub function (e: Blake2bError) to_string(): string {
+  return e.message();
+}
 ```
 
 ### `sha1 on eight lanes`
