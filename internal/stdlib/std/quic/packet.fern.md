@@ -115,7 +115,9 @@ function __initial_salt(): u8[] {
 <<5 pub function keys(suite: keyschedule.CipherSuite, secret: [u8]): Keys>>=
 // QUIC uses the cipher suite's key size, hash size, or a 12-byte IV.
 function __protocol_label(h: keyschedule.Hash, secret: [u8], label: string, context: [u8], length: i32): u8[] {
-  let Ok(bytes) = keyschedule.hkdf_expand_label(h, secret, label, context, length) else { exit(134); };
+  let Ok(bytes) = keyschedule.hkdf_expand_label(h, secret, label, context, length) else {
+    exit(134);
+  };
   return bytes;
 }
 

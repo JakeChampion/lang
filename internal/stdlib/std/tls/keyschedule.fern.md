@@ -233,7 +233,9 @@ pub function hkdf_expand_label(h: Hash, secret: [u8], label: string, context: [u
 
 // Internal callers take their lengths from the TLS cipher suite or RFC 8446.
 function __protocol_label(h: Hash, secret: [u8], label: string, context: [u8], length: i32): u8[] {
-  let Ok(bytes) = hkdf_expand_label(h, secret, label, context, length) else { exit(134); };
+  let Ok(bytes) = hkdf_expand_label(h, secret, label, context, length) else {
+    exit(134);
+  };
   return bytes;
 }
 

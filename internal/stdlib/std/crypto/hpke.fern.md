@@ -504,7 +504,9 @@ function __labeled_expand(suite: [u8], prk: [u8], label: string, info: [u8], len
   let prefix = __alloc_u8(2).with(0, (length >> 8 & 255) as u8).with(1, (length & 255) as u8);
   let labeled = __cat(__cat(__cat(__cat(prefix, "HPKE-v1".as_bytes()), suite), label.as_bytes()), info);
   // The key schedule uses fixed lengths. export validates the caller-supplied length.
-  let Ok(bytes) = crypto.hkdf_sha256_expand(prk, labeled, length) else { exit(134); };
+  let Ok(bytes) = crypto.hkdf_sha256_expand(prk, labeled, length) else {
+    exit(134);
+  };
   return bytes;
 }
 
