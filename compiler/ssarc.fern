@@ -8109,62 +8109,6 @@ function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layo
   return e;
 }
 
-function built_record(f: ssasem.Func, plan: ssaunits.Plan): boolean {
-  if let typeinfo.TypeStruct(_) = f.result {
-    return built_result(f, plan);
-  }
-  return false;
-}
-
-function built_result(f: ssasem.Func, plan: ssaunits.Plan): boolean {
-  if (!plan.ok) {
-    return false;
-  }
-  let boxes = returned_records(f);
-  if (boxes.len() == 0) {
-    return false;
-  }
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      if (!box_use_ok(ins, boxes)) {
-        return false;
-      }
-    }
-  }
-  for step in plan.steps {
-    for item in step.supplies {
-      if (item.mode == ssaunits.retain_unit() && util.index_of_i32(boxes, item.value) >= 0) {
-        return false;
-      }
-    }
-  }
-  return true;
-}
-
-function returned_records(f: ssasem.Func): i32[] {
-  let out: i32[] = [];
-  for b in f.graph.blocks {
-    if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0 && util.index_of_i32(out, b.term.value) < 0) {
-      out = out.append(b.term.value);
-    }
-  }
-  let at = 0;
-  while (at < out.len()) {
-    let def = defining(f, out[at]);
-    if (def.kind_tag == ssa.COPY || def.kind_tag == ssa.PHI) {
-      for arg in def.args {
-        if (util.index_of_i32(out, arg) < 0) {
-          out = out.append(arg);
-        }
-      }
-    } else if (def.kind_tag != ssasem.record_new()) {
-      return [];
-    }
-    at += 1;
-  }
-  return out;
-}
-
 function defining(f: ssasem.Func, v: i32): ssa.SInst {
   for b in f.graph.blocks {
     for ins in b.insts {
@@ -8174,21 +8118,6 @@ function defining(f: ssasem.Func, v: i32): ssa.SInst {
     }
   }
   return ssa.no_inst();
-}
-
-function box_use_ok(ins: ssa.SInst, boxes: i32[]): boolean {
-  if (ins.kind_tag == ssasem.record_get()) {
-    return true;
-  }
-  if ((ins.kind_tag == ssa.COPY || ins.kind_tag == ssa.PHI) && util.index_of_i32(boxes, ins.result) >= 0) {
-    return true;
-  }
-  for arg in ins.args {
-    if (util.index_of_i32(boxes, arg) >= 0) {
-      return false;
-    }
-  }
-  return true;
 }
 
 function place_views(own r: irtables.LowerState): irtables.LowerState {
