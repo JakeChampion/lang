@@ -203,7 +203,8 @@ pub function (c: Config) server_side(id: identity.Identity): Config {
 
 // with_tickets has a server issue a session ticket on each connection,
 // sealed under a key derived from `secret`, and resume the tickets that any
-// server with the same secret issued.
+// server with the same secret issued. A secret shorter than 32 bytes
+// disables ticket issuance and resumption.
 pub function (c: Config) with_tickets(secret: [u8]): Config {
   return Config { ...c, ticket_key: tlsserver.ticket_key_of(secret) };
 }
