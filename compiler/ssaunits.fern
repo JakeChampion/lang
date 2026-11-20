@@ -4659,14 +4659,29 @@ struct Routes { targets: i32[], ways: i32[][], nulls: i32[][] }
 
 struct RouteGraph { at: i32[], claims: i32[][], dies: i32[][], reads: VariantReads }
 
-function route_graph(f: ssasem.Func, p: Plan, dying: Dying[], vr: VariantReads): RouteGraph {
+function route_graph(f: ssasem.Func, p: Plan, idx: i32[][], dying: Dying[], vr: VariantReads, carried: Carry): RouteGraph {
   let claims: i32[][] = [];
   let dies: i32[][] = [];
   for k in 0..f.graph.blocks.len() {
-    claims = claims.append(block_claims(f, p, f.graph.blocks[k]).counts);
+    claims = claims.append(open_claims(f, p, idx, vr, f.graph.blocks[k], carried));
     dies = dies.append(dying[k].values);
   }
   return RouteGraph { at: vr.at, claims: claims, dies: dies, reads: vr };
+}
+
+// The slot counts of the constructions of b that no value dying in b and no
+// token of `carried` supplies. Another token has no use in a block that
+// supplies each of its constructions, so a route goes through such a block.
+function open_claims(f: ssasem.Func, p: Plan, idx: i32[][], vr: VariantReads, b: ssa.SBlock, carried: Carry): i32[] {
+  let own_pairs = reuse_pairs(f, p, idx, vr, b, false, carried);
+  let out: i32[] = [];
+  for pos in 0..b.insts.len() {
+    let c = recipient_slots(f, p, b.insts[pos]);
+    if (c >= 0 && own_pairs.builds[pos] < 0 && own_pairs.selfs[pos] < 0 && util.index_of_i32(out, c) < 0) {
+      out = out.append(c);
+    }
+  }
+  return out;
 }
 
 function claims_slots(g: RouteGraph, k: i32, slots: i32): boolean {
@@ -4861,31 +4876,39 @@ function carried_pairs(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], off:
     dying = dying.append(dying_unclaimed(f, p, idx, links, vr, b));
     holding = holding.append(false);
   }
-  let g = route_graph(f, p, dying, vr);
   let marks = route_marks(f.graph.blocks.len());
-  for bi in 0..dying.len() {
-    let b = f.graph.blocks[bi];
-    let tried: i32[] = [];
-    let i = 0;
-    while (!holding[bi] && can_hold(b) && i < dying[bi].values.len()) {
-      let d = dying[bi].values[i];
-      let slots = donor_slots(f, g.reads, b, d);
-      if (slots >= 0) {
-        let h = holds_of(f, g.reads, dying, holding, bi, d, i, slots);
-        if (h.blocks.len() > 1 || util.index_of_i32(tried, slots) < 0) {
-          tried = tried.append(slots);
-          let found = carry_routes(f, g, h, marks, slots, d);
-          marks = found.marks;
-          let before = c.to.len();
-          c = served_by(f, p, idx, g, c, h, found.routes, d);
-          if (c.to.len() > before) {
-            for id in h.blocks {
-              holding = holding.with(g.at[id], true);
+  // A token that the first round carried supplies its construction, so the
+  // second round can take another token past that block.
+  for round in 0..2 {
+    let g = route_graph(f, p, idx, dying, vr, c);
+    let served = c.to.len();
+    for bi in 0..dying.len() {
+      let b = f.graph.blocks[bi];
+      let tried: i32[] = [];
+      let i = 0;
+      while (!holding[bi] && can_hold(b) && i < dying[bi].values.len()) {
+        let d = dying[bi].values[i];
+        let slots = donor_slots(f, g.reads, b, d);
+        if (slots >= 0) {
+          let h = holds_of(f, g.reads, dying, holding, bi, d, i, slots);
+          if (h.blocks.len() > 1 || util.index_of_i32(tried, slots) < 0) {
+            tried = tried.append(slots);
+            let found = carry_routes(f, g, h, marks, slots, d);
+            marks = found.marks;
+            let before = c.to.len();
+            c = served_by(f, p, idx, g, c, h, found.routes, d);
+            if (c.to.len() > before) {
+              for id in h.blocks {
+                holding = holding.with(g.at[id], true);
+              }
             }
           }
         }
+        i += 1;
       }
-      i += 1;
+    }
+    if (c.to.len() == served) {
+      return c;
     }
   }
   return c;
