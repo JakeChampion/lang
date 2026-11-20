@@ -1,0 +1,9 @@
+[package]
+name = "story-deck"
+lib = "app.fern"
+
+[android]
+package = "dev.fern.storydeck"
+label = "Story Deck"
+min_sdk = 26
+permissions = ["INTERNET"]
