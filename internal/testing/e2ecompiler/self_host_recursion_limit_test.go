@@ -82,7 +82,7 @@ func TestSelfHostREPLRecursionLimit(t *testing.T) {
 	}, "\n")
 	want := strings.Join([]string{
 		"fern REPL — Ctrl+D to exit",
-		"> > error: fern: recursion limit",
+		"> > fern: -repl: fern: recursion limit",
 		"  1000000 calls are active, at line 1 column 67",
 		"> 3",
 		"> ",

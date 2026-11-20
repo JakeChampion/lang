@@ -164,14 +164,17 @@ function tree_count(value: json.JsonValue): i32 {
 function tape_count(doc: json.Document, node: i32): i32 {
   let total = 1;
   if (doc.is_array(node) || doc.is_object(node)) {
-    let child = doc.first(node);
-    while (child >= 0) {
+    let cursor = doc.first(node);
+    while (true) {
+      let Some(child) = cursor else {
+        break;
+      };
       if (doc.is_object(node)) {
         total += tape_count(doc, doc.value(child));
       } else {
         total += tape_count(doc, child);
       }
-      child = doc.next(node, child);
+      cursor = doc.next(node, child);
     }
   }
   return total;

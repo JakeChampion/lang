@@ -133,14 +133,17 @@ function test_walk_array(): test.TestOutcome {
   let d = doc("[10, [20, 21], {\"x\": 30}, 40]");
   let r = d.root();
   let seen = "";
-  let c = d.first(r);
-  while (c >= 0) {
+  let child = d.first(r);
+  while (true) {
+    let Some(c) = child else {
+      break;
+    };
     if (d.is_number(c)) {
       seen = seen + str(d.number_text(c)) + " ";
     } else {
       seen = seen + "(" + d.len(c).to_string() + ") ";
     }
-    c = d.next(r, c);
+    child = d.next(r, c);
   }
   return test.assert_eq(seen + d.len(r).to_string(), "10 (2) (1) 40 4");
 }
@@ -149,23 +152,30 @@ function test_walk_object(): test.TestOutcome {
   let d = doc("{\"a\": [1, 2], \"b\\u0021\": {\"c\": null}, \"d\": 3}");
   let r = d.root();
   let seen = "";
-  let k = d.first(r);
-  while (k >= 0) {
+  let child = d.first(r);
+  while (true) {
+    let Some(k) = child else {
+      break;
+    };
     let v = d.value(k);
     seen = seen + str(d.as_string(k)) + "=" + d.len(v).to_string() + " ";
-    k = d.next(r, k);
+    child = d.next(r, k);
   }
   return test.assert_eq(seen, "a=2 b!=1 d=0 ");
 }
 
 function test_empty_containers(): test.TestOutcome {
-  let d = doc("[[], {}]");
+  let d = doc("[[], {}, 7]");
   let a = idx(d.at(d.root(), 0));
   let o = idx(d.at(d.root(), 1));
-  if (d.first(a) != -1 || d.first(o) != -1 || d.len(a) != 0 || d.len(o) != 0) {
+  if (d.first(a).is_some() || d.first(o).is_some() || d.len(a) != 0 || d.len(o) != 0) {
     return test.fail("an empty container has a member");
   }
-  return test.assert_eq(idx(d.at(d.root(), 2)), -1);
+  let scalar = idx(d.at(d.root(), 2));
+  if (d.first(scalar).is_some() || d.next(d.root(), scalar).is_some()) {
+    return test.fail("a scalar or the last array child has a successor");
+  }
+  return test.assert_eq(idx(d.at(d.root(), 3)), -1);
 }
 
 function test_at_and_get(): test.TestOutcome {
@@ -219,10 +229,13 @@ function test_as_i64(): test.TestOutcome {
   let d = doc("[0, -0, 42, -42, 9223372036854775807, -9223372036854775808, 9223372036854775808, -9223372036854775809, 1.0, 1e2, 99999999999999999999]");
   let r = d.root();
   let out = "";
-  let c = d.first(r);
-  while (c >= 0) {
+  let child = d.first(r);
+  while (true) {
+    let Some(c) = child else {
+      break;
+    };
     out = out + int(d.as_i64(c)) + " ";
-    c = d.next(r, c);
+    child = d.next(r, c);
   }
   return test.assert_eq(out, "0 0 42 -42 9223372036854775807 -9223372036854775808 <none> <none> <none> <none> <none> ");
 }
@@ -231,8 +244,11 @@ function test_kinds(): test.TestOutcome {
   let d = doc("[null, true, 1, \"s\", [], {}]");
   let r = d.root();
   let out = "";
-  let c = d.first(r);
-  while (c >= 0) {
+  let child = d.first(r);
+  while (true) {
+    let Some(c) = child else {
+      break;
+    };
     let n = 0;
     if (d.is_null(c)) {
       n += 1;
@@ -253,7 +269,7 @@ function test_kinds(): test.TestOutcome {
       n += 100000;
     }
     out = out + n.to_string() + " ";
-    c = d.next(r, c);
+    child = d.next(r, c);
   }
   return test.assert_eq(out, "1 10 100 1000 10000 100000 ");
 }

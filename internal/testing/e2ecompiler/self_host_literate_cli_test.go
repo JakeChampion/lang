@@ -180,6 +180,19 @@ func TestSelfHostWeave(t *testing.T) {
 		}
 	})
 
+	t.Run("unmatched inline delimiters", func(t *testing.T) {
+		doc := "# T\n\n[[bad] []() [good](ok) [unfinished](abc\n\n`one` and ``two ` three`` and `unfinished\n"
+		_, out, stderr, code := literateRun(t, doc, "-weave", "-html")
+		if code != 0 {
+			t.Fatalf("exit %d\n%s", code, stderr)
+		}
+		for _, want := range []string{`[[bad] []() <a href="ok">good</a> [unfinished](abc`, "<code>one</code> and <code>two ` three</code> and `unfinished"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("missing %q in:\n%s", want, out)
+			}
+		}
+	})
+
 	t.Run("non-ASCII prose", func(t *testing.T) {
 		doc := "# T\n\n東京 **京都** é *naïve* ü [大阪](https://example.com/a) 奈良\n"
 		_, out, errOut, code := literateRun(t, doc, "-weave", "-html")

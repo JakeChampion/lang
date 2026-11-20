@@ -167,10 +167,13 @@ pub function items_of(d: json.Document, a: i32): i32[] {
   if (!d.is_array(a)) {
     return out;
   }
-  let c = d.first(a);
-  while (c >= 0) {
+  let child = d.first(a);
+  while (true) {
+    let Some(c) = child else {
+      break;
+    };
     out = out.append(c);
-    c = d.next(a, c);
+    child = d.next(a, c);
   }
   return out;
 }

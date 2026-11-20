@@ -279,6 +279,8 @@ jobs:
           - { leg: arm64, shard: 1, count: 8 }
           - { leg: arm64, shard: 2, count: 8 }
           - { leg: arm64, shard: 3, count: 8 }
+          # The full UAX #9 corpus needs its own QEMU worker (run 44806773506).
+          - { leg: arm64-bidi, shard: 0, count: 1 }
           - { leg: arm64, shard: 4, count: 8 }
           - { leg: arm64, shard: 5, count: 8 }
           - { leg: arm64, shard: 6, count: 8 }
@@ -346,14 +348,18 @@ jobs:
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostStdTestFewRegisters$' -test.v -test.timeout 33m
       - name: stdlib suites on arm64 under qemu
-        if: ${{ !cancelled() && matrix.leg == 'arm64' }}
+        if: ${{ !cancelled() && startsWith(matrix.leg, 'arm64') && matrix.leg != 'arm64-tls' }}
         run: |
           set -euo pipefail
           chmod +x e2ecompiler.test
           BIN="$PWD/e2ecompiler.test"
           cd internal/testing/e2ecompiler
+          selection=(-test.run '^TestSelfHostStdTestE2EArm64$' -test.skip '^TestSelfHostStdTestE2EArm64$/^cases$/^bidi$')
+          if [[ "${{ matrix.leg }}" == arm64-bidi ]]; then
+            selection=(-test.run '^TestSelfHostStdTestE2EArm64$/^cases$/^bidi$')
+          fi
           gotestsum --format standard-verbose --raw-command -- \
-            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostStdTestE2EArm64$' -test.v -test.timeout 33m
+            go tool test2json -t -p e2ecompiler "$BIN" "${selection[@]}" -test.v -test.timeout 33m
       - name: stdlib TLS suites on arm64 under qemu
         if: ${{ !cancelled() && matrix.leg == 'arm64-tls' }}
         run: |
