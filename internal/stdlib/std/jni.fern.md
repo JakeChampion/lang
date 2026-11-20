@@ -866,6 +866,22 @@ pub function check(env: usize): Result[void, JavaError] {
   return Err(JavaError { text: out });
 }
 
+// Find a class and promote its local reference for use in generated bindings.
+pub function global_class(env: usize, name: string): Result[usize, JavaError] {
+  let local = find_class(env, name);
+  check(env)?;
+  if (local == 0 as usize) {
+    return Err(JavaError { text: "cannot find Java class " + name });
+  }
+  let class = new_global_ref(env, local);
+  delete_local_ref(env, local);
+  if (class == 0 as usize) {
+    check(env)?;
+    return Err(JavaError { text: "cannot retain Java class " + name });
+  }
+  return Ok(class);
+}
+
 // The ID `id` that a lookup gave, or 0 when the lookup threw. It clears
 // the exception. Use it for a member that an older device does not have.
 pub function optional_id(env: usize, id: usize): usize {

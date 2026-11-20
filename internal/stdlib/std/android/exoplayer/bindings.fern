@@ -18,10 +18,7 @@ pub struct LooperClass { class: usize, id_get_main_looper: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function looper_class(e: usize): Result[LooperClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/os/Looper");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/os/Looper")?;
   let id_get_main_looper = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getMainLooper", "()Landroid/os/Looper;"))?;
   return Ok(LooperClass { class: class, id_get_main_looper: id_get_main_looper });
 }
@@ -57,10 +54,7 @@ pub struct HandlerClass { class: usize, id_new: usize, id_obtain_message: usize 
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function handler_class(e: usize): Result[HandlerClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/os/Handler");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/os/Handler")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Landroid/os/Looper;Landroid/os/Handler$Callback;)V"))?;
   let id_obtain_message = jni.checked_id(e, class, jni.get_method_id(e, class, "obtainMessage", "(IIILjava/lang/Object;)Landroid/os/Message;"))?;
   return Ok(HandlerClass { class: class, id_new: id_new, id_obtain_message: id_obtain_message });
@@ -112,10 +106,7 @@ pub struct MessageClass { class: usize, id_send_to_target: usize, id_arg1: usize
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function message_class(e: usize): Result[MessageClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/os/Message");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/os/Message")?;
   let id_send_to_target = jni.checked_id(e, class, jni.get_method_id(e, class, "sendToTarget", "()V"))?;
   let id_arg1 = jni.checked_id(e, class, jni.get_field_id(e, class, "arg1", "I"))?;
   let id_arg2 = jni.checked_id(e, class, jni.get_field_id(e, class, "arg2", "I"))?;
@@ -183,10 +174,7 @@ pub struct SurfaceClass { class: usize, id_release_: usize, id_set_frame_rate: u
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function surface_class(e: usize): Result[SurfaceClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/view/Surface");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/view/Surface")?;
   let id_release_ = jni.checked_id(e, class, jni.get_method_id(e, class, "release", "()V"))?;
   let id_set_frame_rate = jni.optional_id(e, jni.get_method_id(e, class, "setFrameRate", "(FII)V"));
   return Ok(SurfaceClass { class: class, id_release_: id_release_, id_set_frame_rate: id_set_frame_rate });
@@ -243,10 +231,7 @@ pub struct SurfaceTextureClass { class: usize, id_release_: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function surface_texture_class(e: usize): Result[SurfaceTextureClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/graphics/SurfaceTexture");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/graphics/SurfaceTexture")?;
   let id_release_ = jni.checked_id(e, class, jni.get_method_id(e, class, "release", "()V"))?;
   return Ok(SurfaceTextureClass { class: class, id_release_: id_release_ });
 }
@@ -282,10 +267,7 @@ pub struct ContextClass { class: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/content/Context");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/content/Context")?;
   return Ok(ContextClass { class: class });
 }
 
@@ -311,10 +293,7 @@ pub struct ListClass { class: usize, id_get: usize, id_size: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function list_class(e: usize): Result[ListClass, jni.JavaError] {
-  let local = jni.find_class(e, "java/util/List");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "java/util/List")?;
   let id_get = jni.checked_id(e, class, jni.get_method_id(e, class, "get", "(I)Ljava/lang/Object;"))?;
   let id_size = jni.checked_id(e, class, jni.get_method_id(e, class, "size", "()I"))?;
   return Ok(ListClass { class: class, id_get: id_get, id_size: id_size });
@@ -361,10 +340,7 @@ pub struct AtomicLongArrayClass { class: usize, id_new: usize, id_get: usize, id
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function atomic_long_array_class(e: usize): Result[AtomicLongArrayClass, jni.JavaError] {
-  let local = jni.find_class(e, "java/util/concurrent/atomic/AtomicLongArray");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "java/util/concurrent/atomic/AtomicLongArray")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(I)V"))?;
   let id_get = jni.checked_id(e, class, jni.get_method_id(e, class, "get", "(I)J"))?;
   let id_set = jni.checked_id(e, class, jni.get_method_id(e, class, "set", "(IJ)V"))?;
@@ -424,10 +400,7 @@ pub struct AtomicReferenceClass { class: usize, id_get: usize, id_set: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function atomic_reference_class(e: usize): Result[AtomicReferenceClass, jni.JavaError] {
-  let local = jni.find_class(e, "java/util/concurrent/atomic/AtomicReference");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "java/util/concurrent/atomic/AtomicReference")?;
   let id_get = jni.checked_id(e, class, jni.get_method_id(e, class, "get", "()Ljava/lang/Object;"))?;
   let id_set = jni.checked_id(e, class, jni.get_method_id(e, class, "set", "(Ljava/lang/Object;)V"))?;
   return Ok(AtomicReferenceClass { class: class, id_get: id_get, id_set: id_set });
@@ -474,10 +447,7 @@ pub struct AudioAttributesClass { class: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function audio_attributes_class(e: usize): Result[AudioAttributesClass, jni.JavaError] {
-  let local = jni.find_class(e, "androidx/media3/common/AudioAttributes");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "androidx/media3/common/AudioAttributes")?;
   return Ok(AudioAttributesClass { class: class });
 }
 
@@ -503,10 +473,7 @@ pub struct AudioAttributes_BuilderClass { class: usize, id_new: usize, id_build:
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function audio_attributes_builder_class(e: usize): Result[AudioAttributes_BuilderClass, jni.JavaError] {
-  let local = jni.find_class(e, "androidx/media3/common/AudioAttributes$Builder");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "androidx/media3/common/AudioAttributes$Builder")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "()V"))?;
   let id_build = jni.checked_id(e, class, jni.get_method_id(e, class, "build", "()Landroidx/media3/common/AudioAttributes;"))?;
   let id_set_content_type = jni.checked_id(e, class, jni.get_method_id(e, class, "setContentType", "(I)Landroidx/media3/common/AudioAttributes$Builder;"))?;
@@ -578,10 +545,7 @@ pub struct ExoPlayerClass { class: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function exo_player_class(e: usize): Result[ExoPlayerClass, jni.JavaError] {
-  let local = jni.find_class(e, "androidx/media3/exoplayer/ExoPlayer");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "androidx/media3/exoplayer/ExoPlayer")?;
   return Ok(ExoPlayerClass { class: class });
 }
 
@@ -607,10 +571,7 @@ pub struct ExoPlayer_BuilderClass { class: usize, id_new: usize, id_build: usize
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function exo_player_builder_class(e: usize): Result[ExoPlayer_BuilderClass, jni.JavaError] {
-  let local = jni.find_class(e, "androidx/media3/exoplayer/ExoPlayer$Builder");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "androidx/media3/exoplayer/ExoPlayer$Builder")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Landroid/content/Context;)V"))?;
   let id_build = jni.checked_id(e, class, jni.get_method_id(e, class, "build", "()Landroidx/media3/exoplayer/ExoPlayer;"))?;
   let id_set_audio_attributes = jni.checked_id(e, class, jni.get_method_id(e, class, "setAudioAttributes", "(Landroidx/media3/common/AudioAttributes;Z)Landroidx/media3/exoplayer/ExoPlayer$Builder;"))?;
@@ -669,10 +630,7 @@ pub struct PlayerClass { class: usize, id_add_listener: usize, id_add_media_item
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function player_class(e: usize): Result[PlayerClass, jni.JavaError] {
-  let local = jni.find_class(e, "androidx/media3/common/Player");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "androidx/media3/common/Player")?;
   let id_add_listener = jni.checked_id(e, class, jni.get_method_id(e, class, "addListener", "(Landroidx/media3/common/Player$Listener;)V"))?;
   let id_add_media_item = jni.checked_id(e, class, jni.get_method_id(e, class, "addMediaItem", "(Landroidx/media3/common/MediaItem;)V"))?;
   let id_clear_media_items = jni.checked_id(e, class, jni.get_method_id(e, class, "clearMediaItems", "()V"))?;
@@ -968,10 +926,7 @@ pub struct Player_ListenerClass { class: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function player_listener_class(e: usize): Result[Player_ListenerClass, jni.JavaError] {
-  let local = jni.find_class(e, "androidx/media3/common/Player$Listener");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "androidx/media3/common/Player$Listener")?;
   return Ok(Player_ListenerClass { class: class });
 }
 
@@ -997,10 +952,7 @@ pub struct Player_EventsClass { class: usize, id_contains: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function player_events_class(e: usize): Result[Player_EventsClass, jni.JavaError] {
-  let local = jni.find_class(e, "androidx/media3/common/Player$Events");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "androidx/media3/common/Player$Events")?;
   let id_contains = jni.checked_id(e, class, jni.get_method_id(e, class, "contains", "(I)Z"))?;
   return Ok(Player_EventsClass { class: class, id_contains: id_contains });
 }
@@ -1037,10 +989,7 @@ pub struct MediaItemClass { class: usize, id_from_uri: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function media_item_class(e: usize): Result[MediaItemClass, jni.JavaError] {
-  let local = jni.find_class(e, "androidx/media3/common/MediaItem");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "androidx/media3/common/MediaItem")?;
   let id_from_uri = jni.checked_id(e, class, jni.get_static_method_id(e, class, "fromUri", "(Ljava/lang/String;)Landroidx/media3/common/MediaItem;"))?;
   return Ok(MediaItemClass { class: class, id_from_uri: id_from_uri });
 }
@@ -1079,10 +1028,7 @@ pub struct TracksClass { class: usize, id_get_groups: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function tracks_class(e: usize): Result[TracksClass, jni.JavaError] {
-  let local = jni.find_class(e, "androidx/media3/common/Tracks");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "androidx/media3/common/Tracks")?;
   let id_get_groups = jni.checked_id(e, class, jni.get_method_id(e, class, "getGroups", "()Lcom/google/common/collect/ImmutableList;"))?;
   return Ok(TracksClass { class: class, id_get_groups: id_get_groups });
 }
@@ -1118,10 +1064,7 @@ pub struct Tracks_GroupClass { class: usize, id_get_media_track_group: usize, id
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function tracks_group_class(e: usize): Result[Tracks_GroupClass, jni.JavaError] {
-  let local = jni.find_class(e, "androidx/media3/common/Tracks$Group");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "androidx/media3/common/Tracks$Group")?;
   let id_get_media_track_group = jni.checked_id(e, class, jni.get_method_id(e, class, "getMediaTrackGroup", "()Landroidx/media3/common/TrackGroup;"))?;
   let id_get_type = jni.checked_id(e, class, jni.get_method_id(e, class, "getType", "()I"))?;
   let id_is_selected = jni.checked_id(e, class, jni.get_method_id(e, class, "isSelected", "()Z"))?;
@@ -1187,10 +1130,7 @@ pub struct TrackGroupClass { class: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function track_group_class(e: usize): Result[TrackGroupClass, jni.JavaError] {
-  let local = jni.find_class(e, "androidx/media3/common/TrackGroup");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "androidx/media3/common/TrackGroup")?;
   return Ok(TrackGroupClass { class: class });
 }
 
@@ -1216,10 +1156,7 @@ pub struct TrackSelectionParametersClass { class: usize, id_build_upon: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function track_selection_parameters_class(e: usize): Result[TrackSelectionParametersClass, jni.JavaError] {
-  let local = jni.find_class(e, "androidx/media3/common/TrackSelectionParameters");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "androidx/media3/common/TrackSelectionParameters")?;
   let id_build_upon = jni.checked_id(e, class, jni.get_method_id(e, class, "buildUpon", "()Landroidx/media3/common/TrackSelectionParameters$Builder;"))?;
   return Ok(TrackSelectionParametersClass { class: class, id_build_upon: id_build_upon });
 }
@@ -1255,10 +1192,7 @@ pub struct TrackSelectionParameters_BuilderClass { class: usize, id_build: usize
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function track_selection_parameters_builder_class(e: usize): Result[TrackSelectionParameters_BuilderClass, jni.JavaError] {
-  let local = jni.find_class(e, "androidx/media3/common/TrackSelectionParameters$Builder");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "androidx/media3/common/TrackSelectionParameters$Builder")?;
   let id_build = jni.checked_id(e, class, jni.get_method_id(e, class, "build", "()Landroidx/media3/common/TrackSelectionParameters;"))?;
   let id_set_override_for_type = jni.checked_id(e, class, jni.get_method_id(e, class, "setOverrideForType", "(Landroidx/media3/common/TrackSelectionOverride;)Landroidx/media3/common/TrackSelectionParameters$Builder;"))?;
   let id_set_track_type_disabled = jni.checked_id(e, class, jni.get_method_id(e, class, "setTrackTypeDisabled", "(IZ)Landroidx/media3/common/TrackSelectionParameters$Builder;"))?;
@@ -1317,10 +1251,7 @@ pub struct TrackSelectionOverrideClass { class: usize, id_new: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function track_selection_override_class(e: usize): Result[TrackSelectionOverrideClass, jni.JavaError] {
-  let local = jni.find_class(e, "androidx/media3/common/TrackSelectionOverride");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "androidx/media3/common/TrackSelectionOverride")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Landroidx/media3/common/TrackGroup;I)V"))?;
   return Ok(TrackSelectionOverrideClass { class: class, id_new: id_new });
 }
@@ -1358,10 +1289,7 @@ pub struct VideoSizeClass { class: usize, id_height: usize, id_width: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function video_size_class(e: usize): Result[VideoSizeClass, jni.JavaError] {
-  let local = jni.find_class(e, "androidx/media3/common/VideoSize");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "androidx/media3/common/VideoSize")?;
   let id_height = jni.checked_id(e, class, jni.get_field_id(e, class, "height", "I"))?;
   let id_width = jni.checked_id(e, class, jni.get_field_id(e, class, "width", "I"))?;
   return Ok(VideoSizeClass { class: class, id_height: id_height, id_width: id_width });
@@ -1403,10 +1331,7 @@ pub struct PlaybackExceptionClass { class: usize, id_error_code: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function playback_exception_class(e: usize): Result[PlaybackExceptionClass, jni.JavaError] {
-  let local = jni.find_class(e, "androidx/media3/common/PlaybackException");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "androidx/media3/common/PlaybackException")?;
   let id_error_code = jni.checked_id(e, class, jni.get_field_id(e, class, "errorCode", "I"))?;
   return Ok(PlaybackExceptionClass { class: class, id_error_code: id_error_code });
 }
@@ -1440,10 +1365,7 @@ pub struct AudioCapabilitiesClass { class: usize, id_get_capabilities: usize, id
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function audio_capabilities_class(e: usize): Result[AudioCapabilitiesClass, jni.JavaError] {
-  let local = jni.find_class(e, "androidx/media3/exoplayer/audio/AudioCapabilities");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "androidx/media3/exoplayer/audio/AudioCapabilities")?;
   let id_get_capabilities = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getCapabilities", "(Landroid/content/Context;)Landroidx/media3/exoplayer/audio/AudioCapabilities;"))?;
   let id_supports_encoding = jni.checked_id(e, class, jni.get_method_id(e, class, "supportsEncoding", "(I)Z"))?;
   return Ok(AudioCapabilitiesClass { class: class, id_get_capabilities: id_get_capabilities, id_supports_encoding: id_supports_encoding });
@@ -1491,10 +1413,7 @@ pub struct CueGroupClass { class: usize, id_cues: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function cue_group_class(e: usize): Result[CueGroupClass, jni.JavaError] {
-  let local = jni.find_class(e, "androidx/media3/common/text/CueGroup");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "androidx/media3/common/text/CueGroup")?;
   let id_cues = jni.checked_id(e, class, jni.get_field_id(e, class, "cues", "Lcom/google/common/collect/ImmutableList;"))?;
   return Ok(CueGroupClass { class: class, id_cues: id_cues });
 }
@@ -1528,10 +1447,7 @@ pub struct CueClass { class: usize, id_bitmap: usize, id_bitmap_height: usize, i
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function cue_class(e: usize): Result[CueClass, jni.JavaError] {
-  let local = jni.find_class(e, "androidx/media3/common/text/Cue");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "androidx/media3/common/text/Cue")?;
   let id_bitmap = jni.checked_id(e, class, jni.get_field_id(e, class, "bitmap", "Landroid/graphics/Bitmap;"))?;
   let id_bitmap_height = jni.checked_id(e, class, jni.get_field_id(e, class, "bitmapHeight", "F"))?;
   let id_line = jni.checked_id(e, class, jni.get_field_id(e, class, "line", "F"))?;
@@ -1597,10 +1513,7 @@ pub struct BitmapClass { class: usize, id_get_height: usize, id_get_pixels: usiz
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function bitmap_class(e: usize): Result[BitmapClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/graphics/Bitmap");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/graphics/Bitmap")?;
   let id_get_height = jni.checked_id(e, class, jni.get_method_id(e, class, "getHeight", "()I"))?;
   let id_get_pixels = jni.checked_id(e, class, jni.get_method_id(e, class, "getPixels", "([IIIIIII)V"))?;
   let id_get_width = jni.checked_id(e, class, jni.get_method_id(e, class, "getWidth", "()I"))?;

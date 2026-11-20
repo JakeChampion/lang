@@ -575,8 +575,7 @@ function class_struct(c: classfile.Class, members: Bound[]): string {
   let out = "// The class " + java_name(c.name) + " and the IDs of its members.\npub struct " + t + "Class { " + fields + " }\n\n";
   out += "// One lookup for each member, and each one can fail.\n// fern-lint: allow cyclomatic-complexity\n";
   out += "pub function " + snake(t) + "_class(e: usize): Result[" + t + "Class, jni.JavaError] {\n";
-  out += "  let local = jni.find_class(e, " + quoted(c.name) + ");\n  jni.check(e)?;\n";
-  out += "  let class = jni.new_global_ref(e, local);\n  jni.delete_local_ref(e, local);\n";
+  out += "  let class = jni.global_class(e, " + quoted(c.name) + ")?;\n";
   out += finds + "  return Ok(" + t + "Class { " + values + " });\n}\n\n";
   out += "// Deletes the reference to the class. Do not use `c` after this call.\n";
   return out + "pub function (c: " + t + "Class) release(e: usize): void {\n  jni.delete_global_ref(e, c.class);\n}\n\n";
