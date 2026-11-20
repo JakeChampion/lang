@@ -10353,7 +10353,6 @@ pub function eval_stmt(st: ast.Stmt, own env: Env): StepResult {
           return step_stop(env, v_err("if cond not bool"));
         }
       }
-      return step_stop(env, v_err("unreachable if-arm"));
     },
     ast.StmtWhile(w) => {
       return eval_while_stmt(w, env);
