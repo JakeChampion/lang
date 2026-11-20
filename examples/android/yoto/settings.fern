@@ -5,7 +5,7 @@ import "std/string";
 import "./api";
 import "./light_colour";
 
-enum Kind { Text, ClockTime, Colour, Brightness, Limit, Duration, Switch, ClockFormat, Shortcut, PlayerInfo }
+enum Kind { Text, ClockTime, Colour, Brightness, Limit, TimeoutChoice, Switch, ClockFormat, Shortcut, PlayerInfo }
 
 pub enum AlarmEdit { Add, Remove(i32), Toggle(i32) }
 
@@ -30,8 +30,8 @@ function fields(): (string, Field[])[] {
     ]),
     ("Display and power", [
       Field { key: "displayDimBrightness", label: "Dimmed display brightness", kind: Brightness },
-      Field { key: "displayDimTimeout", label: "Dim display after", kind: Duration },
-      Field { key: "shutdownTimeout", label: "Power off after", kind: Duration },
+      Field { key: "displayDimTimeout", label: "Dim display after", kind: TimeoutChoice },
+      Field { key: "shutdownTimeout", label: "Power off after", kind: TimeoutChoice },
       Field { key: "hourFormat", label: "24-hour clock", kind: ClockFormat },
       Field { key: "clockFace", label: "Clock face", kind: PlayerInfo },
       Field { key: "locale", label: "Player language", kind: PlayerInfo },
@@ -219,7 +219,7 @@ function valid(field: Field, text: string): boolean {
     Limit => {
       return n >= 0 && n <= 16;
     },
-    Duration => {
+    TimeoutChoice => {
       return choices(field.key).any((item: Choice): boolean => item.value == text);
     },
     Switch => {
@@ -373,7 +373,7 @@ pub function controls[M](config: api.PlayerConfig, draft: Map[string, string], c
         let value = draft.get(field.key).unwrap_or(as_text(raw));
         if let Colour = field.kind {
           rows = rows.append(light_field(field, value, choose));
-        } else if let Duration | Shortcut | PlayerInfo = field.kind {
+        } else if let TimeoutChoice | Shortcut | PlayerInfo = field.kind {
           rows = rows.append(named_field(field, choice_caption(field.key, value, cards), "Choose " + field.label.to_lower(), choose));
         } else {
           rows = rows.append(field_view(field, value, edit));
