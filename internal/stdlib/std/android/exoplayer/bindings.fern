@@ -136,11 +136,21 @@ pub function (c: MessageClass) arg1(e: usize, self: Message): Result[i32, jni.Ja
   return Ok(got as i32);
 }
 
+pub function (c: MessageClass) set_arg1(e: usize, self: Message, value: i32): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 5, self.ref, c.id_arg1, value as usize);
+  return jni.check(e);
+}
+
 // android.os.Message.arg2
 pub function (c: MessageClass) arg2(e: usize, self: Message): Result[i32, jni.JavaError] {
   let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_arg2, 0 as usize);
   jni.check(e)?;
   return Ok(got as i32);
+}
+
+pub function (c: MessageClass) set_arg2(e: usize, self: Message, value: i32): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 5, self.ref, c.id_arg2, value as usize);
+  return jni.check(e);
 }
 
 // android.os.Message.obj
@@ -150,11 +160,21 @@ pub function (c: MessageClass) obj(e: usize, self: Message): Result[jni.Object, 
   return Ok(jni.Object { ref: got });
 }
 
+pub function (c: MessageClass) set_obj(e: usize, self: Message, value: jni.Object): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_obj, value.ref);
+  return jni.check(e);
+}
+
 // android.os.Message.what
 pub function (c: MessageClass) what(e: usize, self: Message): Result[i32, jni.JavaError] {
   let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_what, 0 as usize);
   jni.check(e)?;
   return Ok(got as i32);
+}
+
+pub function (c: MessageClass) set_what(e: usize, self: Message, value: i32): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 5, self.ref, c.id_what, value as usize);
+  return jni.check(e);
 }
 
 // A android.view.Surface.
