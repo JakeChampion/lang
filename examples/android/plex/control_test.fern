@@ -604,7 +604,8 @@ function test_poster_menu(): test.TestOutcome {
   if (control.timeout(down, 1000i64) > 500) {
     return test.fail("no wake-up for the hold");
   }
-  let early = at(down, log, 1300i64, f, android.Tick);
+  // Android sends move events even when the finger stays on the poster.
+  let early = at(down, log, 1300i64, f, android.Touch(2, x as f32, y as f32));
   if (node(early, "menu:mark").is_some()) {
     return test.fail("the menu opened before the hold ended");
   }

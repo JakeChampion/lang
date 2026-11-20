@@ -218,6 +218,9 @@ def tap_notice_button(label, out):
         m = re.search(r'text="' + re.escape(label) + r'"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', dump, re.IGNORECASE)
         if m is not None or time.monotonic() >= deadline:
             break
+        # The previous button can close the shade after our first expand.
+        if 'package="com.android.systemui"' not in dump:
+            adb("shell", "cmd", "statusbar", "expand-notifications")
     if m is None:
         Path(out, "notices.xml").write_text(dump)
         print("notices: " + " | ".join(re.findall(r'text="([^"]+)"', dump))[:900], flush=True)

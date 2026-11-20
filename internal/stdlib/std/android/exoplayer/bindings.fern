@@ -1021,12 +1021,12 @@ pub function (c: MediaItemClass) release(e: usize): void {
 
 // androidx.media3.common.MediaItem.fromUri(Ljava/lang/String;)Landroidx/media3/common/MediaItem;
 pub function (c: MediaItemClass) from_uri(e: usize, a0: string): Result[MediaItem, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_from_uri, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(MediaItem { ref: got });
 }

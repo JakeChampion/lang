@@ -32,25 +32,25 @@ pub function (c: KeyStoreClass) release(e: usize): void {
 
 // java.security.KeyStore.getInstance(Ljava/lang/String;)Ljava/security/KeyStore;
 pub function (c: KeyStoreClass) get_instance(e: usize, a0: string): Result[KeyStore, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_get_instance, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(KeyStore { ref: got });
 }
 
 // java.security.KeyStore.getKey(Ljava/lang/String;[C)Ljava/security/Key;
 pub function (c: KeyStoreClass) get_key(e: usize, self: KeyStore, a0: string, a1: jni.Object): Result[jni.Object, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(2);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   jni.jvalue_set_int(args, 1, a1.ref);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_key, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(jni.Object { ref: got });
 }
@@ -105,15 +105,15 @@ pub function (c: KeyGeneratorClass) generate_key(e: usize, self: KeyGenerator): 
 
 // javax.crypto.KeyGenerator.getInstance(Ljava/lang/String;Ljava/lang/String;)Ljavax/crypto/KeyGenerator;
 pub function (c: KeyGeneratorClass) get_instance(e: usize, a0: string, a1: string): Result[KeyGenerator, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let s1 = jni.checked_string(e, a1)?;
+  defer jni.delete_local_ref(e, s1);
   let args = jni.jvalue_alloc(2);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
-  let s1 = jni.new_string(e, a1);
   jni.jvalue_set_int(args, 1, s1);
   let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_get_instance, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
-  jni.delete_local_ref(e, s1);
   jni.check(e)?;
   return Ok(KeyGenerator { ref: got });
 }
@@ -161,13 +161,13 @@ pub function (c: KeyGenParameterSpec_BuilderClass) release(e: usize): void {
 
 // android.security.keystore.KeyGenParameterSpec.Builder.<init>(Ljava/lang/String;I)V
 pub function (c: KeyGenParameterSpec_BuilderClass) new(e: usize, a0: string, a1: i32): Result[KeyGenParameterSpec_Builder, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(2);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   jni.jvalue_set_int(args, 1, a1 as usize);
   let got = jni.invoke(e, 30, c.class, c.id_new, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(KeyGenParameterSpec_Builder { ref: got });
 }
@@ -263,12 +263,12 @@ pub function (c: CipherClass) get_iv(e: usize, self: Cipher): Result[jni.Object,
 
 // javax.crypto.Cipher.getInstance(Ljava/lang/String;)Ljavax/crypto/Cipher;
 pub function (c: CipherClass) get_instance(e: usize, a0: string): Result[Cipher, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_get_instance, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(Cipher { ref: got });
 }

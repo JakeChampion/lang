@@ -125,12 +125,12 @@ pub function (c: IntentFilterClass) release(e: usize): void {
 
 // android.content.IntentFilter.<init>(Ljava/lang/String;)V
 pub function (c: IntentFilterClass) new(e: usize, a0: string): Result[IntentFilter, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, 30, c.class, c.id_new, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(IntentFilter { ref: got });
 }
@@ -200,12 +200,12 @@ pub function (c: ClassLoaderClass) release(e: usize): void {
 
 // java.lang.ClassLoader.loadClass(Ljava/lang/String;)Ljava/lang/Class;
 pub function (c: ClassLoaderClass) load_class(e: usize, self: ClassLoader, a0: string): Result[Class, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
   let args = jni.jvalue_alloc(1);
-  let s0 = jni.new_string(e, a0);
   jni.jvalue_set_int(args, 0, s0);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_load_class, args);
   jni.free_buffer(args);
-  jni.delete_local_ref(e, s0);
   jni.check(e)?;
   return Ok(Class { ref: got });
 }

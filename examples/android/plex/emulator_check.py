@@ -169,7 +169,7 @@ def server(files):
 
 
 def adb(*args, check=True):
-    return subprocess.run(["adb", *args], check=check, capture_output=True, text=True).stdout
+    return subprocess.run(["adb", *args], check=check, stdout=subprocess.PIPE, text=True).stdout
 
 
 def logcat():

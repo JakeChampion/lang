@@ -33,12 +33,14 @@ Call `keep_intent` on the UI thread. Call each other function on the loop thread
 <<module introduction>>=
 // This module gives an app its shortcuts in the launcher.
 import "std/android";
+import "std/android/shortcuts/bindings";
+import "std/result";
 import "std/jni";
 ```
 
 ### `shortcuts`
 
-The intent of a shortcut names the activity of the app as its component, so only that activity can get it.
+The intent of a shortcut names the activity of the app as its component. The module looks up the SDK methods through the generated bindings. Each shortcut gets its own JNI local frame, so building a list keeps only the list and the objects it holds between items.
 
 ```fern
 <<shortcuts>>=
@@ -46,103 +48,106 @@ The intent of a shortcut names the activity of the app as its component, so only
 // person sees, and the action of the intent that it starts the app with.
 pub struct Shortcut { id: string, label: string, action: string }
 
-const BUILDER: string = "android/content/pm/ShortcutInfo$Builder";
-
-function new_object(e: usize, class: usize, sig: string, args: usize[]): usize {
-  let values: usize = jni.jvalues(args);
-  let obj: usize = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", sig), values);
-  jni.free_buffer(values);
-  return obj;
-}
-
-// True when the last JNI call threw. It clears the exception.
-function threw(e: usize): boolean {
-  if (jni.exception_occurred(e) == 0 as usize) {
+function push_frame(e: usize): boolean {
+  if (jni.call1(e, 19, 32 as usize) as i32 != 0) {
+    let cleared = jni.exception_clear(e);
     return false;
   }
-  jni.exception_clear(e);
   return true;
 }
 
-// The ShortcutInfo of `item` for the activity `activity`.
-function info(e: usize, activity: usize, item: Shortcut): usize {
-  let intent: usize = new_object(e, jni.find_class(e, "android/content/Intent"), "(Ljava/lang/String;)V", [jni.new_string(e, item.action)]);
-  let component: usize = jni.call_object(e, activity, "getComponentName", "()Landroid/content/ComponentName;", []);
-  let aimed: usize = jni.call_object(e, intent, "setComponent", "(Landroid/content/ComponentName;)Landroid/content/Intent;", [component]);
-  let builder: usize = new_object(e, jni.find_class(e, BUILDER), "(Landroid/content/Context;Ljava/lang/String;)V", [activity, jni.new_string(e, item.id)]);
-  let labeled: usize = jni.call_object(e, builder, "setShortLabel", "(Ljava/lang/CharSequence;)L" + BUILDER + ";", [jni.new_string(e, item.label)]);
-  let pointed: usize = jni.call_object(e, builder, "setIntent", "(Landroid/content/Intent;)L" + BUILDER + ";", [intent]);
-  let built: usize = jni.call_object(e, builder, "build", "()Landroid/content/pm/ShortcutInfo;", []);
-  for local in [intent, component, aimed, builder, labeled, pointed] {
-    let dropped: usize = jni.delete_local_ref(e, local);
-  }
-  return built;
+function pop_frame(e: usize): void {
+  let popped = jni.call1(e, 20, 0 as usize);
 }
 
-// Gives the launcher the shortcuts `items` of the app, in the place of
-// those that it has. It is false when Android does not take them.
+// ArrayList keeps the shortcut after the item's local frame ends.
+function append_item(e: usize, c: bindings.Classes, activity: bindings.Activity, list: bindings.ArrayList, item: Shortcut): Result[boolean, jni.JavaError] {
+  if (!push_frame(e)) {
+    return Ok(false);
+  }
+  defer pop_frame(e);
+  let intent = c.intent.new(e, item.action)?;
+  let component = c.activity.get_component_name(e, activity)?;
+  let aimed = c.intent.set_component(e, intent, component)?;
+  let builder = c.shortcut_info_builder.new(e, activity.as_context(), item.id)?;
+  let label = jni.new_string(e, item.label);
+  jni.check(e)?;
+  let labeled = c.shortcut_info_builder.set_short_label(e, builder, jni.Object { ref: label })?;
+  let pointed = c.shortcut_info_builder.set_intent(e, labeled, aimed)?;
+  let shortcut = c.shortcut_info_builder.build(e, pointed)?;
+  return c.array_list.add(e, list, shortcut.object());
+}
+
+// Gives the launcher the shortcuts in place of those it has.
 pub function set(ctx: usize, items: Shortcut[]): boolean {
-  let e: usize = android.env(ctx);
-  let activity: usize = android.activity_object(ctx);
-  let manager: usize = jni.call_object(e, activity, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [jni.new_string(e, "shortcut")]);
-  if (threw(e) || manager == 0 as usize) {
+  let e = android.env(ctx);
+  if (!push_frame(e)) {
     return false;
   }
-  let list: usize = new_object(e, jni.find_class(e, "java/util/ArrayList"), "()V", []);
-  let add: usize = jni.get_method_id(e, jni.get_object_class(e, list), "add", "(Ljava/lang/Object;)Z");
+  defer pop_frame(e);
+  let Ok(c) = bindings.classes(e) else {
+    return false;
+  };
+  defer c.release(e);
+  let activity = bindings.Activity { ref: android.activity_object(ctx) };
+  let Ok(service) = c.context.get_system_service(e, activity.as_context(), "shortcut") else {
+    return false;
+  };
+  if (service.ref == 0 as usize) {
+    return false;
+  }
+  let Ok(list) = c.array_list.new(e) else {
+    return false;
+  };
   for item in items {
-    let one: usize = info(e, activity, item);
-    if (threw(e) || one == 0 as usize) {
+    if (!append_item(e, c, activity, list, item).unwrap_or(false)) {
       return false;
     }
-    let values: usize = jni.jvalues([one]);
-    let added: i32 = jni.call_boolean_method_a(e, list, add, values);
-    jni.free_buffer(values);
-    let dropped: usize = jni.delete_local_ref(e, one);
   }
-  let method: usize = jni.get_method_id(e, jni.get_object_class(e, manager), "setDynamicShortcuts", "(Ljava/util/List;)Z");
-  let values: usize = jni.jvalues([list]);
-  let taken: i32 = jni.call_boolean_method_a(e, manager, method, values);
-  jni.free_buffer(values);
-  let failed: boolean = threw(e);
-  for local in [list, manager] {
-    let dropped: usize = jni.delete_local_ref(e, local);
-  }
-  return taken != 0 && !failed;
+  return c.shortcut_manager.set_dynamic_shortcuts(e, bindings.ShortcutManager { ref: service.ref }, list.as_list()).unwrap_or(false);
 }
 
-// The action of the intent that started the activity, or "". It takes the
-// action, so the next call gives "" until a new intent comes.
+// Takes the action of the intent, so the next call gives "".
 pub function action(ctx: usize): string {
   if (android.detached(ctx)) {
     return "";
   }
-  let e: usize = android.env(ctx);
-  let intent: usize = jni.call_object(e, android.activity_object(ctx), "getIntent", "()Landroid/content/Intent;", []);
-  if (threw(e) || intent == 0 as usize) {
+  let e = android.env(ctx);
+  if (!push_frame(e)) {
     return "";
   }
-  let name: usize = jni.call_object(e, intent, "getAction", "()Ljava/lang/String;", []);
-  if (threw(e) || name == 0 as usize) {
-    let dropped: usize = jni.delete_local_ref(e, intent);
+  defer pop_frame(e);
+  let Ok(activity) = bindings.activity_class(e) else {
+    return "";
+  };
+  defer activity.release(e);
+  let Ok(intent) = activity.get_intent(e, bindings.Activity { ref: android.activity_object(ctx) }) else {
+    return "";
+  };
+  if (intent.is_null()) {
     return "";
   }
-  let text: string = jni.string_of(e, name);
-  let taken: usize = jni.call_object(e, intent, "setAction", "(Ljava/lang/String;)Landroid/content/Intent;", [0 as usize]);
-  let failed: boolean = threw(e);
-  for local in [taken, name, intent] {
-    if (local != 0 as usize) {
-      let dropped: usize = jni.delete_local_ref(e, local);
-    }
-  }
-  return text;
+  let Ok(c) = bindings.intent_class(e) else {
+    return "";
+  };
+  defer c.release(e);
+  let Ok(name) = c.get_action(e, intent) else {
+    return "";
+  };
+  let cleared = c.set_action(e, intent, None);
+  return name;
 }
 
-// Makes `intent` the intent of the activity `activity`, so that `action`
-// gives its action. Call it from the `onNewIntent` method of a subclass of
-// NativeActivity, with the arguments of that method.
+// Keeps the intent from onNewIntent for the next Resume.
 pub function keep_intent(env: usize, activity: usize, intent: usize): void {
-  let kept: boolean = jni.call_void(env, activity, "setIntent", "(Landroid/content/Intent;)V", [intent]);
-  let failed: boolean = threw(env);
+  if (!push_frame(env)) {
+    return;
+  }
+  defer pop_frame(env);
+  let Ok(c) = bindings.activity_class(env) else {
+    return;
+  };
+  defer c.release(env);
+  let kept = c.set_intent(env, bindings.Activity { ref: activity }, bindings.Intent { ref: intent });
 }
 ```
