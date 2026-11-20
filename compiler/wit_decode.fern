@@ -1173,43 +1173,31 @@ function wit_externdesc_mapped(tbody: i32[], e: i32, map: i32[]): i32[] {
   return wit_tx_externdesc(tbody, e, none).out;
 }
 
-pub function wit_iface_instance_offset(tbody: i32[], iface: string): i32 {
+pub function wit_iface_instance_offset(tbody: i32[], iface: string): Option[i32] {
   let none: i32[] = [];
-  let rc = wit_read_uleb(tbody, 0);
-  let p = rc.next;
-  p += 1;
-  let oc = wit_read_uleb(tbody, p);
-  p = oc.next;
-  p += 1;
-  p += 1;
-  let wc = wit_read_uleb(tbody, p);
-  let wcount = wc.value;
-  p = wc.next;
-  let typeOffsets: i32[] = [];
-  let result: i32 = -1;
-  let found = false;
-  let i = 0;
-  while (i < wcount && !found) {
+  let world = wit_world_start(tbody);
+  let p = world.next;
+  let typeOffsets: Option[i32][] = [];
+  for i in 0..world.value {
     let kind = tbody[p];
     if (kind == 1) {
-      typeOffsets = typeOffsets.append(p + 1);
-    } else if (kind == 2) {
-      if (tbody[p + 1] == 3) {
-        typeOffsets = typeOffsets.append(-1);
-      }
+      typeOffsets = typeOffsets.append(Some(p + 1));
+    } else if (wit_decl_defines_type(tbody, p)) {
+      typeOffsets = typeOffsets.append(None);
     } else if (kind == 3) {
       let nr = wit_read_name(tbody, p + 2);
-      if (nr.s == iface) {
+      if (nr.s == iface && tbody[nr.next] == 5) {
         let tr = wit_read_uleb(tbody, nr.next + 1);
-        result = typeOffsets[tr.value];
-        found = true;
+        if (tr.value >= 0 && tr.value < typeOffsets.len()) {
+          return typeOffsets[tr.value];
+        }
+        return None;
       }
     }
     let skip = wit_tx_decl(tbody, p, none);
     p = skip.next;
-    i += 1;
   }
-  return result;
+  return None;
 }
 
 pub struct WitScope { offs: i32[], owners: i32[] }
@@ -1439,14 +1427,12 @@ function wit_alias_export_slot(tbody: i32[], sort_pos: i32, instances: string[])
   if (ir.value >= instances.len()) {
     return (-1, -1);
   }
-  let instOff = wit_iface_instance_offset(tbody, instances[ir.value]);
-  if (instOff < 0) {
+  let Some(instOff) = wit_iface_instance_offset(tbody, instances[ir.value]) else {
     return (-1, -1);
-  }
-  let slot = wit_iface_export_type_slot(tbody, instOff, nr.s);
-  if (slot < 0) {
+  };
+  let Some(slot) = wit_iface_export_type_slot(tbody, instOff, nr.s) else {
     return (-1, -1);
-  }
+  };
   let scope = wit_iface_scope(tbody, instOff);
   let owner = scope.owners[slot];
   if (owner < 0) {
@@ -1455,7 +1441,7 @@ function wit_alias_export_slot(tbody: i32[], sort_pos: i32, instances: string[])
   return (scope.offs[slot], owner);
 }
 
-function wit_iface_export_type_slot(tbody: i32[], instOff: i32, name: string): i32 {
+function wit_iface_export_type_slot(tbody: i32[], instOff: i32, name: string): Option[i32] {
   let none: i32[] = [];
   let p = instOff + 1;
   let dc = wit_read_uleb(tbody, p);
@@ -1474,7 +1460,7 @@ function wit_iface_export_type_slot(tbody: i32[], instOff: i32, name: string): i
       let nr = wit_read_name(tbody, p + 2);
       if (tbody[nr.next] == 3) {
         if (nr.s == name) {
-          return slot;
+          return Some(slot);
         }
         slot += 1;
       }
@@ -1482,17 +1468,16 @@ function wit_iface_export_type_slot(tbody: i32[], instOff: i32, name: string): i
     let skip = wit_tx_decl(tbody, p, none);
     p = skip.next;
   }
-  return -1;
+  return None;
 }
 
 pub struct WitFuncLookup { found: boolean, off: i32, scope: WitScope }
 
 pub function wit_iface_func_lookup(tbody: i32[], iface: string, fname: string): WitFuncLookup {
   let none: i32[] = [];
-  let instOff = wit_iface_instance_offset(tbody, iface);
-  if (instOff < 0) {
+  let Some(instOff) = wit_iface_instance_offset(tbody, iface) else {
     return WitFuncLookup { found: false, off: -1, scope: WitScope { offs: none, owners: none } };
-  }
+  };
   let scope = wit_iface_scope(tbody, instOff);
   let p = instOff + 1;
   let dc = wit_read_uleb(tbody, p);
@@ -1515,10 +1500,9 @@ pub function wit_iface_func_lookup(tbody: i32[], iface: string, fname: string): 
 
 pub function wit_iface_has_resource(tbody: i32[], iface: string, res: string): boolean {
   let none: i32[] = [];
-  let instOff = wit_iface_instance_offset(tbody, iface);
-  if (instOff < 0) {
+  let Some(instOff) = wit_iface_instance_offset(tbody, iface) else {
     return false;
-  }
+  };
   let p = instOff + 1;
   let dc = wit_read_uleb(tbody, p);
   let dcount = dc.value;

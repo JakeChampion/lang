@@ -242,6 +242,16 @@ function main(): i32 {
     r = wit_ck(tb, "wasi:filesystem/types@0.2.0", "[method]descriptor.read-via-stream", 1, 6); if (r != 0) { return r; }
     r = wit_ck(tb, "wasi:io/poll@0.2.0", "[method]pollable.block", 0, 7); if (r != 0) { return r; }
     r = wit_ck(tb, "wasi:sockets/tcp@0.2.0", "[method]tcp-socket.accept", 1, 8); if (r != 0) { return r; }
+    if let Some(_) = wit_iface_instance_offset(tb, "missing") { return 9; }
+    // A primitive value import has no type-table slot.
+    let value_world: i32[] = [1, 65, 1, 1, 65, 1, 3, 0, 1, 120, 2, 127];
+    if let Some(_) = wit_iface_instance_offset(value_world, "x") { return 10; }
+    let bad_index: i32[] = [1, 65, 1, 1, 65, 1, 3, 0, 1, 120, 5, 0];
+    if let Some(_) = wit_iface_instance_offset(bad_index, "x") { return 11; }
+    // A resource type import occupies slot zero before the inline instance type.
+    let resource_world: i32[] = [1, 65, 1, 1, 65, 3, 3, 0, 1, 114, 3, 1, 1, 66, 0, 3, 0, 1, 120, 5, 1];
+    let Some(off) = wit_iface_instance_offset(resource_world, "x") else { return 12; };
+    if (off != 13) { return 13; }
     return 0;
 }
 `
