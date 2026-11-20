@@ -465,9 +465,6 @@ function __target_of(raw: string, policy: Policy): Result[__Target, FetchError] 
   match (__proxy_for_url(policy.proxies, u)) {
     Some(spec) => {
       let p = __proxy_named(policy.proxies, spec, tls)?;
-      if (!tls) {
-        target = "http://" + host_field + target;
-      }
       return Ok(__Target { host: p.host, port: p.port, target: target, host_field: host_field, proxy_auth: p.auth, direct: false, origin: u.host, authority: authority, tls: tls });
     },
     None => {}
@@ -585,6 +582,10 @@ function __wire(req: Request, t: __Target, body: u8[]): u8[] {
   let b = buf_new(256 + body.len());
   buf_push(b, req.method);
   buf_push(b, " ");
+  if (!t.direct && !t.tls) {
+    buf_push(b, "http://");
+    buf_push(b, t.host_field);
+  }
   buf_push(b, t.target);
   buf_push(b, " HTTP/1.1\r\nHost: ");
   buf_push(b, t.host_field);
@@ -3377,7 +3378,11 @@ function __outgoing(req: Request, t: __Target): http.Outgoing {
   if (t.tls) {
     scheme = "https";
   }
-  return http.Outgoing { method: req.method, scheme: scheme, authority: t.host_field, target: t.target, headers: __sent_fields(req, t, body.len()), body: body, trailers: headers.new() };
+  let target = t.target;
+  if (!t.direct && !t.tls) {
+    target = "http://" + t.host_field + target;
+  }
+  return http.Outgoing { method: req.method, scheme: scheme, authority: t.host_field, target: target, headers: __sent_fields(req, t, body.len()), body: body, trailers: headers.new() };
 }
 
 function __global_addr(named: net.IpAddr, judged: net.IpAddr): Result[void, FetchError] {
