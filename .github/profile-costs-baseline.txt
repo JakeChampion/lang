@@ -168,7 +168,7 @@ profile/x86-64-linux/int_loop.safe.emit	298
 profile/x86-64-linux/int_loop.safe.ir	12000077
 profile/x86-64-linux/map_string.diagnostic.bytes	140312
 profile/x86-64-linux/map_string.diagnostic.emit	11659
-profile/x86-64-linux/map_string.diagnostic.ir	58321287	2
+profile/x86-64-linux/map_string.diagnostic.ir	59563467	2
 profile/x86-64-linux/map_string.hardened.bytes	43984
 profile/x86-64-linux/map_string.hardened.emit	10422
 profile/x86-64-linux/map_string.hardened.ir	50701569	2
