@@ -1,0 +1,424 @@
+import "../ast";
+import "../flatten";
+import "../lexer";
+import "../parser";
+import "std/test";
+
+function flatten_source(src: string): parser.Module {
+  let none: string[] = [];
+  return flatten.flatten_qualified(parser.parse_module(lexer.tokenize(src)), none, none, none, none, none, none, none, []);
+}
+
+function mangle_source(src: string, prefix: string): parser.Module {
+  let none: string[] = [];
+  return flatten.mangle_module(parser.parse_module(lexer.tokenize(src)), prefix, none, none, none, none, none, none, none, []);
+}
+
+function test_prefix_collisions(): test.TestOutcome {
+  let empty = parser.parse_module([]);
+  let collisions: flatten.LoadedModule[] = [
+    flatten.LoadedModule { name: "frame", ident: "/project/frame", mod: empty },
+    flatten.LoadedModule { name: "frame", ident: "std/http/h3/frame", mod: empty },
+    flatten.LoadedModule { name: "frame", ident: "std/http/h2/frame", mod: empty },
+    flatten.LoadedModule { name: "frame_1", ident: "std/frame_1", mod: empty },
+  ];
+  let prefixes = flatten.assign_prefixes(collisions);
+  if (prefixes[0] != "frame_3" || prefixes[1] != "frame_2" || prefixes[2] != "frame" || prefixes[3] != "frame_1") {
+    return test.fail("colliding module names must skip the reserved frame_1 prefix");
+  }
+  return test.pass();
+}
+
+function test_qualified_names(): test.TestOutcome {
+  let src: string = "import \"./lexer\";"
+    + " function f(): i32 {"
+    + "   let t: lexer.Token = lexer.tokenize(\"x\");"
+    + "   match (t) { lexer.TokNumber(n) => { return 1; }, _ => { return 0; } }"
+    + "   return 0;"
+    + " }";
+  let mod = flatten_source(src);
+  if (mod.funcs.len() != 1) {
+    return test.fail("mod.funcs.len() != 1");
+  }
+  if (mod.funcs[0].name != "f") {
+    return test.fail("mod.funcs[0].name != \"f\"");
+  }
+  let body = mod.funcs[0].body;
+  match (body[0]) {
+    ast.StmtVar(v) => {
+      if (v.type_name != "lexer__Token") {
+        return test.fail("v.type_name != \"lexer__Token\"");
+      }
+      match (v.init) {
+        ast.ExprCall(c) => {
+          match (c.callee) {
+            ast.ExprIdent(id) => {
+              if (id.name != "lexer__tokenize") {
+                return test.fail("id.name != \"lexer__tokenize\"");
+              }
+            },
+            _ => {
+              return test.fail("expected an identifier as the initializer callee");
+            }
+          }
+        },
+        _ => {
+          return test.fail("expected a call in the initializer");
+        }
+      }
+    },
+    _ => {
+      return test.fail("expected a variable declaration");
+    }
+  }
+  match (body[1]) {
+    ast.StmtMatch(m) => {
+      match (m.arms[0].pattern) {
+        ast.PatVariant(pv) => {
+          if (pv.type_name != "lexer__TokNumber") {
+            return test.fail("pv.type_name != \"lexer__TokNumber\"");
+          }
+        },
+        _ => {
+          return test.fail("expected a variant pattern");
+        }
+      }
+    },
+    _ => {
+      return test.fail("expected a match statement");
+    }
+  }
+  return test.pass();
+}
+
+function test_field_access(): test.TestOutcome {
+  let mod2: parser.Module = flatten_source(
+    "import \"./lexer\"; function g(): i32 { return p.x; }",
+  );
+  match (mod2.funcs[0].body[0]) {
+    ast.StmtReturn(r) => {
+      match (r.value) {
+        ast.ExprFieldAccess(fa) => {
+          if (fa.field != "x") {
+            return test.fail("fa.field != \"x\"");
+          }
+          match (fa.obj) {
+            ast.ExprIdent(id) => {
+              if (id.name != "p") {
+                return test.fail("id.name != \"p\"");
+              }
+            },
+            _ => {
+              return test.fail("expected a field access on an identifier");
+            }
+          }
+        },
+        _ => {
+          return test.fail("expected a field access");
+        }
+      }
+    },
+    _ => {
+      return test.fail("expected a return statement");
+    }
+  }
+
+  return test.pass();
+}
+
+function test_mangled_declarations(): test.TestOutcome {
+  let msrc: string = "struct Box { v: i32 }"
+    + " function (b: Box) get(): i32 { return b.v; }"
+    + " function make(n: i32): Box { return Box { v: n }; }"
+    + " function consume(): i32 { let b: Box = make(5); return b.get(); }";
+  let mm = mangle_source(msrc, "m");
+
+  if (mm.structs.len() != 1) {
+    return test.fail("mm.structs.len() != 1");
+  }
+  if (mm.structs[0].name != "m__Box") {
+    return test.fail("mm.structs[0].name != \"m__Box\"");
+  }
+
+  if (mm.funcs.len() != 3) {
+    return test.fail("mm.funcs.len() != 3");
+  }
+  if (mm.funcs[0].name != "get") {
+    return test.fail("mm.funcs[0].name != \"get\"");
+  }
+  if (mm.funcs[0].receiver_type != "m__Box") {
+    return test.fail("mm.funcs[0].receiver_type != \"m__Box\"");
+  }
+  if (mm.funcs[1].name != "m__make") {
+    return test.fail("mm.funcs[1].name != \"m__make\"");
+  }
+  if (mm.funcs[1].ret_type != "m__Box") {
+    return test.fail("mm.funcs[1].ret_type != \"m__Box\"");
+  }
+  if (mm.funcs[2].name != "m__consume") {
+    return test.fail("mm.funcs[2].name != \"m__consume\"");
+  }
+
+  match (mm.funcs[1].body[0]) {
+    ast.StmtReturn(r) => {
+      match (r.value) {
+        ast.ExprStructLit(sl) => {
+          if (sl.type_name != "m__Box") {
+            return test.fail("sl.type_name != \"m__Box\"");
+          }
+        },
+        _ => {
+          return test.fail("expected a struct literal");
+        }
+      }
+    },
+    _ => {
+      return test.fail("expected a return from make");
+    }
+  }
+
+  match (mm.funcs[2].body[0]) {
+    ast.StmtVar(v) => {
+      if (v.type_name != "m__Box") {
+        return test.fail("v.type_name != \"m__Box\"");
+      }
+      match (v.init) {
+        ast.ExprCall(c) => {
+          match (c.callee) {
+            ast.ExprIdent(id) => {
+              if (id.name != "m__make") {
+                return test.fail("id.name != \"m__make\"");
+              }
+            },
+            _ => {
+              return test.fail("expected an identifier as the make callee");
+            }
+          }
+        },
+        _ => {
+          return test.fail("expected a call initializing b");
+        }
+      }
+    },
+    _ => {
+      return test.fail("expected a declaration for b");
+    }
+  }
+  match (mm.funcs[2].body[1]) {
+    ast.StmtReturn(r) => {
+      match (r.value) {
+        ast.ExprCall(c) => {
+          match (c.callee) {
+            ast.ExprFieldAccess(fa) => {
+              if (fa.field != "get") {
+                return test.fail("fa.field != \"get\"");
+              }
+              match (fa.obj) {
+                ast.ExprIdent(id) => {
+                  if (id.name != "b") {
+                    return test.fail("id.name != \"b\"");
+                  }
+                },
+                _ => {
+                  return test.fail("expected a method receiver identifier");
+                }
+              }
+            },
+            _ => {
+              return test.fail("expected a method access");
+            }
+          }
+        },
+        _ => {
+          return test.fail("expected a method call");
+        }
+      }
+    },
+    _ => {
+      return test.fail("expected a return from consume");
+    }
+  }
+
+  return test.pass();
+}
+
+function test_type_names(): test.TestOutcome {
+  // A single bucket suffices for these small declaration tables.
+  let ctx = flatten.RewriteCtx { type_params: [], modnames: ["lexer", "test"], modprefixes: ["lexer", "test"], prefix: "lx", declnames: ["Token"], declnames_mangled: ["lx__Token"], dn_head: [0], dn_next: [-1], locals: [], enumnames: [], imported_enums: [], ivar_names: ["Fail"], ivar_mangled: ["test__Fail"], variant_scope: ["lexer", "test"], reexport_keys: [], reexport_targets: [], own_variants: [] };
+  for (source, expected) in [
+    ("lexer.Token[]", "lexer__Token[]"),
+    ("Token[]", "lx__Token[]"),
+    ("Token", "lx__Token"),
+    ("Map[string, i32]", "Map[string, i32]"),
+    ("i32", "i32"),
+    ("other.Thing", "other.Thing"),
+    ("Fail", "test__Fail"),
+    ("(lexer.Token, i32)", "(lexer__Token, i32)"),
+    ("(Token, string)", "(lx__Token, string)"),
+    ("(Map[string, i32], Token)", "(Map[string, i32], lx__Token)"),
+    ("((Token, i32), string)", "((lx__Token, i32), string)"),
+    ("(string, Token)[]", "(string, lx__Token)[]"),
+    ("(i32, lexer.Token)[][]", "(i32, lexer__Token)[][]"),
+    ("() => i32", "() => i32"),
+    ("(i32) => i32", "(i32) => i32"),
+    ("(Token) => lexer.Token", "(lx__Token) => lexer__Token"),
+    ("(i32, Token) => string", "(i32, lx__Token) => string"),
+    ("Option[() => i32]", "Option[() => i32]"),
+    ("Result[() => Token, string]", "Result[() => lx__Token, string]"),
+    ("() => (i32) => Token", "() => (i32) => lx__Token"),
+    ("(() => Token) => i32", "(() => lx__Token) => i32"),
+    ("() => Token[]", "() => lx__Token[]"),
+  ] {
+    let rewritten = flatten.rewrite_type_name(source, ctx);
+    if (rewritten != expected) {
+      return test.fail(source + " became " + rewritten + ", expected " + expected);
+    }
+  }
+
+  let rctx = flatten.RewriteCtx { ...ctx, reexport_keys: ["lexer__Token"], reexport_targets: ["orig__Token"] };
+  for (source, expected) in [
+    ("lexer.Token", "orig__Token"),
+    ("lexer.Token[]", "orig__Token[]"),
+    ("lexer.Span", "lexer__Span"),
+  ] {
+    let rewritten = flatten.rewrite_type_name(source, rctx);
+    if (rewritten != expected) {
+      return test.fail(source + " became " + rewritten + ", expected " + expected);
+    }
+  }
+
+  let ectx = flatten.RewriteCtx { ...ctx, declnames: ["E", "Wrap"], declnames_mangled: ["lx__E", "lx__Wrap"], dn_head: [0], dn_next: [1, -1], enumnames: ["E"] };
+  for (source, expected) in [
+    ("E.Wrap", "lx__E.lx__Wrap"),
+    ("E", "lx__E"),
+    ("Wrap", "lx__Wrap"),
+    ("lexer.Token", "lexer__Token"),
+    ("Other.Wrap", "Other.Wrap"),
+  ] {
+    let rewritten = flatten.rewrite_type_name(source, ectx);
+    if (rewritten != expected) {
+      return test.fail(source + " became " + rewritten + ", expected " + expected);
+    }
+  }
+
+  return test.pass();
+}
+
+function test_bundle(): test.TestOutcome {
+  let amod: parser.Module = parser.parse_module(lexer.tokenize(
+    "pub function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return 0; }",
+  ));
+  let emod: parser.Module = parser.parse_module(lexer.tokenize(
+    "import \"./a\"; function main(): i32 { return a.add(2, 3); }",
+  ));
+  let loaded: flatten.LoadedModule[] = [];
+  loaded = loaded.append(flatten.LoadedModule { name: "a", ident: "", mod: amod });
+  let merged = flatten.bundle(emod, loaded, "");
+
+  if (merged.imports.len() != 1 || merged.imports[0].path != "./a") {
+    return test.fail("merged.imports.len() != 1 || merged.imports[0].path != \"./a\"");
+  }
+  if (merged.funcs.len() != 3) {
+    return test.fail("merged.funcs.len() != 3");
+  }
+  if (merged.funcs[0].name != "a__add") {
+    return test.fail("merged.funcs[0].name != \"a__add\"");
+  }
+  if (merged.funcs[1].name != "a__main") {
+    return test.fail("merged.funcs[1].name != \"a__main\"");
+  }
+  if (merged.funcs[2].name != "main") {
+    return test.fail("merged.funcs[2].name != \"main\"");
+  }
+  match (merged.funcs[2].body[0]) {
+    ast.StmtReturn(r) => {
+      match (r.value) {
+        ast.ExprCall(c) => {
+          match (c.callee) {
+            ast.ExprIdent(id) => {
+              if (id.name != "a__add") {
+                return test.fail("id.name != \"a__add\"");
+              }
+            },
+            _ => {
+              return test.fail("expected an identifier for the imported callee");
+            }
+          }
+        },
+        _ => {
+          return test.fail("expected a call to the imported function");
+        }
+      }
+    },
+    _ => {
+      return test.fail("expected a return from the entry function");
+    }
+  }
+
+  return test.pass();
+}
+
+function test_reexport(): test.TestOutcome {
+  let hmod: parser.Module = parser.parse_module(lexer.tokenize(
+    "pub function add5(n: i32): i32 { return n + 5; }",
+  ));
+  let fmod: parser.Module = parser.parse_module(lexer.tokenize(
+    "pub use \"./helpers\".{add5};",
+  ));
+  let rxmod: parser.Module = parser.parse_module(lexer.tokenize(
+    "import \"./facade\"; function main(): i32 { return facade.add5(10); }",
+  ));
+  let rxloaded: flatten.LoadedModule[] = [];
+  rxloaded = rxloaded.append(flatten.LoadedModule { name: "facade", ident: "", mod: fmod });
+  rxloaded = rxloaded.append(flatten.LoadedModule { name: "helpers", ident: "", mod: hmod });
+  let rxmerged = flatten.bundle(rxmod, rxloaded, "");
+  let fi = 0;
+  let found_main = false;
+  while (fi < rxmerged.funcs.len()) {
+    if (rxmerged.funcs[fi].name == "main") {
+      found_main = true;
+      match (rxmerged.funcs[fi].body[0]) {
+        ast.StmtReturn(r) => {
+          match (r.value) {
+            ast.ExprCall(c) => {
+              match (c.callee) {
+                ast.ExprIdent(id) => {
+                  if (id.name != "helpers__add5") {
+                    return test.fail("id.name != \"helpers__add5\"");
+                  }
+                },
+                _ => {
+                  return test.fail("expected an identifier for the re-exported callee");
+                }
+              }
+            },
+            _ => {
+              return test.fail("expected a call to the re-exported function");
+            }
+          }
+        },
+        _ => {
+          return test.fail("expected a return from the entry function");
+        }
+      }
+    }
+    fi += 1;
+  }
+  if (!found_main) {
+    return test.fail("!found_main");
+  }
+
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("flatten");
+  r = r.it("module prefix collisions", test_prefix_collisions);
+  r = r.it("qualified names", test_qualified_names);
+  r = r.it("ordinary field access", test_field_access);
+  r = r.it("mangled declarations and uses", test_mangled_declarations);
+  r = r.it("type name rewriting", test_type_names);
+  r = r.it("bundled functions", test_bundle);
+  r = r.it("re-exported calls", test_reexport);
+  return r.finish();
+}
