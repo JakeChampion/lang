@@ -200,7 +200,7 @@ language does not have. It is deleted.
 | `W003` | a literate chunk is defined but never used | — |
 
 For array fusion, map storage and ndarray kernel decisions, run
-`fern -array-report FILE.fern` or compile with `FERN_ARRAY_REPORT=1`. The report
+`fern -array-report FILE.fern` or compile with `FERN_DEBUG_ARRAY_REPORT=1`. The report
 names each stage and a closed reason tag, including guarded reuse and why R7
 declined a map. See [`ARRAY-ALGEBRA.md`](../docs/ARRAY-ALGEBRA.md) for the
 interface.

@@ -427,28 +427,26 @@ pub function semantic_kind_count(): i32 {
   return SEMANTIC_KIND_NAMES.len();
 }
 
+const TERM_NAMES: string[] = ["", "ret", "br", "brif", "unreachable"];
+
 pub function term_count(): i32 {
-  return 3;
+  return TERM_NAMES.len() - 1;
 }
 
 pub function term_id(name: string): i32 {
-  return match (name) {
-    "ret" => 1,
-    "br" => 2,
-    "brif" => 3,
-    _ => 0,
-  };
+  for id in 1..TERM_NAMES.len() {
+    if (TERM_NAMES[id] == name) {
+      return id;
+    }
+  }
+  return TERM_NONE;
 }
 
 pub function term_name(id: i32): string {
-  return match (id) {
-    0 => "",
-    1 => "ret",
-    2 => "br",
-    3 => "brif",
-    4 => "unreachable",
-    _ => "terminator " + util.i32_to_string(id),
-  };
+  if (id >= 0 && id < TERM_NAMES.len()) {
+    return TERM_NAMES[id];
+  }
+  return "terminator " + util.i32_to_string(id);
 }
 
 function rewrite_args(ins: SInst, resolved: i32[]): SInst {
@@ -1402,21 +1400,19 @@ pub function block_loop_weights(f: SFunc): i32[] {
 }
 
 function weights_from_latches(latch: i32[]): i32[] {
-  let depth = __alloc_i32(latch.len());
-  for h in 0..latch.len() {
-    for k in h..=latch[h] {
-      depth = depth.with(k, depth[k] + 1);
+  let out = __alloc_i32(latch.len());
+  let depth = 0;
+  for i in 0..latch.len() {
+    let last = latch[i];
+    if (last >= i) {
+      depth += 1;
+      // Until the scan reaches a latch, its slot counts the loops ending there.
+      out = out.with(last, out[last] + 1);
     }
-  }
-  let out: i32[] = [];
-  for d in depth {
-    let w = 1;
-    let n = 0;
-    while (n < d && n < 3) {
-      w *= 8;
-      n += 1;
-    }
-    out = out.append(w);
+    let ending = out[i];
+    let levels = if (depth < 3) { depth } else { 3 };
+    out = out.with(i, 1 << levels * 3);
+    depth -= ending;
   }
   return out;
 }

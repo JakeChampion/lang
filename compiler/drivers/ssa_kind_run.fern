@@ -61,6 +61,7 @@ function main(): i32 {
   out = out + "term_none_name_len=" + util.i32_to_string(tnone.len()) + "\n";
   out = out + "ret=" + util.i32_to_string(ssa.term_id("ret")) + "\n";
   out = out + "brif=" + util.i32_to_string(ssa.term_id("brif")) + "\n";
+  out = out + "unreachable=" + util.i32_to_string(ssa.term_id("unreachable")) + "\n";
 
   let sid = 1;
   while (sid <= ssa.semantic_kind_count()) {

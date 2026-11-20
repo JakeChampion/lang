@@ -155,7 +155,7 @@ therefore the representation: four fields the IR reads as any struct's,
 which is what lets a kernel take `data`, `shape`, `strides` and `offset`
 without a second description of them.
 
-**Primary compiler.** `FERN_ARRAY_REPORT=1` on a compile prints the actual
+**Primary compiler.** `FERN_DEBUG_ARRAY_REPORT=1` on a compile prints the actual
 ndarray kernel planner's decisions, alongside fusion and map storage. It
 lists all eight operations from §7, including calls that stay scalar. Each
 site includes its receiver layout, the second operand's layout for binary

@@ -1,3 +1,4 @@
+import "core/map";
 import "./util";
 import "std/string";
 
@@ -1537,9 +1538,9 @@ function func_sig(fn: SExpr): string {
   return o;
 }
 
-function rename_atoms(n: SExpr, from: string[], to: string[]): SExpr {
+function rename_atoms(n: SExpr, from: util.NameIndex, to: string[]): SExpr {
   if (n.kind == 2) {
-    let k = util.index_of_str(from, n.text);
+    let k = from.find(n.text);
     if (k >= 0) {
       return SExpr { kind: 2, text: to[k], items: [] };
     }
@@ -1557,8 +1558,7 @@ function rename_atoms(n: SExpr, from: string[], to: string[]): SExpr {
 
 function merge_duplicate_imports(mod: SExpr): SExpr {
   let keep: SExpr[] = [];
-  let seen_key: string[] = [];
-  let seen_name: string[] = [];
+  let imports: Map[string, string] = map_new(8);
   let from: string[] = [];
   let to: string[] = [];
   let i = 0;
@@ -1567,15 +1567,13 @@ function merge_duplicate_imports(mod: SExpr): SExpr {
     if (node_head(it) == "import" && it.items.len() == 4 && node_head(it.items[3]) == "func") {
       let fn = func_node(it);
       let key = it.items[1].text + "\n" + it.items[2].text + "\n" + func_sig(fn);
-      let k = util.index_of_str(seen_key, key);
-      if (k >= 0) {
+      if let Some(first) = imports.get(key) {
         from = from.append(func_name(fn));
-        to = to.append(seen_name[k]);
+        to = to.append(first);
         i += 1;
         continue;
       }
-      seen_key = seen_key.append(key);
-      seen_name = seen_name.append(func_name(fn));
+      imports = imports.insert(key, func_name(fn));
     }
     keep = keep.append(it);
     i += 1;
@@ -1583,7 +1581,7 @@ function merge_duplicate_imports(mod: SExpr): SExpr {
   if (from.len() == 0) {
     return mod;
   }
-  return rename_atoms(SExpr { kind: mod.kind, text: mod.text, items: keep }, from, to);
+  return rename_atoms(SExpr { kind: mod.kind, text: mod.text, items: keep }, util.name_index(from), to);
 }
 
 pub function wat_to_binary(wat: string): i32[] {

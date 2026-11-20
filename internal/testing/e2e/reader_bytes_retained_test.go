@@ -79,7 +79,7 @@ func TestReaderBytesRetainedShortReads(t *testing.T) {
 						}
 						compile := exec.Command(compiler, append(args, src)...)
 						for _, entry := range os.Environ() {
-							if !strings.HasPrefix(entry, "FERN_SANITIZE=") && !strings.HasPrefix(entry, "FERN_RC_FREE_DEBUG=") {
+							if !strings.HasPrefix(entry, "FERN_SANITIZE=") && !strings.HasPrefix(entry, "FERN_RC_FREE_DEBUG=") && !strings.HasPrefix(entry, "FERN_DEBUG_RC_FREE=") {
 								compile.Env = append(compile.Env, entry)
 							}
 						}

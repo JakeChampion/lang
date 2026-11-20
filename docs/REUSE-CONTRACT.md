@@ -226,7 +226,7 @@ turns the shape off. Each taint is a row of `fern -array-report`'s
 planner that performs the rewrite.
 
 R7 is selected in `ssarc.fern` from typed ownership plans.
-`fern -array-report`, or `FERN_ARRAY_REPORT=1` on a compile, prints the final
+`fern -array-report`, or `FERN_DEBUG_ARRAY_REPORT=1` on a compile, prints the final
 plan's map storage verdicts, including `guarded-reuse`: unique input is reused
 and shared input is copied. The reason tags are documented in
 `ARRAY-ALGEBRA.md`.

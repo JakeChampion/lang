@@ -8,11 +8,10 @@ import (
 func TestSelfHostFlattenX86_64(t *testing.T) {
 	runner := x86_64Runner(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "flatten.fern")
-	binPath := buildSelfHostBinFor(t, dir, "flatten.fern", "prog", e2eharness.TargetX86_64Linux)
+	copySelfHostDriver(t, dir, "drivers/flatten_check_run.fern")
+	binPath := buildSelfHostBinFor(t, dir, "drivers/flatten_check_run.fern", "prog", e2eharness.TargetX86_64Linux)
 	cmd := runX86_64Bin(runner, binPath)
-	_, _ = cmd.CombinedOutput()
-	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("fern-port flatten assertion %d failed", code)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("flatten self-checks: %v\n%s", err, out)
 	}
 }

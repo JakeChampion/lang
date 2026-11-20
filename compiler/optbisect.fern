@@ -8,7 +8,7 @@ pub struct Switches { trace: boolean, bisect: boolean, floor: i64 }
 
 pub function switches(): Switches {
   let trace = util.debug_flag("FERN_DEBUG_OPT_TRACE", "FERN_OPT_TRACE");
-  match (env("FERN_OPT_BISECT")) {
+  match (util.debug_env("FERN_DEBUG_OPT_BISECT", "FERN_OPT_BISECT")) {
     Some(v) => {
       return Switches { trace: trace, bisect: true, floor: util.digits_to_i64(v) };
     },

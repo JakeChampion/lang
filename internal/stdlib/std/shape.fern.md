@@ -1643,6 +1643,12 @@ function step(cats: i32[], xs: i32[], set: i64): i32[] {
 
 // The positions of `xs` and `ys`, in order, each one time.
 function either(xs: i32[], ys: i32[]): i32[] {
+  if (xs.len() == 0) {
+    return ys;
+  }
+  if (ys.len() == 0) {
+    return xs;
+  }
   let out: i32[] = [];
   let (i, j) = (0, 0);
   while (i < xs.len() || j < ys.len()) {
@@ -1667,13 +1673,21 @@ function optional(cats: i32[], xs: i32[], set: i64): i32[] {
 
 // The positions after any count of characters of `set`.
 function any_of(cats: i32[], xs: i32[], set: i64): i32[] {
-  let all = xs;
-  let next = xs;
-  while (next.len() > 0) {
-    next = step(cats, next, set);
-    all = either(all, next);
+  let out: i32[] = [];
+  let end = -1;
+  for start in xs {
+    // An earlier match already reached every position through end.
+    if (start <= end) {
+      continue;
+    }
+    end = start;
+    out = out.append(end);
+    while (end < cats.len() && (set >> cats[end] as i64 & 1i64) != 0i64) {
+      end += 1;
+      out = out.append(end);
+    }
   }
-  return all;
+  return out;
 }
 
 function joiner_bits(): i64 {
@@ -1736,6 +1750,9 @@ function halant_or_matra_group(cats: i32[], xs: i32[]): i32[] {
 
 // complex_syllable_tail = (halant_group cn)* CM? halant_or_matra_group syllable_tail
 function complex_tail(cats: i32[], xs: i32[]): i32[] {
+  if (xs.len() == 0) {
+    return xs;
+  }
   let all = xs;
   let next = xs;
   while (next.len() > 0) {
@@ -2170,6 +2187,9 @@ function consonant_position(f: truetype.Font, p: Plan, g: i32): i32 {
 // Whether one of the lookups joins the virama and the glyph `g`, in either
 // order: some fonts have the order of the old specification in new tables.
 function with_virama(f: truetype.Font, p: Plan, lookups: i32[], g: i32): boolean {
+  if (lookups.len() == 0) {
+    return false;
+  }
   return f.would_substitute_lookups(lookups, [p.virama, g], p.zero) || f.would_substitute_lookups(lookups, [g, p.virama], p.zero);
 }
 
@@ -2177,13 +2197,23 @@ function with_virama(f: truetype.Font, p: Plan, lookups: i32[], g: i32): boolean
 // `broken`, after the glyphs of the category `repha`, when the font has the
 // glyph. The circle has the shaper value `value`.
 function with_dotted_circles(f: truetype.Font, gs: Glyph[], broken: i32, value: i32, repha: i32): Glyph[] {
+  let first = 0;
+  while (first < gs.len() && (syllable_of(gs[first]) & 15) != broken) {
+    first += 1;
+  }
+  if (first == gs.len()) {
+    return gs;
+  }
   let circle = f.glyph(0x25CC);
   if (circle == 0) {
     return gs;
   }
   let out: Glyph[] = [];
+  for i in 0..first {
+    out = out.append(gs[i]);
+  }
   let last = 0;
-  let i = 0;
+  let i = first;
   while (i < gs.len()) {
     let s = syllable_of(gs[i]);
     if (s == last || (s & 15) != broken) {
