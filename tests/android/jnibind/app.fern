@@ -111,7 +111,9 @@ function object_part(e: usize): Result[void, jni.JavaError] {
   let points = bindings.point_class(e)?;
   let name = names.new(e, "dev.fern.a", "dev.fern.a.Main")?;
   let short = names.flatten_to_short_string(e, name)?;
-  let p = points.new(e, 3, -4)?;
+  let p = points.new(e, 0, 0)?;
+  points.set_x(e, p, 3)?;
+  points.set_y(e, p, -4)?;
   points.offset(e, p, 10, 20)?;
   let x = points.x(e, p)?;
   let y = points.y(e, p)?;

@@ -18,10 +18,7 @@ pub struct MediaBrowserServiceClass { class: usize, id_set_session_token: usize 
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function media_browser_service_class(e: usize): Result[MediaBrowserServiceClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/service/media/MediaBrowserService");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/service/media/MediaBrowserService")?;
   let id_set_session_token = jni.checked_id(e, class, jni.get_method_id(e, class, "setSessionToken", "(Landroid/media/session/MediaSession$Token;)V"))?;
   return Ok(MediaBrowserServiceClass { class: class, id_set_session_token: id_set_session_token });
 }
@@ -58,10 +55,7 @@ pub struct MediaBrowserService_BrowserRootClass { class: usize, id_new: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function media_browser_service_browser_root_class(e: usize): Result[MediaBrowserService_BrowserRootClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/service/media/MediaBrowserService$BrowserRoot");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/service/media/MediaBrowserService$BrowserRoot")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;Landroid/os/Bundle;)V"))?;
   return Ok(MediaBrowserService_BrowserRootClass { class: class, id_new: id_new });
 }
@@ -101,10 +95,7 @@ pub struct MediaBrowserService_ResultClass { class: usize, id_detach: usize, id_
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function media_browser_service_result_class(e: usize): Result[MediaBrowserService_ResultClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/service/media/MediaBrowserService$Result");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/service/media/MediaBrowserService$Result")?;
   let id_detach = jni.checked_id(e, class, jni.get_method_id(e, class, "detach", "()V"))?;
   let id_send_result = jni.checked_id(e, class, jni.get_method_id(e, class, "sendResult", "(Ljava/lang/Object;)V"))?;
   return Ok(MediaBrowserService_ResultClass { class: class, id_detach: id_detach, id_send_result: id_send_result });
@@ -151,10 +142,7 @@ pub struct MediaSession_TokenClass { class: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function media_session_token_class(e: usize): Result[MediaSession_TokenClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/media/session/MediaSession$Token");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/media/session/MediaSession$Token")?;
   return Ok(MediaSession_TokenClass { class: class });
 }
 
@@ -180,10 +168,7 @@ pub struct MediaBrowser_MediaItemClass { class: usize, id_new: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function media_browser_media_item_class(e: usize): Result[MediaBrowser_MediaItemClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/media/browse/MediaBrowser$MediaItem");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/media/browse/MediaBrowser$MediaItem")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Landroid/media/MediaDescription;I)V"))?;
   return Ok(MediaBrowser_MediaItemClass { class: class, id_new: id_new });
 }
@@ -221,10 +206,7 @@ pub struct MediaDescriptionClass { class: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function media_description_class(e: usize): Result[MediaDescriptionClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/media/MediaDescription");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/media/MediaDescription")?;
   return Ok(MediaDescriptionClass { class: class });
 }
 
@@ -250,10 +232,7 @@ pub struct MediaDescription_BuilderClass { class: usize, id_new: usize, id_build
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function media_description_builder_class(e: usize): Result[MediaDescription_BuilderClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/media/MediaDescription$Builder");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/media/MediaDescription$Builder")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "()V"))?;
   let id_build = jni.checked_id(e, class, jni.get_method_id(e, class, "build", "()Landroid/media/MediaDescription;"))?;
   let id_set_media_id = jni.checked_id(e, class, jni.get_method_id(e, class, "setMediaId", "(Ljava/lang/String;)Landroid/media/MediaDescription$Builder;"))?;
@@ -334,10 +313,7 @@ pub struct ArrayListClass { class: usize, id_new: usize, id_add: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function array_list_class(e: usize): Result[ArrayListClass, jni.JavaError] {
-  let local = jni.find_class(e, "java/util/ArrayList");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "java/util/ArrayList")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "()V"))?;
   let id_add = jni.checked_id(e, class, jni.get_method_id(e, class, "add", "(Ljava/lang/Object;)Z"))?;
   return Ok(ArrayListClass { class: class, id_new: id_new, id_add: id_add });

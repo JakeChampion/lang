@@ -40,7 +40,7 @@ function main(): i32 {
     if (crypto.hmac_sha256_verify("wrongkey".bytes(), "The quick brown fox jumps over the lazy dog".as_bytes(), mac)) { return 11; }
 
     // PBKDF2 borrows the password and salt bytes. The derived key owns its bytes.
-    let dk: u8[] = crypto.pbkdf2_sha256("password".as_bytes(), "salt".bytes(), 1, 32);
+    let Ok(dk) = crypto.pbkdf2_sha256("password".as_bytes(), "salt".bytes(), 1, 32) else { return 12; };
     if (dk.len() != 32) { return 12; }
     if (hex.encode(dk) != "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b") { return 13; }
     if (!crypto.pbkdf2_sha256_verify("password".as_bytes(), "salt".bytes(), 1, dk)) { return 14; }

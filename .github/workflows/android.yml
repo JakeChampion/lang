@@ -308,6 +308,7 @@ jobs:
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/noisy/bindings.spec | diff -u internal/stdlib/std/android/noisy/bindings.fern - || echo "bindings of std/android/noisy" >> build/android-stopwatch/emulator/failed
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/shortcuts/bindings.spec | diff -u internal/stdlib/std/android/shortcuts/bindings.fern - || echo "bindings of std/android/shortcuts" >> build/android-stopwatch/emulator/failed
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/watchnext/bindings.spec | diff -u internal/stdlib/std/android/watchnext/bindings.fern - || echo "bindings of std/android/watchnext" >> build/android-stopwatch/emulator/failed
+            build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/download/bindings.spec | diff -u internal/stdlib/std/android/download/bindings.fern - || echo "bindings of std/android/download" >> build/android-stopwatch/emulator/failed
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/keystore/bindings.spec | diff -u internal/stdlib/std/android/keystore/bindings.fern - || echo "bindings of std/android/keystore" >> build/android-stopwatch/emulator/failed
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" build/media3/jars/*.jar internal/stdlib/std/android/exoplayer/bindings.spec | diff -u internal/stdlib/std/android/exoplayer/bindings.fern - || echo "bindings of std/android/exoplayer" >> build/android-stopwatch/emulator/failed
             python3 examples/android/counter/emulator_check.py build/android-stopwatch/fern-counter.apk build/android-stopwatch/emulator/counter || echo "examples/android/counter" >> build/android-stopwatch/emulator/failed
@@ -326,6 +327,37 @@ jobs:
         with:
           name: fern-stopwatch-emulator
           path: build/android-stopwatch/emulator
+
+  tv:
+    name: android-plex-tv
+    needs: [apk]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: fern-stopwatch-apk
+          path: build/android-stopwatch
+      - uses: ./.github/actions/disable-chrome-apt
+      - name: Prepare the test APKs and video
+        run: |
+          tests/android/plex_tv/build build/android-stopwatch/fern-plex.apk build/android-tv
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          ffmpeg -loglevel error -f lavfi -i testsrc=size=320x240:rate=25 -t 20 -c:v libx264 -g 25 -bf 0 -pix_fmt yuv420p -movflags +faststart build/android-tv/pattern.mp4
+      - name: Let the emulator use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Check the Plex preview channel and Watch Next row
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: android-tv
+          arch: x86_64
+          disable-animations: true
+          script: python3 examples/android/plex/tv_emulator_check.py build/android-tv
 
   # Each syscall that an Android image of a fixture can make, against the app
   # seccomp filter that bionic generates at the AOSP tag in
