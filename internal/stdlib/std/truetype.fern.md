@@ -766,10 +766,15 @@ function feature_tables(b: [u8], t: i32, script: string, feature: string): i32[]
 // `zero_context` a chain context with glyphs before or after its input does
 // not apply.
 pub function (f: Font) would_substitute(script: string, feature: string, gs: i32[], zero_context: boolean): boolean {
+  return f.would_substitute_lookups(f.feature_lookups(script, feature), gs, zero_context);
+}
+
+// Test GSUB lookup indices already selected for a font and script.
+pub function (f: Font) would_substitute_lookups(lookups: i32[], gs: i32[], zero_context: boolean): boolean {
   if (gs.len() == 0) {
     return false;
   }
-  for li in f.feature_lookups(script, feature) {
+  for li in lookups {
     let l = lookup_of(f, f.gsub, false, li);
     for s in 0..l.count {
       let (st, kind) = subtable(f.data, l, s);

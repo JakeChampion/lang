@@ -59,6 +59,10 @@ function differences(font: Option[truetype.Font], cases: string, script: string,
   let Some(f) = font else {
     return "the font did not parse";
   };
+  let plan = shape.prepare_indic(f, script);
+  if (script == "deva" && plan.is_none()) {
+    return "missing Devanagari shaping plan";
+  }
   let out = "";
   let count = 0;
   for line in cases.split("\n") {
@@ -67,7 +71,7 @@ function differences(font: Option[truetype.Font], cases: string, script: string,
       continue;
     }
     count += 1;
-    let r = shape.shape(f, parts[1], script);
+    let r = match (plan) { Some(p) => p.shape(parts[1]), None => shape.shape(f, parts[1], script) };
     let got = joined(r.glyphs) + " " + joined(r.clusters) + (if (placed) { " " + places(r) } else { "" });
     let want = parts[2] + " " + parts[3] + (if (placed) { " " + parts[4] } else { "" });
     if (got != want) {
