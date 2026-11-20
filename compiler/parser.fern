@@ -9471,7 +9471,7 @@ pub function top_arrow_at(s: string): i32 {
   return -1;
 }
 
-function plain_type_spelling(s: string): boolean {
+pub function plain_type_spelling(s: string): boolean {
   for i in 0..s.len() {
     let c = s[i];
     if (c == b'[' || c == b'(' || c == b'=') {
