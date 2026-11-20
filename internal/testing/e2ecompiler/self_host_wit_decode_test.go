@@ -242,6 +242,30 @@ function main(): i32 {
     r = wit_ck(tb, "wasi:filesystem/types@0.2.0", "[method]descriptor.read-via-stream", 1, 6); if (r != 0) { return r; }
     r = wit_ck(tb, "wasi:io/poll@0.2.0", "[method]pollable.block", 0, 7); if (r != 0) { return r; }
     r = wit_ck(tb, "wasi:sockets/tcp@0.2.0", "[method]tcp-socket.accept", 1, 8); if (r != 0) { return r; }
+    if let Some(_) = wit_iface_instance_offset(tb, "missing") { return 9; }
+    // A primitive value import has no type-table slot.
+    let value_world: i32[] = [1, 65, 1, 1, 65, 1, 3, 0, 1, 120, 2, 127];
+    if let Some(_) = wit_iface_instance_offset(value_world, "x") { return 10; }
+    let bad_index: i32[] = [1, 65, 1, 1, 65, 1, 3, 0, 1, 120, 5, 0];
+    if let Some(_) = wit_iface_instance_offset(bad_index, "x") { return 11; }
+    // A resource type import occupies slot zero before the inline instance type.
+    let resource_world: i32[] = [1, 65, 1, 1, 65, 3, 3, 0, 1, 114, 3, 1, 1, 66, 0, 3, 0, 1, 120, 5, 1];
+    let Some(off) = wit_iface_instance_offset(resource_world, "x") else { return 12; };
+    if (off != 13) { return 13; }
+    // The second interface refers to the first interface's exported list
+    // through a world type alias. The resource import occupies slot zero.
+    let alias_world: i32[] = [
+        1, 65, 1, 1, 65, 6,
+        3, 0, 1, 114, 3, 1,
+        1, 66, 2, 1, 112, 125, 4, 0, 1, 116, 3, 0, 0,
+        3, 0, 1, 97, 5, 1,
+        2, 3, 0, 0, 1, 116,
+        1, 66, 1, 2, 3, 2, 1, 2,
+        3, 0, 1, 98, 5, 3,
+    ];
+    let Some(second) = wit_iface_instance_offset(alias_world, "b") else { return 14; };
+    let alias_scope = wit_iface_scope(alias_world, second);
+    if (alias_scope.offs.len() != 1 || alias_scope.offs[0] != 16 || alias_scope.owners[0] != 13) { return 15; }
     return 0;
 }
 `
