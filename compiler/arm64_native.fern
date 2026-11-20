@@ -6661,47 +6661,74 @@ function arm64_gas_bad_shift4(ops: string[]): string {
   return "";
 }
 
+// AArch64 bit positions and widths fit in 0..64. Stop before an invalid
+// literal can wrap around into that range.
+function arm64_gas_bit_count(tok: string): i32 {
+  let i = if (tok.starts_with("#")) { 1 } else { 0 };
+  let negative = i < tok.len() && tok[i] == b'-';
+  if (negative || i < tok.len() && tok[i] == b'+') {
+    i += 1;
+  }
+  let radix = 10;
+  if (i + 1 < tok.len() && tok[i] == b'0') {
+    let prefix = tok[i + 1] | 32u8;
+    radix = 8;
+    if (prefix == b'x' || prefix == b'b') {
+      radix = if (prefix == b'x') { 16 } else { 2 };
+      i += 2;
+    }
+  }
+  if (i == tok.len()) {
+    return -1;
+  }
+  let count = 0;
+  for j in i..tok.len() {
+    let digit = util.hex_value(tok[j]);
+    if (digit < 0 || digit >= radix) {
+      return -1;
+    }
+    count = count * radix + digit;
+    if (count > 64) {
+      return -1;
+    }
+  }
+  return if (negative) { -count } else { count };
+}
+
 function arm64_gas_bad_bitfield(mnem: string, ops: string[]): string {
-  let size = 64;
-  if (ops.len() > 0 && arm64_gas_is_w(ops[0])) {
-    size = 32;
-  }
-  if (mnem == "ror") {
-    return arm64_gas_bad_ror(ops, size);
-  }
-  if (ops.len() != 4) {
+  let rotate = mnem == "ror";
+  let arity = if (rotate) { 3 } else { 4 };
+  if (ops.len() != arity) {
     return "arity";
   }
-  if (ops[3].len() == 0 || ops[3][0] != b'#') {
-    return "imm";
+  let register_count = if (mnem == "extr" || rotate && arm64_gas_data_gp(ops[2])) { 3 } else { 2 };
+  let w = arm64_gas_is_w(ops[0]);
+  for i in 0..register_count {
+    if (!arm64_gas_data_gp(ops[i]) || arm64_gas_is_w(ops[i]) != w) {
+      return "register";
+    }
+  }
+  let size = if (w) { 32 } else { 64 };
+  if (rotate) {
+    if (register_count == 2) {
+      let shift = arm64_gas_bit_count(ops[2]);
+      if (shift < 0 || shift >= size) {
+        return "range";
+      }
+    }
+    return "";
   }
   if (mnem == "extr") {
-    let lsb = arm64_gas_imm(ops[3]);
+    let lsb = arm64_gas_bit_count(ops[3]);
     if (lsb < 0 || lsb >= size) {
       return "range";
     }
     return "";
   }
-  if (ops[2].len() == 0 || ops[2][0] != b'#') {
-    return "imm";
-  }
-  let flsb = arm64_gas_imm(ops[2]);
-  let fw = arm64_gas_imm(ops[3]);
+  let flsb = arm64_gas_bit_count(ops[2]);
+  let fw = arm64_gas_bit_count(ops[3]);
   if (flsb < 0 || fw < 1 || flsb + fw > size) {
     return "range";
-  }
-  return "";
-}
-
-function arm64_gas_bad_ror(ops: string[], size: i32): string {
-  if (ops.len() != 3) {
-    return "arity";
-  }
-  if (ops[2].len() > 0 && ops[2][0] == b'#') {
-    let n = arm64_gas_imm(ops[2]);
-    if (n < 0 || n >= size) {
-      return "range";
-    }
   }
   return "";
 }
@@ -7084,8 +7111,8 @@ function arm64_gas_emit_bitfield(own a: Arm64Asm, mnem: string, ops: string[]): 
   if (w) {
     size = 32;
   }
-  let lsb = arm64_gas_imm(ops[2]);
-  let width = arm64_gas_imm(ops[3]);
+  let lsb = arm64_gas_bit_count(ops[2]);
+  let width = arm64_gas_bit_count(ops[3]);
   if (lsb < 0 || width < 1 || lsb + width > size) {
     return a;
   }
@@ -7104,14 +7131,14 @@ function arm64_gas_emit_extr_ror(own a: Arm64Asm, mnem: string, ops: string[]): 
     if (ops.len() < 4) {
       return a;
     }
-    util.push_bytes(a.code, arm64_extr([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_imm(ops[3]), arm64_gas_is_w(ops[0])));
+    util.push_bytes(a.code, arm64_extr([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_bit_count(ops[3]), arm64_gas_is_w(ops[0])));
     return a;
   }
   if (ops.len() < 3) {
     return a;
   }
-  if (ops[2].len() > 0 && ops[2][0] == b'#') {
-    util.push_bytes(a.code, arm64_extr([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])));
+  if (!arm64_gas_data_gp(ops[2])) {
+    util.push_bytes(a.code, arm64_extr([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[1]), arm64_gas_bit_count(ops[2]), arm64_gas_is_w(ops[0])));
     return a;
   }
   util.push_bytes(a.code, arm64_rrr([], 0x9ac02c00, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_is_w(ops[0])));
@@ -7481,8 +7508,8 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
     let bfw = arm64_gas_is_w(ops[0]);
     let bfd = arm64_gas_reg(ops[0]);
     let bfn = arm64_gas_reg(ops[1]);
-    let bfl = arm64_gas_imm(ops[2]);
-    let bfc = arm64_gas_imm(ops[3]);
+    let bfl = arm64_gas_bit_count(ops[2]);
+    let bfc = arm64_gas_bit_count(ops[3]);
     if (mnem == "sbfx") {
       util.push_bytes(a.code, arm64_sbfx([], bfd, bfn, bfl, bfc, bfw));
       return a;

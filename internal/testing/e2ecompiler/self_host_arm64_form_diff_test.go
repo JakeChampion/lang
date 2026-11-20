@@ -233,7 +233,10 @@ func arm64FormCases() []string {
 		add("%s", f)
 	}
 	out = append(out, "fcmp s31, #0.0", "fcmpe d1, #0.0", "adc x0, xzr, lr",
-		"ngc wzr, w1", "madd w0, w1, w2, wzr", "smaddl x0, w1, w2, x3")
+		"ngc wzr, w1", "madd w0, w1, w2, wzr", "smaddl x0, w1, w2, x3",
+		"sbfiz x0, xzr, #63, #1", "ror w0, wzr, w1", "extr lr, fp, xzr, #0",
+		"ror x0, x1, 010", "extr w0, w1, w2, #0b101", "bfi x0, x1, +0x10, 040",
+		"ubfx x0, x1, #-0, #64", "sbfiz w0, w1, #0X1F, #1")
 	return out
 }
 
@@ -310,6 +313,12 @@ func TestSelfHostArm64RefusesUnencodableImmediates(t *testing.T) {
 		"add x1, x2, #5, lsl #13",
 		"and w1, w2, #0x1000000ff",
 		"orr w1, w2, #0x300000001",
+		"ror x0, x1, #4294967296",
+		"extr w0, w1, w2, #18446744073709551616",
+		"bfi x0, x1, #2147483647, #1",
+		"sbfx x0, x1, #0, #4294967297",
+		"ror w0, w1, #08",
+		"ubfx w0, w1, #2, #0xg",
 	}
 	for _, ln := range lines {
 		if _, rejected := gas.program(t, ".text\n"+ln+"\n"); rejected == "" {
@@ -340,6 +349,12 @@ func TestSelfHostArm64RefusesMisplacedRegisters(t *testing.T) {
 		"sbc x0, d1, x2",
 		"adcs x0, sp, x2",
 		"smaddl x0, s1, w2, x3",
+		"ror x0, x1, w2",
+		"ror x0, d1, #7",
+		"extr w0, w1, x2, #3",
+		"bfi sp, x1, #2, #4",
+		"ubfx w0, x1, #2, #8",
+		"bfxil w0, s1, #4, #2",
 	}
 	for _, ln := range lines {
 		if _, rejected := gas.program(t, ".text\n"+ln+"\n"); rejected == "" {
