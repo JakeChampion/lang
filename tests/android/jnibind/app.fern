@@ -5,6 +5,8 @@
 // got, and finishes.
 import "std/android";
 import "std/android/launch";
+import "std/android/keystore";
+import "std/crypto";
 import "std/jni";
 import "std/log";
 import "std/option";
@@ -54,7 +56,8 @@ function check(e: usize, act: bindings.Activity): Result[i32, jni.JavaError] {
   static_part(e)?;
   thrown_part(e)?;
   marks_part(e)?;
-  return Ok(6);
+  keystore_part(e)?;
+  return Ok(7);
 }
 
 // Methods of an object with a string and a boolean result, and a
@@ -163,5 +166,22 @@ function thrown_part(e: usize): Result[void, jni.JavaError] {
   let after = integers.parse_int(e, "7")?;
   integers.release(e);
   log.warn("jnibind: thrown " + thrown + " then " + after.to_string());
+  return Ok(());
+}
+
+// Use the device provider, including its random IV and authentication check.
+function keystore_part(e: usize): Result[void, jni.JavaError] {
+  let alias = "fern.jnibind.test";
+  let data: u8[] = [0u8, 255u8, 37u8];
+  keystore.ensure_key(e, alias)?;
+  let sealed = keystore.seal(e, alias, data)?;
+  keystore.ensure_key(e, alias)?;
+  let again = keystore.seal(e, alias, data)?;
+  let plain = keystore.open(e, alias, sealed)?;
+  let distinct = !crypto.consteq(sealed[:12], again[:12]);
+  let last = sealed.len() - 1;
+  let changed = sealed.with(last, sealed[last] ^ 1u8);
+  let refused = match (keystore.open(e, alias, changed)) { Ok(_) => false, Err(_) => true };
+  log.warn("jnibind: keystore roundtrip " + crypto.consteq(plain, data).to_string() + " fresh iv " + distinct.to_string() + " refused " + refused.to_string());
   return Ok(());
 }
