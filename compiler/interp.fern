@@ -1242,8 +1242,10 @@ function method_ret_type(funcs: Funcs, recv_ty: string, name: string): string {
   let seen = false;
   for at in funcs.named(name) {
     let fd = funcs.decls[at];
-    if (fd.name == name && receiver_matches(fd.receiver_type, recv_ty)) {
-      let rt = applied_ret_type(fd, recv_ty);
+    if (fd.name != name) {
+      continue;
+    }
+    if let Some(rt) = matched_method_result(fd, recv_ty) {
       if (seen && rt != found) {
         return "";
       }
@@ -1254,25 +1256,19 @@ function method_ret_type(funcs: Funcs, recv_ty: string, name: string): string {
   return found;
 }
 
-// receiver_matches reports whether a method declared on `decl` takes a
-// receiver of static type `recv_ty`: the same spelling, or the same generic
-// type with its variables (`Ring[N, T]` for `Ring[2, i32]`).
-function receiver_matches(decl: string, recv_ty: string): boolean {
-  if (decl == recv_ty) {
-    return true;
+// Match the static receiver and substitute its arguments into the result
+// using the same parsed types. An empty result can itself be a match.
+function matched_method_result(fd: parser.FuncDecl, recv_ty: string): Option[string] {
+  if (parser.plain_type_spelling(fd.receiver_type)) {
+    return if (fd.receiver_type == recv_ty) { Some(fd.ret_type) } else { None };
   }
-  let d = parser.parse_type_ref(decl);
-  let r = parser.parse_type_ref(recv_ty);
-  return d.args.len() > 0 && d.base == r.base && d.args.len() == r.args.len();
-}
-
-// applied_ret_type is fd's result type with the receiver's type variables
-// replaced by the arguments of the static receiver type.
-function applied_ret_type(fd: parser.FuncDecl, recv_ty: string): string {
   let d = parser.parse_type_ref(fd.receiver_type);
+  if (d.args.len() == 0) {
+    return if (fd.receiver_type == recv_ty) { Some(fd.ret_type) } else { None };
+  }
   let r = parser.parse_type_ref(recv_ty);
-  if (d.args.len() == 0 || d.args.len() != r.args.len()) {
-    return fd.ret_type;
+  if (d.base != r.base || d.args.len() != r.args.len()) {
+    return None;
   }
   let vars: string[] = [];
   let cts: string[] = [];
@@ -1280,7 +1276,7 @@ function applied_ret_type(fd: parser.FuncDecl, recv_ty: string): string {
     vars = vars.append(d.args[i].base);
     cts = cts.append(parser.render_type_ref(r.args[i]));
   }
-  return parser.subst_ty(fd.ret_type, vars, cts);
+  return Some(parser.subst_ty(fd.ret_type, vars, cts));
 }
 
 function (e: Env) binds_name(name: string): boolean {
