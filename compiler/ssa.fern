@@ -453,8 +453,9 @@ pub function term_name(id: i32): string {
 
 function rewrite_args(ins: SInst, resolved: i32[]): SInst {
   let na: i32[] = [];
-  for i in 0..ins.args.len() {
-    na = na.append(resolved[ins.args[i]]);
+  for a in ins.args {
+    // An argument below zero names no value.
+    na = na.append(if (a >= 0) { resolved[a] } else { a });
   }
   return SInst { kind_tag: ins.kind_tag, result: ins.result, args: na, imm: ins.imm, str: ins.str };
 }
@@ -7001,6 +7002,84 @@ pub function shared_static_boxes(f: SFunc, hard: boolean[]): SFunc {
     return f;
   }
   return rewrite_through(f, flat);
+}
+
+// The static box of a variant with no field has a key that ends in `|`.
+// Such a box that a loop reads gets its address once, at the start of the
+// entry block, and each AGG_LIT of that constant in the function reads that
+// value. A loop then forms no address in each turn. A block is in a loop
+// when a branch from it or from a later block goes to it or to an earlier
+// block.
+pub function hoisted_static_boxes(f: SFunc): SFunc {
+  if (f.blocks.len() < 2 || f.blocks[0].term.kind_tag != TERM_BR) {
+    return f;
+  }
+  let at = block_positions(f);
+  let n = f.blocks.len();
+  let looped = __alloc_bool(n);
+  let any = false;
+  for bi in 0..n {
+    for id in successors(f.blocks[bi].term) {
+      let tgt = position_of(at, id);
+      if (tgt >= 0 && tgt <= bi) {
+        for k in tgt..=bi {
+          looped = looped.with(k, true);
+        }
+        any = true;
+      }
+    }
+  }
+  if (!any) {
+    return f;
+  }
+  let keys: string[] = [];
+  let firsts: SInst[] = [];
+  for bi in 0..n {
+    for ins in f.blocks[bi].insts {
+      if (looped[bi] && ins.kind_tag == AGG_LIT && ins.result >= 0 && ins.str.ends_with("|") && !util.has_str(keys, ins.str)) {
+        keys = keys.append(ins.str);
+        firsts = firsts.append(ins);
+      }
+    }
+  }
+  if (keys.len() == 0) {
+    return f;
+  }
+  let flat: i32[] = [];
+  for v in 0..f.nvals + keys.len() {
+    flat = flat.append(v);
+  }
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == AGG_LIT && ins.result >= 0) {
+        let k = util.index_of_str(keys, ins.str);
+        if (k >= 0) {
+          flat = flat.with(ins.result, f.nvals + k);
+        }
+      }
+    }
+  }
+  // The entry block can read the constant too, so the address goes before
+  // its first instruction that is not a parameter.
+  let entry = f.blocks[0];
+  let insts: SInst[] = [];
+  let placed = false;
+  for ins in entry.insts {
+    if (!placed && ins.kind_tag != PARAM) {
+      for k in 0..keys.len() {
+        insts = insts.append(SInst { ...firsts[k], result: f.nvals + k });
+      }
+      placed = true;
+    }
+    insts = insts.append(ins);
+  }
+  if (!placed) {
+    for k in 0..keys.len() {
+      insts = insts.append(SInst { ...firsts[k], result: f.nvals + k });
+    }
+  }
+  let blocks = f.blocks.with(0, SBlock { ...entry, insts: insts });
+  return rewrite_through(SFunc { ...f, blocks: blocks, nvals: f.nvals + keys.len() }, flat);
 }
 
 // The AGG_LIT of `key` that reaches the end of each block, -1 for none, and
