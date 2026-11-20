@@ -102,12 +102,12 @@ def run_worker(docker, tag, mode, repeat):
         stopped = time.monotonic()
         info = docker.inspect(container)
         state = state_fields(info)
-        logs = docker.call("logs", container)
         observation.update({"state": state, "collector_killed": timed_out,
                             "deadline_seconds_after_ready_observation": DEADLINE if deadline_start else None,
                             "observed_seconds_ready_to_stopped": stopped - deadline_start if deadline_start else None,
-                            "observed_seconds_start_to_stopped": stopped - start,
-                            "stdout": logs.stdout, "stderr": logs.stderr})
+                            "observed_seconds_start_to_stopped": stopped - start})
+        logs = docker.call("logs", container)
+        observation.update({"stdout": logs.stdout, "stderr": logs.stderr})
         if state["Running"] or state["Pid"] != 0 or state["Error"]:
             raise RuntimeError("worker did not stop cleanly")
         if mode == "oom":
