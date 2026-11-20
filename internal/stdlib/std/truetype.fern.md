@@ -85,6 +85,7 @@ The root chunk keeps the order of the declarations.
 // This module reads TrueType fonts and draws their glyphs as coverage maps.
 import "std/array";
 import "std/f64";
+import "std/u64";
 
 // A font in the bytes `data`, with the offsets of its tables. `cmap` is the
 // offset of the character map subtable, of format `cmap_format`. `pairs`
@@ -1566,6 +1567,65 @@ function moved_positions(ps: i32[], idx: i32, delta: i32): i32[] {
   return out;
 }
 
+// Cache a lookup and its first-glyph coverage for use across text runs.
+pub struct PreparedLookup { font: Font, lookup: Lookup, digest: u64 }
+
+pub function (f: Font) prepare_lookup(li: i32, gpos: boolean): PreparedLookup {
+  let table = if (gpos) { f.gpos } else { f.gsub };
+  let l = lookup_of(f, table, gpos, li);
+  return PreparedLookup { font: f, lookup: l, digest: lookup_digest(f.data, l) };
+}
+
+// A set bit allows an exact coverage check. Collisions only cost a check.
+// Use an unrestricted digest when a table would be expensive to summarize.
+function lookup_digest(b: [u8], l: Lookup): u64 {
+  let bits = 0u64;
+  let full = 0xffffffffffffffffu64;
+  let left = 256;
+  if (l.count > left) {
+    return full;
+  }
+  for sub in 0..l.count {
+    let (st, kind) = subtable(b, l, sub);
+    if (context_kind(l, kind) != 0 && u16_at(b, st) == 3) {
+      return full;
+    }
+    let cov = st + u16_at(b, st + 2);
+    let fmt = u16_at(b, cov);
+    let n = u16_at(b, cov + 2);
+    if (fmt != 1 && fmt != 2 || n > left) {
+      return full;
+    }
+    left -= n;
+    for k in 0..n {
+      if (fmt == 1) {
+        bits |= 1u64 << (u16_at(b, cov + 4 + 2 * k) & 63) as u64;
+      } else {
+        let at = cov + 4 + 6 * k;
+        let lo = u16_at(b, at);
+        let hi = u16_at(b, at + 2);
+        if (hi < lo || hi - lo >= 63) {
+          return full;
+        }
+        let mask = (1u64 << (hi - lo + 1) as u64) - 1u64;
+        bits |= mask.rotate_left(lo & 63);
+      }
+    }
+    if (bits == full) {
+      return full;
+    }
+  }
+  return bits;
+}
+
+pub function (p: PreparedLookup) apply(r: Run, mask: i32, opts: i32): Run {
+  let l = Lookup { ...p.lookup, opts: opts, base: r.glyphs.len() };
+  if (!l.gpos && l.count > 0 && subtable(p.font.data, l, 0).1 == 8) {
+    return reverse_substituted(p.font, r, l, mask);
+  }
+  return applied_to_each(p.font, r, l, mask, p.digest);
+}
+
 // `r` after the GSUB lookup `li` at each glyph whose mask has a bit of
 // `mask`, with the flags `opts`.
 pub function (f: Font) substitute(r: Run, li: i32, mask: i32, opts: i32): Run {
@@ -1573,24 +1633,29 @@ pub function (f: Font) substitute(r: Run, li: i32, mask: i32, opts: i32): Run {
   if (l.count > 0 && subtable(f.data, l, 0).1 == 8) {
     return reverse_substituted(f, r, l, mask);
   }
-  return applied_to_each(f, r, l, mask);
+  return applied_to_each(f, r, l, mask, 0xffffffffffffffffu64);
 }
 
 // `r` after the GPOS lookup `li` at each glyph whose mask has a bit of
 // `mask`, with the flags `opts`. `r` has its advances from `with_advances`.
 pub function (f: Font) position(r: Run, li: i32, mask: i32, opts: i32): Run {
-  return applied_to_each(f, r, Lookup { ...lookup_of(f, f.gpos, true, li), opts: opts, base: r.glyphs.len() }, mask);
+  return applied_to_each(f, r, Lookup { ...lookup_of(f, f.gpos, true, li), opts: opts, base: r.glyphs.len() }, mask, 0xffffffffffffffffu64);
 }
 
 // `r` after `l` at each glyph whose mask has a bit of `mask`, from the first
 // glyph to the last. Each glyph that `l` tries takes one from the attempts of
 // the run, and the lookup stops when none are left.
-function applied_to_each(f: Font, r: Run, l: Lookup, mask: i32): Run {
+function applied_to_each(f: Font, r: Run, l: Lookup, mask: i32, digest: u64): Run {
   let run = r;
   let budget = r.ops;
   let i = 0;
   while (i < run.glyphs.len() && budget > 0) {
     if ((run.masks[i] & mask) == 0 || skipped(f, l, run, i)) {
+      i += 1;
+      continue;
+    }
+    if ((digest & 1u64 << (run.glyphs[i] & 63) as u64) == 0u64) {
+      budget -= 1;
       i += 1;
       continue;
     }
