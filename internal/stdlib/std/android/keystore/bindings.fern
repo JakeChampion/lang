@@ -18,10 +18,7 @@ pub struct KeyStoreClass { class: usize, id_get_instance: usize, id_get_key: usi
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function key_store_class(e: usize): Result[KeyStoreClass, jni.JavaError] {
-  let local = jni.find_class(e, "java/security/KeyStore");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "java/security/KeyStore")?;
   let id_get_instance = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getInstance", "(Ljava/lang/String;)Ljava/security/KeyStore;"))?;
   let id_get_key = jni.checked_id(e, class, jni.get_method_id(e, class, "getKey", "(Ljava/lang/String;[C)Ljava/security/Key;"))?;
   let id_load = jni.checked_id(e, class, jni.get_method_id(e, class, "load", "(Ljava/security/KeyStore$LoadStoreParameter;)V"))?;
@@ -85,10 +82,7 @@ pub struct KeyGeneratorClass { class: usize, id_generate_key: usize, id_get_inst
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function key_generator_class(e: usize): Result[KeyGeneratorClass, jni.JavaError] {
-  let local = jni.find_class(e, "javax/crypto/KeyGenerator");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "javax/crypto/KeyGenerator")?;
   let id_generate_key = jni.checked_id(e, class, jni.get_method_id(e, class, "generateKey", "()Ljavax/crypto/SecretKey;"))?;
   let id_get_instance = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getInstance", "(Ljava/lang/String;Ljava/lang/String;)Ljavax/crypto/KeyGenerator;"))?;
   let id_init = jni.checked_id(e, class, jni.get_method_id(e, class, "init", "(Ljava/security/spec/AlgorithmParameterSpec;)V"))?;
@@ -151,10 +145,7 @@ pub struct KeyGenParameterSpec_BuilderClass { class: usize, id_new: usize, id_bu
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function key_gen_parameter_spec_builder_class(e: usize): Result[KeyGenParameterSpec_BuilderClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/security/keystore/KeyGenParameterSpec$Builder");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/security/keystore/KeyGenParameterSpec$Builder")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;I)V"))?;
   let id_build = jni.checked_id(e, class, jni.get_method_id(e, class, "build", "()Landroid/security/keystore/KeyGenParameterSpec;"))?;
   let id_set_block_modes = jni.checked_id(e, class, jni.get_method_id(e, class, "setBlockModes", "([Ljava/lang/String;)Landroid/security/keystore/KeyGenParameterSpec$Builder;"))?;
@@ -237,10 +228,7 @@ pub struct CipherClass { class: usize, id_do_final: usize, id_get_iv: usize, id_
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function cipher_class(e: usize): Result[CipherClass, jni.JavaError] {
-  let local = jni.find_class(e, "javax/crypto/Cipher");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "javax/crypto/Cipher")?;
   let id_do_final = jni.checked_id(e, class, jni.get_method_id(e, class, "doFinal", "([B)[B"))?;
   let id_get_iv = jni.checked_id(e, class, jni.get_method_id(e, class, "getIV", "()[B"))?;
   let id_get_instance = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getInstance", "(Ljava/lang/String;)Ljavax/crypto/Cipher;"))?;
@@ -325,10 +313,7 @@ pub struct GCMParameterSpecClass { class: usize, id_new: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function gcmparameter_spec_class(e: usize): Result[GCMParameterSpecClass, jni.JavaError] {
-  let local = jni.find_class(e, "javax/crypto/spec/GCMParameterSpec");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "javax/crypto/spec/GCMParameterSpec")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(I[B)V"))?;
   return Ok(GCMParameterSpecClass { class: class, id_new: id_new });
 }

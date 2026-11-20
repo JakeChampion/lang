@@ -85,6 +85,7 @@ The root chunk keeps the order of the declarations.
 // This module reads TrueType fonts and draws their glyphs as coverage maps.
 import "std/array";
 import "std/f64";
+import "std/u64";
 
 // A font in the bytes `data`, with the offsets of its tables. `cmap` is the
 // offset of the character map subtable, of format `cmap_format`. `pairs`
@@ -748,13 +749,13 @@ function feature_tables(b: [u8], t: i32, script: string, feature: string): i32[]
     return out;
   }
   let features = t + u16_at(b, t + 6);
-  let indices = [u16_at(b, ls + 2)];
-  for k in 0..u16_at(b, ls + 4) {
-    indices = indices.append(u16_at(b, ls + 6 + 2 * k));
-  }
-  for fi in indices {
+  let count = u16_at(b, features);
+  // The required feature precedes the count and the optional feature indices.
+  for k in 0..1 + u16_at(b, ls + 4) {
+    let at = if (k == 0) { ls + 2 } else { ls + 4 + 2 * k };
+    let fi = u16_at(b, at);
     let r = features + 2 + 6 * fi;
-    if (fi < u16_at(b, features) && tag_is(b, r, feature)) {
+    if (fi < count && tag_is(b, r, feature)) {
       out = out.append(features + u16_at(b, r + 4));
     }
   }
@@ -766,10 +767,15 @@ function feature_tables(b: [u8], t: i32, script: string, feature: string): i32[]
 // `zero_context` a chain context with glyphs before or after its input does
 // not apply.
 pub function (f: Font) would_substitute(script: string, feature: string, gs: i32[], zero_context: boolean): boolean {
+  return f.would_substitute_lookups(f.feature_lookups(script, feature), gs, zero_context);
+}
+
+// Test GSUB lookup indices already selected for a font and script.
+pub function (f: Font) would_substitute_lookups(lookups: i32[], gs: i32[], zero_context: boolean): boolean {
   if (gs.len() == 0) {
     return false;
   }
-  for li in f.feature_lookups(script, feature) {
+  for li in lookups {
     let l = lookup_of(f, f.gsub, false, li);
     for s in 0..l.count {
       let (st, kind) = subtable(f.data, l, s);
@@ -814,7 +820,10 @@ function ligature_would_apply(b: [u8], st: i32, cov: i32, gs: i32[]): boolean {
 
 // Whether a rule of the context subtable `st` has the input `gs`.
 function context_would_apply(b: [u8], st: i32, kind: i32, cov: i32, gs: i32[], zero_context: boolean): boolean {
-  for rule in rules_of(b, st, kind, cov, gs[0]) {
+  let format = u16_at(b, st);
+  let set = rule_set(b, st, kind, cov, gs[0], format);
+  for k in 0..rule_count(b, set, format) {
+    let rule = context_rule(b, st, set, kind, format, k);
     let from = if (rule.first) { 1 } else { 0 };
     let bare = rule.back.n == 0 && rule.ahead.n == 0;
     if ((bare || !zero_context) && rule.input.n + from == gs.len() && seq_matches(b, rule.input, gs, from)) {
@@ -835,20 +844,25 @@ function seq_matches(b: [u8], s: Seq, gs: i32[], from: i32): boolean {
 }
 
 // The sorted `xs` with `v`, when it does not hold `v`.
-function inserted(xs: i32[], v: i32): i32[] {
-  let out: i32[] = [];
-  let put = false;
-  for x in xs {
-    if (x == v) {
-      return xs;
-    }
-    if (!put && x > v) {
-      out = out.append(v);
-      put = true;
-    }
-    out = out.append(x);
+function inserted(own xs: i32[], v: i32): i32[] {
+  let n = xs.len();
+  let at = n;
+  while (at > 0 && xs[at - 1] > v) {
+    at -= 1;
   }
-  return if (put) { out } else { out.append(v) };
+  if (at > 0 && xs[at - 1] == v) {
+    return xs;
+  }
+  if (at == n) {
+    return xs.append(v);
+  }
+  xs = xs.append(v);
+  let k = n;
+  while (k > at) {
+    xs = xs.with(k, xs[k - 1]);
+    k -= 1;
+  }
+  return xs.with(at, v);
 }
 
 // The lookup `li` of the GSUB or GPOS table at `t`.
@@ -1431,7 +1445,10 @@ function following_parts(out: i32[], ls: i32[], from: i32, last_id: i32, id: i32
 // `r` after the first rule of the context subtable at `st` that matches at
 // `i`, and the index of the glyph after its input, or -1.
 function contextual(f: Font, own r: Run, l: Lookup, st: i32, kind: i32, cov: i32, i: i32, mask: i32, budget: i32): (Run, i32, i32) {
-  for rule in rules_of(f.data, st, kind, cov, r.glyphs[i]) {
+  let format = u16_at(f.data, st);
+  let set = rule_set(f.data, st, kind, cov, r.glyphs[i], format);
+  for k in 0..rule_count(f.data, set, format) {
+    let rule = context_rule(f.data, st, set, kind, format, k);
     let ps = matched_input(f, r, l, mask, i, rule.input, rule.first);
     // HarfBuzz keeps the glyphs before the input in the syllable only while
     // the lookup has not changed the count of glyphs, and the glyphs after
@@ -1444,54 +1461,50 @@ function contextual(f: Font, own r: Run, l: Lookup, st: i32, kind: i32, cov: i32
   return (r, -1, budget);
 }
 
-// The rules of the context subtable at `st` to try for the glyph `g`, whose
-// coverage index is `cov`.
-function rules_of(b: [u8], st: i32, kind: i32, cov: i32, g: i32): Rule[] {
-  let format = u16_at(b, st);
-  let rules: Rule[] = [];
+// The rule-set offset for glyph g in context formats 1 and 2, or zero
+// when absent. Format 3 stores its single rule directly in the subtable.
+function rule_set(b: [u8], st: i32, kind: i32, cov: i32, g: i32, format: i32): i32 {
+  let sets = st + 6;
+  let index = cov;
+  if (format == 2) {
+    let input = if (kind == 5) { st + 4 } else { st + 6 };
+    index = class_of(b, st + u16_at(b, input), g);
+    sets += if (kind == 5) { 2 } else { 6 };
+  } else if (format != 1) {
+    return 0;
+  }
+  if (index >= u16_at(b, sets - 2)) {
+    return 0;
+  }
+  let offset = u16_at(b, sets + 2 * index);
+  return if (offset == 0) { 0 } else { st + offset };
+}
+
+function rule_count(b: [u8], set: i32, format: i32): i32 {
   if (format == 3) {
-    return [format3_rule(b, st, kind)];
+    return 1;
   }
-  let cdefs = class_defs(b, st, kind, format);
-  let sets = st + 6 + 2 * cdefs.filter((c: i32): boolean => c != 0).len();
-  let index = if (format == 1) { cov } else { class_of(b, cdefs[1], g) };
-  let set = if (format >= 1 && format <= 2 && index < u16_at(b, sets - 2)) { u16_at(b, sets + 2 * index) } else { 0 };
-  if (set == 0) {
-    return rules;
-  }
-  for k in 0..u16_at(b, st + set) {
-    rules = rules.append(rule_at(b, st + set + u16_at(b, st + set + 2 + 2 * k), kind, format - 1, cdefs));
-  }
-  return rules;
+  return if (set == 0) { 0 } else { u16_at(b, set) };
 }
 
-// The offsets of the class definitions of a context subtable of format 2:
-// for the glyphs before the input, the input, and the glyphs after it. A
-// subtable of format 1, or of type 5, has 0 for those that it does not have.
-function class_defs(b: [u8], st: i32, kind: i32, format: i32): i32[] {
-  if (format != 2) {
-    return [0, 0, 0];
+function context_rule(b: [u8], st: i32, set: i32, kind: i32, format: i32, k: i32): Rule {
+  if (format == 3) {
+    return format3_rule(b, st, kind);
   }
-  if (kind == 5) {
-    return [0, st + u16_at(b, st + 4), 0];
-  }
-  return [st + u16_at(b, st + 4), st + u16_at(b, st + 6), st + u16_at(b, st + 8)];
-}
-
-// The rule of format 1 or 2 at `at`, with values of `kind` 0 or 1. A rule
-// of type 5 has no glyphs before or after its input.
-function rule_at(b: [u8], at: i32, kind: i32, values: i32, cdefs: i32[]): Rule {
+  let at = set + u16_at(b, set + 2 + 2 * k);
+  let values = format - 1;
+  let input_class = if (format == 2) { st + u16_at(b, st + (if (kind == 5) { 4 } else { 6 })) } else { 0 };
   let empty = Seq { kind: 0, table: 0, at: 0, n: 0 };
   if (kind == 5) {
     let n = u16_at(b, at);
-    return Rule { back: empty, input: Seq { kind: values, table: cdefs[1], at: at + 4, n: n - 1 }, first: true, ahead: empty, records: at + 4 + 2 * (n - 1), count: u16_at(b, at + 2) };
+    return Rule { back: empty, input: Seq { kind: values, table: input_class, at: at + 4, n: n - 1 }, first: true, ahead: empty, records: at + 4 + 2 * (n - 1), count: u16_at(b, at + 2) };
   }
   let nb = u16_at(b, at);
   let ni = at + 2 + 2 * nb;
   let n = u16_at(b, ni);
   let na = ni + 2 * n;
   let rc = na + 2 + 2 * u16_at(b, na);
-  return Rule { back: Seq { kind: values, table: cdefs[0], at: at + 2, n: nb }, input: Seq { kind: values, table: cdefs[1], at: ni + 2, n: n - 1 }, first: true, ahead: Seq { kind: values, table: cdefs[2], at: na + 2, n: u16_at(b, na) }, records: rc + 2, count: u16_at(b, rc) };
+  return Rule { back: Seq { kind: values, table: if (format == 2) { st + u16_at(b, st + 4) } else { 0 }, at: at + 2, n: nb }, input: Seq { kind: values, table: input_class, at: ni + 2, n: n - 1 }, first: true, ahead: Seq { kind: values, table: if (format == 2) { st + u16_at(b, st + 8) } else { 0 }, at: na + 2, n: u16_at(b, na) }, records: rc + 2, count: u16_at(b, rc) };
 }
 
 // The rule of the subtable of format 3 at `st`, with coverage tables.
@@ -1561,6 +1574,65 @@ function moved_positions(ps: i32[], idx: i32, delta: i32): i32[] {
   return out;
 }
 
+// Cache a lookup and its first-glyph coverage for use across text runs.
+pub struct PreparedLookup { font: Font, lookup: Lookup, digest: u64 }
+
+pub function (f: Font) prepare_lookup(li: i32, gpos: boolean): PreparedLookup {
+  let table = if (gpos) { f.gpos } else { f.gsub };
+  let l = lookup_of(f, table, gpos, li);
+  return PreparedLookup { font: f, lookup: l, digest: lookup_digest(f.data, l) };
+}
+
+// A set bit allows an exact coverage check. Collisions only cost a check.
+// Use an unrestricted digest when a table would be expensive to summarize.
+function lookup_digest(b: [u8], l: Lookup): u64 {
+  let bits = 0u64;
+  let full = 0xffffffffffffffffu64;
+  let left = 256;
+  if (l.count > left) {
+    return full;
+  }
+  for sub in 0..l.count {
+    let (st, kind) = subtable(b, l, sub);
+    if (context_kind(l, kind) != 0 && u16_at(b, st) == 3) {
+      return full;
+    }
+    let cov = st + u16_at(b, st + 2);
+    let fmt = u16_at(b, cov);
+    let n = u16_at(b, cov + 2);
+    if (fmt != 1 && fmt != 2 || n > left) {
+      return full;
+    }
+    left -= n;
+    for k in 0..n {
+      if (fmt == 1) {
+        bits |= 1u64 << (u16_at(b, cov + 4 + 2 * k) & 63) as u64;
+      } else {
+        let at = cov + 4 + 6 * k;
+        let lo = u16_at(b, at);
+        let hi = u16_at(b, at + 2);
+        if (hi < lo || hi - lo >= 63) {
+          return full;
+        }
+        let mask = (1u64 << (hi - lo + 1) as u64) - 1u64;
+        bits |= mask.rotate_left(lo & 63);
+      }
+    }
+    if (bits == full) {
+      return full;
+    }
+  }
+  return bits;
+}
+
+pub function (p: PreparedLookup) apply(r: Run, mask: i32, opts: i32): Run {
+  let l = Lookup { ...p.lookup, opts: opts, base: r.glyphs.len() };
+  if (!l.gpos && l.count > 0 && subtable(p.font.data, l, 0).1 == 8) {
+    return reverse_substituted(p.font, r, l, mask);
+  }
+  return applied_to_each(p.font, r, l, mask, p.digest);
+}
+
 // `r` after the GSUB lookup `li` at each glyph whose mask has a bit of
 // `mask`, with the flags `opts`.
 pub function (f: Font) substitute(r: Run, li: i32, mask: i32, opts: i32): Run {
@@ -1568,24 +1640,29 @@ pub function (f: Font) substitute(r: Run, li: i32, mask: i32, opts: i32): Run {
   if (l.count > 0 && subtable(f.data, l, 0).1 == 8) {
     return reverse_substituted(f, r, l, mask);
   }
-  return applied_to_each(f, r, l, mask);
+  return applied_to_each(f, r, l, mask, 0xffffffffffffffffu64);
 }
 
 // `r` after the GPOS lookup `li` at each glyph whose mask has a bit of
 // `mask`, with the flags `opts`. `r` has its advances from `with_advances`.
 pub function (f: Font) position(r: Run, li: i32, mask: i32, opts: i32): Run {
-  return applied_to_each(f, r, Lookup { ...lookup_of(f, f.gpos, true, li), opts: opts, base: r.glyphs.len() }, mask);
+  return applied_to_each(f, r, Lookup { ...lookup_of(f, f.gpos, true, li), opts: opts, base: r.glyphs.len() }, mask, 0xffffffffffffffffu64);
 }
 
 // `r` after `l` at each glyph whose mask has a bit of `mask`, from the first
 // glyph to the last. Each glyph that `l` tries takes one from the attempts of
 // the run, and the lookup stops when none are left.
-function applied_to_each(f: Font, r: Run, l: Lookup, mask: i32): Run {
+function applied_to_each(f: Font, r: Run, l: Lookup, mask: i32, digest: u64): Run {
   let run = r;
   let budget = r.ops;
   let i = 0;
   while (i < run.glyphs.len() && budget > 0) {
     if ((run.masks[i] & mask) == 0 || skipped(f, l, run, i)) {
+      i += 1;
+      continue;
+    }
+    if ((digest & 1u64 << (run.glyphs[i] & 63) as u64) == 0u64) {
+      budget -= 1;
       i += 1;
       continue;
     }

@@ -41,7 +41,7 @@ A `?` after a member is the mark of a member that an older device does not have,
 
 A `string` argument is never the Java value `null`. A `?` before `Ljava/lang/String;` in the descriptor of a member is the mark of a parameter that can be `null`, as in `setAction(?Ljava/lang/String;)Landroid/content/Intent;`. That parameter is an `Option[string]`, and `None` is `null`.
 
-`generate` gives an error for a request whose class is not in the classes, and for a member that the class does not have. It also gives an error for two requests whose classes have one simple name. It writes a getter for each nonconstant field. Floating-point constants preserve signed zero and infinities. Java NaNs become Fern NaNs.
+`generate` gives an error for a request whose class is not in the classes, and for a member that the class does not have. It also gives an error for two requests whose classes have one simple name. Each mutable field has a typed setter named `set_<field>` that shares its getter’s cached field ID. Final fields are read-only. Floating-point constants preserve signed zero and infinities. Java NaNs become Fern NaNs.
 
 ## Module assembly
 
@@ -422,7 +422,7 @@ function ancestors(classes: classfile.Class[], c: classfile.Class): string[] {
 // `has` is the name of the function that tests for the member, or ""
 // for a member that each device has. `nullable` has the places of the
 // String parameters that can be null.
-struct Bound { name: string, java: string, descriptor: string, is_static: boolean, is_field: boolean, has: string, nullable: i32[] }
+struct Bound { name: string, java: string, descriptor: string, is_static: boolean, is_field: boolean, setter: string, has: string, nullable: i32[] }
 
 function is_static(access: i32): boolean {
   return classfile.has(access, classfile.STATIC);
@@ -471,15 +471,27 @@ function bound_members(methods: classfile.Method[], fields: classfile.Field[], w
   // Each struct of IDs has a function with the name `release`.
   let used: string[] = ["release"];
   for m in methods {
-    let b = marked(Bound { name: free_name(method_name(m, count_named(methods, m.name) > 1), used), java: m.name, descriptor: m.descriptor, is_static: is_static(m.access), is_field: false, has: "", nullable: [] }, wants, used);
+    let b = marked(Bound { name: free_name(method_name(m, count_named(methods, m.name) > 1), used), java: m.name, descriptor: m.descriptor, is_static: is_static(m.access), is_field: false, setter: "", has: "", nullable: [] }, wants, used);
     used = used.append(b.name).append(b.has);
     out = out.append(b);
   }
   for f in fields {
     if (!is_constant(f)) {
-      let b = marked(Bound { name: free_name(snake(f.name), used), java: f.name, descriptor: f.descriptor, is_static: is_static(f.access), is_field: true, has: "", nullable: [] }, wants, used);
+      let b = marked(Bound { name: free_name(snake(f.name), used), java: f.name, descriptor: f.descriptor, is_static: is_static(f.access), is_field: true, setter: "", has: "", nullable: [] }, wants, used);
       used = used.append(b.name).append(b.has);
+      if (!classfile.has(f.access, classfile.FINAL)) {
+        b = Bound { ...b, setter: "set_" + b.name };
+      }
       out = out.append(b);
+    }
+  }
+  // Reserve method, getter and presence-test names before naming setters.
+  for i in 0..out.len() {
+    let m = out[i];
+    if (m.setter != "") {
+      let setter = free_name(m.setter, used);
+      used = used.append(setter);
+      out = out.with(i, Bound { ...m, setter: setter });
     }
   }
   return out;
@@ -575,8 +587,7 @@ function class_struct(c: classfile.Class, members: Bound[]): string {
   let out = "// The class " + java_name(c.name) + " and the IDs of its members.\npub struct " + t + "Class { " + fields + " }\n\n";
   out += "// One lookup for each member, and each one can fail.\n// fern-lint: allow cyclomatic-complexity\n";
   out += "pub function " + snake(t) + "_class(e: usize): Result[" + t + "Class, jni.JavaError] {\n";
-  out += "  let local = jni.find_class(e, " + quoted(c.name) + ");\n  jni.check(e)?;\n";
-  out += "  let class = jni.new_global_ref(e, local);\n  jni.delete_local_ref(e, local);\n";
+  out += "  let class = jni.global_class(e, " + quoted(c.name) + ")?;\n";
   out += finds + "  return Ok(" + t + "Class { " + values + " });\n}\n\n";
   out += "// Deletes the reference to the class. Do not use `c` after this call.\n";
   return out + "pub function (c: " + t + "Class) release(e: usize): void {\n  jni.delete_global_ref(e, c.class);\n}\n\n";
@@ -764,6 +775,32 @@ function method_function(c: classfile.Class, m: Bound, sig: classfile.Signature,
   return out + "  jni.free_buffer(args);\n" + ending(result, bound);
 }
 
+function field_setter(c: classfile.Class, m: Bound, kind: classfile.Type, bound: string[]): string {
+  let t = type_name(c.name);
+  let out = "pub function (c: " + t + "Class) " + m.setter + "(" + parameters(t, m, [], bound) + ", value: " + fern_type(kind, bound) + "): Result[void, jni.JavaError] {\n";
+  out += absent_lines(c, m);
+  let dest = target(m) + ", c.id_" + m.name;
+  let slot = result_index(kind);
+  if (slot == 7 || slot == 8) {
+    let prefix = if (m.is_static) { "jni.set_static_" } else { "jni.set_" };
+    let suffix = if (slot == 7) { "float_field" } else { "double_field" };
+    out += "  " + prefix + suffix + "(e, " + dest + ", value);\n";
+  } else {
+    let value = "value as usize";
+    if (is_string(kind)) {
+      out += "  let text = jni.checked_string(e, value)?;\n  defer jni.delete_local_ref(e, text);\n";
+      value = "text";
+    } else if (slot == 0) {
+      value = "value.ref";
+    } else if (slot == 1) {
+      value = "jni.jbool(value)";
+    }
+    let base = if (m.is_static) { "jni.SET_STATIC_FIELD" } else { "jni.SET_FIELD" };
+    out += "  jni.invoke(e, " + base + " + " + slot.to_string() + ", " + dest + ", " + value + ");\n";
+  }
+  return out + "  return jni.check(e);\n}\n\n";
+}
+
 function field_function(c: classfile.Class, m: Bound, kind: classfile.Type, bound: string[]): string {
   let t = type_name(c.name);
   let entry = "jni.GET_FIELD + " + result_index(kind).to_string();
@@ -781,7 +818,11 @@ function member_function(c: classfile.Class, m: Bound, bound: string[]): Result[
     let Some(kind) = classfile.field_type(m.descriptor) else {
       return Err(c.name + "." + m.java + " has a descriptor that is not a type");
     };
-    return Ok(field_function(c, m, kind, bound));
+    let getter = field_function(c, m, kind, bound);
+    if (m.setter == "") {
+      return Ok(getter);
+    }
+    return Ok(getter + field_setter(c, m, kind, bound));
   }
   let Some(sig) = classfile.signature(m.descriptor) else {
     return Err(c.name + "." + m.java + " has a descriptor that is not a signature");

@@ -43,6 +43,7 @@ pub function keep_one(ctx: usize): i32 {
 #include <dlfcn.h>
 
 static int frames, globals, next = 1000, nnames, nstrings, tv = 1, inserts = 1;
+static int fail_global_after = -1;
 static char log_[16384];
 static const char *names[256];
 static int arities[256];
@@ -82,6 +83,7 @@ static int arity(const char *sig) {
   return n;
 }
 static uintptr_t method(uintptr_t e, uintptr_t cls, const char *name, const char *sig) {
+  require(cls != 0, "method lookup on a null class");
   require(nnames < 256, "too many method ids");
   arities[nnames] = arity(sig);
   names[nnames++] = strdup(name);
@@ -105,7 +107,10 @@ static int32_t icall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *a
 static uintptr_t vcall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) { note_call(name_of(id), args, arities[id - 1]); return 0; }
 static uintptr_t new_array(uintptr_t e, int32_t n, uintptr_t cls, uintptr_t init) { uint64_t args[1] = {(uint64_t)n}; note_call("array", args, 1); return fresh(); }
 static void set_element(uintptr_t e, uintptr_t array, int32_t index, uintptr_t value) { uint64_t args[1] = {value}; note_call("element", args, 1); }
-static uintptr_t new_global(uintptr_t e, uintptr_t ref) { globals++; return ref; }
+static uintptr_t new_global(uintptr_t e, uintptr_t ref) {
+  if (globals == fail_global_after) return 0;
+  globals++; return ref;
+}
 static void delete_global(uintptr_t e, uintptr_t ref) { require(globals > 0, "a global reference deleted twice"); globals--; }
 static const char *fail_string;
 static uintptr_t tracked_key;
@@ -186,6 +191,9 @@ int main(int argc, char **argv) {
   require(has_rows((uintptr_t)ctx) == 0 && add_one((uintptr_t)ctx) == -1 && frames == 0 && globals == 0, "no rows with no leanback");
   require(has("getPackageManager();hasSystemFeature('android.software.leanback');") && !has("insert("), "the feature of the rows");
   tv = 1;
+  fail_global_after = 1;
+  require(add_one((uintptr_t)ctx) == -1 && frames == 0 && globals == 0, "class promotion failure releases earlier classes and frame");
+  fail_global_after = -1;
   require(has_rows((uintptr_t)ctx) == 1 && frames == 0, "a jboolean is its low 8 bits");
 
   log_[0] = 0;

@@ -61,7 +61,7 @@ function test_structs(): test.TestOutcome {
       "pub function (x: Point) as_shape(): Shape {",
       "pub struct ShapeClass { class: usize, id_area: usize }",
       "// fern-lint: allow cyclomatic-complexity\npub function point_class(e: usize): Result[PointClass, jni.JavaError] {",
-      "jni.find_class(e, \"dev/fern/Point\");",
+      "jni.global_class(e, \"dev/fern/Point\")?;",
       "let id_parse = jni.checked_id(e, class, jni.get_static_method_id(e, class, \"parse\", \"(Ljava/lang/String;)Ldev/fern/Point;\"))?;",
       "let id_x = jni.checked_id(e, class, jni.get_field_id(e, class, \"x\", \"I\"))?;",
       "let id_made = jni.checked_id(e, class, jni.get_static_field_id(e, class, \"made\", \"J\"))?;",
@@ -124,6 +124,34 @@ function test_calls(): test.TestOutcome {
       "return Ok(got as i32 << 24 >> 24);",
       "return Ok((got & 65535 as usize) as i32);",
       "return Ok((got & 255 as usize) != 0 as usize);",
+    ]),
+    "",
+  );
+}
+
+function test_field_setters(): test.TestOutcome {
+  let point = classes()[2];
+  let field = classfile.Field { name: "ratio", descriptor: "F", access: classfile.PUBLIC, constant: None };
+  let fields = [
+    field,
+    classfile.Field { ...field, name: "scale", descriptor: "D", access: classfile.PUBLIC | classfile.STATIC },
+    classfile.Field { ...field, name: "fixed", access: classfile.PUBLIC | classfile.FINAL },
+    classfile.Field { ...field, name: "setRatio", descriptor: "Z" },
+  ];
+  let request = bind.Request { class: point.name, members: ["ratio?", "scale", "fixed", "setRatio"] };
+  let Ok(text) = bind.generate([classfile.Class { ...point, fields: fields }], [request]) else {
+    return test.fail("field binding generation");
+  };
+  if (text.contains(") set_fixed(")) {
+    return test.fail("setter for final field");
+  }
+  return test.assert_eq(
+    absent(text, [
+      // The setRatio field owns the set_ratio getter. The ratio setter gets a distinct name.
+      "set_ratio_(e: usize, self: Point, value: f32): Result[void, jni.JavaError] {\n  if (c.id_ratio == 0 as usize)",
+      "jni.set_float_field(e, self.ref, c.id_ratio, value);",
+      "jni.set_static_double_field(e, c.class, c.id_scale, value);",
+      "jni.invoke(e, jni.SET_FIELD + 1, self.ref, c.id_set_ratio, jni.jbool(value));",
     ]),
     "",
   );
@@ -283,6 +311,7 @@ function main(): i32 {
   r = r.it("a class with no request is a jni.Object", test_unbound_class);
   r = r.it("a function has the Fern types of its Java member", test_signatures);
   r = r.it("a function calls the entry for its kind of result", test_calls);
+  r = r.it("mutable fields share the getter ID with typed setters", test_field_setters);
   r = r.it("a constant field is a constant of the module", test_constants);
   r = r.it("the module of the sample has its constants", test_sample_module);
   r = r.it("a request with members binds only them", test_members);

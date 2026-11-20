@@ -643,7 +643,7 @@ function with a frame and no such body is a refusal.
 `FERN_RC_CERTIFY=report` turns refusals into a census line for each
 function. The line gives the tracked and the unproved values and the
 findings. An `at=` field names each unproved value as
-`FERN_RC_CERTIFY_DUMP` prints it. The line also gives the most rounds a walk
+`FERN_DEBUG_RC_CERTIFY_DUMP` prints it. The line also gives the most rounds a walk
 took to settle, and any failure or opaque callee. A runtime unit's gate prints its census too.
 
 `FERN_RC_CERTIFY=mutate` adds three mutants of each function that passes: its
@@ -800,10 +800,10 @@ In the order they are usually reached for:
    rather than where the machine code falls over.
 3. `FERN_RC_CERTIFY=report` with `FERN_RC_CERTIFY_MEMO=0`: the certifier's
    census over every function (`FERN_RC_CERTIFY=mutate` adds the mutant
-   outcomes), and `FERN_RC_CERTIFY_DUMP=<name>` (or a
+   outcomes), and `FERN_DEBUG_RC_CERTIFY_DUMP=<name>` (or a
    `<prefix>*`) to print the lifted SSA it read, under the report mode and at
    a refusal.
-4. `FERN_SEM_DUMP=<function>`: the semantic graph as the inliner leaves it,
+4. `FERN_DEBUG_SEM_DUMP=<function>`: the semantic graph as the inliner leaves it,
    before the plan.
 5. `FERN_CLIFF_REPORT=1` on a run of the compiled program: how many appends
    found their array shared with room to spare and how many bytes they copied

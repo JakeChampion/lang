@@ -1,0 +1,502 @@
+// Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
+import "std/jni";
+import "std/option";
+
+// A android.content.Context.
+pub struct Context { ref: usize }
+
+pub function (x: Context) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Context) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.Context and the IDs of its members.
+pub struct ContextClass { class: usize, id_get_external_files_dir: usize, id_get_system_service: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/Context")?;
+  let id_get_external_files_dir = jni.checked_id(e, class, jni.get_method_id(e, class, "getExternalFilesDir", "(Ljava/lang/String;)Ljava/io/File;"))?;
+  let id_get_system_service = jni.checked_id(e, class, jni.get_method_id(e, class, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;"))?;
+  return Ok(ContextClass { class: class, id_get_external_files_dir: id_get_external_files_dir, id_get_system_service: id_get_system_service });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ContextClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.Context.getExternalFilesDir(Ljava/lang/String;)Ljava/io/File;
+pub function (c: ContextClass) get_external_files_dir(e: usize, self: Context, a0: Option[string]): Result[File, jni.JavaError] {
+  let s0 = 0 as usize;
+  if let Some(t0) = a0 {
+    s0 = jni.checked_string(e, t0)?;
+  }
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_external_files_dir, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(File { ref: got });
+}
+
+// android.content.Context.getSystemService(Ljava/lang/String;)Ljava/lang/Object;
+pub function (c: ContextClass) get_system_service(e: usize, self: Context, a0: string): Result[jni.Object, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_system_service, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// A android.app.DownloadManager.
+pub struct DownloadManager { ref: usize }
+
+pub function (x: DownloadManager) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: DownloadManager) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.app.DownloadManager and the IDs of its members.
+pub struct DownloadManagerClass { class: usize, id_enqueue: usize, id_query: usize, id_remove: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function download_manager_class(e: usize): Result[DownloadManagerClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/app/DownloadManager")?;
+  let id_enqueue = jni.checked_id(e, class, jni.get_method_id(e, class, "enqueue", "(Landroid/app/DownloadManager$Request;)J"))?;
+  let id_query = jni.checked_id(e, class, jni.get_method_id(e, class, "query", "(Landroid/app/DownloadManager$Query;)Landroid/database/Cursor;"))?;
+  let id_remove = jni.checked_id(e, class, jni.get_method_id(e, class, "remove", "([J)I"))?;
+  return Ok(DownloadManagerClass { class: class, id_enqueue: id_enqueue, id_query: id_query, id_remove: id_remove });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: DownloadManagerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.app.DownloadManager.enqueue(Landroid/app/DownloadManager$Request;)J
+pub function (c: DownloadManagerClass) enqueue(e: usize, self: DownloadManager, a0: DownloadManager_Request): Result[i64, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 18, self.ref, c.id_enqueue, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i64);
+}
+
+// android.app.DownloadManager.query(Landroid/app/DownloadManager$Query;)Landroid/database/Cursor;
+pub function (c: DownloadManagerClass) query(e: usize, self: DownloadManager, a0: DownloadManager_Query): Result[Cursor, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_query, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Cursor { ref: got });
+}
+
+// android.app.DownloadManager.remove([J)I
+pub function (c: DownloadManagerClass) remove(e: usize, self: DownloadManager, a0: jni.Object): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_remove, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// A android.app.DownloadManager.Request.
+pub struct DownloadManager_Request { ref: usize }
+
+pub function (x: DownloadManager_Request) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: DownloadManager_Request) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.app.DownloadManager.Request and the IDs of its members.
+pub struct DownloadManager_RequestClass { class: usize, id_new: usize, id_add_request_header: usize, id_set_destination_in_external_files_dir: usize, id_set_notification_visibility: usize, id_set_title: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function download_manager_request_class(e: usize): Result[DownloadManager_RequestClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/app/DownloadManager$Request")?;
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Landroid/net/Uri;)V"))?;
+  let id_add_request_header = jni.checked_id(e, class, jni.get_method_id(e, class, "addRequestHeader", "(Ljava/lang/String;Ljava/lang/String;)Landroid/app/DownloadManager$Request;"))?;
+  let id_set_destination_in_external_files_dir = jni.checked_id(e, class, jni.get_method_id(e, class, "setDestinationInExternalFilesDir", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Landroid/app/DownloadManager$Request;"))?;
+  let id_set_notification_visibility = jni.checked_id(e, class, jni.get_method_id(e, class, "setNotificationVisibility", "(I)Landroid/app/DownloadManager$Request;"))?;
+  let id_set_title = jni.checked_id(e, class, jni.get_method_id(e, class, "setTitle", "(Ljava/lang/CharSequence;)Landroid/app/DownloadManager$Request;"))?;
+  return Ok(DownloadManager_RequestClass { class: class, id_new: id_new, id_add_request_header: id_add_request_header, id_set_destination_in_external_files_dir: id_set_destination_in_external_files_dir, id_set_notification_visibility: id_set_notification_visibility, id_set_title: id_set_title });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: DownloadManager_RequestClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.app.DownloadManager.Request.<init>(Landroid/net/Uri;)V
+pub function (c: DownloadManager_RequestClass) new(e: usize, a0: Uri): Result[DownloadManager_Request, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(DownloadManager_Request { ref: got });
+}
+
+// android.app.DownloadManager.Request.addRequestHeader(Ljava/lang/String;Ljava/lang/String;)Landroid/app/DownloadManager$Request;
+pub function (c: DownloadManager_RequestClass) add_request_header(e: usize, self: DownloadManager_Request, a0: string, a1: string): Result[DownloadManager_Request, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let s1 = jni.checked_string(e, a1)?;
+  defer jni.delete_local_ref(e, s1);
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, s0);
+  jni.jvalue_set_int(args, 1, s1);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_add_request_header, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(DownloadManager_Request { ref: got });
+}
+
+// android.app.DownloadManager.Request.setDestinationInExternalFilesDir(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Landroid/app/DownloadManager$Request;
+pub function (c: DownloadManager_RequestClass) set_destination_in_external_files_dir(e: usize, self: DownloadManager_Request, a0: Context, a1: Option[string], a2: string): Result[DownloadManager_Request, jni.JavaError] {
+  let s1 = 0 as usize;
+  if let Some(t1) = a1 {
+    s1 = jni.checked_string(e, t1)?;
+  }
+  defer jni.delete_local_ref(e, s1);
+  let s2 = jni.checked_string(e, a2)?;
+  defer jni.delete_local_ref(e, s2);
+  let args = jni.jvalue_alloc(3);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, s1);
+  jni.jvalue_set_int(args, 2, s2);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_destination_in_external_files_dir, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(DownloadManager_Request { ref: got });
+}
+
+// android.app.DownloadManager.Request.setNotificationVisibility(I)Landroid/app/DownloadManager$Request;
+pub function (c: DownloadManager_RequestClass) set_notification_visibility(e: usize, self: DownloadManager_Request, a0: i32): Result[DownloadManager_Request, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_notification_visibility, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(DownloadManager_Request { ref: got });
+}
+
+// android.app.DownloadManager.Request.setTitle(Ljava/lang/CharSequence;)Landroid/app/DownloadManager$Request;
+pub function (c: DownloadManager_RequestClass) set_title(e: usize, self: DownloadManager_Request, a0: jni.Object): Result[DownloadManager_Request, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_title, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(DownloadManager_Request { ref: got });
+}
+
+// A android.app.DownloadManager.Query.
+pub struct DownloadManager_Query { ref: usize }
+
+pub function (x: DownloadManager_Query) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: DownloadManager_Query) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.app.DownloadManager.Query and the IDs of its members.
+pub struct DownloadManager_QueryClass { class: usize, id_new: usize, id_set_filter_by_id: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function download_manager_query_class(e: usize): Result[DownloadManager_QueryClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/app/DownloadManager$Query")?;
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "()V"))?;
+  let id_set_filter_by_id = jni.checked_id(e, class, jni.get_method_id(e, class, "setFilterById", "([J)Landroid/app/DownloadManager$Query;"))?;
+  return Ok(DownloadManager_QueryClass { class: class, id_new: id_new, id_set_filter_by_id: id_set_filter_by_id });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: DownloadManager_QueryClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.app.DownloadManager.Query.<init>()V
+pub function (c: DownloadManager_QueryClass) new(e: usize): Result[DownloadManager_Query, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(DownloadManager_Query { ref: got });
+}
+
+// android.app.DownloadManager.Query.setFilterById([J)Landroid/app/DownloadManager$Query;
+pub function (c: DownloadManager_QueryClass) set_filter_by_id(e: usize, self: DownloadManager_Query, a0: jni.Object): Result[DownloadManager_Query, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_filter_by_id, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(DownloadManager_Query { ref: got });
+}
+
+// A android.database.Cursor.
+pub struct Cursor { ref: usize }
+
+pub function (x: Cursor) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Cursor) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.database.Cursor and the IDs of its members.
+pub struct CursorClass { class: usize, id_close: usize, id_get_column_index: usize, id_get_int: usize, id_get_long: usize, id_move_to_first: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function cursor_class(e: usize): Result[CursorClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/database/Cursor")?;
+  let id_close = jni.checked_id(e, class, jni.get_method_id(e, class, "close", "()V"))?;
+  let id_get_column_index = jni.checked_id(e, class, jni.get_method_id(e, class, "getColumnIndex", "(Ljava/lang/String;)I"))?;
+  let id_get_int = jni.checked_id(e, class, jni.get_method_id(e, class, "getInt", "(I)I"))?;
+  let id_get_long = jni.checked_id(e, class, jni.get_method_id(e, class, "getLong", "(I)J"))?;
+  let id_move_to_first = jni.checked_id(e, class, jni.get_method_id(e, class, "moveToFirst", "()Z"))?;
+  return Ok(CursorClass { class: class, id_close: id_close, id_get_column_index: id_get_column_index, id_get_int: id_get_int, id_get_long: id_get_long, id_move_to_first: id_move_to_first });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: CursorClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.database.Cursor.close()V
+pub function (c: CursorClass) close(e: usize, self: Cursor): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_close, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.database.Cursor.getColumnIndex(Ljava/lang/String;)I
+pub function (c: CursorClass) get_column_index(e: usize, self: Cursor, a0: string): Result[i32, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_column_index, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.database.Cursor.getInt(I)I
+pub function (c: CursorClass) get_int(e: usize, self: Cursor, a0: i32): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_int, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.database.Cursor.getLong(I)J
+pub function (c: CursorClass) get_long(e: usize, self: Cursor, a0: i32): Result[i64, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 18, self.ref, c.id_get_long, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i64);
+}
+
+// android.database.Cursor.moveToFirst()Z
+pub function (c: CursorClass) move_to_first(e: usize, self: Cursor): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_move_to_first, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// A android.net.Uri.
+pub struct Uri { ref: usize }
+
+pub function (x: Uri) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Uri) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.net.Uri and the IDs of its members.
+pub struct UriClass { class: usize, id_parse: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function uri_class(e: usize): Result[UriClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/net/Uri")?;
+  let id_parse = jni.checked_id(e, class, jni.get_static_method_id(e, class, "parse", "(Ljava/lang/String;)Landroid/net/Uri;"))?;
+  return Ok(UriClass { class: class, id_parse: id_parse });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: UriClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.net.Uri.parse(Ljava/lang/String;)Landroid/net/Uri;
+pub function (c: UriClass) parse(e: usize, a0: string): Result[Uri, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_parse, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Uri { ref: got });
+}
+
+// A java.io.File.
+pub struct File { ref: usize }
+
+pub function (x: File) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: File) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.io.File and the IDs of its members.
+pub struct FileClass { class: usize, id_get_absolute_path: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function file_class(e: usize): Result[FileClass, jni.JavaError] {
+  let class = jni.global_class(e, "java/io/File")?;
+  let id_get_absolute_path = jni.checked_id(e, class, jni.get_method_id(e, class, "getAbsolutePath", "()Ljava/lang/String;"))?;
+  return Ok(FileClass { class: class, id_get_absolute_path: id_get_absolute_path });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: FileClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.io.File.getAbsolutePath()Ljava/lang/String;
+pub function (c: FileClass) get_absolute_path(e: usize, self: File): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_absolute_path, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// The struct of IDs of each class of this module.
+pub struct Classes { context: ContextClass, download_manager: DownloadManagerClass, download_manager_request: DownloadManager_RequestClass, download_manager_query: DownloadManager_QueryClass, cursor: CursorClass, uri: UriClass, file: FileClass }
+
+// Makes the struct of IDs of each class. Call it one time, and call
+// `release` when the app does not call Java again. One lookup for each
+// class, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function classes(e: usize): Result[Classes, jni.JavaError] {
+  let context = match (context_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      return Err(err);
+    },
+  };
+  let download_manager = match (download_manager_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      return Err(err);
+    },
+  };
+  let download_manager_request = match (download_manager_request_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      download_manager.release(e);
+      return Err(err);
+    },
+  };
+  let download_manager_query = match (download_manager_query_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      download_manager.release(e);
+      download_manager_request.release(e);
+      return Err(err);
+    },
+  };
+  let cursor = match (cursor_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      download_manager.release(e);
+      download_manager_request.release(e);
+      download_manager_query.release(e);
+      return Err(err);
+    },
+  };
+  let uri = match (uri_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      download_manager.release(e);
+      download_manager_request.release(e);
+      download_manager_query.release(e);
+      cursor.release(e);
+      return Err(err);
+    },
+  };
+  let file = match (file_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      download_manager.release(e);
+      download_manager_request.release(e);
+      download_manager_query.release(e);
+      cursor.release(e);
+      uri.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { context: context, download_manager: download_manager, download_manager_request: download_manager_request, download_manager_query: download_manager_query, cursor: cursor, uri: uri, file: file });
+}
+
+// Deletes the reference to each class. Do not use `c` after this call.
+pub function (c: Classes) release(e: usize): void {
+  c.context.release(e);
+  c.download_manager.release(e);
+  c.download_manager_request.release(e);
+  c.download_manager_query.release(e);
+  c.cursor.release(e);
+  c.uri.release(e);
+  c.file.release(e);
+}

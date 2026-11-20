@@ -11,7 +11,7 @@ A counterexample is a concrete entry state on which the two versions disagree.
 
 ## How it runs
 
-1. `FERN_TV_DUMP=strength` makes the compiler write every op list the pass
+1. `FERN_DEBUG_TV_DUMP=strength` makes the compiler write every op list the pass
    rewrote to stderr, before and after (`tv_dump` in `compiler/ir.fern`). Each
    op is written with all of its fields, so two dumped ops are equal exactly
    when their lines are.

@@ -23,10 +23,7 @@ pub struct ActivityClass { class: usize, id_get_window: usize, id_run_on_ui_thre
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function activity_class(e: usize): Result[ActivityClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/app/Activity");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/app/Activity")?;
   let id_get_window = jni.checked_id(e, class, jni.get_method_id(e, class, "getWindow", "()Landroid/view/Window;"))?;
   let id_run_on_ui_thread = jni.checked_id(e, class, jni.get_method_id(e, class, "runOnUiThread", "(Ljava/lang/Runnable;)V"))?;
   return Ok(ActivityClass { class: class, id_get_window: id_get_window, id_run_on_ui_thread: id_run_on_ui_thread });
@@ -73,10 +70,7 @@ pub struct ActivityOptionsClass { class: usize, id_make_basic: usize, id_make_cl
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function activity_options_class(e: usize): Result[ActivityOptionsClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/app/ActivityOptions");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/app/ActivityOptions")?;
   let id_make_basic = jni.checked_id(e, class, jni.get_static_method_id(e, class, "makeBasic", "()Landroid/app/ActivityOptions;"))?;
   let id_make_clip_reveal_animation = jni.checked_id(e, class, jni.get_static_method_id(e, class, "makeClipRevealAnimation", "(Landroid/view/View;IIII)Landroid/app/ActivityOptions;"))?;
   let id_set_pending_intent_background_activity_start_mode = jni.optional_id(e, jni.get_method_id(e, class, "setPendingIntentBackgroundActivityStartMode", "(I)Landroid/app/ActivityOptions;"));
@@ -158,10 +152,7 @@ pub struct NotificationClass { class: usize, id_category: usize, id_content_inte
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function notification_class(e: usize): Result[NotificationClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/app/Notification");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/app/Notification")?;
   let id_category = jni.checked_id(e, class, jni.get_field_id(e, class, "category", "Ljava/lang/String;"))?;
   let id_content_intent = jni.checked_id(e, class, jni.get_field_id(e, class, "contentIntent", "Landroid/app/PendingIntent;"))?;
   let id_extras = jni.checked_id(e, class, jni.get_field_id(e, class, "extras", "Landroid/os/Bundle;"))?;
@@ -183,11 +174,23 @@ pub function (c: NotificationClass) category(e: usize, self: Notification): Resu
   return Ok(text);
 }
 
+pub function (c: NotificationClass) set_category(e: usize, self: Notification, value: string): Result[void, jni.JavaError] {
+  let text = jni.checked_string(e, value)?;
+  defer jni.delete_local_ref(e, text);
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_category, text);
+  return jni.check(e);
+}
+
 // android.app.Notification.contentIntent
 pub function (c: NotificationClass) content_intent(e: usize, self: Notification): Result[PendingIntent, jni.JavaError] {
   let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_content_intent, 0 as usize);
   jni.check(e)?;
   return Ok(PendingIntent { ref: got });
+}
+
+pub function (c: NotificationClass) set_content_intent(e: usize, self: Notification, value: PendingIntent): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_content_intent, value.ref);
+  return jni.check(e);
 }
 
 // android.app.Notification.extras
@@ -197,11 +200,21 @@ pub function (c: NotificationClass) extras(e: usize, self: Notification): Result
   return Ok(Bundle { ref: got });
 }
 
+pub function (c: NotificationClass) set_extras(e: usize, self: Notification, value: Bundle): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_extras, value.ref);
+  return jni.check(e);
+}
+
 // android.app.Notification.flags
 pub function (c: NotificationClass) flags(e: usize, self: Notification): Result[i32, jni.JavaError] {
   let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_flags, 0 as usize);
   jni.check(e)?;
   return Ok(got as i32);
+}
+
+pub function (c: NotificationClass) set_flags(e: usize, self: Notification, value: i32): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 5, self.ref, c.id_flags, value as usize);
+  return jni.check(e);
 }
 
 // A android.app.PendingIntent.
@@ -221,10 +234,7 @@ pub struct PendingIntentClass { class: usize, id_send: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function pending_intent_class(e: usize): Result[PendingIntentClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/app/PendingIntent");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/app/PendingIntent")?;
   let id_send = jni.checked_id(e, class, jni.get_method_id(e, class, "send", "(Landroid/content/Context;ILandroid/content/Intent;Landroid/app/PendingIntent$OnFinished;Landroid/os/Handler;Ljava/lang/String;Landroid/os/Bundle;)V"))?;
   return Ok(PendingIntentClass { class: class, id_send: id_send });
 }
@@ -272,10 +282,7 @@ pub struct ComponentNameClass { class: usize, id_unflatten_from_string: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function component_name_class(e: usize): Result[ComponentNameClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/content/ComponentName");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/content/ComponentName")?;
   let id_unflatten_from_string = jni.checked_id(e, class, jni.get_static_method_id(e, class, "unflattenFromString", "(Ljava/lang/String;)Landroid/content/ComponentName;"))?;
   return Ok(ComponentNameClass { class: class, id_unflatten_from_string: id_unflatten_from_string });
 }
@@ -314,10 +321,7 @@ pub struct ContentResolverClass { class: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function content_resolver_class(e: usize): Result[ContentResolverClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/content/ContentResolver");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/content/ContentResolver")?;
   return Ok(ContentResolverClass { class: class });
 }
 
@@ -343,10 +347,7 @@ pub struct ContextClass { class: usize, id_get_content_resolver: usize, id_get_f
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/content/Context");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/content/Context")?;
   let id_get_content_resolver = jni.checked_id(e, class, jni.get_method_id(e, class, "getContentResolver", "()Landroid/content/ContentResolver;"))?;
   let id_get_files_dir = jni.checked_id(e, class, jni.get_method_id(e, class, "getFilesDir", "()Ljava/io/File;"))?;
   let id_get_package_manager = jni.checked_id(e, class, jni.get_method_id(e, class, "getPackageManager", "()Landroid/content/pm/PackageManager;"))?;
@@ -443,10 +444,7 @@ pub struct IntentClass { class: usize, id_new_string: usize, id_new_string_uri: 
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function intent_class(e: usize): Result[IntentClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/content/Intent");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/content/Intent")?;
   let id_new_string = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;)V"))?;
   let id_new_string_uri = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;Landroid/net/Uri;)V"))?;
   let id_add_category = jni.checked_id(e, class, jni.get_method_id(e, class, "addCategory", "(Ljava/lang/String;)Landroid/content/Intent;"))?;
@@ -570,10 +568,7 @@ pub struct ActivityInfoClass { class: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function activity_info_class(e: usize): Result[ActivityInfoClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/content/pm/ActivityInfo");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/content/pm/ActivityInfo")?;
   return Ok(ActivityInfoClass { class: class });
 }
 
@@ -603,10 +598,7 @@ pub struct ApplicationInfoClass { class: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function application_info_class(e: usize): Result[ApplicationInfoClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/content/pm/ApplicationInfo");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/content/pm/ApplicationInfo")?;
   return Ok(ApplicationInfoClass { class: class });
 }
 
@@ -632,10 +624,7 @@ pub struct PackageItemInfoClass { class: usize, id_name: usize, id_package_name:
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function package_item_info_class(e: usize): Result[PackageItemInfoClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/content/pm/PackageItemInfo");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/content/pm/PackageItemInfo")?;
   let id_name = jni.checked_id(e, class, jni.get_field_id(e, class, "name", "Ljava/lang/String;"))?;
   let id_package_name = jni.checked_id(e, class, jni.get_field_id(e, class, "packageName", "Ljava/lang/String;"))?;
   return Ok(PackageItemInfoClass { class: class, id_name: id_name, id_package_name: id_package_name });
@@ -655,6 +644,13 @@ pub function (c: PackageItemInfoClass) name(e: usize, self: PackageItemInfo): Re
   return Ok(text);
 }
 
+pub function (c: PackageItemInfoClass) set_name(e: usize, self: PackageItemInfo, value: string): Result[void, jni.JavaError] {
+  let text = jni.checked_string(e, value)?;
+  defer jni.delete_local_ref(e, text);
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_name, text);
+  return jni.check(e);
+}
+
 // android.content.pm.PackageItemInfo.packageName
 pub function (c: PackageItemInfoClass) package_name(e: usize, self: PackageItemInfo): Result[string, jni.JavaError] {
   let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_package_name, 0 as usize);
@@ -662,6 +658,13 @@ pub function (c: PackageItemInfoClass) package_name(e: usize, self: PackageItemI
   let text = jni.string_of(e, got);
   jni.delete_local_ref(e, got);
   return Ok(text);
+}
+
+pub function (c: PackageItemInfoClass) set_package_name(e: usize, self: PackageItemInfo, value: string): Result[void, jni.JavaError] {
+  let text = jni.checked_string(e, value)?;
+  defer jni.delete_local_ref(e, text);
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_package_name, text);
+  return jni.check(e);
 }
 
 // A android.content.pm.PackageManager.
@@ -683,10 +686,7 @@ pub struct PackageManagerClass { class: usize, id_get_application_info: usize, i
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function package_manager_class(e: usize): Result[PackageManagerClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/content/pm/PackageManager");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/content/pm/PackageManager")?;
   let id_get_application_info = jni.checked_id(e, class, jni.get_method_id(e, class, "getApplicationInfo", "(Ljava/lang/String;I)Landroid/content/pm/ApplicationInfo;"))?;
   let id_get_application_label = jni.checked_id(e, class, jni.get_method_id(e, class, "getApplicationLabel", "(Landroid/content/pm/ApplicationInfo;)Ljava/lang/CharSequence;"))?;
   let id_get_launch_intent_for_package = jni.checked_id(e, class, jni.get_method_id(e, class, "getLaunchIntentForPackage", "(Ljava/lang/String;)Landroid/content/Intent;"))?;
@@ -774,10 +774,7 @@ pub struct ResolveInfoClass { class: usize, id_load_label: usize, id_activity_in
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function resolve_info_class(e: usize): Result[ResolveInfoClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/content/pm/ResolveInfo");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/content/pm/ResolveInfo")?;
   let id_load_label = jni.checked_id(e, class, jni.get_method_id(e, class, "loadLabel", "(Landroid/content/pm/PackageManager;)Ljava/lang/CharSequence;"))?;
   let id_activity_info = jni.checked_id(e, class, jni.get_field_id(e, class, "activityInfo", "Landroid/content/pm/ActivityInfo;"))?;
   return Ok(ResolveInfoClass { class: class, id_load_label: id_load_label, id_activity_info: id_activity_info });
@@ -805,6 +802,11 @@ pub function (c: ResolveInfoClass) activity_info(e: usize, self: ResolveInfo): R
   return Ok(ActivityInfo { ref: got });
 }
 
+pub function (c: ResolveInfoClass) set_activity_info(e: usize, self: ResolveInfo, value: ActivityInfo): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_activity_info, value.ref);
+  return jni.check(e);
+}
+
 // A android.location.Location.
 pub struct Location { ref: usize }
 
@@ -822,10 +824,7 @@ pub struct LocationClass { class: usize, id_get_latitude: usize, id_get_longitud
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function location_class(e: usize): Result[LocationClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/location/Location");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/location/Location")?;
   let id_get_latitude = jni.checked_id(e, class, jni.get_method_id(e, class, "getLatitude", "()D"))?;
   let id_get_longitude = jni.checked_id(e, class, jni.get_method_id(e, class, "getLongitude", "()D"))?;
   let id_get_time = jni.checked_id(e, class, jni.get_method_id(e, class, "getTime", "()J"))?;
@@ -881,10 +880,7 @@ pub struct LocationManagerClass { class: usize, id_get_last_known_location: usiz
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function location_manager_class(e: usize): Result[LocationManagerClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/location/LocationManager");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/location/LocationManager")?;
   let id_get_last_known_location = jni.checked_id(e, class, jni.get_method_id(e, class, "getLastKnownLocation", "(Ljava/lang/String;)Landroid/location/Location;"))?;
   let id_get_providers = jni.checked_id(e, class, jni.get_method_id(e, class, "getProviders", "(Z)Ljava/util/List;"))?;
   return Ok(LocationManagerClass { class: class, id_get_last_known_location: id_get_last_known_location, id_get_providers: id_get_providers });
@@ -934,10 +930,7 @@ pub struct UriClass { class: usize, id_parse: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function uri_class(e: usize): Result[UriClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/net/Uri");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/net/Uri")?;
   let id_parse = jni.checked_id(e, class, jni.get_static_method_id(e, class, "parse", "(Ljava/lang/String;)Landroid/net/Uri;"))?;
   return Ok(UriClass { class: class, id_parse: id_parse });
 }
@@ -976,10 +969,7 @@ pub struct BundleClass { class: usize, id_get_char_sequence: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function bundle_class(e: usize): Result[BundleClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/os/Bundle");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/os/Bundle")?;
   let id_get_char_sequence = jni.checked_id(e, class, jni.get_method_id(e, class, "getCharSequence", "(Ljava/lang/String;)Ljava/lang/CharSequence;"))?;
   return Ok(BundleClass { class: class, id_get_char_sequence: id_get_char_sequence });
 }
@@ -1018,10 +1008,7 @@ pub struct Settings_SecureClass { class: usize, id_get_string: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function settings_secure_class(e: usize): Result[Settings_SecureClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/provider/Settings$Secure");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/provider/Settings$Secure")?;
   let id_get_string = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getString", "(Landroid/content/ContentResolver;Ljava/lang/String;)Ljava/lang/String;"))?;
   return Ok(Settings_SecureClass { class: class, id_get_string: id_get_string });
 }
@@ -1063,10 +1050,7 @@ pub struct Telephony_SmsClass { class: usize, id_get_default_sms_package: usize 
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function telephony_sms_class(e: usize): Result[Telephony_SmsClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/provider/Telephony$Sms");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/provider/Telephony$Sms")?;
   let id_get_default_sms_package = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getDefaultSmsPackage", "(Landroid/content/Context;)Ljava/lang/String;"))?;
   return Ok(Telephony_SmsClass { class: class, id_get_default_sms_package: id_get_default_sms_package });
 }
@@ -1109,10 +1093,7 @@ pub struct NotificationListenerServiceClass { class: usize, id_cancel_notificati
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function notification_listener_service_class(e: usize): Result[NotificationListenerServiceClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/service/notification/NotificationListenerService");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/service/notification/NotificationListenerService")?;
   let id_cancel_notification = jni.checked_id(e, class, jni.get_method_id(e, class, "cancelNotification", "(Ljava/lang/String;)V"))?;
   let id_get_active_notifications = jni.checked_id(e, class, jni.get_method_id(e, class, "getActiveNotifications", "()[Landroid/service/notification/StatusBarNotification;"))?;
   return Ok(NotificationListenerServiceClass { class: class, id_cancel_notification: id_cancel_notification, id_get_active_notifications: id_get_active_notifications });
@@ -1161,10 +1142,7 @@ pub struct StatusBarNotificationClass { class: usize, id_get_key: usize, id_get_
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function status_bar_notification_class(e: usize): Result[StatusBarNotificationClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/service/notification/StatusBarNotification");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/service/notification/StatusBarNotification")?;
   let id_get_key = jni.checked_id(e, class, jni.get_method_id(e, class, "getKey", "()Ljava/lang/String;"))?;
   let id_get_notification = jni.checked_id(e, class, jni.get_method_id(e, class, "getNotification", "()Landroid/app/Notification;"))?;
   let id_get_package_name = jni.checked_id(e, class, jni.get_method_id(e, class, "getPackageName", "()Ljava/lang/String;"))?;
@@ -1254,10 +1232,7 @@ pub struct TelecomManagerClass { class: usize, id_get_default_dialer_package: us
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function telecom_manager_class(e: usize): Result[TelecomManagerClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/telecom/TelecomManager");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/telecom/TelecomManager")?;
   let id_get_default_dialer_package = jni.checked_id(e, class, jni.get_method_id(e, class, "getDefaultDialerPackage", "()Ljava/lang/String;"))?;
   return Ok(TelecomManagerClass { class: class, id_get_default_dialer_package: id_get_default_dialer_package });
 }
@@ -1295,10 +1270,7 @@ pub struct DateFormatClass { class: usize, id_is24_hour_format: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function date_format_class(e: usize): Result[DateFormatClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/text/format/DateFormat");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/text/format/DateFormat")?;
   let id_is24_hour_format = jni.checked_id(e, class, jni.get_static_method_id(e, class, "is24HourFormat", "(Landroid/content/Context;)Z"))?;
   return Ok(DateFormatClass { class: class, id_is24_hour_format: id_is24_hour_format });
 }
@@ -1339,10 +1311,7 @@ pub struct ViewClass { class: usize, id_set_system_ui_visibility: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function view_class(e: usize): Result[ViewClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/view/View");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/view/View")?;
   let id_set_system_ui_visibility = jni.checked_id(e, class, jni.get_method_id(e, class, "setSystemUiVisibility", "(I)V"))?;
   return Ok(ViewClass { class: class, id_set_system_ui_visibility: id_set_system_ui_visibility });
 }
@@ -1379,10 +1348,7 @@ pub struct WindowClass { class: usize, id_get_decor_view: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function window_class(e: usize): Result[WindowClass, jni.JavaError] {
-  let local = jni.find_class(e, "android/view/Window");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "android/view/Window")?;
   let id_get_decor_view = jni.checked_id(e, class, jni.get_method_id(e, class, "getDecorView", "()Landroid/view/View;"))?;
   return Ok(WindowClass { class: class, id_get_decor_view: id_get_decor_view });
 }
@@ -1418,10 +1384,7 @@ pub struct FileClass { class: usize, id_get_absolute_path: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function file_class(e: usize): Result[FileClass, jni.JavaError] {
-  let local = jni.find_class(e, "java/io/File");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "java/io/File")?;
   let id_get_absolute_path = jni.checked_id(e, class, jni.get_method_id(e, class, "getAbsolutePath", "()Ljava/lang/String;"))?;
   return Ok(FileClass { class: class, id_get_absolute_path: id_get_absolute_path });
 }
@@ -1459,10 +1422,7 @@ pub struct CharSequenceClass { class: usize, id_to_string: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function char_sequence_class(e: usize): Result[CharSequenceClass, jni.JavaError] {
-  let local = jni.find_class(e, "java/lang/CharSequence");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "java/lang/CharSequence")?;
   let id_to_string = jni.checked_id(e, class, jni.get_method_id(e, class, "toString", "()Ljava/lang/String;"))?;
   return Ok(CharSequenceClass { class: class, id_to_string: id_to_string });
 }
@@ -1500,10 +1460,7 @@ pub struct HashMapClass { class: usize, id_new: usize, id_put: usize, id_remove:
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function hash_map_class(e: usize): Result[HashMapClass, jni.JavaError] {
-  let local = jni.find_class(e, "java/util/HashMap");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "java/util/HashMap")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "()V"))?;
   let id_put = jni.checked_id(e, class, jni.get_method_id(e, class, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"))?;
   let id_remove = jni.checked_id(e, class, jni.get_method_id(e, class, "remove", "(Ljava/lang/Object;)Ljava/lang/Object;"))?;
@@ -1562,10 +1519,7 @@ pub struct ListClass { class: usize, id_get: usize, id_size: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function list_class(e: usize): Result[ListClass, jni.JavaError] {
-  let local = jni.find_class(e, "java/util/List");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "java/util/List")?;
   let id_get = jni.checked_id(e, class, jni.get_method_id(e, class, "get", "(I)Ljava/lang/Object;"))?;
   let id_size = jni.checked_id(e, class, jni.get_method_id(e, class, "size", "()I"))?;
   return Ok(ListClass { class: class, id_get: id_get, id_size: id_size });
@@ -1612,10 +1566,7 @@ pub struct LocaleClass { class: usize, id_get_country: usize, id_get_default: us
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function locale_class(e: usize): Result[LocaleClass, jni.JavaError] {
-  let local = jni.find_class(e, "java/util/Locale");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "java/util/Locale")?;
   let id_get_country = jni.checked_id(e, class, jni.get_method_id(e, class, "getCountry", "()Ljava/lang/String;"))?;
   let id_get_default = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getDefault", "()Ljava/util/Locale;"))?;
   return Ok(LocaleClass { class: class, id_get_country: id_get_country, id_get_default: id_get_default });

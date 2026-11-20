@@ -247,7 +247,9 @@ pub function key_with_memory_limit(password: [u8], salt: [u8], n: i32, r: i32, p
     return Err(MemoryLimit(max_bytes));
   }
   let h = 16 * r;
-  let blocks = crypto.pbkdf2_sha256(password, salt, 1, 128 * r * p);
+  let Ok(blocks) = crypto.pbkdf2_sha256(password, salt, 1, 128 * r * p) else {
+    return Err(Memory);
+  };
   let b = __alloc_i64(h * (n + 3));
   let k = 0;
   while (k < p) {
@@ -267,6 +269,9 @@ pub function key_with_memory_limit(password: [u8], salt: [u8], n: i32, r: i32, p
   crypto.erase(b);
   let out = crypto.pbkdf2_sha256(password, blocks, 1, key_len);
   crypto.erase(blocks);
-  return Ok(out);
+  let Ok(key_bytes) = out else {
+    return Err(KeyLength(key_len));
+  };
+  return Ok(key_bytes);
 }
 ```

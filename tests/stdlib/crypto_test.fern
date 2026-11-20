@@ -74,21 +74,28 @@ function test_hmac_verify_rejects_one_bit(): test.TestOutcome {
 
 function test_pbkdf2_c1(): test.TestOutcome {
   return test.assert_eq(
-    hex.encode(crypto.pbkdf2_sha256("password".as_bytes(), "salt".bytes(), 1, 32)),
+    hex.encode(crypto.pbkdf2_sha256("password".as_bytes(), "salt".bytes(), 1, 32).unwrap_or([])),
     "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b",
   );
 }
 
 function test_pbkdf2_c2(): test.TestOutcome {
   return test.assert_eq(
-    hex.encode(crypto.pbkdf2_sha256("password".as_bytes(), "salt".bytes(), 2, 32)),
+    hex.encode(crypto.pbkdf2_sha256("password".as_bytes(), "salt".bytes(), 2, 32).unwrap_or([])),
     "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43",
   );
 }
 
 function test_pbkdf2_truncated(): test.TestOutcome {
+  // Cross both the HMAC key block and the derived-key block boundary.
+  let Ok(key) = crypto.pbkdf2_sha256("password".repeat(10).as_bytes(), "salt".repeat(17).as_bytes(), 5, 47) else {
+    return test.fail("valid parameters refused");
+  };
+  if (hex.encode(key) != "0848a03d7a18ead19929bff9c8d55af922c9a3c8ea43337611eedd9a675853837e14a164f925e21f3f1fb7fc7f2637") {
+    return test.fail("long password, long salt and partial second block");
+  }
   return test.assert_eq(
-    hex.encode(crypto.pbkdf2_sha256("password".as_bytes(), "salt".bytes(), 1, 16)),
+    hex.encode(crypto.pbkdf2_sha256("password".as_bytes(), "salt".bytes(), 1, 16).unwrap_or([])),
     "120fb6cffcf8b32c43e7225256c4f837",
   );
 }
@@ -359,7 +366,9 @@ function test_hotp_ten_digits(): test.TestOutcome {
 function test_pbkdf2_verify_limits(): test.TestOutcome {
   let password = "password".as_bytes();
   let salt = "salt".as_bytes();
-  let hash = crypto.pbkdf2_sha256(password, salt, 1, 16);
+  let Ok(hash) = crypto.pbkdf2_sha256(password, salt, 1, 16) else {
+    return test.fail("valid PBKDF2 parameters");
+  };
   for n in [0, 1, 15] {
     if (crypto.pbkdf2_sha256_verify(password, salt, 1, hash[0:n])) {
       return test.fail("accepted a hash of " + n.to_string() + " bytes");

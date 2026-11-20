@@ -845,6 +845,12 @@ pub const CALL_STATIC: i32 = 116;
 // The entry of GetObjectField.
 pub const GET_FIELD: i32 = 95;
 
+// The entry of SetObjectField.
+pub const SET_FIELD: i32 = 104;
+
+// The entry of SetStaticObjectField.
+pub const SET_STATIC_FIELD: i32 = 154;
+
 // The entry of GetStaticObjectField.
 pub const GET_STATIC_FIELD: i32 = 145;
 
@@ -874,6 +880,22 @@ pub function checked_string(env: usize, value: string): Result[usize, JavaError]
     return Err(JavaError { text: "cannot allocate Java string" });
   }
   return Ok(ref);
+}
+
+// Find a class and promote its local reference for use in generated bindings.
+pub function global_class(env: usize, name: string): Result[usize, JavaError] {
+  let local = find_class(env, name);
+  check(env)?;
+  if (local == 0 as usize) {
+    return Err(JavaError { text: "cannot find Java class " + name });
+  }
+  let class = new_global_ref(env, local);
+  delete_local_ref(env, local);
+  if (class == 0 as usize) {
+    check(env)?;
+    return Err(JavaError { text: "cannot retain Java class " + name });
+  }
+  return Ok(class);
 }
 
 // The ID `id` that a lookup gave, or 0 when the lookup threw. It clears

@@ -1,0 +1,40 @@
+// Three passes over the HarfBuzz reference words with one parsed font.
+import "std/base64";
+import "std/i64";
+import "std/shape";
+import "std/string";
+import "std/truetype";
+import "../../tests/stdlib/shape_vectors";
+
+function main(): i32 {
+  let Ok(bytes) = base64.decode(shape_vectors.deva_font()) else {
+    return 1;
+  };
+  let Some(font) = truetype.parse(bytes) else {
+    return 1;
+  };
+  let words: string[] = [];
+  for line in shape_vectors.deva_cases().split("\n") {
+    let fields = line.split("\t");
+    if (fields.len() == 5 && fields[0] == "deva") {
+      words = words.append(fields[1]);
+    }
+  }
+  if (words.len() == 0) {
+    return 1;
+  }
+  let checksum = 0i64;
+  let start = __heap_alloc_count();
+  for pass in 0..3 {
+    for word in words {
+      let run = shape.shape(font, word, "deva");
+      for glyph in run.glyphs {
+        checksum += glyph as i64;
+      }
+    }
+  }
+  let allocations = __heap_alloc_count() - start;
+  print(allocations.to_string());
+  print(checksum.to_string());
+  return 0;
+}
