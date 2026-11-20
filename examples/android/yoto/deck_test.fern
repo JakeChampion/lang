@@ -1,15 +1,20 @@
+import "std/android";
 import "std/android/draw";
 import "std/android/fonts";
+import "std/android/player";
 import "std/android/testkit";
 import "std/android/text";
 import "std/android/ui";
 import "std/android/ui/sim";
 import "std/json";
 import "std/test";
+import "std/worker";
 import "./api";
 import "./deck";
 import "./oauth";
+import "./phone";
 import "./search";
+import "./player_status";
 
 function test_pkce(): test.TestOutcome {
   let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
@@ -127,9 +132,18 @@ function preview(s: sim.Sim[deck.Model, deck.Msg], name: string): void {
   }
 }
 
+function no_audio(): phone.Output {
+  return phone.Output {
+    open: (address: string): Option[player.Player] => None,
+    start: (media: player.Player): boolean => false,
+    pause: (media: player.Player): boolean => false,
+    close: (media: player.Player): void => {},
+  };
+}
+
 function simulator(own model: deck.Model): sim.Sim[deck.Model, deck.Msg] {
-  let real = deck.program((address: string): boolean => false, (data: u8[]): Option[draw.Image] => None);
-  let dry = ui.program(deck.view, deck.update).with_theme_of(real.theme);
+  let real = deck.program((address: string): boolean => false, (data: u8[]): Option[draw.Image] => None, (saved: Option[api.Session]): boolean => true, no_audio());
+  let dry = ui.program(deck.view, deck.update).with_theme_of(real.theme).with_visible(deck.visible_posters);
   return sim.start(model, dry, test_fonts(), 720, 1600, 2.0);
 }
 
@@ -166,11 +180,190 @@ function test_search_in_ui(): test.TestOutcome {
   let s = simulator(deck.update(m, deck.LibraryLoaded(Ok(library))));
   s = sim.tap(s, "Library");
   s = sim.type_in(s, "library-search", "woodland dusk");
-  if (!sim.shows(s, "Fox at dusk") || !sim.shows(s, "Woodland Walk · Forest")) {
+  if (!sim.shows(s, "Fox at dusk") || !sim.shows(s, "Woodland Walk") || !sim.shows(s, "Forest")) {
     return test.fail("the search result must show the matching track and its card");
   }
   s = sim.tap(s, "Tracks for Fox at dusk");
   return test.assert_eq(sim.shows(s, "Back to library") && sim.shows(s, "Fox at dusk"), true);
+}
+
+function test_saved_session(): test.TestOutcome {
+  let original = api.Session { client: "client", refresh: "first" };
+  let saved = cell_new(Some(original));
+  let p = deck.program(
+    (address: string): boolean => false,
+    (data: u8[]): Option[draw.Image] => None,
+    (current: Option[api.Session]): boolean => {
+      saved.set(current);
+      return true;
+    },
+    no_audio(),
+  );
+  let m = deck.restored(Ok(Some(original)));
+  if (p.wait(m) != 0 || m.client != "client") {
+    return test.fail("the saved account must reconnect on launch");
+  }
+  let rotated = api.token_reply(200, json.parse("{\"access_token\":\"access\",\"refresh_token\":\"second\"}").unwrap_or(json.JNull));
+  let auth = [worker.spawn((): Result[api.Tokens, api.Failure] => rotated)];
+  let closed = p.close(deck.Model { ...m, reconnect: false, auth: auth, busy: true });
+  let Some(token) = saved.get() else {
+    return test.fail("the new refresh token must be saved during close");
+  };
+  let signed_out = p.effects(deck.update(deck.restored(Ok(Some(token))), deck.SignOut));
+  return test.assert_eq(token.refresh == "second" && saved.get().is_none() && signed_out.refresh.len() == 0, true);
+}
+
+function test_token_errors(): test.TestOutcome {
+  let revoked = json.parse("{\"error\":\"invalid_grant\"}").unwrap_or(json.JNull);
+  let Err(expired) = api.token_reply(400, revoked) else {
+    return test.fail("a revoked refresh token must require a new sign-in");
+  };
+  let Err(temporary) = api.token_reply(503, json.JNull) else {
+    return test.fail("a server failure must report a retryable sign-in");
+  };
+  return test.assert_eq(expired.expired && !temporary.expired, true);
+}
+
+function library_sim(): sim.Sim[deck.Model, deck.Msg] {
+  let players = [api.Player { id: "one", name: "Bedroom", online: true }, api.Player { id: "two", name: "Living room", online: true }];
+  let m = deck.Model { ...deck.start(), token: "test session" };
+  let library = api.Library { players: players, cards: fixture_cards(), note: "" };
+  return simulator(deck.update(m, deck.LibraryLoaded(Ok(library))));
+}
+
+function test_held_backspace(): test.TestOutcome {
+  let s = sim.tap(library_sim(), "Library");
+  s = sim.type_in(s, "library-search", "woodland");
+  s = sim.event(s, android.Key(67, 0));
+  s = sim.after(s, 700i64);
+  let remaining = s.shell.app.shelf.query;
+  s = sim.event(s, android.Key(67, 1));
+  s = sim.after(s, 800i64);
+  return test.assert_eq(remaining == "wood" && s.shell.app.shelf.query == remaining, true);
+}
+
+function test_successful_search_hides_sync_error(): test.TestOutcome {
+  let s = sim.tap(library_sim(), "Library");
+  let problem = api.Failure { ...api.failure("Network unavailable."), pause_index: true };
+  let generation = s.shell.app.generation;
+  s = sim.send(s, deck.TracksLoaded(generation, 0, Err(problem)));
+  s = sim.type_in(s, "library-search", "woodland");
+  if (!sim.shows(s, "Woodland Walk") || sim.shows(s, "Track search is incomplete. Network unavailable.")) {
+    return test.fail("a search with matches must show the results without the sync error");
+  }
+  s = sim.type_in(s, "library-search", "no result");
+  return test.assert_eq(sim.shows(s, "Track search is incomplete. Network unavailable."), true);
+}
+
+function test_player_playback(): test.TestOutcome {
+  let Some(playing) = player_status.event("{\"playbackStatus\":\"playing\",\"cardId\":\"book\",\"trackTitle\":\"Fox at dusk\"}".bytes()) else {
+    return test.fail("the player playback event must parse");
+  };
+  let s = sim.tap(library_sim(), "Bedroom, Online");
+  let before = s.shell.app;
+  s = sim.tap(s, "Living room, Online");
+  s = sim.send(s, deck.PlaybackLoaded(before.generation, before.now_playing.revision, Ok(playing)));
+  if (sim.shows(s, "Playing")) {
+    return test.fail("a late status from the previous player must be ignored");
+  }
+  let state = s.shell.app;
+  s = sim.send(s, deck.PlaybackLoaded(state.generation, state.now_playing.revision, Ok(player_status.Playback { ...playing, state: "paused" })));
+  return test.assert_eq(sim.shows(s, "Paused") && sim.shows(s, "Woodland Walk") && sim.shows(s, "Fox at dusk"), true);
+}
+
+function test_continuous_posters(): test.TestOutcome {
+  let first = fixture_cards()[0];
+  let cards: api.Card[] = [];
+  let tracks: api.Track[] = [];
+  for i in 0..22 {
+    let title = "Track " + i.to_string();
+    tracks = tracks.append(api.Track { title: title, chapter: "", chapter_key: "01", track_key: i.to_string(), search: title.to_lower() });
+  }
+  for i in 0..22 {
+    let id = "card-" + i.to_string();
+    cards = cards.append(api.Card { ...first, id: id, title: "Cover " + i.to_string(), cover: "https://example.com/" + id, tracks: tracks });
+  }
+  let model = deck.Model { ...deck.start(), token: "test session", tab: 1 };
+  let library = api.Library { players: [], cards: cards, note: "" };
+  let s = simulator(deck.update(model, deck.LibraryLoaded(Ok(library))));
+  let grid = s.shell.host.lay.scrollers[0];
+  if (grid.count != 11 || grid.row < 400 || !sim.says(s, "Tracks for Cover 0") || s.shell.app.shelf.first_art != 0) {
+    return test.fail("the library must show large cover tiles in a single list");
+  }
+  for i in 0..16 {
+    if (sim.says(s, "Tracks for Cover 21")) {
+      break;
+    }
+    s = sim.settle(sim.drag(s, 160, 1450, 160, 580, 450i64));
+  }
+  if (!sim.says(s, "Tracks for Cover 21") || sim.shows(s, "Next") || s.shell.app.shelf.first_art < 16) {
+    return test.fail("a swipe must reach titles and request their covers past the old page limits");
+  }
+  s = sim.tap(s, "Tracks for Cover 21");
+  if (s.shell.host.lay.scrollers[0].count != 22) {
+    return test.fail("card details must put every track in the same list");
+  }
+  s = sim.tap(s, "Back to library");
+  if (!sim.says(s, "Tracks for Cover 21")) {
+    return test.fail("opening a card must preserve the library's scroll position");
+  }
+  s = sim.type_in(s, "library-search", "woodland");
+  return test.assert_eq(s.shell.host.lay.scrollers[0].count == 11 && sim.says(s, "Tracks for Cover 0"), true);
+}
+
+function test_signed_streams(): test.TestOutcome {
+  let value = json.parse("{\"content\":{\"chapters\":[{\"key\":\"01\",\"tracks\":[{\"key\":\"01\",\"title\":\"Intro\",\"trackUrl\":\"yoto:#private\"},{\"key\":\"02\",\"title\":\"Forest\",\"trackUrl\":\"https://example.com/forest.mp3?signature=sample\"}]},{\"key\":\"02\",\"tracks\":[{\"key\":\"01\",\"title\":\"The clearing\",\"trackUrl\":\"https://example.com/clearing.mp3\"}]}]}}").unwrap_or(json.JNull);
+  let Ok(queue) = api.parse_streams(value, "01", "02") else {
+    return test.fail("Yoto's signed URLs must form a playlist");
+  };
+  if (api.parse_streams(value, "", "").is_ok() || api.parse_streams(value, "01", "99").is_ok() || queue.len() != 2) {
+    return test.fail("missing links or keys must not start a different track");
+  }
+  return test.assert_eq_array(queue.map((stream: api.Stream): string => stream.title), ["Forest", "The clearing"]);
+}
+
+function test_phone_playback(): test.TestOutcome {
+  let s = sim.tap(sim.tap(library_sim(), "This phone"), "Library");
+  s = sim.tap(s, "Play Woodland Walk");
+  let m = s.shell.app;
+  if (!m.on_phone || m.job.is_none() || !sim.shows(s, "Play on this phone")) {
+    return test.fail("the phone must be a selectable playback target");
+  }
+  let opened = cell_new([] as string[]);
+  let closes = cell_new(0);
+  let output = phone.Output {
+    ...no_audio(),
+    open: (address: string): Option[player.Player] => {
+      let previous = opened.get();
+      opened.set(previous.append(address));
+      return Some(player.Player { obj: 1 as usize, listener: 1 as usize, slot: previous.len() });
+    },
+    start: (media: player.Player): boolean => true,
+    pause: (media: player.Player): boolean => true,
+    close: (media: player.Player): void => closes.set(closes.get() + 1),
+  };
+  let queue = [api.Stream { title: "Intro", url: "https://example.com/intro" }, api.Stream { title: "Fox at dusk", url: "https://example.com/fox" }];
+  let state = phone.apply(phone.received(m.phone, m.phone.revision, Ok(queue)), output);
+  let (prepared, arg) = player.posted(player.Prepared, 0);
+  state = phone.apply(phone.event(state, android.Posted(prepared, arg)), output);
+  state = phone.apply(phone.control(state, api.Pause), output);
+  if let phone.Paused = state.phase {
+    state = phone.apply(phone.control(state, api.Resume), output);
+  } else {
+    return test.fail("prepared phone audio must pause and resume");
+  }
+  let (ended, value) = player.posted(player.Completed, 0);
+  state = phone.apply(phone.event(state, android.Posted(ended, value)), output);
+  state = phone.apply(phone.event(state, android.Posted(ended, value)), output);
+  if (state.at != 1 || closes.get() != 1) {
+    return test.fail("completion advances once and releases the old audio");
+  }
+  state = phone.apply(phone.stop(state), output);
+  state = phone.apply(phone.received(state, m.phone.revision, Ok(queue)), output);
+  if (state.media.is_some() || closes.get() != 2) {
+    return test.fail("stop releases the player and ignores a late stream response");
+  }
+  return test.assert_eq_array(opened.get(), ["https://example.com/intro", "https://example.com/fox"]);
 }
 
 function main(): i32 {
@@ -184,5 +377,13 @@ function main(): i32 {
   r = r.it("track playback addresses the exact chapter and track", test_exact_track);
   r = r.it("the search box opens a matching track's card", test_search_in_ui);
   r = r.it("cards can play on a selected online player", test_player_selection);
+  r = r.it("save a rotated session before close and clear it on sign-out", test_saved_session);
+  r = r.it("distinguish token rejection from a retryable error", test_token_errors);
+  r = r.it("hold Backspace in search and stop on release", test_held_backspace);
+  r = r.it("a search with matches keeps the sync error out of the results", test_successful_search_hides_sync_error);
+  r = r.it("show the selected player's paused track", test_player_playback);
+  r = r.it("scroll a library of large covers past the former page limit", test_continuous_posters);
+  r = r.it("start a phone playlist at the exact authorized track", test_signed_streams);
+  r = r.it("select the phone and advance, pause, resume, and stop its audio", test_phone_playback);
   return r.finish();
 }

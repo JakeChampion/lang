@@ -44,6 +44,8 @@ A `Nav` is the stack of the pages of an app. `push` opens a page over the top pa
 
 An element gives the messages of `on_tap`, `on_long`, `on_slide`, `on_edit` and `on_submit`, and a list gives the messages of `on_move` and `on_swipe`. A program gives the others. `with_tick` gives a message each time the time of its `wait` goes by. `with_frames` gives a message for each frame while its `animating` is true, with the time of the frame. `with_back` gives a message for the back key, or lets the back key close the app. `with_system` gives a message for an event of `std/android` that this module does not use itself.
 
+`with_visible` can give a message after layout. Use the list boxes and offsets to find rows that come into view.
+
 `with_close` takes the final state during the Destroy that ends the loop, and returns its closed state. The callback runs before Android frees the context or detaches the loop thread from the JVM. A Destroy that `android.keep_alive` keeps the loop through does not close the state: the app runs on with no window, and a later Destroy closes it.
 
 `with_theme` gives the colors for the light system and for the dark system. `with_theme_of` gives them for the state of the program also.
@@ -2388,6 +2390,7 @@ pub struct Program[S, M] {
   frame: Option[(i64) => M],
   back: (S) => Option[M],
   system: (android.Event) => Option[M],
+  visible: Option[(S, Screen, Layout, Input) => Option[M]],
   effects: (S) => S,
   close: (own S) => own S,
   save: (S, kv.Store) => kv.Store,
@@ -2401,7 +2404,7 @@ pub struct Program[S, M] {
 // A program with no messages of its own, which the back key closes, in the
 // colors of `theme`.
 pub function program[S, M](view: (S, Screen) => El[M], update: (own S, M) => S): Program[S, M] {
-  return Program { view: view, update: update, wait: (s: S): i32 => -1, tick: None, animating: (s: S): boolean => false, frame: None, back: (s: S): Option[M] => None, system: (e: android.Event): Option[M] => None, effects: (s: S): S => s, close: (own s: S): own S => s, save: (s: S, k: kv.Store): kv.Store => k, restore: (own s: S, k: kv.Store): own S => s, start: (s: S, m: M): own worker.Worker[M][] => [], poll: (own ws: worker.Worker[M][]): (worker.Worker[M][], M[]) => (ws, []), theme: (s: S, dark: boolean): Theme => theme(dark), meter: false };
+  return Program { view: view, update: update, wait: (s: S): i32 => -1, tick: None, animating: (s: S): boolean => false, frame: None, back: (s: S): Option[M] => None, system: (e: android.Event): Option[M] => None, visible: None, effects: (s: S): S => s, close: (own s: S): own S => s, save: (s: S, k: kv.Store): kv.Store => k, restore: (own s: S, k: kv.Store): own S => s, start: (s: S, m: M): own worker.Worker[M][] => [], poll: (own ws: worker.Worker[M][]): (worker.Worker[M][], M[]) => (ws, []), theme: (s: S, dark: boolean): Theme => theme(dark), meter: false };
 }
 
 // After each message, the shell gives the state to `effects`, which does
@@ -2485,6 +2488,12 @@ pub function (p: Program[S, M]) with_system(system: (android.Event) => Option[M]
   return Program { ...p, system: system };
 }
 
+// After a frame, the program can give a message for a change in the
+// rows that show. Return None if the state already has this range.
+pub function (p: Program[S, M]) with_visible(visible: (S, Screen, Layout, Input) => Option[M]): Program[S, M] {
+  return Program { ...p, visible: Some(visible) };
+}
+
 // The program in the colors that `theme` gives for the light system and
 // for the dark system.
 pub function (p: Program[S, M]) with_theme(theme: (boolean) => Theme): Program[S, M] {
@@ -2545,7 +2554,7 @@ pub struct Device {
 // its caret is before, and `area` tells that it has more than one line.
 // `cost` is the cost of the last frame. `ticked` is the time of the last
 // tick of the program, in ns.
-pub struct Host { dev: Device, fonts: text.Fonts, paint: painter.Painter, window: usize, screen: Screen, input: Input, lay: Layout, frames: i32, focus: string, typed: string, caret: i32, area: boolean, cost: Cost, ticked: i64 }
+pub struct Host { dev: Device, fonts: text.Fonts, paint: painter.Painter, window: usize, screen: Screen, input: Input, lay: Layout, frames: i32, focus: string, typed: string, caret: i32, area: boolean, cost: Cost, ticked: i64, backspace_at: i64 }
 
 // The milliseconds of the parts of the last frame: `view`, the layout, the
 // painter and the accessibility tree. `frame` is the longest frame and
@@ -2576,7 +2585,7 @@ pub struct Shell[S, M] { app: S, host: Host, said: Messages[M], jobs: worker.Wor
 // A shell for the state `state`, which draws text with `fonts`.
 pub function shell[S, M](own state: S, fonts: text.Fonts, dev: Device): Shell[S, M] {
   let screen = Screen { w: 0, h: 0, d: dev.density(), dark: dev.dark(), theme: theme(false), left: 0, top: 0, right: 0, bottom: 0, font: dev.font_scale(), rtl: dev.rtl() };
-  return Shell { app: state, host: Host { dev: dev, fonts: fonts, paint: painter.new(fonts), window: 0 as usize, screen: screen, input: no_input(), lay: no_layout(), frames: 0, focus: "", typed: "", caret: 0, area: false, cost: no_cost(), ticked: dev.now() }, said: no_messages(), jobs: [] };
+  return Shell { app: state, host: Host { dev: dev, fonts: fonts, paint: painter.new(fonts), window: 0 as usize, screen: screen, input: no_input(), lay: no_layout(), frames: 0, focus: "", typed: "", caret: 0, area: false, cost: no_cost(), ticked: dev.now(), backspace_at: 0i64 }, said: no_messages(), jobs: [] };
 }
 
 function changed(h: Host): Host {
@@ -2669,7 +2678,7 @@ function blurred(h: Host): Host {
     h.dev.hide_keyboard();
     h.dev.request_frame();
   }
-  return Host { ...h, focus: "", typed: "", caret: 0, area: false };
+  return Host { ...h, focus: "", typed: "", caret: 0, area: false, backspace_at: 0i64 };
 }
 
 // The host with the keyboard on the text that the tree `root` has for the
@@ -2687,7 +2696,7 @@ function synced[M](own h: Host, root: El[M]): Host {
   }
   let end = text.letters(f.content).len();
   h.dev.set_keyboard(f.content, end);
-  return Host { ...h, typed: f.content, caret: end };
+  return Host { ...h, typed: f.content, caret: end, backspace_at: 0i64 };
 }
 
 // The host with its lists where they are at the time `ns`.
@@ -2758,7 +2767,12 @@ function drawn[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M]
   if (p.meter) {
     over = meter(host.fonts, screen, host.cost);
   }
-  return Shell { app: s.app, host: painted(host, built.layout(), over, screen, animating, cost), said: built.messages(), jobs: s.jobs };
+  let lay = built.layout();
+  let msg: Option[M] = None;
+  if let Some(visible) = p.visible {
+    msg = visible(s.app, screen, lay, host.input);
+  }
+  return told_maybe(Shell { app: s.app, host: painted(host, lay, over, screen, animating, cost), said: built.messages(), jobs: s.jobs }, p, msg);
 }
 
 function frame[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M] {
@@ -2783,7 +2797,7 @@ function focused[M](h: Host, f: El[M], caret: i32): Host {
   if (h.focus == f.field || caret < text.letters(f.content).len()) {
     h.dev.set_keyboard(f.content, caret);
   }
-  return changed(Host { ...h, focus: f.field, typed: f.content, caret: caret, area: f.lines > 1 });
+  return changed(Host { ...h, focus: f.field, typed: f.content, caret: caret, area: f.lines > 1, backspace_at: 0i64 });
 }
 
 // The host after a finger went down: a finger on something other than the
@@ -2930,6 +2944,22 @@ function deleted[S, M](own s: Shell[S, M], p: Program[S, M]): Shell[S, M] {
   return retyped(s, p, next, caret - 1);
 }
 
+// Native repeat events extend this deadline. The shell supplies repeats when
+// an input device sends one down event and holds the key until its up event.
+function backspace[S, M](own s: Shell[S, M], p: Program[S, M], delay: i64): Shell[S, M] {
+  let next = deleted(s, p);
+  let h = next.host;
+  let at = if (h.caret > 0) { h.dev.now() + delay * 1000000i64 } else { 0i64 };
+  return Shell { ...next, host: Host { ...h, backspace_at: at } };
+}
+
+function backspace_wait(h: Host, now: i64): i32 {
+  if (h.backspace_at == 0i64 || h.focus.len() == 0) {
+    return -1;
+  }
+  return (((h.backspace_at - now).max(0i64) + 999999i64) / 1000000i64) as i32;
+}
+
 // The shell with the caret `by` characters to the right.
 function stepped[S, M](own s: Shell[S, M], by: i32): Shell[S, M] {
   let h = s.host;
@@ -2982,7 +3012,7 @@ function key_edited[S, M](own s: Shell[S, M], p: Program[S, M], code: i32): Shel
     return submitted(s, p);
   }
   if (code == 67) {
-    return deleted(s, p);
+    return backspace(s, p, 550i64);
   }
   if (code == 21) {
     return stepped(s, -1);
@@ -2999,7 +3029,7 @@ function edited[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event): S
   let h = s.host;
   match (e) {
     android.Text(t) => {
-      return edit_told(Shell { app: s.app, host: Host { ...h, typed: t, caret: caret_after(h.typed, t, h.caret) }, said: s.said, jobs: s.jobs }, p, t);
+      return edit_told(Shell { app: s.app, host: Host { ...h, typed: t, caret: caret_after(h.typed, t, h.caret), backspace_at: 0i64 }, said: s.said, jobs: s.jobs }, p, t);
     },
     android.TextAction(_) => {
       return submitted(s, p);
@@ -3017,6 +3047,9 @@ function edited[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event): S
       if (action == 0) {
         return key_edited(s, p, code);
       }
+      if (code == 67 && action == 1) {
+        return Shell { ...s, host: Host { ...h, backspace_at: 0i64 } };
+      }
       return s;
     },
     _ => {
@@ -3028,6 +3061,9 @@ function edited[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event): S
 function ticked[S, M](own s: Shell[S, M], p: Program[S, M]): Shell[S, M] {
   let h = s.host;
   let now = h.dev.now();
+  if (backspace_wait(h, now) == 0) {
+    return backspace(s, p, 55i64);
+  }
   let long = long_wait(h.input, now) == 0;
   if (!long && tick_left(h, p.wait(s.app), now) != 0) {
     return s;
@@ -3095,9 +3131,13 @@ function arranged[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event):
       return Shell { app: s.app, host: changed(Host { ...h, screen: Screen { ...sc, left: left.max(0), top: top.max(0), right: (sc.w - right).max(0), bottom: (sc.h - bottom).max(0) } }), said: s.said, jobs: s.jobs };
     },
     android.Pause => {
-      let t = told_maybe(s, p, p.system(e));
+      let released = Shell { ...s, host: Host { ...h, backspace_at: 0i64 } };
+      let t = told_maybe(released, p, p.system(e));
       kept(t.app, p, t.host.dev);
       return t;
+    },
+    android.Focus(false) => {
+      return told_maybe(Shell { ...s, host: Host { ...h, backspace_at: 0i64 } }, p, p.system(e));
     },
     android.Destroy => {
       let t = told_maybe(s, p, p.system(e));
@@ -3202,6 +3242,10 @@ pub function wait[S, M](s: Shell[S, M], p: Program[S, M]): i32 {
   let now = s.host.dev.now();
   let long = long_wait(s.host.input, now);
   let own_wait = tick_left(s.host, p.wait(s.app), now);
+  let repeat = backspace_wait(s.host, now);
+  if (repeat >= 0 && (own_wait < 0 || repeat < own_wait)) {
+    own_wait = repeat;
+  }
   if (s.jobs.len() > 0 && (own_wait < 0 || own_wait > JOB_POLL_MS)) {
     own_wait = JOB_POLL_MS;
   }

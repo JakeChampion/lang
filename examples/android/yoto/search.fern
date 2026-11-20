@@ -1,8 +1,6 @@
 import "std/string";
 import "./api";
 
-pub const PAGE_SIZE: i32 = 16;
-
 pub struct Hit { card: i32, track: i32 }
 
 pub function category(kind: api.Kind): i32 {
@@ -61,12 +59,4 @@ pub function find(cards: api.Card[], query: string, filter: i32): Hit[] {
     }
   }
   return titles.concat(tracks);
-}
-
-pub function page_count(count: i32): i32 {
-  return (count + PAGE_SIZE - 1) / PAGE_SIZE;
-}
-
-pub function page(hits: Hit[], at: i32): Hit[] {
-  return hits.drop(at * PAGE_SIZE).take(PAGE_SIZE);
 }

@@ -2360,10 +2360,29 @@ function field_text(ctx: usize, e: usize, field: usize, text: string, cursor: i3
   unsafe {
     Context.c_store_quiet(ctx, 1);
     let s: usize = jni.new_string(e, text);
-    let set = jni.call_void(e, field, "setText", "(Ljava/lang/CharSequence;)V", [s]);
     let class: usize = jni.get_object_class(e, field);
     let none: usize = jni.jvalue_alloc(0);
-    let n: i32 = jni.call_int_method_a(e, field, jni.get_method_id(e, class, "length", "()I"), none);
+    let length = jni.get_method_id(e, class, "length", "()I");
+    let replaced = false;
+    if (cursor >= 0) {
+      // Keep the editable object that the keyboard uses during a key repeat.
+      let editable = jni.call_object(e, field, "getText", "()Landroid/text/Editable;", []);
+      if (editable != 0 as usize) {
+        let before = jni.call_int_method_a(e, field, length, none);
+        let updated = jni.call_object(e, editable, "replace", "(IILjava/lang/CharSequence;)Landroid/text/Editable;", [0 as usize, before as usize, s]);
+        if let Ok(_) = jni.check(e) {
+          replaced = updated != 0 as usize;
+        }
+        let drop_updated = jni.delete_local_ref(e, updated);
+        let drop_editable = jni.delete_local_ref(e, editable);
+      } else {
+        let cleared = jni.check(e);
+      }
+    }
+    if (!replaced) {
+      let set = jni.call_void(e, field, "setText", "(Ljava/lang/CharSequence;)V", [s]);
+    }
+    let n = jni.call_int_method_a(e, field, length, none);
     jni.free_buffer(none);
     let at = n;
     if (cursor >= 0 && cursor < n) {
