@@ -229,46 +229,67 @@ function test_sha3_one_shots(): test.TestOutcome {
   return test.assert_eq(hex.encode(crypto.sha3_512_new().update("ab".as_bytes()).update("c".as_bytes()).finish()), hex.encode(crypto.sha3_512(abc)));
 }
 
+function rejected_length(r: Result[u8[], crypto.ShakeError], wanted: i32): boolean {
+  if let Err(e) = r {
+    if let InvalidOutputLength(n) = e {
+      return n == wanted;
+    }
+  }
+  return false;
+}
+
 function test_shake128_empty(): test.TestOutcome {
+  if (!rejected_length(crypto.shake128([], -1), -1) || !rejected_length(crypto.shake128([], 0), 0)) {
+    return test.fail("invalid SHAKE128 output length");
+  }
+  if (hex.encode(crypto.shake128([], 1).unwrap_or([])) != "7f") {
+    return test.fail("one-byte SHAKE128 output");
+  }
   let e: u8[] = [];
-  if (hex.encode(crypto.shake128(e, 32)) != "7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26") {
+  if (hex.encode(crypto.shake128(e, 32).unwrap_or([])) != "7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26") {
     return test.fail("32 bytes");
   }
-  if (__sha3_256_of(crypto.shake128(e, 200)) != "0d8eb608fbb0c0196e2bb58ecd41e47aac9fbfbc2334e02e5d5a5767bf0a4d88") {
+  if (__sha3_256_of(crypto.shake128(e, 200).unwrap_or([])) != "0d8eb608fbb0c0196e2bb58ecd41e47aac9fbfbc2334e02e5d5a5767bf0a4d88") {
     return test.fail("200 bytes");
   }
-  return test.assert_eq(__sha3_256_of(crypto.shake128(e, 512)), "783f768321fcc797b69ca9dc323343dbb776263d96e4c40e6c3b48678f355931");
+  return test.assert_eq(__sha3_256_of(crypto.shake128(e, 512).unwrap_or([])), "783f768321fcc797b69ca9dc323343dbb776263d96e4c40e6c3b48678f355931");
 }
 
 function test_shake128_a3(): test.TestOutcome {
-  if (hex.encode(crypto.shake128(__a3x200(), 32)) != "131ab8d2b594946b9c81333f9bb6e0ce75c3b93104fa3469d3917457385da037") {
+  if (hex.encode(crypto.shake128(__a3x200(), 32).unwrap_or([])) != "131ab8d2b594946b9c81333f9bb6e0ce75c3b93104fa3469d3917457385da037") {
     return test.fail("32 bytes");
   }
-  if (__sha3_256_of(crypto.shake128(__a3x200(), 200)) != "74aa9a100299230f02a2a0a01e12f18b58f324e3decca4468d4c684201085f4d") {
+  if (__sha3_256_of(crypto.shake128(__a3x200(), 200).unwrap_or([])) != "74aa9a100299230f02a2a0a01e12f18b58f324e3decca4468d4c684201085f4d") {
     return test.fail("200 bytes");
   }
-  return test.assert_eq(__sha3_256_of(crypto.shake128(__a3x200(), 512)), "70ee622999bda44af5ef3bb03a4afb254e0973e12d8d6b3382e0613cfc8efc23");
+  return test.assert_eq(__sha3_256_of(crypto.shake128(__a3x200(), 512).unwrap_or([])), "70ee622999bda44af5ef3bb03a4afb254e0973e12d8d6b3382e0613cfc8efc23");
 }
 
 function test_shake256_empty(): test.TestOutcome {
+  if (!rejected_length(crypto.shake256([], -1), -1) || !rejected_length(crypto.shake256([], 0), 0)) {
+    return test.fail("invalid SHAKE256 output length");
+  }
+  if (hex.encode(crypto.shake256([], 1).unwrap_or([])) != "46") {
+    return test.fail("one-byte SHAKE256 output");
+  }
   let e: u8[] = [];
-  if (hex.encode(crypto.shake256(e, 64)) != "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762fd75dc4ddd8c0f200cb05019d67b592f6fc821c49479ab48640292eacb3b7c4be") {
+  if (hex.encode(crypto.shake256(e, 64).unwrap_or([])) != "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762fd75dc4ddd8c0f200cb05019d67b592f6fc821c49479ab48640292eacb3b7c4be") {
     return test.fail("64 bytes");
   }
-  if (__sha3_256_of(crypto.shake256(e, 200)) != "8f3e5ca710dda92d2d0dbfa8ee2d796ffdfca88bc43b97e1860e9ae24773ea03") {
+  if (__sha3_256_of(crypto.shake256(e, 200).unwrap_or([])) != "8f3e5ca710dda92d2d0dbfa8ee2d796ffdfca88bc43b97e1860e9ae24773ea03") {
     return test.fail("200 bytes");
   }
-  return test.assert_eq(__sha3_256_of(crypto.shake256(e, 512)), "f758de459963f104daad27582204ddb6730c73b12dfbb359a10d97ed77ffd09b");
+  return test.assert_eq(__sha3_256_of(crypto.shake256(e, 512).unwrap_or([])), "f758de459963f104daad27582204ddb6730c73b12dfbb359a10d97ed77ffd09b");
 }
 
 function test_shake256_a3(): test.TestOutcome {
-  if (hex.encode(crypto.shake256(__a3x200(), 32)) != "cd8a920ed141aa0407a22d59288652e9d9f1a7ee0c1e7c1ca699424da84a904d") {
+  if (hex.encode(crypto.shake256(__a3x200(), 32).unwrap_or([])) != "cd8a920ed141aa0407a22d59288652e9d9f1a7ee0c1e7c1ca699424da84a904d") {
     return test.fail("32 bytes");
   }
-  if (__sha3_256_of(crypto.shake256(__a3x200(), 200)) != "efbb3e2319365b90f450f45a67944e009e2e0b629cf2a017cbf6c2ecdf225572") {
+  if (__sha3_256_of(crypto.shake256(__a3x200(), 200).unwrap_or([])) != "efbb3e2319365b90f450f45a67944e009e2e0b629cf2a017cbf6c2ecdf225572") {
     return test.fail("200 bytes");
   }
-  return test.assert_eq(__sha3_256_of(crypto.shake256(__a3x200(), 512)), "2730489e394c59f24db0aa5275070ec976a5e81f17599cb4c28149603ae10a09");
+  return test.assert_eq(__sha3_256_of(crypto.shake256(__a3x200(), 512).unwrap_or([])), "2730489e394c59f24db0aa5275070ec976a5e81f17599cb4c28149603ae10a09");
 }
 
 function test_shake_streaming(): test.TestOutcome {
@@ -283,7 +304,7 @@ function test_shake_streaming(): test.TestOutcome {
     r = next.1;
     i += 1;
   }
-  return test.assert_eq(hex.encode(out), hex.encode(crypto.shake128(msg, 512)));
+  return test.assert_eq(hex.encode(out), hex.encode(crypto.shake128(msg, 512).unwrap_or([])));
 }
 
 function test_totp_rfc6238(): test.TestOutcome {

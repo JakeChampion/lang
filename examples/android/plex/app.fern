@@ -613,7 +613,9 @@ function swap(ctx: usize, ps: Players): void {
 // no such row, and this changes nothing.
 function watch_next(ctx: usize, key: string, title: string, kind: i32, at: i64, length: i64, poster: string): void {
   let link = watchnext.app_link(ctx, "play", key);
-  let kept = watchnext.keep(ctx, watchnext.Program { id: key, title: title, kind: kind, position_ms: at, duration_ms: length, poster: poster, link: link });
+  if (watchnext.keep(ctx, watchnext.Program { id: key, title: title, kind: kind, position_ms: at, duration_ms: length, poster: poster, link: link })) {
+    log.info("plex: published Watch Next");
+  }
 }
 
 // Gives the channel row of the app on Android TV the cards. The file `path`
@@ -633,7 +635,9 @@ function fill_channel(ctx: usize, path: string, cards: control.Card[]): void {
     return;
   }
   write_text(path, made.to_string());
-  let shown = watchnext.show_channel(ctx, made, programs);
+  if (watchnext.show_channel(ctx, made, programs)) {
+    log.info("plex: published preview channel");
+  }
 }
 
 // The kind of a program of the channel for the kind of a Plex item.
