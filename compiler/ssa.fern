@@ -1381,8 +1381,7 @@ function still_holds(ev: i32, hi: i32[], now: i32): boolean {
 }
 
 // The position of each header's last back edge, or -1.
-function furthest_latches(f: SFunc): i32[] {
-  let at = block_positions(f);
+function furthest_latches(f: SFunc, at: i32[]): i32[] {
   let latch = util.minus_ones(f.blocks.len());
   for bi in 0..f.blocks.len() {
     for which in 0..2 {
@@ -1398,9 +1397,12 @@ function furthest_latches(f: SFunc): i32[] {
 // A loop is a header and the blocks up to its last back edge, so a header
 // with two back edges counts once.
 pub function block_loop_weights(f: SFunc): i32[] {
-  let latch = furthest_latches(f);
-  let depth = __alloc_i32(f.blocks.len());
-  for h in 0..f.blocks.len() {
+  return weights_from_latches(furthest_latches(f, block_positions(f)));
+}
+
+function weights_from_latches(latch: i32[]): i32[] {
+  let depth = __alloc_i32(latch.len());
+  for h in 0..latch.len() {
     for k in h..=latch[h] {
       depth = depth.with(k, depth[k] + 1);
     }
@@ -1903,7 +1905,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
     cum_all = calls_before(all_calls, total_pos);
   }
   let mates = phi_mates(f, at, def_pos, hi, no_home);
-  let bw = block_loop_weights(f);
+  let bw = weights_from_latches(furthest_latches(f, at));
   let weight = spill_weights(f, at, costs, bw);
   let hard = hard_spans(f, bw, cum, cold, lo, hi, weight, crossing);
   let sole = sole_readers(f);
@@ -2416,7 +2418,9 @@ function kept_for_mate(wanted_by: i32[], reg_of: i32[], holder: i32, v: i32): bo
 // The weight of the reads and the writes of the values that `reg_of` keeps
 // in a frame slot.
 pub function spill_cost(f: SFunc, reg_of: i32[], costs: SpillCosts): i32 {
-  let w = spill_weights(f, block_positions(f), costs, block_loop_weights(f));
+  let at = block_positions(f);
+  let bw = weights_from_latches(furthest_latches(f, at));
+  let w = spill_weights(f, at, costs, bw);
   let total = 0;
   for v in 0..f.nvals {
     if (v < reg_of.len() && reg_of[v] <= -2) {
@@ -2468,7 +2472,8 @@ pub function loop_index_copy(f: SFunc, reg_of: i32[]): SFunc {
   if (!repeated) {
     return f;
   }
-  let last = furthest_latches(f);
+  let at = block_positions(f);
+  let last = furthest_latches(f, at);
   let head = -1;
   let param = -1;
   let best = 2;
@@ -2498,11 +2503,10 @@ pub function loop_index_copy(f: SFunc, reg_of: i32[]): SFunc {
   if (head < 0) {
     return f;
   }
-  return copy_loop_index(f, head, last[head], param, sites[param]);
+  return copy_loop_index(f, at, head, last[head], param, sites[param]);
 }
 
-function copy_loop_index(f: SFunc, head: i32, last: i32, param: i32, sites: i32[]): SFunc {
-  let at = block_positions(f);
+function copy_loop_index(f: SFunc, at: i32[], head: i32, last: i32, param: i32, sites: i32[]): SFunc {
   let idom = immediate_dominators(f, at);
   let pre = idom[head];
   if (pre < 0 || pre == head || f.blocks[pre].term.kind_tag != TERM_BR || f.blocks[pre].term.target != f.blocks[head].id) {
@@ -2558,7 +2562,8 @@ struct SplitPlan { v: i32, pre: i32, head: i32, last: i32, inner: i32, inner_las
 // in the inner loop.
 pub function split_spilled(f: SFunc, reg_of: i32[], fl: boolean[]): LoopSplit {
   let none = LoopSplit { f: f, cost: 0 };
-  let latch = furthest_latches(f);
+  let at = block_positions(f);
+  let latch = furthest_latches(f, at);
   let loops: i32[] = [];
   for h in 0..latch.len() {
     if (latch[h] > h) {
@@ -2607,7 +2612,6 @@ pub function split_spilled(f: SFunc, reg_of: i32[], fl: boolean[]): LoopSplit {
       uses = uses.with(slot[t], uses[slot[t]].append(bi));
     }
   }
-  let at = block_positions(f);
   let idom = immediate_dominators(f, at);
   let plans: SplitPlan[] = [];
   for c in 0..cands.len() {
@@ -2621,7 +2625,7 @@ pub function split_spilled(f: SFunc, reg_of: i32[], fl: boolean[]): LoopSplit {
   if (plans.len() == 0) {
     return none;
   }
-  return split_by(f, at, idom, plans, cells);
+  return split_by(f, at, idom, plans, cells, weights_from_latches(latch));
 }
 
 function split_plan(f: SFunc, at: i32[], idom: i32[], latch: i32[], loops: i32[], v: i32, def: i32, uses: i32[]): Option[SplitPlan] {
@@ -2700,11 +2704,10 @@ function dominated_by(idom: i32[], b: i32, d: i32): boolean {
   return false;
 }
 
-function split_by(f: SFunc, at: i32[], idom: i32[], plans: SplitPlan[], cells: i32): LoopSplit {
+function split_by(f: SFunc, at: i32[], idom: i32[], plans: SplitPlan[], cells: i32, weights: i32[]): LoopSplit {
   let made: i32[] = [];
   let blocks = f.blocks;
   let cost = 0;
-  let weights = block_loop_weights(f);
   let cold = cold_blocks(f);
   for k in 0..plans.len() {
     let p = plans[k];
@@ -2791,7 +2794,9 @@ pub function print_alloc(f: SFunc, a: Alloc): string {
 }
 
 pub function print_alloc_costs(f: SFunc, a: Alloc, costs: SpillCosts): string {
-  let w = spill_weights(f, block_positions(f), costs, block_loop_weights(f));
+  let at = block_positions(f);
+  let bw = weights_from_latches(furthest_latches(f, at));
+  let w = spill_weights(f, at, costs, bw);
   let cold = cold_blocks(f);
   let out = "";
   let start = 0;
