@@ -1,4 +1,6 @@
 import "std/test";
+import "std/result";
+import "std/array";
 import "std/hex";
 import "std/codec";
 import "std/string";
@@ -686,6 +688,50 @@ function test_poly1305_lengths(): test.TestOutcome {
   return test.pass();
 }
 
+// AEAD_XCHACHA20_POLY1305 from draft-irtf-cfrg-xchacha-03, appendix A.3.1.
+function test_xchacha(): test.TestOutcome {
+  let Ok(k) = chacha20poly1305.key(key_seq(128)) else {
+    return test.fail("key");
+  };
+  let nonce = __codec_bytes(hex.decode("404142434445464748494a4b4c4d4e4f5051525354555657"));
+  let expected = "bd6d179d3e83d43b9576579493c0e939572a1700252bfaccbed2902c21396cbb731c7f1b0b4aa6440bf3a82f4eda7e39ae64c6708c54c216cb96b72e1213b4522f8c9ba40db5d945b11b69b982c1bb9e3f3fac2bc369488f76b2383565d3fff921f9664c97637da9768812f615c68b13b52ec0875924c1c7987947deafd8780acf49";
+  let Ok(sealed) = k.seal_xchacha(nonce, sunscreen(), aead_aad()) else {
+    return test.fail("seal");
+  };
+  if (hex.encode(sealed) != expected) {
+    return test.fail("ciphertext and tag");
+  }
+  if (k.open_xchacha(nonce, sealed, []).is_ok()) {
+    return test.fail("wrong additional data");
+  }
+  if (k.seal_xchacha(nonce[0:23], [], []).is_ok() || k.open_xchacha([], sealed, []).is_ok()) {
+    return test.fail("wrong nonce length");
+  }
+  if (shown(k.open_prefixed(nonce.concat(sealed), aead_aad())) != hex.encode(sunscreen())) {
+    return test.fail("draft vector with the nonce prefix");
+  }
+  return test.assert_eq(shown(k.open_xchacha(nonce, sealed, aead_aad())), hex.encode(sunscreen()));
+}
+
+function test_random_nonce(): test.TestOutcome {
+  let Ok(k) = chacha20poly1305.key(key_seq(0)) else {
+    return test.fail("key");
+  };
+  let Ok(first) = k.seal_random([], []) else {
+    return test.fail("seal");
+  };
+  let Ok(second) = k.seal_random([], []) else {
+    return test.fail("seal again");
+  };
+  if (first.len() != 40 || second.len() != 40 || hex.encode(first[0:24]) == hex.encode(second[0:24])) {
+    return test.fail("fresh nonce prefix");
+  }
+  if (k.open_prefixed(first[0:39], []).is_ok() || k.open_prefixed(first.with(0, first[0] ^ 1u8), []).is_ok()) {
+    return test.fail("damaged envelope");
+  }
+  return test.assert_eq(shown(k.open_prefixed(first, [])), "");
+}
+
 function main(): i32 {
   let r = test.new("std/crypto/chacha20poly1305");
   r = r.it("chacha20 block, RFC 8439 2.3.2", test_block);
@@ -707,6 +753,8 @@ function main(): i32 {
   r = r.it("chacha20 matches the scalar reference at each length", test_xor_lengths);
   r = r.it("seal matches the scalar reference and poly1305 at each length", test_seal_lengths);
   r = r.it("poly1305 matches the 64-bit and 26-bit references at each length", test_poly1305_lengths);
+  r = r.it("XChaCha20-Poly1305 draft vector", test_xchacha);
+  r = r.it("random nonce envelope", test_random_nonce);
   return r.finish();
 }
 

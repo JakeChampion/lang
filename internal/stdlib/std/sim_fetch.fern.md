@@ -576,7 +576,7 @@ function __without_at[T](xs: T[], k: i32): T[] {
 
 // TICKET_SECRET seals the session tickets of every HTTP/3 endpoint, as one
 // std/serve key does for its workers.
-const TICKET_SECRET: u8[] = [115u8, 105u8, 109u8];
+const TICKET_SECRET: string = "simulated HTTP/3 ticket key only";
 
 // __h3_delivered hands a datagram the client sent to the peer's server at
 // `at`, accepting the connection on its first.
@@ -595,7 +595,7 @@ function __h3_server(n: Net, p: Peer, data: u8[], now: Instant): Option[h3q.Conn
   if let Some(parked) = p.server {
     return Some(h3q.unpark(parked));
   }
-  let cfg = h3q.transport(quic.config([]).server_side(n.endpoints[p.endpoint].id).with_tickets(TICKET_SECRET).with_early_data());
+  let cfg = h3q.transport(quic.config([]).server_side(n.endpoints[p.endpoint].id).with_tickets(TICKET_SECRET.as_bytes()).with_early_data());
   let Ok(h) = packet.parse(data, 0, cfg.cid_len) else {
     return None;
   };
