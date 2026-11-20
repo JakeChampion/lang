@@ -1,0 +1,307 @@
+import "../literate";
+import "../util";
+import "std/test";
+
+function tangle_code(src: string): string {
+  let r = literate.tangle(src);
+  match (r) {
+    literate.TangleOk(o) => {
+      return o.code;
+    },
+    literate.TangleErr(e) => {
+      return "";
+    }
+  }
+}
+
+function is_err(src: string): boolean {
+  let r = literate.tangle(src);
+  match (r) {
+    literate.TangleOk(o) => {
+      return false;
+    },
+    literate.TangleErr(e) => {
+      return true;
+    }
+  }
+}
+
+function err_line(src: string): i32 {
+  let r = literate.tangle(src);
+  match (r) {
+    literate.TangleOk(o) => {
+      return -1;
+    },
+    literate.TangleErr(e) => {
+      return e.line;
+    }
+  }
+}
+
+function tf_files(src: string): literate.FileResult[] {
+  let r = literate.tangle_files(src);
+  match (r) {
+    literate.FileTangleOk(o) => {
+      return o.files;
+    },
+    literate.FileTangleErr(e) => {
+      let empty: literate.FileResult[] = [];
+      return empty;
+    }
+  }
+}
+
+function tangled(src: string): literate.TangleOk {
+  match (literate.tangle(src)) {
+    literate.TangleOk(o) => {
+      return literate.TangleOk { code: o.code, lits: o.lits, shifts: o.shifts };
+    },
+    literate.TangleErr(e) => {}
+  }
+  return literate.TangleOk { code: "", lits: [], shifts: [] };
+}
+
+function lines_are(got: i32[], want: i32[]): boolean {
+  if (got.len() != want.len()) {
+    return false;
+  }
+  for i in 0..got.len() {
+    if (got[i] != want[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function file_code(files: literate.FileResult[], path: string): string {
+  for i in 0..files.len() {
+    if (files[i].path == path) {
+      return files[i].code;
+    }
+  }
+  return "";
+}
+
+function test_chunks(): test.TestOutcome {
+  let s1 = "# Title\n\nProse.\n\n```fern\n<<*>>=\nfn main() {}\n```\n";
+  if (tangle_code(s1) != "fn main() {}") {
+    return test.fail("root chunk output");
+  }
+
+  let s2: string = "```fern\n<<*>>=\n<<greeting>>\ncall();\n```\n"
+    + "\nDefined only now:\n\n"
+    + "```fern\n<<greeting>>=\nfn greeting() {}\n```\n";
+  if (tangle_code(s2) != "fn greeting() {}\ncall();") {
+    return test.fail("forward chunk reference");
+  }
+
+  let s3: string = "```fern\n<<*>>=\n<<body>>\n```\n"
+    + "```fern\n<<body>>=\nline one\n```\n"
+    + "```fern\n<<body>>=\nline two\n```\n";
+  if (tangle_code(s3) != "line one\nline two") {
+    return test.fail("repeated chunk definitions");
+  }
+
+  let s4: string = "```fern\n<<*>>=\nfn main() {\n    <<body>>\n}\n```\n"
+    + "```fern\n<<body>>=\nreturn 7;\n```\n";
+  if (tangle_code(s4) != "fn main() {\n    return 7;\n}") {
+    return test.fail("nested indentation");
+  }
+
+  let s5: string = "```fern\nnot a chunk, illustrative only\n```\n"
+    + "```fern\n<<*>>=\nfn main() {}\n```\n";
+  if (tangle_code(s5) != "fn main() {}") {
+    return test.fail("illustrative fence changed the root");
+  }
+  if (util.contains(tangle_code(s5), "illustrative")) {
+    return test.fail("illustrative prose entered the output");
+  }
+
+  if (!is_err("```fern\n<<helper>>=\nfn h() {}\n```\n")) {
+    return test.fail("accepted a document without a root");
+  }
+
+  let s7 = "```fern\n<<*>>=\n<<nope>>\n```\n";
+  if (!is_err(s7)) {
+    return test.fail("accepted an undefined chunk");
+  }
+  if (err_line(s7) != 3) {
+    return test.fail("wrong undefined-reference line");
+  }
+
+  let s8: string = "```fern\n<<*>>=\n<<a>>\n```\n"
+    + "```fern\n<<a>>=\n<<b>>\n```\n"
+    + "```fern\n<<b>>=\n<<a>>\n```\n";
+  if (!is_err(s8)) {
+    return test.fail("accepted a chunk cycle");
+  }
+
+  let s9 = "````fern\n\n<<*>>=\nfn main() {}\n````\n";
+  if (tangle_code(s9) != "fn main() {}") {
+    return test.fail("four-backtick fence output");
+  }
+  return test.pass();
+}
+
+function test_files(): test.TestOutcome {
+  let m1: string = "```fern file=main.fern entry\nimport \"./u\";\n<<g>>\n```\n"
+    + "```fern file=u.fern\n<<g>>\n```\n"
+    + "```fern\n<<g>>=\npub fn g() {}\n```\n";
+  let f1 = tf_files(m1);
+  if (f1.len() != 2) {
+    return test.fail("file count");
+  }
+  if (file_code(f1, "main.fern") != "import \"./u\";\npub fn g() {}") {
+    return test.fail("main file expansion");
+  }
+  if (file_code(f1, "u.fern") != "pub fn g() {}") {
+    return test.fail("library file expansion");
+  }
+  if (literate.entry_file(f1) != "main.fern") {
+    return test.fail("explicit entry path");
+  }
+
+  let m2: string = "```fern file=a.fern\nL1\n```\n"
+    + "```fern file=a.fern\nL2\n```\n";
+  let f2 = tf_files(m2);
+  if (f2.len() != 1) {
+    return test.fail("repeated file fence count");
+  }
+  if (file_code(f2, "a.fern") != "L1\nL2") {
+    return test.fail("repeated file fence contents");
+  }
+
+  let f3 = tf_files("```fern file=only.fern\nx\n```\n");
+  if (literate.entry_file(f3) != "only.fern") {
+    return test.fail("single-file entry path");
+  }
+
+  let f4 = tf_files("```fern file=a.fern\nx\n```\n```fern file=b.fern\ny\n```\n");
+  if (literate.entry_file(f4) != "") {
+    return test.fail("selected an ambiguous entry");
+  }
+
+  let m5: string = "```fern file=lib.fern\npub fn h() {}\n```\n"
+    + "```fern file=app.fern\nfn main() {}\n```\n";
+  if (literate.entry_file(tf_files(m5)) != "app.fern") {
+    return test.fail("entry inferred from main");
+  }
+
+  let r6 = literate.tangle_files("```fern file=m.fern\n<<nope>>\n```\n");
+  match (r6) {
+    literate.FileTangleOk(o) => {
+      return test.fail("accepted an undefined file chunk");
+    },
+    literate.FileTangleErr(e) => {
+      if (e.line != 2) {
+        return test.fail("wrong file-chunk error line");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function test_maps(): test.TestOutcome {
+  let s4: string = "```fern\n<<*>>=\nfn main() {\n    <<body>>\n}\n```\n"
+    + "```fern\n<<body>>=\nreturn 7;\n```\n";
+  let m1: string = "```fern file=main.fern entry\nimport \"./u\";\n<<g>>\n```\n"
+    + "```fern file=u.fern\n<<g>>\n```\n"
+    + "```fern\n<<g>>=\npub fn g() {}\n```\n";
+  let p4 = tangled(s4);
+  if (!lines_are(p4.lits, [3, 9, 5]) || !lines_are(p4.shifts, [0, 4, 0])) {
+    return test.fail("nested source lines or shifts");
+  }
+
+  let p17 = tangled("```fern\n<<*>>=\n  \\<<x>>\n```\n");
+  if (p17.code != "  <<x>>" || !lines_are(p17.lits, [3]) || !lines_are(p17.shifts, [-1])) {
+    return test.fail("escaped reference source map");
+  }
+
+  let pm = tf_files(m1);
+  if (pm.len() != 2 || pm[0].path != "main.fern" || !lines_are(pm[0].lits, [2, 10]) || !lines_are(pm[0].shifts, [0, 0])) {
+    return test.fail("file source map");
+  }
+
+  let m19: string = "```fern file=a.fern entry\npub fn h() {}\n```\n"
+    + "```fern file=b.fern entry\npub function main(): i32 { return 0; }\n```\n";
+  if (literate.entry_file(tf_files(m19)) != "b.fern") {
+    return test.fail("entry inferred among marked files");
+  }
+
+  let m20: string = "```fern file=a.fern\nfunction mainloop() {}\n```\n"
+    + "```fern file=b.fern\n  fn main() {}\n```\n";
+  if (literate.entry_file(tf_files(m20)) != "b.fern") {
+    return test.fail("mistook mainloop for main");
+  }
+
+  let m21: string = "```fern\n<<*>>=\n<<a>>\n```\n```fern\n<<a>>=\n<<b>>\n```\n```fern\n<<b>>=\nx\n```\n"
+    + "```fern\n<<zed>>=\ny\n```\n```fern\n<<c>>=\nz\n```\n"
+    + "```fern file=f.fern\n<<d>>\n```\n```fern\n<<d>>=\nw\n```\n";
+  let un = literate.unused_chunks(m21);
+  if (un.len() != 2 || un[0] != "c" || un[1] != "zed") {
+    return test.fail("unused chunk list");
+  }
+  return test.pass();
+}
+
+function test_blocks(): test.TestOutcome {
+  if (tangle_code("```FERN\n<<*>>=\nx\n```\n") != "x") {
+    return test.fail("uppercase fence language");
+  }
+  let f22 = tf_files("```fern file=\"q.fern\"\nx\n```\n");
+  if (f22.len() != 1 || f22[0].path != "q.fern") {
+    return test.fail("quoted file path");
+  }
+
+  if (tangle_code("```fern test\n<<*>>=\nbad\n```\n```fern file=f.fern\n<<*>>=\nworse\n```\n```fern\n<<*>>=\ngood\n```\n") != "good") {
+    return test.fail("test or file fence changed the root");
+  }
+
+  if (tangle_code("```fern\n<<*>>=\nx\n") != "x") {
+    return test.fail("unterminated fence output");
+  }
+
+  let d25 = literate.parse("# T\n\n```go\nx\n```\n```fern\nshow\n```\n");
+  if (d25.blocks.len() != 4 || d25.blocks[0].raw != "# T\n" || d25.blocks[1].kind != literate.PROSE || d25.blocks[1].raw != "```go\nx\n```"
+    || d25.blocks[2].kind != literate.DISPLAY || d25.blocks[2].line != 6 || d25.blocks[3].raw != "") {
+    return test.fail("parsed block contents or location");
+  }
+
+  return test.pass();
+}
+
+function test_doctests(): test.TestOutcome {
+  let s26 = "```fern\n<<h>>=\nfn h() {}\n```\n```fern test name=\"adds\"\n<<h>>\nfn main() {}\n```\n```fern test\nfn main() {}\n```\n";
+  match (literate.doctests(s26)) {
+    literate.DoctestsOk(o) => {
+      if (o.tests.len() != 2 || o.tests[0].name != "adds" || o.tests[0].code != "fn h() {}\nfn main() {}" || !lines_are(o.tests[0].lits, [3, 7])
+        || o.tests[1].name != "" || o.tests[1].line != 9) {
+        return test.fail("doctest contents or source map");
+      }
+    },
+    literate.DoctestsErr(e) => {
+      return test.fail("rejected valid doctests");
+    }
+  }
+  match (literate.doctests("```fern test\n<<nope>>\n```\n")) {
+    literate.DoctestsOk(o) => {
+      return test.fail("accepted an undefined doctest chunk");
+    },
+    literate.DoctestsErr(e) => {
+      if (e.line != 2 || e.col != 1) {
+        return test.fail("wrong doctest error position");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("literate");
+  r = r.it("chunks", test_chunks);
+  r = r.it("files", test_files);
+  r = r.it("maps", test_maps);
+  r = r.it("blocks", test_blocks);
+  r = r.it("doctests", test_doctests);
+  return r.finish();
+}
