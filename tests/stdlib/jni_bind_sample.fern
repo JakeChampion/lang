@@ -25,10 +25,7 @@ pub struct PointClass { class: usize, id_new: usize, id_new_int_string: usize, i
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function point_class(e: usize): Result[PointClass, jni.JavaError] {
-  let local = jni.find_class(e, "dev/fern/Point");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "dev/fern/Point")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "()V"))?;
   let id_new_int_string = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(ILjava/lang/String;)V"))?;
   let id_area = jni.checked_id(e, class, jni.get_method_id(e, class, "area", "()D"))?;
@@ -243,10 +240,7 @@ pub struct ShapeClass { class: usize, id_area: usize }
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function shape_class(e: usize): Result[ShapeClass, jni.JavaError] {
-  let local = jni.find_class(e, "dev/fern/Shape");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "dev/fern/Shape")?;
   let id_area = jni.checked_id(e, class, jni.get_method_id(e, class, "area", "()D"))?;
   return Ok(ShapeClass { class: class, id_area: id_area });
 }
@@ -290,10 +284,7 @@ pub struct SampleClass { class: usize, id_new: usize, id_size: usize, id_total: 
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function sample_class(e: usize): Result[SampleClass, jni.JavaError] {
-  let local = jni.find_class(e, "dev/fern/Sample");
-  jni.check(e)?;
-  let class = jni.new_global_ref(e, local);
-  jni.delete_local_ref(e, local);
+  let class = jni.global_class(e, "dev/fern/Sample")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;I)V"))?;
   let id_size = jni.optional_id(e, jni.get_method_id(e, class, "size", "()I"));
   let id_total = jni.checked_id(e, class, jni.get_static_method_id(e, class, "total", "([JD[Ljava/lang/Object;)J"))?;

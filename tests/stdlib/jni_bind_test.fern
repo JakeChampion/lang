@@ -61,7 +61,7 @@ function test_structs(): test.TestOutcome {
       "pub function (x: Point) as_shape(): Shape {",
       "pub struct ShapeClass { class: usize, id_area: usize }",
       "// fern-lint: allow cyclomatic-complexity\npub function point_class(e: usize): Result[PointClass, jni.JavaError] {",
-      "jni.find_class(e, \"dev/fern/Point\");",
+      "jni.global_class(e, \"dev/fern/Point\")?;",
       "let id_parse = jni.checked_id(e, class, jni.get_static_method_id(e, class, \"parse\", \"(Ljava/lang/String;)Ldev/fern/Point;\"))?;",
       "let id_x = jni.checked_id(e, class, jni.get_field_id(e, class, \"x\", \"I\"))?;",
       "let id_made = jni.checked_id(e, class, jni.get_static_field_id(e, class, \"made\", \"J\"))?;",
