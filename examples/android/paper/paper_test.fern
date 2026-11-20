@@ -30,33 +30,45 @@ function test_named_sorts_by_shown_name(): test.TestOutcome {
 }
 
 function test_search_lists_paper(): test.TestOutcome {
-  return test.assert_eq(labels(paper.search(paper.named(apps(), paper.defaults()), "paper", [])), "Paper");
+  let s = paper.defaults();
+  return test.assert_eq(labels(paper.search(paper.named(apps(), s), "paper", s)), "Paper");
 }
 
 function test_search_finds_both_names(): test.TestOutcome {
   let s = paper.with_name(paper.defaults(), "com.android.chrome/com.google.android.apps.chrome.Main", "Web browser");
   let all = paper.named(apps(), s);
-  let by_new = labels(paper.search(all, "web", []));
-  let by_old = labels(paper.search(all, "chrome", []));
+  let by_new = labels(paper.search(all, "web", s));
+  let by_old = labels(paper.search(all, "chrome", s));
   return test.assert_eq(by_new + " " + by_old, "Web browser Web browser");
 }
 
 function test_search_ranks_prefix_first(): test.TestOutcome {
-  let all = paper.named(apps(), paper.defaults());
-  return test.assert_eq(labels(paper.search(all, "m", [])), "Café Météo,Chrome,Gmail");
+  let s = paper.defaults();
+  let all = paper.named(apps(), s);
+  return test.assert_eq(labels(paper.search(all, "m", s)), "Café Météo,Chrome,Gmail");
 }
 
 function test_search_accents(): test.TestOutcome {
-  let all = paper.named(apps(), paper.defaults());
-  return test.assert_eq(labels(paper.search(all, "meteo", [])), "Café Météo");
+  let s = paper.defaults();
+  let all = paper.named(apps(), s);
+  return test.assert_eq(labels(paper.search(all, "meteo", s)), "Café Météo");
 }
 
 function test_hidden_apps(): test.TestOutcome {
-  let all = paper.named(apps(), paper.defaults());
-  let hidden = ["com.spotify.music/com.spotify.music.MainActivity"];
-  let listed = labels(paper.search(all, "", hidden));
-  let found = labels(paper.search(all, "spot", hidden));
-  return test.assert_eq(listed + " " + found, "Café Météo,Chrome,Gmail,Paper Spotify");
+  let key = "com.spotify.music/com.spotify.music.MainActivity";
+  let s = paper.with_name(paper.parse_settings("hide\t" + key + "\n"), key, "Music");
+  let all = paper.named(apps(), s);
+  let off = paper.Settings { ...s, search_hidden: false };
+  return test.assert_eq_array(
+    [
+      labels(paper.search(all, " ", s)),
+      labels(paper.search(all, "spot", s)),
+      labels(paper.search(all, "spot", off)),
+      labels(paper.search(all, "music", off)),
+      labels(paper.search(all, "m", off)),
+    ],
+    ["Café Météo,Chrome,Gmail,Paper", "Music", "", "", "Café Météo,Chrome,Gmail"],
+  );
 }
 
 function test_rename_back(): test.TestOutcome {
@@ -73,10 +85,11 @@ function test_moved(): test.TestOutcome {
 
 function test_settings_round_trip(): test.TestOutcome {
   let s = paper.with_name(paper.defaults(), "a/b", "My\tMail");
-  s = paper.Settings { ...s, favourites: ["a/b", "c/d"], hidden: ["e/f"], mindful: ["c/d"], music: "x.music", units: "c", auto_open: false, filter_on: true, allowed: ["com.phone"], allowed_set: true, asked_location: true };
+  s = paper.Settings { ...s, favourites: ["a/b", "c/d"], hidden: ["e/f"], mindful: ["c/d"], music: "x.music", units: "c", auto_open: false, search_hidden: false, filter_on: true, allowed: ["com.phone"], allowed_set: true, asked_location: true };
   s = paper.with_block(s, "c/d", 5000i64, 1000i64);
   let text = paper.format_settings(s);
-  return test.assert_eq(paper.format_settings(paper.parse_settings(text)), text);
+  let saved = paper.parse_settings(text);
+  return test.assert_eq(!saved.search_hidden && paper.format_settings(saved) == text, true);
 }
 
 function test_blocks(): test.TestOutcome {
@@ -146,7 +159,7 @@ function main(): i32 {
   r = r.it("search finds a renamed app by both names", test_search_finds_both_names);
   r = r.it("search ranks a prefix first", test_search_ranks_prefix_first);
   r = r.it("search ignores accents", test_search_accents);
-  r = r.it("hidden apps show only in a search", test_hidden_apps);
+  r = r.it("search respects the setting for hidden apps", test_hidden_apps);
   r = r.it("an empty name restores the app's name", test_rename_back);
   r = r.it("move a home app", test_moved);
   r = r.it("settings file round trip", test_settings_round_trip);

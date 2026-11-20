@@ -117,21 +117,20 @@ function rank_in(text: string, q: string): i32 {
   return -1;
 }
 
-// The apps of the app list for the query `query`: with no query, every app
-// that is not hidden; with one, every app that matches, best first.
-pub function search(apps: Entry[], query: string, hidden: string[]): Entry[] {
+// List visible apps for an empty query. For a search, return matches in rank order.
+pub function search(apps: Entry[], query: string, settings: Settings): Entry[] {
   let q = fold(query.trim());
-  let out: Entry[] = [];
-  if (q.len() == 0) {
-    for a in apps {
-      if (!has(hidden, a.key)) {
-        out = out.append(a);
-      }
-    }
-    return out;
+  let candidates = apps;
+  let hidden = settings.hidden;
+  if (hidden.len() > 0 && (q.len() == 0 || !settings.search_hidden)) {
+    candidates = apps.filter((a: Entry): boolean => !has(hidden, a.key));
   }
+  if (q.len() == 0) {
+    return candidates;
+  }
+  let out: Entry[] = [];
   for r in 0..6 {
-    for a in apps {
+    for a in candidates {
       if (rank(a, q) == r) {
         out = out.append(a);
       }
@@ -231,6 +230,7 @@ pub struct Settings {
   music: string,
   units: string,
   auto_open: boolean,
+  search_hidden: boolean,
   filter_on: boolean,
   allowed: string[],
   allowed_set: boolean,
@@ -238,7 +238,7 @@ pub struct Settings {
 }
 
 pub function defaults(): Settings {
-  return Settings { favourites: [], hidden: [], mindful: [], names: [], blocks: [], music: "com.spotify.music", units: "", auto_open: true, filter_on: false, allowed: [], allowed_set: false, asked_location: false };
+  return Settings { favourites: [], hidden: [], mindful: [], names: [], blocks: [], music: "com.spotify.music", units: "", auto_open: true, search_hidden: true, filter_on: false, allowed: [], allowed_set: false, asked_location: false };
 }
 
 pub function name_of(s: Settings, key: string): string {
@@ -340,6 +340,7 @@ pub function format_settings(s: Settings): string {
   out += "music\t" + s.music + "\n";
   out += "units\t" + s.units + "\n";
   out += "auto\t" + bit(s.auto_open) + "\n";
+  out += "search_hidden\t" + bit(s.search_hidden) + "\n";
   out += "filter\t" + bit(s.filter_on) + "\n";
   out += "allowset\t" + bit(s.allowed_set) + "\n";
   out += "asked\t" + bit(s.asked_location) + "\n";
@@ -373,6 +374,8 @@ pub function parse_settings(text: string): Settings {
       s = Settings { ...s, units: v };
     } else if (k == "auto") {
       s = Settings { ...s, auto_open: v == "1" };
+    } else if (k == "search_hidden") {
+      s = Settings { ...s, search_hidden: v == "1" };
     } else if (k == "filter") {
       s = Settings { ...s, filter_on: v == "1" };
     } else if (k == "allowset") {

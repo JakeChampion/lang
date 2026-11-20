@@ -24,12 +24,13 @@ text over an illustrated wallpaper. The app is in Fern only. It is a NativeActiv
   longer than the space under the ridge.
 - "Rename" gives an app a name of your choice, such as "Email" or "Web
   browser". A search finds an app by your name and by its own name.
+- To exclude hidden apps from search results, turn off **Search hidden apps** in Paper settings.
 - "Pause before opening" shows a calm screen for 5 seconds before the app
   opens.
 - "Block for a while" closes an app for 15 minutes, 1 hour, 4 hours or the
   rest of the day.
-- In the dark theme of the system, the paper is dark and the ink is light.
-  The sky of the wallpaper above the ridge takes the dark paper.
+- Paper uses a near-black background and light text in both Android themes.
+  The wallpaper uses the same background color for the sky and dims the landscape.
 
 Paper also does these things:
 

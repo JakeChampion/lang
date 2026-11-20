@@ -25,16 +25,11 @@ pub const SKY_TOP: f64 = 0.445;
 
 // --- colours
 
-// The colours of the paper, the ink and the dialogs, light or dark. The
-// wallpaper keeps its own colours in both.
+// The colors of the background, text and dialogs.
 pub struct Palette { paper: i32, ink: i32, ink_soft: i32, ink_faded: i32, dialog: i32, dialog_text: i32, dialog_soft: i32 }
 
-// The palette of the system theme: dark when `dark` is true.
-pub function palette(dark: boolean): Palette {
-  if (dark) {
-    return Palette { paper: draw.rgb(28, 26, 23), ink: draw.rgb(240, 230, 215), ink_soft: draw.rgb(168, 154, 136), ink_faded: draw.rgba(240, 230, 215, 102), dialog: draw.rgb(43, 40, 37), dialog_text: draw.rgb(236, 230, 224), dialog_soft: draw.rgb(190, 182, 172) };
-  }
-  return Palette { paper: draw.rgb(255, 244, 230), ink: draw.rgb(17, 17, 17), ink_soft: draw.rgb(138, 122, 102), ink_faded: draw.rgba(17, 17, 17, 102), dialog: draw.rgb(247, 242, 236), dialog_text: draw.rgb(29, 27, 32), dialog_soft: draw.rgb(73, 69, 79) };
+pub function palette(): Palette {
+  return Palette { paper: draw.rgb(8, 9, 12), ink: draw.rgb(240, 230, 215), ink_soft: draw.rgb(168, 154, 136), ink_faded: draw.rgba(240, 230, 215, 102), dialog: draw.rgb(43, 40, 37), dialog_text: draw.rgb(236, 230, 224), dialog_soft: draw.rgb(190, 182, 172) };
 }
 
 pub function ridge(): i32 {
@@ -62,8 +57,7 @@ pub function dp(m: Metrics, v: f64): i32 {
 
 // --- the wallpaper
 
-// The wallpaper in the JPEG `bytes`, at the width `w`, as an image. The app
-// copies it once into a layer, which each frame copies to the window.
+// The app copies the wallpaper into a layer for each frame to use.
 pub function wallpaper_layer(img: draw.Image): draw.Frame {
   let f = draw.offscreen(img.width, img.height);
   if (f.width > 0) {
@@ -72,20 +66,16 @@ pub function wallpaper_layer(img: draw.Image): draw.Frame {
   return f;
 }
 
-// A pixel within NEAR_PAPER of the light paper, in each channel, takes the
-// dark paper in full. Between that and FAR_PAPER it takes less of it.
+// These limits set the color range for the transition from the sky to the ridge.
 const NEAR_PAPER: i32 = 48;
 
 const FAR_PAPER: i32 = 96;
 
-// The wallpaper `img` in the theme of `pal`. With a dark paper, a pixel near
-// the light paper moves to the dark paper with a third of its difference
-// from the light paper, so the sky above the ridge keeps a faint grain.
-pub function themed(img: draw.Image, pal: Palette): draw.Image {
-  let light = palette(false).paper;
-  if (pal.paper == light) {
-    return img;
-  }
+// Match the sky to the background. Dim the rest of the image to one quarter intensity.
+pub function darken_wallpaper(img: draw.Image): draw.Image {
+  let light = cream();
+  let paper_color = palette().paper;
+  let blend = FAR_PAPER - NEAR_PAPER;
   let px = img.pixels;
   for i in 0..img.width * img.height {
     let k = i * 4;
@@ -93,23 +83,23 @@ pub function themed(img: draw.Image, pal: Palette): draw.Image {
     for ch in 0..3 {
       far = far.max((px[k + ch] as i32 - (light >> 8 * ch & 255)).abs());
     }
-    if (far < FAR_PAPER) {
-      let weight = (FAR_PAPER - far).min(FAR_PAPER - NEAR_PAPER);
-      for ch in 0..3 {
-        let v = px[k + ch] as i32;
-        let target = (pal.paper >> 8 * ch & 255) + (v - (light >> 8 * ch & 255)) / 3;
-        px = px.with(k + ch, (v + (target - v) * weight / (FAR_PAPER - NEAR_PAPER)).max(0).min(255) as u8);
-      }
+    let weight = (FAR_PAPER - far).max(0).min(blend);
+    for ch in 0..3 {
+      let v = px[k + ch] as i32;
+      let sky = (paper_color >> 8 * ch & 255) + (v - (light >> 8 * ch & 255)) / 3;
+      let dimmed = v / 4;
+      px = px.with(k + ch, (dimmed + (sky - dimmed) * weight / blend).max(0) as u8);
     }
   }
   return draw.Image { ...img, pixels: px };
 }
 
+// Decode the wallpaper, scale it to width `w`, and apply the dark colors.
 pub function wallpaper(bytes: [u8], w: i32): draw.Image {
   match (jpeg.decode_image(bytes)) {
     Ok(img) => {
       let h = (img.height as i64 * (w as i64) / (img.width as i64)) as i32;
-      return draw.Image { width: img.width, height: img.height, pixels: img.pixels }.scaled(w, h);
+      return darken_wallpaper(draw.Image { width: img.width, height: img.height, pixels: img.pixels }.scaled(w, h));
     },
     Err(_) => {
       return draw.Image { width: 0, height: 0, pixels: [] };

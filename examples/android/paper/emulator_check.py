@@ -30,7 +30,7 @@ from emulator import adb, count, crashes, fail, finish, logcat, save_log, screen
 
 PACKAGE = "dev.fern.paper"
 ACTIVITY = PACKAGE + "/.Home"
-PAPER = (255, 244, 230)
+PAPER = (8, 9, 12)
 LISTENER = PACKAGE + "/" + PACKAGE + ".Filter"
 
 

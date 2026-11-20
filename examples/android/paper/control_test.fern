@@ -133,7 +133,7 @@ function fake(dir: string, now: i64): control.Device {
     set_field: (text: string): void => field_line(dir, "set " + text),
     hide_field: (): void => field_line(dir, "hide"),
     access: (items: android.AccessItem[]): void => access_line(dir, items),
-    bars: (top: boolean, bottom: boolean): void => {},
+    bars: (): void => {},
     has_location: (): boolean => false,
     ask_location: (): void => {},
     location: (): Option[(f64, f64)] => None,
@@ -292,8 +292,8 @@ function test_letter_index_jumps(): test.TestOutcome {
   t = at(t, 30, android.Touch(2, (m.x + m.w / 2) as f32, (m.y + m.h / 2) as f32));
   let at_m = t.s.list_scroll;
   t = at(t, 30, android.Touch(1, (W / 2) as f32, (m.y + m.h / 2) as f32));
-  let mt = ui.Metrics { w: t.s.w, h: t.s.h, d: t.s.d, top: t.s.top, bottom: t.s.bottom, pal: ui.palette(false) };
-  let apps = paper.search(t.s.apps, "", t.s.settings.hidden);
+  let mt = ui.Metrics { w: t.s.w, h: t.s.h, d: t.s.d, top: t.s.top, bottom: t.s.bottom, pal: ui.palette() };
+  let apps = paper.search(t.s.apps, "", t.s.settings);
   let limit = ui.list_scroll_limit(mt, ui_test.fonts(), apps.len());
   let row = ui.list_row(mt, ui_test.fonts());
   return test.assert_eq((w.x == 0 || w.x + w.w == W).to_string() + " " + (limit > 0).to_string() + " " + (at_w == (row * first_of(apps, "W")).min(limit)).to_string() + " " + (at_m == first_of(apps, "M") * row && at_m > 0).to_string() + " " + (t.s.list_scroll == at_m).to_string() + " " + logged(t), "true true true true true ");
@@ -322,14 +322,41 @@ function test_enter_opens_first_match(): test.TestOutcome {
   return test.assert_eq(logged(r), "launch com.google.android.apps.maps/Main");
 }
 
-// Turns off the opening of a single match, through the settings sheet.
-function control_off_auto(own r: Run): Run {
+function settings_from_drawer(own r: Run): Run {
   let t = at(r, 20, android.Key(4, 1));
   t = at(t, 100, android.Tick);
   t = at(t, 200, android.Tick);
-  t = long_at(t, W / 2, 1300);
-  t = tap(t, "auto");
+  return long_at(t, W / 2, 1300);
+}
+
+// Turns off the opening of a single match, through the settings sheet.
+function control_off_auto(own r: Run): Run {
+  let t = tap(settings_from_drawer(r), "auto");
   return swipe(t, 2000, 900);
+}
+
+function test_search_hidden_apps_setting(): test.TestOutcome {
+  let key = "com.spotify.music/Main";
+  let r = swipe(shown("hidden-search"), 2000, 900);
+  r = tap(long(r, "menu:" + key), "hide");
+  r = settings_from_drawer(r);
+  if (find(r, "search-hidden").say != "Search hidden apps: on") {
+    return test.fail("the setting must show that search includes hidden apps");
+  }
+  r = tap(r, "search-hidden");
+  let saved = paper.parse_settings(testkit.read_text(r.dir + "/" + control.SETTINGS_FILE));
+  r = at(swipe(r, 2000, 900), 20, android.Text("spot"));
+  if (saved.search_hidden || find(r, "open:" + key).y != -100 || logged(r) != "") {
+    return test.fail("a hidden app must stay out of search results when the setting is off");
+  }
+  r = at(r, 20, android.TextAction(android.ACTION_GO));
+  r = settings_from_drawer(r);
+  if (find(r, "search-hidden").say != "Search hidden apps: off") {
+    return test.fail("the setting must show that search excludes hidden apps");
+  }
+  r = tap(r, "search-hidden");
+  r = at(swipe(r, 2000, 900), 20, android.Text("spot"));
+  return test.assert_eq(logged(r), "open search spot\nlaunch " + key);
 }
 
 function test_swipe_down_opens_notifications(): test.TestOutcome {
@@ -577,6 +604,7 @@ function main(): i32 {
   r = r.it("a swipe left or right opens the app list", test_side_swipes_open_list);
   r = r.it("the letter index goes to the apps of a letter", test_letter_index_jumps);
   r = r.it("a search with one match opens it", test_search_opens_single_match);
+  r = r.it("the hidden apps setting controls search", test_search_hidden_apps_setting);
   r = r.it("enter opens the first match", test_enter_opens_first_match);
   r = r.it("a swipe down opens the notifications", test_swipe_down_opens_notifications);
   r = r.it("home holds any number of apps", test_unlimited_home_apps);
