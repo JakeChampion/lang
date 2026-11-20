@@ -185,13 +185,15 @@ pub function received(s: State, revision: i64, result: Result[api.DownloadPlan, 
   }
   let next = State { ...s, fetching: None };
   match (result) {
-    Ok(plan) => { return State { ...next, action: Some(Install(plan)) }; },
+    Ok(plan) => {
+      return State { ...next, action: Some(Install(plan)) };
+    },
     Err(error) => {
       if (error.pause_index) {
         return State { ...next, paused: !error.expired, queue: [card].concat(next.queue), note: error.message };
       }
       return State { ...next, failed: next.failed + 1, note: card.title + " · " + error.message };
-    },
+    }
   }
 }
 
@@ -249,11 +251,13 @@ function install(s: State, plan: api.DownloadPlan, output: Output): State {
     entry = Entry { ...entry, tracks: entry.tracks.append(Track { id: id, name: name, title: track.title, chapter: track.chapter, key: track.key }) };
   }
   match (with_entries(s, s.catalog.entries.append(entry), output)) {
-    Ok(next) => { return State { ...next, checked: 0 }; },
+    Ok(next) => {
+      return State { ...next, checked: 0 };
+    },
     Err(note) => {
       delete(entry, output);
       return State { ...s, failed: s.failed + 1, note: note };
-    },
+    }
   }
 }
 
@@ -266,7 +270,9 @@ function removed(s: State, entries: Entry[], output: Output): State {
       }
       return next;
     },
-    Err(note) => { return State { ...s, note: note }; },
+    Err(note) => {
+      return State { ...s, note: note };
+    }
   }
 }
 
@@ -288,8 +294,12 @@ function checked(s: State, output: Output): State {
   let ready = Entry { ...entry, ready: true };
   let entries = s.catalog.entries.map((e: Entry): Entry => if (e.id == entry.id) { ready } else { e });
   match (with_entries(s, entries, output)) {
-    Ok(next) => { return State { ...next, checked: 0 }; },
-    Err(note) => { return State { ...s, note: note }; },
+    Ok(next) => {
+      return State { ...next, checked: 0 };
+    },
+    Err(note) => {
+      return State { ...s, note: note };
+    }
   }
 }
 
@@ -299,13 +309,21 @@ pub function apply(s: State, output: Output): State {
   };
   let next = State { ...s, action: None };
   match (action) {
-    Install(plan) => { return install(next, plan, output); },
-    Check => { return checked(next, output); },
-    Remove(id) => { return removed(next, next.catalog.entries.filter((e: Entry): boolean => e.id == id), output); },
-    Clear => { return removed(next, next.catalog.entries, output); },
+    Install(plan) => {
+      return install(next, plan, output);
+    },
+    Check => {
+      return checked(next, output);
+    },
+    Remove(id) => {
+      return removed(next, next.catalog.entries.filter((e: Entry): boolean => e.id == id), output);
+    },
+    Clear => {
+      return removed(next, next.catalog.entries, output);
+    },
     Cancel => {
       return removed(State { ...next, checked: 0, note: "Download canceled." }, next.catalog.entries.filter((e: Entry): boolean => !e.ready), output);
-    },
+    }
   }
 }
 

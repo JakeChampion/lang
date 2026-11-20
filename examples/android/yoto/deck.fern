@@ -1193,8 +1193,7 @@ function poster(m: Model, hit: search.Hit, size: f64, caption_height: f64): ui.E
     caption = caption.append(ui.text(chapter).colored(ui.MUTED).clamped(1));
   }
   let items = [
-    ui.column([art(m.shelf, card.cover, size), ui.column(caption).height(caption_height).spaced(2.0).padding_xy(6.0, 6.0).wide()])
-      .wide().on_tap(OpenCard(card.id)).described("Tracks for " + title),
+    ui.column([art(m.shelf, card.cover, size), ui.column(caption).height(caption_height).spaced(2.0).padding_xy(6.0, 6.0).wide()]).wide().on_tap(OpenCard(card.id)).described("Tracks for " + title),
   ];
   if (can_control(m)) {
     if let Some(play) = command {
@@ -1207,7 +1206,7 @@ function poster(m: Model, hit: search.Hit, size: f64, caption_height: f64): ui.E
 function poster_grid(m: Model, screen: ui.Screen): ui.El[Msg] {
   let cols = poster_columns(screen);
   let gap = 12.0;
-  let size = ((screen.width() - 32.0 - (cols - 1) as f64 * gap) / cols as f64).floor().max(1.0);
+  let size = ((screen.width() - 32.0 - (cols - 1) as f64 * gap) / (cols as f64)).floor().max(1.0);
   let lines = if (m.shelf.query.trim().len() > 0) { 78.0 } else { 59.0 };
   let caption = 12.0 + lines * screen.font.max(1.0);
   let actions = if (can_control(m)) { 48.0 } else { 0.0 };
