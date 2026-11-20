@@ -44,6 +44,7 @@ function main(): i32 {
   r = r.it("struct patterns", check_struct_patterns);
   r = r.it("return types of nested match payloads", check_nested_payload_returns);
   r = r.it("result payload return types", check_result_payload_returns);
+  r = r.it("declared enum payload returns", check_declared_payload_returns);
   return r.finish();
 }
 
@@ -1893,6 +1894,21 @@ function check_result_payload_returns(): test.TestOutcome {
     let inferred = returninfer.infer_ret_types_module(parser.Module { ...mod, funcs: [missing] });
     if (inferred.funcs[0].ret_type != "string") {
       return test.fail("expected string in " + fixture.1 + ", got " + inferred.funcs[0].ret_type);
+    }
+  }
+  return test.pass();
+}
+
+function check_declared_payload_returns(): test.TestOutcome {
+  let prefix = "enum Entry[A, B] { Pair(A, B), Reverse(B, A), Fixed(string), Named { num: A, label: B }, Empty }";
+  for pattern in ["Pair(_, text)", "Reverse(text, _)", "Fixed(text)", "Named { label: text, .. }", "Named { label: text, num: _ }"] {
+    let source = prefix + " function pick(x: Entry[i32, string], fallback: string): string { match (x) { "
+      + pattern + " => { return text; }, _ => { return fallback; } } }";
+    let mod = parser.parse_module(lexer.tokenize(source));
+    let missing = parser.FuncDecl { ...mod.funcs[0], ret_type: "" };
+    let out = returninfer.infer_ret_types_module(parser.Module { ...mod, funcs: [missing] });
+    if (out.funcs[0].ret_type != "string") {
+      return test.fail("expected string from " + pattern + ", got " + out.funcs[0].ret_type);
     }
   }
   return test.pass();
