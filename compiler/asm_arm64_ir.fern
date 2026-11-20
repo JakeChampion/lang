@@ -1231,7 +1231,7 @@ function ssa_arg_loc(mask: string, p: i32): i32 {
 }
 
 function ssa_lane_refuse(what: string): void {
-  eprint("error: " + what + ": a lane value crosses a call only as one of the first " + util.i32_to_string(ssa_nargs()) + " arguments of a direct call, or as its result");
+  eprint("fern: error: " + what + ": a lane value crosses a call only as one of the first " + util.i32_to_string(ssa_nargs()) + " arguments of a direct call, or as its result");
   exit(3);
 }
 
