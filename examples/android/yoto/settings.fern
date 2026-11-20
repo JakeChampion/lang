@@ -1,0 +1,235 @@
+import "std/android/ui";
+import "std/i32";
+import "std/json";
+import "std/string";
+import "./api";
+
+enum Kind { Text, ClockTime, Colour, Brightness, Limit, Seconds, Switch, ClockFormat, Shortcut }
+
+pub enum AlarmEdit { Add, Remove(i32), Toggle(i32) }
+
+struct Field { key: string, label: string, kind: Kind }
+
+function fields(): (string, Field[])[] {
+  return [
+    ("Player", [Field { key: "name", label: "Player name", kind: Text }]),
+    ("Day mode", [
+      Field { key: "dayTime", label: "Morning starts", kind: ClockTime },
+      Field { key: "dayDisplayBrightness", label: "Day display brightness", kind: Brightness },
+      Field { key: "ambientColour", label: "Morning light color", kind: Colour },
+      Field { key: "maxVolumeLimit", label: "Day volume limit", kind: Limit },
+    ]),
+    ("Night mode", [
+      Field { key: "nightTime", label: "Bedtime starts", kind: ClockTime },
+      Field { key: "nightDisplayBrightness", label: "Night display brightness", kind: Brightness },
+      Field { key: "nightAmbientColour", label: "Nightlight color", kind: Colour },
+      Field { key: "nightMaxVolumeLimit", label: "Night volume limit", kind: Limit },
+    ]),
+    ("Display and power", [
+      Field { key: "displayDimBrightness", label: "Dimmed display brightness", kind: Brightness },
+      Field { key: "displayDimTimeout", label: "Dim display after (seconds)", kind: Seconds },
+      Field { key: "shutdownTimeout", label: "Power off after (seconds)", kind: Seconds },
+      Field { key: "hourFormat", label: "24-hour clock", kind: ClockFormat },
+      Field { key: "clockFace", label: "Clock face", kind: Text },
+      Field { key: "locale", label: "Player language code", kind: Text },
+    ]),
+    ("Sound and Bluetooth", [
+      Field { key: "headphonesVolumeLimited", label: "Limit headphone volume", kind: Switch },
+      Field { key: "bluetoothEnabled", label: "Bluetooth speaker pairing", kind: Switch },
+      Field { key: "btHeadphonesEnabled", label: "Allow Bluetooth headphones", kind: Switch },
+      Field { key: "repeatAll", label: "Repeat all tracks", kind: Switch },
+    ]),
+    ("Right button shortcuts", [
+      Field { key: "dayYotoDaily", label: "Day first press", kind: Shortcut },
+      Field { key: "dayYotoRadio", label: "Day second press", kind: Shortcut },
+      Field { key: "nightYotoDaily", label: "Night first press", kind: Shortcut },
+      Field { key: "nightYotoRadio", label: "Night second press", kind: Shortcut },
+    ]),
+  ];
+}
+
+function as_text(value: json.JsonValue): string {
+  match (value) {
+    json.JBool(on) => { return if (on) { "1" } else { "0" }; },
+    json.JString(text) | json.JNumber(text) => { return text; },
+    _ => { return ""; }
+  }
+}
+
+function original(config: api.PlayerConfig, key: string): Option[json.JsonValue] {
+  if (key == "name") {
+    return Some(json.JString(config.name));
+  }
+  return json.get(config.values, key);
+}
+
+function clock_time(s: string): boolean {
+  let parts = s.split(":");
+  if (parts.len() != 2 || parts[0].len() != 2 || parts[1].len() != 2) {
+    return false;
+  }
+  let h = i32.parse_i32(parts[0]).unwrap_or(-1);
+  let m = i32.parse_i32(parts[1]).unwrap_or(-1);
+  return h >= 0 && h < 24 && m >= 0 && m < 60;
+}
+
+function valid(field: Field, text: string): boolean {
+  let n = i32.parse_i32(text).unwrap_or(-1);
+  match (field.kind) {
+    Text => { return text.len() > 0 && text.len() <= 80; },
+    ClockTime => { return clock_time(text); },
+    Colour => { return text.len() == 7 && text.starts_with("#") && text.drop(1).is_hex_string(); },
+    Brightness => { return n >= 0 && n <= 100 || text == "auto" && field.key != "displayDimBrightness"; },
+    Limit => { return n >= 0 && n <= 16; },
+    Seconds => { return n >= 0; },
+    Switch => { return text == "0" || text == "1"; },
+    ClockFormat => { return text == "12" || text == "24"; },
+    Shortcut => {
+      let parts = text.split("/");
+      return text.len() == 0 || parts.len() == 3 && parts[0].len() > 0 && parts[1].len() > 0;
+    },
+  }
+}
+
+pub function changes(config: api.PlayerConfig, draft: Map[string, string]): Result[(string, json.JsonValue)[], string] {
+  let out: (string, json.JsonValue)[] = [];
+  for section in fields() {
+    for field in section.1 {
+      if let (Some(old), Some(raw)) = (original(config, field.key), draft.get(field.key)) {
+        let text = raw.trim();
+        if (text == as_text(old)) {
+          continue;
+        }
+        if (!valid(field, text)) {
+          return Err("Check " + field.label.to_lower() + ".");
+        }
+        let value = match (old) {
+          json.JBool(_) => json.JBool(text == "1"),
+          json.JNumber(_) => if (i32.parse_i32(text).is_ok()) { json.JNumber(i32.parse_i32(text).unwrap_or(0).to_string()) } else { json.JString(text) },
+          _ => json.JString(text),
+        };
+        out = out.append((field.key, value));
+      }
+    }
+  }
+  if let (Some(old), Some(raw)) = (json.get_array(config.values, "alarms"), draft.get("alarms")) {
+    if let Ok(json.JArray(next)) = json.parse(raw) {
+      if (json.encode(json.JArray(old)) != json.encode(json.JArray(next))) {
+        out = out.append(("alarms", json.JArray(next)));
+      }
+    }
+  }
+  return Ok(out);
+}
+
+function field_view[M](field: Field, value: string, edit: (string, string) => M): ui.El[M] {
+  let label = field.label;
+  let key = field.key;
+  if let Switch | ClockFormat = field.kind {
+    let yes = if let ClockFormat = field.kind { "24" } else { "1" };
+    let no = if let ClockFormat = field.kind { "12" } else { "0" };
+    let on = value == yes;
+    return ui.row([ui.text[M](label).wide(), ui.toggle(on, label, edit(key, if (on) { no } else { yes }))]).aligned(ui.CENTER).height(48.0);
+  }
+  if let Brightness | Limit = field.kind {
+    let max = if let Limit = field.kind { 16 } else { 100 };
+    let at = i32.parse_i32(value).unwrap_or(max).min(max).max(0);
+    let head: ui.El[M][] = [ui.text[M](label).wide(), ui.text[M](value).colored(ui.MUTED)];
+    if ((key == "dayDisplayBrightness" || key == "nightDisplayBrightness") && value != "auto") {
+      head = head.append(ui.text_button("Auto", edit(key, "auto")));
+    }
+    return ui.column([
+      ui.row(head).aligned(ui.CENTER).spaced(6.0),
+      ui.slider(at as f64 / max as f64, (part: f64): M => edit(field.key, ((part * max as f64 + 0.5) as i32).to_string())).described(field.label),
+    ]).wide();
+  }
+  let hint = match (field.kind) {
+    ClockTime => "HH:MM",
+    Colour => "#RRGGBB",
+    Shortcut => "Card ID / chapter / track",
+    _ => label,
+  };
+  let items = [ui.text[M](label), ui.field[M]("config:" + key, value, hint).on_edit((text: string): M => edit(key, text))];
+  if let Colour = field.kind {
+    items = items.append(ui.row([
+      ui.text_button("Off", edit(key, "#000000")).described(label + " off"),
+      ui.text_button("Warm", edit(key, "#ff7300")).described(label + " warm"),
+      ui.text_button("Red", edit(key, "#ff0000")).described(label + " red"),
+      ui.text_button("Blue", edit(key, "#0000ff")).described(label + " blue"),
+    ]).spaced(2.0));
+  }
+  return ui.column(items).spaced(4.0).wide();
+}
+
+pub function alarms(config: api.PlayerConfig, draft: Map[string, string]): Option[json.JsonValue[]] {
+  if let Some(value) = draft.get("alarms") {
+    if let Ok(json.JArray(items)) = json.parse(value) {
+      return Some(items);
+    }
+  }
+  return json.get_array(config.values, "alarms");
+}
+
+pub function alarm_change(config: api.PlayerConfig, draft: Map[string, string], edit: AlarmEdit): Result[Map[string, string], string] {
+  let Some(items) = alarms(config, draft) else {
+    return Err("Alarm settings are unavailable on this player.");
+  };
+  let next = items;
+  match (edit) {
+    Add => {
+      let time = draft.get("alarm-time").unwrap_or("07:00").trim();
+      let days = draft.get("alarm-days").unwrap_or("1111111").trim();
+      let card = draft.get("alarm-card").unwrap_or("").trim();
+      let volume = i32.parse_i32(draft.get("alarm-volume").unwrap_or("5")).unwrap_or(-1);
+      if (items.len() == 10) {
+        return Err("This player already has ten alarms.");
+      }
+      if (!clock_time(time) || !card.is_ascii_alphanumeric() || volume < 0 || volume > 8) {
+        return Err("Enter a time, a card ID, and an alarm volume from 0 to 8.");
+      }
+      if (days.len() != 7 || days.replace("1", "").replace("0", "").len() > 0 || days == "0000000") {
+        return Err("Select at least one day for the alarm.");
+      }
+      next = next.append(json.JString(days + "," + time + "," + card + ",,," + volume.to_string() + ",1"));
+    },
+    Remove(i) => {
+      if (i >= 0 && i < next.len()) {
+        next = next.take(i).concat(next.drop(i + 1));
+      }
+    },
+    Toggle(i) => {
+      if (i >= 0 && i < next.len()) {
+        if let json.JString(wire) = next[i] {
+          let parts = wire.split(",");
+          if (parts.len() == 7) {
+            let mark = if (parts[6] == "1") { "0" } else { "1" };
+            next = next.with(i, json.JString(parts.with(6, mark).join(",")));
+          }
+        }
+      }
+    },
+  }
+  return Ok(draft.insert("alarms", json.encode(json.JArray(next))));
+}
+
+pub function controls[M](config: api.PlayerConfig, draft: Map[string, string], edit: (string, string) => M): ui.El[M][] {
+  let out: ui.El[M][] = [];
+  for section in fields() {
+    let rows: ui.El[M][] = [];
+    for field in section.1 {
+      if let Some(raw) = original(config, field.key) {
+        rows = rows.append(field_view(field, draft.get(field.key).unwrap_or(as_text(raw)), edit));
+      }
+    }
+    if (rows.len() > 0) {
+      out = out.append(ui.card([ui.text[M](section.0).sized(18.0).weighted(650)].concat(rows)).spaced(10.0).wide());
+    }
+  }
+  if (config.timezone.len() > 0) {
+    out = out.append(ui.text[M]("Time zone · " + config.timezone).colored(ui.MUTED));
+  }
+  if (config.version.len() > 0) {
+    out = out.append(ui.text[M]("Yoto OS · " + config.version).colored(ui.MUTED));
+  }
+  return out;
+}

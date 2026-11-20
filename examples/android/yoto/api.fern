@@ -10,11 +10,17 @@ const API: string = "https://api.yotoplay.com";
 
 pub struct Player { id: string, name: string, online: boolean }
 
+pub struct PlayerConfig { name: string, values: json.JsonValue, timezone: string, version: string }
+
 pub enum Kind { Standard, Myo, Podcast, Radio }
 
 pub struct Track { title: string, chapter: string, chapter_key: string, track_key: string, search: string }
 
 pub struct Stream { title: string, url: string }
+
+pub struct DownloadTrack { title: string, chapter: string, key: string, url: string }
+
+pub struct DownloadPlan { id: string, title: string, creator: string, tracks: DownloadTrack[] }
 
 pub struct Card {
   id: string,
@@ -141,6 +147,67 @@ function entries(value: json.JsonValue, key: string): json.JsonValue[] {
   return json.get_array(value, key).unwrap_or([]);
 }
 
+function config_path(id: string): string {
+  return "/device-v2/" + url.encode(id) + "/config";
+}
+
+pub function parse_config(value: json.JsonValue, player: Player): Result[PlayerConfig, Failure] {
+  let device = object(value, "device");
+  let Some(config) = json.get_object(device, "config") else {
+    return Err(failure("Yoto did not return settings for this player."));
+  };
+  if (json.get_string(device, "deviceId").unwrap_or(player.id) != player.id) {
+    return Err(failure("Yoto returned settings for a different player."));
+  }
+  return Ok(PlayerConfig { name: json.get_string(device, "name").unwrap_or(player.name), values: config, timezone: field(device, "geoTimezone"), version: field(device, "releaseChannelVersion") });
+}
+
+pub function player_config(token: string, player: Player): Result[PlayerConfig, Failure] {
+  return parse_config(send(request(token, "GET", config_path(player.id)))?, player);
+}
+
+pub function merge_config(config: PlayerConfig, edits: (string, json.JsonValue)[]): PlayerConfig {
+  let json.JObject(old) = config.values else {
+    return config;
+  };
+  let pairs: (string, json.JsonValue)[] = [];
+  for i in 0..old.names.len() {
+    pairs = pairs.append((old.names[i], old.items[i]));
+  }
+  let name = config.name;
+  for edit in edits {
+    if (edit.0 == "name") {
+      if let json.JString(changed) = edit.1 {
+        name = changed;
+      }
+    } else {
+      pairs = pairs.append(edit);
+    }
+  }
+  return PlayerConfig { ...config, name: name, values: json.JObject(json.from(pairs)) };
+}
+
+pub function save_config(token: string, player: Player, original: PlayerConfig, edits: (string, json.JsonValue)[]): Result[PlayerConfig, Failure] {
+  let current = player_config(token, player)?;
+  for edit in edits {
+    if (edit.0 == "alarms" && json.encode(json.get(current.values, "alarms").unwrap_or(json.JNull))
+      != json.encode(json.get(original.values, "alarms").unwrap_or(json.JNull))) {
+      return Err(failure("Alarms changed on another device. Reload the player settings."));
+    }
+  }
+  let next = merge_config(current, edits);
+  let fields = [("config", next.values)];
+  if (edits.any((edit: (string, json.JsonValue)): boolean => edit.0 == "name")) {
+    fields = fields.append(("name", json.JString(next.name)));
+  }
+  let body = json.JObject(json.from(fields));
+  let reply = send(request(token, "PUT", config_path(player.id)).with_header("Content-Type", "application/json").with_text(json.encode(body)))?;
+  if (field(reply, "status") != "ok") {
+    return Err(failure("Yoto did not save the player settings."));
+  }
+  return Ok(next);
+}
+
 function kind(category: string, feed: string, myo: boolean): Kind {
   if (category == "radio" || category == "radio-station") {
     return Radio;
@@ -259,9 +326,13 @@ pub function library(token: string): Result[Library, Failure] {
   return Ok(Library { players: players, cards: merge_cards(family.unwrap_or([]), mine.unwrap_or([])), note: note });
 }
 
-function card_reply(token: string, summary: Card, query: string): Result[json.JsonValue, Failure] {
+function request_card(token: string, summary: Card, query: string): Result[json.JsonValue, Failure] {
   let path = if (summary.myo) { "/content/" } else { "/card/" };
-  let response = send(request(token, "GET", path + url.encode(summary.id) + query))?;
+  return send(request(token, "GET", path + url.encode(summary.id) + query));
+}
+
+function card_reply(token: string, summary: Card, query: string): Result[json.JsonValue, Failure] {
+  let response = request_card(token, summary, query)?;
   let Some(value) = json.get_object(response, "card") else {
     return Err(failure("Yoto did not return track information."));
   };
@@ -308,6 +379,46 @@ pub function parse_streams(value: json.JsonValue, chapter_key: string, track_key
 pub function streams(token: string, summary: Card, chapter: string, track: string): Result[Stream[], Failure] {
   let value = card_reply(token, summary, "?playable=true")?;
   return parse_streams(value, chapter, track);
+}
+
+pub function parse_download(reply: json.JsonValue, summary: Card): Result[DownloadPlan, Failure] {
+  let Some(value) = json.get_object(reply, "card") else {
+    return Err(failure("Yoto did not return downloadable card details."));
+  };
+  if (json.get_string(value, "cardId").unwrap_or(summary.id) != summary.id) {
+    return Err(failure("Yoto returned audio for a different card."));
+  }
+  let access = object(reply, "ownership");
+  if (!json.get_bool(access, "canAccess").unwrap_or(true) || json.get_bool(access, "previewAccessOnly").unwrap_or(false)
+      || json.get_bool(access, "isAccessibleUsingSubscription").unwrap_or(false)) {
+    return Err(failure("Yoto did not give offline access to the full card."));
+  }
+  let content = object(value, "content");
+  let config = object(content, "config");
+  let meta = object(value, "metadata");
+  if (json.get_bool(config, "onlineOnly").unwrap_or(false)
+      || json.get_bool(content, "restricted").unwrap_or(false) || json.get_bool(object(meta, "media"), "hasStreams").unwrap_or(false)) {
+    return Err(failure("This title is unavailable for offline download."));
+  }
+  let out: DownloadTrack[] = [];
+  for chapter in entries(content, "chapters") {
+    for track in entries(chapter, "tracks") {
+      let address = field(track, "trackUrl");
+      if (field(track, "type") != "audio" || !address.starts_with("https://")) {
+        return Err(failure("Yoto did not provide downloadable audio for every track."));
+      }
+      out = out.append(DownloadTrack { title: json.get_string(track, "title").unwrap_or(field(chapter, "title")), chapter: field(chapter, "key"), key: field(track, "key"), url: address });
+    }
+  }
+  if (out.len() == 0) {
+    return Err(failure("Yoto did not provide downloadable audio for this title."));
+  }
+  return Ok(DownloadPlan { id: summary.id, title: summary.title, creator: summary.creator, tracks: out });
+}
+
+pub function download_plan(token: string, summary: Card): Result[DownloadPlan, Failure] {
+  let value = request_card(token, summary, "?playable=true")?;
+  return parse_download(value, summary);
 }
 
 pub function cover_bytes(address: string): u8[] {

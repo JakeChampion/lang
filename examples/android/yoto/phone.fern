@@ -1,5 +1,6 @@
 import "std/android";
 import "std/android/player";
+import "std/string";
 import "./api";
 
 pub enum Phase { Idle, Loading, Preparing, Playing, Paused }
@@ -111,7 +112,11 @@ pub function close(s: State, output: Output): void {
 }
 
 function unavailable(s: State): State {
-  return State { ...stop(s), note: "Could not play this track on your phone. Check your connection and try again." };
+  let note = "Could not play this track on your phone. Check your connection and try again.";
+  if (s.at < s.queue.len() && s.queue[s.at].url.starts_with("file://")) {
+    note = "Could not open the saved audio. Remove the download and save it again while online.";
+  }
+  return State { ...stop(s), note: note };
 }
 
 pub function apply(s: State, output: Output): State {

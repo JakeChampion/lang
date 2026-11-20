@@ -1,5 +1,6 @@
 import "std/android";
 import "std/android/draw";
+import "std/android/download";
 import "std/android/fonts";
 import "std/android/player";
 import "std/android/testkit";
@@ -7,13 +8,16 @@ import "std/android/text";
 import "std/android/ui";
 import "std/android/ui/sim";
 import "std/json";
+import "std/string";
 import "std/test";
 import "std/worker";
 import "./api";
 import "./deck";
 import "./oauth";
+import "./offline";
 import "./phone";
 import "./search";
+import "./settings";
 import "./player_status";
 
 function test_pkce(): test.TestOutcome {
@@ -141,8 +145,17 @@ function no_audio(): phone.Output {
   };
 }
 
+function no_downloads(): offline.Output {
+  return offline.Output {
+    start: (address: string, name: string, title: string): i64 => -1i64,
+    status: (id: i64): i32 => 0,
+    remove: (id: i64): void => {},
+    save: (entries: offline.Entry[]): boolean => true,
+  };
+}
+
 function simulator(own model: deck.Model): sim.Sim[deck.Model, deck.Msg] {
-  let real = deck.program((address: string): boolean => false, (data: u8[]): Option[draw.Image] => None, (saved: Option[api.Session]): boolean => true, no_audio());
+  let real = deck.program((address: string): boolean => false, (data: u8[]): Option[draw.Image] => None, (saved: Option[api.Session]): boolean => true, no_audio(), no_downloads());
   let dry = ui.program(deck.view, deck.update).with_theme_of(real.theme).with_visible(deck.visible_posters);
   return sim.start(model, dry, test_fonts(), 720, 1600, 2.0);
 }
@@ -198,6 +211,7 @@ function test_saved_session(): test.TestOutcome {
       return true;
     },
     no_audio(),
+    no_downloads(),
   );
   let m = deck.restored(Ok(Some(original)));
   if (p.wait(m) != 0 || m.client != "client") {
@@ -366,6 +380,104 @@ function test_phone_playback(): test.TestOutcome {
   return test.assert_eq_array(opened.get(), ["https://example.com/intro", "https://example.com/fox"]);
 }
 
+function test_player_settings(): test.TestOutcome {
+  let s = sim.tap(library_sim(), "Settings for Bedroom");
+  let panel = s.shell.app.config_panel;
+  let device = panel.device.unwrap_or(api.Player { id: "", name: "", online: false });
+  if (device.id != "one" || !sim.shows(s, "Loading settings…")) {
+    return test.fail("open settings for the player whose button was pressed");
+  }
+  let reply = json.parse("{\"device\":{\"deviceId\":\"one\",\"config\":{\"dayDisplayBrightness\":\"auto\",\"nightAmbientColour\":\"#112233\",\"alarms\":[\"keep\"],\"headphonesVolumeLimited\":true,\"unknown\":\"keep\"}}}").unwrap_or(json.JNull);
+  let Ok(config) = api.parse_config(reply, device) else {
+    return test.fail("parse the device config and retain its other fields");
+  };
+  s = sim.send(s, deck.ConfigLoaded(panel.revision - 1i64, false, Ok(config)));
+  if (s.shell.app.config_panel.config.is_some()) {
+    return test.fail("ignore a stale settings response");
+  }
+  s = sim.send(s, deck.ConfigLoaded(panel.revision, false, Ok(config)));
+  if (!sim.shows(s, "Day display brightness")) {
+    return test.fail("show the brightness setting from the API");
+  }
+  s = sim.slide(s, "Day display brightness", 0.35);
+  let edited = s.shell.app.config_panel.draft;
+  let Ok(changes) = settings.changes(config, edited.insert("headphonesVolumeLimited", "0")) else {
+    return test.fail("brightness and headphone limit changes must validate");
+  };
+  let updated = api.merge_config(config, changes).values;
+  if (json.get_string(updated, "dayDisplayBrightness").unwrap_or("") != "35"
+    || json.get_string(updated, "unknown").unwrap_or("") != "keep"
+    || json.get_array(updated, "alarms").unwrap_or([]).len() != 1
+    || json.get_bool(updated, "headphonesVolumeLimited").unwrap_or(true)) {
+    return test.fail("saving changes must retain unrelated settings and the stored JSON types");
+  }
+  if (settings.changes(config, edited.insert("nightAmbientColour", "blue")).is_ok()) {
+    return test.fail("reject a light color that is not six hex digits");
+  }
+  let alarm = edited.insert("alarm-card", "book").insert("alarm-time", "06:30").insert("alarm-days", "1111100");
+  let Ok(added) = settings.alarm_change(config, alarm, settings.Add) else {
+    return test.fail("accept a scheduled alarm for a library card");
+  };
+  let Ok(disabled) = settings.alarm_change(config, added, settings.Toggle(1)) else {
+    return test.fail("disable the new alarm without removing it");
+  };
+  let wire = json.encode(json.JArray(settings.alarms(config, disabled).unwrap_or([])));
+  if (wire != "[\"keep\",\"1111100,06:30,book,,,5,0\"]") {
+    return test.fail("add and disable an alarm while preserving the old alarm");
+  }
+  s = sim.tap(s, "Save");
+  return test.assert_eq(s.shell.app.config_panel.working && s.shell.app.job.is_some(), true);
+}
+
+function test_offline_download(): test.TestOutcome {
+  let card = fixture_cards()[0];
+  let payload = "{\"ownership\":{\"canAccess\":true,\"cardIsInFamilyLibrary\":true},\"card\":{\"content\":{\"chapters\":[{\"key\":\"01\",\"tracks\":[{\"key\":\"03\",\"title\":\"Fox at dusk\",\"type\":\"audio\",\"trackUrl\":\"https://example.com/fox?signature=sample\"}]}]}}}";
+  let value = json.parse(payload).unwrap_or(json.JNull);
+  let Ok(plan) = api.parse_download(value, card) else {
+    return test.fail("a full-access purchased library card can download");
+  };
+  let stream = json.parse(payload.replace("\"audio\"", "\"stream\"")).unwrap_or(json.JNull);
+  let online = json.parse(payload.replace("\"chapters\"", "\"config\":{\"onlineOnly\":true},\"chapters\"")).unwrap_or(json.JNull);
+  let preview = json.parse(payload.replace("\"canAccess\":true", "\"canAccess\":true,\"previewAccessOnly\":true")).unwrap_or(json.JNull);
+  let subscription = json.parse(payload.replace("\"canAccess\":true", "\"canAccess\":true,\"isAccessibleUsingSubscription\":true")).unwrap_or(json.JNull);
+  let myo = json.parse(payload.replace("\"ownership\":{\"canAccess\":true,\"cardIsInFamilyLibrary\":true},", "")).unwrap_or(json.JNull);
+  if (!api.parse_download(myo, api.Card { ...card, myo: true }).is_ok() || api.parse_download(stream, card).is_ok() || api.parse_download(online, card).is_ok()
+    || api.parse_download(preview, card).is_ok() || api.parse_download(subscription, card).is_ok()) {
+    return test.fail("save full audio for purchased and Make Your Own cards, and reject streams, previews, and online-only cards");
+  }
+  let Ok(dir) = temp_dir("story-deck-downloads") else {
+    return test.fail("make an isolated store");
+  };
+  let status = cell_new(download.PENDING);
+  let removed = cell_new(0);
+  let disk = offline.Output {
+    start: (address: string, name: string, title: string): i64 => 17i64,
+    status: (id: i64): i32 => status.get(),
+    remove: (id: i64): void => removed.set(removed.get() + 1),
+    save: (entries: offline.Entry[]): boolean => offline.save(dir, entries),
+  };
+  let state = offline.empty(offline.load(dir, dir));
+  let busy = offline.fetching(offline.enqueue(state, [card]), card);
+  let started = offline.apply(offline.received(busy, busy.revision, Ok(plan)), disk);
+  if (started.catalog.entries.len() != 1 || offline.saved(started, card.id).is_some()) {
+    return test.fail("do not offer playback before Android completes the download");
+  }
+  status.set(download.DONE);
+  let recovered = offline.empty(offline.load(dir, dir));
+  let ready = offline.apply(offline.check(recovered), disk);
+  let restored = deck.with_downloads(deck.start(), offline.load(dir, dir));
+  let s = sim.tap(simulator(restored), "Play Woodland Walk");
+  if (s.shell.app.token.len() != 0 || !s.shell.app.on_phone || s.shell.app.job.is_some() || s.shell.app.phone.queue.len() != 1) {
+    return test.fail("play the downloaded card after restart without a Yoto session or request");
+  }
+  let file = s.shell.app.phone.queue[0].url;
+  if (!file.starts_with("file://" + dir + "/yoto-offline-") || !file.ends_with(".audio")) {
+    return test.fail("open a local audio file in airplane mode");
+  }
+  let cleared = offline.apply(offline.remove(ready, card.id), disk);
+  return test.assert_eq(removed.get() == 1 && cleared.catalog.entries.len() == 0 && offline.load(dir, dir).entries.len() == 0, true);
+}
+
 function main(): i32 {
   let r = test.new("Story Deck");
   r = r.it("PKCE matches the standard example", test_pkce);
@@ -385,5 +497,7 @@ function main(): i32 {
   r = r.it("scroll a library of large covers past the former page limit", test_continuous_posters);
   r = r.it("start a phone playlist at the exact authorized track", test_signed_streams);
   r = r.it("select the phone and advance, pause, resume, and stop its audio", test_phone_playback);
+  r = r.it("load and save settings for the selected player", test_player_settings);
+  r = r.it("save a family card and open it without a Yoto session after restart", test_offline_download);
   return r.finish();
 }

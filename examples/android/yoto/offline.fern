@@ -1,0 +1,334 @@
+import "std/android/download";
+import "std/base64";
+import "std/json";
+import "std/kv";
+import "std/rand";
+import "std/string";
+import "./api";
+
+pub struct Track { id: i64, name: string, title: string, chapter: string, key: string }
+
+pub struct Entry { id: string, title: string, creator: string, tracks: Track[], ready: boolean }
+
+pub struct Catalog { dir: string, entries: Entry[], note: string }
+
+pub struct Output {
+  start: (string, string, string) => i64,
+  status: (i64) => i32,
+  remove: (i64) => void,
+  save: (Entry[]) => boolean,
+}
+
+enum Action { Install(api.DownloadPlan), Check, Remove(string), Clear, Cancel }
+
+pub struct State {
+  catalog: Catalog,
+  queue: api.Card[],
+  fetching: Option[api.Card],
+  revision: i64,
+  checked: i32,
+  failed: i32,
+  paused: boolean,
+  note: string,
+  action: Option[Action],
+}
+
+const PREFIX: string = "yoto-offline-";
+
+pub function empty(catalog: Catalog): State {
+  return State { catalog: catalog, queue: [], fetching: None, revision: 0i64, checked: 0, failed: 0, paused: false, note: catalog.note, action: None };
+}
+
+function safe_name(name: string): boolean {
+  if (!name.starts_with(PREFIX) || !name.ends_with(".audio") || name.len() > 96) {
+    return false;
+  }
+  for c in name.bytes() {
+    if (!c.is_ascii_alphanumeric() && c != 45u8 && c != 95u8 && c != 46u8) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function decode_track(value: json.JsonValue): Option[Track] {
+  let name = json.get_string(value, "name").unwrap_or("");
+  let id = json.get_i64(value, "download").unwrap_or(-1i64);
+  if (id < 0i64 || !safe_name(name)) {
+    return None;
+  }
+  return Some(Track { id: id, name: name, title: json.get_string(value, "title").unwrap_or("Track"), chapter: json.get_string(value, "chapter").unwrap_or(""), key: json.get_string(value, "key").unwrap_or("") });
+}
+
+function decode_entry(value: json.JsonValue): Option[Entry] {
+  let id = json.get_string(value, "id").unwrap_or("");
+  let tracks: Track[] = [];
+  for item in json.get_array(value, "tracks").unwrap_or([]) {
+    let Some(track) = decode_track(item) else {
+      return None;
+    };
+    tracks = tracks.append(track);
+  }
+  if (id.len() == 0 || tracks.len() == 0) {
+    return None;
+  }
+  return Some(Entry { id: id, title: json.get_string(value, "title").unwrap_or("Untitled card"), creator: json.get_string(value, "creator").unwrap_or(""), tracks: tracks, ready: json.get_bool(value, "ready").unwrap_or(false) });
+}
+
+function encode_track(track: Track): json.JsonValue {
+  return json.JObject(json.from([
+    ("download", json.JNumber(track.id.to_string())), ("name", json.JString(track.name)),
+    ("title", json.JString(track.title)), ("chapter", json.JString(track.chapter)), ("key", json.JString(track.key)),
+  ]));
+}
+
+function encode_entry(entry: Entry): json.JsonValue {
+  return json.JObject(json.from([
+    ("id", json.JString(entry.id)), ("title", json.JString(entry.title)), ("creator", json.JString(entry.creator)),
+    ("tracks", json.JArray(entry.tracks.map(encode_track))), ("ready", json.JBool(entry.ready)),
+  ]));
+}
+
+pub function load(store_dir: string, media_dir: string): Catalog {
+  let blank = Catalog { dir: media_dir, entries: [], note: "" };
+  if (store_dir.len() == 0 || media_dir.len() == 0) {
+    return Catalog { ...blank, dir: "", note: "Download storage is unavailable." };
+  }
+  let Ok(store) = kv.open(store_dir + "/yoto-downloads") else {
+    return Catalog { ...blank, note: "Could not read the saved downloads." };
+  };
+  let text = store.get("titles").unwrap_or("[]");
+  let Ok(json.JArray(values)) = json.parse(text) else {
+    return Catalog { ...blank, note: "Could not read the saved downloads." };
+  };
+  let entries: Entry[] = [];
+  for value in values {
+    if let Some(entry) = decode_entry(value) {
+      entries = entries.append(entry);
+    }
+  }
+  return Catalog { ...blank, entries: entries };
+}
+
+pub function save(dir: string, entries: Entry[]): boolean {
+  if (dir.len() == 0) {
+    return false;
+  }
+  let data = json.encode(json.JArray(entries.map(encode_entry)));
+  return kv.empty(dir + "/yoto-downloads").set("titles", data).save().is_ok();
+}
+
+pub function saved(s: State, id: string): Option[Entry] {
+  for entry in s.catalog.entries {
+    if (entry.id == id && entry.ready) {
+      return Some(entry);
+    }
+  }
+  return None;
+}
+
+function active(s: State): Option[Entry] {
+  for entry in s.catalog.entries {
+    if (!entry.ready) {
+      return Some(entry);
+    }
+  }
+  return None;
+}
+
+pub function busy(s: State): boolean {
+  return s.fetching.is_some() || s.queue.len() > 0 || active(s).is_some();
+}
+
+function contains(s: State, id: string): boolean {
+  if (s.catalog.entries.any((entry: Entry): boolean => entry.id == id)) {
+    return true;
+  }
+  if let Some(card) = s.fetching {
+    if (card.id == id) {
+      return true;
+    }
+  }
+  return s.queue.any((card: api.Card): boolean => card.id == id);
+}
+
+pub function enqueue(s: State, cards: api.Card[]): State {
+  if (s.catalog.dir.len() == 0) {
+    return State { ...s, note: "Download storage is unavailable." };
+  }
+  let next = if (busy(s)) { s } else { State { ...s, note: "", failed: 0 } };
+  for card in cards {
+    if (!contains(next, card.id)) {
+      next = State { ...next, queue: next.queue.append(card) };
+    }
+  }
+  return next;
+}
+
+pub function next(s: State): Option[api.Card] {
+  if (!s.paused && s.queue.len() > 0 && s.fetching.is_none() && active(s).is_none()) {
+    return Some(s.queue[0]);
+  }
+  return None;
+}
+
+pub function fetching(s: State, card: api.Card): State {
+  return State { ...s, queue: s.queue.drop(1), fetching: Some(card), revision: s.revision + 1i64 };
+}
+
+pub function received(s: State, revision: i64, result: Result[api.DownloadPlan, api.Failure]): State {
+  let Some(card) = s.fetching else {
+    return s;
+  };
+  if (s.revision != revision) {
+    return s;
+  }
+  let next = State { ...s, fetching: None };
+  match (result) {
+    Ok(plan) => { return State { ...next, action: Some(Install(plan)) }; },
+    Err(error) => {
+      if (error.pause_index) {
+        return State { ...next, paused: !error.expired, queue: [card].concat(next.queue), note: error.message };
+      }
+      return State { ...next, failed: next.failed + 1, note: card.title + " · " + error.message };
+    },
+  }
+}
+
+pub function check(s: State): State {
+  if (active(s).is_some()) {
+    return State { ...s, action: Some(Check) };
+  }
+  return s;
+}
+
+pub function clear(s: State): State {
+  return State { ...s, queue: [], fetching: None, paused: false, revision: s.revision + 1i64, action: Some(Clear) };
+}
+
+pub function cancel(s: State): State {
+  return State { ...s, queue: [], fetching: None, paused: false, revision: s.revision + 1i64, action: Some(Cancel) };
+}
+
+pub function resume(s: State): State {
+  return State { ...s, paused: false, note: "" };
+}
+
+pub function checking(s: State): boolean {
+  return active(s).is_some();
+}
+
+pub function remove(s: State, id: string): State {
+  return State { ...s, action: Some(Remove(id)) };
+}
+
+function with_entries(s: State, entries: Entry[], output: Output): Result[State, string] {
+  if (!output.save(entries)) {
+    return Err("Could not save the download list.");
+  }
+  return Ok(State { ...s, catalog: Catalog { ...s.catalog, entries: entries } });
+}
+
+function delete(entry: Entry, output: Output): void {
+  for track in entry.tracks {
+    output.remove(track.id);
+  }
+}
+
+function install(s: State, plan: api.DownloadPlan, output: Output): State {
+  let prefix = PREFIX + base64.encode_url(rand.bytes(12)) + "-";
+  let entry = Entry { id: plan.id, title: plan.title, creator: plan.creator, tracks: [], ready: false };
+  for i in 0..plan.tracks.len() {
+    let track = plan.tracks[i];
+    let name = prefix + i.to_string() + ".audio";
+    let id = output.start(track.url, name, plan.title);
+    if (id < 0i64) {
+      delete(entry, output);
+      return State { ...s, failed: s.failed + 1, note: "Android could not start the download for " + plan.title + "." };
+    }
+    entry = Entry { ...entry, tracks: entry.tracks.append(Track { id: id, name: name, title: track.title, chapter: track.chapter, key: track.key }) };
+  }
+  match (with_entries(s, s.catalog.entries.append(entry), output)) {
+    Ok(next) => { return State { ...next, checked: 0 }; },
+    Err(note) => {
+      delete(entry, output);
+      return State { ...s, failed: s.failed + 1, note: note };
+    },
+  }
+}
+
+function removed(s: State, entries: Entry[], output: Output): State {
+  let keep = s.catalog.entries.filter((entry: Entry): boolean => !entries.any((drop: Entry): boolean => drop.id == entry.id));
+  match (with_entries(s, keep, output)) {
+    Ok(next) => {
+      for entry in entries {
+        delete(entry, output);
+      }
+      return next;
+    },
+    Err(note) => { return State { ...s, note: note }; },
+  }
+}
+
+function checked(s: State, output: Output): State {
+  let Some(entry) = active(s) else {
+    return s;
+  };
+  let n = s.checked;
+  for i in n..entry.tracks.len() {
+    let status = output.status(entry.tracks[i].id);
+    if (status == download.FAILED || status == download.GONE) {
+      let failed = removed(s, [entry], output);
+      return State { ...failed, checked: 0, failed: s.failed + 1, note: "Could not download " + entry.title + ". Try again while online." };
+    }
+    if (status != download.DONE) {
+      return State { ...s, checked: i };
+    }
+  }
+  let ready = Entry { ...entry, ready: true };
+  let entries = s.catalog.entries.map((e: Entry): Entry => if (e.id == entry.id) { ready } else { e });
+  match (with_entries(s, entries, output)) {
+    Ok(next) => { return State { ...next, checked: 0 }; },
+    Err(note) => { return State { ...s, note: note }; },
+  }
+}
+
+pub function apply(s: State, output: Output): State {
+  let Some(action) = s.action else {
+    return s;
+  };
+  let next = State { ...s, action: None };
+  match (action) {
+    Install(plan) => { return install(next, plan, output); },
+    Check => { return checked(next, output); },
+    Remove(id) => { return removed(next, next.catalog.entries.filter((e: Entry): boolean => e.id == id), output); },
+    Clear => { return removed(next, next.catalog.entries, output); },
+    Cancel => {
+      return removed(State { ...next, checked: 0, note: "Download canceled." }, next.catalog.entries.filter((e: Entry): boolean => !e.ready), output);
+    },
+  }
+}
+
+pub function message(s: State): string {
+  if let Some(card) = s.fetching {
+    return "Preparing " + card.title + "…";
+  }
+  if let Some(entry) = active(s) {
+    return "Downloading " + entry.title + " · " + s.checked.to_string() + "/" + entry.tracks.len().to_string() + " tracks";
+  }
+  if (s.failed > 1) {
+    return s.failed.to_string() + " downloads failed. " + s.note;
+  }
+  return s.note;
+}
+
+pub function playlist(s: State, entry: Entry, from: i32): api.Stream[] {
+  let tracks: api.Stream[] = [];
+  if (from < 0 || from >= entry.tracks.len() || s.catalog.dir.len() == 0) {
+    return tracks;
+  }
+  for track in entry.tracks.drop(from) {
+    tracks = tracks.append(api.Stream { title: track.title, url: "file://" + s.catalog.dir + "/" + track.name });
+  }
+  return tracks;
+}
