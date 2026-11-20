@@ -220,7 +220,7 @@ pub function (k: Key) seal_in_place(iv: [u8], seq: u64, own buf: u8[], aad_at: i
 }
 
 // Opens buf[at:at + n] in place, the tag at buf[at + n:at + n + 16]. The kernel decrypts and checks the tag in
-// one pass. A tag that does not verify returns Forged and drops the buffer.
+// one pass. If the tag does not verify, the function erases the buffer and returns Forged.
 pub function (k: Key) open_in_place(iv: [u8], seq: u64, own buf: u8[], aad_at: i32, aad_n: i32, at: i32, n: i32): Result[u8[], aead.AeadError] {
   let ctr = __counter_block(iv, seq, 0)?;
   if (aead.overlaps(aad_at, aad_n, at, n)) {
@@ -229,6 +229,7 @@ pub function (k: Key) open_in_place(iv: [u8], seq: u64, own buf: u8[], aad_at: i
   buf = __chacha20_poly1305_open_into(k.k, ctr, buf, aad_at, aad_n, at, n);
   __ct_public(buf[at + n:at + n + 1]);
   if (buf[at + n] != 0) {
+    crypto.erase(buf);
     return Err(aead.Forged);
   }
   return Ok(buf);
