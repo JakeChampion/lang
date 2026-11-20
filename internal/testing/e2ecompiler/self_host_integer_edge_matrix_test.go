@@ -166,8 +166,7 @@ func TestSelfHostIntegerEdgeMatrix(t *testing.T) {
 				checkFoldedLines(t, target, string(got))
 				expected := want
 				if target == "wasm32-wasi" {
-					// usize has 32 bits on wasm32, so its results are not those of a target of 64 bits.
-					expected, got = withoutUsize(want), []byte(withoutUsize(string(got)))
+					expected = wasmEdgeExpected(t, want)
 				}
 				if line := firstDifferentLine(expected, string(got)); line != "" {
 					t.Errorf("%s and the interpreter differ:\n%s", target, line)
@@ -177,14 +176,31 @@ func TestSelfHostIntegerEdgeMatrix(t *testing.T) {
 	}
 }
 
-func withoutUsize(out string) string {
-	var kept []string
-	for _, line := range strings.Split(out, "\n") {
-		if !strings.HasPrefix(line, "usize ") {
-			kept = append(kept, line)
+// wasm32 usize operations have the same width and test operands as u32.
+// Casts from usize already have portable results: every input fits in 32 bits.
+func wasmEdgeExpected(t *testing.T, out string) string {
+	t.Helper()
+	lines := strings.Split(out, "\n")
+	u32 := map[string]string{}
+	for _, line := range lines {
+		head, results, ok := strings.Cut(line, ":")
+		if op, found := strings.CutPrefix(head, "u32 "); found && ok {
+			u32[op] = results
 		}
 	}
-	return strings.Join(kept, "\n")
+	for i, line := range lines {
+		head, _, _ := strings.Cut(line, ":")
+		op, found := strings.CutPrefix(head, "usize ")
+		if !found || strings.HasPrefix(op, "as") {
+			continue
+		}
+		results, ok := u32[op]
+		if !ok {
+			t.Fatalf("missing u32 reference for %s", head)
+		}
+		lines[i] = head + ":" + results
+	}
+	return strings.Join(lines, "\n")
 }
 
 // checkFoldedLines compares each "const" line with its "run" line, and the
