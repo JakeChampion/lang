@@ -357,6 +357,8 @@ jobs:
           api-level: 36
           target: android-tv
           arch: x86_64
+          profile: tv_720p
+          ram-size: 2048M
           disable-animations: true
           script: python3 examples/android/plex/tv_emulator_check.py build/android-tv
 
