@@ -35,6 +35,7 @@ Call each function on the loop thread, with the context that `launch.start` gave
 <<module introduction>>=
 // This module reads the sensors of the phone.
 import "std/android";
+import "std/android/sensors/bindings";
 import "std/jni";
 ```
 
@@ -133,8 +134,21 @@ function manager_of(ctx: usize): usize {
       return c_manager();
     }
     let e: usize = android.env(ctx);
-    let name: usize = jni.call_object(e, android.activity_object(ctx), "getPackageName", "()Ljava/lang/String;", []);
-    let package: usize = jni.cstr(jni.string_of(e, name));
+    // PushLocalFrame bounds the local references during class and method lookup.
+    if (jni.call1(e, 19, 8 as usize) as i32 != 0) {
+      let cleared = jni.exception_clear(e);
+      return 0 as usize;
+    }
+    defer jni.call1(e, 20, 0 as usize); // PopLocalFrame
+    let Ok(c) = bindings.context_class(e) else {
+      return 0 as usize;
+    };
+    defer c.release(e);
+    let activity = bindings.Context { ref: android.activity_object(ctx) };
+    let Ok(name) = c.get_package_name(e, activity) else {
+      return 0 as usize;
+    };
+    let package = jni.cstr(name);
     let m: usize = c_manager_for(package);
     jni.free_buffer(package);
     return m;
