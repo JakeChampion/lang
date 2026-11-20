@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Sign the instrumentation APK and a test copy of Plex with the same temporary key.
+set -euo pipefail
+src=$(cd "$(dirname "$0")" && pwd)
+plex=$(realpath "$1")
+out=$(mkdir -p "$2" && cd "$2" && pwd)
+sdk=${ANDROID_HOME:?}/platforms/android-34/android.jar
+tools=${ANDROID_HOME}/build-tools/35.0.0
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+cd "$tmp"
+mkdir classes
+javac --release 8 -classpath "$sdk" -d classes "$src/Rows.java"
+"$tools/d8" --min-api 30 --lib "$sdk" --output . classes/dev/fern/plex/rows/Rows.class
+"$tools/aapt2" link -I "$sdk" --manifest "$src/AndroidManifest.xml" --min-sdk-version 30 --target-sdk-version 34 -o rows.apk
+zip -q rows.apk classes.dex
+keytool -genkeypair -keystore test.p12 -storepass android -alias rows -keyalg RSA -dname CN=PlexTest -validity 2
+for apk in "$plex" rows.apk; do
+    "$tools/apksigner" sign --ks test.p12 --ks-pass pass:android --out "$out/$(basename "$apk")" "$apk"
+done
