@@ -244,7 +244,10 @@ that took them and changes the traffic can still take part in a rekey.
 Each phone keeps an Ed25519 identity key. While the users compare the
 string, each phone sends a tag in a sealed frame: the hash of its public
 key and a value of this exchange. Only a phone that knows the key can
-match the tag, and the tag changes with each exchange.
+match the tag, and the tag changes with each exchange. Tags and proofs carry
+a counter nonce. Each direction advances its own counter whenever it seals
+a frame, and the receiver can open frames that arrive out of order. Both
+phones need this frame format for automatic recognition.
 
 A phone that matches the tag of a known phone sends its proof: its public
 key and a signature of the exchange. So a stranger does not learn the

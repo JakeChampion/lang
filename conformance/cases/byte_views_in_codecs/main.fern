@@ -84,7 +84,7 @@ function codecs(bytes: [u8]): i32 {
   if (hex.encode(crypto.sm3(bytes)) != "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0") {
     return 32;
   }
-  if (hex.encode(crypto.blake2b(bytes, 64)) != "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923") {
+  if (hex.encode(crypto.blake2b(bytes, 64).unwrap_or([])) != "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923") {
     return 34;
   }
   if (hex.encode(crypto.sha3_256(bytes)) != "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532") {

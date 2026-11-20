@@ -42,6 +42,7 @@ The functions do no I/O and keep no state. A parser refuses a message that does 
 
 ```fern
 <<dependencies>>=
+import "std/array";
 import "std/crypto";
 import "std/crypto/aes_gcm";
 import "std/crypto/chacha20poly1305";
@@ -82,6 +83,16 @@ pub function suite(code: i32): Option[keyschedule.CipherSuite] {
   return None;
 }
 
+// The authentication algorithm for ServerKeyExchange follows the negotiated
+// suite (RFC 8422 section 5.4). ECDHE_ECDSA also permits EdDSA.
+pub function allows_signature(code: i32, scheme: i32): boolean {
+  return match (code) {
+    0xc02f | 0xc030 | 0xcca8 => [0x0401, 0x0501, 0x0601, 0x0804, 0x0805, 0x0806].contains(scheme),
+    0xc02b | 0xc02c | 0xcca9 => [0x0403, 0x0503, 0x0603, 0x0807].contains(scheme),
+    _ => false,
+  };
+}
+
 // The extensions that offer TLS 1.2: uncompressed points, the extended master secret and an empty renegotiation_info.
 pub function hello_extensions(): message.Extension[] {
   return [message.Extension { kind: EXT_EC_POINT_FORMATS, data: [1 as u8, 0 as u8] }, message.Extension { kind: EXT_EXTENDED_MASTER_SECRET, data: [] }, message.Extension { kind: EXT_RENEGOTIATION_INFO, data: [0 as u8] }];
@@ -106,7 +117,7 @@ pub function downgraded(server_random: [u8]): boolean {
 
 ### `key derivation`
 
-The PRF is P_hash of RFC 5246 §5 with the hash of the suite. When the server echoes the extension, the master secret is the extended master secret of RFC 7627. When it does not, it is the RFC 5246 one.
+The PRF is P_hash of RFC 5246 §5 with the hash of the suite. The TLS client requires the RFC 7627 extended master secret, which binds the negotiated keys to the handshake transcript. The low-level derivation function also supports RFC 5246 test vectors.
 
 ```fern
 <<key derivation>>=

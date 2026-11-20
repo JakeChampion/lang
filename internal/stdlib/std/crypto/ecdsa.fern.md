@@ -88,6 +88,7 @@ pub enum EcdsaError {
   NotOnCurve,
   ScalarRange,
   SigningHash,
+  SignatureCheck,
 }
 ```
 
@@ -126,6 +127,9 @@ pub function (e: EcdsaError) message(): string {
     },
     SigningHash => {
       return "ecdsa: signing takes SHA-256 or SHA-384";
+    },
+    SignatureCheck => {
+      return "ecdsa: the generated signature failed verification";
     }
   }
   return "";
@@ -570,11 +574,38 @@ pub function (key: PrivateKey) sign(hash: sha2.Hash, msg: [u8]): Result[u8[], Ec
       sig = __sign_loop(hash, key.d, mont.to_bytes(s.fn, e), (k: u8[]): i64 => mont.in_range(s.fn, k), (k: u8[]): (u8[], u8[]) => __sign_with(s, key.d, e, k), n);
     }
   }
+  let point = key.public_point();
+  __ct_public(point);
+  return __checked_signature(key.curve, point, hash, msg, sig);
+}
+
+function __checked_signature(curve: Curve, point: [u8], hash: sha2.Hash, msg: [u8], own sig: u8[]): Result[u8[], EcdsaError] {
+  let Ok(public) = public_key(curve, point) else {
+    crypto.erase(sig);
+    return Err(SignatureCheck);
+  };
+  if (!public.verify(hash, msg, sig)) {
+    crypto.erase(sig);
+    return Err(SignatureCheck);
+  }
   return Ok(sig);
 }
 ```
 
-The `s` of a signature is at most n / 2, so that each signature has one form.
+The signer normalizes `s` to the low half of the group order. It verifies the final DER signature against the original message and its derived public point before returning it. A failed self-check returns `SignatureCheck`.
+
+```fern test name=std-crypto-ecdsa-signature-check
+<<*>>
+
+function main(): i32 {
+  let Ok(key) = private_key(P256, __alloc_u8(32).with(31, 1u8)) else { return 1; };
+  let Ok(sig) = key.sign(sha2.Sha256, "first".as_bytes()) else { return 2; };
+  match (__checked_signature(P256, key.public_point(), sha2.Sha256, "second".as_bytes(), sig)) {
+    Err(SignatureCheck()) => { return 0; },
+    _ => { return 3; }
+  }
+}
+```
 
 ```fern test name=std-crypto-ecdsa-low-s
 <<*>>

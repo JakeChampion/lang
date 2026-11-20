@@ -338,9 +338,23 @@ function test_hotp_ten_digits(): test.TestOutcome {
   return test.pass();
 }
 
-function test_pbkdf2_verify_refuses_an_empty_hash(): test.TestOutcome {
-  let none: u8[] = [];
-  return test.assert_false(crypto.pbkdf2_sha256_verify("password".as_bytes(), "salt".bytes(), 1, none));
+function test_pbkdf2_verify_limits(): test.TestOutcome {
+  let password = "password".as_bytes();
+  let salt = "salt".as_bytes();
+  let Ok(hash) = crypto.pbkdf2_sha256(password, salt, 1, 16) else {
+    return test.fail("valid PBKDF2 parameters");
+  };
+  for n in [0, 1, 15] {
+    if (crypto.pbkdf2_sha256_verify(password, salt, 1, hash[0:n])) {
+      return test.fail("accepted a hash of " + n.to_string() + " bytes");
+    }
+  }
+  for count in [-1, 0] {
+    if (crypto.pbkdf2_sha256_verify(password, salt, count, hash)) {
+      return test.fail("accepted " + count.to_string() + " iterations");
+    }
+  }
+  return test.assert_true(crypto.pbkdf2_sha256_verify(password, salt, 1, hash));
 }
 
 function main(): i32 {
@@ -367,7 +381,7 @@ function main(): i32 {
   r = r.it("totp RFC 6238", test_totp_rfc6238);
   r = r.it("hotp + digits", test_hotp_and_digits);
   r = r.it("hotp with ten digits", test_hotp_ten_digits);
-  r = r.it("pbkdf2 verify refuses an empty hash", test_pbkdf2_verify_refuses_an_empty_hash);
+  r = r.it("pbkdf2 verification limits", test_pbkdf2_verify_limits);
   r = r.it("sha3 one-shots", test_sha3_one_shots);
   r = r.it("shake128 empty", test_shake128_empty);
   r = r.it("shake128 0xa3 x 200", test_shake128_a3);

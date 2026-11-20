@@ -1084,7 +1084,7 @@ pub struct Client {
   server_ap: u8[],
   peer_extensions: message.Extension[],
   tls12: boolean,
-  extended: boolean,
+  suite12: i32,
   server_random: u8[],
   key_exchange: tls12.KeyExchange,
   master12: u8[],
@@ -1316,7 +1316,7 @@ function __client_from_hello(hello: message.ClientHello, share: keyshare.ClientS
   let bytes = message.encode(message.ClientHelloMsg(hello));
   let w = __plain_out(Conn { ...__conn_for(config.quic), transcript: bytes }, 0x0301, bytes);
   let hs = keyschedule.HandshakeSecret { hash: keyschedule.Sha256, secret: [] };
-  let c = Client { conn: w.conn, state: C_WAIT_SERVER_HELLO, hello: hello, alpn_offered: alpn, share: share, more_shares: [], spare: __copy(spare), retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: "", requested: false, request_context: [], resume: config.resume, resumed: false, res_master: [], own_chain: config.chain, sign_schemes: config.sign_schemes, request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [], tls12: config.tls12, extended: false, server_random: [], key_exchange: __no_key_exchange(), master12: [], early: EARLY_NONE };
+  let c = Client { conn: w.conn, state: C_WAIT_SERVER_HELLO, hello: hello, alpn_offered: alpn, share: share, more_shares: [], spare: __copy(spare), retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: "", requested: false, request_context: [], resume: config.resume, resumed: false, res_master: [], own_chain: config.chain, sign_schemes: config.sign_schemes, request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [], tls12: config.tls12, suite12: 0, server_random: [], key_exchange: __no_key_exchange(), master12: [], early: EARLY_NONE };
   match (config.resume) {
     Some(r) => {
       if (message.find(hello.extensions, message.EXT_EARLY_DATA).is_some()) {
@@ -1950,7 +1950,7 @@ function __client_drain(c: Client, out: Out): Result[ClientRun, HandshakeError] 
 
 ### `40a the TLS 1.2 client`
 
-A client whose configuration sets `tls12` offers TLS 1.2 beside TLS 1.3. A ServerHello with no `supported_versions` picks TLS 1.2, and the client then follows RFC 5246 §7.3 with an ECDHE suite. The certificate chain and the signature of the ServerKeyExchange go to the caller in one `VerifyServer` event, marked `tls12`. The client answers a CertificateRequest with its certificate and a CertificateVerify when its identity has a scheme that the request names, and with an empty certificate otherwise. It ignores a HelloRequest after the handshake, so it does not renegotiate.
+A client whose configuration sets `tls12` offers TLS 1.2 beside TLS 1.3. A ServerHello with no `supported_versions` picks TLS 1.2, and the client then requires the extended master secret (RFC 7627) and follows RFC 5246 §7.3 with an ECDHE suite. The certificate chain and the signature of the ServerKeyExchange go to the caller in one `VerifyServer` event, marked `tls12`. The client answers a CertificateRequest with its certificate and a CertificateVerify when its identity has a scheme that the request names, and with an empty certificate otherwise. It ignores a HelloRequest after the handshake, so it does not renegotiate.
 
 ```fern
 <<40a the TLS 1.2 client>>=
@@ -2009,8 +2009,11 @@ function __server_hello12(c: Client, raw: message.Raw, h: message.ServerHello, o
       return Err(UnsupportedExtension(e.kind));
     }
   }
+  if (!extended) {
+    return Err(HandshakeFailure("TLS 1.2 requires extended_master_secret"));
+  }
   let conn = Conn { ...c.conn, suite: suite, tls12: true, transcript: __join(c.conn.transcript, raw.bytes) };
-  return Ok(ClientRun { client: Client { ...c, conn: conn, state: C12_WAIT_CERTIFICATE, extended: extended, alpn: alpn, server_random: h.random, peer_extensions: h.extensions }, out: out });
+  return Ok(ClientRun { client: Client { ...c, conn: conn, state: C12_WAIT_CERTIFICATE, suite12: h.cipher_suite, alpn: alpn, server_random: h.random, peer_extensions: h.extensions }, out: out });
 }
 
 // Keep the ordered TLS 1.2 client message states and their transcript updates together.
@@ -2073,7 +2076,7 @@ function __key_exchange12(c: Client, raw: message.Raw, out: Out): Result[ClientR
   if (!__has(offered, kx.group) || kx.group != keyshare.X25519.code() && kx.group != keyshare.Secp256r1.code()) {
     return Err(Illegal("named_curve"));
   }
-  if (!__has(__offered_schemes(c), kx.scheme)) {
+  if (!__has(__offered_schemes(c), kx.scheme) || !tls12.allows_signature(c.suite12, kx.scheme)) {
     return Err(Illegal("signature scheme"));
   }
   let signed = __cat(__join(c.hello.random, c.server_random), kx.params);
@@ -2131,7 +2134,7 @@ function __client_flight12(c: Client, out: Out): Result[ClientRun, HandshakeErro
   }
   flight = __cat(flight, tls12.client_key_exchange(share.public));
   let conn = Conn { ...c.conn, transcript: __join(c.conn.transcript, flight) };
-  let master = tls12.master_secret(conn.suite.hash(), pre_master, c.extended, __hash(conn), c.hello.random, c.server_random);
+  let master = tls12.master_secret(conn.suite.hash(), pre_master, true, __hash(conn), c.hello.random, c.server_random);
   let keyed = Client { ...c, conn: conn, master12: master };
   if (scheme == 0) {
     return __client_finish12(keyed, flight, out);
@@ -2475,7 +2478,7 @@ pub function client_restore(saved: [u8]): Result[Client, HandshakeError] {
       return Err(Misuse("client_restore"));
     }
   }
-  return Ok(Client { conn: conn, state: C_CONNECTED, hello: none, alpn_offered: [], share: share, more_shares: [], spare: [], retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: alpn, requested: false, request_context: [], resume: None, resumed: false, res_master: [], own_chain: [], sign_schemes: [], request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [], tls12: false, extended: false, server_random: [], key_exchange: __no_key_exchange(), master12: [], early: EARLY_NONE });
+  return Ok(Client { conn: conn, state: C_CONNECTED, hello: none, alpn_offered: [], share: share, more_shares: [], spare: [], retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: alpn, requested: false, request_context: [], resume: None, resumed: false, res_master: [], own_chain: [], sign_schemes: [], request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [], tls12: false, suite12: 0, server_random: [], key_exchange: __no_key_exchange(), master12: [], early: EARLY_NONE });
 }
 ```
 

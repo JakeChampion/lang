@@ -2451,22 +2451,20 @@ pub struct Blake2b {
   out_len: i32,
 }
 
+pub enum Blake2bError { InvalidDigestLength(i32) }
+
 // blake2b_new constructs a digest state for `out_len` bytes, from 1 through 64.
 // The default length for `b2sum` is 64 bytes. Its `-l` option accepts bits.
-pub function blake2b_new(out_len: i32): Blake2b {
-  let n = out_len;
-  if (n < 1) {
-    n = 1;
-  }
-  if (n > 64) {
-    n = 64;
+pub function blake2b_new(out_len: i32): Result[Blake2b, Blake2bError] {
+  if (out_len < 1 || out_len > 64) {
+    return Err(InvalidDigestLength(out_len));
   }
   let h: Blake2b = Blake2b {
     h0: 0x6a09e667f3bcc908 as u64, h1: 0xbb67ae8584caa73b as u64, h2: 0x3c6ef372fe94f82b as u64, h3: 0xa54ff53a5f1d36f1 as u64, h4: 0x510e527fade682d1 as u64, h5: 0x9b05688c2b3e6c1f as u64, h6: 0x1f83d9abfb41bd6b as u64, h7: 0x5be0cd19137e2179 as u64,
-    buf: __zero_u8(128), buf_len: 0, total: 0 as u64, out_len: n,
+    buf: __zero_u8(128), buf_len: 0, total: 0 as u64, out_len: out_len,
   };
   // Parameter block word 0: digest length, key length 0, fanout 1, depth 1.
-  return Blake2b { ...h, h0: h.h0 ^ 0x01010000 as u64 ^ n as u64 };
+  return Ok(Blake2b { ...h, h0: h.h0 ^ 0x01010000 as u64 ^ out_len as u64 });
 }
 
 // __blake2b_blocks compresses `nblocks` blocks from byte `from`.
@@ -3372,9 +3370,10 @@ function __blake2b_last(own h: Blake2b): u8[] {
 }
 
 // blake2b calculates an `out_len`-byte digest of `s`.
-pub function blake2b(s: [u8], out_len: i32): u8[] {
-  let last = blake2b_new(out_len).update(s);
-  return __blake2b_last(last);
+pub function blake2b(s: [u8], out_len: i32): Result[u8[], Blake2bError] {
+  let h = blake2b_new(out_len)?;
+  let last = h.update(s);
+  return Ok(__blake2b_last(last));
 }
 
 // <<< generated
@@ -3658,7 +3657,11 @@ pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: 
   return Ok(__pbkdf2_core(password, salt, iterations, dk_len));
 }
 
+// Returns false for a stored hash shorter than 16 bytes or an iteration count below one.
 pub function pbkdf2_sha256_verify(password: [u8], salt: [u8], iterations: i32, expected: [u8]): boolean {
+  if (expected.len() < 16) {
+    return false;
+  }
   let Ok(key) = pbkdf2_sha256(password, salt, iterations, expected.len()) else {
     return false;
   };
