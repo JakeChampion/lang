@@ -19,6 +19,7 @@ import (
 // block of the HMAC inner pad pattern without erasing it, which shows that
 // the scan sees a stale copy.
 const cryptoEraseSrc = `import "std/crypto";
+import "std/hex";
 import "std/crypto/aes_gcm";
 import "std/crypto/chacha20poly1305";
 import "std/crypto/ed25519";
@@ -129,6 +130,14 @@ function run(mode: string, key: [u8], msg: [u8], nonce12: [u8]): i32 {
     crypto.erase(okm);
     return n - 80;
   }
+  if (mode == "sha1-block") {
+    let state = crypto.sha1_new().update(filled(64, 0 as u8));
+    return if (state.h0 == 0x92b404e5 as u32) { 0 } else { 1 };
+  }
+  if (mode == "sha256-block") {
+    let state = crypto.sha256_new().update(filled(64, 0 as u8));
+    return if (state.h0 == 0xda5698be as u32) { 0 } else { 1 };
+  }
   if (mode == "sha256") {
     let secret: u8[] = mixed(40);
     let n: i32 = crypto.sha256(secret).len();
@@ -170,6 +179,17 @@ function needles_of(mode: string, key: [u8], msg: [u8], nonce12: [u8]): u8[][] {
   }
   if (mode == "hkdf-full") {
     return [crypto.hkdf_sha256_extract(nonce12, key)];
+  }
+  // The initial state and the state after one all-zero block, in kernel byte order.
+  if (mode == "sha1-block") {
+    let Ok(input) = hex.decode("0123456789abcdeffedcba9876543210f0e1d2c3") else { exit(9); };
+    let Ok(output) = hex.decode("e504b492ed8c58564ecd1a6c683f05bf933af709") else { exit(9); };
+    return [input, output];
+  }
+  if (mode == "sha256-block") {
+    let Ok(input) = hex.decode("67e6096a85ae67bb72f36e3c3af54fa57f520e518c68059babd9831f19cde05b") else { exit(9); };
+    let Ok(output) = hex.decode("be9856da69b4b91799573362cabe9f7791d4e58c4362d2c0eaf9febad8a93718") else { exit(9); };
+    return [input, output];
   }
   if (mode == "sha256") {
     let secret: u8[] = mixed(40);
@@ -269,7 +289,7 @@ func TestSelfHostPrimitivesEraseKeyMaterial(t *testing.T) {
 			if got := run("plant"); got < 1 {
 				t.Fatalf("plant: the scan found %d stale copies of a released block, want at least 1: the scan does not see the arena", got)
 			}
-			for _, mode := range []string{"hmac", "hkdf", "hkdf-full", "sha256", "x25519", "chacha", "ed25519"} {
+			for _, mode := range []string{"hmac", "hkdf", "hkdf-full", "sha1-block", "sha256-block", "sha256", "x25519", "chacha", "ed25519"} {
 				if got := run(mode); got != 0 {
 					t.Errorf("%s: %d stale copies of key material in the arena after the primitive returned, want 0", mode, got)
 				}
