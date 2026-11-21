@@ -72,12 +72,14 @@ function indexed(reader: Reader, ref: opus_file_check.Reference): Result[void, s
   return Ok(());
 }
 
-function read_file(path: string, ref: opus_file_check.Reference, cooperative: boolean): Result[void, string] {
+function read_file(path: string, ref: opus_file_check.Reference, mode: string): Result[void, string] {
   let source = match (open_reader(path)) { Ok(value) => value, Err(e) => { return Err("open: " + e.message()); } };
-  let result = decode(source, ref, cooperative);
-  if (cooperative && result.is_ok()) {
-    result = indexed(source, ref);
-  }
+  let result = match (mode) {
+    "indexed" => indexed(source, ref),
+    "cooperative" => decode(source, ref, true),
+    "sequential" => decode(source, ref, false),
+    _ => Err("unknown reader mode"),
+  };
   let closed = source.close();
   result?;
   return match (closed) { Ok(_) => Ok(()), Err(e) => Err(e.message()) };
@@ -85,14 +87,18 @@ function read_file(path: string, ref: opus_file_check.Reference, cooperative: bo
 
 function main(): i32 {
   let argv = args();
-  if (argv.len() != 2) {
+  if (argv.len() != 2 && argv.len() != 3) {
     return 2;
   }
   let Ok(ref) = opus_file_check.reference(opus_file_vectors.SMOKE) else {
     return 3;
   };
-  for cooperative in [false, true] {
-    if let Err(message) = read_file(argv[1], ref, cooperative) {
+  let modes = ["sequential", "cooperative", "indexed"];
+  if (argv.len() == 3) {
+    modes = [argv[2]];
+  }
+  for mode in modes {
+    if let Err(message) = read_file(argv[1], ref, mode) {
       eprint(message);
       return 1;
     }
