@@ -65,6 +65,8 @@ struct Matches { hits: search.Hit[], sections: i32[] }
 
 struct Artwork { image: draw.Image, source_size: i32 }
 
+struct ExpandedArtwork { address: string, image: draw.Image }
+
 struct Shelf {
   hits: search.Hit[],
   query: string,
@@ -183,6 +185,7 @@ pub struct Model {
   playback_tools: PlaybackTools,
   now_playing: NowPlaying,
   now_open: boolean,
+  expanded_art: Option[ExpandedArtwork],
   target_open: boolean,
   tools_page: panel_tools.State,
   editing_group: Option[GroupEdit],
@@ -378,6 +381,8 @@ pub enum Msg {
   PhoneRate(i32),
   OpenNowPlaying,
   CloseNowPlaying,
+  EnlargeTrackArtwork(string, i32),
+  RestoreTrackArtwork,
   DeviceStatusLoaded(i64, string, Result[api.DeviceStatus, api.Failure]),
   DeviceVolume(i32),
   PhoneResume,
@@ -404,7 +409,7 @@ function tools(saved: listening.Saved): PlaybackTools {
 
 pub function start(): Model {
   let downloads = offline.empty(offline.Catalog { dir: "", entries: [], cleanup: [], note: "" });
-  return Model { client: "", token: "", refresh: "", reconnect: false, auth: [], storage: None, session_note: "", load_after_auth: false, players: [], cards: [], shelf: empty_shelf(), generation: 0i64, background_busy: false, cover_busy: false, cover_active: "", cover_stop: -1, cover_pipe: (): (i32, i32) => (-1, -1), art_dir: "", warmed: map_new(64), trip_select: false, trip_cards: map_new(32), selected: "", on_phone: false, phone: phone.empty(), playback_tools: tools(listening.empty()), now_playing: NowPlaying { revision: 0i64, requested: false, due: 0i64, running: false, playback: None, note: "" }, now_open: false, target_open: false, tools_page: panel_tools.empty(), editing_group: None, device_status: None, device_note: "", volume: 50, config_panel: panel(0i64), downloads: downloads, offline_open: "", tab: 0, tab_history: [], menu_open: false, note: "", library_loaded: false, cache_dir: "", cache_available: false, changed_index: 0i64, stored_index: 0i64, index_saving: false, wifi: false, retry_download_at: 0i64, wifi_requeue: "", parent: closed_gate(), shortcut: "", launch_action: "", transfer_from: "", transfer_revision: 0i64, transfer_target: "", transfer_note: "", enrich_downloads: false, busy: false, open_login: false, flow: None, job: None };
+  return Model { client: "", token: "", refresh: "", reconnect: false, auth: [], storage: None, session_note: "", load_after_auth: false, players: [], cards: [], shelf: empty_shelf(), generation: 0i64, background_busy: false, cover_busy: false, cover_active: "", cover_stop: -1, cover_pipe: (): (i32, i32) => (-1, -1), art_dir: "", warmed: map_new(64), trip_select: false, trip_cards: map_new(32), selected: "", on_phone: false, phone: phone.empty(), playback_tools: tools(listening.empty()), now_playing: NowPlaying { revision: 0i64, requested: false, due: 0i64, running: false, playback: None, note: "" }, now_open: false, expanded_art: None, target_open: false, tools_page: panel_tools.empty(), editing_group: None, device_status: None, device_note: "", volume: 50, config_panel: panel(0i64), downloads: downloads, offline_open: "", tab: 0, tab_history: [], menu_open: false, note: "", library_loaded: false, cache_dir: "", cache_available: false, changed_index: 0i64, stored_index: 0i64, index_saving: false, wifi: false, retry_download_at: 0i64, wifi_requeue: "", parent: closed_gate(), shortcut: "", launch_action: "", transfer_from: "", transfer_revision: 0i64, transfer_target: "", transfer_note: "", enrich_downloads: false, busy: false, open_login: false, flow: None, job: None };
 }
 
 function signed_out(m: Model, note: string): Model {
@@ -1173,6 +1178,34 @@ function prepare_artwork(image: draw.Image): Artwork {
     }
   }
   return Artwork { image: draw.Image { width: width, height: height, pixels: pixels }, source_size: source_size };
+}
+
+function enlarged_icon(image: draw.Image, side: i32): draw.Image {
+  let crop = image.width.min(image.height);
+  let left = (image.width - crop) / 2;
+  let top = (image.height - crop) / 2;
+  let pixels = buf_new(side * side * 4);
+  for y in 0..side {
+    let row = (top + y * crop / side) * image.width;
+    for x in 0..side {
+      let offset = (row + left + x * crop / side) * 4;
+      buf_push_bytes_range(pixels, image.pixels, offset, offset + 4);
+    }
+  }
+  let bytes = buf_take_bytes(pixels);
+  buf_free(pixels);
+  return draw.Image { width: side, height: side, pixels: bytes };
+}
+
+function visible_expansion(m: Model): Option[ExpandedArtwork] {
+  if (m.on_phone) {
+    if let Some(expanded) = m.expanded_art {
+      if (expanded.address == phone_art(m)) {
+        return Some(expanded);
+      }
+    }
+  }
+  return None;
 }
 
 function store_cover(m: Model, decode: (u8[], i32) => Option[draw.Image]): Model {
@@ -2764,14 +2797,29 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     OpenNowPlaying => {
       let volume = m.now_playing.playback.map((state: player_status.Playback): i32 => state.volume).unwrap_or(-1);
-      let view = Model { ...m, now_open: true, volume: if (!m.on_phone && volume >= 0) { volume } else { m.volume } };
+      let view = Model { ...m, now_open: true, expanded_art: None, volume: if (!m.on_phone && volume >= 0) { volume } else { m.volume } };
       if (!m.on_phone && can_control(m)) {
         return Model { ...view, device_note: "Reading player status…", job: Some(ReadDeviceStatus(m.generation, m.token, m.selected)) };
       }
       return view;
     },
     CloseNowPlaying => {
-      return Model { ...m, now_open: false };
+      return Model { ...m, now_open: false, expanded_art: None };
+    },
+    EnlargeTrackArtwork(address, pixels) => {
+      if (m.now_open && m.on_phone && address == phone_art(m)) {
+        if let Some(Some(artwork)) = m.shelf.covers.get(address) {
+          let image = artwork.image;
+          if (image.width > 0 && image.height > 0 && image.pixels.len() == image.width * image.height * 4) {
+            let expanded = ExpandedArtwork { address: address, image: enlarged_icon(image, pixels.max(1).min(960)) };
+            return Model { ...m, expanded_art: Some(expanded) };
+          }
+        }
+      }
+      return m;
+    },
+    RestoreTrackArtwork => {
+      return Model { ...m, expanded_art: None };
     },
     DeviceStatusLoaded(generation, id, result) => {
       if (generation != m.generation || id != m.selected) {
@@ -2966,6 +3014,9 @@ function effects(m: Model, open_browser: (string) => boolean, decode: (u8[], i32
   }
   let catalog = if (saved.enrich_downloads) { offline.enrich(downloads, saved.cards, disk) } else { downloads };
   let t = save_listening(Model { ...saved, phone: audio, downloads: catalog, wifi_requeue: "", enrich_downloads: false }, output, store, false);
+  if (t.expanded_art.is_some() && visible_expansion(t).is_none()) {
+    t = Model { ...t, expanded_art: None };
+  }
   if (ready_downloads(saved.downloads) != ready_downloads(t.downloads)) {
     if (!t.library_loaded && !t.cache_available && t.token.len() == 0) {
       t = found(Model { ...t, cards: offline.saved_cards(t.downloads) });
@@ -3345,19 +3396,35 @@ function phone_now_playing(m: Model, screen: ui.Screen): ui.El[Msg][] {
   let size = (screen.width() * 0.60).min(240.0);
   let (cover, icon) = featured_art(m.shelf, phone_cover(m), phone_art(m));
   let rows: ui.El[Msg][] = [];
-  if (cover.len() > 0) {
+  let expanded = visible_expansion(m);
+  if let Some(large) = expanded {
+    let picture = ui.picture[Msg](large.address, large.image).width(size).height(size).rounded(8.0);
+    let action = if (cover.len() > 0) { "Show card cover" } else { "Show small track icon" };
+    rows = rows.append(ui.column([
+      picture,
+      ui.text[Msg](action).colored(ui.PRIMARY),
+    ]).spaced(6.0).centered().wide().on_tap(RestoreTrackArtwork).described(action));
+  } else if (cover.len() > 0) {
     rows = rows.append(ui.row([art(m.shelf, cover, size)]).centered().wide());
   }
-  let labels = ui.column([
+  let labels: ui.El[Msg][] = [
     ui.text[Msg](s.title).sized(16.0).colored(ui.MUTED),
     ui.text[Msg](track.title).sized(23.0).weighted(650),
-  ]).spaced(4.0).wide();
-  let title = if (icon.len() > 0) {
-    ui.row([art(m.shelf, icon, 44.0), labels]).aligned(ui.CENTER).spaced(12.0).wide()
+  ];
+  if (expanded.is_none() && icon.len() > 0) {
+    let ready = if let Some(Some(_)) = m.shelf.covers.get(icon) { true } else { false };
+    if (ready) {
+      labels = labels.append(ui.text("Enlarge track artwork").sized(13.0).colored(ui.PRIMARY));
+    }
+    let title = ui.row([art(m.shelf, icon, 44.0), ui.column(labels).spaced(4.0).wide()]).aligned(ui.CENTER).spaced(12.0).wide();
+    if (ready) {
+      let pixels = (size * screen.d).round() as i32;
+      title = title.on_tap(EnlargeTrackArtwork(icon, pixels)).described("Enlarge track artwork");
+    }
+    rows = rows.append(title);
   } else {
-    labels
-  };
-  rows = rows.append(title);
+    rows = rows.append(ui.column(labels).spaced(4.0).wide());
+  }
   if (s.duration > 0i64) {
     let duration = s.duration;
     rows = rows.append(ui.slider(s.elapsed as f64 / (duration as f64), (at: f64): Msg => PhoneSeek((at * (duration as f64)) as i64)).described("Track position"));
@@ -4657,7 +4724,7 @@ function back_message(m: Model): Option[Msg] {
     return Some(CloseGroup);
   }
   if (m.now_open) {
-    return Some(CloseNowPlaying);
+    return if (visible_expansion(m).is_some()) { Some(RestoreTrackArtwork) } else { Some(CloseNowPlaying) };
   }
   if (m.config_panel.device.is_some()) {
     return if (m.config_panel.picker.is_some()) { Some(BackToSettings) } else { Some(CloseSettings) };

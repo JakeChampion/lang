@@ -733,7 +733,7 @@ function artwork_simulator(own model: deck.Model): sim.Sim[deck.Model, deck.Msg]
 
 function artwork_sim_with(own model: deck.Model, decode: (u8[], i32) => Option[draw.Image]): sim.Sim[deck.Model, deck.Msg] {
   let real = deck.program((address: string): boolean => false, decode, (saved: Option[api.Session]): boolean => true, no_audio(), no_downloads(), (state: listening.Saved): boolean => true);
-  let dry = ui.program(deck.view, deck.update).with_theme_of(real.theme).with_visible(deck.visible_posters).with_effects(real.effects);
+  let dry = ui.program(deck.view, deck.update).with_theme_of(real.theme).with_visible(deck.visible_posters).with_effects(real.effects).with_back(real.back);
   return sim.start(model, dry, test_fonts(), 720, 1600, 2.0);
 }
 
@@ -825,6 +825,30 @@ function test_playback_artwork_resolution(): test.TestOutcome {
   }
   if (!crisp) {
     return test.fail("preserve pixel edges in small player icons");
+  }
+  let Some(tile) = s.shell.host.lay.nodes.find((node: scene.Node): boolean => match (node.paint) {
+    scene.Picture(key, _, _) => key == icon,
+    _ => false,
+  }) else {
+    return test.fail("find the small track icon");
+  };
+  s = sim.tap_at(s, tile.x + tile.w / 2, tile.y + tile.h / 2);
+  let Some(expanded) = s.shell.app.expanded_art else {
+    return test.fail("tap the track icon to enlarge it");
+  };
+  let width = artwork_width(s, icon);
+  let mid = expanded.image.width / 2;
+  if (width <= 300 || expanded.image.width != width || artwork_width(s, cover) > 0
+    || expanded.image.pixel(mid - 1, 0) != draw.rgba(255, 0, 0, 255) || expanded.image.pixel(mid, 0) != draw.rgba(0, 0, 255, 255)) {
+    return test.fail("fill the artwork area with sharp track pixels");
+  }
+  s = sim.tap(s, "Show card cover");
+  if (s.shell.app.expanded_art.is_some() || artwork_width(s, icon) != 88 || artwork_width(s, cover) <= 300) {
+    return test.fail("restore the cover with one tap");
+  }
+  s = sim.back(sim.tap(s, "Enlarge track artwork"));
+  if (!s.shell.app.now_open || s.shell.app.expanded_art.is_some()) {
+    return test.fail("use Android Back to close artwork before leaving Now Playing");
   }
   s = sim.send(s, deck.CoverLoaded(generation, cover, []));
   if (artwork_width(s, cover) != 0 || artwork_width(s, icon) != 88) {
