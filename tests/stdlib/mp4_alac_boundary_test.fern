@@ -221,13 +221,13 @@ function edit_spans(): test.TestOutcome {
   let Ok(where) = locate(input) else {
     return test.fail("fixture boxes");
   };
-  let Ok(changed) = edited(input, where, [(3, -1), (7, 5), (4, 1)]) else {
+  let Ok(changed) = edited(input, where, [(3, -1), (7, 5), (0, 5), (2, -1), (4, 1), (4, -1)]) else {
     return test.fail("edit fixture");
   };
   let Ok(audio) = alac.decode(changed, alac.default_limits()) else {
     return test.fail("empty and repeated edits");
   };
-  if (audio.frames != 14i64 || audio.samples.len() != 14) {
+  if (audio.frames != 20i64 || audio.samples.len() != 20) {
     return test.fail("edit extent");
   }
   let limits = alac.default_limits();
@@ -237,7 +237,7 @@ function edit_spans(): test.TestOutcome {
   let Ok(seek) = alac.seek_index(changed, index, 0, limits) else {
     return test.fail("index edit spans");
   };
-  for start in [8, 0, 6, 2] {
+  for start in [16, 12, 10, 8, 0, 6, 2, 14] {
     let Ok((next, range)) = seek.read_into(changed, start, 4, [9, 9, 9, 9, 9], limits.audio) else {
       return test.fail("read edit span");
     };
@@ -251,8 +251,8 @@ function edit_spans(): test.TestOutcome {
       return test.fail("overwrote output suffix");
     }
   }
-  for i in 0..14 {
-    let sample = if (i < 3) { 0 } else if (i < 10) { ref.word(expected, (i + 2) * 4) } else { ref.word(expected, (i - 9) * 4) };
+  for i in 0..20 {
+    let sample = if (i >= 3 && i < 10) { ref.word(expected, (i + 2) * 4) } else if (i >= 12 && i < 16) { ref.word(expected, (i - 11) * 4) } else { 0 };
     if (audio.samples[i] != sample) {
       return test.fail("edited integer PCM");
     }

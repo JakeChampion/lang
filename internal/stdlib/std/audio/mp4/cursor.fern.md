@@ -135,17 +135,16 @@ pub function (own state: Cursor) seek(position: i64): Result[Cursor, source.Read
 }
 
 function region(plan: presentation.Plan, position: i32, channels: i32): (i64, i32) {
-  for span in plan.spans {
+  let n = plan.first_span(channels, position);
+  if (n < plan.spans.len()) {
+    let span = plan.spans[n];
     let first = span.output / channels;
-    let end = first as i64 + span.end - span.start;
     if (position < first) {
       return (-1i64, (first - position).min(1024));
     }
-    if (position as i64 < end) {
-      let at = span.start + (position - first) as i64;
-      let count = (span.end - at).min(1024i64) as i32;
-      return (at, count.min(1024 - (at % 1024i64) as i32));
-    }
+    let at = span.start + (position - first) as i64;
+    let count = (span.end - at).min(1024i64) as i32;
+    return (at, count.min(1024 - (at % 1024i64) as i32));
   }
   return (-1i64, (plan.frames - position).min(1024));
 }

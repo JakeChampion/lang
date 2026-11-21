@@ -378,8 +378,12 @@ pub function (own index: SeekIndex) read_into(input: [u8], position: i32, frames
   for i in 0..count {
     output = output.with(i, 0);
   }
-  for span in plan.spans {
+  for nspan in plan.first_span(channels, position)..plan.spans.len() {
+    let span = plan.spans[nspan];
     let span_position = span.output / channels;
+    if (span_position >= position + frames) {
+      break;
+    }
     let first = position.max(span_position);
     let end = (position + frames).min(span_position + (span.end - span.start) as i32);
     if (end <= first) {

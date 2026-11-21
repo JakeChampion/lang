@@ -117,7 +117,7 @@ open the selected track with `index.stream`, and pass its packet number and an o
 PCM buffer to `read_alac_packet_into`. Each call reads only that packet under the
 file, byte-window, and operation limits. The returned frame gives the valid sample
 count as `frames * channels`. Packet numbers refer to media before presentation edits.
-Sample-accurate seeking on the edited presentation remains open under #14685.
+For byte-view input, `seek_index` and `read_into` provide sample-accurate seeks on the edited presentation. The index locates the first requested edit and packet by binary search.
 
 ## Native FLAC encoding
 
@@ -280,7 +280,7 @@ python3 scripts/gen-alac-vectors.py --apple-reference /tmp/alac-reference --chec
 
 Compressed stereo with 33 predictor bits remains unsupported.
 The byte-view M4A decoder in `std/audio/mp4/alac` supports sample-accurate reads on the edited presentation timeline. Build a `seek_index` once from the file, then use `read_into` with the same file bytes and a caller-owned interleaved PCM buffer.
-Source-backed M4A playback remains open under [#14685](https://github.com/JakeChampion/lang/issues/14685).
+A seekable Reader supports packet playback. Edited presentation reads from a Reader remain open under [#14685](https://github.com/JakeChampion/lang/issues/14685).
 Native, WASI, and Android compilation checks do not establish physical Android performance or power use.
 
 `std/audio/caf` supplies CAF playback and exact byte-view seeks for ALAC.
