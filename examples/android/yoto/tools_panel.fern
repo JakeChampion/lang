@@ -15,7 +15,8 @@ pub struct State {
   scan_result: Option[api.Card],
   recording: boolean,
   choosing_cover: boolean,
-  audio: Option[api.LocalAudio[]],
+  importing: boolean,
+  import_id: i32,
   draft: api.Playlist,
   editing: boolean,
   busy: boolean,
@@ -27,7 +28,7 @@ pub struct State {
 pub function empty(): State {
   return State {
     page: None, return_to_hub: false, action: None, note: "", scanning: false, address: "", scan_result: None, recording: false, choosing_cover: false,
-    audio: None, draft: api.empty_playlist(), editing: false, busy: false, discover_filter: 0, show_shop: false, shop: [],
+    importing: false, import_id: 0, draft: api.empty_playlist(), editing: false, busy: false, discover_filter: 0, show_shop: false, shop: [],
   };
 }
 
@@ -38,7 +39,7 @@ pub function close_tool(s: State): State {
   } else if (s.recording) {
     action = Some(RecordDiscard);
   }
-  return State { ...s, page: None, return_to_hub: false, action: action, scanning: false, recording: false, choosing_cover: false, audio: None, note: "" };
+  return State { ...s, page: None, return_to_hub: false, action: action, scanning: false, recording: false, choosing_cover: false, importing: false, note: "" };
 }
 
 pub function open_page(s: State, page: Page): State {
@@ -46,14 +47,14 @@ pub function open_page(s: State, page: Page): State {
     Some(Hub()) => true,
     _ => false,
   };
-  return State { ...s, page: Some(page), return_to_hub: parent, show_shop: false, choosing_cover: false, note: "", audio: None };
+  return State { ...s, page: Some(page), return_to_hub: parent, show_shop: false, choosing_cover: false, importing: false, note: "" };
 }
 
 pub function back(s: State): State {
   match (s.page) {
     Some(Create()) => {
-      if (s.audio.is_some() || s.choosing_cover) {
-        return State { ...s, audio: None, choosing_cover: false };
+      if (s.choosing_cover) {
+        return State { ...s, choosing_cover: false };
       }
     },
     Some(Discover()) => {
@@ -71,7 +72,21 @@ pub function back(s: State): State {
 }
 
 pub function audio_added(s: State, audio: api.LocalAudio): State {
-  let chapter = api.Chapter { title: audio.title, prior: json.JNull, audio: Some(audio) };
+  return add_audio(s, [audio], "");
+}
+
+pub function add_audio(s: State, audio: api.LocalAudio[], note: string): State {
+  let chapters = audio.map((file: api.LocalAudio): api.Chapter => api.Chapter { title: file.title, prior: json.JNull, audio: Some(file) });
   let draft = s.draft;
-  return State { ...s, draft: api.Playlist { ...draft, chapters: draft.chapters.append(chapter) }, audio: None, note: "" };
+  return State { ...s, draft: api.Playlist { ...draft, chapters: draft.chapters.concat(chapters) }, importing: false, note: note };
+}
+
+pub function clear_audio(draft: api.Playlist): void {
+  for chapter in draft.chapters {
+    if let Some(audio) = chapter.audio {
+      if (audio.temporary) {
+        let removed = remove_file(audio.path);
+      }
+    }
+  }
 }

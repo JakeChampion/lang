@@ -21,6 +21,7 @@ import "./offline";
 import "./listening";
 import "./library_cache";
 import "./native_tools";
+import "./audio_picker";
 import "./tools_panel" as panel_tools;
 import "std/string";
 
@@ -60,6 +61,13 @@ pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size:
 pub function new_intent(env: usize, thiz: usize, intent: usize): void {
   shortcuts.keep_intent(env, thiz, intent);
   let posted = android.tell(env, SHORTCUT_INTENT, 0 as usize);
+}
+
+@jni("dev.fern.storydeck.MainActivity", "void onActivityResult(int, int, android.content.Intent)")
+pub function activity_result(env: usize, thiz: usize, request: i32, result: i32, data: usize): void {
+  if (request == audio_picker.REQUEST) {
+    audio_picker.selected(env, result, data);
+  }
 }
 
 @callback("app_main")
@@ -400,7 +408,7 @@ function publish_media(ctx: usize, model: deck.Model, media: Media): void {
   }
 }
 
-function native_action(ctx: usize, model: deck.Model, recorder: Cell[Option[native_tools.Recorder]]): deck.Model {
+function native_action(ctx: usize, model: deck.Model, recorder: Cell[Option[native_tools.Recorder]], picker: Cell[Option[(i32, i32)]]): deck.Model {
   let Some(action) = model.tools_page.action else {
     return model;
   };
@@ -442,13 +450,10 @@ function native_action(ctx: usize, model: deck.Model, recorder: Cell[Option[nati
       }
     },
     panel_tools.PickAudio => {
-      match (native_tools.audio_files(ctx)) {
-        Ok(files) => {
-          return deck.tools_update(model, panel_tools.State { ...state, audio: Some(files), note: "" });
-        },
-        Err(error) => {
-          return deck.tools_update(model, panel_tools.State { ...state, note: error });
-        }
+      if (picker.get().is_none() && audio_picker.open(ctx)) {
+        picker.set(Some((state.import_id, api.MAX_PLAYLIST_CHAPTERS - state.draft.chapters.len())));
+      } else {
+        return deck.tools_update(model, panel_tools.State { ...state, importing: false, note: "Could not open Android Files. Try again." });
       }
     },
     panel_tools.LaunchOfficial => {
@@ -506,6 +511,9 @@ function app_main(ctx: usize): usize {
   let visible = cell_new(catalog);
   let empty_recording: Option[native_tools.Recorder] = None;
   let recorder = cell_new(empty_recording);
+  let no_request: Option[(i32, i32)] = None;
+  let picker = cell_new(no_request);
+  let cache = android.cache_dir(ctx);
   let wifi_check = cell_new(0i64);
   let stored_listening = listening.load(dir);
   let wifi_only = cell_new(stored_listening.wifi_only);
@@ -560,6 +568,25 @@ function app_main(ctx: usize): usize {
         jni.delete_global_ref(e, ref);
         return Some(deck.ReadPhysicalTag(address));
       }
+      if (kind == audio_picker.SELECTED) {
+        let request = picker.get();
+        picker.set(None);
+        if let Some((id, limit)) = request {
+          if (ref == 0 as usize) {
+            return Some(deck.AudioImported(id, [], ""));
+          }
+          if (audio_picker.copy_later(ctx, ref, id, limit, cache)) {
+            return Some(deck.AudioImportStarted(id));
+          }
+          return Some(deck.AudioImported(id, [], "Could not start the audio import. Try again."));
+        }
+        jni.delete_global_ref(android.env(ctx), ref);
+        return None;
+      }
+      if (kind == audio_picker.COPIED) {
+        let (id, files, note) = audio_picker.read_result(android.env(ctx), ref);
+        return Some(deck.AudioImported(id, files, note));
+      }
     }
     if let android.Resume = event {
       let action = shortcuts.action(ctx);
@@ -571,7 +598,7 @@ function app_main(ctx: usize): usize {
     return if (command.is_some()) { command } else { initial.system(event) };
   }).with_effects((m: deck.Model): deck.Model => {
     wifi_only.set(m.playback_tools.saved.wifi_only);
-    let next = pin_shortcut(ctx, native_action(ctx, initial.effects(m), recorder));
+    let next = pin_shortcut(ctx, native_action(ctx, initial.effects(m), recorder, picker));
     let now = monotonic_ns();
     if (now >= wifi_check.get()) {
       wifi_check.set(now + 1000000000i64);
@@ -600,7 +627,7 @@ function app_main(ctx: usize): usize {
   let opened = deck.with_listening(deck.with_downloads(deck.restored(saved), catalog), stored_listening);
   let cards = if (opened.refresh.len() > 0) { library_cache.load(dir) } else { [] };
   let indexed = deck.with_cover_pipe(deck.with_index(opened, dir, cards), cover.request_pipe);
-  let ready = deck.shortcut_received(deck.with_art(indexed, android.cache_dir(ctx)), shortcuts.action(ctx));
+  let ready = deck.shortcut_received(deck.with_art(indexed, cache), shortcuts.action(ctx));
   let closed = app.run(ctx, ready, p);
   return 0 as usize;
 }

@@ -717,7 +717,10 @@ pub function send_command(token: string, player: string, c: Command): Result[voi
   return Ok(());
 }
 
-pub struct LocalAudio { path: string, title: string, mime: string, recording: boolean }
+pub const MAX_CHAPTER_BYTES: i64 = 100000000i64;
+pub const MAX_PLAYLIST_CHAPTERS: i32 = 100;
+
+pub struct LocalAudio { path: string, title: string, mime: string, temporary: boolean }
 
 pub struct Chapter { title: string, prior: json.JsonValue, audio: Option[LocalAudio] }
 
@@ -763,11 +766,11 @@ function uploaded_audio(token: string, audio: LocalAudio): Result[json.JsonValue
   let Ok(info) = stat(audio.path) else {
     return Err(failure("Could not read " + audio.title + "."));
   };
-  if (info.size <= 0i64 || info.size > 100000000i64) {
+  if (info.size <= 0i64 || info.size > MAX_CHAPTER_BYTES) {
     return Err(failure("Each audio track must be between 1 byte and 100 MB."));
   }
   let Ok(data) = read_file_bytes(audio.path) else {
-    return Err(failure("Could not open " + audio.title + ". Check the audio permission."));
+    return Err(failure("Could not open " + audio.title + ". Add the audio to the playlist again."));
   };
   let reply = send(request(token, "GET", "/media/transcode/audio/uploadUrl"))?;
   let upload = object(reply, "upload");

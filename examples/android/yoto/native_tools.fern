@@ -225,72 +225,7 @@ pub function stop(ctx: usize, recorder: Recorder, keep: boolean): Result[api.Loc
     let removed = remove_file(recorder.path);
     return Err("The recording is unavailable.");
   }
-  return Ok(api.LocalAudio { path: recorder.path, title: "Recording", mime: "audio/mp4", recording: true });
-}
-
-function cursor_bool(e: usize, cursor: usize, method: usize): boolean {
-  return jni.call_boolean_method_a(e, cursor, method, 0 as usize) != 0;
-}
-
-function cursor_text(e: usize, cursor: usize, method: usize, column: i32): string {
-  let args = jni.jvalues([column as usize]);
-  let value = jni.call_object_method_a(e, cursor, method, args);
-  jni.free_buffer(args);
-  let text = if (healthy(e, value)) { jni.string_of(e, value) } else { "" };
-  jni.delete_local_ref(e, value);
-  return text;
-}
-
-function audio_cursor(e: usize, activity: usize): usize {
-  let resolver = jni.call_object(e, activity, "getContentResolver", "()Landroid/content/ContentResolver;", []);
-  if (!healthy(e, resolver)) {
-    return 0 as usize;
-  }
-  defer jni.delete_local_ref(e, resolver);
-  let cls = jni.find_class(e, "android/net/Uri");
-  let method = jni.get_static_method_id(e, cls, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
-  let name = jni.new_string(e, "content://media/external/audio/media");
-  let params = jni.jvalues([name]);
-  let uri = jni.call_static_object_method_a(e, cls, method, params);
-  jni.free_buffer(params);
-  let cols = jni.string_array(e, ["_data", "_display_name", "mime_type"]);
-  let cursor = jni.call_object(e, resolver, "query", "(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;", [uri, cols, 0 as usize, 0 as usize, 0 as usize]);
-  jni.delete_local_ref(e, cols);
-  jni.delete_local_ref(e, uri);
-  jni.delete_local_ref(e, name);
-  jni.delete_local_ref(e, cls);
-  return cursor;
-}
-
-pub function audio_files(ctx: usize): Result[api.LocalAudio[], string] {
-  let modern = "android.permission.READ_MEDIA_AUDIO";
-  let legacy = "android.permission.READ_EXTERNAL_STORAGE";
-  if (!android.has_permission(ctx, modern) && !android.has_permission(ctx, legacy)) {
-    let permission = if (android.sdk_version(ctx) >= 33) { modern } else { legacy };
-    android.request_permissions(ctx, [permission]);
-    return Err("Allow music and audio access, then tap Import audio again.");
-  }
-  let e = android.env(ctx);
-  let cursor = audio_cursor(e, android.activity_object(ctx));
-  if (!healthy(e, cursor)) {
-    return Err("Android could not open the audio library.");
-  }
-  defer jni.delete_local_ref(e, cursor);
-  let cls = jni.get_object_class(e, cursor);
-  defer jni.delete_local_ref(e, cls);
-  let next = jni.get_method_id(e, cls, "moveToNext", "()Z");
-  let string_at = jni.get_method_id(e, cls, "getString", "(I)Ljava/lang/String;");
-  let out: api.LocalAudio[] = [];
-  while (cursor_bool(e, cursor, next)) {
-    let path = cursor_text(e, cursor, string_at, 0);
-    let name = cursor_text(e, cursor, string_at, 1);
-    let mime = cursor_text(e, cursor, string_at, 2);
-    if (path.len() > 0 && mime.starts_with("audio/")) {
-      out = out.append(api.LocalAudio { path: path, title: name, mime: mime, recording: false });
-    }
-  }
-  let closed = jni.call_void(e, cursor, "close", "()V", []);
-  return Ok(out);
+  return Ok(api.LocalAudio { path: recorder.path, title: "Recording", mime: "audio/mp4", temporary: true });
 }
 
 pub function official_app(ctx: usize): boolean {

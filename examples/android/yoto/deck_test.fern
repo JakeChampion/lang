@@ -1598,6 +1598,47 @@ function test_bedtime_and_stickers(): test.TestOutcome {
   return test.assert_eq(m.phone.card == sound.id && m.playback_tools.sleep_at > monotonic_ns(), true);
 }
 
+function test_import_audio_keeps_playlist_and_rejects_stale_results(): test.TestOutcome {
+  let Ok(dir) = temp_dir("story-deck-audio-import") else {
+    return test.fail("open a temporary audio store");
+  };
+  defer remove_dir(dir);
+  let original = dir + "/original.mp3";
+  let copy = dir + "/copied.mp3";
+  let late = dir + "/late.mp3";
+  if (write_file_bytes(original, [1u8]).is_err() || write_file_bytes(copy, [2u8]).is_err() || write_file_bytes(late, [3u8]).is_err()) {
+    return test.fail("create audio fixtures");
+  }
+  defer remove_file(original);
+  defer remove_file(copy);
+  defer remove_file(late);
+  let ready = deck.update(deck.start(), deck.OpenTools(panel_tools.Create));
+  let model = deck.update(ready, deck.DraftTitle("My trip playlist"));
+  model = deck.update(model, deck.ImportAudio);
+  let canceled = model.tools_page.import_id;
+  model = deck.update(model, deck.AudioImported(canceled, [], ""));
+  if (model.tools_page.importing || model.tools_page.draft.title != "My trip playlist" || model.tools_page.draft.chapters.len() != 0) {
+    return test.fail("cancel the picker and keep the playlist draft");
+  }
+  model = deck.update(model, deck.ImportAudio);
+  let active = model.tools_page.import_id;
+  model = deck.update(model, deck.AudioImportStarted(active));
+  let source = api.LocalAudio { path: original, title: "First", mime: "audio/mpeg", temporary: false };
+  let duplicate = api.LocalAudio { ...source, path: copy, title: "Second", temporary: true };
+  let stale = api.LocalAudio { ...duplicate, path: late };
+  model = deck.update(model, deck.AudioImported(canceled, [stale], ""));
+  if (stat(late).is_ok() || !model.tools_page.importing) {
+    return test.fail("discard stale imports and keep the current request active");
+  }
+  model = deck.update(model, deck.AudioImported(active, [source, duplicate], ""));
+  let names = model.tools_page.draft.chapters.map((chapter: api.Chapter): string => chapter.title);
+  if (names != ["First", "Second"] || model.tools_page.importing || model.tools_page.draft.title != "My trip playlist") {
+    return test.fail("add two chapters in order to the current playlist");
+  }
+  model = deck.update(deck.update(model, deck.DropChapter(1)), deck.DropChapter(0));
+  return test.assert_eq(stat(copy).is_err() && stat(original).is_ok() && model.tools_page.draft.chapters.len() == 0, true);
+}
+
 function test_audio_editor_trims_splits_and_matches(): test.TestOutcome {
   let Ok(dir) = temp_dir("story-deck-audio-edits") else {
     return test.fail("open the audio editor's temporary store");
@@ -1614,7 +1655,7 @@ function test_audio_editor_trims_splits_and_matches(): test.TestOutcome {
   if (write_file_bytes(input, original).is_err()) {
     return test.fail("write the WAV fixture");
   }
-  let audio = api.LocalAudio { path: input, title: "Family recording", mime: "audio/wav", recording: false };
+  let audio = api.LocalAudio { path: input, title: "Family recording", mime: "audio/wav", temporary: false };
   let wave = myo_audio.analyze(audio).unwrap_or(myo_audio.Wave { duration: 0, peaks: [] });
   if (wave.duration != 2000 || wave.peaks.len() != 48) {
     return test.fail("read the recording and build a waveform");
@@ -1723,6 +1764,7 @@ function main(): i32 {
   r = r.it("save and play a single authorized chapter offline", test_choose_saved_chapters);
   r = r.it("choose a title by remaining time and protect a family favourite", test_travel_fits_and_protection);
   r = r.it("restore a sticker-linked bedtime routine and start sleep sounds after the story", test_bedtime_and_stickers);
+  r = r.it("import several chapters, keep the draft on cancel, and discard stale imports", test_import_audio_keeps_playlist_and_rejects_stale_results);
   r = r.it("read a waveform and render trimmed, split, volume-matched chapters", test_audio_editor_trims_splits_and_matches);
   r = r.it("link prepared tracks, respect sleep boundaries, and rewind from the media control", test_gapless_and_rewind);
   return r.finish();

@@ -350,7 +350,8 @@ pub enum Msg {
   DropChapter(i32),
   SetRecorder,
   ImportAudio,
-  ChooseAudio(i32),
+  AudioImportStarted(i32),
+  AudioImported(i32, api.LocalAudio[], string),
   SavePlaylist,
   Refresh,
   SignOut,
@@ -495,7 +496,10 @@ pub function start(): Model {
 
 function signed_out(m: Model, note: string): Model {
   let first = start();
-  return Model { ...first, client: m.client, generation: m.generation + 1i64, background_busy: m.background_busy, cover_busy: m.cover_busy, cover_active: m.cover_active, cover_stop: m.cover_stop, cover_pipe: m.cover_pipe, art_dir: m.art_dir, cache_dir: m.cache_dir, phone: phone.stop(m.phone), playback_tools: PlaybackTools { ...first.playback_tools, dirty: true }, now_playing: NowPlaying { ...first.now_playing, running: m.now_playing.running }, config_panel: panel(m.config_panel.revision + 1i64), downloads: offline.clear(m.downloads), note: note };
+  if (!m.tools_page.busy) {
+    panel_tools.clear_audio(m.tools_page.draft);
+  }
+  return Model { ...first, client: m.client, generation: m.generation + 1i64, background_busy: m.background_busy, cover_busy: m.cover_busy, cover_active: m.cover_active, cover_stop: m.cover_stop, cover_pipe: m.cover_pipe, art_dir: m.art_dir, cache_dir: m.cache_dir, phone: phone.stop(m.phone), playback_tools: PlaybackTools { ...first.playback_tools, dirty: true }, now_playing: NowPlaying { ...first.now_playing, running: m.now_playing.running }, config_panel: panel(m.config_panel.revision + 1i64), tools_page: panel_tools.State { ...first.tools_page, import_id: m.tools_page.import_id }, downloads: offline.clear(m.downloads), note: note };
 }
 
 pub function with_downloads(m: Model, catalog: offline.Catalog): Model {
@@ -686,10 +690,10 @@ function move_chapter(s: panel_tools.State, from: i32, to: i32): panel_tools.Sta
 function save_draft(own m: Model): Model {
   let tool = m.tools_page;
   let name = tool.draft.title.trim().to_owned();
-  if (m.token.len() == 0 || tool.busy || tool.recording || name.len() == 0 || tool.draft.chapters.len() == 0) {
+  if (m.token.len() == 0 || tool.busy || tool.recording || tool.importing || name.len() == 0 || tool.draft.chapters.len() == 0) {
     return m;
   }
-  if (tool.draft.chapters.len() > 100) {
+  if (tool.draft.chapters.len() > api.MAX_PLAYLIST_CHAPTERS) {
     return tools_update(m, panel_tools.State { ...tool, note: "A playlist can have up to 100 chapters." });
   }
   let draft = api.Playlist { ...tool.draft, title: name };
@@ -2333,7 +2337,7 @@ function audio_editor_update(own m: Model, msg: Msg): Model {
           let draft = tool.draft;
           let chapters = draft.chapters;
           let new_parts = parts.map((audio: api.LocalAudio): api.Chapter => api.Chapter { title: audio.title, audio: Some(audio), prior: json.JNull });
-          if (e.index >= chapters.len() || chapters.len() + parts.len() - 1 > 100 || !chapters[e.index].audio.map((audio: api.LocalAudio): boolean => audio.path == e.source.path).unwrap_or(false)) {
+          if (e.index >= chapters.len() || chapters.len() + parts.len() - 1 > api.MAX_PLAYLIST_CHAPTERS || !chapters[e.index].audio.map((audio: api.LocalAudio): boolean => audio.path == e.source.path).unwrap_or(false)) {
             myo_audio.discard(parts);
             return Model { ...m, audio_editor: Some(AudioEditor { ...e, working: false, note: "Apply the edits to a playlist with up to 100 chapters." }) };
           }
@@ -2726,11 +2730,12 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     EditPlaylist(id) => {
       let tool = m.tools_page;
-      if (tool.busy || tool.recording) {
+      if (tool.busy || tool.recording || tool.importing) {
         return m;
       }
       if (id.len() == 0) {
-        return tools_update(m, panel_tools.State { ...tool, draft: api.empty_playlist(), note: "", audio: None });
+        panel_tools.clear_audio(tool.draft);
+        return tools_update(m, panel_tools.State { ...tool, draft: api.empty_playlist(), note: "" });
       }
       if let Some(card) = m.cards.find((card: api.Card): boolean => card.id == id && card.myo) {
         let editor = panel_tools.open_page(tool, panel_tools.Create);
@@ -2744,6 +2749,7 @@ pub function update(own m: Model, msg: Msg): Model {
       }
       let tool = m.tools_page;
       if let Ok(draft) = result {
+        panel_tools.clear_audio(tool.draft);
         return tools_update(m, panel_tools.State { ...tool, draft: draft, busy: false, note: "" });
       }
       if let Err(err) = result {
@@ -2758,13 +2764,7 @@ pub function update(own m: Model, msg: Msg): Model {
       let tool = m.tools_page;
       if let Ok(id) = result {
         let title = tool.draft.title;
-        for chapter in tool.draft.chapters {
-          if let Some(audio) = chapter.audio {
-            if (audio.recording) {
-              let removed = remove_file(audio.path);
-            }
-          }
-        }
+        panel_tools.clear_audio(tool.draft);
         return reload(Model { ...m, tools_page: panel_tools.State { ...tool, draft: api.empty_playlist(), busy: false, note: "Saved " + title + "." } });
       }
       if let Err(err) = result {
@@ -2795,7 +2795,7 @@ pub function update(own m: Model, msg: Msg): Model {
       let parts = tool.draft.chapters;
       if (index >= 0 && index < parts.len()) {
         if let Some(audio) = parts[index].audio {
-          if (audio.recording) {
+          if (audio.temporary) {
             let removed = remove_file(audio.path);
           }
         }
@@ -2810,16 +2810,32 @@ pub function update(own m: Model, msg: Msg): Model {
       return tools_update(m, panel_tools.State { ...tool, action: Some(action) });
     },
     ImportAudio => {
-      return tools_update(m, panel_tools.State { ...m.tools_page, action: Some(panel_tools.PickAudio) });
-    },
-    ChooseAudio(index) => {
       let tool = m.tools_page;
-      if let Some(files) = tool.audio {
-        if (index >= 0 && index < files.len()) {
-          return tools_update(m, panel_tools.audio_added(tool, files[index]));
-        }
+      let Some(panel_tools.Create()) = tool.page else {
+        return m;
+      };
+      if (tool.busy || tool.importing || tool.recording) {
+        return m;
       }
-      return tools_update(m, panel_tools.State { ...tool, audio: None });
+      if (tool.draft.chapters.len() >= api.MAX_PLAYLIST_CHAPTERS) {
+        return tools_update(m, panel_tools.State { ...tool, note: "A playlist can have up to 100 chapters." });
+      }
+      return tools_update(m, panel_tools.State { ...tool, action: Some(panel_tools.PickAudio), importing: true, import_id: tool.import_id + 1, note: "" });
+    },
+    AudioImportStarted(id) => {
+      let tool = m.tools_page;
+      if (tool.importing && tool.import_id == id) {
+        return tools_update(m, panel_tools.State { ...tool, note: "Copying audio to this playlist…" });
+      }
+      return m;
+    },
+    AudioImported(id, files, note) => {
+      let tool = m.tools_page;
+      if (!tool.importing || tool.import_id != id) {
+        myo_audio.discard(files);
+        return m;
+      }
+      return tools_update(m, panel_tools.add_audio(tool, files, note));
     },
     SavePlaylist => {
       return save_draft(m);
@@ -4728,18 +4744,8 @@ function create_view(m: Model): ui.El[Msg][] {
     return audio_editor_view(editor);
   }
   let tool = m.tools_page;
-  if (tool.busy) {
+  if (tool.busy || tool.importing) {
     return [];
-  }
-  if let Some(files) = tool.audio {
-    let rows: ui.El[Msg][] = [ui.text_button("Back to playlist", ChooseAudio(-1))];
-    if (files.len() == 0) {
-      return rows.append(ui.text("No audio files found on this phone.").colored(ui.MUTED));
-    }
-    return rows.append(ui.list("import-audio", files.len(), 52.0, (i: i32): ui.El[Msg] => {
-      let file = files[i];
-      return ui.text_button(file.title, ChooseAudio(i)).wide();
-    }).height((files.len() * 52).min(572) as f64));
   }
   if (tool.choosing_cover) {
     let cards = m.cards.filter((card: api.Card): boolean => card.cover.len() > 0);
@@ -4753,11 +4759,15 @@ function create_view(m: Model): ui.El[Msg][] {
     }).height((cards.len() * 52).min(572) as f64));
   }
   let draft = tool.draft;
+  let audio = [ui.button(if (tool.recording) { "Stop recording" } else { "Record" }, SetRecorder)];
+  if (!tool.recording) {
+    audio = audio.append(ui.text_button("Import audio", ImportAudio));
+  }
   let rows: ui.El[Msg][] = [
     ui.field[Msg]("playlist-name", draft.title, "Playlist title").on_edit((value: string): Msg => DraftTitle(value)),
     ui.field[Msg]("playlist-cover", draft.cover, "Cover image HTTPS address").on_edit((value: string): Msg => DraftCover(value)),
     ui.text_button("Choose a library cover", PickCover),
-    ui.row([ui.button(if (tool.recording) { "Stop recording" } else { "Record" }, SetRecorder), ui.text_button("Import audio", ImportAudio)]).spaced(8.0),
+    ui.row(audio).spaced(8.0),
   ];
   if (!tool.recording && draft.title.trim().len() > 0 && draft.chapters.len() > 0 && m.token.len() > 0) {
     rows = rows.append(ui.button("Save playlist", SavePlaylist));
@@ -5509,6 +5519,9 @@ function back_message(m: Model): Option[Msg] {
 pub function program(open_browser: (string) => boolean, decode: (u8[], i32) => Option[draw.Image], persist: (Option[api.Session]) => boolean, output: phone.Output, disk: offline.Output, store: (listening.Saved) => boolean): ui.Program[Model, Msg] {
   return ui.program(view, update).with_visible(visible_posters).with_system(system).with_effects((m: Model): Model => effects(m, open_browser, decode, persist, output, disk, store)).with_jobs(start_job).with_tick(wait, Msg.Tick).with_back(back_message).with_close((own m: Model): own Model => {
     close_pipe(m.cover_stop);
+    if (!m.tools_page.busy) {
+      panel_tools.clear_audio(m.tools_page.draft);
+    }
     let saved = save_listening(m, output, store, true);
     phone.close(saved.phone, output);
     return close_app(Model { ...saved }, persist);
