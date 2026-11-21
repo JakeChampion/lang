@@ -1,63 +1,35 @@
+import "./ssamachineword" as machineword;
 import "./asmcore";
 import "./ssacapacityisa" as isa;
 import "./ssaboxroutines" as recbox;
 import "./ssaconstructorbound" as boundary;
 import "./ssaprepare";
 
-struct Half { kind: i32, identity: i64, high: boolean }
+struct State { regs: machineword.Word[], memory: machineword.Half[], writes: i32[], calls: i32, ok: boolean }
 
-struct Word { low: Half, high: Half }
-
-struct State { regs: Word[], memory: Half[], writes: i32[], calls: i32, ok: boolean }
-
-function half(kind: i32, identity: i64, high: boolean): Half {
-  return Half { kind: kind, identity: identity, high: high };
-}
-
-function token(kind: i32, identity: i64): Word {
-  return Word { low: half(kind, identity, false), high: half(kind, identity, true) };
-}
-
-function number(n: i64): Word {
-  let low = n % 4294967296;
-  return Word { low: half(0, if (low < 0) { low + 4294967296 } else { low }, false), high: half(0, if (n < 0) { 4294967295 } else { n / 4294967296 }, false) };
-}
-
-function same(a: Half, b: Half): boolean {
-  return a.kind == b.kind && a.identity == b.identity && a.high == b.high;
-}
-
-function equal(a: Word, b: Word): boolean {
-  return same(a.low, b.low) && same(a.high, b.high);
-}
-
-function narrowed(w: Word, width: i32): Word {
-  return if (width == 32) { Word { ...w, high: number(0).high } } else { w };
-}
-
-function initial_register(words: i32, register_entry: boolean, i: i32): Word {
+function initial_register(words: i32, register_entry: boolean, i: i32): machineword.Word {
   if (register_entry && i == 0) {
-    return token(9, 0);
+    return machineword.token(9, 0);
   }
   if (register_entry && i == 6 && words == 2) {
-    return token(9, 1);
+    return machineword.token(9, 1);
   }
-  return if (i == 4) { token(2, 0) } else { token(1, i as i64) };
+  return if (i == 4) { machineword.token(2, 0) } else { machineword.token(1, i as i64) };
 }
 
-function initial_word(words: i32, register_entry: boolean, i: i32): Word {
+function initial_word(words: i32, register_entry: boolean, i: i32): machineword.Word {
   if (i == 16 || i == 17) {
-    return token(4, 0);
+    return machineword.token(4, 0);
   }
   if (!register_entry && i >= 18 && i < 18 + words * 2) {
-    return token(9, ((i - 18) / 2) as i64);
+    return machineword.token(9, ((i - 18) / 2) as i64);
   }
-  return if (i < 22) { token(5, (i / 2) as i64) } else { token(6, ((i - 22) / 2) as i64) };
+  return if (i < 22) { machineword.token(5, (i / 2) as i64) } else { machineword.token(6, ((i - 22) / 2) as i64) };
 }
 
 function initial(words: i32, register_entry: boolean): State {
-  let regs: Word[] = [];
-  let memory: Half[] = [];
+  let regs: machineword.Word[] = [];
+  let memory: machineword.Half[] = [];
   let writes: i32[] = [];
   let i = 0;
   while (i < 16) {
@@ -74,20 +46,16 @@ function initial(words: i32, register_entry: boolean): State {
   return State { regs: regs, memory: memory, writes: writes, calls: 0, ok: true };
 }
 
-function write(s: State, reg: i32, w: Word): State {
+function write(s: State, reg: i32, w: machineword.Word): State {
   return State { ...s, regs: s.regs.with(reg, w) };
 }
 
-function pointer(w: Word): boolean {
-  return (w.low.kind == 2 || w.low.kind == 3) && equal(w, token(w.low.kind, w.low.identity));
+function pointer(w: machineword.Word): boolean {
+  return (w.low.kind == 2 || w.low.kind == 3) && machineword.equal(w, machineword.token(w.low.kind, w.low.identity));
 }
 
-function unsigned(w: Word): boolean {
-  return w.low.kind == 0 && same(w.high, number(0).high);
-}
-
-function displaced(w: Word, offset: i64): Word {
-  return token(w.low.kind, w.low.identity + offset);
+function displaced(w: machineword.Word, offset: i64): machineword.Word {
+  return machineword.token(w.low.kind, w.low.identity + offset);
 }
 
 function add(s: State, op: isa.Op): State {
@@ -103,17 +71,17 @@ function add(s: State, op: isa.Op): State {
   return numeric_add(s, op.destination, w, delta);
 }
 
-function numeric_add(s: State, reg: i32, w: Word, delta: i64): State {
-  if (unsigned(w)) {
+function numeric_add(s: State, reg: i32, w: machineword.Word, delta: i64): State {
+  if (machineword.unsigned(w)) {
     let n = w.low.identity + delta;
     if (n >= 0 && n <= 4294967295) {
-      return write(s, reg, number(n));
+      return write(s, reg, machineword.number(n));
     }
   }
   return State { ...s, ok: false };
 }
 
-function cell(s: State, base: Word, offset: i32, width: i32): i32 {
+function cell(s: State, base: machineword.Word, offset: i32, width: i32): i32 {
   if (!pointer(base) || offset < -64 || offset > 64) {
     return -1;
   }
@@ -139,7 +107,7 @@ function writable(s: State, at: i32): boolean {
   return at >= 0 && at < 16 || s.calls == 1 && at >= 23 && at < s.memory.len();
 }
 
-function store_at(s: State, at: i32, width: i32, w: Word): State {
+function store_at(s: State, at: i32, width: i32, w: machineword.Word): State {
   if (!writable(s, at)) {
     return State { ...s, ok: false };
   }
@@ -163,7 +131,7 @@ function load_at(s: State, at: i32, width: i32, reg: i32): State {
   if (at < 0 || s.memory[at].kind == 11 || width == 64 && s.memory[at + 1].kind == 11) {
     return State { ...s, ok: false };
   }
-  return write(s, reg, Word { low: s.memory[at], high: if (width == 64) { s.memory[at + 1] } else { number(0).high } });
+  return write(s, reg, machineword.Word { low: s.memory[at], high: if (width == 64) { s.memory[at + 1] } else { machineword.number(0).high } });
 }
 
 function memory_step(s: State, op: isa.Op): State {
@@ -174,7 +142,7 @@ function memory_step(s: State, op: isa.Op): State {
   if (op.kind == 3) {
     return load_at(s, at, op.width, op.destination);
   }
-  let w = if (op.kind == 22) { number(op.immediate as i64) } else { s.regs[op.source] };
+  let w = if (op.kind == 22) { machineword.number(op.immediate as i64) } else { s.regs[op.source] };
   return store_at(s, at, op.width, w);
 }
 
@@ -201,26 +169,26 @@ function stack_step(s: State, op: isa.Op): State {
 // %rdi is not known after it.
 function allocation(s: State, words: i32, sized: boolean, pc: i32, op: isa.Op): State {
   let named = sized && op.symbol == asmcore.sized_rec_box(words);
-  if (s.calls != 0 || !named && (op.symbol != "__fern_rec_box" || !equal(s.regs[7], number(words as i64)))) {
+  if (s.calls != 0 || !named && (op.symbol != "__fern_rec_box" || !machineword.equal(s.regs[7], machineword.number(words as i64)))) {
     return State { ...s, ok: false };
   }
   let sp = s.regs[4];
   if (!pointer(sp) || sp.low.kind != 2 || sp.low.identity < -40 || sp.low.identity > 0 || sp.low.identity % 8 != 0) {
     return State { ...s, ok: false };
   }
-  let called = store_at(s, cell(s, sp, -8, 64), 64, token(8, (pc + 1) as i64));
-  called = store_at(called, cell(called, sp, -16, 64), 64, token(11, 0));
-  let made = write(State { ...called, memory: helper_memory(called.memory, sp, words), calls: 1 }, 0, token(3, 8));
-  return if (named) { write(made, 7, token(11, 7)) } else { made };
+  let called = store_at(s, cell(s, sp, -8, 64), 64, machineword.token(8, (pc + 1) as i64));
+  called = store_at(called, cell(called, sp, -16, 64), 64, machineword.token(11, 0));
+  let made = write(State { ...called, memory: helper_memory(called.memory, sp, words), calls: 1 }, 0, machineword.token(3, 8));
+  return if (named) { write(made, 7, machineword.token(11, 7)) } else { made };
 }
 
-function helper_memory(memory: Half[], sp: Word, words: i32): Half[] {
+function helper_memory(memory: machineword.Half[], sp: machineword.Word, words: i32): machineword.Half[] {
   let i = 0;
   while (i < (sp.low.identity + 48) as i32 / 4) {
-    memory = memory.with(i, half(11, i as i64, false));
+    memory = memory.with(i, machineword.half(11, i as i64, false));
     i += 1;
   }
-  return memory.with(22, number(1).low).with(23, number(words as i64).low);
+  return memory.with(22, machineword.number(1).low).with(23, machineword.number(words as i64).low);
 }
 
 function lea(s: State, op: isa.Op): State {
@@ -237,10 +205,10 @@ function simple(s: State, op: isa.Op): State {
     return s;
   }
   if (op.kind == 2) {
-    return write(s, op.destination, narrowed(s.regs[op.source], op.width));
+    return write(s, op.destination, machineword.narrowed(s.regs[op.source], op.width));
   }
   if (op.kind == 5) {
-    return write(s, op.destination, narrowed(number(op.immediate as i64), op.width));
+    return write(s, op.destination, machineword.narrowed(machineword.number(op.immediate as i64), op.width));
   }
   if (op.kind == 6 || op.kind == 7) {
     return stack_step(s, op);
@@ -261,14 +229,14 @@ function step(s: State, words: i32, sized: boolean, pc: i32, op: isa.Op): State 
   return if (op.kind == 25) { allocation(s, words, sized, pc, op) } else { simple(s, op) };
 }
 
-function expected_memory(original: State, tag: i64, i: i32): Half {
+function expected_memory(original: State, tag: i64, i: i32): machineword.Half {
   if (i < 22) {
     return original.memory[i];
   }
   if (i < 24) {
-    return if (i == 22) { number(1).low } else { number(tag).low };
+    return if (i == 22) { machineword.number(1).low } else { machineword.number(tag).low };
   }
-  let w = token(9, ((i - 24) / 2) as i64);
+  let w = machineword.token(9, ((i - 24) / 2) as i64);
   return if (i % 2 == 0) { w.low } else { w.high };
 }
 
@@ -279,11 +247,11 @@ function finished(s: State, words: i32, tag: i64, register_entry: boolean): bool
     return false;
   }
   let original = initial(words, register_entry);
-  if (!equal(s.regs[0], token(3, 8))) {
+  if (!machineword.equal(s.regs[0], machineword.token(3, 8))) {
     return false;
   }
   for i in [3, 4, 5, 12, 13, 14, 15] {
-    if (!equal(s.regs[i], original.regs[i])) {
+    if (!machineword.equal(s.regs[i], original.regs[i])) {
       return false;
     }
   }
@@ -292,7 +260,7 @@ function finished(s: State, words: i32, tag: i64, register_entry: boolean): bool
 
 function finished_memory(s: State, original: State, tag: i64): boolean {
   for i in 16..s.memory.len() {
-    if (!same(s.memory[i], expected_memory(original, tag, i))) {
+    if (!machineword.same(s.memory[i], expected_memory(original, tag, i))) {
       return false;
     }
     if (i >= 23 && s.writes[i] != 1) {

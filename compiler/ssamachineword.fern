@@ -1,0 +1,33 @@
+// Symbolic register words shared by the allocation and constructor proof machines.
+pub struct Half { kind: i32, identity: i64, high: boolean }
+
+pub struct Word { low: Half, high: Half }
+
+pub function half(kind: i32, identity: i64, high: boolean): Half {
+  return Half { kind: kind, identity: identity, high: high };
+}
+
+pub function token(kind: i32, identity: i64): Word {
+  return Word { low: half(kind, identity, false), high: half(kind, identity, true) };
+}
+
+pub function number(n: i64): Word {
+  let low = n % 4294967296;
+  return Word { low: half(0, if (low < 0) { low + 4294967296 } else { low }, false), high: half(0, if (n < 0) { 4294967295 } else { n / 4294967296 }, false) };
+}
+
+pub function same(a: Half, b: Half): boolean {
+  return a.kind == b.kind && a.identity == b.identity && a.high == b.high;
+}
+
+pub function equal(a: Word, b: Word): boolean {
+  return same(a.low, b.low) && same(a.high, b.high);
+}
+
+pub function narrowed(w: Word, width: i32): Word {
+  return if (width == 32) { Word { ...w, high: number(0).high } } else { w };
+}
+
+pub function unsigned(w: Word): boolean {
+  return w.low.kind == 0 && same(w.high, number(0).high);
+}

@@ -1,71 +1,39 @@
+import "./ssamachineword" as machineword;
 import "./ssacapacityisa" as isa;
 import "./ssaallocatorinitisa" as init;
 import "./ssadecrementtext" as text;
 
-struct Half { kind: i32, identity: i64, high: boolean }
+struct State { regs: machineword.Word[], memory: machineword.Half[], writes: i32[], zero: i32, carry: i32, sign: i32, overflow: i32, bounded: boolean, mappings: i32, advised: boolean, ok: boolean }
 
-struct Word { low: Half, high: Half }
-
-struct State { regs: Word[], memory: Half[], writes: i32[], zero: i32, carry: i32, sign: i32, overflow: i32, bounded: boolean, mappings: i32, advised: boolean, ok: boolean }
-
-function half(kind: i32, identity: i64, high: boolean): Half {
-  return Half { kind: kind, identity: identity, high: high };
-}
-
-function token(kind: i32, identity: i64): Word {
-  return Word { low: half(kind, identity, false), high: half(kind, identity, true) };
-}
-
-function number(n: i64): Word {
-  let low = n % 4294967296;
-  return Word { low: half(0, if (low < 0) { low + 4294967296 } else { low }, false), high: half(0, if (n < 0) { 4294967295 } else { n / 4294967296 }, false) };
-}
-
-function same(a: Half, b: Half): boolean {
-  return a.kind == b.kind && a.identity == b.identity && a.high == b.high;
-}
-
-function equal(a: Word, b: Word): boolean {
-  return same(a.low, b.low) && same(a.high, b.high);
-}
-
-function unsigned(w: Word): boolean {
-  return w.low.kind == 0 && same(w.high, number(0).high);
-}
-
-function narrowed(w: Word, width: i32): Word {
-  return if (width == 32) { Word { ...w, high: number(0).high } } else { w };
-}
-
-function pointer(w: Word): boolean {
-  return w.low.kind >= 2 && w.low.kind <= 4 && equal(w, token(w.low.kind, w.low.identity));
+function pointer(w: machineword.Word): boolean {
+  return w.low.kind >= 2 && w.low.kind <= 4 && machineword.equal(w, machineword.token(w.low.kind, w.low.identity));
 }
 
 function unknown(s: State): State {
   return State { ...s, zero: -1, carry: -1, sign: -1, overflow: -1, bounded: false };
 }
 
-function write(s: State, reg: i32, value: Word): State {
+function write(s: State, reg: i32, value: machineword.Word): State {
   return State { ...s, regs: s.regs.with(reg, value) };
 }
 
-function initial_word(i: i32): Word {
+function initial_word(i: i32): machineword.Word {
   if (i < 20) {
-    return token(7, (i / 2) as i64);
+    return machineword.token(7, (i / 2) as i64);
   }
   if (i < 22) {
-    return token(6, 0);
+    return machineword.token(6, 0);
   }
-  return if (i < 24) { token(7, 10) } else { number(0) };
+  return if (i < 24) { machineword.token(7, 10) } else { machineword.number(0) };
 }
 
 function initial(request: i32): State {
-  let regs: Word[] = [];
-  let memory: Half[] = [];
+  let regs: machineword.Word[] = [];
+  let memory: machineword.Half[] = [];
   let writes: i32[] = [];
   let i = 0;
   while (i < 16) {
-    regs = regs.append(if (i == 4) { token(2, 0) } else { if (i == 7) { number(request as i64) } else { token(1, i as i64) } });
+    regs = regs.append(if (i == 4) { machineword.token(2, 0) } else { if (i == 7) { machineword.number(request as i64) } else { machineword.token(1, i as i64) } });
     i += 1;
   }
   for i in 0..32 {
@@ -76,7 +44,7 @@ function initial(request: i32): State {
   return State { regs: regs, memory: memory, writes: writes, zero: -1, carry: -1, sign: -1, overflow: -1, bounded: false, mappings: 0, advised: false, ok: true };
 }
 
-function cell(base: Word, offset: i64, width: i32, request: i32): i32 {
+function cell(base: machineword.Word, offset: i64, width: i32, request: i32): i32 {
   if (!pointer(base) || offset < -80 || offset > 80) {
     return -1;
   }
@@ -102,7 +70,7 @@ function address(s: State, op: isa.Op, request: i32): i32 {
   let offset = op.offset as i64;
   if (op.index >= 0) {
     let index = s.regs[op.index];
-    if (!unsigned(index) || index.low.identity > 64) {
+    if (!machineword.unsigned(index) || index.low.identity > 64) {
       return -1;
     }
     offset = offset + index.low.identity * (op.scale as i64);
@@ -110,8 +78,8 @@ function address(s: State, op: isa.Op, request: i32): i32 {
   return cell(s.regs[op.base], offset, op.width, request);
 }
 
-function load(s: State, at: i32, width: i32): Word {
-  return Word { low: s.memory[at], high: if (width == 64) { s.memory[at + 1] } else { number(0).high } };
+function load(s: State, at: i32, width: i32): machineword.Word {
+  return machineword.Word { low: s.memory[at], high: if (width == 64) { s.memory[at + 1] } else { machineword.number(0).high } };
 }
 
 function read(s: State, at: i32, width: i32, reg: i32): State {
@@ -122,7 +90,7 @@ function writable(at: i32): boolean {
   return at >= 0 && at < 20 || at >= 26 && at < 32;
 }
 
-function store(s: State, at: i32, width: i32, w: Word): State {
+function store(s: State, at: i32, width: i32, w: machineword.Word): State {
   let memory = s.memory;
   let writes = s.writes;
   for i in 0..width / 32 {
@@ -147,7 +115,7 @@ function stack(s: State, op: isa.Op, request: i32): State {
       return State { ...s, ok: false };
     }
     let w = if (op.kind == 32) { load(s, at, 64) } else { s.regs[op.source] };
-    let next = token(2, sp.low.identity - 8);
+    let next = machineword.token(2, sp.low.identity - 8);
     return write(store(s, cell(next, 0, 64, request), 64, w), 4, next);
   }
   return pop(s, op, request);
@@ -160,15 +128,15 @@ function pop(s: State, op: isa.Op, request: i32): State {
     return State { ...s, ok: false };
   }
   let w = load(s, at, 64);
-  let advanced = write(s, 4, token(2, sp.low.identity + 8));
+  let advanced = write(s, 4, machineword.token(2, sp.low.identity + 8));
   return if (op.kind == 33) { store(advanced, address(advanced, op, request), 64, w) } else { write(advanced, op.destination, w) };
 }
 
-function shifted(s: State, reg: i32, w: Word, delta: i64, request: i32): State {
+function shifted(s: State, reg: i32, w: machineword.Word, delta: i64, request: i32): State {
   let at = w.low.identity + delta;
   let low = if (w.low.kind == 2) { -(80 as i64) } else { 0 as i64 };
   let high = if (w.low.kind == 3) { 17179869184 as i64 } else { if (w.low.kind == 2) { 16 as i64 } else { 64 as i64 } };
-  return if (at >= low && at <= high) { write(s, reg, token(w.low.kind, at)) } else { State { ...s, ok: false } };
+  return if (at >= low && at <= high) { write(s, reg, machineword.token(w.low.kind, at)) } else { State { ...s, ok: false } };
 }
 
 function immediate_add(s: State, op: isa.Op, request: i32): State {
@@ -177,11 +145,11 @@ function immediate_add(s: State, op: isa.Op, request: i32): State {
   if (pointer(w) && op.width == 64) {
     return shifted(s, op.destination, w, delta, request);
   }
-  if (!unsigned(w)) {
+  if (!machineword.unsigned(w)) {
     return State { ...s, ok: false };
   }
   let n = w.low.identity + delta;
-  return if (n >= 0 && n <= 4294967295) { write(s, op.destination, number(n)) } else { State { ...s, ok: false } };
+  return if (n >= 0 && n <= 4294967295) { write(s, op.destination, machineword.number(n)) } else { State { ...s, ok: false } };
 }
 
 function arithmetic(s: State, op: isa.Op, request: i32): State {
@@ -197,7 +165,7 @@ function arithmetic(s: State, op: isa.Op, request: i32): State {
   return register_arithmetic(cleared, op, a, b, request);
 }
 
-function register_arithmetic(s: State, op: isa.Op, a: Word, b: Word, request: i32): State {
+function register_arithmetic(s: State, op: isa.Op, a: machineword.Word, b: machineword.Word, request: i32): State {
   let av = scalar(a);
   let bv = scalar(b);
   if (op.kind == 10 && pointer(b) && av >= 0) {
@@ -210,12 +178,12 @@ function register_arithmetic(s: State, op: isa.Op, a: Word, b: Word, request: i3
 }
 
 // A mapped kind-three region contains every coordinate that shifted accepts.
-function region_sum(s: State, reg: i32, base: Word, delta: i64, request: i32): State {
+function region_sum(s: State, reg: i32, base: machineword.Word, delta: i64, request: i32): State {
   let result = shifted(s, reg, base, delta, request);
   return if (result.ok && base.low.kind == 3 && delta >= 0) { State { ...result, carry: 0 } } else { result };
 }
 
-function scalar(w: Word): i64 {
+function scalar(w: machineword.Word): i64 {
   if (w.low.kind != 0 || w.high.kind != 0 || w.high.identity > 4) {
     return -1;
   }
@@ -223,9 +191,9 @@ function scalar(w: Word): i64 {
   return if (n <= 17179869184) { n } else { -1 };
 }
 
-function pointer_difference(s: State, op: isa.Op, a: Word, b: Word): State {
+function pointer_difference(s: State, op: isa.Op, a: machineword.Word, b: machineword.Word): State {
   if (op.kind == 9 && pointer(a) && pointer(b) && a.low.kind == b.low.kind && a.low.identity >= b.low.identity) {
-    return write(s, op.destination, number(a.low.identity - b.low.identity));
+    return write(s, op.destination, machineword.number(a.low.identity - b.low.identity));
   }
   return State { ...s, ok: false };
 }
@@ -238,23 +206,23 @@ function flags(s: State, a: i64, b: i64, width: i32): State {
   return State { ...s, zero: if (difference == 0) { 1 } else { 0 }, carry: if (a < b) { 1 } else { 0 }, sign: if (sign) { 1 } else { 0 }, overflow: if (overflow) { 1 } else { 0 }, bounded: false };
 }
 
-function comparison(s: State, a: Word, b: Word, width: i32, request: i32): State {
-  let left = narrowed(a, width);
-  let right = narrowed(b, width);
-  if (unsigned(left) && unsigned(right)) {
+function comparison(s: State, a: machineword.Word, b: machineword.Word, width: i32, request: i32): State {
+  let left = machineword.narrowed(a, width);
+  let right = machineword.narrowed(b, width);
+  if (machineword.unsigned(left) && machineword.unsigned(right)) {
     return flags(s, left.low.identity, right.low.identity, width);
   }
-  if (equal(left, right)) {
+  if (machineword.equal(left, right)) {
     return flags(s, 0, 0, width);
   }
   return pointer_comparison(s, left, right, width);
 }
 
-function pointer_comparison(s: State, a: Word, b: Word, width: i32): State {
+function pointer_comparison(s: State, a: machineword.Word, b: machineword.Word, width: i32): State {
   if (width != 64 || !pointer(a) || a.low.kind != 3) {
     return unknown(s);
   }
-  if (equal(b, number(0))) {
+  if (machineword.equal(b, machineword.number(0))) {
     return State { ...unknown(s), zero: 0, carry: 0, sign: 0, overflow: 0 };
   }
   if (pointer(b) && b.low.kind == 3) {
@@ -287,18 +255,18 @@ function global_step(s: State, op: isa.Op, request: i32): State {
   return comparison(s, s.regs[op.source], load(s, at, op.width), op.width, request);
 }
 
-function global_store(s: State, at: i32, width: i32, w: Word, request: i32): State {
+function global_store(s: State, at: i32, width: i32, w: machineword.Word, request: i32): State {
   let offset = if (at == 30) { 17179869184 as i64 } else { if (at == 26 && s.writes[at] == 1) { request as i64 } else { 0 as i64 } };
-  let expected = token(3, offset);
-  if (s.mappings != 1 || !same(w.low, expected.low) || width == 64 && !same(w.high, expected.high)) {
+  let expected = machineword.token(3, offset);
+  if (s.mappings != 1 || !machineword.same(w.low, expected.low) || width == 64 && !machineword.same(w.high, expected.high)) {
     return State { ...s, ok: false };
   }
   return store(s, at, width, w);
 }
 
 function test(s: State, op: isa.Op): State {
-  let w = narrowed(s.regs[op.source], op.width);
-  if (unsigned(w)) {
+  let w = machineword.narrowed(s.regs[op.source], op.width);
+  if (machineword.unsigned(w)) {
     let result = flags(s, w.low.identity, 0, op.width);
     return State { ...result, carry: 0, overflow: 0 };
   }
@@ -307,11 +275,11 @@ function test(s: State, op: isa.Op): State {
 
 function mask(s: State, op: isa.Op): State {
   let w = s.regs[op.destination];
-  if (op.source >= 0 || op.immediate != -8 || !unsigned(w)) {
+  if (op.source >= 0 || op.immediate != -8 || !machineword.unsigned(w)) {
     return State { ...s, ok: false };
   }
   let n = w.low.identity - w.low.identity % 8;
-  return write(flags(s, n, 0, op.width), op.destination, number(n));
+  return write(flags(s, n, 0, op.width), op.destination, machineword.number(n));
 }
 
 function memory_step(s: State, op: isa.Op, request: i32): State {
@@ -319,7 +287,7 @@ function memory_step(s: State, op: isa.Op, request: i32): State {
   if (op.kind == 3) {
     return read(s, at, op.width, op.destination);
   }
-  let w = if (op.kind == 22) { number(op.immediate as i64) } else { s.regs[op.source] };
+  let w = if (op.kind == 22) { machineword.number(op.immediate as i64) } else { s.regs[op.source] };
   return store(s, at, op.width, w);
 }
 
@@ -328,13 +296,13 @@ function simple(s: State, op: isa.Op, request: i32): State {
     return s;
   }
   if (op.kind == 2) {
-    return write(s, op.destination, narrowed(s.regs[op.source], op.width));
+    return write(s, op.destination, machineword.narrowed(s.regs[op.source], op.width));
   }
   if (op.kind == 5) {
-    return write(s, op.destination, narrowed(number(op.immediate as i64), op.width));
+    return write(s, op.destination, machineword.narrowed(machineword.number(op.immediate as i64), op.width));
   }
   if (op.kind == 19 && op.symbol == "__fern_freelist") {
-    return write(s, op.destination, token(4, 0));
+    return write(s, op.destination, machineword.token(4, 0));
   }
   if (op.kind == 15) {
     return lea(s, op, request);
@@ -344,20 +312,20 @@ function simple(s: State, op: isa.Op, request: i32): State {
 
 // Whether op takes the address 4 MiB past the base of the mapped arena.
 function small_part(s: State, op: isa.Op): boolean {
-  return op.index < 0 && op.base >= 0 && op.offset == 4194304 && s.mappings == 1 && equal(s.regs[op.base], token(3, 0));
+  return op.index < 0 && op.base >= 0 && op.offset == 4194304 && s.mappings == 1 && machineword.equal(s.regs[op.base], machineword.token(3, 0));
 }
 
 function lea(s: State, op: isa.Op, request: i32): State {
   if (small_part(s, op)) {
-    return write(s, op.destination, token(15, 0));
+    return write(s, op.destination, machineword.token(15, 0));
   }
   if (op.index < 0 && op.base >= 0 && pointer(s.regs[op.base])) {
     return shifted(s, op.destination, s.regs[op.base], op.offset as i64, request);
   }
-  if (op.base < 0 && op.index >= 0 && unsigned(s.regs[op.index])) {
+  if (op.base < 0 && op.index >= 0 && machineword.unsigned(s.regs[op.index])) {
     let n = s.regs[op.index].low.identity * (op.scale as i64) + op.offset as i64;
     if (n >= 0 && n <= 4294967295) {
-      return write(s, op.destination, number(n));
+      return write(s, op.destination, machineword.number(n));
     }
   }
   return State { ...s, ok: false };
@@ -365,7 +333,7 @@ function lea(s: State, op: isa.Op, request: i32): State {
 
 function shift(s: State, op: isa.Op): State {
   let w = s.regs[op.destination];
-  if (!unsigned(w)) {
+  if (!machineword.unsigned(w)) {
     return State { ...s, ok: false };
   }
   let n = w.low.identity;
@@ -377,17 +345,17 @@ function shift(s: State, op: isa.Op): State {
     }
     count -= 1;
   }
-  return write(unknown(s), op.destination, number(n));
+  return write(unknown(s), op.destination, machineword.number(n));
 }
 
 function mapping_arguments(s: State): boolean {
-  return equal(s.regs[0], number(9)) && equal(s.regs[7], number(268435456)) && equal(s.regs[6], number(17179869184)) && equal(s.regs[2], number(3)) && equal(s.regs[10], number(16418)) && equal(s.regs[8], number(-1)) && equal(s.regs[9], number(0));
+  return machineword.equal(s.regs[0], machineword.number(9)) && machineword.equal(s.regs[7], machineword.number(268435456)) && machineword.equal(s.regs[6], machineword.number(17179869184)) && machineword.equal(s.regs[2], machineword.number(3)) && machineword.equal(s.regs[10], machineword.number(16418)) && machineword.equal(s.regs[8], machineword.number(-1)) && machineword.equal(s.regs[9], machineword.number(0));
 }
 
 // The request for transparent huge pages: madvise with MADV_HUGEPAGE on the
 // arena from 4 MiB past its base to its end. Token 15 is that address.
 function advice_arguments(s: State): boolean {
-  return equal(s.regs[0], number(28)) && equal(s.regs[7], token(15, 0)) && equal(s.regs[6], number(17175674880)) && equal(s.regs[2], number(14));
+  return machineword.equal(s.regs[0], machineword.number(28)) && machineword.equal(s.regs[7], machineword.token(15, 0)) && machineword.equal(s.regs[6], machineword.number(17175674880)) && machineword.equal(s.regs[2], machineword.number(14));
 }
 
 // mappings is 1 after the call that maps the arena. advised is true after the
@@ -397,12 +365,12 @@ function syscall(s: State): State {
   if (!pointer(sp) || sp.low.kind != 2 || sp.low.identity > 0) {
     return State { ...s, ok: false };
   }
-  let after = write(write(unknown(s), 1, token(11, 1)), 11, token(11, 11));
+  let after = write(write(unknown(s), 1, machineword.token(11, 1)), 11, machineword.token(11, 11));
   if (s.mappings == 0 && mapping_arguments(s)) {
-    return State { ...write(after, 0, token(3, 0)), mappings: 1 };
+    return State { ...write(after, 0, machineword.token(3, 0)), mappings: 1 };
   }
   if (s.mappings == 1 && !s.advised && advice_arguments(s)) {
-    return State { ...write(after, 0, token(11, 0)), advised: true };
+    return State { ...write(after, 0, machineword.token(11, 0)), advised: true };
   }
   return State { ...s, ok: false };
 }
@@ -412,13 +380,13 @@ function initialization(s: State, op: isa.Op): State {
     return syscall(s);
   }
   if (op.kind == 38) {
-    return write(flags(s, 0, 0, 32), op.destination, number(0));
+    return write(flags(s, 0, 0, 32), op.destination, machineword.number(0));
   }
   if (op.kind == 36 && op.symbol == "17179869184") {
-    return write(s, op.destination, number(17179869184));
+    return write(s, op.destination, machineword.number(17179869184));
   }
   if (op.kind == 36 && op.symbol == "17175674880") {
-    return write(s, op.destination, number(17175674880));
+    return write(s, op.destination, machineword.number(17175674880));
   }
   return State { ...s, ok: false };
 }
@@ -461,7 +429,7 @@ function arithmetic_step(s: State, op: isa.Op, request: i32): State {
 
 function compare_or_simple(s: State, op: isa.Op, request: i32): State {
   if (op.kind == 16) {
-    return comparison(s, s.regs[op.source], number(op.immediate as i64), op.width, request);
+    return comparison(s, s.regs[op.source], machineword.number(op.immediate as i64), op.width, request);
   }
   if (op.kind == 28) {
     return comparison(s, s.regs[op.destination], s.regs[op.source], op.width, request);
@@ -538,10 +506,10 @@ function signed_order(s: State, condition: string, less: i32): i32 {
 function finished_memory(s: State, original: State, request: i32): boolean {
   for i in 20..s.memory.len() {
     let offset = if (i >= 30) { 17179869184 as i64 } else { if (i < 28) { request as i64 } else { 0 as i64 } };
-    let changed = token(3, offset);
+    let changed = machineword.token(3, offset);
     let expected = if (i >= 26) { if (i % 2 == 0) { changed.low } else { changed.high } } else { original.memory[i] };
     let count = if (i < 26) { 0 } else { if (i < 28) { 2 } else { 1 } };
-    if (!same(s.memory[i], expected) || s.writes[i] != count) {
+    if (!machineword.same(s.memory[i], expected) || s.writes[i] != count) {
       return false;
     }
   }
@@ -553,12 +521,12 @@ function finished(s: State, request: i32): boolean {
   for i in 0..16 {
     let expected = original.regs[i];
     if (i == 0) {
-      expected = token(3, 0);
+      expected = machineword.token(3, 0);
     }
     if (i == 7) {
-      expected = token(3, request as i64);
+      expected = machineword.token(3, request as i64);
     }
-    if (!equal(s.regs[i], expected)) {
+    if (!machineword.equal(s.regs[i], expected)) {
       return false;
     }
   }
