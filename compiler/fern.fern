@@ -1841,6 +1841,23 @@ function export_widen_arm64(x: string, w: string, t: string): string {
   return "    mov x16, " + x + "\n";
 }
 
+// Both ELF writers emit dynamic symbols in the requested export order.
+function shared_symbol_ranges(names: string[], sym_names: string[], sym_offs: i32[], sym_sizes: i32[], tv: i32): (i32[], i32[]) {
+  let vals: i32[] = [];
+  let sizes: i32[] = [];
+  if (names.len() == 1) {
+    let k = util.index_of_str(sym_names, "__fern_export_" + names[0]);
+    return ([tv + sym_offs[k]], [sym_sizes[k]]);
+  }
+  let symbols = util.name_index(sym_names);
+  for n in names {
+    let k = symbols.find("__fern_export_" + n);
+    vals = vals.append(tv + sym_offs[k]);
+    sizes = sizes.append(sym_sizes[k]);
+  }
+  return (vals, sizes);
+}
+
 function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: string, target: string, merged: parser.Module, note: boolean): u8[] {
   let p = arm64_native.arm64_gas_program_words(asm, words, -1);
   if (p.unknown.len() > 0) {
@@ -1867,13 +1884,7 @@ function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: str
   let pa = p.asm;
   let nosec: i32[] = [];
   let (sym_names, sym_offs, sym_sizes) = elf.elf_func_symbols(pa.lab_names, pa.lab_offs, nosec, -1, text_len);
-  let vals: i32[] = [];
-  let sizes: i32[] = [];
-  for n in names {
-    let k = util.index_of_str(sym_names, "__fern_export_" + n);
-    vals = vals.append(tv + sym_offs[k]);
-    sizes = sizes.append(sym_sizes[k]);
-  }
+  let (vals, sizes) = shared_symbol_ranges(names, sym_names, sym_offs, sym_sizes, tv);
   let imp = so_imports(merged);
   let slots: i32[] = [];
   for stub in import_stub_names(merged) {
@@ -1914,13 +1925,7 @@ function x86_elf_shared(asm: string, words: u8[], names: string[], soname: strin
   }
   let end = x86_native.x86_code_len(a);
   let (sym_names, sym_offs, sym_sizes) = elf.elf_func_symbols(a.lab_names, a.lab_offs, a.lab_secs, 0, end);
-  let vals: i32[] = [];
-  let sizes: i32[] = [];
-  for n in names {
-    let k = util.index_of_str(sym_names, "__fern_export_" + n);
-    vals = vals.append(tv + sym_offs[k]);
-    sizes = sizes.append(sym_sizes[k]);
-  }
+  let (vals, sizes) = shared_symbol_ranges(names, sym_names, sym_offs, sym_sizes, tv);
   let imp = so_imports(merged);
   let slots: i32[] = [];
   let base = x86_native.x86_data_base(a, a.text.len());
