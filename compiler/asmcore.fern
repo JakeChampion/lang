@@ -728,6 +728,11 @@ pub function stack_guard(): i32 {
   return 1048576;
 }
 
+// The initial stack pointer is 16 bytes below the end of the mapping.
+pub function max_owned_stack_depth(): i32 {
+  return stack_size() - 16 - stack_guard();
+}
+
 // Under -sanitize the heap census checks that the context that runs it owns
 // the heap. An executable owns the stack mapping that its start makes.
 pub function owner_by_stack(s: EmitState): boolean {

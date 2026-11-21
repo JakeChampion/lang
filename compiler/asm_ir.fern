@@ -753,7 +753,7 @@ function san_poison_check(reg: string, s: asmcore.EmitState): string {
 // The second-context check at a count operation. It keeps every register.
 function san_owner_guard(s: asmcore.EmitState): string {
   if (asmcore.owner_by_stack(s)) {
-    return "    pushq %rax\n    movq __fern_stack_top(%rip), %rax\n    subq %rsp, %rax\n    cmpq $" + util.i32_to_string(asmcore.stack_size()) + ", %rax\n    popq %rax\n    jae __fern_san_abort_owner\n";
+    return "    pushq %rax\n    movq __fern_stack_top(%rip), %rax\n    subq %rsp, %rax\n    cmpq $" + util.i32_to_string(asmcore.max_owned_stack_depth()) + ", %rax\n    popq %rax\n    ja __fern_san_abort_owner\n";
   }
   if (asmcore.owner_by_thread(s)) {
     return "    pushq %rax\n    movq %fs:0, %rax\n    cmpq __fern_san_owner(%rip), %rax\n    popq %rax\n    jne __fern_san_abort_owner\n";
@@ -1657,7 +1657,7 @@ function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
 // A census run by a context that does not own the heap aborts. %rax is free.
 function san_owner_check(s: asmcore.EmitState): asmcore.EmitState {
   if (asmcore.owner_by_stack(s)) {
-    return s.write("    movq __fern_stack_top(%rip), %rax\n    subq %rsp, %rax\n    cmpq $" + util.i32_to_string(asmcore.stack_size()) + ", %rax\n    jae __fern_san_abort_owner\n");
+    return s.write("    movq __fern_stack_top(%rip), %rax\n    subq %rsp, %rax\n    cmpq $" + util.i32_to_string(asmcore.max_owned_stack_depth()) + ", %rax\n    ja __fern_san_abort_owner\n");
   }
   if (asmcore.owner_by_thread(s)) {
     return s.write("    movq %fs:0, %rax\n    cmpq __fern_san_owner(%rip), %rax\n    jne __fern_san_abort_owner\n");
