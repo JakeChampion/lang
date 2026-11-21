@@ -389,8 +389,10 @@ function notification_of(e: usize, context: usize, class: usize, n: Notice, sess
   }
   if (session != 0 as usize) {
     for button in buttons {
-      build_step(e, builder, "addAction", "(ILjava/lang/CharSequence;Landroid/app/PendingIntent;" + ret,
-        [button.icon as usize, jni.new_string(e, button.label), action_intent(e, context, class, button.action)]);
+      build_step(
+        e, builder, "addAction", "(ILjava/lang/CharSequence;Landroid/app/PendingIntent;" + ret,
+        [button.icon as usize, jni.new_string(e, button.label), action_intent(e, context, class, button.action)],
+      );
     }
     let offset = if (n.action.len() > 0 || n.stop.len() > 0) { 0 } else { buttons.len().min(3) };
     media_style(e, context, builder, session, offset);

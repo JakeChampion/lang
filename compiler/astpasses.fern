@@ -1,3 +1,4 @@
+import "./resourcedrops";
 import "./viewerase";
 import "./ast";
 import "./defaultargs";
@@ -42,5 +43,5 @@ pub function module_with_builtins(mod: parser.Module): parser.Module {
 pub function module_with_builtins_typed(mod: parser.Module): parser.Module {
   let declared = parser.Module { ...mod, structs: parser.inject_builtin_enums(mod.structs) };
   let hoisted = localfuncs.hoist_local_funcs_module(desugar_prepass_module(declared));
-  return parser.monomorphize_all(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.lower_defers_prepass_module(hoisted, returninfer.infer_func_returns(hoisted, false))))));
+  return parser.monomorphize_all(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(resourcedrops.lower_defers_prepass_module(hoisted, returninfer.infer_func_returns(hoisted, false))))));
 }

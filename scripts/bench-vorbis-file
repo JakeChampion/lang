@@ -45,6 +45,24 @@ def qualify_pcm(name, actual, golden):
     return checksum, maximum
 
 
+def reference_pcm(reference, mode, stream):
+    # The reference writes a 16-byte header before each interleaved PCM block.
+    mode = {"benchmark": "decode", "benchmark-stream": "stream",
+            "benchmark-seek": "seek_from_start"}[mode]
+    raw = subprocess.check_output([reference, mode, stream])
+    pcm = bytearray()
+    offset = 0
+    while offset < len(raw):
+        _, _, channels, frames = struct.unpack_from("<IIII", raw, offset)
+        offset += 16
+        end = offset + channels * frames * 4
+        if not 1 <= channels <= 8 or not frames or end > len(raw):
+            raise ValueError(f"invalid reference PCM block in {stream}")
+        pcm.extend(raw[offset:end])
+        offset = end
+    return pcm
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--compiler", type=Path, default=ROOT / "bin/fern-selfhost")
@@ -86,10 +104,9 @@ def main():
                 mode = "benchmark"
                 if corpus == "vorbis_seek_vectors":
                     mode = "benchmark-stream" if name == "interleaved-audio" else "benchmark-seek"
-                golden_checksum = 2166136261
                 if args.reference:
-                    for (bits,) in struct.iter_unpack("<I", golden):
-                        golden_checksum = ((golden_checksum ^ bits) * 16777619) & 0xffffffff
+                    captured = reference_pcm(args.reference.resolve(), mode, stream)
+                    reference_checksum, reference_error = qualify_pcm(name, captured, golden)
                 for trial in range(args.trials):
                     commands = [(trials, [exe, stream])]
                     if args.reference:
@@ -100,15 +117,16 @@ def main():
                         metrics = measure(command, expected_frames, len(golden))
                         if results is trials and metrics["checksum"] != verified_checksum:
                             raise ValueError(f"timed PCM differs from verified playback for {name}")
-                        if results is references and metrics["checksum"] != golden_checksum:
-                            raise ValueError(f"reference PCM differs from frozen samples for {name}")
+                        if results is references and metrics["checksum"] != reference_checksum:
+                            raise ValueError(f"timed reference PCM differs from verified playback for {name}")
                         results.append(metrics)
                 entry = {"sha256": hashlib.sha256(stream.read_bytes()).hexdigest(), "trials": trials,
                          "verified_samples": len(golden) // 4, "max_pcm_error": maximum}
                 if args.reference:
                     entry["reference_mode"] = mode
                     entry["reference_trials"] = references
-                    entry["reference_matches_frozen_bits"] = references[0]["checksum"] == golden_checksum
+                    entry["reference_matches_frozen_bits"] = captured == golden
+                    entry["reference_max_pcm_error"] = reference_error
                 report["fixtures"][name] = entry
     print(json.dumps(report, indent=2))
 

@@ -1008,11 +1008,14 @@ function check_visibility_and_destructuring(): test.TestOutcome {
   if (rtVis.structs[struct_index(rtVis.structs, "B")].is_pub) {
     return test.fail("rtVis.structs[struct_index(rtVis.structs, \"B\")].is_pub");
   }
-  if (!rtVis.enums[printer.enum_index(rtVis.enums, "C")].is_pub) {
-    return test.fail("!rtVis.enums[printer.enum_index(rtVis.enums, \"C\")].is_pub");
+  if (rtVis.enums.len() != 2) {
+    return test.fail("expected both enum declarations after formatting");
   }
-  if (rtVis.enums[printer.enum_index(rtVis.enums, "D")].is_pub) {
-    return test.fail("rtVis.enums[printer.enum_index(rtVis.enums, \"D\")].is_pub");
+  if (rtVis.enums[0].name != "C" || !rtVis.enums[0].is_pub) {
+    return test.fail("expected public enum C first");
+  }
+  if (rtVis.enums[1].name != "D" || rtVis.enums[1].is_pub) {
+    return test.fail("expected private enum D second");
   }
   if (rtVis.aliases.len() != 2) {
     return test.fail("rtVis.aliases.len() != 2");
