@@ -2207,7 +2207,7 @@ function dir_header(c: Cfg, st: State, path: string, header: boolean): State {
 // These formats can write the filename bytes directly, without constructing a
 // text path for metadata or passing the name to a text quoting function.
 function raw_literal_listing(c: Cfg): boolean {
-  return c.format == fmt_single() && c.qstyle == qstyle_literal() && !c.qmark && !c.hyperlink && !c.dired && !needs_stat(c) && c.ignores.len() == 0 && c.hides.len() == 0 && c.ignore_mode != ignore_minimal() && (c.sort_key == sort_none() || c.sort_key == sort_name() || c.sort_key == sort_version());
+  return c.format == fmt_single() && c.qstyle == qstyle_literal() && !c.qmark && !c.hyperlink && !c.dired && !needs_stat(c) && (c.ignore_mode != ignore_minimal() || c.sort_key != sort_none()) && (c.sort_key == sort_none() || c.sort_key == sort_name() || c.sort_key == sort_version());
 }
 
 function raw_order(a: DirEntryBytes, b: DirEntryBytes, version: boolean): i32 {
@@ -2229,11 +2229,26 @@ function raw_order(a: DirEntryBytes, b: DirEntryBytes, version: boolean): i32 {
   return a.name.len() - b.name.len();
 }
 
+function raw_matches_any(patterns: string[], name: [u8]): boolean {
+  for pattern in patterns {
+    if (fnmatch.fnmatch_bytes(pattern.as_bytes(), name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function list_raw(c: Cfg, st: State, path: string, header: boolean): State {
   let entries = match (read_dir_ino_bytes(path)) {
     Ok(es) => es,
     Err(e) => { return State { ...st, out: fail(st.out, "cannot open directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e), status_minor()) }; },
   };
+  // The byte reader omits dot entries. Sorted -a can insert them before
+  // sorting. Unsorted -a needs their original directory positions.
+  if (c.ignore_mode == ignore_minimal()) {
+    entries = entries.append(DirEntryBytes { name: [46u8], ino: 0i64, kind: 0u32 });
+    entries = entries.append(DirEntryBytes { name: [46u8, 46u8], ino: 0i64, kind: 0u32 });
+  }
   if (c.sort_key != sort_none()) {
     let version = c.sort_key == sort_version();
     let reverse = c.reverse;
@@ -2243,6 +2258,9 @@ function list_raw(c: Cfg, st: State, path: string, header: boolean): State {
   let out = state.out;
   for e in entries {
     if (c.ignore_mode == ignore_default() && e.name[0] == 46u8 || c.ignore_backups && e.name[e.name.len() - 1] == 126u8) {
+      continue;
+    }
+    if (raw_matches_any(c.ignores, e.name) || c.ignore_mode == ignore_default() && raw_matches_any(c.hides, e.name)) {
       continue;
     }
     let name = e.name;

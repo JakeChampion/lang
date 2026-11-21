@@ -163,7 +163,7 @@ func lsCases(t *testing.T) []invocation {
 				t.Fatal(err)
 			}
 		}
-		for _, args := range [][]string{{"-v"}, {"-vr"}, {"-A"}, {"-B"}, {"--zero", "-v"}} {
+		for _, args := range [][]string{{"-v"}, {"-vr"}, {"-A"}, {"-B"}, {"--zero", "-v"}, {"-av"}, {"-arv", "-I", "a?2"}, {"-v", "--hide=a*"}, {"-Av", "--hide=a*"}} {
 			cases = append(cases, invocation{name: "raw-names" + strings.Join(args, ""), dir: dir, args: args})
 		}
 	}
