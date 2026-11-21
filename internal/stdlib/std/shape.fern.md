@@ -589,14 +589,14 @@ function hebrew_form(a: i32, b: i32): i32 {
 // its character from the bit CP_SHIFT.
 function run_of_chars(f: truetype.Font, cs: Chars, masks: i32[], vars: i32[]): truetype.Run {
   let marks = if (f.has_glyph_classes()) { [] } else { nonspacing_marks() };
-  let glyphs: i32[] = [];
-  let props: i32[] = [];
+  let glyphs = __alloc_i32(cs.cps.len());
+  let props = __alloc_i32(cs.cps.len());
   let needs_vars = vars.len() == 0;
   for i in 0..cs.cps.len() {
-    glyphs = glyphs.append(glyph_of(f, cs.shown[i]));
+    glyphs = glyphs.with(i, glyph_of(f, cs.shown[i]));
     let u = cs.unicode[i];
     let p = if (keeps_marks_apart(cs, i)) { char_props(u) } else { char_props(u) & ~truetype.HIDDEN };
-    props = props.append(p | class_of_char(u, marks) << truetype.CLASS_SHIFT);
+    props = props.with(i, p | class_of_char(u, marks) << truetype.CLASS_SHIFT);
     if (needs_vars) {
       vars = vars.append(cs.cps[i] as i32 << CP_SHIFT);
     }
@@ -2015,12 +2015,10 @@ pub function (plan: IndicPlan) shape(text: string): truetype.Run {
   let p = plan.indic;
   let cs = normalized(f, vowel_constrained(characters(text), p.config.script), Normalizer { script: p.config.script, indic: true, forms: false, splits_all: true, marks_stay: true, none: false });
   let vars: i32[] = [];
-  let masks: i32[] = [];
   for c in cs.cps {
     vars = vars.append(indic.properties(c as i32) | c as i32 << CP_SHIFT);
-    masks = masks.append(GLOBAL);
   }
-  let r = run_of_chars(f, cs, masks, vars);
+  let r = run_of_chars(f, cs, cs.masks, vars);
   r = apply_lookups(f, r, plan.variation, false);
   r = apply_lookups(f, r, plan.direction, false);
   r = with_syllables(r, "indic");

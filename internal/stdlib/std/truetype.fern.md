@@ -677,17 +677,9 @@ function lang_sys(b: [u8], scripts: i32, script: string): i32 {
 // `masks`, before any lookup.
 pub function run_of(glyphs: i32[], clusters: i32[], masks: i32[]): Run {
   let none: i32[] = [];
-  let zeros = int_zeros(glyphs.len());
+  let zeros = __alloc_i32(glyphs.len());
   let n = glyphs.len().min(MAX_GLYPHS);
   return Run { glyphs: glyphs, clusters: clusters, masks: masks, ligs: zeros, props: zeros, vars: zeros, serial: 0, pos: Positions { advances: none, dx: none, dy: none, chain: none, attach: none, rtl: false }, max_len: (n * LEN_FACTOR).max(MIN_LIMIT).min(MAX_GLYPHS), ops: (n * OPS_FACTOR).max(MIN_LIMIT) };
-}
-
-function int_zeros(n: i32): i32[] {
-  let out: i32[] = [];
-  for _ in 0..n {
-    out = out.append(0);
-  }
-  return out;
 }
 
 // The GSUB lookups of the feature `feature` for the script `script`, in
@@ -1746,11 +1738,11 @@ A lookup that attaches a glyph keeps the distance to the glyph that it attaches 
 // `r` with the advance of each glyph from the font, no offsets and no
 // attachments. `rtl` is true for a run that goes from right to left.
 pub function (f: Font) with_advances(r: Run, rtl: boolean): Run {
-  let advances: i32[] = [];
-  for g in r.glyphs {
-    advances = advances.append(f.advance(g));
+  let advances = __alloc_i32(r.glyphs.len());
+  for i in 0..r.glyphs.len() {
+    advances = advances.with(i, f.advance(r.glyphs[i]));
   }
-  let none = int_zeros(r.glyphs.len());
+  let none = __alloc_i32(r.glyphs.len());
   return Run { ...r, pos: Positions { advances: advances, dx: none, dy: none, chain: none, attach: none, rtl: rtl } };
 }
 
