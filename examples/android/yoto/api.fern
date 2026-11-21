@@ -10,6 +10,23 @@ const API: string = "https://api.yotoplay.com";
 
 pub struct Player { id: string, name: string, online: boolean }
 
+pub struct DeviceStatus { volume: i32, battery: i32, free_bytes: i64, syncing: Option[boolean] }
+
+pub function parse_device_status(value: json.JsonValue): DeviceStatus {
+  let data = json.get_object(value, "status").unwrap_or(value);
+  return DeviceStatus {
+    volume: json.get_i32(data, "userVolumePercentage").unwrap_or(-1),
+    battery: json.get_i32(data, "batteryLevelPercentage").unwrap_or(-1),
+    free_bytes: json.get_i64(data, "freeDiskSpaceBytes").unwrap_or(-1i64),
+    syncing: json.get_bool(data, "isBackgroundDownloadActive"),
+  };
+}
+
+pub function device_status(token: string, id: string): Result[DeviceStatus, Failure] {
+  let response = send(request(token, "GET", "/device-v2/" + url.encode(id) + "/status"))?;
+  return Ok(parse_device_status(response));
+}
+
 pub struct PlayerConfig { name: string, values: json.JsonValue, timezone: string, version: string }
 
 pub enum Kind { Standard, Myo, Podcast, Radio }
@@ -20,18 +37,21 @@ pub struct Stream { title: string, url: string, chapter: string, key: string, ar
 
 pub struct DownloadTrack { title: string, chapter: string, key: string, url: string, art: string }
 
-pub struct DownloadPlan { id: string, title: string, creator: string, tracks: DownloadTrack[] }
+pub struct DownloadPlan { id: string, title: string, creator: string, tracks: DownloadTrack[], card: Option[Card] }
 
 pub struct Card {
   id: string,
   title: string,
   creator: string,
   cover: string,
+  preview: string,
   kind: Kind,
   myo: boolean,
   club: boolean,
   sleep_sounds: boolean,
   last_played: i64,
+  seconds: i64,
+  bytes: i64,
   sort_title: string,
   search: string,
   tracks: Track[],
@@ -44,11 +64,11 @@ pub struct Tokens { access: string, refresh: string }
 
 pub struct Session { client: string, refresh: string }
 
-pub struct Group { id: string, name: string, cards: Map[string, boolean] }
+pub struct Group { id: string, name: string, cards: Map[string, boolean], members: string[], image: string }
 
 pub struct Library { players: Player[], cards: Card[], groups: Result[Group[], Failure], note: string }
 
-pub enum Command { Play(string), PlayTrack(string, string, string), Pause, Resume, Stop }
+pub enum Command { Play(string), PlayTrack(string, string, string), PlayAt(string, string, string, i32), Pause, Resume, Stop, Volume(i32), DeviceSleep(i32) }
 
 pub function failure(message: string): Failure {
   return Failure { message: message, expired: false, pause_index: false };
@@ -74,7 +94,10 @@ function send(req: fetch.Request): Result[json.JsonValue, Failure] {
   if (resp.status == 429) {
     return Err(Failure { ...failure("Yoto is limiting requests. Refresh the library later to retry."), pause_index: true });
   }
-  if (resp.status != 200) {
+  if (resp.status == 204) {
+    return Ok(json.JNull);
+  }
+  if (resp.status != 200 && resp.status != 201) {
     return Err(Failure { ...failure("Yoto returned HTTP " + resp.status.to_string() + "."), pause_index: resp.status >= 500 });
   }
   let Ok(value) = json.parse(resp.body_text_lossy()) else {
@@ -307,6 +330,11 @@ function club_card(value: json.JsonValue, entry: json.JsonValue): boolean {
     || json.get_bool(object(entry, "ownership"), "isAccessibleUsingSubscription").unwrap_or(false);
 }
 
+function preview_address(meta: json.JsonValue): string {
+  let address = field(meta, "audioPreviewUrl");
+  return if (address.starts_with("https://")) { address } else { "" };
+}
+
 function card(value: json.JsonValue, entry: json.JsonValue, myo: boolean): Card {
   let meta = object(value, "metadata");
   let content = object(value, "content");
@@ -318,11 +346,49 @@ function card(value: json.JsonValue, entry: json.JsonValue, myo: boolean): Card 
   let search = [title, creator, category, field(meta, "description"), field(meta, "readBy"), field(meta, "seriestitle")].join(" ").to_lower();
   let played = time.timestamp_parse_rfc3339(field(entry, "lastPlayedAt")).map((at: time.Timestamp): i64 => at.unix_millis()).unwrap_or(0i64);
   let sort = field(value, "sortkey");
+  let media = object(meta, "media");
   return Card {
-    id: id, title: title, creator: creator, cover: cover(value, meta, content), kind: kind(category, field(meta, "feedUrl"), myo), myo: myo,
+    id: id, title: title, creator: creator, cover: cover(value, meta, content), preview: preview_address(meta), kind: kind(category, field(meta, "feedUrl"), myo), myo: myo,
     club: club_card(value, entry), sleep_sounds: sleep_sound(value, meta, category), last_played: played,
+    seconds: json.get_f64(media, "duration").unwrap_or(0.0).max(0.0).round() as i64, bytes: json.get_i64(media, "fileSize").unwrap_or(0i64),
     sort_title: (if (sort.len() > 0) { sort } else { title }).to_lower(), search: search, tracks: tracks(chapters.unwrap_or([])), indexed: chapters.is_some(),
   };
+}
+
+pub function cached_card(c: Card): json.JsonValue {
+  let category = match (c.kind) {
+    Podcast => "podcast",
+    Radio => "radio",
+    _ => "",
+  };
+  let items = c.tracks.map((t: Track): json.JsonValue => json.JObject(json.from([
+    ("title", json.JString(t.title)), ("chapter", json.JString(t.chapter)), ("c", json.JString(t.chapter_key)), ("k", json.JString(t.track_key)),
+    ("search", json.JString(t.search)), ("art", json.JString(t.art)), ("chapterArt", json.JString(t.chapter_art)),
+  ])));
+  return json.JObject(json.from([
+    ("id", json.JString(c.id)), ("title", json.JString(c.title)), ("creator", json.JString(c.creator)), ("cover", json.JString(c.cover)),
+    ("category", json.JString(category)), ("myo", json.JBool(c.myo)), ("club", json.JBool(c.club)), ("sleep", json.JBool(c.sleep_sounds)),
+    ("played", json.JNumber(c.last_played.to_string())), ("seconds", json.JNumber(c.seconds.to_string())), ("bytes", json.JNumber(c.bytes.to_string())),
+    ("sort", json.JString(c.sort_title)), ("search", json.JString(c.search)), ("tracks", json.JArray(items)), ("indexed", json.JBool(c.indexed)),
+  ]));
+}
+
+pub function restore_card(value: json.JsonValue): Option[Card] {
+  let id = field(value, "id");
+  if (id.len() == 0) {
+    return None;
+  }
+  let myo = json.get_bool(value, "myo").unwrap_or(false);
+  let items = entries(value, "tracks").map((t: json.JsonValue): Track => Track {
+    title: field(t, "title"), chapter: field(t, "chapter"), chapter_key: field(t, "c"), track_key: field(t, "k"),
+    search: field(t, "search"), art: field(t, "art"), chapter_art: field(t, "chapterArt"),
+  });
+  return Some(Card {
+    id: id, title: field(value, "title"), creator: field(value, "creator"), cover: field(value, "cover"), preview: "", kind: kind(field(value, "category"), "", myo), myo: myo,
+    club: json.get_bool(value, "club").unwrap_or(false), sleep_sounds: json.get_bool(value, "sleep").unwrap_or(false),
+    last_played: json.get_i64(value, "played").unwrap_or(0i64), seconds: json.get_i64(value, "seconds").unwrap_or(0i64), bytes: json.get_i64(value, "bytes").unwrap_or(0i64),
+    sort_title: field(value, "sort"), search: field(value, "search"), tracks: items, indexed: json.get_bool(value, "indexed").unwrap_or(true),
+  });
 }
 
 pub function parse_cards(value: json.JsonValue, mine: boolean): Result[Card[], Failure] {
@@ -372,15 +438,38 @@ pub function parse_groups(value: json.JsonValue): Result[Group[], Failure] {
       continue;
     }
     let cards: Map[string, boolean] = map_new(16);
+    let members: string[] = [];
     for row in entries(item, "items") {
       let card = field(row, "contentId");
-      if (card.len() > 0) {
+      if (card.len() > 0 && !cards.contains(card)) {
         cards = cards.insert(card, true);
+        members = members.append(card);
       }
     }
-    groups = groups.append(Group { id: id, name: name, cards: cards });
+    groups = groups.append(Group { id: id, name: name, cards: cards, members: members, image: field(item, "imageId") });
   }
   return Ok(groups);
+}
+
+pub function save_group(token: string, id: string, name: string, members: string[], image: string): Result[Group, Failure] {
+  let entries = members.map((card: string): json.JsonValue => json.JObject(json.from([("contentId", json.JString(card))])));
+  let fields = [
+    ("name", json.JString(name)), ("items", json.JArray(entries)),
+    ("imageId", json.JString(if (image.len() > 0) { image } else { "fp-cards" })),
+  ];
+  let base = "/card/family/library/groups";
+  let req = if (id.len() > 0) { request(token, "PUT", base + "/" + url.encode(id)) } else { request(token, "POST", base) };
+  let reply = send(req.with_header("Content-Type", "application/json").with_text(json.encode(json.JObject(json.from(fields)))))?;
+  let groups = parse_groups(json.JArray([json.get_object(reply, "group").unwrap_or(reply)]))?;
+  if (groups.len() == 0) {
+    return Err(failure("Yoto did not return the saved group. Refresh the library."));
+  }
+  return Ok(groups[0]);
+}
+
+pub function delete_group(token: string, id: string): Result[void, Failure] {
+  let reply = send(request(token, "DELETE", "/card/family/library/groups/" + url.encode(id)))?;
+  return Ok(());
 }
 
 function library_groups(token: string): Result[Group[], Failure] {
@@ -497,7 +586,12 @@ pub function parse_download(reply: json.JsonValue, summary: Card): Result[Downlo
   if (out.len() == 0) {
     return Err(failure("Yoto did not provide downloadable audio for this title."));
   }
-  return Ok(DownloadPlan { id: summary.id, title: summary.title, creator: summary.creator, tracks: out });
+  let info = card(value, json.JNull, summary.myo);
+  let metadata = Card {
+    ...summary, indexed: true, tracks: info.tracks,
+    seconds: info.seconds.max(summary.seconds), bytes: info.bytes.max(summary.bytes), cover: if (summary.cover.len() > 0) { summary.cover } else { info.cover },
+  };
+  return Ok(DownloadPlan { id: summary.id, title: summary.title, creator: summary.creator, tracks: out, card: Some(metadata) });
 }
 
 pub function download_plan(token: string, summary: Card): Result[DownloadPlan, Failure] {
@@ -523,7 +617,7 @@ pub function cover_bytes(address: string): u8[] {
 
 pub function command_name(c: Command): string {
   match (c) {
-    Play(_) | PlayTrack(_, _, _) => {
+    Play(_) | PlayTrack(_, _, _) | PlayAt(_, _, _, _) => {
       return "card/start";
     },
     Pause => {
@@ -532,6 +626,12 @@ pub function command_name(c: Command): string {
     Resume => {
       return "card/resume";
     },
+    Volume(_) => {
+      return "volume/set";
+    },
+    DeviceSleep(_) => {
+      return "sleep-timer/set";
+    },
     Stop => {
       return "card/stop";
     }
@@ -539,8 +639,21 @@ pub function command_name(c: Command): string {
 }
 
 pub function command_body(c: Command): string {
+  if let Volume(value) = c {
+    return "{\"volume\":" + value.max(0).min(100).to_string() + "}";
+  }
+  if let DeviceSleep(seconds) = c {
+    return "{\"seconds\":" + seconds.max(0).to_string() + "}";
+  }
   if let Play(id) = c {
     return "{\"uri\":" + json.encode(json.JString("https://yoto.io/" + url.encode(id))) + "}";
+  }
+  if let PlayAt(id, chapter, track, seconds) = c {
+    let fields = [
+      ("uri", json.JString("https://yoto.io/" + url.encode(id))), ("chapterKey", json.JString(chapter)),
+      ("trackKey", json.JString(track)), ("secondsIn", json.JNumber(seconds.max(0).to_string())),
+    ];
+    return json.encode(json.JObject(json.from(fields)));
   }
   if let PlayTrack(id, chapter, track) = c {
     let fields = [("uri", json.JString("https://yoto.io/" + url.encode(id))), ("chapterKey", json.JString(chapter))];
@@ -560,4 +673,184 @@ pub function send_command(token: string, player: string, c: Command): Result[voi
     return Err(failure("Yoto did not accept the playback request."));
   }
   return Ok(());
+}
+
+pub struct LocalAudio { path: string, title: string, mime: string, recording: boolean }
+
+pub struct Chapter { title: string, prior: json.JsonValue, audio: Option[LocalAudio] }
+
+pub struct Playlist {
+  id: string,
+  title: string,
+  cover: string,
+  prior: json.JsonValue,
+  chapters: Chapter[],
+}
+
+pub function empty_playlist(): Playlist {
+  return Playlist { id: "", title: "", cover: "", prior: json.JNull, chapters: [] };
+}
+
+pub function edit_playlist(token: string, summary: Card): Result[Playlist, Failure] {
+  let value = card_reply(token, summary, "")?;
+  let parts = entries(object(value, "content"), "chapters");
+  let chapters = parts.map((part: json.JsonValue): Chapter => Chapter { title: field(part, "title"), prior: part, audio: None });
+  return Ok(Playlist { id: summary.id, title: summary.title, cover: summary.cover, prior: value, chapters: chapters });
+}
+
+function myo_transcode(token: string, upload: string): Result[json.JsonValue, Failure] {
+  let path = "/media/upload/" + url.encode(upload) + "/transcoded?loudnorm=false";
+  for i in 0..75 {
+    let response = response(request(token, "GET", path), 10i64)?;
+    if (response.status == 401 || response.status == 403) {
+      return Err(failure("Yoto did not give access to upload audio. Check the content permission."));
+    }
+    if (response.status == 200) {
+      let value = json.parse(response.body_text_lossy()).unwrap_or(json.JNull);
+      let media = object(value, "transcode");
+      if (field(media, "transcodedSha256").len() > 0) {
+        return Ok(media);
+      }
+    }
+    sleep_ms(1000i64);
+  }
+  return Err(failure("Yoto has not finished converting the audio. Try again later."));
+}
+
+function uploaded_audio(token: string, audio: LocalAudio): Result[json.JsonValue, Failure] {
+  let Ok(info) = stat(audio.path) else {
+    return Err(failure("Could not read " + audio.title + "."));
+  };
+  if (info.size <= 0i64 || info.size > 100000000i64) {
+    return Err(failure("Each audio track must be between 1 byte and 100 MB."));
+  }
+  let Ok(data) = read_file_bytes(audio.path) else {
+    return Err(failure("Could not open " + audio.title + ". Check the audio permission."));
+  };
+  let reply = send(request(token, "GET", "/media/transcode/audio/uploadUrl"))?;
+  let upload = object(reply, "upload");
+  let address = field(upload, "uploadUrl");
+  let id = field(upload, "uploadId");
+  if (!address.starts_with("https://") || id.len() == 0) {
+    return Err(failure("Yoto did not provide an upload address."));
+  }
+  let limit = time.duration_seconds(180i64);
+  let opts = fetch.Timeouts { connect: time.duration_seconds(15i64), inactivity: time.duration_seconds(30i64), total: limit };
+  let req = fetch.request("PUT", address).with_bytes(data).with_header("Content-Type", audio.mime).with_timeouts(opts).with_redirects(0);
+  let Ok(sent) = fetch.send_public(req) else {
+    return Err(failure("Could not upload " + audio.title + "."));
+  };
+  if (sent.status < 200 || sent.status >= 300) {
+    return Err(failure("Yoto could not accept " + audio.title + "."));
+  }
+  return myo_transcode(token, id);
+}
+
+function replace_fields(before: json.JsonValue, edits: (string, json.JsonValue)[]): json.JsonValue {
+  let old = if let json.JObject(value) = before { value } else { json.from([]) };
+  for (name, value) in edits {
+    old = old.insert(name, value);
+  }
+  return json.JObject(old);
+}
+
+function playlist_chapter(token: string, part: Chapter, index: i32): Result[json.JsonValue, Failure] {
+  let Some(audio) = part.audio else {
+    return Ok(replace_fields(part.prior, [("title", json.JString(part.title))]));
+  };
+  let converted = uploaded_audio(token, audio)?;
+  let media = object(converted, "transcodedInfo");
+  let hash = field(converted, "transcodedSha256");
+  let key = "new" + index.to_string();
+  let title = json.JString(part.title);
+  let track: (string, json.JsonValue)[] = [
+    ("key", json.JString("01")), ("title", title), ("trackUrl", json.JString("yoto:#" + hash)), ("type", json.JString("audio")),
+  ];
+  for name in ["duration", "fileSize", "channels", "format"] {
+    if let Some(value) = json.get(media, name) {
+      track = track.append((name, value));
+    }
+  }
+  let icon = json.JObject(json.from([("icon16x16", json.JString("yoto:#aUm9i3ex3qqAMYBv-i-O-pYMKuMJGICtR3Vhf289u2Q"))]));
+  return Ok(json.JObject(json.from([
+    ("key", json.JString(key)), ("title", title), ("display", icon), ("tracks", json.JArray([json.JObject(json.from(track))])),
+  ])));
+}
+
+pub function save_playlist(token: string, draft: Playlist): Result[string, Failure] {
+  let chapters: json.JsonValue[] = [];
+  for i in 0..draft.chapters.len() {
+    chapters = chapters.append(playlist_chapter(token, draft.chapters[i], i)?);
+  }
+  let previous = object(draft.prior, "content");
+  let content = replace_fields(previous, [("chapters", json.JArray(chapters))]);
+  let metadata = replace_fields(object(draft.prior, "metadata"), []);
+  if (draft.cover.starts_with("https://")) {
+    let picture = json.JObject(json.from([("imageL", json.JString(draft.cover))]));
+    metadata = replace_fields(metadata, [("cover", picture)]);
+  }
+  let fields = [("title", json.JString(draft.title)), ("content", content), ("metadata", metadata)];
+  if (draft.id.len() > 0) {
+    fields = fields.append(("cardId", json.JString(draft.id)));
+  }
+  let reply = send(request(token, "POST", "/content").with_header("Content-Type", "application/json").with_text(json.encode(json.JObject(json.from(fields)))))?;
+  let saved = field(object(reply, "card"), "cardId");
+  let id = if (saved.len() > 0) { saved } else { field(reply, "cardId") };
+  return Ok(id);
+}
+
+pub function scan_code(address: string): string {
+  let clean = address.trim();
+  let domain = "https://yoto.io/";
+  let suffix = if (clean.starts_with(domain)) { clean.drop(domain.len()).split("?")[0].split("#")[0] } else { clean.to_owned() };
+  let code = if (suffix.starts_with("c/")) { suffix.drop(2) } else { suffix };
+  if (code.len() < 5 || code.len() > 48 || !code.contains_only("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_-")) {
+    return "";
+  }
+  return code;
+}
+
+pub function lookup_card(token: string, id: string): Result[Card, Failure] {
+  let reply = send(request(token, "GET", "/card/" + url.encode(id)))?;
+  let Some(value) = json.get_object(reply, "card") else {
+    return Err(failure("Yoto did not return a card for this code."));
+  };
+  let result = card(value, reply, false);
+  if (result.id.len() == 0) {
+    return Err(failure("Yoto did not return a card ID."));
+  }
+  return Ok(result);
+}
+
+pub struct ShopTitle { title: string, address: string }
+
+pub function parse_shop_titles(value: json.JsonValue): ShopTitle[] {
+  let cards: ShopTitle[] = [];
+  for item in entries(value, "products") {
+    let category = field(item, "product_type");
+    let handle = field(item, "handle");
+    let title = field(item, "title");
+    if ((category == "single-card" || category == "content-bundle") && title.len() > 0 && handle.len() > 0
+      && handle.contains_only("abcdefghijklmnopqrstuvwxyz0123456789-")) {
+      cards = cards.append(ShopTitle { title: title, address: "https://uk.yotoplay.com/products/" + handle });
+    }
+  }
+  return cards;
+}
+
+pub function shop_titles(): Result[ShopTitle[], Failure] {
+  let req = fetch.request("GET", "https://uk.yotoplay.com/products.json?limit=50");
+  let seconds = time.duration_seconds(10i64);
+  let limits = http.HttpLimits { ...http.limits(), body: 4000000 };
+  let opts = fetch.Timeouts { connect: seconds, inactivity: seconds, total: seconds };
+  let Ok(reply) = fetch.send_public(req.with_limits(limits).with_timeouts(opts).with_redirects(1)) else {
+    return Err(failure("Could not reach the Yoto card shop."));
+  };
+  if (reply.status != 200) {
+    return Err(failure("The Yoto card shop is unavailable."));
+  }
+  let Ok(value) = json.parse(reply.body_text_lossy()) else {
+    return Err(failure("The Yoto card shop returned an invalid response."));
+  };
+  return Ok(parse_shop_titles(value));
 }

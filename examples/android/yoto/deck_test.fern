@@ -22,6 +22,7 @@ import "./settings";
 import "./light_colour";
 import "./launcher_icon";
 import "./listening";
+import "./library_cache";
 import "./player_status";
 
 function test_pkce(): test.TestOutcome {
@@ -148,6 +149,8 @@ function no_audio(): phone.Output {
     close: (media: player.Player): void => {},
     seek: (media: player.Player, ms: i64): boolean => false,
     position: (media: player.Player): i64 => 0i64,
+    duration: (media: player.Player): i64 => 0i64,
+    speed: (media: player.Player, rate: f32): boolean => true,
   };
 }
 
@@ -162,7 +165,7 @@ function no_downloads(): offline.Output {
 
 function simulator(own model: deck.Model): sim.Sim[deck.Model, deck.Msg] {
   let real = deck.program((address: string): boolean => false, (data: u8[]): Option[draw.Image] => None, (saved: Option[api.Session]): boolean => true, no_audio(), no_downloads(), (state: listening.Saved): boolean => true);
-  let dry = ui.program(deck.view, deck.update).with_theme_of(real.theme).with_visible(deck.visible_posters);
+  let dry = ui.program(deck.view, deck.update).with_theme_of(real.theme).with_visible(deck.visible_posters).with_back(real.back);
   return sim.start(model, dry, test_fonts(), 720, 1600, 2.0);
 }
 
@@ -546,7 +549,7 @@ function test_download_work_batches(): test.TestOutcome {
   for i in 0..52 {
     tracks = tracks.append(api.DownloadTrack { title: i.to_string(), chapter: "01", key: i.to_string(), url: "https://example.com/track", art: "" });
   }
-  let plan = api.DownloadPlan { id: card.id, title: card.title, creator: card.creator, tracks: tracks };
+  let plan = api.DownloadPlan { id: card.id, title: card.title, creator: card.creator, tracks: tracks, card: None };
   let state = offline.fetching(offline.empty(offline.load(dir, dir)), card);
   state = offline.apply(offline.received(state, state.revision, Ok(plan)), disk);
   if (enqueued.get() > 4 || state.catalog.entries.len() != 0 || offline.load(dir, dir).cleanup.len() != enqueued.get()) {
@@ -581,7 +584,7 @@ function test_library_download_filter(): test.TestOutcome {
   let cards = fixture_cards();
   let card = cards[0];
   let file = offline.Track { id: 1i64, name: "yoto-offline-sample.audio", title: "Fox at dusk", chapter: "01", key: "03", art: "" };
-  let entry = offline.Entry { id: card.id, title: card.title, creator: card.creator, tracks: [file], ready: true };
+  let entry = offline.Entry { id: card.id, title: card.title, creator: card.creator, tracks: [file], ready: true, failed_at: -1, card: None };
   let catalog = offline.Catalog { dir: "/media", entries: [entry], cleanup: [], note: "" };
   let state = deck.with_downloads(deck.Model { ...deck.start(), token: "test session" }, catalog);
   let m = deck.update(state, deck.LibraryLoaded(Ok(api.Library { players: [], cards: cards, groups: Ok([]), note: "" })));
@@ -667,18 +670,18 @@ function test_playback_tools(): test.TestOutcome {
   };
   let saved_track = offline.Track { id: 1i64, name: "yoto-offline-ready.audio", title: "Fox at dusk", chapter: "01", key: "03", art: "" };
   let missing = offline.Track { ...saved_track, id: 2i64, name: "yoto-offline-missing.audio", key: "04" };
-  let ready = offline.Entry { id: "book", title: "Woodland Walk", creator: "A. Writer", tracks: [saved_track], ready: true };
-  let incomplete = offline.Entry { id: "pod", title: "Sky Journal", creator: "", tracks: [missing], ready: true };
+  let ready = offline.Entry { id: "book", title: "Woodland Walk", creator: "A. Writer", tracks: [saved_track], ready: true, failed_at: -1, card: None };
+  let incomplete = offline.Entry { id: "pod", title: "Sky Journal", creator: "", tracks: [missing], ready: true, failed_at: -1, card: None };
   let catalog = offline.Catalog { dir: dir, entries: [ready, incomplete], cleanup: [], note: "" };
   let written = write_file_bytes(dir + "/" + saved_track.name, "RIFF    WAVEfmt                     data    ".bytes());
   let item = listening.Item { id: ready.id, title: ready.title };
   let queued = listening.Item { id: incomplete.id, title: incomplete.title };
   let report = listening.check_trip(catalog, [item, queued]);
-  if (written.is_err() || report.len() != 2 || report[0].present != 1 || report[1].present != 0) {
+  if (written.is_err() || report.len() != 2 || report[0].present != 1 || report[0].bytes <= 0i64 || report[1].present != 0) {
     return test.fail("mark only readable saved audio as ready for the trip");
   }
-  let pin = listening.Bookmark { item: item, chapter: "01", key: "03", position: 38257i64 };
-  let marked = listening.pin(listening.Saved { queue: [queued], marks: [], pins: [] }, listening.Bookmark { ...pin, position: 1234i64 });
+  let pin = listening.Bookmark { item: item, chapter: "01", key: "03", position: 38257i64, name: "Bookmark" };
+  let marked = listening.pin(listening.Saved { ...listening.empty(), queue: [queued] }, listening.Bookmark { ...pin, position: 1234i64 });
   let store = listening.remember(marked, pin);
   if (!listening.save(dir, store)) {
     return test.fail("save the bookmark and queue");
@@ -835,6 +838,294 @@ function test_account_menu(): test.TestOutcome {
   return test.assert_eq(s.shell.app.busy && !s.shell.app.menu_open, true);
 }
 
+function test_now_playing_controls(): test.TestOutcome {
+  let track = api.Stream { title: "Fox at dusk", url: "file:///sample.audio", chapter: "01", key: "03", art: "" };
+  let audio = player.Player { obj: 1 as usize, listener: 1 as usize, slot: 0 };
+  let playback = phone.State { ...phone.empty(), title: "Woodland Walk", media: Some(audio), queue: [track], phase: phone.Playing, elapsed: 2000i64, duration: 65000i64 };
+  let m = deck.Model { ...deck.start(), tab: 3, on_phone: true, phone: playback };
+  let s = sim.tap(simulator(m), "Open now playing");
+  if (!s.shell.app.now_open || !sim.says(s, "Track position") || !sim.shows(s, "0:02 / 1:05")) {
+    return test.fail("open the phone controls with the current position and duration");
+  }
+  s = sim.send(s, deck.PhoneRate(150));
+  if (s.shell.app.phone.rate != 150) {
+    return test.fail("change phone playback speed from the player");
+  }
+  return test.assert_eq_array(
+    [api.command_name(api.Volume(70)), api.command_body(api.Volume(70)), api.command_name(api.DeviceSleep(900)), api.command_body(api.DeviceSleep(900))],
+    ["volume/set", "{\"volume\":70}", "sleep-timer/set", "{\"seconds\":900}"],
+  );
+}
+
+function test_downloaded_search_and_retry(): test.TestOutcome {
+  let Ok(dir) = temp_dir("story-deck-retry-track") else {
+    return test.fail("make a download store");
+  };
+  let original = fixture_cards()[0];
+  let tracks = [
+    api.DownloadTrack { title: "Intro", chapter: "01", key: "01", url: "https://example.com/intro", art: "" },
+    api.DownloadTrack { title: "Fox at dusk", chapter: "01", key: "03", url: "https://example.com/fox", art: "" },
+  ];
+  let plan = api.DownloadPlan { id: original.id, title: original.title, creator: original.creator, tracks: tracks, card: Some(original) };
+  let count = cell_new(0i64);
+  let removed = cell_new([] as i64[]);
+  let out = offline.Output {
+    start: (address: string, name: string, title: string): i64 => {
+      count.set(count.get() + 1i64);
+      return count.get();
+    },
+    status: (id: i64): i32 => if (id == 2i64) { download.FAILED } else { download.DONE },
+    remove: (ids: i64[]): boolean => {
+      removed.set(removed.get().concat(ids));
+      return true;
+    },
+    save: (entries: offline.Entry[], cleanup: i64[]): boolean => offline.save(dir, entries, cleanup),
+  };
+  let state = offline.empty(offline.load(dir, dir));
+  let pending = offline.fetching(offline.enqueue(state, [original]), original);
+  let started = offline.apply(offline.received(pending, pending.revision, Ok(plan)), out);
+  let failed = offline.apply(offline.check(started), out);
+  if (failed.catalog.entries[0].failed_at != 1 || removed.get().len() != 0) {
+    return test.fail("retain all tracks after one file fails");
+  }
+  let rebuilt = offline.empty(offline.load(dir, dir));
+  let retry = offline.retry(rebuilt, original.id);
+  let request = offline.fetching(retry, original);
+  let replaced = offline.apply(offline.received(request, request.revision, Ok(plan)), out);
+  let cleaned = offline.apply(offline.check(replaced), out);
+  let ready = offline.apply(offline.check(cleaned), out);
+  let Some(entry) = offline.saved(ready, original.id) else {
+    return test.fail("make the card ready after the failed file is replaced");
+  };
+  if (removed.get() != [2i64] || entry.tracks[0].id != 1i64 || entry.tracks[1].id != 3i64 || count.get() != 3i64) {
+    return test.fail("retry just the failed track");
+  }
+  let m = deck.with_downloads(deck.start(), offline.load(dir, dir));
+  let s = sim.tap(simulator(m), "Library");
+  s = sim.type_in(s, "library-search", "fox");
+  return test.assert_eq(s.shell.app.token.len() == 0 && sim.says(s, "Tracks for Fox at dusk") && s.shell.app.cards[0].cover == original.cover, true);
+}
+
+function test_scan_and_shop(): test.TestOutcome {
+  let value = json.parse("{\"products\":[{\"product_type\":\"single-card\",\"handle\":\"a-book\",\"title\":\"A book\"},{\"product_type\":\"single-card\",\"handle\":\"../../other\",\"title\":\"Bad handle\"}]}").unwrap_or(json.JNull);
+  let shop = api.parse_shop_titles(value);
+  if (shop.len() != 1 || shop[0].address != "https://uk.yotoplay.com/products/a-book") {
+    return test.fail("open only valid Yoto shop product links");
+  }
+  return test.assert_eq_array(
+    [api.scan_code("https://yoto.io/c/Abc12?test=sample"), api.scan_code("https://example.com/Abc12")],
+    ["Abc12", ""],
+  );
+}
+
+function test_android_back_returns_through_tabs(): test.TestOutcome {
+  let s = sim.tap(library_sim(), "Library");
+  s = sim.type_in(s, "library-search", "woodland");
+  s = sim.back(s);
+  if (s.shell.app.tab != 1 || sim.keyboard(s).is_some()) {
+    return test.fail("Back clears the search field focus before it leaves Library");
+  }
+  s = sim.tap(s, "Tracks for Woodland Walk");
+  if (s.shell.app.shelf.opened.len() == 0) {
+    return test.fail("open a card to test Back");
+  }
+  s = sim.back(s);
+  if (s.shell.app.shelf.opened.len() > 0 || !sim.says(s, "Tracks for Woodland Walk")) {
+    return test.fail("Back returns from the card to the same search");
+  }
+  s = sim.tap(s, "Downloads");
+  s = sim.tap(s, "Choose cards to download");
+  if (!s.shell.app.trip_select) {
+    return test.fail("open the batch download picker");
+  }
+  s = sim.back(s);
+  if (s.shell.app.tab != 2 || s.shell.app.trip_select || sim.finished(s)) {
+    return test.fail("Back returns from the batch picker to Downloads");
+  }
+  s = sim.back(s);
+  if (s.shell.app.tab != 1 || s.shell.app.shelf.query != "woodland") {
+    return test.fail("Back returns to Library with the search intact");
+  }
+  s = sim.back(s);
+  if (s.shell.app.tab != 0 || sim.finished(s)) {
+    return test.fail("Back returns to Players before it leaves the app");
+  }
+  return test.assert_eq(sim.finished(sim.back(s)), true);
+}
+
+function test_android_back_returns_through_tools(): test.TestOutcome {
+  let s = sim.tap(library_sim(), "Library");
+  s = sim.tap(s, "More options");
+  s = sim.back(s);
+  if (s.shell.app.menu_open || s.shell.app.tab != 1) {
+    return test.fail("Back closes the menu before it leaves Library");
+  }
+  s = sim.tap(sim.tap(s, "More options"), "Library tools");
+  s = sim.tap(s, "Create a playlist");
+  s = sim.tap(s, "Choose a library cover");
+  if (!s.shell.app.tools_page.choosing_cover) {
+    return test.fail("open the cover picker");
+  }
+  s = sim.back(s);
+  if (!sim.says(s, "Choose a library cover") || s.shell.app.tools_page.choosing_cover) {
+    return test.fail("Back returns from the cover picker to the playlist");
+  }
+  s = sim.back(s);
+  if (!sim.says(s, "Discover") || !sim.says(s, "Scan a card")) {
+    return test.fail("Back returns from the playlist to Library tools");
+  }
+  s = sim.tap(s, "Discover");
+  s = sim.tap(s, "Browse new cards in the Yoto shop");
+  let generation = s.shell.app.generation;
+  s = sim.back(s);
+  if (s.shell.app.tools_page.show_shop || !sim.says(s, "Browse new cards in the Yoto shop")) {
+    return test.fail("Back leaves the shop view while the request runs");
+  }
+  s = sim.send(s, deck.ShopLoaded(generation, Ok([api.ShopTitle { title: "A book", address: "https://uk.yotoplay.com/products/a-book" }])));
+  s = sim.tap(s, "Browse new cards in the Yoto shop");
+  if (!sim.says(s, "A book")) {
+    return test.fail("open the shop results");
+  }
+  s = sim.back(s);
+  if (!sim.says(s, "Browse new cards in the Yoto shop") || s.shell.app.tools_page.show_shop) {
+    return test.fail("Back returns from the shop results to Discover");
+  }
+  s = sim.back(sim.back(s));
+  return test.assert_eq(s.shell.app.tab == 1 && s.shell.app.tools_page.page.is_none() && !sim.finished(s), true);
+}
+
+function test_reopen_trip_and_downloads(): test.TestOutcome {
+  let Ok(dir) = temp_dir("story-deck-reopen") else {
+    return test.fail("create the storage fixture");
+  };
+  let catalog = offline.Catalog { dir: dir, entries: [], cleanup: [], note: "" };
+  let cards = fixture_cards();
+  let m = deck.with_index(deck.with_downloads(deck.start(), catalog), "", cards);
+  let draft = deck.update(deck.update(m, deck.OpenLineup("")), deck.LineupTitle("Bedtime"));
+  draft = deck.update(deck.update(draft, deck.AddLineupCard("book")), deck.AddLineupCard("pod"));
+  draft = deck.update(draft, deck.MoveLineupCard(1, 0));
+  let ready = deck.update(draft, deck.SaveLineup);
+  let plans = ready.playback_tools.saved;
+  if (plans.lineups.len() != 1 || plans.lineups[0].cards.len() != 2) {
+    return test.fail("save two selected cards in the trip");
+  }
+  let renamed = listening.keep_lineup(plans, "Bedtime", "Holiday", plans.lineups[0].cards);
+  let item = plans.lineups[0].cards[1];
+  let first = listening.Bookmark { item: item, chapter: "01", key: "03", position: 1000i64, name: "First story" };
+  let saved = listening.pin(listening.pin(renamed, first), listening.Bookmark { ...first, name: "After dinner", position: 2000i64 });
+  let history = listening.heard(listening.heard(saved, item, false, 10i64), item, true, 20i64);
+  let pending = offline.fetching(offline.enqueue(offline.empty(catalog), cards.take(2)), cards[0]);
+  if (!listening.save(dir, listening.Saved { ...history, downloads: offline.pending(pending) })) {
+    return test.fail("save the trip, history, bookmarks and pending downloads");
+  }
+  let restored = listening.load(dir);
+  let restarted = deck.with_listening(deck.with_downloads(deck.start(), catalog), restored);
+  if (restored.lineups.len() != 1 || restored.history.len() != 1) {
+    return test.fail("restore the trip and listening history");
+  }
+  let line = restored.lineups[0];
+  if (line.id != plans.lineups[0].id || line.name != "Holiday" || line.cards[0].id != "pod" || restored.pins.len() != 2 || !restored.history[0].done) {
+    return test.fail("restore the renamed trip, drag order, named bookmarks and finished history");
+  }
+  return test.assert_eq_array(offline.pending(restarted.downloads).map((c: api.Card): string => c.id), [cards[0].id, cards[1].id]);
+}
+
+function test_cache_and_kids_reopen(): test.TestOutcome {
+  let Ok(dir) = temp_dir("story-deck-kids") else {
+    return test.fail("create the storage fixture");
+  };
+  let key = listening.make_key("0574");
+  if (!listening.check_pin("0574", key) || listening.check_pin("0547", key)) {
+    return test.fail("accept only the correct PIN");
+  }
+  let cards = fixture_cards();
+  let saved = listening.toggle_favourite(listening.Saved { ...listening.empty(), kids: true, parent_key: key }, listening.Item { id: "book", title: "Woodland Walk" });
+  if (!listening.save(dir, saved) || !library_cache.save(dir, library_cache.encode(cards))) {
+    return test.fail("save kids mode and the search index");
+  }
+  let cached = library_cache.load(dir);
+  let matches = search.find(cached, "ice", 0);
+  if (matches.len() != 1 || cached[matches[0].card].id != "pod" || search.excerpt("ice", "Sky Journal", cached[matches[0].card].tracks[matches[0].track].search) != "ice") {
+    return test.fail("search cached episode metadata and show the matched word");
+  }
+  let m = deck.with_index(deck.with_listening(deck.start(), listening.load(dir)), dir, cached);
+  let s = artwork_simulator(m);
+  if (!sim.says(s, "Favourites") || sim.says(s, "Library") || !sim.says(s, "Woodland Walk") || sim.says(s, "Sky Journal")) {
+    return test.fail("restart with only the favourite covers and adult gate");
+  }
+  s = sim.tap(s, "Grown-ups");
+  if (!sim.says(s, "Enter parent PIN") || !s.shell.app.playback_tools.saved.kids) {
+    return test.fail("opening the PIN pad keeps kids mode locked");
+  }
+  let removed = sim.send(s, deck.ResumeCard("pod")).shell.app;
+  return test.assert_eq(removed.phone.card, "");
+}
+
+function test_chapter_timer_and_prefetch(): test.TestOutcome {
+  let opened = cell_new(0);
+  let played = cell_new(0);
+  let sought = cell_new(0i64);
+  let output = phone.Output {
+    ...no_audio(),
+    open: (url: string): Option[player.Player] => {
+      let slot = opened.get();
+      opened.set(slot + 1);
+      return Some(player.Player { obj: 1 as usize, listener: 1 as usize, slot: slot });
+    },
+    start: (media: player.Player): boolean => {
+      played.set(played.get() + 1);
+      return true;
+    },
+    seek: (media: player.Player, ms: i64): boolean => {
+      sought.set(ms);
+      return true;
+    },
+  };
+  let first = api.Stream { title: "Part 1", url: "file:///part1", chapter: "01", key: "01", art: "" };
+  let second = api.Stream { ...first, title: "Part 2", url: "file:///part2", chapter: "02" };
+  let loading = phone.loading(phone.chapter_timer(phone.empty(), true), "card", "Test card", 30000i64);
+  let state = phone.apply(phone.received(loading, loading.revision, Ok([first, second])), output);
+  let (prepared, first_arg) = player.posted(player.Prepared, 0);
+  state = phone.apply(phone.event(state, android.Posted(prepared, first_arg)), output);
+  if (sought.get() != 30000i64 || played.get() != 0) {
+    return test.fail("seek to the resume position before playing");
+  }
+  let (seeked, seek_arg) = player.posted(player.Seeked, 0);
+  state = phone.apply(phone.event(state, android.Posted(seeked, seek_arg)), output);
+  state = phone.prime(state, output);
+  let (prepared_next, next_arg) = player.posted(player.Prepared, 1);
+  state = phone.event(state, android.Posted(prepared_next, next_arg));
+  let (ended, ended_arg) = player.posted(player.Completed, 0);
+  state = phone.apply(phone.event(state, android.Posted(ended, ended_arg)), output);
+  if (opened.get() != 2 || played.get() != 1 || !state.sleep_ended || state.at != 1) {
+    return test.fail("prepare the next track early and hold it at the chapter boundary");
+  }
+  let paused = phone.State { ...state, elapsed: 40000i64, paused_at: monotonic_ns() - 121000000000i64 };
+  let resumed = phone.apply(phone.control(paused, api.Resume), output);
+  return test.assert_eq(resumed.starting_seek && sought.get() == 30000i64, true);
+}
+
+function test_phone_player_handoff(): test.TestOutcome {
+  let Some(playback) = player_status.event("{\"playbackStatus\":\"playing\",\"cardId\":\"book\",\"chapterKey\":\"01\",\"trackKey\":\"03\",\"position\":43}".bytes()) else {
+    return test.fail("read the Yoto chapter, track and position");
+  };
+  let s = sim.tap(library_sim(), "Bedroom, Online");
+  let initial = s.shell.app;
+  s = sim.send(s, deck.PlaybackLoaded(initial.generation, initial.now_playing.revision, Ok(playback)));
+  let transferring = sim.send(s, deck.MoveToPhone).shell.app;
+  if (!transferring.on_phone || transferring.phone.resume_ms != 43000i64 || transferring.transfer_from != "one") {
+    return test.fail("open the phone at the Yoto player position");
+  }
+  let track = api.Stream { title: "Fox at dusk", url: "file:///fox", chapter: "01", key: "03", art: "" };
+  let playing = phone.State { ...transferring.phone, queue: [track], phase: phone.Playing, elapsed: 51000i64 };
+  let current = deck.Model { ...deck.start(), token: "test", players: initial.players, on_phone: true, phone: playing };
+  let pending = deck.update(deck.update(current, deck.MoveToPlayer("one")), deck.Tick);
+  let generation = pending.generation;
+  let revision = pending.phone.revision;
+  let done = deck.update(pending, deck.PlaybackMoved(generation, revision, "one", true, Ok(())));
+  return test.assert_eq(!done.on_phone && done.selected == "one" && done.phone.card.len() == 0, true);
+}
+
 function main(): i32 {
   let r = test.new("Story Deck");
   r = r.it("PKCE matches the standard example", test_pkce);
@@ -866,5 +1157,14 @@ function main(): i32 {
   r = r.it("draw the Story Deck launcher icon", test_launcher_icon);
   r = r.it("filter the library by collection and family group", test_library_collections);
   r = r.it("show account actions only in the menu", test_account_menu);
+  r = r.it("open the full phone player and build device commands", test_now_playing_controls);
+  r = r.it("retry one track and find the saved card after restart", test_downloaded_search_and_retry);
+  r = r.it("validate scanned card codes and shop links", test_scan_and_shop);
+  r = r.it("Android Back returns through search, downloads, and tabs", test_android_back_returns_through_tabs);
+  r = r.it("Android Back returns through the menu and Library tools", test_android_back_returns_through_tools);
+  r = r.it("reopen trip playlists, named bookmarks, history, and the download queue", test_reopen_trip_and_downloads);
+  r = r.it("restore the searchable index and keep kids mode locked after restart", test_cache_and_kids_reopen);
+  r = r.it("seek before playback, preload the next track, and stop at the chapter boundary", test_chapter_timer_and_prefetch);
+  r = r.it("transfer the chapter and position between the phone and a Yoto player", test_phone_player_handoff);
   return r.finish();
 }

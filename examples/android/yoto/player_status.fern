@@ -8,12 +8,24 @@ import "std/time";
 import "std/tls/client" as tls;
 import "std/tls/verify";
 import "std/utf8";
+import "./api";
 
 const HOST: string = "aqrphjqbp3u2z-ats.iot.eu-west-2.amazonaws.com";
 
 const LIMIT: i32 = 65536;
 
-pub struct Playback { state: string, card: string, chapter: string, track: string }
+pub struct Playback {
+  state: string,
+  card: string,
+  chapter: string,
+  track: string,
+  chapter_key: string,
+  track_key: string,
+  position: i32,
+  duration: i32,
+  volume: i32,
+  sleep: i32,
+}
 
 struct Wire { conn: tls.Connection, input: u8[], mqtt: u8[] }
 
@@ -34,6 +46,12 @@ pub function event(bytes: u8[]): Option[Playback] {
     card: json.get_string(value, "cardId").unwrap_or(""),
     chapter: json.get_string(value, "chapterTitle").unwrap_or(""),
     track: json.get_string(value, "trackTitle").unwrap_or(""),
+    chapter_key: json.get_string(value, "chapterKey").unwrap_or(""),
+    track_key: json.get_string(value, "trackKey").unwrap_or(""),
+    position: json.get_i32(value, "position").unwrap_or(-1),
+    duration: json.get_i32(value, "trackLength").unwrap_or(0),
+    volume: json.get_i32(value, "volume").unwrap_or(-1),
+    sleep: json.get_i32(value, "sleepTimerSeconds").unwrap_or(-1),
   });
 }
 
@@ -176,7 +194,7 @@ function send(w: Wire, kind: u8, payload: u8[]): Result[Wire, string] {
   return write(w, ws.frame(true, 2, head.append(length as u8).concat(payload), rand.bytes(4)));
 }
 
-function listen(w: Wire, token: string, id: string, until: i64): Result[Playback, string] {
+function listen[T](w: Wire, token: string, id: string, name: string, until: i64, parse: (u8[]) => Option[T]): Result[T, string] {
   let client = "STORY" + base64.encode_url(rand.bytes(12));
   let user = id + "?x-amz-customauthorizer-name=PublicJWTAuthorizer";
   let connect: u8[] = [0, 4, 77, 81, 84, 84, 4, 194, 0, 30];
@@ -185,13 +203,13 @@ function listen(w: Wire, token: string, id: string, until: i64): Result[Playback
   if (connected.header != 32 || connected.data != [0u8, 0u8]) {
     return Err("Yoto denied the player status request.");
   }
-  let topic = "device/" + id + "/data/events";
+  let topic = "device/" + id + "/data/" + name;
   let sent = send(active, 130u8, [0u8, 1u8].concat(text(topic)).append(0u8))?;
   let (ready, subscribed) = next_packet(sent, until)?;
   if (subscribed.header != 144 || subscribed.data != [0u8, 1u8, 0u8]) {
     return Err("Yoto denied access to player events.");
   }
-  let current = send(ready, 48u8, text("device/" + id + "/command/events/request"))?;
+  let current = send(ready, 48u8, text("device/" + id + "/command/" + name + "/request"))?;
   let prefix = text(topic);
   while (monotonic_ns() < until) {
     let (next, p) = next_packet(current, until)?;
@@ -199,15 +217,14 @@ function listen(w: Wire, token: string, id: string, until: i64): Result[Playback
     if (p.header != 48 || p.data.take(prefix.len()) != prefix) {
       continue;
     }
-    if let Some(state) = event(p.data.drop(prefix.len())) {
-      let closed = current.conn.close();
+    if let Some(state) = parse(p.data.drop(prefix.len())) {
       return Ok(state);
     }
   }
   return Err("The player did not report playback status.");
 }
 
-pub function playback(token: string, id: string): Result[Playback, string] {
+function report[T](token: string, id: string, name: string, parse: (u8[]) => Option[T]): Result[T, string] {
   if (id.len() == 0 || id.len() > 100 || !id.contains_only("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") || token.len() == 0 || token.len() > 16000) {
     return Err("The player status request is incomplete.");
   }
@@ -221,5 +238,33 @@ pub function playback(token: string, id: string): Result[Playback, string] {
   defer conn.close();
   let until = monotonic_ns() + 8000000000i64;
   let wire = upgrade(Wire { conn: conn, input: [], mqtt: [] }, until)?;
-  return listen(wire, token, id, until);
+  return listen(wire, token, id, name, until, parse);
+}
+
+pub function playback(token: string, id: string): Result[Playback, string] {
+  return report(token, id, "events", event);
+}
+
+pub function parse_status(bytes: u8[]): Option[api.DeviceStatus] {
+  let Ok(value) = json.parse(utf8.from_bytes_lossy(bytes)) else {
+    return None;
+  };
+  let Some(data) = json.get_object(value, "status") else {
+    return None;
+  };
+  let disk = json.get_i64(data, "freeDisk").unwrap_or(-1i64);
+  let free = if (disk >= 0i64 && disk < 1000000000i64) { disk * 1024i64 } else { -1i64 };
+  return Some(api.DeviceStatus {
+    volume: json.get_i32(data, "userVolume").unwrap_or(json.get_i32(data, "volume").unwrap_or(-1)),
+    battery: json.get_i32(data, "batteryLevel").unwrap_or(-1), free_bytes: free,
+    syncing: json.get_bool(data, "isBackgroundDownloadActive"),
+  });
+}
+
+pub function device(token: string, id: string): Result[api.DeviceStatus, api.Failure] {
+  let live = report(token, id, "status", parse_status);
+  if let Ok(status) = live {
+    return Ok(status);
+  }
+  return api.device_status(token, id);
 }

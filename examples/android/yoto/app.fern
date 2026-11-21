@@ -7,6 +7,9 @@ import "std/android/focus";
 import "std/android/player";
 import "std/android/service";
 import "std/android/session" as media_session;
+import "std/android/shortcuts";
+import "std/base64";
+import "std/crypto";
 import "std/android/ui/app";
 import "std/jni";
 import "./deck";
@@ -16,11 +19,16 @@ import "./session";
 import "./phone";
 import "./offline";
 import "./listening";
+import "./library_cache";
+import "./native_tools";
+import "./tools_panel" as panel_tools;
 import "std/string";
 
 const LISTENER: string = "dev.fern.storydeck.PhoneListener";
 
 const PLAYING: string = "dev.fern.storydeck.Playing";
+
+const SHORTCUT_INTENT: i32 = 0x53444354;
 
 struct Media {
   session: Option[media_session.Session],
@@ -32,6 +40,12 @@ struct Media {
 
 pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
   launch.start(activity, app_main_entry());
+}
+
+@jni("dev.fern.storydeck.MainActivity extends android.app.NativeActivity", "void onNewIntent(android.content.Intent)")
+pub function new_intent(env: usize, thiz: usize, intent: usize): void {
+  shortcuts.keep_intent(env, thiz, intent);
+  let posted = android.tell(env, SHORTCUT_INTENT, 0 as usize);
 }
 
 @callback("app_main")
@@ -264,7 +278,7 @@ function publish_media(ctx: usize, current: phone.State, media: Media): void {
     phone.Idle => "idle",
     _ => "loading",
   };
-  let identity = current.revision.to_string() + ":" + current.at.to_string() + ":" + phase;
+  let identity = current.revision.to_string() + ":" + current.at.to_string() + ":" + current.rate.to_string() + ":" + phase;
   if (last == identity || phase == "loading") {
     return;
   }
@@ -287,6 +301,100 @@ function publish_media(ctx: usize, current: phone.State, media: Media): void {
   media.last.set(identity);
 }
 
+function native_action(ctx: usize, model: deck.Model, recorder: Cell[Option[native_tools.Recorder]]): deck.Model {
+  let Some(action) = model.tools_page.action else {
+    return model;
+  };
+  let state = panel_tools.State { ...model.tools_page, action: None };
+  match (action) {
+    panel_tools.ScanStart => {
+      let started = native_tools.scan(ctx, true);
+      return deck.tools_update(model, panel_tools.State { ...state, scanning: started, note: if (started) { "" } else { "Turn on NFC and try again on a compatible phone." } });
+    },
+    panel_tools.ScanStop => {
+      let disabled = native_tools.scan(ctx, false);
+    },
+    panel_tools.RecordStart => {
+      if (recorder.get().is_none()) {
+        match (native_tools.record(ctx)) {
+          Ok(active) => {
+            recorder.set(Some(active));
+            return deck.tools_update(model, panel_tools.State { ...state, recording: true, note: "Recording…" });
+          },
+          Err(error) => {
+            return deck.tools_update(model, panel_tools.State { ...state, note: error });
+          }
+        }
+      }
+    },
+    panel_tools.RecordStop | panel_tools.RecordDiscard => {
+      if let Some(active) = recorder.get() {
+        recorder.set(None);
+        let keep = match (action) { panel_tools.RecordStop => true, _ => false };
+        let finished = panel_tools.State { ...state, recording: false, note: "" };
+        match (native_tools.stop(ctx, active, keep)) {
+          Ok(audio) => {
+            return deck.tools_update(model, panel_tools.audio_added(finished, audio));
+          },
+          Err(error) => {
+            return deck.tools_update(model, panel_tools.State { ...finished, note: if (keep) { error } else { "" } });
+          }
+        }
+      }
+    },
+    panel_tools.PickAudio => {
+      match (native_tools.audio_files(ctx)) {
+        Ok(files) => {
+          return deck.tools_update(model, panel_tools.State { ...state, audio: Some(files), note: "" });
+        },
+        Err(error) => {
+          return deck.tools_update(model, panel_tools.State { ...state, note: error });
+        }
+      }
+    },
+    panel_tools.LaunchOfficial => {
+      if (!native_tools.official_app(ctx)) {
+        let launched = open_browser(ctx, "https://play.google.com/store/apps/details?id=com.yotoplay.yoto");
+      }
+    },
+    panel_tools.LaunchLink(address) => {
+      if (!open_browser(ctx, address)) {
+        return deck.tools_update(model, panel_tools.State { ...state, note: "Could not open this page." });
+      }
+    }
+  }
+  return deck.tools_update(model, state);
+}
+
+function pin_shortcut(ctx: usize, m: deck.Model): deck.Model {
+  let action = m.shortcut;
+  if (action.len() == 0) {
+    return m;
+  }
+  let label = "Resume Story Deck";
+  let card_prefix = "dev.fern.storydeck.CARD.";
+  let trip_prefix = "dev.fern.storydeck.TRIP.";
+  if (action.starts_with(card_prefix)) {
+    let id = action.drop(card_prefix.len());
+    for card in m.cards {
+      if (card.id == id) {
+        label = card.title;
+        break;
+      }
+    }
+  } else if (action.starts_with(trip_prefix)) {
+    let id = action.drop(trip_prefix.len());
+    for line in m.playback_tools.saved.lineups {
+      if (line.id == id) {
+        label = line.name;
+        break;
+      }
+    }
+  }
+  let id = "story-" + base64.encode_url(crypto.sha256(action.bytes()));
+  return deck.shortcut_result_notice(m, shortcuts.pin(ctx, shortcuts.Shortcut { id: id, label: label, action: action }));
+}
+
 function app_main(ctx: usize): usize {
   let dir = android.no_backup_dir(ctx);
   let env = android.env(ctx);
@@ -297,6 +405,9 @@ function app_main(ctx: usize): usize {
   let unlocked: Option[service.Awake] = None;
   let media = Media { session: session_ref, token: token, focus: focus.music(ctx, "dev.fern.storydeck.AudioFocus"), last: cell_new(""), awake: cell_new(unlocked) };
   let visible = cell_new(catalog);
+  let empty_recording: Option[native_tools.Recorder] = None;
+  let recorder = cell_new(empty_recording);
+  let wifi_check = cell_new(0i64);
   let initial = deck.program(
     (address: string): boolean => open_browser(ctx, address),
     (data: u8[]): Option[draw.Image] => cover.decode(android.env(ctx), data),
@@ -308,6 +419,8 @@ function app_main(ctx: usize): usize {
       close: (media: player.Player): void => player.close(ctx, media),
       seek: (media: player.Player, ms: i64): boolean => player.seek(ctx, media, ms, player.Exact),
       position: (media: player.Player): i64 => player.position_ms(ctx, media),
+      duration: (media: player.Player): i64 => player.duration_ms(ctx, media),
+      speed: (media: player.Player, rate: f32): boolean => player.set_speed(ctx, media, rate),
     },
     offline.Output {
       start: (address: string, name: string, title: string): i64 => download.start(ctx, address, [], name, title),
@@ -318,15 +431,51 @@ function app_main(ctx: usize): usize {
     (state: listening.Saved): boolean => listening.save(dir, state),
   );
   let p = initial.with_system((event: android.Event): Option[deck.Msg] => {
+    if let android.Pause = event {
+      if (recorder.get().is_some()) {
+        return Some(deck.SetRecorder);
+      }
+    }
+    if let android.Posted(kind, ref) = event {
+      if (kind == SHORTCUT_INTENT) {
+        let action = shortcuts.action(ctx);
+        if (action.starts_with("dev.fern.storydeck.")) {
+          return Some(deck.ShortcutAction(action));
+        }
+      }
+      if (kind == native_tools.SCANNED) {
+        let e = android.env(ctx);
+        let address = jni.string_of(e, ref);
+        jni.delete_global_ref(e, ref);
+        return Some(deck.ReadScan(address));
+      }
+    }
+    if let android.Resume = event {
+      let action = shortcuts.action(ctx);
+      if (action.starts_with("dev.fern.storydeck.")) {
+        return Some(deck.ShortcutAction(action));
+      }
+    }
     let command = car_event(ctx, event, visible.get(), media);
     return if (command.is_some()) { command } else { initial.system(event) };
   }).with_effects((m: deck.Model): deck.Model => {
-    let next = initial.effects(m);
+    let next = pin_shortcut(ctx, native_action(ctx, initial.effects(m), recorder));
+    let now = monotonic_ns();
+    if (now >= wifi_check.get()) {
+      wifi_check.set(now + 1000000000i64);
+      next = deck.with_wifi(next, native_tools.on_wifi(ctx));
+    }
     visible.set(next.downloads.catalog);
     publish_media(ctx, next.phone, media);
     return next;
   }).with_close((own m: deck.Model): own deck.Model => {
     release_media(ctx, media);
+    if (m.tools_page.scanning) {
+      let disabled = native_tools.scan(ctx, false);
+    }
+    if let Some(active) = recorder.get() {
+      let stopped = native_tools.stop(ctx, active, false);
+    }
     if let Some(session) = media.session {
       media_session.close(ctx, session);
     }
@@ -336,7 +485,10 @@ function app_main(ctx: usize): usize {
     jni.delete_global_ref(env, media.token);
     return initial.close(m);
   });
-  let opened = deck.with_downloads(deck.restored(saved), catalog);
-  let closed = app.run(ctx, deck.with_listening(opened, listening.load(dir)), p);
+  let opened = deck.with_listening(deck.with_downloads(deck.restored(saved), catalog), listening.load(dir));
+  let cards = if (opened.refresh.len() > 0) { library_cache.load(dir) } else { [] };
+  let indexed = deck.with_index(opened, dir, cards);
+  let ready = deck.shortcut_received(deck.with_art(indexed, android.cache_dir(ctx)), shortcuts.action(ctx));
+  let closed = app.run(ctx, ready, p);
   return 0 as usize;
 }
