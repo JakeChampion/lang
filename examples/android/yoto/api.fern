@@ -44,6 +44,7 @@ pub struct Card {
   title: string,
   creator: string,
   cover: string,
+  thumb: string,
   preview: string,
   kind: Kind,
   myo: boolean,
@@ -250,10 +251,10 @@ function kind(category: string, feed: string, myo: boolean): Kind {
   return Standard;
 }
 
-function cover(card: json.JsonValue, metadata: json.JsonValue, content: json.JsonValue): string {
+function cover(card: json.JsonValue, metadata: json.JsonValue, content: json.JsonValue, sizes: string[]): string {
   for value in [metadata, content, card] {
     let image = object(value, "cover");
-    for key in ["imageL", "imageM", "imageS"] {
+    for key in sizes {
       let link = field(image, key);
       if (link.starts_with("https://")) {
         return link;
@@ -348,7 +349,7 @@ function card(value: json.JsonValue, entry: json.JsonValue, myo: boolean): Card 
   let sort = field(value, "sortkey");
   let media = object(meta, "media");
   return Card {
-    id: id, title: title, creator: creator, cover: cover(value, meta, content), preview: preview_address(meta), kind: kind(category, field(meta, "feedUrl"), myo), myo: myo,
+    id: id, title: title, creator: creator, cover: cover(value, meta, content, ["imageL", "imageM", "imageS"]), thumb: cover(value, meta, content, ["imageM", "imageS"]), preview: preview_address(meta), kind: kind(category, field(meta, "feedUrl"), myo), myo: myo,
     club: club_card(value, entry), sleep_sounds: sleep_sound(value, meta, category), last_played: played,
     seconds: json.get_f64(media, "duration").unwrap_or(0.0).max(0.0).round() as i64, bytes: json.get_i64(media, "fileSize").unwrap_or(0i64),
     sort_title: (if (sort.len() > 0) { sort } else { title }).to_lower(), search: search, tracks: tracks(chapters.unwrap_or([])), indexed: chapters.is_some(),
@@ -366,7 +367,7 @@ pub function cached_card(c: Card): json.JsonValue {
     ("search", json.JString(t.search)), ("art", json.JString(t.art)), ("chapterArt", json.JString(t.chapter_art)),
   ])));
   return json.JObject(json.from([
-    ("id", json.JString(c.id)), ("title", json.JString(c.title)), ("creator", json.JString(c.creator)), ("cover", json.JString(c.cover)),
+    ("id", json.JString(c.id)), ("title", json.JString(c.title)), ("creator", json.JString(c.creator)), ("cover", json.JString(c.cover)), ("thumb", json.JString(c.thumb)),
     ("category", json.JString(category)), ("myo", json.JBool(c.myo)), ("club", json.JBool(c.club)), ("sleep", json.JBool(c.sleep_sounds)),
     ("played", json.JNumber(c.last_played.to_string())), ("seconds", json.JNumber(c.seconds.to_string())), ("bytes", json.JNumber(c.bytes.to_string())),
     ("sort", json.JString(c.sort_title)), ("search", json.JString(c.search)), ("tracks", json.JArray(items)), ("indexed", json.JBool(c.indexed)),
@@ -384,7 +385,7 @@ pub function restore_card(value: json.JsonValue): Option[Card] {
     search: field(t, "search"), art: field(t, "art"), chapter_art: field(t, "chapterArt"),
   });
   return Some(Card {
-    id: id, title: field(value, "title"), creator: field(value, "creator"), cover: field(value, "cover"), preview: "", kind: kind(field(value, "category"), "", myo), myo: myo,
+    id: id, title: field(value, "title"), creator: field(value, "creator"), cover: field(value, "cover"), thumb: field(value, "thumb"), preview: "", kind: kind(field(value, "category"), "", myo), myo: myo,
     club: json.get_bool(value, "club").unwrap_or(false), sleep_sounds: json.get_bool(value, "sleep").unwrap_or(false),
     last_played: json.get_i64(value, "played").unwrap_or(0i64), seconds: json.get_i64(value, "seconds").unwrap_or(0i64), bytes: json.get_i64(value, "bytes").unwrap_or(0i64),
     sort_title: field(value, "sort"), search: field(value, "search"), tracks: items, indexed: json.get_bool(value, "indexed").unwrap_or(true),
@@ -517,12 +518,13 @@ pub function details(token: string, summary: Card): Result[Card, Failure] {
     return Err(failure("Yoto did not return track information."));
   }
   let art = if (summary.cover.len() > 0) { summary.cover } else { item.cover };
+  let thumb = if (summary.thumb.len() > 0) { summary.thumb } else { item.thumb };
   let category = match (item.kind) {
     Podcast => Podcast,
     Radio => Radio,
     _ => summary.kind,
   };
-  return Ok(Card { ...summary, cover: art, kind: category, club: summary.club || item.club, sleep_sounds: summary.sleep_sounds || item.sleep_sounds, search: summary.search + " " + item.search, tracks: item.tracks, indexed: true });
+  return Ok(Card { ...summary, cover: art, thumb: thumb, kind: category, club: summary.club || item.club, sleep_sounds: summary.sleep_sounds || item.sleep_sounds, search: summary.search + " " + item.search, tracks: item.tracks, indexed: true });
 }
 
 pub function parse_streams(value: json.JsonValue, chapter_key: string, track_key: string): Result[Stream[], Failure] {
@@ -600,6 +602,10 @@ pub function download_plan(token: string, summary: Card): Result[DownloadPlan, F
 }
 
 pub function cover_bytes(address: string): u8[] {
+  return cover_bytes_until(address, -1);
+}
+
+pub function cover_bytes_until(address: string, cancel: i32): u8[] {
   if (!address.starts_with("https://")) {
     return [];
   }
@@ -607,7 +613,8 @@ pub function cover_bytes(address: string): u8[] {
   let opts = fetch.Timeouts { connect: seconds, inactivity: seconds, total: seconds };
   let cap = http.HttpLimits { ...http.limits(), body: 2000000 };
   let req = fetch.get(address).with_limits(cap).with_timeouts(opts).with_redirects(2);
-  if let Ok(resp) = fetch.send_public(req) {
+  let response = if (cancel >= 0) { fetch.send_public_until(req, cancel) } else { fetch.send_public(req) };
+  if let Ok(resp) = response {
     if (resp.status == 200) {
       return resp.body_bytes();
     }

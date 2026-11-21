@@ -408,9 +408,11 @@ function app_main(ctx: usize): usize {
   let empty_recording: Option[native_tools.Recorder] = None;
   let recorder = cell_new(empty_recording);
   let wifi_check = cell_new(0i64);
+  let stored_listening = listening.load(dir);
+  let wifi_only = cell_new(stored_listening.wifi_only);
   let initial = deck.program(
     (address: string): boolean => open_browser(ctx, address),
-    (data: u8[]): Option[draw.Image] => cover.decode(android.env(ctx), data),
+    (data: u8[], limit: i32): Option[draw.Image] => cover.decode(android.env(ctx), data, limit),
     (value: Option[api.Session]): boolean => session.save(dir, env, value),
     phone.Output {
       open: (address: string): Option[player.Player] => open_stream(ctx, address),
@@ -423,7 +425,7 @@ function app_main(ctx: usize): usize {
       speed: (media: player.Player, rate: f32): boolean => player.set_speed(ctx, media, rate),
     },
     offline.Output {
-      start: (address: string, name: string, title: string): i64 => download.start(ctx, address, [], name, title),
+      start: (address: string, name: string, title: string): i64 => download.start_with_network(ctx, address, [], name, title, wifi_only.get()),
       status: (id: i64): i32 => download.progress(ctx, id).status,
       remove: (ids: i64[]): boolean => download.remove_many(ctx, ids),
       save: (entries: offline.Entry[], cleanup: i64[]): boolean => offline.save(dir, entries, cleanup),
@@ -459,6 +461,7 @@ function app_main(ctx: usize): usize {
     let command = car_event(ctx, event, visible.get(), media);
     return if (command.is_some()) { command } else { initial.system(event) };
   }).with_effects((m: deck.Model): deck.Model => {
+    wifi_only.set(m.playback_tools.saved.wifi_only);
     let next = pin_shortcut(ctx, native_action(ctx, initial.effects(m), recorder));
     let now = monotonic_ns();
     if (now >= wifi_check.get()) {
@@ -485,9 +488,9 @@ function app_main(ctx: usize): usize {
     jni.delete_global_ref(env, media.token);
     return initial.close(m);
   });
-  let opened = deck.with_listening(deck.with_downloads(deck.restored(saved), catalog), listening.load(dir));
+  let opened = deck.with_listening(deck.with_downloads(deck.restored(saved), catalog), stored_listening);
   let cards = if (opened.refresh.len() > 0) { library_cache.load(dir) } else { [] };
-  let indexed = deck.with_index(opened, dir, cards);
+  let indexed = deck.with_cover_pipe(deck.with_index(opened, dir, cards), cover.request_pipe);
   let ready = deck.shortcut_received(deck.with_art(indexed, android.cache_dir(ctx)), shortcuts.action(ctx));
   let closed = app.run(ctx, ready, p);
   return 0 as usize;

@@ -54,9 +54,25 @@ function in_collection(card: api.Card, filter: i32): boolean {
   }
 }
 
+pub function section(hit: Hit, cards: api.Card[]): i32 {
+  if (category(cards[hit.card].kind) == 4) {
+    return 2;
+  }
+  return if (hit.track >= 0) { 1 } else { 0 };
+}
+
 pub function sorted(hits: Hit[], cards: api.Card[], by_title: boolean): Hit[] {
+  return order(hits, cards, by_title, false);
+}
+
+pub function order(hits: Hit[], cards: api.Card[], by_title: boolean, grouped: boolean): Hit[] {
   return cmp.sort_by(hits, (a: Hit, b: Hit): i32 => {
-    if (a.track < 0 != b.track < 0) {
+    if (grouped) {
+      let group = section(a, cards) - section(b, cards);
+      if (group != 0) {
+        return group;
+      }
+    } else if (a.track < 0 != b.track < 0) {
       return if (a.track < 0) { -1 } else { 1 };
     }
     let alpha = cards[a.card];
@@ -105,15 +121,32 @@ pub function excerpt(query: string, visible: string, metadata: string): string {
   return "";
 }
 
+pub function highlight(query: string, visible: string, metadata: string): string {
+  let extra = excerpt(query, visible, metadata);
+  if (extra.len() > 0) {
+    return extra;
+  }
+  for term in query.trim().to_lower().split(" ") {
+    if (term.len() > 0 && visible.to_lower().contains(term)) {
+      return term;
+    }
+  }
+  return "";
+}
+
 pub function find(cards: api.Card[], query: string, filter: i32): Hit[] {
   return find_in(cards, query, filter, ALL);
 }
 
 pub function find_in(cards: api.Card[], query: string, filter: i32, scope: i32): Hit[] {
+  return find_slice(cards, query, filter, scope, 0, cards.len());
+}
+
+pub function find_slice(cards: api.Card[], query: string, filter: i32, scope: i32, first: i32, last: i32): Hit[] {
   let terms = query.to_lower().replace("\t", " ").replace("\n", " ").split(" ").filter((word: string): boolean => word.len() > 0);
   let titles: Hit[] = [];
   let tracks: Hit[] = [];
-  for i in 0..cards.len() {
+  for i in first..last.min(cards.len()) {
     let card = cards[i];
     if (!in_collection(card, filter)) {
       continue;

@@ -1531,8 +1531,14 @@ pub function read_deadline(sock: Socket, max: i32, deadline: Duration): Result[R
 }
 
 pub function read_watched(sock: Socket, max: i32, wait: Duration, interest: i32): Result[Recv, NetError] {
+  return read_watched_until(sock, max, wait, interest, -1);
+}
+
+// A readable cancellation descriptor ends the wait.
+pub function read_watched_until(sock: Socket, max: i32, wait: Duration, interest: i32, cancel: i32): Result[Recv, NetError] {
   let until = monotonic_ns() + wait.as_nanos();
-  let set = [sock.fd, async.counted(sock.fd, interest)];
+  let read = [sock.fd, async.counted(sock.fd, interest)];
+  let set = if (cancel >= 0) { [cancel, 1].concat(read) } else { read };
   while (true) {
     let at = until;
     if (at - monotonic_ns() < 1000000i64) {
@@ -1544,7 +1550,11 @@ pub function read_watched(sock: Socket, max: i32, wait: Duration, interest: i32)
       return Err(Other(errno.EBADF));
     }
     match (woke) {
-      Woke(i) => {},
+      Woke(i) => {
+        if (cancel >= 0 && i == 0) {
+          return Ok(Abandoned);
+        }
+      },
       TimedOut => {
         return Ok(Elapsed);
       },
