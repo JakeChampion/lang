@@ -267,7 +267,7 @@ function grow(n: i32): i32 {
 function stray(): i32 {
   let ts: usize = __raw_alloc(16);
   __raw_store_ptr(ts, 0, 0 as usize);
-  __raw_store_ptr(ts, 8, 10000000 as usize);
+  __raw_store_ptr(ts, 1, 10000000 as usize);
   let stack: i64 = __syscall6(MMAP, 0, 65536, 3, 34, 0 - 1, 0) + 65536;
   let tls: i64 = __syscall6(MMAP, 0, 4096, 3, 34, 0 - 1, 0);
   let r: i64 = CLONE;
