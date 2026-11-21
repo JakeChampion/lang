@@ -29,6 +29,10 @@ pub struct Card {
   cover: string,
   kind: Kind,
   myo: boolean,
+  club: boolean,
+  sleep_sounds: boolean,
+  last_played: i64,
+  sort_title: string,
   search: string,
   tracks: Track[],
   indexed: boolean,
@@ -40,7 +44,9 @@ pub struct Tokens { access: string, refresh: string }
 
 pub struct Session { client: string, refresh: string }
 
-pub struct Library { players: Player[], cards: Card[], note: string }
+pub struct Group { id: string, name: string, cards: Map[string, boolean] }
+
+pub struct Library { players: Player[], cards: Card[], groups: Result[Group[], Failure], note: string }
 
 pub enum Command { Play(string), PlayTrack(string, string, string), Pause, Resume, Stop }
 
@@ -289,6 +295,18 @@ function tracks(chapters: json.JsonValue[]): Track[] {
   return out;
 }
 
+function sleep_sound(value: json.JsonValue, meta: json.JsonValue, category: string): boolean {
+  return category == "sleep-sounds"
+    || entries(meta, "list").any((v: json.JsonValue): boolean => v == json.JString("sleep-sounds"))
+    || entries(value, "tags").any((v: json.JsonValue): boolean => v == json.JString("sleepsounds"));
+}
+
+function club_card(value: json.JsonValue, entry: json.JsonValue): boolean {
+  return entries(value, "clubAvailability").len() > 0
+    || field(value, "availability") == "premium"
+    || json.get_bool(object(entry, "ownership"), "isAccessibleUsingSubscription").unwrap_or(false);
+}
+
 function card(value: json.JsonValue, entry: json.JsonValue, myo: boolean): Card {
   let meta = object(value, "metadata");
   let content = object(value, "content");
@@ -298,7 +316,13 @@ function card(value: json.JsonValue, entry: json.JsonValue, myo: boolean): Card 
   let creator = field(meta, "author");
   let category = field(meta, "category").to_lower();
   let search = [title, creator, category, field(meta, "description"), field(meta, "readBy"), field(meta, "seriestitle")].join(" ").to_lower();
-  return Card { id: id, title: title, creator: creator, cover: cover(value, meta, content), kind: kind(category, field(meta, "feedUrl"), myo), myo: myo, search: search, tracks: tracks(chapters.unwrap_or([])), indexed: chapters.is_some() };
+  let played = time.timestamp_parse_rfc3339(field(entry, "lastPlayedAt")).map((at: time.Timestamp): i64 => at.unix_millis()).unwrap_or(0i64);
+  let sort = field(value, "sortkey");
+  return Card {
+    id: id, title: title, creator: creator, cover: cover(value, meta, content), kind: kind(category, field(meta, "feedUrl"), myo), myo: myo,
+    club: club_card(value, entry), sleep_sounds: sleep_sound(value, meta, category), last_played: played,
+    sort_title: (if (sort.len() > 0) { sort } else { title }).to_lower(), search: search, tracks: tracks(chapters.unwrap_or([])), indexed: chapters.is_some(),
+  };
 }
 
 pub function parse_cards(value: json.JsonValue, mine: boolean): Result[Card[], Failure] {
@@ -336,6 +360,33 @@ function load_cards(token: string, path: string, mine: boolean): Result[Card[], 
   return parse_cards(send(request(token, "GET", path))?, mine);
 }
 
+pub function parse_groups(value: json.JsonValue): Result[Group[], Failure] {
+  let json.JArray(items) = value else {
+    return Err(failure("Yoto did not return a list of family groups."));
+  };
+  let groups: Group[] = [];
+  for item in items {
+    let id = field(item, "id");
+    let name = field(item, "name");
+    if (id.len() == 0 || name.len() == 0) {
+      continue;
+    }
+    let cards: Map[string, boolean] = map_new(16);
+    for row in entries(item, "items") {
+      let card = field(row, "contentId");
+      if (card.len() > 0) {
+        cards = cards.insert(card, true);
+      }
+    }
+    groups = groups.append(Group { id: id, name: name, cards: cards });
+  }
+  return Ok(groups);
+}
+
+function library_groups(token: string): Result[Group[], Failure] {
+  return parse_groups(send(request(token, "GET", "/card/family/library/groups"))?);
+}
+
 pub function library(token: string): Result[Library, Failure] {
   let players = parse_players(send(request(token, "GET", "/device-v2/devices/mine"))?)?;
   let family = load_cards(token, "/card/family/library", false);
@@ -354,7 +405,7 @@ pub function library(token: string): Result[Library, Failure] {
       note = "Some cards are unavailable. " + err.message;
     }
   }
-  return Ok(Library { players: players, cards: merge_cards(family.unwrap_or([]), mine.unwrap_or([])), note: note });
+  return Ok(Library { players: players, cards: merge_cards(family.unwrap_or([]), mine.unwrap_or([])), groups: library_groups(token), note: note });
 }
 
 function request_card(token: string, summary: Card, query: string): Result[json.JsonValue, Failure] {
@@ -382,7 +433,7 @@ pub function details(token: string, summary: Card): Result[Card, Failure] {
     Radio => Radio,
     _ => summary.kind,
   };
-  return Ok(Card { ...summary, cover: art, kind: category, search: summary.search + " " + item.search, tracks: item.tracks, indexed: true });
+  return Ok(Card { ...summary, cover: art, kind: category, club: summary.club || item.club, sleep_sounds: summary.sleep_sounds || item.sleep_sounds, search: summary.search + " " + item.search, tracks: item.tracks, indexed: true });
 }
 
 pub function parse_streams(value: json.JsonValue, chapter_key: string, track_key: string): Result[Stream[], Failure] {

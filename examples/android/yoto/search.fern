@@ -1,3 +1,5 @@
+import "core/cmp";
+import "std/i64";
 import "std/string";
 import "./api";
 
@@ -10,6 +12,10 @@ pub const TITLES: i32 = 1;
 pub const CHAPTERS: i32 = 2;
 
 pub const TRACKS: i32 = 3;
+
+pub const CLUB: i32 = 5;
+
+pub const SLEEP: i32 = 6;
 
 pub function category(kind: api.Kind): i32 {
   match (kind) {
@@ -26,6 +32,44 @@ pub function category(kind: api.Kind): i32 {
       return 4;
     }
   }
+}
+
+function in_collection(card: api.Card, filter: i32): boolean {
+  match (filter) {
+    0 => {
+      return true;
+    },
+    1 => {
+      return category(card.kind) == 1 && !card.sleep_sounds;
+    },
+    CLUB => {
+      return card.club;
+    },
+    SLEEP => {
+      return card.sleep_sounds;
+    },
+    _ => {
+      return category(card.kind) == filter;
+    }
+  }
+}
+
+pub function sorted(hits: Hit[], cards: api.Card[], by_title: boolean): Hit[] {
+  return cmp.sort_by(hits, (a: Hit, b: Hit): i32 => {
+    if (a.track < 0 != b.track < 0) {
+      return if (a.track < 0) { -1 } else { 1 };
+    }
+    let alpha = cards[a.card];
+    let beta = cards[b.card];
+    let order = if (by_title) { alpha.sort_title.cmp(beta.sort_title) } else { beta.last_played.cmp(alpha.last_played) };
+    if (order != 0) {
+      return order;
+    }
+    if (a.card == b.card) {
+      return a.track - b.track;
+    }
+    return a.card - b.card;
+  });
 }
 
 function matches(terms: string[], card: string, track: string): boolean {
@@ -56,7 +100,7 @@ pub function find_in(cards: api.Card[], query: string, filter: i32, scope: i32):
   let tracks: Hit[] = [];
   for i in 0..cards.len() {
     let card = cards[i];
-    if (filter != 0 && category(card.kind) != filter) {
+    if (!in_collection(card, filter)) {
       continue;
     }
     if ((terms.len() == 0 || scope == ALL || scope == TITLES) && matches(terms, card.search, "")) {

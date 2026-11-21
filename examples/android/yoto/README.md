@@ -8,8 +8,14 @@ You can pause, resume, or stop playback from Story Deck.
 
 ## Browse and search
 
-- Scroll through the large covers in **Library** to see the titles available to
-  your family. Use the tabs to filter cards, Make Your Own, podcasts, or radio.
+- Swipe the collection filters to find **My Cards**, **Playlists**, **Club
+  Collection**, **Sleep Sounds**, **Podcasts**, and **Radio**.
+- Select **Show groups** to filter by a Yoto family group.
+- Select **Last played** or **A–Z** next to the search box to change the sort order.
+
+Search stays at the top as you scroll past the Library header. The Club
+Collection filter shows the Club titles that Yoto returns in your library.
+
 - Use the search box to find titles, authors, narrators, chapters, tracks, and
   episodes. Story Deck reads track information in the background and shows the
   progress. The search covers the information that Yoto returns for your library.
@@ -20,7 +26,8 @@ Track lists and playback also show this artwork.
 
 - Tap a cover to open its card and scroll through its tracks. Select **Play**
   beside a track to start there when Yoto provides its playback keys.
-- Use **Refresh** to update the library and retry the track index.
+- Open **More options** and select **Refresh** to update the library.
+  Refresh also retries the track index.
 
 ## Listen offline
 
@@ -76,8 +83,8 @@ Enable `family:library:view` for the public client to read the family library.
 Story Deck also requests access to Make Your Own cards and player playback.
 Sign in once after an upgrade to grant `offline_access`. Story Deck uses
 Android Keystore to save the refresh token on this device. It restores the
-session when you open the app. Use **Sign out** to clear the saved session, the
-library, and downloads.
+session when you open the app. Open **More options** and select **Sign out** to
+clear the saved session, the library, and downloads.
 
 ## Build and test
 
@@ -103,3 +110,4 @@ write the launcher icon from `launcher_icon.fern`.
 - [Yoto player status](https://yoto.dev/players-mqtt/getting-player-status/)
 - [Yoto content and playable URLs](https://yoto.dev/api/content/getcontent/)
 - [Yoto device configuration](https://yoto.dev/api/devices/updatedeviceconfig/)
+- [Yoto family library groups](https://yoto.dev/api/family-library-groups/getgroups/)

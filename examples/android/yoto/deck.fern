@@ -39,6 +39,12 @@ struct Shelf {
   hits: search.Hit[],
   query: string,
   filter: i32,
+  group: string,
+  groups: api.Group[],
+  groups_open: boolean,
+  groups_note: string,
+  by_title: boolean,
+  pinned: boolean,
   downloaded_only: boolean,
   search_scope: i32,
   search_revision: i64,
@@ -111,6 +117,7 @@ pub struct Model {
   downloads: offline.State,
   offline_open: string,
   tab: i32,
+  menu_open: boolean,
   note: string,
   library_loaded: boolean,
   busy: boolean,
@@ -126,9 +133,12 @@ pub enum Msg {
   Tick,
   Search(string),
   Filter(i32),
+  ToggleGroups,
+  FilterGroup(string),
+  ToggleSort,
   DownloadedOnly,
   SearchScope(i32),
-  PostersVisible(i32, i32),
+  PostersVisible(i32, i32, boolean),
   OpenCard(string),
   CloseCard,
   TracksLoaded(i64, i32, Result[api.Card, api.Failure]),
@@ -139,6 +149,7 @@ pub enum Msg {
   RetrySignIn,
   LibraryLoaded(Result[api.Library, api.Failure]),
   CommandSent(i64, Result[void, api.Failure]),
+  ToggleMenu,
   Refresh,
   SignOut,
   SelectPlayer(string),
@@ -187,7 +198,7 @@ pub enum Msg {
 }
 
 function empty_shelf(): Shelf {
-  return Shelf { hits: [], query: "", filter: 0, downloaded_only: false, search_scope: search.ALL, search_revision: 0i64, opened: "", first_art: 0, last_art: 0, next: 0, paused: "", attempted: map_new(64), note: "", covers: map_new(48), cover_order: [], received: None };
+  return Shelf { hits: [], query: "", filter: 0, group: "", groups: [], groups_open: false, groups_note: "", by_title: false, pinned: false, downloaded_only: false, search_scope: search.ALL, search_revision: 0i64, opened: "", first_art: 0, last_art: 0, next: 0, paused: "", attempted: map_new(64), note: "", covers: map_new(48), cover_order: [], received: None };
 }
 
 function panel(revision: i64): ConfigPanel {
@@ -200,7 +211,7 @@ function tools(saved: listening.Saved): PlaybackTools {
 
 pub function start(): Model {
   let downloads = offline.empty(offline.Catalog { dir: "", entries: [], cleanup: [], note: "" });
-  return Model { client: "", token: "", refresh: "", reconnect: false, auth: [], storage: None, session_note: "", load_after_auth: false, players: [], cards: [], shelf: empty_shelf(), generation: 0i64, background_busy: false, cover_busy: false, selected: "", on_phone: false, phone: phone.empty(), playback_tools: tools(listening.empty()), now_playing: NowPlaying { revision: 0i64, requested: false, running: false, playback: None, note: "" }, config_panel: panel(0i64), downloads: downloads, offline_open: "", tab: 0, note: "", library_loaded: false, busy: false, open_login: false, flow: None, job: None };
+  return Model { client: "", token: "", refresh: "", reconnect: false, auth: [], storage: None, session_note: "", load_after_auth: false, players: [], cards: [], shelf: empty_shelf(), generation: 0i64, background_busy: false, cover_busy: false, selected: "", on_phone: false, phone: phone.empty(), playback_tools: tools(listening.empty()), now_playing: NowPlaying { revision: 0i64, requested: false, running: false, playback: None, note: "" }, config_panel: panel(0i64), downloads: downloads, offline_open: "", tab: 0, menu_open: false, note: "", library_loaded: false, busy: false, open_login: false, flow: None, job: None };
 }
 
 function signed_out(m: Model, note: string): Model {
@@ -306,9 +317,23 @@ function close_app(own m: Model, persist: (Option[api.Session]) => boolean): Mod
   return next;
 }
 
+function selected_group(shelf: Shelf): Option[api.Group] {
+  if (shelf.group.len() > 0) {
+    return shelf.groups.find((group: api.Group): boolean => group.id == shelf.group);
+  }
+  return None;
+}
+
+function reset_grid(shelf: Shelf): Shelf {
+  return Shelf { ...shelf, search_revision: shelf.search_revision + 1i64, first_art: 0, last_art: 0 };
+}
+
 function found(m: Model): Model {
   let shelf = m.shelf;
   let hits = search.find_in(m.cards, shelf.query, shelf.filter, shelf.search_scope);
+  if let Some(group) = selected_group(shelf) {
+    hits = hits.filter((hit: search.Hit): boolean => group.cards.contains(m.cards[hit.card].id));
+  }
   if (shelf.downloaded_only) {
     let ready: Map[string, boolean] = map_new(48);
     for entry in m.downloads.catalog.entries {
@@ -318,7 +343,7 @@ function found(m: Model): Model {
     }
     hits = hits.filter((hit: search.Hit): boolean => ready.contains(m.cards[hit.card].id));
   }
-  return Model { ...m, shelf: Shelf { ...shelf, hits: hits } };
+  return Model { ...m, shelf: Shelf { ...shelf, hits: search.sorted(hits, m.cards, shelf.by_title) } };
 }
 
 function card_index(m: Model, id: string): i32 {
@@ -467,25 +492,20 @@ function next_cover(m: Model): string {
 }
 
 function grid_name(shelf: Shelf): string {
-  let base = "library:" + shelf.filter.to_string();
-  if (shelf.downloaded_only) {
-    base += ":downloads";
-  }
-  if (shelf.query.trim().len() > 0) {
-    return base + ":search:" + shelf.search_revision.to_string() + ":" + shelf.search_scope.to_string();
-  }
-  return base;
+  return "library:" + shelf.search_revision.to_string();
 }
 
 pub function visible_posters(m: Model, screen: ui.Screen, layout: ui.Layout, input: ui.Input): Option[Msg] {
   let name = "";
   let cols = 1;
+  let grid = false;
   if (m.tab == 1) {
     if (m.shelf.opened.len() > 0) {
       name = "tracks:" + m.shelf.opened;
     } else {
       name = grid_name(m.shelf);
       cols = poster_columns(screen);
+      grid = true;
     }
   } else if (m.tab == 2 && m.offline_open.len() > 0) {
     name = "saved:" + m.offline_open;
@@ -494,11 +514,12 @@ pub function visible_posters(m: Model, screen: ui.Screen, layout: ui.Layout, inp
   }
   for list in layout.scrollers {
     if (list.name == name && list.row > 0) {
-      let at = input.offset(name).max(0).min(list.limit);
-      let first = at / list.row * cols;
-      let last = ((at + list.h + list.row - 1) / list.row + 1) * cols;
-      if (first != m.shelf.first_art || last != m.shelf.last_art) {
-        return Some(PostersVisible(first, last));
+      let (start, end) = list.visible_rows();
+      let first = start * cols;
+      let last = if (end > start) { (end + 1).min(list.count) * cols } else { first };
+      let pinned = if (grid) { list.pinned } else { m.shelf.pinned };
+      if (first != m.shelf.first_art || last != m.shelf.last_art || pinned != m.shelf.pinned) {
+        return Some(PostersVisible(first, last, pinned));
       }
     }
   }
@@ -697,6 +718,17 @@ function loaded(own m: Model, result: Result[api.Library, api.Failure]): Model {
   match (result) {
     Ok(library) => {
       let shelf = Shelf { ...m.shelf, next: 0, paused: "", attempted: map_new(64), note: library.note, opened: "" };
+      match (library.groups) {
+        Ok(groups) => {
+          shelf = Shelf { ...shelf, groups: groups, groups_note: "" };
+          if (shelf.group.len() > 0 && selected_group(shelf).is_none()) {
+            shelf = reset_grid(Shelf { ...shelf, group: "" });
+          }
+        },
+        Err(err) => {
+          shelf = Shelf { ...shelf, groups_note: err.message };
+        }
+      }
       let t = found(Model { ...m, players: library.players, cards: library.cards, shelf: shelf, library_loaded: true, busy: false, note: "" });
       if (!t.on_phone && selected(t).is_none()) {
         return request_playback(Model { ...t, selected: "" });
@@ -998,23 +1030,31 @@ pub function update(own m: Model, msg: Msg): Model {
       return prepare_background(m);
     },
     Search(query) => {
-      return found(Model { ...m, shelf: Shelf { ...m.shelf, query: query, search_revision: m.shelf.search_revision + 1i64, first_art: 0, last_art: 0 } });
+      return found(Model { ...m, shelf: reset_grid(Shelf { ...m.shelf, query: query }) });
     },
     Filter(filter) => {
-      return found(Model { ...m, shelf: Shelf { ...m.shelf, filter: filter, first_art: 0, last_art: 0 } });
+      return found(Model { ...m, shelf: reset_grid(Shelf { ...m.shelf, filter: filter }) });
+    },
+    ToggleGroups => {
+      return Model { ...m, shelf: Shelf { ...m.shelf, groups_open: !m.shelf.groups_open } };
+    },
+    FilterGroup(group) => {
+      return found(Model { ...m, shelf: reset_grid(Shelf { ...m.shelf, group: group }) });
+    },
+    ToggleSort => {
+      return found(Model { ...m, shelf: reset_grid(Shelf { ...m.shelf, by_title: !m.shelf.by_title }) });
     },
     DownloadedOnly => {
-      let shelf = m.shelf;
-      return found(Model { ...m, shelf: Shelf { ...shelf, downloaded_only: !shelf.downloaded_only, first_art: 0, last_art: 0 } });
+      return found(Model { ...m, shelf: reset_grid(Shelf { ...m.shelf, downloaded_only: !m.shelf.downloaded_only }) });
     },
     SearchScope(scope) => {
-      return found(Model { ...m, shelf: Shelf { ...m.shelf, search_scope: scope, first_art: 0, last_art: 0 } });
+      return found(Model { ...m, shelf: reset_grid(Shelf { ...m.shelf, search_scope: scope }) });
     },
-    PostersVisible(first, last) => {
-      return Model { ...m, shelf: Shelf { ...m.shelf, first_art: first, last_art: last } };
+    PostersVisible(first, last, pinned) => {
+      return Model { ...m, shelf: Shelf { ...m.shelf, first_art: first, last_art: last, pinned: pinned } };
     },
     OpenCard(id) => {
-      return Model { ...m, shelf: Shelf { ...m.shelf, opened: id, first_art: 0, last_art: 0 } };
+      return Model { ...m, menu_open: false, shelf: Shelf { ...m.shelf, opened: id, first_art: 0, last_art: 0 } };
     },
     CloseCard => {
       return Model { ...m, shelf: Shelf { ...m.shelf, opened: "", first_art: 0, last_art: 0 } };
@@ -1065,15 +1105,18 @@ pub function update(own m: Model, msg: Msg): Model {
         }
       }
     },
+    ToggleMenu => {
+      return Model { ...m, menu_open: !m.menu_open };
+    },
     Refresh => {
       if (!m.busy && m.token.len() > 0) {
-        return reload(m);
+        return reload(Model { ...m, menu_open: false });
       }
       return m;
     },
     SignOut => {
       if (!m.busy) {
-        return forget(m, "");
+        return forget(Model { ...m, menu_open: false }, "");
       }
       return m;
     },
@@ -1328,7 +1371,7 @@ pub function update(own m: Model, msg: Msg): Model {
       return Model { ...m, phone: phone.control(m.phone, command), playback_tools: PlaybackTools { ...m.playback_tools, sample: true } };
     },
     SelectTab(tab) => {
-      return Model { ...m, tab: tab, shelf: Shelf { ...m.shelf, first_art: 0, last_art: 0 } };
+      return Model { ...m, tab: tab, menu_open: false, shelf: Shelf { ...m.shelf, first_art: 0, last_art: 0 } };
     },
     Control(command) => {
       return control(m, command);
@@ -1806,7 +1849,7 @@ function poster(m: Model, hit: search.Hit, size: f64, caption_height: f64): ui.E
   return ui.column(items).width(size).background(ui.SURFACE).rounded(10.0);
 }
 
-function poster_grid(m: Model, screen: ui.Screen): ui.El[Msg] {
+function poster_grid(m: Model, screen: ui.Screen, before: ui.El[Msg], pinned: ui.El[Msg], after: ui.El[Msg]): ui.El[Msg] {
   let cols = poster_columns(screen);
   let gap = 12.0;
   let size = ((screen.width() - 32.0 - (cols - 1) as f64 * gap) / (cols as f64)).floor().max(1.0);
@@ -1820,7 +1863,7 @@ function poster_grid(m: Model, screen: ui.Screen): ui.El[Msg] {
       tiles = tiles.append(poster(m, m.shelf.hits[j], size, caption));
     }
     return ui.row(tiles).spaced(gap).wide();
-  });
+  }).sticky_header(before, pinned, after, m.shelf.pinned);
 }
 
 function track_command(id: string, track: api.Track): Option[api.Command] {
@@ -1999,19 +2042,81 @@ function library_status(m: Model, has_matches: boolean): string {
   return "";
 }
 
-function card_list(m: Model, screen: ui.Screen): ui.El[Msg] {
-  if let Some(card) = opened_card(m) {
-    return card_details(m, card, screen);
+function menu_icon(color: i32): (draw.Frame, i32, i32, i32, i32) => void {
+  return (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => {
+    let gap = h / 7;
+    for i in -1..2 {
+      f.disc(x + w / 2, y + h / 2 + i * gap, (w / 23).max(1), color);
+    }
+  };
+}
+
+function section_header(m: Model, name: string): ui.El[Msg] {
+  let title = ui.text[Msg](name).sized(27.0).weighted(700).wide();
+  let top = [title];
+  if (!m.busy) {
+    top = top.append(ui.tinted("account-menu", ui.INK, menu_icon).width(48.0).height(48.0).background(ui.SURFACE).rounded(14.0).on_tap(ToggleMenu).described("More options"));
   }
+  let items = [ui.row(top).aligned(ui.CENTER).wide()];
+  if (m.menu_open && !m.busy) {
+    let menu = ui.menu(["Refresh", "Sign out"], (at: i32): Msg => if (at == 0) { Refresh } else { SignOut }).width(160.0);
+    items = items.append(ui.row([ui.space(), menu]).wide());
+  }
+  for note in [m.note, m.session_note] {
+    if (note.len() > 0) {
+      items = items.append(ui.text(note).colored(ui.MUTED));
+    }
+  }
+  return ui.column(items).spaced(8.0).wide();
+}
+
+function collection_chip(label: string, selected: boolean, message: Msg): ui.El[Msg] {
+  let color = if (selected) { ui.ON_PRIMARY } else { ui.INK };
+  let text = ui.text[Msg](label).sized(13.0).weighted(600).colored(color).clamped(1);
+  let chip = ui.row([text]).centered().height(40.0).padding_xy(12.0, 0.0).rounded(20.0).on_tap(message).described(label);
+  if (selected) {
+    return chip.background(ui.PRIMARY);
+  }
+  return chip.border(ui.OUTLINE, 1.0);
+}
+
+function collection_filters(shelf: Shelf): ui.El[Msg] {
+  let choices = [("All", 0), ("My Cards", 1), ("Playlists", 2), ("Club Collection", search.CLUB), ("Sleep Sounds", search.SLEEP), ("Podcasts", 3), ("Radio", 4)];
+  let chips = choices.map((choice: (string, i32)): ui.El[Msg] => collection_chip(choice.0, shelf.filter == choice.1, Filter(choice.1)));
+  return ui.row(chips).spaced(8.0).wide().scroll("library-collections");
+}
+
+function group_filters(shelf: Shelf): ui.El[Msg] {
+  let title = "Groups";
+  if let Some(group) = selected_group(shelf) {
+    title += " · " + group.name;
+  }
+  let action = if (shelf.groups_open) { "Hide groups" } else { "Show groups" };
+  let items = [ui.row([ui.text[Msg](title).sized(15.0).weighted(600).clamped(1).wide(), ui.text_button(action, ToggleGroups)]).aligned(ui.CENTER)];
+  if (shelf.groups_open) {
+    if (shelf.groups_note.len() > 0) {
+      items = items.append(ui.text(shelf.groups_note).colored(ui.MUTED));
+    }
+    if (shelf.groups.len() > 0) {
+      let chips = [collection_chip("All groups", shelf.group.len() == 0, FilterGroup(""))];
+      for group in shelf.groups {
+        chips = chips.append(collection_chip(group.name, shelf.group == group.id, FilterGroup(group.id)));
+      }
+      items = items.append(ui.row(chips).spaced(8.0).wide().scroll("library-groups"));
+    } else if (shelf.groups_note.len() == 0) {
+      items = items.append(ui.text("No family groups.").colored(ui.MUTED));
+    }
+  }
+  return ui.column(items).spaced(6.0).wide();
+}
+
+function library_controls(m: Model): ui.El[Msg] {
   let target = "Select a player on the Players tab.";
   if (m.on_phone) {
     target = "Play on this phone";
   }
   if let Some(player) = selected(m) {
-    target = "Play on " + player.name;
-    if (!player.online) {
-      target = player.name + " is offline.";
-    }
+    target = if (player.online) { "Play on " + player.name } else { player.name + " is offline." };
   }
   let shelf = m.shelf;
   let downloaded = ui.row([
@@ -2019,10 +2124,7 @@ function card_list(m: Model, screen: ui.Screen): ui.El[Msg] {
     ui.text[Msg]("Downloaded only").on_tap(DownloadedOnly),
   ]).aligned(ui.CENTER);
   let searching = shelf.query.trim().len() > 0;
-  let fields: ui.El[Msg][] = [
-    ui.field("library-search", shelf.query, "Search titles, tracks and episodes").on_edit((text: string): Msg => Search(text)),
-    ui.tabs(["All", "Cards", "MYO", "Podcasts", "Radio"], shelf.filter, (at: i32): Msg => Filter(at)),
-  ];
+  let fields: ui.El[Msg][] = [];
   if (searching) {
     fields = fields.append(ui.tabs(["Matches", "Titles", "Chapters", "Tracks"], shelf.search_scope, (at: i32): Msg => SearchScope(at)));
   }
@@ -2038,13 +2140,20 @@ function card_list(m: Model, screen: ui.Screen): ui.El[Msg] {
   if (status.len() > 0) {
     fields = fields.append(ui.text(status).colored(ui.MUTED));
   }
-  if (shelf.hits.len() > 0) {
-    fields = fields.append(poster_grid(m, screen));
-  } else if (m.library_loaded) {
+  if (shelf.hits.len() == 0 && m.library_loaded) {
     let hint = if (shelf.downloaded_only) { "No downloaded cards in this view." } else if (searching) { "No matches in the current index." } else { "No titles in this view." };
     fields = fields.append(ui.text(hint).colored(ui.MUTED));
   }
-  return ui.column(fields).spaced(8.0).wide().tall();
+  return ui.column(fields).spaced(8.0).padding_xy(0.0, 8.0).wide();
+}
+
+function card_list(m: Model, screen: ui.Screen): ui.El[Msg] {
+  let before = ui.column([section_header(m, "Library"), group_filters(m.shelf), collection_filters(m.shelf)]).spaced(8.0).padding_xy(0.0, 8.0).wide();
+  let field = ui.field[Msg]("library-search", m.shelf.query, "Search library").rounded(12.0).on_edit((text: string): Msg => Search(text));
+  let label = if (m.shelf.by_title) { "A–Z" } else { "Last played" };
+  let sort = ui.text_button(label, ToggleSort).described("Sort order · " + label);
+  let pinned = ui.row([field, sort]).aligned(ui.CENTER).spaced(4.0).padding_xy(0.0, 6.0).background(ui.BACKGROUND).wide();
+  return poster_grid(m, screen, before, pinned, library_controls(m));
 }
 
 pub function view(m: Model, screen: ui.Screen): ui.El[Msg] {
@@ -2068,26 +2177,24 @@ pub function view(m: Model, screen: ui.Screen): ui.El[Msg] {
   if let Some(player) = m.config_panel.device {
     return settings_panel(m, player, screen);
   }
-  let top: ui.El[Msg][] = [title];
-  if (!m.busy) {
-    top = top.append(ui.text_button("Refresh", Refresh)).append(ui.text_button("Sign out", SignOut));
-  }
+  let tabs = ui.tabs(["Players", "Library", "Downloads", "Queue"], m.tab, (tab: i32): Msg => SelectTab(tab));
   let body = player_list(m);
+  let name = "Players";
   if (m.tab == 1) {
-    body = card_list(m, screen);
+    if let Some(card) = opened_card(m) {
+      body = card_details(m, card, screen);
+      name = "Library";
+    } else {
+      return ui.column([card_list(m, screen), tabs]).padding_xy(16.0, 0.0).wide().tall();
+    }
   } else if (m.tab == 2) {
     body = download_list(m);
+    name = "Downloads";
   } else if (m.tab == 3) {
     body = playback_queue(m);
+    name = "Queue";
   }
-  let items = [ui.row(top).aligned(ui.CENTER), ui.tabs(["Players", "Library", "Downloads", "Queue"], m.tab, (tab: i32): Msg => SelectTab(tab))];
-  if (m.note.len() > 0) {
-    items = items.append(ui.text(m.note).colored(ui.MUTED));
-  }
-  if (m.session_note.len() > 0) {
-    items = items.append(ui.text(m.session_note).colored(ui.MUTED));
-  }
-  return ui.column(items.append(body)).spaced(14.0).padding(16.0).wide().tall();
+  return ui.column([section_header(m, name), body, tabs]).spaced(12.0).padding_xy(16.0, 8.0).wide().tall();
 }
 
 function wait(m: Model): i32 {
@@ -2135,6 +2242,9 @@ function system(event: android.Event): Option[Msg] {
 
 pub function program(open_browser: (string) => boolean, decode: (u8[]) => Option[draw.Image], persist: (Option[api.Session]) => boolean, output: phone.Output, disk: offline.Output, store: (listening.Saved) => boolean): ui.Program[Model, Msg] {
   return ui.program(view, update).with_visible(visible_posters).with_system(system).with_effects((m: Model): Model => effects(m, open_browser, decode, persist, output, disk, store)).with_jobs(start_job).with_tick(wait, Msg.Tick).with_back((m: Model): Option[Msg] => {
+    if (m.menu_open) {
+      return Some(ToggleMenu);
+    }
     if (m.config_panel.device.is_some()) {
       if (m.config_panel.picker.is_some()) {
         return Some(BackToSettings);
