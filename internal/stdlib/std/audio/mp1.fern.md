@@ -115,6 +115,8 @@ pub function decode_raw(input: [u8], limits: pcm.Limits): Result[Decoded, pcm.Au
   let count = pcm.sample_count(384, channels, limits)?;
   let history = spectral.zeros(960);
   let frame = spectral.zeros(count);
+  let lines = spectral.zeros(1728);
+  let transform = spectral.zeros(128);
   let samples: f32[] = [];
   let at = 0;
   while (at < input.len()) {
@@ -126,7 +128,9 @@ pub function decode_raw(input: [u8], limits: pcm.Limits): Result[Decoded, pcm.Au
       return Err(pcm.Limit);
     }
     let bands = subbands(input[at:at + h.bytes], h)?;
-    let (next, output) = synthesis.granule12(history, bands, channels, frame, 0);
+    let (next, output, _, next_lines, next_transform) = synthesis.granule12_into(history, bands, channels, frame, 0, lines, transform);
+    lines = next_lines;
+    transform = next_transform;
     history = next;
     for sample in output {
       samples = samples.append(sample);
