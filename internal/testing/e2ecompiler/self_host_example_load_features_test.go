@@ -765,7 +765,9 @@ func loadH3Tests(t *testing.T, run loadRun, server string) {
 	if j.responses() != 200 || j.StatusCodeDistribution["200"] != 200 || len(j.ErrorDistribution) != 0 || j.Details.DNSDialup.Average == nil {
 		t.Errorf("--http-version 3: %d responses, %v, errors %v", j.responses(), j.StatusCodeDistribution, j.ErrorDistribution)
 	}
+	started := time.Now()
 	verified := summaryOf(t, run, "-n", "10", "-c", "1", "--http-version", "3", "--cacert", cert, url+"/missing")
+	verifiedTime := time.Since(started)
 	if verified.StatusCodeDistribution["404"] != 10 {
 		t.Errorf("--http-version 3 --cacert: %v, errors %v", verified.StatusCodeDistribution, verified.ErrorDistribution)
 	}
@@ -773,9 +775,12 @@ func loadH3Tests(t *testing.T, run loadRun, server string) {
 	if untrusted.responses() != 0 || len(untrusted.ErrorDistribution) == 0 {
 		t.Errorf("HTTP/3 with an untrusted certificate: %d responses", untrusted.responses())
 	}
-	timed := summaryOf(t, run, "-z", "300ms", "-c", "2", "-p", "3", "--http-version", "3", "--insecure", url+"/slow")
+	// The duration includes the handshake. Allow the two connections time
+	// to establish on this runner before the delayed responses arrive.
+	duration := 300*time.Millisecond + 2*verifiedTime
+	timed := summaryOf(t, run, "-z", fmt.Sprintf("%dms", duration.Milliseconds()), "-c", "2", "-p", "3", "--http-version", "3", "--insecure", url+"/slow")
 	if timed.responses() == 0 || len(timed.ErrorDistribution) != 0 {
-		t.Errorf("-z with HTTP/3: %d responses, errors %v", timed.responses(), timed.ErrorDistribution)
+		t.Errorf("-z %s with HTTP/3: %d responses, errors %v", duration, timed.responses(), timed.ErrorDistribution)
 	}
 	out, _, code := run(t, "--debug", "--http-version", "3", "--insecure", url+"/")
 	if code != 0 || !strings.Contains(out, "\nResponse {\n    status: 200,\n    version: HTTP/3.0,\n") {
