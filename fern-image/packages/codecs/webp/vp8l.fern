@@ -45,6 +45,51 @@ function symbol(input: [u8], c: Code, at: i64): u8 {
   return if ((input[(at / 8i64) as i32] as i32 >> (at % 8i64) as i32 & 1) == 0) { c.low } else { c.high };
 }
 
+struct Group { green: Code, red: Code, blue: Code, alpha: Code, stride: i32, start: i64 }
+
+function group(input: [u8], next: i64, flags_width: i32): Result[Group, DecodeError] {
+  let flags = field(input, next, flags_width)?;
+  if (flags.value != 0u64) {
+    return Err(Unsupported);
+  }
+  let (green, g) = code(input, flags.next, 280)?;
+  let (red, r) = code(input, g, 256)?;
+  let (blue, b) = code(input, r, 256)?;
+  let (alpha, a) = code(input, b, 256)?;
+  let (_, start) = code(input, a, 40)?;
+  return Ok(Group { green: green, red: red, blue: blue, alpha: alpha, stride: green.width + red.width + blue.width + alpha.width, start: start });
+}
+
+function literal(input: [u8], codes: Group, at: i64): pixels.Pixel {
+  let r = at + codes.green.width as i64;
+  let b = r + codes.red.width as i64;
+  let a = b + codes.blue.width as i64;
+  return pixels.Pixel { r: symbol(input, codes.red, r), g: symbol(input, codes.green, at), b: symbol(input, codes.blue, b), a: symbol(input, codes.alpha, a) };
+}
+
+function add_channel(a: u8, b: u8): u8 {
+  return (a as i32 + b as i32 & 255) as u8;
+}
+
+function read_palette(input: [u8], next: i64): Result[(pixels.Pixel[], i64), DecodeError] {
+  let size = field(input, next, 8)?;
+  let count = size.value as i32 + 1;
+  // An auxiliary image has a color-cache flag and no meta-prefix flag.
+  let codes = group(input, size.next, 1)?;
+  let end = codes.start + count as i64 * (codes.stride as i64);
+  if (end > input.len() as i64 * 8i64) {
+    return Err(Truncated);
+  }
+  let entries: pixels.Pixel[] = [];
+  let color = pixels.Pixel { r: 0, g: 0, b: 0, a: 0 };
+  for i in 0..count {
+    let d = literal(input, codes, codes.start + i as i64 * (codes.stride as i64));
+    color = pixels.Pixel { r: add_channel(color.r, d.r), g: add_channel(color.g, d.g), b: add_channel(color.b, d.b), a: add_channel(color.a, d.a) };
+    entries = entries.append(color);
+  }
+  return Ok((entries, end));
+}
+
 pub function decode_simple(input: [u8], limits: pixels.Limits, cancelled: () => boolean): Result[pixels.Image, DecodeError] {
   if (cancelled()) {
     return Err(Cancelled);
@@ -66,32 +111,32 @@ pub function decode_simple(input: [u8], limits: pixels.Limits, cancelled: () => 
     return Err(Limit);
   };
   let transform = field(input, version.next, 1)?;
-  let subtract_green = transform.value != 0u64;
+  let subtract_green = false;
+  let palette: pixels.Pixel[] = [];
   let next = transform.next;
-  if (subtract_green) {
+  if (transform.value != 0u64) {
     let kind = field(input, next, 2)?;
-    if (kind.value != 2u64) {
+    next = kind.next;
+    if (kind.value == 2u64) {
+      subtract_green = true;
+    } else if (kind.value == 3u64) {
+      let (entries, after) = read_palette(input, next)?;
+      palette = entries;
+      next = after;
+    } else {
       return Err(Unsupported);
     }
-    let more = field(input, kind.next, 1)?;
+    let more = field(input, next, 1)?;
     if (more.value != 0u64) {
       return Err(Unsupported);
     }
     next = more.next;
   }
-  // No color cache or spatially varying prefix-code groups.
-  let flags = field(input, next, 2)?;
-  if (flags.value != 0u64) {
-    return Err(Unsupported);
-  }
-  let (green, g) = code(input, flags.next, 280)?;
-  let (red, r) = code(input, g, 256)?;
-  let (blue, b) = code(input, r, 256)?;
-  let (alpha, a) = code(input, b, 256)?;
-  let (_, start) = code(input, a, 40)?;
-  let count = width * height;
-  let stride = green.width + red.width + blue.width + alpha.width;
-  let end = start + count as i64 * (stride as i64);
+  let codes = group(input, next, 2)?;
+  let packed = if (palette.len() == 0 || palette.len() > 16) { 1 } else if (palette.len() <= 2) { 8 } else if (palette.len() <= 4) { 4 } else { 2 };
+  let index_bits = 8 / packed;
+  let columns = (width + packed - 1) / packed;
+  let end = codes.start + columns as i64 * (height as i64) * (codes.stride as i64);
   let used = (end + 7i64) / 8i64;
   if (used > input.len() as i64) {
     return Err(Truncated);
@@ -100,23 +145,30 @@ pub function decode_simple(input: [u8], limits: pixels.Limits, cancelled: () => 
     return Err(Trailing);
   }
   let data = __alloc_u8(layout.bytes);
-  let at = start;
+  let at = codes.start;
   for y in 0..height {
     if (cancelled()) {
       return Err(Cancelled);
     }
-    for x in 0..width {
-      let i = y * layout.stride + x * 4;
-      let g_sample = symbol(input, green, at);
-      data = data.with(i + 1, g_sample);
-      let delta = if (subtract_green) { g_sample as i32 } else { 0 };
-      at += green.width as i64;
-      data = data.with(i, (symbol(input, red, at) as i32 + delta & 255) as u8);
-      at += red.width as i64;
-      data = data.with(i + 2, (symbol(input, blue, at) as i32 + delta & 255) as u8);
-      at += blue.width as i64;
-      data = data.with(i + 3, symbol(input, alpha, at));
-      at += alpha.width as i64;
+    for col in 0..columns {
+      let sample = literal(input, codes, at);
+      at += codes.stride as i64;
+      let color = sample;
+      if (subtract_green) {
+        color = pixels.Pixel { ...color, r: add_channel(color.r, color.g), b: add_channel(color.b, color.g) };
+      }
+      for sub in 0..packed {
+        let x = col * packed + sub;
+        if (x >= width) {
+          break;
+        }
+        if (palette.len() > 0) {
+          let idx = sample.g as i32 >> sub * index_bits & (1 << index_bits) - 1;
+          color = if (idx < palette.len()) { palette[idx] } else { pixels.Pixel { r: 0, g: 0, b: 0, a: 0 } };
+        }
+        let i = y * layout.stride + x * 4;
+        data = data.with(i, color.r).with(i + 1, color.g).with(i + 2, color.b).with(i + 3, color.a);
+      }
     }
   }
   return Ok(pixels.Image { layout: layout, data: data });
