@@ -13,7 +13,7 @@ function is_number(r: value.Interval, v: value.Value, n: i64): boolean {
 
 function malformed(): void {
   let r = value.Interval { low: 257, high: 320 };
-  let bad: value.Value[] = [value.unknown(), value.Value { factor: -1, offset: 0 as i64 }, value.Value { factor: 2, offset: 0 as i64 }, value.Value { factor: 0, offset: 4294967296 as i64 }, value.Value { factor: 0, offset: -(4294967296 as i64) }, value.Value { factor: 1, offset: 4294967295 as i64 }];
+  let bad: value.Value[] = [value.Value { factor: 1, offset: 0 as i64, residue: -1 }, value.unknown(), value.Value { factor: -1, offset: 0 as i64, residue: 0 }, value.Value { factor: 2, offset: 0 as i64, residue: 0 }, value.Value { factor: 0, offset: 4294967296 as i64, residue: 0 }, value.Value { factor: 0, offset: -(4294967296 as i64), residue: 0 }, value.Value { factor: 1, offset: 4294967295 as i64, residue: 0 }];
   for v in bad {
     require(!value.valid(r, v), "invalid expression");
     require(!value.valid(r, value.add(r, v, 0 as i64)), "invalid addition");

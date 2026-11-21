@@ -1,98 +1,56 @@
-// Register values, machine state and instructions shared by both string release proofs.
+// Register arithmetic, instruction dispatch and control flow for both string release proofs.
+import "./ssareleasestate" as shared;
+pub use "./ssareleasestate".{Word, State, initial, identity, numeric_half, same_word, write, pointer, extent, put};
+import "./ssaaffinehalf" as half;
+pub use "./ssaaffinehalf".{Half, token, same_half};
 import "./ssacondition" as condition;
 import "./ssacapacityisa" as isa;
 import "./ssastringvalue" as value;
 
-pub struct Half { kind: i32, identity: i32, part: i32, number: value.Value }
-
-pub struct Word { low: Half, high: Half }
-
-pub struct State { regs: Word[], cells: Half[], flags: condition.Flags, ok: boolean, zeros: i32, links: i32, slots: i32, call_return: i32, grown: boolean, family: i32, buffer_links: i32, buffer_slots: i32 }
-
-pub function token(kind: i32, identity: i32, part: i32): Half {
-  return Half { kind: kind, identity: identity, part: part, number: value.unknown() };
+pub function zero(r: value.Interval): half.Half {
+  return shared.numeric_half(value.number(r, 0 as i64));
 }
 
-pub function identity(kind: i32, id: i32): Word {
-  return Word { low: token(kind, id, 0), high: token(kind, id, 1) };
-}
-
-pub function numeric_half(v: value.Value): Half {
-  return Half { kind: 1, identity: 0, part: 0, number: v };
-}
-
-pub function zero(r: value.Interval): Half {
-  return numeric_half(value.number(r, 0 as i64));
-}
-
-pub function numeric(r: value.Interval, v: value.Value): Word {
+pub function numeric(r: value.Interval, v: value.Value): shared.Word {
   if (!value.valid(r, v)) {
-    return identity(0, 0);
+    return shared.identity(0, 0);
   }
   let lo = value.lower(r, v);
   let hi = value.upper(r, v);
-  let high = if (lo.high == hi.high) { numeric_half(value.number(r, hi.high)) } else { Half { kind: 1, identity: 0, part: 1, number: v } };
-  return Word { low: numeric_half(v), high: high };
+  let high = if (lo.high == hi.high) { shared.numeric_half(value.number(r, hi.high)) } else { half.Half { kind: 1, identity: 0, part: 1, number: v } };
+  return shared.Word { low: shared.numeric_half(v), high: high };
 }
 
-pub function number(r: value.Interval, w: Word, width: i32): value.Value {
+pub function number(r: value.Interval, w: shared.Word, width: i32): value.Value {
   if (w.low.kind != 1 || w.low.part != 0 || !value.valid(r, w.low.number)) {
     return value.unknown();
   }
   if (width == 32) {
     return value.zero32(r, w.low.number);
   }
-  return if (same_word(w, numeric(r, w.low.number))) { w.low.number } else { value.unknown() };
+  return if (shared.same_word(w, numeric(r, w.low.number))) { w.low.number } else { value.unknown() };
 }
 
-pub function same_half(a: Half, b: Half): boolean {
-  return a.kind == b.kind && a.identity == b.identity && a.part == b.part && a.number.factor == b.number.factor && a.number.offset == b.number.offset && a.number.residue == b.number.residue;
+pub function narrowed(r: value.Interval, w: shared.Word, width: i32): shared.Word {
+  return if (width == 32) { shared.Word { low: w.low, high: zero(r) } } else { w };
 }
 
-pub function same_word(a: Word, b: Word): boolean {
-  return same_half(a.low, b.low) && same_half(a.high, b.high);
-}
-
-pub function write(s: State, reg: i32, w: Word): State {
-  return State { ...s, regs: s.regs.with(reg, w), ok: s.ok && w.low.kind != 0 && w.high.kind != 0 };
-}
-
-pub function narrowed(r: value.Interval, w: Word, width: i32): Word {
-  return if (width == 32) { Word { low: w.low, high: zero(r) } } else { w };
-}
-
-pub function pointer(w: Word, kind: i32): boolean {
-  return w.low.kind == kind && same_word(w, identity(kind, w.low.identity));
-}
-
-pub function extent(at: i64, low: i32, high: i32, width: i32): boolean {
-  return (width == 32 || width == 64) && at >= low as i64 && at + (width / 8) as i64 <= high as i64 && at % (4 as i64) == 0;
-}
-
-pub function read(s: State, r: value.Interval, at: i32, width: i32): Word {
+pub function read(s: shared.State, r: value.Interval, at: i32, width: i32): shared.Word {
   if (at < 0) {
-    return identity(0, 0);
+    return shared.identity(0, 0);
   }
-  return Word { low: s.cells[at], high: if (width == 64) { s.cells[at + 1] } else { zero(r) } };
+  return shared.Word { low: s.cells[at], high: if (width == 64) { s.cells[at + 1] } else { zero(r) } };
 }
 
-pub function put(s: State, at: i32, width: i32, w: Word): State {
-  let cells = s.cells.with(at, w.low);
-  if (width == 64) {
-    cells = cells.with(at + 1, w.high);
-  }
-  return State { ...s, cells: cells };
-}
-
-pub function arithmetic(s: State, r: value.Interval, op: isa.Op): State {
+pub function arithmetic(s: shared.State, r: value.Interval, op: isa.Op): shared.State {
   let a = number(r, s.regs[op.destination], op.width);
   let b = if (op.source < 0) { value.number(r, op.immediate as i64) } else { number(r, s.regs[op.source], op.width) };
   if (!value.valid(r, b) || b.factor != 0 || b.residue != 0) {
-    return State { ...s, ok: false };
+    return shared.State { ...s, ok: false };
   }
   let v = value.add(r, a, if (op.kind == 9) { -b.offset } else { b.offset });
   let result = if (op.width == 32) { value.zero32(r, v) } else { v };
-  return write(State { ...s, flags: condition.unknown_flags() }, op.destination, numeric(r, result));
+  return shared.write(shared.State { ...s, flags: condition.unknown_flags() }, op.destination, numeric(r, result));
 }
 
 pub function positive_signed(r: value.Interval, v: value.Value, width: i32): boolean {
@@ -103,69 +61,69 @@ pub function positive_signed(r: value.Interval, v: value.Value, width: i32): boo
   return if (width == 32) { high.high == 0 && high.low <= 2147483647 as i64 } else { high.high <= 2147483647 as i64 };
 }
 
-pub function byte_test(s: State, op: isa.Op): State {
+pub function byte_test(s: shared.State, op: isa.Op): shared.State {
   let w = s.regs[op.source];
-  if (!pointer(w, 6) || op.immediate > 7) {
-    return State { ...s, flags: condition.unknown_flags() };
+  if (!shared.pointer(w, 6) || op.immediate > 7) {
+    return shared.State { ...s, flags: condition.unknown_flags() };
   }
   let low = (w.low.identity % 8 + 8) % 8;
   let eq = if ((low & op.immediate) == 0) { 1 } else { 0 };
   let cmp = condition.Comparison { less: 0, equal: eq, less_equal: eq };
-  return State { ...s, flags: condition.Flags { order: cmp, signed: cmp, sign: 0 } };
+  return shared.State { ...s, flags: condition.Flags { order: cmp, signed: cmp, sign: 0 } };
 }
 
-pub function shift(s: State, r: value.Interval, op: isa.Op): State {
+pub function shift(s: shared.State, r: value.Interval, op: isa.Op): shared.State {
   let count = op.immediate % op.width;
   if (count == 0) {
-    return write(s, op.destination, narrowed(r, s.regs[op.destination], op.width));
+    return shared.write(s, op.destination, narrowed(r, s.regs[op.destination], op.width));
   }
   if (op.width != 64 || count != 3) {
-    return State { ...s, ok: false };
+    return shared.State { ...s, ok: false };
   }
-  return write(State { ...s, flags: condition.unknown_flags() }, op.destination, numeric(r, value.shift_three(r, number(r, s.regs[op.destination], 64))));
+  return shared.write(shared.State { ...s, flags: condition.unknown_flags() }, op.destination, numeric(r, value.shift_three(r, number(r, s.regs[op.destination], 64))));
 }
 
 pub struct Instructions {
-  address: (State, value.Interval, isa.Op) => i32,
-  heap_store: (State, value.Interval, i32, i32, Word) => State,
-  stack_step: (State, value.Interval, isa.Op) => State,
-  pointer_lea: (State, isa.Op) => State,
-  comparison: (State, value.Interval, isa.Op) => State,
-  test: (State, value.Interval, isa.Op) => State,
-  dependency_call: (State, value.Interval, i32, isa.Op) => State,
-  heap_operation: (State, value.Interval, isa.Op) => State,
+  address: (shared.State, value.Interval, isa.Op) => i32,
+  heap_store: (shared.State, value.Interval, i32, i32, shared.Word) => shared.State,
+  stack_step: (shared.State, value.Interval, isa.Op) => shared.State,
+  pointer_lea: (shared.State, isa.Op) => shared.State,
+  comparison: (shared.State, value.Interval, isa.Op) => shared.State,
+  test: (shared.State, value.Interval, isa.Op) => shared.State,
+  dependency_call: (shared.State, value.Interval, i32, isa.Op) => shared.State,
+  heap_operation: (shared.State, value.Interval, isa.Op) => shared.State,
 }
 
-pub function store(s: State, r: value.Interval, at: i32, width: i32, w: Word, heap_store: (State, value.Interval, i32, i32, Word) => State): State {
+pub function store(s: shared.State, r: value.Interval, at: i32, width: i32, w: shared.Word, heap_store: (shared.State, value.Interval, i32, i32, shared.Word) => shared.State): shared.State {
   if (at >= 6 && at + width / 32 <= 16) {
-    return put(s, at, width, w);
+    return shared.put(s, at, width, w);
   }
   return heap_store(s, r, at, width, w);
 }
 
-function movement(s: State, r: value.Interval, op: isa.Op, ops: Instructions): State {
+function movement(s: shared.State, r: value.Interval, op: isa.Op, ops: Instructions): shared.State {
   return match (op.kind) {
-    2 => write(s, op.destination, narrowed(r, s.regs[op.source], op.width)),
-    3 => write(s, op.destination, read(s, r, ops.address(s, r, op), op.width)),
+    2 => shared.write(s, op.destination, narrowed(r, s.regs[op.source], op.width)),
+    3 => shared.write(s, op.destination, read(s, r, ops.address(s, r, op), op.width)),
     4 => store(s, r, ops.address(s, r, op), op.width, s.regs[op.source], ops.heap_store),
-    5 => write(s, op.destination, narrowed(r, numeric(r, value.number(r, op.immediate as i64)), op.width)),
+    5 => shared.write(s, op.destination, narrowed(r, numeric(r, value.number(r, op.immediate as i64)), op.width)),
     _ => ops.stack_step(s, r, op),
   };
 }
 
-function lea(s: State, r: value.Interval, op: isa.Op, ops: Instructions): State {
+function lea(s: shared.State, r: value.Interval, op: isa.Op, ops: Instructions): shared.State {
   if (op.base < 0 && op.index >= 0 && op.scale == 8) {
-    return write(s, op.destination, numeric(r, value.add(r, value.times_eight(r, number(r, s.regs[op.index], 64)), op.offset as i64)));
+    return shared.write(s, op.destination, numeric(r, value.add(r, value.times_eight(r, number(r, s.regs[op.index], 64)), op.offset as i64)));
   }
   if (op.base < 0 || op.index >= 0) {
-    return State { ...s, ok: false };
+    return shared.State { ...s, ok: false };
   }
   return ops.pointer_lea(s, op);
 }
 
-function extended(s: State, r: value.Interval, pc: i32, op: isa.Op, ops: Instructions): State {
+function extended(s: shared.State, r: value.Interval, pc: i32, op: isa.Op, ops: Instructions): shared.State {
   if (op.kind == 19 && op.symbol == "__fern_freelist" && op.width == 64) {
-    return write(s, op.destination, identity(7, 0));
+    return shared.write(s, op.destination, shared.identity(7, 0));
   }
   if (op.kind == 22) {
     return store(s, r, ops.address(s, r, op), op.width, numeric(r, value.number(r, op.immediate as i64)), ops.heap_store);
@@ -182,10 +140,10 @@ function extended(s: State, r: value.Interval, pc: i32, op: isa.Op, ops: Instruc
   if (op.kind == 25) {
     return ops.dependency_call(s, r, pc, op);
   }
-  return State { ...s, ok: false };
+  return shared.State { ...s, ok: false };
 }
 
-function step(s: State, r: value.Interval, pc: i32, op: isa.Op, ops: Instructions): State {
+function step(s: shared.State, r: value.Interval, pc: i32, op: isa.Op, ops: Instructions): shared.State {
   if (op.kind == 1) {
     return s;
   }
@@ -213,7 +171,7 @@ function in_program(p: isa.ArrayProgram, pc: i32): boolean {
 
 // Both string representations follow the same control flow; their entry, instruction
 // and return checks decide which changes to registers and storage are permitted.
-pub function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean, s: State, unguarded: (State, State, value.Interval) => State, ops: Instructions, finished: (State, value.Interval, boolean) => boolean): boolean {
+pub function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean, s: shared.State, unguarded: (shared.State, shared.State, value.Interval) => shared.State, ops: Instructions, finished: (shared.State, value.Interval, boolean) => boolean): boolean {
   let original = s;
   let visited: boolean[] = [];
   for op in p.ops {

@@ -36,7 +36,7 @@ function initial(r: value.Interval, register_entry: boolean, grown: boolean): ma
     let held = machine.numeric(r, value.words(r));
     cells = cells.append(held.low).append(held.high);
   }
-  return machine.State { regs: regs, cells: cells, flags: condition.unknown_flags(), ok: true, zeros: 0, links: 0, slots: 0, call_return: -1, grown: grown, family: 0, buffer_links: 0, buffer_slots: 0 };
+  return machine.initial(regs, cells, grown, 0);
 }
 
 function simple_address(w: machine.Word, offset: i32, width: i32, grown: boolean): i32 {

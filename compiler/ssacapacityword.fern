@@ -36,7 +36,7 @@ pub function number(r: value.Interval, w: machine.Word, width: i32): value.Value
     return w.low.number;
   }
   if (w.high.number.offset == 4294967295 as i64) {
-    let v = value.Value { factor: w.low.number.factor, offset: w.low.number.offset - 4294967296 as i64 };
+    let v = value.Value { factor: w.low.number.factor, offset: w.low.number.offset - 4294967296 as i64, residue: 0 };
     return if (value.valid(r, v)) { v } else { value.unknown() };
   }
   return value.unknown();

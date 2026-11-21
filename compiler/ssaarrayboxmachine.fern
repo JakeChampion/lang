@@ -35,7 +35,7 @@ function initial(capacity: i32, hit: boolean): machine.State {
     writes = writes.append(0);
     i += 1;
   }
-  return machine.State { regs: regs, memory: memory, writes: writes, calls: 0, successor: -1, zero: -1, carry: -1, ok: true };
+  return machine.initial_state(regs, memory, writes);
 }
 
 function words(s: machine.State): i32 {
@@ -132,7 +132,7 @@ function load_at(s: machine.State, at: i32, width: i32, reg: i32): machine.State
   if (at < 0) {
     return machine.State { ...s, ok: false };
   }
-  return machine.write(s, reg, machine.loaded(s, at, width));
+  return machine.write(s, reg, machine.load(s, at, width));
 }
 
 function push(s: machine.State, w: machineword.Word): machine.State {
@@ -151,14 +151,14 @@ function stack_step(s: machine.State, op: isa.Op): machine.State {
   }
   if (op.kind == 32) {
     let at = cell(s, s.regs[op.base], op.offset, 64);
-    return if (at < 0) { machine.State { ...s, ok: false } } else { push(s, machine.loaded(s, at, 64)) };
+    return if (at < 0) { machine.State { ...s, ok: false } } else { push(s, machine.load(s, at, 64)) };
   }
   let at = cell(s, sp, 0, 64);
   if (at < 0) {
     return machine.State { ...s, ok: false };
   }
   let advanced = machine.write(s, 4, machine.displaced(sp, 8));
-  return if (op.kind == 7) { machine.write(advanced, op.destination, machine.loaded(s, at, 64)) } else { store_at(advanced, cell(advanced, advanced.regs[op.base], op.offset, 64), 64, machine.loaded(s, at, 64)) };
+  return if (op.kind == 7) { machine.write(advanced, op.destination, machine.load(s, at, 64)) } else { store_at(advanced, cell(advanced, advanced.regs[op.base], op.offset, 64), 64, machine.load(s, at, 64)) };
 }
 
 // `__fern_alloc` takes the size in bytes. `.Lalloc_fast_miss`, its entry

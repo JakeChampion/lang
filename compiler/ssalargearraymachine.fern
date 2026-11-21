@@ -42,7 +42,7 @@ function initial(r: value.Interval, register_entry: boolean): machine.State {
   let cells: machine.Half[] = [machine.numeric_half(value.capacity(r)), machine.token(5, 1, 0), machine.numeric_half(value.number(r, 1 as i64)), machine.token(5, 3, 0), machine.token(5, 4, 0), machine.token(5, 5, 0), machine.token(4, 0, 0), machine.token(4, 0, 1)];
   let argument = if (register_entry) { machine.identity(5, 8) } else { machine.identity(6, 0) };
   cells = cells.append(argument.low).append(argument.high).append(machine.token(8, 0, 0)).append(machine.token(8, 0, 1));
-  return machine.State { regs: regs, cells: cells, flags: condition.unknown_flags(), ok: true, zeros: 0, links: 0, slots: 0, call_return: -1 };
+  return machine.initial(regs, cells, false, 0);
 }
 
 function narrowed(r: value.Interval, w: machine.Word, width: i32): machine.Word {

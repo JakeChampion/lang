@@ -7,5 +7,5 @@ pub function token(kind: i32, identity: i32, part: i32): Half {
 }
 
 pub function same_half(a: Half, b: Half): boolean {
-  return a.kind == b.kind && a.identity == b.identity && a.part == b.part && a.number.factor == b.number.factor && a.number.offset == b.number.offset;
+  return a.kind == b.kind && a.identity == b.identity && a.part == b.part && a.number.factor == b.number.factor && a.number.offset == b.number.offset && a.number.residue == b.number.residue;
 }

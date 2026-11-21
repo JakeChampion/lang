@@ -1,3 +1,5 @@
+import "./ssaaffinevalue" as affine;
+pub use "./ssaaffinevalue".{Value, unknown};
 import "./ssacondition" as condition;
 pub use "./ssacondition".{Comparison};
 import "./ssacapacityvalue" as small;
@@ -5,13 +7,7 @@ import "./ssalargepushranges" as large;
 
 pub struct Interval { low: i64, high: i64, min_residue: i32, max_residue: i32 }
 
-pub struct Value { factor: i32, offset: i64, residue: i32 }
-
 pub struct Parts { low: i64, high: i64, valid: boolean }
-
-pub function unknown(): Value {
-  return Value { factor: -1, offset: 0 as i64, residue: 0 };
-}
 
 pub function valid_interval(r: Interval): boolean {
   return r.low >= 0 && r.low <= r.high && r.high <= 2305843009213693948 as i64 && r.min_residue >= 0 && r.min_residue <= r.max_residue && r.max_residue <= 7 && (r.low > 0 || r.max_residue == 0);
@@ -21,7 +17,7 @@ function bounded(n: i64): boolean {
   return n >= -(4294967295 as i64) && n <= 4294967295 as i64;
 }
 
-function shape(v: Value): boolean {
+function shape(v: affine.Value): boolean {
   return (v.factor == 0 || v.factor == 1 || v.factor == 8) && bounded(v.offset) && (v.residue == 0 || v.residue == -1);
 }
 
@@ -35,7 +31,7 @@ function normalize(low: i64, high: i64): Parts {
   return Parts { low: low - carry * (4294967296 as i64), high: h, valid: h >= 0 && h <= 4294967295 as i64 };
 }
 
-function endpoint(v: Value, w: i64, d: i32): Parts {
+function endpoint(v: affine.Value, w: i64, d: i32): Parts {
   let extra = v.offset + v.residue as i64 * (d as i64);
   if (v.factor == 8) {
     return normalize(w % (536870912 as i64) * (8 as i64) + extra, w / (536870912 as i64));
@@ -44,70 +40,70 @@ function endpoint(v: Value, w: i64, d: i32): Parts {
   return normalize(n % (4294967296 as i64), n / (4294967296 as i64));
 }
 
-pub function valid(r: Interval, v: Value): boolean {
+pub function valid(r: Interval, v: affine.Value): boolean {
   if (!valid_interval(r) || !shape(v)) {
     return false;
   }
   return endpoint(v, r.low, r.max_residue).valid && endpoint(v, r.high, r.min_residue).valid;
 }
 
-function checked(r: Interval, v: Value): Value {
-  return if (valid(r, v)) { v } else { unknown() };
+function checked(r: Interval, v: affine.Value): affine.Value {
+  return if (valid(r, v)) { v } else { affine.unknown() };
 }
 
-pub function number(r: Interval, n: i64): Value {
-  return checked(r, Value { factor: 0, offset: n, residue: 0 });
+pub function number(r: Interval, n: i64): affine.Value {
+  return checked(r, affine.Value { factor: 0, offset: n, residue: 0 });
 }
 
-pub function words(r: Interval): Value {
-  return checked(r, Value { factor: 1, offset: 0 as i64, residue: 0 });
+pub function words(r: Interval): affine.Value {
+  return checked(r, affine.Value { factor: 1, offset: 0 as i64, residue: 0 });
 }
 
-pub function length(r: Interval): Value {
-  return checked(r, Value { factor: 8, offset: 0 as i64, residue: -1 });
+pub function length(r: Interval): affine.Value {
+  return checked(r, affine.Value { factor: 8, offset: 0 as i64, residue: -1 });
 }
 
-pub function add(r: Interval, v: Value, n: i64): Value {
+pub function add(r: Interval, v: affine.Value, n: i64): affine.Value {
   if (!valid(r, v) || !bounded(n)) {
-    return unknown();
+    return affine.unknown();
   }
-  return checked(r, Value { ...v, offset: v.offset + n });
+  return checked(r, affine.Value { ...v, offset: v.offset + n });
 }
 
-pub function times_eight(r: Interval, v: Value): Value {
+pub function times_eight(r: Interval, v: affine.Value): affine.Value {
   if (!valid(r, v) || v.factor != 0 && v.factor != 1 || v.residue != 0) {
-    return unknown();
+    return affine.unknown();
   }
-  return checked(r, Value { factor: v.factor * 8, offset: v.offset * (8 as i64), residue: 0 });
+  return checked(r, affine.Value { factor: v.factor * 8, offset: v.offset * (8 as i64), residue: 0 });
 }
 
-pub function shift_three(r: Interval, v: Value): Value {
+pub function shift_three(r: Interval, v: affine.Value): affine.Value {
   if (!valid(r, v) || v.factor != 8) {
-    return unknown();
+    return affine.unknown();
   }
   let low = floor_div(v.offset + v.residue as i64 * (r.max_residue as i64), 8 as i64);
   let high = floor_div(v.offset + v.residue as i64 * (r.min_residue as i64), 8 as i64);
-  return if (low == high) { checked(r, Value { factor: 1, offset: low, residue: 0 }) } else { unknown() };
+  return if (low == high) { checked(r, affine.Value { factor: 1, offset: low, residue: 0 }) } else { affine.unknown() };
 }
 
-pub function lower(r: Interval, v: Value): Parts {
+pub function lower(r: Interval, v: affine.Value): Parts {
   return if (valid(r, v)) { endpoint(v, r.low, r.max_residue) } else { Parts { low: 0 as i64, high: 0 as i64, valid: false } };
 }
 
-pub function upper(r: Interval, v: Value): Parts {
+pub function upper(r: Interval, v: affine.Value): Parts {
   return if (valid(r, v)) { endpoint(v, r.high, r.min_residue) } else { Parts { low: 0 as i64, high: 0 as i64, valid: false } };
 }
 
-pub function point(r: Interval, v: Value, w: i64, d: i32): Parts {
+pub function point(r: Interval, v: affine.Value, w: i64, d: i32): Parts {
   if (!valid(r, v) || w < r.low || w > r.high || d < r.min_residue || d > r.max_residue) {
     return Parts { low: 0 as i64, high: 0 as i64, valid: false };
   }
   return endpoint(v, w, d);
 }
 
-pub function zero32(r: Interval, v: Value): Value {
+pub function zero32(r: Interval, v: affine.Value): affine.Value {
   let hi = upper(r, v);
-  return if (hi.valid && hi.high == 0) { v } else { unknown() };
+  return if (hi.valid && hi.high == 0) { v } else { affine.unknown() };
 }
 
 function below(p: Parts, n: i64): boolean {
@@ -118,7 +114,7 @@ function equal(p: Parts, n: i64): boolean {
   return p.high == 0 && p.low == n;
 }
 
-pub function compare(r: Interval, v: Value, n: i64): condition.Comparison {
+pub function compare(r: Interval, v: affine.Value, n: i64): condition.Comparison {
   let lo = lower(r, v);
   let hi = upper(r, v);
   if (!lo.valid || !hi.valid || n < 0 || n > 4294967295 as i64) {
@@ -195,19 +191,19 @@ pub function expected_class(r: Interval, fused: boolean): i32 {
   return if (low == class_at(r.high, fused, bins)) { low } else { -1 };
 }
 
-pub function expected_small(r: Interval, fused: boolean): Value {
+pub function expected_small(r: Interval, fused: boolean): affine.Value {
   if (!valid_interval(r) || expected_class(r, fused) != -3) {
-    return unknown();
+    return affine.unknown();
   }
   let extra = extra_words(fused);
   let lo = r.low + extra;
   if (lo < 1) {
-    return unknown();
+    return affine.unknown();
   }
   let s = small.Interval { low: lo as i32, high: (r.high + extra) as i32 };
   let v = small.expected(s);
   if (!small.valid(s, v)) {
-    return unknown();
+    return affine.unknown();
   }
-  return checked(r, Value { factor: v.factor, offset: v.offset + v.factor as i64 * extra, residue: 0 });
+  return checked(r, affine.Value { factor: v.factor, offset: v.offset + v.factor as i64 * extra, residue: 0 });
 }

@@ -28,7 +28,7 @@ function initial(request: i32): machine.State {
     memory = memory.append(if (i % 2 == 0) { w.low } else { w.high });
     writes = writes.append(0);
   }
-  return machine.State { regs: regs, memory: memory, choice: 0, writes: writes, zero: -1, carry: -1, sign: -1, overflow: -1, bounded: false, mappings: 0, advised: false, ok: true };
+  return machine.initial_state(regs, memory, writes);
 }
 
 function cell(base: machineword.Word, offset: i64, width: i32, request: i32): i32 {

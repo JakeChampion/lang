@@ -42,7 +42,7 @@ function initial(words: i32, register_entry: boolean): machine.State {
     writes = writes.append(0);
     i += 1;
   }
-  return machine.State { regs: regs, memory: memory, writes: writes, calls: 0, successor: -1, zero: -1, carry: -1, ok: true };
+  return machine.initial_state(regs, memory, writes);
 }
 
 function pointer(w: machineword.Word): boolean {
@@ -88,7 +88,7 @@ function load_at(s: machine.State, at: i32, width: i32, reg: i32): machine.State
   if (at < 0 || s.memory[at].kind == 11 || width == 64 && s.memory[at + 1].kind == 11) {
     return machine.State { ...s, ok: false };
   }
-  return machine.write(s, reg, machine.loaded(s, at, width));
+  return machine.write(s, reg, machine.load(s, at, width));
 }
 
 function stack_step(s: machine.State, op: isa.Op): machine.State {

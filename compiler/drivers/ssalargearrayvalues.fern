@@ -13,7 +13,7 @@ function same(a: value.Value, b: value.Value): boolean {
 
 function invalid(): void {
   let r = value.Interval { low: 65533 as i64, high: 4294967295 as i64 };
-  let bad: value.Value[] = [value.unknown(), value.Value { factor: 2, offset: 0 as i64 }, value.Value { factor: 2147483647, offset: 0 as i64 }, value.Value { factor: 0, offset: -(9223372036854775807 as i64) }, value.Value { factor: 0, offset: 9223372036854775807 as i64 }, value.Value { factor: 1, offset: -(65534 as i64) }, value.Value { factor: 8, offset: 25 as i64 }];
+  let bad: value.Value[] = [value.Value { factor: 1, offset: 0 as i64, residue: -1 }, value.unknown(), value.Value { factor: 2, offset: 0 as i64, residue: 0 }, value.Value { factor: 2147483647, offset: 0 as i64, residue: 0 }, value.Value { factor: 0, offset: -(9223372036854775807 as i64), residue: 0 }, value.Value { factor: 0, offset: 9223372036854775807 as i64, residue: 0 }, value.Value { factor: 1, offset: -(65534 as i64), residue: 0 }, value.Value { factor: 8, offset: 25 as i64, residue: 0 }];
   for v in bad {
     require(!value.valid(r, v), "invalid value");
     require(!value.valid(r, value.add(r, v, 0 as i64)) && !value.valid(r, value.times_eight(r, v)), "invalid arithmetic");

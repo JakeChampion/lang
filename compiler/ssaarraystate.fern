@@ -1,101 +1,67 @@
-// Machine state and control flow for the small and large array release proofs.
+// Instruction dispatch and control flow for the small and large array release proofs.
+import "./ssareleasestate" as shared;
+pub use "./ssareleasestate".{Word, State, initial, identity, numeric_half, same_word, write, pointer, extent, put};
 import "./ssacondition" as condition;
 import "./ssacapacityisa" as isa;
 import "./ssaaffinevalue" as affine;
 import "./ssaaffinehalf" as half;
 pub use "./ssaaffinehalf".{Half, token, same_half};
 
-pub struct Word { low: half.Half, high: half.Half }
-
-pub struct State { regs: Word[], cells: half.Half[], flags: condition.Flags, ok: boolean, zeros: i32, links: i32, slots: i32, call_return: i32 }
-
-pub function identity(kind: i32, id: i32): Word {
-  return Word { low: half.token(kind, id, 0), high: half.token(kind, id, 1) };
-}
-
-pub function numeric_half(v: affine.Value): half.Half {
-  return half.Half { kind: 1, identity: 0, part: 0, number: v };
-}
-
-pub function same_word(a: Word, b: Word): boolean {
-  return half.same_half(a.low, b.low) && half.same_half(a.high, b.high);
-}
-
-pub function write(s: State, reg: i32, w: Word): State {
-  return State { ...s, regs: s.regs.with(reg, w), ok: s.ok && w.low.kind != 0 && w.high.kind != 0 };
-}
-
-pub function pointer(w: Word, kind: i32): boolean {
-  return w.low.kind == kind && same_word(w, identity(kind, w.low.identity));
-}
-
-pub function extent(at: i64, low: i32, high: i32, width: i32): boolean {
-  return (width == 32 || width == 64) && at >= low as i64 && at + (width / 8) as i64 <= high as i64 && at % (4 as i64) == 0;
-}
-
-pub function put(s: State, at: i32, width: i32, w: Word): State {
-  let cells = s.cells.with(at, w.low);
-  if (width == 64) {
-    cells = cells.with(at + 1, w.high);
-  }
-  return State { ...s, cells: cells };
-}
-
 function in_program(p: isa.ArrayProgram, pc: i32): boolean {
   return pc >= 0 && pc < p.ops.len();
 }
 
 pub struct Instructions {
-  movement: (State, affine.Interval, isa.Op) => State,
-  arithmetic: (State, affine.Interval, isa.Op) => State,
-  lea: (State, affine.Interval, isa.Op) => State,
-  number: (affine.Interval, Word, i32) => affine.Value,
+  movement: (shared.State, affine.Interval, isa.Op) => shared.State,
+  arithmetic: (shared.State, affine.Interval, isa.Op) => shared.State,
+  lea: (shared.State, affine.Interval, isa.Op) => shared.State,
+  number: (affine.Interval, shared.Word, i32) => affine.Value,
   nonnegative: (affine.Interval, affine.Value) => boolean,
   compare: (affine.Interval, affine.Value, i64) => condition.Comparison,
-  extended: (State, affine.Interval, i32, isa.Op) => State,
+  extended: (shared.State, affine.Interval, i32, isa.Op) => shared.State,
 }
 
-function comparison(s: State, r: affine.Interval, op: isa.Op, ops: Instructions): State {
+function comparison(s: shared.State, r: affine.Interval, op: isa.Op, ops: Instructions): shared.State {
   let w = s.regs[op.source];
-  if (op.width == 64 && same_word(w, identity(6, 0)) && op.immediate == 65536) {
+  if (op.width == 64 && shared.same_word(w, shared.identity(6, 0)) && op.immediate == 65536) {
     let f = condition.Comparison { less: 0, equal: -1, less_equal: -1 };
-    return State { ...s, flags: condition.Flags { order: f, signed: condition.unknown_order(), sign: 0 } };
+    return shared.State { ...s, flags: condition.Flags { order: f, signed: condition.unknown_order(), sign: 0 } };
   }
   let v = ops.number(r, w, op.width);
   if (!ops.nonnegative(r, v) || op.immediate < 0) {
-    return State { ...s, flags: condition.unknown_flags() };
+    return shared.State { ...s, flags: condition.unknown_flags() };
   }
   let order = ops.compare(r, v, op.immediate as i64);
   let high = v.factor as i64 * (r.high as i64) + v.offset;
   let signed = if (high <= 2147483647 as i64) { order } else { condition.unknown_order() };
-  return State { ...s, flags: condition.Flags { order: order, signed: signed, sign: signed.less } };
+  return shared.State { ...s, flags: condition.Flags { order: order, signed: signed, sign: signed.less } };
 }
 
-function test(s: State, r: affine.Interval, op: isa.Op, ops: Instructions): State {
+function test(s: shared.State, r: affine.Interval, op: isa.Op, ops: Instructions): shared.State {
   let v = ops.number(r, s.regs[op.source], 32);
   if (!ops.nonnegative(r, v) || v.factor as i64 * (r.high as i64) + v.offset > 2147483647 as i64) {
-    return State { ...s, flags: condition.unknown_flags() };
+    return shared.State { ...s, flags: condition.unknown_flags() };
   }
   let cmp = ops.compare(r, v, 0 as i64);
-  return State { ...s, flags: condition.Flags { order: condition.Comparison { less: 0, equal: cmp.equal, less_equal: cmp.equal }, signed: cmp, sign: 0 } };
+  return shared.State { ...s, flags: condition.Flags { order: condition.Comparison { less: 0, equal: cmp.equal, less_equal: cmp.equal }, signed: cmp, sign: 0 } };
 }
 
-pub function final_registers(s: State, r: affine.Interval, expected_register: (affine.Interval, i32) => Word): boolean {
+pub function final_registers(s: shared.State, r: affine.Interval, expected_register: (affine.Interval, i32) => shared.Word): boolean {
   for i in 0..16 {
-    if (!same_word(s.regs[i], expected_register(r, i))) {
+    if (!shared.same_word(s.regs[i], expected_register(r, i))) {
       return false;
     }
   }
   return true;
 }
 
-function unguarded(s: State, original: State, r: affine.Interval, expected_register: (affine.Interval, i32) => Word): State {
+function unguarded(s: shared.State, original: shared.State, r: affine.Interval, expected_register: (affine.Interval, i32) => shared.Word): shared.State {
   let regs = s.regs;
   let i = 0;
   while (i < regs.len()) {
-    if (!same_word(regs[i], original.regs[i])) {
-      if (i == 0 || same_word(expected_register(r, i), identity(2, i))) {
-        return State { ...s, ok: false };
+    if (!shared.same_word(regs[i], original.regs[i])) {
+      if (i == 0 || shared.same_word(expected_register(r, i), shared.identity(2, i))) {
+        return shared.State { ...s, ok: false };
       }
       regs = regs.with(i, original.regs[i]);
     }
@@ -103,13 +69,13 @@ function unguarded(s: State, original: State, r: affine.Interval, expected_regis
   }
   for i in 0..s.cells.len() {
     if (!half.same_half(s.cells[i], original.cells[i])) {
-      return State { ...s, ok: false };
+      return shared.State { ...s, ok: false };
     }
   }
-  return State { ...s, regs: regs, flags: condition.unknown_flags(), ok: s.ok && s.zeros == 0 && s.links == 0 && s.slots == 0 && s.call_return == -1 };
+  return shared.State { ...s, regs: regs, flags: condition.unknown_flags(), ok: s.ok && s.zeros == 0 && s.links == 0 && s.slots == 0 && s.call_return == -1 };
 }
 
-function step(s: State, r: affine.Interval, pc: i32, op: isa.Op, ops: Instructions): State {
+function step(s: shared.State, r: affine.Interval, pc: i32, op: isa.Op, ops: Instructions): shared.State {
   if (op.kind == 1) {
     return s;
   }
@@ -131,7 +97,7 @@ function step(s: State, r: affine.Interval, pc: i32, op: isa.Op, ops: Instructio
   return ops.extended(s, r, pc, op);
 }
 
-pub function path(p: isa.ArrayProgram, r: affine.Interval, register_entry: boolean, s: State, ops: Instructions, expected_register: (affine.Interval, i32) => Word, finished: (State, affine.Interval, boolean) => boolean): boolean {
+pub function path(p: isa.ArrayProgram, r: affine.Interval, register_entry: boolean, s: shared.State, ops: Instructions, expected_register: (affine.Interval, i32) => shared.Word, finished: (shared.State, affine.Interval, boolean) => boolean): boolean {
   let original = s;
   let visited: boolean[] = [];
   for op in p.ops {

@@ -171,9 +171,10 @@ function arithmetic(): void {
   v = value.original(r);
   let c = value.compare(r, v, 17179869184 as i64);
   require(c.less == -1 && c.equal == -1 && c.less_equal == 1, "whole-domain comparison");
-  require(!value.valid(r, value.Value { factor: 2, offset: 0 as i64 }), "invalid factor");
+  require(!value.valid(r, value.Value { factor: 1, offset: 0 as i64, residue: -1 }), "unsupported byte residue");
+  require(!value.valid(r, value.Value { factor: 2, offset: 0 as i64, residue: 0 }), "invalid factor");
   require(!value.valid(r, value.number(r, 34359738368 as i64)), "constant bound");
-  require(!value.valid(r, value.Value { factor: 1, offset: 34359738367 as i64 }), "endpoint bound");
+  require(!value.valid(r, value.Value { factor: 1, offset: 34359738367 as i64, residue: 0 }), "endpoint bound");
   require(!value.valid(r, value.negate(r, v)), "unsupported affine negation");
   r = ranges.Interval { low: 0, high: 0 };
   require(!value.valid(r, value.add(r, value.number(r, 34359738367 as i64), 1 as i64)), "addition bound");
@@ -238,8 +239,8 @@ function value_operation(op: i32): boolean {
 
 function reference_case(row: reference.Case): void {
   let r = ranges.Interval { low: row.low, high: row.high };
-  let v = value.Value { factor: row.factor, offset: row.offset };
-  let other = value.Value { factor: row.other_factor, offset: row.other_offset };
+  let v = value.Value { factor: row.factor, offset: row.offset, residue: 0 };
+  let other = value.Value { factor: row.other_factor, offset: row.other_offset, residue: 0 };
   let name = "reference case " + row.id.to_string() + " op " + row.op.to_string();
   if (row.op == 14) {
     let c = value.compare(r, v, row.scalar);

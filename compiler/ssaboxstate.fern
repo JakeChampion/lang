@@ -1,32 +1,23 @@
 // Register and memory transitions shared by constructor and array-box proofs.
 import "./ssamachineword" as machineword;
+pub use "./ssamachineword".{State, write, load, initial_state};
 import "./ssacapacityisa" as isa;
-
-pub struct State { regs: machineword.Word[], memory: machineword.Half[], writes: i32[], calls: i32, successor: i32, zero: i32, carry: i32, ok: boolean }
-
-pub function write(s: State, reg: i32, w: machineword.Word): State {
-  return State { ...s, regs: s.regs.with(reg, w) };
-}
 
 pub function displaced(w: machineword.Word, offset: i64): machineword.Word {
   return machineword.token(w.low.kind, w.low.identity + offset);
 }
 
-pub function numeric_add(s: State, reg: i32, w: machineword.Word, delta: i64): State {
+pub function numeric_add(s: machineword.State, reg: i32, w: machineword.Word, delta: i64): machineword.State {
   if (machineword.unsigned(w)) {
     let n = w.low.identity + delta;
     if (n >= 0 && n <= 4294967295) {
-      return write(s, reg, machineword.number(n));
+      return machineword.write(s, reg, machineword.number(n));
     }
   }
-  return State { ...s, ok: false };
+  return machineword.State { ...s, ok: false };
 }
 
-pub function loaded(s: State, at: i32, width: i32): machineword.Word {
-  return machineword.Word { low: s.memory[at], high: if (width == 64) { s.memory[at + 1] } else { machineword.number(0).high } };
-}
-
-pub function cell(s: State, base: machineword.Word, offset: i32, width: i32, pointer: (machineword.Word) => boolean, cell_extent: (State, i32, i64, i32) => i32): i32 {
+pub function cell(s: machineword.State, base: machineword.Word, offset: i32, width: i32, pointer: (machineword.Word) => boolean, cell_extent: (machineword.State, i32, i64, i32) => i32): i32 {
   if (!pointer(base) || offset < -64 || offset > 64) {
     return -1;
   }
@@ -38,9 +29,9 @@ pub function cell(s: State, base: machineword.Word, offset: i32, width: i32, poi
   return cell_extent(s, base.low.kind, at, bytes);
 }
 
-pub function store_at(s: State, at: i32, width: i32, w: machineword.Word, writable: (State, i32) => boolean, first_single_write: i32): State {
+pub function store_at(s: machineword.State, at: i32, width: i32, w: machineword.Word, writable: (machineword.State, i32) => boolean, first_single_write: i32): machineword.State {
   if (!writable(s, at)) {
-    return State { ...s, ok: false };
+    return machineword.State { ...s, ok: false };
   }
   let count = width / 32;
   let i = 0;
@@ -49,18 +40,18 @@ pub function store_at(s: State, at: i32, width: i32, w: machineword.Word, writab
   while (i < count) {
     let pos = at + i;
     if (!writable(s, pos) || pos >= first_single_write && writes[pos] != 0) {
-      return State { ...s, ok: false };
+      return machineword.State { ...s, ok: false };
     }
     memory = memory.with(pos, if (i == 0) { w.low } else { w.high });
     writes = writes.with(pos, writes[pos] + 1);
     i += 1;
   }
-  return State { ...s, memory: memory, writes: writes };
+  return machineword.State { ...s, memory: memory, writes: writes };
 }
 
-pub function memory_step(s: State, op: isa.Op, address: (State, machineword.Word, i32, i32) => i32, load_at: (State, i32, i32, i32) => State, store_at: (State, i32, i32, machineword.Word) => State): State {
+pub function memory_step(s: machineword.State, op: isa.Op, address: (machineword.State, machineword.Word, i32, i32) => i32, load_at: (machineword.State, i32, i32, i32) => machineword.State, store_at: (machineword.State, i32, i32, machineword.Word) => machineword.State): machineword.State {
   if (op.index >= 0) {
-    return State { ...s, ok: false };
+    return machineword.State { ...s, ok: false };
   }
   let at = address(s, s.regs[op.base], op.offset, op.width);
   if (op.kind == 3) {

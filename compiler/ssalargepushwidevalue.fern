@@ -15,7 +15,7 @@ function endpoint(v: affine.Value, n: i64): i64 {
 }
 
 pub function valid(r: ranges.Interval, v: affine.Value): boolean {
-  if (!ranges.valid(r) || v.factor != 0 && v.factor != 1 || !bounded(v.offset)) {
+  if (!ranges.valid(r) || v.residue != 0 || v.factor != 0 && v.factor != 1 || !bounded(v.offset)) {
     return false;
   }
   return bounded(endpoint(v, r.low)) && bounded(endpoint(v, r.high));
@@ -26,18 +26,18 @@ function checked(r: ranges.Interval, v: affine.Value): affine.Value {
 }
 
 pub function number(r: ranges.Interval, n: i64): affine.Value {
-  return checked(r, affine.Value { factor: 0, offset: n });
+  return checked(r, affine.Value { factor: 0, offset: n, residue: 0 });
 }
 
 pub function original(r: ranges.Interval): affine.Value {
-  return checked(r, affine.Value { factor: 1, offset: 0 as i64 });
+  return checked(r, affine.Value { factor: 1, offset: 0 as i64, residue: 0 });
 }
 
 pub function add(r: ranges.Interval, v: affine.Value, delta: i64): affine.Value {
   if (!valid(r, v) || !bounded(delta)) {
     return affine.unknown();
   }
-  return checked(r, affine.Value { factor: v.factor, offset: v.offset + delta });
+  return checked(r, affine.Value { factor: v.factor, offset: v.offset + delta, residue: 0 });
 }
 
 pub function negate(r: ranges.Interval, v: affine.Value): affine.Value {
@@ -59,7 +59,7 @@ function quotient32(r: ranges.Interval, v: affine.Value): WordQuotient {
 
 pub function zero32(r: ranges.Interval, v: affine.Value): affine.Value {
   let q = quotient32(r, v);
-  return if (q.known) { checked(r, affine.Value { factor: v.factor, offset: v.offset - q.value * (4294967296 as i64) }) } else { affine.unknown() };
+  return if (q.known) { checked(r, affine.Value { factor: v.factor, offset: v.offset - q.value * (4294967296 as i64), residue: 0 }) } else { affine.unknown() };
 }
 
 pub function high32(r: ranges.Interval, v: affine.Value): affine.Value {
@@ -78,7 +78,7 @@ pub function join32(r: ranges.Interval, low: affine.Value, high: affine.Value): 
   if (q < -(8 as i64) || q > 7 as i64) {
     return affine.unknown();
   }
-  return checked(r, affine.Value { factor: low.factor, offset: low.offset + q * (4294967296 as i64) });
+  return checked(r, affine.Value { factor: low.factor, offset: low.offset + q * (4294967296 as i64), residue: 0 });
 }
 
 pub function power(bit: i32): i64 {

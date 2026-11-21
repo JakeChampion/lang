@@ -17,7 +17,7 @@ function endpoint(v: affine.Value, n: i64): i64 {
 }
 
 pub function valid(r: affine.Interval, v: affine.Value): boolean {
-  if (!valid_interval(r) || v.factor != 0 && v.factor != 1 || !bounded(v.offset)) {
+  if (!valid_interval(r) || v.residue != 0 || v.factor != 0 && v.factor != 1 || !bounded(v.offset)) {
     return false;
   }
   return bounded(endpoint(v, r.low)) && bounded(endpoint(v, r.high));
@@ -28,18 +28,18 @@ function checked(r: affine.Interval, v: affine.Value): affine.Value {
 }
 
 pub function number(r: affine.Interval, n: i64): affine.Value {
-  return checked(r, affine.Value { factor: 0, offset: n });
+  return checked(r, affine.Value { factor: 0, offset: n, residue: 0 });
 }
 
 pub function original(r: affine.Interval): affine.Value {
-  return checked(r, affine.Value { factor: 1, offset: 0 as i64 });
+  return checked(r, affine.Value { factor: 1, offset: 0 as i64, residue: 0 });
 }
 
 pub function add(r: affine.Interval, v: affine.Value, delta: i64): affine.Value {
   if (!valid(r, v) || !bounded(delta)) {
     return affine.unknown();
   }
-  return checked(r, affine.Value { factor: v.factor, offset: v.offset + delta });
+  return checked(r, affine.Value { factor: v.factor, offset: v.offset + delta, residue: 0 });
 }
 
 pub function negate(r: affine.Interval, v: affine.Value): affine.Value {
@@ -57,7 +57,7 @@ pub function zero32(r: affine.Interval, v: affine.Value): affine.Value {
     return v;
   }
   if (endpoint(v, r.high) < 0) {
-    return checked(r, affine.Value { factor: v.factor, offset: v.offset + 4294967296 as i64 });
+    return checked(r, affine.Value { factor: v.factor, offset: v.offset + 4294967296 as i64, residue: 0 });
   }
   return affine.unknown();
 }

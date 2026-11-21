@@ -17,7 +17,7 @@ function endpoint(v: affine.Value, c: i64): i64 {
 }
 
 pub function valid(r: affine.Interval, v: affine.Value): boolean {
-  if (!valid_interval(r) || v.factor != 0 && v.factor != 1 && v.factor != 8 || !bounded(v.offset)) {
+  if (!valid_interval(r) || v.residue != 0 || v.factor != 0 && v.factor != 1 && v.factor != 8 || !bounded(v.offset)) {
     return false;
   }
   return endpoint(v, r.low) >= 0 as i64 && endpoint(v, r.high) <= 34359738384 as i64;
@@ -28,25 +28,25 @@ function checked(r: affine.Interval, v: affine.Value): affine.Value {
 }
 
 pub function number(r: affine.Interval, n: i64): affine.Value {
-  return checked(r, affine.Value { factor: 0, offset: n });
+  return checked(r, affine.Value { factor: 0, offset: n, residue: 0 });
 }
 
 pub function capacity(r: affine.Interval): affine.Value {
-  return checked(r, affine.Value { factor: 1, offset: 0 as i64 });
+  return checked(r, affine.Value { factor: 1, offset: 0 as i64, residue: 0 });
 }
 
 pub function add(r: affine.Interval, v: affine.Value, delta: i64): affine.Value {
   if (!valid(r, v) || !bounded(delta)) {
     return affine.unknown();
   }
-  return checked(r, affine.Value { factor: v.factor, offset: v.offset + delta });
+  return checked(r, affine.Value { factor: v.factor, offset: v.offset + delta, residue: 0 });
 }
 
 pub function times_eight(r: affine.Interval, v: affine.Value): affine.Value {
   if (!valid(r, v) || v.factor != 0 && v.factor != 1) {
     return affine.unknown();
   }
-  return checked(r, affine.Value { factor: v.factor * 8, offset: v.offset * (8 as i64) });
+  return checked(r, affine.Value { factor: v.factor * 8, offset: v.offset * (8 as i64), residue: 0 });
 }
 
 pub function high32(r: affine.Interval, v: affine.Value): affine.Value {

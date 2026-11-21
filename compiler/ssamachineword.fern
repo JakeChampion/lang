@@ -31,3 +31,20 @@ pub function narrowed(w: Word, width: i32): Word {
 pub function unsigned(w: Word): boolean {
   return w.low.kind == 0 && same(w.high, number(0).high);
 }
+
+// choice is 1 after the test for a block that crosses a 64 KiB line and 2
+// after the test of the coloured pointer against the end of the heap. The
+// branch on such a test can go each way, and each way must finish.
+pub struct State { regs: Word[], memory: Half[], writes: i32[], zero: i32, carry: i32, sign: i32, overflow: i32, bounded: boolean, choice: i32, mappings: i32, advised: boolean, calls: i32, successor: i32, ok: boolean }
+
+pub function initial_state(regs: Word[], memory: Half[], writes: i32[]): State {
+  return State { regs: regs, memory: memory, writes: writes, zero: -1, carry: -1, sign: -1, overflow: -1, bounded: false, choice: 0, mappings: 0, advised: false, calls: 0, successor: -1, ok: true };
+}
+
+pub function write(s: State, reg: i32, value: Word): State {
+  return State { ...s, regs: s.regs.with(reg, value) };
+}
+
+pub function load(s: State, at: i32, width: i32): Word {
+  return Word { low: s.memory[at], high: if (width == 64) { s.memory[at + 1] } else { number(0).high } };
+}
