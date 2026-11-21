@@ -89,6 +89,8 @@ pub const O_NOBREAKS: i32 = 8;
 
 pub const O_STRIKETHROUGH: i32 = 16;
 
+pub const O_AUTOLINK: i32 = 32;
+
 const TS: i32 = 4;
 
 // The fields of a delimiter. The first five are its token, its byte, its
@@ -809,16 +811,20 @@ function node(t: nodes.Tree, w: Work, s: u8[], k: i32, c: Cursor): (nodes.Tree, 
 // that HTML escapes, or smart punctuation.
 function text_node(t: nodes.Tree, w: Work, s: u8[], kind: i32, start: i32, end: i32, x: i32, c: Cursor): nodes.Tree {
   let from = t.here();
-  if (kind == ESCAPED || kind == CHAR) {
-    buf_push_byte(t.bytes(), s[end - 1] as i32);
-  } else if (kind == REF) {
-    push_reference(t.bytes(), x, w.t.raw);
-  } else if (kind == SMART) {
-    buf_push(t.bytes(), SMART_TEXT[x]);
-  } else {
-    push_dashes(t.bytes(), x);
-  }
+  plain_token(t.bytes(), w, s, kind, end, x);
   return t.add_text(from, c.line, col(c, start), col(c, end - 1));
+}
+
+function plain_token(out: usize, w: Work, s: u8[], kind: i32, end: i32, x: i32): void {
+  if (kind == ESCAPED || kind == CHAR) {
+    buf_push_byte(out, s[end - 1] as i32);
+  } else if (kind == REF) {
+    push_reference(out, x, w.t.raw);
+  } else if (kind == SMART) {
+    buf_push(out, SMART_TEXT[x]);
+  } else {
+    push_dashes(out, x);
+  }
 }
 
 // A code span. As in cmark, a code span over more than one line moves the
@@ -1855,6 +1861,10 @@ function link(w: Work, j: i32, end: i32, found: i32, ds: i32, de: i32, ts: i32, 
 // Writes the tokens of `w` and the text between them. Inside the text of an
 // image, the writer writes only text: `plain` is the depth of images.
 function write(out: usize, w: Work, s: u8[], a: i32, e: i32): void {
+  if ((w.opt & O_AUTOLINK) != 0) {
+    write_autolinks(out, w, s, a, e);
+    return;
+  }
   let i = a;
   let plain = 0;
   for k in 0..w.nt {
@@ -1865,6 +1875,142 @@ function write(out: usize, w: Work, s: u8[], a: i32, e: i32): void {
     }
   }
   buf_push_bytes_range(out, s, i, e);
+}
+
+// Email links are recognized in decoded text, after escapes, references,
+// and emphasis have been resolved. Existing links and image labels retain
+// their previous rendering.
+function write_autolinks(out: usize, w: Work, s: u8[], a: i32, e: i32): void {
+  let text = buf_new(e - a);
+  let i = a;
+  let depth = 0;
+  let plain = 0;
+  for k in 0..w.nt {
+    let kind = w.tk[k * TS];
+    if (kind <= BRACKET) {
+      continue;
+    }
+    let start = w.tk[k * TS + 1];
+    let end = w.tk[k * TS + 2];
+    let x = w.tk[k * TS + 3];
+    buf_push_bytes_range(text, s, i, start);
+    i = end;
+    if (kind >= ESCAPED) {
+      plain_token(text, w, s, kind, end, x);
+    } else if (kind == DELIM) {
+      if (dget(w, x, D_CLOSE) >= 0) {
+        email_text(out, buf_take_bytes(text), depth, w.t);
+        close_run(out, w, x, plain > 0);
+      }
+      run_text(text, w, x);
+      if (dget(w, x, D_OPEN) >= 0) {
+        email_text(out, buf_take_bytes(text), depth, w.t);
+        open_run(out, w, x, plain > 0);
+      }
+    } else {
+      email_text(out, buf_take_bytes(text), depth, w.t);
+      plain = item(out, w, s, k, plain);
+      if (kind == LINK || kind == IMAGE) {
+        depth += 1;
+      } else if (kind == END) {
+        depth -= 1;
+      }
+    }
+  }
+  buf_push_bytes_range(text, s, i, e);
+  email_text(out, buf_take_bytes(text), depth, w.t);
+  buf_free(text);
+}
+
+function email_protocol(s: u8[], start: i32, floor: i32, name: string): boolean {
+  let i = start - name.len();
+  if (i < floor || i > floor && is_alnum(s[i - 1] as i32)) {
+    return false;
+  }
+  for k in 0..name.len() {
+    if (s[i + k] != name[k]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function email_local(s: u8[], at_sign: i32, floor: i32): i32 {
+  let i = at_sign;
+  while (i > floor) {
+    let c = s[i - 1] as i32;
+    if (!is_alnum(c) && __memchr(".+-_", c, 0) < 0) {
+      break;
+    }
+    i -= 1;
+  }
+  return i;
+}
+
+function email_domain_char(c: u8, xmpp: boolean): boolean {
+  return is_alnum(c as i32) || c == b'_' || c == b'-' || xmpp && c == b'/';
+}
+
+function email_domain(s: u8[], i: i32, xmpp: boolean): (i32, boolean) {
+  let dots = 0;
+  while (i < s.len()) {
+    let c = s[i];
+    if (c == b'.' && i + 1 < s.len() && is_alnum(s[i + 1] as i32)) {
+      dots += 1;
+    } else if (!email_domain_char(c, xmpp)) {
+      break;
+    }
+    i += 1;
+  }
+  return (i, dots > 0 && is_letter(s[i - 1] as i32));
+}
+
+function email_text(out: usize, s: u8[], depth: i32, t: Tables): void {
+  let from = 0;
+  let i = 0;
+  while (depth == 0 && i < s.len()) {
+    let mark = __memchr_bytes(s, 64, i);
+    if (mark < 0) {
+      break;
+    }
+    let floor = i;
+    let local = email_local(s, mark, floor);
+    i = mark + 1;
+    if (local == mark) {
+      continue;
+    }
+    let xmpp = email_protocol(s, local, floor, "xmpp:");
+    let mailto = email_protocol(s, local, floor, "mailto:");
+    let (end, valid) = email_domain(s, i, xmpp);
+    if (end < s.len() && s[end] == b'@') {
+      continue;
+    }
+    i = end;
+    if (!valid) {
+      continue;
+    }
+    emit_email(out, s, from, local, end, xmpp, mailto, t);
+    from = end;
+  }
+  escape(out, s, from, s.len(), t);
+}
+
+function emit_email(out: usize, s: u8[], from: i32, local: i32, end: i32, xmpp: boolean, mailto: boolean, t: Tables): void {
+  let start = local;
+  if (xmpp) {
+    start -= 5;
+  } else if (mailto) {
+    start -= 7;
+  }
+  escape(out, s, from, start, t);
+  buf_push(out, "<a href=\"");
+  if (start == local) {
+    buf_push(out, "mailto:");
+  }
+  buf_push_bytes_expanded(out, s[start:end], t.href);
+  buf_push(out, "\">");
+  escape(out, s, start, end, t);
+  buf_push(out, "</a>");
 }
 
 // Writes the token `k`, and gives the depth of images after it.
@@ -1989,6 +2135,7 @@ function autolink(out: usize, s: u8[], a: i32, b: i32, email: boolean, plain: bo
 }
 
 const OPEN_TAGS: string[] = ["<del>", "<em>", "<strong>"];
+
 const CLOSE_TAGS: string[] = ["</del>", "</em>", "</strong>"];
 
 function emphasis_tag(c: i32, width: i32): i32 {
@@ -2001,12 +2148,22 @@ function emphasis_tag(c: i32, width: i32): i32 {
 // Writes a run of delimiters: the tags that it closes, the delimiters that
 // no emphasis uses, and the tags that it opens.
 function run(out: usize, w: Work, d: i32, plain: boolean): void {
+  close_run(out, w, d, plain);
+  run_text(out, w, d);
+  open_run(out, w, d, plain);
+}
+
+function close_run(out: usize, w: Work, d: i32, plain: boolean): void {
   let c = dget(w, d, D_CHAR);
   let m = dget(w, d, D_CLOSE);
   while (m >= 0 && !plain) {
     buf_push(out, CLOSE_TAGS[emphasis_tag(c, w.em[m * MS])]);
     m = w.em[m * MS + 1];
   }
+}
+
+function run_text(out: usize, w: Work, d: i32): void {
+  let c = dget(w, d, D_CHAR);
   if (c < 42) {
     buf_push(out, quote_text(w, d));
   } else {
@@ -2014,7 +2171,11 @@ function run(out: usize, w: Work, d: i32, plain: boolean): void {
       buf_push_byte(out, c);
     }
   }
-  m = dget(w, d, D_OPEN);
+}
+
+function open_run(out: usize, w: Work, d: i32, plain: boolean): void {
+  let c = dget(w, d, D_CHAR);
+  let m = dget(w, d, D_OPEN);
   while (m >= 0 && !plain) {
     buf_push(out, OPEN_TAGS[emphasis_tag(c, w.em[m * MS])]);
     m = w.em[m * MS + 2];

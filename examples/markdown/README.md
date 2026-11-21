@@ -34,6 +34,8 @@ as disabled checkboxes. Pass `--strikethrough` to render paired single or double
 tildes as `<del>`. Library callers can set `Options.tasklist` and
 `Options.strikethrough` independently. Pass `--table` or set `Options.tables`
 to render pipe tables with column alignment and inline formatting.
+With `--autolink` or `Options.autolink`, email addresses in HTML text
+become links, including addresses with explicit `mailto:` and `xmpp:` schemes.
 
 The usage text names `cmark`, as cmark does for each name of the program
 file.

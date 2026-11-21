@@ -543,6 +543,17 @@ function test_tables(): test.TestOutcome {
   ]);
 }
 
+function test_email_autolinks(): test.TestOutcome {
+  let o = markdown.Options { ...markdown.options(), autolink: true };
+  return checks_with(o, [
+    ("Say _abc__@fern.dev\n", "<p>Say <em>abc</em><a href=\"mailto:_@fern.dev\">_@fern.dev</a></p>\n"),
+    ("a_b+tag@example.org, and xmpp:u@d.co/message.\n", "<p><a href=\"mailto:a_b+tag@example.org\">a_b+tag@example.org</a>, and <a href=\"xmpp:u@d.co/message\">xmpp:u@d.co/message</a>.</p>\n"),
+    ("[a@b.co](https://example.org) `n@b.co` *m@d.net*\n", "<p><a href=\"https://example.org\">a@b.co</a> <code>n@b.co</code> <em><a href=\"mailto:m@d.net\">m@d.net</a></em></p>\n"),
+    ("a&#64;b.co x@localhost x@b.co1\n", "<p><a href=\"mailto:a@b.co\">a@b.co</a> x@localhost x@b.co1</p>\n"),
+    ("![a@b.co](pic) mailto:z@b.co\n", "<p><img src=\"pic\" alt=\"a@b.co\" /> <a href=\"mailto:z@b.co\">mailto:z@b.co</a></p>\n"),
+  ]);
+}
+
 function test_tasklists(): test.TestOutcome {
   let o = markdown.Options { ...markdown.options(), tasklist: true };
   return checks_with(o, [
@@ -714,6 +725,7 @@ function main(): i32 {
   r = r.it("HTML strikethrough", test_strikethrough);
   r = r.it("table source positions", test_table_sourcepos);
   r = r.it("HTML tables", test_tables);
+  r = r.it("extended email autolinks", test_email_autolinks);
   r = r.it("HTML task list items", test_tasklists);
   r = r.it("smart punctuation", test_smart);
   r = r.it("hard breaks and no breaks", test_breaks);

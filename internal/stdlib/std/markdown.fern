@@ -14,11 +14,11 @@ import "std/markdown/tables";
 // link to a `javascript:`, `vbscript:`, `file:` or `data:` URL has an empty
 // destination. `width` is the width of a line for the renderers that wrap
 // text, or 0 for no wrap.
-pub struct Options { sourcepos: boolean, hardbreaks: boolean, nobreaks: boolean, smart: boolean, unsafe_html: boolean, tasklist: boolean, strikethrough: boolean, tables: boolean, width: i32 }
+pub struct Options { sourcepos: boolean, hardbreaks: boolean, nobreaks: boolean, smart: boolean, unsafe_html: boolean, tasklist: boolean, strikethrough: boolean, autolink: boolean, tables: boolean, width: i32 }
 
 // The defaults of cmark: no option is set.
 pub function options(): Options {
-  return Options { sourcepos: false, hardbreaks: false, nobreaks: false, smart: false, unsafe_html: false, tasklist: false, strikethrough: false, tables: false, width: 0 };
+  return Options { sourcepos: false, hardbreaks: false, nobreaks: false, smart: false, unsafe_html: false, tasklist: false, strikethrough: false, autolink: false, tables: false, width: 0 };
 }
 
 // The bytes `b` with each sequence that is not UTF-8 replaced by U+FFFD, as
@@ -129,6 +129,9 @@ function start(o: Options): State {
   let flags = inline_flags(o);
   if (o.strikethrough) {
     flags |= inlines.O_STRIKETHROUGH;
+  }
+  if (o.autolink) {
+    flags |= inlines.O_AUTOLINK;
   }
   return State { w: inlines.work(flags), open: false, tight: [0], depth: 1, o: o };
 }

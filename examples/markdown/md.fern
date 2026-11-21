@@ -122,6 +122,9 @@ function option(o: markdown.Options, a: string): (markdown.Options, boolean) {
   if (a == "--smart") {
     return (markdown.Options { ...o, smart: true }, true);
   }
+  if (a == "--autolink") {
+    return (markdown.Options { ...o, autolink: true }, true);
+  }
   if (a == "--table") {
     return (markdown.Options { ...o, tables: true }, true);
   }
