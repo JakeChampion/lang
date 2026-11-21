@@ -87,6 +87,8 @@ pub const O_HARDBREAKS: i32 = 4;
 
 pub const O_NOBREAKS: i32 = 8;
 
+pub const O_STRIKETHROUGH: i32 = 16;
+
 const TS: i32 = 4;
 
 // The fields of a delimiter. The first five are its token, its byte, its
@@ -163,7 +165,7 @@ const NO_DECL: i32 = 4;
 const NO_CDATA: i32 = 8;
 
 // The bytes that the parser stops at: a line feed, `!`, `"`, `&`, `*`, `<`,
-// `>`, `[`, a backslash, `]`, `_` and a backtick. A carriage return is in
+// `>`, `[`, a backslash, `]`, `_`, a backtick and a tilde. A carriage return is in
 // the table too. It is never in the text, but it can end the line after
 // the text. A constant table of 256 entries gives the vector form of
 // `__scan_set_bytes`.
@@ -175,7 +177,7 @@ const SPECIAL: u8[] = [
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 1u8, 1u8, 0u8, 1u8,
   1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
-  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8,
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
@@ -195,7 +197,7 @@ const SMART_SPECIAL: u8[] = [
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 1u8, 1u8, 0u8, 1u8,
   1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
-  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8,
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
@@ -298,7 +300,7 @@ pub function work(opt: i32): Work {
     ticks = ticks.append(0);
   }
   let bottoms: i32[] = [];
-  for _ in 0..14 {
+  for _ in 0..16 {
     bottoms = bottoms.append(0);
   }
   return Work { t: tables(), opt: opt, tk: [], nt: 0, dl: [], nd: 0, tail: -1, em: [], ne: 0, br: [], nb: 0, ln: [], nl: 0, found: [], nf: 0, bottoms: bottoms, ticks: ticks, scanned: false, skip: 0, no_links: true };
@@ -1403,14 +1405,7 @@ function punctuation(w: Work, s: u8[], a: i32, j: i32, e: i32): (Work, i32) {
 // characters after `(` or `[`. A quote that is not a delimiter is a right
 // quote, or a left double quote when it cannot close.
 function quote(w: Work, s: u8[], a: i32, i: i32, e: i32, c: i32): (Work, i32) {
-  let before = 10;
-  if (i > a) {
-    before = char_before(s, i, a);
-  }
-  let after = 10;
-  if (i + 1 < e) {
-    after = char_at(s, i + 1, e);
-  }
+  let (before, after) = delimiter_neighbors(s, a, i, i + 1, e, (w.opt & O_STRIKETHROUGH) != 0);
   let flags = quote_flags(before, after);
   if (flags == 0 && c == 34) {
     return (add_token(w, SMART, i, i + 1, Q_LDQUO), i + 1);
@@ -1489,13 +1484,16 @@ function push_dashes(out: usize, n: i32): void {
 
 // Delimiter runs.
 
-// Reads the run of `*` or `_` at `i`. A run that can open or close emphasis
-// goes on the delimiter stack, and other runs are text.
-function delimiters(w: Work, s: u8[], a: i32, i: i32, e: i32): (Work, i32) {
-  let c = s[i];
-  let k = i + 1;
-  while (k < e && s[k] == c) {
-    k += 1;
+// GFM emphasis and smart quotes look through adjacent tilde runs. A
+// strikethrough delimiter uses its immediate neighbors.
+function delimiter_neighbors(s: u8[], a: i32, i: i32, k: i32, e: i32, skip_tildes: boolean): (i32, i32) {
+  if (skip_tildes) {
+    while (i > a && s[i - 1] == b'~') {
+      i -= 1;
+    }
+    while (k < e && s[k] == b'~') {
+      k += 1;
+    }
   }
   let before = 10;
   if (i > a) {
@@ -1505,6 +1503,21 @@ function delimiters(w: Work, s: u8[], a: i32, i: i32, e: i32): (Work, i32) {
   if (k < e) {
     after = char_at(s, k, e);
   }
+  return (before, after);
+}
+
+// Reads a run of emphasis or strikethrough delimiters. A run that can open or close
+// goes on the delimiter stack, and other runs are text.
+function delimiters(w: Work, s: u8[], a: i32, i: i32, e: i32): (Work, i32) {
+  let c = s[i];
+  let k = i + 1;
+  while (k < e && s[k] == c) {
+    k += 1;
+  }
+  if (c == b'~' && ((w.opt & O_STRIKETHROUGH) == 0 || k - i > 2)) {
+    return (w, k);
+  }
+  let (before, after) = delimiter_neighbors(s, a, i, k, e, (w.opt & O_STRIKETHROUGH) != 0 && c != b'~');
   let flags = run_flags(c == b'_', before, after);
   if (flags == 0) {
     return (w, k);
@@ -1571,6 +1584,9 @@ function emphasis(w: Work, bottom: i32): Work {
   if ((w.opt & O_SMART) != 0) {
     keys = 14;
   }
+  if ((w.opt & O_STRIKETHROUGH) != 0) {
+    keys = 16;
+  }
   for k in 0..keys {
     bottoms = bottoms.with(k, bottom + 1);
   }
@@ -1605,7 +1621,9 @@ function close(w: Work, closer: i32): (Work, i32) {
     return close_quote(w, closer, flags, c);
   }
   let key = (flags & CAN_OPEN) * 3 + dget(w, closer, D_LEN) % 3;
-  if (c == 42) {
+  if (c == 126) {
+    key = 13 + dget(w, closer, D_LEN);
+  } else if (c == 42) {
     key += 6;
   }
   let opener = find_opener(w, closer, w.bottoms[key]);
@@ -1684,13 +1702,18 @@ function insert(w: Work, opener: i32, closer: i32): (Work, i32) {
   if (ol >= 2 && cl >= 2) {
     n = 2;
   }
-  let q = dset(dset(w, opener, D_LEFT, ol - n), closer, D_LEFT, cl - n);
+  let q = w;
   let x = dget(q, closer, D_PREV);
   while (x != opener) {
     let p = dget(q, x, D_PREV);
     q = unlink(q, x);
     x = p;
   }
+  if (dget(w, closer, D_CHAR) == 126 && ol != cl) {
+    let next = dget(q, closer, D_NEXT);
+    return (unlink(unlink(q, opener), closer), next);
+  }
+  q = dset(dset(q, opener, D_LEFT, ol - n), closer, D_LEFT, cl - n);
   let m = q.ne;
   let em = put_i32(put_i32(put_i32(q.em, m * MS, n), m * MS + 1, -1), m * MS + 2, dget(q, opener, D_OPEN));
   let tail = dget(q, closer, D_CTAIL);
@@ -1965,19 +1988,25 @@ function autolink(out: usize, s: u8[], a: i32, b: i32, email: boolean, plain: bo
   }
 }
 
+const OPEN_TAGS: string[] = ["<del>", "<em>", "<strong>"];
+const CLOSE_TAGS: string[] = ["</del>", "</em>", "</strong>"];
+
+function emphasis_tag(c: i32, width: i32): i32 {
+  if (c == 126) {
+    return 0;
+  }
+  return width;
+}
+
 // Writes a run of delimiters: the tags that it closes, the delimiters that
 // no emphasis uses, and the tags that it opens.
 function run(out: usize, w: Work, d: i32, plain: boolean): void {
+  let c = dget(w, d, D_CHAR);
   let m = dget(w, d, D_CLOSE);
   while (m >= 0 && !plain) {
-    if (w.em[m * MS] == 2) {
-      buf_push(out, "</strong>");
-    } else {
-      buf_push(out, "</em>");
-    }
+    buf_push(out, CLOSE_TAGS[emphasis_tag(c, w.em[m * MS])]);
     m = w.em[m * MS + 1];
   }
-  let c = dget(w, d, D_CHAR);
   if (c < 42) {
     buf_push(out, quote_text(w, d));
   } else {
@@ -1987,11 +2016,7 @@ function run(out: usize, w: Work, d: i32, plain: boolean): void {
   }
   m = dget(w, d, D_OPEN);
   while (m >= 0 && !plain) {
-    if (w.em[m * MS] == 2) {
-      buf_push(out, "<strong>");
-    } else {
-      buf_push(out, "<em>");
-    }
+    buf_push(out, OPEN_TAGS[emphasis_tag(c, w.em[m * MS])]);
     m = w.em[m * MS + 2];
   }
 }

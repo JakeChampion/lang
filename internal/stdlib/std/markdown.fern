@@ -13,11 +13,11 @@ import "std/markdown/utf8";
 // link to a `javascript:`, `vbscript:`, `file:` or `data:` URL has an empty
 // destination. `width` is the width of a line for the renderers that wrap
 // text, or 0 for no wrap.
-pub struct Options { sourcepos: boolean, hardbreaks: boolean, nobreaks: boolean, smart: boolean, unsafe_html: boolean, tasklist: boolean, width: i32 }
+pub struct Options { sourcepos: boolean, hardbreaks: boolean, nobreaks: boolean, smart: boolean, unsafe_html: boolean, tasklist: boolean, strikethrough: boolean, width: i32 }
 
 // The defaults of cmark: no option is set.
 pub function options(): Options {
-  return Options { sourcepos: false, hardbreaks: false, nobreaks: false, smart: false, unsafe_html: false, tasklist: false, width: 0 };
+  return Options { sourcepos: false, hardbreaks: false, nobreaks: false, smart: false, unsafe_html: false, tasklist: false, strikethrough: false, width: 0 };
 }
 
 // The bytes `b` with each sequence that is not UTF-8 replaced by U+FFFD, as
@@ -125,7 +125,11 @@ pub function write(w: io_buffered.BufWriter, src: u8[], part: i32, o: Options): 
 struct State { w: inlines.Work, open: boolean, tight: i32[], depth: i32, o: Options }
 
 function start(o: Options): State {
-  return State { w: inlines.work(inline_flags(o)), open: false, tight: [0], depth: 1, o: o };
+  let flags = inline_flags(o);
+  if (o.strikethrough) {
+    flags |= inlines.O_STRIKETHROUGH;
+  }
+  return State { w: inlines.work(flags), open: false, tight: [0], depth: 1, o: o };
 }
 
 // Writes the attribute `data-sourcepos` of the record `r` when the option

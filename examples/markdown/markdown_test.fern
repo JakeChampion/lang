@@ -509,6 +509,18 @@ function test_safe(): test.TestOutcome {
 
 // Smart punctuation: quotes are delimiters, and runs of hyphens and three
 // periods are dashes and an ellipsis.
+function test_strikethrough(): test.TestOutcome {
+  let o = markdown.Options { ...markdown.options(), strikethrough: true };
+  return checks_with(o, [
+    ("a~~_~~~_.\n", "<p>a~~_~~~_.</p>\n"),
+    ("~x~~x~~x~\n", "<p><del>x<del>x</del>x</del></p>\n"),
+    ("~~Hi~~ *there*, ~also~.\n", "<p><del>Hi</del> <em>there</em>, <del>also</del>.</p>\n"),
+    ("a ~no~~ and ~~~three~~~\n", "<p>a ~no~~ and ~~~three~~~</p>\n"),
+    ("~~*nested* [link](url)~~ and `~~code~~`\n", "<p><del><em>nested</em> <a href=\"url\">link</a></del> and <code>~~code~~</code></p>\n"),
+    ("~~first\nsecond~~\n\n~third\n\nfourth~\n", "<p><del>first\nsecond</del></p>\n<p>~third</p>\n<p>fourth~</p>\n"),
+  ]);
+}
+
 function test_tasklists(): test.TestOutcome {
   let o = markdown.Options { ...markdown.options(), tasklist: true };
   return checks_with(o, [
@@ -677,6 +689,7 @@ function main(): i32 {
   r = r.it("the changes of cmark 0.31 and its details", test_cmark_031);
   r = r.it("the changes of cmark 0.31 in the other formats", test_cmark_031_formats);
   r = r.it("raw HTML and dangerous URLs without the unsafe option", test_safe);
+  r = r.it("HTML strikethrough", test_strikethrough);
   r = r.it("HTML task list items", test_tasklists);
   r = r.it("smart punctuation", test_smart);
   r = r.it("hard breaks and no breaks", test_breaks);

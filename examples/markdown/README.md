@@ -30,7 +30,9 @@ none. It has the options of cmark:
 - `--help`, `-h` and `--version`, with the text of cmark.
 
 For HTML output, pass `--tasklist` to render GitHub-style task list markers
-as disabled checkboxes. Library callers can set `Options.tasklist`.
+as disabled checkboxes. Pass `--strikethrough` to render paired single or double
+tildes as `<del>`. Library callers can set `Options.tasklist` and
+`Options.strikethrough` independently.
 
 The usage text names `cmark`, as cmark does for each name of the program
 file.

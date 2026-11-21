@@ -122,6 +122,9 @@ function option(o: markdown.Options, a: string): (markdown.Options, boolean) {
   if (a == "--smart") {
     return (markdown.Options { ...o, smart: true }, true);
   }
+  if (a == "--strikethrough") {
+    return (markdown.Options { ...o, strikethrough: true }, true);
+  }
   if (a == "--tasklist") {
     return (markdown.Options { ...o, tasklist: true }, true);
   }
