@@ -8506,6 +8506,30 @@ function arm64_gas_page_base(tok: string): boolean {
   return tok == "sp" || r >= 0 && r < 31 && (tok.starts_with("x") || tok == "fp" || tok == "lr");
 }
 
+// ADD immediate uses register 31 for the stack pointer. A zero register
+// in either position would silently name the stack pointer in its encoding.
+function arm64_gas_page_add_reg(tok: string): i32 {
+  if (tok == "sp" || tok == "wsp") {
+    return 31;
+  }
+  let r = arm64_gas_reg(tok);
+  return if (arm64_gas_data_gp(tok) && r < 31) { r } else { -1 };
+}
+
+function arm64_gas_page_add_symbol(ops: string[]): string {
+  if (ops.len() != 3 || arm64_gas_page_add_reg(ops[0]) < 0 || arm64_gas_page_add_reg(ops[1]) < 0 || arm64_gas_is_w(ops[0]) != arm64_gas_is_w(ops[1])) {
+    return "";
+  }
+  let tok = ops[2];
+  if (tok.starts_with(":lo12:") || tok.starts_with("#:lo12:")) {
+    return arm64_gas_strip_lo12(tok);
+  }
+  if (tok.ends_with("@PAGEOFF")) {
+    return arm64_gas_strip_at(tok);
+  }
+  return "";
+}
+
 function arm64_gas_page_load_symbol(ops: string[]): string {
   if (ops.len() != 2) {
     return "";
@@ -9273,22 +9297,22 @@ function arm64_gas_program_pass(src: string, words: u8[], origin: i32, relax: bo
       p = Arm64GasProg { ...p, lit_vals: p.lit_vals.append(nval) };
       continue;
     }
-    if (mnem == "adrp") {
-      util.push_bytes(a.code, arm64_adrp([], arm64_gas_reg(ops[0]), 0));
-      pf_sites = pf_sites.append(buf_len(a.code) - 4);
-      pf_syms = pf_syms.append(arm64_gas_strip_at(ops[1]));
-      pf_kinds = pf_kinds.append(0);
-      continue;
-    }
-    if (mnem == "adr") {
-      if (ops.len() != 2 || arm64_gas_is_w(ops[0])) {
-        p = Arm64GasProg { ...p, unknown: p.unknown.append("adr:operands") };
+    if (mnem == "adrp" || mnem == "adr") {
+      if (ops.len() != 2 || !arm64_gas_data_gp(ops[0]) || arm64_gas_is_w(ops[0])) {
+        p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":operands") };
         continue;
       }
-      util.push_bytes(a.code, arm64_adr([], arm64_gas_reg(ops[0]), 0));
+      let sym = if (mnem == "adrp") { arm64_gas_strip_at(ops[1]) } else { arm64_gas_trim(ops[1]) };
+      if (sym.len() == 0) {
+        p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":operands") };
+        continue;
+      }
+      let rd = arm64_gas_reg(ops[0]);
+      let word = if (mnem == "adrp") { arm64_adrp([], rd, 0) } else { arm64_adr([], rd, 0) };
+      util.push_bytes(a.code, word);
       pf_sites = pf_sites.append(buf_len(a.code) - 4);
-      pf_syms = pf_syms.append(arm64_gas_trim(ops[1]));
-      pf_kinds = pf_kinds.append(3);
+      pf_syms = pf_syms.append(sym);
+      pf_kinds = pf_kinds.append(if (mnem == "adrp") { 0 } else { 3 });
       continue;
     }
     let page_off = arm64_gas_has_page_off(rest);
@@ -9309,17 +9333,15 @@ function arm64_gas_program_pass(src: string, words: u8[], origin: i32, relax: bo
       pf_kinds = pf_kinds.append(arm64_ldr_page_kind(ops[0]));
       continue;
     }
-    if (mnem == "add" && util.index_of_sub(rest, "@PAGEOFF") >= 0) {
-      util.push_bytes(a.code, arm64_addimm([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), 0, false));
+    if (mnem == "add" && page_off) {
+      let sym = arm64_gas_page_add_symbol(ops);
+      if (sym.len() == 0) {
+        p = Arm64GasProg { ...p, unknown: p.unknown.append("add:page-offset operands") };
+        continue;
+      }
+      util.push_bytes(a.code, arm64_addimm([], arm64_gas_page_add_reg(ops[0]), arm64_gas_page_add_reg(ops[1]), 0, arm64_gas_is_w(ops[0])));
       pf_sites = pf_sites.append(buf_len(a.code) - 4);
-      pf_syms = pf_syms.append(arm64_gas_strip_at(ops[2]));
-      pf_kinds = pf_kinds.append(2);
-      continue;
-    }
-    if (mnem == "add" && util.index_of_sub(rest, ":lo12:") >= 0) {
-      util.push_bytes(a.code, arm64_addimm([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), 0, false));
-      pf_sites = pf_sites.append(buf_len(a.code) - 4);
-      pf_syms = pf_syms.append(arm64_gas_strip_lo12(ops[2]));
+      pf_syms = pf_syms.append(sym);
       pf_kinds = pf_kinds.append(2);
       continue;
     }
