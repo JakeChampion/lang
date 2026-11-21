@@ -269,29 +269,31 @@ pub function lives(f: ssa.SFunc, hard: boolean[]): Lives {
   if (!fl.ok) {
     return Lives { crossing: [], crossing_all: [], lengths: [] };
   }
-  return Lives { crossing: call_crossers(f, fl, hard), crossing_all: call_crossers(f, fl, ssa.hard_call_positions(f, [])), lengths: live_lengths(f, fl) };
+  let calls = call_crossers(f, fl, hard, ssa.hard_call_positions(f, []));
+  return Lives { crossing: calls.hard, crossing_all: calls.all, lengths: live_lengths(f, fl) };
 }
 
-function call_crossers(f: ssa.SFunc, fl: Flow, hard: boolean[]): boolean[] {
-  let w = Cross { live: __alloc_bool(f.nvals), out: __alloc_bool(f.nvals) };
+function call_crossers(f: ssa.SFunc, fl: Flow, hard: boolean[], all: boolean[]): Cross {
+  let w = Cross { live: __alloc_bool(f.nvals), hard: __alloc_bool(f.nvals), all: __alloc_bool(f.nvals) };
   let start = 0;
   for bi in 0..f.blocks.len() {
     let b = f.blocks[bi];
-    if (any_hard(hard, start, b.insts.len())) {
-      w = crossers_in(w, live_out_ids(fl, bi), b, start, hard);
+    if (any_call(hard, all, start, b.insts.len())) {
+      w = crossers_in(w, live_out_ids(fl, bi), b, start, hard, all);
     }
     start = start + b.insts.len() + 1;
   }
-  return w.out;
+  return w;
 }
 
-// `live` is all false between blocks. The walk of one block lists each value
-// it marks live, and clears them at its end.
-struct Cross { live: boolean[], out: boolean[] }
+// One backward walk supplies both call masks. The walk clears `live`
+// at the end of each block.
+struct Cross { live: boolean[], hard: boolean[], all: boolean[] }
 
-function crossers_in(own w: Cross, live_out: i32[], b: ssa.SBlock, start: i32, hard: boolean[]): Cross {
+function crossers_in(own w: Cross, live_out: i32[], b: ssa.SBlock, start: i32, hard: boolean[], all: boolean[]): Cross {
   let live = w.live;
-  let out = w.out;
+  let across_hard = w.hard;
+  let across_all = w.all;
   let seen = live_out.append(ssa.term_operand(b.term));
   for v in seen {
     live = mark_live(live, v);
@@ -301,8 +303,19 @@ function crossers_in(own w: Cross, live_out: i32[], b: ssa.SBlock, start: i32, h
     k -= 1;
     let ins = b.insts[k];
     live = mark_dead(live, ins.result);
-    if (start + k < hard.len() && hard[start + k]) {
-      out = marked_live(out, live, seen);
+    let hard_call = call_at(hard, start + k);
+    let counted_call = call_at(all, start + k);
+    if (hard_call || counted_call) {
+      for v in seen {
+        if (v >= 0 && live[v]) {
+          if (hard_call) {
+            across_hard = across_hard.with(v, true);
+          }
+          if (counted_call) {
+            across_all = across_all.with(v, true);
+          }
+        }
+      }
     }
     if (ins.kind_tag != ssa.PHI) {
       for arg in ins.args {
@@ -316,16 +329,7 @@ function crossers_in(own w: Cross, live_out: i32[], b: ssa.SBlock, start: i32, h
   for v in seen {
     live = mark_dead(live, v);
   }
-  return Cross { live: live, out: out };
-}
-
-function marked_live(own out: boolean[], live: boolean[], seen: i32[]): boolean[] {
-  for v in seen {
-    if (v >= 0 && live[v]) {
-      out = out.with(v, true);
-    }
-  }
-  return out;
+  return Cross { live: live, hard: across_hard, all: across_all };
 }
 
 // The value a terminator reads, or -1.
@@ -343,9 +347,13 @@ function mark_dead(own live: boolean[], v: i32): boolean[] {
   return live.with(v, false);
 }
 
-function any_hard(hard: boolean[], start: i32, n: i32): boolean {
+function call_at(calls: boolean[], k: i32): boolean {
+  return k < calls.len() && calls[k];
+}
+
+function any_call(hard: boolean[], all: boolean[], start: i32, n: i32): boolean {
   for k in start..start + n {
-    if (k < hard.len() && hard[k]) {
+    if (call_at(hard, k) || call_at(all, k)) {
       return true;
     }
   }
