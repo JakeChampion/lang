@@ -1,5 +1,7 @@
 import "./util";
 import "std/string";
+import "std/i32";
+import "std/i64";
 
 const LINE_PREFIX: string = "fern-cover: ";
 
@@ -20,34 +22,32 @@ pub struct Folded {
   err: string,
 }
 
-function last_index(s: string, b: u8): i32 {
-  let i = s.len() - 1;
-  while (i >= 0) {
-    if (s[i] == b) {
-      return i;
-    }
-    i -= 1;
-  }
-  return -1;
-}
-
 function sub(s: string, lo: i32, hi: i32): string {
   return slice_unchecked(s, lo, hi).to_owned();
 }
 
-function parse_count(s: string): i64 {
-  if (s.len() == 0 || s.len() > 19) {
-    return 0 as i64 - 1;
+function parse_count(s: string): Option[i64] {
+  if (s.len() == 0 || s.len() > 19 || s[0] < b'0' || s[0] > b'9') {
+    return None;
   }
-  let n: i64 = 0;
-  for i in 0..s.len() {
-    let c = s[i];
-    if (c < b'0' || c > b'9') {
-      return 0 as i64 - 1;
-    }
-    n = n * 10 + (c - b'0') as i64;
+  if let Ok(n) = i64.parse_i64(s) {
+    return Some(n);
   }
-  return n;
+  return None;
+}
+
+function coordinate(site: string): Option[(string, i32)] {
+  let Some(fields) = site.rsplit_once(":") else {
+    return None;
+  };
+  let (prefix, digits) = fields;
+  let Some(value) = parse_count(digits) else {
+    return None;
+  };
+  if (value > i32.MAX as i64) {
+    return None;
+  }
+  return Some((prefix, value as i32));
 }
 
 function bad(lineno: i32, text: string, why: string): Folded {
@@ -91,43 +91,38 @@ pub function fold(text: string): Folded {
     } else {
       rest = sub(row, LINE_PREFIX.len(), row.len());
     }
-    let sp = last_index(rest, b' ');
-    if (sp < 0) {
+    let Some(fields) = rest.rsplit_once(" ") else {
       return bad(lineno, row, "no count");
-    }
-    let count = parse_count(sub(rest, sp + 1, rest.len()));
-    if (count < 0) {
+    };
+    let (site, digits) = fields;
+    let Some(count) = parse_count(digits) else {
       return bad(lineno, row, "bad count");
-    }
-    let site = sub(rest, 0, sp);
+    };
     let edge = "";
     let col = 0;
     if (is_branch) {
-      let esp = last_index(site, b' ');
-      if (esp < 0) {
+      let Some(parts) = site.rsplit_once(" ") else {
         return bad(lineno, row, "no edge");
-      }
-      edge = sub(site, esp + 1, site.len());
-      site = sub(site, 0, esp);
+      };
+      let (location, marker) = parts;
+      edge = marker;
       if (edge != "E" && edge != "T") {
         return bad(lineno, row, "edge is \"" + edge + "\", want E or T");
       }
-      let cs = last_index(site, b':');
-      if (cs < 0 || parse_count(sub(site, cs + 1, site.len())) < 0) {
+      let Some(column) = coordinate(location) else {
         return bad(lineno, row, "site is not <file>:<line>:<col>");
-      }
-      col = util.digits_to_i32(sub(site, cs + 1, site.len()));
-      site = sub(site, 0, cs);
+      };
+      let (line_site, value) = column;
+      site = line_site;
+      col = value;
     }
-    let ls = last_index(site, b':');
-    if (ls < 0 || parse_count(sub(site, ls + 1, site.len())) < 0) {
+    let Some(line) = coordinate(site) else {
       if (is_branch) {
         return bad(lineno, row, "site is not <file>:<line>:<col>");
       }
       return bad(lineno, row, "site is not <file>:<line>");
-    }
-    let src_line = util.digits_to_i32(sub(site, ls + 1, site.len()));
-    let name = sub(site, 0, ls);
+    };
+    let (name, src_line) = line;
     let fi = names.find(name);
     if (fi < 0) {
       fi = files.len();

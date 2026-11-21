@@ -179,11 +179,19 @@ func TestSelfHostCLICoverReport(t *testing.T) {
 	if out, err := exec.Command(cli, "-cover-report", "-lcov", in).CombinedOutput(); err != nil || string(out) != wantLcov {
 		t.Errorf("lcov: %v\n--- got ---\n%s--- want ---\n%s", err, out, wantLcov)
 	}
-	bad := writeShippedSrc(t, dir, "bad.txt", "fern-cover: a.fern:x 1\n")
-	cmd := exec.Command(cli, "-cover-report", bad)
-	out, _ := cmd.CombinedOutput()
-	if cmd.ProcessState.ExitCode() != 1 || !strings.Contains(string(out), "line 1:") {
-		t.Errorf("malformed row: exit %d, output %q", cmd.ProcessState.ExitCode(), out)
+	for _, tc := range []struct{ row, reason string }{
+		{"fern-cover: a.fern:x 1", "site is not <file>:<line>"},
+		{"fern-cover: a.fern:2147483648 1", "site is not <file>:<line>"},
+		{"fern-branch: a.fern:1:2147483648 E 1", "site is not <file>:<line>:<col>"},
+		{"fern-cover: a.fern:1 9223372036854775808", "bad count"},
+		{"fern-cover: a.fern:1 +1", "bad count"},
+	} {
+		bad := writeShippedSrc(t, dir, "bad.txt", tc.row+"\n")
+		cmd := exec.Command(cli, "-cover-report", bad)
+		out, _ := cmd.CombinedOutput()
+		if cmd.ProcessState.ExitCode() != 1 || !strings.Contains(string(out), "line 1:") || !strings.Contains(string(out), tc.reason) {
+			t.Errorf("row %q: exit %d, output %q", tc.row, cmd.ProcessState.ExitCode(), out)
+		}
 	}
 }
 
