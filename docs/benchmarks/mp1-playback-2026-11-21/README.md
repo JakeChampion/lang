@@ -52,3 +52,16 @@ The incremental decoder keeps its 1,152-float subband buffer across frames. It w
 | Dense stereo | 3.318 / 2.290 | 845 / 726 | 212 / 212 |
 | Dense joint stereo | 3.246 / 2.132 | 845 / 726 | 224 / 224 |
 | ISO Layer I stream | 1.257 / 0.901 | 348 / 300 | 184 / 184 |
+
+## Protected frame CRC
+
+The Layer I and II decoders now process each complete protected byte in two four-bit table steps, then check the remaining bits individually. Four Layer I streams produced identical complete PCM to scalar minimp3 before and after the change. The table compares the decoder at `5c879f5b4c` and the revised library using the frame driver above on x86-64 Linux.
+
+| Stream | Prior / revised instructions | Prior / revised median ms per decode |
+| --- | ---: | ---: |
+| Dense mono | 90,808,357 / 89,683,605 | 1.652 / 1.607 |
+| Dense stereo | 133,650,051 / 131,526,899 | 2.383 / 2.359 |
+| Dense joint stereo | 125,321,393 / 124,071,841 | 2.285 / 2.137 |
+| ISO Layer I | 52,344,463 / 51,380,991 | 0.884 / 0.858 |
+
+Callgrind 3.24 counted the complete benchmark process with one measured decode, including warmups and the final PCM dump. Wall times cover seven alternating pairs of thirty decodes pinned to one CPU. A separate run during local checks produced mixed timing results. The instruction counts are the more repeatable comparison. [Timing trials](crc-frame-trials.csv)
