@@ -1,3 +1,4 @@
+import "std/format";
 import "std/array";
 import "std/i64";
 import "std/u32";

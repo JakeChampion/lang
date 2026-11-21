@@ -6,6 +6,8 @@ This module provides methods for readers and writers.
 
 The helpers collect reader input into owned bytes or text. File and standard-input helpers share that result-based I/O interface.
 
+Import `std/io/traits` to write generic byte readers and writers. Its `Read` and `Write` traits support file handles, buffered I/O, and memory-backed streams and writers.
+
 ## Contracts
 
 A line read distinguishes end of input from an empty line. An I/O failure remains an error instead of ordinary end of input.

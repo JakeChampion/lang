@@ -10,6 +10,18 @@ An array combines flat storage with a shape, strides, and an offset. These field
 
 A view can have different strides from a packed row-major array. Operations that require packed data must use the layout contract rather than shape alone.
 
+Use `try_from_flat` and `try_reshape` for caller-supplied dimensions. They return `None` for a negative extent, an overflowing element count, or a count that differs from the data length. A successful reshape preserves logical element order, including for a transposed view. `try_broadcast_to` returns `None` if the target has fewer axes, an invalid count, or a trailing extent incompatible with the source.
+
+`try_broadcast_shape` checks whether two shapes have a representable common shape. `try_zip_with` applies an elementwise operation to that shape and returns `None` before invoking the callback if broadcasting fails.
+
+The checked view methods `try_permute`, `try_reverse`, `try_slice`, and `try_select` return `None` for an invalid axis, permutation, range, or index. A successful call shares the underlying array storage.
+
+`try_reduce_axis` returns `None` for an invalid axis or an unrepresentable result shape. `try_scan_axis` checks the axis and keeps the input shape. On an empty input, a reduction fills the result with its initial value and a scan returns an empty array. Neither calls the callback.
+
+`try_map_rank` returns `None` for an invalid cell rank, inconsistent mapped cell shapes, or an overflowing result shape. An empty frame produces no callback calls.
+
+`try_inner` checks that both operands have a contraction axis and that their extents match. Both `try_inner` and `try_outer` check the result shape before applying the element functions.
+
 ## Executable example
 
 ```fern test name=std-ndarray-example
@@ -104,30 +116,32 @@ function shape_error(): void {
   exit(134);
 }
 
-function check_shape(shape: i32[]): void {
+function shape_count(shape: i32[]): i32 {
   let n = 1;
   let k = 0;
   while (k < shape.len()) {
-    if (shape[k] < 0) {
-      shape_error();
+    let extent = shape[k];
+    if (extent < 0 || extent != 0 && n > 2147483647 / extent) {
+      return -1;
     }
-    if (shape[k] != 0 && n > 2147483647 / shape[k]) {
-      shape_error();
-    }
-    n *= shape[k];
-    k += 1;
-  }
-}
-
-function count_of(shape: i32[]): i32 {
-  check_shape(shape);
-  let n = 1;
-  let k = 0;
-  while (k < shape.len()) {
-    n *= shape[k];
+    n *= extent;
     k += 1;
   }
   return n;
+}
+
+function count_of(shape: i32[]): i32 {
+  let n = shape_count(shape);
+  if (n < 0) {
+    shape_error();
+  }
+  return n;
+}
+
+// The packed outer-product lowering calls this guard before allocating its result.
+@noinline
+function check_shape(shape: i32[]): void {
+  count_of(shape);
 }
 
 function row_major(shape: i32[]): i32[] {
@@ -152,11 +166,22 @@ function row_major(shape: i32[]): i32[] {
 
 ```fern
 <<4 pub function from_flat[T](data: T[], shape: i32[]): NdArray[T]>>=
+function flat_array[T](data: T[], shape: i32[]): NdArray[T] {
+  return NdArray { data: data, shape: shape, strides: row_major(shape), offset: 0 };
+}
+
+pub function try_from_flat[T](data: T[], shape: i32[]): Option[NdArray[T]] {
+  if (shape_count(shape) != data.len()) {
+    return None;
+  }
+  return Some(flat_array(data, shape));
+}
+
 pub function from_flat[T](data: T[], shape: i32[]): NdArray[T] {
-  if (count_of(shape) != data.len()) {
+  if (shape_count(shape) != data.len()) {
     shape_error();
   }
-  return NdArray { data: data, shape: shape, strides: row_major(shape), offset: 0 };
+  return flat_array(data, shape);
 }
 
 pub function (a: NdArray[T]) shape(): i32[] {
@@ -260,8 +285,20 @@ pub function (a: NdArray[T]) transpose(): NdArray[T] {
 }
 
 pub function (a: NdArray[T]) permute(axes: i32[]): NdArray[T] {
+  match (a.try_permute(axes)) {
+    Some(view) => {
+      return view;
+    },
+    None => {
+      shape_error();
+    }
+  }
+  return a;
+}
+
+pub function (a: NdArray[T]) try_permute(axes: i32[]): Option[NdArray[T]] {
   if (axes.len() != a.shape.len()) {
-    shape_error();
+    return None;
   }
   let seen: boolean[] = [];
   let shape: i32[] = [];
@@ -273,42 +310,83 @@ pub function (a: NdArray[T]) permute(axes: i32[]): NdArray[T] {
   }
   k = 0;
   while (k < axes.len()) {
-    check_axis(a, axes[k]);
-    if (seen[axes[k]]) {
-      shape_error();
+    if (axes[k] < 0 || axes[k] >= axes.len() || seen[axes[k]]) {
+      return None;
     }
     seen = seen.with(axes[k], true);
     shape = shape.append(a.shape[axes[k]]);
     strides = strides.append(a.strides[axes[k]]);
     k += 1;
   }
-  return NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset };
+  return Some(NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset });
 }
 
 pub function (a: NdArray[T]) reverse(axis: i32): NdArray[T] {
-  check_axis(a, axis);
+  match (a.try_reverse(axis)) {
+    Some(view) => {
+      return view;
+    },
+    None => {
+      shape_error();
+    }
+  }
+  return a;
+}
+
+pub function (a: NdArray[T]) try_reverse(axis: i32): Option[NdArray[T]] {
+  if (axis < 0 || axis >= a.rank()) {
+    return None;
+  }
   let n = a.shape[axis];
   let s = a.strides[axis];
   let offset = a.offset;
   if (n > 0) {
     offset += (n - 1) * s;
   }
-  return NdArray { data: a.data, shape: a.shape, strides: a.strides.with(axis, 0 - s), offset: offset };
+  return Some(NdArray { data: a.data, shape: a.shape, strides: a.strides.with(axis, 0 - s), offset: offset });
 }
 
 pub function (a: NdArray[T]) slice(axis: i32, lo: i32, hi: i32): NdArray[T] {
-  check_axis(a, axis);
+  match (a.try_slice(axis, lo, hi)) {
+    Some(view) => {
+      return view;
+    },
+    None => {
+      shape_error();
+    }
+  }
+  return a;
+}
+
+pub function (a: NdArray[T]) try_slice(axis: i32, lo: i32, hi: i32): Option[NdArray[T]] {
+  if (axis < 0 || axis >= a.rank()) {
+    return None;
+  }
   if (lo < 0 || lo > hi || hi > a.shape[axis]) {
-    shape_error();
+    return None;
   }
   let offset = a.offset + lo * a.strides[axis];
-  return NdArray { data: a.data, shape: a.shape.with(axis, hi - lo), strides: a.strides, offset: offset };
+  return Some(NdArray { data: a.data, shape: a.shape.with(axis, hi - lo), strides: a.strides, offset: offset });
 }
 
 pub function (a: NdArray[T]) select(axis: i32, i: i32): NdArray[T] {
-  check_axis(a, axis);
+  match (a.try_select(axis, i)) {
+    Some(view) => {
+      return view;
+    },
+    None => {
+      shape_error();
+    }
+  }
+  return a;
+}
+
+pub function (a: NdArray[T]) try_select(axis: i32, i: i32): Option[NdArray[T]] {
+  if (axis < 0 || axis >= a.rank()) {
+    return None;
+  }
   if (i < 0 || i >= a.shape[axis]) {
-    shape_error();
+    return None;
   }
   let shape: i32[] = [];
   let strides: i32[] = [];
@@ -320,17 +398,28 @@ pub function (a: NdArray[T]) select(axis: i32, i: i32): NdArray[T] {
     }
     k += 1;
   }
-  return NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset + i * a.strides[axis] };
+  return Some(NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset + i * a.strides[axis] });
 }
 
 pub function (a: NdArray[T]) reshape(shape: i32[]): NdArray[T] {
-  if (count_of(shape) != a.len()) {
+  if (shape_count(shape) != a.len()) {
     shape_error();
   }
+  return reshaped(a, shape);
+}
+
+pub function (a: NdArray[T]) try_reshape(shape: i32[]): Option[NdArray[T]] {
+  if (shape_count(shape) != a.len()) {
+    return None;
+  }
+  return Some(reshaped(a, shape));
+}
+
+function reshaped[T](a: NdArray[T], shape: i32[]): NdArray[T] {
   if (a.is_row_major()) {
     return NdArray { data: a.data, shape: shape, strides: row_major(shape), offset: a.offset };
   }
-  return from_flat(copy_flat(a), shape);
+  return flat_array(copy_flat(a), shape);
 }
 
 pub function (a: NdArray[T]) packed(): NdArray[T] {
@@ -429,8 +518,21 @@ function same_shape(x: i32[], y: i32[]): boolean {
 ```fern
 <<12 pub function broadcast_shape(x: i32[], y: i32[]): i32[]>>=
 pub function broadcast_shape(x: i32[], y: i32[]): i32[] {
-  check_shape(x);
-  check_shape(y);
+  match (try_broadcast_shape(x, y)) {
+    Some(shape) => {
+      return shape;
+    },
+    None => {
+      shape_error();
+    }
+  }
+  return [];
+}
+
+pub function try_broadcast_shape(x: i32[], y: i32[]): Option[i32[]] {
+  if (shape_count(x) < 0 || shape_count(y) < 0) {
+    return None;
+  }
   let rank = x.len();
   if (y.len() > rank) {
     rank = y.len();
@@ -451,19 +553,20 @@ pub function broadcast_shape(x: i32[], y: i32[]): i32[] {
     } else if (ex == 1) {
       out = out.with(k, ey);
     } else {
-      shape_error();
+      return None;
     }
     k += 1;
   }
-  check_shape(out);
-  return out;
+  if (shape_count(out) < 0) {
+    return None;
+  }
+  return Some(out);
 }
 
-pub function (a: NdArray[T]) broadcast_to(shape: i32[]): NdArray[T] {
-  check_shape(shape);
+pub function (a: NdArray[T]) try_broadcast_to(shape: i32[]): Option[NdArray[T]] {
   let pad = shape.len() - a.shape.len();
-  if (pad < 0) {
-    shape_error();
+  if (pad < 0 || shape_count(shape) < 0) {
+    return None;
   }
   let strides = zeros(shape.len());
   let k = 0;
@@ -471,15 +574,41 @@ pub function (a: NdArray[T]) broadcast_to(shape: i32[]): NdArray[T] {
     if (a.shape[k] == shape[pad + k]) {
       strides = strides.with(pad + k, a.strides[k]);
     } else if (a.shape[k] != 1) {
-      shape_error();
+      return None;
     }
     k += 1;
   }
-  return NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset };
+  return Some(NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset });
+}
+
+pub function (a: NdArray[T]) broadcast_to(shape: i32[]): NdArray[T] {
+  match (a.try_broadcast_to(shape)) {
+    Some(view) => {
+      return view;
+    },
+    None => {
+      shape_error();
+    }
+  }
+  return a;
 }
 
 pub function (a: NdArray[T]) zip_with[U, V](b: NdArray[U], f: (T, U) => V): NdArray[V] {
-  let shape = broadcast_shape(a.shape, b.shape);
+  return zip_to_shape(a, b, broadcast_shape(a.shape, b.shape), f);
+}
+
+pub function (a: NdArray[T]) try_zip_with[U, V](b: NdArray[U], f: (T, U) => V): Option[NdArray[V]] {
+  match (try_broadcast_shape(a.shape, b.shape)) {
+    Some(shape) => {
+      return Some(zip_to_shape(a, b, shape, f));
+    },
+    None => {
+      return None;
+    }
+  }
+}
+
+function zip_to_shape[T, U, V](a: NdArray[T], b: NdArray[U], shape: i32[], f: (T, U) => V): NdArray[V] {
   let x = a;
   let y = b;
   if (!same_shape(a.shape, shape)) {
@@ -527,6 +656,22 @@ function packed_zip[T, U, V](x: T[], y: U[], f: (T, U) => V): V[] {
 pub function (a: NdArray[T]) outer[U, V](b: NdArray[U], f: (T, U) => V): NdArray[V] {
   let shape = join(a.shape, b.shape);
   check_shape(shape);
+  return outer_to_shape(a, b, shape, f);
+}
+
+pub function (a: NdArray[T]) try_outer[U, V](b: NdArray[U], f: (T, U) => V): Option[NdArray[V]] {
+  let shape = join(a.shape, b.shape);
+  if (shape_count(shape) < 0) {
+    return None;
+  }
+  return Some(outer_to_shape(a, b, shape, f));
+}
+
+function outer_to_shape[T, U, V](a: NdArray[T], b: NdArray[U], shape: i32[], f: (T, U) => V): NdArray[V] {
+  if (a.len() == 0 || b.len() == 0) {
+    let empty: V[] = [];
+    return flat_array(empty, shape);
+  }
   if (a.is_packed() && b.is_packed()) {
     return packed_outer(a.data, b.data, shape, f);
   }
@@ -600,14 +745,29 @@ function base_of[T](a: NdArray[T], idx: i32[], idx_from: i32, axis_from: i32, co
 ```fern
 <<16 pub function (a: NdArray[T]) inner[A](b: NdArray[T], init: A, mul: (T, T)>>=
 pub function (a: NdArray[T]) inner[A](b: NdArray[T], init: A, mul: (T, T) => A, add: (A, A) => A): NdArray[A] {
+  let shape = inner_shape(a.shape, b.shape);
+  return inner_to_shape(a, b, shape, count_of(shape), init, mul, add);
+}
+
+pub function (a: NdArray[T]) try_inner[A](b: NdArray[T], init: A, mul: (T, T) => A, add: (A, A) => A): Option[NdArray[A]] {
+  if (!can_contract(a.shape, b.shape)) {
+    return None;
+  }
+  let shape = join(drop_axis(a.shape, a.rank() - 1), drop_axis(b.shape, 0));
+  let total = shape_count(shape);
+  if (total < 0) {
+    return None;
+  }
+  return Some(inner_to_shape(a, b, shape, total, init, mul, add));
+}
+
+function inner_to_shape[T, A](a: NdArray[T], b: NdArray[T], shape: i32[], total: i32, init: A, mul: (T, T) => A, add: (A, A) => A): NdArray[A] {
   let ra = a.shape.len();
   let rb = b.shape.len();
-  let shape = inner_shape(a.shape, b.shape);
   let n = a.shape[ra - 1];
   let sa = a.strides[ra - 1];
   let sb = b.strides[0];
   let out: A[] = [];
-  let total = count_of(shape);
   if (total == 0) {
     return from_flat(out, shape);
   }
@@ -637,8 +797,12 @@ pub function (a: NdArray[T]) inner[A](b: NdArray[T], init: A, mul: (T, T) => A, 
 
 ```fern
 <<17 function inner_shape(a: i32[], b: i32[]): i32[]>>=
+function can_contract(a: i32[], b: i32[]): boolean {
+  return a.len() > 0 && b.len() > 0 && a[a.len() - 1] == b[0];
+}
+
 function inner_shape(a: i32[], b: i32[]): i32[] {
-  if (a.len() < 1 || b.len() < 1 || a[a.len() - 1] != b[0]) {
+  if (!can_contract(a, b)) {
     shape_error();
   }
   return join(drop_axis(a, a.len() - 1), drop_axis(b, 0));
@@ -823,7 +987,26 @@ function packed_scan[T, A](data: T[], outer: i32, extent: i32, inner: i32, init:
 pub function (a: NdArray[T]) reduce_axis[A](axis: i32, init: A, f: (A, T) => A): NdArray[A] {
   check_axis(a, axis);
   let rshape = drop_axis(a.shape, axis);
-  let lane_strides = row_major(rshape);
+  return reduce_to_shape(a, axis, rshape, count_of(rshape), init, f);
+}
+
+pub function (a: NdArray[T]) try_reduce_axis[A](axis: i32, init: A, f: (A, T) => A): Option[NdArray[A]] {
+  if (axis < 0 || axis >= a.rank()) {
+    return None;
+  }
+  let rshape = drop_axis(a.shape, axis);
+  let count = shape_count(rshape);
+  if (count < 0) {
+    return None;
+  }
+  return Some(reduce_to_shape(a, axis, rshape, count, init, f));
+}
+
+function reduce_to_shape[T, A](a: NdArray[T], axis: i32, rshape: i32[], count: i32, init: A, f: (A, T) => A): NdArray[A] {
+  let n = a.len();
+  if (n == 0) {
+    return from_flat(lanes(count, init), rshape);
+  }
   if (a.is_packed()) {
     return from_flat(
       packed_reduce(
@@ -833,8 +1016,8 @@ pub function (a: NdArray[T]) reduce_axis[A](axis: i32, init: A, f: (A, T) => A):
       rshape,
     );
   }
-  let accs = lanes(count_of(rshape), init);
-  let n = a.len();
+  let lane_strides = row_major(rshape);
+  let accs = lanes(count, init);
   let idx = zeros(a.shape.len());
   let i = 0;
   while (i < n) {
@@ -848,8 +1031,23 @@ pub function (a: NdArray[T]) reduce_axis[A](axis: i32, init: A, f: (A, T) => A):
 
 pub function (a: NdArray[T]) scan_axis[A](axis: i32, init: A, f: (A, T) => A): NdArray[A] {
   check_axis(a, axis);
+  return scan_valid_axis(a, axis, init, f);
+}
+
+pub function (a: NdArray[T]) try_scan_axis[A](axis: i32, init: A, f: (A, T) => A): Option[NdArray[A]] {
+  if (axis < 0 || axis >= a.rank()) {
+    return None;
+  }
+  return Some(scan_valid_axis(a, axis, init, f));
+}
+
+function scan_valid_axis[T, A](a: NdArray[T], axis: i32, init: A, f: (A, T) => A): NdArray[A] {
+  let n = a.len();
+  if (n == 0) {
+    let empty: A[] = [];
+    return from_flat(empty, a.shape);
+  }
   let rshape = drop_axis(a.shape, axis);
-  let lane_strides = row_major(rshape);
   if (a.is_packed()) {
     return from_flat(
       packed_scan(
@@ -859,9 +1057,9 @@ pub function (a: NdArray[T]) scan_axis[A](axis: i32, init: A, f: (A, T) => A): N
       a.shape,
     );
   }
+  let lane_strides = row_major(rshape);
   let accs = lanes(count_of(rshape), init);
   let out: A[] = [];
-  let n = a.len();
   let idx = zeros(a.shape.len());
   let i = 0;
   while (i < n) {
@@ -876,8 +1074,21 @@ pub function (a: NdArray[T]) scan_axis[A](axis: i32, init: A, f: (A, T) => A): N
 }
 
 pub function (a: NdArray[T]) map_rank[U](k: i32, f: (NdArray[T]) => NdArray[U]): NdArray[U] {
+  match (a.try_map_rank(k, f)) {
+    Some(result) => {
+      return result;
+    },
+    None => {
+      shape_error();
+    }
+  }
+  let empty: U[] = [];
+  return flat_array(empty, [0]);
+}
+
+pub function (a: NdArray[T]) try_map_rank[U](k: i32, f: (NdArray[T]) => NdArray[U]): Option[NdArray[U]] {
   if (k < 0 || k > a.shape.len()) {
-    shape_error();
+    return None;
   }
   let fr = a.shape.len() - k;
   let frame: i32[] = [];
@@ -888,7 +1099,11 @@ pub function (a: NdArray[T]) map_rank[U](k: i32, f: (NdArray[T]) => NdArray[U]):
   }
   let cells = count_of(frame);
   let out: U[] = [];
+  if (cells == 0) {
+    return Some(flat_array(out, frame));
+  }
   let cshape: i32[] = [];
+  let shape: i32[] = [];
   let idx = zeros(fr);
   let packed = a.is_packed();
   let cshape_in: i32[] = [];
@@ -916,9 +1131,13 @@ pub function (a: NdArray[T]) map_rank[U](k: i32, f: (NdArray[T]) => NdArray[U]):
     let r = f(cell);
     if (i == 0) {
       cshape = r.shape();
+      shape = join(frame, cshape);
+      if (shape_count(shape) < 0) {
+        return None;
+      }
     } else {
       if (!same_shape(r.shape(), cshape)) {
-        shape_error();
+        return None;
       }
     }
     let flat = r.to_flat();
@@ -929,7 +1148,7 @@ pub function (a: NdArray[T]) map_rank[U](k: i32, f: (NdArray[T]) => NdArray[U]):
     }
     i += 1;
   }
-  return from_flat(out, join(frame, cshape));
+  return Some(from_flat(out, shape));
 }
 ```
 

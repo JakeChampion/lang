@@ -4,6 +4,7 @@
 import "std/json";
 import "std/option";
 import "std/string";
+import "std/hash";
 import "std/url";
 import "std/utf8";
 

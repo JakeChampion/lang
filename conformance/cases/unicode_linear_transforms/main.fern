@@ -1,4 +1,5 @@
 import "std/string";
+import "std/hash";
 import "std/unicode";
 
 function main(): i32 {

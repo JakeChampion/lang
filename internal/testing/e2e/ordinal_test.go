@@ -3,6 +3,7 @@ package e2e
 import "testing"
 
 const ordinalProg = `
+import "std/format";
 import "std/i32";
 function main(): i32 {
     if ((1).ordinal() != "1st") { return 1; }

@@ -1,6 +1,7 @@
 import "std/unicode";
 import "std/test";
 import "std/string";
+import "std/url";
 
 function test_is_int(): test.TestOutcome {
   let ok = "42".is_int() && "-42".is_int() && "+5".is_int();

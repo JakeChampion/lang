@@ -18,6 +18,7 @@ import "std/http";
 function main(): i32 {
   if (!http.is_success(204) || http.is_success(404)) { return 1; }
   if (http.status_text(404) != "Not Found") { return 2; }
+  if (!"PUT".is_http_idempotent_method() || "PUT".is_http_safe_method()) { return 3; }
   return 0;
 }
 ```
@@ -31,6 +32,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<module introduction>>
 
 <<dependencies 2>>
+
+<<method properties>>
 
 <<3 pub function status_text(code: i32): string>>
 
@@ -3363,4 +3366,22 @@ pub function authority_ok(value: string): boolean {
 ```fern
 <<module introduction>>=
 // HTTP/1.1 request parsing and response construction.
+```
+
+### HTTP method properties
+
+The predicates accept case-sensitive method names. Safe methods are GET, HEAD, OPTIONS, and TRACE. PUT and DELETE are also idempotent.
+
+```fern
+<<method properties>>=
+pub function (s: string) is_http_safe_method(): boolean {
+  return s == "GET" || s == "HEAD" || s == "OPTIONS" || s == "TRACE";
+}
+
+pub function (s: string) is_http_idempotent_method(): boolean {
+  if (s.is_http_safe_method()) {
+    return true;
+  }
+  return s == "PUT" || s == "DELETE";
+}
 ```

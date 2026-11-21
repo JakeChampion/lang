@@ -681,6 +681,11 @@ function __serve_wire(out: usize, method: string, version: string, answer: HttpR
   return NoTail;
 }
 
+function __wire_missing_file(out: usize, method: string, version: string, keep_alive: boolean, clk: __Clock): own __Tail {
+  http.serialize_response_into(out, method, version, http.not_found(), keep_alive, clk.line);
+  return NoTail;
+}
+
 function __wire_file(out: usize, method: string, version: string, resp: HttpResponse, path: string, body: __Spans, headless: boolean, keep_alive: boolean, clk: __Clock, date: string): own __Tail {
   match (open_reader(path)) {
     Ok(r) => {
@@ -693,7 +698,7 @@ function __wire_file(out: usize, method: string, version: string, resp: HttpResp
       }
       if (ranges.len() == 0) {
         r.close();
-        return __serve_wire(out, method, version, http.not_found(), keep_alive, clk);
+        return __wire_missing_file(out, method, version, keep_alive, clk);
       }
       let framing = date + "Content-Length: " + http.file_ranges_len(ranges, body.seams).to_string() + "\r\n";
       if (headless) {
@@ -708,12 +713,12 @@ function __wire_file(out: usize, method: string, version: string, resp: HttpResp
           return t;
         },
         None => {
-          return __serve_wire(out, method, version, http.not_found(), keep_alive, clk);
+          return __wire_missing_file(out, method, version, keep_alive, clk);
         }
       }
     },
     Err(e) => {
-      return __serve_wire(out, method, version, http.not_found(), keep_alive, clk);
+      return __wire_missing_file(out, method, version, keep_alive, clk);
     }
   }
   return NoTail;

@@ -1,3 +1,4 @@
+import "std/format";
 import "std/test";
 import "std/i32";
 
