@@ -151,24 +151,32 @@ pub function decode_simple(input: [u8], limits: pixels.Limits, cancelled: () => 
       return Err(Cancelled);
     }
     for col in 0..columns {
-      let sample = literal(input, codes, at);
+      let green = symbol(input, codes.green, at);
+      let row = y * layout.stride;
+      if (palette.len() == 0) {
+        let r = at + codes.green.width as i64;
+        let b = r + codes.red.width as i64;
+        let a = b + codes.blue.width as i64;
+        let delta: u8 = if (subtract_green) { green } else { 0 };
+        let i = row + col * 4;
+        data = data.with(i, add_channel(symbol(input, codes.red, r), delta)).with(i + 1, green);
+        data = data.with(i + 2, add_channel(symbol(input, codes.blue, b), delta)).with(i + 3, symbol(input, codes.alpha, a));
+      } else {
+        for sub in 0..packed {
+          let x = col * packed + sub;
+          if (x >= width) {
+            break;
+          }
+          let idx = green as i32 >> sub * index_bits & (1 << index_bits) - 1;
+          // Out-of-range indices retain the zero-initialized transparent black.
+          if (idx < palette.len()) {
+            let color = palette[idx];
+            let i = row + x * 4;
+            data = data.with(i, color.r).with(i + 1, color.g).with(i + 2, color.b).with(i + 3, color.a);
+          }
+        }
+      }
       at += codes.stride as i64;
-      let color = sample;
-      if (subtract_green) {
-        color = pixels.Pixel { ...color, r: add_channel(color.r, color.g), b: add_channel(color.b, color.g) };
-      }
-      for sub in 0..packed {
-        let x = col * packed + sub;
-        if (x >= width) {
-          break;
-        }
-        if (palette.len() > 0) {
-          let idx = sample.g as i32 >> sub * index_bits & (1 << index_bits) - 1;
-          color = if (idx < palette.len()) { palette[idx] } else { pixels.Pixel { r: 0, g: 0, b: 0, a: 0 } };
-        }
-        let i = y * layout.stride + x * 4;
-        data = data.with(i, color.r).with(i + 1, color.g).with(i + 2, color.b).with(i + 3, color.a);
-      }
     }
   }
   return Ok(pixels.Image { layout: layout, data: data });
