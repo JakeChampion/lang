@@ -143,6 +143,10 @@ function tag(out: usize, d: blocks.Doc, r: i32, s: State, text: string, at: i32)
     return;
   }
   let (sl, sc, el, ec) = d.span_of(r);
+  positioned_tag(out, text, at, sl, sc, el, ec);
+}
+
+function positioned_tag(out: usize, text: string, at: i32, sl: i32, sc: i32, el: i32, ec: i32): void {
   buf_push_range(out, text, 0, at);
   buf_push(out, " data-sourcepos=\"" + sl.to_string() + ":" + sc.to_string() + "-" + el.to_string() + ":" + ec.to_string() + "\"");
   buf_push_range(out, text, at, text.len());
@@ -287,8 +291,8 @@ function paragraph(out: usize, d: blocks.Doc, r: i32, s: State): State {
           s = paragraph_lines(out, d, r, s, from, header);
         }
         cr(out, s.open);
-        tag(out, d, r, s, "<table>\n", 6);
-        let (w, next) = tables.render(out, d, header, to, cols, s.w);
+        table_tag(out, d, r, s, header, to, cols.len());
+        let (w, next) = tables.render(out, d, r, header, to, cols, s.w);
         s = State { ...s, w: w, open: false };
         if (next < to) {
           if (tables.html_block(d, next)) {
@@ -302,6 +306,21 @@ function paragraph(out: usize, d: blocks.Doc, r: i32, s: State): State {
     }
   }
   return paragraph_lines(out, d, r, s, from, to);
+}
+
+function table_tag(out: usize, d: blocks.Doc, r: i32, s: State, header: i32, to: i32, width: i32): void {
+  if (!s.o.sourcepos) {
+    buf_push(out, "<table>\n");
+    return;
+  }
+  let stop = tables.limit(d, header, to, width);
+  let (sl, sc, el, ec) = d.span_of(r);
+  if (stop < to) {
+    let last = blocks.seg_end(d.segs[stop - 1]);
+    el -= to - stop;
+    ec = last - tables.line_start(d.src, last);
+  }
+  positioned_tag(out, "<table>\n", 6, sl, sc, el, ec);
 }
 
 // Paragraph segments omit leading whitespace. A top-level HTML block
@@ -335,7 +354,15 @@ function paragraph_lines(out: usize, d: blocks.Doc, r: i32, s: State, from: i32,
     return State { ...s, w: w, open: s.open || buf_len(out) > before };
   }
   cr(out, s.open);
-  tag(out, d, r, s, "<p>", 2);
+  if (s.o.sourcepos && to < d.to(r)) {
+    positioned_tag(out, "<p>", 2, 0, 0, 0, 0);
+  } else if (s.o.sourcepos && from > d.from(r)) {
+    let (_, _, el, ec) = d.span_of(r);
+    let a = blocks.seg_start(d.segs[from]);
+    positioned_tag(out, "<p>", 2, el - (to - from - 1), a - tables.line_start(d.src, a) + 1, el, ec);
+  } else {
+    tag(out, d, r, s, "<p>", 2);
+  }
   let skip = task_prefix(out, d, r, s.o);
   let w = inlines.render_after(out, d, from, to, s.w, skip);
   buf_push(out, "</p>\n");

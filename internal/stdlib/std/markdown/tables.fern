@@ -1,4 +1,5 @@
 // Pipe tables use byte ranges into the block parser's source lines.
+import "std/i32";
 import "std/markdown/blocks";
 import "std/markdown/inlines";
 import "std/markdown/tags";
@@ -17,22 +18,24 @@ function trim(s: u8[], a: i32, e: i32): (i32, i32) {
   return (a, e);
 }
 
-// Adjacent entries hold the start and end of each trimmed cell.
+// Adjacent entries hold the start and end of each cell before whitespace trimming.
 function cells(s: u8[], a: i32, e: i32): i32[] {
   let spans: i32[] = [];
   let (start, limit) = trim(s, a, e);
   a = start;
-  e = limit;
-  if (a < e && s[a] == b'|') {
+  if (a < limit && s[a] == b'|') {
     a += 1;
   }
-  while (a < e) {
+  while (a < limit) {
     let end = a;
-    while (end < e && (s[end] != b'|' || end > a && s[end - 1] == 92 as u8)) {
+    while (end < limit && (s[end] != b'|' || end > a && s[end - 1] == 92 as u8)) {
       end += 1;
     }
-    let (first, last) = trim(s, a, end);
-    spans = spans.append(first).append(last);
+    let last = end;
+    if (end == limit) {
+      last = e;
+    }
+    spans = spans.append(a).append(last);
     a = end + 1;
   }
   return spans;
@@ -81,7 +84,8 @@ pub function columns(d: blocks.Doc, from: i32): i32[] {
     return result;
   }
   for col in 0..delimiter.len() / 2 {
-    let align = alignment(d.src, delimiter[2 * col], delimiter[2 * col + 1]);
+    let (a, e) = trim(d.src, delimiter[2 * col], delimiter[2 * col + 1]);
+    let align = alignment(d.src, a, e);
     if (align < 0) {
       return [];
     }
@@ -90,7 +94,7 @@ pub function columns(d: blocks.Doc, from: i32): i32[] {
   return result;
 }
 
-const ALIGN: string[] = [">", " align=\"left\">", " align=\"right\">", " align=\"center\">"];
+const ALIGN: string[] = ["", " align=\"left\"", " align=\"right\"", " align=\"center\""];
 
 // The table grammar removes a backslash before a pipe even inside code spans.
 function cell(out: usize, d: blocks.Doc, a: i32, e: i32, w: inlines.Work): inlines.Work {
@@ -114,12 +118,51 @@ function cell(out: usize, d: blocks.Doc, a: i32, e: i32, w: inlines.Work): inlin
   return inlines.inline(out, text, 0, text.len(), d, w);
 }
 
-function row(out: usize, d: blocks.Doc, spans: i32[], cols: i32[], tag: string, w: inlines.Work): inlines.Work {
-  buf_push(out, "<tr>\n");
+struct Position { line: i32, column: i32, offset: i32, end: i32 }
+
+// Source columns count bytes. Body cells are relative to the table's start
+// column, even when a body row uses different indentation from the header.
+function position(d: blocks.Doc, r: i32, k: i32, header: boolean): Position {
+  let p = Position { line: 0, column: 0, offset: 0, end: 0 };
+  if (d.pos.len() == 0) {
+    return p;
+  }
+  let (sl, sc, el, ec) = d.span_of(r);
+  let a = blocks.seg_start(d.segs[k]);
+  let e = blocks.seg_end(d.segs[k]);
+  if (header) {
+    let prefix = 0;
+    for i in d.from(r)..k {
+      prefix += blocks.seg_end(d.segs[i]) - blocks.seg_start(d.segs[i]) + 1;
+    }
+    return Position { line: sl, column: sc, offset: sc + prefix - a, end: sc + prefix + e - a - 1 };
+  }
+  let start = line_start(d.src, a);
+  return Position { line: el - (d.to(r) - k - 1), column: sc, offset: sc - a, end: e - start };
+}
+
+function sourcepos(out: usize, line: i32, start: i32, end: i32): void {
+  if (line > 0) {
+    buf_push(out, " data-sourcepos=\"" + line.to_string() + ":" + start.to_string() + "-" + line.to_string() + ":" + end.to_string() + "\"");
+  }
+}
+
+function row(out: usize, d: blocks.Doc, spans: i32[], cols: i32[], tag: string, pos: Position, w: inlines.Work): inlines.Work {
+  buf_push(out, "<tr");
+  sourcepos(out, pos.line, pos.column, pos.end);
+  buf_push(out, ">\n");
   for i in 0..cols.len() {
     buf_push(out, "<" + tag + ALIGN[cols[i]]);
     if (2 * i < spans.len()) {
-      w = cell(out, d, spans[2 * i], spans[2 * i + 1], w);
+      let start = spans[2 * i];
+      let end = spans[2 * i + 1];
+      sourcepos(out, pos.line, pos.offset + start, pos.offset + end - 1);
+      buf_push(out, ">");
+      let (a, e) = trim(d.src, start, end);
+      w = cell(out, d, a, e, w);
+    } else {
+      sourcepos(out, pos.line, 0, 0);
+      buf_push(out, ">");
     }
     buf_push(out, "</" + tag + ">\n");
   }
@@ -136,9 +179,34 @@ pub function html_block(d: blocks.Doc, k: i32): boolean {
   return a < e && d.src[a] == b'<' && tags.block_start(d.src, a, e, false) == 7;
 }
 
-pub function render(out: usize, d: blocks.Doc, from: i32, to: i32, cols: i32[], w: inlines.Work): (inlines.Work, i32) {
+// Find the last source line before writing the table's opening tag. The
+// normal HTML path can emit each row without this lookahead.
+pub function limit(d: blocks.Doc, from: i32, to: i32, width: i32): i32 {
+  let next = from + 2;
+  let padded = 0;
+  while (next < to && padded <= 0x80000 && !html_block(d, next)) {
+    let count = line(d, next).len() / 2;
+    if (count == 0 || count > 65535) {
+      break;
+    }
+    if (count < width) {
+      padded += width - count;
+    }
+    next += 1;
+  }
+  return next;
+}
+
+pub function line_start(src: u8[], a: i32): i32 {
+  while (a > 0 && src[a - 1] != 10 as u8 && src[a - 1] != 13 as u8) {
+    a -= 1;
+  }
+  return a;
+}
+
+pub function render(out: usize, d: blocks.Doc, r: i32, from: i32, to: i32, cols: i32[], w: inlines.Work): (inlines.Work, i32) {
   buf_push(out, "<thead>\n");
-  w = row(out, d, line(d, from), cols, "th", w);
+  w = row(out, d, line(d, from), cols, "th", position(d, r, from, true), w);
   buf_push(out, "</thead>\n");
   let next = from + 2;
   let padded = 0;
@@ -153,7 +221,7 @@ pub function render(out: usize, d: blocks.Doc, from: i32, to: i32, cols: i32[], 
     if (spans.len() / 2 < cols.len()) {
       padded += cols.len() - spans.len() / 2;
     }
-    w = row(out, d, spans, cols, "td", w);
+    w = row(out, d, spans, cols, "td", position(d, r, next, false), w);
     next += 1;
   }
   if (next > from + 2) {
