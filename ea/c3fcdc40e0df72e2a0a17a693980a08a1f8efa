@@ -624,3 +624,26 @@ h2spec/skipped	0
 h3spec/passed	86
 h3spec/failed	0
 h3spec/pending	0
+
+# lane: net-soak
+soak/static.requests	70375199
+soak/static.failed	0
+soak/static.rss_warm_kb	632
+soak/static.rss_end_kb	16
+soak/static.rss_growth_kb	-616
+soak/static.allocs	529888
+soak/static.live_bytes	0
+soak/echo.requests	53833029
+soak/echo.failed	0
+soak/echo.rss_warm_kb	696
+soak/echo.rss_end_kb	696
+soak/echo.rss_growth_kb	0
+soak/echo.allocs	2416380117
+soak/echo.live_bytes	0
+soak/recent.requests	37387892
+soak/recent.failed	0
+soak/recent.rss_warm_kb	664
+soak/recent.rss_end_kb	664
+soak/recent.rss_growth_kb	0
+soak/recent.allocs	599610001
+soak/recent.live_bytes	0
