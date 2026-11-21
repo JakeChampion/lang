@@ -6963,6 +6963,7 @@ function main(): i32 {
 
 func TestArm64StdlibBundle9(t *testing.T) {
 	src := `
+import "std/format";
 import "std/string";
 import "std/option";
 function main(): i32 {
