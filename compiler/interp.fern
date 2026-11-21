@@ -2,6 +2,7 @@ import "./ast";
 import "./lexer";
 import "./lexical";
 import "./parser";
+import "./localfuncs";
 import "./rangeloops";
 import "./defaultargs";
 import "./util";
@@ -10603,7 +10604,7 @@ function flattened_env(e: Env): Env {
 function block_stmt(body: ast.Stmt[], at: i32, own env: Env): StepResult {
   if let ast.StmtVar(v) = body[at] {
     if (ast.var_binds_itself(v)) {
-      let cycle = parser.nested_fn_cycle(parser.nested_fns(body), v.name);
+      let cycle = localfuncs.nested_fn_cycle(localfuncs.nested_fns(body), v.name);
       if (cycle.len() > 1) {
         if (cycle[0] != v.name) {
           return step_none(env);
