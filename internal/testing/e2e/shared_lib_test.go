@@ -58,7 +58,7 @@ function near(x: i32): i32 { return x + 2; }
 function r16(x: i32): i32 { return x + 3; }
 function main(): i32 { return 0; }
 `
-	exports := []string{"mod", "near", "r16"}
+	exports := []string{"r16", "mod", "near"}
 	bin := buildFernCLI(t)
 
 	t.Run("x86_64_dlopen", func(t *testing.T) {
@@ -83,13 +83,14 @@ function main(): i32 { return 0; }
 #include <stdio.h>
 int main(int c, char**v){
   void*h=dlopen(v[1],RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
-  int t=0;
-  for(int i=2;i<c;i++){
-    int(*f)(int)=(int(*)(int))dlsym(h,v[i]);
-    if(!f){fprintf(stderr,"dlsym %s: %s\n",v[i],dlerror());return 101;}
-    t+=f(10);
+  const char *names[]={"mod","near","r16"};
+  for(int i=0;i<3;i++){
+    int(*f)(int)=(int(*)(int))dlsym(h,names[i]);
+    if(!f){fprintf(stderr,"dlsym %s: %s\n",names[i],dlerror());return 101;}
+    int got=f(10), want=11+i;
+    if(got!=want){fprintf(stderr,"%s(10) = %d, want %d\n",names[i],got,want);return 102;}
   }
-  return t;
+  return 0;
 }`
 		cPath := filepath.Join(dir, "ld.c")
 		if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
@@ -99,10 +100,8 @@ int main(int c, char**v){
 		if o, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
 			t.Fatalf("gcc loader: %v\n%s", err, o)
 		}
-		cmd := exec.Command(ld, append([]string{soPath}, exports...)...)
-		out, _ := cmd.CombinedOutput()
-		if code := cmd.ProcessState.ExitCode(); code != 36 {
-			t.Fatalf("dlopen+call reserved-name exports = %d, want 36 (out=%q)", code, out)
+		if out, err := exec.Command(ld, soPath).CombinedOutput(); err != nil {
+			t.Fatalf("calling reserved-name exports: %v\n%s", err, out)
 		}
 	})
 
