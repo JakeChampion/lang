@@ -434,8 +434,9 @@ Defaults permit 65,536 boxes, 32 tracks, 1,048,576 packet records, 64 descriptio
 The audio limits also bound each decoded AAC frame and the complete presentation output.
 
 Fragmented media, encryption, external data references, other audio codecs, format-changing descriptions, and nonzero composition offsets return `Unsupported`.
-Reader-backed metadata indexing and cooperative file playback remain separate work.
-These limits keep [#14518](https://github.com/JakeChampion/lang/issues/14518) open after this complete-view playback milestone.
+For a seekable AAC file, use `std/audio/mp4/file.inspect(reader, limits)` to index the metadata, then pass the index and track number to `std/audio/mp4/cursor.create`.
+Call `cursor.seek(position)` with a presentation frame offset and pass the same reader to `cursor.step_into` to read PCM. Keep the reader open while stepping the cursor.
+Fragmented MP4 support remains open under [#14518](https://github.com/JakeChampion/lang/issues/14518).
 
 Fifteen independent fixtures compare complete trimmed PCM with FFmpeg at an absolute tolerance of 0.000001.
 They cover fast-start files, multiple audio tracks, a video track, compact sizes, extended boxes, and 64-bit chunk offsets.
@@ -1044,7 +1045,7 @@ These results preserve exact scalar-reference PCM and do not establish world-lea
 The codec stack now includes complete Opus decode, Ogg demux, and MP3/FLAC seek indexes.
 Further MP3 work includes damaged-stream synchronization and more tag formats.
 AAC work includes HE-AAC/SBR/PS, protected ADTS verification, and program configurations.
-MP4/M4A work includes fragmented media, further codecs, and bounded file-reader playback.
+MP4/M4A work includes fragmented media and further codecs.
 Vorbis, further encoders, and other lossless formats need independent reference vectors and benchmarks.
 Android qualification still needs physical-device memory, power, thermal, and sustained-playback measurements.
 
