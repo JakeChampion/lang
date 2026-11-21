@@ -8,7 +8,7 @@ The Opus packet API reuses the Fern CELT implementation.
 | Format | Decode | Encode | Current scope |
 | --- | --- | --- | --- |
 | WAVE | Yes | Integer PCM | Integer PCM at 8/16/24/32 bits and IEEE float at 32/64 bits, one through eight channels. Ordinary and extensible subformats. |
-| AIFF/AIFC | Yes | No | Signed integer PCM at 1 through 32 bits, NONE/twos/sowt, IEEE float at 32 or 64 bits, and G.711 A-law/mu-law. Exact byte-view frame ranges. |
+| AIFF/AIFC | Yes | No | Signed integer PCM at 1 through 32 bits, NONE/twos/sowt, IEEE float at 32 or 64 bits, and G.711 A-law/mu-law. Exact frame ranges from byte views and seekable Readers. |
 | AU | Yes | No | Big-endian signed integer PCM at 8/16/24/32 bits, IEEE float at 32 or 64 bits, and G.711 A-law/mu-law. Known and unknown data sizes. |
 | FLAC | Yes | Fixed and LPC | Native FLAC, 4 through 32 bits, one through eight channels. All predictor types, Rice/Rice2, wasted bits, and stereo assignments. |
 | QOA | Yes | Yes | Static files, signed 16-bit PCM, one through eight channels. Independent frame APIs also accept individual frames. |
@@ -21,7 +21,7 @@ The Opus packet API reuses the Fern CELT implementation.
 | MP4/M4A | AAC-LC, ALAC | No | Self-contained audio tracks, sample tables, decoder configuration, track selection, and edit-list trimming. Complete byte views only. |
 | Vorbis | Yes | No | Version one, one through eight channels, both floor types, all residue types, and standard block sizes. Incremental Ogg files and borrowed readers apply initial and final sample boundaries. |
 | ALAC | Yes | No | Version zero, 16/20/24/32-bit integer PCM, one through eight channels, raw and compressed packets, and standard layouts. CAF and M4A supply file playback. Compressed stereo requires at most 32 predictor bits. |
-| CAF | ALAC, PCM, float, G.711 | No | Version-one files, packet tables, bounded playback, exact sample seeks, and initial and final trim. Complete immutable byte views only. |
+| CAF | ALAC, PCM, float, G.711 | No | Version-one files, packet tables, bounded playback, exact sample seeks, and initial and final trim. Immutable byte views and seekable Readers. |
 | WavPack | Yes | No | Native lossless blocks, 1 through 32 integer bits, exact IEEE float, and one through eight channels. Bounded byte-view, sequential source, and indexed file playback with exact seeks. APE and ID3v1 trailing tags. Hybrid, correction files, and DSD remain unsupported. |
 | HE-AAC | No | No | No implementation in these modules. |
 
@@ -216,7 +216,12 @@ The generator records the reference version and SHA-256 values for encoded bytes
 python3 scripts/gen-linear-audio-vectors.py --check
 ```
 
-The codecs perform no file I/O. Reader integration and additional container encoders remain open under #14687.
+For a seekable file, `std/audio/linear/file` provides `inspect_aiff` (including AIFC),
+`inspect_au`, `inspect_caf`, and `inspect_wav`. These functions read the format headers
+and skip over sample data and unknown chunks. Pass the index and the same borrowed
+Reader to `read_integer_into` or `read_float_into` for an exact frame range.
+The byte budget applies to the whole file at inspection and the requested range at playback.
+An empty range leaves the file position unchanged. The caller closes the Reader.
 
 `std/audio/caf/linear` supplies CAF integer PCM, IEEE float, and G.711 playback through the same linear index.
 Integer PCM uses 8, 16, 24, or 32 bits in either byte order.
@@ -299,7 +304,7 @@ The caller supplies the same immutable source and closes it after success or fai
 The file budget covers the complete source. The audio input budget applies to one packet.
 The default source window holds at most 1 MiB, and the packet-table window normally holds 16 KiB.
 Both windows can coexist during index construction.
-Source-backed linear CAF playback and custom channel descriptions remain open.
+Linear CAF Readers preserve stored channel order and check channel counts for layout tags, bitmaps, and explicit descriptions. The ALAC path supports its documented speaker layouts.
 
 ## Vorbis
 

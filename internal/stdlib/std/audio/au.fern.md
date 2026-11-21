@@ -32,16 +32,16 @@ function encoding(code: u64): Result[(linear.Kind, i32, i32), pcm.AudioError] {
   };
 }
 
-function extent(input: [u8]): Result[(i32, i32), pcm.AudioError] {
+function extent(input: [u8], file_bytes: i32): Result[(i32, i32), pcm.AudioError] {
   let offset = wire.be(input, 4, 4);
   let declared = wire.be(input, 8, 4);
   if (offset < 24u64) {
     return Err(pcm.Header);
   }
-  if (offset > input.len() as u64) {
+  if (offset > file_bytes as u64) {
     return Err(pcm.Truncated);
   }
-  let bytes = input.len() - offset as i32;
+  let bytes = file_bytes - offset as i32;
   if (declared != 4294967295u64 && declared != bytes as u64) {
     return Err(if (declared > bytes as u64) { pcm.Truncated } else { pcm.Header });
   }
@@ -49,14 +49,20 @@ function extent(input: [u8]): Result[(i32, i32), pcm.AudioError] {
 }
 
 pub function inspect(input: [u8], limits: pcm.Limits): Result[linear.Index, pcm.AudioError] {
-  pcm.check_input(input, limits)?;
-  if (input.len() < 24) {
+  return inspect_header(input, input.len(), limits);
+}
+
+pub function inspect_header(input: [u8], file_bytes: i32, limits: pcm.Limits): Result[linear.Index, pcm.AudioError] {
+  if (file_bytes < 0 || file_bytes > limits.max_input_bytes || limits.max_samples < 0) {
+    return Err(pcm.Limit);
+  }
+  if (input.len() < 24 || file_bytes < 24) {
     return Err(pcm.Truncated);
   }
   if (!wire.tag(input, 0, ".snd")) {
     return Err(pcm.Header);
   }
-  let (offset, bytes) = extent(input)?;
+  let (offset, bytes) = extent(input, file_bytes)?;
   let (kind, bits, storage) = encoding(wire.be(input, 12, 4))?;
   let rate = wire.be(input, 16, 4);
   let channels = wire.be(input, 20, 4);
@@ -64,7 +70,7 @@ pub function inspect(input: [u8], limits: pcm.Limits): Result[linear.Index, pcm.
     return Err(pcm.Header);
   }
   let format = linear.Format { sample_rate: rate as i32, channels: channels as i32, bits: bits, storage_bits: storage, little_endian: false, kind: kind };
-  return linear.create(input, offset, bytes, format, limits);
+  return linear.create_extent(file_bytes, offset, bytes, format, limits);
 }
 
 pub function decode(input: [u8], limits: pcm.Limits): Result[pcm.Block, pcm.AudioError] {

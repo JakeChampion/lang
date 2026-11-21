@@ -176,6 +176,26 @@ function floats(): test.TestOutcome {
   return test.pass();
 }
 
+function layouts(): test.TestOutcome {
+  let mono = wire.put_be(wire.put_be(wire.put_be([], 6553601u64, 4), 0u64, 4), 0u64, 4);
+  let bitmap = field(field(mono, 0, 4, 65536u64), 4, 4, 4u64);
+  let descriptions = field(field(mono, 0, 4, 0u64), 8, 4, 1u64);
+  for _ in 0..20 {
+    descriptions = descriptions.append(0u8);
+  }
+  for valid in [mono, bitmap, descriptions] {
+    if (caf.inspect(join(fixture([]), chunk("chan", valid)), caf.default_limits()).is_err()) {
+      return test.fail("valid mono channel layout");
+    }
+  }
+  for invalid in [[], field(mono, 0, 4, 6619138u64), field(bitmap, 4, 4, 3u64), field(descriptions, 8, 4, 2u64)] {
+    if let Err(pcm.Header) = caf.inspect(join(fixture([]), chunk("chan", invalid)), caf.default_limits()) {} else {
+      return test.fail("inconsistent channel layout");
+    }
+  }
+  return test.pass();
+}
+
 function mutations(): test.TestOutcome {
   let input = fixture(packet_table(3u64, 1u64, 1u64, 1u64));
   for at in 0..input.len() {
@@ -196,6 +216,7 @@ function main(): i32 {
   runner = runner.it("packet table counts, signed fields, and extents", tables);
   runner = runner.it("metadata, output, input, and chunk budgets", limits);
   runner = runner.it("non-finite float payloads and explicit quantization", floats);
+  runner = runner.it("channel tags, bitmaps, and description counts", layouts);
   runner = runner.it("every-byte mutations stay bounded", mutations);
   return runner.finish();
 }

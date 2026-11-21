@@ -1,0 +1,177 @@
+import "std/audio/aiff";
+import "std/audio/caf/linear" as caf_linear;
+import "std/audio/linear";
+import "std/audio/linear/file";
+import "std/audio/wire";
+import "aac_kernel_check" as ref;
+import "linear_audio_vectors";
+import "std/audio/pcm";
+import "std/audio/source";
+import "std/hex";
+import "std/rand";
+import "std/test";
+
+function ranges(reader: Reader): test.TestOutcome {
+  let limits = pcm.default_limits();
+  let Ok(index) = file.inspect_au(reader, limits) else {
+    return test.fail("AU header");
+  };
+  let Ok(header_end) = reader.seek(0i64, 1) else {
+    return test.fail("header position");
+  };
+  if (header_end != 24i64 || index.data_offset() != 28 || index.information().frames != 3) {
+    return test.fail("inspection read beyond the fixed header");
+  }
+  let Ok(last) = file.read_integer_into(reader, index, 2, 1, [77, 88], limits) else {
+    return test.fail("last frame");
+  };
+  if (last.samples[0] != -32768 || last.samples[1] != 88) {
+    return test.fail("last integer sample or output suffix");
+  }
+  let Ok(first) = file.read_float_into(reader, index, 0, 1, [0f64, 22f64], limits) else {
+    return test.fail("seek to first frame");
+  };
+  if (first.samples[0] != 0.5f64 || first.samples[1] != 22f64) {
+    return test.fail("first float sample or output suffix");
+  }
+  let Ok(empty) = file.read_float_into(reader, index, 3, 0, [9f64], limits) else {
+    return test.fail("empty range at EOF");
+  };
+  if (empty.frames != 0 || empty.samples[0] != 9f64) {
+    return test.fail("empty range overwrote output");
+  }
+  if let Err(source.ReadAudio(pcm.Limit)) = file.read_integer_into(reader, index, 1, 1, [0], pcm.Limits { ...limits, max_input_bytes: 1 }) {} else {
+    return test.fail("range byte budget");
+  }
+  if let Err(source.ReadAudio(pcm.Buffer)) = file.read_integer_into(reader, index, 0, 1, [], limits) {} else {
+    return test.fail("short output");
+  }
+  if let Err(source.ReadAudio(pcm.Header)) = file.read_integer_into(reader, index, 3, 1, [0], limits) {} else {
+    return test.fail("past end of file");
+  }
+  let Ok(position) = reader.seek(0i64, 1) else {
+    return test.fail("range position");
+  };
+  return test.assert_eq(position, 30i64);
+}
+
+function file_ranges(): test.TestOutcome {
+  let path = "fern-linear-" + hex.encode(rand.bytes(8));
+  let Ok(writer) = open_exclusive(path) else {
+    return test.fail("create fixture");
+  };
+  defer { remove_file(path); }
+  // AU, four annotation bytes, unknown data size, mono 16-bit PCM at 8 kHz.
+  let bytes: u8[] = [46, 115, 110, 100, 0, 0, 0, 28, 255, 255, 255, 255, 0, 0, 0, 3, 0, 0, 31, 64, 0, 0, 0, 1, 65, 85, 0, 0, 64, 0, 0, 0, 128, 0];
+  let wrote = writer.write_bytes(bytes);
+  let closed = writer.close();
+  if (wrote.is_err() || closed.is_err()) {
+    return test.fail("write fixture");
+  }
+  let Ok(reader) = open_reader(path) else {
+    return test.fail("open fixture");
+  };
+  defer reader.close();
+  return ranges(reader);
+}
+
+function inspect(reader: Reader, container: i32): Result[linear.Index, source.ReadError] {
+  return match (container) {
+    0 => file.inspect_aiff(reader, aiff.default_limits()),
+    1 => file.inspect_au(reader, pcm.default_limits()),
+    2 => file.inspect_caf(reader, caf_linear.default_limits()),
+    _ => file.inspect_wav(reader, pcm.default_limits()),
+  };
+}
+
+function check_vector(reader: Reader, v: linear_audio_vectors.Vector): Result[void, string] {
+  let limits = pcm.default_limits();
+  let index = match (inspect(reader, v.container)) { Ok(i) => i, Err(e) => { return Err(e.message()); } };
+  let info = index.information();
+  if (info.frames != v.frames || info.format.bits != v.bits || info.format.channels != v.channels || info.format.sample_rate != v.rate) {
+    return Err("indexed format");
+  }
+  let floats = ref.unpack(v.floats)?;
+  let integers = ref.unpack(v.integers)?;
+  for start in [v.frames / 2, 0] {
+    let frames = if (start == 0) { v.frames / 2 } else { v.frames - start };
+    let n = frames * v.channels;
+    let output: f64[] = [];
+    for _ in 0..n {
+      output = output.append(0f64);
+    }
+    let block = match (file.read_float_into(reader, index, start, frames, output, limits)) { Ok(b) => b, Err(e) => { return Err(e.message()); } };
+    for i in 0..n {
+      if (f64_bits(block.samples[i]) != wire.le(floats, (start * v.channels + i) * 8, 8) as i64) {
+        return Err("float sample " + i.to_string());
+      }
+    }
+    if (!v.floating) {
+      let samples = match (file.read_integer_into(reader, index, start, frames, pcm.zeros(n), limits)) { Ok(b) => b, Err(e) => { return Err(e.message()); } };
+      for i in 0..n {
+        if (samples.samples[i] != ref.word(integers, (start * v.channels + i) * 4)) {
+          return Err("integer sample " + i.to_string());
+        }
+      }
+    }
+  }
+  return Ok(());
+}
+
+function reference_file(v: linear_audio_vectors.Vector, damaged: boolean): Result[void, string] {
+  let encoded = ref.unpack(v.encoded)?;
+  if (damaged) {
+    // Point the first extent beyond EOF: FORM/RIFF size, AU data offset,
+    // or the first CAF chunk's signed 64-bit size.
+    let at = if (v.container == 2) { 12 } else { 4 };
+    for i in 0..4 {
+      encoded = encoded.with(at + i, 127u8);
+    }
+  }
+  let path = "fern-linear-" + hex.encode(rand.bytes(8));
+  let Ok(writer) = open_exclusive(path) else {
+    return Err("create fixture");
+  };
+  defer { remove_file(path); }
+  let wrote = writer.write_bytes(encoded);
+  let closed = writer.close();
+  if (wrote.is_err() || closed.is_err()) {
+    return Err("write fixture");
+  }
+  let Ok(reader) = open_reader(path) else {
+    return Err("open fixture");
+  };
+  defer reader.close();
+  if (damaged) {
+    if let Err(source.ReadAudio(pcm.Truncated)) = inspect(reader, v.container) {
+      return Ok(());
+    }
+    return Err("invalid container extent");
+  }
+  return check_vector(reader, v);
+}
+
+function reference_files(): test.TestOutcome {
+  let count = 0;
+  let damaged = [false, false, false, false];
+  for vector in linear_audio_vectors.all() {
+    if let Err(message) = reference_file(vector, false) {
+      return test.fail(vector.name + ": " + message);
+    }
+    if (!damaged[vector.container]) {
+      if let Err(message) = reference_file(vector, true) {
+        return test.fail(vector.name + ": " + message);
+      }
+      damaged = damaged.with(vector.container, true);
+    }
+    count += 1;
+  }
+  return test.assert_eq(count, 124);
+}
+
+function main(): i32 {
+  let runner = test.new("linear PCM file ranges");
+  runner = runner.it("inspect only the AU header and seek directly to bounded sample ranges", file_ranges);
+  runner = runner.it("seek and compare every sample in 124 FFmpeg fixtures", reference_files);
+  return runner.finish();
+}

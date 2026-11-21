@@ -49,15 +49,21 @@ function valid(format: Format): boolean {
 }
 
 pub function create(input: [u8], offset: i32, bytes: i32, format: Format, limits: pcm.Limits): Result[Index, pcm.AudioError] {
-  pcm.check_input(input, limits)?;
-  if (!valid(format) || offset < 0 || offset > input.len() || bytes < 0 || bytes > input.len() - offset) {
+  return create_extent(input.len(), offset, bytes, format, limits);
+}
+
+pub function create_extent(input_bytes: i32, offset: i32, bytes: i32, format: Format, limits: pcm.Limits): Result[Index, pcm.AudioError] {
+  if (input_bytes < 0 || input_bytes > limits.max_input_bytes || limits.max_samples < 0) {
+    return Err(pcm.Limit);
+  }
+  if (!valid(format) || offset < 0 || offset > input_bytes || bytes < 0 || bytes > input_bytes - offset) {
     return Err(pcm.Header);
   }
   let stride = format.channels * (format.storage_bits / 8);
   if (bytes % stride != 0) {
     return Err(pcm.Header);
   }
-  return Ok(Index { info: Info { format: format, frames: bytes / stride }, offset: offset, bytes: bytes, input_bytes: input.len() });
+  return Ok(Index { info: Info { format: format, frames: bytes / stride }, offset: offset, bytes: bytes, input_bytes: input_bytes });
 }
 
 pub function (index: Index) information(): Info {
