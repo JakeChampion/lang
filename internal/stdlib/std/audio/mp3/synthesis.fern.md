@@ -229,6 +229,11 @@ function butterfly8(own t: f32[], at: i32): f32[] {
 
 function dct32_tail(own samples: f32[], base: i32): f32[] {
   let t = spectral.zeros(32);
+  let (result, _) = dct32_tail_into(samples, base, t);
+  return result;
+}
+
+function dct32_tail_into(own samples: f32[], base: i32, own t: f32[]): (f32[], f32[]) {
   for k in 16..18 {
     for i in 0..8 {
       let x0 = samples[base + k + i * 18];
@@ -255,7 +260,7 @@ function dct32_tail(own samples: f32[], base: i32): f32[] {
     let at = base + k + 28 * 18;
     samples = samples.with(at, t[7]).with(at + 18, t[23] + t[31]).with(at + 36, t[15]).with(at + 54, t[31]);
   }
-  return samples;
+  return (samples, t);
 }
 
 function butterfly8x4(own t: f32[], at: i32): f32[] {
@@ -402,6 +407,45 @@ function granule_columns(own qmf: f32[], own samples: f32[], channels: i32, colu
   let lines = spectral.zeros((15 + columns) * 64);
 <<polyphase synthesis body>>
   return (qmf, output);
+}
+
+// Seed 15 history columns followed by space for two MPEG-1 granules.
+pub function frame_lines(history: [f32]): f32[] {
+  let lines: f32[] = [];
+  for sample in history {
+    lines = lines.append(sample);
+  }
+  for _ in 0..36 * 64 {
+    lines = lines.append(0.0f32);
+  }
+  return lines;
+}
+
+pub function frame_history(own history: f32[], lines: [f32], channels: i32): f32[] {
+  for i in 0..960 {
+    if (channels == 2 || (i & 1) == 0) {
+      history = history.with(i, lines[36 * 64 + i]);
+    }
+  }
+  return history;
+}
+
+// The caller seeds the first 960 lines with history once per Layer III frame.
+// Adjacent granules share the trailing 15 columns directly.
+pub function granule_at(own lines: f32[], offset: i32, own samples: f32[], channels: i32, own output: f32[], out_at: i32, own transform: f32[]): (f32[], f32[], f32[]) {
+  for ch in 0..channels {
+    let (four, scratch) = dct32x4_into(samples, ch * 576, 4, transform);
+    let (tail, next) = dct32_tail_into(four, ch * 576, scratch);
+    samples = tail;
+    transform = next;
+  }
+  for block in 0..9 {
+    let i = block * 2;
+    let (next, pcm) = synth(samples, i, channels, lines, offset + i * 64, output, out_at + i * 32 * channels);
+    lines = next;
+    output = pcm;
+  }
+  return (lines, output, transform);
 }
 
 function synthesize(own qmf: f32[], samples: [f32], channels: i32, columns: i32, own output: f32[], out_at: i32, own lines: f32[]): (f32[], f32[], f32[]) {

@@ -1,1 +1,2 @@
-cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`
+8:7: error[E056]: cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`
+9:7: error[E056]: cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`

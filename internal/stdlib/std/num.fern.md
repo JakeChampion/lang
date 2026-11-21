@@ -1,6 +1,6 @@
-# Numeric reductions
+# Numeric reductions and predicates
 
-This module provides generic reductions over arrays of numbers.
+This module provides generic array reductions and decimal palindrome checks.
 
 ## Model
 
@@ -21,13 +21,15 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<module introduction>>
 
 <<reductions>>
+
+<<decimal palindromes>>
 ```
 
 ### `module introduction`
 
 ```fern
 <<module introduction>>=
-// This module provides generic reductions over arrays of numbers.
+// This module provides generic array reductions and decimal palindrome checks.
 import "core/ops";
 ```
 
@@ -142,5 +144,48 @@ pub function dot[T: ops.Add + ops.Mul + ops.Zero](a: T[], b: T[]): T {
     i += 1;
   }
   return acc;
+}
+```
+
+### Decimal palindromes
+
+Zero is a palindrome. A negative integer or a positive multiple of ten cannot be a palindrome. Reversing only the trailing half keeps the intermediate value in range even for 20-digit unsigned integers.
+
+```fern test name=std-num-palindromes
+import "std/num";
+
+function main(): i32 {
+  if (!18446744066044764481u64.is_palindrome()) { return 1; }
+  if (18446744073709551615u64.is_palindrome() || (0 - 121).is_palindrome()) { return 2; }
+  if (!(0).is_palindrome() || (10 as u32).is_palindrome()) { return 3; }
+  return 0;
+}
+```
+
+```fern
+<<decimal palindromes>>=
+pub function (n: u64) is_palindrome(): boolean {
+  if (n != 0u64 && n % 10u64 == 0u64) {
+    return false;
+  }
+  let leading = n;
+  let trailing = 0u64;
+  while (leading > trailing) {
+    trailing = trailing * 10u64 + leading % 10u64;
+    leading /= 10u64;
+  }
+  return leading == trailing || leading == trailing / 10u64;
+}
+
+pub function (n: i32) is_palindrome(): boolean {
+  return n >= 0 && (n as u64).is_palindrome();
+}
+
+pub function (n: u32) is_palindrome(): boolean {
+  return (n as u64).is_palindrome();
+}
+
+pub function (n: i64) is_palindrome(): boolean {
+  return n >= 0 && (n as u64).is_palindrome();
 }
 ```

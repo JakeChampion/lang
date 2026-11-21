@@ -8,20 +8,21 @@ The Opus packet API reuses the Fern CELT implementation.
 | Format | Decode | Encode | Current scope |
 | --- | --- | --- | --- |
 | WAVE | Yes | Integer PCM | Integer PCM at 8/16/24/32 bits and IEEE float at 32/64 bits, one through eight channels. Ordinary and extensible subformats. |
-| AIFF/AIFC | Yes | No | Signed integer PCM at 1 through 32 bits, NONE/twos/sowt, IEEE float at 32 or 64 bits, and G.711 A-law/mu-law. Exact byte-view frame ranges. |
+| AIFF/AIFC | Yes | No | Signed integer PCM at 1 through 32 bits, NONE/twos/sowt, IEEE float at 32 or 64 bits, and G.711 A-law/mu-law. Exact frame ranges from byte views and seekable Readers. |
 | AU | Yes | No | Big-endian signed integer PCM at 8/16/24/32 bits, IEEE float at 32 or 64 bits, and G.711 A-law/mu-law. Known and unknown data sizes. |
 | FLAC | Yes | Fixed and LPC | Native FLAC, 4 through 32 bits, one through eight channels. All predictor types, Rice/Rice2, wasted bits, and stereo assignments. |
 | QOA | Yes | Yes | Static files, signed 16-bit PCM, one through eight channels. Independent frame APIs also accept individual frames. |
 | ULC2 | Yes | Yes | Example library under `examples/ulc`, with block APIs, transient windows, and VBR/CBR/ABR encoding. |
 | Opus | Yes | Partial | SILK, hybrid, and CELT packets, multistream channel maps, loss concealment, and forward error correction. Ogg files decode at 48 kHz with gain and exact sample boundaries. The CELT encoder uses 48 kHz fullband mono or stereo. |
 | Ogg | Pages | No | Incremental pages and packets, checksums, interleaved streams, and chained streams. The Opus and Vorbis layers supply file playback. |
-| MP3 | Yes | No | Indexed-bitrate MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. |
+| MP3 | Yes | No | Indexed-bitrate and free-format MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. |
+| MP1 | Yes | No | Indexed-bitrate MPEG-1/2 Layer I raw streams, all six sample rates and four channel modes, with protected-frame CRC checks. |
 | MP2 | Yes | No | Indexed-bitrate MPEG-1/2 Layer II at all six sample rates. Mono, stereo, dual channel, joint stereo, and protected frames. Raw frames and complete compatible streams. |
 | AAC-LC | Yes | No | Raw access units and unprotected ADTS, 1024 samples per block, all 13 ADTS rates, and declared channel configurations 1 through 7. |
-| MP4/M4A | AAC-LC, ALAC | No | Self-contained audio tracks, sample tables, decoder configuration, track selection, and edit-list trimming. Complete byte views only. |
+| MP4/M4A | AAC-LC, ALAC | No | Self-contained audio tracks, sample tables, decoder configuration, track selection, and edit-list trimming. Byte-view playback and indexed packet reads from seekable files. |
 | Vorbis | Yes | No | Version one, one through eight channels, both floor types, all residue types, and standard block sizes. Incremental Ogg files and borrowed readers apply initial and final sample boundaries. |
 | ALAC | Yes | No | Version zero, 16/20/24/32-bit integer PCM, one through eight channels, raw and compressed packets, and standard layouts. CAF and M4A supply file playback. Compressed stereo requires at most 32 predictor bits. |
-| CAF | ALAC, PCM, float, G.711 | No | Version-one files, packet tables, bounded playback, exact sample seeks, and initial and final trim. Complete immutable byte views only. |
+| CAF | ALAC, PCM, float, G.711 | No | Version-one files, packet tables, bounded playback, exact sample seeks, and initial and final trim. Immutable byte views and seekable Readers. |
 | WavPack | Yes | No | Native lossless blocks, 1 through 32 integer bits, exact IEEE float, and one through eight channels. Bounded byte-view, sequential source, and indexed file playback with exact seeks. APE and ID3v1 trailing tags. Hybrid, correction files, and DSD remain unsupported. |
 | HE-AAC | No | No | No implementation in these modules. |
 
@@ -46,7 +47,7 @@ The frozen WavPack corpus checks 132 files against WavPack 5.8.1.
 FFmpeg also agrees on 130 files.
 FFmpeg differs on the two files with the newer integer extension optimization.
 Fern matches WavPack on both files.
-Full CI and matched performance measurements remain required.
+The [sequential file benchmarks](benchmarks/wavpack-source-2026-11-21/README.md) compare first-output latency and complete playback against WavPack 5.8.1. The [byte-view measurements](benchmarks/wavpack-decode-2026-11-09/README.md) cover repeated decode after setup.
 
 The [ULC2 example library](../examples/ulc/README.md) has its own block API and WAV tools.
 Its documentation includes reference checks and a separate performance report.
@@ -111,7 +112,12 @@ The bank also covers short-packet sequences, exact edit trimming, fast-start fil
 The manifest identifies cases outside the FFmpeg decoder's packet support.
 
 Fragmented files, encryption, external references, configuration changes, and the ALAC decoder's 33-bit compressed-stereo gap remain unsupported.
-Reader playback and indexed seeks for these M4A tracks remain open in #14513, #14518, and #14685.
+For packet playback from a seekable Reader, call `std/audio/mp4/file.inspect_alac`,
+open the selected track with `index.stream`, and pass its packet number and an owned
+PCM buffer to `read_alac_packet_into`. Each call reads only that packet under the
+file, byte-window, and operation limits. The returned frame gives the valid sample
+count as `frames * channels`. Packet numbers refer to media before presentation edits.
+For byte-view input, `seek_index` and `read_into` provide sample-accurate seeks on the edited presentation. The index locates the first requested edit and packet by binary search.
 
 ## Native FLAC encoding
 
@@ -134,6 +140,8 @@ Complete bit costs include coefficient metadata, warm-up samples, residual parti
 LPC cannot increase the output size relative to the fixed-only options for the same block settings.
 
 LPC analysis uses bounded temporary arrays and can substantially increase CPU work.
+The encoder shares folded-residual sums and widths across partition orders while preserving exact Rice costs.
+The [partition planning measurements](benchmarks/flac-partition-tree-2026-11-21/README.md) compare fixed-only and LPC encoding against the prior planner and libFLAC.
 For 33-bit stereo transforms, the coefficient sums fit within signed 64-bit arithmetic.
 Residuals that exceed the permitted signed 32-bit range retain a fixed or verbatim fallback.
 Further encoder work and matched performance qualification remain open in #14688 and #14515.
@@ -216,7 +224,12 @@ The generator records the reference version and SHA-256 values for encoded bytes
 python3 scripts/gen-linear-audio-vectors.py --check
 ```
 
-The codecs perform no file I/O. Reader integration and additional container encoders remain open under #14687.
+For a seekable file, `std/audio/linear/file` provides `inspect_aiff` (including AIFC),
+`inspect_au`, `inspect_caf`, and `inspect_wav`. These functions read the format headers
+and skip over sample data and unknown chunks. Pass the index and the same borrowed
+Reader to `read_integer_into` or `read_float_into` for an exact frame range.
+The byte budget applies to the whole file at inspection and the requested range at playback.
+An empty range leaves the file position unchanged. The caller closes the Reader.
 
 `std/audio/caf/linear` supplies CAF integer PCM, IEEE float, and G.711 playback through the same linear index.
 Integer PCM uses 8, 16, 24, or 32 bits in either byte order.
@@ -266,8 +279,8 @@ python3 scripts/gen-alac-vectors.py --apple-reference /tmp/alac-reference --chec
 ```
 
 Compressed stereo with 33 predictor bits remains unsupported.
-The byte-view M4A decoder uses `std/audio/mp4/alac`.
-Source-backed M4A playback remains open under [#14685](https://github.com/JakeChampion/lang/issues/14685).
+The byte-view M4A decoder in `std/audio/mp4/alac` supports sample-accurate reads on the edited presentation timeline. Build a `seek_index` once from the file, then use `read_into` with the same file bytes and a caller-owned interleaved PCM buffer.
+A seekable Reader supports packet playback. Edited presentation reads from a Reader remain open under [#14685](https://github.com/JakeChampion/lang/issues/14685).
 Native, WASI, and Android compilation checks do not establish physical Android performance or power use.
 
 `std/audio/caf` supplies CAF playback and exact byte-view seeks for ALAC.
@@ -299,7 +312,7 @@ The caller supplies the same immutable source and closes it after success or fai
 The file budget covers the complete source. The audio input budget applies to one packet.
 The default source window holds at most 1 MiB, and the packet-table window normally holds 16 KiB.
 Both windows can coexist during index construction.
-Source-backed linear CAF playback and custom channel descriptions remain open.
+Linear CAF Readers preserve stored channel order and check channel counts for layout tags, bitmaps, and explicit descriptions. The ALAC path supports its documented speaker layouts.
 
 ## Vorbis
 
@@ -333,7 +346,7 @@ Each `step` performs at most one setup parse, one packet decode, or one link tra
 The index validates container structure, setup, mode headers, and sample boundaries. Reads validate the spectral payload.
 
 Input bytes must remain unchanged after inspection. The default index permits 16 MiB and 1,048,576 packets across selected links.
-Reader-backed seek indexes and performance qualification remain open under [#14519](https://github.com/JakeChampion/lang/issues/14519).
+For a seekable file, `std/audio/vorbisfile/file.inspect` indexes a borrowed Reader from byte zero. After positioning the cursor with `seek`, call `file.step` with the same immutable file. Each step loads the indexed header or packet range under the caller’s chunk and window limits. A range spanning several pages may require a larger window. The caller closes the Reader. On native x86-64 or ARM64 Linux, run `scripts/bench-vorbis-file` to measure a fresh open, index and complete decode of each pinned reference file. Its JSON records elapsed nanoseconds, allocation events, fresh heap bytes, process peak RSS in KiB, output counts and a PCM checksum for each trial. Performance qualification remains open under [#14519](https://github.com/JakeChampion/lang/issues/14519).
 
 `decode_packet_into` consumes a reusable PCM buffer. Entries after the valid prefix retain their values.
 `packet_frames` checks the mode and computes the required output frame count without decode.
@@ -447,7 +460,9 @@ A rate or channel-count change also resets history.
 `decode_raw` accepts consecutive frames with one sample rate and channel count.
 It applies a cumulative output budget.
 Frame APIs require a header at the supplied byte offset.
-Layer I, MPEG-2.5, free-format Layer II, tags, source readers, and seek indexes remain outside this module.
+MPEG-2.5, free-format Layer II, tags, source readers, and seek indexes remain outside this module.
+
+`std/audio/mp1.decode_raw` decodes consecutive indexed Layer I frames. The MPEG-1 and MPEG-2 fixtures cover mono, stereo, dual channel and all four joint-stereo boundaries. Each fixture mixes protected and unprotected frames and compares the complete interleaved output with pinned scalar minimp3. The incremental Layer I API accepts one frame at a time with a reusable PCM buffer and preserves its synthesis history on input or buffer errors. The Layer I API accepts raw frames and does not apply de-emphasis filtering.
 
 The independent reference bank contains 66 streams from FFmpeg and TwoLAME.
 It covers tones, transients, deterministic noise, silence, all rates and channel modes, and 24 protected streams.
@@ -464,20 +479,19 @@ python3 scripts/gen-mp2-vectors.py --minimp3 /path/to/minimp3.h --check
 Native Linux tests include strict IR checks, sanitizers, and balanced allocation counts.
 WASI executes the same corpus and boundary tests.
 Android ARM64 shared libraries compile successfully.
-Native ARM64 CI and device measurements remain necessary.
+Native ARM64 CI verified the allocation reductions and measured the combined workspace and synthesis changes. Device latency and power measurements remain open.
 These checks do not establish a speed or quality lead over other codecs.
 
 The [MP2 measurements](benchmarks/mp2-2026-11-09/README.md) retain seven-trial CPU comparisons, state probes, and all target results.
 Frame scratch reuse reduces decode time by 8.5 to 10.7 percent and allocation counts by 30 to 43 percent.
 The [scratch measurements](benchmarks/mp2-scratch-2026-11-09/README.md) retain the paired trials and unchanged decoder-state probes.
-Fern now takes 3.08 to 3.52 times the decode time of SIMD minimp3 on the measured Linux host.
+That checksum-inclusive campaign measured 3.08 to 3.52 times the decode time of SIMD minimp3. The [same-library workspace comparison](benchmarks/mp2-workspace-2026-11-21/README.md) measures frame allocations, idle decoder memory, and decode time separately from complete PCM export.
 
 ## MP3
 
 `std/audio/mp3` provides native Layer III decode with normalized float output.
 Samples can exceed the device range. Apply gain or `pcm.quantize` at the conversion boundary.
-The decoder supports indexed bitrates in MPEG-1, MPEG-2, and MPEG-2.5 streams.
-It rejects Layer I, Layer II, and free-format bitrate headers.
+The decoder supports indexed bitrates and free-format Layer III in MPEG-1, MPEG-2, and MPEG-2.5 streams. Free-format discovery uses repeated compatible headers or two complete frames at physical EOF. After discovery, the decoder retains the unpadded frame length for subsequent frames.
 
 `decode_raw` retains all coded samples and codec delay.
 `decode` skips a Xing or Info metadata frame and applies recognized LAME delay and padding.
@@ -499,6 +513,7 @@ A result with `needs_history` consumes the frame and retains reservoir data but 
 Use that result for decoder warmup after a seek. A decode error resets decoder state.
 
 Decoder history contains at most 511 reservoir bytes, 576 overlap floats, and 960 synthesis floats.
+MPEG-1 shares synthesis scratch across both granules in a frame. The [synthesis comparison](benchmarks/mp3-synthesis-2026-11-21/README.md) records the allocation savings and peak memory cost.
 Frame decode still allocates bounded scratch arrays. It is not an allocation-free audio callback.
 The frame API does not scan damaged input for synchronization.
 
@@ -847,6 +862,27 @@ The maximum permitted absolute sample difference is 0.000001.
 Separate kernel traces match complete CELT, MDCT, vector quantization, and band results bit for bit.
 Regenerate these corpora with `scripts/gen-opus-playback-vectors.py` and `scripts/gen-opus-kernel-vectors.py`.
 
+The public decoder also passes all three SILK-only streams in the RFC 6716 test vector archive.
+Streams 02, 03 and 04 contain 1,185, 998 and 1,265 packets respectively. Every packet matched
+the stream’s final entropy range. At 48 kHz stereo, the upstream comparator reported 100.0%
+quality for each complete decoded stream against its supplied PCM reference.
+
+To repeat the comparison from the repository root, build `opus_compare` from
+`src/opus_compare.c` at the libopus revision used by `scripts/gen-silk-loss-vectors.py` and put
+it on the path. Place the official archive in the working directory.
+[Opus test vector archive](https://downloads.xiph.org/releases/opus/opus_testvectors.tar.gz)
+
+```sh
+echo '94ac78ca4f74c4e43bc9fe4ec1ad0aa36f38ab90f45b0727c40dd1e96096e767  opus_testvectors.tar.gz' | sha256sum -c -
+tar -xzf opus_testvectors.tar.gz
+bin/fern-selfhost -target x86-64-linux -o /tmp/opus-rfc-decode scripts/audio-reference/opus-rfc-decode.fern internal/stdlib
+for n in 02 03 04; do
+  input="opus_testvectors/testvector${n}"
+  /tmp/opus-rfc-decode "$input.bit" "$input.s16le" && opus_compare -s "$input.dec" "$input.s16le" || exit 1
+done
+```
+
+
 It does not read Ogg containers, apply pre-skip or gain, or trim the final packet.
 Arbitrary `.opus` file playback therefore needs more work.
 
@@ -1006,7 +1042,7 @@ These results preserve exact scalar-reference PCM and do not establish world-lea
 ## Remaining codec work
 
 The codec stack now includes complete Opus decode, Ogg demux, and MP3/FLAC seek indexes.
-Further MP3 work includes free-format streams, damaged-stream synchronization, and more tag formats.
+Further MP3 work includes damaged-stream synchronization and more tag formats.
 AAC work includes HE-AAC/SBR/PS, protected ADTS verification, and program configurations.
 MP4/M4A work includes fragmented media, further codecs, and bounded file-reader playback.
 Vorbis, further encoders, and other lossless formats need independent reference vectors and benchmarks.

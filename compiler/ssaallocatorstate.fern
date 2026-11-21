@@ -1,0 +1,144 @@
+import "./ssamachineword" as machineword;
+pub use "./ssamachineword".{State, write, load, initial_state};
+import "./ssacapacityisa" as isa;
+
+pub function pointer(w: machineword.Word): boolean {
+  return w.low.kind >= 2 && w.low.kind <= 4 && machineword.equal(w, machineword.token(w.low.kind, w.low.identity));
+}
+
+pub function unknown(s: machineword.State): machineword.State {
+  return machineword.State { ...s, zero: -1, carry: -1, sign: -1, overflow: -1, bounded: false, choice: 0 };
+}
+
+pub function read(s: machineword.State, at: i32, width: i32, reg: i32): machineword.State {
+  return if (at < 0) { machineword.State { ...s, ok: false } } else { machineword.write(s, reg, machineword.load(s, at, width)) };
+}
+
+pub function pointer_difference(s: machineword.State, op: isa.Op, a: machineword.Word, b: machineword.Word): machineword.State {
+  if (op.kind == 9 && pointer(a) && pointer(b) && a.low.kind == b.low.kind && a.low.identity >= b.low.identity) {
+    return machineword.write(s, op.destination, machineword.number(a.low.identity - b.low.identity));
+  }
+  return machineword.State { ...s, ok: false };
+}
+
+function inverse(value: i32): i32 {
+  return if (value < 0) { -1 } else { 1 - value };
+}
+
+function disjunction(a: i32, b: i32): i32 {
+  return if (a == 1 || b == 1) { 1 } else { if (a == 0 && b == 0) { 0 } else { -1 } };
+}
+
+function branch(s: machineword.State, condition: string, carry_aliases: boolean): i32 {
+  if (condition == "jmp") {
+    return 1;
+  }
+  if (condition == "je" || condition == "jz") {
+    return s.zero;
+  }
+  if (condition == "jne" || condition == "jnz") {
+    return inverse(s.zero);
+  }
+  if (condition == "jb" || carry_aliases && condition == "jc") {
+    return s.carry;
+  }
+  if (condition == "jae" || carry_aliases && condition == "jnc") {
+    return inverse(s.carry);
+  }
+  return ordered_branch(s, condition);
+}
+
+function ordered_branch(s: machineword.State, condition: string): i32 {
+  if (condition == "ja" || condition == "jbe") {
+    let below = if (s.bounded) { 1 } else { disjunction(s.zero, s.carry) };
+    return if (condition == "jbe") { below } else { inverse(below) };
+  }
+  return signed_branch(s, condition);
+}
+
+function signed_branch(s: machineword.State, condition: string): i32 {
+  if (condition == "js") {
+    return s.sign;
+  }
+  if (condition == "jns") {
+    return inverse(s.sign);
+  }
+  if (condition == "jo") {
+    return s.overflow;
+  }
+  if (condition == "jno") {
+    return inverse(s.overflow);
+  }
+  let less = if (s.sign < 0 || s.overflow < 0) { -1 } else { if (s.sign != s.overflow) { 1 } else { 0 } };
+  if (condition == "jl") {
+    return less;
+  }
+  if (condition == "jge") {
+    return inverse(less);
+  }
+  return signed_order(s, condition, less);
+}
+
+function signed_order(s: machineword.State, condition: string, less: i32): i32 {
+  let below = disjunction(less, s.zero);
+  if (condition == "jle") {
+    return below;
+  }
+  return if (condition == "jg") { inverse(below) } else { -1 };
+}
+
+pub function next_pc(s: machineword.State, op: isa.Op, pc: i32, carry_aliases: boolean): i32 {
+  let taken = branch(s, op.condition, carry_aliases);
+  if (taken < 0 || taken == 1 && op.kind == 35) {
+    return -1;
+  }
+  return if (taken == 1) { op.target } else { pc + 1 };
+}
+
+pub function address(s: machineword.State, op: isa.Op, request: i32, cell: (machineword.Word, i64, i32, i32) => i32): i32 {
+  let offset = op.offset as i64;
+  if (op.index >= 0) {
+    let index = s.regs[op.index];
+    if (!machineword.unsigned(index) || index.low.identity > 64) {
+      return -1;
+    }
+    offset = offset + index.low.identity * (op.scale as i64);
+  }
+  return cell(s.regs[op.base], offset, op.width, request);
+}
+
+function immediate_add(s: machineword.State, op: isa.Op, request: i32, shifted: (machineword.State, i32, machineword.Word, i64, i32) => machineword.State): machineword.State {
+  let w = s.regs[op.destination];
+  let delta = if (op.kind == 9) { -(op.immediate as i64) } else { op.immediate as i64 };
+  if (pointer(w) && op.width == 64) {
+    return shifted(s, op.destination, w, delta, request);
+  }
+  if (!machineword.unsigned(w)) {
+    return machineword.State { ...s, ok: false };
+  }
+  let n = w.low.identity + delta;
+  return if (n >= 0 && n <= 4294967295) { machineword.write(s, op.destination, machineword.number(n)) } else { machineword.State { ...s, ok: false } };
+}
+
+pub function arithmetic(s: machineword.State, op: isa.Op, request: i32, shifted: (machineword.State, i32, machineword.Word, i64, i32) => machineword.State, register_arithmetic: (machineword.State, isa.Op, machineword.Word, machineword.Word, i32) => machineword.State): machineword.State {
+  let cleared = unknown(s);
+  if (op.source < 0) {
+    return immediate_add(cleared, op, request, shifted);
+  }
+  if (op.width != 64) {
+    return machineword.State { ...s, ok: false };
+  }
+  let a = s.regs[op.destination];
+  let b = s.regs[op.source];
+  return register_arithmetic(cleared, op, a, b, request);
+}
+
+pub function compare_or_simple(s: machineword.State, op: isa.Op, request: i32, comparison: (machineword.State, machineword.Word, machineword.Word, i32, i32) => machineword.State, simple: (machineword.State, isa.Op, i32) => machineword.State): machineword.State {
+  if (op.kind == 16) {
+    return comparison(s, s.regs[op.source], machineword.number(op.immediate as i64), op.width, request);
+  }
+  if (op.kind == 28) {
+    return comparison(s, s.regs[op.destination], s.regs[op.source], op.width, request);
+  }
+  return simple(s, op, request);
+}

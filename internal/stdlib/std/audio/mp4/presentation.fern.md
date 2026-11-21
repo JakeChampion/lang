@@ -15,6 +15,23 @@ pub struct Span { start: i64, end: i64, output: i32 }
 
 pub struct Plan { frames: i32, spans: Span[] }
 
+// Presentation spans are ordered by output position even when an edit
+// repeats earlier media. Skip every span ending before or at the request.
+pub function (plan: Plan) first_span(channels: i32, position: i32): i32 {
+  let lo = 0;
+  let hi = plan.spans.len();
+  while (lo < hi) {
+    let mid = lo + (hi - lo) / 2;
+    let span = plan.spans[mid];
+    if (span.output / channels + (span.end - span.start) as i32 <= position) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
 function add_span(own plan: Plan, start: i64, end: i64, channels: i32, limits: pcm.Limits): Result[Plan, pcm.AudioError] {
   if (start < 0i64 || end < start) {
     return Err(pcm.Header);

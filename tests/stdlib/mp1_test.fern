@@ -1,0 +1,114 @@
+import "std/audio/mp1";
+import "std/audio/pcm";
+import "std/audio/mp3/spectral";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "mp1_vectors";
+import "mp2_check";
+
+function incremental(input: [u8], expected: [u8], rate: i32, channels: i32): Result[void, string] {
+  let count = 384 * channels;
+  let output = spectral.zeros(count + 1).with(count, -123.5f32);
+  let state = mp1.decoder();
+  let at = 0;
+  for i in 0..3 {
+    if (i == 2) {
+      let (retry, short) = state.decode_frame_into(input[at:], [], pcm.default_limits());
+      if let Err(pcm.Buffer) = short {} else {
+        return Err("short output");
+      }
+      let corrupt: u8[] = [];
+      for byte in input[at:] {
+        corrupt = corrupt.append(byte);
+      }
+      corrupt = corrupt.with(4, corrupt[4] ^ 1u8);
+      let (again, rejected) = retry.decode_frame_into(corrupt, spectral.zeros(count), pcm.default_limits());
+      if let Err(pcm.Checksum) = rejected {} else {
+        return Err("CRC retry");
+      }
+      state = again;
+    }
+    let (next, result) = state.decode_frame_into(input[at:], output, pcm.default_limits());
+    let audio = match (result) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    if (audio.bytes_read < 4 || audio.sample_rate != rate || audio.channels != channels || audio.samples.len() != count + 1 || audio.samples[count] != -123.5f32) {
+      return Err("frame extent, format or output suffix");
+    }
+    mp2_check.samples(audio.samples, count, expected, i * count)?;
+    at += audio.bytes_read;
+    output = audio.samples;
+    state = next;
+  }
+  if (at != input.len()) {
+    return Err("input consumption");
+  }
+  return Ok(());
+}
+
+function references(): test.TestOutcome {
+  for vector in mp1_vectors.vectors() {
+    let Ok(input) = ref.unpack(vector.encoded) else {
+      return test.fail("fixture");
+    };
+    let Ok(expected) = ref.unpack(vector.pcm) else {
+      return test.fail("reference");
+    };
+    let Ok(audio) = mp1.decode_raw(input, pcm.default_limits()) else {
+      return test.fail("decode");
+    };
+    if (audio.channels != vector.channels || audio.sample_rate != vector.rate || audio.samples.len() != 3 * 384 * vector.channels) {
+      return test.fail("stream format or sample count");
+    }
+    if let Err(e) = incremental(input, expected, vector.rate, vector.channels) {
+      return test.fail(e);
+    }
+    if let Err(e) = mp2_check.samples(audio.samples, audio.samples.len(), expected, 0) {
+      return test.fail(e);
+    }
+  }
+  return test.pass();
+}
+
+function boundaries(): test.TestOutcome {
+  let v = mp1_vectors.vectors()[0];
+  let Ok(input) = ref.unpack(v.encoded) else {
+    return test.fail("fixture");
+  };
+  let limits = pcm.default_limits();
+  if let Err(pcm.Checksum) = mp1.decode_raw(input.with(4, input[4] ^ 128u8), limits) {} else {
+    return test.fail("CRC");
+  }
+  if let Err(pcm.Header) = mp1.decode_raw(input.with(6, 255u8), limits) {} else {
+    return test.fail("forbidden allocation");
+  }
+  if let Err(pcm.Truncated) = mp1.decode_raw(input[:input.len() - 1], limits) {} else {
+    return test.fail("incomplete final frame");
+  }
+  if let Err(pcm.Unsupported) = mp1.decode_raw(input.with(2, 0u8), limits) {} else {
+    return test.fail("free format");
+  }
+  if let Err(pcm.Limit) = mp1.decode_raw(input, pcm.Limits { ...limits, max_samples: 1151 }) {} else {
+    return test.fail("cumulative budget");
+  }
+  return test.pass();
+}
+
+function sample_extent(): test.TestOutcome {
+  // A 32-byte mono frame has exactly 96 bits after its allocation table.
+  // Two six-bit scalefactors and twelve pairs of 2- and 5-bit samples fill it.
+  let frame = __alloc_u8(32).with(0, 255u8).with(1, 255u8).with(2, 20u8).with(3, 192u8).with(4, 20u8).with(31, 255u8);
+  let Ok(audio) = mp1.decode_raw(frame, pcm.default_limits()) else {
+    return test.fail("sample field ending at final byte");
+  };
+  if let Err(pcm.Truncated) = mp1.decode_raw(frame.with(4, 21u8), pcm.default_limits()) {} else {
+    return test.fail("sample fields exceed declared frame");
+  }
+  return test.assert_true(audio.samples.len() == 384);
+}
+
+function main(): i32 {
+  let runner = test.new("MPEG Layer I");
+  runner = runner.it("every sample matches independent scalar minimp3", references);
+  runner = runner.it("frame grammar, CRC, truncation and output limits", boundaries);
+  runner = runner.it("sample fields exactly fill or exceed the frame", sample_extent);
+  return runner.finish();
+}

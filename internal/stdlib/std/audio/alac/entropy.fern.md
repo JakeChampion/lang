@@ -15,6 +15,7 @@ This module is available under MPL-2.0. See `licenses/alac/NOTICE.txt`.
 import "std/audio/alac/bits";
 import "std/audio/alac/config";
 import "std/audio/pcm";
+import "std/u32";
 
 pub struct Parameters { depth: i32, mode: i32, shift: i32, factor: u32, coefficients: i32[] }
 
@@ -50,14 +51,22 @@ pub function rice(input: [u8], at: i64, k: i32, escape: i32): Result[(i64, u32),
   if (k < 0 || k > 31 || escape < 1 || escape > 32) {
     return Err(pcm.Header);
   }
-  let prefix = 0u32;
-  while (prefix < 9u32) {
-    let (next, bit) = bits.read(input, at, 1)?;
-    at = next;
-    if (bit == 0u32) {
-      break;
-    }
-    prefix += 1u32;
+  let size = input.len() as i64 * 8i64;
+  if (at < 0i64 || at > size) {
+    return Err(pcm.Header);
+  }
+  if (at == size) {
+    return Err(pcm.Truncated);
+  }
+  // Two bytes cover the entire nine-bit unary prefix at any alignment.
+  let index = (at / 8i64) as i32;
+  let next_byte = if (index + 1 < input.len()) { input[index + 1] as u32 } else { 255u32 };
+  let window = (input[index] as u32 << 8u32 | next_byte) << (16 + (at % 8i64) as i32) as u32;
+  let ones = (~window).leading_zeros();
+  let prefix = if (ones < 9) { ones as u32 } else { 9u32 };
+  at += if (prefix == 9u32) { 9i64 } else { prefix as i64 + 1i64 };
+  if (at > size) {
+    return Err(pcm.Truncated);
   }
   if (prefix == 9u32) {
     return bits.read(input, at, escape);
@@ -80,15 +89,6 @@ pub function rice(input: [u8], at: i64, k: i32, escape: i32): Result[(i64, u32),
   return Ok((at, value as u32));
 }
 
-function log2(value: u32): i32 {
-  let result = 0;
-  while (value > 1u32) {
-    value >>= 1u32;
-    result += 1;
-  }
-  return result;
-}
-
 // Adaptive history and zero-run syntax share one bounded frame walk.
 // fern-lint: allow cyclomatic-complexity
 pub function residuals(input: [u8], at: i64, info: config.Info, parameters: Parameters, own output: i32[], count: i32): Result[(i64, i32[]), pcm.AudioError] {
@@ -99,7 +99,7 @@ pub function residuals(input: [u8], at: i64, info: config.Info, parameters: Para
   let toggle = 0u32;
   let i = 0;
   while (i < count) {
-    let k = log2((history >> 9u32) + 3u32);
+    let k = 31 - ((history >> 9u32) + 3u32).leading_zeros();
     let (next, raw) = rice(input, at, if (k < info.kb) { k } else { info.kb }, parameters.depth)?;
     at = next;
     let Some(value) = raw +? toggle else {
@@ -110,7 +110,7 @@ pub function residuals(input: [u8], at: i64, info: config.Info, parameters: Para
     i += 1;
     toggle = 0u32;
     if (history < 128u32 && i < count) {
-      let run_k = (if (history == 0u32) { 8 } else { 7 - log2(history) }) + (history + 16u32 >> 6u32) as i32;
+      let run_k = (if (history == 0u32) { 8 } else { history.leading_zeros() - 24 }) + (history + 16u32 >> 6u32) as i32;
       let (next_run, zeros) = rice(input, at, if (run_k < info.kb) { run_k } else { info.kb }, 16)?;
       at = next_run;
       if (zeros > (count - i) as u32) {

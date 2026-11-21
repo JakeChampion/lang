@@ -1,6 +1,8 @@
 // The XML files of an Android app, such as AndroidManifest.xml, as a tree of
 // elements, and their two encodings: the binary XML of an APK, and the
 // protocol buffer XML of aapt2 in an Android App Bundle.
+import "std/array";
+import "std/option";
 import "std/protobuf";
 import "./util";
 
@@ -121,15 +123,6 @@ pub function string_pool(strings: string[]): u8[] {
 
 struct Pool { ids: i32[], strings: string[] }
 
-function index_of_id(ids: i32[], id: i32): i32 {
-  for k in 0..ids.len() {
-    if (ids[k] == id) {
-      return k;
-    }
-  }
-  return -1;
-}
-
 // `ids` and `names` with the attribute `id` and `name` in the order of the
 // IDs.
 function with_id(ids: i32[], names: string[], id: i32, name: string): (i32[], string[]) {
@@ -154,7 +147,7 @@ function with_id(ids: i32[], names: string[], id: i32, name: string): (i32[], st
 
 function framework_attrs(e: Element, ids: i32[], names: string[]): (i32[], string[]) {
   for a in e.attrs {
-    if (a.id != 0 && index_of_id(ids, a.id) < 0) {
+    if (a.id != 0 && array.binary_search(ids, a.id).is_none()) {
       let (more_ids, more_names) = with_id(ids, names, a.id, a.name);
       ids = more_ids;
       names = more_names;
@@ -208,7 +201,7 @@ function node(out: u8[], kind: i32, size: i32, line: i32): u8[] {
 
 function attr_name(p: Pool, a: Attr): i32 {
   if (a.id != 0) {
-    return index_of_id(p.ids, a.id);
+    return array.binary_search(p.ids, a.id).unwrap_or(-1);
   }
   return index(p, a.name);
 }

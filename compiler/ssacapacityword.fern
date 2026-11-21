@@ -1,0 +1,51 @@
+// Register words used by the capacity and small array proofs.
+import "./ssaarraystate" as machine;
+import "./ssacapacityvalue" as value;
+
+pub function zero(r: value.Interval): machine.Half {
+  return machine.numeric_half(value.number(r, 0 as i64));
+}
+
+pub function nonnegative(r: value.Interval, v: value.Value): boolean {
+  return value.valid(r, v) && v.factor as i64 * (r.low as i64) + v.offset >= 0;
+}
+
+pub function numeric(r: value.Interval, v: value.Value): machine.Word {
+  if (!value.valid(r, v)) {
+    return machine.identity(0, 0);
+  }
+  let low = value.zero32(r, v);
+  if (!value.valid(r, low)) {
+    return machine.identity(0, 0);
+  }
+  let high = if (nonnegative(r, v)) { 0 as i64 } else { 4294967295 as i64 };
+  return machine.from_halves(machine.numeric_half(low), machine.numeric_half(value.number(r, high)));
+}
+
+pub function number(r: value.Interval, w: machine.Word, width: i32): value.Value {
+  if (w.low.kind != 1 || !nonnegative(r, w.low.number)) {
+    return value.unknown();
+  }
+  if (width == 32) {
+    return w.low.number;
+  }
+  if (w.high.kind != 1 || w.high.number.factor != 0) {
+    return value.unknown();
+  }
+  if (w.high.number.offset == 0) {
+    return w.low.number;
+  }
+  if (w.high.number.offset == 4294967295 as i64) {
+    let v = value.Value { factor: w.low.number.factor, offset: w.low.number.offset - 4294967296 as i64, residue: 0 };
+    return if (value.valid(r, v)) { v } else { value.unknown() };
+  }
+  return value.unknown();
+}
+
+pub function narrowed(r: value.Interval, w: machine.Word, width: i32): machine.Word {
+  return if (width == 32) { machine.from_halves(w.low, zero(r)) } else { w };
+}
+
+pub function read(s: machine.State, r: value.Interval, at: i32, width: i32): machine.Word {
+  return machine.read(s, at, width, zero(r));
+}

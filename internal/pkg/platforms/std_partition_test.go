@@ -36,6 +36,7 @@ var stdModuleReach = map[string]string{
 	"std/dns":           "fs,host,log,mmio,mmsg,now,pollable,privileged,random,reactor,tcp,unix,uring,vsock",
 	"std/dotenv":        "",
 	"std/elf":           "",
+	"std/email":         "",
 	"std/encoding":      "",
 	"std/envflag":       "env",
 	"std/errno":         "",

@@ -1594,13 +1594,14 @@ function moved_positions(ps: i32[], idx: i32, delta: i32): i32[] {
 }
 
 // Cache a lookup and its first-glyph coverage for use across text runs.
-pub struct PreparedLookup { font: Font, lookup: Lookup, digest: u64, sub_digests: u64[] }
+pub struct PreparedLookup { font: Font, lookup: Lookup, reverse: boolean, digest: u64, sub_digests: u64[] }
 
 pub function (f: Font) prepare_lookup(li: i32, gpos: boolean): PreparedLookup {
   let table = if (gpos) { f.gpos } else { f.gsub };
   let l = lookup_of(f, table, gpos, li);
   let (digest, sub_digests) = lookup_digests(f.data, l);
-  return PreparedLookup { font: f, lookup: l, digest: digest, sub_digests: sub_digests };
+  let reverse = !gpos && l.count > 0 && subtable(f.data, l, 0).1 == 8;
+  return PreparedLookup { font: f, lookup: l, reverse: reverse, digest: digest, sub_digests: sub_digests };
 }
 
 // A set bit allows an exact coverage check. Collisions only cost a check.
@@ -1652,7 +1653,7 @@ function lookup_digests(b: [u8], l: Lookup): (u64, u64[]) {
 
 pub function (p: PreparedLookup) apply(r: Run, mask: i32, opts: i32): Run {
   let l = Lookup { ...p.lookup, opts: opts, base: r.glyphs.len() };
-  if (!l.gpos && l.count > 0 && subtable(p.font.data, l, 0).1 == 8) {
+  if (p.reverse) {
     return reverse_substituted(p.font, r, l, mask);
   }
   return applied_to_each(p.font, r, l, mask, p.digest, p.sub_digests);

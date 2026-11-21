@@ -36,36 +36,36 @@ const CHANNEL_MASK: u64[] = [0u64, 4u64, 3u64, 7u64, 51u64, 55u64, 63u64, 1807u6
 
 // fern-lint: allow cyclomatic-complexity
 // One check per field of the format chunk and its extensible form.
-function parse_format(input: [u8], at: i32, size: i32): Result[linear.Format, pcm.AudioError] {
-  if (size < 16) {
+pub function format_prefix(input: [u8], size: i32): Result[linear.Format, pcm.AudioError] {
+  if (size < 16 || input.len() < 16) {
     return Err(pcm.Header);
   }
-  let kind = wire.le(input, at, 2) as i32;
-  let channels = wire.le(input, at + 2, 2) as i32;
+  let kind = wire.le(input, 0, 2) as i32;
+  let channels = wire.le(input, 2, 2) as i32;
   if (channels < 1 || channels > 8) {
     return Err(pcm.Header);
   }
-  let rate = wire.le(input, at + 4, 4);
-  let byte_rate = wire.le(input, at + 8, 4);
-  let align = wire.le(input, at + 12, 2) as i32;
-  let bits = wire.le(input, at + 14, 2) as i32;
+  let rate = wire.le(input, 4, 4);
+  let byte_rate = wire.le(input, 8, 4);
+  let align = wire.le(input, 12, 2) as i32;
+  let bits = wire.le(input, 14, 2) as i32;
   if (kind == 65534) {
-    if (size < 40 || wire.le(input, at + 16, 2) < 22u64
-      || wire.le(input, at + 16, 2) > (size - 18) as u64) {
+    if (size < 40 || input.len() < 40 || wire.le(input, 16, 2) < 22u64
+      || wire.le(input, 16, 2) > (size - 18) as u64) {
       return Err(pcm.Header);
     }
-    let valid_bits = wire.le(input, at + 18, 2) as i32;
+    let valid_bits = wire.le(input, 18, 2) as i32;
     if (valid_bits != bits) {
       return Err(pcm.Unsupported);
     }
     let guid: u8[] = [1, 0, 0, 0, 0, 0, 16, 0, 128, 0, 0, 170, 0, 56, 155, 113];
-    kind = wire.le(input, at + 24, 4) as i32;
+    kind = wire.le(input, 24, 4) as i32;
     for i in 4..16 {
-      if (input[at + 24 + i] != guid[i]) {
+      if (input[24 + i] != guid[i]) {
         return Err(pcm.Unsupported);
       }
     }
-    let mask = wire.le(input, at + 20, 4);
+    let mask = wire.le(input, 20, 4);
     if (mask != 0u64) {
       let count = 0;
       for i in 0..32 {
@@ -158,7 +158,7 @@ function layout(input: [u8], size: i64, limits: pcm.Limits): Result[Layout, pcm.
       if (chunk > input.len() - at - 8) {
         return Err(pcm.Truncated);
       }
-      format = parse_format(input, at + 8, chunk)?;
+      format = format_prefix(input[at + 8:at + 8 + chunk], chunk)?;
       have_format = true;
     }
     if (wire.tag(input, at, "data")) {

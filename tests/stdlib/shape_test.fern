@@ -8,6 +8,7 @@ import "std/string";
 import "std/test";
 import "std/truetype";
 import "./shape_vectors";
+import "./shape_reference";
 
 function font_of(data: string): Option[truetype.Font] {
   if let Ok(b) = base64.decode(data) {
@@ -43,15 +44,6 @@ function joined(xs: i32[]): string {
   return xs.map((x: i32): string => x.to_string()).join(",");
 }
 
-// The advance, the x offset and the y offset of each glyph of `r`.
-function places(r: truetype.Run): string {
-  let out: string[] = [];
-  for i in 0..r.glyphs.len() {
-    out = out.append(r.pos.advances[i].to_string() + ":" + r.pos.dx[i].to_string() + ":" + r.pos.dy[i].to_string());
-  }
-  return out.join(",");
-}
-
 // The cases of the script `script` that do not give the glyphs and the
 // clusters of HarfBuzz, one on each line. With `placed`, the positions of
 // the glyphs must be those of HarfBuzz too.
@@ -72,7 +64,7 @@ function differences(font: Option[truetype.Font], cases: string, script: string,
     }
     count += 1;
     let r = match (plan) { Some(p) => p.shape(parts[1]), None => shape.shape(f, parts[1], script) };
-    let got = joined(r.glyphs) + " " + joined(r.clusters) + (if (placed) { " " + places(r) } else { "" });
+    let got = shape_reference.describe(r, placed);
     let want = parts[2] + " " + parts[3] + (if (placed) { " " + parts[4] } else { "" });
     if (got != want) {
       out = out + parts[1] + ": " + got + ", want " + want + "\n";
@@ -196,6 +188,25 @@ function test_prepared_coverage_range(): test.TestOutcome {
   return test.assert_eq(joined(run.glyphs) + " " + (ordinary.ops - run.ops).to_string(), "63,64,65,66,126,12 0");
 }
 
+// A reverse chaining substitution inside an extension lookup replaces 7
+// with 8 only before another 7. Scanning from the right skips the first 7.
+function test_prepared_reverse_extension(): test.TestOutcome {
+  let Some(base) = devanagari() else {
+    return test.fail("the font did not parse");
+  };
+  let data: u8[] = [
+    0, 1, 0, 0, 0, 0, 0, 0, 0, 10,  // GSUB header
+    0, 1, 0, 4, 0, 7, 0, 0, 0, 1, 0, 8,  // extension lookup
+    0, 1, 0, 8, 0, 0, 0, 8,  // extension to a reverse chaining substitution
+    0, 1, 0, 14, 0, 0, 0, 1, 0, 14, 0, 1, 0, 8,
+    0, 1, 0, 1, 0, 7,  // input and lookahead coverage
+  ];
+  let font = truetype.Font { ...base, data: data, gsub: 0, gdef: -1 };
+  let input = truetype.run_of([7, 7, 7], [0, 1, 2], [1, 1, 1]);
+  let run = font.prepare_lookup(0, false).apply(input, 1, 0);
+  return test.assert_eq(joined(run.glyphs), "7,8,7");
+}
+
 // Each start of the bytes of the font parses, or gives None, and each
 // font that parses shapes a word with no crash.
 function test_a_cut_font_does_not_crash(): test.TestOutcome {
@@ -229,6 +240,7 @@ function main(): i32 {
   r = r.it("feature_lookups reads the script and the feature lists", test_feature_lookups);
   r = r.it("a font with no GSUB table gives one glyph for each character", test_no_gsub);
   r = r.it("a cut font does not crash", test_a_cut_font_does_not_crash);
+  r = r.it("prepared extension lookups preserve reverse chaining order", test_prepared_reverse_extension);
   r = r.it("prepared coverage preserves matches, collisions and the operation budget", test_prepared_coverage_range);
   return r.finish();
 }

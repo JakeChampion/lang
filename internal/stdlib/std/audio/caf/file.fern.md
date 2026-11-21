@@ -192,15 +192,38 @@ function read_table(own builder: Builder, end: i64, seek: (i64) => Result[i64, I
   return Ok((Builder { ...builder, table_window: Some(next) }, BuildPending));
 }
 
-function packet_window(own builder: Builder, bytes: i32, nominal: i32, row: i64, end: i64, maximum: i32): Result[(Builder, BuildEvent), source.ReadError] {
-  if (bytes < 1 || bytes as i64 > end - builder.progress.at || nominal < 1 || nominal > maximum) {
+function check_packet_size(bytes: i32, available: i64, nominal: i32, maximum: i32, limits: Limits): Result[void, source.ReadError] {
+  if (bytes < 1 || bytes as i64 > available || nominal < 1 || nominal > maximum) {
     return Err(audio(pcm.Header));
   }
-  if (bytes > builder.limits.input.max_buffer_bytes || bytes > builder.limits.container.audio.max_input_bytes) {
+  if (bytes > limits.input.max_buffer_bytes || bytes > limits.container.audio.max_input_bytes) {
     return Err(audio(pcm.Limit));
   }
-  let current = window.create(builder.progress.at, bytes, builder.limits.input)?;
+  return Ok(());
+}
+
+function packet_window(own builder: Builder, bytes: i32, nominal: i32, row: i64, end: i64, maximum: i32): Result[(Builder, BuildEvent), source.ReadError] {
+  check_packet_size(bytes, end - builder.progress.at, nominal, maximum, builder.limits)?;
   let progress = Progress { ...builder.progress, row: row, bytes: bytes, nominal: nominal };
+  if let Some(current) = builder.window {
+    let local = progress.at - current.offset;
+    if (current.ready && local >= 0i64 && local <= (current.bytes - bytes) as i64) {
+      return Ok((Builder { ...builder, progress: progress, phase: 7 }, BuildPending));
+    }
+  }
+  // Adjacent packets share a bounded source read. Inspect each packet using
+  // its own declared extent, even when the following packet is in the window.
+  let ahead = builder.limits.input.chunk_size;
+  if (ahead > builder.limits.input.max_buffer_bytes) {
+    ahead = builder.limits.input.max_buffer_bytes;
+  }
+  if (ahead < bytes) {
+    ahead = bytes;
+  }
+  if (ahead as i64 > end - progress.at) {
+    ahead = (end - progress.at) as i32;
+  }
+  let current = window.create(progress.at, ahead, builder.limits.input)?;
   return Ok((Builder { ...builder, window: Some(current), progress: progress, phase: 7 }, BuildPending));
 }
 
@@ -212,7 +235,7 @@ function finish(own builder: Builder, index: Index, table: metadata.Table, file:
   let frames = match (metadata.presentation(table, raw, builder.progress.capacity, builder.progress.padding)) { Ok(value) => value, Err(e) => { return Err(audio(e)); } };
   let info = caf.Info { ...index.info, frames: frames };
   let result = Index { ...index, info: info };
-  return Ok((Builder { ...builder, index: None, table_window: None, phase: 8 }, BuildReady(result)));
+  return Ok((Builder { ...builder, index: None, window: None, table_window: None, phase: 8 }, BuildReady(result)));
 }
 
 function packet_sizes(current: window.Window, desc: metadata.Description, row: i64): Result[(i64, i32, i32), source.ReadError] {
@@ -282,7 +305,7 @@ function take_index(own builder: Builder): (Builder, Option[Index]) {
   return (Builder { scanner: scanner, file: file, phase: phase, parts: parts, window: window, table_window: table_window, index: None, table: table, description: description, progress: progress, limits: limits }, index);
 }
 
-function inspect_packet(own builder: Builder, input: [u8]): Result[(Builder, BuildEvent), source.ReadError] {
+function inspect_packet(own builder: Builder, current: window.Window): Result[(Builder, BuildEvent), source.ReadError] {
   let (rest, current_index) = take_index(builder);
   let Some(index) = current_index else {
     return Err(audio(pcm.Header));
@@ -290,7 +313,9 @@ function inspect_packet(own builder: Builder, input: [u8]): Result[(Builder, Bui
   let Some(desc) = rest.description else {
     return Err(audio(pcm.Header));
   };
-  let frames = match (alac.inspect_packet(input, index.configuration, rest.limits.container.audio)) { Ok(value) => value, Err(e) => { return Err(audio(e)); } };
+  let start = (rest.progress.at - current.offset) as i32;
+  let packet = current.view()[start:start + rest.progress.bytes];
+  let frames = match (alac.inspect_packet(packet, index.configuration, rest.limits.container.audio)) { Ok(value) => value, Err(e) => { return Err(audio(e)); } };
   if (frames > rest.progress.nominal || desc.frames == 0 && frames != rest.progress.nominal) {
     return Err(audio(pcm.Header));
   }
@@ -302,7 +327,7 @@ function inspect_packet(own builder: Builder, input: [u8]): Result[(Builder, Bui
   };
   let next = Index { ...index, offsets: index.offsets.append(rest.progress.at), sizes: index.sizes.append(rest.progress.bytes), positions: index.positions.append(total) };
   let progress = Progress { ...rest.progress, at: rest.progress.at + rest.progress.bytes as i64, capacity: capacity, padding: (rest.progress.nominal - frames) as i64 };
-  return Ok((Builder { ...rest, index: Some(next), progress: progress, window: None, phase: 6 }, BuildPending));
+  return Ok((Builder { ...rest, index: Some(next), progress: progress, window: Some(current), phase: 6 }, BuildPending));
 }
 
 function read_packet(own builder: Builder, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError]): Result[(Builder, BuildEvent), source.ReadError] {
@@ -314,7 +339,7 @@ function read_packet(own builder: Builder, seek: (i64) => Result[i64, IoError], 
     let next = current.step_with(seek, read)?;
     return Ok((Builder { ...rest, window: Some(next) }, BuildPending));
   }
-  return inspect_packet(rest, current.view());
+  return inspect_packet(rest, current);
 }
 
 pub function (own builder: Builder) step_with(seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError]): Result[(Builder, BuildEvent), source.ReadError] {

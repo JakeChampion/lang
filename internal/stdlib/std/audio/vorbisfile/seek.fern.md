@@ -165,11 +165,8 @@ pub function inspect_with(size: i64, read: (i64, i32) => Result[u8[], IoError], 
   while (true) {
     if (used_in == chunk.len() && base + used_in < n) {
       base += used_in;
-      chunk = match (read(base as i64, CHUNK.min(n - base))) { Ok(value) => value, Err(error) => { return Err(source.ReadIo(error)); } };
+      chunk = read_chunk(read, base, n)?;
       used_in = 0;
-      if (chunk.len() == 0) {
-        return Err(source.ReadAudio(pcm.Header));
-      }
     }
     let eof = base + used_in == n;
     let (next, used, event) = audio(scanner.feed(chunk[used_in:]))?;
@@ -183,16 +180,28 @@ pub function inspect_with(size: i64, read: (i64, i32) => Result[u8[], IoError], 
       // The page goes on past this chunk: read the rest of it with the next one.
       let rest = array.slice(chunk, used_in, chunk.len());
       base += used_in;
-      let more = match (read((base + rest.len()) as i64, CHUNK.min(n - base - rest.len()))) { Ok(value) => value, Err(error) => { return Err(source.ReadIo(error)); } };
-      if (more.len() == 0) {
-        return Err(source.ReadAudio(pcm.Header));
-      }
+      let more = read_chunk(read, base + rest.len(), n)?;
       chunk = rest.concat(more);
       used_in = 0;
     }
   }
   audio(scanner.finish())?;
   return Ok(build.result);
+}
+
+function read_chunk(read: (i64, i32) => Result[u8[], IoError], offset: i32, size: i32): Result[u8[], source.ReadError] {
+  let count = CHUNK.min(size - offset);
+  if (count <= 0) {
+    return Err(source.ReadAudio(pcm.Header));
+  }
+  let bytes = match (read(offset as i64, count)) { Ok(value) => value, Err(error) => { return Err(source.ReadIo(error)); } };
+  if (bytes.len() > count) {
+    return Err(source.ReadSize);
+  }
+  if (bytes.len() == 0) {
+    return Err(source.ReadAudio(pcm.Header));
+  }
+  return Ok(bytes);
 }
 
 // The bytes that `inspect_with` asks for at a time.

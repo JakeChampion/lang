@@ -1,0 +1,15 @@
+import "std/array";
+import "std/truetype";
+
+// The advance, the x offset and the y offset of each glyph of `r`.
+function places(r: truetype.Run): string {
+  let out: string[] = [];
+  for i in 0..r.glyphs.len() {
+    out = out.append(r.pos.advances[i].to_string() + ":" + r.pos.dx[i].to_string() + ":" + r.pos.dy[i].to_string());
+  }
+  return out.join(",");
+}
+
+pub function describe(r: truetype.Run, placed: boolean): string {
+  return r.glyphs.map((x: i32): string => x.to_string()).join(",") + " " + r.clusters.map((x: i32): string => x.to_string()).join(",") + (if (placed) { " " + places(r) } else { "" });
+}

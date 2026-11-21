@@ -1,0 +1,108 @@
+import "std/audio/vorbisfile/seek";
+import "std/audio/vorbisfile/file";
+import "std/audio/source";
+import "std/hex";
+import "std/rand";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "vorbis_seek_check";
+import "vorbis_file_vectors";
+import "vorbis_seek_vectors";
+
+function playback(reader: Reader, formats: [u8], expected: [u8], bytes: i32): Result[void, string] {
+  let index = match (file.inspect(reader, seek.default_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let links = index.links();
+  if (links.len() * 12 != formats.len()) {
+    return Err("indexed link count");
+  }
+  let probe = seek.cursor(index);
+  let (_, first_bytes) = probe.want();
+  if (first_bytes > 1) {
+    if let Err(source.ReadSize) = file.step(reader, probe, source.Limits { chunk_size: 1, max_buffer_bytes: 1 }) {} else {
+      return Err("exceeded retained window budget");
+    }
+  }
+  let state = seek.cursor(index);
+  let limits = source.Limits { chunk_size: 997, max_buffer_bytes: bytes };
+  for i in 0..links.len() {
+    if (links[i].frames != ref.word(formats, 12 * i + 8) as i64) {
+      return Err("indexed frame count");
+    }
+    for start in [links[i].frames / 2i64, 0i64] {
+      state = match (state.seek(i, start)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+      let position = start;
+      let pending = 0;
+      while (position < links[i].frames) {
+        let (next, event) = match (file.step(reader, state, limits)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+        state = next;
+        match (event) {
+          seek.Samples(value) => {
+            vorbis_seek_check.audio(value, formats, expected, i, position, links[i].initial_granule)?;
+            position += value.frames as i64;
+            pending = 0;
+          },
+          seek.Pending => {
+            pending += 1;
+            if (pending > 8) {
+              return Err("no seek progress");
+            }
+          },
+          seek.Finished => {
+            return Err("early end of link");
+          }
+        }
+      }
+    }
+  }
+  let last = links.len() - 1;
+  state = match (state.seek(last, links[last].frames)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  for _ in 0..2 {
+    let (next, event) = match (file.step(reader, state, limits)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    state = next;
+    if let seek.Finished = event {
+      return Ok(());
+    }
+  }
+  return Err("expected end of presentation");
+}
+
+function fixture(encoded: string, layout: string, golden: string): Result[void, string] {
+  let bytes = ref.unpack(encoded)?;
+  let formats = ref.unpack(layout)?;
+  let expected = ref.unpack(golden)?;
+  let path = "fern-vorbis-" + hex.encode(rand.bytes(8));
+  let Ok(writer) = open_exclusive(path) else {
+    return Err("create fixture");
+  };
+  defer { remove_file(path); }
+  let wrote = writer.write_bytes(bytes);
+  let closed = writer.close();
+  if (wrote.is_err() || closed.is_err()) {
+    return Err("write fixture");
+  }
+  let Ok(reader) = open_reader(path) else {
+    return Err("open fixture");
+  };
+  defer reader.close();
+  return playback(reader, formats, expected, bytes.len());
+}
+
+function references(): test.TestOutcome {
+  for v in vorbis_file_vectors.vectors() {
+    if let Err(e) = fixture(v.encoded, v.formats, v.pcm) {
+      return test.fail(v.name + ": " + e);
+    }
+  }
+  for v in vorbis_seek_vectors.vectors() {
+    if let Err(e) = fixture(v.encoded, v.formats, v.pcm) {
+      return test.fail(v.name + ": " + e);
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Vorbis seekable Reader");
+  runner = runner.it("seek within each logical link and compare PCM through its end", references);
+  return runner.finish();
+}

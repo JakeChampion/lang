@@ -30,6 +30,11 @@ function area(s: Shape): i32 {
 function main(): i32 {
   return area(Rect(3, 4)) + area(Circle(2)) + area(Unit) + area(Pair(5, 6));
 }`},
+	{"two_digit_payload_slot", `enum Wide { Fields { a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32, i: i32, j: i32, k: i32, l: i32 } }
+function value(w: Wide): i32 {
+  return match (w) { Fields { l, k, a, .. } => 10 * l + k + a, };
+}
+function main(): i32 { return if (value(Fields(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)) == 132) { 0 } else { 1 }; }`},
 	{"reordered_fields", `enum Shape { Rect { w: i32, h: i32 } }
 function f(s: Shape): i32 { match (s) { Rect { h, w } => { return w * 10 + h; }, } return 0; }
 function main(): i32 { return f(Rect(3, 7)); }`},

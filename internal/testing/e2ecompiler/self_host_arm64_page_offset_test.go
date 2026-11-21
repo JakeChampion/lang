@@ -30,6 +30,18 @@ function report(name: string, src: string): i32 {
 }
 function main(): i32 {
     let data: string = ".data\nfirst:\n    .quad 1\nquad:\n    .quad 7\nwide:\n    .long 3\n    .long 0\nbyte:\n    .byte 1\nodd:\n    .quad 9\n";
+    report("add_short", "add x0, :lo12:quad\n" + data);
+    report("add_mixed", "add w0, x1, quad@PAGEOFF\n" + data);
+    report("add_zr", "add xzr, x0, :lo12:quad\n" + data);
+    report("add_x", "add x0, sp, quad@PAGEOFF\n" + data);
+    report("add_wsp", "add wsp, w1, #:lo12:quad\n" + data);
+    report("add_w", "add w1, w2, :lo12:quad\n" + data);
+    report("adrp_short", "adrp x0");
+    report("adrp_w", "adrp w0, quad\n" + data);
+    report("adrp_no_symbol", "adrp x0, @PAGE");
+    report("adr_fp", "adr d0, quad\n" + data);
+    report("adrp_page", "adrp x0, quad@PAGE\n" + data);
+    report("adr_near", "adr x1, near\nnear:\n");
     report("ldr_x", ".text\n    ldr x16, [x16, :lo12:quad]\n" + data);
     report("ldr_w", ".text\n    ldr w1, [x1, :lo12:wide]\n" + data);
     report("ldr_pageoff", ".text\n    ldr x16, [x16, quad@PAGEOFF]\n" + data);
@@ -67,6 +79,19 @@ func TestSelfHostArm64PageOffsetLoads(t *testing.T) {
 		t.Fatalf("driver: %v\n%s", err, stderr.String())
 	}
 	for _, want := range []string{
+		"add_short [add:page-offset operands]\n",
+		"add_mixed [add:page-offset operands]\n",
+		"add_zr [add:page-offset operands]\n",
+		"add_x 2432705504\n",
+		"add_w 285220929\n",
+		"add_wsp 285220927\n",
+		"adrp_short [adrp:operands]\n",
+		"adrp_w [adrp:operands]\n",
+		"adrp_no_symbol [adrp:operands]\n",
+		"adr_fp [adr:operands]\n",
+		// adrp x0 from page 1 to page 32; adr x1 to the following word.
+		"adrp_page 4026532064\n",
+		"adr_near 268435489\n",
 		// ldr x16, [x16, #8]: 0xf9400610.
 		"ldr_x 4181722640\n",
 		// ldr w1, [x1, #16]: 0xb9401021.

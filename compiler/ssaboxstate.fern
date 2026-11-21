@@ -1,0 +1,62 @@
+// Register and memory transitions shared by constructor and array-box proofs.
+import "./ssamachineword" as machineword;
+pub use "./ssamachineword".{State, write, load, initial_state};
+import "./ssacapacityisa" as isa;
+
+pub function displaced(w: machineword.Word, offset: i64): machineword.Word {
+  return machineword.token(w.low.kind, w.low.identity + offset);
+}
+
+pub function numeric_add(s: machineword.State, reg: i32, w: machineword.Word, delta: i64): machineword.State {
+  if (machineword.unsigned(w)) {
+    let n = w.low.identity + delta;
+    if (n >= 0 && n <= 4294967295) {
+      return machineword.write(s, reg, machineword.number(n));
+    }
+  }
+  return machineword.State { ...s, ok: false };
+}
+
+pub function cell(s: machineword.State, base: machineword.Word, offset: i32, width: i32, pointer: (machineword.Word) => boolean, cell_extent: (machineword.State, i32, i64, i32) => i32): i32 {
+  if (!pointer(base) || offset < -64 || offset > 64) {
+    return -1;
+  }
+  let at = base.low.identity + offset as i64;
+  let bytes = width / 8;
+  if (at % 4 != 0) {
+    return -1;
+  }
+  return cell_extent(s, base.low.kind, at, bytes);
+}
+
+pub function store_at(s: machineword.State, at: i32, width: i32, w: machineword.Word, writable: (machineword.State, i32) => boolean, first_single_write: i32): machineword.State {
+  if (!writable(s, at)) {
+    return machineword.State { ...s, ok: false };
+  }
+  let count = width / 32;
+  let i = 0;
+  let memory = s.cells;
+  let writes = s.writes;
+  while (i < count) {
+    let pos = at + i;
+    if (!writable(s, pos) || pos >= first_single_write && writes[pos] != 0) {
+      return machineword.State { ...s, ok: false };
+    }
+    memory = memory.with(pos, if (i == 0) { w.low } else { w.high });
+    writes = writes.with(pos, writes[pos] + 1);
+    i += 1;
+  }
+  return machineword.State { ...s, cells: memory, writes: writes };
+}
+
+pub function memory_step(s: machineword.State, op: isa.Op, address: (machineword.State, machineword.Word, i32, i32) => i32, load_at: (machineword.State, i32, i32, i32) => machineword.State, store_at: (machineword.State, i32, i32, machineword.Word) => machineword.State): machineword.State {
+  if (op.index >= 0) {
+    return machineword.State { ...s, ok: false };
+  }
+  let at = address(s, s.regs[op.base], op.offset, op.width);
+  if (op.kind == 3) {
+    return load_at(s, at, op.width, op.destination);
+  }
+  let w = if (op.kind == 22) { machineword.number(op.immediate as i64) } else { s.regs[op.source] };
+  return store_at(s, at, op.width, w);
+}

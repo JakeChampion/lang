@@ -11,7 +11,11 @@ var arm64Conditions = []string{
 }
 
 func TestSelfHostArm64ConditionsMatchGas(t *testing.T) {
-	var cases []string
+	cases := []string{
+		"1:\n\ttbz w0, #31, 1b", "1:\n\ttbnz xzr, #0x3f, 1b",
+		"1:\n\ttbz x0, #010, 1b", "1:\n\ttbz w0, #0b101, 1b",
+		"1:\n\tcbnz wzr, 1b", "1:\n\tbeq 1b",
+	}
 	for _, cond := range arm64Conditions {
 		cases = append(cases,
 			"csel x0, x1, x2, "+cond,
@@ -55,4 +59,17 @@ func TestSelfHostArm64RefusesBadConditions(t *testing.T) {
 			t.Errorf("%q: refused as %v, which does not name %q", bad, refused, tok)
 		}
 	}
+}
+
+func TestSelfHostArm64RefusesBadBranches(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	bin := buildAsmBenchDriver(t, gcc)
+	checkRefusedSelfHost(t, bin, runner, []string{
+		"b.zz _start", "b.eq _start, x0", "bl _start, x1",
+		"cbnz sp, _start", "cbz d0, _start", "cbz x0, _start, w1",
+		"tbz w0, #32, _start", "tbnz x0, #64, _start",
+		"tbz x0, #-1, _start", "tbz x0, #0xZZ, _start",
+		"tbz x0, #4294967296, _start", "tbz s0, #1, _start",
+		"b", "cbz x0", "tbz x0, #1",
+	})
 }

@@ -1,30 +1,18 @@
+import "./ssareleasestate" as shared;
+import "./ssaaffinehalf" as half;
 import "./ssacondition" as condition;
 import "./ssacapacityisa" as isa;
 import "./ssalargepushwidevalue" as value;
 import "./ssalargepushwideranges" as ranges;
 import "./ssalargepushwideisa" as decoder;
 
-struct Half { kind: i32, identity: i32, part: i32, number: value.Value }
+struct Flow { state: shared.State, next: i32 }
 
-struct Word { low: Half, high: Half, full: value.Value }
-
-struct Flow { state: State, next: i32 }
-
-struct State { regs: Word[], cells: Half[], flags: condition.Comparison, ok: boolean, oversized: boolean, block_writes: i32, slot_writes: i32 }
-
-function token(kind: i32, identity: i32, part: i32): Half {
-  return Half { kind: kind, identity: identity, part: part, number: value.unknown() };
+function numeric_half(v: value.Value): half.Half {
+  return half.Half { kind: if (v.factor < 0) { 0 } else { 1 }, identity: 0, part: 0, number: v };
 }
 
-function identity(kind: i32, id: i32): Word {
-  return Word { low: token(kind, id, 0), high: token(kind, id, 1), full: value.unknown() };
-}
-
-function numeric_half(v: value.Value): Half {
-  return Half { kind: if (v.factor < 0) { 0 } else { 1 }, identity: 0, part: 0, number: v };
-}
-
-function zero(r: ranges.Interval): Half {
+function zero(r: ranges.Interval): half.Half {
   return numeric_half(value.number(r, 0 as i64));
 }
 
@@ -32,14 +20,14 @@ function nonnegative(r: ranges.Interval, v: value.Value): boolean {
   return value.valid(r, v) && v.factor as i64 * r.low + v.offset >= 0;
 }
 
-function numeric(r: ranges.Interval, v: value.Value): Word {
+function numeric(r: ranges.Interval, v: value.Value): shared.Word {
   if (!value.valid(r, v)) {
-    return identity(0, 0);
+    return shared.identity(0, 0);
   }
-  return Word { low: numeric_half(value.zero32(r, v)), high: numeric_half(value.high32(r, v)), full: v };
+  return shared.Word { low: numeric_half(value.zero32(r, v)), high: numeric_half(value.high32(r, v)), full: v };
 }
 
-function number(r: ranges.Interval, w: Word, width: i32): value.Value {
+function number(r: ranges.Interval, w: shared.Word, width: i32): value.Value {
   if (width == 64 && value.valid(r, w.full)) {
     return w.full;
   }
@@ -52,47 +40,40 @@ function number(r: ranges.Interval, w: Word, width: i32): value.Value {
   return if (w.high.kind == 1) { value.join32(r, w.low.number, w.high.number) } else { value.unknown() };
 }
 
-function same_half(a: Half, b: Half): boolean {
-  return a.kind == b.kind && a.identity == b.identity && a.part == b.part && a.number.factor == b.number.factor && a.number.offset == b.number.offset;
-}
-
-function same_word(a: Word, b: Word): boolean {
-  return same_half(a.low, b.low) && same_half(a.high, b.high) && a.full.factor == b.full.factor && a.full.offset == b.full.offset;
-}
-
-function initial_register(r: ranges.Interval, reg: i32, oversized: boolean): Word {
+function initial_register(r: ranges.Interval, reg: i32, oversized: boolean): shared.Word {
   return match (reg) {
-    4 => identity(3, 0),
-    8 => identity(8, 0),
-    6 => if (oversized) { identity(7, 0) } else { numeric(r, value.original(r)) },
-    _ => identity(2, reg),
+    4 => shared.identity(3, 0),
+    8 => shared.identity(8, 0),
+    6 => if (oversized) { shared.identity(7, 0) } else { numeric(r, value.original(r)) },
+    _ => shared.identity(2, reg),
   };
 }
 
-function initial(r: ranges.Interval, oversized: boolean, duplicate: boolean): State {
-  let regs: Word[] = [];
+function initial(r: ranges.Interval, oversized: boolean, duplicate: boolean): shared.State {
+  let regs: shared.Word[] = [];
   for reg in 0..16 {
     regs = regs.append(initial_register(r, reg, oversized));
   }
-  let head = identity(if (duplicate) { 8 } else { 6 }, 0);
-  let cells = [token(5, 0, 0), token(5, 0, 1), head.low, head.high, token(4, 0, 0), token(4, 0, 1)];
-  return State { regs: regs, cells: cells, flags: condition.unknown_order(), ok: true, oversized: oversized, block_writes: 0, slot_writes: 0 };
+  let head = shared.identity(if (duplicate) { 8 } else { 6 }, 0);
+  let cells = [half.token(5, 0, 0), half.token(5, 0, 1), head.low, head.high, half.token(4, 0, 0), half.token(4, 0, 1)];
+  let state = shared.initial(regs, cells, false, 0);
+  return shared.State { ...state, oversized: oversized };
 }
 
-function write(s: State, r: ranges.Interval, reg: i32, w: Word): State {
+function write(s: shared.State, r: ranges.Interval, reg: i32, w: shared.Word): shared.State {
   let known = value.valid(r, w.full) || w.low.kind != 0 && w.high.kind != 0;
-  return State { ...s, regs: s.regs.with(reg, w), ok: s.ok && known };
+  return shared.State { ...s, regs: s.regs.with(reg, w), ok: s.ok && known };
 }
 
-function narrowed(r: ranges.Interval, w: Word, width: i32): Word {
+function narrowed(r: ranges.Interval, w: shared.Word, width: i32): shared.Word {
   if (width == 64) {
     return w;
   }
-  return if (w.low.kind == 1) { numeric(r, w.low.number) } else { Word { low: w.low, high: zero(r), full: value.unknown() } };
+  return if (w.low.kind == 1) { numeric(r, w.low.number) } else { shared.from_halves(w.low, zero(r)) };
 }
 
-function slot(s: State, r: ranges.Interval, op: isa.Op): boolean {
-  if (s.oversized || op.index < 0 || op.scale != 8 || !same_word(s.regs[op.base], identity(9, 0))) {
+function slot(s: shared.State, r: ranges.Interval, op: isa.Op): boolean {
+  if (s.oversized || op.index < 0 || op.scale != 8 || !shared.same_word(s.regs[op.base], shared.identity(9, 0))) {
     return false;
   }
   let index = number(r, s.regs[op.index], 64);
@@ -103,43 +84,43 @@ function cell_extent(op: isa.Op): boolean {
   return (op.width == 32 || op.width == 64) && op.offset >= 0 && op.offset <= 8 - op.width / 8 && op.offset % 4 == 0;
 }
 
-function address(s: State, r: ranges.Interval, op: isa.Op): i32 {
+function address(s: shared.State, r: ranges.Interval, op: isa.Op): i32 {
   if (!cell_extent(op)) {
     return -1;
   }
   let half = op.offset / 4;
-  if (op.index < 0 && same_word(s.regs[op.base], identity(3, 0))) {
+  if (op.index < 0 && shared.same_word(s.regs[op.base], shared.identity(3, 0))) {
     return 4 + half;
   }
-  if (op.index < 0 && same_word(s.regs[op.base], identity(8, 0))) {
+  if (op.index < 0 && shared.same_word(s.regs[op.base], shared.identity(8, 0))) {
     return half;
   }
   return if (slot(s, r, op)) { 2 + half } else { -1 };
 }
 
-function read(s: State, r: ranges.Interval, at: i32, width: i32): Word {
+function read(s: shared.State, r: ranges.Interval, at: i32, width: i32): shared.Word {
   if (at < 0) {
-    return identity(0, 0);
+    return shared.identity(0, 0);
   }
   let low = s.cells[at];
   let high = if (width == 64) { s.cells[at + 1] } else { zero(r) };
   let full = if (low.kind == 1 && high.kind == 1) { value.join32(r, low.number, high.number) } else { value.unknown() };
-  return Word { low: low, high: high, full: full };
+  return shared.Word { low: low, high: high, full: full };
 }
 
-function store(s: State, at: i32, width: i32, w: Word): State {
+function store(s: shared.State, at: i32, width: i32, w: shared.Word): shared.State {
   if (s.oversized || width != 64 || at != 0 && at != 2) {
-    return State { ...s, ok: false };
+    return shared.State { ...s, ok: false };
   }
   let count = if (at == 0) { s.block_writes } else { s.slot_writes };
   if (count != 0) {
-    return State { ...s, ok: false };
+    return shared.State { ...s, ok: false };
   }
   let cells = s.cells.with(at, w.low).with(at + 1, w.high);
-  return State { ...s, cells: cells, block_writes: s.block_writes + (if (at == 0) { 1 } else { 0 }), slot_writes: s.slot_writes + (if (at == 2) { 1 } else { 0 }) };
+  return shared.State { ...s, cells: cells, block_writes: s.block_writes + (if (at == 0) { 1 } else { 0 }), slot_writes: s.slot_writes + (if (at == 2) { 1 } else { 0 }) };
 }
 
-function movement(s: State, r: ranges.Interval, op: isa.Op): State {
+function movement(s: shared.State, r: ranges.Interval, op: isa.Op): shared.State {
   if (op.kind == 2) {
     return write(s, r, op.destination, narrowed(r, s.regs[op.source], op.width));
   }
@@ -153,10 +134,10 @@ function movement(s: State, r: ranges.Interval, op: isa.Op): State {
     let w = numeric(r, value.number(r, op.immediate as i64));
     return write(s, r, op.destination, narrowed(r, w, op.width));
   }
-  return State { ...s, ok: false };
+  return shared.State { ...s, ok: false };
 }
 
-function arithmetic_source(s: State, r: ranges.Interval, op: isa.Op): value.Value {
+function arithmetic_source(s: shared.State, r: ranges.Interval, op: isa.Op): value.Value {
   return if (op.source < 0) { value.number(r, op.immediate as i64) } else { number(r, s.regs[op.source], op.width) };
 }
 
@@ -182,19 +163,19 @@ function shift(r: ranges.Interval, v: value.Value, count: value.Value, left: boo
   return value.number(r, n);
 }
 
-function shifted(s: State, r: ranges.Interval, op: isa.Op): State {
+function shifted(s: shared.State, r: ranges.Interval, op: isa.Op): shared.State {
   let count = if (op.kind == 20 || op.kind == 21) { value.number(r, op.immediate as i64) } else { number(r, s.regs[1], 32) };
   if (!value.valid(r, count) || count.factor != 0 || count.offset < 0 as i64) {
-    return State { ...s, ok: false };
+    return shared.State { ...s, ok: false };
   }
   let masked = value.number(r, count.offset % (op.width as i64));
-  let flags = if (masked.offset == 0) { s.flags } else { condition.unknown_order() };
+  let flags = if (masked.offset == 0) { s.flags.order } else { condition.unknown_order() };
   let v = number(r, s.regs[op.destination], op.width);
   let result = if (masked.offset == 0) { narrowed(r, s.regs[op.destination], op.width) } else { numeric(r, shift(r, v, masked, op.kind == 13 || op.kind == 20)) };
-  return write(State { ...s, flags: flags }, r, op.destination, result);
+  return write(shared.with_order(s, flags), r, op.destination, result);
 }
 
-function calculated(s: State, r: ranges.Interval, op: isa.Op): value.Value {
+function calculated(s: shared.State, r: ranges.Interval, op: isa.Op): value.Value {
   let a = number(r, s.regs[op.destination], op.width);
   if (op.kind == 12) {
     return value.negate(r, a);
@@ -206,7 +187,7 @@ function calculated(s: State, r: ranges.Interval, op: isa.Op): value.Value {
   return add_sub(r, a, b, op.kind == 9, op.width);
 }
 
-function arithmetic(s: State, r: ranges.Interval, op: isa.Op): State {
+function arithmetic(s: shared.State, r: ranges.Interval, op: isa.Op): shared.State {
   if (op.kind == 13 || op.kind == 14 || op.kind == 20 || op.kind == 21) {
     return shifted(s, r, op);
   }
@@ -220,46 +201,46 @@ function arithmetic(s: State, r: ranges.Interval, op: isa.Op): State {
     v = calculated(s, r, op);
   }
   let w = narrowed(r, numeric(r, v), op.width);
-  return write(State { ...s, flags: condition.unknown_order() }, r, op.destination, w);
+  return write(shared.with_order(s, condition.unknown_order()), r, op.destination, w);
 }
 
-function lea(s: State, r: ranges.Interval, op: isa.Op): State {
+function lea(s: shared.State, r: ranges.Interval, op: isa.Op): shared.State {
   let base = number(r, s.regs[op.base], 64);
   let index = if (op.index < 0) { value.number(r, 0 as i64) } else { number(r, s.regs[op.index], 64) };
   if (!value.valid(r, index) || index.factor != 0) {
-    return State { ...s, ok: false };
+    return shared.State { ...s, ok: false };
   }
   let result = value.add(r, base, index.offset * (op.scale as i64) + op.offset as i64);
   return write(s, r, op.destination, numeric(r, result));
 }
 
-function comparison(s: State, r: ranges.Interval, op: isa.Op): State {
+function comparison(s: shared.State, r: ranges.Interval, op: isa.Op): shared.State {
   if (op.kind == 28 && op.width == 64) {
     let a = s.regs[op.destination];
     let b = s.regs[op.source];
-    if (a.low.kind != 0 && a.high.kind != 0 && same_word(a, b)) {
-      return State { ...s, flags: condition.Comparison { less: 0, equal: 1, less_equal: 1 } };
+    if (a.low.kind != 0 && a.high.kind != 0 && shared.same_word(a, b)) {
+      return shared.with_order(s, condition.Comparison { less: 0, equal: 1, less_equal: 1 });
     }
-    if (same_word(a, identity(6, 0)) && same_word(b, identity(8, 0)) || same_word(a, identity(8, 0)) && same_word(b, identity(6, 0))) {
-      return State { ...s, flags: condition.Comparison { less: -1, equal: 0, less_equal: -1 } };
+    if (shared.same_word(a, shared.identity(6, 0)) && shared.same_word(b, shared.identity(8, 0)) || shared.same_word(a, shared.identity(8, 0)) && shared.same_word(b, shared.identity(6, 0))) {
+      return shared.with_order(s, condition.Comparison { less: -1, equal: 0, less_equal: -1 });
     }
   }
   let operand = if (op.kind == 16) { op.source } else { op.destination };
   let threshold = if (op.kind == 16) { value.number(r, op.immediate as i64) } else { number(r, s.regs[op.source], op.width) };
   if (!nonnegative(r, threshold) || threshold.factor != 0) {
-    return State { ...s, flags: condition.unknown_order() };
+    return shared.with_order(s, condition.unknown_order());
   }
-  if (op.width == 64 && same_word(s.regs[operand], identity(7, 0)) && threshold.offset <= 17179869184 as i64) {
-    return State { ...s, flags: condition.Comparison { less: 0, equal: 0, less_equal: 0 } };
+  if (op.width == 64 && shared.same_word(s.regs[operand], shared.identity(7, 0)) && threshold.offset <= 17179869184 as i64) {
+    return shared.with_order(s, condition.Comparison { less: 0, equal: 0, less_equal: 0 });
   }
   let v = number(r, s.regs[operand], op.width);
   if (!nonnegative(r, v)) {
-    return State { ...s, flags: condition.unknown_order() };
+    return shared.with_order(s, condition.unknown_order());
   }
-  return State { ...s, flags: value.compare(r, v, threshold.offset) };
+  return shared.with_order(s, value.compare(r, v, threshold.offset));
 }
 
-function step(s: State, r: ranges.Interval, op: isa.Op): State {
+function step(s: shared.State, r: ranges.Interval, op: isa.Op): shared.State {
   if (op.kind == 1) {
     return s;
   }
@@ -272,9 +253,9 @@ function step(s: State, r: ranges.Interval, op: isa.Op): State {
   return addressing_or_comparison(s, r, op);
 }
 
-function addressing_or_comparison(s: State, r: ranges.Interval, op: isa.Op): State {
+function addressing_or_comparison(s: shared.State, r: ranges.Interval, op: isa.Op): shared.State {
   if (op.kind == 19 && op.width == 64 && op.symbol == "__fern_large_freelist") {
-    return write(s, r, op.destination, identity(9, 0));
+    return write(s, r, op.destination, shared.identity(9, 0));
   }
   if (op.kind == 15) {
     return lea(s, r, op);
@@ -282,46 +263,46 @@ function addressing_or_comparison(s: State, r: ranges.Interval, op: isa.Op): Sta
   if (op.kind == 16 || op.kind == 28) {
     return comparison(s, r, op);
   }
-  return State { ...s, ok: false };
+  return shared.State { ...s, ok: false };
 }
 
-function final_register(s: State, r: ranges.Interval, reg: i32): Word {
+function final_register(s: shared.State, r: ranges.Interval, reg: i32): shared.Word {
   if (reg == 0) {
     return numeric(r, value.number(r, if (s.oversized) { 17179869184 as i64 } else { ranges.expected_class(r) as i64 }));
   }
   if (!s.oversized) {
     if (reg == 1) {
-      return identity(6, 0);
+      return shared.identity(6, 0);
     }
     if (reg == 2) {
-      return identity(9, 0);
+      return shared.identity(9, 0);
     }
   }
   return initial_register(r, reg, s.oversized);
 }
 
-function finished(s: State, r: ranges.Interval): boolean {
+function finished(s: shared.State, r: ranges.Interval): boolean {
   for reg in 0..16 {
-    if (!same_word(s.regs[reg], final_register(s, r, reg))) {
+    if (!shared.same_word(s.regs[reg], final_register(s, r, reg))) {
       return false;
     }
   }
-  let block = if (s.oversized) { identity(5, 0) } else { identity(6, 0) };
-  let head = if (s.oversized) { identity(6, 0) } else { identity(8, 0) };
+  let block = if (s.oversized) { shared.identity(5, 0) } else { shared.identity(6, 0) };
+  let head = if (s.oversized) { shared.identity(6, 0) } else { shared.identity(8, 0) };
   let writes = if (s.oversized) { 0 } else { 1 };
-  return s.block_writes == writes && s.slot_writes == writes && same_word(read(s, r, 0, 64), block) && same_word(read(s, r, 2, 64), head) && same_word(read(s, r, 4, 64), identity(4, 0));
+  return s.block_writes == writes && s.slot_writes == writes && shared.same_word(read(s, r, 0, 64), block) && shared.same_word(read(s, r, 2, 64), head) && shared.same_word(read(s, r, 4, 64), shared.identity(4, 0));
 }
 
-function execute(s: State, r: ranges.Interval, item: decoder.WideOp, pc: i32, duplicate: boolean): Flow {
+function execute(s: shared.State, r: ranges.Interval, item: decoder.WideOp, pc: i32, duplicate: boolean): Flow {
   let op = item.instruction;
   if (op.kind == 35) {
-    let taken = condition.unsigned_branch(s.flags, op.condition);
+    let taken = condition.unsigned_branch(s.flags.order, op.condition);
     let abort = taken == 1 && duplicate && !s.oversized && s.block_writes == 0 && s.slot_writes == 0;
-    return Flow { state: State { ...s, ok: s.ok && (taken == 0 || abort) }, next: if (taken == 1) { -1 } else { pc + 1 } };
+    return Flow { state: shared.State { ...s, ok: s.ok && (taken == 0 || abort) }, next: if (taken == 1) { -1 } else { pc + 1 } };
   }
   if (op.kind == 17) {
-    let taken = condition.unsigned_branch(s.flags, op.condition);
-    return Flow { state: State { ...s, ok: s.ok && taken >= 0 }, next: if (taken == 1) { op.target } else { pc + 1 } };
+    let taken = condition.unsigned_branch(s.flags.order, op.condition);
+    return Flow { state: shared.State { ...s, ok: s.ok && taken >= 0 }, next: if (taken == 1) { op.target } else { pc + 1 } };
   }
   let next = if (op.kind == 41) { write(s, r, op.destination, numeric(r, value.number(r, item.immediate))) } else { step(s, r, op) };
   return Flow { state: next, next: pc + 1 };

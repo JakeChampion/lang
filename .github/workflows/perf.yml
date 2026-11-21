@@ -386,6 +386,15 @@ jobs:
       - name: Build the compiler
         working-directory: candidate
         run: bash bootstrap/bootstrap.sh build
+      - name: Measure indexed Vorbis playback
+        working-directory: candidate
+        run: |
+          mkdir -p build/audio-pair
+          sudo apt-get update
+          sudo apt-get install -y libvorbis-dev
+          test "$(pkg-config --modversion vorbisfile)" = 1.3.7
+          cc -O2 scripts/audio-reference/vorbis-file.c -lvorbisfile -o build/vorbis-file-reference
+          python3 scripts/bench-vorbis-file --reference build/vorbis-file-reference > build/audio-pair/vorbis-file.json
       - name: Fetch hash-checked reference headers
         working-directory: candidate
         run: |

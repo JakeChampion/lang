@@ -14,7 +14,7 @@ Use `try_from_flat` and `try_reshape` for caller-supplied dimensions. They retur
 
 `try_broadcast_shape` checks whether two shapes have a representable common shape. `try_zip_with` applies an elementwise operation to that shape and returns `None` before invoking the callback if broadcasting fails.
 
-The checked view methods `try_permute`, `try_reverse`, `try_slice`, and `try_select` return `None` for an invalid axis, permutation, range, or index. A successful call shares the underlying array storage.
+The checked view methods `try_transpose`, `try_permute`, `try_reverse`, `try_slice`, and `try_select` return `None` for an invalid axis, permutation, range, or index. A transpose or permutation also returns `None` if the reordered dimensions overflow the element count before a later zero extent. A successful call shares the underlying array storage.
 
 `try_reduce_axis` returns `None` for an invalid axis or an unrepresentable result shape. `try_scan_axis` checks the axis and keeps the input shape. On an empty input, a reduction fills the result with its initial value and a scan returns an empty array. Neither calls the callback.
 
@@ -275,13 +275,21 @@ function check_axis[T](a: NdArray[T], axis: i32): void {
 ```fern
 <<8 pub function (a: NdArray[T]) transpose(): NdArray[T]>>=
 pub function (a: NdArray[T]) transpose(): NdArray[T] {
+  let Some(view) = a.try_transpose() else {
+    shape_error();
+    return a;
+  };
+  return view;
+}
+
+pub function (a: NdArray[T]) try_transpose(): Option[NdArray[T]] {
   let axes: i32[] = [];
   let k = a.shape.len() - 1;
   while (k >= 0) {
     axes = axes.append(k);
     k -= 1;
   }
-  return a.permute(axes);
+  return a.try_permute(axes);
 }
 
 pub function (a: NdArray[T]) permute(axes: i32[]): NdArray[T] {
@@ -317,6 +325,9 @@ pub function (a: NdArray[T]) try_permute(axes: i32[]): Option[NdArray[T]] {
     shape = shape.append(a.shape[axes[k]]);
     strides = strides.append(a.strides[axes[k]]);
     k += 1;
+  }
+  if (shape_count(shape) < 0) {
+    return None;
   }
   return Some(NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset });
 }

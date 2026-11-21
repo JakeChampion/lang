@@ -1,0 +1,93 @@
+import "std/audio/source";
+import "std/audio/vorbisfile/file";
+import "std/audio/vorbisfile/seek";
+import "std/audio/wire";
+import "std/bench";
+import "std/i32";
+import "std/string";
+
+function peak_rss(): i32 {
+  let Ok(status) = read_file("/proc/self/status") else {
+    return 0;
+  };
+  for line in status.split("\n") {
+    if (line.starts_with("VmHWM:")) {
+      for part in line.replace("\t", " ").split(" ") {
+        let value = i32.parse_i32_radix(part, 10).unwrap_or(0);
+        if (value > 0) {
+          return value;
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+// Measure one fresh open, index, and complete playback through EOF.
+// Supply the same immutable file to each trial.
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2 && argv.len() != 3) {
+    return 1;
+  }
+  let capture = argv.len() == 3;
+  let pcm: u8[] = [];
+  let allocs = bench.alloc_count();
+  let fresh = bench.bump_bytes();
+  let started = monotonic_ns();
+  let Ok(reader) = open_reader(argv[1]) else {
+    return 2;
+  };
+  let Ok(index) = file.inspect(reader, seek.default_limits()) else {
+    let _ = reader.close();
+    return 3;
+  };
+  let state = seek.cursor(index);
+  let frames = 0i64;
+  let samples = 0i64;
+  let checksum = 2166136261u32;
+  let limits = source.Limits { chunk_size: 16384, max_buffer_bytes: 16777216 };
+  while (true) {
+    let (next, event) = match (file.step(reader, state, limits)) {
+      Ok(value) => value,
+      Err(_) => { let _ = reader.close(); return 4; },
+    };
+    state = next;
+    match (event) {
+      seek.Samples(audio) => {
+        frames += audio.frames as i64;
+        samples += audio.samples.len() as i64;
+        if (capture) {
+          for value in audio.samples {
+            pcm = wire.put_le(pcm, (f32_bits(value) as u32) as u64, 4);
+          }
+        }
+        for value in audio.samples {
+          checksum = (checksum ^ f32_bits(value) as u32) * 16777619u32;
+        }
+      },
+      seek.Pending => {},
+      seek.Finished => {
+        break;
+      }
+    }
+  }
+  if (reader.close().is_err()) {
+    return 5;
+  }
+  let elapsed = monotonic_ns() - started;
+  let allocations = bench.allocs_after(allocs);
+  let bytes = bench.fresh_bytes_after(fresh);
+  let peak = peak_rss();
+  if (capture && write_file_bytes(argv[2], pcm).is_err()) {
+    return 6;
+  }
+  print("native_peak_rss_kb=" + peak.to_string());
+  print("frames=" + frames.to_string());
+  print("samples=" + samples.to_string());
+  print("checksum=" + checksum.to_string());
+  print("wall_ns=" + elapsed.to_string());
+  print("allocs=" + allocations.to_string());
+  print("fresh_bytes=" + bytes.to_string());
+  return 0;
+}

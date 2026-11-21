@@ -13,7 +13,7 @@ function is_number(r: value.Interval, v: value.Value, n: i64): boolean {
 
 function malformed(): void {
   let r = value.Interval { low: 257, high: 320 };
-  let bad: value.Value[] = [value.unknown(), value.Value { factor: -1, offset: 0 as i64 }, value.Value { factor: 2, offset: 0 as i64 }, value.Value { factor: 0, offset: 4294967296 as i64 }, value.Value { factor: 0, offset: -(4294967296 as i64) }, value.Value { factor: 1, offset: 4294967295 as i64 }];
+  let bad: value.Value[] = [value.Value { factor: 1, offset: 0 as i64, residue: -1 }, value.unknown(), value.Value { factor: -1, offset: 0 as i64, residue: 0 }, value.Value { factor: 2, offset: 0 as i64, residue: 0 }, value.Value { factor: 0, offset: 4294967296 as i64, residue: 0 }, value.Value { factor: 0, offset: -(4294967296 as i64), residue: 0 }, value.Value { factor: 1, offset: 4294967295 as i64, residue: 0 }];
   for v in bad {
     require(!value.valid(r, v), "invalid expression");
     require(!value.valid(r, value.add(r, v, 0 as i64)), "invalid addition");
@@ -25,7 +25,7 @@ function malformed(): void {
 }
 
 function invalid_intervals(): void {
-  let bad: value.Interval[] = [value.Interval { low: 0, high: 1 }, value.Interval { low: 2, high: 1 }, value.Interval { low: 1, high: 65536 }, value.Interval { low: -2147483648, high: 2147483647 }];
+  let bad: value.Interval[] = [value.Interval { low: 0, high: 1 }, value.Interval { low: 2, high: 1 }, value.Interval { low: 1, high: 65536 }, value.Interval { low: -2147483648, high: 2147483647 }, value.Interval { low: 4294967297 as i64, high: 4294967297 as i64 }];
   for r in bad {
     require(!value.valid_interval(r) && !value.valid(r, value.original(r)) && !value.valid(r, value.expected(r)), "invalid interval");
     require(!value.valid(r, value.number(r, 1 as i64)), "invalid constant interval");
@@ -116,13 +116,13 @@ pub function audit(limit: i32): void {
   require(limit >= 1 && limit <= 65535, "audit input bound");
   let rows = value.intervals();
   require(rows.len() == 40, "partition size");
-  let next = 1;
+  let next = 1 as i64;
   for r in rows {
     require(value.valid_interval(r) && r.low == next, "partition coverage");
     let expected = value.expected(r);
     require(value.valid(r, expected), "expected interval");
     rounding(r, expected);
-    let n = r.low;
+    let n = r.low as i32;
     while (n <= r.high && n <= limit) {
       require(evaluate(expected, n) == scalar_expected(n), "exhaustive rounding");
       n += 1;

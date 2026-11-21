@@ -32,6 +32,7 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 	var free []string
 	// These functions share names across modules but implement independent contracts.
 	independent := map[string]bool{
+		"ssaaffinevalue.unknown":       true, // An unknown affine expression has no decrement-count family.
 		"ssacondition.unknown_flags":   true, // Comparison flags differ from decrement-count flags.
 		"ssalargepushwidecases.rows":   true,
 		"ssalargepushwideranges.valid": true,
@@ -66,7 +67,7 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 	sort.Strings(free)
 	wantFree := []string{
 		"aborts", "aesref", "builtins", "capvocab", "docprintable", "rtbundle", "rttemplates", "rtwasm",
-		"sourcepos", "ssacondition", "ssadecrementcount", "ssafixed", "ssalargepushwidecases", "ssalargepushwideranges", "stdlib_methods", "wit_fern_world", "wit_proxy_world",
+		"sourcepos", "ssaaffinevalue", "ssacondition", "ssadecrementcount", "ssafixed", "ssalargepushwidecases", "ssalargepushwideranges", "stdlib_methods", "wit_fern_world", "wit_proxy_world",
 	}
 	if strings.Join(free, ",") != strings.Join(wantFree, ",") {
 		t.Errorf("the import-free module set changed.\n  got:  %v\n  want: %v\n"+

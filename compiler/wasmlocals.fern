@@ -177,9 +177,8 @@ function assign(ops: ir.Op[], n_params: i32, sl: Slots, types: i32[]): i32[] {
   for i in 0..starts.len() {
     let t = starts[i];
     if (t >= 0) {
-      let k = free_local(kind, until, types[t], i);
-      if (k < 0) {
-        k = kind.len();
+      let k = reusable_or_next_local(kind, until, types[t], i);
+      if (k == kind.len()) {
         kind = kind.append(types[t]);
         until = until.append(sl.last[t]);
       } else {
@@ -191,13 +190,13 @@ function assign(ops: ir.Op[], n_params: i32, sl: Slots, types: i32[]): i32[] {
   return map;
 }
 
-function free_local(kind: i32[], until: i32[], ty: i32, at: i32): i32 {
+function reusable_or_next_local(kind: i32[], until: i32[], ty: i32, at: i32): i32 {
   for k in 0..kind.len() {
     if (kind[k] == ty && until[k] < at) {
       return k;
     }
   }
-  return -1;
+  return kind.len();
 }
 
 function remapped_types(map: i32[], types: i32[]): i32[] {

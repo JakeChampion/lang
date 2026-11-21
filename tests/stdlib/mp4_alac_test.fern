@@ -1,8 +1,41 @@
 import "std/audio/mp4/alac";
 import "std/audio/mp4/file";
+import "std/i32";
 import "std/test";
 import "aac_kernel_check" as ref;
 import "mp4_alac_vectors";
+
+// Compare nonsequential ranges, including a packet boundary and the empty
+// range at EOF, against independently decoded PCM.
+function seek_ranges(encoded: [u8], index: alac.Index, expected: [u8], frames: i32, channels: i32): boolean {
+  let limits = alac.default_limits();
+  let Ok(cursor) = alac.seek_index(encoded, index, 0, limits) else {
+    return false;
+  };
+  if (cursor.frames() != frames) {
+    return false;
+  }
+  for start in [frames, frames / 2, 0, 4095.min(frames), (frames - 1).max(0)] {
+    let count = (frames - start).min(7);
+    let out: i32[] = [];
+    for i in 0..count * channels + 1 {
+      out = out.append(-123);
+    }
+    let Ok((next, samples)) = cursor.read_into(encoded, start, count, out, limits.audio) else {
+      return false;
+    };
+    cursor = next;
+    if (samples[count * channels] != -123) {
+      return false;
+    }
+    for i in 0..count * channels {
+      if (samples[i] != ref.word(expected, 4 * (start * channels + i))) {
+        return false;
+      }
+    }
+  }
+  return cursor.read_into(encoded, frames, 1, [], limits.audio).is_err();
+}
 
 // Check every independent format field and PCM sample in one corpus pass.
 // fern-lint: allow cyclomatic-complexity
@@ -25,6 +58,9 @@ function references(): test.TestOutcome {
     let audio = match (alac.decode_track(encoded, index, 0, alac.default_limits())) { Ok(value) => value, Err(e) => { return test.fail(vector.name + ": decode: " + e.message()); } };
     if (audio.frames != vector.frames as i64 || audio.samples.len() * 4 != expected.len()) {
       return test.fail(vector.name + ": extent");
+    }
+    if (!seek_ranges(encoded, index, expected, vector.frames, vector.channels)) {
+      return test.fail(vector.name + ": seek range");
     }
     for i in 0..audio.samples.len() {
       if (audio.samples[i] != ref.word(expected, i * 4)) {

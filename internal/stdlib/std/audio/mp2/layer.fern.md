@@ -214,17 +214,26 @@ pub function granule_into(input: [u8], b: bits.Bits, scale: Scale, part: i32, ow
   return Ok((b, output));
 }
 
+// Four MSB-first shifts of the MPEG polynomial 0x8005 per table entry.
+const CRC_NIBBLE: i32[] = [0, 32773, 32783, 10, 32795, 30, 20, 32785, 32819, 54, 60, 32825, 40, 32813, 32807, 34];
+
+function crc_byte(crc: i32, byte: i32): i32 {
+  let high = crc << 4 & 65535 ^ CRC_NIBBLE[crc >> 12 ^ byte >> 4];
+  return high << 4 & 65535 ^ CRC_NIBBLE[high >> 12 ^ byte & 15];
+}
+
 function crc_bit(crc: i32, bit: i32): i32 {
   let feedback = (crc >> 15 ^ bit) & 1;
   return (crc << 1 ^ (if (feedback != 0) { 32773 } else { 0 })) & 65535;
 }
 
 pub function checksum(header: [u8], input: [u8], count: i32): i32 {
-  let crc = 65535;
-  for i in 0..16 {
-    crc = crc_bit(crc, header[i / 8] as i32 >> 7 - i % 8 & 1);
+  let crc = crc_byte(crc_byte(65535, header[0] as i32), header[1] as i32);
+  let bytes = count / 8;
+  for i in 0..bytes {
+    crc = crc_byte(crc, input[i] as i32);
   }
-  for i in 0..count {
+  for i in bytes * 8..count {
     crc = crc_bit(crc, input[i / 8] as i32 >> 7 - i % 8 & 1);
   }
   return crc;

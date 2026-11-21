@@ -783,25 +783,6 @@ pub function (s: string) is_valid_identifier(): boolean {
   }
   return true;
 }
-
-pub function (s: string) is_email_like(): boolean {
-  match (s.split_once("@")) {
-    Some(p) => {
-      let lo = p.0;
-      let dom = p.1;
-      if (lo.len() == 0) {
-        return false;
-      }
-      if (dom.len() == 0) {
-        return false;
-      }
-      return dom.contains(".");
-    },
-    None => {
-      return false;
-    }
-  }
-}
 ```
 ### `15 pub function (s: string) common_prefix(other: string): string`
 

@@ -66,8 +66,32 @@ function peak_rss(): i32 {
   return 0;
 }
 
+function decoder_state(count: i32): i32 {
+  let mark_allocs = bench.alloc_count();
+  let mark_bytes = bench.bump_bytes();
+  let states: mp2.Decoder[] = [];
+  for _ in 0..count {
+    states = states.append(mp2.decoder());
+  }
+  let allocations = bench.allocs_after(mark_allocs);
+  let bytes = bench.fresh_bytes_after(mark_bytes);
+  let peak = peak_rss();
+  print("allocs=" + allocations.to_string());
+  print("fresh_bytes=" + bytes.to_string());
+  print("native_peak_rss_kb=" + peak.to_string());
+  print("decoders=" + states.len().to_string());
+  return if (states.len() == count) { 0 } else { 2 };
+}
+
 function main(): i32 {
   let argv = args();
+  if (argv.len() == 3 && argv[1] == "state") {
+    let count = i32.parse_i32_radix(argv[2], 10).unwrap_or(0);
+    if (count < 1) {
+      return 1;
+    }
+    return decoder_state(count);
+  }
   if (argv.len() != 5 && argv.len() != 6 || argv[2] != "whole" && argv[2] != "frames") {
     return 1;
   }

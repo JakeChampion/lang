@@ -1574,11 +1574,23 @@ function elf_debug_info(text_vaddr: i64, text_len: i32, sym_names: string[], sym
     die = util.le32(die, 0);
   }
   let tys = dw_types_new();
-  let var_keys: string[] = [];
+  // Match the full spelling: a pointer reference and a later definition
+  // share a type key, but the definition still has members to register.
+  let spellings = util.name_index([]);
+  let type_ids: i32[] = [];
+  let var_types: i32[] = [];
   for t in vars.types {
-    let p = dw_type_parse(tys, t, 0);
-    tys = p.t;
-    var_keys = var_keys.append(p.key);
+    let known = spellings.find(t);
+    if (known >= 0) {
+      var_types = var_types.append(type_ids[known]);
+    } else {
+      let p = dw_type_parse(tys, t, 0);
+      tys = p.t;
+      let id = tys.keys.find(p.key);
+      spellings = spellings.added(t);
+      type_ids = type_ids.append(id);
+      var_types = var_types.append(id);
+    }
   }
   let emitted = dw_types_emit(DwEmit { die: die, offs: [], p_at: [], p_key: [] }, tys);
   die = emitted.die;
@@ -1603,7 +1615,7 @@ function elf_debug_info(text_vaddr: i64, text_len: i32, sym_names: string[], sym
           die = dw_uleb(die, 6);
         }
         die = elf_str_bytes(die, vars.names[v]);
-        die = util.le32(die, emitted.offs[tys.keys.find(var_keys[v])]);
+        die = util.le32(die, emitted.offs[var_types[v]]);
         die = util.le32(die, vars.loc_at[v]);
         v = by_fn.next[v];
       }
@@ -1864,40 +1876,19 @@ pub function elf_wx_text_off(note: boolean): i32 {
   return elf_text_align(elf_eh_size() + elf_image_phnum(true, note, true) * elf_ph_size());
 }
 
-pub function elf_func_sym_names(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32, text_end: i32): string[] {
+pub function elf_func_symbols(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32, text_end: i32): (string[], i32[], i32[]) {
   let idx = elf_func_sym_order(lab_names, lab_offs, lab_secs, sec_filter);
-  let out: string[] = [];
-  for i in 0..idx.len() {
-    out = out.append(lab_names[idx[i]]);
-  }
-  return out;
-}
-
-pub function elf_func_sym_offs(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32, text_end: i32): i32[] {
-  let idx = elf_func_sym_order(lab_names, lab_offs, lab_secs, sec_filter);
-  let out: i32[] = [];
-  for i in 0..idx.len() {
-    out = out.append(lab_offs[idx[i]]);
-  }
-  return out;
-}
-
-pub function elf_func_sym_sizes(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32, text_end: i32): i32[] {
-  let idx = elf_func_sym_order(lab_names, lab_offs, lab_secs, sec_filter);
-  let out: i32[] = [];
+  let names: string[] = [];
+  let offsets: i32[] = [];
+  let sizes: i32[] = [];
   for i in 0..idx.len() {
     let here = lab_offs[idx[i]];
-    let end = text_end;
-    if (i + 1 < idx.len()) {
-      end = lab_offs[idx[i + 1]];
-    }
-    let sz = end - here;
-    if (sz < 0) {
-      sz = 0;
-    }
-    out = out.append(sz);
+    let end = if (i + 1 < idx.len()) { lab_offs[idx[i + 1]] } else { text_end };
+    names = names.append(lab_names[idx[i]]);
+    offsets = offsets.append(here);
+    sizes = sizes.append((end - here).max(0));
   }
-  return out;
+  return (names, offsets, sizes);
 }
 
 function elf_func_sym_order(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32): i32[] {
@@ -1913,27 +1904,7 @@ function elf_func_sym_order(lab_names: string[], lab_offs: i32[], lab_secs: i32[
       idx = idx.append(i);
     }
   }
-  let a = 1;
-  while (a < idx.len()) {
-    let cur = idx[a];
-    let b = a - 1;
-    while (b >= 0) {
-      let prev = idx[b];
-      let after = lab_offs[prev] > lab_offs[cur];
-      if (!after && lab_offs[prev] == lab_offs[cur]) {
-        after = elf_str_gt(lab_names[prev], lab_names[cur]);
-      }
-      if (!after) {
-        b = -1;
-      } else {
-        idx = idx.with(b + 1, prev);
-        idx = idx.with(b, cur);
-        b -= 1;
-      }
-    }
-    a += 1;
-  }
-  return idx;
+  return util.sorted_by(idx, (a: i32, b: i32): boolean => lab_offs[a] > lab_offs[b] || lab_offs[a] == lab_offs[b] && elf_str_gt(lab_names[a], lab_names[b]));
 }
 
 function elf_str_gt(x: string, y: string): boolean {

@@ -7,7 +7,8 @@
 #include <stdio.h>
 
 int main(int argc, char **argv) {
-    if (argc != 3) return 1;
+    if (argc != 3 && (argc != 4 || strcmp(argv[3], "layer1"))) return 1;
+    int layer = argc == 4 ? 1 : 2;
     FILE *in = fopen(argv[1], "rb");
     if (!in || fseek(in, 0, SEEK_END)) return 1;
     long size = ftell(in);
@@ -24,7 +25,7 @@ int main(int argc, char **argv) {
         float pcm[2304];
         mp3dec_frame_info_t info = {0};
         int frames = mp3dec_decode_frame(&state, bytes + at, (int)size - at, pcm, &info);
-        if (info.layer != 2 || frames != 1152 || info.frame_bytes < 4 || info.frame_bytes > size - at) return 2;
+        if (info.layer != layer || frames != (layer == 1 ? 384 : 1152) || info.frame_bytes < 4 || info.frame_bytes > size - at) return 2;
         for (int i = 0; i < frames * info.channels; i++) {
             uint32_t bits;
             memcpy(&bits, pcm + i, sizeof(bits));

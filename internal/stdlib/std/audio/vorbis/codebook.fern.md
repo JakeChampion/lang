@@ -176,28 +176,34 @@ function tree(lengths: [i32], codes: [u64], maximum: i32): Result[i32[], pcm.Aud
   return Ok(children);
 }
 
+// Short words fill every nine-bit pattern with the same low bits. A branch
+// at depth nine retains its node for the remaining scalar tree walk.
+function fill_prefix(children: [i32], child: i32, depth: i32, pattern: i32, own out: i32[]): i32[] {
+  if (child == MISSING) {
+    return out;
+  }
+  if (child < 0) {
+    let entry = depth << 24 | -child - 1;
+    let i = pattern;
+    while (i < 512) {
+      out = out.with(i, entry);
+      i += 1 << depth;
+    }
+    return out;
+  }
+  if (depth == 9) {
+    return out.with(pattern, -child - 1);
+  }
+  out = fill_prefix(children, children[2 * child], depth + 1, pattern, out);
+  return fill_prefix(children, children[2 * child + 1], depth + 1, pattern | 1 << depth, out);
+}
+
 function prefix(children: [i32]): i32[] {
   let out: i32[] = [];
-  for pattern in 0..512 {
-    let node = 0;
-    let entry = MISSING;
-    for depth in 0..9 {
-      let child = children[2 * node + (pattern >> depth & 1)];
-      if (child == MISSING) {
-        break;
-      }
-      if (child < 0) {
-        entry = depth + 1 << 24 | -child - 1;
-        break;
-      }
-      node = child;
-      if (depth == 8) {
-        entry = -node - 1;
-      }
-    }
-    out = out.append(entry);
+  for _ in 0..512 {
+    out = out.append(MISSING);
   }
-  return out;
+  return fill_prefix(children, 0, 0, 0, out);
 }
 
 pub function unpack_float(value: u32): Result[f32, pcm.AudioError] {

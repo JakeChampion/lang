@@ -1,6 +1,7 @@
 import "./ast";
 import "./astwalk";
 import "./parser";
+import "./localfuncs";
 import "./util";
 import "std/string";
 
@@ -187,13 +188,13 @@ function pattern(p: ast.Pattern, s: Scope): ast.Pattern {
 function bind_mutual(stmts: ast.Stmt[], s: Scope): (Scope, string[]) {
   let names: string[] = [];
   let out = s;
-  let fns = parser.nested_fns(stmts);
+  let fns = localfuncs.nested_fns(stmts);
   if (fns.len() < 2) {
     return (out, names);
   }
   for st in stmts {
     if let ast.StmtVar(v) = st {
-      if (ast.var_binds_itself(v) && parser.nested_fn_cycle(fns, v.name).len() > 1) {
+      if (ast.var_binds_itself(v) && localfuncs.nested_fn_cycle(fns, v.name).len() > 1) {
         out = bind_all(out, ast.append_var_names([], v), v.line, v.col);
         names = names.append(v.name);
       }

@@ -1,0 +1,51 @@
+// Symbolic register words shared by the allocation and constructor proof machines.
+import "./ssaaffinehalf" as halves;
+import "./ssaaffinevalue" as affine;
+import "./ssareleasestate" as shared;
+pub use "./ssaaffinehalf".{Half};
+pub use "./ssareleasestate".{Word, State, from_halves};
+
+pub function half(kind: i32, identity: i64, high: boolean): halves.Half {
+  return halves.Half { kind: kind, identity: identity, part: if (high) { 1 } else { 0 }, number: affine.unknown() };
+}
+
+pub function token(kind: i32, identity: i64): shared.Word {
+  return shared.from_halves(half(kind, identity, false), half(kind, identity, true));
+}
+
+pub function number(n: i64): shared.Word {
+  let low = n % 4294967296;
+  return shared.from_halves(half(0, if (low < 0) { low + 4294967296 } else { low }, false), half(0, if (n < 0) { 4294967295 } else { n / 4294967296 }, false));
+}
+
+pub function same(a: halves.Half, b: halves.Half): boolean {
+  return halves.same_half(a, b);
+}
+
+pub function equal(a: shared.Word, b: shared.Word): boolean {
+  return shared.same_word(a, b);
+}
+
+pub function narrowed(w: shared.Word, width: i32): shared.Word {
+  return if (width == 32) { shared.Word { ...w, high: number(0).high } } else { w };
+}
+
+pub function unsigned(w: shared.Word): boolean {
+  return w.low.kind == 0 && same(w.high, number(0).high);
+}
+
+// choice is 1 after the test for a block that crosses a 64 KiB line and 2
+// after the test of the coloured pointer against the end of the heap. The
+// branch on such a test can go each way, and each way must finish.
+pub function initial_state(regs: shared.Word[], memory: halves.Half[], writes: i32[]): shared.State {
+  let s = shared.initial(regs, memory, false, 0);
+  return shared.State { ...s, writes: writes };
+}
+
+pub function write(s: shared.State, reg: i32, value: shared.Word): shared.State {
+  return shared.State { ...s, regs: s.regs.with(reg, value) };
+}
+
+pub function load(s: shared.State, at: i32, width: i32): shared.Word {
+  return shared.from_halves(s.cells[at], if (width == 64) { s.cells[at + 1] } else { number(0).high });
+}

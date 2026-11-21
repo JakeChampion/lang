@@ -42,7 +42,16 @@ def main():
     parser.add_argument('--timing', choices=['decode', 'checksum'], default='decode')
     parser.add_argument('--workspace', action='store_true')
     parser.add_argument('--baseline-workspace', action='store_true')
+    parser.add_argument('--compare-workspace', action='store_true',
+                        help='compare reusable and per-frame scratch in the same standard library')
     args = parser.parse_args()
+    if args.compare_workspace:
+        if args.baseline_stdlib or args.baseline_workspace:
+            parser.error('--compare-workspace uses the current stdlib and a per-frame baseline')
+        args.workspace = True
+        args.baseline_stdlib = ROOT / 'internal/stdlib'
+    if args.baseline_workspace and not args.baseline_stdlib:
+        parser.error('--baseline-workspace needs --baseline-stdlib')
     assert args.rounds > 0 and args.trials >= 3
     assert platform.system() == 'Linux', 'RSS metrics use Linux /proc'
     target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux'}[platform.machine()]
@@ -71,20 +80,20 @@ def main():
         inputs[name] = encoded
     source = ROOT / 'scripts/audio-reference/mp3_freeformat_bench.c'
     driver = ROOT / 'bench/audio/mp2.fern'
-    candidate_driver = driver
-    if args.workspace:
-        candidate_driver = work / 'workspace.fern'
+    workspace_driver = work / 'workspace.fern'
+    if args.workspace or args.baseline_workspace:
         source_text = driver.read_text().replace('  let codec = mp2.decoder();', '  let codec = mp2.decoder();\n  let work = mp2.workspace();')
         source_text = source_text.replace('let (next, result) = codec.decode_frame_into(input, at, buffer, pcm.default_limits());', 'let (next, scratch, result) = codec.decode_frame_with(input, at, buffer, work, pcm.default_limits());\n    work = scratch;')
         assert 'decode_frame_with' in source_text
-        candidate_driver.write_text(source_text)
+        workspace_driver.write_text(source_text)
+    candidate_driver = workspace_driver if args.workspace else driver
     binaries = {'fern': work / 'fern', 'scalar': work / 'scalar', 'simd': work / 'simd'}
     commands = {'fern': [args.compiler.resolve(), '-stdlib', ROOT / 'internal/stdlib',
                          '-target', target, '-o', binaries['fern'], candidate_driver]}
     if args.baseline_stdlib:
         binaries['baseline'] = work / 'baseline'
         commands['baseline'] = [args.compiler.resolve(), '-stdlib', args.baseline_stdlib.resolve(),
-                                '-target', target, '-o', binaries['baseline'], candidate_driver if args.baseline_workspace else driver]
+                                '-target', target, '-o', binaries['baseline'], workspace_driver if args.baseline_workspace else driver]
     for name in ['scalar', 'simd']:
         commands[name] = ['cc', '-O3', '-ffp-contract=off', '-DFERN_MPEG_LAYERS_12',
                           *(['-DFERN_MP3_BENCH_SIMD'] if name == 'simd' else []),
@@ -136,6 +145,11 @@ def main():
         group = [r for r in rows if r['name'] in ['fern', 'baseline', 'scalar'] and r['input'] == kind]
         for mode in ['whole', 'frames']:
             assert len({(r['samples'], r['checksum']) for r in group if r['mode'] == mode}) == 1
+    if args.compare_workspace:
+        for kind in inputs:
+            allocations = {c['name']: c['medians']['allocs'] for c in comparisons
+                           if c['input'] == kind and c['mode'] == 'frames' and c['name'] in ('fern', 'baseline')}
+            assert allocations['fern'] < allocations['baseline'], (kind, allocations)
     report = {'machine': platform.platform(), 'target': target,
               'cpu': Path('/proc/cpuinfo').read_text().splitlines()[4],
               'compiler_sha256': sha(args.compiler), 'stdlib_sha256': tree_hash(ROOT / 'internal/stdlib'),
@@ -146,11 +160,24 @@ def main():
               'binaries': {name: sha(path) for name, path in binaries.items()},
               'script_sha256': sha(Path(__file__)), 'driver_sha256': sha(driver),
               'c_driver_sha256': sha(source), 'rounds': args.rounds, 'trials': args.trials,
-              'candidate_driver_sha256': sha(candidate_driver), 'workspace': args.workspace, 'baseline_workspace': args.baseline_workspace, 'timing': args.timing,
+              'candidate_driver_sha256': sha(candidate_driver), 'workspace_comparison': args.compare_workspace, 'workspace': args.workspace, 'baseline_workspace': args.baseline_workspace, 'timing': args.timing,
               'wall_scope': ('Decode plus one observable sample per frame or file, after two warmups.' if args.timing == 'decode' else 'Decode plus a byte checksum of every float sample, after two warmups.'),
               'cpu_scope': 'Whole process, including warmups and final PCM export.',
               'rss_scope': 'Process VmHWM after timed decode, before final PCM export.',
               'rows': rows, 'comparisons': comparisons}
+    if args.compare_workspace:
+        state = {}
+        for count in (1, 100):
+            measurements = {}
+            for name in ('baseline', 'fern'):
+                output = subprocess.check_output([binaries[name], 'state', str(count)], text=True)
+                measurements[name] = dict((k, int(v)) for k, v in
+                                          (line.split('=', 1) for line in output.splitlines()))
+                assert measurements[name]['decoders'] == count
+            for key in ('allocs', 'fresh_bytes'):
+                assert measurements['fern'][key] == measurements['baseline'][key], (count, key)
+            state[str(count)] = measurements
+        report['idle_decoders'] = state
     if args.baseline_stdlib:
         report['baseline_stdlib_sha256'] = tree_hash(args.baseline_stdlib.resolve())
     (work / 'results.json').write_text(json.dumps(report, indent=2) + '\n')

@@ -5130,6 +5130,29 @@ pub function derive_magic_s32(d: i64): MagicS32 {
   return MagicS32 { m: c, s: s };
 }
 
+// The divisor has already been extended to the width of the target operation.
+// A signed minimum cannot be negated at that width.
+pub enum ConstDivPlan { DivIdentity, DivZero, DivNegate, DivShift(i32), DivHardware, DivReciprocal }
+
+pub function const_div_plan(d: i64, bits: i32, uns: boolean, remainder: boolean): ConstDivPlan {
+  if (d == 0i64) {
+    return if (remainder) { DivIdentity } else { DivZero };
+  }
+  if (d == 1i64) {
+    return if (remainder) { DivZero } else { DivIdentity };
+  }
+  if (!uns && d == -1i64) {
+    return if (remainder) { DivZero } else { DivNegate };
+  }
+  let minimum = if (bits == 32) { -2147483648i64 } else { -9223372036854775808i64 };
+  if (!uns && d == minimum) {
+    return DivHardware;
+  }
+  let magnitude = if (!uns && d < 0i64) { -d } else { d };
+  let shift = pow2_shift_i64(magnitude);
+  return if (shift >= 0) { DivShift(shift) } else { DivReciprocal };
+}
+
 pub function pow2_shift_i64(mag: i64): i32 {
   if (mag == 0i64 || (mag & mag - 1i64) != 0i64) {
     return -1;
@@ -5223,37 +5246,29 @@ function strength_rewrite(ks: StrengthKinds, k: i32, bop: Op): Option[Op[]] {
     }
     return strength_none();
   }
-  if (t == ks.div_s) {
-    if (k == 1) {
-      return strength_del();
+  if (t == ks.div_s || t == ks.div_u || t == ks.rem_s || t == ks.rem_u) {
+    let uns = t == ks.div_u || t == ks.rem_u;
+    let rem = t == ks.rem_s || t == ks.rem_u;
+    let divisor = if (uns) { (k as u32) as i64 } else { k as i64 };
+    match (const_div_plan(divisor, 32, uns, rem)) {
+      DivIdentity => {
+        return strength_del();
+      },
+      DivZero => {
+        return strength_drop0();
+      },
+      DivShift(n) => {
+        if (uns && rem) {
+          return strength_pair(op_const_i32(k - 1), op_bin("and", 0, false));
+        }
+        if (uns) {
+          return strength_pair(op_const_i32(n), op_bin("shr_u", 0, false));
+        }
+      },
+      DivNegate => {},
+      DivHardware => {},
+      DivReciprocal => {}
     }
-    return strength_none();
-  }
-  if (t == ks.div_u) {
-    if (k == 1) {
-      return strength_del();
-    }
-    let nd = log2_i32(k);
-    if (nd > 0) {
-      return strength_pair(op_const_i32(nd), op_bin("shr_u", 0, false));
-    }
-    return strength_none();
-  }
-  if (t == ks.rem_s) {
-    if (k == 1) {
-      return strength_drop0();
-    }
-    return strength_none();
-  }
-  if (t == ks.rem_u) {
-    if (k == 1) {
-      return strength_drop0();
-    }
-    let nr = log2_i32(k);
-    if (nr > 0) {
-      return strength_pair(op_const_i32(k - 1), op_bin("and", 0, false));
-    }
-    return strength_none();
   }
   return strength_none();
 }

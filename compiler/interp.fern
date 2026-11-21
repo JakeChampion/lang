@@ -1,7 +1,9 @@
+import "./deferlower";
 import "./ast";
 import "./lexer";
 import "./lexical";
 import "./parser";
+import "./localfuncs";
 import "./rangeloops";
 import "./defaultargs";
 import "./util";
@@ -1008,11 +1010,7 @@ function add_variant_decl(acc: parser.StructDecl[], name: string, arity: i32, en
   }
   let fields: parser.StructFieldDecl[] = [];
   for f in 0..arity {
-    let fname = "__ev";
-    if (f > 0) {
-      fname = "__ev" + util.i32_to_string(f);
-    }
-    fields = fields.append(parser.bare_field(fname, ""));
+    fields = fields.append(parser.bare_field(parser.variant_payload_name(f), ""));
   }
   return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, secret: false, value_type: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
 }
@@ -1050,11 +1048,7 @@ function v_variant_in(heap: interpheap.Heap, owner: string, name: string, args: 
 function v_variant_keyed(owner: string, name: string, args: Value[], key: i64): Value {
   let vnames: string[] = [];
   for vi in 0..args.len() {
-    if (vi == 0) {
-      vnames = vnames.append("__ev");
-    } else {
-      vnames = vnames.append("__ev" + util.i32_to_string(vi));
-    }
+    vnames = vnames.append(parser.variant_payload_name(vi));
   }
   return VStruct { type_name: name, field_names: vnames, field_values: args, owner: owner, targs: [], key: key };
 }
@@ -1131,7 +1125,7 @@ function funcs_of(decls: parser.FuncDecl[]): Funcs {
     receivers = receivers.append(receiver);
     receiver_args = receiver_args.append(receiver_arg_names(fd));
     cells = cells.append(body_needs_cells(fd.body));
-    cleanups = cleanups.append(parser.try_cleanup(fd.body));
+    cleanups = cleanups.append(deferlower.try_cleanup(fd.body));
     plain = plain.append(fd.receiver_type.len() == 0 && !builtin_takes_name(fd.name));
   }
   return Funcs { decls: decls, runtime_names: util.name_index(names), iterator_decls: iterator_decls, receivers: receivers, receiver_args: receiver_args, cells: cells, cleanups: cleanups, plain: plain };
@@ -1297,11 +1291,16 @@ function func_ret_type(funcs: Funcs, name: string, targs: string[]): string {
   for at in funcs.named(name) {
     let fd = funcs.decls[at];
     if (fd.name == name && fd.receiver_type.len() == 0) {
-      let refs: parser.TypeRef[] = [];
-      for ta in targs {
-        refs = refs.append(parser.parse_type_ref(ta));
+      if (targs.len() == 0 || targs.len() != fd.all_type_params.len()) {
+        return fd.ret_type;
       }
-      return applied_spelling(fd.ret_type, fd.all_type_params, refs);
+      let concrete = targs;
+      for i in 0..targs.len() {
+        if (!parser.plain_type_spelling(targs[i])) {
+          concrete = concrete.with(i, parser.render_type_ref(parser.parse_type_ref(targs[i])));
+        }
+      }
+      return parser.subst_ty(fd.ret_type, fd.all_type_params, concrete);
     }
   }
   return "";
@@ -6460,7 +6459,7 @@ function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], func
     env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
   }
   if (!inline_value) {
-    env = Env { ...env, try_cleanup: parser.try_cleanup(fv.body) };
+    env = Env { ...env, try_cleanup: deferlower.try_cleanup(fv.body) };
   }
   // A nested function sees its own name.
   if (fv.self_name.len() > 0) {
@@ -6548,15 +6547,17 @@ function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args
     return v_err("arity mismatch calling `" + type_name + "." + name + "`");
   }
   let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: funcs.cleanups[ai], cells: funcs.cells[ai] };
-  let targs = parser.parse_type_ref(type_name).args;
-  let tps = fd.type_params;
-  if (tps.len() == 0) {
-    tps = decl_type_params(type_decls, aliases, util.base_type_name(type_name));
-  }
-  let t = 0;
-  while (t < tps.len() && t < targs.len()) {
-    env = env.bind(tps[t], v_type(parser.render_type_ref(targs[t])));
-    t += 1;
+  if (!parser.plain_type_spelling(type_name)) {
+    let targs = parser.parse_type_ref(type_name).args;
+    let tps = fd.type_params;
+    if (tps.len() == 0) {
+      tps = decl_type_params(type_decls, aliases, util.base_type_name(type_name));
+    }
+    let t = 0;
+    while (t < tps.len() && t < targs.len()) {
+      env = env.bind(tps[t], v_type(parser.render_type_ref(targs[t])));
+      t += 1;
+    }
   }
   for j in 0..fd.params.len() {
     env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
@@ -10159,7 +10160,7 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
           VStruct(vs) => {
             if (vs.type_name == pv.type_name || vs.type_name == parser.derive_simple_name(pv.type_name)) {
               matched = true;
-              let is_payload = vs.field_names.len() > 0 && vs.field_names[0] == "__ev";
+              let is_payload = vs.field_names.len() > 0 && vs.field_names[0] == parser.VARIANT_PAYLOAD_PREFIX;
               if (pv.at_binding.len() > 0) {
                 bind_names = bind_names.append(pv.at_binding);
                 bind_values = bind_values.append(sv);
@@ -10603,7 +10604,7 @@ function flattened_env(e: Env): Env {
 function block_stmt(body: ast.Stmt[], at: i32, own env: Env): StepResult {
   if let ast.StmtVar(v) = body[at] {
     if (ast.var_binds_itself(v)) {
-      let cycle = parser.nested_fn_cycle(parser.nested_fns(body), v.name);
+      let cycle = localfuncs.nested_fn_cycle(localfuncs.nested_fns(body), v.name);
       if (cycle.len() > 1) {
         if (cycle[0] != v.name) {
           return step_none(env);
@@ -10760,7 +10761,7 @@ function lowered(raw: parser.Module): parser.Module {
     funcs = funcs.append(lexical.resolve_func(fd).func);
   }
   let resolved = parser.Module { ...typed, funcs: funcs };
-  return defaultargs.fill_module(rangeloops.desugar_ranges_module(parser.lower_defers_module(resolved)));
+  return defaultargs.fill_module(rangeloops.desugar_ranges_module(deferlower.lower_defers_module(resolved)));
 }
 
 pub function (s: Session) declare(m: parser.Module): Session {

@@ -1,0 +1,583 @@
+// Find mutually recursive local functions and lift them with explicit capture parameters.
+
+import "./ast";
+import "./astwalk";
+import "./callsubst";
+import "./parser";
+import "./util";
+import "std/string";
+
+function hl_append_str(a: string[], b: string[]): string[] {
+  let out = a;
+  for i in 0..b.len() {
+    out = out.append(b[i]);
+  }
+  return out;
+}
+
+function hl_collect_var_names(stmts: ast.Stmt[]): string[] {
+  function vs(st: ast.Stmt, own acc: string[]): string[] {
+    match (st) {
+      ast.StmtVar(v) => {
+        return ast.append_var_names(acc, v);
+      },
+      _ => {
+        return acc;
+      }
+    }
+  }
+  let out: string[] = [];
+  for st in stmts {
+    out = astwalk.fold_stmt_spine(st, out, vs);
+  }
+  return out;
+}
+
+pub struct NestedFn { name: string, lam: ast.ExprLambda, refs: string[] }
+
+function hl_add_nested_fn(st: ast.Stmt, own acc: NestedFn[]): NestedFn[] {
+  if let ast.StmtVar(v) = st {
+    if let ast.ExprLambda(lam) = v.init {
+      if (ast.var_binds_itself(v)) {
+        return acc.append(NestedFn { name: v.name, lam: lam, refs: [] });
+      }
+    }
+  }
+  return acc;
+}
+
+function hl_link(found: NestedFn[]): NestedFn[] {
+  let out: NestedFn[] = [];
+  for sb in found {
+    let refs: string[] = [];
+    for other in found {
+      if (!util.has_str(refs, other.name) && parser.stmts_mention(sb.lam.body, other.name)) {
+        refs = refs.append(other.name);
+      }
+    }
+    out = out.append(NestedFn { ...sb, refs: refs });
+  }
+  return out;
+}
+
+pub function nested_fns(stmts: ast.Stmt[]): NestedFn[] {
+  let found: NestedFn[] = [];
+  for st in stmts {
+    found = hl_add_nested_fn(st, found);
+  }
+  return hl_link(found);
+}
+
+function hl_refs(sibs: NestedFn[], name: string): string[] {
+  for sb in sibs {
+    if (sb.name == name) {
+      return sb.refs;
+    }
+  }
+  let none: string[] = [];
+  return none;
+}
+
+function hl_reach(sibs: NestedFn[], from: string): string[] {
+  let seen = hl_refs(sibs, from);
+  let i = 0;
+  while (i < seen.len()) {
+    for r in hl_refs(sibs, seen[i]) {
+      if (!util.has_str(seen, r)) {
+        seen = seen.append(r);
+      }
+    }
+    i += 1;
+  }
+  return seen;
+}
+
+pub function nested_fn_cycle(sibs: NestedFn[], name: string): string[] {
+  let out: string[] = [];
+  let reach = hl_reach(sibs, name);
+  if (!util.has_str(reach, name)) {
+    return out;
+  }
+  for sb in sibs {
+    if (sb.name == name || util.has_str(reach, sb.name) && util.has_str(hl_reach(sibs, sb.name), name)) {
+      out = out.append(sb.name);
+    }
+  }
+  return out;
+}
+
+function hl_has_rec_local(stmts: ast.Stmt[]): boolean {
+  if (hl_list_has_cycle(stmts)) {
+    return true;
+  }
+  function vs(st: ast.Stmt, own hit: boolean): boolean {
+    return hit || hl_owned_lists_have_cycle(st);
+  }
+  for st in stmts {
+    if (astwalk.fold_stmt_spine(st, false, vs)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hl_owned_lists_have_cycle(st: ast.Stmt): boolean {
+  match (st) {
+    ast.StmtVar(v) => {
+      if let ast.ExprLambda(lam) = v.init {
+        return hl_has_rec_local(lam.body);
+      }
+      return false;
+    },
+    ast.StmtIf(f) => {
+      return hl_list_has_cycle(f.then_body) || hl_list_has_cycle(f.else_body);
+    },
+    ast.StmtWhile(w) => {
+      return hl_list_has_cycle(w.body);
+    },
+    ast.StmtFor(fr) => {
+      return hl_list_has_cycle(fr.body);
+    },
+    ast.StmtMatch(m) => {
+      for arm in m.arms {
+        if (hl_list_has_cycle(arm.body)) {
+          return true;
+        }
+      }
+      return false;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+function hl_list_has_cycle(stmts: ast.Stmt[]): boolean {
+  let sibs = nested_fns(stmts);
+  for sb in sibs {
+    if (nested_fn_cycle(sibs, sb.name).len() > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hl_capture_list(lam: ast.ExprLambda, lifted: string[], enclosing: string[]): string[] {
+  let shadow = parser.param_names(lam.params);
+  shadow = hl_append_str(shadow, hl_collect_var_names(lam.body));
+  let caps: string[] = [];
+  for i in 0..enclosing.len() {
+    let e = enclosing[i];
+    if (!util.has_str(lifted, e) && !util.has_str(shadow, e) && !util.has_str(caps, e)) {
+      if (parser.stmts_mention(lam.body, e)) {
+        caps = caps.append(e);
+      }
+    }
+  }
+  return caps;
+}
+
+function hl_cycle_captures(sibs: NestedFn[], cycle: string[], enclosing: string[]): string[] {
+  let caps: string[] = [];
+  for sb in sibs {
+    if (util.has_str(cycle, sb.name)) {
+      for c in hl_capture_list(sb.lam, cycle, enclosing) {
+        if (!util.has_str(caps, c)) {
+          caps = caps.append(c);
+        }
+      }
+    }
+  }
+  return caps;
+}
+
+pub struct LateCapture { fn_name: string, name: string, first: string, line: i32, col: i32 }
+
+// The captures of the functions of each cycle in stmts that a statement
+// after the first function of the cycle binds.
+pub function nested_fn_late_captures(stmts: ast.Stmt[]): LateCapture[] {
+  let out: LateCapture[] = [];
+  let sibs = nested_fns(stmts);
+  let done: string[] = [];
+  for i in 0..stmts.len() {
+    let heads = hl_add_nested_fn(stmts[i], []);
+    if (heads.len() == 0 || util.has_str(done, heads[0].name)) {
+      continue;
+    }
+    let first = heads[0].name;
+    let cycle = nested_fn_cycle(sibs, first);
+    if (cycle.len() < 2) {
+      continue;
+    }
+    done = hl_append_str(done, cycle);
+    let between: string[] = [];
+    for j in i + 1..stmts.len() {
+      let fns = hl_add_nested_fn(stmts[j], []);
+      if (fns.len() > 0 && util.has_str(cycle, fns[0].name)) {
+        for cap in hl_capture_list(fns[0].lam, cycle, between) {
+          out = out.append(LateCapture { fn_name: fns[0].name, name: cap, first: first, line: fns[0].lam.line, col: fns[0].lam.col });
+        }
+      } else if let ast.StmtVar(v) = stmts[j] {
+        between = ast.append_var_names(between, v);
+      }
+    }
+  }
+  return out;
+}
+
+struct HlScope { names: string[], env: parser.MEnv, fns: parser.MFns, owner: string }
+
+function hl_lambda_scope(sc: HlScope, lam: ast.ExprLambda): HlScope {
+  let names = hl_append_str(hl_append_str(sc.names, parser.param_names(lam.params)), hl_collect_var_names(lam.body));
+  let pe = parser.me_env_from_params(lam.params);
+  let env = parser.MEnv { mnames: hl_append_str(sc.env.mnames, pe.mnames), mtypes: hl_append_str(sc.env.mtypes, pe.mtypes) };
+  return HlScope { ...sc, names: names, env: env };
+}
+
+function hl_var_type(v: ast.StmtVar, sc: HlScope): string {
+  if (v.type_name.len() > 0) {
+    return v.type_name;
+  }
+  return parser.mono_infer(v.init, sc.env, sc.fns);
+}
+
+function hl_cap_type(sc: HlScope, name: string): string {
+  let t = sc.env.elook(name);
+  if (t == "fn" || util.contains(t, "=>")) {
+    return "";
+  }
+  return t;
+}
+
+function hl_rewrite_match(m: ast.StmtMatch, sc: HlScope, hoisted: parser.FuncDecl[]): (ast.Stmt[], parser.FuncDecl[]) {
+  let arms: ast.MatchArm[] = [];
+  let acc = hoisted;
+  for a in 0..m.arms.len() {
+    let (ar_stmts, ar_hoisted) = hl_rewrite(m.arms[a].body, sc, acc);
+    acc = ar_hoisted;
+    arms = arms.append(ast.MatchArm { pattern: m.arms[a].pattern, body: ar_stmts, line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard, alt_cont: false });
+  }
+  return ([parser.s_match_at(m.scrutinee, arms, m.line, m.col)], acc);
+}
+
+// The name of the module function for the nested function name of owner.
+// A `$` is not in a source name, so the name is free unless a function of
+// taken or a name of pending has it.
+function hl_hoisted_name(owner: string, name: string, taken: parser.FuncDecl[], pending: string[]): string {
+  let used = pending;
+  for f in taken {
+    used = used.append(f.name);
+  }
+  let base = owner + "$" + name;
+  if (!util.has_str(used, base)) {
+    return base;
+  }
+  for k in 1..used.len() + 1 {
+    let numbered = base + "$" + util.i32_to_string(k);
+    if (!util.has_str(used, numbered)) {
+      return numbered;
+    }
+  }
+  return base + "$" + util.i32_to_string(used.len() + 1);
+}
+
+// A read of a hoisted function that is not a call: its name, or a lambda
+// that passes the captures when the function has them.
+function hl_fn_value(lam: ast.ExprLambda, hname: string, caps: string[]): ast.Expr {
+  if (caps.len() == 0) {
+    return parser.e_ident(hname);
+  }
+  let params: ast.ParamDecl[] = [];
+  let args: ast.Expr[] = [];
+  for j in 0..lam.params.len() {
+    let pname = "__hl_a" + util.i32_to_string(j);
+    params = params.append(ast.ParamDecl { ...lam.params[j], name: pname });
+    args = args.append(parser.e_ident(pname));
+  }
+  for c in caps {
+    args = args.append(parser.e_ident(c));
+  }
+  let call = parser.e_call(parser.e_ident(hname), args);
+  let body: ast.Stmt[] = [parser.s_return(call)];
+  if (lam.ret_type.len() == 0 || lam.ret_type == "void") {
+    body = [parser.s_expr(call)];
+  }
+  return parser.e_lambda_at(params, lam.ret_type, body, "", lam.line, lam.col, lam.ret_fn_ret, lam.ret_fn_param_types, lam.ret_own);
+}
+
+function hl_idents(names: string[]): ast.Expr[] {
+  let out: ast.Expr[] = [];
+  for n in names {
+    out = out.append(parser.e_ident(n));
+  }
+  return out;
+}
+
+// The declarations of the functions of cycle in stmts from index from, in
+// the order of cycle.
+function hl_members(stmts: ast.Stmt[], from: i32, cycle: string[]): NestedFn[] {
+  let out: NestedFn[] = [];
+  for name in cycle {
+    let found = false;
+    for i in from..stmts.len() {
+      if let ast.StmtVar(v) = stmts[i] {
+        if let ast.ExprLambda(lam) = v.init {
+          if (!found && v.name == name && ast.var_binds_itself(v)) {
+            out = out.append(NestedFn { name: name, lam: lam, refs: [] });
+            found = true;
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// For each statement of stmts after index at, true when it is the first
+// declaration of a function of cycle.
+function hl_decls_after(stmts: ast.Stmt[], at: i32, cycle: string[]): boolean[] {
+  let out: boolean[] = [];
+  let dropped: string[] = [];
+  if let ast.StmtVar(first) = stmts[at] {
+    dropped = dropped.append(first.name);
+  }
+  for i in 0..stmts.len() {
+    let decl = false;
+    if let ast.StmtVar(v) = stmts[i] {
+      if (i > at && ast.var_binds_itself(v) && util.has_str(cycle, v.name) && !util.has_str(dropped, v.name)) {
+        dropped = dropped.append(v.name);
+        decl = true;
+      }
+    }
+    out = out.append(decl);
+  }
+  return out;
+}
+
+// The names that stmts bind, in each statement and in each lambda.
+function hl_bound_deep(stmts: ast.Stmt[]): string[] {
+  function of_expr(e: ast.Expr, own acc: string[]): string[] {
+    if let ast.ExprLambda(lm) = e {
+      for p in lm.params {
+        acc = astwalk.append_bound_name(acc, p.name);
+      }
+    }
+    return acc;
+  }
+  let out: string[] = [];
+  for st in stmts {
+    out = astwalk.fold_stmt_nodes(st, out, astwalk.binders_of, of_expr, astwalk.descend_all);
+  }
+  return out;
+}
+
+struct HlHoist { hoisted: parser.FuncDecl[], names: string[], caps: string[] }
+
+// Hoists the functions of one cycle to module functions. Each function gets
+// the captures of the cycle as parameters after its own, and each read of a
+// member in a body names the module function.
+function hl_hoist_cycle(members: NestedFn[], sc: HlScope, hoisted: parser.FuncDecl[]): HlHoist {
+  let cycle: string[] = [];
+  for mb in members {
+    cycle = cycle.append(mb.name);
+  }
+  let caps = hl_cycle_captures(members, cycle, sc.names);
+  let names: string[] = [];
+  for mb in members {
+    names = names.append(hl_hoisted_name(sc.owner, mb.name, hoisted, names));
+  }
+  let acc = hoisted;
+  for m in 0..members.len() {
+    let lam = members[m].lam;
+    let own_names = hl_append_str(parser.param_names(lam.params), hl_collect_var_names(lam.body));
+    let fwd: string[] = [];
+    let new_params = lam.params;
+    for ci in 0..caps.len() {
+      let pname = caps[ci];
+      if (util.has_str(own_names, pname)) {
+        pname = "__cap_" + pname;
+      }
+      fwd = fwd.append(pname);
+      new_params = new_params.append(ast.ParamDecl { name: pname, type_name: hl_cap_type(sc, caps[ci]), own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+    }
+    let inner_encl = parser.param_names(new_params);
+    inner_encl = hl_append_str(inner_encl, hl_collect_var_names(lam.body));
+    let inner = HlScope { ...sc, names: inner_encl, env: parser.me_env_from_params(new_params), owner: names[m] };
+    let (lifted_body, ir_hoisted) = hl_rewrite(lam.body, inner, acc);
+    acc = ir_hoisted;
+    for y in 0..members.len() {
+      lifted_body = callsubst.subst_fn(lifted_body, cycle[y], names[y], hl_idents(fwd), hl_fn_value(members[y].lam, names[y], fwd), parser.param_names(lam.params));
+    }
+    let notp: string[] = [];
+    acc = acc.append(parser.FuncDecl {
+      bound_modules: [], is_unsafe: false,
+      stdlib: "", no_inline: false, always_inline: false,
+      name: names[m], receiver_name: "", receiver_type: "", receiver_own: false,
+      type_params: notp, params: new_params, ret_own: lam.ret_own, ret_type: lam.ret_type,
+      body: lifted_body, line: lam.line, col: lam.col,
+      import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
+      is_pub: true,
+      is_const: false, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [],
+    });
+  }
+  return HlHoist { hoisted: acc, names: names, caps: caps };
+}
+
+function hl_rewrite(stmts: ast.Stmt[], outer: HlScope, hoisted: parser.FuncDecl[]): (ast.Stmt[], parser.FuncDecl[]) {
+  if (!hl_has_rec_local(stmts)) {
+    return (stmts, hoisted);
+  }
+  let out: ast.Stmt[] = [];
+  let acc = hoisted;
+  let sc = outer;
+  let sibs = nested_fns(stmts);
+  let work = stmts;
+  let gone: boolean[] = [];
+  for st in stmts {
+    gone = gone.append(false);
+  }
+  for i in 0..stmts.len() {
+    if (gone[i]) {
+      continue;
+    }
+    match (work[i]) {
+      ast.StmtVar(v) => {
+        let did_lift = false;
+        match (v.init) {
+          ast.ExprLambda(lam) => {
+            let cycle: string[] = [];
+            if (ast.var_binds_itself(v)) {
+              cycle = nested_fn_cycle(sibs, v.name);
+            }
+            if (cycle.len() > 0) {
+              did_lift = true;
+              let members = hl_members(work, i, cycle);
+              let h = hl_hoist_cycle(members, sc, acc);
+              acc = h.hoisted;
+              // The siblings of a cycle of two or more are in scope in the whole block.
+              let decls = hl_decls_after(work, i, cycle);
+              let at: i32[] = [];
+              let tail: ast.Stmt[] = [];
+              for j in i + 1..work.len() {
+                if (decls[j]) {
+                  gone = gone.with(j, true);
+                } else if (!gone[j]) {
+                  at = at.append(j);
+                  tail = tail.append(work[j]);
+                }
+              }
+              for m in 0..members.len() {
+                if (members.len() > 1) {
+                  out = callsubst.subst_fn(out, members[m].name, h.names[m], hl_idents(h.caps), hl_fn_value(members[m].lam, h.names[m], h.caps), []);
+                }
+              }
+              // A capture that a later statement binds again keeps its value under a second name.
+              let rebound = hl_bound_deep(tail);
+              let passed: string[] = [];
+              for cap in h.caps {
+                if (util.has_str(rebound, cap)) {
+                  let kept = "__hl_cap" + util.i32_to_string(acc.len()) + "_" + cap;
+                  out = out.append(parser.s_var(kept, "", parser.e_ident(cap)));
+                  sc = HlScope { ...sc, names: sc.names.append(kept), env: sc.env.ebind(kept, sc.env.elook(cap)) };
+                  passed = passed.append(kept);
+                } else {
+                  passed = passed.append(cap);
+                }
+              }
+              for m in 0..members.len() {
+                tail = callsubst.subst_fn(tail, members[m].name, h.names[m], hl_idents(passed), hl_fn_value(members[m].lam, h.names[m], passed), []);
+              }
+              for q in 0..at.len() {
+                work = work.with(at[q], tail[q]);
+              }
+            }
+          },
+          _ => {}
+        }
+        if (!did_lift) {
+          let kept = work[i];
+          if let ast.ExprLambda(lam) = v.init {
+            let (lb_stmts, lb_hoisted) = hl_rewrite(lam.body, hl_lambda_scope(sc, lam), acc);
+            if (lb_hoisted.len() > acc.len()) {
+              kept = ast.StmtVar { ...v, init: ast.ExprLambda { ...lam, body: lb_stmts } };
+            }
+            acc = lb_hoisted;
+          }
+          sc = HlScope { ...sc, env: sc.env.ebind(v.name, hl_var_type(v, sc)) };
+          out = out.append(kept);
+        }
+      },
+      ast.StmtIf(f) => {
+        let (tr_stmts, tr_hoisted) = hl_rewrite(f.then_body, sc, acc);
+        let (er_stmts, er_hoisted) = hl_rewrite(f.else_body, sc, tr_hoisted);
+        acc = er_hoisted;
+        out = out.append(parser.s_if(f.cond, tr_stmts, er_stmts));
+      },
+      ast.StmtWhile(w) => {
+        let (wr_stmts, wr_hoisted) = hl_rewrite(w.body, sc, acc);
+        acc = wr_hoisted;
+        out = out.append(parser.s_while(w.cond, wr_stmts));
+      },
+      ast.StmtFor(fr) => {
+        let (fr2_stmts, fr2_hoisted) = hl_rewrite(fr.body, sc, acc);
+        acc = fr2_hoisted;
+        out = out.append(ast.StmtFor { ...fr, body: fr2_stmts, label: "", line: 0, col: 0 });
+      },
+      ast.StmtMatch(m) => {
+        let (mr_stmts, mr_hoisted) = hl_rewrite_match(m, sc, acc);
+        acc = mr_hoisted;
+        for km in 0..mr_stmts.len() {
+          out = out.append(mr_stmts[km]);
+        }
+      },
+      ast.StmtDefer(d) => {
+        let one: ast.Stmt[] = [d.action];
+        let (dr_stmts, dr_hoisted) = hl_rewrite(one, sc, acc);
+        acc = dr_hoisted;
+        if (dr_stmts.len() >= 1) {
+          out = out.append(parser.s_defer(dr_stmts[0]));
+        }
+      },
+      _ => {
+        out = out.append(work[i]);
+      }
+    }
+  }
+  return (out, acc);
+}
+
+pub function hoist_local_funcs_module(mod: parser.Module): parser.Module {
+  let funcs: parser.FuncDecl[] = [];
+  let hoisted: parser.FuncDecl[] = [];
+  let fns = parser.mfns_of(mod.funcs, mod.structs, mod.enums, mod.impls);
+  for i in 0..mod.funcs.len() {
+    let fn = mod.funcs[i];
+    let encl = parser.param_names(fn.params);
+    encl = hl_append_str(encl, hl_collect_var_names(fn.body));
+    let env = parser.me_env_from_params(fn.params);
+    if (fn.receiver_name.len() > 0) {
+      env = env.ebind(fn.receiver_name, fn.receiver_type);
+      encl = encl.append(fn.receiver_name);
+    }
+    let owner = fn.name;
+    if (fn.receiver_type.len() > 0) {
+      owner = parser.receiver_base(fn.receiver_type) + "$" + fn.name;
+    }
+    let (fn_body, r_hoisted) = hl_rewrite(fn.body, HlScope { names: encl, env: env, fns: fns, owner: owner }, hoisted);
+    let h = hoisted.len();
+    hoisted = r_hoisted;
+    while (h < hoisted.len()) {
+      hoisted = hoisted.with(h, parser.FuncDecl { ...hoisted[h], module: fn.module });
+      h += 1;
+    }
+    funcs = funcs.append(parser.FuncDecl { ...fn, body: fn_body });
+  }
+  let tencl = hl_collect_var_names(mod.top_stmts);
+  let tenv = parser.MEnv { mnames: [], mtypes: [] };
+  let (top_body, tr_hoisted) = hl_rewrite(mod.top_stmts, HlScope { names: tencl, env: tenv, fns: fns, owner: "__top" }, hoisted);
+  hoisted = tr_hoisted;
+  for j in 0..hoisted.len() {
+    funcs = funcs.append(hoisted[j]);
+  }
+  return parser.Module { ...mod, funcs: funcs, top_stmts: top_body };
+}

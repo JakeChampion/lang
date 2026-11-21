@@ -129,6 +129,28 @@ var constDivisorOracleCases = []struct {
 	main string
 }{
 	{"int-min-by-neg1", `function main(): i32 { let xs: i32[] = [-2147483648]; let x: i32 = xs[0]; if (x / -1 == -2147483648 && x % -1 == 0) { return 5; } return 9; }`},
+	{"signed-min-divisors", `function main(): i32 {
+		let xs: i32[] = [-2147483648, -17, 2147483647];
+		let ys: i64[] = [-9223372036854775808i64, -17i64, 9223372036854775807i64];
+		for x in xs {
+			if (x / -2147483648 != x / xs[0] || x % -2147483648 != x % xs[0]) { return 1; }
+		}
+		for y in ys {
+			if (y / -9223372036854775808i64 != y / ys[0] || y % -9223372036854775808i64 != y % ys[0]) { return 2; }
+		}
+		return 0;
+	}`},
+	{"unsigned-top-bit-divisors", `function main(): i32 {
+		let xs: u32[] = [2147483648u32, 2147483647u32, 4294967295u32];
+		let ys: u64[] = [9223372036854775808u64, 9223372036854775807u64, 18446744073709551615u64];
+		for x in xs {
+			if (x / 2147483648u32 != x / xs[0] || x % 2147483648u32 != x % xs[0]) { return 1; }
+		}
+		for y in ys {
+			if (y / 9223372036854775808u64 != y / ys[0] || y % 9223372036854775808u64 != y % ys[0]) { return 2; }
+		}
+		return 0;
+	}`},
 	{"neg-by-pow2", `function main(): i32 { let xs: i32[] = [-17]; let x: i32 = xs[0]; return (x / 8 + 10) * 10 + (x % 8 + 5); }`},
 	{"int-min-by-pow2", `function main(): i32 { let xs: i32[] = [-2147483648]; let x: i32 = xs[0]; if (x / 1024 == -2097152 && x % 1024 == 0 && x / -1024 == 2097152) { return 5; } return 9; }`},
 	{"reciprocal", `function main(): i32 { let xs: i32[] = [9000, -9000, -2147483648, 2147483647]; let h: i32 = 0; let i: i32 = 0; while (i < 4) { let x: i32 = xs[i]; h = h * 31 + x / 4093 + x % 4093 + x / -7 + x % -7 + x / 3; i = i + 1; } if (h < 0) { h = 0 - h; } return h % 200; }`},

@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Measure indexed Vorbis playback on native Linux using the pinned file corpus."""
+import argparse
+import base64
+import hashlib
+import json
+import math
+import platform
+import re
+import struct
+import subprocess
+import tempfile
+import zlib
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def unpack(value):
+    return zlib.decompress(base64.b64decode(value, validate=True))
+
+
+def measure(command, expected_frames, pcm_bytes):
+    output = subprocess.check_output(command, text=True)
+    metrics = {k: int(v) for k, v in (line.split("=") for line in output.splitlines())}
+    if metrics["frames"] != expected_frames or metrics["samples"] * 4 != pcm_bytes:
+        raise ValueError(f"incomplete playback for {command}")
+    return metrics
+
+
+def qualify_pcm(name, actual, golden):
+    if len(actual) != len(golden):
+        raise ValueError(f"incomplete PCM capture for {name}")
+    checksum = 2166136261
+    maximum = 0.0
+    for index, ((sample,), (reference,), (bits,)) in enumerate(zip(
+            struct.iter_unpack("<f", actual), struct.iter_unpack("<f", golden),
+            struct.iter_unpack("<I", actual))):
+        error = abs(sample - reference)
+        if not math.isfinite(error) or error > 1e-6:
+            raise ValueError(f"PCM differs for {name} at sample {index}: {sample} vs {reference}")
+        maximum = max(maximum, error)
+        checksum = ((checksum ^ bits) * 16777619) & 0xffffffff
+    return checksum, maximum
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--compiler", type=Path, default=ROOT / "bin/fern-selfhost")
+    parser.add_argument("--reference", type=Path,
+                        help="libvorbisfile 1.3.7 harness built from scripts/audio-reference/vorbis-file.c")
+    parser.add_argument("--trials", type=int, default=7)
+    args = parser.parse_args()
+    targets = {"x86_64": "x86-64-linux", "aarch64": "arm64-linux"}
+    if platform.system() != "Linux" or platform.machine() not in targets:
+        parser.error("requires native x86-64 or ARM64 Linux")
+    if args.trials < 1:
+        parser.error("--trials must be positive")
+    compiler = args.compiler.resolve()
+    target = targets[platform.machine()]
+    report = {"target": target, "compiler_sha256": hashlib.sha256(compiler.read_bytes()).hexdigest(),
+              "reference": "Xiph libvorbisfile 1.3.7" if args.reference else None, "fixtures": {}}
+    with tempfile.TemporaryDirectory() as directory:
+        exe = Path(directory) / "decode"
+        stream = Path(directory) / "fixture.ogg"
+        subprocess.run([compiler, "-O", "-stdlib", "internal/stdlib", "-target", target,
+                        "-o", exe, "bench/audio/vorbis_file.fern"], cwd=ROOT, check=True)
+        for corpus in ("vorbis_file_vectors", "vorbis_seek_vectors"):
+            source = (ROOT / f"tests/stdlib/{corpus}.fern").read_text()
+            records = re.findall(r'Vector \{ name: "([^"]+)", encoded: "([^"]+)", '
+                                 r'formats: "([^"]+)", pcm: "([^"]+)"', source)
+            if not records or len(records) != source.count("Vector { name: \""):
+                raise ValueError(f"incomplete fixture list in {corpus}")
+            for name, encoded, formats, pcm in records:
+                stream.write_bytes(unpack(encoded))
+                expected_frames = sum(row[2] for row in struct.iter_unpack("<III", unpack(formats)))
+                golden = unpack(pcm)
+                capture = Path(directory) / "fern.f32"
+                capture.unlink(missing_ok=True)
+                measure([exe, stream, capture], expected_frames, len(golden))
+                verified_checksum, maximum = qualify_pcm(name, capture.read_bytes(), golden)
+                trials = []
+                references = []
+                # Match the callback and initial position used to generate the frozen PCM.
+                mode = "benchmark"
+                if corpus == "vorbis_seek_vectors":
+                    mode = "benchmark-stream" if name == "interleaved-audio" else "benchmark-seek"
+                golden_checksum = 2166136261
+                if args.reference:
+                    for (bits,) in struct.iter_unpack("<I", golden):
+                        golden_checksum = ((golden_checksum ^ bits) * 16777619) & 0xffffffff
+                for trial in range(args.trials):
+                    commands = [(trials, [exe, stream])]
+                    if args.reference:
+                        commands.append((references, [args.reference.resolve(), mode, stream]))
+                    if trial % 2:
+                        commands.reverse()
+                    for results, command in commands:
+                        metrics = measure(command, expected_frames, len(golden))
+                        if results is trials and metrics["checksum"] != verified_checksum:
+                            raise ValueError(f"timed PCM differs from verified playback for {name}")
+                        if results is references and metrics["checksum"] != golden_checksum:
+                            raise ValueError(f"reference PCM differs from frozen samples for {name}")
+                        results.append(metrics)
+                entry = {"sha256": hashlib.sha256(stream.read_bytes()).hexdigest(), "trials": trials,
+                         "verified_samples": len(golden) // 4, "max_pcm_error": maximum}
+                if args.reference:
+                    entry["reference_mode"] = mode
+                    entry["reference_trials"] = references
+                    entry["reference_matches_frozen_bits"] = references[0]["checksum"] == golden_checksum
+                report["fixtures"][name] = entry
+    print(json.dumps(report, indent=2))
+
+
+if __name__ == "__main__":
+    main()

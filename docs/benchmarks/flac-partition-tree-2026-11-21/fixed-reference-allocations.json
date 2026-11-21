@@ -1,0 +1,122 @@
+{
+  "rounds": [
+    4,
+    8
+  ],
+  "cases": {
+    "music-2ch": {
+      "process_calls": [
+        {
+          "malloc": 98,
+          "realloc": 156,
+          "calloc": 30
+        },
+        {
+          "malloc": 158,
+          "realloc": 260,
+          "calloc": 50
+        }
+      ],
+      "calls_for_extra_rounds": {
+        "malloc": 60,
+        "realloc": 104,
+        "calloc": 20
+      }
+    },
+    "music-8ch": {
+      "process_calls": [
+        {
+          "malloc": 206,
+          "realloc": 306,
+          "calloc": 30
+        },
+        {
+          "malloc": 338,
+          "realloc": 510,
+          "calloc": 50
+        }
+      ],
+      "calls_for_extra_rounds": {
+        "malloc": 132,
+        "realloc": 204,
+        "calloc": 20
+      }
+    },
+    "noise-2ch": {
+      "process_calls": [
+        {
+          "malloc": 98,
+          "realloc": 150,
+          "calloc": 30
+        },
+        {
+          "malloc": 158,
+          "realloc": 250,
+          "calloc": 50
+        }
+      ],
+      "calls_for_extra_rounds": {
+        "malloc": 60,
+        "realloc": 100,
+        "calloc": 20
+      }
+    },
+    "silence-2ch": {
+      "process_calls": [
+        {
+          "malloc": 98,
+          "realloc": 132,
+          "calloc": 30
+        },
+        {
+          "malloc": 158,
+          "realloc": 220,
+          "calloc": 50
+        }
+      ],
+      "calls_for_extra_rounds": {
+        "malloc": 60,
+        "realloc": 88,
+        "calloc": 20
+      }
+    },
+    "music-32bit-2ch": {
+      "process_calls": [
+        {
+          "malloc": 98,
+          "realloc": 150,
+          "calloc": 30
+        },
+        {
+          "malloc": 158,
+          "realloc": 250,
+          "calloc": 50
+        }
+      ],
+      "calls_for_extra_rounds": {
+        "malloc": 60,
+        "realloc": 100,
+        "calloc": 20
+      }
+    },
+    "noise-32bit-2ch": {
+      "process_calls": [
+        {
+          "malloc": 98,
+          "realloc": 156,
+          "calloc": 30
+        },
+        {
+          "malloc": 158,
+          "realloc": 260,
+          "calloc": 50
+        }
+      ],
+      "calls_for_extra_rounds": {
+        "malloc": 60,
+        "realloc": 104,
+        "calloc": 20
+      }
+    }
+  }
+}

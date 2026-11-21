@@ -1,5 +1,6 @@
 import "std/audio/wavpack";
 import "std/audio/pcm";
+import "std/audio/wavpack/input";
 import "std/bench";
 import "std/io";
 import "std/i32";
@@ -49,10 +50,73 @@ function peak_rss(): i32 {
   return 0;
 }
 
+// Time a fresh file open through the first group and through verified EOF.
+function playback(path: string): i32 {
+  let allocs = bench.alloc_count();
+  let fresh = bench.bump_bytes();
+  let started = monotonic_ns();
+  let Ok(reader) = open_reader(path) else {
+    return 2;
+  };
+  defer reader.close();
+  let Ok(state) = input.create(input.default_limits()) else {
+    return 3;
+  };
+  let output: i32[] = [];
+  let checksum = 2166136261u32;
+  let samples = 0i64;
+  let first = 0i64;
+  let first_frames = 0;
+  while (true) {
+    let Ok(progress) = state.next_into(reader, output) else {
+      return 4;
+    };
+    state = progress.state;
+    output = progress.samples;
+    match (progress.event) {
+      input.Output(input.Samples(audio)) => {
+        if (samples == 0i64) {
+          first_frames = audio.frames;
+          first = monotonic_ns() - started;
+        }
+        let count = audio.frames * audio.info.format.channels;
+        checksum = hash(output, count, checksum);
+        samples += count as i64;
+      },
+      input.Output(input.End(summary)) => {
+        if (samples != summary.frames * (summary.info.format.channels as i64)) {
+          return 5;
+        }
+        break;
+      },
+      input.Finished => {
+        return 6;
+      },
+      _ => {}
+    }
+  }
+  let elapsed = monotonic_ns() - started;
+  let allocated = bench.allocs_after(allocs);
+  let bytes = bench.fresh_bytes_after(fresh);
+  let resident = peak_rss();
+  print("first_group_frames=" + first_frames.to_string());
+  print("first_group_ns=" + first.to_string());
+  print("samples=" + samples.to_string());
+  print("checksum=" + checksum.to_string());
+  print("wall_ns=" + elapsed.to_string());
+  print("allocs=" + allocated.to_string());
+  print("fresh_bytes=" + bytes.to_string());
+  print("native_peak_rss_kb=" + resident.to_string());
+  return 0;
+}
+
 function main(): i32 {
   let argv = args();
   if (argv.len() != 3) {
     return 1;
+  }
+  if (argv[2] == "source") {
+    return playback(argv[1]);
   }
   let rounds = i32.parse_i32_radix(argv[2], 10).unwrap_or(0);
   if (rounds < 1 || rounds > 100000) {

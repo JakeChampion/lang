@@ -270,18 +270,18 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back emulated
-          # Android 16 shows a notice the first time an app hides the bars,
-          # hides the soft keyboard while the emulator has a hardware one,
-          # and reads the freezer settings only at boot. After the boot, the
-          # checks wait for the package manager too.
+          # Android reads the freezer settings at boot. Configure the active
+          # user's keyboard and fullscreen confirmation after that reboot,
+          # before the first fullscreen activity starts.
           script: |
-            adb shell settings put secure immersive_mode_confirmations confirmed
-            adb shell settings put secure show_ime_with_hard_keyboard 1
             adb shell settings put global cached_apps_freezer disabled
             adb shell device_config set_sync_disabled_for_tests persistent
             adb shell device_config put activity_manager_native_boot use_freezer false
             adb reboot
             adb wait-for-device shell 'while [ "$(getprop sys.boot_completed)" != 1 ] || ! pm path android > /dev/null 2>&1; do sleep 1; done'
+            adb shell settings --user current put secure show_ime_with_hard_keyboard 1
+            adb shell settings --user current put secure immersive_mode_confirmations confirmed
+            adb shell 'test "$(settings --user current get secure immersive_mode_confirmations)" = confirmed'
             mkdir -p build/android-stopwatch/emulator
             python3 examples/android/stopwatch/emulator_check.py build/android-stopwatch/fern-stopwatch.apk build/android-stopwatch/emulator build/android-stopwatch/report || echo "examples/android/stopwatch" >> build/android-stopwatch/emulator/failed
             python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native.apk dev.fern.native build/android-stopwatch/emulator/native mapped || echo "examples/android/native dev.fern.native" >> build/android-stopwatch/emulator/failed
@@ -306,6 +306,7 @@ jobs:
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" examples/android/paper/bindings.spec | diff -u examples/android/paper/bindings.fern - || echo "bindings of examples/android/paper" >> build/android-stopwatch/emulator/failed
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/focus/bindings.spec | diff -u internal/stdlib/std/android/focus/bindings.fern - || echo "bindings of std/android/focus" >> build/android-stopwatch/emulator/failed
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/noisy/bindings.spec | diff -u internal/stdlib/std/android/noisy/bindings.fern - || echo "bindings of std/android/noisy" >> build/android-stopwatch/emulator/failed
+            build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/location/bindings.spec | diff -u internal/stdlib/std/android/location/bindings.fern - || echo "bindings of std/android/location" >> build/android-stopwatch/emulator/failed
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/video/source/bindings.spec | diff -u internal/stdlib/std/android/video/source/bindings.fern - || echo "bindings of std/android/video/source" >> build/android-stopwatch/emulator/failed
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/sensors/bindings.spec | diff -u internal/stdlib/std/android/sensors/bindings.fern - || echo "bindings of std/android/sensors" >> build/android-stopwatch/emulator/failed
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/shortcuts/bindings.spec | diff -u internal/stdlib/std/android/shortcuts/bindings.fern - || echo "bindings of std/android/shortcuts" >> build/android-stopwatch/emulator/failed

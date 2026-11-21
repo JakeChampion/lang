@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import platform
 import random
+import resource
 import runpy
 import shutil
 import statistics
@@ -119,6 +120,7 @@ def main():
               'measurement': 'whole-stream encode, PCM MD5, frame CRCs, and checksum of every output byte; input loading and two warmups excluded',
               'settings': {'bits': [16, 24, 32] if args.wide else [16, 24], 'channels': [2, 8], 'rate': 48000, 'block': 4096, 'fixed_order': '0 through 4', 'max_lpc_order': args.lpc_order, 'baseline_lpc_order': args.baseline_lpc_order, 'max_residual_partition': 6, 'stereo': 'full search', 'lpc_window': 'Welch', 'lpc_precision': 15},
               'rss': 'native Linux VmHWM including input loading and warmup; excludes the Python launcher',
+              'process_cpu_us': 'whole child user and system CPU including input loading and two warmups',
               'fresh_bytes': 'new runtime heap storage, not total allocation traffic',
               'source_sha256': {str(p.relative_to(ROOT)): sha(p) for p in sources},
               'compiler_sha256': {}, 'cases': {}}
@@ -169,9 +171,12 @@ def main():
                     order_arg = str(args.lpc_order) if args.lpc_order and mode in ['fern', 'libflac'] else 'fixed'
                     if mode == 'baseline' and args.baseline_lpc_order:
                         order_arg = str(args.baseline_lpc_order)
+                    before = resource.getrusage(resource.RUSAGE_CHILDREN)
                     run = subprocess.run([str(binaries[mode]), str(path), str(encoded_path), str(bits), str(channels), str(args.rounds), order_arg],
                                          env=env, check=True, capture_output=True, text=True, timeout=300)
+                    after = resource.getrusage(resource.RUSAGE_CHILDREN)
                     sample = fields(run.stdout)
+                    sample['process_cpu_us'] = round(1e6 * (after.ru_utime - before.ru_utime + after.ru_stime - before.ru_stime))
                     record = row['modes'].setdefault(mode, {'trials': []})
                     record['trials'].append(sample)
                     if trial == 0:

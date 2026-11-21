@@ -1,0 +1,2181 @@
+{
+  "schema": 1,
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "target": "x86-64-linux",
+  "cpu": 0,
+  "allowed_affinity": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "libFLAC": "1.5.0",
+  "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+  "cpu_max": "400000 100000",
+  "python": "3.12.14",
+  "libFLAC_sha256": "b39619be623caffbf2b04e7a2c9cc51b4ef20af8ae0434fb2693b50ebff9090f",
+  "rounds": 4,
+  "trials": 7,
+  "measurement": "whole-stream encode, PCM MD5, frame CRCs, and checksum of every output byte; input loading and two warmups excluded",
+  "settings": {
+    "bits": [
+      16,
+      24,
+      32
+    ],
+    "channels": [
+      2,
+      8
+    ],
+    "rate": 48000,
+    "block": 4096,
+    "fixed_order": "0 through 4",
+    "max_lpc_order": 32,
+    "baseline_lpc_order": 32,
+    "max_residual_partition": 6,
+    "stereo": "full search",
+    "lpc_window": "Welch",
+    "lpc_precision": 15
+  },
+  "rss": "native Linux VmHWM including input loading and warmup; excludes the Python launcher",
+  "process_cpu_us": "whole child user and system CPU including input loading and two warmups",
+  "fresh_bytes": "new runtime heap storage, not total allocation traffic",
+  "source_sha256": {
+    "compiler/semscalarreturn.fern": "7c8788bd920c5eb53a5514032c6ba56876ba759f9ae12714f5e210558f80353e",
+    "bench/audio/flac_encode.fern": "ab351c43bb95beb0cae9f9b5b5fb88ce5bf4b401f43c8aa866d54285a9fa0062",
+    "scripts/audio-reference/flac_bench.c": "f80c241a5d1e2cab8db1b686c04e48af452cd088ada8f472f6469f88bbf2172f",
+    "scripts/bench-flac-encode": "f0cf1fba8069de1792fff6b8cc5f8bc9b6e7fbffd627eb629d4b43e867146208",
+    "internal/stdlib/std/audio/flac/bitwriter.fern.md": "5eafea9e0f38a2d5e1c1e1b4e4a237843bee5587260741ebe7fe88ae287734cf",
+    "internal/stdlib/std/audio/flac/checksum.fern.md": "bde24eec8dd21a41d1231c8ca2c53ff80b00341aa1c820f8a9d2a661506d6e53",
+    "internal/stdlib/std/audio/flac/encoder.fern.md": "bd3aa53a64187021c02aa4bec276093fbbaea94e97ac348e5e87fb4568cec437",
+    "internal/stdlib/std/audio/flac/file.fern.md": "5bce1e3dd794ae04f352d2d88e8e769261bab13446aa68a6a8d079f2f19836d0",
+    "internal/stdlib/std/audio/flac/input.fern.md": "a73fa00ac633cbbd4e3bcac15ae90a5b7e457314b7b43dcca869c9e97917f52a",
+    "internal/stdlib/std/audio/flac/lpc.fern.md": "25e3beb7a622fd040e16cbb0e6c7a3a6efa1cc0749cab384c38811b65a681a98",
+    "internal/stdlib/std/audio/flac/plan.fern.md": "02461eb90537158e7ff418d1f41c2995f863d207dba8299e6b71fbeb4c7a74cc",
+    "internal/stdlib/std/audio/flac/seek.fern.md": "58d291d5a360799de40de7daa57741c19781313676df49de1b90d03dc55bea3c",
+    "bench/audio/flac_lpc_encode.fern": "4c005d2b7d793b7758a917500b866a6e8d7a55a75370f361e06d5df2768d0b31"
+  },
+  "compiler_sha256": {
+    "fern": "522a6fa528bb473b457a2203a213ce3271a5e04347df668782b91c9f51978f2e",
+    "fixed": "522a6fa528bb473b457a2203a213ce3271a5e04347df668782b91c9f51978f2e",
+    "baseline": "522a6fa528bb473b457a2203a213ce3271a5e04347df668782b91c9f51978f2e"
+  },
+  "cases": {
+    "music-2ch": {
+      "input_sha256": "7f157002553cfa969aa835f31bb598d49801a8e733c1a76674f9d1a4887a1f31",
+      "frames": 48000,
+      "channels": 2,
+      "bits": 24,
+      "modes": {
+        "fern": {
+          "trials": [
+            {
+              "wall_ns": 1373917013,
+              "allocs": 119304,
+              "fresh_bytes": 0,
+              "checksum": 2983679673,
+              "encoded_bytes": 239700,
+              "native_peak_rss_kb": 1224,
+              "process_cpu_us": 2009236
+            },
+            {
+              "wall_ns": 1344830629,
+              "allocs": 119304,
+              "fresh_bytes": 0,
+              "checksum": 2983679673,
+              "encoded_bytes": 239700,
+              "native_peak_rss_kb": 1220,
+              "process_cpu_us": 2016455
+            },
+            {
+              "wall_ns": 1361579739,
+              "allocs": 119304,
+              "fresh_bytes": 0,
+              "checksum": 2983679673,
+              "encoded_bytes": 239700,
+              "native_peak_rss_kb": 1224,
+              "process_cpu_us": 2005212
+            },
+            {
+              "wall_ns": 1306729093,
+              "allocs": 119304,
+              "fresh_bytes": 0,
+              "checksum": 2983679673,
+              "encoded_bytes": 239700,
+              "native_peak_rss_kb": 1224,
+              "process_cpu_us": 1971404
+            },
+            {
+              "wall_ns": 1347049765,
+              "allocs": 119304,
+              "fresh_bytes": 0,
+              "checksum": 2983679673,
+              "encoded_bytes": 239700,
+              "native_peak_rss_kb": 1220,
+              "process_cpu_us": 2038124
+            },
+            {
+              "wall_ns": 1385391455,
+              "allocs": 119304,
+              "fresh_bytes": 0,
+              "checksum": 2983679673,
+              "encoded_bytes": 239700,
+              "native_peak_rss_kb": 1224,
+              "process_cpu_us": 2069638
+            },
+            {
+              "wall_ns": 1371111766,
+              "allocs": 119304,
+              "fresh_bytes": 0,
+              "checksum": 2983679673,
+              "encoded_bytes": 239700,
+              "native_peak_rss_kb": 1220,
+              "process_cpu_us": 2027967
+            }
+          ],
+          "encoded_bytes": 59925,
+          "frame_bytes": 59883,
+          "encoded_sha256": "c0f6b57d91f2b336c01aa9a6f491f9b55da098eecd7f5d941d2f19769c6b1528",
+          "median": {
+            "wall_ns": 1361579739,
+            "allocs": 119304,
+            "fresh_bytes": 0,
+            "checksum": 2983679673,
+            "encoded_bytes": 239700,
+            "native_peak_rss_kb": 1224,
+            "process_cpu_us": 2016455
+          }
+        },
+        "fixed": {
+          "trials": [
+            {
+              "wall_ns": 107015793,
+              "allocs": 24564,
+              "fresh_bytes": 0,
+              "checksum": 3377880125,
+              "encoded_bytes": 241832,
+              "native_peak_rss_kb": 1140,
+              "process_cpu_us": 156080
+            },
+            {
+              "wall_ns": 90513821,
+              "allocs": 24564,
+              "fresh_bytes": 0,
+              "checksum": 3377880125,
+              "encoded_bytes": 241832,
+              "native_peak_rss_kb": 1140,
+              "process_cpu_us": 137994
+            },
+            {
+              "wall_ns": 93341557,
+              "allocs": 24564,
+              "fresh_bytes": 0,
+              "checksum": 3377880125,
+              "encoded_bytes": 241832,
+              "native_peak_rss_kb": 1140,
+              "process_cpu_us": 144037
+            },
+            {
+              "wall_ns": 91229367,
+              "allocs": 24564,
+              "fresh_bytes": 0,
+              "checksum": 3377880125,
+              "encoded_bytes": 241832,
+              "native_peak_rss_kb": 1140,
+              "process_cpu_us": 139734
+            },
+            {
+              "wall_ns": 89423664,
+              "allocs": 24564,
+              "fresh_bytes": 0,
+              "checksum": 3377880125,
+              "encoded_bytes": 241832,
+              "native_peak_rss_kb": 1140,
+              "process_cpu_us": 136195
+            },
+            {
+              "wall_ns": 101734156,
+              "allocs": 24564,
+              "fresh_bytes": 0,
+              "checksum": 3377880125,
+              "encoded_bytes": 241832,
+              "native_peak_rss_kb": 1140,
+              "process_cpu_us": 155257
+            },
+            {
+              "wall_ns": 92444951,
+              "allocs": 24564,
+              "fresh_bytes": 0,
+              "checksum": 3377880125,
+              "encoded_bytes": 241832,
+              "native_peak_rss_kb": 1140,
+              "process_cpu_us": 141474
+            }
+          ],
+          "encoded_bytes": 60458,
+          "frame_bytes": 60416,
+          "encoded_sha256": "6700073affeeb5f8862b933f0a568d09ceb9d9bc754dab552ff85df829a39c98",
+          "median": {
+            "wall_ns": 92444951,
+            "allocs": 24564,
+            "fresh_bytes": 0,
+            "checksum": 3377880125,
+            "encoded_bytes": 241832,
+            "native_peak_rss_kb": 1140,
+            "process_cpu_us": 141474
+          }
+        },
+        "baseline": {
+          "trials": [
+            {
+              "wall_ns": 1598028239,
+              "allocs": 126156,
+              "fresh_bytes": 0,
+              "checksum": 2983679673,
+              "encoded_bytes": 239700,
+              "native_peak_rss_kb": 1220,
+              "process_cpu_us": 2463406
+            },
+            {
+              "wall_ns": 1588358144,
+              "allocs": 126156,
+              "fresh_bytes": 0,
+              "checksum": 2983679673,
+              "encoded_bytes": 239700,
+              "native_peak_rss_kb": 1220,
+              "process_cpu_us": 2366641
+            },
+            {
+              "wall_ns": 1692671492,
+              "allocs": 126156,
+              "fresh_bytes": 0,
+              "checksum": 2983679673,
+              "encoded_bytes": 239700,
+              "native_peak_rss_kb": 1220,
+              "process_cpu_us": 2481076
+            },
+            {
+              "wall_ns": 1598163908,
+              "allocs": 126156,
+              "fresh_bytes": 0,
+              "checksum": 2983679673,
+              "encoded_bytes": 239700,
+              "native_peak_rss_kb": 1220,
+              "process_cpu_us": 2402124
+            },
+            {
+              "wall_ns": 1590643720,
+              "allocs": 126156,
+              "fresh_bytes": 0,
+              "checksum": 2983679673,
+              "encoded_bytes": 239700,
+              "native_peak_rss_kb": 1220,
+              "process_cpu_us": 2460835
+            },
+            {
+              "wall_ns": 1702905900,
+              "allocs": 126156,
+              "fresh_bytes": 0,
+              "checksum": 2983679673,
+              "encoded_bytes": 239700,
+              "native_peak_rss_kb": 1220,
+              "process_cpu_us": 2526371
+            },
+            {
+              "wall_ns": 1590994571,
+              "allocs": 126156,
+              "fresh_bytes": 0,
+              "checksum": 2983679673,
+              "encoded_bytes": 239700,
+              "native_peak_rss_kb": 1220,
+              "process_cpu_us": 2385033
+            }
+          ],
+          "encoded_bytes": 59925,
+          "frame_bytes": 59883,
+          "encoded_sha256": "c0f6b57d91f2b336c01aa9a6f491f9b55da098eecd7f5d941d2f19769c6b1528",
+          "median": {
+            "wall_ns": 1598028239,
+            "allocs": 126156,
+            "fresh_bytes": 0,
+            "checksum": 2983679673,
+            "encoded_bytes": 239700,
+            "native_peak_rss_kb": 1220,
+            "process_cpu_us": 2460835
+          }
+        },
+        "libflac": {
+          "trials": [
+            {
+              "wall_ns": 151255314,
+              "checksum": 3299429089,
+              "encoded_bytes": 245548,
+              "native_peak_rss_kb": 1792,
+              "process_cpu_us": 228646
+            },
+            {
+              "wall_ns": 171783125,
+              "checksum": 3299429089,
+              "encoded_bytes": 245548,
+              "native_peak_rss_kb": 1792,
+              "process_cpu_us": 231491
+            },
+            {
+              "wall_ns": 157001457,
+              "checksum": 3299429089,
+              "encoded_bytes": 245548,
+              "native_peak_rss_kb": 1792,
+              "process_cpu_us": 237526
+            },
+            {
+              "wall_ns": 161132641,
+              "checksum": 3299429089,
+              "encoded_bytes": 245548,
+              "native_peak_rss_kb": 1792,
+              "process_cpu_us": 245290
+            },
+            {
+              "wall_ns": 152870838,
+              "checksum": 3299429089,
+              "encoded_bytes": 245548,
+              "native_peak_rss_kb": 1792,
+              "process_cpu_us": 232018
+            },
+            {
+              "wall_ns": 156271646,
+              "checksum": 3299429089,
+              "encoded_bytes": 245548,
+              "native_peak_rss_kb": 1792,
+              "process_cpu_us": 235584
+            },
+            {
+              "wall_ns": 151004696,
+              "checksum": 3299429089,
+              "encoded_bytes": 245548,
+              "native_peak_rss_kb": 1792,
+              "process_cpu_us": 228929
+            }
+          ],
+          "encoded_bytes": 61387,
+          "frame_bytes": 61301,
+          "encoded_sha256": "41aa4bd00a7a50726b1d99340b4ad02562fc292f5a6ff4778605769a9a1507ec",
+          "median": {
+            "wall_ns": 156271646,
+            "checksum": 3299429089,
+            "encoded_bytes": 245548,
+            "native_peak_rss_kb": 1792,
+            "process_cpu_us": 232018
+          }
+        }
+      },
+      "paired_wall_ratios": {
+        "fixed": {
+          "trials": [
+            12.83845098451964,
+            14.85773790281155,
+            14.587069069353536,
+            14.32355759960496,
+            15.063683422768273,
+            13.61776132491825,
+            14.831656582304857
+          ],
+          "median": 14.587069069353536
+        },
+        "baseline": {
+          "trials": [
+            0.8597576560097321,
+            0.8466797202382085,
+            0.8043969225187376,
+            0.8176439766026802,
+            0.8468582549711383,
+            0.813545513583575,
+            0.8617953769246395
+          ],
+          "median": 0.8466797202382085
+        },
+        "libflac": {
+          "trials": [
+            9.083429710112531,
+            7.828653885531539,
+            8.672401931913281,
+            8.109648578279058,
+            8.811685620510564,
+            8.865277166146955,
+            9.079927991113601
+          ],
+          "median": 8.811685620510564
+        }
+      }
+    },
+    "music-8ch": {
+      "input_sha256": "99f5f602a0b1a20894c613cd7aa3b9775052a9e89ac849408a902ea8d8a7cc01",
+      "frames": 48000,
+      "channels": 8,
+      "bits": 24,
+      "modes": {
+        "fern": {
+          "trials": [
+            {
+              "wall_ns": 1337309363,
+              "allocs": 117044,
+              "fresh_bytes": 0,
+              "checksum": 3524000789,
+              "encoded_bytes": 1187920,
+              "native_peak_rss_kb": 6052,
+              "process_cpu_us": 2017343
+            },
+            {
+              "wall_ns": 1398429698,
+              "allocs": 117044,
+              "fresh_bytes": 0,
+              "checksum": 3524000789,
+              "encoded_bytes": 1187920,
+              "native_peak_rss_kb": 6048,
+              "process_cpu_us": 2085230
+            },
+            {
+              "wall_ns": 1347514108,
+              "allocs": 117044,
+              "fresh_bytes": 0,
+              "checksum": 3524000789,
+              "encoded_bytes": 1187920,
+              "native_peak_rss_kb": 6048,
+              "process_cpu_us": 2040186
+            },
+            {
+              "wall_ns": 1404569429,
+              "allocs": 117044,
+              "fresh_bytes": 0,
+              "checksum": 3524000789,
+              "encoded_bytes": 1187920,
+              "native_peak_rss_kb": 6048,
+              "process_cpu_us": 2068899
+            },
+            {
+              "wall_ns": 1355432417,
+              "allocs": 117044,
+              "fresh_bytes": 0,
+              "checksum": 3524000789,
+              "encoded_bytes": 1187920,
+              "native_peak_rss_kb": 6052,
+              "process_cpu_us": 2018733
+            },
+            {
+              "wall_ns": 1328453782,
+              "allocs": 117044,
+              "fresh_bytes": 0,
+              "checksum": 3524000789,
+              "encoded_bytes": 1187920,
+              "native_peak_rss_kb": 6048,
+              "process_cpu_us": 1995809
+            },
+            {
+              "wall_ns": 1351400366,
+              "allocs": 117044,
+              "fresh_bytes": 0,
+              "checksum": 3524000789,
+              "encoded_bytes": 1187920,
+              "native_peak_rss_kb": 6048,
+              "process_cpu_us": 2036397
+            }
+          ],
+          "encoded_bytes": 296980,
+          "frame_bytes": 296938,
+          "encoded_sha256": "2dc5be91696506d891a47c1afb0710ddac2f807cf1ba71fc172098bdf5c26df3",
+          "median": {
+            "wall_ns": 1351400366,
+            "allocs": 117044,
+            "fresh_bytes": 0,
+            "checksum": 3524000789,
+            "encoded_bytes": 1187920,
+            "native_peak_rss_kb": 6048,
+            "process_cpu_us": 2036397
+          }
+        },
+        "fixed": {
+          "trials": [
+            {
+              "wall_ns": 125109773,
+              "allocs": 22356,
+              "fresh_bytes": 0,
+              "checksum": 503739825,
+              "encoded_bytes": 1191772,
+              "native_peak_rss_kb": 6040,
+              "process_cpu_us": 191065
+            },
+            {
+              "wall_ns": 123925471,
+              "allocs": 22356,
+              "fresh_bytes": 0,
+              "checksum": 503739825,
+              "encoded_bytes": 1191772,
+              "native_peak_rss_kb": 6040,
+              "process_cpu_us": 187599
+            },
+            {
+              "wall_ns": 123387002,
+              "allocs": 22356,
+              "fresh_bytes": 0,
+              "checksum": 503739825,
+              "encoded_bytes": 1191772,
+              "native_peak_rss_kb": 6040,
+              "process_cpu_us": 189354
+            },
+            {
+              "wall_ns": 121994218,
+              "allocs": 22356,
+              "fresh_bytes": 0,
+              "checksum": 503739825,
+              "encoded_bytes": 1191772,
+              "native_peak_rss_kb": 6040,
+              "process_cpu_us": 187360
+            },
+            {
+              "wall_ns": 123188106,
+              "allocs": 22356,
+              "fresh_bytes": 0,
+              "checksum": 503739825,
+              "encoded_bytes": 1191772,
+              "native_peak_rss_kb": 6040,
+              "process_cpu_us": 188538
+            },
+            {
+              "wall_ns": 121718089,
+              "allocs": 22356,
+              "fresh_bytes": 0,
+              "checksum": 503739825,
+              "encoded_bytes": 1191772,
+              "native_peak_rss_kb": 6040,
+              "process_cpu_us": 188721
+            },
+            {
+              "wall_ns": 126044832,
+              "allocs": 22356,
+              "fresh_bytes": 0,
+              "checksum": 503739825,
+              "encoded_bytes": 1191772,
+              "native_peak_rss_kb": 6044,
+              "process_cpu_us": 192308
+            }
+          ],
+          "encoded_bytes": 297943,
+          "frame_bytes": 297901,
+          "encoded_sha256": "481d445a1308f28829df6bec17615633e1da4dbc2a1227e879dc9ee840b72fb1",
+          "median": {
+            "wall_ns": 123387002,
+            "allocs": 22356,
+            "fresh_bytes": 0,
+            "checksum": 503739825,
+            "encoded_bytes": 1191772,
+            "native_peak_rss_kb": 6040,
+            "process_cpu_us": 188721
+          }
+        },
+        "baseline": {
+          "trials": [
+            {
+              "wall_ns": 1640866306,
+              "allocs": 123744,
+              "fresh_bytes": 0,
+              "checksum": 3524000789,
+              "encoded_bytes": 1187920,
+              "native_peak_rss_kb": 6048,
+              "process_cpu_us": 2471500
+            },
+            {
+              "wall_ns": 1677855315,
+              "allocs": 123744,
+              "fresh_bytes": 0,
+              "checksum": 3524000789,
+              "encoded_bytes": 1187920,
+              "native_peak_rss_kb": 6048,
+              "process_cpu_us": 2510246
+            },
+            {
+              "wall_ns": 1644995358,
+              "allocs": 123744,
+              "fresh_bytes": 0,
+              "checksum": 3524000789,
+              "encoded_bytes": 1187920,
+              "native_peak_rss_kb": 6048,
+              "process_cpu_us": 2460528
+            },
+            {
+              "wall_ns": 1751771628,
+              "allocs": 123744,
+              "fresh_bytes": 0,
+              "checksum": 3524000789,
+              "encoded_bytes": 1187920,
+              "native_peak_rss_kb": 6048,
+              "process_cpu_us": 2669263
+            },
+            {
+              "wall_ns": 1678201689,
+              "allocs": 123744,
+              "fresh_bytes": 0,
+              "checksum": 3524000789,
+              "encoded_bytes": 1187920,
+              "native_peak_rss_kb": 6048,
+              "process_cpu_us": 2466778
+            },
+            {
+              "wall_ns": 1625705459,
+              "allocs": 123744,
+              "fresh_bytes": 0,
+              "checksum": 3524000789,
+              "encoded_bytes": 1187920,
+              "native_peak_rss_kb": 6048,
+              "process_cpu_us": 2419143
+            },
+            {
+              "wall_ns": 1704278022,
+              "allocs": 123744,
+              "fresh_bytes": 0,
+              "checksum": 3524000789,
+              "encoded_bytes": 1187920,
+              "native_peak_rss_kb": 6048,
+              "process_cpu_us": 2562395
+            }
+          ],
+          "encoded_bytes": 296980,
+          "frame_bytes": 296938,
+          "encoded_sha256": "2dc5be91696506d891a47c1afb0710ddac2f807cf1ba71fc172098bdf5c26df3",
+          "median": {
+            "wall_ns": 1677855315,
+            "allocs": 123744,
+            "fresh_bytes": 0,
+            "checksum": 3524000789,
+            "encoded_bytes": 1187920,
+            "native_peak_rss_kb": 6048,
+            "process_cpu_us": 2471500
+          }
+        },
+        "libflac": {
+          "trials": [
+            {
+              "wall_ns": 319773101,
+              "checksum": 3591806749,
+              "encoded_bytes": 1239384,
+              "native_peak_rss_kb": 3456,
+              "process_cpu_us": 482406
+            },
+            {
+              "wall_ns": 315640893,
+              "checksum": 3591806749,
+              "encoded_bytes": 1239384,
+              "native_peak_rss_kb": 3456,
+              "process_cpu_us": 476864
+            },
+            {
+              "wall_ns": 317609155,
+              "checksum": 3591806749,
+              "encoded_bytes": 1239384,
+              "native_peak_rss_kb": 3456,
+              "process_cpu_us": 477242
+            },
+            {
+              "wall_ns": 314400894,
+              "checksum": 3591806749,
+              "encoded_bytes": 1239384,
+              "native_peak_rss_kb": 3456,
+              "process_cpu_us": 481287
+            },
+            {
+              "wall_ns": 314053263,
+              "checksum": 3591806749,
+              "encoded_bytes": 1239384,
+              "native_peak_rss_kb": 3456,
+              "process_cpu_us": 471795
+            },
+            {
+              "wall_ns": 325694026,
+              "checksum": 3591806749,
+              "encoded_bytes": 1239384,
+              "native_peak_rss_kb": 3456,
+              "process_cpu_us": 484310
+            },
+            {
+              "wall_ns": 327450718,
+              "checksum": 3591806749,
+              "encoded_bytes": 1239384,
+              "native_peak_rss_kb": 3456,
+              "process_cpu_us": 493365
+            }
+          ],
+          "encoded_bytes": 309846,
+          "frame_bytes": 309760,
+          "encoded_sha256": "65cc95e2ed5bc4268a6a031f621d94c722977b8ac15865c582c1710e422a07b4",
+          "median": {
+            "wall_ns": 317609155,
+            "checksum": 3591806749,
+            "encoded_bytes": 1239384,
+            "native_peak_rss_kb": 3456,
+            "process_cpu_us": 481287
+          }
+        }
+      },
+      "paired_wall_ratios": {
+        "fixed": {
+          "trials": [
+            10.689087918015804,
+            11.284441259053194,
+            10.921037760525213,
+            11.513409832259427,
+            11.002948750587983,
+            10.9141853352627,
+            10.721584888145197
+          ],
+          "median": 10.921037760525213
+        },
+        "baseline": {
+          "trials": [
+            0.8150020255215114,
+            0.8334626266627764,
+            0.8191598240364153,
+            0.801799393567984,
+            0.8076695583637921,
+            0.8171552692067328,
+            0.7929459563258981
+          ],
+          "median": 0.8150020255215114
+        },
+        "libflac": {
+          "trials": [
+            4.182057086158726,
+            4.430445259195234,
+            4.242680309388437,
+            4.46744731266572,
+            4.3159316481930645,
+            4.078839880225497,
+            4.127034364908615
+          ],
+          "median": 4.242680309388437
+        }
+      }
+    },
+    "noise-2ch": {
+      "input_sha256": "fb8eeeef09e2948b07686f13b8303eaf77ff82cd00ca784db2893bc98683f3b5",
+      "frames": 48000,
+      "channels": 2,
+      "bits": 16,
+      "modes": {
+        "fern": {
+          "trials": [
+            {
+              "wall_ns": 1375707446,
+              "allocs": 99740,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1504,
+              "process_cpu_us": 2020163
+            },
+            {
+              "wall_ns": 1433805862,
+              "allocs": 99740,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1504,
+              "process_cpu_us": 2085255
+            },
+            {
+              "wall_ns": 1320014145,
+              "allocs": 99740,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1504,
+              "process_cpu_us": 1975798
+            },
+            {
+              "wall_ns": 1385367060,
+              "allocs": 99740,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1504,
+              "process_cpu_us": 2047378
+            },
+            {
+              "wall_ns": 1368659373,
+              "allocs": 99740,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1504,
+              "process_cpu_us": 2020867
+            },
+            {
+              "wall_ns": 1343721116,
+              "allocs": 99740,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1504,
+              "process_cpu_us": 2015600
+            },
+            {
+              "wall_ns": 1363832752,
+              "allocs": 99740,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1504,
+              "process_cpu_us": 2061999
+            }
+          ],
+          "encoded_bytes": 192164,
+          "frame_bytes": 192122,
+          "encoded_sha256": "491efda6ec423f1d690b35601e307984cc4eaff731850b19d557f6c55d8fcc68",
+          "median": {
+            "wall_ns": 1368659373,
+            "allocs": 99740,
+            "fresh_bytes": 0,
+            "checksum": 2942698157,
+            "encoded_bytes": 768656,
+            "native_peak_rss_kb": 1504,
+            "process_cpu_us": 2020867
+          }
+        },
+        "fixed": {
+          "trials": [
+            {
+              "wall_ns": 86979269,
+              "allocs": 5276,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1412,
+              "process_cpu_us": 132722
+            },
+            {
+              "wall_ns": 90940871,
+              "allocs": 5276,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1412,
+              "process_cpu_us": 136441
+            },
+            {
+              "wall_ns": 85083701,
+              "allocs": 5276,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1412,
+              "process_cpu_us": 129643
+            },
+            {
+              "wall_ns": 92115083,
+              "allocs": 5276,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1412,
+              "process_cpu_us": 141076
+            },
+            {
+              "wall_ns": 92178547,
+              "allocs": 5276,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1412,
+              "process_cpu_us": 140920
+            },
+            {
+              "wall_ns": 87534219,
+              "allocs": 5276,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1412,
+              "process_cpu_us": 134476
+            },
+            {
+              "wall_ns": 92179579,
+              "allocs": 5276,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1412,
+              "process_cpu_us": 138544
+            }
+          ],
+          "encoded_bytes": 192164,
+          "frame_bytes": 192122,
+          "encoded_sha256": "491efda6ec423f1d690b35601e307984cc4eaff731850b19d557f6c55d8fcc68",
+          "median": {
+            "wall_ns": 90940871,
+            "allocs": 5276,
+            "fresh_bytes": 0,
+            "checksum": 2942698157,
+            "encoded_bytes": 768656,
+            "native_peak_rss_kb": 1412,
+            "process_cpu_us": 136441
+          }
+        },
+        "baseline": {
+          "trials": [
+            {
+              "wall_ns": 1663503994,
+              "allocs": 113180,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1508,
+              "process_cpu_us": 2492464
+            },
+            {
+              "wall_ns": 1646967888,
+              "allocs": 113180,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1504,
+              "process_cpu_us": 2435864
+            },
+            {
+              "wall_ns": 1580112183,
+              "allocs": 113180,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1504,
+              "process_cpu_us": 2346240
+            },
+            {
+              "wall_ns": 1665867304,
+              "allocs": 113180,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1508,
+              "process_cpu_us": 2462213
+            },
+            {
+              "wall_ns": 1713924648,
+              "allocs": 113180,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1504,
+              "process_cpu_us": 2528848
+            },
+            {
+              "wall_ns": 1639154221,
+              "allocs": 113180,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1504,
+              "process_cpu_us": 2445602
+            },
+            {
+              "wall_ns": 1673423037,
+              "allocs": 113180,
+              "fresh_bytes": 0,
+              "checksum": 2942698157,
+              "encoded_bytes": 768656,
+              "native_peak_rss_kb": 1504,
+              "process_cpu_us": 2584983
+            }
+          ],
+          "encoded_bytes": 192164,
+          "frame_bytes": 192122,
+          "encoded_sha256": "491efda6ec423f1d690b35601e307984cc4eaff731850b19d557f6c55d8fcc68",
+          "median": {
+            "wall_ns": 1663503994,
+            "allocs": 113180,
+            "fresh_bytes": 0,
+            "checksum": 2942698157,
+            "encoded_bytes": 768656,
+            "native_peak_rss_kb": 1504,
+            "process_cpu_us": 2462213
+          }
+        },
+        "libflac": {
+          "trials": [
+            {
+              "wall_ns": 147233736,
+              "checksum": 3936772317,
+              "encoded_bytes": 768832,
+              "native_peak_rss_kb": 1940,
+              "process_cpu_us": 222898
+            },
+            {
+              "wall_ns": 150748030,
+              "checksum": 3936772317,
+              "encoded_bytes": 768832,
+              "native_peak_rss_kb": 1940,
+              "process_cpu_us": 225860
+            },
+            {
+              "wall_ns": 151430834,
+              "checksum": 3936772317,
+              "encoded_bytes": 768832,
+              "native_peak_rss_kb": 1940,
+              "process_cpu_us": 225206
+            },
+            {
+              "wall_ns": 142337359,
+              "checksum": 3936772317,
+              "encoded_bytes": 768832,
+              "native_peak_rss_kb": 1940,
+              "process_cpu_us": 214472
+            },
+            {
+              "wall_ns": 148856328,
+              "checksum": 3936772317,
+              "encoded_bytes": 768832,
+              "native_peak_rss_kb": 1936,
+              "process_cpu_us": 223874
+            },
+            {
+              "wall_ns": 147766688,
+              "checksum": 3936772317,
+              "encoded_bytes": 768832,
+              "native_peak_rss_kb": 1940,
+              "process_cpu_us": 222553
+            },
+            {
+              "wall_ns": 142475862,
+              "checksum": 3936772317,
+              "encoded_bytes": 768832,
+              "native_peak_rss_kb": 1940,
+              "process_cpu_us": 216179
+            }
+          ],
+          "encoded_bytes": 192208,
+          "frame_bytes": 192122,
+          "encoded_sha256": "522a9359abb872cdc66218848681e4e3e4ceb8ee9830ce35ab3f89a8448ba8e0",
+          "median": {
+            "wall_ns": 147766688,
+            "checksum": 3936772317,
+            "encoded_bytes": 768832,
+            "native_peak_rss_kb": 1940,
+            "process_cpu_us": 222898
+          }
+        }
+      },
+      "paired_wall_ratios": {
+        "fixed": {
+          "trials": [
+            15.816498135894888,
+            15.76635286459924,
+            15.514300970523133,
+            15.039524634635567,
+            14.847916543965484,
+            15.350809447445918,
+            14.795389247763868
+          ],
+          "median": 15.350809447445918
+        },
+        "baseline": {
+          "trials": [
+            0.8269937739626491,
+            0.8705730527273037,
+            0.8353926760401417,
+            0.8316190951545321,
+            0.7985528270435376,
+            0.8197649121631978,
+            0.8149958031204037
+          ],
+          "median": 0.8269937739626491
+        },
+        "libflac": {
+          "trials": [
+            9.343697194507106,
+            9.511274289952578,
+            8.716944298147364,
+            9.732982751211507,
+            9.194499094455695,
+            9.093532068608047,
+            9.572377614391973
+          ],
+          "median": 9.343697194507106
+        }
+      }
+    },
+    "silence-2ch": {
+      "input_sha256": "fec9afb531a8e036eba1d81651896e1b2c1f78b0234dbadc8e7549563f09407b",
+      "frames": 48000,
+      "channels": 2,
+      "bits": 24,
+      "modes": {
+        "fern": {
+          "trials": [
+            {
+              "wall_ns": 6942318,
+              "allocs": 996,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 968,
+              "process_cpu_us": 10313
+            },
+            {
+              "wall_ns": 6067686,
+              "allocs": 996,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 968,
+              "process_cpu_us": 7733
+            },
+            {
+              "wall_ns": 4362876,
+              "allocs": 996,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 968,
+              "process_cpu_us": 7742
+            },
+            {
+              "wall_ns": 4334906,
+              "allocs": 996,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 968,
+              "process_cpu_us": 7338
+            },
+            {
+              "wall_ns": 4304299,
+              "allocs": 996,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 972,
+              "process_cpu_us": 7297
+            },
+            {
+              "wall_ns": 4325130,
+              "allocs": 996,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 968,
+              "process_cpu_us": 7356
+            },
+            {
+              "wall_ns": 4453881,
+              "allocs": 996,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 968,
+              "process_cpu_us": 7622
+            }
+          ],
+          "encoded_bytes": 236,
+          "frame_bytes": 194,
+          "encoded_sha256": "ac1db777bb05001a2de7ec84025035a17b958b35e54ba693c6c4da91e15c2675",
+          "median": {
+            "wall_ns": 4362876,
+            "allocs": 996,
+            "fresh_bytes": 0,
+            "checksum": 68435397,
+            "encoded_bytes": 944,
+            "native_peak_rss_kb": 968,
+            "process_cpu_us": 7622
+          }
+        },
+        "fixed": {
+          "trials": [
+            {
+              "wall_ns": 4152296,
+              "allocs": 900,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 956,
+              "process_cpu_us": 7187
+            },
+            {
+              "wall_ns": 4240346,
+              "allocs": 900,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 956,
+              "process_cpu_us": 7317
+            },
+            {
+              "wall_ns": 4137143,
+              "allocs": 900,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 956,
+              "process_cpu_us": 6984
+            },
+            {
+              "wall_ns": 4099067,
+              "allocs": 900,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 956,
+              "process_cpu_us": 6969
+            },
+            {
+              "wall_ns": 4132897,
+              "allocs": 900,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 956,
+              "process_cpu_us": 7062
+            },
+            {
+              "wall_ns": 4115010,
+              "allocs": 900,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 956,
+              "process_cpu_us": 6994
+            },
+            {
+              "wall_ns": 8082792,
+              "allocs": 900,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 956,
+              "process_cpu_us": 14099
+            }
+          ],
+          "encoded_bytes": 236,
+          "frame_bytes": 194,
+          "encoded_sha256": "ac1db777bb05001a2de7ec84025035a17b958b35e54ba693c6c4da91e15c2675",
+          "median": {
+            "wall_ns": 4137143,
+            "allocs": 900,
+            "fresh_bytes": 0,
+            "checksum": 68435397,
+            "encoded_bytes": 944,
+            "native_peak_rss_kb": 956,
+            "process_cpu_us": 7062
+          }
+        },
+        "baseline": {
+          "trials": [
+            {
+              "wall_ns": 4141138,
+              "allocs": 996,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 968,
+              "process_cpu_us": 7129
+            },
+            {
+              "wall_ns": 4322866,
+              "allocs": 996,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 968,
+              "process_cpu_us": 7365
+            },
+            {
+              "wall_ns": 4441743,
+              "allocs": 996,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 968,
+              "process_cpu_us": 7288
+            },
+            {
+              "wall_ns": 4102842,
+              "allocs": 996,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 968,
+              "process_cpu_us": 6954
+            },
+            {
+              "wall_ns": 4257751,
+              "allocs": 996,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 968,
+              "process_cpu_us": 7445
+            },
+            {
+              "wall_ns": 4388775,
+              "allocs": 996,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 972,
+              "process_cpu_us": 7435
+            },
+            {
+              "wall_ns": 4091005,
+              "allocs": 996,
+              "fresh_bytes": 0,
+              "checksum": 68435397,
+              "encoded_bytes": 944,
+              "native_peak_rss_kb": 968,
+              "process_cpu_us": 7470
+            }
+          ],
+          "encoded_bytes": 236,
+          "frame_bytes": 194,
+          "encoded_sha256": "ac1db777bb05001a2de7ec84025035a17b958b35e54ba693c6c4da91e15c2675",
+          "median": {
+            "wall_ns": 4257751,
+            "allocs": 996,
+            "fresh_bytes": 0,
+            "checksum": 68435397,
+            "encoded_bytes": 944,
+            "native_peak_rss_kb": 968,
+            "process_cpu_us": 7365
+          }
+        },
+        "libflac": {
+          "trials": [
+            {
+              "wall_ns": 3383810,
+              "checksum": 876706029,
+              "encoded_bytes": 1120,
+              "native_peak_rss_kb": 1564,
+              "process_cpu_us": 6445
+            },
+            {
+              "wall_ns": 3392573,
+              "checksum": 876706029,
+              "encoded_bytes": 1120,
+              "native_peak_rss_kb": 1560,
+              "process_cpu_us": 6642
+            },
+            {
+              "wall_ns": 3293896,
+              "checksum": 876706029,
+              "encoded_bytes": 1120,
+              "native_peak_rss_kb": 1564,
+              "process_cpu_us": 6205
+            },
+            {
+              "wall_ns": 3267829,
+              "checksum": 876706029,
+              "encoded_bytes": 1120,
+              "native_peak_rss_kb": 1560,
+              "process_cpu_us": 5872
+            },
+            {
+              "wall_ns": 3286847,
+              "checksum": 876706029,
+              "encoded_bytes": 1120,
+              "native_peak_rss_kb": 1560,
+              "process_cpu_us": 6316
+            },
+            {
+              "wall_ns": 3230594,
+              "checksum": 876706029,
+              "encoded_bytes": 1120,
+              "native_peak_rss_kb": 1564,
+              "process_cpu_us": 5932
+            },
+            {
+              "wall_ns": 3266667,
+              "checksum": 876706029,
+              "encoded_bytes": 1120,
+              "native_peak_rss_kb": 1560,
+              "process_cpu_us": 6140
+            }
+          ],
+          "encoded_bytes": 280,
+          "frame_bytes": 194,
+          "encoded_sha256": "8c63aafe55f5302894b3c8014ab43be4dc4390e9e7404f14efebe83a746073b0",
+          "median": {
+            "wall_ns": 3286847,
+            "checksum": 876706029,
+            "encoded_bytes": 1120,
+            "native_peak_rss_kb": 1560,
+            "process_cpu_us": 6205
+          }
+        }
+      },
+      "paired_wall_ratios": {
+        "fixed": {
+          "trials": [
+            1.6719227145656284,
+            1.4309412486622555,
+            1.0545625326463215,
+            1.0575347999922908,
+            1.0414726038418087,
+            1.051061844321156,
+            0.5510324897634382
+          ],
+          "median": 1.0545625326463215
+        },
+        "baseline": {
+          "trials": [
+            1.6764275906767656,
+            1.403625742736416,
+            0.9822441325398611,
+            1.0565617686471962,
+            1.0109325322218232,
+            0.9854982312832169,
+            1.0887009426778995
+          ],
+          "median": 1.0565617686471962
+        },
+        "libflac": {
+          "trials": [
+            2.051627603204672,
+            1.7885203944027144,
+            1.3245336221908646,
+            1.3265400362136452,
+            1.3095525894573128,
+            1.3388033284281466,
+            1.3634328200578756
+          ],
+          "median": 1.3388033284281466
+        }
+      }
+    },
+    "music-32bit-2ch": {
+      "input_sha256": "f0ff6c19759b2a02d24fea9cfaca16bc01647db005c2ca9d3652f3359348179f",
+      "frames": 48000,
+      "channels": 2,
+      "bits": 32,
+      "modes": {
+        "fern": {
+          "trials": [
+            {
+              "wall_ns": 1458220624,
+              "allocs": 121020,
+              "fresh_bytes": 0,
+              "checksum": 3576506069,
+              "encoded_bytes": 572960,
+              "native_peak_rss_kb": 1508,
+              "process_cpu_us": 2090450
+            },
+            {
+              "wall_ns": 1347239298,
+              "allocs": 121020,
+              "fresh_bytes": 0,
+              "checksum": 3576506069,
+              "encoded_bytes": 572960,
+              "native_peak_rss_kb": 1508,
+              "process_cpu_us": 2044397
+            },
+            {
+              "wall_ns": 1389216728,
+              "allocs": 121020,
+              "fresh_bytes": 0,
+              "checksum": 3576506069,
+              "encoded_bytes": 572960,
+              "native_peak_rss_kb": 1508,
+              "process_cpu_us": 2064455
+            },
+            {
+              "wall_ns": 1317568298,
+              "allocs": 121020,
+              "fresh_bytes": 0,
+              "checksum": 3576506069,
+              "encoded_bytes": 572960,
+              "native_peak_rss_kb": 1508,
+              "process_cpu_us": 1970343
+            },
+            {
+              "wall_ns": 1323011557,
+              "allocs": 121020,
+              "fresh_bytes": 0,
+              "checksum": 3576506069,
+              "encoded_bytes": 572960,
+              "native_peak_rss_kb": 1508,
+              "process_cpu_us": 1959666
+            },
+            {
+              "wall_ns": 1345492223,
+              "allocs": 121020,
+              "fresh_bytes": 0,
+              "checksum": 3576506069,
+              "encoded_bytes": 572960,
+              "native_peak_rss_kb": 1508,
+              "process_cpu_us": 1996253
+            },
+            {
+              "wall_ns": 1358664336,
+              "allocs": 121020,
+              "fresh_bytes": 0,
+              "checksum": 3576506069,
+              "encoded_bytes": 572960,
+              "native_peak_rss_kb": 1512,
+              "process_cpu_us": 2012142
+            }
+          ],
+          "encoded_bytes": 143240,
+          "frame_bytes": 143198,
+          "encoded_sha256": "8a2087fc10a6026fc6b32ada45b57b821e65bb2829ccc4d14cb078684ec79413",
+          "median": {
+            "wall_ns": 1347239298,
+            "allocs": 121020,
+            "fresh_bytes": 0,
+            "checksum": 3576506069,
+            "encoded_bytes": 572960,
+            "native_peak_rss_kb": 1508,
+            "process_cpu_us": 2012142
+          }
+        },
+        "fixed": {
+          "trials": [
+            {
+              "wall_ns": 99237240,
+              "allocs": 26236,
+              "fresh_bytes": 0,
+              "checksum": 2791608837,
+              "encoded_bytes": 577136,
+              "native_peak_rss_kb": 1412,
+              "process_cpu_us": 154039
+            },
+            {
+              "wall_ns": 98876871,
+              "allocs": 26236,
+              "fresh_bytes": 0,
+              "checksum": 2791608837,
+              "encoded_bytes": 577136,
+              "native_peak_rss_kb": 1412,
+              "process_cpu_us": 150290
+            },
+            {
+              "wall_ns": 98195928,
+              "allocs": 26236,
+              "fresh_bytes": 0,
+              "checksum": 2791608837,
+              "encoded_bytes": 577136,
+              "native_peak_rss_kb": 1416,
+              "process_cpu_us": 148333
+            },
+            {
+              "wall_ns": 95750371,
+              "allocs": 26236,
+              "fresh_bytes": 0,
+              "checksum": 2791608837,
+              "encoded_bytes": 577136,
+              "native_peak_rss_kb": 1416,
+              "process_cpu_us": 145148
+            },
+            {
+              "wall_ns": 103486180,
+              "allocs": 26236,
+              "fresh_bytes": 0,
+              "checksum": 2791608837,
+              "encoded_bytes": 577136,
+              "native_peak_rss_kb": 1412,
+              "process_cpu_us": 151459
+            },
+            {
+              "wall_ns": 94167497,
+              "allocs": 26236,
+              "fresh_bytes": 0,
+              "checksum": 2791608837,
+              "encoded_bytes": 577136,
+              "native_peak_rss_kb": 1412,
+              "process_cpu_us": 144051
+            },
+            {
+              "wall_ns": 93358225,
+              "allocs": 26236,
+              "fresh_bytes": 0,
+              "checksum": 2791608837,
+              "encoded_bytes": 577136,
+              "native_peak_rss_kb": 1416,
+              "process_cpu_us": 141865
+            }
+          ],
+          "encoded_bytes": 144284,
+          "frame_bytes": 144242,
+          "encoded_sha256": "335c00573d9edf396d1ee1587f42a25ef980fccd7af6d05181b7cd181053ffbb",
+          "median": {
+            "wall_ns": 98195928,
+            "allocs": 26236,
+            "fresh_bytes": 0,
+            "checksum": 2791608837,
+            "encoded_bytes": 577136,
+            "native_peak_rss_kb": 1412,
+            "process_cpu_us": 148333
+          }
+        },
+        "baseline": {
+          "trials": [
+            {
+              "wall_ns": 1696998399,
+              "allocs": 127144,
+              "fresh_bytes": 0,
+              "checksum": 3576506069,
+              "encoded_bytes": 572960,
+              "native_peak_rss_kb": 1508,
+              "process_cpu_us": 2583687
+            },
+            {
+              "wall_ns": 1681416904,
+              "allocs": 127144,
+              "fresh_bytes": 0,
+              "checksum": 3576506069,
+              "encoded_bytes": 572960,
+              "native_peak_rss_kb": 1508,
+              "process_cpu_us": 2490919
+            },
+            {
+              "wall_ns": 1663747986,
+              "allocs": 127144,
+              "fresh_bytes": 0,
+              "checksum": 3576506069,
+              "encoded_bytes": 572960,
+              "native_peak_rss_kb": 1512,
+              "process_cpu_us": 2518781
+            },
+            {
+              "wall_ns": 1637672725,
+              "allocs": 127144,
+              "fresh_bytes": 0,
+              "checksum": 3576506069,
+              "encoded_bytes": 572960,
+              "native_peak_rss_kb": 1508,
+              "process_cpu_us": 2416716
+            },
+            {
+              "wall_ns": 1668069829,
+              "allocs": 127144,
+              "fresh_bytes": 0,
+              "checksum": 3576506069,
+              "encoded_bytes": 572960,
+              "native_peak_rss_kb": 1508,
+              "process_cpu_us": 2498981
+            },
+            {
+              "wall_ns": 1676962926,
+              "allocs": 127144,
+              "fresh_bytes": 0,
+              "checksum": 3576506069,
+              "encoded_bytes": 572960,
+              "native_peak_rss_kb": 1512,
+              "process_cpu_us": 2449258
+            },
+            {
+              "wall_ns": 1709774403,
+              "allocs": 127144,
+              "fresh_bytes": 0,
+              "checksum": 3576506069,
+              "encoded_bytes": 572960,
+              "native_peak_rss_kb": 1512,
+              "process_cpu_us": 2506504
+            }
+          ],
+          "encoded_bytes": 143240,
+          "frame_bytes": 143198,
+          "encoded_sha256": "8a2087fc10a6026fc6b32ada45b57b821e65bb2829ccc4d14cb078684ec79413",
+          "median": {
+            "wall_ns": 1676962926,
+            "allocs": 127144,
+            "fresh_bytes": 0,
+            "checksum": 3576506069,
+            "encoded_bytes": 572960,
+            "native_peak_rss_kb": 1508,
+            "process_cpu_us": 2498981
+          }
+        },
+        "libflac": {
+          "trials": [
+            {
+              "wall_ns": 188807415,
+              "checksum": 1373331241,
+              "encoded_bytes": 587836,
+              "native_peak_rss_kb": 1920,
+              "process_cpu_us": 288212
+            },
+            {
+              "wall_ns": 192056885,
+              "checksum": 1373331241,
+              "encoded_bytes": 587836,
+              "native_peak_rss_kb": 1920,
+              "process_cpu_us": 289934
+            },
+            {
+              "wall_ns": 200505695,
+              "checksum": 1373331241,
+              "encoded_bytes": 587836,
+              "native_peak_rss_kb": 1920,
+              "process_cpu_us": 282264
+            },
+            {
+              "wall_ns": 185119720,
+              "checksum": 1373331241,
+              "encoded_bytes": 587836,
+              "native_peak_rss_kb": 1920,
+              "process_cpu_us": 277889
+            },
+            {
+              "wall_ns": 181326590,
+              "checksum": 1373331241,
+              "encoded_bytes": 587836,
+              "native_peak_rss_kb": 1920,
+              "process_cpu_us": 277530
+            },
+            {
+              "wall_ns": 185463411,
+              "checksum": 1373331241,
+              "encoded_bytes": 587836,
+              "native_peak_rss_kb": 1920,
+              "process_cpu_us": 287624
+            },
+            {
+              "wall_ns": 197347759,
+              "checksum": 1373331241,
+              "encoded_bytes": 587836,
+              "native_peak_rss_kb": 1920,
+              "process_cpu_us": 295128
+            }
+          ],
+          "encoded_bytes": 146959,
+          "frame_bytes": 146873,
+          "encoded_sha256": "76e1d988b87411163bdad4a521b483c9d4e31cb30b939a9ce483ae24f5e01efa",
+          "median": {
+            "wall_ns": 188807415,
+            "checksum": 1373331241,
+            "encoded_bytes": 587836,
+            "native_peak_rss_kb": 1920,
+            "process_cpu_us": 287624
+          }
+        }
+      },
+      "paired_wall_ratios": {
+        "fixed": {
+          "trials": [
+            14.694288394155258,
+            13.625424069092963,
+            14.147396498966842,
+            13.760451100497564,
+            12.784427418231111,
+            14.288286997795003,
+            14.553236589491712
+          ],
+          "median": 14.147396498966842
+        },
+        "baseline": {
+          "trials": [
+            0.8592940481613265,
+            0.8012523811286721,
+            0.8349922822986966,
+            0.8045369980745084,
+            0.7931391923761004,
+            0.8023386815171607,
+            0.7946453834003269
+          ],
+          "median": 0.8023386815171607
+        },
+        "libflac": {
+          "trials": [
+            7.723322857844328,
+            7.014793028638364,
+            6.9285649367714965,
+            7.117384890167293,
+            7.296290946628401,
+            7.254758314565885,
+            6.884620037666605
+          ],
+          "median": 7.117384890167293
+        }
+      }
+    },
+    "noise-32bit-2ch": {
+      "input_sha256": "0f474108162977818aa5d2653f760418149e47bf20b3a92c01d1c5fc646f7f87",
+      "frames": 48000,
+      "channels": 2,
+      "bits": 32,
+      "modes": {
+        "fern": {
+          "trials": [
+            {
+              "wall_ns": 278890001,
+              "allocs": 74108,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1832,
+              "process_cpu_us": 430680
+            },
+            {
+              "wall_ns": 261409719,
+              "allocs": 74108,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1836,
+              "process_cpu_us": 394220
+            },
+            {
+              "wall_ns": 263524068,
+              "allocs": 74108,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1832,
+              "process_cpu_us": 394486
+            },
+            {
+              "wall_ns": 279315261,
+              "allocs": 74108,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1832,
+              "process_cpu_us": 418375
+            },
+            {
+              "wall_ns": 283136078,
+              "allocs": 74108,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1832,
+              "process_cpu_us": 429363
+            },
+            {
+              "wall_ns": 285415290,
+              "allocs": 74108,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1832,
+              "process_cpu_us": 406696
+            },
+            {
+              "wall_ns": 270292211,
+              "allocs": 74108,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1836,
+              "process_cpu_us": 407666
+            }
+          ],
+          "encoded_bytes": 384164,
+          "frame_bytes": 384122,
+          "encoded_sha256": "344971578aa9abfbe9f5b04012b07bdf0ac54fdf99e733a5ace7fd6c4fdf9fb8",
+          "median": {
+            "wall_ns": 278890001,
+            "allocs": 74108,
+            "fresh_bytes": 0,
+            "checksum": 3324155557,
+            "encoded_bytes": 1536656,
+            "native_peak_rss_kb": 1832,
+            "process_cpu_us": 407666
+          }
+        },
+        "fixed": {
+          "trials": [
+            {
+              "wall_ns": 41627696,
+              "allocs": 3356,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1756,
+              "process_cpu_us": 65338
+            },
+            {
+              "wall_ns": 39012127,
+              "allocs": 3356,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1752,
+              "process_cpu_us": 58658
+            },
+            {
+              "wall_ns": 38785653,
+              "allocs": 3356,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1752,
+              "process_cpu_us": 58308
+            },
+            {
+              "wall_ns": 39103463,
+              "allocs": 3356,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1756,
+              "process_cpu_us": 58911
+            },
+            {
+              "wall_ns": 42644185,
+              "allocs": 3356,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1752,
+              "process_cpu_us": 64728
+            },
+            {
+              "wall_ns": 42242873,
+              "allocs": 3356,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1756,
+              "process_cpu_us": 64036
+            },
+            {
+              "wall_ns": 38272586,
+              "allocs": 3356,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1752,
+              "process_cpu_us": 58914
+            }
+          ],
+          "encoded_bytes": 384164,
+          "frame_bytes": 384122,
+          "encoded_sha256": "344971578aa9abfbe9f5b04012b07bdf0ac54fdf99e733a5ace7fd6c4fdf9fb8",
+          "median": {
+            "wall_ns": 39103463,
+            "allocs": 3356,
+            "fresh_bytes": 0,
+            "checksum": 3324155557,
+            "encoded_bytes": 1536656,
+            "native_peak_rss_kb": 1752,
+            "process_cpu_us": 58914
+          }
+        },
+        "baseline": {
+          "trials": [
+            {
+              "wall_ns": 289152673,
+              "allocs": 74012,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1832,
+              "process_cpu_us": 435430
+            },
+            {
+              "wall_ns": 272703208,
+              "allocs": 74012,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1832,
+              "process_cpu_us": 412668
+            },
+            {
+              "wall_ns": 272681706,
+              "allocs": 74012,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1832,
+              "process_cpu_us": 409049
+            },
+            {
+              "wall_ns": 280498116,
+              "allocs": 74012,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1832,
+              "process_cpu_us": 416306
+            },
+            {
+              "wall_ns": 286084186,
+              "allocs": 74012,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1832,
+              "process_cpu_us": 431474
+            },
+            {
+              "wall_ns": 290517987,
+              "allocs": 74012,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1832,
+              "process_cpu_us": 431450
+            },
+            {
+              "wall_ns": 280789506,
+              "allocs": 74012,
+              "fresh_bytes": 0,
+              "checksum": 3324155557,
+              "encoded_bytes": 1536656,
+              "native_peak_rss_kb": 1836,
+              "process_cpu_us": 423351
+            }
+          ],
+          "encoded_bytes": 384164,
+          "frame_bytes": 384122,
+          "encoded_sha256": "344971578aa9abfbe9f5b04012b07bdf0ac54fdf99e733a5ace7fd6c4fdf9fb8",
+          "median": {
+            "wall_ns": 280789506,
+            "allocs": 74012,
+            "fresh_bytes": 0,
+            "checksum": 3324155557,
+            "encoded_bytes": 1536656,
+            "native_peak_rss_kb": 1832,
+            "process_cpu_us": 423351
+          }
+        },
+        "libflac": {
+          "trials": [
+            {
+              "wall_ns": 48242409,
+              "checksum": 1085936341,
+              "encoded_bytes": 1536832,
+              "native_peak_rss_kb": 2176,
+              "process_cpu_us": 68039
+            },
+            {
+              "wall_ns": 37269226,
+              "checksum": 1085936341,
+              "encoded_bytes": 1536832,
+              "native_peak_rss_kb": 2176,
+              "process_cpu_us": 54296
+            },
+            {
+              "wall_ns": 35931333,
+              "checksum": 1085936341,
+              "encoded_bytes": 1536832,
+              "native_peak_rss_kb": 2176,
+              "process_cpu_us": 55102
+            },
+            {
+              "wall_ns": 36884188,
+              "checksum": 1085936341,
+              "encoded_bytes": 1536832,
+              "native_peak_rss_kb": 2048,
+              "process_cpu_us": 55338
+            },
+            {
+              "wall_ns": 36701359,
+              "checksum": 1085936341,
+              "encoded_bytes": 1536832,
+              "native_peak_rss_kb": 2048,
+              "process_cpu_us": 56584
+            },
+            {
+              "wall_ns": 39554377,
+              "checksum": 1085936341,
+              "encoded_bytes": 1536832,
+              "native_peak_rss_kb": 2116,
+              "process_cpu_us": 59991
+            },
+            {
+              "wall_ns": 37467749,
+              "checksum": 1085936341,
+              "encoded_bytes": 1536832,
+              "native_peak_rss_kb": 2176,
+              "process_cpu_us": 57230
+            }
+          ],
+          "encoded_bytes": 384208,
+          "frame_bytes": 384122,
+          "encoded_sha256": "0537a80e6d64d91a3c2b326c6cae1750f6acb46c7834b3c628b9aaba08802c68",
+          "median": {
+            "wall_ns": 37269226,
+            "checksum": 1085936341,
+            "encoded_bytes": 1536832,
+            "native_peak_rss_kb": 2176,
+            "process_cpu_us": 56584
+          }
+        }
+      },
+      "paired_wall_ratios": {
+        "fixed": {
+          "trials": [
+            6.699626157546649,
+            6.700729724375193,
+            6.7943697634792946,
+            7.142980175438682,
+            6.639500274187442,
+            6.756531214152977,
+            7.062292864140406
+          ],
+          "median": 6.756531214152977
+        },
+        "baseline": {
+          "trials": [
+            0.9645077740643954,
+            0.9585868861506023,
+            0.966416382916425,
+            0.9957830198046678,
+            0.9896949634259057,
+            0.9824358654942766,
+            0.9626150736559221
+          ],
+          "median": 0.966416382916425
+        },
+        "libflac": {
+          "trials": [
+            5.781013153800011,
+            7.014090365064195,
+            7.334102188749858,
+            7.572764269610598,
+            7.714593838337158,
+            7.215770077733748,
+            7.213996522716109
+          ],
+          "median": 7.215770077733748
+        }
+      }
+    }
+  },
+  "codec_sha256": {
+    "fern": {
+      "std/audio/flac/bitwriter.fern.md": "5eafea9e0f38a2d5e1c1e1b4e4a237843bee5587260741ebe7fe88ae287734cf",
+      "std/audio/flac/checksum.fern.md": "bde24eec8dd21a41d1231c8ca2c53ff80b00341aa1c820f8a9d2a661506d6e53",
+      "std/audio/flac/encoder.fern.md": "bd3aa53a64187021c02aa4bec276093fbbaea94e97ac348e5e87fb4568cec437",
+      "std/audio/flac/file.fern.md": "5bce1e3dd794ae04f352d2d88e8e769261bab13446aa68a6a8d079f2f19836d0",
+      "std/audio/flac/input.fern.md": "a73fa00ac633cbbd4e3bcac15ae90a5b7e457314b7b43dcca869c9e97917f52a",
+      "std/audio/flac/lpc.fern.md": "25e3beb7a622fd040e16cbb0e6c7a3a6efa1cc0749cab384c38811b65a681a98",
+      "std/audio/flac/plan.fern.md": "02461eb90537158e7ff418d1f41c2995f863d207dba8299e6b71fbeb4c7a74cc",
+      "std/audio/flac/seek.fern.md": "58d291d5a360799de40de7daa57741c19781313676df49de1b90d03dc55bea3c"
+    },
+    "fixed": {
+      "std/audio/flac/bitwriter.fern.md": "5eafea9e0f38a2d5e1c1e1b4e4a237843bee5587260741ebe7fe88ae287734cf",
+      "std/audio/flac/checksum.fern.md": "bde24eec8dd21a41d1231c8ca2c53ff80b00341aa1c820f8a9d2a661506d6e53",
+      "std/audio/flac/encoder.fern.md": "bd3aa53a64187021c02aa4bec276093fbbaea94e97ac348e5e87fb4568cec437",
+      "std/audio/flac/file.fern.md": "5bce1e3dd794ae04f352d2d88e8e769261bab13446aa68a6a8d079f2f19836d0",
+      "std/audio/flac/input.fern.md": "a73fa00ac633cbbd4e3bcac15ae90a5b7e457314b7b43dcca869c9e97917f52a",
+      "std/audio/flac/lpc.fern.md": "25e3beb7a622fd040e16cbb0e6c7a3a6efa1cc0749cab384c38811b65a681a98",
+      "std/audio/flac/plan.fern.md": "02461eb90537158e7ff418d1f41c2995f863d207dba8299e6b71fbeb4c7a74cc",
+      "std/audio/flac/seek.fern.md": "58d291d5a360799de40de7daa57741c19781313676df49de1b90d03dc55bea3c"
+    },
+    "baseline": {
+      "std/audio/flac/bitwriter.fern.md": "5eafea9e0f38a2d5e1c1e1b4e4a237843bee5587260741ebe7fe88ae287734cf",
+      "std/audio/flac/checksum.fern.md": "bde24eec8dd21a41d1231c8ca2c53ff80b00341aa1c820f8a9d2a661506d6e53",
+      "std/audio/flac/encoder.fern.md": "bd3aa53a64187021c02aa4bec276093fbbaea94e97ac348e5e87fb4568cec437",
+      "std/audio/flac/file.fern.md": "5bce1e3dd794ae04f352d2d88e8e769261bab13446aa68a6a8d079f2f19836d0",
+      "std/audio/flac/input.fern.md": "a73fa00ac633cbbd4e3bcac15ae90a5b7e457314b7b43dcca869c9e97917f52a",
+      "std/audio/flac/lpc.fern.md": "25e3beb7a622fd040e16cbb0e6c7a3a6efa1cc0749cab384c38811b65a681a98",
+      "std/audio/flac/plan.fern.md": "e66894cee21a6a8c159c424cada77c38653678b924fdf506c18921f9af32d68f",
+      "std/audio/flac/seek.fern.md": "58d291d5a360799de40de7daa57741c19781313676df49de1b90d03dc55bea3c"
+    }
+  },
+  "core_sha256": {
+    "fern": "522a6fa528bb473b457a2203a213ce3271a5e04347df668782b91c9f51978f2e",
+    "fixed": "522a6fa528bb473b457a2203a213ce3271a5e04347df668782b91c9f51978f2e",
+    "baseline": "522a6fa528bb473b457a2203a213ce3271a5e04347df668782b91c9f51978f2e"
+  },
+  "cc": "cc (Debian 14.2.0-19) 14.2.0",
+  "reference_binary_sha256": "1a08f32a56190a62bd205a349e10cd7602aa0acd4ecfb952f518d9740e2ba405"
+}

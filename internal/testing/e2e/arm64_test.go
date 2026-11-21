@@ -6185,6 +6185,7 @@ function main(): i32 {
 
 func TestArm64StdlibBundle24(t *testing.T) {
 	src := `
+import "std/email";
 import "std/http";
 import "std/net";
 function main(): i32 {
@@ -6297,6 +6298,7 @@ function main(): i32 {
 
 func TestArm64StdlibBundle22(t *testing.T) {
 	src := `
+import "std/num";
 import "std/i32";
 import "std/string";
 function main(): i32 {

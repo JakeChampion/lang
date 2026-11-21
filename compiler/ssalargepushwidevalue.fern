@@ -1,51 +1,47 @@
+import "./ssaaffinevalue" as affine;
+pub use "./ssaaffinevalue".{Value, unknown};
 import "./ssacondition" as condition;
 pub use "./ssacondition".{Comparison};
 import "./ssalargepushwideranges" as ranges;
 
-pub struct Value { factor: i32, offset: i64 }
-
 struct WordQuotient { known: boolean, value: i64 }
-
-pub function unknown(): Value {
-  return Value { factor: -1, offset: 0 as i64 };
-}
 
 function bounded(n: i64): boolean {
   return n >= -(34359738367 as i64) && n <= 34359738367 as i64;
 }
 
-function endpoint(v: Value, n: i64): i64 {
+function endpoint(v: affine.Value, n: i64): i64 {
   return v.factor as i64 * n + v.offset;
 }
 
-pub function valid(r: ranges.Interval, v: Value): boolean {
-  if (!ranges.valid(r) || v.factor != 0 && v.factor != 1 || !bounded(v.offset)) {
+pub function valid(r: ranges.Interval, v: affine.Value): boolean {
+  if (!ranges.valid(r) || v.residue != 0 || v.factor != 0 && v.factor != 1 || !bounded(v.offset)) {
     return false;
   }
   return bounded(endpoint(v, r.low)) && bounded(endpoint(v, r.high));
 }
 
-function checked(r: ranges.Interval, v: Value): Value {
-  return if (valid(r, v)) { v } else { unknown() };
+function checked(r: ranges.Interval, v: affine.Value): affine.Value {
+  return if (valid(r, v)) { v } else { affine.unknown() };
 }
 
-pub function number(r: ranges.Interval, n: i64): Value {
-  return checked(r, Value { factor: 0, offset: n });
+pub function number(r: ranges.Interval, n: i64): affine.Value {
+  return checked(r, affine.Value { factor: 0, offset: n, residue: 0 });
 }
 
-pub function original(r: ranges.Interval): Value {
-  return checked(r, Value { factor: 1, offset: 0 as i64 });
+pub function original(r: ranges.Interval): affine.Value {
+  return checked(r, affine.Value { factor: 1, offset: 0 as i64, residue: 0 });
 }
 
-pub function add(r: ranges.Interval, v: Value, delta: i64): Value {
+pub function add(r: ranges.Interval, v: affine.Value, delta: i64): affine.Value {
   if (!valid(r, v) || !bounded(delta)) {
-    return unknown();
+    return affine.unknown();
   }
-  return checked(r, Value { factor: v.factor, offset: v.offset + delta });
+  return checked(r, affine.Value { factor: v.factor, offset: v.offset + delta, residue: 0 });
 }
 
-pub function negate(r: ranges.Interval, v: Value): Value {
-  return if (valid(r, v) && v.factor == 0) { number(r, -v.offset) } else { unknown() };
+pub function negate(r: ranges.Interval, v: affine.Value): affine.Value {
+  return if (valid(r, v) && v.factor == 0) { number(r, -v.offset) } else { affine.unknown() };
 }
 
 function floor_word(n: i64): i64 {
@@ -53,7 +49,7 @@ function floor_word(n: i64): i64 {
   return if (n < 0 as i64 && n % (4294967296 as i64) != 0 as i64) { q - 1 as i64 } else { q };
 }
 
-function quotient32(r: ranges.Interval, v: Value): WordQuotient {
+function quotient32(r: ranges.Interval, v: affine.Value): WordQuotient {
   if (!valid(r, v)) {
     return WordQuotient { known: false, value: 0 as i64 };
   }
@@ -61,28 +57,28 @@ function quotient32(r: ranges.Interval, v: Value): WordQuotient {
   return WordQuotient { known: q == floor_word(endpoint(v, r.high)), value: q };
 }
 
-pub function zero32(r: ranges.Interval, v: Value): Value {
+pub function zero32(r: ranges.Interval, v: affine.Value): affine.Value {
   let q = quotient32(r, v);
-  return if (q.known) { checked(r, Value { factor: v.factor, offset: v.offset - q.value * (4294967296 as i64) }) } else { unknown() };
+  return if (q.known) { checked(r, affine.Value { factor: v.factor, offset: v.offset - q.value * (4294967296 as i64), residue: 0 }) } else { affine.unknown() };
 }
 
-pub function high32(r: ranges.Interval, v: Value): Value {
+pub function high32(r: ranges.Interval, v: affine.Value): affine.Value {
   let q = quotient32(r, v);
-  return if (q.known) { number(r, if (q.value < 0 as i64) { q.value + 4294967296 as i64 } else { q.value }) } else { unknown() };
+  return if (q.known) { number(r, if (q.value < 0 as i64) { q.value + 4294967296 as i64 } else { q.value }) } else { affine.unknown() };
 }
 
-pub function join32(r: ranges.Interval, low: Value, high: Value): Value {
+pub function join32(r: ranges.Interval, low: affine.Value, high: affine.Value): affine.Value {
   if (!valid(r, low) || !valid(r, high) || high.factor != 0) {
-    return unknown();
+    return affine.unknown();
   }
   if (endpoint(low, r.low) < 0 as i64 || endpoint(low, r.high) > 4294967295 as i64 || high.offset < 0 as i64 || high.offset > 4294967295 as i64) {
-    return unknown();
+    return affine.unknown();
   }
   let q = if (high.offset < 2147483648 as i64) { high.offset } else { high.offset - 4294967296 as i64 };
   if (q < -(8 as i64) || q > 7 as i64) {
-    return unknown();
+    return affine.unknown();
   }
-  return checked(r, Value { factor: low.factor, offset: low.offset + q * (4294967296 as i64) });
+  return checked(r, affine.Value { factor: low.factor, offset: low.offset + q * (4294967296 as i64), residue: 0 });
 }
 
 pub function power(bit: i32): i64 {
@@ -106,7 +102,7 @@ function highest(n: i64): i32 {
   return bit;
 }
 
-pub function bit_scan(r: ranges.Interval, v: Value): i32 {
+pub function bit_scan(r: ranges.Interval, v: affine.Value): i32 {
   if (!valid(r, v) || endpoint(v, r.low) <= 0 as i64) {
     return -1;
   }
@@ -114,20 +110,20 @@ pub function bit_scan(r: ranges.Interval, v: Value): i32 {
   return if (bit == highest(endpoint(v, r.high))) { bit } else { -1 };
 }
 
-pub function mask(r: ranges.Interval, v: Value, m: Value): Value {
+pub function mask(r: ranges.Interval, v: affine.Value, m: affine.Value): affine.Value {
   if (!valid(r, v) || !valid(r, m) || m.factor != 0 || m.offset >= 0 as i64) {
-    return unknown();
+    return affine.unknown();
   }
   let step = -m.offset;
   if (power(highest(step)) != step || endpoint(v, r.low) < 0 as i64) {
-    return unknown();
+    return affine.unknown();
   }
   let low = endpoint(v, r.low) / step;
   let high = endpoint(v, r.high) / step;
-  return if (low == high) { number(r, low * step) } else { unknown() };
+  return if (low == high) { number(r, low * step) } else { affine.unknown() };
 }
 
-pub function compare(r: ranges.Interval, v: Value, n: i64): condition.Comparison {
+pub function compare(r: ranges.Interval, v: affine.Value, n: i64): condition.Comparison {
   if (!valid(r, v) || !bounded(n)) {
     return condition.unknown_order();
   }

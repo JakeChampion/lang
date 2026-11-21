@@ -1,0 +1,105 @@
+import "std/audio/mp1";
+import "std/audio/pcm";
+import "std/audio/mp3/spectral";
+import "std/audio/wire";
+import "std/io";
+import "std/i32";
+import "std/string";
+import "std/bench";
+
+function hash(sample: f32, previous: u32): u32 {
+  let word = f32_bits(sample) as u32;
+  let checksum = previous;
+  for byte in 0..4 {
+    checksum = (checksum ^ word >> byte * 8 & 255u32) * 16777619u32;
+  }
+  return checksum;
+}
+
+// Consume the first sample of each returned block, as in the reference driver.
+function decode(input: [u8], frames: boolean, previous: u32): Result[(u32, i64), pcm.AudioError] {
+  if (!frames) {
+    let audio = mp1.decode_raw(input, pcm.default_limits())?;
+    return Ok((hash(audio.samples[0], previous), audio.samples.len() as i64));
+  }
+  let state = mp1.decoder();
+  let output = spectral.zeros(768);
+  let at = 0;
+  let total = 0i64;
+  while (at < input.len()) {
+    let (next, result) = state.decode_frame_into(input[at:], output, pcm.default_limits());
+    let audio = result?;
+    previous = hash(audio.samples[0], previous);
+    at += audio.bytes_read;
+    total += (384 * audio.channels) as i64;
+    output = audio.samples;
+    state = next;
+  }
+  return Ok((previous, total));
+}
+
+function peak_rss(): i32 {
+  let Ok(status) = read_file("/proc/self/status") else {
+    return 0;
+  };
+  for line in status.split("\n") {
+    if (line.starts_with("VmHWM:")) {
+      for part in line.replace("\t", " ").split(" ") {
+        let value = i32.parse_i32_radix(part, 10).unwrap_or(0);
+        if (value > 0) {
+          return value;
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 6 || argv[2] != "whole" && argv[2] != "frames" || argv[5] != "decode") {
+    return 1;
+  }
+  let frames = argv[2] == "frames";
+  let Ok(input) = io.read_input_bytes(argv[1]) else {
+    return 2;
+  };
+  let rounds = i32.parse_i32_radix(argv[3], 10).unwrap_or(0);
+  if (rounds < 1) {
+    return 3;
+  }
+  for _ in 0..2 {
+    if let Err(_) = decode(input, frames, 2166136261u32) {
+      return 4;
+    }
+  }
+  let allocations = bench.alloc_count();
+  let fresh = bench.bump_bytes();
+  let started = monotonic_ns();
+  let checksum = 2166136261u32;
+  let samples = 0i64;
+  for _ in 0..rounds {
+    let Ok((value, count)) = decode(input, frames, checksum) else {
+      return 5;
+    };
+    checksum = value;
+    samples += count;
+  }
+  let elapsed = monotonic_ns() - started;
+  let allocation_count = bench.allocs_after(allocations);
+  let fresh_bytes = bench.fresh_bytes_after(fresh);
+  print("wall_ns=" + elapsed.to_string());
+  print("allocs=" + allocation_count.to_string());
+  print("fresh_bytes=" + fresh_bytes.to_string());
+  print("checksum=" + checksum.to_string());
+  print("samples=" + samples.to_string());
+  print("native_peak_rss_kb=" + peak_rss().to_string());
+  let Ok(audio) = mp1.decode_raw(input, pcm.default_limits()) else {
+    return 6;
+  };
+  let bytes: u8[] = [];
+  for sample in audio.samples {
+    bytes = wire.put_le(bytes, f32_bits(sample) as u64, 4);
+  }
+  return match (write_file_bytes(argv[4], bytes)) { Ok(_) => 0, Err(_) => 7 };
+}

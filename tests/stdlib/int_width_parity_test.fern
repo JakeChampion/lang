@@ -1,3 +1,4 @@
+import "std/num";
 // Every integer width has the same method set. This suite calls the
 // methods that i64, u32 and u64 share with i32 on each width, and pins
 // the negative-operand results of div_ceil and next_multiple_of to Rust.

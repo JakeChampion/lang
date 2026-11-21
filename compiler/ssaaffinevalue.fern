@@ -1,0 +1,8 @@
+pub struct Interval { low: i64, high: i64 }
+
+// A linear function of the input extent and its byte residue. Array proofs use zero residue.
+pub struct Value { factor: i32, offset: i64, residue: i32 }
+
+pub function unknown(): Value {
+  return Value { factor: -1, offset: 0 as i64, residue: 0 };
+}

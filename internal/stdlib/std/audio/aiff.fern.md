@@ -21,7 +21,7 @@ import "std/audio/wire";
 
 pub struct Limits { audio: pcm.Limits, max_chunks: i32 }
 
-struct Common { format: linear.Format, frames: i32 }
+pub struct Common { format: linear.Format, frames: i32 }
 
 pub function default_limits(): Limits {
   return Limits { audio: pcm.default_limits(), max_chunks: 65536 };
@@ -70,14 +70,14 @@ function encoding(input: [u8], at: i32): Result[(linear.Kind, i32, boolean), pcm
 
 // Keep the Pascal compression name and its padding inside the common chunk.
 // fern-lint: allow cyclomatic-complexity
-function common(input: [u8], at: i32, size: i32, compressed: boolean): Result[Common, pcm.AudioError] {
-  if (size < 18 || compressed && size < 24) {
+pub function common_prefix(input: [u8], size: i32, compressed: boolean): Result[Common, pcm.AudioError] {
+  if (size < 18 || input.len() < 18 || compressed && (size < 24 || input.len() < 23)) {
     return Err(pcm.Truncated);
   }
-  let channels = wire.be(input, at, 2) as i32;
-  let frames = wire.be(input, at + 2, 4);
-  let bits = wire.be(input, at + 6, 2) as i32;
-  let rate = sample_rate(input, at + 8)?;
+  let channels = wire.be(input, 0, 2) as i32;
+  let frames = wire.be(input, 2, 4);
+  let bits = wire.be(input, 6, 2) as i32;
+  let rate = sample_rate(input, 8)?;
   if (frames > 2147483647u64) {
     return Err(pcm.Limit);
   }
@@ -86,11 +86,11 @@ function common(input: [u8], at: i32, size: i32, compressed: boolean): Result[Co
   let depth = bits;
   let storage = (bits + 7) / 8 * 8;
   if (compressed) {
-    let name = input[at + 22] as i32;
+    let name = input[22] as i32;
     if (23 + name + (1 + name) % 2 > size) {
       return Err(pcm.Truncated);
     }
-    let (codec, fixed, le) = encoding(input, at + 18)?;
+    let (codec, fixed, le) = encoding(input, 18)?;
     kind = codec;
     little = le;
     if (fixed != 0) {
@@ -152,7 +152,7 @@ pub function inspect(input: [u8], limits: Limits): Result[linear.Index, pcm.Audi
       if let Some(_) = desc {
         return Err(pcm.Header);
       }
-      desc = Some(common(input, data, bytes, compressed)?);
+      desc = Some(common_prefix(input[data:data + bytes], bytes, compressed)?);
     } else if (wire.tag(input, at, "FVER")) {
       if (!compressed || version || bytes != 4) {
         return Err(pcm.Header);

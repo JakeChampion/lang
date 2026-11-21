@@ -39,6 +39,11 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"rem_u_1: load_local 0 ; drop ; const_i32 0\n" +
 		"rem_u_8: load_local 0 ; const_i32 7 ; and\n" +
 		"rem_u_6: load_local 0 ; const_i32 6 ; rem_u\n" +
+		"div_s_0: load_local 0 ; drop ; const_i32 0\n" +
+		"rem_u_0: load_local 0\n" +
+		"rem_s_neg1: load_local 0 ; drop ; const_i32 0\n" +
+		"div_u_top: load_local 0 ; const_i32 31 ; shr_u\n" +
+		"rem_u_top: load_local 0 ; const_i32 2147483647 ; and\n" +
 		"mul_8_w64: load_local 0 ; const_i32 8 ; mul\n" +
 		"add_0_w64: load_local 0 ; const_i32 0 ; add\n" +
 		"mul_text_8: load_local 0 ; const_i32 3 ; shl\n" +

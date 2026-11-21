@@ -11,6 +11,11 @@ Fragmented media, encryption, external references, and configuration changes are
 The ALAC packet decoder retains its declared format and predictor limits.
 A retained index applies to the same immutable input bytes used during inspection.
 
+For repeated reads in presentation time, build a `SeekIndex` with `seek_index`.
+Its `frames` includes edited silence. Pass the original bytes to `read_into` along with
+a starting frame, frame count, and interleaved output buffer. Retain the returned
+index for the next read. Samples beyond the requested range are preserved.
+
 A `Stream` decodes one packet at a time for a player, without edits.
 A player can read each packet from a source, at the place that `packet` gives.
 `std/audio/mp4/file` makes an index from the boxes of a file in a source, with no bytes of the sound.
@@ -29,6 +34,7 @@ import "std/audio/mp4/tables";
 import "std/audio/mp4/time";
 import "std/audio/pcm";
 import "std/audio/wire";
+import "std/i32";
 pub use "std/audio/mp4/index".{Limits};
 
 struct Configuration { raw: u8[], info: config.Info, mask: u32 }
@@ -43,7 +49,7 @@ pub struct Decoded { format: pcm.Format, channel_mask: u32, track_id: u32, frame
 
 // One track that a player decodes one packet at a time. Packet numbers
 // follow the time of the track, and edits do not apply.
-pub opaque struct Stream { decoder: codec.Decoder, configuration: Configuration, packets: tables.Packet[] }
+pub opaque struct Stream { id: u32, enabled: boolean, decoder: codec.Decoder, configuration: Configuration, packets: tables.Packet[] }
 
 pub function default_limits(): container.Limits {
   return container.default_limits();
@@ -196,12 +202,18 @@ function render(input: [u8], track: Track, plan: presentation.Plan, limits: pcm.
       return Err(pcm.Header);
     }
   }
+  check_duration(track, decoded)?;
+  return Ok(output);
+}
+
+function check_duration(track: Track, decoded: i64): Result[void, pcm.AudioError] {
+  let info = track.configuration.info;
   let last = track.source.packets[track.source.packets.len() - 1];
   let declared = time.nearest(last.position + last.duration as i64, info.format.sample_rate as u32, track.source.clock.scale)?;
   if (declared > decoded || decoded - declared >= info.frame_length as i64) {
     return Err(pcm.Header);
   }
-  return Ok(output);
+  return Ok(());
 }
 
 function check_limits(track: container.Track, tracks: i32, limits: container.Limits): Result[void, pcm.AudioError] {
@@ -234,12 +246,12 @@ pub function (value: Index) stream(track_number: i32, limits: pcm.Limits): Resul
   }
   let track = value.tracks[track_number];
   let decoder = codec.create(track.configuration.raw, limits)?;
-  return Ok(Stream { decoder: decoder, configuration: track.configuration, packets: track.source.packets });
+  return Ok(Stream { id: track.source.id, enabled: track.source.enabled, decoder: decoder, configuration: track.configuration, packets: track.source.packets });
 }
 
 pub function (value: Stream) information(): Info {
   let info = value.configuration.info;
-  return Info { id: 0u32, enabled: true, format: info.format, channel_mask: value.configuration.mask, frame_length: info.frame_length, packets: value.packets.len() };
+  return Info { id: value.id, enabled: value.enabled, format: info.format, channel_mask: value.configuration.mask, frame_length: info.frame_length, packets: value.packets.len() };
 }
 
 // The place of the packet `number` in the file: its offset and its bytes.
@@ -268,10 +280,140 @@ pub function (own value: Stream) decode_packet(input: [u8], number: i32, limits:
 // The stream after the packet whose bytes are `bytes`, and the samples of
 // that packet in WAVE speaker order. The packets go in their order.
 pub function (own value: Stream) decode_bytes(bytes: [u8], limits: pcm.Limits): Result[(Stream, i32[]), pcm.AudioError] {
-  let Stream { decoder, configuration, packets } = value;
-  let (next, frame) = decoder.decode_packet(bytes, limits)?;
+  let frames = value.decoder.packet_frames(bytes, limits)?;
+  let count = pcm.sample_count(frames, value.configuration.info.format.channels, limits)?;
+  let (next, frame) = value.decode_bytes_into(bytes, pcm.zeros(count), limits)?;
+  return Ok((next, frame.samples));
+}
+
+// Decode a packet into the caller's buffer. Only frames * channels samples
+// in the returned buffer belong to this packet; its remaining samples survive.
+pub function (own value: Stream) decode_bytes_into(bytes: [u8], own output: i32[], limits: pcm.Limits): Result[(Stream, codec.Frame), pcm.AudioError] {
+  let Stream { id, enabled, decoder, configuration, packets } = value;
+  let (next, frame) = decoder.decode_packet_into(bytes, output, limits)?;
   let samples = layout.reorder(frame.samples, configuration.info.format, configuration.mask, frame.frames)?;
-  return Ok((Stream { decoder: next, configuration: configuration, packets: packets }, samples));
+  return Ok((Stream { id: id, enabled: enabled, decoder: next, configuration: configuration, packets: packets }, codec.Frame { ...frame, samples: samples }));
+}
+
+// The physical start of each packet comes from its ALAC frame count.
+// Rounded container timestamps can differ by one sample at packet boundaries.
+pub opaque struct SeekIndex {
+  stream: Stream,
+  plan: presentation.Plan,
+  starts: i64[],
+  file_bytes: i32,
+  scratch: i32[],
+}
+
+function packet_starts(input: [u8], stream: Stream, track: Track, limits: pcm.Limits): Result[i64[], pcm.AudioError] {
+  let info = track.configuration.info;
+  let starts: i64[] = [0i64];
+  let total = 0i64;
+  for n in 0..track.source.packets.len() {
+    let packet = stream.packet(n)?;
+    if (packet.offset > input.len() as i64 - packet.bytes as i64) {
+      return Err(pcm.Header);
+    }
+    let position = time.nearest(packet.position, info.format.sample_rate as u32, track.source.clock.scale)?;
+    if (position < total - 1i64 || position > total + 1i64) {
+      return Err(pcm.Unsupported);
+    }
+    let at = packet.offset as i32;
+    total += stream.decoder.packet_frames(input[at:at + packet.bytes], limits)? as i64;
+    starts = starts.append(total);
+  }
+  return Ok(starts);
+}
+
+pub function seek_index(input: [u8], index: Index, track_number: i32, limits: container.Limits): Result[SeekIndex, pcm.AudioError] {
+  pcm.check_input(input, limits.audio)?;
+  if (index.bytes != input.len() as i64 || track_number < 0 || track_number >= index.tracks.len()) {
+    return Err(pcm.Header);
+  }
+  let track = index.tracks[track_number];
+  check_limits(track.source, index.tracks.len(), limits)?;
+  let stream = index.stream(track_number, limits.audio)?;
+  let info = track.configuration.info;
+  let starts = packet_starts(input, stream, track, limits.audio)?;
+  let total = starts[starts.len() - 1];
+  let plan = presentation.create(track.source.packets, track.source.edits, track.source.clock, index.movie, info.format.sample_rate, info.format.channels, total, limits.audio)?;
+  check_duration(track, total)?;
+  let scratch = pcm.zeros(pcm.sample_count(info.frame_length, info.format.channels, limits.audio)?);
+  return Ok(SeekIndex { stream: stream, plan: plan, starts: starts, file_bytes: input.len(), scratch: scratch });
+}
+
+pub function (index: SeekIndex) frames(): i32 {
+  return index.plan.frames;
+}
+
+function containing(starts: [i64], frame: i64): i32 {
+  let lo = 0;
+  let hi = starts.len() - 1;
+  while (hi - lo > 1) {
+    let mid = lo + (hi - lo) / 2;
+    if (starts[mid] <= frame) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+// Read a range in edited presentation time. Samples after the output prefix
+// are preserved, including for an empty read at the end of the presentation.
+// The span and packet loops thread ownership of one decoder and both reusable buffers.
+// fern-lint: allow cyclomatic-complexity
+pub function (own index: SeekIndex) read_into(input: [u8], position: i32, frames: i32, own output: i32[], limits: pcm.Limits): Result[(SeekIndex, i32[]), pcm.AudioError] {
+  if (input.len() != index.file_bytes || position < 0 || position > index.plan.frames || frames < 0 || frames > index.plan.frames - position) {
+    return Err(pcm.Header);
+  }
+  pcm.check_input(input, limits)?;
+  let SeekIndex { stream, plan, starts, file_bytes, scratch } = index;
+  let channels = stream.information().format.channels;
+  let count = pcm.sample_count(frames, channels, limits)?;
+  if (count > output.len()) {
+    return Err(pcm.Buffer);
+  }
+  for i in 0..count {
+    output = output.with(i, 0);
+  }
+  for nspan in plan.first_span(channels, position)..plan.spans.len() {
+    let span = plan.spans[nspan];
+    let span_position = span.output / channels;
+    if (span_position >= position + frames) {
+      break;
+    }
+    let first = position.max(span_position);
+    let end = (position + frames).min(span_position + (span.end - span.start) as i32);
+    if (end <= first) {
+      continue;
+    }
+    let at = span.start + (first - span_position) as i64;
+    let n = containing(starts, at);
+    let written = first - position;
+    let remaining = end - first;
+    while (remaining > 0) {
+      let packet = stream.packet(n)?;
+      let offset = packet.offset as i32;
+      let (next, block) = stream.decode_bytes_into(input[offset:offset + packet.bytes], scratch, limits)?;
+      if (block.frames as i64 != starts[n + 1] - starts[n]) {
+        return Err(pcm.Header);
+      }
+      stream = next;
+      scratch = block.samples;
+      let skip = (at - starts[n]) as i32;
+      let take = remaining.min(block.frames - skip);
+      for i in 0..take * channels {
+        output = output.with(written * channels + i, scratch[skip * channels + i]);
+      }
+      at += take as i64;
+      written += take;
+      remaining -= take;
+      n += 1;
+    }
+  }
+  return Ok((SeekIndex { stream: stream, plan: plan, starts: starts, file_bytes: file_bytes, scratch: scratch }, output));
 }
 
 pub function decode(input: [u8], limits: container.Limits): Result[Decoded, pcm.AudioError] {

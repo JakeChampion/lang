@@ -152,13 +152,13 @@ var interpSlowStdTests = map[string]bool{
 	"wavpack_input": true, "wavpack_input_boundary": true, "wavpack_file": true, "wavpack_file_boundary": true,
 	// Full Vorbis PCM and transform corpora use compiled gates. Nonzero smoke stays here.
 	"vorbis": true, "vorbis_kernel": true, "vorbis_boundary": true,
-	"vorbis_file": true, "vorbis_input": true, "vorbis_seek": true, "vorbis_seek_view": true,
+	"vorbis_file": true, "vorbis_input": true, "vorbis_seek": true, "vorbis_seek_view": true, "vorbis_seek_reader": true,
 	// Seek boundaries take 65 seconds. Exact seek smoke stays in the interpreter gate.
 	"vorbis_seek_boundary": true,
 	// Full MP4 corpora exceed a minute. Independent M4A smoke stays here.
 	"mp4": true, "mp4_boundary": true,
 	// The full M4A ALAC bank uses compiled gates. Its exact integer smoke stays here.
-	"mp4_alac": true,
+	"mp4_alac": true, "mp4_alac_reader": true,
 	// Full AAC corpora exceed a minute. Independent AAC PCM smoke stays here.
 	"aac": true, "aac_boundary": true, "aac_kernel": true,
 	// The two conformance files of UAX #9 run each of their cases. The compiled gates run them.
@@ -433,6 +433,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"zip", langSrcAbs(t, "tests/stdlib/zip_test.fern"), ""},
 		{"zstd", langSrcAbs(t, "tests/stdlib/zstd_test.fern"), ""},
 		{"brotli", langSrcAbs(t, "tests/stdlib/brotli_test.fern"), ""},
+		{"linear_file", langSrcAbs(t, "tests/stdlib/linear_file_test.fern"), ""},
 		{"linear_audio", langSrcAbs(t, "tests/stdlib/linear_audio_test.fern"), ""},
 		{"linear_audio_boundary", langSrcAbs(t, "tests/stdlib/linear_audio_boundary_test.fern"), ""},
 		{"caf_linear", langSrcAbs(t, "tests/stdlib/caf_linear_test.fern"), ""},
@@ -472,6 +473,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"alac_boundary", langSrcAbs(t, "tests/stdlib/alac_boundary_test.fern"), ""},
 		{"alac_smoke", langSrcAbs(t, "tests/stdlib/alac_smoke_test.fern"), ""},
 		{"vorbis_seek", langSrcAbs(t, "tests/stdlib/vorbis_seek_test.fern"), ""},
+		{"vorbis_seek_reader", langSrcAbs(t, "tests/stdlib/vorbis_seek_reader_test.fern"), ""},
 		{"vorbis_seek_view", langSrcAbs(t, "tests/stdlib/vorbis_seek_view_test.fern"), ""},
 		{"vorbis_seek_boundary", langSrcAbs(t, "tests/stdlib/vorbis_seek_boundary_test.fern"), ""},
 		{"vorbis_seek_smoke", langSrcAbs(t, "tests/stdlib/vorbis_seek_smoke_test.fern"), ""},
@@ -486,6 +488,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"vorbis_kernel", langSrcAbs(t, "tests/stdlib/vorbis_kernel_test.fern"), ""},
 		{"vorbis_smoke", langSrcAbs(t, "tests/stdlib/vorbis_smoke_test.fern"), ""},
 		{"mp4_alac", langSrcAbs(t, "tests/stdlib/mp4_alac_test.fern"), ""},
+		{"mp4_alac_reader", langSrcAbs(t, "tests/stdlib/mp4_alac_reader_test.fern"), ""},
 		{"mp4_alac_boundary", langSrcAbs(t, "tests/stdlib/mp4_alac_boundary_test.fern"), ""},
 		{"mp4_alac_smoke", langSrcAbs(t, "tests/stdlib/mp4_alac_smoke_test.fern"), ""},
 		{"mp4", langSrcAbs(t, "tests/stdlib/mp4_test.fern"), ""},
@@ -537,6 +540,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"mp2_shard1", langSrcAbs(t, "tests/stdlib/mp2_shard1_test.fern"), ""},
 		{"mp2_shard2", langSrcAbs(t, "tests/stdlib/mp2_shard2_test.fern"), ""},
 		{"mp2_shard3", langSrcAbs(t, "tests/stdlib/mp2_shard3_test.fern"), ""},
+		{"mp1", langSrcAbs(t, "tests/stdlib/mp1_test.fern"), ""},
 		{"mp2_boundary", langSrcAbs(t, "tests/stdlib/mp2_boundary_test.fern"), ""},
 		{"mp2_smoke", langSrcAbs(t, "tests/stdlib/mp2_smoke_test.fern"), ""},
 		{"mp3_freeformat", langSrcAbs(t, "tests/stdlib/mp3_freeformat_test.fern"), ""},
