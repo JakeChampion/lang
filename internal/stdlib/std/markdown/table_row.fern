@@ -1,4 +1,5 @@
 // Shared GFM table row grammar for the block parser and HTML writer.
+
 function space(c: u8): boolean {
   return c == b' ' || c == b'\t';
 }
