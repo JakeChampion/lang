@@ -9264,7 +9264,7 @@ function san_poison_check(rc: string, w: string, live: string, s: asmcore.EmitSt
 function san_owner_guard(s: asmcore.EmitState, ok: string): string {
   if (asmcore.owner_by_stack(s)) {
     return "    stp x9, x10, [sp, #-16]!\n    adrp x9, __fern_stack_top\n    add x9, x9, :lo12:__fern_stack_top\n    ldr x9, [x9]\n    mov x10, sp\n    sub x9, x9, x10\n"
-      + mov_imm64("x10", asmcore.stack_size() as i64) + "    cmp x9, x10\n    ldp x9, x10, [sp], #16\n    b.lo " + ok + "\n    bl __fern_san_abort_owner\n" + ok + ":\n";
+      + mov_imm64("x10", asmcore.max_owned_stack_depth() as i64) + "    cmp x9, x10\n    ldp x9, x10, [sp], #16\n    b.ls " + ok + "\n    bl __fern_san_abort_owner\n" + ok + ":\n";
   }
   if (asmcore.owner_by_thread(s)) {
     return "    stp x9, x10, [sp, #-16]!\n    mrs x9, tpidr_el0\n    adrp x10, __fern_san_owner\n    add x10, x10, :lo12:__fern_san_owner\n    ldr x10, [x10]\n    cmp x9, x10\n    ldp x9, x10, [sp], #16\n    b.eq " + ok + "\n    bl __fern_san_abort_owner\n" + ok + ":\n";
@@ -9304,7 +9304,7 @@ function san_owner_check(s: asmcore.EmitState, t1: string, t2: string): asmcore.
   let mine = asmcore.fresh_label(s);
   if (asmcore.owner_by_stack(s)) {
     s = mine.state.write("    adrp " + t1 + ", __fern_stack_top\n    add " + t1 + ", " + t1 + ", :lo12:__fern_stack_top\n    ldr " + t1 + ", [" + t1 + "]\n    mov " + t2 + ", sp\n    sub " + t1 + ", " + t1 + ", " + t2 + "\n");
-    s = s.write(mov_imm64(t2, asmcore.stack_size() as i64) + "    cmp " + t1 + ", " + t2 + "\n    b.lo " + mine.name + "\n");
+    s = s.write(mov_imm64(t2, asmcore.max_owned_stack_depth() as i64) + "    cmp " + t1 + ", " + t2 + "\n    b.ls " + mine.name + "\n");
     return s.write("    bl __fern_san_abort_owner\n" + mine.name + ":\n");
   }
   if (asmcore.owner_by_thread(s)) {

@@ -33,7 +33,7 @@ function grow(n: i32): i32 {
 function main(): i32 {
   let ts: usize = __raw_alloc(16);
   __raw_store_ptr(ts, 0, 0 as usize);
-  __raw_store_ptr(ts, 8, 10000000 as usize);
+  __raw_store_ptr(ts, 1, 10000000 as usize);
   let stack: usize = __syscall6(MMAP, 0, 65536, 3, 34, 0 - 1, 0) as usize;
   let r: i64 = __syscall6(CLONE, 331520, (stack + 65536) as i64, 0, 0, 0, 0);
   if (r == 0) {
@@ -58,7 +58,7 @@ func sanStrayCountSrc(mmap, clone, nanosleep int) string {
   let p: usize = a as usize;
   let ts: usize = __raw_alloc(16);
   __raw_store_ptr(ts, 0, 0 as usize);
-  __raw_store_ptr(ts, 8, 10000000 as usize);
+  __raw_store_ptr(ts, 1, 10000000 as usize);
   let stack: usize = __syscall6(MMAP, 0, 65536, 3, 34, 0 - 1, 0) as usize;
   let r: i64 = __syscall6(CLONE, 331520, (stack + 65536) as i64, 0, 0, 0, 0);
   if (r == 0) {
