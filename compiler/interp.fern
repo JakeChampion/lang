@@ -1291,11 +1291,16 @@ function func_ret_type(funcs: Funcs, name: string, targs: string[]): string {
   for at in funcs.named(name) {
     let fd = funcs.decls[at];
     if (fd.name == name && fd.receiver_type.len() == 0) {
-      let refs: parser.TypeRef[] = [];
-      for ta in targs {
-        refs = refs.append(parser.parse_type_ref(ta));
+      if (targs.len() == 0 || targs.len() != fd.all_type_params.len()) {
+        return fd.ret_type;
       }
-      return applied_spelling(fd.ret_type, fd.all_type_params, refs);
+      let concrete = targs;
+      for i in 0..targs.len() {
+        if (!parser.plain_type_spelling(targs[i])) {
+          concrete = concrete.with(i, parser.render_type_ref(parser.parse_type_ref(targs[i])));
+        }
+      }
+      return parser.subst_ty(fd.ret_type, fd.all_type_params, concrete);
     }
   }
   return "";
