@@ -11,11 +11,11 @@
 // emphasis that the algorithm of the spec finds is a list of tags on each
 // run of delimiters.
 import "core/map";
-import "./blocks";
+import "std/markdown/blocks";
 import "std/markdown/entities";
 import "std/markdown/nodes";
-import "./refs";
-import "./tags";
+import "std/markdown/refs";
+import "std/markdown/tags";
 import "std/markdown/utf8";
 
 // The kinds of token. A token has four fields: the kind, the start and the

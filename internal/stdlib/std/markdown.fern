@@ -2,8 +2,8 @@
 // input and options.
 import "std/i32";
 import "std/io_buffered";
-import "./blocks";
-import "./inlines";
+import "std/markdown/blocks";
+import "std/markdown/inlines";
 import "std/markdown/utf8";
 
 // The options of cmark. `sourcepos` gives each block the attribute

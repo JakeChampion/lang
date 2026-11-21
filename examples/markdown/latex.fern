@@ -1,6 +1,6 @@
 // The LaTeX of a node tree, as cmark writes it.
 import "./commonmark";
-import "./markdown";
+import "std/markdown";
 import "std/markdown/nodes";
 import "./out";
 

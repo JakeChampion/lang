@@ -1,12 +1,12 @@
 // The node tree of a document, and its output in the formats of cmark other
 // than HTML: `xml`, `man`, `commonmark` and `latex`.
 import "std/io_buffered";
-import "./blocks";
+import "std/markdown/blocks";
 import "./commonmark";
-import "./inlines";
+import "std/markdown/inlines";
 import "./latex";
 import "./man";
-import "./markdown";
+import "std/markdown";
 import "std/markdown/nodes";
 import "./xml";
 

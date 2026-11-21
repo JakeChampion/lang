@@ -67,6 +67,7 @@ var stdModuleReach = map[string]string{
 	"std/log":           "log",
 	"std/lz4":           "",
 	"std/lzw":           "",
+	"std/markdown":      "",
 	"std/math":          "",
 	"std/mitigations":   "fs,sysinfo",
 	"std/metrics":       "config,env,fs,host,ktls,log,mmio,mmsg,now,pollable,privileged,random,reactor,tcp,unix,uring,userid,vsock",

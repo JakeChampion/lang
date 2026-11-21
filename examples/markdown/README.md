@@ -43,7 +43,7 @@ An unknown option writes the usage and fails. The errors of `--width` and
 `--to`, a file that `md` cannot open, and the exit status are those of cmark.
 A directory gives no text, as it does in cmark.
 
-A program can call `markdown.to_html(bytes, options)`, or
+A program can import `"std/markdown"` and call `markdown.to_html(bytes, options)`, or
 `markdown.render(builder, bytes, options)` to write into a byte builder.
 `markdown.write(writer, bytes, part, options)` gives the HTML to a buffered
 writer each time that `part` bytes or more are ready. `md` uses it, so the

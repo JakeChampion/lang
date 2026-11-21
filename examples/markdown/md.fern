@@ -5,7 +5,7 @@
 import "core/error";
 import "std/io";
 import "std/io_buffered";
-import "./markdown";
+import "std/markdown";
 import "./render";
 
 // cmark writes its own name, not the name of the program file.

@@ -2,12 +2,12 @@
 // with --unsafe. Some cases check the shape of the block tree.
 import "core/map";
 import "std/test";
-import "./blocks";
-import "./inlines";
-import "./markdown";
-import "./refs";
+import "std/markdown/blocks";
+import "std/markdown/inlines";
+import "std/markdown";
+import "std/markdown/refs";
 import "./render";
-import "./tags";
+import "std/markdown/tags";
 
 // The options of `cmark --unsafe`.
 function unsafe_html(): markdown.Options {

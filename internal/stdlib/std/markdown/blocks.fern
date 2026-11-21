@@ -10,8 +10,8 @@
 // record when it closes. A leaf block keeps no copy of its text: it holds a
 // range of line segments, and each segment is a range of the source.
 import "core/map";
-import "./refs";
-import "./tags";
+import "std/markdown/refs";
+import "std/markdown/tags";
 
 pub const DOCUMENT: i32 = 0;
 
