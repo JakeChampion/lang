@@ -2378,7 +2378,7 @@ function arm64_gas_lane_size(tok: string): i32 {
   if (t.len() < 5 || t[0] != b'v' || dot < 2 || ob < dot || t[t.len() - 1] != b']') {
     return -1;
   }
-  if (ob != dot + 2) {
+  if (ob != dot + 2 || arm64_gas_field_number(t, 1, dot, 31) < 0) {
     return -1;
   }
   let c = t[dot + 1] as i32;
@@ -2391,26 +2391,33 @@ function arm64_gas_lane_size(tok: string): i32 {
   };
 }
 
+// Register and lane fields have small architectural limits. Check each digit
+// while the accumulator is still in range so a long numeral cannot wrap.
+function arm64_gas_field_number(tok: string, start: i32, end: i32, limit: i32): i32 {
+  if (start >= end) {
+    return -1;
+  }
+  let n = 0;
+  for i in start..end {
+    let c = tok[i];
+    if (c < b'0' || c > b'9') {
+      return -1;
+    }
+    n = n * 10 + (c - b'0') as i32;
+    if (n > limit) {
+      return -1;
+    }
+  }
+  return n;
+}
+
 function arm64_gas_lane_reg(tok: string): i32 {
   let t = arm64_gas_trim(tok);
   if (arm64_gas_lane_size(tok) < 0) {
     return -1;
   }
   let dot = util.index_of_sub(t, ".");
-  let n = 0;
-  let i = 1;
-  while (i < dot) {
-    let c = t[i] as i32;
-    if (c < 48 || c > 57) {
-      return -1;
-    }
-    n = n * 10 + (c - 48);
-    i += 1;
-  }
-  if (n > 31) {
-    return -1;
-  }
-  return n;
+  return arm64_gas_field_number(t, 1, dot, 31);
 }
 
 function arm64_gas_lane_index(tok: string): i32 {
@@ -2420,23 +2427,7 @@ function arm64_gas_lane_index(tok: string): i32 {
     return -1;
   }
   let ob = util.index_of_sub(t, "[");
-  let n = 0;
-  let i = ob + 1;
-  if (i >= t.len() - 1) {
-    return -1;
-  }
-  while (i < t.len() - 1) {
-    let c = t[i] as i32;
-    if (c < 48 || c > 57) {
-      return -1;
-    }
-    n = n * 10 + (c - 48);
-    i += 1;
-  }
-  if (n > 15 / arm64_gas_pow2(size)) {
-    return -1;
-  }
-  return n;
+  return arm64_gas_field_number(t, ob + 1, t.len() - 1, 15 / arm64_gas_pow2(size));
 }
 
 function arm64_vec_imm5(size: i32, index: i32): i32 {
@@ -2683,20 +2674,7 @@ function arm64_gas_scalar_reg(tok: string): i32 {
   if (t.len() < 2) {
     return -1;
   }
-  let n = 0;
-  let i = 1;
-  while (i < t.len()) {
-    let c = t[i] as i32;
-    if (c < 48 || c > 57) {
-      return -1;
-    }
-    n = n * 10 + (c - 48);
-    i += 1;
-  }
-  if (n > 31) {
-    return -1;
-  }
-  return n;
+  return arm64_gas_field_number(t, 1, t.len(), 31);
 }
 
 function arm64_gas_vlist_one(tok: string): i32 {
@@ -3364,24 +3342,8 @@ function arm64_gas_reg(tok: string): i32 {
   if (j - i < 2 || !(tok[i] == b'x' || tok[i] == b'w' || tok[i] == b'd' || tok[i] == b's')) {
     return -1;
   }
-  let n = 0;
-  let k = i + 1;
-  while (k < j) {
-    let c = tok[k] as i32;
-    if (c < 48 || c > 57) {
-      return -1;
-    }
-    n = n * 10 + (c - 48);
-    k += 1;
-  }
-  let lim = 30;
-  if (tok[i] == b'd' || tok[i] == b's') {
-    lim = 31;
-  }
-  if (n > lim) {
-    return -1;
-  }
-  return n;
+  let limit = if (tok[i] == b'd' || tok[i] == b's') { 31 } else { 30 };
+  return arm64_gas_field_number(tok, i + 1, j, limit);
 }
 
 function arm64_gas_reg_alias(tok: string, i: i32, j: i32): Option[i32] {
@@ -3491,20 +3453,7 @@ function arm64_gas_qreg(tok: string): i32 {
   }
   let i = arm64_gas_trim_lo(tok, 0, tok.len());
   let j = arm64_gas_trim_hi(tok, i, tok.len());
-  let n = 0;
-  let k = i + 1;
-  while (k < j) {
-    let c = tok[k] as i32;
-    if (c < 48 || c > 57) {
-      return -1;
-    }
-    n = n * 10 + (c - 48);
-    k += 1;
-  }
-  if (n > 31) {
-    return -1;
-  }
-  return n;
+  return arm64_gas_field_number(tok, i + 1, j, 31);
 }
 
 function arm64_gas_fp_ldst_size(tok: string): i32 {
@@ -3645,23 +3594,10 @@ function arm64_gas_vreg_any(tok: string): i32 {
   if (s.len() < 4 || s[0] != b'v' || dot < 2) {
     return -1;
   }
-  let n = 0;
-  let i = 1;
-  while (i < dot) {
-    let c = s[i] as i32;
-    if (c < 48 || c > 57) {
-      return -1;
-    }
-    n = n * 10 + (c - 48);
-    i += 1;
-  }
-  if (n > 31) {
-    return -1;
-  }
   if (arm64_gas_arr_code(slice_unchecked(s, dot + 1, s.len()).to_owned()) < 0) {
     return -1;
   }
-  return n;
+  return arm64_gas_field_number(s, 1, dot, 31);
 }
 
 function arm64_gas_vreg_arrof(tok: string): i32 {
