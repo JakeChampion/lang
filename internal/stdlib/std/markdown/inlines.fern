@@ -2074,18 +2074,60 @@ function email_domain_char(c: u8, xmpp: boolean): boolean {
   return is_alnum(c as i32) || c == b'_' || c == b'-' || xmpp && c == b'/';
 }
 
-function email_domain(s: u8[], i: i32, xmpp: boolean): (i32, boolean) {
-  let dots = 0;
+function email_domain(s: u8[], i: i32, xmpp: boolean, dotted: boolean): (i32, boolean) {
   while (i < s.len()) {
     let c = s[i];
     if (c == b'.' && i + 1 < s.len() && is_alnum(s[i + 1] as i32)) {
-      dots += 1;
+      dotted = true;
     } else if (!email_domain_char(c, xmpp)) {
       break;
     }
     i += 1;
   }
-  return (i, dots > 0 && is_letter(s[i - 1] as i32));
+  return (i, dotted);
+}
+
+function email_start(s: u8[], mark: i32, floor: i32): (i32, boolean, boolean) {
+  let xmpp = false;
+  let explicit = false;
+  let start = email_local(s, mark, floor);
+  while (start > floor && s[start - 1] == b':') {
+    if (email_protocol(s, start, floor, "xmpp:")) {
+      xmpp = true;
+    } else if (!email_protocol(s, start, floor, "mailto:")) {
+      break;
+    }
+    explicit = true;
+    start = email_local(s, start - 1, floor);
+  }
+  return (start, explicit, xmpp);
+}
+
+// cmark-gfm retries at a second @ in the domain, carrying the dots and
+// explicit protocol seen while scanning the candidate.
+function email_candidate(s: u8[], floor: i32, mark: i32): (i32, i32, boolean) {
+  let dotted = false;
+  let xmpp = false;
+  let automatic = true;
+  while (true) {
+    let (start, explicit, resource) = email_start(s, mark, floor);
+    automatic = automatic && !explicit;
+    xmpp = xmpp || resource;
+    if (start == mark) {
+      return (-1, mark + 1, true);
+    }
+    let (end, dot) = email_domain(s, mark + 1, xmpp, dotted);
+    if (end == s.len() || s[end] != b'@') {
+      if (dot && is_letter(s[end - 1] as i32)) {
+        return (start, end, automatic);
+      }
+      return (-1, end, true);
+    }
+    floor = mark + 1;
+    mark = end;
+    dotted = dot;
+  }
+  return (-1, s.len(), true);
 }
 
 function email_text(out: usize, s: u8[], depth: i32, t: Tables): void {
@@ -2096,38 +2138,20 @@ function email_text(out: usize, s: u8[], depth: i32, t: Tables): void {
     if (mark < 0) {
       break;
     }
-    let floor = i;
-    let local = email_local(s, mark, floor);
-    i = mark + 1;
-    if (local == mark) {
-      continue;
-    }
-    let xmpp = email_protocol(s, local, floor, "xmpp:");
-    let mailto = email_protocol(s, local, floor, "mailto:");
-    let (end, valid) = email_domain(s, i, xmpp);
-    if (end < s.len() && s[end] == b'@') {
-      continue;
-    }
+    let (start, end, automatic) = email_candidate(s, i, mark);
     i = end;
-    if (!valid) {
-      continue;
+    if (start >= 0) {
+      emit_email(out, s, from, start, end, automatic, t);
+      from = end;
     }
-    emit_email(out, s, from, local, end, xmpp, mailto, t);
-    from = end;
   }
   escape(out, s, from, s.len(), t);
 }
 
-function emit_email(out: usize, s: u8[], from: i32, local: i32, end: i32, xmpp: boolean, mailto: boolean, t: Tables): void {
-  let start = local;
-  if (xmpp) {
-    start -= 5;
-  } else if (mailto) {
-    start -= 7;
-  }
+function emit_email(out: usize, s: u8[], from: i32, start: i32, end: i32, automatic: boolean, t: Tables): void {
   escape(out, s, from, start, t);
   buf_push(out, "<a href=\"");
-  if (start == local) {
+  if (automatic) {
     buf_push(out, "mailto:");
   }
   buf_push_bytes_expanded(out, s[start:end], t.href);

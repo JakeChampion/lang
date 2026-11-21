@@ -556,6 +556,7 @@ function test_url_autolinks(): test.TestOutcome {
 function test_email_autolinks(): test.TestOutcome {
   let o = markdown.Options { ...markdown.options(), autolink: true };
   return checks_with(o, [
+    ("a@b.c@d xmpp:a@b.c@d/e mailto:a@b.c@d a@b.c@@d a@b@x\n", "<p>a@<a href=\"mailto:b.c@d\">b.c@d</a> xmpp:a@<a href=\"b.c@d/e\">b.c@d/e</a> mailto:a@<a href=\"b.c@d\">b.c@d</a> a@b.c@@d a@b@x</p>\n"),
     ("Say _abc__@fern.dev\n", "<p>Say <em>abc</em><a href=\"mailto:_@fern.dev\">_@fern.dev</a></p>\n"),
     ("a_b+tag@example.org, and xmpp:u@d.co/message.\n", "<p><a href=\"mailto:a_b+tag@example.org\">a_b+tag@example.org</a>, and <a href=\"xmpp:u@d.co/message\">xmpp:u@d.co/message</a>.</p>\n"),
     ("[a@b.co](https://example.org) `n@b.co` *m@d.net*\n", "<p><a href=\"https://example.org\">a@b.co</a> <code>n@b.co</code> <em><a href=\"mailto:m@d.net\">m@d.net</a></em></p>\n"),
