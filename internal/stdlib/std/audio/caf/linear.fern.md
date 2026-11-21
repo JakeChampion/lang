@@ -22,6 +22,7 @@ The caller must preserve the input bytes after inspection.
 import "std/audio/caf/chunks";
 import "std/audio/linear" as samples;
 import "std/audio/pcm";
+import "std/u64";
 import "std/audio/wire";
 import "std/f64";
 
@@ -128,21 +129,21 @@ pub function inspect(input: [u8], limits: Limits): Result[samples.Index, pcm.Aud
 // Validate channel counts and record extents. Linear PCM retains stored order,
 // so the index does not need to retain speaker labels or coordinates.
 pub function check_layout(prefix: [u8], bytes: i32, channels: i32): Result[void, pcm.AudioError] {
-  if (prefix.len() < 12 || bytes < 12) { return Err(pcm.Header); }
+  if (prefix.len() < 12 || bytes < 12) {
+    return Err(pcm.Header);
+  }
   let tag = wire.be(prefix, 0, 4);
   let bitmap = wire.be(prefix, 4, 4);
   let descriptions = wire.be(prefix, 8, 4);
-  if (12u64 + descriptions * 20u64 != bytes as u64) { return Err(pcm.Header); }
-  if (tag == 0u64) {
-    if (bitmap != 0u64 || descriptions != channels as u64) { return Err(pcm.Header); }
-  } else if (tag == 65536u64) {
-    let count = 0;
-    for i in 0..32 { count += ((bitmap >> i as u64) & 1u64) as i32; }
-    if (descriptions != 0u64 || count != channels) { return Err(pcm.Header); }
-  } else if (bitmap != 0u64 || descriptions != 0u64 || (tag & 65535u64) != channels as u64) {
+  if (12u64 + descriptions * 20u64 != bytes as u64) {
     return Err(pcm.Header);
   }
-  return Ok(());
+  let valid = match (tag) {
+    0u64 => bitmap == 0u64 && descriptions == channels as u64,
+    65536u64 => descriptions == 0u64 && bitmap.count_ones() == channels,
+    _ => bitmap == 0u64 && descriptions == 0u64 && (tag & 65535u64) == channels as u64,
+  };
+  return if (valid) { Ok(()) } else { Err(pcm.Header) };
 }
 
 // An absent packet table is represented by an empty view.

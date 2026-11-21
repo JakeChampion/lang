@@ -192,13 +192,18 @@ function read_table(own builder: Builder, end: i64, seek: (i64) => Result[i64, I
   return Ok((Builder { ...builder, table_window: Some(next) }, BuildPending));
 }
 
-function packet_window(own builder: Builder, bytes: i32, nominal: i32, row: i64, end: i64, maximum: i32): Result[(Builder, BuildEvent), source.ReadError] {
-  if (bytes < 1 || bytes as i64 > end - builder.progress.at || nominal < 1 || nominal > maximum) {
+function check_packet_size(bytes: i32, available: i64, nominal: i32, maximum: i32, limits: Limits): Result[void, source.ReadError] {
+  if (bytes < 1 || bytes as i64 > available || nominal < 1 || nominal > maximum) {
     return Err(audio(pcm.Header));
   }
-  if (bytes > builder.limits.input.max_buffer_bytes || bytes > builder.limits.container.audio.max_input_bytes) {
+  if (bytes > limits.input.max_buffer_bytes || bytes > limits.container.audio.max_input_bytes) {
     return Err(audio(pcm.Limit));
   }
+  return Ok(());
+}
+
+function packet_window(own builder: Builder, bytes: i32, nominal: i32, row: i64, end: i64, maximum: i32): Result[(Builder, BuildEvent), source.ReadError] {
+  check_packet_size(bytes, end - builder.progress.at, nominal, maximum, builder.limits)?;
   let progress = Progress { ...builder.progress, row: row, bytes: bytes, nominal: nominal };
   if let Some(current) = builder.window {
     let local = progress.at - current.offset;
@@ -209,9 +214,15 @@ function packet_window(own builder: Builder, bytes: i32, nominal: i32, row: i64,
   // Adjacent packets share a bounded source read. Inspect each packet using
   // its own declared extent, even when the following packet is in the window.
   let ahead = builder.limits.input.chunk_size;
-  if (ahead > builder.limits.input.max_buffer_bytes) { ahead = builder.limits.input.max_buffer_bytes; }
-  if (ahead < bytes) { ahead = bytes; }
-  if (ahead as i64 > end - progress.at) { ahead = (end - progress.at) as i32; }
+  if (ahead > builder.limits.input.max_buffer_bytes) {
+    ahead = builder.limits.input.max_buffer_bytes;
+  }
+  if (ahead < bytes) {
+    ahead = bytes;
+  }
+  if (ahead as i64 > end - progress.at) {
+    ahead = (end - progress.at) as i32;
+  }
   let current = window.create(progress.at, ahead, builder.limits.input)?;
   return Ok((Builder { ...builder, window: Some(current), progress: progress, phase: 7 }, BuildPending));
 }

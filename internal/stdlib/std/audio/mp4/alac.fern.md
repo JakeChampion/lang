@@ -202,12 +202,18 @@ function render(input: [u8], track: Track, plan: presentation.Plan, limits: pcm.
       return Err(pcm.Header);
     }
   }
+  check_duration(track, decoded)?;
+  return Ok(output);
+}
+
+function check_duration(track: Track, decoded: i64): Result[void, pcm.AudioError] {
+  let info = track.configuration.info;
   let last = track.source.packets[track.source.packets.len() - 1];
   let declared = time.nearest(last.position + last.duration as i64, info.format.sample_rate as u32, track.source.clock.scale)?;
   if (declared > decoded || decoded - declared >= info.frame_length as i64) {
     return Err(pcm.Header);
   }
-  return Ok(output);
+  return Ok(());
 }
 
 function check_limits(track: container.Track, tracks: i32, limits: container.Limits): Result[void, pcm.AudioError] {
@@ -292,7 +298,31 @@ pub function (own value: Stream) decode_bytes_into(bytes: [u8], own output: i32[
 // The physical start of each packet comes from its ALAC frame count.
 // Rounded container timestamps can differ by one sample at packet boundaries.
 pub opaque struct SeekIndex {
-  stream: Stream, plan: presentation.Plan, starts: i64[], file_bytes: i32, scratch: i32[],
+  stream: Stream,
+  plan: presentation.Plan,
+  starts: i64[],
+  file_bytes: i32,
+  scratch: i32[],
+}
+
+function packet_starts(input: [u8], stream: Stream, track: Track, limits: pcm.Limits): Result[i64[], pcm.AudioError] {
+  let info = track.configuration.info;
+  let starts: i64[] = [0i64];
+  let total = 0i64;
+  for n in 0..track.source.packets.len() {
+    let packet = stream.packet(n)?;
+    if (packet.offset > input.len() as i64 - packet.bytes as i64) {
+      return Err(pcm.Header);
+    }
+    let position = time.nearest(packet.position, info.format.sample_rate as u32, track.source.clock.scale)?;
+    if (position < total - 1i64 || position > total + 1i64) {
+      return Err(pcm.Unsupported);
+    }
+    let at = packet.offset as i32;
+    total += stream.decoder.packet_frames(input[at:at + packet.bytes], limits)? as i64;
+    starts = starts.append(total);
+  }
+  return Ok(starts);
 }
 
 pub function seek_index(input: [u8], index: Index, track_number: i32, limits: container.Limits): Result[SeekIndex, pcm.AudioError] {
@@ -304,21 +334,10 @@ pub function seek_index(input: [u8], index: Index, track_number: i32, limits: co
   check_limits(track.source, index.tracks.len(), limits)?;
   let stream = index.stream(track_number, limits.audio)?;
   let info = track.configuration.info;
-  let starts: i64[] = [0i64];
-  let total = 0i64;
-  for n in 0..track.source.packets.len() {
-    let packet = stream.packet(n)?;
-    if (packet.offset > index.bytes - packet.bytes as i64) { return Err(pcm.Header); }
-    let position = time.nearest(packet.position, info.format.sample_rate as u32, track.source.clock.scale)?;
-    if (position < total - 1i64 || position > total + 1i64) { return Err(pcm.Unsupported); }
-    let at = packet.offset as i32;
-    total += stream.decoder.packet_frames(input[at:at + packet.bytes], limits.audio)? as i64;
-    starts = starts.append(total);
-  }
+  let starts = packet_starts(input, stream, track, limits.audio)?;
+  let total = starts[starts.len() - 1];
   let plan = presentation.create(track.source.packets, track.source.edits, track.source.clock, index.movie, info.format.sample_rate, info.format.channels, total, limits.audio)?;
-  let last = track.source.packets[track.source.packets.len() - 1];
-  let declared = time.nearest(last.position + last.duration as i64, info.format.sample_rate as u32, track.source.clock.scale)?;
-  if (declared > total || total - declared >= info.frame_length as i64) { return Err(pcm.Header); }
+  check_duration(track, total)?;
   let scratch = pcm.zeros(pcm.sample_count(info.frame_length, info.format.channels, limits.audio)?);
   return Ok(SeekIndex { stream: stream, plan: plan, starts: starts, file_bytes: input.len(), scratch: scratch });
 }
@@ -332,13 +351,19 @@ function containing(starts: [i64], frame: i64): i32 {
   let hi = starts.len() - 1;
   while (hi - lo > 1) {
     let mid = lo + (hi - lo) / 2;
-    if (starts[mid] <= frame) { lo = mid; } else { hi = mid; }
+    if (starts[mid] <= frame) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
   }
   return lo;
 }
 
 // Read a range in edited presentation time. Samples after the output prefix
 // are preserved, including for an empty read at the end of the presentation.
+// The span and packet loops thread ownership of one decoder and both reusable buffers.
+// fern-lint: allow cyclomatic-complexity
 pub function (own index: SeekIndex) read_into(input: [u8], position: i32, frames: i32, own output: i32[], limits: pcm.Limits): Result[(SeekIndex, i32[]), pcm.AudioError] {
   if (input.len() != index.file_bytes || position < 0 || position > index.plan.frames || frames < 0 || frames > index.plan.frames - position) {
     return Err(pcm.Header);
@@ -347,13 +372,19 @@ pub function (own index: SeekIndex) read_into(input: [u8], position: i32, frames
   let SeekIndex { stream, plan, starts, file_bytes, scratch } = index;
   let channels = stream.information().format.channels;
   let count = pcm.sample_count(frames, channels, limits)?;
-  if (count > output.len()) { return Err(pcm.Buffer); }
-  for i in 0..count { output = output.with(i, 0); }
+  if (count > output.len()) {
+    return Err(pcm.Buffer);
+  }
+  for i in 0..count {
+    output = output.with(i, 0);
+  }
   for span in plan.spans {
     let span_position = span.output / channels;
     let first = position.max(span_position);
     let end = (position + frames).min(span_position + (span.end - span.start) as i32);
-    if (end <= first) { continue; }
+    if (end <= first) {
+      continue;
+    }
     let at = span.start + (first - span_position) as i64;
     let n = containing(starts, at);
     let written = first - position;
@@ -362,7 +393,9 @@ pub function (own index: SeekIndex) read_into(input: [u8], position: i32, frames
       let packet = stream.packet(n)?;
       let offset = packet.offset as i32;
       let (next, block) = stream.decode_bytes_into(input[offset:offset + packet.bytes], scratch, limits)?;
-      if (block.frames as i64 != starts[n + 1] - starts[n]) { return Err(pcm.Header); }
+      if (block.frames as i64 != starts[n + 1] - starts[n]) {
+        return Err(pcm.Header);
+      }
       stream = next;
       scratch = block.samples;
       let skip = (at - starts[n]) as i32;

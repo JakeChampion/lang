@@ -84,6 +84,19 @@ pub function inspect_alac(reader: Reader, limits: Limits): Result[alac.Index, so
   return inspect_alac_with(bytes, (offset: i64): Result[i64, IoError] => reader.seek(offset, 0), (count: i32): Result[u8[], IoError] => reader.read_chunk_bytes(count), Limits { ...limits, max_operations: limits.max_operations - 1 });
 }
 
+function packet_window(reader: Reader, offset: i64, bytes: i32, limits: Limits): Result[packet_file.Window, source.ReadError] {
+  let window = packet_file.create(offset, bytes, limits.input)?;
+  let remaining = limits.max_operations;
+  while (!window.ready) {
+    if (remaining <= 0) {
+      return Err(source.ReadAudio(pcm.Limit));
+    }
+    remaining -= 1;
+    window = window.step(reader)?;
+  }
+  return Ok(window);
+}
+
 // Read a single ALAC packet by its indexed ordinal. The source remains
 // borrowed and presentation edits do not change the packet numbering.
 pub function read_alac_packet_into(reader: Reader, own stream: alac.Stream, number: i32, own output: i32[], limits: Limits): Result[(alac.Stream, codec.Frame), source.ReadError] {
@@ -91,13 +104,7 @@ pub function read_alac_packet_into(reader: Reader, own stream: alac.Stream, numb
   if (packet.bytes > limits.index.audio.max_input_bytes || limits.index.audio.max_samples < 0 || limits.max_file_bytes < packet.bytes as i64 || packet.offset > limits.max_file_bytes - packet.bytes as i64) {
     return Err(source.ReadAudio(pcm.Limit));
   }
-  let window = packet_file.create(packet.offset, packet.bytes, limits.input)?;
-  let remaining = limits.max_operations;
-  while (!window.ready) {
-    if (remaining <= 0) { return Err(source.ReadAudio(pcm.Limit)); }
-    remaining -= 1;
-    window = window.step(reader)?;
-  }
+  let window = packet_window(reader, packet.offset, packet.bytes, limits)?;
   return match (stream.decode_bytes_into(window.view(), output, limits.index.audio)) { Ok(decoded) => Ok(decoded), Err(e) => Err(source.ReadAudio(e)) };
 }
 ```

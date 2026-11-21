@@ -50,11 +50,7 @@ pub function inspect_au(reader: Reader, limits: pcm.Limits): Result[linear.Index
   return match (au.inspect_header(header, size, limits)) { Ok(index) => Ok(index), Err(e) => Err(source.ReadAudio(e)) };
 }
 
-function caf_index(reader: Reader, size: i32, chunks: source_chunks.File, limits: pcm.Limits): Result[linear.Index, source.ReadError] {
-  if (chunks.description.end - chunks.description.start != 32i64) {
-    return Err(source.ReadAudio(pcm.Header));
-  }
-  let desc = bytes_at(reader, chunks.description.start, 32)?;
+function caf_table(reader: Reader, chunks: source_chunks.File): Result[u8[], source.ReadError] {
   let table: u8[] = [];
   if let Some(chunk) = chunks.packets {
     if (chunk.end - chunk.start != 24i64) {
@@ -62,6 +58,29 @@ function caf_index(reader: Reader, size: i32, chunks: source_chunks.File, limits
     }
     table = bytes_at(reader, chunk.start, 24)?;
   }
+  return Ok(table);
+}
+
+function check_caf_channels(reader: Reader, chunks: source_chunks.File, channels: i32): Result[void, source.ReadError] {
+  if let Some(chunk) = chunks.channels {
+    let bytes = (chunk.end - chunk.start) as i32;
+    if (bytes < 12) {
+      return Err(source.ReadAudio(pcm.Header));
+    }
+    let prefix = bytes_at(reader, chunk.start, 12)?;
+    if let Err(e) = caf_linear.check_layout(prefix, bytes, channels) {
+      return Err(source.ReadAudio(e));
+    }
+  }
+  return Ok(());
+}
+
+function caf_index(reader: Reader, size: i32, chunks: source_chunks.File, limits: pcm.Limits): Result[linear.Index, source.ReadError] {
+  if (chunks.description.end - chunks.description.start != 32i64) {
+    return Err(source.ReadAudio(pcm.Header));
+  }
+  let desc = bytes_at(reader, chunks.description.start, 32)?;
+  let table = caf_table(reader, chunks)?;
   let edit = bytes_at(reader, chunks.data.start, 4)?;
   if (wire.be(edit, 0, 4) != 0u64) {
     return Err(source.ReadAudio(pcm.Unsupported));
@@ -71,14 +90,7 @@ function caf_index(reader: Reader, size: i32, chunks: source_chunks.File, limits
     Ok(value) => value,
     Err(e) => { return Err(source.ReadAudio(e)); },
   };
-  if let Some(chunk) = chunks.channels {
-    let bytes = (chunk.end - chunk.start) as i32;
-    if (bytes < 12) { return Err(source.ReadAudio(pcm.Header)); }
-    let prefix = bytes_at(reader, chunk.start, 12)?;
-    if let Err(e) = caf_linear.check_layout(prefix, bytes, index.information().format.channels) {
-      return Err(source.ReadAudio(e));
-    }
-  }
+  check_caf_channels(reader, chunks, index.information().format.channels)?;
   return Ok(index);
 }
 
@@ -116,9 +128,7 @@ function chunk_at(reader: Reader, at: i32, end: i32, little: boolean): Result[Ch
   return Ok(Chunk { header: header, data: data, size: size, next: data + size + size % 2 });
 }
 
-function form(reader: Reader, size: i32, little: boolean): Result[boolean, source.ReadError] {
-  let header = bytes_at(reader, 0i64, 12)?;
-  let compressed = wire.tag(header, 8, "AIFC");
+function check_form(header: [u8], little: boolean, compressed: boolean): Result[void, source.ReadError] {
   if (little) {
     if (wire.tag(header, 0, "RF64") || wire.tag(header, 0, "RIFX")) {
       return Err(source.ReadAudio(pcm.Unsupported));
@@ -134,11 +144,36 @@ function form(reader: Reader, size: i32, little: boolean): Result[boolean, sourc
       return Err(source.ReadAudio(pcm.Unsupported));
     }
   }
+  return Ok(());
+}
+
+function form(reader: Reader, size: i32, little: boolean): Result[boolean, source.ReadError] {
+  let header = bytes_at(reader, 0i64, 12)?;
+  let compressed = wire.tag(header, 8, "AIFC");
+  check_form(header, little, compressed)?;
   let declared = 8u64 + (if (little) { wire.le(header, 4, 4) } else { wire.be(header, 4, 4) });
   if (declared != size as u64) {
     return Err(source.ReadAudio(if (declared > size as u64) { pcm.Truncated } else { pcm.Header }));
   }
   return Ok(compressed);
+}
+
+function wav_format(reader: Reader, chunk: Chunk, previous: Option[linear.Format]): Result[linear.Format, source.ReadError] {
+  if let Some(_) = previous {
+    return Err(source.ReadAudio(pcm.Header));
+  }
+  let head = bytes_at(reader, chunk.data as i64, if (chunk.size > 40) { 40 } else { chunk.size })?;
+  return match (wav.format_prefix(head, chunk.size)) { Ok(f) => Ok(f), Err(e) => Err(source.ReadAudio(e)) };
+}
+
+function wav_data(size: i32, chunk: Chunk, format: Option[linear.Format], index: Option[linear.Index], limits: pcm.Limits): Result[linear.Index, source.ReadError] {
+  if let Some(_) = index {
+    return Err(source.ReadAudio(pcm.Header));
+  }
+  let Some(f) = format else {
+    return Err(source.ReadAudio(pcm.Header));
+  };
+  return match (linear.create_extent(size, chunk.data, chunk.size, f, limits)) { Ok(i) => Ok(i), Err(e) => Err(source.ReadAudio(e)) };
 }
 
 pub function inspect_wav(reader: Reader, limits: pcm.Limits): Result[linear.Index, source.ReadError] {
@@ -150,19 +185,9 @@ pub function inspect_wav(reader: Reader, limits: pcm.Limits): Result[linear.Inde
   while (at < size) {
     let chunk = chunk_at(reader, at, size, true)?;
     if (wire.tag(chunk.header, 0, "fmt ")) {
-      if let Some(_) = format {
-        return Err(source.ReadAudio(pcm.Header));
-      }
-      let head = bytes_at(reader, chunk.data as i64, if (chunk.size > 40) { 40 } else { chunk.size })?;
-      format = Some(match (wav.format_prefix(head, chunk.size)) { Ok(f) => f, Err(e) => { return Err(source.ReadAudio(e)); } });
+      format = Some(wav_format(reader, chunk, format)?);
     } else if (wire.tag(chunk.header, 0, "data")) {
-      if let Some(_) = index {
-        return Err(source.ReadAudio(pcm.Header));
-      }
-      let Some(f) = format else {
-        return Err(source.ReadAudio(pcm.Header));
-      };
-      index = Some(match (linear.create_extent(size, chunk.data, chunk.size, f, limits)) { Ok(i) => i, Err(e) => { return Err(source.ReadAudio(e)); } });
+      index = Some(wav_data(size, chunk, format, index, limits)?);
     }
     at = chunk.next;
   }
@@ -184,6 +209,39 @@ function sound_range(reader: Reader, chunk: Chunk): Result[(i32, i32), source.Re
   return Ok((chunk.data + 8 + offset as i32, chunk.size - 8 - offset as i32));
 }
 
+function check_version(reader: Reader, chunk: Chunk, compressed: boolean, version: boolean): Result[void, source.ReadError] {
+  if (!compressed || version || chunk.size != 4) {
+    return Err(source.ReadAudio(pcm.Header));
+  }
+  let head = bytes_at(reader, chunk.data as i64, 4)?;
+  if (wire.be(head, 0, 4) != 2726318400u64) {
+    return Err(source.ReadAudio(pcm.Unsupported));
+  }
+  return Ok(());
+}
+
+function aiff_description(reader: Reader, chunk: Chunk, compressed: boolean, previous: Option[aiff.Common]): Result[aiff.Common, source.ReadError] {
+  if let Some(_) = previous {
+    return Err(source.ReadAudio(pcm.Header));
+  }
+  let head = bytes_at(reader, chunk.data as i64, if (chunk.size > 24) { 24 } else { chunk.size })?;
+  return match (aiff.common_prefix(head, chunk.size, compressed)) { Ok(v) => Ok(v), Err(e) => Err(source.ReadAudio(e)) };
+}
+
+function aiff_extent(size: i32, desc: Option[aiff.Common], offset: i32, bytes: i32, compressed: boolean, version: boolean, limits: pcm.Limits): Result[linear.Index, source.ReadError] {
+  let Some(d) = desc else {
+    return Err(source.ReadAudio(pcm.Header));
+  };
+  if (offset < 0 || compressed && !version) {
+    return Err(source.ReadAudio(pcm.Header));
+  }
+  let index = match (linear.create_extent(size, offset, bytes, d.format, limits)) { Ok(i) => i, Err(e) => { return Err(source.ReadAudio(e)); } };
+  if (index.information().frames != d.frames) {
+    return Err(source.ReadAudio(pcm.Header));
+  }
+  return Ok(index);
+}
+
 pub function inspect_aiff(reader: Reader, limits: aiff.Limits): Result[linear.Index, source.ReadError] {
   let size = file_size(reader, limits.audio)?;
   if (limits.max_chunks < 1) {
@@ -202,19 +260,9 @@ pub function inspect_aiff(reader: Reader, limits: aiff.Limits): Result[linear.In
     }
     let chunk = chunk_at(reader, at, size, false)?;
     if (wire.tag(chunk.header, 0, "COMM")) {
-      if let Some(_) = desc {
-        return Err(source.ReadAudio(pcm.Header));
-      }
-      let head = bytes_at(reader, chunk.data as i64, if (chunk.size > 24) { 24 } else { chunk.size })?;
-      desc = Some(match (aiff.common_prefix(head, chunk.size, compressed)) { Ok(v) => v, Err(e) => { return Err(source.ReadAudio(e)); } });
+      desc = Some(aiff_description(reader, chunk, compressed, desc)?);
     } else if (wire.tag(chunk.header, 0, "FVER")) {
-      if (!compressed || version || chunk.size != 4) {
-        return Err(source.ReadAudio(pcm.Header));
-      }
-      let head = bytes_at(reader, chunk.data as i64, 4)?;
-      if (wire.be(head, 0, 4) != 2726318400u64) {
-        return Err(source.ReadAudio(pcm.Unsupported));
-      }
+      check_version(reader, chunk, compressed, version)?;
       version = true;
     } else if (wire.tag(chunk.header, 0, "SSND")) {
       if (offset >= 0) {
@@ -227,17 +275,7 @@ pub function inspect_aiff(reader: Reader, limits: aiff.Limits): Result[linear.In
     at = chunk.next;
     seen += 1;
   }
-  let Some(d) = desc else {
-    return Err(source.ReadAudio(pcm.Header));
-  };
-  if (offset < 0 || compressed && !version) {
-    return Err(source.ReadAudio(pcm.Header));
-  }
-  let index = match (linear.create_extent(size, offset, bytes, d.format, limits.audio)) { Ok(i) => i, Err(e) => { return Err(source.ReadAudio(e)); } };
-  if (index.information().frames != d.frames) {
-    return Err(source.ReadAudio(pcm.Header));
-  }
-  return Ok(index);
+  return aiff_extent(size, desc, offset, bytes, compressed, version, limits.audio);
 }
 
 function frame_window(reader: Reader, index: linear.Index, start: i32, frames: i32, capacity: i32, limits: pcm.Limits): Result[(linear.Index, u8[]), source.ReadError] {
