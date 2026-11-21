@@ -327,6 +327,7 @@ pub struct El[M] {
   count: i32,
   row: f64,
   build: Option[(i32) => El[M]],
+  start_pinned: boolean,
   // A text field: its name and the text that it shows while it is empty.
   // `content` is its text.
   field: string,
@@ -347,7 +348,7 @@ pub struct El[M] {
 }
 
 function element[M](kind: i32, kids: El[M][]): El[M] {
-  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: None, long: None, barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, tint: None, tint_rtl: None, count: 0, row: 0.0, build: None, field: "", hint: "", edit: None, submit: None, slide: None, moves: None, swipes: None, square: false };
+  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: None, long: None, barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, tint: None, tint_rtl: None, count: 0, row: 0.0, build: None, start_pinned: false, field: "", hint: "", edit: None, submit: None, slide: None, moves: None, swipes: None, square: false };
 }
 
 // The elements one below the other.
@@ -409,6 +410,12 @@ pub function (e: El[M]) mirrored(paint: (i32) => (draw.Frame, i32, i32, i32, i32
 // show.
 pub function list[M](name: string, count: i32, row: f64, build: (i32) => El[M]): El[M] {
   return El { ...element(LIST, []), list: name, count: count, row: row, build: Some(build), w: Grow(1.0), h: Grow(1.0) };
+}
+
+// The list with content before and after a header that stays at the top.
+// A new list starts at the header when start_pinned is true.
+pub function (e: El[M]) sticky_header(before: El[M], header: El[M], after: El[M], start_pinned: boolean): El[M] {
+  return El { ...e, kids: [before, header, after], start_pinned: start_pinned };
 }
 ```
 
@@ -1048,7 +1055,8 @@ function content[M](env: Env, e: El[M], iw: i32, ih: i32): (i32, i32) {
     return (0, 0);
   }
   if (e.kind == LIST) {
-    return (0, e.count * px(env, e.row));
+    let (before, header, after) = header_heights(env, e, iw, ih);
+    return (0, before + header + after + e.count * px(env, e.row));
   }
   if (e.kind == FIELD) {
     return (0, e.lines.max(1) * text.line(env.fonts, text.face_for(env.fonts, e.weight), sp(env, e.size)));
@@ -1120,7 +1128,22 @@ The elements of a list get the name of the list as their group, and the rows of 
 // `count` rows of `row` pixels, and other lists have a `row` of 0.
 // `moves` and `swipes` are the indexes of the functions of `on_move` and
 // `on_swipe` in `Messages`, or -1.
-pub struct Scroller { name: string, x: i32, y: i32, w: i32, h: i32, limit: i32, across: boolean, parent: string, row: i32, count: i32, moves: i32, swipes: i32 }
+pub struct Scroller {
+  name: string, x: i32, y: i32, w: i32, h: i32, limit: i32, across: boolean, parent: string,
+  row: i32, count: i32, moves: i32, swipes: i32,
+  rows_y: i32, rows_clip: (i32, i32), initial: i32, pinned: boolean,
+}
+
+// The first row that shows and the index after the last row that shows.
+pub function (s: Scroller) visible_rows(): (i32, i32) {
+  let (top, bottom) = s.rows_clip;
+  if (s.row == 0 || bottom <= top) {
+    return (0, 0);
+  }
+  let first = ((top - s.rows_y) / s.row).max(0).min(s.count);
+  let last = ((bottom - s.rows_y + s.row - 1) / s.row).max(first).min(s.count);
+  return (first, last);
+}
 
 // The nodes of a screen, and its lists.
 pub struct Layout { nodes: scene.Node[], scrollers: Scroller[] }
@@ -1273,8 +1296,8 @@ function own_nodes[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: 
 
 // How far the list `name` scrolls: from 0 to `limit`, or as far as `room`
 // pixels past an end while a finger pulls it there.
-function offset_of(env: Env, name: string, limit: i32, room: i32): i32 {
-  return env.offsets.get(name).unwrap_or(0).max(-room).min(limit + room);
+function offset_of(env: Env, name: string, limit: i32, room: i32, initial: i32): i32 {
+  return env.offsets.get(name).unwrap_or(initial).max(-room).min(limit + room);
 }
 
 function place_text[M](env: Env, e: El[M], x: i32, y: i32, w: i32, clip: Clip, own out: Built[M]): Built[M] {
@@ -1513,27 +1536,60 @@ function place_field[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip
   return Built { nodes: nodes, scrollers: out.scrollers, taps: out.taps, fields: out.fields, slides: out.slides, moves: out.moves, swipes: out.swipes };
 }
 
+function header_heights[M](env: Env, e: El[M], w: i32, h: i32): (i32, i32, i32) {
+  if (e.kids.len() != 3) {
+    return (0, 0, 0);
+  }
+  let (_, before) = measure(env, e.kids[0], w, UNBOUNDED);
+  let (_, header) = measure(env, e.kids[1], w, h);
+  let (_, after) = measure(env, e.kids[2], w, UNBOUNDED);
+  return (before, header, after);
+}
+
+function place_list_item[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: Clip, own out: Built[M]): Built[M] {
+  if (h > 0 && y + h > clip.c0 && y < clip.c1) {
+    return place(env, e, x, y, w, h, clip, out);
+  }
+  return out;
+}
+
 // The rows of a list that show, each in its box.
 function place_rows[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: Clip, own out: Built[M]): Built[M] {
   let row = px(env, e.row).max(1);
-  let limit = (e.count * row - h).max(0);
-  let at = offset_of(env, e.list, limit, h);
+  let (before, header, after) = header_heights(env, e, w, h);
+  let limit = (before + header + after + e.count * row - h).max(before);
+  let initial = if (e.start_pinned) { before } else { 0 };
+  let at = offset_of(env, e.list, limit, h, initial);
   let inner = Clip { ...clip, group: e.list, c0: clip.c0.max(y), c1: clip.c1.min(y + h) };
+  let header_y = (y + before - at).max(y);
+  let body = if (header > 0) { Clip { ...inner, c0: inner.c0.max(header_y + header) } } else { inner };
+  let rows_y = y + before + header + after - at;
   let moves = index_of_some(out.moves.len(), e.moves.is_some());
   let swipes = index_of_some(out.swipes.len(), e.swipes.is_some());
-  let lists = out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group, row: row, count: e.count, moves: moves, swipes: swipes });
-  let o = Built { nodes: out.nodes, scrollers: lists, taps: out.taps, fields: out.fields, slides: out.slides, moves: with_some(out.moves, e.moves), swipes: with_some(out.swipes, e.swipes) };
+  let list = Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group, row: row, count: e.count, moves: moves, swipes: swipes, rows_y: rows_y, rows_clip: (body.c0, body.c1), initial: initial, pinned: header > 0 && at >= before };
+  let o = Built { nodes: out.nodes, scrollers: out.scrollers.append(list), taps: out.taps, fields: out.fields, slides: out.slides, moves: with_some(out.moves, e.moves), swipes: with_some(out.swipes, e.swipes) };
+  if (e.kids.len() == 3) {
+    let zone = clipped(scene.node(x, y, w, h, scene.Blank), inner);
+    o = Built { ...o, nodes: o.nodes.append(zone) };
+    o = place_list_item(env, e.kids[0], x, y - at, w, before, inner, o);
+    o = place_list_item(env, e.kids[1], x, header_y, w, header, inner, o);
+    o = place_list_item(env, e.kids[2], x, rows_y - after, w, after, body, o);
+  }
+  return place_virtual_rows(env, e, list, body, o);
+}
+
+function place_virtual_rows[M](env: Env, e: El[M], list: Scroller, clip: Clip, own out: Built[M]): Built[M] {
   let Some(build) = e.build else {
-    return o;
+    return out;
   };
-  let first = (at / row).max(0).min(e.count);
-  let last = ((at + h + row - 1) / row).max(first).min(e.count);
+  let (first, last) = list.visible_rows();
   let g = env.grab;
   if (g.list == e.list && g.row >= 0 && g.row < e.count) {
-    return held_rows(env, build, g, e.count, x, y - at, w, row, (first, last), inner, o);
+    return held_rows(env, build, g, e.count, list.x, list.rows_y, list.w, list.row, (first, last), clip, out);
   }
+  let o = out;
   for i in first..last {
-    o = place(env, build(i), x, y + i * row - at, w, row, inner, o);
+    o = place(env, build(i), list.x, list.rows_y + i * list.row, list.w, list.row, clip, o);
   }
   return o;
 }
@@ -1655,7 +1711,7 @@ function place_row[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: 
   if (scrolls) {
     let limit = (total - w).max(0);
     let inner = Clip { ...clip, group: e.list, left: clip.left.max(x), right: clip.right.min(x + w) };
-    return place_along(env, e, ss, x - offset_of(env, e.list, limit, w), y, h, gap, inner, Built { ...out, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: true, parent: clip.group, row: 0, count: 0, moves: -1, swipes: -1 }) });
+    return place_along(env, e, ss, x - offset_of(env, e.list, limit, w, 0), y, h, gap, inner, Built { ...out, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: true, parent: clip.group, row: 0, count: 0, moves: -1, swipes: -1, rows_y: 0, rows_clip: (0, 0), initial: 0, pinned: false }) });
   }
   if (e.justify == BETWEEN && n > 1) {
     return place_along(env, e, ss, x, y, h, gap + (w - total).max(0) / (n - 1), clip, out);
@@ -1700,7 +1756,7 @@ function place_column[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, cli
   if (scrolls) {
     let limit = (total - h).max(0);
     let inner = Clip { ...clip, group: e.list, c0: clip.c0.max(y), c1: clip.c1.min(y + h) };
-    return place_down(env, e, ss, x, y - offset_of(env, e.list, limit, h), w, gap, inner, Built { ...out, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group, row: 0, count: 0, moves: -1, swipes: -1 }) });
+    return place_down(env, e, ss, x, y - offset_of(env, e.list, limit, h, 0), w, gap, inner, Built { ...out, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group, row: 0, count: 0, moves: -1, swipes: -1, rows_y: 0, rows_clip: (0, 0), initial: 0, pinned: false }) });
   }
   if (e.justify == BETWEEN && n > 1) {
     return place_down(env, e, ss, x, y, w, gap + (h - total).max(0) / (n - 1), clip, out);
@@ -1906,12 +1962,13 @@ function pulled(at: i32, limit: i32): i32 {
 
 // The row at `y` of the list `name` of `lay` when the list moves or swipes
 // its rows, or -1.
-function row_at(inp: Input, lay: Layout, name: string, y: i32): i32 {
+function row_at(lay: Layout, name: string, y: i32): i32 {
   let Some(s) = scroller_of(lay, name) else {
     return -1;
   };
-  let at = y - s.y + inp.offset(name);
-  if (s.row <= 0 || s.moves < 0 && s.swipes < 0 || at < 0) {
+  let at = y - s.rows_y;
+  let (top, bottom) = s.rows_clip;
+  if (s.row <= 0 || s.moves < 0 && s.swipes < 0 || at < 0 || y < top || y >= bottom) {
     return -1;
   }
   let row = at / s.row;
@@ -1939,7 +1996,7 @@ function swipes_rows(lay: Layout, name: string): boolean {
 
 function down(inp: Input, lay: Layout, x: i32, y: i32, now: i64): Input {
   let inner = scene.group_at(lay.nodes, x, y);
-  let row = row_at(inp, lay, inner, y);
+  let row = row_at(lay, inner, y);
   let press = Press { ...no_press(), active: true, x0: x, y0: y, x: x, y: y, at: now, target: scene.hit(lay.nodes, x, y), inner: inner, row: row, lifts: row >= 0 && moves_rows(lay, inner) };
   return Input { ...inp, press: press, flung: "", fling: motion.no_fling(), sprung: "", spring: no_spring(), grab: no_grab() };
 }
@@ -2704,6 +2761,16 @@ function advanced(h: Host, ns: i64): Host {
   return Host { ...h, input: advance(h.input, h.lay, ns) };
 }
 
+function initial_scrolls(input: Input, lay: Layout): Input {
+  let out = input;
+  for list in lay.scrollers {
+    if (list.initial > 0 && !out.offsets.contains(list.name)) {
+      out = scrolled(out, list.name, list.initial);
+    }
+  }
+  return out;
+}
+
 // Draws the layout `lay` on the screen `screen`, with the nodes `over` on
 // top of it. `cost` has the costs of the frame before the painter.
 function painted(own h: Host, lay: Layout, over: scene.Node[], screen: Screen, animating: boolean, cost: Cost): Host {
@@ -2768,6 +2835,7 @@ function drawn[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M]
     over = meter(host.fonts, screen, host.cost);
   }
   let lay = built.layout();
+  host = Host { ...host, input: initial_scrolls(host.input, lay) };
   let msg: Option[M] = None;
   if let Some(visible) = p.visible {
     msg = visible(s.app, screen, lay, host.input);

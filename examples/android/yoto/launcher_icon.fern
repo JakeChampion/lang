@@ -1,0 +1,35 @@
+import "std/android/draw";
+import "std/android/ui";
+
+pub const SIZE: i32 = 192;
+
+pub function theme(dark: boolean): ui.Theme {
+  return ui.seeded(draw.rgb(90, 87, 165), dark);
+}
+
+pub function render(f: draw.Frame): void {
+  let colors = theme(true);
+  let edge = draw.rgb(62, 57, 105);
+  let shadow = draw.rgb(13, 12, 26);
+  let violet = draw.rgb(116, 106, 202);
+  let mint = draw.rgb(165, 237, 209);
+  f.store(0, 0, SIZE, SIZE, 0);
+  f.round_rect(6, 6, 180, 180, 46, edge);
+  f.round_rect(9, 9, 174, 174, 43, colors.surface);
+
+  f.round_rect(46, 57, 94, 104, 20, shadow);
+  f.round_rect(49, 56, 92, 99, 18, violet);
+  f.round_rect(57, 49, 92, 99, 18, colors.on_primary);
+  f.round_rect(62, 45, 87, 96, 17, colors.primary);
+
+  f.round_rect(84, 82, 10, 14, 5, colors.on_primary);
+  f.round_rect(118, 82, 10, 14, 5, colors.on_primary);
+  f.disc(106, 101, 11, colors.on_primary);
+  f.fill(94, 89, 24, 12, colors.primary);
+  f.round_rect(75, 103, 12, 5, 2, violet);
+  f.round_rect(125, 103, 12, 5, 2, violet);
+
+  f.fill(147, 29, 8, 24, mint);
+  f.fill(139, 37, 24, 8, mint);
+  f.fill(34, 94, 7, 7, mint);
+}
