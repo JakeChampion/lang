@@ -5130,6 +5130,29 @@ pub function derive_magic_s32(d: i64): MagicS32 {
   return MagicS32 { m: c, s: s };
 }
 
+// The divisor has already been extended to the width of the target operation.
+// A signed minimum cannot be negated at that width.
+pub enum ConstDivPlan { DivIdentity, DivZero, DivNegate, DivShift(i32), DivHardware, DivReciprocal }
+
+pub function const_div_plan(d: i64, bits: i32, uns: boolean, remainder: boolean): ConstDivPlan {
+  if (d == 0i64) {
+    return if (remainder) { DivIdentity } else { DivZero };
+  }
+  if (d == 1i64) {
+    return if (remainder) { DivZero } else { DivIdentity };
+  }
+  if (!uns && d == -1i64) {
+    return if (remainder) { DivZero } else { DivNegate };
+  }
+  let minimum = if (bits == 32) { -2147483648i64 } else { -9223372036854775808i64 };
+  if (!uns && d == minimum) {
+    return DivHardware;
+  }
+  let magnitude = if (!uns && d < 0i64) { -d } else { d };
+  let shift = pow2_shift_i64(magnitude);
+  return if (shift >= 0) { DivShift(shift) } else { DivReciprocal };
+}
+
 pub function pow2_shift_i64(mag: i64): i32 {
   if (mag == 0i64 || (mag & mag - 1i64) != 0i64) {
     return -1;

@@ -6031,55 +6031,21 @@ function ir_div_const(tag: i32, width: i32, k: i64): string {
 
 function ir_div_const_body(w64: boolean, uns: boolean, is_rem: boolean, k: i64): string {
   let r = div_regs(w64);
-  let mag = k;
-  let neg = false;
-  if (uns) {
-    if (!w64) {
-      mag = (k as i32) as i64 & 4294967295i64;
-    }
-  } else {
-    let v = k;
-    if (!w64) {
-      v = (k as i32) as i64;
-    }
-    let min: i64 = -2147483648i64;
-    if (w64) {
-      min = -9223372036854775808i64;
-    }
-    if (v == min) {
-      return ir_div_const_generic(r, uns, is_rem, k);
-    }
-    if (v < 0i64) {
-      neg = true;
-      mag = 0i64 - v;
-    } else {
-      mag = v;
+  let d = k;
+  if (!w64) {
+    d = (k as i32) as i64;
+    if (uns) {
+      d &= 4294967295i64;
     }
   }
-  if (mag == 0i64) {
-    if (is_rem) {
-      return "";
-    }
-    return "    xorl %eax, %eax\n";
-  }
-  if (mag == 1i64) {
-    if (is_rem) {
-      return "    xorl %eax, %eax\n";
-    }
-    if (neg) {
-      return "    neg" + r.sfx + " " + r.a + "\n";
-    }
-    return "";
-  }
-  let sh = ir.pow2_shift_i64(mag);
-  let max_sh = r.bits - 2;
-  if (uns) {
-    max_sh = r.bits - 1;
-  }
-  if (sh >= 0 && sh <= max_sh) {
-    return ir_div_const_pow2(r, uns, is_rem, neg, sh);
-  }
-  return ir_div_const_magic(r, uns, is_rem, k);
+  return match (ir.const_div_plan(d, r.bits, uns, is_rem)) {
+    ir.DivIdentity => "",
+    ir.DivZero => "    xorl %eax, %eax\n",
+    ir.DivNegate => "    neg" + r.sfx + " " + r.a + "\n",
+    ir.DivShift(sh) => ir_div_const_pow2(r, uns, is_rem, !uns && d < 0i64, sh),
+    ir.DivHardware => ir_div_const_generic(r, uns, is_rem, k),
+    ir.DivReciprocal => ir_div_const_magic(r, uns, is_rem, k),
+  };
 }
 
 function ir_div_const_pow2(r: DivRegs, uns: boolean, is_rem: boolean, neg: boolean, sh: i32): string {
