@@ -45,8 +45,28 @@ function check(ok: boolean, what: string, failures: i32): i32 {
   return failures + 1;
 }
 
+function call_crossings(): boolean {
+  let ops = [
+    inst(ssa.CONST_INT, 0, [], ""),
+    inst(ssa.CALL, 1, [0], "cold"),
+    inst(ssa.BINARY, 2, [0, 1], "add"),
+    inst(ssa.CALL, 3, [2], "hard"),
+    inst(ssa.BINARY, 4, [2, 3], "add"),
+  ];
+  let b = ssa.SBlock { id: 0, insts: ops, term: ret(4), preds: [] };
+  let f = ssa.SFunc { name: "call_crossings", nparams: 0, nvals: 5, blocks: [b], entry: 0, takes_env: false };
+  let mask = ssa.hard_call_positions(f, [0, ssa.COLD_SLOW, 0, 0, 0, 0]);
+  let live = ssalive.lives(f, mask);
+  let unmarked = ssalive.lives(f, []);
+  return live.crossing == [false, false, true, false, false]
+    && live.crossing_all == [true, false, true, false, false]
+    && unmarked.crossing == [false, false, false, false, false]
+    && unmarked.crossing_all == live.crossing_all;
+}
+
 function main(): i32 {
   let failures = 0;
+  failures = check(call_crossings(), "the masks distinguish cold calls and exclude call results", failures);
   let f = two_loops();
   let live = ssalive.lives(f, ssa.hard_call_positions(f, []));
   let lens = live.lengths;
