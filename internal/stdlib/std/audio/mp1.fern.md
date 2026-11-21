@@ -30,6 +30,10 @@ const RATES: i32[] = [44100, 48000, 32000];
 
 const LOW_BITRATES: i32[] = [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256];
 
+function invalid_header(input: [u8], a: i32, version: i32, rate_index: i32, bitrate_index: i32): boolean {
+  return input[0] != 255u8 || a >> 5 != 7 || version == 1 || (a & 6) == 0 || rate_index == 3 || bitrate_index == 15 || (input[3] & 3u8) == 2u8;
+}
+
 function header(input: [u8]): Result[Header, pcm.AudioError] {
   if (input.len() < 4) {
     return Err(pcm.Truncated);
@@ -40,7 +44,7 @@ function header(input: [u8]): Result[Header, pcm.AudioError] {
   let version = a >> 3 & 3;
   let rate_index = b >> 2 & 3;
   let bitrate_index = b >> 4;
-  if (input[0] != 255u8 || a >> 5 != 7 || version == 1 || (a & 6) == 0 || rate_index == 3 || bitrate_index == 15 || (input[3] & 3u8) == 2u8) {
+  if (invalid_header(input, a, version, rate_index, bitrate_index)) {
     return Err(pcm.Header);
   }
   if (version == 0 || (a & 6) != 6 || bitrate_index == 0) {
@@ -116,7 +120,10 @@ function subbands(frame: [u8], h: Header): Result[f32[], pcm.AudioError] {
   if (b.bad || slot_bits * 12 > b.limit - b.pos) {
     return Err(pcm.Truncated);
   }
-  let pos = b.pos;
+  return Ok(decode_slots(data, h, widths, scales, b.pos));
+}
+
+function decode_slots(data: [u8], h: Header, widths: [u8], scales: [f32], pos: i32): f32[] {
   let samples = spectral.zeros(1152);
   for slot in 0..12 {
     for band in 0..32 {
@@ -135,7 +142,7 @@ function subbands(frame: [u8], h: Header): Result[f32[], pcm.AudioError] {
       }
     }
   }
-  return Ok(samples);
+  return samples;
 }
 
 function render(own state: Decoder, input: [u8], h: Header, own output: f32[]): (Decoder, Result[Frame, pcm.AudioError]) {
