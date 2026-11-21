@@ -28,3 +28,33 @@ cmp /tmp/fern.s16 /tmp/ffmpeg.s16
 ```
 
 The six CAF source suites cover independent PCM and seeks, malformed input, short reads, callback failures, sparse offsets and the one-operation step bound. They passed on x86-64 Linux, ARM64 Linux and Android targets under QEMU Linux user-mode, and WASI under Wasmtime. Native sanitizer runs passed for all six suites.
+
+## Stereo ALAC playback
+
+The reader rendered 409,600 stereo frames from an FFmpeg-encoded CAF. Every one of the 819,200 signed 16-bit samples matched both the input PCM and FFmpeg's decoded output. The two channels have different periods so a channel swap or a missing channel changes the result. Native Fern sanitizer playback matched the input and finished with zero live bytes. The previous mono fixture also matched FFmpeg after the renderer change.
+
+| Whole-file playback on x86-64 Linux | Median CPU (user + system) | Median elapsed | Median peak RSS | Allocation calls |
+| --- | ---: | ---: | ---: | ---: |
+| Fern CAF Reader | 15.89 ms | 17.18 ms | 364 KiB | 5,413 |
+| FFmpeg 7.1.5 | 70.40 ms | 74.06 ms | 33,408 KiB | 7,968 |
+
+Five measured trials followed a warm-up for each program on CPU 0 of an AMD EPYC 9V74. Trial order alternated. CPU and elapsed time include process startup, indexing, decoding, and writing the complete PCM file. Startup contributes to the cost of this short file. Peak RSS comes from Fern's Linux VmHWM and FFmpeg's benchmark report. Fern counted runtime allocations through completion of the render. A separate Memcheck invocation counted process-wide FFmpeg allocations including startup and shutdown. The counts cover different allocator layers. [Raw trials](stereo-playback.csv)
+
+To reproduce the input and compare output bytes with FFmpeg 7.1.5 and a local Fern compiler:
+
+```sh
+python3 - <<'PY'
+import struct
+with open('/tmp/stereo.s16', 'wb') as output:
+    for i in range(4096 * 100):
+        output.write(struct.pack('<hh', (i * 71) % 40001 - 20000, (i * 131) % 50001 - 25000))
+PY
+ffmpeg -nostdin -v error -y -f s16le -ar 48000 -ac 2 -i /tmp/stereo.s16 -c:a alac /tmp/stereo.caf
+bin/fern -stdlib internal/stdlib -target x86-64-linux -o /tmp/caf-source bench/audio/caf_source.fern
+taskset -c 0 /tmp/caf-source render-s16 /tmp/stereo.caf /tmp/fern.s16
+taskset -c 0 ffmpeg -nostdin -nostats -benchmark -y -i /tmp/stereo.caf -f s16le /tmp/ffmpeg.s16
+cmp /tmp/stereo.s16 /tmp/fern.s16 && cmp /tmp/fern.s16 /tmp/ffmpeg.s16
+taskset -c 0 valgrind --leak-check=no ffmpeg -nostdin -nostats -benchmark -y -i /tmp/stereo.caf -f s16le /tmp/ffmpeg.s16
+```
+
+The compiler SHA-256 was `c221a1f3b6f40d7bc470ca1cf1df047a2c143d71abc2600e28d39868a56e858e`. The encoded CAF SHA-256 was `4332117adc20cbd343623e38857f855468bd9fede3460c1c275d2cd07db5eee1`.

@@ -119,16 +119,16 @@ function source(path: string, started: i64, allocations: i64, fresh: i64, reuse_
   return Ok(value);
 }
 
-// Render the frozen mono S16 fixture for a full-file comparison with FFmpeg.
+// Render interleaved S16 samples for a full-file comparison with FFmpeg.
 function render(reader: Reader, writer: Writer): Result[void, string] {
   let bytes = match (reader.seek(0i64, 2)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
   let index = source_index(reader, bytes, false)?;
   let format = index.information().format;
-  if (format.channels != 1 || format.bits_per_sample != 16) {
-    return Err("expected mono S16");
+  if (format.bits_per_sample != 16) {
+    return Err("expected S16");
   }
   let cursor = match (file.cursor(index)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
-  let output = pcm.zeros(index.max_packet_frames());
+  let output = pcm.zeros(index.max_packet_frames() * format.channels);
   let block: u8[] = [];
   while (true) {
     let (next, event) = match (cursor.step_into(output, reader)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
@@ -138,7 +138,7 @@ function render(reader: Reader, writer: Writer): Result[void, string] {
         output = samples;
       },
       caf.BufferSamples(audio) => {
-        for sample in audio.samples[audio.start:audio.start + audio.frames] {
+        for sample in audio.samples[audio.start * format.channels:(audio.start + audio.frames) * format.channels] {
           block = block.append(sample as u8).append((sample >> 8) as u8);
         }
         output = audio.samples;
@@ -177,6 +177,9 @@ function main(): i32 {
       eprint(e);
       return 2;
     }
+    let allocations = __heap_alloc_count();
+    print("allocations=" + allocations.to_string());
+    print("peak_rss_kib=" + rss().to_string());
     return 0;
   }
   if (argv.len() != 3 || argv[1] != "view" && argv[1] != "source" && argv[1] != "source-with") {
