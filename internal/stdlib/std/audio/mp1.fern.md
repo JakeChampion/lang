@@ -68,6 +68,21 @@ function allocation(data: [u8], h: Header): Result[(bits.Bits, u8[]), pcm.AudioE
   return Ok((b, widths));
 }
 
+// Sample fields are 2–15 bits. Their complete extent is checked once
+// before decoding the twelve slots. Read only bytes that belong to the field.
+function sample_code(data: [u8], pos: i32, width: i32): i32 {
+  let at = pos >> 3;
+  let end = (pos & 7) + width;
+  let value = data[at] as i32 << 16;
+  if (end > 8) {
+    value |= data[at + 1] as i32 << 8;
+  }
+  if (end > 16) {
+    value |= data[at + 2] as i32;
+  }
+  return value >> 24 - end & (1 << width) - 1;
+}
+
 function subbands(frame: [u8], h: Header): Result[f32[], pcm.AudioError] {
   let data = frame[if (h.crc) { 6 } else { 4 }:];
   let (b, widths) = allocation(data, h)?;
@@ -75,15 +90,23 @@ function subbands(frame: [u8], h: Header): Result[f32[], pcm.AudioError] {
     return Err(pcm.Checksum);
   }
   let scales = spectral.zeros(64);
+  let slot_bits = 0;
   for i in 0..64 {
     let width = widths[i] as i32;
     if (width != 0) {
+      if ((i & 1) == 0 || i / 2 < h.separate) {
+        slot_bits += width;
+      }
       let (next, index) = bits.read(data, b, 6);
       b = next;
       let factor = tables.DEQUANT[3 * (width - 2) + index % 3] * ((2097152 >> index / 3) as f32);
       scales = scales.with(i, factor);
     }
   }
+  if (b.bad || slot_bits * 12 > b.limit - b.pos) {
+    return Err(pcm.Truncated);
+  }
+  let pos = b.pos;
   let samples = spectral.zeros(1152);
   for slot in 0..12 {
     for band in 0..32 {
@@ -93,17 +116,14 @@ function subbands(frame: [u8], h: Header): Result[f32[], pcm.AudioError] {
         let width = widths[i] as i32;
         if (width > 0) {
           if (ch == 0 || band < h.separate) {
-            let (next, code) = bits.read(data, b, width);
-            b = next;
+            let code = sample_code(data, pos, width);
+            pos += width;
             value = code - ((1 << width - 1) - 1);
           }
           samples = samples.with(ch * 576 + band * 18 + slot, value as f32 * scales[i]);
         }
       }
     }
-  }
-  if (b.bad) {
-    return Err(pcm.Truncated);
   }
   return Ok(samples);
 }

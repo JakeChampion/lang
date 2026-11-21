@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MP2 = runpy.run_path(str(ROOT / "scripts/gen-mp2-vectors.py"))
 
 
-def frame(version, rate_index, mode, ext, seq):
+def frame(version, rate_index, mode, ext, seq, dense=False):
     protected = seq != 1
     rate = [44100, 48000, 32000][rate_index] // version
     bitrate = 448 if version == 1 else 256
@@ -32,6 +32,8 @@ def frame(version, rate_index, mode, ext, seq):
         for ch in range(channels):
             if ch == 0 or band < bound:
                 allocation = 1 + (band + seq + ch) % 14 if band in (1, 16, 31) else 0
+                if dense:
+                    allocation = 1 + (band + seq + ch) % 4
                 put(allocation, 4)
             widths[band, ch] = allocation + 1 if allocation else 0
 
@@ -69,9 +71,11 @@ def main():
         oracle = work / "oracle"
         subprocess.run(["cc", "-O2", "-ffp-contract=off", "-I", work,
                         ROOT / "scripts/audio-reference/mp2.c", "-o", oracle], check=True)
-        for version, rate, mode, ext in [(1,0,3,0), (1,1,0,0), (1,2,2,0), (2,0,1,0),
-                                         (2,1,1,1), (2,2,1,2), (1,1,1,3)]:
-            data = b"".join(frame(version, rate, mode, ext, seq) for seq in range(3))
+        cases = [(1, 0, 3, 0), (1, 1, 0, 0), (1, 2, 2, 0), (2, 0, 1, 0),
+                 (2, 1, 1, 1), (2, 2, 1, 2), (1, 1, 1, 3)]
+        for version, rate, mode, ext, dense in [(*case, False) for case in cases] + [
+                (1, 0, 3, 0, True), (1, 1, 0, 0, True), (2, 0, 1, 0, True)]:
+            data = b"".join(frame(version, rate, mode, ext, seq, dense) for seq in range(3))
             stream = work / "input.mp1"
             stream.write_bytes(data)
             pcm = work / "out.pcm"

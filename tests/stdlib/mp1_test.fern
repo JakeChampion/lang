@@ -50,9 +50,23 @@ function boundaries(): test.TestOutcome {
   return test.pass();
 }
 
+function sample_extent(): test.TestOutcome {
+  // A 32-byte mono frame has exactly 96 bits after its allocation table.
+  // Two six-bit scalefactors and twelve pairs of 2- and 5-bit samples fill it.
+  let frame = __alloc_u8(32).with(0, 255u8).with(1, 255u8).with(2, 20u8).with(3, 192u8).with(4, 20u8).with(31, 255u8);
+  let Ok(audio) = mp1.decode_raw(frame, pcm.default_limits()) else {
+    return test.fail("sample field ending at final byte");
+  };
+  if let Err(pcm.Truncated) = mp1.decode_raw(frame.with(4, 21u8), pcm.default_limits()) {} else {
+    return test.fail("sample fields exceed declared frame");
+  }
+  return test.assert_true(audio.samples.len() == 384);
+}
+
 function main(): i32 {
   let runner = test.new("MPEG Layer I");
   runner = runner.it("every sample matches independent scalar minimp3", references);
   runner = runner.it("frame grammar, CRC, truncation and output limits", boundaries);
+  runner = runner.it("sample fields exactly fill or exceed the frame", sample_extent);
   return runner.finish();
 }

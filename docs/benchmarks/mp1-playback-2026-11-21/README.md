@@ -15,3 +15,18 @@ Sharing the 1,728-float synthesis array and 128-float transform array across con
 Use `scripts/gen-mp1-vectors.py`'s `frame(version, rate_index, mode, ext, seq)` with the first four arguments set to `(1, 0, 3, 0)`, `(1, 1, 0, 0)`, or `(2, 0, 1, 0)`, respectively. Concatenate 120 frames with `seq = i % 3`.
 
 Build `bench/audio/mp1.fern` with the same optimized self-host compiler and the two stdlib trees (baseline `9b3a510a4c`). Build `scripts/audio-reference/mp3_freeformat_bench.c` with `cc -O3 -ffp-contract=off -DFERN_MPEG_LAYERS_12` and headers from pinned minimp3 revision `ea99364f61c14656440e8d77e9c233ccf3124633`. Add `-DFERN_MP3_BENCH_SIMD` for the SIMD build. Run each executable with arguments `INPUT whole 30 OUTPUT.f32 decode`.
+
+## Densely allocated subbands and an independent stream
+
+A second campaign included three 120-frame streams with all 32 subbands allocated, plus the FFmpeg archive's copy of the ISO Layer I test vector `fl1.mpg` (SHA-256 `8bffe46c1a1ba709b35f4782c1a661d0081e8ef84222edcf518ee5e4c2e77f13`). Generate the synthetic inputs as above with `dense=True`. Use `125bed347d` as the prior stdlib. [Archive sample](https://samples.ffmpeg.org/A-codecs/mp1-sample.mp1) · [Sample provenance](https://samples.ffmpeg.org/A-codecs/mp1-sample.txt)
+
+The revised decoder checks the required bits for all twelve sample slots before decoding them. It reads each sample from the one to three bytes occupied by its field. On all four inputs its complete PCM matched both the previous decoder and scalar minimp3 bit for bit. The largest absolute difference from SIMD minimp3 was 4.77e-7. On the archive stream, all 37,632 interleaved samples matched scalar minimp3.
+
+| Input | Prior Fern ms | Revised Fern ms | Scalar ms | SIMD ms | Fern allocations before / after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Dense mono | 2.156 | 2.191 | 0.921 | 0.576 | 733 / 613 |
+| Dense stereo | 3.600 | 3.456 | 1.263 | 0.848 | 733 / 613 |
+| Dense joint stereo | 3.610 | 3.456 | 1.001 | 0.707 | 733 / 613 |
+| ISO Layer I stream | 1.393 | 1.345 | 0.454 | 0.315 | 306 / 257 |
+
+The revised Fern decoder used one fewer allocation per frame and 12 KiB less median peak RSS on each input. Its median wall time was 3.8–4.9 times the SIMD reference. Each of the seven alternating trials used thirty complete decodes per process. [All 112 measurements](dense-trials.json)
