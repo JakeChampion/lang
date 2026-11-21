@@ -946,12 +946,17 @@ function with_class(p: i32, c: i32): i32 {
   return p & ~(3 << CLASS_SHIFT) | c << CLASS_SHIFT;
 }
 
+// The right-to-left flag alone does not filter any glyph class.
+function filters_classes(l: Lookup): boolean {
+  return (l.flag & ~1) != 0 || l.set >= 0;
+}
+
 // Whether the flags of `l` make it skip the glyph at `i` of `r`.
 function skipped(f: Font, l: Lookup, r: Run, i: i32): boolean {
-  // The right-to-left flag alone does not filter any glyph class.
-  if ((l.flag & ~1) == 0 && l.set < 0) {
-    return false;
-  }
+  return filters_classes(l) && skipped_class(f, l, r, i);
+}
+
+function skipped_class(f: Font, l: Lookup, r: Run, i: i32): boolean {
   let g = r.glyphs[i];
   let c = f.class_at(r, i);
   if (c == 1 && (l.flag & 2) != 0 || c == 2 && (l.flag & 4) != 0) {
@@ -1681,9 +1686,10 @@ pub function (f: Font) position(r: Run, li: i32, mask: i32, opts: i32): Run {
 function applied_to_each(f: Font, r: Run, l: Lookup, mask: i32, digest: u64, sub_digests: [u64]): Run {
   let run = r;
   let budget = r.ops;
+  let filter = filters_classes(l);
   let i = 0;
   while (i < run.glyphs.len() && budget > 0) {
-    if ((run.masks[i] & mask) == 0 || skipped(f, l, run, i)) {
+    if ((run.masks[i] & mask) == 0 || filter && skipped_class(f, l, run, i)) {
       i += 1;
       continue;
     }
