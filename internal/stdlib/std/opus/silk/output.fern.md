@@ -5,6 +5,7 @@ Call `begin_packet` once before the encoded frames of an Opus packet.
 The packet boundary retains separate resampler histories during a stereo-to-mono change.
 `decode_frame` accepts the shared range decoder and returns normalized, interleaved float PCM.
 `decode_fec` uses redundant data from the next packet to recover a lost packet.
+The `decode_frame_into`, `decode_fec_into`, and `decode_lost_into` variants accept an owned interleaved PCM buffer and return it filled. Pass an empty buffer to allocate the frame, or a buffer of exactly `(output_rate / 1000) * duration * output_channels` samples to reuse it. A different nonempty length returns `pcm.Buffer`.
 The outer Opus decoder handles CELT redundancy and mode transitions.
 
 The output history rules follow [Pion Opus](https://github.com/pion/opus/tree/e7b8aa55508cfd30a968dbc695d4272a8e04f2f2).
@@ -89,13 +90,18 @@ function zeros(count: i32): f32[] {
   return output;
 }
 
-function convert(own previous: State, input: [i32], duration: i32, decoded_channels: i32): Result[(State, f32[]), pcm.AudioError] {
+function convert(own previous: State, input: [i32], duration: i32, decoded_channels: i32, own output: f32[]): Result[(State, f32[]), pcm.AudioError] {
   let frames = previous.input_rate * duration;
   let output_frames = previous.output_rate / 1000 * duration;
   let input_buffer = previous.input_buffer;
   let output_buffer = previous.output_buffer;
   let filters = previous.filters;
-  let output = zeros(output_frames * previous.output_channels);
+  let count = output_frames * previous.output_channels;
+  if (output.len() == 0) {
+    output = zeros(count);
+  } else if (output.len() != count) {
+    return Err(pcm.Buffer);
+  }
   for channel in 0..previous.filter_channels {
     let source = if (decoded_channels == 1) { 0 } else { channel };
     for i in 0..frames {
@@ -123,7 +129,7 @@ function packet_samples(own decoder: silk.Decoder, own range: range.Decoder, rat
   return silk.decode_range(decoder, range, rate, duration, stream, channels);
 }
 
-function decode_packet(own previous: State, own range: range.Decoder, duration: i32, fec: boolean): Result[(State, range.Decoder, f32[]), pcm.AudioError] {
+function decode_packet(own previous: State, own range: range.Decoder, duration: i32, fec: boolean, own output: f32[]): Result[(State, range.Decoder, f32[]), pcm.AudioError] {
   let State { decoder, filters, input_rate, output_rate, output_channels, stream_channels, filter_channels, input_buffer, output_buffer } = previous;
   let decoded_channels = if (stream_channels == 2 && output_channels == 2) { 2 } else { 1 };
   let (next, last, samples) = packet_samples(decoder, range, input_rate, duration, stream_channels, decoded_channels, fec)?;
@@ -132,19 +138,31 @@ function decode_packet(own previous: State, own range: range.Decoder, duration: 
     output_channels: output_channels, stream_channels: stream_channels, filter_channels: filter_channels,
     input_buffer: input_buffer, output_buffer: output_buffer,
   };
-  let (state, output) = convert(current, samples, duration, decoded_channels)?;
+  let (state, output) = convert(current, samples, duration, decoded_channels, output)?;
   return Ok((state, last, output));
 }
 
 pub function decode_frame(own previous: State, own range: range.Decoder, duration: i32): Result[(State, range.Decoder, f32[]), pcm.AudioError] {
-  return decode_packet(previous, range, duration, false);
+  return decode_packet(previous, range, duration, false, []);
+}
+
+pub function decode_frame_into(own previous: State, own range: range.Decoder, duration: i32, own output: f32[]): Result[(State, range.Decoder, f32[]), pcm.AudioError] {
+  return decode_packet(previous, range, duration, false, output);
 }
 
 pub function decode_fec(own previous: State, own range: range.Decoder, duration: i32): Result[(State, range.Decoder, f32[]), pcm.AudioError] {
-  return decode_packet(previous, range, duration, true);
+  return decode_packet(previous, range, duration, true, []);
+}
+
+pub function decode_fec_into(own previous: State, own range: range.Decoder, duration: i32, own output: f32[]): Result[(State, range.Decoder, f32[]), pcm.AudioError] {
+  return decode_packet(previous, range, duration, true, output);
 }
 
 pub function decode_lost(own previous: State, duration: i32): Result[(State, f32[]), pcm.AudioError] {
+  return decode_lost_into(previous, duration, []);
+}
+
+pub function decode_lost_into(own previous: State, duration: i32, own output: f32[]): Result[(State, f32[]), pcm.AudioError] {
   let rate = previous.input_rate;
   let channels = previous.stream_channels;
   previous = begin_packet(previous, rate, channels)?;
@@ -156,6 +174,6 @@ pub function decode_lost(own previous: State, duration: i32): Result[(State, f32
     output_channels: output_channels, stream_channels: stream_channels, filter_channels: filter_channels,
     input_buffer: input_buffer, output_buffer: output_buffer,
   };
-  return convert(current, samples, duration, decoded_channels);
+  return convert(current, samples, duration, decoded_channels, output);
 }
 ```

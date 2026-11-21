@@ -5,11 +5,11 @@ import "std/opus/silk/output";
 import "std/test";
 import "opus_silk_fec_vectors";
 
-function decode(own state: output.State, bytes: [u8], duration: i32, fec: boolean): Result[(output.State, range.Decoder, f32[]), pcm.AudioError] {
+function decode(own state: output.State, bytes: [u8], duration: i32, fec: boolean, own buffer: f32[]): Result[(output.State, range.Decoder, f32[]), pcm.AudioError] {
   if (fec) {
-    return output.decode_fec(state, range.decoder(bytes), duration);
+    return output.decode_fec_into(state, range.decoder(bytes), duration, buffer);
   }
-  return output.decode_frame(state, range.decoder(bytes), duration);
+  return output.decode_frame_into(state, range.decoder(bytes), duration, buffer);
 }
 
 function references(): test.TestOutcome {
@@ -19,6 +19,7 @@ function references(): test.TestOutcome {
   let previous_case = -1;
   let packet: u8[] = [];
   let step = 0;
+  let buffer: f32[] = [];
   while (at < rows.len()) {
     let id = rows[at];
     let rate = rows[at + 1];
@@ -40,7 +41,10 @@ function references(): test.TestOutcome {
     }
     at += size + 8;
     let prepared = match (output.begin_packet(state, rate, stream)) { Ok(value) => value, Err(_) => { return test.fail("packet setup"); } };
-    let (next, last, samples) = match (decode(prepared, packet, duration, fec)) {
+    if (buffer.len() != target / 1000 * duration * channels) {
+      buffer = [];
+    }
+    let (next, last, samples) = match (decode(prepared, packet, duration, fec, buffer)) {
       Ok(values) => values,
       Err(_) => { return test.fail("FEC or received packet rejected"); },
     };
@@ -68,6 +72,7 @@ function references(): test.TestOutcome {
         return test.fail("FEC boundary samples");
       }
     }
+    buffer = samples;
     at += 20;
     step += 1;
   }
