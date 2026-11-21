@@ -1,7 +1,7 @@
 // The XML of a node tree, in the CommonMark DTD, as cmark writes it.
 import "std/io_buffered";
 import "./markdown";
-import "./nodes";
+import "std/markdown/nodes";
 
 const NAMES: string[] = ["document", "block_quote", "list", "item", "code_block", "html_block", "paragraph", "heading", "thematic_break", "text", "softbreak", "linebreak", "code", "html_inline", "emph", "strong", "link", "image"];
 

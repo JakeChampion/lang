@@ -85,7 +85,7 @@ the block starts.
 
 The parser reads the bytes of the source as they are. Only the tests that
 need a code point decode one, with the UTF-8 rules of cmark in
-`utf8.fern`. The writers copy the bytes of the text.
+`std/markdown/utf8`. The writers copy the bytes of the text.
 
 The inline parser reads each byte of the text once. A constant table of 256
 entries makes `__scan_set_bytes` a vector scan, and the scan finds the next
@@ -113,7 +113,7 @@ length of the line of an ATX heading does not count its closing `#` marks.
 
 The other formats need the node tree of cmark. `render.fern` builds it from
 the log of blocks. `inlines.build` adds the nodes of the inline text from
-the tokens that the HTML writer reads. `nodes.fern` keeps the tree as rows
+the tokens that the HTML writer reads. `std/markdown/nodes` keeps the tree as rows
 of i32 fields, and the text of all the nodes in one byte array.
 
 The tree has the text nodes of cmark. Adjacent text joins. The positions
@@ -129,7 +129,7 @@ CommonMark, man or LaTeX, and it wraps the lines. `commonmark.fern`,
 `refs.fern` parses the link reference definitions, normalizes link labels,
 and scans link destinations and titles. `tags.fern` has the HTML tag
 scanners and the start and end conditions of the seven kinds of HTML block.
-`entities.fern` has the named character references of HTML and the Unicode
+`std/markdown/entities` has the named character references of HTML and the Unicode
 punctuation ranges. `scripts/gen-markdown-tables.py` writes it.
 
 ## What it has

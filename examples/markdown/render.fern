@@ -7,7 +7,7 @@ import "./inlines";
 import "./latex";
 import "./man";
 import "./markdown";
-import "./nodes";
+import "std/markdown/nodes";
 import "./xml";
 
 // The document `src` in the format `format`. As in cmark, the output keeps

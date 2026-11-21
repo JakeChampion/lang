@@ -12,11 +12,11 @@
 // run of delimiters.
 import "core/map";
 import "./blocks";
-import "./entities";
-import "./nodes";
+import "std/markdown/entities";
+import "std/markdown/nodes";
 import "./refs";
 import "./tags";
-import "./utf8";
+import "std/markdown/utf8";
 
 // The kinds of token. A token has four fields: the kind, the start and the
 // end of its text, and a value.

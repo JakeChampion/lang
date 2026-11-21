@@ -4,7 +4,7 @@ import "std/i32";
 import "std/io_buffered";
 import "./blocks";
 import "./inlines";
-import "./utf8";
+import "std/markdown/utf8";
 
 // The options of cmark. `sourcepos` gives each block the attribute
 // `data-sourcepos`. `hardbreaks` makes each soft line break a hard line
