@@ -184,7 +184,7 @@ function main(): i32 {
   let ln: string[] = ["main", ".Lloop", "", "helper", "msg", "helper.r"];
   let lo: i32[] = [16, 20, 24, 4, 0, 8];
   let ls: i32[] = [0, 0, 0, 0, 1, 0];
-  let got = elf.elf_func_sym_names(ln, lo, ls, 0, 32);
+  let (got, go2, gs) = elf.elf_func_symbols(ln, lo, ls, 0, 32);
   if (got.len() != 2) {
     return 40;
   }
@@ -195,12 +195,10 @@ function main(): i32 {
     return 42;
   }
 
-  let go2 = elf.elf_func_sym_offs(ln, lo, ls, 0, 32);
   if (go2[0] != 4 || go2[1] != 16) {
     return 43;
   }
 
-  let gs = elf.elf_func_sym_sizes(ln, lo, ls, 0, 32);
   if (gs[0] != 12) {
     return 44;
   }
@@ -208,8 +206,14 @@ function main(): i32 {
     return 45;
   }
 
-  if (elf.elf_func_sym_names(ln, lo, ls, -1, 32).len() != 3) {
+  if (elf.elf_func_symbols(ln, lo, ls, -1, 32).0.len() != 3) {
     return 46;
+  }
+
+  // Equal addresses sort by name. A symbol beyond the end has size zero.
+  let (aliases, alias_offs, alias_sizes) = elf.elf_func_symbols(["z", "a", "last"], [8, 8, 24], [], -1, 20);
+  if (aliases[0] != "a" || aliases[1] != "z" || alias_offs[2] != 24 || alias_sizes[0] != 0 || alias_sizes[1] != 16 || alias_sizes[2] != 0) {
+    return 47;
   }
 
   print(to_hex(img));

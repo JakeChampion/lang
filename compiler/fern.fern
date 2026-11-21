@@ -746,11 +746,10 @@ function darwin_dwarf(p: arm64_native.Arm64GasProg, tv: i64, dv: i64, cu_name: s
   }
   let nosec: i32[] = [];
   let end = arm64_native.arm64_code_len(p);
+  let (sym_names, sym_offs, sym_sizes) = elf.elf_func_symbols(names, a.lab_offs, nosec, -1, end);
   let dw: elf.DwSections = elf.dw_sections(
     tv, end,
-    elf.elf_func_sym_names(names, a.lab_offs, nosec, -1, end),
-    elf.elf_func_sym_offs(names, a.lab_offs, nosec, -1, end),
-    elf.elf_func_sym_sizes(names, a.lab_offs, nosec, -1, end),
+    sym_names, sym_offs, sym_sizes,
     cu_name, dir,
     a.files, a.loc_offs, a.loc_files, a.loc_lines, a.loc_cols, a.loc_flags,
     elfimage.arm64_var_ranges(p),
@@ -1867,9 +1866,7 @@ function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: str
   }
   let pa = p.asm;
   let nosec: i32[] = [];
-  let sym_names = elf.elf_func_sym_names(pa.lab_names, pa.lab_offs, nosec, -1, text_len);
-  let sym_offs = elf.elf_func_sym_offs(pa.lab_names, pa.lab_offs, nosec, -1, text_len);
-  let sym_sizes = elf.elf_func_sym_sizes(pa.lab_names, pa.lab_offs, nosec, -1, text_len);
+  let (sym_names, sym_offs, sym_sizes) = elf.elf_func_symbols(pa.lab_names, pa.lab_offs, nosec, -1, text_len);
   let vals: i32[] = [];
   let sizes: i32[] = [];
   for n in names {
@@ -1916,9 +1913,7 @@ function x86_elf_shared(asm: string, words: u8[], names: string[], soname: strin
     rel_adds = rel_adds.append(le64_at(a.rodata, off));
   }
   let end = x86_native.x86_code_len(a);
-  let sym_names = elf.elf_func_sym_names(a.lab_names, a.lab_offs, a.lab_secs, 0, end);
-  let sym_offs = elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end);
-  let sym_sizes = elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end);
+  let (sym_names, sym_offs, sym_sizes) = elf.elf_func_symbols(a.lab_names, a.lab_offs, a.lab_secs, 0, end);
   let vals: i32[] = [];
   let sizes: i32[] = [];
   for n in names {

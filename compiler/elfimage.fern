@@ -78,11 +78,10 @@ function arm64_with_debug(bin: u8[], p: arm64_native.Arm64GasProg, tv: i64, dv: 
   let pa2 = p.asm;
   let aend = arm64_native.arm64_code_len(p);
   let nosec: i32[] = [];
+  let (sym_names, sym_offs, sym_sizes) = elf.elf_func_symbols(pa2.lab_names, pa2.lab_offs, nosec, -1, aend);
   let wide: i32[] = elf.elf_append_debug(
     elf.elf_cat_u8([], bin), tv as i32, text_off, aend,
-    elf.elf_func_sym_names(pa2.lab_names, pa2.lab_offs, nosec, -1, aend),
-    elf.elf_func_sym_offs(pa2.lab_names, pa2.lab_offs, nosec, -1, aend),
-    elf.elf_func_sym_sizes(pa2.lab_names, pa2.lab_offs, nosec, -1, aend),
+    sym_names, sym_offs, sym_sizes,
     cu_name, dir,
     pa2.files, pa2.loc_offs, pa2.loc_files, pa2.loc_lines, pa2.loc_cols, pa2.loc_flags,
     arm64_native.arm64_debug_frame(p, tv),
@@ -223,11 +222,10 @@ pub function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_nam
     return bin;
   }
   let end = x86_native.x86_code_len(a);
+  let (sym_names, sym_offs, sym_sizes) = elf.elf_func_symbols(a.lab_names, a.lab_offs, a.lab_secs, 0, end);
   let wide: i32[] = elf.elf_append_debug(
     elf.elf_cat_u8([], bin), tv as i32, elf.elf_x86_wx_text_off(), end,
-    elf.elf_func_sym_names(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
-    elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
-    elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
+    sym_names, sym_offs, sym_sizes,
     cu_name, dir,
     a.files, a.loc_offs, a.loc_files, a.loc_lines, a.loc_cols, a.loc_flags,
     x86_native.x86_debug_frame(a, tv),
