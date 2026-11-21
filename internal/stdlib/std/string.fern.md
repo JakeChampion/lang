@@ -571,7 +571,6 @@ pub function (s: string) trailing_count(b: u8): i32 {
   }
   return i;
 }
-
 ```
 ### `10 pub function (s: string) escape_c(): string`
 
@@ -2625,7 +2624,6 @@ pub function (e: ParseBoolError) to_string(): string {
 impl error.Error for ParseBoolError {}
 
 impl cmp.Display for ParseBoolError {}
-
 ```
 
 ### `50 pub function repeat_char(ch: char, n: i32): string`

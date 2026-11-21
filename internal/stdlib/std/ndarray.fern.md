@@ -138,6 +138,8 @@ function count_of(shape: i32[]): i32 {
   return n;
 }
 
+// The packed outer-product lowering calls this guard before allocating its result.
+@noinline
 function check_shape(shape: i32[]): void {
   count_of(shape);
 }

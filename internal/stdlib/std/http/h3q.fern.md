@@ -326,12 +326,12 @@ function (c: Conn) __unparked(): Conn {
 function (c: Conn) __applied(now: Instant): Conn {
   let cur = c;
   while (true) {
-    if (cur.session.actions.len() == 0 && cur.session.events.len() == 0) {
+    let acts = cur.session.actions;
+    let evs = cur.session.events;
+    if (acts.len() == 0 && evs.len() == 0) {
       return cur;
     }
-    let step = cur.session.step();
-    cur = Conn { ...cur, session: step.conn, quic: __acts(cur.quic, step.output, now) };
-    let evs = step.events;
+    cur = Conn { ...cur, session: cur.session.taken(), quic: __acts(cur.quic, acts, now) };
     let k = 0;
     while (k < evs.len()) {
       let id = __ended_by(evs, k);

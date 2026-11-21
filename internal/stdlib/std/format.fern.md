@@ -542,11 +542,19 @@ function __duration_count(s: string, start: i32, end: i32): Option[i64] {
 <<English integer formatting>>=
 function __ordinal_suffix(magnitude: u64): string {
   let last_two = (magnitude % (100 as u64)) as i32;
-  if (last_two >= 11 && last_two <= 13) { return "th"; }
+  if (last_two >= 11 && last_two <= 13) {
+    return "th";
+  }
   let last = last_two % 10;
-  if (last == 1) { return "st"; }
-  if (last == 2) { return "nd"; }
-  if (last == 3) { return "rd"; }
+  if (last == 1) {
+    return "st";
+  }
+  if (last == 2) {
+    return "nd";
+  }
+  if (last == 3) {
+    return "rd";
+  }
   return "th";
 }
 
@@ -555,7 +563,9 @@ pub function (n: u64) ordinal(): string {
 }
 
 pub function (n: u64) pluralize(singular: string, plural: string): string {
-  if (n == 1 as u64) { return singular; }
+  if (n == 1 as u64) {
+    return singular;
+  }
   return plural;
 }
 

@@ -28,10 +28,31 @@ function main(): i32 {
 <<*>>=
 // Byte readers and writers return their updated state after each successful operation.
 
+import "core/cmp";
+import "core/error";
 import "std/io_buffered" as buffered;
 import "std/stream";
 
 pub enum ReadError { ReadIo(IoError), ReadStream(StreamFault) }
+
+pub function (e: ReadError) message(): string {
+  match (e) {
+    ReadIo(err) => {
+      return err.message();
+    },
+    ReadStream(err) => {
+      return err.message();
+    }
+  }
+}
+
+pub function (e: ReadError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for ReadError {}
+
+impl cmp.Display for ReadError {}
 
 pub trait Read {
   function pull_bytes(own self: Self): Result[(Option[u8[]], Self), ReadError];
