@@ -43,7 +43,7 @@ pub struct Decoded { format: pcm.Format, channel_mask: u32, track_id: u32, frame
 
 // One track that a player decodes one packet at a time. Packet numbers
 // follow the time of the track, and edits do not apply.
-pub opaque struct Stream { decoder: codec.Decoder, configuration: Configuration, packets: tables.Packet[] }
+pub opaque struct Stream { id: u32, enabled: boolean, decoder: codec.Decoder, configuration: Configuration, packets: tables.Packet[] }
 
 pub function default_limits(): container.Limits {
   return container.default_limits();
@@ -234,12 +234,12 @@ pub function (value: Index) stream(track_number: i32, limits: pcm.Limits): Resul
   }
   let track = value.tracks[track_number];
   let decoder = codec.create(track.configuration.raw, limits)?;
-  return Ok(Stream { decoder: decoder, configuration: track.configuration, packets: track.source.packets });
+  return Ok(Stream { id: track.source.id, enabled: track.source.enabled, decoder: decoder, configuration: track.configuration, packets: track.source.packets });
 }
 
 pub function (value: Stream) information(): Info {
   let info = value.configuration.info;
-  return Info { id: 0u32, enabled: true, format: info.format, channel_mask: value.configuration.mask, frame_length: info.frame_length, packets: value.packets.len() };
+  return Info { id: value.id, enabled: value.enabled, format: info.format, channel_mask: value.configuration.mask, frame_length: info.frame_length, packets: value.packets.len() };
 }
 
 // The place of the packet `number` in the file: its offset and its bytes.
@@ -268,10 +268,19 @@ pub function (own value: Stream) decode_packet(input: [u8], number: i32, limits:
 // The stream after the packet whose bytes are `bytes`, and the samples of
 // that packet in WAVE speaker order. The packets go in their order.
 pub function (own value: Stream) decode_bytes(bytes: [u8], limits: pcm.Limits): Result[(Stream, i32[]), pcm.AudioError] {
-  let Stream { decoder, configuration, packets } = value;
-  let (next, frame) = decoder.decode_packet(bytes, limits)?;
+  let frames = value.decoder.packet_frames(bytes, limits)?;
+  let count = pcm.sample_count(frames, value.configuration.info.format.channels, limits)?;
+  let (next, frame) = value.decode_bytes_into(bytes, pcm.zeros(count), limits)?;
+  return Ok((next, frame.samples));
+}
+
+// Decode a packet into the caller's buffer. Only frames * channels samples
+// in the returned buffer belong to this packet; its remaining samples survive.
+pub function (own value: Stream) decode_bytes_into(bytes: [u8], own output: i32[], limits: pcm.Limits): Result[(Stream, codec.Frame), pcm.AudioError] {
+  let Stream { id, enabled, decoder, configuration, packets } = value;
+  let (next, frame) = decoder.decode_packet_into(bytes, output, limits)?;
   let samples = layout.reorder(frame.samples, configuration.info.format, configuration.mask, frame.frames)?;
-  return Ok((Stream { decoder: next, configuration: configuration, packets: packets }, samples));
+  return Ok((Stream { id: id, enabled: enabled, decoder: next, configuration: configuration, packets: packets }, codec.Frame { ...frame, samples: samples }));
 }
 
 pub function decode(input: [u8], limits: container.Limits): Result[Decoded, pcm.AudioError] {

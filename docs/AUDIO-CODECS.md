@@ -18,7 +18,7 @@ The Opus packet API reuses the Fern CELT implementation.
 | MP3 | Yes | No | Indexed-bitrate MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. |
 | MP2 | Yes | No | Indexed-bitrate MPEG-1/2 Layer II at all six sample rates. Mono, stereo, dual channel, joint stereo, and protected frames. Raw frames and complete compatible streams. |
 | AAC-LC | Yes | No | Raw access units and unprotected ADTS, 1024 samples per block, all 13 ADTS rates, and declared channel configurations 1 through 7. |
-| MP4/M4A | AAC-LC, ALAC | No | Self-contained audio tracks, sample tables, decoder configuration, track selection, and edit-list trimming. Complete byte views only. |
+| MP4/M4A | AAC-LC, ALAC | No | Self-contained audio tracks, sample tables, decoder configuration, track selection, and edit-list trimming. Byte-view playback and indexed packet reads from seekable files. |
 | Vorbis | Yes | No | Version one, one through eight channels, both floor types, all residue types, and standard block sizes. Incremental Ogg files and borrowed readers apply initial and final sample boundaries. |
 | ALAC | Yes | No | Version zero, 16/20/24/32-bit integer PCM, one through eight channels, raw and compressed packets, and standard layouts. CAF and M4A supply file playback. Compressed stereo requires at most 32 predictor bits. |
 | CAF | ALAC, PCM, float, G.711 | No | Version-one files, packet tables, bounded playback, exact sample seeks, and initial and final trim. Immutable byte views and seekable Readers. |
@@ -111,7 +111,12 @@ The bank also covers short-packet sequences, exact edit trimming, fast-start fil
 The manifest identifies cases outside the FFmpeg decoder's packet support.
 
 Fragmented files, encryption, external references, configuration changes, and the ALAC decoder's 33-bit compressed-stereo gap remain unsupported.
-Reader playback and indexed seeks for these M4A tracks remain open in #14513, #14518, and #14685.
+For packet playback from a seekable Reader, call `std/audio/mp4/file.inspect_alac`,
+open the selected track with `index.stream`, and pass its packet number and an owned
+PCM buffer to `read_alac_packet_into`. Each call reads only that packet under the
+file, byte-window, and operation limits. The returned frame gives the valid sample
+count as `frames * channels`. Packet numbers refer to media before presentation edits.
+Sample-accurate seeking on the edited presentation remains open under #14685.
 
 ## Native FLAC encoding
 

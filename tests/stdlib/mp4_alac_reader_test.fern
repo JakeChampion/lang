@@ -1,0 +1,85 @@
+import "std/audio/mp4/alac";
+import "std/audio/mp4/file";
+import "std/audio/pcm";
+import "std/audio/source";
+import "std/hex";
+import "std/rand";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "mp4_alac_vectors";
+
+function packets(reader: Reader, bytes: [u8]): Result[void, string] {
+  let limits = file.default_limits();
+  let Ok(index) = file.inspect_alac(reader, limits) else {
+    return Err("file index");
+  };
+  let Ok(info) = index.information(0) else {
+    return Err("track metadata");
+  };
+  let Ok(stream) = index.stream(0, limits.index.audio) else {
+    return Err("file stream");
+  };
+  let Ok(reference) = index.stream(0, limits.index.audio) else {
+    return Err("reference stream");
+  };
+  if (info.id != stream.information().id || info.enabled != stream.information().enabled) {
+    return Err("stream track identity");
+  }
+  let buffer = pcm.zeros(info.frame_length * info.format.channels).append(123456789);
+  for i in 0..info.packets {
+    let n = info.packets - 1 - i;
+    let (next, frame) = match (file.read_alac_packet_into(reader, stream, n, buffer, limits)) { Ok(v) => v, Err(e) => { return Err(e.message()); } };
+    stream = next;
+    let Ok((other, expected)) = reference.decode_packet(bytes, n, limits.index.audio) else {
+      return Err("byte-view decode");
+    };
+    reference = other;
+    if (frame.frames * info.format.channels != expected.len() || frame.samples[frame.samples.len() - 1] != 123456789) {
+      return Err("frame size or caller buffer suffix");
+    }
+    for j in 0..expected.len() {
+      if (frame.samples[j] != expected[j]) {
+        return Err("sample mismatch");
+      }
+    }
+    buffer = frame.samples;
+  }
+  if let Err(source.ReadAudio(pcm.Limit)) = file.read_alac_packet_into(reader, stream, 0, buffer, file.Limits { ...limits, max_operations: 1 }) {} else {
+    return Err("seek plus read exceeded operation limit");
+  }
+  return Ok(());
+}
+
+function fixture(encoded: string): Result[void, string] {
+  let bytes = ref.unpack(encoded)?;
+  let path = "fern-alac-" + hex.encode(rand.bytes(8));
+  let Ok(writer) = open_exclusive(path) else {
+    return Err("create fixture");
+  };
+  defer { remove_file(path); }
+  let written = writer.write_bytes(bytes);
+  let closed = writer.close();
+  if (written.is_err() || closed.is_err()) {
+    return Err("write fixture");
+  }
+  let Ok(reader) = open_reader(path) else {
+    return Err("open fixture");
+  };
+  defer reader.close();
+  return packets(reader, bytes);
+}
+
+function references(): test.TestOutcome {
+  for vector in mp4_alac_vectors.all() {
+    if let Err(message) = fixture(vector.encoded) {
+      return test.fail(vector.name + ": " + message);
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("M4A ALAC packet reads");
+  runner = runner.it("read every packet in reverse order into caller storage across 44 tracks", references);
+  return runner.finish();
+}

@@ -158,7 +158,7 @@ var interpSlowStdTests = map[string]bool{
 	// Full MP4 corpora exceed a minute. Independent M4A smoke stays here.
 	"mp4": true, "mp4_boundary": true,
 	// The full M4A ALAC bank uses compiled gates. Its exact integer smoke stays here.
-	"mp4_alac": true,
+	"mp4_alac": true, "mp4_alac_reader": true,
 	// Full AAC corpora exceed a minute. Independent AAC PCM smoke stays here.
 	"aac": true, "aac_boundary": true, "aac_kernel": true,
 	// The two conformance files of UAX #9 run each of their cases. The compiled gates run them.
@@ -487,6 +487,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"vorbis_kernel", langSrcAbs(t, "tests/stdlib/vorbis_kernel_test.fern"), ""},
 		{"vorbis_smoke", langSrcAbs(t, "tests/stdlib/vorbis_smoke_test.fern"), ""},
 		{"mp4_alac", langSrcAbs(t, "tests/stdlib/mp4_alac_test.fern"), ""},
+		{"mp4_alac_reader", langSrcAbs(t, "tests/stdlib/mp4_alac_reader_test.fern"), ""},
 		{"mp4_alac_boundary", langSrcAbs(t, "tests/stdlib/mp4_alac_boundary_test.fern"), ""},
 		{"mp4_alac_smoke", langSrcAbs(t, "tests/stdlib/mp4_alac_smoke_test.fern"), ""},
 		{"mp4", langSrcAbs(t, "tests/stdlib/mp4_test.fern"), ""},
