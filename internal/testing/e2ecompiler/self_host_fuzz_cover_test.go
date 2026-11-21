@@ -111,7 +111,7 @@ func mutateHostile(rng *rand.Rand, in []byte, corpus [][]byte) []byte {
 
 // keepFailingInput writes input to the testdata corpus of target, in the
 // format of Go's fuzzer, so that each run of the package replays it.
-func keepFailingInput(tb testing.TB, target string, input []byte) {
+func keepFailingInput(tb testing.TB, target string, input []byte) string {
 	tb.Helper()
 	dir := filepath.Join("testdata", "fuzz", target)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -122,7 +122,7 @@ func keepFailingInput(tb testing.TB, target string, input []byte) {
 	if err := os.WriteFile(path, []byte(entry), 0o644); err != nil {
 		tb.Fatal(err)
 	}
-	tb.Logf("the failing input is in %s: commit it with the fix", path)
+	return path
 }
 
 // coverCampaign is the state of one coverage-guided loop over one reader.
@@ -154,8 +154,11 @@ func (c *coverCampaign) try(input []byte, keep bool) bool {
 	bits, run := runCover(c.tb, c.bin, c.path, c.r, input)
 	c.runs++
 	if fault := readerFault(c.r, input, c.path, run); fault != "" {
-		keepFailingInput(c.tb, c.r.target, input)
-		c.tb.Fatalf("%s\ninput: %x", fault, input)
+		path := keepFailingInput(c.tb, c.r.target, input)
+		// The corpus file holds every byte. A hex dump can crowd the fault
+		// out of the CI annotation, including dumps from differential checks.
+		detail, _, _ := strings.Cut(fault, "\ninput: ")
+		c.tb.Fatalf("%s\nfailing input (%d bytes): %s", detail, len(input), path)
 	}
 	if bits.Rows == 0 {
 		// An abort ends the program before it writes the report.

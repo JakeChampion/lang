@@ -2739,12 +2739,12 @@ function advance_delta(f: Font, g: i32): f64 {
     }
     return store_delta(f, f.hvar + u32_at(b, f.hvar + 4), outer, inner);
   }
-  let at = glyph_at(f, g);
+  let (at, end) = glyph_span(f, g);
   let o = Outline { xs: [], ys: [], flags: [], ends: [] };
   if (at >= 0 && i16_at(b, at) < 0) {
     o = part_outline(parts(b, at + 10));
   } else if (at >= 0) {
-    o = simple(b, at, i16_at(b, at));
+    o = simple(b, at, end, i16_at(b, at));
   }
   let (dx, _) = glyph_deltas(f, g, o);
   return dx[o.xs.len() + 1] - dx[o.xs.len()];
@@ -2765,11 +2765,10 @@ struct Point { x: f64, y: f64, on: boolean, cubic: boolean }
 // offsets of the parts.
 struct Outline { xs: i32[], ys: i32[], flags: i32[], ends: i32[] }
 
-// The offset of the data of glyph `g` in the font, or -1 for a glyph with
-// no outline.
-function glyph_at(f: Font, g: i32): i32 {
+// The start and exclusive end of the glyph, or (-1, -1) for an absent outline.
+function glyph_span(f: Font, g: i32): (i32, i32) {
   if (g < 0 || g >= f.glyphs) {
-    return -1;
+    return (-1, -1);
   }
   let b = f.data;
   let start = 0;
@@ -2781,10 +2780,10 @@ function glyph_at(f: Font, g: i32): i32 {
     start = 2 * u16_at(b, f.loca + 2 * g);
     end = 2 * u16_at(b, f.loca + 2 * g + 2);
   }
-  if (end <= start) {
-    return -1;
+  if (f.glyf < 0 || start < 0 || end < 10 || start > end - 10 || end > b.len() - f.glyf) {
+    return (-1, -1);
   }
-  return f.glyf + start;
+  return (f.glyf + start, f.glyf + end);
 }
 
 // The most glyphs that the outline of one glyph can read. A composite glyph
@@ -2803,7 +2802,7 @@ function contours(f: Font, g: i32): Point[][] {
 // The contours of glyph `g` and the glyph reads that remain of `reads`.
 // `depth` stops composite glyphs that refer to themselves.
 function contours_within(f: Font, g: i32, depth: i32, reads: i32): (Point[][], i32) {
-  let at = glyph_at(f, g);
+  let (at, end) = glyph_span(f, g);
   if (at < 0 || depth > 8 || reads <= 0) {
     return ([], reads);
   }
@@ -2811,7 +2810,7 @@ function contours_within(f: Font, g: i32, depth: i32, reads: i32): (Point[][], i
   if (n < 0) {
     return composite(f, g, at + 10, depth, reads - 1);
   }
-  let o = simple(f.data, at, n);
+  let o = simple(f.data, at, end, n);
   let (dx, dy) = glyph_deltas(f, g, o);
   let pts: Point[] = [];
   for i in 0..o.xs.len() {
@@ -2820,45 +2819,59 @@ function contours_within(f: Font, g: i32, depth: i32, reads: i32): (Point[][], i
   return (split_contours(pts, o.ends), reads - 1);
 }
 
-function simple(b: [u8], at: i32, n: i32): Outline {
+function simple(b: [u8], at: i32, end: i32, n: i32): Outline {
+  let empty = Outline { xs: [], ys: [], flags: [], ends: [] };
+  if (n == 0 || end - at < 12 + 2 * n) {
+    return empty;
+  }
   let ends: i32[] = [];
+  let last = -1;
   for i in 0..n {
-    ends = ends.append(u16_at(b, at + 10 + 2 * i));
-  }
-  if (n == 0 || !rising(ends)) {
-    return Outline { xs: [], ys: [], flags: [], ends: [] };
-  }
-  let count = ends[n - 1] + 1;
-  let p = at + 10 + 2 * n;
-  p = p + 2 + u16_at(b, p);
-  let (flags, p1) = read_flags(b, p, count);
-  let (xs, p2) = read_coords(b, p1, flags, 2, 16);
-  let (ys, _) = read_coords(b, p2, flags, 4, 32);
-  return Outline { xs: xs, ys: ys, flags: flags, ends: ends };
-}
-
-// Whether each number of `xs` is more than the one before it. The last point
-// of a contour comes after the last point of the contour before it.
-function rising(xs: i32[]): boolean {
-  for i in 1..xs.len() {
-    if (xs[i] <= xs[i - 1]) {
-      return false;
+    let point = u16_at(b, at + 10 + 2 * i);
+    if (point <= last) {
+      return empty;
     }
+    ends = ends.append(point);
+    last = point;
   }
-  return true;
+  let count = last + 1;
+  let p = at + 10 + 2 * n;
+  let skip = u16_at(b, p);
+  if (skip > end - p - 2) {
+    return empty;
+  }
+  let (flags, p1) = read_flags(b, p + 2 + skip, end, count);
+  if (flags.len() != count) {
+    return empty;
+  }
+  let (xs, p2) = read_coords(b, p1, end, flags, 2, 16);
+  if (xs.len() != count) {
+    return empty;
+  }
+  let (ys, _) = read_coords(b, p2, end, flags, 4, 32);
+  if (ys.len() != count) {
+    return empty;
+  }
+  return Outline { xs: xs, ys: ys, flags: flags, ends: ends };
 }
 
 // The flags of `count` points from `p`, with their repeats, and the offset
 // after them.
-function read_flags(b: [u8], at: i32, count: i32): (i32[], i32) {
+function read_flags(b: [u8], at: i32, end: i32, count: i32): (i32[], i32) {
   let flags: i32[] = [];
   let p = at;
-  while (flags.len() < count) {
+  while (flags.len() < count && p < end) {
     let fl = u8_at(b, p);
     p += 1;
     flags = flags.append(fl);
     if ((fl & 8) != 0) {
+      if (p == end) {
+        return ([], p);
+      }
       let rep = u8_at(b, p);
+      if (rep > count - flags.len()) {
+        return ([], p);
+      }
       p += 1;
       for r in 0..rep {
         flags = flags.append(fl);
@@ -2871,13 +2884,16 @@ function read_flags(b: [u8], at: i32, count: i32): (i32[], i32) {
 // The x or the y coordinates of the points, and the offset after them. The
 // flag bit `short` marks one byte, and `same` marks a positive byte, or no
 // change for a coordinate of two bytes.
-function read_coords(b: [u8], at: i32, flags: i32[], short: i32, same: i32): (i32[], i32) {
+function read_coords(b: [u8], at: i32, end: i32, flags: i32[], short: i32, same: i32): (i32[], i32) {
   let out: i32[] = [];
   let v = 0;
   let p = at;
   for i in 0..flags.len() {
     let fl = flags[i];
     if ((fl & short) != 0) {
+      if (p >= end) {
+        return ([], p);
+      }
       let d = u8_at(b, p);
       p += 1;
       if ((fl & same) == 0) {
@@ -2885,6 +2901,9 @@ function read_coords(b: [u8], at: i32, flags: i32[], short: i32, same: i32): (i3
       }
       v += d;
     } else if ((fl & same) == 0) {
+      if (end - p < 2) {
+        return ([], p);
+      }
       v += i16_at(b, p);
       p += 2;
     }
@@ -3625,7 +3644,7 @@ pub function (f: Font) extents(g: i32): Option[Extents] {
   if (f.cff.charstrings >= 0 || f.coords.len() > 0) {
     return Some(points_extents(contours(f, g), f.cff.charstrings >= 0));
   }
-  let at = glyph_at(f, g);
+  let (at, _) = glyph_span(f, g);
   let b = f.data;
   if (at < 0 || i16_at(b, at) == 0) {
     return Some(Extents { x_bearing: 0, y_bearing: 0, width: 0, height: 0 });

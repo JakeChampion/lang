@@ -113,6 +113,25 @@ function test_bitmap_above_the_limit(): test.TestOutcome {
   return test.assert_eq(huge.coverage.len().to_string() + " " + huge.width.to_string() + " " + (small.width > 0 && small.coverage.len() == small.width * small.height).to_string(), "0 0 true");
 }
 
+// Shorten the square's loca entry while leaving all following bytes intact.
+function test_simple_outline_stays_inside_glyph(): test.TestOutcome {
+  let f = font();
+  let start = f.data[f.loca + 3] as i32 * 2;
+  let end = f.data[f.loca + 5] as i32 * 2;
+  let words = (end - start) / 2;
+  for size in 5..words {
+    let data = f.data.with(f.loca + 5, (start / 2 + size) as u8);
+    let shortened = truetype.Font { ...f, data: data };
+    let bitmap = shortened.render(1, 20.0, 0.0);
+    for pixel in bitmap.coverage {
+      if (pixel != 0 as u8) {
+        return test.fail("a truncated square drew pixels");
+      }
+    }
+  }
+  return test.pass();
+}
+
 function test_not_a_font(): test.TestOutcome {
   return test.assert_eq(truetype.parse([0 as u8, 1 as u8, 0 as u8]).is_none(), true);
 }
@@ -233,6 +252,7 @@ function main(): i32 {
   r = r.it("glyphs and advances", test_glyphs_and_advances);
   r = r.it("kerning", test_kerning);
   r = r.it("a square", test_square);
+  r = r.it("a simple outline stays inside its glyph", test_simple_outline_stays_inside_glyph);
   r = r.it("an edge half a pixel in", test_half_pixel_edge);
   r = r.it("a curve", test_curve);
   r = r.it("a composite glyph", test_composite);
