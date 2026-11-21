@@ -35,14 +35,17 @@ static long peak_rss_kb(void) {
 
 int main(int argc, char **argv) {
   if (argc != 3) return 2;
-  int benchmark = !strcmp(argv[1], "benchmark");
+  int stream = !strcmp(argv[1], "stream") || !strcmp(argv[1], "benchmark-stream");
+  int seek = !strcmp(argv[1], "seek_from_start") || !strcmp(argv[1], "benchmark-seek");
+  int benchmark = !strcmp(argv[1], "benchmark") || !strcmp(argv[1], "benchmark-stream") ||
+                  !strcmp(argv[1], "benchmark-seek");
   uint64_t total_frames = 0, total_samples = 0;
   uint32_t checksum = UINT32_C(2166136261);
   int64_t started = benchmark ? monotonic_ns() : 0;
   FILE *file = fopen(argv[2], "rb");
   if (!file) return 3;
   OggVorbis_File state;
-  ov_callbacks callbacks = !strcmp(argv[1], "stream") ? OV_CALLBACKS_STREAMONLY : OV_CALLBACKS_DEFAULT;
+  ov_callbacks callbacks = stream ? OV_CALLBACKS_STREAMONLY : OV_CALLBACKS_DEFAULT;
   if (ov_open_callbacks(file, &state, NULL, 0, callbacks)) { fclose(file); return 4; }
   if (!strcmp(argv[1], "tracks")) {
     long count = ov_streams(&state);
@@ -57,7 +60,7 @@ int main(int argc, char **argv) {
     ov_clear(&state);
     return ferror(stdout) ? 7 : 0;
   }
-  if (!strcmp(argv[1], "seek_from_start") && ov_pcm_seek(&state, 0)) { ov_clear(&state); return 9; }
+  if (seek && ov_pcm_seek(&state, 0)) { ov_clear(&state); return 9; }
   static const int order[9][8] = {
     {0}, {0}, {0,1}, {0,2,1}, {0,1,2,3}, {0,2,1,3,4},
     {0,2,1,5,3,4}, {0,2,1,6,5,3,4}, {0,2,1,7,5,6,3,4}

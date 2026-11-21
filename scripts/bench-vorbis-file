@@ -43,7 +43,7 @@ def main():
     compiler = args.compiler.resolve()
     target = targets[platform.machine()]
     report = {"target": target, "compiler_sha256": hashlib.sha256(compiler.read_bytes()).hexdigest(),
-              "reference": "Xiph libvorbisfile 1.3.7", "fixtures": {}}
+              "reference": "Xiph libvorbisfile 1.3.7" if args.reference else None, "fixtures": {}}
     with tempfile.TemporaryDirectory() as directory:
         exe = Path(directory) / "decode"
         stream = Path(directory) / "fixture.ogg"
@@ -61,26 +61,30 @@ def main():
                 golden = unpack(pcm)
                 trials = []
                 references = []
-                # The seek corpus uses stream-only callbacks or an explicit PCM seek.
-                # Its oracle and the default libvorbisfile open have different workloads.
-                paired = args.reference and corpus == "vorbis_file_vectors"
+                # Match the callback and initial position used to generate the frozen PCM.
+                mode = "benchmark"
+                if corpus == "vorbis_seek_vectors":
+                    mode = "benchmark-stream" if name == "interleaved-audio" else "benchmark-seek"
                 golden_checksum = 2166136261
-                if paired:
+                if args.reference:
                     for (bits,) in struct.iter_unpack("<I", golden):
                         golden_checksum = ((golden_checksum ^ bits) * 16777619) & 0xffffffff
                 for trial in range(args.trials):
                     commands = [(trials, [exe, stream])]
-                    if paired:
-                        commands.append((references, [args.reference.resolve(), "benchmark", stream]))
+                    if args.reference:
+                        commands.append((references, [args.reference.resolve(), mode, stream]))
                     if trial % 2:
                         commands.reverse()
                     for results, command in commands:
                         metrics = measure(command, expected_frames, len(golden))
                         if results and metrics["checksum"] != results[0]["checksum"]:
                             raise ValueError(f"inconsistent PCM for {name}")
+                        if results is references and metrics["checksum"] != golden_checksum:
+                            raise ValueError(f"reference PCM differs from frozen samples for {name}")
                         results.append(metrics)
                 entry = {"sha256": hashlib.sha256(stream.read_bytes()).hexdigest(), "trials": trials}
-                if paired:
+                if args.reference:
+                    entry["reference_mode"] = mode
                     entry["reference_trials"] = references
                     entry["reference_matches_frozen_bits"] = references[0]["checksum"] == golden_checksum
                 report["fixtures"][name] = entry

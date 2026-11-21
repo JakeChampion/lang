@@ -22,3 +22,9 @@ python3 scripts/bench-vorbis-file --reference build/vorbis-reference > build/vor
 The revised setup walks each Huffman tree down to depth nine once. A short code fills all table indices sharing its low bits. A longer code stores the continuation node. The previous setup walked from the root for each of the 512 table indices.
 
 A native x86-64 comparison used the same optimized compiler and playback driver for both revisions, pinned to one CPU, with eleven pairs of fresh processes per fixture in alternating order. All 35 files had identical PCM checksums across the two builds. Allocations fell on every file, from 150,288 to 137,940 for one playback of each file. The sum of the per-file median wall times fell from 115.9 ms to 108.1 ms, with 28 files faster and seven slower. The corpus contains short streams, so these measurements include a larger share of setup time than long-running playback. [All 770 process measurements](prefix-x86-64.json.gz)
+
+## Reference playback for seek fixtures
+
+The seven seek fixtures now have reference timings as well as Fern timings. For six files, libvorbisfile opens the seekable input and calls `ov_pcm_seek(0)` before reading. For the interleaved file, it opens with stream-only callbacks. These modes reproduce the PCM used to generate the fixtures. They also affect the timed workload, so each result records the reference mode.
+
+On x86-64 Linux, all 245 libvorbisfile trials across 35 files reproduced the frozen PCM checksum. All 245 Fern trials produced the expected frame and sample counts. The benchmark now fails if a reference trial disagrees with its frozen checksum. The separate Reader suite checks Fern's individual float samples with a tolerance of 1e-6. [Complete measurements](all-reference-modes-x86-64.json.gz)
