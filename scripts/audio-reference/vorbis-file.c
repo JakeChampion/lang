@@ -2,7 +2,10 @@
  * Build with the public headers and libvorbisfile. This is not a Fern dependency.
  * Output records contain LE u32 link, rate, channels, frames, then float PCM.
  */
+#define _POSIX_C_SOURCE 200809L
+#include <inttypes.h>
 #include <stdint.h>
+#include <time.h>
 #include <stdio.h>
 #include <string.h>
 #include <vorbis/vorbisfile.h>
@@ -12,8 +15,30 @@ static void word(uint32_t value) {
   if (fwrite(bytes, 1, 4, stdout) != 4) { perror("write"); }
 }
 
+static int64_t monotonic_ns(void) {
+  struct timespec value;
+  if (clock_gettime(CLOCK_MONOTONIC, &value)) return -1;
+  return (int64_t)value.tv_sec * 1000000000 + value.tv_nsec;
+}
+
+static long peak_rss_kb(void) {
+  FILE *status = fopen("/proc/self/status", "r");
+  if (!status) return -1;
+  char line[256];
+  long peak = -1;
+  while (fgets(line, sizeof(line), status)) {
+    if (sscanf(line, "VmHWM: %ld kB", &peak) == 1) break;
+  }
+  fclose(status);
+  return peak;
+}
+
 int main(int argc, char **argv) {
   if (argc != 3) return 2;
+  int benchmark = !strcmp(argv[1], "benchmark");
+  uint64_t total_frames = 0, total_samples = 0;
+  uint32_t checksum = UINT32_C(2166136261);
+  int64_t started = benchmark ? monotonic_ns() : 0;
   FILE *file = fopen(argv[2], "rb");
   if (!file) return 3;
   OggVorbis_File state;
@@ -45,15 +70,29 @@ int main(int argc, char **argv) {
     if (!frames) break;
     vorbis_info *info = ov_info(&state, -1);
     if (!info || info->channels < 1 || info->channels > 8) { ov_clear(&state); return 6; }
-    word(link); word(info->rate); word(info->channels); word(frames);
+    if (benchmark) {
+      total_frames += frames;
+      total_samples += (uint64_t)frames * info->channels;
+    } else {
+      word(link); word(info->rate); word(info->channels); word(frames);
+    }
     for (long i = 0; i < frames; ++i) {
       for (int ch = 0; ch < info->channels; ++ch) {
         uint32_t value;
         memcpy(&value, &pcm[order[info->channels][ch]][i], 4);
-        word(value);
+        if (benchmark) checksum = (checksum ^ value) * UINT32_C(16777619);
+        else word(value);
       }
     }
   }
   ov_clear(&state);
+  if (benchmark) {
+    int64_t finished = monotonic_ns();
+    long peak = peak_rss_kb();
+    if (started < 0 || finished < started || peak < 1) return 10;
+    printf("frames=%" PRIu64 "\nsamples=%" PRIu64 "\nchecksum=%" PRIu32
+           "\nwall_ns=%" PRId64 "\nnative_peak_rss_kb=%ld\n",
+           total_frames, total_samples, checksum, finished - started, peak);
+  }
   return ferror(stdout) ? 7 : 0;
 }
