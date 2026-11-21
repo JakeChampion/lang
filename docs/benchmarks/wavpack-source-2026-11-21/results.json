@@ -1,0 +1,1244 @@
+{
+  "schema": 1,
+  "target": "x86-64-linux",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "cpu": 0,
+  "allowed_affinity": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "rounds": 1,
+  "trials": 7,
+  "frames_per_file": 8192,
+  "group_frames": 4096,
+  "compiler_sha256": "522a6fa528bb473b457a2203a213ce3271a5e04347df668782b91c9f51978f2e",
+  "compiler_core_sha256": null,
+  "compiler_version": "fern (unknown build)\nbuilt for x86-64-linux",
+  "git_head": "ba7def67c5bc71c82730812ed51d9b7d98dc1a8d",
+  "reference_commit": "4827b9889665b937b6ed71b9c6c0123152cd7a02",
+  "reference_header_sha256": "3c61d65511e258c5dc120a6daaee626d6a1051f3254ca9b67ac654a8f6212a97",
+  "reference_version": "5.8.1",
+  "reference_library_sha256": {
+    "/usr/lib/x86_64-linux-gnu/libwavpack.so.1.2.7": "f3ec334f8b40e90af42120a52f06372b917e166b0564aaa9dae00dce8b779fb9"
+  },
+  "source_sha256": {
+    "scripts/bench-wavpack": "0157e8f3d049e661bd50269642fdbc321f5ba10d84131c8fdeff264edd7306d3",
+    "bench/audio/wavpack_decode.fern": "2bfe4a0190842c3967d66e38b933642e3cd3a87de1f8dc328d23aeed71214487",
+    "scripts/audio-reference/wavpack_bench.c": "ab1fd028d1eec800bb35fcf2bf53583e1b26c97c33c45d81a697d2e7f94866ee",
+    "scripts/audio-reference/wavpack_reference.py": "7d8deb35d3ee3e7d57737472339cbd599dc57b01396ad17c4c1c3e020729081e",
+    "scripts/audio-reference/wavpack-decode.fern": "e252bbc89b6f0203b2cf0db3f7c26957c5c1325f880894d2bb2d25ddd011acc5",
+    "internal/stdlib/std/audio/wavpack/bits.fern.md": "7e820ffd8b230d9f0b0b8ee858024f7e39c43d3a4f00a9985374577849f9635f",
+    "internal/stdlib/std/audio/wavpack/block.fern.md": "ee7ceda32f04e5d1d9dd5f4a4a60d62634b42eb5c99b972fb04009b80dd5970e",
+    "internal/stdlib/std/audio/wavpack/config.fern.md": "239e22432ffebb91ae38cff15852bf5f296f3e1e0ed6fe0f528c1e336e0c0ba0",
+    "internal/stdlib/std/audio/wavpack/entropy.fern.md": "88345abe351bb880785671ae85c56d8fb4246cc5e9198f9a2da9059d7608d8ef",
+    "internal/stdlib/std/audio/wavpack/extend.fern.md": "4c5a204b2f3417c8833b07409c4ace757cd17df75bf09e037d889178ac64fc17",
+    "internal/stdlib/std/audio/wavpack/file.fern.md": "5e07781a6fa5be129d24e26e7d8f323700f47e0b13be0cd5f90e14eb2bb8db6a",
+    "internal/stdlib/std/audio/wavpack/input.fern.md": "2646968ca756272775a2a01e72dfd5e8e0f1d1866a77f8a50ce015723624cc17",
+    "internal/stdlib/std/audio/wavpack/packet.fern.md": "2cca18b8ff520da10012c3bd3ca18cb819c8d48cd8566d16f0d3056b85e8ed74",
+    "internal/stdlib/std/audio/wavpack/predict.fern.md": "7ed11a78e86ff502d87730ab01bb528ffdc312ffc3fd402d5a799cb307037153",
+    "internal/stdlib/std/audio/wavpack/tables.fern": "05b7d7c54a24f50fc4711bea72e8af35f5448086700102b130ec640048801ea8",
+    "internal/stdlib/std/audio/wavpack/tags.fern.md": "e7fdcff464f37d21c1138d0f425f74d621370c909b7a228d1894d496e723b38d",
+    "internal/stdlib/std/audio/wavpack/tags_input.fern.md": "f20d7c6e186666b307f98de23cd96fe4409d0aeb9cc9af27bbdeed6f95b18658",
+    "internal/stdlib/std/audio/wavpack.fern.md": "e7fefebb17f4055dad629280f500c642aeb86443bbfa536bb87a08f4d6125a77"
+  },
+  "measurement": "file open through first PCM group and through complete decode with full sample checksum; warm filesystem cache, process startup and close excluded",
+  "output_storage": "reusable signed 32-bit PCM in both implementations; raw IEEE float bits",
+  "native_peak_rss": "whole Linux process VmHWM after reading the file",
+  "fresh_bytes": "Fern new runtime heap storage, not total allocation traffic; C allocation counts remain unmeasured",
+  "limitations": "one host; no physical Android latency, power or thermal measurements",
+  "cases": {
+    "music2": {
+      "channels": 2,
+      "bits": 24,
+      "floating": false,
+      "flags": 0,
+      "input_bytes": 26132,
+      "input_sha256": "02bd5890fefe86404c82f0544bba70b1a3c8a88eedeca39d4ff674eacf2b4d5d",
+      "pcm_sha256": "807fb6fcfc55a3e43089d0ddf375a425ed2ae04e93e0d5fb5e85a1243127957f",
+      "reference_info": {
+        "channels": 2,
+        "depth": 24,
+        "rate": 48000,
+        "mode": 2,
+        "norm_exp": 0,
+        "channel_mask": 3,
+        "title": "",
+        "md5": null
+      },
+      "raw_trials": {
+        "fern": [
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 682486,
+            "samples": 16384,
+            "checksum": 847010985,
+            "wall_ns": 1296971,
+            "allocs": 47213,
+            "fresh_bytes": 163224,
+            "native_peak_rss_kb": 420,
+            "process_cpu_us": 1536
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 638421,
+            "samples": 16384,
+            "checksum": 847010985,
+            "wall_ns": 1325303,
+            "allocs": 47213,
+            "fresh_bytes": 163224,
+            "native_peak_rss_kb": 420,
+            "process_cpu_us": 1484
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 650709,
+            "samples": 16384,
+            "checksum": 847010985,
+            "wall_ns": 1259025,
+            "allocs": 47213,
+            "fresh_bytes": 163224,
+            "native_peak_rss_kb": 420,
+            "process_cpu_us": 1436
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 616618,
+            "samples": 16384,
+            "checksum": 847010985,
+            "wall_ns": 1247217,
+            "allocs": 47213,
+            "fresh_bytes": 163224,
+            "native_peak_rss_kb": 420,
+            "process_cpu_us": 1631
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 611221,
+            "samples": 16384,
+            "checksum": 847010985,
+            "wall_ns": 1275389,
+            "allocs": 47213,
+            "fresh_bytes": 163224,
+            "native_peak_rss_kb": 424,
+            "process_cpu_us": 1593
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 638230,
+            "samples": 16384,
+            "checksum": 847010985,
+            "wall_ns": 1248039,
+            "allocs": 47213,
+            "fresh_bytes": 163224,
+            "native_peak_rss_kb": 424,
+            "process_cpu_us": 1461
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 610480,
+            "samples": 16384,
+            "checksum": 847010985,
+            "wall_ns": 1280767,
+            "allocs": 47213,
+            "fresh_bytes": 163224,
+            "native_peak_rss_kb": 420,
+            "process_cpu_us": 1444
+          }
+        ],
+        "libwavpack": [
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 226604,
+            "samples": 16384,
+            "checksum": 847010985,
+            "wall_ns": 416835,
+            "native_peak_rss_kb": 964,
+            "process_cpu_us": 1210
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 198142,
+            "samples": 16384,
+            "checksum": 847010985,
+            "wall_ns": 362274,
+            "native_peak_rss_kb": 960,
+            "process_cpu_us": 1053
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 193265,
+            "samples": 16384,
+            "checksum": 847010985,
+            "wall_ns": 439448,
+            "native_peak_rss_kb": 964,
+            "process_cpu_us": 1067
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 194577,
+            "samples": 16384,
+            "checksum": 847010985,
+            "wall_ns": 358308,
+            "native_peak_rss_kb": 960,
+            "process_cpu_us": 1104
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 195749,
+            "samples": 16384,
+            "checksum": 847010985,
+            "wall_ns": 359911,
+            "native_peak_rss_kb": 960,
+            "process_cpu_us": 1051
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 194727,
+            "samples": 16384,
+            "checksum": 847010985,
+            "wall_ns": 382394,
+            "native_peak_rss_kb": 960,
+            "process_cpu_us": 1115
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 192884,
+            "samples": 16384,
+            "checksum": 847010985,
+            "wall_ns": 356866,
+            "native_peak_rss_kb": 964,
+            "process_cpu_us": 981
+          }
+        ]
+      },
+      "median": {
+        "fern": {
+          "first_group_frames": 4096,
+          "first_group_ns": 638230,
+          "samples": 16384,
+          "checksum": 847010985,
+          "wall_ns": 1275389,
+          "allocs": 47213,
+          "fresh_bytes": 163224,
+          "native_peak_rss_kb": 420,
+          "process_cpu_us": 1484
+        },
+        "libwavpack": {
+          "first_group_frames": 4096,
+          "first_group_ns": 194727,
+          "samples": 16384,
+          "checksum": 847010985,
+          "wall_ns": 362274,
+          "native_peak_rss_kb": 960,
+          "process_cpu_us": 1067
+        }
+      },
+      "paired_ratios": [
+        3.1114733647606365,
+        3.658289029850334,
+        2.8650147457719686,
+        3.4808516695133798,
+        3.5436232846453706,
+        3.2637515232979597,
+        3.5889297383331558
+      ],
+      "median_paired_fern_over_c": 3.4808516695133798
+    },
+    "music8": {
+      "channels": 8,
+      "bits": 24,
+      "floating": false,
+      "flags": 0,
+      "input_bytes": 105094,
+      "input_sha256": "78f6763ba2ad006b3917af9b9b8daf0553abd2999312475b3c65f67b354145b6",
+      "pcm_sha256": "c2b9f8d5053792eb2f0bc89c3a78444e72808687b578f374a679506257ed33bb",
+      "reference_info": {
+        "channels": 8,
+        "depth": 24,
+        "rate": 48000,
+        "mode": 2,
+        "norm_exp": 0,
+        "channel_mask": 1599,
+        "title": "",
+        "md5": null
+      },
+      "raw_trials": {
+        "fern": [
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 2493023,
+            "samples": 65536,
+            "checksum": 671355595,
+            "wall_ns": 5319548,
+            "allocs": 188845,
+            "fresh_bytes": 627064,
+            "native_peak_rss_kb": 776,
+            "process_cpu_us": 5527
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 2425955,
+            "samples": 65536,
+            "checksum": 671355595,
+            "wall_ns": 4942404,
+            "allocs": 188845,
+            "fresh_bytes": 627064,
+            "native_peak_rss_kb": 776,
+            "process_cpu_us": 5346
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 2421158,
+            "samples": 65536,
+            "checksum": 671355595,
+            "wall_ns": 5006008,
+            "allocs": 188845,
+            "fresh_bytes": 627064,
+            "native_peak_rss_kb": 776,
+            "process_cpu_us": 5167
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 2409241,
+            "samples": 65536,
+            "checksum": 671355595,
+            "wall_ns": 5062532,
+            "allocs": 188845,
+            "fresh_bytes": 627064,
+            "native_peak_rss_kb": 780,
+            "process_cpu_us": 5222
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 2492954,
+            "samples": 65536,
+            "checksum": 671355595,
+            "wall_ns": 5000870,
+            "allocs": 188845,
+            "fresh_bytes": 627064,
+            "native_peak_rss_kb": 780,
+            "process_cpu_us": 5161
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 2518983,
+            "samples": 65536,
+            "checksum": 671355595,
+            "wall_ns": 5038196,
+            "allocs": 188845,
+            "fresh_bytes": 627064,
+            "native_peak_rss_kb": 776,
+            "process_cpu_us": 5285
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 2437302,
+            "samples": 65536,
+            "checksum": 671355595,
+            "wall_ns": 4979519,
+            "allocs": 188845,
+            "fresh_bytes": 627064,
+            "native_peak_rss_kb": 776,
+            "process_cpu_us": 5220
+          }
+        ],
+        "libwavpack": [
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 710607,
+            "samples": 65536,
+            "checksum": 671355595,
+            "wall_ns": 1494442,
+            "native_peak_rss_kb": 1148,
+            "process_cpu_us": 2352
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 726110,
+            "samples": 65536,
+            "checksum": 671355595,
+            "wall_ns": 1482695,
+            "native_peak_rss_kb": 1148,
+            "process_cpu_us": 2284
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 696357,
+            "samples": 65536,
+            "checksum": 671355595,
+            "wall_ns": 1390280,
+            "native_peak_rss_kb": 1152,
+            "process_cpu_us": 2101
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 714874,
+            "samples": 65536,
+            "checksum": 671355595,
+            "wall_ns": 1392192,
+            "native_peak_rss_kb": 1148,
+            "process_cpu_us": 2025
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 751007,
+            "samples": 65536,
+            "checksum": 671355595,
+            "wall_ns": 1450789,
+            "native_peak_rss_kb": 1152,
+            "process_cpu_us": 2179
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 736926,
+            "samples": 65536,
+            "checksum": 671355595,
+            "wall_ns": 1456907,
+            "native_peak_rss_kb": 1148,
+            "process_cpu_us": 2099
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 873598,
+            "samples": 65536,
+            "checksum": 671355595,
+            "wall_ns": 1567380,
+            "native_peak_rss_kb": 1148,
+            "process_cpu_us": 2261
+          }
+        ]
+      },
+      "median": {
+        "fern": {
+          "first_group_frames": 4096,
+          "first_group_ns": 2437302,
+          "samples": 65536,
+          "checksum": 671355595,
+          "wall_ns": 5006008,
+          "allocs": 188845,
+          "fresh_bytes": 627064,
+          "native_peak_rss_kb": 776,
+          "process_cpu_us": 5222
+        },
+        "libwavpack": {
+          "first_group_frames": 4096,
+          "first_group_ns": 726110,
+          "samples": 65536,
+          "checksum": 671355595,
+          "wall_ns": 1456907,
+          "native_peak_rss_kb": 1148,
+          "process_cpu_us": 2179
+        }
+      },
+      "paired_ratios": [
+        3.5595546699035494,
+        3.3333922350854355,
+        3.6007192795695833,
+        3.6363748678343217,
+        3.4470002185017945,
+        3.458145235076776,
+        3.1769698477714403
+      ],
+      "median_paired_fern_over_c": 3.458145235076776
+    },
+    "noise2": {
+      "channels": 2,
+      "bits": 24,
+      "floating": false,
+      "flags": 0,
+      "input_bytes": 50068,
+      "input_sha256": "6924919a46b774f221b285df4e79b114a62b754aa3f9d74b05f80d2228f06451",
+      "pcm_sha256": "6958fde68deb41a6dfbf94b3a7b4f5ed54241ff1fe40f2a1d6cf1442f8a0903d",
+      "reference_info": {
+        "channels": 2,
+        "depth": 24,
+        "rate": 48000,
+        "mode": 2,
+        "norm_exp": 0,
+        "channel_mask": 3,
+        "title": "",
+        "md5": null
+      },
+      "raw_trials": {
+        "fern": [
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 750116,
+            "samples": 16384,
+            "checksum": 2962632469,
+            "wall_ns": 1484828,
+            "allocs": 53542,
+            "fresh_bytes": 228168,
+            "native_peak_rss_kb": 476,
+            "process_cpu_us": 1672
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 758899,
+            "samples": 16384,
+            "checksum": 2962632469,
+            "wall_ns": 1453783,
+            "allocs": 53542,
+            "fresh_bytes": 228168,
+            "native_peak_rss_kb": 476,
+            "process_cpu_us": 1602
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 694844,
+            "samples": 16384,
+            "checksum": 2962632469,
+            "wall_ns": 1415446,
+            "allocs": 53542,
+            "fresh_bytes": 228168,
+            "native_peak_rss_kb": 476,
+            "process_cpu_us": 1566
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 754732,
+            "samples": 16384,
+            "checksum": 2962632469,
+            "wall_ns": 1480963,
+            "allocs": 53542,
+            "fresh_bytes": 228168,
+            "native_peak_rss_kb": 476,
+            "process_cpu_us": 1631
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 722645,
+            "samples": 16384,
+            "checksum": 2962632469,
+            "wall_ns": 1456207,
+            "allocs": 53542,
+            "fresh_bytes": 228168,
+            "native_peak_rss_kb": 476,
+            "process_cpu_us": 1598
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 759550,
+            "samples": 16384,
+            "checksum": 2962632469,
+            "wall_ns": 1534001,
+            "allocs": 53542,
+            "fresh_bytes": 228168,
+            "native_peak_rss_kb": 476,
+            "process_cpu_us": 1733
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 765518,
+            "samples": 16384,
+            "checksum": 2962632469,
+            "wall_ns": 1470217,
+            "allocs": 53542,
+            "fresh_bytes": 228168,
+            "native_peak_rss_kb": 476,
+            "process_cpu_us": 1609
+          }
+        ],
+        "libwavpack": [
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 225483,
+            "samples": 16384,
+            "checksum": 2962632469,
+            "wall_ns": 413460,
+            "native_peak_rss_kb": 972,
+            "process_cpu_us": 1130
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 218202,
+            "samples": 16384,
+            "checksum": 2962632469,
+            "wall_ns": 470734,
+            "native_peak_rss_kb": 972,
+            "process_cpu_us": 1077
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 218802,
+            "samples": 16384,
+            "checksum": 2962632469,
+            "wall_ns": 435001,
+            "native_peak_rss_kb": 976,
+            "process_cpu_us": 1229
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 282687,
+            "samples": 16384,
+            "checksum": 2962632469,
+            "wall_ns": 472286,
+            "native_peak_rss_kb": 972,
+            "process_cpu_us": 1071
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 255457,
+            "samples": 16384,
+            "checksum": 2962632469,
+            "wall_ns": 443814,
+            "native_peak_rss_kb": 972,
+            "process_cpu_us": 1134
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 219614,
+            "samples": 16384,
+            "checksum": 2962632469,
+            "wall_ns": 406870,
+            "native_peak_rss_kb": 972,
+            "process_cpu_us": 1035
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 222838,
+            "samples": 16384,
+            "checksum": 2962632469,
+            "wall_ns": 410575,
+            "native_peak_rss_kb": 976,
+            "process_cpu_us": 1243
+          }
+        ]
+      },
+      "median": {
+        "fern": {
+          "first_group_frames": 4096,
+          "first_group_ns": 754732,
+          "samples": 16384,
+          "checksum": 2962632469,
+          "wall_ns": 1470217,
+          "allocs": 53542,
+          "fresh_bytes": 228168,
+          "native_peak_rss_kb": 476,
+          "process_cpu_us": 1609
+        },
+        "libwavpack": {
+          "first_group_frames": 4096,
+          "first_group_ns": 222838,
+          "samples": 16384,
+          "checksum": 2962632469,
+          "wall_ns": 435001,
+          "native_peak_rss_kb": 972,
+          "process_cpu_us": 1130
+        }
+      },
+      "paired_ratios": [
+        3.591225269675422,
+        3.0883322640812008,
+        3.253891370364666,
+        3.135733432708147,
+        3.281120018746592,
+        3.770248482316219,
+        3.580873165682275
+      ],
+      "median_paired_fern_over_c": 3.281120018746592
+    },
+    "silence2": {
+      "channels": 2,
+      "bits": 24,
+      "floating": false,
+      "flags": 0,
+      "input_bytes": 224,
+      "input_sha256": "cd49f7e9481a9dbc9d80a78171de9b1726925caaa483d5e13616e3d537a14719",
+      "pcm_sha256": "de2f256064a0af797747c2b97505dc0b9f3df0de4f489eac731c23ae9ca9cc31",
+      "reference_info": {
+        "channels": 2,
+        "depth": 24,
+        "rate": 48000,
+        "mode": 2,
+        "norm_exp": 0,
+        "channel_mask": 3,
+        "title": "",
+        "md5": null
+      },
+      "raw_trials": {
+        "fern": [
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 109872,
+            "samples": 16384,
+            "checksum": 946445765,
+            "wall_ns": 216028,
+            "allocs": 146,
+            "fresh_bytes": 124168,
+            "native_peak_rss_kb": 380,
+            "process_cpu_us": 354
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 174587,
+            "samples": 16384,
+            "checksum": 946445765,
+            "wall_ns": 337287,
+            "allocs": 146,
+            "fresh_bytes": 124168,
+            "native_peak_rss_kb": 380,
+            "process_cpu_us": 663
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 109942,
+            "samples": 16384,
+            "checksum": 946445765,
+            "wall_ns": 292020,
+            "allocs": 146,
+            "fresh_bytes": 124168,
+            "native_peak_rss_kb": 384,
+            "process_cpu_us": 738
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 108910,
+            "samples": 16384,
+            "checksum": 946445765,
+            "wall_ns": 214907,
+            "allocs": 146,
+            "fresh_bytes": 124168,
+            "native_peak_rss_kb": 380,
+            "process_cpu_us": 394
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 108230,
+            "samples": 16384,
+            "checksum": 946445765,
+            "wall_ns": 213204,
+            "allocs": 146,
+            "fresh_bytes": 124168,
+            "native_peak_rss_kb": 380,
+            "process_cpu_us": 353
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 108389,
+            "samples": 16384,
+            "checksum": 946445765,
+            "wall_ns": 213945,
+            "allocs": 146,
+            "fresh_bytes": 124168,
+            "native_peak_rss_kb": 384,
+            "process_cpu_us": 350
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 107509,
+            "samples": 16384,
+            "checksum": 946445765,
+            "wall_ns": 212373,
+            "allocs": 146,
+            "fresh_bytes": 124168,
+            "native_peak_rss_kb": 380,
+            "process_cpu_us": 343
+          }
+        ],
+        "libwavpack": [
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 57735,
+            "samples": 16384,
+            "checksum": 946445765,
+            "wall_ns": 117903,
+            "native_peak_rss_kb": 944,
+            "process_cpu_us": 1012
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 72297,
+            "samples": 16384,
+            "checksum": 946445765,
+            "wall_ns": 106708,
+            "native_peak_rss_kb": 948,
+            "process_cpu_us": 1168
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 73208,
+            "samples": 16384,
+            "checksum": 946445765,
+            "wall_ns": 107588,
+            "native_peak_rss_kb": 948,
+            "process_cpu_us": 962
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 70243,
+            "samples": 16384,
+            "checksum": 946445765,
+            "wall_ns": 151683,
+            "native_peak_rss_kb": 948,
+            "process_cpu_us": 1123
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 56473,
+            "samples": 16384,
+            "checksum": 946445765,
+            "wall_ns": 91044,
+            "native_peak_rss_kb": 948,
+            "process_cpu_us": 745
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 58486,
+            "samples": 16384,
+            "checksum": 946445765,
+            "wall_ns": 93007,
+            "native_peak_rss_kb": 948,
+            "process_cpu_us": 722
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 57595,
+            "samples": 16384,
+            "checksum": 946445765,
+            "wall_ns": 92066,
+            "native_peak_rss_kb": 948,
+            "process_cpu_us": 785
+          }
+        ]
+      },
+      "median": {
+        "fern": {
+          "first_group_frames": 4096,
+          "first_group_ns": 108910,
+          "samples": 16384,
+          "checksum": 946445765,
+          "wall_ns": 214907,
+          "allocs": 146,
+          "fresh_bytes": 124168,
+          "native_peak_rss_kb": 380,
+          "process_cpu_us": 354
+        },
+        "libwavpack": {
+          "first_group_frames": 4096,
+          "first_group_ns": 58486,
+          "samples": 16384,
+          "checksum": 946445765,
+          "wall_ns": 106708,
+          "native_peak_rss_kb": 948,
+          "process_cpu_us": 962
+        }
+      },
+      "paired_ratios": [
+        1.8322519359134204,
+        3.160840799190314,
+        2.7142432241513923,
+        1.41681665051456,
+        2.3417688150784235,
+        2.300310729299945,
+        2.3067473334347097
+      ],
+      "median_paired_fern_over_c": 2.3067473334347097
+    },
+    "integer32": {
+      "channels": 2,
+      "bits": 32,
+      "floating": false,
+      "flags": 1073741824,
+      "input_bytes": 66480,
+      "input_sha256": "bd1ad1b7a8bf981d78e9242be8bc13c801310de9a2a111972b2f27c320468457",
+      "pcm_sha256": "e637afad0633bd516731f0c7a42bb578eae8b4dd354ed4220176b8a533932eed",
+      "reference_info": {
+        "channels": 2,
+        "depth": 32,
+        "rate": 48000,
+        "mode": 2,
+        "norm_exp": 0,
+        "channel_mask": 3,
+        "title": "",
+        "md5": null
+      },
+      "raw_trials": {
+        "fern": [
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 1021906,
+            "samples": 16384,
+            "checksum": 2259683703,
+            "wall_ns": 1961591,
+            "allocs": 70035,
+            "fresh_bytes": 310096,
+            "native_peak_rss_kb": 520,
+            "process_cpu_us": 2187
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 1004771,
+            "samples": 16384,
+            "checksum": 2259683703,
+            "wall_ns": 1950034,
+            "allocs": 70035,
+            "fresh_bytes": 310096,
+            "native_peak_rss_kb": 516,
+            "process_cpu_us": 2104
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 964622,
+            "samples": 16384,
+            "checksum": 2259683703,
+            "wall_ns": 2022632,
+            "allocs": 70035,
+            "fresh_bytes": 310096,
+            "native_peak_rss_kb": 516,
+            "process_cpu_us": 2180
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 970721,
+            "samples": 16384,
+            "checksum": 2259683703,
+            "wall_ns": 1903295,
+            "allocs": 70035,
+            "fresh_bytes": 310096,
+            "native_peak_rss_kb": 520,
+            "process_cpu_us": 2053
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 959655,
+            "samples": 16384,
+            "checksum": 2259683703,
+            "wall_ns": 1910115,
+            "allocs": 70035,
+            "fresh_bytes": 310096,
+            "native_peak_rss_kb": 516,
+            "process_cpu_us": 2060
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 1060203,
+            "samples": 16384,
+            "checksum": 2259683703,
+            "wall_ns": 2001200,
+            "allocs": 70035,
+            "fresh_bytes": 310096,
+            "native_peak_rss_kb": 516,
+            "process_cpu_us": 2148
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 952534,
+            "samples": 16384,
+            "checksum": 2259683703,
+            "wall_ns": 1875174,
+            "allocs": 70035,
+            "fresh_bytes": 310096,
+            "native_peak_rss_kb": 516,
+            "process_cpu_us": 2019
+          }
+        ],
+        "libwavpack": [
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 262236,
+            "samples": 16384,
+            "checksum": 2259683703,
+            "wall_ns": 539906,
+            "native_peak_rss_kb": 984,
+            "process_cpu_us": 1266
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 252031,
+            "samples": 16384,
+            "checksum": 2259683703,
+            "wall_ns": 493597,
+            "native_peak_rss_kb": 984,
+            "process_cpu_us": 1129
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 302536,
+            "samples": 16384,
+            "checksum": 2259683703,
+            "wall_ns": 524183,
+            "native_peak_rss_kb": 980,
+            "process_cpu_us": 1214
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 251090,
+            "samples": 16384,
+            "checksum": 2259683703,
+            "wall_ns": 471785,
+            "native_peak_rss_kb": 984,
+            "process_cpu_us": 1321
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 323197,
+            "samples": 16384,
+            "checksum": 2259683703,
+            "wall_ns": 547698,
+            "native_peak_rss_kb": 984,
+            "process_cpu_us": 1195
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 255026,
+            "samples": 16384,
+            "checksum": 2259683703,
+            "wall_ns": 495300,
+            "native_peak_rss_kb": 984,
+            "process_cpu_us": 1102
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 251701,
+            "samples": 16384,
+            "checksum": 2259683703,
+            "wall_ns": 494599,
+            "native_peak_rss_kb": 984,
+            "process_cpu_us": 1113
+          }
+        ]
+      },
+      "median": {
+        "fern": {
+          "first_group_frames": 4096,
+          "first_group_ns": 970721,
+          "samples": 16384,
+          "checksum": 2259683703,
+          "wall_ns": 1950034,
+          "allocs": 70035,
+          "fresh_bytes": 310096,
+          "native_peak_rss_kb": 516,
+          "process_cpu_us": 2104
+        },
+        "libwavpack": {
+          "first_group_frames": 4096,
+          "first_group_ns": 255026,
+          "samples": 16384,
+          "checksum": 2259683703,
+          "wall_ns": 495300,
+          "native_peak_rss_kb": 984,
+          "process_cpu_us": 1195
+        }
+      },
+      "paired_ratios": [
+        3.633208373309428,
+        3.9506601539312434,
+        3.858637155344603,
+        4.034242292569709,
+        3.4875332756373036,
+        4.040379567938623,
+        3.7913016403187227
+      ],
+      "median_paired_fern_over_c": 3.858637155344603
+    },
+    "float2": {
+      "channels": 2,
+      "bits": 32,
+      "floating": true,
+      "flags": 1073741824,
+      "input_bytes": 31748,
+      "input_sha256": "3eab7a2af599124b09d3616d4ef8e770d2488c8e0e6b1cc86e5873a02013d13e",
+      "pcm_sha256": "89132749ff0bf6ebabc3f07d0ac1d8292f90079388c76356f561d42ea3579c1c",
+      "reference_info": {
+        "channels": 2,
+        "depth": 32,
+        "rate": 48000,
+        "mode": 10,
+        "norm_exp": 127,
+        "channel_mask": 3,
+        "title": "",
+        "md5": null
+      },
+      "raw_trials": {
+        "fern": [
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 960316,
+            "samples": 16384,
+            "checksum": 1399423327,
+            "wall_ns": 1775167,
+            "allocs": 63641,
+            "fresh_bytes": 194920,
+            "native_peak_rss_kb": 444,
+            "process_cpu_us": 1880
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 816804,
+            "samples": 16384,
+            "checksum": 1399423327,
+            "wall_ns": 1607279,
+            "allocs": 63641,
+            "fresh_bytes": 194920,
+            "native_peak_rss_kb": 444,
+            "process_cpu_us": 1752
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 836733,
+            "samples": 16384,
+            "checksum": 1399423327,
+            "wall_ns": 1624935,
+            "allocs": 63641,
+            "fresh_bytes": 194920,
+            "native_peak_rss_kb": 444,
+            "process_cpu_us": 1793
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 900438,
+            "samples": 16384,
+            "checksum": 1399423327,
+            "wall_ns": 1708208,
+            "allocs": 63641,
+            "fresh_bytes": 194920,
+            "native_peak_rss_kb": 444,
+            "process_cpu_us": 1855
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 815322,
+            "samples": 16384,
+            "checksum": 1399423327,
+            "wall_ns": 1602803,
+            "allocs": 63641,
+            "fresh_bytes": 194920,
+            "native_peak_rss_kb": 444,
+            "process_cpu_us": 1742
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 813319,
+            "samples": 16384,
+            "checksum": 1399423327,
+            "wall_ns": 1657132,
+            "allocs": 63641,
+            "fresh_bytes": 194920,
+            "native_peak_rss_kb": 444,
+            "process_cpu_us": 1796
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 810485,
+            "samples": 16384,
+            "checksum": 1399423327,
+            "wall_ns": 1610614,
+            "allocs": 63641,
+            "fresh_bytes": 194920,
+            "native_peak_rss_kb": 444,
+            "process_cpu_us": 1751
+          }
+        ],
+        "libwavpack": [
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 275235,
+            "samples": 16384,
+            "checksum": 1399423327,
+            "wall_ns": 513597,
+            "native_peak_rss_kb": 964,
+            "process_cpu_us": 1211
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 282386,
+            "samples": 16384,
+            "checksum": 1399423327,
+            "wall_ns": 531303,
+            "native_peak_rss_kb": 968,
+            "process_cpu_us": 1193
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 366790,
+            "samples": 16384,
+            "checksum": 1399423327,
+            "wall_ns": 613414,
+            "native_peak_rss_kb": 968,
+            "process_cpu_us": 1343
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 268386,
+            "samples": 16384,
+            "checksum": 1399423327,
+            "wall_ns": 511855,
+            "native_peak_rss_kb": 968,
+            "process_cpu_us": 1172
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 291530,
+            "samples": 16384,
+            "checksum": 1399423327,
+            "wall_ns": 537602,
+            "native_peak_rss_kb": 968,
+            "process_cpu_us": 1143
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 269558,
+            "samples": 16384,
+            "checksum": 1399423327,
+            "wall_ns": 514609,
+            "native_peak_rss_kb": 968,
+            "process_cpu_us": 1132
+          },
+          {
+            "first_group_frames": 4096,
+            "first_group_ns": 272011,
+            "samples": 16384,
+            "checksum": 1399423327,
+            "wall_ns": 515230,
+            "native_peak_rss_kb": 968,
+            "process_cpu_us": 1210
+          }
+        ]
+      },
+      "median": {
+        "fern": {
+          "first_group_frames": 4096,
+          "first_group_ns": 816804,
+          "samples": 16384,
+          "checksum": 1399423327,
+          "wall_ns": 1624935,
+          "allocs": 63641,
+          "fresh_bytes": 194920,
+          "native_peak_rss_kb": 444,
+          "process_cpu_us": 1793
+        },
+        "libwavpack": {
+          "first_group_frames": 4096,
+          "first_group_ns": 275235,
+          "samples": 16384,
+          "checksum": 1399423327,
+          "wall_ns": 515230,
+          "native_peak_rss_kb": 968,
+          "process_cpu_us": 1193
+        }
+      },
+      "paired_ratios": [
+        3.456342229413334,
+        3.0251645482897707,
+        2.64900214210957,
+        3.337288880640025,
+        2.981393298388027,
+        3.2201768721495347,
+        3.126009743221474
+      ],
+      "median_paired_fern_over_c": 3.126009743221474
+    }
+  },
+  "process_cpu": "whole child process user and system CPU time, including startup and teardown",
+  "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+  "cpu_quota": "400000 100000",
+  "binary_sha256": {
+    "fern": "cd2cd3e8b5abad725d5cb6468d04ed8b7bac71a73e7a49da3e3e4adfa0d4daf3",
+    "libwavpack": "1b533c5b545864af1120fbba506d8373070da86c6dd493b3ad9d10692e842543"
+  },
+  "c_compiler": "cc (Debian 14.2.0-19) 14.2.0"
+}

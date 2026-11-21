@@ -63,8 +63,44 @@ static int consume(WavpackContext *context, int32_t *output, int channels, int r
     }
     return 1;
 }
+static int playback(const char *path) {
+    char error[100];
+    int64_t start = nanoseconds();
+    WavpackContext *context = WavpackOpenFileInput(path, error, 0, 0);
+    if (!context) { fprintf(stderr, "%s\n", error); return 2; }
+    int channels = WavpackGetNumChannels(context);
+    if (channels < 1 || channels > 8) { WavpackCloseFile(context); return 3; }
+    int32_t *output = malloc((size_t)4096 * channels * sizeof(*output));
+    if (!output) { WavpackCloseFile(context); return 4; }
+    uint64_t samples = 0;
+    uint32_t checksum = 2166136261u, frames;
+    int64_t first = 0;
+    uint32_t first_frames = WavpackGetNumSamplesInFrame(context);
+    if (!first_frames || first_frames > 4096) {
+        WavpackCloseFile(context);
+        free(output);
+        return 5;
+    }
+    while ((frames = WavpackUnpackSamples(context, output, samples ? 4096 : first_frames)) != 0) {
+        if (!samples) first = nanoseconds() - start;
+        uint32_t count = frames * (uint32_t)channels;
+        for (uint32_t i = 0; i < count; ++i) checksum = (checksum ^ (uint32_t)output[i]) * 16777619u;
+        samples += count;
+    }
+    int valid = !WavpackGetNumErrors(context) &&
+        samples == (uint64_t)WavpackGetNumSamples64(context) * channels;
+    int64_t elapsed = nanoseconds() - start;
+    printf("first_group_frames=%u\n", first_frames);
+    printf("first_group_ns=%lld\nsamples=%llu\nchecksum=%u\nwall_ns=%lld\nnative_peak_rss_kb=%ld\n",
+        (long long)first, (unsigned long long)samples, checksum, (long long)elapsed, peak_rss());
+    WavpackCloseFile(context);
+    free(output);
+    return valid ? 0 : 5;
+}
+
 int main(int argc, char **argv) {
     if (argc != 3 || strcmp(WavpackGetLibraryVersionString(), "5.8.1")) return 1;
+    if (!strcmp(argv[2], "source")) return playback(argv[1]);
     int rounds = atoi(argv[2]);
     if (rounds < 1 || rounds > 100000) return 1;
     FILE *file = fopen(argv[1], "rb");

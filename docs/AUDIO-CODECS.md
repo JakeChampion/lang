@@ -46,7 +46,7 @@ The frozen WavPack corpus checks 132 files against WavPack 5.8.1.
 FFmpeg also agrees on 130 files.
 FFmpeg differs on the two files with the newer integer extension optimization.
 Fern matches WavPack on both files.
-Full CI and matched performance measurements remain required.
+The [sequential file benchmarks](benchmarks/wavpack-source-2026-11-21/README.md) compare first-output latency and complete playback against WavPack 5.8.1. The [byte-view measurements](benchmarks/wavpack-decode-2026-11-09/README.md) cover repeated decode after setup.
 
 The [ULC2 example library](../examples/ulc/README.md) has its own block API and WAV tools.
 Its documentation includes reference checks and a separate performance report.
