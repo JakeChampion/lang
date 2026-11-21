@@ -47,6 +47,7 @@ function main(): i32 {
   print("bare " + doubled_last([]).to_string());
   let bytes: u8[] = [200, 100];
   print("bytes " + ((bytes[0] + bytes[1]) as i32).to_string());
+  print("array as view " + tail_sum(typed).to_string());
   print("view " + view_sum(typed[0:2]).to_string());
   print("view of view " + tail_sum(typed[0:3]).to_string());
   print("nested " + second_row([[1], [7, 8]]).to_string());
@@ -61,6 +62,7 @@ literal 9
 empty 244
 bare 244
 bytes 44
+array as view 5
 view 3
 view of view 5
 nested 15
