@@ -58,3 +58,9 @@ taskset -c 0 valgrind --leak-check=no ffmpeg -nostdin -nostats -benchmark -y -i 
 ```
 
 The compiler SHA-256 was `c221a1f3b6f40d7bc470ca1cf1df047a2c143d71abc2600e28d39868a56e858e`. The encoded CAF SHA-256 was `4332117adc20cbd343623e38857f855468bd9fede3460c1c275d2cd07db5eee1`.
+
+## ALAC Rice prefix decoding
+
+A Rice residual starts with up to nine one bits. Reading two adjacent bytes covers the prefix at every bit alignment. The decoder now counts those bits with a leading-zero operation on the inverted window and uses the same instruction for the adaptive history logarithm. At the final byte it checks the consumed bit count against the packet length.
+
+On the stereo CAF above, median whole-process CPU time fell from 17.35 to 16.08 ms and elapsed time from 17.58 to 16.28 ms. Both versions made 5,413 allocations and matched all 819,200 original samples on every trial. Twenty-one measured pairs followed a warm-up pair on CPU 0, alternating the order each time. Both binaries used the compiler identified above and the same rendering driver from commit 70a0645260. [Paired trials](rice-prefix.csv)

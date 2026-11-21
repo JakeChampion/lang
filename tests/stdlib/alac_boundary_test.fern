@@ -178,6 +178,37 @@ function bounded_bits(): test.TestOutcome {
   return test.pass();
 }
 
+function rice_prefixes(): test.TestOutcome {
+  for offset in 0..8 {
+    for ones in 0..10 {
+      let bytes = field([0u8, 0u8, 0u8], offset, ones, (1u32 << ones as u32) - 1u32);
+      let end = offset + ones + 1;
+      let expected = ones as u32;
+      if (ones == 9) {
+        bytes = field(bytes, offset + 9, 3, 5u32);
+        end = offset + 12;
+        expected = 5u32;
+      }
+      let Ok((next, value)) = entropy.rice(bytes, offset as i64, 1, 3) else {
+        return test.fail("aligned Rice prefix");
+      };
+      if (next != end as i64 || value != expected) {
+        return test.fail("Rice prefix consumed the wrong bits");
+      }
+    }
+    if let Err(pcm.Truncated) = entropy.rice([255u8], offset as i64, 1, 3) {} else {
+      return test.fail("unterminated final-byte prefix");
+    }
+    let Ok((next, _)) = entropy.rice([254u8], offset as i64, 1, 3) else {
+      return test.fail("terminal zero in final byte");
+    };
+    if (next != 8i64) {
+      return test.fail("final byte extent");
+    }
+  }
+  return test.pass();
+}
+
 function zero_runs(): test.TestOutcome {
   let Ok((configuration, _)) = fixture() else {
     return test.fail("fixture");
@@ -244,6 +275,7 @@ function main(): i32 {
   runner = runner.it("configuration prefixes, layouts, versions, and depths", configurations);
   runner = runner.it("packet prefixes, headers, frame lengths, and padding", prefixes);
   runner = runner.it("scratch, output, packet, and declared byte budgets", budgets);
+  runner = runner.it("Rice prefixes at every bit alignment", rice_prefixes);
   runner = runner.it("checked bit positions and incomplete Rice escapes", bounded_bits);
   runner = runner.it("bounded zero runs and predictor warm-up", zero_runs);
   runner = runner.it("channel permutations and declared predictor width", layouts);
