@@ -139,6 +139,7 @@ pub struct Model {
   downloads: offline.State,
   offline_open: string,
   tab: i32,
+  tab_history: i32[],
   menu_open: boolean,
   note: string,
   library_loaded: boolean,
@@ -263,6 +264,7 @@ pub enum Msg {
   PhoneResume,
   PhoneControl(api.Command),
   SelectTab(i32),
+  BackTab,
   Control(api.Command),
 }
 
@@ -280,7 +282,7 @@ function tools(saved: listening.Saved): PlaybackTools {
 
 pub function start(): Model {
   let downloads = offline.empty(offline.Catalog { dir: "", entries: [], cleanup: [], note: "" });
-  return Model { client: "", token: "", refresh: "", reconnect: false, auth: [], storage: None, session_note: "", load_after_auth: false, players: [], cards: [], shelf: empty_shelf(), generation: 0i64, background_busy: false, cover_busy: false, art_dir: "", warmed: map_new(64), trip_select: false, trip_cards: map_new(32), selected: "", on_phone: false, phone: phone.empty(), playback_tools: tools(listening.empty()), now_playing: NowPlaying { revision: 0i64, requested: false, due: 0i64, running: false, playback: None, note: "" }, now_open: false, tools_page: panel_tools.empty(), editing_group: None, device_status: None, device_note: "", volume: 50, config_panel: panel(0i64), downloads: downloads, offline_open: "", tab: 0, menu_open: false, note: "", library_loaded: false, enrich_downloads: false, busy: false, open_login: false, flow: None, job: None };
+  return Model { client: "", token: "", refresh: "", reconnect: false, auth: [], storage: None, session_note: "", load_after_auth: false, players: [], cards: [], shelf: empty_shelf(), generation: 0i64, background_busy: false, cover_busy: false, art_dir: "", warmed: map_new(64), trip_select: false, trip_cards: map_new(32), selected: "", on_phone: false, phone: phone.empty(), playback_tools: tools(listening.empty()), now_playing: NowPlaying { revision: 0i64, requested: false, due: 0i64, running: false, playback: None, note: "" }, now_open: false, tools_page: panel_tools.empty(), editing_group: None, device_status: None, device_note: "", volume: 50, config_panel: panel(0i64), downloads: downloads, offline_open: "", tab: 0, tab_history: [], menu_open: false, note: "", library_loaded: false, enrich_downloads: false, busy: false, open_login: false, flow: None, job: None };
 }
 
 function signed_out(m: Model, note: string): Model {
@@ -343,7 +345,7 @@ function accept_auth(m: Model, result: Result[api.Tokens, api.Failure]): Model {
       if (err.expired) {
         return found(Model {
           ...m, token: "", refresh: "", busy: false, note: err.message, storage: Some(ClearAuth),
-          selected: "", cards: offline.saved_cards(m.downloads), library_loaded: false, tab: 0,
+          selected: "", cards: offline.saved_cards(m.downloads), library_loaded: false, tab: 0, tab_history: [],
         });
       }
       return Model { ...m, busy: false, note: err.message };
@@ -1177,6 +1179,18 @@ function back_from_picker(m: Model): Model {
   return Model { ...m, config_panel: ConfigPanel { ...p, picker: picker, working: false, note: "" } };
 }
 
+function switch_tab(m: Model, tab: i32, history: i32[]): Model {
+  return Model { ...m, tab: tab, tab_history: history, menu_open: false, shelf: Shelf { ...m.shelf, first_art: 0, last_art: 0 } };
+}
+
+function select_tab(m: Model, tab: i32): Model {
+  if (tab == m.tab) {
+    return Model { ...m, menu_open: false };
+  }
+  let history = m.tab_history.filter((item: i32): boolean => item != tab).append(m.tab);
+  return switch_tab(m, tab, history);
+}
+
 pub function update(own m: Model, msg: Msg): Model {
   match (msg) {
     EditClient(text) => {
@@ -1235,6 +1249,9 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     CloseGroup => {
       if let Some(edit) = m.editing_group {
+        if (edit.confirm && !edit.busy) {
+          return Model { ...m, editing_group: Some(GroupEdit { ...edit, confirm: false, note: "" }) };
+        }
         if (!edit.busy) {
           return Model { ...m, editing_group: None };
         }
@@ -1400,14 +1417,11 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     OpenTools(page) => {
       let state = m.tools_page;
-      let tool = if (state.busy) { state } else { panel_tools.State { ...state, page: Some(page), note: "", audio: None } };
+      let tool = if (state.busy) { state } else { panel_tools.open_page(state, page) };
       return Model { ...m, tools_page: tool, menu_open: false };
     },
     CloseTools => {
-      if (!m.tools_page.busy) {
-        return tools_update(m, panel_tools.close_tool(m.tools_page));
-      }
-      return m;
+      return tools_update(m, panel_tools.back(m.tools_page));
     },
     EnableEditing => {
       if (!m.busy && m.client.len() > 0) {
@@ -1452,7 +1466,8 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     OpenScanned(id) => {
       if (card_index(m, id) >= 0) {
-        return Model { ...m, tools_page: panel_tools.close_tool(m.tools_page), tab: 1, shelf: Shelf { ...m.shelf, opened: id, first_art: 0, last_art: 0 } };
+        let next = select_tab(m, 1);
+        return Model { ...next, tools_page: panel_tools.close_tool(next.tools_page), shelf: Shelf { ...next.shelf, opened: id, first_art: 0, last_art: 0 } };
       }
       return m;
     },
@@ -1469,6 +1484,9 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     ShowShop => {
       let tool = m.tools_page;
+      if (tool.busy) {
+        return m;
+      }
       if (tool.show_shop || tool.shop.len() > 0) {
         return tools_update(m, panel_tools.State { ...tool, show_shop: !tool.show_shop, note: "" });
       }
@@ -1497,7 +1515,8 @@ pub function update(own m: Model, msg: Msg): Model {
         return tools_update(m, panel_tools.State { ...tool, draft: api.empty_playlist(), note: "", audio: None });
       }
       if let Some(card) = m.cards.find((card: api.Card): boolean => card.id == id && card.myo) {
-        return Model { ...m, tools_page: panel_tools.State { ...tool, page: Some(panel_tools.Create), busy: true, note: "Loading playlist…" }, job: Some(ReadPlaylist(m.generation, m.token, card)) };
+        let editor = panel_tools.open_page(tool, panel_tools.Create);
+        return Model { ...m, tools_page: panel_tools.State { ...editor, busy: true, note: "Loading playlist…" }, job: Some(ReadPlaylist(m.generation, m.token, card)) };
       }
       return m;
     },
@@ -1880,7 +1899,14 @@ pub function update(own m: Model, msg: Msg): Model {
       return Model { ...m, phone: phone.control(m.phone, command), playback_tools: PlaybackTools { ...m.playback_tools, sample: true } };
     },
     SelectTab(tab) => {
-      return Model { ...m, tab: tab, menu_open: false, shelf: Shelf { ...m.shelf, first_art: 0, last_art: 0 } };
+      return select_tab(m, tab);
+    },
+    BackTab => {
+      let n = m.tab_history.len();
+      if (n > 0) {
+        return switch_tab(m, m.tab_history[n - 1], m.tab_history.take(n - 1));
+      }
+      return m;
     },
     Control(command) => {
       return control(m, command);
@@ -3147,34 +3173,42 @@ function system(event: android.Event): Option[Msg] {
   }
 }
 
+function back_message(m: Model): Option[Msg] {
+  if (m.flow.is_some()) {
+    return Some(Cancel);
+  }
+  if (m.tools_page.page.is_some()) {
+    return Some(CloseTools);
+  }
+  if (m.editing_group.is_some()) {
+    return Some(CloseGroup);
+  }
+  if (m.now_open) {
+    return Some(CloseNowPlaying);
+  }
+  if (m.config_panel.device.is_some()) {
+    return if (m.config_panel.picker.is_some()) { Some(BackToSettings) } else { Some(CloseSettings) };
+  }
+  if (m.menu_open) {
+    return Some(ToggleMenu);
+  }
+  if (m.tab == 2 && m.trip_select && m.token.len() > 0) {
+    return Some(ChooseDownloads);
+  }
+  if (m.tab == 2 && m.offline_open.len() > 0) {
+    return Some(OpenDownload(""));
+  }
+  if (m.tab == 1 && m.shelf.opened.len() > 0) {
+    return Some(CloseCard);
+  }
+  if (m.tab_history.len() > 0) {
+    return Some(BackTab);
+  }
+  return None;
+}
+
 pub function program(open_browser: (string) => boolean, decode: (u8[]) => Option[draw.Image], persist: (Option[api.Session]) => boolean, output: phone.Output, disk: offline.Output, store: (listening.Saved) => boolean): ui.Program[Model, Msg] {
-  return ui.program(view, update).with_visible(visible_posters).with_system(system).with_effects((m: Model): Model => effects(m, open_browser, decode, persist, output, disk, store)).with_jobs(start_job).with_tick(wait, Msg.Tick).with_back((m: Model): Option[Msg] => {
-    if (m.tools_page.page.is_some()) {
-      return Some(CloseTools);
-    }
-    if (m.editing_group.is_some()) {
-      return Some(CloseGroup);
-    }
-    if (m.now_open) {
-      return Some(CloseNowPlaying);
-    }
-    if (m.menu_open) {
-      return Some(ToggleMenu);
-    }
-    if (m.config_panel.device.is_some()) {
-      if (m.config_panel.picker.is_some()) {
-        return Some(BackToSettings);
-      }
-      return Some(CloseSettings);
-    }
-    if (m.tab == 2 && m.offline_open.len() > 0) {
-      return Some(OpenDownload(""));
-    }
-    if (m.tab == 1 && m.shelf.opened.len() > 0) {
-      return Some(CloseCard);
-    }
-    return None;
-  }).with_close((own m: Model): own Model => {
+  return ui.program(view, update).with_visible(visible_posters).with_system(system).with_effects((m: Model): Model => effects(m, open_browser, decode, persist, output, disk, store)).with_jobs(start_job).with_tick(wait, Msg.Tick).with_back(back_message).with_close((own m: Model): own Model => {
     let saved = save_listening(m, output, store, true);
     phone.close(saved.phone, output);
     return close_app(Model { ...saved }, persist);

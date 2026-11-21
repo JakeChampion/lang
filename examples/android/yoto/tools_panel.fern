@@ -7,6 +7,7 @@ pub enum Native { ScanStart, ScanStop, RecordStart, RecordStop, RecordDiscard, P
 
 pub struct State {
   page: Option[Page],
+  return_to_hub: boolean,
   action: Option[Native],
   note: string,
   scanning: boolean,
@@ -25,7 +26,7 @@ pub struct State {
 
 pub function empty(): State {
   return State {
-    page: None, action: None, note: "", scanning: false, address: "", scan_result: None, recording: false, choosing_cover: false,
+    page: None, return_to_hub: false, action: None, note: "", scanning: false, address: "", scan_result: None, recording: false, choosing_cover: false,
     audio: None, draft: api.empty_playlist(), editing: false, busy: false, discover_filter: 0, show_shop: false, shop: [],
   };
 }
@@ -37,7 +38,36 @@ pub function close_tool(s: State): State {
   } else if (s.recording) {
     action = Some(RecordDiscard);
   }
-  return State { ...s, page: None, action: action, scanning: false, recording: false, choosing_cover: false, audio: None, note: "" };
+  return State { ...s, page: None, return_to_hub: false, action: action, scanning: false, recording: false, choosing_cover: false, audio: None, note: "" };
+}
+
+pub function open_page(s: State, page: Page): State {
+  let parent = match (s.page) {
+    Some(Hub()) => true,
+    _ => false,
+  };
+  return State { ...s, page: Some(page), return_to_hub: parent, show_shop: false, choosing_cover: false, note: "", audio: None };
+}
+
+pub function back(s: State): State {
+  match (s.page) {
+    Some(Create()) => {
+      if (s.audio.is_some() || s.choosing_cover) {
+        return State { ...s, audio: None, choosing_cover: false };
+      }
+    },
+    Some(Discover()) => {
+      if (s.show_shop) {
+        return State { ...s, show_shop: false, note: "" };
+      }
+    },
+    _ => {}
+  }
+  let closed = close_tool(s);
+  if (s.return_to_hub) {
+    return State { ...closed, page: Some(Hub) };
+  }
+  return closed;
 }
 
 pub function audio_added(s: State, audio: api.LocalAudio): State {

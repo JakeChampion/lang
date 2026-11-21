@@ -164,7 +164,7 @@ function no_downloads(): offline.Output {
 
 function simulator(own model: deck.Model): sim.Sim[deck.Model, deck.Msg] {
   let real = deck.program((address: string): boolean => false, (data: u8[]): Option[draw.Image] => None, (saved: Option[api.Session]): boolean => true, no_audio(), no_downloads(), (state: listening.Saved): boolean => true);
-  let dry = ui.program(deck.view, deck.update).with_theme_of(real.theme).with_visible(deck.visible_posters);
+  let dry = ui.program(deck.view, deck.update).with_theme_of(real.theme).with_visible(deck.visible_posters).with_back(real.back);
   return sim.start(model, dry, test_fonts(), 720, 1600, 2.0);
 }
 
@@ -917,6 +917,82 @@ function test_scan_and_shop(): test.TestOutcome {
   );
 }
 
+function test_android_back_returns_through_tabs(): test.TestOutcome {
+  let s = sim.tap(library_sim(), "Library");
+  s = sim.type_in(s, "library-search", "woodland");
+  s = sim.back(s);
+  if (s.shell.app.tab != 1 || sim.keyboard(s).is_some()) {
+    return test.fail("Back clears the search field focus before it leaves Library");
+  }
+  s = sim.tap(s, "Tracks for Woodland Walk");
+  if (s.shell.app.shelf.opened.len() == 0) {
+    return test.fail("open a card to test Back");
+  }
+  s = sim.back(s);
+  if (s.shell.app.shelf.opened.len() > 0 || !sim.says(s, "Tracks for Woodland Walk")) {
+    return test.fail("Back returns from the card to the same search");
+  }
+  s = sim.tap(s, "Downloads");
+  s = sim.tap(s, "Choose cards to download");
+  if (!s.shell.app.trip_select) {
+    return test.fail("open the batch download picker");
+  }
+  s = sim.back(s);
+  if (s.shell.app.tab != 2 || s.shell.app.trip_select || sim.finished(s)) {
+    return test.fail("Back returns from the batch picker to Downloads");
+  }
+  s = sim.back(s);
+  if (s.shell.app.tab != 1 || s.shell.app.shelf.query != "woodland") {
+    return test.fail("Back returns to Library with the search intact");
+  }
+  s = sim.back(s);
+  if (s.shell.app.tab != 0 || sim.finished(s)) {
+    return test.fail("Back returns to Players before it leaves the app");
+  }
+  return test.assert_eq(sim.finished(sim.back(s)), true);
+}
+
+function test_android_back_returns_through_tools(): test.TestOutcome {
+  let s = sim.tap(library_sim(), "Library");
+  s = sim.tap(s, "More options");
+  s = sim.back(s);
+  if (s.shell.app.menu_open || s.shell.app.tab != 1) {
+    return test.fail("Back closes the menu before it leaves Library");
+  }
+  s = sim.tap(sim.tap(s, "More options"), "Library tools");
+  s = sim.tap(s, "Create a playlist");
+  s = sim.tap(s, "Choose a library cover");
+  if (!s.shell.app.tools_page.choosing_cover) {
+    return test.fail("open the cover picker");
+  }
+  s = sim.back(s);
+  if (!sim.says(s, "Choose a library cover") || s.shell.app.tools_page.choosing_cover) {
+    return test.fail("Back returns from the cover picker to the playlist");
+  }
+  s = sim.back(s);
+  if (!sim.says(s, "Discover") || !sim.says(s, "Scan a card")) {
+    return test.fail("Back returns from the playlist to Library tools");
+  }
+  s = sim.tap(s, "Discover");
+  s = sim.tap(s, "Browse new cards in the Yoto shop");
+  let generation = s.shell.app.generation;
+  s = sim.back(s);
+  if (s.shell.app.tools_page.show_shop || !sim.says(s, "Browse new cards in the Yoto shop")) {
+    return test.fail("Back leaves the shop view while the request runs");
+  }
+  s = sim.send(s, deck.ShopLoaded(generation, Ok([api.ShopTitle { title: "A book", address: "https://uk.yotoplay.com/products/a-book" }])));
+  s = sim.tap(s, "Browse new cards in the Yoto shop");
+  if (!sim.says(s, "A book")) {
+    return test.fail("open the shop results");
+  }
+  s = sim.back(s);
+  if (!sim.says(s, "Browse new cards in the Yoto shop") || s.shell.app.tools_page.show_shop) {
+    return test.fail("Back returns from the shop results to Discover");
+  }
+  s = sim.back(sim.back(s));
+  return test.assert_eq(s.shell.app.tab == 1 && s.shell.app.tools_page.page.is_none() && !sim.finished(s), true);
+}
+
 function main(): i32 {
   let r = test.new("Story Deck");
   r = r.it("PKCE matches the standard example", test_pkce);
@@ -951,5 +1027,7 @@ function main(): i32 {
   r = r.it("open the full phone player and build device commands", test_now_playing_controls);
   r = r.it("retry one track and find the saved card after restart", test_downloaded_search_and_retry);
   r = r.it("validate scanned card codes and shop links", test_scan_and_shop);
+  r = r.it("Android Back returns through search, downloads, and tabs", test_android_back_returns_through_tabs);
+  r = r.it("Android Back returns through the menu and Library tools", test_android_back_returns_through_tools);
   return r.finish();
 }
