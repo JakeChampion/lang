@@ -71,3 +71,16 @@ It must also release excess storage from zero-length callback results.
 The compiler and runtime must own physical-layout knowledge.
 The audio library must preserve its callback and lifetime contracts.
 Issue #14876 records these requirements and cross-target qualification.
+
+## Callback retention recheck, 2026-11-21
+
+Commit `9c0c1cca70` later introduced direct transfer for both Readers and arbitrary callbacks. The frozen capacity probe on the integration branch reproduced excess retention. Copying callback bytes while preserving direct transfer for a Reader restored bounded retention in both the one-byte and EOF cases.
+
+| Sixteen retained windows from 8 MiB chunks | Prior peak RSS | Revised peak RSS |
+| --- | ---: | ---: |
+| One byte per window | 165,956 KiB | 12,360 KiB |
+| Empty EOF per window | 165,952 KiB | 12,356 KiB |
+
+Both binaries used the same optimized self-host compiler on x86-64 Linux. The EOF variant changed the frozen probe to truncate to zero and check each buffer for EOF and zero available bytes. Reading the frozen 7,300,140-byte CAF through the direct Reader in 16 KiB chunks retained the same checksum and 1,791 allocations in both builds.
+
+Seven alternating trials of the 100,000-packet CAF benchmark verified the same frame counts and packet checksum. Copying callback results added 457 allocations in each CAF source mode. Median index time changed from 20.05 to 20.17 ms with the CAF Reader API and from 18.32 to 19.46 ms with retained callbacks. Both CAF paths delegate window reads through callbacks. The generic bounded-capacity array handoff remains open in #14876.
