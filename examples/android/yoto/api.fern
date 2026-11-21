@@ -718,6 +718,7 @@ pub function send_command(token: string, player: string, c: Command): Result[voi
 }
 
 pub const MAX_CHAPTER_BYTES: i64 = 100000000i64;
+
 pub const MAX_PLAYLIST_CHAPTERS: i32 = 100;
 
 pub struct LocalAudio { path: string, title: string, mime: string, temporary: boolean }
