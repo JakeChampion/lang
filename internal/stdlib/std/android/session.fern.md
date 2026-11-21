@@ -139,9 +139,6 @@ const PLAYING: i32 = 3;
 // Android Auto plays an item of `std/android/browse` with the last one.
 const ACTIONS: i32 = 1847;
 
-// The bits of the float 1.0, the speed of a player that plays.
-const SPEED_ONE: i32 = 1065353216;
-
 function new_object(e: usize, class: usize, sig: string, args: usize[]): usize {
   let values: usize = jni.jvalues(args);
   let obj: usize = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", sig), values);
@@ -270,19 +267,34 @@ pub function set_track(ctx: usize, s: Session, title: string, artist: string, al
   }
 }
 
-// Gives the session the state of the player: it plays or not, at the time
-// `at_ms` of the track. The session takes each command.
+// Gives the session the state of the player, with its default controls.
 pub function set_state(ctx: usize, s: Session, playing: boolean, at_ms: i64): void {
+  let state = if (playing) { PLAYING } else { PAUSED };
+  let rate = if (playing) { 1.0f32 } else { 0.0f32 };
+  set_transport(ctx, s, state, at_ms, rate, ACTIONS as i64);
+}
+
+// Publishes the Android playback state, speed, and action flags.
+pub function set_transport(ctx: usize, s: Session, state: i32, at_ms: i64, rate: f32, actions: i64): void {
+  set_transport_actions(ctx, s, state, at_ms, rate, actions, []);
+}
+
+pub struct TransportAction { id: string, label: string, icon: i32 }
+
+// Adds custom media controls to the published Android playback state.
+pub function set_transport_actions(ctx: usize, s: Session, state: i32, at_ms: i64, rate: f32, actions: i64, custom: TransportAction[]): void {
   let e: usize = android.env(ctx);
   let builder: usize = new_object(e, jni.find_class(e, STATE_BUILDER), "()V", []);
-  let acts: usize = jni.call_object(e, builder, "setActions", "(J)L" + STATE_BUILDER + ";", [ACTIONS as usize]);
-  let state = PAUSED;
-  let speed = 0;
-  if (playing) {
-    state = PLAYING;
-    speed = SPEED_ONE;
+  let acts: usize = jni.call_object(e, builder, "setActions", "(J)L" + STATE_BUILDER + ";", [actions as usize]);
+  let stated: usize = jni.call_object(e, builder, "setState", "(IJF)L" + STATE_BUILDER + ";", [state as usize, at_ms.max(0i64) as usize, f32_bits(rate) as usize]);
+  for action in custom {
+    let name = jni.new_string(e, action.id);
+    let label = jni.new_string(e, action.label);
+    let added = jni.call_object(e, builder, "addCustomAction", "(Ljava/lang/String;Ljava/lang/CharSequence;I)L" + STATE_BUILDER + ";", [name, label, action.icon as usize]);
+    for ref in [name, label, added] {
+      let dropped = jni.delete_local_ref(e, ref);
+    }
   }
-  let stated: usize = jni.call_object(e, builder, "setState", "(IJF)L" + STATE_BUILDER + ";", [state as usize, at_ms.max(0i64) as usize, speed as usize]);
   let built: usize = jni.call_object(e, builder, "build", "()Landroid/media/session/PlaybackState;", []);
   let set: boolean = jni.call_void(e, s.obj, "setPlaybackState", "(Landroid/media/session/PlaybackState;)V", [built]);
   for local in [acts, stated, built, builder] {

@@ -28,6 +28,18 @@ const LISTENER: string = "dev.fern.storydeck.PhoneListener";
 
 const PLAYING: string = "dev.fern.storydeck.Playing";
 
+const MEDIA_REWIND: i32 = 0x53445257;
+
+const MEDIA_READY: i32 = 0x53444d52;
+
+const MEDIA_PLAY_ACTION: string = "dev.fern.storydeck.media.PLAY";
+
+const MEDIA_PAUSE_ACTION: string = "dev.fern.storydeck.media.PAUSE";
+
+const MEDIA_NEXT_ACTION: string = "dev.fern.storydeck.media.NEXT";
+
+const MEDIA_REWIND_ACTION: string = "dev.fern.storydeck.media.REWIND";
+
 const SHORTCUT_INTENT: i32 = 0x53444354;
 
 struct Media {
@@ -35,6 +47,8 @@ struct Media {
   token: usize,
   focus: Option[focus.Focus],
   last: Cell[string],
+  metadata: Cell[string],
+  showing: Cell[boolean],
   awake: Cell[Option[service.Awake]],
 }
 
@@ -76,6 +90,18 @@ pub function media_stop(env: usize, thiz: usize): void {
   media_session.stop(env);
 }
 
+@jni("dev.fern.storydeck.MediaControls", "void onRewind()")
+pub function media_rewind(env: usize, thiz: usize): void {
+  let sent = android.tell(env, MEDIA_REWIND, 0 as usize);
+}
+
+@jni("dev.fern.storydeck.MediaControls", "void onCustomAction(java.lang.String, android.os.Bundle)")
+pub function media_custom(env: usize, thiz: usize, action: usize, extras: usize): void {
+  if (jni.string_of(env, action) == MEDIA_REWIND_ACTION) {
+    media_rewind(env, thiz);
+  }
+}
+
 @jni("dev.fern.storydeck.MediaControls", "void onSeekTo(long)")
 pub function media_seek(env: usize, thiz: usize, ms: i64): void {
   media_session.seek_to(env, ms);
@@ -110,9 +136,49 @@ pub function playing_bind(env: usize, thiz: usize, intent: usize): usize {
   return 0 as usize;
 }
 
+function media_notice(title: string, text: string): service.Notice {
+  return service.Notice { channel: "story-deck", channel_name: "Playback", title: title, text: text, action: "", stop: "", unlock: false };
+}
+
+function media_buttons(playing: boolean): service.MediaButton[] {
+  let toggle = if (playing) {
+    service.MediaButton { label: "Pause", action: MEDIA_PAUSE_ACTION, icon: 17301539 }
+  } else {
+    service.MediaButton { label: "Play", action: MEDIA_PLAY_ACTION, icon: 17301540 }
+  };
+  return [
+    service.MediaButton { label: "Back 15 seconds", action: MEDIA_REWIND_ACTION, icon: 17301542 },
+    toggle,
+    service.MediaButton { label: "Next track", action: MEDIA_NEXT_ACTION, icon: 17301538 },
+  ];
+}
+
 @jni("dev.fern.storydeck.Playing", "int onStartCommand(android.content.Intent, int, int)")
 pub function playing_command(env: usize, thiz: usize, intent: usize, flags: i32, id: i32): i32 {
-  return service.command(env, thiz, intent, service.Notice { channel: "story-deck", channel_name: "Playback", title: "Story Deck", text: "Card audio is playing.", action: "", stop: "", unlock: false });
+  if (intent != 0 as usize) {
+    let action = android.intent_action(env, intent);
+    if (action == MEDIA_PLAY_ACTION) {
+      media_session.play(env);
+      return 2;
+    }
+    if (action == MEDIA_PAUSE_ACTION) {
+      media_session.pause(env);
+      return 2;
+    }
+    if (action == MEDIA_NEXT_ACTION) {
+      media_session.next(env);
+      return 2;
+    }
+    if (action == MEDIA_REWIND_ACTION) {
+      let sent = android.tell(env, MEDIA_REWIND, 0 as usize);
+      return 2;
+    }
+  }
+  let result = service.command_media(env, thiz, intent, media_notice("Story Deck", "Playback"), media_buttons(true));
+  if (intent != 0 as usize) {
+    let sent = android.tell(env, MEDIA_READY, 0 as usize);
+  }
+  return result;
 }
 
 @jni("dev.fern.storydeck.AudioFocus implements android.media.AudioManager$OnAudioFocusChangeListener", "void onAudioFocusChange(int)")
@@ -194,9 +260,6 @@ function car_event(ctx: usize, event: android.Event, catalog: offline.Catalog, m
   if let Some(command) = media_session.event(event) {
     match (command) {
       media_session.Play => {
-        if (android.detached(ctx) && media.token != 0 as usize) {
-          let foreground = service.start_media(ctx, PLAYING, media.token);
-        }
         return Some(deck.PhoneResume);
       },
       media_session.Hold => {
@@ -247,7 +310,7 @@ function car_event(ctx: usize, event: android.Event, catalog: offline.Catalog, m
   return None;
 }
 
-function release_media(ctx: usize, media: Media): void {
+function release_audio(ctx: usize, media: Media): void {
   if let Some(held) = media.awake.get() {
     service.release_awake(ctx, held);
     media.awake.set(None);
@@ -255,7 +318,14 @@ function release_media(ctx: usize, media: Media): void {
   if let Some(audio) = media.focus {
     focus.release(ctx, audio);
   }
-  service.stop(ctx, PLAYING);
+}
+
+function release_media(ctx: usize, media: Media): void {
+  release_audio(ctx, media);
+  if (media.showing.get()) {
+    service.stop(ctx, PLAYING);
+    media.showing.set(false);
+  }
 }
 
 function start_audio(ctx: usize, audio: player.Player, media: Media): boolean {
@@ -264,41 +334,70 @@ function start_audio(ctx: usize, audio: player.Player, media: Media): boolean {
       return false;
     }
   }
-  return player.start(ctx, audio);
+  return player.playing(ctx, audio) || player.start(ctx, audio);
 }
 
-function publish_media(ctx: usize, current: phone.State, media: Media): void {
+function publish_media(ctx: usize, model: deck.Model, media: Media): void {
   let Some(session) = media.session else {
     return;
   };
-  let last = media.last.get();
+  let current = model.phone;
   let phase = match (current.phase) {
-    phone.Playing => "playing",
-    phone.Paused => "paused",
-    phone.Idle => "idle",
-    _ => "loading",
+    phone.Playing => 3,
+    phone.Paused => 2,
+    phone.Idle => 1,
+    _ => 6,
   };
-  let identity = current.revision.to_string() + ":" + current.at.to_string() + ":" + current.rate.to_string() + ":" + phase;
-  if (last == identity || phase == "loading") {
-    return;
+  let active = phase != 1;
+  let playing = phase == 3;
+  let key = current.revision.to_string() + ":" + current.at.to_string() + ":" + current.rate.to_string() + ":" + phase.to_string();
+  let changed = key != media.last.get();
+  let position = current.elapsed;
+  let length = current.duration;
+  let title = current.title;
+  if (current.at < current.queue.len()) {
+    title = current.queue[current.at].title;
   }
-  let playing = phase == "playing";
-  let position = 0i64;
   if let Some(audio) = current.media {
-    if (current.at < current.queue.len()) {
-      media_session.set_track(ctx, session, current.queue[current.at].title, "", current.title, player.duration_ms(ctx, audio), None);
+    if (phase == 2 || phase == 3) {
       position = player.position_ms(ctx, audio);
+      length = player.duration_ms(ctx, audio);
     }
   }
-  media_session.set_state(ctx, session, playing, position);
-  android.keep_alive(ctx, playing);
-  if (playing && !last.ends_with(":playing")) {
-    media.awake.set(Some(service.stay_awake(ctx, "fern:story-deck")));
-    let started = service.start_media(ctx, PLAYING, media.token);
-  } else if (!playing) {
-    release_media(ctx, media);
+  let (art_key, cover) = deck.media_artwork(model);
+  let metadata = current.card + ":" + title + ":" + length.to_string() + ":" + art_key;
+  if (active && metadata != media.metadata.get()) {
+    media_session.set_track(ctx, session, title, "", current.title, length, cover);
+    media.metadata.set(metadata);
   }
-  media.last.set(identity);
+  if (!changed) {
+    return;
+  }
+  media.last.set(key);
+  android.keep_alive(ctx, active);
+  if (!active) {
+    media_session.set_transport(ctx, session, 1, 0i64, 0.0f32, 0i64);
+    media.metadata.set("");
+    release_media(ctx, media);
+    return;
+  }
+  let actions = if (current.at + 1 < current.queue.len() || model.playback_tools.saved.queue.len() > 0) { 1855i64 } else { 1823i64 };
+  let rate = if (playing) { current.rate as f32 / 100.0f32 } else { 0.0f32 };
+  let rewind = media_session.TransportAction { id: MEDIA_REWIND_ACTION, label: "Back 15 seconds", icon: 17301542 };
+  media_session.set_transport_actions(ctx, session, phase, position, rate, actions, [rewind]);
+  if (playing) {
+    if (media.awake.get().is_none()) {
+      media.awake.set(Some(service.stay_awake(ctx, "fern:story-deck")));
+    }
+    if (!media.showing.get()) {
+      media.showing.set(service.start_media(ctx, PLAYING, media.token));
+    }
+  } else if (phase == 2) {
+    release_audio(ctx, media);
+  }
+  if (media.showing.get()) {
+    service.publish_media(ctx, PLAYING, media_notice(title, current.title), media.token, media_buttons(phase != 2));
+  }
 }
 
 function native_action(ctx: usize, model: deck.Model, recorder: Cell[Option[native_tools.Recorder]]): deck.Model {
@@ -403,7 +502,7 @@ function app_main(ctx: usize): usize {
   let session_ref = media_session.new(ctx, "dev.fern.storydeck.MediaControls", "Story Deck");
   let token = if let Some(ref) = session_ref { media_session.token(ctx, ref) } else { 0 as usize };
   let unlocked: Option[service.Awake] = None;
-  let media = Media { session: session_ref, token: token, focus: focus.music(ctx, "dev.fern.storydeck.AudioFocus"), last: cell_new(""), awake: cell_new(unlocked) };
+  let media = Media { session: session_ref, token: token, focus: focus.music(ctx, "dev.fern.storydeck.AudioFocus"), last: cell_new(""), metadata: cell_new(""), showing: cell_new(false), awake: cell_new(unlocked) };
   let visible = cell_new(catalog);
   let empty_recording: Option[native_tools.Recorder] = None;
   let recorder = cell_new(empty_recording);
@@ -423,6 +522,8 @@ function app_main(ctx: usize): usize {
       position: (media: player.Player): i64 => player.position_ms(ctx, media),
       duration: (media: player.Player): i64 => player.duration_ms(ctx, media),
       speed: (media: player.Player, rate: f32): boolean => player.set_speed(ctx, media, rate),
+      volume: (media: player.Player, gain: f32): boolean => player.set_volume(ctx, media, gain),
+      link: (media: player.Player, adjacent: Option[player.Player]): boolean => player.set_next(ctx, media, adjacent),
     },
     offline.Output {
       start: (address: string, name: string, title: string): i64 => download.start_with_network(ctx, address, [], name, title, wifi_only.get()),
@@ -439,6 +540,14 @@ function app_main(ctx: usize): usize {
       }
     }
     if let android.Posted(kind, ref) = event {
+      if (kind == MEDIA_REWIND) {
+        return Some(deck.PhoneRewind);
+      }
+      if (kind == MEDIA_READY) {
+        media.last.set("");
+        media.showing.set(true);
+        return Some(deck.MediaReady);
+      }
       if (kind == SHORTCUT_INTENT) {
         let action = shortcuts.action(ctx);
         if (action.starts_with("dev.fern.storydeck.")) {
@@ -449,7 +558,7 @@ function app_main(ctx: usize): usize {
         let e = android.env(ctx);
         let address = jni.string_of(e, ref);
         jni.delete_global_ref(e, ref);
-        return Some(deck.ReadScan(address));
+        return Some(deck.ReadPhysicalTag(address));
       }
     }
     if let android.Resume = event {
@@ -469,7 +578,7 @@ function app_main(ctx: usize): usize {
       next = deck.with_wifi(next, native_tools.on_wifi(ctx));
     }
     visible.set(next.downloads.catalog);
-    publish_media(ctx, next.phone, media);
+    publish_media(ctx, next, media);
     return next;
   }).with_close((own m: deck.Model): own deck.Model => {
     release_media(ctx, media);
