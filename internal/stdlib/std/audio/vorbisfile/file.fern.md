@@ -7,6 +7,8 @@ The caller closes the Reader.
 
 ```fern
 <<*>>=
+// Index and read playable Vorbis frames from a borrowed seekable Reader.
+
 import "std/audio/file" as packet_file;
 import "std/audio/source";
 import "std/audio/vorbisfile/seek";

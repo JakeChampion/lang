@@ -6,6 +6,8 @@ For incremental playback, create a `decoder()` and pass a byte view starting at 
 
 ```fern
 <<*>>=
+// Decode bounded MPEG Layer I frames and streams into interleaved PCM.
+
 import "std/audio/mp2/layer";
 import "std/audio/mp2/tables";
 import "std/audio/mp3/bits";
