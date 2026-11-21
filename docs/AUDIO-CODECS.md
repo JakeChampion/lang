@@ -847,6 +847,27 @@ The maximum permitted absolute sample difference is 0.000001.
 Separate kernel traces match complete CELT, MDCT, vector quantization, and band results bit for bit.
 Regenerate these corpora with `scripts/gen-opus-playback-vectors.py` and `scripts/gen-opus-kernel-vectors.py`.
 
+The public decoder also passes all three SILK-only streams in the RFC 6716 test vector archive.
+Streams 02, 03 and 04 contain 1,185, 998 and 1,265 packets respectively. Every packet matched
+the stream’s final entropy range. At 48 kHz stereo, the upstream comparator reported 100.0%
+quality for each complete decoded stream against its supplied PCM reference.
+
+To repeat the comparison from the repository root, build `opus_compare` from
+`src/opus_compare.c` at the libopus revision used by `scripts/gen-silk-loss-vectors.py` and put
+it on the path. Place the official archive in the working directory.
+[Opus test vector archive](https://downloads.xiph.org/releases/opus/opus_testvectors.tar.gz)
+
+```sh
+echo '94ac78ca4f74c4e43bc9fe4ec1ad0aa36f38ab90f45b0727c40dd1e96096e767  opus_testvectors.tar.gz' | sha256sum -c -
+tar -xzf opus_testvectors.tar.gz
+bin/fern-selfhost -target x86-64-linux -o /tmp/opus-rfc-decode scripts/audio-reference/opus-rfc-decode.fern internal/stdlib
+for n in 02 03 04; do
+  input="opus_testvectors/testvector${n}"
+  /tmp/opus-rfc-decode "$input.bit" "$input.s16le" && opus_compare -s "$input.dec" "$input.s16le" || exit 1
+done
+```
+
+
 It does not read Ogg containers, apply pre-skip or gain, or trim the final packet.
 Arbitrary `.opus` file playback therefore needs more work.
 
