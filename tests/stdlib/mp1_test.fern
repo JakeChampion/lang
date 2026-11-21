@@ -92,6 +92,50 @@ function boundaries(): test.TestOutcome {
   return test.pass();
 }
 
+function format_changes(): test.TestOutcome {
+  let v = mp1_vectors.vectors()[0];
+  let Ok(input) = ref.unpack(v.encoded) else {
+    return test.fail("fixture");
+  };
+  let Ok(expected) = ref.unpack(v.pcm) else {
+    return test.fail("reference");
+  };
+  let limits = pcm.default_limits();
+  let (state, result) = mp1.decoder().decode_frame_into(input, spectral.zeros(384), limits);
+  let Ok(first) = result else {
+    return test.fail("first frame");
+  };
+
+  // Unprotected 128 kbit/s silence. Change only the rate or only the channel count.
+  let other_rate = __alloc_u8(128).with(0, 255u8).with(1, 255u8).with(2, 68u8).with(3, 192u8);
+  let other_channels = __alloc_u8(136).with(0, 255u8).with(1, 255u8).with(2, 64u8);
+  for frame in [other_rate, other_channels] {
+    if (mp1.decode_raw(frame, limits).is_err()) {
+      return test.fail("standalone silent frame");
+    }
+    let (retry, changed) = state.decode_frame_into(frame, spectral.zeros(768), limits);
+    if let Err(pcm.Header) = changed {} else {
+      return test.fail("incremental format change");
+    }
+    state = retry;
+    let joined = input;
+    for byte in frame {
+      joined = joined.append(byte);
+    }
+    if let Err(pcm.Header) = mp1.decode_raw(joined, limits) {} else {
+      return test.fail("raw format change");
+    }
+  }
+  let (_, resumed) = state.decode_frame_into(input[first.bytes_read:], first.samples, limits);
+  let Ok(second) = resumed else {
+    return test.fail("resume original stream");
+  };
+  if let Err(e) = mp2_check.samples(second.samples, 384, expected, 384) {
+    return test.fail(e);
+  }
+  return test.pass();
+}
+
 function sample_extent(): test.TestOutcome {
   // A 32-byte mono frame has exactly 96 bits after its allocation table.
   // Two six-bit scalefactors and twelve pairs of 2- and 5-bit samples fill it.
@@ -109,6 +153,7 @@ function main(): i32 {
   let runner = test.new("MPEG Layer I");
   runner = runner.it("every sample matches independent scalar minimp3", references);
   runner = runner.it("frame grammar, CRC, truncation and output limits", boundaries);
+  runner = runner.it("format changes preserve the previous stream history", format_changes);
   runner = runner.it("sample fields exactly fill or exceed the frame", sample_extent);
   return runner.finish();
 }
