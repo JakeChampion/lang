@@ -1,5 +1,6 @@
 import "std/android/download";
 import "std/base64";
+import "std/crypto";
 import "std/i64";
 import "std/json";
 import "std/kv";
@@ -7,9 +8,9 @@ import "std/rand";
 import "std/string";
 import "./api";
 
-pub struct Track { id: i64, name: string, title: string, chapter: string, key: string }
+pub struct Track { id: i64, name: string, title: string, chapter: string, key: string, art: string }
 
-pub struct Entry { id: string, title: string, creator: string, tracks: Track[], ready: boolean }
+pub struct Entry { id: string, title: string, creator: string, tracks: Track[], ready: boolean, failed_at: i32, card: Option[api.Card] }
 
 pub struct Catalog { dir: string, entries: Entry[], cleanup: i64[], note: string }
 
@@ -65,7 +66,7 @@ function decode_track(value: json.JsonValue): Option[Track] {
   if (id < 0i64 || !safe_name(name)) {
     return None;
   }
-  return Some(Track { id: id, name: name, title: json.get_string(value, "title").unwrap_or("Track"), chapter: json.get_string(value, "chapter").unwrap_or(""), key: json.get_string(value, "key").unwrap_or("") });
+  return Some(Track { id: id, name: name, title: json.get_string(value, "title").unwrap_or("Track"), chapter: json.get_string(value, "chapter").unwrap_or(""), key: json.get_string(value, "key").unwrap_or(""), art: json.get_string(value, "art").unwrap_or("") });
 }
 
 function decode_entry(value: json.JsonValue): Option[Entry] {
@@ -80,13 +81,14 @@ function decode_entry(value: json.JsonValue): Option[Entry] {
   if (id.len() == 0 || tracks.len() == 0) {
     return None;
   }
-  return Some(Entry { id: id, title: json.get_string(value, "title").unwrap_or("Untitled card"), creator: json.get_string(value, "creator").unwrap_or(""), tracks: tracks, ready: json.get_bool(value, "ready").unwrap_or(false) });
+  return Some(Entry { id: id, title: json.get_string(value, "title").unwrap_or("Untitled card"), creator: json.get_string(value, "creator").unwrap_or(""), tracks: tracks, ready: json.get_bool(value, "ready").unwrap_or(false), failed_at: json.get_i32(value, "failed").unwrap_or(-1), card: api.restore_card(json.get(value, "card").unwrap_or(json.JNull)) });
 }
 
 function encode_track(track: Track): json.JsonValue {
   return json.JObject(json.from([
     ("download", json.JNumber(track.id.to_string())), ("name", json.JString(track.name)),
     ("title", json.JString(track.title)), ("chapter", json.JString(track.chapter)), ("key", json.JString(track.key)),
+    ("art", json.JString(track.art)),
   ]));
 }
 
@@ -94,6 +96,7 @@ function encode_entry(entry: Entry): json.JsonValue {
   return json.JObject(json.from([
     ("id", json.JString(entry.id)), ("title", json.JString(entry.title)), ("creator", json.JString(entry.creator)),
     ("tracks", json.JArray(entry.tracks.map(encode_track))), ("ready", json.JBool(entry.ready)),
+    ("failed", json.JNumber(entry.failed_at.to_string())), ("card", entry.card.map(api.cached_card).unwrap_or(json.JNull)),
   ]));
 }
 
@@ -139,6 +142,48 @@ pub function save(dir: string, entries: Entry[], cleanup: i64[]): boolean {
   return kv.empty(dir + "/yoto-downloads").set("titles", data).set("cleanup", pending).save().is_ok();
 }
 
+pub function card(entry: Entry): api.Card {
+  if let Some(info) = entry.card {
+    return info;
+  }
+  let tracks = entry.tracks.map((t: Track): api.Track => api.Track {
+    title: t.title, chapter: "", chapter_key: t.chapter, track_key: t.key, search: t.title.to_lower(), art: t.art, chapter_art: "",
+  });
+  return api.Card {
+    id: entry.id, title: entry.title, creator: entry.creator, cover: "", preview: "", kind: api.Standard, myo: false, club: false, sleep_sounds: false,
+    last_played: 0i64, seconds: 0i64, bytes: 0i64, sort_title: entry.title.to_lower(), search: (entry.title + " " + entry.creator).to_lower(),
+    tracks: tracks, indexed: true,
+  };
+}
+
+pub function saved_cards(s: State): api.Card[] {
+  return s.catalog.entries.filter((entry: Entry): boolean => entry.ready).map(card);
+}
+
+pub function picture(dir: string, address: string, online: boolean): u8[] {
+  if (dir.len() == 0) {
+    return if (online) { api.cover_bytes(address) } else { [] };
+  }
+  let key = base64.encode_url(crypto.sha256(address.bytes()));
+  let path = dir + "/story-deck-art-" + key;
+  if let Ok(data) = read_file_bytes(path) {
+    if (data.len() > 0 && data.len() <= 2000000) {
+      return data;
+    }
+  }
+  if (!online) {
+    return [];
+  }
+  let data = api.cover_bytes(address);
+  if (data.len() > 0) {
+    let temp = path + ".tmp";
+    if (write_file_bytes(temp, data).is_ok()) {
+      let moved = rename(temp, path);
+    }
+  }
+  return data;
+}
+
 pub function saved(s: State, id: string): Option[Entry] {
   for entry in s.catalog.entries {
     if (entry.id == id && entry.ready) {
@@ -150,7 +195,7 @@ pub function saved(s: State, id: string): Option[Entry] {
 
 function active(s: State): Option[Entry] {
   for entry in s.catalog.entries {
-    if (!entry.ready) {
+    if (!entry.ready && entry.failed_at < 0) {
       return Some(entry);
     }
   }
@@ -191,6 +236,55 @@ pub function enqueue(s: State, cards: api.Card[]): State {
   return next;
 }
 
+pub function retry(s: State, id: string): State {
+  let entry = s.catalog.entries.find((entry: Entry): boolean => entry.id == id && entry.failed_at >= 0);
+  if let Some(failed) = entry {
+    if (!s.queue.any((item: api.Card): boolean => item.id == id) && !s.fetching.map((item: api.Card): boolean => item.id == id).unwrap_or(false)
+      && !s.installing.map((item: Install): boolean => item.plan.id == id).unwrap_or(false)) {
+      return State { ...s, queue: s.queue.append(card(failed)), note: "", paused: false };
+    }
+  }
+  return s;
+}
+
+pub function pending(s: State): api.Card[] {
+  if let Some(card) = s.fetching {
+    return [card].concat(s.queue);
+  }
+  if let Some(setup) = s.installing {
+    return [card(setup.entry)].concat(s.queue);
+  }
+  return s.queue;
+}
+
+pub function restore_pending(s: State, pending: api.Card[]): State {
+  let next = s;
+  for card in pending {
+    if let Some(entry) = next.catalog.entries.find((item: Entry): boolean => item.id == card.id) {
+      if (entry.failed_at >= 0) {
+        next = retry(next, card.id);
+      }
+    } else {
+      next = enqueue(next, [card]);
+    }
+  }
+  return next;
+}
+
+pub function has_failed(s: State): boolean {
+  return s.catalog.entries.any((item: Entry): boolean => item.failed_at >= 0);
+}
+
+pub function retry_on_wifi(s: State): State {
+  let next = resume(s);
+  for entry in s.catalog.entries {
+    if (entry.failed_at >= 0) {
+      next = retry(next, entry.id);
+    }
+  }
+  return next;
+}
+
 pub function next(s: State): Option[api.Card] {
   if (!s.paused && s.queue.len() > 0 && s.fetching.is_none() && s.installing.is_none() && active(s).is_none()) {
     return Some(s.queue[0]);
@@ -212,7 +306,8 @@ pub function received(s: State, revision: i64, result: Result[api.DownloadPlan, 
   let next = State { ...s, fetching: None };
   match (result) {
     Ok(plan) => {
-      let entry = Entry { id: plan.id, title: plan.title, creator: plan.creator, tracks: [], ready: false };
+      let blank = Entry { id: plan.id, title: plan.title, creator: plan.creator, tracks: [], ready: false, failed_at: -1, card: plan.card };
+      let entry = s.catalog.entries.find((entry: Entry): boolean => entry.id == plan.id && entry.failed_at >= 0).unwrap_or(blank);
       let setup = Install { plan: plan, entry: entry, prefix: PREFIX + base64.encode_url(rand.bytes(12)) + "-" };
       return State { ...next, installing: Some(setup), action: Some(Check) };
     },
@@ -255,7 +350,13 @@ pub function work_interval(s: State): i32 {
 }
 
 pub function remove(s: State, id: string): State {
-  return State { ...s, action: Some(Remove(id)) };
+  let fetching = s.fetching.map((card: api.Card): boolean => card.id == id).unwrap_or(false);
+  let installing = s.installing.map((item: Install): boolean => item.plan.id == id).unwrap_or(false);
+  return State {
+    ...s, action: Some(Remove(id)), queue: s.queue.filter((card: api.Card): boolean => card.id != id),
+    fetching: if (fetching) { None } else { s.fetching }, revision: if (fetching) { s.revision + 1i64 } else { s.revision },
+    installing: if (installing) { None } else { s.installing },
+  };
 }
 
 function with_catalog(s: State, entries: Entry[], cleanup: i64[], output: Output): Result[State, string] {
@@ -265,7 +366,63 @@ function with_catalog(s: State, entries: Entry[], cleanup: i64[], output: Output
   return Ok(State { ...s, catalog: Catalog { ...s.catalog, entries: entries, cleanup: cleanup } });
 }
 
+pub function enrich(s: State, cards: api.Card[], output: Output): State {
+  let entries: Entry[] = [];
+  let changed = false;
+  for entry in s.catalog.entries {
+    if (entry.card.is_none()) {
+      if let Some(info) = cards.find((card: api.Card): boolean => card.id == entry.id) {
+        let saved = card(entry);
+        let enriched = api.Card { ...info, tracks: if (info.indexed) { info.tracks } else { saved.tracks }, indexed: true };
+        entries = entries.append(Entry { ...entry, card: Some(enriched) });
+        changed = true;
+        continue;
+      }
+    }
+    entries = entries.append(entry);
+  }
+  if (changed) {
+    return with_catalog(s, entries, s.catalog.cleanup, output).unwrap_or(s);
+  }
+  return s;
+}
+
+function replace_track(s: State, setup: Install, output: Output): State {
+  let entry = setup.entry;
+  let plan = setup.plan;
+  let i = entry.failed_at;
+  if (i >= entry.tracks.len() || plan.tracks.len() != entry.tracks.len()) {
+    return State { ...s, installing: None, note: "The card changed. Remove this download and save the card again." };
+  }
+  for j in 0..entry.tracks.len() {
+    if (plan.tracks[j].chapter != entry.tracks[j].chapter || plan.tracks[j].key != entry.tracks[j].key) {
+      return State { ...s, installing: None, note: "The card changed. Remove this download and save the card again." };
+    }
+  }
+  let track = plan.tracks[i];
+  let previous = entry.tracks[i];
+  let name = setup.prefix + i.to_string() + ".audio";
+  let id = output.start(track.url, name, entry.title);
+  if (id < 0i64) {
+    return State { ...s, installing: None, note: "Android could not retry " + track.title + "." };
+  }
+  let fixed = Entry { ...entry, failed_at: -1, card: plan.card, tracks: entry.tracks.with(i, Track { ...previous, id: id, name: name, art: track.art }) };
+  let entries = s.catalog.entries.map((item: Entry): Entry => if (item.id == entry.id) { fixed } else { item });
+  match (with_catalog(s, entries, s.catalog.cleanup.append(previous.id), output)) {
+    Ok(next) => {
+      return State { ...next, checked: 0, installing: None };
+    },
+    Err(note) => {
+      let removed = output.remove([id]);
+      return State { ...s, installing: None, note: note };
+    }
+  }
+}
+
 function install(s: State, setup: Install, output: Output): State {
+  if (setup.entry.failed_at >= 0) {
+    return replace_track(s, setup, output);
+  }
   let entry = setup.entry;
   let plan = setup.plan;
   let ids: i64[] = [];
@@ -279,7 +436,7 @@ function install(s: State, setup: Install, output: Output): State {
       return State { ...s, installing: None, failed: s.failed + 1, note: "Android could not start the download for " + entry.title + "." };
     }
     ids = ids.append(id);
-    entry = Entry { ...entry, tracks: entry.tracks.append(Track { id: id, name: name, title: track.title, chapter: track.chapter, key: track.key }) };
+    entry = Entry { ...entry, tracks: entry.tracks.append(Track { id: id, name: name, title: track.title, chapter: track.chapter, key: track.key, art: track.art }) };
   }
   // Keep the Android IDs in the cleanup list until every track is queued.
   let pending = s.catalog.cleanup.concat(ids);
@@ -343,8 +500,10 @@ function checked(s: State, output: Output): State {
   for i in n..limit {
     let status = output.status(entry.tracks[i].id);
     if (status == download.FAILED || status == download.GONE) {
-      let failed = removed(s, [entry], output);
-      return State { ...failed, checked: 0, failed: s.failed + 1, note: "Could not download " + entry.title + ". Try again while online." };
+      let blocked = Entry { ...entry, failed_at: i };
+      let entries = s.catalog.entries.map((item: Entry): Entry => if (item.id == entry.id) { blocked } else { item });
+      let saved = with_catalog(s, entries, cleanup, output).unwrap_or(s);
+      return State { ...saved, checked: 0, failed: s.failed + 1, note: "Could not download " + entry.tracks[i].title + "." };
     }
     if (status != download.DONE) {
       return State { ...s, checked: i };
@@ -381,7 +540,7 @@ pub function apply(s: State, output: Output): State {
       return removed(next, next.catalog.entries, output);
     },
     Cancel => {
-      return removed(State { ...next, checked: 0, note: "Download canceled." }, next.catalog.entries.filter((e: Entry): boolean => !e.ready), output);
+      return removed(State { ...next, checked: 0, note: "Download canceled." }, next.catalog.entries.filter((e: Entry): boolean => !e.ready && e.failed_at < 0), output);
     }
   }
 }
@@ -408,7 +567,7 @@ pub function playlist(s: State, entry: Entry, from: i32): api.Stream[] {
     return tracks;
   }
   for track in entry.tracks.drop(from) {
-    tracks = tracks.append(api.Stream { title: track.title, url: "file://" + s.catalog.dir + "/" + track.name, chapter: track.chapter, key: track.key });
+    tracks = tracks.append(api.Stream { title: track.title, url: "file://" + s.catalog.dir + "/" + track.name, chapter: track.chapter, key: track.key, art: track.art });
   }
   return tracks;
 }

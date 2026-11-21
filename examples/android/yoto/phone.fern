@@ -5,7 +5,7 @@ import "./api";
 
 pub enum Phase { Idle, Loading, Preparing, Playing, Paused }
 
-enum Action { Open, Start, Pause, Close, Seek(i64) }
+enum Action { Open, Start, Pause, Close, Seek(i64), Speed, DiscardStandby }
 
 pub struct State {
   revision: i64,
@@ -18,6 +18,18 @@ pub struct State {
   media: Option[player.Player],
   action: Option[Action],
   resume_ms: i64,
+  elapsed: i64,
+  duration: i64,
+  rate: i32,
+  standby: Option[player.Player],
+  standby_at: i32,
+  standby_ready: boolean,
+  preload_attempt: i32,
+  stop_at_chapter: boolean,
+  sleep_ended: boolean,
+  wait_paused: boolean,
+  paused_at: i64,
+  starting_seek: boolean,
 }
 
 pub struct Output {
@@ -27,18 +39,20 @@ pub struct Output {
   close: (player.Player) => void,
   seek: (player.Player, i64) => boolean,
   position: (player.Player) => i64,
+  duration: (player.Player) => i64,
+  speed: (player.Player, f32) => boolean,
 }
 
 pub function empty(): State {
-  return State { revision: 0i64, card: "", title: "", queue: [], at: 0, phase: Idle, note: "", media: None, action: None, resume_ms: 0i64 };
+  return State { revision: 0i64, card: "", title: "", queue: [], at: 0, phase: Idle, note: "", media: None, action: None, resume_ms: 0i64, elapsed: 0i64, duration: 0i64, rate: 100, standby: None, standby_at: -1, standby_ready: false, preload_attempt: -1, stop_at_chapter: false, sleep_ended: false, wait_paused: false, paused_at: 0i64, starting_seek: false };
 }
 
 pub function stop(s: State): State {
-  return State { ...empty(), revision: s.revision + 1i64, media: s.media, action: Some(Close) };
+  return State { ...empty(), revision: s.revision + 1i64, media: s.media, standby: s.standby, action: Some(Close), rate: s.rate };
 }
 
 pub function loading(s: State, card: string, title: string, resume_ms: i64): State {
-  return State { ...stop(s), card: card, title: title, phase: Loading, resume_ms: resume_ms };
+  return State { ...stop(s), card: card, title: title, phase: Loading, resume_ms: resume_ms, stop_at_chapter: s.stop_at_chapter };
 }
 
 function prepare(s: State, at: i32): State {
@@ -48,7 +62,24 @@ function prepare(s: State, at: i32): State {
   if (s.queue[at].url.len() == 0) {
     return State { ...stop(s), note: "Yoto did not provide playable audio for the next track." };
   }
-  return State { ...s, at: at, phase: Preparing, action: Some(Open) };
+  return State { ...s, at: at, phase: Preparing, action: Some(Open), elapsed: 0i64, duration: 0i64, sleep_ended: false, wait_paused: false, paused_at: 0i64, starting_seek: false, preload_attempt: -1 };
+}
+
+pub function chapter_timer(s: State, active: boolean): State {
+  return State { ...s, stop_at_chapter: active, sleep_ended: false };
+}
+
+function chapter_finished(s: State): boolean {
+  let next = s.at + 1;
+  return next >= s.queue.len() || s.queue[s.at].chapter.len() == 0 || s.queue[next].chapter != s.queue[s.at].chapter;
+}
+
+function finished(s: State): State {
+  let upcoming = next(s);
+  if (s.stop_at_chapter && chapter_finished(s)) {
+    return State { ...upcoming, stop_at_chapter: false, sleep_ended: true, wait_paused: upcoming.card.len() > 0 };
+  }
+  return upcoming;
 }
 
 pub function next(s: State): State {
@@ -67,7 +98,24 @@ pub function previous(s: State): State {
 
 pub function seek(s: State, ms: i64): State {
   if let Playing | Paused = s.phase {
-    return State { ...s, action: Some(Seek(ms.max(0i64))) };
+    return State { ...s, action: Some(Seek(ms.max(0i64))), elapsed: ms.max(0i64) };
+  }
+  return s;
+}
+
+pub function set_rate(s: State, rate: i32): State {
+  let value = rate.max(50).min(200);
+  if let Playing = s.phase {
+    return State { ...s, rate: value, action: Some(Speed) };
+  }
+  return State { ...s, rate: value };
+}
+
+pub function sample(s: State, output: Output): State {
+  if let Playing | Paused = s.phase {
+    if let Some(media) = s.media {
+      return State { ...s, elapsed: output.position(media).max(0i64), duration: output.duration(media).max(0i64) };
+    }
   }
   return s;
 }
@@ -95,7 +143,9 @@ pub function control(s: State, command: api.Command): State {
     },
     api.Resume => {
       if let Paused = s.phase {
-        return State { ...s, action: Some(Start) };
+        let long_pause = s.paused_at > 0i64 && monotonic_ns() - s.paused_at >= 120000000000i64;
+        let at = if (long_pause) { (s.elapsed - 10000i64).max(0i64) } else { s.resume_ms };
+        return State { ...s, action: Some(Start), resume_ms: at, paused_at: 0i64 };
       }
     },
     api.Stop => {
@@ -107,6 +157,21 @@ pub function control(s: State, command: api.Command): State {
 }
 
 pub function event(s: State, event: android.Event): State {
+  if let Some(standby) = s.standby {
+    if (standby.sent(event)) {
+      match (player.event(event)) {
+        Some(player.Prepared) => {
+          return State { ...s, standby_ready: true };
+        },
+        Some(player.Failed(_, _)) => {
+          return State { ...s, action: Some(DiscardStandby) };
+        },
+        _ => {
+          return s;
+        }
+      }
+    }
+  }
   let Some(media) = s.media else {
     return s;
   };
@@ -116,16 +181,22 @@ pub function event(s: State, event: android.Event): State {
   match (player.event(event)) {
     Some(player.Prepared) => {
       if let Preparing = s.phase {
+        if (s.wait_paused) {
+          return State { ...s, phase: Paused, wait_paused: false };
+        }
         return State { ...s, action: Some(Start) };
       }
     },
     Some(player.Completed) => {
-      return next(s);
+      return finished(s);
     },
     Some(player.Failed(_, _)) => {
       return unavailable(s);
     },
     Some(player.Seeked) => {
+      if (s.starting_seek) {
+        return State { ...s, starting_seek: false, action: Some(Start), resume_ms: 0i64 };
+      }
       return State { ...s, revision: s.revision + 1i64 };
     },
     _ => {}
@@ -137,6 +208,23 @@ pub function close(s: State, output: Output): void {
   if let Some(media) = s.media {
     output.close(media);
   }
+  if let Some(standby) = s.standby {
+    output.close(standby);
+  }
+}
+
+function preload(s: State, output: Output): State {
+  if let Playing = s.phase {
+    let at = s.at + 1;
+    if (at < s.queue.len() && s.standby.is_none() && s.preload_attempt != s.at && s.queue[at].url.len() > 0) {
+      return State { ...s, standby: output.open(s.queue[at].url), standby_at: at, standby_ready: false, preload_attempt: s.at };
+    }
+  }
+  return s;
+}
+
+pub function prime(s: State, output: Output): State {
+  return preload(s, output);
 }
 
 function unavailable(s: State): State {
@@ -153,21 +241,55 @@ pub function apply(s: State, output: Output): State {
   };
   let next = State { ...s, action: None };
   match (action) {
+    DiscardStandby => {
+      if let Some(standby) = s.standby {
+        output.close(standby);
+      }
+      return State { ...next, standby: None, standby_ready: false };
+    },
     Close => {
       close(s, output);
-      return State { ...next, media: None };
+      return State { ...next, media: None, standby: None };
     },
     Open => {
+      if (s.standby_at == s.at) {
+        if let Some(standby) = s.standby {
+          if let Some(media) = s.media {
+            output.close(media);
+          }
+          let opened = State { ...next, media: Some(standby), standby: None, standby_ready: false };
+          if (s.standby_ready) {
+            if (s.wait_paused) {
+              return State { ...opened, phase: Paused, wait_paused: false };
+            }
+            if (output.start(standby)) {
+              let rate = if (output.speed(standby, s.rate as f32 / 100.0f32)) { s.rate } else { 100 };
+              return sample(State { ...opened, phase: Playing, rate: rate }, output);
+            }
+            output.close(standby);
+            return State { ...unavailable(opened), media: None, action: None };
+          }
+          return opened;
+        }
+      }
       let media = output.open(s.queue[s.at].url);
       close(s, output);
       if (media.is_none()) {
-        return State { ...unavailable(next), media: None, action: None };
+        return State { ...unavailable(next), media: None, standby: None, action: None };
       }
-      return State { ...next, media: media };
+      return State { ...next, media: media, standby: None };
     },
     Seek(ms) => {
       if let Some(media) = s.media {
         let located = output.seek(media, ms);
+      }
+      return next;
+    },
+    Speed => {
+      if let Some(media) = s.media {
+        if (!output.speed(media, s.rate as f32 / 100.0f32)) {
+          return State { ...next, rate: 100 };
+        }
       }
       return next;
     },
@@ -176,15 +298,20 @@ pub function apply(s: State, output: Output): State {
   if let Some(media) = s.media {
     if let Start = action {
       if (s.resume_ms > 0i64) {
-        let located = output.seek(media, s.resume_ms);
+        if (output.seek(media, s.resume_ms)) {
+          return State { ...next, phase: Preparing, starting_seek: true };
+        }
+        close(s, output);
+        return State { ...unavailable(next), media: None, standby: None, note: "Could not reach the saved playback position." };
       }
       if (output.start(media)) {
-        return State { ...next, phase: Playing, resume_ms: 0i64 };
+        let rate = if (output.speed(media, s.rate as f32 / 100.0f32)) { s.rate } else { 100 };
+        return sample(State { ...next, phase: Playing, resume_ms: 0i64, rate: rate }, output);
       }
     } else if (output.pause(media)) {
-      return State { ...next, phase: Paused };
+      return State { ...sample(s, output), action: None, phase: Paused, paused_at: monotonic_ns() };
     }
   }
   close(s, output);
-  return State { ...unavailable(next), media: None, action: None };
+  return State { ...unavailable(next), media: None, standby: None, action: None };
 }
