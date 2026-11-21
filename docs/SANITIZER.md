@@ -63,8 +63,8 @@ each count operation beside its poison check (`san_owner_guard`). The owner
 of the heap depends on the image:
 
 - **An executable** owns the stack mapping that `_start` makes. The check
-  compares the stack pointer with `__fern_stack_top`. The distance must be
-  less than the size of the mapping, which is 1 GiB. A thread that a raw
+  accepts stack pointers from the first writable byte above the guard through
+  the initial stack pointer recorded in `__fern_stack_top`. A thread that a raw
   `clone` makes, or a handler on the signal stack, runs on another stack.
 - **A shared object** owns the thread that holds the turn on `__fern_busy`.
   `__fern_busy_take` stores the thread pointer in `__fern_san_owner` when it
