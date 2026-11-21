@@ -30,3 +30,14 @@ The revised decoder checks the required bits for all twelve sample slots before 
 | ISO Layer I stream | 1.393 | 1.345 | 0.454 | 0.315 | 306 / 257 |
 
 The revised Fern decoder used one fewer allocation per frame and 12 KiB less median peak RSS on each input. Its median wall time was 3.8–4.9 times the SIMD reference. Each of the seven alternating trials used thirty complete decodes per process. [All 112 measurements](dense-trials.json)
+
+## Frame-at-a-time playback
+
+The incremental API retains synthesis history and workspace between frames. The caller can pass a view starting at the next header, advance by the returned byte count and reuse one 768-float output array. The decoder writes only the 384-sample-per-channel prefix. Across ten independent streams, retrying the third frame after a short output buffer and a CRC failure reproduced all PCM bits and left the extra output element intact.
+
+| Input | Whole / incremental Fern ms | Scalar / SIMD frame ms | Whole / incremental Fern peak RSS |
+| --- | ---: | ---: | ---: |
+| Dense MPEG-1 stereo, 120 frames | 3.291 / 3.242 | 1.050 / 0.680 | 1,000 / 212 KiB |
+| ISO Layer I stream, 49 frames | 1.252 / 1.291 | 0.356 / 0.242 | 560 / 184 KiB |
+
+The benchmark preloads the same compressed file in all variants. Each process takes its peak RSS reading before writing the independent-check PCM dump. Frame-mode timing includes hashing the first sample of every frame. Whole-stream timing hashes the first sample of the stream. Each median covers seven trials of thirty decodes. Use the reproduction commands above with mode `frames` in place of `whole` and build the C frame drivers with `-DFERN_MPEG_LAYER_1`. [All 56 measurements](frame-trials.json)

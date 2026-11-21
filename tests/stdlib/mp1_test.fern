@@ -1,9 +1,48 @@
 import "std/audio/mp1";
 import "std/audio/pcm";
+import "std/audio/mp3/spectral";
 import "std/test";
 import "aac_kernel_check" as ref;
 import "mp1_vectors";
 import "mp2_check";
+
+function incremental(input: [u8], expected: [u8], rate: i32, channels: i32): Result[void, string] {
+  let count = 384 * channels;
+  let output = spectral.zeros(count + 1).with(count, -123.5f32);
+  let state = mp1.decoder();
+  let at = 0;
+  for i in 0..3 {
+    if (i == 2) {
+      let (retry, short) = state.decode_frame_into(input[at:], [], pcm.default_limits());
+      if let Err(pcm.Buffer) = short {} else {
+        return Err("short output");
+      }
+      let corrupt: u8[] = [];
+      for byte in input[at:] {
+        corrupt = corrupt.append(byte);
+      }
+      corrupt = corrupt.with(4, corrupt[4] ^ 1u8);
+      let (again, rejected) = retry.decode_frame_into(corrupt, spectral.zeros(count), pcm.default_limits());
+      if let Err(pcm.Checksum) = rejected {} else {
+        return Err("CRC retry");
+      }
+      state = again;
+    }
+    let (next, result) = state.decode_frame_into(input[at:], output, pcm.default_limits());
+    let audio = match (result) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    if (audio.bytes_read < 4 || audio.sample_rate != rate || audio.channels != channels || audio.samples.len() != count + 1 || audio.samples[count] != -123.5f32) {
+      return Err("frame extent, format or output suffix");
+    }
+    mp2_check.samples(audio.samples, count, expected, i * count)?;
+    at += audio.bytes_read;
+    output = audio.samples;
+    state = next;
+  }
+  if (at != input.len()) {
+    return Err("input consumption");
+  }
+  return Ok(());
+}
 
 function references(): test.TestOutcome {
   for vector in mp1_vectors.vectors() {
@@ -18,6 +57,9 @@ function references(): test.TestOutcome {
     };
     if (audio.channels != vector.channels || audio.sample_rate != vector.rate || audio.samples.len() != 3 * 384 * vector.channels) {
       return test.fail("stream format or sample count");
+    }
+    if let Err(e) = incremental(input, expected, vector.rate, vector.channels) {
+      return test.fail(e);
     }
     if let Err(e) = mp2_check.samples(audio.samples, audio.samples.len(), expected, 0) {
       return test.fail(e);

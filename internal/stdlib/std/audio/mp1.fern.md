@@ -2,6 +2,8 @@
 
 `decode_raw` decodes consecutive indexed-bitrate MPEG-1 or MPEG-2 Layer I frames to interleaved float PCM. Mono, stereo, dual-channel and joint-stereo streams retain synthesis history between compatible frames. Protected frames check the header and allocation fields before reading scalefactors. Input and cumulative sample counts use the caller's PCM limits. Tags, free-format frame discovery and de-emphasis filtering are outside this entry point.
 
+For incremental playback, create a `decoder()` and pass a byte view starting at each frame to `decode_frame_into`. Each success consumes `bytes_read` input bytes and writes 384 samples per channel to the supplied output prefix. The caller may recycle the returned array. Errors preserve the last successful synthesis history. Start a new decoder for a different rate or channel count.
+
 ```fern
 <<*>>=
 import "std/audio/mp2/layer";
@@ -13,6 +15,14 @@ import "std/audio/pcm";
 import "std/audio/wire";
 
 pub struct Decoded { sample_rate: i32, channels: i32, samples: f32[] }
+
+pub opaque struct Decoder { rate: i32, channels: i32, history: f32[], lines: f32[], transform: f32[] }
+
+pub struct Frame { sample_rate: i32, channels: i32, bytes_read: i32, samples: f32[] }
+
+pub function decoder(): Decoder {
+  return Decoder { rate: 0, channels: 0, history: spectral.zeros(960), lines: spectral.zeros(1728), transform: spectral.zeros(128) };
+}
 
 struct Header { rate: i32, channels: i32, separate: i32, bytes: i32, crc: boolean }
 
@@ -128,36 +138,53 @@ function subbands(frame: [u8], h: Header): Result[f32[], pcm.AudioError] {
   return Ok(samples);
 }
 
+function render(own state: Decoder, input: [u8], h: Header, own output: f32[]): (Decoder, Result[Frame, pcm.AudioError]) {
+  if (state.rate != 0 && (h.rate != state.rate || h.channels != state.channels)) {
+    return (state, Err(pcm.Header));
+  }
+  let bands = match (subbands(input[:h.bytes], h)) { Ok(value) => value, Err(e) => { return (state, Err(e)); } };
+  let Decoder { rate, channels, history, lines, transform } = state;
+  let (next, samples, _, next_lines, next_transform) = synthesis.granule12_into(history, bands, h.channels, output, 0, lines, transform);
+  return (Decoder { rate: h.rate, channels: h.channels, history: next, lines: next_lines, transform: next_transform }, Ok(Frame { sample_rate: h.rate, channels: h.channels, bytes_read: h.bytes, samples: samples }));
+}
+
+pub function (own state: Decoder) decode_frame_into(input: [u8], own output: f32[], limits: pcm.Limits): (Decoder, Result[Frame, pcm.AudioError]) {
+  if let Err(e) = pcm.check_input(input, limits) {
+    return (state, Err(e));
+  }
+  let h = match (header(input)) { Ok(value) => value, Err(e) => { return (state, Err(e)); } };
+  let count = match (pcm.sample_count(384, h.channels, limits)) { Ok(value) => value, Err(e) => { return (state, Err(e)); } };
+  if (output.len() < count) {
+    return (state, Err(pcm.Buffer));
+  }
+  return render(state, input, h, output);
+}
+
 pub function decode_raw(input: [u8], limits: pcm.Limits): Result[Decoded, pcm.AudioError] {
   pcm.check_input(input, limits)?;
   let first = header(input)?;
-  let channels = first.channels;
-  let count = pcm.sample_count(384, channels, limits)?;
-  let history = spectral.zeros(960);
+  let count = pcm.sample_count(384, first.channels, limits)?;
+  let state = decoder();
   let frame = spectral.zeros(count);
-  let lines = spectral.zeros(1728);
-  let transform = spectral.zeros(128);
   let samples: f32[] = [];
   let at = 0;
   while (at < input.len()) {
     let h = header(input[at:])?;
-    if (h.channels != channels || h.rate != first.rate) {
+    if (h.channels != first.channels || h.rate != first.rate) {
       return Err(pcm.Header);
     }
     if (count > limits.max_samples - samples.len()) {
       return Err(pcm.Limit);
     }
-    let bands = subbands(input[at:at + h.bytes], h)?;
-    let (next, output, _, next_lines, next_transform) = synthesis.granule12_into(history, bands, channels, frame, 0, lines, transform);
-    lines = next_lines;
-    transform = next_transform;
-    history = next;
-    for sample in output {
+    let (next, result) = render(state, input[at:], h, frame);
+    state = next;
+    let decoded = result?;
+    for sample in decoded.samples {
       samples = samples.append(sample);
     }
-    frame = output;
+    frame = decoded.samples;
     at += h.bytes;
   }
-  return Ok(Decoded { sample_rate: first.rate, channels: channels, samples: samples });
+  return Ok(Decoded { sample_rate: first.rate, channels: first.channels, samples: samples });
 }
 ```

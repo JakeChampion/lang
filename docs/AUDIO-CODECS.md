@@ -462,7 +462,7 @@ It applies a cumulative output budget.
 Frame APIs require a header at the supplied byte offset.
 MPEG-2.5, free-format Layer II, tags, source readers, and seek indexes remain outside this module.
 
-`std/audio/mp1.decode_raw` decodes consecutive indexed Layer I frames. The MPEG-1 and MPEG-2 fixtures cover mono, stereo, dual channel and all four joint-stereo boundaries. Each fixture mixes protected and unprotected frames and compares the complete interleaved output with pinned scalar minimp3. The Layer I API accepts raw frames and does not apply de-emphasis filtering.
+`std/audio/mp1.decode_raw` decodes consecutive indexed Layer I frames. The MPEG-1 and MPEG-2 fixtures cover mono, stereo, dual channel and all four joint-stereo boundaries. Each fixture mixes protected and unprotected frames and compares the complete interleaved output with pinned scalar minimp3. The incremental Layer I API accepts one frame at a time with a reusable PCM buffer and preserves its synthesis history on input or buffer errors. The Layer I API accepts raw frames and does not apply de-emphasis filtering.
 
 The independent reference bank contains 66 streams from FFmpeg and TwoLAME.
 It covers tones, transients, deterministic noise, silence, all rates and channel modes, and 24 protected streams.

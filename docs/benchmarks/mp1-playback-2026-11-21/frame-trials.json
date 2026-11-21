@@ -1,0 +1,414 @@
+{
+  "stereo": {
+    "whole": [
+      {
+        "wall_ns": 99350496,
+        "allocs": 18390,
+        "fresh_bytes": 0,
+        "checksum": 3651893285,
+        "samples": 2764800,
+        "native_peak_rss_kb": 1000
+      },
+      {
+        "wall_ns": 111803918,
+        "allocs": 18390,
+        "fresh_bytes": 0,
+        "checksum": 3651893285,
+        "samples": 2764800,
+        "native_peak_rss_kb": 1000
+      },
+      {
+        "wall_ns": 97965596,
+        "allocs": 18390,
+        "fresh_bytes": 0,
+        "checksum": 3651893285,
+        "samples": 2764800,
+        "native_peak_rss_kb": 1000
+      },
+      {
+        "wall_ns": 95356622,
+        "allocs": 18390,
+        "fresh_bytes": 0,
+        "checksum": 3651893285,
+        "samples": 2764800,
+        "native_peak_rss_kb": 1000
+      },
+      {
+        "wall_ns": 98244971,
+        "allocs": 18390,
+        "fresh_bytes": 0,
+        "checksum": 3651893285,
+        "samples": 2764800,
+        "native_peak_rss_kb": 1000
+      },
+      {
+        "wall_ns": 100446999,
+        "allocs": 18390,
+        "fresh_bytes": 0,
+        "checksum": 3651893285,
+        "samples": 2764800,
+        "native_peak_rss_kb": 1000
+      },
+      {
+        "wall_ns": 98742239,
+        "allocs": 18390,
+        "fresh_bytes": 0,
+        "checksum": 3651893285,
+        "samples": 2764800,
+        "native_peak_rss_kb": 1000
+      }
+    ],
+    "frames": [
+      {
+        "wall_ns": 114306048,
+        "allocs": 25350,
+        "fresh_bytes": 0,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 212
+      },
+      {
+        "wall_ns": 97264174,
+        "allocs": 25350,
+        "fresh_bytes": 0,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 216
+      },
+      {
+        "wall_ns": 97170866,
+        "allocs": 25350,
+        "fresh_bytes": 0,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 212
+      },
+      {
+        "wall_ns": 93838680,
+        "allocs": 25350,
+        "fresh_bytes": 0,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 216
+      },
+      {
+        "wall_ns": 98329496,
+        "allocs": 25350,
+        "fresh_bytes": 0,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 212
+      },
+      {
+        "wall_ns": 129198039,
+        "allocs": 25350,
+        "fresh_bytes": 0,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 216
+      },
+      {
+        "wall_ns": 94223019,
+        "allocs": 25350,
+        "fresh_bytes": 0,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 212
+      }
+    ],
+    "scalar": [
+      {
+        "wall_ns": 31819325,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 800
+      },
+      {
+        "wall_ns": 31506541,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 800
+      },
+      {
+        "wall_ns": 39561748,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 800
+      },
+      {
+        "wall_ns": 29379042,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 804
+      },
+      {
+        "wall_ns": 31690333,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 800
+      },
+      {
+        "wall_ns": 31408695,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 800
+      },
+      {
+        "wall_ns": 29957150,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 804
+      }
+    ],
+    "simd": [
+      {
+        "wall_ns": 20408676,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 792
+      },
+      {
+        "wall_ns": 21169745,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 792
+      },
+      {
+        "wall_ns": 30228453,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 792
+      },
+      {
+        "wall_ns": 19705581,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 796
+      },
+      {
+        "wall_ns": 21515338,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 792
+      },
+      {
+        "wall_ns": 19879931,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 792
+      },
+      {
+        "wall_ns": 19664552,
+        "checksum": 3664171173,
+        "samples": 2764800,
+        "native_peak_rss_kb": 792
+      }
+    ]
+  },
+  "archive": {
+    "whole": [
+      {
+        "wall_ns": 37548430,
+        "allocs": 7710,
+        "fresh_bytes": 0,
+        "checksum": 3651893285,
+        "samples": 1128960,
+        "native_peak_rss_kb": 560
+      },
+      {
+        "wall_ns": 37365738,
+        "allocs": 7710,
+        "fresh_bytes": 0,
+        "checksum": 3651893285,
+        "samples": 1128960,
+        "native_peak_rss_kb": 560
+      },
+      {
+        "wall_ns": 39219780,
+        "allocs": 7710,
+        "fresh_bytes": 0,
+        "checksum": 3651893285,
+        "samples": 1128960,
+        "native_peak_rss_kb": 560
+      },
+      {
+        "wall_ns": 38146617,
+        "allocs": 7710,
+        "fresh_bytes": 0,
+        "checksum": 3651893285,
+        "samples": 1128960,
+        "native_peak_rss_kb": 560
+      },
+      {
+        "wall_ns": 39776707,
+        "allocs": 7710,
+        "fresh_bytes": 0,
+        "checksum": 3651893285,
+        "samples": 1128960,
+        "native_peak_rss_kb": 560
+      },
+      {
+        "wall_ns": 37545875,
+        "allocs": 7710,
+        "fresh_bytes": 0,
+        "checksum": 3651893285,
+        "samples": 1128960,
+        "native_peak_rss_kb": 560
+      },
+      {
+        "wall_ns": 37232390,
+        "allocs": 7710,
+        "fresh_bytes": 0,
+        "checksum": 3651893285,
+        "samples": 1128960,
+        "native_peak_rss_kb": 560
+      }
+    ],
+    "frames": [
+      {
+        "wall_ns": 35854715,
+        "allocs": 10440,
+        "fresh_bytes": 0,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 188
+      },
+      {
+        "wall_ns": 41525113,
+        "allocs": 10440,
+        "fresh_bytes": 0,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 184
+      },
+      {
+        "wall_ns": 38735921,
+        "allocs": 10440,
+        "fresh_bytes": 0,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 184
+      },
+      {
+        "wall_ns": 37121596,
+        "allocs": 10440,
+        "fresh_bytes": 0,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 184
+      },
+      {
+        "wall_ns": 38715102,
+        "allocs": 10440,
+        "fresh_bytes": 0,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 184
+      },
+      {
+        "wall_ns": 43026541,
+        "allocs": 10440,
+        "fresh_bytes": 0,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 188
+      },
+      {
+        "wall_ns": 37969004,
+        "allocs": 10440,
+        "fresh_bytes": 0,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 184
+      }
+    ],
+    "scalar": [
+      {
+        "wall_ns": 10019533,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 780
+      },
+      {
+        "wall_ns": 12450277,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 776
+      },
+      {
+        "wall_ns": 10669138,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 776
+      },
+      {
+        "wall_ns": 10266289,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 780
+      },
+      {
+        "wall_ns": 10634205,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 776
+      },
+      {
+        "wall_ns": 14230414,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 776
+      },
+      {
+        "wall_ns": 11008571,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 776
+      }
+    ],
+    "simd": [
+      {
+        "wall_ns": 6870128,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 768
+      },
+      {
+        "wall_ns": 6799123,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 768
+      },
+      {
+        "wall_ns": 7345343,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 768
+      },
+      {
+        "wall_ns": 7269502,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 768
+      },
+      {
+        "wall_ns": 7709595,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 768
+      },
+      {
+        "wall_ns": 9993595,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 768
+      },
+      {
+        "wall_ns": 7167410,
+        "checksum": 1735297013,
+        "samples": 1128960,
+        "native_peak_rss_kb": 768
+      }
+    ]
+  }
+}
