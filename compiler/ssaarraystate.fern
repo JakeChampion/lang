@@ -1,0 +1,117 @@
+// Machine state and control flow for the small and large array release proofs.
+import "./ssacondition" as condition;
+import "./ssacapacityisa" as isa;
+import "./ssaaffinevalue" as affine;
+
+pub struct Half { kind: i32, identity: i32, part: i32, number: affine.Value }
+
+pub struct Word { low: Half, high: Half }
+
+pub struct State { regs: Word[], cells: Half[], flags: condition.Flags, ok: boolean, zeros: i32, links: i32, slots: i32, call_return: i32 }
+
+pub function token(kind: i32, identity: i32, part: i32): Half {
+  return Half { kind: kind, identity: identity, part: part, number: affine.unknown() };
+}
+
+pub function identity(kind: i32, id: i32): Word {
+  return Word { low: token(kind, id, 0), high: token(kind, id, 1) };
+}
+
+pub function numeric_half(v: affine.Value): Half {
+  return Half { kind: 1, identity: 0, part: 0, number: v };
+}
+
+pub function same_half(a: Half, b: Half): boolean {
+  return a.kind == b.kind && a.identity == b.identity && a.part == b.part && a.number.factor == b.number.factor && a.number.offset == b.number.offset;
+}
+
+pub function same_word(a: Word, b: Word): boolean {
+  return same_half(a.low, b.low) && same_half(a.high, b.high);
+}
+
+pub function write(s: State, reg: i32, w: Word): State {
+  return State { ...s, regs: s.regs.with(reg, w), ok: s.ok && w.low.kind != 0 && w.high.kind != 0 };
+}
+
+pub function pointer(w: Word, kind: i32): boolean {
+  return w.low.kind == kind && same_word(w, identity(kind, w.low.identity));
+}
+
+pub function extent(at: i64, low: i32, high: i32, width: i32): boolean {
+  return (width == 32 || width == 64) && at >= low as i64 && at + (width / 8) as i64 <= high as i64 && at % (4 as i64) == 0;
+}
+
+pub function put(s: State, at: i32, width: i32, w: Word): State {
+  let cells = s.cells.with(at, w.low);
+  if (width == 64) {
+    cells = cells.with(at + 1, w.high);
+  }
+  return State { ...s, cells: cells };
+}
+
+function in_program(p: isa.ArrayProgram, pc: i32): boolean {
+  return pc >= 0 && pc < p.ops.len();
+}
+
+pub struct Instructions[R] {
+  movement: (State, R, isa.Op) => State,
+  arithmetic: (State, R, isa.Op) => State,
+  lea: (State, R, isa.Op) => State,
+  comparison: (State, R, isa.Op) => State,
+  extended: (State, R, i32, isa.Op) => State,
+}
+
+function step[R](s: State, r: R, pc: i32, op: isa.Op, ops: Instructions[R]): State {
+  if (op.kind == 1) {
+    return s;
+  }
+  if (op.kind >= 2 && op.kind <= 7) {
+    return ops.movement(s, r, op);
+  }
+  if (op.kind == 9 || op.kind == 10) {
+    return ops.arithmetic(s, r, op);
+  }
+  if (op.kind == 15) {
+    return ops.lea(s, r, op);
+  }
+  if (op.kind == 16) {
+    return ops.comparison(s, r, op);
+  }
+  return ops.extended(s, r, pc, op);
+}
+
+pub function path[R](p: isa.ArrayProgram, r: R, register_entry: boolean, s: State, ops: Instructions[R], unguarded: (State, State, R) => State, finished: (State, R, boolean) => boolean): boolean {
+  let original = s;
+  let visited: boolean[] = [];
+  for op in p.ops {
+    visited = visited.append(false);
+  }
+  let pc = if (register_entry) { p.register_entry } else { 0 };
+  while (in_program(p, pc)) {
+    if (visited[pc]) {
+      return false;
+    }
+    visited = visited.with(pc, true);
+    if (register_entry && pc == p.unguarded_entry) {
+      s = unguarded(s, original, r);
+    }
+    let op = p.ops[pc];
+    if (op.kind == 18) {
+      return s.ok && (!register_entry || visited[p.unguarded_entry]) && finished(s, r, register_entry);
+    }
+    if (op.kind == 17) {
+      let taken = condition.branch(s.flags, op.condition);
+      if (taken < 0) {
+        return false;
+      }
+      pc = if (taken == 1) { op.target } else { pc + 1 };
+    } else {
+      s = step(s, r, pc, op, ops);
+      if (!s.ok) {
+        return false;
+      }
+      pc += 1;
+    }
+  }
+  return false;
+}

@@ -1,47 +1,30 @@
+import "./ssaarraystate" as machine;
 import "./ssacondition" as condition;
 import "./ssacapacityisa" as isa;
 import "./ssacapacityvalue" as value;
 import "./ssacapacitymachine" as capacity;
 
-struct Half { kind: i32, identity: i32, part: i32, number: value.Value }
-
-struct Word { low: Half, high: Half }
-
-struct State { regs: Word[], cells: Half[], flags: condition.Flags, ok: boolean, zeros: i32, links: i32, slots: i32, call_return: i32 }
-
-function token(kind: i32, identity: i32, part: i32): Half {
-  return Half { kind: kind, identity: identity, part: part, number: value.unknown() };
-}
-
-function identity(kind: i32, id: i32): Word {
-  return Word { low: token(kind, id, 0), high: token(kind, id, 1) };
-}
-
-function numeric_half(v: value.Value): Half {
-  return Half { kind: 1, identity: 0, part: 0, number: v };
-}
-
-function zero(r: value.Interval): Half {
-  return numeric_half(value.number(r, 0 as i64));
+function zero(r: value.Interval): machine.Half {
+  return machine.numeric_half(value.number(r, 0 as i64));
 }
 
 function nonnegative(r: value.Interval, v: value.Value): boolean {
   return value.valid(r, v) && v.factor as i64 * (r.low as i64) + v.offset >= 0;
 }
 
-function numeric(r: value.Interval, v: value.Value): Word {
+function numeric(r: value.Interval, v: value.Value): machine.Word {
   if (!value.valid(r, v)) {
-    return identity(0, 0);
+    return machine.identity(0, 0);
   }
   let low = value.zero32(r, v);
   if (!value.valid(r, low)) {
-    return identity(0, 0);
+    return machine.identity(0, 0);
   }
   let high = if (nonnegative(r, v)) { 0 as i64 } else { 4294967295 as i64 };
-  return Word { low: numeric_half(low), high: numeric_half(value.number(r, high)) };
+  return machine.Word { low: machine.numeric_half(low), high: machine.numeric_half(value.number(r, high)) };
 }
 
-function number(r: value.Interval, w: Word, width: i32): value.Value {
+function number(r: value.Interval, w: machine.Word, width: i32): value.Value {
   if (w.low.kind != 1 || !nonnegative(r, w.low.number)) {
     return value.unknown();
   }
@@ -61,64 +44,44 @@ function number(r: value.Interval, w: Word, width: i32): value.Value {
   return value.unknown();
 }
 
-function same_half(a: Half, b: Half): boolean {
-  return a.kind == b.kind && a.identity == b.identity && a.part == b.part && a.number.factor == b.number.factor && a.number.offset == b.number.offset;
-}
-
-function same_word(a: Word, b: Word): boolean {
-  return same_half(a.low, b.low) && same_half(a.high, b.high);
-}
-
-function initial(r: value.Interval, register_entry: boolean): State {
-  let regs: Word[] = [];
-  let cells: Half[] = [];
+function initial(r: value.Interval, register_entry: boolean): machine.State {
+  let regs: machine.Word[] = [];
+  let cells: machine.Half[] = [];
   let i = 0;
   while (i < 16) {
-    regs = regs.append(if (i == 4) { identity(3, 0) } else { identity(2, i) });
+    regs = regs.append(if (i == 4) { machine.identity(3, 0) } else { machine.identity(2, i) });
     i += 1;
   }
   if (register_entry) {
-    regs = regs.with(0, identity(6, 0));
+    regs = regs.with(0, machine.identity(6, 0));
   }
-  cells = cells.append(numeric_half(value.add(r, value.original(r), -(3 as i64))));
-  cells = cells.append(token(5, 1, 0)).append(numeric_half(value.number(r, 1 as i64))).append(token(5, 3, 0));
+  cells = cells.append(machine.numeric_half(value.add(r, value.original(r), -(3 as i64))));
+  cells = cells.append(machine.token(5, 1, 0)).append(machine.numeric_half(value.number(r, 1 as i64))).append(machine.token(5, 3, 0));
   for i in 4..14 {
-    cells = cells.append(token(5, i, 0));
+    cells = cells.append(machine.token(5, i, 0));
   }
-  cells = cells.append(token(4, 0, 0)).append(token(4, 0, 1));
-  let argument = if (register_entry) { identity(5, 16) } else { identity(6, 0) };
-  cells = cells.append(argument.low).append(argument.high).append(token(8, 0, 0)).append(token(8, 0, 1));
-  return State { regs: regs, cells: cells, flags: condition.unknown_flags(), ok: true, zeros: 0, links: 0, slots: 0, call_return: -1 };
+  cells = cells.append(machine.token(4, 0, 0)).append(machine.token(4, 0, 1));
+  let argument = if (register_entry) { machine.identity(5, 16) } else { machine.identity(6, 0) };
+  cells = cells.append(argument.low).append(argument.high).append(machine.token(8, 0, 0)).append(machine.token(8, 0, 1));
+  return machine.State { regs: regs, cells: cells, flags: condition.unknown_flags(), ok: true, zeros: 0, links: 0, slots: 0, call_return: -1 };
 }
 
-function write(s: State, reg: i32, w: Word): State {
-  return State { ...s, regs: s.regs.with(reg, w), ok: s.ok && w.low.kind != 0 && w.high.kind != 0 };
+function narrowed(r: value.Interval, w: machine.Word, width: i32): machine.Word {
+  return if (width == 32) { machine.Word { low: w.low, high: zero(r) } } else { w };
 }
 
-function narrowed(r: value.Interval, w: Word, width: i32): Word {
-  return if (width == 32) { Word { low: w.low, high: zero(r) } } else { w };
-}
-
-function pointer(w: Word, kind: i32): boolean {
-  return w.low.kind == kind && same_word(w, identity(kind, w.low.identity));
-}
-
-function extent(at: i64, low: i32, high: i32, width: i32): boolean {
-  return (width == 32 || width == 64) && at >= low as i64 && at + (width / 8) as i64 <= high as i64 && at % (4 as i64) == 0;
-}
-
-function simple_address(w: Word, offset: i32, width: i32): i32 {
+function simple_address(w: machine.Word, offset: i32, width: i32): i32 {
   let at = w.low.identity as i64 + offset as i64;
-  if (pointer(w, 3) && extent(at, -40, 16, width)) {
+  if (machine.pointer(w, 3) && machine.extent(at, -40, 16, width)) {
     return 4 + (at as i32 + 40) / 4;
   }
-  if (pointer(w, 6) && extent(at, -16, 0, width)) {
+  if (machine.pointer(w, 6) && machine.extent(at, -16, 0, width)) {
     return (at as i32 + 16) / 4;
   }
   return -1;
 }
 
-function address(s: State, r: value.Interval, op: isa.Op): i32 {
+function address(s: machine.State, r: value.Interval, op: isa.Op): i32 {
   if (op.base < 0) {
     return -1;
   }
@@ -126,148 +89,140 @@ function address(s: State, r: value.Interval, op: isa.Op): i32 {
   if (op.index < 0) {
     return simple_address(w, op.offset, op.width);
   }
-  if (!same_word(w, identity(7, 0)) || op.scale != 8 || !extent(op.offset as i64, 0, 8, op.width)) {
+  if (!machine.same_word(w, machine.identity(7, 0)) || op.scale != 8 || !machine.extent(op.offset as i64, 0, 8, op.width)) {
     return -1;
   }
   let index = s.regs[op.index];
-  return if (same_word(index, numeric(r, value.expected(r)))) { 18 + op.offset / 4 } else { -1 };
+  return if (machine.same_word(index, numeric(r, value.expected(r)))) { 18 + op.offset / 4 } else { -1 };
 }
 
-function read(s: State, r: value.Interval, at: i32, width: i32): Word {
+function read(s: machine.State, r: value.Interval, at: i32, width: i32): machine.Word {
   if (at < 0) {
-    return identity(0, 0);
+    return machine.identity(0, 0);
   }
-  return Word { low: s.cells[at], high: if (width == 64) { s.cells[at + 1] } else { zero(r) } };
+  return machine.Word { low: s.cells[at], high: if (width == 64) { s.cells[at + 1] } else { zero(r) } };
 }
 
-function put(s: State, at: i32, width: i32, w: Word): State {
-  let cells = s.cells.with(at, w.low);
-  if (width == 64) {
-    cells = cells.with(at + 1, w.high);
-  }
-  return State { ...s, cells: cells };
-}
-
-function store(s: State, r: value.Interval, at: i32, width: i32, w: Word): State {
+function store(s: machine.State, r: value.Interval, at: i32, width: i32, w: machine.Word): machine.State {
   if (at >= 4 && at + width / 32 <= 14) {
-    return put(s, at, width, w);
+    return machine.put(s, at, width, w);
   }
   return heap_store(s, r, at, width, w);
 }
 
-function heap_store(s: State, r: value.Interval, at: i32, width: i32, w: Word): State {
-  if (at == 2 && width == 32 && s.zeros == 0 && same_half(w.low, zero(r))) {
-    return put(State { ...s, zeros: 1 }, at, width, w);
+function heap_store(s: machine.State, r: value.Interval, at: i32, width: i32, w: machine.Word): machine.State {
+  if (at == 2 && width == 32 && s.zeros == 0 && machine.same_half(w.low, zero(r))) {
+    return machine.put(machine.State { ...s, zeros: 1 }, at, width, w);
   }
   return link_store(s, at, width, w);
 }
 
-function link_store(s: State, at: i32, width: i32, w: Word): State {
+function link_store(s: machine.State, at: i32, width: i32, w: machine.Word): machine.State {
   if (at == 0 && width == 64 && s.links == 0) {
-    return put(State { ...s, links: 1 }, at, width, w);
+    return machine.put(machine.State { ...s, links: 1 }, at, width, w);
   }
   if (at == 18 && width == 64 && s.slots == 0) {
-    return put(State { ...s, slots: 1 }, at, width, w);
+    return machine.put(machine.State { ...s, slots: 1 }, at, width, w);
   }
-  return State { ...s, ok: false };
+  return machine.State { ...s, ok: false };
 }
 
-function stack_step(s: State, r: value.Interval, op: isa.Op): State {
-  if (!pointer(s.regs[4], 3)) {
-    return State { ...s, ok: false };
+function stack_step(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
+  if (!machine.pointer(s.regs[4], 3)) {
+    return machine.State { ...s, ok: false };
   }
   let sp = s.regs[4].low.identity;
   if (op.kind == 6) {
     let saved = s.regs[op.source];
     let at = simple_address(s.regs[4], -8, 64);
-    return write(store(s, r, at, 64, saved), 4, identity(3, sp - 8));
+    return machine.write(store(s, r, at, 64, saved), 4, machine.identity(3, sp - 8));
   }
   if (op.destination == 4) {
-    return State { ...s, ok: false };
+    return machine.State { ...s, ok: false };
   }
   let loaded = read(s, r, simple_address(s.regs[4], 0, 64), 64);
-  return write(write(s, 4, identity(3, sp + 8)), op.destination, loaded);
+  return machine.write(machine.write(s, 4, machine.identity(3, sp + 8)), op.destination, loaded);
 }
 
-function movement(s: State, r: value.Interval, op: isa.Op): State {
+function movement(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
   return match (op.kind) {
-    2 => write(s, op.destination, narrowed(r, s.regs[op.source], op.width)),
-    3 => write(s, op.destination, read(s, r, address(s, r, op), op.width)),
+    2 => machine.write(s, op.destination, narrowed(r, s.regs[op.source], op.width)),
+    3 => machine.write(s, op.destination, read(s, r, address(s, r, op), op.width)),
     4 => store(s, r, address(s, r, op), op.width, s.regs[op.source]),
-    5 => write(s, op.destination, narrowed(r, numeric(r, value.number(r, op.immediate as i64)), op.width)),
+    5 => machine.write(s, op.destination, narrowed(r, numeric(r, value.number(r, op.immediate as i64)), op.width)),
     _ => stack_step(s, r, op),
   };
 }
 
-function arithmetic(s: State, r: value.Interval, op: isa.Op): State {
+function arithmetic(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
   let a = number(r, s.regs[op.destination], op.width);
   let b = if (op.source < 0) { value.number(r, op.immediate as i64) } else { number(r, s.regs[op.source], op.width) };
   if (!value.valid(r, b) || b.factor != 0) {
-    return State { ...s, ok: false };
+    return machine.State { ...s, ok: false };
   }
   let v = value.add(r, a, if (op.kind == 9) { -b.offset } else { b.offset });
   if (!nonnegative(r, v)) {
-    return State { ...s, ok: false };
+    return machine.State { ...s, ok: false };
   }
-  return write(State { ...s, flags: condition.unknown_flags() }, op.destination, numeric(r, v));
+  return machine.write(machine.State { ...s, flags: condition.unknown_flags() }, op.destination, numeric(r, v));
 }
 
-function lea(s: State, r: value.Interval, op: isa.Op): State {
+function lea(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
   if (op.base < 0 || op.index >= 0) {
-    return State { ...s, ok: false };
+    return machine.State { ...s, ok: false };
   }
   let w = s.regs[op.base];
   let at = w.low.identity as i64 + op.offset as i64;
-  if (pointer(w, 6) && at >= -(16 as i64) && at <= 0 as i64) {
-    return write(s, op.destination, identity(6, at as i32));
+  if (machine.pointer(w, 6) && at >= -(16 as i64) && at <= 0 as i64) {
+    return machine.write(s, op.destination, machine.identity(6, at as i32));
   }
-  if (pointer(w, 3) && at >= -(40 as i64) && at <= 8 as i64) {
-    return write(s, op.destination, identity(3, at as i32));
+  if (machine.pointer(w, 3) && at >= -(40 as i64) && at <= 8 as i64) {
+    return machine.write(s, op.destination, machine.identity(3, at as i32));
   }
-  return State { ...s, ok: false };
+  return machine.State { ...s, ok: false };
 }
 
-function comparison(s: State, r: value.Interval, op: isa.Op): State {
+function comparison(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
   let w = s.regs[op.source];
-  if (op.width == 64 && same_word(w, identity(6, 0)) && op.immediate == 65536) {
+  if (op.width == 64 && machine.same_word(w, machine.identity(6, 0)) && op.immediate == 65536) {
     let f = condition.Comparison { less: 0, equal: -1, less_equal: -1 };
-    return State { ...s, flags: condition.Flags { order: f, signed: condition.unknown_order(), sign: 0 } };
+    return machine.State { ...s, flags: condition.Flags { order: f, signed: condition.unknown_order(), sign: 0 } };
   }
   let v = number(r, w, op.width);
   if (!nonnegative(r, v) || op.immediate < 0) {
-    return State { ...s, flags: condition.unknown_flags() };
+    return machine.State { ...s, flags: condition.unknown_flags() };
   }
   let order = value.compare(r, v, op.immediate as i64);
   let high = v.factor as i64 * (r.high as i64) + v.offset;
   let signed = if (high <= 2147483647 as i64) { order } else { condition.unknown_order() };
-  return State { ...s, flags: condition.Flags { order: order, signed: signed, sign: signed.less } };
+  return machine.State { ...s, flags: condition.Flags { order: order, signed: signed, sign: signed.less } };
 }
 
-function test(s: State, r: value.Interval, op: isa.Op): State {
+function test(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
   let v = number(r, s.regs[op.source], 32);
   if (!nonnegative(r, v) || v.factor as i64 * (r.high as i64) + v.offset > 2147483647 as i64) {
-    return State { ...s, flags: condition.unknown_flags() };
+    return machine.State { ...s, flags: condition.unknown_flags() };
   }
   let cmp = value.compare(r, v, 0 as i64);
-  return State { ...s, flags: condition.Flags { order: condition.Comparison { less: 0, equal: cmp.equal, less_equal: cmp.equal }, signed: cmp, sign: 0 } };
+  return machine.State { ...s, flags: condition.Flags { order: condition.Comparison { less: 0, equal: cmp.equal, less_equal: cmp.equal }, signed: cmp, sign: 0 } };
 }
 
-function dependency_call(s: State, r: value.Interval, pc: i32, op: isa.Op): State {
-  if (op.symbol != "__fern_capw" || s.call_return >= 0 || !same_word(s.regs[4], identity(3, -8)) || !same_word(read(s, r, 12, 64), numeric(r, value.original(r)))) {
-    return State { ...s, ok: false };
+function dependency_call(s: machine.State, r: value.Interval, pc: i32, op: isa.Op): machine.State {
+  if (op.symbol != "__fern_capw" || s.call_return >= 0 || !machine.same_word(s.regs[4], machine.identity(3, -8)) || !machine.same_word(read(s, r, 12, 64), numeric(r, value.original(r)))) {
+    return machine.State { ...s, ok: false };
   }
   let next = pc + 1;
-  let called = put(s, 10, 64, identity(9, next));
-  called = put(called, 8, 64, s.regs[0]);
-  called = put(called, 6, 64, s.regs[1]);
-  called = put(called, 4, 64, s.regs[2]);
-  called = put(called, 12, 64, numeric(r, value.expected(r)));
-  return State { ...called, call_return: next, flags: condition.unknown_flags() };
+  let called = machine.put(s, 10, 64, machine.identity(9, next));
+  called = machine.put(called, 8, 64, s.regs[0]);
+  called = machine.put(called, 6, 64, s.regs[1]);
+  called = machine.put(called, 4, 64, s.regs[2]);
+  called = machine.put(called, 12, 64, numeric(r, value.expected(r)));
+  return machine.State { ...called, call_return: next, flags: condition.unknown_flags() };
 }
 
-function extended(s: State, r: value.Interval, pc: i32, op: isa.Op): State {
+function extended(s: machine.State, r: value.Interval, pc: i32, op: isa.Op): machine.State {
   if (op.kind == 19 && op.symbol == "__fern_freelist" && op.width == 64) {
-    return write(s, op.destination, identity(7, 0));
+    return machine.write(s, op.destination, machine.identity(7, 0));
   }
   if (op.kind == 22) {
     return store(s, r, address(s, r, op), op.width, numeric(r, value.number(r, op.immediate as i64)));
@@ -278,140 +233,85 @@ function extended(s: State, r: value.Interval, pc: i32, op: isa.Op): State {
   if (op.kind == 25) {
     return dependency_call(s, r, pc, op);
   }
-  return State { ...s, ok: false };
+  return machine.State { ...s, ok: false };
 }
 
-function step(s: State, r: value.Interval, pc: i32, op: isa.Op): State {
-  if (op.kind == 1) {
-    return s;
-  }
-  if (op.kind >= 2 && op.kind <= 7) {
-    return movement(s, r, op);
-  }
-  if (op.kind == 9 || op.kind == 10) {
-    return arithmetic(s, r, op);
-  }
-  if (op.kind == 15) {
-    return lea(s, r, op);
-  }
-  if (op.kind == 16) {
-    return comparison(s, r, op);
-  }
-  return extended(s, r, pc, op);
-}
-
-function expected_register(r: value.Interval, reg: i32): Word {
+function expected_register(r: value.Interval, reg: i32): machine.Word {
   return match (reg) {
-    0 => identity(6, 0),
+    0 => machine.identity(6, 0),
     1 => numeric(r, value.expected(r)),
-    2 => identity(6, -16),
-    4 => identity(3, 0),
-    7 => identity(8, 0),
-    8 => identity(7, 0),
-    _ => identity(2, reg),
+    2 => machine.identity(6, -16),
+    4 => machine.identity(3, 0),
+    7 => machine.identity(8, 0),
+    8 => machine.identity(7, 0),
+    _ => machine.identity(2, reg),
   };
 }
 
-function expected_scratch(s: State, r: value.Interval): Half[] {
+function expected_scratch(s: machine.State, r: value.Interval): machine.Half[] {
   let cells = initial(r, false).cells;
   if (r.low > 256 && s.call_return >= 0) {
-    let expected = State { ...s, cells: cells };
-    expected = put(expected, 4, 64, identity(6, -16));
-    expected = put(expected, 6, 64, numeric(r, value.original(r)));
-    expected = put(expected, 8, 64, identity(6, 0));
-    expected = put(expected, 10, 64, identity(9, s.call_return));
-    expected = put(expected, 12, 64, numeric(r, value.expected(r)));
+    let expected = machine.State { ...s, cells: cells };
+    expected = machine.put(expected, 4, 64, machine.identity(6, -16));
+    expected = machine.put(expected, 6, 64, numeric(r, value.original(r)));
+    expected = machine.put(expected, 8, 64, machine.identity(6, 0));
+    expected = machine.put(expected, 10, 64, machine.identity(9, s.call_return));
+    expected = machine.put(expected, 12, 64, numeric(r, value.expected(r)));
     cells = expected.cells;
   }
   return cells;
 }
 
-function final_registers(s: State, r: value.Interval): boolean {
+function final_registers(s: machine.State, r: value.Interval): boolean {
   for i in 0..16 {
-    if (!same_word(s.regs[i], expected_register(r, i))) {
+    if (!machine.same_word(s.regs[i], expected_register(r, i))) {
       return false;
     }
   }
   return true;
 }
 
-function finished(s: State, r: value.Interval, register_entry: boolean): boolean {
+function finished(s: machine.State, r: value.Interval, register_entry: boolean): boolean {
   if (s.zeros != 1 || s.links != 1 || s.slots != 1 || r.low > 256 != s.call_return >= 0 || !final_registers(s, r)) {
     return false;
   }
   let expected = initial(r, register_entry);
-  expected = put(expected, 0, 64, identity(8, 0));
-  expected = put(expected, 2, 32, numeric(r, value.number(r, 0 as i64)));
-  expected = put(expected, 18, 64, identity(6, -16));
+  expected = machine.put(expected, 0, 64, machine.identity(8, 0));
+  expected = machine.put(expected, 2, 32, numeric(r, value.number(r, 0 as i64)));
+  expected = machine.put(expected, 18, 64, machine.identity(6, -16));
   let scratch = expected_scratch(s, r);
   for i in 0..20 {
     let wanted = if (i >= 4 && i < 14) { scratch[i] } else { expected.cells[i] };
-    if (!same_half(s.cells[i], wanted)) {
+    if (!machine.same_half(s.cells[i], wanted)) {
       return false;
     }
   }
   return true;
 }
 
-function in_program(p: isa.ArrayProgram, pc: i32): boolean {
-  return pc >= 0 && pc < p.ops.len();
-}
-
-function unguarded(s: State, original: State, r: value.Interval): State {
+function unguarded(s: machine.State, original: machine.State, r: value.Interval): machine.State {
   let regs = s.regs;
   let i = 0;
   while (i < regs.len()) {
-    if (!same_word(regs[i], original.regs[i])) {
-      if (i == 0 || same_word(expected_register(r, i), identity(2, i))) {
-        return State { ...s, ok: false };
+    if (!machine.same_word(regs[i], original.regs[i])) {
+      if (i == 0 || machine.same_word(expected_register(r, i), machine.identity(2, i))) {
+        return machine.State { ...s, ok: false };
       }
       regs = regs.with(i, original.regs[i]);
     }
     i += 1;
   }
   for i in 0..s.cells.len() {
-    if (!same_half(s.cells[i], original.cells[i])) {
-      return State { ...s, ok: false };
+    if (!machine.same_half(s.cells[i], original.cells[i])) {
+      return machine.State { ...s, ok: false };
     }
   }
-  return State { ...s, regs: regs, flags: condition.unknown_flags(), ok: s.ok && s.zeros == 0 && s.links == 0 && s.slots == 0 && s.call_return == -1 };
+  return machine.State { ...s, regs: regs, flags: condition.unknown_flags(), ok: s.ok && s.zeros == 0 && s.links == 0 && s.slots == 0 && s.call_return == -1 };
 }
 
 function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean): boolean {
-  let s = initial(r, register_entry);
-  let original = s;
-  let visited: boolean[] = [];
-  for op in p.ops {
-    visited = visited.append(false);
-  }
-  let pc = if (register_entry) { p.register_entry } else { 0 };
-  while (in_program(p, pc)) {
-    if (visited[pc]) {
-      return false;
-    }
-    visited = visited.with(pc, true);
-    if (register_entry && pc == p.unguarded_entry) {
-      s = unguarded(s, original, r);
-    }
-    let op = p.ops[pc];
-    if (op.kind == 18) {
-      return s.ok && (!register_entry || visited[p.unguarded_entry]) && finished(s, r, register_entry);
-    }
-    if (op.kind == 17) {
-      let taken = condition.branch(s.flags, op.condition);
-      if (taken < 0) {
-        return false;
-      }
-      pc = if (taken == 1) { op.target } else { pc + 1 };
-    } else {
-      s = step(s, r, pc, op);
-      if (!s.ok) {
-        return false;
-      }
-      pc += 1;
-    }
-  }
-  return false;
+  let ops: machine.Instructions[value.Interval] = machine.Instructions { movement: movement, arithmetic: arithmetic, lea: lea, comparison: comparison, extended: extended };
+  return machine.path(p, r, register_entry, initial(r, register_entry), ops, unguarded, finished);
 }
 
 pub function check(output: string): boolean {

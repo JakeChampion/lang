@@ -1,0 +1,6 @@
+// A linear function of the input extent used by both array release proofs.
+pub struct Value { factor: i32, offset: i64 }
+
+pub function unknown(): Value {
+  return Value { factor: -1, offset: 0 as i64 };
+}
