@@ -636,3 +636,14 @@ wasm32/checker.unproved	127
 x86_64/checker.refuted	5238
 x86_64/checker.weakened	234
 x86_64/checker.missed	225
+
+# lane: bootstrap-arm64-darwin
+bootstrap/arm64-darwin/stage1.wall_s	120
+bootstrap/arm64-darwin/stage1.peak_rss_mb	2844
+bootstrap/arm64-darwin/stage1.size_bytes	21002641
+bootstrap/arm64-darwin/stage2.wall_s	98
+bootstrap/arm64-darwin/stage2.peak_rss_mb	2540
+bootstrap/arm64-darwin/stage2.size_bytes	21862241
+bootstrap/arm64-darwin/stage3.wall_s	93
+bootstrap/arm64-darwin/stage3.peak_rss_mb	2394
+bootstrap/arm64-darwin/stage3.size_bytes	21862241
