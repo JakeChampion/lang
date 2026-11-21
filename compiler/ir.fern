@@ -5246,37 +5246,29 @@ function strength_rewrite(ks: StrengthKinds, k: i32, bop: Op): Option[Op[]] {
     }
     return strength_none();
   }
-  if (t == ks.div_s) {
-    if (k == 1) {
-      return strength_del();
+  if (t == ks.div_s || t == ks.div_u || t == ks.rem_s || t == ks.rem_u) {
+    let uns = t == ks.div_u || t == ks.rem_u;
+    let rem = t == ks.rem_s || t == ks.rem_u;
+    let divisor = if (uns) { (k as u32) as i64 } else { k as i64 };
+    match (const_div_plan(divisor, 32, uns, rem)) {
+      DivIdentity => {
+        return strength_del();
+      },
+      DivZero => {
+        return strength_drop0();
+      },
+      DivShift(n) => {
+        if (uns && rem) {
+          return strength_pair(op_const_i32(k - 1), op_bin("and", 0, false));
+        }
+        if (uns) {
+          return strength_pair(op_const_i32(n), op_bin("shr_u", 0, false));
+        }
+      },
+      DivNegate => {},
+      DivHardware => {},
+      DivReciprocal => {}
     }
-    return strength_none();
-  }
-  if (t == ks.div_u) {
-    if (k == 1) {
-      return strength_del();
-    }
-    let nd = log2_i32(k);
-    if (nd > 0) {
-      return strength_pair(op_const_i32(nd), op_bin("shr_u", 0, false));
-    }
-    return strength_none();
-  }
-  if (t == ks.rem_s) {
-    if (k == 1) {
-      return strength_drop0();
-    }
-    return strength_none();
-  }
-  if (t == ks.rem_u) {
-    if (k == 1) {
-      return strength_drop0();
-    }
-    let nr = log2_i32(k);
-    if (nr > 0) {
-      return strength_pair(op_const_i32(k - 1), op_bin("and", 0, false));
-    }
-    return strength_none();
   }
   return strength_none();
 }

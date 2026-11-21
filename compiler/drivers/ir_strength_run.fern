@@ -66,6 +66,12 @@ function main(): i32 {
   out += case_bin("rem_u_8", 8, "rem_u", 0);
   out += case_bin("rem_u_6", 6, "rem_u", 0);
 
+  out += case_bin("div_s_0", 0, "div_s", 0);
+  out += case_bin("rem_u_0", 0, "rem_u", 0);
+  out += case_bin("rem_s_neg1", -1, "rem_s", 0);
+  out += case_bin("div_u_top", -2147483648, "div_u", 0);
+  out += case_bin("rem_u_top", -2147483648, "rem_u", 0);
+
   out += case_bin("mul_8_w64", 8, "mul", 64);
   out += case_bin("add_0_w64", 0, "add", 64);
 
