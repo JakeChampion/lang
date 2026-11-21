@@ -7,6 +7,7 @@ import "std/shape";
 import "std/string";
 import "std/truetype";
 import "../../tests/stdlib/shape_vectors";
+import "../../tests/stdlib/shape_reference";
 
 function main(): i32 {
   let Ok(bytes) = base64.decode(shape_vectors.deva_font()) else {
@@ -16,9 +17,11 @@ function main(): i32 {
     return 1;
   };
   let words: string[] = [];
+  let expected: string[] = [];
   for line in shape_vectors.deva_cases().split("\n") {
     let fields = line.split("\t");
     if (fields.len() == 5 && fields[0] == "deva") {
+      expected = expected.append(fields[2] + " " + fields[3] + " " + fields[4]);
       words = words.append(fields[1]);
     }
   }
@@ -44,6 +47,14 @@ function main(): i32 {
   }
   let elapsed = monotonic_ns() - started;
   let allocations = __heap_alloc_count() - start;
+  // Validate after timing so reference formatting is excluded from both metrics.
+  for i in 0..words.len() {
+    let run = match (plan) { Some(p) => p.shape(words[i]), None => shape.shape(font, words[i], "deva") };
+    if (shape_reference.describe(run, true) != expected[i]) {
+      print("HarfBuzz mismatch for " + words[i]);
+      return 1;
+    }
+  }
   print(allocations.to_string());
   print(checksum.to_string());
   if (plan.is_some()) {

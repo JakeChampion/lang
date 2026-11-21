@@ -8,6 +8,7 @@ import "std/string";
 import "std/test";
 import "std/truetype";
 import "./shape_vectors";
+import "./shape_reference";
 
 function font_of(data: string): Option[truetype.Font] {
   if let Ok(b) = base64.decode(data) {
@@ -43,15 +44,6 @@ function joined(xs: i32[]): string {
   return xs.map((x: i32): string => x.to_string()).join(",");
 }
 
-// The advance, the x offset and the y offset of each glyph of `r`.
-function places(r: truetype.Run): string {
-  let out: string[] = [];
-  for i in 0..r.glyphs.len() {
-    out = out.append(r.pos.advances[i].to_string() + ":" + r.pos.dx[i].to_string() + ":" + r.pos.dy[i].to_string());
-  }
-  return out.join(",");
-}
-
 // The cases of the script `script` that do not give the glyphs and the
 // clusters of HarfBuzz, one on each line. With `placed`, the positions of
 // the glyphs must be those of HarfBuzz too.
@@ -72,7 +64,7 @@ function differences(font: Option[truetype.Font], cases: string, script: string,
     }
     count += 1;
     let r = match (plan) { Some(p) => p.shape(parts[1]), None => shape.shape(f, parts[1], script) };
-    let got = joined(r.glyphs) + " " + joined(r.clusters) + (if (placed) { " " + places(r) } else { "" });
+    let got = shape_reference.describe(r, placed);
     let want = parts[2] + " " + parts[3] + (if (placed) { " " + parts[4] } else { "" });
     if (got != want) {
       out = out + parts[1] + ": " + got + ", want " + want + "\n";
