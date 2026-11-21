@@ -17,6 +17,46 @@ function healthy(e: usize, obj: usize): boolean {
   return jni.check(e).is_ok() && obj != 0 as usize;
 }
 
+function network_flag(e: usize, capabilities: usize, name: string, value: i32): boolean {
+  let cls = jni.get_object_class(e, capabilities);
+  defer jni.delete_local_ref(e, cls);
+  let method = jni.get_method_id(e, cls, name, "(I)Z");
+  if (jni.check(e).is_err() || method == 0 as usize) {
+    return false;
+  }
+  let args = jni.jvalues([value as usize]);
+  let found = jni.call_boolean_method_a(e, capabilities, method, args);
+  jni.free_buffer(args);
+  return jni.check(e).is_ok() && found != 0;
+}
+
+pub function on_wifi(ctx: usize): boolean {
+  if (android.detached(ctx)) {
+    return false;
+  }
+  let e = android.env(ctx);
+  let service = jni.new_string(e, "connectivity");
+  defer jni.delete_local_ref(e, service);
+  let manager = jni.call_object(e, android.activity_object(ctx), "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [service]);
+  if (!healthy(e, manager)) {
+    return false;
+  }
+  defer jni.delete_local_ref(e, manager);
+  let network = jni.call_object(e, manager, "getActiveNetwork", "()Landroid/net/Network;", []);
+  if (!healthy(e, network)) {
+    return false;
+  }
+  defer jni.delete_local_ref(e, network);
+  let caps = jni.call_object(e, manager, "getNetworkCapabilities", "(Landroid/net/Network;)Landroid/net/NetworkCapabilities;", [network]);
+  if (!healthy(e, caps)) {
+    return false;
+  }
+  defer jni.delete_local_ref(e, caps);
+  let transport_wifi = 1;
+  let capability_validated = 16;
+  return network_flag(e, caps, "hasTransport", transport_wifi) && network_flag(e, caps, "hasCapability", capability_validated);
+}
+
 function create(e: usize, cls: usize): usize {
   if (!healthy(e, cls)) {
     return 0 as usize;

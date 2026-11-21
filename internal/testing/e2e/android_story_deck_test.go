@@ -35,16 +35,20 @@ func TestAndroidStoryDeckApk(t *testing.T) {
 	}
 	manifest := readZipEntry(t, z, "AndroidManifest.xml")
 	for _, want := range []string{
-		"dev.fern.storydeck", "Story Deck", "android.permission.INTERNET",
+		"dev.fern.storydeck", "Story Deck", "android.permission.INTERNET", "android.permission.ACCESS_NETWORK_STATE", "dev.fern.storydeck.MainActivity",
 		"dev.fern.storydeck.CarBrowse", "android.media.browse.MediaBrowserService",
 		"com.google.android.gms.car.application", "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
 		"android.permission.NFC", "android.permission.RECORD_AUDIO", "android.permission.READ_MEDIA_AUDIO",
+		"enableOnBackInvokedCallback",
 	} {
 		if !bytes.Contains(manifest, utf16le(want)) {
 			t.Errorf("the manifest has no string %q", want)
 		}
 	}
 	dex := readZipEntry(t, z, "classes.dex")
+	if !bytes.Contains(dex, []byte("Ldev/fern/android/Back;")) {
+		t.Error("the APK does not contain the Android Back callback")
+	}
 	if !bytes.Contains(dex, []byte("Ldev/fern/storydeck/CardReader;")) {
 		t.Error("the APK does not contain the NFC reader callback")
 	}
