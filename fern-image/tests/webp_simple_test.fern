@@ -213,6 +213,23 @@ function indexed(): test.TestOutcome {
   return test.pass();
 }
 
+function transform_order(): test.TestOutcome {
+  // libwebp decodes the first pixel of each stream to these RGBA values.
+  let before: u8[] = [47, 4, 192, 0, 16, 61, 128, 94, 244, 184, 4, 61, 15, 148, 46, 162, 255, 1];
+  let after: u8[] = [47, 0, 128, 0, 16, 15, 208, 139, 30, 151, 160, 231, 81, 124, 229, 55, 162, 255, 17];
+  for (stream, expected) in [(before, [222u8, 23u8, 27u8, 231u8]), (after, [142u8, 46u8, 8u8, 206u8])] {
+    let Ok(image) = vp8l.decode_simple(stream, pixels.default_limits(), active) else {
+      return test.fail("transform sequence");
+    };
+    for i in 0..4 {
+      if (image.data[i] != expected[i]) {
+        return test.fail("inverse transform order");
+      }
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("VP8L simple literal payloads");
   r = r.it("independent RGBA samples", samples);
@@ -221,5 +238,6 @@ function main(): i32 {
   r = r.it("inverse subtract-green with modular channel sums", subtract_green);
   r = r.it("bounded simple RGB and RGBA writer", writer_roundtrip);
   r = r.it("delta-coded palettes and packed rows", indexed);
+  r = r.it("palette and subtract-green in both orders", transform_order);
   return r.finish();
 }
