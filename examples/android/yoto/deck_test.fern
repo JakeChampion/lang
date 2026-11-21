@@ -1,4 +1,9 @@
 import "std/android";
+import "std/audio/pcm";
+import "std/audio/wav";
+import "./myo_audio";
+import "./travel";
+import "./tools_panel" as panel_tools;
 import "std/android/draw";
 import "std/android/download";
 import "std/android/fonts";
@@ -153,6 +158,8 @@ function no_audio(): phone.Output {
     position: (media: player.Player): i64 => 0i64,
     duration: (media: player.Player): i64 => 0i64,
     speed: (media: player.Player, rate: f32): boolean => true,
+    volume: (media: player.Player, gain: f32): boolean => true,
+    link: (media: player.Player, adjacent: Option[player.Player]): boolean => true,
   };
 }
 
@@ -312,7 +319,7 @@ function test_continuous_posters(): test.TestOutcome {
   let tracks: api.Track[] = [];
   for i in 0..22 {
     let title = "Track " + i.to_string();
-    tracks = tracks.append(api.Track { title: title, chapter: "", chapter_key: "01", track_key: i.to_string(), search: title.to_lower(), art: "", chapter_art: "" });
+    tracks = tracks.append(api.Track { title: title, chapter: "", chapter_key: "01", track_key: i.to_string(), search: title.to_lower(), art: "", chapter_art: "", seconds: 0i64 });
   }
   for i in 0..22 {
     let id = "card-" + i.to_string();
@@ -1283,7 +1290,7 @@ function test_library_search_jobs(): test.TestOutcome {
   let tracks: api.Track[] = [];
   for i in 0..24 {
     let track = "Woodland chapter " + i.to_string();
-    tracks = tracks.append(api.Track { title: track, chapter: "Forest", chapter_key: "01", track_key: i.to_string(), search: track.to_lower(), art: "", chapter_art: "" });
+    tracks = tracks.append(api.Track { title: track, chapter: "Forest", chapter_key: "01", track_key: i.to_string(), search: track.to_lower(), art: "", chapter_art: "", seconds: 0i64 });
   }
   let cards: api.Card[] = [fixture_cards()[2]];
   for i in 0..1500 {
@@ -1513,6 +1520,158 @@ function test_artwork_read_cancellation(): test.TestOutcome {
   return test.fail("closing the signal peer must cancel the pending artwork read");
 }
 
+function test_choose_saved_chapters(): test.TestOutcome {
+  let book = fixture_cards()[0];
+  let selected = api.chapter_download(book, "02", "Second chapter");
+  let raw = "{\"card\":{\"cardId\":\"book\",\"content\":{\"chapters\":["
+    + "{\"key\":\"01\",\"tracks\":[{\"type\":\"stream\"}]},"
+    + "{\"key\":\"02\",\"title\":\"Second chapter\",\"tracks\":[{\"key\":\"01\",\"title\":\"Second track\",\"type\":\"audio\",\"trackUrl\":\"https://example.com/second.mp3\",\"duration\":42}]}]}}}";
+  let reply = json.parse(raw).unwrap_or(json.JNull);
+  let Ok(plan) = api.parse_download(reply, selected) else {
+    return test.fail("use the card's authorized audio for the selected chapter");
+  };
+  let (origin, chapter) = api.download_selection(plan.id);
+  if (origin != book.id || chapter != "02" || plan.tracks.len() != 1 || api.parse_download(reply, book).is_ok()) {
+    return test.fail("keep a partial download separate from the complete card");
+  }
+  let track = offline.Track { id: 1i64, name: "yoto-offline-second.audio", title: "Second track", chapter: "02", key: "01", art: "" };
+  let entry = offline.Entry { id: selected.id, title: selected.title, creator: "", tracks: [track], ready: true, failed_at: -1, resume_from: -1, card: plan.card };
+  let catalog = offline.Catalog { dir: "/media", entries: [entry], cleanup: [], note: "" };
+  let m = deck.with_downloads(deck.start(), catalog);
+  let next = deck.update(m, deck.PlayChapter(selected.id));
+  return test.assert_eq(next.phone.queue.len() == 1 && next.phone.queue[0].url.starts_with("file://") && offline.saved(next.downloads, book.id).is_none(), true);
+}
+
+function test_travel_fits_and_protection(): test.TestOutcome {
+  let path = "/media";
+  let book = fixture_cards()[0];
+  let card = api.Card { ...book, seconds: 900i64 };
+  let track = offline.Track { id: 1i64, name: "yoto-offline-forest.audio", title: "Fox at dusk", chapter: "01", key: "03", art: "" };
+  let entry = offline.Entry { id: card.id, title: card.title, creator: "", tracks: [track], ready: true, failed_at: -1, resume_from: -1, card: Some(card) };
+  let catalog = offline.Catalog { dir: path, entries: [entry], cleanup: [], note: "" };
+  let item = listening.Item { id: card.id, title: card.title };
+  let bookmark = listening.Bookmark { item: item, chapter: "01", key: "03", name: "", position: 360000i64 };
+  let saved = listening.remember(listening.empty(), bookmark);
+  let shorter = travel.fit([card], catalog, saved, 10);
+  if (shorter.len() != 1 || shorter[0].seconds != 540i64 || travel.fit([card], catalog, listening.empty(), 10).len() != 0) {
+    return test.fail("use the remaining time on an in-progress saved card");
+  }
+  let liked = listening.toggle_favourite(saved, item);
+  let other = listening.switch_profile(liked, "Jess");
+  let report = [listening.Trip { id: card.id, title: card.title, expected: 1, present: 1, bytes: 42i64, first_bad: -1 }];
+  return test.assert_eq(travel.largest(other, report).len() == 0 && travel.surprise(liked, catalog, "").is_some(), true);
+}
+
+function test_bedtime_and_stickers(): test.TestOutcome {
+  let Ok(dir) = temp_dir("story-deck-bedtime") else {
+    return test.fail("open a bedtime settings store");
+  };
+  let cards = fixture_cards();
+  let story = listening.Item { id: cards[0].id, title: cards[0].title };
+  let sound = listening.Item { id: cards[1].id, title: cards[1].title };
+  let routine = listening.Routine { profile: "Family", story: story, sound: sound, minutes: 15 };
+  let track = offline.Track { id: 1i64, name: "yoto-offline-bedtime.audio", title: "Story", chapter: "01", key: "03", art: "" };
+  let first = offline.Entry { id: story.id, title: story.title, creator: "", tracks: [track], ready: true, failed_at: -1, resume_from: -1, card: Some(cards[0]) };
+  let second = offline.Entry { ...first, id: sound.id, title: sound.title, card: Some(cards[1]) };
+  let catalog = offline.Catalog { dir: dir, entries: [first, second], cleanup: [], note: "" };
+  let settings = listening.Saved { ...listening.empty(), routines: [routine], fade: true, budget_mb: 2048 };
+  let m = deck.with_listening(deck.with_downloads(deck.start(), catalog), settings);
+  m = deck.update(deck.update(m, deck.OpenTravel(deck.NfcTags)), deck.LinkRoutineTag);
+  m = deck.tools_update(m, panel_tools.State { ...m.tools_page, scanning: true });
+  m = deck.update(m, deck.ReadPhysicalTag("NfcFixture|"));
+  if (m.playback_tools.saved.tags.len() != 1 || !listening.save(dir, m.playback_tools.saved)) {
+    return test.fail("save the sticker binding for the current profile");
+  }
+  let restored = listening.load(dir);
+  if (restored.routines.len() != 1 || restored.budget_mb != 2048 || !restored.fade || restored.tags[0].uid != "NfcFixture") {
+    return test.fail("restore travel preferences across restarts");
+  }
+  m = deck.tools_update(m, panel_tools.State { ...m.tools_page, scanning: true });
+  m = deck.update(m, deck.ReadPhysicalTag("NfcFixture|"));
+  if (m.phone.card != story.id || m.playback_tools.sleep_at != 0i64) {
+    return test.fail("play the bedtime story first");
+  }
+  let media = player.Player { obj: 1 as usize, listener: 1 as usize, slot: 0 };
+  let (ended, value) = player.posted(player.Completed, 0);
+  let playing = phone.State { ...m.phone, media: Some(media), phase: phone.Playing };
+  m = deck.update(deck.Model { ...m, phone: playing }, deck.PhoneEvent(ended, value));
+  return test.assert_eq(m.phone.card == sound.id && m.playback_tools.sleep_at > monotonic_ns(), true);
+}
+
+function test_audio_editor_trims_splits_and_matches(): test.TestOutcome {
+  let Ok(dir) = temp_dir("story-deck-audio-edits") else {
+    return test.fail("open the audio editor's temporary store");
+  };
+  let format = pcm.Format { sample_rate: 8000, channels: 1, bits_per_sample: 16 };
+  let points: i32[] = [];
+  for i in 0..16000 {
+    points = points.append(if (i < 8000) { 1000 } else { 2000 });
+  }
+  let Ok(original) = wav.encode(points, format, pcm.default_limits()) else {
+    return test.fail("encode a small WAV fixture");
+  };
+  let input = dir + "/fixture.wav";
+  if (write_file_bytes(input, original).is_err()) {
+    return test.fail("write the WAV fixture");
+  }
+  let audio = api.LocalAudio { path: input, title: "Family recording", mime: "audio/wav", recording: false };
+  let wave = myo_audio.analyze(audio).unwrap_or(myo_audio.Wave { duration: 0, peaks: [] });
+  if (wave.duration != 2000 || wave.peaks.len() != 48) {
+    return test.fail("read the recording and build a waveform");
+  }
+  let edit = myo_audio.Edit { first: 250, last: 1750, markers: [1000], match_volume: true };
+  let Ok(parts) = myo_audio.render(audio, audio.title, dir, edit) else {
+    return test.fail("render the trim and chapter split");
+  };
+  defer myo_audio.discard(parts);
+  if (parts.len() != 2 || parts[0].path == input) {
+    return test.fail("save edits as separate files");
+  }
+  let Ok(first) = wav.decode(read_file_bytes(parts[0].path).unwrap_or([]), pcm.default_limits()) else {
+    return test.fail("read the first edited chapter");
+  };
+  let Ok(second) = wav.decode(read_file_bytes(parts[1].path).unwrap_or([]), pcm.default_limits()) else {
+    return test.fail("read the second edited chapter");
+  };
+  return test.assert_eq(
+    first.samples.len() == 6000 && second.samples.len() == 6000 && first.samples[0] == second.samples[0]
+      && first.samples[0] > 3000 && read_file_bytes(input).unwrap_or([]) == original,
+    true,
+  );
+}
+
+function test_gapless_and_rewind(): test.TestOutcome {
+  let first = api.Stream { title: "One", url: "file:///one", chapter: "01", key: "01", art: "" };
+  let second = api.Stream { ...first, title: "Two", url: "file:///two", chapter: "02" };
+  let media = player.Player { obj: 1 as usize, listener: 1 as usize, slot: 0 };
+  let next = player.Player { ...media, slot: 1 };
+  let connected = cell_new(false);
+  let volume = cell_new(1.0f32);
+  let output = phone.Output {
+    ...no_audio(),
+    link: (media: player.Player, adjacent: Option[player.Player]): boolean => {
+      connected.set(adjacent.is_some());
+      return true;
+    },
+    volume: (media: player.Player, gain: f32): boolean => {
+      volume.set(gain);
+      return true;
+    },
+  };
+  let playing = phone.State { ...phone.empty(), queue: [first, second], media: Some(media), standby: Some(next), standby_at: 1, standby_ready: true, phase: phone.Playing, elapsed: 43000i64 };
+  let linked = phone.link_gapless(playing, output);
+  if (!linked.linked || !connected.get()) {
+    return test.fail("link the prepared next track");
+  }
+  let limited = phone.link_gapless(phone.chapter_timer(linked, true), output);
+  if (limited.linked || connected.get()) {
+    return test.fail("disable gapless playback at a sleep boundary");
+  }
+  let faded = phone.volume(limited, 0.25f32, output);
+  let model = deck.update(deck.Model { ...deck.start(), phone: faded }, deck.PhoneRewind);
+  return test.assert_eq(volume.get() == 0.25f32 && model.phone.elapsed == 28000i64, true);
+}
+
 function main(): i32 {
   let r = test.new("Story Deck");
   r = r.it("PKCE matches the standard example", test_pkce);
@@ -1561,5 +1720,10 @@ function main(): i32 {
   r = r.it("pause, resume, and repair downloads without replacing complete tracks", test_pause_and_repair_download);
   r = r.it("check a trip and play a local sample from the dashboard", test_trip_sample_and_target);
   r = r.it("cancel a pending artwork read when its signal closes", test_artwork_read_cancellation);
+  r = r.it("save and play a single authorized chapter offline", test_choose_saved_chapters);
+  r = r.it("choose a title by remaining time and protect a family favourite", test_travel_fits_and_protection);
+  r = r.it("restore a sticker-linked bedtime routine and start sleep sounds after the story", test_bedtime_and_stickers);
+  r = r.it("read a waveform and render trimmed, split, volume-matched chapters", test_audio_editor_trims_splits_and_matches);
+  r = r.it("link prepared tracks, respect sleep boundaries, and rewind from the media control", test_gapless_and_rewind);
   return r.finish();
 }
