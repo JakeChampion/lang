@@ -6550,15 +6550,17 @@ function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args
     return v_err("arity mismatch calling `" + type_name + "." + name + "`");
   }
   let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: funcs.cleanups[ai], cells: funcs.cells[ai] };
-  let targs = parser.parse_type_ref(type_name).args;
-  let tps = fd.type_params;
-  if (tps.len() == 0) {
-    tps = decl_type_params(type_decls, aliases, util.base_type_name(type_name));
-  }
-  let t = 0;
-  while (t < tps.len() && t < targs.len()) {
-    env = env.bind(tps[t], v_type(parser.render_type_ref(targs[t])));
-    t += 1;
+  if (!parser.plain_type_spelling(type_name)) {
+    let targs = parser.parse_type_ref(type_name).args;
+    let tps = fd.type_params;
+    if (tps.len() == 0) {
+      tps = decl_type_params(type_decls, aliases, util.base_type_name(type_name));
+    }
+    let t = 0;
+    while (t < tps.len() && t < targs.len()) {
+      env = env.bind(tps[t], v_type(parser.render_type_ref(targs[t])));
+      t += 1;
+    }
   }
   for j in 0..fd.params.len() {
     env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
