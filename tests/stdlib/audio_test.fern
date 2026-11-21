@@ -59,6 +59,40 @@ function qoa_reference(): test.TestOutcome {
   return test.assert_true(true);
 }
 
+function qoa_final_frame(): test.TestOutcome {
+  let format = pcm.Format { sample_rate: 48000, channels: 1, bits_per_sample: 16 };
+  let limits = pcm.default_limits();
+  let Ok(bytes) = qoa.encode(signal(5121, 1), format, limits) else {
+    return test.fail("QOA two-frame fixture");
+  };
+  let Ok(first) = qoa.decode_frame(bytes, 8, limits) else {
+    return test.fail("QOA first frame");
+  };
+  let last = 8 + first.bytes_read;
+  for end in last..bytes.len() {
+    match (qoa.decode(bytes[:end], limits)) {
+      Err(pcm.Truncated) => {},
+      _ => {
+        return test.fail("QOA final frame truncation");
+      }
+    }
+  }
+  // Flip each bit of the second frame's sample rate and encoded size.
+  for offset in [1, 2, 3, 6, 7] {
+    let at = last + offset;
+    for bit in 0..8 {
+      let changed = bytes.with(at, bytes[at] ^ 1u8 << bit as u8);
+      match (qoa.decode(changed, limits)) {
+        Err(pcm.Header) => {},
+        _ => {
+          return test.fail("QOA inconsistent final frame header");
+        }
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
 function flac_reference(): test.TestOutcome {
   for v in audio_vectors.invalid_flacs() {
     let Ok(bytes) = hex.decode(v) else {
@@ -351,6 +385,7 @@ function quantization(): test.TestOutcome {
 function main(): i32 {
   let r = test.new("audio codecs");
   r = r.it("QOA matches the independent reference codec", qoa_reference);
+  r = r.it("QOA rejects truncation and header corruption after a complete frame", qoa_final_frame);
   r = r.it("FLAC matches independent PCM vectors", flac_reference);
   r = r.it("WAVE PCM depths, channels, and ranges", wave_pcm);
   r = r.it("WAVE byte layout and malformed input", wave_bytes);
