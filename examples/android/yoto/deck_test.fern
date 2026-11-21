@@ -1065,6 +1065,64 @@ function test_cache_and_kids_reopen(): test.TestOutcome {
   return test.assert_eq(removed.phone.card, "");
 }
 
+function keypad_is_aligned(s: sim.Sim[deck.Model, deck.Msg]): boolean {
+  let previous_y = -1000;
+  for row in 0..3 {
+    let Some((left, y)) = sim.place_of(s, (row * 3 + 1).to_string(), 0) else {
+      return false;
+    };
+    let Some((middle, middle_y)) = sim.place_of(s, (row * 3 + 2).to_string(), 0) else {
+      return false;
+    };
+    let Some((right, right_y)) = sim.place_of(s, (row * 3 + 3).to_string(), 0) else {
+      return false;
+    };
+    if (left >= middle || middle >= right || y != middle_y || y != right_y || y - previous_y < 96) {
+      return false;
+    }
+    previous_y = y;
+  }
+  let Some((center, _)) = sim.place_of(s, "2", 0) else {
+    return false;
+  };
+  let Some((zero, bottom)) = sim.place_of(s, "0", 0) else {
+    return false;
+  };
+  let Some((_, submit)) = sim.place_of(s, "Continue", 0) else {
+    return false;
+  };
+  return center == zero && bottom - previous_y >= 96 && submit - bottom >= 96;
+}
+
+function test_parent_pin_keypad(): test.TestOutcome {
+  let s = sim.scaled(sim.themed(simulator(deck.update(deck.start(), deck.EnterKids)), true), 1.0);
+  if (!keypad_is_aligned(s)) {
+    return test.fail("show every PIN key in four separate rows with Continue below them");
+  }
+  preview(s, "parent-pin");
+  s = sim.scaled(s, 1.8);
+  if (!keypad_is_aligned(s)) {
+    return test.fail("keep all ten keys and Continue separate at large text size");
+  }
+  preview(s, "parent-pin-large-text");
+  for label in ["0", "5", "7", "9"] {
+    s = sim.tap(s, label);
+  }
+  s = sim.tap(s, "Delete last digit");
+  s = sim.tap(s, "Continue");
+  if (s.shell.app.parent.code != "057" || s.shell.app.parent.first.len() > 0) {
+    return test.fail("delete one digit and require at least four to continue");
+  }
+  s = sim.tap(sim.tap(s, "4"), "Continue");
+  if (s.shell.app.parent.first != "0574" || s.shell.app.parent.code.len() > 0 || !keypad_is_aligned(s)) {
+    return test.fail("clear the entry before asking for confirmation");
+  }
+  for label in ["0", "5", "7", "4", "Continue"] {
+    s = sim.tap(s, label);
+  }
+  return test.assert_eq(s.shell.app.parent.busy && sim.shows(s, "Checking PIN…"), true);
+}
+
 function test_chapter_timer_and_prefetch(): test.TestOutcome {
   let opened = cell_new(0);
   let played = cell_new(0);
@@ -1403,6 +1461,7 @@ function main(): i32 {
   r = r.it("Android Back returns through the menu and Library tools", test_android_back_returns_through_tools);
   r = r.it("reopen trip playlists, named bookmarks, history, and the download queue", test_reopen_trip_and_downloads);
   r = r.it("restore the searchable index and keep kids mode locked after restart", test_cache_and_kids_reopen);
+  r = r.it("enter and confirm a parent PIN with a regular or large keypad", test_parent_pin_keypad);
   r = r.it("seek before playback, preload the next track, and stop at the chapter boundary", test_chapter_timer_and_prefetch);
   r = r.it("transfer the chapter and position between the phone and a Yoto player", test_phone_player_handoff);
   r = r.it("cancel superseded search work in a large library and group results", test_library_search_jobs);

@@ -4243,32 +4243,51 @@ function history_view(m: Model): ui.El[Msg] {
   return ui.column(rows.append(list)).spaced(8.0).padding(16.0).wide().tall();
 }
 
-function parent_view(m: Model): ui.El[Msg] {
+function pin_key(digit: i32, height: f64): ui.El[Msg] {
+  let label = ui.text[Msg](digit.to_string()).sized(20.0).weighted(600);
+  return ui.row([label]).centered().background(ui.SURFACE).rounded(16.0).wide().height(height).on_tap(ParentCode(digit)).described(digit.to_string());
+}
+
+function parent_view(m: Model, screen: ui.Screen): ui.El[Msg] {
   let gate = m.parent;
   let saved = m.playback_tools.saved;
-  let title = if (saved.parent_key.len() > 0) { "Enter parent PIN" } else { if (gate.first.len() == 0) { "Create parent PIN" } else { "Confirm parent PIN" } };
+  let setup = saved.parent_key.len() == 0;
+  let confirming = setup && gate.first.len() > 0;
+  let title = if (confirming) { "Confirm parent PIN" } else { if (setup) { "Create parent PIN" } else { "Enter parent PIN" } };
   let rows: ui.El[Msg][] = [ui.text_button("Back", CloseParent), ui.text[Msg](title).sized(25.0).weighted(700)];
   if (gate.busy || saved.retry_pin_at > now_unix_ms()) {
     let status = if (gate.busy) { "Checking PIN…" } else { "Wait 30 seconds before you try again." };
-    return ui.column(rows.append(ui.text(status).colored(ui.MUTED))).spaced(12.0).padding(18.0).wide().tall();
-  }
-  if (gate.note.len() > 0) {
-    rows = rows.append(ui.text(gate.note).colored(ui.MUTED));
-  }
-  rows = rows.append(ui.text[Msg]("●".repeat(gate.code.len())).sized(24.0).described(gate.code.len().to_string() + " digits entered"));
-  for n in 0..3 {
-    let digits: ui.El[Msg][] = [];
-    for d in 1..4 {
-      let digit = n * 3 + d;
-      digits = digits.append(ui.outlined_button(digit.to_string(), ParentCode(digit)).grow(1.0));
+    rows = rows.append(ui.text(status).colored(ui.MUTED));
+  } else {
+    if (setup) {
+      let hint = if (confirming) { "Enter the same PIN again." } else { "Choose 4 to 8 digits." };
+      rows = rows.append(ui.text(hint).colored(ui.MUTED));
     }
-    rows = rows.append(ui.row(digits).spaced(6.0).wide());
+    if (gate.note.len() > 0) {
+      rows = rows.append(ui.text(gate.note).colored(ui.MUTED));
+    }
+    let count = gate.code.len();
+    let marks = "●".repeat(count) + "○".repeat((4 - count).max(0));
+    let mask = ui.text[Msg](marks).sized(20.0).described(count.to_string() + " digits entered");
+    rows = rows.append(ui.row([mask]).centered().wide());
+    let height = 54.0 * (screen.font / 1.4).max(1.0);
+    for n in 0..3 {
+      rows = rows.append(ui.row([pin_key(n * 3 + 1, height), pin_key(n * 3 + 2, height), pin_key(n * 3 + 3, height)]).spaced(8.0).wide());
+    }
+    rows = rows.append(ui.row([
+      ui.box[Msg]().wide().height(height),
+      pin_key(0, height),
+      ui.text_button("Delete", ParentCode(-1)).padding_xy(4.0, 0.0).wide().height(height).described("Delete last digit"),
+    ]).spaced(8.0).wide());
+    let submit = if (listening.valid_pin(gate.code)) {
+      ui.button("Continue", ParentSubmit)
+    } else {
+      ui.row([ui.text[Msg]("Continue").weighted(500).colored(ui.MUTED)]).centered().background(ui.SURFACE).rounded(20.0)
+    };
+    rows = rows.append(submit.wide().height(height));
   }
-  rows = rows.append(ui.row([
-    ui.text_button("Delete", ParentCode(-1)).grow(1.0), ui.outlined_button("0", ParentCode(0)).grow(1.0),
-    ui.button("Continue", ParentSubmit).grow(1.0),
-  ]).spaced(6.0).wide());
-  return ui.column(rows).spaced(10.0).padding(18.0).wide().tall();
+  let width = (screen.width() - 36.0).min(360.0).max(1.0);
+  return ui.column([ui.column(rows).spaced(10.0).width(width)]).aligned(ui.CENTER).padding(18.0).wide().tall().scroll("parent-pin");
 }
 
 function kids_view(m: Model, screen: ui.Screen): ui.El[Msg] {
@@ -4396,7 +4415,7 @@ function trip_dashboard(m: Model, line: listening.Lineup): ui.El[Msg] {
 
 pub function view(m: Model, screen: ui.Screen): ui.El[Msg] {
   if (m.parent.open) {
-    return parent_view(m);
+    return parent_view(m, screen);
   }
   if (m.playback_tools.saved.kids) {
     return kids_view(m, screen);
