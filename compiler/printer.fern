@@ -3242,15 +3242,6 @@ function print_const_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
   return (out + ";\n", f);
 }
 
-pub function enum_index(enums: parser.EnumDecl[], name: string): i32 {
-  for i in 0..enums.len() {
-    if (enums[i].name == name) {
-      return i;
-    }
-  }
-  return -1;
-}
-
 // enum_variant_starts gives, for each enum, the index in structs of its first
 // variant, or -1 for an enum with no variant. The parser appends the variants
 // of an enum in order and together, so a name that the source declares twice
@@ -3628,9 +3619,13 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
     idxs = idxs.append(ii);
     lines = lines.append(mod.imports[ii].line);
   }
+  let enum_names: Map[string, boolean] = map_new(mod.enums.len());
+  for ed in mod.enums {
+    enum_names = enum_names.insert(ed.name, true);
+  }
   for i in 0..mod.structs.len() {
     let owner = mod.structs[i].enum_owner;
-    if (owner.len() == 0 || enum_index(mod.enums, owner) < 0) {
+    if (owner.len() == 0 || !enum_names.contains(owner)) {
       kinds = kinds.append(0);
       idxs = idxs.append(i);
       lines = lines.append(mod.structs[i].line);
