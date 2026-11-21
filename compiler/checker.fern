@@ -3628,10 +3628,7 @@ function variant_payload_type_at(s: Scope, type_name: string, idx: i32): typeinf
   let Some(ss) = variant_payload_struct(s, type_name) else {
     return t_unknown("built-in variant payload `" + type_name + "`");
   };
-  let want = "__ev";
-  if (idx > 0) {
-    want = "__ev" + util.i32_to_string(idx);
-  }
+  let want = parser.variant_payload_name(idx);
   for i in 0..ss.field_names.len() {
     if (ss.field_names[i] == want) {
       return ss.field_types[i];
@@ -3690,10 +3687,7 @@ function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Ty
   if (us.type_params.len() == 0 || us.type_params.len() != args.len()) {
     return t_unknown("not a generic enum instance");
   }
-  let want = "__ev";
-  if (index > 0) {
-    want = "__ev" + util.i32_to_string(index);
-  }
+  let want = parser.variant_payload_name(index);
   let Some(ss) = s.lookup_owned_struct(variant_pattern_name(name), u.name) else {
     return t_unknown("no payload " + want);
   };
@@ -4672,10 +4666,7 @@ function payload_spelling(s: Scope, us: UnionSig, vname: string, k: i32): string
   let Some(ss) = s.lookup_owned_struct(variant_pattern_name(vname), us.name) else {
     return "";
   };
-  let want = "__ev";
-  if (k > 0) {
-    want = "__ev" + util.i32_to_string(k);
-  }
+  let want = parser.variant_payload_name(k);
   let fi = util.index_of_str(ss.field_names, want);
   if (fi < 0 || fi >= ss.field_type_names.len()) {
     return "";
@@ -12478,13 +12469,12 @@ function variant_payload_count(name: string, structs: StructTable): i32 {
   let Some(sd) = find_variant_sig(structs, name) else {
     return -1;
   };
-  if (!util.has_str(sd.field_names, "__ev")) {
+  if (!util.has_str(sd.field_names, parser.VARIANT_PAYLOAD_PREFIX)) {
     return -1;
   }
   let c = 0;
   for field_name in sd.field_names {
-    let fn = field_name;
-    if (fn.len() >= 4 && fn.starts_with("__ev")) {
+    if (field_name.starts_with(parser.VARIANT_PAYLOAD_PREFIX)) {
       c += 1;
     }
   }
@@ -12602,10 +12592,7 @@ function struct_pattern_covers_diags(name: string, fields: string[], rest: boole
 }
 
 function payload_slot_type_name(ss: StructSig, idx: i32): string {
-  let want = "__ev";
-  if (idx > 0) {
-    want = "__ev" + util.i32_to_string(idx);
-  }
+  let want = parser.variant_payload_name(idx);
   for i in 0..ss.field_names.len() {
     if (ss.field_names[i] == want && i < ss.field_type_names.len()) {
       return util.base_type_name(ss.field_type_names[i]);

@@ -848,7 +848,7 @@ function payload_variant(name: string, ty: typeinfo.Type): semrecords.Variant {
   if (typeinfo.is_void(ty)) {
     return semrecords.Variant { name: name, fields: [] };
   }
-  return semrecords.Variant { name: name, fields: [semrecords.Field { name: "__ev", ty: ty }] };
+  return semrecords.Variant { name: name, fields: [semrecords.Field { name: parser.VARIANT_PAYLOAD_PREFIX, ty: ty }] };
 }
 
 struct Payloads { types: typeinfo.Type[], unit: boolean }

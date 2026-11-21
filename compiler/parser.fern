@@ -13,6 +13,16 @@ pub struct FuncDecl { stdlib: string, no_inline: boolean, always_inline: boolean
 
 pub struct StructFieldDecl { name: string, type_name: string, fn_ret: string, fn_param_types: string, line: i32, col: i32 }
 
+pub const VARIANT_PAYLOAD_PREFIX: string = "__ev";
+
+// The first enum payload field has no numeric suffix.
+pub function variant_payload_name(index: i32): string {
+  if (index <= 0) {
+    return VARIANT_PAYLOAD_PREFIX;
+  }
+  return VARIANT_PAYLOAD_PREFIX + util.i32_to_string(index);
+}
+
 pub function bare_field(name: string, type_name: string): StructFieldDecl {
   return StructFieldDecl { name: name, type_name: type_name, fn_ret: "", fn_param_types: "", line: 0, col: 0 };
 }
@@ -8579,7 +8589,6 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], string[], i32
     let vfnames: string[] = [];
     if (p.peek_punct() == "{") {
       p = p.advance();
-      let rnum = 0;
       while (p.peek_punct() != "}" && !p.at_end()) {
         let rfname = p.peek_ident();
         if (rfname.len() == 0) {
@@ -8589,15 +8598,10 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], string[], i32
         if (p.peek_punct() == ":") {
           p = p.advance();
         }
-        let mark = "__ev";
-        if (rnum > 0) {
-          mark = "__ev" + dl_itoa(rnum);
-        }
-        let (rf, rf_p) = parse_field_type(p, mark);
+        let (rf, rf_p) = parse_field_type(p, variant_payload_name(fields.len()));
         p = rf_p;
         fields = fields.append(rf);
         vfnames = vfnames.append(rfname);
-        rnum += 1;
         if (p.peek_punct() == ",") {
           p = p.advance();
           continue;
@@ -8609,17 +8613,15 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], string[], i32
       }
     } else if (p.peek_punct() == "(") {
       p = p.advance();
-      let (tr, tr_p) = parse_field_type(p, "__ev");
+      let (tr, tr_p) = parse_field_type(p, VARIANT_PAYLOAD_PREFIX);
       p = tr_p;
       fields = fields.append(tr);
-      let pnum = 1;
       let (pmore, pmore_p) = p.more_elems(")");
       p = pmore_p;
       while (pmore) {
-        let (tr2, tr2_p) = parse_field_type(p, "__ev" + dl_itoa(pnum));
+        let (tr2, tr2_p) = parse_field_type(p, variant_payload_name(fields.len()));
         p = tr2_p;
         fields = fields.append(tr2);
-        pnum += 1;
         let (pm2, pm2_p) = p.more_elems(")");
         pmore = pm2;
         p = pm2_p;
@@ -8805,11 +8807,7 @@ function add_builtin_variant(acc: StructDecl[], name: string, payload_types: str
   }
   let fields: StructFieldDecl[] = [];
   for t in payload_types {
-    let field = "__ev";
-    if (fields.len() > 0) {
-      field = "__ev" + dl_itoa(fields.len());
-    }
-    fields = fields.append(bare_field(field, t));
+    fields = fields.append(bare_field(variant_payload_name(fields.len()), t));
   }
   return acc.append(StructDecl { name: name, fields: fields, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, secret: false, value_type: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
 }
@@ -17647,7 +17645,7 @@ pub function desugar_union_aliases(mod: Module): Module {
       if (vi < al.variant_args.len() && al.variant_args[vi].len() > 0) {
         payload = member + "[" + al.variant_args[vi] + "]";
       }
-      structs = structs.append(StructDecl { name: member, fields: [bare_field("__ev", payload)], type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: al.name, must_consume: false, secret: false, value_type: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+      structs = structs.append(StructDecl { name: member, fields: [bare_field(VARIANT_PAYLOAD_PREFIX, payload)], type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: al.name, must_consume: false, secret: false, value_type: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
     }
     enums = enums.append(EnumDecl { name: al.name, variant_names: al.variants, type_params: al.type_params, const_params: al.const_params, line: al.line, col: al.col, must_consume: false, try_marker: false, is_pub: al.is_pub, is_package: al.is_package, module: al.module, instance: "", visible_from: [] });
     i += 1;

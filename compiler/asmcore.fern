@@ -4913,7 +4913,7 @@ function bind_variant_payloads(pv: ast.PatVariant, st: EmitState): EmitState {
     return out;
   }
   let sd = st.struct_decls.decls[di];
-  let payloaded = sd.fields.len() > 0 && sd.fields[0].name == "__ev";
+  let payloaded = sd.fields.len() > 0 && sd.fields[0].name == parser.VARIANT_PAYLOAD_PREFIX;
   if (!payloaded) {
     for nm in names {
       out = out.bind_local_typed(nm, struct_local_tag(sd.name, st));
