@@ -7,10 +7,13 @@ import "std/string";
 import "./api";
 
 pub const SELECTED: i32 = 0x53444153;
+
 pub const COPIED: i32 = 0x53444143;
+
 pub const REQUEST: i32 = 7410;
 
 const INTENT: string = "Landroid/content/Intent;";
+
 const CALLBACK: string = "dev.fern.storydeck.AudioImport";
 
 function healthy(e: usize, ref: usize): boolean {
