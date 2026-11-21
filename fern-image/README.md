@@ -67,6 +67,7 @@ HTTP and CDN services remain unimplemented.
 Each codec documents its metadata policy and resource limits.
 A [native QOI benchmark pipeline](docs/benchmarks.md) checks exact pixels before native time and memory observations.
 JPEG XL and wider PNG/JPEG compatibility are active roadmap items.
+The [AVIF feasibility decision](docs/decisions/0002-avif.md) defers pixel coding and records the evidence required to revisit it.
 
 ## Build and test
 
