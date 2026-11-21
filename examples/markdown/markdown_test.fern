@@ -521,6 +521,16 @@ function test_strikethrough(): test.TestOutcome {
   ]);
 }
 
+function test_tables(): test.TestOutcome {
+  let o = markdown.Options { ...markdown.options(), tables: true };
+  return checks_with(o, [
+    ("text\nA | B\n:- | -:\n*one* | `a\\|b`\nshort\n", "<p>text</p>\n<table>\n<thead>\n<tr>\n<th align=\"left\">A</th>\n<th align=\"right\">B</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td align=\"left\"><em>one</em></td>\n<td align=\"right\"><code>a|b</code></td>\n</tr>\n<tr>\n<td align=\"left\">short</td>\n<td align=\"right\"></td>\n</tr>\n</tbody>\n</table>\n"),
+    ("A | B\n---\n", "<h2>A | B</h2>\n"),
+    ("A | B\n- | -\n|\ntrailing\n", "<p>A | B</p>\n<ul>\n<li>| -\n|\ntrailing</li>\n</ul>\n"),
+    ("A | B\n:-: | -\n<b>\n", "<table>\n<thead>\n<tr>\n<th align=\"center\">A</th>\n<th>B</th>\n</tr>\n</thead>\n</table>\n<!-- raw HTML omitted -->\n"),
+  ]);
+}
+
 function test_tasklists(): test.TestOutcome {
   let o = markdown.Options { ...markdown.options(), tasklist: true };
   return checks_with(o, [
@@ -690,6 +700,7 @@ function main(): i32 {
   r = r.it("the changes of cmark 0.31 in the other formats", test_cmark_031_formats);
   r = r.it("raw HTML and dangerous URLs without the unsafe option", test_safe);
   r = r.it("HTML strikethrough", test_strikethrough);
+  r = r.it("HTML tables", test_tables);
   r = r.it("HTML task list items", test_tasklists);
   r = r.it("smart punctuation", test_smart);
   r = r.it("hard breaks and no breaks", test_breaks);

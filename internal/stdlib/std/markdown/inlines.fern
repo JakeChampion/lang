@@ -676,7 +676,7 @@ pub function render_after(out: usize, d: blocks.Doc, from: i32, to: i32, w: Work
 }
 
 // Writes the text `s[a:e]`. The text has no whitespace at its end.
-function inline(out: usize, s: u8[], a: i32, e: i32, d: blocks.Doc, w: Work): Work {
+pub function inline(out: usize, s: u8[], a: i32, e: i32, d: blocks.Doc, w: Work): Work {
   let q = parse(fresh(w), s, a, e, d);
   write(out, q, s, a, e);
   return q;

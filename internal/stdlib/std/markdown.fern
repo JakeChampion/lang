@@ -5,6 +5,7 @@ import "std/io_buffered";
 import "std/markdown/blocks";
 import "std/markdown/inlines";
 import "std/markdown/utf8";
+import "std/markdown/tables";
 
 // The options of cmark. `sourcepos` gives each block the attribute
 // `data-sourcepos`. `hardbreaks` makes each soft line break a hard line
@@ -13,11 +14,11 @@ import "std/markdown/utf8";
 // link to a `javascript:`, `vbscript:`, `file:` or `data:` URL has an empty
 // destination. `width` is the width of a line for the renderers that wrap
 // text, or 0 for no wrap.
-pub struct Options { sourcepos: boolean, hardbreaks: boolean, nobreaks: boolean, smart: boolean, unsafe_html: boolean, tasklist: boolean, strikethrough: boolean, width: i32 }
+pub struct Options { sourcepos: boolean, hardbreaks: boolean, nobreaks: boolean, smart: boolean, unsafe_html: boolean, tasklist: boolean, strikethrough: boolean, tables: boolean, width: i32 }
 
 // The defaults of cmark: no option is set.
 pub function options(): Options {
-  return Options { sourcepos: false, hardbreaks: false, nobreaks: false, smart: false, unsafe_html: false, tasklist: false, strikethrough: false, width: 0 };
+  return Options { sourcepos: false, hardbreaks: false, nobreaks: false, smart: false, unsafe_html: false, tasklist: false, strikethrough: false, tables: false, width: 0 };
 }
 
 // The bytes `b` with each sequence that is not UTF-8 replaced by U+FFFD, as
@@ -278,6 +279,55 @@ function task_prefix(out: usize, d: blocks.Doc, r: i32, o: Options): i32 {
 function paragraph(out: usize, d: blocks.Doc, r: i32, s: State): State {
   let from = d.from(r);
   let to = d.to(r);
+  if (s.o.tables) {
+    for header in from..to - 1 {
+      let cols = tables.columns(d, header);
+      if (cols.len() > 0) {
+        if (header > from) {
+          s = paragraph_lines(out, d, r, s, from, header);
+        }
+        cr(out, s.open);
+        tag(out, d, r, s, "<table>\n", 6);
+        let (w, next) = tables.render(out, d, header, to, cols, s.w);
+        s = State { ...s, w: w, open: false };
+        if (next < to) {
+          if (tables.html_block(d, next)) {
+            table_html(out, d, next, to, s);
+            return s;
+          }
+          return paragraph_lines(out, d, r, s, next, to);
+        }
+        return s;
+      }
+    }
+  }
+  return paragraph_lines(out, d, r, s, from, to);
+}
+
+// Paragraph segments omit leading whitespace. A top-level HTML block
+// following a table keeps that whitespace on every line.
+function table_html(out: usize, d: blocks.Doc, from: i32, to: i32, s: State): void {
+  if (!s.o.unsafe_html) {
+    buf_push(out, inlines.OMITTED);
+    buf_push_byte(out, 10);
+    return;
+  }
+  if (s.depth > 1) {
+    lines(out, d, from, to);
+    return;
+  }
+  for k in from..to {
+    let seg = d.segs[k];
+    let a = blocks.seg_start(seg);
+    while (a > 0 && (d.src[a - 1] == b' ' || d.src[a - 1] == b'\t')) {
+      a -= 1;
+    }
+    buf_push_bytes_range(out, d.src, a, blocks.seg_end(seg));
+    buf_push_byte(out, 10);
+  }
+}
+
+function paragraph_lines(out: usize, d: blocks.Doc, r: i32, s: State, from: i32, to: i32): State {
   if (s.tight[s.depth - 1] == 1) {
     let before = buf_len(out);
     let skip = task_prefix(out, d, r, s.o);

@@ -1,0 +1,164 @@
+// Pipe tables use byte ranges into the block parser's source lines.
+import "std/markdown/blocks";
+import "std/markdown/inlines";
+import "std/markdown/tags";
+
+function space(c: u8): boolean {
+  return c == b' ' || c == b'\t';
+}
+
+function trim(s: u8[], a: i32, e: i32): (i32, i32) {
+  while (a < e && space(s[a])) {
+    a += 1;
+  }
+  while (e > a && space(s[e - 1])) {
+    e -= 1;
+  }
+  return (a, e);
+}
+
+// Adjacent entries hold the start and end of each trimmed cell.
+function cells(s: u8[], a: i32, e: i32): i32[] {
+  let spans: i32[] = [];
+  let (start, limit) = trim(s, a, e);
+  a = start;
+  e = limit;
+  if (a < e && s[a] == b'|') {
+    a += 1;
+  }
+  while (a < e) {
+    let end = a;
+    while (end < e && (s[end] != b'|' || end > a && s[end - 1] == 92 as u8)) {
+      end += 1;
+    }
+    let (first, last) = trim(s, a, end);
+    spans = spans.append(first).append(last);
+    a = end + 1;
+  }
+  return spans;
+}
+
+function line(d: blocks.Doc, seg: i32): i32[] {
+  let part = d.segs[seg];
+  return cells(d.src, blocks.seg_start(part), blocks.seg_end(part));
+}
+
+// -1 means this cell cannot be part of a delimiter row.
+function alignment(s: u8[], a: i32, e: i32): i32 {
+  let flags = 0;
+  if (a < e && s[a] == b':') {
+    flags = 1;
+    a += 1;
+  }
+  if (a < e && s[e - 1] == b':') {
+    flags += 2;
+    e -= 1;
+  }
+  if (a == e) {
+    return -1;
+  }
+  for k in a..e {
+    if (s[k] != b'-') {
+      return -1;
+    }
+  }
+  return flags;
+}
+
+pub function columns(d: blocks.Doc, from: i32): i32[] {
+  let result: i32[] = [];
+  let seg = d.segs[from + 1];
+  let start = blocks.seg_start(seg);
+  if (start >= blocks.seg_end(seg)) {
+    return result;
+  }
+  let c = d.src[start];
+  if (c != b'|' && c != b':' && c != b'-' && !space(c)) {
+    return result;
+  }
+  let delimiter = line(d, from + 1);
+  if (delimiter.len() > 131070 || delimiter.len() != line(d, from).len()) {
+    return result;
+  }
+  for col in 0..delimiter.len() / 2 {
+    let align = alignment(d.src, delimiter[2 * col], delimiter[2 * col + 1]);
+    if (align < 0) {
+      return [];
+    }
+    result = result.append(align);
+  }
+  return result;
+}
+
+const ALIGN: string[] = [">", " align=\"left\">", " align=\"right\">", " align=\"center\">"];
+
+// The table grammar removes a backslash before a pipe even inside code spans.
+function cell(out: usize, d: blocks.Doc, a: i32, e: i32, w: inlines.Work): inlines.Work {
+  let from = a;
+  let buf = 0 as usize;
+  for k in a..e {
+    if (d.src[k] == b'|' && k > a && d.src[k - 1] == 92 as u8) {
+      if (buf == 0 as usize) {
+        buf = buf_new(e - a);
+      }
+      buf_push_bytes_range(buf, d.src, from, k - 1);
+      from = k;
+    }
+  }
+  if (from == a) {
+    return inlines.inline(out, d.src, a, e, d, w);
+  }
+  buf_push_bytes_range(buf, d.src, from, e);
+  let text = buf_take_bytes(buf);
+  buf_free(buf);
+  return inlines.inline(out, text, 0, text.len(), d, w);
+}
+
+function row(out: usize, d: blocks.Doc, spans: i32[], cols: i32[], tag: string, w: inlines.Work): inlines.Work {
+  buf_push(out, "<tr>\n");
+  for i in 0..cols.len() {
+    buf_push(out, "<" + tag + ALIGN[cols[i]]);
+    if (2 * i < spans.len()) {
+      w = cell(out, d, spans[2 * i], spans[2 * i + 1], w);
+    }
+    buf_push(out, "</" + tag + ">\n");
+  }
+  buf_push(out, "</tr>\n");
+  return w;
+}
+
+// A complete HTML tag can interrupt a table even when it cannot interrupt
+// a CommonMark paragraph.
+pub function html_block(d: blocks.Doc, k: i32): boolean {
+  let seg = d.segs[k];
+  let a = blocks.seg_start(seg);
+  let e = blocks.seg_end(seg);
+  return a < e && d.src[a] == b'<' && tags.block_start(d.src, a, e, false) == 7;
+}
+
+pub function render(out: usize, d: blocks.Doc, from: i32, to: i32, cols: i32[], w: inlines.Work): (inlines.Work, i32) {
+  buf_push(out, "<thead>\n");
+  w = row(out, d, line(d, from), cols, "th", w);
+  buf_push(out, "</thead>\n");
+  let next = from + 2;
+  let padded = 0;
+  while (next < to && padded <= 0x80000 && !html_block(d, next)) {
+    let spans = line(d, next);
+    if (spans.len() == 0 || spans.len() > 131070) {
+      break;
+    }
+    if (next == from + 2) {
+      buf_push(out, "<tbody>\n");
+    }
+    if (spans.len() / 2 < cols.len()) {
+      padded += cols.len() - spans.len() / 2;
+    }
+    w = row(out, d, spans, cols, "td", w);
+    next += 1;
+  }
+  if (next > from + 2) {
+    buf_push(out, "</tbody>\n");
+  }
+  buf_push(out, "</table>\n");
+  return (w, next);
+}

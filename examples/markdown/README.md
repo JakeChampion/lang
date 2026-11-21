@@ -32,7 +32,8 @@ none. It has the options of cmark:
 For HTML output, pass `--tasklist` to render GitHub-style task list markers
 as disabled checkboxes. Pass `--strikethrough` to render paired single or double
 tildes as `<del>`. Library callers can set `Options.tasklist` and
-`Options.strikethrough` independently.
+`Options.strikethrough` independently. Pass `--table` or set `Options.tables`
+to render pipe tables with column alignment and inline formatting.
 
 The usage text names `cmark`, as cmark does for each name of the program
 file.
