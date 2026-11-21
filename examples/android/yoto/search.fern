@@ -90,6 +90,21 @@ function track_matches(terms: string[], card: string, track: string): boolean {
   return false;
 }
 
+pub function excerpt(query: string, visible: string, metadata: string): string {
+  let shown = visible.to_lower();
+  for term in query.to_lower().split(" ") {
+    if (term.len() == 0 || shown.contains(term)) {
+      continue;
+    }
+    for word in metadata.split(" ") {
+      if (word.contains(term)) {
+        return word;
+      }
+    }
+  }
+  return "";
+}
+
 pub function find(cards: api.Card[], query: string, filter: i32): Hit[] {
   return find_in(cards, query, filter, ALL);
 }

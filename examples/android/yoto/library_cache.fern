@@ -1,0 +1,33 @@
+import "std/json";
+import "std/kv";
+import "./api";
+
+pub function load(dir: string): api.Card[] {
+  let Ok(store) = kv.open(dir + "/yoto-library-index") else {
+    return [];
+  };
+  let Ok(json.JArray(items)) = json.parse(store.get("cards").unwrap_or("[]")) else {
+    return [];
+  };
+  let cards: api.Card[] = [];
+  for item in items {
+    if let Some(card) = api.restore_card(item) {
+      cards = cards.append(card);
+    }
+  }
+  return cards;
+}
+
+pub function encode(cards: api.Card[]): string {
+  return json.encode(json.JArray(cards.map(api.cached_card)));
+}
+
+pub function save(dir: string, data: string): boolean {
+  return kv.empty(dir + "/yoto-library-index").set("cards", data).save().is_ok();
+}
+
+pub function clear(dir: string): void {
+  if (dir.len() > 0) {
+    let removed = remove_file(dir + "/yoto-library-index");
+  }
+}
