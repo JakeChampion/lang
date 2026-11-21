@@ -125,26 +125,6 @@ function stack_step(s: machine.State, r: value.Interval, op: isa.Op): machine.St
   return machine.write(machine.write(s, 4, machine.identity(3, sp + 8)), op.destination, loaded);
 }
 
-function movement(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
-  return match (op.kind) {
-    2 => machine.write(s, op.destination, machine.narrowed(r, s.regs[op.source], op.width)),
-    3 => machine.write(s, op.destination, machine.read(s, r, address(s, r, op), op.width)),
-    4 => store(s, r, address(s, r, op), op.width, s.regs[op.source]),
-    5 => machine.write(s, op.destination, machine.narrowed(r, machine.numeric(r, value.number(r, op.immediate as i64)), op.width)),
-    _ => stack_step(s, r, op),
-  };
-}
-
-function lea(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
-  if (op.base < 0 && op.index >= 0 && op.scale == 8) {
-    return machine.write(s, op.destination, machine.numeric(r, value.add(r, value.times_eight(r, machine.number(r, s.regs[op.index], 64)), op.offset as i64)));
-  }
-  if (op.base < 0 || op.index >= 0) {
-    return machine.State { ...s, ok: false };
-  }
-  return pointer_lea(s, op);
-}
-
 function pointer_lea(s: machine.State, op: isa.Op): machine.State {
   let w = s.regs[op.base];
   let at = w.low.identity as i64 + op.offset as i64;
@@ -246,50 +226,6 @@ function large_call(s: machine.State, r: value.Interval, pc: i32, op: isa.Op): m
   return machine.State { ...called, call_return: pc + 1, flags: condition.unknown_flags() };
 }
 
-function extended(s: machine.State, r: value.Interval, pc: i32, op: isa.Op): machine.State {
-  if (op.kind == 19 && op.symbol == "__fern_freelist" && op.width == 64) {
-    return machine.write(s, op.destination, machine.identity(7, 0));
-  }
-  if (op.kind == 22) {
-    return store(s, r, address(s, r, op), op.width, machine.numeric(r, value.number(r, op.immediate as i64)));
-  }
-  if (op.kind == 23 || op.kind == 27) {
-    return test(s, r, op);
-  }
-  if (op.kind == 26) {
-    return machine.byte_test(s, op);
-  }
-  if (op.kind == 21) {
-    return machine.shift(s, r, op);
-  }
-  if (op.kind == 25) {
-    return dependency_call(s, r, pc, op);
-  }
-  return machine.State { ...s, ok: false };
-}
-
-function step(s: machine.State, r: value.Interval, pc: i32, op: isa.Op): machine.State {
-  if (op.kind == 1) {
-    return s;
-  }
-  if (op.kind >= 2 && op.kind <= 7) {
-    return movement(s, r, op);
-  }
-  if (op.kind == 9 || op.kind == 10) {
-    return machine.arithmetic(s, r, op);
-  }
-  if (op.kind == 15) {
-    return lea(s, r, op);
-  }
-  if (op.kind == 16) {
-    return comparison(s, r, op);
-  }
-  if (op.kind >= 28 && op.kind <= 30) {
-    return heap_operation(s, r, op);
-  }
-  return extended(s, r, pc, op);
-}
-
 function expected_register(s: machine.State, r: value.Interval, reg: i32): machine.Word {
   return match (reg) {
     0 => machine.identity(6, 0),
@@ -377,7 +313,8 @@ function unguarded(s: machine.State, original: machine.State, r: value.Interval)
 }
 
 function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean, family: i32): boolean {
-  return machine.path(p, r, register_entry, initial(r, register_entry, family), unguarded, step, finished);
+  let ops = machine.Instructions { address: address, store: store, stack_step: stack_step, pointer_lea: pointer_lea, comparison: comparison, test: test, dependency_call: dependency_call, heap_operation: heap_operation };
+  return machine.path(p, r, register_entry, initial(r, register_entry, family), unguarded, ops, finished);
 }
 
 pub function check(output: string): boolean {

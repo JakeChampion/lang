@@ -57,8 +57,64 @@ pub struct Instructions {
   movement: (State, affine.Interval, isa.Op) => State,
   arithmetic: (State, affine.Interval, isa.Op) => State,
   lea: (State, affine.Interval, isa.Op) => State,
-  comparison: (State, affine.Interval, isa.Op) => State,
+  number: (affine.Interval, Word, i32) => affine.Value,
+  nonnegative: (affine.Interval, affine.Value) => boolean,
+  compare: (affine.Interval, affine.Value, i64) => condition.Comparison,
   extended: (State, affine.Interval, i32, isa.Op) => State,
+}
+
+function comparison(s: State, r: affine.Interval, op: isa.Op, ops: Instructions): State {
+  let w = s.regs[op.source];
+  if (op.width == 64 && same_word(w, identity(6, 0)) && op.immediate == 65536) {
+    let f = condition.Comparison { less: 0, equal: -1, less_equal: -1 };
+    return State { ...s, flags: condition.Flags { order: f, signed: condition.unknown_order(), sign: 0 } };
+  }
+  let v = ops.number(r, w, op.width);
+  if (!ops.nonnegative(r, v) || op.immediate < 0) {
+    return State { ...s, flags: condition.unknown_flags() };
+  }
+  let order = ops.compare(r, v, op.immediate as i64);
+  let high = v.factor as i64 * (r.high as i64) + v.offset;
+  let signed = if (high <= 2147483647 as i64) { order } else { condition.unknown_order() };
+  return State { ...s, flags: condition.Flags { order: order, signed: signed, sign: signed.less } };
+}
+
+function test(s: State, r: affine.Interval, op: isa.Op, ops: Instructions): State {
+  let v = ops.number(r, s.regs[op.source], 32);
+  if (!ops.nonnegative(r, v) || v.factor as i64 * (r.high as i64) + v.offset > 2147483647 as i64) {
+    return State { ...s, flags: condition.unknown_flags() };
+  }
+  let cmp = ops.compare(r, v, 0 as i64);
+  return State { ...s, flags: condition.Flags { order: condition.Comparison { less: 0, equal: cmp.equal, less_equal: cmp.equal }, signed: cmp, sign: 0 } };
+}
+
+pub function final_registers(s: State, r: affine.Interval, expected_register: (affine.Interval, i32) => Word): boolean {
+  for i in 0..16 {
+    if (!same_word(s.regs[i], expected_register(r, i))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function unguarded(s: State, original: State, r: affine.Interval, expected_register: (affine.Interval, i32) => Word): State {
+  let regs = s.regs;
+  let i = 0;
+  while (i < regs.len()) {
+    if (!same_word(regs[i], original.regs[i])) {
+      if (i == 0 || same_word(expected_register(r, i), identity(2, i))) {
+        return State { ...s, ok: false };
+      }
+      regs = regs.with(i, original.regs[i]);
+    }
+    i += 1;
+  }
+  for i in 0..s.cells.len() {
+    if (!same_half(s.cells[i], original.cells[i])) {
+      return State { ...s, ok: false };
+    }
+  }
+  return State { ...s, regs: regs, flags: condition.unknown_flags(), ok: s.ok && s.zeros == 0 && s.links == 0 && s.slots == 0 && s.call_return == -1 };
 }
 
 function step(s: State, r: affine.Interval, pc: i32, op: isa.Op, ops: Instructions): State {
@@ -75,12 +131,15 @@ function step(s: State, r: affine.Interval, pc: i32, op: isa.Op, ops: Instructio
     return ops.lea(s, r, op);
   }
   if (op.kind == 16) {
-    return ops.comparison(s, r, op);
+    return comparison(s, r, op, ops);
+  }
+  if (op.kind == 23) {
+    return test(s, r, op, ops);
   }
   return ops.extended(s, r, pc, op);
 }
 
-pub function path(p: isa.ArrayProgram, r: affine.Interval, register_entry: boolean, s: State, ops: Instructions, unguarded: (State, State, affine.Interval) => State, finished: (State, affine.Interval, boolean) => boolean): boolean {
+pub function path(p: isa.ArrayProgram, r: affine.Interval, register_entry: boolean, s: State, ops: Instructions, expected_register: (affine.Interval, i32) => Word, finished: (State, affine.Interval, boolean) => boolean): boolean {
   let original = s;
   let visited: boolean[] = [];
   for op in p.ops {
@@ -93,7 +152,7 @@ pub function path(p: isa.ArrayProgram, r: affine.Interval, register_entry: boole
     }
     visited = visited.with(pc, true);
     if (register_entry && pc == p.unguarded_entry) {
-      s = unguarded(s, original, r);
+      s = unguarded(s, original, r, expected_register);
     }
     let op = p.ops[pc];
     if (op.kind == 18) {

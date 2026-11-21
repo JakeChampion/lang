@@ -138,31 +138,6 @@ function pointer_lea(s: machine.State, op: isa.Op): machine.State {
   return machine.State { ...s, ok: false };
 }
 
-function comparison(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
-  let w = s.regs[op.source];
-  if (op.width == 64 && machine.same_word(w, machine.identity(6, 0)) && op.immediate == 65536) {
-    let f = condition.Comparison { less: 0, equal: -1, less_equal: -1 };
-    return machine.State { ...s, flags: condition.Flags { order: f, signed: condition.unknown_order(), sign: 0 } };
-  }
-  let v = number(r, w, op.width);
-  if (!nonnegative(r, v) || op.immediate < 0) {
-    return machine.State { ...s, flags: condition.unknown_flags() };
-  }
-  let order = value.compare(r, v, op.immediate as i64);
-  let high = v.factor as i64 * (r.high as i64) + v.offset;
-  let signed = if (high <= 2147483647 as i64) { order } else { condition.unknown_order() };
-  return machine.State { ...s, flags: condition.Flags { order: order, signed: signed, sign: signed.less } };
-}
-
-function test(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
-  let v = number(r, s.regs[op.source], 32);
-  if (!nonnegative(r, v) || v.factor as i64 * (r.high as i64) + v.offset > 2147483647 as i64) {
-    return machine.State { ...s, flags: condition.unknown_flags() };
-  }
-  let cmp = value.compare(r, v, 0 as i64);
-  return machine.State { ...s, flags: condition.Flags { order: condition.Comparison { less: 0, equal: cmp.equal, less_equal: cmp.equal }, signed: cmp, sign: 0 } };
-}
-
 function words(r: value.Interval): value.Value {
   return value.add(r, value.capacity(r), 3 as i64);
 }
@@ -202,9 +177,6 @@ function extended(s: machine.State, r: value.Interval, pc: i32, op: isa.Op): mac
   if (op.kind == 22) {
     return store(s, r, address(s, r, op), op.width, numeric(r, value.number(r, op.immediate as i64)));
   }
-  if (op.kind == 23) {
-    return test(s, r, op);
-  }
   if (op.kind == 25) {
     return dependency_call(s, r, pc, op);
   }
@@ -224,18 +196,9 @@ function expected_register(r: value.Interval, reg: i32): machine.Word {
   };
 }
 
-function final_registers(s: machine.State, r: value.Interval): boolean {
-  for i in 0..16 {
-    if (!machine.same_word(s.regs[i], expected_register(r, i))) {
-      return false;
-    }
-  }
-  return true;
-}
-
 function finished(s: machine.State, r: value.Interval, register_entry: boolean): boolean {
   let recycled = if (value.expected_class(r) >= 0) { 1 } else { 0 };
-  if (s.zeros != 1 || s.links != recycled || s.slots != recycled || s.call_return < 0 || !final_registers(s, r)) {
+  if (s.zeros != 1 || s.links != recycled || s.slots != recycled || s.call_return < 0 || !machine.final_registers(s, r, expected_register)) {
     return false;
   }
   let expected = initial(r, register_entry);
@@ -253,29 +216,9 @@ function finished(s: machine.State, r: value.Interval, register_entry: boolean):
   return true;
 }
 
-function unguarded(s: machine.State, original: machine.State, r: value.Interval): machine.State {
-  let regs = s.regs;
-  let i = 0;
-  while (i < regs.len()) {
-    if (!machine.same_word(regs[i], original.regs[i])) {
-      if (i == 0 || machine.same_word(expected_register(r, i), machine.identity(2, i))) {
-        return machine.State { ...s, ok: false };
-      }
-      regs = regs.with(i, original.regs[i]);
-    }
-    i += 1;
-  }
-  for i in 0..s.cells.len() {
-    if (!machine.same_half(s.cells[i], original.cells[i])) {
-      return machine.State { ...s, ok: false };
-    }
-  }
-  return machine.State { ...s, regs: regs, flags: condition.unknown_flags(), ok: s.ok && s.zeros == 0 && s.links == 0 && s.slots == 0 && s.call_return == -1 };
-}
-
 function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean): boolean {
-  let ops: machine.Instructions = machine.Instructions { movement: movement, arithmetic: arithmetic, lea: lea, comparison: comparison, extended: extended };
-  return machine.path(p, r, register_entry, initial(r, register_entry), ops, unguarded, finished);
+  let ops: machine.Instructions = machine.Instructions { movement: movement, arithmetic: arithmetic, lea: lea, number: number, nonnegative: nonnegative, compare: value.compare, extended: extended };
+  return machine.path(p, r, register_entry, initial(r, register_entry), ops, expected_register, finished);
 }
 
 pub function check(output: string): boolean {

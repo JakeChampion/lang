@@ -125,13 +125,88 @@ pub function shift(s: State, r: value.Interval, op: isa.Op): State {
   return write(State { ...s, flags: condition.unknown_flags() }, op.destination, numeric(r, value.shift_three(r, number(r, s.regs[op.destination], 64))));
 }
 
+pub struct Instructions {
+  address: (State, value.Interval, isa.Op) => i32,
+  store: (State, value.Interval, i32, i32, Word) => State,
+  stack_step: (State, value.Interval, isa.Op) => State,
+  pointer_lea: (State, isa.Op) => State,
+  comparison: (State, value.Interval, isa.Op) => State,
+  test: (State, value.Interval, isa.Op) => State,
+  dependency_call: (State, value.Interval, i32, isa.Op) => State,
+  heap_operation: (State, value.Interval, isa.Op) => State,
+}
+
+function movement(s: State, r: value.Interval, op: isa.Op, ops: Instructions): State {
+  return match (op.kind) {
+    2 => write(s, op.destination, narrowed(r, s.regs[op.source], op.width)),
+    3 => write(s, op.destination, read(s, r, ops.address(s, r, op), op.width)),
+    4 => ops.store(s, r, ops.address(s, r, op), op.width, s.regs[op.source]),
+    5 => write(s, op.destination, narrowed(r, numeric(r, value.number(r, op.immediate as i64)), op.width)),
+    _ => ops.stack_step(s, r, op),
+  };
+}
+
+function lea(s: State, r: value.Interval, op: isa.Op, ops: Instructions): State {
+  if (op.base < 0 && op.index >= 0 && op.scale == 8) {
+    return write(s, op.destination, numeric(r, value.add(r, value.times_eight(r, number(r, s.regs[op.index], 64)), op.offset as i64)));
+  }
+  if (op.base < 0 || op.index >= 0) {
+    return State { ...s, ok: false };
+  }
+  return ops.pointer_lea(s, op);
+}
+
+function extended(s: State, r: value.Interval, pc: i32, op: isa.Op, ops: Instructions): State {
+  if (op.kind == 19 && op.symbol == "__fern_freelist" && op.width == 64) {
+    return write(s, op.destination, identity(7, 0));
+  }
+  if (op.kind == 22) {
+    return ops.store(s, r, ops.address(s, r, op), op.width, numeric(r, value.number(r, op.immediate as i64)));
+  }
+  if (op.kind == 23 || op.kind == 27) {
+    return ops.test(s, r, op);
+  }
+  if (op.kind == 26) {
+    return byte_test(s, op);
+  }
+  if (op.kind == 21) {
+    return shift(s, r, op);
+  }
+  if (op.kind == 25) {
+    return ops.dependency_call(s, r, pc, op);
+  }
+  return State { ...s, ok: false };
+}
+
+function step(s: State, r: value.Interval, pc: i32, op: isa.Op, ops: Instructions): State {
+  if (op.kind == 1) {
+    return s;
+  }
+  if (op.kind >= 2 && op.kind <= 7) {
+    return movement(s, r, op, ops);
+  }
+  if (op.kind == 9 || op.kind == 10) {
+    return arithmetic(s, r, op);
+  }
+  if (op.kind == 15) {
+    return lea(s, r, op, ops);
+  }
+  if (op.kind == 16) {
+    return ops.comparison(s, r, op);
+  }
+  if (op.kind >= 28 && op.kind <= 30) {
+    return ops.heap_operation(s, r, op);
+  }
+  return extended(s, r, pc, op, ops);
+}
+
 function in_program(p: isa.ArrayProgram, pc: i32): boolean {
   return pc >= 0 && pc < p.ops.len();
 }
 
 // Both string representations follow the same control flow; their entry, instruction
 // and return checks decide which changes to registers and storage are permitted.
-pub function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean, s: State, unguarded: (State, State, value.Interval) => State, step: (State, value.Interval, i32, isa.Op) => State, finished: (State, value.Interval, boolean) => boolean): boolean {
+pub function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean, s: State, unguarded: (State, State, value.Interval) => State, ops: Instructions, finished: (State, value.Interval, boolean) => boolean): boolean {
   let original = s;
   let visited: boolean[] = [];
   for op in p.ops {
@@ -157,7 +232,7 @@ pub function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolea
       }
       pc = if (taken == 1) { op.target } else { pc + 1 };
     } else {
-      s = step(s, r, pc, op);
+      s = step(s, r, pc, op, ops);
       if (!s.ok) {
         return false;
       }
