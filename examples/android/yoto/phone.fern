@@ -24,6 +24,8 @@ pub struct State {
   standby: Option[player.Player],
   standby_at: i32,
   standby_ready: boolean,
+  linked: boolean,
+  gain: f32,
   preload_attempt: i32,
   stop_at_chapter: boolean,
   sleep_ended: boolean,
@@ -41,10 +43,12 @@ pub struct Output {
   position: (player.Player) => i64,
   duration: (player.Player) => i64,
   speed: (player.Player, f32) => boolean,
+  volume: (player.Player, f32) => boolean,
+  link: (player.Player, Option[player.Player]) => boolean,
 }
 
 pub function empty(): State {
-  return State { revision: 0i64, card: "", title: "", queue: [], at: 0, phase: Idle, note: "", media: None, action: None, resume_ms: 0i64, elapsed: 0i64, duration: 0i64, rate: 100, standby: None, standby_at: -1, standby_ready: false, preload_attempt: -1, stop_at_chapter: false, sleep_ended: false, wait_paused: false, paused_at: 0i64, starting_seek: false };
+  return State { revision: 0i64, card: "", title: "", queue: [], at: 0, phase: Idle, note: "", media: None, action: None, resume_ms: 0i64, elapsed: 0i64, duration: 0i64, rate: 100, standby: None, standby_at: -1, standby_ready: false, linked: false, gain: 1.0f32, preload_attempt: -1, stop_at_chapter: false, sleep_ended: false, wait_paused: false, paused_at: 0i64, starting_seek: false };
 }
 
 pub function stop(s: State): State {
@@ -227,6 +231,33 @@ pub function prime(s: State, output: Output): State {
   return preload(s, output);
 }
 
+pub function volume(s: State, gain: f32, output: Output): State {
+  if (gain != s.gain) {
+    if let Some(media) = s.media {
+      if (output.volume(media, gain)) {
+        return State { ...s, gain: gain };
+      }
+    }
+  }
+  return s;
+}
+
+pub function link_gapless(s: State, output: Output): State {
+  let Some(media) = s.media else {
+    return s;
+  };
+  let eligible = if let Playing = s.phase {
+    s.standby_ready && s.standby_at == s.at + 1 && s.standby.is_some() && s.gain == 1.0f32 && s.rate == 100 && !(s.stop_at_chapter && chapter_finished(s))
+  } else { false };
+  if (eligible != s.linked) {
+    let adjacent = if (eligible) { s.standby } else { None };
+    if (output.link(media, adjacent)) {
+      return State { ...s, linked: eligible };
+    }
+  }
+  return s;
+}
+
 function unavailable(s: State): State {
   let note = "Could not play this track on your phone. Check your connection and try again.";
   if (s.at < s.queue.len() && s.queue[s.at].url.starts_with("file://")) {
@@ -242,10 +273,15 @@ pub function apply(s: State, output: Output): State {
   let next = State { ...s, action: None };
   match (action) {
     DiscardStandby => {
+      if (s.linked) {
+        if let Some(media) = s.media {
+          let cleared = output.link(media, None);
+        }
+      }
       if let Some(standby) = s.standby {
         output.close(standby);
       }
-      return State { ...next, standby: None, standby_ready: false };
+      return State { ...next, standby: None, standby_ready: false, linked: false };
     },
     Close => {
       close(s, output);
@@ -257,7 +293,7 @@ pub function apply(s: State, output: Output): State {
           if let Some(media) = s.media {
             output.close(media);
           }
-          let opened = State { ...next, media: Some(standby), standby: None, standby_ready: false };
+          let opened = State { ...next, media: Some(standby), standby: None, standby_ready: false, linked: false, gain: 1.0f32 };
           if (s.standby_ready) {
             if (s.wait_paused) {
               return State { ...opened, phase: Paused, wait_paused: false };
@@ -277,7 +313,7 @@ pub function apply(s: State, output: Output): State {
       if (media.is_none()) {
         return State { ...unavailable(next), media: None, standby: None, action: None };
       }
-      return State { ...next, media: media, standby: None };
+      return State { ...next, media: media, standby: None, linked: false, gain: 1.0f32 };
     },
     Seek(ms) => {
       if let Some(media) = s.media {
