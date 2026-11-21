@@ -58,7 +58,7 @@ function writable(at: i32): boolean {
 }
 
 function store(s: machine.State, at: i32, width: i32, w: machineword.Word): machine.State {
-  let memory = s.memory;
+  let memory = s.cells;
   let writes = s.writes;
   for i in 0..width / 32 {
     let pos = at + i;
@@ -68,7 +68,7 @@ function store(s: machine.State, at: i32, width: i32, w: machineword.Word): mach
     memory = memory.with(pos, if (i == 0) { w.low } else { w.high });
     writes = writes.with(pos, writes[pos] + 1);
   }
-  return machine.State { ...s, memory: memory, writes: writes };
+  return machine.State { ...s, cells: memory, writes: writes };
 }
 
 function stack(s: machine.State, op: isa.Op, request: i32): machine.State {
@@ -362,12 +362,12 @@ function arithmetic_step(s: machine.State, op: isa.Op, request: i32): machine.St
 }
 
 function finished_memory(s: machine.State, original: machine.State, request: i32): boolean {
-  for i in 20..s.memory.len() {
+  for i in 20..s.cells.len() {
     let offset = if (i >= 30) { 17179869184 as i64 } else { if (i < 28) { request as i64 } else { 0 as i64 } };
     let changed = machineword.token(3, offset);
-    let expected = if (i >= 26) { if (i % 2 == 0) { changed.low } else { changed.high } } else { original.memory[i] };
+    let expected = if (i >= 26) { if (i % 2 == 0) { changed.low } else { changed.high } } else { original.cells[i] };
     let count = if (i < 26) { 0 } else { if (i < 28) { 2 } else { 1 } };
-    if (!machineword.same(s.memory[i], expected) || s.writes[i] != count) {
+    if (!machineword.same(s.cells[i], expected) || s.writes[i] != count) {
       return false;
     }
   }

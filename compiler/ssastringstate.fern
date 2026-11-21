@@ -36,10 +36,7 @@ pub function narrowed(r: value.Interval, w: shared.Word, width: i32): shared.Wor
 }
 
 pub function read(s: shared.State, r: value.Interval, at: i32, width: i32): shared.Word {
-  if (at < 0) {
-    return shared.identity(0, 0);
-  }
-  return shared.from_halves(s.cells[at], if (width == 64) { s.cells[at + 1] } else { zero(r) });
+  return shared.read(s, at, width, zero(r));
 }
 
 pub function arithmetic(s: shared.State, r: value.Interval, op: isa.Op): shared.State {

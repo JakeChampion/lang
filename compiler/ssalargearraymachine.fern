@@ -79,10 +79,7 @@ function address(s: machine.State, r: value.Interval, op: isa.Op): i32 {
 }
 
 function read(s: machine.State, r: value.Interval, at: i32, width: i32): machine.Word {
-  if (at < 0) {
-    return machine.identity(0, 0);
-  }
-  return machine.from_halves(s.cells[at], if (width == 64) { s.cells[at + 1] } else { zero(r) });
+  return machine.read(s, at, width, zero(r));
 }
 
 function store(s: machine.State, r: value.Interval, at: i32, width: i32, w: machine.Word): machine.State {

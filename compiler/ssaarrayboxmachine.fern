@@ -39,7 +39,7 @@ function initial(capacity: i32, hit: boolean): machine.State {
 }
 
 function words(s: machine.State): i32 {
-  return (s.memory.len() - 10) / 4;
+  return (s.cells.len() - 10) / 4;
 }
 
 function unknown(s: machine.State): machine.State {
@@ -285,7 +285,7 @@ function expected_memory(s: machine.State, original: machine.State, capacity: i3
   if (hit && i >= slot && i < slot + 2) {
     return if (i % 2 == 0) { machineword.token(11, 0).low } else { machineword.token(11, 0).high };
   }
-  return if (hit && i >= slot + 2 && i < slot + 8) { header(capacity, slot + 2, i) } else { original.memory[i] };
+  return if (hit && i >= slot + 2 && i < slot + 8) { header(capacity, slot + 2, i) } else { original.cells[i] };
 }
 
 function expected_writes(s: machine.State, hit: boolean, i: i32): i32 {
@@ -311,8 +311,8 @@ function finished(s: machine.State, capacity: i32, hit: boolean): boolean {
 }
 
 function finished_memory(s: machine.State, original: machine.State, capacity: i32, hit: boolean): boolean {
-  for i in 0..s.memory.len() {
-    if (!machineword.same(s.memory[i], expected_memory(s, original, capacity, hit, i))) {
+  for i in 0..s.cells.len() {
+    if (!machineword.same(s.cells[i], expected_memory(s, original, capacity, hit, i))) {
       return false;
     }
     if (i >= 8 && s.writes[i] != expected_writes(s, hit, i)) {

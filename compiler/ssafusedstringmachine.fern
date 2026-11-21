@@ -97,7 +97,7 @@ function stack_step(s: machine.State, r: value.Interval, op: isa.Op): machine.St
   if (!machine.pointer(s.regs[4], 3)) {
     return machine.State { ...s, ok: false };
   }
-  let sp = s.regs[4].low.identity;
+  let sp = s.regs[4].low.identity as i32;
   if (op.kind == 6) {
     let saved = s.regs[op.source];
     let at = simple_address(s.regs[4], -8, 64, false);

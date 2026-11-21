@@ -32,13 +32,6 @@ function address(s: machine.State, base: i32, offset: i32, width: i32): i32 {
   return (at as i32 + 24) / 4;
 }
 
-function read(s: machine.State, r: value.Interval, at: i32, width: i32): machine.Word {
-  if (at < 0) {
-    return machine.identity(0, 0);
-  }
-  return machine.from_halves(s.cells[at], if (width == 64) { s.cells[at + 1] } else { capacityword.zero(r) });
-}
-
 function store(s: machine.State, at: i32, width: i32, w: machine.Word): machine.State {
   if (at < 0 || at <= 7 && at + width / 32 > 6) {
     return machine.State { ...s, ok: false };
@@ -50,7 +43,7 @@ function stack_step(s: machine.State, r: value.Interval, op: isa.Op): machine.St
   if (!machine.pointer(s.regs[4], 3)) {
     return machine.State { ...s, ok: false };
   }
-  let sp = s.regs[4].low.identity;
+  let sp = s.regs[4].low.identity as i32;
   if (op.kind == 6) {
     let saved = s.regs[op.source];
     let at = address(s, 4, -8, 64);
@@ -60,7 +53,7 @@ function stack_step(s: machine.State, r: value.Interval, op: isa.Op): machine.St
   if (op.destination == 4) {
     return machine.State { ...s, ok: false };
   }
-  let loaded = read(s, r, address(s, 4, 0, 64), 64);
+  let loaded = capacityword.read(s, r, address(s, 4, 0, 64), 64);
   return machine.write(machine.write(s, 4, machine.identity(3, sp + 8)), op.destination, loaded);
 }
 
@@ -69,7 +62,7 @@ function movement(s: machine.State, r: value.Interval, op: isa.Op): machine.Stat
     return machine.write(s, op.destination, capacityword.narrowed(r, s.regs[op.source], op.width));
   }
   if (op.kind == 3) {
-    return machine.write(s, op.destination, read(s, r, address(s, op.base, op.offset, op.width), op.width));
+    return machine.write(s, op.destination, capacityword.read(s, r, address(s, op.base, op.offset, op.width), op.width));
   }
   if (op.kind == 4) {
     return store(s, address(s, op.base, op.offset, op.width), op.width, s.regs[op.source]);
@@ -196,11 +189,11 @@ function finished(s: machine.State, r: value.Interval): boolean {
   }
   for reg in [2, 1, 0] {
     let at = (2 - reg) * 2;
-    if (!machine.same_word(read(s, r, at, 64), machine.identity(2, reg))) {
+    if (!machine.same_word(capacityword.read(s, r, at, 64), machine.identity(2, reg))) {
       return false;
     }
   }
-  return machine.same_word(read(s, r, 6, 64), machine.identity(4, 0)) && machine.same_word(read(s, r, 8, 64), capacityword.numeric(r, value.expected(r)));
+  return machine.same_word(capacityword.read(s, r, 6, 64), machine.identity(4, 0)) && machine.same_word(capacityword.read(s, r, 8, 64), capacityword.numeric(r, value.expected(r)));
 }
 
 function path(p: isa.Program, r: value.Interval): boolean {

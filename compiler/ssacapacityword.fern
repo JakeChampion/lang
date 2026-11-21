@@ -45,3 +45,7 @@ pub function number(r: value.Interval, w: machine.Word, width: i32): value.Value
 pub function narrowed(r: value.Interval, w: machine.Word, width: i32): machine.Word {
   return if (width == 32) { machine.from_halves(w.low, zero(r)) } else { w };
 }
+
+pub function read(s: machine.State, r: value.Interval, at: i32, width: i32): machine.Word {
+  return machine.read(s, at, width, zero(r));
+}

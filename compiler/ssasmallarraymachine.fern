@@ -53,13 +53,6 @@ function address(s: machine.State, r: value.Interval, op: isa.Op): i32 {
   return if (machine.same_word(index, capacityword.numeric(r, value.expected(r)))) { 18 + op.offset / 4 } else { -1 };
 }
 
-function read(s: machine.State, r: value.Interval, at: i32, width: i32): machine.Word {
-  if (at < 0) {
-    return machine.identity(0, 0);
-  }
-  return machine.from_halves(s.cells[at], if (width == 64) { s.cells[at + 1] } else { capacityword.zero(r) });
-}
-
 function store(s: machine.State, r: value.Interval, at: i32, width: i32, w: machine.Word): machine.State {
   if (at >= 4 && at + width / 32 <= 14) {
     return machine.put(s, at, width, w);
@@ -88,7 +81,7 @@ function stack_step(s: machine.State, r: value.Interval, op: isa.Op): machine.St
   if (!machine.pointer(s.regs[4], 3)) {
     return machine.State { ...s, ok: false };
   }
-  let sp = s.regs[4].low.identity;
+  let sp = s.regs[4].low.identity as i32;
   if (op.kind == 6) {
     let saved = s.regs[op.source];
     let at = simple_address(s.regs[4], -8, 64);
@@ -97,14 +90,14 @@ function stack_step(s: machine.State, r: value.Interval, op: isa.Op): machine.St
   if (op.destination == 4) {
     return machine.State { ...s, ok: false };
   }
-  let loaded = read(s, r, simple_address(s.regs[4], 0, 64), 64);
+  let loaded = capacityword.read(s, r, simple_address(s.regs[4], 0, 64), 64);
   return machine.write(machine.write(s, 4, machine.identity(3, sp + 8)), op.destination, loaded);
 }
 
 function movement(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
   return match (op.kind) {
     2 => machine.write(s, op.destination, capacityword.narrowed(r, s.regs[op.source], op.width)),
-    3 => machine.write(s, op.destination, read(s, r, address(s, r, op), op.width)),
+    3 => machine.write(s, op.destination, capacityword.read(s, r, address(s, r, op), op.width)),
     4 => store(s, r, address(s, r, op), op.width, s.regs[op.source]),
     5 => machine.write(s, op.destination, capacityword.narrowed(r, capacityword.numeric(r, value.number(r, op.immediate as i64)), op.width)),
     _ => stack_step(s, r, op),
@@ -140,7 +133,7 @@ function lea(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
 }
 
 function dependency_call(s: machine.State, r: value.Interval, pc: i32, op: isa.Op): machine.State {
-  if (op.symbol != "__fern_capw" || s.call_return >= 0 || !machine.same_word(s.regs[4], machine.identity(3, -8)) || !machine.same_word(read(s, r, 12, 64), capacityword.numeric(r, value.original(r)))) {
+  if (op.symbol != "__fern_capw" || s.call_return >= 0 || !machine.same_word(s.regs[4], machine.identity(3, -8)) || !machine.same_word(capacityword.read(s, r, 12, 64), capacityword.numeric(r, value.original(r)))) {
     return machine.State { ...s, ok: false };
   }
   let next = pc + 1;

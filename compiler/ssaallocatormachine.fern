@@ -85,7 +85,7 @@ function link_word(at: i32, bump: boolean): boolean {
 }
 
 function store(s: machine.State, at: i32, width: i32, w: machineword.Word, bump: boolean): machine.State {
-  let memory = s.memory;
+  let memory = s.cells;
   let writes = s.writes;
   for i in 0..width / 32 {
     let pos = at + i;
@@ -95,7 +95,7 @@ function store(s: machine.State, at: i32, width: i32, w: machineword.Word, bump:
     memory = memory.with(pos, if (i == 0) { w.low } else { w.high });
     writes = writes.with(pos, writes[pos] + 1);
   }
-  return machine.State { ...s, memory: memory, writes: writes };
+  return machine.State { ...s, cells: memory, writes: writes };
 }
 
 function stack(s: machine.State, op: isa.Op, request: i32, bump: boolean): machine.State {
@@ -205,7 +205,7 @@ function coloured_store(s: machine.State, w: machineword.Word): machine.State {
   if (!s.bounded || s.writes[22] != 1 || s.writes[23] != 1) {
     return machine.State { ...s, ok: false };
   }
-  return machine.State { ...s, memory: s.memory.with(22, w.low).with(23, w.high), writes: s.writes.with(22, 2).with(23, 2) };
+  return machine.State { ...s, cells: s.cells.with(22, w.low).with(23, w.high), writes: s.writes.with(22, 2).with(23, 2) };
 }
 
 // The values of the colour step. Kind 12 is the number of a 64 KiB line.
@@ -322,10 +322,10 @@ function other_step(s: machine.State, op: isa.Op, request: i32, bump: boolean): 
 function finished_memory(s: machine.State, original: machine.State, request: i32, bump: boolean): boolean {
   let start = if (bump) { 22 } else { 20 };
   let changed = if (bump) { machineword.token(3, request as i64) } else { machineword.token(8, 0) };
-  for i in 16..s.memory.len() {
+  for i in 16..s.cells.len() {
     let selected = i == start || i == start + 1;
-    let kept = machineword.same(s.memory[i], original.memory[i]) && s.writes[i] == 0;
-    let cleared = link_word(i, bump) && machineword.same(s.memory[i], machineword.number(0).low) && s.writes[i] == 1;
+    let kept = machineword.same(s.cells[i], original.cells[i]) && s.writes[i] == 0;
+    let cleared = link_word(i, bump) && machineword.same(s.cells[i], machineword.number(0).low) && s.writes[i] == 1;
     let good = if (selected) { moved(s, i, changed, request, bump) } else { kept || cleared };
     if (!good) {
       return false;
@@ -343,7 +343,7 @@ function moved(s: machine.State, i: i32, changed: machineword.Word, request: i32
 
 // Whether the cell at i holds its half of w after that many stores.
 function written(s: machine.State, i: i32, w: machineword.Word, stores: i32): boolean {
-  return machineword.same(s.memory[i], if (i % 2 == 0) { w.low } else { w.high }) && s.writes[i] == stores;
+  return machineword.same(s.cells[i], if (i % 2 == 0) { w.low } else { w.high }) && s.writes[i] == stores;
 }
 
 function finished(s: machine.State, request: i32, bump: boolean): boolean {

@@ -70,14 +70,14 @@ function cell_extent(s: machine.State, kind: i32, at: i64, bytes: i32): i32 {
   if (kind == 2 && at >= -64 && at + bytes <= 24) {
     return ((at + 64) / 4) as i32;
   }
-  if (kind == 3 && s.calls == 1 && at >= 0 && at + bytes <= ((s.memory.len() - 22) * 4) as i64) {
+  if (kind == 3 && s.calls == 1 && at >= 0 && at + bytes <= ((s.cells.len() - 22) * 4) as i64) {
     return 22 + (at / 4) as i32;
   }
   return -1;
 }
 
 function writable(s: machine.State, at: i32): boolean {
-  return at >= 0 && at < 16 || s.calls == 1 && at >= 23 && at < s.memory.len();
+  return at >= 0 && at < 16 || s.calls == 1 && at >= 23 && at < s.cells.len();
 }
 
 function store_at(s: machine.State, at: i32, width: i32, w: machineword.Word): machine.State {
@@ -85,7 +85,7 @@ function store_at(s: machine.State, at: i32, width: i32, w: machineword.Word): m
 }
 
 function load_at(s: machine.State, at: i32, width: i32, reg: i32): machine.State {
-  if (at < 0 || s.memory[at].kind == 11 || width == 64 && s.memory[at + 1].kind == 11) {
+  if (at < 0 || s.cells[at].kind == 11 || width == 64 && s.cells[at + 1].kind == 11) {
     return machine.State { ...s, ok: false };
   }
   return machine.write(s, reg, machine.load(s, at, width));
@@ -123,7 +123,7 @@ function allocation(s: machine.State, words: i32, sized: boolean, pc: i32, op: i
   }
   let called = store_at(s, cell(s, sp, -8, 64), 64, machineword.token(8, (pc + 1) as i64));
   called = store_at(called, cell(called, sp, -16, 64), 64, machineword.token(11, 0));
-  let made = machine.write(machine.State { ...called, memory: helper_memory(called.memory, sp, words), calls: 1 }, 0, machineword.token(3, 8));
+  let made = machine.write(machine.State { ...called, cells: helper_memory(called.cells, sp, words), calls: 1 }, 0, machineword.token(3, 8));
   return if (named) { machine.write(made, 7, machineword.token(11, 7)) } else { made };
 }
 
@@ -176,7 +176,7 @@ function step(s: machine.State, words: i32, sized: boolean, pc: i32, op: isa.Op)
 
 function expected_memory(original: machine.State, tag: i64, i: i32): machineword.Half {
   if (i < 22) {
-    return original.memory[i];
+    return original.cells[i];
   }
   if (i < 24) {
     return if (i == 22) { machineword.number(1).low } else { machineword.number(tag).low };
@@ -204,8 +204,8 @@ function finished(s: machine.State, words: i32, tag: i64, register_entry: boolea
 }
 
 function finished_memory(s: machine.State, original: machine.State, tag: i64): boolean {
-  for i in 16..s.memory.len() {
-    if (!machineword.same(s.memory[i], expected_memory(original, tag, i))) {
+  for i in 16..s.cells.len() {
+    if (!machineword.same(s.cells[i], expected_memory(original, tag, i))) {
       return false;
     }
     if (i >= 23 && s.writes[i] != 1) {

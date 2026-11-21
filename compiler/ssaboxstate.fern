@@ -35,7 +35,7 @@ pub function store_at(s: machineword.State, at: i32, width: i32, w: machineword.
   }
   let count = width / 32;
   let i = 0;
-  let memory = s.memory;
+  let memory = s.cells;
   let writes = s.writes;
   while (i < count) {
     let pos = at + i;
@@ -46,7 +46,7 @@ pub function store_at(s: machineword.State, at: i32, width: i32, w: machineword.
     writes = writes.with(pos, writes[pos] + 1);
     i += 1;
   }
-  return machineword.State { ...s, memory: memory, writes: writes };
+  return machineword.State { ...s, cells: memory, writes: writes };
 }
 
 pub function memory_step(s: machineword.State, op: isa.Op, address: (machineword.State, machineword.Word, i32, i32) => i32, load_at: (machineword.State, i32, i32, i32) => machineword.State, store_at: (machineword.State, i32, i32, machineword.Word) => machineword.State): machineword.State {

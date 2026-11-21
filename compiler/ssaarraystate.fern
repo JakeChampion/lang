@@ -1,6 +1,6 @@
 // Instruction dispatch and control flow for the small and large array release proofs.
 import "./ssareleasestate" as shared;
-pub use "./ssareleasestate".{Word, State, initial, identity, numeric_half, same_word, write, pointer, extent, put, with_order, from_halves};
+pub use "./ssareleasestate".{Word, State, initial, identity, numeric_half, same_word, write, pointer, extent, read, put, with_order, from_halves};
 import "./ssacondition" as condition;
 import "./ssacapacityisa" as isa;
 import "./ssaaffinevalue" as affine;

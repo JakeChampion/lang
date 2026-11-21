@@ -1,50 +1,51 @@
 // Symbolic register words shared by the allocation and constructor proof machines.
-pub struct Half { kind: i32, identity: i64, high: boolean }
+import "./ssaaffinehalf" as halves;
+import "./ssaaffinevalue" as affine;
+import "./ssareleasestate" as shared;
+pub use "./ssaaffinehalf".{Half};
+pub use "./ssareleasestate".{Word, State, from_halves};
 
-pub struct Word { low: Half, high: Half }
-
-pub function half(kind: i32, identity: i64, high: boolean): Half {
-  return Half { kind: kind, identity: identity, high: high };
+pub function half(kind: i32, identity: i64, high: boolean): halves.Half {
+  return halves.Half { kind: kind, identity: identity, part: if (high) { 1 } else { 0 }, number: affine.unknown() };
 }
 
-pub function token(kind: i32, identity: i64): Word {
-  return Word { low: half(kind, identity, false), high: half(kind, identity, true) };
+pub function token(kind: i32, identity: i64): shared.Word {
+  return shared.from_halves(half(kind, identity, false), half(kind, identity, true));
 }
 
-pub function number(n: i64): Word {
+pub function number(n: i64): shared.Word {
   let low = n % 4294967296;
-  return Word { low: half(0, if (low < 0) { low + 4294967296 } else { low }, false), high: half(0, if (n < 0) { 4294967295 } else { n / 4294967296 }, false) };
+  return shared.from_halves(half(0, if (low < 0) { low + 4294967296 } else { low }, false), half(0, if (n < 0) { 4294967295 } else { n / 4294967296 }, false));
 }
 
-pub function same(a: Half, b: Half): boolean {
-  return a.kind == b.kind && a.identity == b.identity && a.high == b.high;
+pub function same(a: halves.Half, b: halves.Half): boolean {
+  return halves.same_half(a, b);
 }
 
-pub function equal(a: Word, b: Word): boolean {
-  return same(a.low, b.low) && same(a.high, b.high);
+pub function equal(a: shared.Word, b: shared.Word): boolean {
+  return shared.same_word(a, b);
 }
 
-pub function narrowed(w: Word, width: i32): Word {
-  return if (width == 32) { Word { ...w, high: number(0).high } } else { w };
+pub function narrowed(w: shared.Word, width: i32): shared.Word {
+  return if (width == 32) { shared.Word { ...w, high: number(0).high } } else { w };
 }
 
-pub function unsigned(w: Word): boolean {
+pub function unsigned(w: shared.Word): boolean {
   return w.low.kind == 0 && same(w.high, number(0).high);
 }
 
 // choice is 1 after the test for a block that crosses a 64 KiB line and 2
 // after the test of the coloured pointer against the end of the heap. The
 // branch on such a test can go each way, and each way must finish.
-pub struct State { regs: Word[], memory: Half[], writes: i32[], zero: i32, carry: i32, sign: i32, overflow: i32, bounded: boolean, choice: i32, mappings: i32, advised: boolean, calls: i32, successor: i32, ok: boolean }
-
-pub function initial_state(regs: Word[], memory: Half[], writes: i32[]): State {
-  return State { regs: regs, memory: memory, writes: writes, zero: -1, carry: -1, sign: -1, overflow: -1, bounded: false, choice: 0, mappings: 0, advised: false, calls: 0, successor: -1, ok: true };
+pub function initial_state(regs: shared.Word[], memory: halves.Half[], writes: i32[]): shared.State {
+  let s = shared.initial(regs, memory, false, 0);
+  return shared.State { ...s, writes: writes };
 }
 
-pub function write(s: State, reg: i32, value: Word): State {
-  return State { ...s, regs: s.regs.with(reg, value) };
+pub function write(s: shared.State, reg: i32, value: shared.Word): shared.State {
+  return shared.State { ...s, regs: s.regs.with(reg, value) };
 }
 
-pub function load(s: State, at: i32, width: i32): Word {
-  return Word { low: s.memory[at], high: if (width == 64) { s.memory[at + 1] } else { number(0).high } };
+pub function load(s: shared.State, at: i32, width: i32): shared.Word {
+  return shared.from_halves(s.cells[at], if (width == 64) { s.cells[at + 1] } else { number(0).high });
 }
