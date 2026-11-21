@@ -4,6 +4,7 @@ import "testing"
 
 const cmpStringHashProg = `import "core/cmp";
 import "std/string";
+import "std/hash";
 import "std/i32";
 
 function main(): i32 {

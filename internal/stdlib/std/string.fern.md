@@ -572,30 +572,6 @@ pub function (s: string) trailing_count(b: u8): i32 {
   return i;
 }
 
-pub function (s: string) hash_fnv32(): u32 {
-  let h = 2166136261u32;
-  let prime = 16777619u32;
-  let n = s.len();
-  let i = 0;
-  while (i < n) {
-    h ^= s[i] as u32;
-    h *= prime;
-    i += 1;
-  }
-  return h;
-}
-
-pub function (s: string) hash_djb2(): u32 {
-  let h = 5381 as u32;
-  let mult = 33 as u32;
-  let n = s.len();
-  let i = 0;
-  while (i < n) {
-    h = h * mult + s[i] as u32;
-    i += 1;
-  }
-  return h;
-}
 ```
 ### `10 pub function (s: string) escape_c(): string`
 

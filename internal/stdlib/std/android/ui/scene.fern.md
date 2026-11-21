@@ -44,6 +44,7 @@ import "std/android";
 import "std/android/draw";
 import "std/android/text";
 import "std/f64";
+import "std/hash";
 import "std/option";
 ```
 

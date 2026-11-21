@@ -6655,6 +6655,7 @@ function main(): i32 {
 
 func TestArm64StdlibBundle15(t *testing.T) {
 	src := `
+import "std/hash";
 import "std/http";
 function main(): i32 {
     // distinct / distinct_count
@@ -7054,6 +7055,7 @@ func TestArm64StdlibBundle7(t *testing.T) {
 	src := `
 import "std/array";
 import "std/string";
+import "std/hash";
 import "std/http";
 function main(): i32 {
     // i32[] product / avg
