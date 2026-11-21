@@ -33,10 +33,14 @@ pub function challenge(verifier: string): string {
   return base64.encode_url(crypto.sha256(verifier.bytes())).trim_end_matches("=");
 }
 
-function authorization_url(client: string, verifier: string, state: string): string {
+function authorization_url(client: string, verifier: string, state: string, editing: boolean): string {
+  let scopes = "family:devices:view family:devices:control family:devices:manage family:library:view user:content:view offline_access";
+  if (editing) {
+    scopes += " family:library:manage user:content:manage";
+  }
   return LOGIN + "/authorize?" + url.query_encode([
     ("audience", "https://api.yotoplay.com"),
-    ("scope", "family:devices:view family:devices:control family:devices:manage family:library:view user:content:view offline_access"),
+    ("scope", scopes),
     ("response_type", "code"),
     ("client_id", client),
     ("code_challenge", challenge(verifier)),
@@ -46,7 +50,7 @@ function authorization_url(client: string, verifier: string, state: string): str
   ]);
 }
 
-pub function begin(client: string, now: i64): Result[(Flow, string), string] {
+pub function begin(client: string, now: i64, editing: boolean): Result[(Flow, string), string] {
   let addr = net.socket_addr(net.ipv4_loopback(), PORT);
   let Ok(listener) = net.listen_at(addr, net.listen_options()) else {
     return Err("Could not open the local sign-in callback. Try again.");
@@ -58,7 +62,7 @@ pub function begin(client: string, now: i64): Result[(Flow, string), string] {
   let verifier = base64.encode_url(rand.bytes(32)).trim_end_matches("=");
   let state = base64.encode_url(rand.bytes(32)).trim_end_matches("=");
   let flow = Flow { listener: listener, client: None, received: "", client_until: 0i64, until: now + 300000i64, verifier: verifier, state: state };
-  return Ok((flow, authorization_url(client, verifier, state)));
+  return Ok((flow, authorization_url(client, verifier, state, editing)));
 }
 
 pub function callback(raw: string, state: string): Callback {

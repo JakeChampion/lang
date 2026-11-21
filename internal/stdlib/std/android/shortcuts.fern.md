@@ -10,9 +10,9 @@ A long press on the icon of an app shows its shortcuts. A shortcut has an id, a 
 
 `action` gives the action of the intent that started the activity. An activity that the icon of the app started has the action `android.intent.action.MAIN`. `action` takes the action, so the next call gives "" until a new intent comes. Thus an app can call it at each Resume event, and do the action of each intent one time.
 
-`fern -apk` gives the activity the launch mode `singleTask`. Thus a start of the app while it runs gives the new intent to the activity that runs, through its `onNewIntent` method. `NativeActivity` does not keep that intent. An app that wants it declares a subclass of `NativeActivity` with `onNewIntent`, and calls `keep_intent` there. Android calls `onNewIntent` before the Resume event.
+`fern -apk` gives the activity the launch mode `singleTask`. If the activity already runs, Android sends the new intent to its `onNewIntent` method. `NativeActivity` does not keep that intent. An app that wants it declares a subclass of `NativeActivity` with `onNewIntent`, and calls `keep_intent` there. Android calls `onNewIntent` before the Resume event.
 
-The module needs API level 25.
+`set` and `action` need API level 25. `pin` needs API level 26. The launcher can ask the user to confirm the pin.
 
 ## Contracts
 
@@ -40,7 +40,7 @@ import "std/jni";
 
 ### `shortcuts`
 
-The intent of a shortcut names the activity of the app as its component. The module looks up the SDK methods through the generated bindings. Each shortcut gets its own JNI local frame, so building a list keeps only the list and the objects it holds between items.
+The intent of a shortcut names the activity of the app as its component. The module looks up the SDK methods through the generated bindings. Each shortcut gets a JNI local frame. The list keeps its objects after each local frame ends.
 
 ```fern
 <<shortcuts>>=
@@ -60,12 +60,7 @@ function pop_frame(e: usize): void {
   let popped = jni.call1(e, 20, 0 as usize);
 }
 
-// ArrayList keeps the shortcut after the item's local frame ends.
-function append_item(e: usize, c: bindings.Classes, activity: bindings.Activity, list: bindings.ArrayList, item: Shortcut): Result[boolean, jni.JavaError] {
-  if (!push_frame(e)) {
-    return Ok(false);
-  }
-  defer pop_frame(e);
+function build_item(e: usize, c: bindings.Classes, activity: bindings.Activity, item: Shortcut): Result[bindings.ShortcutInfo, jni.JavaError] {
   let intent = c.intent.new(e, item.action)?;
   let component = c.activity.get_component_name(e, activity)?;
   let aimed = c.intent.set_component(e, intent, component)?;
@@ -74,7 +69,15 @@ function append_item(e: usize, c: bindings.Classes, activity: bindings.Activity,
   jni.check(e)?;
   let labeled = c.shortcut_info_builder.set_short_label(e, builder, jni.Object { ref: label })?;
   let pointed = c.shortcut_info_builder.set_intent(e, labeled, aimed)?;
-  let shortcut = c.shortcut_info_builder.build(e, pointed)?;
+  return c.shortcut_info_builder.build(e, pointed);
+}
+
+function append_item(e: usize, c: bindings.Classes, activity: bindings.Activity, list: bindings.ArrayList, item: Shortcut): Result[boolean, jni.JavaError] {
+  if (!push_frame(e)) {
+    return Ok(false);
+  }
+  defer pop_frame(e);
+  let shortcut = build_item(e, c, activity, item)?;
   return c.array_list.add(e, list, shortcut.object());
 }
 
@@ -105,6 +108,41 @@ pub function set(ctx: usize, items: Shortcut[]): boolean {
     }
   }
   return c.shortcut_manager.set_dynamic_shortcuts(e, bindings.ShortcutManager { ref: service.ref }, list.as_list()).unwrap_or(false);
+}
+
+// Asks the launcher to pin a shortcut to the home screen.
+pub function pin(ctx: usize, item: Shortcut): boolean {
+  if (android.detached(ctx)) {
+    return false;
+  }
+  let e = android.env(ctx);
+  if (!push_frame(e)) {
+    return false;
+  }
+  defer pop_frame(e);
+  let Ok(c) = bindings.classes(e) else {
+    return false;
+  };
+  defer c.release(e);
+  let activity = bindings.Activity { ref: android.activity_object(ctx) };
+  let Ok(service) = c.context.get_system_service(e, activity.as_context(), "shortcut") else {
+    return false;
+  };
+  if (service.ref == 0 as usize) {
+    return false;
+  }
+  let Ok(info) = build_item(e, c, activity, item) else {
+    return false;
+  };
+  let cls = jni.get_object_class(e, service.ref);
+  let method = jni.get_method_id(e, cls, "requestPinShortcut", "(Landroid/content/pm/ShortcutInfo;Landroid/content/IntentSender;)Z");
+  if (jni.check(e).is_err() || method == 0 as usize) {
+    return false;
+  }
+  let args = jni.jvalues([info.ref, 0 as usize]);
+  let accepted = jni.call_boolean_method_a(e, service.ref, method, args);
+  jni.free_buffer(args);
+  return jni.check(e).is_ok() && accepted != 0;
 }
 
 // Takes the action of the intent, so the next call gives "".
