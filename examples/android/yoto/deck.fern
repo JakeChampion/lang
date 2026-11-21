@@ -4,6 +4,7 @@ import "std/android/player";
 import "std/json";
 import "std/i64";
 import "std/android/ui";
+import "std/array";
 import "std/kv";
 import "std/string";
 import "std/worker";
@@ -437,15 +438,15 @@ function visible_covers(m: Model): string[] {
   let shelf = m.shelf;
   if (m.tab == 1) {
     if let Some(card) = opened_card(m) {
-      let visible = card.tracks.drop(shelf.first_art).take((shelf.last_art - shelf.first_art).max(0));
+      let visible = array.slice(card.tracks, shelf.first_art, shelf.last_art);
       return [card.cover].concat(visible.map((track: api.Track): string => artwork(shelf, track.art, card.cover)));
     }
-    let visible = shelf.hits.drop(shelf.first_art).take((shelf.last_art - shelf.first_art).max(0));
+    let visible = array.slice(shelf.hits, shelf.first_art, shelf.last_art);
     return visible.map((hit: search.Hit): string => hit_art(m, hit));
   }
   if (m.tab == 2) {
     if let Some(entry) = offline.saved(m.downloads, m.offline_open) {
-      let visible = entry.tracks.drop(shelf.first_art).take((shelf.last_art - shelf.first_art).max(0));
+      let visible = array.slice(entry.tracks, shelf.first_art, shelf.last_art);
       return visible.map((track: offline.Track): string => keyed_art(m, entry.id, track.chapter, track.key, track.art));
     }
   }
