@@ -9,6 +9,8 @@ The caller retains and closes the Reader.
 
 ```fern
 <<*>>=
+// Index seekable linear PCM files and decode bounded sample ranges.
+
 import "std/audio/au";
 import "std/audio/aiff";
 import "std/audio/wav";
