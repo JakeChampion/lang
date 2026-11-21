@@ -285,7 +285,11 @@ function test_zero_rtt(): test.TestOutcome {
     return test.fail("the first connection did not start");
   };
   let first = settled(e0, 14);
-  let tickets = first.client.tickets();
+  let ticket_step = first.client.step();
+  if (ticket_step.conn.step().tickets.len() != 0) {
+    return test.fail("a ticket was delivered twice");
+  }
+  let tickets = ticket_step.tickets;
   if (tickets.len() == 0) {
     return test.fail("no ticket");
   }
@@ -312,6 +316,41 @@ function test_zero_rtt(): test.TestOutcome {
     replay = to_server(replay, d);
   }
   return test.assert_eq(line + "| " + r6.log + "| replay: " + noticed(replay).log, "true true true | client response 4 425 Too Early; server request 0 GET /early 0b host=tls.example early-data=1; | client response 0 200 early hi; server request 8 POST /late 3b host=tls.example; client response 8 200 late hi; | replay: server request 0 GET /early 0b host=tls.example early-data=1; ");
+}
+
+function test_step_output(): test.TestOutcome {
+  let Ok(e) = begin() else {
+    return test.fail("client did not start");
+  };
+  let sending = e.client.transmit(START);
+  let with_event = h3q.Conn { ...sending, events: [h3q.StreamDropped(4i64, 7i64)] };
+  let step = with_event.step();
+  if (step.conn.events.len() != 0 || step.events.len() != 1) {
+    return test.fail("step lost or repeated the pending event");
+  }
+  let h3q.StreamDropped(id, code) = step.events[0] else {
+    return test.fail("wrong event");
+  };
+  if (id != 4 || code != 7) {
+    return test.fail("changed event payload");
+  }
+  if (step.output.len() == 0 || step.ecn != sending.ecn_codepoint() || step.conn.datagrams().len() != 0) {
+    return test.fail("first flight and its ECN mark");
+  }
+  let sc = server_config();
+  let Ok(header) = packet.parse(step.output[0], 0, 8) else {
+    return test.fail("initial packet");
+  };
+  let Ok(q) = conn.accept(sc, entropy(2, conn.server_entropy(sc)), header, START, time.timestamp_from_unix_millis(WALL_MS)) else {
+    return test.fail("server did not start");
+  };
+  let flight = h3q.server(q, h3.config()).read_from(step.output[0], [1 as u8], 0, START);
+  if (flight.output.len() == 0) {
+    return test.fail("server did not send a handshake");
+  }
+  let received = step.conn.read(flight.output[0], START);
+  let again = received.conn.step();
+  return test.assert_true(again.output.len() == 0 && again.events.len() == 0 && again.tickets.len() == 0);
 }
 
 // The session checks a request's :path once and hands it on in its normal
@@ -641,6 +680,7 @@ function test_blocked_backpressure(): test.TestOutcome {
 
 function main(): i32 {
   let r = test.new("std/http/h3q");
+  r = r.it("each step drains its output", test_step_output);
   r = r.it("a GET and its response", test_get);
   r = r.it("a client counts the body of a response as it arrives", test_received);
   r = r.it("a request target reaches the handler in its normal form", test_target_normalised);
