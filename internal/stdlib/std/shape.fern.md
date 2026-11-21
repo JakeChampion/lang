@@ -566,18 +566,19 @@ function hebrew_form(a: i32, b: i32): i32 {
 // A run of the glyphs of `cs` in the font `f`, with the masks `masks` and
 // the properties of the characters. The shaper value of each glyph holds
 // its character from the bit CP_SHIFT.
-function run_of_chars(f: truetype.Font, cs: Chars, masks: i32[]): truetype.Run {
+function run_of_chars(f: truetype.Font, cs: Chars, masks: i32[], vars: i32[]): truetype.Run {
   let marks = if (f.has_glyph_classes()) { [] } else { nonspacing_marks() };
   let glyphs: i32[] = [];
   let props: i32[] = [];
-  let vars: i32[] = [];
+  let needs_vars = vars.len() == 0;
   for i in 0..cs.cps.len() {
-    let c = cs.cps[i];
     glyphs = glyphs.append(glyph_of(f, cs.shown[i]));
     let u = cs.unicode[i];
     let p = if (keeps_marks_apart(cs, i)) { char_props(u) } else { char_props(u) & ~truetype.HIDDEN };
     props = props.append(p | class_of_char(u, marks) << truetype.CLASS_SHIFT);
-    vars = vars.append(c as i32 << CP_SHIFT);
+    if (needs_vars) {
+      vars = vars.append(cs.cps[i] as i32 << CP_SHIFT);
+    }
   }
   return truetype.Run { ...truetype.run_of(glyphs, cs.clusters, masks), props: props, vars: vars };
 }
@@ -1381,7 +1382,7 @@ function default_shaped(f: truetype.Font, text: string, script: string): truetyp
   let rtl = rtl(script);
   let n = Normalizer { script: script, indic: false, forms: script == "hebr" && !f.has_feature(script, "mark"), splits_all: false, marks_stay: false, none: false };
   let cs = normalized(f, preprocessed(f, characters(text), script, rtl), n);
-  let r = run_of_chars(f, cs, masks_of(cs, arabic));
+  let r = run_of_chars(f, cs, masks_of(cs, arabic), []);
   for stage in stages(f, script, rtl) {
     r = applied_stage(f, r, script, stage, false);
     r = if (arabic && stage[0].tag == "rlig") { arabic_fallback_applied(f, r) } else { r };
@@ -1998,7 +1999,7 @@ pub function (plan: IndicPlan) shape(text: string): truetype.Run {
     vars = vars.append(indic.properties(c as i32) | c as i32 << CP_SHIFT);
     masks = masks.append(GLOBAL);
   }
-  let r = truetype.Run { ...run_of_chars(f, cs, masks), vars: vars };
+  let r = run_of_chars(f, cs, masks, vars);
   r = apply_lookups(f, r, plan.variation, false);
   r = apply_lookups(f, r, plan.direction, false);
   r = with_syllables(r, "indic");
@@ -2021,8 +2022,31 @@ function glyphs_of(r: truetype.Run): Glyph[] {
   return out;
 }
 
+// Reuse a shared glyph column until reordering changes one of its values.
+function updated_value(own xs: i32[], at: i32, value: i32): i32[] {
+  return if (xs[at] == value) { xs } else { xs.with(at, value) };
+}
+
 // `r` with the glyphs `gs`. `r` has no positions yet.
 function run_of_glyphs(r: truetype.Run, gs: Glyph[]): truetype.Run {
+  if (gs.len() == r.glyphs.len()) {
+    let glyphs = r.glyphs;
+    let clusters = r.clusters;
+    let masks = r.masks;
+    let ligs = r.ligs;
+    let props = r.props;
+    let vars = r.vars;
+    for i in 0..gs.len() {
+      let g = gs[i];
+      glyphs = updated_value(glyphs, i, g.id);
+      clusters = updated_value(clusters, i, g.cluster);
+      masks = updated_value(masks, i, g.mask);
+      ligs = updated_value(ligs, i, g.lig);
+      props = updated_value(props, i, g.prop);
+      vars = updated_value(vars, i, g.var);
+    }
+    return truetype.Run { ...r, glyphs: glyphs, clusters: clusters, masks: masks, ligs: ligs, props: props, vars: vars };
+  }
   let ids: i32[] = [];
   let cs: i32[] = [];
   let ms: i32[] = [];
@@ -3043,7 +3067,7 @@ function khmer_shaped(f: truetype.Font, text: string): truetype.Run {
     vars = vars.append(indic.properties(c as i32) | c as i32 << CP_SHIFT);
     masks = masks.append(GLOBAL);
   }
-  let r = truetype.Run { ...run_of_chars(f, cs, masks), vars: vars };
+  let r = run_of_chars(f, cs, masks, vars);
   r = applied_stage(f, r, "khmr", [feature("rvrn", GLOBAL, 0)], false);
   r = applied_stage(f, r, "khmr", direction_features(false), false);
   r = with_syllables(r, "khmer");
@@ -3268,7 +3292,7 @@ function myanmar_shaped(f: truetype.Font, text: string, gsub: string, gpos: stri
     vars = vars.append(indic.properties(c as i32) | c as i32 << CP_SHIFT);
     masks = masks.append(GLOBAL);
   }
-  let r = truetype.Run { ...run_of_chars(f, cs, masks), vars: vars };
+  let r = run_of_chars(f, cs, masks, vars);
   r = applied_stage(f, r, gsub, [feature("rvrn", GLOBAL, 0)], false);
   r = applied_stage(f, r, gsub, direction_features(false), false);
   r = with_syllables(r, "myanmar");
@@ -3598,7 +3622,7 @@ function use_shaped(f: truetype.Font, text: string, script: string, gsub: string
     vars = vars.append(universal.category(c as i32) | c as i32 << CP_SHIFT);
   }
   let masks = if (joining) { use_joining_masks(cs, script) } else { cs.masks };
-  let r = truetype.Run { ...run_of_chars(f, cs, masks), vars: vars };
+  let r = run_of_chars(f, cs, masks, vars);
   r = applied_stage(f, r, gsub, [feature("rvrn", GLOBAL, 0)], false);
   r = applied_stage(f, r, gsub, direction_features(rtl), false);
   r = use_masked(f, with_use_syllables(r), gsub, joining);
@@ -4073,7 +4097,7 @@ function hangul_shaped(f: truetype.Font, text: string): truetype.Run {
   for i in 0..cs.cps.len() {
     masks = masks.append(cs.masks[i] | (if (is_jamo(cs.cps[i] as i32)) { 0 } else { CALT }));
   }
-  let r = run_of_chars(f, cs, masks);
+  let r = run_of_chars(f, cs, masks, []);
   let jamo = [feature("ljmo", LJMO, 0), feature("vjmo", VJMO, 0), feature("tjmo", TJMO, 0)];
   let all = ["ccmp", "locl", "rlig", "clig", "liga", "rclt"].map((tag: string): Feature => feature(tag, GLOBAL, 0));
   r = applied_stage(f, r, "hang", [feature("rvrn", GLOBAL, 0)], false);
