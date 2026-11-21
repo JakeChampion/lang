@@ -1,0 +1,107 @@
+// Decode a single VP8L chunk payload using one group of simple literal codes.
+import "../../pixels/pixels";
+import "../jxl/bits";
+import "core/cmp";
+
+@derive(cmp.Eq)
+pub enum DecodeError { Header, Truncated, Unsupported, InvalidCode, Trailing, Limit, Cancelled }
+
+struct Code { low: u8, high: u8, width: i32 }
+
+function field(input: [u8], at: i64, width: i32): Result[bits.Read, DecodeError] {
+  return match (bits.read(input, at, width, input.len() as i64 * 8i64)) {
+    Ok(r) => Ok(r), Err(_) => Err(Truncated),
+  };
+}
+
+function code(input: [u8], at: i64, alphabet: i32): Result[(Code, i64), DecodeError] {
+  let simple = field(input, at, 1)?;
+  if (simple.value == 0u64) {
+    return Err(Unsupported);
+  }
+  let pair = field(input, simple.next, 1)?;
+  let wide = field(input, pair.next, 1)?;
+  let a = field(input, wide.next, if (wide.value == 0u64) { 1 } else { 8 })?;
+  if (a.value >= alphabet as u64) {
+    return Err(InvalidCode);
+  }
+  let first = a.value as u8;
+  if (pair.value == 0u64) {
+    return Ok((Code { low: first, high: first, width: 0 }, a.next));
+  }
+  let b = field(input, a.next, 8)?;
+  if (b.value >= alphabet as u64 || b.value == a.value) {
+    return Err(InvalidCode);
+  }
+  let second = b.value as u8;
+  return Ok((if (first < second) { Code { low: first, high: second, width: 1 } } else { Code { low: second, high: first, width: 1 } }, b.next));
+}
+
+// The caller has checked the extent of all literal bits before allocating.
+function symbol(input: [u8], c: Code, at: i64): u8 {
+  if (c.width == 0) {
+    return c.low;
+  }
+  return if ((input[(at / 8i64) as i32] as i32 >> (at % 8i64) as i32 & 1) == 0) { c.low } else { c.high };
+}
+
+pub function decode_simple(input: [u8], limits: pixels.Limits, cancelled: () => boolean): Result[pixels.Image, DecodeError] {
+  if (cancelled()) {
+    return Err(Cancelled);
+  }
+  let signature = field(input, 0i64, 8)?;
+  if (signature.value != 47u64) {
+    return Err(Header);
+  }
+  let w = field(input, 8i64, 14)?;
+  let h = field(input, w.next, 14)?;
+  // The alpha hint is informational. The alpha tree supplies each value.
+  let version = field(input, h.next + 1i64, 3)?;
+  if (version.value != 0u64) {
+    return Err(Header);
+  }
+  let width = w.value as i32 + 1;
+  let height = h.value as i32 + 1;
+  let Ok(layout) = pixels.checked_layout(width, height, width * 4, pixels.RGBA8, limits) else {
+    return Err(Limit);
+  };
+  // No transforms, color cache or spatially varying prefix-code groups.
+  let flags = field(input, version.next, 3)?;
+  if (flags.value != 0u64) {
+    return Err(Unsupported);
+  }
+  let (green, g) = code(input, flags.next, 280)?;
+  let (red, r) = code(input, g, 256)?;
+  let (blue, b) = code(input, r, 256)?;
+  let (alpha, a) = code(input, b, 256)?;
+  let (_, start) = code(input, a, 40)?;
+  let count = width * height;
+  let stride = green.width + red.width + blue.width + alpha.width;
+  let end = start + count as i64 * (stride as i64);
+  let used = (end + 7i64) / 8i64;
+  if (used > input.len() as i64) {
+    return Err(Truncated);
+  }
+  if (used < input.len() as i64) {
+    return Err(Trailing);
+  }
+  let data = __alloc_u8(layout.bytes);
+  let at = start;
+  for y in 0..height {
+    if (cancelled()) {
+      return Err(Cancelled);
+    }
+    for x in 0..width {
+      let i = y * layout.stride + x * 4;
+      data = data.with(i + 1, symbol(input, green, at));
+      at += green.width as i64;
+      data = data.with(i, symbol(input, red, at));
+      at += red.width as i64;
+      data = data.with(i + 2, symbol(input, blue, at));
+      at += blue.width as i64;
+      data = data.with(i + 3, symbol(input, alpha, at));
+      at += alpha.width as i64;
+    }
+  }
+  return Ok(pixels.Image { layout: layout, data: data });
+}

@@ -1,0 +1,73 @@
+import "../packages/codecs/webp/vp8l";
+import "../packages/pixels/pixels";
+import "std/test";
+
+function active(): boolean {
+  return false;
+}
+
+function stop(): boolean {
+  return true;
+}
+
+// Raw VP8L payload. Green declares its two symbols in descending order.
+// The expected RGBA bytes were decoded from the RIFF-wrapped payload by libwebp.
+function mixed(): u8[] {
+  return [47, 2, 64, 0, 16, 184, 247, 193, 178, 20, 121, 254, 19, 209, 88];
+}
+
+function samples(): test.TestOutcome {
+  let Ok(im) = vp8l.decode_simple(mixed(), pixels.default_limits(), active) else {
+    return test.fail("mixed decode");
+  };
+  let want: u8[] = [1, 7, 200, 0, 1, 222, 200, 0, 44, 7, 200, 0, 44, 222, 200, 0, 1, 7, 200, 255, 1, 222, 200, 255];
+  if (im.layout.width != 3 || im.layout.height != 2 || im.data.len() != want.len()) {
+    return test.fail("layout");
+  }
+  for i in 0..want.len() {
+    if (im.data[i] != want[i]) {
+      return test.fail("mixed samples");
+    }
+  }
+  let flat: u8[] = [47, 2, 64, 0, 16, 136, 236, 72, 255, 3];
+  let Ok(solid) = vp8l.decode_simple(flat, pixels.default_limits(), active) else {
+    return test.fail("flat decode");
+  };
+  let pixel: u8[] = [1, 0, 35, 255];
+  for i in 0..24 {
+    if (solid.data[i] != pixel[i % 4]) {
+      return test.fail("flat samples");
+    }
+  }
+  return test.pass();
+}
+
+function rejects(): test.TestOutcome {
+  let src = mixed();
+  let limits = pixels.default_limits();
+  for n in 0..src.len() {
+    if let Ok(_) = vp8l.decode_simple(src[0:n], limits, active) {
+      return test.fail("accepted prefix");
+    }
+  }
+  if let Ok(_) = vp8l.decode_simple(src.append(0), limits, active) {
+    return test.fail("trailing");
+  }
+  if let Ok(_) = vp8l.decode_simple(src.with(5, 1), limits, active) {
+    return test.fail("transform");
+  }
+  if let Ok(_) = vp8l.decode_simple(src, pixels.Limits { ...limits, max_bytes: 23 }, active) {
+    return test.fail("byte limit");
+  }
+  if let Ok(_) = vp8l.decode_simple(src, limits, stop) {
+    return test.fail("cancelled");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("VP8L simple literal payloads");
+  r = r.it("independent RGBA samples", samples);
+  r = r.it("bounds and unsupported features", rejects);
+  return r.finish();
+}

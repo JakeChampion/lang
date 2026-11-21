@@ -64,6 +64,8 @@ HTTP and CDN services remain unimplemented.
 | JPEG XL | Planned | Planned |
 | QOI | RGB8/RGBA8 | RGB8/RGBA8 |
 
+The [lossless WebP payload reader](docs/webp-lossless.md) reconstructs RGBA8 pixels from simple VP8L literal codes. Full WebP file decoding remains open.
+
 Each codec documents its metadata policy and resource limits.
 A [native QOI benchmark pipeline](docs/benchmarks.md) checks exact pixels before native time and memory observations.
 JPEG XL and wider PNG/JPEG compatibility are active roadmap items.

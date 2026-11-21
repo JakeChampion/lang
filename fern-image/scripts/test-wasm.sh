@@ -15,6 +15,7 @@ wasmtime --version
   tests/jxl_boxes_test.fern \
   tests/png_adam7_geometry_test.fern \
   tests/png_adam7_test.fern \
+  tests/webp_simple_test.fern \
   tests/qoi_test.fern \
   tests/png_grayscale_test.fern \
   tests/png_packed_test.fern \
