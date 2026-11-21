@@ -1,0 +1,397 @@
+// Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
+import "std/jni";
+
+// A android.content.Context.
+pub struct Context { ref: usize }
+
+pub function (x: Context) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Context) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.Context and the IDs of its members.
+pub struct ContextClass { class: usize, id_get_class_loader: usize, id_get_main_looper: usize, id_get_system_service: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/Context")?;
+  let id_get_class_loader = jni.checked_id(e, class, jni.get_method_id(e, class, "getClassLoader", "()Ljava/lang/ClassLoader;"))?;
+  let id_get_main_looper = jni.checked_id(e, class, jni.get_method_id(e, class, "getMainLooper", "()Landroid/os/Looper;"))?;
+  let id_get_system_service = jni.checked_id(e, class, jni.get_method_id(e, class, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;"))?;
+  return Ok(ContextClass { class: class, id_get_class_loader: id_get_class_loader, id_get_main_looper: id_get_main_looper, id_get_system_service: id_get_system_service });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ContextClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.Context.getClassLoader()Ljava/lang/ClassLoader;
+pub function (c: ContextClass) get_class_loader(e: usize, self: Context): Result[ClassLoader, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_class_loader, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(ClassLoader { ref: got });
+}
+
+// android.content.Context.getMainLooper()Landroid/os/Looper;
+pub function (c: ContextClass) get_main_looper(e: usize, self: Context): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_main_looper, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// android.content.Context.getSystemService(Ljava/lang/String;)Ljava/lang/Object;
+pub function (c: ContextClass) get_system_service(e: usize, self: Context, a0: string): Result[jni.Object, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_system_service, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// A android.location.LocationManager.
+pub struct LocationManager { ref: usize }
+
+pub function (x: LocationManager) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: LocationManager) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.location.LocationManager and the IDs of its members.
+pub struct LocationManagerClass { class: usize, id_get_last_known_location: usize, id_remove_updates: usize, id_request_location_updates: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function location_manager_class(e: usize): Result[LocationManagerClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/location/LocationManager")?;
+  let id_get_last_known_location = jni.checked_id(e, class, jni.get_method_id(e, class, "getLastKnownLocation", "(Ljava/lang/String;)Landroid/location/Location;"))?;
+  let id_remove_updates = jni.checked_id(e, class, jni.get_method_id(e, class, "removeUpdates", "(Landroid/location/LocationListener;)V"))?;
+  let id_request_location_updates = jni.checked_id(e, class, jni.get_method_id(e, class, "requestLocationUpdates", "(Ljava/lang/String;JFLandroid/location/LocationListener;Landroid/os/Looper;)V"))?;
+  return Ok(LocationManagerClass { class: class, id_get_last_known_location: id_get_last_known_location, id_remove_updates: id_remove_updates, id_request_location_updates: id_request_location_updates });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: LocationManagerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.location.LocationManager.getLastKnownLocation(Ljava/lang/String;)Landroid/location/Location;
+pub function (c: LocationManagerClass) get_last_known_location(e: usize, self: LocationManager, a0: string): Result[Location, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_last_known_location, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Location { ref: got });
+}
+
+// android.location.LocationManager.removeUpdates(Landroid/location/LocationListener;)V
+pub function (c: LocationManagerClass) remove_updates(e: usize, self: LocationManager, a0: LocationListener): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_remove_updates, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.location.LocationManager.requestLocationUpdates(Ljava/lang/String;JFLandroid/location/LocationListener;Landroid/os/Looper;)V
+pub function (c: LocationManagerClass) request_location_updates(e: usize, self: LocationManager, a0: string, a1: i64, a2: f32, a3: LocationListener, a4: jni.Object): Result[void, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(5);
+  jni.jvalue_set_int(args, 0, s0);
+  jni.jvalue_set_long(args, 1, a1);
+  jni.jvalue_set_f32(args, 2, a2);
+  jni.jvalue_set_int(args, 3, a3.ref);
+  jni.jvalue_set_int(args, 4, a4.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_request_location_updates, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.location.LocationListener.
+pub struct LocationListener { ref: usize }
+
+pub function (x: LocationListener) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: LocationListener) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.location.LocationListener and the IDs of its members.
+pub struct LocationListenerClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function location_listener_class(e: usize): Result[LocationListenerClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/location/LocationListener")?;
+  return Ok(LocationListenerClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: LocationListenerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.location.Location.
+pub struct Location { ref: usize }
+
+pub function (x: Location) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Location) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.location.Location and the IDs of its members.
+pub struct LocationClass { class: usize, id_get_accuracy: usize, id_get_altitude: usize, id_get_bearing: usize, id_get_latitude: usize, id_get_longitude: usize, id_get_speed: usize, id_get_time: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function location_class(e: usize): Result[LocationClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/location/Location")?;
+  let id_get_accuracy = jni.checked_id(e, class, jni.get_method_id(e, class, "getAccuracy", "()F"))?;
+  let id_get_altitude = jni.checked_id(e, class, jni.get_method_id(e, class, "getAltitude", "()D"))?;
+  let id_get_bearing = jni.checked_id(e, class, jni.get_method_id(e, class, "getBearing", "()F"))?;
+  let id_get_latitude = jni.checked_id(e, class, jni.get_method_id(e, class, "getLatitude", "()D"))?;
+  let id_get_longitude = jni.checked_id(e, class, jni.get_method_id(e, class, "getLongitude", "()D"))?;
+  let id_get_speed = jni.checked_id(e, class, jni.get_method_id(e, class, "getSpeed", "()F"))?;
+  let id_get_time = jni.checked_id(e, class, jni.get_method_id(e, class, "getTime", "()J"))?;
+  return Ok(LocationClass { class: class, id_get_accuracy: id_get_accuracy, id_get_altitude: id_get_altitude, id_get_bearing: id_get_bearing, id_get_latitude: id_get_latitude, id_get_longitude: id_get_longitude, id_get_speed: id_get_speed, id_get_time: id_get_time });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: LocationClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.location.Location.getAccuracy()F
+pub function (c: LocationClass) get_accuracy(e: usize, self: Location): Result[f32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke_f32(e, jni.CALL_METHOD + 21, self.ref, c.id_get_accuracy, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// android.location.Location.getAltitude()D
+pub function (c: LocationClass) get_altitude(e: usize, self: Location): Result[f64, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke_f64(e, jni.CALL_METHOD + 24, self.ref, c.id_get_altitude, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// android.location.Location.getBearing()F
+pub function (c: LocationClass) get_bearing(e: usize, self: Location): Result[f32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke_f32(e, jni.CALL_METHOD + 21, self.ref, c.id_get_bearing, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// android.location.Location.getLatitude()D
+pub function (c: LocationClass) get_latitude(e: usize, self: Location): Result[f64, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke_f64(e, jni.CALL_METHOD + 24, self.ref, c.id_get_latitude, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// android.location.Location.getLongitude()D
+pub function (c: LocationClass) get_longitude(e: usize, self: Location): Result[f64, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke_f64(e, jni.CALL_METHOD + 24, self.ref, c.id_get_longitude, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// android.location.Location.getSpeed()F
+pub function (c: LocationClass) get_speed(e: usize, self: Location): Result[f32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke_f32(e, jni.CALL_METHOD + 21, self.ref, c.id_get_speed, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// android.location.Location.getTime()J
+pub function (c: LocationClass) get_time(e: usize, self: Location): Result[i64, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 18, self.ref, c.id_get_time, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i64);
+}
+
+// A java.lang.Class.
+pub struct Class { ref: usize }
+
+pub function (x: Class) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Class) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.lang.Class and the IDs of its members.
+pub struct ClassClass { class: usize, id_new_instance: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function class_class(e: usize): Result[ClassClass, jni.JavaError] {
+  let class = jni.global_class(e, "java/lang/Class")?;
+  let id_new_instance = jni.checked_id(e, class, jni.get_method_id(e, class, "newInstance", "()Ljava/lang/Object;"))?;
+  return Ok(ClassClass { class: class, id_new_instance: id_new_instance });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ClassClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.lang.Class.newInstance()Ljava/lang/Object;
+pub function (c: ClassClass) new_instance(e: usize, self: Class): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_new_instance, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// A java.lang.ClassLoader.
+pub struct ClassLoader { ref: usize }
+
+pub function (x: ClassLoader) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ClassLoader) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.lang.ClassLoader and the IDs of its members.
+pub struct ClassLoaderClass { class: usize, id_load_class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function class_loader_class(e: usize): Result[ClassLoaderClass, jni.JavaError] {
+  let class = jni.global_class(e, "java/lang/ClassLoader")?;
+  let id_load_class = jni.checked_id(e, class, jni.get_method_id(e, class, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;"))?;
+  return Ok(ClassLoaderClass { class: class, id_load_class: id_load_class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ClassLoaderClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.lang.ClassLoader.loadClass(Ljava/lang/String;)Ljava/lang/Class;
+pub function (c: ClassLoaderClass) load_class(e: usize, self: ClassLoader, a0: string): Result[Class, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_load_class, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Class { ref: got });
+}
+
+// The struct of IDs of each class of this module.
+pub struct Classes { context: ContextClass, location_manager: LocationManagerClass, location_listener: LocationListenerClass, location: LocationClass, class: ClassClass, class_loader: ClassLoaderClass }
+
+// Makes the struct of IDs of each class. Call it one time, and call
+// `release` when the app does not call Java again. One lookup for each
+// class, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function classes(e: usize): Result[Classes, jni.JavaError] {
+  let context = match (context_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      return Err(err);
+    },
+  };
+  let location_manager = match (location_manager_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      return Err(err);
+    },
+  };
+  let location_listener = match (location_listener_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      location_manager.release(e);
+      return Err(err);
+    },
+  };
+  let location = match (location_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      location_manager.release(e);
+      location_listener.release(e);
+      return Err(err);
+    },
+  };
+  let class = match (class_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      location_manager.release(e);
+      location_listener.release(e);
+      location.release(e);
+      return Err(err);
+    },
+  };
+  let class_loader = match (class_loader_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      location_manager.release(e);
+      location_listener.release(e);
+      location.release(e);
+      class.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { context: context, location_manager: location_manager, location_listener: location_listener, location: location, class: class, class_loader: class_loader });
+}
+
+// Deletes the reference to each class. Do not use `c` after this call.
+pub function (c: Classes) release(e: usize): void {
+  c.context.release(e);
+  c.location_manager.release(e);
+  c.location_listener.release(e);
+  c.location.release(e);
+  c.class.release(e);
+  c.class_loader.release(e);
+}
