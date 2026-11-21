@@ -14,4 +14,4 @@ Two self-built x86-64 Linux compilers compiled the same source tree from `ba633a
 
 Callgrind ran with `FERN_RC_CERTIFY=1` and `FERN_RC_CERTIFY_MEMO=0`. Separate compiler builds included the allocation counters from `FERN_LEAKCHECK=1`. These compilers ran with `FERN_RC_CERTIFY=0` and freed every allocation. Each pair produced the same executable for its input. The checker assembly also matched byte for byte on x86-64 Linux, ARM64 Linux and wasm32 WASI.
 
-The CI benchmark emits checker assembly and uses absolute paths. With the GitHub checkout path, this benchmark took 56,187,292 allocations before the change and 54,475,087 after it.
+The CI benchmark emits checker assembly and uses absolute paths. With main at `eac3fcdc40e0` and the GitHub checkout path, the compiler on main took 56,176,237 allocations and the updated compiler took 54,464,032. Both freed every allocation.
