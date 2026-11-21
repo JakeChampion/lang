@@ -5143,8 +5143,6 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    call $__fern_fma_f64\n");
   } else if (o.kind_tag == ir.K_FFMA32) {
     parts = parts.append("    call $__fern_fma_f32\n");
-  } else if (o.kind_tag >= ir.K_DIR_OPEN && o.kind_tag <= ir.K_DIR_OPEN_FILE) {
-    parts = parts.append("    unreachable\n");
   } else {
     parts = parts.append("    " + wasm_binop_w(o.kind_tag, o.width) + "\n");
   }

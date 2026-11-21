@@ -42,6 +42,31 @@ func TestSelfHostWasmUnsupportedOpRefused(t *testing.T) {
 		}
 	})
 
+	// The reactor driver emits exported functions without a command main.
+	for _, tc := range []struct{ op, call string }{
+		{"dir_open", `d.open_dir("child")`},
+		{"dir_entries", "d.entries()"},
+		{"dir_stat", `d.stat("entry")`},
+		{"dir_access", `d.access("entry", 4)`},
+		{"dir_unlink", `d.remove_file("entry")`},
+		{"dir_chmod", `d.chmod("entry", 384, true)`},
+		{"dir_chown", `d.chown("entry", -1, -1, false)`},
+		{"dir_open_file", `d.open_reader("entry")`},
+	} {
+		t.Run(tc.op, func(t *testing.T) {
+			cmd := exec.Command(wasmDriver, "-reactor")
+			cmd.Stdin = strings.NewReader("pub function probe(d: Dir): i32 { match (" + tc.call +
+				") { Ok(_) => { return 0; }, Err(_) => { return 1; } } }")
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			out, err := cmd.Output()
+			if err == nil || cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != 3 ||
+				!strings.Contains(stderr.String(), "no instruction selection for IR op "+tc.op+" ") || len(out) != 0 {
+				t.Fatalf("expected compile-time refusal for %s; error %v, output %d bytes, stderr %s", tc.op, err, len(out), &stderr)
+			}
+		})
+	}
+
 	t.Run("x86-64-still-lowers-it", func(t *testing.T) {
 		asmDir := t.TempDir()
 		copySelfHostDriver(t, asmDir, "drivers/asm_ir_run.fern")
