@@ -55,7 +55,9 @@ var wasiHttpRequests = []wasiHttpRequest{
 	{method: "GET", path: "/headers", header: [2]string{"x-token", "s3cret"}, status: 200, want: "token=s3cret"},
 	{method: "GET", path: "/headers", status: 400, want: "no token"},
 	{method: "POST", path: "/echo", body: strings.Repeat("a", 1<<20), status: 200, want: "POST:" + strings.Repeat("a", 1<<20)},
-	{method: "POST", path: "/echo", body: strings.Repeat("b", 2<<20), status: 413, want: ""},
+	// The handler rejects the declared length before reading. Wait for its response
+	// before uploading so the rejected write cannot obscure the 413.
+	{method: "POST", path: "/echo", body: strings.Repeat("b", 2<<20), header: [2]string{"Expect", "100-continue"}, status: 413, want: ""},
 }
 
 func compileWasiHttp(t *testing.T, dir, src, out string, emit ...string) string {
