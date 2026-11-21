@@ -614,3 +614,8 @@ wasm32/checker.unproved	127
 x86_64/checker.refuted	5238
 x86_64/checker.weakened	234
 x86_64/checker.missed	225
+
+# lane: net-h2spec
+h2spec/passed	146
+h2spec/failed	0
+h2spec/skipped	0
