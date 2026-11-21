@@ -509,6 +509,15 @@ function test_safe(): test.TestOutcome {
 
 // Smart punctuation: quotes are delimiters, and runs of hyphens and three
 // periods are dashes and an ellipsis.
+function test_tasklists(): test.TestOutcome {
+  let o = markdown.Options { ...markdown.options(), tasklist: true };
+  return checks_with(o, [
+    ("- [ ] first\n- [x] *second*\n  - [X] nested\n", "<ul>\n<li><input type=\"checkbox\" disabled=\"\" /> first</li>\n<li><input type=\"checkbox\" checked=\"\" disabled=\"\" /> <em>second</em>\n<ul>\n<li><input type=\"checkbox\" checked=\"\" disabled=\"\" /> nested</li>\n</ul>\n</li>\n</ul>\n"),
+    ("1. [X] first\n   continued\n\n   [x] another paragraph\n", "<ol>\n<li>\n<p><input type=\"checkbox\" checked=\"\" disabled=\"\" /> first\ncontinued</p>\n<p>[x] another paragraph</p>\n</li>\n</ol>\n"),
+    ("[x] plain\n\n- [x]adjacent\n- [z] other\n- `[x]` code\n", "<p>[x] plain</p>\n<ul>\n<li>[x]adjacent</li>\n<li>[z] other</li>\n<li><code>[x]</code> code</li>\n</ul>\n"),
+  ]);
+}
+
 function test_smart(): test.TestOutcome {
   let o = markdown.Options { ...markdown.options(), smart: true };
   return checks_with(o, [
@@ -668,6 +677,7 @@ function main(): i32 {
   r = r.it("the changes of cmark 0.31 and its details", test_cmark_031);
   r = r.it("the changes of cmark 0.31 in the other formats", test_cmark_031_formats);
   r = r.it("raw HTML and dangerous URLs without the unsafe option", test_safe);
+  r = r.it("HTML task list items", test_tasklists);
   r = r.it("smart punctuation", test_smart);
   r = r.it("hard breaks and no breaks", test_breaks);
   r = r.it("the source positions of blocks", test_sourcepos);

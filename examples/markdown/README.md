@@ -29,6 +29,9 @@ none. It has the options of cmark:
 - `--validate-utf8`: invalid UTF-8 as cmark replaces it (see below).
 - `--help`, `-h` and `--version`, with the text of cmark.
 
+For HTML output, pass `--tasklist` to render GitHub-style task list markers
+as disabled checkboxes. Library callers can set `Options.tasklist`.
+
 The usage text names `cmark`, as cmark does for each name of the program
 file.
 

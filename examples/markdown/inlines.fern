@@ -657,15 +657,20 @@ function joined(d: blocks.Doc, from: i32, to: i32): u8[] {
 
 // Writes the inline content of the lines `from` to `to` of `d` as HTML.
 pub function render(out: usize, d: blocks.Doc, from: i32, to: i32, w: Work): Work {
+  return render_after(out, d, from, to, w, 0);
+}
+
+// Skip a recognized block-level prefix before scanning inline delimiters.
+pub function render_after(out: usize, d: blocks.Doc, from: i32, to: i32, w: Work, skip: i32): Work {
   if (to <= from) {
     return w;
   }
   if (in_source(d, from, to)) {
-    let a = blocks.seg_start(d.segs[from]);
+    let a = blocks.seg_start(d.segs[from]) + skip;
     return inline(out, d.src, a, rtrim(d.src, a, blocks.seg_end(d.segs[to - 1])), d, w);
   }
   let text = joined(d, from, to);
-  return inline(out, text, 0, rtrim(text, 0, text.len()), d, w);
+  return inline(out, text, skip, rtrim(text, skip, text.len()), d, w);
 }
 
 // Writes the text `s[a:e]`. The text has no whitespace at its end.

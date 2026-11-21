@@ -13,11 +13,11 @@ import "./utf8";
 // link to a `javascript:`, `vbscript:`, `file:` or `data:` URL has an empty
 // destination. `width` is the width of a line for the renderers that wrap
 // text, or 0 for no wrap.
-pub struct Options { sourcepos: boolean, hardbreaks: boolean, nobreaks: boolean, smart: boolean, unsafe_html: boolean, width: i32 }
+pub struct Options { sourcepos: boolean, hardbreaks: boolean, nobreaks: boolean, smart: boolean, unsafe_html: boolean, tasklist: boolean, width: i32 }
 
 // The defaults of cmark: no option is set.
 pub function options(): Options {
-  return Options { sourcepos: false, hardbreaks: false, nobreaks: false, smart: false, unsafe_html: false, width: 0 };
+  return Options { sourcepos: false, hardbreaks: false, nobreaks: false, smart: false, unsafe_html: false, tasklist: false, width: 0 };
 }
 
 // The bytes `b` with each sequence that is not UTF-8 replaced by U+FFFD, as
@@ -240,6 +240,35 @@ function list_start(out: usize, d: blocks.Doc, r: i32, s: State): void {
   }
 }
 
+// A task marker can open the first paragraph of an ordered or unordered item.
+function task_prefix(out: usize, d: blocks.Doc, r: i32, o: Options): i32 {
+  if (!o.tasklist || r == 0 || d.kind(r - 1) != blocks.ITEM || d.from(r) >= d.to(r)) {
+    return 0;
+  }
+  let seg = d.segs[d.from(r)];
+  let a = blocks.seg_start(seg);
+  let e = blocks.seg_end(seg);
+  if (blocks.seg_pad(seg) != 0 || e - a < 3 || d.src[a] != 91 as u8 || d.src[a + 2] != 93 as u8) {
+    return 0;
+  }
+  let mark = d.src[a + 1];
+  let end = a + 3;
+  while (end < e && (d.src[end] == 32 as u8 || d.src[end] == 9 as u8)) {
+    end += 1;
+  }
+  if (end == a + 3 && end < e) {
+    return 0;
+  }
+  if (mark == 32 as u8 || mark == 9 as u8) {
+    buf_push(out, "<input type=\"checkbox\" disabled=\"\" /> ");
+  } else if (mark == 120 as u8 || mark == 88 as u8) {
+    buf_push(out, "<input type=\"checkbox\" checked=\"\" disabled=\"\" /> ");
+  } else {
+    return 0;
+  }
+  return end - a;
+}
+
 // A paragraph in an item of a tight list has no `<p>` tags. The text of a
 // paragraph does not end with a line feed.
 function paragraph(out: usize, d: blocks.Doc, r: i32, s: State): State {
@@ -247,12 +276,14 @@ function paragraph(out: usize, d: blocks.Doc, r: i32, s: State): State {
   let to = d.to(r);
   if (s.tight[s.depth - 1] == 1) {
     let before = buf_len(out);
-    let w = inlines.render(out, d, from, to, s.w);
+    let skip = task_prefix(out, d, r, s.o);
+    let w = inlines.render_after(out, d, from, to, s.w, skip);
     return State { ...s, w: w, open: s.open || buf_len(out) > before };
   }
   cr(out, s.open);
   tag(out, d, r, s, "<p>", 2);
-  let w = inlines.render(out, d, from, to, s.w);
+  let skip = task_prefix(out, d, r, s.o);
+  let w = inlines.render_after(out, d, from, to, s.w, skip);
   buf_push(out, "</p>\n");
   return State { ...s, w: w, open: false };
 }
