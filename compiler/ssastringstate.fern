@@ -127,7 +127,7 @@ pub function shift(s: State, r: value.Interval, op: isa.Op): State {
 
 pub struct Instructions {
   address: (State, value.Interval, isa.Op) => i32,
-  store: (State, value.Interval, i32, i32, Word) => State,
+  heap_store: (State, value.Interval, i32, i32, Word) => State,
   stack_step: (State, value.Interval, isa.Op) => State,
   pointer_lea: (State, isa.Op) => State,
   comparison: (State, value.Interval, isa.Op) => State,
@@ -136,11 +136,18 @@ pub struct Instructions {
   heap_operation: (State, value.Interval, isa.Op) => State,
 }
 
+pub function store(s: State, r: value.Interval, at: i32, width: i32, w: Word, heap_store: (State, value.Interval, i32, i32, Word) => State): State {
+  if (at >= 6 && at + width / 32 <= 16) {
+    return put(s, at, width, w);
+  }
+  return heap_store(s, r, at, width, w);
+}
+
 function movement(s: State, r: value.Interval, op: isa.Op, ops: Instructions): State {
   return match (op.kind) {
     2 => write(s, op.destination, narrowed(r, s.regs[op.source], op.width)),
     3 => write(s, op.destination, read(s, r, ops.address(s, r, op), op.width)),
-    4 => ops.store(s, r, ops.address(s, r, op), op.width, s.regs[op.source]),
+    4 => store(s, r, ops.address(s, r, op), op.width, s.regs[op.source], ops.heap_store),
     5 => write(s, op.destination, narrowed(r, numeric(r, value.number(r, op.immediate as i64)), op.width)),
     _ => ops.stack_step(s, r, op),
   };
@@ -161,7 +168,7 @@ function extended(s: State, r: value.Interval, pc: i32, op: isa.Op, ops: Instruc
     return write(s, op.destination, identity(7, 0));
   }
   if (op.kind == 22) {
-    return ops.store(s, r, ops.address(s, r, op), op.width, numeric(r, value.number(r, op.immediate as i64)));
+    return store(s, r, ops.address(s, r, op), op.width, numeric(r, value.number(r, op.immediate as i64)), ops.heap_store);
   }
   if (op.kind == 23 || op.kind == 27) {
     return ops.test(s, r, op);

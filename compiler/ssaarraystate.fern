@@ -2,31 +2,23 @@
 import "./ssacondition" as condition;
 import "./ssacapacityisa" as isa;
 import "./ssaaffinevalue" as affine;
+import "./ssaaffinehalf" as half;
+pub use "./ssaaffinehalf".{Half, token, same_half};
 
-pub struct Half { kind: i32, identity: i32, part: i32, number: affine.Value }
+pub struct Word { low: half.Half, high: half.Half }
 
-pub struct Word { low: Half, high: Half }
-
-pub struct State { regs: Word[], cells: Half[], flags: condition.Flags, ok: boolean, zeros: i32, links: i32, slots: i32, call_return: i32 }
-
-pub function token(kind: i32, identity: i32, part: i32): Half {
-  return Half { kind: kind, identity: identity, part: part, number: affine.unknown() };
-}
+pub struct State { regs: Word[], cells: half.Half[], flags: condition.Flags, ok: boolean, zeros: i32, links: i32, slots: i32, call_return: i32 }
 
 pub function identity(kind: i32, id: i32): Word {
-  return Word { low: token(kind, id, 0), high: token(kind, id, 1) };
+  return Word { low: half.token(kind, id, 0), high: half.token(kind, id, 1) };
 }
 
-pub function numeric_half(v: affine.Value): Half {
-  return Half { kind: 1, identity: 0, part: 0, number: v };
-}
-
-pub function same_half(a: Half, b: Half): boolean {
-  return a.kind == b.kind && a.identity == b.identity && a.part == b.part && a.number.factor == b.number.factor && a.number.offset == b.number.offset;
+pub function numeric_half(v: affine.Value): half.Half {
+  return half.Half { kind: 1, identity: 0, part: 0, number: v };
 }
 
 pub function same_word(a: Word, b: Word): boolean {
-  return same_half(a.low, b.low) && same_half(a.high, b.high);
+  return half.same_half(a.low, b.low) && half.same_half(a.high, b.high);
 }
 
 pub function write(s: State, reg: i32, w: Word): State {
@@ -110,7 +102,7 @@ function unguarded(s: State, original: State, r: affine.Interval, expected_regis
     i += 1;
   }
   for i in 0..s.cells.len() {
-    if (!same_half(s.cells[i], original.cells[i])) {
+    if (!half.same_half(s.cells[i], original.cells[i])) {
       return State { ...s, ok: false };
     }
   }

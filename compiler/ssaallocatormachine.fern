@@ -74,18 +74,6 @@ function cell_extent(kind: i32, at: i64, bytes: i32, request: i32): i32 {
   return -1;
 }
 
-function address(s: machine.State, op: isa.Op, request: i32): i32 {
-  let offset = op.offset as i64;
-  if (op.index >= 0) {
-    let index = s.regs[op.index];
-    if (!machineword.unsigned(index) || index.low.identity > 64) {
-      return -1;
-    }
-    offset = offset + index.low.identity * (op.scale as i64);
-  }
-  return cell(s.regs[op.base], offset, op.width, request);
-}
-
 function writable(at: i32, bump: boolean): boolean {
   return at >= 0 && at < 16 || at >= (if (bump) { 22 } else { 20 }) && at < (if (bump) { 24 } else { 22 }) || link_word(at, bump);
 }
@@ -116,7 +104,7 @@ function stack(s: machine.State, op: isa.Op, request: i32, bump: boolean): machi
     return machine.State { ...s, ok: false };
   }
   if (op.kind == 6 || op.kind == 32) {
-    let at = if (op.kind == 32) { address(s, op, request) } else { 0 };
+    let at = if (op.kind == 32) { machine.address(s, op, request, cell) } else { 0 };
     if (at < 0) {
       return machine.State { ...s, ok: false };
     }
@@ -135,7 +123,7 @@ function pop(s: machine.State, op: isa.Op, request: i32, bump: boolean): machine
   }
   let w = machine.load(s, at, 64);
   let advanced = machine.write(s, 4, machineword.token(2, sp.low.identity + 8));
-  return if (op.kind == 33) { store(advanced, address(advanced, op, request), 64, w, bump) } else { machine.write(advanced, op.destination, w) };
+  return if (op.kind == 33) { store(advanced, machine.address(advanced, op, request, cell), 64, w, bump) } else { machine.write(advanced, op.destination, w) };
 }
 
 function shifted(s: machine.State, reg: i32, w: machineword.Word, delta: i64, request: i32): machine.State {
@@ -143,32 +131,6 @@ function shifted(s: machine.State, reg: i32, w: machineword.Word, delta: i64, re
   let low = if (w.low.kind == 2) { -(64 as i64) } else { 0 as i64 };
   let high = if (w.low.kind == 3) { request as i64 } else { if (w.low.kind == 2) { 16 as i64 } else { 64 as i64 } };
   return if (at >= low && at <= high) { machine.write(s, reg, machineword.token(w.low.kind, at)) } else { machine.State { ...s, ok: false } };
-}
-
-function immediate_add(s: machine.State, op: isa.Op, request: i32): machine.State {
-  let w = s.regs[op.destination];
-  let delta = if (op.kind == 9) { -(op.immediate as i64) } else { op.immediate as i64 };
-  if (machine.pointer(w) && op.width == 64) {
-    return shifted(s, op.destination, w, delta, request);
-  }
-  if (!machineword.unsigned(w)) {
-    return machine.State { ...s, ok: false };
-  }
-  let n = w.low.identity + delta;
-  return if (n >= 0 && n <= 4294967295) { machine.write(s, op.destination, machineword.number(n)) } else { machine.State { ...s, ok: false } };
-}
-
-function arithmetic(s: machine.State, op: isa.Op, request: i32): machine.State {
-  let cleared = machine.unknown(s);
-  if (op.source < 0) {
-    return immediate_add(cleared, op, request);
-  }
-  if (op.width != 64) {
-    return machine.State { ...s, ok: false };
-  }
-  let a = s.regs[op.destination];
-  let b = s.regs[op.source];
-  return register_arithmetic(cleared, op, a, b, request);
 }
 
 function register_arithmetic(s: machine.State, op: isa.Op, a: machineword.Word, b: machineword.Word, request: i32): machine.State {
@@ -301,7 +263,7 @@ function mask(s: machine.State, op: isa.Op): machine.State {
 }
 
 function memory_step(s: machine.State, op: isa.Op, request: i32, bump: boolean): machine.State {
-  let at = address(s, op, request);
+  let at = machine.address(s, op, request, cell);
   if (op.kind == 3) {
     return machine.read(s, at, op.width, op.destination);
   }
@@ -343,7 +305,7 @@ function other_step(s: machine.State, op: isa.Op, request: i32, bump: boolean): 
     return colour_step(s, op, request, bump);
   }
   if (op.kind == 9 || op.kind == 10) {
-    return arithmetic(s, op, request);
+    return machine.arithmetic(s, op, request, shifted, register_arithmetic);
   }
   if (op.kind == 11) {
     return mask(s, op);
@@ -354,17 +316,7 @@ function other_step(s: machine.State, op: isa.Op, request: i32, bump: boolean): 
   if (op.kind >= 29 && op.kind <= 30 || op.kind == 34) {
     return global_step(s, op, request, bump);
   }
-  return compare_or_simple(s, op, request);
-}
-
-function compare_or_simple(s: machine.State, op: isa.Op, request: i32): machine.State {
-  if (op.kind == 16) {
-    return comparison(s, s.regs[op.source], machineword.number(op.immediate as i64), op.width, request);
-  }
-  if (op.kind == 28) {
-    return comparison(s, s.regs[op.destination], s.regs[op.source], op.width, request);
-  }
-  return simple(s, op, request);
+  return machine.compare_or_simple(s, op, request, comparison, simple);
 }
 
 function finished_memory(s: machine.State, original: machine.State, request: i32, bump: boolean): boolean {

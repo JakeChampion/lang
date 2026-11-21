@@ -1,30 +1,25 @@
+import "./ssaaffinehalf" as half;
 import "./ssacondition" as condition;
 import "./ssacapacityisa" as isa;
 import "./ssalargepushwidevalue" as value;
 import "./ssalargepushwideranges" as ranges;
 import "./ssalargepushwideisa" as decoder;
 
-struct Half { kind: i32, identity: i32, part: i32, number: value.Value }
-
-struct Word { low: Half, high: Half, full: value.Value }
+struct Word { low: half.Half, high: half.Half, full: value.Value }
 
 struct Flow { state: State, next: i32 }
 
-struct State { regs: Word[], cells: Half[], flags: condition.Comparison, ok: boolean, oversized: boolean, block_writes: i32, slot_writes: i32 }
-
-function token(kind: i32, identity: i32, part: i32): Half {
-  return Half { kind: kind, identity: identity, part: part, number: value.unknown() };
-}
+struct State { regs: Word[], cells: half.Half[], flags: condition.Comparison, ok: boolean, oversized: boolean, block_writes: i32, slot_writes: i32 }
 
 function identity(kind: i32, id: i32): Word {
-  return Word { low: token(kind, id, 0), high: token(kind, id, 1), full: value.unknown() };
+  return Word { low: half.token(kind, id, 0), high: half.token(kind, id, 1), full: value.unknown() };
 }
 
-function numeric_half(v: value.Value): Half {
-  return Half { kind: if (v.factor < 0) { 0 } else { 1 }, identity: 0, part: 0, number: v };
+function numeric_half(v: value.Value): half.Half {
+  return half.Half { kind: if (v.factor < 0) { 0 } else { 1 }, identity: 0, part: 0, number: v };
 }
 
-function zero(r: ranges.Interval): Half {
+function zero(r: ranges.Interval): half.Half {
   return numeric_half(value.number(r, 0 as i64));
 }
 
@@ -52,12 +47,8 @@ function number(r: ranges.Interval, w: Word, width: i32): value.Value {
   return if (w.high.kind == 1) { value.join32(r, w.low.number, w.high.number) } else { value.unknown() };
 }
 
-function same_half(a: Half, b: Half): boolean {
-  return a.kind == b.kind && a.identity == b.identity && a.part == b.part && a.number.factor == b.number.factor && a.number.offset == b.number.offset;
-}
-
 function same_word(a: Word, b: Word): boolean {
-  return same_half(a.low, b.low) && same_half(a.high, b.high) && a.full.factor == b.full.factor && a.full.offset == b.full.offset;
+  return half.same_half(a.low, b.low) && half.same_half(a.high, b.high) && a.full.factor == b.full.factor && a.full.offset == b.full.offset;
 }
 
 function initial_register(r: ranges.Interval, reg: i32, oversized: boolean): Word {
@@ -75,7 +66,7 @@ function initial(r: ranges.Interval, oversized: boolean, duplicate: boolean): St
     regs = regs.append(initial_register(r, reg, oversized));
   }
   let head = identity(if (duplicate) { 8 } else { 6 }, 0);
-  let cells = [token(5, 0, 0), token(5, 0, 1), head.low, head.high, token(4, 0, 0), token(4, 0, 1)];
+  let cells = [half.token(5, 0, 0), half.token(5, 0, 1), head.low, head.high, half.token(4, 0, 0), half.token(4, 0, 1)];
   return State { regs: regs, cells: cells, flags: condition.unknown_order(), ok: true, oversized: oversized, block_writes: 0, slot_writes: 0 };
 }
 

@@ -106,3 +106,51 @@ pub function next_pc(s: State, op: isa.Op, pc: i32, carry_aliases: boolean): i32
   }
   return if (taken == 1) { op.target } else { pc + 1 };
 }
+
+pub function address(s: State, op: isa.Op, request: i32, cell: (machineword.Word, i64, i32, i32) => i32): i32 {
+  let offset = op.offset as i64;
+  if (op.index >= 0) {
+    let index = s.regs[op.index];
+    if (!machineword.unsigned(index) || index.low.identity > 64) {
+      return -1;
+    }
+    offset = offset + index.low.identity * (op.scale as i64);
+  }
+  return cell(s.regs[op.base], offset, op.width, request);
+}
+
+function immediate_add(s: State, op: isa.Op, request: i32, shifted: (State, i32, machineword.Word, i64, i32) => State): State {
+  let w = s.regs[op.destination];
+  let delta = if (op.kind == 9) { -(op.immediate as i64) } else { op.immediate as i64 };
+  if (pointer(w) && op.width == 64) {
+    return shifted(s, op.destination, w, delta, request);
+  }
+  if (!machineword.unsigned(w)) {
+    return State { ...s, ok: false };
+  }
+  let n = w.low.identity + delta;
+  return if (n >= 0 && n <= 4294967295) { write(s, op.destination, machineword.number(n)) } else { State { ...s, ok: false } };
+}
+
+pub function arithmetic(s: State, op: isa.Op, request: i32, shifted: (State, i32, machineword.Word, i64, i32) => State, register_arithmetic: (State, isa.Op, machineword.Word, machineword.Word, i32) => State): State {
+  let cleared = unknown(s);
+  if (op.source < 0) {
+    return immediate_add(cleared, op, request, shifted);
+  }
+  if (op.width != 64) {
+    return State { ...s, ok: false };
+  }
+  let a = s.regs[op.destination];
+  let b = s.regs[op.source];
+  return register_arithmetic(cleared, op, a, b, request);
+}
+
+pub function compare_or_simple(s: State, op: isa.Op, request: i32, comparison: (State, machineword.Word, machineword.Word, i32, i32) => State, simple: (State, isa.Op, i32) => State): State {
+  if (op.kind == 16) {
+    return comparison(s, s.regs[op.source], machineword.number(op.immediate as i64), op.width, request);
+  }
+  if (op.kind == 28) {
+    return comparison(s, s.regs[op.destination], s.regs[op.source], op.width, request);
+  }
+  return simple(s, op, request);
+}

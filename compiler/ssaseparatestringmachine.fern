@@ -68,13 +68,6 @@ function indexed_slot(s: machine.State, r: value.Interval, op: isa.Op, w: machin
   return if (machine.same_word(s.regs[op.index], machine.numeric(r, value.expected_small(r, false)))) { buffer_slot(r) + op.offset / 4 } else { -1 };
 }
 
-function store(s: machine.State, r: value.Interval, at: i32, width: i32, w: machine.Word): machine.State {
-  if (at >= 6 && at + width / 32 <= 16) {
-    return machine.put(s, at, width, w);
-  }
-  return heap_store(s, r, at, width, w);
-}
-
 function heap_store(s: machine.State, r: value.Interval, at: i32, width: i32, w: machine.Word): machine.State {
   if (at == 0 && width == 32 && s.zeros == 0 && s.links == 0 && buffer_done(s, r) && machine.same_half(w.low, machine.zero(r))) {
     return machine.put(machine.State { ...s, zeros: 1 }, at, width, w);
@@ -116,7 +109,7 @@ function stack_step(s: machine.State, r: value.Interval, op: isa.Op): machine.St
   if (op.kind == 6) {
     let saved = s.regs[op.source];
     let at = simple_address(s.regs[4], -8, 64);
-    return machine.write(store(s, r, at, 64, saved), 4, machine.identity(3, sp - 8));
+    return machine.write(machine.store(s, r, at, 64, saved, heap_store), 4, machine.identity(3, sp - 8));
   }
   if (op.destination == 4) {
     return machine.State { ...s, ok: false };
@@ -313,7 +306,7 @@ function unguarded(s: machine.State, original: machine.State, r: value.Interval)
 }
 
 function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean, family: i32): boolean {
-  let ops = machine.Instructions { address: address, store: store, stack_step: stack_step, pointer_lea: pointer_lea, comparison: comparison, test: test, dependency_call: dependency_call, heap_operation: heap_operation };
+  let ops = machine.Instructions { address: address, heap_store: heap_store, stack_step: stack_step, pointer_lea: pointer_lea, comparison: comparison, test: test, dependency_call: dependency_call, heap_operation: heap_operation };
   return machine.path(p, r, register_entry, initial(r, register_entry, family), unguarded, ops, finished);
 }
 
