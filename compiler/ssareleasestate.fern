@@ -3,16 +3,20 @@ import "./ssacondition" as condition;
 import "./ssaaffinevalue" as affine;
 import "./ssaaffinehalf" as half;
 
-pub struct Word { low: half.Half, high: half.Half }
+pub struct Word { low: half.Half, high: half.Half, full: affine.Value }
 
-pub struct State { regs: Word[], cells: half.Half[], flags: condition.Flags, ok: boolean, zeros: i32, links: i32, slots: i32, call_return: i32, grown: boolean, family: i32, buffer_links: i32, buffer_slots: i32 }
+pub struct State { regs: Word[], cells: half.Half[], flags: condition.Flags, ok: boolean, zeros: i32, links: i32, slots: i32, call_return: i32, grown: boolean, family: i32, buffer_links: i32, buffer_slots: i32, oversized: boolean, block_writes: i32, slot_writes: i32 }
 
 pub function initial(regs: Word[], cells: half.Half[], grown: boolean, family: i32): State {
-  return State { regs: regs, cells: cells, flags: condition.unknown_flags(), ok: true, zeros: 0, links: 0, slots: 0, call_return: -1, grown: grown, family: family, buffer_links: 0, buffer_slots: 0 };
+  return State { regs: regs, cells: cells, flags: condition.unknown_flags(), ok: true, zeros: 0, links: 0, slots: 0, call_return: -1, grown: grown, family: family, buffer_links: 0, buffer_slots: 0, oversized: false, block_writes: 0, slot_writes: 0 };
+}
+
+pub function from_halves(low: half.Half, high: half.Half): Word {
+  return Word { low: low, high: high, full: affine.unknown() };
 }
 
 pub function identity(kind: i32, id: i32): Word {
-  return Word { low: half.token(kind, id, 0), high: half.token(kind, id, 1) };
+  return from_halves(half.token(kind, id, 0), half.token(kind, id, 1));
 }
 
 pub function numeric_half(v: affine.Value): half.Half {
@@ -20,7 +24,7 @@ pub function numeric_half(v: affine.Value): half.Half {
 }
 
 pub function same_word(a: Word, b: Word): boolean {
-  return half.same_half(a.low, b.low) && half.same_half(a.high, b.high);
+  return half.same_half(a.low, b.low) && half.same_half(a.high, b.high) && a.full.factor == b.full.factor && a.full.offset == b.full.offset && a.full.residue == b.full.residue;
 }
 
 pub function write(s: State, reg: i32, w: Word): State {
@@ -41,4 +45,8 @@ pub function put(s: State, at: i32, width: i32, w: Word): State {
     cells = cells.with(at + 1, w.high);
   }
   return State { ...s, cells: cells };
+}
+
+pub function with_order(s: State, order: condition.Comparison): State {
+  return State { ...s, flags: condition.Flags { ...s.flags, order: order } };
 }

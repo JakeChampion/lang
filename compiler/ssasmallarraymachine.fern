@@ -27,10 +27,6 @@ function initial(r: value.Interval, register_entry: boolean): machine.State {
   return machine.initial(regs, cells, false, 0);
 }
 
-function narrowed(r: value.Interval, w: machine.Word, width: i32): machine.Word {
-  return if (width == 32) { machine.Word { low: w.low, high: capacityword.zero(r) } } else { w };
-}
-
 function simple_address(w: machine.Word, offset: i32, width: i32): i32 {
   let at = w.low.identity as i64 + offset as i64;
   if (machine.pointer(w, 3) && machine.extent(at, -40, 16, width)) {
@@ -61,7 +57,7 @@ function read(s: machine.State, r: value.Interval, at: i32, width: i32): machine
   if (at < 0) {
     return machine.identity(0, 0);
   }
-  return machine.Word { low: s.cells[at], high: if (width == 64) { s.cells[at + 1] } else { capacityword.zero(r) } };
+  return machine.from_halves(s.cells[at], if (width == 64) { s.cells[at + 1] } else { capacityword.zero(r) });
 }
 
 function store(s: machine.State, r: value.Interval, at: i32, width: i32, w: machine.Word): machine.State {
@@ -107,10 +103,10 @@ function stack_step(s: machine.State, r: value.Interval, op: isa.Op): machine.St
 
 function movement(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
   return match (op.kind) {
-    2 => machine.write(s, op.destination, narrowed(r, s.regs[op.source], op.width)),
+    2 => machine.write(s, op.destination, capacityword.narrowed(r, s.regs[op.source], op.width)),
     3 => machine.write(s, op.destination, read(s, r, address(s, r, op), op.width)),
     4 => store(s, r, address(s, r, op), op.width, s.regs[op.source]),
-    5 => machine.write(s, op.destination, narrowed(r, capacityword.numeric(r, value.number(r, op.immediate as i64)), op.width)),
+    5 => machine.write(s, op.destination, capacityword.narrowed(r, capacityword.numeric(r, value.number(r, op.immediate as i64)), op.width)),
     _ => stack_step(s, r, op),
   };
 }

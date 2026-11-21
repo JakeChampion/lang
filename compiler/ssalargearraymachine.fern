@@ -18,7 +18,7 @@ function numeric(r: value.Interval, v: value.Value): machine.Word {
   if (!value.valid(r, low) || !value.valid(r, high)) {
     return machine.identity(0, 0);
   }
-  return machine.Word { low: machine.numeric_half(low), high: machine.numeric_half(high) };
+  return machine.from_halves(machine.numeric_half(low), machine.numeric_half(high));
 }
 
 function number(r: value.Interval, w: machine.Word, width: i32): value.Value {
@@ -46,7 +46,7 @@ function initial(r: value.Interval, register_entry: boolean): machine.State {
 }
 
 function narrowed(r: value.Interval, w: machine.Word, width: i32): machine.Word {
-  return if (width == 32) { machine.Word { low: w.low, high: zero(r) } } else { w };
+  return if (width == 32) { machine.from_halves(w.low, zero(r)) } else { w };
 }
 
 function simple_address(w: machine.Word, offset: i32, width: i32): i32 {
@@ -82,7 +82,7 @@ function read(s: machine.State, r: value.Interval, at: i32, width: i32): machine
   if (at < 0) {
     return machine.identity(0, 0);
   }
-  return machine.Word { low: s.cells[at], high: if (width == 64) { s.cells[at + 1] } else { zero(r) } };
+  return machine.from_halves(s.cells[at], if (width == 64) { s.cells[at + 1] } else { zero(r) });
 }
 
 function store(s: machine.State, r: value.Interval, at: i32, width: i32, w: machine.Word): machine.State {

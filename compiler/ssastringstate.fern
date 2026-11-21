@@ -18,7 +18,7 @@ pub function numeric(r: value.Interval, v: value.Value): shared.Word {
   let lo = value.lower(r, v);
   let hi = value.upper(r, v);
   let high = if (lo.high == hi.high) { shared.numeric_half(value.number(r, hi.high)) } else { half.Half { kind: 1, identity: 0, part: 1, number: v } };
-  return shared.Word { low: shared.numeric_half(v), high: high };
+  return shared.from_halves(shared.numeric_half(v), high);
 }
 
 pub function number(r: value.Interval, w: shared.Word, width: i32): value.Value {
@@ -32,14 +32,14 @@ pub function number(r: value.Interval, w: shared.Word, width: i32): value.Value 
 }
 
 pub function narrowed(r: value.Interval, w: shared.Word, width: i32): shared.Word {
-  return if (width == 32) { shared.Word { low: w.low, high: zero(r) } } else { w };
+  return if (width == 32) { shared.from_halves(w.low, zero(r)) } else { w };
 }
 
 pub function read(s: shared.State, r: value.Interval, at: i32, width: i32): shared.Word {
   if (at < 0) {
     return shared.identity(0, 0);
   }
-  return shared.Word { low: s.cells[at], high: if (width == 64) { s.cells[at + 1] } else { zero(r) } };
+  return shared.from_halves(s.cells[at], if (width == 64) { s.cells[at + 1] } else { zero(r) });
 }
 
 pub function arithmetic(s: shared.State, r: value.Interval, op: isa.Op): shared.State {

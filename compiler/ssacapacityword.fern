@@ -19,7 +19,7 @@ pub function numeric(r: value.Interval, v: value.Value): machine.Word {
     return machine.identity(0, 0);
   }
   let high = if (nonnegative(r, v)) { 0 as i64 } else { 4294967295 as i64 };
-  return machine.Word { low: machine.numeric_half(low), high: machine.numeric_half(value.number(r, high)) };
+  return machine.from_halves(machine.numeric_half(low), machine.numeric_half(value.number(r, high)));
 }
 
 pub function number(r: value.Interval, w: machine.Word, width: i32): value.Value {
@@ -40,4 +40,8 @@ pub function number(r: value.Interval, w: machine.Word, width: i32): value.Value
     return if (value.valid(r, v)) { v } else { value.unknown() };
   }
   return value.unknown();
+}
+
+pub function narrowed(r: value.Interval, w: machine.Word, width: i32): machine.Word {
+  return if (width == 32) { machine.from_halves(w.low, zero(r)) } else { w };
 }

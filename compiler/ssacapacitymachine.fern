@@ -4,9 +4,7 @@ import "./ssacondition" as condition;
 import "./ssacapacityisa" as isa;
 import "./ssacapacityvalue" as value;
 
-struct State { regs: machine.Word[], cells: machine.Half[], flags: condition.Comparison, ok: boolean }
-
-function initial(r: value.Interval): State {
+function initial(r: value.Interval): machine.State {
   let regs: machine.Word[] = [];
   let cells: machine.Half[] = [];
   let i = 0;
@@ -19,87 +17,71 @@ function initial(r: value.Interval): State {
   }
   let argument = capacityword.numeric(r, value.original(r));
   cells = cells.append(machine.token(4, 0, 0)).append(machine.token(4, 0, 1)).append(argument.low).append(argument.high);
-  return State { regs: regs, cells: cells, flags: condition.unknown_order(), ok: true };
+  return machine.initial(regs, cells, false, 0);
 }
 
-function write(s: State, reg: i32, w: machine.Word): State {
-  return State { ...s, regs: s.regs.with(reg, w), ok: s.ok && w.low.kind != 0 && w.high.kind != 0 };
-}
-
-function narrowed(r: value.Interval, w: machine.Word, width: i32): machine.Word {
-  return if (width == 32) { machine.Word { low: w.low, high: capacityword.zero(r) } } else { w };
-}
-
-function stack(w: machine.Word): boolean {
-  return w.low.kind == 3 && machine.same_word(w, machine.identity(3, w.low.identity));
-}
-
-function address(s: State, base: i32, offset: i32, width: i32): i32 {
+function address(s: machine.State, base: i32, offset: i32, width: i32): i32 {
   let w = s.regs[base];
-  if (!stack(w) || width != 32 && width != 64) {
+  if (!machine.pointer(w, 3)) {
     return -1;
   }
   let at = w.low.identity as i64 + offset as i64;
-  if (at < -(24 as i64) || at + (width / 8) as i64 > 16 as i64 || at % (4 as i64) != 0) {
+  if (!machine.extent(at, -24, 16, width)) {
     return -1;
   }
   return (at as i32 + 24) / 4;
 }
 
-function read(s: State, r: value.Interval, at: i32, width: i32): machine.Word {
+function read(s: machine.State, r: value.Interval, at: i32, width: i32): machine.Word {
   if (at < 0) {
     return machine.identity(0, 0);
   }
-  return machine.Word { low: s.cells[at], high: if (width == 64) { s.cells[at + 1] } else { capacityword.zero(r) } };
+  return machine.from_halves(s.cells[at], if (width == 64) { s.cells[at + 1] } else { capacityword.zero(r) });
 }
 
-function store(s: State, at: i32, width: i32, w: machine.Word): State {
+function store(s: machine.State, at: i32, width: i32, w: machine.Word): machine.State {
   if (at < 0 || at <= 7 && at + width / 32 > 6) {
-    return State { ...s, ok: false };
+    return machine.State { ...s, ok: false };
   }
-  let cells = s.cells.with(at, w.low);
-  if (width == 64) {
-    cells = cells.with(at + 1, w.high);
-  }
-  return State { ...s, cells: cells };
+  return machine.put(s, at, width, w);
 }
 
-function stack_step(s: State, r: value.Interval, op: isa.Op): State {
-  if (!stack(s.regs[4])) {
-    return State { ...s, ok: false };
+function stack_step(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
+  if (!machine.pointer(s.regs[4], 3)) {
+    return machine.State { ...s, ok: false };
   }
   let sp = s.regs[4].low.identity;
   if (op.kind == 6) {
     let saved = s.regs[op.source];
     let at = address(s, 4, -8, 64);
     let pushed = store(s, at, 64, saved);
-    return write(pushed, 4, machine.identity(3, sp - 8));
+    return machine.write(pushed, 4, machine.identity(3, sp - 8));
   }
   if (op.destination == 4) {
-    return State { ...s, ok: false };
+    return machine.State { ...s, ok: false };
   }
   let loaded = read(s, r, address(s, 4, 0, 64), 64);
-  return write(write(s, 4, machine.identity(3, sp + 8)), op.destination, loaded);
+  return machine.write(machine.write(s, 4, machine.identity(3, sp + 8)), op.destination, loaded);
 }
 
-function movement(s: State, r: value.Interval, op: isa.Op): State {
+function movement(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
   if (op.kind == 2) {
-    return write(s, op.destination, narrowed(r, s.regs[op.source], op.width));
+    return machine.write(s, op.destination, capacityword.narrowed(r, s.regs[op.source], op.width));
   }
   if (op.kind == 3) {
-    return write(s, op.destination, read(s, r, address(s, op.base, op.offset, op.width), op.width));
+    return machine.write(s, op.destination, read(s, r, address(s, op.base, op.offset, op.width), op.width));
   }
   if (op.kind == 4) {
     return store(s, address(s, op.base, op.offset, op.width), op.width, s.regs[op.source]);
   }
   if (op.kind == 5) {
     let w = capacityword.numeric(r, value.number(r, op.immediate as i64));
-    return write(s, op.destination, narrowed(r, w, op.width));
+    return machine.write(s, op.destination, capacityword.narrowed(r, w, op.width));
   }
   return stack_step(s, r, op);
 }
 
-function arithmetic_source(s: State, r: value.Interval, op: isa.Op): value.Value {
+function arithmetic_source(s: machine.State, r: value.Interval, op: isa.Op): value.Value {
   return if (op.source < 0) { value.number(r, op.immediate as i64) } else { capacityword.number(r, s.regs[op.source], op.width) };
 }
 
@@ -127,19 +109,19 @@ function shift(r: value.Interval, v: value.Value, count: value.Value, left: bool
   return value.number(r, n);
 }
 
-function shifted(s: State, r: value.Interval, op: isa.Op): State {
+function shifted(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
   let count = capacityword.number(r, s.regs[1], 32);
   if (!value.valid(r, count) || count.factor != 0) {
-    return State { ...s, ok: false };
+    return machine.State { ...s, ok: false };
   }
   let masked = value.number(r, count.offset % (op.width as i64));
-  let flags = if (masked.offset == 0) { s.flags } else { condition.unknown_order() };
+  let flags = if (masked.offset == 0) { s.flags.order } else { condition.unknown_order() };
   let v = capacityword.number(r, s.regs[op.destination], op.width);
-  let result = if (masked.offset == 0) { narrowed(r, s.regs[op.destination], op.width) } else { capacityword.numeric(r, shift(r, v, masked, op.kind == 13)) };
-  return write(State { ...s, flags: flags }, op.destination, result);
+  let result = if (masked.offset == 0) { capacityword.narrowed(r, s.regs[op.destination], op.width) } else { capacityword.numeric(r, shift(r, v, masked, op.kind == 13)) };
+  return machine.write(machine.with_order(s, flags), op.destination, result);
 }
 
-function calculated(s: State, r: value.Interval, op: isa.Op): value.Value {
+function calculated(s: machine.State, r: value.Interval, op: isa.Op): value.Value {
   let a = capacityword.number(r, s.regs[op.destination], op.width);
   if (op.kind == 12) {
     return value.negate(r, a);
@@ -151,7 +133,7 @@ function calculated(s: State, r: value.Interval, op: isa.Op): value.Value {
   return add_sub(r, a, b, op.kind == 9, op.width);
 }
 
-function arithmetic(s: State, r: value.Interval, op: isa.Op): State {
+function arithmetic(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
   if (op.kind == 13 || op.kind == 14) {
     return shifted(s, r, op);
   }
@@ -164,29 +146,29 @@ function arithmetic(s: State, r: value.Interval, op: isa.Op): State {
   } else {
     v = calculated(s, r, op);
   }
-  let w = narrowed(r, capacityword.numeric(r, v), op.width);
-  return write(State { ...s, flags: condition.unknown_order() }, op.destination, w);
+  let w = capacityword.narrowed(r, capacityword.numeric(r, v), op.width);
+  return machine.write(machine.with_order(s, condition.unknown_order()), op.destination, w);
 }
 
-function lea(s: State, r: value.Interval, op: isa.Op): State {
+function lea(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
   let base = capacityword.number(r, s.regs[op.base], 64);
   let index = if (op.index < 0) { value.number(r, 0 as i64) } else { capacityword.number(r, s.regs[op.index], 64) };
   if (!value.valid(r, index) || index.factor != 0) {
-    return State { ...s, ok: false };
+    return machine.State { ...s, ok: false };
   }
   let result = value.add(r, base, index.offset * (op.scale as i64) + op.offset as i64);
-  return write(s, op.destination, capacityword.numeric(r, result));
+  return machine.write(s, op.destination, capacityword.numeric(r, result));
 }
 
-function comparison(s: State, r: value.Interval, op: isa.Op): State {
+function comparison(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
   let v = capacityword.number(r, s.regs[op.source], op.width);
   if (!capacityword.nonnegative(r, v) || op.immediate < 0) {
-    return State { ...s, flags: condition.unknown_order() };
+    return machine.with_order(s, condition.unknown_order());
   }
-  return State { ...s, flags: value.compare(r, v, op.immediate as i64) };
+  return machine.with_order(s, value.compare(r, v, op.immediate as i64));
 }
 
-function step(s: State, r: value.Interval, op: isa.Op): State {
+function step(s: machine.State, r: value.Interval, op: isa.Op): machine.State {
   if (op.kind == 1) {
     return s;
   }
@@ -202,10 +184,10 @@ function step(s: State, r: value.Interval, op: isa.Op): State {
   if (op.kind == 16) {
     return comparison(s, r, op);
   }
-  return State { ...s, ok: false };
+  return machine.State { ...s, ok: false };
 }
 
-function finished(s: State, r: value.Interval): boolean {
+function finished(s: machine.State, r: value.Interval): boolean {
   for i in 0..16 {
     let expected = if (i == 4) { machine.identity(3, 0) } else { machine.identity(2, i) };
     if (!machine.same_word(s.regs[i], expected)) {
@@ -238,7 +220,7 @@ function path(p: isa.Program, r: value.Interval): boolean {
       return finished(s, r);
     }
     if (op.kind == 17) {
-      let taken = condition.unsigned_branch(s.flags, op.condition);
+      let taken = condition.unsigned_branch(s.flags.order, op.condition);
       if (taken < 0) {
         return false;
       }
