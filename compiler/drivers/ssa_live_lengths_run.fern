@@ -64,8 +64,28 @@ function call_crossings(): boolean {
     && unmarked.crossing_all == live.crossing_all;
 }
 
+// The first side entry bypasses the store. The second passes the store but
+// reaches an early read without passing through the header phi.
+function split_with_side_entry(skip_store: boolean, skip_phi: boolean): boolean {
+  let entry = ssa.SBlock { id: 0, insts: [inst(ssa.BINARY, 2, [0, 1], "add")], term: if (skip_store) { branch(0, 1, 6) } else { jump(1) }, preds: [] };
+  let pre = ssa.SBlock { id: 1, insts: [], term: if (skip_phi) { branch(0, 2, 3) } else { jump(2) }, preds: [0] };
+  let outer = ssa.SBlock { id: 2, insts: [], term: branch(0, 3, 8), preds: [1, 7] };
+  let early = ssa.SBlock { id: 3, insts: [inst(ssa.BINARY, 3, [2, 1], "sub")], term: jump(4), preds: if (skip_phi) { [1, 2] } else { [2] } };
+  let inner = ssa.SBlock { id: 4, insts: [], term: branch(3, 5, 6), preds: [3, 5] };
+  let inner_tail = ssa.SBlock { id: 5, insts: [], term: jump(4), preds: [4] };
+  let late = ssa.SBlock { id: 6, insts: [inst(ssa.BINARY, 4, [2, 1], "add")], term: branch(0, 7, 8), preds: if (skip_store) { [0, 4] } else { [4] } };
+  let outer_tail = ssa.SBlock { id: 7, insts: [], term: jump(2), preds: [6] };
+  let done = ssa.SBlock { id: 8, insts: [inst(ssa.PHI, 5, [0, 4], "")], term: ret(5), preds: [2, 6] };
+  let f = ssa.SFunc { name: "split_entry", nparams: 2, nvals: 6, blocks: [entry, pre, outer, early, inner, inner_tail, late, outer_tail, done], entry: 0, takes_env: false };
+  let split = ssa.split_spilled(f, [0, 1, -2, 0, 0, 0], []);
+  return ssalive.graph_error(f) == "" && split.cost > 0 == !(skip_store || skip_phi);
+}
+
 function main(): i32 {
   let failures = 0;
+  failures = check(split_with_side_entry(true, false), "a side entry must not bypass the split store", failures);
+  failures = check(split_with_side_entry(false, true), "a side entry must not bypass the split phi", failures);
+  failures = check(split_with_side_entry(false, false), "a single-entry loop still splits", failures);
   failures = check(call_crossings(), "the masks distinguish cold calls and exclude call results", failures);
   let f = two_loops();
   let live = ssalive.lives(f, ssa.hard_call_positions(f, []));
