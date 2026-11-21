@@ -1,3 +1,4 @@
+import "core/cmp";
 import "std/string";
 import "std/array";
 import "std/i64";
@@ -2145,35 +2146,8 @@ function ent_path(e: Ent): string {
   return attach(e.dir, e.name);
 }
 
-function dir_entries(c: Cfg, o: Out, path: string, seed: pwdb.Names): (Ent[], Out, pwdb.Names, boolean) {
+function dir_entries(c: Cfg, o: Out, path: string, seed: pwdb.Names, read: DirEntry[]): (Ent[], Out, pwdb.Names) {
   let out = o;
-  let read: DirEntry[] = [];
-  let failed = false;
-  let why = "";
-  if (c.ignore_mode == ignore_minimal()) {
-    match (read_dir_ino_all(path)) {
-      Ok(es) => {
-        read = es;
-      },
-      Err(e) => {
-        failed = true;
-        why = gnu.io_error_text(e);
-      }
-    }
-  } else {
-    match (read_dir_ino(path)) {
-      Ok(es) => {
-        read = es;
-      },
-      Err(e) => {
-        failed = true;
-        why = gnu.io_error_text(e);
-      }
-    }
-  }
-  if (failed) {
-    return ([], fail(out, "cannot open directory " + gnu.quotea(path) + ": " + why, status_minor()), seed, false);
-  }
   let list: Ent[] = [];
   for d in read {
     if (hidden(c, d.name) || ignored(c, d.name)) {
@@ -2182,7 +2156,7 @@ function dir_entries(c: Cfg, o: Out, path: string, seed: pwdb.Names): (Ent[], Ou
     list = list.append(Ent { ...ent_new(d.name, path), dkind: d.kind });
   }
   if (!needs_stat(c)) {
-    return (list, out, seed, true);
+    return (list, out, seed);
   }
   let ids = seed;
   let filled: Ent[] = [];
@@ -2210,29 +2184,96 @@ function dir_entries(c: Cfg, o: Out, path: string, seed: pwdb.Names): (Ent[], Ou
     ids = r2.1;
     k += 1;
   }
-  return (filled, out, ids, true);
+  return (filled, out, ids);
 }
 
 struct Pending { path: string }
 
 struct State { out: Out, paint: Paint, wrote: boolean, queue: Pending[], names: pwdb.Names }
 
-function list_dir(c: Cfg, st: State, p: Pending, header: boolean): State {
-  let r: (Ent[], Out, pwdb.Names, boolean) = dir_entries(c, st.out, p.path, st.names);
-  let es = r.0;
-  let state = State { ...st, out: r.1, names: r.2 };
-  if (!r.3) {
-    return state;
-  }
+function dir_header(c: Cfg, st: State, path: string, header: boolean): State {
+  let state = st;
   if (header) {
     if (state.wrote) {
       state = State { ...state, out: put(state.out, "\n") };
     }
     let h = dired_indent(c, state.out);
-    h = put_subdir(c, h, quoted_header(c, p.path));
+    h = put_subdir(c, h, quoted_header(c, path));
     state = State { ...state, out: put(h, ":\n") };
   }
-  state = State { ...state, wrote: true };
+  return State { ...state, wrote: true };
+}
+
+// These formats can write the filename bytes directly, without constructing a
+// text path for metadata or passing the name to a text quoting function.
+function raw_literal_listing(c: Cfg): boolean {
+  return c.format == fmt_single() && c.qstyle == qstyle_literal() && !c.qmark && !c.hyperlink && !c.dired && !needs_stat(c) && c.ignores.len() == 0 && c.hides.len() == 0 && c.ignore_mode != ignore_minimal() && (c.sort_key == sort_none() || c.sort_key == sort_name() || c.sort_key == sort_version());
+}
+
+function raw_order(a: DirEntryBytes, b: DirEntryBytes, version: boolean): i32 {
+  if (version) {
+    let r = vercmp.compare_arrays(a.name, 0, a.name.len(), b.name, 0, b.name.len());
+    if (r != 0) {
+      return r;
+    }
+  }
+  for i in 0..a.name.len() {
+    if (i == b.name.len()) {
+      return 1;
+    }
+    let diff = a.name[i] as i32 - b.name[i] as i32;
+    if (diff != 0) {
+      return diff;
+    }
+  }
+  return a.name.len() - b.name.len();
+}
+
+function list_raw(c: Cfg, st: State, path: string, header: boolean): State {
+  let entries = match (read_dir_ino_bytes(path)) {
+    Ok(es) => es,
+    Err(e) => { return State { ...st, out: fail(st.out, "cannot open directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e), status_minor()) }; },
+  };
+  if (c.sort_key != sort_none()) {
+    let version = c.sort_key == sort_version();
+    let reverse = c.reverse;
+    entries = cmp.sort_by(entries, (a: DirEntryBytes, b: DirEntryBytes): i32 => if (reverse) { raw_order(b, a, version) } else { raw_order(a, b, version) });
+  }
+  let state = dir_header(c, st, path, header);
+  let out = state.out;
+  for e in entries {
+    if (c.ignore_mode == ignore_default() && e.name[0] == 46u8 || c.ignore_backups && e.name[e.name.len() - 1] == 126u8) {
+      continue;
+    }
+    let name = e.name;
+    if (c.qmark_newline) {
+      for i in 0..name.len() {
+        if (name[i] == 10u8) {
+          name = name.with(i, 63u8);
+        }
+      }
+    }
+    out = put(put_bytes(out, name), eol(c));
+  }
+  return State { ...state, out: out };
+}
+
+function list_dir(c: Cfg, st: State, p: Pending, header: boolean): State {
+  let read = if (c.ignore_mode == ignore_minimal()) { read_dir_ino_all(p.path) } else { read_dir_ino(p.path) };
+  let entries = match (read) {
+    Ok(es) => es,
+    Err(e) => {
+      if let InvalidUtf8(_) = e {
+        if (raw_literal_listing(c)) {
+          return list_raw(c, st, p.path, header);
+        }
+      }
+      return State { ...st, out: fail(st.out, "cannot open directory " + gnu.quotea(p.path) + ": " + gnu.io_error_text(e), status_minor()) };
+    },
+  };
+  let r = dir_entries(c, st.out, p.path, st.names, entries);
+  let es = r.0;
+  let state = dir_header(c, State { ...st, out: r.1, names: r.2 }, p.path, header);
   es = sort_entries(c, es);
   if (c.format == fmt_long() || c.show_blocks) {
     state = State { ...state, out: emit_total(c, state.out, es) };
