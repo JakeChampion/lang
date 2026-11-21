@@ -4612,16 +4612,24 @@ function mark_above(b0: truetype.Extents, m: truetype.Extents, gap: i32): (truet
 // `r` with the glyph of the space for each default ignorable glyph, or with
 // no default ignorable glyphs in a font with no space.
 function hidden(f: truetype.Font, r: truetype.Run): truetype.Run {
+  let first = 0;
+  while (first < r.glyphs.len() && !truetype.is_ignorable(r.props[first])) {
+    first += 1;
+  }
+  if (first == r.glyphs.len()) {
+    return r;
+  }
   let space = f.glyph(0x20);
-  let gs = r.glyphs;
-  let any = false;
-  for i in 0..gs.len() {
+  if (space == 0) {
+    return without_ignorables(r);
+  }
+  let gs = r.glyphs.with(first, space);
+  for i in first + 1..gs.len() {
     if (truetype.is_ignorable(r.props[i])) {
       gs = gs.with(i, space);
-      any = true;
     }
   }
-  return if (!any || space != 0) { truetype.Run { ...r, glyphs: gs } } else { without_ignorables(r) };
+  return truetype.Run { ...r, glyphs: gs };
 }
 
 // `r` with no default ignorable glyphs. A cluster that only such a glyph
