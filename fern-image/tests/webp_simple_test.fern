@@ -1,5 +1,6 @@
 import "../packages/codecs/webp/vp8l";
 import "../packages/codecs/webp/webp";
+import "../packages/codecs/webp/writer";
 import "../packages/pixels/pixels";
 import "std/test";
 
@@ -129,11 +130,62 @@ function files(): test.TestOutcome {
   return test.pass();
 }
 
+function writer_roundtrip(): test.TestOutcome {
+  let limits = pixels.default_limits();
+  let Ok(image) = vp8l.decode_simple(mixed(), limits, active) else {
+    return test.fail("fixture");
+  };
+  let Ok(file) = writer.encode_simple(image, 256, active) else {
+    return test.fail("encode");
+  };
+  let Ok(copy) = webp.decode_simple(file, file.len(), limits, active) else {
+    return test.fail("round trip");
+  };
+  for i in 0..image.data.len() {
+    if (copy.data[i] != image.data[i]) {
+      return test.fail("samples");
+    }
+  }
+  if let Err(_) = writer.encode_simple(image, file.len(), active) {
+    return test.fail("exact budget");
+  }
+  if let Ok(_) = writer.encode_simple(image, file.len() - 1, active) {
+    return test.fail("output limit");
+  }
+  if let Ok(_) = writer.encode_simple(image, 256, stop) {
+    return test.fail("cancelled");
+  }
+  if let Ok(_) = writer.encode_simple(pixels.Image { ...image, data: image.data.with(0, 88) }, 256, active) {
+    return test.fail("third symbol");
+  }
+  if let Ok(_) = writer.encode_simple(pixels.Image { ...image, data: [] }, 256, active) {
+    return test.fail("short storage");
+  }
+  let Ok(rgb) = pixels.create(1, 2, 5, pixels.RGB8, limits) else {
+    return test.fail("padded input");
+  };
+  let src: u8[] = [8, 10, 12, 111, 222, 8, 10, 12, 55, 66];
+  let Ok(solid) = writer.encode_simple(pixels.Image { ...rgb, data: src }, 64, active) else {
+    return test.fail("solid");
+  };
+  let Ok(decoded) = webp.decode_simple(solid, solid.len(), limits, active) else {
+    return test.fail("solid decode");
+  };
+  let pixel: u8[] = [8, 10, 12, 255];
+  for i in 0..8 {
+    if (decoded.data[i] != pixel[i % 4]) {
+      return test.fail("RGB or padding");
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("VP8L simple literal payloads");
   r = r.it("independent RGBA samples", samples);
   r = r.it("bounds and unsupported features", rejects);
   r = r.it("single-chunk RIFF files and size limits", files);
   r = r.it("inverse subtract-green with modular channel sums", subtract_green);
+  r = r.it("bounded simple RGB and RGBA writer", writer_roundtrip);
   return r.finish();
 }

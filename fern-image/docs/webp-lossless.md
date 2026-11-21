@@ -19,7 +19,9 @@ and zero padding for an odd-sized chunk before passing the payload to the decode
 | Other VP8L tools | Predictor, cross-color and color-indexing transforms, color caches, multiple groups, general Huffman trees and LZ77 copies are outside this entry point. |
 | Container | Single-chunk RIFF/WEBP files containing a supported VP8L payload. Extended WebP, metadata chunks and animation require separate admission and validation. |
 | Lossy WebP | VP8 frames and separate ALPH streams require their own codecs. |
-| Encoding | No WebP writer is provided. |
+| Encoding | `writer.encode_simple` emits a single VP8L chunk for RGB8 or RGBA8 images with at most two distinct values per channel. A third value in any channel returns `Unsupported`. |
+
+The writer validates the source layout, skips row padding and preserves RGB samples under transparent alpha. It measures the exact encoded length before allocating the file, including the RIFF pad byte. Both passes check for cancellation at row boundaries.
 
 The checked-in tests compare exact RGBA bytes from libwebp for a two-row
 mixed-color image and a constant image. They also exercise every truncated
