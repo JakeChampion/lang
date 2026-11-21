@@ -14,7 +14,9 @@ You can pause, resume, or stop playback from Story Deck.
   episodes. Story Deck reads track information in the background and shows the
   progress. The search covers the information that Yoto returns for your library.
 - Select **Titles**, **Chapters**, or **Tracks** to narrow the search. The result
-  shows the name of the chapter or track and its card.
+  shows the name and artwork of the chapter or track when Yoto supplies it.
+
+Track lists and playback also show this artwork.
 
 - Tap a cover to open its card and scroll through its tracks. Select **Play**
   beside a track to start there when Yoto provides its playback keys.
@@ -91,6 +93,9 @@ go test ./internal/testing/e2e -run '^TestAndroidStoryDeck'
 The host tests cover OAuth callback validation, library navigation, track search,
 download recovery, and player settings in the UI simulator. Live downloads and
 player settings require a registered public client and access to a Yoto account.
+
+Set `STORY_DECK_ICON` to the path of `icon.png` when you run `deck_test.fern` to
+write the launcher icon from `launcher_icon.fern`.
 
 - [Yoto public-client sign-in](https://yoto.dev/authentication/headless-cli-auth/)
 - [Yoto library permissions](https://yoto.dev/authentication/scopes/)

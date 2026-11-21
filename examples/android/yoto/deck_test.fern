@@ -7,6 +7,7 @@ import "std/android/testkit";
 import "std/android/text";
 import "std/android/ui";
 import "std/android/ui/sim";
+import "std/android/ui/scene";
 import "std/json";
 import "std/string";
 import "std/test";
@@ -19,6 +20,7 @@ import "./phone";
 import "./search";
 import "./settings";
 import "./light_colour";
+import "./launcher_icon";
 import "./listening";
 import "./player_status";
 
@@ -75,7 +77,7 @@ function test_playback_requests(): test.TestOutcome {
 // These fixtures use invented titles and the same keys as the Yoto responses.
 function fixture_cards(): api.Card[] {
   let family = "{\"cards\":["
-    + "{\"cardId\":\"book\",\"inFamilyLibrary\":true,\"card\":{\"title\":\"Woodland Walk\",\"metadata\":{\"author\":\"A. Writer\",\"readBy\":\"M. Reader\",\"cover\":{\"imageL\":\"https://example.com/cover.jpg\"}},\"content\":{\"chapters\":[{\"key\":\"01\",\"title\":\"Forest\",\"tracks\":[{\"key\":\"03\",\"title\":\"Fox at dusk\"}]}]}}},"
+    + "{\"cardId\":\"book\",\"inFamilyLibrary\":true,\"card\":{\"title\":\"Woodland Walk\",\"metadata\":{\"author\":\"A. Writer\",\"readBy\":\"M. Reader\",\"cover\":{\"imageL\":\"https://example.com/cover.jpg\"}},\"content\":{\"chapters\":[{\"key\":\"01\",\"title\":\"Forest\",\"display\":{\"icon16x16\":\"yoto:#_WWpLHoOj6iqeREcGkJnGlsis2QSF6znM0UPFdXTjf8\"},\"tracks\":[{\"key\":\"03\",\"title\":\"Fox at dusk\",\"display\":{\"iconUrl16x16\":\"https://example.com/fox.png\"}}]}]}}},"
     + "{\"cardId\":\"pod\",\"card\":{\"title\":\"Sky Journal\",\"metadata\":{\"category\":\"podcast\"},\"content\":{\"chapters\":[{\"key\":\"204\",\"title\":\"Comet night\",\"tracks\":[{\"key\":\"1\",\"description\":\"Watch for ice\"}]}]}}},"
     + "{\"cardId\":\"radio\",\"card\":{\"title\":\"Night Radio\",\"metadata\":{\"category\":\"radio\"}}},"
     + "{\"cardId\":\"old\",\"inFamilyLibrary\":false,\"card\":{\"title\":\"Removed title\"}}]}";
@@ -296,7 +298,7 @@ function test_continuous_posters(): test.TestOutcome {
   let tracks: api.Track[] = [];
   for i in 0..22 {
     let title = "Track " + i.to_string();
-    tracks = tracks.append(api.Track { title: title, chapter: "", chapter_key: "01", track_key: i.to_string(), search: title.to_lower() });
+    tracks = tracks.append(api.Track { title: title, chapter: "", chapter_key: "01", track_key: i.to_string(), search: title.to_lower(), art: "", chapter_art: "" });
   }
   for i in 0..22 {
     let id = "card-" + i.to_string();
@@ -331,14 +333,17 @@ function test_continuous_posters(): test.TestOutcome {
 }
 
 function test_signed_streams(): test.TestOutcome {
-  let value = json.parse("{\"content\":{\"chapters\":[{\"key\":\"01\",\"tracks\":[{\"key\":\"01\",\"title\":\"Intro\",\"trackUrl\":\"yoto:#private\"},{\"key\":\"02\",\"title\":\"Forest\",\"trackUrl\":\"https://example.com/forest.mp3?signature=sample\"}]},{\"key\":\"02\",\"tracks\":[{\"key\":\"01\",\"title\":\"The clearing\",\"trackUrl\":\"https://example.com/clearing.mp3\"}]}]}}").unwrap_or(json.JNull);
+  let value = json.parse("{\"content\":{\"chapters\":[{\"key\":\"01\",\"display\":{\"icon16x16\":\"https://example.com/chapter.png\"},\"defaultTrackDisplay\":\"https://example.com/default.png\",\"tracks\":[{\"key\":\"01\",\"title\":\"Intro\",\"trackUrl\":\"yoto:#private\"},{\"key\":\"02\",\"title\":\"Forest\",\"display\":{\"icon16x16\":\"http://example.com/rejected.png\"},\"trackUrl\":\"https://example.com/forest.mp3?signature=sample\"}]},{\"key\":\"02\",\"tracks\":[{\"key\":\"01\",\"title\":\"The clearing\",\"trackUrl\":\"https://example.com/clearing.mp3\"}]}]}}").unwrap_or(json.JNull);
   let Ok(queue) = api.parse_streams(value, "01", "02") else {
     return test.fail("Yoto's signed URLs must form a playlist");
   };
   if (api.parse_streams(value, "", "").is_ok() || api.parse_streams(value, "01", "99").is_ok() || queue.len() != 2) {
     return test.fail("missing links or keys must not start a different track");
   }
-  return test.assert_eq_array(queue.map((stream: api.Stream): string => stream.title), ["Forest", "The clearing"]);
+  return test.assert_eq_array(
+    [queue[0].title, queue[0].art, queue[1].title, queue[1].art],
+    ["Forest", "https://example.com/default.png", "The clearing", ""],
+  );
 }
 
 function test_phone_playback(): test.TestOutcome {
@@ -361,7 +366,7 @@ function test_phone_playback(): test.TestOutcome {
     pause: (media: player.Player): boolean => true,
     close: (media: player.Player): void => closes.set(closes.get() + 1),
   };
-  let queue = [api.Stream { title: "Intro", url: "https://example.com/intro", chapter: "01", key: "01" }, api.Stream { title: "Fox at dusk", url: "https://example.com/fox", chapter: "01", key: "03" }];
+  let queue = [api.Stream { title: "Intro", url: "https://example.com/intro", chapter: "01", key: "01", art: "" }, api.Stream { title: "Fox at dusk", url: "https://example.com/fox", chapter: "01", key: "03", art: "" }];
   let state = phone.apply(phone.received(m.phone, m.phone.revision, Ok(queue)), output);
   let (prepared, arg) = player.posted(player.Prepared, 0);
   state = phone.apply(phone.event(state, android.Posted(prepared, arg)), output);
@@ -436,7 +441,7 @@ function test_player_settings(): test.TestOutcome {
 
 function test_offline_download(): test.TestOutcome {
   let card = fixture_cards()[0];
-  let payload = "{\"ownership\":{\"canAccess\":true,\"cardIsInFamilyLibrary\":true},\"card\":{\"content\":{\"chapters\":[{\"key\":\"01\",\"tracks\":[{\"key\":\"03\",\"title\":\"Fox at dusk\",\"type\":\"audio\",\"trackUrl\":\"https://example.com/fox?signature=sample\"}]}]}}}";
+  let payload = "{\"ownership\":{\"canAccess\":true,\"cardIsInFamilyLibrary\":true},\"card\":{\"content\":{\"chapters\":[{\"key\":\"01\",\"tracks\":[{\"key\":\"03\",\"title\":\"Fox at dusk\",\"type\":\"audio\",\"display\":{\"iconUrl16x16\":\"https://example.com/fox.png\"},\"trackUrl\":\"https://example.com/fox?signature=sample\"}]}]}}}";
   let value = json.parse(payload).unwrap_or(json.JNull);
   let Ok(plan) = api.parse_download(value, card) else {
     return test.fail("a full-access purchased library card can download");
@@ -482,6 +487,9 @@ function test_offline_download(): test.TestOutcome {
   if (!file.starts_with("file://" + dir + "/yoto-offline-") || !file.ends_with(".audio")) {
     return test.fail("open a local audio file in airplane mode");
   }
+  if (s.shell.app.phone.queue[0].art != "https://example.com/fox.png") {
+    return test.fail("preserve the track artwork address with the download");
+  }
   let cleared = offline.apply(offline.remove(ready, card.id), disk);
   let clean = offline.apply(offline.check(cleared), disk);
   return test.assert_eq(removed.get() == 1 && clean.catalog.entries.len() == 0 && offline.load(dir, dir).entries.len() == 0, true);
@@ -513,7 +521,7 @@ function test_download_work_batches(): test.TestOutcome {
   let card = fixture_cards()[0];
   let tracks: api.DownloadTrack[] = [];
   for i in 0..52 {
-    tracks = tracks.append(api.DownloadTrack { title: i.to_string(), chapter: "01", key: i.to_string(), url: "https://example.com/track" });
+    tracks = tracks.append(api.DownloadTrack { title: i.to_string(), chapter: "01", key: i.to_string(), url: "https://example.com/track", art: "" });
   }
   let plan = api.DownloadPlan { id: card.id, title: card.title, creator: card.creator, tracks: tracks };
   let state = offline.fetching(offline.empty(offline.load(dir, dir)), card);
@@ -549,7 +557,7 @@ function test_download_work_batches(): test.TestOutcome {
 function test_library_download_filter(): test.TestOutcome {
   let cards = fixture_cards();
   let card = cards[0];
-  let file = offline.Track { id: 1i64, name: "yoto-offline-sample.audio", title: "Fox at dusk", chapter: "01", key: "03" };
+  let file = offline.Track { id: 1i64, name: "yoto-offline-sample.audio", title: "Fox at dusk", chapter: "01", key: "03", art: "" };
   let entry = offline.Entry { id: card.id, title: card.title, creator: card.creator, tracks: [file], ready: true };
   let catalog = offline.Catalog { dir: "/media", entries: [entry], cleanup: [], note: "" };
   let state = deck.with_downloads(deck.Model { ...deck.start(), token: "test session" }, catalog);
@@ -634,7 +642,7 @@ function test_playback_tools(): test.TestOutcome {
   let Ok(dir) = temp_dir("story-deck-trip") else {
     return test.fail("create an isolated playback store");
   };
-  let saved_track = offline.Track { id: 1i64, name: "yoto-offline-ready.audio", title: "Fox at dusk", chapter: "01", key: "03" };
+  let saved_track = offline.Track { id: 1i64, name: "yoto-offline-ready.audio", title: "Fox at dusk", chapter: "01", key: "03", art: "" };
   let missing = offline.Track { ...saved_track, id: 2i64, name: "yoto-offline-missing.audio", key: "04" };
   let ready = offline.Entry { id: "book", title: "Woodland Walk", creator: "A. Writer", tracks: [saved_track], ready: true };
   let incomplete = offline.Entry { id: "pod", title: "Sky Journal", creator: "", tracks: [missing], ready: true };
@@ -682,6 +690,67 @@ function test_search_scope(): test.TestOutcome {
   );
 }
 
+function shows_art(s: sim.Sim[deck.Model, deck.Msg], address: string): boolean {
+  return s.shell.host.lay.nodes.any((node: scene.Node): boolean => match (node.paint) {
+    scene.Picture(key, _, _) => key == address,
+    _ => false,
+  });
+}
+
+function artwork_simulator(own model: deck.Model): sim.Sim[deck.Model, deck.Msg] {
+  let real = deck.program((address: string): boolean => false, (data: u8[]): Option[draw.Image] => Some(draw.Image { width: 1, height: 1, pixels: data }), (saved: Option[api.Session]): boolean => true, no_audio(), no_downloads(), (state: listening.Saved): boolean => true);
+  let dry = ui.program(deck.view, deck.update).with_theme_of(real.theme).with_visible(deck.visible_posters).with_effects(real.effects);
+  return sim.start(model, dry, test_fonts(), 720, 1600, 2.0);
+}
+
+function test_track_artwork(): test.TestOutcome {
+  let art = "https://example.com/fox.png";
+  let chapter = "https://card-content.yotoplay.com/yoto/_WWpLHoOj6iqeREcGkJnGlsis2QSF6znM0UPFdXTjf8";
+  let first = fixture_cards()[0].tracks[0];
+  if (first.art != art || first.chapter_art != chapter) {
+    return test.fail("read a track icon URL and a chapter icon reference");
+  }
+  let ready = deck.Model { ...deck.start(), token: "test session", tab: 1 };
+  let library = api.Library { players: [], cards: fixture_cards(), note: "" };
+  let s = artwork_simulator(deck.update(ready, deck.LibraryLoaded(Ok(library))));
+  let generation = s.shell.app.generation;
+  s = sim.send(s, deck.CoverLoaded(generation, art, [175u8, 157u8, 250u8, 255u8]));
+  s = sim.send(s, deck.CoverLoaded(generation, chapter, [59u8, 206u8, 148u8, 255u8]));
+  s = sim.type_in(s, "library-search", "Forest");
+  s = sim.tap(s, "Chapters");
+  if (!shows_art(s, chapter) || shows_art(s, art)) {
+    return test.fail("chapter results use the chapter icon");
+  }
+  s = sim.type_in(s, "library-search", "Fox at dusk");
+  s = sim.tap(s, "Tracks");
+  if (!shows_art(s, art)) {
+    return test.fail("track results use the track icon");
+  }
+  s = sim.tap(s, "Tracks for Fox at dusk");
+  if (!shows_art(s, art) || s.shell.app.shelf.last_art == 0) {
+    return test.fail("visible track rows use track icons");
+  }
+  let track = api.Stream { title: first.title, chapter: first.chapter_key, key: first.track_key, url: "https://example.com/fox.mp3", art: art };
+  let phone = phone.State { ...phone.empty(), card: "book", phase: phone.Paused, queue: [track] };
+  let playing = artwork_simulator(deck.Model { ...deck.start(), tab: 3, on_phone: true, phone: phone });
+  let revision = playing.shell.app.generation;
+  playing = sim.send(playing, deck.CoverLoaded(revision, art, [175u8, 157u8, 250u8, 255u8]));
+  return test.assert_eq(shows_art(playing, art) && sim.shows(playing, "Paused · Fox at dusk"), true);
+}
+
+function test_launcher_icon(): test.TestOutcome {
+  let frame = draw.offscreen(launcher_icon.SIZE, launcher_icon.SIZE);
+  defer draw.release(frame);
+  launcher_icon.render(frame);
+  if let Some(path) = env("STORY_DECK_ICON") {
+    if (!testkit.save_png(frame, path)) {
+      return test.fail("write the Story Deck launcher icon");
+    }
+  }
+  let colors = launcher_icon.theme(true);
+  return test.assert_eq(frame.pixel(0, 0) == 0 && frame.pixel(72, 76) == colors.primary && frame.pixel(89, 89) == colors.on_primary, true);
+}
+
 function main(): i32 {
   let r = test.new("Story Deck");
   r = r.it("PKCE matches the standard example", test_pkce);
@@ -709,5 +778,7 @@ function main(): i32 {
   r = r.it("preview and apply the selected day or night light colour", test_light_picker);
   r = r.it("check trip files, restore a bookmark, and advance the queue with a sleep timer", test_playback_tools);
   r = r.it("find the exact chapter or track with search filters", test_search_scope);
+  r = r.it("use chapter and track icons in search, track lists, and phone playback", test_track_artwork);
+  r = r.it("draw the Story Deck launcher icon", test_launcher_icon);
   return r.finish();
 }

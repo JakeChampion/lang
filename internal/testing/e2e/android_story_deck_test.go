@@ -44,6 +44,13 @@ func TestAndroidStoryDeckApk(t *testing.T) {
 		}
 	}
 	readZipEntry(t, z, "res/xml/automotive_app_desc.xml")
+	icon, err := os.ReadFile(e2eharness.RepoPath(storyDeckApp, "icon.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(readZipEntry(t, z, "res/drawable/icon.png"), icon) {
+		t.Error("the APK does not contain the Story Deck launcher icon")
+	}
 	readZipEntry(t, z, "lib/arm64-v8a/libapp.so")
 	readZipEntry(t, z, "lib/x86_64/libapp.so")
 	verifyApkV2(t, raw)

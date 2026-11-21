@@ -7,7 +7,7 @@ import "std/rand";
 import "std/string";
 import "./api";
 
-pub struct Track { id: i64, name: string, title: string, chapter: string, key: string }
+pub struct Track { id: i64, name: string, title: string, chapter: string, key: string, art: string }
 
 pub struct Entry { id: string, title: string, creator: string, tracks: Track[], ready: boolean }
 
@@ -65,7 +65,7 @@ function decode_track(value: json.JsonValue): Option[Track] {
   if (id < 0i64 || !safe_name(name)) {
     return None;
   }
-  return Some(Track { id: id, name: name, title: json.get_string(value, "title").unwrap_or("Track"), chapter: json.get_string(value, "chapter").unwrap_or(""), key: json.get_string(value, "key").unwrap_or("") });
+  return Some(Track { id: id, name: name, title: json.get_string(value, "title").unwrap_or("Track"), chapter: json.get_string(value, "chapter").unwrap_or(""), key: json.get_string(value, "key").unwrap_or(""), art: json.get_string(value, "art").unwrap_or("") });
 }
 
 function decode_entry(value: json.JsonValue): Option[Entry] {
@@ -87,6 +87,7 @@ function encode_track(track: Track): json.JsonValue {
   return json.JObject(json.from([
     ("download", json.JNumber(track.id.to_string())), ("name", json.JString(track.name)),
     ("title", json.JString(track.title)), ("chapter", json.JString(track.chapter)), ("key", json.JString(track.key)),
+    ("art", json.JString(track.art)),
   ]));
 }
 
@@ -279,7 +280,7 @@ function install(s: State, setup: Install, output: Output): State {
       return State { ...s, installing: None, failed: s.failed + 1, note: "Android could not start the download for " + entry.title + "." };
     }
     ids = ids.append(id);
-    entry = Entry { ...entry, tracks: entry.tracks.append(Track { id: id, name: name, title: track.title, chapter: track.chapter, key: track.key }) };
+    entry = Entry { ...entry, tracks: entry.tracks.append(Track { id: id, name: name, title: track.title, chapter: track.chapter, key: track.key, art: track.art }) };
   }
   // Keep the Android IDs in the cleanup list until every track is queued.
   let pending = s.catalog.cleanup.concat(ids);
@@ -408,7 +409,7 @@ pub function playlist(s: State, entry: Entry, from: i32): api.Stream[] {
     return tracks;
   }
   for track in entry.tracks.drop(from) {
-    tracks = tracks.append(api.Stream { title: track.title, url: "file://" + s.catalog.dir + "/" + track.name, chapter: track.chapter, key: track.key });
+    tracks = tracks.append(api.Stream { title: track.title, url: "file://" + s.catalog.dir + "/" + track.name, chapter: track.chapter, key: track.key, art: track.art });
   }
   return tracks;
 }

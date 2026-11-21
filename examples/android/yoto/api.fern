@@ -14,11 +14,11 @@ pub struct PlayerConfig { name: string, values: json.JsonValue, timezone: string
 
 pub enum Kind { Standard, Myo, Podcast, Radio }
 
-pub struct Track { title: string, chapter: string, chapter_key: string, track_key: string, search: string }
+pub struct Track { title: string, chapter: string, chapter_key: string, track_key: string, search: string, art: string, chapter_art: string }
 
-pub struct Stream { title: string, url: string, chapter: string, key: string }
+pub struct Stream { title: string, url: string, chapter: string, key: string, art: string }
 
-pub struct DownloadTrack { title: string, chapter: string, key: string, url: string }
+pub struct DownloadTrack { title: string, chapter: string, key: string, url: string, art: string }
 
 pub struct DownloadPlan { id: string, title: string, creator: string, tracks: DownloadTrack[] }
 
@@ -234,14 +234,45 @@ function cover(card: json.JsonValue, metadata: json.JsonValue, content: json.Jso
   return "";
 }
 
+function icon_url(value: string): string {
+  if (value.starts_with("https://")) {
+    return value;
+  }
+  if (value.starts_with("yoto:#") && value.len() == 49) {
+    let id = value.drop(6);
+    if (id.bytes().all((c: u8): boolean => c.is_ascii_alphanumeric() || c == 45u8 || c == 95u8)) {
+      return "https://card-content.yotoplay.com/yoto/" + id;
+    }
+  }
+  return "";
+}
+
+function artwork(item: json.JsonValue, fallback: string): string {
+  let display = object(item, "display");
+  for key in ["iconUrl16x16", "icon16x16"] {
+    let address = icon_url(field(display, key));
+    if (address.len() > 0) {
+      return address;
+    }
+  }
+  return fallback;
+}
+
+function default_track_art(chapter: json.JsonValue): string {
+  let address = icon_url(field(chapter, "defaultTrackDisplay"));
+  return if (address.len() > 0) { address } else { artwork(chapter, "") };
+}
+
 function tracks(chapters: json.JsonValue[]): Track[] {
   let out: Track[] = [];
   for c in chapters {
     let name = field(c, "title");
     let chapter_key = field(c, "key");
     let items = entries(c, "tracks");
+    let chapter_art = artwork(c, "");
+    let fallback = default_track_art(c);
     if (items.len() == 0 && name.len() > 0) {
-      out = out.append(Track { title: name, chapter: "", chapter_key: chapter_key, track_key: "", search: name.to_lower() });
+      out = out.append(Track { title: name, chapter: "", chapter_key: chapter_key, track_key: "", search: name.to_lower(), art: chapter_art, chapter_art: chapter_art });
     }
     for t in items {
       let title = json.get_string(t, "title").unwrap_or(name);
@@ -252,7 +283,7 @@ function tracks(chapters: json.JsonValue[]): Track[] {
       ].join(" ").to_lower();
       let key = field(t, "key");
       let start = if (items.len() > 1 && key.len() == 0) { "" } else { chapter_key };
-      out = out.append(Track { title: title, chapter: name, chapter_key: start, track_key: key, search: search });
+      out = out.append(Track { title: title, chapter: name, chapter_key: start, track_key: key, search: search, art: artwork(t, fallback), chapter_art: chapter_art });
     }
   }
   return out;
@@ -359,6 +390,7 @@ pub function parse_streams(value: json.JsonValue, chapter_key: string, track_key
   let found = chapter_key.len() == 0;
   for chapter in entries(object(value, "content"), "chapters") {
     let key = field(chapter, "key");
+    let fallback = default_track_art(chapter);
     for track in entries(chapter, "tracks") {
       if (!found && key == chapter_key && (track_key.len() == 0 || field(track, "key") == track_key)) {
         found = true;
@@ -366,7 +398,7 @@ pub function parse_streams(value: json.JsonValue, chapter_key: string, track_key
       if (found) {
         let address = field(track, "trackUrl");
         let link = if (address.starts_with("https://")) { address } else { "" };
-        out = out.append(Stream { title: json.get_string(track, "title").unwrap_or(field(chapter, "title")), url: link, chapter: key, key: field(track, "key") });
+        out = out.append(Stream { title: json.get_string(track, "title").unwrap_or(field(chapter, "title")), url: link, chapter: key, key: field(track, "key"), art: artwork(track, fallback) });
       }
     }
   }
@@ -402,12 +434,13 @@ pub function parse_download(reply: json.JsonValue, summary: Card): Result[Downlo
   }
   let out: DownloadTrack[] = [];
   for chapter in entries(content, "chapters") {
+    let fallback = default_track_art(chapter);
     for track in entries(chapter, "tracks") {
       let address = field(track, "trackUrl");
       if (field(track, "type") != "audio" || !address.starts_with("https://")) {
         return Err(failure("Yoto did not provide downloadable audio for every track."));
       }
-      out = out.append(DownloadTrack { title: json.get_string(track, "title").unwrap_or(field(chapter, "title")), chapter: field(chapter, "key"), key: field(track, "key"), url: address });
+      out = out.append(DownloadTrack { title: json.get_string(track, "title").unwrap_or(field(chapter, "title")), chapter: field(chapter, "key"), key: field(track, "key"), url: address, art: artwork(track, fallback) });
     }
   }
   if (out.len() == 0) {

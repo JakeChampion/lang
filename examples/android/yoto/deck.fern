@@ -14,6 +14,7 @@ import "./phone";
 import "./search";
 import "./settings";
 import "./light_colour";
+import "./launcher_icon";
 import "./listening";
 import "./player_status";
 
@@ -352,21 +353,113 @@ function load_tracks(m: Model, index: i32, next: i32): Model {
   return Model { ...m, background_busy: true, shelf: Shelf { ...m.shelf, next: next, attempted: attempted }, job: Some(Tracks(m.generation, index, m.token, card)) };
 }
 
-function next_cover(m: Model): string {
-  if (m.tab != 1) {
-    return "";
+function artwork(shelf: Shelf, address: string, fallback: string): string {
+  if (address.len() == 0) {
+    return fallback;
   }
-  if let Some(card) = opened_card(m) {
-    if (card.cover.len() > 0 && !m.shelf.covers.contains(card.cover)) {
-      return card.cover;
+  if let Some(None()) = shelf.covers.get(address) {
+    return fallback;
+  }
+  return address;
+}
+
+function hit_art(m: Model, hit: search.Hit): string {
+  let card = m.cards[hit.card];
+  if (hit.track >= 0) {
+    let track = card.tracks[hit.track];
+    let address = if (m.shelf.search_scope == search.CHAPTERS) { track.chapter_art } else { track.art };
+    return artwork(m.shelf, address, card.cover);
+  }
+  return card.cover;
+}
+
+function keyed_art(m: Model, id: string, chapter: string, key: string, address: string): string {
+  let i = card_index(m, id);
+  if (i < 0) {
+    return address;
+  }
+  let card = m.cards[i];
+  let preferred = address;
+  if (preferred.len() == 0) {
+    for track in card.tracks {
+      if (track.chapter_key == chapter && track.track_key == key) {
+        preferred = track.art;
+        break;
+      }
     }
+  }
+  return artwork(m.shelf, preferred, card.cover);
+}
+
+function phone_art(m: Model): string {
+  let s = m.phone;
+  if (s.at >= 0 && s.at < s.queue.len()) {
+    let track = s.queue[s.at];
+    return keyed_art(m, s.card, track.chapter, track.key, track.art);
+  }
+  let i = card_index(m, s.card);
+  return if (i >= 0) { m.cards[i].cover } else { "" };
+}
+
+function player_art(m: Model, playback: player_status.Playback): string {
+  let i = card_index(m, playback.card);
+  if (i < 0) {
     return "";
   }
+  let card = m.cards[i];
+  for track in card.tracks {
+    if ((playback.chapter.len() == 0 || track.chapter == playback.chapter) && track.title == playback.track) {
+      return artwork(m.shelf, track.art, card.cover);
+    }
+  }
+  return card.cover;
+}
+
+function needs_cover(shelf: Shelf, address: string): boolean {
+  return address.len() > 0 && !shelf.covers.contains(address);
+}
+
+function playback_art(m: Model): string {
+  if (m.on_phone) {
+    return phone_art(m);
+  }
+  if (m.tab == 0 && m.config_panel.device.is_none()) {
+    if let Some(playback) = m.now_playing.playback {
+      if (playback.state == "playing" || playback.state == "paused") {
+        return player_art(m, playback);
+      }
+    }
+  }
+  return "";
+}
+
+function visible_covers(m: Model): string[] {
   let shelf = m.shelf;
-  for i in shelf.first_art..shelf.last_art.min(shelf.hits.len()) {
-    let cover = m.cards[shelf.hits[i].card].cover;
-    if (cover.len() > 0 && !m.shelf.covers.contains(cover)) {
-      return cover;
+  if (m.tab == 1) {
+    if let Some(card) = opened_card(m) {
+      let visible = card.tracks.drop(shelf.first_art).take((shelf.last_art - shelf.first_art).max(0));
+      return [card.cover].concat(visible.map((track: api.Track): string => artwork(shelf, track.art, card.cover)));
+    }
+    let visible = shelf.hits.drop(shelf.first_art).take((shelf.last_art - shelf.first_art).max(0));
+    return visible.map((hit: search.Hit): string => hit_art(m, hit));
+  }
+  if (m.tab == 2) {
+    if let Some(entry) = offline.saved(m.downloads, m.offline_open) {
+      let visible = entry.tracks.drop(shelf.first_art).take((shelf.last_art - shelf.first_art).max(0));
+      return visible.map((track: offline.Track): string => keyed_art(m, entry.id, track.chapter, track.key, track.art));
+    }
+  }
+  return [];
+}
+
+function next_cover(m: Model): string {
+  let current = playback_art(m);
+  if (needs_cover(m.shelf, current)) {
+    return current;
+  }
+  for address in visible_covers(m) {
+    if (needs_cover(m.shelf, address)) {
+      return address;
     }
   }
   return "";
@@ -384,14 +477,23 @@ function grid_name(shelf: Shelf): string {
 }
 
 pub function visible_posters(m: Model, screen: ui.Screen, layout: ui.Layout, input: ui.Input): Option[Msg] {
-  if (m.tab != 1 || m.shelf.opened.len() > 0 || m.shelf.hits.len() == 0) {
+  let name = "";
+  let cols = 1;
+  if (m.tab == 1) {
+    if (m.shelf.opened.len() > 0) {
+      name = "tracks:" + m.shelf.opened;
+    } else {
+      name = grid_name(m.shelf);
+      cols = poster_columns(screen);
+    }
+  } else if (m.tab == 2 && m.offline_open.len() > 0) {
+    name = "saved:" + m.offline_open;
+  } else {
     return None;
   }
-  let name = grid_name(m.shelf);
   for list in layout.scrollers {
     if (list.name == name && list.row > 0) {
       let at = input.offset(name).max(0).min(list.limit);
-      let cols = poster_columns(screen);
       let first = at / list.row * cols;
       let last = ((at + list.h + list.row - 1) / list.row + 1) * cols;
       if (first != m.shelf.first_art || last != m.shelf.last_art) {
@@ -404,7 +506,7 @@ pub function visible_posters(m: Model, screen: ui.Screen, layout: ui.Layout, inp
 
 function prepare_background(own m: Model): Model {
   let shelf = m.shelf;
-  if (m.busy || !m.library_loaded) {
+  if (m.busy) {
     return m;
   }
   if (!m.cover_busy) {
@@ -413,7 +515,7 @@ function prepare_background(own m: Model): Model {
       return Model { ...m, cover_busy: true, job: Some(Cover(m.generation, image)) };
     }
   }
-  if (m.background_busy) {
+  if (!m.library_loaded || m.background_busy) {
     return m;
   }
   let opened = opened_index(m);
@@ -911,10 +1013,10 @@ pub function update(own m: Model, msg: Msg): Model {
       return Model { ...m, shelf: Shelf { ...m.shelf, first_art: first, last_art: last } };
     },
     OpenCard(id) => {
-      return Model { ...m, shelf: Shelf { ...m.shelf, opened: id } };
+      return Model { ...m, shelf: Shelf { ...m.shelf, opened: id, first_art: 0, last_art: 0 } };
     },
     CloseCard => {
-      return Model { ...m, shelf: Shelf { ...m.shelf, opened: "" } };
+      return Model { ...m, shelf: Shelf { ...m.shelf, opened: "", first_art: 0, last_art: 0 } };
     },
     TracksLoaded(generation, index, result) => {
       return track_result(m, generation, index, result);
@@ -1141,7 +1243,7 @@ pub function update(own m: Model, msg: Msg): Model {
       return Model { ...m, downloads: offline.remove(m.downloads, id), phone: state, offline_open: "" };
     },
     OpenDownload(id) => {
-      return Model { ...m, offline_open: id };
+      return Model { ...m, offline_open: id, shelf: Shelf { ...m.shelf, first_art: 0, last_art: 0 } };
     },
     PlayDownload(id, at) => {
       if let Some(entry) = offline.saved(m.downloads, id) {
@@ -1225,7 +1327,7 @@ pub function update(own m: Model, msg: Msg): Model {
       return Model { ...m, phone: phone.control(m.phone, command), playback_tools: PlaybackTools { ...m.playback_tools, sample: true } };
     },
     SelectTab(tab) => {
-      return Model { ...m, tab: tab };
+      return Model { ...m, tab: tab, shelf: Shelf { ...m.shelf, first_art: 0, last_art: 0 } };
     },
     Control(command) => {
       return control(m, command);
@@ -1404,7 +1506,12 @@ function playing_info(m: Model): ui.El[Msg][] {
   if (detail.len() > 0 && detail != any_title) {
     items = items.append(ui.text(detail).colored(ui.MUTED).clamped(2));
   }
-  return [ui.card(items).spaced(4.0).wide()];
+  let details = ui.column(items).spaced(4.0).wide();
+  let address = player_art(m, playback);
+  if (address.len() > 0) {
+    return [ui.card([ui.row([art(m.shelf, address, 52.0), details]).aligned(ui.CENTER).spaced(12.0)]).wide()];
+  }
+  return [ui.card([details]).wide()];
 }
 
 function player_list(m: Model): ui.El[Msg] {
@@ -1423,7 +1530,7 @@ function player_list(m: Model): ui.El[Msg] {
   }
   let items: ui.El[Msg][] = [ui.text[Msg]("Your players").sized(23.0).weighted(700), handset];
   if (m.on_phone) {
-    items = items.concat(phone_controls(m.phone));
+    items = items.concat(phone_controls(m));
   } else {
     items = items.concat(playing_info(m));
   }
@@ -1611,7 +1718,8 @@ function settings_panel(m: Model, player: api.Player, screen: ui.Screen): ui.El[
   return ui.column(items).spaced(10.0).padding(16.0).wide().tall();
 }
 
-function phone_controls(s: phone.State): ui.El[Msg][] {
+function phone_controls(m: Model): ui.El[Msg][] {
+  let s = m.phone;
   if (s.note.len() > 0) {
     return [ui.text(s.note).colored(ui.MUTED)];
   }
@@ -1632,7 +1740,10 @@ function phone_controls(s: phone.State): ui.El[Msg][] {
     buttons = [ui.text_button("Resume", Control(api.Resume))];
   }
   buttons = buttons.append(ui.text_button("Stop", Control(api.Stop)));
-  return [ui.row([ui.text[Msg](state + " · " + title).colored(ui.MUTED).clamped(2).wide()].concat(buttons)).aligned(ui.CENTER)];
+  let label = ui.text[Msg](state + " · " + title).colored(ui.MUTED).clamped(2).wide();
+  let address = phone_art(m);
+  let leading = if (address.len() > 0) { [art(m.shelf, address, 44.0), label] } else { [label] };
+  return [ui.row(leading.concat(buttons)).aligned(ui.CENTER).spaced(6.0)];
 }
 
 function art(shelf: Shelf, address: string, size: f64): ui.El[Msg] {
@@ -1673,7 +1784,7 @@ function poster(m: Model, hit: search.Hit, size: f64, caption_height: f64): ui.E
     caption = caption.append(ui.text(chapter).colored(ui.MUTED).clamped(1));
   }
   let items = [
-    ui.column([art(m.shelf, card.cover, size), ui.column(caption).height(caption_height).spaced(2.0).padding_xy(6.0, 6.0).wide()]).wide().on_tap(OpenCard(card.id)).described("Tracks for " + title),
+    ui.column([art(m.shelf, hit_art(m, hit), size), ui.column(caption).height(caption_height).spaced(2.0).padding_xy(6.0, 6.0).wide()]).wide().on_tap(OpenCard(card.id)).described("Tracks for " + title),
   ];
   let actions: ui.El[Msg][] = [];
   if (can_play_card(m, card.id)) {
@@ -1718,14 +1829,14 @@ function track_command(id: string, track: api.Track): Option[api.Command] {
   return None;
 }
 
-function track_row(id: string, track: api.Track, ready: boolean): ui.El[Msg] {
-  let items: ui.El[Msg][] = [ui.text(track.title).clamped(2).wide()];
+function track_row(shelf: Shelf, card: api.Card, track: api.Track, ready: boolean): ui.El[Msg] {
+  let items: ui.El[Msg][] = [art(shelf, artwork(shelf, track.art, card.cover), 44.0), ui.text(track.title).clamped(2).wide()];
   if (ready) {
-    if let Some(command) = track_command(id, track) {
+    if let Some(command) = track_command(card.id, track) {
       items = items.append(play_button(track.title, command));
     }
   }
-  return ui.row(items).padding_xy(8.0, 2.0).aligned(ui.CENTER);
+  return ui.row(items).padding_xy(8.0, 2.0).aligned(ui.CENTER).spaced(10.0);
 }
 
 function card_details(m: Model, card: api.Card, screen: ui.Screen): ui.El[Msg] {
@@ -1745,7 +1856,7 @@ function card_details(m: Model, card: api.Card, screen: ui.Screen): ui.El[Msg] {
   let size = (screen.width() * 0.4).min(screen.height() * 0.23).min(180.0);
   items = items.append(ui.row([art(m.shelf, card.cover, size), ui.column(header).spaced(4.0).wide()]).aligned(ui.CENTER).spaced(12.0));
   if (m.on_phone) {
-    items = items.concat(phone_controls(m.phone));
+    items = items.concat(phone_controls(m));
   }
   let count = card.tracks.len();
   if (count == 0) {
@@ -1755,7 +1866,8 @@ function card_details(m: Model, card: api.Card, screen: ui.Screen): ui.El[Msg] {
   let tracks = card.tracks;
   let ready = can_play_card(m, card.id);
   let id = card.id;
-  let list = ui.list("tracks:" + id, tracks.len(), 52.0, (i: i32): ui.El[Msg] => track_row(id, tracks[i], ready));
+  let shelf = m.shelf;
+  let list = ui.list("tracks:" + id, tracks.len(), 56.0, (i: i32): ui.El[Msg] => track_row(shelf, card, tracks[i], ready));
   return ui.column(items.append(list)).spaced(12.0).wide().tall();
 }
 
@@ -1772,7 +1884,7 @@ function download_row(entry: offline.Entry): ui.El[Msg] {
 function download_list(m: Model): ui.El[Msg] {
   let fields: ui.El[Msg][] = [];
   if (m.on_phone) {
-    fields = phone_controls(m.phone);
+    fields = phone_controls(m);
   }
   let note = offline.message(m.downloads);
   if (note.len() > 0) {
@@ -1782,9 +1894,10 @@ function download_list(m: Model): ui.El[Msg] {
     let tools = ui.row([ui.text_button("Back to downloads", OpenDownload("")), ui.text_button("Remove download", RemoveDownload(entry.id))]).spaced(6.0);
     let title = ui.text[Msg](entry.title).sized(22.0).weighted(650).clamped(3);
     let tracks = ui.list("saved:" + entry.id, entry.tracks.len(), 56.0, (at: i32): ui.El[Msg] => {
-      let name = entry.tracks[at].title;
-      let play = ui.text_button("Play", PlayDownload(entry.id, at)).described("Play " + name);
-      return ui.row([ui.text[Msg](name).clamped(2).wide(), play]).aligned(ui.CENTER);
+      let track = entry.tracks[at];
+      let address = keyed_art(m, entry.id, track.chapter, track.key, track.art);
+      let play = ui.text_button("Play", PlayDownload(entry.id, at)).described("Play " + track.title);
+      return ui.row([art(m.shelf, address, 44.0), ui.text[Msg](track.title).clamped(2).wide(), play]).aligned(ui.CENTER).spaced(10.0);
     });
     return ui.column([tools, title, ui.text_button("Play next", QueueCard(entry.id))].concat(fields).append(tracks)).spaced(8.0).wide().tall();
   }
@@ -1809,7 +1922,7 @@ function download_list(m: Model): ui.El[Msg] {
 
 function playback_queue(m: Model): ui.El[Msg] {
   let tools = m.playback_tools;
-  let rows = phone_controls(m.phone);
+  let rows = phone_controls(m);
   if let phone.Playing | phone.Paused = m.phone.phase {
     rows = rows.append(ui.text_button("Bookmark this spot", BookmarkHere));
   }
@@ -1914,7 +2027,7 @@ function card_list(m: Model, screen: ui.Screen): ui.El[Msg] {
   }
   fields = fields.append(ui.row([ui.text[Msg](target).colored(ui.MUTED).clamped(2).wide(), downloaded]).aligned(ui.CENTER).spaced(6.0));
   if (m.on_phone) {
-    fields = fields.concat(phone_controls(m.phone));
+    fields = fields.concat(phone_controls(m));
   }
   let has_matches = searching && shelf.hits.len() > 0;
   let status = if (searching) { library_status(m, has_matches) } else { "" };
@@ -1986,7 +2099,7 @@ function wait(m: Model): i32 {
   if (m.flow.is_some()) {
     return 150;
   }
-  if (m.library_loaded && !m.busy && !m.cover_busy && next_cover(m).len() > 0) {
+  if (!m.busy && !m.cover_busy && next_cover(m).len() > 0) {
     return 120;
   }
   if (m.library_loaded && !m.busy && !m.background_busy && m.shelf.paused.len() == 0 && m.shelf.next < m.cards.len()) {
@@ -2041,5 +2154,5 @@ pub function program(open_browser: (string) => boolean, decode: (u8[]) => Option
   }).with_state(
     (m: Model, k: kv.Store): kv.Store => k.set("client_id", m.client),
     (own m: Model, k: kv.Store): own Model => Model { ...m, client: if (m.refresh.len() > 0) { m.client } else { k.get("client_id").unwrap_or(m.client) } },
-  ).with_theme((dark: boolean): ui.Theme => ui.seeded(draw.rgb(90, 87, 165), dark));
+  ).with_theme(launcher_icon.theme);
 }
