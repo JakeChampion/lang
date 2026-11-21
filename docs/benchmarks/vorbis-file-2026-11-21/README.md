@@ -16,3 +16,9 @@ To reproduce on native ARM64 or x86-64 Linux with the public headers and Xiph li
 cc -O2 scripts/audio-reference/vorbis-file.c -lvorbisfile -o build/vorbis-reference
 python3 scripts/bench-vorbis-file --reference build/vorbis-reference > build/vorbis-file.json
 ```
+
+## Nine-bit Huffman prefix table
+
+The revised setup walks each Huffman tree down to depth nine once. A short code fills all table indices sharing its low bits. A longer code stores the continuation node. The previous setup walked from the root for each of the 512 table indices.
+
+A native x86-64 comparison used the same optimized compiler and playback driver for both revisions, pinned to one CPU, with eleven pairs of fresh processes per fixture in alternating order. All 35 files had identical PCM checksums across the two builds. Allocations fell on every file, from 150,288 to 137,940 for one playback of each file. The sum of the per-file median wall times fell from 115.9 ms to 108.1 ms, with 28 files faster and seven slower. The corpus contains short streams, so these measurements include a larger share of setup time than long-running playback. [All 770 process measurements](prefix-x86-64.json.gz)
