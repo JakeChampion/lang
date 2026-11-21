@@ -1,5 +1,6 @@
 import "std/deflate";
 import "std/rand";
+import "std/i32";
 import "./util";
 import "std/string";
 
@@ -72,10 +73,9 @@ function write_entries(tmp: string, t: u8[]): string {
   let next_name = "";
   let off = 0;
   while (off + 512 <= t.len() && t[off] != 0) {
-    let e = header(t, off);
-    if (e.size < 0 || e.size > t.len() - e.at) {
+    let Some(e) = header(t, off) else {
       return "reading tar: truncated archive";
-    }
+    };
     off = e.at + (e.size + 511) / 512 * 512;
     if (names_next_entry(e.kind)) {
       next_name = names_next(t, e);
@@ -150,7 +150,14 @@ function made(r: Result[void, IoError], path: string): string {
   }
 }
 
-function header(t: u8[], off: i32): Entry {
+function header(t: u8[], off: i32): Option[Entry] {
+  let Some(size) = octal(t, off + 124, 12) else {
+    return None;
+  };
+  let at = off + 512;
+  if (size > t.len() - at) {
+    return None;
+  }
   let name = c_string(t, off, 100);
   if (c_string(t, off + 257, 5) == "ustar") {
     let prefix = c_string(t, off + 345, 155);
@@ -158,7 +165,7 @@ function header(t: u8[], off: i32): Entry {
       name = prefix + "/" + name;
     }
   }
-  return Entry { name: name, kind: t[off + 156], at: off + 512, size: octal(t, off + 124, 12) };
+  return Some(Entry { name: name, kind: t[off + 156], at: at, size: size });
 }
 
 function c_string(t: u8[], at: i32, n: i32): string {
@@ -179,17 +186,20 @@ function bytes(t: u8[], from: i32, to: i32): u8[] {
   return out;
 }
 
-function octal(t: u8[], at: i32, n: i32): i32 {
+function octal(t: u8[], at: i32, n: i32): Option[i32] {
   let v = 0;
   for i in at..at + n {
     let c = t[i];
     if (c >= b'0' && c <= b'7') {
+      if (v > i32.MAX / 8) {
+        return None;
+      }
       v = v * 8 + (c - b'0') as i32;
     } else if (c != b' ' && c != 0) {
-      return -1;
+      return None;
     }
   }
-  return v;
+  return Some(v);
 }
 
 function pax_path(t: u8[], at: i32, size: i32): string {
@@ -199,7 +209,9 @@ function pax_path(t: u8[], at: i32, size: i32): string {
     while (sp < at + size && t[sp] != b' ') {
       sp += 1;
     }
-    let len = decimal(t, i, sp);
+    let Some(len) = decimal(t, i, sp) else {
+      return "";
+    };
     if (len <= 0 || len > at + size - i) {
       return "";
     }
@@ -215,15 +227,19 @@ function pax_path(t: u8[], at: i32, size: i32): string {
   return "";
 }
 
-function decimal(t: u8[], from: i32, to: i32): i32 {
+function decimal(t: u8[], from: i32, to: i32): Option[i32] {
   let v = 0;
   for i in from..to {
     if (t[i] < b'0' || t[i] > b'9') {
-      return -1;
+      return None;
     }
-    v = v * 10 + (t[i] - b'0') as i32;
+    let digit = (t[i] - b'0') as i32;
+    if (v > (i32.MAX - digit) / 10) {
+      return None;
+    }
+    v = v * 10 + digit;
   }
-  return v;
+  return Some(v);
 }
 
 function clean(p: string): string {
