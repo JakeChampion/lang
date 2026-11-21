@@ -74,22 +74,26 @@ def main():
                         ROOT / "scripts/audio-reference/mp2.c", "-o", oracle], check=True)
         cases = [(1, 0, 3, 0), (1, 1, 0, 0), (1, 2, 2, 0), (2, 0, 1, 0),
                  (2, 1, 1, 1), (2, 2, 1, 2), (1, 1, 1, 3)]
-        streams = [(*case, (False,) * 3) for case in cases]
-        streams.extend([(*case, (True,) * 3) for case in [(1, 0, 3, 0), (1, 1, 0, 0), (2, 0, 1, 0)]])
+        streams = [(version, rate, [(mode, ext)] * 3, (False,) * 3, (14,) * 3)
+                   for version, rate, mode, ext in cases]
+        for version, rate, mode, ext in [(1, 0, 3, 0), (1, 1, 0, 0), (2, 0, 1, 0)]:
+            streams.append((version, rate, [(mode, ext)] * 3, (True,) * 3, (14,) * 3))
         # The middle frame disables bands whose scratch held prior synthesis results.
-        streams.append((1, 2, 1, 1, (True, False, True)))
-        streams = [(*stream, (14, 14, 14)) for stream in streams]
+        streams.append((1, 2, [(1, 1)] * 3, (True, False, True), (14,) * 3))
         # Keep synthesis history while bitrate, padding, protection and frame length change.
-        streams.extend([(1, 0, 3, 0, (False,) * 3, (3, 5, 4)),
-                        (2, 1, 0, 0, (False,) * 3, (6, 9, 7))])
-        for version, rate, mode, ext, density, bitrates in streams:
-            data = b"".join(frame(version, rate, mode, ext, seq, dense, bitrates[seq])
-                            for seq, dense in enumerate(density))
+        streams.extend([(1, 0, [(3, 0)] * 3, (False,) * 3, (3, 5, 4)),
+                        (2, 1, [(0, 0)] * 3, (False,) * 3, (6, 9, 7))])
+        # Two-channel mode and joint-stereo bound may change without resetting synthesis.
+        streams.extend([(1, 1, [(0, 0), (1, 0), (2, 0)], (True,) * 3, (14,) * 3),
+                        (2, 0, [(1, 3), (1, 0), (1, 2)], (True,) * 3, (14,) * 3)])
+        for version, rate, modes, density, bitrates in streams:
+            data = b"".join(frame(version, rate, mode, ext, seq, density[seq], bitrates[seq])
+                            for seq, (mode, ext) in enumerate(modes))
             stream = work / "input.mp1"
             stream.write_bytes(data)
             pcm = work / "out.pcm"
             subprocess.run([oracle, stream, pcm, "layer1"], check=True)
-            channels = 1 if mode == 3 else 2
+            channels = 1 if modes[0][0] == 3 else 2
             assert pcm.stat().st_size == 3 * 384 * channels * 4
             sample_rate = [44100, 48000, 32000][rate] // version
             rows.append(f'    Vector {{ rate: {sample_rate}, channels: {channels}, '
