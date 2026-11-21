@@ -16,6 +16,7 @@ The Opus packet API reuses the Fern CELT implementation.
 | Opus | Yes | Partial | SILK, hybrid, and CELT packets, multistream channel maps, loss concealment, and forward error correction. Ogg files decode at 48 kHz with gain and exact sample boundaries. The CELT encoder uses 48 kHz fullband mono or stereo. |
 | Ogg | Pages | No | Incremental pages and packets, checksums, interleaved streams, and chained streams. The Opus and Vorbis layers supply file playback. |
 | MP3 | Yes | No | Indexed-bitrate and free-format MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. |
+| MP1 | Yes | No | Indexed-bitrate MPEG-1/2 Layer I raw streams, all six sample rates and four channel modes, with protected-frame CRC checks. |
 | MP2 | Yes | No | Indexed-bitrate MPEG-1/2 Layer II at all six sample rates. Mono, stereo, dual channel, joint stereo, and protected frames. Raw frames and complete compatible streams. |
 | AAC-LC | Yes | No | Raw access units and unprotected ADTS, 1024 samples per block, all 13 ADTS rates, and declared channel configurations 1 through 7. |
 | MP4/M4A | AAC-LC, ALAC | No | Self-contained audio tracks, sample tables, decoder configuration, track selection, and edit-list trimming. Byte-view playback and indexed packet reads from seekable files. |
@@ -459,7 +460,9 @@ A rate or channel-count change also resets history.
 `decode_raw` accepts consecutive frames with one sample rate and channel count.
 It applies a cumulative output budget.
 Frame APIs require a header at the supplied byte offset.
-Layer I, MPEG-2.5, free-format Layer II, tags, source readers, and seek indexes remain outside this module.
+MPEG-2.5, free-format Layer II, tags, source readers, and seek indexes remain outside this module.
+
+`std/audio/mp1.decode_raw` decodes consecutive indexed Layer I frames. The MPEG-1 and MPEG-2 fixtures cover mono, stereo, dual channel and all four joint-stereo boundaries. Each fixture mixes protected and unprotected frames and compares the complete interleaved output with pinned scalar minimp3. The Layer I API accepts raw frames and does not apply de-emphasis filtering.
 
 The independent reference bank contains 66 streams from FFmpeg and TwoLAME.
 It covers tones, transients, deterministic noise, silence, all rates and channel modes, and 24 protected streams.

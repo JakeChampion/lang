@@ -1,0 +1,58 @@
+import "std/audio/mp1";
+import "std/audio/pcm";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "mp1_vectors";
+import "mp2_check";
+
+function references(): test.TestOutcome {
+  for vector in mp1_vectors.vectors() {
+    let Ok(input) = ref.unpack(vector.encoded) else {
+      return test.fail("fixture");
+    };
+    let Ok(expected) = ref.unpack(vector.pcm) else {
+      return test.fail("reference");
+    };
+    let Ok(audio) = mp1.decode_raw(input, pcm.default_limits()) else {
+      return test.fail("decode");
+    };
+    if (audio.channels != vector.channels || audio.sample_rate != vector.rate || audio.samples.len() != 3 * 384 * vector.channels) {
+      return test.fail("stream format or sample count");
+    }
+    if let Err(e) = mp2_check.samples(audio.samples, audio.samples.len(), expected, 0) {
+      return test.fail(e);
+    }
+  }
+  return test.pass();
+}
+
+function boundaries(): test.TestOutcome {
+  let v = mp1_vectors.vectors()[0];
+  let Ok(input) = ref.unpack(v.encoded) else {
+    return test.fail("fixture");
+  };
+  let limits = pcm.default_limits();
+  if let Err(pcm.Checksum) = mp1.decode_raw(input.with(4, input[4] ^ 128u8), limits) {} else {
+    return test.fail("CRC");
+  }
+  if let Err(pcm.Header) = mp1.decode_raw(input.with(6, 255u8), limits) {} else {
+    return test.fail("forbidden allocation");
+  }
+  if let Err(pcm.Truncated) = mp1.decode_raw(input[:input.len() - 1], limits) {} else {
+    return test.fail("incomplete final frame");
+  }
+  if let Err(pcm.Unsupported) = mp1.decode_raw(input.with(2, 0u8), limits) {} else {
+    return test.fail("free format");
+  }
+  if let Err(pcm.Limit) = mp1.decode_raw(input, pcm.Limits { ...limits, max_samples: 1151 }) {} else {
+    return test.fail("cumulative budget");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("MPEG Layer I");
+  runner = runner.it("every sample matches independent scalar minimp3", references);
+  runner = runner.it("frame grammar, CRC, truncation and output limits", boundaries);
+  return runner.finish();
+}

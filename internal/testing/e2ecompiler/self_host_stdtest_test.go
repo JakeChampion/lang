@@ -540,6 +540,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"mp2_shard1", langSrcAbs(t, "tests/stdlib/mp2_shard1_test.fern"), ""},
 		{"mp2_shard2", langSrcAbs(t, "tests/stdlib/mp2_shard2_test.fern"), ""},
 		{"mp2_shard3", langSrcAbs(t, "tests/stdlib/mp2_shard3_test.fern"), ""},
+		{"mp1", langSrcAbs(t, "tests/stdlib/mp1_test.fern"), ""},
 		{"mp2_boundary", langSrcAbs(t, "tests/stdlib/mp2_boundary_test.fern"), ""},
 		{"mp2_smoke", langSrcAbs(t, "tests/stdlib/mp2_smoke_test.fern"), ""},
 		{"mp3_freeformat", langSrcAbs(t, "tests/stdlib/mp3_freeformat_test.fern"), ""},
