@@ -1,12 +1,10 @@
 import "./ssaaffinevalue" as affine;
-pub use "./ssaaffinevalue".{Value, unknown};
+pub use "./ssaaffinevalue".{Interval, Value, unknown};
 import "./ssacondition" as condition;
 pub use "./ssacondition".{Comparison};
 import "./ssalargepushranges" as bins;
 
-pub struct Interval { low: i64, high: i64 }
-
-pub function valid_interval(r: Interval): boolean {
+pub function valid_interval(r: affine.Interval): boolean {
   return r.low >= 65533 as i64 && r.low <= r.high && r.high <= 4294967295 as i64;
 }
 
@@ -18,40 +16,40 @@ function endpoint(v: affine.Value, c: i64): i64 {
   return v.factor as i64 * c + v.offset;
 }
 
-pub function valid(r: Interval, v: affine.Value): boolean {
+pub function valid(r: affine.Interval, v: affine.Value): boolean {
   if (!valid_interval(r) || v.factor != 0 && v.factor != 1 && v.factor != 8 || !bounded(v.offset)) {
     return false;
   }
   return endpoint(v, r.low) >= 0 as i64 && endpoint(v, r.high) <= 34359738384 as i64;
 }
 
-function checked(r: Interval, v: affine.Value): affine.Value {
+function checked(r: affine.Interval, v: affine.Value): affine.Value {
   return if (valid(r, v)) { v } else { affine.unknown() };
 }
 
-pub function number(r: Interval, n: i64): affine.Value {
+pub function number(r: affine.Interval, n: i64): affine.Value {
   return checked(r, affine.Value { factor: 0, offset: n });
 }
 
-pub function capacity(r: Interval): affine.Value {
+pub function capacity(r: affine.Interval): affine.Value {
   return checked(r, affine.Value { factor: 1, offset: 0 as i64 });
 }
 
-pub function add(r: Interval, v: affine.Value, delta: i64): affine.Value {
+pub function add(r: affine.Interval, v: affine.Value, delta: i64): affine.Value {
   if (!valid(r, v) || !bounded(delta)) {
     return affine.unknown();
   }
   return checked(r, affine.Value { factor: v.factor, offset: v.offset + delta });
 }
 
-pub function times_eight(r: Interval, v: affine.Value): affine.Value {
+pub function times_eight(r: affine.Interval, v: affine.Value): affine.Value {
   if (!valid(r, v) || v.factor != 0 && v.factor != 1) {
     return affine.unknown();
   }
   return checked(r, affine.Value { factor: v.factor * 8, offset: v.offset * (8 as i64) });
 }
 
-pub function high32(r: Interval, v: affine.Value): affine.Value {
+pub function high32(r: affine.Interval, v: affine.Value): affine.Value {
   if (!valid(r, v)) {
     return affine.unknown();
   }
@@ -60,12 +58,12 @@ pub function high32(r: Interval, v: affine.Value): affine.Value {
   return if (a == b) { number(r, a) } else { affine.unknown() };
 }
 
-pub function low32(r: Interval, v: affine.Value): affine.Value {
+pub function low32(r: affine.Interval, v: affine.Value): affine.Value {
   let high = high32(r, v);
   return if (valid(r, high)) { add(r, v, -high.offset * (4294967296 as i64)) } else { affine.unknown() };
 }
 
-pub function join32(r: Interval, low: affine.Value, high: affine.Value): affine.Value {
+pub function join32(r: affine.Interval, low: affine.Value, high: affine.Value): affine.Value {
   if (!valid(r, low) || !valid(r, high) || high.factor != 0) {
     return affine.unknown();
   }
@@ -75,7 +73,7 @@ pub function join32(r: Interval, low: affine.Value, high: affine.Value): affine.
   return add(r, low, high.offset * (4294967296 as i64));
 }
 
-pub function compare(r: Interval, v: affine.Value, n: i64): condition.Comparison {
+pub function compare(r: affine.Interval, v: affine.Value, n: i64): condition.Comparison {
   if (!valid(r, v) || !bounded(n)) {
     return condition.unknown_order();
   }
@@ -94,7 +92,7 @@ function class_at(c: i64, capacities: i32[]): i32 {
   return -2;
 }
 
-pub function expected_class(r: Interval): i32 {
+pub function expected_class(r: affine.Interval): i32 {
   if (!valid_interval(r)) {
     return -1;
   }
@@ -103,20 +101,20 @@ pub function expected_class(r: Interval): i32 {
   return if (a == class_at(r.high, capacities)) { a } else { -1 };
 }
 
-pub function intervals(): Interval[] {
-  let result: Interval[] = [];
+pub function intervals(): affine.Interval[] {
+  let result: affine.Interval[] = [];
   let low = 65533 as i64;
   for size in bins.capacities() {
     let high = size as i64 / (8 as i64) - 3 as i64;
-    result = result.append(Interval { low: low, high: high });
+    result = result.append(affine.Interval { low: low, high: high });
     low = high + 1 as i64;
   }
   let index = 1 as i64;
   while (index <= 8 as i64) {
     let cut = index * (536870912 as i64) - 3 as i64;
-    result = result.append(Interval { low: low, high: cut - 1 as i64 });
+    result = result.append(affine.Interval { low: low, high: cut - 1 as i64 });
     low = cut;
     index = index + 1 as i64;
   }
-  return result.append(Interval { low: low, high: 4294967295 as i64 });
+  return result.append(affine.Interval { low: low, high: 4294967295 as i64 });
 }

@@ -1,12 +1,10 @@
 import "./ssaaffinevalue" as affine;
-pub use "./ssaaffinevalue".{Value, unknown};
+pub use "./ssaaffinevalue".{Interval, Value, unknown};
 import "./ssacondition" as condition;
 pub use "./ssacondition".{Comparison};
 import "core/cmp";
 
-pub struct Interval { low: i32, high: i32 }
-
-pub function valid_interval(r: Interval): boolean {
+pub function valid_interval(r: affine.Interval): boolean {
   return r.low >= 1 && r.low <= r.high && r.high <= 65535;
 }
 
@@ -14,44 +12,44 @@ function bounded(n: i64): boolean {
   return n >= -(4294967295 as i64) && n <= 4294967295 as i64;
 }
 
-function endpoint(v: affine.Value, n: i32): i64 {
-  return v.factor as i64 * (n as i64) + v.offset;
+function endpoint(v: affine.Value, n: i64): i64 {
+  return v.factor as i64 * n + v.offset;
 }
 
-pub function valid(r: Interval, v: affine.Value): boolean {
+pub function valid(r: affine.Interval, v: affine.Value): boolean {
   if (!valid_interval(r) || v.factor != 0 && v.factor != 1 || !bounded(v.offset)) {
     return false;
   }
   return bounded(endpoint(v, r.low)) && bounded(endpoint(v, r.high));
 }
 
-function checked(r: Interval, v: affine.Value): affine.Value {
+function checked(r: affine.Interval, v: affine.Value): affine.Value {
   return if (valid(r, v)) { v } else { affine.unknown() };
 }
 
-pub function number(r: Interval, n: i64): affine.Value {
+pub function number(r: affine.Interval, n: i64): affine.Value {
   return checked(r, affine.Value { factor: 0, offset: n });
 }
 
-pub function original(r: Interval): affine.Value {
+pub function original(r: affine.Interval): affine.Value {
   return checked(r, affine.Value { factor: 1, offset: 0 as i64 });
 }
 
-pub function add(r: Interval, v: affine.Value, delta: i64): affine.Value {
+pub function add(r: affine.Interval, v: affine.Value, delta: i64): affine.Value {
   if (!valid(r, v) || !bounded(delta)) {
     return affine.unknown();
   }
   return checked(r, affine.Value { factor: v.factor, offset: v.offset + delta });
 }
 
-pub function negate(r: Interval, v: affine.Value): affine.Value {
+pub function negate(r: affine.Interval, v: affine.Value): affine.Value {
   if (!valid(r, v) || v.factor != 0) {
     return affine.unknown();
   }
   return number(r, -v.offset);
 }
 
-pub function zero32(r: Interval, v: affine.Value): affine.Value {
+pub function zero32(r: affine.Interval, v: affine.Value): affine.Value {
   if (!valid(r, v)) {
     return affine.unknown();
   }
@@ -85,7 +83,7 @@ function highest(n: i64): i32 {
   return bit;
 }
 
-pub function bit_scan(r: Interval, v: affine.Value): i32 {
+pub function bit_scan(r: affine.Interval, v: affine.Value): i32 {
   if (!valid(r, v) || endpoint(v, r.low) <= 0) {
     return -1;
   }
@@ -93,7 +91,7 @@ pub function bit_scan(r: Interval, v: affine.Value): i32 {
   return if (bit == highest(endpoint(v, r.high))) { bit } else { -1 };
 }
 
-pub function mask(r: Interval, v: affine.Value, m: affine.Value): affine.Value {
+pub function mask(r: affine.Interval, v: affine.Value, m: affine.Value): affine.Value {
   if (!valid(r, v) || !valid(r, m) || m.factor != 0 || m.offset >= 0) {
     return affine.unknown();
   }
@@ -106,15 +104,15 @@ pub function mask(r: Interval, v: affine.Value, m: affine.Value): affine.Value {
   return if (low == high) { number(r, low * step) } else { affine.unknown() };
 }
 
-pub function compare(r: Interval, v: affine.Value, n: i64): condition.Comparison {
+pub function compare(r: affine.Interval, v: affine.Value, n: i64): condition.Comparison {
   if (!valid(r, v) || !bounded(n)) {
     return condition.unknown_order();
   }
   return condition.compare_interval(endpoint(v, r.low), endpoint(v, r.high), n);
 }
 
-pub function intervals(): Interval[] {
-  let result = [Interval { low: 1, high: 256 }];
+pub function intervals(): affine.Interval[] {
+  let result = [affine.Interval { low: 1, high: 256 }];
   for bit in 8..16 {
     let step = power(bit - 2) as i32;
     let low = power(bit) as i32;
@@ -123,14 +121,14 @@ pub function intervals(): Interval[] {
     while (low <= high) {
       let rounded = ((low - 1) / step + 1) * step;
       let end = cmp.min(rounded, high);
-      result = result.append(Interval { low: low, high: end });
+      result = result.append(affine.Interval { low: low as i64, high: end as i64 });
       low = end + 1;
     }
   }
   return result;
 }
 
-pub function expected(r: Interval): affine.Value {
+pub function expected(r: affine.Interval): affine.Value {
   if (!valid_interval(r)) {
     return affine.unknown();
   }

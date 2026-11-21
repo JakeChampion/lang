@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 REFERENCE = ROOT / 'internal/testing/e2ecompiler/testdata/large_free_wide_classes.json.gz'
 DRIVER = ROOT / 'compiler/drivers/ssalargefreewideclassescases.fern'
 CAPS = [(4 + n % 4) * 2 ** (17 + n // 4) for n in range(61)]
-LEGACY = ['compiler/ssalargearrayvalue.fern', 'compiler/ssastringvalue.fern', 'compiler/ssacapacityvalue.fern', 'compiler/ssalargepushranges.fern']
+LEGACY = ['compiler/ssaaffinevalue.fern', 'compiler/ssalargearrayvalue.fern', 'compiler/ssastringvalue.fern', 'compiler/ssacapacityvalue.fern', 'compiler/ssalargepushranges.fern']
 
 
 def packet(c):

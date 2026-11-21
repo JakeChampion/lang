@@ -274,7 +274,7 @@ function unguarded(s: machine.State, original: machine.State, r: value.Interval)
 }
 
 function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean): boolean {
-  let ops: machine.Instructions[value.Interval] = machine.Instructions { movement: movement, arithmetic: arithmetic, lea: lea, comparison: comparison, extended: extended };
+  let ops: machine.Instructions = machine.Instructions { movement: movement, arithmetic: arithmetic, lea: lea, comparison: comparison, extended: extended };
   return machine.path(p, r, register_entry, initial(r, register_entry), ops, unguarded, finished);
 }
 

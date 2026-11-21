@@ -53,15 +53,15 @@ function in_program(p: isa.ArrayProgram, pc: i32): boolean {
   return pc >= 0 && pc < p.ops.len();
 }
 
-pub struct Instructions[R] {
-  movement: (State, R, isa.Op) => State,
-  arithmetic: (State, R, isa.Op) => State,
-  lea: (State, R, isa.Op) => State,
-  comparison: (State, R, isa.Op) => State,
-  extended: (State, R, i32, isa.Op) => State,
+pub struct Instructions {
+  movement: (State, affine.Interval, isa.Op) => State,
+  arithmetic: (State, affine.Interval, isa.Op) => State,
+  lea: (State, affine.Interval, isa.Op) => State,
+  comparison: (State, affine.Interval, isa.Op) => State,
+  extended: (State, affine.Interval, i32, isa.Op) => State,
 }
 
-function step[R](s: State, r: R, pc: i32, op: isa.Op, ops: Instructions[R]): State {
+function step(s: State, r: affine.Interval, pc: i32, op: isa.Op, ops: Instructions): State {
   if (op.kind == 1) {
     return s;
   }
@@ -80,7 +80,7 @@ function step[R](s: State, r: R, pc: i32, op: isa.Op, ops: Instructions[R]): Sta
   return ops.extended(s, r, pc, op);
 }
 
-pub function path[R](p: isa.ArrayProgram, r: R, register_entry: boolean, s: State, ops: Instructions[R], unguarded: (State, State, R) => State, finished: (State, R, boolean) => boolean): boolean {
+pub function path(p: isa.ArrayProgram, r: affine.Interval, register_entry: boolean, s: State, ops: Instructions, unguarded: (State, State, affine.Interval) => State, finished: (State, affine.Interval, boolean) => boolean): boolean {
   let original = s;
   let visited: boolean[] = [];
   for op in p.ops {
