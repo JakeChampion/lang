@@ -95,8 +95,17 @@ function sources(): test.TestOutcome {
   return test.assert_true(heard.get() > 100000);
 }
 
+function oversized(): test.TestOutcome {
+  let read = (_offset: i64, count: i32): Result[u8[], IoError] => Ok([1u8, 2u8]);
+  if let Err(source.ReadSize) = seek.inspect_with(1i64, read, seek.default_limits()) {
+    return test.pass();
+  }
+  return test.fail("accepted more bytes than requested");
+}
+
 function main(): i32 {
   let runner = test.new("Indexed Vorbis seeks from a source");
   runner = runner.it("an index from a source plays each packet from a view of its pages", sources);
+  runner = runner.it("reject a source response longer than its requested extent", oversized);
   return runner.finish();
 }
