@@ -1574,11 +1574,23 @@ function elf_debug_info(text_vaddr: i64, text_len: i32, sym_names: string[], sym
     die = util.le32(die, 0);
   }
   let tys = dw_types_new();
-  let var_keys: string[] = [];
+  // Match the full spelling: a pointer reference and a later definition
+  // share a type key, but the definition still has members to register.
+  let spellings = util.name_index([]);
+  let type_ids: i32[] = [];
+  let var_types: i32[] = [];
   for t in vars.types {
-    let p = dw_type_parse(tys, t, 0);
-    tys = p.t;
-    var_keys = var_keys.append(p.key);
+    let known = spellings.find(t);
+    if (known >= 0) {
+      var_types = var_types.append(type_ids[known]);
+    } else {
+      let p = dw_type_parse(tys, t, 0);
+      tys = p.t;
+      let id = tys.keys.find(p.key);
+      spellings = spellings.added(t);
+      type_ids = type_ids.append(id);
+      var_types = var_types.append(id);
+    }
   }
   let emitted = dw_types_emit(DwEmit { die: die, offs: [], p_at: [], p_key: [] }, tys);
   die = emitted.die;
@@ -1603,7 +1615,7 @@ function elf_debug_info(text_vaddr: i64, text_len: i32, sym_names: string[], sym
           die = dw_uleb(die, 6);
         }
         die = elf_str_bytes(die, vars.names[v]);
-        die = util.le32(die, emitted.offs[tys.keys.find(var_keys[v])]);
+        die = util.le32(die, emitted.offs[var_types[v]]);
         die = util.le32(die, vars.loc_at[v]);
         v = by_fn.next[v];
       }
