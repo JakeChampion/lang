@@ -5,7 +5,7 @@ import "./api";
 
 pub enum Phase { Idle, Loading, Preparing, Playing, Paused }
 
-enum Action { Open, Start, Pause, Close, Seek(i64) }
+enum Action { Open, Start, Pause, Close, Seek(i64), Speed }
 
 pub struct State {
   revision: i64,
@@ -18,6 +18,9 @@ pub struct State {
   media: Option[player.Player],
   action: Option[Action],
   resume_ms: i64,
+  elapsed: i64,
+  duration: i64,
+  rate: i32,
 }
 
 pub struct Output {
@@ -27,14 +30,16 @@ pub struct Output {
   close: (player.Player) => void,
   seek: (player.Player, i64) => boolean,
   position: (player.Player) => i64,
+  duration: (player.Player) => i64,
+  speed: (player.Player, f32) => boolean,
 }
 
 pub function empty(): State {
-  return State { revision: 0i64, card: "", title: "", queue: [], at: 0, phase: Idle, note: "", media: None, action: None, resume_ms: 0i64 };
+  return State { revision: 0i64, card: "", title: "", queue: [], at: 0, phase: Idle, note: "", media: None, action: None, resume_ms: 0i64, elapsed: 0i64, duration: 0i64, rate: 100 };
 }
 
 pub function stop(s: State): State {
-  return State { ...empty(), revision: s.revision + 1i64, media: s.media, action: Some(Close) };
+  return State { ...empty(), revision: s.revision + 1i64, media: s.media, action: Some(Close), rate: s.rate };
 }
 
 pub function loading(s: State, card: string, title: string, resume_ms: i64): State {
@@ -48,7 +53,7 @@ function prepare(s: State, at: i32): State {
   if (s.queue[at].url.len() == 0) {
     return State { ...stop(s), note: "Yoto did not provide playable audio for the next track." };
   }
-  return State { ...s, at: at, phase: Preparing, action: Some(Open) };
+  return State { ...s, at: at, phase: Preparing, action: Some(Open), elapsed: 0i64, duration: 0i64 };
 }
 
 pub function next(s: State): State {
@@ -67,7 +72,24 @@ pub function previous(s: State): State {
 
 pub function seek(s: State, ms: i64): State {
   if let Playing | Paused = s.phase {
-    return State { ...s, action: Some(Seek(ms.max(0i64))) };
+    return State { ...s, action: Some(Seek(ms.max(0i64))), elapsed: ms.max(0i64) };
+  }
+  return s;
+}
+
+pub function set_rate(s: State, rate: i32): State {
+  let value = rate.max(50).min(200);
+  if let Playing = s.phase {
+    return State { ...s, rate: value, action: Some(Speed) };
+  }
+  return State { ...s, rate: value };
+}
+
+pub function sample(s: State, output: Output): State {
+  if let Playing | Paused = s.phase {
+    if let Some(media) = s.media {
+      return State { ...s, elapsed: output.position(media).max(0i64), duration: output.duration(media).max(0i64) };
+    }
   }
   return s;
 }
@@ -171,6 +193,14 @@ pub function apply(s: State, output: Output): State {
       }
       return next;
     },
+    Speed => {
+      if let Some(media) = s.media {
+        if (!output.speed(media, s.rate as f32 / 100.0f32)) {
+          return State { ...next, rate: 100 };
+        }
+      }
+      return next;
+    },
     _ => {}
   }
   if let Some(media) = s.media {
@@ -179,7 +209,8 @@ pub function apply(s: State, output: Output): State {
         let located = output.seek(media, s.resume_ms);
       }
       if (output.start(media)) {
-        return State { ...next, phase: Playing, resume_ms: 0i64 };
+        let rate = if (output.speed(media, s.rate as f32 / 100.0f32)) { s.rate } else { 100 };
+        return sample(State { ...next, phase: Playing, resume_ms: 0i64, rate: rate }, output);
       }
     } else if (output.pause(media)) {
       return State { ...next, phase: Paused };

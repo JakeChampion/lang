@@ -1,0 +1,47 @@
+import "std/json";
+import "./api";
+
+pub enum Page { Hub, Scan, Create, Discover, Setup }
+
+pub enum Native { ScanStart, ScanStop, RecordStart, RecordStop, RecordDiscard, PickAudio, LaunchOfficial, LaunchLink(string) }
+
+pub struct State {
+  page: Option[Page],
+  action: Option[Native],
+  note: string,
+  scanning: boolean,
+  address: string,
+  scan_result: Option[api.Card],
+  recording: boolean,
+  choosing_cover: boolean,
+  audio: Option[api.LocalAudio[]],
+  draft: api.Playlist,
+  editing: boolean,
+  busy: boolean,
+  discover_filter: i32,
+  show_shop: boolean,
+  shop: api.ShopTitle[],
+}
+
+pub function empty(): State {
+  return State {
+    page: None, action: None, note: "", scanning: false, address: "", scan_result: None, recording: false, choosing_cover: false,
+    audio: None, draft: api.empty_playlist(), editing: false, busy: false, discover_filter: 0, show_shop: false, shop: [],
+  };
+}
+
+pub function close_tool(s: State): State {
+  let action: Option[Native] = None;
+  if (s.scanning) {
+    action = Some(ScanStop);
+  } else if (s.recording) {
+    action = Some(RecordDiscard);
+  }
+  return State { ...s, page: None, action: action, scanning: false, recording: false, choosing_cover: false, audio: None, note: "" };
+}
+
+pub function audio_added(s: State, audio: api.LocalAudio): State {
+  let chapter = api.Chapter { title: audio.title, prior: json.JNull, audio: Some(audio) };
+  let draft = s.draft;
+  return State { ...s, draft: api.Playlist { ...draft, chapters: draft.chapters.append(chapter) }, audio: None, note: "" };
+}

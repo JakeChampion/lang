@@ -38,10 +38,15 @@ func TestAndroidStoryDeckApk(t *testing.T) {
 		"dev.fern.storydeck", "Story Deck", "android.permission.INTERNET",
 		"dev.fern.storydeck.CarBrowse", "android.media.browse.MediaBrowserService",
 		"com.google.android.gms.car.application", "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+		"android.permission.NFC", "android.permission.RECORD_AUDIO", "android.permission.READ_MEDIA_AUDIO",
 	} {
 		if !bytes.Contains(manifest, utf16le(want)) {
 			t.Errorf("the manifest has no string %q", want)
 		}
+	}
+	dex := readZipEntry(t, z, "classes.dex")
+	if !bytes.Contains(dex, []byte("Ldev/fern/storydeck/CardReader;")) {
+		t.Error("the APK does not contain the NFC reader callback")
 	}
 	readZipEntry(t, z, "res/xml/automotive_app_desc.xml")
 	icon, err := os.ReadFile(e2eharness.RepoPath(storyDeckApp, "icon.png"))

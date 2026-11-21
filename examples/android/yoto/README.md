@@ -36,8 +36,11 @@ Track lists and playback also show this artwork.
   open **Downloads** and select **Download all cards**.
 - Turn on **Downloaded only** in **Library** to see the cards saved on the phone.
   When you play on the phone, Story Deck uses saved audio first.
-- Wait for the cards to appear in **Downloads**. Test playback with airplane mode
-  on before you travel.
+- Use **Choose cards to download** to select a batch and see its estimated size
+  and duration. Select **Retry track** if a file fails to download.
+- Open **Library** with airplane mode on to browse and search the saved titles.
+  Story Deck saves the track index and caches cover and track artwork.
+
 - Open **Downloads** to play the saved audio without a connection. To delete a
   download, open its track list and select **Remove download**.
 
@@ -55,6 +58,33 @@ files. Live streams, previews, cards with subscription access, and cards marked
   Story Deck checks each saved file for a readable audio header.
 - Use **Story Deck** in Android Auto to browse downloaded cards and control
   playback.
+
+## Now playing
+
+Select the playback bar to see the current track, its position, and its
+artwork. On the phone, use the position slider and choose a playback speed.
+
+Open the status view on **Players**. Change the volume or set a sleep timer.
+The view shows the battery, free storage, and download activity when the
+player reports them.
+
+## Library tools
+
+Open **More options** and select **Library tools**.
+
+- **Scan a card** reads a Yoto tag on an Android phone with NFC. Open an
+  available card directly or pass the scanned link to Yoto to add the card.
+- **Create a playlist** records or imports audio to make new chapters. Edit
+  the title, order, and cover. Use Yoto to link the playlist to a physical card.
+
+- **Discover** shows the collections in your library and new cards in the
+  UK Yoto shop. Play previews when Yoto supplies them.
+- **Player and family setup** opens Yoto to connect a player to Wi-Fi or
+  accept a family invitation. Return to Story Deck and refresh to see the changes.
+
+To edit playlists and family groups, enable `user:content:manage` and
+`family:library:manage` in the Yoto developer dashboard. Then select
+the option to authorize edits in **Library tools**.
 
 ## Change player settings
 
@@ -111,3 +141,5 @@ write the launcher icon from `launcher_icon.fern`.
 - [Yoto content and playable URLs](https://yoto.dev/api/content/getcontent/)
 - [Yoto device configuration](https://yoto.dev/api/devices/updatedeviceconfig/)
 - [Yoto family library groups](https://yoto.dev/api/family-library-groups/getgroups/)
+- [Upload playlist audio](https://yoto.dev/myo/uploading-to-cards/)
+- [Set up a Yoto Player or Mini](https://support.yotoplay.com/en_gb/how-to-set-up-your-yoto-player-or-mini-ryCTOYjmMl)

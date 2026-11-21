@@ -148,6 +148,8 @@ function no_audio(): phone.Output {
     close: (media: player.Player): void => {},
     seek: (media: player.Player, ms: i64): boolean => false,
     position: (media: player.Player): i64 => 0i64,
+    duration: (media: player.Player): i64 => 0i64,
+    speed: (media: player.Player, rate: f32): boolean => true,
   };
 }
 
@@ -546,7 +548,7 @@ function test_download_work_batches(): test.TestOutcome {
   for i in 0..52 {
     tracks = tracks.append(api.DownloadTrack { title: i.to_string(), chapter: "01", key: i.to_string(), url: "https://example.com/track", art: "" });
   }
-  let plan = api.DownloadPlan { id: card.id, title: card.title, creator: card.creator, tracks: tracks };
+  let plan = api.DownloadPlan { id: card.id, title: card.title, creator: card.creator, tracks: tracks, card: None };
   let state = offline.fetching(offline.empty(offline.load(dir, dir)), card);
   state = offline.apply(offline.received(state, state.revision, Ok(plan)), disk);
   if (enqueued.get() > 4 || state.catalog.entries.len() != 0 || offline.load(dir, dir).cleanup.len() != enqueued.get()) {
@@ -581,7 +583,7 @@ function test_library_download_filter(): test.TestOutcome {
   let cards = fixture_cards();
   let card = cards[0];
   let file = offline.Track { id: 1i64, name: "yoto-offline-sample.audio", title: "Fox at dusk", chapter: "01", key: "03", art: "" };
-  let entry = offline.Entry { id: card.id, title: card.title, creator: card.creator, tracks: [file], ready: true };
+  let entry = offline.Entry { id: card.id, title: card.title, creator: card.creator, tracks: [file], ready: true, failed_at: -1, card: None };
   let catalog = offline.Catalog { dir: "/media", entries: [entry], cleanup: [], note: "" };
   let state = deck.with_downloads(deck.Model { ...deck.start(), token: "test session" }, catalog);
   let m = deck.update(state, deck.LibraryLoaded(Ok(api.Library { players: [], cards: cards, groups: Ok([]), note: "" })));
@@ -667,8 +669,8 @@ function test_playback_tools(): test.TestOutcome {
   };
   let saved_track = offline.Track { id: 1i64, name: "yoto-offline-ready.audio", title: "Fox at dusk", chapter: "01", key: "03", art: "" };
   let missing = offline.Track { ...saved_track, id: 2i64, name: "yoto-offline-missing.audio", key: "04" };
-  let ready = offline.Entry { id: "book", title: "Woodland Walk", creator: "A. Writer", tracks: [saved_track], ready: true };
-  let incomplete = offline.Entry { id: "pod", title: "Sky Journal", creator: "", tracks: [missing], ready: true };
+  let ready = offline.Entry { id: "book", title: "Woodland Walk", creator: "A. Writer", tracks: [saved_track], ready: true, failed_at: -1, card: None };
+  let incomplete = offline.Entry { id: "pod", title: "Sky Journal", creator: "", tracks: [missing], ready: true, failed_at: -1, card: None };
   let catalog = offline.Catalog { dir: dir, entries: [ready, incomplete], cleanup: [], note: "" };
   let written = write_file_bytes(dir + "/" + saved_track.name, "RIFF    WAVEfmt                     data    ".bytes());
   let item = listening.Item { id: ready.id, title: ready.title };
@@ -835,6 +837,86 @@ function test_account_menu(): test.TestOutcome {
   return test.assert_eq(s.shell.app.busy && !s.shell.app.menu_open, true);
 }
 
+function test_now_playing_controls(): test.TestOutcome {
+  let track = api.Stream { title: "Fox at dusk", url: "file:///sample.audio", chapter: "01", key: "03", art: "" };
+  let audio = player.Player { obj: 1 as usize, listener: 1 as usize, slot: 0 };
+  let playback = phone.State { ...phone.empty(), title: "Woodland Walk", media: Some(audio), queue: [track], phase: phone.Playing, elapsed: 2000i64, duration: 65000i64 };
+  let m = deck.Model { ...deck.start(), tab: 3, on_phone: true, phone: playback };
+  let s = sim.tap(simulator(m), "Open now playing");
+  if (!s.shell.app.now_open || !sim.says(s, "Track position") || !sim.shows(s, "0:02 / 1:05")) {
+    return test.fail("open the phone controls with the current position and duration");
+  }
+  s = sim.send(s, deck.PhoneRate(150));
+  if (s.shell.app.phone.rate != 150) {
+    return test.fail("change phone playback speed from the player");
+  }
+  return test.assert_eq_array(
+    [api.command_name(api.Volume(70)), api.command_body(api.Volume(70)), api.command_name(api.DeviceSleep(900)), api.command_body(api.DeviceSleep(900))],
+    ["volume/set", "{\"volume\":70}", "sleep-timer/set", "{\"seconds\":900}"],
+  );
+}
+
+function test_downloaded_search_and_retry(): test.TestOutcome {
+  let Ok(dir) = temp_dir("story-deck-retry-track") else {
+    return test.fail("make a download store");
+  };
+  let original = fixture_cards()[0];
+  let tracks = [
+    api.DownloadTrack { title: "Intro", chapter: "01", key: "01", url: "https://example.com/intro", art: "" },
+    api.DownloadTrack { title: "Fox at dusk", chapter: "01", key: "03", url: "https://example.com/fox", art: "" },
+  ];
+  let plan = api.DownloadPlan { id: original.id, title: original.title, creator: original.creator, tracks: tracks, card: Some(original) };
+  let count = cell_new(0i64);
+  let removed = cell_new([] as i64[]);
+  let out = offline.Output {
+    start: (address: string, name: string, title: string): i64 => {
+      count.set(count.get() + 1i64);
+      return count.get();
+    },
+    status: (id: i64): i32 => if (id == 2i64) { download.FAILED } else { download.DONE },
+    remove: (ids: i64[]): boolean => {
+      removed.set(removed.get().concat(ids));
+      return true;
+    },
+    save: (entries: offline.Entry[], cleanup: i64[]): boolean => offline.save(dir, entries, cleanup),
+  };
+  let state = offline.empty(offline.load(dir, dir));
+  let pending = offline.fetching(offline.enqueue(state, [original]), original);
+  let started = offline.apply(offline.received(pending, pending.revision, Ok(plan)), out);
+  let failed = offline.apply(offline.check(started), out);
+  if (failed.catalog.entries[0].failed_at != 1 || removed.get().len() != 0) {
+    return test.fail("retain all tracks after one file fails");
+  }
+  let rebuilt = offline.empty(offline.load(dir, dir));
+  let retry = offline.retry(rebuilt, original.id);
+  let request = offline.fetching(retry, original);
+  let replaced = offline.apply(offline.received(request, request.revision, Ok(plan)), out);
+  let cleaned = offline.apply(offline.check(replaced), out);
+  let ready = offline.apply(offline.check(cleaned), out);
+  let Some(entry) = offline.saved(ready, original.id) else {
+    return test.fail("make the card ready after the failed file is replaced");
+  };
+  if (removed.get() != [2i64] || entry.tracks[0].id != 1i64 || entry.tracks[1].id != 3i64 || count.get() != 3i64) {
+    return test.fail("retry just the failed track");
+  }
+  let m = deck.with_downloads(deck.start(), offline.load(dir, dir));
+  let s = sim.tap(simulator(m), "Library");
+  s = sim.type_in(s, "library-search", "fox");
+  return test.assert_eq(s.shell.app.token.len() == 0 && sim.says(s, "Tracks for Fox at dusk") && s.shell.app.cards[0].cover == original.cover, true);
+}
+
+function test_scan_and_shop(): test.TestOutcome {
+  let value = json.parse("{\"products\":[{\"product_type\":\"single-card\",\"handle\":\"a-book\",\"title\":\"A book\"},{\"product_type\":\"single-card\",\"handle\":\"../../other\",\"title\":\"Bad handle\"}]}").unwrap_or(json.JNull);
+  let shop = api.parse_shop_titles(value);
+  if (shop.len() != 1 || shop[0].address != "https://uk.yotoplay.com/products/a-book") {
+    return test.fail("open only valid Yoto shop product links");
+  }
+  return test.assert_eq_array(
+    [api.scan_code("https://yoto.io/c/Abc12?test=sample"), api.scan_code("https://example.com/Abc12")],
+    ["Abc12", ""],
+  );
+}
+
 function main(): i32 {
   let r = test.new("Story Deck");
   r = r.it("PKCE matches the standard example", test_pkce);
@@ -866,5 +948,8 @@ function main(): i32 {
   r = r.it("draw the Story Deck launcher icon", test_launcher_icon);
   r = r.it("filter the library by collection and family group", test_library_collections);
   r = r.it("show account actions only in the menu", test_account_menu);
+  r = r.it("open the full phone player and build device commands", test_now_playing_controls);
+  r = r.it("retry one track and find the saved card after restart", test_downloaded_search_and_retry);
+  r = r.it("validate scanned card codes and shop links", test_scan_and_shop);
   return r.finish();
 }

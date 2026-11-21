@@ -1,0 +1,246 @@
+import "std/android";
+import "std/base64";
+import "std/jni";
+import "std/rand";
+import "std/string";
+import "./api";
+
+pub const SCANNED: i32 = 0x53544344;
+
+const READER: string = "dev.fern.storydeck.CardReader";
+
+const MIC: string = "android.permission.RECORD_AUDIO";
+
+pub struct Recorder { object: usize, path: string }
+
+function healthy(e: usize, obj: usize): boolean {
+  return jni.check(e).is_ok() && obj != 0 as usize;
+}
+
+function create(e: usize, cls: usize): usize {
+  if (!healthy(e, cls)) {
+    return 0 as usize;
+  }
+  return jni.new_object_a(e, cls, jni.get_method_id(e, cls, "<init>", "()V"), 0 as usize);
+}
+
+function adapter(e: usize, activity: usize): usize {
+  let cls = jni.find_class(e, "android/nfc/NfcAdapter");
+  if (!healthy(e, cls)) {
+    return 0 as usize;
+  }
+  let get = jni.get_static_method_id(e, cls, "getDefaultAdapter", "(Landroid/content/Context;)Landroid/nfc/NfcAdapter;");
+  let args = jni.jvalues([activity]);
+  let obj = jni.call_static_object_method_a(e, cls, get, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, cls);
+  return if (healthy(e, obj)) { obj } else { 0 as usize };
+}
+
+pub function scan(ctx: usize, enabled: boolean): boolean {
+  let e = android.env(ctx);
+  let activity = android.activity_object(ctx);
+  let nfc = adapter(e, activity);
+  if (nfc == 0 as usize) {
+    return false;
+  }
+  defer jni.delete_local_ref(e, nfc);
+  if (!enabled) {
+    return jni.call_void(e, nfc, "disableReaderMode", "(Landroid/app/Activity;)V", [activity]);
+  }
+  let adapter_class = jni.get_object_class(e, nfc);
+  let enabled_check = jni.get_method_id(e, adapter_class, "isEnabled", "()Z");
+  let switched_on = jni.call_boolean_method_a(e, nfc, enabled_check, 0 as usize) != 0;
+  jni.delete_local_ref(e, adapter_class);
+  if (!healthy(e, nfc) || !switched_on) {
+    return false;
+  }
+  let cls = jni.load_class(e, activity, READER);
+  let reader = create(e, cls);
+  if (!healthy(e, reader)) {
+    return false;
+  }
+  let ok = jni.call_void(e, nfc, "enableReaderMode", "(Landroid/app/Activity;Landroid/nfc/NfcAdapter$ReaderCallback;ILandroid/os/Bundle;)V", [activity, reader, 15 as usize, 0 as usize]);
+  jni.delete_local_ref(e, reader);
+  jni.delete_local_ref(e, cls);
+  return ok;
+}
+
+function ndef_message(e: usize, tag: usize): usize {
+  let cls = jni.find_class(e, "android/nfc/tech/Ndef");
+  let get = jni.get_static_method_id(e, cls, "get", "(Landroid/nfc/Tag;)Landroid/nfc/tech/Ndef;");
+  let args = jni.jvalues([tag]);
+  let tech = jni.call_static_object_method_a(e, cls, get, args);
+  jni.free_buffer(args);
+  if (!healthy(e, tech)) {
+    return 0 as usize;
+  }
+  return jni.call_object(e, tech, "getCachedNdefMessage", "()Landroid/nfc/NdefMessage;", []);
+}
+
+function publish_scan(e: usize, text: string): void {
+  let local = jni.new_string(e, text);
+  let value = jni.new_global_ref(e, local);
+  if (!android.tell(e, SCANNED, value)) {
+    jni.delete_global_ref(e, value);
+  }
+}
+
+@jni("dev.fern.storydeck.CardReader implements android.nfc.NfcAdapter$ReaderCallback", "void onTagDiscovered(android.nfc.Tag)")
+pub function discovered(e: usize, reader: usize, tag: usize): void {
+  let message = ndef_message(e, tag);
+  if (!healthy(e, message)) {
+    publish_scan(e, "");
+    return;
+  }
+  let records = jni.call_object(e, message, "getRecords", "()[Landroid/nfc/NdefRecord;", []);
+  if (healthy(e, records)) {
+    for i in 0..jni.get_array_length(e, records) {
+      let record = jni.get_object_array_element(e, records, i);
+      let uri = jni.call_object(e, record, "toUri", "()Landroid/net/Uri;", []);
+      if (healthy(e, uri)) {
+        let raw = jni.call_object(e, uri, "toString", "()Ljava/lang/String;", []);
+        let address = jni.string_of(e, raw);
+        if (address.starts_with("https://yoto.io/") && api.scan_code(address).len() > 0) {
+          publish_scan(e, address);
+          return;
+        }
+      }
+    }
+  }
+  publish_scan(e, "");
+}
+
+function release(e: usize, recorder: usize): void {
+  let closed = jni.call_void(e, recorder, "release", "()V", []);
+}
+
+pub function record(ctx: usize): Result[Recorder, string] {
+  if (!android.has_permission(ctx, MIC)) {
+    android.request_permissions(ctx, [MIC]);
+    return Err("Allow microphone access, then tap Record again.");
+  }
+  let dir = android.cache_dir(ctx);
+  if (dir.len() == 0) {
+    return Err("Recording storage is unavailable.");
+  }
+  let path = dir + "/story-voice-" + base64.encode_url(rand.bytes(12)) + ".m4a";
+  let e = android.env(ctx);
+  let cls = jni.find_class(e, "android/media/MediaRecorder");
+  let obj = create(e, cls);
+  if (!healthy(e, obj)) {
+    return Err("The Android audio recorder is unavailable.");
+  }
+  defer jni.delete_local_ref(e, obj);
+  defer jni.delete_local_ref(e, cls);
+  let dest = jni.new_string(e, path);
+  defer jni.delete_local_ref(e, dest);
+  let started = jni.call_void(e, obj, "setAudioSource", "(I)V", [1 as usize])
+    && jni.call_void(e, obj, "setOutputFormat", "(I)V", [2 as usize])
+    && jni.call_void(e, obj, "setAudioEncoder", "(I)V", [3 as usize])
+    && jni.call_void(e, obj, "setOutputFile", "(Ljava/lang/String;)V", [dest])
+    && jni.call_void(e, obj, "setMaxDuration", "(I)V", [3600000 as usize])
+    && jni.call_void(e, obj, "prepare", "()V", [])
+    && jni.call_void(e, obj, "start", "()V", []);
+  if (!started) {
+    release(e, obj);
+    let removed = remove_file(path);
+    return Err("Could not start recording.");
+  }
+  return Ok(Recorder { object: jni.new_global_ref(e, obj), path: path });
+}
+
+pub function stop(ctx: usize, recorder: Recorder, keep: boolean): Result[api.LocalAudio, string] {
+  let e = android.env(ctx);
+  let stopped = jni.call_void(e, recorder.object, "stop", "()V", []);
+  release(e, recorder.object);
+  jni.delete_global_ref(e, recorder.object);
+  if (!stopped || !keep) {
+    let removed = remove_file(recorder.path);
+    return Err("The recording is unavailable.");
+  }
+  return Ok(api.LocalAudio { path: recorder.path, title: "Recording", mime: "audio/mp4", recording: true });
+}
+
+function cursor_bool(e: usize, cursor: usize, method: usize): boolean {
+  return jni.call_boolean_method_a(e, cursor, method, 0 as usize) != 0;
+}
+
+function cursor_text(e: usize, cursor: usize, method: usize, column: i32): string {
+  let args = jni.jvalues([column as usize]);
+  let value = jni.call_object_method_a(e, cursor, method, args);
+  jni.free_buffer(args);
+  let text = if (healthy(e, value)) { jni.string_of(e, value) } else { "" };
+  jni.delete_local_ref(e, value);
+  return text;
+}
+
+function audio_cursor(e: usize, activity: usize): usize {
+  let resolver = jni.call_object(e, activity, "getContentResolver", "()Landroid/content/ContentResolver;", []);
+  if (!healthy(e, resolver)) {
+    return 0 as usize;
+  }
+  defer jni.delete_local_ref(e, resolver);
+  let cls = jni.find_class(e, "android/net/Uri");
+  let method = jni.get_static_method_id(e, cls, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
+  let name = jni.new_string(e, "content://media/external/audio/media");
+  let params = jni.jvalues([name]);
+  let uri = jni.call_static_object_method_a(e, cls, method, params);
+  jni.free_buffer(params);
+  let cols = jni.string_array(e, ["_data", "_display_name", "mime_type"]);
+  let cursor = jni.call_object(e, resolver, "query", "(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;", [uri, cols, 0 as usize, 0 as usize, 0 as usize]);
+  jni.delete_local_ref(e, cols);
+  jni.delete_local_ref(e, uri);
+  jni.delete_local_ref(e, name);
+  jni.delete_local_ref(e, cls);
+  return cursor;
+}
+
+pub function audio_files(ctx: usize): Result[api.LocalAudio[], string] {
+  let modern = "android.permission.READ_MEDIA_AUDIO";
+  let legacy = "android.permission.READ_EXTERNAL_STORAGE";
+  if (!android.has_permission(ctx, modern) && !android.has_permission(ctx, legacy)) {
+    let permission = if (android.sdk_version(ctx) >= 33) { modern } else { legacy };
+    android.request_permissions(ctx, [permission]);
+    return Err("Allow music and audio access, then tap Import audio again.");
+  }
+  let e = android.env(ctx);
+  let cursor = audio_cursor(e, android.activity_object(ctx));
+  if (!healthy(e, cursor)) {
+    return Err("Android could not open the audio library.");
+  }
+  defer jni.delete_local_ref(e, cursor);
+  let cls = jni.get_object_class(e, cursor);
+  defer jni.delete_local_ref(e, cls);
+  let next = jni.get_method_id(e, cls, "moveToNext", "()Z");
+  let string_at = jni.get_method_id(e, cls, "getString", "(I)Ljava/lang/String;");
+  let out: api.LocalAudio[] = [];
+  while (cursor_bool(e, cursor, next)) {
+    let path = cursor_text(e, cursor, string_at, 0);
+    let name = cursor_text(e, cursor, string_at, 1);
+    let mime = cursor_text(e, cursor, string_at, 2);
+    if (path.len() > 0 && mime.starts_with("audio/")) {
+      out = out.append(api.LocalAudio { path: path, title: name, mime: mime, recording: false });
+    }
+  }
+  let closed = jni.call_void(e, cursor, "close", "()V", []);
+  return Ok(out);
+}
+
+pub function official_app(ctx: usize): boolean {
+  let e = android.env(ctx);
+  let activity = android.activity_object(ctx);
+  let cls = jni.find_class(e, "android/content/Intent");
+  let intent = create(e, cls);
+  if (!healthy(e, intent)) {
+    return false;
+  }
+  let pkg = jni.new_string(e, "com.yotoplay.yoto");
+  let target = jni.new_string(e, "com.yotoplay.yoto.SplashActivity");
+  let configured = jni.call_object(e, intent, "setClassName", "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;", [pkg, target]);
+  let launched = healthy(e, configured) && jni.call_void(e, activity, "startActivity", "(Landroid/content/Intent;)V", [intent]);
+  for ref in [target, pkg, configured, intent, cls] {
+    jni.delete_local_ref(e, ref);
+  }
+  return launched;
+}
