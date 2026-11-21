@@ -284,3 +284,22 @@ XML takes 686 M against 697 M, and CommonMark takes 993 M against 1012 M.
 On the first 4 MB of the spec input, the HTML takes 826 M against 843 M.
 The other formats keep the node tree and its text, so they use more memory
 than cmark.
+
+A repeat on 2026-11-21 used the HTML command lines of all three renderers on
+the same x86-64 Linux host. The table gives median elapsed milliseconds over
+15 measured runs per program after a warmup. The programs shared one CPU
+affinity, rotated their order and wrote stdout to /dev/null.
+
+| HTML input | Bytes | Fern md | cmark 0.31.2 | md4c 0.4.8 (md2html) |
+|---|---:|---:|---:|---:|
+| Repository Markdown | 25,617,121 | 86.2 ms | 353.3 ms | 107.3 ms |
+| Repeated spec examples | 16,888,143 | 246.2 ms | 1060.9 ms | 276.9 ms |
+
+The repository input contains all 2,859 regular Markdown files from
+`git archive c507562f85 -- '*.md'` in archive order, with two newlines
+after each file. For the spec input, append two newlines to the Markdown
+of each of the 652 examples in `tests/spec.json`, then repeat that block
+as many whole times as fit in 16,900,000 bytes. Fern and cmark produced
+byte-identical HTML on both inputs. The C tools used release-tag sources
+compiled with `cc -O3 -DNDEBUG`. Fern used `-target x86-64-linux`. Each
+renderer received the input filename and used its default options.
