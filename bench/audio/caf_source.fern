@@ -119,8 +119,66 @@ function source(path: string, started: i64, allocations: i64, fresh: i64, reuse_
   return Ok(value);
 }
 
+// Render the frozen mono S16 fixture for a full-file comparison with FFmpeg.
+function render(reader: Reader, writer: Writer): Result[void, string] {
+  let bytes = match (reader.seek(0i64, 2)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let index = source_index(reader, bytes, false)?;
+  let format = index.information().format;
+  if (format.channels != 1 || format.bits_per_sample != 16) {
+    return Err("expected mono S16");
+  }
+  let cursor = match (file.cursor(index)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let output = pcm.zeros(index.max_packet_frames());
+  let block: u8[] = [];
+  while (true) {
+    let (next, event) = match (cursor.step_into(output, reader)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    cursor = next;
+    match (event) {
+      caf.BufferPending(samples) => {
+        output = samples;
+      },
+      caf.BufferSamples(audio) => {
+        for sample in audio.samples[audio.start:audio.start + audio.frames] {
+          block = block.append(sample as u8).append((sample >> 8) as u8);
+        }
+        output = audio.samples;
+        if (block.len() >= 16384) {
+          if let Err(e) = writer.write_bytes(block) {
+            return Err(e.message());
+          }
+          block = [];
+        }
+      },
+      caf.BufferFinished(_) => {
+        if let Err(e) = writer.write_bytes(block) {
+          return Err(e.message());
+        }
+        return Ok(());
+      }
+    }
+  }
+}
+
+function render_file(input: string, output: string): Result[void, string] {
+  let reader = match (open_reader(input)) { Ok(r) => r, Err(e) => { return Err(e.message()); } };
+  defer reader.close();
+  let writer = match (open_writer(output)) { Ok(w) => w, Err(e) => { return Err(e.message()); } };
+  let result = render(reader, writer);
+  if let Err(e) = writer.close() {
+    return Err(e.message());
+  }
+  return result;
+}
+
 function main(): i32 {
   let argv = args();
+  if (argv.len() == 4 && argv[1] == "render-s16") {
+    if let Err(e) = render_file(argv[2], argv[3]) {
+      eprint(e);
+      return 2;
+    }
+    return 0;
+  }
   if (argv.len() != 3 || argv[1] != "view" && argv[1] != "source" && argv[1] != "source-with") {
     return 1;
   }
