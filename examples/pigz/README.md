@@ -243,6 +243,60 @@ This cause is not measured: `longest` takes ten arguments, and some of them
 go on the stack. The values of the loop of `deflate_slow` that live across
 the call are in stack slots, because x86-64 has five callee-saved registers.
 
+### Silesia and 1 GiB log comparison
+
+On 2026-11-21, the Fern port at `eac0faf9b4` used less wall time than
+pigz 2.8 to decompress both inputs at every level. Pigz compressed both
+inputs faster at all three levels. The zlib-ng results use its single-threaded
+`minigzip` utility. Fern and pigz used four workers.
+
+Each cell gives **wall / CPU seconds** for one timed run on x86-64 Linux
+(AMD EPYC 9V74, four logical CPUs available to each process). CPU includes
+user and system time across workers. These individual observations include
+file I/O and process startup.
+
+| Input | Level | Operation | Fern | pigz 2.8 | zlib-ng 2.3.3 |
+| --- | ---: | --- | ---: | ---: | ---: |
+| Silesia | 1 | compress | 1.226 / 3.868 | 0.736 / 2.772 | 1.113 / 1.112 |
+| Silesia | 1 | decompress | 0.496 / 0.493 | 0.701 / 0.808 | 0.366 / 0.366 |
+| Silesia | 6 | compress | 3.322 / 10.34 | 2.262 / 8.83 | 3.47 / 3.438 |
+| Silesia | 6 | decompress | 0.419 / 0.419 | 0.777 / 0.905 | 0.422 / 0.419 |
+| Silesia | 9 | compress | 6.041 / 20.29 | 5.148 / 20.253 | 8.38 / 8.324 |
+| Silesia | 9 | decompress | 0.378 / 0.378 | 0.722 / 0.862 | 0.315 / 0.314 |
+| Log | 1 | compress | 2.574 / 7.75 | 1.342 / 5.066 | 1.748 / 1.701 |
+| Log | 1 | decompress | 1.071 / 1.069 | 1.989 / 2.408 | 1.027 / 1.015 |
+| Log | 6 | compress | 4.35 / 14.593 | 2.918 / 11.249 | 5.904 / 5.887 |
+| Log | 6 | decompress | 0.882 / 0.881 | 1.344 / 1.892 | 0.649 / 0.649 |
+| Log | 9 | compress | 17.818 / 64.8 | 15.885 / 62.819 | 21.316 / 21.21 |
+| Log | 9 | decompress | 0.995 / 0.994 | 2.319 / 2.47 | 0.7 / 0.699 |
+
+**Inputs and commands.** Silesia uses the concatenation and hash above.
+The synthetic log repeats the following ASCII records and ends at exactly
+1,073,741,824 bytes, including the partial last record. Its SHA-256 is
+`6c5ed1232fc88e28a965505c3d9b2c2380d009415a3e5cfe90ac38783cba17d5`.
+
+```python
+block = b"".join(
+    f"2026-11-21T12:{i // 60 % 60:02}:{i % 60:02}Z GET /items/{i % 997} status=200 bytes={i * 37 % 8192}\n".encode("ascii")
+    for i in range(65536)
+)
+with open("log.bin", "wb") as log:
+    copies, tail = divmod(1 << 30, len(block))
+    for _ in range(copies):
+        log.write(block)
+    log.write(block[:tail])
+```
+
+Build Fern with `-O`, pigz 2.8 with zlib 1.3 as in the CI oracle, and
+zlib-ng 2.3.3 with `./configure --static && make minigzip`. Read stdin
+from the input file and write compressed stdout to a regular file.
+Pass `-c -LEVEL -p 4 -n` to Fern and pigz, or `-c -LEVEL` to minigzip,
+replacing LEVEL with 1, 6 or 9. Rotate the starting compressor at each level.
+For decompression, give all three programs the same pigz stream for that
+level, pass `-d -c` (plus `-p 4 -n` for Fern and pigz), and direct stdout
+to `/dev/null`. Outside timing, GNU gzip decoded every compressor's output
+and all three decoders reproduced the input SHA-256 from each shared stream.
+
 ## Messages and exit codes
 
 The messages and the exit codes are those of pigz 2.8. Some examples:
