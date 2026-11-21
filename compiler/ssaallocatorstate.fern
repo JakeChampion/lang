@@ -1,0 +1,108 @@
+import "./ssamachineword" as machineword;
+import "./ssacapacityisa" as isa;
+
+// choice is 1 after the test for a block that crosses a 64 KiB line and 2
+// after the test of the coloured pointer against the end of the heap. The
+// branch on such a test can go each way, and each way must finish.
+pub struct State { regs: machineword.Word[], memory: machineword.Half[], writes: i32[], zero: i32, carry: i32, sign: i32, overflow: i32, bounded: boolean, choice: i32, mappings: i32, advised: boolean, ok: boolean }
+
+pub function pointer(w: machineword.Word): boolean {
+  return w.low.kind >= 2 && w.low.kind <= 4 && machineword.equal(w, machineword.token(w.low.kind, w.low.identity));
+}
+
+pub function unknown(s: State): State {
+  return State { ...s, zero: -1, carry: -1, sign: -1, overflow: -1, bounded: false, choice: 0 };
+}
+
+pub function write(s: State, reg: i32, value: machineword.Word): State {
+  return State { ...s, regs: s.regs.with(reg, value) };
+}
+
+pub function load(s: State, at: i32, width: i32): machineword.Word {
+  return machineword.Word { low: s.memory[at], high: if (width == 64) { s.memory[at + 1] } else { machineword.number(0).high } };
+}
+
+pub function read(s: State, at: i32, width: i32, reg: i32): State {
+  return if (at < 0) { State { ...s, ok: false } } else { write(s, reg, load(s, at, width)) };
+}
+
+pub function pointer_difference(s: State, op: isa.Op, a: machineword.Word, b: machineword.Word): State {
+  if (op.kind == 9 && pointer(a) && pointer(b) && a.low.kind == b.low.kind && a.low.identity >= b.low.identity) {
+    return write(s, op.destination, machineword.number(a.low.identity - b.low.identity));
+  }
+  return State { ...s, ok: false };
+}
+
+function inverse(value: i32): i32 {
+  return if (value < 0) { -1 } else { 1 - value };
+}
+
+function disjunction(a: i32, b: i32): i32 {
+  return if (a == 1 || b == 1) { 1 } else { if (a == 0 && b == 0) { 0 } else { -1 } };
+}
+
+function branch(s: State, condition: string, carry_aliases: boolean): i32 {
+  if (condition == "jmp") {
+    return 1;
+  }
+  if (condition == "je" || condition == "jz") {
+    return s.zero;
+  }
+  if (condition == "jne" || condition == "jnz") {
+    return inverse(s.zero);
+  }
+  if (condition == "jb" || carry_aliases && condition == "jc") {
+    return s.carry;
+  }
+  if (condition == "jae" || carry_aliases && condition == "jnc") {
+    return inverse(s.carry);
+  }
+  return ordered_branch(s, condition);
+}
+
+function ordered_branch(s: State, condition: string): i32 {
+  if (condition == "ja" || condition == "jbe") {
+    let below = if (s.bounded) { 1 } else { disjunction(s.zero, s.carry) };
+    return if (condition == "jbe") { below } else { inverse(below) };
+  }
+  return signed_branch(s, condition);
+}
+
+function signed_branch(s: State, condition: string): i32 {
+  if (condition == "js") {
+    return s.sign;
+  }
+  if (condition == "jns") {
+    return inverse(s.sign);
+  }
+  if (condition == "jo") {
+    return s.overflow;
+  }
+  if (condition == "jno") {
+    return inverse(s.overflow);
+  }
+  let less = if (s.sign < 0 || s.overflow < 0) { -1 } else { if (s.sign != s.overflow) { 1 } else { 0 } };
+  if (condition == "jl") {
+    return less;
+  }
+  if (condition == "jge") {
+    return inverse(less);
+  }
+  return signed_order(s, condition, less);
+}
+
+function signed_order(s: State, condition: string, less: i32): i32 {
+  let below = disjunction(less, s.zero);
+  if (condition == "jle") {
+    return below;
+  }
+  return if (condition == "jg") { inverse(below) } else { -1 };
+}
+
+pub function next_pc(s: State, op: isa.Op, pc: i32, carry_aliases: boolean): i32 {
+  let taken = branch(s, op.condition, carry_aliases);
+  if (taken < 0 || taken == 1 && op.kind == 35) {
+    return -1;
+  }
+  return if (taken == 1) { op.target } else { pc + 1 };
+}
