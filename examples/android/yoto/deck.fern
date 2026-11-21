@@ -2811,7 +2811,7 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     ImportAudio => {
       let tool = m.tools_page;
-      let Some(panel_tools.Create()) = tool.page else {
+      let Some(panel_tools.Create) = tool.page else {
         return m;
       };
       if (tool.busy || tool.importing || tool.recording) {
