@@ -64,9 +64,12 @@ HTTP and CDN services remain unimplemented.
 | JPEG XL | Planned | Planned |
 | QOI | RGB8/RGBA8 | RGB8/RGBA8 |
 
+The [lossless WebP reader](docs/webp-lossless.md) decodes single-chunk RIFF files whose VP8L payload uses simple literal codes. The companion writer encodes RGB8 and RGBA8 images with up to two distinct values per channel.
+
 Each codec documents its metadata policy and resource limits.
 A [native QOI benchmark pipeline](docs/benchmarks.md) checks exact pixels before native time and memory observations.
 JPEG XL and wider PNG/JPEG compatibility are active roadmap items.
+The [AVIF feasibility decision](docs/decisions/0002-avif.md) defers pixel coding and records the evidence required to revisit it.
 
 ## Build and test
 

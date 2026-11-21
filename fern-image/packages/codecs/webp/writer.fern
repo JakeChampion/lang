@@ -1,0 +1,124 @@
+// Encode literal pixels with at most two symbols per channel.
+import "../../pixels/pixels";
+import "../jxl/bits";
+import "std/binary";
+import "core/cmp";
+
+@derive(cmp.Eq)
+pub enum EncodeError { Storage, Unsupported, Limit, Cancelled }
+
+struct Channel { first: u8, second: u8 }
+
+function channel(value: u8): Channel {
+  return Channel { first: value, second: value };
+}
+
+function sample(image: pixels.Image, offset: i32, component: i32, n: i32): u8 {
+  if (component == 3 && n == 3) {
+    return 255;
+  }
+  return image.data[offset + component];
+}
+
+function field(value: u64, width: i32): bits.Field {
+  return bits.Field { value: value, width: width };
+}
+
+pub function encode_simple(image: pixels.Image, max_bytes: i32, cancelled: () => boolean): Result[u8[], EncodeError] {
+  if (cancelled()) {
+    return Err(Cancelled);
+  }
+  let l = image.layout;
+  let Ok(layout) = pixels.checked_layout(l.width, l.height, l.stride, l.format, pixels.default_limits()) else {
+    return Err(Storage);
+  };
+  if (layout.bytes != l.bytes || image.data.len() != l.bytes) {
+    return Err(Storage);
+  }
+  if (l.width > 16384 || l.height > 16384) {
+    return Err(Unsupported);
+  }
+  let n = pixels.channels(l.format);
+  // VP8L emits green, red, blue, alpha, in that order.
+  let order: i32[] = [1, 0, 2, 3];
+  let channels: Channel[] = [];
+  for k in order {
+    channels = channels.append(channel(sample(image, 0, k, n)));
+  }
+  for y in 0..l.height {
+    if (cancelled()) {
+      return Err(Cancelled);
+    }
+    for x in 0..l.width {
+      let off = y * l.stride + x * n;
+      for k in 0..4 {
+        let v = sample(image, off, order[k], n);
+        if (v != channels[k].first && v != channels[k].second) {
+          if (channels[k].first != channels[k].second) {
+            return Err(Unsupported);
+          }
+          channels = channels.with(k, Channel { first: channels[k].first, second: v });
+        }
+      }
+    }
+  }
+  let alpha = channels[3];
+  let has_alpha = alpha.first != 255 || alpha.second != 255;
+  let fields: bits.Field[] = [field(47u64, 8), field((l.width - 1) as u64, 14), field((l.height - 1) as u64, 14), field(if (has_alpha) { 1u64 } else { 0u64 }, 1), field(0u64, 6)];
+  let varying: i32[] = [];
+  for k in 0..4 {
+    let c = channels[k];
+    let pair = c.first != c.second;
+    let wide = c.first > 1;
+    fields = fields.append(field(1u64, 1)).append(field(if (pair) { 1u64 } else { 0u64 }, 1)).append(field(if (wide) { 1u64 } else { 0u64 }, 1));
+    fields = fields.append(field(c.first as u64, if (wide) { 8 } else { 1 }));
+    if (pair) {
+      fields = fields.append(field(c.second as u64, 8));
+      varying = varying.append(k);
+    }
+  }
+  fields = fields.append(field(1u64, 4));  // single distance symbol zero
+  let Ok(header) = bits.pack(fields, 32, cancelled) else {
+    return Err(Cancelled);
+  };
+  let extent = header.bits + l.width as i64 * (l.height as i64) * (varying.len() as i64);
+  let payload = ((extent + 7i64) / 8i64) as i32;
+  let total = 20 + payload + (payload & 1);
+  if (total > max_bytes) {
+    return Err(Limit);
+  }
+  let prefix: u8[] = [82, 73, 70, 70];
+  prefix = binary.append_u32_le(prefix, (total - 8) as u32);
+  for c in "WEBPVP8L".bytes() {
+    prefix = prefix.append(c);
+  }
+  prefix = binary.append_u32_le(prefix, payload as u32);
+  let output = __alloc_u8(total);
+  for k in 0..prefix.len() {
+    output = output.with(k, prefix[k]);
+  }
+  for k in 0..header.bytes.len() {
+    output = output.with(20 + k, header.bytes[k]);
+  }
+  let at = header.bits as i32;
+  if (varying.len() > 0) {
+    for y in 0..l.height {
+      if (cancelled()) {
+        return Err(Cancelled);
+      }
+      for x in 0..l.width {
+        let offset = y * l.stride + x * n;
+        for k in varying {
+          let c = channels[k];
+          let value = sample(image, offset, order[k], n);
+          if (value == (if (c.first > c.second) { c.first } else { c.second })) {
+            let byte = 20 + at / 8;
+            output = output.with(byte, output[byte] | 1u8 << (at % 8) as u8);
+          }
+          at += 1;
+        }
+      }
+    }
+  }
+  return Ok(output);
+}

@@ -1,0 +1,191 @@
+import "../packages/codecs/webp/vp8l";
+import "../packages/codecs/webp/webp";
+import "../packages/codecs/webp/writer";
+import "../packages/pixels/pixels";
+import "std/test";
+
+function active(): boolean {
+  return false;
+}
+
+function stop(): boolean {
+  return true;
+}
+
+// Raw VP8L payload. Green declares its two symbols in descending order.
+// The expected RGBA bytes were decoded from the RIFF-wrapped payload by libwebp.
+function mixed(): u8[] {
+  return [47, 2, 64, 0, 16, 184, 247, 193, 178, 20, 121, 254, 19, 209, 88];
+}
+
+function samples(): test.TestOutcome {
+  let Ok(im) = vp8l.decode_simple(mixed(), pixels.default_limits(), active) else {
+    return test.fail("mixed decode");
+  };
+  let want: u8[] = [1, 7, 200, 0, 1, 222, 200, 0, 44, 7, 200, 0, 44, 222, 200, 0, 1, 7, 200, 255, 1, 222, 200, 255];
+  if (im.layout.width != 3 || im.layout.height != 2 || im.data.len() != want.len()) {
+    return test.fail("layout");
+  }
+  for i in 0..want.len() {
+    if (im.data[i] != want[i]) {
+      return test.fail("mixed samples");
+    }
+  }
+  let flat: u8[] = [47, 2, 64, 0, 16, 136, 236, 72, 255, 3];
+  let Ok(solid) = vp8l.decode_simple(flat, pixels.default_limits(), active) else {
+    return test.fail("flat decode");
+  };
+  let pixel: u8[] = [1, 0, 35, 255];
+  for i in 0..24 {
+    if (solid.data[i] != pixel[i % 4]) {
+      return test.fail("flat samples");
+    }
+  }
+  return test.pass();
+}
+
+function subtract_green(): test.TestOutcome {
+  // libwebp reconstructs both channels modulo 256, even for transparent pixels.
+  let src: u8[] = [47, 2, 64, 0, 16, 197, 189, 15, 150, 165, 200, 243, 159, 136, 198, 2];
+  let want: u8[] = [8, 7, 207, 0, 223, 222, 166, 0, 51, 7, 207, 0, 10, 222, 166, 0, 8, 7, 207, 255, 223, 222, 166, 255];
+  let limits = pixels.default_limits();
+  let Ok(image) = vp8l.decode_simple(src, limits, active) else {
+    return test.fail("subtract-green decode");
+  };
+  if (image.data.len() != want.len()) {
+    return test.fail("size");
+  }
+  for i in 0..want.len() {
+    if (image.data[i] != want[i]) {
+      return test.fail("reconstructed sample");
+    }
+  }
+  if let Ok(_) = vp8l.decode_simple(src.with(5, src[5] | 8u8), limits, active) {
+    return test.fail("additional transform");
+  }
+  for n in 0..src.len() {
+    if let Ok(_) = vp8l.decode_simple(src[0:n], limits, active) {
+      return test.fail("short transform stream");
+    }
+  }
+  return test.pass();
+}
+
+function rejects(): test.TestOutcome {
+  let src = mixed();
+  let limits = pixels.default_limits();
+  for n in 0..src.len() {
+    if let Ok(_) = vp8l.decode_simple(src[0:n], limits, active) {
+      return test.fail("accepted prefix");
+    }
+  }
+  if let Ok(_) = vp8l.decode_simple(src.append(0), limits, active) {
+    return test.fail("trailing");
+  }
+  if let Ok(_) = vp8l.decode_simple(src.with(5, 1), limits, active) {
+    return test.fail("transform");
+  }
+  if let Ok(_) = vp8l.decode_simple(src, pixels.Limits { ...limits, max_bytes: 23 }, active) {
+    return test.fail("byte limit");
+  }
+  if let Ok(_) = vp8l.decode_simple(src, limits, stop) {
+    return test.fail("cancelled");
+  }
+  return test.pass();
+}
+
+function files(): test.TestOutcome {
+  let odd: u8[] = [82, 73, 70, 70, 28, 0, 0, 0, 87, 69, 66, 80, 86, 80, 56, 76, 15, 0, 0, 0, 47, 2, 64, 0, 16, 184, 247, 193, 178, 20, 121, 254, 19, 209, 88, 0];
+  let even: u8[] = [82, 73, 70, 70, 22, 0, 0, 0, 87, 69, 66, 80, 86, 80, 56, 76, 10, 0, 0, 0, 47, 2, 64, 0, 16, 136, 236, 72, 255, 3];
+  let limits = pixels.default_limits();
+  for file in [odd, even] {
+    let Ok(image) = webp.decode_simple(file, file.len(), limits, active) else {
+      return test.fail("RIFF decode");
+    };
+    let Ok(raw) = vp8l.decode_simple(file[20:20 + file[16] as i32], limits, active) else {
+      return test.fail("payload decode");
+    };
+    if (image.data.len() != raw.data.len()) {
+      return test.fail("size");
+    }
+    for i in 0..raw.data.len() {
+      if (image.data[i] != raw.data[i]) {
+        return test.fail("RIFF pixel");
+      }
+    }
+    for n in 0..file.len() {
+      if let Ok(_) = webp.decode_simple(file[0:n], n, limits, active) {
+        return test.fail("short file");
+      }
+    }
+  }
+  for bad in [odd.with(0, 0), odd.with(8, 0), odd.with(4, 255), odd.with(4, 27), odd.with(12, 0), odd.with(19, 255), odd.with(35, 1), odd.with(16, 10), odd.append(0)] {
+    if let Ok(_) = webp.decode_simple(bad, bad.len(), limits, active) {
+      return test.fail("invalid envelope");
+    }
+  }
+  if let Ok(_) = webp.decode_simple(odd, odd.len() - 1, limits, active) {
+    return test.fail("input budget");
+  }
+  return test.pass();
+}
+
+function writer_roundtrip(): test.TestOutcome {
+  let limits = pixels.default_limits();
+  let Ok(image) = vp8l.decode_simple(mixed(), limits, active) else {
+    return test.fail("fixture");
+  };
+  let Ok(file) = writer.encode_simple(image, 256, active) else {
+    return test.fail("encode");
+  };
+  let Ok(copy) = webp.decode_simple(file, file.len(), limits, active) else {
+    return test.fail("round trip");
+  };
+  for i in 0..image.data.len() {
+    if (copy.data[i] != image.data[i]) {
+      return test.fail("samples");
+    }
+  }
+  if let Err(_) = writer.encode_simple(image, file.len(), active) {
+    return test.fail("exact budget");
+  }
+  if let Ok(_) = writer.encode_simple(image, file.len() - 1, active) {
+    return test.fail("output limit");
+  }
+  if let Ok(_) = writer.encode_simple(image, 256, stop) {
+    return test.fail("cancelled");
+  }
+  if let Ok(_) = writer.encode_simple(pixels.Image { ...image, data: image.data.with(0, 88) }, 256, active) {
+    return test.fail("third symbol");
+  }
+  if let Ok(_) = writer.encode_simple(pixels.Image { ...image, data: [] }, 256, active) {
+    return test.fail("short storage");
+  }
+  let Ok(rgb) = pixels.create(1, 2, 5, pixels.RGB8, limits) else {
+    return test.fail("padded input");
+  };
+  let src: u8[] = [8, 10, 12, 111, 222, 8, 10, 12, 55, 66];
+  let Ok(solid) = writer.encode_simple(pixels.Image { ...rgb, data: src }, 64, active) else {
+    return test.fail("solid");
+  };
+  let Ok(decoded) = webp.decode_simple(solid, solid.len(), limits, active) else {
+    return test.fail("solid decode");
+  };
+  let pixel: u8[] = [8, 10, 12, 255];
+  for i in 0..8 {
+    if (decoded.data[i] != pixel[i % 4]) {
+      return test.fail("RGB or padding");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("VP8L simple literal payloads");
+  r = r.it("independent RGBA samples", samples);
+  r = r.it("bounds and unsupported features", rejects);
+  r = r.it("single-chunk RIFF files and size limits", files);
+  r = r.it("inverse subtract-green with modular channel sums", subtract_green);
+  r = r.it("bounded simple RGB and RGBA writer", writer_roundtrip);
+  return r.finish();
+}

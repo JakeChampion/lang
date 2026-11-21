@@ -1,0 +1,60 @@
+// Standalone simple-format WebP with one lossless image chunk.
+import "std/binary";
+import "../../pixels/pixels";
+import "./vp8l";
+
+function tag(input: [u8], at: i32, name: string): boolean {
+  for i in 0..4 {
+    if (input[at + i] != name[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+pub function decode_simple(input: [u8], max_input_bytes: i32, limits: pixels.Limits, cancelled: () => boolean): Result[pixels.Image, vp8l.DecodeError] {
+  if (input.len() > max_input_bytes) {
+    return Err(vp8l.Limit);
+  }
+  if (input.len() < 12) {
+    return Err(vp8l.Truncated);
+  }
+  if (!tag(input, 0, "RIFF") || !tag(input, 8, "WEBP")) {
+    return Err(vp8l.Header);
+  }
+  let Ok(size) = binary.read_u32_le(input, 4) else {
+    return Err(vp8l.Truncated);
+  };
+  let available = (input.len() - 8) as u32;
+  if (size > available) {
+    return Err(vp8l.Truncated);
+  }
+  if (size < available) {
+    return Err(vp8l.Trailing);
+  }
+  if (input.len() < 20) {
+    return Err(vp8l.Truncated);
+  }
+  if (!tag(input, 12, "VP8L")) {
+    return Err(vp8l.Unsupported);
+  }
+  let Ok(length) = binary.read_u32_le(input, 16) else {
+    return Err(vp8l.Truncated);
+  };
+  let body = input.len() - 20;
+  if (length > body as u32) {
+    return Err(vp8l.Truncated);
+  }
+  let padding = (length & 1u32) as i32;
+  let extra = body - length as i32;
+  if (extra < padding) {
+    return Err(vp8l.Truncated);
+  }
+  if (extra > padding) {
+    return Err(vp8l.Unsupported);
+  }
+  if (padding == 1 && input[input.len() - 1] != 0) {
+    return Err(vp8l.Header);
+  }
+  return vp8l.decode_simple(input[20:20 + length as i32], limits, cancelled);
+}
