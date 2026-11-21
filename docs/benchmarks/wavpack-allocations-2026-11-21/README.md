@@ -17,6 +17,23 @@ The Fern profiles sample allocations over the whole process. On stereo music, 73
 
 Both campaigns used native x86-64 Linux. The CPU and memory results are host measurements. [Source trials and profiles](source.json) · [Warm trials and profiles](warm.json) · [Previous warm CPU profile and comparison](../wavpack-decode-2026-11-09/README.md)
 
+## Compiler comparison
+
+The mixed-use case occurs when one caller retains a bit reader’s successful tuple while another consumes its two fields. The prior compiler boxed the tuple for both callers. The changed compiler can return the two scalars directly when the callee creates a fresh payload and rebuild the tuple in a caller that retains it. The issue reproduces in a codec-independent regression with a 64-bit first field and an error variant. The prior compiler allocated in the loop. The candidate produced the same values with zero loop allocations on x86-64 Linux, ARM64 Linux and WASI.
+
+The paired campaigns hold the codec, driver and input constant and alternate the order of the two compilers and the C reference across seven trials. The table gives the median paired candidate/prior time. The warm trial decodes the file 32 times after four warmups.
+
+| File | Source allocations, prior / candidate | Source time ratio | Warm time ratio |
+| --- | ---: | ---: | ---: |
+| music2 | 47,213 / 174 | 0.757 | 0.712 |
+| music8 | 188,845 / 480 | 0.767 | 0.732 |
+| noise2 | 53,542 / 182 | 0.725 | 0.702 |
+| silence2 | 146 / 140 | 0.969 | 0.962 |
+| integer32 | 70,035 / 190 | 0.673 | 0.687 |
+| float2 | 63,641 / 177 | 0.715 | 0.685 |
+
+Stereo music playback used 174 allocation events. The reference used eight external glibc allocation calls. Both timed programs and both profiling programs preserved the full PCM checksum in every case. The WavPack implementation and its acceptance limits are identical for both compilers. Eight WavPack suites passed native x86-64 sanitizers, ARM64 Linux and Android under QEMU, and WASI with zero live bytes. The [source](source-compiler-pair.json) and [warm](warm-compiler-pair.json) reports include the remaining C timing gap, peak RSS, raw trials, allocation stacks and binary hashes.
+
 ## Reproduce
 
 ```sh
@@ -25,3 +42,5 @@ scripts/bench-wavpack --compiler bin/fern-selfhost --allocation-profile --rounds
 ```
 
 The optional C allocation profile requires glibc. The production benchmark uses the regular system allocator.
+
+To reproduce the compiler comparison, add `--baseline-compiler /path/to/prior/fern-selfhost` and use the candidate for `--compiler`. Use `--source` for file playback and `--rounds 32` for warm decode.

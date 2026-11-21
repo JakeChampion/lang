@@ -11,6 +11,8 @@ import (
 // result whole, and the loop must still get the results in words.
 const pairKeptWholeProg = `import "std/bench";
 
+enum FieldError { Invalid, End }
+
 struct Gap { sec: i64, nsec: i32 }
 
 struct Mark { sec: i64, nsec: i32 }
@@ -35,7 +37,36 @@ struct Mark { sec: i64, nsec: i32 }
   return Ok(r);
 }
 
+@noinline function field(i: i32): Result[(i64, u32), FieldError] {
+  if (i < 0) { return Err(Invalid); }
+  return Ok((5000000000i64 + i as i64, i as u32 + 1u32));
+}
+
+@noinline function store(own items: (i64, u32)[], item: (i64, u32)): (i64, u32)[] {
+  return items.append(item);
+}
+
+function split_payload(): i32 {
+  let Ok(pair) = field(17) else { return 1; };
+  let empty: (i64, u32)[] = [];
+  let kept = store(empty, pair);
+  let before = bench.alloc_count();
+  let total = 0i64;
+  for i in 0..100 {
+    let Ok((a, b)) = field(i) else { return 2; };
+    total += a + b as i64;
+  }
+  let count = bench.allocs_after(before);
+  let (left, right) = kept[0];
+  if (total != 500000010000i64 || left != 5000000017i64 || right != 18u32) { return 3; }
+  if let Err(FieldError.Invalid) = field(-1) {} else { return 4; }
+  if (count != 0i64) { return 5; }
+  return 0;
+}
+
 function main(): i32 {
+  let rc = split_payload();
+  if (rc != 0) { return rc; }
   let step = Gap { sec: 1 as i64, nsec: 600 };
   let marks: Option[Mark][] = [];
   marks = marks.append(Some(mark_add(Mark { sec: 0 as i64, nsec: 0 }, step)));

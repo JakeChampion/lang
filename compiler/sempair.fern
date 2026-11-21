@@ -62,11 +62,37 @@ function pairable(funcs: ssasem.Func[], names: string[], ix: util.NameIndex, rew
   return taken_apart(funcs, ix, Pairing { ok: ok, split: split }, dead);
 }
 
-// A callee stays paired while no caller keeps its value whole, and returns a
-// payload in two words while no caller keeps that payload whole either.
+// If each split payload is a fresh scalar pair, a caller that keeps it can
+// rebuild that pair at the use. Other callers can still consume the words.
+function builds_scalar_payloads(f: ssasem.Func): boolean {
+  let defs = ssa.inst_defs(f.graph);
+  for b in f.graph.blocks {
+    if (b.term.kind_tag != ssa.TERM_RET) {
+      continue;
+    }
+    let d = ssa.copy_source(defs, b.term.value);
+    if (d.kind_tag != ssasem.variant_new()) {
+      return false;
+    }
+    for arg in d.args {
+      let parts = split_parts(f.records, f.finalizers, f.values[arg]);
+      if (parts.len() == 2 && (!ssasem.is_scalar(parts[0]) || !ssasem.is_scalar(parts[1]) || !built_value(defs, arg, 0))) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// A kept value needs its original box unless the callee builds a fresh value
+// that the caller can rebuild. Apply that check separately to split payloads.
 function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, pg0: Pairing, dead: boolean[]): Pairing {
   let ok = pg0.ok;
   let split = pg0.split;
+  let fresh: boolean[] = [];
+  for i in 0..funcs.len() {
+    fresh = fresh.append(split[i] && builds_scalar_payloads(funcs[i]));
+  }
   let changed = true;
   while (changed) {
     changed = false;
@@ -94,7 +120,7 @@ function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, pg0: Pairing, dea
             ok = ok.with(at, false);
             split = split.with(at, false);
             changed = true;
-          } else if (at >= 0 && split[at] && inner[ins.result]) {
+          } else if (at >= 0 && split[at] && inner[ins.result] && !fresh[at]) {
             split = split.with(at, false);
             changed = true;
           }

@@ -102,6 +102,7 @@ def main():
     parser.add_argument("--cpu", type=int)
     parser.add_argument("--reference-include", type=Path)
     parser.add_argument("--baseline-stdlib", type=Path)
+    parser.add_argument("--baseline-compiler", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.source and args.rounds not in (None, 1):
@@ -232,12 +233,14 @@ def main():
             check=True,
             env=env,
         )
-        if args.baseline_stdlib:
-            baseline = args.baseline_stdlib.resolve()
+        if args.baseline_stdlib or args.baseline_compiler:
+            baseline = (args.baseline_stdlib or ROOT / "internal/stdlib").resolve()
+            baseline_compiler = (args.baseline_compiler or compiler).resolve()
+            result["baseline_compiler_sha256"] = sha(baseline_compiler)
             binaries["baseline_fern"] = temp / "baseline-fern"
             subprocess.run(
                 [
-                    str(compiler),
+                    str(baseline_compiler),
                     "-stdlib",
                     str(baseline),
                     "-O",
@@ -366,7 +369,7 @@ def main():
                     counts["estimated_bytes"] += int(weight)
                 result["cases"][name]["allocation_profile"] = {
                     "libwavpack_calls": c_row["allocs"], "fern_header": header, "fern_stacks": weights}
-            if args.baseline_stdlib:
+            if "baseline_fern" in trials:
                 paired = [
                     trials["fern"][i]["wall_ns"] / trials["baseline_fern"][i]["wall_ns"]
                     for i in range(args.trials)
