@@ -2690,7 +2690,10 @@ struct SplitPlan { v: i32, pre: i32, head: i32, last: i32, inner: i32, inner_las
 // allocator gives each value one interval, so none of these values is live
 // in the inner loop.
 pub function split_spilled(f: SFunc, reg_of: i32[], fl: boolean[]): LoopSplit {
-  let none = LoopSplit { f: f, cost: 0 };
+  // A split needs a preheader, two loop headers, and two distinct latches.
+  if (f.blocks.len() < 5 || !any_below(reg_of, -1)) {
+    return LoopSplit { f: f, cost: 0 };
+  }
   let at = block_positions(f);
   let latch = furthest_latches(f, at);
   let loops: i32[] = [];
@@ -2700,8 +2703,13 @@ pub function split_spilled(f: SFunc, reg_of: i32[], fl: boolean[]): LoopSplit {
     }
   }
   if (loops.len() < 2) {
-    return none;
+    return LoopSplit { f: f, cost: 0 };
   }
+  return split_spilled_in_loops(f, reg_of, fl, at, latch, loops);
+}
+
+function split_spilled_in_loops(f: SFunc, reg_of: i32[], fl: boolean[], at: i32[], latch: i32[], loops: i32[]): LoopSplit {
+  let none = LoopSplit { f: f, cost: 0 };
   let slot = util.minus_ones(f.nvals);
   let cands: i32[] = [];
   for v in 0..f.nvals {
