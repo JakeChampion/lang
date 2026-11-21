@@ -2,6 +2,7 @@ import "./ast";
 import "./astwalk";
 import "./parser";
 import "./util";
+import "std/array";
 import "std/option";
 
 function module_has_default_params(mod: parser.Module): boolean {
@@ -50,15 +51,6 @@ function fda_args_have_named(args: ast.Expr[]): boolean {
   return false;
 }
 
-function fda_named_lookup(names: string[], vals: ast.Expr[], want: string): i32 {
-  for i in 0..names.len() {
-    if (names[i] == want) {
-      return i;
-    }
-  }
-  return -1;
-}
-
 function fda_resolve_named(params: ast.ParamDecl[], args: ast.Expr[]): ast.Expr[] {
   let posvals: ast.Expr[] = [];
   let nnames: string[] = [];
@@ -76,8 +68,7 @@ function fda_resolve_named(params: ast.ParamDecl[], args: ast.Expr[]): ast.Expr[
     if (pi < posvals.len()) {
       out = out.append(posvals[pi]);
     } else {
-      let ni = fda_named_lookup(nnames, nvals, params[pi].name);
-      if (ni >= 0) {
+      if let Some(ni) = nnames.index_of(params[pi].name) {
         out = out.append(nvals[ni]);
       } else {
         out = out.append(params[pi].default_value);
