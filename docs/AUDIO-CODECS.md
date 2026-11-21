@@ -139,6 +139,8 @@ Complete bit costs include coefficient metadata, warm-up samples, residual parti
 LPC cannot increase the output size relative to the fixed-only options for the same block settings.
 
 LPC analysis uses bounded temporary arrays and can substantially increase CPU work.
+The encoder shares folded-residual sums and widths across partition orders while preserving exact Rice costs.
+The [partition planning measurements](benchmarks/flac-partition-tree-2026-11-21/README.md) compare fixed-only and LPC encoding against the prior planner and libFLAC.
 For 33-bit stereo transforms, the coefficient sums fit within signed 64-bit arithmetic.
 Residuals that exceed the permitted signed 32-bit range retain a fixed or verbatim fallback.
 Further encoder work and matched performance qualification remain open in #14688 and #14515.

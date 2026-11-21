@@ -18,9 +18,11 @@ A zero integer mean uses parameter zero.
 
 The encoder compares those exact costs and the Rice-one parameter cap in one scan.
 The complete search also checks raw escapes and every permitted partition order.
-Cost scans reuse one bounded parameter cache.
-Only a smaller plan retains its selected parameter array.
-The cache retains two scalar slots per permitted partition.
+Each predictor computes the sum and widest residual once per finest partition.
+Coarser partitions combine those summaries. The exact quotient scan still runs at every order.
+The fixed and LPC searches each reuse a bounded array across their predictor orders.
+It has two 64-bit slots per finest partition, at most 512 KiB. A consumed summary
+slot holds the candidate parameters until a smaller plan copies the selected ones.
 Block divisibility, predictor order, and the requested partition limit cap that count.
 
 Source samples must fit the declared PCM depth before plan selection.
@@ -104,19 +106,12 @@ function quotients(values: [u32], start: i32, end: i32, k: i32): Quotients {
 
 // Exact Rice minima lie within one bit of floor(log2(mean)). Ties select the lower parameter.
 // fern-lint: allow cyclomatic-complexity
-function rice(values: [u32], start: i32, end: i32): Rice {
+function rice(values: [u32], start: i32, end: i32, summary: i64): Rice {
   let count = (end - start) as i64;
   if (count == 0i64) {
     return Rice { first_cost: 4i64, second_cost: 5i64, first: 0, second: 0 };
   }
-  let sum = 0i64;
-  let maximum = 0u32;
-  for i in start..end {
-    sum += values[i] as i64;
-    if (values[i] > maximum) {
-      maximum = values[i];
-    }
-  }
+  let sum = summary >> 6i64;
   let average = (sum / count) as u32;
   let seed = if (average == 0u32) { 0 } else { 31 - average.leading_zeros() };
   if (seed > 30) {
@@ -141,7 +136,7 @@ function rice(values: [u32], start: i32, end: i32): Rice {
   let second_cost = 5i64 + count * ((k + 1) as i64) + quotient;
   let first = first_k;
   let second = k;
-  let width = 32 - maximum.leading_zeros();
+  let width = (summary & 63i64) as i32;
   if (width <= 31) {
     let raw = 5i64 + count * (width as i64);
     if (4i64 + raw < first_cost) {
@@ -161,12 +156,11 @@ function predictor_cost(base: Channel, order: i32): i64 {
     + (if (base.kind >= 32) { 9i64 + order as i64 * 15i64 } else { 0i64 });
 }
 
-function partition_parameters(candidates: [i32], partition: i32, wide: boolean): i32[] {
-  let count = 1 << partition;
-  let method = if (wide) { 1 } else { 0 };
+function partition_parameters(nodes: [i64], count: i32, wide: boolean): i32[] {
   let output: i32[] = [];
   for part in 0..count {
-    output = output.append(candidates[part * 2 + method]);
+    let pair = nodes[count + part];
+    output = output.append(if (wide) { (pair >> 32i64) as i32 } else { pair as i32 });
   }
   return output;
 }
@@ -183,33 +177,68 @@ function partition_capacity(frames: i32, order: i32, maximum: i32): i32 {
   return count * 2;
 }
 
-function partitions(values: [u32], base: Channel, order: i32, maximum: i32): Channel {
+// The sum needs at most 48 bits (65535 folded u32 residuals). The low
+// six bits hold the widest residual, including zero for an all-zero range.
+function summarize(values: [u32], start: i32, end: i32): i64 {
+  let sum = 0i64;
+  let used = 0u32;
+  for i in start..end {
+    let value = values[i];
+    sum += value as i64;
+    used |= value;
+  }
+  return sum << 6i64 | (32 - used.leading_zeros()) as i64;
+}
+
+// All permitted orders split the same residuals into nested partitions.
+// Build the finest summaries once. Node count + part describes that range
+// at each order, including the warmup exclusion in the first partition.
+function partition_summaries(values: [u32], frames: i32, order: i32, capacity: i32, own sums: i64[]): i64[] {
+  let leaves = capacity / 2;
+  let per = frames / leaves;
+  for part in 0..leaves {
+    let start = if (part == 0) { order } else { part * per };
+    sums = sums.with(leaves + part, summarize(values, start, (part + 1) * per));
+  }
+  let node = leaves - 1;
+  while (node > 0) {
+    let left = sums[node * 2];
+    let right = sums[node * 2 + 1];
+    let lwidth = left & 63i64;
+    let rwidth = right & 63i64;
+    sums = sums.with(node, left - lwidth + right - rwidth + (if (lwidth > rwidth) { lwidth } else { rwidth }));
+    node -= 1;
+  }
+  return sums;
+}
+
+function partitions(values: [u32], base: Channel, order: i32, maximum: i32, own nodes: i64[]): (Channel, i64[]) {
   let best = base;
-  let candidates = __alloc_i32(partition_capacity(base.frames, order, maximum));
+  let capacity = partition_capacity(base.frames, order, maximum);
+  nodes = partition_summaries(values, base.frames, order, capacity, nodes);
   let p = 0;
-  while (p <= maximum) {
+  while (1 << p <= capacity / 2) {
     let count = 1 << p;
-    if (base.frames % count != 0 || base.frames / count < order) {
-      break;
-    }
     let per = base.frames / count;
     let first_cost = 6i64;
     let second_cost = 6i64;
     for part in 0..count {
       let start = part * per + (if (part == 0) { order } else { 0 });
-      let selected = rice(values, start, (part + 1) * per);
-      candidates = candidates.with(part * 2, selected.first).with(part * 2 + 1, selected.second);
+      let selected = rice(values, start, (part + 1) * per, nodes[count + part]);
+      // This summary has been consumed. Its children already have their own
+      // summaries, so its slot can hold both signed Rice parameters.
+      nodes = nodes.with(count + part, selected.second as i64 << 32i64 | (selected.first as u32) as i64);
       first_cost += selected.first_cost;
       second_cost += selected.second_cost;
     }
     let wide = second_cost < first_cost;
     let cost = predictor_cost(base, order) + (if (wide) { second_cost } else { first_cost });
     if (cost < best.cost) {
-      best = Channel { ...base, kind: if (base.kind >= 32) { base.kind } else { 8 + order }, cost: cost, partition: p, rice2: wide, parameters: partition_parameters(candidates, p, wide) };
+      best = Channel { ...base, kind: if (base.kind >= 32) { base.kind } else { 8 + order }, cost: cost, partition: p, rice2: wide, parameters: partition_parameters(nodes, count, wide) };
     }
     p += 1;
   }
-  return best;
+  return (best, nodes);
 }
 
 function differences(own values: i64[], order: i32): i64[] {
@@ -227,6 +256,7 @@ function predictors(input: [i32], base: Channel, max_order: i32, max_partition: 
     values = values.with(at, sample(input, base.channels, at, base.channel, base.assignment) >> base.wasted as i64);
   }
   let best = base;
+  let nodes = __alloc_i64(partition_capacity(base.frames, 0, max_partition));
   let order = 0;
   while (order <= max_order && order < base.frames) {
     if (order > 0) {
@@ -242,7 +272,8 @@ function predictors(input: [i32], base: Channel, max_order: i32, max_partition: 
       scratch = scratch.with(at, folded(value));
     }
     if (valid) {
-      let selected = partitions(scratch, Channel { ...base, cost: best.cost }, order, max_partition);
+      let (selected, next_nodes) = partitions(scratch, Channel { ...base, cost: best.cost }, order, max_partition, nodes);
+      nodes = next_nodes;
       if (selected.cost < best.cost) {
         best = selected;
       }
@@ -258,6 +289,7 @@ function linear(input: [i32], base: Channel, maximum: i32, max_partition: i32, o
     values = values.with(at, sample(input, base.channels, at, base.channel, base.assignment) >> base.wasted as i64);
   }
   let best = base;
+  let nodes = __alloc_i64(partition_capacity(base.frames, 0, max_partition));
   for model in lpc.models(values, maximum) {
     let order = model.coefficients.len();
     let valid = true;
@@ -275,7 +307,8 @@ function linear(input: [i32], base: Channel, maximum: i32, max_partition: i32, o
     }
     if (valid) {
       let candidate = Channel { ...base, kind: 31 + order, model: Some(model), cost: best.cost };
-      let selected = partitions(scratch, candidate, order, max_partition);
+      let (selected, next_nodes) = partitions(scratch, candidate, order, max_partition, nodes);
+      nodes = next_nodes;
       if (selected.cost < best.cost) {
         best = selected;
       }
