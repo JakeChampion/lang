@@ -91,7 +91,7 @@ pub function to_html(src: u8[], o: Options): u8[] {
 
 // Writes the HTML of the CommonMark document `src` to the byte builder `out`.
 pub function render(out: usize, src: u8[], o: Options): void {
-  let d = blocks.parse(src, o.sourcepos);
+  let d = blocks.parse_options(src, o.sourcepos, o.tables);
   let s = start(o);
   for r in 0..d.count() {
     s = step(out, d, r, s);
@@ -102,7 +102,7 @@ pub function render(out: usize, src: u8[], o: Options): void {
 // the HTML of a part of the document each time its buffer holds `part`
 // bytes or more.
 pub function write(w: io_buffered.BufWriter, src: u8[], part: i32, o: Options): Result[io_buffered.BufWriter, IoError] {
-  let d = blocks.parse(src, o.sourcepos);
+  let d = blocks.parse_options(src, o.sourcepos, o.tables);
   let out = w.handle();
   let s = start(o);
   let q = w;
@@ -285,7 +285,7 @@ function paragraph(out: usize, d: blocks.Doc, r: i32, s: State): State {
   let to = d.to(r);
   if (s.o.tables) {
     for header in from..to - 1 {
-      let cols = tables.columns(d, header);
+      let cols = blocks.table_columns(d.src, d.segs, header);
       if (cols.len() > 0) {
         if (header > from) {
           s = paragraph_lines(out, d, r, s, from, header);

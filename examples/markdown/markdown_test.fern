@@ -533,6 +533,9 @@ function test_table_sourcepos(): test.TestOutcome {
 function test_tables(): test.TestOutcome {
   let o = markdown.Options { ...markdown.options(), tables: true };
   return checks_with(o, [
+    ("[ref]: /url\nA|B\n-|:-\n[ref]|y\n\n[ref]\n", "<p>[ref]: /url</p>\n<table>\n<thead>\n<tr>\n<th>A</th>\n<th align=\"left\">B</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>[ref]</td>\n<td align=\"left\">y</td>\n</tr>\n</tbody>\n</table>\n<p>[ref]</p>\n"),
+    ("[ref]: /url\n\nA|B\n-|:-\n[ref]|y\n", "<table>\n<thead>\n<tr>\n<th>A</th>\n<th align=\"left\">B</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td><a href=\"/url\">ref</a></td>\n<td align=\"left\">y</td>\n</tr>\n</tbody>\n</table>\n"),
+    ("[ref]: /url\nA|B\n-|:-|-\n\n[ref]\n", "<p>A|B\n-|:-|-</p>\n<p><a href=\"/url\">ref</a></p>\n"),
     ("text\nA | B\n:- | -:\n*one* | `a\\|b`\nshort\n", "<p>text</p>\n<table>\n<thead>\n<tr>\n<th align=\"left\">A</th>\n<th align=\"right\">B</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td align=\"left\"><em>one</em></td>\n<td align=\"right\"><code>a|b</code></td>\n</tr>\n<tr>\n<td align=\"left\">short</td>\n<td align=\"right\"></td>\n</tr>\n</tbody>\n</table>\n"),
     ("A | B\n---\n", "<h2>A | B</h2>\n"),
     ("A | B\n- | -\n|\ntrailing\n", "<p>A | B</p>\n<ul>\n<li>| -\n|\ntrailing</li>\n</ul>\n"),
