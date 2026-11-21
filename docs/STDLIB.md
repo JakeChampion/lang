@@ -77,6 +77,16 @@ Import `std/option` or `std/result` for their combinators.
 A `dyn error.Error` can hold different concrete error types that implement that trait.
 See [error propagation](TRY.md) for the `?` operator and its conversion rules.
 
+String separators, path components and JSON tape cursors use `Option`. For
+example, `"=value".before("=")` returns `Some("")`, while `"value".before("=")`
+returns `None`. For command-line input, `CliSpec.parse` returns a `Result`
+with the argument error.
+
+For dimensions supplied at runtime, use `ndarray.try_from_flat`,
+`try_reshape` and the other checked shape operations. They return `None` on
+invalid dimensions. The shorter `from_flat` and `reshape` require valid
+dimensions and abort on a mismatch. See the [ndarray contracts and examples](../internal/stdlib/std/ndarray.fern.md).
+
 Regex patterns are checked by `regex.compile`, which returns
 `Result[Regex, CompileError]`. Search and replacement methods use the compiled
 receiver. Text outputs return `Result` for invalid UTF-8; capture accessors
