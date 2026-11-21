@@ -153,7 +153,7 @@ function u8_at(b: [u8], at: i32): i32 {
 
 function u16_at(b: [u8], at: i32): i32 {
   if (at >= 0 && at < b.len() - 1) {
-    return (b[at] as i32) << 8 | b[at + 1] as i32;
+    return b[at] as i32 << 8 | b[at + 1] as i32;
   }
   return u8_at(b, at) << 8 | u8_at(b, at + 1);
 }

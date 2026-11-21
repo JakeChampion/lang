@@ -6,6 +6,8 @@ This module encodes and decodes JSON values.
 
 Tree values represent JSON data as enums and ordered objects. A document instead retains source text and a compact tape for node access.
 
+The string method `is_json_like` checks for paired outer braces or brackets after trimming whitespace. Use a parser to validate the contents.
+
 ## Contracts
 
 Parsing and typed decoding return typed errors. Syntax errors retain their source positions. Shape errors retain field, index, or variant context.
@@ -20,6 +22,7 @@ import "std/json";
 function main(): i32 {
   let Ok(doc) = json.parse_document("[true,null]") else { return 1; };
   if (!doc.is_array(doc.root()) || doc.len(doc.root()) != 2) { return 2; }
+  if (!"  {} ".is_json_like() || "true".is_json_like()) { return 3; }
   return 0;
 }
 ```
@@ -31,6 +34,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<*>>=
 <<dependencies 1>>
+
+<<json shape predicate>>
 
 <<2 pub enum JsonValue>>
 
@@ -2932,5 +2937,27 @@ impl cmp.Display for JsonObject {
   function to_string(self: JsonObject): string {
     return encode(JObject(self));
   }
+}
+```
+
+### is_json_like
+
+```fern
+<<json shape predicate>>=
+pub function (s: string) is_json_like(): boolean {
+  let t = s.trim();
+  let n = t.len();
+  if (n < 2) {
+    return false;
+  }
+  let first = t[0] as i32;
+  let last = t[n - 1] as i32;
+  if (first == 123 && last == 125) {
+    return true;
+  }
+  if (first == 91 && last == 93) {
+    return true;
+  }
+  return false;
 }
 ```

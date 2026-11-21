@@ -10,6 +10,8 @@ The adapter owns a QUIC connection and an HTTP/3 session. It translates their pr
 
 The caller supplies datagrams and time progress and sends the returned datagrams. Body limits bound collected request or response data.
 
+`read(datagram, now)` processes the datagram and transmits at the supplied instant. It returns the next connection, outgoing datagrams, HTTP events, session tickets, and the ECN codepoint for those datagrams together in a `Step`. Use `read_from` when the transport supplies the peer address and received ECN codepoint. Other transitions can be collected with `step()`, for example `c.tick(now).transmit(now).step()`. Continue with `step.conn` after dispatching the results.
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.
@@ -68,6 +70,8 @@ import "std/time";
 ```fern
 <<3 pub enum Event>>=
 pub enum Event { Requested(i64, HttpRequest), Responded(i64, HttpResponse), StreamDropped(i64, i64), Ended(conn.Close) }
+
+pub struct Step { conn: Conn, output: u8[][], events: Event[], tickets: conn.Ticket[], ecn: i32 }
 
 struct Partial { id: i64, fields: qpack.Field[], body: u8[], trailers: qpack.Field[] }
 
@@ -182,6 +186,18 @@ pub function (c: Conn) sent(): Conn {
 // ecn_codepoint is the ECN codepoint to send the datagrams with.
 pub function (c: Conn) ecn_codepoint(): i32 {
   return c.quic.ecn_codepoint();
+}
+
+pub function (c: Conn) step(): Step {
+  return Step { conn: c.sent().events_taken().tickets_taken(), output: c.datagrams(), events: c.events, tickets: c.tickets(), ecn: c.ecn_codepoint() };
+}
+
+pub function (c: Conn) read(datagram: [u8], now: Instant): Step {
+  return c.receive(datagram, now).transmit(now).step();
+}
+
+pub function (c: Conn) read_from(datagram: [u8], path: [u8], ecn: i32, now: Instant): Step {
+  return c.receive_from(datagram, path, ecn, now).transmit(now).step();
 }
 
 pub function (c: Conn) receive(datagram: [u8], now: Instant): Conn {

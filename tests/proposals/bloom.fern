@@ -1,5 +1,6 @@
 import "std/test";
 import "std/string";
+import "std/hash";
 import "std/i32";
 import "std/u32";
 

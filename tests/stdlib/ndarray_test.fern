@@ -44,6 +44,66 @@ function test_get_is_none_out_of_range(): test.TestOutcome {
   return test.assert_true(a.get([1]).is_none() && a.get([0, 0, 0]).is_none());
 }
 
+function test_checked_shapes(): test.TestOutcome {
+  let a = grid();
+  let empty: i32[] = [];
+  if (ndarray.try_from_flat(empty, [-1]).is_some() || ndarray.try_from_flat(empty, [65536, 65536]).is_some()) {
+    return test.fail("invalid extent or overflowing count");
+  }
+  if (ndarray.try_from_flat([1], [2]).is_some() || ndarray.try_from_flat(empty, [3, 0]).is_none()) {
+    return test.fail("flat input count");
+  }
+  if (a.try_reshape([3]).is_some() || a.try_reshape([-1]).is_some() || a.try_reshape([65536, 65536]).is_some()) {
+    return test.fail("invalid reshape");
+  }
+  if (a.try_broadcast_to([12]).is_some() || a.try_broadcast_to([4, 3]).is_some() || a.try_broadcast_to([-1, 3, 4]).is_some()) {
+    return test.fail("invalid broadcast");
+  }
+  let wide = a.try_broadcast_to([2, 3, 4]).unwrap_or(a);
+  if (wide.rank() != 3 || wide.get_unchecked([1, 2, 3]) != 11) {
+    return test.fail("broadcast across leading axis");
+  }
+  let flat = a.transpose().try_reshape([12]).unwrap_or(a);
+  return test.assert_true(flat.rank() == 1 && flat.get_unchecked([1]) == 4);
+}
+
+function unexpected_element(x: i32, y: i32): i32 {
+  exit(1);
+  return 0;
+}
+
+function test_checked_broadcast_shape_and_zip(): test.TestOutcome {
+  if (ndarray.try_broadcast_shape([50000, 1], [1, 50000]).is_some() || ndarray.try_broadcast_shape([-1], [1]).is_some()) {
+    return test.fail("invalid or overflowing broadcast shape");
+  }
+  let a = grid();
+  let row = ndarray.from_flat([10, 11, 12, 13], [4]);
+  let result = a.try_zip_with(row, (x: i32, y: i32): i32 => x + y).unwrap_or(row);
+  if (result.rank() != 2 || result.get_unchecked([2, 3]) != 24) {
+    return test.fail("broadcast zip");
+  }
+  let empty = ndarray.from_flat([] as i32[], [0, 4]);
+  if (empty.try_zip_with(row, unexpected_element).is_none()) {
+    return test.fail("empty broadcast");
+  }
+  return test.assert_true(a.transpose().try_zip_with(row, unexpected_element).is_none());
+}
+
+function test_checked_axis_views(): test.TestOutcome {
+  let a = grid();
+  if (a.try_permute([1]).is_some() || a.try_permute([1, 1]).is_some() || a.try_permute([-1, 0]).is_some() || a.try_permute([0, 2]).is_some()) {
+    return test.fail("invalid permutation");
+  }
+  if (a.try_reverse(-1).is_some() || a.try_select(2, 0).is_some() || a.try_select(1, 4).is_some() || a.try_slice(2, 0, 0).is_some()) {
+    return test.fail("invalid axis or index");
+  }
+  if (a.try_slice(1, -1, 0).is_some() || a.try_slice(1, 3, 2).is_some() || a.try_slice(1, 4, 5).is_some() || a.try_slice(1, 4, 4).is_none()) {
+    return test.fail("slice boundaries");
+  }
+  let view = a.try_permute([1, 0]).unwrap_or(a).try_reverse(0).unwrap_or(a).try_slice(0, 1, 3).unwrap_or(a).try_select(1, 2).unwrap_or(a);
+  return test.assert_true(view.rank() == 1 && view.len() == 2 && view.get_unchecked([0]) == 10 && view.get_unchecked([1]) == 9);
+}
+
 function test_transpose_swaps_indices(): test.TestOutcome {
   let t = grid().transpose();
   if (t.shape()[0] != 4 || t.shape()[1] != 3) {
@@ -170,6 +230,60 @@ function test_fold_all_reads_in_order(): test.TestOutcome {
   }
   let packed = ndarray.from_flat([1, 2, 3, 4], [2, 2]);
   return test.assert_eq(packed.fold_all(0, (acc: i32, x: i32): i32 => acc * 10 + x), 1234);
+}
+
+function test_checked_products(): test.TestOutcome {
+  let a = grid();
+  let mul = (x: i32, y: i32): i32 => x * y;
+  let add = (x: i32, y: i32): i32 => x + y;
+  let wide = ndarray.from_flat([1], [1]).broadcast_to([50000]);
+  let empty = ndarray.from_flat([] as i32[], [50000, 0]);
+  if (wide.try_outer(wide, unexpected_element).is_some() || empty.try_inner(empty.transpose(), 0, mul, add).is_some()) {
+    return test.fail("overflowing product shapes");
+  }
+  if (a.try_inner(a, 0, mul, add).is_some() || a.try_inner(ndarray.from_flat([1], []), 0, mul, add).is_some()) {
+    return test.fail("incompatible contraction");
+  }
+  let inner = a.try_inner(a.transpose(), 1, mul, add).unwrap_or(a);
+  let outer = a.try_outer(ndarray.from_flat([2], []), mul).unwrap_or(a);
+  return test.assert_true(inner.get_unchecked([0, 1]) == 39 && outer.get_unchecked([2, 3]) == 22);
+}
+
+function test_checked_cell_map(): test.TestOutcome {
+  let a = grid();
+  let id = (cell: ndarray.NdArray[i32]): ndarray.NdArray[i32] => cell;
+  if (a.try_map_rank(3, id).is_some() || a.try_map_rank(-1, id).is_some()) {
+    return test.fail("invalid cell rank");
+  }
+  let ragged = a.try_map_rank(1, (row: ndarray.NdArray[i32]): ndarray.NdArray[i32] => row.slice(0, 0, row.get_unchecked([0]) % 3));
+  if (ragged.is_some()) {
+    return test.fail("inconsistent mapped cell shapes");
+  }
+  let large = ndarray.from_flat([1], [1]).broadcast_to([2147483647]);
+  if (a.try_map_rank(1, (row: ndarray.NdArray[i32]): ndarray.NdArray[i32] => large).is_some()) {
+    return test.fail("overflowing result shape");
+  }
+  let empty = ndarray.from_flat([] as i32[], [0, 50000, 50000]).try_map_rank(2, id).unwrap_or(a);
+  return test.assert_true(empty.rank() == 1 && empty.len() == 0);
+}
+
+function test_checked_axis_folds(): test.TestOutcome {
+  let a = grid().transpose();
+  let add = (x: i32, y: i32): i32 => x + y;
+  if (a.try_scan_axis(-1, 0, add).is_some() || a.try_reduce_axis(2, 0, add).is_some()) {
+    return test.fail("axis outside the rank");
+  }
+  let reduced = a.try_reduce_axis(1, 2, add).unwrap_or(a);
+  let scanned = a.try_scan_axis(1, 2, add).unwrap_or(a);
+  if (reduced.rank() != 1 || reduced.get_unchecked([2]) != 20 || scanned.get_unchecked([2, 1]) != 10) {
+    return test.fail("strided reduction or scan");
+  }
+  let empty = ndarray.from_flat([] as i32[], [50000, 0, 50000]);
+  if (empty.try_reduce_axis(1, 0, unexpected_element).is_some() || empty.try_scan_axis(1, 0, unexpected_element).is_none()) {
+    return test.fail("empty scan or overflowing reduction");
+  }
+  let rows = ndarray.from_flat([] as i32[], [3, 0]).try_reduce_axis(1, 7, unexpected_element).unwrap_or(a);
+  return test.assert_true(rows.len() == 3 && rows.get_unchecked([2]) == 7);
 }
 
 function test_reduce_axis_drops_the_axis(): test.TestOutcome {
@@ -363,6 +477,9 @@ function main(): i32 {
   let r = test.new("std/ndarray");
   r = r.it("from_flat indexes row-major", test_from_flat_indexes_row_major);
   r = r.it("get is None out of range", test_get_is_none_out_of_range);
+  r = r.it("checked construction and reshape", test_checked_shapes);
+  r = r.it("checked broadcast shape and zip", test_checked_broadcast_shape_and_zip);
+  r = r.it("checked axis views", test_checked_axis_views);
   r = r.it("transpose swaps indices", test_transpose_swaps_indices);
   r = r.it("permute is the general transpose", test_permute_is_the_general_transpose);
   r = r.it("reverse flips one axis", test_reverse_flips_one_axis);
@@ -372,6 +489,9 @@ function main(): i32 {
   r = r.it("rank zero and empty", test_rank_zero_and_empty);
   r = r.it("map and zip_with are elementwise", test_map_and_zip_with_are_elementwise);
   r = r.it("fold_all reads in order", test_fold_all_reads_in_order);
+  r = r.it("checked products", test_checked_products);
+  r = r.it("checked cell mapping", test_checked_cell_map);
+  r = r.it("checked axis folds", test_checked_axis_folds);
   r = r.it("reduce_axis drops the axis", test_reduce_axis_drops_the_axis);
   r = r.it("scan_axis keeps the axis", test_scan_axis_keeps_the_axis);
   r = r.it("broadcast_to is a view", test_broadcast_to_is_a_view);

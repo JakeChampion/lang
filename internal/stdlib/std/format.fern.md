@@ -17,6 +17,8 @@ import "std/format";
 
 function main(): i32 {
   if (format.format("Hello, {}", ["Ada"]) != "Hello, Ada") { return 1; }
+  if ((0 - 21).ordinal() != "-21st" || (11 as u64).ordinal() != "11th") { return 2; }
+  if ((0 - 1).pluralize("item", "items") != "item") { return 3; }
   return 0;
 }
 ```
@@ -30,6 +32,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<module introduction>>
 
 <<dependencies 2>>
+
+<<English integer formatting>>
 
 <<3 pub function format(fmt: string, args: string[]): string>>
 
@@ -527,5 +531,65 @@ function __duration_count(s: string, start: i32, end: i32): Option[i64] {
     num = (num +? (s[i] - 48) as i64)?;
   }
   return Some(num);
+}
+```
+
+### English integer formatting
+
+`ordinal` appends the English ordinal suffix. `pluralize` selects the singular form for 1 and −1 and the plural form for every other count.
+
+```fern
+<<English integer formatting>>=
+function __ordinal_suffix(magnitude: u64): string {
+  let last_two = (magnitude % (100 as u64)) as i32;
+  if (last_two >= 11 && last_two <= 13) {
+    return "th";
+  }
+  let last = last_two % 10;
+  if (last == 1) {
+    return "st";
+  }
+  if (last == 2) {
+    return "nd";
+  }
+  if (last == 3) {
+    return "rd";
+  }
+  return "th";
+}
+
+pub function (n: u64) ordinal(): string {
+  return n.to_string() + __ordinal_suffix(n);
+}
+
+pub function (n: u64) pluralize(singular: string, plural: string): string {
+  if (n == 1 as u64) {
+    return singular;
+  }
+  return plural;
+}
+
+pub function (n: i64) ordinal(): string {
+  return n.to_string() + __ordinal_suffix(n.unsigned_abs());
+}
+
+pub function (n: i64) pluralize(singular: string, plural: string): string {
+  return n.unsigned_abs().pluralize(singular, plural);
+}
+
+pub function (n: u32) ordinal(): string {
+  return (n as u64).ordinal();
+}
+
+pub function (n: u32) pluralize(singular: string, plural: string): string {
+  return (n as u64).pluralize(singular, plural);
+}
+
+pub function (n: i32) ordinal(): string {
+  return (n as i64).ordinal();
+}
+
+pub function (n: i32) pluralize(singular: string, plural: string): string {
+  return (n as i64).pluralize(singular, plural);
 }
 ```

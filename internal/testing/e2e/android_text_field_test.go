@@ -43,11 +43,11 @@ pub function changed(env: usize, thiz: usize, editable: usize): void { text_chan
 #include <dlfcn.h>
 
 static int locals, globals;
-static char log_[4096], text[64];
+static char log_[4096], text[64], pending_text[64];
 static uintptr_t fern_field, ctx_;
 static void (*changed)(uintptr_t, uintptr_t, uintptr_t);
 static uintptr_t env;
-static const char *names[64];
+static char names[64][64];
 static int nnames;
 static void require(int ok, const char *what) { if (!ok) { fprintf(stderr, "text field: %s (locals=%d globals=%d)\nlog: %s\n", what, locals, globals, log_); exit(1); } }
 static void note(const char *s) { strcat(log_, s); strcat(log_, ";"); }
@@ -60,7 +60,8 @@ static uintptr_t find_class(uintptr_t e, const char *name) {
 static uintptr_t get_class(uintptr_t e, uintptr_t obj) { locals++; return obj + 1000; }
 static uintptr_t method(uintptr_t e, uintptr_t cls, const char *name, const char *sig) {
   require(nnames < 64, "too many method ids");
-  names[nnames++] = name;
+  require(strlen(name) < sizeof names[0], "method name too long");
+  strcpy(names[nnames++], name);
   return nnames;
 }
 static const char *name_of(uintptr_t id) { return names[id - 1]; }
@@ -79,6 +80,14 @@ static uintptr_t object(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t
   if (!strcmp(n, "loadClass")) { require(obj == 400 && args[0] == 700, "loadClass of TextField"); return 2003; }
   if (!strcmp(n, "getSystemService")) { require(obj == 100 && args[0] == 700, "the input method service"); return 500; }
   if (!strcmp(n, "getWindowToken")) { require(obj == 900, "the token of the field"); return 600; }
+  if (!strcmp(n, "getText")) { require(obj == 900, "get the editable field"); return 800; }
+  if (!strcmp(n, "replace")) {
+    require(obj == 800 && args[0] == 0 && args[1] == strlen(text) && args[2] == 700, "replace the full editable text");
+    strcpy(text, pending_text);
+    note("replace");
+    changed(env, 302, 800);
+    return 800;
+  }
   require(!strcmp(n, "toString") && obj == 800, "toString of the Editable");
   return 801;
 }
@@ -87,6 +96,7 @@ static uintptr_t vcall(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t 
   char line[128];
   if (!strcmp(n, "setText")) {
     require(obj == 900 && args[0] == 700, "setText on the field");
+    strcpy(text, pending_text);
     snprintf(line, sizeof line, "setText %s", text);
     note(line);
     if (fern_field) changed(env, 302, 800);
@@ -120,9 +130,9 @@ static uintptr_t get_long(uintptr_t e, uintptr_t cls, uintptr_t id) { return fer
 static void set_long(uintptr_t e, uintptr_t cls, uintptr_t id, int64_t v) { require(cls == 2003, "the field of TextField"); fern_field = (uintptr_t)v; }
 static uintptr_t new_string(uintptr_t e, const uint16_t *units, uintptr_t n) {
   if (n == 12 && units[0] == 'i') { locals++; return 700; }
-  require(n < sizeof text, "a short text");
-  for (uintptr_t i = 0; i < n; i++) text[i] = (char)units[i];
-  text[n] = 0;
+  require(n < sizeof pending_text, "a short text");
+  for (uintptr_t i = 0; i < n; i++) pending_text[i] = (char)units[i];
+  pending_text[n] = 0;
   locals++;
   return 700;
 }
@@ -199,10 +209,11 @@ int main(int argc, char **argv) {
   require(!ready(message_fd(ctx_)), "set_field sends no Text message");
 
   log_[0] = 0;
+  strcpy(text, "longer");
   set_at(ctx_);
   show_lines(ctx_);
   require(pump(ctx_) == 1 && locals == 0, "a cursor and a field of lines");
-  require(!strcmp(log_, "setText xyz;setSelection 900 1;setSingleLine 900 0;setInputType 900 131073;setImeOptions 900 268435462;setText a;setSelection 900 1;requestFocus 900;showSoftInput 900;"), "the cursor of set_field_at, and a field of more than one line");
+  require(!strcmp(log_, "replace;setSelection 900 1;setSingleLine 900 0;setInputType 900 131073;setImeOptions 900 268435462;setText a;setSelection 900 1;requestFocus 900;showSoftInput 900;"), "the cursor of set_field_at, and a field of more than one line");
   return 0;
 }
 `

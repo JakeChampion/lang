@@ -18,14 +18,14 @@ function flow(p: Link): Link {
   let cur = p;
   let rounds = 0;
   while (rounds < 20) {
-    let step1 = cur.c;
-    let cacts = step1.actions;
+    let step1 = cur.c.step();
+    let cacts = step1.output;
     let cevs = step1.events;
-    let c = step1.taken();
-    let step2 = cur.s;
-    let sacts = step2.actions;
+    let c = step1.conn;
+    let step2 = cur.s.step();
+    let sacts = step2.output;
     let sevs = step2.events;
-    let s = step2.taken();
+    let s = step2.conn;
     cur = Link { ...cur, c: c, s: s, log: cur.log + noted("client", cevs) + noted("server", sevs) };
     if (cacts.len() == 0 && sacts.len() == 0) {
       return cur;
@@ -313,7 +313,10 @@ function test_connection_errors(): test.TestOutcome {
       }
     }
   }
-  let step4 = p.s.on_stream(4 as i64, __codec_bytes(hex.decode("2103abcdef")).concat(request), true);
+  let step4 = p.s.read(4 as i64, __codec_bytes(hex.decode("2103abcdef")).concat(request), true);
+  if (step4.conn.events.len() != 0 || step4.conn.actions.len() != 0) {
+    return test.fail("read left pending events or actions on its continuation");
+  }
   let evs = step4.events;
   return test.assert_eq(out + "| " + noted("server", evs), "261 DATA outside a message's body; 266 the control stream did not open with SETTINGS; 259 a second critical stream of one type; 265 a repeated setting, or one of HTTP/2's; 260 a critical stream ended; 259 a push stream from a client; stop 22 259; 264 a CANCEL_PUSH for a push ID past MAX_PUSH_ID; 264 a MAX_PUSH_ID that went down; 264 a GOAWAY push ID that rose; 262 MAX_PUSH_ID with octets after its identifier; 263 a frame larger than this side reads; open; | server headers 4 [:method=GET :scheme=https :authority=example.com :path=/g ]; server end 4; ");
 }

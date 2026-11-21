@@ -1,6 +1,7 @@
 // Every integer width has the same method set. This suite calls the
 // methods that i64, u32 and u64 share with i32 on each width, and pins
 // the negative-operand results of div_ceil and next_multiple_of to Rust.
+import "std/format";
 import "std/test";
 import "std/array";
 import "std/i32";

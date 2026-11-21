@@ -571,31 +571,6 @@ pub function (s: string) trailing_count(b: u8): i32 {
   }
   return i;
 }
-
-pub function (s: string) hash_fnv32(): u32 {
-  let h = 2166136261u32;
-  let prime = 16777619u32;
-  let n = s.len();
-  let i = 0;
-  while (i < n) {
-    h ^= s[i] as u32;
-    h *= prime;
-    i += 1;
-  }
-  return h;
-}
-
-pub function (s: string) hash_djb2(): u32 {
-  let h = 5381 as u32;
-  let mult = 33 as u32;
-  let n = s.len();
-  let i = 0;
-  while (i < n) {
-    h = h * mult + s[i] as u32;
-    i += 1;
-  }
-  return h;
-}
 ```
 ### `10 pub function (s: string) escape_c(): string`
 
@@ -826,38 +801,6 @@ pub function (s: string) is_email_like(): boolean {
       return false;
     }
   }
-}
-
-pub function (s: string) is_url_like(): boolean {
-  let rest = "";
-  if (s.starts_with("https://")) {
-    rest = s.remove_prefix("https://");
-  } else if (s.starts_with("http://")) {
-    rest = s.remove_prefix("http://");
-  } else {
-    return false;
-  }
-  if (rest.len() == 0) {
-    return false;
-  }
-  return rest.contains(".");
-}
-
-pub function (s: string) is_json_like(): boolean {
-  let t = s.trim();
-  let n = t.len();
-  if (n < 2) {
-    return false;
-  }
-  let first = t[0] as i32;
-  let last = t[n - 1] as i32;
-  if (first == 123 && last == 125) {
-    return true;
-  }
-  if (first == 91 && last == 93) {
-    return true;
-  }
-  return false;
 }
 ```
 ### `15 pub function (s: string) common_prefix(other: string): string`
@@ -2681,17 +2624,6 @@ pub function (e: ParseBoolError) to_string(): string {
 impl error.Error for ParseBoolError {}
 
 impl cmp.Display for ParseBoolError {}
-
-pub function (s: string) is_http_safe_method(): boolean {
-  return s == "GET" || s == "HEAD" || s == "OPTIONS" || s == "TRACE";
-}
-
-pub function (s: string) is_http_idempotent_method(): boolean {
-  if (s.is_http_safe_method()) {
-    return true;
-  }
-  return s == "PUT" || s == "DELETE";
-}
 ```
 
 ### `50 pub function repeat_char(ch: char, n: i32): string`

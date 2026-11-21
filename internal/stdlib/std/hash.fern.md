@@ -1,10 +1,12 @@
 # Fast hashes
 
-This module calculates the XXH64 hash. The checksums are in their own modules: `std/hash/cksum`, `std/hash/crc32`, `std/hash/bsd_sum` and `std/hash/sysv_sum`.
+This module provides XXH64, FNV-1a and DJB2 hashes. The checksums are in their own modules: `std/hash/cksum`, `std/hash/crc32`, `std/hash/bsd_sum` and `std/hash/sysv_sum`.
 
 ## Model
 
 `xxh64` hashes a borrowed byte view with a seed and returns the 64-bit digest.
+
+The string methods `hash_fnv32` and `hash_djb2` hash the bytes of a string and return a 32-bit digest.
 
 ## Contracts
 
@@ -18,6 +20,8 @@ import "std/string";
 
 function main(): i32 {
   if (hash.xxh64("".as_bytes(), 0 as u64) != 0xEF46DB3751D8E999 as u64) { return 1; }
+  if ("hello".hash_fnv32() != 0x4f9f2cabu32) { return 2; }
+  if ("hello".hash_djb2() != 0x0f923099u32) { return 3; }
   return 0;
 }
 ```
@@ -30,6 +34,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<*>>=
 <<module introduction>>
 
+<<string hashes>>
+
 <<2 pub function xxh64(bs: [u8], seed: u64): u64>>
 
 <<3 function __xxh_tail(bs: [u8], at: i32, h: u64): u64>>
@@ -39,7 +45,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<module introduction>>=
-// This module calculates the XXH64 hash.
+// This module provides XXH64, FNV-1a and DJB2 hashes.
 ```
 
 ### `2 pub function xxh64(bs: [u8], seed: u64): u64`
@@ -112,5 +118,35 @@ function __rotl64(x: u64, r: u64): u64 {
 function __le64(bs: [u8], at: i32): u64 {
   return bs[at] as u64 | bs[at + 1] as u64 << 8 | bs[at + 2] as u64 << 16 | bs[at + 3] as u64 << 24
     | bs[at + 4] as u64 << 32 | bs[at + 5] as u64 << 40 | bs[at + 6] as u64 << 48 | bs[at + 7] as u64 << 56;
+}
+```
+
+### String hashes
+
+```fern
+<<string hashes>>=
+pub function (s: string) hash_fnv32(): u32 {
+  let h = 2166136261u32;
+  let prime = 16777619u32;
+  let n = s.len();
+  let i = 0;
+  while (i < n) {
+    h ^= s[i] as u32;
+    h *= prime;
+    i += 1;
+  }
+  return h;
+}
+
+pub function (s: string) hash_djb2(): u32 {
+  let h = 5381 as u32;
+  let mult = 33 as u32;
+  let n = s.len();
+  let i = 0;
+  while (i < n) {
+    h = h * mult + s[i] as u32;
+    i += 1;
+  }
+  return h;
 }
 ```
