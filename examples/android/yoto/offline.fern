@@ -10,7 +10,7 @@ import "./api";
 
 pub struct Track { id: i64, name: string, title: string, chapter: string, key: string, art: string }
 
-pub struct Entry { id: string, title: string, creator: string, tracks: Track[], ready: boolean, failed_at: i32, card: Option[api.Card] }
+pub struct Entry { id: string, title: string, creator: string, tracks: Track[], ready: boolean, failed_at: i32, resume_from: i32, card: Option[api.Card] }
 
 pub struct Catalog { dir: string, entries: Entry[], cleanup: i64[], note: string }
 
@@ -21,13 +21,14 @@ pub struct Output {
   save: (Entry[], i64[]) => boolean,
 }
 
-enum Action { Check, Remove(string), Clear, Cancel }
+enum Action { Check, Remove(string), HoldActive(string), Repair((string, i32)[]), Clear, Cancel }
 
 struct Install { plan: api.DownloadPlan, entry: Entry, prefix: string }
 
 pub struct State {
   catalog: Catalog,
   queue: api.Card[],
+  held: api.Card[],
   fetching: Option[api.Card],
   installing: Option[Install],
   revision: i64,
@@ -45,7 +46,7 @@ const BATCH: i32 = 4;
 const REMOVE_BATCH: i32 = 8;
 
 pub function empty(catalog: Catalog): State {
-  return State { catalog: catalog, queue: [], fetching: None, installing: None, revision: 0i64, checked: 0, failed: 0, paused: false, note: catalog.note, action: None };
+  return State { catalog: catalog, queue: [], held: [], fetching: None, installing: None, revision: 0i64, checked: 0, failed: 0, paused: false, note: catalog.note, action: None };
 }
 
 function safe_name(name: string): boolean {
@@ -81,7 +82,7 @@ function decode_entry(value: json.JsonValue): Option[Entry] {
   if (id.len() == 0 || tracks.len() == 0) {
     return None;
   }
-  return Some(Entry { id: id, title: json.get_string(value, "title").unwrap_or("Untitled card"), creator: json.get_string(value, "creator").unwrap_or(""), tracks: tracks, ready: json.get_bool(value, "ready").unwrap_or(false), failed_at: json.get_i32(value, "failed").unwrap_or(-1), card: api.restore_card(json.get(value, "card").unwrap_or(json.JNull)) });
+  return Some(Entry { id: id, title: json.get_string(value, "title").unwrap_or("Untitled card"), creator: json.get_string(value, "creator").unwrap_or(""), tracks: tracks, ready: json.get_bool(value, "ready").unwrap_or(false), failed_at: json.get_i32(value, "failed").unwrap_or(-1), resume_from: json.get_i32(value, "resumeFrom").unwrap_or(-1), card: api.restore_card(json.get(value, "card").unwrap_or(json.JNull)) });
 }
 
 function encode_track(track: Track): json.JsonValue {
@@ -96,7 +97,7 @@ function encode_entry(entry: Entry): json.JsonValue {
   return json.JObject(json.from([
     ("id", json.JString(entry.id)), ("title", json.JString(entry.title)), ("creator", json.JString(entry.creator)),
     ("tracks", json.JArray(entry.tracks.map(encode_track))), ("ready", json.JBool(entry.ready)),
-    ("failed", json.JNumber(entry.failed_at.to_string())), ("card", entry.card.map(api.cached_card).unwrap_or(json.JNull)),
+    ("failed", json.JNumber(entry.failed_at.to_string())), ("resumeFrom", json.JNumber(entry.resume_from.to_string())), ("card", entry.card.map(api.cached_card).unwrap_or(json.JNull)),
   ]));
 }
 
@@ -147,10 +148,10 @@ pub function card(entry: Entry): api.Card {
     return info;
   }
   let tracks = entry.tracks.map((t: Track): api.Track => api.Track {
-    title: t.title, chapter: "", chapter_key: t.chapter, track_key: t.key, search: t.title.to_lower(), art: t.art, chapter_art: "",
+    title: t.title, chapter: "", chapter_key: t.chapter, track_key: t.key, search: t.title.to_lower(), art: t.art, chapter_art: "", seconds: 0i64,
   });
   return api.Card {
-    id: entry.id, title: entry.title, creator: entry.creator, cover: "", preview: "", kind: api.Standard, myo: false, club: false, sleep_sounds: false,
+    id: entry.id, title: entry.title, creator: entry.creator, cover: "", thumb: "", preview: "", kind: api.Standard, myo: false, club: false, sleep_sounds: false,
     last_played: 0i64, seconds: 0i64, bytes: 0i64, sort_title: entry.title.to_lower(), search: (entry.title + " " + entry.creator).to_lower(),
     tracks: tracks, indexed: true,
   };
@@ -161,8 +162,12 @@ pub function saved_cards(s: State): api.Card[] {
 }
 
 pub function picture(dir: string, address: string, online: boolean): u8[] {
+  return picture_until(dir, address, online, -1);
+}
+
+pub function picture_until(dir: string, address: string, online: boolean, cancel: i32): u8[] {
   if (dir.len() == 0) {
-    return if (online) { api.cover_bytes(address) } else { [] };
+    return if (online) { api.cover_bytes_until(address, cancel) } else { [] };
   }
   let key = base64.encode_url(crypto.sha256(address.bytes()));
   let path = dir + "/story-deck-art-" + key;
@@ -174,7 +179,7 @@ pub function picture(dir: string, address: string, online: boolean): u8[] {
   if (!online) {
     return [];
   }
-  let data = api.cover_bytes(address);
+  let data = api.cover_bytes_until(address, cancel);
   if (data.len() > 0) {
     let temp = path + ".tmp";
     if (write_file_bytes(temp, data).is_ok()) {
@@ -220,7 +225,7 @@ pub function contains(s: State, id: string): boolean {
       return true;
     }
   }
-  return s.queue.any((card: api.Card): boolean => card.id == id);
+  return s.queue.any((card: api.Card): boolean => card.id == id) || s.held.any((card: api.Card): boolean => card.id == id);
 }
 
 pub function enqueue(s: State, cards: api.Card[]): State {
@@ -237,12 +242,94 @@ pub function enqueue(s: State, cards: api.Card[]): State {
 }
 
 pub function retry(s: State, id: string): State {
+  if (s.held.any((card: api.Card): boolean => card.id == id)) {
+    return s;
+  }
   let entry = s.catalog.entries.find((entry: Entry): boolean => entry.id == id && entry.failed_at >= 0);
   if let Some(failed) = entry {
     if (!s.queue.any((item: api.Card): boolean => item.id == id) && !s.fetching.map((item: api.Card): boolean => item.id == id).unwrap_or(false)
       && !s.installing.map((item: Install): boolean => item.plan.id == id).unwrap_or(false)) {
       return State { ...s, queue: s.queue.append(card(failed)), note: "", paused: false };
     }
+  }
+  return s;
+}
+
+pub function current(s: State): Option[api.Card] {
+  if let Some(card) = s.fetching {
+    return Some(card);
+  }
+  if let Some(setup) = s.installing {
+    return Some(card(setup.entry));
+  }
+  return active(s).map(card);
+}
+
+pub function label(s: State, id: string): string {
+  if (s.held.any((item: api.Card): boolean => item.id == id)) {
+    return "Paused";
+  }
+  if let Some(entry) = s.catalog.entries.find((item: Entry): boolean => item.id == id) {
+    if (entry.ready) {
+      return "Saved";
+    }
+    if (entry.failed_at >= 0) {
+      return "Needs attention";
+    }
+  }
+  if (current(s).map((item: api.Card): boolean => item.id == id).unwrap_or(false)) {
+    return "Downloading";
+  }
+  return if (s.queue.any((item: api.Card): boolean => item.id == id)) { "Queued" } else { "" };
+}
+
+pub function hold(s: State, id: string): State {
+  if let Some(item) = s.queue.find((item: api.Card): boolean => item.id == id) {
+    return State { ...s, queue: s.queue.filter((item: api.Card): boolean => item.id != id), held: s.held.append(item) };
+  }
+  if let Some(item) = current(s) {
+    if (item.id == id) {
+      if (active(s).is_some() && s.installing.is_none() && s.fetching.is_none()) {
+        return State { ...s, action: Some(HoldActive(id)), held: s.held.append(item) };
+      }
+      let stopped = remove(s, id);
+      return State { ...stopped, held: stopped.held.append(item), checked: 0 };
+    }
+  }
+  return s;
+}
+
+pub function restore_held(s: State, cards: api.Card[]): State {
+  let next = State { ...s, held: cards };
+  if let Some(entry) = active(next) {
+    if (cards.any((card: api.Card): boolean => card.id == entry.id)) {
+      next = State { ...next, action: Some(HoldActive(entry.id)) };
+    }
+  }
+  return next;
+}
+
+pub function repair(s: State, items: (string, i32)[]): State {
+  if (items.len() == 0) {
+    return s;
+  }
+  return State { ...s, action: Some(Repair(items)) };
+}
+
+pub function resume_card(s: State, id: string): State {
+  if let Some(item) = s.held.find((item: api.Card): boolean => item.id == id) {
+    let ready = State { ...s, held: s.held.filter((item: api.Card): boolean => item.id != id) };
+    if (s.catalog.entries.any((entry: Entry): boolean => entry.id == id && entry.failed_at >= 0)) {
+      return retry(ready, id);
+    }
+    return enqueue(ready, [item]);
+  }
+  return s;
+}
+
+pub function move_first(s: State, id: string): State {
+  if let Some(item) = s.queue.find((item: api.Card): boolean => item.id == id) {
+    return State { ...s, queue: [item].concat(s.queue.filter((item: api.Card): boolean => item.id != id)) };
   }
   return s;
 }
@@ -272,7 +359,7 @@ pub function restore_pending(s: State, pending: api.Card[]): State {
 }
 
 pub function has_failed(s: State): boolean {
-  return s.catalog.entries.any((item: Entry): boolean => item.failed_at >= 0);
+  return s.catalog.entries.any((item: Entry): boolean => item.failed_at >= 0 && !s.held.any((held: api.Card): boolean => held.id == item.id));
 }
 
 pub function retry_on_wifi(s: State): State {
@@ -286,7 +373,7 @@ pub function retry_on_wifi(s: State): State {
 }
 
 pub function next(s: State): Option[api.Card] {
-  if (!s.paused && s.queue.len() > 0 && s.fetching.is_none() && s.installing.is_none() && active(s).is_none()) {
+  if (!s.paused && s.catalog.cleanup.len() == 0 && s.queue.len() > 0 && s.fetching.is_none() && s.installing.is_none() && active(s).is_none()) {
     return Some(s.queue[0]);
   }
   return None;
@@ -306,8 +393,18 @@ pub function received(s: State, revision: i64, result: Result[api.DownloadPlan, 
   let next = State { ...s, fetching: None };
   match (result) {
     Ok(plan) => {
-      let blank = Entry { id: plan.id, title: plan.title, creator: plan.creator, tracks: [], ready: false, failed_at: -1, card: plan.card };
+      let blank = Entry { id: plan.id, title: plan.title, creator: plan.creator, tracks: [], ready: false, failed_at: -1, resume_from: -1, card: plan.card };
       let entry = s.catalog.entries.find((entry: Entry): boolean => entry.id == plan.id && entry.failed_at >= 0).unwrap_or(blank);
+      if (entry.resume_from >= 0) {
+        let count = entry.resume_from.min(entry.tracks.len()).min(plan.tracks.len());
+        let good = entry.tracks.take(count);
+        for i in 0..good.len() {
+          if (good[i].chapter != plan.tracks[i].chapter || good[i].key != plan.tracks[i].key) {
+            return State { ...next, note: "The card changed. Remove this download and save the card again." };
+          }
+        }
+        entry = Entry { ...blank, tracks: good };
+      }
       let setup = Install { plan: plan, entry: entry, prefix: PREFIX + base64.encode_url(rand.bytes(12)) + "-" };
       return State { ...next, installing: Some(setup), action: Some(Check) };
     },
@@ -321,18 +418,18 @@ pub function received(s: State, revision: i64, result: Result[api.DownloadPlan, 
 }
 
 pub function check(s: State): State {
-  if (work_interval(s) >= 0) {
+  if (s.action.is_none() && work_interval(s) >= 0) {
     return State { ...s, action: Some(Check) };
   }
   return s;
 }
 
 pub function clear(s: State): State {
-  return State { ...s, queue: [], fetching: None, installing: None, paused: false, revision: s.revision + 1i64, action: Some(Clear) };
+  return State { ...s, queue: [], held: [], fetching: None, installing: None, paused: false, revision: s.revision + 1i64, action: Some(Clear) };
 }
 
 pub function cancel(s: State): State {
-  return State { ...s, queue: [], fetching: None, installing: None, paused: false, revision: s.revision + 1i64, action: Some(Cancel) };
+  return State { ...s, queue: [], held: [], fetching: None, installing: None, paused: false, revision: s.revision + 1i64, action: Some(Cancel) };
 }
 
 pub function resume(s: State): State {
@@ -353,7 +450,7 @@ pub function remove(s: State, id: string): State {
   let fetching = s.fetching.map((card: api.Card): boolean => card.id == id).unwrap_or(false);
   let installing = s.installing.map((item: Install): boolean => item.plan.id == id).unwrap_or(false);
   return State {
-    ...s, action: Some(Remove(id)), queue: s.queue.filter((card: api.Card): boolean => card.id != id),
+    ...s, action: Some(Remove(id)), queue: s.queue.filter((card: api.Card): boolean => card.id != id), held: s.held.filter((card: api.Card): boolean => card.id != id),
     fetching: if (fetching) { None } else { s.fetching }, revision: if (fetching) { s.revision + 1i64 } else { s.revision },
     installing: if (installing) { None } else { s.installing },
   };
@@ -448,7 +545,7 @@ function install(s: State, setup: Install, output: Output): State {
       committed = committed.insert(track.id, true);
     }
     pending = pending.filter((download_id: i64): boolean => !committed.contains(download_id));
-    entries = entries.append(entry);
+    entries = entries.filter((item: Entry): boolean => item.id != entry.id).append(entry);
     installing = None;
   }
   match (with_catalog(s, entries, pending, output)) {
@@ -479,6 +576,45 @@ function removed(s: State, entries: Entry[], output: Output): State {
       return State { ...s, note: note };
     }
   }
+}
+
+function held_active(s: State, id: string, output: Output): State {
+  let Some(entry) = s.catalog.entries.find((item: Entry): boolean => item.id == id && !item.ready && item.failed_at < 0) else {
+    return s;
+  };
+  let count = s.checked.min((entry.tracks.len() - 1).max(0));
+  let paused = Entry { ...entry, failed_at: count, resume_from: count };
+  let entries = s.catalog.entries.map((item: Entry): Entry => if (item.id == id) { paused } else { item });
+  let cleanup = s.catalog.cleanup.concat(entry.tracks.drop(count).map((track: Track): i64 => track.id));
+  match (with_catalog(s, entries, cleanup, output)) {
+    Ok(next) => {
+      return State { ...next, checked: 0, note: "" };
+    },
+    Err(note) => {
+      return State { ...s, held: s.held.filter((item: api.Card): boolean => item.id != id), note: note };
+    }
+  }
+}
+
+function repair_ready(s: State, items: (string, i32)[], output: Output): State {
+  let entries = s.catalog.entries;
+  let repair_ids: string[] = [];
+  for (id, index) in items {
+    if let Some(at) = entries.position((entry: Entry): boolean => entry.id == id && entry.ready && index >= 0 && index < entry.tracks.len()) {
+      entries = entries.with(at, Entry { ...entries[at], ready: false, failed_at: index });
+      repair_ids = repair_ids.append(id);
+    }
+  }
+  if (repair_ids.len() == 0) {
+    return s;
+  }
+  let Ok(next) = with_catalog(s, entries, s.catalog.cleanup, output) else {
+    return State { ...s, note: "Could not queue the missing audio." };
+  };
+  for id in repair_ids {
+    next = retry(next, id);
+  }
+  return next;
 }
 
 function checked(s: State, output: Output): State {
@@ -532,6 +668,12 @@ pub function apply(s: State, output: Output): State {
   match (action) {
     Check => {
       return checked(next, output);
+    },
+    HoldActive(id) => {
+      return held_active(next, id, output);
+    },
+    Repair(items) => {
+      return repair_ready(next, items, output);
     },
     Remove(id) => {
       return removed(next, next.catalog.entries.filter((e: Entry): boolean => e.id == id), output);

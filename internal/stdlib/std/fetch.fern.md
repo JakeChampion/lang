@@ -1709,7 +1709,7 @@ function __alt_max_age(parts: string[]): Duration {
 <<31 pub struct Lookup>>=
 pub struct Lookup { dial: net.IpAddr[], named: net.IpAddr[], judged: net.IpAddr[] }
 
-pub struct Sockets { pool: Idle }
+pub struct Sockets { pool: Idle, cancel: i32 }
 ```
 
 ### `32 pub function sockets(): Sockets`
@@ -1721,7 +1721,7 @@ pub function sockets(): Sockets {
 }
 
 pub function sockets_with(pool: Idle): Sockets {
-  return Sockets { pool: pool };
+  return Sockets { pool: pool, cancel: -1 };
 }
 ```
 
@@ -1783,7 +1783,7 @@ impl Transport for Sockets {
   function read(self: Sockets, conn: i32, max: i32, wait: Duration): Result[net.Recv, net.NetError] {
     match (__sock_at(self.pool.socks, conn)) {
       Some(sock) => {
-        return net.read_watched(sock, max, wait, self.pool.read_interest(conn));
+        return net.read_watched_until(sock, max, wait, self.pool.read_interest(conn), self.cancel);
       },
       None => {}
     }
@@ -1838,7 +1838,7 @@ impl Transport for Sockets {
     let Some(sock) = __sock_at(self.pool.socks, conn) else {
       return Err(net.Other(9));
     };
-    return __datagram_watched(sock, max, wait);
+    return __datagram_watched(sock, max, wait, self.cancel);
   }
 }
 
@@ -1860,16 +1860,22 @@ function __datagram_peer(sock: Socket, peer: net.SocketAddr): Result[void, net.N
 }
 
 // __datagram_watched is one datagram, or Elapsed once `wait` has passed.
-function __datagram_watched(sock: Socket, max: i32, wait: Duration): Result[net.Recv, net.NetError] {
+function __datagram_watched(sock: Socket, max: i32, wait: Duration, cancel: i32): Result[net.Recv, net.NetError] {
   let until = monotonic_ns() + wait.as_nanos();
   let buf = __alloc_u8(max);
+  let read = [sock.fd, async.counted(sock.fd, 1)];
+  let set = if (cancel >= 0) { [cancel, 1].concat(read) } else { read };
   while (true) {
     let at = until;
     if (at - monotonic_ns() < 1000000i64) {
       at = monotonic_ns() + 1000000i64;
     }
-    match (async.wait_any([sock.fd, async.counted(sock.fd, 1)], Some(time.instant_from_nanos(at)))) {
-      async.Woke(_) => {},
+    match (async.wait_any(set, Some(time.instant_from_nanos(at)))) {
+      async.Woke(at) => {
+        if (cancel >= 0 && at == 0) {
+          return Ok(net.Abandoned);
+        }
+      },
       async.TimedOut => {
         return Ok(net.Elapsed);
       },
@@ -1902,6 +1908,14 @@ pub function send(req: Request): Result[HttpResponse, FetchError] {
 
 pub function send_public(req: Request): Result[HttpResponse, FetchError] {
   return __send_closing(public_policy(), req);
+}
+
+// A readable cancellation descriptor ends the wait for the response.
+pub function send_public_until(req: Request, cancel: i32): Result[HttpResponse, FetchError] {
+  let tr = Sockets { ...sockets(), cancel: cancel };
+  let answer = send_on(tr, req, public_policy());
+  close_idle(tr);
+  return answer;
 }
 
 pub function send_public_on[T: Transport](tr: T, req: Request): Result[HttpResponse, FetchError] {

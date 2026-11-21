@@ -126,11 +126,37 @@ function publish_scan(e: usize, text: string): void {
   }
 }
 
+function tag_id(e: usize, tag: usize): string {
+  let bytes = jni.call_object(e, tag, "getId", "()[B", []);
+  if (!healthy(e, bytes)) {
+    return "";
+  }
+  defer jni.delete_local_ref(e, bytes);
+  let n = jni.get_array_length(e, bytes);
+  if (n < 1 || n > 64) {
+    return "";
+  }
+  let result: u8[] = [];
+  unsafe {
+    let memory = __alloc(n);
+    defer __free(memory, n);
+    let read = jni.call4(e, 200, bytes, 0 as usize, n as usize, memory);
+    if (jni.check(e).is_err()) {
+      return "";
+    }
+    for i in 0..n {
+      result = result.append(__load_u8(memory + i as usize) as u8);
+    }
+  }
+  return base64.encode_url(result);
+}
+
 @jni("dev.fern.storydeck.CardReader implements android.nfc.NfcAdapter$ReaderCallback", "void onTagDiscovered(android.nfc.Tag)")
 pub function discovered(e: usize, reader: usize, tag: usize): void {
+  let uid = tag_id(e, tag);
   let message = ndef_message(e, tag);
   if (!healthy(e, message)) {
-    publish_scan(e, "");
+    publish_scan(e, uid + "|");
     return;
   }
   let records = jni.call_object(e, message, "getRecords", "()[Landroid/nfc/NdefRecord;", []);
@@ -142,13 +168,13 @@ pub function discovered(e: usize, reader: usize, tag: usize): void {
         let raw = jni.call_object(e, uri, "toString", "()Ljava/lang/String;", []);
         let address = jni.string_of(e, raw);
         if (address.starts_with("https://yoto.io/") && api.scan_code(address).len() > 0) {
-          publish_scan(e, address);
+          publish_scan(e, uid + "|" + address);
           return;
         }
       }
     }
   }
-  publish_scan(e, "");
+  publish_scan(e, uid + "|");
 }
 
 function release(e: usize, recorder: usize): void {

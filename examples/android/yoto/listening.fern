@@ -15,6 +15,14 @@ pub struct Lineup { id: string, name: string, cards: Item[] }
 
 pub struct Heard { card: Item, at: i64, done: boolean }
 
+pub struct Profile { name: string, marks: Bookmark[], pins: Bookmark[], history: Heard[], favourites: Item[] }
+
+pub struct Collection { name: string, cards: string[], available: boolean, category: i32, scope: i32 }
+
+pub struct Routine { profile: string, story: Item, sound: Item, minutes: i32 }
+
+pub struct TagLink { uid: string, card: Item, routine: boolean, profile: string }
+
 pub struct Saved {
   queue: Item[],
   marks: Bookmark[],
@@ -27,12 +35,22 @@ pub struct Saved {
   kids: boolean,
   attempts: i32,
   retry_pin_at: i64,
+  profile: string,
+  other_profiles: Profile[],
+  collections: Collection[],
+  compact: boolean,
+  wifi_only: boolean,
+  held_downloads: api.Card[],
+  budget_mb: i32,
+  fade: boolean,
+  routines: Routine[],
+  tags: TagLink[],
 }
 
-pub struct Trip { id: string, title: string, expected: i32, present: i32, bytes: i64 }
+pub struct Trip { id: string, title: string, expected: i32, present: i32, bytes: i64, first_bad: i32 }
 
 pub function empty(): Saved {
-  return Saved { queue: [], marks: [], pins: [], lineups: [], history: [], favourites: [], downloads: [], parent_key: "", kids: false, attempts: 0, retry_pin_at: 0i64 };
+  return Saved { queue: [], marks: [], pins: [], lineups: [], history: [], favourites: [], downloads: [], parent_key: "", kids: false, attempts: 0, retry_pin_at: 0i64, profile: "Family", other_profiles: [], collections: [], compact: false, wifi_only: false, held_downloads: [], budget_mb: 0, fade: false, routines: [], tags: [] };
 }
 
 function item(value: json.JsonValue): Item {
@@ -62,13 +80,21 @@ pub function load(dir: string): Saved {
   };
   let value = json.parse(k.get("extras").unwrap_or("{}")).unwrap_or(json.JNull);
   let lines = json.get_array(value, "lineups").unwrap_or([]).map((row: json.JsonValue): Lineup => Lineup { id: json.get_string(row, "id").unwrap_or(""), name: json.get_string(row, "name").unwrap_or("Trip"), cards: items(json.get_array(row, "cards").unwrap_or([])) });
-  let recent = json.get_array(value, "history").unwrap_or([]).map((row: json.JsonValue): Heard => Heard { card: item(row), at: json.get_i64(row, "at").unwrap_or(0i64), done: json.get_bool(row, "done").unwrap_or(false) }).filter((row: Heard): boolean => row.card.id.len() > 0);
-  let intent: api.Card[] = [];
-  for card in json.get_array(value, "downloads").unwrap_or([]) {
-    if let Some(info) = api.restore_card(card) {
-      intent = intent.append(info);
-    }
-  }
+  let recent = decode_history(value);
+  let profiles = json.get_array(value, "profiles").unwrap_or([]).map((row: json.JsonValue): Profile => Profile {
+    name: json.get_string(row, "name").unwrap_or("Family"),
+    marks: decoded_marks(json.get_string(row, "marks").unwrap_or("[]")),
+    pins: decoded_marks(json.get_string(row, "pins").unwrap_or("[]")),
+    history: decode_history(row),
+    favourites: items(json.get_array(row, "favourites").unwrap_or([])),
+  });
+  let collections = json.get_array(value, "collections").unwrap_or([]).map((row: json.JsonValue): Collection => Collection {
+    name: json.get_string(row, "name").unwrap_or("Collection"),
+    cards: json.get_array(row, "cards").unwrap_or([]).map((id: json.JsonValue): string => if let json.JString(name) = id { name } else { "" }),
+    available: json.get_bool(row, "available").unwrap_or(false),
+    category: json.get_i32(row, "category").unwrap_or(0).max(0).min(6),
+    scope: json.get_i32(row, "scope").unwrap_or(0).max(0).min(3),
+  });
   let queue = json.parse(k.get("queue").unwrap_or("[]")).unwrap_or(json.JNull);
   let kids = json.get_bool(value, "kids").unwrap_or(false);
   let key = json.get_string(value, "key").unwrap_or("");
@@ -78,8 +104,21 @@ pub function load(dir: string): Saved {
     } else { [] },
     marks: decoded_marks(k.get("marks").unwrap_or("[]")), pins: decoded_marks(k.get("pins").unwrap_or("[]")),
     lineups: lines, history: recent, favourites: items(json.get_array(value, "favourites").unwrap_or([])),
-    downloads: intent, parent_key: key, kids: kids && key.len() > 0,
+    downloads: decode_downloads(value, "downloads"), parent_key: key, kids: kids && key.len() > 0,
     attempts: json.get_i32(value, "attempts").unwrap_or(0), retry_pin_at: json.get_i64(value, "retry").unwrap_or(0i64),
+    profile: json.get_string(value, "profile").unwrap_or("Family"), other_profiles: profiles, collections: collections,
+    compact: json.get_bool(value, "compact").unwrap_or(false), wifi_only: json.get_bool(value, "wifiOnly").unwrap_or(false),
+    held_downloads: decode_downloads(value, "heldDownloads"),
+    budget_mb: json.get_i32(value, "budget").unwrap_or(0).max(0),
+    fade: json.get_bool(value, "fade").unwrap_or(false),
+    routines: json.get_array(value, "routines").unwrap_or([]).map((row: json.JsonValue): Routine => Routine {
+      profile: json.get_string(row, "profile").unwrap_or("Family"), story: item(json.get(row, "story").unwrap_or(json.JNull)),
+      sound: item(json.get(row, "sound").unwrap_or(json.JNull)), minutes: json.get_i32(row, "minutes").unwrap_or(30).max(1).min(120),
+    }),
+    tags: json.get_array(value, "tags").unwrap_or([]).map((row: json.JsonValue): TagLink => TagLink {
+      uid: json.get_string(row, "uid").unwrap_or(""), card: item(json.get(row, "card").unwrap_or(json.JNull)),
+      routine: json.get_bool(row, "routine").unwrap_or(false), profile: json.get_string(row, "profile").unwrap_or("Family"),
+    }).filter((link: TagLink): boolean => link.uid.len() > 0),
   };
 }
 
@@ -99,6 +138,42 @@ function encode_marks(marks: Bookmark[]): string {
   return json.encode(json.JArray(items));
 }
 
+function decode_history(value: json.JsonValue): Heard[] {
+  return json.get_array(value, "history").unwrap_or([]).map((row: json.JsonValue): Heard => Heard {
+    card: item(row), at: json.get_i64(row, "at").unwrap_or(0i64), done: json.get_bool(row, "done").unwrap_or(false),
+  }).filter((row: Heard): boolean => row.card.id.len() > 0);
+}
+
+function encode_history(rows: Heard[]): json.JsonValue {
+  return json.JArray(rows.map((row: Heard): json.JsonValue => json.JObject(json.from([
+    ("id", json.JString(row.card.id)), ("title", json.JString(row.card.title)), ("at", json.JNumber(row.at.to_string())), ("done", json.JBool(row.done)),
+  ]))));
+}
+
+function decode_downloads(value: json.JsonValue, key: string): api.Card[] {
+  let cards: api.Card[] = [];
+  for row in json.get_array(value, key).unwrap_or([]) {
+    if let Some(card) = api.restore_card(row) {
+      cards = cards.append(card);
+    }
+  }
+  return cards;
+}
+
+function encode_downloads(cards: api.Card[]): json.JsonValue {
+  return json.JArray(cards.map((card: api.Card): json.JsonValue => api.cached_card(api.Card { ...card, tracks: [], indexed: false })));
+}
+
+pub function switch_profile(s: Saved, name: string): Saved {
+  if (name == s.profile || name.len() == 0 || s.kids) {
+    return s;
+  }
+  let prior = Profile { name: s.profile, marks: s.marks, pins: s.pins, history: s.history, favourites: s.favourites };
+  let next = s.other_profiles.find((p: Profile): boolean => p.name == name).unwrap_or(Profile { name: name, marks: [], pins: [], history: [], favourites: [] });
+  let others = s.other_profiles.filter((p: Profile): boolean => p.name != name).append(prior);
+  return Saved { ...s, profile: name, other_profiles: others, marks: next.marks, pins: next.pins, history: next.history, favourites: next.favourites };
+}
+
 pub function save(dir: string, value: Saved): boolean {
   if (dir.len() == 0) {
     return false;
@@ -106,12 +181,26 @@ pub function save(dir: string, value: Saved): boolean {
   let lines = value.lineups.map((line: Lineup): json.JsonValue => json.JObject(json.from([
     ("id", json.JString(line.id)), ("name", json.JString(line.name)), ("cards", json.JArray(line.cards.map(encode_item))),
   ])));
-  let recent = value.history.map((row: Heard): json.JsonValue => json.JObject(json.from([
-    ("id", json.JString(row.card.id)), ("title", json.JString(row.card.title)), ("at", json.JNumber(row.at.to_string())), ("done", json.JBool(row.done)),
+  let profiles = value.other_profiles.map((row: Profile): json.JsonValue => json.JObject(json.from([
+    ("name", json.JString(row.name)), ("marks", json.JString(encode_marks(row.marks))), ("pins", json.JString(encode_marks(row.pins))),
+    ("history", encode_history(row.history)), ("favourites", json.JArray(row.favourites.map(encode_item))),
+  ])));
+  let collections = value.collections.map((row: Collection): json.JsonValue => json.JObject(json.from([
+    ("name", json.JString(row.name)), ("cards", json.JArray(row.cards.map((id: string): json.JsonValue => json.JString(id)))),
+    ("available", json.JBool(row.available)), ("category", json.JNumber(row.category.to_string())), ("scope", json.JNumber(row.scope.to_string())),
+  ])));
+  let routines = value.routines.map((row: Routine): json.JsonValue => json.JObject(json.from([
+    ("profile", json.JString(row.profile)), ("story", encode_item(row.story)), ("sound", encode_item(row.sound)), ("minutes", json.JNumber(row.minutes.to_string())),
+  ])));
+  let tags = value.tags.map((row: TagLink): json.JsonValue => json.JObject(json.from([
+    ("uid", json.JString(row.uid)), ("card", encode_item(row.card)), ("routine", json.JBool(row.routine)), ("profile", json.JString(row.profile)),
   ])));
   let extras = json.JObject(json.from([
-    ("lineups", json.JArray(lines)), ("history", json.JArray(recent)), ("favourites", json.JArray(value.favourites.map(encode_item))),
-    ("downloads", json.JArray(value.downloads.map((card: api.Card): json.JsonValue => api.cached_card(api.Card { ...card, tracks: [], indexed: false })))), ("kids", json.JBool(value.kids)),
+    ("lineups", json.JArray(lines)), ("history", encode_history(value.history)), ("favourites", json.JArray(value.favourites.map(encode_item))),
+    ("downloads", encode_downloads(value.downloads)), ("heldDownloads", encode_downloads(value.held_downloads)), ("kids", json.JBool(value.kids)),
+    ("profile", json.JString(value.profile)), ("profiles", json.JArray(profiles)), ("collections", json.JArray(collections)),
+    ("compact", json.JBool(value.compact)), ("wifiOnly", json.JBool(value.wifi_only)),
+    ("budget", json.JNumber(value.budget_mb.to_string())), ("fade", json.JBool(value.fade)), ("routines", json.JArray(routines)), ("tags", json.JArray(tags)),
     ("key", json.JString(value.parent_key)), ("attempts", json.JNumber(value.attempts.to_string())), ("retry", json.JNumber(value.retry_pin_at.to_string())),
   ]));
   return kv.empty(dir + "/yoto-listening").set("queue", json.encode(json.JArray(value.queue.map(encode_item)))).set("marks", encode_marks(value.marks)).set("pins", encode_marks(value.pins)).set("extras", json.encode(extras)).save().is_ok();
@@ -227,21 +316,24 @@ pub function check_trip(catalog: offline.Catalog, items: Item[]): Trip[] {
     let expected = 0;
     let present = 0;
     let bytes = 0i64;
+    let first_bad = -1;
     if let Some(entry) = entries.get(item.id) {
       expected = entry.tracks.len();
-      if (entry.ready) {
-        for track in entry.tracks {
-          let path = catalog.dir + "/" + track.name;
-          if let Ok(info) = stat(path) {
-            bytes += info.size.max(0i64);
-            if (readable(path)) {
-              present += 1;
-            }
+      for i in 0..entry.tracks.len() {
+        let path = catalog.dir + "/" + entry.tracks[i].name;
+        if let Ok(info) = stat(path) {
+          bytes += info.size.max(0i64);
+          if (entry.ready && readable(path)) {
+            present += 1;
+            continue;
           }
+        }
+        if (entry.ready && first_bad < 0) {
+          first_bad = i;
         }
       }
     }
-    report = report.append(Trip { id: item.id, title: item.title, expected: expected, present: present, bytes: bytes });
+    report = report.append(Trip { id: item.id, title: item.title, expected: expected, present: present, bytes: bytes, first_bad: first_bad });
   }
   return report;
 }

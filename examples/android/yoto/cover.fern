@@ -39,7 +39,7 @@ function pixels(e: usize, image: usize): Option[draw.Image] {
   return Some(draw.Image { width: w, height: h, pixels: rgba });
 }
 
-function decode_in_frame(e: usize, data: u8[]): Option[draw.Image] {
+function decode_in_frame(e: usize, data: u8[], limit: i32): Option[draw.Image] {
   let factory = jni.find_class(e, "android/graphics/BitmapFactory");
   let options = jni.find_class(e, "android/graphics/BitmapFactory$Options");
   let args = jni.jvalues([]);
@@ -62,7 +62,7 @@ function decode_in_frame(e: usize, data: u8[]): Option[draw.Image] {
     return None;
   }
   let sample = 1;
-  while (w.max(h) / sample > 256) {
+  while (w.max(h) / sample > limit.max(1).min(480)) {
     sample *= 2;
   }
   jni.set_boolean_field(e, opts, bounds, 0 as usize);
@@ -75,16 +75,34 @@ function decode_in_frame(e: usize, data: u8[]): Option[draw.Image] {
   return pixels(e, image);
 }
 
-pub function decode(e: usize, data: u8[]): Option[draw.Image] {
+pub function decode(e: usize, data: u8[], limit: i32): Option[draw.Image] {
   if (data.len() == 0 || jni.call1(e, PUSH_LOCAL_FRAME, 16 as usize) as i32 != 0) {
     let ignored = jni.check(e);
     return None;
   }
-  let image = decode_in_frame(e, data);
+  let image = decode_in_frame(e, data, limit);
   let err = jni.check(e);
   let ignored = jni.call1(e, POP_LOCAL_FRAME, 0 as usize);
   if (err.is_err()) {
     return None;
   }
   return image;
+}
+
+@import("libc.so", "pipe2")
+function c_pipe(fds: usize, flags: i32): i32;
+
+pub function request_pipe(): (i32, i32) {
+  if (target_os() != "android") {
+    return (-1, -1);
+  }
+  unsafe {
+    let fds: usize = __alloc(8);
+    defer __free(fds, 8);
+    let close_on_exec = 524288;
+    if (c_pipe(fds, close_on_exec) != 0) {
+      return (-1, -1);
+    }
+    return (__load_i32(fds), __load_i32(fds + 4 as usize));
+  }
 }

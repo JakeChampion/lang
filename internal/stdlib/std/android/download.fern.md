@@ -6,6 +6,8 @@ This module downloads a file through the `DownloadManager` of Android, into the 
 
 `start` gives a download to Android, and gives its ID. Android downloads the file in its own process, so a large file does not go through the memory of the app. Android continues the download after a lost connection and after the app stops, and it shows the progress in a notification. The file goes to `dir(ctx)` with the name that the app gives.
 
+`start_with_network` can limit a download to Wi-Fi.
+
 `progress` gives the state of a download: its status, the bytes that came, and the size of the file, or -1 when the server did not tell it. `remove` stops a download and deletes its file. `remove_many` removes several downloads in one request.
 
 ## Contracts
@@ -68,18 +70,35 @@ const NOTIFY_COMPLETED: i32 = 1;
 <<calls>>=
 // Downloads the file, or gives -1 if Android refuses it.
 pub function start(ctx: usize, url: string, headers: (string, string)[], name: string, title: string): i64 {
+  return start_with_network(ctx, url, headers, name, title, false);
+}
+
+// When wifi_only is true, allow the file to download on Wi-Fi.
+pub function start_with_network(ctx: usize, url: string, headers: (string, string)[], name: string, title: string, wifi_only: boolean): i64 {
   let Some(s) = session(ctx) else {
     return -1i64;
   };
   defer close(s);
-  return enqueue(s, url, headers, name, title).unwrap_or(-1i64);
+  return enqueue(s, url, headers, name, title, wifi_only).unwrap_or(-1i64);
 }
 
-function enqueue(s: Session, url: string, headers: (string, string)[], name: string, title: string): Result[i64, jni.JavaError] {
+function enqueue(s: Session, url: string, headers: (string, string)[], name: string, title: string, wifi_only: boolean): Result[i64, jni.JavaError] {
   let manager = manager_of(s)?;
   let uri = s.c.uri.parse(s.e, url)?;
   let r = s.c.download_manager_request;
   let request = r.new(s.e, uri)?;
+  if (wifi_only) {
+    let cls = jni.get_object_class(s.e, request.ref);
+    defer jni.delete_local_ref(s.e, cls);
+    let method = jni.get_method_id(s.e, cls, "setAllowedNetworkTypes", "(I)Landroid/app/DownloadManager$Request;");
+    jni.check(s.e)?;
+    let network_wifi = 2 as usize;
+    let args = jni.jvalues([network_wifi]);
+    let allowed = jni.call_object_method_a(s.e, request.ref, method, args);
+    jni.free_buffer(args);
+    jni.check(s.e)?;
+    jni.delete_local_ref(s.e, allowed);
+  }
   for h in headers {
     let added = r.add_request_header(s.e, request, h.0, h.1)?;
     jni.delete_local_ref(s.e, added.ref);
