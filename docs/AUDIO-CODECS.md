@@ -15,7 +15,7 @@ The Opus packet API reuses the Fern CELT implementation.
 | ULC2 | Yes | Yes | Example library under `examples/ulc`, with block APIs, transient windows, and VBR/CBR/ABR encoding. |
 | Opus | Yes | Partial | SILK, hybrid, and CELT packets, multistream channel maps, loss concealment, and forward error correction. Ogg files decode at 48 kHz with gain and exact sample boundaries. The CELT encoder uses 48 kHz fullband mono or stereo. |
 | Ogg | Pages | No | Incremental pages and packets, checksums, interleaved streams, and chained streams. The Opus and Vorbis layers supply file playback. |
-| MP3 | Yes | No | Indexed-bitrate MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. |
+| MP3 | Yes | No | Indexed-bitrate and free-format MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. |
 | MP2 | Yes | No | Indexed-bitrate MPEG-1/2 Layer II at all six sample rates. Mono, stereo, dual channel, joint stereo, and protected frames. Raw frames and complete compatible streams. |
 | AAC-LC | Yes | No | Raw access units and unprotected ADTS, 1024 samples per block, all 13 ADTS rates, and declared channel configurations 1 through 7. |
 | MP4/M4A | AAC-LC, ALAC | No | Self-contained audio tracks, sample tables, decoder configuration, track selection, and edit-list trimming. Byte-view playback and indexed packet reads from seekable files. |
@@ -474,20 +474,19 @@ python3 scripts/gen-mp2-vectors.py --minimp3 /path/to/minimp3.h --check
 Native Linux tests include strict IR checks, sanitizers, and balanced allocation counts.
 WASI executes the same corpus and boundary tests.
 Android ARM64 shared libraries compile successfully.
-Native ARM64 CI and device measurements remain necessary.
+Native ARM64 CI verified the allocation reductions and measured the combined workspace and synthesis changes. Device latency and power measurements remain open.
 These checks do not establish a speed or quality lead over other codecs.
 
 The [MP2 measurements](benchmarks/mp2-2026-11-09/README.md) retain seven-trial CPU comparisons, state probes, and all target results.
 Frame scratch reuse reduces decode time by 8.5 to 10.7 percent and allocation counts by 30 to 43 percent.
 The [scratch measurements](benchmarks/mp2-scratch-2026-11-09/README.md) retain the paired trials and unchanged decoder-state probes.
-Fern now takes 3.08 to 3.52 times the decode time of SIMD minimp3 on the measured Linux host.
+That checksum-inclusive campaign measured 3.08 to 3.52 times the decode time of SIMD minimp3. The [same-library workspace comparison](benchmarks/mp2-workspace-2026-11-21/README.md) measures frame allocations, idle decoder memory, and decode time separately from complete PCM export.
 
 ## MP3
 
 `std/audio/mp3` provides native Layer III decode with normalized float output.
 Samples can exceed the device range. Apply gain or `pcm.quantize` at the conversion boundary.
-The decoder supports indexed bitrates in MPEG-1, MPEG-2, and MPEG-2.5 streams.
-It rejects Layer I, Layer II, and free-format bitrate headers.
+The decoder supports indexed bitrates and free-format Layer III in MPEG-1, MPEG-2, and MPEG-2.5 streams. Free-format discovery uses repeated compatible headers or two complete frames at physical EOF. After discovery, the decoder retains the unpadded frame length for subsequent frames.
 
 `decode_raw` retains all coded samples and codec delay.
 `decode` skips a Xing or Info metadata frame and applies recognized LAME delay and padding.
@@ -1037,7 +1036,7 @@ These results preserve exact scalar-reference PCM and do not establish world-lea
 ## Remaining codec work
 
 The codec stack now includes complete Opus decode, Ogg demux, and MP3/FLAC seek indexes.
-Further MP3 work includes free-format streams, damaged-stream synchronization, and more tag formats.
+Further MP3 work includes damaged-stream synchronization and more tag formats.
 AAC work includes HE-AAC/SBR/PS, protected ADTS verification, and program configurations.
 MP4/M4A work includes fragmented media, further codecs, and bounded file-reader playback.
 Vorbis, further encoders, and other lossless formats need independent reference vectors and benchmarks.
