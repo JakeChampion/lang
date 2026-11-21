@@ -252,7 +252,7 @@ function import_documents(e: usize, resolver: usize, intent: usize, dir: string,
 }
 
 @jni("dev.fern.storydeck.AudioImport implements android.os.Handler$Callback", "boolean handleMessage(android.os.Message)")
-pub function handle(e: usize, self: usize, message: usize): u8 {
+pub function handle_import_message(e: usize, self: usize, message: usize): u8 {
   let cls = jni.get_object_class(e, message);
   let id = jni.get_int_field(e, message, jni.get_field_id(e, cls, "arg1", "I"));
   let limit = jni.get_int_field(e, message, jni.get_field_id(e, cls, "arg2", "I"));
