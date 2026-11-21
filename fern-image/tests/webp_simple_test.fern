@@ -1,4 +1,5 @@
 import "../packages/codecs/webp/vp8l";
+import "../packages/codecs/webp/webp";
 import "../packages/pixels/pixels";
 import "std/test";
 
@@ -65,9 +66,46 @@ function rejects(): test.TestOutcome {
   return test.pass();
 }
 
+function files(): test.TestOutcome {
+  let odd: u8[] = [82, 73, 70, 70, 28, 0, 0, 0, 87, 69, 66, 80, 86, 80, 56, 76, 15, 0, 0, 0, 47, 2, 64, 0, 16, 184, 247, 193, 178, 20, 121, 254, 19, 209, 88, 0];
+  let even: u8[] = [82, 73, 70, 70, 22, 0, 0, 0, 87, 69, 66, 80, 86, 80, 56, 76, 10, 0, 0, 0, 47, 2, 64, 0, 16, 136, 236, 72, 255, 3];
+  let limits = pixels.default_limits();
+  for file in [odd, even] {
+    let Ok(image) = webp.decode_simple(file, file.len(), limits, active) else {
+      return test.fail("RIFF decode");
+    };
+    let Ok(raw) = vp8l.decode_simple(file[20:20 + file[16] as i32], limits, active) else {
+      return test.fail("payload decode");
+    };
+    if (image.data.len() != raw.data.len()) {
+      return test.fail("size");
+    }
+    for i in 0..raw.data.len() {
+      if (image.data[i] != raw.data[i]) {
+        return test.fail("RIFF pixel");
+      }
+    }
+    for n in 0..file.len() {
+      if let Ok(_) = webp.decode_simple(file[0:n], n, limits, active) {
+        return test.fail("short file");
+      }
+    }
+  }
+  for bad in [odd.with(0, 0), odd.with(8, 0), odd.with(4, 255), odd.with(4, 27), odd.with(12, 0), odd.with(19, 255), odd.with(35, 1), odd.with(16, 10), odd.append(0)] {
+    if let Ok(_) = webp.decode_simple(bad, bad.len(), limits, active) {
+      return test.fail("invalid envelope");
+    }
+  }
+  if let Ok(_) = webp.decode_simple(odd, odd.len() - 1, limits, active) {
+    return test.fail("input budget");
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("VP8L simple literal payloads");
   r = r.it("independent RGBA samples", samples);
   r = r.it("bounds and unsupported features", rejects);
+  r = r.it("single-chunk RIFF files and size limits", files);
   return r.finish();
 }
