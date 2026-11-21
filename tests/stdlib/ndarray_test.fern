@@ -100,6 +100,16 @@ function test_checked_axis_views(): test.TestOutcome {
   if (a.try_slice(1, -1, 0).is_some() || a.try_slice(1, 3, 2).is_some() || a.try_slice(1, 4, 5).is_some() || a.try_slice(1, 4, 4).is_none()) {
     return test.fail("slice boundaries");
   }
+  let empty = ndarray.from_flat([] as i32[], [0, 65536, 65536]);
+  if (empty.try_permute([1, 2, 0]).is_some()) {
+    return test.fail("permuted shape overflows before its zero axis");
+  }
+  let Some(moved) = empty.try_permute([1, 0, 2]) else {
+    return test.fail("representable empty permutation");
+  };
+  if (moved.len() != 0 || moved.shape() != [65536, 0, 65536]) {
+    return test.fail("permuted empty view");
+  }
   let view = a.try_permute([1, 0]).unwrap_or(a).try_reverse(0).unwrap_or(a).try_slice(0, 1, 3).unwrap_or(a).try_select(1, 2).unwrap_or(a);
   return test.assert_true(view.rank() == 1 && view.len() == 2 && view.get_unchecked([0]) == 10 && view.get_unchecked([1]) == 9);
 }
