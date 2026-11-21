@@ -1860,6 +1860,14 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
 // The model discounts those reads and keeps the squared-use protection.
 pub struct SpillCosts { fold_alu_rhs: boolean }
 
+function phi_count(insts: SInst[]): i32 {
+  let count = 0;
+  for ins in insts {
+    count += if (ins.kind_tag == PHI) { 1 } else { 0 };
+  }
+  return count;
+}
+
 pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[], crossing: boolean[], crossing_all: boolean[], lens: i32[], costs: SpillCosts): Alloc {
   no_home = unhomed_call_results(f, no_home);
   let cold_calls = cold.len() > 0;
@@ -1900,7 +1908,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
     blk_start = blk_start.append(pos);
     // The moves of an edge write each phi of the block together, so each
     // phi lives at least to the last phi, even with no read.
-    let phi_end = pos + blk.insts.filter((ins: SInst): boolean => ins.kind_tag == PHI).len() - 1;
+    let phi_end = pos + phi_count(blk.insts) - 1;
     for k in 0..blk.insts.len() {
       let ins = blk.insts[k];
       if (ins.result >= 0 && ins.result < lo.len() && pos < lo[ins.result]) {
