@@ -445,3 +445,12 @@ cannot see and from operands that it can fold, and the two must be equal.
 For `usize` arithmetic on wasm32, the matrix uses the interpreter’s `u32`
 results for the same operands. Casts from `usize` use inputs that fit in
 32 bits and are compared across all targets.
+
+The conformance cases also check specific results independently of agreement
+between backends. `integer_conversion_boundaries` checks sign extension,
+zero extension, narrowing, and values on either side of a checked cast's
+limit. `int_saturating_product_of_wide_operands` includes the regression
+where multiplying two maximum `u32` values saturated to zero in the
+interpreter. Its expected result is `4294967295`. The two
+`usize_wraps_at_*` cases check casts *to* the pointer width against separate
+expected outputs for 32-bit and 64-bit targets.
