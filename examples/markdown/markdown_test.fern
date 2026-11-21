@@ -543,6 +543,16 @@ function test_tables(): test.TestOutcome {
   ]);
 }
 
+function test_url_autolinks(): test.TestOutcome {
+  let o = markdown.Options { ...markdown.options(), autolink: true };
+  return checks_with(o, [
+    ("www.example.org/x and HTTPS://a.b/α_(b)).\n", "<p><a href=\"http://www.example.org/x\">www.example.org/x</a> and <a href=\"HTTPS://a.b/%CE%B1_(b)\">HTTPS://a.b/α_(b)</a>).</p>\n"),
+    ("**http://example.org/a_b** [www.example.org](https://e.org) `ftp://abc`\n", "<p><strong><a href=\"http://example.org/a_b\">http://example.org/a_b</a></strong> <a href=\"https://e.org\">www.example.org</a> <code>ftp://abc</code></p>\n"),
+    ("xwww.e.org www.a_b.cd www.a_b.cd.ef/path?x=a&y=b\n", "<p>xwww.e.org www.a_b.cd <a href=\"http://www.a_b.cd.ef/path?x=a&amp;y=b\">www.a_b.cd.ef/path?x=a&amp;y=b</a></p>\n"),
+    ("[www.a.org](foo)\n\n![http://test.org](img)\n", "<p><a href=\"foo\">www.a.org</a></p>\n<p><img src=\"img\" alt=\"http://test.org\" /></p>\n"),
+  ]);
+}
+
 function test_email_autolinks(): test.TestOutcome {
   let o = markdown.Options { ...markdown.options(), autolink: true };
   return checks_with(o, [
@@ -725,6 +735,7 @@ function main(): i32 {
   r = r.it("HTML strikethrough", test_strikethrough);
   r = r.it("table source positions", test_table_sourcepos);
   r = r.it("HTML tables", test_tables);
+  r = r.it("extended URL autolinks", test_url_autolinks);
   r = r.it("extended email autolinks", test_email_autolinks);
   r = r.it("HTML task list items", test_tasklists);
   r = r.it("smart punctuation", test_smart);

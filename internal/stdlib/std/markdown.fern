@@ -252,6 +252,10 @@ function list_start(out: usize, d: blocks.Doc, r: i32, s: State): void {
   }
 }
 
+function task_marker(src: u8[], a: i32, e: i32): boolean {
+  return e - a >= 3 && src[a] == 91 as u8 && src[a + 2] == 93 as u8;
+}
+
 // A task marker can open the first paragraph of an ordered or unordered item.
 function task_prefix(out: usize, d: blocks.Doc, r: i32, o: Options): i32 {
   if (!o.tasklist || r == 0 || d.kind(r - 1) != blocks.ITEM || d.from(r) >= d.to(r)) {
@@ -260,7 +264,7 @@ function task_prefix(out: usize, d: blocks.Doc, r: i32, o: Options): i32 {
   let seg = d.segs[d.from(r)];
   let a = blocks.seg_start(seg);
   let e = blocks.seg_end(seg);
-  if (blocks.seg_pad(seg) != 0 || e - a < 3 || d.src[a] != 91 as u8 || d.src[a + 2] != 93 as u8) {
+  if (blocks.seg_pad(seg) != 0 || !task_marker(d.src, a, e)) {
     return 0;
   }
   let mark = d.src[a + 1];

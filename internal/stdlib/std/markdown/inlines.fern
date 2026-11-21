@@ -1002,7 +1002,15 @@ function parse(w: Work, s: u8[], a: i32, e: i32, d: blocks.Doc): Work {
     // A constant table gives the vector scan. The scan can pass `e`, but
     // the line ending or the end of the source after `e` stops it.
     let j = 0;
-    if (smart) {
+    if ((w.opt & O_AUTOLINK) != 0 && q.nb == 0) {
+      let (stop, end, prefix) = next_url(s, a, i, e, smart);
+      if (end > stop) {
+        q = add_token(q, URI, stop, end, prefix);
+        i = end;
+        continue;
+      }
+      j = stop;
+    } else if (smart) {
       j = __scan_set_bytes(s, i, SMART_SPECIAL);
     } else {
       j = __scan_set_bytes(s, i, SPECIAL);
@@ -1027,6 +1035,121 @@ function parse(w: Work, s: u8[], a: i32, e: i32, d: blocks.Doc): Work {
     }
   }
   return emphasis(q, -1);
+}
+
+// A value of 1 keeps the URL as written. A value of 2 supplies http://.
+function www_prefix(s: u8[], i: i32, e: i32): boolean {
+  return i + 4 < e && s[i] == b'w' && s[i + 1] == b'w' && s[i + 2] == b'w' && s[i + 3] == b'.';
+}
+
+function url_prefix(s: u8[], a: i32, i: i32, e: i32): (i32, i32) {
+  if (www_prefix(s, i, e)) {
+    if (i == a || refs.is_space(s[i - 1] as i32) || __memchr("*_~(", s[i - 1] as i32, 0) >= 0) {
+      return (i, 2);
+    }
+  }
+  if (i > a && is_letter(s[i - 1] as i32)) {
+    return (i, 0);
+  }
+  if (word_ci(s, i, e, "https://")) {
+    return (i + 8, 1);
+  }
+  if (word_ci(s, i, e, "http://")) {
+    return (i + 7, 1);
+  }
+  if (word_ci(s, i, e, "ftp://")) {
+    return (i + 6, 1);
+  }
+  return (i, 0);
+}
+
+function host_alnum(s: u8[], i: i32, e: i32): boolean {
+  if (s[i] < 128 as u8) {
+    return is_alnum(s[i] as i32);
+  }
+  return !is_white(char_at(s, i, e));
+}
+
+function domain_byte(c: u8): boolean {
+  return c >= 128 as u8 || c == b'-' || is_alnum(c as i32);
+}
+
+function url_host(s: u8[], a: i32, e: i32, require_dot: boolean): boolean {
+  if (a >= e || !host_alnum(s, a, e)) {
+    return false;
+  }
+  let dots = 0;
+  let last_underscore = -2;
+  for k in a + 1..e - 1 {
+    let c = s[k];
+    if (c == b'_') {
+      last_underscore = dots;
+    } else if (c == b'.') {
+      dots += 1;
+    } else if (!domain_byte(c)) {
+      break;
+    }
+  }
+  return (!require_dot || dots > 0) && (dots > 10 || dots - last_underscore >= 2);
+}
+
+function url_end(s: u8[], a: i32, e: i32): i32 {
+  let k = a;
+  let balance = 0;
+  while (k < e && !refs.is_space(s[k] as i32) && s[k] != b'<') {
+    if (s[k] == b'(') {
+      balance += 1;
+    } else if (s[k] == b')') {
+      balance -= 1;
+    }
+    k += 1;
+  }
+  return trim_url(s, a, k, balance);
+}
+
+function entity_suffix(s: u8[], a: i32, k: i32): i32 {
+  let j = k - 1;
+  while (j > a && is_letter(s[j - 1] as i32)) {
+    j -= 1;
+  }
+  if (j < k - 1 && j > a && s[j - 1] == b'&') {
+    return j - 1;
+  }
+  return k - 1;
+}
+
+function trim_url(s: u8[], a: i32, k: i32, balance: i32): i32 {
+  while (k > a) {
+    let c = s[k - 1];
+    if (c == b')' && balance < 0) {
+      balance += 1;
+    } else if (c == b';') {
+      k = entity_suffix(s, a, k);
+      continue;
+    } else if (__memchr("?!.,:*_~'\"", c as i32, 0) < 0) {
+      break;
+    }
+    k -= 1;
+  }
+  return k;
+}
+
+function next_url(s: u8[], a: i32, i: i32, e: i32, smart: boolean): (i32, i32, i32) {
+  let stops = SPECIAL;
+  if (smart) {
+    stops = SMART_SPECIAL;
+  }
+  while (i < e && stops[s[i] as i32] == 0 as u8) {
+    let c = s[i] as i32 | 32;
+    if (c == 104 || c == 102 || c == 119) {
+      let (host, prefix) = url_prefix(s, a, i, e);
+      if (prefix > 0 && url_host(s, host, e, prefix == 2)) {
+        return (i, url_end(s, host, e), prefix);
+      }
+    }
+    i += 1;
+  }
+  return (i, i, 0);
 }
 
 // Reads the token at `j`, and gives the index after it.
@@ -2048,9 +2171,22 @@ function leaf(out: usize, s: u8[], kind: i32, start: i32, end: i32, x: i32, plai
     push_dashes(out, x);
   } else if (kind == HTML) {
     raw_html(out, s, start, end, plain, t, opt);
+  } else if (kind == URI && x > 0) {
+    write_url(out, s, start, end, x, t);
   } else {
     autolink(out, s, start + 1, end - 1, kind == EMAIL, plain, t, opt);
   }
+}
+
+function write_url(out: usize, s: u8[], start: i32, end: i32, prefix: i32, t: Tables): void {
+  buf_push(out, "<a href=\"");
+  if (prefix == 2) {
+    buf_push(out, "http://");
+  }
+  buf_push_bytes_expanded(out, s[start:end], t.href);
+  buf_push(out, "\">");
+  escape(out, s, start, end, t);
+  buf_push(out, "</a>");
 }
 
 // Raw HTML is text in the text of an image.
