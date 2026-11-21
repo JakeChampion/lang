@@ -180,6 +180,56 @@ function writer_roundtrip(): test.TestOutcome {
   return test.pass();
 }
 
+function indexed(): test.TestOutcome {
+  // A 3x2 solid RGB image produced by libwebp's WebPEncodeLosslessRGBA.
+  let solid: u8[] = [47, 2, 64, 0, 0, 7, 80, 134, 26, 212, 191, 255, 129, 136, 232, 127, 0];
+  // Three delta-coded palette entries. Index 3 expands to transparent black.
+  // Each row occupies one packed byte even though its fourth index is unused.
+  let packed: u8[] = [47, 2, 64, 0, 16, 23, 208, 139, 30, 151, 160, 231, 129, 186, 68, 244, 63, 0];
+  let limits = pixels.default_limits();
+  let Ok(a) = vp8l.decode_simple(solid, limits, active) else {
+    return test.fail("reference palette decode");
+  };
+  let pixel: u8[] = [6, 12, 254, 255];
+  for i in 0..24 {
+    if (a.data[i] != pixel[i % 4]) {
+      return test.fail("solid palette");
+    }
+  }
+  let Ok(b) = vp8l.decode_simple(packed, limits, active) else {
+    return test.fail("packed decode");
+  };
+  let row: u8[] = [85, 69, 12, 181, 0, 0, 0, 0, 85, 69, 12, 181];
+  for i in 0..24 {
+    if (b.data[i] != row[i % 12]) {
+      return test.fail("packed indices");
+    }
+  }
+  for n in 0..packed.len() {
+    if let Ok(_) = vp8l.decode_simple(packed[0:n], limits, active) {
+      return test.fail("truncated palette");
+    }
+  }
+  return test.pass();
+}
+
+function transform_order(): test.TestOutcome {
+  // libwebp decodes the first pixel of each stream to these RGBA values.
+  let before: u8[] = [47, 4, 192, 0, 16, 61, 128, 94, 244, 184, 4, 61, 15, 148, 46, 162, 255, 1];
+  let after: u8[] = [47, 0, 128, 0, 16, 15, 208, 139, 30, 151, 160, 231, 81, 124, 229, 55, 162, 255, 17];
+  for (stream, expected) in [(before, [222u8, 23u8, 27u8, 231u8]), (after, [142u8, 46u8, 8u8, 206u8])] {
+    let Ok(image) = vp8l.decode_simple(stream, pixels.default_limits(), active) else {
+      return test.fail("transform sequence");
+    };
+    for i in 0..4 {
+      if (image.data[i] != expected[i]) {
+        return test.fail("inverse transform order");
+      }
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("VP8L simple literal payloads");
   r = r.it("independent RGBA samples", samples);
@@ -187,5 +237,7 @@ function main(): i32 {
   r = r.it("single-chunk RIFF files and size limits", files);
   r = r.it("inverse subtract-green with modular channel sums", subtract_green);
   r = r.it("bounded simple RGB and RGBA writer", writer_roundtrip);
+  r = r.it("delta-coded palettes and packed rows", indexed);
+  r = r.it("palette and subtract-green in both orders", transform_order);
   return r.finish();
 }

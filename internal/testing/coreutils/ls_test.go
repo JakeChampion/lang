@@ -155,7 +155,19 @@ func lsTree(t *testing.T) string {
 }
 
 func lsCases(t *testing.T) []invocation {
-	return listingCases(t, "ls")
+	cases := listingCases(t, "ls")
+	if runtime.GOOS == "linux" {
+		dir := t.TempDir()
+		for _, name := range []string{"a\xff", "a\xff2", "a\xff10", ".hidden\x80", "backup\xfe~", "line\nend", "valid-é"} {
+			if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, args := range [][]string{{"-v"}, {"-vr"}, {"-A"}, {"-B"}, {"--zero", "-v"}, {"-av"}, {"-arv", "-I", "a?2"}, {"-v", "--hide=a*"}, {"-Av", "--hide=a*"}} {
+			cases = append(cases, invocation{name: "raw-names" + strings.Join(args, ""), dir: dir, args: args})
+		}
+	}
+	return cases
 }
 
 func dirCases(t *testing.T) []invocation {

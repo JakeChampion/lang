@@ -5676,16 +5676,11 @@ function needs_file_handle_error(needs: string[]): boolean {
 }
 
 pub function with_strerror_texts(sv: string[]): string[] {
-  let texts = asmcore.strerror_texts();
-  for i in 0..texts.len() {
-    if (util.index_of_str(sv, texts[i]) < 0) {
-      sv = sv.append(texts[i]);
-    }
+  let vals = util.name_index(sv);
+  for text in asmcore.strerror_texts() {
+    vals = interned(vals, text);
   }
-  if (util.index_of_str(sv, "Unknown error ") < 0) {
-    sv = sv.append("Unknown error ");
-  }
-  return sv;
+  return interned(vals, "Unknown error ").names;
 }
 
 function refused_errno(): string {

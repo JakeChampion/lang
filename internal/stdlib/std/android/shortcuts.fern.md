@@ -134,15 +134,7 @@ pub function pin(ctx: usize, item: Shortcut): boolean {
   let Ok(info) = build_item(e, c, activity, item) else {
     return false;
   };
-  let cls = jni.get_object_class(e, service.ref);
-  let method = jni.get_method_id(e, cls, "requestPinShortcut", "(Landroid/content/pm/ShortcutInfo;Landroid/content/IntentSender;)Z");
-  if (jni.check(e).is_err() || method == 0 as usize) {
-    return false;
-  }
-  let args = jni.jvalues([info.ref, 0 as usize]);
-  let accepted = jni.call_boolean_method_a(e, service.ref, method, args);
-  jni.free_buffer(args);
-  return jni.check(e).is_ok() && accepted != 0;
+  return c.shortcut_manager.request_pin_shortcut(e, bindings.ShortcutManager { ref: service.ref }, info, jni.Object { ref: 0 as usize }).unwrap_or(false);
 }
 
 // Takes the action of the intent, so the next call gives "".

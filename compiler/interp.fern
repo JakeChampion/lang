@@ -353,8 +353,13 @@ function coerce_to_declared(val: Value, type_name: string): Value {
       return cell_as_declared(c, parser.parse_type_ref(type_name));
     },
     VArr(a) => {
-      if (a.elem.len() > 0 && (if (a.view) { parser.spelling_is_view(type_name) } else { name_ends_with(type_name, "[]") })) {
-        return val;
+      if (a.elem.len() > 0) {
+        if (!a.view && name_ends_with(type_name, "[]")) {
+          return val;
+        }
+        if (parser.spelling_is_view(type_name)) {
+          return if (a.view) { val } else { arr_view(a, 0, arr_len(a)) };
+        }
       }
       let ty = parser.parse_type_ref(type_name);
       let is_view = ty.is_view && ty.array_depth == 0;
@@ -712,11 +717,14 @@ function arr_retyped(a: VArr, elem: string, view: boolean): Value {
 // A view of a[from:to], reading what a builtin later writes into `a`.
 function arr_view(a: VArr, from: i32, to: i32): Value {
   let els = arr_els(a);
-  let out: Value[] = [];
-  for i in from..to {
-    out = out.append(els[i]);
+  let items = els;
+  if (from != 0 || to != els.len()) {
+    items = [];
+    for i in from..to {
+      items = items.append(els[i]);
+    }
   }
-  return VArr { items: out, elem: a.elem, view: true, store: a.store, offset: a.offset + from };
+  return VArr { items: items, elem: a.elem, view: true, store: a.store, offset: a.offset + from };
 }
 
 // Every slot of the array's capacity, as the integers a builtin writes.
