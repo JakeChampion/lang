@@ -537,7 +537,14 @@ function extended(own c: Chunk, read: (i64, i32) => Result[u8[], IoError], n: i3
 
 // At most SEEK_CHUNK bytes of the file from `at`, and at least one.
 function read_more(read: (i64, i32) => Result[u8[], IoError], at: i32, n: i32): Result[u8[], source.ReadError] {
-  let bytes = match (read(at as i64, SEEK_CHUNK.min(n - at))) { Ok(value) => value, Err(error) => { return Err(source.ReadIo(error)); } };
+  let count = SEEK_CHUNK.min(n - at);
+  if (count <= 0) {
+    return Err(source.ReadAudio(pcm.Header));
+  }
+  let bytes = match (read(at as i64, count)) { Ok(value) => value, Err(error) => { return Err(source.ReadIo(error)); } };
+  if (bytes.len() > count) {
+    return Err(source.ReadSize);
+  }
   if (bytes.len() == 0) {
     return Err(source.ReadAudio(pcm.Header));
   }
