@@ -276,7 +276,7 @@ python3 scripts/gen-alac-vectors.py --apple-reference /tmp/alac-reference --chec
 ```
 
 Compressed stereo with 33 predictor bits remains unsupported.
-The byte-view M4A decoder uses `std/audio/mp4/alac`.
+The byte-view M4A decoder in `std/audio/mp4/alac` supports sample-accurate reads on the edited presentation timeline. Build a `seek_index` once from the file, then use `read_into` with the same file bytes and a caller-owned interleaved PCM buffer.
 Source-backed M4A playback remains open under [#14685](https://github.com/JakeChampion/lang/issues/14685).
 Native, WASI, and Android compilation checks do not establish physical Android performance or power use.
 
