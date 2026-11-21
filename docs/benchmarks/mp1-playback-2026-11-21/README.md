@@ -41,3 +41,14 @@ The incremental API retains synthesis history and workspace between frames. The 
 | ISO Layer I stream, 49 frames | 1.252 / 1.291 | 0.356 / 0.242 | 560 / 184 KiB |
 
 The benchmark preloads the same compressed file in all variants. Each process takes its peak RSS reading before writing the independent-check PCM dump. Frame-mode timing includes hashing the first sample of every frame. Whole-stream timing hashes the first sample of the stream. Each median covers seven trials of thirty decodes. Use the reproduction commands above with mode `frames` in place of `whole` and build the C frame drivers with `-DFERN_MPEG_LAYER_1`. [All 56 measurements](frame-trials.json)
+
+## Reusing the frame subbands
+
+The incremental decoder keeps its 1,152-float subband buffer across frames. It writes every active sample slot, including zero for unallocated bands, before synthesis. On native x86-64 Linux, all four streams matched scalar minimp3 bit for bit. The comparison below uses the same frame driver and compiler for both versions, with the previous library at `cd44c48271`. Each median covers five alternating trials of 24 decodes after two warmups.
+
+| Input | Prior / revised ms per stream | Prior / revised allocations per stream | Prior / revised peak RSS (KiB) |
+| --- | ---: | ---: | ---: |
+| Dense mono | 2.107 / 1.578 | 845 / 726 | 216 / 220 |
+| Dense stereo | 3.318 / 2.290 | 845 / 726 | 212 / 212 |
+| Dense joint stereo | 3.246 / 2.132 | 845 / 726 | 224 / 224 |
+| ISO Layer I stream | 1.257 / 0.901 | 348 / 300 | 184 / 184 |

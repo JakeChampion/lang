@@ -73,9 +73,12 @@ def main():
                         ROOT / "scripts/audio-reference/mp2.c", "-o", oracle], check=True)
         cases = [(1, 0, 3, 0), (1, 1, 0, 0), (1, 2, 2, 0), (2, 0, 1, 0),
                  (2, 1, 1, 1), (2, 2, 1, 2), (1, 1, 1, 3)]
-        for version, rate, mode, ext, dense in [(*case, False) for case in cases] + [
-                (1, 0, 3, 0, True), (1, 1, 0, 0, True), (2, 0, 1, 0, True)]:
-            data = b"".join(frame(version, rate, mode, ext, seq, dense) for seq in range(3))
+        streams = [(*case, (False,) * 3) for case in cases]
+        streams.extend([(*case, (True,) * 3) for case in [(1, 0, 3, 0), (1, 1, 0, 0), (2, 0, 1, 0)]])
+        # The middle frame disables bands whose scratch held prior synthesis results.
+        streams.append((1, 2, 1, 1, (True, False, True)))
+        for version, rate, mode, ext, density in streams:
+            data = b"".join(frame(version, rate, mode, ext, seq, dense) for seq, dense in enumerate(density))
             stream = work / "input.mp1"
             stream.write_bytes(data)
             pcm = work / "out.pcm"

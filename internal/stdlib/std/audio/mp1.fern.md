@@ -16,12 +16,12 @@ import "std/audio/wire";
 
 pub struct Decoded { sample_rate: i32, channels: i32, samples: f32[] }
 
-pub opaque struct Decoder { rate: i32, channels: i32, history: f32[], lines: f32[], transform: f32[] }
+pub opaque struct Decoder { rate: i32, channels: i32, history: f32[], bands: f32[], lines: f32[], transform: f32[] }
 
 pub struct Frame { sample_rate: i32, channels: i32, bytes_read: i32, samples: f32[] }
 
 pub function decoder(): Decoder {
-  return Decoder { rate: 0, channels: 0, history: spectral.zeros(960), lines: spectral.zeros(1728), transform: spectral.zeros(128) };
+  return Decoder { rate: 0, channels: 0, history: spectral.zeros(960), bands: spectral.zeros(1152), lines: spectral.zeros(1728), transform: spectral.zeros(128) };
 }
 
 struct Header { rate: i32, channels: i32, separate: i32, bytes: i32, crc: boolean }
@@ -97,8 +97,7 @@ function sample_code(data: [u8], pos: i32, width: i32): i32 {
   return value >> 24 - end & (1 << width) - 1;
 }
 
-function subbands(frame: [u8], h: Header): Result[f32[], pcm.AudioError] {
-  let data = frame[if (h.crc) { 6 } else { 4 }:];
+function scales_for(frame: [u8], data: [u8], h: Header): Result[(i32, u8[], f32[]), pcm.AudioError] {
   let (b, widths) = allocation(data, h)?;
   if (h.crc && layer.checksum(frame[2:4], data, b.pos) != wire.be(frame, 4, 2) as i32) {
     return Err(pcm.Checksum);
@@ -120,25 +119,26 @@ function subbands(frame: [u8], h: Header): Result[f32[], pcm.AudioError] {
   if (b.bad || slot_bits * 12 > b.limit - b.pos) {
     return Err(pcm.Truncated);
   }
-  return Ok(decode_slots(data, h, widths, scales, b.pos));
+  return Ok((b.pos, widths, scales));
 }
 
-function decode_slots(data: [u8], h: Header, widths: [u8], scales: [f32], pos: i32): f32[] {
-  let samples = spectral.zeros(1152);
+function decode_slots(data: [u8], h: Header, widths: [u8], scales: [f32], pos: i32, own samples: f32[]): f32[] {
   for slot in 0..12 {
     for band in 0..32 {
       let value = 0;
       for ch in 0..h.channels {
         let i = 2 * band + ch;
         let width = widths[i] as i32;
+        let sample = 0f32;
         if (width > 0) {
           if (ch == 0 || band < h.separate) {
             let code = sample_code(data, pos, width);
             pos += width;
             value = code - ((1 << width - 1) - 1);
           }
-          samples = samples.with(ch * 576 + band * 18 + slot, value as f32 * scales[i]);
+          sample = value as f32 * scales[i];
         }
+        samples = samples.with(ch * 576 + band * 18 + slot, sample);
       }
     }
   }
@@ -149,10 +149,13 @@ function render(own state: Decoder, input: [u8], h: Header, own output: f32[]): 
   if (state.rate != 0 && (h.rate != state.rate || h.channels != state.channels)) {
     return (state, Err(pcm.Header));
   }
-  let bands = match (subbands(input[:h.bytes], h)) { Ok(value) => value, Err(e) => { return (state, Err(e)); } };
-  let Decoder { rate, channels, history, lines, transform } = state;
-  let (next, samples, _, next_lines, next_transform) = synthesis.granule12_into(history, bands, h.channels, output, 0, lines, transform);
-  return (Decoder { rate: h.rate, channels: h.channels, history: next, lines: next_lines, transform: next_transform }, Ok(Frame { sample_rate: h.rate, channels: h.channels, bytes_read: h.bytes, samples: samples }));
+  let frame = input[:h.bytes];
+  let data = frame[if (h.crc) { 6 } else { 4 }:];
+  let (pos, widths, scales) = match (scales_for(frame, data, h)) { Ok(value) => value, Err(e) => { return (state, Err(e)); } };
+  let Decoder { rate, channels, history, bands, lines, transform } = state;
+  bands = decode_slots(data, h, widths, scales, pos, bands);
+  let (next, samples, next_bands, next_lines, next_transform) = synthesis.granule12_into(history, bands, h.channels, output, 0, lines, transform);
+  return (Decoder { rate: h.rate, channels: h.channels, history: next, bands: next_bands, lines: next_lines, transform: next_transform }, Ok(Frame { sample_rate: h.rate, channels: h.channels, bytes_read: h.bytes, samples: samples }));
 }
 
 pub function (own state: Decoder) decode_frame_into(input: [u8], own output: f32[], limits: pcm.Limits): (Decoder, Result[Frame, pcm.AudioError]) {
