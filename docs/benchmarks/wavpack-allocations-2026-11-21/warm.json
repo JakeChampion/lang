@@ -1,0 +1,1135 @@
+{
+  "schema": 1,
+  "target": "x86-64-linux",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "cpu": 0,
+  "allowed_affinity": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "rounds": 8,
+  "trials": 7,
+  "frames_per_file": 8192,
+  "group_frames": 4096,
+  "compiler_sha256": "522a6fa528bb473b457a2203a213ce3271a5e04347df668782b91c9f51978f2e",
+  "compiler_core_sha256": "522a6fa528bb473b457a2203a213ce3271a5e04347df668782b91c9f51978f2e",
+  "compiler_version": "fern (unknown build)\nbuilt for x86-64-linux",
+  "git_head": "b7e9e5443d1e87deecfc0835fe55e9539a901049",
+  "reference_commit": "4827b9889665b937b6ed71b9c6c0123152cd7a02",
+  "reference_header_sha256": "3c61d65511e258c5dc120a6daaee626d6a1051f3254ca9b67ac654a8f6212a97",
+  "reference_version": "5.8.1",
+  "reference_library_sha256": {
+    "/usr/lib/x86_64-linux-gnu/libwavpack.so.1.2.7": "f3ec334f8b40e90af42120a52f06372b917e166b0564aaa9dae00dce8b779fb9"
+  },
+  "source_sha256": {
+    "scripts/bench-wavpack": "4a90d5d54a2295bebec8f18ab7d488d07f8ff8e566be1d67bda17cbed8c32609",
+    "bench/audio/wavpack_decode.fern": "2bfe4a0190842c3967d66e38b933642e3cd3a87de1f8dc328d23aeed71214487",
+    "scripts/audio-reference/wavpack_bench.c": "387594cf855ba100cbbe32aecd9d0f925697a335b285fb768acb8a4a4451ccfd",
+    "scripts/audio-reference/wavpack_reference.py": "7d8deb35d3ee3e7d57737472339cbd599dc57b01396ad17c4c1c3e020729081e",
+    "scripts/audio-reference/wavpack-decode.fern": "e252bbc89b6f0203b2cf0db3f7c26957c5c1325f880894d2bb2d25ddd011acc5",
+    "internal/stdlib/std/audio/wavpack/bits.fern.md": "7e820ffd8b230d9f0b0b8ee858024f7e39c43d3a4f00a9985374577849f9635f",
+    "internal/stdlib/std/audio/wavpack/block.fern.md": "ee7ceda32f04e5d1d9dd5f4a4a60d62634b42eb5c99b972fb04009b80dd5970e",
+    "internal/stdlib/std/audio/wavpack/config.fern.md": "239e22432ffebb91ae38cff15852bf5f296f3e1e0ed6fe0f528c1e336e0c0ba0",
+    "internal/stdlib/std/audio/wavpack/entropy.fern.md": "88345abe351bb880785671ae85c56d8fb4246cc5e9198f9a2da9059d7608d8ef",
+    "internal/stdlib/std/audio/wavpack/extend.fern.md": "4c5a204b2f3417c8833b07409c4ace757cd17df75bf09e037d889178ac64fc17",
+    "internal/stdlib/std/audio/wavpack/file.fern.md": "5e07781a6fa5be129d24e26e7d8f323700f47e0b13be0cd5f90e14eb2bb8db6a",
+    "internal/stdlib/std/audio/wavpack/input.fern.md": "2646968ca756272775a2a01e72dfd5e8e0f1d1866a77f8a50ce015723624cc17",
+    "internal/stdlib/std/audio/wavpack/packet.fern.md": "2cca18b8ff520da10012c3bd3ca18cb819c8d48cd8566d16f0d3056b85e8ed74",
+    "internal/stdlib/std/audio/wavpack/predict.fern.md": "7ed11a78e86ff502d87730ab01bb528ffdc312ffc3fd402d5a799cb307037153",
+    "internal/stdlib/std/audio/wavpack/tables.fern": "05b7d7c54a24f50fc4711bea72e8af35f5448086700102b130ec640048801ea8",
+    "internal/stdlib/std/audio/wavpack/tags.fern.md": "e7fdcff464f37d21c1138d0f425f74d621370c909b7a228d1894d496e723b38d",
+    "internal/stdlib/std/audio/wavpack/tags_input.fern.md": "f20d7c6e186666b307f98de23cd96fe4409d0aeb9cc9af27bbdeed6f95b18658",
+    "internal/stdlib/std/audio/wavpack.fern.md": "e7fefebb17f4055dad629280f500c642aeb86443bbfa536bb87a08f4d6125a77"
+  },
+  "measurement": "warm seek to zero, complete decode, CRC validation, and full PCM checksum; four warmup rounds; input, index, and context setup excluded",
+  "output_storage": "reusable signed 32-bit PCM in both implementations; raw IEEE float bits",
+  "native_peak_rss": "Linux process VmHWM after decode, including code, input, index, context, and output storage",
+  "fresh_bytes": "New Fern runtime heap storage. The separate C profile counts successful external glibc malloc, calloc and realloc calls within the measured decode scope.",
+  "limitations": "in-memory input on this host; no source I/O, startup latency, physical Android latency, power, or thermal measurements",
+  "cases": {
+    "music2": {
+      "channels": 2,
+      "bits": 24,
+      "floating": false,
+      "flags": 0,
+      "input_bytes": 26132,
+      "input_sha256": "02bd5890fefe86404c82f0544bba70b1a3c8a88eedeca39d4ff674eacf2b4d5d",
+      "pcm_sha256": "807fb6fcfc55a3e43089d0ddf375a425ed2ae04e93e0d5fb5e85a1243127957f",
+      "reference_info": {
+        "channels": 2,
+        "depth": 24,
+        "rate": 48000,
+        "mode": 2,
+        "norm_exp": 0,
+        "channel_mask": 3,
+        "title": "",
+        "md5": null
+      },
+      "raw_trials": {
+        "fern": [
+          {
+            "samples": 131072,
+            "checksum": 926085285,
+            "wall_ns": 14106409,
+            "allocs": 376592,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 412
+          },
+          {
+            "samples": 131072,
+            "checksum": 926085285,
+            "wall_ns": 9021172,
+            "allocs": 376592,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 412
+          },
+          {
+            "samples": 131072,
+            "checksum": 926085285,
+            "wall_ns": 9247384,
+            "allocs": 376592,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 412
+          },
+          {
+            "samples": 131072,
+            "checksum": 926085285,
+            "wall_ns": 10191036,
+            "allocs": 376592,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 412
+          },
+          {
+            "samples": 131072,
+            "checksum": 926085285,
+            "wall_ns": 10423909,
+            "allocs": 376592,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 412
+          },
+          {
+            "samples": 131072,
+            "checksum": 926085285,
+            "wall_ns": 9227165,
+            "allocs": 376592,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 412
+          },
+          {
+            "samples": 131072,
+            "checksum": 926085285,
+            "wall_ns": 9017917,
+            "allocs": 376592,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 412
+          }
+        ],
+        "libwavpack": [
+          {
+            "samples": 131072,
+            "checksum": 926085285,
+            "wall_ns": 2008562,
+            "native_peak_rss_kb": 956
+          },
+          {
+            "samples": 131072,
+            "checksum": 926085285,
+            "wall_ns": 2057574,
+            "native_peak_rss_kb": 960
+          },
+          {
+            "samples": 131072,
+            "checksum": 926085285,
+            "wall_ns": 2005587,
+            "native_peak_rss_kb": 956
+          },
+          {
+            "samples": 131072,
+            "checksum": 926085285,
+            "wall_ns": 1996333,
+            "native_peak_rss_kb": 960
+          },
+          {
+            "samples": 131072,
+            "checksum": 926085285,
+            "wall_ns": 1967782,
+            "native_peak_rss_kb": 956
+          },
+          {
+            "samples": 131072,
+            "checksum": 926085285,
+            "wall_ns": 1962594,
+            "native_peak_rss_kb": 956
+          },
+          {
+            "samples": 131072,
+            "checksum": 926085285,
+            "wall_ns": 4137250,
+            "native_peak_rss_kb": 960
+          }
+        ]
+      },
+      "median": {
+        "fern": {
+          "samples": 131072,
+          "checksum": 926085285,
+          "wall_ns": 9247384,
+          "allocs": 376592,
+          "fresh_bytes": 0,
+          "native_peak_rss_kb": 412
+        },
+        "libwavpack": {
+          "samples": 131072,
+          "checksum": 926085285,
+          "wall_ns": 2005587,
+          "native_peak_rss_kb": 956
+        }
+      },
+      "paired_ratios": [
+        7.023138444319867,
+        4.384373052925436,
+        4.610811697522969,
+        5.1048777934342615,
+        5.297288520781265,
+        4.701514933806992,
+        2.1796886820955947
+      ],
+      "median_paired_fern_over_c": 4.701514933806992,
+      "allocation_profile": {
+        "libwavpack_calls": 24,
+        "fern_header": "# fern allocation profile samples=8192 dropped=636 interval=64 weight=rounded-bytes",
+        "fern_stacks": {
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fern_arr_box": {
+            "samples": 4,
+            "estimated_bytes": 16384
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fn_bits__read;__fern_arr_box": {
+            "samples": 6329,
+            "estimated_bytes": 12961792
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fn_bits__unary;__fn_bits__read;__fern_arr_box": {
+            "samples": 1855,
+            "estimated_bytes": 3799040
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fn___fern_arr_slice_u32;__fn___fern_arr_slice_packed;__fern_arr_box": {
+            "samples": 1,
+            "estimated_bytes": 5632
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__entry;__fern_arr_box": {
+            "samples": 1,
+            "estimated_bytes": 2560
+          },
+          "_start;__fn_main;__fn_peak_rss;__fn___fern_str_split;__fn___fern_str_concat": {
+            "samples": 1,
+            "estimated_bytes": 3584
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fn_bits__exponential;__fn_bits__unary;__fn_bits__read;__fern_arr_box": {
+            "samples": 1,
+            "estimated_bytes": 2048
+          }
+        }
+      }
+    },
+    "music8": {
+      "channels": 8,
+      "bits": 24,
+      "floating": false,
+      "flags": 0,
+      "input_bytes": 105094,
+      "input_sha256": "78f6763ba2ad006b3917af9b9b8daf0553abd2999312475b3c65f67b354145b6",
+      "pcm_sha256": "c2b9f8d5053792eb2f0bc89c3a78444e72808687b578f374a679506257ed33bb",
+      "reference_info": {
+        "channels": 8,
+        "depth": 24,
+        "rate": 48000,
+        "mode": 2,
+        "norm_exp": 0,
+        "channel_mask": 1599,
+        "title": "",
+        "md5": null
+      },
+      "raw_trials": {
+        "fern": [
+          {
+            "samples": 524288,
+            "checksum": 4001428197,
+            "wall_ns": 55713867,
+            "allocs": 1508224,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 664
+          },
+          {
+            "samples": 524288,
+            "checksum": 4001428197,
+            "wall_ns": 38397244,
+            "allocs": 1508224,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 668
+          },
+          {
+            "samples": 524288,
+            "checksum": 4001428197,
+            "wall_ns": 38099606,
+            "allocs": 1508224,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 664
+          },
+          {
+            "samples": 524288,
+            "checksum": 4001428197,
+            "wall_ns": 37949424,
+            "allocs": 1508224,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 664
+          },
+          {
+            "samples": 524288,
+            "checksum": 4001428197,
+            "wall_ns": 37965339,
+            "allocs": 1508224,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 668
+          },
+          {
+            "samples": 524288,
+            "checksum": 4001428197,
+            "wall_ns": 39503737,
+            "allocs": 1508224,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 664
+          },
+          {
+            "samples": 524288,
+            "checksum": 4001428197,
+            "wall_ns": 39783329,
+            "allocs": 1508224,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 664
+          }
+        ],
+        "libwavpack": [
+          {
+            "samples": 524288,
+            "checksum": 4001428197,
+            "wall_ns": 10129535,
+            "native_peak_rss_kb": 1220
+          },
+          {
+            "samples": 524288,
+            "checksum": 4001428197,
+            "wall_ns": 10724492,
+            "native_peak_rss_kb": 1224
+          },
+          {
+            "samples": 524288,
+            "checksum": 4001428197,
+            "wall_ns": 11440238,
+            "native_peak_rss_kb": 1220
+          },
+          {
+            "samples": 524288,
+            "checksum": 4001428197,
+            "wall_ns": 10767636,
+            "native_peak_rss_kb": 1224
+          },
+          {
+            "samples": 524288,
+            "checksum": 4001428197,
+            "wall_ns": 10844770,
+            "native_peak_rss_kb": 1224
+          },
+          {
+            "samples": 524288,
+            "checksum": 4001428197,
+            "wall_ns": 10257054,
+            "native_peak_rss_kb": 1224
+          },
+          {
+            "samples": 524288,
+            "checksum": 4001428197,
+            "wall_ns": 11833779,
+            "native_peak_rss_kb": 1220
+          }
+        ]
+      },
+      "median": {
+        "fern": {
+          "samples": 524288,
+          "checksum": 4001428197,
+          "wall_ns": 38397244,
+          "allocs": 1508224,
+          "fresh_bytes": 0,
+          "native_peak_rss_kb": 664
+        },
+        "libwavpack": {
+          "samples": 524288,
+          "checksum": 4001428197,
+          "wall_ns": 10767636,
+          "native_peak_rss_kb": 1224
+        }
+      },
+      "paired_ratios": [
+        5.500140628370404,
+        3.580332196620595,
+        3.330315855316996,
+        3.524396998561244,
+        3.500797066235614,
+        3.851372626097123,
+        3.3618448510826506
+      ],
+      "median_paired_fern_over_c": 3.524396998561244,
+      "allocation_profile": {
+        "libwavpack_calls": 232,
+        "fern_header": "# fern allocation profile samples=8192 dropped=27160 interval=64 weight=rounded-bytes",
+        "fern_stacks": {
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fn_bits__unary;__fn_bits__read;__fern_arr_box": {
+            "samples": 1906,
+            "estimated_bytes": 3903488
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fn_bits__read;__fern_arr_box": {
+            "samples": 6280,
+            "estimated_bytes": 12861440
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__entry;__fern_arr_box": {
+            "samples": 2,
+            "estimated_bytes": 5120
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fern_arr_push_u32;__fern_arr_box": {
+            "samples": 1,
+            "estimated_bytes": 3584
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fern_arr_box": {
+            "samples": 2,
+            "estimated_bytes": 9216
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fn_bits__exponential;__fn_bits__read;__fern_arr_box": {
+            "samples": 1,
+            "estimated_bytes": 2048
+          }
+        }
+      }
+    },
+    "noise2": {
+      "channels": 2,
+      "bits": 24,
+      "floating": false,
+      "flags": 0,
+      "input_bytes": 50068,
+      "input_sha256": "6924919a46b774f221b285df4e79b114a62b754aa3f9d74b05f80d2228f06451",
+      "pcm_sha256": "6958fde68deb41a6dfbf94b3a7b4f5ed54241ff1fe40f2a1d6cf1442f8a0903d",
+      "reference_info": {
+        "channels": 2,
+        "depth": 24,
+        "rate": 48000,
+        "mode": 2,
+        "norm_exp": 0,
+        "channel_mask": 3,
+        "title": "",
+        "md5": null
+      },
+      "raw_trials": {
+        "fern": [
+          {
+            "samples": 131072,
+            "checksum": 2348983877,
+            "wall_ns": 10746105,
+            "allocs": 427160,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 436
+          },
+          {
+            "samples": 131072,
+            "checksum": 2348983877,
+            "wall_ns": 10501274,
+            "allocs": 427160,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 436
+          },
+          {
+            "samples": 131072,
+            "checksum": 2348983877,
+            "wall_ns": 11500727,
+            "allocs": 427160,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 436
+          },
+          {
+            "samples": 131072,
+            "checksum": 2348983877,
+            "wall_ns": 10222883,
+            "allocs": 427160,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 436
+          },
+          {
+            "samples": 131072,
+            "checksum": 2348983877,
+            "wall_ns": 10600990,
+            "allocs": 427160,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 436
+          },
+          {
+            "samples": 131072,
+            "checksum": 2348983877,
+            "wall_ns": 11091694,
+            "allocs": 427160,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 436
+          },
+          {
+            "samples": 131072,
+            "checksum": 2348983877,
+            "wall_ns": 11183739,
+            "allocs": 427160,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 436
+          }
+        ],
+        "libwavpack": [
+          {
+            "samples": 131072,
+            "checksum": 2348983877,
+            "wall_ns": 2330486,
+            "native_peak_rss_kb": 996
+          },
+          {
+            "samples": 131072,
+            "checksum": 2348983877,
+            "wall_ns": 2636167,
+            "native_peak_rss_kb": 996
+          },
+          {
+            "samples": 131072,
+            "checksum": 2348983877,
+            "wall_ns": 2266351,
+            "native_peak_rss_kb": 996
+          },
+          {
+            "samples": 131072,
+            "checksum": 2348983877,
+            "wall_ns": 2172533,
+            "native_peak_rss_kb": 992
+          },
+          {
+            "samples": 131072,
+            "checksum": 2348983877,
+            "wall_ns": 2145263,
+            "native_peak_rss_kb": 996
+          },
+          {
+            "samples": 131072,
+            "checksum": 2348983877,
+            "wall_ns": 2145704,
+            "native_peak_rss_kb": 992
+          },
+          {
+            "samples": 131072,
+            "checksum": 2348983877,
+            "wall_ns": 2407440,
+            "native_peak_rss_kb": 992
+          }
+        ]
+      },
+      "median": {
+        "fern": {
+          "samples": 131072,
+          "checksum": 2348983877,
+          "wall_ns": 10746105,
+          "allocs": 427160,
+          "fresh_bytes": 0,
+          "native_peak_rss_kb": 436
+        },
+        "libwavpack": {
+          "samples": 131072,
+          "checksum": 2348983877,
+          "wall_ns": 2266351,
+          "native_peak_rss_kb": 996
+        }
+      },
+      "paired_ratios": [
+        4.611100431412161,
+        3.9835389791314433,
+        5.074556853726541,
+        4.7055133339746735,
+        4.941580589419572,
+        5.169256337314001,
+        4.645490230286113
+      ],
+      "median_paired_fern_over_c": 4.7055133339746735,
+      "allocation_profile": {
+        "libwavpack_calls": 24,
+        "fern_header": "# fern allocation profile samples=8192 dropped=1821 interval=64 weight=rounded-bytes",
+        "fern_stacks": {
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fn_bits__read;__fern_arr_box": {
+            "samples": 6582,
+            "estimated_bytes": 13479936
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fn_bits__unary;__fn_bits__read;__fern_arr_box": {
+            "samples": 1603,
+            "estimated_bytes": 3282944
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fn___fern_arr_slice_u32;__fn___fern_arr_slice_packed;__fern_arr_box": {
+            "samples": 2,
+            "estimated_bytes": 11264
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fern_arr_box": {
+            "samples": 3,
+            "estimated_bytes": 14848
+          },
+          "_start;__fn_main;__fn_peak_rss;__fn___fern_str_split;__fn___fern_str_concat": {
+            "samples": 1,
+            "estimated_bytes": 3072
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fern_arr_push;__fern_arr_box": {
+            "samples": 1,
+            "estimated_bytes": 3584
+          }
+        }
+      }
+    },
+    "silence2": {
+      "channels": 2,
+      "bits": 24,
+      "floating": false,
+      "flags": 0,
+      "input_bytes": 224,
+      "input_sha256": "cd49f7e9481a9dbc9d80a78171de9b1726925caaa483d5e13616e3d537a14719",
+      "pcm_sha256": "de2f256064a0af797747c2b97505dc0b9f3df0de4f489eac731c23ae9ca9cc31",
+      "reference_info": {
+        "channels": 2,
+        "depth": 24,
+        "rate": 48000,
+        "mode": 2,
+        "norm_exp": 0,
+        "channel_mask": 3,
+        "title": "",
+        "md5": null
+      },
+      "raw_trials": {
+        "fern": [
+          {
+            "samples": 131072,
+            "checksum": 998546885,
+            "wall_ns": 1062106,
+            "allocs": 104,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 380
+          },
+          {
+            "samples": 131072,
+            "checksum": 998546885,
+            "wall_ns": 1194732,
+            "allocs": 104,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 380
+          },
+          {
+            "samples": 131072,
+            "checksum": 998546885,
+            "wall_ns": 1169655,
+            "allocs": 104,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 380
+          },
+          {
+            "samples": 131072,
+            "checksum": 998546885,
+            "wall_ns": 1121113,
+            "allocs": 104,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 380
+          },
+          {
+            "samples": 131072,
+            "checksum": 998546885,
+            "wall_ns": 1109245,
+            "allocs": 104,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 380
+          },
+          {
+            "samples": 131072,
+            "checksum": 998546885,
+            "wall_ns": 1119961,
+            "allocs": 104,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 384
+          },
+          {
+            "samples": 131072,
+            "checksum": 998546885,
+            "wall_ns": 1051040,
+            "allocs": 104,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 380
+          }
+        ],
+        "libwavpack": [
+          {
+            "samples": 131072,
+            "checksum": 998546885,
+            "wall_ns": 490493,
+            "native_peak_rss_kb": 912
+          },
+          {
+            "samples": 131072,
+            "checksum": 998546885,
+            "wall_ns": 463914,
+            "native_peak_rss_kb": 916
+          },
+          {
+            "samples": 131072,
+            "checksum": 998546885,
+            "wall_ns": 413279,
+            "native_peak_rss_kb": 912
+          },
+          {
+            "samples": 131072,
+            "checksum": 998546885,
+            "wall_ns": 391898,
+            "native_peak_rss_kb": 916
+          },
+          {
+            "samples": 131072,
+            "checksum": 998546885,
+            "wall_ns": 397617,
+            "native_peak_rss_kb": 916
+          },
+          {
+            "samples": 131072,
+            "checksum": 998546885,
+            "wall_ns": 450044,
+            "native_peak_rss_kb": 912
+          },
+          {
+            "samples": 131072,
+            "checksum": 998546885,
+            "wall_ns": 374983,
+            "native_peak_rss_kb": 912
+          }
+        ]
+      },
+      "median": {
+        "fern": {
+          "samples": 131072,
+          "checksum": 998546885,
+          "wall_ns": 1119961,
+          "allocs": 104,
+          "fresh_bytes": 0,
+          "native_peak_rss_kb": 380
+        },
+        "libwavpack": {
+          "samples": 131072,
+          "checksum": 998546885,
+          "wall_ns": 413279,
+          "native_peak_rss_kb": 912
+        }
+      },
+      "paired_ratios": [
+        2.1653846232260197,
+        2.575330772513871,
+        2.830182515927497,
+        2.86072651557293,
+        2.7897323303581083,
+        2.488558896463457,
+        2.8029003981513827
+      ],
+      "median_paired_fern_over_c": 2.7897323303581083,
+      "allocation_profile": {
+        "libwavpack_calls": 24,
+        "fern_header": "# fern allocation profile samples=4 dropped=0 interval=64 weight=rounded-bytes",
+        "fern_stacks": {
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fn_bits__exponential;__fn_bits__unary;__fn_bits__read;__fern_arr_box": {
+            "samples": 1,
+            "estimated_bytes": 2048
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fern_arr_push_u32;__fern_arr_box": {
+            "samples": 1,
+            "estimated_bytes": 3584
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fern_arr_box": {
+            "samples": 1,
+            "estimated_bytes": 3072
+          },
+          "_start;__fn_main;__fn_peak_rss;__fn___fern_str_split;__fn___fern_str_concat": {
+            "samples": 1,
+            "estimated_bytes": 3072
+          }
+        }
+      }
+    },
+    "integer32": {
+      "channels": 2,
+      "bits": 32,
+      "floating": false,
+      "flags": 1073741824,
+      "input_bytes": 66480,
+      "input_sha256": "bd1ad1b7a8bf981d78e9242be8bc13c801310de9a2a111972b2f27c320468457",
+      "pcm_sha256": "e637afad0633bd516731f0c7a42bb578eae8b4dd354ed4220176b8a533932eed",
+      "reference_info": {
+        "channels": 2,
+        "depth": 32,
+        "rate": 48000,
+        "mode": 2,
+        "norm_exp": 0,
+        "channel_mask": 3,
+        "title": "",
+        "md5": null
+      },
+      "raw_trials": {
+        "fern": [
+          {
+            "samples": 131072,
+            "checksum": 2470182757,
+            "wall_ns": 14462625,
+            "allocs": 559024,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 452
+          },
+          {
+            "samples": 131072,
+            "checksum": 2470182757,
+            "wall_ns": 14591314,
+            "allocs": 559024,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 452
+          },
+          {
+            "samples": 131072,
+            "checksum": 2470182757,
+            "wall_ns": 14543634,
+            "allocs": 559024,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 452
+          },
+          {
+            "samples": 131072,
+            "checksum": 2470182757,
+            "wall_ns": 15818995,
+            "allocs": 559024,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 452
+          },
+          {
+            "samples": 131072,
+            "checksum": 2470182757,
+            "wall_ns": 15172091,
+            "allocs": 559024,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 452
+          },
+          {
+            "samples": 131072,
+            "checksum": 2470182757,
+            "wall_ns": 13890541,
+            "allocs": 559024,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 452
+          },
+          {
+            "samples": 131072,
+            "checksum": 2470182757,
+            "wall_ns": 14448314,
+            "allocs": 559024,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 452
+          }
+        ],
+        "libwavpack": [
+          {
+            "samples": 131072,
+            "checksum": 2470182757,
+            "wall_ns": 3130676,
+            "native_peak_rss_kb": 1020
+          },
+          {
+            "samples": 131072,
+            "checksum": 2470182757,
+            "wall_ns": 3097317,
+            "native_peak_rss_kb": 1020
+          },
+          {
+            "samples": 131072,
+            "checksum": 2470182757,
+            "wall_ns": 3227809,
+            "native_peak_rss_kb": 1016
+          },
+          {
+            "samples": 131072,
+            "checksum": 2470182757,
+            "wall_ns": 2755262,
+            "native_peak_rss_kb": 1020
+          },
+          {
+            "samples": 131072,
+            "checksum": 2470182757,
+            "wall_ns": 2953274,
+            "native_peak_rss_kb": 1020
+          },
+          {
+            "samples": 131072,
+            "checksum": 2470182757,
+            "wall_ns": 2680532,
+            "native_peak_rss_kb": 1016
+          },
+          {
+            "samples": 131072,
+            "checksum": 2470182757,
+            "wall_ns": 2954727,
+            "native_peak_rss_kb": 1020
+          }
+        ]
+      },
+      "median": {
+        "fern": {
+          "samples": 131072,
+          "checksum": 2470182757,
+          "wall_ns": 14543634,
+          "allocs": 559024,
+          "fresh_bytes": 0,
+          "native_peak_rss_kb": 452
+        },
+        "libwavpack": {
+          "samples": 131072,
+          "checksum": 2470182757,
+          "wall_ns": 2954727,
+          "native_peak_rss_kb": 1020
+        }
+      },
+      "paired_ratios": [
+        4.619649238694774,
+        4.71095273748215,
+        4.50572942822825,
+        5.741375956261147,
+        5.1373800737757485,
+        5.182009019105163,
+        4.889898119183261
+      ],
+      "median_paired_fern_over_c": 4.889898119183261,
+      "allocation_profile": {
+        "libwavpack_calls": 24,
+        "fern_header": "# fern allocation profile samples=8192 dropped=4912 interval=64 weight=rounded-bytes",
+        "fern_stacks": {
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fn_bits__unary;__fn_bits__read;__fern_arr_box": {
+            "samples": 1251,
+            "estimated_bytes": 2562048
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fn_bits__read;__fern_arr_box": {
+            "samples": 5020,
+            "estimated_bytes": 10280960
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_bits__read;__fern_arr_box": {
+            "samples": 1918,
+            "estimated_bytes": 3928064
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fern_arr_box": {
+            "samples": 2,
+            "estimated_bytes": 7168
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fern_arr_push_owned;__fern_arr_push;__fern_arr_box": {
+            "samples": 1,
+            "estimated_bytes": 5632
+          }
+        }
+      }
+    },
+    "float2": {
+      "channels": 2,
+      "bits": 32,
+      "floating": true,
+      "flags": 1073741824,
+      "input_bytes": 31748,
+      "input_sha256": "3eab7a2af599124b09d3616d4ef8e770d2488c8e0e6b1cc86e5873a02013d13e",
+      "pcm_sha256": "89132749ff0bf6ebabc3f07d0ac1d8292f90079388c76356f561d42ea3579c1c",
+      "reference_info": {
+        "channels": 2,
+        "depth": 32,
+        "rate": 48000,
+        "mode": 10,
+        "norm_exp": 127,
+        "channel_mask": 3,
+        "title": "",
+        "md5": null
+      },
+      "raw_trials": {
+        "fern": [
+          {
+            "samples": 131072,
+            "checksum": 3855421077,
+            "wall_ns": 11962538,
+            "allocs": 507976,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 416
+          },
+          {
+            "samples": 131072,
+            "checksum": 3855421077,
+            "wall_ns": 11991060,
+            "allocs": 507976,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 416
+          },
+          {
+            "samples": 131072,
+            "checksum": 3855421077,
+            "wall_ns": 11949979,
+            "allocs": 507976,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 416
+          },
+          {
+            "samples": 131072,
+            "checksum": 3855421077,
+            "wall_ns": 12297331,
+            "allocs": 507976,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 420
+          },
+          {
+            "samples": 131072,
+            "checksum": 3855421077,
+            "wall_ns": 12142584,
+            "allocs": 507976,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 416
+          },
+          {
+            "samples": 131072,
+            "checksum": 3855421077,
+            "wall_ns": 12407484,
+            "allocs": 507976,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 416
+          },
+          {
+            "samples": 131072,
+            "checksum": 3855421077,
+            "wall_ns": 12601300,
+            "allocs": 507976,
+            "fresh_bytes": 0,
+            "native_peak_rss_kb": 416
+          }
+        ],
+        "libwavpack": [
+          {
+            "samples": 131072,
+            "checksum": 3855421077,
+            "wall_ns": 3562342,
+            "native_peak_rss_kb": 964
+          },
+          {
+            "samples": 131072,
+            "checksum": 3855421077,
+            "wall_ns": 3232076,
+            "native_peak_rss_kb": 964
+          },
+          {
+            "samples": 131072,
+            "checksum": 3855421077,
+            "wall_ns": 3231765,
+            "native_peak_rss_kb": 968
+          },
+          {
+            "samples": 131072,
+            "checksum": 3855421077,
+            "wall_ns": 3295499,
+            "native_peak_rss_kb": 968
+          },
+          {
+            "samples": 131072,
+            "checksum": 3855421077,
+            "wall_ns": 3319704,
+            "native_peak_rss_kb": 964
+          },
+          {
+            "samples": 131072,
+            "checksum": 3855421077,
+            "wall_ns": 3391321,
+            "native_peak_rss_kb": 968
+          },
+          {
+            "samples": 131072,
+            "checksum": 3855421077,
+            "wall_ns": 3048945,
+            "native_peak_rss_kb": 964
+          }
+        ]
+      },
+      "median": {
+        "fern": {
+          "samples": 131072,
+          "checksum": 3855421077,
+          "wall_ns": 12142584,
+          "allocs": 507976,
+          "fresh_bytes": 0,
+          "native_peak_rss_kb": 416
+        },
+        "libwavpack": {
+          "samples": 131072,
+          "checksum": 3855421077,
+          "wall_ns": 3295499,
+          "native_peak_rss_kb": 964
+        }
+      },
+      "paired_ratios": [
+        3.3580543361642423,
+        3.710017957498524,
+        3.69766335114094,
+        3.7315535522844945,
+        3.657730930227514,
+        3.6585991122633335,
+        4.133003383137446
+      ],
+      "median_paired_fern_over_c": 3.69766335114094,
+      "allocation_profile": {
+        "libwavpack_calls": 24,
+        "fern_header": "# fern allocation profile samples=8192 dropped=3716 interval=64 weight=rounded-bytes",
+        "fern_stacks": {
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fn_bits__unary;__fn_bits__read;__fern_arr_box": {
+            "samples": 1374,
+            "estimated_bytes": 2813952
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fn_bits__read;__fern_arr_box": {
+            "samples": 4735,
+            "estimated_bytes": 9697280
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_bits__read;__fern_arr_box": {
+            "samples": 2076,
+            "estimated_bytes": 4251648
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fern_arr_box": {
+            "samples": 4,
+            "estimated_bytes": 18432
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fn_bits__exponential;__fn_bits__read;__fern_arr_box": {
+            "samples": 1,
+            "estimated_bytes": 2048
+          },
+          "_start;__fn_main;__fn_u32__to_string;__fn_int____int_to_string_u64;__fern_alloc_bytes;__fern_arr_box": {
+            "samples": 1,
+            "estimated_bytes": 2560
+          },
+          "_start;__fn_main;__fn_wavpack__FileReader__read;__fn_packet__residuals;__fn___fern_arr_slice_u32;__fn___fern_arr_slice_packed;__fern_arr_box": {
+            "samples": 1,
+            "estimated_bytes": 5632
+          }
+        }
+      }
+    }
+  },
+  "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+  "cpu_quota": "400000 100000",
+  "profile_binary_sha256": {
+    "fern": "788e9f002427b211950c365e66e8cec87292de8f1ae623a30ef4d87e4b2b3fcb",
+    "libwavpack": "bf9192efe8450de91c77e6b9b8530da2c018bc5455fe330953617323660da62d"
+  },
+  "binary_sha256": {
+    "fern": "cd2cd3e8b5abad725d5cb6468d04ed8b7bac71a73e7a49da3e3e4adfa0d4daf3",
+    "libwavpack": "1b533c5b545864af1120fbba506d8373070da86c6dd493b3ad9d10692e842543"
+  },
+  "c_compiler": "cc (Debian 14.2.0-19) 14.2.0"
+}

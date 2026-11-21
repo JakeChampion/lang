@@ -6,6 +6,29 @@
 #include <string.h>
 #include <time.h>
 
+// Only the separate allocation-profile executable interposes these glibc calls.
+// The timed executable links directly to the system allocator.
+#ifdef WAVPACK_COUNT_ALLOCATIONS
+#include <stdatomic.h>
+static _Atomic uint64_t allocation_calls;
+extern void *__libc_malloc(size_t);
+extern void *__libc_calloc(size_t, size_t);
+extern void *__libc_realloc(void *, size_t);
+
+static void *count_call(void *result) {
+    if (result) atomic_fetch_add_explicit(&allocation_calls, 1, memory_order_relaxed);
+    return result;
+}
+void *malloc(size_t bytes) { return count_call(__libc_malloc(bytes)); }
+void *calloc(size_t count, size_t bytes) { return count_call(__libc_calloc(count, bytes)); }
+void *realloc(void *p, size_t bytes) { return count_call(__libc_realloc(p, bytes)); }
+#define START_COUNT() uint64_t initial_calls = atomic_load(&allocation_calls)
+#define REPORT_COUNT() printf("allocs=%llu\n", (unsigned long long)(atomic_load(&allocation_calls) - initial_calls))
+#else
+#define START_COUNT() ((void)0)
+#define REPORT_COUNT() ((void)0)
+#endif
+
 typedef struct { const unsigned char *data; int64_t bytes, at; } Input;
 static int32_t read_bytes(void *opaque, void *out, int32_t count) {
     Input *in = opaque;
@@ -65,6 +88,7 @@ static int consume(WavpackContext *context, int32_t *output, int channels, int r
 }
 static int playback(const char *path) {
     char error[100];
+    START_COUNT();
     int64_t start = nanoseconds();
     WavpackContext *context = WavpackOpenFileInput(path, error, 0, 0);
     if (!context) { fprintf(stderr, "%s\n", error); return 2; }
@@ -90,6 +114,7 @@ static int playback(const char *path) {
     int valid = !WavpackGetNumErrors(context) &&
         samples == (uint64_t)WavpackGetNumSamples64(context) * channels;
     int64_t elapsed = nanoseconds() - start;
+    REPORT_COUNT();
     printf("first_group_frames=%u\n", first_frames);
     printf("first_group_ns=%lld\nsamples=%llu\nchecksum=%u\nwall_ns=%lld\nnative_peak_rss_kb=%ld\n",
         (long long)first, (unsigned long long)samples, checksum, (long long)elapsed, peak_rss());
@@ -118,9 +143,11 @@ int main(int argc, char **argv) {
     int32_t *output = malloc((size_t)4096 * (size_t)channels * sizeof(*output));
     uint32_t checksum; uint64_t samples;
     if (!output || !consume(context, output, channels, 4, &checksum, &samples)) return 4;
+    START_COUNT();
     int64_t started = nanoseconds();
     if (!consume(context, output, channels, rounds, &checksum, &samples)) return 5;
     int64_t elapsed = nanoseconds() - started;
+    REPORT_COUNT();
     uint64_t expected = (uint64_t)WavpackGetNumSamples64(context) * (uint64_t)channels * (uint64_t)rounds;
     if (samples != expected) return 6;
     printf("samples=%llu\nchecksum=%u\nwall_ns=%lld\nnative_peak_rss_kb=%ld\n",
