@@ -386,6 +386,11 @@ jobs:
       - name: Build the compiler
         working-directory: candidate
         run: bash bootstrap/bootstrap.sh build
+      - name: Measure indexed Vorbis playback
+        working-directory: candidate
+        run: |
+          mkdir -p build/audio-pair
+          python3 scripts/bench-vorbis-file > build/audio-pair/vorbis-file.json
       - name: Fetch hash-checked reference headers
         working-directory: candidate
         run: |
