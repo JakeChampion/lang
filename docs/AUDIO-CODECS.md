@@ -764,6 +764,10 @@ For windowed playback, `cursor.want()` gives the offset and byte count for the
 next step. Pass a view covering that range and its absolute starting offset to
 `step_view`. A zero count lets the cursor advance without reading the file.
 
+For a seekable Reader, `std/audio/opusfile/file.inspect` builds the index from
+byte zero. After `seek` or `seek_exact`, call `file.step` with the same Reader
+and the desired chunk and window limits. The caller closes the Reader.
+
 The seek corpus compares 90 cold seeks and 760,044 float samples with independent libopusfile output.
 Separate exact seeks compare full-history PCM at the same 0.000001 tolerance.
 Tests cover repeated forward and backward seeks, chains, gain, trimming, continued packets, zero output, and invalid limits or positions.

@@ -1,5 +1,7 @@
 import "std/audio/opusfile";
 import "std/audio/opusfile/input";
+import "std/audio/opusfile/file";
+import "std/audio/source";
 import "opus_file_check";
 import "opus_file_vectors";
 import "opus_input_check";
@@ -35,9 +37,47 @@ function decode(source: Reader, ref: opus_file_check.Reference, cooperative: boo
   return complete(source, ref, progress);
 }
 
+function indexed(reader: Reader, ref: opus_file_check.Reference): Result[void, string] {
+  let index = match (file.inspect(reader, opusfile.default_seek_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let cursor = opusfile.seek_reader(index);
+  let (_, count) = cursor.want();
+  if (count > 1) {
+    if let Err(source.ReadSize) = file.step(reader, cursor, source.Limits { chunk_size: 1, max_buffer_bytes: 1 }) {} else {
+      return Err("indexed read exceeded its window budget");
+    }
+    let fresh = match (file.inspect(reader, opusfile.default_seek_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    cursor = opusfile.seek_reader(fresh);
+  }
+  let limits = source.Limits { chunk_size: 17, max_buffer_bytes: ref.bytes.len() };
+  for link in 0..ref.links.len() {
+    let want = ref.links[link];
+    for start in [want.frames / 2i64, 0i64] {
+      cursor = match (cursor.seek_exact(link, start)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+      let progress = opus_file_check.Progress { link: link, stage: 2, samples: start as i32 * (want.fields[1] as i32) };
+      while (progress.samples < want.pcm.len() / 4) {
+        let (next, event) = match (file.step(reader, cursor, limits)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+        cursor = next;
+        match (event) {
+          opusfile.SeekSamples(audio) => {
+            progress = opus_file_check.event_progress(Some(opusfile.Samples(audio)), ref, progress)?;
+          },
+          opusfile.SeekEnd => {
+            return Err("early end of indexed file");
+          },
+          opusfile.SeekPending => {}
+        }
+      }
+    }
+  }
+  return Ok(());
+}
+
 function read_file(path: string, ref: opus_file_check.Reference, cooperative: boolean): Result[void, string] {
   let source = match (open_reader(path)) { Ok(value) => value, Err(e) => { return Err("open: " + e.message()); } };
   let result = decode(source, ref, cooperative);
+  if (cooperative && result.is_ok()) {
+    result = indexed(source, ref);
+  }
   let closed = source.close();
   result?;
   return match (closed) { Ok(_) => Ok(()), Err(e) => Err(e.message()) };
