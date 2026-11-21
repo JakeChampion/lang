@@ -65,8 +65,22 @@ pub function decode_simple(input: [u8], limits: pixels.Limits, cancelled: () => 
   let Ok(layout) = pixels.checked_layout(width, height, width * 4, pixels.RGBA8, limits) else {
     return Err(Limit);
   };
-  // No transforms, color cache or spatially varying prefix-code groups.
-  let flags = field(input, version.next, 3)?;
+  let transform = field(input, version.next, 1)?;
+  let subtract_green = transform.value != 0u64;
+  let next = transform.next;
+  if (subtract_green) {
+    let kind = field(input, next, 2)?;
+    if (kind.value != 2u64) {
+      return Err(Unsupported);
+    }
+    let more = field(input, kind.next, 1)?;
+    if (more.value != 0u64) {
+      return Err(Unsupported);
+    }
+    next = more.next;
+  }
+  // No color cache or spatially varying prefix-code groups.
+  let flags = field(input, next, 2)?;
   if (flags.value != 0u64) {
     return Err(Unsupported);
   }
@@ -93,11 +107,13 @@ pub function decode_simple(input: [u8], limits: pixels.Limits, cancelled: () => 
     }
     for x in 0..width {
       let i = y * layout.stride + x * 4;
-      data = data.with(i + 1, symbol(input, green, at));
+      let g_sample = symbol(input, green, at);
+      data = data.with(i + 1, g_sample);
+      let delta = if (subtract_green) { g_sample as i32 } else { 0 };
       at += green.width as i64;
-      data = data.with(i, symbol(input, red, at));
+      data = data.with(i, (symbol(input, red, at) as i32 + delta & 255) as u8);
       at += red.width as i64;
-      data = data.with(i + 2, symbol(input, blue, at));
+      data = data.with(i + 2, (symbol(input, blue, at) as i32 + delta & 255) as u8);
       at += blue.width as i64;
       data = data.with(i + 3, symbol(input, alpha, at));
       at += alpha.width as i64;

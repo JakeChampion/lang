@@ -43,6 +43,33 @@ function samples(): test.TestOutcome {
   return test.pass();
 }
 
+function subtract_green(): test.TestOutcome {
+  // libwebp reconstructs both channels modulo 256, even for transparent pixels.
+  let src: u8[] = [47, 2, 64, 0, 16, 197, 189, 15, 150, 165, 200, 243, 159, 136, 198, 2];
+  let want: u8[] = [8, 7, 207, 0, 223, 222, 166, 0, 51, 7, 207, 0, 10, 222, 166, 0, 8, 7, 207, 255, 223, 222, 166, 255];
+  let limits = pixels.default_limits();
+  let Ok(image) = vp8l.decode_simple(src, limits, active) else {
+    return test.fail("subtract-green decode");
+  };
+  if (image.data.len() != want.len()) {
+    return test.fail("size");
+  }
+  for i in 0..want.len() {
+    if (image.data[i] != want[i]) {
+      return test.fail("reconstructed sample");
+    }
+  }
+  if let Ok(_) = vp8l.decode_simple(src.with(5, src[5] | 8u8), limits, active) {
+    return test.fail("additional transform");
+  }
+  for n in 0..src.len() {
+    if let Ok(_) = vp8l.decode_simple(src[0:n], limits, active) {
+      return test.fail("short transform stream");
+    }
+  }
+  return test.pass();
+}
+
 function rejects(): test.TestOutcome {
   let src = mixed();
   let limits = pixels.default_limits();
@@ -107,5 +134,6 @@ function main(): i32 {
   r = r.it("independent RGBA samples", samples);
   r = r.it("bounds and unsupported features", rejects);
   r = r.it("single-chunk RIFF files and size limits", files);
+  r = r.it("inverse subtract-green with modular channel sums", subtract_green);
   return r.finish();
 }

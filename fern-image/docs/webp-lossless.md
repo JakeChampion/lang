@@ -15,7 +15,8 @@ and zero padding for an odd-sized chunk before passing the payload to the decode
 |---|---|
 | Lossless pixel data | One prefix-code group with simple one- or two-symbol trees and literal green, red, blue and alpha samples. Each channel can select its value independently. A single-symbol tree consumes zero pixel bits. |
 | Alpha | The alpha tree yields straight 8-bit alpha, including partially transparent samples. RGB values under zero alpha are preserved. The header's alpha hint has no effect on decoding. |
-| Other VP8L tools | Transforms, color caches, multiple groups, general Huffman trees and LZ77 copies are outside this entry point. |
+| Subtract-green transform | Reconstructs red and blue by adding green modulo 256, including for fully transparent pixels. |
+| Other VP8L tools | Predictor, cross-color and color-indexing transforms, color caches, multiple groups, general Huffman trees and LZ77 copies are outside this entry point. |
 | Container | Single-chunk RIFF/WEBP files containing a supported VP8L payload. Extended WebP, metadata chunks and animation require separate admission and validation. |
 | Lossy WebP | VP8 frames and separate ALPH streams require their own codecs. |
 | Encoding | No WebP writer is provided. |
