@@ -4,7 +4,7 @@
 // label up with `normalize`.
 import "core/map";
 import "std/unicode";
-import "./utf8";
+import "std/markdown/utf8";
 
 // The destination and the title of a definition, as they are in the source.
 // Backslash escapes and entity references are not decoded yet. The title

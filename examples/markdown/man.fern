@@ -1,7 +1,7 @@
 // The groff man page of a node tree, as cmark writes it.
 import "std/array";
-import "./markdown";
-import "./nodes";
+import "std/markdown";
+import "std/markdown/nodes";
 import "./out";
 
 pub function render(t: nodes.Tree, o: markdown.Options): u8[] {

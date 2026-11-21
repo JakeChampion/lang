@@ -3,8 +3,8 @@
 // it writes the line breaks that the renderers ask for, and it wraps the
 // text at a width. The output is a byte array, because a wrap moves the
 // end of a line to the next line.
-import "./markdown";
-import "./utf8";
+import "std/markdown";
+import "std/markdown/utf8";
 
 // The escaping of `out`.
 pub const LITERAL: i32 = 0;

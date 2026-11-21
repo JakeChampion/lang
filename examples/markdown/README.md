@@ -29,6 +29,15 @@ none. It has the options of cmark:
 - `--validate-utf8`: invalid UTF-8 as cmark replaces it (see below).
 - `--help`, `-h` and `--version`, with the text of cmark.
 
+For HTML output, pass `--tasklist` to render GitHub-style task list markers
+as disabled checkboxes. Pass `--strikethrough` to render paired single or double
+tildes as `<del>`. Library callers can set `Options.tasklist` and
+`Options.strikethrough` independently. Pass `--table` or set `Options.tables`
+to render pipe tables with column alignment and inline formatting.
+With `--autolink` or `Options.autolink`, HTML output links bare HTTP, HTTPS,
+FTP and `www.` URLs, as well as email addresses and explicit `mailto:` and
+`xmpp:` addresses.
+
 The usage text names `cmark`, as cmark does for each name of the program
 file.
 
@@ -40,7 +49,7 @@ An unknown option writes the usage and fails. The errors of `--width` and
 `--to`, a file that `md` cannot open, and the exit status are those of cmark.
 A directory gives no text, as it does in cmark.
 
-A program can call `markdown.to_html(bytes, options)`, or
+A program can import `"std/markdown"` and call `markdown.to_html(bytes, options)`, or
 `markdown.render(builder, bytes, options)` to write into a byte builder.
 `markdown.write(writer, bytes, part, options)` gives the HTML to a buffered
 writer each time that `part` bytes or more are ready. `md` uses it, so the
@@ -82,7 +91,7 @@ the block starts.
 
 The parser reads the bytes of the source as they are. Only the tests that
 need a code point decode one, with the UTF-8 rules of cmark in
-`utf8.fern`. The writers copy the bytes of the text.
+`std/markdown/utf8`. The writers copy the bytes of the text.
 
 The inline parser reads each byte of the text once. A constant table of 256
 entries makes `__scan_set_bytes` a vector scan, and the scan finds the next
@@ -110,7 +119,7 @@ length of the line of an ATX heading does not count its closing `#` marks.
 
 The other formats need the node tree of cmark. `render.fern` builds it from
 the log of blocks. `inlines.build` adds the nodes of the inline text from
-the tokens that the HTML writer reads. `nodes.fern` keeps the tree as rows
+the tokens that the HTML writer reads. `std/markdown/nodes` keeps the tree as rows
 of i32 fields, and the text of all the nodes in one byte array.
 
 The tree has the text nodes of cmark. Adjacent text joins. The positions
@@ -126,7 +135,7 @@ CommonMark, man or LaTeX, and it wraps the lines. `commonmark.fern`,
 `refs.fern` parses the link reference definitions, normalizes link labels,
 and scans link destinations and titles. `tags.fern` has the HTML tag
 scanners and the start and end conditions of the seven kinds of HTML block.
-`entities.fern` has the named character references of HTML and the Unicode
+`std/markdown/entities` has the named character references of HTML and the Unicode
 punctuation ranges. `scripts/gen-markdown-tables.py` writes it.
 
 ## What it has
@@ -284,3 +293,22 @@ XML takes 686 M against 697 M, and CommonMark takes 993 M against 1012 M.
 On the first 4 MB of the spec input, the HTML takes 826 M against 843 M.
 The other formats keep the node tree and its text, so they use more memory
 than cmark.
+
+A repeat on 2026-11-21 used the HTML command lines of all three renderers on
+the same x86-64 Linux host. The table gives median elapsed milliseconds over
+15 measured runs per program after a warmup. The programs shared one CPU
+affinity, rotated their order and wrote stdout to /dev/null.
+
+| HTML input | Bytes | Fern md | cmark 0.31.2 | md4c 0.4.8 (md2html) |
+|---|---:|---:|---:|---:|
+| Repository Markdown | 25,617,121 | 86.2 ms | 353.3 ms | 107.3 ms |
+| Repeated spec examples | 16,888,143 | 246.2 ms | 1060.9 ms | 276.9 ms |
+
+The repository input contains all 2,859 regular Markdown files from
+`git archive c507562f85 -- '*.md'` in archive order, with two newlines
+after each file. For the spec input, append two newlines to the Markdown
+of each of the 652 examples in `tests/spec.json`, then repeat that block
+as many whole times as fit in 16,900,000 bytes. Fern and cmark produced
+byte-identical HTML on both inputs. The C tools used release-tag sources
+compiled with `cc -O3 -DNDEBUG`. Fern used `-target x86-64-linux`. Each
+renderer received the input filename and used its default options.

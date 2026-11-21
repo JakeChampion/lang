@@ -8,7 +8,7 @@ spec.json is the JSON that test/spec_tests.py --dump-tests writes for spec.txt.
 spec.json has the same CC-BY-SA 4.0 license as the spec.
 The full license text of the spec repository is in LICENSE.txt.
 
-examples/markdown/entities.fern holds the names of the named character references of the HTML Standard and the characters that each name gives.
+internal/stdlib/std/markdown/entities.fern holds the names of the named character references of the HTML Standard and the characters that each name gives.
 Reference: https://html.spec.whatwg.org/multipage/named-characters.html
 Copyright (C) WHATWG (Apple, Google, Mozilla, Microsoft).
 The HTML Standard has the Creative Commons CC-BY 4.0 license: https://creativecommons.org/licenses/by/4.0/

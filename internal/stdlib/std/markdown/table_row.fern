@@ -1,0 +1,83 @@
+// Shared GFM table row grammar for the block parser and HTML writer.
+function space(c: u8): boolean {
+  return c == b' ' || c == b'\t';
+}
+
+pub function trim(s: u8[], a: i32, e: i32): (i32, i32) {
+  while (a < e && space(s[a])) {
+    a += 1;
+  }
+  while (e > a && space(s[e - 1])) {
+    e -= 1;
+  }
+  return (a, e);
+}
+
+// Adjacent entries hold the start and end of each cell before whitespace trimming.
+pub function cells(s: u8[], a: i32, e: i32): i32[] {
+  let spans: i32[] = [];
+  let (start, limit) = trim(s, a, e);
+  a = start;
+  if (a < limit && s[a] == b'|') {
+    a += 1;
+  }
+  while (a < limit) {
+    let end = a;
+    while (end < limit && (s[end] != b'|' || end > a && s[end - 1] == 92 as u8)) {
+      end += 1;
+    }
+    let last = end;
+    if (end == limit) {
+      last = e;
+    }
+    spans = spans.append(a).append(last);
+    a = end + 1;
+  }
+  return spans;
+}
+
+// -1 means this cell cannot be part of a delimiter row.
+function alignment(s: u8[], a: i32, e: i32): i32 {
+  let flags = 0;
+  if (a < e && s[a] == b':') {
+    flags = 1;
+    a += 1;
+  }
+  if (a < e && s[e - 1] == b':') {
+    flags += 2;
+    e -= 1;
+  }
+  if (a == e) {
+    return -1;
+  }
+  for k in a..e {
+    if (s[k] != b'-') {
+      return -1;
+    }
+  }
+  return flags;
+}
+
+pub function columns(src: u8[], header: i32, header_end: i32, start: i32, end: i32): i32[] {
+  let result: i32[] = [];
+  if (start >= end) {
+    return result;
+  }
+  let c = src[start];
+  if (c != b'|' && c != b':' && c != b'-' && !space(c)) {
+    return result;
+  }
+  let delimiter = cells(src, start, end);
+  if (delimiter.len() > 131070 || delimiter.len() != cells(src, header, header_end).len()) {
+    return result;
+  }
+  for col in 0..delimiter.len() / 2 {
+    let (a, e) = trim(src, delimiter[2 * col], delimiter[2 * col + 1]);
+    let align = alignment(src, a, e);
+    if (align < 0) {
+      return [];
+    }
+    result = result.append(align);
+  }
+  return result;
+}

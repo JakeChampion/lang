@@ -2,12 +2,12 @@
 // with --unsafe. Some cases check the shape of the block tree.
 import "core/map";
 import "std/test";
-import "./blocks";
-import "./inlines";
-import "./markdown";
-import "./refs";
+import "std/markdown/blocks";
+import "std/markdown/inlines";
+import "std/markdown";
+import "std/markdown/refs";
 import "./render";
-import "./tags";
+import "std/markdown/tags";
 
 // The options of `cmark --unsafe`.
 function unsafe_html(): markdown.Options {
@@ -509,6 +509,71 @@ function test_safe(): test.TestOutcome {
 
 // Smart punctuation: quotes are delimiters, and runs of hyphens and three
 // periods are dashes and an ellipsis.
+function test_strikethrough(): test.TestOutcome {
+  let o = markdown.Options { ...markdown.options(), strikethrough: true };
+  return checks_with(o, [
+    ("a~~_~~~_.\n", "<p>a~~_~~~_.</p>\n"),
+    ("~x~~x~~x~\n", "<p><del>x<del>x</del>x</del></p>\n"),
+    ("~~Hi~~ *there*, ~also~.\n", "<p><del>Hi</del> <em>there</em>, <del>also</del>.</p>\n"),
+    ("a ~no~~ and ~~~three~~~\n", "<p>a ~no~~ and ~~~three~~~</p>\n"),
+    ("~~*nested* [link](url)~~ and `~~code~~`\n", "<p><del><em>nested</em> <a href=\"url\">link</a></del> and <code>~~code~~</code></p>\n"),
+    ("~~first\nsecond~~\n\n~third\n\nfourth~\n", "<p><del>first\nsecond</del></p>\n<p>~third</p>\n<p>fourth~</p>\n"),
+  ]);
+}
+
+function test_table_sourcepos(): test.TestOutcome {
+  let o = markdown.Options { ...markdown.options(), tables: true, sourcepos: true };
+  return checks_with(o, [
+    ("  A | B  \r\n--- | :--:\r\n|x|\r\n", "<table data-sourcepos=\"1:3-3:3\">\n<thead>\n<tr data-sourcepos=\"1:3-1:9\">\n<th data-sourcepos=\"1:3-1:4\">A</th>\n<th align=\"center\" data-sourcepos=\"1:6-1:9\">B</th>\n</tr>\n</thead>\n<tbody>\n<tr data-sourcepos=\"3:3-3:3\">\n<td data-sourcepos=\"3:4-3:4\">x</td>\n<td align=\"center\" data-sourcepos=\"3:0-3:0\"></td>\n</tr>\n</tbody>\n</table>\n"),
+    ("> α | b\n> --|--\n>   1 |2\n", "<blockquote data-sourcepos=\"1:1-3:8\">\n<table data-sourcepos=\"1:3-3:8\">\n<thead>\n<tr data-sourcepos=\"1:3-1:8\">\n<th data-sourcepos=\"1:3-1:5\">α</th>\n<th data-sourcepos=\"1:7-1:8\">b</th>\n</tr>\n</thead>\n<tbody>\n<tr data-sourcepos=\"3:3-3:8\">\n<td data-sourcepos=\"3:3-3:4\">1</td>\n<td data-sourcepos=\"3:6-3:6\">2</td>\n</tr>\n</tbody>\n</table>\n</blockquote>\n"),
+    ("intro\nA | B\n--|--\n |\nafter\n", "<p data-sourcepos=\"0:0-0:0\">intro</p>\n<table data-sourcepos=\"1:1-3:5\">\n<thead>\n<tr data-sourcepos=\"1:1-1:11\">\n<th data-sourcepos=\"1:7-1:8\">A</th>\n<th data-sourcepos=\"1:10-1:11\">B</th>\n</tr>\n</thead>\n</table>\n<p data-sourcepos=\"4:2-5:5\">|\nafter</p>\n"),
+  ]);
+}
+
+function test_tables(): test.TestOutcome {
+  let o = markdown.Options { ...markdown.options(), tables: true };
+  return checks_with(o, [
+    ("[ref]: /url\nA|B\n-|:-\n[ref]|y\n\n[ref]\n", "<p>[ref]: /url</p>\n<table>\n<thead>\n<tr>\n<th>A</th>\n<th align=\"left\">B</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>[ref]</td>\n<td align=\"left\">y</td>\n</tr>\n</tbody>\n</table>\n<p>[ref]</p>\n"),
+    ("[ref]: /url\n\nA|B\n-|:-\n[ref]|y\n", "<table>\n<thead>\n<tr>\n<th>A</th>\n<th align=\"left\">B</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td><a href=\"/url\">ref</a></td>\n<td align=\"left\">y</td>\n</tr>\n</tbody>\n</table>\n"),
+    ("[ref]: /url\nA|B\n-|:-|-\n\n[ref]\n", "<p>A|B\n-|:-|-</p>\n<p><a href=\"/url\">ref</a></p>\n"),
+    ("text\nA | B\n:- | -:\n*one* | `a\\|b`\nshort\n", "<p>text</p>\n<table>\n<thead>\n<tr>\n<th align=\"left\">A</th>\n<th align=\"right\">B</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td align=\"left\"><em>one</em></td>\n<td align=\"right\"><code>a|b</code></td>\n</tr>\n<tr>\n<td align=\"left\">short</td>\n<td align=\"right\"></td>\n</tr>\n</tbody>\n</table>\n"),
+    ("A | B\n---\n", "<h2>A | B</h2>\n"),
+    ("A | B\n- | -\n|\ntrailing\n", "<p>A | B</p>\n<ul>\n<li>| -\n|\ntrailing</li>\n</ul>\n"),
+    ("A | B\n:-: | -\n<b>\n", "<table>\n<thead>\n<tr>\n<th align=\"center\">A</th>\n<th>B</th>\n</tr>\n</thead>\n</table>\n<!-- raw HTML omitted -->\n"),
+  ]);
+}
+
+function test_url_autolinks(): test.TestOutcome {
+  let o = markdown.Options { ...markdown.options(), autolink: true };
+  return checks_with(o, [
+    ("www.example.org/x and HTTPS://a.b/α_(b)).\n", "<p><a href=\"http://www.example.org/x\">www.example.org/x</a> and <a href=\"HTTPS://a.b/%CE%B1_(b)\">HTTPS://a.b/α_(b)</a>).</p>\n"),
+    ("**http://example.org/a_b** [www.example.org](https://e.org) `ftp://abc`\n", "<p><strong><a href=\"http://example.org/a_b\">http://example.org/a_b</a></strong> <a href=\"https://e.org\">www.example.org</a> <code>ftp://abc</code></p>\n"),
+    ("xwww.e.org www.a_b.cd www.a_b.cd.ef/path?x=a&y=b\n", "<p>xwww.e.org www.a_b.cd <a href=\"http://www.a_b.cd.ef/path?x=a&amp;y=b\">www.a_b.cd.ef/path?x=a&amp;y=b</a></p>\n"),
+    ("[www.a.org](foo)\n\n![http://test.org](img)\n", "<p><a href=\"foo\">www.a.org</a></p>\n<p><img src=\"img\" alt=\"http://test.org\" /></p>\n"),
+  ]);
+}
+
+function test_email_autolinks(): test.TestOutcome {
+  let o = markdown.Options { ...markdown.options(), autolink: true };
+  return checks_with(o, [
+    ("a@b.c@d xmpp:a@b.c@d/e mailto:a@b.c@d a@b.c@@d a@b@x\n", "<p>a@<a href=\"mailto:b.c@d\">b.c@d</a> xmpp:a@<a href=\"b.c@d/e\">b.c@d/e</a> mailto:a@<a href=\"b.c@d\">b.c@d</a> a@b.c@@d a@b@x</p>\n"),
+    ("Say _abc__@fern.dev\n", "<p>Say <em>abc</em><a href=\"mailto:_@fern.dev\">_@fern.dev</a></p>\n"),
+    ("a_b+tag@example.org, and xmpp:u@d.co/message.\n", "<p><a href=\"mailto:a_b+tag@example.org\">a_b+tag@example.org</a>, and <a href=\"xmpp:u@d.co/message\">xmpp:u@d.co/message</a>.</p>\n"),
+    ("[a@b.co](https://example.org) `n@b.co` *m@d.net*\n", "<p><a href=\"https://example.org\">a@b.co</a> <code>n@b.co</code> <em><a href=\"mailto:m@d.net\">m@d.net</a></em></p>\n"),
+    ("a&#64;b.co x@localhost x@b.co1\n", "<p><a href=\"mailto:a@b.co\">a@b.co</a> x@localhost x@b.co1</p>\n"),
+    ("![a@b.co](pic) mailto:z@b.co\n", "<p><img src=\"pic\" alt=\"a@b.co\" /> <a href=\"mailto:z@b.co\">mailto:z@b.co</a></p>\n"),
+  ]);
+}
+
+function test_tasklists(): test.TestOutcome {
+  let o = markdown.Options { ...markdown.options(), tasklist: true };
+  return checks_with(o, [
+    ("- [ ] first\n- [x] *second*\n  - [X] nested\n", "<ul>\n<li><input type=\"checkbox\" disabled=\"\" /> first</li>\n<li><input type=\"checkbox\" checked=\"\" disabled=\"\" /> <em>second</em>\n<ul>\n<li><input type=\"checkbox\" checked=\"\" disabled=\"\" /> nested</li>\n</ul>\n</li>\n</ul>\n"),
+    ("1. [X] first\n   continued\n\n   [x] another paragraph\n", "<ol>\n<li>\n<p><input type=\"checkbox\" checked=\"\" disabled=\"\" /> first\ncontinued</p>\n<p>[x] another paragraph</p>\n</li>\n</ol>\n"),
+    ("[x] plain\n\n- [x]adjacent\n- [z] other\n- `[x]` code\n", "<p>[x] plain</p>\n<ul>\n<li>[x]adjacent</li>\n<li>[z] other</li>\n<li><code>[x]</code> code</li>\n</ul>\n"),
+  ]);
+}
+
 function test_smart(): test.TestOutcome {
   let o = markdown.Options { ...markdown.options(), smart: true };
   return checks_with(o, [
@@ -668,6 +733,12 @@ function main(): i32 {
   r = r.it("the changes of cmark 0.31 and its details", test_cmark_031);
   r = r.it("the changes of cmark 0.31 in the other formats", test_cmark_031_formats);
   r = r.it("raw HTML and dangerous URLs without the unsafe option", test_safe);
+  r = r.it("HTML strikethrough", test_strikethrough);
+  r = r.it("table source positions", test_table_sourcepos);
+  r = r.it("HTML tables", test_tables);
+  r = r.it("extended URL autolinks", test_url_autolinks);
+  r = r.it("extended email autolinks", test_email_autolinks);
+  r = r.it("HTML task list items", test_tasklists);
   r = r.it("smart punctuation", test_smart);
   r = r.it("hard breaks and no breaks", test_breaks);
   r = r.it("the source positions of blocks", test_sourcepos);

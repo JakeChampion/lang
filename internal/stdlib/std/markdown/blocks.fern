@@ -10,8 +10,9 @@
 // record when it closes. A leaf block keeps no copy of its text: it holds a
 // range of line segments, and each segment is a range of the source.
 import "core/map";
-import "./refs";
-import "./tags";
+import "std/markdown/refs";
+import "std/markdown/tags";
+import "std/markdown/table_row";
 
 pub const DOCUMENT: i32 = 0;
 
@@ -177,7 +178,7 @@ function span(from: i32, to: i32): i64 {
 // line that the parser reads, and `ls` is where it starts in the source.
 // `cur` is its length, and `prev` is the length of the line before it. `end`
 // is true after the last line.
-struct Kept { refs: Map[string, refs.Ref], on: boolean, line: i32, ls: i32, cur: i32, prev: i32, end: boolean }
+struct Kept { refs: Map[string, refs.Ref], on: boolean, tables: boolean, line: i32, ls: i32, cur: i32, prev: i32, end: boolean }
 
 // `pos` holds the positions of the records, as Doc does.
 struct P { log: i64[], segs: i64[], nseg: i32, st: i32[], depth: i32, pos: i32[], kept: Kept }
@@ -591,6 +592,23 @@ function read_defs(src: u8[], segs: i64[], from: i32, to: i32, found: Map[string
   return refs.take_defs(text, 0, text.len(), found);
 }
 
+pub function table_columns(src: u8[], segs: i64[], header: i32): i32[] {
+  let h = segs[header];
+  let d = segs[header + 1];
+  return table_row.columns(src, seg_start(h), seg_end(h), seg_start(d), seg_end(d));
+}
+
+// A table interrupts a paragraph before it can register reference
+// definitions. The lines before its header remain inline paragraph text.
+function contains_table(src: u8[], segs: i64[], from: i32, to: i32): boolean {
+  for header in from..to - 1 {
+    if (table_columns(src, segs, header).len() > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Takes the link reference definitions at the start of the paragraph at `d`
 // out of its lines. Gives false when no text is left.
 function take_defs(p: P, src: u8[], d: i32): (P, boolean) {
@@ -601,6 +619,9 @@ function take_defs(p: P, src: u8[], d: i32): (P, boolean) {
   }
   let first = p.segs[from];
   if (seg_pad(first) > 0 || src[seg_start(first)] != b'[') {
+    return (p, true);
+  }
+  if (p.kept.tables && contains_table(src, p.segs, from, to)) {
     return (p, true);
   }
   let (end, found) = read_defs(src, p.segs, from, to, p.kept.refs);
@@ -778,6 +799,10 @@ function rtrim(src: u8[], start: i32, end: i32): i32 {
 // The document `source`, with the source positions of its blocks when
 // `positions` is true.
 pub function parse(source: u8[], positions: boolean): Doc {
+  return parse_options(source, positions, false);
+}
+
+pub function parse_options(source: u8[], positions: boolean, tables: boolean): Doc {
   let src = without_nul(source);
   let n = src.len();
   let ends = __alloc_u8(14).with(10, 1 as u8).with(13, 1 as u8);
@@ -788,7 +813,7 @@ pub function parse(source: u8[], positions: boolean): Doc {
     lines += __count_byte_bytes(src, 13);
   }
   let st: i32[] = __alloc_i32(SS * 8).with(S_LAST, NONE);
-  let kept = Kept { refs: Map { }, on: positions, line: 0, ls: 0, cur: 0, prev: 0, end: false };
+  let kept = Kept { refs: Map { }, on: positions, tables: tables, line: 0, ls: 0, cur: 0, prev: 0, end: false };
   let p = P { log: [], segs: __alloc_i64(lines), nseg: 0, st: st, depth: 1, pos: [], kept: kept };
   let pos = bom_length(src);
   let line = 0;

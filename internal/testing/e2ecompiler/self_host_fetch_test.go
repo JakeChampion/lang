@@ -204,9 +204,11 @@ func TestShippedFernFetchRefusals(t *testing.T) {
 }
 
 func TestShippedFernFetchFlatArchive(t *testing.T) {
+	longName := strings.Repeat("a", 104) + ".txt"
 	archive, hash := tarGz(t, []tarEntry{
 		{name: "fern.toml", body: "[package]\nname = \"helper\"\n"},
 		{name: "lib.fern", body: "pub function nine(): i32 { return 9; }\n"},
+		{name: longName, body: "PAX path\n"},
 		{name: "sub/", typeflag: tar.TypeDir},
 		{name: "sub/more.fern", body: "\n"},
 	})
@@ -216,6 +218,10 @@ func TestShippedFernFetchFlatArchive(t *testing.T) {
 	})
 	if out, code := e.run("-fetch"); code != 0 {
 		t.Fatalf("exit %d\n%s", code, out)
+	}
+	path := filepath.Join(e.cache, "pkgs", strings.TrimPrefix(hash, "sha256:"), longName)
+	if body, err := os.ReadFile(path); err != nil || string(body) != "PAX path\n" {
+		t.Fatalf("long PAX filename: body %q, error %v", body, err)
 	}
 	if out, code := e.run("-run", "main.fern"); code != 9 {
 		t.Errorf("exit %d\n%s", code, out)

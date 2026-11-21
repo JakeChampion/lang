@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate examples/markdown/entities.fern: the HTML5 named character
+"""Generate internal/stdlib/std/markdown/entities.fern: the HTML5 named character
 references, and the Unicode punctuation and symbol ranges of cmark 0.31.2.
 
 The ranges come from cmark_utf8proc_is_punctuation_or_symbol in the
@@ -12,7 +12,7 @@ import unicodedata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / 'examples/markdown/entities.fern'
+OUT = ROOT / 'internal/stdlib/std/markdown/entities.fern'
 
 
 def literal(s):
@@ -86,7 +86,7 @@ def main():
     text = generate(args.cmark)
     if args.check:
         if OUT.read_text() != text:
-            parser.exit(1, 'examples/markdown/entities.fern is stale; run scripts/gen-markdown-tables.py\n')
+            parser.exit(1, 'internal/stdlib/std/markdown/entities.fern is stale; run scripts/gen-markdown-tables.py\n')
         return
     OUT.write_text(text)
 

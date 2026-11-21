@@ -1,7 +1,7 @@
 // The LaTeX of a node tree, as cmark writes it.
 import "./commonmark";
-import "./markdown";
-import "./nodes";
+import "std/markdown";
+import "std/markdown/nodes";
 import "./out";
 
 const SECTIONS: string[] = ["", "\\section", "\\subsection", "\\subsubsection", "\\paragraph", "\\subparagraph", ""];

@@ -2,9 +2,10 @@
 // input and options.
 import "std/i32";
 import "std/io_buffered";
-import "./blocks";
-import "./inlines";
-import "./utf8";
+import "std/markdown/blocks";
+import "std/markdown/inlines";
+import "std/markdown/utf8";
+import "std/markdown/tables";
 
 // The options of cmark. `sourcepos` gives each block the attribute
 // `data-sourcepos`. `hardbreaks` makes each soft line break a hard line
@@ -13,11 +14,11 @@ import "./utf8";
 // link to a `javascript:`, `vbscript:`, `file:` or `data:` URL has an empty
 // destination. `width` is the width of a line for the renderers that wrap
 // text, or 0 for no wrap.
-pub struct Options { sourcepos: boolean, hardbreaks: boolean, nobreaks: boolean, smart: boolean, unsafe_html: boolean, width: i32 }
+pub struct Options { sourcepos: boolean, hardbreaks: boolean, nobreaks: boolean, smart: boolean, unsafe_html: boolean, tasklist: boolean, strikethrough: boolean, autolink: boolean, tables: boolean, width: i32 }
 
 // The defaults of cmark: no option is set.
 pub function options(): Options {
-  return Options { sourcepos: false, hardbreaks: false, nobreaks: false, smart: false, unsafe_html: false, width: 0 };
+  return Options { sourcepos: false, hardbreaks: false, nobreaks: false, smart: false, unsafe_html: false, tasklist: false, strikethrough: false, autolink: false, tables: false, width: 0 };
 }
 
 // The bytes `b` with each sequence that is not UTF-8 replaced by U+FFFD, as
@@ -90,7 +91,7 @@ pub function to_html(src: u8[], o: Options): u8[] {
 
 // Writes the HTML of the CommonMark document `src` to the byte builder `out`.
 pub function render(out: usize, src: u8[], o: Options): void {
-  let d = blocks.parse(src, o.sourcepos);
+  let d = blocks.parse_options(src, o.sourcepos, o.tables);
   let s = start(o);
   for r in 0..d.count() {
     s = step(out, d, r, s);
@@ -101,7 +102,7 @@ pub function render(out: usize, src: u8[], o: Options): void {
 // the HTML of a part of the document each time its buffer holds `part`
 // bytes or more.
 pub function write(w: io_buffered.BufWriter, src: u8[], part: i32, o: Options): Result[io_buffered.BufWriter, IoError] {
-  let d = blocks.parse(src, o.sourcepos);
+  let d = blocks.parse_options(src, o.sourcepos, o.tables);
   let out = w.handle();
   let s = start(o);
   let q = w;
@@ -125,7 +126,14 @@ pub function write(w: io_buffered.BufWriter, src: u8[], part: i32, o: Options): 
 struct State { w: inlines.Work, open: boolean, tight: i32[], depth: i32, o: Options }
 
 function start(o: Options): State {
-  return State { w: inlines.work(inline_flags(o)), open: false, tight: [0], depth: 1, o: o };
+  let flags = inline_flags(o);
+  if (o.strikethrough) {
+    flags |= inlines.O_STRIKETHROUGH;
+  }
+  if (o.autolink) {
+    flags |= inlines.O_AUTOLINK;
+  }
+  return State { w: inlines.work(flags), open: false, tight: [0], depth: 1, o: o };
 }
 
 // Writes the attribute `data-sourcepos` of the record `r` when the option
@@ -138,6 +146,10 @@ function tag(out: usize, d: blocks.Doc, r: i32, s: State, text: string, at: i32)
     return;
   }
   let (sl, sc, el, ec) = d.span_of(r);
+  positioned_tag(out, text, at, sl, sc, el, ec);
+}
+
+function positioned_tag(out: usize, text: string, at: i32, sl: i32, sc: i32, el: i32, ec: i32): void {
   buf_push_range(out, text, 0, at);
   buf_push(out, " data-sourcepos=\"" + sl.to_string() + ":" + sc.to_string() + "-" + el.to_string() + ":" + ec.to_string() + "\"");
   buf_push_range(out, text, at, text.len());
@@ -240,19 +252,126 @@ function list_start(out: usize, d: blocks.Doc, r: i32, s: State): void {
   }
 }
 
+function task_marker(src: u8[], a: i32, e: i32): boolean {
+  return e - a >= 3 && src[a] == 91 as u8 && src[a + 2] == 93 as u8;
+}
+
+// A task marker can open the first paragraph of an ordered or unordered item.
+function task_prefix(out: usize, d: blocks.Doc, r: i32, o: Options): i32 {
+  if (!o.tasklist || r == 0 || d.kind(r - 1) != blocks.ITEM || d.from(r) >= d.to(r)) {
+    return 0;
+  }
+  let seg = d.segs[d.from(r)];
+  let a = blocks.seg_start(seg);
+  let e = blocks.seg_end(seg);
+  if (blocks.seg_pad(seg) != 0 || !task_marker(d.src, a, e)) {
+    return 0;
+  }
+  let mark = d.src[a + 1];
+  let end = a + 3;
+  while (end < e && (d.src[end] == 32 as u8 || d.src[end] == 9 as u8)) {
+    end += 1;
+  }
+  if (end == a + 3 && end < e) {
+    return 0;
+  }
+  if (mark == 32 as u8 || mark == 9 as u8) {
+    buf_push(out, "<input type=\"checkbox\" disabled=\"\" /> ");
+  } else if (mark == 120 as u8 || mark == 88 as u8) {
+    buf_push(out, "<input type=\"checkbox\" checked=\"\" disabled=\"\" /> ");
+  } else {
+    return 0;
+  }
+  return end - a;
+}
+
 // A paragraph in an item of a tight list has no `<p>` tags. The text of a
 // paragraph does not end with a line feed.
 function paragraph(out: usize, d: blocks.Doc, r: i32, s: State): State {
   let from = d.from(r);
   let to = d.to(r);
+  if (s.o.tables) {
+    for header in from..to - 1 {
+      let cols = blocks.table_columns(d.src, d.segs, header);
+      if (cols.len() > 0) {
+        if (header > from) {
+          s = paragraph_lines(out, d, r, s, from, header);
+        }
+        cr(out, s.open);
+        table_tag(out, d, r, s, header, to, cols.len());
+        let (w, next) = tables.render(out, d, r, header, to, cols, s.w);
+        s = State { ...s, w: w, open: false };
+        if (next < to) {
+          if (tables.html_block(d, next)) {
+            table_html(out, d, next, to, s);
+            return s;
+          }
+          return paragraph_lines(out, d, r, s, next, to);
+        }
+        return s;
+      }
+    }
+  }
+  return paragraph_lines(out, d, r, s, from, to);
+}
+
+function table_tag(out: usize, d: blocks.Doc, r: i32, s: State, header: i32, to: i32, width: i32): void {
+  if (!s.o.sourcepos) {
+    buf_push(out, "<table>\n");
+    return;
+  }
+  let stop = tables.limit(d, header, to, width);
+  let (sl, sc, el, ec) = d.span_of(r);
+  if (stop < to) {
+    let last = blocks.seg_end(d.segs[stop - 1]);
+    el -= to - stop;
+    ec = last - tables.line_start(d.src, last);
+  }
+  positioned_tag(out, "<table>\n", 6, sl, sc, el, ec);
+}
+
+// Paragraph segments omit leading whitespace. A top-level HTML block
+// following a table keeps that whitespace on every line.
+function table_html(out: usize, d: blocks.Doc, from: i32, to: i32, s: State): void {
+  if (!s.o.unsafe_html) {
+    buf_push(out, inlines.OMITTED);
+    buf_push_byte(out, 10);
+    return;
+  }
+  if (s.depth > 1) {
+    lines(out, d, from, to);
+    return;
+  }
+  for k in from..to {
+    let seg = d.segs[k];
+    let a = blocks.seg_start(seg);
+    while (a > 0 && (d.src[a - 1] == b' ' || d.src[a - 1] == b'\t')) {
+      a -= 1;
+    }
+    buf_push_bytes_range(out, d.src, a, blocks.seg_end(seg));
+    buf_push_byte(out, 10);
+  }
+}
+
+function paragraph_lines(out: usize, d: blocks.Doc, r: i32, s: State, from: i32, to: i32): State {
   if (s.tight[s.depth - 1] == 1) {
     let before = buf_len(out);
-    let w = inlines.render(out, d, from, to, s.w);
+    let skip = task_prefix(out, d, r, s.o);
+    let w = inlines.render_after(out, d, from, to, s.w, skip);
     return State { ...s, w: w, open: s.open || buf_len(out) > before };
   }
   cr(out, s.open);
-  tag(out, d, r, s, "<p>", 2);
-  let w = inlines.render(out, d, from, to, s.w);
+  if (s.o.sourcepos && to < d.to(r)) {
+    positioned_tag(out, "<p>", 2, 0, 0, 0, 0);
+  } else if (s.o.sourcepos && from > d.from(r)) {
+    let (_, _, el, ec) = d.span_of(r);
+    let a = blocks.seg_start(d.segs[from]);
+    positioned_tag(out, "<p>", 2, el - (to - from - 1), a - tables.line_start(d.src, a) + 1, el, ec);
+  } else {
+    tag(out, d, r, s, "<p>", 2);
+  }
+  let skip = task_prefix(out, d, r, s.o);
+  let w = inlines.render_after(out, d, from, to, s.w, skip);
   buf_push(out, "</p>\n");
   return State { ...s, w: w, open: false };
 }
