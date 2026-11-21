@@ -510,6 +510,7 @@ A result with `needs_history` consumes the frame and retains reservoir data but 
 Use that result for decoder warmup after a seek. A decode error resets decoder state.
 
 Decoder history contains at most 511 reservoir bytes, 576 overlap floats, and 960 synthesis floats.
+MPEG-1 shares synthesis scratch across both granules in a frame. The [synthesis comparison](benchmarks/mp3-synthesis-2026-11-21/README.md) records the allocation savings and peak memory cost.
 Frame decode still allocates bounded scratch arrays. It is not an allocation-free audio callback.
 The frame API does not scan damaged input for synchronization.
 

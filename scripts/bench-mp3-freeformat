@@ -39,6 +39,8 @@ def main():
     parser.add_argument('--baseline-stdlib', type=Path, required=True)
     parser.add_argument('--candidate-stdlib', type=Path, default=ROOT / 'internal/stdlib')
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--baseline-free-format', action='store_true', help='also time free-format inputs with a compatible baseline')
+    parser.add_argument('--reference-dir', type=Path, help='directory containing the two pinned minimp3 headers')
     parser.add_argument('--rounds', type=int, default=20)
     parser.add_argument('--trials', type=int, default=7)
     parser.add_argument('--sample-rate', type=int, choices=[8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000], default=48000)
@@ -53,7 +55,13 @@ def main():
     spec = importlib.util.spec_from_file_location('vectors', ROOT / 'scripts/gen-mp3-vectors.py')
     vectors = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(vectors)
-    vectors.reference(work)
+    if args.reference_dir:
+        for name, expected in [('minimp3.h', vectors.tables.SHA), ('minimp3_ex.h', vectors.EX_SHA)]:
+            header = args.reference_dir / name
+            assert sha(header) == expected, name
+            (work / name).write_bytes(header.read_bytes())
+    else:
+        vectors.reference(work)
     data = vectors.encoded(work, args.sample_rate, args.channels,
                            values=vectors.signal(args.sample_rate, args.channels, args.sample_rate))
     free = bytearray(data)
@@ -80,7 +88,7 @@ def main():
     pcm_hashes = {}
     for mode in ['whole', 'frames']:
         variants = [(name, kind) for kind in inputs for name in binaries
-                    if name != 'baseline' or kind == 'indexed']
+                    if name != 'baseline' or kind == 'indexed' or args.baseline_free_format]
         for trial in range(args.trials):
             order = variants if trial % 2 == 0 else variants[::-1]
             for name, kind in order:

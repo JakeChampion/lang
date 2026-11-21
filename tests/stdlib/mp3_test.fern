@@ -1,5 +1,6 @@
 import "std/audio/mp3";
 import "std/audio/mp3/spectral";
+import "std/audio/mp3/synthesis";
 import "std/audio/pcm";
 import "std/audio/wire";
 import "std/hash/crc32";
@@ -302,8 +303,51 @@ function mixed_8khz(): test.TestOutcome {
   return test.assert_true(true);
 }
 
+function synthesis_input(seed: i32): f32[] {
+  let samples = spectral.zeros(1152);
+  for i in 0..1152 {
+    samples = samples.with(i, ((i + seed) % 59 - 29) as f32 * 0.03125f32);
+  }
+  return samples;
+}
+
+// Channel-mode changes retain the unused right-channel history during mono frames.
+function synthesis_history(): test.TestOutcome {
+  let expected = spectral.zeros(960);
+  let actual = spectral.zeros(960);
+  for channels in [2, 1, 2] {
+    let reference = spectral.zeros(1152 * channels);
+    let output = spectral.zeros(1152 * channels);
+    let lines = synthesis.frame_lines(actual);
+    let transform = spectral.zeros(128);
+    for g in 0..2 {
+      let at = g * 576 * channels;
+      let (next, pcm) = synthesis.granule(expected, synthesis_input(g), channels, reference, at);
+      expected = next;
+      reference = pcm;
+      let (window, values, scratch) = synthesis.granule_at(lines, g * 18 * 64, synthesis_input(g), channels, output, at, transform);
+      lines = window;
+      output = values;
+      transform = scratch;
+    }
+    actual = synthesis.frame_history(actual, lines, channels);
+    for i in 0..960 {
+      if (f32_bits(expected[i]) != f32_bits(actual[i])) {
+        return test.fail("retained synthesis history");
+      }
+    }
+    for i in 0..output.len() {
+      if (f32_bits(reference[i]) != f32_bits(output[i])) {
+        return test.fail("channel-mode transition PCM");
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
 function main(): i32 {
   let runner = test.new("MP3 Layer III");
+  runner = runner.it("two-granule history across stereo and mono transitions", synthesis_history);
   runner = runner.it("independent PCM reference vectors", goldens);
   runner = runner.it("stream state and reusable buffers", streaming);
   runner = runner.it("ID3, APE, and gapless metadata", metadata);

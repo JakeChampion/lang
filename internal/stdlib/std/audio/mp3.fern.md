@@ -197,7 +197,14 @@ function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], l
   let b = bits.new(main.len() * 8);
   let pos0 = pcm.zeros(40);
   let pos1 = pcm.zeros(40);
-  for granule in 0..if (h.version == 1) { 2 } else { 1 } {
+  let granules = if (h.version == 1) { 2 } else { 1 };
+  let lines: f32[] = [];
+  let transform: f32[] = [];
+  if (granules == 2) {
+    lines = synthesis.frame_lines(qmf);
+    transform = spectral.zeros(128);
+  }
+  for granule in 0..granules {
     let samples = spectral.zeros(1152);
     for ch in 0..h.channels {
       let g = side.granules[granule * h.channels + ch];
@@ -232,9 +239,19 @@ function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], l
       samples = values;
       overlap = ov;
     }
-    let (next, values) = synthesis.granule(qmf, samples, h.channels, output, granule * 576 * h.channels);
-    qmf = next;
-    output = values;
+    if (granules == 1) {
+      let (next, values) = synthesis.granule(qmf, samples, h.channels, output, 0);
+      qmf = next;
+      output = values;
+    } else {
+      let (next, values, scratch) = synthesis.granule_at(lines, granule * 18 * 64, samples, h.channels, output, granule * 576 * h.channels, transform);
+      transform = scratch;
+      lines = next;
+      output = values;
+    }
+  }
+  if (granules == 2) {
+    qmf = synthesis.frame_history(qmf, lines, h.channels);
   }
   for i in 0..count {
     if (!output[i].is_finite()) {
