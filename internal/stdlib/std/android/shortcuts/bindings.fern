@@ -316,19 +316,39 @@ pub function (x: ShortcutManager) object(): jni.Object {
 }
 
 // The class android.content.pm.ShortcutManager and the IDs of its members.
-pub struct ShortcutManagerClass { class: usize, id_set_dynamic_shortcuts: usize }
+pub struct ShortcutManagerClass { class: usize, id_request_pin_shortcut: usize, id_set_dynamic_shortcuts: usize }
 
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function shortcut_manager_class(e: usize): Result[ShortcutManagerClass, jni.JavaError] {
   let class = jni.global_class(e, "android/content/pm/ShortcutManager")?;
+  let id_request_pin_shortcut = jni.optional_id(e, jni.get_method_id(e, class, "requestPinShortcut", "(Landroid/content/pm/ShortcutInfo;Landroid/content/IntentSender;)Z"));
   let id_set_dynamic_shortcuts = jni.checked_id(e, class, jni.get_method_id(e, class, "setDynamicShortcuts", "(Ljava/util/List;)Z"))?;
-  return Ok(ShortcutManagerClass { class: class, id_set_dynamic_shortcuts: id_set_dynamic_shortcuts });
+  return Ok(ShortcutManagerClass { class: class, id_request_pin_shortcut: id_request_pin_shortcut, id_set_dynamic_shortcuts: id_set_dynamic_shortcuts });
 }
 
 // Deletes the reference to the class. Do not use `c` after this call.
 pub function (c: ShortcutManagerClass) release(e: usize): void {
   jni.delete_global_ref(e, c.class);
+}
+
+// False when the device does not have the member of `request_pin_shortcut`.
+pub function (c: ShortcutManagerClass) has_request_pin_shortcut(): boolean {
+  return c.id_request_pin_shortcut != 0 as usize;
+}
+
+// android.content.pm.ShortcutManager.requestPinShortcut(Landroid/content/pm/ShortcutInfo;Landroid/content/IntentSender;)Z
+pub function (c: ShortcutManagerClass) request_pin_shortcut(e: usize, self: ShortcutManager, a0: ShortcutInfo, a1: jni.Object): Result[boolean, jni.JavaError] {
+  if (c.id_request_pin_shortcut == 0 as usize) {
+    return Err(jni.absent("android.content.pm.ShortcutManager.requestPinShortcut"));
+  }
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_request_pin_shortcut, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
 }
 
 // android.content.pm.ShortcutManager.setDynamicShortcuts(Ljava/util/List;)Z
