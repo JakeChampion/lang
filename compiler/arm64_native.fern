@@ -3535,12 +3535,6 @@ function arm64_gas_cond(s: string): i32 {
   return -1;
 }
 
-function arm64_gas_is_cond(s: string): boolean {
-  return s == "eq" || s == "ne" || s == "cs" || s == "hs" || s == "cc" || s == "lo"
-    || s == "mi" || s == "pl" || s == "vs" || s == "vc" || s == "hi" || s == "ls"
-    || s == "ge" || s == "lt" || s == "gt" || s == "le" || s == "al" || s == "nv";
-}
-
 function arm64_gas_is_w(tok: string): boolean {
   let n = tok.len();
   let i = arm64_gas_trim_lo(tok, 0, n);
@@ -7325,10 +7319,10 @@ function arm64_gas_emit_fcmp(own a: Arm64Asm, mnem: string, ops: string[]): Arm6
 }
 
 function arm64_gas_is_bcond(mnem: string): boolean {
-  if (mnem.len() >= 3 && mnem[0] == b'b' && mnem[1] == b'.') {
-    return true;
+  if (mnem.len() == 4 && mnem.starts_with("b.")) {
+    return arm64_gas_cond(slice_unchecked(mnem, 2, 4)) >= 0;
   }
-  return mnem.len() == 3 && mnem[0] == b'b' && arm64_gas_is_cond(slice_unchecked(mnem, 1, 3));
+  return mnem.len() == 3 && mnem[0] == b'b' && arm64_gas_cond(slice_unchecked(mnem, 1, 3)) >= 0;
 }
 
 function arm64_gas_bcond_suffix(mnem: string): string {
@@ -9075,6 +9069,25 @@ function arm64_gas_msr_line(own p: Arm64GasProg, a: Arm64Asm, ops: string[], res
   return p;
 }
 
+function arm64_gas_branch_fault(fam: i32, ops: string[]): string {
+  let compare = fam == arm64_fam_cbranch();
+  let test = fam == arm64_fam_tbranch();
+  let arity = if (test) { 3 } else if (compare) { 2 } else { 1 };
+  if (ops.len() != arity) {
+    return "arity";
+  }
+  if ((compare || test) && !arm64_gas_data_gp(ops[0])) {
+    return "register";
+  }
+  if (test) {
+    let bit = arm64_gas_small_imm(ops[1]);
+    if (bit < 0 || bit > 63 || arm64_gas_is_w(ops[0]) && bit > 31) {
+      return "bit";
+    }
+  }
+  return "";
+}
+
 // A branch of any family, its target a numeric or named label.
 function arm64_gas_branch_line(own a: Arm64Asm, nl_cnt: Arm64NumericLabels, mnem: string, ops: string[]): Arm64Asm {
   return match (mnem) {
@@ -9082,8 +9095,8 @@ function arm64_gas_branch_line(own a: Arm64Asm, nl_cnt: Arm64NumericLabels, mnem
     "bl" => arm64_asm_bl(a, arm64_gas_nl_ref(nl_cnt, ops[0])),
     "cbz" => arm64_asm_cbz(a, arm64_gas_reg(ops[0]), arm64_gas_nl_ref(nl_cnt, ops[1]), arm64_gas_is_w(ops[0])),
     "cbnz" => arm64_asm_cbnz(a, arm64_gas_reg(ops[0]), arm64_gas_nl_ref(nl_cnt, ops[1]), arm64_gas_is_w(ops[0])),
-    "tbz" => arm64_asm_tbz(a, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), arm64_gas_nl_ref(nl_cnt, ops[2])),
-    "tbnz" => arm64_asm_tbnz(a, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), arm64_gas_nl_ref(nl_cnt, ops[2])),
+    "tbz" => arm64_asm_tbz(a, arm64_gas_reg(ops[0]), arm64_gas_small_imm(ops[1]), arm64_gas_nl_ref(nl_cnt, ops[2])),
+    "tbnz" => arm64_asm_tbnz(a, arm64_gas_reg(ops[0]), arm64_gas_small_imm(ops[1]), arm64_gas_nl_ref(nl_cnt, ops[2])),
     _ => arm64_asm_bcond(a, arm64_gas_cond(arm64_gas_bcond_suffix(mnem)), arm64_gas_nl_ref(nl_cnt, ops[0])),
   };
 }
@@ -9342,6 +9355,11 @@ function arm64_gas_program_pass(src: string, words: u8[], origin: i32, relax: bo
     let fam = arm64_gas_family(mnem);
     if (fam == arm64_fam_branch() || fam == arm64_fam_cbranch()
       || fam == arm64_fam_tbranch() || arm64_gas_is_bcond(mnem)) {
+      let fault = arm64_gas_branch_fault(fam, ops);
+      if (fault != "") {
+        p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":" + fault) };
+        continue;
+      }
       a = arm64_gas_branch_line(a, nl_cnt, mnem, ops);
       continue;
     }
