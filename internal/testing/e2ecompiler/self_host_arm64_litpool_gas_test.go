@@ -85,6 +85,14 @@ function main(): i32 {
     // str d1, [x2, #16] -> 0xFD000841
     let m: Arm64Asm = arm64_gas_assemble("str d1, [x2, #16]");
     if (m.text[0] != 65 || m.text[1] != 8 || m.text[2] != 0 || m.text[3] != 253) { return 19; }
+    // The literal-load opcode selects both the width and the register file.
+    let ws = arm64_gas_assemble("ldr w3, =+0x12345678\nldr s4, =-1\nldr d5, =0xffffffffffffffff");
+    if (ws.text[3] != 0x18 || ws.text[7] != 0x1c || ws.text[11] != 0x5c) { return 20; }
+    if (ws.text[16] != 0x78 || ws.text[19] != 0x12 || ws.text[24] != 255 || ws.text[39] != 255) { return 21; }
+    for line in ["ldr =2", "ldr x0, =", "ldr x0, =12x3", "ldr x0, =0x", "ldr sp, =9", "ldr q1, =1", "ldr x0, =1, x2", "ldr x0, =18446744073709551616"] {
+      let bad = arm64_gas_program(line);
+      if (bad.unknown.len() == 0 || bad.asm.text.len() != 0) { return 22; }
+    }
     return 0;
 }
 `

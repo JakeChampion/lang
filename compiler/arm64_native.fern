@@ -4,6 +4,7 @@ import "./gas";
 import "std/crypto";
 import "std/string";
 import "std/option";
+import "std/u64";
 
 function arm64_x0(): i32 {
   return 0;
@@ -8944,6 +8945,40 @@ function arm64_lit_pool_far(p: Arm64GasProg, code_len: i32): i32 {
   return worst;
 }
 
+// The pool stores a little-endian quad. W and S loads read its low word.
+function arm64_gas_literal_word(reg: string): Option[i64] {
+  let rt = arm64_gas_reg(reg);
+  if (rt < 0 || reg == "sp") {
+    return None;
+  }
+  let word = arm64_ldr_lit_word(rt, 0);
+  if (arm64_gas_is_w(reg) || arm64_gas_is_sreg(reg)) {
+    word &= 0xbfffffff;
+  }
+  if (arm64_gas_is_d(reg) || arm64_gas_is_sreg(reg)) {
+    word |= 0x04000000;
+  }
+  return Some(word);
+}
+
+function arm64_gas_literal_value(operand: string): Option[i64] {
+  if (!operand.starts_with("=")) {
+    return None;
+  }
+  let s = arm64_gas_trim(slice_unchecked(operand, 1, operand.len()));
+  let negative = s.starts_with("-");
+  let start = if (negative || s.starts_with("+")) { 1 } else { 0 };
+  let hex = start + 1 < s.len() && s[start] == b'0' && (s[start + 1] == b'x' || s[start + 1] == b'X');
+  let digits = if (hex) { start + 2 } else { start };
+  if (digits == s.len() || util.hex_value(s[digits]) < 0) {
+    return None;
+  }
+  let Ok(value) = u64.parse_u64_radix(slice_unchecked(s, digits, s.len()), if (hex) { 16 } else { 10 }) else {
+    return None;
+  };
+  return Some((if (negative) { 0u64 - value } else { value }) as i64);
+}
+
 function arm64_gas_ltorg(p: Arm64GasProg, own aw: Arm64Asm): Arm64Asm {
   if (p.lit_sites.len() == 0) {
     return aw;
@@ -9286,12 +9321,18 @@ function arm64_gas_program_pass(src: string, words: u8[], origin: i32, relax: bo
       p = Arm64GasProg { ...p, unknown: p.unknown.append(fault) };
     }
     if (mnem == "ldr" && util.index_of_sub(rest, "=") >= 0) {
-      let litok = arm64_gas_trim(ops[1]);
-      let nval = arm64_gas_atoi64(arm64_gas_trim(slice_unchecked(litok, 1, litok.len())));
-      let lw = arm64_ldr_lit_word(arm64_gas_reg(ops[0]), 0);
-      if (arm64_gas_trim(ops[0])[0] == b'd') {
-        lw = lw | 0x04000000;
+      if (ops.len() != 2) {
+        p = Arm64GasProg { ...p, unknown: p.unknown.append("ldr:literal operands") };
+        continue;
       }
+      let Some(lw) = arm64_gas_literal_word(ops[0]) else {
+        p = Arm64GasProg { ...p, unknown: p.unknown.append("ldr:literal register") };
+        continue;
+      };
+      let Some(nval) = arm64_gas_literal_value(ops[1]) else {
+        p = Arm64GasProg { ...p, unknown: p.unknown.append("ldr:literal value") };
+        continue;
+      };
       arm64_push_word(a.code, lw);
       p = Arm64GasProg { ...p, lit_sites: p.lit_sites.append(buf_len(a.code) - 4) };
       p = Arm64GasProg { ...p, lit_vals: p.lit_vals.append(nval) };
