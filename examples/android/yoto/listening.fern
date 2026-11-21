@@ -2,17 +2,37 @@ import "std/json";
 import "std/kv";
 import "std/string";
 import "./offline";
+import "./api";
+import "std/base64";
+import "std/crypto";
+import "std/rand";
 
 pub struct Item { id: string, title: string }
 
-pub struct Bookmark { item: Item, chapter: string, key: string, position: i64 }
+pub struct Bookmark { item: Item, chapter: string, key: string, position: i64, name: string }
 
-pub struct Saved { queue: Item[], marks: Bookmark[], pins: Bookmark[] }
+pub struct Lineup { id: string, name: string, cards: Item[] }
 
-pub struct Trip { title: string, expected: i32, present: i32 }
+pub struct Heard { card: Item, at: i64, done: boolean }
+
+pub struct Saved {
+  queue: Item[],
+  marks: Bookmark[],
+  pins: Bookmark[],
+  lineups: Lineup[],
+  history: Heard[],
+  favourites: Item[],
+  downloads: api.Card[],
+  parent_key: string,
+  kids: boolean,
+  attempts: i32,
+  retry_pin_at: i64,
+}
+
+pub struct Trip { id: string, title: string, expected: i32, present: i32, bytes: i64 }
 
 pub function empty(): Saved {
-  return Saved { queue: [], marks: [], pins: [] };
+  return Saved { queue: [], marks: [], pins: [], lineups: [], history: [], favourites: [], downloads: [], parent_key: "", kids: false, attempts: 0, retry_pin_at: 0i64 };
 }
 
 function item(value: json.JsonValue): Item {
@@ -27,7 +47,7 @@ function decoded_marks(raw: string): Bookmark[] {
   for value in marks {
     let card = item(value);
     if (card.id.len() > 0) {
-      found = found.append(Bookmark { item: card, chapter: json.get_string(value, "chapter").unwrap_or(""), key: json.get_string(value, "key").unwrap_or(""), position: json.get_i64(value, "position").unwrap_or(0i64).max(0i64) });
+      found = found.append(Bookmark { item: card, chapter: json.get_string(value, "chapter").unwrap_or(""), key: json.get_string(value, "key").unwrap_or(""), position: json.get_i64(value, "position").unwrap_or(0i64).max(0i64), name: json.get_string(value, "name").unwrap_or("Bookmark") });
     }
   }
   return found;
@@ -40,17 +60,41 @@ pub function load(dir: string): Saved {
   let Ok(k) = kv.open(dir + "/yoto-listening") else {
     return empty();
   };
-  let queue: Item[] = [];
-  if let Ok(json.JArray(items)) = json.parse(k.get("queue").unwrap_or("[]")) {
-    queue = items.map(item).filter((i: Item): boolean => i.id.len() > 0);
+  let value = json.parse(k.get("extras").unwrap_or("{}")).unwrap_or(json.JNull);
+  let lines = json.get_array(value, "lineups").unwrap_or([]).map((row: json.JsonValue): Lineup => Lineup { id: json.get_string(row, "id").unwrap_or(""), name: json.get_string(row, "name").unwrap_or("Trip"), cards: items(json.get_array(row, "cards").unwrap_or([])) });
+  let recent = json.get_array(value, "history").unwrap_or([]).map((row: json.JsonValue): Heard => Heard { card: item(row), at: json.get_i64(row, "at").unwrap_or(0i64), done: json.get_bool(row, "done").unwrap_or(false) }).filter((row: Heard): boolean => row.card.id.len() > 0);
+  let intent: api.Card[] = [];
+  for card in json.get_array(value, "downloads").unwrap_or([]) {
+    if let Some(info) = api.restore_card(card) {
+      intent = intent.append(info);
+    }
   }
-  return Saved { queue: queue, marks: decoded_marks(k.get("marks").unwrap_or("[]")), pins: decoded_marks(k.get("pins").unwrap_or("[]")) };
+  let queue = json.parse(k.get("queue").unwrap_or("[]")).unwrap_or(json.JNull);
+  let kids = json.get_bool(value, "kids").unwrap_or(false);
+  let key = json.get_string(value, "key").unwrap_or("");
+  return Saved {
+    ...empty(), queue: if let json.JArray(entries) = queue {
+      items(entries)
+    } else { [] },
+    marks: decoded_marks(k.get("marks").unwrap_or("[]")), pins: decoded_marks(k.get("pins").unwrap_or("[]")),
+    lineups: lines, history: recent, favourites: items(json.get_array(value, "favourites").unwrap_or([])),
+    downloads: intent, parent_key: key, kids: kids && key.len() > 0,
+    attempts: json.get_i32(value, "attempts").unwrap_or(0), retry_pin_at: json.get_i64(value, "retry").unwrap_or(0i64),
+  };
+}
+
+function items(rows: json.JsonValue[]): Item[] {
+  return rows.map(item).filter((i: Item): boolean => i.id.len() > 0);
+}
+
+function encode_item(i: Item): json.JsonValue {
+  return json.JObject(json.from([("id", json.JString(i.id)), ("title", json.JString(i.title))]));
 }
 
 function encode_marks(marks: Bookmark[]): string {
   let items = marks.map((b: Bookmark): json.JsonValue => json.JObject(json.from([
     ("id", json.JString(b.item.id)), ("title", json.JString(b.item.title)), ("chapter", json.JString(b.chapter)),
-    ("key", json.JString(b.key)), ("position", json.JNumber(b.position.to_string())),
+    ("key", json.JString(b.key)), ("position", json.JNumber(b.position.to_string())), ("name", json.JString(b.name)),
   ])));
   return json.encode(json.JArray(items));
 }
@@ -59,8 +103,18 @@ pub function save(dir: string, value: Saved): boolean {
   if (dir.len() == 0) {
     return false;
   }
-  let queue = value.queue.map((i: Item): json.JsonValue => json.JObject(json.from([("id", json.JString(i.id)), ("title", json.JString(i.title))])));
-  return kv.empty(dir + "/yoto-listening").set("queue", json.encode(json.JArray(queue))).set("marks", encode_marks(value.marks)).set("pins", encode_marks(value.pins)).save().is_ok();
+  let lines = value.lineups.map((line: Lineup): json.JsonValue => json.JObject(json.from([
+    ("id", json.JString(line.id)), ("name", json.JString(line.name)), ("cards", json.JArray(line.cards.map(encode_item))),
+  ])));
+  let recent = value.history.map((row: Heard): json.JsonValue => json.JObject(json.from([
+    ("id", json.JString(row.card.id)), ("title", json.JString(row.card.title)), ("at", json.JNumber(row.at.to_string())), ("done", json.JBool(row.done)),
+  ])));
+  let extras = json.JObject(json.from([
+    ("lineups", json.JArray(lines)), ("history", json.JArray(recent)), ("favourites", json.JArray(value.favourites.map(encode_item))),
+    ("downloads", json.JArray(value.downloads.map((card: api.Card): json.JsonValue => api.cached_card(api.Card { ...card, tracks: [], indexed: false })))), ("kids", json.JBool(value.kids)),
+    ("key", json.JString(value.parent_key)), ("attempts", json.JNumber(value.attempts.to_string())), ("retry", json.JNumber(value.retry_pin_at.to_string())),
+  ]));
+  return kv.empty(dir + "/yoto-listening").set("queue", json.encode(json.JArray(value.queue.map(encode_item)))).set("marks", encode_marks(value.marks)).set("pins", encode_marks(value.pins)).set("extras", json.encode(extras)).save().is_ok();
 }
 
 pub function mark(saved: Saved, id: string): Option[Bookmark] {
@@ -81,13 +135,64 @@ pub function remember(saved: Saved, pin: Bookmark): Saved {
   return Saved { ...saved, marks: [pin].concat(others.marks) };
 }
 
-pub function unpin(saved: Saved, id: string): Saved {
-  return Saved { ...saved, pins: saved.pins.filter((entry: Bookmark): boolean => entry.item.id != id) };
+pub function unpin(saved: Saved, id: string, name: string): Saved {
+  return Saved { ...saved, pins: saved.pins.filter((entry: Bookmark): boolean => entry.item.id != id || entry.name != name) };
 }
 
 pub function pin(saved: Saved, mark: Bookmark): Saved {
-  let remaining = unpin(saved, mark.item.id);
+  let remaining = unpin(saved, mark.item.id, mark.name);
   return Saved { ...saved, pins: [mark].concat(remaining.pins) };
+}
+
+pub function heard(saved: Saved, card: Item, done: boolean, now: i64): Saved {
+  if (card.id.len() == 0) {
+    return saved;
+  }
+  let previous = saved.history.filter((row: Heard): boolean => row.card.id != card.id);
+  return Saved { ...saved, history: [Heard { card: card, at: now, done: done }].concat(previous) };
+}
+
+pub function keep_lineup(s: Saved, old: string, name: string, cards: Item[]): Saved {
+  let index = s.lineups.position((item: Lineup): boolean => item.name == old);
+  if let Some(at) = index {
+    let previous = s.lineups[at];
+    return Saved { ...s, lineups: s.lineups.with(at, Lineup { ...previous, name: name, cards: cards }) };
+  }
+  let id = base64.encode_url(rand.bytes(12));
+  return Saved { ...s, lineups: s.lineups.append(Lineup { id: id, name: name, cards: cards }) };
+}
+
+pub function favourite(s: Saved, id: string): boolean {
+  return s.favourites.any((item: Item): boolean => item.id == id);
+}
+
+pub function toggle_favourite(s: Saved, card: Item): Saved {
+  if (favourite(s, card.id)) {
+    return Saved { ...s, favourites: s.favourites.filter((item: Item): boolean => item.id != card.id) };
+  }
+  return Saved { ...s, favourites: s.favourites.append(card) };
+}
+
+pub function valid_pin(pin: string): boolean {
+  return pin.len() >= 4 && pin.len() <= 8 && pin.contains_only("0123456789");
+}
+
+pub function make_key(pin: string): string {
+  let salt = rand.bytes(16);
+  let Ok(hash) = crypto.pbkdf2_sha256(pin.bytes(), salt, 120000, 32) else {
+    return "";
+  };
+  return base64.encode(salt.concat(hash));
+}
+
+pub function check_pin(pin: string, key: string): boolean {
+  let Ok(data) = base64.decode(key) else {
+    return false;
+  };
+  if (data.len() != 48 || !valid_pin(pin)) {
+    return false;
+  }
+  return crypto.pbkdf2_sha256_verify(pin.bytes(), data.take(16), 120000, data.drop(16));
 }
 
 function audio_header(bytes: u8[]): boolean {
@@ -121,17 +226,22 @@ pub function check_trip(catalog: offline.Catalog, items: Item[]): Trip[] {
   for item in items {
     let expected = 0;
     let present = 0;
+    let bytes = 0i64;
     if let Some(entry) = entries.get(item.id) {
       expected = entry.tracks.len();
       if (entry.ready) {
         for track in entry.tracks {
-          if (readable(catalog.dir + "/" + track.name)) {
-            present += 1;
+          let path = catalog.dir + "/" + track.name;
+          if let Ok(info) = stat(path) {
+            bytes += info.size.max(0i64);
+            if (readable(path)) {
+              present += 1;
+            }
           }
         }
       }
     }
-    report = report.append(Trip { title: item.title, expected: expected, present: present });
+    report = report.append(Trip { id: item.id, title: item.title, expected: expected, present: present, bytes: bytes });
   }
   return report;
 }

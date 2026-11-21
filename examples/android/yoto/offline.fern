@@ -247,6 +247,44 @@ pub function retry(s: State, id: string): State {
   return s;
 }
 
+pub function pending(s: State): api.Card[] {
+  if let Some(card) = s.fetching {
+    return [card].concat(s.queue);
+  }
+  if let Some(setup) = s.installing {
+    return [card(setup.entry)].concat(s.queue);
+  }
+  return s.queue;
+}
+
+pub function restore_pending(s: State, pending: api.Card[]): State {
+  let next = s;
+  for card in pending {
+    if let Some(entry) = next.catalog.entries.find((item: Entry): boolean => item.id == card.id) {
+      if (entry.failed_at >= 0) {
+        next = retry(next, card.id);
+      }
+    } else {
+      next = enqueue(next, [card]);
+    }
+  }
+  return next;
+}
+
+pub function has_failed(s: State): boolean {
+  return s.catalog.entries.any((item: Entry): boolean => item.failed_at >= 0);
+}
+
+pub function retry_on_wifi(s: State): State {
+  let next = resume(s);
+  for entry in s.catalog.entries {
+    if (entry.failed_at >= 0) {
+      next = retry(next, entry.id);
+    }
+  }
+  return next;
+}
+
 pub function next(s: State): Option[api.Card] {
   if (!s.paused && s.queue.len() > 0 && s.fetching.is_none() && s.installing.is_none() && active(s).is_none()) {
     return Some(s.queue[0]);
