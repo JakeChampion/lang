@@ -1,3 +1,4 @@
+import "./deferlower";
 import "./ast";
 import "./lexer";
 import "./lexical";
@@ -1132,7 +1133,7 @@ function funcs_of(decls: parser.FuncDecl[]): Funcs {
     receivers = receivers.append(receiver);
     receiver_args = receiver_args.append(receiver_arg_names(fd));
     cells = cells.append(body_needs_cells(fd.body));
-    cleanups = cleanups.append(parser.try_cleanup(fd.body));
+    cleanups = cleanups.append(deferlower.try_cleanup(fd.body));
     plain = plain.append(fd.receiver_type.len() == 0 && !builtin_takes_name(fd.name));
   }
   return Funcs { decls: decls, runtime_names: util.name_index(names), iterator_decls: iterator_decls, receivers: receivers, receiver_args: receiver_args, cells: cells, cleanups: cleanups, plain: plain };
@@ -6461,7 +6462,7 @@ function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], func
     env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
   }
   if (!inline_value) {
-    env = Env { ...env, try_cleanup: parser.try_cleanup(fv.body) };
+    env = Env { ...env, try_cleanup: deferlower.try_cleanup(fv.body) };
   }
   // A nested function sees its own name.
   if (fv.self_name.len() > 0) {
@@ -10761,7 +10762,7 @@ function lowered(raw: parser.Module): parser.Module {
     funcs = funcs.append(lexical.resolve_func(fd).func);
   }
   let resolved = parser.Module { ...typed, funcs: funcs };
-  return defaultargs.fill_module(rangeloops.desugar_ranges_module(parser.lower_defers_module(resolved)));
+  return defaultargs.fill_module(rangeloops.desugar_ranges_module(deferlower.lower_defers_module(resolved)));
 }
 
 pub function (s: Session) declare(m: parser.Module): Session {
