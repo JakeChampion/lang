@@ -1129,9 +1129,22 @@ The elements of a list get the name of the list as their group, and the rows of 
 // `moves` and `swipes` are the indexes of the functions of `on_move` and
 // `on_swipe` in `Messages`, or -1.
 pub struct Scroller {
-  name: string, x: i32, y: i32, w: i32, h: i32, limit: i32, across: boolean, parent: string,
-  row: i32, count: i32, moves: i32, swipes: i32,
-  rows_y: i32, rows_clip: (i32, i32), initial: i32, pinned: boolean,
+  name: string,
+  x: i32,
+  y: i32,
+  w: i32,
+  h: i32,
+  limit: i32,
+  across: boolean,
+  parent: string,
+  row: i32,
+  count: i32,
+  moves: i32,
+  swipes: i32,
+  rows_y: i32,
+  rows_clip: (i32, i32),
+  initial: i32,
+  pinned: boolean,
 }
 
 // The first row that shows and the index after the last row that shows.
