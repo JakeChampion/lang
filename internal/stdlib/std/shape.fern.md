@@ -198,6 +198,13 @@ function with_char(own out: Chars, cs: Chars, i: i32): Chars {
   return Chars { cps: out.cps.append(cs.cps[i]), clusters: out.clusters.append(cs.clusters[i]), masks: out.masks.append(cs.masks[i]), shown: out.shown.append(cs.shown[i]), unicode: out.unicode.append(cs.unicode[i]) };
 }
 
+function with_chars(own out: Chars, cs: Chars, start: i32, end: i32): Chars {
+  for k in start..end {
+    out = with_char(out, cs, k);
+  }
+  return out;
+}
+
 // `out` with the character `c`, which takes the cluster and the mask of the
 // character at `i` of `cs`.
 function with_new_char(own out: Chars, cs: Chars, i: i32, c: char): Chars {
@@ -224,23 +231,20 @@ const HIDDEN_CHARS: i32[] = [0x34F, 0x34F, 0x180B, 0x180D, 0x180F, 0x180F, 0xE00
 
 // The characters of `text` and their clusters.
 function characters(text: string): Chars {
-  let cps: char[] = [];
+  let cps = text.chars();
   let clusters: i32[] = [];
+  let masks: i32[] = [];
+  let shown: i32[] = [];
   let pair = false;
-  for c in text.chars() {
-    let i = cps.len();
+  for i in 0..cps.len() {
+    let c = cps[i];
     let n = c as i32;
     let ri = n >= 0x1F1E6 && n <= 0x1F1FF;
     let continues = i > 0 && (c.is_mark() || in_ranges(n, GRAPHEME_EXTENDERS) || ri && pair);
     pair = ri && !continues;
-    cps = cps.append(c);
     clusters = clusters.append(if (continues) { clusters[i - 1] } else { i });
-  }
-  let masks: i32[] = [];
-  let shown: i32[] = [];
-  for c in cps {
     masks = masks.append(GLOBAL);
-    shown = shown.append(c as i32);
+    shown = shown.append(n);
   }
   return Chars { cps: cps, clusters: clusters, masks: masks, shown: shown, unicode: cps };
 }
@@ -354,25 +358,37 @@ function circle_before(cps: char[], i: i32, script: string, pairs: i32[]): i32 {
 function vowel_constrained(cs: Chars, script: string): Chars {
   let pairs = invalid_pairs(script);
   let out = no_chars();
+  let start = 0;
   let i = 0;
   while (i < cs.cps.len()) {
     let at = circle_before(cs.cps, i, script, pairs);
-    let to = if (at == 0) { i + 1 } else { at };
-    for k in i..to {
-      out = with_char(out, cs, k);
+    if (at == 0) {
+      i += 1;
+      continue;
     }
-    if (at != 0) {
-      out = with_char(with_copied_char(out, cs, at, 0x25CC as char), cs, at);
-    }
-    i = if (at == 0) { to } else { at + 1 };
+    out = with_chars(out, cs, start, at);
+    out = with_char(with_copied_char(out, cs, at, 0x25CC as char), cs, at);
+    start = at + 1;
+    i = start;
   }
-  return out;
+  if (start == 0) {
+    return cs;
+  }
+  return with_chars(out, cs, start, cs.cps.len());
 }
 
 // `cs` in the order of `mark_order` for the script `script`.
 function ordered(cs: Chars, script: string): Chars {
+  let order = mark_order(cs.unicode, script);
+  let i = 0;
+  while (i < order.len() && order[i] == i) {
+    i += 1;
+  }
+  if (i == order.len()) {
+    return cs;
+  }
   let out = no_chars();
-  for k in mark_order(cs.unicode, script) {
+  for k in order {
     out = with_char(out, cs, k);
   }
   return out;
@@ -420,41 +436,42 @@ function normalized(f: truetype.Font, cs: Chars, n: Normalizer): Chars {
 // font `f` has the glyphs of the parts. The parts keep the cluster.
 function decomposed(f: truetype.Font, cs: Chars, n: Normalizer): Chars {
   let out = no_chars();
+  let start = 0;
   for i in 0..cs.cps.len() {
-    let parts = parts_of(f, cs, i, n);
-    if (parts.len() == 1 && parts[0] == cs.cps[i]) {
-      out = with_char(out, cs, i);
-      continue;
-    }
-    for part in parts {
-      out = with_new_char(out, cs, i, part);
+    if let Some(parts) = parts_of(f, cs, i, n) {
+      out = with_chars(out, cs, start, i);
+      for part in parts {
+        out = with_new_char(out, cs, i, part);
+      }
+      start = i + 1;
     }
   }
-  return out;
+  if (start == 0) {
+    return cs;
+  }
+  return with_chars(out, cs, start, cs.cps.len());
 }
 
-// The characters that the character at `i` of `cs` becomes. Outside the
+// The characters that the character at `i` of `cs` becomes, or None if it stays whole. Outside the
 // Indic shaper, a character that is not in a cluster of marks stays whole
 // when the font has its glyph, and else decomposes by the fewest steps.
 // The Indic shaper keeps each of KEPT_WHOLE.
-function parts_of(f: truetype.Font, cs: Chars, i: i32, n: Normalizer): char[] {
+function parts_of(f: truetype.Font, cs: Chars, i: i32, n: Normalizer): Option[char[]] {
   let c = cs.cps[i];
   if (n.indic && holds(KEPT_WHOLE, c as i32)) {
-    return [c];
+    return None;
   }
   let shortest = shortest_at(cs, i, n);
   if (shortest && f.glyph(c as i32) != 0) {
-    return [c];
+    return None;
   }
-  return if let Some(parts) = steps_of(f, c, shortest, n) { parts } else { [c] };
+  return steps_of(f, c, shortest, n);
 }
 
 // Whether the character at `i` of `cs` splits by the fewest steps: outside
 // a sequence of marks, or always with `n.none`.
 function shortest_at(cs: Chars, i: i32, n: Normalizer): boolean {
-  let c = cs.unicode[i];
-  let next_mark = i + 1 < cs.cps.len() && cs.unicode[i + 1].is_mark();
-  return n.none || !n.splits_all && (i == 0 || !c.is_mark()) && !next_mark;
+  return n.none || !n.splits_all && (i == 0 || !cs.unicode[i].is_mark()) && (i + 1 >= cs.cps.len() || !cs.unicode[i + 1].is_mark());
 }
 
 // The decomposition of `c`, one step at a time, while the font `f` has the
@@ -489,15 +506,18 @@ function steps_of(f: truetype.Font, c: char, shortest: boolean, n: Normalizer): 
 // starter must not be a mark. The characters from the starter to the mark take the first of
 // their clusters.
 function composed(f: truetype.Font, cs: Chars, n: Normalizer): Chars {
-  if (cs.cps.len() == 0) {
-    return cs;
-  }
-  let out = with_char(no_chars(), cs, 0);
+  let out = cs;
+  let changed = false;
   let starter = 0;
   for i in 1..cs.cps.len() {
     let c = cs.unicode[i];
-    let both = composite(f, out, starter, cs.cps[i], c, n);
+    let last = if (changed) { out.cps.len() - 1 } else { i - 1 };
+    let both = composite(f, out, starter, last, cs.cps[i], c, n);
     if (both != 0) {
+      if (!changed) {
+        out = with_chars(no_chars(), cs, 0, i);
+        changed = true;
+      }
       let cl = cs.clusters[i];
       for k in starter..out.cps.len() {
         cl = cl.min(out.clusters[k]);
@@ -509,9 +529,11 @@ function composed(f: truetype.Font, cs: Chars, n: Normalizer): Chars {
       out = Chars { ...out, cps: out.cps.with(starter, both as char), clusters: clusters, shown: out.shown.with(starter, both), unicode: out.unicode.with(starter, both as char) };
       continue;
     }
-    out = with_char(out, cs, i);
+    if (changed) {
+      out = with_char(out, cs, i);
+    }
     if (sort_class(c) == 0) {
-      starter = out.cps.len() - 1;
+      starter = last + 1;
     }
   }
   return out;
@@ -520,9 +542,8 @@ function composed(f: truetype.Font, cs: Chars, n: Normalizer): Chars {
 // The character that the character `c`, with the Unicode properties of
 // `props`, composes to with the starter at `starter` of `out`, or 0. Only a
 // mark composes.
-function composite(f: truetype.Font, out: Chars, starter: i32, c: char, props: char, n: Normalizer): i32 {
+function composite(f: truetype.Font, out: Chars, starter: i32, last: i32, c: char, props: char, n: Normalizer): i32 {
   let us = out.unicode;
-  let last = us.len() - 1;
   let free = props.is_mark() && !(n.marks_stay && us[starter].is_mark()) && (starter == last || sort_class(us[last]) < sort_class(props));
   let both = if (free) { composition_of(out.cps[starter], c, n) } else { 0 };
   return if (both != 0 && f.glyph(both) != 0) { both } else { 0 };
