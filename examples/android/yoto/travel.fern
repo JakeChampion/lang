@@ -1,0 +1,99 @@
+import "core/cmp";
+import "./api";
+import "./listening";
+import "./offline";
+
+pub struct Fit {
+  card: listening.Item,
+  chapter: string,
+  track: string,
+  position: i64,
+  seconds: i64,
+}
+
+function remaining(card: api.Card, mark: listening.Bookmark): i64 {
+  let left = card.seconds - mark.position / 1000i64;
+  for track in card.tracks {
+    if (track.chapter_key == mark.chapter && track.track_key == mark.key) {
+      return left.max(0i64);
+    }
+    if (track.seconds <= 0i64) {
+      return 0i64;
+    }
+    left -= track.seconds;
+  }
+  return 0i64;
+}
+
+pub function fit(library: api.Card[], catalog: offline.Catalog, saved: listening.Saved, minutes: i32): Fit[] {
+  let matches: Fit[] = [];
+  let maximum = minutes as i64 * 60i64;
+  let indexed: Map[string, api.Card] = map_new(library.len());
+  for card in library {
+    indexed = indexed.insert(card.id, card);
+  }
+  for entry in catalog.entries {
+    if (!entry.ready) {
+      continue;
+    }
+    let card = indexed.get(entry.id).unwrap_or(offline.card(entry));
+    let item = listening.Item { id: entry.id, title: entry.title };
+    let mark = listening.mark(saved, entry.id);
+    match (card.kind) {
+      api.Radio => {},
+      api.Podcast => {
+        for track in card.tracks {
+          let has_audio = entry.tracks.any((file: offline.Track): boolean => file.chapter == track.chapter_key && file.key == track.track_key);
+          let position = mark.filter((m: listening.Bookmark): boolean => m.chapter == track.chapter_key && m.key == track.track_key).map((m: listening.Bookmark): i64 => m.position).unwrap_or(0i64);
+          let seconds = track.seconds - position / 1000i64;
+          if (has_audio && seconds > 0i64 && seconds <= maximum) {
+            let title = listening.Item { ...item, title: track.title + " · " + card.title };
+            matches = matches.append(Fit { card: title, chapter: track.chapter_key, track: track.track_key, position: position, seconds: seconds });
+          }
+        }
+      },
+      _ => {
+        if (!card.sleep_sounds) {
+          let seconds = mark.map((point: listening.Bookmark): i64 => remaining(card, point)).unwrap_or(card.seconds);
+          if (seconds > 0i64 && seconds <= maximum) {
+            matches = matches.append(Fit { card: item, chapter: "", track: "", position: 0i64, seconds: seconds });
+          }
+        }
+      }
+    }
+  }
+  return cmp.sort_by(matches, (a: Fit, b: Fit): i32 => if (a.seconds > b.seconds) { -1 } else { if (a.seconds < b.seconds) { 1 } else { 0 } }).take(24);
+}
+
+pub function surprise(saved: listening.Saved, catalog: offline.Catalog, current: string): Option[listening.Item] {
+  let choice: Option[listening.Item] = None;
+  let oldest = 9223372036854775807i64;
+  for item in saved.favourites {
+    if (item.id != current && catalog.entries.any((entry: offline.Entry): boolean => entry.ready && entry.id == item.id)) {
+      let date = saved.history.find((row: listening.Heard): boolean => row.card.id == item.id).map((row: listening.Heard): i64 => row.at).unwrap_or(0i64);
+      if (choice.is_none() || date < oldest) {
+        choice = Some(item);
+        oldest = date;
+      }
+    }
+  }
+  return choice;
+}
+
+pub function protected(saved: listening.Saved, id: string): boolean {
+  let (origin, _) = api.download_selection(id);
+  return listening.favourite(saved, id) || listening.favourite(saved, origin)
+    || saved.lineups.any((line: listening.Lineup): boolean => line.cards.any((card: listening.Item): boolean => card.id == id || card.id == origin))
+    || saved.other_profiles.any((profile: listening.Profile): boolean => profile.favourites.any((card: listening.Item): boolean => card.id == id || card.id == origin))
+    || saved.routines.any((row: listening.Routine): boolean => row.story.id == id || row.sound.id == id);
+}
+
+pub function largest(saved: listening.Saved, report: listening.Trip[]): listening.Trip[] {
+  let safe = report.filter((row: listening.Trip): boolean => row.bytes > 0i64 && !protected(saved, row.id));
+  return cmp.sort_by(safe, (a: listening.Trip, b: listening.Trip): i32 => if (a.bytes > b.bytes) { -1 } else { if (a.bytes < b.bytes) { 1 } else { 0 } });
+}
+
+pub function routine(saved: listening.Saved): listening.Routine {
+  let empty = listening.Item { id: "", title: "" };
+  return saved.routines.find((r: listening.Routine): boolean => r.profile == saved.profile).unwrap_or(listening.Routine { profile: saved.profile, story: empty, sound: empty, minutes: 30 });
+}

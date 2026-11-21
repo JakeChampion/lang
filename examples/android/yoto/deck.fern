@@ -20,6 +20,8 @@ import "./launcher_icon";
 import "./listening";
 import "./library_cache";
 import "./player_status";
+import "./travel";
+import "./myo_audio";
 
 enum Job {
   Load(string),
@@ -36,6 +38,8 @@ enum Job {
   LookUpCard(i64, string, string),
   ReadPlaylist(i64, string, api.Card),
   WritePlaylist(i64, string, api.Playlist),
+  AnalyzeAudio(i64, api.LocalAudio),
+  RenderEditedAudio(i64, api.LocalAudio, string, string, myo_audio.Edit),
   ReadShop(i64),
   Streams(i64, string, api.Card, string, string),
   ReadConfig(i64, string, api.Player),
@@ -135,6 +139,45 @@ function closed_gate(): ParentGate {
   return ParentGate { open: false, code: "", first: "", busy: false, note: "" };
 }
 
+pub enum TravelPage { CarMode, ListenTime, StorageBudget, Bedtime, NfcTags, ChapterDownloads }
+
+struct TravelPanel {
+  page: Option[TravelPage],
+  duration: i32,
+  query: string,
+  card: string,
+  choice: i32,
+  selected_tag: string,
+  nfc_routine: boolean,
+  tap_to_play: boolean,
+  scan_uid: string,
+  last_tag: string,
+  last_tag_at: i64,
+  storage_confirm: string,
+  bedtime_sound: Option[listening.Routine],
+  bedtime_story: string,
+  bedtime_sleeping: string,
+  single_listen: string,
+}
+
+function travel_panel(): TravelPanel {
+  return TravelPanel {
+    page: None, duration: 20, query: "", card: "", choice: 0, selected_tag: "", nfc_routine: false,
+    tap_to_play: false, scan_uid: "", last_tag: "", last_tag_at: 0i64, storage_confirm: "", bedtime_sound: None, bedtime_story: "", bedtime_sleeping: "", single_listen: "",
+  };
+}
+
+struct AudioEditor {
+  index: i32,
+  source: api.LocalAudio,
+  title: string,
+  wave: Option[myo_audio.Wave],
+  working: boolean,
+  note: string,
+  marker: i32,
+  edit: myo_audio.Edit,
+}
+
 struct PlaybackTools {
   saved: listening.Saved,
   dirty: boolean,
@@ -183,11 +226,14 @@ pub struct Model {
   on_phone: boolean,
   phone: phone.State,
   playback_tools: PlaybackTools,
+  travel_panel: TravelPanel,
   now_playing: NowPlaying,
   now_open: boolean,
   expanded_art: Option[ExpandedArtwork],
   target_open: boolean,
   tools_page: panel_tools.State,
+  audio_revision: i64,
+  audio_editor: Option[AudioEditor],
   editing_group: Option[GroupEdit],
   device_status: Option[api.DeviceStatus],
   device_note: string,
@@ -378,6 +424,41 @@ pub enum Msg {
   PhoneNext,
   PhonePrevious,
   PhoneSeek(i64),
+  PhoneRewind,
+  OpenTravel(TravelPage),
+  CloseTravel,
+  PlayCarTrip(string),
+  PickTime(i32),
+  PlayFit(travel.Fit),
+  PickBudget(i32),
+  SuggestRemoval(string),
+  RemoveForBudget(string),
+  SurpriseKids,
+  SetRoutineChoice(i32),
+  TravelQuery(string),
+  SetRoutineCard(string),
+  SetRoutineTime(i32),
+  StartRoutine,
+  PlayTagCard(string),
+  LinkRoutineTag,
+  RemoveTag(string),
+  ReadPhysicalTag(string),
+  SetTapToPlay,
+  OpenChapterDownloads(string),
+  SaveChapter(string, string),
+  PlayChapter(string),
+  ToggleSleepFade,
+  EditAudio(i32),
+  CloseAudioEditor,
+  WaveReady(i64, Result[myo_audio.Wave, string]),
+  AudioTrim(boolean, i32),
+  AudioMarker(i32),
+  AddAudioMarker,
+  DropAudioMarker(i32),
+  ToggleMatchAudio,
+  RenderAudio,
+  AudioRendered(i64, Result[api.LocalAudio[], string]),
+  MediaReady,
   PhoneRate(i32),
   OpenNowPlaying,
   CloseNowPlaying,
@@ -409,7 +490,7 @@ function tools(saved: listening.Saved): PlaybackTools {
 
 pub function start(): Model {
   let downloads = offline.empty(offline.Catalog { dir: "", entries: [], cleanup: [], note: "" });
-  return Model { client: "", token: "", refresh: "", reconnect: false, auth: [], storage: None, session_note: "", load_after_auth: false, players: [], cards: [], shelf: empty_shelf(), generation: 0i64, background_busy: false, cover_busy: false, cover_active: "", cover_stop: -1, cover_pipe: (): (i32, i32) => (-1, -1), art_dir: "", warmed: map_new(64), trip_select: false, trip_cards: map_new(32), selected: "", on_phone: false, phone: phone.empty(), playback_tools: tools(listening.empty()), now_playing: NowPlaying { revision: 0i64, requested: false, due: 0i64, running: false, playback: None, note: "" }, now_open: false, expanded_art: None, target_open: false, tools_page: panel_tools.empty(), editing_group: None, device_status: None, device_note: "", volume: 50, config_panel: panel(0i64), downloads: downloads, offline_open: "", tab: 0, tab_history: [], menu_open: false, note: "", library_loaded: false, cache_dir: "", cache_available: false, changed_index: 0i64, stored_index: 0i64, index_saving: false, wifi: false, retry_download_at: 0i64, wifi_requeue: "", parent: closed_gate(), shortcut: "", launch_action: "", transfer_from: "", transfer_revision: 0i64, transfer_target: "", transfer_note: "", enrich_downloads: false, busy: false, open_login: false, flow: None, job: None };
+  return Model { client: "", token: "", refresh: "", reconnect: false, auth: [], storage: None, session_note: "", load_after_auth: false, players: [], cards: [], shelf: empty_shelf(), generation: 0i64, background_busy: false, cover_busy: false, cover_active: "", cover_stop: -1, cover_pipe: (): (i32, i32) => (-1, -1), art_dir: "", warmed: map_new(64), trip_select: false, trip_cards: map_new(32), selected: "", on_phone: false, phone: phone.empty(), playback_tools: tools(listening.empty()), travel_panel: travel_panel(), now_playing: NowPlaying { revision: 0i64, requested: false, due: 0i64, running: false, playback: None, note: "" }, now_open: false, expanded_art: None, target_open: false, tools_page: panel_tools.empty(), audio_revision: 0i64, audio_editor: None, editing_group: None, device_status: None, device_note: "", volume: 50, config_panel: panel(0i64), downloads: downloads, offline_open: "", tab: 0, tab_history: [], menu_open: false, note: "", library_loaded: false, cache_dir: "", cache_available: false, changed_index: 0i64, stored_index: 0i64, index_saving: false, wifi: false, retry_download_at: 0i64, wifi_requeue: "", parent: closed_gate(), shortcut: "", launch_action: "", transfer_from: "", transfer_revision: 0i64, transfer_target: "", transfer_note: "", enrich_downloads: false, busy: false, open_login: false, flow: None, job: None };
 }
 
 function signed_out(m: Model, note: string): Model {
@@ -951,10 +1032,19 @@ function phone_cover(m: Model): string {
 
 function playback_pictures(m: Model): string[] {
   let current = playback_art(m);
-  if (m.now_open && m.on_phone) {
+  if (m.on_phone && m.phone.card.len() > 0) {
     return [phone_cover(m), current];
   }
   return [current];
+}
+
+pub function media_artwork(m: Model): (string, Option[draw.Image]) {
+  for address in [phone_cover(m), phone_art(m)] {
+    if let Some(Some(art)) = m.shelf.covers.get(address) {
+      return (address, Some(art.image));
+    }
+  }
+  return ("", None);
 }
 
 function featured_art(shelf: Shelf, cover: string, detail: string): (string, string) {
@@ -1428,7 +1518,9 @@ function stream_card(m: Model, id: string, chapter: string, track: string): Mode
 }
 
 function stream_at(m: Model, id: string, chapter: string, track: string, position: i64): Model {
-  if let Some(entry) = offline.saved(m.downloads, id) {
+  let full = offline.saved(m.downloads, id);
+  let saved = if (full.is_none() && chapter.len() > 0) { offline.saved(m.downloads, api.chapter_download_id(id, chapter)) } else { full };
+  if let Some(entry) = saved {
     if (chapter.len() == 0) {
       return play_download_at(m, entry, 0, position);
     }
@@ -1493,6 +1585,29 @@ function play_queued(m: Model): Model {
   return Model { ...next, playback_tools: PlaybackTools { ...tools, saved: saved, dirty: true, note: "" } };
 }
 
+function start_routine(m: Model): Model {
+  let routine = travel.routine(m.playback_tools.saved);
+  if (routine.story.id.len() == 0 || routine.sound.id.len() == 0) {
+    return Model { ...m, playback_tools: PlaybackTools { ...m.playback_tools, note: "Choose a story and a sleep sound first." } };
+  }
+  let next = stream_at(phone_target(m), routine.story.id, "", "", 0i64);
+  if (next.phone.revision == m.phone.revision) {
+    return Model { ...m, playback_tools: PlaybackTools { ...m.playback_tools, note: "Save this story for offline use or connect to play it." } };
+  }
+  let panel = TravelPanel { ...next.travel_panel, bedtime_story: next.phone.card, bedtime_sound: Some(routine), bedtime_sleeping: "", single_listen: "" };
+  return Model { ...next, travel_panel: panel, playback_tools: PlaybackTools { ...next.playback_tools, sleep_at: 0i64, note: "Bedtime routine started." }, phone: phone.chapter_timer(next.phone, false) };
+}
+
+function continue_bedtime(m: Model, stopped: phone.State, routine: listening.Routine): Model {
+  let quiet = Model { ...m, phone: stopped, travel_panel: TravelPanel { ...m.travel_panel, bedtime_sound: None, bedtime_story: "" } };
+  let next = stream_at(phone_target(quiet), routine.sound.id, "", "", 0i64);
+  if (next.phone.revision == stopped.revision) {
+    return Model { ...quiet, playback_tools: PlaybackTools { ...quiet.playback_tools, note: "Could not open the sleep sound." } };
+  }
+  let end = monotonic_ns() + routine.minutes as i64 * 60000000000i64;
+  return Model { ...next, travel_panel: TravelPanel { ...next.travel_panel, bedtime_sleeping: next.phone.card }, playback_tools: PlaybackTools { ...next.playback_tools, sleep_at: end, note: "Sleep sounds are playing." } };
+}
+
 function finished_phone(m: Model, next: phone.State): Model {
   if (m.playback_tools.trip_test_until > 0i64 && m.phone.card.len() > 0 && next.card.len() == 0) {
     let note = if (next.note.len() > 0) { next.note } else { "Offline sample played." };
@@ -1503,6 +1618,23 @@ function finished_phone(m: Model, next: phone.State): Model {
     let item = listening.Item { id: m.phone.card, title: m.phone.title };
     let saved = listening.heard(listening.without(tools.saved, item.id), item, true, now_unix_ms());
     let ready = Model { ...m, phone: next, playback_tools: PlaybackTools { ...tools, saved: saved, dirty: true } };
+    if (m.travel_panel.bedtime_story == m.phone.card) {
+      if let Some(routine) = m.travel_panel.bedtime_sound {
+        return continue_bedtime(ready, next, routine);
+      }
+    }
+    if (m.travel_panel.bedtime_sleeping == m.phone.card) {
+      if (tools.sleep_at > monotonic_ns()) {
+        let again = stream_at(phone_target(ready), m.phone.card, "", "", 0i64);
+        if (again.phone.revision != next.revision) {
+          return again;
+        }
+      }
+      return Model { ...ready, travel_panel: TravelPanel { ...ready.travel_panel, bedtime_sleeping: "" }, playback_tools: PlaybackTools { ...ready.playback_tools, sleep_at: 0i64, note: "Bedtime routine ended." } };
+    }
+    if (m.travel_panel.single_listen == m.phone.card) {
+      return Model { ...ready, travel_panel: TravelPanel { ...ready.travel_panel, single_listen: "" } };
+    }
     if (next.sleep_ended) {
       return Model { ...ready, playback_tools: PlaybackTools { ...ready.playback_tools, note: "Sleep timer ended." } };
     }
@@ -1525,7 +1657,8 @@ pub function playback_tick(m: Model, now: i64): Model {
       phone.Loading | phone.Preparing => phone.stop(m.phone),
       _ => m.phone,
     };
-    return Model { ...m, phone: state, playback_tools: PlaybackTools { ...tools, sleep_at: 0i64, sample: true, note: "Sleep timer ended." } };
+    let panel = TravelPanel { ...m.travel_panel, bedtime_sleeping: "" };
+    return Model { ...m, phone: state, travel_panel: panel, playback_tools: PlaybackTools { ...tools, sleep_at: 0i64, sample: true, note: "Sleep timer ended." } };
   }
   if (now - tools.sample_at >= 2000000000i64) {
     if let phone.Playing = m.phone.phase {
@@ -1906,8 +2039,323 @@ function travel_request(m: Model, msg: Msg): Model {
   }
 }
 
+function travel_note(m: Model, text: string): Model {
+  return Model { ...m, playback_tools: PlaybackTools { ...m.playback_tools, note: text } };
+}
+
+function downloaded_items(m: Model): listening.Item[] {
+  return m.downloads.catalog.entries.filter((entry: offline.Entry): boolean => entry.ready).map((entry: offline.Entry): listening.Item => listening.Item { id: entry.id, title: entry.title });
+}
+
+function scan_finished(m: Model): Model {
+  let tool = m.tools_page;
+  let action = if (tool.scanning) { Some(panel_tools.ScanStop) } else { None };
+  return tools_update(m, panel_tools.State { ...tool, scanning: false, action: action });
+}
+
+function save_tag(m: Model, uid: string, card: listening.Item, routine: boolean): Model {
+  let s = m.playback_tools.saved;
+  let rest = s.tags.filter((link: listening.TagLink): boolean => link.uid != uid);
+  let link = listening.TagLink { uid: uid, card: card, routine: routine, profile: s.profile };
+  return set_saved(m, listening.Saved { ...s, tags: rest.append(link) });
+}
+
+function tag_playback(m: Model, id: string): Model {
+  if (offline.saved(m.downloads, id).is_none()) {
+    return travel_note(m, "Save this card offline before you use tap to play.");
+  }
+  return stream_card(phone_target(m), id, "", "");
+}
+
+function physical_tag(own m: Model, payload: string): Model {
+  let fields = payload.split("|");
+  let uid = if (fields.len() > 1) { fields[0] } else { "" };
+  let address = if (fields.len() > 1) { fields[1] } else { payload };
+  let panel = m.travel_panel;
+  let now = monotonic_ns();
+  if (!m.tools_page.scanning || uid.len() > 0 && uid == panel.last_tag && now - panel.last_tag_at < 1500000000i64) {
+    return m;
+  }
+  if let Some(NfcTags()) = panel.page {
+    if (uid.len() > 0 && (panel.selected_tag.len() > 0 || panel.nfc_routine)) {
+      let item = queue_item(m, panel.selected_tag).unwrap_or(listening.Item { id: "", title: "" });
+      let ready = save_tag(scan_finished(m), uid, item, panel.nfc_routine);
+      return travel_note(Model { ...ready, travel_panel: TravelPanel { ...panel, selected_tag: "", nfc_routine: false } }, "Sticker linked.");
+    }
+  }
+  if (panel.tap_to_play) {
+    let saved = m.playback_tools.saved;
+    let tapped = Model { ...m, travel_panel: TravelPanel { ...panel, last_tag: uid, last_tag_at: now } };
+    if let Some(link) = saved.tags.find((tag: listening.TagLink): boolean => uid.len() > 0 && tag.uid == uid) {
+      let ready = tapped;
+      if (link.routine) {
+        return if (link.profile == saved.profile) { start_routine(ready) } else { travel_note(ready, "Select the " + link.profile + " profile to start this routine.") };
+      }
+      return tag_playback(ready, link.card.id);
+    }
+    let id = api.scan_code(address);
+    if (offline.saved(m.downloads, id).is_some()) {
+      return tag_playback(tapped, id);
+    }
+  }
+  if (address.len() == 0) {
+    return travel_note(scan_finished(m), "This sticker is not linked. Select a card or routine first.");
+  }
+  let next = Model { ...m, travel_panel: TravelPanel { ...panel, scan_uid: if (panel.tap_to_play) { uid } else { "" } } };
+  return scan_card(next, address);
+}
+
+function edit_routine(m: Model, routine: listening.Routine): Model {
+  let s = m.playback_tools.saved;
+  let rest = s.routines.filter((item: listening.Routine): boolean => item.profile != routine.profile);
+  return set_saved(m, listening.Saved { ...s, routines: rest.append(routine) });
+}
+
+function view_chapters(m: Model, id: string): Model {
+  return Model { ...m, travel_panel: TravelPanel { ...m.travel_panel, page: Some(ChapterDownloads), card: id } };
+}
+
+function update_travel(own m: Model, msg: Msg): Model {
+  let panel = m.travel_panel;
+  let saved = m.playback_tools.saved;
+  match (msg) {
+    OpenTravel(page) => {
+      let next = travel_note(Model { ...m, menu_open: false, travel_panel: TravelPanel { ...panel, page: Some(page), choice: 0, storage_confirm: "", query: "", tap_to_play: if let NfcTags = page { true } else { panel.tap_to_play } } }, "");
+      if let StorageBudget = page {
+        return queue_check(next, downloaded_items(next));
+      }
+      return next;
+    },
+    CloseTravel => {
+      let next = scan_finished(m);
+      return Model { ...next, travel_panel: TravelPanel { ...panel, page: None, choice: 0, selected_tag: "", nfc_routine: false, storage_confirm: "", scan_uid: "" } };
+    },
+    PlayCarTrip(id) => {
+      if let Some(line) = saved.lineups.find((item: listening.Lineup): boolean => item.id == id) {
+        let ready = line.cards.filter((card: listening.Item): boolean => offline.saved(m.downloads, card.id).is_some());
+        if (ready.len() == 0) {
+          return travel_note(m, "Download a card from this trip first.");
+        }
+        let note = if (ready.len() < line.cards.len()) { "Playing the downloaded cards from this trip." } else { "" };
+        let start = play_queued(set_saved(m, listening.Saved { ...saved, queue: ready }));
+        return travel_note(start, note);
+      }
+      return m;
+    },
+    PickTime(minutes) => {
+      return Model { ...m, travel_panel: TravelPanel { ...panel, duration: minutes } };
+    },
+    PlayFit(fit) => {
+      if (offline.saved(m.downloads, fit.card.id).is_none()) {
+        return m;
+      }
+      let next = if (fit.chapter.len() == 0) { stream_card(phone_target(m), fit.card.id, "", "") } else { stream_at(phone_target(m), fit.card.id, fit.chapter, fit.track, fit.position) };
+      let state = next.phone;
+      if (fit.chapter.len() > 0 && state.queue.len() > 0) {
+        let queue = if (fit.track.len() > 0) { state.queue.take(1) } else { state.queue.filter((track: api.Stream): boolean => track.chapter == fit.chapter) };
+        state = phone.State { ...state, queue: queue };
+      }
+      return Model { ...next, phone: state, travel_panel: TravelPanel { ...panel, page: None, single_listen: state.card }, now_open: true };
+    },
+    PickBudget(mb) => {
+      return set_saved(m, listening.Saved { ...saved, budget_mb: mb.max(0) });
+    },
+    SuggestRemoval(id) => {
+      return Model { ...m, travel_panel: TravelPanel { ...panel, storage_confirm: id } };
+    },
+    RemoveForBudget(id) => {
+      if (panel.storage_confirm == id && !travel.protected(saved, id) && m.phone.card != id) {
+        let tools = m.playback_tools;
+        let report = tools.trip.filter((row: listening.Trip): boolean => row.id != id);
+        return Model { ...m, downloads: offline.remove(m.downloads, id), travel_panel: TravelPanel { ...panel, storage_confirm: "" }, playback_tools: PlaybackTools { ...tools, trip: report } };
+      }
+      return m;
+    },
+    SurpriseKids => {
+      if (saved.kids) {
+        if let Some(item) = travel.surprise(saved, m.downloads.catalog, m.phone.card) {
+          return stream_at(phone_target(m), item.id, "", "", 0i64);
+        }
+      }
+      return m;
+    },
+    SetRoutineChoice(choice) => {
+      return Model { ...m, travel_panel: TravelPanel { ...panel, choice: choice, query: "" } };
+    },
+    TravelQuery(query) => {
+      return Model { ...m, travel_panel: TravelPanel { ...panel, query: query } };
+    },
+    SetRoutineCard(id) => {
+      if let Some(item) = queue_item(m, id) {
+        let old = travel.routine(saved);
+        let changed = if (panel.choice == 1) { listening.Routine { ...old, story: item } } else { listening.Routine { ...old, sound: item } };
+        return edit_routine(Model { ...m, travel_panel: TravelPanel { ...panel, choice: 0 } }, changed);
+      }
+      return m;
+    },
+    SetRoutineTime(minutes) => {
+      return edit_routine(m, listening.Routine { ...travel.routine(saved), minutes: minutes });
+    },
+    StartRoutine => {
+      return start_routine(m);
+    },
+    PlayTagCard(id) => {
+      return Model { ...m, travel_panel: TravelPanel { ...panel, selected_tag: id, nfc_routine: false, choice: 0 } };
+    },
+    LinkRoutineTag => {
+      return Model { ...m, travel_panel: TravelPanel { ...panel, selected_tag: "", nfc_routine: true } };
+    },
+    RemoveTag(uid) => {
+      let tags = saved.tags.filter((link: listening.TagLink): boolean => link.uid != uid);
+      return set_saved(m, listening.Saved { ...saved, tags: tags });
+    },
+    ReadPhysicalTag(payload) => {
+      return physical_tag(m, payload);
+    },
+    SetTapToPlay => {
+      return Model { ...m, travel_panel: TravelPanel { ...panel, tap_to_play: !panel.tap_to_play } };
+    },
+    OpenChapterDownloads(id) => {
+      return view_chapters(m, id);
+    },
+    SaveChapter(id, chapter) => {
+      let at = card_index(m, id);
+      let (_, selected) = api.download_selection(id);
+      if (selected.len() == 0 && at >= 0 && m.token.len() > 0 && offline.saved(m.downloads, id).is_none()) {
+        let card = m.cards[at];
+        if let Some(track) = card.tracks.find((track: api.Track): boolean => track.chapter_key == chapter) {
+          let name = if (track.chapter.len() > 0) { track.chapter } else { track.title };
+          return Model { ...m, downloads: offline.enqueue(m.downloads, [api.chapter_download(card, chapter, name)]) };
+        }
+      }
+      return m;
+    },
+    PlayChapter(id) => {
+      let next = tag_playback(m, id);
+      if (next.phone.revision != m.phone.revision) {
+        return Model { ...next, travel_panel: TravelPanel { ...next.travel_panel, single_listen: next.phone.card } };
+      }
+      return next;
+    },
+    ToggleSleepFade => {
+      return set_saved(m, listening.Saved { ...saved, fade: !saved.fade });
+    },
+    _ => {
+      return m;
+    }
+  }
+}
+
+function audio_editor_update(own m: Model, msg: Msg): Model {
+  if let EditAudio(index) = msg {
+    let chapters = m.tools_page.draft.chapters;
+    if (index >= 0 && index < chapters.len() && !m.tools_page.recording && !m.tools_page.busy) {
+      let part = chapters[index];
+      if let Some(source) = part.audio {
+        let revision = m.audio_revision + 1i64;
+        let editor = AudioEditor {
+          index: index, source: source, title: part.title, wave: None, working: true, note: "",
+          marker: 0, edit: myo_audio.Edit { first: 0, last: 0, markers: [], match_volume: false },
+        };
+        return Model { ...m, audio_revision: revision, audio_editor: Some(editor), job: Some(AnalyzeAudio(revision, source)) };
+      }
+    }
+    return m;
+  }
+  let Some(e) = m.audio_editor else {
+    if let AudioRendered(_, Ok(parts)) = msg {
+      myo_audio.discard(parts);
+    }
+    return m;
+  };
+  match (msg) {
+    CloseAudioEditor => {
+      return Model { ...m, audio_editor: None, audio_revision: m.audio_revision + 1i64 };
+    },
+    WaveReady(revision, result) => {
+      if (revision == m.audio_revision) {
+        match (result) {
+          Ok(wave) => {
+            let edit = myo_audio.Edit { ...e.edit, last: wave.duration };
+            let ready = AudioEditor { ...e, wave: Some(wave), working: false, marker: wave.duration / 2, edit: edit };
+            return Model { ...m, audio_editor: Some(ready) };
+          },
+          Err(note) => {
+            return Model { ...m, audio_editor: Some(AudioEditor { ...e, working: false, note: note }) };
+          }
+        }
+      }
+    },
+    AudioTrim(start, ms) => {
+      if let Some(wave) = e.wave {
+        let trim = if (start) { myo_audio.Edit { ...e.edit, first: ms.max(0).min(e.edit.last - 1) } } else { myo_audio.Edit { ...e.edit, last: ms.max(e.edit.first + 1).min(wave.duration) } };
+        return Model { ...m, audio_editor: Some(AudioEditor { ...e, edit: trim }) };
+      }
+    },
+    AudioMarker(ms) => {
+      return Model { ...m, audio_editor: Some(AudioEditor { ...e, marker: ms }) };
+    },
+    AddAudioMarker => {
+      let edit = e.edit;
+      if (e.marker > edit.first && e.marker < edit.last && !edit.markers.contains(e.marker)) {
+        let markers = myo_audio.Edit { ...edit, markers: edit.markers.append(e.marker) };
+        return Model { ...m, audio_editor: Some(AudioEditor { ...e, edit: markers, note: "" }) };
+      }
+      return Model { ...m, audio_editor: Some(AudioEditor { ...e, note: "Choose a new marker inside the trim range." }) };
+    },
+    DropAudioMarker(ms) => {
+      let edit = myo_audio.Edit { ...e.edit, markers: e.edit.markers.filter((item: i32): boolean => item != ms) };
+      return Model { ...m, audio_editor: Some(AudioEditor { ...e, edit: edit }) };
+    },
+    ToggleMatchAudio => {
+      let edit = myo_audio.Edit { ...e.edit, match_volume: !e.edit.match_volume };
+      return Model { ...m, audio_editor: Some(AudioEditor { ...e, edit: edit }) };
+    },
+    RenderAudio => {
+      if (!e.working && e.wave.is_some()) {
+        let next = AudioEditor { ...e, working: true, note: "Applying audio edits…" };
+        return Model { ...m, audio_editor: Some(next), job: Some(RenderEditedAudio(m.audio_revision, e.source, e.title, m.art_dir, e.edit)) };
+      }
+    },
+    AudioRendered(revision, result) => {
+      if (revision != m.audio_revision) {
+        if let Ok(parts) = result {
+          myo_audio.discard(parts);
+        }
+        return m;
+      }
+      match (result) {
+        Err(note) => {
+          return Model { ...m, audio_editor: Some(AudioEditor { ...e, working: false, note: note }) };
+        },
+        Ok(parts) => {
+          let tool = m.tools_page;
+          let draft = tool.draft;
+          let chapters = draft.chapters;
+          let new_parts = parts.map((audio: api.LocalAudio): api.Chapter => api.Chapter { title: audio.title, audio: Some(audio), prior: json.JNull });
+          if (e.index >= chapters.len() || chapters.len() + parts.len() - 1 > 100 || !chapters[e.index].audio.map((audio: api.LocalAudio): boolean => audio.path == e.source.path).unwrap_or(false)) {
+            myo_audio.discard(parts);
+            return Model { ...m, audio_editor: Some(AudioEditor { ...e, working: false, note: "Apply the edits to a playlist with up to 100 chapters." }) };
+          }
+          let updated = chapters.take(e.index).concat(new_parts).concat(chapters.drop(e.index + 1));
+          let ready = panel_tools.State { ...tool, draft: api.Playlist { ...draft, chapters: updated }, note: "Audio edits applied." };
+          return tools_update(Model { ...m, audio_editor: None }, ready);
+        }
+      }
+    },
+    _ => {}
+  }
+  return m;
+}
+
 pub function update(own m: Model, msg: Msg): Model {
   match (msg) {
+    EditAudio(_) | CloseAudioEditor | WaveReady(_, _) | AudioTrim(_, _) | AudioMarker(_) | AddAudioMarker | DropAudioMarker(_) | ToggleMatchAudio | RenderAudio | AudioRendered(_, _) => {
+      return audio_editor_update(m, msg);
+    },
+    OpenTravel(_) | CloseTravel | PlayCarTrip(_) | PickTime(_) | PlayFit(_) | PickBudget(_) | SuggestRemoval(_) | RemoveForBudget(_) | SurpriseKids | SetRoutineChoice(_) | TravelQuery(_) | SetRoutineCard(_) | SetRoutineTime(_) | StartRoutine | PlayTagCard(_) | LinkRoutineTag | RemoveTag(_) | ReadPhysicalTag(_) | SetTapToPlay | OpenChapterDownloads(_) | SaveChapter(_, _) | PlayChapter(_) | ToggleSleepFade => {
+      return update_travel(m, msg);
+    },
     EditClient(text) => {
       if (!m.busy) {
         return Model { ...m, client: text, note: "" };
@@ -2203,7 +2651,7 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     ReadScan(value) => {
       if (!m.tools_page.busy) {
-        return scan_card(m, value);
+        return scan_card(Model { ...m, travel_panel: TravelPanel { ...m.travel_panel, scan_uid: "" } }, value);
       }
       return m;
     },
@@ -2213,7 +2661,15 @@ pub function update(own m: Model, msg: Msg): Model {
       }
       let tool = m.tools_page;
       if let Ok(card) = result {
-        return tools_update(m, panel_tools.State { ...tool, busy: false, scan_result: Some(card), note: "" });
+        let ready = tools_update(m, panel_tools.State { ...tool, busy: false, scan_result: Some(card), note: "" });
+        let uid = ready.travel_panel.scan_uid;
+        let next = Model { ...ready, travel_panel: TravelPanel { ...ready.travel_panel, scan_uid: "" } };
+        if (next.travel_panel.tap_to_play && offline.saved(next.downloads, card.id).is_some()) {
+          let item = listening.Item { id: card.id, title: card.title };
+          let linked = if (uid.len() > 0) { save_tag(next, uid, item, false) } else { next };
+          return tag_playback(linked, card.id);
+        }
+        return next;
       }
       if let Err(err) = result {
         return tools_update(m, panel_tools.State { ...tool, busy: false, note: err.message });
@@ -2789,6 +3245,12 @@ pub function update(own m: Model, msg: Msg): Model {
     PhonePrevious => {
       return Model { ...m, phone: phone.previous(m.phone) };
     },
+    MediaReady => {
+      return m;
+    },
+    PhoneRewind => {
+      return Model { ...m, phone: phone.seek(m.phone, (m.phone.elapsed - 15000i64).max(0i64)) };
+    },
     PhoneSeek(ms) => {
       return Model { ...m, phone: phone.seek(m.phone, ms) };
     },
@@ -2900,6 +3362,12 @@ function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
       ReadPlaylist(generation, token, card) => {
         return PlaylistLoaded(generation, api.edit_playlist(token, card));
       },
+      AnalyzeAudio(revision, audio) => {
+        return WaveReady(revision, myo_audio.analyze(audio));
+      },
+      RenderEditedAudio(revision, audio, title, dir, edit) => {
+        return AudioRendered(revision, myo_audio.render(audio, title, dir, edit));
+      },
       WritePlaylist(generation, token, draft) => {
         return PlaylistSaved(generation, api.save_playlist(token, draft));
       },
@@ -3004,7 +3472,14 @@ function effects(m: Model, open_browser: (string) => boolean, decode: (u8[], i32
     saved = Model { ...saved, playback_tools: PlaybackTools { ...saved.playback_tools, sample: true } };
   }
   let applied = if (saved.playback_tools.sample) { phone.prime(stepped, output) } else { stepped };
-  let audio = if (saved.playback_tools.sample) { phone.sample(applied, output) } else { applied };
+  let sampled = if (saved.playback_tools.sample) { phone.sample(applied, output) } else { applied };
+  let gain = if let phone.Playing = sampled.phase {
+    let end = saved.playback_tools.sleep_at;
+    if (saved.playback_tools.saved.fade && end > 0i64) {
+      (end - monotonic_ns()).max(0i64).min(5000000000i64) as f32 / 5000000000.0f32
+    } else { 1.0f32 }
+  } else { 1.0f32 };
+  let audio = phone.link_gapless(phone.volume(sampled, gain, output), output);
   if (saved.playback_tools.saved.held_downloads.map((card: api.Card): string => card.id) != saved.downloads.held.map((card: api.Card): string => card.id)) {
     saved = save_listening(saved, output, store, false);
   }
@@ -3014,6 +3489,15 @@ function effects(m: Model, open_browser: (string) => boolean, decode: (u8[], i32
   }
   let catalog = if (saved.enrich_downloads) { offline.enrich(downloads, saved.cards, disk) } else { downloads };
   let t = save_listening(Model { ...saved, phone: audio, downloads: catalog, wifi_requeue: "", enrich_downloads: false }, output, store, false);
+  if (t.travel_panel.bedtime_sound.is_some() && t.travel_panel.bedtime_story != t.phone.card) {
+    t = Model { ...t, travel_panel: TravelPanel { ...t.travel_panel, bedtime_sound: None, bedtime_story: "" } };
+  }
+  if (t.travel_panel.bedtime_sleeping.len() > 0 && t.travel_panel.bedtime_sleeping != t.phone.card) {
+    t = Model { ...t, travel_panel: TravelPanel { ...t.travel_panel, bedtime_sleeping: "" }, playback_tools: PlaybackTools { ...t.playback_tools, sleep_at: 0i64 } };
+  }
+  if (t.travel_panel.single_listen.len() > 0 && t.travel_panel.single_listen != t.phone.card) {
+    t = Model { ...t, travel_panel: TravelPanel { ...t.travel_panel, single_listen: "" } };
+  }
   if (t.expanded_art.is_some() && visible_expansion(t).is_none()) {
     t = Model { ...t, expanded_art: None };
   }
@@ -3697,6 +4181,10 @@ function track_row(shelf: Shelf, card: api.Card, track: api.Track, ready: boolea
 
 function card_details(m: Model, card: api.Card, screen: ui.Screen): ui.El[Msg] {
   let items: ui.El[Msg][] = [ui.text_button("Back to library", CloseCard)];
+  let (_, section) = api.download_selection(card.id);
+  if (section.len() == 0 && card.tracks.any((track: api.Track): boolean => track.chapter_key.len() > 0)) {
+    items = items.append(ui.text_button("Chapter downloads", OpenChapterDownloads(card.id)));
+  }
   let liked = listening.favourite(m.playback_tools.saved, card.id);
   items = items.append(ui.row([
     ui.text_button(if (liked) { "Remove favourite" } else { "Add to favourites" }, ToggleFavourite(card.id)),
@@ -3820,6 +4308,9 @@ function download_list(m: Model): ui.El[Msg] {
     return batch_downloads(m);
   }
   let fields: ui.El[Msg][] = [];
+  if (m.offline_open.len() == 0) {
+    fields = fields.append(ui.text_button("Storage budget", OpenTravel(StorageBudget)));
+  }
   let note = offline.message(m.downloads);
   if (note.len() > 0) {
     fields = fields.append(ui.text(note).colored(ui.MUTED));
@@ -3876,6 +4367,8 @@ function download_list(m: Model): ui.El[Msg] {
 function playback_queue(m: Model): ui.El[Msg] {
   let tools = m.playback_tools;
   let rows: ui.El[Msg][] = [];
+  rows = rows.append(ui.row([ui.text_button("Car Mode", OpenTravel(CarMode)), ui.text_button("Find by time", OpenTravel(ListenTime))]).spaced(8.0));
+  rows = rows.append(ui.row([ui.text_button("Bedtime routine", OpenTravel(Bedtime)), ui.text_button("NFC shortcuts", OpenTravel(NfcTags))]).spaced(8.0));
   if let phone.Playing | phone.Paused = m.phone.phase {
     rows = rows.append(ui.text_button("Bookmark this spot", BookmarkHere));
     if (tools.naming_bookmark) {
@@ -3902,6 +4395,7 @@ function playback_queue(m: Model): ui.El[Msg] {
   rows = rows.append(ui.card([
     ui.text[Msg](timer).sized(18.0).weighted(650),
     ui.row([ui.text_button("15 min", SetSleep(15)), ui.text_button("30 min", SetSleep(30)), ui.text_button("60 min", SetSleep(60)), ui.text_button("Off", SetSleep(0))]),
+    ui.checkbox(tools.saved.fade, "Fade out at the end", ToggleSleepFade),
     ui.text_button(if (m.phone.stop_at_chapter) { "Cancel end of chapter timer" } else { "Stop at end of chapter" }, ChapterSleep),
   ]).wide());
   if (tools.saved.marks.len() > 0) {
@@ -4177,13 +4671,62 @@ function create_chapter(part: api.Chapter, n: i32, count: i32): ui.El[Msg] {
   if (n < count - 1) {
     actions = [ui.text_button("Move down", MoveChapter(n, n + 1))].concat(actions);
   }
+  if (part.audio.is_some()) {
+    actions = [ui.text_button("Edit audio", EditAudio(n))].concat(actions);
+  }
   return ui.card([
     ui.field[Msg]("chapter-title-" + n.to_string(), part.title, "Chapter title").on_edit((name: string): Msg => ChapterTitle(n, name)),
     ui.row(actions).spaced(6.0),
   ]).wide();
 }
 
+function audio_editor_view(e: AudioEditor): ui.El[Msg][] {
+  let rows = [ui.text_button("Back to playlist", CloseAudioEditor), ui.text[Msg](e.title).sized(23.0).weighted(650)];
+  if (e.note.len() > 0) {
+    rows = rows.append(ui.text(e.note).colored(ui.MUTED));
+  }
+  if (e.working) {
+    return rows.append(ui.text("Working on audio…").colored(ui.MUTED));
+  }
+  let Some(wave) = e.wave else {
+    return rows;
+  };
+  let length = wave.duration.max(1);
+  let edit = e.edit;
+  let bars: ui.El[Msg][] = [];
+  for i in 0..wave.peaks.len() {
+    let at = i * length / wave.peaks.len();
+    let kept = at >= edit.first && at < edit.last;
+    let color = if (kept) { ui.PRIMARY } else { ui.TRACK };
+    bars = bars.append(ui.box[Msg]().wide().height(4.0 + wave.peaks[i] * 62.0).background(color).rounded(2.0));
+  }
+  let scale = length as f64;
+  rows = rows.concat([
+    ui.row(bars).spaced(2.0).height(72.0).aligned(ui.CENTER).wide().described("Audio waveform"),
+    ui.text[Msg]("Trim start · " + playback_time(edit.first as i64)),
+    ui.slider(edit.first as f64 / scale, (part: f64): Msg => AudioTrim(true, (part * scale) as i32)).described("Trim start"),
+    ui.text[Msg]("Trim end · " + playback_time(edit.last as i64)),
+    ui.slider(edit.last as f64 / scale, (part: f64): Msg => AudioTrim(false, (part * scale) as i32)).described("Trim end"),
+    ui.text[Msg]("Chapter marker · " + playback_time(e.marker as i64)),
+    ui.slider(e.marker as f64 / scale, (part: f64): Msg => AudioMarker((part * scale) as i32)).described("Chapter marker position"),
+    ui.text_button("Add chapter marker", AddAudioMarker),
+  ]);
+  for time in edit.markers {
+    rows = rows.append(ui.row([
+      ui.text[Msg](playback_time(time as i64)).wide(),
+      ui.text_button("Remove marker", DropAudioMarker(time)),
+    ]).aligned(ui.CENTER));
+  }
+  return rows.concat([
+    ui.checkbox(edit.match_volume, "Match chapter volume", ToggleMatchAudio),
+    ui.button("Use audio edits", RenderAudio),
+  ]);
+}
+
 function create_view(m: Model): ui.El[Msg][] {
+  if let Some(editor) = m.audio_editor {
+    return audio_editor_view(editor);
+  }
   let tool = m.tools_page;
   if (tool.busy) {
     return [];
@@ -4438,6 +4981,9 @@ function parent_view(m: Model, screen: ui.Screen): ui.El[Msg] {
 function kids_view(m: Model, screen: ui.Screen): ui.El[Msg] {
   let favourites = m.playback_tools.saved.favourites;
   let rows: ui.El[Msg][] = [ui.row([ui.text[Msg]("Favourites").sized(25.0).weighted(700).wide(), ui.text_button("Grown-ups", EnterKids)]).aligned(ui.CENTER)];
+  if (travel.surprise(m.playback_tools.saved, m.downloads.catalog, m.phone.card).is_some()) {
+    rows = rows.append(ui.button("Surprise me", SurpriseKids).height(52.0));
+  }
   if (m.on_phone && m.phone.queue.len() > 0) {
     let paused = match (m.phone.phase) { phone.Paused => true, _ => false };
     let tap = PhoneControl(if (paused) { api.Resume } else { api.Pause });
@@ -4558,12 +5104,216 @@ function trip_dashboard(m: Model, line: listening.Lineup): ui.El[Msg] {
   return ui.column(rows.concat(checklist).concat(playback_bar(m))).spaced(10.0).padding(16.0).wide().tall().scroll("trip-dashboard:" + line.id);
 }
 
+function car_view(m: Model): ui.El[Msg][] {
+  let s = m.phone;
+  let paused = match (s.phase) { phone.Paused => true, _ => false };
+  let playing = match (s.phase) { phone.Playing => true, _ => false };
+  let rows: ui.El[Msg][] = [];
+  if (s.at < s.queue.len()) {
+    rows = rows.append(ui.text[Msg](s.title).colored(ui.MUTED));
+    rows = rows.append(ui.text(s.queue[s.at].title).sized(25.0).weighted(700));
+  } else {
+    rows = rows.append(ui.text[Msg]("Choose a downloaded trip below.").colored(ui.MUTED));
+  }
+  if (playing || paused) {
+    rows = rows.append(ui.button(if (paused) { "Resume" } else { "Pause" }, PhoneControl(if (paused) { api.Resume } else { api.Pause })).height(76.0).wide());
+    rows = rows.append(ui.row([
+      ui.outlined_button("Back 15 s", PhoneRewind).wide().height(68.0),
+      ui.outlined_button("Next", PhoneNext).wide().height(68.0),
+    ]).spaced(10.0).wide());
+  }
+  let trips = m.playback_tools.saved.lineups;
+  for line in trips {
+    let count = line.cards.filter((item: listening.Item): boolean => offline.saved(m.downloads, item.id).is_some()).len();
+    if (count > 0) {
+      rows = rows.append(ui.outlined_button(line.name + " · " + count.to_string() + " saved", PlayCarTrip(line.id)).height(60.0).wide());
+    }
+  }
+  return rows;
+}
+
+function time_view(m: Model): ui.El[Msg][] {
+  let choices = [10, 20, 45];
+  let limit = m.travel_panel.duration;
+  let selected = choices.position((minutes: i32): boolean => minutes == limit).unwrap_or(1);
+  let results = travel.fit(m.cards, m.downloads.catalog, m.playback_tools.saved, limit);
+  let rows = [ui.tabs(["10 min", "20 min", "45 min"], selected, (i: i32): Msg => PickTime(choices[i]))];
+  if (results.len() == 0) {
+    return rows.append(ui.text("No saved stories or episodes with a known duration fit this time.").colored(ui.MUTED));
+  }
+  for item in results {
+    let label = item.card.title;
+    let time = if (item.seconds < 60i64) { item.seconds.to_string() + " s" } else { ((item.seconds + 59i64) / 60i64).to_string() + " min" };
+    rows = rows.append(ui.card([ui.row([ui.text[Msg](label).wide().clamped(2), ui.text(time).colored(ui.MUTED), ui.text_button("Play", PlayFit(item)).described("Play " + label)]).spaced(8.0).aligned(ui.CENTER)]).wide());
+  }
+  return rows;
+}
+
+function storage_view(m: Model): ui.El[Msg][] {
+  let s = m.playback_tools.saved;
+  let panel = m.travel_panel;
+  let report = m.playback_tools.trip.filter((row: listening.Trip): boolean => offline.saved(m.downloads, row.id).is_some());
+  let bytes = 0i64;
+  for row in report {
+    bytes += row.bytes;
+  }
+  let choices = [0, 1024, 2048, 4096, 8192];
+  let selected = choices.position((mb: i32): boolean => mb == s.budget_mb).unwrap_or(0);
+  let rows = [
+    ui.tabs(["Off", "1 GB", "2 GB", "4 GB", "8 GB"], selected, (i: i32): Msg => PickBudget(choices[i])),
+    ui.text_button("Check storage", OpenTravel(StorageBudget)),
+  ];
+  if (m.playback_tools.trip_running) {
+    return rows.append(ui.text("Checking downloaded audio…").colored(ui.MUTED));
+  }
+  let over = if (s.budget_mb > 0) { (bytes - s.budget_mb as i64 * 1048576i64).max(0i64) } else { 0i64 };
+  let label = "Saved audio uses " + size_text(bytes);
+  rows = rows.append(ui.text(label).weighted(650));
+  if (over > 0i64) {
+    rows = rows.append(ui.text(size_text(over) + " above your budget").colored(ui.MUTED));
+  }
+  rows = rows.append(ui.text[Msg]("Favourites, trip cards, and bedtime audio are protected.").colored(ui.MUTED));
+  for item in travel.largest(s, report).take(12) {
+    if (item.id != m.phone.card) {
+      let action = if (panel.storage_confirm == item.id) { ui.button("Confirm removal", RemoveForBudget(item.id)) } else { ui.text_button("Remove", SuggestRemoval(item.id)) };
+      rows = rows.append(ui.row([ui.text[Msg](item.title).wide().clamped(2), ui.text(size_text(item.bytes)).colored(ui.MUTED), action]).aligned(ui.CENTER).spaced(6.0));
+    }
+  }
+  return rows;
+}
+
+function card_picker_for_travel(m: Model, choice: i32): ui.El[Msg][] {
+  let query = m.travel_panel.query.to_lower().trim();
+  let selected = m.cards.filter((card: api.Card): boolean => {
+    if (!card.search.contains(query)) {
+      return false;
+    }
+    if (choice == 3) {
+      return offline.saved(m.downloads, card.id).is_some();
+    }
+    let sound = card.sleep_sounds || search.category(card.kind) == 4;
+    return sound == (choice == 2) && (m.token.len() > 0 || offline.saved(m.downloads, card.id).is_some());
+  });
+  let field = ui.field[Msg]("travel-search", m.travel_panel.query, "Find cards").on_edit((text: string): Msg => TravelQuery(text));
+  let list = ui.list("travel-card-results:" + choice.to_string() + ":" + m.travel_panel.query, selected.len(), 56.0, (i: i32): ui.El[Msg] => {
+    let item = selected[i];
+    let action = if (choice == 3) { PlayTagCard(item.id) } else { SetRoutineCard(item.id) };
+    return ui.text_button(item.title, action).wide().height(52.0);
+  }).height((selected.len() * 56).min(560) as f64);
+  return [ui.text_button("Back to choices", SetRoutineChoice(0)), field, list];
+}
+
+function bedtime_view(m: Model): ui.El[Msg][] {
+  let s = m.playback_tools.saved;
+  let r = travel.routine(s);
+  if (m.travel_panel.choice > 0) {
+    return card_picker_for_travel(m, m.travel_panel.choice);
+  }
+  let story = if (r.story.id.len() > 0) { r.story.title } else { "Choose story" };
+  let sound = if (r.sound.id.len() > 0) { r.sound.title } else { "Choose sleep sound" };
+  let choices = [15, 30, 60];
+  let index = choices.position((minutes: i32): boolean => minutes == r.minutes).unwrap_or(1);
+  return [
+    ui.text[Msg](s.profile).colored(ui.MUTED),
+    ui.row([ui.text[Msg]("Story").wide(), ui.text_button(story, SetRoutineChoice(1))]).aligned(ui.CENTER),
+    ui.row([ui.text[Msg]("Sleep sound").wide(), ui.text_button(sound, SetRoutineChoice(2))]).aligned(ui.CENTER),
+    ui.text[Msg]("Play sleep sounds for").colored(ui.MUTED),
+    ui.tabs(["15 min", "30 min", "60 min"], index, (i: i32): Msg => SetRoutineTime(choices[i])),
+    ui.checkbox(s.fade, "Fade out at the end", ToggleSleepFade),
+    ui.button("Start bedtime", StartRoutine),
+  ];
+}
+
+function tag_view(m: Model): ui.El[Msg][] {
+  let panel = m.travel_panel;
+  if (panel.choice == 3) {
+    return card_picker_for_travel(m, panel.choice);
+  }
+  let s = m.playback_tools.saved;
+  let rows: ui.El[Msg][] = [
+    ui.checkbox(panel.tap_to_play, "Tap to play saved cards", SetTapToPlay),
+    ui.text_button("Link a saved card", SetRoutineChoice(3)),
+    ui.text_button("Link this profile's bedtime routine", LinkRoutineTag),
+  ];
+  if (panel.selected_tag.len() > 0 || panel.nfc_routine) {
+    let title = if (panel.nfc_routine) { "Bedtime routine" } else { queue_item(m, panel.selected_tag).map((item: listening.Item): string => item.title).unwrap_or("") };
+    rows = rows.append(ui.text[Msg]("Hold an NFC sticker near the phone to link " + title + ".").colored(ui.MUTED));
+  }
+  rows = rows.append(ui.button(if (m.tools_page.scanning) { "Ready to scan" } else { "Start NFC scan" }, StartScan));
+  if (m.tools_page.note.len() > 0) {
+    rows = rows.append(ui.text(m.tools_page.note).colored(ui.MUTED));
+  }
+  for link in s.tags {
+    let title = if (link.routine) { link.profile + " · Bedtime routine" } else { link.card.title };
+    rows = rows.append(ui.row([ui.text[Msg](title).wide().clamped(2), ui.text_button("Unlink", RemoveTag(link.uid))]).aligned(ui.CENTER));
+  }
+  return rows;
+}
+
+function chapter_download_view(m: Model): ui.El[Msg][] {
+  let id = m.travel_panel.card;
+  let at = card_index(m, id);
+  if (at < 0) {
+    return [];
+  }
+  let card = m.cards[at];
+  let rows: ui.El[Msg][] = [ui.text[Msg](card.title).sized(21.0).weighted(650)];
+  let seen: Map[string, boolean] = map_new(32);
+  for track in card.tracks {
+    if (track.chapter_key.len() == 0 || seen.contains(track.chapter_key)) {
+      continue;
+    }
+    seen = seen.insert(track.chapter_key, true);
+    let local = api.chapter_download_id(id, track.chapter_key);
+    let full = offline.saved(m.downloads, id).is_some();
+    let name = if (track.chapter.len() > 0) { track.chapter } else { track.title };
+    let detail = offline.label(m.downloads, local);
+    let actions = [
+      ui.text[Msg](name).clamped(2).wide(),
+    ];
+    if (full) {
+      let fit = travel.Fit { card: listening.Item { id: id, title: name }, chapter: track.chapter_key, track: "", position: 0i64, seconds: 0i64 };
+      actions = actions.append(ui.text_button("Play saved", PlayFit(fit)));
+    } else if (detail == "Saved") {
+      actions = actions.append(ui.text_button("Play saved", PlayChapter(local)));
+    } else if (detail == "Needs attention" && m.token.len() > 0) {
+      actions = actions.append(ui.text_button("Retry", RetryTrack(local)));
+    } else if (detail.len() > 0) {
+      actions = actions.append(ui.text(detail).colored(ui.MUTED));
+    } else if (m.token.len() > 0) {
+      actions = actions.append(ui.text_button("Download", SaveChapter(id, track.chapter_key)).described("Download " + name));
+    }
+    rows = rows.append(ui.row(actions).aligned(ui.CENTER).spaced(8.0).wide());
+  }
+  return rows;
+}
+
+function travel_view(m: Model, page: TravelPage): ui.El[Msg] {
+  let (title, body) = match (page) {
+    CarMode => ("Car Mode", car_view(m)),
+    ListenTime => ("Find a story by time", time_view(m)),
+    StorageBudget => ("Download storage budget", storage_view(m)),
+    Bedtime => ("Bedtime routine", bedtime_view(m)),
+    NfcTags => ("NFC cards and stickers", tag_view(m)),
+    ChapterDownloads => ("Chapter downloads", chapter_download_view(m)),
+  };
+  let rows = [ui.text_button("Back", CloseTravel), ui.text[Msg](title).sized(27.0).weighted(700)];
+  let note = m.playback_tools.note;
+  if (note.len() > 0) {
+    rows = rows.append(ui.text(note).colored(ui.MUTED));
+  }
+  return ui.column(rows.concat(body)).spaced(12.0).padding(16.0).wide().tall().scroll("travel:" + title);
+}
+
 pub function view(m: Model, screen: ui.Screen): ui.El[Msg] {
   if (m.parent.open) {
     return parent_view(m, screen);
   }
   if (m.playback_tools.saved.kids) {
     return kids_view(m, screen);
+  }
+  if let Some(page) = m.travel_panel.page {
+    return travel_view(m, page);
   }
   if (m.target_open) {
     return destination_view(m);
@@ -4664,6 +5414,9 @@ function wait(m: Model): i32 {
     return offline_wait;
   }
   if (m.playback_tools.sleep_at > 0i64 || m.playback_tools.trip_test_until > 0i64) {
+    if (m.playback_tools.saved.fade && m.playback_tools.sleep_at > 0i64 && m.playback_tools.sleep_at - monotonic_ns() <= 5000000000i64) {
+      return 150;
+    }
     return 500;
   }
   if (m.playback_tools.saved.wifi_only && m.downloads.queue.len() > 0 || m.downloads.paused || offline.has_failed(m.downloads) || m.parent.open && m.playback_tools.saved.retry_pin_at > now_unix_ms()) {
@@ -4699,6 +5452,9 @@ function back_message(m: Model): Option[Msg] {
   if (m.playback_tools.saved.kids) {
     return None;
   }
+  if (m.travel_panel.page.is_some()) {
+    return Some(CloseTravel);
+  }
   if (m.target_open) {
     return Some(CloseTarget);
   }
@@ -4716,6 +5472,9 @@ function back_message(m: Model): Option[Msg] {
   }
   if (m.flow.is_some()) {
     return Some(Cancel);
+  }
+  if (m.audio_editor.is_some()) {
+    return Some(CloseAudioEditor);
   }
   if (m.tools_page.page.is_some()) {
     return Some(CloseTools);

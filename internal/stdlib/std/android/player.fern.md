@@ -861,6 +861,17 @@ pub function stop(ctx: usize, p: Player): void {
   let reset = call_void(e, p.obj, "reset", "()V", []);
 }
 
+// Sets the gain of both audio channels. A gain of 1 is the original level.
+pub function set_volume(ctx: usize, p: Player, gain: f32): boolean {
+  let e = android.env(ctx);
+  if (!begin(e)) {
+    return false;
+  }
+  defer end(e);
+  let bits = f32_bits(gain) as usize;
+  return call_void(e, p.obj, "setVolume", "(FF)V", [bits, bits]);
+}
+
 // Gives the player `next`, which must be prepared, to the player `p`, so
 // it starts with no gap when `p` completes. None takes it away.
 pub function set_next(ctx: usize, p: Player, next: Option[Player]): boolean {

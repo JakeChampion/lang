@@ -148,7 +148,7 @@ pub function card(entry: Entry): api.Card {
     return info;
   }
   let tracks = entry.tracks.map((t: Track): api.Track => api.Track {
-    title: t.title, chapter: "", chapter_key: t.chapter, track_key: t.key, search: t.title.to_lower(), art: t.art, chapter_art: "",
+    title: t.title, chapter: "", chapter_key: t.chapter, track_key: t.key, search: t.title.to_lower(), art: t.art, chapter_art: "", seconds: 0i64,
   });
   return api.Card {
     id: entry.id, title: entry.title, creator: entry.creator, cover: "", thumb: "", preview: "", kind: api.Standard, myo: false, club: false, sleep_sounds: false,
