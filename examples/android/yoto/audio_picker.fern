@@ -1,0 +1,292 @@
+import "std/android";
+import "std/base64";
+import "std/i32";
+import "std/jni";
+import "std/rand";
+import "std/string";
+import "./api";
+
+pub const SELECTED: i32 = 0x53444153;
+pub const COPIED: i32 = 0x53444143;
+pub const REQUEST: i32 = 7410;
+
+const INTENT: string = "Landroid/content/Intent;";
+const CALLBACK: string = "dev.fern.storydeck.AudioImport";
+
+function healthy(e: usize, ref: usize): boolean {
+  return jni.check(e).is_ok() && ref != 0 as usize;
+}
+
+function make(e: usize, name: string, sig: string, values: usize[]): usize {
+  let cls = jni.find_class(e, name);
+  return construct(e, cls, sig, values);
+}
+
+function construct(e: usize, cls: usize, sig: string, values: usize[]): usize {
+  if (!healthy(e, cls)) {
+    return 0 as usize;
+  }
+  let method = jni.get_method_id(e, cls, "<init>", sig);
+  if (!healthy(e, method)) {
+    return 0 as usize;
+  }
+  let args = jni.jvalues(values);
+  let result = jni.new_object_a(e, cls, method, args);
+  jni.free_buffer(args);
+  return if (healthy(e, result)) { result } else { 0 as usize };
+}
+
+function int_call(e: usize, obj: usize, name: string, sig: string, values: usize[]): i32 {
+  let cls = jni.get_object_class(e, obj);
+  defer jni.delete_local_ref(e, cls);
+  let method = jni.get_method_id(e, cls, name, sig);
+  if (!healthy(e, method)) {
+    return -1;
+  }
+  let args = jni.jvalues(values);
+  let result = jni.call_int_method_a(e, obj, method, args);
+  jni.free_buffer(args);
+  return if (jni.check(e).is_ok()) { result } else { -1 };
+}
+
+function flag(e: usize, obj: usize, name: string): boolean {
+  let cls = jni.get_object_class(e, obj);
+  defer jni.delete_local_ref(e, cls);
+  let method = jni.get_method_id(e, cls, name, "()Z");
+  if (!healthy(e, method)) {
+    return false;
+  }
+  let value = jni.call_boolean_method_a(e, obj, method, 0 as usize);
+  return jni.check(e).is_ok() && value != 0;
+}
+
+pub function open(ctx: usize): boolean {
+  if (android.detached(ctx)) {
+    return false;
+  }
+  let e = android.env(ctx);
+  unsafe {
+    if (jni.call1(e, 19, 16 as usize) as i32 != 0) {
+      jni.exception_clear(e);
+      return false;
+    }
+    defer jni.call1(e, 20, 0 as usize);
+    let action = jni.new_string(e, "android.intent.action.OPEN_DOCUMENT");
+    let intent = make(e, "android/content/Intent", "(Ljava/lang/String;)V", [action]);
+    if (intent == 0 as usize) {
+      return false;
+    }
+    let category = jni.new_string(e, "android.intent.category.OPENABLE");
+    let mime = jni.new_string(e, "audio/*");
+    let multiple = jni.new_string(e, "android.intent.extra.ALLOW_MULTIPLE");
+    return healthy(e, jni.call_object(e, intent, "addCategory", "(Ljava/lang/String;)" + INTENT, [category]))
+      && healthy(e, jni.call_object(e, intent, "setType", "(Ljava/lang/String;)" + INTENT, [mime]))
+      && healthy(e, jni.call_object(e, intent, "putExtra", "(Ljava/lang/String;Z)" + INTENT, [multiple, 1 as usize]))
+      && jni.call_void(e, android.activity_object(ctx), "startActivityForResult", "(" + INTENT + "I)V", [intent, REQUEST as usize]);
+  }
+}
+
+pub function selected(e: usize, result: i32, data: usize): void {
+  if (result != -1 || data == 0 as usize) {
+    let sent = android.tell(e, SELECTED, 0 as usize);
+    return;
+  }
+  let ref = jni.new_global_ref(e, data);
+  if (healthy(e, ref) && !android.tell(e, SELECTED, ref)) {
+    jni.delete_global_ref(e, ref);
+  }
+}
+
+// Use a Java thread because a document provider can wait for a file.
+pub function copy_later(ctx: usize, intent: usize, id: i32, limit: i32, dir: string): boolean {
+  let e = android.env(ctx);
+  defer jni.delete_global_ref(e, intent);
+  if (dir.len() == 0) {
+    return false;
+  }
+  unsafe {
+    if (jni.call1(e, 19, 24 as usize) as i32 != 0) {
+      jni.exception_clear(e);
+      return false;
+    }
+    defer jni.call1(e, 20, 0 as usize);
+    let activity = android.activity_object(ctx);
+    let resolver = jni.call_object(e, activity, "getContentResolver", "()Landroid/content/ContentResolver;", []);
+    if (!healthy(e, resolver)) {
+      return false;
+    }
+    let callback = construct(e, jni.load_class(e, activity, CALLBACK), "()V", []);
+    let thread = make(e, "android/os/HandlerThread", "(Ljava/lang/String;)V", [jni.new_string(e, "Story Deck audio import")]);
+    if (callback == 0 as usize || thread == 0 as usize || !jni.call_void(e, thread, "start", "()V", [])) {
+      return false;
+    }
+    defer flag(e, thread, "quitSafely");
+    let looper = jni.call_object(e, thread, "getLooper", "()Landroid/os/Looper;", []);
+    if (!healthy(e, looper)) {
+      return false;
+    }
+    let handler = make(e, "android/os/Handler", "(Landroid/os/Looper;Landroid/os/Handler$Callback;)V", [looper, callback]);
+    if (handler == 0 as usize) {
+      return false;
+    }
+    let args = jni.new_object_array(e, 3, jni.find_class(e, "java/lang/Object"), 0 as usize);
+    if (!healthy(e, args)) {
+      return false;
+    }
+    jni.set_object_array_element(e, args, 0, resolver);
+    jni.set_object_array_element(e, args, 1, intent);
+    jni.set_object_array_element(e, args, 2, jni.new_string(e, dir));
+    let message = jni.call_object(e, handler, "obtainMessage", "(IIILjava/lang/Object;)Landroid/os/Message;", [0 as usize, id as usize, limit as usize, args]);
+    return healthy(e, message) && jni.call_void(e, message, "sendToTarget", "()V", []);
+  }
+}
+
+function name_of(e: usize, resolver: usize, uri: usize): string {
+  let cols = jni.string_array(e, ["_display_name"]);
+  defer jni.delete_local_ref(e, cols);
+  let cursor = jni.call_object(e, resolver, "query", "(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;", [uri, cols, 0 as usize, 0 as usize, 0 as usize]);
+  if (!healthy(e, cursor)) {
+    return "";
+  }
+  defer jni.delete_local_ref(e, cursor);
+  defer jni.call_void(e, cursor, "close", "()V", []);
+  if (!flag(e, cursor, "moveToFirst")) {
+    return "";
+  }
+  let name = jni.call_object(e, cursor, "getString", "(I)Ljava/lang/String;", [0 as usize]);
+  defer jni.delete_local_ref(e, name);
+  return if (healthy(e, name)) { jni.string_of(e, name) } else { "" };
+}
+
+function copy_bytes(e: usize, input: usize, path: string, buffer: usize): boolean {
+  let input_class = jni.get_object_class(e, input);
+  let read = jni.get_method_id(e, input_class, "read", "([B)I");
+  if (!healthy(e, read)) {
+    return false;
+  }
+  let read_args = jni.jvalues([buffer]);
+  defer jni.free_buffer(read_args);
+  let out = make(e, "java/io/FileOutputStream", "(Ljava/lang/String;)V", [jni.new_string(e, path)]);
+  if (out == 0 as usize) {
+    return false;
+  }
+  let total = 0i64;
+  let good = true;
+  while (good) {
+    let n = jni.call_int_method_a(e, input, read, read_args);
+    if (jni.check(e).is_err()) {
+      good = false;
+    } else if (n < 0) {
+      break;
+    } else {
+      total += n as i64;
+      good = n > 0 && total <= api.MAX_CHAPTER_BYTES && jni.call_void(e, out, "write", "([BII)V", [buffer, 0 as usize, n as usize]);
+    }
+  }
+  let closed = jni.call_void(e, out, "close", "()V", []);
+  return good && closed && total > 0i64;
+}
+
+function read_audio(e: usize, resolver: usize, uri: usize, dir: string, buffer: usize): Option[api.LocalAudio] {
+  let title = name_of(e, resolver, uri);
+  let kind = jni.call_object(e, resolver, "getType", "(Landroid/net/Uri;)Ljava/lang/String;", [uri]);
+  let mime = if (healthy(e, kind)) { jni.string_of(e, kind) } else { "" };
+  let lower = title.to_lower();
+  let audio_mime = if (lower.ends_with(".mp3") || mime == "audio/mp3") { "audio/mpeg" } else { mime };
+  if (!audio_mime.starts_with("audio/")) {
+    return None;
+  }
+  let mode = jni.call_object(e, resolver, "openInputStream", "(Landroid/net/Uri;)Ljava/io/InputStream;", [uri]);
+  if (!healthy(e, mode)) {
+    return None;
+  }
+  defer jni.call_void(e, mode, "close", "()V", []);
+  let path = dir + "/story-import-" + base64.encode_url(rand.bytes(12));
+  if (!copy_bytes(e, mode, path, buffer)) {
+    let removed = remove_file(path);
+    return None;
+  }
+  return Some(api.LocalAudio { path: path, title: if (title.len() > 0) { title } else { "Audio file" }, mime: audio_mime, temporary: true });
+}
+
+function item_uri(e: usize, clip: usize, index: i32): usize {
+  let item = jni.call_object(e, clip, "getItemAt", "(I)Landroid/content/ClipData$Item;", [index as usize]);
+  if (!healthy(e, item)) {
+    return 0 as usize;
+  }
+  return jni.call_object(e, item, "getUri", "()Landroid/net/Uri;", []);
+}
+
+function import_documents(e: usize, resolver: usize, intent: usize, dir: string, limit: i32): (api.LocalAudio[], string) {
+  let clip = jni.call_object(e, intent, "getClipData", "()Landroid/content/ClipData;", []);
+  let many = healthy(e, clip);
+  let n = if (many) { int_call(e, clip, "getItemCount", "()I", []) } else { 1 };
+  if (n > limit) {
+    return ([], "Choose up to " + limit.to_string() + " audio files for this playlist.");
+  }
+  let buffer = jni.new_byte_array(e, 65536);
+  if (!healthy(e, buffer)) {
+    return ([], "Could not read the selected audio files.");
+  }
+  let files: api.LocalAudio[] = [];
+  for i in 0..n {
+    unsafe {
+      if (jni.call1(e, 19, 20 as usize) as i32 != 0) {
+        jni.exception_clear(e);
+        break;
+      }
+      defer jni.call1(e, 20, 0 as usize);
+      let uri = if (many) { item_uri(e, clip, i) } else { jni.call_object(e, intent, "getData", "()Landroid/net/Uri;", []) };
+      if (healthy(e, uri)) {
+        if let Some(audio) = read_audio(e, resolver, uri, dir, buffer) {
+          files = files.append(audio);
+        }
+      }
+    }
+  }
+  if (files.len() == 0) {
+    return (files, "Could not import the selected files. Choose audio files up to 100 MB each.");
+  }
+  let note = if (files.len() < n) { "Imported " + files.len().to_string() + " of " + n.to_string() + " files. Choose audio files up to 100 MB each." } else { "" };
+  return (files, note);
+}
+
+@jni("dev.fern.storydeck.AudioImport implements android.os.Handler$Callback", "boolean handleMessage(android.os.Message)")
+pub function handle(e: usize, self: usize, message: usize): u8 {
+  let cls = jni.get_object_class(e, message);
+  let id = jni.get_int_field(e, message, jni.get_field_id(e, cls, "arg1", "I"));
+  let limit = jni.get_int_field(e, message, jni.get_field_id(e, cls, "arg2", "I"));
+  let args = jni.get_object_field(e, message, jni.get_field_id(e, cls, "obj", "Ljava/lang/Object;"));
+  let dir = jni.string_of(e, jni.get_object_array_element(e, args, 2));
+  let (files, note) = import_documents(e, jni.get_object_array_element(e, args, 0), jni.get_object_array_element(e, args, 1), dir, limit);
+  let values = [id.to_string(), note];
+  for audio in files {
+    values = values.concat([audio.path, audio.title, audio.mime]);
+  }
+  let ref = jni.new_global_ref(e, jni.string_array(e, values));
+  if (!healthy(e, ref) || !android.tell(e, COPIED, ref)) {
+    for audio in files {
+      let removed = remove_file(audio.path);
+    }
+    jni.delete_global_ref(e, ref);
+  }
+  return 1u8;
+}
+
+function text_at(e: usize, result: usize, index: i32): string {
+  let field = jni.get_object_array_element(e, result, index);
+  defer jni.delete_local_ref(e, field);
+  return jni.string_of(e, field);
+}
+
+pub function read_result(e: usize, ref: usize): (i32, api.LocalAudio[], string) {
+  defer jni.delete_global_ref(e, ref);
+  let id = i32.parse_i32(text_at(e, ref, 0)).unwrap_or(-1);
+  let note = text_at(e, ref, 1);
+  let files: api.LocalAudio[] = [];
+  for i in 0..(jni.get_array_length(e, ref) - 2) / 3 {
+    let at = 2 + i * 3;
+    files = files.append(api.LocalAudio { path: text_at(e, ref, at), title: text_at(e, ref, at + 1), mime: text_at(e, ref, at + 2), temporary: true });
+  }
+  return (id, files, note);
+}

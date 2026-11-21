@@ -146,6 +146,9 @@ Open **More options** and select **Library tools**.
   original file and accepts WAV, MP3, and AAC in M4A. Use Yoto to link the
   playlist to a physical card.
 
+- Select **Import audio** to browse folders in Android Files. Select one or more
+  audio files. Story Deck adds each file as a chapter.
+
 - **Discover** shows the collections in your library and new cards in the
   UK Yoto shop. Play previews when Yoto supplies them.
 - **Player and family setup** opens Yoto to connect a player to Wi-Fi or

@@ -39,11 +39,16 @@ func TestAndroidStoryDeckApk(t *testing.T) {
 		"dev.fern.storydeck.CarBrowse", "android.media.browse.MediaBrowserService",
 		"dev.fern.storydeck.Playing",
 		"com.google.android.gms.car.application", "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
-		"android.permission.NFC", "android.permission.RECORD_AUDIO", "android.permission.READ_MEDIA_AUDIO",
+		"android.permission.NFC", "android.permission.RECORD_AUDIO",
 		"enableOnBackInvokedCallback",
 	} {
 		if !bytes.Contains(manifest, utf16le(want)) {
 			t.Errorf("the manifest has no string %q", want)
+		}
+	}
+	for _, permission := range []string{"android.permission.READ_MEDIA_AUDIO", "android.permission.READ_EXTERNAL_STORAGE"} {
+		if bytes.Contains(manifest, utf16le(permission)) {
+			t.Errorf("the manifest requests %q for audio selected in Android Files", permission)
 		}
 	}
 	dex := readZipEntry(t, z, "classes.dex")
@@ -52,6 +57,11 @@ func TestAndroidStoryDeckApk(t *testing.T) {
 	}
 	if !bytes.Contains(dex, []byte("Ldev/fern/storydeck/CardReader;")) {
 		t.Error("the APK does not contain the NFC reader callback")
+	}
+	for _, want := range []string{"onActivityResult", "Ldev/fern/storydeck/AudioImport;", "handleMessage"} {
+		if !bytes.Contains(dex, []byte(want)) {
+			t.Errorf("the APK has no audio picker callback %q", want)
+		}
 	}
 	for _, want := range []string{
 		"Ldev/fern/storydeck/MediaControls;", "onPlay", "onPause", "onSeekTo",

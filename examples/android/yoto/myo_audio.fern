@@ -98,7 +98,7 @@ function segment(audio: Samples, first: i32, last: i32, match_volume: boolean): 
 
 pub function discard(parts: api.LocalAudio[]): void {
   for part in parts {
-    if (part.recording) {
+    if (part.temporary) {
       let removed = remove_file(part.path);
     }
   }
@@ -129,7 +129,7 @@ pub function render(source: api.LocalAudio, title: string, dir: string, edit: Ed
       return Err("Could not save the edited audio.");
     }
     let name = if (bounds.len() == 2) { title } else { title + " · " + (i + 1).to_string() };
-    clip = clip.append(api.LocalAudio { path: path, title: name, mime: "audio/wav", recording: true });
+    clip = clip.append(api.LocalAudio { path: path, title: name, mime: "audio/wav", temporary: true });
   }
   return Ok(clip);
 }
