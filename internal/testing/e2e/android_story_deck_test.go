@@ -37,6 +37,7 @@ func TestAndroidStoryDeckApk(t *testing.T) {
 	for _, want := range []string{
 		"dev.fern.storydeck", "Story Deck", "android.permission.INTERNET", "android.permission.ACCESS_NETWORK_STATE", "dev.fern.storydeck.MainActivity",
 		"dev.fern.storydeck.CarBrowse", "android.media.browse.MediaBrowserService",
+		"dev.fern.storydeck.Playing",
 		"com.google.android.gms.car.application", "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
 		"android.permission.NFC", "android.permission.RECORD_AUDIO", "android.permission.READ_MEDIA_AUDIO",
 		"enableOnBackInvokedCallback",
@@ -51,6 +52,14 @@ func TestAndroidStoryDeckApk(t *testing.T) {
 	}
 	if !bytes.Contains(dex, []byte("Ldev/fern/storydeck/CardReader;")) {
 		t.Error("the APK does not contain the NFC reader callback")
+	}
+	for _, want := range []string{
+		"Ldev/fern/storydeck/MediaControls;", "onPlay", "onPause", "onSeekTo",
+		"onRewind", "onCustomAction", "onSkipToNext", "onSkipToPrevious",
+	} {
+		if !bytes.Contains(dex, []byte(want)) {
+			t.Errorf("the APK has no media callback %q", want)
+		}
 	}
 	readZipEntry(t, z, "res/xml/automotive_app_desc.xml")
 	icon, err := os.ReadFile(e2eharness.RepoPath(storyDeckApp, "icon.png"))

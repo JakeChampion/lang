@@ -66,6 +66,9 @@ empty to save only the filters. Collections stay on this phone.
 
 - Open **Downloads** to play the saved audio without a connection. To delete a
   download, open its track list and select **Remove download**.
+- Open **Chapter downloads** on a card to save or play one chapter.
+- Open **Storage budget** in **Downloads** to set a budget, protect downloads,
+  and review removal suggestions. Story Deck asks before it removes a download.
 
 Story Deck can save cards when Yoto gives the signed-in account complete audio
 files. Live streams, previews, cards with subscription access, and cards marked
@@ -82,6 +85,9 @@ files. Live streams, previews, cards with subscription access, and cards marked
 
 - Select **Test offline playback** to play a short sample from a saved card.
   Select **Check again** after downloads finish.
+- Open **Car Mode** in **Queue** for large playback controls and to play saved
+  titles from a trip. **Find by time** suggests saved titles and episodes that
+  fit. It uses the remaining time when you have a saved position.
 - Use **Story Deck** in Android Auto to browse downloaded cards and control
   playback.
 
@@ -98,10 +104,15 @@ files. Live streams, previews, cards with subscription access, and cards marked
   to your latest position.
 
 - Select **Stop at end of chapter** in **Queue** for a phone sleep timer.
-  Story Deck prepares the next track while the current one plays. If you
-  resume after a two-minute pause, playback goes back up to ten seconds.
+  Enable **Fade out at the end** for a gradual stop. At normal speed, Story
+  Deck prepares the next track for gapless playback. If you resume after a
+  two-minute pause, playback goes back up to ten seconds.
+
+- Set up a **Bedtime routine** in **Queue** for each listening profile.
+  Choose a story, a sleep sound, and how long the sound plays.
 - Add favourite cards from Library. Open **More options** and select
-  **Kids mode**. Set a parent PIN the first time. Select **Grown-ups**
+  **Kids mode**. Set a parent PIN the first time. **Surprise me** plays
+  a downloaded favourite from the current profile. Select **Grown-ups**
   and enter the PIN to return to the full app.
 
 ## Now playing
@@ -110,6 +121,10 @@ Select the playback bar to see the current track, its position, and its
 artwork. On the phone, use the position slider and choose a playback speed.
 Use **Continue on this phone** or select a Yoto player from the same screen
 to move playback. The transfer uses the chapter, track, and position.
+
+For phone playback, swipe down to the Android media panel for the track art and
+playback controls. The panel stays available when you pause. The controls work
+with Paper and other Android launchers.
 
 Open the status view on **Players**. Change the volume or set a sleep timer.
 The view shows the battery, free storage, and download activity when the
@@ -121,8 +136,15 @@ Open **More options** and select **Library tools**.
 
 - **Scan a card** reads a Yoto tag on an Android phone with NFC. Open an
   available card directly or pass the scanned link to Yoto to add the card.
+
+- Open **NFC shortcuts** and turn on **Tap to play**. Link an NFC sticker to a
+  saved title or bedtime routine. Select **Start NFC scan** to use it.
+
 - **Create a playlist** records or imports audio to make new chapters. Edit
-  the title, order, and cover. Use Yoto to link the playlist to a physical card.
+  the title, order, and cover. Select **Edit audio** on a chapter. You can trim
+  the audio, split it, or match the volume of its parts. The editor keeps the
+  original file and accepts WAV, MP3, and AAC in M4A. Use Yoto to link the
+  playlist to a physical card.
 
 - **Discover** shows the collections in your library and new cards in the
   UK Yoto shop. Play previews when Yoto supplies them.

@@ -1,4 +1,6 @@
 import "std/fetch";
+import "std/base64";
+import "std/utf8";
 import "std/http";
 import "std/json";
 import "std/time";
@@ -31,7 +33,7 @@ pub struct PlayerConfig { name: string, values: json.JsonValue, timezone: string
 
 pub enum Kind { Standard, Myo, Podcast, Radio }
 
-pub struct Track { title: string, chapter: string, chapter_key: string, track_key: string, search: string, art: string, chapter_art: string }
+pub struct Track { title: string, chapter: string, chapter_key: string, track_key: string, search: string, art: string, chapter_art: string, seconds: i64 }
 
 pub struct Stream { title: string, url: string, chapter: string, key: string, art: string }
 
@@ -302,7 +304,7 @@ function tracks(chapters: json.JsonValue[]): Track[] {
     let chapter_art = artwork(c, "");
     let fallback = default_track_art(c);
     if (items.len() == 0 && name.len() > 0) {
-      out = out.append(Track { title: name, chapter: "", chapter_key: chapter_key, track_key: "", search: name.to_lower(), art: chapter_art, chapter_art: chapter_art });
+      out = out.append(Track { title: name, chapter: "", chapter_key: chapter_key, track_key: "", search: name.to_lower(), art: chapter_art, chapter_art: chapter_art, seconds: json.get_f64(c, "duration").unwrap_or(0.0).max(0.0).round() as i64 });
     }
     for t in items {
       let title = json.get_string(t, "title").unwrap_or(name);
@@ -313,7 +315,7 @@ function tracks(chapters: json.JsonValue[]): Track[] {
       ].join(" ").to_lower();
       let key = field(t, "key");
       let start = if (items.len() > 1 && key.len() == 0) { "" } else { chapter_key };
-      out = out.append(Track { title: title, chapter: name, chapter_key: start, track_key: key, search: search, art: artwork(t, fallback), chapter_art: chapter_art });
+      out = out.append(Track { title: title, chapter: name, chapter_key: start, track_key: key, search: search, art: artwork(t, fallback), chapter_art: chapter_art, seconds: json.get_f64(t, "duration").unwrap_or(0.0).max(0.0).round() as i64 });
     }
   }
   return out;
@@ -364,7 +366,7 @@ pub function cached_card(c: Card): json.JsonValue {
   };
   let items = c.tracks.map((t: Track): json.JsonValue => json.JObject(json.from([
     ("title", json.JString(t.title)), ("chapter", json.JString(t.chapter)), ("c", json.JString(t.chapter_key)), ("k", json.JString(t.track_key)),
-    ("search", json.JString(t.search)), ("art", json.JString(t.art)), ("chapterArt", json.JString(t.chapter_art)),
+    ("search", json.JString(t.search)), ("art", json.JString(t.art)), ("chapterArt", json.JString(t.chapter_art)), ("seconds", json.JNumber(t.seconds.to_string())),
   ])));
   return json.JObject(json.from([
     ("id", json.JString(c.id)), ("title", json.JString(c.title)), ("creator", json.JString(c.creator)), ("cover", json.JString(c.cover)), ("thumb", json.JString(c.thumb)),
@@ -382,7 +384,7 @@ pub function restore_card(value: json.JsonValue): Option[Card] {
   let myo = json.get_bool(value, "myo").unwrap_or(false);
   let items = entries(value, "tracks").map((t: json.JsonValue): Track => Track {
     title: field(t, "title"), chapter: field(t, "chapter"), chapter_key: field(t, "c"), track_key: field(t, "k"),
-    search: field(t, "search"), art: field(t, "art"), chapter_art: field(t, "chapterArt"),
+    search: field(t, "search"), art: field(t, "art"), chapter_art: field(t, "chapterArt"), seconds: json.get_i64(t, "seconds").unwrap_or(0i64),
   });
   return Some(Card {
     id: id, title: field(value, "title"), creator: field(value, "creator"), cover: field(value, "cover"), thumb: field(value, "thumb"), preview: "", kind: kind(field(value, "category"), "", myo), myo: myo,
@@ -555,11 +557,38 @@ pub function streams(token: string, summary: Card, chapter: string, track: strin
   return parse_streams(value, chapter, track);
 }
 
+pub function chapter_download_id(id: string, chapter: string): string {
+  return "chapter:" + base64.encode_url((id + "\t" + chapter).bytes());
+}
+
+pub function download_selection(id: string): (string, string) {
+  if (id.starts_with("chapter:")) {
+    if let Ok(bytes) = base64.decode_url(id.drop(8)) {
+      let parts = utf8.from_bytes_lossy(bytes).split("\t");
+      if (parts.len() == 2 && parts[0].len() > 0 && parts[1].len() > 0) {
+        return (parts[0], parts[1]);
+      }
+    }
+  }
+  return (id, "");
+}
+
+pub function chapter_download(summary: Card, key: string, title: string): Card {
+  let tracks = summary.tracks.filter((track: Track): boolean => track.chapter_key == key);
+  let seconds = 0i64;
+  for track in tracks {
+    seconds += track.seconds;
+  }
+  let label = summary.title + " · " + title;
+  return Card { ...summary, id: chapter_download_id(summary.id, key), title: label, sort_title: label.to_lower(), seconds: seconds, bytes: 0i64, tracks: tracks };
+}
+
 pub function parse_download(reply: json.JsonValue, summary: Card): Result[DownloadPlan, Failure] {
   let Some(value) = json.get_object(reply, "card") else {
     return Err(failure("Yoto did not return downloadable card details."));
   };
-  if (json.get_string(value, "cardId").unwrap_or(summary.id) != summary.id) {
+  let (origin, section) = download_selection(summary.id);
+  if (json.get_string(value, "cardId").unwrap_or(origin) != origin) {
     return Err(failure("Yoto returned audio for a different card."));
   }
   let access = object(reply, "ownership");
@@ -576,6 +605,9 @@ pub function parse_download(reply: json.JsonValue, summary: Card): Result[Downlo
   }
   let out: DownloadTrack[] = [];
   for chapter in entries(content, "chapters") {
+    if (section.len() > 0 && field(chapter, "key") != section) {
+      continue;
+    }
     let fallback = default_track_art(chapter);
     for track in entries(chapter, "tracks") {
       let address = field(track, "trackUrl");
@@ -590,14 +622,17 @@ pub function parse_download(reply: json.JsonValue, summary: Card): Result[Downlo
   }
   let info = card(value, json.JNull, summary.myo);
   let metadata = Card {
-    ...summary, indexed: true, tracks: info.tracks,
-    seconds: info.seconds.max(summary.seconds), bytes: info.bytes.max(summary.bytes), cover: if (summary.cover.len() > 0) { summary.cover } else { info.cover },
+    ...summary, indexed: true, tracks: if (section.len() == 0) {
+      info.tracks
+    } else { info.tracks.filter((track: Track): boolean => track.chapter_key == section) },
+    seconds: if (section.len() == 0) { info.seconds.max(summary.seconds) } else { summary.seconds }, bytes: if (section.len() == 0) { info.bytes.max(summary.bytes) } else { 0i64 }, cover: if (summary.cover.len() > 0) { summary.cover } else { info.cover },
   };
   return Ok(DownloadPlan { id: summary.id, title: summary.title, creator: summary.creator, tracks: out, card: Some(metadata) });
 }
 
 pub function download_plan(token: string, summary: Card): Result[DownloadPlan, Failure] {
-  let value = request_card(token, summary, "?playable=true")?;
+  let (origin, _) = download_selection(summary.id);
+  let value = request_card(token, Card { ...summary, id: origin }, "?playable=true")?;
   return parse_download(value, summary);
 }
 

@@ -19,6 +19,10 @@ pub struct Profile { name: string, marks: Bookmark[], pins: Bookmark[], history:
 
 pub struct Collection { name: string, cards: string[], available: boolean, category: i32, scope: i32 }
 
+pub struct Routine { profile: string, story: Item, sound: Item, minutes: i32 }
+
+pub struct TagLink { uid: string, card: Item, routine: boolean, profile: string }
+
 pub struct Saved {
   queue: Item[],
   marks: Bookmark[],
@@ -37,12 +41,16 @@ pub struct Saved {
   compact: boolean,
   wifi_only: boolean,
   held_downloads: api.Card[],
+  budget_mb: i32,
+  fade: boolean,
+  routines: Routine[],
+  tags: TagLink[],
 }
 
 pub struct Trip { id: string, title: string, expected: i32, present: i32, bytes: i64, first_bad: i32 }
 
 pub function empty(): Saved {
-  return Saved { queue: [], marks: [], pins: [], lineups: [], history: [], favourites: [], downloads: [], parent_key: "", kids: false, attempts: 0, retry_pin_at: 0i64, profile: "Family", other_profiles: [], collections: [], compact: false, wifi_only: false, held_downloads: [] };
+  return Saved { queue: [], marks: [], pins: [], lineups: [], history: [], favourites: [], downloads: [], parent_key: "", kids: false, attempts: 0, retry_pin_at: 0i64, profile: "Family", other_profiles: [], collections: [], compact: false, wifi_only: false, held_downloads: [], budget_mb: 0, fade: false, routines: [], tags: [] };
 }
 
 function item(value: json.JsonValue): Item {
@@ -101,6 +109,16 @@ pub function load(dir: string): Saved {
     profile: json.get_string(value, "profile").unwrap_or("Family"), other_profiles: profiles, collections: collections,
     compact: json.get_bool(value, "compact").unwrap_or(false), wifi_only: json.get_bool(value, "wifiOnly").unwrap_or(false),
     held_downloads: decode_downloads(value, "heldDownloads"),
+    budget_mb: json.get_i32(value, "budget").unwrap_or(0).max(0),
+    fade: json.get_bool(value, "fade").unwrap_or(false),
+    routines: json.get_array(value, "routines").unwrap_or([]).map((row: json.JsonValue): Routine => Routine {
+      profile: json.get_string(row, "profile").unwrap_or("Family"), story: item(json.get(row, "story").unwrap_or(json.JNull)),
+      sound: item(json.get(row, "sound").unwrap_or(json.JNull)), minutes: json.get_i32(row, "minutes").unwrap_or(30).max(1).min(120),
+    }),
+    tags: json.get_array(value, "tags").unwrap_or([]).map((row: json.JsonValue): TagLink => TagLink {
+      uid: json.get_string(row, "uid").unwrap_or(""), card: item(json.get(row, "card").unwrap_or(json.JNull)),
+      routine: json.get_bool(row, "routine").unwrap_or(false), profile: json.get_string(row, "profile").unwrap_or("Family"),
+    }).filter((link: TagLink): boolean => link.uid.len() > 0),
   };
 }
 
@@ -171,11 +189,18 @@ pub function save(dir: string, value: Saved): boolean {
     ("name", json.JString(row.name)), ("cards", json.JArray(row.cards.map((id: string): json.JsonValue => json.JString(id)))),
     ("available", json.JBool(row.available)), ("category", json.JNumber(row.category.to_string())), ("scope", json.JNumber(row.scope.to_string())),
   ])));
+  let routines = value.routines.map((row: Routine): json.JsonValue => json.JObject(json.from([
+    ("profile", json.JString(row.profile)), ("story", encode_item(row.story)), ("sound", encode_item(row.sound)), ("minutes", json.JNumber(row.minutes.to_string())),
+  ])));
+  let tags = value.tags.map((row: TagLink): json.JsonValue => json.JObject(json.from([
+    ("uid", json.JString(row.uid)), ("card", encode_item(row.card)), ("routine", json.JBool(row.routine)), ("profile", json.JString(row.profile)),
+  ])));
   let extras = json.JObject(json.from([
     ("lineups", json.JArray(lines)), ("history", encode_history(value.history)), ("favourites", json.JArray(value.favourites.map(encode_item))),
     ("downloads", encode_downloads(value.downloads)), ("heldDownloads", encode_downloads(value.held_downloads)), ("kids", json.JBool(value.kids)),
     ("profile", json.JString(value.profile)), ("profiles", json.JArray(profiles)), ("collections", json.JArray(collections)),
     ("compact", json.JBool(value.compact)), ("wifiOnly", json.JBool(value.wifi_only)),
+    ("budget", json.JNumber(value.budget_mb.to_string())), ("fade", json.JBool(value.fade)), ("routines", json.JArray(routines)), ("tags", json.JArray(tags)),
     ("key", json.JString(value.parent_key)), ("attempts", json.JNumber(value.attempts.to_string())), ("retry", json.JNumber(value.retry_pin_at.to_string())),
   ]));
   return kv.empty(dir + "/yoto-listening").set("queue", json.encode(json.JArray(value.queue.map(encode_item)))).set("marks", encode_marks(value.marks)).set("pins", encode_marks(value.pins)).set("extras", json.encode(extras)).save().is_ok();

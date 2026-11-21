@@ -1,0 +1,135 @@
+import "core/cmp";
+import "std/audio/mp3";
+import "std/audio/mp4";
+import "std/audio/pcm";
+import "std/audio/wav";
+import "std/base64";
+import "std/f64";
+import "std/rand";
+import "std/string";
+import "./api";
+
+struct Samples { rate: i32, channels: i32, data: f32[] }
+
+pub struct Wave { duration: i32, peaks: f64[] }
+
+pub struct Edit { first: i32, last: i32, markers: i32[], match_volume: boolean }
+
+function limits(): pcm.Limits {
+  return pcm.Limits { max_input_bytes: 48000000, max_samples: 12000000 };
+}
+
+function read_audio(audio: api.LocalAudio): Result[Samples, string] {
+  let Ok(info) = stat(audio.path) else {
+    return Err("Could not open this audio file.");
+  };
+  let cap = limits();
+  if (info.size < 1i64 || info.size > cap.max_input_bytes as i64) {
+    return Err("This file is too large for the audio editor.");
+  }
+  let Ok(data) = read_file_bytes(audio.path) else {
+    return Err("Could not read this audio file.");
+  };
+  if (data.take(4) == "RIFF".bytes()) {
+    let decoded = wav.decode_float(data, cap).map_err((error: pcm.AudioError): string => error.message())?;
+    return Ok(Samples { rate: decoded.sample_rate, channels: decoded.channels, data: decoded.samples.map((value: f64): f32 => value as f32) });
+  }
+  if (data.drop(4).take(4) == "ftyp".bytes()) {
+    let decoded = mp4.decode(data, mp4.Limits { ...mp4.default_limits(), audio: cap }).map_err((error: pcm.AudioError): string => error.message())?;
+    return Ok(Samples { rate: decoded.sample_rate, channels: decoded.channels, data: decoded.samples });
+  }
+  if (audio.mime == "audio/mpeg" || audio.path.to_lower().ends_with(".mp3")) {
+    let decoded = mp3.decode(data, cap).map_err((error: pcm.AudioError): string => error.message())?;
+    return Ok(Samples { rate: decoded.sample_rate, channels: decoded.channels, data: decoded.samples });
+  }
+  return Err("Use a WAV, MP3, or AAC recording in the audio editor.");
+}
+
+pub function analyze(audio: api.LocalAudio): Result[Wave, string] {
+  let audio = read_audio(audio)?;
+  if (audio.channels < 1 || audio.rate < 1 || audio.data.len() == 0) {
+    return Err("This file has no audio samples.");
+  }
+  let bins = 48;
+  let peaks: f64[] = [];
+  for index in 0..bins {
+    let first = (index as i64 * (audio.data.len() as i64) / (bins as i64)) as i32;
+    let last = ((index + 1) as i64 * (audio.data.len() as i64) / (bins as i64)) as i32;
+    let peak = 0.0;
+    for i in first..last {
+      peak = peak.max((audio.data[i] as f64).abs());
+    }
+    peaks = peaks.append(peak.min(1.0));
+  }
+  let duration = (audio.data.len() as i64 / (audio.channels as i64) * 1000i64 / (audio.rate as i64)) as i32;
+  return Ok(Wave { duration: duration, peaks: peaks });
+}
+
+function gain_for(input: f32[], first: i32, last: i32): f64 {
+  let energy = 0.0;
+  let peak = 0.0;
+  for i in first..last {
+    let value = input[i] as f64;
+    energy += value * value;
+    peak = peak.max(value.abs());
+  }
+  let rms = (energy / ((last - first) as f64)).sqrt();
+  if (rms < 0.0001) {
+    return 1.0;
+  }
+  return (0.1 / rms).min(4.0).min(0.95 / peak);
+}
+
+function segment(audio: Samples, first: i32, last: i32, match_volume: boolean): Result[u8[], string] {
+  let start = ((first as i64 * (audio.rate as i64) / 1000i64) as i32 * audio.channels).min(audio.data.len());
+  let end = ((last as i64 * (audio.rate as i64) / 1000i64) as i32 * audio.channels).min(audio.data.len());
+  if (end <= start) {
+    return Err("Leave some audio between chapter markers.");
+  }
+  let gain = if (match_volume) { gain_for(audio.data, start, end) } else { 1.0 };
+  let samples: i32[] = [];
+  for i in start..end {
+    let value = (audio.data[i] as f64 * gain * 32768.0).round().max(-32768.0).min(32767.0);
+    samples = samples.append(value as i32);
+  }
+  let format = pcm.Format { sample_rate: audio.rate, channels: audio.channels, bits_per_sample: 16 };
+  return wav.encode(samples, format, limits()).map_err((error: pcm.AudioError): string => error.message());
+}
+
+pub function discard(parts: api.LocalAudio[]): void {
+  for part in parts {
+    if (part.recording) {
+      let removed = remove_file(part.path);
+    }
+  }
+}
+
+pub function render(source: api.LocalAudio, title: string, dir: string, edit: Edit): Result[api.LocalAudio[], string] {
+  if (dir.len() == 0) {
+    return Err("Audio editor storage is unavailable.");
+  }
+  let audio = read_audio(source)?;
+  let duration = (audio.data.len() as i64 / (audio.channels as i64) * 1000i64 / (audio.rate as i64)) as i32;
+  if (edit.first < 0 || edit.last > duration || edit.last <= edit.first) {
+    return Err("Choose a start and end inside the audio file.");
+  }
+  let marks = cmp.sort_by(edit.markers.filter((time: i32): boolean => time > edit.first && time < edit.last), (a: i32, b: i32): i32 => a - b);
+  let bounds = [edit.first].concat(marks).append(edit.last);
+  let clip: api.LocalAudio[] = [];
+  for i in 0..bounds.len() - 1 {
+    let out = segment(audio, bounds[i], bounds[i + 1], edit.match_volume);
+    let Ok(bytes) = out else {
+      discard(clip);
+      return Err("Could not render the selected audio. Check the trim and markers.");
+    };
+    let path = dir + "/story-edit-" + base64.encode_url(rand.bytes(12)) + ".wav";
+    if (write_file_bytes(path, bytes).is_err()) {
+      let removed = remove_file(path);
+      discard(clip);
+      return Err("Could not save the edited audio.");
+    }
+    let name = if (bounds.len() == 2) { title } else { title + " · " + (i + 1).to_string() };
+    clip = clip.append(api.LocalAudio { path: path, title: name, mime: "audio/wav", recording: true });
+  }
+  return Ok(clip);
+}
