@@ -728,7 +728,11 @@ function shows_art(s: sim.Sim[deck.Model, deck.Msg], address: string): boolean {
 }
 
 function artwork_simulator(own model: deck.Model): sim.Sim[deck.Model, deck.Msg] {
-  let real = deck.program((address: string): boolean => false, (data: u8[], limit: i32): Option[draw.Image] => Some(draw.Image { width: 1, height: 1, pixels: data }), (saved: Option[api.Session]): boolean => true, no_audio(), no_downloads(), (state: listening.Saved): boolean => true);
+  return artwork_sim_with(model, (data: u8[], limit: i32): Option[draw.Image] => Some(draw.Image { width: 1, height: 1, pixels: data }));
+}
+
+function artwork_sim_with(own model: deck.Model, decode: (u8[], i32) => Option[draw.Image]): sim.Sim[deck.Model, deck.Msg] {
+  let real = deck.program((address: string): boolean => false, decode, (saved: Option[api.Session]): boolean => true, no_audio(), no_downloads(), (state: listening.Saved): boolean => true);
   let dry = ui.program(deck.view, deck.update).with_theme_of(real.theme).with_visible(deck.visible_posters).with_effects(real.effects);
   return sim.start(model, dry, test_fonts(), 720, 1600, 2.0);
 }
@@ -766,6 +770,68 @@ function test_track_artwork(): test.TestOutcome {
   let revision = playing.shell.app.generation;
   playing = sim.send(playing, deck.CoverLoaded(revision, art, [175u8, 157u8, 250u8, 255u8]));
   return test.assert_eq(shows_art(playing, art) && sim.shows(playing, "Paused · Fox at dusk"), true);
+}
+
+function artwork_width(s: sim.Sim[deck.Model, deck.Msg], address: string): i32 {
+  for node in s.shell.host.lay.nodes {
+    if let scene.Picture(key, _, _) = node.paint {
+      if (key == address) {
+        return node.w;
+      }
+    }
+  }
+  return 0;
+}
+
+function resolution_fixture(data: u8[], limit: i32): Option[draw.Image] {
+  if (data.len() == 0) {
+    return None;
+  }
+  let side = data[0] as i32;
+  let pixels: u8[] = [];
+  for i in 0..side * side {
+    let red = if (i % side < side / 2) { 255u8 } else { 0u8 };
+    pixels = pixels.append(red).append(0u8).append(255u8 - red).append(255u8);
+  }
+  return Some(draw.Image { width: side, height: side, pixels: pixels });
+}
+
+function test_playback_artwork_resolution(): test.TestOutcome {
+  let card = fixture_cards()[0];
+  let first = card.tracks[0];
+  let cover = card.cover;
+  let icon = first.art;
+  let track = api.Stream { title: first.title, chapter: first.chapter_key, key: first.track_key, url: "https://example.com/fox.mp3", art: icon };
+  let phone = phone.State { ...phone.empty(), card: card.id, title: card.title, phase: phone.Paused, queue: [track] };
+  let m = deck.with_index(deck.Model { ...deck.start(), tab: 3, on_phone: true, now_open: true, phone: phone }, "", [card]);
+  let requested = deck.update(m, deck.Tick);
+  if (requested.cover_active != cover) {
+    return test.fail("request the large card cover from the full player");
+  }
+  let s = artwork_sim_with(requested, resolution_fixture);
+  let generation = s.shell.app.generation;
+  s = sim.send(s, deck.CoverLoaded(generation, cover, [224u8]));
+  s = sim.send(s, deck.CoverLoaded(generation, icon, [16u8]));
+  if (artwork_width(s, cover) <= 300 || artwork_width(s, icon) != 88) {
+    return test.fail("show the card cover at full size and keep the player icon small");
+  }
+  let crisp = false;
+  for node in s.shell.host.lay.nodes {
+    if let scene.Picture(key, img, _) = node.paint {
+      if (key == icon && img.width == 128) {
+        crisp = img.pixel(63, 0) == draw.rgba(255, 0, 0, 255) && img.pixel(64, 0) == draw.rgba(0, 0, 255, 255);
+      }
+    }
+  }
+  if (!crisp) {
+    return test.fail("preserve pixel edges in small player icons");
+  }
+  s = sim.send(s, deck.CoverLoaded(generation, cover, []));
+  if (artwork_width(s, cover) != 0 || artwork_width(s, icon) != 88) {
+    return test.fail("keep a lone player icon small if the card has no available cover");
+  }
+  s = sim.send(s, deck.CoverLoaded(generation, icon, [224u8]));
+  return test.assert_eq(artwork_width(s, icon) > 300, true);
 }
 
 function test_launcher_icon(): test.TestOutcome {
@@ -1451,6 +1517,7 @@ function main(): i32 {
   r = r.it("check trip files, restore a bookmark, and advance the queue with a sleep timer", test_playback_tools);
   r = r.it("find the exact chapter or track with search filters", test_search_scope);
   r = r.it("use chapter and track icons in search, track lists, and phone playback", test_track_artwork);
+  r = r.it("use sharp artwork at full size and keep player icons small", test_playback_artwork_resolution);
   r = r.it("draw the Story Deck launcher icon", test_launcher_icon);
   r = r.it("filter the library by collection and family group", test_library_collections);
   r = r.it("show account actions only in the menu", test_account_menu);
