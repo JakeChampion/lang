@@ -1,6 +1,7 @@
 import "std/audio/source";
 import "std/audio/vorbisfile/file";
 import "std/audio/vorbisfile/seek";
+import "std/audio/wire";
 import "std/bench";
 import "std/i32";
 import "std/string";
@@ -26,9 +27,11 @@ function peak_rss(): i32 {
 // Supply the same immutable file to each trial.
 function main(): i32 {
   let argv = args();
-  if (argv.len() != 2) {
+  if (argv.len() != 2 && argv.len() != 3) {
     return 1;
   }
+  let capture = argv.len() == 3;
+  let pcm: u8[] = [];
   let allocs = bench.alloc_count();
   let fresh = bench.bump_bytes();
   let started = monotonic_ns();
@@ -54,6 +57,11 @@ function main(): i32 {
       seek.Samples(audio) => {
         frames += audio.frames as i64;
         samples += audio.samples.len() as i64;
+        if (capture) {
+          for value in audio.samples {
+            pcm = wire.put_le(pcm, (f32_bits(value) as u32) as u64, 4);
+          }
+        }
         for value in audio.samples {
           checksum = (checksum ^ f32_bits(value) as u32) * 16777619u32;
         }
@@ -71,6 +79,9 @@ function main(): i32 {
   let allocations = bench.allocs_after(allocs);
   let bytes = bench.fresh_bytes_after(fresh);
   let peak = peak_rss();
+  if (capture && write_file_bytes(argv[2], pcm).is_err()) {
+    return 6;
+  }
   print("native_peak_rss_kb=" + peak.to_string());
   print("frames=" + frames.to_string());
   print("samples=" + samples.to_string());

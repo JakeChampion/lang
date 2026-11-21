@@ -4,6 +4,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import platform
 import re
 import struct
@@ -26,6 +27,22 @@ def measure(command, expected_frames, pcm_bytes):
     if metrics["frames"] != expected_frames or metrics["samples"] * 4 != pcm_bytes:
         raise ValueError(f"incomplete playback for {command}")
     return metrics
+
+
+def qualify_pcm(name, actual, golden):
+    if len(actual) != len(golden):
+        raise ValueError(f"incomplete PCM capture for {name}")
+    checksum = 2166136261
+    maximum = 0.0
+    for index, ((sample,), (reference,), (bits,)) in enumerate(zip(
+            struct.iter_unpack("<f", actual), struct.iter_unpack("<f", golden),
+            struct.iter_unpack("<I", actual))):
+        error = abs(sample - reference)
+        if not math.isfinite(error) or error > 1e-6:
+            raise ValueError(f"PCM differs for {name} at sample {index}: {sample} vs {reference}")
+        maximum = max(maximum, error)
+        checksum = ((checksum ^ bits) * 16777619) & 0xffffffff
+    return checksum, maximum
 
 
 def main():
@@ -59,6 +76,10 @@ def main():
                 stream.write_bytes(unpack(encoded))
                 expected_frames = sum(row[2] for row in struct.iter_unpack("<III", unpack(formats)))
                 golden = unpack(pcm)
+                capture = Path(directory) / "fern.f32"
+                capture.unlink(missing_ok=True)
+                measure([exe, stream, capture], expected_frames, len(golden))
+                verified_checksum, maximum = qualify_pcm(name, capture.read_bytes(), golden)
                 trials = []
                 references = []
                 # Match the callback and initial position used to generate the frozen PCM.
@@ -77,12 +98,13 @@ def main():
                         commands.reverse()
                     for results, command in commands:
                         metrics = measure(command, expected_frames, len(golden))
-                        if results and metrics["checksum"] != results[0]["checksum"]:
-                            raise ValueError(f"inconsistent PCM for {name}")
+                        if results is trials and metrics["checksum"] != verified_checksum:
+                            raise ValueError(f"timed PCM differs from verified playback for {name}")
                         if results is references and metrics["checksum"] != golden_checksum:
                             raise ValueError(f"reference PCM differs from frozen samples for {name}")
                         results.append(metrics)
-                entry = {"sha256": hashlib.sha256(stream.read_bytes()).hexdigest(), "trials": trials}
+                entry = {"sha256": hashlib.sha256(stream.read_bytes()).hexdigest(), "trials": trials,
+                         "verified_samples": len(golden) // 4, "max_pcm_error": maximum}
                 if args.reference:
                     entry["reference_mode"] = mode
                     entry["reference_trials"] = references

@@ -28,3 +28,9 @@ A native x86-64 comparison used the same optimized compiler and playback driver 
 The seven seek fixtures now have reference timings as well as Fern timings. For six files, libvorbisfile opens the seekable input and calls `ov_pcm_seek(0)` before reading. For the interleaved file, it opens with stream-only callbacks. These modes reproduce the PCM used to generate the fixtures. They also affect the timed workload, so each result records the reference mode.
 
 On x86-64 Linux, all 245 libvorbisfile trials across 35 files reproduced the frozen PCM checksum. All 245 Fern trials produced the expected frame and sample counts. The benchmark now fails if a reference trial disagrees with its frozen checksum. The separate Reader suite checks Fern's individual float samples with a tolerance of 1e-6. [Complete measurements](all-reference-modes-x86-64.json.gz)
+
+## Verifying the timed Fern decoder
+
+Before timing each fixture, the benchmark runs the same Fern executable once with a PCM output file. It compares every float against the frozen libvorbisfile samples with an absolute tolerance of 1e-6, rejects nonfinite differences, and records the largest error. Each timed Fern trial must reproduce the checksum of that verified output. PCM capture runs separately so writing the file does not enter the timing or memory measurements.
+
+Across all 35 fixtures, native x86-64 Linux and the ARM64 Android executable under QEMU each reproduced 254,516 samples with a maximum absolute error of 1.79e-7. Three native timing trials per fixture reproduced the verified checksums. The empty logical stream produced zero samples.
