@@ -101,7 +101,7 @@ function test_checked_axis_views(): test.TestOutcome {
     return test.fail("slice boundaries");
   }
   let empty = ndarray.from_flat([] as i32[], [0, 65536, 65536]);
-  if (empty.try_permute([1, 2, 0]).is_some()) {
+  if (empty.try_transpose().is_some() || empty.try_permute([1, 2, 0]).is_some()) {
     return test.fail("permuted shape overflows before its zero axis");
   }
   let Some(moved) = empty.try_permute([1, 0, 2]) else {
@@ -115,7 +115,9 @@ function test_checked_axis_views(): test.TestOutcome {
 }
 
 function test_transpose_swaps_indices(): test.TestOutcome {
-  let t = grid().transpose();
+  let Some(t) = grid().try_transpose() else {
+    return test.fail("valid transpose");
+  };
   if (t.shape()[0] != 4 || t.shape()[1] != 3) {
     return test.fail("shape");
   }
