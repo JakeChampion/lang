@@ -732,7 +732,7 @@ Unsupported constructs refuse the whole function with a reason.
   release: the front end inserts `defer __resource_drop_R(h)` after each
   owned local that is not moved, when `R` carries an `@import` WIT binding,
   with the `[resource-drop]` import it calls
-  (`parser.lower_defers_prepass_module`), so both lowerings see an ordinary
+  (`resourcedrops.lower_defers_prepass_module`), so both lowerings see an ordinary
   extern call. An owned local is spelled `own R` or bare `R`; both are
   dropped. An owned parameter is not dropped there. A resource named like
   another resource, a struct or an enum (built-in ones included, and a union
