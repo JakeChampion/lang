@@ -12,13 +12,14 @@ ROOT = Path(__file__).resolve().parent.parent
 MP2 = runpy.run_path(str(ROOT / "scripts/gen-mp2-vectors.py"))
 
 
-def frame(version, rate_index, mode, ext, seq, dense=False):
+def frame(version, rate_index, mode, ext, seq, dense=False, bitrate_index=14):
     protected = seq != 1
     rate = [44100, 48000, 32000][rate_index] // version
-    bitrate = 448 if version == 1 else 256
+    bitrate = (32 * bitrate_index if version == 1 else
+               [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256][bitrate_index])
     padding = seq % 2
     header = bytes([255, (254 if version == 1 else 246) | (not protected),
-                    224 | (rate_index << 2) | (padding << 1),
+                    (bitrate_index << 4) | (rate_index << 2) | (padding << 1),
                     (mode << 6) | (ext << 4) | [0, 1, 3][seq]])
     fields = []
 
@@ -77,8 +78,13 @@ def main():
         streams.extend([(*case, (True,) * 3) for case in [(1, 0, 3, 0), (1, 1, 0, 0), (2, 0, 1, 0)]])
         # The middle frame disables bands whose scratch held prior synthesis results.
         streams.append((1, 2, 1, 1, (True, False, True)))
-        for version, rate, mode, ext, density in streams:
-            data = b"".join(frame(version, rate, mode, ext, seq, dense) for seq, dense in enumerate(density))
+        streams = [(*stream, (14, 14, 14)) for stream in streams]
+        # Keep synthesis history while bitrate, padding, protection and frame length change.
+        streams.extend([(1, 0, 3, 0, (False,) * 3, (3, 5, 4)),
+                        (2, 1, 0, 0, (False,) * 3, (6, 9, 7))])
+        for version, rate, mode, ext, density, bitrates in streams:
+            data = b"".join(frame(version, rate, mode, ext, seq, dense, bitrates[seq])
+                            for seq, dense in enumerate(density))
             stream = work / "input.mp1"
             stream.write_bytes(data)
             pcm = work / "out.pcm"
