@@ -26,6 +26,8 @@ function main(): i32 {
 
 ```fern
 <<*>>=
+// Byte readers and writers return their updated state after each successful operation.
+
 import "std/io_buffered" as buffered;
 import "std/stream";
 
