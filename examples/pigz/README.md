@@ -155,6 +155,28 @@ other jobs do not wait for the slowest one.
 On macOS and on wasm32-wasi, `std/worker` runs the workers inline
 (#15584).
 
+## Canterbury and Silesia round trips
+
+On x86-64 Linux, Fern and pigz 2.8 produced these gzip sizes with four
+workers. GNU gzip and pigz both decoded Fern's output to the original
+SHA-256 digest at every level. Fern also decoded pigz's output at all
+three levels and GNU gzip's level-1 output.
+
+| Corpus | Input bytes | Level 1 bytes | Level 6 bytes | Level 9 bytes |
+| --- | ---: | ---: | ---: | ---: |
+| Canterbury (11 files) | 2,810,784 | 864,968 | 732,519 | 729,274 |
+| Silesia (12 files) | 211,938,580 | 77,189,411 | 68,247,770 | 67,666,924 |
+
+To reproduce, concatenate the regular files of each tar archive in
+lexicographic member-name order, without the tar headers. Run each
+compressor with `-nc -p 4` and the indicated level, reading the joined
+input from stdin. The joined Canterbury input has SHA-256
+`0737d6c25a3337923a1429471546118448f07133e55c8f43fadde7984384982c`.
+The joined Silesia input has SHA-256
+`8df8cf2a9456a3765834b7cd8b7c1114df9dca708dd505e4d37bc12e536395b0`.
+[Canterbury archive](https://corpus.canterbury.ac.nz/resources/cantrbry.tar.gz) ·
+[Silesia archive](https://github.com/DataCompression/corpus-collection/tree/main/Silesia-Corpus)
+
 ## Speed
 
 A file of 108 MB: 80 MB of the Markdown, Go and Fern sources of this

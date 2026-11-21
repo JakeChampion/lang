@@ -117,7 +117,7 @@ function readn(rd: Reader, n: i32, path: string): Result[u8[], gz.Fail] {
         if (chunk.len() == 0) {
           return Ok(out);
         }
-        out = out.concat(chunk);
+        out = if (out.len() == 0) { chunk } else { out.concat(chunk) };
       },
       Err(e) => {
         return Err(fatal("read", path, e));
@@ -266,7 +266,7 @@ struct JobOut {
 
 // The next job of the feed. A read that fails ends the feed, and the job
 // before it does not start, as a read error stops a compression.
-function take(own f: Feed, rd: Reader, size: i32, path: string): Taken {
+function take(own f: Feed, rd: Reader, size: i32, setdict: boolean, path: string): Taken {
   let cur = f.next;
   let next: u8[] = [];
   let failed = f.failed;
@@ -279,14 +279,18 @@ function take(own f: Feed, rd: Reader, size: i32, path: string): Taken {
     }
   }
   let more = next.len() > 0;
-  let dict = if (cur.len() >= layout.DICT) { array.slice(cur, cur.len() - layout.DICT, cur.len()) } else { last_dict(f.dict.concat(cur)) };
+  let dict: u8[] = [];
+  if (more && setdict) {
+    if (cur.len() >= layout.DICT) {
+      dict = array.slice(cur, cur.len() - layout.DICT, cur.len());
+    } else {
+      let keep = layout.DICT - cur.len();
+      let start = if (f.dict.len() > keep) { f.dict.len() - keep } else { 0 };
+      dict = array.slice(f.dict, start, f.dict.len()).concat(cur);
+    }
+  }
   let feed = Feed { next: next, dict: dict, ended: !more || failed.is_some(), failed: failed };
   return Taken { feed: feed, dict: f.dict, cur: cur, more: more };
-}
-
-function last_dict(data: u8[]): u8[] {
-  let from = if (data.len() > layout.DICT) { data.len() - layout.DICT } else { 0 };
-  return array.slice(data, from, data.len());
 }
 
 // A worker compresses the job and takes the check of its input, so the
@@ -295,7 +299,10 @@ function start_job(s: layout.Settings, zlib: boolean, t: Taken): worker.Worker[J
   let dict = t.dict;
   let cur = t.cur;
   let more = t.more;
-  return worker.spawn((): JobOut => JobOut { bytes: layout.blocks(s, dict.concat(cur), dict.len(), more), len: cur.len(), check: chunk_check(zlib, cur) });
+  return worker.spawn((): JobOut => {
+    let input = if (dict.len() == 0) { cur } else { dict.concat(cur) };
+    return JobOut { bytes: layout.blocks(s, input, dict.len(), more), len: cur.len(), check: chunk_check(zlib, cur) };
+  });
 }
 
 function drain(own jobs: worker.Worker[JobOut][]): void {
@@ -318,7 +325,7 @@ function parallel_to(s: layout.Settings, procs: i32, rd: Reader, w: Writer, path
   let failed: Option[gz.Fail] = None;
   let queue: worker.Worker[JobOut][] = [];
   while (!feed.ended && queue.len() < procs) {
-    let t = take(feed, rd, size, path);
+    let t = take(feed, rd, size, s.setdict, path);
     feed = t.feed;
     if (feed.failed.is_none()) {
       queue = queue.append(start_job(s, c0.zlib, t));
@@ -336,7 +343,7 @@ function parallel_to(s: layout.Settings, procs: i32, rd: Reader, w: Writer, path
         clen += out.bytes.len() as i64;
       }
       if (!feed.ended && failed.is_none()) {
-        let t = take(feed, rd, size, path);
+        let t = take(feed, rd, size, s.setdict, path);
         feed = t.feed;
         if (feed.failed.is_none()) {
           later = later.append(start_job(s, c0.zlib, t));
