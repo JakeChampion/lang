@@ -6,6 +6,8 @@ This module parses URLs and query strings and converts percent escapes.
 
 URL helpers separate references, paths, query fields, and percent escapes. Form conversion also applies the form-specific rule for a plus sign.
 
+The string method `is_url_like` recognizes an HTTP or HTTPS prefix followed by text containing a dot.
+
 ## Contracts
 
 Decoders that return bytes preserve arbitrary decoded bytes. Reference resolution requires a base URL and can fail for invalid input.
@@ -17,6 +19,7 @@ import "std/url";
 
 function main(): i32 {
   if (url.encode("a b") != "a%20b" || url.form_decode("a+b") != "a b") { return 1; }
+  if (!"https://example.org".is_url_like() || "example.org".is_url_like()) { return 2; }
   return 0;
 }
 ```
@@ -30,6 +33,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<module introduction>>
 
 <<dependencies 2>>
+
+<<url shape predicate>>
 
 <<3 function __url_unreserved(b: i32): boolean>>
 
@@ -71,6 +76,7 @@ import "core/cmp";
 import "core/map";
 import "core/error";
 import "std/utf8" as utf8;
+import "std/string";
 ```
 
 ### `3 function __url_unreserved(b: i32): boolean`
@@ -904,5 +910,25 @@ pub function query_encode(pairs: (string, string)[]): string {
   unsafe {
     return string_from_bytes_unchecked(buf);
   }
+}
+```
+
+### is_url_like
+
+```fern
+<<url shape predicate>>=
+pub function (s: string) is_url_like(): boolean {
+  let rest = "";
+  if (s.starts_with("https://")) {
+    rest = s.remove_prefix("https://");
+  } else if (s.starts_with("http://")) {
+    rest = s.remove_prefix("http://");
+  } else {
+    return false;
+  }
+  if (rest.len() == 0) {
+    return false;
+  }
+  return rest.contains(".");
 }
 ```

@@ -6129,6 +6129,8 @@ function main(): i32 {
 
 func TestArm64StdlibBundle25(t *testing.T) {
 	src := `
+import "std/json";
+import "std/url";
 import "std/string";
 function main(): i32 {
     // is_url_like
@@ -7005,6 +7007,7 @@ function main(): i32 {
 
 func TestArm64StdlibBundle8(t *testing.T) {
 	src := `
+import "std/http";
 import "std/i32";
 function main(): i32 {
     // Saturating add / sub — clamp at MAX / MIN
