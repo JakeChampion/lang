@@ -47,7 +47,7 @@ function main(): i32 {
   while (true) {
     let (next, event) = match (file.step(reader, state, limits)) {
       Ok(value) => value,
-      Err(_) => { let _ = reader.close(); return 4; }
+      Err(_) => { let _ = reader.close(); return 4; },
     };
     state = next;
     match (event) {
@@ -59,7 +59,9 @@ function main(): i32 {
         }
       },
       seek.Pending => {},
-      seek.Finished => { break; }
+      seek.Finished => {
+        break;
+      }
     }
   }
   if (reader.close().is_err()) {
