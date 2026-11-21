@@ -16,6 +16,16 @@ The prior and candidate diagnostic executables used the same free-format stereo 
 
 The eleven MP3 and shared Layer II suites passed x86-64 Linux sanitizers, WASI execution, and emulated ARM64 Linux with zero live bytes. All eleven built as Android ARM64 libraries. A stereo–mono–stereo regression compares all 960 history entries and all output sample bits with the original granule helper. The self-host interpreter passed the free-format smoke suite.
 
+## Native ARM64 verification
+
+The native Ubuntu ARM64 runner compared the prior and candidate libraries at three sample rates. Each of nine alternating trials decoded the same input 100 times. The frame and whole-file outputs matched scalar minimp3 bit for bit and stayed within the SIMD tolerance of 0.00002. The table uses medians of the indexed-input frame trials. Peak RSS is the process high-water mark. [Trial logs](https://github.com/JakeChampion/lang/actions/runs/44865163778/job/136727103458)
+
+| Sample rate and channels | Allocations per stream, prior / new | Wall ms per stream, prior / new | Scalar / SIMD ms per stream | Peak KiB, prior / new |
+| --- | ---: | ---: | ---: | ---: |
+| 48 kHz, stereo | 2,959 / 2,701 | 5.485 / 5.529 | 1.119 / 0.711 | 300 / 324 |
+| 24 kHz, mono | 1,187 / 1,187 | 1.607 / 1.599 | 0.440 / 0.242 | 268 / 272 |
+| 8 kHz, mono | 661 / 661 | 0.752 / 0.749 | 0.176 / 0.104 | 268 / 272 |
+
 ## Reproduce
 
 Use the compiler and prior stdlib from the same checkout before changing the decoder. Set `prior` to that checkout and `headers` to the directory containing the two pinned minimp3 headers. Run each sample-rate/channel pair from the table. The producer checks both header hashes before building the C references.
