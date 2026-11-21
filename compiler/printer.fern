@@ -3619,13 +3619,14 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
     idxs = idxs.append(ii);
     lines = lines.append(mod.imports[ii].line);
   }
-  let enum_names: Map[string, boolean] = map_new(mod.enums.len());
+  let names: string[] = [];
   for ed in mod.enums {
-    enum_names = enum_names.insert(ed.name, true);
+    names = names.append(ed.name);
   }
+  let enum_names = util.name_index(names);
   for i in 0..mod.structs.len() {
     let owner = mod.structs[i].enum_owner;
-    if (owner.len() == 0 || !enum_names.contains(owner)) {
+    if (owner.len() == 0 || !enum_names.has(owner)) {
       kinds = kinds.append(0);
       idxs = idxs.append(i);
       lines = lines.append(mod.structs[i].line);
