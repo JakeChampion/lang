@@ -1081,12 +1081,17 @@ These results preserve exact scalar-reference PCM and do not establish world-lea
 
 ## Remaining codec work
 
-The codec stack now includes complete Opus decode, Ogg demux, and MP3/FLAC seek indexes.
-Further MP3 work includes damaged-stream synchronization and more tag formats.
-AAC work includes HE-AAC/SBR/PS, protected ADTS verification, and program configurations.
-MP4/M4A work includes fragmented media and further codecs.
-Vorbis, further encoders, and other lossless formats need independent reference vectors and benchmarks.
-Android qualification still needs physical-device memory, power, thermal, and sustained-playback measurements.
+Each line names the issue that owns the work.
+
+- MPEG Layers I and II: MPEG-2.5 and free-format Layer II, source readers, and seek indexes ([#14689](https://github.com/JakeChampion/lang/issues/14689)).
+- MP3: damaged-stream synchronization and more tag formats. No issue owns this work.
+- AAC: HE-AAC/SBR/PS, protected ADTS verification, coupling-channel elements, program configurations, and 960-sample frames ([#14517](https://github.com/JakeChampion/lang/issues/14517)).
+- MP4/M4A: fragmented media and further codecs ([#14518](https://github.com/JakeChampion/lang/issues/14518)).
+- ALAC: edited presentation reads from a Reader and compressed stereo with 33 predictor bits ([#14685](https://github.com/JakeChampion/lang/issues/14685)).
+- Encoders: MP3, AAC, and Vorbis have no encoder, and the Opus encoder is partial ([#14688](https://github.com/JakeChampion/lang/issues/14688)).
+- Conformance: independent corpora and malformed-stream qualification for each decoder ([#14520](https://github.com/JakeChampion/lang/issues/14520)).
+- Performance: reference baselines ([#14515](https://github.com/JakeChampion/lang/issues/14515)) and the measured CPU and allocation gaps ([#14516](https://github.com/JakeChampion/lang/issues/14516), [#16437](https://github.com/JakeChampion/lang/issues/16437)).
+- Android: the playback and measurement harness, with physical-device memory, power, thermal, and sustained-playback measurements ([#14514](https://github.com/JakeChampion/lang/issues/14514)).
 
 Additional formats need their own reference vectors and benchmarks before the support matrix changes.
 No metadata inspector or unsupported-format placeholder counts as a codec implementation.
