@@ -871,8 +871,8 @@ jobs:
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
   # Each checker corpus has parallel subtests. A shard worker limits one to a
-  # single CPU. The stdlib tests exceeded 28 minutes that way on ARM64 in run
-  # 40325134038, and the examples did on x86-64 in run 44995899840.
+  # single CPU. The stdlib corpus exceeded 28 minutes that way on ARM64 in run
+  # 40325134038, and the examples corpus did on x86-64 in run 45004245911.
   checker-stdlib:
     needs: [driver-sizes]
     name: checker-stdlib-${{ matrix.host }}-${{ matrix.shard }}
@@ -894,7 +894,7 @@ jobs:
         with:
           slot: checker-stdlib-${{ matrix.host }}-${{ matrix.shard }}
       - uses: ./.github/actions/build-e2e-binaries
-      - name: compare every stdlib test with the Go checker
+      - name: compare every stdlib test and every example with the Go checker
         run: |
           set -euo pipefail
           chmod +x e2ecompiler.test
@@ -902,11 +902,6 @@ jobs:
           cd internal/testing/e2ecompiler
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostCheckAgreesWithGoOnStdlibTests$' -test.parallel 4 -test.v -test.timeout 28m
-      - name: compare every example with the Go checker
-        run: |
-          set -euo pipefail
-          BIN="$PWD/e2ecompiler.test"
-          cd internal/testing/e2ecompiler
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostCheckAgreesWithGoOnExamples$' -test.parallel 4 -test.v -test.timeout 28m
       - name: name the failed tests as annotations

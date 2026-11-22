@@ -77,7 +77,6 @@ struct Shelf {
   filter: i32,
   group: string,
   groups: api.Group[],
-  groups_open: boolean,
   groups_note: string,
   by_title: boolean,
   pinned: boolean,
@@ -94,7 +93,7 @@ struct Shelf {
   search_keys: string[],
   sections: i32[],
   personal: string,
-  personal_open: boolean,
+  filters_open: boolean,
   opened: string,
   first_art: i32,
   last_art: i32,
@@ -243,8 +242,13 @@ pub struct Model {
   offline_open: string,
   tab: i32,
   tab_history: i32[],
-  menu_open: boolean,
   note: string,
+  // The text of the last note that tells of a fault.
+  fault: string,
+  // The action that waits for a second tap, or "".
+  confirm: string,
+  // When to send the volume of the slider to the player, or 0.
+  volume_due: i64,
   library_loaded: boolean,
   cache_dir: string,
   cache_available: boolean,
@@ -279,7 +283,6 @@ pub enum Msg {
   ToggleCompact,
   PlaybackTarget,
   CloseTarget,
-  TogglePersonal,
   UsePersonal(string),
   EditPersonal(string),
   ShowProfiles,
@@ -294,7 +297,7 @@ pub enum Msg {
   TestTrip(string),
   RepairTripCard(string, i32),
   Filter(i32),
-  ToggleGroups,
+  ToggleFilters,
   EditGroup(string),
   GroupName(string),
   GroupQuery(string),
@@ -324,7 +327,6 @@ pub enum Msg {
   RetrySignIn,
   LibraryLoaded(Result[api.Library, api.Failure]),
   CommandSent(i64, Result[void, api.Failure]),
-  ToggleMenu,
   OpenTools(panel_tools.Page),
   CloseTools,
   EnableEditing,
@@ -476,8 +478,8 @@ pub enum Msg {
 
 function empty_shelf(): Shelf {
   return Shelf {
-    hits: [], query: "", filter: 0, group: "", groups: [], groups_open: false, groups_note: "", by_title: false, pinned: false, downloaded_only: false, search_scope: search.ALL, search_revision: 0i64, search_serial: 0i64, search_due: 0i64, search_busy: false,
-    search_at: 0, search_matches: [], search_cache: map_new(8), background_search: false, search_keys: [], sections: [], personal: "", personal_open: false, opened: "", first_art: 0, last_art: 0, next: 0, paused: "", attempted: map_new(64), note: "", covers: map_new(48), cover_order: [], received: None,
+    hits: [], query: "", filter: 0, group: "", groups: [], groups_note: "", by_title: false, pinned: false, downloaded_only: false, search_scope: search.ALL, search_revision: 0i64, search_serial: 0i64, search_due: 0i64, search_busy: false,
+    search_at: 0, search_matches: [], search_cache: map_new(8), background_search: false, search_keys: [], sections: [], personal: "", filters_open: false, opened: "", first_art: 0, last_art: 0, next: 0, paused: "", attempted: map_new(64), note: "", covers: map_new(48), cover_order: [], received: None,
   };
 }
 
@@ -491,7 +493,7 @@ function tools(saved: listening.Saved): PlaybackTools {
 
 pub function start(): Model {
   let downloads = offline.empty(offline.Catalog { dir: "", entries: [], cleanup: [], note: "" });
-  return Model { client: "", token: "", refresh: "", reconnect: false, auth: [], storage: None, session_note: "", load_after_auth: false, players: [], cards: [], shelf: empty_shelf(), generation: 0i64, background_busy: false, cover_busy: false, cover_active: "", cover_stop: -1, cover_pipe: (): (i32, i32) => (-1, -1), art_dir: "", warmed: map_new(64), trip_select: false, trip_cards: map_new(32), selected: "", on_phone: false, phone: phone.empty(), playback_tools: tools(listening.empty()), travel_panel: travel_panel(), now_playing: NowPlaying { revision: 0i64, requested: false, due: 0i64, running: false, playback: None, note: "" }, now_open: false, expanded_art: None, target_open: false, tools_page: panel_tools.empty(), audio_revision: 0i64, audio_editor: None, editing_group: None, device_status: None, device_note: "", volume: 50, config_panel: panel(0i64), downloads: downloads, offline_open: "", tab: 0, tab_history: [], menu_open: false, note: "", library_loaded: false, cache_dir: "", cache_available: false, changed_index: 0i64, stored_index: 0i64, index_saving: false, wifi: false, retry_download_at: 0i64, wifi_requeue: "", parent: closed_gate(), shortcut: "", launch_action: "", transfer_from: "", transfer_revision: 0i64, transfer_target: "", transfer_note: "", enrich_downloads: false, busy: false, open_login: false, flow: None, job: None };
+  return Model { client: "", token: "", refresh: "", reconnect: false, auth: [], storage: None, session_note: "", load_after_auth: false, players: [], cards: [], shelf: empty_shelf(), generation: 0i64, background_busy: false, cover_busy: false, cover_active: "", cover_stop: -1, cover_pipe: (): (i32, i32) => (-1, -1), art_dir: "", warmed: map_new(64), trip_select: false, trip_cards: map_new(32), selected: "", on_phone: false, phone: phone.empty(), playback_tools: tools(listening.empty()), travel_panel: travel_panel(), now_playing: NowPlaying { revision: 0i64, requested: false, due: 0i64, running: false, playback: None, note: "" }, now_open: false, expanded_art: None, target_open: false, tools_page: panel_tools.empty(), audio_revision: 0i64, audio_editor: None, editing_group: None, device_status: None, device_note: "", volume: 50, config_panel: panel(0i64), downloads: downloads, offline_open: "", tab: 0, tab_history: [], note: "", fault: "", confirm: "", volume_due: 0i64, library_loaded: false, cache_dir: "", cache_available: false, changed_index: 0i64, stored_index: 0i64, index_saving: false, wifi: false, retry_download_at: 0i64, wifi_requeue: "", parent: closed_gate(), shortcut: "", launch_action: "", transfer_from: "", transfer_revision: 0i64, transfer_target: "", transfer_note: "", enrich_downloads: false, busy: false, open_login: false, flow: None, job: None };
 }
 
 function signed_out(m: Model, note: string): Model {
@@ -588,11 +590,11 @@ function accept_auth(m: Model, result: Result[api.Tokens, api.Failure]): Model {
     Err(err) => {
       if (err.expired) {
         return found(Model {
-          ...m, token: "", refresh: "", busy: false, note: err.message, storage: Some(ClearAuth),
+          ...m, token: "", refresh: "", busy: false, note: err.message, fault: err.message, storage: Some(ClearAuth),
           selected: "", cards: offline.saved_cards(m.downloads), library_loaded: false, tab: 0, tab_history: [], cache_available: false,
         });
       }
-      return Model { ...m, busy: false, note: err.message };
+      return Model { ...m, busy: false, note: err.message, fault: err.message };
     }
   }
 }
@@ -753,7 +755,7 @@ function changed_groups(m: Model, groups: api.Group[], selected: string): Model 
 
 function group_problem(m: Model, message: string): Model {
   if let Some(edit) = m.editing_group {
-    return Model { ...m, editing_group: Some(GroupEdit { ...edit, busy: false, confirm: false, note: message }) };
+    return Model { ...m, fault: message, editing_group: Some(GroupEdit { ...edit, busy: false, confirm: false, note: message }) };
   }
   return m;
 }
@@ -1436,7 +1438,7 @@ function failed(own m: Model, err: api.Failure): Model {
     }
     return Model { ...m, token: "", busy: false, note: "Yoto could not restore access to your library. Try again." };
   }
-  return Model { ...m, busy: false, note: err.message };
+  return Model { ...m, busy: false, note: err.message, fault: err.message };
 }
 
 function reload(own m: Model): Model {
@@ -1732,7 +1734,7 @@ function prime_lineup(m: Model, line: listening.Lineup): Model {
 function kids_mode(m: Model, saved: listening.Saved): Model {
   let audio = if (listening.favourite(saved, m.phone.card)) { m.phone } else { phone.stop(m.phone) };
   let ready = set_saved(m, listening.Saved { ...saved, kids: true });
-  return Model { ...ready, phone: audio, parent: closed_gate(), menu_open: false };
+  return Model { ...ready, phone: audio, parent: closed_gate() };
 }
 
 function parent_result(m: Model, key: string, accepted: boolean): Model {
@@ -1900,7 +1902,7 @@ function shortcut_result(own m: Model, revision: i64, result: Result[api.Card, a
       return Model { ...m, config_panel: state };
     },
     Err(err) => {
-      return Model { ...m, config_panel: ConfigPanel { ...state, note: err.message } };
+      return Model { ...m, fault: err.message, config_panel: ConfigPanel { ...state, note: err.message } };
     }
   }
 }
@@ -1920,13 +1922,23 @@ function back_from_picker(m: Model): Model {
   return Model { ...m, config_panel: ConfigPanel { ...p, picker: picker, working: false, note: "" } };
 }
 
+const CONFIRM_SIGN_OUT: string = "sign-out";
+
+// The time that the volume slider must rest before the player gets its
+// volume.
+const VOLUME_WAIT_NS: i64 = 400000000i64;
+
+function remove_key(id: string): string {
+  return "download:" + id;
+}
+
 function switch_tab(m: Model, tab: i32, history: i32[]): Model {
-  return Model { ...m, tab: tab, tab_history: history, menu_open: false, shelf: Shelf { ...m.shelf, first_art: 0, last_art: 0 } };
+  return Model { ...m, tab: tab, tab_history: history, confirm: "", shelf: Shelf { ...m.shelf, first_art: 0, last_art: 0 } };
 }
 
 function select_tab(m: Model, tab: i32): Model {
   if (tab == m.tab) {
-    return Model { ...m, menu_open: false };
+    return m;
   }
   let history = m.tab_history.filter((item: i32): boolean => item != tab).append(m.tab);
   return switch_tab(m, tab, history);
@@ -1953,9 +1965,6 @@ function library_request(m: Model, msg: Msg): Model {
     CloseTarget => {
       return Model { ...m, target_open: false };
     },
-    TogglePersonal => {
-      return Model { ...m, shelf: Shelf { ...m.shelf, personal_open: !m.shelf.personal_open } };
-    },
     UsePersonal(name) => {
       return use_personal(m, name);
     },
@@ -1964,7 +1973,7 @@ function library_request(m: Model, msg: Msg): Model {
     },
     ShowProfiles => {
       let tools = m.playback_tools;
-      return Model { ...m, menu_open: false, playback_tools: PlaybackTools { ...tools, profile_open: !tools.profile_open, profile_name: "" } };
+      return Model { ...m, playback_tools: PlaybackTools { ...tools, profile_open: !tools.profile_open, profile_name: "" } };
     },
     ProfileName(name) => {
       return Model { ...m, playback_tools: PlaybackTools { ...m.playback_tools, profile_name: name } };
@@ -2124,7 +2133,7 @@ function update_travel(own m: Model, msg: Msg): Model {
   let saved = m.playback_tools.saved;
   match (msg) {
     OpenTravel(page) => {
-      let next = travel_note(Model { ...m, menu_open: false, travel_panel: TravelPanel { ...panel, page: Some(page), choice: 0, storage_confirm: "", query: "", tap_to_play: if let NfcTags = page { true } else { panel.tap_to_play } } }, "");
+      let next = travel_note(Model { ...m, travel_panel: TravelPanel { ...panel, page: Some(page), choice: 0, storage_confirm: "", query: "", tap_to_play: if let NfcTags = page { true } else { panel.tap_to_play } } }, "");
       if let StorageBudget = page {
         return queue_check(next, downloaded_items(next));
       }
@@ -2397,6 +2406,9 @@ pub function update(own m: Model, msg: Msg): Model {
       if (m.load_after_auth) {
         return reload(Model { ...m, load_after_auth: false });
       }
+      if (m.volume_due > 0i64 && now >= m.volume_due && !m.busy) {
+        return control(Model { ...m, volume_due: 0i64 }, api.Volume(m.volume));
+      }
       if (!m.shelf.search_busy && m.shelf.search_due > 0i64 && now >= m.shelf.search_due) {
         let shelf = m.shelf;
         let job = if (shelf.search_at >= m.cards.len()) {
@@ -2430,7 +2442,7 @@ pub function update(own m: Model, msg: Msg): Model {
       }
       return prepare_background(m);
     },
-    Search(_) | SearchChunk(_, _, _) | SearchReady(_, _) | ToggleCompact | PlaybackTarget | CloseTarget | TogglePersonal | UsePersonal(_) | EditPersonal(_) | ShowProfiles | ProfileName(_) | SwitchProfile(_) | SaveProfile => {
+    Search(_) | SearchChunk(_, _, _) | SearchReady(_, _) | ToggleCompact | PlaybackTarget | CloseTarget | UsePersonal(_) | EditPersonal(_) | ShowProfiles | ProfileName(_) | SwitchProfile(_) | SaveProfile => {
       return library_request(m, msg);
     },
     ToggleWifiOnly | HoldDownload(_) | ContinueDownload(_) | FirstDownload(_) | OpenTripDashboard(_) | RepairTripCard(_, _) | TestTrip(_) => {
@@ -2439,8 +2451,8 @@ pub function update(own m: Model, msg: Msg): Model {
     Filter(filter) => {
       return found(Model { ...m, shelf: reset_grid(Shelf { ...m.shelf, filter: filter }) });
     },
-    ToggleGroups => {
-      return Model { ...m, shelf: Shelf { ...m.shelf, groups_open: !m.shelf.groups_open } };
+    ToggleFilters => {
+      return Model { ...m, shelf: Shelf { ...m.shelf, filters_open: !m.shelf.filters_open } };
     },
     EditGroup(id) => {
       return open_group(m, id);
@@ -2547,7 +2559,7 @@ pub function update(own m: Model, msg: Msg): Model {
       return Model { ...m, shelf: Shelf { ...m.shelf, first_art: first, last_art: last, pinned: pinned } };
     },
     OpenCard(id) => {
-      return Model { ...m, menu_open: false, shelf: Shelf { ...m.shelf, opened: id, first_art: 0, last_art: 0 } };
+      return Model { ...m, shelf: Shelf { ...m.shelf, opened: id, first_art: 0, last_art: 0 } };
     },
     CloseCard => {
       return Model { ...m, shelf: Shelf { ...m.shelf, opened: "", first_art: 0, last_art: 0 } };
@@ -2626,13 +2638,10 @@ pub function update(own m: Model, msg: Msg): Model {
         }
       }
     },
-    ToggleMenu => {
-      return Model { ...m, menu_open: !m.menu_open };
-    },
     OpenTools(page) => {
       let state = m.tools_page;
       let tool = if (state.busy) { state } else { panel_tools.open_page(state, page) };
-      return Model { ...m, tools_page: tool, menu_open: false };
+      return Model { ...m, tools_page: tool };
     },
     CloseTools => {
       return tools_update(m, panel_tools.back(m.tools_page));
@@ -2676,7 +2685,7 @@ pub function update(own m: Model, msg: Msg): Model {
         return next;
       }
       if let Err(err) = result {
-        return tools_update(m, panel_tools.State { ...tool, busy: false, note: err.message });
+        return tools_update(Model { ...m, fault: err.message }, panel_tools.State { ...tool, busy: false, note: err.message });
       }
       return m;
     },
@@ -2724,7 +2733,7 @@ pub function update(own m: Model, msg: Msg): Model {
           return tools_update(m, panel_tools.State { ...tool, shop: items });
         },
         Err(err) => {
-          return tools_update(m, panel_tools.State { ...tool, show_shop: false, note: err.message });
+          return tools_update(Model { ...m, fault: err.message }, panel_tools.State { ...tool, show_shop: false, note: err.message });
         }
       }
     },
@@ -2753,7 +2762,7 @@ pub function update(own m: Model, msg: Msg): Model {
         return tools_update(m, panel_tools.State { ...tool, draft: draft, busy: false, note: "" });
       }
       if let Err(err) = result {
-        return tools_update(m, panel_tools.State { ...tool, busy: false, note: err.message });
+        return tools_update(Model { ...m, fault: err.message }, panel_tools.State { ...tool, busy: false, note: err.message });
       }
       return m;
     },
@@ -2768,7 +2777,7 @@ pub function update(own m: Model, msg: Msg): Model {
         return reload(Model { ...m, tools_page: panel_tools.State { ...tool, draft: api.empty_playlist(), busy: false, note: "Saved " + title + "." } });
       }
       if let Err(err) = result {
-        return tools_update(m, panel_tools.State { ...tool, busy: false, note: err.message });
+        return tools_update(Model { ...m, fault: err.message }, panel_tools.State { ...tool, busy: false, note: err.message });
       }
       return m;
     },
@@ -2842,15 +2851,18 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     Refresh => {
       if (!m.busy && m.token.len() > 0) {
-        return reload(Model { ...m, menu_open: false, warmed: map_new(64) });
+        return reload(Model { ...m, warmed: map_new(64) });
       }
       return m;
     },
     SignOut => {
-      if (!m.busy) {
-        return forget(Model { ...m, menu_open: false }, "");
+      if (m.busy) {
+        return m;
       }
-      return m;
+      if (m.confirm != CONFIRM_SIGN_OUT) {
+        return Model { ...m, confirm: CONFIRM_SIGN_OUT };
+      }
+      return forget(Model { ...m, confirm: "" }, "");
     },
     SelectPlayer(id) => {
       let state = if (m.on_phone) { phone.stop(m.phone) } else { m.phone };
@@ -3009,11 +3021,14 @@ pub function update(own m: Model, msg: Msg): Model {
       return Model { ...m, downloads: offline.resume(m.downloads) };
     },
     RemoveDownload(id) => {
+      if (m.confirm != remove_key(id)) {
+        return Model { ...m, confirm: remove_key(id) };
+      }
       let state = m.phone;
       if (state.card == id && state.at < state.queue.len() && state.queue[state.at].url.starts_with("file://")) {
         state = phone.stop(state);
       }
-      return Model { ...m, downloads: offline.remove(m.downloads, id), phone: state, offline_open: "" };
+      return Model { ...m, downloads: offline.remove(m.downloads, id), phone: state, offline_open: "", confirm: "" };
     },
     OpenDownload(id) => {
       return Model { ...m, offline_open: id, shelf: Shelf { ...m.shelf, first_art: 0, last_art: 0 } };
@@ -3138,7 +3153,7 @@ pub function update(own m: Model, msg: Msg): Model {
     EnterKids => {
       let saved = m.playback_tools.saved;
       if (saved.parent_key.len() == 0 || saved.kids) {
-        return Model { ...m, parent: ParentGate { ...closed_gate(), open: true }, menu_open: false };
+        return Model { ...m, parent: ParentGate { ...closed_gate(), open: true } };
       }
       return kids_mode(m, saved);
     },
@@ -3212,7 +3227,7 @@ pub function update(own m: Model, msg: Msg): Model {
         return Model { ...m, transfer_note: "" };
       }
       if let Err(err) = result {
-        return Model { ...m, transfer_note: err.message };
+        return Model { ...m, transfer_note: err.message, fault: err.message };
       }
       if (to_player) {
         return request_playback(Model { ...m, selected: id, on_phone: false, phone: phone.stop(m.phone), transfer_note: "" });
@@ -3308,12 +3323,12 @@ pub function update(own m: Model, msg: Msg): Model {
           return Model { ...m, device_status: Some(status), volume: if (status.volume >= 0) { status.volume } else { m.volume }, device_note: "" };
         },
         Err(err) => {
-          return Model { ...m, device_note: err.message };
+          return Model { ...m, device_note: err.message, fault: err.message };
         }
       }
     },
     DeviceVolume(volume) => {
-      return Model { ...m, volume: volume.max(0).min(100) };
+      return Model { ...m, volume: volume.max(0).min(100), volume_due: monotonic_ns() + VOLUME_WAIT_NS };
     },
     PhoneResume => {
       if let phone.Idle = m.phone.phase {
@@ -3546,11 +3561,54 @@ function ready_downloads(s: offline.State): i32 {
   return s.catalog.entries.filter((entry: offline.Entry): boolean => entry.ready).len();
 }
 
+// A note of the app. A note that tells of a fault has the color of an
+// error.
+function notice(m: Model, note: string): ui.El[Msg] {
+  return ui.text[Msg](note).colored(if (note == m.fault) { ui.ERROR } else { ui.MUTED });
+}
+
+// Buttons side by side. The buttons that do not fit go on the next line.
+function actions_row(buttons: ui.El[Msg][]): ui.El[Msg] {
+  return ui.row(buttons).spaced(4.0).aligned(ui.CENTER).wrapped().wide();
+}
+
+function heading(title: string): ui.El[Msg] {
+  return ui.text[Msg](title).sized(18.0).weighted(650);
+}
+
+// The bar at the top of a tab, with the name of the tab.
+function title_bar(title: string, actions: ui.El[Msg][]): ui.El[Msg] {
+  let name = ui.text[Msg](title).sized(24.0).weighted(700).fitted().wide();
+  return ui.row([name].concat(actions)).aligned(ui.CENTER).spaced(4.0).height(56.0).wide();
+}
+
+// A screen over the tabs: a bar with a back arrow, then `rows`. The rows
+// scroll as the list `name`, or do not scroll when `name` is "".
+function page(title: string, back: Msg, actions: ui.El[Msg][], rows: ui.El[Msg][], name: string): ui.El[Msg] {
+  let body = ui.column(rows).spaced(12.0).padding_xy(16.0, 8.0).wide().tall();
+  if (name.len() > 0) {
+    body = body.scroll(name);
+  }
+  let bar = ui.app_bar(title, Some(back), actions);
+  if (actions.len() > 0) {
+    bar = ui.row([bar, ui.box[Msg]().width(8.0)]).wide();
+  }
+  return ui.column([bar, body]).wide().tall();
+}
+
+function sign_out_label(m: Model): string {
+  return if (m.confirm == CONFIRM_SIGN_OUT) { "Confirm sign out" } else { "Sign out" };
+}
+
+function remove_label(m: Model, id: string, label: string): string {
+  return if (m.confirm == remove_key(id)) { "Confirm removal" } else { label };
+}
+
 function sign_in(m: Model): ui.El[Msg] {
   if (m.refresh.len() > 0) {
-    let actions: ui.El[Msg][] = [ui.text(m.note).colored(ui.MUTED)];
+    let actions: ui.El[Msg][] = [notice(m, m.note)];
     if (!m.busy && !m.reconnect) {
-      actions = actions.append(ui.button("Try again", RetrySignIn)).append(ui.text_button("Sign out", SignOut));
+      actions = actions.append(actions_row([ui.button("Try again", RetrySignIn), ui.text_button(sign_out_label(m), SignOut)]));
     }
     return ui.card(actions).spaced(12.0).wide();
   }
@@ -3559,15 +3617,16 @@ function sign_in(m: Model): ui.El[Msg] {
     ui.text("Connect your account to see your players and library.").sized(20.0).weighted(600),
   ];
   if (!m.busy) {
-    items = items.append(ui.text("Public client ID").weighted(500));
-    items = items.append(ui.field("client", m.client, "Yoto developer client ID").on_edit((text: string): Msg => EditClient(text)).on_submit(Msg.Connect));
+    items = items.append(ui.text("Yoto client ID").weighted(500));
+    items = items.append(ui.text("Story Deck signs in with your own Yoto developer client. Paste the client ID from the Yoto developer dashboard.").colored(ui.MUTED));
+    items = items.append(ui.field("client", m.client, "Client ID").on_edit((text: string): Msg => EditClient(text)).on_submit(Msg.Connect));
     items = items.append(ui.button("Connect to Yoto", Msg.Connect));
   }
   if (m.flow.is_some()) {
     items = items.append(ui.outlined_button("Cancel sign-in", Cancel));
   }
   if (m.note.len() > 0) {
-    items = items.append(ui.text(m.note).colored(ui.MUTED));
+    items = items.append(notice(m, m.note));
   }
   return ui.card(items).spaced(14.0).wide();
 }
@@ -3595,7 +3654,7 @@ function player_row(player: api.Player, active: boolean): ui.El[Msg] {
 function playing_info(m: Model): ui.El[Msg][] {
   let now = m.now_playing;
   if (now.note.len() > 0) {
-    return [ui.text(now.note).colored(ui.MUTED)];
+    return [notice(m, now.note)];
   }
   let Some(playback) = now.playback else {
     return [];
@@ -3622,12 +3681,42 @@ function playing_info(m: Model): ui.El[Msg][] {
   let details = ui.column(items).spaced(4.0).wide();
   let address = player_art(m, playback);
   if (address.len() > 0) {
-    return [ui.card([ui.row([art(m.shelf, address, 52.0), details]).aligned(ui.CENTER).spaced(12.0)]).wide()];
+    return [ui.row([art(m.shelf, address, 52.0), details]).aligned(ui.CENTER).spaced(12.0)];
   }
-  return [ui.card([details]).wide()];
+  return [details];
+}
+
+// What the selected player plays, with its controls, below the list of
+// the players.
+function player_controls(m: Model): ui.El[Msg][] {
+  if (m.on_phone || m.selected.len() == 0) {
+    return [];
+  }
+  let buttons: ui.El[Msg][] = [];
+  if (can_control(m)) {
+    let state = m.now_playing.playback.map((p: player_status.Playback): string => p.state).unwrap_or("");
+    if (state != "paused") {
+      buttons = buttons.append(ui.text_button("Pause", Control(api.Pause)));
+    }
+    if (state != "playing") {
+      buttons = buttons.append(ui.text_button("Resume", Control(api.Resume)));
+    }
+    buttons = buttons.append(ui.text_button("Stop", Control(api.Stop)));
+  }
+  buttons = buttons.append(ui.outlined_button("Now playing", OpenNowPlaying));
+  return [ui.card(playing_info(m).append(actions_row(buttons))).spaced(8.0).wide()];
 }
 
 function player_list(m: Model): ui.El[Msg] {
+  let label = if (m.on_phone) { "This phone, selected" } else { "This phone" };
+  let names: ui.El[Msg][] = [ui.text("This phone").sized(17.0).weighted(600)];
+  if (m.on_phone) {
+    names = names.append(ui.text("Selected").colored(ui.MUTED));
+  }
+  let handset = ui.card(names).spaced(4.0).wide().on_tap(SelectPhone).described(label);
+  if (m.on_phone) {
+    handset = handset.border(ui.PRIMARY, 1.0);
+  }
   let picker = ui.space[Msg]();
   if (m.players.len() > 0) {
     let players = m.players;
@@ -3636,26 +3725,7 @@ function player_list(m: Model): ui.El[Msg] {
   } else if (m.library_loaded) {
     picker = ui.text[Msg]("No players linked to this account.").colored(ui.MUTED);
   }
-  let label = if (m.on_phone) { "This phone, selected" } else { "This phone" };
-  let handset = ui.card[Msg]([ui.text("This phone").sized(17.0).weighted(600)]).wide().on_tap(SelectPhone).described(label);
-  if (m.on_phone) {
-    handset = handset.border(ui.PRIMARY, 1.0);
-  }
-  let items: ui.El[Msg][] = [ui.text[Msg]("Your players").sized(23.0).weighted(700), handset];
-  if (!m.on_phone) {
-    items = items.concat(playing_info(m));
-  }
-  if (m.selected.len() > 0 || m.on_phone) {
-    items = items.append(ui.outlined_button("Now playing and player status", OpenNowPlaying));
-  }
-  if (!m.on_phone && can_control(m)) {
-    items = items.append(ui.row([
-      ui.text_button("Pause", Control(api.Pause)),
-      ui.text_button("Resume", Control(api.Resume)),
-      ui.text_button("Stop", Control(api.Stop)),
-    ]).spaced(4.0));
-  }
-  return ui.column(items.append(picker)).spaced(10.0).wide().tall();
+  return ui.column([handset, picker].concat(player_controls(m))).spaced(10.0).wide().tall();
 }
 
 function settings_card_picker(m: Model, heading: string): ui.El[Msg] {
@@ -3663,15 +3733,13 @@ function settings_card_picker(m: Model, heading: string): ui.El[Msg] {
   let terms = query.trim().to_lower().to_owned();
   let cards = m.cards.filter((card: api.Card): boolean => card.search.contains(terms));
   let inputs: ui.El[Msg][] = [
-    ui.text_button("Back", BackToSettings),
-    ui.text[Msg](heading).sized(24.0).weighted(700),
     ui.field[Msg]("settings-card-search", query, "Search your library").on_edit((text: string): Msg => FilterSettingCards(text)),
     ui.list("settings-cards:" + heading + ":" + query, cards.len(), 60.0, (at: i32): ui.El[Msg] => {
       let card = cards[at];
       return ui.row([ui.text[Msg](card.title).clamped(2).wide()]).padding_xy(12.0, 8.0).wide().on_tap(PickSettingCard(card.id)).described(card.title);
     }),
   ];
-  return ui.column(inputs).spaced(10.0).padding(16.0).wide().tall();
+  return page(heading, BackToSettings, [], inputs, "");
 }
 
 function setting_choices(m: Model, key: string): ui.El[Msg] {
@@ -3680,7 +3748,7 @@ function setting_choices(m: Model, key: string): ui.El[Msg] {
   if let Some(config) = p.config {
     current = settings.setting_value(config, p.draft, key);
   }
-  let rows: ui.El[Msg][] = [ui.text_button("Back to settings", BackToSettings), ui.text[Msg](settings.label(key)).sized(24.0).weighted(700)];
+  let rows: ui.El[Msg][] = [];
   for item in settings.choices(key) {
     let action = ChooseSettingValue(item.value);
     let row = ui.card([ui.row([ui.radio(current == item.value, item.label, action), ui.text[Msg](item.label).wide()]).aligned(ui.CENTER)]).wide().on_tap(action).described(item.label);
@@ -3689,16 +3757,16 @@ function setting_choices(m: Model, key: string): ui.El[Msg] {
   if (settings.is_shortcut(key)) {
     rows = rows.append(ui.outlined_button("Choose from library", ChooseShortcutLibrary));
   }
-  return ui.column(rows).spaced(10.0).padding(16.0).wide().tall().scroll("setting-choices:" + key);
+  return page(settings.label(key), BackToSettings, [], rows, "setting-choices:" + key);
 }
 
 function shortcut_tracks(m: Model, id: string): ui.El[Msg] {
   let p = m.config_panel;
-  let rows: ui.El[Msg][] = [ui.text_button("Back to cards", BackToSettings)];
+  let rows: ui.El[Msg][] = [];
   let index = card_index(m, id);
   if (index >= 0) {
     let card = m.cards[index];
-    rows = rows.append(ui.text[Msg](card.title).sized(24.0).weighted(700).clamped(2));
+    rows = rows.append(ui.text[Msg](card.title).sized(20.0).weighted(700).clamped(2));
     let tracks: i32[] = [];
     for i in 0..card.tracks.len() {
       if (settings.shortcut_track(card.tracks[i])) {
@@ -3719,12 +3787,12 @@ function shortcut_tracks(m: Model, id: string): ui.El[Msg] {
     } else if (p.working) {
       rows = rows.append(ui.text[Msg]("Loading tracks…").colored(ui.MUTED));
     } else if (p.note.len() > 0) {
-      rows = rows.append(ui.text[Msg](p.note).colored(ui.MUTED)).append(ui.text_button("Try again", PickSettingCard(id)));
+      rows = rows.append(notice(m, p.note)).append(ui.text_button("Try again", PickSettingCard(id)));
     } else {
       rows = rows.append(ui.text[Msg]("Yoto did not provide tracks for a shortcut on this card.").colored(ui.MUTED));
     }
   }
-  return ui.column(rows).spaced(10.0).padding(16.0).wide().tall();
+  return page("Shortcut start", BackToSettings, [], rows, "");
 }
 
 function alarm_card_title(m: Model, id: string): string {
@@ -3741,7 +3809,7 @@ function alarm_controls(m: Model, config: api.PlayerConfig): ui.El[Msg][] {
   let Some(alarms) = settings.alarms(config, d) else {
     return [];
   };
-  let rows: ui.El[Msg][] = [ui.text[Msg]("Alarms").sized(18.0).weighted(650)];
+  let rows: ui.El[Msg][] = [heading("Alarms")];
   for i in 0..alarms.len() {
     let name = "Alarm " + (i + 1).to_string();
     let controls: ui.El[Msg][] = [];
@@ -3762,10 +3830,13 @@ function alarm_controls(m: Model, config: api.PlayerConfig): ui.El[Msg][] {
     let choose = if (card.len() > 0) { card } else { "Choose a card" };
     rows = rows.concat([
       ui.text[Msg]("New alarm").weighted(600),
-      ui.field[Msg]("alarm-time", d.get("alarm-time").unwrap_or("07:00"), "Alarm time (HH:MM)").on_edit((value: string): Msg => EditSetting("alarm-time", value)),
-      ui.field[Msg]("alarm-volume", d.get("alarm-volume").unwrap_or("5"), "Volume (0–8)").on_edit((value: string): Msg => EditSetting("alarm-volume", value)),
+      ui.text[Msg]("Time, as hours and minutes (07:00)").colored(ui.MUTED),
+      ui.field[Msg]("alarm-time", d.get("alarm-time").unwrap_or("07:00"), "HH:MM").on_edit((value: string): Msg => EditSetting("alarm-time", value)),
+      settings.time_steps("Alarm time", d.get("alarm-time").unwrap_or("07:00"), (time: string): Msg => EditSetting("alarm-time", time)),
+      ui.text[Msg]("Volume, from 0 to 8").colored(ui.MUTED),
+      ui.field[Msg]("alarm-volume", d.get("alarm-volume").unwrap_or("5"), "0 to 8").on_edit((value: string): Msg => EditSetting("alarm-volume", value)),
       ui.tabs[Msg](["Every day", "Weekdays", "Weekend"], if (days == "1111100") { 1 } else if (days == "0000011") { 2 } else { 0 }, (at: i32): Msg => EditSetting("alarm-days", ["1111111", "1111100", "0000011"][at])),
-      ui.row([ui.text_button(choose, ChooseAlarmCard).wide(), ui.text_button("Add alarm", EditAlarm(settings.Add))]).spaced(6.0),
+      actions_row([ui.outlined_button(choose, ChooseAlarmCard), ui.button("Add alarm", EditAlarm(settings.Add))]),
     ]);
   }
   return [ui.card(rows).spaced(8.0).wide()];
@@ -3788,33 +3859,27 @@ function settings_panel(m: Model, player: api.Player, screen: ui.Screen): ui.El[
         return shortcut_tracks(m, id);
       },
       LightColour(key, colour) => {
-        let controls = [
-          ui.row([ui.text_button("Cancel", BackToSettings), ui.button("Use colour", UseLightColour)]).spaced(8.0),
-          ui.text[Msg](settings.label(key)).sized(24.0).weighted(700),
-        ].concat(light_colour.controls(colour, (colour: light_colour.Hsv): Msg => AdjustLightColour(colour), screen.d));
-        return ui.column(controls).spaced(8.0).padding(16.0).wide().tall().scroll("light-colour");
+        let controls = light_colour.controls(colour, (colour: light_colour.Hsv): Msg => AdjustLightColour(colour), screen.d);
+        return page(settings.label(key), BackToSettings, [ui.button("Use colour", UseLightColour)], controls, "light-colour");
       }
     }
   }
-  let actions = [ui.text_button("Back to players", CloseSettings)];
+  let actions: ui.El[Msg][] = [];
   if (!p.working && !m.busy && p.config.is_some() && p.draft.len() > 0) {
     actions = actions.append(ui.button("Save", SaveSettings));
   }
-  let items = [
-    ui.row(actions).aligned(ui.CENTER).spaced(8.0),
-    ui.text[Msg](player.name + " settings").sized(26.0).weighted(700).clamped(2),
-  ];
+  let items: ui.El[Msg][] = [];
   if (p.working) {
     let working = if (p.config.is_some()) { "Saving settings…" } else { "Loading settings…" };
     items = items.append(ui.text(working).colored(ui.MUTED));
   }
   if (m.note.len() > 0 && m.busy) {
-    items = items.append(ui.text(m.note).colored(ui.MUTED));
+    items = items.append(notice(m, m.note));
   }
   if (p.note.len() > 0) {
-    items = items.append(ui.text(p.note).colored(ui.MUTED));
+    items = items.append(notice(m, p.note));
     if (p.note.starts_with("Yoto denied access") && !m.busy) {
-      items = items.append(ui.text("Enable player management for your public client, then reconnect.").colored(ui.MUTED));
+      items = items.append(ui.text("Enable player management for your Yoto client, then reconnect.").colored(ui.MUTED));
       items = items.append(ui.text_button("Reconnect", Msg.Connect));
     } else if (p.note.starts_with("Alarms changed") && !m.busy) {
       items = items.append(ui.text_button("Reload settings", OpenSettings(player)));
@@ -3829,13 +3894,13 @@ function settings_panel(m: Model, player: api.Player, screen: ui.Screen): ui.El[
   } else if (!p.working && !m.busy) {
     items = items.append(ui.text_button("Reload settings", OpenSettings(player)));
   }
-  return ui.column(items).spaced(10.0).padding(16.0).wide().tall();
+  return page(player.name + " settings", CloseSettings, actions, items, "");
 }
 
 function phone_controls(m: Model): ui.El[Msg][] {
   let s = m.phone;
   if (s.note.len() > 0) {
-    return [ui.text(s.note).colored(ui.MUTED)];
+    return [notice(m, s.note)];
   }
   if let phone.Idle = s.phase {
     return [];
@@ -3848,10 +3913,10 @@ function phone_controls(m: Model): ui.El[Msg][] {
   let buttons: ui.El[Msg][] = [];
   if let phone.Playing = s.phase {
     state = "Playing";
-    buttons = [ui.outlined_button("Pause", Control(api.Pause)).height(48.0)];
+    buttons = [ui.outlined_button("Pause", Control(api.Pause))];
   } else if let phone.Paused = s.phase {
     state = "Paused";
-    buttons = [ui.outlined_button("Resume", Control(api.Resume)).height(48.0)];
+    buttons = [ui.outlined_button("Resume", Control(api.Resume))];
   }
   let label = ui.text[Msg](state + " · " + title).clamped(2).wide();
   let address = phone_art(m);
@@ -3878,7 +3943,7 @@ function playback_bar(m: Model): ui.El[Msg][] {
   let title = if (label.len() > 0) { label } else { if (paused) { "Paused" } else { "Playing" } };
   return [ui.card([ui.row([
     ui.column([ui.text[Msg](title).wide().clamped(2).on_tap(OpenNowPlaying).described("Open now playing"), target_button(m)]).wide(),
-    ui.outlined_button(if (paused) { "Resume" } else { "Pause" }, Control(if (paused) { api.Resume } else { api.Pause })).height(48.0),
+    ui.outlined_button(if (paused) { "Resume" } else { "Pause" }, Control(if (paused) { api.Resume } else { api.Pause })),
   ]).spaced(8.0).aligned(ui.CENTER)]).wide()];
 }
 
@@ -3890,7 +3955,7 @@ function playback_time(ms: i64): string {
 function phone_now_playing(m: Model, screen: ui.Screen): ui.El[Msg][] {
   let s = m.phone;
   if (s.queue.len() == 0) {
-    return [ui.text[Msg](if (s.note.len() > 0) { s.note } else { "Choose a card to play on this phone." }).colored(ui.MUTED)];
+    return [notice(m, if (s.note.len() > 0) { s.note } else { "Choose a card to play on this phone." })];
   }
   let track = s.queue[s.at];
   let size = (screen.width() * 0.60).min(240.0);
@@ -3931,16 +3996,19 @@ function phone_now_playing(m: Model, screen: ui.Screen): ui.El[Msg][] {
     rows = rows.append(ui.text(playback_time(s.elapsed) + " / " + playback_time(duration)).colored(ui.MUTED));
   }
   let paused = match (s.phase) { phone.Paused => true, _ => false };
-  let play = ui.button(if (paused) { "Resume" } else { "Pause" }, PhoneControl(if (paused) { api.Resume } else { api.Pause }));
+  let play = ui.button(if (paused) { "Resume" } else { "Pause" }, PhoneControl(if (paused) { api.Resume } else { api.Pause })).height(56.0);
   rows = rows.append(ui.row([ui.text_button("Previous", PhonePrevious), play, ui.text_button("Next", PhoneNext)]).spaced(6.0).centered().wide());
-  rows = rows.append(ui.text_button("Stop", PhoneControl(api.Stop)));
+  let forward = PhoneSeek((s.elapsed + 30000i64).min(s.duration.max(s.elapsed)));
+  rows = rows.append(ui.row([ui.text_button("Back 15 s", PhoneRewind), ui.text_button("Forward 30 s", forward)]).spaced(6.0).centered().wide());
+  let more: ui.El[Msg][] = [ui.text_button("Stop", PhoneControl(api.Stop))];
   if (m.token.len() > 0 && s.card.len() > 0 && track.chapter.len() > 0 && track.key.len() > 0) {
     for player in m.players {
       if (player.online) {
-        rows = rows.append(ui.outlined_button("Continue on " + player.name, MoveToPlayer(player.id)));
+        more = more.append(ui.outlined_button("Continue on " + player.name, MoveToPlayer(player.id)));
       }
     }
   }
+  rows = rows.append(actions_row(more));
   let index = [75, 100, 125, 150, 200].position((rate: i32): boolean => rate == s.rate).unwrap_or(1);
   rows = rows.append(ui.text[Msg]("Playback speed").colored(ui.MUTED));
   return rows.append(ui.tabs(["0.75×", "1×", "1.25×", "1.5×", "2×"], index, (i: i32): Msg => PhoneRate([75, 100, 125, 150, 200][i])));
@@ -3974,54 +4042,64 @@ function device_transport(m: Model, state: player_status.Playback, play: ui.El[M
 }
 
 function device_controls(m: Model): ui.El[Msg][] {
-  let rows = playing_info(m);
-  if let Some(status) = m.device_status {
-    if (status.battery >= 0) {
-      rows = rows.append(ui.text("Battery " + status.battery.to_string() + "%").colored(ui.MUTED));
-    }
-    if (status.free_bytes >= 0i64) {
-      rows = rows.append(ui.text((status.free_bytes / 1048576i64).to_string() + " MB free on this player").colored(ui.MUTED));
-    }
-    if let Some(syncing) = status.syncing {
-      rows = rows.append(ui.text(if (syncing) { "Player downloads in progress" } else { "No player downloads in progress" }).colored(ui.MUTED));
-    }
-  }
+  let rows: ui.El[Msg][] = [];
   if (m.device_note.len() > 0) {
-    rows = rows.append(ui.text(m.device_note).colored(ui.MUTED));
+    rows = rows.append(notice(m, m.device_note));
   }
-  if (!can_control(m)) {
-    return rows;
+  let info = playing_info(m);
+  if (info.len() > 0) {
+    rows = rows.append(ui.card(info).wide());
   }
-  if let Some(state) = m.now_playing.playback {
-    let label = if (state.state == "paused") { "Resume" } else { "Pause" };
-    let action = if (state.state == "paused") { api.Resume } else { api.Pause };
-    rows = rows.concat(device_transport(m, state, ui.button(label, Control(action))));
-    rows = rows.append(ui.text_button("Stop", Control(api.Stop)));
-    if (state.position >= 0 && state.chapter_key.len() > 0 && state.track_key.len() > 0 && card_index(m, state.card) >= 0) {
-      rows = rows.append(ui.outlined_button("Continue on this phone", MoveToPhone));
+  if (can_control(m)) {
+    if let Some(state) = m.now_playing.playback {
+      let label = if (state.state == "paused") { "Resume" } else { "Pause" };
+      let action = if (state.state == "paused") { api.Resume } else { api.Pause };
+      rows = rows.concat(device_transport(m, state, ui.button(label, Control(action)).height(56.0)));
+      let more: ui.El[Msg][] = [ui.text_button("Stop", Control(api.Stop))];
+      if (state.position >= 0 && state.chapter_key.len() > 0 && state.track_key.len() > 0 && card_index(m, state.card) >= 0) {
+        more = more.append(ui.outlined_button("Continue on this phone", MoveToPhone));
+      }
+      rows = rows.append(actions_row(more));
+      if (state.sleep > 0) {
+        rows = rows.append(ui.text("Player timer · " + playback_time(state.sleep as i64 * 1000i64) + " left").colored(ui.MUTED));
+      }
     }
-    if (state.sleep > 0) {
-      rows = rows.append(ui.text("Player timer · " + playback_time(state.sleep as i64 * 1000i64) + " left").colored(ui.MUTED));
+    rows = rows.concat([
+      ui.text[Msg]("Volume " + m.volume.to_string() + "%").weighted(600),
+      ui.slider(m.volume as f64 / 100.0, (at: f64): Msg => DeviceVolume((at * 100.0).round() as i32)).described("Player volume"),
+      ui.text[Msg]("Player sleep timer").weighted(600),
+      actions_row([ui.text_button("15 min", Control(api.DeviceSleep(900))), ui.text_button("30 min", Control(api.DeviceSleep(1800))), ui.text_button("60 min", Control(api.DeviceSleep(3600))), ui.text_button("Off", Control(api.DeviceSleep(0)))]),
+    ]);
+  }
+  let status: string[] = [];
+  if let Some(report) = m.device_status {
+    if (report.battery >= 0) {
+      status = status.append("Battery " + report.battery.to_string() + "%");
+    }
+    if (report.free_bytes >= 0i64) {
+      status = status.append((report.free_bytes / 1048576i64).to_string() + " MB free");
+    }
+    if let Some(syncing) = report.syncing {
+      status = status.append(if (syncing) { "Player downloads in progress" } else { "No player downloads in progress" });
     }
   }
-  let volume = ui.slider(m.volume as f64 / 100.0, (at: f64): Msg => DeviceVolume((at * 100.0).round() as i32)).described("Player volume");
-  return rows.concat([
-    ui.row([ui.text[Msg]("Volume " + m.volume.to_string() + "%").wide(), ui.text_button("Apply", Control(api.Volume(m.volume)))]).aligned(ui.CENTER),
-    volume,
-    ui.text[Msg]("Player sleep timer").weighted(600),
-    ui.row([ui.text_button("15 min", Control(api.DeviceSleep(900))), ui.text_button("30 min", Control(api.DeviceSleep(1800))), ui.text_button("60 min", Control(api.DeviceSleep(3600))), ui.text_button("Off", Control(api.DeviceSleep(0)))]).wide(),
-    ui.text_button("Refresh player status", OpenNowPlaying),
-  ]);
+  if (status.len() > 0) {
+    rows = rows.append(ui.text[Msg](status.join(" · ")).colored(ui.MUTED));
+  }
+  if (can_control(m)) {
+    rows = rows.append(ui.text_button("Refresh player status", OpenNowPlaying));
+  }
+  return rows;
 }
 
 function now_playing_screen(m: Model, screen: ui.Screen): ui.El[Msg] {
   let heading = if (m.on_phone) { "Now playing" } else { selected(m).map((player: api.Player): string => player.name).unwrap_or("Now playing") };
   let controls = if (m.on_phone) { phone_now_playing(m, screen) } else { device_controls(m) };
-  let rows = [ui.text_button("Back", CloseNowPlaying), ui.text[Msg](heading).weighted(700).sized(26.0)];
+  let rows: ui.El[Msg][] = [];
   if (m.transfer_note.len() > 0) {
-    rows = rows.append(ui.text(m.transfer_note).colored(ui.MUTED));
+    rows = rows.append(notice(m, m.transfer_note));
   }
-  return ui.column(rows.concat(controls)).spaced(12.0).padding(16.0).wide().tall().scroll("now-playing");
+  return page(heading, CloseNowPlaying, [], rows.concat(controls), "now-playing");
 }
 
 function art(shelf: Shelf, address: string, size: f64): ui.El[Msg] {
@@ -4071,18 +4149,6 @@ function row_hits(shelf: Shelf, row: i32, cols: i32): (i32, i32, string) {
     start += count;
   }
   return (start, start, "");
-}
-
-function target_name(m: Model): string {
-  if (m.on_phone) {
-    return "This phone";
-  }
-  return selected(m).map((p: api.Player): string => p.name).unwrap_or("This phone");
-}
-
-function target_button(m: Model): ui.El[Msg] {
-  let name = target_name(m);
-  return ui.text_button(name, PlaybackTarget).described("Playback device · " + name);
 }
 
 function poster(m: Model, hit: search.Hit, size: f64, caption_height: f64): ui.El[Msg] {
@@ -4173,7 +4239,7 @@ function poster_grid(m: Model, screen: ui.Screen, before: ui.El[Msg], pinned: ui
     for j in first..last {
       tiles = tiles.append(poster(m, m.shelf.hits[j], size, caption));
     }
-    let row = ui.row(tiles).spaced(gap).wide();
+    let row = ui.row(tiles).spaced(gap).aligned(ui.STRETCH).wide();
     if (label.len() > 0) {
       return ui.column([ui.text[Msg](label).sized(17.0).weighted(700).height(heading).clamped(1), row]).wide();
     }
@@ -4199,45 +4265,50 @@ function track_row(shelf: Shelf, card: api.Card, track: api.Track, ready: boolea
 }
 
 function card_details(m: Model, card: api.Card, screen: ui.Screen): ui.El[Msg] {
-  let items: ui.El[Msg][] = [ui.text_button("Back to library", CloseCard)];
-  let (_, section) = api.download_selection(card.id);
-  if (section.len() == 0 && card.tracks.any((track: api.Track): boolean => track.chapter_key.len() > 0)) {
-    items = items.append(ui.text_button("Chapter downloads", OpenChapterDownloads(card.id)));
+  let names = [ui.text[Msg](card.title).sized(20.0).weighted(700).clamped(4)];
+  if (card.creator.len() > 0) {
+    names = names.append(ui.text(card.creator).colored(ui.MUTED).clamped(2));
   }
+  let size = (screen.width() * 0.3).min(screen.height() * 0.2).min(160.0);
+  let items: ui.El[Msg][] = [ui.row([art(m.shelf, card.cover, size), ui.column(names).spaced(4.0).wide()]).aligned(ui.CENTER).spaced(12.0)];
+  let main: ui.El[Msg][] = [];
+  if (can_play_card(m, card.id)) {
+    main = main.append(ui.button("Play", Control(api.Play(card.id))).described("Play " + card.title));
+    main = main.append(target_button(m));
+  }
+  main = main.append(ui.outlined_button("Play next", QueueCard(card.id)));
+  if (offline.saved(m.downloads, card.id).is_some()) {
+    main = main.append(ui.text_button("Saved offline", SelectTab(2)));
+  } else if (offline.contains(m.downloads, card.id)) {
+    main = main.append(ui.text[Msg]("Download queued").colored(ui.MUTED));
+  } else if (m.downloads.catalog.dir.len() > 0) {
+    main = main.append(ui.outlined_button("Download", Download(card.id)).described("Download to phone"));
+  }
+  items = items.append(actions_row(main));
   let liked = listening.favourite(m.playback_tools.saved, card.id);
-  items = items.append(ui.row([
+  let more = [
     ui.text_button(if (liked) { "Remove favourite" } else { "Add to favourites" }, ToggleFavourite(card.id)),
     ui.text_button("Pin to home screen", PinCard(card.id)),
-  ]).spaced(8.0));
+  ];
+  let (_, section) = api.download_selection(card.id);
+  if (section.len() == 0 && card.tracks.any((track: api.Track): boolean => track.chapter_key.len() > 0)) {
+    more = more.append(ui.text_button("Chapter downloads", OpenChapterDownloads(card.id)));
+  }
   if (card.myo && m.token.len() > 0) {
-    items = items.append(ui.text_button("Edit playlist", EditPlaylist(card.id)));
+    more = more.append(ui.text_button("Edit playlist", EditPlaylist(card.id)));
   }
-  let header = [ui.text[Msg](card.title).sized(22.0).weighted(700).clamped(3).wide()];
-  if (can_play_card(m, card.id)) {
-    let controls = [play_button(card.title, api.Play(card.id)), target_button(m)];
-    header = header.append(if (screen.font >= 1.4) { ui.column(controls).wide() } else { ui.row(controls).aligned(ui.CENTER).wide() });
-  }
-  header = header.append(ui.text_button("Play next", QueueCard(card.id)));
-  if (offline.saved(m.downloads, card.id).is_some()) {
-    header = header.append(ui.text_button("Saved offline", SelectTab(2)));
-  } else if (offline.contains(m.downloads, card.id)) {
-    header = header.append(ui.text[Msg]("Download queued").colored(ui.MUTED));
-  } else if (m.downloads.catalog.dir.len() > 0) {
-    header = header.append(ui.text_button("Download to phone", Download(card.id)));
-  }
-  let size = (screen.width() * 0.4).min(screen.height() * 0.23).min(180.0);
-  items = items.append(ui.row([art(m.shelf, card.cover, size), ui.column(header).spaced(4.0).wide()]).aligned(ui.CENTER).spaced(12.0));
+  items = items.append(actions_row(more));
   let count = card.tracks.len();
   if (count == 0) {
     let note = if (card.indexed) { "Yoto returned no tracks for this title." } else { "Track information is unavailable or still loading." };
-    return ui.column(items.append(ui.text(note).colored(ui.MUTED))).spaced(12.0).wide().tall();
+    return ui.column(items.append(ui.text(note).colored(ui.MUTED))).spaced(8.0).wide().tall();
   }
   let tracks = card.tracks;
   let ready = can_play_card(m, card.id);
   let id = card.id;
   let shelf = m.shelf;
   let list = ui.list("tracks:" + id, tracks.len(), 56.0, (i: i32): ui.El[Msg] => track_row(shelf, card, tracks[i], ready));
-  return ui.column(items.append(list)).spaced(12.0).wide().tall();
+  return ui.column(items.append(list)).spaced(8.0).wide().tall();
 }
 
 function download_row(m: Model, entry: offline.Entry): ui.El[Msg] {
@@ -4268,11 +4339,10 @@ function batch_downloads(m: Model): ui.El[Msg] {
   }
   let estimate = picked.len().to_string() + " selected · " + (seconds / 3600i64).to_string() + " h "
     + (seconds % 3600i64 / 60i64).to_string() + " min · " + (bytes / 1048576i64).to_string() + " MB";
-  let actions = [ui.text_button("Back to downloads", ChooseDownloads)];
+  let intro: ui.El[Msg][] = [ui.text(estimate).colored(ui.MUTED)];
   if (picked.len() > 0) {
-    actions = actions.append(ui.button("Download selected", DownloadSelected));
+    intro = intro.append(ui.button("Download selected", DownloadSelected));
   }
-  let intro: ui.El[Msg][] = [ui.row(actions).spaced(8.0), ui.text[Msg]("Choose cards").sized(24.0).weighted(650), ui.text(estimate).colored(ui.MUTED)];
   if (unknown > 0) {
     intro = intro.append(ui.text(unknown.to_string() + " titles have incomplete size or duration data.").colored(ui.MUTED));
   }
@@ -4287,10 +4357,7 @@ function batch_downloads(m: Model): ui.El[Msg] {
 function download_controls(m: Model): ui.El[Msg][] {
   let state = m.downloads;
   let limited = m.playback_tools.saved.wifi_only;
-  let rows: ui.El[Msg][] = [ui.row([
-    ui.checkbox(limited, "Wi-Fi only", ToggleWifiOnly),
-    ui.text[Msg]("Wi-Fi only").on_tap(ToggleWifiOnly),
-  ]).aligned(ui.CENTER)];
+  let rows: ui.El[Msg][] = [ui.labelled_checkbox(limited, "Wi-Fi only", ToggleWifiOnly)];
   if (limited && !m.wifi && state.queue.len() > 0) {
     rows = rows.append(ui.text("Waiting for Wi-Fi.").colored(ui.MUTED));
   }
@@ -4301,7 +4368,7 @@ function download_controls(m: Model): ui.El[Msg][] {
     rows = rows.append(ui.row([
       ui.text[Msg](item.title + " · Paused").clamped(2).wide(),
       ui.text_button("Resume", ContinueDownload(item.id)).described("Resume download for " + item.title),
-      ui.text_button("Remove", RemoveDownload(item.id)).described("Remove " + item.title + " from downloads"),
+      ui.text_button(remove_label(m, item.id, "Remove"), RemoveDownload(item.id)).described("Remove " + item.title + " from downloads"),
     ]).aligned(ui.CENTER));
   }
   return rows;
@@ -4327,57 +4394,61 @@ function download_list(m: Model): ui.El[Msg] {
     return batch_downloads(m);
   }
   let fields: ui.El[Msg][] = [];
-  if (m.offline_open.len() == 0) {
-    fields = fields.append(ui.text_button("Storage budget", OpenTravel(StorageBudget)));
-  }
   let note = offline.message(m.downloads);
   if (note.len() > 0) {
     fields = fields.append(ui.text(note).colored(ui.MUTED));
   }
   if let Some(entry) = offline.saved(m.downloads, m.offline_open) {
-    let tools = ui.row([ui.text_button("Back to downloads", OpenDownload("")), ui.text_button("Remove download", RemoveDownload(entry.id))]).spaced(6.0);
-    let title = ui.text[Msg](entry.title).sized(22.0).weighted(650).clamped(3);
+    let title = ui.text[Msg](entry.title).sized(20.0).weighted(650).clamped(3);
+    let tools = actions_row([
+      ui.outlined_button("Play next", QueueCard(entry.id)),
+      ui.text_button(remove_label(m, entry.id, "Remove download"), RemoveDownload(entry.id)),
+    ]);
     let tracks = ui.list("saved:" + entry.id, entry.tracks.len(), 56.0, (at: i32): ui.El[Msg] => {
       let track = entry.tracks[at];
       let address = keyed_art(m, entry.id, track.chapter, track.key, track.art);
       let play = ui.text_button("Play", PlayDownload(entry.id, at)).described("Play " + track.title);
       return ui.row([art(m.shelf, address, 44.0), ui.text[Msg](track.title).clamped(2).wide(), play]).aligned(ui.CENTER).spaced(10.0);
     });
-    return ui.column([tools, title, ui.text_button("Play next", QueueCard(entry.id))].concat(fields).append(tracks)).spaced(8.0).wide().tall();
+    return ui.column([title, tools].concat(fields).append(tracks)).spaced(8.0).wide().tall();
   }
+  let entries = m.downloads.catalog.entries.filter((entry: offline.Entry): boolean => entry.ready);
+  let actions: ui.El[Msg][] = [];
+  if (m.token.len() > 0 && m.cards.any((card: api.Card): boolean => !offline.contains(m.downloads, card.id))) {
+    actions = actions.append(ui.outlined_button("Choose cards to download", ChooseDownloads));
+  }
+  if (offline.busy(m.downloads)) {
+    actions = actions.append(ui.text_button("Cancel downloads", CancelDownload));
+    if (m.downloads.paused && m.token.len() > 0) {
+      actions = actions.append(ui.text_button("Resume downloads", ResumeDownload));
+    }
+  } else if (m.token.len() > 0 && !m.busy && m.cards.any((card: api.Card): boolean => offline.saved(m.downloads, card.id).is_none())) {
+    actions = actions.append(ui.text_button("Download all cards", Download("")));
+  }
+  actions = actions.append(ui.text_button("Storage budget", OpenTravel(StorageBudget)));
+  if (entries.len() > 0) {
+    actions = actions.append(ui.text_button("Check saved files and storage", CheckTrip));
+  }
+  fields = fields.append(actions_row(actions));
   fields = fields.concat(download_controls(m));
   if (m.downloads.queue.len() > 0) {
     fields = fields.append(pending_downloads(m).height((m.downloads.queue.len() as f64 * 60.0).min(144.0)));
   }
-  if (offline.busy(m.downloads)) {
-    let controls: ui.El[Msg][] = [ui.text_button("Cancel downloads", CancelDownload)];
-    if (m.downloads.paused && m.token.len() > 0) {
-      controls = controls.append(ui.text_button("Resume downloads", ResumeDownload));
-    }
-    fields = fields.append(ui.row(controls).spaced(4.0));
-  } else if (m.token.len() > 0 && !m.busy && m.cards.any((card: api.Card): boolean => offline.saved(m.downloads, card.id).is_none())) {
-    fields = fields.append(ui.text_button("Download all cards", Download("")));
-  }
-  if (m.token.len() > 0 && m.cards.any((card: api.Card): boolean => !offline.contains(m.downloads, card.id))) {
-    fields = fields.append(ui.outlined_button("Choose cards to download", ChooseDownloads));
-  }
   let failed = m.downloads.catalog.entries.filter((entry: offline.Entry): boolean => entry.failed_at >= 0 && entry.failed_at < entry.tracks.len());
   for entry in failed {
-    let actions = [ui.text_button("Remove", RemoveDownload(entry.id))];
+    let repairs = [ui.text_button(remove_label(m, entry.id, "Remove"), RemoveDownload(entry.id))];
     if (m.token.len() > 0) {
-      actions = actions.append(ui.text_button("Retry track", RetryTrack(entry.id)));
+      repairs = repairs.append(ui.text_button("Retry track", RetryTrack(entry.id)));
     }
     if (offline.label(m.downloads, entry.id) == "Paused") {
       continue;
     }
-    fields = fields.append(ui.card([ui.text[Msg](entry.title).weighted(600), ui.text(entry.tracks[entry.failed_at].title).colored(ui.MUTED), ui.row(actions)]).wide());
+    fields = fields.append(ui.card([ui.text[Msg](entry.title).weighted(600), ui.text(entry.tracks[entry.failed_at].title).colored(ui.ERROR), actions_row(repairs)]).wide());
   }
-  let entries = m.downloads.catalog.entries.filter((entry: offline.Entry): boolean => entry.ready);
   if (entries.len() == 0 && !offline.busy(m.downloads)) {
     fields = fields.append(ui.text("Download cards while online. They will appear here when ready.").colored(ui.MUTED));
   }
   if (entries.len() > 0) {
-    fields = fields.append(ui.text_button("Check saved files and storage", CheckTrip));
     fields = fields.append(ui.list("downloads", entries.len(), 110.0, (at: i32): ui.El[Msg] => download_row(m, entries[at])));
   }
   return ui.column(fields).spaced(8.0).wide().tall();
@@ -4386,8 +4457,9 @@ function download_list(m: Model): ui.El[Msg] {
 function playback_queue(m: Model): ui.El[Msg] {
   let tools = m.playback_tools;
   let rows: ui.El[Msg][] = [];
-  rows = rows.append(ui.row([ui.text_button("Car Mode", OpenTravel(CarMode)), ui.text_button("Find by time", OpenTravel(ListenTime))]).spaced(8.0));
-  rows = rows.append(ui.row([ui.text_button("Bedtime routine", OpenTravel(Bedtime)), ui.text_button("NFC shortcuts", OpenTravel(NfcTags))]).spaced(8.0));
+  if (tools.note.len() > 0) {
+    rows = rows.append(notice(m, tools.note));
+  }
   if let phone.Playing | phone.Paused = m.phone.phase {
     rows = rows.append(ui.text_button("Bookmark this spot", BookmarkHere));
     if (tools.naming_bookmark) {
@@ -4397,41 +4469,7 @@ function playback_queue(m: Model): ui.El[Msg] {
       ]).aligned(ui.CENTER).spaced(6.0));
     }
   }
-  rows = rows.append(ui.row([ui.text_button("New trip playlist", OpenLineup("")), ui.text_button("Listening history", ShowHistory)]).spaced(6.0));
-  for line in tools.saved.lineups {
-    let buttons = [ui.text_button("Edit", OpenLineup(line.name)), ui.text_button("Play", StartLineup(line.name)), ui.text_button("Trip dashboard", OpenTripDashboard(line.name))];
-    if (m.token.len() > 0) {
-      buttons = buttons.append(ui.text_button("Download missing", PrimeLineup(line.name)));
-    }
-    rows = rows.append(ui.card([
-      ui.text[Msg](line.name).sized(18.0).weighted(650),
-      ui.text[Msg](lineup_summary(m, line.cards)).colored(ui.MUTED),
-      ui.row(buttons).spaced(4.0).scroll("trip-actions:" + line.name).wide(),
-    ]).wide());
-  }
-  let minutes = ((tools.sleep_at - monotonic_ns()).max(0i64) + 59999999999i64) / 60000000000i64;
-  let timer = if (minutes > 0i64) { "Phone sleep timer · " + minutes.to_string() + " min left" } else { "Phone sleep timer" };
-  rows = rows.append(ui.card([
-    ui.text[Msg](timer).sized(18.0).weighted(650),
-    ui.row([ui.text_button("15 min", SetSleep(15)), ui.text_button("30 min", SetSleep(30)), ui.text_button("60 min", SetSleep(60)), ui.text_button("Off", SetSleep(0))]),
-    ui.checkbox(tools.saved.fade, "Fade out at the end", ToggleSleepFade),
-    ui.text_button(if (m.phone.stop_at_chapter) { "Cancel end of chapter timer" } else { "Stop at end of chapter" }, ChapterSleep),
-  ]).wide());
-  if (tools.saved.marks.len() > 0) {
-    rows = rows.append(ui.row([ui.text[Msg]("Continue listening").sized(18.0).weighted(650).wide(), ui.text_button("Pin resume", PinResume)]).aligned(ui.CENTER));
-    for mark in tools.saved.marks.take(4) {
-      rows = rows.append(ui.text_button(mark.item.title, ResumeCard(mark.item.id)).described("Resume " + mark.item.title));
-    }
-  }
-  if (tools.saved.pins.len() > 0) {
-    rows = rows.append(ui.text[Msg]("Bookmarks").sized(18.0).weighted(650));
-    for mark in tools.saved.pins {
-      let resume = ui.text_button(mark.name + " · " + mark.item.title, ResumeBookmark(mark)).wide().described("Play bookmark " + mark.name + " for " + mark.item.title);
-      let remove = ui.text_button("Remove", RemoveBookmark(mark.item.id, mark.name)).described("Remove bookmark " + mark.name);
-      rows = rows.append(ui.row([resume, remove]).aligned(ui.CENTER));
-    }
-  }
-  rows = rows.append(ui.text[Msg]("Up next").sized(18.0).weighted(650));
+  rows = rows.append(heading("Up next"));
   if (tools.saved.queue.len() == 0) {
     rows = rows.append(ui.text[Msg]("Use Play next on a card to add it here.").colored(ui.MUTED));
   } else {
@@ -4442,7 +4480,46 @@ function playback_queue(m: Model): ui.El[Msg] {
       rows = rows.append(ui.row([ui.text[Msg](item.title).clamped(2).wide(), remove]).aligned(ui.CENTER));
     }
   }
-  rows = rows.append(ui.text[Msg]("Ready for the trip").sized(18.0).weighted(650));
+  if (tools.saved.marks.len() > 0) {
+    rows = rows.append(ui.row([heading("Continue listening").wide(), ui.text_button("Pin resume", PinResume)]).aligned(ui.CENTER));
+    for mark in tools.saved.marks.take(4) {
+      let resume = ui.text_button("Resume", ResumeCard(mark.item.id)).described("Resume " + mark.item.title);
+      rows = rows.append(ui.row([ui.text[Msg](mark.item.title).clamped(2).wide(), resume]).aligned(ui.CENTER));
+    }
+  }
+  if (tools.saved.pins.len() > 0) {
+    rows = rows.append(heading("Bookmarks"));
+    for mark in tools.saved.pins {
+      let names = ui.column([ui.text[Msg](mark.name).weighted(500).clamped(1), ui.text[Msg](mark.item.title).colored(ui.MUTED).clamped(1)]).spaced(2.0).wide();
+      let play = ui.text_button("Play", ResumeBookmark(mark)).described("Play bookmark " + mark.name + " for " + mark.item.title);
+      let remove = ui.text_button("Remove", RemoveBookmark(mark.item.id, mark.name)).described("Remove bookmark " + mark.name);
+      rows = rows.append(ui.row([names, play, remove]).aligned(ui.CENTER));
+    }
+  }
+  rows = rows.append(ui.row([heading("Trip playlists").wide(), ui.text_button("New trip playlist", OpenLineup(""))]).aligned(ui.CENTER));
+  if (tools.saved.lineups.len() == 0) {
+    rows = rows.append(ui.text[Msg]("Group cards for a journey, and check that they are saved before you leave.").colored(ui.MUTED));
+  }
+  for line in tools.saved.lineups {
+    let buttons = [ui.text_button("Play", StartLineup(line.name)), ui.text_button("Edit", OpenLineup(line.name)), ui.text_button("Trip dashboard", OpenTripDashboard(line.name))];
+    if (m.token.len() > 0) {
+      buttons = buttons.append(ui.text_button("Download missing", PrimeLineup(line.name)));
+    }
+    rows = rows.append(ui.card([
+      heading(line.name),
+      ui.text[Msg](lineup_summary(m, line.cards)).colored(ui.MUTED),
+      actions_row(buttons),
+    ]).wide());
+  }
+  let minutes = ((tools.sleep_at - monotonic_ns()).max(0i64) + 59999999999i64) / 60000000000i64;
+  let timer = if (minutes > 0i64) { "Phone sleep timer · " + minutes.to_string() + " min left" } else { "Phone sleep timer" };
+  rows = rows.append(ui.card([
+    heading(timer),
+    actions_row([ui.text_button("15 min", SetSleep(15)), ui.text_button("30 min", SetSleep(30)), ui.text_button("60 min", SetSleep(60)), ui.text_button("Off", SetSleep(0))]),
+    ui.labelled_checkbox(tools.saved.fade, "Fade out at the end", ToggleSleepFade),
+    ui.text_button(if (m.phone.stop_at_chapter) { "Cancel end of chapter timer" } else { "Stop at end of chapter" }, ChapterSleep),
+  ]).wide());
+  rows = rows.append(heading("Ready for the trip"));
   if (tools.trip_running) {
     rows = rows.append(ui.text[Msg]("Checking saved tracks…").colored(ui.MUTED));
   } else {
@@ -4456,10 +4533,40 @@ function playback_queue(m: Model): ui.El[Msg] {
     }
     rows = rows.append(ui.row([ui.text[Msg](item.title).wide().clamped(2), ui.text[Msg](status).colored(ui.MUTED).clamped(2)]).aligned(ui.CENTER).spaced(8.0));
   }
-  if (tools.note.len() > 0) {
-    rows = rows.append(ui.text[Msg](tools.note).colored(ui.MUTED));
-  }
   return ui.column(rows).spaced(10.0).wide().tall().scroll("playback-queue");
+}
+
+function menu_row(label: string, detail: string, message: Msg): ui.El[Msg] {
+  let texts = ui.column([ui.text[Msg](label).sized(16.0).weighted(500), ui.text[Msg](detail).colored(ui.MUTED)]).spaced(2.0).wide();
+  return ui.row([texts]).aligned(ui.CENTER).padding_xy(4.0, 10.0).wide().on_tap(message).described(label);
+}
+
+// The tab More: each tool of the app, and the account.
+function more_view(m: Model): ui.El[Msg] {
+  let rows = [
+    heading("Listen"),
+    menu_row("Car Mode", "Large controls and saved trips", OpenTravel(CarMode)),
+    menu_row("Find a story by time", "Saved stories for 10, 20 or 45 minutes", OpenTravel(ListenTime)),
+    menu_row("Bedtime routine", "A story, then sleep sounds", OpenTravel(Bedtime)),
+    menu_row("Listening history", "Cards played on this phone", ShowHistory),
+    menu_row("Listening profiles", "Current profile · " + m.playback_tools.saved.profile, ShowProfiles),
+    menu_row("Kids mode", "Favourites only, behind a parent PIN", EnterKids),
+    heading("Library"),
+    menu_row("Scan a card", "Read a Yoto card with NFC, or enter its code", OpenTools(panel_tools.Scan)),
+    menu_row("Create a playlist", "Record or import your own audio", OpenTools(panel_tools.Create)),
+    menu_row("Discover", "Club, podcasts, radio and sleep sounds", OpenTools(panel_tools.Discover)),
+    menu_row("NFC cards and stickers", "Tap a sticker to play a saved card", OpenTravel(NfcTags)),
+    heading("Players and account"),
+    menu_row("Player and family setup", "Pair a player or accept an invitation", OpenTools(panel_tools.Setup)),
+  ];
+  if (m.token.len() > 0) {
+    rows = rows.concat([
+      menu_row("Authorize library editing", "Let Story Deck change playlists and groups", EnableEditing),
+      menu_row("Refresh", "Load the players and the library again", Refresh),
+      menu_row(sign_out_label(m), "Remove this account from the phone", SignOut),
+    ]);
+  }
+  return ui.column(rows).spaced(4.0).wide().tall().scroll("more");
 }
 
 function library_status(m: Model, has_matches: boolean): string {
@@ -4475,7 +4582,7 @@ function library_status(m: Model, has_matches: boolean): string {
     return "Track search is incomplete. " + m.shelf.paused;
   }
   if (m.shelf.next < total || m.background_busy && ready < total) {
-    return "Track search: " + ready.to_string() + " of " + total.to_string() + " titles indexed";
+    return "Reading track names for search: " + ready.to_string() + " of " + total.to_string() + " titles";
   }
   if (ready < total && !has_matches) {
     return "Track information is unavailable for " + (total - ready).to_string() + " titles.";
@@ -4492,29 +4599,10 @@ function menu_icon(color: i32): (draw.Frame, i32, i32, i32, i32) => void {
   };
 }
 
-function section_header(m: Model, name: string): ui.El[Msg] {
-  let title = ui.text[Msg](name).sized(27.0).weighted(700).wide();
-  let top = [title];
-  if (!m.busy && m.token.len() > 0) {
-    top = top.append(ui.tinted("account-menu", ui.INK, menu_icon).width(48.0).height(48.0).background(ui.SURFACE).rounded(14.0).on_tap(ToggleMenu).described("More options"));
-  }
-  let items = [ui.row(top).aligned(ui.CENTER).wide()];
-  if (m.menu_open && !m.busy) {
-    let menu = ui.menu(["Refresh", "Sign out", "Library tools", "Listening profiles", "Kids mode"], (at: i32): Msg => [Refresh, SignOut, OpenTools(panel_tools.Hub), ShowProfiles, EnterKids][at]).width(196.0);
-    items = items.append(ui.row([ui.space(), menu]).wide());
-  }
-  for note in [m.note, m.session_note] {
-    if (note.len() > 0) {
-      items = items.append(ui.text(note).colored(ui.MUTED));
-    }
-  }
-  return ui.column(items).spaced(8.0).wide();
-}
-
 function collection_chip(label: string, selected: boolean, message: Msg): ui.El[Msg] {
   let color = if (selected) { ui.ON_PRIMARY } else { ui.INK };
   let text = ui.text[Msg](label).sized(13.0).weighted(600).colored(color).clamped(1);
-  let chip = ui.row([text]).centered().height(40.0).padding_xy(12.0, 0.0).rounded(20.0).on_tap(message).described(label);
+  let chip = ui.row([text]).centered().height(48.0).padding_xy(14.0, 0.0).rounded(24.0).on_tap(message).described(label);
   if (selected) {
     return chip.background(ui.PRIMARY);
   }
@@ -4527,60 +4615,65 @@ function collection_filters(shelf: Shelf): ui.El[Msg] {
   return ui.row(chips).spaced(8.0).wide().scroll("library-collections");
 }
 
-function group_filters(shelf: Shelf, online: boolean): ui.El[Msg] {
-  let title = "Groups";
-  if let Some(group) = selected_group(shelf) {
-    title += " · " + group.name;
+function group_filters(shelf: Shelf, online: boolean): ui.El[Msg][] {
+  let top = [ui.text[Msg]("Family groups").weighted(600).wide()];
+  if (online) {
+    if let Some(group) = selected_group(shelf) {
+      top = top.append(ui.text_button("Edit group", EditGroup(group.id)));
+    }
+    top = top.append(ui.text_button("New group", EditGroup("")));
   }
-  let action = if (shelf.groups_open) { "Hide groups" } else { "Show groups" };
-  let items = [ui.row([ui.text[Msg](title).sized(15.0).weighted(600).clamped(1).wide(), ui.text_button(action, ToggleGroups)]).aligned(ui.CENTER)];
-  if (shelf.groups_open) {
-    if (online) {
-      let actions = [ui.text_button("New group", EditGroup(""))];
-      if let Some(group) = selected_group(shelf) {
-        actions = actions.append(ui.text_button("Edit group", EditGroup(group.id)));
-      }
-      items = items.append(ui.row(actions).spaced(6.0));
-    }
-    if (shelf.groups_note.len() > 0) {
-      items = items.append(ui.text(shelf.groups_note).colored(ui.MUTED));
-    }
-    if (shelf.groups.len() > 0) {
-      let chips = [collection_chip("All groups", shelf.group.len() == 0, FilterGroup(""))];
-      for group in shelf.groups {
-        chips = chips.append(collection_chip(group.name, shelf.group == group.id, FilterGroup(group.id)));
-      }
-      items = items.append(ui.row(chips).spaced(8.0).wide().scroll("library-groups"));
-    } else if (shelf.groups_note.len() == 0) {
-      items = items.append(ui.text("No family groups.").colored(ui.MUTED));
-    }
+  let items = [ui.row(top).aligned(ui.CENTER)];
+  if (shelf.groups_note.len() > 0) {
+    items = items.append(ui.text(shelf.groups_note).colored(ui.MUTED));
   }
-  return ui.column(items).spaced(6.0).wide();
+  if (shelf.groups.len() > 0) {
+    let chips = [collection_chip("All groups", shelf.group.len() == 0, FilterGroup(""))];
+    for group in shelf.groups {
+      chips = chips.append(collection_chip(group.name, shelf.group == group.id, FilterGroup(group.id)));
+    }
+    items = items.append(ui.row(chips).spaced(8.0).wide().scroll("library-groups"));
+  } else if (shelf.groups_note.len() == 0) {
+    items = items.append(ui.text("No family groups.").colored(ui.MUTED));
+  }
+  return items;
 }
 
-function library_destination(m: Model): ui.El[Msg] {
-  let target = "Choose playback device";
+function target_button(m: Model): ui.El[Msg] {
+  let target = "Choose player";
   if (m.on_phone) {
-    target = "Play on this phone";
+    target = "On this phone";
   }
   if let Some(player) = selected(m) {
-    target = if (player.online) { "Play on " + player.name } else { player.name + " is offline." };
+    target = if (player.online) { "On " + player.name } else { player.name + " is offline." };
   }
   return ui.text_button(target, PlaybackTarget).described("Playback device · " + target);
 }
 
+function library_filters(m: Model): ui.El[Msg] {
+  let shelf = m.shelf;
+  let order = if (shelf.by_title) { "A–Z" } else { "Last played" };
+  let covers = if (m.playback_tools.saved.compact) { "Compact" } else { "Large" };
+  let rows = [
+    actions_row([
+      ui.text_button("Sort: " + order, ToggleSort).described("Sort order · " + order),
+      ui.text_button("Covers: " + covers, ToggleCompact).described("Cover size · " + covers),
+    ]),
+    ui.labelled_checkbox(shelf.downloaded_only, "Downloaded only", DownloadedOnly),
+  ];
+  return ui.card(rows.concat(group_filters(shelf, m.token.len() > 0)).concat(personal_filters(m))).spaced(4.0).wide();
+}
+
 function library_controls(m: Model): ui.El[Msg] {
   let shelf = m.shelf;
-  let downloaded = ui.row([
-    ui.checkbox(shelf.downloaded_only, "Downloaded only", DownloadedOnly),
-    ui.text[Msg]("Downloaded only").on_tap(DownloadedOnly),
-  ]).aligned(ui.CENTER);
   let searching = shelf.query.trim().len() > 0;
   let fields: ui.El[Msg][] = [];
+  if (shelf.filters_open) {
+    fields = fields.append(library_filters(m));
+  }
   if (searching) {
     fields = fields.append(ui.tabs(["Matches", "Titles", "Chapters", "Tracks"], shelf.search_scope, (at: i32): Msg => SearchScope(at)));
   }
-  fields = fields.append(downloaded);
   let has_matches = searching && shelf.hits.len() > 0;
   let status = if (searching) { library_status(m, has_matches) } else { "" };
   if (shelf.note.len() > 0 && !has_matches) {
@@ -4596,46 +4689,50 @@ function library_controls(m: Model): ui.El[Msg] {
   return ui.column(fields).spaced(8.0).padding_xy(0.0, 8.0).wide();
 }
 
-function personal_filters(m: Model): ui.El[Msg] {
+function personal_filters(m: Model): ui.El[Msg][] {
   let shelf = m.shelf;
-  let action = if (shelf.personal_open) { "Hide collections" } else { "My collections" };
-  let rows = [ui.row([ui.text_button(action, TogglePersonal), ui.space(), ui.text_button(if (m.playback_tools.saved.compact) { "Large covers" } else { "Compact covers" }, ToggleCompact)]).wide()];
-  if (shelf.personal_open) {
-    let controls = [ui.text_button("New collection", EditPersonal(""))];
-    if (shelf.personal.len() > 0) {
-      controls = controls.append(ui.text_button("Edit collection", EditPersonal(shelf.personal)));
-    }
-    rows = rows.append(ui.row(controls).spaced(6.0));
+  let top = [ui.text[Msg]("My collections").weighted(600).wide()];
+  if (shelf.personal.len() > 0) {
+    top = top.append(ui.text_button("Edit collection", EditPersonal(shelf.personal)));
+  }
+  top = top.append(ui.text_button("New collection", EditPersonal("")));
+  let rows = [ui.row(top).aligned(ui.CENTER)];
+  let saved = m.playback_tools.saved.collections;
+  if (saved.len() > 0) {
     let chips = [collection_chip("All titles", shelf.personal.len() == 0, UsePersonal(""))];
-    for item in m.playback_tools.saved.collections {
+    for item in saved {
       chips = chips.append(collection_chip(item.name, item.name == shelf.personal, UsePersonal(item.name)));
     }
     rows = rows.append(ui.row(chips).spaced(8.0).wide().scroll("personal-collections"));
   }
-  return ui.column(rows).spaced(6.0).wide();
+  return rows;
 }
 
 function card_list(m: Model, screen: ui.Screen): ui.El[Msg] {
-  let before = ui.column([section_header(m, "Library"), group_filters(m.shelf, m.token.len() > 0), personal_filters(m), collection_filters(m.shelf)]).spaced(8.0).padding_xy(0.0, 8.0).wide();
+  let top: ui.El[Msg][] = [title_bar("Library", [target_button(m)])];
+  for note in [m.note, m.session_note] {
+    if (note.len() > 0) {
+      top = top.append(notice(m, note));
+    }
+  }
+  let before = ui.column(top.append(collection_filters(m.shelf))).spaced(8.0).padding_xy(0.0, 4.0).wide();
   let field = ui.field[Msg]("library-search", m.shelf.query, "Search library").rounded(12.0).on_edit((text: string): Msg => Search(text));
-  let label = if (m.shelf.by_title) { "A–Z" } else { "Last played" };
-  let sort = ui.text_button(label, ToggleSort).described("Sort order · " + label);
-  let search_row = ui.row([field, sort]).aligned(ui.CENTER).spaced(4.0).wide();
-  let pinned = ui.column([search_row, library_destination(m)]).padding_xy(0.0, 4.0).background(ui.BACKGROUND).wide();
+  let filters = ui.text_button(if (m.shelf.filters_open) { "Hide filters" } else { "Filters" }, ToggleFilters);
+  let pinned = ui.row([field, filters]).aligned(ui.CENTER).spaced(4.0).padding_xy(0.0, 4.0).background(ui.BACKGROUND).wide();
   return poster_grid(m, screen, before, pinned, library_controls(m));
 }
 
 function group_editor(m: Model, edit: GroupEdit): ui.El[Msg] {
   let title = if (edit.local) { if (edit.id.len() > 0) { "Edit collection" } else { "New collection" } } else { if (edit.id.len() > 0) { "Edit group" } else { "New group" } };
-  let rows: ui.El[Msg][] = [ui.text_button("Back to library", CloseGroup), ui.text[Msg](title).weighted(700).sized(25.0)];
+  let rows: ui.El[Msg][] = [];
   if (edit.local) {
     rows = rows.append(ui.text("Choose cards to include. With no cards selected, the collection saves only your Library filters.").colored(ui.MUTED));
   }
   if (edit.note.len() > 0) {
-    rows = rows.append(ui.text(edit.note).colored(ui.MUTED));
+    rows = rows.append(notice(m, edit.note));
   }
   if (edit.busy) {
-    return ui.column(rows).spaced(10.0).padding(16.0).wide().tall();
+    return page(title, CloseGroup, [], rows, "");
   }
   let actions: ui.El[Msg][] = [];
   if (edit.name.trim().len() > 0) {
@@ -4646,7 +4743,7 @@ function group_editor(m: Model, edit: GroupEdit): ui.El[Msg] {
   }
   rows = rows.concat([
     ui.field[Msg]("group-name", edit.name, "Group name").on_edit((name: string): Msg => GroupName(name)),
-    ui.row(actions).spaced(6.0),
+    actions_row(actions),
     ui.field[Msg]("group-search", edit.query, "Find cards to add").on_edit((query: string): Msg => GroupQuery(query)),
   ]);
   let query = edit.query.trim().to_lower();
@@ -4656,7 +4753,7 @@ function group_editor(m: Model, edit: GroupEdit): ui.El[Msg] {
     let tap = GroupMember(card.id);
     return ui.row([ui.checkbox(edit.members.contains(card.id), card.title, tap), ui.text[Msg](card.title).wide().clamped(2).on_tap(tap)]).aligned(ui.CENTER);
   });
-  return ui.column(rows.append(list)).spaced(8.0).padding(16.0).wide().tall();
+  return page(title, CloseGroup, [], rows.append(list), "");
 }
 
 function scan_view(m: Model): ui.El[Msg][] {
@@ -4695,12 +4792,12 @@ function create_chapter(part: api.Chapter, n: i32, count: i32): ui.El[Msg] {
   }
   return ui.card([
     ui.field[Msg]("chapter-title-" + n.to_string(), part.title, "Chapter title").on_edit((name: string): Msg => ChapterTitle(n, name)),
-    ui.row(actions).spaced(6.0),
+    actions_row(actions),
   ]).wide();
 }
 
 function audio_editor_view(e: AudioEditor): ui.El[Msg][] {
-  let rows = [ui.text_button("Back to playlist", CloseAudioEditor), ui.text[Msg](e.title).sized(23.0).weighted(650)];
+  let rows = [ui.text[Msg](e.title).sized(20.0).weighted(650)];
   if (e.note.len() > 0) {
     rows = rows.append(ui.text(e.note).colored(ui.MUTED));
   }
@@ -4737,7 +4834,7 @@ function audio_editor_view(e: AudioEditor): ui.El[Msg][] {
     ]).aligned(ui.CENTER));
   }
   return rows.concat([
-    ui.checkbox(edit.match_volume, "Match chapter volume", ToggleMatchAudio),
+    ui.labelled_checkbox(edit.match_volume, "Match chapter volume", ToggleMatchAudio),
     ui.button("Use audio edits", RenderAudio),
   ]);
 }
@@ -4752,7 +4849,7 @@ function create_view(m: Model): ui.El[Msg][] {
   }
   if (tool.choosing_cover) {
     let cards = m.cards.filter((card: api.Card): boolean => card.cover.len() > 0);
-    let rows: ui.El[Msg][] = [ui.text_button("Back to playlist", PickCover)];
+    let rows: ui.El[Msg][] = [ui.text[Msg]("Choose a cover from your library.").colored(ui.MUTED)];
     if (cards.len() == 0) {
       return rows.append(ui.text("No covers are available in your library yet.").colored(ui.MUTED));
     }
@@ -4768,9 +4865,9 @@ function create_view(m: Model): ui.El[Msg][] {
   }
   let rows: ui.El[Msg][] = [
     ui.field[Msg]("playlist-name", draft.title, "Playlist title").on_edit((value: string): Msg => DraftTitle(value)),
-    ui.field[Msg]("playlist-cover", draft.cover, "Cover image HTTPS address").on_edit((value: string): Msg => DraftCover(value)),
+    ui.field[Msg]("playlist-cover", draft.cover, "Cover image link (https://…)").on_edit((value: string): Msg => DraftCover(value)),
     ui.text_button("Choose a library cover", PickCover),
-    ui.row(audio).spaced(8.0),
+    actions_row(audio),
   ];
   if (!tool.recording && draft.title.trim().len() > 0 && draft.chapters.len() > 0 && m.token.len() > 0) {
     rows = rows.append(ui.button("Save playlist", SavePlaylist));
@@ -4785,7 +4882,7 @@ function create_view(m: Model): ui.El[Msg][] {
 function discover_view(m: Model): ui.El[Msg][] {
   let tool = m.tools_page;
   if (tool.show_shop) {
-    let rows: ui.El[Msg][] = [ui.text_button("Back to collections", ShowShop)];
+    let rows: ui.El[Msg][] = [ui.text[Msg]("New cards in the Yoto shop").colored(ui.MUTED)];
     if (tool.shop.len() == 0) {
       return rows;
     }
@@ -4822,28 +4919,20 @@ function discover_view(m: Model): ui.El[Msg][] {
   }).height((result.len() * 72).min(648) as f64));
 }
 
-function tools_view(m: Model, page: panel_tools.Page): ui.El[Msg] {
-  let title = match (page) {
-    panel_tools.Hub => "Library tools",
+function tools_view(m: Model, page_of: panel_tools.Page): ui.El[Msg] {
+  let title = match (page_of) {
     panel_tools.Scan => "Scan a card",
     panel_tools.Create => "Create a playlist",
     panel_tools.Discover => "Discover",
     panel_tools.Setup => "Player and family setup",
   };
-  let rows: ui.El[Msg][] = [ui.text_button("Back", CloseTools), ui.text[Msg](title).sized(26.0).weighted(700)];
+  let rows: ui.El[Msg][] = [];
   for note in [m.tools_page.note, m.note] {
     if (note.len() > 0) {
-      rows = rows.append(ui.text(note).colored(ui.MUTED));
+      rows = rows.append(notice(m, note));
     }
   }
-  let body: ui.El[Msg][] = match (page) {
-    panel_tools.Hub => [
-      ui.outlined_button("Scan a card", OpenTools(panel_tools.Scan)),
-      ui.outlined_button("Create a playlist", OpenTools(panel_tools.Create)),
-      ui.outlined_button("Discover", OpenTools(panel_tools.Discover)),
-      ui.outlined_button("Player and family setup", OpenTools(panel_tools.Setup)),
-      ui.text_button("Authorize library editing", EnableEditing),
-    ],
+  let body: ui.El[Msg][] = match (page_of) {
     panel_tools.Scan => scan_view(m),
     panel_tools.Create => create_view(m),
     panel_tools.Discover => discover_view(m),
@@ -4855,7 +4944,10 @@ function tools_view(m: Model, page: panel_tools.Page): ui.El[Msg] {
       ui.text_button("Refresh connected players", Refresh),
     ],
   };
-  return ui.column(rows.concat(body)).spaced(10.0).padding(16.0).wide().tall().scroll("tools:" + title);
+  if (m.audio_editor.is_some()) {
+    return page("Edit audio", CloseAudioEditor, [], rows.concat(body), "tools:audio");
+  }
+  return page(title, CloseTools, [], rows.concat(body), "tools:" + title);
 }
 
 function size_text(bytes: i64): string {
@@ -4891,25 +4983,21 @@ function trip_editor(m: Model, draft: TripDraft): ui.El[Msg] {
       let card = cards[i];
       return ui.text_button(card.title, AddLineupCard(card.id)).described("Add " + card.title).wide();
     });
-    return ui.column([
-      ui.text_button("Done", CloseLineup),
-      ui.field[Msg]("find-trip-cards", draft.query, "Find cards").on_edit((text: string): Msg => FindLineupCards(text)),
-      ui.text[Msg](lineup_summary(m, draft.items)).colored(ui.MUTED),
-      list,
-    ]).spaced(8.0).padding(16.0).wide().tall();
+    let finder = ui.field[Msg]("find-trip-cards", draft.query, "Find cards").on_edit((text: string): Msg => FindLineupCards(text));
+    return page("Add cards", CloseLineup, [], [finder, ui.text[Msg](lineup_summary(m, draft.items)).colored(ui.MUTED), list], "");
   }
   let rows: ui.El[Msg][] = [
-    ui.row([ui.text_button("Back to queue", CloseLineup), ui.button("Save trip", SaveLineup)]).spaced(6.0),
     ui.field[Msg]("trip-title", draft.title, "Trip name").on_edit((text: string): Msg => LineupTitle(text)),
     ui.text[Msg](lineup_summary(m, draft.items)).colored(ui.MUTED),
-    ui.text_button("Add cards", PickLineupCards),
   ];
   if (m.playback_tools.note.len() > 0) {
-    rows = rows.append(ui.text(m.playback_tools.note).colored(ui.MUTED));
+    rows = rows.append(notice(m, m.playback_tools.note));
   }
+  let tools = [ui.outlined_button("Add cards", PickLineupCards)];
   if (draft.original.len() > 0) {
-    rows = rows.append(ui.text_button("Pin trip to home screen", PinLineup(draft.original)));
+    tools = tools.append(ui.text_button("Pin trip to home screen", PinLineup(draft.original)));
   }
+  rows = rows.append(actions_row(tools));
   if (draft.items.len() > 1) {
     rows = rows.append(ui.text[Msg]("Hold and drag a card to move it.").colored(ui.MUTED));
   }
@@ -4917,18 +5005,15 @@ function trip_editor(m: Model, draft: TripDraft): ui.El[Msg] {
     ui.text[Msg](draft.items[i].title).clamped(2).wide(),
     ui.text_button("Remove", DropLineupCard(i)),
   ]).aligned(ui.CENTER).wide()).on_move((from: i32, to: i32): Msg => MoveLineupCard(from, to));
-  return ui.column(rows.append(list)).spaced(8.0).padding(16.0).wide().tall();
+  let title = if (draft.original.len() > 0) { "Edit trip" } else { "New trip" };
+  return page(title, CloseLineup, [ui.button("Save trip", SaveLineup)], rows.append(list), "");
 }
 
 function history_view(m: Model): ui.El[Msg] {
   let tools = m.playback_tools;
   let filter = tools.history_filter;
   let history = tools.saved.history.filter((item: listening.Heard): boolean => filter == 0 || item.done == (filter == 2));
-  let rows = [
-    ui.text_button("Back to queue", ShowHistory),
-    ui.text[Msg]("Listening history").sized(24.0).weighted(650),
-    ui.tabs(["Recent", "In progress", "Finished"], filter, (at: i32): Msg => FilterHistory(at)),
-  ];
+  let rows = [ui.tabs(["Recent", "In progress", "Finished"], filter, (at: i32): Msg => FilterHistory(at))];
   if (history.len() == 0) {
     let note = if (filter == 0) { "Cards you play on this phone appear here." } else { "No cards in this view." };
     rows = rows.append(ui.text(note).colored(ui.MUTED));
@@ -4941,7 +5026,7 @@ function history_view(m: Model): ui.El[Msg] {
       ui.text_button(if (item.done) { "Play again" } else { "Resume" }, ResumeCard(item.card.id)),
     ]).aligned(ui.CENTER).wide();
   });
-  return ui.column(rows.append(list)).spaced(8.0).padding(16.0).wide().tall();
+  return page("Listening history", ShowHistory, [], rows.append(list), "");
 }
 
 function pin_key(digit: i32, height: f64): ui.El[Msg] {
@@ -4955,7 +5040,7 @@ function parent_view(m: Model, screen: ui.Screen): ui.El[Msg] {
   let setup = saved.parent_key.len() == 0;
   let confirming = setup && gate.first.len() > 0;
   let title = if (confirming) { "Confirm parent PIN" } else { if (setup) { "Create parent PIN" } else { "Enter parent PIN" } };
-  let rows: ui.El[Msg][] = [ui.text_button("Back", CloseParent), ui.text[Msg](title).sized(25.0).weighted(700)];
+  let rows: ui.El[Msg][] = [];
   if (gate.busy || saved.retry_pin_at > now_unix_ms()) {
     let status = if (gate.busy) { "Checking PIN…" } else { "Wait 30 seconds before you try again." };
     rows = rows.append(ui.text(status).colored(ui.MUTED));
@@ -4965,7 +5050,7 @@ function parent_view(m: Model, screen: ui.Screen): ui.El[Msg] {
       rows = rows.append(ui.text(hint).colored(ui.MUTED));
     }
     if (gate.note.len() > 0) {
-      rows = rows.append(ui.text(gate.note).colored(ui.MUTED));
+      rows = rows.append(ui.text(gate.note).colored(ui.ERROR));
     }
     let count = gate.code.len();
     let marks = "●".repeat(count) + "○".repeat((4 - count).max(0));
@@ -4983,12 +5068,13 @@ function parent_view(m: Model, screen: ui.Screen): ui.El[Msg] {
     let submit = if (listening.valid_pin(gate.code)) {
       ui.button("Continue", ParentSubmit)
     } else {
-      ui.row([ui.text[Msg]("Continue").weighted(500).colored(ui.MUTED)]).centered().background(ui.SURFACE).rounded(20.0)
+      ui.row([ui.text[Msg]("Continue").weighted(500).colored(ui.MUTED)]).centered().background(ui.SURFACE).rounded(24.0)
     };
     rows = rows.append(submit.wide().height(height));
   }
   let width = (screen.width() - 36.0).min(360.0).max(1.0);
-  return ui.column([ui.column(rows).spaced(10.0).width(width)]).aligned(ui.CENTER).padding(18.0).wide().tall().scroll("parent-pin");
+  let keys = ui.column([ui.column(rows).spaced(10.0).width(width)]).aligned(ui.CENTER).padding(18.0).wide().tall().scroll("parent-pin");
+  return ui.column([ui.app_bar(title, Some(CloseParent), []), keys]).wide().tall();
 }
 
 function kids_view(m: Model, screen: ui.Screen): ui.El[Msg] {
@@ -5025,11 +5111,7 @@ function kids_view(m: Model, screen: ui.Screen): ui.El[Msg] {
 }
 
 function destination_view(m: Model): ui.El[Msg] {
-  let rows = [
-    ui.text_button("Back", CloseTarget),
-    ui.text[Msg]("Playback device").sized(24.0).weighted(700),
-    ui.outlined_button("This phone", SelectPhone).height(52.0).wide(),
-  ];
+  let rows = [ui.outlined_button("This phone", SelectPhone).height(52.0).wide()];
   for device in m.players {
     let name = if (device.online) { device.name } else { device.name + " · Offline" };
     if (device.online) {
@@ -5038,34 +5120,26 @@ function destination_view(m: Model): ui.El[Msg] {
       rows = rows.append(ui.text(name).colored(ui.MUTED).clamped(2));
     }
   }
-  return ui.column(rows).spaced(8.0).padding(16.0).wide().tall().scroll("playback-target");
+  return page("Playback device", CloseTarget, [], rows, "playback-target");
 }
 
 function profile_view(m: Model): ui.El[Msg] {
   let tools = m.playback_tools;
-  let rows = [
-    ui.text_button("Back", ShowProfiles),
-    ui.text[Msg]("Listening profiles").sized(24.0).weighted(700),
-    ui.text[Msg]("Current profile · " + tools.saved.profile).colored(ui.MUTED),
-  ];
+  let rows = [ui.text[Msg]("Current profile · " + tools.saved.profile).colored(ui.MUTED)];
   for profile in tools.saved.other_profiles {
     rows = rows.append(ui.outlined_button(profile.name, SwitchProfile(profile.name)).wide());
   }
   rows = rows.append(ui.field[Msg]("profile-name", tools.profile_name, "New profile name").on_edit((name: string): Msg => ProfileName(name)));
   rows = rows.append(ui.button("Create profile", SaveProfile));
   if (tools.note.len() > 0) {
-    rows = rows.append(ui.text(tools.note).colored(ui.MUTED));
+    rows = rows.append(notice(m, tools.note));
   }
-  return ui.column(rows).spaced(10.0).padding(16.0).wide().tall().scroll("profiles");
+  return page("Listening profiles", ShowProfiles, [], rows, "profiles");
 }
 
 function trip_dashboard(m: Model, line: listening.Lineup): ui.El[Msg] {
   let tools = m.playback_tools;
-  let rows = [
-    ui.text_button("Back to queue", OpenTripDashboard("")),
-    ui.text[Msg](line.name).sized(24.0).weighted(700),
-    ui.text[Msg](lineup_summary(m, line.cards)).colored(ui.MUTED),
-  ];
+  let rows = [ui.text[Msg](lineup_summary(m, line.cards)).colored(ui.MUTED)];
   let ready = 0;
   let bytes = 0i64;
   let unknown = 0;
@@ -5112,9 +5186,9 @@ function trip_dashboard(m: Model, line: listening.Lineup): ui.El[Msg] {
     rows = rows.append(ui.outlined_button("Test offline playback", TestTrip(line.name)));
   }
   if (tools.note.len() > 0) {
-    rows = rows.append(ui.text(tools.note).colored(ui.MUTED));
+    rows = rows.append(notice(m, tools.note));
   }
-  return ui.column(rows.concat(checklist).concat(playback_bar(m))).spaced(10.0).padding(16.0).wide().tall().scroll("trip-dashboard:" + line.id);
+  return page(line.name, OpenTripDashboard(""), [], rows.concat(checklist).concat(playback_bar(m)), "trip-dashboard:" + line.id);
 }
 
 function car_view(m: Model): ui.El[Msg][] {
@@ -5188,7 +5262,7 @@ function storage_view(m: Model): ui.El[Msg][] {
   rows = rows.append(ui.text[Msg]("Favourites, trip cards, and bedtime audio are protected.").colored(ui.MUTED));
   for item in travel.largest(s, report).take(12) {
     if (item.id != m.phone.card) {
-      let action = if (panel.storage_confirm == item.id) { ui.button("Confirm removal", RemoveForBudget(item.id)) } else { ui.text_button("Remove", SuggestRemoval(item.id)) };
+      let action = if (panel.storage_confirm == item.id) { ui.text_button("Confirm removal", RemoveForBudget(item.id)) } else { ui.text_button("Remove", SuggestRemoval(item.id)) };
       rows = rows.append(ui.row([ui.text[Msg](item.title).wide().clamped(2), ui.text(size_text(item.bytes)).colored(ui.MUTED), action]).aligned(ui.CENTER).spaced(6.0));
     }
   }
@@ -5213,7 +5287,7 @@ function card_picker_for_travel(m: Model, choice: i32): ui.El[Msg][] {
     let action = if (choice == 3) { PlayTagCard(item.id) } else { SetRoutineCard(item.id) };
     return ui.text_button(item.title, action).wide().height(52.0);
   }).height((selected.len() * 56).min(560) as f64);
-  return [ui.text_button("Back to choices", SetRoutineChoice(0)), field, list];
+  return [field, list];
 }
 
 function bedtime_view(m: Model): ui.El[Msg][] {
@@ -5232,7 +5306,7 @@ function bedtime_view(m: Model): ui.El[Msg][] {
     ui.row([ui.text[Msg]("Sleep sound").wide(), ui.text_button(sound, SetRoutineChoice(2))]).aligned(ui.CENTER),
     ui.text[Msg]("Play sleep sounds for").colored(ui.MUTED),
     ui.tabs(["15 min", "30 min", "60 min"], index, (i: i32): Msg => SetRoutineTime(choices[i])),
-    ui.checkbox(s.fade, "Fade out at the end", ToggleSleepFade),
+    ui.labelled_checkbox(s.fade, "Fade out at the end", ToggleSleepFade),
     ui.button("Start bedtime", StartRoutine),
   ];
 }
@@ -5244,7 +5318,7 @@ function tag_view(m: Model): ui.El[Msg][] {
   }
   let s = m.playback_tools.saved;
   let rows: ui.El[Msg][] = [
-    ui.checkbox(panel.tap_to_play, "Tap to play saved cards", SetTapToPlay),
+    ui.labelled_checkbox(panel.tap_to_play, "Tap to play saved cards", SetTapToPlay),
     ui.text_button("Link a saved card", SetRoutineChoice(3)),
     ui.text_button("Link this profile's bedtime routine", LinkRoutineTag),
   ];
@@ -5254,7 +5328,7 @@ function tag_view(m: Model): ui.El[Msg][] {
   }
   rows = rows.append(ui.button(if (m.tools_page.scanning) { "Ready to scan" } else { "Start NFC scan" }, StartScan));
   if (m.tools_page.note.len() > 0) {
-    rows = rows.append(ui.text(m.tools_page.note).colored(ui.MUTED));
+    rows = rows.append(notice(m, m.tools_page.note));
   }
   for link in s.tags {
     let title = if (link.routine) { link.profile + " · Bedtime routine" } else { link.card.title };
@@ -5267,10 +5341,10 @@ function chapter_download_view(m: Model): ui.El[Msg][] {
   let id = m.travel_panel.card;
   let at = card_index(m, id);
   if (at < 0) {
-    return [];
+    return [ui.text[Msg]("Open this page from a card in Library.").colored(ui.MUTED)];
   }
   let card = m.cards[at];
-  let rows: ui.El[Msg][] = [ui.text[Msg](card.title).sized(21.0).weighted(650)];
+  let rows: ui.El[Msg][] = [ui.text[Msg](card.title).sized(20.0).weighted(650)];
   let seen: Map[string, boolean] = map_new(32);
   for track in card.tracks {
     if (track.chapter_key.len() == 0 || seen.contains(track.chapter_key)) {
@@ -5298,11 +5372,19 @@ function chapter_download_view(m: Model): ui.El[Msg][] {
     }
     rows = rows.append(ui.row(actions).aligned(ui.CENTER).spaced(8.0).wide());
   }
+  if (rows.len() == 1) {
+    rows = rows.append(ui.text[Msg]("Yoto gave no chapters for this card.").colored(ui.MUTED));
+  }
   return rows;
 }
 
-function travel_view(m: Model, page: TravelPage): ui.El[Msg] {
-  let (title, body) = match (page) {
+// Where the back arrow of a travel page goes: to its first step, or out.
+function travel_back(m: Model): Msg {
+  return if (m.travel_panel.choice > 0) { SetRoutineChoice(0) } else { CloseTravel };
+}
+
+function travel_view(m: Model, page_of: TravelPage): ui.El[Msg] {
+  let (title, body) = match (page_of) {
     CarMode => ("Car Mode", car_view(m)),
     ListenTime => ("Find a story by time", time_view(m)),
     StorageBudget => ("Download storage budget", storage_view(m)),
@@ -5310,12 +5392,34 @@ function travel_view(m: Model, page: TravelPage): ui.El[Msg] {
     NfcTags => ("NFC cards and stickers", tag_view(m)),
     ChapterDownloads => ("Chapter downloads", chapter_download_view(m)),
   };
-  let rows = [ui.text_button("Back", CloseTravel), ui.text[Msg](title).sized(27.0).weighted(700)];
+  let rows: ui.El[Msg][] = [];
   let note = m.playback_tools.note;
   if (note.len() > 0) {
-    rows = rows.append(ui.text(note).colored(ui.MUTED));
+    rows = rows.append(notice(m, note));
   }
-  return ui.column(rows.concat(body)).spaced(12.0).padding(16.0).wide().tall().scroll("travel:" + title);
+  return page(title, travel_back(m), [], rows.concat(body), "travel:" + title);
+}
+
+function main_tabs(m: Model): ui.El[Msg] {
+  let first = if (m.token.len() > 0) { "Players" } else { "Sign in" };
+  return ui.tabs([first, "Library", "Downloads", "Queue", "More"], m.tab, (tab: i32): Msg => SelectTab(tab));
+}
+
+function tab_bar(title: string): ui.El[Msg] {
+  return title_bar(title, []).padding_xy(16.0, 0.0);
+}
+
+// A tab: its bar, the notes of the app, `body`, what plays, and the tabs.
+function tab_page(m: Model, bar: ui.El[Msg], body: ui.El[Msg]): ui.El[Msg] {
+  let rows: ui.El[Msg][] = [];
+  for note in [m.note, m.session_note] {
+    if (note.len() > 0) {
+      rows = rows.append(notice(m, note));
+    }
+  }
+  let inner = ui.column(rows.append(body)).spaced(12.0).padding_xy(16.0, 0.0).wide().tall();
+  let playing = ui.column(playback_bar(m)).padding_xy(16.0, 4.0).wide();
+  return ui.column([bar, inner, playing, main_tabs(m)]).wide().tall();
 }
 
 pub function view(m: Model, screen: ui.Screen): ui.El[Msg] {
@@ -5352,21 +5456,12 @@ pub function view(m: Model, screen: ui.Screen): ui.El[Msg] {
   if (m.now_open) {
     return now_playing_screen(m, screen);
   }
-  let title = ui.text[Msg]("Story Deck").sized(30.0).weighted(700).wide();
-  if (m.token.len() == 0) {
-    if (m.tab > 0 && (m.tab != 1 || m.cache_available || m.downloads.catalog.entries.len() > 0)) {
-      let tabs = ui.tabs(["Sign in", "Library", "Downloads", "Queue"], m.tab, (at: i32): Msg => SelectTab(at));
-      let body = if (m.tab == 3) { playback_queue(m) } else { download_list(m) };
-      if (m.tab == 1) {
-        body = if let Some(card) = opened_card(m) { card_details(m, card, screen) } else { card_list(m, screen) };
-      }
-      return ui.column([body].concat(playback_bar(m)).append(tabs)).padding_xy(16.0, 0.0).wide().tall();
-    }
+  let signed = m.token.len() > 0;
+  if (!signed && !(m.tab > 0 && (m.tab != 1 || m.cache_available || m.downloads.catalog.entries.len() > 0))) {
+    let title = ui.text[Msg]("Story Deck").sized(30.0).weighted(700).wide();
     let items = [title, sign_in(m), ui.text_button("Player and family setup", OpenTools(panel_tools.Setup))];
     if (m.cache_available || m.downloads.catalog.entries.len() > 0) {
       items = items.append(ui.text_button("Listening profiles", ShowProfiles));
-    }
-    if (m.cache_available || m.downloads.catalog.entries.len() > 0) {
       items = items.append(ui.text_button("Offline library", SelectTab(1)));
     }
     if (m.downloads.catalog.entries.len() > 0) {
@@ -5378,29 +5473,37 @@ pub function view(m: Model, screen: ui.Screen): ui.El[Msg] {
     if (m.playback_tools.saved.queue.len() > 0 || m.playback_tools.saved.marks.len() > 0 || m.playback_tools.saved.pins.len() > 0 || m.playback_tools.saved.lineups.len() > 0 || m.playback_tools.saved.history.len() > 0) {
       items = items.append(ui.text_button("Queue", SelectTab(3)));
     }
-    return ui.column(items).spaced(20.0).padding(20.0).wide().tall().scroll("connection");
+    items = items.append(ui.text_button("More tools", SelectTab(4)));
+    return ui.column(items).spaced(12.0).padding(20.0).wide().tall().scroll("connection");
   }
-  if let Some(player) = m.config_panel.device {
-    return settings_panel(m, player, screen);
+  if (signed) {
+    if let Some(player) = m.config_panel.device {
+      return settings_panel(m, player, screen);
+    }
   }
-  let tabs = ui.tabs(["Players", "Library", "Downloads", "Queue"], m.tab, (tab: i32): Msg => SelectTab(tab));
-  let body = player_list(m);
-  let name = "Players";
   if (m.tab == 1) {
     if let Some(card) = opened_card(m) {
-      body = card_details(m, card, screen);
-      name = "Library";
-    } else {
-      return ui.column([card_list(m, screen)].concat(playback_bar(m)).append(tabs)).padding_xy(16.0, 0.0).wide().tall();
+      return tab_page(m, ui.app_bar("Library", Some(CloseCard), []), card_details(m, card, screen));
     }
-  } else if (m.tab == 2) {
-    body = download_list(m);
-    name = "Downloads";
-  } else if (m.tab == 3) {
-    body = playback_queue(m);
-    name = "Queue";
+    let shelf = ui.column([card_list(m, screen)].concat(playback_bar(m))).padding_xy(16.0, 0.0).wide().tall();
+    return ui.column([shelf, main_tabs(m)]).wide().tall();
   }
-  return ui.column([section_header(m, name), body].concat(playback_bar(m)).append(tabs)).spaced(12.0).padding_xy(16.0, 8.0).wide().tall();
+  if (m.tab == 2) {
+    if (m.trip_select && signed) {
+      return tab_page(m, ui.app_bar("Choose cards", Some(ChooseDownloads), []), download_list(m));
+    }
+    if (offline.saved(m.downloads, m.offline_open).is_some()) {
+      return tab_page(m, ui.app_bar("Downloads", Some(OpenDownload("")), []), download_list(m));
+    }
+    return tab_page(m, tab_bar("Downloads"), download_list(m));
+  }
+  if (m.tab == 3) {
+    return tab_page(m, tab_bar("Queue"), playback_queue(m));
+  }
+  if (m.tab == 4) {
+    return tab_page(m, tab_bar("More"), more_view(m));
+  }
+  return tab_page(m, tab_bar("Players"), player_list(m));
 }
 
 function wait(m: Model): i32 {
@@ -5415,6 +5518,9 @@ function wait(m: Model): i32 {
   }
   if (m.flow.is_some()) {
     return 150;
+  }
+  if (m.volume_due > 0i64 && !m.busy) {
+    return (((m.volume_due - monotonic_ns()) / 1000000i64) as i32).max(0);
   }
   if (!m.busy && !m.cover_busy && (next_cover(m).len() > 0 || warm_art(m).len() > 0)) {
     return 120;
@@ -5466,7 +5572,7 @@ function back_message(m: Model): Option[Msg] {
     return None;
   }
   if (m.travel_panel.page.is_some()) {
-    return Some(CloseTravel);
+    return Some(travel_back(m));
   }
   if (m.target_open) {
     return Some(CloseTarget);
@@ -5500,9 +5606,6 @@ function back_message(m: Model): Option[Msg] {
   }
   if (m.config_panel.device.is_some()) {
     return if (m.config_panel.picker.is_some()) { Some(BackToSettings) } else { Some(CloseSettings) };
-  }
-  if (m.menu_open) {
-    return Some(ToggleMenu);
   }
   if (m.tab == 2 && m.trip_select && m.token.len() > 0) {
     return Some(ChooseDownloads);

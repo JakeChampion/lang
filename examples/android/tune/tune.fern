@@ -383,9 +383,9 @@ pub function theme(m: Model, dark: boolean): ui.Theme {
 pub function plain_theme(dark: boolean): ui.Theme {
   let white = draw.rgb(255, 255, 255);
   if (dark) {
-    return ui.Theme { background: draw.rgb(0, 0, 0), surface: draw.rgb(28, 28, 28), primary: look.red(), on_primary: white, ink: white, muted: draw.rgb(160, 160, 160), outline: draw.rgb(70, 70, 70), track: draw.rgb(48, 48, 48), pressed: draw.rgba(255, 255, 255, 31) };
+    return ui.Theme { background: draw.rgb(0, 0, 0), surface: draw.rgb(28, 28, 28), primary: look.red(), on_primary: white, ink: white, muted: draw.rgb(160, 160, 160), outline: draw.rgb(70, 70, 70), track: draw.rgb(48, 48, 48), pressed: draw.rgba(255, 255, 255, 31), error: draw.rgb(242, 184, 181) };
   }
-  return ui.Theme { background: draw.rgb(242, 242, 242), surface: white, primary: look.red(), on_primary: white, ink: draw.rgb(0, 0, 0), muted: draw.rgb(110, 110, 110), outline: draw.rgb(200, 200, 200), track: draw.rgb(222, 222, 222), pressed: draw.rgba(0, 0, 0, 31) };
+  return ui.Theme { background: draw.rgb(242, 242, 242), surface: white, primary: look.red(), on_primary: white, ink: draw.rgb(0, 0, 0), muted: draw.rgb(110, 110, 110), outline: draw.rgb(200, 200, 200), track: draw.rgb(222, 222, 222), pressed: draw.rgba(0, 0, 0, 31), error: draw.rgb(179, 38, 30) };
 }
 
 // The key color of the cover of the track that plays, when the player

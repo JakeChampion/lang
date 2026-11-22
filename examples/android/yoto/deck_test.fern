@@ -215,7 +215,7 @@ function test_search_in_ui(): test.TestOutcome {
     return test.fail("the search result must show the matching track and its card");
   }
   s = sim.tap(s, "Tracks for Fox at dusk");
-  return test.assert_eq(sim.shows(s, "Back to library") && sim.shows(s, "Fox at dusk"), true);
+  return test.assert_eq(sim.says(s, "Back") && sim.shows(s, "Fox at dusk"), true);
 }
 
 function test_saved_session(): test.TestOutcome {
@@ -242,7 +242,7 @@ function test_saved_session(): test.TestOutcome {
   let Some(token) = saved.get() else {
     return test.fail("the new refresh token must be saved during close");
   };
-  let signed_out = p.effects(deck.update(deck.restored(Ok(Some(token))), deck.SignOut));
+  let signed_out = p.effects(deck.update(deck.update(deck.restored(Ok(Some(token))), deck.SignOut), deck.SignOut));
   return test.assert_eq(token.refresh == "second" && saved.get().is_none() && signed_out.refresh.len() == 0, true);
 }
 
@@ -335,7 +335,7 @@ function test_continuous_posters(): test.TestOutcome {
   let search_at_top = search_position(s);
   s = sim.settle(sim.drag(s, 160, 1250, 160, 770, 450i64));
   let pinned_at = search_position(s);
-  if (pinned_at < 0 || pinned_at >= search_at_top || sim.says(s, "More options") || !s.shell.app.shelf.pinned) {
+  if (pinned_at < 0 || pinned_at >= search_at_top || sim.says(s, "Playlists") || !s.shell.app.shelf.pinned) {
     return test.fail("the library header must scroll away and leave the search field at the top");
   }
   preview(s, "search-pinned");
@@ -354,7 +354,7 @@ function test_continuous_posters(): test.TestOutcome {
   if (s.shell.host.lay.scrollers[0].count != 22) {
     return test.fail("card details must put every track in the same list");
   }
-  s = sim.tap(s, "Back to library");
+  s = sim.tap(s, "Back");
   if (!sim.says(s, "Tracks for Cover 21") || s.shell.host.input.offsets.get(name).unwrap_or(0) != offset) {
     return test.fail("opening a card must restore the exact library scroll position");
   }
@@ -366,7 +366,7 @@ function test_continuous_posters(): test.TestOutcome {
     return test.fail("search from the pinned field and return to the first result");
   }
   s = sim.settle(sim.drag(s, 160, 200, 160, 800, 450i64));
-  return test.assert_eq(sim.says(s, "More options") && !s.shell.app.shelf.pinned && search_position(s) == search_at_top, true);
+  return test.assert_eq(sim.says(s, "Playlists") && !s.shell.app.shelf.pinned && search_position(s) == search_at_top, true);
 }
 
 function test_signed_streams(): test.TestOutcome {
@@ -387,7 +387,7 @@ function test_phone_playback(): test.TestOutcome {
   let s = sim.tap(sim.tap(library_sim(), "This phone"), "Library");
   s = sim.tap(s, "Play Woodland Walk");
   let m = s.shell.app;
-  if (!m.on_phone || m.job.is_none() || !sim.shows(s, "Play on this phone")) {
+  if (!m.on_phone || m.job.is_none() || !sim.shows(s, "On this phone")) {
     return test.fail("the phone must be a selectable playback target");
   }
   let opened = cell_new([] as string[]);
@@ -605,7 +605,7 @@ function test_library_download_filter(): test.TestOutcome {
   if (queued.len() != 1 || queued[0].title != "Sky Journal" || s.shell.app.tab != 1) {
     return test.fail("queue just the chosen card and stay in the library");
   }
-  s = sim.tap(s, "Downloaded only, not checked");
+  s = sim.tap(sim.tap(sim.tap(s, "Filters"), "Downloaded only, not checked"), "Hide filters");
   if (!sim.says(s, "Play Woodland Walk") || sim.says(s, "Tracks for Sky Journal")) {
     return test.fail("show only cards with a complete download in the filtered grid");
   }
@@ -662,7 +662,7 @@ function test_light_picker(): test.TestOutcome {
   s = sim.send(s, deck.ConfigLoaded(panel.revision, false, Ok(config)));
   s = sim.tap(s, "Choose Morning light color");
   s = sim.slide(s, "Hue", 0.5);
-  s = sim.tap(s, "Cancel");
+  s = sim.tap(s, "Back");
   if (s.shell.app.config_panel.draft.len() != 0) {
     return test.fail("cancel the preview without editing settings");
   }
@@ -902,11 +902,10 @@ function test_library_collections(): test.TestOutcome {
     || search.find(cards, "", search.CLUB)[0].card != 1 || search.find(cards, "", 2)[0].card != 3) {
     return test.fail("use the service metadata for collections and last-played order");
   }
-  s = sim.tap(s, "Sort order · Last played");
+  s = sim.tap(sim.tap(s, "Filters"), "Sort order · Last played");
   if (s.shell.app.shelf.hits[0].card != 1) {
     return test.fail("sort the library by title");
   }
-  s = sim.tap(s, "Show groups");
   s = sim.tap(s, "Favourites");
   if (s.shell.app.shelf.hits.len() != 1 || s.shell.app.shelf.hits[0].card != 1) {
     return test.fail("filter the library to the selected group and skip unavailable cards");
@@ -926,17 +925,27 @@ function test_library_collections(): test.TestOutcome {
   return test.assert_eq(s.shell.app.shelf.hits.len() == 0 && sim.shows(s, "No matches in the current index."), true);
 }
 
-function test_account_menu(): test.TestOutcome {
-  let s = library_sim();
-  if (!sim.says(s, "More options") || sim.says(s, "Refresh") || sim.says(s, "Sign out")) {
-    return test.fail("show only the account menu icon when the menu is closed");
+function account_rows(): sim.Sim[deck.Model, deck.Msg] {
+  return sim.settle(sim.drag(sim.tap(library_sim(), "More"), 360, 1400, 360, 200, 300i64));
+}
+
+function test_account_actions(): test.TestOutcome {
+  if (sim.says(library_sim(), "Refresh") || sim.says(library_sim(), "Sign out")) {
+    return test.fail("show no account actions on the Players tab");
   }
-  s = sim.tap(s, "More options");
+  let s = account_rows();
   if (!sim.says(s, "Refresh") || !sim.says(s, "Sign out")) {
-    return test.fail("show refresh and sign-out actions in the menu");
+    return test.fail("show refresh and sign-out actions on the More tab");
   }
-  s = sim.tap(s, "Refresh");
-  return test.assert_eq(s.shell.app.busy && !s.shell.app.menu_open, true);
+  s = sim.tap(s, "Sign out");
+  if (s.shell.app.token.len() == 0 || !sim.says(s, "Confirm sign out")) {
+    return test.fail("ask again before the account goes");
+  }
+  s = sim.tap(s, "Confirm sign out");
+  if (s.shell.app.token.len() > 0) {
+    return test.fail("sign out on the second tap");
+  }
+  return test.assert_eq(sim.tap(account_rows(), "Refresh").shell.app.busy, true);
 }
 
 function test_now_playing_controls(): test.TestOutcome {
@@ -1055,13 +1064,7 @@ function test_android_back_returns_through_tabs(): test.TestOutcome {
 }
 
 function test_android_back_returns_through_tools(): test.TestOutcome {
-  let s = sim.tap(library_sim(), "Library");
-  s = sim.tap(s, "More options");
-  s = sim.back(s);
-  if (s.shell.app.menu_open || s.shell.app.tab != 1) {
-    return test.fail("Back closes the menu before it leaves Library");
-  }
-  s = sim.tap(sim.tap(s, "More options"), "Library tools");
+  let s = sim.tap(sim.tap(library_sim(), "Library"), "More");
   s = sim.tap(s, "Create a playlist");
   s = sim.tap(s, "Choose a library cover");
   if (!s.shell.app.tools_page.choosing_cover) {
@@ -1073,7 +1076,7 @@ function test_android_back_returns_through_tools(): test.TestOutcome {
   }
   s = sim.back(s);
   if (!sim.says(s, "Discover") || !sim.says(s, "Scan a card")) {
-    return test.fail("Back returns from the playlist to Library tools");
+    return test.fail("Back returns from the playlist to the More tab");
   }
   s = sim.tap(s, "Discover");
   s = sim.tap(s, "Browse new cards in the Yoto shop");
@@ -1328,6 +1331,101 @@ function test_player_transport_fits(): test.TestOutcome {
   return test.assert_eq(previous, next);
 }
 
+function label_color(s: sim.Sim[deck.Model, deck.Msg], label: string): i32 {
+  for n in s.shell.host.lay.nodes {
+    match (n.paint) {
+      scene.Label(t, _, _, _, color) => {
+        if (t == label) {
+          return color;
+        }
+      },
+      _ => {}
+    }
+  }
+  return 0;
+}
+
+function playing_on_bedroom(state: string): sim.Sim[deck.Model, deck.Msg] {
+  let reply = "{\"playbackStatus\":\"" + state + "\",\"cardId\":\"book\",\"chapterKey\":\"01\",\"trackKey\":\"03\",\"position\":19,\"trackLength\":114}";
+  let s = sim.tap(library_sim(), "Bedroom, Online");
+  let Some(playback) = player_status.event(reply.bytes()) else {
+    return s;
+  };
+  let initial = s.shell.app;
+  return sim.send(s, deck.PlaybackLoaded(initial.generation, initial.now_playing.revision, Ok(playback)));
+}
+
+function test_each_option_shows_its_label(): test.TestOutcome {
+  let item = listening.Item { id: "book", title: "Woodland Walk" };
+  let plans = listening.keep_lineup(listening.empty(), "", "Car ride", [item]);
+  let s = sim.send(simulator(deck.with_listening(library_sim().shell.app, plans)), deck.SelectTab(3));
+  let line = label_height(s, "Play");
+  if (line <= 0 || label_height(s, "Download missing") != line || label_height(s, "Trip dashboard") != line) {
+    return test.fail("show each action of a trip on one line");
+  }
+  s = sim.settle(sim.drag(s, 360, 1300, 360, 300, 300i64));
+  if (!sim.shows(s, "Fade out at the end")) {
+    return test.fail("label the fade option of the phone sleep timer");
+  }
+  let bedtime = sim.send(library_sim(), deck.OpenTravel(deck.Bedtime));
+  let tags = sim.send(library_sim(), deck.OpenTravel(deck.NfcTags));
+  let chapters = sim.send(library_sim(), deck.OpenTravel(deck.ChapterDownloads));
+  if (!sim.shows(bedtime, "Fade out at the end") || !sim.shows(tags, "Tap to play saved cards")) {
+    return test.fail("label the options of the bedtime routine and of the NFC stickers");
+  }
+  return test.assert_eq(sim.shows(chapters, "Open this page from a card in Library."), true);
+}
+
+function test_large_text_keeps_the_tabs(): test.TestOutcome {
+  let s = sim.scaled(library_sim(), 1.5);
+  let line = label_height(s, "More");
+  for label in ["Library", "Downloads", "Queue"] {
+    if (line <= 0 || label_height(s, label) > line) {
+      return test.fail("show the tab " + label + " on one line at a large text size");
+    }
+  }
+  return test.assert_eq(sim.says(s, "More, tab 5 of 5"), true);
+}
+
+function test_player_state_sets_the_controls(): test.TestOutcome {
+  let playing = playing_on_bedroom("playing");
+  let paused = playing_on_bedroom("paused");
+  if (!sim.shows(playing, "Pause") || sim.shows(playing, "Resume") || !sim.shows(paused, "Resume") || sim.shows(paused, "Pause")) {
+    return test.fail("offer Pause for a player that plays and Resume for a player that waits");
+  }
+  let waiting = sim.send(playing_on_bedroom("playing"), deck.DeviceVolume(30)).shell.app;
+  if (waiting.volume != 30 || waiting.volume_due <= 0i64 || waiting.busy) {
+    return test.fail("wait for the volume slider to rest");
+  }
+  let rested = deck.Model { ...deck.start(), token: "test session", players: [api.Player { id: "one", name: "Bedroom", online: true }], selected: "one", volume: 30, volume_due: 1i64 };
+  let sent = deck.update(rested, deck.Tick);
+  if (!sent.busy || sent.volume_due != 0i64 || sent.job.is_none()) {
+    return test.fail("send the volume after the slider rests");
+  }
+  let s = sim.send(playing, deck.OpenNowPlaying);
+  let state = s.shell.app;
+  let fault = "Yoto denied access.";
+  s = sim.send(s, deck.DeviceStatusLoaded(state.generation, "one", Err(api.failure(fault))));
+  let colors = launcher_icon.theme(false);
+  return test.assert_eq(sim.shows(s, fault) && label_color(s, fault) == colors.error && label_color(s, "Stop") == colors.primary, true);
+}
+
+function test_time_steps(): test.TestOutcome {
+  if (settings.shifted_time("07:00", 15) != "07:15" || settings.shifted_time("00:10", -15) != "23:55" || settings.shifted_time("", 60) != "08:00") {
+    return test.fail("move a clock time in one day");
+  }
+  let s = sim.tap(library_sim(), "Settings for Bedroom");
+  let panel = s.shell.app.config_panel;
+  let device = panel.device.unwrap_or(api.Player { id: "", name: "", online: false });
+  let reply = json.parse("{\"device\":{\"config\":{\"dayTime\":\"23:30\"}}}").unwrap_or(json.JNull);
+  let Ok(config) = api.parse_config(reply, device) else {
+    return test.fail("parse the time that the morning starts");
+  };
+  s = sim.send(s, deck.ConfigLoaded(panel.revision, false, Ok(config)));
+  s = sim.tap(s, "Morning starts +1 h");
+  return test.assert_eq(s.shell.app.config_panel.draft.get("dayTime").unwrap_or(""), "00:30");
+}
+
 function test_library_search_jobs(): test.TestOutcome {
   let first = fixture_cards()[0];
   let tracks: api.Track[] = [];
@@ -1444,8 +1542,12 @@ function test_concurrent_download_removal(): test.TestOutcome {
   let real = deck.program((url: string): boolean => false, (data: u8[], limit: i32): Option[draw.Image] => None, (session: Option[api.Session]): boolean => true, no_audio(), disk, (state: listening.Saved): boolean => listening.save(dir, state));
   let dry = ui.program(deck.view, deck.update).with_effects(real.effects).with_back(real.back);
   let s = sim.start(opened, dry, test_fonts(), 720, 1600, 2.0);
-  let start = monotonic_ns();
   s = sim.tap(s, "Remove download");
+  if (s.shell.app.offline_open.len() == 0 || !sim.shows(s, "Confirm removal")) {
+    return test.fail("ask again before a download goes");
+  }
+  let start = monotonic_ns();
+  s = sim.tap(s, "Confirm removal");
   let touch_ms = (monotonic_ns() - start) / 1000000i64;
   if (s.shell.app.offline_open.len() > 0 || removed.get() != 0 || !sim.shows(s, "Downloading " + active.title + " · 0/1 tracks")) {
     return test.fail("leave the track list immediately while the second title downloads");
@@ -1787,13 +1889,17 @@ function main(): i32 {
   r = r.it("use sharp artwork at full size and keep player icons small", test_playback_artwork_resolution);
   r = r.it("draw the Story Deck launcher icon", test_launcher_icon);
   r = r.it("filter the library by collection and family group", test_library_collections);
-  r = r.it("show account actions only in the menu", test_account_menu);
+  r = r.it("show account actions on the More tab and confirm sign-out", test_account_actions);
   r = r.it("open the full phone player and build device commands", test_now_playing_controls);
   r = r.it("keep each player transport button on one line", test_player_transport_fits);
+  r = r.it("show the label of each option and each trip action on one line", test_each_option_shows_its_label);
+  r = r.it("keep each tab on one line at a large text size", test_large_text_keeps_the_tabs);
+  r = r.it("move a time setting by an hour without the keyboard", test_time_steps);
+  r = r.it("match the player controls to its state, rest the volume, and mark a fault", test_player_state_sets_the_controls);
   r = r.it("retry one track and find the saved card after restart", test_downloaded_search_and_retry);
   r = r.it("validate scanned card codes and shop links", test_scan_and_shop);
   r = r.it("Android Back returns through search, downloads, and tabs", test_android_back_returns_through_tabs);
-  r = r.it("Android Back returns through the menu and Library tools", test_android_back_returns_through_tools);
+  r = r.it("Android Back returns through the tools to the More tab", test_android_back_returns_through_tools);
   r = r.it("reopen trip playlists, named bookmarks, history, and the download queue", test_reopen_trip_and_downloads);
   r = r.it("restore the searchable index and keep kids mode locked after restart", test_cache_and_kids_reopen);
   r = r.it("enter and confirm a parent PIN with a regular or large keypad", test_parent_pin_keypad);

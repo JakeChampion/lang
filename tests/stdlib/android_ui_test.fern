@@ -155,6 +155,50 @@ function test_a_square_fits_its_room(): test.TestOutcome {
   return test.assert_eq(boxes(laid(column(400.0)).nodes) + " | " + boxes(laid(column(100.0)).nodes) + " | " + boxes(row.nodes), "0,0,150,150 0,150,20,30 | 0,0,70,70 0,70,20,30 | 0,0,50,50 50,0,20,10");
 }
 
+// A row of 60 pixels takes two texts of 18 pixels with a gap of 5, so the
+// third text goes on the next line, 5 pixels below. Each line is in the
+// middle of the row.
+function test_a_row_wraps(): test.TestOutcome {
+  let lay = laid(ui.column([ui.row([label("AAA"), label("AAA"), label("AAA")]).spaced(5.0).justified(ui.CENTER).wrapped().wide(), label("A")]).width(60.0));
+  let one = laid(ui.column([ui.row([label("AAA"), label("AAA")]).spaced(5.0).wrapped(), label("A")]).width(60.0));
+  return test.assert_eq(boxes(lay.nodes) + " | " + boxes(one.nodes), "9,0,18,10 32,0,18,10 21,15,18,10 0,25,6,10 | 0,0,18,10 23,0,18,10 0,10,6,10");
+}
+
+// "AAAAA" is 30 pixels wide at 10 sp. In a room of 24 pixels it shows at
+// 8 sp. In a room of 12 pixels it shows at 7 sp, with an ellipsis.
+function test_a_text_fits(): test.TestOutcome {
+  let lay = laid(ui.column([label("AAAAA").fitted()]).width(24.0));
+  let small = laid(ui.column([label("AAAAA").fitted()]).width(12.0));
+  let wide = laid(ui.column([label("AAAAA").fitted()]).width(100.0));
+  let got: string[] = [];
+  for n in [lay.nodes[0], small.nodes[0], wide.nodes[0]] {
+    match (n.paint) {
+      scene.Label(t, size, _, _, _) => {
+        got = got.append((t == "AAAAA").to_string() + ":" + size.to_string() + ":" + (n.w <= 24).to_string());
+      },
+      _ => {}
+    }
+  }
+  return test.assert_eq(got.join(" ") + " " + small.nodes.len().to_string(), "true:8:true false:7:true true:10:false 1");
+}
+
+// The text of a labelled checkbox shows, and a tap on the text gives the
+// message.
+function test_a_labelled_checkbox(): test.TestOutcome {
+  let lay = laid(ui.column([ui.labelled_checkbox(false, "AA", Agree)]));
+  let texts = labels(lay.nodes);
+  let said = "none";
+  for n in lay.nodes {
+    match (n.paint) {
+      scene.Label(_, _, _, _, _) => {
+        said = ui.tap_message(lay.messages(), lay.layout(), lay.nodes[0]).map((m: Msg): string => name_of(m)).unwrap_or("none");
+      },
+      _ => {}
+    }
+  }
+  return test.assert_eq(texts + " " + lay.nodes[0].h.to_string() + " " + lay.nodes[0].say + " " + (said != "none").to_string(), "AA@48 48 AA, not checked true");
+}
+
 function test_stack(): test.TestOutcome {
   let lay = laid(ui.stack([ui.box().grow(1.0).background(ui.SURFACE), label("AA")]).centered());
   return test.assert_eq(boxes(lay.nodes), "0,0,200,400 94,195,12,10");
@@ -314,6 +358,12 @@ function test_roles_take_the_theme(): test.TestOutcome {
   return test.assert_eq(got, "true true");
 }
 
+function test_the_error_role(): test.TestOutcome {
+  let dark = ui.theme(true);
+  let seeded = ui.seeded(draw.rgb(90, 87, 165), false);
+  return test.assert_eq(dark.color(ui.ERROR) == dark.error && seeded.color(ui.ERROR) == seeded.error && dark.error != seeded.error, true);
+}
+
 function test_safe_area(): test.TestOutcome {
   let s = ui.Screen { ...screen(), top: 24, bottom: 48 };
   let lay = laid_on(ui.box().grow(1.0).background(ui.SURFACE), s, ui.no_focus());
@@ -332,7 +382,7 @@ function test_button(): test.TestOutcome {
     _ => {}
   }
   let said = ui.tap_message(lay.messages(), lay.layout(), n).map((m: Msg): string => name_of(m)).unwrap_or("none");
-  return test.assert_eq(boxes(lay.nodes) + " " + said + " " + r.to_string(), "10,10,65,40 34,22,17,15 go0 20");
+  return test.assert_eq(boxes(lay.nodes) + " " + said + " " + r.to_string(), "10,10,65,48 34,26,17,15 go0 24");
 }
 
 function rows(n: i32): ui.El[Msg][] {
@@ -540,7 +590,7 @@ function test_pressed_node_shows(): test.TestOutcome {
     },
     _ => {}
   }
-  return test.assert_eq(lay.nodes.len().to_string() + " " + pressed.len().to_string() + " " + ui.shown(b, lay, 0).len().to_string() + " " + r.to_string() + " " + over.w.to_string(), "2 3 2 20 " + lay.nodes[0].w.to_string());
+  return test.assert_eq(lay.nodes.len().to_string() + " " + pressed.len().to_string() + " " + ui.shown(b, lay, 0).len().to_string() + " " + r.to_string() + " " + over.w.to_string(), "2 3 2 24 " + lay.nodes[0].w.to_string());
 }
 
 function test_modal_takes_the_touches(): test.TestOutcome {
@@ -1381,7 +1431,11 @@ function main(): i32 {
   r = r.it("STRETCH gives each element the whole width", test_stretch);
   r = r.it("a space in a row adds no height to the row", test_a_space_in_a_row_adds_no_height);
   r = r.it("a square takes the largest square that fits in its room", test_a_square_fits_its_room);
+  r = r.it("a row that wraps puts the elements that do not fit on the next line", test_a_row_wraps);
+  r = r.it("a fitted text gets smaller to fit its room", test_a_text_fits);
+  r = r.it("a labelled checkbox shows its text", test_a_labelled_checkbox);
   r = r.it("a stack puts its elements one over the other", test_stack);
+  r = r.it("the role ERROR takes the error color of the theme", test_the_error_role);
   r = r.it("a text wraps and clamps", test_text_wraps);
   r = r.it("a right-to-left text reads from the right", test_right_to_left_text);
   r = r.it("a frame takes a fallback font for a character of its text", test_a_frame_covers_its_text);
@@ -1392,7 +1446,7 @@ function main(): i32 {
   r = r.it("a seeded theme takes the hue of its seed", test_a_seeded_theme);
   r = r.it("a theme follows the state of the program", test_a_theme_follows_the_state);
   r = r.it("the tree stays out of the bars of the system", test_safe_area);
-  r = r.it("a button has the size of Material", test_button);
+  r = r.it("a button is 48 dp high", test_button);
   r = r.it("a column that scrolls clips and moves its rows", test_scroll_column);
   r = r.it("a list builds only the rows that show", test_list_builds_the_rows_that_show);
   r = r.it("a row that is a list scrolls across", test_row_scrolls_across);

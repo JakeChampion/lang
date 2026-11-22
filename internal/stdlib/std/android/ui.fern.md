@@ -14,7 +14,7 @@ The executable example below is such an app.
 
 ### Elements
 
-`column` puts its elements one below the other, `row` puts them side by side, and `stack` puts them one over the other. `text` shows a text, which wraps at the width of its box. `picture` shows an image, and `canvas` shows what a function of the app draws. `box` is an empty rectangle, and `space` takes the room that is left.
+`column` puts its elements one below the other, `row` puts them side by side, and `stack` puts them one over the other. `text` shows a text, which wraps at the width of its box. `fitted` makes a text of one line whose letters get smaller to fit its box. `wrapped` makes a row put the elements that do not fit on the next line. `picture` shows an image, and `canvas` shows what a function of the app draws. `box` is an empty rectangle, and `space` takes the room that is left.
 
 Each element has a width and a height. `Hug` takes the size of what the element holds, and `Grow` takes a share of the room that is left. `Exact` is a size in dp. `square` makes an element the largest square that fits in its room, so a picture that grows keeps its shape on a short screen.
 
@@ -34,7 +34,7 @@ The shell lays out as for a layout that is left to right. Then `on_screen` mirro
 
 `on_move` lets a person move the rows of a `list`: a long press lifts a row, and the row goes with the finger. `on_swipe` lets a person drag a row across the list to take it out.
 
-A color is a pixel word of `std/android/draw`, or a role: `PRIMARY`, `ON_PRIMARY`, `INK`, `MUTED`, `SURFACE`, `OUTLINE`, `BACKGROUND` and `TRACK`. A role takes its color from the `Theme`, which is light or dark as the system is. `seeded` makes a theme from one color, for example the key color of an album cover. `button`, `outlined_button`, `card`, `toggle`, `checkbox`, `radio`, `tabs`, `menu`, `app_bar`, `snackbar`, `progress` and `divider` are elements in the look of Material 3.
+A color is a pixel word of `std/android/draw`, or a role: `PRIMARY`, `ON_PRIMARY`, `INK`, `MUTED`, `SURFACE`, `OUTLINE`, `BACKGROUND`, `TRACK` and `ERROR`. A role takes its color from the `Theme`, which is light or dark as the system is. `seeded` makes a theme from one color, for example the key color of an album cover. `button`, `outlined_button`, `card`, `toggle`, `checkbox`, `labelled_checkbox`, `radio`, `tabs`, `menu`, `app_bar`, `snackbar`, `progress` and `divider` are elements in the look of Material 3.
 
 A canvas gives its paint a color of `std/android/draw`. `tinted` makes a canvas whose paint gets the color of a role, so an icon of `std/android/icons` follows the theme.
 
@@ -160,8 +160,9 @@ The colors are the baseline colors of Material 3. A role is a pixel word with no
 ```fern
 <<theme>>=
 // `track` is behind the bar of `progress`, and `pressed` is over the
-// element under a finger.
-pub struct Theme { background: i32, surface: i32, primary: i32, on_primary: i32, ink: i32, muted: i32, outline: i32, track: i32, pressed: i32 }
+// element under a finger. `error` is the color of a text that tells of a
+// fault.
+pub struct Theme { background: i32, surface: i32, primary: i32, on_primary: i32, ink: i32, muted: i32, outline: i32, track: i32, pressed: i32, error: i32 }
 
 // The colors of the light theme, or of the dark theme, from the color
 // `seed`. The primary color has the hue of the seed, and the surfaces and
@@ -173,19 +174,19 @@ pub function seeded(seed: i32, dark: boolean): Theme {
   if (dark) {
     let ink = tone(0.93, 0.012);
     let outline = tone(0.66, 0.03);
-    return Theme { background: tone(0.17, 0.012), surface: tone(0.23, 0.022), primary: tone(0.82, c * 0.8), on_primary: tone(0.3, c * 0.6), ink: ink, muted: tone(0.81, 0.025), outline: outline, track: draw.with_alpha(outline, 77), pressed: draw.with_alpha(ink, 31) };
+    return Theme { background: tone(0.17, 0.012), surface: tone(0.23, 0.022), primary: tone(0.82, c * 0.8), on_primary: tone(0.3, c * 0.6), ink: ink, muted: tone(0.81, 0.025), outline: outline, track: draw.with_alpha(outline, 77), pressed: draw.with_alpha(ink, 31), error: draw.rgb(242, 184, 181) };
   }
   let ink = tone(0.21, 0.014);
   let outline = tone(0.58, 0.03);
-  return Theme { background: tone(0.985, 0.01), surface: tone(0.95, 0.022), primary: tone(0.48, c), on_primary: draw.rgb(255, 255, 255), ink: ink, muted: tone(0.42, 0.025), outline: outline, track: draw.with_alpha(outline, 77), pressed: draw.with_alpha(ink, 31) };
+  return Theme { background: tone(0.985, 0.01), surface: tone(0.95, 0.022), primary: tone(0.48, c), on_primary: draw.rgb(255, 255, 255), ink: ink, muted: tone(0.42, 0.025), outline: outline, track: draw.with_alpha(outline, 77), pressed: draw.with_alpha(ink, 31), error: draw.rgb(179, 38, 30) };
 }
 
 // The colors of the light theme, or of the dark theme.
 pub function theme(dark: boolean): Theme {
   if (dark) {
-    return Theme { background: draw.rgb(20, 18, 24), surface: draw.rgb(33, 31, 38), primary: draw.rgb(208, 188, 255), on_primary: draw.rgb(56, 30, 114), ink: draw.rgb(230, 224, 233), muted: draw.rgb(202, 196, 208), outline: draw.rgb(147, 143, 153), track: draw.rgba(147, 143, 153, 77), pressed: draw.rgba(230, 224, 233, 31) };
+    return Theme { background: draw.rgb(20, 18, 24), surface: draw.rgb(33, 31, 38), primary: draw.rgb(208, 188, 255), on_primary: draw.rgb(56, 30, 114), ink: draw.rgb(230, 224, 233), muted: draw.rgb(202, 196, 208), outline: draw.rgb(147, 143, 153), track: draw.rgba(147, 143, 153, 77), pressed: draw.rgba(230, 224, 233, 31), error: draw.rgb(242, 184, 181) };
   }
-  return Theme { background: draw.rgb(254, 247, 255), surface: draw.rgb(243, 237, 247), primary: draw.rgb(103, 80, 164), on_primary: draw.rgb(255, 255, 255), ink: draw.rgb(29, 27, 32), muted: draw.rgb(73, 69, 79), outline: draw.rgb(121, 116, 126), track: draw.rgba(121, 116, 126, 77), pressed: draw.rgba(29, 27, 32, 31) };
+  return Theme { background: draw.rgb(254, 247, 255), surface: draw.rgb(243, 237, 247), primary: draw.rgb(103, 80, 164), on_primary: draw.rgb(255, 255, 255), ink: draw.rgb(29, 27, 32), muted: draw.rgb(73, 69, 79), outline: draw.rgb(121, 116, 126), track: draw.rgba(121, 116, 126, 77), pressed: draw.rgba(29, 27, 32, 31), error: draw.rgb(179, 38, 30) };
 }
 
 pub const PRIMARY: i32 = 1;
@@ -203,6 +204,8 @@ pub const OUTLINE: i32 = 6;
 pub const BACKGROUND: i32 = 7;
 
 pub const TRACK: i32 = 8;
+
+pub const ERROR: i32 = 9;
 
 // The color of `c` in the theme `t`, when `c` is a role.
 pub function (t: Theme) color(c: i32): i32 {
@@ -229,6 +232,9 @@ pub function (t: Theme) color(c: i32): i32 {
   }
   if (c == TRACK) {
     return t.track;
+  }
+  if (c == ERROR) {
+    return t.error;
   }
   return c;
 }
@@ -345,10 +351,14 @@ pub struct El[M] {
   swipes: Option[(i32) => M],
   // The element is the largest square that fits in its room.
   square: boolean,
+  // A row: the elements that do not fit go on the next line.
+  wraps: boolean,
+  // A text of one line: its letters get smaller to fit its room.
+  fit: boolean,
 }
 
 function element[M](kind: i32, kids: El[M][]): El[M] {
-  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: None, long: None, barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, tint: None, tint_rtl: None, count: 0, row: 0.0, build: None, start_pinned: false, field: "", hint: "", edit: None, submit: None, slide: None, moves: None, swipes: None, square: false };
+  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: None, long: None, barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, tint: None, tint_rtl: None, count: 0, row: 0.0, build: None, start_pinned: false, field: "", hint: "", edit: None, submit: None, slide: None, moves: None, swipes: None, square: false, wraps: false, fit: false };
 }
 
 // The elements one below the other.
@@ -627,16 +637,30 @@ pub function (e: El[M]) colored(color: i32): El[M] {
 pub function (e: El[M]) clamped(n: i32): El[M] {
   return El { ...e, lines: n };
 }
+
+// A text of one line whose letters get smaller, down to 0.7 of their
+// size, when the text is wider than its room. A text that is still too
+// wide ends with an ellipsis.
+pub function (e: El[M]) fitted(): El[M] {
+  return El { ...e, fit: true, lines: 1 };
+}
+
+// A row that puts the elements that do not fit on the next line. The gap
+// of the row is also between its lines. `justify` sets where each line
+// puts its elements. An element of such a row does not grow.
+pub function (e: El[M]) wrapped(): El[M] {
+  return El { ...e, wraps: true };
+}
 ```
 
 ### `widgets`
 
-The sizes are those of Material 3: a button is 40 dp high with corners of 20 dp, and a switch is 52 dp by 32 dp.
+A switch is 52 dp by 32 dp, as in Material 3. A button, a checkbox and a radio button are 48 dp high, which is the least size that Android recommends for a touch target. `labelled_checkbox` is a checkbox with its text.
 
 ```fern
 <<widgets>>=
 function button_row[M](label: string, color: i32): El[M] {
-  return row([text(label).weighted(500).colored(color)]).centered().padding_xy(24.0, 0.0).height(40.0).rounded(20.0);
+  return row([text(label).weighted(500).colored(color).clamped(1)]).centered().padding_xy(24.0, 0.0).height(48.0).rounded(24.0);
 }
 
 // A button in the primary color. A tap gives the message `m`.
@@ -703,18 +727,30 @@ pub function progress[M](part: f64): El[M] {
   return row([filled.background(PRIMARY).rounded(2.0), rest]).wide().height(4.0).background(TRACK).rounded(2.0);
 }
 
-// A box that is checked or not, with room of 40 dp for a finger. A tap
-// gives the message `m`. An accessibility service reads `say` and the
-// state of the box.
-pub function checkbox[M](on: boolean, say: string, m: M): El[M] {
-  let mark: El[M] = box().width(18.0).height(18.0).rounded(2.0).border(OUTLINE, 2.0);
-  let state = "not checked";
+// The box of a checkbox, and how an accessibility service reads its state.
+function check_mark[M](on: boolean): (El[M], string) {
   if (on) {
     let checked: El[M] = tinted("check", ON_PRIMARY, icons.check);
-    mark = checked.width(18.0).height(18.0).rounded(2.0).background(PRIMARY);
-    state = "checked";
+    return (checked.width(18.0).height(18.0).rounded(2.0).background(PRIMARY), "checked");
   }
-  return row([mark]).centered().width(40.0).height(40.0).on_tap(m).described(say + ", " + state);
+  let empty: El[M] = box().width(18.0).height(18.0).rounded(2.0).border(OUTLINE, 2.0);
+  return (empty, "not checked");
+}
+
+// A box that is checked or not, with room of 48 dp for a finger. A tap
+// gives the message `m`. An accessibility service reads `say` and the
+// state of the box. The box shows no text: `labelled_checkbox` does.
+pub function checkbox[M](on: boolean, say: string, m: M): El[M] {
+  let (mark, state) = check_mark[M](on);
+  return row([mark]).centered().width(48.0).height(48.0).on_tap(m).described(say + ", " + state);
+}
+
+// A checkbox with the text `label` after it. A tap on the box or on the
+// text gives the message `m`.
+pub function labelled_checkbox[M](on: boolean, label: string, m: M): El[M] {
+  let (mark, state) = check_mark[M](on);
+  let room: El[M] = row([mark]).centered().width(48.0).height(48.0);
+  return row([room, text(label).wide()]).aligned(CENTER).wide().on_tap(m).described(label + ", " + state);
 }
 
 // A radio button: one of a group of choices, selected or not. A tap gives
@@ -726,11 +762,12 @@ pub function radio[M](on: boolean, say: string, m: M): El[M] {
     ring = row([box().width(10.0).height(10.0).rounded(5.0).background(PRIMARY)]).centered().width(20.0).height(20.0).rounded(10.0).border(PRIMARY, 2.0);
     state = "selected";
   }
-  return row([ring]).centered().width(40.0).height(40.0).on_tap(m).described(say + ", " + state);
+  return row([ring]).centered().width(48.0).height(48.0).on_tap(m).described(say + ", " + state);
 }
 
-// A row of tabs with the labels `labels`, 48 dp high. The tab `at` is
-// selected, with a line under it. A tap on a tab gives the message that
+// A row of tabs with the labels `labels`, 48 dp high. A tab with a longer
+// label is wider, and a label that is still too wide gets smaller. The tab
+// `at` is selected, with a line under it. A tap on a tab gives the message that
 // `pick` makes from its index.
 pub function tabs[M](labels: string[], at: i32, pick: (i32) => M): El[M] {
   let kids: El[M][] = [];
@@ -743,9 +780,9 @@ pub function tabs[M](labels: string[], at: i32, pick: (i32) => M): El[M] {
       line = line.background(PRIMARY);
       state = ", selected";
     }
-    let label: El[M] = row([text(labels[i]).weighted(500).colored(color)]).centered().wide().grow(1.0);
+    let label: El[M] = row([text(labels[i]).weighted(500).colored(color).fitted().wide().aligned(CENTER)]).centered().padding_xy(2.0, 0.0).wide().grow(1.0);
     let say = labels[i] + ", tab " + (i + 1).to_string() + " of " + labels.len().to_string() + state;
-    kids = kids.append(column([label, line]).grow(1.0).height(48.0).on_tap(pick(i)).described(say));
+    kids = kids.append(column([label, line]).grow((text.letters(labels[i]).len() + 4) as f64).height(48.0).on_tap(pick(i)).described(say));
   }
   return row(kids).wide();
 }
@@ -772,7 +809,7 @@ pub function app_bar[M](title: string, back: Option[M], actions: El[M][]): El[M]
     kids = kids.append(arrow.width(48.0).height(48.0).on_tap(m).described("Back"));
     start = 4.0;
   }
-  kids = kids.append(text(title).sized(22.0).clamped(1).wide());
+  kids = kids.append(text(title).sized(22.0).fitted().wide());
   for a in actions {
     kids = kids.append(a);
   }
@@ -783,7 +820,7 @@ pub function app_bar[M](title: string, back: Option[M], actions: El[M][]): El[M]
 // A short note at the bottom of a screen, in the colors of the ink. A tap on
 // `action` gives the message `m`.
 pub function snackbar[M](note: string, action: string, m: M): El[M] {
-  let act: El[M] = row([text(action).weighted(500).colored(BACKGROUND)]).centered().padding_xy(12.0, 0.0).height(40.0).rounded(20.0).on_tap(m);
+  let act: El[M] = row([text(action).weighted(500).colored(BACKGROUND)]).centered().padding_xy(12.0, 0.0).height(48.0).rounded(24.0).on_tap(m);
   return row([text(note).colored(BACKGROUND).clamped(2).wide(), act]).aligned(CENTER).padding_xy(16.0, 4.0).wide().background(INK).rounded(4.0);
 }
 
@@ -881,8 +918,8 @@ function weight_of(s: Size): f64 {
 struct Lines { lines: string[], rtl: boolean[], px: i32, face: i32, line: i32 }
 
 function text_lines[M](env: Env, e: El[M], room: i32): Lines {
-  let size = sp(env, e.size);
   let face = text.face_for(env.fonts, e.weight);
+  let size = fitted_px(env, e, face, room);
   let ranges = text.wrap_ranges(env.fonts, face, size, e.content, room);
   let r = bidi.resolve(e.content, bidi.AUTO);
   let n = ranges.len();
@@ -903,6 +940,20 @@ function text_lines[M](env: Env, e: El[M], room: i32): Lines {
     }
   }
   return Lines { lines: lines, rtl: rtl, px: size, face: face, line: text.line(env.fonts, face, size) };
+}
+
+// The pixels of the em of the text `e` in a room of `room` pixels.
+function fitted_px[M](env: Env, e: El[M], face: i32, room: i32): i32 {
+  let size = sp(env, e.size);
+  if (!e.fit || !bounded(room)) {
+    return size;
+  }
+  let width = text.width(env.fonts, face, size, e.content);
+  if (width <= room) {
+    return size;
+  }
+  let least = (size as f64 * 0.7).ceil() as i32;
+  return (size * room / width).max(least);
 }
 
 // The lines of `s` from the line `i`, joined by spaces.
@@ -1007,8 +1058,62 @@ function stack_size[M](env: Env, e: El[M], iw: i32, ih: i32): (i32, i32) {
   return (w, h);
 }
 
+// The size of each element of the row `e` that wraps, and the line that
+// each element is on, in a room of `iw` pixels.
+function wrapped_sizes[M](env: Env, e: El[M], iw: i32, ih: i32): ((i32, i32)[], i32[]) {
+  let gap = px(env, e.gap);
+  let ss: (i32, i32)[] = [];
+  let lines: i32[] = [];
+  let line = 0;
+  let used = 0;
+  for k in e.kids {
+    let (w, h) = measure(env, k, iw, ih);
+    if (used > 0 && used + gap + w > iw) {
+      line += 1;
+      used = 0;
+    }
+    if (used > 0) {
+      used += gap;
+    }
+    used += w;
+    ss = ss.append((w, h));
+    lines = lines.append(line);
+  }
+  return (ss, lines);
+}
+
+// The width and the height of each line of a row that wraps.
+function line_sizes(ss: (i32, i32)[], lines: i32[], gap: i32): (i32, i32)[] {
+  let out: (i32, i32)[] = [];
+  for i in 0..ss.len() {
+    let (w, h) = ss[i];
+    if (lines[i] == out.len()) {
+      out = out.append((w, h));
+    } else {
+      let (lw, lh) = out[lines[i]];
+      out = out.with(lines[i], (lw + gap + w, lh.max(h)));
+    }
+  }
+  return out;
+}
+
+function wrapped_size[M](env: Env, e: El[M], iw: i32, ih: i32): (i32, i32) {
+  let gap = px(env, e.gap);
+  let (ss, lines) = wrapped_sizes(env, e, iw, ih);
+  let (w, h) = (0, 0);
+  for l in line_sizes(ss, lines, gap) {
+    let (lw, lh) = l;
+    w = w.max(lw);
+    h += lh + (if (h > 0) { gap } else { 0 });
+  }
+  return (w, h);
+}
+
 // The size of the elements of the column or the row `e`, with their gaps.
 function flow_size[M](env: Env, e: El[M], iw: i32, ih: i32): (i32, i32) {
+  if (e.wraps && e.kind == ROW && e.list.len() == 0 && bounded(iw)) {
+    return wrapped_size(env, e, iw, ih);
+  }
   let (rw, rh) = (iw, ih);
   if (e.list.len() > 0) {
     if (e.kind == ROW) {
@@ -1705,10 +1810,42 @@ function place_along[M](env: Env, e: El[M], ss: (i32, i32)[], left: i32, y: i32,
   return o;
 }
 
+// The elements of a row that wraps, each in its box on its line.
+function place_wrapped[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: Clip, own out: Built[M]): Built[M] {
+  let gap = px(env, e.gap);
+  let (ss, lines) = wrapped_sizes(env, e, w, h);
+  let rows = line_sizes(ss, lines, gap);
+  let o = out;
+  let top = y;
+  let at = x;
+  for i in 0..e.kids.len() {
+    let (kw, kh) = ss[i];
+    let (lw, lh) = rows[lines[i]];
+    if (i == 0 || lines[i] != lines[i - 1]) {
+      if (i > 0) {
+        let (_, above) = rows[lines[i - 1]];
+        top += above + gap;
+      }
+      at = x + shift(e.justify, w - lw);
+    }
+    if (e.align == STRETCH) {
+      kh = lh;
+    }
+    if (top + lh > clip.c0 && top < clip.c1) {
+      o = place(env, e.kids[i], at, top + shift(e.align, lh - kh), kw, kh, clip, o);
+    }
+    at += kw + gap;
+  }
+  return o;
+}
+
 // The elements of a row, each in its box. A row that is a list scrolls
 // them across.
 function place_row[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: Clip, own out: Built[M]): Built[M] {
   let scrolls = e.list.len() > 0;
+  if (e.wraps && !scrolls) {
+    return place_wrapped(env, e, x, y, w, h, clip, out);
+  }
   let room = w;
   if (scrolls) {
     room = UNBOUNDED;
