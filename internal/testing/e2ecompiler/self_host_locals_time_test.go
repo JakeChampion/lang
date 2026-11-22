@@ -19,14 +19,17 @@ func TestSelfHostLocalsCompileInLinearTime(t *testing.T) {
 	stdlib := e2eharness.SelfHostStdlibRoot(t)
 	for _, tc := range []struct {
 		name string
-		init func(i int) string
+		stmt func(i int) string
 	}{
-		{"integer literals", func(i int) string { return fmt.Sprint(i % 97) }},
+		{"integer literals", func(i int) string { return fmt.Sprintf("let v%d = %d;", i, i%97) }},
 		{"each reads the last", func(i int) string {
 			if i == 0 {
-				return "v"
+				return "let v0 = v;"
 			}
-			return fmt.Sprintf("v%d + %d", i-1, i%7)
+			return fmt.Sprintf("let v%d = v%d + %d;", i, i-1, i%7)
+		}},
+		{"arrays, each with a read of its length", func(i int) string {
+			return fmt.Sprintf("let a%d: i32[] = [%d]; v = v + a%d.len();", i, i%97, i)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -34,7 +37,7 @@ func TestSelfHostLocalsCompileInLinearTime(t *testing.T) {
 				var b strings.Builder
 				b.WriteString("function main(): i32 {\n  let v = 0;\n")
 				for i := range locals {
-					fmt.Fprintf(&b, "  let v%d = %s;\n", i, tc.init(i))
+					fmt.Fprintf(&b, "  %s\n", tc.stmt(i))
 				}
 				b.WriteString("  return v;\n}\n")
 				return b.String()

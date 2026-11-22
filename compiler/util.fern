@@ -171,6 +171,71 @@ pub function (ix: LastIndex) with_entry(name: string): LastIndex {
   return LastIndex { heads: ix.heads.with(b, ix.prior.len()), prior: ix.prior.append(before) };
 }
 
+// A list of fewer names than this has no index.
+const LAST_INDEX_FROM: i32 = 32;
+
+// The index of `names`.
+pub function last_index_of(names: string[]): LastIndex {
+  if (names.len() < LAST_INDEX_FROM) {
+    return no_last_index();
+  }
+  let out = last_index_for(2 * names.len());
+  for name in names {
+    out = out.with_entry(name);
+  }
+  return out;
+}
+
+// The index of `names` after the last of them joined the list that `ix` is
+// the index of.
+pub function (ix: LastIndex) with_last_of(names: string[]): LastIndex {
+  if (ix.on() && ix.room(names.len() - 1)) {
+    return ix.with_entry(names[names.len() - 1]);
+  }
+  return last_index_of(names);
+}
+
+// The index of the first `count` of `names`, the list that `ix` is the index
+// of.
+pub function (ix: LastIndex) cut_to(names: string[], count: i32): LastIndex {
+  if (!ix.on() || count >= names.len()) {
+    return ix;
+  }
+  let heads = ix.heads;
+  let prior: i32[] = [];
+  for k in 0..count {
+    prior = prior.append(ix.prior[k]);
+  }
+  for back in 0..names.len() - count {
+    let k = names.len() - 1 - back;
+    heads = heads.with(name_bucket(names[k], heads.len() - 1), ix.prior[k]);
+  }
+  return LastIndex { heads: heads, prior: prior };
+}
+
+// The last place of `name` in `names`, the list that `ix` is the index of,
+// or -1.
+pub function (ix: LastIndex) find(names: string[], name: string): i32 {
+  if (ix.on()) {
+    let at = ix.head(name);
+    while (at >= 0) {
+      if (names[at] == name) {
+        return at;
+      }
+      at = ix.prior[at];
+    }
+    return -1;
+  }
+  let i = names.len() - 1;
+  while (i >= 0) {
+    if (names[i] == name) {
+      return i;
+    }
+    i -= 1;
+  }
+  return -1;
+}
+
 // The last entry in the bucket of `name`, or -1.
 pub function (ix: LastIndex) head(name: string): i32 {
   return ix.heads[name_bucket(name, ix.heads.len() - 1)];
