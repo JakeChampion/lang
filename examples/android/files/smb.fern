@@ -69,34 +69,28 @@ const EPOCH_GAP: i64 = 11644473600i64;
 
 const WAIT_SECONDS: i64 = 20i64;
 
-// What the status of a reply means, for a person.
+// What each status of a reply means, for a person.
+const MEANINGS: (i64, string)[] = [
+  (0xc000006di64, "The user name or the password is wrong."),
+  (0xc000006ai64, "The user name or the password is wrong."),
+  (0xc0000064i64, "The user name or the password is wrong."),
+  (0xc0000022i64, "The server refused access."),
+  (0xc00000cci64, "The server has no share with that name."),
+  (0xc0000034i64, "The server has no such file or folder."),
+  (0xc000003ai64, "The server has no such file or folder."),
+  (0xc000000fi64, "The server has no such file or folder."),
+  (0xc0000035i64, "That name is in use already."),
+  (0xc0000101i64, "The folder is not empty."),
+  (0xc0000043i64, "Another program uses the file."),
+  (0xc000007fi64, "The share is full."),
+  (0xc00000bbi64, "The server accepts only SMB 3, which this app does not speak."),
+];
+
 pub function status_text(status: i64): string {
-  if (status == 0xc000006di64 || status == 0xc000006ai64 || status == 0xc0000064i64) {
-    return "The user name or the password is wrong.";
-  }
-  if (status == 0xc0000022i64) {
-    return "The server refused access.";
-  }
-  if (status == 0xc00000cci64) {
-    return "The server has no share with that name.";
-  }
-  if (status == 0xc0000034i64 || status == 0xc000003ai64 || status == 0xc000000fi64) {
-    return "The server has no such file or folder.";
-  }
-  if (status == 0xc0000035i64) {
-    return "That name is in use already.";
-  }
-  if (status == 0xc0000101i64) {
-    return "The folder is not empty.";
-  }
-  if (status == 0xc0000043i64) {
-    return "Another program uses the file.";
-  }
-  if (status == 0xc000007fi64) {
-    return "The share is full.";
-  }
-  if (status == 0xc00000bbi64) {
-    return "The server accepts only SMB 3, which this app does not speak.";
+  for meaning in MEANINGS {
+    if (meaning.0 == status) {
+      return meaning.1;
+    }
   }
   return "The server gave the error " + status.to_hex() + ".";
 }

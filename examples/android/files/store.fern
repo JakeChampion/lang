@@ -1,0 +1,359 @@
+// The places that the app shows: the storage of the phone and the shares of
+// SMB servers. Each function takes a place, so the screens and the copy
+// work the same way on each of them.
+import "std/array";
+import "std/i32";
+import "std/i64";
+import "./smb";
+
+pub enum Place { Local, Remote(smb.Server) }
+
+// The most bytes that one step of a copy moves.
+pub const STEP: i32 = 1048576;
+
+pub function same_place(a: Place, b: Place): boolean {
+  match (a) {
+    Local => {
+      match (b) {
+        Local => {
+          return true;
+        },
+        _ => {
+          return false;
+        }
+      }
+    },
+    Remote(x) => {
+      match (b) {
+        Remote(y) => {
+          return x.host == y.host && x.share == y.share && x.user == y.user && x.port == y.port;
+        },
+        _ => {
+          return false;
+        }
+      }
+    }
+  }
+}
+
+function io_text(e: IoError): string {
+  match (e) {
+    NotFound(_) => {
+      return "The phone has no such file or folder.";
+    },
+    PermissionDenied(_) => {
+      return "Android refused access.";
+    },
+    AlreadyExists(_) => {
+      return "That name is in use already.";
+    },
+    Other(_, message, _) => {
+      return message;
+    },
+    _ => {
+      return "The storage gave an error.";
+    }
+  }
+}
+
+// `dir` with `name` below it.
+pub function join(dir: string, name: string): string {
+  if (dir.len() == 0) {
+    return name;
+  }
+  if (dir.ends_with("/")) {
+    return dir + name;
+  }
+  return dir + "/" + name;
+}
+
+// The directory that holds `path`, or "" for a path with one part.
+pub function parent(path: string): string {
+  let parts = path.split("/").filter((p: string): boolean => p.len() > 0);
+  if (parts.len() <= 1) {
+    return if (path.starts_with("/")) { "/" } else { "" };
+  }
+  let up = parts.take(parts.len() - 1).join("/");
+  return if (path.starts_with("/")) { "/" + up } else { up };
+}
+
+// The last part of `path`.
+pub function base(path: string): string {
+  let parts = path.split("/").filter((p: string): boolean => p.len() > 0);
+  if (parts.len() == 0) {
+    return "";
+  }
+  return parts[parts.len() - 1];
+}
+
+function local_list(path: string): Result[smb.Entry[], string] {
+  match (read_dir(path)) {
+    Ok(names) => {
+      let out: smb.Entry[] = [];
+      for name in names {
+        if let Ok(st) = stat(join(path, name)) {
+          out = out.append(smb.Entry { name: name, dir: st.is_dir, size: if (st.is_dir) { 0i64 } else { st.size }, modified: st.mtime });
+        } else {
+          out = out.append(smb.Entry { name: name, dir: false, size: 0i64, modified: 0i64 });
+        }
+      }
+      return Ok(out);
+    },
+    Err(e) => {
+      return Err(io_text(e));
+    }
+  }
+}
+
+function local_read(path: string, offset: i64, limit: i32): Result[smb.Part, string] {
+  let size = 0i64;
+  match (stat(path)) {
+    Ok(st) => {
+      size = st.size;
+    },
+    Err(e) => {
+      return Err(io_text(e));
+    }
+  }
+  match (open_reader(path)) {
+    Ok(r) => {
+      let data: u8[] = [];
+      let failure = "";
+      if let Err(e) = r.seek(offset, 0) {
+        failure = io_text(e);
+      }
+      while (failure.len() == 0 && data.len() < limit) {
+        match (r.read_chunk_bytes((limit - data.len()).min(65536))) {
+          Ok(bytes) => {
+            if (bytes.len() == 0) {
+              break;
+            }
+            data = data.concat(bytes);
+          },
+          Err(e) => {
+            failure = io_text(e);
+          }
+        }
+      }
+      let closed = r.close();
+      if (failure.len() > 0) {
+        return Err(failure);
+      }
+      return Ok(smb.Part { data: data, size: size });
+    },
+    Err(e) => {
+      return Err(io_text(e));
+    }
+  }
+}
+
+function local_write(path: string, offset: i64, data: u8[]): Result[void, string] {
+  let opened = if (offset == 0i64) { open_writer(path) } else { open_writer_with(path, 0) };
+  match (opened) {
+    Ok(w) => {
+      let failure = "";
+      if let Err(e) = w.seek(offset, 0) {
+        failure = io_text(e);
+      }
+      if (failure.len() == 0) {
+        if let Err(e) = w.write_bytes(data) {
+          failure = io_text(e);
+        }
+      }
+      let closed = w.close();
+      if (failure.len() > 0) {
+        return Err(failure);
+      }
+      return Ok(());
+    },
+    Err(e) => {
+      return Err(io_text(e));
+    }
+  }
+}
+
+function done(r: Result[void, IoError]): Result[void, string] {
+  match (r) {
+    Ok(_) => {
+      return Ok(());
+    },
+    Err(e) => {
+      return Err(io_text(e));
+    }
+  }
+}
+
+// The files and the directories of the directory `path` of `place`.
+pub function list(place: Place, path: string): Result[smb.Entry[], string] {
+  match (place) {
+    Local => {
+      return local_list(path);
+    },
+    Remote(server) => {
+      return smb.list(server, path);
+    }
+  }
+}
+
+// At most `limit` bytes of the file from the byte `offset`.
+pub function read(place: Place, path: string, offset: i64, limit: i32): Result[smb.Part, string] {
+  match (place) {
+    Local => {
+      return local_read(path, offset, limit);
+    },
+    Remote(server) => {
+      return smb.read(server, path, offset, limit);
+    }
+  }
+}
+
+// Writes `data` to the file from the byte `offset`. A write from the byte
+// 0 makes the file, or empties the file that is there.
+pub function write(place: Place, path: string, offset: i64, data: u8[]): Result[void, string] {
+  match (place) {
+    Local => {
+      return local_write(path, offset, data);
+    },
+    Remote(server) => {
+      return smb.write(server, path, offset, data);
+    }
+  }
+}
+
+pub function make_dir(place: Place, path: string): Result[void, string] {
+  match (place) {
+    Local => {
+      return done(create_dir(path, 493));
+    },
+    Remote(server) => {
+      return smb.make_dir(server, path);
+    }
+  }
+}
+
+// Removes the file, or the directory and all that it holds.
+pub function remove(place: Place, path: string, dir: boolean): Result[void, string] {
+  match (place) {
+    Local => {
+      return done(if (dir) { remove_dir_all(path) } else { remove_file(path) });
+    },
+    Remote(server) => {
+      return smb.remove(server, path, dir);
+    }
+  }
+}
+
+pub function rename_to(place: Place, from: string, to: string): Result[void, string] {
+  match (place) {
+    Local => {
+      return done(rename(from, to));
+    },
+    Remote(server) => {
+      return smb.rename(server, from, to);
+    }
+  }
+}
+
+// One step of a copy: a directory to make, or a file to copy.
+pub struct Step { from: string, to: string, size: i64, dir: boolean }
+
+// The steps that copy `item` of the directory `from` to the name `name` of
+// the directory `to`: each directory before what it holds.
+function plan_one(src: Place, from: string, item: smb.Entry, to: string, name: string): Result[Step[], string] {
+  let source = join(from, item.name);
+  let target = join(to, name);
+  if (!item.dir) {
+    return Ok([Step { from: source, to: target, size: item.size, dir: false }]);
+  }
+  let out = [Step { from: source, to: target, size: 0i64, dir: true }];
+  let below = list(src, source)?;
+  for child in below {
+    out = out.concat(plan_one(src, source, child, target, child.name)?);
+  }
+  return Ok(out);
+}
+
+// A name that `taken` does not have: `name`, or `name` with a number.
+pub function free_name(taken: string[], name: string): string {
+  if (!taken.contains(name)) {
+    return name;
+  }
+  let dot = name.last_index_of(".").unwrap_or(-1);
+  let stem = if (dot > 0) { name.take(dot) } else { name };
+  let rest = if (dot > 0) { name.drop(dot) } else { "" };
+  let n = 2;
+  while (taken.contains(stem + " (" + n.to_string() + ")" + rest)) {
+    n += 1;
+  }
+  return stem + " (" + n.to_string() + ")" + rest;
+}
+
+// The steps that copy `items` of the directory `from` of `src` into the
+// directory `to` of `dst`. An item whose name `dst` has gets a new name.
+pub function plan(src: Place, from: string, items: smb.Entry[], dst: Place, to: string): Result[Step[], string] {
+  let taken = list(dst, to)?.map((e: smb.Entry): string => e.name);
+  let out: Step[] = [];
+  for item in items {
+    let name = free_name(taken, item.name);
+    taken = taken.append(name);
+    out = out.concat(plan_one(src, from, item, to, name)?);
+  }
+  return Ok(out);
+}
+
+// Does the step from its byte `offset`, and gives the bytes that it copied.
+// A file is complete when the result is less than STEP.
+pub function advance(src: Place, dst: Place, step: Step, offset: i64): Result[i64, string] {
+  if (step.dir) {
+    make_dir(dst, step.to)?;
+    return Ok(0i64);
+  }
+  let part = read(src, step.from, offset, STEP)?;
+  if (part.data.len() > 0 || offset == 0i64) {
+    write(dst, step.to, offset, part.data)?;
+  }
+  return Ok(part.data.len() as i64);
+}
+
+// The total and the free bytes of the storage that holds `path`.
+pub function space(path: string): Option[(i64, i64)] {
+  if let Ok(fs) = statfs(path) {
+    return Some((fs.block_size * fs.blocks, fs.block_size * fs.blocks_avail));
+  }
+  return None;
+}
+
+// A size for a person: "512 B", "1.4 MB".
+pub function size_text(bytes: i64): string {
+  let units = ["B", "KB", "MB", "GB", "TB"];
+  let whole = bytes;
+  let tenth = 0i64;
+  let at = 0;
+  while (whole >= 1024i64 && at < 4) {
+    tenth = whole % 1024i64 * 10i64 / 1024i64;
+    whole /= 1024i64;
+    at += 1;
+  }
+  if (at == 0 || whole >= 100i64) {
+    return whole.to_string() + " " + units[at];
+  }
+  return whole.to_string() + "." + tenth.to_string() + " " + units[at];
+}
+
+// The day of `seconds` from 1970 in UTC, as 2026-11-22. It is the civil
+// date from the count of days, by the method of Howard Hinnant.
+pub function day_text(seconds: i64): string {
+  if (seconds <= 0i64) {
+    return "";
+  }
+  let z = seconds / 86400i64 + 719468i64;
+  let era = z / 146097i64;
+  let doe = z - era * 146097i64;
+  let yoe = (doe - doe / 1460i64 + doe / 36524i64 - doe / 146096i64) / 365i64;
+  let doy = doe - (365i64 * yoe + yoe / 4i64 - yoe / 100i64);
+  let mp = (5i64 * doy + 2i64) / 153i64;
+  let day = doy - (153i64 * mp + 2i64) / 5i64 + 1i64;
+  let month = if (mp < 10i64) { mp + 3i64 } else { mp - 9i64 };
+  let year = yoe + era * 400i64 + (if (month <= 2i64) { 1i64 } else { 0i64 });
+  return year.to_string() + "-" + month.to_string().pad_start(2, '0') + "-" + day.to_string().pad_start(2, '0');
+}
