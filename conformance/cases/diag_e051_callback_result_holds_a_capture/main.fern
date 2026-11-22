@@ -1,0 +1,10 @@
+struct Handle { fd: i32 }
+function (own h: Handle) close(): i32 { return h.fd; }
+function captured(h: Handle): () => Handle { return (): Handle => h; }
+function main(): i32 {
+  let h = Handle { fd: 7 };
+  let f = captured(h);
+  let alias = f();
+  let n = alias.close();
+  return n + h.close();
+}
