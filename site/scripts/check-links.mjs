@@ -70,16 +70,18 @@ function checkDist(dist) {
   return { checked, broken };
 }
 
-// A network error is not a broken link, so it gets two more attempts.
-// An HTTP status, such as a 404, is the answer and gets none.
+// A network error or a gateway status (502, 503, 504) is not a broken link,
+// so it gets two more attempts. Any other HTTP status, such as a 404, is the
+// answer and gets none.
 export async function fetchRetry(url, init, attempts = 3, fetchImpl = fetch) {
   for (let i = 1; ; i++) {
     try {
-      return await fetchImpl(url, init);
+      const res = await fetchImpl(url, init);
+      if (i >= attempts || ![502, 503, 504].includes(res.status)) return res;
     } catch (e) {
       if (i >= attempts) throw e;
-      await new Promise((r) => setTimeout(r, 250 * i));
     }
+    await new Promise((r) => setTimeout(r, 250 * i));
   }
 }
 
