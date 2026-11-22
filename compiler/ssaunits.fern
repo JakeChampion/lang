@@ -5407,10 +5407,11 @@ function first_classified_take(f: ssasem.Func, p: Plan, b: ssa.SBlock, bi: i32, 
   }
   let first: i32 = -1;
   let before: i32 = -1;
-  let u = ssasem.first_use_in(uses, d, bi);
-  while (u < uses.start[d + 1] && uses.block[u] == bi && uses.at[u] <= dies) {
+  for u in ssasem.first_use_in(uses, d, bi)..uses.start[d + 1] {
+    if (uses.block[u] != bi || uses.at[u] > dies) {
+      break;
+    }
     let pos = uses.at[u];
-    u += 1;
     if (pos == before) {
       continue;
     }

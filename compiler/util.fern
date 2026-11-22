@@ -670,6 +670,34 @@ pub function same_i32s(a: i32[], b: i32[]): boolean {
   return true;
 }
 
+// A stack of i32 in an array. Element 0 has the count of the entries, and
+// the entries follow it, so a pop does not copy the array.
+pub function stack(): i32[] {
+  return [0];
+}
+
+pub function stack_len(s: i32[]): i32 {
+  return s[0];
+}
+
+pub function stack_push(own s: i32[], v: i32): i32[] {
+  let n = s[0] + 1;
+  if (n < s.len()) {
+    return s.with(n, v).with(0, n);
+  }
+  return s.append(v).with(0, n);
+}
+
+// The entry `back` places under the top one.
+pub function stack_at(s: i32[], back: i32): i32 {
+  return s[s[0] - back];
+}
+
+// `s` without its top `count` entries.
+pub function stack_pop(own s: i32[], count: i32): i32[] {
+  return s.with(0, s[0] - count);
+}
+
 // drop_last_i32 is a without its last element.
 pub function drop_last_i32(a: i32[]): i32[] {
   let out: i32[] = [];
