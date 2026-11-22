@@ -126,6 +126,22 @@ function test_signature(): test.TestOutcome {
   ]);
 }
 
+// A read takes what the server and the credits allow, and costs one credit
+// for each 64 KiB.
+function test_request_sizes(): test.TestOutcome {
+  return all([
+    test.assert_eq(smb.payload(8388608, 8388608, 256), 4194304),
+    test.assert_eq(smb.payload(8388608, 1048576, 256), 1048576),
+    test.assert_eq(smb.payload(8388608, 8388608, 3), 196608),
+    test.assert_eq(smb.payload(8388608, 8388608, 0), 65536),
+    test.assert_eq(smb.payload(100, 65536, 1), 100),
+    test.assert_eq(smb.charge_of(0), 1),
+    test.assert_eq(smb.charge_of(65536), 1),
+    test.assert_eq(smb.charge_of(65537), 2),
+    test.assert_eq(smb.charge_of(4194304), 64),
+  ]);
+}
+
 function test_paths(): test.TestOutcome {
   return all([
     test.assert_eq(smb.wire_path("/docs/a b.txt"), "docs\\a b.txt"),
@@ -168,7 +184,7 @@ function test_copy(): test.TestOutcome {
     big = big.append((i % 251) as u8);
   }
   let block = big;
-  for i in 0..3 {
+  for i in 0..4 {
     big = big.concat(block).concat(block);
   }
   let made = store.make_dir(store.Local, dir + "/src").is_ok() && store.make_dir(store.Local, dir + "/src/in").is_ok() && store.make_dir(store.Local, dir + "/dst").is_ok();
@@ -226,6 +242,7 @@ function main(): i32 {
   r = r.it("a directory listing gives its entries without . and ..", test_listing);
   r = r.it("the reply to a share question gives the disk shares", test_shares);
   r = r.it("a reply passes only with its signature", test_signature);
+  r = r.it("a request takes what the credits pay for", test_request_sizes);
   r = r.it("paths join, split and get free names", test_paths);
   r = r.it("a file name gives its media type", test_types);
   r = r.it("sizes and days read well", test_texts);

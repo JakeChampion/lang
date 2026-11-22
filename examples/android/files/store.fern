@@ -9,7 +9,7 @@ import "./smb";
 pub enum Place { Local, Remote(smb.Server) }
 
 // The most bytes that one step of a copy moves.
-pub const STEP: i32 = 1048576;
+pub const STEP: i32 = 8388608;
 
 pub function same_place(a: Place, b: Place): boolean {
   match (a) {

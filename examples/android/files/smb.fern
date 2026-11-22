@@ -24,8 +24,10 @@ pub struct Entry { name: string, dir: boolean, size: i64, modified: i64 }
 // A part of a file, and the size of the whole file.
 pub struct Part { data: u8[], size: i64 }
 
-// What a connection keeps from one request to the next.
-struct State { session: u8[], tree: u8[], next: i64, key: u8[], signs: boolean }
+// What a connection keeps from one request to the next. `credits` is the
+// count of 64 KiB units that the server lets the client send, and
+// `most_read` and `most_write` are the most bytes of one read and one write.
+struct State { session: u8[], tree: u8[], next: i64, key: u8[], signs: boolean, credits: i32, most_read: i32, most_write: i32 }
 
 // A reply: its status and what follows its header of 64 bytes.
 struct Answer { status: i64, body: u8[], tree: u8[], session: u8[] }
@@ -63,8 +65,18 @@ const END_OF_FILE: i64 = 0xc0000011i64;
 // A read gave a part of a message of a pipe, and the pipe has more.
 const BUFFER_OVERFLOW: i64 = 0x80000005i64;
 
-// The most bytes of one read or one write. A request of this size costs
-// one credit in each dialect.
+// The capability of the 2.1 dialect for a read or a write of more than
+// 64 KiB.
+const LARGE_MTU: i64 = 4i64;
+
+// The credits that each request asks the server for.
+const WANTED_CREDITS: i32 = 256;
+
+// The most credits that one request costs: 64 of them are 4 MiB.
+const MOST_CHARGE: i32 = 64;
+
+// The bytes that one credit pays for. A request of this size costs one
+// credit in each dialect.
 pub const CHUNK: i32 = 65536;
 
 // The seconds between 1601, where a Windows file time starts, and 1970.
@@ -138,10 +150,10 @@ pub function wire_path(path: string): string {
   return parts.join("\\");
 }
 
-function header(st: State, command: i32, flags: i64): u8[] {
+function header(st: State, command: i32, flags: i64, charge: i32): u8[] {
   let h: u8[] = [254, 83, 77, 66];
-  h = ntlm.put16(ntlm.put16(h, 64), if (command == NEGOTIATE) { 0 } else { 1 });
-  h = ntlm.put16(ntlm.put16(ntlm.put32(h, 0i64), command), 32);
+  h = ntlm.put16(ntlm.put16(h, 64), if (command == NEGOTIATE) { 0 } else { charge });
+  h = ntlm.put16(ntlm.put16(ntlm.put32(h, 0i64), command), WANTED_CREDITS);
   h = ntlm.put64(ntlm.put32(ntlm.put32(h, flags), 0i64), st.next);
   return ntlm.put32(h, 0i64).concat(st.tree).concat(st.session).concat(ntlm.zeros(16));
 }
@@ -168,11 +180,27 @@ pub function signed_by(msg: u8[], key: u8[]): boolean {
   return ntlm.part(crypto.hmac_sha256(key, clear), 0, 16) == ntlm.part(msg, 48, 64);
 }
 
-// Sends one request and reads its reply. The server can send a reply that
-// says that the work goes on: the reply after it is the result.
+// The bytes of one read or one write: `want`, but no more than the server
+// takes in one request, and no more than the credits pay for.
+pub function payload(want: i32, most: i32, credits: i32): i32 {
+  return want.min(most).min(credits.max(1).min(MOST_CHARGE) * CHUNK).max(0);
+}
+
+// The credits that a request with `bytes` of data costs.
+pub function charge_of(bytes: i32): i32 {
+  return ((bytes + CHUNK - 1) / CHUNK).max(1);
+}
+
 function request(sock: Socket, st: State, command: i32, body: u8[]): (State, Result[Answer, string]) {
-  let after = State { ...st, next: st.next + 1i64 };
-  let head = header(st, command, if (st.signs) { 8i64 } else { 0i64 });
+  return charged(sock, st, command, body, 1);
+}
+
+// Sends one request that costs `charge` credits and reads its reply. The
+// server can send a reply that says that the work goes on: the reply after
+// it is the result. Each reply gives the client more credits.
+function charged(sock: Socket, st: State, command: i32, body: u8[], charge: i32): (State, Result[Answer, string]) {
+  let after = State { ...st, next: st.next + charge as i64, credits: st.credits - charge };
+  let head = header(st, command, if (st.signs) { 8i64 } else { 0i64 }, charge);
   if (!send_all(sock, sealed(head, body, if (st.signs) { st.key } else { [] }))) {
     return (after, Err("The connection to the server broke."));
   }
@@ -187,6 +215,7 @@ function request(sock: Socket, st: State, command: i32, body: u8[]): (State, Res
           return (after, Err("The server sent a reply that is not SMB 2."));
         }
         let status = ntlm.get32(msg, 8);
+        after = State { ...after, credits: after.credits + ntlm.get16(msg, 14) };
         if (status == PENDING) {
           continue;
         }
@@ -232,6 +261,17 @@ function ntlm_message(blob: u8[]): u8[] {
   return blob;
 }
 
+// The state with the sizes of the reply to the negotiation. A server of
+// the 2.1 dialect with large requests takes more than 64 KiB in one read or
+// one write, and each 64 KiB costs one credit.
+function sized(st: State, body: u8[]): State {
+  if (body.len() < 40 || ntlm.get16(body, 4) < 0x0210 || (ntlm.get32(body, 24) & LARGE_MTU) == 0i64) {
+    return st;
+  }
+  let limit = (MOST_CHARGE * CHUNK) as i64;
+  return State { ...st, most_read: ntlm.get32(body, 32).min(limit).max(CHUNK as i64) as i32, most_write: ntlm.get32(body, 36).min(limit).max(CHUNK as i64) as i32 };
+}
+
 function session_body(blob: u8[]): u8[] {
   let b = ntlm.put16([], 25).append(0u8).append(1u8);
   b = ntlm.put16(ntlm.put16(ntlm.put32(ntlm.put32(b, 0i64), 0i64), 88), blob.len());
@@ -241,11 +281,11 @@ function session_body(blob: u8[]): u8[] {
 // Agrees the dialect, signs in and opens the share. It gives the state of
 // the connection.
 function sign_in(sock: Socket, s: Server): Result[State, string] {
-  let st = State { session: ntlm.zeros(8), tree: ntlm.zeros(4), next: 0i64, key: [], signs: false };
-  let hello = ntlm.put32(ntlm.put16(ntlm.put16(ntlm.put16(ntlm.put16([], 36), 2), 1), 0), 0i64).concat(rand.bytes(16));
+  let st = State { session: ntlm.zeros(8), tree: ntlm.zeros(4), next: 0i64, key: [], signs: false, credits: 1, most_read: CHUNK, most_write: CHUNK };
+  let hello = ntlm.put32(ntlm.put16(ntlm.put16(ntlm.put16(ntlm.put16([], 36), 2), 1), 0), LARGE_MTU).concat(rand.bytes(16));
   hello = ntlm.put16(ntlm.put16(ntlm.put64(hello, 0i64), 0x0202), 0x0210);
-  let (st1, agreed) = request(sock, st, NEGOTIATE, hello);
-  expect(agreed, OK)?;
+  let (st0, agreed) = request(sock, st, NEGOTIATE, hello);
+  let st1 = sized(st0, expect(agreed, OK)?.body);
   let (st2, asked) = request(sock, st1, SESSION_SETUP, session_body(ntlm.negotiate()));
   let first = expect(asked, MORE_PROCESSING)?;
   let offset = ntlm.get16(first.body, 4) - 64;
@@ -395,10 +435,10 @@ pub function read(s: Server, path: string, offset: i64, limit: i32): Result[Part
     let state = st1;
     let failure = "";
     while (data.len() < limit) {
-      let want = (limit - data.len()).min(CHUNK);
+      let want = payload(limit - data.len(), state.most_read, state.credits);
       let q = ntlm.put64(ntlm.put32(ntlm.put16([], 49).append(80u8).append(0u8), want as i64), offset + data.len() as i64).concat(file.id);
       q = ntlm.put16(ntlm.put16(ntlm.put32(ntlm.put32(ntlm.put32(q, 0i64), 0i64), 0i64), 0), 0).append(0u8);
-      let (next, got) = request(sock, state, READ, q);
+      let (next, got) = charged(sock, state, READ, q, charge_of(want));
       state = next;
       match (got) {
         Ok(a) => {
@@ -565,10 +605,10 @@ pub function write(s: Server, path: string, offset: i64, data: u8[]): Result[voi
     let done = 0;
     let failure = "";
     while (done < data.len()) {
-      let bytes = ntlm.part(data, done, done + CHUNK);
+      let bytes = ntlm.part(data, done, done + payload(data.len() - done, state.most_write, state.credits));
       let q = ntlm.put64(ntlm.put32(ntlm.put16(ntlm.put16([], 49), 112), bytes.len() as i64), offset + done as i64).concat(file.id);
       q = ntlm.put32(ntlm.put16(ntlm.put16(ntlm.put32(ntlm.put32(q, 0i64), 0i64), 0), 0), 0i64).concat(bytes);
-      let (next, got) = request(sock, state, WRITE, q);
+      let (next, got) = charged(sock, state, WRITE, q, charge_of(bytes.len()));
       state = next;
       if let Err(e) = expect(got, OK) {
         failure = e;
