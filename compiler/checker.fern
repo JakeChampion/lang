@@ -7196,6 +7196,17 @@ pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
   return s;
 }
 
+// The type that bind_stmt gives the local of `v`, a declaration of one name.
+pub function local_bind_type(v: ast.StmtVar, s: Scope): typeinfo.Type {
+  return var_bind_type(v, s);
+}
+
+// The scope after `v`, a declaration of one name whose type is `t` from
+// local_bind_type.
+pub function bind_local(v: ast.StmtVar, s: Scope, t: typeinfo.Type): Scope {
+  return bind_var(v, s, t);
+}
+
 // var_bind_type is the type that bind_stmt gives the local of v.
 function var_bind_type(v: ast.StmtVar, s: Scope): typeinfo.Type {
   if (v.type_name.len() > 0) {

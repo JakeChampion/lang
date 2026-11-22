@@ -4423,8 +4423,8 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
   if (ast.destructures(v)) {
     return declare_tuple(st, v, s);
   }
-  let after = checker.bind_stmt(st, s.scope);
-  let ty = bound_type(s, v.name, after);
+  let bound = checker.local_bind_type(v, s.scope);
+  let ty = settled(resolved(bound, s.template, s.binding, s.scope));
   if (!semtypes.concrete(ty, true)) {
     let cty = closure_slot_type(v.init, s.contracts.list);
     if (semtypes.concrete(cty, true)) {
@@ -4432,7 +4432,7 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     }
   }
   if (!semtypes.concrete(ty, false) && ast.is_call(v.init)) {
-    return declare_from_call(v, s, after);
+    return declare_from_call(v, s, bound);
   }
   if (!semtypes.concrete(ty, true)) {
     ty = settled_payload(ty);
@@ -4442,7 +4442,7 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
   }
   if (value_local_placeholder(v) && !ssasem.is_integer(ty)) {
     let z = define(s, ssasem.zero(), [], 0, "", ty);
-    return State { ...bind_var(z.s, v.name, z.id), scope: after };
+    return in_scope(bind_var(z.s, v.name, z.id), v, bound);
   }
   let init = expr(v.init, s, ty);
   s = init.s;
@@ -4453,7 +4453,15 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     return fail(s, mismatch(v.name, ty, s.values[init.id]));
   }
   init = unaliased_view(init);
-  return State { ...bind_var(init.s, v.name, init.id), scope: after };
+  return in_scope(bind_var(init.s, v.name, init.id), v, bound);
+}
+
+// The state with the local of `v` in its scope. The bind is the last use of
+// the scope of `s`, so the scope grows in place. A bind before the initial
+// value is lowered has a second holder, and it copies the scope for each
+// declaration.
+function in_scope(s: State, v: ast.StmtVar, bound: typeinfo.Type): State {
+  return State { ...s, scope: checker.bind_local(v, s.scope, bound) };
 }
 
 function bind_var(s: State, name: string, id: i32): State {
@@ -4551,7 +4559,7 @@ function value_local_placeholder(v: ast.StmtVar): boolean {
   return false;
 }
 
-function declare_from_call(v: ast.StmtVar, s: State, after: checker.Scope): State {
+function declare_from_call(v: ast.StmtVar, s: State, bound: typeinfo.Type): State {
   let init = expr(v.init, s, typeinfo.unchecked());
   s = init.s;
   if (!s.ok) {
@@ -4560,7 +4568,7 @@ function declare_from_call(v: ast.StmtVar, s: State, after: checker.Scope): Stat
   if (!semtypes.concrete(s.values[init.id], true)) {
     return fail(s, "unresolved type of binding " + v.name + ": " + type_detail(s.values[init.id]));
   }
-  return State { ...bind_var(s, v.name, init.id), scope: after };
+  return in_scope(bind_var(s, v.name, init.id), v, bound);
 }
 
 function assign(a: ast.StmtAssign, s: State): State {
