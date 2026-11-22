@@ -91,11 +91,19 @@ function expr(e: ast.Expr, s: Scope): (ast.Expr, Scope) {
 
 function body(stmts: ast.Stmt[], s: Scope): (ast.Stmt[], Scope) {
   let out: ast.Stmt[] = [];
-  let (cur, mutual) = bind_mutual(stmts, s);
+  let fns = localfuncs.nested_fns(stmts);
+  let mutual = mutual_names(stmts, fns);
+  let cur = s;
   for st in stmts {
     // A local is bound here rather than through the walker, so that cur is
     // at its last use and the bind grows its arrays in place.
     if let ast.StmtVar(v) = st {
+      if (util.has_str(mutual, v.name)) {
+        let cycle = localfuncs.nested_fn_cycle(fns, v.name);
+        if (cycle[0] == v.name) {
+          cur = bind_cycle(stmts, cycle, cur);
+        }
+      }
       let (local, tail) = var_at(v, cur, mutual);
       out = out.append(local);
       cur = tail;
@@ -184,23 +192,31 @@ function pattern(p: ast.Pattern, s: Scope): ast.Pattern {
   }
 }
 
-// Nested functions that call each other are in scope in the whole block.
-function bind_mutual(stmts: ast.Stmt[], s: Scope): (Scope, string[]) {
+// Nested functions that call each other are in scope from the first of them.
+function mutual_names(stmts: ast.Stmt[], fns: localfuncs.NestedFn[]): string[] {
   let names: string[] = [];
-  let out = s;
-  let fns = localfuncs.nested_fns(stmts);
   if (fns.len() < 2) {
-    return (out, names);
+    return names;
   }
   for st in stmts {
     if let ast.StmtVar(v) = st {
       if (ast.var_binds_itself(v) && localfuncs.nested_fn_cycle(fns, v.name).len() > 1) {
-        out = bind_all(out, ast.append_var_names([], v), v.line, v.col);
         names = names.append(v.name);
       }
     }
   }
-  return (out, names);
+  return names;
+}
+
+function bind_cycle(stmts: ast.Stmt[], cycle: string[], own s: Scope): Scope {
+  for st in stmts {
+    if let ast.StmtVar(v) = st {
+      if (ast.var_binds_itself(v) && util.has_str(cycle, v.name)) {
+        s = bind_all(s, ast.append_var_names([], v), v.line, v.col);
+      }
+    }
+  }
+  return s;
 }
 
 function var_at(v: ast.StmtVar, s: Scope, mutual: string[]): (ast.Stmt, Scope) {

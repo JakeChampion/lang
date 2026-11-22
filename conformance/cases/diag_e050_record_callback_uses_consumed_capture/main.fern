@@ -1,0 +1,23 @@
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): void {}
+
+function read(h: Handle): i32 {
+  return h.fd;
+}
+
+struct Box { run: () => i32 }
+
+function call(b: Box): i32 {
+  return b.run();
+}
+
+function run(own h: Handle): i32 {
+  let b = Box { run: (): i32 => read(h) };
+  h.close();
+  return call(b);
+}
+
+function main(): i32 {
+  return run(Handle { fd: 3 });
+}

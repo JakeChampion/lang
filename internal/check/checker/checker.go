@@ -6093,8 +6093,10 @@ type checker struct {
 	callbackFactories    map[string][]callbackLoan
 	callbackResultCalls  map[*ast.Call]bool
 	callbackValues       map[ast.Expr]bool
-	resultBorrows        map[string]bool
-	resultAnalysed       map[string]bool
+	// localUseTypes has the type of each use of a local.
+	localUseTypes  map[*ast.Ident]ast.Type
+	resultBorrows  map[string]bool
+	resultAnalysed map[string]bool
 	// declaredMethods names the methods the program declares.
 	declaredMethods map[string]bool
 	// handleFreeResults names the functions whose result type cannot hold a handle.
@@ -11446,10 +11448,11 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	type movedSet = map[string]ast.Position
 	var callbackCaptures map[string][]ast.Param
 	var inlineCaptures map[ast.Expr][]ast.Param
+	var holderCaptures map[string][]ast.Param
 	callbackCapturesKnown := false
 	ensureCallbackCaptures := func() {
 		if !callbackCapturesKnown {
-			callbackCaptures, inlineCaptures = c.localCallbackCaptures(fn)
+			callbackCaptures, inlineCaptures, holderCaptures = c.localCallbackCaptures(fn)
 			callbackCapturesKnown = true
 		}
 	}
@@ -11470,6 +11473,23 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 		}
 		return false
+	}
+	// A call argument that holds a callback, such as a record with a callback
+	// field, takes the loans of that callback into the callee.
+	checkHolderCaptures := func(value ast.Expr, moved movedSet) {
+		id, ok := value.(*ast.Ident)
+		if !ok || len(moved) == 0 || c.callbackValues[value] || id.Builtin || !id.Local || owned[id.Name] {
+			return
+		}
+		if t := c.localUseTypes[id]; t == nil || c.copyableCallResult(t) {
+			return
+		}
+		ensureCallbackCaptures()
+		for _, capture := range holderCaptures[id.Name] {
+			if at, consumed := moved[capture.Name]; consumed {
+				c.movedErr(value.Pos(), at, "moved here", "%q holds a callback that uses captured owned parameter %q after it was consumed", id.Name, capture.Name)
+			}
+		}
 	}
 	checkCallbackCaptures := func(value ast.Expr, moved movedSet) {
 		if value == nil || len(moved) == 0 || !c.callbackValues[value] {
@@ -11926,6 +11946,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				checkCallbackCaptures(x.Callee, moved)
 				for _, arg := range x.Args {
 					checkCallbackCaptures(arg, moved)
+					checkHolderCaptures(arg, moved)
 				}
 				if lambda, ok := x.Callee.(*ast.Lambda); ok {
 					walkLambda(lambda, true)
@@ -12295,16 +12316,20 @@ func (c *checker) checkBlock(b *ast.Block, parent *scope) {
 	}
 	if len(localFns) > 1 {
 		c.mutualRecSiblings = detectMutualRecSCCs(localFns)
-		for _, fn := range localFns {
-			if c.mutualRecSiblings[fn.Name] != "" {
-				s.set(fn.Name, paramSig(fn.Params, fn.ReturnType, fn.ReturnOwn))
-			}
-		}
 		c.recordLateBinders(b)
 	} else {
 		c.mutualRecSiblings = nil
 	}
+	siblings := c.mutualRecSiblings
 	for i, st := range b.Stmts {
+		// Nested functions that call each other are in scope from the first of them.
+		if first, ok := st.(*ast.FuncDecl); ok && first.IsLocal && siblings[first.Name] == first.Name {
+			for _, fn := range localFns {
+				if siblings[fn.Name] == first.Name {
+					s.set(fn.Name, paramSig(fn.Params, fn.ReturnType, fn.ReturnOwn))
+				}
+			}
+		}
 		b.Stmts[i] = c.checkStmtLoweringForEach(st, s)
 	}
 	c.mutualRecSiblings = prevMutualRec
@@ -15271,6 +15296,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	}
 	_, callbackValue := t.(*ast.FuncType)
 	_, genericValue := t.(ast.ParamType)
+	if id, ok := e.(*ast.Ident); ok && id.Local {
+		if c.localUseTypes == nil {
+			c.localUseTypes = map[*ast.Ident]ast.Type{}
+		}
+		c.localUseTypes[id] = t
+	}
 	if callbackValue || genericValue {
 		if c.callbackValues == nil {
 			c.callbackValues = map[ast.Expr]bool{}

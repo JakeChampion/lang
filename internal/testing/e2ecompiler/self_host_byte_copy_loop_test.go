@@ -458,7 +458,7 @@ func TestSelfHostByteCopyLoopBounds(t *testing.T) {
 				if code == 0 {
 					t.Fatal("out-of-bounds copy returned")
 				}
-				if target != "wasm32-wasi" && (code != 134 || !strings.Contains(stderr, "fern: array index out of range")) {
+				if code != 134 || !strings.Contains(stderr, "fern: array index out of range") {
 					t.Fatalf("bounds: exit %d, want array abort 134\n%s", code, stderr)
 				}
 			})
@@ -606,7 +606,7 @@ func TestSelfHostByteCopyInvariantStart(t *testing.T) {
 				if code == 0 {
 					t.Fatal("out-of-bounds copy returned")
 				}
-				if target != "wasm32-wasi" && (code != 134 || !strings.Contains(stderr, "fern: array index out of range")) {
+				if code != 134 || !strings.Contains(stderr, "fern: array index out of range") {
 					t.Fatalf("bounds: exit %d, want array abort 134\n%s", code, stderr)
 				}
 			})
@@ -706,7 +706,7 @@ func TestSelfHostByteCopyViewSourceBounds(t *testing.T) {
 				if code == 0 {
 					t.Fatal("out-of-bounds copy returned")
 				}
-				if target != "wasm32-wasi" && (code != 134 || !strings.Contains(stderr, "fern: array index out of range")) {
+				if code != 134 || !strings.Contains(stderr, "fern: array index out of range") {
 					t.Fatalf("bounds: exit %d, want array abort 134\n%s", code, stderr)
 				}
 			})

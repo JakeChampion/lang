@@ -7286,15 +7286,21 @@ function rec_local_scope(v: ast.StmtVar, s: Scope): Scope {
   return s;
 }
 
-function bind_mutual_siblings(stmts: ast.Stmt[], s: Scope): Scope {
-  let fns = localfuncs.nested_fns(stmts);
-  let out = s;
-  for f in fns {
-    if (localfuncs.nested_fn_cycle(fns, f.name).len() > 1) {
-      out = out.bind(f.name, lambda_fn_type(f.lam, s));
+// Nested functions that call each other are in scope from the first of them.
+function bind_group_at(st: ast.Stmt, fns: localfuncs.NestedFn[], s: Scope): Scope {
+  if let ast.StmtVar(v) = st {
+    let cycle = localfuncs.nested_fn_cycle(fns, v.name);
+    if (cycle.len() > 1 && cycle[0] == v.name) {
+      let out = s;
+      for f in fns {
+        if (util.has_str(cycle, f.name)) {
+          out = out.bind(f.name, lambda_fn_type(f.lam, s));
+        }
+      }
+      return out;
     }
   }
-  return out;
+  return s;
 }
 
 const INFERRED_RESULT: string = "inferred lambda result";
@@ -10825,8 +10831,10 @@ function unsafe_expr(e: ast.Expr, s: Scope, inside: boolean): util.Diag[] {
 
 function unsafe_stmts(stmts: ast.Stmt[], s: Scope, inside: boolean): util.Diag[] {
   let out: util.Diag[] = [];
-  let cur = bind_mutual_siblings(stmts, s);
+  let cur = s;
+  let fns = localfuncs.nested_fns(stmts);
   for st in stmts {
+    cur = bind_group_at(st, fns, cur);
     match (st) {
       ast.StmtVar(v) => {
         out = util.append_diags(out, unsafe_expr(v.init, rec_local_scope(v, cur), inside));
@@ -18060,11 +18068,13 @@ function then_scope(f: ast.StmtIf, s: Scope): Scope {
 
 function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
-  let cur = bind_mutual_siblings(stmts, s);
+  let cur = s;
+  let fns = localfuncs.nested_fns(stmts);
   for lc in localfuncs.nested_fn_late_captures(stmts) {
     out = out.append(dg_at("E108", "nested function " + util.quoted(lc.fn_name) + " captures " + util.quoted(lc.name) + ", but " + util.quoted(lc.first) + " can call " + util.quoted(lc.fn_name) + " before the declaration of " + util.quoted(lc.name) + ": declare " + util.quoted(lc.name) + " before " + util.quoted(lc.first), lc.line, lc.col));
   }
   for st in stmts {
+    cur = bind_group_at(st, fns, cur);
     match (st) {
       ast.StmtVar(v) => {
         let vsc = cur;
@@ -20620,12 +20630,19 @@ function ow_local_capture_owner(name: string, ctx: OwnCtx): boolean {
 }
 
 function ow_callback_capture_diags(value: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): util.Diag[] {
+  return ow_capture_diags(value, moved, ctx, false);
+}
+
+// A call argument that holds a callback, such as a record with a callback
+// field, takes the loans of that callback into the callee.
+function ow_capture_diags(value: ast.Expr, moved: MovedEntry[], ctx: OwnCtx, holder: boolean): util.Diag[] {
   if (moved.len() == 0) {
     return [];
   }
   let ty = check_expr(value, ctx.scope);
   let spelling = typeinfo.spelling(ty);
-  if (!parser.ref_is_fn_value(parser.parse_type_ref(spelling)) && !util.has_str(ctx.scope.tparams, spelling)) {
+  let callback = parser.ref_is_fn_value(parser.parse_type_ref(spelling)) || util.has_str(ctx.scope.tparams, spelling);
+  if (!callback && (!holder || ow_cached_value_data(spelling, ctx.decls, ctx.value_proofs) || !ow_local_holder(value, ctx))) {
     return [];
   }
   let name = "lambda";
@@ -20647,7 +20664,8 @@ function ow_callback_capture_diags(value: ast.Expr, moved: MovedEntry[], ctx: Ow
   let out: util.Diag[] = [];
   for capture in captures {
     if (ow_moved_has(moved, capture.name) && !ow_cached_value_data(capture.type_name, ctx.decls, ctx.value_proofs)) {
-      out = out.append(ow_moved_diag("callback \"" + name + "\" uses captured owned parameter \"" + capture.name + "\" after it was consumed", expr_line(value), expr_col(value), moved, capture.name, "moved here"));
+      let what = if (callback) { "callback \"" + name + "\" uses" } else { "\"" + name + "\" holds a callback that uses" };
+      out = out.append(ow_moved_diag(what + " captured owned parameter \"" + capture.name + "\" after it was consumed", expr_line(value), expr_col(value), moved, capture.name, "moved here"));
     }
   }
   return out;
@@ -26311,9 +26329,16 @@ function ow_call_capture_diags(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx
   }
   let out = ow_callback_capture_diags(c.callee, moved, ctx);
   for arg in c.args {
-    out = util.append_diags(out, ow_callback_capture_diags(arg, moved, ctx));
+    out = util.append_diags(out, ow_capture_diags(arg, moved, ctx, true));
   }
   return out;
+}
+
+function ow_local_holder(value: ast.Expr, ctx: OwnCtx): boolean {
+  if let ast.ExprIdent(id) = value {
+    return !id.builtin && ctx.bound.has(id.name) && ocl_lookup(ow_callback_facts(ctx), id.name).len() > 0;
+  }
+  return false;
 }
 
 function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {

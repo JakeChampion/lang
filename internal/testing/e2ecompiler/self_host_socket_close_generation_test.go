@@ -59,7 +59,10 @@ function show(r: Result[net.Recv, net.NetError]): string {
 function run(own c1: Socket): string {
   let fd1 = c1.fd;
   let f = async.spawn((): string => show(net.read_deadline(c1, 16, time.duration_millis(2000i64))));
-  let closed = tcp_close(c1);
+  // The checker refuses a checked close of a socket that a task holds (E050).
+  unsafe {
+    __tcp_close_unchecked(c1);
+  }
   let c2: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %[1]d, false);
   print("same descriptor: " + (c2.fd == fd1).to_string());
   match (async.block_on(f)) {

@@ -150,6 +150,18 @@ This difference remains in a UTF-8 locale:
   read the codeset in the files of a locale. It takes the codeset from the
   name.
 
+These differences come from faults of the regex of glibc. The port gives
+the result that POSIX gives:
+
+- A group that has an alternation, in an interval, where one
+  branch has two assertions that cannot hold together before a character and
+  another branch can match the empty string. After its first match, glibc
+  finds no more matches in the line. The port finds each match. For
+  `s/\(\<\>-\|b*\)\{1,2\}/<\1>/g` on `a-`, GNU sed 4.9 gives `<>a-` and the
+  port gives `<>a<>-<>`.
+- With `\+` in place of the interval in that script, GNU sed 4.9 does not
+  terminate. The port gives the same result as for the interval.
+
 These differences come from the output and from WASI:
 
 - With `--debug`, a write error on standard output can give a different

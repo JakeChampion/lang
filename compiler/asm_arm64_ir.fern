@@ -6960,7 +6960,7 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], own s: as
   let key = tag.name;
   let dargc = args.len();
   s = dyn_arg_load(s, "x0", args[0]);
-  s = s.write("    ldur w1, [x0, #-4]\n");
+  s = s.write("    ldur w5, [x0, #-4]\n");
   let dend = key + "dynend";
   let dfi = 0;
   let darmn = 0;
@@ -6972,8 +6972,8 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], own s: as
       && (asmcore.is_struct_decl_name(ddbn, s) || dprim)) {
       let dbn = ddbn;
       let dnext = key + "dynnext" + util.i32_to_string(darmn);
-      s = s.write(mov_tag("w2", asmcore.shape_tag(s, dbn)));
-      s = s.write("    cmp w1, w2\n    b.ne " + dnext + "\n");
+      s = s.write(mov_tag("w6", asmcore.shape_tag(s, dbn)));
+      s = s.write("    cmp w5, w6\n    b.ne " + dnext + "\n");
       let dk = dargc - 1;
       while (dk >= 0) {
         if (dk == 0 && dprim) {
@@ -7001,8 +7001,8 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], own s: as
       while (dvi < s.struct_decls.decls.len()) {
         if (s.struct_decls.decls[dvi].enum_owner == ddbn) {
           let vlit_name = irtables.decl_shape(s.struct_decls.decls[dvi]);
-          s = s.write(mov_tag("w2", asmcore.shape_tag(s, vlit_name)));
-          s = s.write("    cmp w1, w2\n    b.eq " + dehit + "\n");
+          s = s.write(mov_tag("w6", asmcore.shape_tag(s, vlit_name)));
+          s = s.write("    cmp w5, w6\n    b.eq " + dehit + "\n");
         }
         dvi += 1;
       }
