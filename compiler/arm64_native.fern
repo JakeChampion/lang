@@ -1437,15 +1437,23 @@ pub function arm64_fixed_word(mnem: string): i64 {
 }
 
 pub function arm64_bti_word(ops: string[]): i64 {
-  let op2: i64 = 0;
-  if (ops.len() == 1 && ops[0] == "c") {
-    op2 = 2;
-  } else if (ops.len() == 1 && ops[0] == "j") {
-    op2 = 4;
-  } else if (ops.len() == 1 && ops[0] == "jc") {
-    op2 = 6;
+  if (ops.len() == 0) {
+    return 0xd503241f;
   }
-  return 0xd503241f | op2 << 5;
+  if (ops.len() != 1) {
+    return -1;
+  }
+  let target = ops[0];
+  if (target.eq_ignore_ascii_case("c")) {
+    return 0xd503245f;
+  }
+  if (target.eq_ignore_ascii_case("j")) {
+    return 0xd503249f;
+  }
+  if (target.eq_ignore_ascii_case("jc")) {
+    return 0xd50324df;
+  }
+  return -1;
 }
 
 function arm64_br_word(rn: i32): i64 {
@@ -6319,11 +6327,40 @@ function arm64_fam_is_excl(fam: i32): boolean {
   return fam == arm64_fam_excl_ld() || fam == arm64_fam_excl_st() || fam == arm64_fam_acqrel();
 }
 
+function arm64_gas_bad_exception(ops: string[]): string {
+  if (ops.len() != 1) {
+    return "operands";
+  }
+  return if (arm64_gas_small_imm(ops[0], 65535) < 0) { "imm16" } else { "" };
+}
+
+function arm64_gas_bad_branch_reg(ops: string[]): string {
+  if (ops.len() != 1) {
+    return "operands";
+  }
+  if (!arm64_gas_data_gp(ops[0]) || arm64_gas_is_w(ops[0])) {
+    return "register";
+  }
+  return "";
+}
+
 function arm64_gas_bad_ext_token(mnem: string, ops: string[], lm: Arm64Mem): string {
+  let fam = arm64_gas_family(mnem);
+  if (fam == arm64_fam_sys()) {
+    return arm64_gas_bad_exception(ops);
+  }
+  if (fam == arm64_fam_landing()) {
+    return if (arm64_bti_word(ops) < 0) { "operands" } else { "" };
+  }
+  if (fam == arm64_fam_indirect()) {
+    return arm64_gas_bad_branch_reg(ops);
+  }
+  if (fam == arm64_fam_fixed() && ops.len() > 0) {
+    return if (mnem == "ret") { arm64_gas_bad_branch_reg(ops) } else { "operands" };
+  }
   if (arm64_gas_routes_vec(mnem, ops)) {
     return "";
   }
-  let fam = arm64_gas_family(mnem);
   let t = arm64_gas_bad_ext_alu(fam, mnem, ops);
   if (t.len() > 0) {
     return t;
@@ -6374,12 +6411,9 @@ function arm64_gas_bad_crc(mnem: string, ops: string[]): string {
   }
   let i = 0;
   while (i < 3) {
-    let want = b'w';
-    if (i == 2 && mnem == "crc32x") {
-      want = b'x';
-    }
+    let wide = i == 2 && mnem == "crc32x";
     let t = arm64_gas_trim(ops[i]);
-    if (t.len() < 2 || t[0] != want || arm64_gas_reg(t) < 0) {
+    if (!arm64_gas_data_gp(t) || arm64_gas_is_w(t) == wide) {
       return t;
     }
     i += 1;
@@ -6592,9 +6626,8 @@ function arm64_gas_bad_shift4(ops: string[]): string {
   return "";
 }
 
-// Bit counts, conditional immediates and NZCV fields fit in 0..64. Stop before an invalid
-// literal can wrap around into that range.
-function arm64_gas_small_imm(tok: string): i32 {
+// Stop before an out-of-range literal can wrap into the instruction field.
+function arm64_gas_small_imm(tok: string, limit: i32 = 64): i32 {
   let i = if (tok.starts_with("#")) { 1 } else { 0 };
   let negative = i < tok.len() && tok[i] == b'-';
   if (negative || i < tok.len() && tok[i] == b'+') {
@@ -6619,7 +6652,7 @@ function arm64_gas_small_imm(tok: string): i32 {
       return -1;
     }
     count = count * radix + digit;
-    if (count > 64) {
+    if (count > limit) {
       return -1;
     }
   }
@@ -7335,7 +7368,11 @@ function arm64_gas_bcond_suffix(mnem: string): string {
 function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
   let fam = arm64_gas_family(mnem);
   if (fam == arm64_fam_fixed()) {
-    util.push_bytes(a.code, arm64_le32([], arm64_fixed_word(mnem)));
+    if (mnem == "ret" && ops.len() == 1) {
+      arm64_push_word(a.code, arm64_ret_word(arm64_gas_reg(ops[0])));
+      return a;
+    }
+    arm64_push_word(a.code, arm64_fixed_word(mnem));
     return a;
   }
   if (fam == arm64_fam_landing()) {
@@ -7349,7 +7386,7 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
     if (ops.len() < 1) {
       return a;
     }
-    util.push_bytes(a.code, arm64_exception([], mnem, arm64_gas_imm(ops[0])));
+    util.push_bytes(a.code, arm64_exception([], mnem, arm64_gas_small_imm(ops[0], 65535)));
     return a;
   }
   if (fam == arm64_fam_indirect()) {
@@ -8958,9 +8995,6 @@ function arm64_gas_line_faults(mnem: string, ops: string[], lmem: Arm64Mem): str
 
 function arm64_gas_token_faults(mnem: string, ops: string[], lmem: Arm64Mem): string[] {
   let out: string[] = [];
-  if ((mnem == "yield" || mnem == "wfe" || mnem == "wfi") && ops.len() != 0) {
-    out = out.append(mnem + ":operands");
-  }
   let badreg = arm64_gas_bad_reg_token(ops);
   if (badreg.len() > 0) {
     out = out.append(mnem + ":" + badreg);

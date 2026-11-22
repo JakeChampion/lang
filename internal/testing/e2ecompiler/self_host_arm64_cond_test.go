@@ -14,6 +14,7 @@ func TestSelfHostArm64ConditionsMatchGas(t *testing.T) {
 	cases := []string{
 		"1:\n\ttbz w0, #31, 1b", "1:\n\ttbnz xzr, #0x3f, 1b",
 		"1:\n\ttbz x0, #010, 1b", "1:\n\ttbz w0, #0b101, 1b",
+		"br xzr", "br lr", "blr fp", "blr x0",
 		"1:\n\tcbnz wzr, 1b", "1:\n\tbeq 1b",
 	}
 	for _, cond := range arm64Conditions {
@@ -70,6 +71,7 @@ func TestSelfHostArm64RefusesBadBranches(t *testing.T) {
 		"tbz w0, #32, _start", "tbnz x0, #64, _start",
 		"tbz x0, #-1, _start", "tbz x0, #0xZZ, _start",
 		"tbz x0, #4294967296, _start", "tbz s0, #1, _start",
+		"br", "br w3", "br d0", "blr", "blr sp", "blr x0, x1",
 		"b", "cbz x0", "tbz x0, #1",
 	})
 }

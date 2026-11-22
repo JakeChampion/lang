@@ -777,6 +777,35 @@ The interpreter smoke corpus retains independent PCM checks for both seek polici
 Regenerate the seek corpus with `scripts/gen-opus-seek-vectors.py`.
 The generator verifies all three reference archive hashes and checks the complete-file fixtures before it freezes seek results.
 
+### Seeking and track boundaries in Tune
+
+Tune uses one 48 kHz timeline for a chained Opus file. Its duration is the sum
+of the playable frames of all links. A seek selects the link that contains the
+requested frame, including when playback has already reached the end. A mix of
+mono and stereo links plays in stereo, with each mono sample sent to both
+channels. The engine accepts one or two channels. An Ogg decode step can
+produce no samples while working through preroll.
+
+The Tune engine regression concatenates 48,000 mono frames and 6,000 stereo
+frames. It checks both copies of every mono sample, all 108,000 output samples,
+and the 3,375 stereo frames remaining after a seek to frame 50,625. The same
+suite checks an 8,000-frame Opus pre-skip against the FFmpeg output length.
+
+The following measurements are maxima across the checked-in file-seek fixtures.
+For MP3 and FLAC, the window measurement is the greatest length of
+`builder.decoder.buffer.bytes` observed after an indexing step. For Opus it
+is the largest encoded packet window requested by `SeekCursor.want()` during
+the source-backed seek tests. Index payload is the number of entries in the
+completed index multiplied by the logical entry sizes documented above.
+Buffer and index maxima may come from different files. Decoder state, spare
+array capacity and allocator metadata are additional costs.
+
+| Native x86-64 suite | Largest index (entries) | Index payload (bytes) | Largest observed encoded window (bytes) |
+|---|---:|---:|---:|
+| `mp3_file_test.fern` | 20 | 320 | 4,096 |
+| `flac_file_test.fern` | 3 | 72 | 3,559 |
+| `opus_seek_test.fern` | 18 | 504 | 65,569 |
+
 ## Opus and Android
 
 `std/opus` provides stateful SILK, hybrid, and CELT packet decode, plus CELT packet encode.

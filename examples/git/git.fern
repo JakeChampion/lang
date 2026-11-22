@@ -15,6 +15,7 @@ import "std/process";
 import "std/errno";
 import "std/io";
 import "std/string";
+import "std/u64";
 import "std/worker";
 import "core/cmp";
 import "core/map";
@@ -362,23 +363,29 @@ function cat_file(argv: string[]): i32 {
 
 const AMBIGUOUS: string = "': unknown revision or path not in the working tree.\nUse '--' to separate paths from revisions, like this:\n'git <command> [<revision>...] -- [<file>...]'";
 
-// The digits after `--short=`, or the length that git gives to a short
-// name in this store. A number below 4 is 4, as in git.
+// Git reads the decimal prefix with strtoul, narrows it to int and then
+// clamps it to the supported object-name lengths.
 function short_length(s: store.Store, flag: string): i32 {
   if (!flag.starts_with("--short=")) {
     return store.short_length(s);
   }
-  let n = 0;
-  for i in 8..flag.len() {
-    if (flag[i] < b'0' || flag[i] > b'9') {
-      return store.short_length(s);
-    }
-    n = n * 10 + (flag[i] - b'0') as i32;
+  let i = 8;
+  while (i < flag.len() && (flag[i] == b' ' || flag[i] >= 9 && flag[i] <= 13)) {
+    i += 1;
   }
-  if (n < 4) {
+  let negative = i < flag.len() && flag[i] == b'-';
+  if (negative || i < flag.len() && flag[i] == b'+') {
+    i += 1;
+  }
+  let start = i;
+  while (i < flag.len() && flag[i] >= b'0' && flag[i] <= b'9') {
+    i += 1;
+  }
+  let Ok(magnitude) = u64.parse_u64(slice_unchecked(flag, start, i)) else {
     return 4;
-  }
-  return n.min(2 * s.width);
+  };
+  let value = if (negative) { 0u64 - magnitude } else { magnitude };
+  return (value as i32).max(4).min(2 * s.width);
 }
 
 // Prints the lines that git prints while it reads a revision.
@@ -570,25 +577,34 @@ function rev_parse(argv: string[]): i32 {
   let r = repo[0];
   let p = RevParse { store: r.store(), short: 0, verify: false, quiet: false, count: 0, last: "" };
   let dashdash = argv.contains("--");
+  let options = true;
   let as_is = 0;
   for x in argv {
     if (as_is > 0) {
       put_line(x);
+      if (as_is < 2 && x.starts_with("-")) {
+        return fatal("option '" + x + "' must come before non-option arguments");
+      }
       if (as_is < 2 && !looks_like_pathspec(x) && !path_exists(r, x)) {
-        if (x.starts_with("-")) {
-          return fatal("option '" + x + "' must come before non-option arguments");
-        }
         return fatal(x + ": no such path in the working tree.\nUse 'git <command> -- <path>...' to specify paths that do not exist locally.");
       }
       continue;
     }
     if (x == "--") {
+      if (p.verify) {
+        break;
+      }
       as_is = 2;
       put_line(x);
       continue;
     }
-    if (x.starts_with("-")) {
-      if (x == "--verify") {
+    if (options && x.starts_with("-")) {
+      if (x == "--end-of-options") {
+        options = false;
+        if (!p.verify) {
+          put_line(x);
+        }
+      } else if (x == "--verify") {
         p = RevParse { ...p, verify: true };
       } else if (x == "-q" || x == "--quiet") {
         p = RevParse { ...p, quiet: true };
@@ -638,7 +654,7 @@ function rev_parse(argv: string[]): i32 {
     }
     as_is = 1;
     put_line(x);
-    if (!looks_like_pathspec(x) && !path_exists(r, x)) {
+    if (x.starts_with("-") || !looks_like_pathspec(x) && !path_exists(r, x)) {
       return no_such_name(r, x, named);
     }
   }

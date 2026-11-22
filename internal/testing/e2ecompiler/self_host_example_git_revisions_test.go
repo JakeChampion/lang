@@ -127,6 +127,8 @@ func TestSelfHostExampleGitRevisions(t *testing.T) {
 		"rev-parse HEAD~1^-", "rev-parse HEAD~1^-1", "rev-parse HEAD~1^-2", "rev-parse HEAD~1^-3", "rev-parse HEAD^!x",
 		"rev-parse ..side", "rev-parse side..", "rev-parse ..", "rev-parse ...", "rev-parse HEAD..HEAD^{tree}", "rev-parse HEAD...HEAD^{tree}",
 		"rev-parse --short HEAD~1..side", "rev-parse --short HEAD", "rev-parse --verify HEAD~1..side", "rev-parse --verify -q nosuch",
+		"rev-parse --verify --end-of-options HEAD", "rev-parse --end-of-options --short", "rev-parse --end-of-options -- HEAD",
+		"rev-parse --verify HEAD -- ignored", "rev-parse --verify -- HEAD", "rev-parse --verify -q --end-of-options --short",
 		"rev-parse -q --verify HEAD", "rev-parse --verify HEAD main",
 		"rev-parse @", "rev-parse @^ @~2", "rev-parse @{0}", "rev-parse @{1}", "rev-parse @{2}", "rev-parse @{5}", "rev-parse @{99}",
 		"rev-parse HEAD@{0} HEAD@{1} HEAD@{2} HEAD@{3}", "rev-parse HEAD@{20}", "rev-parse main@{0} main@{1}", "rev-parse side@{1}",

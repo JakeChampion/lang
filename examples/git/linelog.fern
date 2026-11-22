@@ -2,9 +2,12 @@
 // git): the ranges of each `-L`, which follow the changes of their files
 // back through the history, one commit at a time.
 import "std/array";
+import "std/i64";
 import "std/linediff";
 import "std/string";
 import "../../coreutils/lib/bre";
+import "../../coreutils/lib/gnu";
+import "std/errno";
 import "./attr";
 import "./objects";
 import "./store";
@@ -259,23 +262,19 @@ function strtol(s: string, at: i32): (i64, i32) {
   while (i < s.len() && c_space(s[i])) {
     i += 1;
   }
-  let negative = false;
+  let start = i;
   if (i < s.len() && (s[i] == b'+' || s[i] == b'-')) {
-    negative = s[i] == b'-';
     i += 1;
   }
   let first = i;
-  let n: i64 = 0;
   while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
-    if (n < 1000000000000) {
-      n = n * 10 + (s[i] - b'0') as i64;
-    }
     i += 1;
   }
   if (i == first) {
     return (0, at);
   }
-  return (if (negative) { -n } else { n }, i);
+  let limit = if (s[start] == b'-') { i64.MIN } else { i64.MAX };
+  return (i64.parse_i64(slice_unchecked(s, start, i)).unwrap_or(limit), i);
 }
 
 // The end of the text of `/REGEX/` that starts at `at`, after its last
@@ -561,11 +560,49 @@ pub function range_in(arg: string, data: u8[], anchor: i32, funcs: Option[userdi
   return parse_range(arg, Blob { data: data, ends: ends, lines: ends.len() - 1 }, anchor, funcs);
 }
 
+// An absolute name may reach the worktree through a symlink to its root.
+// Once inside, the remaining components name entries in the commit tree.
+function from_worktree(parts: string[], top: string, name: string, directory: boolean): Result[string, string] {
+  let outside = "'" + name + "' is outside repository at '" + top + "'";
+  if (top.len() == 0) {
+    return Err(outside);
+  }
+  let absolute = "/" + parts.join("/");
+  if (absolute == top) {
+    return Ok("");
+  }
+  if let Some(rest) = absolute.strip_prefix(if (top == "/") { "/" } else { top + "/" }) {
+    return Ok(rest);
+  }
+  let Ok(root) = stat(top) else {
+    return Err(outside);
+  };
+  let parent = "";
+  for i in 0..parts.len() {
+    parent += "/" + parts[i];
+    match (stat(parent)) {
+      Ok(dir) => {
+        if (dir.dev == root.dev && dir.ino == root.ino) {
+          return Ok(array.slice(parts, i + 1, parts.len()).join("/"));
+        }
+      },
+      Err(e) => {
+        if (i + 1 < parts.len() || directory || errno.of(e) != errno.ENOENT) {
+          return Err("Invalid path '" + parent + "': " + gnu.io_error_text(e));
+        }
+      }
+    }
+  }
+  return Err(outside);
+}
+
 // The path of the name `name` of `-L` from the directory `prefix` below
 // the top of the worktree, or the message of git (`prefix_path`).
 function full_name(prefix: string, name: string, top: string): Result[string, string] {
   let parts: string[] = [];
-  for p in (prefix + name).split("/") {
+  let absolute = name.starts_with("/");
+  let input = if (absolute) { name } else { prefix + name };
+  for p in input.split("/") {
     if (p == "..") {
       if (parts.len() == 0) {
         return Err("'" + name + "' is outside repository at '" + top + "'");
@@ -575,16 +612,24 @@ function full_name(prefix: string, name: string, top: string): Result[string, st
       parts = parts.append(p);
     }
   }
-  return Ok(parts.join("/"));
+  let directory = name.ends_with("/") || name == "." || name.ends_with("/.") || name == ".." || name.ends_with("/..");
+  let path = if (absolute) { from_worktree(parts, top, name, directory)? } else { parts.join("/") };
+  return Ok(if (directory && path.len() > 0) { path + "/" } else { path });
 }
 
 // The blob of `path` in the tree `tree` (`get_tree_entry`), or the
 // message of git for no entry and for an entry that is not a blob.
 function blob_at(s_in: store.Store, tree: string, path: string): (store.Store, Result[u8[], string]) {
   let s = s_in;
+  if (path.len() == 0) {
+    return (s, Err("internal error: asking to populate invalid file."));
+  }
   let at = tree;
   let parts = path.split("/");
   for k in 0..parts.len() {
+    if (parts[k].len() == 0) {
+      break;
+    }
     let (s1, t) = treediff.entries_of(s, at);
     s = s1;
     let next = -1;
