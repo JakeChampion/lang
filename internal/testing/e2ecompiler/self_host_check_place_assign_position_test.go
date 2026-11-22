@@ -39,6 +39,16 @@ func TestSelfHostCheckPlaceAssignPosition(t *testing.T) {
 		{"generic-field-value", "  b.item = \"s\";\n"},
 		{"field-literal-settles", "  p.w = 2;\n"},
 		{"index-literal-settles", "  ws[0] = 2;\n"},
+		{"call-index-compound", "  a[nope()] += 1;\n"},
+		{"nested-call-index-compound", "  g[nope()][0] -= 1;\n"},
+		{"call-index-field-compound", "  ps[nope()].f *= 2;\n"},
+	}
+	// A compound assignment reads its target and writes it. A diagnostic of
+	// the target must come one time.
+	once := map[string]string{
+		"call-index-compound":        "cannot find \"nope\"",
+		"nested-call-index-compound": "cannot find \"nope\"",
+		"call-index-field-compound":  "cannot find \"nope\"",
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -47,7 +57,7 @@ func TestSelfHostCheckPlaceAssignPosition(t *testing.T) {
 			src := decls + "function main(): i32 {\n  let a: i32[] = [0, 0];\n  let g: i32[][] = [[0]];\n  let u: u8[] = [0];\n" +
 				"  let t: (i32, string) = (0, \"\");\n  let m: Map[string, i32] = map_new(8);\n" +
 				"  let b: Box[i64] = Box[i64] { item: 1 };\n  let ws: i64[] = [1];\n" +
-				"  let p: P = P { f: 0, i: In { q: 0 }, w: 0 };\n  let x: i32 = 0;\n" + tc.body + "  return x + p.f + a[0];\n}\n"
+				"  let p: P = P { f: 0, i: In { q: 0 }, w: 0 };\n  let ps: P[] = [p];\n  let x: i32 = 0;\n" + tc.body + "  return x + p.f + a[0];\n}\n"
 			if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -58,6 +68,11 @@ func TestSelfHostCheckPlaceAssignPosition(t *testing.T) {
 			}
 			if string(shOut) != string(goOut) {
 				t.Errorf("the two checkers report differently\n--- Go ---\n%s--- self-host ---\n%s", goOut, shOut)
+			}
+			if text := once[tc.name]; text != "" {
+				if n := strings.Count(string(shOut), text); n != 1 {
+					t.Errorf("want %q one time, got it %d times\n%s", text, n, shOut)
+				}
 			}
 		})
 	}
