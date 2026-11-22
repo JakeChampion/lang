@@ -2819,11 +2819,28 @@ function split_plan(f: SFunc, at: i32[], idom: i32[], latch: i32[], loops: i32[]
     }
     for b in inner_last + 1..last + 1 {
       if (later.filter((u: i32): boolean => u < b || !dominated_by(idom, u, b)).len() == 0) {
-        return Some(SplitPlan { v: v, pre: pre, head: head, last: last, inner: inner, inner_last: inner_last, after: b, early: early });
+        return checked_split(idom, SplitPlan { v: v, pre: pre, head: head, last: last, inner: inner, inner_last: inner_last, after: b, early: early });
       }
     }
   }
   return None;
+}
+
+// A second entry into the loop can bypass a definition introduced by the
+// split. The store must dominate the reload. Before the inner loop, the
+// header phi must dominate the blocks in which it replaces the old value.
+function checked_split(idom: i32[], p: SplitPlan): Option[SplitPlan] {
+  if (!dominates(idom, p.pre, p.after)) {
+    return None;
+  }
+  if (p.early) {
+    for b in p.head + 1..p.inner {
+      if (!dominates(idom, p.head, b)) {
+        return None;
+      }
+    }
+  }
+  return Some(p);
 }
 
 // Whether the block at position `d` dominates the block at position `b`.
