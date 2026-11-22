@@ -241,7 +241,7 @@ function c_mutex_unlock(mutex: usize): i32;
 
 `Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel, and the place of the first pointer. When more than one finger is on the screen, the action 5 tells that one more finger went down, and the action 6 tells that a finger went up while others stay. `touch_pointers` gives each pointer of the event, and `touch_index` gives the pointer of an action 5 or 6. Android can give one `Touch` event for more than one place of a finger that moves: it collects the places between two frames of the display. `touch_pointers` gives each place with its time, for an app that draws a path or needs the speed of a finger. `unbatched_touch` asks Android for each place at once. While TalkBack explores by touch, a finger on the screen comes as a hover pointer instead: 7 hover move, 9 hover enter and 10 hover exit. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. The volume keys and the mute key (24, 25 and 164) come as `Key` events too, and then the system changes the volume. The headset hook and the media keys (79, 85 to 90, 126 and 127) come as `Key` events too, and then the system gives them to the media session that plays.
 
-From Android 13 the system gives the back key and the back gesture to a callback of the activity. The loop then gives a `Key` down and a `Key` up of key code 4 for each back. The app decides what back does, for example with `finish` or `to_background`.
+From Android 13 the system gives the back key and the back gesture to a callback of the activity, to the input queue, or to both. The loop gives one `Key` down and one `Key` up of key code 4 for each back. The app decides what back does, for example with `finish` or `to_background`.
 
 `Char` follows the `Key` event of a key that goes down and types a character: the code point that the key map of the keyboard gives for the key and its shift state. A hardware keyboard types through these events.
 
@@ -393,7 +393,7 @@ Only the UI thread can change the views of the activity. `immersive` sets bit 0 
 <<the UI thread>>=
 // The context block of an activity, which both threads share.
 @derive(ffi.CLayout)
-struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize, ui_read: i32, ui_write: i32, field: usize, watcher: usize, quiet: i32, focused: i32, host: usize, provider: usize, delegate_class: usize, tree_class: usize, tree: usize, hovered: i32, sent: i64, kept: i32, app: usize, vm: usize, sdk: i32, dpi: i32, night: i32, motion: usize, back_class: usize, insets_class: usize, windowed: i32, senders: usize, held: i32 }
+struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize, ui_read: i32, ui_write: i32, field: usize, watcher: usize, quiet: i32, focused: i32, host: usize, provider: usize, delegate_class: usize, tree_class: usize, tree: usize, hovered: i32, sent: i64, kept: i32, app: usize, vm: usize, sdk: i32, dpi: i32, night: i32, motion: usize, back_class: usize, insets_class: usize, windowed: i32, senders: usize, held: i32, back_ns: i64, back_from: i32 }
 
 // ANativeActivity.
 @derive(ffi.CLayout)
@@ -661,7 +661,7 @@ function new_context(activity: usize): usize {
 function new_bare_context(activity: usize, vm: usize, sdk: i32): usize {
   unsafe {
     let ctx: usize = __alloc(Context.c_size() as i32);
-    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sent: 0i64, kept: 0, app: 0 as usize, vm: vm, sdk: sdk, dpi: 0, night: 0, motion: 0 as usize, back_class: 0 as usize, insets_class: 0 as usize, windowed: 0, senders: __alloc(SENDERS * 8), held: 0 }.c_store(ctx);
+    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sent: 0i64, kept: 0, app: 0 as usize, vm: vm, sdk: sdk, dpi: 0, night: 0, motion: 0 as usize, back_class: 0 as usize, insets_class: 0 as usize, windowed: 0, senders: __alloc(SENDERS * 8), held: 0, back_ns: 0i64, back_from: 0 }.c_store(ctx);
     for k in 0..SENDERS {
       __store_i64(Context.c_load_senders(ctx) + (k * 8) as usize, 0i64);
     }
@@ -1250,8 +1250,10 @@ function message[S](lp: Loop, own state: S, step: (own S, Event) => S): (Loop, S
       c_queue_detach(arg);
       lp = Loop { ...lp, queue: 0 as usize };
     } else if (kind == BACK) {
-      state = step(state, Key(KEY_BACK, 0));
-      state = step(state, Key(KEY_BACK, 1));
+      if (new_back(lp.ctx, BACK_FROM_CALLBACK, monotonic_ns())) {
+        state = step(state, Key(KEY_BACK, 0));
+        state = step(state, Key(KEY_BACK, 1));
+      }
     } else if (kind > 0) {
       state = step(state, message_event(kind, arg));
     }
@@ -1298,6 +1300,10 @@ function input[S](lp: Loop, own state: S, step: (own S, Event) => S): S {
           Context.c_store_motion(lp.ctx, 0 as usize);
           handled = 1;
         } else if (kind == 1 && back_by_callback(lp.ctx, c_key_code(ev))) {
+          if (c_key_action(ev) == 1 && new_back(lp.ctx, BACK_FROM_QUEUE, monotonic_ns())) {
+            state = step(state, Key(KEY_BACK, 0));
+            state = step(state, Key(KEY_BACK, 1));
+          }
           handled = 1;
         } else if (kind == 1) {
           let code: i32 = c_key_code(ev);
@@ -1321,11 +1327,35 @@ function input[S](lp: Loop, own state: S, step: (own S, Event) => S): S {
   return state;
 }
 
-// True for the back key while the back callback of the activity gives each
-// back: the input queue of Android 16 still gives the key too.
+// True for the back key while the activity has a back callback. Android
+// then gives a back to the callback, to the input queue, or to both.
 function back_by_callback(ctx: usize, code: i32): boolean {
   unsafe {
     return code == KEY_BACK && Context.c_load_back_class(ctx) != 0 as usize;
+  }
+}
+
+// Where a back comes from.
+const BACK_FROM_CALLBACK: i32 = 1;
+
+const BACK_FROM_QUEUE: i32 = 2;
+
+// The longest time between the two reports of one press of the back key.
+const BACK_PAIR_NS: i64 = 300000000i64;
+
+// True when the back that came from `from` at the time `now` is a new
+// press. It is false for the second report of a press, which comes from the
+// other source soon after the first.
+function new_back(ctx: usize, from: i32, now: i64): boolean {
+  unsafe {
+    let last: i64 = Context.c_load_back_ns(ctx);
+    let other = Context.c_load_back_from(ctx) != from;
+    if (last != 0i64 && other && now - last < BACK_PAIR_NS) {
+      return false;
+    }
+    Context.c_store_back_ns(ctx, now);
+    Context.c_store_back_from(ctx, from);
+    return true;
   }
 }
 
