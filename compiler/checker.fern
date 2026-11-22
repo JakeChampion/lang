@@ -6582,7 +6582,7 @@ function operator_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo
 }
 
 function bitwise_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type, s: Scope): typeinfo.Type {
-  if (b.op == "&" || b.op == "|" || b.op == "^") {
+  if (b.op == "&" || b.op == "|" || b.op == "^" || b.op == "<<" || b.op == ">>") {
     if (is_integer(lt) && is_integer(rt)) {
       return int_result(lt, rt, b.left, b.right);
     }
@@ -6591,19 +6591,6 @@ function bitwise_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.
       return bovt;
     }
     return t_unknown("bitwise operands must both be integers");
-  }
-  if (b.op == "<<" || b.op == ">>") {
-    if (is_integer(lt) && is_integer(rt)) {
-      if (int_literal_tree(b.left) && !int_literal_tree(b.right) || unsettled_int_literal(b.left)) {
-        return rt;
-      }
-      return lt;
-    }
-    let sovt = s.binop_overload_ret(b.op, lt);
-    if (!is_unknown(sovt)) {
-      return sovt;
-    }
-    return t_unknown("shift operands must both be integers");
   }
   if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
     return typeinfo.t_bool();
