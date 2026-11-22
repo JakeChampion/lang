@@ -914,6 +914,8 @@ func TestSelfHostArm64CrcGas(t *testing.T) {
 	bin := buildAsmBenchDriver(t, gcc)
 	checkPinnedSelfHost(t, bin, runner, []pinnedAsm{
 		{"crc32x w0, w0, x2", 0x9ac24c00},
+		{"crc32x w0, w1, fp", 0x9add4c20},
+		{"crc32x w0, w1, lr", 0x9ade4c20},
 		{"crc32x w23, w9, x28", 0x9adc4d37},
 		{"crc32b w0, w0, w2", 0x1ac24000},
 		{"crc32b w23, w9, w28", 0x1adc4137},
@@ -923,6 +925,8 @@ func TestSelfHostArm64CrcGas(t *testing.T) {
 	checkRefusedSelfHost(t, bin, runner, []string{
 		"crc32x w0, w1, w2",
 		"crc32x x0, x1, x2",
+		"crc32x w0, w1, sp",
+		"crc32w w0, w1, lr",
 		"crc32b w0, w1, x2",
 		"crc32w x0, w1, w2",
 		"crc32h w0, w1",

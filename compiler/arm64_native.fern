@@ -6374,12 +6374,9 @@ function arm64_gas_bad_crc(mnem: string, ops: string[]): string {
   }
   let i = 0;
   while (i < 3) {
-    let want = b'w';
-    if (i == 2 && mnem == "crc32x") {
-      want = b'x';
-    }
+    let wide = i == 2 && mnem == "crc32x";
     let t = arm64_gas_trim(ops[i]);
-    if (t.len() < 2 || t[0] != want || arm64_gas_reg(t) < 0) {
+    if (!arm64_gas_data_gp(t) || arm64_gas_is_w(t) == wide) {
       return t;
     }
     i += 1;
