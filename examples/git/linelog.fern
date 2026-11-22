@@ -572,16 +572,24 @@ function full_name(prefix: string, name: string, top: string): Result[string, st
       parts = parts.append(p);
     }
   }
-  return Ok(parts.join("/"));
+  let path = parts.join("/");
+  let directory = name.ends_with("/") || name == "." || name.ends_with("/.") || name == ".." || name.ends_with("/..");
+  return Ok(if (directory && path.len() > 0) { path + "/" } else { path });
 }
 
 // The blob of `path` in the tree `tree` (`get_tree_entry`), or the
 // message of git for no entry and for an entry that is not a blob.
 function blob_at(s_in: store.Store, tree: string, path: string): (store.Store, Result[u8[], string]) {
   let s = s_in;
+  if (path.len() == 0) {
+    return (s, Err("internal error: asking to populate invalid file."));
+  }
   let at = tree;
   let parts = path.split("/");
   for k in 0..parts.len() {
+    if (parts[k].len() == 0) {
+      break;
+    }
     let (s1, t) = treediff.entries_of(s, at);
     s = s1;
     let next = -1;

@@ -19,6 +19,8 @@ var gitLineLogCases = []string{
 	"log -L :ma.n:b.c", "log -L /\\}/,+2:b.c", "log -L 4,12:b.c -L :main:b.c", "log -L 4,22:b.c -L ^:main:b.c", "log -L :main:b.c -L 4,22:b.c",
 	"log -L 4:b.c -L 8,12:b.c", "log -L 8,12:b.c -L 4:b.c", "log -L :f:b.c -L 1,2:other.txt", "log -L 3,4:n.c", "log -L 1:n.c",
 	"log -L 2,4:big.txt -L 300,+3:big.txt", "log -L 1:bin.dat", "log -L :f:a.c HEAD~6", "log -L 1,3:empty",
+	// Directory syntax must survive normalization, even on a path naming a blob.
+	"log -L 1:b.c/", "log -L 1:b.c/.", "log -L 1:b.c/sub/..", "log -L 1:d/", "log -L 1:d/..",
 	// The forms of the output.
 	"log -L :f:b.c --oneline", "log -L :f:b.c --graph", "log -L :f:b.c --graph --oneline", "log -L :main:b.c --parents --oneline",
 	"log -L :f:b.c -s", "log -L :f:b.c --no-patch --format=%h|%p|%s", "log -L :f:b.c -s --parents --format=%h|%p|%s",
