@@ -577,25 +577,34 @@ function rev_parse(argv: string[]): i32 {
   let r = repo[0];
   let p = RevParse { store: r.store(), short: 0, verify: false, quiet: false, count: 0, last: "" };
   let dashdash = argv.contains("--");
+  let options = true;
   let as_is = 0;
   for x in argv {
     if (as_is > 0) {
       put_line(x);
+      if (as_is < 2 && x.starts_with("-")) {
+        return fatal("option '" + x + "' must come before non-option arguments");
+      }
       if (as_is < 2 && !looks_like_pathspec(x) && !path_exists(r, x)) {
-        if (x.starts_with("-")) {
-          return fatal("option '" + x + "' must come before non-option arguments");
-        }
         return fatal(x + ": no such path in the working tree.\nUse 'git <command> -- <path>...' to specify paths that do not exist locally.");
       }
       continue;
     }
     if (x == "--") {
+      if (p.verify) {
+        break;
+      }
       as_is = 2;
       put_line(x);
       continue;
     }
-    if (x.starts_with("-")) {
-      if (x == "--verify") {
+    if (options && x.starts_with("-")) {
+      if (x == "--end-of-options") {
+        options = false;
+        if (!p.verify) {
+          put_line(x);
+        }
+      } else if (x == "--verify") {
         p = RevParse { ...p, verify: true };
       } else if (x == "-q" || x == "--quiet") {
         p = RevParse { ...p, quiet: true };
@@ -645,7 +654,7 @@ function rev_parse(argv: string[]): i32 {
     }
     as_is = 1;
     put_line(x);
-    if (!looks_like_pathspec(x) && !path_exists(r, x)) {
+    if (x.starts_with("-") || !looks_like_pathspec(x) && !path_exists(r, x)) {
       return no_such_name(r, x, named);
     }
   }
