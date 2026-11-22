@@ -46,7 +46,7 @@ function kernel_shift(name: string): i32 {
 // $src.
 pub function wasm_source(append: boolean, write: boolean, back: boolean, kernels: string[], src_view: string): string {
   let out = "  (func $__fern_bytes_copy_bounds (param $a i32) (param $from i32) (param $n i32)\n"
-    + "    (if (i32.or (i32.gt_u (local.get $from) (i32.load (local.get $a))) (i32.gt_s (local.get $n) (i32.sub (i32.load (local.get $a)) (local.get $from)))) (then (unreachable))))\n";
+    + "    (if (i32.or (i32.gt_u (local.get $from) (i32.load (local.get $a))) (i32.gt_s (local.get $n) (i32.sub (i32.load (local.get $a)) (local.get $from)))) (then (call $__fern_abort_arr) (unreachable))))\n";
   if (kernels.len() > 0) {
     out += wasm_sole();
   }
@@ -95,7 +95,7 @@ function wasm_back(): string {
     + "    (local $len i32) (local $total i64) (local $cap i64) (local $r i32) (local $base i32) (local $at i32) (local $end i32) (local $chunk i32)\n"
     + "    (if (i32.le_s (local.get $n) (i32.const 0)) (then (return (local.get $a))))\n"
     + "    (local.set $len (i32.load (local.get $a)))\n"
-    + "    (if (i32.or (i32.lt_s (local.get $dist) (i32.const 1)) (i32.gt_s (local.get $dist) (local.get $len))) (then (unreachable)))\n"
+    + "    (if (i32.or (i32.lt_s (local.get $dist) (i32.const 1)) (i32.gt_s (local.get $dist) (local.get $len))) (then (call $__fern_abort_arr) (unreachable)))\n"
     + wasm_grow()
     + "    (local.set $base (i32.add (local.get $r) (i32.const 8))) (local.set $at (local.get $len)) (local.set $end (i32.wrap_i64 (local.get $total)))\n"
     + "    (block $done (loop $copy (br_if $done (i32.ge_s (local.get $at) (local.get $end)))\n"
@@ -201,7 +201,7 @@ function wasm_move(): string {
 
 function wasm_grow(): string {
   return "    (local.set $total (i64.add (i64.extend_i32_u (local.get $len)) (i64.extend_i32_u (local.get $n))))\n"
-    + "    (if (i64.gt_u (local.get $total) (i64.const 2147483647)) (then (unreachable)))\n"
+    + "    (if (i64.gt_u (local.get $total) (i64.const 2147483647)) (then (call $__fern_abort_alloc) (unreachable)))\n"
     + "    (local.set $cap (i64.extend_i32_u (i32.load offset=4 (local.get $a))))\n"
     + "    (local.set $r (local.get $a))\n"
     + "    (if (i32.or (i32.ne (i32.load (i32.sub (local.get $a) (i32.const 8))) (i32.const 1)) (i64.gt_u (local.get $total) (local.get $cap))) (then\n"
@@ -224,7 +224,7 @@ function wasm_write(src_view: string): string {
     + "    (local $len i32) (local $cap i32) (local $r i32) (local $p i32) (local $sn i32)\n"
     + "    (if (i32.le_s (local.get $n) (i32.const 0)) (then (return (local.get $a))))\n"
     + src_view
-    + "    (if (i32.or (i32.gt_u (local.get $from) (local.get $sn)) (i32.gt_s (local.get $n) (i32.sub (local.get $sn) (local.get $from)))) (then (unreachable)))\n"
+    + "    (if (i32.or (i32.gt_u (local.get $from) (local.get $sn)) (i32.gt_s (local.get $n) (i32.sub (local.get $sn) (local.get $from)))) (then (call $__fern_abort_arr) (unreachable)))\n"
     + "    (call $__fern_bytes_copy_bounds (local.get $a) (local.get $at) (local.get $n))\n"
     + "    (local.set $len (i32.load (local.get $a))) (local.set $r (local.get $a))\n"
     + "    (if (i32.ne (i32.load (i32.sub (local.get $a) (i32.const 8))) (i32.const 1)) (then\n"
