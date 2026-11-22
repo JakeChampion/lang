@@ -1413,6 +1413,9 @@ func freshInit(info *Info, init ast.Expr) bool {
 		if info != nil && info.CallOwnedResult != nil && info.CallOwnedResult(init) {
 			return true
 		}
+		if info != nil && info.CallValueLoan != nil && info.CallValueLoan(init) {
+			return false
+		}
 		if info != nil {
 			// A variant construction from another module has a qualified
 			// callee. It is fresh on the same terms as an unqualified one.

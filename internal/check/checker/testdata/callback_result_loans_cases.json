@@ -1433,5 +1433,40 @@
     "name": "binder of a plain data call result accepted after the borrowed owner is consumed",
     "source": "struct H { fd: i32 }\nfunction (own h: H) close(): H { return h; }\nstruct Item { n: i32 }\nfunction following(h: H): Option[(Item, Item[])] { return Some((Item { n: h.fd }, [])); }\nfunction go_on(own h: H, it: Item, queue: Item[]): i32 { return it.n + queue.len(); }\nfunction run(own h: H): i32 { let next = following(h); let t = h.close(); if let Some((it, queue)) = next { return go_on(t, it, queue); } return 0; }\nfunction main(): i32 { return run(H { fd: 7 }); }\n",
     "want": ""
+  },
+  {
+    "name": "result of a returned closure refused as an owned value",
+    "source": "struct Handle { fd: i32 }\nfunction (own h: Handle) close(): i32 { return h.fd; }\nfunction captured(h: Handle): () => Handle { return (): Handle => h; }\nfunction main(): i32 { let h = Handle { fd: 7 }; let f = captured(h); let alias = f(); let n = alias.close(); return n + h.close(); }\n",
+    "want": "E051"
+  },
+  {
+    "name": "result of a local closure refused as an owned value",
+    "source": "struct Handle { fd: i32 }\nfunction (own h: Handle) close(): i32 { return h.fd; }\nfunction main(): i32 { let h = Handle { fd: 7 }; let f = (): Handle => h; let alias = f(); let n = alias.close(); return n + h.close(); }\n",
+    "want": "E051"
+  },
+  {
+    "name": "result of a closure alias refused as an owned value",
+    "source": "struct Handle { fd: i32 }\nfunction (own h: Handle) close(): i32 { return h.fd; }\nfunction captured(h: Handle): () => Handle { return (): Handle => h; }\nfunction main(): i32 { let h = Handle { fd: 7 }; let f = captured(h); let g = f; let alias = g(); let n = alias.close(); return n + h.close(); }\n",
+    "want": "E051"
+  },
+  {
+    "name": "result of a callback parameter refused as an owned value",
+    "source": "struct Handle { fd: i32 }\nfunction (own h: Handle) close(): i32 { return h.fd; }\nfunction apply(f: () => Handle): i32 { let a = f(); return a.close(); }\nfunction main(): i32 { let h = Handle { fd: 7 }; return apply((): Handle => h) + h.close(); }\n",
+    "want": "E051"
+  },
+  {
+    "name": "result of a callback with an own result accepted as an owned value",
+    "source": "struct Handle { fd: i32 }\nfunction (own h: Handle) close(): i32 { return h.fd; }\nfunction mk(): own Handle { return Handle { fd: 1 }; }\nfunction apply(f: () => own Handle): i32 { let a = f(); return a.close(); }\nfunction main(): i32 { let f: () => own Handle = mk; let a = f(); let g = (): own Handle => Handle { fd: 2 }; let b = g(); return a.close() + b.close() + apply(mk); }\n",
+    "want": ""
+  },
+  {
+    "name": "result of a callback read and not consumed accepted",
+    "source": "struct Handle { fd: i32 }\nfunction (own h: Handle) close(): i32 { return h.fd; }\nfunction peek(f: () => Handle): i32 { let a = f(); return a.fd; }\nfunction main(): i32 { return peek((): Handle => Handle { fd: 4 }); }\n",
+    "want": ""
+  },
+  {
+    "name": "plain data result of a callback accepted as an owned value",
+    "source": "struct Handle { fd: i32 }\nfunction (own h: Handle) close(): i32 { return h.fd; }\nfunction eat(own xs: i32[]): i32 { return xs.len(); }\nfunction apply(f: () => i32[]): i32 { let a = f(); return eat(a); }\nfunction main(): i32 { return apply((): i32[] => [1, 2]); }\n",
+    "want": ""
   }
 ]

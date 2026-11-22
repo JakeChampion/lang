@@ -196,6 +196,13 @@ Reads that only evaluate a condition or a block statement do not extend the retu
 It preserves repeated reads before cleanup and immutable data copies.
 The cases `diag_e050_callback_uses_consumed_capture` and `callback_capture_lifetimes` cover this guard.
 
+The result of a call of a function value is an owned value only when the type of the function value has an `own` result.
+A callback can return a value that it captured, and a function type does not name the captures.
+Thus `let a = f();` with `f: () => Handle` gives a borrowed `a`, and a consume of `a` is E051.
+Write `() => own Handle` for a callback that returns a new value.
+A result of plain value data is a copy and stays owned.
+The case `diag_e051_callback_result_holds_a_capture` covers this rule.
+
 This guard does not establish complete capture lifetimes.
 Callback factories and aggregate fields need a broader loan analysis.
 Mutable and shadowed bindings, deferred callbacks, and resource field paths have the same limit.

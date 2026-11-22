@@ -64,6 +64,9 @@ type Info struct {
 	CallBorrows func(*ast.Call) bool
 	// CallOwnedResult reports the checked type or immutable-data copy contract.
 	CallOwnedResult func(*ast.Call) bool
+	// CallValueLoan reports a call of a function value whose result type is
+	// not `own` and can hold a handle. The result can be a capture of the value.
+	CallValueLoan func(*ast.Call) bool
 	// DeclaredMethod reports a method with a body in this program.
 	DeclaredMethod func(*ast.Call) bool
 	// CallScopedFresh checks each input that can lend in a compound result.
@@ -3206,6 +3209,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.computeResultBorrows(prog)
 	c.info.CallBorrows = c.callSiteBorrows
 	c.info.CallOwnedResult = func(call *ast.Call) bool { return c.callOwnResults[call] }
+	c.info.CallValueLoan = func(call *ast.Call) bool {
+		result, isValue := c.callValueResults[call]
+		return isValue && !c.callOwnResults[call] && !c.copyableCallResult(result)
+	}
 	c.info.DeclaredMethod = func(call *ast.Call) bool {
 		id, ok := call.Callee.(*ast.Ident)
 		return ok && call.Method != nil && c.resultAnalysed[id.Name]
@@ -6108,6 +6115,7 @@ type checker struct {
 	callOwnFlags     map[*ast.Call][]bool
 	callOwnResults   map[*ast.Call]bool
 	callValueCallees map[*ast.Call]bool
+	callValueResults map[*ast.Call]ast.Type
 	// onceCalls holds each call of a value of a `once` function type. The
 	// call consumes its callee.
 	onceCalls           map[*ast.Call]bool
@@ -16506,6 +16514,14 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			c.callValueCallees[n] = true
 		} else {
 			delete(c.callValueCallees, n)
+		}
+		if calleeIsValue && ft != nil && ft.Result != nil {
+			if c.callValueResults == nil {
+				c.callValueResults = map[*ast.Call]ast.Type{}
+			}
+			c.callValueResults[n] = ft.Result
+		} else {
+			delete(c.callValueResults, n)
 		}
 		if len(calleeOwnFlags) == 0 && ft != nil {
 			calleeOwnFlags = ft.ParamOwn

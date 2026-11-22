@@ -21958,6 +21958,12 @@ function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
     if (lu_field_value_call(c)) {
       return false;
     }
+    // The result of a callback value is fresh only when its type says `own`.
+    if let ast.ExprIdent(id) = c.callee {
+      if ((util.has_str(fx.params, id.name) || lu_decl_count(fx, id.name) > 0) && c.ty.len() > 0 && !ow_value_data(c.ty, fx.lenders.decls, [])) {
+        return false;
+      }
+    }
     if let Some(tail) = ow_unsafe_value(c) {
       return lu_fresh_value(fx, tail);
     }
