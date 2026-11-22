@@ -17,8 +17,8 @@ const MPEG1: i32[] = [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 3
 
 const MPEG2: i32[] = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
 
-function grammar(a: i32, b: i32): Result[void, pcm.AudioError] {
-  if ((a & 224) != 224 || (a >> 3 & 3) == 1 || (a & 6) == 0 || b >> 4 == 15 || (b >> 2 & 3) == 3) {
+function grammar(a: i32, b: i32, c: i32): Result[void, pcm.AudioError] {
+  if ((a & 224) != 224 || (a >> 3 & 3) == 1 || (a & 6) == 0 || b >> 4 == 15 || (b >> 2 & 3) == 3 || (c & 3) == 2) {
     return Err(pcm.Header);
   }
   if ((a & 6) != 4 || (a >> 3 & 3) == 0 || b >> 4 == 0) {
@@ -40,7 +40,7 @@ pub function parse(input: [u8], at: i32): Result[Header, pcm.AudioError] {
   let a = input[at + 1] as i32;
   let b = input[at + 2] as i32;
   let c = input[at + 3] as i32;
-  grammar(a, b)?;
+  grammar(a, b, c)?;
   let version = if ((a & 8) != 0) { 1 } else { 2 };
   let rate_index = b >> 2 & 3;
   let rate = RATES[rate_index] / version;

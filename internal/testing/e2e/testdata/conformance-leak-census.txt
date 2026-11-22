@@ -771,6 +771,8 @@ nul_byte_in_a_program_or_argument_is_refused         0
 number_parsing                                       0
 numeric_lossless_widening                            0
 numeric_module_limits                                0
+oob_empty_array_read                                 0
+oob_empty_view_read                                  0
 oob_index_below_guard                                0
 oob_index_negative                                   0
 oob_index_read                                       0

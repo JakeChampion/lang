@@ -18,7 +18,8 @@ The rule under test is in [ARRAY-BOUNDS.md](../ARRAY-BOUNDS.md).
 | `xs.with(len, v)` | `array index out of range` | `oob_index_write` |
 | A byte array slice with the high bound past the length | `slice range out of bounds` | `oob_slice_range` |
 | An array slice with a negative low bound | `slice range out of bounds` | `oob_slice_negative_start` |
-| An index into an empty array | `array index out of range` | `oob_index_read` |
+| Index zero in an empty array | `array index out of range` | `oob_empty_array_read` |
+| Index zero in an empty view of nonempty storage | `array index out of range` | `oob_empty_view_read` |
 | An index past a view's length, inside its storage | `array index out of range` | `oob_view_index_past_view` |
 | A `u64` index above 2^32 | `array index out of range` | `oob_index_wide_integer` |
 
@@ -47,7 +48,7 @@ The main function calls the function with indexes at the ends of the arrays and 
 
 The interpreter of the compiler checks each access, so it is the reference.
 x86-64, arm64 under QEMU and wasm under wasmtime must print the same lines and abort with the same cause line, or not abort.
-Each pull request runs 32 programs from fixed seeds.
+Each pull request runs 32 programs from fixed seeds. A seed that exceeds the interpreter time limit is reported as skipped. At least three quarters of the seeds must yield a reference result. Each compiled target must produce a result for every seed that reaches comparison.
 `FERN_BOUNDS_SWEEP` sets a different number, and `FERN_BOUNDS_SWEEP_BASE` sets the seed before the first.
 The `bounds-guard-sweep` job of `nightly-fuzz.yml` runs 400 new seeds each night.
 

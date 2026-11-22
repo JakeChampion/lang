@@ -50,7 +50,10 @@ func TestSelfHostOpusInputReader(t *testing.T) {
 	fixture := opusInputFileFixture(t)
 	valid := filepath.Join(dir, "complete.opus")
 	truncated := filepath.Join(dir, "truncated.opus")
-	for path, data := range map[string][]byte{valid: fixture, truncated: fixture[:len(fixture)-1]} {
+	corrupt := filepath.Join(dir, "corrupt.opus")
+	badChecksum := bytes.Clone(fixture)
+	badChecksum[len(badChecksum)-1] ^= 1
+	for path, data := range map[string][]byte{valid: fixture, truncated: fixture[:len(fixture)-1], corrupt: badChecksum} {
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -63,10 +66,13 @@ func TestSelfHostOpusInputReader(t *testing.T) {
 			} else {
 				bin = cli.x86Binary(t, source, "FERN_STRICT_IR=1", "FERN_SANITIZE=1")
 			}
-			for _, tc := range []struct{ name, path, message string }{
-				{"complete", valid, ""},
-				{"truncated", truncated, "incomplete audio input"},
-				{"missing", filepath.Join(dir, "missing.opus"), ""},
+			for _, tc := range []struct{ name, path, message, mode string }{
+				{"complete", valid, "", ""},
+				{"truncated", truncated, "incomplete audio input", "sequential"},
+				{"truncated-cooperative", truncated, "incomplete audio input", "cooperative"},
+				{"truncated-indexed", truncated, "incomplete audio input", "indexed"},
+				{"checksum-indexed", corrupt, "audio checksum mismatch", "indexed"},
+				{"missing", filepath.Join(dir, "missing.opus"), "", ""},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					var command *exec.Cmd
@@ -74,6 +80,9 @@ func TestSelfHostOpusInputReader(t *testing.T) {
 						command = exec.Command("wasmtime", "run", "--dir", dir+"::/", bin, filepath.Base(tc.path))
 					} else {
 						command = runX86_64Bin(cli.runner, bin, tc.path)
+					}
+					if tc.mode != "" {
+						command.Args = append(command.Args, tc.mode)
 					}
 					output, err := command.CombinedOutput()
 					if tc.name == "complete" {

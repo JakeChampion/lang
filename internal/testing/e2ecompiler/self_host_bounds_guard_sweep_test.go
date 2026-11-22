@@ -399,7 +399,10 @@ func TestSelfHostBoundsGuardSweep(t *testing.T) {
 				want, ended := runGuardProgram(t, exec.CommandContext(ctx, interp, "-interp", src, stdlib))
 				if !ended {
 					compared <- false
-					return
+					if ctx.Err() == context.DeadlineExceeded {
+						t.Skip("interpreter exceeded the ten-second limit")
+					}
+					t.Fatal("interpreter did not produce a verdict")
 				}
 				compared <- true
 				engines := map[string]*exec.Cmd{
@@ -408,7 +411,10 @@ func TestSelfHostBoundsGuardSweep(t *testing.T) {
 					"wasm32-wasi":  exec.Command(wasmtime, "run", cli.wasmComponent(t, src)),
 				}
 				for target, cmd := range engines {
-					got, _ := runGuardProgram(t, cmd)
+					got, ended := runGuardProgram(t, cmd)
+					if !ended {
+						t.Fatalf("%s did not produce a verdict", target)
+					}
 					if got != want {
 						t.Errorf("%s: stdout %q, cause %q\ninterpreter: stdout %q, cause %q\n%s", target, got.stdout, got.cause, want.stdout, want.cause, program)
 					}

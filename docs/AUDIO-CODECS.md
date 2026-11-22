@@ -733,8 +733,11 @@ Real-file tests check both APIs, exact PCM, reader ownership, truncated files, a
 ### Indexed Opus seeks
 
 `inspect_seek` validates the complete immutable encoded input and builds an index without PCM decode.
-The index retains packet locations, raw positions, durations, and link metadata.
-Its parallel arrays require 24 logical bytes per packet, plus array capacity.
+For a file-backed source, `inspect_seek_with(size, read, limits)` builds the index
+from short reads at absolute byte offsets.
+Each packet contributes three 32-bit location fields, a 64-bit sample position,
+a 32-bit duration and a 32-bit end offset. That totals 28 logical bytes per
+packet, before spare array capacity and per-link metadata.
 The default limits allow 16 MiB of encoded input and 1,048,576 packets.
 The file, codec, comment, link, and per-packet output limits also apply before decode.
 
@@ -757,6 +760,13 @@ This API lets an application cancel or apply backpressure between packet decodes
 `next(input)` continues until samples or the end.
 The input view must contain the same unchanged bytes that created the index.
 Each sample result contains at most one packet of PCM.
+For windowed playback, `cursor.want()` gives the offset and byte count for the
+next step. Pass a view covering that range and its absolute starting offset to
+`step_view`. A zero count lets the cursor advance without reading the file.
+
+For a seekable Reader, `std/audio/opusfile/file.inspect` builds the index from
+byte zero. After `seek` or `seek_exact`, call `file.step` with the same Reader
+and the desired chunk and window limits. The caller closes the Reader.
 
 The seek corpus compares 90 cold seeks and 760,044 float samples with independent libopusfile output.
 Separate exact seeks compare full-history PCM at the same 0.000001 tolerance.

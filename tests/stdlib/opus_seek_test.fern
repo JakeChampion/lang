@@ -226,6 +226,25 @@ function sources(): test.TestOutcome {
   return test.assert_true(heard > 10000);
 }
 
+function read_bounds(): test.TestOutcome {
+  let over = (offset: i64, count: i32): Result[u8[], IoError] => Ok(__alloc_u8(count + 1));
+  for size in [1i64, 70000i64] {
+    if let Err(source.ReadSize) = opusfile.inspect_seek_with(size, over, opusfile.default_seek_limits()) {} else {
+      return test.fail("oversized read");
+    }
+  }
+  let prefix = (offset: i64, count: i32): Result[u8[], IoError] => {
+    if (offset == 0i64 && count == 4) {
+      return Ok([79u8, 103u8, 103u8, 83u8]);
+    }
+    return Err(IoError.Interrupted);
+  };
+  if let Err(source.ReadAudio(pcm.Truncated)) = opusfile.inspect_seek_with(4i64, prefix, opusfile.default_seek_limits()) {
+    return test.pass();
+  }
+  return test.fail("incomplete page at the declared end of input");
+}
+
 function main(): i32 {
   let runner = test.new("Indexed Ogg Opus seeks against libopusfile PCM");
   runner = runner.it("repeated seeks, preroll, gain, sample boundaries, and chains", references);
@@ -236,5 +255,6 @@ function main(): i32 {
   runner = runner.it("invalid link and sample positions", positions);
   runner = runner.it("checksums, truncated pages, and changed input length", invalid_input);
   runner = runner.it("an index from a source plays each packet from a view of its pages", sources);
+  runner = runner.it("source read size and end of input", read_bounds);
   return runner.finish();
 }

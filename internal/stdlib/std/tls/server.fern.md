@@ -8,7 +8,7 @@ Server configuration combines an identity, ALPN policy, ticket policy, and optio
 
 ## Contracts
 
-A session draws no randomness of its own: `start` takes exactly `entropy(config)` bytes from the caller, covering the handshake's random and key share and the ticket it issues, so a session given the same bytes and clock writes the same records. `accept` draws those bytes from the platform's random source. The ticket key is the caller's too: `config` takes it, and every server sharing it can resume the others' tickets.
+A session draws no randomness of its own: `start` takes exactly `entropy(config)` bytes from the caller, covering the handshake's random and key share and the ticket it issues, so a session given the same bytes and clock writes the same records. `accept` draws those bytes from the platform's random source. The configuration shares the supplied identity. The caller can release its own key holder while the configured identity continues to sign. For session tickets, `config` borrows the supplied secret bytes and stores a derived key. Servers configured with the same secret can resume each other's tickets.
 
 Ticket keys and lifetimes control resumption policy. Optional client roots enable a separate client-authentication requirement. The caller retains the next state from each step.
 

@@ -34,6 +34,28 @@ function main(): i32 {
 }
 ```
 
+When a caller supplies the dimensions, handle the optional array before using
+its shape. A zero extent can describe a valid empty array.
+
+```fern test name=std-ndarray-checked-rows
+import "std/ndarray";
+
+function rows(data: i32[], columns: i32): Option[ndarray.NdArray[i32]] {
+  if (columns <= 0) { return None; }
+  return ndarray.try_from_flat(data, [data.len() / columns, columns]);
+}
+
+function main(): i32 {
+  let Some(empty) = rows([], 3) else { return 1; };
+  if (empty.shape() != [0, 3]) { return 2; }
+  let Some(a) = rows([1, 2, 3, 4], 2) else { return 3; };
+  let Some(value) = a.get([1, 0]) else { return 4; };
+  if (value != 3) { return 5; }
+  if let Some(_) = rows([1, 2, 3], 2) { return 6; }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.

@@ -1,7 +1,7 @@
 {
   "minimp3_revision": "ea99364f61c14656440e8d77e9c233ccf3124633",
   "minimp3_sha256": "57e437c5c1f0e8b243885d3929c8973b5e6c778451e0100ab4251d19915cb3ad",
-  "reference_source_sha256": "04a3a1dbdbbefe055d6948cdf09e523cca1b847d51d3a7ce538e6c6f69a7f1a6",
+  "reference_source_sha256": "9cad1885a8a555cf1770872005c82906508a7d732e28232b2f51ee2221a02291",
   "ffmpeg": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
   "ffmpeg_input": "RIFF/WAVE tag 0x50 with unchanged MPEG audio payload",
   "vectors": [
@@ -511,7 +511,7 @@
     },
     {
       "name": "mp2-48000-0-tone",
-      "input_sha256": "e4f73738c46b1b33b72df9b30af5dbb6654d80606b3ccc0fd39842d1ba3e6c28",
+      "input_sha256": "ac3873bd073a8cee8ea4759eff7ea0504eb5d00dc665e7beeb75a7815d2d293d",
       "pcm_sha256": "2a0dde436dcaf1bb2c83b83c8f1f047eb0b1206deb128b13f0db51e290a970d2",
       "frames": 2,
       "mode": 0,

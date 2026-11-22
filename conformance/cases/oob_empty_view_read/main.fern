@@ -1,0 +1,10 @@
+// spec: AB-08
+
+import "std/i32";
+
+function main(): i32 {
+    let storage: i32[] = [10, 20];
+    let xs: [i32] = storage[1:1];
+    print(xs[0].to_string());
+    return 0;
+}

@@ -5,6 +5,7 @@ import "std/crypto/ecdsa";
 import "std/crypto/ed25519";
 import "std/crypto/sha2";
 import "std/tls/identity";
+import "std/tls/server";
 
 const P256_LEAF: string = "3082016e30820120a00302010202020202300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b746c732e6578616d706c653059301306072a8648ce3d020106082a8648ce3d0301070342000451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1a3533051300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301c0603551d1104153013820b746c732e6578616d706c658704c0000207300506032b65700341002aa51d9e7ebbabda2407971bedb6799f3b6e56cc126dc876310e47342f19f0d0902e1173373fdb0ba17ebc39f3324667b06162300c7b9873eb31123c89ca500c";
 
@@ -36,12 +37,14 @@ function test_ecdsa(): test.TestOutcome {
     return test.fail("identity");
   };
   key.erase();
-  let content = "paired identity".as_bytes();
-  let Ok(signature) = id.key.sign(0x0403, content) else {
+  let config = server.config(id, []).without_tickets();
+  release_identity(id);
+  let content = "configured identity".as_bytes();
+  let Ok(signature) = config.identity.key.sign(0x0403, content) else {
     return test.fail("signature");
   };
   let valid = public.verify(sha2.Sha256, content, signature);
-  release_identity(id);
+  release_identity(config.identity);
   return test.assert_true(valid);
 }
 
@@ -64,12 +67,14 @@ function test_ed25519(): test.TestOutcome {
   };
   crypto.erase(seed);
   key.erase();
-  let content = "paired identity".as_bytes();
-  let Ok(signature) = id.key.sign(0x0807, content) else {
+  let config = server.config(id, []).without_tickets();
+  release_identity(id);
+  let content = "configured identity".as_bytes();
+  let Ok(signature) = config.identity.key.sign(0x0807, content) else {
     return test.fail("signature");
   };
   let valid = public.verify(content, signature);
-  release_identity(id);
+  release_identity(config.identity);
   return test.assert_true(valid);
 }
 

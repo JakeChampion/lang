@@ -94,6 +94,15 @@ def main():
                         data = encoded.read_bytes()
                         frames = frame_offsets(data)
                         assert frames and all(row[2] == rate and row[3] == channels and row[4] == kbps for row in frames)
+                        # Exercise both defined nonzero emphasis values on unprotected frames.
+                        if name == 'mp2-48000-0-tone':
+                            data = bytearray(data)
+                            assert len(frames) == 2
+                            for frame, emphasis in zip(frames, [1, 3]):
+                                at = frame[0] + 3
+                                assert not frame[6]
+                                data[at] = (data[at] & 0xfc) | emphasis
+                            encoded.write_bytes(data)
                         golden = temp / 'output.f32'
                         subprocess.run([str(reference), str(encoded), str(golden)], check=True)
                         pcm = golden.read_bytes()
