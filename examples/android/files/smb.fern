@@ -1,0 +1,521 @@
+// An SMB 2 client, from MS-SMB2: the files of a share on a Windows computer,
+// a NAS or a Samba server. It speaks the dialects 2.0.2 and 2.1, signs in
+// with NTLMv2, and signs each request after the sign-in.
+//
+// A socket cannot go from one worker to the next, so each function here
+// makes its own connection: it connects, signs in, opens the share, does
+// its work and closes. The client does not check the signature of a reply.
+import "std/array";
+import "std/crypto";
+import "std/dns";
+import "std/i32";
+import "std/i64";
+import "std/net";
+import "std/rand";
+import "std/result";
+import "std/time";
+import "./ntlm";
+
+pub struct Server { host: string, port: i32, share: string, user: string, password: string, domain: string }
+
+// A file or a directory of a share. `modified` is in seconds from 1970.
+pub struct Entry { name: string, dir: boolean, size: i64, modified: i64 }
+
+// A part of a file, and the size of the whole file.
+pub struct Part { data: u8[], size: i64 }
+
+// What a connection keeps from one request to the next.
+struct State { session: u8[], tree: u8[], next: i64, key: u8[], signs: boolean }
+
+// A reply: its status and what follows its header of 64 bytes.
+struct Answer { status: i64, body: u8[], tree: u8[], session: u8[] }
+
+struct Opened { id: u8[], size: i64 }
+
+const NEGOTIATE: i32 = 0;
+
+const SESSION_SETUP: i32 = 1;
+
+const TREE_CONNECT: i32 = 3;
+
+const CREATE: i32 = 5;
+
+const CLOSE: i32 = 6;
+
+const READ: i32 = 8;
+
+const WRITE: i32 = 9;
+
+const QUERY_DIRECTORY: i32 = 14;
+
+const SET_INFO: i32 = 17;
+
+const OK: i64 = 0i64;
+
+const PENDING: i64 = 0x103i64;
+
+const MORE_PROCESSING: i64 = 0xc0000016i64;
+
+const NO_MORE_FILES: i64 = 0x80000006i64;
+
+const END_OF_FILE: i64 = 0xc0000011i64;
+
+// The most bytes of one read or one write. A request of this size costs
+// one credit in each dialect.
+pub const CHUNK: i32 = 65536;
+
+// The seconds between 1601, where a Windows file time starts, and 1970.
+const EPOCH_GAP: i64 = 11644473600i64;
+
+const WAIT_SECONDS: i64 = 20i64;
+
+// What the status of a reply means, for a person.
+pub function status_text(status: i64): string {
+  if (status == 0xc000006di64 || status == 0xc000006ai64 || status == 0xc0000064i64) {
+    return "The user name or the password is wrong.";
+  }
+  if (status == 0xc0000022i64) {
+    return "The server refused access.";
+  }
+  if (status == 0xc00000cci64) {
+    return "The server has no share with that name.";
+  }
+  if (status == 0xc0000034i64 || status == 0xc000003ai64 || status == 0xc000000fi64) {
+    return "The server has no such file or folder.";
+  }
+  if (status == 0xc0000035i64) {
+    return "That name is in use already.";
+  }
+  if (status == 0xc0000101i64) {
+    return "The folder is not empty.";
+  }
+  if (status == 0xc0000043i64) {
+    return "Another program uses the file.";
+  }
+  if (status == 0xc000007fi64) {
+    return "The share is full.";
+  }
+  if (status == 0xc00000bbi64) {
+    return "The server accepts only SMB 3, which this app does not speak.";
+  }
+  return "The server gave the error " + status.to_hex() + ".";
+}
+
+function send_all(sock: Socket, data: u8[]): boolean {
+  let rest = data;
+  while (rest.len() > 0) {
+    let sent = tcp_send_bytes(sock, rest);
+    if (sent <= 0) {
+      return false;
+    }
+    rest = array.drop(rest, sent);
+  }
+  return true;
+}
+
+function receive(sock: Socket, n: i32): Result[u8[], string] {
+  let out: u8[] = [];
+  while (out.len() < n) {
+    match (net.read_deadline(sock, n - out.len(), time.duration_seconds(WAIT_SECONDS))) {
+      Ok(net.Chunk(bytes)) => {
+        if (bytes.len() == 0) {
+          return Err("The server closed the connection.");
+        }
+        out = out.concat(bytes);
+      },
+      Ok(_) => {
+        return Err("The server did not answer in time.");
+      },
+      Err(e) => {
+        return Err("The connection failed: " + e.message());
+      }
+    }
+  }
+  return Ok(out);
+}
+
+// The path of a share as SMB writes it: with backslashes, and with none at
+// its start or its end.
+pub function wire_path(path: string): string {
+  let parts = path.split("/").filter((p: string): boolean => p.len() > 0);
+  return parts.join("\\");
+}
+
+function header(st: State, command: i32, flags: i64): u8[] {
+  let h: u8[] = [254, 83, 77, 66];
+  h = ntlm.put16(ntlm.put16(h, 64), if (command == NEGOTIATE) { 0 } else { 1 });
+  h = ntlm.put16(ntlm.put16(ntlm.put32(h, 0i64), command), 32);
+  h = ntlm.put64(ntlm.put32(ntlm.put32(h, flags), 0i64), st.next);
+  return ntlm.put32(h, 0i64).concat(st.tree).concat(st.session).concat(ntlm.zeros(16));
+}
+
+// The request as it goes on the wire: with its signature when the session
+// signs, and with the 4 bytes of its length before it.
+pub function sealed(head: u8[], body: u8[], key: u8[]): u8[] {
+  let msg = head.concat(body);
+  if (key.len() > 0) {
+    let mac = crypto.hmac_sha256(key, msg);
+    msg = ntlm.part(msg, 0, 48).concat(ntlm.part(mac, 0, 16)).concat(array.drop(msg, 64));
+  }
+  let n = msg.len();
+  let frame: u8[] = [0u8, (n >> 16 & 255) as u8, (n >> 8 & 255) as u8, (n & 255) as u8];
+  return frame.concat(msg);
+}
+
+// Sends one request and reads its reply. The server can send a reply that
+// says that the work goes on: the reply after it is the result.
+function request(sock: Socket, st: State, command: i32, body: u8[]): (State, Result[Answer, string]) {
+  let after = State { ...st, next: st.next + 1i64 };
+  let head = header(st, command, if (st.signs) { 8i64 } else { 0i64 });
+  if (!send_all(sock, sealed(head, body, if (st.signs) { st.key } else { [] }))) {
+    return (after, Err("The connection to the server broke."));
+  }
+  while (true) {
+    let Ok(size) = receive(sock, 4) else {
+      return (after, Err("The server did not answer."));
+    };
+    let n = size[1] as i32 << 16 | size[2] as i32 << 8 | size[3] as i32;
+    match (receive(sock, n)) {
+      Ok(msg) => {
+        if (msg.len() < 64 || msg[0] != 254u8 || msg[1] != 83u8) {
+          return (after, Err("The server sent a reply that is not SMB 2."));
+        }
+        let status = ntlm.get32(msg, 8);
+        if (status == PENDING) {
+          continue;
+        }
+        return (after, Ok(Answer { status: status, body: array.drop(msg, 64), tree: ntlm.part(msg, 36, 40), session: ntlm.part(msg, 40, 48) }));
+      },
+      Err(e) => {
+        return (after, Err(e));
+      }
+    }
+  }
+  return (after, Err("The server did not answer."));
+}
+
+// The reply, when its status is `want`, or what its status means.
+function expect(got: Result[Answer, string], want: i64): Result[Answer, string] {
+  match (got) {
+    Ok(a) => {
+      if (a.status != want) {
+        return Err(status_text(a.status));
+      }
+      return Ok(a);
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
+}
+
+// The NTLM message in a security buffer. A server can put it in an SPNEGO
+// token, and the message then starts at its signature.
+function ntlm_message(blob: u8[]): u8[] {
+  let sign: u8[] = [78, 84, 76, 77, 83, 83, 80, 0];
+  let at = 0;
+  while (at + 8 <= blob.len()) {
+    if (ntlm.part(blob, at, at + 8) == sign) {
+      return array.drop(blob, at);
+    }
+    at += 1;
+  }
+  return blob;
+}
+
+function session_body(blob: u8[]): u8[] {
+  let b = ntlm.put16([], 25).append(0u8).append(1u8);
+  b = ntlm.put16(ntlm.put16(ntlm.put32(ntlm.put32(b, 0i64), 0i64), 88), blob.len());
+  return ntlm.put64(b, 0i64).concat(blob);
+}
+
+// Agrees the dialect, signs in and opens the share. It gives the state of
+// the connection.
+function sign_in(sock: Socket, s: Server): Result[State, string] {
+  let st = State { session: ntlm.zeros(8), tree: ntlm.zeros(4), next: 0i64, key: [], signs: false };
+  let hello = ntlm.put32(ntlm.put16(ntlm.put16(ntlm.put16(ntlm.put16([], 36), 2), 1), 0), 0i64).concat(rand.bytes(16));
+  hello = ntlm.put16(ntlm.put16(ntlm.put64(hello, 0i64), 0x0202), 0x0210);
+  let (st1, agreed) = request(sock, st, NEGOTIATE, hello);
+  expect(agreed, OK)?;
+  let (st2, asked) = request(sock, st1, SESSION_SETUP, session_body(ntlm.negotiate()));
+  let first = expect(asked, MORE_PROCESSING)?;
+  let offset = ntlm.get16(first.body, 4) - 64;
+  let token = ntlm_message(ntlm.part(first.body, offset, offset + ntlm.get16(first.body, 6)));
+  let Some(challenge) = ntlm.challenge(token) else {
+    return Err("The server sent a sign-in challenge that is not NTLM.");
+  };
+  let now = (now_unix_ms() / 1000i64 + EPOCH_GAP) * 10000000i64;
+  let reply = ntlm.authenticate(challenge, s.user, s.domain, s.password, rand.bytes(8), now);
+  let st3 = State { ...st2, session: first.session };
+  let (st4, answered) = request(sock, st3, SESSION_SETUP, session_body(reply.message));
+  let done = expect(answered, OK)?;
+  let guest = (ntlm.get16(done.body, 2) & 3) != 0;
+  let st5 = State { ...st4, key: reply.key, signs: s.user.len() > 0 && !guest };
+  let path = ntlm.utf16("\\\\" + s.host + "\\" + s.share);
+  let tree = ntlm.put16(ntlm.put16(ntlm.put16(ntlm.put16([], 9), 0), 72), path.len()).concat(path);
+  let (st6, connected) = request(sock, st5, TREE_CONNECT, tree);
+  let share = expect(connected, OK)?;
+  return Ok(State { ...st6, tree: share.tree });
+}
+
+// Runs `work` on a connection to the share of `s`, and closes it.
+function with_share[T](s: Server, work: (Socket, State) => Result[T, string]): Result[T, string] {
+  if (s.host.len() == 0 || s.share.len() == 0) {
+    return Err("Give the name of the server and of the share.");
+  }
+  match (dns.dial(s.host, if (s.port > 0) { s.port } else { 445 }, dns.dial_options())) {
+    Ok(sock) => {
+      let out: Result[T, string] = Err("");
+      match (sign_in(sock, s)) {
+        Ok(st) => {
+          out = work(sock, st);
+        },
+        Err(e) => {
+          out = Err(e);
+        }
+      }
+      let closed = tcp_close(sock);
+      return out;
+    },
+    Err(e) => {
+      return Err("Could not reach " + s.host + ": " + e.message());
+    }
+  }
+}
+
+// Opens the file or the directory `path` of the share.
+function open(sock: Socket, st: State, path: string, access: i64, disposition: i64, options: i64, attributes: i64): (State, Result[Opened, string]) {
+  let name = ntlm.utf16(wire_path(path));
+  let b = ntlm.put16([], 57).append(0u8).append(0u8);
+  b = ntlm.put64(ntlm.put64(ntlm.put32(b, 2i64), 0i64), 0i64);
+  b = ntlm.put32(ntlm.put32(ntlm.put32(ntlm.put32(ntlm.put32(b, access), attributes), 7i64), disposition), options);
+  b = ntlm.put32(ntlm.put32(ntlm.put16(ntlm.put16(b, 120), name.len()), 0i64), 0i64);
+  b = if (name.len() > 0) { b.concat(name) } else { b.append(0u8) };
+  let (after, got) = request(sock, st, CREATE, b);
+  match (expect(got, OK)) {
+    Ok(a) => {
+      return (after, Ok(Opened { id: ntlm.part(a.body, 64, 80), size: ntlm.get64(a.body, 48) }));
+    },
+    Err(e) => {
+      return (after, Err(e));
+    }
+  }
+}
+
+function close(sock: Socket, st: State, id: u8[]): (State, Result[Answer, string]) {
+  let (after, got) = request(sock, st, CLOSE, ntlm.put32(ntlm.put16(ntlm.put16([], 24), 0), 0i64).concat(id));
+  return (after, expect(got, OK));
+}
+
+// The entries of one reply of a directory query, with no "." and "..".
+pub function entries(buffer: u8[]): Entry[] {
+  let out: Entry[] = [];
+  let at = 0;
+  while (at + 64 <= buffer.len()) {
+    let next = ntlm.get32(buffer, at) as i32;
+    let length = ntlm.get32(buffer, at + 60) as i32;
+    let name = ntlm.text16(ntlm.part(buffer, at + 64, at + 64 + length));
+    if (name != "." && name != "..") {
+      let written = ntlm.get64(buffer, at + 24) / 10000000i64 - EPOCH_GAP;
+      out = out.append(Entry { name: name, dir: (ntlm.get32(buffer, at + 56) & 16i64) != 0i64, size: ntlm.get64(buffer, at + 40), modified: written.max(0i64) });
+    }
+    if (next <= 0) {
+      break;
+    }
+    at += next;
+  }
+  return out;
+}
+
+function listed(sock: Socket, st: State, path: string): (State, Result[Entry[], string]) {
+  let (st1, opened) = open(sock, st, path, 0x100081i64, 1i64, 0x21i64, 0i64);
+  let Ok(dir) = opened else {
+    return (st1, Err(opened.err().unwrap_or("")));
+  };
+  let out: Entry[] = [];
+  let state = st1;
+  let first = true;
+  let failure = "";
+  while (true) {
+    let q = ntlm.put16([], 33).append(1u8).append(if (first) { 1u8 } else { 0u8 });
+    q = ntlm.put32(ntlm.put16(ntlm.put16(ntlm.put32(q, 0i64).concat(dir.id), 96), 2), CHUNK as i64).concat(ntlm.utf16("*"));
+    let (next, got) = request(sock, state, QUERY_DIRECTORY, q);
+    state = next;
+    first = false;
+    match (got) {
+      Ok(a) => {
+        if (a.status == NO_MORE_FILES) {
+          break;
+        }
+        if (a.status != OK) {
+          failure = status_text(a.status);
+          break;
+        }
+        let offset = ntlm.get16(a.body, 2) - 64;
+        out = out.concat(entries(ntlm.part(a.body, offset, offset + ntlm.get32(a.body, 4) as i32)));
+      },
+      Err(e) => {
+        failure = e;
+        break;
+      }
+    }
+  }
+  let (last, closed) = close(sock, state, dir.id);
+  if (failure.len() > 0) {
+    return (last, Err(failure));
+  }
+  return (last, Ok(out));
+}
+
+// The files and the directories of the directory `path` of the share. An
+// empty path is the top of the share.
+pub function list(s: Server, path: string): Result[Entry[], string] {
+  return with_share(s, (sock: Socket, st: State): Result[Entry[], string] => {
+    let (after, got) = listed(sock, st, path);
+    return got;
+  });
+}
+
+// At most `limit` bytes of the file `path` from the byte `offset`, and the
+// size of the file. The part is empty at the end of the file.
+pub function read(s: Server, path: string, offset: i64, limit: i32): Result[Part, string] {
+  return with_share(s, (sock: Socket, st: State): Result[Part, string] => {
+    let (st1, opened) = open(sock, st, path, 0x120089i64, 1i64, 0x60i64, 0i64);
+    let file = opened?;
+    let data: u8[] = [];
+    let state = st1;
+    let failure = "";
+    while (data.len() < limit) {
+      let want = (limit - data.len()).min(CHUNK);
+      let q = ntlm.put64(ntlm.put32(ntlm.put16([], 49).append(80u8).append(0u8), want as i64), offset + data.len() as i64).concat(file.id);
+      q = ntlm.put16(ntlm.put16(ntlm.put32(ntlm.put32(ntlm.put32(q, 0i64), 0i64), 0i64), 0), 0).append(0u8);
+      let (next, got) = request(sock, state, READ, q);
+      state = next;
+      match (got) {
+        Ok(a) => {
+          if (a.status == END_OF_FILE) {
+            break;
+          }
+          if (a.status != OK) {
+            failure = status_text(a.status);
+            break;
+          }
+          let at = a.body[2] as i32 - 64;
+          let bytes = ntlm.part(a.body, at, at + ntlm.get32(a.body, 4) as i32);
+          if (bytes.len() == 0) {
+            break;
+          }
+          data = data.concat(bytes);
+        },
+        Err(e) => {
+          failure = e;
+          break;
+        }
+      }
+    }
+    let (last, closed) = close(sock, state, file.id);
+    if (failure.len() > 0) {
+      return Err(failure);
+    }
+    return Ok(Part { data: data, size: file.size });
+  });
+}
+
+// Writes `data` to the file `path` from the byte `offset`. A write from
+// the byte 0 makes the file, or empties the file that is there.
+pub function write(s: Server, path: string, offset: i64, data: u8[]): Result[void, string] {
+  return with_share(s, (sock: Socket, st: State): Result[void, string] => {
+    let (st1, opened) = open(sock, st, path, 0x120116i64, if (offset == 0i64) { 5i64 } else { 1i64 }, 0x60i64, 0x80i64);
+    let file = opened?;
+    let state = st1;
+    let done = 0;
+    let failure = "";
+    while (done < data.len()) {
+      let bytes = ntlm.part(data, done, done + CHUNK);
+      let q = ntlm.put64(ntlm.put32(ntlm.put16(ntlm.put16([], 49), 112), bytes.len() as i64), offset + done as i64).concat(file.id);
+      q = ntlm.put32(ntlm.put16(ntlm.put16(ntlm.put32(ntlm.put32(q, 0i64), 0i64), 0), 0), 0i64).concat(bytes);
+      let (next, got) = request(sock, state, WRITE, q);
+      state = next;
+      if let Err(e) = expect(got, OK) {
+        failure = e;
+        break;
+      }
+      done += bytes.len();
+    }
+    let (last, closed) = close(sock, state, file.id);
+    if (failure.len() > 0) {
+      return Err(failure);
+    }
+    return Ok(());
+  });
+}
+
+// Makes the directory `path`.
+pub function make_dir(s: Server, path: string): Result[void, string] {
+  return with_share(s, (sock: Socket, st: State): Result[void, string] => {
+    let (st1, opened) = open(sock, st, path, 0x100081i64, 2i64, 0x21i64, 0x10i64);
+    let dir = opened?;
+    let (last, closed) = close(sock, st1, dir.id);
+    return Ok(());
+  });
+}
+
+// Removes one file or one empty directory: the server deletes it when the
+// handle closes.
+function removed(sock: Socket, st: State, path: string, dir: boolean): (State, Result[void, string]) {
+  let (st1, opened) = open(sock, st, path, 0x10080i64, 1i64, if (dir) { 0x1001i64 } else { 0x1040i64 }, 0i64);
+  let Ok(it) = opened else {
+    return (st1, Err(opened.err().unwrap_or("")));
+  };
+  let (last, closed) = close(sock, st1, it.id);
+  match (closed) {
+    Ok(_) => {
+      return (last, Ok(()));
+    },
+    Err(e) => {
+      return (last, Err(e));
+    }
+  }
+}
+
+// Removes a directory after each thing that it holds.
+function removed_tree(sock: Socket, st: State, path: string): (State, Result[void, string]) {
+  let (st1, got) = listed(sock, st, path);
+  let Ok(items) = got else {
+    return (st1, Err(got.err().unwrap_or("")));
+  };
+  let state = st1;
+  for item in items {
+    let child = path + "/" + item.name;
+    let (next, gone) = if (item.dir) { removed_tree(sock, state, child) } else { removed(sock, state, child, false) };
+    state = next;
+    if let Err(e) = gone {
+      return (state, Err(e));
+    }
+  }
+  return removed(sock, state, path, true);
+}
+
+// Removes the file `path`, or the directory `path` and all that it holds.
+pub function remove(s: Server, path: string, dir: boolean): Result[void, string] {
+  return with_share(s, (sock: Socket, st: State): Result[void, string] => {
+    let (after, got) = if (dir) { removed_tree(sock, st, path) } else { removed(sock, st, path, false) };
+    return got;
+  });
+}
+
+// Gives the file or the directory `from` the path `to` in the same share.
+pub function rename(s: Server, from: string, to: string): Result[void, string] {
+  return with_share(s, (sock: Socket, st: State): Result[void, string] => {
+    let (st1, opened) = open(sock, st, from, 0x110080i64, 1i64, 0i64, 0i64);
+    let it = opened?;
+    let name = ntlm.utf16(wire_path(to));
+    let info = ntlm.put32(ntlm.put64(ntlm.zeros(8), 0i64), name.len() as i64).concat(name);
+    let q = ntlm.put32(ntlm.put16([], 33).append(1u8).append(10u8), info.len() as i64);
+    q = ntlm.put32(ntlm.put16(ntlm.put16(q, 96), 0), 0i64).concat(it.id).concat(info);
+    let (st2, got) = request(sock, st1, SET_INFO, q);
+    let (last, closed) = close(sock, st2, it.id);
+    expect(got, OK)?;
+    return Ok(());
+  });
+}
