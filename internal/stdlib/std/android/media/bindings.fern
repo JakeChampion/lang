@@ -1,0 +1,808 @@
+// Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
+import "std/jni";
+import "std/option";
+
+// A android.app.Activity.
+pub struct Activity { ref: usize }
+
+pub function (x: Activity) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Activity) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub function (x: Activity) as_context(): Context {
+  return Context { ref: x.ref };
+}
+
+// The class android.app.Activity and the IDs of its members.
+pub struct ActivityClass { class: usize, id_start_intent_sender_for_result: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function activity_class(e: usize): Result[ActivityClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/app/Activity")?;
+  let id_start_intent_sender_for_result = jni.checked_id(e, class, jni.get_method_id(e, class, "startIntentSenderForResult", "(Landroid/content/IntentSender;ILandroid/content/Intent;III)V"))?;
+  return Ok(ActivityClass { class: class, id_start_intent_sender_for_result: id_start_intent_sender_for_result });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ActivityClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.app.Activity.startIntentSenderForResult(Landroid/content/IntentSender;ILandroid/content/Intent;III)V
+pub function (c: ActivityClass) start_intent_sender_for_result(e: usize, self: Activity, a0: IntentSender, a1: i32, a2: Intent, a3: i32, a4: i32, a5: i32): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(6);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.jvalue_set_int(args, 2, a2.ref);
+  jni.jvalue_set_int(args, 3, a3 as usize);
+  jni.jvalue_set_int(args, 4, a4 as usize);
+  jni.jvalue_set_int(args, 5, a5 as usize);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_start_intent_sender_for_result, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.app.PendingIntent.
+pub struct PendingIntent { ref: usize }
+
+pub function (x: PendingIntent) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: PendingIntent) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.app.PendingIntent and the IDs of its members.
+pub struct PendingIntentClass { class: usize, id_get_intent_sender: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function pending_intent_class(e: usize): Result[PendingIntentClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/app/PendingIntent")?;
+  let id_get_intent_sender = jni.checked_id(e, class, jni.get_method_id(e, class, "getIntentSender", "()Landroid/content/IntentSender;"))?;
+  return Ok(PendingIntentClass { class: class, id_get_intent_sender: id_get_intent_sender });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: PendingIntentClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.app.PendingIntent.getIntentSender()Landroid/content/IntentSender;
+pub function (c: PendingIntentClass) get_intent_sender(e: usize, self: PendingIntent): Result[IntentSender, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_intent_sender, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(IntentSender { ref: got });
+}
+
+// A android.content.ContentResolver.
+pub struct ContentResolver { ref: usize }
+
+pub function (x: ContentResolver) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ContentResolver) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.ContentResolver and the IDs of its members.
+pub struct ContentResolverClass { class: usize, id_open_output_stream: usize, id_query: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function content_resolver_class(e: usize): Result[ContentResolverClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/ContentResolver")?;
+  let id_open_output_stream = jni.checked_id(e, class, jni.get_method_id(e, class, "openOutputStream", "(Landroid/net/Uri;Ljava/lang/String;)Ljava/io/OutputStream;"))?;
+  let id_query = jni.checked_id(e, class, jni.get_method_id(e, class, "query", "(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;"))?;
+  return Ok(ContentResolverClass { class: class, id_open_output_stream: id_open_output_stream, id_query: id_query });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ContentResolverClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.ContentResolver.openOutputStream(Landroid/net/Uri;Ljava/lang/String;)Ljava/io/OutputStream;
+pub function (c: ContentResolverClass) open_output_stream(e: usize, self: ContentResolver, a0: Uri, a1: string): Result[OutputStream, jni.JavaError] {
+  let s1 = jni.checked_string(e, a1)?;
+  defer jni.delete_local_ref(e, s1);
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, s1);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_open_output_stream, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(OutputStream { ref: got });
+}
+
+// android.content.ContentResolver.query(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;
+pub function (c: ContentResolverClass) query(e: usize, self: ContentResolver, a0: Uri, a1: jni.Object, a2: string, a3: jni.Object, a4: Option[string]): Result[Cursor, jni.JavaError] {
+  let s2 = jni.checked_string(e, a2)?;
+  defer jni.delete_local_ref(e, s2);
+  let s4 = 0 as usize;
+  if let Some(t4) = a4 {
+    s4 = jni.checked_string(e, t4)?;
+  }
+  defer jni.delete_local_ref(e, s4);
+  let args = jni.jvalue_alloc(5);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  jni.jvalue_set_int(args, 2, s2);
+  jni.jvalue_set_int(args, 3, a3.ref);
+  jni.jvalue_set_int(args, 4, s4);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_query, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Cursor { ref: got });
+}
+
+// A android.content.ContentUris.
+pub struct ContentUris { ref: usize }
+
+pub function (x: ContentUris) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ContentUris) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.ContentUris and the IDs of its members.
+pub struct ContentUrisClass { class: usize, id_with_appended_id: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function content_uris_class(e: usize): Result[ContentUrisClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/ContentUris")?;
+  let id_with_appended_id = jni.checked_id(e, class, jni.get_static_method_id(e, class, "withAppendedId", "(Landroid/net/Uri;J)Landroid/net/Uri;"))?;
+  return Ok(ContentUrisClass { class: class, id_with_appended_id: id_with_appended_id });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ContentUrisClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.ContentUris.withAppendedId(Landroid/net/Uri;J)Landroid/net/Uri;
+pub function (c: ContentUrisClass) with_appended_id(e: usize, a0: Uri, a1: i64): Result[Uri, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_long(args, 1, a1);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_with_appended_id, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Uri { ref: got });
+}
+
+// A android.content.Context.
+pub struct Context { ref: usize }
+
+pub function (x: Context) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Context) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.Context and the IDs of its members.
+pub struct ContextClass { class: usize, id_get_content_resolver: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/Context")?;
+  let id_get_content_resolver = jni.checked_id(e, class, jni.get_method_id(e, class, "getContentResolver", "()Landroid/content/ContentResolver;"))?;
+  return Ok(ContextClass { class: class, id_get_content_resolver: id_get_content_resolver });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ContextClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.Context.getContentResolver()Landroid/content/ContentResolver;
+pub function (c: ContextClass) get_content_resolver(e: usize, self: Context): Result[ContentResolver, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_content_resolver, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(ContentResolver { ref: got });
+}
+
+// A android.content.Intent.
+pub struct Intent { ref: usize }
+
+pub function (x: Intent) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Intent) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.Intent and the IDs of its members.
+pub struct IntentClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function intent_class(e: usize): Result[IntentClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/Intent")?;
+  return Ok(IntentClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: IntentClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.content.IntentSender.
+pub struct IntentSender { ref: usize }
+
+pub function (x: IntentSender) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: IntentSender) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.IntentSender and the IDs of its members.
+pub struct IntentSenderClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function intent_sender_class(e: usize): Result[IntentSenderClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/IntentSender")?;
+  return Ok(IntentSenderClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: IntentSenderClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.database.Cursor.
+pub struct Cursor { ref: usize }
+
+pub function (x: Cursor) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Cursor) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.database.Cursor and the IDs of its members.
+pub struct CursorClass { class: usize, id_close: usize, id_get_long: usize, id_move_to_first: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function cursor_class(e: usize): Result[CursorClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/database/Cursor")?;
+  let id_close = jni.checked_id(e, class, jni.get_method_id(e, class, "close", "()V"))?;
+  let id_get_long = jni.checked_id(e, class, jni.get_method_id(e, class, "getLong", "(I)J"))?;
+  let id_move_to_first = jni.checked_id(e, class, jni.get_method_id(e, class, "moveToFirst", "()Z"))?;
+  return Ok(CursorClass { class: class, id_close: id_close, id_get_long: id_get_long, id_move_to_first: id_move_to_first });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: CursorClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.database.Cursor.close()V
+pub function (c: CursorClass) close(e: usize, self: Cursor): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_close, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.database.Cursor.getLong(I)J
+pub function (c: CursorClass) get_long(e: usize, self: Cursor, a0: i32): Result[i64, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 18, self.ref, c.id_get_long, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i64);
+}
+
+// android.database.Cursor.moveToFirst()Z
+pub function (c: CursorClass) move_to_first(e: usize, self: Cursor): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_move_to_first, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// A android.net.Uri.
+pub struct Uri { ref: usize }
+
+pub function (x: Uri) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Uri) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.net.Uri and the IDs of its members.
+pub struct UriClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function uri_class(e: usize): Result[UriClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/net/Uri")?;
+  return Ok(UriClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: UriClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.provider.MediaStore.
+pub struct MediaStore { ref: usize }
+
+pub function (x: MediaStore) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: MediaStore) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.provider.MediaStore and the IDs of its members.
+pub struct MediaStoreClass { class: usize, id_create_write_request: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function media_store_class(e: usize): Result[MediaStoreClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/provider/MediaStore")?;
+  let id_create_write_request = jni.optional_id(e, jni.get_static_method_id(e, class, "createWriteRequest", "(Landroid/content/ContentResolver;Ljava/util/Collection;)Landroid/app/PendingIntent;"));
+  return Ok(MediaStoreClass { class: class, id_create_write_request: id_create_write_request });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: MediaStoreClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// False when the device does not have the member of `create_write_request`.
+pub function (c: MediaStoreClass) has_create_write_request(): boolean {
+  return c.id_create_write_request != 0 as usize;
+}
+
+// android.provider.MediaStore.createWriteRequest(Landroid/content/ContentResolver;Ljava/util/Collection;)Landroid/app/PendingIntent;
+pub function (c: MediaStoreClass) create_write_request(e: usize, a0: ContentResolver, a1: Collection): Result[PendingIntent, jni.JavaError] {
+  if (c.id_create_write_request == 0 as usize) {
+    return Err(jni.absent("android.provider.MediaStore.createWriteRequest"));
+  }
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_create_write_request, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(PendingIntent { ref: got });
+}
+
+// A android.provider.MediaStore.Audio.Media.
+pub struct MediaStore_Audio_Media { ref: usize }
+
+pub function (x: MediaStore_Audio_Media) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: MediaStore_Audio_Media) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.provider.MediaStore.Audio.Media and the IDs of its members.
+pub struct MediaStore_Audio_MediaClass { class: usize, id_get_content_uri: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function media_store_audio_media_class(e: usize): Result[MediaStore_Audio_MediaClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/provider/MediaStore$Audio$Media")?;
+  let id_get_content_uri = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getContentUri", "(Ljava/lang/String;)Landroid/net/Uri;"))?;
+  return Ok(MediaStore_Audio_MediaClass { class: class, id_get_content_uri: id_get_content_uri });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: MediaStore_Audio_MediaClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.provider.MediaStore.Audio.Media.getContentUri(Ljava/lang/String;)Landroid/net/Uri;
+pub function (c: MediaStore_Audio_MediaClass) get_content_uri(e: usize, a0: string): Result[Uri, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_get_content_uri, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Uri { ref: got });
+}
+
+// A java.io.OutputStream.
+pub struct OutputStream { ref: usize }
+
+pub function (x: OutputStream) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: OutputStream) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.io.OutputStream and the IDs of its members.
+pub struct OutputStreamClass { class: usize, id_close: usize, id_write: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function output_stream_class(e: usize): Result[OutputStreamClass, jni.JavaError] {
+  let class = jni.global_class(e, "java/io/OutputStream")?;
+  let id_close = jni.checked_id(e, class, jni.get_method_id(e, class, "close", "()V"))?;
+  let id_write = jni.checked_id(e, class, jni.get_method_id(e, class, "write", "([BII)V"))?;
+  return Ok(OutputStreamClass { class: class, id_close: id_close, id_write: id_write });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: OutputStreamClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.io.OutputStream.close()V
+pub function (c: OutputStreamClass) close(e: usize, self: OutputStream): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_close, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// java.io.OutputStream.write([BII)V
+pub function (c: OutputStreamClass) write(e: usize, self: OutputStream, a0: jni.Object, a1: i32, a2: i32): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(3);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.jvalue_set_int(args, 2, a2 as usize);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_write, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A java.util.Collections.
+pub struct Collections { ref: usize }
+
+pub function (x: Collections) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Collections) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.util.Collections and the IDs of its members.
+pub struct CollectionsClass { class: usize, id_singleton_list: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function collections_class(e: usize): Result[CollectionsClass, jni.JavaError] {
+  let class = jni.global_class(e, "java/util/Collections")?;
+  let id_singleton_list = jni.checked_id(e, class, jni.get_static_method_id(e, class, "singletonList", "(Ljava/lang/Object;)Ljava/util/List;"))?;
+  return Ok(CollectionsClass { class: class, id_singleton_list: id_singleton_list });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: CollectionsClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.util.Collections.singletonList(Ljava/lang/Object;)Ljava/util/List;
+pub function (c: CollectionsClass) singleton_list(e: usize, a0: jni.Object): Result[List, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_singleton_list, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(List { ref: got });
+}
+
+// A java.util.Collection.
+pub struct Collection { ref: usize }
+
+pub function (x: Collection) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Collection) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.util.Collection and the IDs of its members.
+pub struct CollectionClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function collection_class(e: usize): Result[CollectionClass, jni.JavaError] {
+  let class = jni.global_class(e, "java/util/Collection")?;
+  return Ok(CollectionClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: CollectionClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A java.util.List.
+pub struct List { ref: usize }
+
+pub function (x: List) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: List) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub function (x: List) as_collection(): Collection {
+  return Collection { ref: x.ref };
+}
+
+// The class java.util.List and the IDs of its members.
+pub struct ListClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function list_class(e: usize): Result[ListClass, jni.JavaError] {
+  let class = jni.global_class(e, "java/util/List")?;
+  return Ok(ListClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ListClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// The struct of IDs of each class of this module.
+pub struct Classes { activity: ActivityClass, pending_intent: PendingIntentClass, content_resolver: ContentResolverClass, content_uris: ContentUrisClass, context: ContextClass, intent: IntentClass, intent_sender: IntentSenderClass, cursor: CursorClass, uri: UriClass, media_store: MediaStoreClass, media_store_audio_media: MediaStore_Audio_MediaClass, output_stream: OutputStreamClass, collections: CollectionsClass, collection: CollectionClass, list: ListClass }
+
+// Makes the struct of IDs of each class. Call it one time, and call
+// `release` when the app does not call Java again. One lookup for each
+// class, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function classes(e: usize): Result[Classes, jni.JavaError] {
+  let activity = match (activity_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      return Err(err);
+    },
+  };
+  let pending_intent = match (pending_intent_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      return Err(err);
+    },
+  };
+  let content_resolver = match (content_resolver_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      pending_intent.release(e);
+      return Err(err);
+    },
+  };
+  let content_uris = match (content_uris_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      pending_intent.release(e);
+      content_resolver.release(e);
+      return Err(err);
+    },
+  };
+  let context = match (context_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      pending_intent.release(e);
+      content_resolver.release(e);
+      content_uris.release(e);
+      return Err(err);
+    },
+  };
+  let intent = match (intent_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      pending_intent.release(e);
+      content_resolver.release(e);
+      content_uris.release(e);
+      context.release(e);
+      return Err(err);
+    },
+  };
+  let intent_sender = match (intent_sender_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      pending_intent.release(e);
+      content_resolver.release(e);
+      content_uris.release(e);
+      context.release(e);
+      intent.release(e);
+      return Err(err);
+    },
+  };
+  let cursor = match (cursor_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      pending_intent.release(e);
+      content_resolver.release(e);
+      content_uris.release(e);
+      context.release(e);
+      intent.release(e);
+      intent_sender.release(e);
+      return Err(err);
+    },
+  };
+  let uri = match (uri_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      pending_intent.release(e);
+      content_resolver.release(e);
+      content_uris.release(e);
+      context.release(e);
+      intent.release(e);
+      intent_sender.release(e);
+      cursor.release(e);
+      return Err(err);
+    },
+  };
+  let media_store = match (media_store_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      pending_intent.release(e);
+      content_resolver.release(e);
+      content_uris.release(e);
+      context.release(e);
+      intent.release(e);
+      intent_sender.release(e);
+      cursor.release(e);
+      uri.release(e);
+      return Err(err);
+    },
+  };
+  let media_store_audio_media = match (media_store_audio_media_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      pending_intent.release(e);
+      content_resolver.release(e);
+      content_uris.release(e);
+      context.release(e);
+      intent.release(e);
+      intent_sender.release(e);
+      cursor.release(e);
+      uri.release(e);
+      media_store.release(e);
+      return Err(err);
+    },
+  };
+  let output_stream = match (output_stream_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      pending_intent.release(e);
+      content_resolver.release(e);
+      content_uris.release(e);
+      context.release(e);
+      intent.release(e);
+      intent_sender.release(e);
+      cursor.release(e);
+      uri.release(e);
+      media_store.release(e);
+      media_store_audio_media.release(e);
+      return Err(err);
+    },
+  };
+  let collections = match (collections_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      pending_intent.release(e);
+      content_resolver.release(e);
+      content_uris.release(e);
+      context.release(e);
+      intent.release(e);
+      intent_sender.release(e);
+      cursor.release(e);
+      uri.release(e);
+      media_store.release(e);
+      media_store_audio_media.release(e);
+      output_stream.release(e);
+      return Err(err);
+    },
+  };
+  let collection = match (collection_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      pending_intent.release(e);
+      content_resolver.release(e);
+      content_uris.release(e);
+      context.release(e);
+      intent.release(e);
+      intent_sender.release(e);
+      cursor.release(e);
+      uri.release(e);
+      media_store.release(e);
+      media_store_audio_media.release(e);
+      output_stream.release(e);
+      collections.release(e);
+      return Err(err);
+    },
+  };
+  let list = match (list_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      pending_intent.release(e);
+      content_resolver.release(e);
+      content_uris.release(e);
+      context.release(e);
+      intent.release(e);
+      intent_sender.release(e);
+      cursor.release(e);
+      uri.release(e);
+      media_store.release(e);
+      media_store_audio_media.release(e);
+      output_stream.release(e);
+      collections.release(e);
+      collection.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { activity: activity, pending_intent: pending_intent, content_resolver: content_resolver, content_uris: content_uris, context: context, intent: intent, intent_sender: intent_sender, cursor: cursor, uri: uri, media_store: media_store, media_store_audio_media: media_store_audio_media, output_stream: output_stream, collections: collections, collection: collection, list: list });
+}
+
+// Deletes the reference to each class. Do not use `c` after this call.
+pub function (c: Classes) release(e: usize): void {
+  c.activity.release(e);
+  c.pending_intent.release(e);
+  c.content_resolver.release(e);
+  c.content_uris.release(e);
+  c.context.release(e);
+  c.intent.release(e);
+  c.intent_sender.release(e);
+  c.cursor.release(e);
+  c.uri.release(e);
+  c.media_store.release(e);
+  c.media_store_audio_media.release(e);
+  c.output_stream.release(e);
+  c.collections.release(e);
+  c.collection.release(e);
+  c.list.release(e);
+}
