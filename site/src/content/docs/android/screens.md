@@ -31,6 +31,7 @@ ui.column([title, body]).spaced(12.0).padding(16.0).background(ui.SURFACE).round
 | `.aligned(a)` | Where the elements go across: `ui.START`, `ui.CENTER`, `ui.END`, `ui.STRETCH` |
 | `.justified(j)` | Where they go along: `ui.START`, `ui.CENTER`, `ui.END`, `ui.BETWEEN` |
 | `.centered()` | The middle, along and across |
+| `.wrapped()` | A row puts the elements that do not fit on the next line |
 | `.background(color)`, `.rounded(dp)`, `.border(color, dp)` | The look of the box |
 
 ## Sizes
@@ -60,7 +61,8 @@ ui.text("Hello").sized(24.0).weighted(700).colored(ui.MUTED).clamped(2)
 ```
 
 A text wraps at the width of its box. `.clamped(n)` keeps `n` lines and
-ends the last one with an ellipsis. The weights are 400, 500 and 700.
+ends the last one with an ellipsis. `.fitted()` keeps one line and makes
+the letters smaller, down to 0.7 of their size, to fit the box. The weights are 400, 500 and 700.
 
 ## Colors
 
@@ -68,7 +70,7 @@ A color is `draw.rgb(r, g, b)` from `std/android/draw`, or a role. A role
 takes its color from the theme, which is light or dark as the system is:
 
 `ui.PRIMARY`, `ui.ON_PRIMARY`, `ui.INK`, `ui.MUTED`, `ui.SURFACE`,
-`ui.OUTLINE`, `ui.BACKGROUND`.
+`ui.OUTLINE`, `ui.BACKGROUND`, `ui.ERROR`.
 
 Use roles, and the app has a dark theme with no more code. For your own
 colors, give the program a theme:
@@ -92,7 +94,8 @@ ui.program(view, update).with_theme_of((s: State, dark: boolean): ui.Theme => ui
 | `ui.outlined_button(label, msg)` | A button with a border |
 | `ui.text_button(label, msg)` | A button with its text only |
 | `ui.toggle(on, say, msg)` | A switch. TalkBack reads `say` and its state |
-| `ui.checkbox(on, say, msg)` | A box that is checked or not |
+| `ui.checkbox(on, say, msg)` | A box that is checked or not, with no text |
+| `ui.labelled_checkbox(on, label, msg)` | A checkbox with its text |
 | `ui.radio(on, say, msg)` | One choice of a group |
 | `ui.tabs(labels, at, pick)` | A row of tabs, with the tab `at` selected |
 | `ui.menu(items, pick)` | The items of a menu, one below the other |

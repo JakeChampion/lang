@@ -10,8 +10,8 @@ You can pause, resume, or stop playback from Story Deck.
 
 - Swipe the collection filters to find **My Cards**, **Playlists**, **Club
   Collection**, **Sleep Sounds**, **Podcasts**, and **Radio**.
-- Select **Show groups** to filter by a Yoto family group.
-- Select **Last played** or **A–Z** next to the search box to change the sort order.
+- Select **Filters** next to the search box to filter by a Yoto family group.
+  **Filters** also has the sort order, the cover size, and **Downloaded only**.
 
 Search stays at the top as you scroll past the Library header. The Club
 Collection filter shows the Club titles that Yoto returns in your library.
@@ -24,29 +24,30 @@ Collection filter shows the Club titles that Yoto returns in your library.
 - Select **Titles**, **Chapters**, or **Tracks** to narrow the search. The result
   shows the name and artwork of the chapter or track when Yoto supplies it.
 
-Select **Compact covers** to see more cards on one screen. When you return
-from a card, Library restores your search, filters, and scroll position.
-Select the playback device next to the search box or in the playback bar
+In **Filters**, select **Covers** to see more cards on one screen. When you
+return from a card, Library restores your search, filters, and scroll position.
+Select the playback device at the top of Library or in the playback bar
 to change where a card plays.
 
 ## Personal collections
 
-Open **My collections** in **Library** and select **New collection**.
+Open **Filters** in **Library** and select **New collection**.
 Name the collection and choose the cards to include. Saves include the
 current category, download filter, and search scope. Leave the card list
 empty to save only the filters. Collections stay on this phone.
 
 - Tap a cover to open its card and scroll through its tracks. Select **Play**
   beside a track to start there when Yoto provides its playback keys.
-- Open **More options** and select **Refresh** to update the library.
+- Open **More** and select **Refresh** to update the library.
   Refresh also retries the track index.
 
 ## Listen offline
 
 - While online, select **Download** under a cover in **Library** or
-  **Download to phone** on the card. To save the library at once, open
+  **Download** on the card. To save the library at once, open
   **Downloads** and select **Download all cards**.
-- Turn on **Downloaded only** in **Library** to see the cards saved on the phone.
+- Turn on **Downloaded only** in the Library **Filters** to see the cards saved
+  on the phone.
   Story Deck uses saved audio first.
 - Use **Choose cards to download** to select a batch and see its estimated size
   and duration. The queue resumes after you close Story Deck.
@@ -65,7 +66,8 @@ empty to save only the filters. Collections stay on this phone.
   Story Deck saves the track index and caches cover and track artwork.
 
 - Open **Downloads** to play the saved audio without a connection. To delete a
-  download, open its track list and select **Remove download**.
+  download, open its track list and select **Remove download**, then
+  **Confirm removal**.
 - Open **Chapter downloads** on a card to save or play one chapter.
 - Open **Storage budget** in **Downloads** to set a budget, protect downloads,
   and review removal suggestions. Story Deck asks before it removes a download.
@@ -93,12 +95,12 @@ files. Live streams, previews, cards with subscription access, and cards marked
 
 ## Listening and home-screen shortcuts
 
-- Open **Listening profiles** in **More options** to create or switch
+- Open **Listening profiles** in **More** to create or switch
   profiles. Each profile saves its own progress, bookmarks, history, and
   favourites. Downloads are shared on the phone.
 
-- Select **Listening history** in **Queue** to see recent cards and their
-  progress. Select **Bookmark this spot** to save a named position.
+- Select **Listening history** in **More** to see recent cards and their
+  progress. Select **Bookmark this spot** in **Queue** to save a named position.
 - Use **Pin to home screen** on a card or **Pin trip to home screen**
   in a saved trip. Select **Pin resume** in **Queue** to add a shortcut
   to your latest position.
@@ -108,9 +110,9 @@ files. Live streams, previews, cards with subscription access, and cards marked
   Deck prepares the next track for gapless playback. If you resume after a
   two-minute pause, playback goes back up to ten seconds.
 
-- Set up a **Bedtime routine** in **Queue** for each listening profile.
+- Set up a **Bedtime routine** in **More** for each listening profile.
   Choose a story, a sleep sound, and how long the sound plays.
-- Add favourite cards from Library. Open **More options** and select
+- Add favourite cards from Library. Open **More** and select
   **Kids mode**. Set a parent PIN the first time. **Surprise me** plays
   a downloaded favourite from the current profile. Select **Grown-ups**
   and enter the PIN to return to the full app.
@@ -126,18 +128,19 @@ For phone playback, swipe down to the Android media panel for the track art and
 playback controls. The panel stays available when you pause. The controls work
 with Paper and other Android launchers.
 
-Open the status view on **Players**. Change the volume or set a sleep timer.
+Select **Now playing** on **Players**. Move the volume slider or set a sleep
+timer. Story Deck sends the volume when the slider stops.
 The view shows the battery, free storage, and download activity when the
 player reports them.
 
 ## Library tools
 
-Open **More options** and select **Library tools**.
+Open **More**. The tools are under **Library**.
 
 - **Scan a card** reads a Yoto tag on an Android phone with NFC. Open an
   available card directly or pass the scanned link to Yoto to add the card.
 
-- Open **NFC shortcuts** and turn on **Tap to play**. Link an NFC sticker to a
+- Open **NFC cards and stickers** and turn on **Tap to play saved cards**. Link an NFC sticker to a
   saved title or bedtime routine. Select **Start NFC scan** to use it.
 
 - **Create a playlist** records or imports audio to make new chapters. Edit
@@ -156,7 +159,7 @@ Open **More options** and select **Library tools**.
 
 To edit playlists and family groups, enable `user:content:manage` and
 `family:library:manage` in the Yoto developer dashboard. Then select
-the option to authorize edits in **Library tools**.
+**Authorize library editing** in **More**.
 
 ## Change player settings
 
@@ -165,6 +168,9 @@ display brightness, nightlight color, volume limits, or schedule. The available
 controls depend on the player. You can also set Bluetooth preferences, when the
 display dims, automatic power-off, clock format, alarms, and right button
 shortcuts. Pick a service or choose a track from your library for a shortcut.
+
+Type a time, or use the buttons below it to move it by an hour or by
+15 minutes.
 
 Tap **Choose** next to Morning light or Nightlight to preview a colour.
 Adjust hue, saturation, and brightness, then select **Use colour**.
@@ -185,8 +191,8 @@ Enable `family:library:view` for the public client to read the family library.
 Story Deck also requests access to Make Your Own cards and player playback.
 Sign in once after an upgrade to grant `offline_access`. Story Deck uses
 Android Keystore to save the refresh token on this device. It restores the
-session when you open the app. Open **More options** and select **Sign out** to
-clear the saved session, the library, and downloads.
+session when you open the app. Open **More** and select **Sign out**, then
+**Confirm sign out**, to clear the saved session, the library, and downloads.
 
 ## Build and test
 
