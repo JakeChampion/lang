@@ -9,10 +9,11 @@ import (
 // Reassigned and shadowed bindings need a separate flow proof.
 //
 // The third result has each local that is not a callback but holds one, such
-// as a record with a callback field.
-func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) (map[string][]ast.Param, map[ast.Expr][]ast.Param, map[string][]ast.Param) {
+// as a record with a callback field. The fourth result names each binding
+// with one definition that such a local uses.
+func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) (map[string][]ast.Param, map[ast.Expr][]ast.Param, map[string][]ast.Param, map[string]bool) {
 	c.computeCallbackFactories()
-	names, values, held := c.callbackCaptureFacts(fn, false)
+	names, values, held, heldOwners := c.callbackCaptureFacts(fn, false)
 	out := map[string][]ast.Param{}
 	inline := map[ast.Expr][]ast.Param{}
 	holders := map[string][]ast.Param{}
@@ -27,7 +28,7 @@ func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) (map[string][]ast.Para
 			inline[value] = callbackLoanParams(loans)
 		}
 	}
-	return out, inline, holders
+	return out, inline, holders, heldOwners
 }
 
 // A factory summary names the inputs retained by its returned callback.
@@ -49,7 +50,7 @@ func (c *checker) computeCallbackFactories() {
 		changed = false
 		for _, fn := range factories {
 			restore := distinctBindings(fn)
-			_, values, _ := c.callbackCaptureFacts(fn, true)
+			_, values, _, _ := c.callbackCaptureFacts(fn, true)
 			var captures []callbackLoan
 			ast.Walk(fn.Body, func(n ast.Node) bool {
 				switch node := n.(type) {
@@ -82,7 +83,7 @@ func (c *checker) computeCallbackFactories() {
 	}
 }
 
-func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[string][]callbackLoan, map[ast.Expr][]callbackLoan, map[string][]callbackLoan) {
+func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[string][]callbackLoan, map[ast.Expr][]callbackLoan, map[string][]callbackLoan, map[string]bool) {
 	definitions := map[string][]ast.Expr{}
 	bindingTypes := map[string]ast.Type{}
 	for _, param := range fn.Params {
@@ -365,5 +366,13 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 	for _, value := range values {
 		inline[value] = valueCaptures(value, map[string]bool{})
 	}
-	return out, inline, holders
+	heldOwners := map[string]bool{}
+	for _, loans := range holders {
+		for _, loan := range loans {
+			if len(definitions[loan.param.Name]) <= 1 {
+				heldOwners[loan.param.Name] = true
+			}
+		}
+	}
+	return out, inline, holders, heldOwners
 }

@@ -20617,8 +20617,10 @@ function ow_local_capture_owner(name: string, ctx: OwnCtx): boolean {
       return true;
     }
   }
+  // A local that holds a callback makes an owner of a binding with one definition only.
+  let single = ocl_unique(facts.names, name);
   for i in 0..facts.rows.len() {
-    if (ocl_callback_type(facts.types[i], facts.tparams)) {
+    if (single || ocl_callback_type(facts.types[i], facts.tparams)) {
       for capture in facts.rows[i] {
         if (capture.name == name && !ow_cached_value_data(capture.type_name, ctx.decls, ctx.value_proofs)) {
           return true;
