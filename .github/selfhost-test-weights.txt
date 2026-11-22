@@ -477,7 +477,7 @@ TestSelfHostBoundedRingSnapshots 4
 TestSelfHostBoundsElideIRArm64 3
 TestSelfHostBoundsElideIRWasm 3
 TestSelfHostBoundsElideIRX86_64 4
-TestSelfHostBoundsGuardSweep 84
+TestSelfHostBoundsGuardSweep 150
 TestSelfHostBoxHasAHeaderOfOneWord 4
 TestSelfHostBranchComparesTheLowHalf 3
 TestSelfHostBrokerBoundaries 5
@@ -2696,6 +2696,7 @@ TestSelfHostREPLRecursionLimit 2
 TestSelfHostRaceClosesTheLoser 36
 TestSelfHostRandomBytesScratch 3
 TestSelfHostRangePatternX86_64 2
+TestSelfHostRangeProofsOff 57
 TestSelfHostRangeValueIR 6
 TestSelfHostRatchetIncludesLiterateSources 12
 TestSelfHostRawDoubleFree 4
