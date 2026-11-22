@@ -1,0 +1,60 @@
+// The preferences of the app: the sort order, the hidden files, the pinned
+// folders and the recent files. They hold no secret, so the file is plain.
+import "std/base64";
+import "std/i32";
+import "std/kv";
+import "std/result";
+import "std/utf8";
+import "./files";
+
+const FILE: string = "/prefs";
+
+function with_marks(store: kv.Store, key: string, marks: files.Mark[]): kv.Store {
+  let out = store.set(key, marks.len().to_string());
+  for i in 0..marks.len() {
+    let at = key + "." + i.to_string() + ".";
+    out = out.set(at + "label", base64.encode(marks[i].label.bytes())).set(at + "path", base64.encode(marks[i].path.bytes())).set(at + "server", base64.encode(marks[i].server.bytes()));
+  }
+  return out;
+}
+
+function marks_of(store: kv.Store, key: string): files.Mark[] {
+  let field = (name: string): string => {
+    if let Some(value) = store.get(name) {
+      if let Ok(bytes) = base64.decode(value) {
+        return utf8.from_bytes_lossy(bytes);
+      }
+    }
+    return "";
+  };
+  let out: files.Mark[] = [];
+  for i in 0..i32.parse_i32(store.get(key).unwrap_or("0")).unwrap_or(0).min(64) {
+    let at = key + "." + i.to_string() + ".";
+    out = out.append(files.Mark { label: field(at + "label"), path: field(at + "path"), server: field(at + "server") });
+  }
+  return out;
+}
+
+// The preferences as text. Each name and each path is base64, so it can
+// hold each character.
+pub function encode(p: files.Prefs): string {
+  let store = kv.empty("").set("sort", p.sort.to_string()).set("hidden", if (p.hidden) { "1" } else { "0" });
+  return with_marks(with_marks(store, "pin", p.pins), "recent", p.recent).encode();
+}
+
+// The preferences of the text that `encode` made, or the first ones.
+pub function decode(text: string): files.Prefs {
+  let Ok(store) = kv.decode("", text) else {
+    return files.no_prefs();
+  };
+  let sort = i32.parse_i32(store.get("sort").unwrap_or("0")).unwrap_or(0);
+  return files.Prefs { sort: sort.max(0).min(2), hidden: store.get("hidden").unwrap_or("0") == "1", pins: marks_of(store, "pin"), recent: marks_of(store, "recent") };
+}
+
+pub function load(dir: string): files.Prefs {
+  return decode(read_file(dir + FILE).unwrap_or(""));
+}
+
+pub function save(dir: string, p: files.Prefs): boolean {
+  return dir.len() > 0 && write_file(dir + FILE, encode(p)).is_ok();
+}

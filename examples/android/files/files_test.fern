@@ -8,6 +8,7 @@ import "std/android/text";
 import "std/android/ui/sim";
 import "std/test";
 import "./files";
+import "./prefs";
 import "./smb";
 
 function test_fonts(): text.Fonts {
@@ -60,10 +61,12 @@ function simulator(dir: string, servers: files.Saved[]): sim.Sim[files.Model, fi
     access: (): boolean => read_dir(dir).is_ok(),
     ask_access: (): boolean => true,
     save: (kept: files.Saved[]): boolean => write_file(dir + "/.saved", kept.len().to_string()).is_ok(),
+    keep: (p: files.Prefs): boolean => write_file(dir + "/.prefs", prefs.encode(p)).is_ok(),
+    share: (path: string): boolean => write_file(dir + "/.shared", path).is_ok(),
     open: (path: string): boolean => !path.ends_with(".jpg") && write_file(dir + "/.opened", path).is_ok(),
     decode: (bytes: u8[], wide: i32): Option[draw.Image] => tile(bytes),
   };
-  return sim.scaled(sim.themed(sim.start(files.start(roots, read_dir(dir).is_ok(), servers, dir + "/.cache"), files.program(platform), test_fonts(), 720, 1600, 2.0), true), 1.0);
+  return sim.scaled(sim.themed(sim.start(files.start(roots, read_dir(dir).is_ok(), servers, dir + "/.cache", prefs.decode(read_file(dir + "/.prefs").unwrap_or(""))), files.program(platform), test_fonts(), 720, 1600, 2.0), true), 1.0);
 }
 
 // Does the jobs of the last action and draws their result.
@@ -262,6 +265,54 @@ function test_open(): test.TestOutcome {
   return test.assert_eq(opened.to_string() + " " + told.to_string(), "true true");
 }
 
+function test_pins_recent_and_prefs(): test.TestOutcome {
+  let dir = fixture();
+  let s = done(sim.tap(simulator(dir, []), "Phone storage"));
+  s = sim.tap(s, "Sort order · Name");
+  s = done(sim.tap(s, "Download"));
+  s = sim.tap(s, "Pin");
+  if (!sim.says(s, "Unpin")) {
+    return test.fail("a pinned folder must offer Unpin");
+  }
+  s = done(sim.back(s));
+  s = sim.tap(s, "notes.txt");
+  s = sim.tap(s, "Share");
+  let shared = read_file(dir + "/.shared").unwrap_or("") == dir + "/notes.txt";
+  s = sim.tap(s, "Open");
+  // A new start of the app has the same preferences.
+  let t = simulator(dir, []);
+  preview(t, "13-pins");
+  if (t.shell.app.sort != 1 || !sim.says(t, "Pinned Download") || !sim.says(t, "Recent notes.txt")) {
+    return test.fail("the next start must have the sort order, the pin and the recent file");
+  }
+  t = done(sim.tap(t, "Pinned Download"));
+  let at_pin = t.shell.app.path == dir + "/Download" && sim.shows(t, "Phone storage / Download");
+  t = done(sim.tap(sim.back(sim.back(t)), "Recent notes.txt"));
+  let at_recent = t.shell.app.path == dir;
+  let removed = remove_dir_all(dir);
+  return test.assert_eq(shared.to_string() + " " + at_pin.to_string() + " " + at_recent.to_string(), "true true true");
+}
+
+function test_search_below(): test.TestOutcome {
+  let dir = fixture();
+  let wrote = write_file(dir + "/Download/old/Notes of May.txt", "x").is_ok();
+  let s = done(sim.tap(simulator(dir, []), "Phone storage"));
+  s = sim.type_in(s, "filter", "NOTES");
+  s = done(sim.tap(s, "Search the folders below"));
+  preview(s, "14-search");
+  if (names(s) != "Download/old/Notes of May.txt,notes.txt") {
+    return test.fail("the search found " + names(s));
+  }
+  s = sim.tap(s, "Download/old/Notes of May.txt");
+  s = sim.tap(s, "Rename");
+  s = sim.type_in(s, "name", "may.txt");
+  s = done(sim.tap(s, "Save"));
+  // The filter stays, so the folder shows its one file with that text.
+  let renamed = stat(dir + "/Download/old/may.txt").is_ok() && names(s) == "notes.txt";
+  let removed = remove_dir_all(dir);
+  return test.assert_eq(wrote && renamed, true);
+}
+
 function test_no_access(): test.TestOutcome {
   let s = simulator("/no/such/storage", []);
   preview(s, "10-access");
@@ -276,6 +327,8 @@ function main(): i32 {
   r = r.it("save and remove a server", test_servers);
   r = r.it("show a picture and select all", test_picture_and_select_all);
   r = r.it("open a file in another app", test_open);
+  r = r.it("keep the pins, the recent files and the sort order", test_pins_recent_and_prefs);
+  r = r.it("search the folders below", test_search_below);
   r = r.it("ask for access when the storage is closed", test_no_access);
   return r.finish();
 }

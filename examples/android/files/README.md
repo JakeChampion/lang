@@ -15,6 +15,12 @@ saved server. The headings are words of round dots.
   name, by size or by date, show the hidden files, and filter by a part of
   a name.
 
+- The person can pin a folder to the home screen. The home screen also
+  shows the last 8 files that the person opened.
+- A search looks in each folder below the folder that shows.
+- The app keeps the sort order, the hidden files setting, the pins and the
+  recent files from one start to the next (`prefs.fern`).
+
 A long press starts a selection:
 
 - One button selects each item of the folder.
@@ -22,7 +28,7 @@ A long press starts a selection:
   tap.
 - The app pastes into the folder that shows, also from the phone to a
   server and back.
-- A copy runs in steps of 1 MiB. The screen shows its progress, and a
+- A copy runs in steps of 8 MiB. The screen shows its progress, and a
   button stops it.
 
 The app does more for one file:
@@ -32,6 +38,8 @@ The app does more for one file:
   other file as text.
 - **Open** shows the file in another app of the phone, such as a video
   player. A file of a server goes to the cache of the app first.
+- **Share** gives the file to an app that the person picks, such as a
+  mail app.
 - A file shows a picture of dots for what it holds: an image, sound, a
   film or other data.
 
@@ -43,6 +51,10 @@ button that opens that setting.
 `smb.fern` is an SMB 2 client over TCP. It signs in with NTLMv2
 (`ntlm.fern`, `md4.fern`) and signs each message when the server asks for
 that. It verifies the signature of each reply on a session that signs.
+
+A server of the 2.1 dialect takes up to 4 MiB in one read or one write.
+The client pays one credit for each 64 KiB. Through a link with a
+round trip of 4 ms, a file of 200 MiB moves at about 80 MiB/s.
 
 Each operation makes its own connection, because a worker is a
 process of its own and cannot share a socket.

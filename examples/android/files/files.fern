@@ -29,6 +29,17 @@ pub struct Clip { place: store.Place, dir: string, items: smb.Entry[], cut: bool
 // `open` is the path of a download that another app shows at the end.
 pub struct Task { src: store.Place, dst: store.Place, steps: store.Step[], at: i32, offset: i64, done: i64, total: i64, clip: Clip, stop: boolean, open: string }
 
+// A folder that the person pinned, or the folder of a file that the person
+// opened. `server` is the name of a saved server, or "" for the phone.
+pub struct Mark { label: string, path: string, server: string }
+
+// What the app keeps from one start to the next.
+pub struct Prefs { sort: i32, hidden: boolean, pins: Mark[], recent: Mark[] }
+
+pub function no_prefs(): Prefs {
+  return Prefs { sort: 0, hidden: false, pins: [], recent: [] };
+}
+
 pub enum Naming { Folder, NewName(string) }
 
 pub enum Page { Home, Browse, Item(string), Server(i32), Text(string), Picture(string) }
@@ -43,13 +54,15 @@ enum Job {
   Move(i64, store.Place, string, smb.Entry[], string),
   ReadText(i64, store.Place, string),
   ReadPicture(i64, store.Place, string),
+  Search(i64, store.Place, string, string),
   Shares(i64, smb.Server),
 }
 
 // What the app needs from Android: the storages of the phone, whether the
-// app has access to all files, the screen that gives that access, a place to keep the servers, the app
-// of the phone that shows a file, and a decoder that gives an image at a width in pixels or less.
-pub struct Platform { roots: () => Root[], access: () => boolean, ask_access: () => boolean, save: (Saved[]) => boolean, open: (string) => boolean, decode: (u8[], i32) => Option[draw.Image] }
+// app has access to all files, the screen that gives that access, a place to keep the servers, a place
+// to keep the preferences, the app of the phone that shows a file, the
+// apps that take a file, and a decoder that gives an image at a width in pixels or less.
+pub struct Platform { roots: () => Root[], access: () => boolean, ask_access: () => boolean, save: (Saved[]) => boolean, keep: (Prefs) => boolean, open: (string) => boolean, share: (string) => boolean, decode: (u8[], i32) => Option[draw.Image] }
 
 pub struct Model {
   roots: Root[],
@@ -59,6 +72,15 @@ pub struct Model {
   // and the path of the file that waits for that app.
   cache: string,
   launch: string,
+  // True when the file that waits goes to an app that the person picks.
+  sharing: boolean,
+  pins: Mark[],
+  recent: Mark[],
+  // True when the preferences changed and the file does not have them.
+  unkept: boolean,
+  // True when the entries are what a search below the folder found. The
+  // name of each entry is then its path below the folder.
+  found: boolean,
   page: Page,
   place: store.Place,
   label: string,
@@ -142,6 +164,11 @@ pub enum Msg {
   PickShare(string),
   SelectAll,
   OpenFile(string),
+  ShareFile(string),
+  TogglePin,
+  OpenMark(Mark),
+  DeepSearch,
+  Searched(i64, Result[smb.Entry[], string]),
   AskAccess,
   Resumed,
 }
@@ -163,9 +190,9 @@ function no_server(): Saved {
 
 // The model of the home screen, with the storages and the servers.
 // `granted` is false when Android hides the files of the storages.
-pub function start(roots: Root[], granted: boolean, servers: Saved[], cache: string): Model {
+pub function start(roots: Root[], granted: boolean, servers: Saved[], cache: string, prefs: Prefs): Model {
   return Model {
-    roots: roots, servers: servers, granted: granted, cache: cache, launch: "", page: Home, place: store.Local, label: "", top: "", path: "", entries: [], loading: false, note: "", fault: "", sort: 0, hidden: false, query: "",
+    roots: roots, servers: servers, granted: granted, cache: cache, launch: "", sharing: false, pins: prefs.pins, recent: prefs.recent, unkept: false, found: false, page: Home, place: store.Local, label: "", top: "", path: "", entries: [], loading: false, note: "", fault: "", sort: prefs.sort, hidden: prefs.hidden, query: "",
     selecting: false, picked: [], clip: None, task: None, naming: None, name_text: "", confirm: "", draft: no_server(), preview: "", picture: None, raw: [], wide: 0, shares: [], finding: false, revision: 0i64, task_revision: 0i64, job: None, need_roots: false, ask_access: false, unsaved: false,
   };
 }
@@ -181,7 +208,7 @@ function told(m: Model, text: string): Model {
 // Reads the directory `path` of the place that shows.
 function reload(m: Model): Model {
   let revision = m.revision + 1i64;
-  return Model { ...m, loading: true, revision: revision, job: Some(List(revision, m.place, m.path)) };
+  return Model { ...m, loading: true, found: false, revision: revision, job: Some(List(revision, m.place, m.path)) };
 }
 
 function open(m: Model, place: store.Place, label: string, top: string, path: string): Model {
@@ -342,7 +369,7 @@ function name_update(own m: Model, msg: Msg): Model {
           return Model { ...next, job: Some(MakeDir(revision, m.place, store.join(m.path, name))) };
         },
         NewName(old) => {
-          return Model { ...next, job: Some(Rename(revision, m.place, store.join(m.path, old), store.join(m.path, name))) };
+          return Model { ...next, job: Some(Rename(revision, m.place, store.join(m.path, old), store.join(store.parent(store.join(m.path, old)), name))) };
         }
       }
     },
@@ -582,26 +609,72 @@ function result_update(own m: Model, msg: Msg): Model {
 }
 
 function up(m: Model): Model {
+  if (m.found) {
+    return reload(Model { ...m, query: "" });
+  }
   if (m.path == m.top || m.path.len() <= m.top.len()) {
     return Model { ...m, page: Home, note: "", fault: "", selecting: false, picked: [], naming: None, need_roots: true };
   }
   return open(m, m.place, m.label, m.top, store.parent(m.path));
 }
 
+// The name of the server that shows, or "" for the phone.
+function server_name(m: Model): string {
+  if let store.Remote(_) = m.place {
+    return m.label;
+  }
+  return "";
+}
+
+function mark_here(m: Model): Mark {
+  let label = if (store.base(m.path).len() > 0 && m.path != m.top) { store.base(m.path) } else { m.label };
+  return Mark { label: label, path: m.path, server: server_name(m) };
+}
+
+function pinned(m: Model): boolean {
+  let here = mark_here(m);
+  return m.pins.any((p: Mark): boolean => p.path == here.path && p.server == here.server);
+}
+
+// The model with the file `name` first in the recent files, which hold 8.
+function remembered(m: Model, name: string): Model {
+  let path = store.join(m.path, name);
+  let mark = Mark { label: store.base(name), path: path, server: server_name(m) };
+  let rest = m.recent.filter((r: Mark): boolean => r.path != path || r.server != mark.server);
+  return Model { ...m, recent: [mark].concat(rest).take(8), unkept: true };
+}
+
+// Opens the folder of a pin, or the folder that holds a recent file.
+function open_mark(m: Model, mark: Mark): Model {
+  let dir = if (m.pins.any((p: Mark): boolean => p.path == mark.path && p.server == mark.server)) { mark.path } else { store.parent(mark.path) };
+  if (mark.server.len() > 0) {
+    let Some(saved) = m.servers.find((s: Saved): boolean => s.name == mark.server) else {
+      return failed(m, "The server of this item is not saved.");
+    };
+    return open(m, store.Remote(saved.server), saved.name, "", dir);
+  }
+  for root in m.roots {
+    if (dir.starts_with(root.path)) {
+      return open(m, store.Local, root.label, root.path, dir);
+    }
+  }
+  return open(m, store.Local, mark.label, dir, dir);
+}
+
 // Shows the file in another app. A file of a server goes to the cache of
 // the app first.
-function open_file(m: Model, name: string): Model {
+function open_file(m: Model, name: string, sharing: boolean): Model {
   let Some(e) = entry_named(m, name) else {
     return m;
   };
-  let clear = Model { ...m, note: "", fault: "" };
+  let clear = Model { ...m, note: "", fault: "", sharing: sharing };
   if let store.Local = m.place {
     return Model { ...clear, launch: store.join(m.path, name) };
   }
   if (m.task.is_some()) {
     return failed(m, "Wait for the copy that runs.");
   }
-  let to = store.join(m.cache, name);
+  let to = store.join(m.cache, store.base(name));
   let step = store.Step { from: store.join(m.path, name), to: to, size: e.size, dir: false };
   let clip = Clip { place: m.place, dir: m.path, items: [e], cut: false };
   let task = Task { src: m.place, dst: store.Local, steps: [step], at: 0, offset: 0i64, done: 0i64, total: e.size, clip: clip, stop: false, open: to };
@@ -648,10 +721,10 @@ function browse_update(own m: Model, msg: Msg): Model {
       }
     },
     NextSort => {
-      return Model { ...m, sort: (m.sort + 1) % SORTS.len() };
+      return Model { ...m, sort: (m.sort + 1) % SORTS.len(), unkept: true };
     },
     ToggleHidden => {
-      return Model { ...m, hidden: !m.hidden };
+      return Model { ...m, hidden: !m.hidden, unkept: true };
     },
     Query(text) => {
       return Model { ...m, query: text };
@@ -661,7 +734,39 @@ function browse_update(own m: Model, msg: Msg): Model {
       return Model { ...m, page: Text(name), preview: "", loading: true, revision: revision, job: Some(ReadText(revision, m.place, store.join(m.path, name))) };
     },
     OpenFile(name) => {
-      return open_file(m, name);
+      return open_file(remembered(m, name), name, false);
+    },
+    ShareFile(name) => {
+      return open_file(m, name, true);
+    },
+    TogglePin => {
+      let here = mark_here(m);
+      let pins = if (pinned(m)) { m.pins.filter((p: Mark): boolean => p.path != here.path || p.server != here.server) } else { m.pins.append(here) };
+      return Model { ...m, pins: pins, unkept: true };
+    },
+    OpenMark(mark) => {
+      return open_mark(m, mark);
+    },
+    DeepSearch => {
+      if (m.query.trim().len() == 0) {
+        return m;
+      }
+      let revision = m.revision + 1i64;
+      return Model { ...m, loading: true, note: "", fault: "", revision: revision, job: Some(Search(revision, m.place, m.path, m.query.trim())) };
+    },
+    Searched(revision, result) => {
+      if (revision != m.revision) {
+        return m;
+      }
+      match (result) {
+        Ok(entries) => {
+          let note = if (entries.len() >= store.MOST_FOUND) { "The first " + entries.len().to_string() + " items show." } else { "" };
+          return told(Model { ...m, entries: entries, loading: false, found: true, selecting: false, picked: [] }, note);
+        },
+        Err(e) => {
+          return failed(Model { ...m, loading: false }, e);
+        }
+      }
     },
     ShowPicture(name, wide) => {
       let revision = m.revision + 1i64;
@@ -757,6 +862,9 @@ function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
       ReadPicture(revision, place, path) => {
         return PictureRead(revision, store.read(place, path, 0i64, PICTURE_BYTES));
       },
+      Search(revision, place, path, needle) => {
+        return Searched(revision, store.search(place, path, needle));
+      },
       Shares(revision, server) => {
         return SharesFound(revision, smb.shares(server));
       }
@@ -781,9 +889,14 @@ function effects(m: Model, platform: Platform): Model {
       next = failed(next, "The app cannot read this image.");
     }
   }
+  if (m.unkept) {
+    let kept = platform.keep(Prefs { sort: m.sort, hidden: m.hidden, pins: m.pins, recent: m.recent });
+    next = Model { ...next, unkept: false };
+  }
   if (m.launch.len() > 0) {
-    next = Model { ...next, launch: "" };
-    if (!platform.open(m.launch)) {
+    next = Model { ...next, launch: "", sharing: false };
+    let went = if (m.sharing) { platform.share(m.launch) } else { platform.open(m.launch) };
+    if (!went) {
       next = failed(next, "No app on this phone opens this file.");
     }
   }
@@ -951,6 +1064,11 @@ function clip_bar(m: Model): ui.El[Msg][] {
   return [ui.card([ui.text[Msg](line).clamped(1), actions_row(buttons)]).spaced(4.0).wide()];
 }
 
+// Where a mark is: its server, then its path.
+function mark_detail(mark: Mark): string {
+  return if (mark.server.len() > 0) { mark.server + " · /" + mark.path } else { mark.path };
+}
+
 function home(m: Model): ui.El[Msg] {
   let rows: ui.El[Msg][] = [ui.row([dots("FILES", 28.0, ui.INK)]).padding_xy(0.0, 12.0)];
   rows = rows.concat(notice(m));
@@ -970,6 +1088,18 @@ function home(m: Model): ui.El[Msg] {
   rows = rows.append(section("PLACES"));
   for place in PLACES {
     rows = rows.append(place_row(glyph(FOLDER, "place", ui.MUTED), place.0, "", OpenFolder(place.0, place.1)));
+  }
+  if (m.pins.len() > 0) {
+    rows = rows.append(section("PINNED"));
+    for pin in m.pins {
+      rows = rows.append(place_row(glyph(FOLDER, "pin", ui.PRIMARY), pin.label, mark_detail(pin), OpenMark(pin)).described("Pinned " + pin.label));
+    }
+  }
+  if (m.recent.len() > 0) {
+    rows = rows.append(section("RECENT"));
+    for item in m.recent {
+      rows = rows.append(place_row(file_glyph(item.label, ui.MUTED), item.label, mark_detail(item), OpenMark(item)).described("Recent " + item.label));
+    }
   }
   rows = rows.append(section("NETWORK"));
   for i in 0..m.servers.len() {
@@ -1048,7 +1178,12 @@ function browse(m: Model): ui.El[Msg] {
     ui.text_button(if (m.hidden) { "Hidden: shown" } else { "Hidden: off" }, ToggleHidden),
     ui.text_button("New folder", NewFolder),
   ]));
-  head = head.append(ui.field[Msg]("filter", m.query, "Filter this folder").on_edit((text: string): Msg => Query(text)));
+  head = head.append(ui.field[Msg]("filter", m.query, "Filter this folder").on_edit((text: string): Msg => Query(text)).on_submit(DeepSearch));
+  if (m.found) {
+    head = head.append(ui.row([ui.text[Msg]("Found below this folder").colored(ui.MUTED).wide(), ui.text_button("Show the folder", Enter(""))]).aligned(ui.CENTER));
+  } else if (m.query.trim().len() > 0) {
+    head = head.append(actions_row([ui.text_button("Search the folders below", DeepSearch)]));
+  }
   head = head.concat(naming_card(m)).concat(notice(m));
   if (m.loading) {
     head = head.append(ui.text[Msg]("Reading…").colored(ui.MUTED));
@@ -1058,7 +1193,7 @@ function browse(m: Model): ui.El[Msg] {
   let list = ui.list("entries:" + m.path + ":" + m.sort.to_string() + ":" + m.query + ":" + m.hidden.to_string(), items.len(), 64.0, (i: i32): ui.El[Msg] => entry_row(m, items[i]));
   let bars = ui.column(selection_bar(m).concat(task_bar(m)).concat(clip_bar(m))).spaced(8.0).wide();
   let body = ui.column(head.append(list).append(bars)).spaced(8.0).padding_xy(16.0, 8.0).wide().tall();
-  return ui.column([ui.app_bar(title, Some(Up), [ui.text_button("Home", GoHome)]), body]).wide().tall();
+  return ui.column([ui.app_bar(title, Some(Up), [ui.text_button(if (pinned(m)) { "Unpin" } else { "Pin" }, TogglePin), ui.text_button("Home", GoHome)]), body]).wide().tall();
 }
 
 // A screen over the folder: a bar with a back arrow, then its rows.
@@ -1085,7 +1220,7 @@ function item(m: Model, name: string, screen: ui.Screen): ui.El[Msg] {
     ui.text[Msg](store.size_text(e.size) + " · " + e.size.to_string() + " bytes").colored(ui.MUTED),
     ui.text[Msg]("Changed " + store.day_text(e.modified)).colored(ui.MUTED),
     ui.text[Msg](trail(m)).colored(ui.MUTED),
-    actions_row([ui.button("Open", OpenFile(name)), look_button(name, screen)]),
+    actions_row([ui.button("Open", OpenFile(name)), look_button(name, screen), ui.outlined_button("Share", ShareFile(name))]),
     actions_row([ui.outlined_button("Copy", CopyOne(name, false)), ui.outlined_button("Move", CopyOne(name, true)), ui.text_button("Rename", StartRename(name)), ui.text_button(delete, DeleteOne(name))]),
   ]).concat(task_bar(m));
   return sheet("File", rows, "item");

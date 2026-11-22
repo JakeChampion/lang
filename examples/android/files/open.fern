@@ -152,3 +152,37 @@ pub function view(ctx: usize, path: string): boolean {
   let intent_ref = jni.delete_local_ref(e, intent);
   return jni.check(e).is_ok() && started;
 }
+
+// Asks Android for the apps that take the file `path`, such as a mail app,
+// and gives the file to the one that the person picks.
+pub function send(ctx: usize, path: string): boolean {
+  let e = android.env(ctx);
+  let uri = shared_uri(e, path);
+  if (uri == 0 as usize) {
+    return false;
+  }
+  let class = jni.find_class(e, "android/content/Intent");
+  let ctor = jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;)V");
+  let action = jni.new_string(e, "android.intent.action.SEND");
+  let init = jni.jvalues([action]);
+  let intent = jni.new_object_a(e, class, ctor, init);
+  jni.free_buffer(init);
+  if (jni.check(e).is_err() || intent == 0 as usize) {
+    return false;
+  }
+  let kind = jni.new_string(e, mime(path));
+  let stream = jni.new_string(e, "android.intent.extra.STREAM");
+  let typed = jni.call_object(e, intent, "setType", "(Ljava/lang/String;)Landroid/content/Intent;", [kind]);
+  let filled = jni.call_object(e, intent, "putExtra", "(Ljava/lang/String;Landroid/os/Parcelable;)Landroid/content/Intent;", [stream, uri]);
+  // 1 is FLAG_GRANT_READ_URI_PERMISSION.
+  let flagged = jni.call_object(e, intent, "addFlags", "(I)Landroid/content/Intent;", [1 as usize]);
+  let chooser_of = jni.get_static_method_id(e, class, "createChooser", "(Landroid/content/Intent;Ljava/lang/CharSequence;)Landroid/content/Intent;");
+  let args = jni.jvalues([intent, 0 as usize]);
+  let chooser = jni.call_static_object_method_a(e, class, chooser_of, args);
+  jni.free_buffer(args);
+  if (jni.check(e).is_err() || chooser == 0 as usize) {
+    return false;
+  }
+  let started = jni.call_void(e, android.activity_object(ctx), "startActivity", "(Landroid/content/Intent;)V", [chooser]);
+  return jni.check(e).is_ok() && started;
+}
