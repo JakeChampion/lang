@@ -7044,23 +7044,7 @@ function share_shape_loads(f: SFunc): Formed {
   if (loads < 2) {
     return Formed { f: f, repl: [] };
   }
-  let at = block_positions(f);
-  let repl: i32[] = [];
-  for bi in 0..f.blocks.len() {
-    let insts = f.blocks[bi].insts;
-    for k in 0..insts.len() {
-      let ins = insts[k];
-      if (shape_load(ins, f.nvals) && !stored[ins.args[0]]) {
-        let found = earlier_shape(f, at, bi, k, ins);
-        if (found >= 0) {
-          if (repl.len() == 0) {
-            repl = identity_repl(f.nvals);
-          }
-          repl = repl.with(ins.result, repl[found]);
-        }
-      }
-    }
-  }
+  let repl = earlier_shapes(f, stored);
   if (repl.len() == 0) {
     return Formed { f: f, repl: [] };
   }
@@ -7379,30 +7363,106 @@ function length_checked(ins: SInst, used: boolean[]): boolean {
   return ins.kind_tag == ARR_ST && ins.args.len() == 3 && ins.imm == 0;
 }
 
-function earlier_shape(f: SFunc, at: i32[], bi: i32, k: i32, load: SInst): i32 {
-  let b = bi;
-  let j = k - 1;
-  while (true) {
-    while (j >= 0) {
-      let ins = f.blocks[b].insts[j];
-      if (shape_load(ins, f.nvals) && ins.args[0] == load.args[0] && ins.imm == load.imm) {
-        return ins.result;
+// For each shape load, the nearest shape load of the same word before it
+// with no write of memory between them, as its replacement. The search goes
+// back in the block, and then through each block that is the one earlier
+// predecessor of the block after it. Those links make a forest, and a walk
+// of the forest keeps the loads that are on the path to the current block.
+// `seen` has the last load of each word on the path, and `since` the count
+// of writes on the path when the load was seen. A block undoes its entries
+// when the walk leaves it.
+function earlier_shapes(f: SFunc, stored: boolean[]): i32[] {
+  let at = block_positions(f);
+  let n = f.blocks.len();
+  let parent = util.minus_ones(n);
+  let child = util.minus_ones(n);
+  let sibling = util.minus_ones(n);
+  for b in 0..n {
+    if (f.blocks[b].preds.len() == 1) {
+      let pb = position_of(at, f.blocks[b].preds[0]);
+      if (pb >= 0 && pb < b) {
+        parent = parent.with(b, pb);
+        sibling = sibling.with(b, child[pb]);
+        child = child.with(pb, b);
       }
-      if (may_write(ins.kind_tag)) {
-        return -1;
-      }
-      j -= 1;
     }
-    if (f.blocks[b].preds.len() != 1) {
-      return -1;
-    }
-    let pb = position_of(at, f.blocks[b].preds[0]);
-    if (pb < 0 || pb >= b) {
-      return -1;
-    }
-    b = pb;
-    j = f.blocks[b].insts.len() - 1;
   }
+  let seen = util.minus_ones(2 * f.nvals);
+  let since = __alloc_i32(2 * f.nvals);
+  let undo_slot: i32[] = [];
+  let undo_seen: i32[] = [];
+  let undo_since: i32[] = [];
+  let undone = 0;
+  let mark = __alloc_i32(n);
+  let entry = __alloc_i32(n);
+  let writes = 1;
+  let epoch = 0;
+  let repl: i32[] = [];
+  let todo: i32[] = [];
+  let pending = 0;
+  for root in 0..n {
+    if (parent[root] >= 0) {
+      continue;
+    }
+    writes += 1;
+    epoch = writes;
+    todo = put_at(todo, pending, root);
+    pending += 1;
+    while (pending > 0) {
+      pending -= 1;
+      let top = todo[pending];
+      if (top < 0) {
+        let done = -1 - top;
+        while (undone > mark[done]) {
+          undone -= 1;
+          seen = seen.with(undo_slot[undone], undo_seen[undone]);
+          since = since.with(undo_slot[undone], undo_since[undone]);
+        }
+        epoch = entry[done];
+        continue;
+      }
+      mark = mark.with(top, undone);
+      entry = entry.with(top, epoch);
+      for ins in f.blocks[top].insts {
+        if (shape_load(ins, f.nvals)) {
+          let slot = 2 * ins.args[0] + if (ins.imm == 0) { 0 } else { 1 };
+          if (!stored[ins.args[0]] && seen[slot] >= 0 && since[slot] == epoch) {
+            if (repl.len() == 0) {
+              repl = identity_repl(f.nvals);
+            }
+            repl = repl.with(ins.result, repl[seen[slot]]);
+          }
+          undo_slot = put_at(undo_slot, undone, slot);
+          undo_seen = put_at(undo_seen, undone, seen[slot]);
+          undo_since = put_at(undo_since, undone, since[slot]);
+          undone += 1;
+          seen = seen.with(slot, ins.result);
+          since = since.with(slot, epoch);
+        }
+        if (may_write(ins.kind_tag)) {
+          writes += 1;
+          epoch = writes;
+        }
+      }
+      todo = put_at(todo, pending, -1 - top);
+      pending += 1;
+      let c = child[top];
+      while (c >= 0) {
+        todo = put_at(todo, pending, c);
+        pending += 1;
+        c = sibling[c];
+      }
+    }
+  }
+  return repl;
+}
+
+// `stack` with `v` at `top`, the count of its entries in use.
+function put_at(own stack: i32[], top: i32, v: i32): i32[] {
+  if (top < stack.len()) {
+    return stack.with(top, v);
+  }
+  return stack.append(v);
 }
 
 function may_write(k: i32): boolean {
