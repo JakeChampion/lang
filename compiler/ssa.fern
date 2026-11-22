@@ -2697,12 +2697,20 @@ pub function split_spilled(f: SFunc, reg_of: i32[], fl: boolean[]): LoopSplit {
   let at = block_positions(f);
   let latch = furthest_latches(f, at);
   let loops: i32[] = [];
+  let furthest = -1;
+  let nested = false;
   for h in 0..latch.len() {
-    if (latch[h] > h) {
+    let end = latch[h];
+    if (end > h) {
       loops = loops.append(h);
+      if (end < furthest) {
+        nested = true;
+      } else {
+        furthest = end;
+      }
     }
   }
-  if (loops.len() < 2) {
+  if (!nested) {
     return LoopSplit { f: f, cost: 0 };
   }
   return split_spilled_in_loops(f, reg_of, fl, at, latch, loops);
