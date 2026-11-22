@@ -165,6 +165,13 @@ func TestSelfHostExampleGitLineLog(t *testing.T) {
 				gitCompare(t, oracle, port, dir, "", args...)
 			}
 			sub := filepath.Join(dir, "d")
+			alias := filepath.Join(t.TempDir(), "tree")
+			if err := os.Symlink(dir, alias); err != nil {
+				t.Fatal(err)
+			}
+			for _, path := range []string{filepath.Join(dir, "b.c"), filepath.Join(alias, "b.c"), dir + "/b.c/", filepath.Join(dir, "absent"), dir + "-outside/b.c"} {
+				gitCompare(t, oracle, port, sub, "", "log", "-s", "-L", "1:"+path)
+			}
 			for _, c := range []string{"log -L 1,2:sub.c", "log -L :sub:sub.c --oneline", "log -L 1:../b.c --oneline -s", "log -L 1:../../b.c",
 				"log -L 1:./sub.c -L 3:sub.c --format=%s"} {
 				gitCompare(t, oracle, port, sub, "", strings.Fields(c)...)

@@ -6,6 +6,8 @@ import "std/i64";
 import "std/linediff";
 import "std/string";
 import "../../coreutils/lib/bre";
+import "../../coreutils/lib/gnu";
+import "std/errno";
 import "./attr";
 import "./objects";
 import "./store";
@@ -558,11 +560,49 @@ pub function range_in(arg: string, data: u8[], anchor: i32, funcs: Option[userdi
   return parse_range(arg, Blob { data: data, ends: ends, lines: ends.len() - 1 }, anchor, funcs);
 }
 
+// An absolute name may reach the worktree through a symlink to its root.
+// Once inside, the remaining components name entries in the commit tree.
+function from_worktree(parts: string[], top: string, name: string, directory: boolean): Result[string, string] {
+  let outside = "'" + name + "' is outside repository at '" + top + "'";
+  if (top.len() == 0) {
+    return Err(outside);
+  }
+  let absolute = "/" + parts.join("/");
+  if (absolute == top) {
+    return Ok("");
+  }
+  if let Some(rest) = absolute.strip_prefix(if (top == "/") { "/" } else { top + "/" }) {
+    return Ok(rest);
+  }
+  let Ok(root) = stat(top) else {
+    return Err(outside);
+  };
+  let parent = "";
+  for i in 0..parts.len() {
+    parent += "/" + parts[i];
+    match (stat(parent)) {
+      Ok(dir) => {
+        if (dir.dev == root.dev && dir.ino == root.ino) {
+          return Ok(array.slice(parts, i + 1, parts.len()).join("/"));
+        }
+      },
+      Err(e) => {
+        if (i + 1 < parts.len() || directory || errno.of(e) != errno.ENOENT) {
+          return Err("Invalid path '" + parent + "': " + gnu.io_error_text(e));
+        }
+      }
+    }
+  }
+  return Err(outside);
+}
+
 // The path of the name `name` of `-L` from the directory `prefix` below
 // the top of the worktree, or the message of git (`prefix_path`).
 function full_name(prefix: string, name: string, top: string): Result[string, string] {
   let parts: string[] = [];
-  for p in (prefix + name).split("/") {
+  let absolute = name.starts_with("/");
+  let input = if (absolute) { name } else { prefix + name };
+  for p in input.split("/") {
     if (p == "..") {
       if (parts.len() == 0) {
         return Err("'" + name + "' is outside repository at '" + top + "'");
@@ -572,8 +612,8 @@ function full_name(prefix: string, name: string, top: string): Result[string, st
       parts = parts.append(p);
     }
   }
-  let path = parts.join("/");
   let directory = name.ends_with("/") || name == "." || name.ends_with("/.") || name == ".." || name.ends_with("/..");
+  let path = if (absolute) { from_worktree(parts, top, name, directory)? } else { parts.join("/") };
   return Ok(if (directory && path.len() > 0) { path + "/" } else { path });
 }
 
