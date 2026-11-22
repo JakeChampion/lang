@@ -264,6 +264,14 @@ function test_alac_plays(): test.TestOutcome {
   return test.assert_eq(played(fixture.alac16()) + " | " + head + " " + wide, "8000 1 true true true true | 8000 2 true true true");
 }
 
+function test_long_pre_skip(): test.TestOutcome {
+  let Some(deck) = engine.open(fixture.long_pre_skip()) else {
+    return test.fail("the Opus file did not open");
+  };
+  let (samples, _, last) = drained(deck);
+  return test.assert_true(last.done && samples.len() == 4120 && last.at == 4120i64);
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune engine");
   r = r.it("a WAV file plays each sample", test_wav_plays_each_sample);
@@ -275,5 +283,6 @@ function main(): i32 {
   r = r.it("an M4A, an Ogg Vorbis and an Opus file play from a window", test_indexed_files_play_from_a_window);
   r = r.it("an M4A file with ALAC sound plays", test_alac_plays);
   r = r.it("a file plays from a window of it", test_a_file_plays_from_a_window);
+  r = r.it("Opus pre-skip can span more than 64 packets", test_long_pre_skip);
   return r.finish();
 }

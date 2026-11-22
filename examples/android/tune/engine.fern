@@ -663,7 +663,7 @@ function pull_vorbis(own rest: Deck, own cursor: vorbis_seek.Cursor): (Deck, i32
       vorbis_seek.Pending => {}
     }
   }
-  return ended(d);
+  return (Deck { ...d, codec: Vorbis(c) }, []);
 }
 
 // The next packet of an Opus file, as for an Ogg Vorbis file.
@@ -689,7 +689,7 @@ function pull_opus(own rest: Deck, own cursor: opusfile.SeekCursor): (Deck, i32[
       opusfile.SeekPending => {}
     }
   }
-  return ended(d);
+  return (Deck { ...d, codec: Opus(c) }, []);
 }
 
 // The deck at `part` of an Ogg file. A deck that cannot go there is done.
@@ -717,8 +717,8 @@ function seek_ogg(own d: Deck, part: f64): Deck {
 
 // The deck after its next part, and the samples of that part: the samples
 // of a frame are one after the other. At the end of the file, the deck is
-// done and the part is empty. A part of an MP3 file can be empty before the
-// end.
+// done and the part is empty. An MP3 frame or an Ogg preroll step can produce
+// an empty part before the end.
 pub function (own d: Deck) pull(): (Deck, i32[]) {
   if (d.done) {
     return (d, []);
