@@ -270,7 +270,7 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 				return nil
 			}
 			factory := c.callbackFactoryFuncs[id.Name]
-			if factory == nil {
+			if factory == nil || c.copyableCallResult(factory.ReturnType) {
 				return nil
 			}
 			var out []callbackLoan

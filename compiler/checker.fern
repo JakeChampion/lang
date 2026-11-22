@@ -20642,7 +20642,7 @@ function ow_capture_diags(value: ast.Expr, moved: MovedEntry[], ctx: OwnCtx, hol
   let ty = check_expr(value, ctx.scope);
   let spelling = typeinfo.spelling(ty);
   let callback = parser.ref_is_fn_value(parser.parse_type_ref(spelling)) || util.has_str(ctx.scope.tparams, spelling);
-  if (!callback && (!holder || !ow_local_holder(value, ctx))) {
+  if (!callback && (!holder || ow_cached_value_data(spelling, ctx.decls, ctx.value_proofs) || !ow_local_holder(value, ctx))) {
     return [];
   }
   let name = "lambda";

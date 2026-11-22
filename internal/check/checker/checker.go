@@ -6093,8 +6093,10 @@ type checker struct {
 	callbackFactories    map[string][]callbackLoan
 	callbackResultCalls  map[*ast.Call]bool
 	callbackValues       map[ast.Expr]bool
-	resultBorrows        map[string]bool
-	resultAnalysed       map[string]bool
+	// localUseTypes has the type of each use of a local.
+	localUseTypes  map[*ast.Ident]ast.Type
+	resultBorrows  map[string]bool
+	resultAnalysed map[string]bool
 	// declaredMethods names the methods the program declares.
 	declaredMethods map[string]bool
 	// handleFreeResults names the functions whose result type cannot hold a handle.
@@ -11479,6 +11481,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		if !ok || len(moved) == 0 || c.callbackValues[value] || id.Builtin || !id.Local || owned[id.Name] {
 			return
 		}
+		if t := c.localUseTypes[id]; t == nil || c.copyableCallResult(t) {
+			return
+		}
 		ensureCallbackCaptures()
 		for _, capture := range holderCaptures[id.Name] {
 			if at, consumed := moved[capture.Name]; consumed {
@@ -15291,6 +15296,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	}
 	_, callbackValue := t.(*ast.FuncType)
 	_, genericValue := t.(ast.ParamType)
+	if id, ok := e.(*ast.Ident); ok && id.Local {
+		if c.localUseTypes == nil {
+			c.localUseTypes = map[*ast.Ident]ast.Type{}
+		}
+		c.localUseTypes[id] = t
+	}
 	if callbackValue || genericValue {
 		if c.callbackValues == nil {
 			c.callbackValues = map[ast.Expr]bool{}
