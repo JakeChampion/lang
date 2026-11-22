@@ -1,0 +1,19 @@
+import "std/async";
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): void {}
+
+function read(h: Handle): i32 {
+  return h.fd;
+}
+
+function run(own h: Handle): i32 {
+  let task = async.spawn((): i32 => read(h));
+  h.close();
+  return async.block_on(task).unwrap_or(0);
+}
+
+function main(): i32 {
+  return run(Handle { fd: 3 });
+}

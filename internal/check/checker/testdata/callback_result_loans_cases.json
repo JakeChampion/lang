@@ -1393,5 +1393,40 @@
     "name": "binder that is not a callback accepted in a loop",
     "source": "struct H { n: i32 }\nfunction (own h: H) close(): void {}\nstruct Box { run: () => i32 }\nfunction pick(h: H): Option[Box] { return Some(Box { run: (): i32 => h.n }); }\nfunction renew(own h: H): H { return h; }\nfunction run(own h0: H): i32 { let h = h0; let total = 0; for k in 0..2 { if (k == 0) { h = renew(h); } if let Some(b) = pick(h) { total += 1; } } h.close(); return total; }\nfunction main(): i32 { return run(H { n: 7 }); }\n",
     "want": ""
+  },
+  {
+    "name": "record that holds a callback refused as an argument after close",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32, n: i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction num(n: i32): i32 { return n; }\nfunction make(g: () => i32): Box { return Box { run: g, n: 2 }; }\nfunction run(own h: H): i32 { let b = Box { run: (): i32 => read(h), n: 2 }; h.close(); return call(b); }\nfunction main(): i32 { return run(H { fd: 7 }); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "factory record that holds a callback refused as an argument after close",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32, n: i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction num(n: i32): i32 { return n; }\nfunction make(g: () => i32): Box { return Box { run: g, n: 2 }; }\nfunction run(own h: H): i32 { let b = make((): i32 => read(h)); h.close(); return call(b); }\nfunction main(): i32 { return run(H { fd: 7 }); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "tuple that holds a callback refused as an argument after close",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32, n: i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction num(n: i32): i32 { return n; }\nfunction make(g: () => i32): Box { return Box { run: g, n: 2 }; }\nfunction first(p: (() => i32, i32)): i32 { return p.0(); }\nfunction run(own h: H): i32 { let p = ((): i32 => read(h), 3); h.close(); return first(p); }\nfunction main(): i32 { return run(H { fd: 7 }); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "array that holds a callback refused as an argument after close",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32, n: i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction num(n: i32): i32 { return n; }\nfunction make(g: () => i32): Box { return Box { run: g, n: 2 }; }\nfunction head(fs: (() => i32)[]): i32 { return fs[0](); }\nfunction run(own h: H): i32 { let fs = [(): i32 => read(h)]; h.close(); return head(fs); }\nfunction main(): i32 { return run(H { fd: 7 }); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "record that holds a callback accepted as an argument before close",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32, n: i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction num(n: i32): i32 { return n; }\nfunction make(g: () => i32): Box { return Box { run: g, n: 2 }; }\nfunction run(own h: H): i32 { let b = Box { run: (): i32 => read(h), n: 2 }; let k = call(b); h.close(); return k; }\nfunction main(): i32 { return run(H { fd: 7 }); }\n",
+    "want": ""
+  },
+  {
+    "name": "data field of a record that holds a callback accepted after close",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32, n: i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction num(n: i32): i32 { return n; }\nfunction make(g: () => i32): Box { return Box { run: g, n: 2 }; }\nfunction run(own h: H): i32 { let b = Box { run: (): i32 => read(h), n: 2 }; let k = call(b); h.close(); return num(b.n) + k; }\nfunction main(): i32 { return run(H { fd: 7 }); }\n",
+    "want": ""
+  },
+  {
+    "name": "record that holds a callback of plain data accepted after close",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32, n: i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction num(n: i32): i32 { return n; }\nfunction make(g: () => i32): Box { return Box { run: g, n: 2 }; }\nfunction run(own h: H): i32 { let k = h.fd; let b = Box { run: (): i32 => k, n: 2 }; h.close(); return call(b); }\nfunction main(): i32 { return run(H { fd: 7 }); }\n",
+    "want": ""
   }
 ]

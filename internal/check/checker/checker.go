@@ -11446,10 +11446,11 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	type movedSet = map[string]ast.Position
 	var callbackCaptures map[string][]ast.Param
 	var inlineCaptures map[ast.Expr][]ast.Param
+	var holderCaptures map[string][]ast.Param
 	callbackCapturesKnown := false
 	ensureCallbackCaptures := func() {
 		if !callbackCapturesKnown {
-			callbackCaptures, inlineCaptures = c.localCallbackCaptures(fn)
+			callbackCaptures, inlineCaptures, holderCaptures = c.localCallbackCaptures(fn)
 			callbackCapturesKnown = true
 		}
 	}
@@ -11470,6 +11471,20 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 		}
 		return false
+	}
+	// A call argument that holds a callback, such as a record with a callback
+	// field, takes the loans of that callback into the callee.
+	checkHolderCaptures := func(value ast.Expr, moved movedSet) {
+		id, ok := value.(*ast.Ident)
+		if !ok || len(moved) == 0 || c.callbackValues[value] || id.Builtin || !id.Local || owned[id.Name] {
+			return
+		}
+		ensureCallbackCaptures()
+		for _, capture := range holderCaptures[id.Name] {
+			if at, consumed := moved[capture.Name]; consumed {
+				c.movedErr(value.Pos(), at, "moved here", "%q holds a callback that uses captured owned parameter %q after it was consumed", id.Name, capture.Name)
+			}
+		}
 	}
 	checkCallbackCaptures := func(value ast.Expr, moved movedSet) {
 		if value == nil || len(moved) == 0 || !c.callbackValues[value] {
@@ -11926,6 +11941,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				checkCallbackCaptures(x.Callee, moved)
 				for _, arg := range x.Args {
 					checkCallbackCaptures(arg, moved)
+					checkHolderCaptures(arg, moved)
 				}
 				if lambda, ok := x.Callee.(*ast.Lambda); ok {
 					walkLambda(lambda, true)
