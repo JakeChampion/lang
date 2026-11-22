@@ -30,6 +30,8 @@ The app does more for one file:
 - A file has a screen with its size and its date. The app shows a JPEG,
   PNG, GIF, WebP or BMP file as a picture, and the first 64 KiB of each
   other file as text.
+- **Open** shows the file in another app of the phone, such as a video
+  player. A file of a server goes to the cache of the app first.
 - A file shows a picture of dots for what it holds: an image, sound, a
   film or other data.
 
@@ -55,7 +57,14 @@ The limits are:
 
 - A server that accepts only SMB 3 gets a note, because the app does not
   speak that dialect.
-- The app does not open a file in another app.
+
+## Other apps
+
+Android lets another app read a file only through a content provider.
+`open.fern` has one: `dev.fern.files.Shared`, a @jni class that extends
+`ContentProvider`. `fern -apk` puts each such class in the manifest as a
+provider that is not exported, with the name of the class as its authority.
+The app gives access to one URI with each intent, for reading only.
 
 ## Tests
 

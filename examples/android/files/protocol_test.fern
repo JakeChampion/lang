@@ -5,6 +5,7 @@ import "std/test";
 import "./files";
 import "./md4";
 import "./ntlm";
+import "./open";
 import "./smb";
 import "./store";
 import "./vault";
@@ -138,6 +139,15 @@ function test_paths(): test.TestOutcome {
   ]);
 }
 
+function test_types(): test.TestOutcome {
+  return all([
+    test.assert_eq(open.mime("Holiday.JPG"), "image/jpeg"),
+    test.assert_eq(open.mime("/a/b.c/film.mkv"), "video/x-matroska"),
+    test.assert_eq(open.mime("notes"), "application/octet-stream"),
+    test.assert_eq(open.mime("archive.tar.xyz"), "application/octet-stream"),
+  ]);
+}
+
 function test_texts(): test.TestOutcome {
   return all([
     test.assert_eq(store.size_text(5i64), "5 B"),
@@ -217,6 +227,7 @@ function main(): i32 {
   r = r.it("the reply to a share question gives the disk shares", test_shares);
   r = r.it("a reply passes only with its signature", test_signature);
   r = r.it("paths join, split and get free names", test_paths);
+  r = r.it("a file name gives its media type", test_types);
   r = r.it("sizes and days read well", test_texts);
   r = r.it("a copy in steps keeps each byte", test_copy);
   r = r.it("the saved servers survive the vault", test_vault);

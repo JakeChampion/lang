@@ -10,6 +10,7 @@ import "std/android/ui/app";
 import "std/jni";
 import "std/result";
 import "./files";
+import "./open";
 import "./store";
 import "./vault";
 
@@ -19,6 +20,45 @@ pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size:
 
 @callback("app_main")
 function app_main_entry(): usize;
+
+// The content provider that lets another app read one file. Android makes
+// it when the process starts, and calls it on a thread of its own.
+@jni("dev.fern.files.Shared extends android.content.ContentProvider", "boolean onCreate()")
+pub function shared_create(env: usize, thiz: usize): u8 {
+  return 1u8;
+}
+
+@jni("dev.fern.files.Shared", "android.os.ParcelFileDescriptor openFile(android.net.Uri, java.lang.String)")
+pub function shared_open(env: usize, thiz: usize, uri: usize, mode: usize): usize {
+  return open.descriptor(env, uri);
+}
+
+@jni("dev.fern.files.Shared", "java.lang.String getType(android.net.Uri)")
+pub function shared_type(env: usize, thiz: usize, uri: usize): usize {
+  return open.kind(env, uri);
+}
+
+@jni("dev.fern.files.Shared", "android.database.Cursor query(android.net.Uri, java.lang.String[], java.lang.String, java.lang.String[], java.lang.String)")
+pub function shared_query(env: usize, thiz: usize, uri: usize, columns: usize, selection: usize, values: usize, order: usize): usize {
+  return open.row(env, uri);
+}
+
+// The provider is for reading only, so the three calls that change data
+// change nothing.
+@jni("dev.fern.files.Shared", "android.net.Uri insert(android.net.Uri, android.content.ContentValues)")
+pub function shared_insert(env: usize, thiz: usize, uri: usize, values: usize): usize {
+  return 0 as usize;
+}
+
+@jni("dev.fern.files.Shared", "int delete(android.net.Uri, java.lang.String, java.lang.String[])")
+pub function shared_delete(env: usize, thiz: usize, uri: usize, selection: usize, values: usize): i32 {
+  return 0;
+}
+
+@jni("dev.fern.files.Shared", "int update(android.net.Uri, android.content.ContentValues, java.lang.String, java.lang.String[])")
+pub function shared_update(env: usize, thiz: usize, uri: usize, change: usize, selection: usize, values: usize): i32 {
+  return 0;
+}
 
 const MAIN: string = "/storage/emulated/0";
 
@@ -90,13 +130,18 @@ function picture(bytes: u8[], wide: i32): Option[draw.Image] {
 
 function app_main(ctx: usize): usize {
   let dir = android.no_backup_dir(ctx);
+  // The copies of server files that other apps showed go at each start.
+  let cache = android.cache_dir(ctx) + "/open";
+  let cleared = remove_dir_all(cache);
+  let made = create_dir_all(cache);
   let platform = files.Platform {
     roots: (): files.Root[] => roots(),
     access: (): boolean => has_access(ctx),
     ask_access: (): boolean => ask_access(ctx),
     save: (servers: files.Saved[]): boolean => vault.save(dir, android.env(ctx), servers),
+    open: (path: string): boolean => open.view(ctx, path),
     decode: (bytes: u8[], wide: i32): Option[draw.Image] => picture(bytes, wide),
   };
-  let last = app.run(ctx, files.start(roots(), has_access(ctx), vault.load(dir, android.env(ctx))), files.program(platform));
+  let last = app.run(ctx, files.start(roots(), has_access(ctx), vault.load(dir, android.env(ctx)), cache), files.program(platform));
   return 0 as usize;
 }

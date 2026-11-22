@@ -26,7 +26,8 @@ pub struct Saved { name: string, server: smb.Server }
 pub struct Clip { place: store.Place, dir: string, items: smb.Entry[], cut: boolean }
 
 // A copy that runs: its steps, the step that it is at, and its progress.
-pub struct Task { src: store.Place, dst: store.Place, steps: store.Step[], at: i32, offset: i64, done: i64, total: i64, clip: Clip, stop: boolean }
+// `open` is the path of a download that another app shows at the end.
+pub struct Task { src: store.Place, dst: store.Place, steps: store.Step[], at: i32, offset: i64, done: i64, total: i64, clip: Clip, stop: boolean, open: string }
 
 pub enum Naming { Folder, NewName(string) }
 
@@ -46,14 +47,18 @@ enum Job {
 }
 
 // What the app needs from Android: the storages of the phone, whether the
-// app has access to all files, the screen that gives that access, a place to keep the servers, and a
-// decoder that gives an image at a width in pixels or less.
-pub struct Platform { roots: () => Root[], access: () => boolean, ask_access: () => boolean, save: (Saved[]) => boolean, decode: (u8[], i32) => Option[draw.Image] }
+// app has access to all files, the screen that gives that access, a place to keep the servers, the app
+// of the phone that shows a file, and a decoder that gives an image at a width in pixels or less.
+pub struct Platform { roots: () => Root[], access: () => boolean, ask_access: () => boolean, save: (Saved[]) => boolean, open: (string) => boolean, decode: (u8[], i32) => Option[draw.Image] }
 
 pub struct Model {
   roots: Root[],
   servers: Saved[],
   granted: boolean,
+  // The directory for the copy of a server file that another app shows,
+  // and the path of the file that waits for that app.
+  cache: string,
+  launch: string,
   page: Page,
   place: store.Place,
   label: string,
@@ -136,6 +141,7 @@ pub enum Msg {
   SharesFound(i64, Result[string[], string]),
   PickShare(string),
   SelectAll,
+  OpenFile(string),
   AskAccess,
   Resumed,
 }
@@ -157,9 +163,9 @@ function no_server(): Saved {
 
 // The model of the home screen, with the storages and the servers.
 // `granted` is false when Android hides the files of the storages.
-pub function start(roots: Root[], granted: boolean, servers: Saved[]): Model {
+pub function start(roots: Root[], granted: boolean, servers: Saved[], cache: string): Model {
   return Model {
-    roots: roots, servers: servers, granted: granted, page: Home, place: store.Local, label: "", top: "", path: "", entries: [], loading: false, note: "", fault: "", sort: 0, hidden: false, query: "",
+    roots: roots, servers: servers, granted: granted, cache: cache, launch: "", page: Home, place: store.Local, label: "", top: "", path: "", entries: [], loading: false, note: "", fault: "", sort: 0, hidden: false, query: "",
     selecting: false, picked: [], clip: None, task: None, naming: None, name_text: "", confirm: "", draft: no_server(), preview: "", picture: None, raw: [], wide: 0, shares: [], finding: false, revision: 0i64, task_revision: 0i64, job: None, need_roots: false, ask_access: false, unsaved: false,
   };
 }
@@ -226,7 +232,7 @@ function start_paste(m: Model): Model {
     }
     return Model { ...m, task_revision: revision, clip: None, loading: true, job: Some(Move(revision, m.place, clip.dir, clip.items, m.path)) };
   }
-  let waiting = Task { src: clip.place, dst: m.place, steps: [], at: 0, offset: 0i64, done: 0i64, total: 0i64, clip: clip, stop: false };
+  let waiting = Task { src: clip.place, dst: m.place, steps: [], at: 0, offset: 0i64, done: 0i64, total: 0i64, clip: clip, stop: false, open: "" };
   return Model { ...m, task_revision: revision, task: Some(waiting), clip: None, note: "", fault: "", job: Some(Plan(revision, clip, m.place, m.path)) };
 }
 
@@ -235,6 +241,9 @@ function start_paste(m: Model): Model {
 function continue_task(m: Model, t: Task): Model {
   if (t.stop) {
     return reload(told(Model { ...m, task: None }, "The copy stopped. The part that it made stays."));
+  }
+  if (t.at >= t.steps.len() && t.open.len() > 0) {
+    return Model { ...m, task: None, launch: t.open };
   }
   if (t.at < t.steps.len()) {
     return Model { ...m, task: Some(t), job: Some(Advance(m.task_revision, t.src, t.dst, t.steps[t.at], t.offset)) };
@@ -579,6 +588,26 @@ function up(m: Model): Model {
   return open(m, m.place, m.label, m.top, store.parent(m.path));
 }
 
+// Shows the file in another app. A file of a server goes to the cache of
+// the app first.
+function open_file(m: Model, name: string): Model {
+  let Some(e) = entry_named(m, name) else {
+    return m;
+  };
+  let clear = Model { ...m, note: "", fault: "" };
+  if let store.Local = m.place {
+    return Model { ...clear, launch: store.join(m.path, name) };
+  }
+  if (m.task.is_some()) {
+    return failed(m, "Wait for the copy that runs.");
+  }
+  let to = store.join(m.cache, name);
+  let step = store.Step { from: store.join(m.path, name), to: to, size: e.size, dir: false };
+  let clip = Clip { place: m.place, dir: m.path, items: [e], cut: false };
+  let task = Task { src: m.place, dst: store.Local, steps: [step], at: 0, offset: 0i64, done: 0i64, total: e.size, clip: clip, stop: false, open: to };
+  return continue_task(Model { ...clear, task_revision: m.task_revision + 1i64 }, task);
+}
+
 function browse_update(own m: Model, msg: Msg): Model {
   match (msg) {
     OpenRoot(i) => {
@@ -630,6 +659,9 @@ function browse_update(own m: Model, msg: Msg): Model {
     Preview(name) => {
       let revision = m.revision + 1i64;
       return Model { ...m, page: Text(name), preview: "", loading: true, revision: revision, job: Some(ReadText(revision, m.place, store.join(m.path, name))) };
+    },
+    OpenFile(name) => {
+      return open_file(m, name);
     },
     ShowPicture(name, wide) => {
       let revision = m.revision + 1i64;
@@ -747,6 +779,12 @@ function effects(m: Model, platform: Platform): Model {
     next = Model { ...next, raw: [], loading: false, picture: shown };
     if (shown.is_none()) {
       next = failed(next, "The app cannot read this image.");
+    }
+  }
+  if (m.launch.len() > 0) {
+    next = Model { ...next, launch: "" };
+    if (!platform.open(m.launch)) {
+      next = failed(next, "No app on this phone opens this file.");
     }
   }
   if (m.need_roots) {
@@ -884,7 +922,7 @@ function task_bar(m: Model): ui.El[Msg][] {
   let Some(t) = m.task else {
     return [];
   };
-  let verb = if (t.clip.cut) { "Moving" } else { "Copying" };
+  let verb = if (t.open.len() > 0) { "Downloading" } else if (t.clip.cut) { "Moving" } else { "Copying" };
   if (t.steps.len() == 0) {
     return [ui.card([ui.text[Msg](verb + ": reading the items…")]).wide()];
   }
@@ -1032,9 +1070,9 @@ function sheet(title: string, rows: ui.El[Msg][], name: string): ui.El[Msg] {
 // The button that shows what the file holds: its picture, or its text.
 function look_button(name: string, screen: ui.Screen): ui.El[Msg] {
   if (is_photo(name)) {
-    return ui.button("View picture", ShowPicture(name, screen.w));
+    return ui.outlined_button("View picture", ShowPicture(name, screen.w));
   }
-  return ui.button("Preview as text", Preview(name));
+  return ui.outlined_button("Preview as text", Preview(name));
 }
 
 function item(m: Model, name: string, screen: ui.Screen): ui.El[Msg] {
@@ -1047,9 +1085,9 @@ function item(m: Model, name: string, screen: ui.Screen): ui.El[Msg] {
     ui.text[Msg](store.size_text(e.size) + " · " + e.size.to_string() + " bytes").colored(ui.MUTED),
     ui.text[Msg]("Changed " + store.day_text(e.modified)).colored(ui.MUTED),
     ui.text[Msg](trail(m)).colored(ui.MUTED),
-    actions_row([look_button(name, screen), ui.outlined_button("Copy", CopyOne(name, false)), ui.outlined_button("Move", CopyOne(name, true))]),
-    actions_row([ui.text_button("Rename", StartRename(name)), ui.text_button(delete, DeleteOne(name))]),
-  ]);
+    actions_row([ui.button("Open", OpenFile(name)), look_button(name, screen)]),
+    actions_row([ui.outlined_button("Copy", CopyOne(name, false)), ui.outlined_button("Move", CopyOne(name, true)), ui.text_button("Rename", StartRename(name)), ui.text_button(delete, DeleteOne(name))]),
+  ]).concat(task_bar(m));
   return sheet("File", rows, "item");
 }
 

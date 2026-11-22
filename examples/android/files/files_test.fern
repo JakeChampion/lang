@@ -60,9 +60,10 @@ function simulator(dir: string, servers: files.Saved[]): sim.Sim[files.Model, fi
     access: (): boolean => read_dir(dir).is_ok(),
     ask_access: (): boolean => true,
     save: (kept: files.Saved[]): boolean => write_file(dir + "/.saved", kept.len().to_string()).is_ok(),
+    open: (path: string): boolean => !path.ends_with(".jpg") && write_file(dir + "/.opened", path).is_ok(),
     decode: (bytes: u8[], wide: i32): Option[draw.Image] => tile(bytes),
   };
-  return sim.scaled(sim.themed(sim.start(files.start(roots, read_dir(dir).is_ok(), servers), files.program(platform), test_fonts(), 720, 1600, 2.0), true), 1.0);
+  return sim.scaled(sim.themed(sim.start(files.start(roots, read_dir(dir).is_ok(), servers, dir + "/.cache"), files.program(platform), test_fonts(), 720, 1600, 2.0), true), 1.0);
 }
 
 // Does the jobs of the last action and draws their result.
@@ -246,6 +247,21 @@ function test_picture_and_select_all(): test.TestOutcome {
   return test.assert_eq(all && wrote, true);
 }
 
+// The platform of the tests opens each file but a .jpg file.
+function test_open(): test.TestOutcome {
+  let dir = fixture();
+  let s = done(sim.tap(simulator(dir, []), "Phone storage"));
+  s = sim.tap(s, "notes.txt");
+  s = sim.tap(s, "Open");
+  let opened = read_file(dir + "/.opened").unwrap_or("") == dir + "/notes.txt" && s.shell.app.fault.len() == 0;
+  s = sim.back(s);
+  s = sim.tap(s, "photo.jpg");
+  s = sim.tap(s, "Open");
+  let told = sim.shows(s, "No app on this phone opens this file.");
+  let removed = remove_dir_all(dir);
+  return test.assert_eq(opened.to_string() + " " + told.to_string(), "true true");
+}
+
 function test_no_access(): test.TestOutcome {
   let s = simulator("/no/such/storage", []);
   preview(s, "10-access");
@@ -259,6 +275,7 @@ function main(): i32 {
   r = r.it("make a folder, rename, preview and delete", test_folder_rename_delete);
   r = r.it("save and remove a server", test_servers);
   r = r.it("show a picture and select all", test_picture_and_select_all);
+  r = r.it("open a file in another app", test_open);
   r = r.it("ask for access when the storage is closed", test_no_access);
   return r.finish();
 }
