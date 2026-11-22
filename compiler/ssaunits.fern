@@ -183,6 +183,10 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
           for field in grow_fields_of(partial, ins.str, i) {
             out = with_row(out, callee, defs[root].imm, field);
           }
+        } else if (is_record(f.values[ins.args[i]])) {
+          if (grow_fields_of(partial, ins.str, i).len() > 0) {
+            out = with_row(out, callee, defs[root].imm, s.hand_fields[i]);
+          }
         } else if (has_row_at(table, tix, ins.str, i, -1)) {
           out = with_row(out, callee, defs[root].imm, s.hand_fields[i]);
         }
@@ -2974,6 +2978,12 @@ function hands(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.S
     }
     if (is_record(f.values[v]) && !semtypes.is_env(f.values[v]) && lent_param) {
       root = v;
+    }
+    if (grow_record(f, f.values[v]) && defs[v].kind_tag == ssasem.record_get() && !owned[v] && occurrences(ins.args, v) == 1) {
+      root = projection_root(f, a, owned, defs, bi, pos, v);
+      if (root >= 0) {
+        field = defs[v].imm;
+      }
     }
     roots = roots.append(root);
     fields = fields.append(field);

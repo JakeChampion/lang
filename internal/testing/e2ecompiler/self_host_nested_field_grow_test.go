@@ -16,29 +16,58 @@ import (
 func TestSelfHostNestedFieldGrowKeepsTheCallersValues(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	stdlib := e2eharness.SelfHostStdlibRoot(t)
-	dir := t.TempDir()
-	src := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(src, []byte(nestedFieldGrowSource), 0o644); err != nil {
-		t.Fatal(err)
+	// The second program gives the middle record to a callee that does the
+	// write, and that the compiler does not splice.
+	handed := strings.Replace(nestedFieldGrowSource, nestedFieldGrowInline, nestedFieldGrowHanded, 1)
+	if handed == nestedFieldGrowSource {
+		t.Fatal("the source does not have the body to replace")
 	}
-	out := filepath.Join(dir, "prog")
-	cmd := exec.Command(cli, "-target", "x86-64-linux", "-o", out, src, stdlib)
-	cmd.Env = append(os.Environ(), "FERN_SANITIZE=1")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("compile: %v\n%s", err, output)
-	}
-	output, err := exec.Command(out).CombinedOutput()
-	if err != nil {
-		t.Fatalf("run: %v\n%s", err, output)
-	}
-	got := string(output)
-	if !strings.HasPrefix(got, nestedFieldGrowWant) {
-		t.Fatalf("output:\n%s\nwant:\n%s", got, nestedFieldGrowWant)
-	}
-	if rest := strings.TrimPrefix(got, nestedFieldGrowWant); !strings.Contains(rest, "live_bytes=0") || strings.Count(rest, "\n") != 1 {
-		t.Fatalf("the sanitizer reported:\n%s", rest)
+	for _, tc := range []struct{ name, src, want string }{
+		{"the function does the write", nestedFieldGrowSource, nestedFieldGrowWant},
+		{"a callee does the write", handed, nestedFieldGrowWant},
+		{"the frame needs the record after the write", nestedFieldGrowAfterSource, nestedFieldGrowAfterWant},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "main.fern")
+			if err := os.WriteFile(src, []byte(tc.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out := filepath.Join(dir, "prog")
+			cmd := exec.Command(cli, "-target", "x86-64-linux", "-o", out, src, stdlib)
+			cmd.Env = append(os.Environ(), "FERN_SANITIZE=1")
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("compile: %v\n%s", err, output)
+			}
+			output, err := exec.Command(out).CombinedOutput()
+			if err != nil {
+				t.Fatalf("run: %v\n%s", err, output)
+			}
+			got := string(output)
+			if !strings.HasPrefix(got, tc.want) {
+				t.Fatalf("output:\n%s\nwant:\n%s", got, tc.want)
+			}
+			if rest := strings.TrimPrefix(got, tc.want); !strings.Contains(rest, "live_bytes=0") || strings.Count(rest, "\n") != 1 {
+				t.Fatalf("the sanitizer reported:\n%s", rest)
+			}
+		})
 	}
 }
+
+const nestedFieldGrowInline = `function (l: L) bound(n: i32): L {
+  return L { names: l.names.append(n), by: Ix { heads: l.by.heads.with(n, l.by.count + 100), count: l.by.count + 1 } };
+}`
+
+const nestedFieldGrowHanded = `function (ix: Ix) entered(n: i32): Ix {
+  let t = 0;
+  for k in 0..3 {
+    t = t + k;
+  }
+  return Ix { heads: ix.heads.with(n, ix.count + 97 + t), count: ix.count + 1 };
+}
+function (l: L) bound(n: i32): L {
+  return L { names: l.names.append(n), by: l.by.entered(n) };
+}`
 
 const nestedFieldGrowSource = `struct Ix { heads: i32[], count: i32 }
 struct L { names: i32[], by: Ix }
@@ -161,4 +190,87 @@ via k names=2 heads=201 count=2
 shared m names=1 heads=100 count=1
 shared b names=0 heads=0 count=0
 shared ix=0
+`
+
+// The frame reads the record, gives it on, or returns its middle record
+// after the write, so the write must not clear a slot that it still needs.
+const nestedFieldGrowAfterSource = `struct Ix { heads: i32[], count: i32 }
+struct L { names: i32[], by: Ix }
+function (ix: Ix) entered(n: i32): Ix {
+  let t = 0;
+  for k in 0..3 {
+    t = t + k;
+  }
+  return Ix { heads: ix.heads.with(n, ix.count + 97 + t), count: ix.count + 1 };
+}
+function sum(xs: i32[]): i32 {
+  let t = 0;
+  for x in xs { t = t + x; }
+  return t;
+}
+function total(l: L): i32 {
+  return sum(l.by.heads) + l.by.count + l.names.len();
+}
+function fresh(): L {
+  return L { names: [7], by: Ix { heads: [1, 1, 1, 1, 1, 1, 1, 1], count: 0 } };
+}
+// The frame reads the array again after the call.
+function reads_after(l: L, n: i32): i32 {
+  let m = l.by.entered(n);
+  return sum(l.by.heads) * 1000 + sum(m.heads);
+}
+// The frame gives the whole record on after the call.
+function passes_after(l: L, n: i32): i32 {
+  let m = l.by.entered(n);
+  return total(l) * 1000 + sum(m.heads);
+}
+// The frame returns the middle record that it read before the call.
+function returns_mid(l: L, n: i32): Ix {
+  let b = l.by;
+  let m = l.by.entered(n);
+  if (m.count > 100) {
+    return m;
+  }
+  return b;
+}
+// The frame writes in place and reads the parameter after that.
+function writes_then_reads(l: L, n: i32): i32 {
+  let h = l.by.heads.with(n, 50);
+  return sum(h) * 1000 + total(l);
+}
+// The same write in each pass of a loop.
+function writes_in_loop(l: L): i32 {
+  let t = 0;
+  for i in 0..4 {
+    let h = l.by.heads.with(i, 50);
+    t = t + sum(h);
+  }
+  return t * 1000 + total(l);
+}
+// The frame gives the field two times.
+function hands_twice(l: L): i32 {
+  let a = l.by.entered(1);
+  let b = l.by.entered(2);
+  return sum(a.heads) * 1000 + sum(b.heads);
+}
+function main(): i32 {
+  print("reads_after " + reads_after(fresh(), 2).to_string());
+  print("passes_after " + passes_after(fresh(), 2).to_string());
+  print("returns_mid " + sum(returns_mid(fresh(), 2).heads).to_string());
+  print("writes_then_reads " + writes_then_reads(fresh(), 2).to_string());
+  print("writes_in_loop " + writes_in_loop(fresh()).to_string());
+  print("hands_twice " + hands_twice(fresh()).to_string());
+  let l = fresh();
+  print("kept " + reads_after(l, 3).to_string() + " " + total(l).to_string());
+  return 0;
+}
+`
+
+const nestedFieldGrowAfterWant = `reads_after 8107
+passes_after 9107
+returns_mid 8
+writes_then_reads 57009
+writes_in_loop 228009
+hands_twice 107107
+kept 8107 9
 `

@@ -6504,6 +6504,35 @@ function main(): i32 {
 }
 `
 
+// As semNestedFieldGrowSource, but a callee that is not spliced does the write.
+const semHandedFieldGrowSource = `
+struct Ix { heads: i32[], count: i32 }
+struct L { names: i32[], by: Ix }
+function (ix: Ix) entered(n: i32): Ix {
+  let t = 0;
+  for k in 0..3 {
+    t = t + k;
+  }
+  return Ix { heads: ix.heads.with(n % 8, ix.count + t), count: ix.count + 1 };
+}
+function (l: L) bound(n: i32): L {
+  return L { names: l.names.append(n), by: l.by.entered(n) };
+}
+function other(l: L): i32 {
+  let inner = l;
+  inner = inner.bound(1);
+  return inner.by.count;
+}
+function main(): i32 {
+  let l = L { names: [], by: Ix { heads: [0, 0, 0, 0, 0, 0, 0, 0], count: 0 } };
+  let t = other(l);
+  for i in 0..100 {
+    l = l.bound(i);
+  }
+  return (l.by.count + t) % 7;
+}
+`
+
 const semSpreadTwoWithsSource = `
 struct C { fds: i64[], t: i64[], k: boolean[] }
 
@@ -6662,6 +6691,7 @@ func TestSelfHostSemanticAllocationCounts(t *testing.T) {
 		{"a-destructured-element-is-taken-past-a-later-sibling-read", 2, semTupleDestructureTakeSource},
 		{"a-field-is-taken-past-a-sibling-read-in-a-later-block", 4, semSpreadTwoWithsSource},
 		{"a-grow-through-two-records-of-a-borrowed-parameter", 208, semNestedFieldGrowSource},
+		{"a-record-field-handed-to-a-callee-that-grows-it", 209, semHandedFieldGrowSource},
 	} {
 		t.Run(prog.name, func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "main.fern")
