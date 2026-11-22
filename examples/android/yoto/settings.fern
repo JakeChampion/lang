@@ -306,6 +306,23 @@ function field_view[M](field: Field, value: string, edit: (string, string) => M)
   return ui.column(rows).spaced(4.0).wide();
 }
 
+// The brightness setting `from` after `step` steps of 1 down to `target`
+// percent. A display on "auto" starts from 100. A display at `target` or
+// below stays as it is.
+pub function dimmed(from: string, step: i32, target: i32): string {
+  let start = i32.parse_i32(from).unwrap_or(100);
+  if (start <= target) {
+    return from;
+  }
+  return (start - step).max(target).to_string();
+}
+
+// The number of the steps of 1 from the brightness setting `from` down to
+// `target` percent.
+pub function dim_steps(from: string, target: i32): i32 {
+  return (i32.parse_i32(from).unwrap_or(100) - target).max(0);
+}
+
 // The clock time `value`, as HH:MM, after `minutes` more minutes. The time
 // stays in one day. A value that is not a time counts as 07:00.
 pub function shifted_time(value: string, minutes: i32): string {
