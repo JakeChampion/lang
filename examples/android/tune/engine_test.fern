@@ -272,6 +272,33 @@ function test_long_pre_skip(): test.TestOutcome {
   return test.assert_true(last.done && samples.len() == 4120 && last.at == 4120i64);
 }
 
+function test_chained_opus(): test.TestOutcome {
+  let mono = fixture.opus();
+  let stereo = fixture.stereo_opus();
+  let Some(single) = engine.open(mono) else {
+    return test.fail("mono link");
+  };
+  let (reference, _, _) = drained(single);
+  let bytes = fixture.joined(mono, stereo);
+  let Some(deck) = engine.open(bytes) else {
+    return test.fail("chained file");
+  };
+  if (deck.channels != 2 || deck.total != 54000i64) {
+    return test.fail("chain format and duration");
+  }
+  let (samples, _, end) = drained(deck);
+  if (samples.len() != 108000 || end.at != 54000i64) {
+    return test.fail("chain sample count and final position");
+  }
+  for i in 0..reference.len() {
+    if (samples[2 * i] != reference[i] || samples[2 * i + 1] != reference[i]) {
+      return test.fail("mono link maps to both channels");
+    }
+  }
+  let (tail, _, sought) = drained(end.seek(0.9375));
+  return test.assert_true(tail.len() == 6750 && sought.at == 54000i64 && sought.done);
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune engine");
   r = r.it("a WAV file plays each sample", test_wav_plays_each_sample);
@@ -284,5 +311,6 @@ function main(): i32 {
   r = r.it("an M4A file with ALAC sound plays", test_alac_plays);
   r = r.it("a file plays from a window of it", test_a_file_plays_from_a_window);
   r = r.it("Opus pre-skip can span more than 64 packets", test_long_pre_skip);
+  r = r.it("chained Opus links share one playback and seek timeline", test_chained_opus);
   return r.finish();
 }
