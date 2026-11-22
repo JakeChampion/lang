@@ -6320,10 +6320,19 @@ function arm64_fam_is_excl(fam: i32): boolean {
 }
 
 function arm64_gas_bad_ext_token(mnem: string, ops: string[], lm: Arm64Mem): string {
+  let fam = arm64_gas_family(mnem);
+  if (fam == arm64_fam_fixed() && ops.len() > 0) {
+    if (mnem != "ret" || ops.len() != 1) {
+      return "operands";
+    }
+    if (!arm64_gas_data_gp(ops[0]) || arm64_gas_is_w(ops[0])) {
+      return "register";
+    }
+    return "";
+  }
   if (arm64_gas_routes_vec(mnem, ops)) {
     return "";
   }
-  let fam = arm64_gas_family(mnem);
   let t = arm64_gas_bad_ext_alu(fam, mnem, ops);
   if (t.len() > 0) {
     return t;
@@ -7332,7 +7341,11 @@ function arm64_gas_bcond_suffix(mnem: string): string {
 function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
   let fam = arm64_gas_family(mnem);
   if (fam == arm64_fam_fixed()) {
-    util.push_bytes(a.code, arm64_le32([], arm64_fixed_word(mnem)));
+    if (mnem == "ret" && ops.len() == 1) {
+      arm64_push_word(a.code, arm64_ret_word(arm64_gas_reg(ops[0])));
+      return a;
+    }
+    arm64_push_word(a.code, arm64_fixed_word(mnem));
     return a;
   }
   if (fam == arm64_fam_landing()) {
@@ -8955,9 +8968,6 @@ function arm64_gas_line_faults(mnem: string, ops: string[], lmem: Arm64Mem): str
 
 function arm64_gas_token_faults(mnem: string, ops: string[], lmem: Arm64Mem): string[] {
   let out: string[] = [];
-  if ((mnem == "yield" || mnem == "wfe" || mnem == "wfi") && ops.len() != 0) {
-    out = out.append(mnem + ":operands");
-  }
   let badreg = arm64_gas_bad_reg_token(ops);
   if (badreg.len() > 0) {
     out = out.append(mnem + ":" + badreg);
