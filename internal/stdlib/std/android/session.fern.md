@@ -290,7 +290,7 @@ pub function set_transport_actions(ctx: usize, s: Session, state: i32, at_ms: i6
   for action in custom {
     let name = jni.new_string(e, action.id);
     let label = jni.new_string(e, action.label);
-    let added = jni.call_object(e, builder, "addCustomAction", "(Ljava/lang/String;Ljava/lang/CharSequence;I)L" + STATE_BUILDER + ";", [name, label, action.icon as usize]);
+    let added = jni.call_object(e, builder, "addCustomAction", "(Ljava/lang/String;Ljava/lang/String;I)L" + STATE_BUILDER + ";", [name, label, action.icon as usize]);
     for ref in [name, label, added] {
       let dropped = jni.delete_local_ref(e, ref);
     }
