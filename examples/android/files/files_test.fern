@@ -10,6 +10,7 @@ import "std/test";
 import "./files";
 import "./prefs";
 import "./smb";
+import "./store";
 
 function test_fonts(): text.Fonts {
   let dir = "examples/android/paper/testfonts";
@@ -313,6 +314,17 @@ function test_search_below(): test.TestOutcome {
   return test.assert_eq(wrote && renamed, true);
 }
 
+function test_folder_sizes(): test.TestOutcome {
+  let dir = fixture();
+  let wrote = write_file_bytes(dir + "/Music/a.flac", [0u8, 1u8, 2u8, 3u8, 4u8, 5u8]).is_ok() && write_file(dir + "/Download/old/b.txt", "12").is_ok();
+  let s = done(sim.tap(simulator(dir, []), "Phone storage"));
+  s = done(sim.tap(s, "Measure the folders"));
+  preview(s, "15-sizes");
+  let shown = names(s) == "Music,Download,notes.txt,photo.jpg" && sim.shows(s, "6 B · " + store.day_text(now_unix_ms() / 1000i64));
+  let removed = remove_dir_all(dir);
+  return test.assert_eq(wrote && shown, true);
+}
+
 function test_no_access(): test.TestOutcome {
   let s = simulator("/no/such/storage", []);
   preview(s, "10-access");
@@ -329,6 +341,7 @@ function main(): i32 {
   r = r.it("open a file in another app", test_open);
   r = r.it("keep the pins, the recent files and the sort order", test_pins_recent_and_prefs);
   r = r.it("search the folders below", test_search_below);
+  r = r.it("measure the folders and sort by size", test_folder_sizes);
   r = r.it("ask for access when the storage is closed", test_no_access);
   return r.finish();
 }

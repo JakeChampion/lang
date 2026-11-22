@@ -18,6 +18,8 @@ saved server. The headings are words of round dots.
 - The person can pin a folder to the home screen. The home screen also
   shows the last 8 files that the person opened.
 - A search looks in each folder below the folder that shows.
+- **Sizes** measures each folder of the folder that shows, and sorts by
+  size, so the person finds what fills the storage.
 - The app keeps the sort order, the hidden files setting, the pins and the
   recent files from one start to the next (`prefs.fern`).
 

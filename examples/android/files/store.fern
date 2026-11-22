@@ -320,6 +320,33 @@ pub function advance(src: Place, dst: Place, step: Step, offset: i64): Result[i6
   return Ok(part.data.len() as i64);
 }
 
+// The bytes of the files below the directory `path`, in at most
+// MOST_SEARCHED directories.
+function total(place: Place, path: string): i64 {
+  let sum = 0i64;
+  let waiting = [path];
+  let read = 0;
+  while (read < waiting.len() && read < MOST_SEARCHED) {
+    if let Ok(entries) = list(place, waiting[read]) {
+      for e in entries {
+        if (e.dir) {
+          waiting = waiting.append(join(waiting[read], e.name));
+        } else {
+          sum += e.size;
+        }
+      }
+    }
+    read += 1;
+  }
+  return sum;
+}
+
+// `entries` of the directory `path`, each directory with the bytes of the
+// files below it as its size.
+pub function measured(place: Place, path: string, entries: smb.Entry[]): smb.Entry[] {
+  return entries.map((e: smb.Entry): smb.Entry => if (e.dir) { smb.Entry { ...e, size: total(place, join(path, e.name)) } } else { e });
+}
+
 // The most items that a search gives, and the most directories that it
 // reads.
 pub const MOST_FOUND: i32 = 200;

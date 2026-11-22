@@ -55,6 +55,7 @@ enum Job {
   ReadText(i64, store.Place, string),
   ReadPicture(i64, store.Place, string),
   Search(i64, store.Place, string, string),
+  Measure(i64, store.Place, string, smb.Entry[]),
   Shares(i64, smb.Server),
 }
 
@@ -167,6 +168,8 @@ pub enum Msg {
   ShareFile(string),
   TogglePin,
   OpenMark(Mark),
+  MeasureFolders,
+  Measured(i64, smb.Entry[]),
   DeepSearch,
   Searched(i64, Result[smb.Entry[], string]),
   AskAccess,
@@ -747,6 +750,16 @@ function browse_update(own m: Model, msg: Msg): Model {
     OpenMark(mark) => {
       return open_mark(m, mark);
     },
+    MeasureFolders => {
+      let revision = m.revision + 1i64;
+      return Model { ...m, loading: true, sort: 1, unkept: true, note: "", fault: "", revision: revision, job: Some(Measure(revision, m.place, m.path, m.entries)) };
+    },
+    Measured(revision, entries) => {
+      if (revision != m.revision) {
+        return m;
+      }
+      return Model { ...m, entries: entries, loading: false };
+    },
     DeepSearch => {
       if (m.query.trim().len() == 0) {
         return m;
@@ -861,6 +874,9 @@ function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
       },
       ReadPicture(revision, place, path) => {
         return PictureRead(revision, store.read(place, path, 0i64, PICTURE_BYTES));
+      },
+      Measure(revision, place, path, entries) => {
+        return Measured(revision, store.measured(place, path, entries));
       },
       Search(revision, place, path, needle) => {
         return Searched(revision, store.search(place, path, needle));
@@ -1118,7 +1134,8 @@ function home(m: Model): ui.El[Msg] {
 function entry_detail(e: smb.Entry): string {
   let day = store.day_text(e.modified);
   if (e.dir) {
-    return if (day.len() > 0) { "Folder · " + day } else { "Folder" };
+    let what = if (e.size > 0i64) { store.size_text(e.size) } else { "Folder" };
+    return if (day.len() > 0) { what + " · " + day } else { what };
   }
   return if (day.len() > 0) { store.size_text(e.size) + " · " + day } else { store.size_text(e.size) };
 }
@@ -1176,7 +1193,8 @@ function browse(m: Model): ui.El[Msg] {
   head = head.append(actions_row([
     ui.text_button("Sort: " + SORTS[m.sort], NextSort).described("Sort order · " + SORTS[m.sort]),
     ui.text_button(if (m.hidden) { "Hidden: shown" } else { "Hidden: off" }, ToggleHidden),
-    ui.text_button("New folder", NewFolder),
+    ui.text_button("New", NewFolder).described("New folder"),
+    ui.text_button("Sizes", MeasureFolders).described("Measure the folders"),
   ]));
   head = head.append(ui.field[Msg]("filter", m.query, "Filter this folder").on_edit((text: string): Msg => Query(text)).on_submit(DeepSearch));
   if (m.found) {
