@@ -1437,15 +1437,26 @@ pub function arm64_fixed_word(mnem: string): i64 {
 }
 
 pub function arm64_bti_word(ops: string[]): i64 {
-  let op2: i64 = 0;
-  if (ops.len() == 1 && ops[0] == "c") {
-    op2 = 2;
-  } else if (ops.len() == 1 && ops[0] == "j") {
-    op2 = 4;
-  } else if (ops.len() == 1 && ops[0] == "jc") {
-    op2 = 6;
+  if (ops.len() == 0) {
+    return 0xd503241f;
   }
-  return 0xd503241f | op2 << 5;
+  if (ops.len() != 1) {
+    return -1;
+  }
+  match (ops[0].to_ascii_lower()) {
+    "c" => {
+      return 0xd503245f;
+    },
+    "j" => {
+      return 0xd503249f;
+    },
+    "jc" => {
+      return 0xd50324df;
+    },
+    _ => {
+      return -1;
+    }
+  }
 }
 
 function arm64_br_word(rn: i32): i64 {
@@ -6321,6 +6332,9 @@ function arm64_fam_is_excl(fam: i32): boolean {
 
 function arm64_gas_bad_ext_token(mnem: string, ops: string[], lm: Arm64Mem): string {
   let fam = arm64_gas_family(mnem);
+  if (fam == arm64_fam_landing() && arm64_bti_word(ops) < 0) {
+    return "operands";
+  }
   if (fam == arm64_fam_fixed() && ops.len() > 0) {
     if (mnem != "ret" || ops.len() != 1) {
       return "operands";
