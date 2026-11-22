@@ -1285,6 +1285,49 @@ function test_phone_player_handoff(): test.TestOutcome {
   return test.assert_eq(!done.on_phone && done.selected == "one" && done.phone.card.len() == 0, true);
 }
 
+function label_height(s: sim.Sim[deck.Model, deck.Msg], label: string): i32 {
+  for n in s.shell.host.lay.nodes {
+    match (n.paint) {
+      scene.Label(t, _, _, _, _) => {
+        if (t == label) {
+          return n.h;
+        }
+      },
+      _ => {}
+    }
+  }
+  return -1;
+}
+
+function test_player_transport_fits(): test.TestOutcome {
+  let Some(playback) = player_status.event("{\"playbackStatus\":\"playing\",\"cardId\":\"book\",\"chapterKey\":\"01\",\"trackKey\":\"03\",\"position\":19,\"trackLength\":114}".bytes()) else {
+    return test.fail("read the Yoto chapter, track and position");
+  };
+  let book = fixture_cards()[0];
+  let middle = book.tracks[0];
+  let tracks = [api.Track { ...middle, track_key: "02" }, middle, api.Track { ...middle, track_key: "04" }];
+  let players = [api.Player { id: "one", name: "Bedroom", online: true }];
+  let library = api.Library { players: players, cards: [api.Card { ...book, tracks: tracks }], groups: Ok([]), note: "" };
+  let m = deck.update(deck.Model { ...deck.start(), token: "test session" }, deck.LibraryLoaded(Ok(library)));
+  let s = sim.tap(simulator(m), "Bedroom, Online");
+  let initial = s.shell.app;
+  s = sim.send(s, deck.PlaybackLoaded(initial.generation, initial.now_playing.revision, Ok(playback)));
+  s = sim.send(s, deck.OpenNowPlaying);
+  let line = label_height(s, "Stop");
+  for label in ["Previous", "Pause", "Next", "Back 15 s", "Forward 30 s"] {
+    if (line <= 0 || label_height(s, label) != line) {
+      return test.fail("show " + label + " on one line");
+    }
+  }
+  let Some((_, previous)) = sim.place_of(s, "Previous", 0) else {
+    return test.fail("show Previous");
+  };
+  let Some((_, next)) = sim.place_of(s, "Next", 0) else {
+    return test.fail("show Next");
+  };
+  return test.assert_eq(previous, next);
+}
+
 function test_library_search_jobs(): test.TestOutcome {
   let first = fixture_cards()[0];
   let tracks: api.Track[] = [];
@@ -1746,6 +1789,7 @@ function main(): i32 {
   r = r.it("filter the library by collection and family group", test_library_collections);
   r = r.it("show account actions only in the menu", test_account_menu);
   r = r.it("open the full phone player and build device commands", test_now_playing_controls);
+  r = r.it("keep each player transport button on one line", test_player_transport_fits);
   r = r.it("retry one track and find the saved card after restart", test_downloaded_search_and_retry);
   r = r.it("validate scanned card codes and shop links", test_scan_and_shop);
   r = r.it("Android Back returns through search, downloads, and tabs", test_android_back_returns_through_tabs);

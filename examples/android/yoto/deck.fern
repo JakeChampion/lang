@@ -3946,28 +3946,31 @@ function phone_now_playing(m: Model, screen: ui.Screen): ui.El[Msg][] {
   return rows.append(ui.tabs(["0.75×", "1×", "1.25×", "1.5×", "2×"], index, (i: i32): Msg => PhoneRate([75, 100, 125, 150, 200][i])));
 }
 
-function device_transport(m: Model, state: player_status.Playback): ui.El[Msg][] {
+function device_transport(m: Model, state: player_status.Playback, play: ui.El[Msg]): ui.El[Msg][] {
   if (state.position < 0 || state.chapter_key.len() == 0 || state.track_key.len() == 0 || state.card.len() == 0) {
-    return [];
+    return [ui.row([play]).centered().wide()];
   }
-  let rows: ui.El[Msg][] = [ui.text(playback_time(state.position as i64 * 1000i64) + " / " + playback_time(state.duration as i64 * 1000i64)).colored(ui.MUTED)];
   let rewind = api.PlayAt(state.card, state.chapter_key, state.track_key, (state.position - 15).max(0));
   let forward = api.PlayAt(state.card, state.chapter_key, state.track_key, (state.position + 30).min(state.duration.max(state.position)));
-  let buttons = [ui.text_button("Back 15 s", Control(rewind)), ui.text_button("Forward 30 s", Control(forward))];
+  let tracks = [play];
   let i = card_index(m, state.card);
   if (i >= 0) {
-    let tracks = m.cards[i].tracks;
-    let at = tracks.position((item: api.Track): boolean => item.chapter_key == state.chapter_key && item.track_key == state.track_key).unwrap_or(-1);
+    let all = m.cards[i].tracks;
+    let at = all.position((item: api.Track): boolean => item.chapter_key == state.chapter_key && item.track_key == state.track_key).unwrap_or(-1);
     if (at > 0) {
-      let previous = tracks[at - 1];
-      buttons = [ui.text_button("Previous", Control(api.PlayTrack(state.card, previous.chapter_key, previous.track_key)))].concat(buttons);
+      let previous = all[at - 1];
+      tracks = [ui.text_button("Previous", Control(api.PlayTrack(state.card, previous.chapter_key, previous.track_key)))].concat(tracks);
     }
-    if (at >= 0 && at + 1 < tracks.len()) {
-      let next = tracks[at + 1];
-      buttons = buttons.append(ui.text_button("Next", Control(api.PlayTrack(state.card, next.chapter_key, next.track_key))));
+    if (at >= 0 && at + 1 < all.len()) {
+      let next = all[at + 1];
+      tracks = tracks.append(ui.text_button("Next", Control(api.PlayTrack(state.card, next.chapter_key, next.track_key))));
     }
   }
-  return rows.append(ui.row(buttons).spaced(4.0));
+  return [
+    ui.text[Msg](playback_time(state.position as i64 * 1000i64) + " / " + playback_time(state.duration as i64 * 1000i64)).colored(ui.MUTED),
+    ui.row(tracks).spaced(6.0).centered().wide(),
+    ui.row([ui.text_button("Back 15 s", Control(rewind)), ui.text_button("Forward 30 s", Control(forward))]).spaced(6.0).centered().wide(),
+  ];
 }
 
 function device_controls(m: Model): ui.El[Msg][] {
@@ -3990,16 +3993,16 @@ function device_controls(m: Model): ui.El[Msg][] {
     return rows;
   }
   if let Some(state) = m.now_playing.playback {
-    rows = rows.concat(device_transport(m, state));
+    let label = if (state.state == "paused") { "Resume" } else { "Pause" };
+    let action = if (state.state == "paused") { api.Resume } else { api.Pause };
+    rows = rows.concat(device_transport(m, state, ui.button(label, Control(action))));
+    rows = rows.append(ui.text_button("Stop", Control(api.Stop)));
     if (state.position >= 0 && state.chapter_key.len() > 0 && state.track_key.len() > 0 && card_index(m, state.card) >= 0) {
       rows = rows.append(ui.outlined_button("Continue on this phone", MoveToPhone));
     }
     if (state.sleep > 0) {
       rows = rows.append(ui.text("Player timer · " + playback_time(state.sleep as i64 * 1000i64) + " left").colored(ui.MUTED));
     }
-    let label = if (state.state == "paused") { "Resume" } else { "Pause" };
-    let action = if (state.state == "paused") { api.Resume } else { api.Pause };
-    rows = rows.append(ui.row([ui.button(label, Control(action)), ui.text_button("Stop", Control(api.Stop))]).spaced(8.0));
   }
   let volume = ui.slider(m.volume as f64 / 100.0, (at: f64): Msg => DeviceVolume((at * 100.0).round() as i32)).described("Player volume");
   return rows.concat([
