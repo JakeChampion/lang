@@ -28,7 +28,7 @@ The shell lays out as for a layout that is left to right. Then `on_screen` mirro
 
 `on_tap` gives an element a message. A tap on the element gives that message to `update`. A message can hold values: the row of a list, for example. `on_long` does the same for a long press. `slider` is a bar with a thumb, and `on_slide` gives each element the message of a finger that moves across it.
 
-`field` is a text field of one line, and `area` is a text field of more than one line. A tap gives a field the focus and shows the keyboard of the system, and a tap on its text puts the caret there. The program keeps the text. `on_edit` gives the field a function that makes a message from the new text, and each change gives that message to `update`. `view` gives the field the text that it shows. `on_submit` gives the field the message of the action key of the keyboard.
+`field` is a text field of one line, and `area` is a text field of more than one line. A tap gives a field the focus and shows the keyboard of the system, and a tap on its text puts the caret there. The program keeps the text. `on_edit` gives the field a function that makes a message from the new text, and each change gives that message to `update`. `view` gives the field the text that it shows. `on_submit` gives the field the message of the action key of the keyboard. `secret` makes the field show a dot for each character, for a password.
 
 `scroll` makes a column a list that scrolls down, and a row a list that scrolls across. Each list has the fling of an Android list and a spring at each end. `list` is a list that makes only the rows that show, so a list of many rows costs as much as a short one. Each list has a name, which keeps its position from frame to frame.
 
@@ -338,6 +338,8 @@ pub struct El[M] {
   // `content` is its text.
   field: string,
   hint: string,
+  // A text field that shows a dot for each character of its text.
+  secret: boolean,
   // A text field: the message of a change of its text, and the message of
   // the action key of the keyboard.
   edit: Option[(string) => M],
@@ -358,7 +360,7 @@ pub struct El[M] {
 }
 
 function element[M](kind: i32, kids: El[M][]): El[M] {
-  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: None, long: None, barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, tint: None, tint_rtl: None, count: 0, row: 0.0, build: None, start_pinned: false, field: "", hint: "", edit: None, submit: None, slide: None, moves: None, swipes: None, square: false, wraps: false, fit: false };
+  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: None, long: None, barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, tint: None, tint_rtl: None, count: 0, row: 0.0, build: None, start_pinned: false, field: "", hint: "", secret: false, edit: None, submit: None, slide: None, moves: None, swipes: None, square: false, wraps: false, fit: false };
 }
 
 // The elements one below the other.
@@ -472,6 +474,12 @@ function field_el[M](e: El[M], name: string): Option[El[M]] {
 // from the new text.
 pub function (e: El[M]) on_edit(edit: (string) => M): El[M] {
   return El { ...e, edit: Some(edit) };
+}
+
+// The field shows a dot for each character of its text, as a field of a
+// password does. An accessibility service reads the count of the characters.
+pub function (e: El[M]) secret(): El[M] {
+  return El { ...e, secret: true };
 }
 
 // The action key of the keyboard gives the message `m`.
@@ -1385,6 +1393,9 @@ function takes_part[M](e: El[M]): boolean {
 // text has its hint and its text.
 function spoken[M](e: El[M]): string {
   if (e.kind == FIELD && e.say.len() == 0 && e.content.len() > 0) {
+    if (e.secret) {
+      return e.hint + ", " + text.letters(e.content).len().to_string() + " characters";
+    }
     return e.hint + ", " + e.content;
   }
   return e.say;
@@ -1562,8 +1573,17 @@ function area_view[M](env: Env, e: El[M], w: i32, focused: boolean): FieldView {
   return with_caret(env, e, v, at - first, caret);
 }
 
-// What the field `e` shows in `w` pixels. An empty field shows its hint.
+// What the field `e` shows in `w` pixels. A secret field shows a dot in
+// the place of each character, so its caret keeps its index.
 function field_view[M](env: Env, e: El[M], w: i32): FieldView {
+  if (e.secret) {
+    return clear_view(env, El { ...e, content: "•".repeat(text.letters(e.content).len()) }, w);
+  }
+  return clear_view(env, e, w);
+}
+
+// What the field `e` shows in `w` pixels. An empty field shows its hint.
+function clear_view[M](env: Env, e: El[M], w: i32): FieldView {
   let focused = e.field == env.focus.field;
   if (e.content.len() == 0) {
     let (size, face, _) = field_type(env, e);
