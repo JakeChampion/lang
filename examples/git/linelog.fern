@@ -2,6 +2,7 @@
 // git): the ranges of each `-L`, which follow the changes of their files
 // back through the history, one commit at a time.
 import "std/array";
+import "std/i64";
 import "std/linediff";
 import "std/string";
 import "../../coreutils/lib/bre";
@@ -259,23 +260,19 @@ function strtol(s: string, at: i32): (i64, i32) {
   while (i < s.len() && c_space(s[i])) {
     i += 1;
   }
-  let negative = false;
+  let start = i;
   if (i < s.len() && (s[i] == b'+' || s[i] == b'-')) {
-    negative = s[i] == b'-';
     i += 1;
   }
   let first = i;
-  let n: i64 = 0;
   while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
-    if (n < 1000000000000) {
-      n = n * 10 + (s[i] - b'0') as i64;
-    }
     i += 1;
   }
   if (i == first) {
     return (0, at);
   }
-  return (if (negative) { -n } else { n }, i);
+  let limit = if (s[start] == b'-') { i64.MIN } else { i64.MAX };
+  return (i64.parse_i64(slice_unchecked(s, start, i)).unwrap_or(limit), i);
 }
 
 // The end of the text of `/REGEX/` that starts at `at`, after its last
