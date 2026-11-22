@@ -77,6 +77,54 @@ function test_listing(): test.TestOutcome {
   ]);
 }
 
+// A string of an RPC message, as a server writes it.
+function wide_text(out: u8[], text: string): u8[] {
+  let wide = ntlm.utf16(text).concat(ntlm.zeros(2));
+  let count = (wide.len() / 2) as i64;
+  let b = ntlm.put32(ntlm.put32(ntlm.put32(out, count), 0i64), count).concat(wide);
+  return b.concat(ntlm.zeros((4 - b.len() % 4) % 4));
+}
+
+// The reply to NetrShareEnum with a disk share, a hidden share, the pipe
+// share, and a disk share with no remark.
+function test_shares(): test.TestOutcome {
+  let stub = ntlm.put32(ntlm.put32(ntlm.put32(ntlm.put32(ntlm.put32(ntlm.put32([], 1i64), 1i64), 0x20000i64), 4i64), 0x20004i64), 4i64);
+  let kinds = [0i64, 0x80000000i64, 0x80000003i64, 0i64];
+  for i in 0..4 {
+    stub = ntlm.put32(ntlm.put32(ntlm.put32(stub, 0x20008i64), kinds[i]), if (i == 3) { 0i64 } else { 0x2000ci64 });
+  }
+  stub = wide_text(wide_text(stub, "media"), "Films and music");
+  stub = wide_text(wide_text(stub, "C$"), "Default share");
+  stub = wide_text(wide_text(stub, "IPC$"), "IPC");
+  stub = wide_text(stub, "Ünï");
+  let request = smb.share_request("nas");
+  let bind = smb.share_bind();
+  return all([
+    test.assert_eq(smb.share_names(stub).join(","), "media,Ünï"),
+    test.assert_eq(smb.share_names([]).len(), 0),
+    test.assert_eq(ntlm.get16(request, 8), request.len()),
+    test.assert_eq(ntlm.get16(request, 22), 15),
+    test.assert_eq(bind.len(), 72),
+    test.assert_eq(hex.encode(ntlm.part(bind, 32, 48)), "c84f324b7016d30112785a47bf6ee188"),
+  ]);
+}
+
+// A reply has a good signature only with the key, the flag and each byte.
+function test_signature(): test.TestOutcome {
+  let key = ntlm.zeros(15).append(7u8);
+  let head = ntlm.put32(ntlm.zeros(16), 8i64).concat(ntlm.zeros(44));
+  let framed = smb.sealed(head, "body".bytes(), key);
+  let msg = ntlm.part(framed, 4, framed.len());
+  let changed = msg.with(66, 0u8);
+  let plain = smb.sealed(ntlm.zeros(64), "body".bytes(), key);
+  return all([
+    holds(smb.signed_by(msg, key), "a signed reply did not pass"),
+    holds(!smb.signed_by(changed, key), "a changed reply passed"),
+    holds(!smb.signed_by(msg, ntlm.zeros(16)), "a reply passed with another key"),
+    holds(!smb.signed_by(ntlm.part(plain, 4, plain.len()), key), "a reply with no signature flag passed"),
+  ]);
+}
+
 function test_paths(): test.TestOutcome {
   return all([
     test.assert_eq(smb.wire_path("/docs/a b.txt"), "docs\\a b.txt"),
@@ -166,6 +214,8 @@ function main(): i32 {
   r = r.it("the NTLMv2 key follows the specification", test_ntlm_keys);
   r = r.it("the sign-in messages have the NTLM mark", test_challenge);
   r = r.it("a directory listing gives its entries without . and ..", test_listing);
+  r = r.it("the reply to a share question gives the disk shares", test_shares);
+  r = r.it("a reply passes only with its signature", test_signature);
   r = r.it("paths join, split and get free names", test_paths);
   r = r.it("sizes and days read well", test_texts);
   r = r.it("a copy in steps keeps each byte", test_copy);

@@ -30,7 +30,7 @@ pub struct Task { src: store.Place, dst: store.Place, steps: store.Step[], at: i
 
 pub enum Naming { Folder, NewName(string) }
 
-pub enum Page { Home, Browse, Item(string), Server(i32), Text(string) }
+pub enum Page { Home, Browse, Item(string), Server(i32), Text(string), Picture(string) }
 
 enum Job {
   List(i64, store.Place, string),
@@ -41,11 +41,14 @@ enum Job {
   Rename(i64, store.Place, string, string),
   Move(i64, store.Place, string, smb.Entry[], string),
   ReadText(i64, store.Place, string),
+  ReadPicture(i64, store.Place, string),
+  Shares(i64, smb.Server),
 }
 
 // What the app needs from Android: the storages of the phone, the screen
-// that gives access to all files, and a place to keep the servers.
-pub struct Platform { roots: () => Root[], ask_access: () => boolean, save: (Saved[]) => boolean }
+// that gives access to all files, a place to keep the servers, and a
+// decoder that gives an image at a width in pixels or less.
+pub struct Platform { roots: () => Root[], ask_access: () => boolean, save: (Saved[]) => boolean, decode: (u8[], i32) => Option[draw.Image] }
 
 pub struct Model {
   roots: Root[],
@@ -74,6 +77,15 @@ pub struct Model {
   confirm: string,
   draft: Saved,
   preview: string,
+  picture: Option[draw.Image],
+  // The bytes of an image that waits for the decoder, and the most pixels
+  // across that the screen shows.
+  raw: u8[],
+  wide: i32,
+  // The shares that the server of the draft has, and true while the app
+  // asks for them.
+  shares: string[],
+  finding: boolean,
   revision: i64,
   task_revision: i64,
   job: Option[Job],
@@ -118,6 +130,12 @@ pub enum Msg {
   CancelName,
   Preview(string),
   TextRead(i64, Result[smb.Part, string]),
+  ShowPicture(string, i32),
+  PictureRead(i64, Result[smb.Part, string]),
+  FindShares,
+  SharesFound(i64, Result[string[], string]),
+  PickShare(string),
+  SelectAll,
   AskAccess,
   Resumed,
 }
@@ -130,6 +148,9 @@ const SORTS: string[] = ["Name", "Size", "Date"];
 // The most bytes of a text file that the preview shows.
 const PREVIEW_BYTES: i32 = 65536;
 
+// The most bytes of an image file that the app reads to show it.
+const PICTURE_BYTES: i32 = 16777216;
+
 function no_server(): Saved {
   return Saved { name: "", server: smb.Server { host: "", port: 445, share: "", user: "", password: "", domain: "" } };
 }
@@ -138,7 +159,7 @@ function no_server(): Saved {
 pub function start(roots: Root[], servers: Saved[]): Model {
   return Model {
     roots: roots, servers: servers, granted: readable(roots), page: Home, place: store.Local, label: "", top: "", path: "", entries: [], loading: false, note: "", fault: "", sort: 0, hidden: false, query: "",
-    selecting: false, picked: [], clip: None, task: None, naming: None, name_text: "", confirm: "", draft: no_server(), preview: "", revision: 0i64, task_revision: 0i64, job: None, need_roots: false, ask_access: false, unsaved: false,
+    selecting: false, picked: [], clip: None, task: None, naming: None, name_text: "", confirm: "", draft: no_server(), preview: "", picture: None, raw: [], wide: 0, shares: [], finding: false, revision: 0i64, task_revision: 0i64, job: None, need_roots: false, ask_access: false, unsaved: false,
   };
 }
 
@@ -359,6 +380,9 @@ function select_update(own m: Model, msg: Msg): Model {
     StopSelecting => {
       return Model { ...m, selecting: false, picked: [], confirm: "" };
     },
+    SelectAll => {
+      return Model { ...m, picked: shown(m).map((e: smb.Entry): string => e.name), confirm: "" };
+    },
     Copy(cut) => {
       let items = picked_entries(m);
       if (items.len() == 0) {
@@ -423,11 +447,34 @@ function server_update(own m: Model, msg: Msg): Model {
     },
     EditServer(i) => {
       let draft = if (i >= 0 && i < m.servers.len()) { m.servers[i] } else { no_server() };
-      return Model { ...m, page: Server(i), draft: draft, note: "", fault: "", confirm: "" };
+      return Model { ...m, page: Server(i), draft: draft, shares: [], finding: false, note: "", fault: "", confirm: "" };
     },
     Draft(field, text) => {
       let next = drafted(m.draft, field, text);
       return Model { ...m, draft: next };
+    },
+    FindShares => {
+      if (m.draft.server.host.len() == 0) {
+        return failed(m, "Give the address first.");
+      }
+      let revision = m.revision + 1i64;
+      return Model { ...m, finding: true, shares: [], note: "", fault: "", revision: revision, job: Some(Shares(revision, m.draft.server)) };
+    },
+    SharesFound(revision, result) => {
+      if (revision != m.revision) {
+        return m;
+      }
+      match (result) {
+        Ok(names) => {
+          return told(Model { ...m, finding: false, shares: names }, if (names.len() == 0) { "The server shows no shares." } else { "" });
+        },
+        Err(e) => {
+          return failed(Model { ...m, finding: false }, e);
+        }
+      }
+    },
+    PickShare(name) => {
+      return Model { ...m, draft: drafted(m.draft, 2, name) };
     },
     SaveServer => {
       let Server(i) = m.page else {
@@ -493,6 +540,22 @@ function result_update(own m: Model, msg: Msg): Model {
         }
       }
     },
+    PictureRead(revision, result) => {
+      if (revision != m.revision) {
+        return m;
+      }
+      match (result) {
+        Ok(part) => {
+          if (part.size > part.data.len() as i64) {
+            return failed(Model { ...m, loading: false }, "The image is too large to show.");
+          }
+          return Model { ...m, raw: part.data };
+        },
+        Err(e) => {
+          return failed(Model { ...m, loading: false }, e);
+        }
+      }
+    },
     TextRead(revision, result) => {
       if (revision != m.revision) {
         return m;
@@ -546,7 +609,10 @@ function browse_update(own m: Model, msg: Msg): Model {
     ClosePage => {
       match (m.page) {
         Text(name) => {
-          return Model { ...m, page: Item(name), preview: "" };
+          return Model { ...m, page: Item(name), preview: "", note: "", fault: "" };
+        },
+        Picture(name) => {
+          return Model { ...m, page: Item(name), picture: None, note: "", fault: "" };
         },
         Server(_) => {
           return Model { ...m, page: Home, note: "", fault: "" };
@@ -568,6 +634,10 @@ function browse_update(own m: Model, msg: Msg): Model {
     Preview(name) => {
       let revision = m.revision + 1i64;
       return Model { ...m, page: Text(name), preview: "", loading: true, revision: revision, job: Some(ReadText(revision, m.place, store.join(m.path, name))) };
+    },
+    ShowPicture(name, wide) => {
+      let revision = m.revision + 1i64;
+      return Model { ...m, page: Picture(name), picture: None, loading: true, note: "", fault: "", revision: revision, wide: wide, job: Some(ReadPicture(revision, m.place, store.join(m.path, name))) };
     },
     AskAccess => {
       return Model { ...m, ask_access: true };
@@ -594,13 +664,13 @@ pub function update(own m: Model, msg: Msg): Model {
     NewFolder | StartRename(_) | NameText(_) | SaveName | CancelName => {
       return name_update(idle, msg);
     },
-    Tap(_) | Hold(_) | StopSelecting | Copy(_) | CopyOne(_, _) | ClearClip | Delete | DeleteOne(_) => {
+    Tap(_) | Hold(_) | StopSelecting | SelectAll | Copy(_) | CopyOne(_, _) | ClearClip | Delete | DeleteOne(_) => {
       return select_update(idle, msg);
     },
-    OpenServer(_) | EditServer(_) | Draft(_, _) | SaveServer | DeleteServer => {
+    OpenServer(_) | EditServer(_) | Draft(_, _) | SaveServer | DeleteServer | FindShares | SharesFound(_, _) | PickShare(_) => {
       return server_update(idle, msg);
     },
-    Listed(_, _) | Finished(_, _, _) | TextRead(_, _) => {
+    Listed(_, _) | Finished(_, _, _) | TextRead(_, _) | PictureRead(_, _) => {
       return result_update(idle, msg);
     },
     _ => {
@@ -655,6 +725,12 @@ function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
       },
       ReadText(revision, place, path) => {
         return TextRead(revision, store.read(place, path, 0i64, PREVIEW_BYTES));
+      },
+      ReadPicture(revision, place, path) => {
+        return PictureRead(revision, store.read(place, path, 0i64, PICTURE_BYTES));
+      },
+      Shares(revision, server) => {
+        return SharesFound(revision, smb.shares(server));
       }
     }
   })];
@@ -669,6 +745,13 @@ function effects(m: Model, platform: Platform): Model {
   if (m.unsaved) {
     let kept = platform.save(m.servers);
     next = Model { ...next, unsaved: false };
+  }
+  if (m.raw.len() > 0) {
+    let shown = platform.decode(m.raw, m.wide);
+    next = Model { ...next, raw: [], loading: false, picture: shown };
+    if (shown.is_none()) {
+      next = failed(next, "The app cannot read this image.");
+    }
   }
   if (m.need_roots) {
     let roots = platform.roots();
@@ -718,6 +801,37 @@ function dots(text: string, high: f64, role: i32): ui.El[Msg] {
 const FOLDER: string[] = ["111....", "1111111", "1.....1", "1.....1", "1.....1", "1111111"];
 
 const SHEET: string[] = ["11111..", "1...11.", "1....11", "1.....1", "1.....1", "1111111"];
+
+const PHOTO: string[] = ["1111111", "1....11", "1.....1", "1..1..1", "1.111.1", "1111111"];
+
+const SOUND: string[] = ["..1111.", "..1..1.", "..1..1.", "..1..1.", "111.111", "111.111"];
+
+const FILM: string[] = ["1111111", "1.1...1", "1.11..1", "1.11..1", "1.1...1", "1111111"];
+
+const PHOTO_ENDS: string[] = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"];
+
+const SOUND_ENDS: string[] = [".mp3", ".flac", ".wav", ".ogg", ".m4a", ".opus", ".aac"];
+
+const FILM_ENDS: string[] = [".mp4", ".mkv", ".mov", ".avi", ".webm"];
+
+function is_photo(name: string): boolean {
+  return name.to_lower().ends_with_any(PHOTO_ENDS);
+}
+
+// The picture of a file: what the end of its name says that it holds.
+function file_glyph(name: string, role: i32): ui.El[Msg] {
+  let low = name.to_lower();
+  if (low.ends_with_any(PHOTO_ENDS)) {
+    return glyph(PHOTO, "photo", role);
+  }
+  if (low.ends_with_any(SOUND_ENDS)) {
+    return glyph(SOUND, "sound", role);
+  }
+  if (low.ends_with_any(FILM_ENDS)) {
+    return glyph(FILM, "film", role);
+  }
+  return glyph(SHEET, "file", role);
+}
 
 function glyph(rows: string[], key: string, role: i32): ui.El[Msg] {
   let paint = (color: i32): ((draw.Frame, i32, i32, i32, i32) => void) => (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => {
@@ -846,7 +960,7 @@ function entry_detail(e: smb.Entry): string {
 }
 
 function entry_row(m: Model, e: smb.Entry): ui.El[Msg] {
-  let picture = if (e.dir) { glyph(FOLDER, "dir", ui.INK) } else { glyph(SHEET, "file", ui.MUTED) };
+  let picture = if (e.dir) { glyph(FOLDER, "dir", ui.INK) } else { file_glyph(e.name, ui.MUTED) };
   let words = ui.column([ui.text[Msg](e.name).sized(16.0).clamped(1), ui.text[Msg](entry_detail(e)).colored(ui.MUTED).clamped(1)]).spaced(2.0).wide();
   let kids = [picture, words];
   if (m.selecting) {
@@ -886,8 +1000,8 @@ function selection_bar(m: Model): ui.El[Msg][] {
   }
   let delete = if (m.confirm == "delete") { "Confirm delete" } else { "Delete" };
   return [ui.card([
-    ui.text[Msg](m.picked.len().to_string() + " selected").weighted(600),
-    actions_row([ui.text_button("Copy", Copy(false)), ui.text_button("Move", Copy(true)), ui.text_button(delete, Delete), ui.text_button("Cancel", StopSelecting)]),
+    ui.row([ui.text[Msg](m.picked.len().to_string() + " selected").weighted(600).wide(), ui.text_button("Cancel", StopSelecting)]).aligned(ui.CENTER),
+    actions_row([ui.text_button("Copy", Copy(false)), ui.text_button("Move", Copy(true)), ui.text_button(delete, Delete), ui.text_button("All", SelectAll)]),
   ]).spaced(4.0).wide()];
 }
 
@@ -919,17 +1033,25 @@ function sheet(title: string, rows: ui.El[Msg][], name: string): ui.El[Msg] {
   return ui.column([ui.app_bar(title, Some(ClosePage), []), body]).wide().tall();
 }
 
-function item(m: Model, name: string): ui.El[Msg] {
+// The button that shows what the file holds: its picture, or its text.
+function look_button(name: string, screen: ui.Screen): ui.El[Msg] {
+  if (is_photo(name)) {
+    return ui.button("View picture", ShowPicture(name, screen.w));
+  }
+  return ui.button("Preview as text", Preview(name));
+}
+
+function item(m: Model, name: string, screen: ui.Screen): ui.El[Msg] {
   let Some(e) = entry_named(m, name) else {
     return sheet(name, [ui.text[Msg]("The folder no longer has this file.").colored(ui.MUTED)], "item");
   };
   let delete = if (m.confirm == "delete:" + name) { "Confirm delete" } else { "Delete" };
   let rows = notice(m).concat([
-    ui.row([glyph(SHEET, "file", ui.INK), ui.text[Msg](e.name).sized(18.0).weighted(600).wide()]).aligned(ui.CENTER).spaced(14.0),
+    ui.row([file_glyph(e.name, ui.INK), ui.text[Msg](e.name).sized(18.0).weighted(600).wide()]).aligned(ui.CENTER).spaced(14.0),
     ui.text[Msg](store.size_text(e.size) + " · " + e.size.to_string() + " bytes").colored(ui.MUTED),
     ui.text[Msg]("Changed " + store.day_text(e.modified)).colored(ui.MUTED),
     ui.text[Msg](trail(m)).colored(ui.MUTED),
-    actions_row([ui.button("Preview as text", Preview(name)), ui.outlined_button("Copy", CopyOne(name, false)), ui.outlined_button("Move", CopyOne(name, true))]),
+    actions_row([look_button(name, screen), ui.outlined_button("Copy", CopyOne(name, false)), ui.outlined_button("Move", CopyOne(name, true))]),
     actions_row([ui.text_button("Rename", StartRename(name)), ui.text_button(delete, DeleteOne(name))]),
   ]);
   return sheet("File", rows, "item");
@@ -945,18 +1067,45 @@ function text_page(m: Model, name: string): ui.El[Msg] {
   return sheet(name, rows, "text:" + name);
 }
 
+function picture_page(m: Model, name: string, screen: ui.Screen): ui.El[Msg] {
+  let rows = notice(m);
+  if (m.loading) {
+    rows = rows.append(ui.text[Msg]("Reading…").colored(ui.MUTED));
+  }
+  if let Some(shown) = m.picture {
+    let wide = screen.width() - 32.0;
+    let high = wide * (shown.height as f64) / (shown.width.max(1) as f64);
+    rows = rows.append(ui.picture[Msg]("picture:" + m.path + "/" + name, shown).width(wide).height(high).rounded(8.0).described("Picture " + name));
+    rows = rows.append(ui.text[Msg](shown.width.to_string() + " × " + shown.height.to_string() + " shown").colored(ui.MUTED));
+  }
+  return sheet(name, rows, "picture:" + name);
+}
+
 function labelled(label: string, name: string, value: string, hint: string, field: i32): ui.El[Msg] {
   return ui.column([ui.text[Msg](label).colored(ui.MUTED), ui.field[Msg](name, value, hint).on_edit((text: string): Msg => Draft(field, text))]).spaced(4.0).wide();
+}
+
+// The button that asks the server for its shares, and a button for each
+// share that it gave.
+function share_picker(m: Model): ui.El[Msg] {
+  let buttons: ui.El[Msg][] = [ui.text_button(if (m.finding) { "Looking…" } else { "Find shares" }, FindShares)];
+  for name in m.shares {
+    let chosen = name == m.draft.server.share;
+    let pick = if (chosen) { ui.button(name, PickShare(name)) } else { ui.outlined_button(name, PickShare(name)) };
+    buttons = buttons.append(pick.described("Share " + name));
+  }
+  return actions_row(buttons);
 }
 
 function server_page(m: Model, at: i32): ui.El[Msg] {
   let s = m.draft.server;
   let rows = notice(m).concat([
     labelled("Address", "host", s.host, "192.168.1.10 or nas.local", 1),
-    labelled("Share", "share", s.share, "The name of the shared folder", 2),
     labelled("User", "user", s.user, "Leave empty for a guest", 3),
-    labelled("Password", "password", s.password, "Password", 4),
+    ui.column([ui.text[Msg]("Password").colored(ui.MUTED), ui.field[Msg]("password", s.password, "Password").secret().on_edit((text: string): Msg => Draft(4, text))]).spaced(4.0).wide(),
     labelled("Domain", "domain", s.domain, "Optional", 5),
+    labelled("Share", "share", s.share, "The name of the shared folder", 2),
+    share_picker(m),
     labelled("Name in this app", "label", m.draft.name, "Optional", 0),
   ]);
   let buttons = [ui.button("Save", SaveServer)];
@@ -977,7 +1126,10 @@ pub function view(m: Model, screen: ui.Screen): ui.El[Msg] {
       return browse(m);
     },
     Item(name) => {
-      return item(m, name);
+      return item(m, name, screen);
+    },
+    Picture(name) => {
+      return picture_page(m, name, screen);
     },
     Server(at) => {
       return server_page(m, at);

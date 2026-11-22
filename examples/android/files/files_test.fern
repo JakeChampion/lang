@@ -41,12 +41,25 @@ function nas(): files.Saved {
   return files.Saved { name: "Films", server: smb.Server { host: "192.168.1.20", port: 445, share: "media", user: "jo", password: "pw", domain: "" } };
 }
 
+// The decoder of the tests: bytes that start with 1 are a red tile.
+function tile(bytes: u8[]): Option[draw.Image] {
+  if (bytes.len() == 0 || bytes[0] != 1u8) {
+    return None;
+  }
+  let pixels: u8[] = [];
+  for i in 0..8 {
+    pixels = pixels.concat([215u8, 25u8, 33u8, 255u8]);
+  }
+  return Some(draw.Image { width: 4, height: 2, pixels: pixels });
+}
+
 function simulator(dir: string, servers: files.Saved[]): sim.Sim[files.Model, files.Msg] {
   let roots = [files.Root { label: "Phone storage", path: dir, total: 128000000000i64, free: 51200000000i64 }];
   let platform = files.Platform {
     roots: (): files.Root[] => roots,
     ask_access: (): boolean => true,
     save: (kept: files.Saved[]): boolean => write_file(dir + "/.saved", kept.len().to_string()).is_ok(),
+    decode: (bytes: u8[], wide: i32): Option[draw.Image] => tile(bytes),
   };
   return sim.scaled(sim.themed(sim.start(files.start(roots, servers), files.program(platform), test_fonts(), 720, 1600, 2.0), true), 1.0);
 }
@@ -208,6 +221,30 @@ function test_servers(): test.TestOutcome {
   return test.assert_eq(none && told, true);
 }
 
+function test_picture_and_select_all(): test.TestOutcome {
+  let dir = fixture();
+  let wrote = write_file(dir + "/broken.png", "not an image").is_ok();
+  let s = done(sim.tap(simulator(dir, []), "Phone storage"));
+  s = sim.tap(s, "photo.jpg");
+  s = done(sim.tap(s, "View picture"));
+  preview(s, "11-picture");
+  if (!sim.says(s, "Picture photo.jpg") || !sim.shows(s, "4 × 2 shown")) {
+    return test.fail("the picture of the file must show");
+  }
+  s = sim.back(sim.back(s));
+  s = sim.tap(s, "broken.png");
+  s = done(sim.tap(s, "View picture"));
+  if (!sim.shows(s, "The app cannot read this image.")) {
+    return test.fail("a file that is not an image must give a note");
+  }
+  s = sim.back(sim.back(s));
+  s = sim.hold(s, "Music");
+  s = sim.tap(s, "All");
+  let all = sim.shows(s, "5 selected");
+  let removed = remove_dir_all(dir);
+  return test.assert_eq(all && wrote, true);
+}
+
 function test_no_access(): test.TestOutcome {
   let s = simulator("/no/such/storage", []);
   preview(s, "10-access");
@@ -220,6 +257,7 @@ function main(): i32 {
   r = r.it("copy and move a selection", test_copy_and_move);
   r = r.it("make a folder, rename, preview and delete", test_folder_rename_delete);
   r = r.it("save and remove a server", test_servers);
+  r = r.it("show a picture and select all", test_picture_and_select_all);
   r = r.it("ask for access when the storage is closed", test_no_access);
   return r.finish();
 }

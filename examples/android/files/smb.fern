@@ -60,6 +60,9 @@ const NO_MORE_FILES: i64 = 0x80000006i64;
 
 const END_OF_FILE: i64 = 0xc0000011i64;
 
+// A read gave a part of a message of a pipe, and the pipe has more.
+const BUFFER_OVERFLOW: i64 = 0x80000005i64;
+
 // The most bytes of one read or one write. A request of this size costs
 // one credit in each dialect.
 pub const CHUNK: i32 = 65536;
@@ -156,6 +159,15 @@ pub function sealed(head: u8[], body: u8[], key: u8[]): u8[] {
   return frame.concat(msg);
 }
 
+// True when the reply `msg` has the signature that `key` gives it.
+pub function signed_by(msg: u8[], key: u8[]): boolean {
+  if (msg.len() < 64 || (ntlm.get32(msg, 16) & 8i64) == 0i64) {
+    return false;
+  }
+  let clear = ntlm.part(msg, 0, 48).concat(ntlm.zeros(16)).concat(array.drop(msg, 64));
+  return ntlm.part(crypto.hmac_sha256(key, clear), 0, 16) == ntlm.part(msg, 48, 64);
+}
+
 // Sends one request and reads its reply. The server can send a reply that
 // says that the work goes on: the reply after it is the result.
 function request(sock: Socket, st: State, command: i32, body: u8[]): (State, Result[Answer, string]) {
@@ -177,6 +189,9 @@ function request(sock: Socket, st: State, command: i32, body: u8[]): (State, Res
         let status = ntlm.get32(msg, 8);
         if (status == PENDING) {
           continue;
+        }
+        if (st.signs && !signed_by(msg, st.key)) {
+          return (after, Err("The server sent a reply with a wrong signature."));
         }
         return (after, Ok(Answer { status: status, body: array.drop(msg, 64), tree: ntlm.part(msg, 36, 40), session: ntlm.part(msg, 40, 48) }));
       },
@@ -412,6 +427,131 @@ pub function read(s: Server, path: string, offset: i64, limit: i32): Result[Part
       return Err(failure);
     }
     return Ok(Part { data: data, size: file.size });
+  });
+}
+
+// A string of an RPC message: its counts, its characters with the 0 at
+// the end, and zeros up to a multiple of 4 bytes.
+function rpc_string(out: u8[], text: string): u8[] {
+  let wide = ntlm.utf16(text).concat(ntlm.zeros(2));
+  let count = (wide.len() / 2) as i64;
+  let b = ntlm.put32(ntlm.put32(ntlm.put32(out, count), 0i64), count).concat(wide);
+  return b.concat(ntlm.zeros((4 - b.len() % 4) % 4));
+}
+
+function rpc_head(kind: i32, length: i32): u8[] {
+  let b: u8[] = [5u8, 0u8, kind as u8, 3u8, 16u8, 0u8, 0u8, 0u8];
+  return ntlm.put32(ntlm.put16(ntlm.put16(b, length), 0), 1i64);
+}
+
+// The RPC message that binds a pipe to the server service, with NDR.
+pub function share_bind(): u8[] {
+  let service: u8[] = [0xc8, 0x4f, 0x32, 0x4b, 0x70, 0x16, 0xd3, 0x01, 0x12, 0x78, 0x5a, 0x47, 0xbf, 0x6e, 0xe1, 0x88];
+  let ndr: u8[] = [0x04, 0x5d, 0x88, 0x8a, 0xeb, 0x1c, 0xc9, 0x11, 0x9f, 0xe8, 0x08, 0x00, 0x2b, 0x10, 0x48, 0x60];
+  let b = ntlm.put32(ntlm.put32(ntlm.put16(ntlm.put16(rpc_head(11, 72), 4280), 4280), 0i64), 1i64);
+  b = ntlm.put16(ntlm.put16(ntlm.put16(b, 0), 1).concat(service), 3);
+  return ntlm.put32(ntlm.put16(b, 0).concat(ndr), 2i64);
+}
+
+// The RPC message that asks the server `host` for its shares: the call
+// NetrShareEnum at the level 1.
+pub function share_request(host: string): u8[] {
+  let stub = rpc_string(ntlm.put32([], 0x20000i64), "\\\\" + host);
+  stub = ntlm.put32(ntlm.put32(ntlm.put32(ntlm.put32(ntlm.put32(stub, 1i64), 1i64), 0x20004i64), 0i64), 0i64);
+  stub = ntlm.put32(ntlm.put32(stub, 0xffffffffi64), 0i64);
+  let head = ntlm.put16(ntlm.put16(ntlm.put32(rpc_head(0, 24 + stub.len()), stub.len() as i64), 0), 15);
+  return head.concat(stub);
+}
+
+// The string of an RPC message at the byte `at`, and the byte after it.
+function rpc_text(stub: u8[], at: i32): (string, i32) {
+  let count = ntlm.get32(stub, at + 8) as i32;
+  let end = at + 12 + count * 2;
+  let text = ntlm.text16(ntlm.part(stub, at + 12, end - 2));
+  return (text, end + (4 - end % 4) % 4);
+}
+
+// The names of the disk shares in the reply to `share_request`, with no
+// share whose name ends in "$".
+pub function share_names(stub: u8[]): string[] {
+  if (stub.len() < 24 || ntlm.get32(stub, 8) == 0i64 || ntlm.get32(stub, 16) == 0i64) {
+    return [];
+  }
+  let count = ntlm.get32(stub, 12) as i32;
+  let at = 24 + count * 12;
+  let out: string[] = [];
+  for i in 0..count {
+    if (at + 12 > stub.len()) {
+      break;
+    }
+    let kind = ntlm.get32(stub, 24 + i * 12 + 4);
+    let (name, after) = rpc_text(stub, at);
+    at = after;
+    if (ntlm.get32(stub, 24 + i * 12 + 8) != 0i64) {
+      let (remark, next) = rpc_text(stub, at);
+      at = next;
+    }
+    if ((kind & 0xffffi64) == 0i64 && !name.ends_with("$")) {
+      out = out.append(name);
+    }
+  }
+  return out;
+}
+
+// Sends `message` on the pipe `id` and reads the RPC message that answers:
+// each of its parts, up to the last one.
+function pipe_call(sock: Socket, st: State, id: u8[], message: u8[]): (State, Result[u8[], string]) {
+  let q = ntlm.put64(ntlm.put32(ntlm.put16(ntlm.put16([], 49), 112), message.len() as i64), 0i64).concat(id);
+  q = ntlm.put32(ntlm.put16(ntlm.put16(ntlm.put32(ntlm.put32(q, 0i64), 0i64), 0), 0), 0i64).concat(message);
+  let (wrote, sent) = request(sock, st, WRITE, q);
+  if let Err(e) = expect(sent, OK) {
+    return (wrote, Err(e));
+  }
+  let state = wrote;
+  let stub: u8[] = [];
+  let part: u8[] = [];
+  while (true) {
+    let r = ntlm.put64(ntlm.put32(ntlm.put16([], 49).append(80u8).append(0u8), CHUNK as i64), 0i64).concat(id);
+    r = ntlm.put16(ntlm.put16(ntlm.put32(ntlm.put32(ntlm.put32(r, 0i64), 0i64), 0i64), 0), 0).append(0u8);
+    let (next, got) = request(sock, state, READ, r);
+    state = next;
+    let Ok(a) = got else {
+      return (state, Err(got.err().unwrap_or("")));
+    };
+    if (a.status != OK && a.status != BUFFER_OVERFLOW) {
+      return (state, Err(status_text(a.status)));
+    }
+    let at = a.body[2] as i32 - 64;
+    part = part.concat(ntlm.part(a.body, at, at + ntlm.get32(a.body, 4) as i32));
+    if (part.len() < 16 || part.len() < ntlm.get16(part, 8)) {
+      continue;
+    }
+    if (part[2] != 2u8) {
+      return (state, Ok(part));
+    }
+    stub = stub.concat(ntlm.part(part, 24, ntlm.get16(part, 8)));
+    if ((part[3] & 2u8) != 0u8) {
+      return (state, Ok(stub));
+    }
+    part = array.drop(part, ntlm.get16(part, 8));
+  }
+  return (state, Err("The server did not answer."));
+}
+
+// The names of the disk shares of the server. The `share` of `s` has no
+// effect: the question goes to the pipe of the server service.
+pub function shares(s: Server): Result[string[], string] {
+  return with_share(Server { ...s, share: "IPC$" }, (sock: Socket, st: State): Result[string[], string] => {
+    let (st1, opened) = open(sock, st, "srvsvc", 0x12019fi64, 1i64, 0x40i64, 0i64);
+    let pipe = opened?;
+    let (st2, bound) = pipe_call(sock, st1, pipe.id, share_bind());
+    let ack = bound?;
+    if (ack.len() < 3 || ack[2] != 12u8) {
+      return Err("The server does not list its shares.");
+    }
+    let (st3, answered) = pipe_call(sock, st2, pipe.id, share_request(s.host));
+    let (last, closed) = close(sock, st3, pipe.id);
+    return Ok(share_names(answered?));
   });
 }
 
