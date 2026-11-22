@@ -1,13 +1,12 @@
 import "std/json";
 import "./api";
 
-pub enum Page { Hub, Scan, Create, Discover, Setup }
+pub enum Page { Scan, Create, Discover, Setup }
 
 pub enum Native { ScanStart, ScanStop, RecordStart, RecordStop, RecordDiscard, PickAudio, LaunchOfficial, LaunchLink(string) }
 
 pub struct State {
   page: Option[Page],
-  return_to_hub: boolean,
   action: Option[Native],
   note: string,
   scanning: boolean,
@@ -27,7 +26,7 @@ pub struct State {
 
 pub function empty(): State {
   return State {
-    page: None, return_to_hub: false, action: None, note: "", scanning: false, address: "", scan_result: None, recording: false, choosing_cover: false,
+    page: None, action: None, note: "", scanning: false, address: "", scan_result: None, recording: false, choosing_cover: false,
     importing: false, import_id: 0, draft: api.empty_playlist(), editing: false, busy: false, discover_filter: 0, show_shop: false, shop: [],
   };
 }
@@ -39,15 +38,11 @@ pub function close_tool(s: State): State {
   } else if (s.recording) {
     action = Some(RecordDiscard);
   }
-  return State { ...s, page: None, return_to_hub: false, action: action, scanning: false, recording: false, choosing_cover: false, importing: false, note: "" };
+  return State { ...s, page: None, action: action, scanning: false, recording: false, choosing_cover: false, importing: false, note: "" };
 }
 
 pub function open_page(s: State, page: Page): State {
-  let parent = match (s.page) {
-    Some(Hub()) => true,
-    _ => false,
-  };
-  return State { ...s, page: Some(page), return_to_hub: parent, show_shop: false, choosing_cover: false, importing: false, note: "" };
+  return State { ...s, page: Some(page), show_shop: false, choosing_cover: false, importing: false, note: "" };
 }
 
 pub function back(s: State): State {
@@ -64,11 +59,7 @@ pub function back(s: State): State {
     },
     _ => {}
   }
-  let closed = close_tool(s);
-  if (s.return_to_hub) {
-    return State { ...closed, page: Some(Hub) };
-  }
-  return closed;
+  return close_tool(s);
 }
 
 pub function audio_added(s: State, audio: api.LocalAudio): State {

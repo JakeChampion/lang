@@ -298,11 +298,31 @@ function field_view[M](field: Field, value: string, edit: (string, string) => M)
       ui.slider(at as f64 / (max as f64), (part: f64): M => edit(field.key, ((part * (max as f64) + 0.5) as i32).to_string())).described(field.label),
     ]).wide();
   }
-  let hint = match (field.kind) {
-    ClockTime => "HH:MM",
-    _ => label,
-  };
-  return ui.column([ui.text[M](label), ui.field[M]("config:" + key, value, hint).on_edit((text: string): M => edit(key, text))]).spaced(4.0).wide();
+  let hint = if let ClockTime = field.kind { "HH:MM" } else { label };
+  let rows = [ui.text[M](label), ui.field[M]("config:" + key, value, hint).on_edit((text: string): M => edit(key, text))];
+  if let ClockTime = field.kind {
+    rows = rows.append(time_steps(label, value, (time: string): M => edit(key, time)));
+  }
+  return ui.column(rows).spaced(4.0).wide();
+}
+
+// The clock time `value`, as HH:MM, after `minutes` more minutes. The time
+// stays in one day. A value that is not a time counts as 07:00.
+pub function shifted_time(value: string, minutes: i32): string {
+  let parts = value.trim().split(":");
+  let at = 420;
+  if (parts.len() == 2) {
+    at = i32.parse_i32(parts[0]).unwrap_or(7) * 60 + i32.parse_i32(parts[1]).unwrap_or(0);
+  }
+  let total = ((at + minutes) % 1440 + 1440) % 1440;
+  return (total / 60).to_string().pad_start(2, '0') + ":" + (total % 60).to_string().pad_start(2, '0');
+}
+
+// Buttons that move the clock time `value` by an hour or by 15 minutes.
+pub function time_steps[M](label: string, value: string, set: (string) => M): ui.El[M] {
+  let steps = [(-60, "−1 h"), (60, "+1 h"), (-15, "−15 min"), (15, "+15 min")];
+  let buttons = steps.map((step: (i32, string)): ui.El[M] => ui.text_button(step.1, set(shifted_time(value, step.0))).described(label + " " + step.1));
+  return ui.row(buttons).spaced(4.0).wrapped().wide();
 }
 
 function light_field[M](field: Field, value: string, choose: (string) => M): ui.El[M] {
