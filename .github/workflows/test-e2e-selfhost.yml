@@ -94,7 +94,7 @@ env:
   # self-builds) measure 50 to 165 seconds each and ride the shards.
   # Gather's server and 512-participant client need CPU time together. Its
   # unchanged throughput assertions run in cli after the compiler workers.
-  OWN_JOB_TESTS: "TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestHarden|TestSelfHostStdTestFewRegisters|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelX86UserModeOnQemu|TestSelfHostKernelX86UserModeMasksLegacyPIC|TestSelfHostKernelX86ProcessOnQemu|TestSelfHostKernelX86SchedulerOnQemu|TestSelfHostKernelAtomicsOnQemu|TestSelfHostKernelX86AtomicsOnQemu|TestSelfHostKernelSecondaryCountsOnQemu|TestSelfHostKernelTwoCoreSchedulerOnQemu|TestSelfHostKernelSavesItsRootOnQemu|TestSelfHostKernelServesFromAProcessOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelSchedulerOnQemu|TestSelfHostKernelCompilesOnQemu|TestSelfHostKernelSelfCompilesOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu"
+  OWN_JOB_TESTS: "TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestHarden|TestSelfHostStdTestFewRegisters|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostCheckAgreesWithGoOnExamples|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelLinuxImageOnQemu|TestSelfHostKernelEarlyHookOnQemu|TestSelfHostKernelUserModeOnQemu|TestSelfHostKernelX86UserModeOnQemu|TestSelfHostKernelX86UserModeMasksLegacyPIC|TestSelfHostKernelX86ProcessOnQemu|TestSelfHostKernelX86SchedulerOnQemu|TestSelfHostKernelAtomicsOnQemu|TestSelfHostKernelX86AtomicsOnQemu|TestSelfHostKernelSecondaryCountsOnQemu|TestSelfHostKernelTwoCoreSchedulerOnQemu|TestSelfHostKernelSavesItsRootOnQemu|TestSelfHostKernelServesFromAProcessOnQemu|TestSelfHostKernelProcessOnQemu|TestSelfHostKernelSchedulerOnQemu|TestSelfHostKernelCompilesOnQemu|TestSelfHostKernelSelfCompilesOnQemu|TestSelfHostKernelX86EarlyHookOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelVirtioBlkOnQemu|TestSelfHostKernelX86VirtioBlkOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu"
   # QUARANTINED: tests excluded from shard selection (they still run locally)
   # while their root cause is fixed. EXACT names only, each with its issue in
   # the comment, and re-run the list when that issue closes: a quarantine with
@@ -870,8 +870,9 @@ jobs:
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
-  # The checker corpus has parallel subtests. A shard worker limits it to one
-  # CPU, which exceeded 28 minutes on ARM64 in run 40325134038.
+  # Each checker corpus has parallel subtests. A shard worker limits one to a
+  # single CPU. The stdlib corpus exceeded 28 minutes that way on ARM64 in run
+  # 40325134038, and the examples corpus did on x86-64 in run 45004245911.
   checker-stdlib:
     needs: [driver-sizes]
     name: checker-stdlib-${{ matrix.host }}-${{ matrix.shard }}
@@ -893,7 +894,7 @@ jobs:
         with:
           slot: checker-stdlib-${{ matrix.host }}-${{ matrix.shard }}
       - uses: ./.github/actions/build-e2e-binaries
-      - name: compare every stdlib test with the Go checker
+      - name: compare every stdlib test and every example with the Go checker
         run: |
           set -euo pipefail
           chmod +x e2ecompiler.test
@@ -901,6 +902,8 @@ jobs:
           cd internal/testing/e2ecompiler
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostCheckAgreesWithGoOnStdlibTests$' -test.parallel 4 -test.v -test.timeout 28m
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostCheckAgreesWithGoOnExamples$' -test.parallel 4 -test.v -test.timeout 28m
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

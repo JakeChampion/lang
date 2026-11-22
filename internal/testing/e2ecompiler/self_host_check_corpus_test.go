@@ -33,7 +33,15 @@ func TestSelfHostCheckAgreesWithGoOnTests(t *testing.T) {
 }
 
 func TestSelfHostCheckAgreesWithGoOnExamples(t *testing.T) {
-	checkAgreesWithGo(t, treeCorpus(t, "examples", ""), 100)
+	progs := treeCorpus(t, "examples", "")
+	if len(progs) < 100 {
+		t.Fatalf("found only %d example programs", len(progs))
+	}
+	progs, err := corpus.Shard(progs, os.Getenv("FERN_CHECK_CORPUS_SHARD"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkAgreesWithGo(t, progs, 1)
 }
 
 func checkAgreesWithGo(t *testing.T, progs []string, least int) {
