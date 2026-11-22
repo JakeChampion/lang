@@ -6330,22 +6330,36 @@ function arm64_fam_is_excl(fam: i32): boolean {
   return fam == arm64_fam_excl_ld() || fam == arm64_fam_excl_st() || fam == arm64_fam_acqrel();
 }
 
+function arm64_gas_bad_exception(ops: string[]): string {
+  if (ops.len() != 1) {
+    return "operands";
+  }
+  return if (arm64_gas_small_imm(ops[0], 65535) < 0) { "imm16" } else { "" };
+}
+
+function arm64_gas_bad_branch_reg(ops: string[]): string {
+  if (ops.len() != 1) {
+    return "operands";
+  }
+  if (!arm64_gas_data_gp(ops[0]) || arm64_gas_is_w(ops[0])) {
+    return "register";
+  }
+  return "";
+}
+
 function arm64_gas_bad_ext_token(mnem: string, ops: string[], lm: Arm64Mem): string {
   let fam = arm64_gas_family(mnem);
-  if (fam == arm64_fam_landing() && arm64_bti_word(ops) < 0) {
-    return "operands";
+  if (fam == arm64_fam_sys()) {
+    return arm64_gas_bad_exception(ops);
   }
-  if (fam == arm64_fam_fixed() && mnem != "ret" && ops.len() > 0) {
-    return "operands";
+  if (fam == arm64_fam_landing()) {
+    return if (arm64_bti_word(ops) < 0) { "operands" } else { "" };
   }
-  if (fam == arm64_fam_indirect() || mnem == "ret" && ops.len() > 0) {
-    if (ops.len() != 1) {
-      return "operands";
-    }
-    if (!arm64_gas_data_gp(ops[0]) || arm64_gas_is_w(ops[0])) {
-      return "register";
-    }
-    return "";
+  if (fam == arm64_fam_indirect()) {
+    return arm64_gas_bad_branch_reg(ops);
+  }
+  if (fam == arm64_fam_fixed() && ops.len() > 0) {
+    return if (mnem == "ret") { arm64_gas_bad_branch_reg(ops) } else { "operands" };
   }
   if (arm64_gas_routes_vec(mnem, ops)) {
     return "";
@@ -6615,9 +6629,8 @@ function arm64_gas_bad_shift4(ops: string[]): string {
   return "";
 }
 
-// Bit counts, conditional immediates and NZCV fields fit in 0..64. Stop before an invalid
-// literal can wrap around into that range.
-function arm64_gas_small_imm(tok: string): i32 {
+// Stop before an out-of-range literal can wrap into the instruction field.
+function arm64_gas_small_imm(tok: string, limit: i32 = 64): i32 {
   let i = if (tok.starts_with("#")) { 1 } else { 0 };
   let negative = i < tok.len() && tok[i] == b'-';
   if (negative || i < tok.len() && tok[i] == b'+') {
@@ -6642,7 +6655,7 @@ function arm64_gas_small_imm(tok: string): i32 {
       return -1;
     }
     count = count * radix + digit;
-    if (count > 64) {
+    if (count > limit) {
       return -1;
     }
   }
@@ -7376,7 +7389,7 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
     if (ops.len() < 1) {
       return a;
     }
-    util.push_bytes(a.code, arm64_exception([], mnem, arm64_gas_imm(ops[0])));
+    util.push_bytes(a.code, arm64_exception([], mnem, arm64_gas_small_imm(ops[0], 65535)));
     return a;
   }
   if (fam == arm64_fam_indirect()) {
