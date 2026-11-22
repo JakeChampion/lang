@@ -6,7 +6,7 @@ This module plays video and audio through Media3 ExoPlayer for a NativeActivity 
 
 ExoPlayer reads progressive files, such as MP4 and Matroska, and HLS. It plays each sound track of a file, and it changes the sound track during the playback with no new start. `std/android/player` uses `MediaPlayer`, which plays the sound track that the file marks as the default, and changes it only on some files.
 
-An ExoPlayer takes each call on the thread of its `Looper`, and it calls its listener on that thread. This module gives it the main `Looper` of the app. The loop thread does not call the ExoPlayer: each function of the loop thread sends a command to a `Handler` on the main thread, as an `android.os.Message`. The main thread runs the commands in their order.
+An ExoPlayer takes each call on the thread of its `Looper`, and it calls its listener on that thread. This module gives it the main `Looper` of the app. The loop thread does not call the ExoPlayer: each function of the loop thread sends a command to the main thread through `std/android/handler`. The main thread runs the commands in their order.
 
 The app declares a @jni class that extends `java.util.concurrent.atomic.AtomicReference` and implements `android.os.Handler$Callback` and `androidx.media3.common.Player$Listener`. Its native `handleMessage` calls `handle`, and its native `onEvents` calls `events`. `new` makes one object of that class for each player. The object holds the state of its player, so `handle` and `events` find it with no table.
 
@@ -72,6 +72,7 @@ Each command can fail on the main thread with no answer to the loop thread. Then
 import "std/android";
 import "std/android/draw";
 import "std/android/exoplayer/bindings";
+import "std/android/handler";
 import "std/android/player";
 import "std/jni";
 import "std/log";
@@ -277,14 +278,14 @@ The struct holds three global references: the listener object, the `Handler` and
 
 ```fern
 <<the player>>=
-pub struct Player { listener: usize, handler: usize, state: usize, slot: i32 }
+pub struct Player { listener: usize, handler: handler.Handler, state: usize, slot: i32 }
 
 pub function none(): Player {
-  return Player { listener: 0 as usize, handler: 0 as usize, state: 0 as usize, slot: -1 };
+  return Player { listener: 0 as usize, handler: handler.Handler { ref: 0 as usize }, state: 0 as usize, slot: -1 };
 }
 
 pub function (p: Player) live(): boolean {
-  return p.handler != 0 as usize;
+  return p.handler.live();
 }
 
 // Whether the player `p` sent the Posted event `e`.
@@ -334,8 +335,8 @@ pub function new(ctx: usize, class: string): Option[Player] {
 function made(ctx: usize, e: usize, class: string): Result[Player, jni.JavaError] {
   let listener = new_listener(ctx, e, class)?;
   let state = new_state(e, listener)?;
-  let handler = new_handler(e, listener)?;
-  let p = Player { listener: jni.new_global_ref(e, listener), handler: jni.new_global_ref(e, handler), state: jni.new_global_ref(e, state), slot: -1 };
+  let commands = handler.new(e, listener)?;
+  let p = Player { listener: jni.new_global_ref(e, listener), handler: commands, state: jni.new_global_ref(e, state), slot: -1 };
   let slot = android.add_sender(ctx, p.listener as i64);
   if (slot < 0) {
     forget(e, p);
@@ -381,17 +382,6 @@ function new_state(e: usize, listener: usize): Result[usize, jni.JavaError] {
   return Ok(state.ref);
 }
 
-// A Handler on the main Looper that gives each message to the listener.
-function new_handler(e: usize, listener: usize): Result[usize, jni.JavaError] {
-  let loopers = bindings.looper_class(e)?;
-  defer loopers.release(e);
-  let main = loopers.get_main_looper(e)?;
-  let handlers = bindings.handler_class(e)?;
-  defer handlers.release(e);
-  let handler = handlers.new(e, main, jni.Object { ref: listener })?;
-  return Ok(handler.ref);
-}
-
 function put_slot(e: usize, state: usize, slot: i32): boolean {
   let Ok(longs) = bindings.atomic_long_array_class(e) else {
     return false;
@@ -402,7 +392,7 @@ function put_slot(e: usize, state: usize, slot: i32): boolean {
 
 function forget(e: usize, p: Player): void {
   jni.delete_global_ref(e, p.state);
-  jni.delete_global_ref(e, p.handler);
+  p.handler.close(e);
   jni.delete_global_ref(e, p.listener);
 }
 
@@ -494,7 +484,7 @@ pub function audio_tracks(ctx: usize, p: Player): i32[] {
 
 ### `the commands`
 
-`send` gets a `Message` from the `Handler` of the player, with the command, one number and one object, and sends it. The message holds the object, so the loop thread can delete its own reference after the call.
+`send` gives the command, one number and one object to the `Handler` of the player. The message holds the object, so the loop thread can delete its own reference after the call.
 
 ```fern
 <<the commands>>=
@@ -507,18 +497,7 @@ function send(ctx: usize, p: Player, what: i32, arg: i32, obj: usize): boolean {
     return false;
   }
   defer end(e);
-  let Ok(h) = bindings.handler_class(e) else {
-    return false;
-  };
-  defer h.release(e);
-  let Ok(m) = bindings.message_class(e) else {
-    return false;
-  };
-  defer m.release(e);
-  let Ok(msg) = h.obtain_message(e, bindings.Handler { ref: p.handler }, what, arg, 0, jni.Object { ref: obj }) else {
-    return false;
-  };
-  return m.send_to_target(e, msg).is_ok();
+  return p.handler.send(e, what, arg, obj);
 }
 
 // Sends a command whose object is the Java string `text`.
@@ -932,7 +911,7 @@ pub function handle(e: usize, listener: usize, msg: usize): u8 {
   defer end(e);
   match (bindings.classes(e)) {
     Ok(c) => {
-      if let Err(err) = command(e, c, listener, bindings.Message { ref: msg }) {
+      if let Err(err) = command(e, c, listener, msg) {
         log.warn("exoplayer: a command failed: " + err.message());
       }
       c.release(e);
@@ -944,10 +923,11 @@ pub function handle(e: usize, listener: usize, msg: usize): u8 {
   return 1u8;
 }
 
-function command(e: usize, c: bindings.Classes, listener: usize, m: bindings.Message): Result[void, jni.JavaError] {
-  let what = c.message.what(e, m)?;
-  let arg = c.message.arg1(e, m)?;
-  let obj = c.message.obj(e, m)?;
+function command(e: usize, c: bindings.Classes, listener: usize, msg: usize): Result[void, jni.JavaError] {
+  let m = handler.command(e, msg)?;
+  let what = m.what;
+  let arg = m.arg;
+  let obj = jni.Object { ref: m.obj };
   if (what == DROP_TARGET) {
     return drop_target(e, c, obj);
   }
