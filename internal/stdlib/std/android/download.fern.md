@@ -88,16 +88,9 @@ function enqueue(s: Session, url: string, headers: (string, string)[], name: str
   let r = s.c.download_manager_request;
   let request = r.new(s.e, uri)?;
   if (wifi_only) {
-    let cls = jni.get_object_class(s.e, request.ref);
-    defer jni.delete_local_ref(s.e, cls);
-    let method = jni.get_method_id(s.e, cls, "setAllowedNetworkTypes", "(I)Landroid/app/DownloadManager$Request;");
-    jni.check(s.e)?;
-    let network_wifi = 2 as usize;
-    let args = jni.jvalues([network_wifi]);
-    let allowed = jni.call_object_method_a(s.e, request.ref, method, args);
-    jni.free_buffer(args);
-    jni.check(s.e)?;
-    jni.delete_local_ref(s.e, allowed);
+    // DownloadManager.Request.NETWORK_WIFI.
+    let allowed = r.set_allowed_network_types(s.e, request, 2)?;
+    jni.delete_local_ref(s.e, allowed.ref);
   }
   for h in headers {
     let added = r.add_request_header(s.e, request, h.0, h.1)?;

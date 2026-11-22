@@ -14,7 +14,7 @@ From Android 13 an app shows notifications only with the permission `POST_NOTIFI
 
 Call each function on the loop thread, with the context that `launch.start` gave the loop. Channels need API level 26. Below it, `channel` does nothing, and `post` uses no channel.
 
-`post` gives false and shows nothing when `allowed` is false. The person can turn the notifications of an app off at each time, so `allowed` can change while the app runs.
+`post` gives false and shows nothing when `allowed` is false or Android rejects the notification. The person can turn the notifications of an app off at each time, so `allowed` can change while the app runs.
 
 ## Module assembly
 
@@ -34,6 +34,8 @@ Call each function on the loop thread, with the context that `launch.start` gave
 // This module shows the notifications of an app.
 import "std/android";
 import "std/jni";
+import "std/android/notify/bindings";
+import "std/result";
 ```
 
 ### `notes`
@@ -70,107 +72,164 @@ const PERMISSION: string = "android.permission.POST_NOTIFICATIONS";
 
 ```fern
 <<calls>>=
-function manager(e: usize, obj: usize): usize {
-  return jni.call_object(e, obj, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [jni.new_string(e, "notification")]);
+function push_frame(e: usize): boolean {
+  if (jni.call1(e, 19, 48 as usize) as i32 != 0) {
+    let cleared = jni.exception_clear(e);
+    return false;
+  }
+  return true;
+}
+
+function pop_frame(e: usize): void {
+  let popped = jni.call1(e, 20, 0 as usize);
+}
+
+function activity(ctx: usize): bindings.Context {
+  return bindings.Context { ref: android.activity_object(ctx) };
+}
+
+function manager(e: usize, obj: bindings.Context): Result[bindings.NotificationManager, jni.JavaError] {
+  let c = bindings.context_class(e)?;
+  defer c.release(e);
+  let service = c.get_system_service(e, obj, "notification")?;
+  if (service.ref == 0 as usize) {
+    return Err(jni.JavaError { text: "notification service unavailable" });
+  }
+  return Ok(bindings.NotificationManager { ref: service.ref });
+}
+
+function create_channel(e: usize, obj: bindings.Context, channel: Channel): Result[void, jni.JavaError] {
+  let service = manager(e, obj)?;
+  let c = bindings.notification_channel_class(e)?;
+  defer c.release(e);
+  let name = jni.checked_string(e, channel.name)?;
+  let made = c.new(e, channel.id, jni.Object { ref: name }, channel.importance)?;
+  let m = bindings.notification_manager_class(e)?;
+  defer m.release(e);
+  return m.create_notification_channel(e, service, made);
 }
 
 pub function channel(ctx: usize, c: Channel): void {
   if (android.sdk_version(ctx) < 26) {
     return;
   }
-  let e: usize = android.env(ctx);
-  let obj: usize = android.activity_object(ctx);
-  let class: usize = jni.find_class(e, "android/app/NotificationChannel");
-  let args: usize = jni.jvalues([jni.new_string(e, c.id), jni.new_string(e, c.name), c.importance as usize]);
-  let made: usize = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;Ljava/lang/CharSequence;I)V"), args);
-  jni.free_buffer(args);
-  let done: boolean = jni.call_void(e, manager(e, obj), "createNotificationChannel", "(Landroid/app/NotificationChannel;)V", [made]);
+  let e = android.env(ctx);
+  if (push_frame(e)) {
+    defer pop_frame(e);
+    let _ = create_channel(e, activity(ctx), c);
+  }
+}
+
+function permission(ctx: usize): boolean {
+  return android.sdk_version(ctx) < 33 || android.has_permission(ctx, PERMISSION);
+}
+
+function enabled(e: usize, obj: bindings.Context): Result[boolean, jni.JavaError] {
+  let service = manager(e, obj)?;
+  let m = bindings.notification_manager_class(e)?;
+  defer m.release(e);
+  return m.are_notifications_enabled(e, service);
 }
 
 pub function allowed(ctx: usize): boolean {
-  if (android.sdk_version(ctx) >= 33 && !android.has_permission(ctx, PERMISSION)) {
+  let e = android.env(ctx);
+  if (!permission(ctx) || !push_frame(e)) {
     return false;
   }
-  let e: usize = android.env(ctx);
-  let m: usize = manager(e, android.activity_object(ctx));
-  let none: usize = jni.jvalue_alloc(0);
-  let on: i32 = jni.call_boolean_method_a(e, m, jni.get_method_id(e, jni.get_object_class(e, m), "areNotificationsEnabled", "()Z"), none);
-  jni.free_buffer(none);
-  return on != 0;
+  defer pop_frame(e);
+  return enabled(e, activity(ctx)).unwrap_or(false);
 }
 
-// Shows the dialog of the permission to show notifications, from Android
-// 13. The answer comes with the next Resume.
+// Requests permission from Android 13 onwards. The answer comes with the next Resume.
 pub function ask(ctx: usize): void {
-  if (android.sdk_version(ctx) >= 33 && !android.has_permission(ctx, PERMISSION)) {
+  if (!permission(ctx)) {
     android.request_permissions(ctx, [PERMISSION]);
   }
 }
 
-// Calls the builder method `name` with the signature `sig` and the
-// arguments `values`. Each one gives the builder back.
-function build_step(e: usize, builder: usize, name: string, sig: string, values: usize[]): void {
-  let same: usize = jni.call_object(e, builder, name, sig, values);
-}
-
-// The intent that opens the app, for a tap on a notification.
-function open_intent(e: usize, obj: usize): usize {
-  let packages: usize = jni.call_object(e, obj, "getPackageManager", "()Landroid/content/pm/PackageManager;", []);
-  let name: usize = jni.call_object(e, obj, "getPackageName", "()Ljava/lang/String;", []);
-  let launch: usize = jni.call_object(e, packages, "getLaunchIntentForPackage", "(Ljava/lang/String;)Landroid/content/Intent;", [name]);
-  let class: usize = jni.find_class(e, "android/app/PendingIntent");
-  let get: usize = jni.get_static_method_id(e, class, "getActivity", "(Landroid/content/Context;ILandroid/content/Intent;I)Landroid/app/PendingIntent;");
-  // FLAG_IMMUTABLE | FLAG_UPDATE_CURRENT
-  let args: usize = jni.jvalues([obj, 0 as usize, launch, 201326592 as usize]);
-  let pending: usize = jni.call_static_object_method_a(e, class, get, args);
-  jni.free_buffer(args);
-  return pending;
-}
-
-// A builder of a notification on the channel `channel`, from API level 26.
-function builder_of(ctx: usize, e: usize, obj: usize, class: usize, channel: string): usize {
-  if (android.sdk_version(ctx) < 26) {
-    let one: usize = jni.jvalues([obj]);
-    let old: usize = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", "(Landroid/content/Context;)V"), one);
-    jni.free_buffer(one);
-    return old;
+function open_intent(e: usize, obj: bindings.Context): Result[bindings.PendingIntent, jni.JavaError] {
+  let c = bindings.context_class(e)?;
+  defer c.release(e);
+  let packages = c.get_package_manager(e, obj)?;
+  if (packages.is_null()) {
+    return Err(jni.JavaError { text: "package manager unavailable" });
   }
-  let args: usize = jni.jvalues([obj, jni.new_string(e, channel)]);
-  let made: usize = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", "(Landroid/content/Context;Ljava/lang/String;)V"), args);
-  jni.free_buffer(args);
-  return made;
+  let name = c.get_package_name(e, obj)?;
+  let pm = bindings.package_manager_class(e)?;
+  defer pm.release(e);
+  let launch = pm.get_launch_intent_for_package(e, packages, name)?;
+  if (launch.is_null()) {
+    return Ok(bindings.PendingIntent { ref: 0 as usize });
+  }
+  let pending = bindings.pending_intent_class(e)?;
+  defer pending.release(e);
+  // FLAG_IMMUTABLE | FLAG_UPDATE_CURRENT
+  return pending.get_activity(e, obj, 0, launch, 201326592);
 }
 
-function built(ctx: usize, e: usize, obj: usize, n: Note): usize {
-  let builder = builder_of(ctx, e, obj, jni.find_class(e, "android/app/Notification$Builder"), n.channel);
-  let ret = ")Landroid/app/Notification$Builder;";
+function set_content(e: usize, c: bindings.Notification_BuilderClass, builder: bindings.Notification_Builder, n: Note): Result[void, jni.JavaError] {
   let icon = if (n.icon != 0) { n.icon } else { INFO_ICON };
-  build_step(e, builder, "setSmallIcon", "(I" + ret, [icon as usize]);
-  build_step(e, builder, "setContentTitle", "(Ljava/lang/CharSequence;" + ret, [jni.new_string(e, n.title)]);
-  build_step(e, builder, "setContentText", "(Ljava/lang/CharSequence;" + ret, [jni.new_string(e, n.text)]);
-  build_step(e, builder, "setOngoing", "(Z" + ret, [if (n.ongoing) { 1 as usize } else { 0 as usize }]);
-  build_step(e, builder, "setAutoCancel", "(Z" + ret, [if (n.ongoing) { 0 as usize } else { 1 as usize }]);
+  c.set_small_icon(e, builder, icon)?;
+  let title = jni.checked_string(e, n.title)?;
+  c.set_content_title(e, builder, jni.Object { ref: title })?;
+  let text = jni.checked_string(e, n.text)?;
+  c.set_content_text(e, builder, jni.Object { ref: text })?;
+  c.set_ongoing(e, builder, n.ongoing)?;
+  c.set_auto_cancel(e, builder, !n.ongoing)?;
+  return Ok(());
+}
+
+function built(ctx: usize, e: usize, obj: bindings.Context, n: Note): Result[bindings.Notification, jni.JavaError] {
+  let c = bindings.notification_builder_class(e)?;
+  defer c.release(e);
+  let made = if (android.sdk_version(ctx) < 26) { c.new_context(e, obj) } else { c.new_context_string(e, obj, n.channel) };
+  let builder = made?;
+  set_content(e, c, builder, n)?;
   if (n.progress >= 0) {
-    build_step(e, builder, "setProgress", "(IIZ" + ret, [100 as usize, n.progress.min(100) as usize, 0 as usize]);
+    c.set_progress(e, builder, 100, n.progress.min(100), false)?;
   }
   if (n.open) {
-    build_step(e, builder, "setContentIntent", "(Landroid/app/PendingIntent;" + ret, [open_intent(e, obj)]);
+    let pending = open_intent(e, obj)?;
+    c.set_content_intent(e, builder, pending)?;
   }
-  return jni.call_object(e, builder, "build", "()Landroid/app/Notification;", []);
+  return c.build(e, builder);
+}
+
+function publish(ctx: usize, e: usize, n: Note): Result[boolean, jni.JavaError] {
+  let obj = activity(ctx);
+  let service = manager(e, obj)?;
+  let m = bindings.notification_manager_class(e)?;
+  defer m.release(e);
+  let on = m.are_notifications_enabled(e, service)?;
+  if (!on) {
+    return Ok(false);
+  }
+  let note = built(ctx, e, obj, n)?;
+  m.notify(e, service, n.id, note)?;
+  return Ok(true);
 }
 
 pub function post(ctx: usize, n: Note): boolean {
-  if (!allowed(ctx)) {
+  let e = android.env(ctx);
+  if (!permission(ctx) || !push_frame(e)) {
     return false;
   }
-  let e: usize = android.env(ctx);
-  let obj: usize = android.activity_object(ctx);
-  let shown: boolean = jni.call_void(e, manager(e, obj), "notify", "(ILandroid/app/Notification;)V", [n.id as usize, built(ctx, e, obj, n)]);
-  return true;
+  defer pop_frame(e);
+  return publish(ctx, e, n).unwrap_or(false);
+}
+
+function remove(e: usize, obj: bindings.Context, id: i32): Result[void, jni.JavaError] {
+  let service = manager(e, obj)?;
+  let m = bindings.notification_manager_class(e)?;
+  defer m.release(e);
+  return m.cancel(e, service, id);
 }
 
 pub function cancel(ctx: usize, id: i32): void {
-  let e: usize = android.env(ctx);
-  let done: boolean = jni.call_void(e, manager(e, android.activity_object(ctx)), "cancel", "(I)V", [id as usize]);
+  let e = android.env(ctx);
+  if (push_frame(e)) {
+    defer pop_frame(e);
+    let _ = remove(e, activity(ctx), id);
+  }
 }
 ```

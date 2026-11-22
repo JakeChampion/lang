@@ -13,6 +13,9 @@ func TestAndroidDownload(t *testing.T) {
 pub function start_one(ctx: usize): i64 {
   return download.start(ctx, "https://den.example/library/parts/9/file.mkv?download=1", [("X-Plex-Token", "tok")], "9.mkv", "Film");
 }
+pub function start_wifi(ctx: usize): i64 {
+  return download.start_with_network(ctx, "https://den.example/file", [], "file", "Film", true);
+}
 pub function status_of(ctx: usize, id: i64): i32 { return download.progress(ctx, id).status; }
 pub function done_of(ctx: usize, id: i64): i64 { return download.progress(ctx, id).done; }
 pub function total_of(ctx: usize, id: i64): i64 { return download.progress(ctx, id).total; }
@@ -133,12 +136,13 @@ int main(int argc, char **argv) {
   void *lib = dlopen(argv[1], RTLD_NOW);
   if (!lib) { fprintf(stderr, "%s\n", dlerror()); return 2; }
   int64_t (*start_one)(uintptr_t) = dlsym(lib, "start_one");
+  int64_t (*start_wifi)(uintptr_t) = dlsym(lib, "start_wifi");
   int32_t (*status_of)(uintptr_t, int64_t) = dlsym(lib, "status_of");
   int64_t (*done_of)(uintptr_t, int64_t) = dlsym(lib, "done_of");
   int64_t (*total_of)(uintptr_t, int64_t) = dlsym(lib, "total_of");
   void (*remove_one)(uintptr_t, int64_t) = dlsym(lib, "remove_one");
   int32_t (*dir_is)(uintptr_t) = dlsym(lib, "dir_is");
-  require(start_one && status_of && done_of && total_of && remove_one && dir_is, "the entries");
+  require(start_one && start_wifi && status_of && done_of && total_of && remove_one && dir_is, "the entries");
   uintptr_t table[240] = {0}, activity[10] = {0}, ctx[40] = {0};
   table[6] = (uintptr_t)find_class;
   table[15] = (uintptr_t)none;
@@ -173,6 +177,10 @@ int main(int argc, char **argv) {
   require(has("getSystemService('download');") && has("class android/app/DownloadManager$Request;") && has("parse('https://den.example/library/parts/9/file.mkv?download=1');"), "the manager and the address");
   require(has("addRequestHeader('X-Plex-Token','tok');") && has("setTitle('Film');") && has("setNotificationVisibility(1);") && has("setDestinationInExternalFilesDir(1234,0,'9.mkv');") && has("enqueue("), "the request");
 
+  require(!has("setAllowedNetworkTypes("), "default download keeps all networks");
+  log_[0] = 0;
+  require(start_wifi((uintptr_t)ctx) == 42 && frames == 0 && has("setAllowedNetworkTypes(2);"), "restricted download uses Wi-Fi");
+
   log_[0] = 0;
   require(status_of((uintptr_t)ctx, 42) == 2 && region == 42 && frames == 0 && closes == 1, "the status of a running download");
   require(has("class android/app/DownloadManager$Query;") && has("setFilterById(") && has("moveToFirst();") && has("getColumnIndex('status');getInt(1);"), "the query of one id");
@@ -193,5 +201,5 @@ int main(int argc, char **argv) {
   return 0;
 }
 `
-	androidJNIMockCheck(t, src, "start_one,status_of,done_of,total_of,remove_one,dir_is", check)
+	androidJNIMockCheck(t, src, "start_one,start_wifi,status_of,done_of,total_of,remove_one,dir_is", check)
 }

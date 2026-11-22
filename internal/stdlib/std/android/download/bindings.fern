@@ -128,7 +128,7 @@ pub function (x: DownloadManager_Request) object(): jni.Object {
 }
 
 // The class android.app.DownloadManager.Request and the IDs of its members.
-pub struct DownloadManager_RequestClass { class: usize, id_new: usize, id_add_request_header: usize, id_set_destination_in_external_files_dir: usize, id_set_notification_visibility: usize, id_set_title: usize }
+pub struct DownloadManager_RequestClass { class: usize, id_new: usize, id_add_request_header: usize, id_set_allowed_network_types: usize, id_set_destination_in_external_files_dir: usize, id_set_notification_visibility: usize, id_set_title: usize }
 
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
@@ -136,10 +136,11 @@ pub function download_manager_request_class(e: usize): Result[DownloadManager_Re
   let class = jni.global_class(e, "android/app/DownloadManager$Request")?;
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Landroid/net/Uri;)V"))?;
   let id_add_request_header = jni.checked_id(e, class, jni.get_method_id(e, class, "addRequestHeader", "(Ljava/lang/String;Ljava/lang/String;)Landroid/app/DownloadManager$Request;"))?;
+  let id_set_allowed_network_types = jni.checked_id(e, class, jni.get_method_id(e, class, "setAllowedNetworkTypes", "(I)Landroid/app/DownloadManager$Request;"))?;
   let id_set_destination_in_external_files_dir = jni.checked_id(e, class, jni.get_method_id(e, class, "setDestinationInExternalFilesDir", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Landroid/app/DownloadManager$Request;"))?;
   let id_set_notification_visibility = jni.checked_id(e, class, jni.get_method_id(e, class, "setNotificationVisibility", "(I)Landroid/app/DownloadManager$Request;"))?;
   let id_set_title = jni.checked_id(e, class, jni.get_method_id(e, class, "setTitle", "(Ljava/lang/CharSequence;)Landroid/app/DownloadManager$Request;"))?;
-  return Ok(DownloadManager_RequestClass { class: class, id_new: id_new, id_add_request_header: id_add_request_header, id_set_destination_in_external_files_dir: id_set_destination_in_external_files_dir, id_set_notification_visibility: id_set_notification_visibility, id_set_title: id_set_title });
+  return Ok(DownloadManager_RequestClass { class: class, id_new: id_new, id_add_request_header: id_add_request_header, id_set_allowed_network_types: id_set_allowed_network_types, id_set_destination_in_external_files_dir: id_set_destination_in_external_files_dir, id_set_notification_visibility: id_set_notification_visibility, id_set_title: id_set_title });
 }
 
 // Deletes the reference to the class. Do not use `c` after this call.
@@ -167,6 +168,16 @@ pub function (c: DownloadManager_RequestClass) add_request_header(e: usize, self
   jni.jvalue_set_int(args, 0, s0);
   jni.jvalue_set_int(args, 1, s1);
   let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_add_request_header, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(DownloadManager_Request { ref: got });
+}
+
+// android.app.DownloadManager.Request.setAllowedNetworkTypes(I)Landroid/app/DownloadManager$Request;
+pub function (c: DownloadManager_RequestClass) set_allowed_network_types(e: usize, self: DownloadManager_Request, a0: i32): Result[DownloadManager_Request, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_allowed_network_types, args);
   jni.free_buffer(args);
   jni.check(e)?;
   return Ok(DownloadManager_Request { ref: got });
