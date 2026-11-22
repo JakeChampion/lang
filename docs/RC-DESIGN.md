@@ -399,10 +399,21 @@ reads (`units_of`):
   its rows are every closure body's (under `indirect_callee`) or every arm's
   (under the dyn call's name), and it holds the whole box of each lent
   operand at those positions, handed parameters included
-  (`dispatched_rows`, `ssarc.dispatch_bracketed`). Pinned by
+  (`dispatched_rows`, `ssarc.dispatch_bracketed`). The root of a grow can
+  be a field of a borrowed parameter, so the buffer is two records deep
+  (`nested_grow_top`, `Plan.grow_tops`). The frame must not need that field
+  past the grow, as for a take of the field. The lowering then tests the
+  count of the parameter, of the middle record and of the buffer
+  (`ssarc.grow_root_unique`), and clears the slot of the middle record. The
+  row of such a grow names the first field. A caller that still reads the
+  parameter brackets the box of that field, so the test of the middle record
+  fails and the callee copies. Pinned by
   `TestSelfHostFieldAppendInPlace*`,
   `TestSelfHostGrowFieldBracketReleasesRetainedX86_64`,
-  `TestSelfHostLentArrayBracket` and `TestSelfHostDispatchedBracket*`.
+  `TestSelfHostLentArrayBracket`, `TestSelfHostDispatchedBracket*`,
+  `TestSelfHostNestedFieldGrowKeepsTheCallersValues` and the
+  `a-grow-through-two-records-of-a-borrowed-parameter` row of
+  `TestSelfHostSemanticAllocationCounts`.
 - **Kept fields** (`Plan.kept`): the fields a record update keeps, so the
   construction that reuses the record's box leaves them in place.
 

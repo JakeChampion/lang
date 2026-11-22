@@ -6481,6 +6481,29 @@ function main(): i32 {
 }
 `
 
+// Each call of bound makes the two records and no copy of heads: 2 for each
+// of the 101 calls, and the 6 of main and of the first append.
+const semNestedFieldGrowSource = `
+struct Ix { heads: i32[], count: i32 }
+struct L { names: i32[], by: Ix }
+function (l: L) bound(n: i32): L {
+  return L { names: l.names.append(n), by: Ix { heads: l.by.heads.with(n % 8, l.by.count), count: l.by.count + 1 } };
+}
+function other(l: L): i32 {
+  let inner = l;
+  inner = inner.bound(1);
+  return inner.by.count;
+}
+function main(): i32 {
+  let l = L { names: [], by: Ix { heads: [0, 0, 0, 0, 0, 0, 0, 0], count: 0 } };
+  let t = other(l);
+  for i in 0..100 {
+    l = l.bound(i);
+  }
+  return (l.by.count + t) % 7;
+}
+`
+
 const semSpreadTwoWithsSource = `
 struct C { fds: i64[], t: i64[], k: boolean[] }
 
@@ -6638,6 +6661,7 @@ func TestSelfHostSemanticAllocationCounts(t *testing.T) {
 		{"a-tuple-element-is-taken-past-a-later-sibling-read", 2, semTupleElementTakeSource},
 		{"a-destructured-element-is-taken-past-a-later-sibling-read", 2, semTupleDestructureTakeSource},
 		{"a-field-is-taken-past-a-sibling-read-in-a-later-block", 4, semSpreadTwoWithsSource},
+		{"a-grow-through-two-records-of-a-borrowed-parameter", 208, semNestedFieldGrowSource},
 	} {
 		t.Run(prog.name, func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "main.fern")

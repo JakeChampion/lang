@@ -3658,8 +3658,7 @@ function grow_field_or_concat(own r: irtables.LowerState, f: ssasem.Func, p: ssa
   r = reserve(r, res + 1);
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(grown));
-  r = emit(r, ir.op_load_local(root));
-  r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+  r = grow_root_unique(r, p, ins);
   r = emit(r, ir.op_if(0));
   r = grow_call(r, ins, "");
   r = emit(r, ir.op_store_local(grown));
@@ -5155,8 +5154,7 @@ function concat_field(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Pl
   let unique = scratch_start;
   let res = unique + 1;
   r = reserve(r, res + 1);
-  r = emit(r, ir.op_load_local(root));
-  r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+  r = grow_root_unique(r, p, ins);
   r = emit(r, ir.op_store_local(unique));
   r = unless_unique(r, unique, ins.args[0], "__fern_arr_share_inc");
   r = concat_call(r, f, ins, true);
@@ -5526,8 +5524,7 @@ function append_field(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Pl
   let unique = scratch_start;
   let res = unique + 1;
   r = reserve(r, res + 1);
-  r = emit(r, ir.op_load_local(root));
-  r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+  r = grow_root_unique(r, p, ins);
   r = emit(r, ir.op_store_local(unique));
   r = unless_unique(r, unique, ins.args[0], "__fern_arr_share_inc");
   r = emit(r, ir.op_load_local(ins.args[0]));
@@ -5548,6 +5545,20 @@ function append_field(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Pl
   }
   r = emit(r, ir.op_end());
   return emit(r, ir.op_load_local(res));
+}
+
+// The test that a grow may clear the slot of its root. A root in a field of
+// a parameter needs one holder of the parameter also.
+function grow_root_unique(own r: irtables.LowerState, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerState {
+  r = emit(r, ir.op_load_local(p.grows[ins.result]));
+  r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+  let top = p.grow_tops[ins.result];
+  if (top >= 0) {
+    r = emit(r, ir.op_load_local(top));
+    r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+    r = emit(r, ir.op_bin("and", 0, false));
+  }
+  return r;
 }
 
 function unless_unique(own r: irtables.LowerState, unique: i32, value: i32, fn: string): irtables.LowerState {
@@ -5689,8 +5700,7 @@ function field_base(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
   let res = scratch_start;
   let unique = res + 1;
   r = reserve(r, unique + 1);
-  r = emit(r, ir.op_load_local(root));
-  r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+  r = grow_root_unique(r, p, ins);
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
