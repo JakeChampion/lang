@@ -6335,8 +6335,11 @@ function arm64_gas_bad_ext_token(mnem: string, ops: string[], lm: Arm64Mem): str
   if (fam == arm64_fam_landing() && arm64_bti_word(ops) < 0) {
     return "operands";
   }
-  if (fam == arm64_fam_fixed() && ops.len() > 0) {
-    if (mnem != "ret" || ops.len() != 1) {
+  if (fam == arm64_fam_fixed() && mnem != "ret" && ops.len() > 0) {
+    return "operands";
+  }
+  if (fam == arm64_fam_indirect() || mnem == "ret" && ops.len() > 0) {
+    if (ops.len() != 1) {
       return "operands";
     }
     if (!arm64_gas_data_gp(ops[0]) || arm64_gas_is_w(ops[0])) {
