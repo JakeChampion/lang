@@ -130,6 +130,12 @@ with Paper and other Android launchers.
 
 Select **Now playing** on **Players**. Move the volume slider or set a sleep
 timer. Story Deck sends the volume when the slider stops.
+
+Select **Dim the display to 5% over 2 minutes** on a selected player to
+lower its display for bedtime. Story Deck lowers the day and the night
+brightness by 1% for each step, and it spaces the steps across 2 minutes.
+Keep Story Deck open while the display goes dim. Clear the box to restore the brightness from before. This
+needs `family:devices:manage`, as the player settings do.
 The view shows the battery, free storage, and download activity when the
 player reports them.
 
