@@ -1443,20 +1443,17 @@ pub function arm64_bti_word(ops: string[]): i64 {
   if (ops.len() != 1) {
     return -1;
   }
-  match (ops[0].to_ascii_lower()) {
-    "c" => {
-      return 0xd503245f;
-    },
-    "j" => {
-      return 0xd503249f;
-    },
-    "jc" => {
-      return 0xd50324df;
-    },
-    _ => {
-      return -1;
-    }
+  let target = ops[0];
+  if (target.eq_ignore_ascii_case("c")) {
+    return 0xd503245f;
   }
+  if (target.eq_ignore_ascii_case("j")) {
+    return 0xd503249f;
+  }
+  if (target.eq_ignore_ascii_case("jc")) {
+    return 0xd50324df;
+  }
+  return -1;
 }
 
 function arm64_br_word(rn: i32): i64 {
