@@ -57,11 +57,12 @@ function simulator(dir: string, servers: files.Saved[]): sim.Sim[files.Model, fi
   let roots = [files.Root { label: "Phone storage", path: dir, total: 128000000000i64, free: 51200000000i64 }];
   let platform = files.Platform {
     roots: (): files.Root[] => roots,
+    access: (): boolean => read_dir(dir).is_ok(),
     ask_access: (): boolean => true,
     save: (kept: files.Saved[]): boolean => write_file(dir + "/.saved", kept.len().to_string()).is_ok(),
     decode: (bytes: u8[], wide: i32): Option[draw.Image] => tile(bytes),
   };
-  return sim.scaled(sim.themed(sim.start(files.start(roots, servers), files.program(platform), test_fonts(), 720, 1600, 2.0), true), 1.0);
+  return sim.scaled(sim.themed(sim.start(files.start(roots, read_dir(dir).is_ok(), servers), files.program(platform), test_fonts(), 720, 1600, 2.0), true), 1.0);
 }
 
 // Does the jobs of the last action and draws their result.

@@ -38,6 +38,17 @@ function roots(): files.Root[] {
   return out;
 }
 
+// True when the app has access to all files. Without it Android shows the
+// directories of a storage and hides their files.
+function has_access(ctx: usize): boolean {
+  let e = android.env(ctx);
+  let environment = jni.find_class(e, "android/os/Environment");
+  let method = jni.get_static_method_id(e, environment, "isExternalStorageManager", "()Z");
+  let granted = (jni.invoke(e, jni.CALL_STATIC + 3, environment, method, 0 as usize) & 255 as usize) != 0 as usize;
+  let class_ref = jni.delete_local_ref(e, environment);
+  return jni.check(e).is_ok() && granted;
+}
+
 // Opens the screen of Android that gives this app access to all files.
 function ask_access(ctx: usize): boolean {
   let e = android.env(ctx);
@@ -81,10 +92,11 @@ function app_main(ctx: usize): usize {
   let dir = android.no_backup_dir(ctx);
   let platform = files.Platform {
     roots: (): files.Root[] => roots(),
+    access: (): boolean => has_access(ctx),
     ask_access: (): boolean => ask_access(ctx),
     save: (servers: files.Saved[]): boolean => vault.save(dir, android.env(ctx), servers),
     decode: (bytes: u8[], wide: i32): Option[draw.Image] => picture(bytes, wide),
   };
-  let last = app.run(ctx, files.start(roots(), vault.load(dir, android.env(ctx))), files.program(platform));
+  let last = app.run(ctx, files.start(roots(), has_access(ctx), vault.load(dir, android.env(ctx))), files.program(platform));
   return 0 as usize;
 }

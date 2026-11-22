@@ -45,10 +45,10 @@ enum Job {
   Shares(i64, smb.Server),
 }
 
-// What the app needs from Android: the storages of the phone, the screen
-// that gives access to all files, a place to keep the servers, and a
+// What the app needs from Android: the storages of the phone, whether the
+// app has access to all files, the screen that gives that access, a place to keep the servers, and a
 // decoder that gives an image at a width in pixels or less.
-pub struct Platform { roots: () => Root[], ask_access: () => boolean, save: (Saved[]) => boolean, decode: (u8[], i32) => Option[draw.Image] }
+pub struct Platform { roots: () => Root[], access: () => boolean, ask_access: () => boolean, save: (Saved[]) => boolean, decode: (u8[], i32) => Option[draw.Image] }
 
 pub struct Model {
   roots: Root[],
@@ -156,16 +156,12 @@ function no_server(): Saved {
 }
 
 // The model of the home screen, with the storages and the servers.
-pub function start(roots: Root[], servers: Saved[]): Model {
+// `granted` is false when Android hides the files of the storages.
+pub function start(roots: Root[], granted: boolean, servers: Saved[]): Model {
   return Model {
-    roots: roots, servers: servers, granted: readable(roots), page: Home, place: store.Local, label: "", top: "", path: "", entries: [], loading: false, note: "", fault: "", sort: 0, hidden: false, query: "",
+    roots: roots, servers: servers, granted: granted, page: Home, place: store.Local, label: "", top: "", path: "", entries: [], loading: false, note: "", fault: "", sort: 0, hidden: false, query: "",
     selecting: false, picked: [], clip: None, task: None, naming: None, name_text: "", confirm: "", draft: no_server(), preview: "", picture: None, raw: [], wide: 0, shares: [], finding: false, revision: 0i64, task_revision: 0i64, job: None, need_roots: false, ask_access: false, unsaved: false,
   };
-}
-
-// True when Android lets the app read the first storage.
-function readable(roots: Root[]): boolean {
-  return roots.len() > 0 && read_dir(roots[0].path).is_ok();
 }
 
 function failed(m: Model, text: string): Model {
@@ -755,7 +751,7 @@ function effects(m: Model, platform: Platform): Model {
   }
   if (m.need_roots) {
     let roots = platform.roots();
-    next = Model { ...next, need_roots: false, roots: roots, granted: readable(roots) };
+    next = Model { ...next, need_roots: false, roots: roots, granted: platform.access() };
   }
   return next;
 }
