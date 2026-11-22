@@ -38671,11 +38671,15 @@ function lit_stmts(stmts: ast.Stmt[], s: Scope, st: LitInfer): LitInfer {
 function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
   match (stmt) {
     ast.StmtVar(v) => {
+      // Each branch reads s before its bind, so that the bind is the last
+      // use of s and grows its arrays in place.
       if (ast.destructures(v)) {
-        return (bind_stmt(stmt, s), lit_expr(v.init, s, st));
+        let inferred = lit_expr(v.init, s, st);
+        return (bind_stmt(stmt, s), inferred);
       }
       if (v.type_name.len() > 0) {
-        return (bind_stmt(stmt, s), lit_demand(v.init, var_declared_type(v, s), s, st));
+        let demanded = lit_demand(v.init, var_declared_type(v, s), s, st);
+        return (bind_stmt(stmt, s), demanded);
       }
       let (seed, ids, sst) = lit_seed(v.init, s, st);
       if (!seed) {
@@ -38718,7 +38722,8 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
           let k = ost.okeys.len();
           return (s.bind(v.name, lit_open_marker(k)), LitInfer { ...ost, okeys: ost.okeys.append(lit_var_key(v)), otypes: ost.otypes.append(open_type), ofills: ost.ofills.append(t_unknown("open")) });
         }
-        return (bind_stmt(stmt, s), lit_expr(v.init, s, st));
+        let inferred = lit_expr(v.init, s, st);
+        return (bind_stmt(stmt, s), inferred);
       }
       let k = sst.parent.len();
       return (s.bind(v.name, lit_marker(k)), lit_link(lit_new(sst, lit_var_key(v)), ids.append(k)));
