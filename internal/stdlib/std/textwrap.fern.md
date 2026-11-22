@@ -6,9 +6,22 @@ This module divides text into lines of a specified width.
 
 The wrapper divides text into lines at a requested width. It returns the complete wrapped text as a string.
 
+A line feed ends a paragraph, and the wrapper divides each paragraph independently. Spaces, tabs and carriage returns separate the words of a paragraph. One space joins the words of an output line. The width counts code points. A word longer than the width stays whole on its own line. A width of zero or less returns the text unchanged.
+
 ## Contracts
 
 The width belongs to text layout policy. The caller controls the destination and any terminal-specific behavior.
+
+## Executable example
+
+```fern test name=std-textwrap-example
+import "std/textwrap";
+
+function main(): i32 {
+  if (textwrap.word_wrap("the quick brown fox", 10) != "the quick\nbrown fox") { return 1; }
+  return 0;
+}
+```
 
 ## Module assembly
 
@@ -45,16 +58,26 @@ import "std/array";
 ```fern
 <<3 function __tw_words(line: string): string[]>>=
 function __tw_words(line: string): string[] {
-  let raw = line.split(" ");
   let out: string[] = [];
+  let n = line.len();
   let i = 0;
-  while (i < raw.len()) {
-    if (raw[i].len() > 0) {
-      out = out.append(raw[i]);
+  while (i < n) {
+    while (i < n && __tw_is_space(line[i])) {
+      i += 1;
     }
-    i += 1;
+    let start = i;
+    while (i < n && !__tw_is_space(line[i])) {
+      i += 1;
+    }
+    if (i > start) {
+      out = out.append(slice_unchecked(line, start, i) + "");
+    }
   }
   return out;
+}
+
+function __tw_is_space(b: u8): boolean {
+  return b == 32 || b == 9 || b == 13;
 }
 
 function __tw_wrap_line(words: string[], width: i32): string {
