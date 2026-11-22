@@ -57,6 +57,7 @@ pub struct EmitState {
   funcs_ix: util.NameIndex,
   kinds: ssa_lift.KindTable,
   local_names: string[],
+  local_ix: util.NameIndex,
   string_lits: string[],
   slit_head: i32[],
   slit_next: i32[],
@@ -617,6 +618,7 @@ pub function new_state(): EmitState {
     funcs_ix: util.name_index(ns),
     kinds: ssa_lift.kind_table(),
     local_names: ns,
+    local_ix: util.name_index(ns),
     string_lits: sl,
     slit_head: slit_empty_buckets(),
     slit_next: [],
@@ -1048,7 +1050,7 @@ pub function (s: EmitState) branch(w: i64, label: string): EmitState {
 pub function (s: EmitState) bind_local_typed(name: string, ty: Ty): EmitState {
   let ln = s.local_names.append(name);
   let lts = s.local_types.append(ty);
-  return EmitState { ...s, local_names: ln, local_types: lts };
+  return EmitState { ...s, local_names: ln, local_ix: s.local_ix.added(name), local_types: lts };
 }
 
 pub function (s: EmitState) local_type_of(name: string): Ty {
@@ -3844,16 +3846,11 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
 pub function (s: EmitState) reset_locals(): EmitState {
   let ln: string[] = [];
   let lts: Ty[] = [];
-  return EmitState { ...s, local_names: ln, local_types: lts };
+  return EmitState { ...s, local_names: ln, local_ix: util.name_index(ln), local_types: lts };
 }
 
 pub function (s: EmitState) has_local(name: string): boolean {
-  for i in 0..s.local_names.len() {
-    if (s.local_names[i] == name) {
-      return true;
-    }
-  }
-  return false;
+  return s.local_ix.has(name);
 }
 
 pub struct LabelOut { state: EmitState, name: string }

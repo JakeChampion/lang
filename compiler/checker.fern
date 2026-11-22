@@ -2095,6 +2095,7 @@ pub struct UnionSig { name: string, variants: string[], is_try: boolean, is_enum
 pub struct Scope {
   names: string[],
   types: typeinfo.Type[],
+  by_name: BindingIndex,
   sigs: SigTable,
   structs: StructTable,
   unions: UnionTable,
@@ -2486,20 +2487,21 @@ function new_scope(): Scope {
   let ms: MethodSig[] = [];
   let structs = struct_table(ss, [], [], no_spellings());
   let unions = union_table(us);
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, []), methods: method_table(ms), imports: Imports { paths: [], unloaded: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: util.name_index([]), in_unsafe: false, range_indexes: [] };
+  return Scope { names: ns, types: ts, by_name: no_binding_index(), sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, []), methods: method_table(ms), imports: Imports { paths: [], unloaded: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: util.name_index([]), in_unsafe: false, range_indexes: [] };
 }
 
 function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: Imports, impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let ns: string[] = [];
   let ts: typeinfo.Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, imports.unloaded), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: util.name_index([]), in_unsafe: false, range_indexes: [] };
+  return Scope { names: ns, types: ts, by_name: no_binding_index(), sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, imports.unloaded), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: util.name_index([]), in_unsafe: false, range_indexes: [] };
 }
 
 function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
   let ns = s.names.append(name);
   let ts = s.types.append(t);
+  let ix = s.by_name.with_last(ns);
   if (!s.lit_locals.has(name)) {
-    return Scope { ...s, names: ns, types: ts };
+    return Scope { ...s, names: ns, types: ts, by_name: ix };
   }
   let lits: string[] = [];
   for lit in s.lit_locals.names {
@@ -2507,7 +2509,40 @@ function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
       lits = lits.append(lit);
     }
   }
-  return Scope { ...s, names: ns, types: ts, lit_locals: util.name_index(lits) };
+  return Scope { ...s, names: ns, types: ts, by_name: ix, lit_locals: util.name_index(lits) };
+}
+
+// The bindings of a scope by name. `heads` has the last binding of each
+// bucket, and `prior` the binding before each one in its bucket, so a search
+// gives the last binding of a name. A scope of few names has no index: its
+// search reads the names.
+struct BindingIndex { heads: i32[], prior: i32[] }
+
+const BINDING_INDEX_FROM: i32 = 32;
+
+function no_binding_index(): BindingIndex {
+  return BindingIndex { heads: [], prior: [] };
+}
+
+// The index after the last name of `names` joined the scope.
+function (ix: BindingIndex) with_last(names: string[]): BindingIndex {
+  let k = names.len() - 1;
+  if (ix.heads.len() == 0 && k < BINDING_INDEX_FROM) {
+    return ix;
+  }
+  if (k >= ix.heads.len()) {
+    let heads = util.minus_ones(4 * names.len());
+    let prior = __alloc_i32(names.len());
+    for i in 0..names.len() {
+      let b = util.name_bucket(names[i], heads.len() - 1);
+      prior = prior.with(i, heads[b]);
+      heads = heads.with(b, i);
+    }
+    return BindingIndex { heads: heads, prior: prior };
+  }
+  let b = util.name_bucket(names[k], ix.heads.len() - 1);
+  let before = ix.heads[b];
+  return BindingIndex { heads: ix.heads.with(b, k), prior: ix.prior.append(before) };
 }
 
 function (s: Scope) bind_inferred(v: ast.StmtVar, t: typeinfo.Type): Scope {
@@ -2552,14 +2587,7 @@ pub function (s: Scope) resolve_type(name: string): typeinfo.Type {
 }
 
 function (s: Scope) defines(name: string): boolean {
-  let i = s.names.len() - 1;
-  while (i >= 0) {
-    if (s.names[i] == name) {
-      return true;
-    }
-    i -= 1;
-  }
-  return false;
+  return s.binding_index(name) >= 0;
 }
 
 function bind_destructure_names(s: Scope, v: ast.StmtVar): Scope {
@@ -2892,6 +2920,16 @@ function (s: Scope) ident_binding(id: ast.ExprIdent): i32 {
 }
 
 function (s: Scope) binding_index(name: string): i32 {
+  if (s.by_name.heads.len() > 0) {
+    let at = s.by_name.heads[util.name_bucket(name, s.by_name.heads.len() - 1)];
+    while (at >= 0) {
+      if (s.names[at] == name) {
+        return at;
+      }
+      at = s.by_name.prior[at];
+    }
+    return -1;
+  }
   let i = s.names.len() - 1;
   while (i >= 0) {
     if (s.names[i] == name) {
