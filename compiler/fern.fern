@@ -1,3 +1,4 @@
+import "core/cmp";
 import "./viewerase";
 import "./util";
 import "./lexer";
@@ -1229,15 +1230,6 @@ function jni_mangle(s: string): string {
   return out;
 }
 
-function char_at(s: string, c: u8): i32 {
-  for i in 0..s.len() {
-    if (s[i] == c) {
-      return i;
-    }
-  }
-  return -1;
-}
-
 function jni_bad(f: parser.FuncDecl, why: string): (JniMethod, string) {
   let none: string[] = [];
   return (JniMethod { func: f, class: "", superclass: "", interfaces: none, is_static: false, result: "", name: "", types: none, params: none, symbol: "" }, "@jni " + f.name + ": " + why);
@@ -1255,8 +1247,10 @@ function java_decl(class: string, decl: string): JavaDecl {
   if (is_static) {
     d = slice_unchecked(d, 7, d.len()).trim();
   }
-  let open = char_at(d, b'(');
-  if (open < 0 || d[d.len() - 1] != b')') {
+  let Some(open) = d.index_of("(") else {
+    return bad;
+  };
+  if (d[d.len() - 1] != b')') {
     return bad;
   }
   let head = slice_unchecked(d, 0, open).trim().split(" ");
@@ -3321,7 +3315,7 @@ function run_fetch(start: string, fetcher: Fetcher): i32 {
 }
 
 function fetch_walk(fetcher: Fetcher, w: FetchWalk, mdir: string): FetchWalk {
-  if (str_index(w.seen, mdir) >= 0) {
+  if (util.has_str(w.seen, mdir)) {
     return w;
   }
   let out = FetchWalk { ...w, seen: w.seen.append(mdir) };
@@ -3460,7 +3454,7 @@ function vendor_collect(starts: string[]): VendorSet {
   while (qi < queue.len()) {
     let mdir = queue[qi];
     qi += 1;
-    if (str_index(seen, mdir) >= 0) {
+    if (util.has_str(seen, mdir)) {
       continue;
     }
     seen = seen.append(mdir + "");
@@ -3484,8 +3478,7 @@ function vendor_collect(starts: string[]): VendorSet {
       if (pkg_name.len() > 0) {
         key = pkg_name;
       }
-      let at = str_index(names, key);
-      if (at >= 0) {
+      if let Some(at) = cmp.index_of(names, key) {
         if (srcs[at] != src.dir) {
           return VendorSet {
             names: names, srcs: srcs,
@@ -3589,15 +3582,6 @@ function has_manifest(dir: string): boolean {
     Err(e) => {}
   }
   return false;
-}
-
-function str_index(xs: string[], want: string): i32 {
-  for i in 0..xs.len() {
-    if (xs[i] == want) {
-      return i;
-    }
-  }
-  return -1;
 }
 
 function copy_package(src: string, dst: string): string {
