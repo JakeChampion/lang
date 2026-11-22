@@ -33,6 +33,8 @@ The module needs API level 23.
 <<module introduction>>=
 // This module shows the texts and sets the buttons of an app widget.
 import "std/jni";
+import "std/result";
+import "std/android/widget/bindings";
 ```
 
 ### `widget`
@@ -58,128 +60,121 @@ const FIRST_ITEM: i32 = 2130968576;
 // FLAG_IMMUTABLE and FLAG_UPDATE_CURRENT of PendingIntent.
 const PENDING_FLAGS: i32 = 201326592;
 
-const VIEWS: string = "android/widget/RemoteViews";
-
-const PENDING: string = "android/app/PendingIntent";
-
-function new_object(e: usize, class: usize, sig: string, args: usize[]): usize {
-  let values: usize = jni.jvalues(args);
-  let obj: usize = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", sig), values);
-  jni.free_buffer(values);
-  return obj;
-}
-
-function call_static(e: usize, class: usize, name: string, sig: string, args: usize[]): usize {
-  let values: usize = jni.jvalues(args);
-  let out: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, name, sig), values);
-  jni.free_buffer(values);
-  return out;
-}
-
-// True when the last JNI call threw. It clears the exception.
-function threw(e: usize): boolean {
-  if (jni.exception_occurred(e) == 0 as usize) {
+function push_frame(e: usize): boolean {
+  if (jni.call1(e, 19, 32 as usize) as i32 != 0) {
+    let cleared = jni.exception_clear(e);
     return false;
   }
-  jni.exception_clear(e);
   return true;
 }
 
-// The action of the Intent `intent` of a broadcast, or "".
+function pop_frame(e: usize): void {
+  let popped = jni.call1(e, 20, 0 as usize);
+}
+
+// The action of the Intent that Android sent, or "".
 pub function action(e: usize, intent: usize): string {
-  if (intent == 0 as usize) {
+  if (intent == 0 as usize || !push_frame(e)) {
     return "";
   }
-  let name: usize = jni.call_object(e, intent, "getAction", "()Ljava/lang/String;", []);
-  if (threw(e) || name == 0 as usize) {
+  defer pop_frame(e);
+  let Ok(c) = bindings.intent_class(e) else {
     return "";
-  }
-  let text: string = jni.string_of(e, name);
-  let dropped: usize = jni.delete_local_ref(e, name);
-  return text;
+  };
+  defer c.release(e);
+  return c.get_action(e, bindings.Intent { ref: intent }).unwrap_or("");
 }
 
-// Gives the views the PendingIntent `pending` for a tap on the item `item`.
-function on_tap(e: usize, views: usize, item: i32, pending: usize): void {
-  if (!threw(e) && pending != 0 as usize) {
-    let set: boolean = jni.call_void(e, views, "setOnClickPendingIntent", "(IL" + PENDING + ";)V", [(FIRST_ITEM + item) as usize, pending]);
-    let dropped: usize = jni.delete_local_ref(e, pending);
-  }
+function set_text(e: usize, c: bindings.Classes, views: bindings.RemoteViews, item: i32, text: string): Result[void, jni.JavaError] {
+  let label = jni.checked_string(e, text)?;
+  defer jni.delete_local_ref(e, label);
+  return c.remote_views.set_text_view_text(e, views, FIRST_ITEM + item, jni.Object { ref: label });
 }
 
-// A copy of the Intent `launch` that starts the app with the action
-// `name`.
-function started_with(e: usize, launch: usize, name: string): usize {
-  if (launch == 0 as usize) {
-    return 0 as usize;
+function broadcast_button(e: usize, c: bindings.Classes, views: bindings.RemoteViews, context: bindings.Context, package: string, provider: string, item: i32, name: string): Result[void, jni.JavaError] {
+  let intent = c.intent.new_string(e, name)?;
+  defer jni.delete_local_ref(e, intent.ref);
+  let aimed = c.intent.set_class_name(e, intent, package, provider)?;
+  defer jni.delete_local_ref(e, aimed.ref);
+  let pending = c.pending_intent.get_broadcast(e, context, item, intent, PENDING_FLAGS)?;
+  if (pending.is_null()) {
+    return Ok(());
   }
-  let intent: usize = new_object(e, jni.find_class(e, "android/content/Intent"), "(Landroid/content/Intent;)V", [launch]);
-  let label: usize = jni.new_string(e, name);
-  let aimed: usize = jni.call_object(e, intent, "setAction", "(Ljava/lang/String;)Landroid/content/Intent;", [label]);
-  for local in [aimed, label] {
-    let dropped: usize = jni.delete_local_ref(e, local);
-  }
-  return intent;
+  defer jni.delete_local_ref(e, pending.ref);
+  return c.remote_views.set_on_click_pending_intent(e, views, FIRST_ITEM + item, pending);
 }
 
-// The RemoteViews of `look` for the package `package` and the provider
-// class `provider`.
-function views_of(e: usize, context: usize, package: usize, provider: string, look: Look): usize {
-  let views: usize = new_object(e, jni.find_class(e, VIEWS), "(Ljava/lang/String;I)V", [package, LAYOUT as usize]);
+function launch_button(e: usize, c: bindings.Classes, views: bindings.RemoteViews, context: bindings.Context, item: i32, request: i32, intent: bindings.Intent): Result[void, jni.JavaError] {
+  let pending = c.pending_intent.get_activity(e, context, request, intent, PENDING_FLAGS)?;
+  if (pending.is_null()) {
+    return Ok(());
+  }
+  defer jni.delete_local_ref(e, pending.ref);
+  return c.remote_views.set_on_click_pending_intent(e, views, FIRST_ITEM + item, pending);
+}
+
+function action_button(e: usize, c: bindings.Classes, views: bindings.RemoteViews, context: bindings.Context, item: i32, launch: bindings.Intent, name: string): Result[void, jni.JavaError] {
+  let intent = c.intent.new_intent(e, launch)?;
+  defer jni.delete_local_ref(e, intent.ref);
+  let aimed = c.intent.set_action(e, intent, name)?;
+  defer jni.delete_local_ref(e, aimed.ref);
+  return launch_button(e, c, views, context, item, 128 + item, intent);
+}
+
+function populate(e: usize, c: bindings.Classes, views: bindings.RemoteViews, context: bindings.Context, package: string, provider: string, look: Look): Result[boolean, jni.JavaError] {
   for pair in look.texts {
     let (item, text) = pair;
-    let label: usize = jni.new_string(e, text);
-    let set: boolean = jni.call_void(e, views, "setTextViewText", "(ILjava/lang/CharSequence;)V", [(FIRST_ITEM + item) as usize, label]);
-    let dropped: usize = jni.delete_local_ref(e, label);
+    set_text(e, c, views, item, text)?;
   }
-  let pending_class: usize = jni.find_class(e, PENDING);
   for pair in look.actions {
     let (item, name) = pair;
-    let intent: usize = new_object(e, jni.find_class(e, "android/content/Intent"), "(Ljava/lang/String;)V", [jni.new_string(e, name)]);
-    let aimed: usize = jni.call_object(e, intent, "setClassName", "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;", [package, jni.new_string(e, provider)]);
-    on_tap(e, views, item, call_static(e, pending_class, "getBroadcast", "(Landroid/content/Context;ILandroid/content/Intent;I)L" + PENDING + ";", [context, item as usize, intent, PENDING_FLAGS as usize]));
-    for local in [intent, aimed] {
-      let dropped: usize = jni.delete_local_ref(e, local);
-    }
+    broadcast_button(e, c, views, context, package, provider, item, name)?;
   }
   if (look.opens.len() > 0 || look.starts.len() > 0) {
-    let manager: usize = jni.call_object(e, context, "getPackageManager", "()Landroid/content/pm/PackageManager;", []);
-    let launch: usize = jni.call_object(e, manager, "getLaunchIntentForPackage", "(Ljava/lang/String;)Landroid/content/Intent;", [package]);
-    for item in look.opens {
-      on_tap(e, views, item, call_static(e, pending_class, "getActivity", "(Landroid/content/Context;ILandroid/content/Intent;I)L" + PENDING + ";", [context, (64 + item) as usize, launch, PENDING_FLAGS as usize]));
+    let manager = c.context.get_package_manager(e, context)?;
+    if (manager.is_null()) {
+      return Ok(false);
     }
-    for pair in look.starts {
-      let (item, name) = pair;
-      let intent: usize = started_with(e, launch, name);
-      on_tap(e, views, item, call_static(e, pending_class, "getActivity", "(Landroid/content/Context;ILandroid/content/Intent;I)L" + PENDING + ";", [context, (128 + item) as usize, intent, PENDING_FLAGS as usize]));
-      let dropped: usize = jni.delete_local_ref(e, intent);
-    }
-    for local in [launch, manager] {
-      let dropped: usize = jni.delete_local_ref(e, local);
+    let launch = c.package_manager.get_launch_intent_for_package(e, manager, package)?;
+    if (!launch.is_null()) {
+      for item in look.opens {
+        launch_button(e, c, views, context, item, 64 + item, launch)?;
+      }
+      for pair in look.starts {
+        let (item, name) = pair;
+        action_button(e, c, views, context, item, launch, name)?;
+      }
     }
   }
-  return views;
+  return Ok(true);
 }
 
-// Shows `look` on each widget of the app whose provider class is
-// `provider`. `context` is the activity, or the Context of `onReceive`. It
-// is false when Android does not take the views.
+function update(e: usize, c: bindings.Classes, context: bindings.Context, provider: string, look: Look): Result[boolean, jni.JavaError] {
+  let package = c.context.get_package_name(e, context)?;
+  let views = c.remote_views.new(e, package, LAYOUT)?;
+  let ready = populate(e, c, views, context, package, provider, look)?;
+  if (!ready) {
+    return Ok(false);
+  }
+  let manager = c.app_widget_manager.get_instance(e, context)?;
+  if (manager.is_null()) {
+    return Ok(false);
+  }
+  let component = c.component_name.new(e, package, provider)?;
+  c.app_widget_manager.update_app_widget(e, manager, component, views)?;
+  return Ok(true);
+}
+
+// Shows the layout on every widget for the given provider.
 pub function show(e: usize, context: usize, provider: string, look: Look): boolean {
-  let package: usize = jni.call_object(e, context, "getPackageName", "()Ljava/lang/String;", []);
-  if (threw(e) || package == 0 as usize) {
+  if (context == 0 as usize || !push_frame(e)) {
     return false;
   }
-  let views: usize = views_of(e, context, package, provider, look);
-  if (threw(e) || views == 0 as usize) {
+  defer pop_frame(e);
+  let Ok(c) = bindings.classes(e) else {
     return false;
-  }
-  let manager: usize = call_static(e, jni.find_class(e, "android/appwidget/AppWidgetManager"), "getInstance", "(Landroid/content/Context;)Landroid/appwidget/AppWidgetManager;", [context]);
-  let component: usize = new_object(e, jni.find_class(e, "android/content/ComponentName"), "(Ljava/lang/String;Ljava/lang/String;)V", [package, jni.new_string(e, provider)]);
-  let shown: boolean = manager != 0 as usize && jni.call_void(e, manager, "updateAppWidget", "(Landroid/content/ComponentName;L" + VIEWS + ";)V", [component, views]);
-  let failed: boolean = threw(e);
-  for local in [component, manager, views, package] {
-    let dropped: usize = jni.delete_local_ref(e, local);
-  }
-  return shown && !failed;
+  };
+  defer c.release(e);
+  return update(e, c, bindings.Context { ref: context }, provider, look).unwrap_or(false);
 }
 ```
