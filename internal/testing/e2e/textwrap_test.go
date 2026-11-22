@@ -12,6 +12,7 @@ function main(): i32 {
     if (tw.word_wrap("a   b", 10) != "a b") { return 5; }
     if (tw.word_wrap("aa bb", 5) != "aa bb" || tw.word_wrap("aa bb", 4) != "aa\nbb") { return 6; }
     if (tw.word_wrap("", 10) != "" || tw.word_wrap("a b c", 0) != "a b c") { return 7; }
+    if (tw.word_wrap("a\tb  c\r\nd e\r\n", 3) != "a b\nc\nd e\n") { return 8; }
     return 42;
 }
 `
