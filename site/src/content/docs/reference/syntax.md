@@ -268,7 +268,9 @@ function main(): i32 {
   those, or an array, tuple or struct literal of them:
   `const ORIGIN: Point = Point { x: 0, y: 0 };`.
 - **Nested functions** — a `function` declared inside a body is local to
-  it and can read the enclosing function's bindings.
+  it and can read the enclosing function's bindings. Its name is in scope
+  from its declaration. Nested functions that call each other are in scope
+  from the first of them.
 
 ### Function modifiers
 

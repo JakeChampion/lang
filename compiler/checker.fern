@@ -7286,15 +7286,21 @@ function rec_local_scope(v: ast.StmtVar, s: Scope): Scope {
   return s;
 }
 
-function bind_mutual_siblings(stmts: ast.Stmt[], s: Scope): Scope {
-  let fns = localfuncs.nested_fns(stmts);
-  let out = s;
-  for f in fns {
-    if (localfuncs.nested_fn_cycle(fns, f.name).len() > 1) {
-      out = out.bind(f.name, lambda_fn_type(f.lam, s));
+// Nested functions that call each other are in scope from the first of them.
+function bind_group_at(st: ast.Stmt, fns: localfuncs.NestedFn[], s: Scope): Scope {
+  if let ast.StmtVar(v) = st {
+    let cycle = localfuncs.nested_fn_cycle(fns, v.name);
+    if (cycle.len() > 1 && cycle[0] == v.name) {
+      let out = s;
+      for f in fns {
+        if (util.has_str(cycle, f.name)) {
+          out = out.bind(f.name, lambda_fn_type(f.lam, s));
+        }
+      }
+      return out;
     }
   }
-  return out;
+  return s;
 }
 
 const INFERRED_RESULT: string = "inferred lambda result";
@@ -10825,8 +10831,10 @@ function unsafe_expr(e: ast.Expr, s: Scope, inside: boolean): util.Diag[] {
 
 function unsafe_stmts(stmts: ast.Stmt[], s: Scope, inside: boolean): util.Diag[] {
   let out: util.Diag[] = [];
-  let cur = bind_mutual_siblings(stmts, s);
+  let cur = s;
+  let fns = localfuncs.nested_fns(stmts);
   for st in stmts {
+    cur = bind_group_at(st, fns, cur);
     match (st) {
       ast.StmtVar(v) => {
         out = util.append_diags(out, unsafe_expr(v.init, rec_local_scope(v, cur), inside));
@@ -18060,11 +18068,13 @@ function then_scope(f: ast.StmtIf, s: Scope): Scope {
 
 function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
-  let cur = bind_mutual_siblings(stmts, s);
+  let cur = s;
+  let fns = localfuncs.nested_fns(stmts);
   for lc in localfuncs.nested_fn_late_captures(stmts) {
     out = out.append(dg_at("E108", "nested function " + util.quoted(lc.fn_name) + " captures " + util.quoted(lc.name) + ", but " + util.quoted(lc.first) + " can call " + util.quoted(lc.fn_name) + " before the declaration of " + util.quoted(lc.name) + ": declare " + util.quoted(lc.name) + " before " + util.quoted(lc.first), lc.line, lc.col));
   }
   for st in stmts {
+    cur = bind_group_at(st, fns, cur);
     match (st) {
       ast.StmtVar(v) => {
         let vsc = cur;

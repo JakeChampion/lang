@@ -12311,16 +12311,20 @@ func (c *checker) checkBlock(b *ast.Block, parent *scope) {
 	}
 	if len(localFns) > 1 {
 		c.mutualRecSiblings = detectMutualRecSCCs(localFns)
-		for _, fn := range localFns {
-			if c.mutualRecSiblings[fn.Name] != "" {
-				s.set(fn.Name, paramSig(fn.Params, fn.ReturnType, fn.ReturnOwn))
-			}
-		}
 		c.recordLateBinders(b)
 	} else {
 		c.mutualRecSiblings = nil
 	}
+	siblings := c.mutualRecSiblings
 	for i, st := range b.Stmts {
+		// Nested functions that call each other are in scope from the first of them.
+		if first, ok := st.(*ast.FuncDecl); ok && first.IsLocal && siblings[first.Name] == first.Name {
+			for _, fn := range localFns {
+				if siblings[fn.Name] == first.Name {
+					s.set(fn.Name, paramSig(fn.Params, fn.ReturnType, fn.ReturnOwn))
+				}
+			}
+		}
 		b.Stmts[i] = c.checkStmtLoweringForEach(st, s)
 	}
 	c.mutualRecSiblings = prevMutualRec

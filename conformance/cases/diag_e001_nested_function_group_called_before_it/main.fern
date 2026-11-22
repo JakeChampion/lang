@@ -1,0 +1,18 @@
+function main(): i32 {
+  print(down(7));
+  let step = 2;
+  function down(n: i32): i32 {
+    if (n <= 0) {
+      return 0;
+    }
+    return 1 + up(n - step);
+  }
+  function up(n: i32): i32 {
+    if (n <= 0) {
+      return 0;
+    }
+    return 1 + down(n - 1);
+  }
+  print(down(7));
+  return 0;
+}
