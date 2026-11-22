@@ -227,6 +227,13 @@ pub function save_config(token: string, player: Player, original: PlayerConfig, 
       return Err(failure("Alarms changed on another device. Reload the player settings."));
     }
   }
+  return write_config(token, player, current, edits);
+}
+
+// Writes the settings `current` of `player` with `edits`, and reads nothing
+// first. Use it for a series of writes, where each one starts from the
+// settings that the write before it gave.
+pub function write_config(token: string, player: Player, current: PlayerConfig, edits: (string, json.JsonValue)[]): Result[PlayerConfig, Failure] {
   let next = merge_config(current, edits);
   let fields = [("config", next.values)];
   if (edits.any((edit: (string, json.JsonValue)): boolean => edit.0 == "name")) {

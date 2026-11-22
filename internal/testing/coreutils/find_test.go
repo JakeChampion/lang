@@ -986,7 +986,6 @@ var findDebugLines = []string{
 	`unsearchable -empty , -name x`,
 	`unsearchable -prune -name x`,
 	`-depth unsearchable -prune -name x`,
-	`-D all sub -maxdepth 1 -name 's*'`,
 }
 
 // findMaskedCases print the process of a command or the time of the run,
@@ -1014,6 +1013,7 @@ func findMaskedCases(dir string) []invocation {
 		`-D opt -path './sub/*' -prune -a -prune , -writable -fstype nosuchfs -and -printf '%p %s\n' '(' -links 2 ')' -type l,f -or -mtime -1`,
 		`-D time,tree -maxdepth 0 -mtime 1 -mtime -1 -mtime +3 -mmin 5 -atime 0.5 -daystart -ctime 0`,
 		`-D all sub -maxdepth 1 -name 'b*' -exec echo '{}' ';'`,
+		`-D all sub -maxdepth 1 -name 's*'`,
 	} {
 		cases = append(cases, invocation{name: "find " + line, args: shellWords(line), dir: dir, stderrMask: mask})
 	}

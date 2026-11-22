@@ -44,6 +44,8 @@ enum Job {
   Streams(i64, string, api.Card, string, string),
   ReadConfig(i64, string, api.Player),
   WriteConfig(i64, string, api.Player, api.PlayerConfig, (string, json.JsonValue)[]),
+  ReadDim(i64, string, api.Player),
+  WriteDim(i64, string, api.Player, api.PlayerConfig, (string, json.JsonValue)[]),
   ReadShortcutTracks(i64, string, api.Card),
   GetDownload(i64, string, api.Card),
   TripCheck(offline.Catalog, listening.Item[]),
@@ -107,6 +109,17 @@ struct Shelf {
 }
 
 struct GroupEdit { local: boolean, id: string, name: string, members: string[], image: string, query: string, confirm: boolean, busy: boolean, note: string }
+
+// A display that goes dim. `day` and `night` are the brightness settings
+// from before, which come back when the person stops it. Each step lowers
+// the brightness by 1. `steps` is the number of the steps, and `sent` is
+// the number of them that the player has.
+pub struct Dimming { player: api.Player, config: Option[api.PlayerConfig], day: string, night: string, started: i64, steps: i32, sent: i32, working: boolean }
+
+// The display goes to DIM_TARGET percent in DIM_NS.
+const DIM_NS: i64 = 120000000000i64;
+
+const DIM_TARGET: i32 = 5;
 
 struct NowPlaying {
   revision: i64,
@@ -249,6 +262,8 @@ pub struct Model {
   confirm: string,
   // When to send the volume of the slider to the player, or 0.
   volume_due: i64,
+  dimming: Option[Dimming],
+  dim_revision: i64,
   library_loaded: boolean,
   cache_dir: string,
   cache_available: boolean,
@@ -469,6 +484,9 @@ pub enum Msg {
   RestoreTrackArtwork,
   DeviceStatusLoaded(i64, string, Result[api.DeviceStatus, api.Failure]),
   DeviceVolume(i32),
+  ToggleDim,
+  DimLoaded(i64, Result[api.PlayerConfig, api.Failure]),
+  DimSaved(i64, Result[api.PlayerConfig, api.Failure]),
   PhoneResume,
   PhoneControl(api.Command),
   SelectTab(i32),
@@ -493,7 +511,7 @@ function tools(saved: listening.Saved): PlaybackTools {
 
 pub function start(): Model {
   let downloads = offline.empty(offline.Catalog { dir: "", entries: [], cleanup: [], note: "" });
-  return Model { client: "", token: "", refresh: "", reconnect: false, auth: [], storage: None, session_note: "", load_after_auth: false, players: [], cards: [], shelf: empty_shelf(), generation: 0i64, background_busy: false, cover_busy: false, cover_active: "", cover_stop: -1, cover_pipe: (): (i32, i32) => (-1, -1), art_dir: "", warmed: map_new(64), trip_select: false, trip_cards: map_new(32), selected: "", on_phone: false, phone: phone.empty(), playback_tools: tools(listening.empty()), travel_panel: travel_panel(), now_playing: NowPlaying { revision: 0i64, requested: false, due: 0i64, running: false, playback: None, note: "" }, now_open: false, expanded_art: None, target_open: false, tools_page: panel_tools.empty(), audio_revision: 0i64, audio_editor: None, editing_group: None, device_status: None, device_note: "", volume: 50, config_panel: panel(0i64), downloads: downloads, offline_open: "", tab: 0, tab_history: [], note: "", fault: "", confirm: "", volume_due: 0i64, library_loaded: false, cache_dir: "", cache_available: false, changed_index: 0i64, stored_index: 0i64, index_saving: false, wifi: false, retry_download_at: 0i64, wifi_requeue: "", parent: closed_gate(), shortcut: "", launch_action: "", transfer_from: "", transfer_revision: 0i64, transfer_target: "", transfer_note: "", enrich_downloads: false, busy: false, open_login: false, flow: None, job: None };
+  return Model { client: "", token: "", refresh: "", reconnect: false, auth: [], storage: None, session_note: "", load_after_auth: false, players: [], cards: [], shelf: empty_shelf(), generation: 0i64, background_busy: false, cover_busy: false, cover_active: "", cover_stop: -1, cover_pipe: (): (i32, i32) => (-1, -1), art_dir: "", warmed: map_new(64), trip_select: false, trip_cards: map_new(32), selected: "", on_phone: false, phone: phone.empty(), playback_tools: tools(listening.empty()), travel_panel: travel_panel(), now_playing: NowPlaying { revision: 0i64, requested: false, due: 0i64, running: false, playback: None, note: "" }, now_open: false, expanded_art: None, target_open: false, tools_page: panel_tools.empty(), audio_revision: 0i64, audio_editor: None, editing_group: None, device_status: None, device_note: "", volume: 50, config_panel: panel(0i64), downloads: downloads, offline_open: "", tab: 0, tab_history: [], note: "", fault: "", confirm: "", volume_due: 0i64, dimming: None, dim_revision: 0i64, library_loaded: false, cache_dir: "", cache_available: false, changed_index: 0i64, stored_index: 0i64, index_saving: false, wifi: false, retry_download_at: 0i64, wifi_requeue: "", parent: closed_gate(), shortcut: "", launch_action: "", transfer_from: "", transfer_revision: 0i64, transfer_target: "", transfer_note: "", enrich_downloads: false, busy: false, open_login: false, flow: None, job: None };
 }
 
 function signed_out(m: Model, note: string): Model {
@@ -1932,6 +1950,122 @@ function remove_key(id: string): string {
   return "download:" + id;
 }
 
+// The brightness setting `from` after `step` steps down to DIM_TARGET.
+function dim_level(from: string, step: i32): string {
+  return settings.dimmed(from, step, DIM_TARGET);
+}
+
+// The percent that the display of the player has now, for the person.
+function dim_percent(d: Dimming): string {
+  return dim_level(d.day, d.sent);
+}
+
+// The milliseconds to the next step of the display that goes dim at the
+// time `now`, or -1 when no step waits.
+function dim_wait(m: Model, now: i64): i32 {
+  let Some(d) = m.dimming else {
+    return -1;
+  };
+  if (d.working || d.config.is_none() || d.sent >= d.steps || m.token.len() == 0) {
+    return -1;
+  }
+  let due = d.started + (d.sent + 1) as i64 * DIM_NS / (d.steps as i64);
+  return (((due - now) / 1000000i64) as i32).max(0);
+}
+
+// Sends the brightness of the step that is due at the time `now`.
+pub function dim_step(own m: Model, now: i64): Model {
+  if (dim_wait(m, now) != 0) {
+    return m;
+  }
+  let Some(d) = m.dimming else {
+    return m;
+  };
+  let Some(config) = d.config else {
+    return m;
+  };
+  let step = d.sent + 1;
+  let draft: Map[string, string] = map_new(4);
+  draft = draft.insert("dayDisplayBrightness", dim_level(d.day, step)).insert("nightDisplayBrightness", dim_level(d.night, step));
+  let edits = settings.changes(config, draft).unwrap_or([]);
+  if (edits.len() == 0) {
+    return Model { ...m, dimming: Some(Dimming { ...d, sent: step }) };
+  }
+  return Model { ...m, dimming: Some(Dimming { ...d, working: true }), job: Some(WriteDim(m.dim_revision, m.token, d.player, config, edits)) };
+}
+
+// Starts to make the display of the selected player dim, or stops and puts
+// its brightness back.
+function toggle_dim(own m: Model): Model {
+  if let Some(d) = m.dimming {
+    let stopped = Model { ...m, dimming: None, dim_revision: m.dim_revision + 1i64 };
+    let Some(config) = d.config else {
+      return stopped;
+    };
+    let draft: Map[string, string] = map_new(4);
+    draft = draft.insert("dayDisplayBrightness", d.day).insert("nightDisplayBrightness", d.night);
+    let edits = settings.changes(config, draft).unwrap_or([]);
+    if (edits.len() == 0 || m.token.len() == 0) {
+      return stopped;
+    }
+    return Model { ...stopped, note: "Display brightness restored.", job: Some(WriteDim(stopped.dim_revision, m.token, d.player, config, edits)) };
+  }
+  let Some(player) = selected(m) else {
+    return m;
+  };
+  if (!player.online || m.token.len() == 0 || m.on_phone) {
+    return m;
+  }
+  let revision = m.dim_revision + 1i64;
+  let waiting = Dimming { player: player, config: None, day: "", night: "", started: 0i64, steps: 0, sent: 0, working: true };
+  return Model { ...m, dimming: Some(waiting), dim_revision: revision, job: Some(ReadDim(revision, m.token, player)) };
+}
+
+function dim_failed(own m: Model, err: api.Failure): Model {
+  return Model { ...m, dimming: None, dim_revision: m.dim_revision + 1i64, note: err.message, fault: err.message };
+}
+
+function dim_loaded(own m: Model, revision: i64, result: Result[api.PlayerConfig, api.Failure]): Model {
+  let Some(d) = m.dimming else {
+    return m;
+  };
+  if (revision != m.dim_revision) {
+    return m;
+  }
+  match (result) {
+    Ok(config) => {
+      let empty: Map[string, string] = map_new(1);
+      let day = settings.setting_value(config, empty, "dayDisplayBrightness");
+      let night = settings.setting_value(config, empty, "nightDisplayBrightness");
+      let steps = settings.dim_steps(day, DIM_TARGET).max(settings.dim_steps(night, DIM_TARGET));
+      return Model { ...m, dimming: Some(Dimming { ...d, config: Some(config), day: day, night: night, started: monotonic_ns(), steps: steps, sent: 0, working: false }) };
+    },
+    Err(err) => {
+      return dim_failed(m, err);
+    }
+  }
+}
+
+function dim_saved(own m: Model, revision: i64, result: Result[api.PlayerConfig, api.Failure]): Model {
+  if (revision != m.dim_revision) {
+    if let Err(err) = result {
+      return Model { ...m, note: err.message, fault: err.message };
+    }
+    return m;
+  }
+  let Some(d) = m.dimming else {
+    return m;
+  };
+  match (result) {
+    Ok(config) => {
+      return Model { ...m, dimming: Some(Dimming { ...d, config: Some(config), sent: d.sent + 1, working: false }) };
+    },
+    Err(err) => {
+      return dim_failed(m, err);
+    }
+  }
+}
+
 function switch_tab(m: Model, tab: i32, history: i32[]): Model {
   return Model { ...m, tab: tab, tab_history: history, confirm: "", shelf: Shelf { ...m.shelf, first_art: 0, last_art: 0 } };
 }
@@ -2408,6 +2542,9 @@ pub function update(own m: Model, msg: Msg): Model {
       }
       if (m.volume_due > 0i64 && now >= m.volume_due && !m.busy) {
         return control(Model { ...m, volume_due: 0i64 }, api.Volume(m.volume));
+      }
+      if (dim_wait(m, now) == 0) {
+        return dim_step(m, now);
       }
       if (!m.shelf.search_busy && m.shelf.search_due > 0i64 && now >= m.shelf.search_due) {
         let shelf = m.shelf;
@@ -3327,6 +3464,15 @@ pub function update(own m: Model, msg: Msg): Model {
         }
       }
     },
+    ToggleDim => {
+      return toggle_dim(m);
+    },
+    DimLoaded(revision, result) => {
+      return dim_loaded(m, revision, result);
+    },
+    DimSaved(revision, result) => {
+      return dim_saved(m, revision, result);
+    },
     DeviceVolume(volume) => {
       return Model { ...m, volume: volume.max(0).min(100), volume_due: monotonic_ns() + VOLUME_WAIT_NS };
     },
@@ -3422,6 +3568,12 @@ function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
       },
       WriteConfig(revision, token, player, config, edits) => {
         return ConfigLoaded(revision, true, api.save_config(token, player, config, edits));
+      },
+      ReadDim(revision, token, player) => {
+        return DimLoaded(revision, api.player_config(token, player));
+      },
+      WriteDim(revision, token, player, config, edits) => {
+        return DimSaved(revision, api.write_config(token, player, config, edits));
       },
       ReadShortcutTracks(revision, token, card) => {
         return ShortcutTracksLoaded(revision, api.details(token, card));
@@ -3688,6 +3840,28 @@ function playing_info(m: Model): ui.El[Msg][] {
 
 // What the selected player plays, with its controls, below the list of
 // the players.
+// The checkbox that makes the display of the selected player dim, with its
+// progress.
+function dim_control(m: Model): ui.El[Msg][] {
+  let Some(player) = selected(m) else {
+    return [];
+  };
+  if (m.on_phone || !player.online || m.token.len() == 0) {
+    return [];
+  }
+  let Some(d) = m.dimming else {
+    return [ui.labelled_checkbox(false, "Dim the display to 5% over 2 minutes", ToggleDim)];
+  };
+  if (d.player.id != player.id) {
+    return [ui.text[Msg]("The display of " + d.player.name + " goes dim. Stop it there first.").colored(ui.MUTED)];
+  }
+  let state = "Reading the display brightness…";
+  if (d.config.is_some()) {
+    state = if (d.sent >= d.steps) { "Display at " + dim_percent(d) + "%. Clear the box to restore it." } else { "Display at " + dim_percent(d) + "%, going to " + DIM_TARGET.to_string() + "%" };
+  }
+  return [ui.labelled_checkbox(true, "Dim the display to 5% over 2 minutes", ToggleDim), ui.text[Msg](state).colored(ui.MUTED)];
+}
+
 function player_controls(m: Model): ui.El[Msg][] {
   if (m.on_phone || m.selected.len() == 0) {
     return [];
@@ -3704,7 +3878,7 @@ function player_controls(m: Model): ui.El[Msg][] {
     buttons = buttons.append(ui.text_button("Stop", Control(api.Stop)));
   }
   buttons = buttons.append(ui.outlined_button("Now playing", OpenNowPlaying));
-  return [ui.card(playing_info(m).append(actions_row(buttons))).spaced(8.0).wide()];
+  return [ui.card(playing_info(m).append(actions_row(buttons)).concat(dim_control(m))).spaced(8.0).wide()];
 }
 
 function player_list(m: Model): ui.El[Msg] {
@@ -4067,6 +4241,9 @@ function device_controls(m: Model): ui.El[Msg][] {
     rows = rows.concat([
       ui.text[Msg]("Volume " + m.volume.to_string() + "%").weighted(600),
       ui.slider(m.volume as f64 / 100.0, (at: f64): Msg => DeviceVolume((at * 100.0).round() as i32)).described("Player volume"),
+    ]);
+    rows = rows.concat(dim_control(m));
+    rows = rows.concat([
       ui.text[Msg]("Player sleep timer").weighted(600),
       actions_row([ui.text_button("15 min", Control(api.DeviceSleep(900))), ui.text_button("30 min", Control(api.DeviceSleep(1800))), ui.text_button("60 min", Control(api.DeviceSleep(3600))), ui.text_button("Off", Control(api.DeviceSleep(0)))]),
     ]);
@@ -5521,6 +5698,10 @@ function wait(m: Model): i32 {
   }
   if (m.volume_due > 0i64 && !m.busy) {
     return (((m.volume_due - monotonic_ns()) / 1000000i64) as i32).max(0);
+  }
+  let dim = dim_wait(m, monotonic_ns());
+  if (dim >= 0) {
+    return dim;
   }
   if (!m.busy && !m.cover_busy && (next_cover(m).len() > 0 || warm_art(m).len() > 0)) {
     return 120;

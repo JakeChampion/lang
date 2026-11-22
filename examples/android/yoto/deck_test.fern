@@ -1426,6 +1426,52 @@ function test_time_steps(): test.TestOutcome {
   return test.assert_eq(s.shell.app.config_panel.draft.get("dayTime").unwrap_or(""), "00:30");
 }
 
+function brightness_config(player: api.Player, day: string): Option[api.PlayerConfig] {
+  let reply = json.parse("{\"device\":{\"config\":{\"dayDisplayBrightness\":\"" + day + "\",\"nightDisplayBrightness\":\"auto\"}}}").unwrap_or(json.JNull);
+  return api.parse_config(reply, player).ok();
+}
+
+function test_display_dims(): test.TestOutcome {
+  if (settings.dimmed("80", 1, 5) != "79" || settings.dimmed("auto", 6, 5) != "94" || settings.dimmed("20", 40, 5) != "5" || settings.dimmed("3", 6, 5) != "3") {
+    return test.fail("lower the brightness by 1 for each step and leave a dim display as it is");
+  }
+  if (settings.dim_steps("80", 5) != 75 || settings.dim_steps("auto", 5) != 95 || settings.dim_steps("3", 5) != 0) {
+    return test.fail("count one step for each percent down to the target");
+  }
+  let player = api.Player { id: "one", name: "Bedroom", online: true };
+  let (Some(first), Some(second)) = (brightness_config(player, "80"), brightness_config(player, "79")) else {
+    return test.fail("parse the brightness settings");
+  };
+  let s = sim.tap(library_sim(), "Bedroom, Online");
+  s = sim.tap(s, "Dim the display to 5% over 2 minutes");
+  let asked = s.shell.app;
+  if (asked.dimming.is_none() || asked.job.is_none() || !sim.says(s, "Dim the display to 5% over 2 minutes, checked")) {
+    return test.fail("read the brightness of the selected player when the box is checked");
+  }
+  s = sim.send(s, deck.DimLoaded(asked.dim_revision, Ok(first)));
+  if (!sim.shows(s, "Display at 80%, going to 5%")) {
+    return test.fail("show the brightness that the display starts from");
+  }
+  // The night display starts from 100, so the 95 steps of 2 minutes are 1263 ms apart.
+  let running = deck.Dimming { player: player, config: Some(first), day: "80", night: "auto", started: 0i64, steps: 95, sent: 0, working: false };
+  let model = deck.Model { ...deck.start(), token: "test session", players: [player], selected: "one", dimming: Some(running) };
+  let early = deck.dim_step(model, 1200000000i64);
+  if (early.job.is_some()) {
+    return test.fail("wait for the time of the first step");
+  }
+  let stepped = deck.dim_step(early, 1300000000i64);
+  if (stepped.job.is_none()) {
+    return test.fail("send the first step when its time comes");
+  }
+  let saved = deck.update(stepped, deck.DimSaved(0i64, Ok(second)));
+  let sent = saved.dimming.map((d: deck.Dimming): i32 => d.sent).unwrap_or(-1);
+  if (sent != 1) {
+    return test.fail("count the step that the player took");
+  }
+  let stopped = deck.update(saved, deck.ToggleDim);
+  return test.assert_eq(stopped.dimming.is_none() && stopped.job.is_some() && stopped.note == "Display brightness restored.", true);
+}
+
 function test_library_search_jobs(): test.TestOutcome {
   let first = fixture_cards()[0];
   let tracks: api.Track[] = [];
@@ -1895,6 +1941,7 @@ function main(): i32 {
   r = r.it("show the label of each option and each trip action on one line", test_each_option_shows_its_label);
   r = r.it("keep each tab on one line at a large text size", test_large_text_keeps_the_tabs);
   r = r.it("move a time setting by an hour without the keyboard", test_time_steps);
+  r = r.it("dim the display of a player in steps and restore it", test_display_dims);
   r = r.it("match the player controls to its state, rest the volume, and mark a fault", test_player_state_sets_the_controls);
   r = r.it("retry one track and find the saved card after restart", test_downloaded_search_and_retry);
   r = r.it("validate scanned card codes and shop links", test_scan_and_shop);
