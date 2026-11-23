@@ -191,7 +191,9 @@ This rule also covers callback literals and their captured callback aliases.
 Selected callback values retain the captures of their `if`, `match`, and block results.
 A local that holds a callback, such as a record with a callback field or the task of `async.spawn`, keeps the loans of that callback.
 It is E050 as a call argument after the captured owner moves.
-The cases `diag_e050_record_callback_uses_consumed_capture` and `diag_e050_spawned_task_uses_consumed_capture` cover this rule.
+The captured owner can be an `own` parameter or a fresh local, and the local can get its callback from a function.
+A fresh local that is assigned again is not such an owner, because the guard follows a binding with one definition only.
+The cases `diag_e050_record_callback_uses_consumed_capture`, `diag_e050_spawned_task_uses_consumed_capture`, `diag_e050_factory_holder_uses_consumed_local` and `diag_e050_task_from_function_uses_consumed_local` cover this rule.
 Reads that only evaluate a condition or a block statement do not extend the returned callback's captures.
 It preserves repeated reads before cleanup and immutable data copies.
 The cases `diag_e050_callback_uses_consumed_capture` and `callback_capture_lifetimes` cover this guard.
