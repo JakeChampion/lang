@@ -27834,14 +27834,17 @@ function ow_value_data(tn: string, dx: OwnDecls, seen: string[]): boolean {
   let checked: string[] = [];
   let arities: i32[] = [];
   let at = 0;
+  // A part that the walk met before gives the same answer again.
+  let met = util.name_index([]);
   while (at < pending.len()) {
     let part = pending[at].trim();
     at += 1;
+    if (util.has_str(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize", "f32", "f64", "boolean", "char", "string", "void"], part) || typeinfo.lanes_width(part) > 0 || met.has(part)) {
+      continue;
+    }
+    met = met.added(part);
     if (!ow_holds_no_handle(part, dx) || part == "str" || part == "fn" || parser.top_arrow_at(part) >= 0 || part.starts_with("[")) {
       return false;
-    }
-    if (util.has_str(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize", "f32", "f64", "boolean", "char", "string", "void"], part) || typeinfo.lanes_width(part) > 0) {
-      continue;
     }
     if (part.ends_with("[]")) {
       pending = pending.append(slice_unchecked(part, 0, part.len() - 2).to_owned());
