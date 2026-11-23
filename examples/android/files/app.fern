@@ -143,6 +143,7 @@ function app_main(ctx: usize): usize {
     keep: (p: files.Prefs): boolean => prefs.save(dir, p),
     open: (path: string): boolean => open.view(ctx, path),
     share: (path: string): boolean => open.send(ctx, path),
+    play: (address: string, name: string): boolean => open.play(ctx, address, name),
     decode: (bytes: u8[], wide: i32): Option[draw.Image] => picture(bytes, wide),
   };
   let last = app.run(ctx, files.start(roots(), has_access(ctx), vault.load(dir, android.env(ctx)), cache, prefs.load(dir)), files.program(platform));

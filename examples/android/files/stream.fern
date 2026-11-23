@@ -1,0 +1,128 @@
+// Gives a file to a player of the phone as an HTTP address, so the player
+// reads the part that it shows and not the whole file. A small HTTP server
+// answers range requests, and reads each piece from the place of the file.
+// The address holds a token, so no other program finds the file.
+import "std/http";
+import "std/i32";
+import "std/i64";
+import "std/net";
+import "std/platform";
+import "std/result";
+import "std/serve";
+import "std/string";
+import "std/utf8";
+import "./open";
+import "./store";
+
+// The most bytes of one read from the place of the file.
+pub const PIECE: i32 = 4194304;
+
+// The first and the last byte that the Range header `header` asks for, in
+// a file of `size` bytes, or None when it names no range of the file.
+pub function range_of(header: string, size: i64): Option[(i64, i64)] {
+  let text = header.trim();
+  if (!text.starts_with("bytes=") || size <= 0i64) {
+    return None;
+  }
+  let parts = text.drop(6).split("-");
+  if (parts.len() != 2 || text.contains(",")) {
+    return None;
+  }
+  let last = size - 1i64;
+  if (parts[0].len() == 0) {
+    let Ok(tail) = i64.parse_i64(parts[1]) else {
+      return None;
+    };
+    return if (tail <= 0i64) { None } else { Some(((size - tail).max(0i64), last)) };
+  }
+  let Ok(first) = i64.parse_i64(parts[0]) else {
+    return None;
+  };
+  if (first < 0i64 || first > last) {
+    return None;
+  }
+  if (parts[1].len() == 0) {
+    return Some((first, last));
+  }
+  let Ok(end) = i64.parse_i64(parts[1]) else {
+    return None;
+  };
+  return if (end < first) { None } else { Some((first, end.min(last))) };
+}
+
+// The path of the address of the file `name` with the token `token`.
+pub function path_of(token: string, name: string): string {
+  let safe = name.bytes().map((b: u8): u8 => if (b >= 48u8 && b <= 57u8 || b >= 65u8 && b <= 90u8 || b >= 97u8 && b <= 122u8 || b == 46u8 || b == 45u8) { b } else { 95u8 });
+  return "/" + token + "/" + utf8.from_bytes_lossy(safe);
+}
+
+// The answer to one request for the file `path` of `place`, which has
+// `size` bytes. A request for the stop address ends the server.
+pub function answer(place: store.Place, path: string, size: i64, token: string, req: HttpRequest): HttpResponse {
+  if (req.path == "/" + token + "/stop") {
+    exit(0);
+  }
+  if (!req.path.starts_with("/" + token + "/")) {
+    return http.text(404, "no such file");
+  }
+  let asked = req.headers.get("range").unwrap_or("");
+  let span = range_of(asked, size);
+  if (asked.len() > 0 && span.is_none()) {
+    return http.text(416, "no such range").with_header("Content-Range", "bytes */" + size.to_string());
+  }
+  let (first, last) = span.unwrap_or((0i64, size - 1i64));
+  let at = cell_new(first);
+  let next = (room: i32): Option[u8[]] => {
+    let from = at.get();
+    if (from > last) {
+      return None;
+    }
+    let want = (last - from + 1i64).min(PIECE as i64) as i32;
+    let Ok(part) = store.read(place, path, from, want) else {
+      return None;
+    };
+    if (part.data.len() == 0) {
+      return None;
+    }
+    at.set(from + part.data.len() as i64);
+    return Some(part.data);
+  };
+  let status = if (asked.len() > 0) { 206 } else { 200 };
+  let out = http.chunks(status, next).with_header("Accept-Ranges", "bytes").with_header("Content-Type", open.mime(path));
+  if (status == 206) {
+    return out.with_header("Content-Range", "bytes " + first.to_string() + "-" + last.to_string() + "/" + size.to_string());
+  }
+  return out;
+}
+
+// Ends the server that listens on `port` with the token `token`, when
+// there is one.
+pub function stop(port: i32, token: string): void {
+  if (port <= 0) {
+    return;
+  }
+  if let Ok(sock) = net.connect(net.socket_addr(net.ipv4_loopback(), port)) {
+    let sent = tcp_send_bytes(sock, ("GET /" + token + "/stop HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n").bytes());
+    sleep_ms(100i64);
+    let closed = tcp_close(sock);
+  }
+}
+
+// The address of the file `name` on the server of this phone.
+pub function address(port: i32, token: string, name: string): string {
+  return "http://127.0.0.1:" + port.to_string() + path_of(token, name);
+}
+
+// Serves the file on `port` until the stop address gets a request, or the
+// app ends. It gives a text only when the server does not start.
+pub function serve_file(place: store.Place, path: string, size: i64, token: string, port: i32): string {
+  let handler: (HttpRequest, platform.Host) => HttpResponse = (req: HttpRequest, host: platform.Host): HttpResponse => answer(place, path, size, token, req);
+  match (serve.run(port, serve.Config { ...serve.config(), stop_with_parent: true }, handler)) {
+    Ok(_) => {
+      return "";
+    },
+    Err(e) => {
+      return "The app could not start the stream: " + e.message();
+    }
+  }
+}

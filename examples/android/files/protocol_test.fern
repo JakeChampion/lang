@@ -13,6 +13,7 @@ import "./scan";
 import "./smb";
 import "./smb3";
 import "./store";
+import "./stream";
 import "./vault";
 
 // The first outcome that is a failure, or a pass.
@@ -258,6 +259,30 @@ function test_archive_names(): test.TestOutcome {
   ]);
 }
 
+// The range of a header in a file of 1000 bytes, as text.
+function span(header: string): string {
+  if let Some((first, last)) = stream.range_of(header, 1000i64) {
+    return first.to_string() + "-" + last.to_string();
+  }
+  return "none";
+}
+
+function test_ranges(): test.TestOutcome {
+  return all([
+    test.assert_eq(span("bytes=0-99"), "0-99"),
+    test.assert_eq(span("bytes=500-"), "500-999"),
+    test.assert_eq(span("bytes=-10"), "990-999"),
+    test.assert_eq(span("bytes=900-5000"), "900-999"),
+    test.assert_eq(span("bytes=1000-"), "none"),
+    test.assert_eq(span("bytes=5-2"), "none"),
+    test.assert_eq(span("bytes=0-1,5-6"), "none"),
+    test.assert_eq(span("lines=1-2"), "none"),
+    test.assert_eq(stream.path_of("abc", "My film (1).mkv"), "/abc/My_film__1_.mkv"),
+    test.assert_eq(stream.address(8080, "t", "a.mp3"), "http://127.0.0.1:8080/t/a.mp3"),
+    holds(open.plays("a.MKV") && open.plays("b.flac") && !open.plays("c.pdf"), "the wrong files play"),
+  ]);
+}
+
 function test_texts(): test.TestOutcome {
   return all([
     test.assert_eq(store.size_text(5i64), "5 B"),
@@ -345,6 +370,7 @@ function main(): i32 {
   r = r.it("a file name gives its media type", test_types);
   r = r.it("the preferences survive their file", test_prefs);
   r = r.it("an archive name stays below its folder", test_archive_names);
+  r = r.it("a range request names the bytes of a file", test_ranges);
   r = r.it("sizes and days read well", test_texts);
   r = r.it("a copy in steps keeps each byte", test_copy);
   r = r.it("the saved servers survive the vault", test_vault);
