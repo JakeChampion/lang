@@ -7111,6 +7111,138 @@ pub function shared_lengths(f: SFunc): SFunc {
   return SFunc { ...f, blocks: blocks, nvals: f.nvals + made.len() };
 }
 
+// A checked read or write of an array or a string in a loop compares its
+// index with the length in memory on each trip. When the loop has one way
+// in, and nothing in it can change a length, one load of the length in the
+// block before the loop serves each trip. The base must be defined before
+// the loop. A target that compares with the length in memory gains nothing.
+pub function hoisted_lengths(f: SFunc): SFunc {
+  if (f.blocks.len() < 3) {
+    return f;
+  }
+  let at = block_positions(f);
+  let latch = furthest_latches(f, at);
+  let used = used_values(f);
+  let def_pos = util.minus_ones(f.nvals);
+  let preds: i32[][] = f.blocks.map((b: SBlock): i32[] => []);
+  for bi in 0..f.blocks.len() {
+    for ins in f.blocks[bi].insts {
+      if (ins.result >= 0 && ins.result < f.nvals) {
+        def_pos = def_pos.with(ins.result, bi);
+      }
+    }
+    for id in successors(f.blocks[bi].term) {
+      let p = position_of(at, id);
+      if (p >= 0 && !util.has_i32(preds[p], bi)) {
+        preds = preds.with(p, preds[p].append(bi));
+      }
+    }
+  }
+  let blocks = f.blocks;
+  let made: i32[] = [];
+  for h in 0..latch.len() {
+    let last = latch[h];
+    if (last <= h) {
+      continue;
+    }
+    let pre = loop_entry(blocks, preds, at, h, last);
+    if (pre < 0 || changes_lengths(blocks, h, last)) {
+      continue;
+    }
+    let bases: i32[] = [];
+    let lens: i32[] = [];
+    let loads: SInst[] = [];
+    for bi in h..=last {
+      let insts: SInst[] = [];
+      let changed = false;
+      for ins in blocks[bi].insts {
+        let b = if (ins.args.len() > 0) { ins.args[0] } else { -1 };
+        if (!length_checked(ins, used) || !defined_before(f, def_pos, b, h, last)) {
+          insts = insts.append(ins);
+          continue;
+        }
+        let k = util.index_of_i32(bases, b);
+        if (k < 0) {
+          k = bases.len();
+          bases = bases.append(b);
+          let id = f.nvals + made.len();
+          made = made.append(b);
+          lens = lens.append(id);
+          loads = loads.append(SInst { kind_tag: LD_AT, result: id, args: [b], imm: if (ins.kind_tag == STR_AT) { 8 } else { 0 }, str: "" });
+        }
+        insts = insts.append(SInst { kind_tag: BOUND, result: -1, args: [ins.args[1], lens[k]], imm: if (ins.kind_tag == STR_AT) { 1 } else { 0 }, str: "" });
+        if (ins.kind_tag == ARR_ST || ins.imm == 0) {
+          insts = insts.append(SInst { ...ins, imm: 1 });
+        }
+        changed = true;
+      }
+      if (changed) {
+        blocks = blocks.with(bi, SBlock { ...blocks[bi], insts: insts });
+      }
+    }
+    if (loads.len() > 0) {
+      blocks = blocks.with(pre, SBlock { ...blocks[pre], insts: blocks[pre].insts.concat(loads) });
+    }
+  }
+  if (made.len() == 0) {
+    return f;
+  }
+  return SFunc { ...f, blocks: blocks, nvals: f.nvals + made.len() };
+}
+
+// The position of the one block outside the loop from `h` to `last` that
+// enters it, when that block goes only to `h` and no block outside enters
+// the loop elsewhere, or -1.
+function loop_entry(blocks: SBlock[], preds: i32[][], at: i32[], h: i32, last: i32): i32 {
+  let pre = -1;
+  for p in preds[h] {
+    if (p < h || p > last) {
+      if (pre >= 0) {
+        return -1;
+      }
+      pre = p;
+    }
+  }
+  if (pre < 0 || successors(blocks[pre].term).len() != 1) {
+    return -1;
+  }
+  for bi in h + 1..=last {
+    for p in preds[bi] {
+      if (p < h || p > last) {
+        return -1;
+      }
+    }
+  }
+  return pre;
+}
+
+// Whether an instruction from block `h` to block `last` can change the
+// length of an array or a string. A read, a check and a write of an element
+// cannot.
+function changes_lengths(blocks: SBlock[], h: i32, last: i32): boolean {
+  for bi in h..=last {
+    for ins in blocks[bi].insts {
+      let k = ins.kind_tag;
+      if (inst_has_effect(k) && k != LINE && k != ARR_AT && k != STR_AT && k != ARR_ST && k != BOUND) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Whether `v` is a parameter, or is defined before the loop from `h` to
+// `last`.
+function defined_before(f: SFunc, def_pos: i32[], v: i32, h: i32, last: i32): boolean {
+  if (v < 0 || v >= def_pos.len()) {
+    return false;
+  }
+  if (def_pos[v] < 0) {
+    return v < f.nparams;
+  }
+  return def_pos[v] < h;
+}
+
 // Each AGG_LIT of one constant gives the same address. Where one of them
 // reaches another on each path with no call between them, the second reads
 // the value of the first, so a target forms the address once. `hard` says
