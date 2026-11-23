@@ -7085,14 +7085,43 @@ function env_serving(c: ssasem.Contract, t: typeinfo.Type): Option[EnvCandidate]
 
 struct Closed { rows: ssasem.EnvRow[], dyns: ssasem.EnvRow[], table: Schemas, requests: Request[] }
 
+// Types with an index by their spelling.
+struct TypeSet { types: typeinfo.Type[], by_spelling: util.NameIndex }
+
+function (ts: TypeSet) has(t: typeinfo.Type): boolean {
+  let key = typeinfo.spelling(t);
+  let i = ts.by_spelling.chain(key);
+  while (i >= 0) {
+    if (ts.by_spelling.names[i] == key && semtypes.equal(ts.types[i], t)) {
+      return true;
+    }
+    i = ts.by_spelling.next[i];
+  }
+  return false;
+}
+
+function (ts: TypeSet) added(t: typeinfo.Type): TypeSet {
+  return TypeSet { types: ts.types.append(t), by_spelling: ts.by_spelling.added(typeinfo.spelling(t)) };
+}
+
 function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo): Closed {
   let rows = ssasem.no_env_rows();
   let drows = ssasem.no_env_rows();
   let requests: Request[] = [];
   let table = schemas(named, s, memo);
+  let no_names: string[] = [];
+  // The rows of a function type do not change between the rounds, so each
+  // function type gives its candidates one time.
+  let served = TypeSet { types: [], by_spelling: util.name_index(no_names) };
   while (table.ok) {
     let r = table_reach(table, named);
-    let reach = r.fns;
+    let reach: typeinfo.Type[] = [];
+    for t in r.fns {
+      if (!served.has(t)) {
+        served = served.added(t);
+        reach = reach.append(t);
+      }
+    }
     let dreach = r.dyns;
     let grown = false;
     for candidate in env_rows(reach, s.contracts.envs) {
