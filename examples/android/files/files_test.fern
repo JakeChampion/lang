@@ -63,6 +63,8 @@ function simulator(dir: string, servers: files.Saved[]): sim.Sim[files.Model, fi
     ask_access: (): boolean => true,
     save: (kept: files.Saved[]): boolean => write_file(dir + "/.saved", kept.len().to_string()).is_ok(),
     keep: (p: files.Prefs): boolean => write_file(dir + "/.prefs", prefs.encode(p)).is_ok(),
+    play: (address: string, name: string): boolean => write_file(dir + "/.played", address + " " + name).is_ok(),
+    busy: (text: string): boolean => write_file(dir + "/.busy", read_file(dir + "/.busy").unwrap_or("") + "[" + text + "]").is_ok(),
     share: (path: string): boolean => write_file(dir + "/.shared", path).is_ok(),
     open: (path: string): boolean => !path.ends_with(".jpg") && write_file(dir + "/.opened", path).is_ok(),
     decode: (bytes: u8[], wide: i32): Option[draw.Image] => tile(bytes),
@@ -366,6 +368,38 @@ function test_thumbs_and_grid(): test.TestOutcome {
   return test.assert_eq(small + " " + grid.to_string() + " " + entered.to_string() + " " + kept.to_string(), "photo.jpg true true true");
 }
 
+// A copy tells Android what it does and when it ends. A step that fails
+// starts again, and the copy ends with a note after the last try.
+function test_background_and_retry(): test.TestOutcome {
+  let dir = fixture();
+  let s = done(sim.tap(simulator(dir, []), "Phone storage"));
+  s = sim.hold(s, "notes.txt");
+  s = sim.tap(s, "Copy");
+  s = done(sim.tap(s, "Music"));
+  s = done(sim.tap(s, "Paste here"));
+  for i in 0..4 {
+    s = done(s);
+  }
+  let said = read_file(dir + "/.busy").unwrap_or("");
+  if (!said.contains("[Copying 1 of 1]") || !said.ends_with("[]")) {
+    return test.fail("the copy told Android: " + said);
+  }
+  s = sim.hold(s, "notes.txt");
+  s = sim.tap(s, "Copy");
+  s = done(sim.back(s));
+  s = sim.tap(s, "Download");
+  s = done(s);
+  // The source goes away before the paste, so each try of the step fails.
+  let gone = remove_file(dir + "/Music/notes.txt").is_ok();
+  s = sim.tap(s, "Paste here");
+  for i in 0..12 {
+    s = done(s);
+  }
+  let ended = s.shell.app.task.is_none() && s.shell.app.fault.len() > 0;
+  let removed = remove_dir_all(dir);
+  return test.assert_eq(gone && ended, true);
+}
+
 function test_no_access(): test.TestOutcome {
   let s = simulator("/no/such/storage", []);
   preview(s, "10-access");
@@ -385,6 +419,7 @@ function main(): i32 {
   r = r.it("measure the folders and sort by size", test_folder_sizes);
   r = r.it("zip a selection and extract the archive", test_zip_and_extract);
   r = r.it("show small pictures and a grid", test_thumbs_and_grid);
+  r = r.it("tell Android of a copy, and try a failed step again", test_background_and_retry);
   r = r.it("ask for access when the storage is closed", test_no_access);
   return r.finish();
 }

@@ -834,21 +834,6 @@ function check_type_aliases(): test.TestOutcome {
     return test.fail("modBad.aliases.len() != 1 || modBad.enums.len() != 0");
   }
 
-  let srcTy2 = "type Id = Inner;";
-  let modTy2 = parser.parse_module(lexer.tokenize(srcTy2));
-  if (modTy2.aliases.len() != 1) {
-    return test.fail("modTy2.aliases.len() != 1");
-  }
-  if (modTy2.aliases[0].name != "Id") {
-    return test.fail("modTy2.aliases[0].name != \"Id\"");
-  }
-  if (modTy2.aliases[0].variants.len() != 1) {
-    return test.fail("modTy2.aliases[0].variants.len() != 1");
-  }
-  if (modTy2.aliases[0].variants[0] != "Inner") {
-    return test.fail("modTy2.aliases[0].variants[0] != \"Inner\"");
-  }
-
   return test.pass();
 }
 

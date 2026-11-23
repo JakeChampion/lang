@@ -50,6 +50,74 @@ pub function (p: Pool) log(): usize {
   return p.base;
 }
 `},
+	{"match-header-and-arm-comments", `enum E { A, B(i32), C }
+
+function f(e: E, s: string, t: (i32, i32)): i32 {
+  match (e) { // on the match
+    A => { return 0; }, // on the arm
+    B(n) => {
+      return n;  // on the statement
+    },  // after the arm
+    C => {}  // after an empty arm
+  }
+  match (s) {  // literal patterns
+    "a" => {
+      return 1;
+    },  // after a literal arm
+    _ => {}  // after the last arm
+  }
+  match (t) {  // tuple patterns
+    (0, y) => {
+      return y;
+    },  // after a tuple arm
+    (x, _) => {
+      return x;
+    }  // after the last tuple arm
+  }
+  return 2;
+}
+`},
+	{"comment-after-the-last-member-of-a-line", `enum E { A, B(i32), // after B
+  C, D // after D
+}
+
+struct P { x: i32, y: i32, // after y
+  z: i32 // after z
+}
+
+function main(): i32 { return 0; }
+`},
+	{"comment-after-a-one-line-declaration", `import "std/string"; // why
+pub use "./x".{y}; // reexport
+
+const A: i32 = 1; // about A
+const B: i32 = 2;
+
+type S = P | Q; // about S
+
+struct P { x: i32 } // about P
+struct Q { x: i32 }
+
+enum E { One, Two } // about E
+
+function main(): i32 { return 0; }
+`},
+	{"comment-on-the-line-that-closes-a-block", `function f(a: i32): i32 {
+  return f(a, // arg a
+    2);
+} // end f
+
+function g(a: i32): i32 {
+  if (a > 0) {
+    let xs = [a,
+      2];
+  } // end if
+  return g(
+    a,
+    2,
+  ); // after the call
+}
+`},
 	{"unsafe-value-blocks", `function f(bytes: u8[]): string {
   let n = unsafe { 3 };
   let text = unsafe { string_from_bytes_unchecked(bytes) };

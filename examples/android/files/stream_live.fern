@@ -1,0 +1,23 @@
+// Serves one file of an SMB share over HTTP, for scripts/files-samba-check.
+// FILES_SMB_SERVER is as in smb_live.fern. FILES_STREAM holds the path of
+// the file on the share, its size, the token and the port, with spaces
+// between them.
+import "std/i32";
+import "std/i64";
+import "std/result";
+import "std/string";
+import "./smb";
+import "./store";
+import "./stream";
+
+function main(): i32 {
+  let s = env("FILES_SMB_SERVER").unwrap_or("").split(" ");
+  let f = env("FILES_STREAM").unwrap_or("").split(" ");
+  if (s.len() != 5 || f.len() != 4) {
+    print("set FILES_SMB_SERVER and FILES_STREAM");
+    return 2;
+  }
+  let server = smb.Server { host: s[0], port: i32.parse_i32(s[1]).unwrap_or(445), share: s[2], user: s[3], password: s[4], domain: "" };
+  print(stream.serve_file(store.Remote(server), f[0], i64.parse_i64(f[1]).unwrap_or(0i64), f[2], i32.parse_i32(f[3]).unwrap_or(0)));
+  return 1;
+}

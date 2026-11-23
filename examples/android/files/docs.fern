@@ -1,0 +1,234 @@
+// The documents provider of the app: the file picker of the system shows
+// the saved SMB servers, so each app of the phone can open a file of a
+// server. The provider reads only. A file goes to the cache of the app
+// before the other app gets it.
+//
+// The ID of a document is the index of its server, a colon, and its path
+// on the share. The provider runs on a thread of Android with no window,
+// so it reads the saved servers from their file each time.
+import "std/array";
+import "std/i32";
+import "std/jni";
+import "std/option";
+import "std/result";
+import "std/string";
+import "./files";
+import "./ntlm";
+import "./open";
+import "./smb";
+import "./store";
+import "./vault";
+
+// The type of a directory for the picker.
+pub const DIRECTORY: string = "vnd.android.document/directory";
+
+const ROOT_COLUMNS: string[] = ["root_id", "title", "flags", "document_id", "icon", "summary"];
+
+const DOCUMENT_COLUMNS: string[] = ["document_id", "mime_type", "_display_name", "last_modified", "flags", "_size"];
+
+// One cell of a row of a cursor.
+pub enum Value { Text(string), Number(i64), Empty }
+
+pub function document_id(server: i32, path: string): string {
+  return server.to_string() + ":" + path;
+}
+
+// The index of the server and the path of the ID `id`.
+pub function document_of(id: string): Option[(i32, string)] {
+  let Some((head, path)) = id.split_once(":") else {
+    return None;
+  };
+  let Ok(server) = i32.parse_i32(head) else {
+    return None;
+  };
+  return if (server < 0) { None } else { Some((server, path)) };
+}
+
+// The cell of `column` for the root of the server `at`.
+pub function root_value(column: string, at: i32, saved: files.Saved, icon: i32): Value {
+  return match (column) {
+    "root_id" => Text(at.to_string()),
+    "title" => Text(saved.name),
+    "summary" => Text("smb://" + saved.server.host + "/" + saved.server.share),
+    "document_id" => Text(document_id(at, "")),
+    "icon" => Number(icon as i64),
+    "flags" => Number(0i64),
+    _ => Empty,
+  };
+}
+
+// The cell of `column` for the entry `e`, whose path on the share of the
+// server `server` is `path`.
+pub function document_value(column: string, server: i32, path: string, e: smb.Entry): Value {
+  return match (column) {
+    "document_id" => Text(document_id(server, path)),
+    "_display_name" => Text(e.name),
+    "mime_type" => Text(if (e.dir) { DIRECTORY } else { open.mime(e.name) }),
+    "last_modified" => if (e.modified > 0i64) { Number(e.modified * 1000i64) } else { Empty },
+    "_size" => if (e.dir) { Empty } else { Number(e.size) },
+    "flags" => Number(0i64),
+    _ => Empty,
+  };
+}
+
+// The columns that the picker asks for, or `usual` when it names none.
+function columns(e: usize, projection: usize, usual: string[]): string[] {
+  if (projection == 0 as usize) {
+    return usual;
+  }
+  let out: string[] = [];
+  for i in 0..jni.get_array_length(e, projection) {
+    let item = jni.get_object_array_element(e, projection, i);
+    out = out.append(jni.string_of(e, item));
+    let item_ref = jni.delete_local_ref(e, item);
+  }
+  return out;
+}
+
+// The Java object of a cell: a String, a Long, or null.
+function boxed(e: usize, value: Value): usize {
+  match (value) {
+    Text(text) => {
+      return jni.new_string(e, text);
+    },
+    Number(n) => {
+      let class = jni.find_class(e, "java/lang/Long");
+      let value_of = jni.get_static_method_id(e, class, "valueOf", "(J)Ljava/lang/Long;");
+      let args = jni.jvalue_set_long(jni.jvalue_alloc(1), 0, n);
+      let out = jni.call_static_object_method_a(e, class, value_of, args);
+      jni.free_buffer(args);
+      let class_ref = jni.delete_local_ref(e, class);
+      return out;
+    },
+    Empty => {
+      return 0 as usize;
+    }
+  }
+}
+
+// A MatrixCursor with the columns `names` and the rows `rows`.
+function cursor(e: usize, names: string[], rows: Value[][]): usize {
+  let class = jni.find_class(e, "android/database/MatrixCursor");
+  let ctor = jni.get_method_id(e, class, "<init>", "([Ljava/lang/String;)V");
+  let made = jni.jvalues([jni.string_array(e, names)]);
+  let out = jni.new_object_a(e, class, ctor, made);
+  jni.free_buffer(made);
+  let object = jni.find_class(e, "java/lang/Object");
+  for row in rows {
+    let values = jni.new_object_array(e, row.len(), object, 0 as usize);
+    for i in 0..row.len() {
+      let cell = boxed(e, row[i]);
+      let set = jni.set_object_array_element(e, values, i, cell);
+      if (cell != 0 as usize) {
+        let cell_ref = jni.delete_local_ref(e, cell);
+      }
+    }
+    let added = jni.call_void(e, out, "addRow", "([Ljava/lang/Object;)V", [values]);
+    let values_ref = jni.delete_local_ref(e, values);
+  }
+  return out;
+}
+
+// The path of the directory that the method `method` of the context of
+// the provider `provider` gives.
+function context_dir(e: usize, provider: usize, method: string): string {
+  let context = jni.call_object(e, provider, "getContext", "()Landroid/content/Context;", []);
+  let file = jni.call_object(e, context, method, "()Ljava/io/File;", []);
+  let text = jni.call_object(e, file, "getPath", "()Ljava/lang/String;", []);
+  return jni.string_of(e, text);
+}
+
+function servers(e: usize, provider: usize): files.Saved[] {
+  return vault.load(context_dir(e, provider, "getNoBackupFilesDir"), e);
+}
+
+// Tells the picker that the document is not there: the Java method that
+// called then throws FileNotFoundException.
+function missing(e: usize, text: string): usize {
+  let class = jni.find_class(e, "java/io/FileNotFoundException");
+  let thrown = jni.throw_new(e, class, text);
+  return 0 as usize;
+}
+
+// The answer to queryRoots: one root for each saved server.
+pub function roots(e: usize, provider: usize, projection: usize, icon: i32): usize {
+  let names = columns(e, projection, ROOT_COLUMNS);
+  let saved = servers(e, provider);
+  let rows: Value[][] = [];
+  for i in 0..saved.len() {
+    rows = rows.append(names.map((column: string): Value => root_value(column, i, saved[i], icon)));
+  }
+  return cursor(e, names, rows);
+}
+
+// The server and the path of the ID `id`, or None for an ID of no saved
+// server.
+function located(e: usize, provider: usize, id: string): Option[(i32, files.Saved, string)] {
+  let (at, path) = document_of(id)?;
+  let saved = servers(e, provider);
+  if (at >= saved.len()) {
+    return None;
+  }
+  return Some((at, saved[at], path));
+}
+
+// The answer to queryDocument: one row for the document `id`.
+pub function document(e: usize, provider: usize, id: usize, projection: usize): usize {
+  let Some((at, saved, path)) = located(e, provider, jni.string_of(e, id)) else {
+    return missing(e, "No saved server has this document.");
+  };
+  let names = columns(e, projection, DOCUMENT_COLUMNS);
+  if (path.len() == 0) {
+    let top = smb.Entry { name: saved.name, dir: true, size: 0i64, modified: 0i64 };
+    return cursor(e, names, [names.map((column: string): Value => document_value(column, at, "", top))]);
+  }
+  let Ok(beside) = smb.list(saved.server, store.parent(path)) else {
+    return missing(e, "The server did not give the folder of this document.");
+  };
+  let Some(entry) = beside.find((x: smb.Entry): boolean => x.name == store.base(path)) else {
+    return missing(e, "The server has no such document.");
+  };
+  return cursor(e, names, [names.map((column: string): Value => document_value(column, at, path, entry))]);
+}
+
+// The answer to queryChildDocuments: the entries of the folder `parent`.
+pub function children(e: usize, provider: usize, parent: usize, projection: usize): usize {
+  let Some((at, saved, path)) = located(e, provider, jni.string_of(e, parent)) else {
+    return missing(e, "No saved server has this folder.");
+  };
+  let Ok(entries) = smb.list(saved.server, path) else {
+    return missing(e, "The server did not give this folder.");
+  };
+  let names = columns(e, projection, DOCUMENT_COLUMNS);
+  let rows: Value[][] = [];
+  for entry in entries {
+    rows = rows.append(names.map((column: string): Value => document_value(column, at, store.join(path, entry.name), entry)));
+  }
+  return cursor(e, names, rows);
+}
+
+// The answer to openDocument for reading: the file goes to the cache of
+// the app, and the other app gets a descriptor of that copy.
+pub function opened(e: usize, provider: usize, id: usize, mode: usize): usize {
+  if (jni.string_of(e, mode) != "r") {
+    return missing(e, "Fern Files gives documents for reading only.");
+  }
+  let Some((at, saved, path)) = located(e, provider, jni.string_of(e, id)) else {
+    return missing(e, "No saved server has this document.");
+  };
+  let dir = context_dir(e, provider, "getCacheDir") + "/documents";
+  let made = create_dir_all(dir);
+  let copy = store.join(dir, at.to_string() + "-" + store.base(path));
+  let step = store.Step { from: path, to: copy, size: 0i64, dir: false };
+  let offset = 0i64;
+  while (true) {
+    let Ok(n) = store.advance(store.Remote(saved.server), store.Local, step, offset) else {
+      return missing(e, "The server did not give this document.");
+    };
+    offset += n;
+    if (n < store.STEP as i64) {
+      break;
+    }
+  }
+  return open.descriptor_of(e, copy);
+}

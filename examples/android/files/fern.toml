@@ -8,4 +8,4 @@ package = "dev.fern.files"
 label = "Fern Files"
 icon = "icon.png"
 min_sdk = 30
-permissions = ["MANAGE_EXTERNAL_STORAGE", "INTERNET", "ACCESS_NETWORK_STATE"]
+permissions = ["MANAGE_EXTERNAL_STORAGE", "INTERNET", "ACCESS_NETWORK_STATE", "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_DATA_SYNC", "POST_NOTIFICATIONS", "WAKE_LOCK"]

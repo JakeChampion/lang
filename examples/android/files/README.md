@@ -37,14 +37,21 @@ A long press starts a selection:
 - **Zip** makes an archive of the selection in the folder that shows.
 - A copy runs in steps of 8 MiB. The screen shows its progress, and a
   button stops it.
+- A copy continues while the window of the app is away: a foreground
+  service keeps the app at work, and its notification says what the copy
+  does.
+- A step that fails starts again from its byte, 3 times at most, after
+  waits of 1.5 s, 3 s and 4.5 s. So a connection that drops for a moment
+  does not end the copy.
 
 The app does more for one file:
 
 - A file has a screen with its size and its date. The app shows a JPEG,
   PNG, GIF, WebP or BMP file as a picture, and the first 64 KiB of each
   other file as text.
-- **Open** shows the file in another app of the phone, such as a video
-  player. A file of a server goes to the cache of the app first.
+- **Open** shows the file in another app of the phone. A film or sound
+  of a server plays as a stream, and each other file of a server goes to
+  the cache of the app first.
 - **Extract here** puts the files of a zip archive of at most 256 MiB in
   a new folder beside it (`pack.fern`).
 - **Share** gives the file to an app that the person picks, such as a
@@ -89,7 +96,8 @@ The limits are:
 
 - A server that accepts only 3.0 or 3.0.2 and requires signatures moves
   files at about 0.2 MiB/s (#16795).
-- A file of a server downloads in full before another app shows it.
+- The server of a stream listens on each interface of the phone, because
+  `std/serve` has no option for one address. The token is its guard.
 
 ## Other apps
 
@@ -99,6 +107,25 @@ Android lets another app read a file only through a content provider.
 provider that is not exported, with the name of the class as its authority.
 The app gives access to one URI with each intent, for reading only.
 
+## Streams
+
+A player reads a film a part at a time, and moves in it. `stream.fern`
+is an HTTP server on a port of the phone that answers range requests, and
+reads each part of 4 MiB from the share. The app gives the player the
+address of the file on that server. The address has a token that is new
+for each file, so no other program finds the file. A new stream ends the
+server of the stream before it.
+
+## The file picker of the system
+
+`docs.fern` is a documents provider: the file picker of Android shows
+each saved server, so each app of the phone can open a file of a server.
+`fern -apk` puts a @jni class that extends `DocumentsProvider` in the
+manifest as a provider that only the picker can ask.
+
+The provider gives documents for reading only. A file goes to the cache
+of the app in full before the other app gets it.
+
 ## Tests
 
 `protocol_test.fern` checks MD4 and NTLMv2 against their specifications,
@@ -106,6 +133,11 @@ reads a directory listing and a list of shares, and verifies a signature.
 It also copies a directory in steps.
 `files_test.fern` runs the app on the simulator of `std/android/ui`, with a
 temporary directory as the storage of the phone.
+
+`smb_live.fern` checks the SMB client against a real server, and
+`stream_live.fern` serves a file of a share for a check of the stream.
+`scripts/files-samba-check` runs it against Samba with each set of
+dialects and signature rules, and the Android lane of CI runs that script.
 
 ```sh
 fern -apk files.apk examples/android/files/app.fern
