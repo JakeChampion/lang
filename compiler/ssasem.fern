@@ -655,6 +655,31 @@ pub function callee_modes(f: Func, ins: ssa.SInst): i32[] {
   return f.calls[at].modes;
 }
 
+// Rows with an index by the spelling of `env_ty`, so a search compares only
+// the rows of one spelling.
+pub struct EnvRows { rows: EnvRow[], by_env: util.NameIndex }
+
+pub function no_env_rows(): EnvRows {
+  let none: string[] = [];
+  return EnvRows { rows: [], by_env: util.name_index(none) };
+}
+
+pub function (e: EnvRows) has(fn_ty: typeinfo.Type, env_ty: typeinfo.Type): boolean {
+  let key = typeinfo.spelling(env_ty);
+  let i = e.by_env.chain(key);
+  while (i >= 0) {
+    if (e.by_env.names[i] == key && semtypes.equal(e.rows[i].fn_ty, fn_ty) && semtypes.equal(e.rows[i].env_ty, env_ty)) {
+      return true;
+    }
+    i = e.by_env.next[i];
+  }
+  return false;
+}
+
+pub function (e: EnvRows) added(row: EnvRow): EnvRows {
+  return EnvRows { rows: e.rows.append(row), by_env: e.by_env.added(typeinfo.spelling(row.env_ty)) };
+}
+
 pub function has_env_row(rows: EnvRow[], fn_ty: typeinfo.Type, env_ty: typeinfo.Type): boolean {
   for row in rows {
     if (semtypes.equal(row.fn_ty, fn_ty) && semtypes.equal(row.env_ty, env_ty)) {

@@ -652,6 +652,11 @@ const OPS_FACTOR: i32 = 1024;
 
 const MIN_LIMIT: i32 = 16384;
 
+// An attempt at one glyph takes one more attempt from the budget for each
+// this many subtables that it examines. A lookup can declare 65535 subtables,
+// and without this each attempt could examine each of them for nothing.
+const SUBTABLES_PER_ATTEMPT: i32 = 64;
+
 function tag_is(b: [u8], at: i32, tag: string): boolean {
   return tag.len() == 4 && u8_at(b, at) == tag[0] as i32 && u8_at(b, at + 1) == tag[1] as i32 && u8_at(b, at + 2) == tag[2] as i32 && u8_at(b, at + 3) == tag[3] as i32;
 }
@@ -1118,10 +1123,14 @@ function matched_context(f: Font, r: Run, l: Lookup, i: i32, s: Seq, step: i32, 
 
 // `l` applied to the glyph at `i` of `r`, and the index of the glyph to
 // try next, or -1 when no subtable applies. Each lookup that a context
-// applies takes one from `budget`, and the budget that is left comes last.
+// applies takes one from `budget`, and so does each SUBTABLES_PER_ATTEMPT
+// subtables that the attempt examines. The budget that is left comes last.
 function applied(f: Font, own r: Run, l: Lookup, i: i32, mask: i32, budget: i32, sub_digests: [u64]): (Run, i32, i32) {
   let b = f.data;
   for s in 0..l.count {
+    if (s / SUBTABLES_PER_ATTEMPT > budget) {
+      return (r, -1, 0);
+    }
     if (s < sub_digests.len() && (sub_digests[s] & 1u64 << (r.glyphs[i] & 63) as u64) == 0u64) {
       continue;
     }
@@ -1134,18 +1143,18 @@ function applied(f: Font, own r: Run, l: Lookup, i: i32, mask: i32, budget: i32,
     if (ctx != 0) {
       let (next, at, left) = contextual(f, r, l, st, ctx, cov, i, mask, budget);
       if (at >= 0) {
-        return (next, at, left);
+        return (next, at, left - s / SUBTABLES_PER_ATTEMPT);
       }
       r = next;
       continue;
     }
     let (next, at) = if (l.gpos) { positioned(f, r, l, st, kind, cov, i, mask) } else { substituted(f, r, l, st, kind, cov, i, mask) };
     if (at >= 0) {
-      return (next, at, budget);
+      return (next, at, budget - s / SUBTABLES_PER_ATTEMPT);
     }
     r = next;
   }
-  return (r, -1, budget);
+  return (r, -1, budget - l.count / SUBTABLES_PER_ATTEMPT);
 }
 
 // The type of a context subtable as GSUB numbers it, 5 or 6, or 0 for a
@@ -1219,6 +1228,11 @@ function substitution(f: Font, r: Run, l: Lookup, st: i32, kind: i32, cov: i32, 
     return ([u16_at(b, st + 6 + 2 * cov)], 1);
   }
   if (kind == 2) {
+    // A sequence that the run has no room for does not apply. Its glyphs
+    // are not read: a font can give 65535 of them for each glyph of the run.
+    if (r.glyphs.len() + u16_at(b, at) > r.max_len) {
+      return (none, 0);
+    }
     return (values(b, at), 1);
   }
   if (kind == 4) {

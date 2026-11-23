@@ -53,7 +53,7 @@ pub struct Supply { value: i32, slot: i32, mode: i32 }
 
 pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops: i32[], hand_roots: i32[], hand_fields: i32[] }
 
-pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], likely: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[], modes: i32[], unit_analysis: ssasem.Analysis, unique_receivers: boolean[], linked_receivers: boolean[], fresh_seeded: boolean, checked_writes: boolean[], links: i32[], chained: boolean[], reuse: Reuse, forced: boolean[] }
+pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], grow_tops: i32[], takes: i32[], held: boolean[], payloads: boolean[], likely: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[], modes: i32[], unit_analysis: ssasem.Analysis, unique_receivers: boolean[], linked_receivers: boolean[], fresh_seeded: boolean, checked_writes: boolean[], links: i32[], chained: boolean[], reuse: Reuse, forced: boolean[] }
 
 struct Ledger { ok: boolean, why: string, bits: boolean[], held: i32 }
 
@@ -157,6 +157,10 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
         }
         continue;
       }
+      if (p.grow_tops[ins.result] >= 0) {
+        out = with_row(out, callee, defs[p.grow_tops[ins.result]].imm, defs[root].imm);
+        continue;
+      }
       if (defs[root].kind_tag != ssa.PARAM || p.owned[root]) {
         continue;
       }
@@ -178,6 +182,10 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
         if (is_record(f.values[root]) && s.hand_fields[i] < 0) {
           for field in grow_fields_of(partial, ins.str, i) {
             out = with_row(out, callee, defs[root].imm, field);
+          }
+        } else if (is_record(f.values[ins.args[i]])) {
+          if (grow_fields_of(partial, ins.str, i).len() > 0) {
+            out = with_row(out, callee, defs[root].imm, s.hand_fields[i]);
           }
         } else if (has_row_at(table, tix, ins.str, i, -1)) {
           out = with_row(out, callee, defs[root].imm, s.hand_fields[i]);
@@ -359,7 +367,7 @@ function plan_callers(kix: util.NameIndex, funcs: ssasem.Func[], plans: Plan[]):
 }
 
 function bad(why: string): Plan {
-  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], likely: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why), defs: [], modes: [], unit_analysis: ssasem.refused_analysis(why), unique_receivers: [], linked_receivers: [], fresh_seeded: false, checked_writes: [], links: [], chained: [], reuse: no_reuse(), forced: [] };
+  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], grow_tops: [], takes: [], held: [], payloads: [], likely: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why), defs: [], modes: [], unit_analysis: ssasem.refused_analysis(why), unique_receivers: [], linked_receivers: [], fresh_seeded: false, checked_writes: [], links: [], chained: [], reuse: no_reuse(), forced: [] };
 }
 
 pub function refused(why: string): Plan {
@@ -2858,6 +2866,47 @@ function field_grow_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], d
   return root;
 }
 
+// A grow can have its root in a field of a borrowed parameter: the result is
+// that parameter, or -1. The frame must not need the field past the grow, as
+// for a take of the field, because the grow clears a slot of the box of the
+// field. The lowering tests the count of the parameter also.
+function nested_grow_top(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
+  let none: i32 = -1;
+  let ins = f.graph.blocks[bi].insts[pos];
+  if (!box_update(ins)) {
+    return none;
+  }
+  let leaf = defs[ins.args[0]];
+  if (leaf.kind_tag != ssasem.record_get()) {
+    return none;
+  }
+  let mid = leaf.args[0];
+  let up = defs[mid];
+  if (up.kind_tag != ssasem.record_get()) {
+    return none;
+  }
+  let top = up.args[0];
+  if (defs[top].kind_tag != ssa.PARAM || owned[top] || !grow_record(f, f.values[mid]) || !grow_record(f, f.values[top])) {
+    return none;
+  }
+  for k in 1..ins.args.len() {
+    if (ssasem.counted(f, f.values[ins.args[k]]) && reads(a, ins.args[k], top)) {
+      return none;
+    }
+  }
+  if (needed_past_slot(f, a, defs, bi, pos, leaf, false, true, false) || needed_past_slot(f, a, defs, bi, pos, up, true, false, false)) {
+    return none;
+  }
+  if (spent_in_another_block(f, a, mid, bi) || spent_in_another_block(f, a, top, bi)) {
+    return none;
+  }
+  return top;
+}
+
+function grow_record(f: ssasem.Func, t: typeinfo.Type): boolean {
+  return is_record(t) && !semtypes.is_env(t) && !ssasem.has_finalizer(f, t);
+}
+
 // The grow tests the count of the box of `root` and writes its field. A use
 // in another block that is not a field read can move or release the box
 // before the grow runs.
@@ -2929,6 +2978,12 @@ function hands(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.S
     }
     if (is_record(f.values[v]) && !semtypes.is_env(f.values[v]) && lent_param) {
       root = v;
+    }
+    if (grow_record(f, f.values[v]) && defs[v].kind_tag == ssasem.record_get() && !owned[v] && occurrences(ins.args, v) == 1) {
+      root = projection_root(f, a, owned, defs, bi, pos, v);
+      if (root >= 0) {
+        field = defs[v].imm;
+      }
     }
     roots = roots.append(root);
     fields = fields.append(field);
@@ -3074,11 +3129,13 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
   let ids = identity_roots(defs);
   let grows: i32[] = [];
   let grow_fields: i32[] = [];
+  let grow_tops: i32[] = [];
   let kept = analysis.flow.none;
   let entry_kept = analysis.flow.none;
   for vi0 in 0..f.graph.nvals {
     grows = grows.append(-1);
     grow_fields = grow_fields.append(-1);
+    grow_tops = grow_tops.append(-1);
   }
   let steps: Step[] = [];
   let live = analysis.flow.none;
@@ -3130,9 +3187,14 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
           let supplies = sup.at(bi, pos);
           steps = steps.append(steals(f, analysis, owned, defs, bi, pos, hands(f, analysis, owned, defs, bi, pos, choose_ids(step(b.id, pos, -1), supplies, dead, owned, ids, lent_owners(ins, supplies, analysis.dependencies, owned, ids)))));
           let root = field_grow_root(f, analysis, owned, defs, bi, pos);
+          let top = if (root < 0) { nested_grow_top(f, analysis, owned, defs, bi, pos) } else { -1 };
+          if (top >= 0) {
+            root = defs[ins.args[0]].args[0];
+          }
           if (root >= 0) {
             grows = grows.with(ins.result, root);
             grow_fields = grow_fields.with(ins.result, defs[ins.args[0]].imm);
+            grow_tops = grow_tops.with(ins.result, top);
           }
         }
         pos -= 1;
@@ -3166,7 +3228,7 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
   }
   let consts = constants(f, defs, view);
   let receivers = receivers_of(f, steps, consts, no_fresh(), view.loans, defs, owned, kept);
-  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, likely: units.likely, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: receivers.unique, linked_receivers: receivers.linked, fresh_seeded: false, checked_writes: checked_writes(f), links: [], chained: [], reuse: no_reuse(), forced: forced };
+  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, grow_tops: grow_tops, takes: takes, held: units.held, payloads: units.payloads, likely: units.likely, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: receivers.unique, linked_receivers: receivers.linked, fresh_seeded: false, checked_writes: checked_writes(f), links: [], chained: [], reuse: no_reuse(), forced: forced };
 }
 
 // A frame view is a record in the stack frame of its function. A function

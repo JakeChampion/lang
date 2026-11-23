@@ -554,18 +554,11 @@ function field_spelling(t: typeinfo.Type): string {
 
 struct DeclarationBodies { helpers: ssarc.Helpers, bodies: Result[Option[irtables.Lowered], irtables.LowerState][], count: i32 }
 
-function helper_rows(rows: ssasem.EnvRow[], more: ssasem.EnvRow[]): ssasem.EnvRow[] {
+function helper_rows(rows: ssasem.EnvRows, more: ssasem.EnvRow[]): ssasem.EnvRows {
   let out = rows;
   for row in more {
-    let found = false;
-    for old in out {
-      if (semtypes.equal(old.fn_ty, row.fn_ty) && semtypes.equal(old.env_ty, row.env_ty)) {
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
-      out = out.append(row);
+    if (!out.has(row.fn_ty, row.env_ty)) {
+      out = out.added(row);
     }
   }
   return out;
@@ -576,8 +569,8 @@ function module_helpers(built: semsource.Built): ssarc.Helpers {
   if (built.decls.len() == 0) {
     return ssarc.no_helpers(built.contracts);
   }
-  let envs: ssasem.EnvRow[] = [];
-  let dyns: ssasem.EnvRow[] = [];
+  let envs = ssasem.no_env_rows();
+  let dyns = ssasem.no_env_rows();
   let map_module = false;
   for p in util.append_all(built.decls, built.instances) {
     envs = helper_rows(envs, p.func.envs);
@@ -586,7 +579,7 @@ function module_helpers(built: semsource.Built): ssarc.Helpers {
   }
   let f = ssasem.Func {
     ...built.decls[0].func, records: built.records, enums: built.enums, schema_checked: false,
-    envs: envs, dyns: dyns, finalizers: built.finalizers, map_module: map_module,
+    envs: envs.rows, dyns: dyns.rows, finalizers: built.finalizers, map_module: map_module,
   };
   return ssarc.with_drop_helpers(ssarc.no_helpers(built.contracts), f);
 }
