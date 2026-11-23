@@ -1594,13 +1594,12 @@ import "std/utf8" as utf8;
 
 	stats.tableBytes += regexData(&b)
 
-	b.WriteString(`function _dig(c: i32): i32 {
-    if (c <= 91) { return c - 48; }
-    return c - 49;
-}
-
+	b.WriteString(`// The four digits at i as one number. The digits load as one word, and each
+// byte then loses 48, and 1 more when it is above the backslash.
 function _fld(t: string, i: i32): i32 {
-    return (_dig(t[i] as i32) << 18) | (_dig(t[i + 1] as i32) << 12) | (_dig(t[i + 2] as i32) << 6) | _dig(t[i + 3] as i32);
+    let v = (t[i] as i32 << 24) | (t[i + 1] as i32 << 16) | (t[i + 2] as i32 << 8) | t[i + 3] as i32;
+    let w = v - 0x30303030 - (((v + 0x23232323) >> 7) & 0x01010101);
+    return (w & 63) | ((w >> 2) & 0xfc0) | ((w >> 4) & 0x3f000) | ((w >> 6) & 0xfc0000);
 }
 
 function _case_apply(cp: i32, want_upper: boolean): i32 {
