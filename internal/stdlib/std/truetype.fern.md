@@ -621,8 +621,8 @@ pub struct Positions { advances: i32[], dx: i32[], dy: i32[], chain: i32[], atta
 // A GSUB or GPOS lookup: its type, its flags, its offset, its count of
 // subtables, its mark filtering set or -1, and the offset of its table.
 // `opts` holds the flags of `substitute`, and `base` the count of glyphs
-// before the lookup.
-struct Lookup { kind: i32, flag: i32, at: i32, count: i32, set: i32, table: i32, gpos: boolean, opts: i32, base: i32 }
+// before the lookup. `classes` is the result of `glyph_classes`, or empty.
+struct Lookup { kind: i32, flag: i32, at: i32, count: i32, set: i32, table: i32, gpos: boolean, opts: i32, base: i32, classes: u8[] }
 
 // How a search for the next glyph matches, as in HarfBuzz. A glyph matches
 // only when its mask has a bit of `mask` and, when `syllable` is not 0, it
@@ -869,13 +869,13 @@ function lookup_of(f: Font, t: i32, gpos: boolean, li: i32): Lookup {
   let b = f.data;
   let list = t + u16_at(b, t + 8);
   if (t < 0 || li < 0 || li >= u16_at(b, list)) {
-    return Lookup { kind: 0, flag: 0, at: 0, count: 0, set: -1, table: t, gpos: gpos, opts: 0, base: 0 };
+    return Lookup { kind: 0, flag: 0, at: 0, count: 0, set: -1, table: t, gpos: gpos, opts: 0, base: 0, classes: [] };
   }
   let lk = list + u16_at(b, list + 2 + 2 * li);
   let n = u16_at(b, lk + 4);
   let flag = u16_at(b, lk + 2);
   let set = if ((flag & 16) != 0) { u16_at(b, lk + 6 + 2 * n) } else { -1 };
-  return Lookup { kind: u16_at(b, lk), flag: flag, at: lk, count: n, set: set, table: t, gpos: gpos, opts: 0, base: 0 };
+  return Lookup { kind: u16_at(b, lk), flag: flag, at: lk, count: n, set: set, table: t, gpos: gpos, opts: 0, base: 0, classes: [] };
 }
 
 // The offset and the type of subtable `i` of `l`. An extension subtable,
@@ -938,6 +938,21 @@ pub function (f: Font) class_at(r: Run, i: i32): i32 {
   return if (at == 0) { r.props[i] >> CLASS_SHIFT & 3 } else { class_of(f.data, f.gdef + at, r.glyphs[i]) };
 }
 
+// The class of each glyph of the font as `glyph_class` gives it, for a
+// prepared lookup. A class above 255 becomes 255, which no lookup flag
+// names. The result is empty for a font with no glyph classes.
+pub function (f: Font) glyph_classes(): u8[] {
+  let at = gdef_offset(f, 4);
+  if (at == 0) {
+    return [];
+  }
+  let out = __alloc_u8(f.glyphs.max(0));
+  for g in 0..out.len() {
+    out = out.with(g, class_of(f.data, f.gdef + at, g).min(255) as u8);
+  }
+  return out;
+}
+
 // The properties `p` with the class `c`.
 function with_class(p: i32, c: i32): i32 {
   return p & ~(3 << CLASS_SHIFT) | c << CLASS_SHIFT;
@@ -955,7 +970,7 @@ function skipped(f: Font, l: Lookup, r: Run, i: i32): boolean {
 
 function skipped_class(f: Font, l: Lookup, r: Run, i: i32): boolean {
   let g = r.glyphs[i];
-  let c = f.class_at(r, i);
+  let c = if (g >= 0 && g < l.classes.len()) { l.classes[g] as i32 } else { f.class_at(r, i) };
   if (c == 1 && (l.flag & 2) != 0 || c == 2 && (l.flag & 4) != 0) {
     return true;
   }
@@ -1569,7 +1584,7 @@ function records_applied(f: Font, own r: Run, l: Lookup, ps0: i32[], rule: Rule,
       continue;
     }
     let before = run.glyphs.len();
-    let nested = Lookup { ...lookup_of(f, l.table, l.gpos, u16_at(b, rule.records + 4 * k + 2)), opts: l.opts, base: l.base };
+    let nested = Lookup { ...lookup_of(f, l.table, l.gpos, u16_at(b, rule.records + 4 * k + 2)), opts: l.opts, base: l.base, classes: l.classes };
     let (next, at, rest) = applied(f, run, nested, ps[idx], mask, left - 1, []);
     run = next;
     left = rest;
@@ -1660,6 +1675,12 @@ function lookup_digests(b: [u8], l: Lookup): (u64, u64[]) {
     }
   }
   return (combined, subtables);
+}
+
+// `p` with the classes of `glyph_classes` for its font, so that a class
+// filter reads a byte for each glyph.
+pub function (p: PreparedLookup) with_classes(classes: u8[]): PreparedLookup {
+  return PreparedLookup { ...p, lookup: Lookup { ...p.lookup, classes: classes } };
 }
 
 pub function (p: PreparedLookup) apply(r: Run, mask: i32, opts: i32): Run {
@@ -2203,7 +2224,7 @@ function kern_class(b: [u8], at: i32, g: i32): i32 {
 // mark and not default ignorable.
 function kerned_by(f: Font, r: Run, order: i32[], sub: i32[], cross: boolean): Positions {
   let p = r.pos;
-  let marks = Lookup { kind: 0, flag: 8, at: 0, count: 0, set: -1, table: 0, gpos: true, opts: 0, base: 0 };
+  let marks = Lookup { kind: 0, flag: 8, at: 0, count: 0, set: -1, table: 0, gpos: true, opts: 0, base: 0, classes: [] };
   let idx = 0;
   while (idx < order.len()) {
     let j = idx + 1;

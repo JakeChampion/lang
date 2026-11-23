@@ -491,7 +491,9 @@ non-literal left operand takes this path, a one-shot `c = a + b` included,
 as Rust's `String + &str` grows the buffer it consumes: the slack is at most
 the length again and leaves with the string. A literal on the left, or a
 left operand the frame keeps other than a field the `+` writes back to,
-still builds an exact box.
+builds an exact box when no append takes the result. When a later `+` takes
+the result as its receiver, the first `+` builds the grown box
+(`ssarc.first_of_chain`), so `"a" + b + ", " + c` allocates one time.
 
 The **capacity-carrying builder** (#8773) is the other half. A builder is a
 `usize` — the address of a control block holding data, length, capacity and

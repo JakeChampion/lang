@@ -53,7 +53,7 @@ pub struct Supply { value: i32, slot: i32, mode: i32 }
 
 pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops: i32[], hand_roots: i32[], hand_fields: i32[] }
 
-pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], grow_tops: i32[], takes: i32[], held: boolean[], payloads: boolean[], likely: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[], modes: i32[], unit_analysis: ssasem.Analysis, unique_receivers: boolean[], linked_receivers: boolean[], fresh_seeded: boolean, checked_writes: boolean[], links: i32[], chained: boolean[], reuse: Reuse, forced: boolean[] }
+pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], grow_tops: i32[], takes: i32[], held: boolean[], payloads: boolean[], likely: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], appended: boolean[], analysis: ssasem.Analysis, defs: ssa.SInst[], modes: i32[], unit_analysis: ssasem.Analysis, unique_receivers: boolean[], linked_receivers: boolean[], fresh_seeded: boolean, checked_writes: boolean[], links: i32[], chained: boolean[], reuse: Reuse, forced: boolean[] }
 
 struct Ledger { ok: boolean, why: string, bits: boolean[], held: i32 }
 
@@ -367,7 +367,7 @@ function plan_callers(kix: util.NameIndex, funcs: ssasem.Func[], plans: Plan[]):
 }
 
 function bad(why: string): Plan {
-  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], grow_tops: [], takes: [], held: [], payloads: [], likely: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why), defs: [], modes: [], unit_analysis: ssasem.refused_analysis(why), unique_receivers: [], linked_receivers: [], fresh_seeded: false, checked_writes: [], links: [], chained: [], reuse: no_reuse(), forced: [] };
+  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], grow_tops: [], takes: [], held: [], payloads: [], likely: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], appended: [], analysis: ssasem.refused_analysis(why), defs: [], modes: [], unit_analysis: ssasem.refused_analysis(why), unique_receivers: [], linked_receivers: [], fresh_seeded: false, checked_writes: [], links: [], chained: [], reuse: no_reuse(), forced: [] };
 }
 
 pub function refused(why: string): Plan {
@@ -1035,6 +1035,19 @@ function text_lens(f: ssasem.Func): i32[] {
     for ins in b.insts {
       if (ins.kind_tag == ssa.CONST_STR && ins.result >= 0) {
         out = out.with(ins.result, ins.str.len());
+      }
+    }
+  }
+  return out;
+}
+
+// The texts that a later `+` or range append takes as its receiver.
+function appended_texts(f: ssasem.Func): boolean[] {
+  let out = __alloc_bool(f.graph.nvals);
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ssasem.string_append(f, ins) && ins.args[0] >= 0) {
+        out = out.with(ins.args[0], true);
       }
     }
   }
@@ -3228,7 +3241,7 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
   }
   let consts = constants(f, defs, view);
   let receivers = receivers_of(f, steps, consts, no_fresh(), view.loans, defs, owned, kept);
-  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, grow_tops: grow_tops, takes: takes, held: units.held, payloads: units.payloads, likely: units.likely, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: receivers.unique, linked_receivers: receivers.linked, fresh_seeded: false, checked_writes: checked_writes(f), links: [], chained: [], reuse: no_reuse(), forced: forced };
+  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, grow_tops: grow_tops, takes: takes, held: units.held, payloads: units.payloads, likely: units.likely, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), appended: appended_texts(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: receivers.unique, linked_receivers: receivers.linked, fresh_seeded: false, checked_writes: checked_writes(f), links: [], chained: [], reuse: no_reuse(), forced: forced };
 }
 
 // A frame view is a record in the stack frame of its function. A function

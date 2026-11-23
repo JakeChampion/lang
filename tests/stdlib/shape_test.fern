@@ -258,6 +258,29 @@ function test_a_cut_font_does_not_crash(): test.TestOutcome {
   return test.assert_eq(shaped > 0, true);
 }
 
+// The class table of a prepared lookup holds the class that GDEF gives each
+// glyph, and a font with no GDEF table has no class table.
+function test_glyph_classes_match_gdef(): test.TestOutcome {
+  let Some(f) = devanagari() else {
+    return test.fail("the font did not parse");
+  };
+  let classes = f.glyph_classes();
+  let seen = [0, 0, 0, 0];
+  let wrong = 0;
+  for g in 0..classes.len() {
+    let c = f.glyph_class(g);
+    if (classes[g] as i32 != c) {
+      wrong += 1;
+    }
+    if (c < 4) {
+      seen = seen.with(c, seen[c] + 1);
+    }
+  }
+  let bare = truetype.Font { ...f, gdef: -1 };
+  let got = [classes.len() == f.glyphs, wrong == 0, seen[1] > 0, seen[3] > 0, bare.glyph_classes().len() == 0];
+  return test.assert_eq(got.map((b: boolean): string => if (b) { "1" } else { "0" }).join(""), "11111");
+}
+
 function main(): i32 {
   let r = test.new("std/shape");
   r = r.it("Arabic words give the glyphs of HarfBuzz", test_arabic_matches_harfbuzz);
@@ -277,5 +300,6 @@ function main(): i32 {
   r = r.it("prepared extension lookups preserve reverse chaining order", test_prepared_reverse_extension);
   r = r.it("the subtables of a lookup take from the attempts of the run", test_subtables_take_from_the_attempts);
   r = r.it("prepared coverage preserves matches, collisions and the operation budget", test_prepared_coverage_range);
+  r = r.it("glyph_classes gives the class of each glyph in GDEF", test_glyph_classes_match_gdef);
   return r.finish();
 }

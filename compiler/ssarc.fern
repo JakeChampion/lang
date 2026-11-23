@@ -3677,6 +3677,12 @@ function grow_field_or_concat(own r: irtables.LowerState, f: ssasem.Func, p: ssa
   return emit(r, ir.op_load_local(res));
 }
 
+// A `+` that makes a new text which a later append takes as its receiver.
+// The new text gets room to grow, so that the chain allocates one time.
+function first_of_chain(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssa.BINARY && ssasem.string_append(f, ins) && ins.result >= 0 && ins.result < p.appended.len() && p.appended[ins.result];
+}
+
 function grow_call(own r: irtables.LowerState, ins: ssa.SInst, form: string): irtables.LowerState {
   for arg in ins.args {
     r = emit(r, ir.op_load_local(arg));
@@ -4861,6 +4867,10 @@ function instruction_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunit
   }
   if (ssasem.string_append(f, ins) && defer0 && p.grows[ins.result] >= 0) {
     r = grow_field_or_concat(r, f, p, ins);
+    return emit(r, ir.op_store_local(ins.result));
+  }
+  if (first_of_chain(f, p, ins)) {
+    r = grow_call(r, ins, "_fresh");
     return emit(r, ir.op_store_local(ins.result));
   }
   if (literal_text_eq(f, p, ins) >= 0) {
