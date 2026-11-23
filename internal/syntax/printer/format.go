@@ -76,10 +76,27 @@ func Format(prog *ast.Program) string {
 			f.b.WriteByte('\n')
 		}
 		f.drainDeclLeading(d.p.Line)
+		start := f.b.Len()
 		d.emit()
+		f.trailOneLineDecl(start, d.p.Line)
 	}
 	f.drainAll(0)
 	return f.b.String()
+}
+
+// A declaration that takes one line keeps the trailing comment of its line.
+func (f *formatter) trailOneLineDecl(start, line int) {
+	if f.ci >= len(f.comments) || f.comments[f.ci].Pos.Line != line || !f.comments[f.ci].Trailing {
+		return
+	}
+	s := f.b.String()
+	if decl := s[start:]; !strings.HasSuffix(decl, "\n") || strings.Count(decl, "\n") != 1 {
+		return
+	}
+	f.b.Reset()
+	f.b.WriteString(s[:len(s)-1])
+	f.emitTrailing(line)
+	f.b.WriteByte('\n')
 }
 
 const formatIndent = "  "
@@ -118,6 +135,8 @@ type formatter struct {
 	ci       int
 	blanks   map[int]bool
 	depth    int
+	// The line of the brace that closes the block in progress, or 0.
+	closeLine int
 }
 
 func (f *formatter) blankBefore(line int) bool {
@@ -379,12 +398,14 @@ func (f *formatter) formatEnumDecl(ed *ast.EnumDecl) {
 	f.writeTypeParams(ed.TypeParams, nil, nil, ed.ConstParams)
 	if len(ed.Variants) > 0 && f.keepListLines(ed.P.Line, ed.Variants[len(ed.Variants)-1].P.Line) {
 		f.b.WriteString(" {\n")
-		for _, v := range ed.Variants {
+		for i, v := range ed.Variants {
 			f.drainLeading(v.P.Line, 1)
 			f.b.WriteString(formatIndent)
 			f.writeEnumVariant(v)
 			f.b.WriteByte(',')
-			f.emitTrailing(v.P.Line)
+			if i+1 == len(ed.Variants) || ed.Variants[i+1].P.Line != v.P.Line {
+				f.emitTrailing(v.P.Line)
+			}
 			f.b.WriteByte('\n')
 		}
 		f.b.WriteString("}\n")
@@ -590,14 +611,16 @@ func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 	if n := len(sd.Fields); n > 0 && sd.Fields[n-1].NamePos.Line > 0 &&
 		f.keepListLines(sd.P.Line, sd.Fields[n-1].NamePos.Line) {
 		f.b.WriteString(" {\n")
-		for _, fld := range sd.Fields {
+		for i, fld := range sd.Fields {
 			f.drainLeading(fld.NamePos.Line, 1)
 			f.b.WriteString(formatIndent)
 			f.b.WriteString(fld.Name)
 			f.b.WriteString(": ")
 			f.b.WriteString(formatType(fld.Type))
 			f.b.WriteByte(',')
-			f.emitTrailing(fld.NamePos.Line)
+			if i+1 == len(sd.Fields) || sd.Fields[i+1].NamePos.Line != fld.NamePos.Line {
+				f.emitTrailing(fld.NamePos.Line)
+			}
 			f.b.WriteByte('\n')
 		}
 		f.b.WriteString("}\n")
@@ -1017,7 +1040,10 @@ func (f *formatter) formatBlock(blk *ast.Block, depth int) {
 		f.emitTrailing(blk.P.Line)
 	}
 	f.b.WriteByte('\n')
+	outer := f.closeLine
+	f.closeLine = blk.End.Line
 	f.formatStmtLines(blk.Stmts, depth+1, false)
+	f.closeLine = outer
 	f.b.WriteByte('\n')
 	if blk.End.Line > 0 {
 		f.drainLeading(blk.End.Line, depth+1)
@@ -1090,7 +1116,10 @@ func (f *formatter) formatStmtLine(s ast.Stmt, depth int) {
 	f.formatStmt(s, depth)
 	if isSingleLineStmt(s) {
 		f.emitTrailing(s.Pos().Line)
-		f.emitTrailing(stmtLastLine(s))
+		// The comment on the line that closes the block is not of this statement.
+		if last := stmtLastLine(s); last != f.closeLine || last == s.Pos().Line {
+			f.emitTrailing(last)
+		}
 	}
 }
 
@@ -1474,7 +1503,11 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		}
 		f.b.WriteString("match (")
 		f.formatExpr(x.Tag, precLowest)
-		f.b.WriteString(") {\n")
+		f.b.WriteString(") {")
+		if x.P.Line > 0 && len(arms) > 0 && arms[0].P.Line > x.P.Line {
+			f.emitTrailing(x.P.Line)
+		}
+		f.b.WriteByte('\n')
 		for i := 0; i < len(arms); i++ {
 			arm := arms[i]
 			f.indent(depth + 1)
@@ -1492,6 +1525,9 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			f.formatBlock(arm.Body, depth+1)
 			if i < len(arms)-1 {
 				f.b.WriteByte(',')
+			}
+			if arm.Body != nil && arm.Body.End.Line > 0 {
+				f.emitTrailing(arm.Body.End.Line)
 			}
 			f.b.WriteByte('\n')
 		}

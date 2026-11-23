@@ -1327,10 +1327,11 @@ function indent_str(depth: i32): string {
 }
 
 // at is the line of the statement in print. own is the span of the last block printed, or -1.
-struct Fmt { comments: lexer.Comment[], ci: i32, blanks: boolean[], spans: parser.BlockSpans, si: i32, at: i32, own: i32 }
+// `close` is the line of the brace that closes the block in progress, or 0.
+struct Fmt { comments: lexer.Comment[], ci: i32, blanks: boolean[], spans: parser.BlockSpans, si: i32, at: i32, own: i32, close: i32 }
 
 function empty_fmt(): Fmt {
-  return Fmt { comments: [], ci: 0, blanks: [], spans: no_spans(), si: 0, at: 0, own: -1 };
+  return Fmt { comments: [], ci: 0, blanks: [], spans: no_spans(), si: 0, at: 0, own: -1, close: 0 };
 }
 
 function no_spans(): parser.BlockSpans {
@@ -1589,6 +1590,7 @@ function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
     g = gt;
   }
   out += "\n";
+  g = Fmt { ...g, close: close_line };
   for i in 0..body.len() {
     let ln = ast.stmt_line(body[i]);
     if (i > 0 && ln > 0 && g.blank_before(ln)) {
@@ -1609,7 +1611,7 @@ function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
     g = gc;
   }
   out = out + indent_str(depth) + "}";
-  return (out, Fmt { ...g, own: span });
+  return (out, Fmt { ...g, own: span, close: f.close });
 }
 
 // An empty block takes the first span that opens on or after the line of its
@@ -2015,8 +2017,14 @@ function sugar_written_arms(sg: ast.MatchSugar): WrittenArm[] {
 function print_sugared_match(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, Fmt) {
   let pad = indent_str(depth);
   let arms = sugar_written_arms(sg);
-  let out = "match (" + print_expr(sg.scrut, depth) + ") {\n";
+  let out = "match (" + print_expr(sg.scrut, depth) + ") {";
   let g = f;
+  if (sg.line > 0 && arms.len() > 0 && arms[0].line > sg.line) {
+    let (tr, gh) = emit_trailing(g, sg.line);
+    out += tr;
+    g = gh;
+  }
+  out += "\n";
   for i in 0..arms.len() {
     let (arm_body, g1) = print_block(arms[i].body, depth + 1, g);
     g = g1;
@@ -2027,6 +2035,11 @@ function print_sugared_match(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, F
     out = out + " => " + arm_body;
     if (i + 1 < arms.len()) {
       out += ",";
+    }
+    if (g.own >= 0) {
+      let (tr, gt) = emit_trailing(g, g.spans.closes[g.own]);
+      out += tr;
+      g = gt;
     }
     out += "\n";
   }
@@ -2114,12 +2127,18 @@ function print_lit_pat(a: ast.LitArm): string {
 
 function print_match(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
   let pad = indent_str(depth);
-  let out = "match (" + print_expr(m.scrutinee, depth) + ") {\n";
+  let out = "match (" + print_expr(m.scrutinee, depth) + ") {";
   let g = f;
   let arms = m.arms;
   if (m.sugar.len() > 0) {
     arms = m.sugar;
   }
+  if (m.line > 0 && arms.len() > 0 && arms[0].line > m.line) {
+    let (tr, gh) = emit_trailing(g, m.line);
+    out += tr;
+    g = gh;
+  }
+  out += "\n";
   let i = 0;
   while (i < arms.len()) {
     let (arm_body, g1) = print_block(arms[i].body, depth + 1, anchored(g, arms[i].line));
@@ -2137,6 +2156,11 @@ function print_match(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
     out = out + " => " + arm_body;
     if (i + 1 < arms.len()) {
       out += ",";
+    }
+    if (g.own >= 0) {
+      let (tr, gt) = emit_trailing(g, g.spans.closes[g.own]);
+      out += tr;
+      g = gt;
     }
     out += "\n";
     i += 1;
@@ -2674,7 +2698,12 @@ function print_stmt_line(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
     let ln = ast.stmt_line(st);
     if (ln > 0) {
       let (tr, g2) = emit_trailing(g, ln);
-      let (tr2, g3) = emit_trailing(g2, stmt_last_line(st, ln, g2.spans));
+      // The comment on the line that closes the block is not of this statement.
+      let last = stmt_last_line(st, ln, g2.spans);
+      if (last == g2.close && last != ln) {
+        return (out + tr, g2);
+      }
+      let (tr2, g3) = emit_trailing(g2, last);
       return (out + tr + tr2, g3);
     }
   }
@@ -3198,9 +3227,12 @@ function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f
       out += lead;
       f = f1;
       out = out + indent_str(1) + sd.fields[mi].name + ": " + sd.fields[mi].type_name + ",";
-      let (tr, f2) = emit_trailing(f, lns[mi]);
-      out = out + tr + "\n";
-      f = f2;
+      if (mi + 1 == lns.len() || lns[mi + 1] != lns[mi]) {
+        let (tr, f2) = emit_trailing(f, lns[mi]);
+        out += tr;
+        f = f2;
+      }
+      out += "\n";
     }
     return (out + "}\n", f);
   }
@@ -3296,9 +3328,12 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[], d0: 
       out += lead;
       f = f1;
       out = out + indent_str(1) + print_enum_variant(structs[d0 + mvi]) + ",";
-      let (tr, f2) = emit_trailing(f, lns[mvi]);
-      out = out + tr + "\n";
-      f = f2;
+      if (mvi + 1 == lns.len() || lns[mvi + 1] != lns[mvi]) {
+        let (tr, f2) = emit_trailing(f, lns[mvi]);
+        out += tr;
+        f = f2;
+      }
+      out += "\n";
     }
     return (out + "}\n", f);
   }
@@ -3608,7 +3643,7 @@ function print_annotated_function(fd: parser.FuncDecl, mod: parser.Module, hints
 }
 
 function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[], impls: parser.ImplDecl[], flines: parser.FieldLines[], hints: parser.FunctionInlineHint[], spans: parser.BlockSpans, comments: lexer.Comment[], blanks: boolean[]): string {
-  let f = Fmt { comments: comments, ci: 0, blanks: blanks, spans: spans, si: 0, at: 0, own: -1 };
+  let f = Fmt { comments: comments, ci: 0, blanks: blanks, spans: spans, si: 0, at: 0, own: -1, close: 0 };
   let chunks: string[] = [];
   let wrote = false;
   let kinds: i32[] = [];
@@ -3738,6 +3773,9 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
         f = ff;
       }
     }
+    let (trailed, tf) = trail_one_line_decl(chunks[chunks.len() - 1], dline, f);
+    chunks = chunks.with(chunks.len() - 1, trailed);
+    f = tf;
   }
   for j in 0..mod.top_stmts.len() {
     if (wrote) {
@@ -3752,6 +3790,24 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
   let (tail, _) = drain_all(f, 0, chunks.len() > 0);
   chunks = chunks.append(tail);
   return util.str_join_chunks(chunks);
+}
+
+// A declaration that takes one line keeps the trailing comment of its line.
+function trail_one_line_decl(text: string, line: i32, f: Fmt): (string, Fmt) {
+  let n = text.len();
+  if (line <= 0 || n == 0 || text[n - 1] != b'\n') {
+    return (text, f);
+  }
+  for i in 0..n - 1 {
+    if (text[i] == b'\n') {
+      return (text, f);
+    }
+  }
+  let (tr, g) = emit_trailing(f, line);
+  if (tr.len() == 0) {
+    return (text, f);
+  }
+  return (slice_unchecked(text, 0, n - 1) + tr + "\n", g);
 }
 
 pub function diff_split_lines(s: string): string[] {
