@@ -134,6 +134,11 @@ temporary directory as the storage of the phone.
 `scripts/files-samba-check` runs it against Samba with each set of
 dialects and signature rules, and the Android lane of CI runs that script.
 
+`emulator_check.py` operates the APK on an Android emulator through the
+accessibility tree. It reads a text file, copies a picture, deletes and
+restores a file, reads the two content providers, and opens a file. The
+Android lane of CI runs it.
+
 ```sh
 fern -apk files.apk examples/android/files/app.fern
 ```
