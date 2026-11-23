@@ -16,6 +16,8 @@ func TestAESGCMBuiltinSignatures(t *testing.T) {
 	}{
 		{"expand takes an owned u8[]", `function main(): i32 { let k: u8[] = __alloc_u8(16); let rk: u8[] = __aes_expand_key(k); return rk.len(); }`, ""},
 		{"ctr takes views", `function main(): i32 { let k: u8[] = __alloc_u8(16); let rk: u8[] = __aes_expand_key(k); let c: [u8] = k[0:16]; let out: u8[] = __aes_ctr32(rk, c, "abc".as_bytes()); return out.len(); }`, ""},
+		{"dec takes views", `function main(): i32 { let k: u8[] = __alloc_u8(16); let rk: u8[] = __aes_expand_key(k); let out: u8[] = __aes_dec_blocks(rk[0:176], "0123456789abcdef".as_bytes()); return out.len(); }`, ""},
+		{"dec takes two arguments", `function main(): i32 { let k: u8[] = __alloc_u8(16); let out: u8[] = __aes_dec_blocks(k); return 0; }`, "argument"},
 		{"ghash takes views", `function main(): i32 { let h: u8[] = __alloc_u8(16); let y: u8[] = __ghash(h, h[0:16], "abc".as_bytes()); return y.len(); }`, ""},
 		{"expand refuses an i32[]", `function main(): i32 { let k: i32[] = [1, 2]; let rk: u8[] = __aes_expand_key(k); return 0; }`, "argument"},
 		{"ctr refuses a string", `function main(): i32 { let k: u8[] = __alloc_u8(16); let out: u8[] = __aes_ctr32(k, k, "abc"); return 0; }`, "argument"},

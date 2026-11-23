@@ -68,10 +68,8 @@ function test_cbc(): test.TestOutcome {
   return test.assert_eq_array(got, want);
 }
 
-// A key of 128 or 256 bits encrypts with the AES kernel of the target, and
-// each key decrypts with the rounds of FIPS 197 in Fern. So a message that
-// comes back after the two is a check of the kernel against the rounds, for
-// 200 blocks that differ.
+// Each key decrypts with the inverse cipher of the AES kernel of the target.
+// The message has 200 blocks that differ, so the kernel does full passes.
 function test_cbc_round_trip(): test.TestOutcome {
   let data = __alloc_u8(3200);
   for i in 0..data.len() {

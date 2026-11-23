@@ -2494,8 +2494,14 @@ function arm64_aes_opcode(mnem: string): Option[i32] {
   if (mnem == "aese") {
     return Some(4);
   }
+  if (mnem == "aesd") {
+    return Some(5);
+  }
   if (mnem == "aesmc") {
     return Some(6);
+  }
+  if (mnem == "aesimc") {
+    return Some(7);
   }
   return None;
 }
@@ -5110,8 +5116,8 @@ function arm64_gas_family_len4_a(mnem: string): i32 {
   if (c == b'd') {
     return arm64_gas_family_len4_a_ad(mnem);
   }
-  if (c == b'e' && mnem == "aese") {
-    return arm64_fam_vecext();
+  if (c == b'e') {
+    return arm64_gas_family_len4_a_ae(mnem);
   }
   if (c == b'n' && mnem == "ands") {
     return arm64_fam_logical2();
@@ -5126,6 +5132,16 @@ function arm64_gas_family_len4_a_ad(mnem: string): i32 {
     "adcs" => arm64_fam_carry(),
     _ => -1,
   };
+}
+
+function arm64_gas_family_len4_a_ae(mnem: string): i32 {
+  if (mnem == "aese") {
+    return arm64_fam_vecext();
+  }
+  if (mnem == "aesd") {
+    return arm64_fam_vecext();
+  }
+  return -1;
 }
 
 function arm64_gas_family_len4_c(mnem: string): i32 {
@@ -5757,6 +5773,9 @@ function arm64_gas_family_len5_u_um(mnem: string): i32 {
 
 function arm64_gas_family_len6(mnem: string): i32 {
   let c: u8 = mnem[0];
+  if (c == b'a' && mnem == "aesimc") {
+    return arm64_fam_vecext();
+  }
   if (c == b'c') {
     return arm64_gas_family_len6_c(mnem);
   }

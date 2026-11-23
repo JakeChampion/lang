@@ -190,6 +190,7 @@ var Scalar = []Family{
 		Ops: []ScalarOp{{Mnemonic: "ext"}, {Mnemonic: "tbl", Probe: "tbl v0.16b, {v1.16b}, v2.16b"},
 			{Mnemonic: "tbx", Probe: "tbx v0.16b, {v1.16b-v4.16b}, v2.16b"},
 			{Mnemonic: "aese", Probe: "aese v0.16b, v1.16b"}, {Mnemonic: "aesmc", Probe: "aesmc v0.16b, v1.16b"},
+			{Mnemonic: "aesd", Probe: "aesd v0.16b, v1.16b"}, {Mnemonic: "aesimc", Probe: "aesimc v0.16b, v1.16b"},
 			{Mnemonic: "sha256h", Probe: "sha256h q0, q1, v2.4s"}, {Mnemonic: "sha256h2", Probe: "sha256h2 q0, q1, v2.4s"},
 			{Mnemonic: "sha256su0", Probe: "sha256su0 v0.4s, v1.4s"}, {Mnemonic: "sha256su1", Probe: "sha256su1 v0.4s, v1.4s, v2.4s"},
 			{Mnemonic: "sha1c", Probe: "sha1c q0, s1, v2.4s"}, {Mnemonic: "sha1p", Probe: "sha1p q0, s1, v2.4s"},

@@ -10,7 +10,7 @@ CBC operates on whole blocks and supplies neither padding nor a message authenti
 
 The S-box is computed, not read from a table: the inverse in GF(2^8) is x^254, and then the affine map of FIPS 197 section 5.1.1 applies. Thus no step reads memory at an index that depends on the key or the data.
 
-`encrypt_block` with a key of 128 or 256 bits uses the AES kernel of the target, which `std/crypto/aes_gcm` also uses: the AES instructions on x86-64 and arm64, and a bitsliced cipher on WebAssembly. Each of these runs in constant time. The kernel has no schedule for a key of 192 bits and no inverse cipher, so a key of 192 bits and each `decrypt_block` use the rounds of this module.
+`encrypt_block` with a key of 128 or 256 bits uses the AES kernel of the target, which `std/crypto/aes_gcm` also uses: the AES instructions on x86-64 and arm64, and a bitsliced cipher on WebAssembly. Each of these runs in constant time. `decrypt_block` and `cbc_decrypt` use the inverse cipher of the same kernel for each key size. The kernel has no cipher for a key of 192 bits, so `encrypt_block` with that key uses the rounds of this module.
 
 ## Contracts
 
@@ -137,10 +137,6 @@ function __sbox(x: i32): i32 {
   let b = __inverse(x);
   return b ^ __rotl8(b, 1) ^ __rotl8(b, 2) ^ __rotl8(b, 3) ^ __rotl8(b, 4) ^ 0x63;
 }
-
-function __inverse_sbox(y: i32): i32 {
-  return __inverse(__rotl8(y, 1) ^ __rotl8(y, 3) ^ __rotl8(y, 6) ^ 0x05);
-}
 ```
 
 ### `5 the key expansion`
@@ -199,7 +195,7 @@ pub function cipher(key: [u8]): Result[Cipher, AesError] {
 
 ### `6 the rounds`
 
-The state is 16 bytes in the order of FIPS 197: byte r + 4c is row r of column c. ShiftRows moves row r left by r columns. MixColumns multiplies each column by the matrix of section 5.1.3, and InvMixColumns by its inverse of section 5.3.3.
+The state is 16 bytes in the order of FIPS 197: byte r + 4c is row r of column c. ShiftRows moves row r left by r columns. MixColumns multiplies each column by the matrix of section 5.1.3.
 
 ```fern
 <<6 the rounds>>=
@@ -220,16 +216,6 @@ function __sub_shift(s: [u8]): u8[] {
   return out;
 }
 
-function __inverse_sub_shift(s: [u8]): u8[] {
-  let out = __alloc_u8(16);
-  for c in 0..4 {
-    for r in 0..4 {
-      out = out.with(r + 4 * ((c + r) % 4), __inverse_sbox(s[r + 4 * c] as i32) as u8);
-    }
-  }
-  return out;
-}
-
 function __mix(own s: u8[]): u8[] {
   for c in 0..4 {
     let a0 = s[4 * c] as i32;
@@ -238,18 +224,6 @@ function __mix(own s: u8[]): u8[] {
     let a3 = s[4 * c + 3] as i32;
     s = s.with(4 * c, (__mul(a0, 2) ^ __mul(a1, 3) ^ a2 ^ a3) as u8).with(4 * c + 1, (a0 ^ __mul(a1, 2) ^ __mul(a2, 3) ^ a3) as u8);
     s = s.with(4 * c + 2, (a0 ^ a1 ^ __mul(a2, 2) ^ __mul(a3, 3)) as u8).with(4 * c + 3, (__mul(a0, 3) ^ a1 ^ a2 ^ __mul(a3, 2)) as u8);
-  }
-  return s;
-}
-
-function __inverse_mix(own s: u8[]): u8[] {
-  for c in 0..4 {
-    let a0 = s[4 * c] as i32;
-    let a1 = s[4 * c + 1] as i32;
-    let a2 = s[4 * c + 2] as i32;
-    let a3 = s[4 * c + 3] as i32;
-    s = s.with(4 * c, (__mul(a0, 14) ^ __mul(a1, 11) ^ __mul(a2, 13) ^ __mul(a3, 9)) as u8).with(4 * c + 1, (__mul(a0, 9) ^ __mul(a1, 14) ^ __mul(a2, 11) ^ __mul(a3, 13)) as u8);
-    s = s.with(4 * c + 2, (__mul(a0, 13) ^ __mul(a1, 9) ^ __mul(a2, 14) ^ __mul(a3, 11)) as u8).with(4 * c + 3, (__mul(a0, 11) ^ __mul(a1, 13) ^ __mul(a2, 9) ^ __mul(a3, 14)) as u8);
   }
   return s;
 }
@@ -271,15 +245,9 @@ pub function (c: Cipher) encrypt_block(block: [u8]): u8[] {
 
 const ZERO_BLOCK: u8[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-// The inverse cipher of FIPS 197 section 5.3 on the 16 bytes of block.
+// The inverse cipher of FIPS 197 section 5.3 on the 16 bytes of block, in the AES kernel of the target.
 pub function (c: Cipher) decrypt_block(block: [u8]): u8[] {
-  let s = __add_key(__bytes_into(__alloc_u8(16), 0, block, 0, 16), c.keys, c.rounds);
-  let round = c.rounds - 1;
-  while (round > 0) {
-    s = __inverse_mix(__add_key(__inverse_sub_shift(s), c.keys, round));
-    round -= 1;
-  }
-  return __add_key(__inverse_sub_shift(s), c.keys, 0);
+  return __aes_dec_blocks(c.keys, block[0:16]);
 }
 ```
 
@@ -319,15 +287,10 @@ pub function cbc_encrypt(key: [u8], iv: [u8], data: [u8]): Result[u8[], AesError
 // Decrypts whole blocks without checking a MAC or removing padding. Use std/crypto/aes_gcm to detect tampering.
 pub function cbc_decrypt(key: [u8], iv: [u8], data: [u8]): Result[u8[], AesError] {
   let c = __checked(key, iv, data)?;
-  let out = __alloc_u8(data.len());
-  let at = 0;
-  while (at < data.len()) {
-    let plain = c.decrypt_block(data[at:at + 16]);
-    for i in 0..16 {
-      let before = if (at == 0) { iv[i] } else { data[at - 16 + i] };
-      out = out.with(at + i, plain[i] ^ before);
-    }
-    at += 16;
+  let out = __aes_dec_blocks(c.keys, data);
+  for i in 0..out.len() {
+    let before = if (i < 16) { iv[i] } else { data[i - 16] };
+    out = out.with(i, out[i] ^ before);
   }
   return Ok(out);
 }

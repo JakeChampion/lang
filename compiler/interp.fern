@@ -7428,6 +7428,9 @@ function aes_gcm_arity(name: string): i32 {
   if (name == "__aes_expand_key") {
     return 1;
   }
+  if (name == "__aes_dec_blocks") {
+    return 2;
+  }
   if (name == "__aes_ctr32" || name == "__ghash") {
     return 3;
   }
@@ -7946,6 +7949,12 @@ function call_aes_gcm(heap: interpheap.Heap, name: string, args: Value[]): Value
       return v_err(name + ": the key is not 16 or 32 bytes");
     }
     return byte_value(heap, aesref.expand_key(bs[0]));
+  }
+  if (name == "__aes_dec_blocks") {
+    if (bs[0].len() < 176) {
+      return v_err(name + ": the round keys are too short");
+    }
+    return byte_value(heap, aesref.dec_blocks(bs[0], bs[1]));
   }
   if (name == "__ghash") {
     if (bs[0].len() < 16 || bs[1].len() < 16) {

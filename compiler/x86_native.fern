@@ -2779,6 +2779,15 @@ function x86_gas_sse38_op(mnem: string): Option[i32] {
     "aesenclast" => {
       return Some(221);
     },
+    "aesdec" => {
+      return Some(222);
+    },
+    "aesdeclast" => {
+      return Some(223);
+    },
+    "aesimc" => {
+      return Some(219);
+    },
     _ => {
       return None;
     }

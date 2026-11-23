@@ -310,6 +310,51 @@ function shared(): i32 {
   return 0;
 }
 
+// The inverse cipher against the vectors of FIPS 197 appendix C and against
+// answers that a separate implementation gave.
+function inverses(): i32 {
+  let pt: u8[] = hex("00112233445566778899aabbccddeeff");
+  let r128: u8[] = __aes_expand_key(pattern(16, 1, 0));
+  let r256: u8[] = __aes_expand_key(pattern(32, 1, 0));
+  if (!same(__aes_dec_blocks(r128, hex("69c4e0d86a7b0430d8cdb78070b4c55a")), pt)) {
+    return 60;
+  }
+  if (!same(__aes_dec_blocks(hex("` + aesKATSchedule192 + `"), hex("dda97ca4864cdfe06eaf70a0ec0d7191")), pt)) {
+    return 61;
+  }
+  if (!same(__aes_dec_blocks(r256, hex("8ea2b7ca516745bfeafc49904b496089")), pt)) {
+    return 62;
+  }
+  // Round keys that no key schedule made, of 10 rounds and of 12 rounds.
+  if (!same(__aes_dec_blocks(pattern(200, 7, 3), pt), hex("67e57b1972b13ad8bdb0e685e3063139"))) {
+    return 63;
+  }
+  if (!same(__aes_dec_blocks(pattern(215, 7, 3), pt), hex("9c4d14780bfd4759f1f82558647ae952"))) {
+    return 64;
+  }
+  let long: u8[] = __aes_dec_blocks(r128, pattern(150, 5, 1));
+  if (!same(long, hex("` + aesKATDec128Long + `"))) {
+    return 65;
+  }
+  if (!same(__aes_dec_blocks(r256, pattern(150, 5, 1)), hex("` + aesKATDec256Long + `"))) {
+    return 66;
+  }
+  // Each length to 150 as views: the answer has the whole blocks only.
+  let n: i32 = 0;
+  while (n <= 150) {
+    if (!same(__aes_dec_blocks(r128[0:176], pattern(150, 5, 1)[0:n]), long[0:n / 16 * 16])) {
+      return 67;
+    }
+    n = n + 1;
+  }
+  // The inverse cipher gives back each block that the cipher made.
+  let sealed: u8[] = __aes_ctr32(r256, pattern(16, 9, 4), __alloc_u8(16));
+  if (!same(__aes_dec_blocks(r256, sealed), pattern(16, 9, 4))) {
+    return 68;
+  }
+  return 0;
+}
+
 function main(): i32 {
   let r: i32 = schedules();
   if (r == 0) {
@@ -324,17 +369,23 @@ function main(): i32 {
   if (r == 0) {
     r = fused();
   }
+  if (r == 0) {
+    r = inverses();
+  }
   return r;
 }
 `
 
 const (
-	gcmCase4PT       = "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39"
-	gcmCase4Sealed   = "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e0915bc94fbc3221a5db94fae95ae7121a47"
-	gcmCase16Sealed  = "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f66276fc6ece0f4e1768cddf8853bb2d551b"
-	aesKATCtr128Wrap = "5261f7439cb239734ad239c63d4ed9a38c514451afce7c8b7a847f7e8e38ec52ceacb4c7ff57d15ca56b37375774a824bc59"
-	aesKATCtr128Long = "5922f813dfd110fade6b86b5239d7b3efed6fc1ffd3bfd19816366e23957aa2c1e1b972a9663e913c333111c917ef4c9a8ae6a32805e52da1b6fb69a5b3ae0aca7367f5c57691c8cad91b5d83a43739d9b02de52c045762a1853d844f1d36666c16793d96a129bc98fb30bdedf5008fd6aa1f0aef3905e6c9d690374d630ec09ecb0beccd634057885bcb40a82fe779696c44ee629a9c3e617e8a23b22ab483722f5e4648e131f9ede3a5c22b5edf44ff57c45db32c54425105e49e5c297b11c29c62cd3fa07525f4a9bd9655faf3bbdab3c8323279f9a9643f8e234a34452a7cbcf2fc415f584eb3a741817ac063bf17b5c7f5f02a89f54e1bdbde3963b7461f9714476506125f07e7a9aa76c4e7a8f702de5437ec8c518c8c5398019107165754ec2ae207c1d881f1a16bd"
-	aesKATCtr256Long = "ff56feaa6d804759f03c320d54b0ddaa1f861681450c6b175d0bf7f08913563e8fb24b5317c376b527ea56bf644e1890139ed3b31ffbce0eb48c10396bf2f33a08d1895094b7388d0802f7224bc2a24fe30b0fe6d514b72e813b9e0d8462263082317bc6785a570d1c00a1756f44e658e6cac967bf2e9e5f5f20d582d96dd521292abc33779b235d7513e4a49de50a8ea380f3a8b4495523d698980ae697ed71c112dd0734e3b85c507624994d088c42dbc7050fe998396518ace8f6905be9bf659b3773856472d6586f3b40a67aeea10d7d98c8d952c350dd6e634af5ee02b34f79627149f82ed8c1ec842f77036162afbe7cda134c625858dbde52daf1e5f1147b3c5228a42b20281b0640978addab460fc9f29045f9aeacd21d9ae1554957c78b383970297a22e231414e"
+	aesKATSchedule192 = "000102030405060708090a0b0c0d0e0f10111213141516175846f2f95c43f4fe544afef55847f0fa4856e2e95c43f4fe40f949b31cbabd4d48f043b810b7b34258e151ab04a2a5557effb5416245080c2ab54bb43a02f8f662e3a95d66410c08f501857297448d7ebdf1c6ca87f33e3ce510976183519b6934157c9ea351f1e01ea0372a995309167c439e77ff12051edd7e0e887e2fff68608fc842f9dcc154859f5f237a8d5a3dc0c02952beefd63ade601e7827bcdf2ca223800fd8aeda32a4970a331a78dc09c418c271e3a41d5d"
+	aesKATDec128Long  = "240dcbbfae79c8f3c24b7535e4505b7e25da6e81cb49a537ecb77bbdcc7d78b7489857108f443052b00ad6fa5a543262337aef74d309c05d6ce9009e174ed86f359dcc774204be87588f833cc194ec9fa04771c3f290cf160920489720c7e6098aeaf39f52bac19e8be5d897e53eebb242e590116081469af2f15daaf6b209ba2322c4fa555328660dcf4bd34824de30"
+	aesKATDec256Long  = "7232aa4b9aa3691db2b96b92a8044ce07b11db615c86e4e0f5dd663215d04cc4cbf6aade92b279c74e8e8e28773ac8086f280774b08c7dfcb3224d7b1d6e41cc85e4ba7805ee49667803505b9e4fd3a81dd763d286c377f8e8f73cba2167fd2ef1ac2cf44f234daebcd5f72e12b8f0c89b2169e21a403262f08a5220904b1e5a043e89a4e6224c29d981d2efce94ce10"
+	gcmCase4PT        = "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39"
+	gcmCase4Sealed    = "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e0915bc94fbc3221a5db94fae95ae7121a47"
+	gcmCase16Sealed   = "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f66276fc6ece0f4e1768cddf8853bb2d551b"
+	aesKATCtr128Wrap  = "5261f7439cb239734ad239c63d4ed9a38c514451afce7c8b7a847f7e8e38ec52ceacb4c7ff57d15ca56b37375774a824bc59"
+	aesKATCtr128Long  = "5922f813dfd110fade6b86b5239d7b3efed6fc1ffd3bfd19816366e23957aa2c1e1b972a9663e913c333111c917ef4c9a8ae6a32805e52da1b6fb69a5b3ae0aca7367f5c57691c8cad91b5d83a43739d9b02de52c045762a1853d844f1d36666c16793d96a129bc98fb30bdedf5008fd6aa1f0aef3905e6c9d690374d630ec09ecb0beccd634057885bcb40a82fe779696c44ee629a9c3e617e8a23b22ab483722f5e4648e131f9ede3a5c22b5edf44ff57c45db32c54425105e49e5c297b11c29c62cd3fa07525f4a9bd9655faf3bbdab3c8323279f9a9643f8e234a34452a7cbcf2fc415f584eb3a741817ac063bf17b5c7f5f02a89f54e1bdbde3963b7461f9714476506125f07e7a9aa76c4e7a8f702de5437ec8c518c8c5398019107165754ec2ae207c1d881f1a16bd"
+	aesKATCtr256Long  = "ff56feaa6d804759f03c320d54b0ddaa1f861681450c6b175d0bf7f08913563e8fb24b5317c376b527ea56bf644e1890139ed3b31ffbce0eb48c10396bf2f33a08d1895094b7388d0802f7224bc2a24fe30b0fe6d514b72e813b9e0d8462263082317bc6785a570d1c00a1756f44e658e6cac967bf2e9e5f5f20d582d96dd521292abc33779b235d7513e4a49de50a8ea380f3a8b4495523d698980ae697ed71c112dd0734e3b85c507624994d088c42dbc7050fe998396518ace8f6905be9bf659b3773856472d6586f3b40a67aeea10d7d98c8d952c350dd6e634af5ee02b34f79627149f82ed8c1ec842f77036162afbe7cda134c625858dbde52daf1e5f1147b3c5228a42b20281b0640978addab460fc9f29045f9aeacd21d9ae1554957c78b383970297a22e231414e"
 )
 
 // aesKernelMisuses each stop the program instead of reaching outside the
@@ -347,6 +398,7 @@ var aesKernelMisuses = []string{
 	"__aes_expand_key(__alloc_u8(0))",
 	"__aes_ctr32(rk[0:10], __alloc_u8(16), __alloc_u8(16))",
 	"__aes_ctr32(rk, __alloc_u8(15), __alloc_u8(16))",
+	"__aes_dec_blocks(rk[0:175], __alloc_u8(16))",
 	"__ghash(h[0:15], h, h)",
 	"__ghash(h, h[0:15], h)",
 	"__aes_gcm_seal_into(rk, h, iv, 0 as u64, __alloc_u8(20), 0, 0, 0, 8)",
@@ -457,7 +509,7 @@ func TestSelfHostAESGCMKernelsWasm(t *testing.T) {
 		t.Fatal(err)
 	}
 	wat := string(data)
-	for _, kernel := range []string{"$__fern_aes_expand_key", "$__fern_aes_ctr_at"} {
+	for _, kernel := range []string{"$__fern_aes_expand_key", "$__fern_aes_ctr_at", "$__fern_aes_dec_blocks"} {
 		bodies := wasmFuncBodies(wat, kernel+" ")
 		const release = "(drop (call $__fern_arr_dec (local.get $tmp)))"
 		if len(bodies) != 1 || strings.Count(bodies[0], release) != 1 {

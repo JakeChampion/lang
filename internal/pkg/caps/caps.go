@@ -189,6 +189,7 @@ var Ungated = map[string]bool{
 	"__bytes_into":                true,
 	"__aes_expand_key":            true,
 	"__aes_ctr32":                 true,
+	"__aes_dec_blocks":            true,
 	"__ghash":                     true,
 	"__aes_gcm_seal_into":         true,
 	"__aes_gcm_open_into":         true,
