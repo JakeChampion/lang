@@ -10,6 +10,23 @@ Lane traits express numeric operations for scalar and SIMD types. Dual numbers r
 
 Generic kernels use the lane trait contract. Approximation accuracy and exceptional-value behavior still depend on the selected operation and concrete lane type.
 
+## Executable example
+
+```fern test name=std-simd-example
+import "std/simd";
+
+function main(): i32 {
+  let text: u8[] = [97u8, 44u8, 98u8, 44u8, 99u8, 100u8, 101u8, 102u8, 103u8, 104u8, 105u8, 106u8, 107u8, 108u8, 109u8, 44u8];
+  // One bit for each of the 16 bytes that is a comma.
+  let commas = simd.bitmask_u8x16(simd.eq_u8x16(simd.load_u8x16(text, 0), simd.splat_u8x16(44u8)));
+  if (commas != (1 << 1 | 1 << 3 | 1 << 15)) { return 1; }
+  let capped = simd.min_u8x16(simd.load_u8x16(text, 0), simd.splat_u8x16(100u8));
+  let out = simd.with_u8x16(text, 0, capped);
+  if (out[0] != 97u8 || out[6] != 100u8 || out[14] != 100u8) { return 2; }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.

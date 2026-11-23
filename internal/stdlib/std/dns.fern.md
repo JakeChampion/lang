@@ -10,6 +10,23 @@ DNS records retain their resource-data kind. Packet helpers encode and decode me
 
 UDP and TCP use different message frame rules. The TCP path must send the complete length-prefixed query. Network operations return concrete DNS errors.
 
+## Executable example
+
+```fern test name=std-dns-example
+import "std/dns";
+
+function main(): i32 {
+  let query = dns.with_edns(dns.query(4660, "Example.org", dns.TYPE_A));
+  let Ok(wire) = dns.encode(query) else { return 1; };
+  let Ok(back) = dns.decode(wire) else { return 2; };
+  if (back.id != 4660 || back.response || back.questions.len() != 1) { return 3; }
+  if (!dns.names_equal(back.questions[0].name, "example.org.") || back.questions[0].qtype != dns.TYPE_A) { return 4; }
+  let hosts = dns.parse_hosts("127.0.0.1 localhost loopback # this machine\n::1 localhost\n");
+  if (dns.hosts_lookup(hosts, "LOOPBACK").len() != 1 || dns.hosts_lookup(hosts, "localhost").len() != 2) { return 5; }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.

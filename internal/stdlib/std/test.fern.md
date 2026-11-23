@@ -10,6 +10,28 @@ A test runner records outcomes and emits TAP reports. Filters select cases, whil
 
 A failed assertion retains diagnostic context. Test results and process exit behavior remain separate so a suite can report all selected outcomes.
 
+## Executable example
+
+```fern test name=std-test-example
+import "std/test";
+
+function adds(): test.TestOutcome {
+  return test.assert_eq(1 + 2, 3);
+}
+
+function orders(): test.TestOutcome {
+  return test.assert_lt(2, 3);
+}
+
+function main(): i32 {
+  let suite = test.new_quiet("arithmetic");
+  suite = suite.it("adds", adds);
+  suite = suite.it("orders", orders);
+  suite = suite.skip("divides", "not written yet");
+  return suite.finish();
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.
