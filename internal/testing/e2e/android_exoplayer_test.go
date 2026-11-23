@@ -19,9 +19,10 @@ import "testing"
 // until close.
 func TestAndroidExoplayer(t *testing.T) {
 	const src = `import "std/android/exoplayer";
+import "std/android/handler";
 import "std/android/player";
 function of(l: usize, h: usize, s: usize, slot: i32): exoplayer.Player {
-  return exoplayer.Player { listener: l, handler: h, state: s, slot: slot };
+  return exoplayer.Player { listener: l, handler: handler.Handler { ref: h }, state: s, slot: slot };
 }
 pub function make(ctx: usize): i32 {
   if let Some(p) = exoplayer.new(ctx, "dev.fern.test.Exo") {

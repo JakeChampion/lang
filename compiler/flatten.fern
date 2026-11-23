@@ -10,7 +10,7 @@ import "std/string";
 
 pub struct ImportedEnum { name: string, prefix: string }
 
-pub struct RewriteCtx { modnames: string[], modprefixes: string[], prefix: string, declnames: string[], declnames_mangled: string[], dn_head: i32[], dn_next: i32[], locals: string[], enumnames: string[], imported_enums: ImportedEnum[], ivar_names: string[], ivar_mangled: string[], variant_scope: string[], reexport_keys: string[], reexport_targets: string[], type_params: string[], own_variants: string[] }
+pub struct RewriteCtx { modnames: string[], modprefixes: string[], prefix: string, declnames: string[], declnames_mangled: string[], dn_head: i32[], dn_next: i32[], locals: util.NameIndex, enumnames: string[], imported_enums: ImportedEnum[], ivar_names: string[], ivar_mangled: string[], variant_scope: string[], reexport_keys: string[], reexport_targets: string[], type_params: string[], own_variants: string[] }
 
 function imported_enum_prefix(name: string, ctx: RewriteCtx): string {
   for en in ctx.imported_enums {
@@ -304,6 +304,15 @@ function with_enum_viewers(mod: parser.Module, viewers: string[]): parser.Module
     enums = enums.append(parser.EnumDecl { ...ed, visible_from: viewers });
   }
   return parser.Module { ...mod, enums: enums };
+}
+
+// `ix` with each of `names`.
+function with_names(ix: util.NameIndex, names: string[]): util.NameIndex {
+  let out = ix;
+  for name in names {
+    out = out.added(name);
+  }
+  return out;
 }
 
 function is_in(name: string, list: string[]): boolean {
@@ -868,7 +877,7 @@ function rewrite_pattern(p: ast.Pattern, ctx: RewriteCtx): ast.Pattern {
 pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
   match (e) {
     ast.ExprIdent(id) => {
-      if (id.builtin || is_in(id.name, ctx.locals)) {
+      if (id.builtin || ctx.locals.has(id.name)) {
         return ast.ExprIdent { ...id };
       }
       return ast.ExprIdent { ...id, name: mangle_bare_value(id.name, ctx) };
@@ -876,7 +885,7 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
     ast.ExprFieldAccess(fa) => {
       match (fa.obj) {
         ast.ExprIdent(id) => {
-          if (is_in(id.name, ctx.modnames) && !is_in(id.name, ctx.locals)) {
+          if (is_in(id.name, ctx.modnames) && !ctx.locals.has(id.name)) {
             let mangled = lookup_reexport(resolve_prefix(id.name, ctx) + "__" + fa.field, ctx);
             // Primitive display bodies share the compiler's canonical ABI.
             if (fa.field.starts_with("__primitive_")) {
@@ -886,7 +895,7 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
             // FUNCTION, so the module ident's own tag says nothing about it.
             return ast.ExprIdent { ...id, name: mangled, ty: "" };
           }
-          if (!is_in(id.name, ctx.locals) && is_in(id.name, ctx.enumnames)) {
+          if (!ctx.locals.has(id.name) && is_in(id.name, ctx.enumnames)) {
             return ast.ExprFieldAccess { ...fa, obj: ast.ExprIdent { ...id, name: mangle_bare(id.name, ctx) }, field: mangle_bare(fa.field, ctx) };
           }
         },
@@ -896,7 +905,7 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       if let ast.ExprFieldAccess(_) = fa.obj {
         if let ast.ExprIdent(id) = obj {
           let owner = imported_enum_prefix(id.name, ctx);
-          if (owner.len() > 0 && !is_in(id.name, ctx.locals)) {
+          if (owner.len() > 0 && !ctx.locals.has(id.name)) {
             return ast.ExprFieldAccess { ...fa, obj: obj, field: mangled_name(owner, fa.field) };
           }
         }
@@ -974,7 +983,7 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
     ast.ExprLambda(lm) => {
       let inner = ctx.locals;
       for lp in lm.params {
-        inner = inner.append(lp.name);
+        inner = inner.added(lp.name);
       }
       let lctx = RewriteCtx { ...ctx, locals: inner };
       return ast.ExprLambda {
@@ -999,7 +1008,7 @@ pub function rewrite_block(stmts: ast.Stmt[], ctx: RewriteCtx): ast.Stmt[] {
     out = out.append(rewrite_stmt(st, scope));
     match (st) {
       ast.StmtVar(v) => {
-        scope = RewriteCtx { ...scope, locals: ast.append_var_names(scope.locals, v) };
+        scope = RewriteCtx { ...scope, locals: with_names(scope.locals, ast.append_var_names([], v)) };
       },
       _ => {}
     }
@@ -1055,7 +1064,7 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
       return ast.StmtFor {
         var_name: f.var_name,
         iter: rewrite_expr(f.iter, ctx),
-        body: rewrite_block(f.body, RewriteCtx { ...ctx, locals: ast.append_for_names(loop_locals, f) }),
+        body: rewrite_block(f.body, RewriteCtx { ...ctx, locals: with_names(loop_locals, ast.append_for_names([], f)) }),
         label: f.label,
         line: f.line,
         col: f.col,
@@ -1077,7 +1086,7 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
 function rewrite_match_arms(arms: ast.MatchArm[], ctx: RewriteCtx): ast.MatchArm[] {
   let out: ast.MatchArm[] = [];
   for arm in arms {
-    let locals = util.append_all(ctx.locals, astwalk.pattern_binders(arm.pattern, []));
+    let locals = with_names(ctx.locals, astwalk.pattern_binders(arm.pattern, []));
     let actx = RewriteCtx { ...ctx, locals: locals };
     out = out.append(ast.MatchArm { ...arm, pattern: rewrite_pattern(arm.pattern, ctx), body: rewrite_block(arm.body, actx), guard: rewrite_expr(arm.guard, actx) });
   }
@@ -1085,16 +1094,17 @@ function rewrite_match_arms(arms: ast.MatchArm[], ctx: RewriteCtx): ast.MatchArm
 }
 
 function rewrite_tuple_arm(arm: ast.TupArm, ctx: RewriteCtx): ast.TupArm {
-  let locals = util.append_all(ctx.locals, []);
-  locals = astwalk.append_bound_name(locals, arm.at_binding);
+  let bound: string[] = [];
+  bound = astwalk.append_bound_name(bound, arm.at_binding);
   for name in arm.binds {
-    locals = astwalk.append_bound_name(locals, name);
+    bound = astwalk.append_bound_name(bound, name);
   }
   let patterns: ast.Pattern[] = [];
   for pattern in arm.elem_pats {
-    locals = astwalk.pattern_binders(pattern, locals);
+    bound = astwalk.pattern_binders(pattern, bound);
     patterns = patterns.append(rewrite_pattern(pattern, ctx));
   }
+  let locals = with_names(ctx.locals, bound);
   let literals: ast.Expr[] = [];
   for literal in arm.lits {
     literals = literals.append(rewrite_expr(literal, ctx));
@@ -1239,7 +1249,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
     let bctx: RewriteCtx = RewriteCtx {
       type_params: tctx.type_params,
       modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix,
-      declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: param_names(fd),
+      declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: util.name_index(param_names(fd)),
       enumnames: ctx.enumnames, imported_enums: ctx.imported_enums, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope,
       reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets, own_variants: ctx.own_variants,
     };
@@ -1307,7 +1317,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
   for pv in mod.marks {
     marks = marks.append(parser.FuncMark { ...pv, func_name: mangle_bare(pv.func_name, ctx) });
   }
-  return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, exports: exports, marks: marks, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { type_params: [], modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: [], enumnames: ctx.enumnames, imported_enums: ctx.imported_enums, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets, own_variants: ctx.own_variants }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx), trait_reqs: mangle_trait_reqs(mod.trait_reqs, ctx) };
+  return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, exports: exports, marks: marks, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { type_params: [], modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: util.name_index([]), enumnames: ctx.enumnames, imported_enums: ctx.imported_enums, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets, own_variants: ctx.own_variants }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx), trait_reqs: mangle_trait_reqs(mod.trait_reqs, ctx) };
 }
 
 function rewrite_trait_ref(spelling: string, ctx: RewriteCtx): string {
@@ -1408,7 +1418,7 @@ pub function flatten_qualified(mod: parser.Module, ids: string[], pfxs: string[]
     }
   }
   let shadows = builtin_shadows(mod);
-  let ctx = RewriteCtx { type_params: [], modnames: path_aliased_names(mod, mod_names(mod)), modprefixes: path_aliased_prefixes(mod, import_prefixes(mod, ids, pfxs)), prefix: "", declnames: shadows, declnames_mangled: entry_shadow_names(shadows), dn_head: build_declname_head(shadows), dn_next: build_declname_next(shadows), locals: empty, enumnames: empty, imported_enums: imported, ivar_names: ivn, ivar_mangled: ivm, variant_scope: scope, reexport_keys: reexport_keys, reexport_targets: reexport_targets, own_variants: empty };
+  let ctx = RewriteCtx { type_params: [], modnames: path_aliased_names(mod, mod_names(mod)), modprefixes: path_aliased_prefixes(mod, import_prefixes(mod, ids, pfxs)), prefix: "", declnames: shadows, declnames_mangled: entry_shadow_names(shadows), dn_head: build_declname_head(shadows), dn_next: build_declname_next(shadows), locals: util.name_index(empty), enumnames: empty, imported_enums: imported, ivar_names: ivn, ivar_mangled: ivm, variant_scope: scope, reexport_keys: reexport_keys, reexport_targets: reexport_targets, own_variants: empty };
   return rewrite_module_bodies(mod, ctx);
 }
 
@@ -1444,7 +1454,7 @@ pub function qualify_entry_builtins(mod: parser.Module): parser.Module {
     return mod;
   }
   let empty: string[] = [];
-  let ctx = RewriteCtx { type_params: [], modnames: empty, modprefixes: empty, prefix: "", declnames: shadows, declnames_mangled: entry_shadow_names(shadows), dn_head: build_declname_head(shadows), dn_next: build_declname_next(shadows), locals: empty, enumnames: empty, imported_enums: [], ivar_names: empty, ivar_mangled: empty, variant_scope: empty, reexport_keys: empty, reexport_targets: empty, own_variants: empty };
+  let ctx = RewriteCtx { type_params: [], modnames: empty, modprefixes: empty, prefix: "", declnames: shadows, declnames_mangled: entry_shadow_names(shadows), dn_head: build_declname_head(shadows), dn_next: build_declname_next(shadows), locals: util.name_index(empty), enumnames: empty, imported_enums: [], ivar_names: empty, ivar_mangled: empty, variant_scope: empty, reexport_keys: empty, reexport_targets: empty, own_variants: empty };
   return rewrite_module_bodies(mod, ctx);
 }
 
@@ -1500,7 +1510,7 @@ function module_ctx(mod: parser.Module, prefix: string, ids: string[], pfxs: str
     declnames_mangled: build_mangled_names(prefix, decls),
     dn_head: build_declname_head(decls),
     dn_next: build_declname_next(decls),
-    locals: [],
+    locals: util.name_index([]),
     enumnames: collect_enum_names(mod), imported_enums: imported,
     ivar_names: ivar_names,
     ivar_mangled: ivar_mangled,
@@ -1528,7 +1538,7 @@ function module_trait_defaults(mod: parser.Module, ctx: RewriteCtx, acc: TraitDe
     for m in td.methods {
       if (m.body.len() > 0) {
         let tctx = with_type_params(with_type_params(ctx, td.type_params), m.all_type_params);
-        let bctx = RewriteCtx { ...tctx, locals: param_names(m) };
+        let bctx = RewriteCtx { ...tctx, locals: util.name_index(param_names(m)) };
         let rm = parser.FuncDecl { ...m, params: rewrite_params(m.params, bctx), ret_type: rewrite_type_name(m.ret_type, tctx), ret_fn_ret: rewrite_type_name(m.ret_fn_ret, tctx), ret_fn_param_types: rewrite_type_name_list(m.ret_fn_param_types, tctx), body: rewrite_block(m.body, bctx), module: ctx.prefix };
         acc = acc.append(TraitDefaultIn { key: ctx.prefix + "." + td.name, params: td.type_params, consts: td.const_params, method: rm });
       }

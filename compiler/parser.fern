@@ -16011,6 +16011,13 @@ function struct_lit_spelling(sl: ast.ExprStructLit, env: MEnv, funcs: MFns): str
     return sl.type_name;
   }
   let sd = funcs.structs[si];
+  // A literal with a base takes the type arguments of the base.
+  if (sl.has_base) {
+    let from = mono_infer(sl.base, env, funcs);
+    if (from.len() > sd.name.len() && strip_struct_base(from) == sd.name) {
+      return from;
+    }
+  }
   let binds = MEnv { mnames: [], mtypes: [] };
   let k = 0;
   while (k < sl.field_names.len() && k < sl.field_values.len()) {
@@ -22135,24 +22142,33 @@ function settle_field_type(structs: SettleStructs, type_name: string, field: str
   return "";
 }
 
-function settle_local_type(names: string[], types: string[], name: string): string {
-  let i = names.len() - 1;
-  while (i >= 0) {
-    if (names[i] == name) {
-      return types[i];
-    }
-    i -= 1;
-  }
-  return "";
+struct SettleLocals { names: string[], types: string[], by_name: util.LastIndex }
+
+function no_settle_locals(): SettleLocals {
+  return SettleLocals { names: [], types: [], by_name: util.no_last_index() };
 }
 
-function settle_expr(e: ast.Expr, names: string[], types: string[], fns: SettleFns, structs: SettleStructs): ast.Expr {
+function (l: SettleLocals) bound(name: string, type_name: string): SettleLocals {
+  let names = l.names.append(name);
+  let by_name = l.by_name.with_last_of(names);
+  return SettleLocals { ...l, names: names, types: l.types.append(type_name), by_name: by_name };
+}
+
+function settle_local_type(locals: SettleLocals, name: string): string {
+  let i = locals.by_name.find(locals.names, name);
+  if (i < 0) {
+    return "";
+  }
+  return locals.types[i];
+}
+
+function settle_expr(e: ast.Expr, locals: SettleLocals, fns: SettleFns, structs: SettleStructs): ast.Expr {
   match (e) {
     ast.ExprBinary(b) => {
-      return ast.binary(b.op, settle_expr(b.left, names, types, fns, structs), settle_expr(b.right, names, types, fns, structs), b.line, b.col, b.ty);
+      return ast.binary(b.op, settle_expr(b.left, locals, fns, structs), settle_expr(b.right, locals, fns, structs), b.line, b.col, b.ty);
     },
     ast.ExprUnary(u) => {
-      return ast.rebuild_unary(u, settle_expr(u.operand, names, types, fns, structs), u.line, u.col, u.ty);
+      return ast.rebuild_unary(u, settle_expr(u.operand, locals, fns, structs), u.line, u.col, u.ty);
     },
     ast.ExprCall(c) => {
       let ptypes: string[] = [];
@@ -22163,7 +22179,7 @@ function settle_expr(e: ast.Expr, names: string[], types: string[], fns: SettleF
         ast.ExprFieldAccess(mfa) => {
           match (mfa.obj) {
             ast.ExprIdent(rid) => {
-              ptypes = settle_method_param_types(fns, settle_local_type(names, types, rid.name), mfa.field);
+              ptypes = settle_method_param_types(fns, settle_local_type(locals, rid.name), mfa.field);
             },
             _ => {
               ptypes = [];
@@ -22176,38 +22192,38 @@ function settle_expr(e: ast.Expr, names: string[], types: string[], fns: SettleF
       }
       let args: ast.Expr[] = [];
       for ai in 0..c.args.len() {
-        let arg = settle_expr(c.args[ai], names, types, fns, structs);
+        let arg = settle_expr(c.args[ai], locals, fns, structs);
         if (ai < ptypes.len()) {
           arg = settle_to_name(arg, ptypes[ai]);
         }
         args = args.append(arg);
       }
-      return ast.ExprCall { callee: settle_expr(c.callee, names, types, fns, structs), args: args, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
+      return ast.ExprCall { callee: settle_expr(c.callee, locals, fns, structs), args: args, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
     },
     ast.ExprArray(a) => {
       let els: ast.Expr[] = [];
       for i in 0..a.elements.len() {
-        els = els.append(settle_expr(a.elements[i], names, types, fns, structs));
+        els = els.append(settle_expr(a.elements[i], locals, fns, structs));
       }
       return ast.ExprArray { ...a, elements: els };
     },
     ast.ExprTuple(t) => {
       let tels: ast.Expr[] = [];
       for ti in 0..t.elements.len() {
-        tels = tels.append(settle_expr(t.elements[ti], names, types, fns, structs));
+        tels = tels.append(settle_expr(t.elements[ti], locals, fns, structs));
       }
       return ast.ExprTuple { elements: tels, line: t.line, col: t.col };
     },
     ast.ExprIndex(x) => {
-      return ast.ExprIndex { array: settle_expr(x.array, names, types, fns, structs), index: settle_expr(x.index, names, types, fns, structs), unchecked: x.unchecked, ty: x.ty, line: x.line, col: x.col };
+      return ast.ExprIndex { array: settle_expr(x.array, locals, fns, structs), index: settle_expr(x.index, locals, fns, structs), unchecked: x.unchecked, ty: x.ty, line: x.line, col: x.col };
     },
     ast.ExprSlice(sl) => {
-      return ast.ExprSlice { ...sl, array: settle_expr(sl.array, names, types, fns, structs), start: settle_expr(sl.start, names, types, fns, structs), end: settle_expr(sl.end, names, types, fns, structs) };
+      return ast.ExprSlice { ...sl, array: settle_expr(sl.array, locals, fns, structs), start: settle_expr(sl.start, locals, fns, structs), end: settle_expr(sl.end, locals, fns, structs) };
     },
     ast.ExprStructLit(sl) => {
       let vals: ast.Expr[] = [];
       for vi in 0..sl.field_values.len() {
-        let v = settle_expr(sl.field_values[vi], names, types, fns, structs);
+        let v = settle_expr(sl.field_values[vi], locals, fns, structs);
         if (vi < sl.field_names.len()) {
           v = settle_to_name(v, settle_field_type(structs, sl.type_name, sl.field_names[vi]));
         }
@@ -22215,21 +22231,19 @@ function settle_expr(e: ast.Expr, names: string[], types: string[], fns: SettleF
       }
       let base = sl.base;
       if (sl.has_base) {
-        base = settle_expr(sl.base, names, types, fns, structs);
+        base = settle_expr(sl.base, locals, fns, structs);
       }
       return ast.ExprStructLit { ...sl, field_values: vals, base: base };
     },
     ast.ExprFieldAccess(fa) => {
-      return ast.ExprFieldAccess { ...fa, obj: settle_expr(fa.obj, names, types, fns, structs) };
+      return ast.ExprFieldAccess { ...fa, obj: settle_expr(fa.obj, locals, fns, structs) };
     },
     ast.ExprLambda(lm) => {
-      let lnames = names;
-      let ltypes = types;
+      let inner = locals;
       for lpi in 0..lm.params.len() {
-        lnames = lnames.append(lm.params[lpi].name);
-        ltypes = ltypes.append(lm.params[lpi].type_name);
+        inner = inner.bound(lm.params[lpi].name, lm.params[lpi].type_name);
       }
-      return ast.ExprLambda { ...lm, body: settle_block(lm.body, lm.ret_type, lnames, ltypes, fns, structs) };
+      return ast.ExprLambda { ...lm, body: settle_block(lm.body, lm.ret_type, inner, fns, structs) };
     },
     _ => {
       return e;
@@ -22237,41 +22251,41 @@ function settle_expr(e: ast.Expr, names: string[], types: string[], fns: SettleF
   }
 }
 
-function settle_stmt(st: ast.Stmt, ret_type: string, names: string[], types: string[], fns: SettleFns, structs: SettleStructs): ast.Stmt {
+function settle_stmt(st: ast.Stmt, ret_type: string, locals: SettleLocals, fns: SettleFns, structs: SettleStructs): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
-      let init = settle_to_name(settle_expr(v.init, names, types, fns, structs), v.type_name);
+      let init = settle_to_name(settle_expr(v.init, locals, fns, structs), v.type_name);
       return ast.StmtVar { name: v.name, type_name: v.type_name, init: init, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr, header: v.header };
     },
     ast.StmtReturn(r) => {
-      return ast.StmtReturn { value: settle_to_name(settle_expr(r.value, names, types, fns, structs), ret_type), line: r.line, col: r.col };
+      return ast.StmtReturn { value: settle_to_name(settle_expr(r.value, locals, fns, structs), ret_type), line: r.line, col: r.col };
     },
     ast.StmtAssign(a) => {
-      let val = settle_to_name(settle_expr(a.value, names, types, fns, structs), settle_local_type(names, types, a.target));
+      let val = settle_to_name(settle_expr(a.value, locals, fns, structs), settle_local_type(locals, a.target));
       return ast.StmtAssign { ...a, value: val };
     },
     ast.StmtExpr(x) => {
-      return ast.StmtExpr { ...x, value: settle_expr(x.value, names, types, fns, structs) };
+      return ast.StmtExpr { ...x, value: settle_expr(x.value, locals, fns, structs) };
     },
     ast.StmtIf(f) => {
-      return ast.StmtIf { ...f, cond: settle_expr(f.cond, names, types, fns, structs), then_body: settle_block(f.then_body, ret_type, names, types, fns, structs), else_body: settle_block(f.else_body, ret_type, names, types, fns, structs) };
+      return ast.StmtIf { ...f, cond: settle_expr(f.cond, locals, fns, structs), then_body: settle_block(f.then_body, ret_type, locals, fns, structs), else_body: settle_block(f.else_body, ret_type, locals, fns, structs) };
     },
     ast.StmtWhile(w) => {
-      return ast.StmtWhile { cond: settle_expr(w.cond, names, types, fns, structs), body: settle_block(w.body, ret_type, names, types, fns, structs), label: w.label, line: w.line, is_loop: w.is_loop };
+      return ast.StmtWhile { cond: settle_expr(w.cond, locals, fns, structs), body: settle_block(w.body, ret_type, locals, fns, structs), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtFor(fr) => {
-      return ast.StmtFor { var_name: fr.var_name, iter: settle_expr(fr.iter, names, types, fns, structs), body: settle_block(fr.body, ret_type, names, types, fns, structs), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
+      return ast.StmtFor { var_name: fr.var_name, iter: settle_expr(fr.iter, locals, fns, structs), body: settle_block(fr.body, ret_type, locals, fns, structs), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
     },
     ast.StmtMatch(m) => {
       let arms: ast.MatchArm[] = [];
       for ai in 0..m.arms.len() {
         let a = m.arms[ai];
-        arms = arms.append(ast.MatchArm { ...a, body: settle_block(a.body, ret_type, names, types, fns, structs) });
+        arms = arms.append(ast.MatchArm { ...a, body: settle_block(a.body, ret_type, locals, fns, structs) });
       }
-      return ast.StmtMatch { ...m, scrutinee: settle_expr(m.scrutinee, names, types, fns, structs), arms: arms };
+      return ast.StmtMatch { ...m, scrutinee: settle_expr(m.scrutinee, locals, fns, structs), arms: arms };
     },
     ast.StmtDefer(dd) => {
-      return ast.StmtDefer { action: settle_stmt(dd.action, ret_type, names, types, fns, structs), on_error: dd.on_error, line: dd.line };
+      return ast.StmtDefer { action: settle_stmt(dd.action, ret_type, locals, fns, structs), on_error: dd.on_error, line: dd.line };
     },
     _ => {
       return st;
@@ -22279,15 +22293,15 @@ function settle_stmt(st: ast.Stmt, ret_type: string, names: string[], types: str
   }
 }
 
-function settle_block(stmts: ast.Stmt[], ret_type: string, names: string[], types: string[], fns: SettleFns, structs: SettleStructs): ast.Stmt[] {
+function settle_block(stmts: ast.Stmt[], ret_type: string, locals: SettleLocals, fns: SettleFns, structs: SettleStructs): ast.Stmt[] {
   let out: ast.Stmt[] = [];
+  let known = locals;
   for i in 0..stmts.len() {
-    out = out.append(settle_stmt(stmts[i], ret_type, names, types, fns, structs));
+    out = out.append(settle_stmt(stmts[i], ret_type, known, fns, structs));
     match (stmts[i]) {
       ast.StmtVar(v) => {
         if (v.type_name.len() > 0) {
-          names = names.append(v.name);
-          types = types.append(v.type_name);
+          known = known.bound(v.name, v.type_name);
         }
       },
       _ => {}
@@ -22302,20 +22316,16 @@ pub function settle_module(mod: Module): Module {
   let funcs: FuncDecl[] = [];
   for i in 0..mod.funcs.len() {
     let fd = mod.funcs[i];
-    let names: string[] = [];
-    let types: string[] = [];
+    let locals = no_settle_locals();
     for pi in 0..fd.params.len() {
-      names = names.append(fd.params[pi].name);
-      types = types.append(fd.params[pi].type_name);
+      locals = locals.bound(fd.params[pi].name, fd.params[pi].type_name);
     }
     if (fd.receiver_name.len() > 0) {
-      names = names.append(fd.receiver_name);
-      types = types.append(fd.receiver_type);
+      locals = locals.bound(fd.receiver_name, fd.receiver_type);
     }
-    funcs = funcs.append(FuncDecl { ...fd, body: settle_block(fd.body, fd.ret_type, names, types, fns, structs) });
+    funcs = funcs.append(FuncDecl { ...fd, body: settle_block(fd.body, fd.ret_type, locals, fns, structs) });
   }
-  let nonames: string[] = [];
-  return Module { ...mod, funcs: funcs, top_stmts: settle_block(mod.top_stmts, "", nonames, nonames, fns, structs) };
+  return Module { ...mod, funcs: funcs, top_stmts: settle_block(mod.top_stmts, "", no_settle_locals(), fns, structs) };
 }
 
 pub struct ConstTable { names: string[], values: ast.Expr[] }

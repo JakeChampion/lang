@@ -69,6 +69,7 @@ struct State {
   next_block: i32,
   values: typeinfo.Type[],
   names: string[],
+  by_name: util.LastIndex,
   vals: i32[],
   scope: checker.Scope,
   result: typeinfo.Type,
@@ -186,29 +187,24 @@ function terminate(s: State, term: ssa.STerm): State {
 }
 
 function lookup(s: State, name: string): i32 {
-  let i = s.names.len() - 1;
-  while (i >= 0) {
-    if (s.names[i] == name) {
-      return s.vals[i];
-    }
-    i -= 1;
+  let i = s.by_name.find(s.names, name);
+  if (i < 0) {
+    return -1;
   }
-  return -1;
+  return s.vals[i];
 }
 
 function bind(s: State, name: string, value: i32): State {
-  return note_binding(State { ...s, names: s.names.append(name), vals: s.vals.append(value) }, name, value);
+  let names = s.names.append(name);
+  return note_binding(State { ...s, names: names, by_name: s.by_name.with_last_of(names), vals: s.vals.append(value) }, name, value);
 }
 
 function replace(s: State, name: string, value: i32): State {
-  let i = s.names.len() - 1;
-  while (i >= 0) {
-    if (s.names[i] == name) {
-      return note_binding(State { ...s, vals: s.vals.with(i, value) }, name, value);
-    }
-    i -= 1;
+  let i = s.by_name.find(s.names, name);
+  if (i < 0) {
+    return fail(s, "replacement of an unbound name");
   }
-  return fail(s, "replacement of an unbound name");
+  return note_binding(State { ...s, vals: s.vals.with(i, value) }, name, value);
 }
 
 function note_binding(s: State, name: string, value: i32): State {
@@ -223,7 +219,7 @@ function note_binding(s: State, name: string, value: i32): State {
 }
 
 function leave(s: State, count: i32, scope: checker.Scope): State {
-  return State { ...s, names: prefix_names(s.names, count), vals: prefix(s.vals, count), scope: scope };
+  return State { ...s, names: prefix_names(s.names, count), by_name: s.by_name.cut_to(s.names, count), vals: prefix(s.vals, count), scope: scope };
 }
 
 function merge_binding(s: State, envs: i32[][], at: i32): Value {
@@ -2194,7 +2190,7 @@ function try_expr(u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {
   }
   let out = define(gone, ssasem.variant_new(), args, 0, rnames[1], s.result);
   s = terminate(out.s, ssa.t_ret(out.id));
-  s = State { ...s, names: entry.names, vals: entry.vals, scope: entry.scope, replaying: entry.replaying };
+  s = State { ...s, names: entry.names, by_name: entry.by_name, vals: entry.vals, scope: entry.scope, replaying: entry.replaying };
 
   if (unit_good) {
     return define(open(s, good, [pred]), 1, [], 0, "", typeinfo.t_void());
@@ -4424,8 +4420,8 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
   if (ast.destructures(v)) {
     return declare_tuple(st, v, s);
   }
-  let after = checker.bind_stmt(st, s.scope);
-  let ty = bound_type(s, v.name, after);
+  let bound = checker.local_bind_type(v, s.scope);
+  let ty = settled(resolved(bound, s.template, s.binding, s.scope));
   if (!semtypes.concrete(ty, true)) {
     let cty = closure_slot_type(v.init, s.contracts.list);
     if (semtypes.concrete(cty, true)) {
@@ -4433,7 +4429,7 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     }
   }
   if (!semtypes.concrete(ty, false) && ast.is_call(v.init)) {
-    return declare_from_call(v, s, after);
+    return declare_from_call(v, s, bound);
   }
   if (!semtypes.concrete(ty, true)) {
     ty = settled_payload(ty);
@@ -4443,7 +4439,7 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
   }
   if (value_local_placeholder(v) && !ssasem.is_integer(ty)) {
     let z = define(s, ssasem.zero(), [], 0, "", ty);
-    return State { ...bind_var(z.s, v.name, z.id), scope: after };
+    return in_scope(bind_var(z.s, v.name, z.id), v, bound);
   }
   let init = expr(v.init, s, ty);
   s = init.s;
@@ -4454,7 +4450,15 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     return fail(s, mismatch(v.name, ty, s.values[init.id]));
   }
   init = unaliased_view(init);
-  return State { ...bind_var(init.s, v.name, init.id), scope: after };
+  return in_scope(bind_var(init.s, v.name, init.id), v, bound);
+}
+
+// The state with the local of `v` in its scope. The bind is the last use of
+// the scope of `s`, so the scope grows in place. A bind before the initial
+// value is lowered has a second holder, and it copies the scope for each
+// declaration.
+function in_scope(s: State, v: ast.StmtVar, bound: typeinfo.Type): State {
+  return State { ...s, scope: checker.bind_local(v, s.scope, bound) };
 }
 
 function bind_var(s: State, name: string, id: i32): State {
@@ -4552,7 +4556,7 @@ function value_local_placeholder(v: ast.StmtVar): boolean {
   return false;
 }
 
-function declare_from_call(v: ast.StmtVar, s: State, after: checker.Scope): State {
+function declare_from_call(v: ast.StmtVar, s: State, bound: typeinfo.Type): State {
   let init = expr(v.init, s, typeinfo.unchecked());
   s = init.s;
   if (!s.ok) {
@@ -4561,7 +4565,7 @@ function declare_from_call(v: ast.StmtVar, s: State, after: checker.Scope): Stat
   if (!semtypes.concrete(s.values[init.id], true)) {
     return fail(s, "unresolved type of binding " + v.name + ": " + type_detail(s.values[init.id]));
   }
-  return State { ...bind_var(s, v.name, init.id), scope: after };
+  return in_scope(bind_var(s, v.name, init.id), v, bound);
 }
 
 function assign(a: ast.StmtAssign, s: State): State {
@@ -6101,7 +6105,7 @@ function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Co
   let entry = ssa.SBlock { id: 0, insts: [], term: t_none(), preds: [] };
   return State {
     ok: true, why: "", blocks: [], cur: entry, live: true, next_block: 1, values: [],
-    names: [], vals: [], scope: scope, result: result_type(fd, scope, binding, contracts.list), loops: [], contracts: contracts, calls: [],
+    names: [], by_name: util.no_last_index(), vals: [], scope: scope, result: result_type(fd, scope, binding, contracts.list), loops: [], contracts: contracts, calls: [],
     template: generic_decl(fd), binding: binding, requests: [], foreign: [], handers: handers, shadows: shadows, views: views,
     name: name, modes: [], funcs: funcs, impls: impls, try_cleanup: deferlower.try_cleanup(fd.body), replaying: false, armed: 0, escaping: escaping_bindings(fd.body), learned: [], learned_types: [],
     narrowings: [], debug_lines: layout.debug_lines, dbg_vals: [], dbg_names: [], packs: layout.packs, finalized: layout.finalized, word_reads: [], tested: [], range_proofs: layout.range_proofs,
@@ -7615,7 +7619,7 @@ function return_exprs(st: ast.Stmt, own acc: ast.Expr[]): ast.Expr[] {
 // each name can hold.
 // `sets` has one entry for each parameter, and then one for each local.
 // `values` names each parameter and each local that the body binds.
-struct Carried { params: string[], locals: string[], sets: i64[], values: string[] }
+struct Carried { params: string[], locals: util.NameIndex, sets: i64[], values: util.NameIndex }
 
 // The entry of `name` in `c.sets`, or -1.
 function (c: Carried) find(name: string): i32 {
@@ -7623,7 +7627,7 @@ function (c: Carried) find(name: string): i32 {
   if (at >= 0) {
     return at;
   }
-  let local = util.index_of_str(c.locals, name);
+  let local = c.locals.find(name);
   if (local < 0) {
     return -1;
   }
@@ -7695,7 +7699,7 @@ const CALL_EITHER: i32 = 2;
 
 function field_call(fa: ast.ExprFieldAccess, c: Carried, known: Handers): i32 {
   if let ast.ExprIdent(id) = fa.obj {
-    if (util.index_of_str(c.values, id.name) >= 0) {
+    if (c.values.has(id.name)) {
       return CALL_METHOD;
     }
     if (known.statics.has(id.name + "." + fa.field)) {
@@ -7757,7 +7761,7 @@ function stores_argument(name: string): boolean {
 
 function kept_params(call: ast.ExprCall, c: Carried, known: Handers): i64 {
   if let ast.ExprIdent(id) = call.callee {
-    if (stores_argument(id.name) || util.index_of_str(c.values, id.name) >= 0) {
+    if (stores_argument(id.name) || c.values.has(id.name)) {
       return every_param();
     }
     return known.mask(id.name);
@@ -7829,7 +7833,7 @@ function call_exprs(e: ast.Expr, own acc: ast.ExprCall[]): ast.ExprCall[] {
 // a call of a closure, and the positions that the callee stores.
 function stored_params(call: ast.ExprCall, c: Carried, known: Handers): i64 {
   if let ast.ExprIdent(id) = call.callee {
-    if (id.name.starts_with("__mkclo$") || util.index_of_str(c.values, id.name) >= 0) {
+    if (id.name.starts_with("__mkclo$") || c.values.has(id.name)) {
       return every_param();
     }
     return known.stored(id.name);
@@ -7880,7 +7884,8 @@ function hands_back(body: FlowBody, known: Handers): Kept {
   for b in body.binds {
     values = values.append(b.name);
   }
-  let c = Carried { params: body.names, locals: [], sets: sets, values: values };
+  let none: string[] = [];
+  let c = Carried { params: body.names, locals: util.name_index(none), sets: sets, values: util.name_index(values) };
   let grew = true;
   while (grew) {
     grew = false;
@@ -7888,7 +7893,7 @@ function hands_back(body: FlowBody, known: Handers): Kept {
       let held = reach(b.value, c, known);
       let at = c.find(b.name);
       if (at < 0 && held != 0) {
-        c = Carried { ...c, locals: c.locals.append(b.name), sets: c.sets.append(held) };
+        c = Carried { ...c, locals: c.locals.added(b.name), sets: c.sets.append(held) };
         grew = true;
       } else if (at >= 0 && (c.sets[at] | held) != c.sets[at]) {
         c = Carried { ...c, sets: c.sets.with(at, c.sets[at] | held) };
