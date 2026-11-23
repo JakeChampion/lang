@@ -10,6 +10,24 @@ A decoded field retains its number, wire type, integer word, and byte payload. T
 
 Application code supplies the schema rules and validates expected field types. Varint, fixed-width, and byte fields retain distinct wire representations. The decoder checks varint widths, field numbers, and lengths before shifts or index casts. Typed errors retain their byte offsets.
 
+## Executable example
+
+```fern test name=std-protobuf-example
+import "std/protobuf";
+import "std/option";
+import "std/string";
+
+function main(): i32 {
+  let message = protobuf.varint_field(1, 150).concat(protobuf.string_field(2, "fern"));
+  let Ok(fields) = protobuf.decode(message) else { return 1; };
+  if (protobuf.varint(fields, 1).unwrap_or(0) != 150) { return 2; }
+  if (protobuf.bytes(fields, 2).unwrap_or([]) != "fern".bytes()) { return 3; }
+  if (protobuf.varint(fields, 3).is_some()) { return 4; }
+  if (protobuf.unzigzag(protobuf.zigzag(-3)) != -3) { return 5; }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.

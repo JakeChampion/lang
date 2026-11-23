@@ -10,6 +10,34 @@ Bearer and Basic wrappers separate credential extraction from application verifi
 
 Only a verified user reaches the next handler. A credential parser does not establish trust by itself. `token_eq` provides a dedicated token comparison.
 
+## Executable example
+
+```fern test name=std-http-auth-example
+import "std/http";
+import "std/http/auth";
+
+function by_token(token: string): Option[string] {
+  if (auth.token_eq(token, "s3cret")) {
+    return Some("ada");
+  }
+  return None;
+}
+
+function whoami(req: HttpRequest): Result[HttpResponse, dyn http.ToResponse] {
+  use user <- auth.bearer(req, by_token);
+  return Ok(http.ok("you are " + user));
+}
+
+function main(): i32 {
+  let known = http.respond(whoami(http.request("GET", "/me").with_header("Authorization", "Bearer s3cret")));
+  if (known.status != 200 || known.body_text_lossy() != "you are ada") { return 1; }
+  let wrong = http.respond(whoami(http.request("GET", "/me").with_header("Authorization", "Bearer guess")));
+  if (wrong.status != 401) { return 2; }
+  if (http.respond(whoami(http.request("GET", "/me"))).status != 401) { return 3; }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.
