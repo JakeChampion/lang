@@ -1536,8 +1536,10 @@ produces a response:
        variant `stream-error` is read **discriminant-only** by modeling the return
        as `Result[i64, i64]`, whose 16-byte same-width-scalar area safely covers
        the canonical `result<_, stream-error>` (~12 bytes) — no under-allocation.
-       Gated by `TestExportWasiHttpHandlerBodyWriteServes`: a handler writes "hi"
-       and `wasmtime serve` returns **200 + body "hi"**.
+       Gated by `TestExportWasiHttpHandlerFinishServes` (2a): a handler writes
+       "hi" and `wasmtime serve` returns **200 + body "hi"**. A handler must
+       finish its body. When a guest drops a body without `finish`, wasmtime 51
+       sends a protocol error, as the wasi:http spec requires.
     2a. **`outgoing-body.finish` — the full response path. ✅ Done.** A handler now
        writes the body AND calls `[static]outgoing-body.finish(own<outgoing-body>,
        option<own<trailers>>) -> result<_, error-code>` to seal it. Two pieces:

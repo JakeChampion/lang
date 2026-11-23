@@ -15,6 +15,8 @@ resource Fields;
 resource OutgoingResponse;
 @import("wasi:http/types@0.2.0", "outgoing-body")
 resource OutgoingBody;
+@import("wasi:http/types@0.2.0", "trailers")
+resource Trailers;
 @import("wasi:io/streams@0.2.0", "output-stream")
 resource OutputStream;
 
@@ -26,6 +28,10 @@ function response_new(headers: own Fields): own OutgoingResponse;
 function response_body(resp: borrow OutgoingResponse): Result[own OutgoingBody, u32];
 @import("wasi:http/types@0.2.0", "[method]outgoing-body.write")
 function body_write(body: borrow OutgoingBody): Result[own OutputStream, u32];
+@import("wasi:io/streams@0.2.0", "[resource-drop]output-stream")
+function drop_stream(s: own OutputStream): void;
+@import("wasi:http/types@0.2.0", "[static]outgoing-body.finish")
+function body_finish(body: own OutgoingBody, trailers: Option[own Trailers]): Result[i64, i64];
 @import("wasi:http/types@0.2.0", "[static]response-outparam.set")
 function response_outparam_set(out: own ResponseOutparam, disc: i32, resp: own OutgoingResponse, a: i32, b: i64, c: i32, d: i32, e: i32, f: i32): void;
 
@@ -39,8 +45,14 @@ function on_request(request: own IncomingRequest, response_out: own ResponseOutp
 	match (response_body(resp)) {
 		Ok(body) => {
 			match (body_write(body)) {
-				Ok(stream) => {},
+				Ok(stream) => {
+					drop_stream(stream);
+				},
 				Err(e1) => {},
+			}
+			match (body_finish(body, None)) {
+				Ok(x) => {},
+				Err(y) => {},
 			}
 		},
 		Err(e0) => {},
@@ -50,7 +62,8 @@ function on_request(request: own IncomingRequest, response_out: own ResponseOutp
 }`
 
 func TestExportWasiHttpHandlerBodyServes(t *testing.T) {
-	if got := serveHttpHandlerStatus(t, httpHandlerBodyProg); got != http.StatusOK {
-		t.Fatalf("status = %d; want 200", got)
+	status, body := serveHttpHandler(t, httpHandlerBodyProg)
+	if status != http.StatusOK || body != "" {
+		t.Fatalf("status = %d, body = %q; want 200 and an empty body", status, body)
 	}
 }
