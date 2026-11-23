@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Starts or stops a Samba server for the checks of examples/android/files.
+# The server listens on 127.0.0.1 only, and keeps each file that it has in
+# WORK. The share has the name "share" and its directory is WORK/share.
+# It needs smbd, pdbedit and root, because Samba keeps its users with the
+# rights of root.
+#
+# usage: scripts/files-samba-serve start WORK PORT [OPTIONS]
+#        scripts/files-samba-serve stop WORK
+# OPTIONS are lines for the [global] section of smb.conf.
+set -euo pipefail
+
+user=${FILES_SMB_USER:-fernfiles}
+password=${FILES_SMB_PASSWORD:-live-check-1}
+action=${1:-}
+work=${2:-}
+[ -n "$work" ] || { sed -n '8,10p' "$0" >&2; exit 2; }
+
+# smbd ends its process group when it ends, so it runs in a session of its
+# own, and stop ends each process that has the config file.
+stop() {
+  pkill -9 -f "$work/smb.conf" 2> /dev/null || true
+}
+
+case "$action" in
+  stop)
+    stop
+    exit 0
+    ;;
+  start) ;;
+  *)
+    sed -n '8,10p' "$0" >&2
+    exit 2
+    ;;
+esac
+
+port=${3:?files-samba-serve: start needs a port}
+options=${4:-}
+for tool in smbd pdbedit; do
+  command -v "$tool" > /dev/null || { echo "files-samba-serve: $tool is not on PATH" >&2; exit 2; }
+done
+[ "$(id -u)" = 0 ] || { echo "files-samba-serve: run as root" >&2; exit 2; }
+
+stop
+sleep 1
+mkdir -p "$work"/{private,lock,state,cache,pid,ncalrpc,log,share}
+chmod 777 "$work/share"
+id "$user" > /dev/null 2>&1 || useradd --no-create-home --shell /usr/sbin/nologin "$user"
+cat > "$work/smb.conf" << CONF
+[global]
+  workgroup = WORKGROUP
+  server role = standalone server
+  smb ports = $port
+  bind interfaces only = yes
+  interfaces = 127.0.0.1
+  private dir = $work/private
+  lock directory = $work/lock
+  state directory = $work/state
+  cache directory = $work/cache
+  pid directory = $work/pid
+  ncalrpc dir = $work/ncalrpc
+  log file = $work/log/smbd.log
+  map to guest = never
+  disable netbios = yes
+  load printers = no
+  printing = bsd
+$options
+[share]
+  path = $work/share
+  read only = no
+  valid users = $user
+  force user = root
+CONF
+printf '%s\n%s\n' "$password" "$password" | pdbedit -s "$work/smb.conf" -a -t -u "$user" > /dev/null
+setsid smbd -s "$work/smb.conf" -D --no-process-group
+for _ in $(seq 1 50); do
+  (exec 3<> "/dev/tcp/127.0.0.1/$port") 2> /dev/null && exit 0
+  sleep 0.2
+done
+echo "files-samba-serve: smbd does not answer on port $port" >&2
+exit 1
