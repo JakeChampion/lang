@@ -64,7 +64,7 @@ name: Android
 # Android's app filter.
 # The files-samba job runs the SMB client of examples/android/files against
 # Samba, with each set of dialects and signature rules that the client has
-# code for. No other lane has an SMB server.
+# code for. The emulator job has a Samba server too, for the app itself.
 
 # Called from ci.yml rather than triggered: that is the one workflow a pull
 # request or a push to main launches. It decides from the changed files
@@ -243,8 +243,12 @@ jobs:
           name: fern-stopwatch-apk
           path: build/android-stopwatch
       - uses: ./.github/actions/disable-chrome-apt
-      - name: Install the video reference tools
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install the video reference tools and Samba
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg && sudo apt-get install -y --no-install-recommends samba
+      # The check of Fern Files uses this server from the emulator, which
+      # reaches the 127.0.0.1 of this computer at 10.0.2.2.
+      - name: Start the SMB server of the Fern Files check
+        run: sudo scripts/files-samba-serve start "$PWD/build/files-smb" 44450
       - name: Check the Plex video screen assertion
         run: python3 -B -m unittest discover -s examples/android/plex -p 'test_*.py'
       # The Plex check plays an H.264 test pattern, which ffmpeg writes. Each
@@ -334,7 +338,7 @@ jobs:
             python3 examples/android/tune/emulator_check.py build/android-stopwatch/fern-tune.apk build/android-stopwatch/emulator/tune || echo "examples/android/tune" >> build/android-stopwatch/emulator/failed
             python3 examples/android/paper/emulator_check.py build/android-stopwatch/fern-paper.apk build/android-stopwatch/fern-notifytest.apk build/android-stopwatch/emulator/paper || echo "examples/android/paper" >> build/android-stopwatch/emulator/failed
             python3 examples/android/plex/emulator_check.py build/android-stopwatch/fern-plex.apk build/android-stopwatch/emulator/plex build/android-stopwatch/pattern.mp4 || echo "examples/android/plex" >> build/android-stopwatch/emulator/failed
-            python3 examples/android/files/emulator_check.py build/android-stopwatch/fern-files.apk build/android-stopwatch/emulator/files || echo "examples/android/files" >> build/android-stopwatch/emulator/failed
+            python3 examples/android/files/emulator_check.py build/android-stopwatch/fern-files.apk build/android-stopwatch/emulator/files build/files-smb/share 44450 || echo "examples/android/files" >> build/android-stopwatch/emulator/failed
             python3 tests/android/tz/emulator_check.py build/android-stopwatch/zone build/android-stopwatch/emulator/tz || echo "tests/android/tz" >> build/android-stopwatch/emulator/failed
             python3 examples/android/walkie/emulator_check.py build/android-stopwatch/fern-walkie.apk build/android-stopwatch/fern-walkie2.apk build/android-stopwatch/emulator/walkie || echo "examples/android/walkie" >> build/android-stopwatch/emulator/failed
             ! test -s build/android-stopwatch/emulator/failed || { echo "failed checks:"; cat build/android-stopwatch/emulator/failed; exit 1; }

@@ -87,7 +87,8 @@ Each operation makes its own connection, because a worker is a process of
 its own and cannot share a socket.
 
 The person gives the address of the server, or picks it from a scan of
-the network of the phone (`scan.fern`). The app asks the server for its
+the network of the phone (`scan.fern`). An address such as
+`nas.local:4450` gives a port other than 445. The app asks the server for its
 disk shares (the call NetrShareEnum on the `srvsvc` pipe), and the person
 picks one or types its name. The password field shows dots. The app keeps
 the servers in a file that a key of the Android Keystore seals
@@ -142,6 +143,10 @@ dialects and signature rules, and the Android lane of CI runs that script.
 accessibility tree. It reads a text file, copies a picture, deletes and
 restores a file, reads the two content providers, and opens a file. The
 Android lane of CI runs it.
+
+The lane also starts Samba with `scripts/files-samba-serve`. The check
+then adds that server in the app, reads a file of the share, and copies a
+file in each direction.
 
 ```sh
 fern -apk files.apk examples/android/files/app.fern

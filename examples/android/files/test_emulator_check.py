@@ -40,6 +40,30 @@ class NodeTests(unittest.TestCase):
         self.assertEqual(check.nodes(""), [])
 
 
+class FieldTests(unittest.TestCase):
+    def test_empty_field_has_its_hint(self):
+        xml = tree(("dev.fern.files", "Leave empty for a guest", "", "[0,400][1080,560]"))
+        self.assertEqual(check.field_point(xml, "Leave empty for a guest"), (540, 480))
+
+    def test_field_with_text(self):
+        xml = tree(("dev.fern.files", "", "Leave empty for a guest, jo", "[0,400][1080,560]"))
+        self.assertEqual(check.field_point(xml, "Leave empty for a guest"), (540, 480))
+
+    def test_the_field_is_after_its_label(self):
+        xml = tree(("dev.fern.files", "Password", "", "[0,300][1080,360]"),
+                   ("dev.fern.files", "", "Password, 12 characters", "[0,400][1080,560]"))
+        self.assertEqual(check.field_point(xml, "Password"), (540, 480))
+
+    def test_no_field(self):
+        xml = tree(("dev.fern.files", "Passwords", "", "[0,300][1080,360]"))
+        self.assertIsNone(check.field_point(xml, "Password"))
+
+    def test_keyboard(self):
+        self.assertTrue(check.keyboard_shown("  mShowRequested=true mInputShown=true mInFullscreenMode=false\n"))
+        self.assertFalse(check.keyboard_shown("  mShowRequested=false mInputShown=false\n"))
+        self.assertFalse(check.keyboard_shown(""))
+
+
 class TrashTests(unittest.TestCase):
     def test_entry_of_the_file(self):
         listing = ".\n..\n1795000000~L3N0b3JhZ2U~other.txt\n1795000001~L3N0b3JhZ2U~notes.txt\n"

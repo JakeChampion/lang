@@ -241,8 +241,10 @@ const PREVIEW_BYTES: i32 = 65536;
 // The most bytes of an image file that the app reads to show it.
 const PICTURE_BYTES: i32 = 16777216;
 
+const SMB_PORT: i32 = 445;
+
 function no_server(): Saved {
-  return Saved { name: "", server: smb.Server { host: "", port: 445, share: "", user: "", password: "", domain: "" } };
+  return Saved { name: "", server: smb.Server { host: "", port: SMB_PORT, share: "", user: "", password: "", domain: "" } };
 }
 
 // The model of the home screen, with the storages and the servers.
@@ -601,6 +603,27 @@ function select_update(own m: Model, msg: Msg): Model {
 }
 
 // The draft `d` with `text` in the field `field` of the server screen.
+// The server of an address field. "nas.local:4450" gives the host and the
+// port, and an address with no port keeps the port that `s` has.
+pub function addressed(s: smb.Server): smb.Server {
+  let Some((host, tail)) = s.host.split_once(":") else {
+    return s;
+  };
+  let Ok(port) = i32.parse_i32(tail) else {
+    return s;
+  };
+  if (host.len() == 0 || tail.contains(":") || port < 1 || port > 65535) {
+    return s;
+  }
+  return smb.Server { ...s, host: host.to_owned(), port: port };
+}
+
+// The text of the address field for `s`: the host, and the port when it
+// is not the port of SMB.
+pub function address_text(s: smb.Server): string {
+  return if (s.port == SMB_PORT) { s.host } else { s.host + ":" + s.port.to_string() };
+}
+
 function drafted(d: Saved, field: i32, text: string): Saved {
   let s = d.server;
   match (field) {
@@ -636,6 +659,7 @@ function server_update(own m: Model, msg: Msg): Model {
     },
     EditServer(i) => {
       let draft = if (i >= 0 && i < m.servers.len()) { m.servers[i] } else { no_server() };
+      draft = Saved { ...draft, server: smb.Server { ...draft.server, host: address_text(draft.server), port: SMB_PORT } };
       return Model { ...m, page: Server(i), draft: draft, shares: [], finding: false, hosts: [], scanning: false, note: "", fault: "", confirm: "" };
     },
     Draft(field, text) => {
@@ -647,7 +671,7 @@ function server_update(own m: Model, msg: Msg): Model {
         return failed(m, "Give the address first.");
       }
       let revision = m.revision + 1i64;
-      return Model { ...m, finding: true, shares: [], note: "", fault: "", revision: revision, job: Some(Shares(revision, m.draft.server)) };
+      return Model { ...m, finding: true, shares: [], note: "", fault: "", revision: revision, job: Some(Shares(revision, addressed(m.draft.server))) };
     },
     SharesFound(revision, result) => {
       if (revision != m.revision) {
@@ -689,7 +713,7 @@ function server_update(own m: Model, msg: Msg): Model {
       let Server(i) = m.page else {
         return m;
       };
-      let d = m.draft;
+      let d = Saved { ...m.draft, server: addressed(m.draft.server) };
       if (d.server.host.len() == 0 || d.server.share.len() == 0) {
         return failed(m, "Give the address and the share.");
       }
@@ -1428,7 +1452,7 @@ function entry_tile(m: Model, e: smb.Entry): ui.El[Msg] {
   let on = m.selecting && m.picked.contains(e.name);
   let name = ui.text[Msg](shown_name(m, e)).sized(13.0).clamped(2).colored(if (on) { ui.PRIMARY } else { ui.INK });
   let state = if (on) { ", selected" } else { "" };
-  return ui.column([entry_picture(m, e, 88.0), name]).spaced(4.0).aligned(ui.CENTER).padding_xy(4.0, 4.0).wide().on_tap(Tap(e.name)).on_long(Hold(e.name)).described(e.name + state);
+  return ui.column([entry_picture(m, e, 88.0), name]).spaced(4.0).aligned(ui.CENTER).padding_xy(4.0, 4.0).wide().on_tap(Tap(e.name)).on_long(Hold(e.name)).described(shown_name(m, e) + state);
 }
 
 // One row of the grid: the 3 entries from `first`.
@@ -1454,7 +1478,7 @@ function entry_row(m: Model, e: smb.Entry): ui.El[Msg] {
     kids = kids.append(mark);
   }
   let state = if (m.selecting && m.picked.contains(e.name)) { ", selected" } else { "" };
-  return ui.row(kids).aligned(ui.CENTER).spaced(14.0).padding_xy(4.0, 0.0).wide().height(64.0).on_tap(Tap(e.name)).on_long(Hold(e.name)).described(e.name + state);
+  return ui.row(kids).aligned(ui.CENTER).spaced(14.0).padding_xy(4.0, 0.0).wide().height(64.0).on_tap(Tap(e.name)).on_long(Hold(e.name)).described(shown_name(m, e) + state);
 }
 
 // The path of the folder that shows, below the name of its place.
@@ -1607,7 +1631,7 @@ function server_picker(m: Model): ui.El[Msg] {
 function server_page(m: Model, at: i32): ui.El[Msg] {
   let s = m.draft.server;
   let rows = notice(m).concat([
-    labelled("Address", "host", s.host, "192.168.1.10 or nas.local", 1),
+    labelled("Address", "host", s.host, "192.168.1.10 or nas.local:4450", 1),
     server_picker(m),
     labelled("User", "user", s.user, "Leave empty for a guest", 3),
     ui.column([ui.text[Msg]("Password").colored(ui.MUTED), ui.field[Msg]("password", s.password, "Password").secret().on_edit((text: string): Msg => Draft(4, text))]).spaced(4.0).wide(),

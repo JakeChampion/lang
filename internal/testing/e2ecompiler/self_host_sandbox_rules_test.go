@@ -60,11 +60,13 @@ var sandboxFlagExpressions = map[string]map[string]int64{
 		"f as i64":                0x1f5fc1,
 		"flags as i64":            0x1f5fc1,
 		"(65536 | 524288) as i64": 65536 | 524288,
+		"65536 | 131072":          65536 | 131072,
 	},
 	"arm64": {
 		"f as i64":                0x1ddfc1,
 		"flags as i64":            0x1ddfc1,
 		"(16384 | 524288) as i64": 16384 | 524288,
+		"16384 | 32768":           16384 | 32768,
 	},
 }
 

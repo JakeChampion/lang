@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Drives the Fern Files APK on a running Android device or emulator.
 
-Usage: emulator_check.py APK OUT_DIR
+Usage: emulator_check.py APK OUT_DIR [SHARE_DIR PORT]
 
 It installs the APK, gives it access to all files, and puts a text file
 and a picture in the Download folder of the device. It then uses the
@@ -15,11 +15,22 @@ accessibility tree to operate the app as a person does:
 - The two content providers of the app answer.
 - Open gives the file to another app.
 
+With SHARE_DIR and PORT, it also uses an SMB server on this computer,
+which scripts/files-samba-serve starts. SHARE_DIR is the directory of its
+share. The emulator reaches the computer at 10.0.2.2.
+
+- The form of a server takes the address, the user and the password, and
+  the server gives the name of its share.
+- The folder of the server shows a file of the share, and its text.
+- A copy of that file arrives in the Download folder with the same bytes.
+- A copy of the picture arrives on the share with the same bytes.
+
 It fails on a crash in logcat. OUT_DIR gets the frames, the trees and
 logcat.
 """
 
 import hashlib
+import os
 from pathlib import Path
 import re
 import struct
@@ -39,6 +50,12 @@ NOTE = "notes-check.txt"
 NOTE_TEXT = "The emulator check of Fern Files wrote this line."
 PICTURE = "dot-check.png"
 TREE = "/sdcard/fern-files-ui.xml"
+# The address of the computer that runs the emulator, from the emulator.
+HOST = "10.0.2.2"
+SMB_USER = os.environ.get("FILES_SMB_USER", "fernfiles")
+SMB_PASSWORD = os.environ.get("FILES_SMB_PASSWORD", "live-check-1")
+SMB_NOTE = "smb-check.txt"
+SMB_TEXT = "The share of the emulator check has this line."
 
 
 def png(width, height, rgb):
@@ -80,6 +97,23 @@ def point_of(xml, label):
         if name == label:
             return x, y
     return None
+
+
+def field_point(xml, hint):
+    """The middle of the text field with the hint `hint`, or None. The name
+    of an empty field is its hint, and the name of a field with text starts
+    with the hint and a comma. A label with the same words is before the
+    field, so the last node is the field."""
+    found = None
+    for name, x, y in nodes(xml):
+        if name == hint or name.startswith(hint + ", "):
+            found = x, y
+    return found
+
+
+def keyboard_shown(dumpsys):
+    """True when `dumpsys input_method` shows the keyboard on the screen."""
+    return "mInputShown=true" in dumpsys
 
 
 def trash_entry(listing, name):
@@ -163,6 +197,31 @@ def tap(out, step, label, hold=False, scroll=False):
 
 def taps(out, step, labels):
     return all(tap(out, f"{step}-{at}", label) for at, label in enumerate(labels))
+
+
+def type_in(out, step, hint, text):
+    """Types `text` in the field with the hint `hint`. False when the field
+    does not show or does not take the text."""
+    xml = dump(out, step)
+    point = field_point(xml, hint)
+    if not point:
+        screen(out, step)
+        fail(f"{step}: the screen has no field {hint}. It shows {sorted({name for name, _, _ in nodes(xml)})}")
+        return False
+    adb("shell", "input", "tap", str(point[0]), str(point[1]))
+    time.sleep(1.5)
+    adb("shell", "input", "text", text)
+    time.sleep(1)
+    # The keyboard covers the fields below, and the back key closes it.
+    if keyboard_shown(adb("shell", "dumpsys", "input_method", check=False)):
+        adb("shell", "input", "keyevent", "4")
+        time.sleep(1)
+    names = [name for name, _, _ in nodes(dump(out, step + "-typed"))]
+    if not any(name.startswith(hint + ", ") for name in names):
+        screen(out, step + "-typed")
+        fail(f"{step}: the field {hint} did not take the text. The screen shows {sorted(set(names))}")
+        return False
+    return True
 
 
 def device_has(path):
@@ -268,7 +327,48 @@ def check_open(out):
     adb("shell", "input", "keyevent", "4")
 
 
-def main(apk, out):
+def check_server(out, share_dir, port):
+    server = f"share on {HOST}"
+    Path(share_dir, SMB_NOTE).write_text(SMB_TEXT + "\n")
+    start()
+    if not tap(out, "server-add", "Add a server", scroll=True):
+        return
+    if not (type_in(out, "server-host", "192.168.1.10 or nas.local:4450", f"{HOST}:{port}")
+            and type_in(out, "server-user", "Leave empty for a guest", SMB_USER)
+            and type_in(out, "server-password", "Password", SMB_PASSWORD)):
+        return
+    # The server gives the names of its shares over the srvsvc pipe.
+    if not (tap(out, "server-shares", "Find shares", scroll=True) and tap(out, "server-share", "Share share", scroll=True)
+            and tap(out, "server-save", "Save", scroll=True)):
+        return
+    if not tap(out, "server-open", server, scroll=True) or not taps(out, "server-text", [SMB_NOTE, "Preview as text"]):
+        return
+    if not until(lambda: any(SMB_TEXT in name for name, _, _ in nodes(dump(out, "server-text-shown")))):
+        screen(out, "server-text-shown")
+        fail("the file of the share does not show its text")
+    screen(out, "server-text-shown")
+
+    # From the share to the phone. A new start reads the saved server again.
+    start()
+    if not tap(out, "download-open", server, scroll=True) or not taps(out, "download", [SMB_NOTE, "Copy", "Home", "Downloads", "Paste here"]):
+        return
+    want = hashlib.sha256((SMB_TEXT + "\n").encode()).hexdigest()
+    target = f"{STORAGE}/Download/{SMB_NOTE}"
+    if not until(lambda: sum_of(target) == want):
+        screen(out, "download-done")
+        fail(f"the copy from the share has the digest {sum_of(target) or 'of no file'}, not {want}")
+
+    # From the phone to the share.
+    if not taps(out, "upload", [PICTURE, "Copy", "Home"]) or not tap(out, "upload-open", server, scroll=True) or not tap(out, "upload-paste", "Paste here"):
+        return
+    sent = Path(share_dir, PICTURE)
+    picture = Path(out, PICTURE).read_bytes()
+    if not until(lambda: sent.exists() and sent.read_bytes() == picture):
+        screen(out, "upload-done")
+        fail("the copy of the picture did not arrive on the share with the same bytes")
+
+
+def main(apk, out, share_dir=None, port=None):
     subprocess.run(["mkdir", "-p", out], check=True)
     picture = png(48, 48, (215, 25, 33))
     Path(out, NOTE).write_text(NOTE_TEXT + "\n")
@@ -288,6 +388,8 @@ def main(apk, out):
         check_trash(out)
         check_providers(out)
         check_open(out)
+        if share_dir:
+            check_server(out, share_dir, port)
 
     log = logcat()
     with open(f"{out}/logcat.txt", "w") as f:
@@ -302,6 +404,6 @@ def main(apk, out):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 5):
         sys.exit(__doc__)
     main(*sys.argv[1:])
