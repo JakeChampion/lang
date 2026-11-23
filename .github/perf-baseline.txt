@@ -207,14 +207,14 @@ aarch64/perceus_rbtree.ir	21621553
 aarch64/perceus_rbtree_ck.text	3479
 aarch64/perceus_rbtree_ck.ir	27669017
 x86_64/video_qtrle.text 5615
-x86_64/video_qtrle.ir 1547169520
+x86_64/video_qtrle.ir 1351828808
 aarch64/video_qtrle.text 6232
 aarch64/video_qtrle.ir 1166068375
 x86_64/hex_encode.text	2132
-x86_64/hex_encode.ir	58026542
+x86_64/hex_encode.ir	56977710
 aarch64/hex_encode.text	2361
 x86_64/base64_encode.text	2416
-x86_64/base64_encode.ir	67203374
+x86_64/base64_encode.ir	66154798
 aarch64/base64_encode.text	2616
 aarch64/hex_encode.ir	69713241
 aarch64/base64_encode.ir	67320921
@@ -291,7 +291,7 @@ x86_64/byte_copy_append.dr	3244438
 x86_64/byte_copy_with.dr	3124467
 x86_64/call_overhead.dr	187564
 x86_64/closure_call.dr	4878023
-x86_64/deflate_decode.dr	4613645
+x86_64/deflate_decode.dr	5142382
 x86_64/deflate_encode.dr	12676876
 x86_64/enum_match.dr	225002
 x86_64/gather_many.dr	10701857
@@ -325,4 +325,4 @@ x86_64/tokenize.dr	6770008
 x86_64/utf8_ingest_unchecked.dr	550769
 x86_64/utf8_ingest_validated.dr	776973
 x86_64/utf8_validate.dr	27641588
-x86_64/video_qtrle.dr	299830951
+x86_64/video_qtrle.dr	244755951
