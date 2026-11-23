@@ -62,7 +62,7 @@ CONF
 
 failed=0
 check() {
-  local name=$1 bytes=$2 options=$3
+  local name=$1 options=$2
   stop
   sleep 1
   conf "$options"
@@ -73,7 +73,7 @@ check() {
     sleep 0.2
   done
   echo "== $name"
-  if FILES_SMB_SERVER="127.0.0.1 $port share $user $password" FILES_SMB_BYTES=$bytes "$work/live" > "$work/out.txt" 2>&1 && grep -q '^# fail 0' "$work/out.txt"; then
+  if FILES_SMB_SERVER="127.0.0.1 $port share $user $password" "$work/live" > "$work/out.txt" 2>&1 && grep -q '^# fail 0' "$work/out.txt"; then
     grep '^# pass' "$work/out.txt"
   else
     cat "$work/out.txt"
@@ -81,7 +81,7 @@ check() {
   fi
 }
 
-check "default: 3.1.1 with AES-128-GCM" 12000000 ""
+check "default: 3.1.1 with AES-128-GCM" ""
 
 # The HTTP server of the app gives a player the parts of a file of the
 # share: the whole file, a range in the middle that is more than one read,
@@ -112,16 +112,17 @@ else
   echo "the stream gave other bytes than the file"
   failed=1
 fi
-check "3.1.1, encryption required" 12000000 "  server min protocol = SMB3_11
+check "3.1.1, encryption required" "  server min protocol = SMB3_11
   smb encrypt = required"
-check "3.1.1, signatures required, no encryption" 12000000 "  server min protocol = SMB3_11
+check "3.1.1, signatures required, no encryption" "  server min protocol = SMB3_11
   smb encrypt = off
   server signing = mandatory"
-check "up to 3.0.2, signatures required: the client picks 2.1" 12000000 "  server max protocol = SMB3_02
+check "3.0.2, signatures required: AES-CMAC" "  server max protocol = SMB3_02
   server signing = mandatory"
-check "3.0 and 3.0.2 only, signatures required: AES-CMAC" 200000 "  server min protocol = SMB3_00
-  server max protocol = SMB3_02
+check "3.0, signatures required: AES-CMAC" "  server max protocol = SMB3_00
   server signing = mandatory"
-check "2.0.2 only, signatures required" 12000000 "  server max protocol = SMB2_02
+check "2.1, signatures required: HMAC-SHA256" "  server max protocol = SMB2_10
+  server signing = mandatory"
+check "2.0.2 only, signatures required" "  server max protocol = SMB2_02
   server signing = mandatory"
 exit "$failed"
