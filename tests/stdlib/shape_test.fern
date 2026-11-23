@@ -207,6 +207,40 @@ function test_prepared_reverse_extension(): test.TestOutcome {
   return test.assert_eq(joined(run.glyphs), "7,8,7");
 }
 
+// A GSUB table with one lookup of the type `kind` that has `n` subtables.
+// Each offset gives the same subtable, `sub`, which is after the offsets.
+function gsub_of_subtables(kind: i32, n: i32, sub: u8[]): u8[] {
+  let data: u8[] = [
+    0, 1, 0, 0, 0, 0, 0, 0, 0, 10,  // GSUB header
+    0, 1, 0, 4,  // one lookup
+    0, kind as u8, 0, 0, (n >> 8) as u8, (n & 255) as u8,
+  ];
+  let at = 6 + 2 * n;
+  for k in 0..n {
+    data = data.append((at >> 8) as u8).append((at & 255) as u8);
+  }
+  return data.concat(sub);
+}
+
+// A lookup can declare 65535 subtables. Each 64 subtables that a glyph
+// examines take one from the attempts of the run, as the glyph does, so a
+// font cannot make each attempt examine them for nothing.
+function test_subtables_take_from_the_attempts(): test.TestOutcome {
+  let Some(base) = devanagari() else {
+    return test.fail("the font did not parse");
+  };
+  let input = truetype.run_of([7, 7, 7], [0, 1, 2], [1, 1, 1]);
+  // A single substitution with the delta 1, for glyph 9 only.
+  let single: u8[] = [0, 1, 0, 6, 0, 1, 0, 1, 0, 1, 0, 9];
+  let forward = truetype.Font { ...base, data: gsub_of_subtables(1, 640, single), gsub: 0, gdef: -1 };
+  let f = forward.substitute(input, 0, 1, 0);
+  // A reverse chaining substitution with no context, for glyph 9 only.
+  let chained: u8[] = [0, 1, 0, 10, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 9];
+  let reverse = truetype.Font { ...base, data: gsub_of_subtables(8, 640, chained), gsub: 0, gdef: -1 };
+  let r = reverse.substitute(input, 0, 1, 0);
+  return test.assert_eq(joined(f.glyphs) + " " + (input.ops - f.ops).to_string() + " " + joined(r.glyphs) + " " + (input.ops - r.ops).to_string(), "7,7,7 33 7,7,7 33");
+}
+
 // Each start of the bytes of the font parses, or gives None, and each
 // font that parses shapes a word with no crash.
 function test_a_cut_font_does_not_crash(): test.TestOutcome {
@@ -241,6 +275,7 @@ function main(): i32 {
   r = r.it("a font with no GSUB table gives one glyph for each character", test_no_gsub);
   r = r.it("a cut font does not crash", test_a_cut_font_does_not_crash);
   r = r.it("prepared extension lookups preserve reverse chaining order", test_prepared_reverse_extension);
+  r = r.it("the subtables of a lookup take from the attempts of the run", test_subtables_take_from_the_attempts);
   r = r.it("prepared coverage preserves matches, collisions and the operation budget", test_prepared_coverage_range);
   return r.finish();
 }
