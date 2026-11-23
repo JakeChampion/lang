@@ -32,17 +32,19 @@ A long press starts a selection:
 - One button selects each item of the folder.
 - The person can copy, move or delete the selection. Delete needs a second
   tap.
-- A delete on the phone moves the items to the trash, a folder at the top
-  of the storage. The trash restores an item to its folder, or deletes it
-  for good. A delete on a server removes the item at once.
 - The app pastes into the folder that shows, also from the phone to a
   server and back.
 - **Zip** makes an archive of the selection in the folder that shows.
-- A copy runs in steps of 8 MiB. The screen shows its progress, and a
-  button stops it.
-- A copy continues while the window of the app is away: a foreground
-  service keeps the app at work, and its notification says what the copy
-  does.
+
+A delete on the phone moves the items to the trash, a folder at the top
+of the storage. The trash restores an item to its folder, or deletes it
+for good. A delete on a server removes the item at once.
+
+A copy runs in steps of 8 MiB:
+
+- The screen shows its progress, and a button stops it.
+- A foreground service keeps the app at work while the window of the app
+  is away, and its notification says what the copy does.
 - A step that fails starts again from its byte, 3 times at most, after
   waits of 1.5 s, 3 s and 4.5 s. So a connection that drops for a moment
   does not end the copy.
