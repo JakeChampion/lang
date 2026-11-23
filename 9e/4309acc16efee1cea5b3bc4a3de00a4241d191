@@ -310,3 +310,7 @@ bootstrap/x86-64-linux/stage2.size_bytes	19875056
 bootstrap/x86-64-linux/stage3.wall_s	46
 bootstrap/x86-64-linux/stage3.peak_rss_mb	2352
 bootstrap/x86-64-linux/stage3.size_bytes	19875056
+
+# lane: append-cliff-x86_64
+x86_64/checker.cliff_bytes	43381068
+x86_64/checker.cliff_count	574097
