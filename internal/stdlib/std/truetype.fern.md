@@ -1713,15 +1713,24 @@ function applied_to_each(f: Font, r: Run, l: Lookup, mask: i32, digest: u64, sub
 }
 
 // `r` after a lookup of type 8. It goes from the last glyph to the first,
-// and replaces one glyph at a time.
+// and replaces one glyph at a time. Each glyph that the lookup tries takes
+// one from the attempts of the run, and one more for each
+// SUBTABLES_PER_ATTEMPT subtables that it examines. The lookup stops when
+// none are left.
 function reverse_substituted(f: Font, r: Run, l: Lookup, mask: i32): Run {
   let b = f.data;
   let run = r;
+  let budget = r.ops;
   let i = run.glyphs.len() - 1;
-  while (i >= 0) {
+  while (i >= 0 && budget > 0) {
     let g = run.glyphs[i];
     if ((run.masks[i] & mask) != 0 && !skipped(f, l, run, i)) {
+      let examined = l.count;
       for s in 0..l.count {
+        if (s / SUBTABLES_PER_ATTEMPT > budget) {
+          examined = s;
+          break;
+        }
         let st = subtable(b, l, s).0;
         let cov = coverage(b, st + u16_at(b, st + 2), g);
         let nb = u16_at(b, st + 4);
@@ -1731,13 +1740,15 @@ function reverse_substituted(f: Font, r: Run, l: Lookup, mask: i32): Run {
         let ahead = Seq { kind: 2, table: st, at: na + 2, n: u16_at(b, na) };
         if (cov >= 0 && cov < u16_at(b, subs) && matched_context(f, run, l, i, back, -1, true) && matched_context(f, run, l, i, ahead, 1, true)) {
           run = replaced(run, i, [u16_at(b, subs + 2 + 2 * cov)], false);
+          examined = s;
           break;
         }
       }
+      budget = budget - 1 - examined / SUBTABLES_PER_ATTEMPT;
     }
     i -= 1;
   }
-  return run;
+  return Run { ...run, ops: budget };
 }
 ```
 
