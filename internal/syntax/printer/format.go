@@ -675,7 +675,7 @@ func (f *formatter) formatTraitDecl(td *ast.TraitDecl) {
 		f.b.WriteString(";\n")
 	}
 	for i, m := range td.Methods {
-		if i > 0 && f.blankBefore(m.P.Line) {
+		if i > 0 && td.Methods[i-1].P.Line != m.P.Line && f.blankBefore(m.P.Line) {
 			f.b.WriteByte('\n')
 		}
 		f.drainLeading(m.P.Line, 1)
@@ -779,7 +779,7 @@ func (f *formatter) formatImplDecl(id *ast.ImplDecl) {
 	}
 	parametric := len(id.TypeParams) > 0
 	for i, m := range id.Methods {
-		if i > 0 && f.blankBefore(m.P.Line) {
+		if i > 0 && id.Methods[i-1].P.Line != m.P.Line && f.blankBefore(m.P.Line) {
 			f.b.WriteByte('\n')
 		}
 		f.drainLeading(m.P.Line, 1)
@@ -1050,7 +1050,7 @@ func (f *formatter) formatBlock(blk *ast.Block, depth int) {
 	f.b.WriteByte('\n')
 	outer := f.closeLine
 	f.closeLine = blk.End.Line
-	f.formatStmtLines(blk.Stmts, depth+1, false)
+	f.formatStmtLines(blk.Stmts, depth+1, 0)
 	f.closeLine = outer
 	f.b.WriteByte('\n')
 	if blk.End.Line > 0 {
@@ -1074,13 +1074,17 @@ func (f *formatter) formatEmptyBlock(blk *ast.Block, depth int) {
 	f.b.WriteByte('}')
 }
 
-func (f *formatter) formatStmtLines(stmts []ast.Stmt, depth int, blankFirst bool) {
+// formatStmtLines writes one statement to a line. after is the line of the
+// statement that the first one follows, or 0 when it opens a block.
+func (f *formatter) formatStmtLines(stmts []ast.Stmt, depth int, after int) {
 	for i := 0; i < len(stmts); i++ {
 		s := stmts[i]
 		if i > 0 {
 			f.b.WriteByte('\n')
+			after = stmts[i-1].Pos().Line
 		}
-		if (i > 0 || blankFirst) && f.blankBefore(s.Pos().Line) {
+		// The blank line above a line is above its first statement only.
+		if after > 0 && after != s.Pos().Line && f.blankBefore(s.Pos().Line) {
 			f.b.WriteByte('\n')
 		}
 		if fd, ok := s.(*ast.FuncDecl); ok && fd.UseSource != nil && i+1 < len(stmts) && returnsCall(stmts[i+1], fd.UseSource) {
@@ -1114,7 +1118,7 @@ func (f *formatter) formatUse(fd *ast.FuncDecl, depth int) {
 	f.emitTrailing(fd.P.Line)
 	if fd.Body != nil && len(fd.Body.Stmts) > 0 {
 		f.b.WriteByte('\n')
-		f.formatStmtLines(fd.Body.Stmts, depth, true)
+		f.formatStmtLines(fd.Body.Stmts, depth, fd.P.Line)
 	}
 }
 
@@ -1218,12 +1222,12 @@ func (f *formatter) formatBody(stmts []ast.Stmt, tail ast.Expr, lines bool) {
 func (f *formatter) formatBodyLines(stmts []ast.Stmt, tail ast.Expr) {
 	depth := f.depth
 	f.b.WriteString("{\n")
-	f.formatStmtLines(stmts, depth+1, false)
+	f.formatStmtLines(stmts, depth+1, 0)
 	if tail != nil {
 		ln := firstLine(tail)
 		if len(stmts) > 0 {
 			f.b.WriteByte('\n')
-			if f.blankBefore(ln) {
+			if stmts[len(stmts)-1].Pos().Line != ln && f.blankBefore(ln) {
 				f.b.WriteByte('\n')
 			}
 		}
@@ -1493,7 +1497,7 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 				f.b.WriteByte(';')
 				if len(success.Stmts) > 0 {
 					f.b.WriteByte('\n')
-					f.formatStmtLines(success.Stmts, depth, true)
+					f.formatStmtLines(success.Stmts, depth, x.P.Line)
 				}
 				return
 			}
