@@ -6791,6 +6791,12 @@ function str_data_wat(s: string): string {
   return "(i32.add " + s + " (i32.const 4))";
 }
 
+// The WAT of the size of the block that holds a string of `n` bytes: its
+// header, its length word and its bytes, rounded up to 8.
+function str_block_wat(n: string): string {
+  return "(i32.and (i32.add " + n + " (i32.const 19)) (i32.const -8))";
+}
+
 // The WAT of a new string of `n` bytes, for a constant `n`.
 function str_alloc_n_wat(n: i32): string {
   return "(call $__fern_str_box (i32.const " + util.i32_to_string(4 + n) + "))";
@@ -9317,17 +9323,17 @@ pub function heap_alloc_helpers(h: WasmHeap): string {
   o += "    (i32.store (local.get $slot) (local.get $base)))\n";
   o += "  (func $__fern_account_entry (param $kind i32) (param $key i32) (result i32) (i32.const 0))\n";
   o += "  (func $__fern_str_grow (param $a i32) (param $b i32) (result i32)\n";
-  o += "    (call $__fern_str_grow_bytes (local.get $a) (i32.add (local.get $b) (i32.const 4)) (i32.load (local.get $b))))\n";
+  o += "    (call $__fern_str_grow_bytes (local.get $a) " + str_data_wat("(local.get $b)") + " " + str_len_wat("(local.get $b)") + "))\n";
   o += "  (func $__fern_str_grow_range (param $a i32) (param $s i32) (param $lo i32) (param $hi i32) (result i32)\n";
-  o += "    (if (i32.or (i32.lt_s (local.get $lo) (i32.const 0)) (i32.or (i32.lt_s (local.get $hi) (local.get $lo)) (i32.gt_s (local.get $hi) (i32.load (local.get $s))))) (then (return (i32.const 0))))\n";
-  o += "    (call $__fern_str_grow_bytes (local.get $a) (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $lo)) (i32.sub (local.get $hi) (local.get $lo))))\n";
+  o += "    (if (i32.or (i32.lt_s (local.get $lo) (i32.const 0)) (i32.or (i32.lt_s (local.get $hi) (local.get $lo)) (i32.gt_s (local.get $hi) " + str_len_wat("(local.get $s)") + "))) (then (return (i32.const 0))))\n";
+  o += "    (call $__fern_str_grow_bytes (local.get $a) (i32.add " + str_data_wat("(local.get $s)") + " (local.get $lo)) (i32.sub (local.get $hi) (local.get $lo))))\n";
   o += "  (func $__fern_str_grow_bytes (param $a i32) (param $src i32) (param $lb i32) (result i32)\n";
   o += "    (local $la i32) (local $bsz i32) (local $cap i32) (local $nsz i32)\n";
   o += "    (if (i32.eqz (local.get $a)) (then (return (i32.const 0))))\n";
   o += "    (if (i32.and (local.get $a) (i32.const 1)) (then (return (i32.const 0))))\n";
   o = o + "    (if (i32.lt_u (local.get $a) (i32.const " + hb + ")) (then (return (i32.const 0))))\n";
   o += "    (if (i32.ne (i32.load (i32.sub (local.get $a) (i32.const 8))) (i32.const 1)) (then (return (i32.const 0))))\n";
-  o += "    (local.set $la (i32.load (local.get $a)))\n";
+  o += "    (local.set $la " + str_len_wat("(local.get $a)") + ")\n";
   o += "    (if (i32.gt_u (i32.add (local.get $la) (local.get $lb)) (i32.const 1073741824)) (then (return (i32.const 0))))\n";
   o += "    (local.set $bsz (i32.load (i32.sub (local.get $a) (i32.const 4))))\n";
   o += "    (local.set $cap (call $__fern_capw (i32.shr_u (local.get $bsz) (i32.const 3))))\n";
@@ -9336,12 +9342,12 @@ pub function heap_alloc_helpers(h: WasmHeap): string {
   o += "      (else (if (i32.gt_u (local.get $bsz) (i32.const 1073741824))\n";
   o += "        (then (local.set $cap (local.get $bsz)))\n";
   o += "        (else (local.set $cap (call $__fern_large_cap (local.get $bsz)))))))\n";
-  o += "    (if (i32.gt_u (i32.and (i32.add (i32.add (local.get $la) (local.get $lb)) (i32.const 19)) (i32.const -8)) (local.get $cap)) (then (return (i32.const 0))))\n";
-  o += "    (memory.copy (i32.add (i32.add (local.get $a) (i32.const 4)) (local.get $la)) (local.get $src) (local.get $lb))\n";
-  o += "    (i32.store (local.get $a) (i32.add (local.get $la) (local.get $lb)))\n";
+  o += "    (if (i32.gt_u " + str_block_wat("(i32.add (local.get $la) (local.get $lb))") + " (local.get $cap)) (then (return (i32.const 0))))\n";
+  o += "    (memory.copy (i32.add " + str_data_wat("(local.get $a)") + " (local.get $la)) (local.get $src) (local.get $lb))\n";
+  o += "    " + str_set_len_wat("(local.get $a)", "(i32.add (local.get $la) (local.get $lb))") + "\n";
   // The block grows inside its class, so its size word grows with it, as the
   // native size that the release reads from the length does.
-  o += "    (local.set $nsz (i32.and (i32.add (i32.add (local.get $la) (local.get $lb)) (i32.const 19)) (i32.const -8)))\n";
+  o += "    (local.set $nsz " + str_block_wat("(i32.add (local.get $la) (local.get $lb))") + ")\n";
   o += "    (if (i32.gt_u (local.get $nsz) (local.get $bsz)) (then\n";
   o += "      (i32.store (i32.sub (local.get $a) (i32.const 4)) (local.get $nsz))\n";
   if (lc) {
@@ -9350,16 +9356,16 @@ pub function heap_alloc_helpers(h: WasmHeap): string {
   o += "    ))\n";
   o += "    (i32.const 1))\n";
   o += "  (func $__fern_str_grow_fresh (param $a i32) (param $b i32) (result i32)\n";
-  o += "    (call $__fern_str_grow_fresh_bytes (local.get $a) (i32.add (local.get $b) (i32.const 4)) (i32.load (local.get $b))))\n";
+  o += "    (call $__fern_str_grow_fresh_bytes (local.get $a) " + str_data_wat("(local.get $b)") + " " + str_len_wat("(local.get $b)") + "))\n";
   o += "  (func $__fern_str_grow_fresh_range (param $a i32) (param $s i32) (param $lo i32) (param $hi i32) (result i32)\n";
-  o += "    (if (i32.or (i32.lt_s (local.get $lo) (i32.const 0)) (i32.or (i32.lt_s (local.get $hi) (local.get $lo)) (i32.gt_s (local.get $hi) (i32.load (local.get $s))))) (then (call $__fern_abort_str) (unreachable)))\n";
-  o += "    (call $__fern_str_grow_fresh_bytes (local.get $a) (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $lo)) (i32.sub (local.get $hi) (local.get $lo))))\n";
+  o += "    (if (i32.or (i32.lt_s (local.get $lo) (i32.const 0)) (i32.or (i32.lt_s (local.get $hi) (local.get $lo)) (i32.gt_s (local.get $hi) " + str_len_wat("(local.get $s)") + "))) (then (call $__fern_abort_str) (unreachable)))\n";
+  o += "    (call $__fern_str_grow_fresh_bytes (local.get $a) (i32.add " + str_data_wat("(local.get $s)") + " (local.get $lo)) (i32.sub (local.get $hi) (local.get $lo))))\n";
   o += "  (func $__fern_str_grow_fresh_bytes (param $a i32) (param $src i32) (param $lb i32) (result i32)\n";
   o += "    (local $la i32) (local $need i32) (local $n i32) (local $w i32) (local $base i32)\n";
-  o += "    (local.set $la (i32.load (local.get $a)))\n";
+  o += "    (local.set $la " + str_len_wat("(local.get $a)") + ")\n";
   o += "    (if (i32.gt_u (i32.add (local.get $la) (local.get $lb)) (i32.const 1073741824)) (then (call $__fern_abort_alloc) (unreachable)))\n";
-  o += "    (local.set $need (i32.and (i32.add (i32.add (local.get $la) (local.get $lb)) (i32.const 19)) (i32.const -8)))\n";
-  o += "    (local.set $n (i32.shl (i32.and (i32.add (local.get $la) (i32.const 19)) (i32.const -8)) (i32.const 1)))\n";
+  o += "    (local.set $need " + str_block_wat("(i32.add (local.get $la) (local.get $lb))") + ")\n";
+  o += "    (local.set $n (i32.shl " + str_block_wat("(local.get $la)") + " (i32.const 1)))\n";
   o += "    (if (i32.lt_u (local.get $n) (local.get $need)) (then (local.set $n (local.get $need))))\n";
   o += "    (local.set $w (call $__fern_capw (i32.shr_u (local.get $n) (i32.const 3))))\n";
   o = o + "    (if (i32.lt_u (local.get $w) (i32.const " + flc + "))\n";
@@ -9368,9 +9374,9 @@ pub function heap_alloc_helpers(h: WasmHeap): string {
   o += "    (local.set $base (call $__fern_alloc (local.get $n)))\n";
   o += "    (i32.store (local.get $base) (i32.const 1))\n";
   o += "    (i32.store (i32.add (local.get $base) (i32.const 4)) (local.get $n))\n";
-  o += "    (i32.store (i32.add (local.get $base) (i32.const 8)) (i32.add (local.get $la) (local.get $lb)))\n";
-  o += "    (memory.copy (i32.add (local.get $base) (i32.const 12)) (i32.add (local.get $a) (i32.const 4)) (local.get $la))\n";
-  o += "    (memory.copy (i32.add (i32.add (local.get $base) (i32.const 12)) (local.get $la)) (local.get $src) (local.get $lb))\n";
+  o += "    " + str_set_len_wat("(i32.add (local.get $base) (i32.const 8))", "(i32.add (local.get $la) (local.get $lb))") + "\n";
+  o += "    (memory.copy " + str_data_wat("(i32.add (local.get $base) (i32.const 8))") + " " + str_data_wat("(local.get $a)") + " (local.get $la))\n";
+  o += "    (memory.copy (i32.add " + str_data_wat("(i32.add (local.get $base) (i32.const 8))") + " (local.get $la)) (local.get $src) (local.get $lb))\n";
   o += "    (i32.add (local.get $base) (i32.const 8)))\n";
   o += "  (func $__fern_raw_free (param $base i32) (param $bytes i32)\n";
   o += "    (local $cls i32) (local $slot i32) (local $q i32)\n";
