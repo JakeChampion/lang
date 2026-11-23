@@ -146,7 +146,8 @@ Android lane of CI runs it.
 
 The lane also starts Samba with `scripts/files-samba-serve`. The check
 then adds that server in the app, reads a file of the share, and copies a
-file in each direction.
+file in each direction. Last, it reads the server through the provider of
+documents, as the file picker of the system does.
 
 ```sh
 fern -apk files.apk examples/android/files/app.fern

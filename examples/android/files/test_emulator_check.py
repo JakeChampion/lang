@@ -64,6 +64,16 @@ class FieldTests(unittest.TestCase):
         self.assertFalse(check.keyboard_shown(""))
 
 
+class DocumentTests(unittest.TestCase):
+    def test_root_of_a_server(self):
+        self.assertEqual(check.document_uri("0:", children=True),
+                         "content://dev.fern.files.Documents/document/0%3A/children")
+
+    def test_file_in_a_folder(self):
+        self.assertEqual(check.document_uri("2:Films/a b.mkv"),
+                         "content://dev.fern.files.Documents/document/2%3AFilms%2Fa%20b.mkv")
+
+
 class TrashTests(unittest.TestCase):
     def test_entry_of_the_file(self):
         listing = ".\n..\n1795000000~L3N0b3JhZ2U~other.txt\n1795000001~L3N0b3JhZ2U~notes.txt\n"

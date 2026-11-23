@@ -24,6 +24,8 @@ share. The emulator reaches the computer at 10.0.2.2.
 - The folder of the server shows a file of the share, and its text.
 - A copy of that file arrives in the Download folder with the same bytes.
 - A copy of the picture arrives on the share with the same bytes.
+- As root, the provider of documents gives the saved server as a root,
+  the file of the share as a child of that root, and the text of the file.
 
 It fails on a crash in logcat. OUT_DIR gets the frames, the trees and
 logcat.
@@ -37,6 +39,7 @@ import struct
 import subprocess
 import sys
 import time
+import urllib.parse
 import xml.etree.ElementTree as ET
 import zlib
 
@@ -114,6 +117,13 @@ def field_point(xml, hint):
 def keyboard_shown(dumpsys):
     """True when `dumpsys input_method` shows the keyboard on the screen."""
     return "mInputShown=true" in dumpsys
+
+
+def document_uri(document_id, children=False):
+    """The URI of a document of the provider of documents, as
+    DocumentsContract builds it: the ID is one encoded part of the path."""
+    uri = f"content://{PACKAGE}.Documents/document/{urllib.parse.quote(document_id, safe='')}"
+    return uri + "/children" if children else uri
 
 
 def trash_entry(listing, name):
@@ -368,6 +378,28 @@ def check_server(out, share_dir, port):
         fail("the copy of the picture did not arrive on the share with the same bytes")
 
 
+def check_documents(out):
+    """Reads the saved server through the provider of documents, which the
+    file picker of the system uses. The first server has the ID 0."""
+    if not root():
+        return print("the device refuses root: the provider of documents is not read", flush=True)
+    queries = {
+        "roots": ["query", "--uri", f"content://{PACKAGE}.Documents/root"],
+        "children": ["query", "--uri", document_uri("0:", children=True)],
+        "text": ["read", "--uri", document_uri("0:" + SMB_NOTE)],
+    }
+    got = {name: subprocess.run(["adb", "shell", "content", *args], capture_output=True, text=True) for name, args in queries.items()}
+    with open(f"{out}/documents.txt", "w") as f:
+        for name, done in got.items():
+            f.write(f"== {name}\n{done.stdout}{done.stderr}")
+    if f"smb://{HOST}/share" not in got["roots"].stdout:
+        fail(f"the provider of documents does not give the saved server as a root: {got['roots'].stdout!r} {got['roots'].stderr!r}")
+    if f"_display_name={SMB_NOTE}" not in got["children"].stdout:
+        fail(f"the provider of documents does not give the file of the share: {got['children'].stdout!r} {got['children'].stderr!r}")
+    if SMB_TEXT not in got["text"].stdout:
+        fail(f"the provider of documents does not give the text of the file: {got['text'].stdout!r} {got['text'].stderr!r}")
+
+
 def main(apk, out, share_dir=None, port=None):
     subprocess.run(["mkdir", "-p", out], check=True)
     picture = png(48, 48, (215, 25, 33))
@@ -390,6 +422,7 @@ def main(apk, out, share_dir=None, port=None):
         check_open(out)
         if share_dir:
             check_server(out, share_dir, port)
+            check_documents(out)
 
     log = logcat()
     with open(f"{out}/logcat.txt", "w") as f:
