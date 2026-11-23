@@ -1,11 +1,14 @@
 package e2ecompiler
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -91,8 +94,12 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 // in the release build: every test passes and the exit code is 0. Under
 // -harden a released block is zero, so a read of released storage that the
 // release build does not show gives a failed assertion or a hang here.
+//
+// The build also has FERN_LEAKCHECK, and each program must end with a
+// balanced census: as many frees as allocations and no live bytes. A run that
+// leaves through exit() is not checked, because its frames are not unwound.
 func TestSelfHostStdTestHarden(t *testing.T) {
-	stdTestVerdictUnder(t, "under -harden", []string{"-harden"}, nil)
+	stdTestVerdictUnder(t, "under -harden", []string{"-harden"}, []string{"FERN_LEAKCHECK=1"})
 }
 
 // Each std/test program must give the same verdict when the allocator has
@@ -120,14 +127,43 @@ func stdTestVerdictUnder(t *testing.T, what string, flags, env []string) {
 					t.Fatalf("self-host compile failed: %v\n%s", err, log)
 				}
 				run := runX86_64Bin(cli.runner, bin)
+				var stderr bytes.Buffer
+				run.Stderr = &stderr
 				out, _ := stdTestOutput(run)
 				exit := run.ProcessState.ExitCode()
 				if wantFail := tc.name == "synthetic_fail"; (exit != 0) != wantFail {
 					t.Errorf("exit code %d %s\n%s", exit, what, out)
 				}
+				if slices.Contains(env, "FERN_LEAKCHECK=1") {
+					checkStdTestCensus(t, stderr.String())
+				}
 			})
 		}
 	})
+}
+
+// checkStdTestCensus fails the test for a census with an allocation that
+// was not freed. A program built with FERN_LEAKCHECK prints the census on
+// stderr when it returns from main.
+func checkStdTestCensus(t *testing.T, stderr string) {
+	t.Helper()
+	i := strings.LastIndex(stderr, "leakcheck: allocs=")
+	if i < 0 {
+		t.Errorf("no leakcheck census on stderr:\n%s", stderr)
+		return
+	}
+	line, _, _ := strings.Cut(stderr[i:], "\n")
+	if strings.HasSuffix(line, " from=exit") {
+		return
+	}
+	var allocs, frees, live int64
+	if _, err := fmt.Sscanf(line, "leakcheck: allocs=%d frees=%d live_bytes=%d", &allocs, &frees, &live); err != nil {
+		t.Errorf("parse %q: %v", line, err)
+		return
+	}
+	if allocs != frees || live != 0 {
+		t.Errorf("the program does not free what it allocates: %s", line)
+	}
 }
 
 // The suites that take more than a minute under the self-host interpreter. The
@@ -800,6 +836,21 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"parse_limits", langSrcAbs(t, "tests/stdlib/parse_limits_test.fern"), ""},
 		{"worker", langSrcAbs(t, "tests/stdlib/worker_test.fern"), ""},
 		{"sim_worker", langSrcAbs(t, "tests/stdlib/sim_worker_test.fern"), ""},
+		{"frames", langSrcAbs(t, "tests/stdlib/frames_test.fern"), ""},
+		{"pagetable", langSrcAbs(t, "tests/stdlib/pagetable_test.fern"), ""},
+		{"http_body_text", langSrcAbs(t, "tests/stdlib/http_body_text_test.fern"), ""},
+		{"http_framing_outcome", langSrcAbs(t, "tests/stdlib/http_framing_outcome_test.fern"), ""},
+		{"http_outgoing", langSrcAbs(t, "tests/stdlib/http_outgoing_test.fern"), ""},
+		{"http_response_split", langSrcAbs(t, "tests/stdlib/http_response_split_test.fern"), ""},
+		{"stream_read_line", langSrcAbs(t, "tests/stdlib/stream_read_line_test.fern"), ""},
+		{"string_ordering", langSrcAbs(t, "tests/stdlib/string_ordering_test.fern"), ""},
+		{"time_duration", langSrcAbs(t, "tests/stdlib/time_duration_test.fern"), ""},
+		{"time_instant", langSrcAbs(t, "tests/stdlib/time_instant_test.fern"), ""},
+		{"video_av1_annex_b_input", langSrcAbs(t, "tests/stdlib/video_av1_annex_b_input_test.fern"), ""},
+		{"video_av1_annex_b", langSrcAbs(t, "tests/stdlib/video_av1_annex_b_test.fern"), ""},
+		{"video_av1_metadata", langSrcAbs(t, "tests/stdlib/video_av1_metadata_test.fern"), ""},
+		{"video_avc_input", langSrcAbs(t, "tests/stdlib/video_avc_input_test.fern"), ""},
+		{"video_hevc_input", langSrcAbs(t, "tests/stdlib/video_hevc_input_test.fern"), ""},
 		{"synthetic_fail", failing, ""},
 	}
 	var cases []selfHostStdTestCase
