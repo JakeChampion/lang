@@ -33,7 +33,8 @@ pub struct Clip { place: store.Place, dir: string, items: smb.Entry[], cut: bool
 
 // A copy that runs: its steps, the step that it is at, and its progress.
 // `open` is the path of a download that another app shows at the end.
-pub struct Task { src: store.Place, dst: store.Place, steps: store.Step[], at: i32, offset: i64, done: i64, total: i64, clip: Clip, stop: boolean, open: string }
+// `tries` counts the times that the step it is at failed.
+pub struct Task { src: store.Place, dst: store.Place, steps: store.Step[], at: i32, offset: i64, done: i64, total: i64, clip: Clip, stop: boolean, open: string, tries: i32 }
 
 // A folder that the person pinned, or the folder of a file that the person
 // opened. `server` is the name of a saved server, or "" for the phone.
@@ -56,7 +57,7 @@ pub enum Page { Home, Browse, Item(string), Server(i32), Text(string), Picture(s
 enum Job {
   List(i64, store.Place, string),
   Plan(i64, Clip, store.Place, string),
-  Advance(i64, store.Place, store.Place, store.Step, i64),
+  Advance(i64, store.Place, store.Place, store.Step, i64, i64),
   Remove(i64, store.Place, string, smb.Entry[]),
   MakeDir(i64, store.Place, string),
   Rename(i64, store.Place, string, string),
@@ -77,7 +78,7 @@ enum Job {
 // app has access to all files, the screen that gives that access, a place to keep the servers, a place
 // to keep the preferences, the app of the phone that shows a file, the
 // player of an HTTP address, the apps that take a file, and a decoder that gives an image at a width in pixels or less.
-pub struct Platform { roots: () => Root[], access: () => boolean, ask_access: () => boolean, save: (Saved[]) => boolean, keep: (Prefs) => boolean, open: (string) => boolean, play: (string, string) => boolean, share: (string) => boolean, decode: (u8[], i32) => Option[draw.Image] }
+pub struct Platform { roots: () => Root[], access: () => boolean, ask_access: () => boolean, save: (Saved[]) => boolean, keep: (Prefs) => boolean, open: (string) => boolean, play: (string, string) => boolean, busy: (string) => boolean, share: (string) => boolean, decode: (u8[], i32) => Option[draw.Image] }
 
 pub struct Model {
   roots: Root[],
@@ -87,6 +88,8 @@ pub struct Model {
   // and the path of the file that waits for that app.
   cache: string,
   launch: string,
+  // What the notification of a copy says now, or "" with no copy.
+  busy: string,
   // The HTTP address of a file of a server that waits for a player, with
   // the name of the file. The port and the token are those of the server
   // of this phone that streams, or 0 and "".
@@ -222,6 +225,12 @@ const PLACES: (string, string)[] = [("Downloads", "Download"), ("Camera", "DCIM"
 
 const SORTS: string[] = ["Name", "Size", "Date"];
 
+// The times that a step of a copy starts again after it fails, and the
+// wait before each of them: this time, then 2 and 3 times it.
+const MOST_TRIES: i32 = 3;
+
+const RETRY_MS: i64 = 1500i64;
+
 // The most bytes of a text file that the preview shows.
 const PREVIEW_BYTES: i32 = 65536;
 
@@ -236,7 +245,7 @@ function no_server(): Saved {
 // `granted` is false when Android hides the files of the storages.
 pub function start(roots: Root[], granted: boolean, servers: Saved[], cache: string, prefs: Prefs): Model {
   return Model {
-    roots: roots, servers: servers, granted: granted, cache: cache, launch: "", play: "", play_name: "", stream_port: 0, stream_token: "", sharing: false, pins: prefs.pins, recent: prefs.recent, unkept: false, found: false, grid: prefs.grid, thumbs: [], thumb_wait: [], thumb_raw: [], thumb_name: "", page: Home, place: store.Local, label: "", top: "", path: "", entries: [], loading: false, note: "", fault: "", sort: prefs.sort, hidden: prefs.hidden, query: "",
+    roots: roots, servers: servers, granted: granted, cache: cache, launch: "", busy: "", play: "", play_name: "", stream_port: 0, stream_token: "", sharing: false, pins: prefs.pins, recent: prefs.recent, unkept: false, found: false, grid: prefs.grid, thumbs: [], thumb_wait: [], thumb_raw: [], thumb_name: "", page: Home, place: store.Local, label: "", top: "", path: "", entries: [], loading: false, note: "", fault: "", sort: prefs.sort, hidden: prefs.hidden, query: "",
     selecting: false, picked: [], clip: None, task: None, naming: None, name_text: "", confirm: "", draft: no_server(), preview: "", picture: None, raw: [], wide: 0, shares: [], finding: false, hosts: [], scanning: false, revision: 0i64, task_revision: 0i64, job: None, need_roots: false, ask_access: false, unsaved: false,
   };
 }
@@ -303,7 +312,7 @@ function start_paste(m: Model): Model {
     }
     return Model { ...m, task_revision: revision, clip: None, loading: true, job: Some(Move(revision, m.place, clip.dir, clip.items, m.path)) };
   }
-  let waiting = Task { src: clip.place, dst: m.place, steps: [], at: 0, offset: 0i64, done: 0i64, total: 0i64, clip: clip, stop: false, open: "" };
+  let waiting = Task { src: clip.place, dst: m.place, steps: [], at: 0, offset: 0i64, done: 0i64, total: 0i64, clip: clip, stop: false, open: "", tries: 0 };
   return Model { ...m, task_revision: revision, task: Some(waiting), clip: None, note: "", fault: "", job: Some(Plan(revision, clip, m.place, m.path)) };
 }
 
@@ -317,7 +326,7 @@ function continue_task(m: Model, t: Task): Model {
     return Model { ...m, task: None, launch: t.open };
   }
   if (t.at < t.steps.len()) {
-    return Model { ...m, task: Some(t), job: Some(Advance(m.task_revision, t.src, t.dst, t.steps[t.at], t.offset)) };
+    return Model { ...m, task: Some(t), job: Some(Advance(m.task_revision, t.src, t.dst, t.steps[t.at], t.offset, t.tries as i64 * RETRY_MS)) };
   }
   let ended = told(Model { ...m, task: None }, if (t.clip.cut) { "Moved." } else { "Copied." });
   if (t.clip.cut) {
@@ -361,10 +370,15 @@ function task_update(own m: Model, msg: Msg): Model {
       match (result) {
         Ok(n) => {
           let whole = t.steps[t.at].dir || n < store.STEP as i64;
-          let next = if (whole) { Task { ...t, at: t.at + 1, offset: 0i64, done: t.done + n } } else { Task { ...t, offset: t.offset + n, done: t.done + n } };
+          let next = if (whole) { Task { ...t, at: t.at + 1, offset: 0i64, done: t.done + n, tries: 0 } } else { Task { ...t, offset: t.offset + n, done: t.done + n, tries: 0 } };
           return continue_task(m, next);
         },
         Err(e) => {
+          // A step that fails starts again from its byte, after a wait
+          // that grows: a connection that dropped can come back.
+          if (t.tries < MOST_TRIES && !t.stop) {
+            return continue_task(told(m, "The copy tries again: " + e), Task { ...t, tries: t.tries + 1 });
+          }
           return reload(failed(Model { ...m, task: None }, e));
         }
       }
@@ -816,7 +830,7 @@ function open_file(m: Model, name: string, sharing: boolean): Model {
   let to = store.join(m.cache, store.base(name));
   let step = store.Step { from: store.join(m.path, name), to: to, size: e.size, dir: false };
   let clip = Clip { place: m.place, dir: m.path, items: [e], cut: false };
-  let task = Task { src: m.place, dst: store.Local, steps: [step], at: 0, offset: 0i64, done: 0i64, total: e.size, clip: clip, stop: false, open: to };
+  let task = Task { src: m.place, dst: store.Local, steps: [step], at: 0, offset: 0i64, done: 0i64, total: e.size, clip: clip, stop: false, open: to, tries: 0 };
   return continue_task(Model { ...clear, task_revision: m.task_revision + 1i64 }, task);
 }
 
@@ -995,7 +1009,10 @@ function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
       Plan(revision, clip, place, path) => {
         return Planned(revision, store.plan(clip.place, clip.dir, clip.items, place, path));
       },
-      Advance(revision, src, dst, step, offset) => {
+      Advance(revision, src, dst, step, offset, wait) => {
+        if (wait > 0i64) {
+          sleep_ms(wait);
+        }
         return Advanced(revision, store.advance(src, dst, step, offset));
       },
       Remove(revision, place, dir, items) => {
@@ -1045,6 +1062,19 @@ function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
   })];
 }
 
+// What a copy does now, for its notification, or "" with no copy. While
+// it has a text, Android keeps the app at work with no window.
+pub function busy_text(m: Model): string {
+  let Some(t) = m.task else {
+    return "";
+  };
+  let verb = if (t.open.len() > 0) { "Downloading" } else if (t.clip.cut) { "Moving" } else { "Copying" };
+  if (t.steps.len() == 0) {
+    return verb + "…";
+  }
+  return verb + " " + (t.at + 1).min(t.steps.len()).to_string() + " of " + t.steps.len().to_string();
+}
+
 function effects(m: Model, platform: Platform): Model {
   let next = m;
   if (m.ask_access) {
@@ -1071,6 +1101,11 @@ function effects(m: Model, platform: Platform): Model {
   if (m.unkept) {
     let kept = platform.keep(Prefs { sort: m.sort, hidden: m.hidden, grid: m.grid, pins: m.pins, recent: m.recent });
     next = Model { ...next, unkept: false };
+  }
+  let work = busy_text(m);
+  if (work != m.busy) {
+    let told_android = platform.busy(work);
+    next = Model { ...next, busy: work };
   }
   if (m.play.len() > 0) {
     next = Model { ...next, play: "", play_name: "" };

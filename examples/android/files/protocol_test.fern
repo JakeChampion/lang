@@ -3,6 +3,7 @@
 import "std/hex";
 import "std/net";
 import "std/test";
+import "./docs";
 import "./files";
 import "./md4";
 import "./ntlm";
@@ -283,6 +284,33 @@ function test_ranges(): test.TestOutcome {
   ]);
 }
 
+function shown(v: docs.Value): string {
+  return match (v) {
+    docs.Text(text) => text,
+    docs.Number(n) => n.to_string(),
+    docs.Empty => "-",
+  };
+}
+
+// The rows that the file picker of the system gets for a server and for
+// its files, and the IDs of its documents.
+function test_documents(): test.TestOutcome {
+  let nas = files.Saved { name: "Films", server: smb.Server { host: "nas", port: 445, share: "media", user: "", password: "", domain: "" } };
+  let file = smb.Entry { name: "a b.mkv", dir: false, size: 77i64, modified: 1000i64 };
+  let folder = smb.Entry { name: "x", dir: true, size: 0i64, modified: 0i64 };
+  let root = ["root_id", "title", "summary", "document_id", "icon", "flags", "other"].map((c: string): string => shown(docs.root_value(c, 2, nas, 9))).join("|");
+  let one = ["document_id", "_display_name", "mime_type", "last_modified", "_size", "flags"].map((c: string): string => shown(docs.document_value(c, 2, "dir/a b.mkv", file))).join("|");
+  let dir = ["mime_type", "last_modified", "_size"].map((c: string): string => shown(docs.document_value(c, 2, "x", folder))).join("|");
+  let (at, path) = docs.document_of("2:dir/a:b.mkv").unwrap_or((-1, ""));
+  return all([
+    test.assert_eq(root, "2|Films|smb://nas/media|2:|9|0|-"),
+    test.assert_eq(one, "2:dir/a b.mkv|a b.mkv|video/x-matroska|1000000|77|0"),
+    test.assert_eq(dir, docs.DIRECTORY + "|-|-"),
+    test.assert_eq(at.to_string() + " " + path, "2 dir/a:b.mkv"),
+    holds(docs.document_of("x:1").is_none() && docs.document_of("nothing").is_none() && docs.document_of("-1:a").is_none(), "a bad ID gave a document"),
+  ]);
+}
+
 function test_texts(): test.TestOutcome {
   return all([
     test.assert_eq(store.size_text(5i64), "5 B"),
@@ -371,6 +399,7 @@ function main(): i32 {
   r = r.it("the preferences survive their file", test_prefs);
   r = r.it("an archive name stays below its folder", test_archive_names);
   r = r.it("a range request names the bytes of a file", test_ranges);
+  r = r.it("the file picker gets rows for servers and files", test_documents);
   r = r.it("sizes and days read well", test_texts);
   r = r.it("a copy in steps keeps each byte", test_copy);
   r = r.it("the saved servers survive the vault", test_vault);

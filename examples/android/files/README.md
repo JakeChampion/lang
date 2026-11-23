@@ -37,6 +37,12 @@ A long press starts a selection:
 - **Zip** makes an archive of the selection in the folder that shows.
 - A copy runs in steps of 8 MiB. The screen shows its progress, and a
   button stops it.
+- A copy continues while the window of the app is away: a foreground
+  service keeps the app at work, and its notification says what the copy
+  does.
+- A step that fails starts again from its byte, 3 times at most, after
+  waits of 1.5 s, 3 s and 4.5 s. So a connection that drops for a moment
+  does not end the copy.
 
 The app does more for one file:
 
@@ -109,6 +115,16 @@ reads each part of 4 MiB from the share. The app gives the player the
 address of the file on that server. The address has a token that is new
 for each file, so no other program finds the file. A new stream ends the
 server of the stream before it.
+
+## The file picker of the system
+
+`docs.fern` is a documents provider: the file picker of Android shows
+each saved server, so each app of the phone can open a file of a server.
+`fern -apk` puts a @jni class that extends `DocumentsProvider` in the
+manifest as a provider that only the picker can ask.
+
+The provider gives documents for reading only. A file goes to the cache
+of the app in full before the other app gets it.
 
 ## Tests
 

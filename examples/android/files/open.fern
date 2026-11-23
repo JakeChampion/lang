@@ -68,7 +68,12 @@ function file_of(e: usize, path: string): usize {
 // of `uri`. A file that does not open leaves its Java exception for the
 // caller, as openFile declares.
 pub function descriptor(e: usize, uri: usize): usize {
-  let file = file_of(e, path_of(e, uri));
+  return descriptor_of(e, path_of(e, uri));
+}
+
+// A ParcelFileDescriptor that reads the file `path` of the phone.
+pub function descriptor_of(e: usize, path: string): usize {
+  let file = file_of(e, path);
   if (file == 0 as usize) {
     return 0 as usize;
   }
