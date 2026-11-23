@@ -1488,5 +1488,15 @@
     "name": "factory record of a reassigned fresh local accepted in a loop",
     "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32, n: i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction make(h: H): Box { return Box { run: (): i32 => read(h), n: 2 }; }\nfunction renew(own h: H): H { return h; }\nfunction main(): i32 { let h = H { fd: 7 }; let t = 0; for k in 0..2 { let b = make(h); t += call(b); h = renew(h); } h.close(); return t; }\n",
     "want": ""
+  },
+  {
+    "name": "factory callback that captures a plain data field accepted after close",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Box { run: () => i32, n: i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction mk(h: H): () => i32 { let k = h.fd; return (): i32 => k; }\nfunction run(own h: H): i32 { let g = mk(h); h.close(); return g(); }\nfunction main(): i32 { return run(H { fd: 7 }); }\n",
+    "want": ""
+  },
+  {
+    "name": "factory record with a callback that captures a plain data field accepted after close",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Box { run: () => i32, n: i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction make(h: H): Box { let k = h.fd; return Box { run: (): i32 => k, n: 2 }; }\nfunction run(own h: H): i32 { let b = make(h); h.close(); return call(b); }\nfunction main(): i32 { return run(H { fd: 7 }); }\n",
+    "want": ""
   }
 ]
