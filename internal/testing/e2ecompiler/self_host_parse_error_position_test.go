@@ -154,6 +154,13 @@ var parseErrPosCases = []struct {
 	{"return-type-refused", "function f(): = {\n  return 0;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
 	{"map-literal-in-if-let-source", "enum E { A(i32), B }\nfunction main(): i32 {\n  if let A(x) = Map { 1: 10 } { }\n  return 0;\n}\n"},
 	{"for-paren-let-literal", "function main(): i32 {\n  for (let 1 in [1]) { }\n  return 0;\n}\n"},
+	{"union-primitive-member", "type X = i32 | string;\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"union-tuple-member", "struct A { x: i32 }\ntype X = A | (A, A);\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"union-array-member", "struct A { x: i32 }\nstruct B { y: i32 }\ntype X = A | B[];\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"union-generic-array-member", "struct A { x: i32 }\nstruct B[T] { y: T }\ntype X = A | B[i32][];\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"union-optional-member", "struct A { x: i32 }\nstruct B { y: i32 }\ntype X = A | B?;\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"union-single-member", "struct A { x: i32 }\ntype X = A;\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"union-missing-semicolon", "struct A { x: i32 }\nstruct B { y: i32 }\ntype X = A | B\nfunction main(): i32 {\n  return 0;\n}\n"},
 }
 
 func TestSelfHostParseErrorPositions(t *testing.T) {

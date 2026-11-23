@@ -97,9 +97,11 @@ VariantPayload
             | '{' [ FieldDecl { FieldDecl } ] '}'
             ;
 
-# `type X = A | B;` is a union of two or more types; there is no
-# single-type alias.
-TypeDecl    = 'type' IDENT [ TypeParams ] '=' Type '|' Type { '|' Type } ';' ;
+# `type X = A | B;` is a union of two or more structs; there is no
+# single-type alias. A member names a struct: a primitive, an array or
+# an optional type is not a member.
+TypeDecl    = 'type' IDENT [ TypeParams ] '=' UnionMember '|' UnionMember { '|' UnionMember } ';' ;
+UnionMember = IDENT [ TypeArgs ] ;
 
 TraitDecl   = 'trait' IDENT [ TypeParams ] [ ':' Bounds ] '{' { TraitItem } '}' [ ';' ] ;
 TraitItem   = 'type' IDENT [ ':' Bounds ] ';'
