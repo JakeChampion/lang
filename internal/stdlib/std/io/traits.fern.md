@@ -98,8 +98,8 @@ impl Read for buffered.ByteLineReader {
   }
 }
 
-impl Write for BytesWriter {
-  function put_bytes(own self: Self, bytes: u8[]): Result[BytesWriter, IoError] {
+impl Write for buffered.BytesWriter {
+  function put_bytes(own self: Self, bytes: u8[]): Result[buffered.BytesWriter, IoError] {
     return Ok(self.write_bytes(bytes));
   }
 }
