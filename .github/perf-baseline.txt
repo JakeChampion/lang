@@ -67,12 +67,12 @@ x86_64/http_hello.text	16675
 x86_64/http_hello.ir	22236372
 x86_64/int_loop.text	298
 x86_64/int_loop.ir	12000077
-x86_64/map_int.text	8891
-x86_64/map_int.ir	24115264
-x86_64/map_probe_chain.text	8895
-x86_64/map_probe_chain.ir	235291505
-x86_64/map_string.text	9772
-x86_64/map_string.ir	49328509	2
+x86_64/map_int.text	8753
+x86_64/map_int.ir	23651802
+x86_64/map_probe_chain.text	8757
+x86_64/map_probe_chain.ir	230890651
+x86_64/map_string.text	9647
+x86_64/map_string.ir	48024349	2
 x86_64/ordmap_insert.text	6096
 x86_64/ordmap_insert.ir	66342314
 x86_64/pmap_insert.text	3683
@@ -325,4 +325,4 @@ x86_64/tokenize.dr	6770008
 x86_64/utf8_ingest_unchecked.dr	550769
 x86_64/utf8_ingest_validated.dr	776973
 x86_64/utf8_validate.dr	27641588
-x86_64/video_qtrle.dr	321555951
+x86_64/video_qtrle.dr	299830951
