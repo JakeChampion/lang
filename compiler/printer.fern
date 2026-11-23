@@ -2028,12 +2028,14 @@ function print_sugared_match(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, F
   }
   out += "\n";
   for i in 0..arms.len() {
-    let (arm_body, g1) = print_block(arms[i].body, depth + 1, g);
-    g = g1;
     out = out + indent_str(depth + 1) + arms[i].head;
     if (arms[i].has_guard) {
-      out = out + " when " + print_expr(arms[i].guard, depth);
+      let (guard, gg) = print_expr_c(arms[i].guard, prec_lowest(), depth, g);
+      out = out + " when " + guard;
+      g = gg;
     }
+    let (arm_body, g1) = print_block(arms[i].body, depth + 1, g);
+    g = g1;
     out = out + " => " + arm_body;
     if (i + 1 < arms.len()) {
       out += ",";
@@ -2143,8 +2145,6 @@ function print_match(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
   out += "\n";
   let i = 0;
   while (i < arms.len()) {
-    let (arm_body, g1) = print_block(arms[i].body, depth + 1, anchored(g, arms[i].line));
-    g = g1;
     let head = print_pattern(arms[i].pattern);
     let guarded = arms[i];
     while (i + 1 < arms.len() && arms[i + 1].alt_cont) {
@@ -2153,8 +2153,12 @@ function print_match(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
     }
     out = out + indent_str(depth + 1) + head;
     if (guarded.has_guard) {
-      out = out + " when " + print_expr(guarded.guard, depth);
+      let (guard, gg) = print_expr_c(guarded.guard, prec_lowest(), depth, g);
+      out = out + " when " + guard;
+      g = gg;
     }
+    let (arm_body, g1) = print_block(guarded.body, depth + 1, anchored(g, guarded.line));
+    g = g1;
     out = out + " => " + arm_body;
     if (i + 1 < arms.len()) {
       out += ",";
@@ -2762,8 +2766,9 @@ function destr_at_prefix(v: ast.StmtVar): string {
   return v.destr.at + " @ ";
 }
 
-function print_struct_destructure(v: ast.StmtVar, depth: i32): string {
-  return "let " + destr_at_prefix(v) + struct_destr_pattern(v) + " = " + print_expr(v.init, depth) + ";";
+function print_struct_destructure(v: ast.StmtVar, depth: i32, f: Fmt): (string, Fmt) {
+  let (init, g) = print_expr_c(v.init, prec_lowest(), depth, f);
+  return ("let " + destr_at_prefix(v) + struct_destr_pattern(v) + " = " + init + ";", g);
 }
 
 function struct_destr_pattern(v: ast.StmtVar): string {
@@ -2903,13 +2908,14 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
     },
     ast.StmtVar(v) => {
       if (ast.record_destr(v.destr)) {
-        return (print_struct_destructure(v, depth), f);
+        return print_struct_destructure(v, depth, f);
       }
       if (v.type_name == "@fndecl") {
         return print_nested_func_decl(v, depth, f);
       }
       if (v.destr.binds.len() > 1) {
-        return ("let " + destr_at_prefix(v) + "(" + tuple_pattern_text(v.destr) + ") = " + print_expr(v.init, depth) + ";", f);
+        let (init, ig) = print_expr_c(v.init, prec_lowest(), depth, f);
+        return ("let " + destr_at_prefix(v) + "(" + tuple_pattern_text(v.destr) + ") = " + init + ";", ig);
       }
       let ann = "";
       if (v.type_name.len() > 0) {
