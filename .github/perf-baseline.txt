@@ -154,7 +154,7 @@ aarch64/map_string.text	9841
 aarch64/map_string.ir	47549521	2
 aarch64/ordmap_insert.text	6525
 aarch64/ordmap_insert.ir	82086738
-aarch64/pmap_insert.text	3952
+aarch64/pmap_insert.text	4039
 aarch64/pmap_insert.ir	54692820
 aarch64/pvec_with.text	3827
 aarch64/pvec_with.ir	46418540

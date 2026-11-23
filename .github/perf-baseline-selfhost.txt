@@ -62,7 +62,7 @@ selfhost/arm64-linux/map_int.emit	8808
 selfhost/arm64-linux/map_probe_chain.emit	8818
 selfhost/arm64-linux/map_string.emit	9841
 selfhost/arm64-linux/ordmap_insert.emit	6525
-selfhost/arm64-linux/pmap_insert.emit	3952
+selfhost/arm64-linux/pmap_insert.emit	4039
 selfhost/arm64-linux/pvec_with.emit	3827
 selfhost/arm64-linux/record_update.emit	1347
 selfhost/arm64-linux/sort_inplace.emit	1841
@@ -96,7 +96,7 @@ selfhost/wasm32-wasi/map_int.emit	13496
 selfhost/wasm32-wasi/map_probe_chain.emit	13521
 selfhost/wasm32-wasi/map_string.emit	14287
 selfhost/wasm32-wasi/ordmap_insert.emit	6710
-selfhost/wasm32-wasi/pmap_insert.emit	3573
+selfhost/wasm32-wasi/pmap_insert.emit	3731
 selfhost/wasm32-wasi/pvec_with.emit	2764
 selfhost/wasm32-wasi/record_update.emit	581
 selfhost/wasm32-wasi/sort_inplace.emit	1013
