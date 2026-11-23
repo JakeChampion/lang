@@ -101,6 +101,10 @@ Android lets another app read a file only through a content provider.
 provider that is not exported, with the name of the class as its authority.
 The app gives access to one URI with each intent, for reading only.
 
+The installer of Android ignores an APK from an app that does not hold
+`REQUEST_INSTALL_PACKAGES`. The app holds that permission, so Open on an
+APK starts the installation.
+
 ## Streams
 
 A player reads a film a part at a time, and moves in it. `stream.fern`

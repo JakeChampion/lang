@@ -51,6 +51,7 @@ func TestAndroidFilesApk(t *testing.T) {
 		"provider", "dev.fern.files.Shared", "authorities", "grantUriPermissions",
 		"dev.fern.files.Documents", "android.permission.MANAGE_DOCUMENTS", "android.content.action.DOCUMENTS_PROVIDER",
 		"dev.fern.files.Copying", "android.permission.FOREGROUND_SERVICE_DATA_SYNC", "foregroundServiceType",
+		"android.permission.REQUEST_INSTALL_PACKAGES",
 	} {
 		if !bytes.Contains(manifest, utf16le(want)) {
 			t.Errorf("the manifest has no string %q", want)
