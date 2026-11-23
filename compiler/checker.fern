@@ -39471,9 +39471,14 @@ function nested_array_gives_way(e: ast.Expr, from: typeinfo.Type, to: typeinfo.T
   return false;
 }
 
+// The type that both operands of `b` widen to, or an unknown type. A shift
+// has none: its value keeps its type, and its count does not change it.
 function binary_numeric_join(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type): typeinfo.Type {
   if (is_integer(lt) && is_integer(rt) && (int_literal_tree(b.left) || int_literal_tree(b.right))) {
     return int_result(lt, rt, b.left, b.right);
+  }
+  if (b.op == "<<" || b.op == ">>" || b.op == "<<|" || b.op == "<<?" || b.op == ">>?") {
+    return t_unknown("a shift has no common operand type");
   }
   return scalar_numeric_join(lt, rt);
 }
