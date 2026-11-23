@@ -176,6 +176,44 @@ function f(e: E): i32 {
   return p.0 as i32 + xs[0];
 }
 `},
+	{"blank-line-above-a-line-of-two-or-more-statements", `function main(): i32 {
+    let a = 1;
+
+    let f = (x: i32) => { let y: i32 = x + 1; let z: i32 = y + 1; return z * 2; };
+    let g = (x: i32) => { let y: i32 = x + 1; y * 2 };
+
+    if (a > 0) { let b = 2; let c = 3; return b + c; }
+    return f(a) + g(a);
+}
+
+trait T { function a(self: Self): i32; function b(self: Self): i32; }
+
+struct S { x: i32 }
+
+impl T for S { function a(self: Self): i32 { return 1; } function b(self: Self): i32 { return 2; } }
+
+function h(o: Option[i32]): i32 {
+    let a = 1;
+
+    let Some(v) = o else { return 0; }; let w = v + a; return w;
+}
+
+function with_file(path: string, f: (i32) => i32): i32 { return f(1); }
+
+function u(): i32 {
+    let a = 1;
+
+    use fd <- with_file("x"); let b = fd + a; return b;
+}
+
+function u2(): i32 {
+    use fd <- with_file("x");
+
+    let b = fd;
+
+    return b;
+}
+`},
 	{"unsafe-value-blocks", `function f(bytes: u8[]): string {
   let n = unsafe { 3 };
   let text = unsafe { string_from_bytes_unchecked(bytes) };

@@ -1780,3 +1780,120 @@ func TestFormatSendParamRoundTrip(t *testing.T) {
 		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
 	}
 }
+
+// A blank line above a source line is above its first statement only. The
+// other statements of that line get no blank line.
+func TestFormatBlankLineAboveALineOfStatements(t *testing.T) {
+	src := `function main(): i32 {
+    let a = 1;
+
+    let f = (x: i32) => { let y: i32 = x + 1; let z: i32 = y + 1; return z * 2; };
+    let g = (x: i32) => { let y: i32 = x + 1; y * 2 };
+
+    if (a > 0) { let b = 2; let c = 3; return b + c; }
+    return f(a) + g(a);
+}
+
+trait T { function a(self: Self): i32; function b(self: Self): i32; }
+
+struct S { x: i32 }
+
+impl T for S { function a(self: Self): i32 { return 1; } function b(self: Self): i32 { return 2; } }
+
+function h(o: Option[i32]): i32 {
+    let a = 1;
+
+    let Some(v) = o else { return 0; }; let w = v + a; return w;
+}
+
+function with_file(path: string, f: (i32) => i32): i32 { return f(1); }
+
+function u(): i32 {
+    let a = 1;
+
+    use fd <- with_file("x"); let b = fd + a; return b;
+}
+
+function u2(): i32 {
+    use fd <- with_file("x");
+
+    let b = fd;
+
+    return b;
+}
+`
+	want := `function main(): i32 {
+  let a = 1;
+
+  let f = (x: i32) => {
+    let y: i32 = x + 1;
+    let z: i32 = y + 1;
+    return z * 2;
+  };
+  let g = (x: i32) => {
+    let y: i32 = x + 1;
+    return y * 2;
+  };
+
+  if (a > 0) {
+    let b = 2;
+    let c = 3;
+    return b + c;
+  }
+  return f(a) + g(a);
+}
+
+trait T {
+  function a(self: Self): i32;
+  function b(self: Self): i32;
+}
+
+struct S { x: i32 }
+
+impl T for S {
+  function a(self: Self): i32 {
+    return 1;
+  }
+  function b(self: Self): i32 {
+    return 2;
+  }
+}
+
+function h(o: Option[i32]): i32 {
+  let a = 1;
+
+  let Some(v) = o else {
+    return 0;
+  };
+  let w = v + a;
+  return w;
+}
+
+function with_file(path: string, f: (i32) => i32): i32 {
+  return f(1);
+}
+
+function u(): i32 {
+  let a = 1;
+
+  use fd <- with_file("x");
+  let b = fd + a;
+  return b;
+}
+
+function u2(): i32 {
+  use fd <- with_file("x");
+
+  let b = fd;
+
+  return b;
+}
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := Format(prog); got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
