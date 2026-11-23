@@ -105,13 +105,42 @@ def point_of(xml, label):
 def field_point(xml, hint):
     """The middle of the text field with the hint `hint`, or None. The name
     of an empty field is its hint, and the name of a field with text starts
-    with the hint and a comma. A label with the same words is before the
-    field, so the last node is the field."""
-    found = None
-    for name, x, y in nodes(xml):
-        if name == hint or name.startswith(hint + ", "):
-            found = x, y
-    return found
+    with the hint and a comma. A label can have the same words, so only a
+    node that takes a tap is a field."""
+    try:
+        tree = ET.fromstring(xml)
+    except ET.ParseError:
+        return None
+    for node in tree.iter("node"):
+        name = node.get("content-desc") or node.get("text") or ""
+        if node.get("package") != PACKAGE or node.get("clickable") != "true":
+            continue
+        if name != hint and not name.startswith(hint + ", "):
+            continue
+        bounds = re.fullmatch(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", node.get("bounds", ""))
+        if bounds:
+            x, y, right, bottom = map(int, bounds.groups())
+            if right > x and bottom > y:
+                return (x + right) // 2, (y + bottom) // 2
+    return None
+
+
+def crash_blocks(log):
+    """Each crash in `log`: the line of the fatal exception and the lines of
+    the same process after it, which name the process and give the stack."""
+    lines = log.splitlines()
+    blocks = []
+    for at, line in enumerate(lines):
+        if not re.match(r"E/AndroidRuntime\(\s*\d+\): FATAL EXCEPTION", line):
+            continue
+        tag = line[:line.index(")") + 1]
+        block = [line]
+        for after in lines[at + 1:at + 40]:
+            if not after.startswith(tag):
+                break
+            block.append(after)
+        blocks.append("\n".join(block))
+    return blocks
 
 
 def keyboard_shown(dumpsys):
@@ -429,6 +458,8 @@ def main(apk, out, share_dir=None, port=None):
         f.write(log)
     for line in crashes(log):
         fail("logcat: " + line)
+    for block in crash_blocks(log):
+        print(block, flush=True)
     save_log(out, "logcat-all.txt")
     adb("shell", "am", "force-stop", PACKAGE, check=False)
     if failures:

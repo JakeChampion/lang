@@ -40,28 +40,51 @@ class NodeTests(unittest.TestCase):
         self.assertEqual(check.nodes(""), [])
 
 
+def fields(*rows):
+    body = "".join(f'<node package="dev.fern.files" text="{text}" content-desc="{desc}" clickable="{click}" bounds="{bounds}" />'
+                   for text, desc, click, bounds in rows)
+    return f"<hierarchy><node package='android' bounds='[0,0][1080,2400]'>{body}</node></hierarchy>"
+
+
 class FieldTests(unittest.TestCase):
     def test_empty_field_has_its_hint(self):
-        xml = tree(("dev.fern.files", "Leave empty for a guest", "", "[0,400][1080,560]"))
+        xml = fields(("", "Leave empty for a guest", "true", "[0,400][1080,560]"))
         self.assertEqual(check.field_point(xml, "Leave empty for a guest"), (540, 480))
 
     def test_field_with_text(self):
-        xml = tree(("dev.fern.files", "", "Leave empty for a guest, jo", "[0,400][1080,560]"))
+        xml = fields(("", "Leave empty for a guest, jo", "true", "[0,400][1080,560]"))
         self.assertEqual(check.field_point(xml, "Leave empty for a guest"), (540, 480))
 
-    def test_the_field_is_after_its_label(self):
-        xml = tree(("dev.fern.files", "Password", "", "[0,300][1080,360]"),
-                   ("dev.fern.files", "", "Password, 12 characters", "[0,400][1080,560]"))
-        self.assertEqual(check.field_point(xml, "Password"), (540, 480))
+    def test_a_label_with_the_same_words_is_not_the_field(self):
+        for rows in [(("Password", "", "false", "[0,300][1080,360]"), ("", "Password", "true", "[0,400][1080,560]")),
+                     (("", "Password", "true", "[0,400][1080,560]"), ("Password", "", "false", "[0,300][1080,360]"))]:
+            with self.subTest(rows=rows):
+                self.assertEqual(check.field_point(fields(*rows), "Password"), (540, 480))
 
     def test_no_field(self):
-        xml = tree(("dev.fern.files", "Passwords", "", "[0,300][1080,360]"))
+        xml = fields(("Passwords", "", "true", "[0,300][1080,360]"), ("Password", "", "false", "[0,300][1080,360]"))
         self.assertIsNone(check.field_point(xml, "Password"))
 
     def test_keyboard(self):
         self.assertTrue(check.keyboard_shown("  mShowRequested=true mInputShown=true mInFullscreenMode=false\n"))
         self.assertFalse(check.keyboard_shown("  mShowRequested=false mInputShown=false\n"))
         self.assertFalse(check.keyboard_shown(""))
+
+
+class CrashTests(unittest.TestCase):
+    def test_block_of_one_process(self):
+        log = ("I/fern    ( 812): files: started\n"
+               "E/AndroidRuntime( 8659): FATAL EXCEPTION: main\n"
+               "E/AndroidRuntime( 8659): Process: dev.fern.files, PID: 8659\n"
+               "E/AndroidRuntime( 8659): java.lang.NullPointerException\n"
+               "E/AndroidRuntime(  901): other\n"
+               "E/AndroidRuntime( 8659): at x\n")
+        self.assertEqual(check.crash_blocks(log), ["E/AndroidRuntime( 8659): FATAL EXCEPTION: main\n"
+                                                   "E/AndroidRuntime( 8659): Process: dev.fern.files, PID: 8659\n"
+                                                   "E/AndroidRuntime( 8659): java.lang.NullPointerException"])
+
+    def test_no_crash(self):
+        self.assertEqual(check.crash_blocks("E/AndroidRuntime( 1): something\n"), [])
 
 
 class DocumentTests(unittest.TestCase):
