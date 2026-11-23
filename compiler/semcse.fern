@@ -17,7 +17,7 @@ struct Across { reads: ssa.SInst[], at: i32[], slots: Slots, dom: ssadeps.Dom }
 pub function merge(f0: ssasem.Func): Merged {
   let lent = lent_reads(f0);
   let f = lent.f;
-  let same = Same { of: identity(f.values.len()), merged: lent.merged };
+  let same = Same { of: lent.of, merged: lent.merged };
   let across = scalar_reads(f.graph, f.values);
   let before: i32 = -1;
   while (same.merged != before) {
@@ -29,15 +29,20 @@ pub function merge(f0: ssasem.Func): Merged {
       same = merge_dominated(across, f.values, same);
     }
   }
-  if (same.merged == lent.merged) {
-    return Merged { f: f, merged: same.merged };
+  if (same.merged == 0) {
+    return Merged { f: f, merged: 0 };
   }
   return Merged { f: replaced(f, same.of), merged: same.merged };
 }
 
+// of maps the length reads of a lend to the one read of the array length.
+struct Lent { f: ssasem.Func, of: i32[], merged: i32 }
+
 // A lend of a whole array has the offset and the length of the array. A
-// scalar element read or a length of the lend reads the array itself.
-function lent_reads(f: ssasem.Func): Merged {
+// scalar element read of the lend reads the array itself. The array cannot
+// change its length while it is lent, so the lend's length reads become one
+// read of the array length, just after the lend.
+function lent_reads(f: ssasem.Func): Lent {
   let owner = util.minus_ones(f.values.len());
   for b in f.graph.blocks {
     for ins in b.insts {
@@ -46,24 +51,48 @@ function lent_reads(f: ssasem.Func): Merged {
       }
     }
   }
+  let lens: ssa.SInst[] = [];
+  let len_of = util.minus_ones(f.values.len());
+  let values = f.values;
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (lent_length(f, ins, owner) && len_of[ins.args[0]] < 0) {
+        len_of = len_of.with(ins.args[0], values.len());
+        lens = lens.append(ssa.SInst { ...ins, result: values.len(), args: [owner[ins.args[0]]] });
+        values = values.append(f.values[ins.result]);
+      }
+    }
+  }
+  let of = identity(values.len());
   let blocks: ssa.SBlock[] = [];
   let n = 0;
   for b in f.graph.blocks {
     let insts: ssa.SInst[] = [];
     for ins in b.insts {
-      if (lent_read(f, ins) && ins.args[0] < owner.len() && owner[ins.args[0]] >= 0) {
+      if (lent_length(f, ins, owner)) {
+        of = of.with(ins.result, len_of[ins.args[0]]);
+        insts = insts.append(ins);
+      } else if (lent_read(f, ins) && ins.args[0] < owner.len() && owner[ins.args[0]] >= 0) {
         insts = insts.append(ssa.SInst { ...ins, args: ins.args.with(0, owner[ins.args[0]]) });
-        n += 1;
       } else {
         insts = insts.append(ins);
+        if (ins.kind_tag == ssasem.array_lend() && ins.result >= 0 && ins.result < len_of.len() && len_of[ins.result] >= 0) {
+          insts = insts.append(lens[len_of[ins.result] - f.values.len()]);
+        }
+        continue;
       }
+      n += 1;
     }
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
   }
   if (n == 0) {
-    return Merged { f: f, merged: 0 };
+    return Lent { f: f, of: of, merged: 0 };
   }
-  return Merged { f: ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } }, merged: n };
+  return Lent { f: ssasem.Func { ...f, values: values, graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() } }, of: of, merged: n };
+}
+
+function lent_length(f: ssasem.Func, ins: ssa.SInst, owner: i32[]): boolean {
+  return ins.kind_tag == ssasem.length() && lent_read(f, ins) && ins.args[0] < owner.len() && owner[ins.args[0]] >= 0;
 }
 
 function lent_read(f: ssasem.Func, ins: ssa.SInst): boolean {

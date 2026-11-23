@@ -86,3 +86,39 @@ func TestSelfHostLentReadsReadTheArray(t *testing.T) {
 		t.Errorf("checked still lends its array to the reads of plain:\n%s", checked)
 	}
 }
+
+// count reads the length of its view in the loop test and after the loop.
+// Once count is spliced into total, both reads are one read of the length of
+// the array, before the loop (#16852).
+const lentLengthProgram = `function count(v: [u8]): i32 {
+    let n: i32 = 0;
+    let i: i32 = 0;
+    while (i < v.len()) {
+        if (v[i] > 100 as u8) { n = n + 1; }
+        i = i + 1;
+    }
+    return n + v.len();
+}
+@noinline function total(buf: u8[]): i32 {
+    return count(buf);
+}
+function main(): i32 {
+    let b: u8[] = [1, 200, 3, 150];
+    return total(b);
+}
+`
+
+func TestSelfHostLentLengthIsReadOnce(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	src := filepath.Join(t.TempDir(), "lent_length.fern")
+	if err := os.WriteFile(src, []byte(lentLengthProgram), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	total := semanticDumpOf(t, h, src, "total")
+	if strings.Contains(total, "array_lend") {
+		t.Errorf("total still lends its array to the reads of count:\n%s", total)
+	}
+	if n := strings.Count(total, "= length "); n != 1 {
+		t.Errorf("total reads the length %d times, want 1:\n%s", n, total)
+	}
+}

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Runs examples/android/files/smb_live.fern against Samba with each set of
 # dialects and signature rules that the SMB client of the app has code for.
-# It needs smbd, pdbedit and root, because Samba keeps its users with the
-# rights of root. CI runs it with sudo (.github/workflows/android.yml).
+# scripts/files-samba-serve starts each server, and needs smbd, pdbedit and
+# root. CI runs this script with sudo (.github/workflows/android.yml).
 #
 # usage: scripts/files-samba-check [FERN]
 set -euo pipefail
@@ -13,49 +13,11 @@ port=${FILES_SMB_PORT:-44450}
 user=fernfiles
 password=live-check-1
 
-for tool in smbd pdbedit; do
-  command -v "$tool" > /dev/null || { echo "files-samba-check: $tool is not on PATH" >&2; exit 2; }
-done
-[ "$(id -u)" = 0 ] || { echo "files-samba-check: run as root" >&2; exit 2; }
-
+serve="$root/scripts/files-samba-serve"
+export FILES_SMB_USER=$user FILES_SMB_PASSWORD=$password
 work=$(mktemp -d)
-# smbd ends its process group when it ends, so it runs in a session of its
-# own, and the script ends each process that has the config file.
-stop() {
-  pkill -9 -f "$work/smb.conf" 2> /dev/null || true
-}
-trap 'stop; rm -rf "$work"' EXIT
-mkdir -p "$work"/{private,lock,state,cache,pid,ncalrpc,log,share}
-chmod 777 "$work/share"
-id "$user" > /dev/null 2>&1 || useradd --no-create-home --shell /usr/sbin/nologin "$user"
-
-conf() {
-  cat > "$work/smb.conf" << CONF
-[global]
-  workgroup = WORKGROUP
-  server role = standalone server
-  smb ports = $port
-  bind interfaces only = yes
-  interfaces = 127.0.0.1
-  private dir = $work/private
-  lock directory = $work/lock
-  state directory = $work/state
-  cache directory = $work/cache
-  pid directory = $work/pid
-  ncalrpc dir = $work/ncalrpc
-  log file = $work/log/smbd.log
-  map to guest = never
-  disable netbios = yes
-  load printers = no
-  printing = bsd
-$1
-[share]
-  path = $work/share
-  read only = no
-  valid users = $user
-  force user = root
-CONF
-}
+trap '"$serve" stop "$work"; rm -rf "$work"' EXIT
+mkdir -p "$work/share"
 
 "$fern" -stdlib "$root/internal/stdlib" -o "$work/live" "$root/examples/android/files/smb_live.fern"
 "$fern" -stdlib "$root/internal/stdlib" -o "$work/stream" "$root/examples/android/files/stream_live.fern"
@@ -63,15 +25,7 @@ CONF
 failed=0
 check() {
   local name=$1 options=$2
-  stop
-  sleep 1
-  conf "$options"
-  printf '%s\n%s\n' "$password" "$password" | pdbedit -s "$work/smb.conf" -a -t -u "$user" > /dev/null
-  setsid smbd -s "$work/smb.conf" -D --no-process-group
-  for _ in $(seq 1 50); do
-    (exec 3<> "/dev/tcp/127.0.0.1/$port") 2> /dev/null && break
-    sleep 0.2
-  done
+  "$serve" start "$work" "$port" "$options"
   echo "== $name"
   if FILES_SMB_SERVER="127.0.0.1 $port share $user $password" "$work/live" > "$work/out.txt" 2>&1 && grep -q '^# fail 0' "$work/out.txt"; then
     grep '^# pass' "$work/out.txt"

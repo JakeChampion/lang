@@ -214,6 +214,49 @@ function u2(): i32 {
     return b;
 }
 `},
+	{"comment-in-a-destructuring-let-and-in-a-match-guard", `struct H { value: i32 }
+struct Inner { xs: H[], n: i32 }
+struct Outer { inner: Inner }
+function update(o: Outer): (Outer, i32) { return (o, 7); }
+function main(): i32 {
+  let (updated, tag) = update(Outer {
+    inner: Inner { // c11
+      xs: [H { value: 42 }],
+      n: 1,
+    },
+  });
+  let plain = update(Outer {
+    inner: Inner { // c12
+      xs: [],
+      n: 1,
+    },
+  });
+  return tag;
+}
+
+struct P { a: i32, b: i32 }
+
+function rec(o: Outer): i32 {
+  let P { a, b } = P {
+    a: 1, // on a field
+    b: 2,
+  };
+  return a + b;
+}
+
+function guard(tag: i32): i32 {
+  match (tag) {
+    n when ((): boolean => {
+      return n > 2; // in the guard
+    })() => {
+      return n; // in the arm
+    },
+    _ => {
+      return 0;
+    }
+  }
+}
+`},
 	{"unsafe-value-blocks", `function f(bytes: u8[]): string {
   let n = unsafe { 3 };
   let text = unsafe { string_from_bytes_unchecked(bytes) };

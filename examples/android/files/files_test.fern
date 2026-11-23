@@ -216,6 +216,30 @@ function test_servers(): test.TestOutcome {
   if (saved.len() != 1 || saved[0].name != "media on nas.local" || saved[0].server.password != "secret" || read_file(dir + "/.saved").unwrap_or("") != "1") {
     return test.fail("the app did not save the server");
   }
+  // An address with a port gives the port, and the form shows it again.
+  s = sim.tap(s, "Edit media on nas.local");
+  s = sim.type_in(s, "host", "nas.local:4450");
+  s = sim.tap(s, "Save");
+  let moved = s.shell.app.servers;
+  if (moved.len() != 1 || moved[0].server.host != "nas.local" || moved[0].server.port != 4450) {
+    return test.fail("an address with a port did not give the port");
+  }
+  s = sim.tap(s, "Edit media on nas.local");
+  if (s.shell.app.draft.server.host != "nas.local:4450") {
+    return test.fail("the form did not show the port of the server");
+  }
+  s = sim.type_in(s, "host", "nas.local");
+  s = sim.tap(s, "Save");
+  if (s.shell.app.servers[0].server.port != 445) {
+    return test.fail("an address with no port did not give the port of SMB");
+  }
+  let plain = smb.Server { host: "", port: 445, share: "x", user: "", password: "", domain: "" };
+  for text in ["nas.local:", ":445", "nas.local:0", "nas.local:70000", "fe80::1", "nas.local:smb"] {
+    let kept = files.addressed(smb.Server { ...plain, host: text });
+    if (kept.host != text || kept.port != 445) {
+      return test.fail("the address " + text + " must stay as it is");
+    }
+  }
   s = sim.tap(s, "Edit media on nas.local");
   s = sim.tap(s, "Remove");
   s = sim.tap(s, "Confirm removal");
@@ -417,6 +441,10 @@ function test_trash(): test.TestOutcome {
   preview(s, "17-trash");
   if (!sim.shows(s, "notes.txt") || !sim.shows(s, "photo.jpg") || files.shown(s.shell.app).len() != 2) {
     return test.fail("the trash does not show the two files by their names");
+  }
+  // A screen reader says the name that the file had, not the name in the trash.
+  if (!sim.spoken(s).contains("notes.txt")) {
+    return test.fail("the trash row does not say the name that the file had");
   }
   s = sim.hold(s, "notes.txt");
   s = done(sim.tap(s, "Restore"));
