@@ -10,6 +10,8 @@ The string method `is_url_like` recognizes an HTTP or HTTPS prefix followed by t
 
 ## Contracts
 
+`parse` divides a URL reference as RFC 3986 section 3 does. A scheme is a letter, then letters, digits, `+`, `-` or `.`, before the first `:`. A host and a port come only from an authority, which follows `//`. Thus `//host/x` has a host and no scheme, and `mailto:a@b.example` has a scheme and no host.
+
 Decoders that return bytes preserve arbitrary decoded bytes. Reference resolution requires a base URL and can fail for invalid input.
 
 ## Executable example
@@ -365,7 +367,7 @@ function __resolved(b: Url, reference: string): Result[string, UrlError] {
     return __parsed_text(b.scheme + ":" + reference);
   }
   let r = parse(reference)?;
-  if (r.scheme.len() > 0 || __has_scheme(reference)) {
+  if (r.scheme.len() > 0) {
     return Ok(reference);
   }
   let pq: (string, string) = __merged(b, r, reference);
@@ -376,24 +378,6 @@ function __resolved(b: Url, reference: string): Result[string, UrlError] {
 function __parsed_text(text: string): Result[string, UrlError] {
   parse(text)?;
   return Ok(text);
-}
-
-// RFC 3986 section 3.1: a letter, then letters, digits, "+", "-" or ".", then
-// ":". A reference with a scheme is not merged with the base (section 5.2.2).
-function __has_scheme(reference: string): boolean {
-  let i = 0;
-  while (i < reference.len()) {
-    let c = reference[i];
-    let letter = c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z';
-    if (c == b':') {
-      return i > 0;
-    }
-    if (!letter && (i == 0 || !(c >= b'0' && c <= b'9' || c == b'+' || c == b'-' || c == b'.'))) {
-      return false;
-    }
-    i += 1;
-  }
-  return false;
 }
 
 function __merged(b: Url, r: Url, reference: string): (string, string) {
@@ -517,7 +501,8 @@ function __joined_path(segments: string[], absolute: boolean): string {
 
 ```fern
 <<11 pub function parse(s: string): Result[Url, UrlError]>>=
-// The parts of a URL. `port` is 0 where the text gives none.
+// The parts of a URL. `port` is 0 where the text gives none. `host` is
+// empty where the text has no `//` authority, as in `mailto:a@b.example`.
 pub struct Url { scheme: string, host: string, port: i32, path: string, query: string, fragment: string }
 
 // The URL a parse refused, and which part of it was at fault.
@@ -562,9 +547,7 @@ pub function parse(s: string): Result[Url, UrlError] {
   while (i < n) {
     let sb = s[i] as i32;
     if (sb == 58) {
-      if (i + 2 < n && s[i + 1] == 47 && s[i + 2] == 47) {
-        scheme_end = i;
-      }
+      scheme_end = i;
       i = n;
     } else if (__url_scheme_char(sb, i == 0)) {
       i += 1;
@@ -577,7 +560,11 @@ pub function parse(s: string): Result[Url, UrlError] {
   let rest_start = 0;
   if (scheme_end > 0) {
     scheme = slice_unchecked(s, 0, scheme_end) + "";
-    rest_start = scheme_end + 3;
+    rest_start = scheme_end + 1;
+  }
+  let has_authority = rest_start + 1 < n && s[rest_start] == 47 && s[rest_start + 1] == 47;
+  if (has_authority) {
+    rest_start += 2;
   }
 
   // The fragment starts at the first '#', the query at the first '?' before
@@ -610,7 +597,7 @@ pub function parse(s: string): Result[Url, UrlError] {
   }
 
   let authority_end = rest_start;
-  if (scheme_end > 0) {
+  if (has_authority) {
     authority_end = query_start;
     if (slash >= 0) {
       authority_end = slash;
@@ -619,7 +606,7 @@ pub function parse(s: string): Result[Url, UrlError] {
 
   let host = "";
   let port = 0;
-  if (scheme_end > 0) {
+  if (has_authority) {
     let host_start = rest_start;
     i = rest_start;
     while (i < authority_end) {

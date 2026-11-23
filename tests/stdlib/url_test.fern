@@ -387,6 +387,52 @@ function test_parse_scheme_anchored(): test.TestOutcome {
   }
 }
 
+function __parts(s: string): string {
+  match (url.parse(s)) {
+    Ok(u) => {
+      return u.scheme + "|" + u.host + "|" + u.port.to_string() + "|" + u.path + "|" + u.query + "|" + u.fragment;
+    },
+    Err(e) => {
+      return "error";
+    }
+  }
+}
+
+function test_parse_scheme_without_authority(): test.TestOutcome {
+  if (__parts("mailto:a@b.example?subject=hi") != "mailto||0|a@b.example|subject=hi|") {
+    return test.fail("mailto: " + __parts("mailto:a@b.example?subject=hi"));
+  }
+  if (__parts("javascript:alert(1)") != "javascript||0|alert(1)||") {
+    return test.fail("javascript: " + __parts("javascript:alert(1)"));
+  }
+  if (__parts("urn:isbn:0451450523") != "urn||0|isbn:0451450523||") {
+    return test.fail("urn: " + __parts("urn:isbn:0451450523"));
+  }
+  return test.assert_eq(__parts("file:/etc/hosts"), "file||0|/etc/hosts||");
+}
+
+function test_parse_network_path_reference(): test.TestOutcome {
+  if (__parts("//evil.example:8080/x?y#z") != "|evil.example|8080|/x|y|z") {
+    return test.fail("network path: " + __parts("//evil.example:8080/x?y#z"));
+  }
+  if (__parts("//ev il/") != "error") {
+    return test.fail("a network path with an invalid host parsed");
+  }
+  return test.assert_eq(__parts("/a//b"), "||0|/a//b||");
+}
+
+function test_parse_not_a_scheme(): test.TestOutcome {
+  for text in ["./a:b", "a/b:c", "1a:b", ":b", "a b:c", "?a:b", "#a:b"] {
+    let Ok(u) = url.parse(text) else {
+      return test.fail(text + " did not parse");
+    };
+    if (u.scheme != "" || u.host != "") {
+      return test.fail(text + " got the scheme " + u.scheme);
+    }
+  }
+  return test.pass();
+}
+
 function test_decode_ill_formed_is_replacement(): test.TestOutcome {
   let fffd = utf8.encode(65533 as char);
   if (url.decode("a%FFb") != "a" + fffd + "b") {
@@ -444,6 +490,9 @@ function main(): i32 {
   r = r.it("parse port validation", test_parse_port);
   r = r.it("parse host shape", test_parse_host_shape);
   r = r.it("parse scheme anchored", test_parse_scheme_anchored);
+  r = r.it("parse scheme without authority", test_parse_scheme_without_authority);
+  r = r.it("parse network-path reference", test_parse_network_path_reference);
+  r = r.it("parse text that has no scheme", test_parse_not_a_scheme);
   r = r.it("decode ill-formed is U+FFFD", test_decode_ill_formed_is_replacement);
   r = r.it("decode_bytes keeps the bytes", test_decode_bytes_keeps_the_bytes);
   r = r.it("resolve normal references", test_resolve_normal);
