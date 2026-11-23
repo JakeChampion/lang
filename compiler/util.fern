@@ -140,6 +140,107 @@ function bucket_count(n: i32): i32 {
   return nb;
 }
 
+// The last entry of each name in a list that grows at its end. `heads` has
+// the last entry of each bucket, and `prior` the entry before each one in
+// its bucket, so a search from `head` gives the last entry of a name first.
+// The entries have the numbers 0, 1, 2 and so on.
+pub struct LastIndex { heads: i32[], prior: i32[] }
+
+pub function no_last_index(): LastIndex {
+  return LastIndex { heads: [], prior: [] };
+}
+
+// An index with no entry and with room for `n` entries.
+pub function last_index_for(n: i32): LastIndex {
+  return LastIndex { heads: minus_ones(bucket_count(n)), prior: [] };
+}
+
+pub function (ix: LastIndex) on(): boolean {
+  return ix.heads.len() > 0;
+}
+
+// The index has room for entry `k`.
+pub function (ix: LastIndex) room(k: i32): boolean {
+  return 2 * k < ix.heads.len();
+}
+
+// The index with one more entry, whose name is `name`.
+pub function (ix: LastIndex) with_entry(name: string): LastIndex {
+  let b = name_bucket(name, ix.heads.len() - 1);
+  let before = ix.heads[b];
+  return LastIndex { heads: ix.heads.with(b, ix.prior.len()), prior: ix.prior.append(before) };
+}
+
+// A list of fewer names than this has no index.
+const LAST_INDEX_FROM: i32 = 32;
+
+// The index of `names`.
+pub function last_index_of(names: string[]): LastIndex {
+  if (names.len() < LAST_INDEX_FROM) {
+    return no_last_index();
+  }
+  let out = last_index_for(2 * names.len());
+  for name in names {
+    out = out.with_entry(name);
+  }
+  return out;
+}
+
+// The index of `names` after the last of them joined the list that `ix` is
+// the index of.
+pub function (ix: LastIndex) with_last_of(names: string[]): LastIndex {
+  if (ix.on() && ix.room(names.len() - 1)) {
+    return ix.with_entry(names[names.len() - 1]);
+  }
+  return last_index_of(names);
+}
+
+// The index of the first `count` of `names`, the list that `ix` is the index
+// of.
+pub function (ix: LastIndex) cut_to(names: string[], count: i32): LastIndex {
+  if (!ix.on() || count >= names.len()) {
+    return ix;
+  }
+  let heads = ix.heads;
+  let prior: i32[] = [];
+  for k in 0..count {
+    prior = prior.append(ix.prior[k]);
+  }
+  for back in 0..names.len() - count {
+    let k = names.len() - 1 - back;
+    heads = heads.with(name_bucket(names[k], heads.len() - 1), ix.prior[k]);
+  }
+  return LastIndex { heads: heads, prior: prior };
+}
+
+// The last place of `name` in `names`, the list that `ix` is the index of,
+// or -1.
+pub function (ix: LastIndex) find(names: string[], name: string): i32 {
+  if (ix.on()) {
+    let at = ix.head(name);
+    while (at >= 0) {
+      if (names[at] == name) {
+        return at;
+      }
+      at = ix.prior[at];
+    }
+    return -1;
+  }
+  let i = names.len() - 1;
+  while (i >= 0) {
+    if (names[i] == name) {
+      return i;
+    }
+    i -= 1;
+  }
+  return -1;
+}
+
+// The last entry in the bucket of `name`, or -1.
+pub function (ix: LastIndex) head(name: string): i32 {
+  return ix.heads[name_bucket(name, ix.heads.len() - 1)];
+}
+
 pub function name_index(names: string[]): NameIndex {
   if (names.len() == 0) {
     return NameIndex { names: names, head: [], next: [] };
@@ -632,6 +733,34 @@ pub function same_i32s(a: i32[], b: i32[]): boolean {
     }
   }
   return true;
+}
+
+// A stack of i32 in an array. Element 0 has the count of the entries, and
+// the entries follow it, so a pop does not copy the array.
+pub function stack(): i32[] {
+  return [0];
+}
+
+pub function stack_len(s: i32[]): i32 {
+  return s[0];
+}
+
+pub function stack_push(own s: i32[], v: i32): i32[] {
+  let n = s[0] + 1;
+  if (n < s.len()) {
+    return s.with(n, v).with(0, n);
+  }
+  return s.append(v).with(0, n);
+}
+
+// The entry `back` places under the top one.
+pub function stack_at(s: i32[], back: i32): i32 {
+  return s[s[0] - back];
+}
+
+// `s` without its top `count` entries.
+pub function stack_pop(own s: i32[], count: i32): i32[] {
+  return s.with(0, s[0] - count);
 }
 
 // drop_last_i32 is a without its last element.
