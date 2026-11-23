@@ -110,3 +110,16 @@ jobs:
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+      # A fuzz step writes each failing input into testdata/fuzz/ of its
+      # package. Commit the entry and each run of the package replays it.
+      - name: Upload the failing fuzz inputs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-diff-repro-${{ matrix.host }}
+          path: |
+            internal/testing/e2e/testdata/fuzz
+            internal/testing/fernsmith/testdata/fuzz
+            internal/testing/e2ecompiler/testdata/fuzz
+          if-no-files-found: ignore
+          retention-days: 30
