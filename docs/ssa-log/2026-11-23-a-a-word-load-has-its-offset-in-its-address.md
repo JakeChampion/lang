@@ -62,6 +62,30 @@ the block of the load does not pay. `longest` keeps the one split whose load
 is on the cold side. `TestSelfHostLoopSplitKeepsOnceReadValues` pins this,
 and `deflate.__codes` keeps the split of `TestSelfHostLoopSplit`.
 
+## The literal pool on arm64
+
+The arm64 emitter put a literal pool, with a branch over it, before each
+256th instruction of a function. The change moved the code of
+`deflate_encode` by some instructions, and a pool that was before the match
+loop was then in it. `aarch64/deflate_encode.ir` went up 1.37% in the Perf
+lane, although each load in the loop was shorter.
+
+A pool now goes before the last instruction of the least loop weight in the
+second half of that span (`ssa_pool_sites`). The span between two pools is
+256 instructions at most, as before.
+`TestSelfHostArm64LiteralPoolOutsideLoop` pins a pool before a loop.
+
+Instructions of `bench/deflate_encode.fern` on arm64, counted by
+`qemu-aarch64 -one-insn-per-tb`:
+
+| Build | Instructions |
+| --- | ---: |
+| main | 40,531,166 |
+| the fold, a pool at each 256 instructions | 41,010,306 |
+| the fold, a pool at the least loop weight | 40,320,770 |
+
+`bench/deflate_decode.fern` runs 25,744,904, and on main it runs 26,101,669.
+
 ## Measured
 
 x86-64, callgrind, a program that calls `zlib_compress` at level 6 on 2 MB of
