@@ -9461,6 +9461,21 @@ pub function plain_type_spelling(s: string): boolean {
   return true;
 }
 
+// Reports a spelling that is a plain name with one or more `[]` after it.
+pub function array_of_plain_spelling(s: string): boolean {
+  let n = s.len();
+  if (n < 3 || s[n - 1] != b']') {
+    return false;
+  }
+  for i in 0..n {
+    let c = s[i];
+    if (c == b'(' || c == b'=' || c == b'[' && s[i + 1] != b']' || c == b']' && (i == 0 || s[i - 1] != b'[')) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // The type of `e?` when `e` has the type spelled t: the payload of an Option
 // or the Ok type of a Result, or "" when t is neither.
 function try_payload_spelling(t: string): string {

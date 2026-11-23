@@ -5,7 +5,7 @@ import "./ast";
 pub struct Ref { slot: i32, generation: i64 }
 
 // Closure code has no runtime values. Captures use heap edges.
-pub struct ClosureCode { params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], captured_names: string[], captured_types: string[], generic_name: string, self_name: string, peers: i32, cells: boolean }
+pub struct ClosureCode { params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], captured_names: string[], captured_types: string[], generic_name: string, self_name: string, peers: i32, cells: boolean, tynames: boolean }
 
 // Payloads contain data and internal references, without host cells or root handles.
 pub struct NativeHandle { reader: Option[Reader], writer: Option[Writer], directory: Option[Dir] }
