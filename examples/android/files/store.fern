@@ -2,10 +2,12 @@
 // SMB servers. Each function takes a place, so the screens and the copy
 // work the same way on each of them.
 import "std/array";
+import "std/base64";
 import "std/i32";
 import "std/i64";
 import "std/string";
 import "std/unicode";
+import "std/utf8";
 import "./smb";
 
 pub enum Place { Local, Remote(smb.Server) }
@@ -345,6 +347,57 @@ function total(place: Place, path: string): i64 {
 // files below it as its size.
 pub function measured(place: Place, path: string, entries: smb.Entry[]): smb.Entry[] {
   return entries.map((e: smb.Entry): smb.Entry => if (e.dir) { smb.Entry { ...e, size: total(place, join(path, e.name)) } } else { e });
+}
+
+// The folder at the top of a storage of the phone that holds what the
+// person deleted, until the person restores it or deletes it there.
+pub const TRASH: string = ".FernTrash";
+
+// The name of an item in the trash: the time of its delete, the folder
+// that it was in as base64, and its name. So two items of one name do not
+// meet, and the item can go back.
+pub function trash_name(now: i64, dir: string, name: string): string {
+  return now.to_string() + "~" + base64.encode_url(dir.bytes()) + "~" + name;
+}
+
+// The folder and the name that an item of the trash had, or None for a
+// name that `trash_name` did not make.
+pub function trashed(entry: string): Option[(string, string)] {
+  let parts = entry.splitn("~", 3);
+  if (parts.len() != 3) {
+    return None;
+  }
+  let Ok(dir) = base64.decode_url(parts[1]) else {
+    return None;
+  };
+  return Some((utf8.from_bytes_lossy(dir), parts[2]));
+}
+
+// Moves `items` of the folder `dir` to the trash of the storage `top`.
+pub function to_trash(top: string, dir: string, items: smb.Entry[], now: i64): Result[void, string] {
+  let trash = join(top, TRASH);
+  if (stat(trash).is_err()) {
+    make_dir(Local, trash)?;
+  }
+  for item in items {
+    rename_to(Local, join(dir, item.name), join(trash, trash_name(now, dir, item.name)))?;
+  }
+  return Ok(());
+}
+
+// Moves `items` of the trash `trash` back to the folders that they were
+// in. An item whose name is in use there gets a new name.
+pub function restore(trash: string, items: smb.Entry[]): Result[void, string] {
+  for item in items {
+    if let Some((dir, name)) = trashed(item.name) {
+      if (stat(dir).is_err() && create_dir_all(dir).is_err()) {
+        return Err("The folder of " + name + " is not there, and the app could not make it.");
+      }
+      let taken = list(Local, dir)?.map((e: smb.Entry): string => e.name);
+      rename_to(Local, join(trash, item.name), join(dir, free_name(taken, name)))?;
+    }
+  }
+  return Ok(());
 }
 
 // The most items that a search gives, and the most directories that it

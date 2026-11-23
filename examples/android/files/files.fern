@@ -68,6 +68,8 @@ enum Job {
   Measure(i64, store.Place, string, smb.Entry[]),
   Shares(i64, smb.Server),
   Scan(i64),
+  Trash(i64, string, string, smb.Entry[], i64),
+  Restore(i64, string, smb.Entry[]),
   Stream(store.Place, string, i64, string, i32, i32, string),
   ReadThumb(string, store.Place, string),
   Unpack(i64, store.Place, string, string),
@@ -203,6 +205,8 @@ pub enum Msg {
   ServersFound(i64, Result[string[], string]),
   PickServer(string),
   SelectAll,
+  OpenTrash,
+  RestorePicked,
   Zip,
   ToggleGrid,
   ThumbRead(string, string, Result[smb.Part, string]),
@@ -446,7 +450,50 @@ function remove_items(m: Model, items: smb.Entry[], key: string): Model {
     return Model { ...m, confirm: key };
   }
   let revision = m.task_revision + 1i64;
-  return Model { ...m, page: Browse, confirm: "", selecting: false, picked: [], task_revision: revision, loading: true, job: Some(Remove(revision, m.place, m.path, items)) };
+  let next = Model { ...m, page: Browse, confirm: "", selecting: false, picked: [], task_revision: revision, loading: true };
+  let trash = trash_of(m);
+  // A delete on the phone moves the items to the trash. A delete in the
+  // trash, or on a server, removes them.
+  if (trash.len() > 0 && !inside(m.path, trash)) {
+    return Model { ...next, job: Some(Trash(revision, store.parent(trash), m.path, items, now_unix_ms())) };
+  }
+  return Model { ...next, job: Some(Remove(revision, m.place, m.path, items)) };
+}
+
+// True when `path` is the folder `dir` or is below it.
+function inside(path: string, dir: string): boolean {
+  return path == dir || path.starts_with(dir + "/");
+}
+
+// The trash of the storage that holds the folder that shows, or "" for a
+// folder of a server.
+function trash_of(m: Model): string {
+  let store.Local = m.place else {
+    return "";
+  };
+  for root in m.roots {
+    if (inside(m.path, root.path)) {
+      return store.join(root.path, store.TRASH);
+    }
+  }
+  return "";
+}
+
+// True when the folder that shows is the trash, whose items have the
+// names of `store.trash_name`.
+function at_trash(m: Model): boolean {
+  return m.path == trash_of(m);
+}
+
+// The name that the screen shows for an entry: an item of the trash shows
+// the name that it had.
+function shown_name(m: Model, e: smb.Entry): string {
+  if (at_trash(m)) {
+    if let Some((dir, name)) = store.trashed(e.name) {
+      return name;
+    }
+  }
+  return e.name;
 }
 
 function select_update(own m: Model, msg: Msg): Model {
@@ -506,6 +553,21 @@ function select_update(own m: Model, msg: Msg): Model {
         return failed(Model { ...m, stream_port: 0, stream_token: "" }, text);
       }
       return m;
+    },
+    OpenTrash => {
+      if (m.roots.len() == 0) {
+        return m;
+      }
+      let trash = store.join(m.roots[0].path, store.TRASH);
+      return open(m, store.Local, "Trash", trash, trash);
+    },
+    RestorePicked => {
+      let items = picked_entries(m);
+      if (items.len() == 0 || !at_trash(m)) {
+        return m;
+      }
+      let revision = m.task_revision + 1i64;
+      return Model { ...m, selecting: false, picked: [], task_revision: revision, loading: true, job: Some(Restore(revision, m.path, items)) };
     },
     SelectAll => {
       return Model { ...m, picked: shown(m).map((e: smb.Entry): string => e.name), confirm: "" };
@@ -960,7 +1022,7 @@ pub function update(own m: Model, msg: Msg): Model {
     NewFolder | StartRename(_) | NameText(_) | SaveName | CancelName => {
       return name_update(idle, msg);
     },
-    Tap(_) | Hold(_) | StopSelecting | SelectAll | Zip | Extract(_) | StreamEnded(_) | ToggleGrid | ThumbRead(_, _, _) | Copy(_) | CopyOne(_, _) | ClearClip | Delete | DeleteOne(_) => {
+    Tap(_) | Hold(_) | StopSelecting | SelectAll | OpenTrash | RestorePicked | Zip | Extract(_) | StreamEnded(_) | ToggleGrid | ThumbRead(_, _, _) | Copy(_) | CopyOne(_, _) | ClearClip | Delete | DeleteOne(_) => {
       return select_update(idle, msg);
     },
     OpenServer(_) | EditServer(_) | Draft(_, _) | SaveServer | DeleteServer | FindShares | SharesFound(_, _) | PickShare(_) | FindServers | ServersFound(_, _) | PickServer(_) => {
@@ -1051,6 +1113,12 @@ function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
       Stream(place, path, size, token, port, old_port, old_token) => {
         stream.stop(old_port, old_token);
         return StreamEnded(stream.serve_file(place, path, size, token, port));
+      },
+      Trash(revision, top, dir, items, now) => {
+        return Finished(revision, "Moved to the trash.", store.to_trash(top, dir, items, now));
+      },
+      Restore(revision, trash, items) => {
+        return Finished(revision, "Restored.", store.restore(trash, items));
       },
       Scan(revision) => {
         return ServersFound(revision, scan.servers());
@@ -1309,6 +1377,7 @@ function home(m: Model): ui.El[Msg] {
   for place in PLACES {
     rows = rows.append(place_row(glyph(FOLDER, "place", ui.MUTED), place.0, "", OpenFolder(place.0, place.1)));
   }
+  rows = rows.append(place_row(glyph(SHEET, "trash", ui.MUTED), "Trash", "What you deleted on the phone", OpenTrash));
   if (m.pins.len() > 0) {
     rows = rows.append(section("PINNED"));
     for pin in m.pins {
@@ -1357,7 +1426,7 @@ function entry_picture(m: Model, e: smb.Entry, size: f64): ui.El[Msg] {
 // A tile of the grid: the picture of the entry over its name.
 function entry_tile(m: Model, e: smb.Entry): ui.El[Msg] {
   let on = m.selecting && m.picked.contains(e.name);
-  let name = ui.text[Msg](e.name).sized(13.0).clamped(2).colored(if (on) { ui.PRIMARY } else { ui.INK });
+  let name = ui.text[Msg](shown_name(m, e)).sized(13.0).clamped(2).colored(if (on) { ui.PRIMARY } else { ui.INK });
   let state = if (on) { ", selected" } else { "" };
   return ui.column([entry_picture(m, e, 88.0), name]).spaced(4.0).aligned(ui.CENTER).padding_xy(4.0, 4.0).wide().on_tap(Tap(e.name)).on_long(Hold(e.name)).described(e.name + state);
 }
@@ -1377,7 +1446,7 @@ function tile_row(m: Model, items: smb.Entry[], first: i32): ui.El[Msg] {
 
 function entry_row(m: Model, e: smb.Entry): ui.El[Msg] {
   let picture = entry_picture(m, e, 36.0);
-  let words = ui.column([ui.text[Msg](e.name).sized(16.0).clamped(1), ui.text[Msg](entry_detail(e)).colored(ui.MUTED).clamped(1)]).spaced(2.0).wide();
+  let words = ui.column([ui.text[Msg](shown_name(m, e)).sized(16.0).clamped(1), ui.text[Msg](entry_detail(e)).colored(ui.MUTED).clamped(1)]).spaced(2.0).wide();
   let kids = [picture, words];
   if (m.selecting) {
     let on = m.picked.contains(e.name);
@@ -1415,8 +1484,12 @@ function selection_bar(m: Model): ui.El[Msg][] {
     return [];
   }
   let delete = if (m.confirm == "delete") { "Confirm delete" } else { "Delete" };
+  let count = ui.row([ui.text[Msg](m.picked.len().to_string() + " selected").weighted(600).wide(), ui.text_button("Cancel", StopSelecting)]).aligned(ui.CENTER);
+  if (at_trash(m)) {
+    return [ui.card([count, actions_row([ui.button("Restore", RestorePicked), ui.text_button(delete, Delete), ui.text_button("All", SelectAll)])]).spaced(4.0).wide()];
+  }
   return [ui.card([
-    ui.row([ui.text[Msg](m.picked.len().to_string() + " selected").weighted(600).wide(), ui.text_button("Cancel", StopSelecting)]).aligned(ui.CENTER),
+    count,
     actions_row([ui.text_button("Copy", Copy(false)), ui.text_button("Move", Copy(true)), ui.text_button(delete, Delete), ui.text_button("Zip", Zip), ui.text_button("All", SelectAll)]),
   ]).spaced(4.0).wide()];
 }
@@ -1470,7 +1543,7 @@ function item(m: Model, name: string, screen: ui.Screen): ui.El[Msg] {
   };
   let delete = if (m.confirm == "delete:" + name) { "Confirm delete" } else { "Delete" };
   let rows = notice(m).concat([
-    ui.row([file_glyph(e.name, ui.INK), ui.text[Msg](e.name).sized(18.0).weighted(600).wide()]).aligned(ui.CENTER).spaced(14.0),
+    ui.row([file_glyph(e.name, ui.INK), ui.text[Msg](shown_name(m, e)).sized(18.0).weighted(600).wide()]).aligned(ui.CENTER).spaced(14.0),
     ui.text[Msg](store.size_text(e.size) + " · " + e.size.to_string() + " bytes").colored(ui.MUTED),
     ui.text[Msg]("Changed " + store.day_text(e.modified)).colored(ui.MUTED),
     ui.text[Msg](trail(m)).colored(ui.MUTED),

@@ -32,6 +32,9 @@ A long press starts a selection:
 - One button selects each item of the folder.
 - The person can copy, move or delete the selection. Delete needs a second
   tap.
+- A delete on the phone moves the items to the trash, a folder at the top
+  of the storage. The trash restores an item to its folder, or deletes it
+  for good. A delete on a server removes the item at once.
 - The app pastes into the folder that shows, also from the phone to a
   server and back.
 - **Zip** makes an archive of the selection in the folder that shows.

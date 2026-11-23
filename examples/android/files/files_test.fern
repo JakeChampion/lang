@@ -400,6 +400,35 @@ function test_background_and_retry(): test.TestOutcome {
   return test.assert_eq(gone && ended, true);
 }
 
+// A delete on the phone moves the file to the trash. The trash shows the
+// name that the file had, restores it, and deletes it for good.
+function test_trash(): test.TestOutcome {
+  let dir = fixture();
+  let s = done(sim.tap(simulator(dir, []), "Phone storage"));
+  s = sim.hold(s, "notes.txt");
+  s = sim.tap(s, "photo.jpg");
+  s = sim.tap(s, "Delete");
+  s = done(sim.tap(s, "Confirm delete"));
+  if (names(s) != "Download,Music" || !sim.shows(s, "Moved to the trash.") || stat(dir + "/notes.txt").is_ok()) {
+    return test.fail("the delete left " + names(s));
+  }
+  s = sim.back(s);
+  s = done(sim.tap(s, "Trash"));
+  preview(s, "17-trash");
+  if (!sim.shows(s, "notes.txt") || !sim.shows(s, "photo.jpg") || files.shown(s.shell.app).len() != 2) {
+    return test.fail("the trash does not show the two files by their names");
+  }
+  s = sim.hold(s, "notes.txt");
+  s = done(sim.tap(s, "Restore"));
+  let back = read_file(dir + "/notes.txt").unwrap_or("") == "Buy milk.\nCall the plumber.\n" && files.shown(s.shell.app).len() == 1;
+  s = sim.hold(s, "photo.jpg");
+  s = sim.tap(s, "Delete");
+  s = done(sim.tap(s, "Confirm delete"));
+  let emptied = files.shown(s.shell.app).len() == 0 && read_dir(dir + "/" + store.TRASH).unwrap_or(["x"]).len() == 0 && stat(dir + "/photo.jpg").is_err();
+  let removed = remove_dir_all(dir);
+  return test.assert_eq(back.to_string() + " " + emptied.to_string(), "true true");
+}
+
 function test_no_access(): test.TestOutcome {
   let s = simulator("/no/such/storage", []);
   preview(s, "10-access");
@@ -420,6 +449,7 @@ function main(): i32 {
   r = r.it("zip a selection and extract the archive", test_zip_and_extract);
   r = r.it("show small pictures and a grid", test_thumbs_and_grid);
   r = r.it("tell Android of a copy, and try a failed step again", test_background_and_retry);
+  r = r.it("delete to the trash, restore, and delete for good", test_trash);
   r = r.it("ask for access when the storage is closed", test_no_access);
   return r.finish();
 }

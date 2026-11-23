@@ -311,6 +311,17 @@ function test_documents(): test.TestOutcome {
   ]);
 }
 
+function test_trash_names(): test.TestOutcome {
+  let name = store.trash_name(1795377562000i64, "/storage/emulated/0/Ünï dir", "a~b.txt");
+  let (dir, base) = store.trashed(name).unwrap_or(("", ""));
+  return all([
+    test.assert_eq(dir, "/storage/emulated/0/Ünï dir"),
+    test.assert_eq(base, "a~b.txt"),
+    holds(!name.contains("/"), "the name of an item of the trash has a slash"),
+    holds(store.trashed("plain.txt").is_none() && store.trashed("1~!!~x").is_none(), "a plain name read as an item of the trash"),
+  ]);
+}
+
 function test_texts(): test.TestOutcome {
   return all([
     test.assert_eq(store.size_text(5i64), "5 B"),
@@ -400,6 +411,7 @@ function main(): i32 {
   r = r.it("an archive name stays below its folder", test_archive_names);
   r = r.it("a range request names the bytes of a file", test_ranges);
   r = r.it("the file picker gets rows for servers and files", test_documents);
+  r = r.it("an item of the trash keeps its folder and its name", test_trash_names);
   r = r.it("sizes and days read well", test_texts);
   r = r.it("a copy in steps keeps each byte", test_copy);
   r = r.it("the saved servers survive the vault", test_vault);
