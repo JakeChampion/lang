@@ -40,17 +40,6 @@ class NodeTests(unittest.TestCase):
         self.assertEqual(check.nodes(""), [])
 
 
-class ScreenTests(unittest.TestCase):
-    def test_physical_size(self):
-        self.assertEqual(check.screen_size("Physical size: 1080x2400\n"), (1080, 2400))
-
-    def test_override_wins(self):
-        self.assertEqual(check.screen_size("Physical size: 1080x2400\nOverride size: 720x1600\n"), (720, 1600))
-
-    def test_no_size(self):
-        self.assertIsNone(check.screen_size("error: device offline"))
-
-
 class TrashTests(unittest.TestCase):
     def test_entry_of_the_file(self):
         listing = ".\n..\n1795000000~L3N0b3JhZ2U~other.txt\n1795000001~L3N0b3JhZ2U~notes.txt\n"
@@ -63,6 +52,17 @@ class TrashTests(unittest.TestCase):
         for listing in ["", "notes.txt\n", "x~QQ~notes.txt\n", "17~QQ~notes.txt.bak\n", "ls: /sdcard/.FernTrash: No such file or directory\n"]:
             with self.subTest(listing=listing):
                 self.assertIsNone(check.trash_entry(listing, "notes.txt"))
+
+
+class SwipeTests(unittest.TestCase):
+    def test_half_the_screen(self):
+        self.assertEqual(check.swipe_up(tree()), ((540, 1800), (540, 600)))
+
+    def test_no_screen(self):
+        for xml in ("", "ERROR: could not get idle state.", "<hierarchy />",
+                    "<hierarchy><node bounds='[0,0][0,0]' /></hierarchy>"):
+            with self.subTest(xml=xml):
+                self.assertIsNone(check.swipe_up(xml))
 
 
 class FileTests(unittest.TestCase):

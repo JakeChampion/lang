@@ -92,6 +92,23 @@ def trash_entry(listing, name):
     return None
 
 
+def swipe_up(xml):
+    """The two points of a swipe that moves the screen of a uiautomator dump
+    up by half its height, or None when the dump has no screen."""
+    try:
+        top = ET.fromstring(xml).find("node")
+    except ET.ParseError:
+        return None
+    bounds = re.fullmatch(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", top.get("bounds", "") if top is not None else "")
+    if not bounds:
+        return None
+    x, y, right, bottom = map(int, bounds.groups())
+    if right <= x or bottom <= y:
+        return None
+    middle, height = (x + right) // 2, bottom - y
+    return (middle, y + height * 3 // 4), (middle, y + height // 4)
+
+
 def digest(text):
     """The first word of the output of sha256sum, or "" for no output."""
     words = text.split()
@@ -108,41 +125,28 @@ def dump(out, step):
     return xml
 
 
-def screen_size(text):
-    """The width and the height in the output of `wm size`, or None. An
-    override of the size comes after the physical size."""
-    sizes = re.findall(r"(\d+)x(\d+)", text)
-    return tuple(map(int, sizes[-1])) if sizes else None
-
-
-def scroll():
-    """Moves a list up by a third of the screen."""
-    width, height = screen_size(adb("shell", "wm", "size", check=False)) or (1080, 1920)
-    x = str(width // 2)
-    adb("shell", "input", "swipe", x, str(height * 2 // 3), x, str(height // 3), "400")
-    time.sleep(0.7)
-
-
-def find(out, step, label, timeout=30):
+def find(out, step, label, timeout=30, scroll=False):
     """The middle of the node `label`, when it shows in `timeout` seconds.
-    The tree has only the rows on the screen, so each third look without
-    the node moves the list up."""
+    With `scroll`, each dump that does not show it scrolls the screen down."""
     deadline = time.monotonic() + timeout
-    looks = 0
     while time.monotonic() < deadline:
-        point = point_of(dump(out, step), label)
+        xml = dump(out, step)
+        point = point_of(xml, label)
         if point:
             return point
-        looks += 1
-        if looks % 3 == 0:
-            scroll()
+        swipe = swipe_up(xml) if scroll else None
+        if swipe:
+            (x, y), (x2, y2) = swipe
+            # A slow drag scrolls the list and does not fling it.
+            adb("shell", "input", "swipe", str(x), str(y), str(x2), str(y2), "1500")
+            time.sleep(1)
         time.sleep(0.5)
     return None
 
 
-def tap(out, step, label, hold=False):
+def tap(out, step, label, hold=False, scroll=False):
     """Taps the node `label`, or holds it. False when it does not show."""
-    point = find(out, step, label)
+    point = find(out, step, label, scroll=scroll)
     if not point:
         screen(out, step)
         shown = sorted({name for name, _, _ in nodes(dump(out, step))})
@@ -224,7 +228,8 @@ def check_trash(out):
         screen(out, "delete-done")
         return fail("the delete did not move the text file to the trash")
     start()
-    if not tap(out, "trash", "Trash") or not tap(out, "trash-hold", NOTE, hold=True) or not tap(out, "restore", "Restore"):
+    # The Trash row is below the fold of a small screen.
+    if not tap(out, "trash", "Trash", scroll=True) or not tap(out, "trash-hold", NOTE, hold=True) or not tap(out, "restore", "Restore"):
         return
     if not until(lambda: NOTE_TEXT in adb("shell", "cat", source, check=False)):
         screen(out, "restore-done")
