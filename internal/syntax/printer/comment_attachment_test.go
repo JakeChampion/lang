@@ -382,6 +382,50 @@ struct P {
 	}
 }
 
+func TestFormatKeepsCommentOnOneLineDeclaration(t *testing.T) {
+	src := `import "std/string"; // why
+pub use "./x".{y}; // reexport
+
+const A: i32 = 1; // about A
+const B: i32 = 2;
+
+type S = P | Q; // about S
+
+struct P { x: i32 } // about P
+struct Q { x: i32 }
+
+enum E { One, Two } // about E
+
+function main(): i32 { return 0; }
+`
+	want := `import "std/string";  // why
+pub use "./x".{y};  // reexport
+
+const A: i32 = 1;  // about A
+
+const B: i32 = 2;
+
+type S = P | Q;  // about S
+
+struct P { x: i32 }  // about P
+
+struct Q { x: i32 }
+
+enum E { One, Two }  // about E
+
+function main(): i32 {
+  return 0;
+}
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := Format(prog); got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestFormatKeepsDeclarationOrder(t *testing.T) {
 	src := `function first(): i32 { return 1; }
 

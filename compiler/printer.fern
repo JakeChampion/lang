@@ -3766,6 +3766,9 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
         f = ff;
       }
     }
+    let (trailed, tf) = trail_one_line_decl(chunks[chunks.len() - 1], dline, f);
+    chunks = chunks.with(chunks.len() - 1, trailed);
+    f = tf;
   }
   for j in 0..mod.top_stmts.len() {
     if (wrote) {
@@ -3780,6 +3783,24 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
   let (tail, _) = drain_all(f, 0, chunks.len() > 0);
   chunks = chunks.append(tail);
   return util.str_join_chunks(chunks);
+}
+
+// A declaration that takes one line keeps the trailing comment of its line.
+function trail_one_line_decl(text: string, line: i32, f: Fmt): (string, Fmt) {
+  let n = text.len();
+  if (line <= 0 || n == 0 || text[n - 1] != b'\n') {
+    return (text, f);
+  }
+  for i in 0..n - 1 {
+    if (text[i] == b'\n') {
+      return (text, f);
+    }
+  }
+  let (tr, g) = emit_trailing(f, line);
+  if (tr.len() == 0) {
+    return (text, f);
+  }
+  return (slice_unchecked(text, 0, n - 1) + tr + "\n", g);
 }
 
 pub function diff_split_lines(s: string): string[] {

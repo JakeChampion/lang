@@ -87,6 +87,21 @@ struct P { x: i32, y: i32, // after y
 
 function main(): i32 { return 0; }
 `},
+	{"comment-after-a-one-line-declaration", `import "std/string"; // why
+pub use "./x".{y}; // reexport
+
+const A: i32 = 1; // about A
+const B: i32 = 2;
+
+type S = P | Q; // about S
+
+struct P { x: i32 } // about P
+struct Q { x: i32 }
+
+enum E { One, Two } // about E
+
+function main(): i32 { return 0; }
+`},
 	{"unsafe-value-blocks", `function f(bytes: u8[]): string {
   let n = unsafe { 3 };
   let text = unsafe { string_from_bytes_unchecked(bytes) };

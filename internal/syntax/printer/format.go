@@ -76,10 +76,27 @@ func Format(prog *ast.Program) string {
 			f.b.WriteByte('\n')
 		}
 		f.drainDeclLeading(d.p.Line)
+		start := f.b.Len()
 		d.emit()
+		f.trailOneLineDecl(start, d.p.Line)
 	}
 	f.drainAll(0)
 	return f.b.String()
+}
+
+// A declaration that takes one line keeps the trailing comment of its line.
+func (f *formatter) trailOneLineDecl(start, line int) {
+	if f.ci >= len(f.comments) || f.comments[f.ci].Pos.Line != line || !f.comments[f.ci].Trailing {
+		return
+	}
+	s := f.b.String()
+	if decl := s[start:]; !strings.HasSuffix(decl, "\n") || strings.Count(decl, "\n") != 1 {
+		return
+	}
+	f.b.Reset()
+	f.b.WriteString(s[:len(s)-1])
+	f.emitTrailing(line)
+	f.b.WriteByte('\n')
 }
 
 const formatIndent = "  "
