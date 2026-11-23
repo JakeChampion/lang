@@ -1,11 +1,12 @@
 function __fern_count_runs(s: usize, state: i32, set: usize): i32 {
-  let len: i32 = __load_i32(s);
+  let len: i32 = __fern_str_len(s);
+  let p = __fern_str_data(s);
   let n: u32 = __load_i32(set) as u32;
   let i: i32 = 0;
   let prev: i32 = if (state != 0) { 1 } else { 0 };
   let count: i32 = 0;
   while (i < len) {
-    let b: u32 = __load_u8(s + 4 + i as usize) as u32;
+    let b: u32 = __load_u8(p + i as usize) as u32;
     let cur: i32 = 0;
     if (b < n) {
       cur = __load_u8(set + 8 + b) + 255 >> 8;
