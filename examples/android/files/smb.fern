@@ -1,10 +1,11 @@
-// An SMB 2 client, from MS-SMB2: the files of a share on a Windows computer,
-// a NAS or a Samba server. It speaks the dialects 2.0.2 and 2.1, signs in
-// with NTLMv2, and signs each request after the sign-in.
+// An SMB client, from MS-SMB2: the files of a share on a Windows computer,
+// a NAS or a Samba server. It speaks the dialects from 2.0.2 to 3.1.1 and
+// signs in with NTLMv2. After the sign-in it signs each request, and with
+// the 3.1.1 dialect it encrypts each request.
 //
 // A socket cannot go from one worker to the next, so each function here
 // makes its own connection: it connects, signs in, opens the share, does
-// its work and closes. The client does not check the signature of a reply.
+// its work and closes.
 import "std/array";
 import "std/crypto";
 import "std/dns";
@@ -15,6 +16,7 @@ import "std/rand";
 import "std/result";
 import "std/time";
 import "./ntlm";
+import "./smb3";
 
 pub struct Server { host: string, port: i32, share: string, user: string, password: string, domain: string }
 
@@ -27,10 +29,14 @@ pub struct Part { data: u8[], size: i64 }
 // What a connection keeps from one request to the next. `credits` is the
 // count of 64 KiB units that the server lets the client send, and
 // `most_read` and `most_write` are the most bytes of one read and one write.
-struct State { session: u8[], tree: u8[], next: i64, key: u8[], signs: boolean, credits: i32, most_read: i32, most_write: i32 }
+// `signer` is the signature of the session: HMAC_SHA256, smb3.AES_CMAC or
+// smb3.AES_GMAC. `seal_key` and `open_key` are the keys of the encrypted
+// messages, or are empty.
+struct State { session: u8[], tree: u8[], next: i64, key: u8[], signs: boolean, credits: i32, most_read: i32, most_write: i32, dialect: i32, signer: i32, seal_key: u8[], open_key: u8[] }
 
-// A reply: its status and what follows its header of 64 bytes.
-struct Answer { status: i64, body: u8[], tree: u8[], session: u8[] }
+// A reply: its status and what follows its header of 64 bytes. `sent` and
+// `raw` are the whole request and the whole reply, for the sign-in hash.
+struct Answer { status: i64, body: u8[], tree: u8[], session: u8[], sent: u8[], raw: u8[] }
 
 struct Opened { id: u8[], size: i64 }
 
@@ -62,12 +68,37 @@ const NO_MORE_FILES: i64 = 0x80000006i64;
 
 const END_OF_FILE: i64 = 0xc0000011i64;
 
+const NOT_SUPPORTED: i64 = 0xc00000bbi64;
+
 // A read gave a part of a message of a pipe, and the pipe has more.
 const BUFFER_OVERFLOW: i64 = 0x80000005i64;
 
 // The capability of the 2.1 dialect for a read or a write of more than
 // 64 KiB.
 const LARGE_MTU: i64 = 4i64;
+
+// The capability of the 3.0 dialects for encrypted messages.
+const ENCRYPTION: i64 = 0x40i64;
+
+// The signature of a session of a dialect before 3.0.
+const HMAC_SHA256: i32 = 0;
+
+// The dialects that the client offers first. A server of 3.0 or 3.0.2 then
+// picks 2.1, whose HMAC-SHA256 signature is much faster here than the
+// AES-CMAC of those dialects.
+const FAST_DIALECTS: i32[] = [0x0202, 0x0210, 0x0311];
+
+const EACH_DIALECT: i32[] = [0x0202, 0x0210, 0x0300, 0x0302, 0x0311];
+
+const SMB_2_0_2: i32 = 0x0202;
+
+const SMB_2_1: i32 = 0x0210;
+
+const SMB_3_0: i32 = 0x0300;
+
+const SMB_3_0_2: i32 = 0x0302;
+
+const SMB_3_1_1: i32 = 0x0311;
 
 // The credits that each request asks the server for.
 const WANTED_CREDITS: i32 = 256;
@@ -98,7 +129,7 @@ const MEANINGS: (i64, string)[] = [
   (0xc0000101i64, "The folder is not empty."),
   (0xc0000043i64, "Another program uses the file."),
   (0xc000007fi64, "The share is full."),
-  (0xc00000bbi64, "The server accepts only SMB 3, which this app does not speak."),
+  (0xc00000bbi64, "The server accepts no SMB dialect that this app speaks."),
 ];
 
 pub function status_text(status: i64): string {
@@ -171,13 +202,48 @@ pub function sealed(head: u8[], body: u8[], key: u8[]): u8[] {
   return frame.concat(msg);
 }
 
-// True when the reply `msg` has the signature that `key` gives it.
+// True when the reply `msg` has the HMAC-SHA256 signature of `key`.
 pub function signed_by(msg: u8[], key: u8[]): boolean {
+  return marked(msg, key, HMAC_SHA256);
+}
+
+// The 16 bytes that sign `msg` with the signature `signer`.
+function mark(msg: u8[], key: u8[], signer: i32, reply: boolean): u8[] {
+  if (signer == smb3.AES_GMAC) {
+    return smb3.gmac(key, msg, reply);
+  }
+  if (signer == smb3.AES_CMAC) {
+    return smb3.cmac(key, msg);
+  }
+  return ntlm.part(crypto.hmac_sha256(key, msg), 0, 16);
+}
+
+function marked(msg: u8[], key: u8[], signer: i32): boolean {
   if (msg.len() < 64 || (ntlm.get32(msg, 16) & 8i64) == 0i64) {
     return false;
   }
   let clear = ntlm.part(msg, 0, 48).concat(ntlm.zeros(16)).concat(array.drop(msg, 64));
-  return ntlm.part(crypto.hmac_sha256(key, clear), 0, 16) == ntlm.part(msg, 48, 64);
+  return mark(clear, key, signer, true) == ntlm.part(msg, 48, 64);
+}
+
+// The request as it goes on the wire, with no length before it: encrypted
+// when the session has a key for that, or else signed when the session
+// signs.
+function wire(st: State, head: u8[], body: u8[]): Result[u8[], string] {
+  let msg = head.concat(body);
+  if (st.seal_key.len() > 0) {
+    return smb3.seal(st.seal_key, st.session, rand.bytes(12), msg);
+  }
+  if (st.signs) {
+    return Ok(ntlm.part(msg, 0, 48).concat(mark(msg, st.key, st.signer, false)).concat(array.drop(msg, 64)));
+  }
+  return Ok(msg);
+}
+
+function framed(msg: u8[]): u8[] {
+  let n = msg.len();
+  let frame: u8[] = [0u8, (n >> 16 & 255) as u8, (n >> 8 & 255) as u8, (n & 255) as u8];
+  return frame.concat(msg);
 }
 
 // The bytes of one read or one write: `want`, but no more than the server
@@ -200,8 +266,11 @@ function request(sock: Socket, st: State, command: i32, body: u8[]): (State, Res
 // it is the result. Each reply gives the client more credits.
 function charged(sock: Socket, st: State, command: i32, body: u8[], charge: i32): (State, Result[Answer, string]) {
   let after = State { ...st, next: st.next + charge as i64, credits: st.credits - charge };
-  let head = header(st, command, if (st.signs) { 8i64 } else { 0i64 }, charge);
-  if (!send_all(sock, sealed(head, body, if (st.signs) { st.key } else { [] }))) {
+  let head = header(st, command, if (st.signs && st.seal_key.len() == 0) { 8i64 } else { 0i64 }, charge);
+  let Ok(sent) = wire(st, head, body) else {
+    return (after, Err("The app could not encrypt a request."));
+  };
+  if (!send_all(sock, framed(sent))) {
     return (after, Err("The connection to the server broke."));
   }
   while (true) {
@@ -209,7 +278,7 @@ function charged(sock: Socket, st: State, command: i32, body: u8[], charge: i32)
       return (after, Err("The server did not answer."));
     };
     let n = size[1] as i32 << 16 | size[2] as i32 << 8 | size[3] as i32;
-    match (receive(sock, n)) {
+    match (opened(st, receive(sock, n))) {
       Ok(msg) => {
         if (msg.len() < 64 || msg[0] != 254u8 || msg[1] != 83u8) {
           return (after, Err("The server sent a reply that is not SMB 2."));
@@ -219,10 +288,10 @@ function charged(sock: Socket, st: State, command: i32, body: u8[], charge: i32)
         if (status == PENDING) {
           continue;
         }
-        if (st.signs && !signed_by(msg, st.key)) {
+        if (st.signs && st.seal_key.len() == 0 && !marked(msg, st.key, st.signer)) {
           return (after, Err("The server sent a reply with a wrong signature."));
         }
-        return (after, Ok(Answer { status: status, body: array.drop(msg, 64), tree: ntlm.part(msg, 36, 40), session: ntlm.part(msg, 40, 48) }));
+        return (after, Ok(Answer { status: status, body: array.drop(msg, 64), tree: ntlm.part(msg, 36, 40), session: ntlm.part(msg, 40, 48), sent: sent, raw: msg }));
       },
       Err(e) => {
         return (after, Err(e));
@@ -230,6 +299,19 @@ function charged(sock: Socket, st: State, command: i32, body: u8[], charge: i32)
     }
   }
   return (after, Err("The server did not answer."));
+}
+
+// The reply as the server wrote it: an encrypted reply opens with the key
+// of the session. A session that encrypts takes no reply in the clear.
+function opened(st: State, got: Result[u8[], string]): Result[u8[], string] {
+  let msg = got?;
+  if (st.open_key.len() == 0) {
+    return Ok(msg);
+  }
+  if (msg.len() < 4 || ntlm.part(msg, 0, 4) != smb3.TRANSFORM) {
+    return Err("The server sent a reply in the clear on an encrypted session.");
+  }
+  return smb3.open(st.open_key, msg);
 }
 
 // The reply, when its status is `want`, or what its status means.
@@ -265,11 +347,42 @@ function ntlm_message(blob: u8[]): u8[] {
 // the 2.1 dialect with large requests takes more than 64 KiB in one read or
 // one write, and each 64 KiB costs one credit.
 function sized(st: State, body: u8[]): State {
-  if (body.len() < 40 || ntlm.get16(body, 4) < 0x0210 || (ntlm.get32(body, 24) & LARGE_MTU) == 0i64) {
+  if (body.len() < 40 || ntlm.get16(body, 4) < SMB_2_1 || (ntlm.get32(body, 24) & LARGE_MTU) == 0i64) {
     return st;
   }
   let limit = (MOST_CHARGE * CHUNK) as i64;
   return State { ...st, most_read: ntlm.get32(body, 32).min(limit).max(CHUNK as i64) as i32, most_write: ntlm.get32(body, 36).min(limit).max(CHUNK as i64) as i32 };
+}
+
+// The request that offers `dialects`. The contexts at its end are for
+// the 3.1.1 dialect, and a server of an older dialect does not read them.
+function hello(dialects: i32[]): u8[] {
+  let b = ntlm.put32(ntlm.put16(ntlm.put16(ntlm.put16(ntlm.put16([], 36), dialects.len()), 1), 0), LARGE_MTU | ENCRYPTION).concat(rand.bytes(16));
+  let fixed = 64 + 36 + dialects.len() * 2;
+  let pad = (8 - fixed % 8) % 8;
+  b = ntlm.put16(ntlm.put16(ntlm.put32(b, (fixed + pad) as i64), smb3.CONTEXTS), 0);
+  for dialect in dialects {
+    b = ntlm.put16(b, dialect);
+  }
+  return b.concat(ntlm.zeros(pad)).concat(smb3.contexts(rand.bytes(32)));
+}
+
+// The state with the keys of a session that signed in with the key `key`.
+// `hash` is the hash of the sign-in messages, which the 3.1.1 dialect puts
+// in each key. `terms` is the reply to the negotiation: with 3.1.1 it
+// names the signature, and the session encrypts when it names AES-128-GCM.
+function keyed(st: State, key: u8[], hash: u8[], terms: u8[]): State {
+  if (st.dialect < SMB_3_0) {
+    return State { ...st, key: key, signs: true };
+  }
+  if (st.dialect < SMB_3_1_1) {
+    return State { ...st, key: smb3.derived(key, "SMB2AESCMAC\x00", "SmbSign\x00".bytes()), signs: true, signer: smb3.AES_CMAC };
+  }
+  let signed = State { ...st, key: smb3.derived(key, "SMBSigningKey\x00", hash), signs: true, signer: smb3.signer_of(terms) };
+  if (smb3.cipher_of(terms) != smb3.AES_128_GCM) {
+    return signed;
+  }
+  return State { ...signed, seal_key: smb3.derived(key, "SMBC2SCipherKey\x00", hash), open_key: smb3.derived(key, "SMBS2CCipherKey\x00", hash) };
 }
 
 function session_body(blob: u8[]): u8[] {
@@ -280,12 +393,13 @@ function session_body(blob: u8[]): u8[] {
 
 // Agrees the dialect, signs in and opens the share. It gives the state of
 // the connection.
-function sign_in(sock: Socket, s: Server): Result[State, string] {
-  let st = State { session: ntlm.zeros(8), tree: ntlm.zeros(4), next: 0i64, key: [], signs: false, credits: 1, most_read: CHUNK, most_write: CHUNK };
-  let hello = ntlm.put32(ntlm.put16(ntlm.put16(ntlm.put16(ntlm.put16([], 36), 2), 1), 0), LARGE_MTU).concat(rand.bytes(16));
-  hello = ntlm.put16(ntlm.put16(ntlm.put64(hello, 0i64), 0x0202), 0x0210);
-  let (st0, agreed) = request(sock, st, NEGOTIATE, hello);
-  let st1 = sized(st0, expect(agreed, OK)?.body);
+function sign_in(sock: Socket, s: Server, dialects: i32[]): Result[State, string] {
+  let st = State { session: ntlm.zeros(8), tree: ntlm.zeros(4), next: 0i64, key: [], signs: false, credits: 1, most_read: CHUNK, most_write: CHUNK, dialect: 0, signer: HMAC_SHA256, seal_key: [], open_key: [] };
+  let (st0, agreed) = request(sock, st, NEGOTIATE, hello(dialects));
+  let terms = expect(agreed, OK)?;
+  let dialect = ntlm.get16(terms.body, 4);
+  let st1 = State { ...sized(st0, terms.body), dialect: dialect };
+  let hash = smb3.hashed(smb3.hashed(ntlm.zeros(64), terms.sent), terms.raw);
   let (st2, asked) = request(sock, st1, SESSION_SETUP, session_body(ntlm.negotiate()));
   let first = expect(asked, MORE_PROCESSING)?;
   let offset = ntlm.get16(first.body, 4) - 64;
@@ -299,7 +413,10 @@ function sign_in(sock: Socket, s: Server): Result[State, string] {
   let (st4, answered) = request(sock, st3, SESSION_SETUP, session_body(reply.message));
   let done = expect(answered, OK)?;
   let guest = (ntlm.get16(done.body, 2) & 3) != 0;
-  let st5 = State { ...st4, key: reply.key, signs: s.user.len() > 0 && !guest };
+  let st5 = st4;
+  if (s.user.len() > 0 && !guest) {
+    st5 = keyed(st4, reply.key, smb3.hashed(smb3.hashed(smb3.hashed(hash, first.sent), first.raw), done.sent), terms.body);
+  }
   let path = ntlm.utf16("\\\\" + s.host + "\\" + s.share);
   let tree = ntlm.put16(ntlm.put16(ntlm.put16(ntlm.put16([], 9), 0), 72), path.len()).concat(path);
   let (st6, connected) = request(sock, st5, TREE_CONNECT, tree);
@@ -312,22 +429,34 @@ function with_share[T](s: Server, work: (Socket, State) => Result[T, string]): R
   if (s.host.len() == 0 || s.share.len() == 0) {
     return Err("Give the name of the server and of the share.");
   }
+  let (first, refused) = connected(s, FAST_DIALECTS, work);
+  if (refused) {
+    return connected(s, EACH_DIALECT, work).0;
+  }
+  return first;
+}
+
+// Runs `work` on a connection that offers `dialects`. The boolean is true
+// when the server took none of them.
+function connected[T](s: Server, dialects: i32[], work: (Socket, State) => Result[T, string]): (Result[T, string], boolean) {
   match (dns.dial(s.host, if (s.port > 0) { s.port } else { 445 }, dns.dial_options())) {
     Ok(sock) => {
       let out: Result[T, string] = Err("");
-      match (sign_in(sock, s)) {
+      let refused = false;
+      match (sign_in(sock, s, dialects)) {
         Ok(st) => {
           out = work(sock, st);
         },
         Err(e) => {
+          refused = e == status_text(NOT_SUPPORTED);
           out = Err(e);
         }
       }
       let closed = tcp_close(sock);
-      return out;
+      return (out, refused);
     },
     Err(e) => {
-      return Err("Could not reach " + s.host + ": " + e.message());
+      return (Err("Could not reach " + s.host + ": " + e.message()), false);
     }
   }
 }

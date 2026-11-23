@@ -1,0 +1,168 @@
+// The parts of SMB 3 that SMB 2 does not have, from MS-SMB2: the AES-CMAC
+// signature, the keys that come from the session key, the hash of the
+// sign-in messages of the 3.1.1 dialect, and the encrypted message.
+import "std/array";
+import "std/crypto";
+import "std/crypto/aes";
+import "std/crypto/aes_gcm";
+import "std/result";
+import "./ntlm";
+
+// The identifier of SHA-512 and of AES-128-GCM in a negotiation.
+const SHA_512: i32 = 1;
+
+pub const AES_128_GCM: i32 = 2;
+
+// The identifiers of the signature of a 3.1.1 session.
+pub const AES_CMAC: i32 = 1;
+
+pub const AES_GMAC: i32 = 2;
+
+// The first 4 bytes of an encrypted message.
+pub const TRANSFORM: u8[] = [253, 83, 77, 66];
+
+function xored(a: u8[], b: u8[]): u8[] {
+  let out: u8[] = [];
+  for i in 0..a.len() {
+    out = out.append(a[i] ^ b[i]);
+  }
+  return out;
+}
+
+// The block `b` times x in the field of CMAC.
+function doubled(b: u8[]): u8[] {
+  let out: u8[] = [];
+  for i in 0..16 {
+    let low = if (i < 15) { b[i + 1] >> 7 } else { 0u8 };
+    out = out.append((b[i] << 1 | low) & 255u8);
+  }
+  if ((b[0] & 128u8) != 0u8) {
+    out = out.with(15, out[15] ^ 135u8);
+  }
+  return out;
+}
+
+// The AES-CMAC of `msg` with the 16 bytes `key`, from RFC 4493.
+pub function cmac(key: u8[], msg: u8[]): u8[] {
+  let Ok(cipher) = aes.cipher(key) else {
+    return [];
+  };
+  let first = doubled(cipher.encrypt_block(ntlm.zeros(16)));
+  let blocks = ((msg.len() + 15) / 16).max(1);
+  let whole = msg.len() > 0 && msg.len() % 16 == 0;
+  let tail = ntlm.part(msg, (blocks - 1) * 16, msg.len());
+  let last = if (whole) { xored(tail, first) } else { xored(tail.append(128u8).concat(ntlm.zeros(15 - tail.len())), doubled(first)) };
+  // The CMAC is the last block of the CBC encryption of the message with
+  // that last block, from 16 zeros.
+  let at = (blocks - 1) * 16;
+  let Ok(chained) = aes.cbc_encrypt(key, ntlm.zeros(16), ntlm.part(msg, 0, at).concat(last)) else {
+    return [];
+  };
+  return ntlm.part(chained, at, at + 16);
+}
+
+// A key of 16 bytes from the session key, by the counter mode of SP 800-108
+// with HMAC-SHA256. `label` has its 0 byte at its end.
+pub function derived(key: u8[], label: string, context: u8[]): u8[] {
+  let msg: u8[] = [0u8, 0u8, 0u8, 1u8];
+  msg = msg.concat(label.bytes()).append(0u8).concat(context).concat([0u8, 0u8, 0u8, 128u8]);
+  return ntlm.part(crypto.hmac_sha256(key, msg), 0, 16);
+}
+
+// The hash of the sign-in after the message `msg`. It starts at 64 zeros.
+pub function hashed(before: u8[], msg: u8[]): u8[] {
+  return crypto.sha512(before.concat(msg));
+}
+
+function context(kind: i32, data: u8[]): u8[] {
+  let out = ntlm.put32(ntlm.put16(ntlm.put16([], kind), data.len()), 0i64).concat(data);
+  return out.concat(ntlm.zeros((8 - out.len() % 8) % 8));
+}
+
+// The count of the contexts that `contexts` gives.
+pub const CONTEXTS: i32 = 3;
+
+// The contexts of a 3.1.1 negotiation: SHA-512 for the hash of the sign-in
+// with the 32 bytes `salt`, AES-128-GCM for encrypted messages, and AES-GMAC
+// before AES-CMAC for signatures.
+pub function contexts(salt: u8[]): u8[] {
+  let hash = ntlm.put16(ntlm.put16(ntlm.put16([], 1), salt.len()), SHA_512).concat(salt);
+  let cipher = ntlm.put16(ntlm.put16([], 1), AES_128_GCM);
+  let signer = ntlm.put16(ntlm.put16(ntlm.put16([], 2), AES_GMAC), AES_CMAC);
+  return context(1, hash).concat(context(2, cipher)).concat(context(8, signer));
+}
+
+// The first choice of the context `kind` in the reply to a 3.1.1
+// negotiation, or 0. `body` is the reply after its header of 64 bytes.
+function picked(body: u8[], kind: i32): i32 {
+  if (body.len() < 64) {
+    return 0;
+  }
+  let count = ntlm.get16(body, 6);
+  let at = ntlm.get32(body, 60) as i32 - 64;
+  for i in 0..count {
+    if (at < 0 || at + 8 > body.len()) {
+      return 0;
+    }
+    let length = ntlm.get16(body, at + 2);
+    if (ntlm.get16(body, at) == kind && at + 12 <= body.len()) {
+      return ntlm.get16(body, at + 10);
+    }
+    at += 8 + length;
+    at += (8 - at % 8) % 8;
+  }
+  return 0;
+}
+
+// The cipher that the server picked for encrypted messages, or 0.
+pub function cipher_of(body: u8[]): i32 {
+  return picked(body, 2);
+}
+
+// The signature that the server picked. A server that names none signs
+// with AES-CMAC.
+pub function signer_of(body: u8[]): i32 {
+  let named = picked(body, 8);
+  return if (named == 0) { AES_CMAC } else { named };
+}
+
+// The AES-GMAC that signs `msg`: the tag of AES-GCM over the message with
+// no text. The nonce is the message ID of `msg`, and a bit for a reply.
+pub function gmac(key: u8[], msg: u8[], reply: boolean): u8[] {
+  let Ok(k) = aes_gcm.key(key) else {
+    return [];
+  };
+  let nonce = ntlm.part(msg, 24, 32).append(if (reply) { 1u8 } else { 0u8 }).concat(ntlm.zeros(3));
+  let empty: u8[] = [];
+  return k.seal(nonce, empty, msg).unwrap_or([]);
+}
+
+// The message `msg` encrypted for the session `session`, with the 12 bytes
+// `nonce`. The header of 52 bytes holds the tag, the nonce and the size.
+pub function seal(key: u8[], session: u8[], nonce: u8[], msg: u8[]): Result[u8[], string] {
+  let Ok(k) = aes_gcm.key(key) else {
+    return Err("The key of the session has a wrong size.");
+  };
+  let about = ntlm.put16(ntlm.put16(ntlm.put32(nonce.concat(ntlm.zeros(4)), msg.len() as i64), 0), 1).concat(session);
+  let Ok(out) = k.seal(nonce, msg, about) else {
+    return Err("The app could not encrypt a message.");
+  };
+  let n = msg.len();
+  return Ok(TRANSFORM.concat(ntlm.part(out, n, n + 16)).concat(about).concat(ntlm.part(out, 0, n)));
+}
+
+// The message in the encrypted message `wire`, or an error when its tag is
+// wrong.
+pub function open(key: u8[], wire: u8[]): Result[u8[], string] {
+  if (wire.len() < 52) {
+    return Err("The server sent an encrypted reply that is too short.");
+  }
+  let Ok(k) = aes_gcm.key(key) else {
+    return Err("The key of the session has a wrong size.");
+  };
+  let sealed = array.drop(wire, 52).concat(ntlm.part(wire, 4, 20));
+  let Ok(msg) = k.open(ntlm.part(wire, 20, 32), sealed, ntlm.part(wire, 20, 52)) else {
+    return Err("The server sent an encrypted reply with a wrong tag.");
+  };
+  return Ok(msg);
+}

@@ -11,6 +11,7 @@ import "std/i64";
 import "std/string";
 import "std/utf8";
 import "std/worker";
+import "./scan";
 import "./smb";
 import "./store";
 import "../look";
@@ -57,6 +58,7 @@ enum Job {
   Search(i64, store.Place, string, string),
   Measure(i64, store.Place, string, smb.Entry[]),
   Shares(i64, smb.Server),
+  Scan(i64),
 }
 
 // What the app needs from Android: the storages of the phone, whether the
@@ -114,6 +116,9 @@ pub struct Model {
   // asks for them.
   shares: string[],
   finding: boolean,
+  // The servers that a scan of the network found, and true while it runs.
+  hosts: string[],
+  scanning: boolean,
   revision: i64,
   task_revision: i64,
   job: Option[Job],
@@ -163,6 +168,9 @@ pub enum Msg {
   FindShares,
   SharesFound(i64, Result[string[], string]),
   PickShare(string),
+  FindServers,
+  ServersFound(i64, Result[string[], string]),
+  PickServer(string),
   SelectAll,
   OpenFile(string),
   ShareFile(string),
@@ -196,7 +204,7 @@ function no_server(): Saved {
 pub function start(roots: Root[], granted: boolean, servers: Saved[], cache: string, prefs: Prefs): Model {
   return Model {
     roots: roots, servers: servers, granted: granted, cache: cache, launch: "", sharing: false, pins: prefs.pins, recent: prefs.recent, unkept: false, found: false, page: Home, place: store.Local, label: "", top: "", path: "", entries: [], loading: false, note: "", fault: "", sort: prefs.sort, hidden: prefs.hidden, query: "",
-    selecting: false, picked: [], clip: None, task: None, naming: None, name_text: "", confirm: "", draft: no_server(), preview: "", picture: None, raw: [], wide: 0, shares: [], finding: false, revision: 0i64, task_revision: 0i64, job: None, need_roots: false, ask_access: false, unsaved: false,
+    selecting: false, picked: [], clip: None, task: None, naming: None, name_text: "", confirm: "", draft: no_server(), preview: "", picture: None, raw: [], wide: 0, shares: [], finding: false, hosts: [], scanning: false, revision: 0i64, task_revision: 0i64, job: None, need_roots: false, ask_access: false, unsaved: false,
   };
 }
 
@@ -482,7 +490,7 @@ function server_update(own m: Model, msg: Msg): Model {
     },
     EditServer(i) => {
       let draft = if (i >= 0 && i < m.servers.len()) { m.servers[i] } else { no_server() };
-      return Model { ...m, page: Server(i), draft: draft, shares: [], finding: false, note: "", fault: "", confirm: "" };
+      return Model { ...m, page: Server(i), draft: draft, shares: [], finding: false, hosts: [], scanning: false, note: "", fault: "", confirm: "" };
     },
     Draft(field, text) => {
       let next = drafted(m.draft, field, text);
@@ -510,6 +518,26 @@ function server_update(own m: Model, msg: Msg): Model {
     },
     PickShare(name) => {
       return Model { ...m, draft: drafted(m.draft, 2, name) };
+    },
+    FindServers => {
+      let revision = m.revision + 1i64;
+      return Model { ...m, scanning: true, hosts: [], note: "", fault: "", revision: revision, job: Some(Scan(revision)) };
+    },
+    ServersFound(revision, result) => {
+      if (revision != m.revision) {
+        return m;
+      }
+      match (result) {
+        Ok(hosts) => {
+          return told(Model { ...m, scanning: false, hosts: hosts }, if (hosts.len() == 0) { "No server answers on this network." } else { "" });
+        },
+        Err(e) => {
+          return failed(Model { ...m, scanning: false }, e);
+        }
+      }
+    },
+    PickServer(host) => {
+      return Model { ...m, draft: drafted(m.draft, 1, host), shares: [] };
     },
     SaveServer => {
       let Server(i) = m.page else {
@@ -813,7 +841,7 @@ pub function update(own m: Model, msg: Msg): Model {
     Tap(_) | Hold(_) | StopSelecting | SelectAll | Copy(_) | CopyOne(_, _) | ClearClip | Delete | DeleteOne(_) => {
       return select_update(idle, msg);
     },
-    OpenServer(_) | EditServer(_) | Draft(_, _) | SaveServer | DeleteServer | FindShares | SharesFound(_, _) | PickShare(_) => {
+    OpenServer(_) | EditServer(_) | Draft(_, _) | SaveServer | DeleteServer | FindShares | SharesFound(_, _) | PickShare(_) | FindServers | ServersFound(_, _) | PickServer(_) => {
       return server_update(idle, msg);
     },
     Listed(_, _) | Finished(_, _, _) | TextRead(_, _) | PictureRead(_, _) => {
@@ -880,6 +908,9 @@ function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
       },
       Search(revision, place, path, needle) => {
         return Searched(revision, store.search(place, path, needle));
+      },
+      Scan(revision) => {
+        return ServersFound(revision, scan.servers());
       },
       Shares(revision, server) => {
         return SharesFound(revision, smb.shares(server));
@@ -1284,10 +1315,22 @@ function share_picker(m: Model): ui.El[Msg] {
   return actions_row(buttons);
 }
 
+// The button that looks for servers on the network, and a button for each
+// server that it found.
+function server_picker(m: Model): ui.El[Msg] {
+  let buttons: ui.El[Msg][] = [ui.text_button(if (m.scanning) { "Looking…" } else { "Find servers" }, FindServers)];
+  for host in m.hosts {
+    let pick = if (host == m.draft.server.host) { ui.button(host, PickServer(host)) } else { ui.outlined_button(host, PickServer(host)) };
+    buttons = buttons.append(pick.described("Server " + host));
+  }
+  return actions_row(buttons);
+}
+
 function server_page(m: Model, at: i32): ui.El[Msg] {
   let s = m.draft.server;
   let rows = notice(m).concat([
     labelled("Address", "host", s.host, "192.168.1.10 or nas.local", 1),
+    server_picker(m),
     labelled("User", "user", s.user, "Leave empty for a guest", 3),
     ui.column([ui.text[Msg]("Password").colored(ui.MUTED), ui.field[Msg]("password", s.password, "Password").secret().on_edit((text: string): Msg => Draft(4, text))]).spaced(4.0).wide(),
     labelled("Domain", "domain", s.domain, "Optional", 5),
@@ -1300,7 +1343,7 @@ function server_page(m: Model, at: i32): ui.El[Msg] {
     buttons = buttons.append(ui.text_button(if (m.confirm == "server") { "Confirm removal" } else { "Remove" }, DeleteServer));
   }
   rows = rows.append(actions_row(buttons));
-  rows = rows.append(ui.text[Msg]("Files speaks SMB 2 and signs in with NTLMv2. The password stays on this phone.").colored(ui.MUTED));
+  rows = rows.append(ui.text[Msg]("Files speaks SMB 2 and SMB 3, and encrypts with SMB 3.1.1. The password stays on this phone.").colored(ui.MUTED));
   return sheet(if (at >= 0) { "Edit server" } else { "Add a server" }, rows, "server");
 }
 

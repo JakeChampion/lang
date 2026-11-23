@@ -1,0 +1,54 @@
+// Finds the SMB servers of the local network: each address of the /24
+// network of the phone that takes a connection on the SMB port.
+import "std/net";
+import "std/result";
+
+// The address of the phone on its network, or None with no network. The
+// UDP socket sends nothing: its peer only picks the interface.
+pub function local_ip(): Option[u8[]] {
+  let Ok(sock) = net.udp_socket(net.socket_addr(net.ipv4_unspecified(), 0)) else {
+    return None;
+  };
+  let out: Option[u8[]] = None;
+  if (net.set_peer(sock, net.socket_addr(net.ipv4(192, 0, 2, 1), 9)).is_ok()) {
+    if let Ok(here) = net.local_addr(sock) {
+      let ip = here.ip.to_canonical();
+      if (ip.is_v4() && !ip.is_unspecified() && !ip.is_loopback()) {
+        out = Some(ip.bytes());
+      }
+    }
+  }
+  let closed = tcp_close(sock);
+  return out;
+}
+
+// The addresses from first to last of the network of `ip`, which is 4
+// bytes, that take a connection on `port` in `wait_ms`. Each connection
+// starts at the same time, so the scan takes `wait_ms`.
+pub function open_hosts(ip: u8[], first: i32, last: i32, port: i32, wait_ms: i64): string[] {
+  let started: (i32, Socket)[] = [];
+  for d in first..last + 1 {
+    if (d != ip[3] as i32) {
+      if let Ok(sock) = net.connect_start(net.socket_addr(net.ipv4(ip[0] as i32, ip[1] as i32, ip[2] as i32, d), port)) {
+        started = started.append((d, sock));
+      }
+    }
+  }
+  sleep_ms(wait_ms);
+  let out: string[] = [];
+  for pair in started {
+    if (net.connect_result(pair.1).is_ok()) {
+      out = out.append(ip[0].to_string() + "." + ip[1].to_string() + "." + ip[2].to_string() + "." + pair.0.to_string());
+    }
+    let closed = tcp_close(pair.1);
+  }
+  return out;
+}
+
+// The SMB servers of the network of the phone.
+pub function servers(): Result[string[], string] {
+  let Some(ip) = local_ip() else {
+    return Err("The phone is on no network.");
+  };
+  return Ok(open_hosts(ip, 1, 254, 445, 700i64));
+}

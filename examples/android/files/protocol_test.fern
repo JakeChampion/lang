@@ -1,13 +1,16 @@
 // Tests of the parts of the file explorer that do not need a screen: the
 // hashes and the messages of the SMB sign-in, the paths, and the texts.
 import "std/hex";
+import "std/net";
 import "std/test";
 import "./files";
 import "./md4";
 import "./ntlm";
 import "./open";
 import "./prefs";
+import "./scan";
 import "./smb";
+import "./smb3";
 import "./store";
 import "./vault";
 
@@ -143,6 +146,69 @@ function test_request_sizes(): test.TestOutcome {
   ]);
 }
 
+// The AES-CMAC vectors of RFC 4493: no message, one block, 40 bytes.
+function test_cmac(): test.TestOutcome {
+  let key = hex.decode("2b7e151628aed2a6abf7158809cf4f3c").unwrap_or([]);
+  let msg = hex.decode("6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e5130c81c46a35ce411").unwrap_or([]);
+  let empty: u8[] = [];
+  return all([
+    test.assert_eq(hex.encode(smb3.cmac(key, empty)), "bb1d6929e95937287fa37d129b756746"),
+    test.assert_eq(hex.encode(smb3.cmac(key, ntlm.part(msg, 0, 16))), "070a16b46b4d4144f79bdd9dd04a287c"),
+    test.assert_eq(hex.encode(smb3.cmac(key, msg)), "dfa66747de9ae63030ca32611497c827"),
+  ]);
+}
+
+// An encrypted message opens with its key, and not after a change.
+function test_encrypted_message(): test.TestOutcome {
+  let key = ntlm.zeros(15).append(9u8);
+  let session = ntlm.put64([], 77i64);
+  let Ok(wire) = smb3.seal(key, session, ntlm.zeros(11).append(1u8), "a request".bytes()) else {
+    return test.fail("the message did not encrypt");
+  };
+  let back = smb3.open(key, wire);
+  let changed = smb3.open(key, wire.with(60, wire[60] ^ 1u8));
+  let other = smb3.open(ntlm.zeros(16), wire);
+  return all([
+    test.assert_eq(wire.len(), 52 + 9),
+    test.assert_eq(hex.encode(ntlm.part(wire, 0, 4)), "fd534d42"),
+    test.assert_eq(ntlm.get32(wire, 36), 9i64),
+    holds(back.is_ok() && back.unwrap_or([]) == "a request".bytes(), "the message did not come back"),
+    holds(changed.is_err(), "a changed message opened"),
+    holds(other.is_err(), "a message opened with another key"),
+  ]);
+}
+
+// The contexts of a negotiation, and the cipher that a reply picks.
+function test_negotiation_contexts(): test.TestOutcome {
+  let sent = smb3.contexts(ntlm.zeros(32));
+  let reply = ntlm.put16(ntlm.zeros(6), 3).concat(ntlm.zeros(52));
+  reply = ntlm.put32(reply, 128i64).concat(sent);
+  return all([
+    test.assert_eq(sent.len(), 48 + 16 + 16),
+    test.assert_eq(ntlm.get16(sent, 0), 1),
+    test.assert_eq(ntlm.get16(sent, 48), 2),
+    test.assert_eq(smb3.cipher_of(reply), smb3.AES_128_GCM),
+    test.assert_eq(smb3.signer_of(reply), smb3.AES_GMAC),
+    test.assert_eq(smb3.cipher_of(ntlm.zeros(64)), 0),
+    test.assert_eq(smb3.signer_of(ntlm.zeros(64)), smb3.AES_CMAC),
+    test.assert_eq(smb3.gmac(ntlm.zeros(16), ntlm.zeros(64), true).len(), 16),
+    holds(smb3.gmac(ntlm.zeros(16), ntlm.zeros(64), true) != smb3.gmac(ntlm.zeros(16), ntlm.zeros(64), false), "a request and a reply have one GMAC"),
+    test.assert_eq(smb3.derived(ntlm.zeros(16), "SMBSigningKey\x00", ntlm.zeros(64)).len(), 16),
+  ]);
+}
+
+// A scan finds the one address of its range that listens.
+function test_scan(): test.TestOutcome {
+  let Ok(listener) = net.listen_at(net.socket_addr(net.ipv4(127, 0, 0, 2), 0), net.listen_options()) else {
+    return test.fail("no listener");
+  };
+  let port = net.local_port(listener).unwrap_or(0);
+  let found = scan.open_hosts([127u8, 0u8, 0u8, 9u8], 1, 4, port, 300i64);
+  let closed = tcp_close(listener);
+  let none = scan.open_hosts([127u8, 0u8, 0u8, 9u8], 1, 4, port, 300i64);
+  return all([test.assert_eq(found.join(","), "127.0.0.2"), test.assert_eq(none.len(), 0)]);
+}
+
 function test_paths(): test.TestOutcome {
   return all([
     test.assert_eq(smb.wire_path("/docs/a b.txt"), "docs\\a b.txt"),
@@ -260,6 +326,10 @@ function main(): i32 {
   r = r.it("the reply to a share question gives the disk shares", test_shares);
   r = r.it("a reply passes only with its signature", test_signature);
   r = r.it("a request takes what the credits pay for", test_request_sizes);
+  r = r.it("AES-CMAC gives the values of RFC 4493", test_cmac);
+  r = r.it("an encrypted message opens only with its key", test_encrypted_message);
+  r = r.it("a negotiation names its hash and its cipher", test_negotiation_contexts);
+  r = r.it("a scan finds the address that listens", test_scan);
   r = r.it("paths join, split and get free names", test_paths);
   r = r.it("a file name gives its media type", test_types);
   r = r.it("the preferences survive their file", test_prefs);
