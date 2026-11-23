@@ -1,0 +1,4 @@
+// The length of the string `s`, in bytes.
+function __fern_str_len(s: usize): i32 {
+  return __load_i32(s);
+}

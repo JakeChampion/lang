@@ -5984,8 +5984,8 @@ pub function fd_stat_func(): string {
   o += "    (local.set $err (call $__fern_fd_filestat_get (local.get $fd) (local.get $buf)))\n";
   o += "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o += "      (call $__fern_raw_free (local.get $buf) (i32.const 64))\n";
-  o += "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
-  o += "      (i32.store (local.get $path) (i32.const 0))\n";
+  o += "      (local.set $path " + str_empty_wat() + ")\n";
+  o += "      " + str_set_len_wat("(local.get $path)", "(i32.const 0)") + "\n";
   o += "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o += "      (i32.store (local.get $res) (i32.const 1))\n";
   o += "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
@@ -6050,8 +6050,8 @@ pub function fd_sync_func(name: string, imp: string): string {
   o += "    (local $err i32) (local $res i32) (local $path i32)\n";
   o = o + "    (local.set $err (call $__fern_" + imp + " (local.get $fd)))\n";
   o += "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
-  o += "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
-  o += "      (i32.store (local.get $path) (i32.const 0))\n";
+  o += "      (local.set $path " + str_empty_wat() + ")\n";
+  o += "      " + str_set_len_wat("(local.get $path)", "(i32.const 0)") + "\n";
   o += "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o += "      (i32.store (local.get $res) (i32.const 1))\n";
   o += "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
@@ -6068,8 +6068,8 @@ pub function fd_drop_cache_func(): string {
   o += "    (local $err i32) (local $res i32) (local $path i32)\n";
   o += "    (local.set $err (call $__fern_fd_advise (local.get $fd) (local.get $off) (local.get $len) (i32.const 4)))\n";
   o += "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
-  o += "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
-  o += "      (i32.store (local.get $path) (i32.const 0))\n";
+  o += "      (local.set $path " + str_empty_wat() + ")\n";
+  o += "      " + str_set_len_wat("(local.get $path)", "(i32.const 0)") + "\n";
   o += "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o += "      (i32.store (local.get $res) (i32.const 1))\n";
   o += "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
@@ -6162,8 +6162,8 @@ pub function reader_seek_func(): string {
   o += "  (func $__fern_reader_seek (param $fd i32) (param $off i64) (param $whence i32) (result i32)\n";
   o += "    (local $err i32) (local $rb i32) (local $res i32) (local $path i32)\n";
   o += "    (if (i32.gt_u (local.get $whence) (i32.const 2)) (then\n";
-  o += "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
-  o += "      (i32.store (local.get $path) (i32.const 0))\n";
+  o += "      (local.set $path " + str_empty_wat() + ")\n";
+  o += "      " + str_set_len_wat("(local.get $path)", "(i32.const 0)") + "\n";
   o += "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o += "      (i32.store (local.get $res) (i32.const 1))\n";
   o += "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (i32.const 28) (local.get $path)))\n";
@@ -6172,8 +6172,8 @@ pub function reader_seek_func(): string {
   o += "    (local.set $err (call $__fern_fd_seek (local.get $fd) (local.get $off) (local.get $whence) (local.get $rb)))\n";
   o += "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o += "      (call $__fern_raw_free (local.get $rb) (i32.const 8))\n";
-  o += "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
-  o += "      (i32.store (local.get $path) (i32.const 0))\n";
+  o += "      (local.set $path " + str_empty_wat() + ")\n";
+  o += "      " + str_set_len_wat("(local.get $path)", "(i32.const 0)") + "\n";
   o += "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o += "      (i32.store (local.get $res) (i32.const 1))\n";
   o += "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
@@ -6194,8 +6194,8 @@ pub function fd_flags_func(): string {
   o += "    (local.set $err (call $__fern_fd_fdstat_get (local.get $fd) (local.get $buf)))\n";
   o += "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o += "      (call $__fern_raw_free (local.get $buf) (i32.const 24))\n";
-  o += "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
-  o += "      (i32.store (local.get $path) (i32.const 0))\n";
+  o += "      (local.set $path " + str_empty_wat() + ")\n";
+  o += "      " + str_set_len_wat("(local.get $path)", "(i32.const 0)") + "\n";
   o += "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o += "      (i32.store (local.get $res) (i32.const 1))\n";
   o += "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
@@ -6338,8 +6338,8 @@ pub function writer_set_times_func(): string {
   o += " (i64.add (i64.mul (local.get $msec) (i64.const 1000000000)) (local.get $mnsec))";
   o += " (local.get $fst)))))\n";
   o += "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
-  o += "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
-  o += "      (i32.store (local.get $path) (i32.const 0))\n";
+  o += "      (local.set $path " + str_empty_wat() + ")\n";
+  o += "      " + str_set_len_wat("(local.get $path)", "(i32.const 0)") + "\n";
   o += "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o += "      (i32.store (local.get $res) (i32.const 1))\n";
   o += "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
@@ -6415,19 +6415,20 @@ function read_link_payload_func(raw: boolean): string {
   o += "      (i32.store (local.get $res) (i32.const 1))\n";
   o += "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $path))))\n";
   o += "      (return (local.get $res))))\n";
-  let offset = "4";
+  let data = str_data_wat("(local.get $blk)");
   if (raw) {
-    offset = "8";
+    data = "(i32.add (local.get $blk) (i32.const 8))";
     o += "    (local.set $blk (call $__fern_arr_elems (i32.load (local.get $used)) (i32.const 1)))\n";
     o += "    (i32.store (i32.add (local.get $blk) (i32.const 4)) (i32.load (local.get $used)))\n";
+    o += "    (i32.store (local.get $blk) (i32.load (local.get $used)))\n";
   } else {
-    o += "    (local.set $blk (call $__fern_str_box (i32.add (i32.const 4) (i32.load (local.get $used)))))\n";
+    o += "    (local.set $blk " + str_alloc_wat("(i32.load (local.get $used))") + ")\n";
+    o += "    " + str_set_len_wat("(local.get $blk)", "(i32.load (local.get $used))") + "\n";
   }
-  o += "    (i32.store (local.get $blk) (i32.load (local.get $used)))\n";
   o += "    (local.set $i (i32.const 0))\n";
   o += "    (block $rd (loop $rl\n";
   o += "      (br_if $rd (i32.ge_u (local.get $i) (i32.load (local.get $used))))\n";
-  o = o + "      (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const " + offset + ")) (local.get $i)) (i32.load8_u (i32.add (local.get $buf) (local.get $i))))\n";
+  o = o + "      (i32.store8 (i32.add " + data + " (local.get $i)) (i32.load8_u (i32.add (local.get $buf) (local.get $i))))\n";
   o += "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o += "      (br $rl)))\n";
   o += "    (drop (call $__fern_arr_dec (local.get $used)))\n";
@@ -8178,8 +8179,8 @@ pub function strcat_helper(): string {
   o += "    (local $la i32) (local $lb i32) (local $pa i32) (local $pb i32) (local $p i32) (local $i i32)\n";
   o += view_string_decode("$a", "$pa", "$la");
   o += view_string_decode("$b", "$pb", "$lb");
-  o += "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (i32.add (local.get $la) (local.get $lb)))))\n";
-  o += "    (i32.store (local.get $p) (i32.add (local.get $la) (local.get $lb)))\n";
+  o += "    (local.set $p " + str_alloc_wat("(i32.add (local.get $la) (local.get $lb))") + ")\n";
+  o += "    " + str_set_len_wat("(local.get $p)", "(i32.add (local.get $la) (local.get $lb))") + "\n";
   o += "    (local.set $i (i32.const 0))\n";
   o += "    (block $da (loop $ca\n";
   o += "      (br_if $da (i32.ge_u (local.get $i) (local.get $la)))\n";
@@ -8729,7 +8730,7 @@ pub function writer_bytes_func(all: boolean, p2: boolean): string {
   o += more;
   o += "    ))\n";
   o += "    (if (local.get $err) (then\n";
-  o += "      (local.set $path (call $__fern_str_box (i32.const 4))) (i32.store (local.get $path) (i32.const 0))\n";
+  o += "      (local.set $path " + str_empty_wat() + ") " + str_set_len_wat("(local.get $path)", "(i32.const 0)") + "\n";
   o += "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o += "      (i32.store (local.get $res) (i32.const 1))\n";
   o += "      (i32.store offset=4 (local.get $res) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
@@ -8774,8 +8775,8 @@ pub function writer_truncate_func(): string {
   o += "    (local $err i32) (local $opt i32) (local $path i32)\n";
   o += "    (local.set $err (call $__fern_fd_filestat_set_size (local.get $fd) (local.get $length)))\n";
   o += "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
-  o += "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
-  o += "      (i32.store (local.get $path) (i32.const 0))\n";
+  o += "      (local.set $path " + str_empty_wat() + ")\n";
+  o += "      " + str_set_len_wat("(local.get $path)", "(i32.const 0)") + "\n";
   o += "      (local.set $opt (call $__fern_str_box (i32.const 8)))\n";
   o += "      (i32.store (local.get $opt) (i32.const 1))\n";
   o += "      (i32.store (i32.add (local.get $opt) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
@@ -8799,7 +8800,7 @@ pub function reader_read_chunk_bytes_func(): string {
   o += "      (local.set $got (i32.load (i32.const 8)))))\n";
   o += "    (if (local.get $err) (then\n";
   o += "      (if (local.get $a) (then (drop (call $__fern_arr_dec (local.get $a)))))\n";
-  o += "      (local.set $path (call $__fern_str_box (i32.const 4))) (i32.store (local.get $path) (i32.const 0))\n";
+  o += "      (local.set $path " + str_empty_wat() + ") " + str_set_len_wat("(local.get $path)", "(i32.const 0)") + "\n";
   o += "      (local.set $box (call $__fern_str_box (i32.const 8))) (i32.store (local.get $box) (i32.const 1))\n";
   o += "      (i32.store offset=4 (local.get $box) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
   o += "      (return (local.get $box))))\n";
@@ -8830,8 +8831,8 @@ pub function reader_read_chunk_func(): string {
   o += "          (then (local.set $err (i32.const 25))))))))\n";
   o += "    (if (local.get $err) (then\n";
   o += "      (if (local.get $blk) (then (drop (call $__fern_arr_dec (local.get $blk)))))\n";
-  o += "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
-  o += "      (i32.store (local.get $path) (i32.const 0))\n";
+  o += "      (local.set $path " + str_empty_wat() + ")\n";
+  o += "      " + str_set_len_wat("(local.get $path)", "(i32.const 0)") + "\n";
   o += "      (local.set $opt (call $__fern_str_box (i32.const 8)))\n";
   o += "      (i32.store (local.get $opt) (i32.const 1))\n";
   o += "      (i32.store offset=4 (local.get $opt) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
@@ -8858,8 +8859,8 @@ pub function reader_close_func(dir_off: boolean): string {
   }
   o += "    (local.set $err (call $__fern_fd_close (local.get $fd)))\n";
   o += "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
-  o += "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
-  o += "      (i32.store (local.get $path) (i32.const 0))\n";
+  o += "      (local.set $path " + str_empty_wat() + ")\n";
+  o += "      " + str_set_len_wat("(local.get $path)", "(i32.const 0)") + "\n";
   o += "      (local.set $opt (call $__fern_str_box (i32.const 8)))\n";
   o += "      (i32.store (local.get $opt) (i32.const 1))\n";
   o += "      (i32.store (i32.add (local.get $opt) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
@@ -10236,11 +10237,24 @@ pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (p
   if (roots.len() == 0) {
     return units;
   }
-  let mod = rtmodule.load_wasm("wasm32-wasi", roots);
-  let lowered = rt_lower(mod);
+  let loaded = rtmodule.load_wasm("wasm32-wasi", roots);
+  let lowered = rt_lower(loaded);
+  let mod = declared_runtime(loaded, util.name_index(lowered.declarations));
   let bodies = irtables.lowered_results(lowered.bodies);
   let text = emit_functions_ns("$runtime", mod, bodies, physicalbody.collection(lowered), san);
   return units.append(WasmUnit { ns: "$runtime", text: text, strs: str_values(bodies), caggs: const_agg_values(bodies), fns: fn_value_table(bodies) });
+}
+
+// The runtime functions that the lowering kept. A function spliced into each
+// of its callers has no body.
+function declared_runtime(mod: parser.Module, declared: util.NameIndex): parser.Module {
+  let funcs: parser.FuncDecl[] = [];
+  for fd in mod.funcs {
+    if (declared.has(fd.name)) {
+      funcs = funcs.append(fd);
+    }
+  }
+  return parser.Module { ...mod, funcs: funcs };
 }
 
 function module_needs_type_ids(units: WasmUnit[], needs: string[]): boolean {

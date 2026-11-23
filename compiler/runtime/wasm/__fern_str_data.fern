@@ -1,0 +1,4 @@
+// The address of the first byte of the string `s`.
+function __fern_str_data(s: usize): usize {
+  return s + 4;
+}
