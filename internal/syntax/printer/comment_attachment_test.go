@@ -351,6 +351,37 @@ func TestFormatPreservesCommentAttachment(t *testing.T) {
 	}
 }
 
+func TestFormatKeepsCommentOnLastMemberOfLine(t *testing.T) {
+	src := `enum E { A, B(i32), // after B
+  C, D // after D
+}
+
+struct P { x: i32, y: i32, // after y
+  z: i32 // after z
+}
+`
+	want := `enum E {
+  A,
+  B(i32),  // after B
+  C,
+  D,  // after D
+}
+
+struct P {
+  x: i32,
+  y: i32,  // after y
+  z: i32,  // after z
+}
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := Format(prog); got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestFormatKeepsDeclarationOrder(t *testing.T) {
 	src := `function first(): i32 { return 1; }
 

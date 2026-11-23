@@ -379,12 +379,14 @@ func (f *formatter) formatEnumDecl(ed *ast.EnumDecl) {
 	f.writeTypeParams(ed.TypeParams, nil, nil, ed.ConstParams)
 	if len(ed.Variants) > 0 && f.keepListLines(ed.P.Line, ed.Variants[len(ed.Variants)-1].P.Line) {
 		f.b.WriteString(" {\n")
-		for _, v := range ed.Variants {
+		for i, v := range ed.Variants {
 			f.drainLeading(v.P.Line, 1)
 			f.b.WriteString(formatIndent)
 			f.writeEnumVariant(v)
 			f.b.WriteByte(',')
-			f.emitTrailing(v.P.Line)
+			if i+1 == len(ed.Variants) || ed.Variants[i+1].P.Line != v.P.Line {
+				f.emitTrailing(v.P.Line)
+			}
 			f.b.WriteByte('\n')
 		}
 		f.b.WriteString("}\n")
@@ -590,14 +592,16 @@ func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 	if n := len(sd.Fields); n > 0 && sd.Fields[n-1].NamePos.Line > 0 &&
 		f.keepListLines(sd.P.Line, sd.Fields[n-1].NamePos.Line) {
 		f.b.WriteString(" {\n")
-		for _, fld := range sd.Fields {
+		for i, fld := range sd.Fields {
 			f.drainLeading(fld.NamePos.Line, 1)
 			f.b.WriteString(formatIndent)
 			f.b.WriteString(fld.Name)
 			f.b.WriteString(": ")
 			f.b.WriteString(formatType(fld.Type))
 			f.b.WriteByte(',')
-			f.emitTrailing(fld.NamePos.Line)
+			if i+1 == len(sd.Fields) || sd.Fields[i+1].NamePos.Line != fld.NamePos.Line {
+				f.emitTrailing(fld.NamePos.Line)
+			}
 			f.b.WriteByte('\n')
 		}
 		f.b.WriteString("}\n")

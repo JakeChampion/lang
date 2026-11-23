@@ -3220,9 +3220,12 @@ function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f
       out += lead;
       f = f1;
       out = out + indent_str(1) + sd.fields[mi].name + ": " + sd.fields[mi].type_name + ",";
-      let (tr, f2) = emit_trailing(f, lns[mi]);
-      out = out + tr + "\n";
-      f = f2;
+      if (mi + 1 == lns.len() || lns[mi + 1] != lns[mi]) {
+        let (tr, f2) = emit_trailing(f, lns[mi]);
+        out += tr;
+        f = f2;
+      }
+      out += "\n";
     }
     return (out + "}\n", f);
   }
@@ -3318,9 +3321,12 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[], d0: 
       out += lead;
       f = f1;
       out = out + indent_str(1) + print_enum_variant(structs[d0 + mvi]) + ",";
-      let (tr, f2) = emit_trailing(f, lns[mvi]);
-      out = out + tr + "\n";
-      f = f2;
+      if (mvi + 1 == lns.len() || lns[mvi + 1] != lns[mvi]) {
+        let (tr, f2) = emit_trailing(f, lns[mvi]);
+        out += tr;
+        f = f2;
+      }
+      out += "\n";
     }
     return (out + "}\n", f);
   }

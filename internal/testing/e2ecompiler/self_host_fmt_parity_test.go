@@ -77,6 +77,16 @@ function f(e: E, s: string, t: (i32, i32)): i32 {
   return 2;
 }
 `},
+	{"comment-after-the-last-member-of-a-line", `enum E { A, B(i32), // after B
+  C, D // after D
+}
+
+struct P { x: i32, y: i32, // after y
+  z: i32 // after z
+}
+
+function main(): i32 { return 0; }
+`},
 	{"unsafe-value-blocks", `function f(bytes: u8[]): string {
   let n = unsafe { 3 };
   let text = unsafe { string_from_bytes_unchecked(bytes) };
