@@ -13122,6 +13122,21 @@ function a64_aes_schedule128(): string {
   return o + "    b .Laesk_ret\n";
 }
 
+// Each step makes six words, and the last step four, from the word before them.
+function a64_aes_schedule192(): string {
+  let o: string = ".Laesk_192:\n    ldp w4, w5, [x1]\n    ldp w6, w7, [x1, #8]\n    ldp w8, w9, [x1, #16]\n"
+    + "    stp w4, w5, [x3]\n    stp w6, w7, [x3, #8]\n    stp w8, w9, [x3, #16]\n";
+  let rcon: i32[] = [1, 2, 4, 8, 16, 32, 64, 128];
+  for k in 0..8 {
+    let off = 24 * (k + 1);
+    o += a64_aes_rot_step("w9", ["w4", "w5", "w6", "w7"], rcon[k], off);
+    if (k < 7) {
+      o = o + "    eor w8, w8, w7\n    eor w9, w9, w8\n    stp w8, w9, [x3, #" + util.i32_to_string(off + 16) + "]\n";
+    }
+  }
+  return o + "    b .Laesk_ret\n";
+}
+
 function a64_aes_schedule256(): string {
   let o: string = ".Laesk_256:\n    ldp w4, w5, [x1]\n    ldp w6, w7, [x1, #8]\n    ldp w8, w9, [x1, #16]\n    ldp w10, w11, [x1, #24]\n"
     + "    stp w4, w5, [x3]\n    stp w6, w7, [x3, #8]\n    stp w8, w9, [x3, #16]\n    stp w10, w11, [x3, #24]\n";
@@ -13139,18 +13154,20 @@ function a64_aes_expand_key(s: asmcore.EmitState): string {
   return "    .global __fern_aes_expand_key\n    .type __fern_aes_expand_key, %function\n__fern_aes_expand_key:\n"
     + rt_frame_of(s, 48) + "    mov x29, sp\n" + a64_aes_view("x0", "x3", "x4", ".Laesk_key")
     + "    str x3, [x29, #16]\n    mov x0, #0\n    cmp x4, #16\n    b.ne .Laesk_n32\n    mov x0, #176\n.Laesk_n32:\n"
+    + "    cmp x4, #24\n    b.ne .Laesk_n24\n    mov x0, #208\n.Laesk_n24:\n"
     + "    cmp x4, #32\n    b.ne .Laesk_box\n    mov x0, #240\n.Laesk_box:\n    cbz x0, .Laesk_bad\n" + a64_aes_alloc("32")
     + "    ldr x5, [x0]\n    ldr x1, [x29, #16]\n    add x3, x0, #8\n    movi v17.2d, #0\n"
-    + "    cmp x5, #240\n    b.eq .Laesk_256\n"
-    + a64_aes_schedule128() + a64_aes_schedule256()
+    + "    cmp x5, #240\n    b.eq .Laesk_256\n    cmp x5, #208\n    b.eq .Laesk_192\n"
+    + a64_aes_schedule128() + a64_aes_schedule192() + a64_aes_schedule256()
     + ".Laesk_ret:\n    ldr x0, [x29, #32]\n" + rt_unframe_of(s, 48) + "    ret\n.Laesk_bad:\n    b __fern_slice_abort\n    .size __fern_aes_expand_key, .-__fern_aes_expand_key\n";
 }
 
 function a64_aes_rounds(label: string, n: i32): string {
   let o = label + ":\n";
   for r in 0..13 {
-    if (r == 9) {
-      o = o + "    cmp x7, #14\n    b.eq " + label + "_256\n" + a64_aes_last(n, 25) + "    ret\n" + label + "_256:\n";
+    if (r == 9 || r == 11) {
+      let more = label + "_" + util.i32_to_string(r + 1);
+      o = o + "    cmp x7, #" + util.i32_to_string(r + 1) + "\n    b.ne " + more + "\n" + a64_aes_last(n, 16 + r) + "    ret\n" + more + ":\n";
     }
     for j in 0..n {
       let v = "v" + util.i32_to_string(j) + ".16b";
@@ -13206,8 +13223,8 @@ function a64_aes_load_keys(): string {
 function a64_aes_load_keys_at(label: string): string {
   let o = "";
   for r in 0..15 {
-    if (r == 11) {
-      o = o + "    cmp x7, #14\n    b.ne " + label + "\n";
+    if (r == 11 || r == 13) {
+      o = o + "    cmp x7, #" + util.i32_to_string(r - 1) + "\n    b.eq " + label + "\n";
     }
     o = o + "    ld1 {v" + util.i32_to_string(16 + r) + ".16b}, [x8]\n    add x8, x8, #16\n";
   }
@@ -13220,7 +13237,7 @@ function a64_aes_ctr32(s: asmcore.EmitState): string {
     + a64_aes_view("x2", "x3", "x4", ".Lctr_data") + "    str x3, [x29, #16]\n    str x4, [x29, #24]\n"
     + a64_aes_view("x1", "x3", "x5", ".Lctr_ctr") + "    str x3, [x29, #32]\n"
     + a64_aes_view("x0", "x3", "x6", ".Lctr_rk") + "    str x3, [x29, #40]\n";
-  o = o + "    cmp x6, #176\n    b.lo .Lctr_bad\n    mov x7, #10\n    cmp x6, #240\n    b.lo .Lctr_rounds\n    mov x7, #14\n.Lctr_rounds:\n"
+  o = o + "    cmp x6, #176\n    b.lo .Lctr_bad\n    mov x7, #10\n    cmp x6, #208\n    b.lo .Lctr_rounds\n    mov x7, #12\n    cmp x6, #240\n    b.lo .Lctr_rounds\n    mov x7, #14\n.Lctr_rounds:\n"
     + "    cmp x5, #16\n    b.lo .Lctr_bad\n    str x7, [x29, #48]\n    ldr x0, [x29, #24]\n"
     + a64_aes_alloc("64") + "    ldr x4, [x0]\n    cbz x4, .Lctr_ret\n    add x2, x0, #8\n    ldr x1, [x29, #16]\n    ldr x8, [x29, #40]\n    ldr x7, [x29, #48]\n    ldr x3, [x29, #32]\n"
     + a64_aes_load_keys() + "    ld1 {v6.16b}, [x3]\n    rev32 v6.16b, v6.16b\n    movi v7.2d, #0\n    mov w9, #1\n    ins v7.s[3], w9\n";
@@ -13340,7 +13357,7 @@ function a64_aes_gcm(s: asmcore.EmitState, seal: boolean): string {
 }
 
 function a64_aes_gcm_checks(p: string): string {
-  return "    mov x11, #10\n    cmp x10, #176\n    b.lo " + p + "_bad\n    cmp x10, #240\n    b.lo " + p + "_r\n    mov x11, #14\n" + p + "_r:\n    str x11, [x29, #40]\n"
+  return "    mov x11, #10\n    cmp x10, #176\n    b.lo " + p + "_bad\n    cmp x10, #208\n    b.lo " + p + "_r\n    mov x11, #12\n    cmp x10, #240\n    b.lo " + p + "_r\n    mov x11, #14\n" + p + "_r:\n    str x11, [x29, #40]\n"
     + "    ldr x9, [x29, #176]\n    cmp x9, #12\n    b.ne " + p + "_bad\n    ldr x9, [x29, #184]\n    cmp x9, #16\n    b.lo " + p + "_bad\n"
     + "    ldr x9, [x29, #208]\n    ldr x10, [x29, #72]\n    ldr x11, [x29, #200]\n    ldr x12, [x29, #24]\n"
     + "    orr x13, x9, x10\n    orr x13, x13, x11\n    orr x13, x13, x12\n    tbnz x13, #63, " + p + "_bad\n"

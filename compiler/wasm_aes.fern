@@ -325,6 +325,7 @@ function expand_key_func(): string {
     + "    (local $n i32) (local $size i32) (local $out i32) (local $w i32) (local $nk i32) (local $i i32) (local $t i32) (local $rcon i32) (local $tmp i32)\n"
     + "    (local.set $n (call $__fern_aes_view_len (local.get $key)))\n"
     + "    (if (i32.eq (local.get $n) (i32.const 16)) (then (local.set $size (i32.const 176))))\n"
+    + "    (if (i32.eq (local.get $n) (i32.const 24)) (then (local.set $size (i32.const 208))))\n"
     + "    (if (i32.eq (local.get $n) (i32.const 32)) (then (local.set $size (i32.const 240))))\n"
     + abort_unless("(local.get $size)")
     + "    (local.set $out (call $__fern_aes_bytes (local.get $size)))\n"
@@ -349,6 +350,7 @@ function ctr_rounds_wat(): string {
   return abort_unless("(i32.ge_u (call $__fern_aes_view_len (local.get $rk)) (i32.const 176))")
     + abort_unless("(i32.ge_u (call $__fern_aes_view_len (local.get $ctr)) (i32.const 16))")
     + "    (local.set $rounds (i32.const 10))\n"
+    + "    (if (i32.ge_u (call $__fern_aes_view_len (local.get $rk)) (i32.const 208)) (then (local.set $rounds (i32.const 12))))\n"
     + "    (if (i32.ge_u (call $__fern_aes_view_len (local.get $rk)) (i32.const 240)) (then (local.set $rounds (i32.const 14))))\n"
     + "    (local.set $n (call $__fern_aes_view_len (local.get $data)))\n";
 }
@@ -478,7 +480,7 @@ function gcm_checks_wat(): string {
   let len = "(i64.extend_i32_u (i32.load (local.get $buf)))";
   return "    (local.set $kl (call $__fern_aes_view_len (local.get $rk)))\n"
     + abort_unless("(i32.ge_u (local.get $kl) (i32.const 176))")
-    + "    (local.set $rounds (select (i32.const 14) (i32.const 10) (i32.ge_u (local.get $kl) (i32.const 240))))\n"
+    + "    (local.set $rounds (select (i32.const 14) (select (i32.const 12) (i32.const 10) (i32.ge_u (local.get $kl) (i32.const 208))) (i32.ge_u (local.get $kl) (i32.const 240))))\n"
     + abort_unless("(i32.ge_u (call $__fern_aes_view_len (local.get $h)) (i32.const 16))")
     + abort_unless("(i32.eq (call $__fern_aes_view_len (local.get $iv)) (i32.const 12))")
     + abort_unless("(i32.ge_s (i32.or (i32.or (local.get $aad_at) (local.get $aad_n)) (i32.or (local.get $at) (local.get $n))) (i32.const 0))")

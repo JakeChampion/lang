@@ -2165,17 +2165,34 @@ function x86_aes_schedule256(): string {
   return o + "    jmp .Laesk_ret\n";
 }
 
+// Each step makes six words, and the last step four, from the word before them.
+function x86_aes_schedule192(): string {
+  let o = ".Laesk_192:\n    movdqu (%rsi), %xmm1\n    movdqu %xmm1, (%rdx)\n    movq 16(%rsi), %rax\n    movq %rax, 16(%rdx)\n";
+  let rcon: i32[] = [1, 2, 4, 8, 16, 32, 64, 128];
+  for k in 0..8 {
+    let base = 24 * (k + 1);
+    o = o + "    movl " + util.i32_to_string(base - 4) + "(%rdx), %eax\n    movd %eax, %xmm2\n    pshufd $0, %xmm2, %xmm2\n"
+      + "    aeskeygenassist $" + util.i32_to_string(rcon[k]) + ", %xmm2, %xmm2\n    pshufd $85, %xmm2, %xmm2\n    movd %xmm2, %eax\n";
+    let words = if (k < 7) { 6 } else { 4 };
+    for j in 0..words {
+      o = o + "    xorl " + util.i32_to_string(base - 24 + 4 * j) + "(%rdx), %eax\n    movl %eax, " + util.i32_to_string(base + 4 * j) + "(%rdx)\n";
+    }
+  }
+  return o + "    jmp .Laesk_ret\n";
+}
+
 function x86_aes_expand_key(): string {
   return "    .globl __fern_aes_expand_key\n    .type __fern_aes_expand_key, @function\n__fern_aes_expand_key:\n"
     + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $48, %rsp\n"
     + x86_aes_view("%rdi", "%rsi", "%rcx", ".Laesk_key")
     + "    movq %rsi, -8(%rbp)\n    movq %rcx, -16(%rbp)\n    xorl %edi, %edi\n"
     + "    cmpq $16, %rcx\n    jne .Laesk_n32\n    movl $176, %edi\n.Laesk_n32:\n"
+    + "    cmpq $24, %rcx\n    jne .Laesk_n24\n    movl $208, %edi\n.Laesk_n24:\n"
     + "    cmpq $32, %rcx\n    jne .Laesk_box\n    movl $240, %edi\n.Laesk_box:\n    testl %edi, %edi\n    jz __fern_slice_abort\n"
     + x86_aes_alloc()
     + "    movq -8(%rbp), %rsi\n    movq -16(%rbp), %rcx\n    leaq 8(%rax), %rdx\n"
-    + "    cmpq $32, %rcx\n    je .Laesk_256\n"
-    + x86_aes_schedule128() + x86_aes_schedule256()
+    + "    cmpq $32, %rcx\n    je .Laesk_256\n    cmpq $24, %rcx\n    je .Laesk_192\n"
+    + x86_aes_schedule128() + x86_aes_schedule192() + x86_aes_schedule256()
     + ".Laesk_ret:\n" + x86_aes_epilogue()
     + "    .size __fern_aes_expand_key, .-__fern_aes_expand_key\n";
 }
@@ -2183,8 +2200,10 @@ function x86_aes_expand_key(): string {
 function x86_aes_rounds(label: string, regs: string[]): string {
   let o = label + ":\n    movdqu (%r8), %xmm4\n" + x86_aes_each("pxor", regs);
   for r in 1..14 {
-    if (r == 10) {
-      o = o + "    cmpq $14, %rcx\n    je " + label + "_256\n    movdqu 160(%r8), %xmm4\n" + x86_aes_each("aesenclast", regs) + "    ret\n" + label + "_256:\n";
+    if (r == 10 || r == 12) {
+      let more = label + "_" + util.i32_to_string(r);
+      o = o + "    cmpq $" + util.i32_to_string(r) + ", %rcx\n    jne " + more + "\n    movdqu " + util.i32_to_string(16 * r) + "(%r8), %xmm4\n"
+        + x86_aes_each("aesenclast", regs) + "    ret\n" + more + ":\n";
     }
     o = o + "    movdqu " + util.i32_to_string(16 * r) + "(%r8), %xmm4\n" + x86_aes_each("aesenc", regs);
   }
@@ -2233,7 +2252,7 @@ function x86_aes_ctr32(): string {
     + x86_aes_view("%rdx", "%r8", "%r9", ".Lctr_data") + "    movq %r8, -24(%rbp)\n    movq %r9, -32(%rbp)\n"
     + x86_aes_view("%rsi", "%r8", "%r10", ".Lctr_ctr") + "    movq %r8, -16(%rbp)\n"
     + x86_aes_view("%rdi", "%r8", "%r9", ".Lctr_rk") + "    movq %r8, -8(%rbp)\n";
-  o = o + "    cmpq $176, %r9\n    jb __fern_slice_abort\n    movl $10, %ecx\n    cmpq $240, %r9\n    jb .Lctr_rounds\n    movl $14, %ecx\n.Lctr_rounds:\n"
+  o = o + "    cmpq $176, %r9\n    jb __fern_slice_abort\n    movl $10, %ecx\n    cmpq $208, %r9\n    jb .Lctr_rounds\n    movl $12, %ecx\n    cmpq $240, %r9\n    jb .Lctr_rounds\n    movl $14, %ecx\n.Lctr_rounds:\n"
     + "    cmpq $16, %r10\n    jb __fern_slice_abort\n    movq %rcx, -40(%rbp)\n    movq -32(%rbp), %rdi\n"
     + x86_aes_alloc()
     + "    movq %rdi, %rdx\n    leaq 8(%rax), %rdi\n    movq -24(%rbp), %rsi\n    movq -8(%rbp), %r8\n    movq -40(%rbp), %rcx\n"
@@ -2360,7 +2379,7 @@ function x86_aes_gcm(seal: boolean): string {
 // A schedule that is not AES-128's or AES-256's, an h short of a block, an iv that is not 12 bytes, or a region
 // outside buf aborts.
 function x86_aes_gcm_checks(p: string): string {
-  return "    movl $10, %ecx\n    cmpq $176, %r11\n    jb __fern_slice_abort\n    cmpq $240, %r11\n    jb " + p + "_r\n    movl $14, %ecx\n" + p + "_r:\n"
+  return "    movl $10, %ecx\n    cmpq $176, %r11\n    jb __fern_slice_abort\n    cmpq $208, %r11\n    jb " + p + "_r\n    movl $12, %ecx\n    cmpq $240, %r11\n    jb " + p + "_r\n    movl $14, %ecx\n" + p + "_r:\n"
     + "    movq %rcx, -40(%rbp)\n    cmpq $12, -80(%rbp)\n    jne __fern_slice_abort\n    cmpq $16, -88(%rbp)\n    jb __fern_slice_abort\n"
     + "    movq -184(%rbp), %rax\n    orq -72(%rbp), %rax\n    orq -176(%rbp), %rax\n    orq -32(%rbp), %rax\n    js __fern_slice_abort\n"
     + "    movq -48(%rbp), %r8\n    movq (%r8), %r9\n    movq -176(%rbp), %rax\n    addq -32(%rbp), %rax\n    addq $16, %rax\n    cmpq %r9, %rax\n    ja __fern_slice_abort\n"

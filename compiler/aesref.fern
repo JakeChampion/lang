@@ -163,13 +163,7 @@ function inverse_round(st: u8[], rk: u8[], at: i32, inv: i32[], last: boolean): 
 
 // The inverse cipher over each whole block of data. The round keys are the keys of the cipher.
 pub function dec_blocks(rk: u8[], data: u8[]): u8[] {
-  let rounds = 10;
-  if (rk.len() >= 208) {
-    rounds = 12;
-  }
-  if (rk.len() >= 240) {
-    rounds = 14;
-  }
+  let rounds = rounds_of(rk);
   let inv = inverse_sbox_table(sbox_table());
   let n = data.len() / 16 * 16;
   let out = __alloc_u8(n);
@@ -204,11 +198,19 @@ function inc32(cb: u8[]): u8[] {
   return cb;
 }
 
-pub function ctr32(rk: u8[], counter: u8[], data: u8[]): u8[] {
-  let rounds = 10;
+// The rounds of the cipher that made a schedule of this length.
+function rounds_of(rk: u8[]): i32 {
   if (rk.len() >= 240) {
-    rounds = 14;
+    return 14;
   }
+  if (rk.len() >= 208) {
+    return 12;
+  }
+  return 10;
+}
+
+pub function ctr32(rk: u8[], counter: u8[], data: u8[]): u8[] {
+  let rounds = rounds_of(rk);
   let sb = sbox_table();
   let cb = block_at(counter, 0, 16);
   let out = __alloc_u8(data.len());
