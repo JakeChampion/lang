@@ -232,6 +232,25 @@ function test_collisions(): test.TestOutcome {
   return test.assert_eq(total, 10000);
 }
 
+function test_new_hash_beside_a_collision(): test.TestOutcome {
+  let c: pmap.PMap[Coarse, i32] = pmap.new();
+  c = c.insert(Coarse { bucket: 1, id: 1 }, 1).insert(Coarse { bucket: 1, id: 2 }, 2).insert(Coarse { bucket: 1, id: 3 }, 3);
+  c = c.insert(Coarse { bucket: 2, id: 4 }, 4);
+  if (c.len() != 4 || !c.is_valid() || c.keys().len() != 4) {
+    return test.fail("an entry with a new hash beside three entries of one hash: len " + c.len().to_string());
+  }
+  c = c.insert(Coarse { bucket: 2, id: 5 }, 5).insert(Coarse { bucket: 3, id: 6 }, 6);
+  if (c.len() != 6 || !c.is_valid()) {
+    return test.fail("a second collision and a third hash: len " + c.len().to_string());
+  }
+  c = c.remove(Coarse { bucket: 1, id: 2 }).remove(Coarse { bucket: 2, id: 4 });
+  if (c.len() != 4 || !c.is_valid() || c.contains(Coarse { bucket: 1, id: 2 })) {
+    return test.fail("remove from the two collisions: len " + c.len().to_string());
+  }
+  let total: i32 = c.fold(0, (a: i32, k: Coarse, v: i32) => a + v);
+  return test.assert_eq(total, 15);
+}
+
 function test_for_each(): test.TestOutcome {
   let m = pmap.from([(2, 20), (1, 10)]);
   let seen = 0;
@@ -254,6 +273,7 @@ function main(): i32 {
   r = r.it("set algebra", test_set_algebra);
   r = r.it("string keys", test_string_keys);
   r = r.it("collisions", test_collisions);
+  r = r.it("a new hash beside a collision", test_new_hash_beside_a_collision);
   r = r.it("for_each", test_for_each);
   return r.finish();
 }

@@ -167,16 +167,18 @@ function node_pair[K, V](a: PMap[K, V], ah: i32, b: PMap[K, V], bh: i32, shift: 
   if (shift >= 32) {
     return Coll(ah, [a, b]);
   }
+  // `a` can be a collision node, so the branch does not always hold two entries.
+  let size = node_size(a) + node_size(b);
   let fa = node_frag(ah, shift);
   let fb = node_frag(bh, shift);
   if (fa == fb) {
     let inner = node_pair(a, ah, b, bh, shift + 5);
-    return Branch(1 << fa, 2, [inner]);
+    return Branch(1 << fa, size, [inner]);
   }
   if (fa < fb) {
-    return Branch(1 << fa | 1 << fb, 2, [a, b]);
+    return Branch(1 << fa | 1 << fb, size, [a, b]);
   }
-  return Branch(1 << fa | 1 << fb, 2, [b, a]);
+  return Branch(1 << fa | 1 << fb, size, [b, a]);
 }
 
 function node_coll_index[K: cmp.Hash + cmp.Eq, V](leaves: PMap[K, V][], k: K): i32 {
