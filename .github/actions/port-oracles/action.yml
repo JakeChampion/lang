@@ -46,7 +46,14 @@ runs:
       run: |
         set -euo pipefail
         work="$(mktemp -d "$RUNNER_TEMP/cmark-oracle.XXXXXX")"
-        git clone -q --depth 1 --branch 0.31.2 https://github.com/commonmark/cmark "$work/cmark"
+        for try in 1 2 3; do
+          if git clone -q --depth 1 --branch 0.31.2 https://github.com/commonmark/cmark "$work/cmark"; then
+            break
+          fi
+          echo "clone attempt $try failed" >&2
+          rm -rf "$work/cmark"
+          sleep $((try * 10))
+        done
         test "$(git -C "$work/cmark" rev-parse HEAD)" = eec0eeba6d31189fd828314576494566d539b1e3
         cmake -S "$work/cmark" -B "$work/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
         cmake --build "$work/build" -j2
