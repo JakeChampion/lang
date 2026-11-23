@@ -105,8 +105,11 @@ func TestSelfHostWasmIoErrorMessageIsRcBoxed(t *testing.T) {
 	if strings.Contains(body, "(call $__fern_alloc (i32.const 4))") {
 		t.Error("the Other arm still builds its empty message with a bare $__fern_alloc — no rc word at [e-8]")
 	}
-	if got := strings.Count(body, "(call $__fern_str_box "); got != 8 {
-		t.Errorf("$__fern_build_io_error makes %d $__fern_str_box calls, want 8 (seven variant boxes + the Other arm's message)", got)
+	if got := strings.Count(body, "(call $__fern_str_box "); got != 7 {
+		t.Errorf("$__fern_build_io_error makes %d $__fern_str_box calls, want 7 (the seven variant boxes)", got)
+	}
+	if got := strings.Count(body, "(call $__fern_str_new "); got != 1 {
+		t.Errorf("$__fern_build_io_error makes %d $__fern_str_new calls, want 1 (the Other arm's message)", got)
 	}
 	if got := strings.Count(body, "(call $__fern_alloc "); got != 0 {
 		t.Errorf("$__fern_build_io_error still makes %d bare $__fern_alloc calls, want 0", got)

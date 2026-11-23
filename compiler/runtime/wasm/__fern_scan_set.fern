@@ -1,13 +1,9 @@
-// `s` is a string, a frame window at its address less 1, or a borrowed
-// descriptor, as a byte view's string arm can be.
+// `s` is a string, a borrowed descriptor, or a frame window at its address
+// less 1, as a byte view's string arm can be. Each is a box [data, len].
 function __fern_scan_set(s: usize, state: i32, set: usize): i32 {
-  let tag = s & 1;
-  let len = __load_i32(s + tag * 3);
-  let p: usize = if (tag == 0) { s + 4 } else { (__load_i32(s - 1) as u32) as usize };
-  if (len < 0) {
-    p = (__load_i32(s + 4) as u32) as usize;
-    len = len & 2147483647;
-  }
+  let base = s - (s & 1);
+  let len = __fern_str_len(base);
+  let p = __fern_str_data(base);
   let n = __load_i32(set) as u32;
   let i = state;
   if (i < 0) {
