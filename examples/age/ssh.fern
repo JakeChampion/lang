@@ -1381,11 +1381,9 @@ function openssh_rsa(rest: Wire): Parsed {
   if (!padding_ok(rest_of(w1))) {
     return Bad("ssh: padding not as expected");
   }
+  mark_rsa([f[2], f[3], f[4], f[5]]);
   return match (rsa.private_key(f[0], f[1], f[2], f[4], f[5], f[3])) {
-    Ok(key) => {
-      mark_rsa(key);
-      Key(RsaPrivate(RsaPublic(rsa_wire(f[0], f[1]), key.public_key()), key))
-    },
+    Ok(key) => Key(RsaPrivate(RsaPublic(rsa_wire(f[0], f[1]), key.public_key()), key)),
     Err(e) => Bad(e.message()),
   };
 }
@@ -1614,10 +1612,10 @@ function int_bytes(v: i64): u8[] {
   return out;
 }
 
-// The secret values of an RSA key become secret after the checks of the
-// key, which are not constant-time, as in Go.
-function mark_rsa(k: rsa.PrivateKey): void {
-  for s in k.secrets() {
+// The secret values of an RSA key file become secret before the
+// construction of the key, which is constant-time.
+function mark_rsa(secrets: [u8[]]): void {
+  for s in secrets {
     __ct_secret(s);
   }
 }
@@ -1669,11 +1667,13 @@ function pkcs1_parse(der: [u8]): (Parsed, boolean) {
       return (Bad(why), false);
     }
   }
-  return match (rsa.private_key(n, e, unsigned(v[3]), unsigned(v[4]), unsigned(v[5]), unsigned(v[8]))) {
-    Ok(key) => {
-      mark_rsa(key);
-      (Key(RsaPrivate(RsaPublic(rsa_wire(n, e), key.public_key()), key)), false)
-    },
+  let d = unsigned(v[3]);
+  let p = unsigned(v[4]);
+  let q = unsigned(v[5]);
+  let qinv = unsigned(v[8]);
+  mark_rsa([d, p, q, qinv]);
+  return match (rsa.private_key(n, e, d, p, q, qinv)) {
+    Ok(key) => (Key(RsaPrivate(RsaPublic(rsa_wire(n, e), key.public_key()), key)), false),
     Err(why) => (Bad(why.message()), false),
   };
 }

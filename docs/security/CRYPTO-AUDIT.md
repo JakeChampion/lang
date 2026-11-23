@@ -57,14 +57,14 @@ The AEAD open folds the tag difference into one byte, marks that byte public wit
 
 `__ct_secret(b)` tells Valgrind's memcheck that the bytes of `b` are undefined, and `__ct_public(b)` that they are defined again.
 Memcheck then reports every branch and every address that depends on a secret byte.
-`TestSelfHostCtGateX86_64` and `TestSelfHostCtGateArm64` run a program per primitive under memcheck. They require a clean run for AES-GCM, ChaCha20-Poly1305, X25519, ML-KEM-768, the TLS key share, Ed25519, ECDSA, P-256 ECDH, HPKE on the X-Wing path, and HOTP-SHA256.
+`TestSelfHostCtGateX86_64` and `TestSelfHostCtGateArm64` run a program per primitive under memcheck. They require a clean run for AES-GCM, ChaCha20-Poly1305, X25519, ML-KEM-768, the TLS key share, Ed25519, ECDSA, P-256 ECDH, HPKE on the X-Wing path, HOTP-SHA256, and RSA private-key construction with RSA-OAEP decryption.
 The gate also checks equal-length matching and mismatching inputs to `consteq`, multi-block PBKDF2-HMAC-SHA256 and HKDF-SHA256/SHA384 outputs, and scrypt with a secret password. In ROMix the implementation marks the password-dependent lookup index public before reading its table.
 Memcheck must report the control programs that branch or index on a secret, which proves the gate sees what it looks for.
 
 ## Remaining limits
 
 - The constant-time gate observes one execution under memcheck. It does not prove the absence of a data-dependent timing in the processor's own instructions, such as a variable-latency multiply.
-- RSA supports signature verification and OAEP encryption and decryption. RSA signing is unavailable. The gate above does not cover RSA private-key construction.
+- RSA supports signature verification and OAEP encryption and decryption. RSA signing is unavailable.
 - `crypto.erase` wipes an owned array the caller passes, and the three key types that hold secret arrays wipe them on `erase()`: `aes_gcm.Key`, `ed25519.PrivateKey` and `ecdsa.PrivateKey`. A key the program drops without that call keeps its bytes until the allocator reuses the block. A copy the compiler made is not wiped.
 - The primitives zero the key material they copy. HMAC zeroes its two pad blocks and a hashed long key. HKDF and PBKDF2 zero each output block and each message that carries one. ChaCha20-Poly1305 zeroes the one-time Poly1305 key. X25519 zeroes the clamped scalar of `public_key`. Ed25519 zeroes the nonce hash and the nonce scalar of a signature, and the limb array of each reduction. The ECDSA signer zeroes each nonce, and the key, the value and every message of its HMAC-DRBG. `TestSelfHostPrimitivesEraseKeyMaterial` scans the arena after each primitive for the copy it used to leave.
 - The limb arithmetic of P-256, the generic Weierstrass curves and ML-KEM allocates an array for each intermediate product. A product of a secret is not zeroed. In the release build they stay in their released blocks until the allocator reuses them. Under `-harden` the allocator zeroes each block at its release ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)).
