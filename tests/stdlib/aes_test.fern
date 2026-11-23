@@ -68,6 +68,32 @@ function test_cbc(): test.TestOutcome {
   return test.assert_eq_array(got, want);
 }
 
+// A key of 128 or 256 bits encrypts with the AES kernel of the target, and
+// each key decrypts with the rounds of FIPS 197 in Fern. So a message that
+// comes back after the two is a check of the kernel against the rounds, for
+// 200 blocks that differ.
+function test_cbc_round_trip(): test.TestOutcome {
+  let data = __alloc_u8(3200);
+  for i in 0..data.len() {
+    data = data.with(i, (i * 131 + i / 7 + 5) as u8);
+  }
+  let iv = data[16:32];
+  let same = 0;
+  for n in [16, 24, 32] {
+    let key = data[40:40 + n];
+    let Ok(sealed) = aes.cbc_encrypt(key, iv, data) else {
+      return test.fail("the message did not encrypt");
+    };
+    let Ok(opened) = aes.cbc_decrypt(key, iv, sealed) else {
+      return test.fail("the message did not decrypt");
+    };
+    if (opened == data && sealed != data) {
+      same = same + n;
+    }
+  }
+  return test.assert_eq(same, 72);
+}
+
 function test_refusals(): test.TestOutcome {
   let key = b(CBC_KEYS[0]);
   let iv = b(CBC_IV);
@@ -89,6 +115,7 @@ function main(): i32 {
   let r = test.new("std/crypto/aes");
   r = r.it("FIPS 197 appendix C, each key size", test_fips_blocks);
   r = r.it("SP 800-38A CBC, each key size", test_cbc);
+  r = r.it("CBC decrypts what it encrypts, each key size", test_cbc_round_trip);
   r = r.it("lengths", test_refusals);
   return r.finish();
 }
