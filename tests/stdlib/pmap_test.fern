@@ -3,6 +3,7 @@ import "std/pmap" as pmap;
 import "std/option";
 import "std/i32";
 import "core/cmp";
+import "core/map";
 
 @derive(cmp.Eq)
 struct Coarse { bucket: i32, id: i32 }
@@ -251,6 +252,36 @@ function test_new_hash_beside_a_collision(): test.TestOutcome {
   return test.assert_eq(total, 15);
 }
 
+// A random sequence of inserts and removes, with keys in three buckets. A Map
+// with the same entries is the model.
+function test_random_steps_agree_with_a_map(): test.TestOutcome {
+  for seed in 1..6 {
+    let s = (seed * 7919) as i64;
+    let c: pmap.PMap[Coarse, i32] = pmap.new();
+    let model: Map[i32, i32] = map_new(8);
+    for step in 0..1500 {
+      s = s * 6364136223846793005 + 1442695040888963407 & 9223372036854775807;
+      let op = ((s >> 33) % 10) as i32;
+      let id = ((s >> 40) % 120) as i32;
+      let key = Coarse { bucket: id % 3, id: id };
+      if (op < 6) {
+        c = c.insert(key, step);
+        model = model.insert(id, step);
+      } else {
+        c = c.remove(key);
+        model = model.remove(id);
+      }
+      if (c.len() != model.len() || c.get(key) != model.get(id)) {
+        return test.fail("seed " + seed.to_string() + " step " + step.to_string() + ": len " + c.len().to_string() + ", the model has " + model.len().to_string());
+      }
+      if (step % 97 == 0 && (!c.is_valid() || c.keys().len() != model.len())) {
+        return test.fail("seed " + seed.to_string() + " step " + step.to_string() + ": the map is not valid");
+      }
+    }
+  }
+  return test.pass();
+}
+
 function test_for_each(): test.TestOutcome {
   let m = pmap.from([(2, 20), (1, 10)]);
   let seen = 0;
@@ -274,6 +305,7 @@ function main(): i32 {
   r = r.it("string keys", test_string_keys);
   r = r.it("collisions", test_collisions);
   r = r.it("a new hash beside a collision", test_new_hash_beside_a_collision);
+  r = r.it("random steps agree with a Map", test_random_steps_agree_with_a_map);
   r = r.it("for_each", test_for_each);
   return r.finish();
 }
