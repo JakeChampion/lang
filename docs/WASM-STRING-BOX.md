@@ -1,6 +1,8 @@
 # A wasm string is a `[data, len]` box
 
-Status: [plan] for #15740. The owner chose this shape on 2026-11-23.
+Status: [plan] for #15740. The owner chose this shape on 2026-11-23. Phase 1
+is done, except the four view decoders of the Fern runtime (see "Phase 1 at
+its end").
 
 ## The decision
 
@@ -88,3 +90,37 @@ copy (#15760).
   `self_host_frame_view_release_test.go`,
   `self_host_wasm_units_test.go` (`wasmRuntimeStringViewProbe`) and
   `self_host_wasm_ioerror_layout_test.go`.
+
+## Phase 1 at its end
+
+Phase 1 landed in #16833, #16835, #16843 and #16845. The WAT of each program
+of the corpus stayed the same, except a few lines that give the same result.
+
+The layout is in these functions of `compiler/wasm_ir.fern`. Phase 2 changes
+them and the code below.
+
+| Function | What it gives |
+|---|---|
+| `str_len_wat`, `str_len_stack` | The length of a string |
+| `str_data_wat`, `str_data_stack` | The address of the first byte |
+| `str_index_stack` | Byte `i` of a string, on the stack |
+| `str_byte_wat`, `str_at_n_wat` | Byte `i`, and the address of a constant byte |
+| `str_alloc_wat`, `str_alloc_n_wat`, `str_empty_wat` | A new string of `n` bytes |
+| `str_set_len_wat` | The store of the length |
+| `str_block_wat` | The size of the block of a string of `n` bytes |
+| `str_adopt_bytes_wat` | A unique byte array made into a string in place |
+| `str_literal_bytes`, `str_literal_wat`, `str_literal_data` | The block, the data-segment text and the first byte of a literal |
+
+The Fern runtime reads a string through `__fern_str_len` and
+`__fern_str_data` (`compiler/runtime/wasm/`). The inliner splices them into
+each caller. A runtime function that is not a root has no body when each of
+its calls is spliced (#16850).
+
+These still read the old layout, and phase 2 changes them by hand:
+
+- The four view decoders of the Fern runtime: `__fern_sum_bytes`,
+  `__fern_bsd_sum`, `__fern_scan_masks` and `__fern_scan_set`. They also take
+  a borrowed descriptor, which reads its length at the same address.
+- `view_string_decode` and `byte_view_decode` in `compiler/wasm_ir.fern`.
+- The storage of a buffer (`$__fern_buf_new`, `$__fern_buf_reserve`) is not a
+  string, so its layout can stay.
