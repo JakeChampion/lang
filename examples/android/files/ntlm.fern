@@ -1,0 +1,183 @@
+// NTLMv2, the sign-in of an SMB server that has no Kerberos, from MS-NLMP.
+// It makes the three messages of the exchange and the key of the session.
+import "std/array";
+import "std/crypto";
+import "std/i32";
+import "std/unicode";
+import "std/utf8";
+import "./md4";
+
+const SIGNATURE: u8[] = [78, 84, 76, 77, 83, 83, 80, 0];
+
+// Unicode, a target name, signing, NTLM, always sign, extended session
+// security, target information and 128-bit keys. No key exchange: the key
+// of the session is then the session base key.
+const FLAGS: i64 = 0x20888215i64;
+
+pub function put16(out: u8[], v: i32): u8[] {
+  return out.append((v & 255) as u8).append((v >> 8 & 255) as u8);
+}
+
+pub function put32(out: u8[], v: i64): u8[] {
+  return out.append((v & 255i64) as u8).append((v >> 8i64 & 255i64) as u8).append((v >> 16i64 & 255i64) as u8).append((v >> 24i64 & 255i64) as u8);
+}
+
+pub function put64(out: u8[], v: i64): u8[] {
+  let o = out;
+  for i in 0..8 {
+    o = o.append((v >> (8 * i) as i64 & 255i64) as u8);
+  }
+  return o;
+}
+
+pub function get16(bs: u8[], at: i32): i32 {
+  if (at < 0 || at + 2 > bs.len()) {
+    return 0;
+  }
+  return bs[at] as i32 | bs[at + 1] as i32 << 8;
+}
+
+pub function get32(bs: u8[], at: i32): i64 {
+  if (at < 0 || at + 4 > bs.len()) {
+    return 0i64;
+  }
+  return bs[at] as i64 | bs[at + 1] as i64 << 8i64 | bs[at + 2] as i64 << 16i64 | bs[at + 3] as i64 << 24i64;
+}
+
+pub function get64(bs: u8[], at: i32): i64 {
+  return get32(bs, at) | get32(bs, at + 4) << 32i64;
+}
+
+pub function part(bs: u8[], from: i32, to: i32): u8[] {
+  let a = from.max(0).min(bs.len());
+  let b = to.max(a).min(bs.len());
+  return bs.drop(a).take(b - a);
+}
+
+pub function zeros(n: i32): u8[] {
+  let out: u8[] = [];
+  for i in 0..n {
+    out = out.append(0u8);
+  }
+  return out;
+}
+
+// The text as UTF-16, least byte first, as each string of SMB is.
+pub function utf16(s: string): u8[] {
+  let out: u8[] = [];
+  for c in s.chars() {
+    let cp = c as i32;
+    if (cp >= 65536) {
+      let v = cp - 65536;
+      out = put16(put16(out, 55296 + (v >> 10)), 56320 + (v & 1023));
+    } else {
+      out = put16(out, cp);
+    }
+  }
+  return out;
+}
+
+// The text of UTF-16 bytes, least byte first.
+pub function text16(bs: u8[]): string {
+  let out = "";
+  let i = 0;
+  while (i + 1 < bs.len()) {
+    let u = get16(bs, i);
+    i += 2;
+    if (u >= 55296 && u < 56320 && i + 1 < bs.len()) {
+      let low = get16(bs, i);
+      if (low >= 56320 && low < 57344) {
+        i += 2;
+        u = 65536 + (u - 55296 << 10) + (low - 56320);
+      }
+    }
+    out += (u as char).to_string();
+  }
+  return out;
+}
+
+// HMAC of RFC 2104 with MD5.
+pub function hmac_md5(key: u8[], msg: u8[]): u8[] {
+  let k = if (key.len() > 64) { crypto.md5(key) } else { key };
+  let inner: u8[] = [];
+  let outer: u8[] = [];
+  for i in 0..64 {
+    let b = if (i < k.len()) { k[i] } else { 0u8 };
+    inner = inner.append(b ^ 54u8);
+    outer = outer.append(b ^ 92u8);
+  }
+  return crypto.md5(outer.concat(crypto.md5(inner.concat(msg))));
+}
+
+// The key of NTLMv2 for the user, from MS-NLMP 3.3.2.
+pub function v2_key(user: string, domain: string, password: string): u8[] {
+  return hmac_md5(md4.sum(utf16(password)), utf16(user.to_upper() + domain));
+}
+
+// The first message: it asks for the challenge of the server.
+pub function negotiate(): u8[] {
+  return put32(put32(SIGNATURE, 1i64), FLAGS).concat(zeros(16));
+}
+
+// What the second message has: the challenge of the server, its target
+// information, and the time of the server from that information or 0.
+pub struct Challenge { nonce: u8[], target: u8[], time: i64 }
+
+pub function challenge(msg: u8[]): Option[Challenge] {
+  if (msg.len() < 48 || part(msg, 0, 8) != SIGNATURE || get32(msg, 8) != 2i64) {
+    return None;
+  }
+  let length = get16(msg, 40);
+  let offset = get32(msg, 44) as i32;
+  let target = part(msg, offset, offset + length);
+  let time = 0i64;
+  let at = 0;
+  while (at + 4 <= target.len()) {
+    let id = get16(target, at);
+    let n = get16(target, at + 2);
+    if (id == 0) {
+      break;
+    }
+    if (id == 7 && n == 8) {
+      time = get64(target, at + 4);
+    }
+    at += 4 + n;
+  }
+  return Some(Challenge { nonce: part(msg, 24, 32), target: target, time: time });
+}
+
+// The third message and the key of the session.
+pub struct Reply { message: u8[], key: u8[] }
+
+// A field of the third message: its length twice and its offset.
+function field(out: u8[], n: i32, at: i32): u8[] {
+  return put32(put16(put16(out, n), n), at as i64);
+}
+
+// The answer to the challenge `c` for the user. `client` is 8 random
+// bytes, and `now` is the time as a Windows file time, which the answer
+// uses when the server gave none.
+pub function authenticate(c: Challenge, user: string, domain: string, password: string, client: u8[], now: i64): Reply {
+  let key = v2_key(user, domain, password);
+  let time = if (c.time != 0i64) { c.time } else { now };
+  let blob = put32(put64(put32(put32([], 0x0101i64), 0i64), time).concat(client), 0i64).concat(c.target).concat(zeros(4));
+  let proof = hmac_md5(key, c.nonce.concat(blob));
+  let nt = proof.concat(blob);
+  let lm = if (c.time != 0i64) { zeros(24) } else { hmac_md5(key, c.nonce.concat(client)).concat(client) };
+  let domain16 = utf16(domain);
+  let user16 = utf16(user);
+  let at = 64;
+  let head = put32(SIGNATURE, 3i64);
+  head = field(head, lm.len(), at);
+  at += lm.len();
+  head = field(head, nt.len(), at);
+  at += nt.len();
+  head = field(head, domain16.len(), at);
+  at += domain16.len();
+  head = field(head, user16.len(), at);
+  at += user16.len();
+  head = field(head, 0, at);
+  head = field(head, 0, at);
+  head = put32(head, FLAGS);
+  return Reply { message: head.concat(lm).concat(nt).concat(domain16).concat(user16), key: hmac_md5(key, proof) };
+}

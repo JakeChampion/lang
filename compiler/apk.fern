@@ -25,9 +25,10 @@ import "./util";
 // `min_sdk` is the lowest API level it runs on. `icon` is the PNG of the
 // launcher icon, or is empty. `compress` deflates the libraries. `home`
 // makes the activity a home screen, and `assets` go under assets/.
+// `providers` are the Java classes of the content providers.
 // `queries` are the intent actions of the components of other apps that
 // the app must see.
-pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], more_dex: u8[][], permissions: string[], min_sdk: i32, services: Service[], icon: u8[], banner: u8[], compress: boolean, cleartext: boolean, backup: boolean, debuggable: boolean, home: boolean, tv: boolean, pip: boolean, assets: Asset[], widget: Widget, queries: string[] }
+pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], more_dex: u8[][], permissions: string[], min_sdk: i32, services: Service[], providers: string[], icon: u8[], banner: u8[], compress: boolean, cleartext: boolean, backup: boolean, debuggable: boolean, home: boolean, tv: boolean, pip: boolean, assets: Asset[], widget: Widget, queries: string[] }
 
 // The app widget of the home screen: the Java class of its provider, which
 // extends android.appwidget.AppWidgetProvider, and the items of its row. An
@@ -182,9 +183,9 @@ function prefixed(b: [u8]): u8[] {
 }
 
 // The framework attributes of the files of an app, and their resource IDs.
-const ATTR_NAMES: string[] = ["theme", "label", "icon", "name", "permission", "hasCode", "debuggable", "exported", "taskAffinity", "clearTaskOnLaunch", "stateNotNeeded", "excludeFromRecents", "launchMode", "configChanges", "value", "resource", "textSize", "textColor", "gravity", "orientation", "id", "background", "padding", "layout_width", "layout_height", "minWidth", "minHeight", "text", "maxLines", "layout_weight", "minSdkVersion", "versionCode", "versionName", "windowSoftInputMode", "updatePeriodMillis", "initialLayout", "targetSdkVersion", "allowBackup", "required", "resizeMode", "banner", "resumeWhilePausing", "extractNativeLibs", "usesCleartextTraffic", "resizeableActivity", "supportsPictureInPicture", "foregroundServiceType", "enableOnBackInvokedCallback"];
+const ATTR_NAMES: string[] = ["theme", "label", "icon", "name", "permission", "hasCode", "debuggable", "exported", "taskAffinity", "clearTaskOnLaunch", "stateNotNeeded", "excludeFromRecents", "authorities", "grantUriPermissions", "launchMode", "configChanges", "value", "resource", "textSize", "textColor", "gravity", "orientation", "id", "background", "padding", "layout_width", "layout_height", "minWidth", "minHeight", "text", "maxLines", "layout_weight", "minSdkVersion", "versionCode", "versionName", "windowSoftInputMode", "updatePeriodMillis", "initialLayout", "targetSdkVersion", "allowBackup", "required", "resizeMode", "banner", "resumeWhilePausing", "extractNativeLibs", "usesCleartextTraffic", "resizeableActivity", "supportsPictureInPicture", "foregroundServiceType", "enableOnBackInvokedCallback"];
 
-const ATTR_IDS: i32[] = [16842752, 16842753, 16842754, 16842755, 16842758, 16842764, 16842767, 16842768, 16842770, 16842773, 16842774, 16842775, 16842781, 16842783, 16842788, 16842789, 16842901, 16842904, 16842927, 16842948, 16842960, 16842964, 16842965, 16842996, 16842997, 16843071, 16843072, 16843087, 16843091, 16843137, 16843276, 16843291, 16843292, 16843307, 16843344, 16843345, 16843376, 16843392, 16843406, 16843619, 16843762, 16843954, 16844010, 16844012, 16844022, 16844023, 16844185, 16844396];
+const ATTR_IDS: i32[] = [16842752, 16842753, 16842754, 16842755, 16842758, 16842764, 16842767, 16842768, 16842770, 16842773, 16842774, 16842775, 16842776, 16842779, 16842781, 16842783, 16842788, 16842789, 16842901, 16842904, 16842927, 16842948, 16842960, 16842964, 16842965, 16842996, 16842997, 16843071, 16843072, 16843087, 16843091, 16843137, 16843276, 16843291, 16843292, 16843307, 16843344, 16843345, 16843376, 16843392, 16843406, 16843619, 16843762, 16843954, 16844010, 16844012, 16844022, 16844023, 16844185, 16844396];
 
 // An attribute of the android namespace.
 function attr(name: string, kind: i32, data: i32): androidxml.Attr {
@@ -209,6 +210,12 @@ const LEANBACK: string = "android.software.leanback";
 const TOUCHSCREEN: string = "android.hardware.touchscreen";
 
 const LEANBACK_LAUNCHER: string = "android.intent.category.LEANBACK_LAUNCHER";
+
+// A content provider that no other app finds. Its authority is the name
+// of its class, and the app gives access to one URI at a time.
+function provider_element(name: string): androidxml.Element {
+  return androidxml.element("provider", [text_attr("name", name), flag("exported", false), text_attr("authorities", name), flag("grantUriPermissions", true)], []);
+}
 
 function service_element(sv: Service): androidxml.Element {
   let attrs: androidxml.Attr[] = [text_attr("name", sv.name)];
@@ -323,6 +330,9 @@ pub function manifest_tree(app: App): androidxml.Element {
   let parts: androidxml.Element[] = [androidxml.element("activity", activity_attrs, [meta, androidxml.element("intent-filter", [], filter)])];
   for sv in app.services {
     parts = parts.append(service_element(sv));
+  }
+  for name in app.providers {
+    parts = parts.append(provider_element(name));
   }
   if (app.widget.provider.len() > 0) {
     parts = parts.append(receiver_element(app.widget));
