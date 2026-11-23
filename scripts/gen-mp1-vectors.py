@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MP2 = runpy.run_path(str(ROOT / "scripts/gen-mp2-vectors.py"))
 
 
-def frame(version, rate_index, mode, ext, seq, dense=False, bitrate_index=14):
+def frame(version, rate_index, mode, ext, seq, dense=False, bitrate_index=14, free_slots=0):
     protected = seq != 1
     rate = [44100, 48000, 32000][rate_index] // version
     bitrate = (32 * bitrate_index if version == 1 else
@@ -53,7 +53,7 @@ def frame(version, rate_index, mode, ext, seq, dense=False, bitrate_index=14):
     bits += "0" * (-len(bits) % 8)
     payload = int(bits, 2).to_bytes(len(bits) // 8, "big")
     data = header + (struct.pack(">H", crc) if protected else b"") + payload
-    size = 4 * (12000 * bitrate // rate + padding)
+    size = 4 * ((12000 * bitrate // rate if bitrate_index else free_slots) + padding)
     assert len(data) <= size
     return data.ljust(size, bytes(1))
 

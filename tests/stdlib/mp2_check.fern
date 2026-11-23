@@ -31,8 +31,11 @@ function buffered(encoded: [u8], expected: [u8], rate: i32, channels: i32, reuse
   let buffer = spectral.zeros(count + 3).with(count, 123.5f32).with(count + 1, -321.25f32).with(count + 2, 17.0f32);
   let at = 0;
   let position = 0;
+  let free = 0;
   while (at < encoded.len()) {
-    let h = match (header.parse(encoded, at)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    let parsed = match (header.parse(encoded, at)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    let h = match (header.resolve(encoded, at, parsed, free, encoded.len())) { Ok(value) => value, Err(e) => { return Err("frame extent: " + e.message()); } };
+    free = header.extent(h, free);
     let (next, scratch, result) = decode(state, encoded, at, buffer, work, reuse);
     work = scratch;
     state = next;

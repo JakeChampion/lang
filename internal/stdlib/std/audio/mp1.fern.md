@@ -1,6 +1,8 @@
 # MPEG Layer I playback
 
-`decode_raw` decodes consecutive indexed-bitrate MPEG-1 or MPEG-2 Layer I frames to interleaved float PCM. Mono, stereo, dual-channel and joint-stereo streams retain synthesis history between compatible frames. Protected frames check the header and allocation fields before reading scalefactors. Input and cumulative sample counts use the caller's PCM limits. Tags, free-format frame discovery and de-emphasis filtering are outside this entry point.
+`decode_raw` decodes consecutive indexed-bitrate or free-format MPEG-1 or MPEG-2 Layer I frames to interleaved float PCM. Mono, stereo, dual-channel and joint-stereo streams retain synthesis history between compatible frames. Protected frames check the header and allocation fields before reading scalefactors. Input and cumulative sample counts use the caller's PCM limits. Tags and de-emphasis filtering are outside this entry point.
+
+A fresh free-format frame needs the compatible header that follows it, or a second complete frame at the end of the input. The extent is a whole number of four-byte slots and must not exceed `max_input_bytes`. The decoder keeps that extent, so later frames and the final frame need no lookahead.
 
 For incremental playback, create a `decoder()` and pass a byte view starting at each frame to `decode_frame_into`. Each success consumes `bytes_read` input bytes and writes 384 samples per channel to the supplied output prefix. The caller may recycle the returned array. Errors preserve the last successful synthesis history. Start a new decoder for a different rate or channel count.
 
@@ -11,6 +13,7 @@ For incremental playback, create a `decoder()` and pass a byte view starting at 
 import "std/audio/mp2/layer";
 import "std/audio/mp2/tables";
 import "std/audio/mp3/bits";
+import "std/audio/mp3/framing";
 import "std/audio/mp3/spectral";
 import "std/audio/mp3/synthesis";
 import "std/audio/pcm";
@@ -18,15 +21,15 @@ import "std/audio/wire";
 
 pub struct Decoded { sample_rate: i32, channels: i32, samples: f32[] }
 
-pub opaque struct Decoder { rate: i32, channels: i32, history: f32[], bands: f32[], lines: f32[], transform: f32[] }
+pub opaque struct Decoder { rate: i32, channels: i32, free: i32, history: f32[], bands: f32[], lines: f32[], transform: f32[] }
 
 pub struct Frame { sample_rate: i32, channels: i32, bytes_read: i32, samples: f32[] }
 
 pub function decoder(): Decoder {
-  return Decoder { rate: 0, channels: 0, history: spectral.zeros(960), bands: spectral.zeros(1152), lines: spectral.zeros(1728), transform: spectral.zeros(128) };
+  return Decoder { rate: 0, channels: 0, free: 0, history: spectral.zeros(960), bands: spectral.zeros(1152), lines: spectral.zeros(1728), transform: spectral.zeros(128) };
 }
 
-struct Header { rate: i32, channels: i32, separate: i32, bytes: i32, crc: boolean }
+struct Header { rate: i32, channels: i32, separate: i32, bytes: i32, free: i32, crc: boolean }
 
 const RATES: i32[] = [44100, 48000, 32000];
 
@@ -36,7 +39,8 @@ function invalid_header(input: [u8], a: i32, version: i32, rate_index: i32, bitr
   return input[0] != 255u8 || a >> 5 != 7 || version == 1 || (a & 6) == 0 || rate_index == 3 || bitrate_index == 15 || (input[3] & 3u8) == 2u8;
 }
 
-function header(input: [u8]): Result[Header, pcm.AudioError] {
+// `free` is a known unpadded free-format extent, or zero to discover one from the frames that follow.
+function header(input: [u8], free: i32, maximum: i32): Result[Header, pcm.AudioError] {
   if (input.len() < 4) {
     return Err(pcm.Truncated);
   }
@@ -49,16 +53,22 @@ function header(input: [u8]): Result[Header, pcm.AudioError] {
   if (invalid_header(input, a, version, rate_index, bitrate_index)) {
     return Err(pcm.Header);
   }
-  if (version == 0 || (a & 6) != 6 || bitrate_index == 0) {
+  if (version == 0 || (a & 6) != 6) {
     return Err(pcm.Unsupported);
   }
   let rate = RATES[rate_index] / (if (version == 3) { 1 } else { 2 });
   let bitrate = if (version == 3) { bitrate_index * 32 } else { LOW_BITRATES[bitrate_index] };
-  let bytes = 4 * (12000 * bitrate / rate + (b >> 1 & 1));
+  let padding = b >> 1 & 1;
+  let crc = (a & 1) == 0;
+  let base = if (bitrate_index != 0) { 0 } else if (free > 0) { free } else { framing.discover(input, framing.layered(3, version, rate_index, mode == 3, padding, crc, 0), maximum)? };
+  if (base > maximum) {
+    return Err(pcm.Limit);
+  }
+  let bytes = if (bitrate_index != 0) { 4 * (12000 * bitrate / rate + padding) } else { base + 4 * padding };
   if (bytes > input.len()) {
     return Err(pcm.Truncated);
   }
-  return Ok(Header { rate: rate, channels: if (mode == 3) { 1 } else { 2 }, separate: if (mode == 1) { 4 * (1 + (input[3] as i32 >> 4 & 3)) } else { 32 }, bytes: bytes, crc: (a & 1) == 0 });
+  return Ok(Header { rate: rate, channels: if (mode == 3) { 1 } else { 2 }, separate: if (mode == 1) { 4 * (1 + (input[3] as i32 >> 4 & 3)) } else { 32 }, bytes: bytes, free: base, crc: crc });
 }
 
 function allocation(data: [u8], h: Header): Result[(bits.Bits, u8[]), pcm.AudioError] {
@@ -154,17 +164,17 @@ function render(own state: Decoder, input: [u8], h: Header, own output: f32[]): 
   let frame = input[:h.bytes];
   let data = frame[if (h.crc) { 6 } else { 4 }:];
   let (pos, widths, scales) = match (scales_for(frame, data, h)) { Ok(value) => value, Err(e) => { return (state, Err(e)); } };
-  let Decoder { rate, channels, history, bands, lines, transform } = state;
+  let Decoder { rate, channels, free, history, bands, lines, transform } = state;
   bands = decode_slots(data, h, widths, scales, pos, bands);
   let (next, samples, next_bands, next_lines, next_transform) = synthesis.granule12_into(history, bands, h.channels, output, 0, lines, transform);
-  return (Decoder { rate: h.rate, channels: h.channels, history: next, bands: next_bands, lines: next_lines, transform: next_transform }, Ok(Frame { sample_rate: h.rate, channels: h.channels, bytes_read: h.bytes, samples: samples }));
+  return (Decoder { rate: h.rate, channels: h.channels, free: if (h.free > 0) { h.free } else { free }, history: next, bands: next_bands, lines: next_lines, transform: next_transform }, Ok(Frame { sample_rate: h.rate, channels: h.channels, bytes_read: h.bytes, samples: samples }));
 }
 
 pub function (own state: Decoder) decode_frame_into(input: [u8], own output: f32[], limits: pcm.Limits): (Decoder, Result[Frame, pcm.AudioError]) {
   if let Err(e) = pcm.check_input(input, limits) {
     return (state, Err(e));
   }
-  let h = match (header(input)) { Ok(value) => value, Err(e) => { return (state, Err(e)); } };
+  let h = match (header(input, state.free, limits.max_input_bytes)) { Ok(value) => value, Err(e) => { return (state, Err(e)); } };
   let count = match (pcm.sample_count(384, h.channels, limits)) { Ok(value) => value, Err(e) => { return (state, Err(e)); } };
   if (output.len() < count) {
     return (state, Err(pcm.Buffer));
@@ -174,14 +184,14 @@ pub function (own state: Decoder) decode_frame_into(input: [u8], own output: f32
 
 pub function decode_raw(input: [u8], limits: pcm.Limits): Result[Decoded, pcm.AudioError] {
   pcm.check_input(input, limits)?;
-  let first = header(input)?;
+  let first = header(input, 0, limits.max_input_bytes)?;
   let count = pcm.sample_count(384, first.channels, limits)?;
   let state = decoder();
   let frame = spectral.zeros(count);
   let samples: f32[] = [];
   let at = 0;
   while (at < input.len()) {
-    let h = header(input[at:])?;
+    let h = header(input[at:], state.free, limits.max_input_bytes)?;
     if (h.channels != first.channels || h.rate != first.rate) {
       return Err(pcm.Header);
     }

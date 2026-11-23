@@ -16,8 +16,8 @@ The Opus packet API reuses the Fern CELT implementation.
 | Opus | Yes | Partial | SILK, hybrid, and CELT packets, multistream channel maps, loss concealment, and forward error correction. Ogg files decode at 48 kHz with gain and exact sample boundaries. The CELT encoder uses 48 kHz fullband mono or stereo. |
 | Ogg | Pages | No | Incremental pages and packets, checksums, interleaved streams, and chained streams. The Opus and Vorbis layers supply file playback. |
 | MP3 | Yes | No | Indexed-bitrate and free-format MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. |
-| MP1 | Yes | No | Indexed-bitrate MPEG-1/2 Layer I raw streams, all six sample rates and four channel modes, with protected-frame CRC checks. |
-| MP2 | Yes | No | Indexed-bitrate MPEG-1/2 Layer II at all six sample rates. Mono, stereo, dual channel, joint stereo, and protected frames. Raw frames and complete compatible streams. |
+| MP1 | Yes | No | Indexed-bitrate and free-format MPEG-1/2 Layer I raw streams, all six sample rates and four channel modes, with protected-frame CRC checks. |
+| MP2 | Yes | No | Indexed-bitrate and free-format MPEG-1/2 Layer II at all six sample rates. Mono, stereo, dual channel, joint stereo, and protected frames. Raw frames and complete compatible streams. |
 | AAC-LC | Yes | No | Raw access units and unprotected ADTS, 1024 samples per block, all 13 ADTS rates, and declared channel configurations 1 through 7. |
 | MP4/M4A | AAC-LC, ALAC | No | Self-contained audio tracks, sample tables, decoder configuration, track selection, and edit-list trimming. Byte-view playback and indexed packet reads from seekable files. |
 | Vorbis | Yes | No | Version one, one through eight channels, both floor types, all residue types, and standard block sizes. Incremental Ogg files and borrowed readers apply initial and final sample boundaries. |
@@ -446,7 +446,7 @@ They also check 64-bit packet ranges beyond eight GiB without allocating a large
 
 ## MP2
 
-`std/audio/mp2` decodes MPEG-1 and MPEG-2 Layer II frames to interleaved float PCM.
+`std/audio/mp2` decodes indexed and free-format MPEG-1 and MPEG-2 Layer II frames to interleaved float PCM.
 It supports all six sample rates and all four channel modes.
 Protected frames validate the MPEG CRC over the header, allocation fields, and scale-factor selection.
 `decode_frame_into` reuses caller-owned PCM storage and preserves the unused suffix on success.
@@ -461,7 +461,17 @@ A rate or channel-count change also resets history.
 `decode_raw` accepts consecutive frames with one sample rate and channel count.
 It applies a cumulative output budget.
 Frame APIs require a header at the supplied byte offset.
-MPEG-2.5, free-format Layer II, tags, source readers, and seek indexes remain outside this module.
+MPEG-2.5, tags, source readers, and seek indexes remain outside this module.
+
+Free-format Layer I and II frames use the bounded discovery of `std/audio/mp3/framing`.
+A fresh free-format frame needs a compatible header after it, or a second complete frame at the input end.
+The decoder keeps the unpadded extent, so later frames need no lookahead.
+A Layer I extent must be a whole number of four-byte slots.
+Free-format MPEG-1 Layer II uses the allocation tables for 192 kbit/s per channel, as ISO 11172-3 Table B.2 specifies.
+
+The nine free-format fixtures are four synthetic Layer I streams and five libtwolame Layer II streams without a bitrate index.
+Fern output matches pinned scalar minimp3 bit for bit.
+The generator also checks that each Layer II stream decodes in minimp3 to the same PCM as its indexed original.
 
 `std/audio/mp1.decode_raw` decodes consecutive indexed Layer I frames. The MPEG-1 and MPEG-2 fixtures cover mono, stereo, dual channel and all four joint-stereo boundaries. Each fixture mixes protected and unprotected frames and compares the complete interleaved output with pinned scalar minimp3. The incremental Layer I API accepts one frame at a time with a reusable PCM buffer and preserves its synthesis history on input or buffer errors. The Layer I API accepts raw frames and does not apply de-emphasis filtering.
 
@@ -475,6 +485,7 @@ This wrapper avoids raw-demux rejection of valid short streams with channel-mode
 ```sh
 python3 scripts/gen-mp2-tables.py --source /path/to/minimp3.h --check
 python3 scripts/gen-mp2-vectors.py --minimp3 /path/to/minimp3.h --check
+python3 scripts/gen-mpeg12-freeformat-vectors.py --minimp3 /path/to/minimp3.h --check
 ```
 
 Native Linux tests include strict IR checks, sanitizers, and balanced allocation counts.
@@ -1083,7 +1094,7 @@ These results preserve exact scalar-reference PCM and do not establish world-lea
 
 Each line names the issue that owns the work.
 
-- MPEG Layers I and II: MPEG-2.5 and free-format Layer II, source readers, and seek indexes ([#14689](https://github.com/JakeChampion/lang/issues/14689)).
+- MPEG Layers I and II: source readers and seek indexes ([#14689](https://github.com/JakeChampion/lang/issues/14689)).
 - MP3: damaged-stream synchronization and more tag formats. No issue owns this work.
 - AAC: HE-AAC/SBR/PS, protected ADTS verification, coupling-channel elements, program configurations, and 960-sample frames ([#14517](https://github.com/JakeChampion/lang/issues/14517)).
 - MP4/M4A: fragmented media and further codecs ([#14518](https://github.com/JakeChampion/lang/issues/14518)).
