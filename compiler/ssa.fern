@@ -7044,23 +7044,7 @@ function share_shape_loads(f: SFunc): Formed {
   if (loads < 2) {
     return Formed { f: f, repl: [] };
   }
-  let at = block_positions(f);
-  let repl: i32[] = [];
-  for bi in 0..f.blocks.len() {
-    let insts = f.blocks[bi].insts;
-    for k in 0..insts.len() {
-      let ins = insts[k];
-      if (shape_load(ins, f.nvals) && !stored[ins.args[0]]) {
-        let found = earlier_shape(f, at, bi, k, ins);
-        if (found >= 0) {
-          if (repl.len() == 0) {
-            repl = identity_repl(f.nvals);
-          }
-          repl = repl.with(ins.result, repl[found]);
-        }
-      }
-    }
-  }
+  let repl = earlier_shapes(f, stored);
   if (repl.len() == 0) {
     return Formed { f: f, repl: [] };
   }
@@ -7379,30 +7363,94 @@ function length_checked(ins: SInst, used: boolean[]): boolean {
   return ins.kind_tag == ARR_ST && ins.args.len() == 3 && ins.imm == 0;
 }
 
-function earlier_shape(f: SFunc, at: i32[], bi: i32, k: i32, load: SInst): i32 {
-  let b = bi;
-  let j = k - 1;
-  while (true) {
-    while (j >= 0) {
-      let ins = f.blocks[b].insts[j];
-      if (shape_load(ins, f.nvals) && ins.args[0] == load.args[0] && ins.imm == load.imm) {
-        return ins.result;
+// For each shape load, the nearest shape load of the same word before it
+// with no write of memory between them, as its replacement. The search goes
+// back in the block, and then through each block that is the one earlier
+// predecessor of the block after it. Those links make a forest, and a walk
+// of the forest keeps the loads that are on the path to the current block.
+// `seen` has the last load of each word on the path, and `since` the last
+// write on the path when the load was seen: 0 for none, or the number of the
+// instruction that wrote. A block undoes its entries when the walk leaves it.
+function earlier_shapes(f: SFunc, stored: boolean[]): i32[] {
+  let at = block_positions(f);
+  let n = f.blocks.len();
+  let parent = util.minus_ones(n);
+  let child = util.minus_ones(n);
+  let sibling = util.minus_ones(n);
+  let first = __alloc_i32(n);
+  let insts = 1;
+  for b in 0..n {
+    first = first.with(b, insts);
+    insts = insts + f.blocks[b].insts.len();
+    if (f.blocks[b].preds.len() == 1) {
+      let pb = position_of(at, f.blocks[b].preds[0]);
+      if (pb >= 0 && pb < b) {
+        parent = parent.with(b, pb);
+        sibling = sibling.with(b, child[pb]);
+        child = child.with(pb, b);
       }
-      if (may_write(ins.kind_tag)) {
-        return -1;
-      }
-      j -= 1;
     }
-    if (f.blocks[b].preds.len() != 1) {
-      return -1;
-    }
-    let pb = position_of(at, f.blocks[b].preds[0]);
-    if (pb < 0 || pb >= b) {
-      return -1;
-    }
-    b = pb;
-    j = f.blocks[b].insts.len() - 1;
   }
+  let seen = util.minus_ones(2 * f.nvals);
+  let since = __alloc_i32(2 * f.nvals);
+  // Each undo entry is a slot, its `seen` and its `since`.
+  let undo = util.stack();
+  let mark = __alloc_i32(n);
+  let entry = __alloc_i32(n);
+  let wrote = 0;
+  let repl: i32[] = [];
+  // A block to enter, or -1 - b for a block b to leave.
+  let todo = util.stack();
+  for root in 0..n {
+    if (parent[root] >= 0) {
+      continue;
+    }
+    wrote = 0;
+    todo = util.stack_push(todo, root);
+    while (util.stack_len(todo) > 0) {
+      let top = util.stack_at(todo, 0);
+      todo = util.stack_pop(todo, 1);
+      if (top < 0) {
+        let done = -1 - top;
+        while (util.stack_len(undo) > mark[done]) {
+          let slot = util.stack_at(undo, 2);
+          seen = seen.with(slot, util.stack_at(undo, 1));
+          since = since.with(slot, util.stack_at(undo, 0));
+          undo = util.stack_pop(undo, 3);
+        }
+        wrote = entry[done];
+        continue;
+      }
+      mark = mark.with(top, util.stack_len(undo));
+      entry = entry.with(top, wrote);
+      let block = f.blocks[top].insts;
+      for k in 0..block.len() {
+        let ins = block[k];
+        if (shape_load(ins, f.nvals)) {
+          let slot = 2 * ins.args[0] + (if (ins.imm == 0) { 0 } else { 1 });
+          if (!stored[ins.args[0]] && seen[slot] >= 0 && since[slot] == wrote) {
+            if (repl.len() == 0) {
+              repl = identity_repl(f.nvals);
+            }
+            repl = repl.with(ins.result, repl[seen[slot]]);
+          }
+          undo = util.stack_push(util.stack_push(util.stack_push(undo, slot), seen[slot]), since[slot]);
+          seen = seen.with(slot, ins.result);
+          since = since.with(slot, wrote);
+        }
+        if (may_write(ins.kind_tag)) {
+          wrote = first[top] + k;
+        }
+      }
+      todo = util.stack_push(todo, -1 - top);
+      let c = child[top];
+      while (c >= 0) {
+        todo = util.stack_push(todo, c);
+        c = sibling[c];
+      }
+    }
+  }
+  return repl;
 }
 
 function may_write(k: i32): boolean {

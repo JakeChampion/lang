@@ -2095,6 +2095,7 @@ pub struct UnionSig { name: string, variants: string[], is_try: boolean, is_enum
 pub struct Scope {
   names: string[],
   types: typeinfo.Type[],
+  by_name: util.LastIndex,
   sigs: SigTable,
   structs: StructTable,
   unions: UnionTable,
@@ -2486,20 +2487,21 @@ function new_scope(): Scope {
   let ms: MethodSig[] = [];
   let structs = struct_table(ss, [], [], no_spellings());
   let unions = union_table(us);
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, []), methods: method_table(ms), imports: Imports { paths: [], unloaded: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: util.name_index([]), in_unsafe: false, range_indexes: [] };
+  return Scope { names: ns, types: ts, by_name: util.no_last_index(), sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, []), methods: method_table(ms), imports: Imports { paths: [], unloaded: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: util.name_index([]), in_unsafe: false, range_indexes: [] };
 }
 
 function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: Imports, impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let ns: string[] = [];
   let ts: typeinfo.Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, imports.unloaded), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: util.name_index([]), in_unsafe: false, range_indexes: [] };
+  return Scope { names: ns, types: ts, by_name: util.no_last_index(), sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, imports.unloaded), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: util.name_index([]), in_unsafe: false, range_indexes: [] };
 }
 
 function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
   let ns = s.names.append(name);
   let ts = s.types.append(t);
+  let ix = s.by_name.with_last_of(ns);
   if (!s.lit_locals.has(name)) {
-    return Scope { ...s, names: ns, types: ts };
+    return Scope { ...s, names: ns, types: ts, by_name: ix };
   }
   let lits: string[] = [];
   for lit in s.lit_locals.names {
@@ -2507,7 +2509,7 @@ function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
       lits = lits.append(lit);
     }
   }
-  return Scope { ...s, names: ns, types: ts, lit_locals: util.name_index(lits) };
+  return Scope { ...s, names: ns, types: ts, by_name: ix, lit_locals: util.name_index(lits) };
 }
 
 function (s: Scope) bind_inferred(v: ast.StmtVar, t: typeinfo.Type): Scope {
@@ -2552,14 +2554,7 @@ pub function (s: Scope) resolve_type(name: string): typeinfo.Type {
 }
 
 function (s: Scope) defines(name: string): boolean {
-  let i = s.names.len() - 1;
-  while (i >= 0) {
-    if (s.names[i] == name) {
-      return true;
-    }
-    i -= 1;
-  }
-  return false;
+  return s.binding_index(name) >= 0;
 }
 
 function bind_destructure_names(s: Scope, v: ast.StmtVar): Scope {
@@ -2892,14 +2887,7 @@ function (s: Scope) ident_binding(id: ast.ExprIdent): i32 {
 }
 
 function (s: Scope) binding_index(name: string): i32 {
-  let i = s.names.len() - 1;
-  while (i >= 0) {
-    if (s.names[i] == name) {
-      return i;
-    }
-    i -= 1;
-  }
-  return -1;
+  return s.by_name.find(s.names, name);
 }
 
 function (s: Scope) lookup(name: string): typeinfo.Type {
@@ -7183,6 +7171,17 @@ pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
   return s;
 }
 
+// The type that bind_stmt gives the local of `v`, a declaration of one name.
+pub function local_bind_type(v: ast.StmtVar, s: Scope): typeinfo.Type {
+  return var_bind_type(v, s);
+}
+
+// The scope after `v`, a declaration of one name whose type is `t` from
+// local_bind_type.
+pub function bind_local(v: ast.StmtVar, s: Scope, t: typeinfo.Type): Scope {
+  return bind_var(v, s, t);
+}
+
 // var_bind_type is the type that bind_stmt gives the local of v.
 function var_bind_type(v: ast.StmtVar, s: Scope): typeinfo.Type {
   if (v.type_name.len() > 0) {
@@ -9152,7 +9151,7 @@ struct SlcLists { arrays: string[], tainted: string[], held: string[] }
 // The block depth of the storage behind each name of the three lists, in list
 // order, and the depth of the declaration of each local. A function body has
 // depth 1. `depth` is the depth of the block that the walk is in.
-struct SlcDepths { depth: i32, arrays: i32[], tainted: i32[], held: i32[], vars: string[], var_depths: i32[] }
+struct SlcDepths { depth: i32, arrays: i32[], tainted: i32[], held: i32[], vars: string[], by_var: util.LastIndex, var_depths: i32[] }
 
 // The names of `names` whose storage is deeper than depth `t`.
 function slc_deeper(names: string[], at: i32[], t: i32): string[] {
@@ -9171,10 +9170,10 @@ function slc_lists_deeper(l: SlcLists, d: SlcDepths, t: i32): SlcLists {
 
 // The depth of the deepest storage that `v` views: the deepest block for
 // which the storage of that block and of the blocks inside it gives a root.
-function slc_storage_depth(v: ast.StmtVar, cur: Scope, params: string[], before: SlcLists, d: SlcDepths, sums: ViewSum[], vix: ViewIndex): i32 {
+function slc_storage_depth(v: ast.StmtVar, cur: Scope, params: string[], after: SlcLists, d: SlcDepths, sums: ViewSum[], vix: ViewIndex): i32 {
   let vty = bound_type(v, cur);
   for up in 1..d.depth {
-    let l = slc_lists_deeper(before, d, d.depth - up);
+    let l = slc_lists_deeper(after, d, d.depth - up);
     let found = slc_src_roots(v.init, cur, params, l.arrays, l.tainted, sums, vix).local || slc_expr_roots(v.init, cur, params, l.arrays, l.tainted, sums, vix).local;
     if (found || holds_view_aggregate(vty, cur) && slc_agg_roots(v.init, vty, cur, params, l.arrays, l.tainted, l.held, sums, vix).local) {
       return d.depth - up + 1;
@@ -9183,21 +9182,23 @@ function slc_storage_depth(v: ast.StmtVar, cur: Scope, params: string[], before:
   return 1;
 }
 
-// The depths after the declaration `v`, which grew the lists from `before`
-// to `after`.
-function slc_declared(d: SlcDepths, v: ast.StmtVar, cur: Scope, params: string[], before: SlcLists, after: SlcLists, sums: ViewSum[], vix: ViewIndex): SlcDepths {
-  let out = SlcDepths { ...d, vars: d.vars.append(v.name), var_depths: d.var_depths.append(d.depth) };
-  if (after.arrays.len() > before.arrays.len()) {
+// The depths after the declaration `v`, which grew the lists to `after`.
+// The depths of `d` give the lengths of the lists before the declaration.
+function slc_declared(d: SlcDepths, v: ast.StmtVar, cur: Scope, params: string[], after: SlcLists, sums: ViewSum[], vix: ViewIndex): SlcDepths {
+  let vars = d.vars.append(v.name);
+  let by_var = d.by_var.with_last_of(vars);
+  let out = SlcDepths { ...d, vars: vars, by_var: by_var, var_depths: d.var_depths.append(d.depth) };
+  if (after.arrays.len() > d.arrays.len()) {
     out = SlcDepths { ...out, arrays: out.arrays.append(d.depth) };
   }
-  if (after.tainted.len() == before.tainted.len() && after.held.len() == before.held.len()) {
+  if (after.tainted.len() == d.tainted.len() && after.held.len() == d.held.len()) {
     return out;
   }
-  let at = slc_storage_depth(v, cur, params, before, d, sums, vix);
-  for i in before.tainted.len()..after.tainted.len() {
+  let at = slc_storage_depth(v, cur, params, after, d, sums, vix);
+  for i in d.tainted.len()..after.tainted.len() {
     out = SlcDepths { ...out, tainted: out.tainted.append(at) };
   }
-  for i in before.held.len()..after.held.len() {
+  for i in d.held.len()..after.held.len() {
     out = SlcDepths { ...out, held: out.held.append(at) };
   }
   return out;
@@ -9205,16 +9206,14 @@ function slc_declared(d: SlcDepths, v: ast.StmtVar, cur: Scope, params: string[]
 
 // The depth of the declaration of the local or parameter `name`, or 0.
 function slc_var_depth(d: SlcDepths, name: string, params: string[]): i32 {
-  let at = 0;
-  for i in 0..d.vars.len() {
-    if (d.vars[i] == name) {
-      at = d.var_depths[i];
-    }
+  let i = d.by_var.find(d.vars, name);
+  if (i >= 0 && d.var_depths[i] != 0) {
+    return d.var_depths[i];
   }
-  if (at == 0 && name_in(name, params)) {
+  if (name_in(name, params)) {
     return 1;
   }
-  return at;
+  return 0;
 }
 
 // A view that is stored in a variable of an outer block must not view the
@@ -9246,7 +9245,6 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
         out = util.append_diags(out, slc_store_diags(a, cur, params, localarr, tainted, held, sums, vix, dep));
       },
       ast.StmtVar(v) => {
-        let before = SlcLists { arrays: localarr, tainted: tainted, held: held };
         if (typeinfo.is_array_view(var_declared_type(v, cur)) && typeinfo.is_owned_array(check_expr(v.init, cur))) {
           if (slc_of_call_result(v.init) || slc_src_roots(v.init, cur, params, localarr, tainted, sums, vix).local) {
             tainted = tainted.append(v.name);
@@ -9266,7 +9264,7 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
             }
           }
         }
-        dep = slc_declared(dep, v, cur, params, before, SlcLists { arrays: localarr, tainted: tainted, held: held }, sums, vix);
+        dep = slc_declared(dep, v, cur, params, SlcLists { arrays: localarr, tainted: tainted, held: held }, sums, vix);
       },
       ast.StmtReturn(r) => {
         if (ret_is_view) {
@@ -9659,7 +9657,7 @@ function slice_escape_diags(fn: parser.FuncDecl, prepared: SlcFunction, sums: Vi
   for name in prepared.fixed_strings {
     roots = roots.append(1);
   }
-  let depths = SlcDepths { depth: 1, arrays: [], tainted: roots, held: [], vars: [], var_depths: [] };
+  let depths = SlcDepths { depth: 1, arrays: [], tainted: roots, held: [], vars: [], by_var: util.no_last_index(), var_depths: [] };
   return slc_walk(fn.body, fn.name, prepared.scope, prepared.params, localarr, prepared.fixed_strings, held, sums, vix, parser.spelling_is_view(fn.ret_type), depths);
 }
 
@@ -38622,11 +38620,15 @@ function lit_stmts(stmts: ast.Stmt[], s: Scope, st: LitInfer): LitInfer {
 function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
   match (stmt) {
     ast.StmtVar(v) => {
+      // Each branch reads s before its bind, so that the bind is the last
+      // use of s and grows its arrays in place.
       if (ast.destructures(v)) {
-        return (bind_stmt(stmt, s), lit_expr(v.init, s, st));
+        let inferred = lit_expr(v.init, s, st);
+        return (bind_stmt(stmt, s), inferred);
       }
       if (v.type_name.len() > 0) {
-        return (bind_stmt(stmt, s), lit_demand(v.init, var_declared_type(v, s), s, st));
+        let demanded = lit_demand(v.init, var_declared_type(v, s), s, st);
+        return (bind_stmt(stmt, s), demanded);
       }
       let (seed, ids, sst) = lit_seed(v.init, s, st);
       if (!seed) {
@@ -38669,7 +38671,8 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
           let k = ost.okeys.len();
           return (s.bind(v.name, lit_open_marker(k)), LitInfer { ...ost, okeys: ost.okeys.append(lit_var_key(v)), otypes: ost.otypes.append(open_type), ofills: ost.ofills.append(t_unknown("open")) });
         }
-        return (bind_stmt(stmt, s), lit_expr(v.init, s, st));
+        let inferred = lit_expr(v.init, s, st);
+        return (bind_stmt(stmt, s), inferred);
       }
       let k = sst.parent.len();
       return (s.bind(v.name, lit_marker(k)), lit_link(lit_new(sst, lit_var_key(v)), ids.append(k)));
