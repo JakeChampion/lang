@@ -3,13 +3,16 @@ import "std/frames";
 import "std/pagetable";
 import "std/option";
 
-// A region of 64 frames plus one of slack. The first frame holds the header
-// and the bitmap of the frames, and the root table takes the second.
+// A region of 64 frames plus one of slack. The base is one byte past the
+// block, so the frames start at the next frame boundary wherever the block
+// is: 64 frames, and 63 free after the header. The first frame holds the
+// header and the bitmap of the frames, and the root table takes the second.
 const REGION_BYTES: usize = 266240;
 
-function region(): frames.Frames {
+// The frames over `block`, set up again for each case.
+function region(block: usize): frames.Frames {
   unsafe {
-    let Some(f) = frames.new(__alloc(REGION_BYTES as i32), REGION_BYTES) else {
+    let Some(f) = frames.new(block + 1 as usize, REGION_BYTES - 1 as usize) else {
       eprint("no frames\n");
       exit(98);
       return frames.Frames { base: 0 as usize };
@@ -35,8 +38,8 @@ function attr_of(e: i64): i64 {
   return e & 0xffff000000000fffu64 as i64;
 }
 
-function test_block(): test.TestOutcome {
-  let f = region();
+function test_block(block: usize): test.TestOutcome {
+  let f = region(block);
   let Some(t) = pagetable.new(f) else {
     return test.fail("no tables");
   };
@@ -63,8 +66,8 @@ function test_block(): test.TestOutcome {
   return test.assert_eq((63 as usize - f.free_count()) as i64, 3i64);
 }
 
-function test_page(): test.TestOutcome {
-  let f = region();
+function test_page(block: usize): test.TestOutcome {
+  let f = region(block);
   let Some(t) = pagetable.new(f) else {
     return test.fail("no tables");
   };
@@ -90,8 +93,8 @@ function test_page(): test.TestOutcome {
 
 // A range that is not page aligned is refused, and a range longer than the
 // frames can describe stops when they run out.
-function test_refusals(): test.TestOutcome {
-  let f = region();
+function test_refusals(block: usize): test.TestOutcome {
+  let f = region(block);
   let Some(t) = pagetable.new(f) else {
     return test.fail("no tables");
   };
@@ -115,8 +118,8 @@ function test_refusals(): test.TestOutcome {
 // A page inside a mapped block changes on its own: the block splits into a
 // table of its pages, the page takes the new attributes, and its neighbours
 // keep the old ones.
-function test_split(): test.TestOutcome {
-  let f = region();
+function test_split(block: usize): test.TestOutcome {
+  let f = region(block);
   let Some(t) = pagetable.new(f) else {
     return test.fail("no tables");
   };
@@ -155,10 +158,15 @@ function test_split(): test.TestOutcome {
 }
 
 function main(): i32 {
+  let block = unsafe { __alloc(REGION_BYTES as i32) };
   let r = test.new("std/pagetable");
-  r = r.it("maps a 2 MiB block through three tables", test_block);
-  r = r.it("maps a 4 KiB device page through four tables", test_page);
-  r = r.it("refuses unaligned ranges and stops when the frames run out", test_refusals);
-  r = r.it("splits a block when a page inside it changes", test_split);
-  return r.finish();
+  r = r.it("maps a 2 MiB block through three tables", (): test.TestOutcome => test_block(block));
+  r = r.it("maps a 4 KiB device page through four tables", (): test.TestOutcome => test_page(block));
+  r = r.it("refuses unaligned ranges and stops when the frames run out", (): test.TestOutcome => test_refusals(block));
+  r = r.it("splits a block when a page inside it changes", (): test.TestOutcome => test_split(block));
+  let verdict = r.finish();
+  unsafe {
+    __free(block, REGION_BYTES as i32);
+  }
+  return verdict;
 }
