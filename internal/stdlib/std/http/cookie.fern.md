@@ -10,6 +10,24 @@ Request cookie pairs and response cookie attributes have separate parse rules. A
 
 Length limits bound cookie fields and attributes. SameSite and partition policy remain explicit. The cookie jar uses request context to select applicable values.
 
+## Executable example
+
+```fern test name=std-http-cookie-example
+import "std/http/cookie";
+
+function main(): i32 {
+  let session = cookie.SetCookie { ...cookie.new("sid", "abc123"), path: "/", secure: true, http_only: true };
+  let Ok(text) = session.serialize() else { return 1; };
+  if (text != "sid=abc123; Path=/; Secure; HttpOnly; SameSite=Lax") { return 2; }
+  match (cookie.new("bad name", "x").serialize()) {
+    Ok(text) => { return 3; },
+    Err(e) => {}
+  }
+  if (!cookie.domain_matches("api.example.com", "example.com") || cookie.domain_matches("badexample.com", "example.com")) { return 4; }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.
