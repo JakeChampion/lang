@@ -1,0 +1,106 @@
+// Checks the SMB client against a real server. FILES_SMB_SERVER holds the
+// host, the port, the share, the user and the password, with spaces between
+// them. FILES_SMB_BYTES is the size of the file that goes to the server and
+// back. scripts/files-samba-check runs this program against Samba with each
+// set of dialects and signature rules.
+import "std/i32";
+import "std/result";
+import "std/string";
+import "std/test";
+import "./smb";
+import "./store";
+
+function server(): smb.Server {
+  let parts = env("FILES_SMB_SERVER").unwrap_or("").split(" ");
+  if (parts.len() != 5) {
+    return smb.Server { host: "", port: 0, share: "", user: "", password: "", domain: "" };
+  }
+  return smb.Server { host: parts[0], port: i32.parse_i32(parts[1]).unwrap_or(445), share: parts[2], user: parts[3], password: parts[4], domain: "" };
+}
+
+function test_shares(): test.TestOutcome {
+  let s = server();
+  match (smb.shares(s)) {
+    Ok(names) => {
+      return test.assert_eq(names.contains(s.share), true);
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+function test_wrong_password(): test.TestOutcome {
+  let s = server();
+  match (smb.list(smb.Server { ...s, password: s.password + "x" }, "")) {
+    Ok(_) => {
+      return test.fail("the server took a wrong password");
+    },
+    Err(e) => {
+      return test.assert_eq(e, "The user name or the password is wrong.");
+    }
+  }
+}
+
+// Copies the file `from` of `src` to `to` of `dst` in steps.
+function copied(src: store.Place, from: string, dst: store.Place, to: string): Result[i64, string] {
+  let step = store.Step { from: from, to: to, size: 0i64, dir: false };
+  let offset = 0i64;
+  while (true) {
+    let n = store.advance(src, dst, step, offset)?;
+    offset += n;
+    if (n < store.STEP as i64) {
+      return Ok(offset);
+    }
+  }
+  return Ok(offset);
+}
+
+function test_round_trip(): test.TestOutcome {
+  let remote = store.Remote(server());
+  let size = i32.parse_i32(env("FILES_SMB_BYTES").unwrap_or("12000000")).unwrap_or(12000000);
+  let Ok(dir) = temp_dir("fern-files-live") else {
+    return test.fail("no temp dir");
+  };
+  let data: u8[] = [];
+  for i in 0..65536 {
+    data = data.append((i * 7 % 251) as u8);
+  }
+  while (data.len() < size) {
+    data = data.concat(data);
+  }
+  let sent = data.take(size);
+  let wrote = write_file_bytes(dir + "/up.bin", sent).is_ok();
+  let up = copied(store.Local, dir + "/up.bin", remote, "live/Ünï up.bin");
+  let listed = store.list(remote, "live").unwrap_or([]);
+  let down = copied(remote, "live/Ünï up.bin", store.Local, dir + "/down.bin");
+  let back = read_file_bytes(dir + "/down.bin").unwrap_or([]);
+  let removed = remove_dir_all(dir);
+  if (up.is_err() || down.is_err()) {
+    return test.fail("the copy failed: " + up.err().unwrap_or("") + down.err().unwrap_or(""));
+  }
+  let sized = listed.len() == 1 && listed[0].name == "Ünï up.bin" && listed[0].size == size as i64;
+  return test.assert_eq(wrote.to_string() + " " + sized.to_string() + " " + (back == sent).to_string(), "true true true");
+}
+
+function test_folders(): test.TestOutcome {
+  let remote = store.Remote(server());
+  let made = store.make_dir(remote, "live/a").is_ok() && store.make_dir(remote, "live/a/b").is_ok() && store.write(remote, "live/a/b/note.txt", 0i64, "x".bytes()).is_ok();
+  let renamed = store.rename_to(remote, "live/a", "live/c").is_ok() && store.list(remote, "live/c/b").unwrap_or([]).len() == 1;
+  let gone = store.remove(remote, "live", true).is_ok() && store.list(remote, "live").is_err();
+  return test.assert_eq(made.to_string() + " " + renamed.to_string() + " " + gone.to_string(), "true true true");
+}
+
+function main(): i32 {
+  if (server().host.len() == 0) {
+    print("set FILES_SMB_SERVER to: host port share user password");
+    return 2;
+  }
+  let made = store.make_dir(store.Remote(server()), "live");
+  let r = test.new("Fern Files against an SMB server");
+  r = r.it("the server lists its share", test_shares);
+  r = r.it("a wrong password gets its note", test_wrong_password);
+  r = r.it("a file goes to the server and back with the same bytes", test_round_trip);
+  r = r.it("folders rename and go with what they hold", test_folders);
+  return r.finish();
+}
