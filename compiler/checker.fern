@@ -27693,7 +27693,9 @@ function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: Own
 // The struct declarations a type name resolves against, and the types with
 // a method that consumes its receiver.
 // no_handle and handle hold the current declaration classification.
-struct OwnDecls { structs: parser.StructDecl[], aliases: parser.TypeAlias[], snames: util.NameIndex, consuming: util.NameIndex, no_handle: util.NameIndex, handle: util.NameIndex, obligations: util.NameIndex, copy_results: util.NameIndex }
+// struct_keys has the name and the enum owner of each struct, and
+// struct_rows the struct of each key. alias_names has the name of each alias.
+struct OwnDecls { structs: parser.StructDecl[], struct_keys: util.NameIndex, struct_rows: i32[], alias_names: util.NameIndex, aliases: parser.TypeAlias[], snames: util.NameIndex, consuming: util.NameIndex, no_handle: util.NameIndex, handle: util.NameIndex, obligations: util.NameIndex, copy_results: util.NameIndex }
 
 // Variant payloads use the type parameters of their enum declaration.
 function ow_data_structs(mod: parser.Module): parser.StructDecl[] {
@@ -27749,7 +27751,22 @@ function ow_decls(mod: parser.Module, snames: util.NameIndex): OwnDecls {
     decl_names = decl_names.append(al.name);
   }
   let no: string[] = [];
-  let dx: OwnDecls = OwnDecls { structs: ow_data_structs(mod), aliases: mod.aliases, snames: snames, consuming: util.name_index(names), no_handle: util.name_index(decl_names), handle: util.name_index(no), obligations: util.name_index(obligations), copy_results: util.name_index([]) };
+  let structs = ow_data_structs(mod);
+  let keys: string[] = [];
+  let rows: i32[] = [];
+  for i in 0..structs.len() {
+    keys = keys.append(structs[i].name);
+    rows = rows.append(i);
+    if (structs[i].enum_owner != structs[i].name) {
+      keys = keys.append(structs[i].enum_owner);
+      rows = rows.append(i);
+    }
+  }
+  let alias_names: string[] = [];
+  for alias in mod.aliases {
+    alias_names = alias_names.append(alias.name);
+  }
+  let dx: OwnDecls = OwnDecls { structs: structs, struct_keys: util.name_index(keys), struct_rows: rows, alias_names: util.name_index(alias_names), aliases: mod.aliases, snames: snames, consuming: util.name_index(names), no_handle: util.name_index(decl_names), handle: util.name_index(no), obligations: util.name_index(obligations), copy_results: util.name_index([]) };
   return ow_classify_decls(dx, decl_names);
 }
 
@@ -27817,14 +27834,17 @@ function ow_value_data(tn: string, dx: OwnDecls, seen: string[]): boolean {
   let checked: string[] = [];
   let arities: i32[] = [];
   let at = 0;
+  // A part that the walk met before gives the same answer again.
+  let met = util.name_index([]);
   while (at < pending.len()) {
     let part = pending[at].trim();
     at += 1;
+    if (util.has_str(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize", "f32", "f64", "boolean", "char", "string", "void"], part) || typeinfo.lanes_width(part) > 0 || met.has(part)) {
+      continue;
+    }
+    met = met.added(part);
     if (!ow_holds_no_handle(part, dx) || part == "str" || part == "fn" || parser.top_arrow_at(part) >= 0 || part.starts_with("[")) {
       return false;
-    }
-    if (util.has_str(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize", "f32", "f64", "boolean", "char", "string", "void"], part) || typeinfo.lanes_width(part) > 0) {
-      continue;
     }
     if (part.ends_with("[]")) {
       pending = pending.append(slice_unchecked(part, 0, part.len() - 2).to_owned());
@@ -27853,7 +27873,10 @@ function ow_value_data(tn: string, dx: OwnDecls, seen: string[]): boolean {
     }
     checked = checked.append(name);
     arities = arities.append(args.len());
-    for alias in dx.aliases {
+    let ai = dx.alias_names.chain(name);
+    while (ai >= 0) {
+      let alias = dx.aliases[ai];
+      ai = dx.alias_names.next[ai];
       if (alias.name != name) {
         continue;
       }
@@ -27868,8 +27891,12 @@ function ow_value_data(tn: string, dx: OwnDecls, seen: string[]): boolean {
         pending = pending.append(parser.subst_ty(member, alias.type_params, args));
       }
     }
-    for sd in dx.structs {
-      if (sd.name != name && sd.enum_owner != name) {
+    let si = dx.struct_keys.chain(name);
+    while (si >= 0) {
+      let key = dx.struct_keys.names[si];
+      let sd = dx.structs[dx.struct_rows[si]];
+      si = dx.struct_keys.next[si];
+      if (key != name) {
         continue;
       }
       if (sd.type_params.len() != args.len() || sd.must_consume) {
