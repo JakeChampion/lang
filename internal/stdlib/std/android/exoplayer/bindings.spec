@@ -1,9 +1,6 @@
 # The classes of std/android/exoplayer. Write bindings.fern again with
 #   tools/media3/fetch
 #   jnibind $ANDROID_HOME/platforms/android-34/android.jar build/media3/jars/*.jar bindings.spec
-android.os.Looper getMainLooper
-android.os.Handler <init>(Landroid/os/Looper;Landroid/os/Handler$Callback;)V obtainMessage(IIILjava/lang/Object;)Landroid/os/Message;
-android.os.Message sendToTarget what arg1 arg2 obj
 android.view.Surface release setFrameRate(FII)V?
 android.graphics.SurfaceTexture release
 android.content.Context -

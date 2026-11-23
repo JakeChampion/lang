@@ -758,6 +758,55 @@ func TestApkSensors(t *testing.T) {
 	verifyApkV2(t, raw)
 }
 
+// The class of std/android/speech implements RecognitionListener, so the
+// manifest of the test app has the query for the recognition service, which
+// Android 11 and later need. An app with no such class has no query.
+func TestApkSpeech(t *testing.T) {
+	dir := t.TempDir()
+	build := func(name, pkg, permissions string, app string) *zip.Reader {
+		t.Helper()
+		out := filepath.Join(dir, name)
+		cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-package", pkg, "-apk-permission", permissions,
+			app, e2eharness.SelfHostStdlibRoot(t))
+		cmd.Env = e2eharness.ChildEnv()
+		if o, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("fern -apk: %v\n%s", err, o)
+		}
+		raw, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		verifyApkV2(t, raw)
+		return zr
+	}
+	zr := build("speechtest.apk", "dev.fern.speechtest", "RECORD_AUDIO", e2eharness.RepoPath("tests/android/speech", "app.fern"))
+	man := readZipEntry(t, zr, "AndroidManifest.xml")
+	for _, want := range []string{"android.permission.RECORD_AUDIO", "queries", "intent", "android.speech.RecognitionService"} {
+		if !bytes.Contains(man, utf16le(want)) {
+			t.Errorf("the manifest has no %s", want)
+		}
+	}
+	dex := readZipEntry(t, zr, "classes.dex")
+	for _, name := range []string{"Ldev/fern/android/Speech;", "Landroid/speech/RecognitionListener;", "Landroid/os/Handler$Callback;", "handleMessage", "onReadyForSpeech", "onBeginningOfSpeech", "onRmsChanged", "onBufferReceived", "onEndOfSpeech", "onError", "onResults", "onPartialResults", "onEvent"} {
+		if !bytes.Contains(dex, []byte(name)) {
+			t.Errorf("classes.dex has no %s", name)
+		}
+	}
+	for _, abi := range []string{"arm64-v8a", "x86_64"} {
+		if lib := readZipEntry(t, zr, "lib/"+abi+"/libapp.so"); !bytes.Contains(lib, []byte("createSpeechRecognizer")) {
+			t.Errorf("the library of %s does not call createSpeechRecognizer", abi)
+		}
+	}
+	other := build("locationtest.apk", "dev.fern.locationtest", "ACCESS_FINE_LOCATION", e2eharness.RepoPath("tests/android/location", "app.fern"))
+	if man := readZipEntry(t, other, "AndroidManifest.xml"); bytes.Contains(man, utf16le("queries")) {
+		t.Error("the manifest of an app with no RecognitionListener has a query")
+	}
+}
+
 // The test app of std/android/location declares both permissions, and its
 // @jni class implements each method of LocationListener, as Android below
 // API level 30 calls each one.

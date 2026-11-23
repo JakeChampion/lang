@@ -15,7 +15,7 @@ function test_render_empty(): test.TestOutcome {
 }
 
 function test_render_short_rows(): test.TestOutcome {
-  return test.assert_eq(table.render([["x", "y", "z"], ["1"]]), "x  y  z\n1     ");
+  return test.assert_eq(table.render([["x", "y", "z"], ["1"]]), "x  y  z\n1");
 }
 
 function test_codepoint_alignment(): test.TestOutcome {
@@ -27,12 +27,18 @@ function test_render_with_header(): test.TestOutcome {
   return test.assert_eq(h, "name  age\n----  ---\nada   36\nbo    9");
 }
 
+function test_no_trailing_spaces(): test.TestOutcome {
+  let h = table.render_with_header(["a", "bb"], [["1", "2", "3"], ["xxxx", "", ""], []]);
+  return test.assert_eq(h, "a     bb\n----  --  -\n1     2   3\nxxxx\n");
+}
+
 function main(): i32 {
   let r = test.new("std/table");
   r = r.it("render basic", test_render_basic);
   r = r.it("single column", test_render_single_column);
   r = r.it("empty", test_render_empty);
   r = r.it("short rows", test_render_short_rows);
+  r = r.it("no trailing spaces", test_no_trailing_spaces);
   r = r.it("codepoint align", test_codepoint_alignment);
   r = r.it("with header", test_render_with_header);
   return r.finish();

@@ -26,7 +26,9 @@ import "./util";
 // launcher icon, or is empty. `compress` deflates the libraries. `home`
 // makes the activity a home screen, and `assets` go under assets/.
 // `providers` are the Java classes of the content providers.
-pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], more_dex: u8[][], permissions: string[], min_sdk: i32, services: Service[], providers: string[], icon: u8[], banner: u8[], compress: boolean, cleartext: boolean, backup: boolean, debuggable: boolean, home: boolean, tv: boolean, pip: boolean, assets: Asset[], widget: Widget }
+// `queries` are the intent actions of the components of other apps that
+// the app must see.
+pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], more_dex: u8[][], permissions: string[], min_sdk: i32, services: Service[], providers: string[], icon: u8[], banner: u8[], compress: boolean, cleartext: boolean, backup: boolean, debuggable: boolean, home: boolean, tv: boolean, pip: boolean, assets: Asset[], widget: Widget, queries: string[] }
 
 // The app widget of the home screen: the Java class of its provider, which
 // extends android.appwidget.AppWidgetProvider, and the items of its row. An
@@ -59,6 +61,10 @@ pub struct Service { name: string, types: i32, permission: string, action: strin
 
 // The action of a media browser service, which Android Auto binds.
 pub const BROWSE_ACTION: string = "android.media.browse.MediaBrowserService";
+
+// The action of the recognition service of a SpeechRecognizer. From
+// Android 11 an app sees that service only with a query for this action.
+pub const RECOGNITION_ACTION: string = "android.speech.RecognitionService";
 
 // The meta-data of the application that marks it as an app of Android
 // Auto, and the file that says that it is a media app.
@@ -254,6 +260,13 @@ pub function manifest_tree(app: App): androidxml.Element {
     for f in [LEANBACK, TOUCHSCREEN] {
       top = top.append(androidxml.element("uses-feature", [text_attr("name", f), flag("required", false)], []));
     }
+  }
+  if (app.queries.len() > 0) {
+    let intents: androidxml.Element[] = [];
+    for action in app.queries {
+      intents = intents.append(androidxml.element("intent", [], [named("action", action)]));
+    }
+    top = top.append(androidxml.element("queries", [], intents));
   }
   let theme = APP_THEME;
   if (app.home) {

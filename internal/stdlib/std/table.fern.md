@@ -10,6 +10,20 @@ The renderer aligns rows of text into columns. A separate entry point includes a
 
 Input consists of rows and cells rather than preformatted lines. The renderer returns text so the caller controls the output destination.
 
+Two spaces separate the columns. The width of a column is the largest number of code points in its cells. A row can have fewer cells than the table has columns. No line ends with spaces.
+
+## Executable example
+
+```fern test name=std-table-example
+import "std/table";
+
+function main(): i32 {
+  let text = table.render_with_header(["name", "age"], [["ada", "36"], ["bo"]]);
+  if (text != "name  age\n----  ---\nada   36\nbo") { return 1; }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.
@@ -90,18 +104,23 @@ function __tbl_widths(rows: string[][]): i32[] {
   return widths;
 }
 
+// The cells after the last cell with text are not written, so a line does
+// not end with spaces.
 function __tbl_row(row: string[], widths: i32[]): string {
+  let last = row.len() - 1;
+  if (last >= widths.len()) {
+    last = widths.len() - 1;
+  }
+  while (last >= 0 && row[last].len() == 0) {
+    last -= 1;
+  }
   let cells: string[] = [];
   let c = 0;
-  while (c < widths.len()) {
-    let cell = "";
-    if (c < row.len()) {
-      cell = row[c];
-    }
-    if (c == widths.len() - 1) {
-      cells = cells.append(cell);
+  while (c <= last) {
+    if (c == last) {
+      cells = cells.append(row[c]);
     } else {
-      cells = cells.append(__tbl_pad(cell, widths[c]));
+      cells = cells.append(__tbl_pad(row[c], widths[c]));
     }
     c += 1;
   }

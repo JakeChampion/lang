@@ -40,6 +40,49 @@ function test_skips_malformed(): test.TestOutcome {
   return test.assert_true(m.len() == 1 && m.get_or("GOOD", "?") == "ok");
 }
 
+function test_inline_comment(): test.TestOutcome {
+  let m = dotenv.parse("A=bar # note\nB=a#b\nC=# all comment\nD=x\t#y\nURL=http://host/#top\n");
+  return test.assert_true(m.get_or("A", "?") == "bar"
+    && m.get_or("B", "?") == "a#b"
+    && m.get_or("C", "?") == ""
+    && m.get_or("D", "?") == "x"
+    && m.get_or("URL", "?") == "http://host/#top");
+}
+
+function test_comment_after_quoted(): test.TestOutcome {
+  let m = dotenv.parse("A=\"x # y\" # note\nB='p#q'#note\nC=\"z\"  \r\n");
+  return test.assert_true(m.get_or("A", "?") == "x # y"
+    && m.get_or("B", "?") == "p#q"
+    && m.get_or("C", "?") == "z");
+}
+
+function test_multi_line_quoted(): test.TestOutcome {
+  let m = dotenv.parse("KEY=\"line 1\nline 2\"\nRAW='a\n#b'\nNEXT=1\n");
+  return test.assert_true(m.len() == 3
+    && m.get_or("KEY", "?") == "line 1\nline 2"
+    && m.get_or("RAW", "?") == "a\n#b"
+    && m.get_or("NEXT", "?") == "1");
+}
+
+function test_escaped_quote(): test.TestOutcome {
+  let m = dotenv.parse("A=\"say \\\"hi\\\"\"\nB=2\n");
+  return test.assert_true(m.get_or("A", "?") == "say \"hi\"" && m.get_or("B", "?") == "2");
+}
+
+function test_quote_not_closed(): test.TestOutcome {
+  let m = dotenv.parse("A=\"open\nB=2\nC=\"x\" y\nD='it\n");
+  return test.assert_true(m.len() == 4
+    && m.get_or("A", "?") == "\"open"
+    && m.get_or("B", "?") == "2"
+    && m.get_or("C", "?") == "\"x\" y"
+    && m.get_or("D", "?") == "'it");
+}
+
+function test_no_final_newline(): test.TestOutcome {
+  let m = dotenv.parse("A=1\n  export   B = \"2\"");
+  return test.assert_true(m.len() == 2 && m.get_or("A", "?") == "1" && m.get_or("B", "?") == "2");
+}
+
 function main(): i32 {
   let r = test.new("std/dotenv");
   r = r.it("basic + trim", test_basic);
@@ -49,5 +92,11 @@ function main(): i32 {
   r = r.it("single-quoted", test_single_quoted_literal);
   r = r.it("last wins + empty", test_last_wins_and_empty);
   r = r.it("skips malformed", test_skips_malformed);
+  r = r.it("inline comment", test_inline_comment);
+  r = r.it("comment after a quoted value", test_comment_after_quoted);
+  r = r.it("multi-line quoted", test_multi_line_quoted);
+  r = r.it("escaped quote", test_escaped_quote);
+  r = r.it("quote not closed", test_quote_not_closed);
+  r = r.it("no final newline", test_no_final_newline);
   return r.finish();
 }
