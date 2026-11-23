@@ -169,8 +169,9 @@ function test_no_gsub(): test.TestOutcome {
   return test.assert_eq(joined(r.glyphs) + " " + joined(r.clusters), plain.glyph(0x628).to_string() + "," + plain.glyph(0x628).to_string() + " 0,1");
 }
 
-// The coverage range crosses bit 63 of the digest. Glyph 126 collides
-// with 62, and glyph 12 misses; both must retain their original glyph ID.
+// The coverage range crosses bit 63 of the first word of the digest. Glyph
+// 126 has the bit of 62 in that word only, and glyph 12 misses; both must
+// retain their original glyph ID.
 function test_prepared_coverage_range(): test.TestOutcome {
   let Some(base) = devanagari() else {
     return test.fail("the font did not parse");
@@ -185,7 +186,15 @@ function test_prepared_coverage_range(): test.TestOutcome {
   let input = truetype.run_of([62, 63, 64, 65, 126, 12], [0, 1, 2, 3, 4, 5], [1, 1, 1, 1, 1, 1]);
   let run = font.prepare_lookup(0, false).apply(input, 1, 0);
   let ordinary = font.substitute(input, 0, 1, 0);
-  return test.assert_eq(joined(run.glyphs) + " " + (ordinary.ops - run.ops).to_string(), "63,64,65,66,126,12 0");
+  // A range of 301 glyphs fills the first word of the digest. Glyph 4196
+  // is in the first two words and not in the third.
+  let wide_data = data.with(data.len() - 5, 100 as u8).with(data.len() - 4, 1 as u8).with(data.len() - 3, 144 as u8);
+  let wide_font = truetype.Font { ...base, data: wide_data, gsub: 0, gdef: -1 };
+  let wide_input = truetype.run_of([100, 400, 401, 99, 4196], [0, 1, 2, 3, 4], [1, 1, 1, 1, 1]);
+  let wide = wide_font.prepare_lookup(0, false).apply(wide_input, 1, 0);
+  let wide_ordinary = wide_font.substitute(wide_input, 0, 1, 0);
+  let got = joined(run.glyphs) + " " + (ordinary.ops - run.ops).to_string() + " " + joined(wide.glyphs) + " " + (wide_ordinary.ops - wide.ops).to_string();
+  return test.assert_eq(got + " " + joined(wide_ordinary.glyphs), "63,64,65,66,126,12 0 101,401,401,99,4196 0 101,401,401,99,4196");
 }
 
 // A reverse chaining substitution inside an extension lookup replaces 7
