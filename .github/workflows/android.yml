@@ -99,6 +99,8 @@ jobs:
         run: python3 -B -m unittest discover -s tests/android -p 'test_emulator.py'
       - name: Check the Paper navigation assertions
         run: python3 -B -m unittest discover -s examples/android/paper -p 'test_*.py'
+      - name: Check the Files emulator helpers
+        run: python3 -B -m unittest discover -s examples/android/files -p 'test_*.py'
       - name: Check the Tune provider assertions
         run: python3 -B -m unittest discover -s examples/android/tune -p 'test_*.py'
       # The Plex app plays with Media3 ExoPlayer, and its fern.toml names the
@@ -150,6 +152,7 @@ jobs:
           ./bin/fern -apk build/android-stopwatch/fern-tune.apk examples/android/tune/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-paper.apk examples/android/paper/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-plex.apk examples/android/plex/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-files.apk examples/android/files/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-walkie.apk examples/android/walkie/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-walkie2.apk -apk-package dev.fern.walkie2 -apk-label "Fern Walkie 2" -apk-min-sdk 28 -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION,WAKE_LOCK examples/android/walkie/app.fern
       # bundletool makes the APKs of each device from a bundle, as Google
@@ -223,6 +226,7 @@ jobs:
             build/android-stopwatch/fern-tune.apk
             build/android-stopwatch/fern-paper.apk
             build/android-stopwatch/fern-plex.apk
+            build/android-stopwatch/fern-files.apk
             build/android-stopwatch/fern-walkie.apk
             build/android-stopwatch/fern-walkie2.apk
           if-no-files-found: error
@@ -330,6 +334,7 @@ jobs:
             python3 examples/android/tune/emulator_check.py build/android-stopwatch/fern-tune.apk build/android-stopwatch/emulator/tune || echo "examples/android/tune" >> build/android-stopwatch/emulator/failed
             python3 examples/android/paper/emulator_check.py build/android-stopwatch/fern-paper.apk build/android-stopwatch/fern-notifytest.apk build/android-stopwatch/emulator/paper || echo "examples/android/paper" >> build/android-stopwatch/emulator/failed
             python3 examples/android/plex/emulator_check.py build/android-stopwatch/fern-plex.apk build/android-stopwatch/emulator/plex build/android-stopwatch/pattern.mp4 || echo "examples/android/plex" >> build/android-stopwatch/emulator/failed
+            python3 examples/android/files/emulator_check.py build/android-stopwatch/fern-files.apk build/android-stopwatch/emulator/files || echo "examples/android/files" >> build/android-stopwatch/emulator/failed
             python3 tests/android/tz/emulator_check.py build/android-stopwatch/zone build/android-stopwatch/emulator/tz || echo "tests/android/tz" >> build/android-stopwatch/emulator/failed
             python3 examples/android/walkie/emulator_check.py build/android-stopwatch/fern-walkie.apk build/android-stopwatch/fern-walkie2.apk build/android-stopwatch/emulator/walkie || echo "examples/android/walkie" >> build/android-stopwatch/emulator/failed
             ! test -s build/android-stopwatch/emulator/failed || { echo "failed checks:"; cat build/android-stopwatch/emulator/failed; exit 1; }
