@@ -10,6 +10,25 @@ This module implements the storage operations behind generic `Map` values. Table
 
 Updates use copy-on-write when storage has more than one owner. Lookup helpers distinguish an absent key from a stored zero value.
 
+## Executable example
+
+```fern test name=core-map-example
+import "core/map";
+
+function main(): i32 {
+  let ages: Map[string, i32] = map.from([("ada", 36), ("bo", 9)]);
+  ages = ages.insert("cy", 0);
+  if (ages.len() != 3 || ages.get_or("bo", -1) != 9) { return 1; }
+  if (!ages.contains("cy") || ages.get_or("cy", -1) != 0) { return 2; }
+  ages = ages.update("ada", 0, (n: i32): i32 => n + 1);
+  let total = ages.fold(0, (sum: i32, name: string, age: i32): i32 => sum + age);
+  if (total != 46) { return 3; }
+  let adults = ages.filter((name: string, age: i32): boolean => age >= 18);
+  if (adults.len() != 1 || !adults.contains("ada")) { return 4; }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.

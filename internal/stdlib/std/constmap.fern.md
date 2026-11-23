@@ -10,6 +10,19 @@ Construction assigns string keys and unsigned 64-bit values to a compact immutab
 
 `ConstMap.map` assumes a key from the construction set. `VerifiedConstMap` checks a stored fingerprint and returns an option for other queries.
 
+## Executable example
+
+```fern test name=std-constmap-example
+import "std/constmap";
+
+function main(): i32 {
+  let Ok(ports) = constmap.verified_new(["http", "https", "ssh"], [80 as u64, 443 as u64, 22 as u64]) else { return 1; };
+  if (ports.len() != 3 || ports.get_or("https", 0 as u64) != 443 as u64) { return 2; }
+  if (ports.contains("gopher")) { return 3; }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.

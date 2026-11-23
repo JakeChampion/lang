@@ -10,6 +10,27 @@ A key is built once from its 16 or 32 bytes and retains the AES round keys and t
 
 Seal authenticates both the plaintext and additional data. Open validates the authentication tag. Invalid key or nonce lengths and authentication failures return AEAD errors.
 
+## Executable example
+
+```fern test name=std-crypto-aes_gcm-example
+import "std/crypto/aes_gcm";
+import "std/string";
+
+function main(): i32 {
+  let Ok(key) = aes_gcm.key("0123456789abcdef".bytes()) else { return 1; };
+  let nonce = "unique nonce".bytes();
+  let Ok(sealed) = key.seal(nonce, "attack at dawn".bytes(), "header".bytes()) else { return 2; };
+  if (sealed.len() != 14 + 16) { return 3; }
+  let Ok(plain) = key.open(nonce, sealed, "header".bytes()) else { return 4; };
+  if (plain != "attack at dawn".bytes()) { return 5; }
+  match (key.open(nonce, sealed, "other".bytes())) {
+    Ok(bytes) => { return 6; },
+    Err(e) => {}
+  }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.
