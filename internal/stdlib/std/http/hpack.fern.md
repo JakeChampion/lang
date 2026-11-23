@@ -10,6 +10,25 @@ HPACK represents fields through static entries, dynamic entries, and literals. E
 
 Table capacity, field count, and list size have separate limits. Sensitive fields carry an explicit flag so the encoder can select their representation.
 
+## Executable example
+
+```fern test name=std-http-hpack-example
+import "std/http/hpack";
+
+function main(): i32 {
+  let fields = [hpack.field(":method", "GET"), hpack.field("x-request", "a value that is not in the static table"), hpack.sensitive("authorization", "secret")];
+  let first = hpack.encoder(4096).encode(fields);
+  let Ok(decoded) = hpack.decoder(4096, 16384).decode(first.bytes) else { return 1; };
+  if (decoded.fields.len() != 3) { return 2; }
+  if (decoded.fields[1].name != "x-request" || decoded.fields[1].value != "a value that is not in the static table") { return 3; }
+  if (!decoded.fields[2].sensitive) { return 4; }
+  // The second block of a connection is smaller: the table has the field.
+  let again = first.encoder.encode(fields);
+  if (again.bytes.len() >= first.bytes.len()) { return 5; }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.
