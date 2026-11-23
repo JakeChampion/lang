@@ -60,8 +60,10 @@ lowered function it:
    and a byte load, a u8 element, a string byte, a compare, a bit count and
    an `and` with a byte all leave 0..255; a phi or a select holds what all
    its operands hold, found by a fixed point that starts full), gives a
-   byte load or store at `add(a, b) + 0` the address `a + b` when the
-   full-width sum is read nowhere else (`ssa.fold_byte_access`), then
+   load, or a byte store, at `add(a, b)` the address `a + b` when the
+   full-width sum is read nowhere else, and gives the load a constant that
+   one side adds as its offset (`ssa.fold_sum_access`: the read of a word
+   of an array is `8(base,index)` in one x86-64 instruction), then
    drops what nothing reads (`ssa.prune_dead`), which is the rotate's shifts,
    most of the zeros the lift gives declared locals and the loop-header phis
    nothing reads (the lift gives a header a phi only for the slots the loop's
