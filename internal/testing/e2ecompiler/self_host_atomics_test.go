@@ -164,6 +164,34 @@ func TestSelfHostAtomicsHosted(t *testing.T) {
 	}
 }
 
+// Under -sanitize each atomic checks that its address is a multiple of 8. An
+// aligned program stays silent, and each atomic at an address 4 bytes past a
+// word reports and exits with 124, on both hosted targets.
+func TestSelfHostSanitizeMisalignedAtomic(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	const report = "fern-sanitizer: misaligned atomic (an atomic access of an address that is not a multiple of 8)\n"
+	aligned := strings.Replace(atomicsSrc, "return (", "let r = (", 1)
+	aligned = strings.Replace(aligned, ") as i32;\n", ") as i32;\n    __free(p, 16);\n    return r;\n", 1)
+	ops := map[string]string{
+		"load":      "__atomic_load_acquire(q)",
+		"store":     "__atomic_store_release(q, 1i64)",
+		"fetch_add": "__atomic_fetch_add(q, 1i64)",
+		"cas":       "__atomic_cas(q, 0i64, 1i64)",
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		if stderr, code := cli.exitOf(t, aligned, target, "FERN_SANITIZE=1"); code != 21 || strings.Contains(stderr, "fern-sanitizer:") {
+			t.Errorf("%s aligned: exit %d, want 21 and no report\n%s", target, code, stderr)
+		}
+		for name, call := range ops {
+			src := "function main(): i32 {\n  unsafe {\n    let p = __alloc(16) as usize;\n    let q = p + 4 as usize;\n    " + call + ";\n  }\n  return 0;\n}\n"
+			stderr, code := cli.exitOf(t, src, target, "FERN_SANITIZE=1")
+			if code != 124 || !strings.HasPrefix(stderr, report) {
+				t.Errorf("%s %s: exit %d, want 124 with the misaligned-atomic report\n%s", target, name, code, stderr)
+			}
+		}
+	}
+}
+
 // The values on one core: fetch_add and cas give the old word, a cas with a
 // stale expected word changes nothing, and the acquire load sees the last
 // write.

@@ -23,6 +23,7 @@ changes the code the backend emits — so it goes on the build, not on the run.
 | rc over-release (double free) | a `dec` sees a refcount already `<= 0` | `fern-sanitizer: rc over-release (double free)` + backtrace, exit 124 |
 | use-after-free | an `inc`/`dec` touches a quarantined block | `fern-sanitizer: use-after-free (touched a quarantined block)` + backtrace, exit 124 |
 | heap-buffer-overflow | a release finds that the redzone after a block was written | `fern-sanitizer: heap-buffer-overflow (a block was written past its end)` + backtrace, exit 124 |
+| misaligned atomic | an `__atomic_*` builtin gets an address that is not a multiple of 8 | `fern-sanitizer: misaligned atomic (an atomic access of an address that is not a multiple of 8)` + backtrace, exit 124 |
 | second context | a context that does not own the heap allocates or releases a block | `fern-sanitizer: second context (a thread or stack that does not own the heap used it)` + backtrace, exit 124 |
 | leak census | `main` returns with live bytes outstanding | `leakcheck: …` summary + `fern-sanitizer: leak <K> bytes in <N> blocks`, then one line for each shape that leaked |
 
@@ -377,6 +378,12 @@ whose reference outlived the count.
   bytes or fewer is not seen. A write that lands beyond the redzone, or in the
   next block, is seen only when that block's own release or count reports it.
   A block that is never released is never checked.
+
+- **A misaligned ordinary raw access.** The native targets accept a
+  misaligned `__load_*` or `__store_*`, so only the atomics are checked
+  (`TestSelfHostSanitizeMisalignedAtomic`). A kernel image has no check,
+  because the report needs a host. QEMU user mode accepts a misaligned
+  atomic on arm64, so the check is the only thing that finds one there.
 
 - **A second context on the same thread or stack.** A raw `clone` with the
   stack of its parent, or a thread pointer that a raw `clone` copies into a

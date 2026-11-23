@@ -1,0 +1,158 @@
+// Zip archives: the app makes one from files and folders, and extracts
+// one into a folder. It holds an archive in memory, so it takes one of at
+// most MOST bytes.
+import "std/array";
+import "std/deflate";
+import "std/hash/crc32";
+import "std/i32";
+import "std/i64";
+import "std/result";
+import "std/string";
+import "std/zip";
+import "./ntlm";
+import "./smb";
+import "./store";
+
+// The most bytes of an archive, and of the files that go into one.
+pub const MOST: i64 = 268435456i64;
+
+// The whole file `path`, when it has at most MOST bytes.
+function whole(place: store.Place, path: string): Result[u8[], string] {
+  let out: u8[] = [];
+  while (true) {
+    let part = store.read(place, path, out.len() as i64, store.STEP)?;
+    if (part.size > MOST) {
+      return Err("The file is too large for this app to pack or to extract.");
+    }
+    out = out.concat(part.data);
+    if (part.data.len() < store.STEP) {
+      return Ok(out);
+    }
+  }
+  return Ok(out);
+}
+
+// Writes `data` to the file `path` in steps.
+function put(place: store.Place, path: string, data: u8[]): Result[void, string] {
+  let at = 0;
+  store.write(place, path, 0i64, ntlm.part(data, 0, store.STEP))?;
+  at = store.STEP.min(data.len());
+  while (at < data.len()) {
+    store.write(place, path, at as i64, ntlm.part(data, at, at + store.STEP))?;
+    at += store.STEP;
+  }
+  return Ok(());
+}
+
+// The parts of the name of an entry that are safe below a folder: no
+// empty part, no "." and no "..", so no entry leaves the folder.
+pub function safe_parts(name: string): string[] {
+  return name.replace("\\", "/").split("/").filter((p: string): boolean => p.len() > 0 && p != "." && p != "..");
+}
+
+// Makes the folder `dir` and each folder above it that `made` does not have.
+function ensure(place: store.Place, dir: string, own made: string[]): Result[string[], string] {
+  if (dir.len() == 0 || made.contains(dir)) {
+    return Ok(made);
+  }
+  let known = ensure(place, store.parent(dir), made)?;
+  if (store.list(place, dir).is_err()) {
+    store.make_dir(place, dir)?;
+  }
+  return Ok(known.append(dir));
+}
+
+// Extracts the archive `path` into the new folder `into`, and gives the
+// count of its files.
+pub function extract(place: store.Place, path: string, into: string): Result[i32, string] {
+  let bytes = whole(place, path)?;
+  let Ok(archive) = zip.parse(bytes) else {
+    return Err("The app cannot read this archive.");
+  };
+  let made = ensure(place, into, [store.parent(into)])?;
+  let count = 0;
+  for entry in archive.entries {
+    let parts = safe_parts(entry.name);
+    if (parts.len() > 0) {
+      let target = store.join(into, parts.join("/"));
+      if (entry.is_dir()) {
+        made = ensure(place, target, made)?;
+      } else {
+        made = ensure(place, store.parent(target), made)?;
+        let Ok(data) = zip.read(bytes, entry) else {
+          return Err("The archive has a file that the app cannot read: " + entry.name);
+        };
+        put(place, target, data)?;
+        count += 1;
+      }
+    }
+  }
+  return Ok(count);
+}
+
+// One file of a new archive: its name in the archive and its bytes.
+struct Member { name: string, data: u8[] }
+
+// The files of `item` of the folder `dir`, with names below `prefix`.
+function members(place: store.Place, dir: string, item: smb.Entry, prefix: string, own acc: Member[], room: i64): Result[Member[], string] {
+  let name = store.join(prefix, item.name);
+  let path = store.join(dir, item.name);
+  if (!item.dir) {
+    if (item.size > room) {
+      return Err("The items are too large for one archive of this app.");
+    }
+    return Ok(acc.append(Member { name: name, data: whole(place, path)? }));
+  }
+  let out = acc.append(Member { name: name + "/", data: [] });
+  for child in store.list(place, path)? {
+    let used = 0i64;
+    for m in out {
+      used += m.data.len() as i64;
+    }
+    out = members(place, path, child, name, out, MOST - used)?;
+  }
+  return Ok(out);
+}
+
+// The bytes of a zip archive of `files`: each file deflated, or stored
+// when that is smaller, then the central directory.
+function archive_of(files: Member[]): u8[] {
+  let out: u8[] = [];
+  let central: u8[] = [];
+  for f in files {
+    let name = f.name.bytes();
+    let packed = if (f.data.len() > 0) { deflate.deflate_fast(f.data) } else { f.data };
+    let method = if (packed.len() < f.data.len()) { 8 } else { 0 };
+    let body = if (method == 8) { packed } else { f.data };
+    let sum = crc32.of(f.data) as i64;
+    // The flag 0x800 says that the name is UTF-8.
+    let about = ntlm.put16(ntlm.put16(ntlm.put16(ntlm.put16([], 20), 0x800), method), 0);
+    about = ntlm.put32(ntlm.put32(ntlm.put32(ntlm.put16(about, 33), sum), body.len() as i64), f.data.len() as i64);
+    about = ntlm.put16(ntlm.put16(about, name.len()), 0);
+    let at = out.len() as i64;
+    out = out.concat([80u8, 75u8, 3u8, 4u8]).concat(about).concat(name).concat(body);
+    let entry: u8[] = [80u8, 75u8, 1u8, 2u8];
+    entry = ntlm.put16(entry, 20).concat(about);
+    entry = ntlm.put32(ntlm.put16(ntlm.put16(ntlm.put16(entry, 0), 0), 0), if (f.name.ends_with("/")) { 16i64 } else { 0i64 });
+    central = central.concat(ntlm.put32(entry, at)).concat(name);
+  }
+  let end: u8[] = [80u8, 75u8, 5u8, 6u8];
+  end = ntlm.put16(ntlm.put16(ntlm.put16(ntlm.put16(end, 0), 0), files.len()), files.len());
+  end = ntlm.put16(ntlm.put32(ntlm.put32(end, central.len() as i64), out.len() as i64), 0);
+  return out.concat(central).concat(end);
+}
+
+// Makes the archive `to` from `items` of the folder `dir`, and gives the
+// count of its files.
+pub function pack(place: store.Place, dir: string, items: smb.Entry[], to: string): Result[i32, string] {
+  let files: Member[] = [];
+  for item in items {
+    let used = 0i64;
+    for m in files {
+      used += m.data.len() as i64;
+    }
+    files = members(place, dir, item, "", files, MOST - used)?;
+  }
+  put(place, to, archive_of(files))?;
+  return Ok(files.filter((m: Member): boolean => !m.name.ends_with("/")).len());
+}

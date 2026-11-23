@@ -3854,7 +3854,7 @@ function ssa_sysreg(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
 // an MMIO store, because x9 and x10 can hold one of them.
 function ssa_atomic(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   if (ins.str == "dev_atomic_load_acquire") {
-    s = ssa_load(reg_of, ins.args[0], "x9", s);
+    s = san_atomic_align(ssa_load(reg_of, ins.args[0], "x9", s));
     s = s.write("    ldar x0, [x9]\n");
     return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
   }
@@ -3862,13 +3862,25 @@ function ssa_atomic(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
     s = ssa_push_operand(reg_of, ins.args[i], 16 * i, s);
   }
   if (ins.str == "dev_atomic_cas") {
-    s = s.write("    ldr x10, [sp], #16\n    ldr x0, [sp], #16\n    ldr x9, [sp], #16\n    casal x0, x10, [x9]\n");
+    s = san_atomic_align(s.write("    ldr x10, [sp], #16\n    ldr x0, [sp], #16\n    ldr x9, [sp], #16\n"));
+    s = s.write("    casal x0, x10, [x9]\n");
   } else if (ins.str == "dev_atomic_fetch_add") {
-    s = s.write("    ldr x10, [sp], #16\n    ldr x9, [sp], #16\n    ldaddal x10, x0, [x9]\n");
+    s = san_atomic_align(s.write("    ldr x10, [sp], #16\n    ldr x9, [sp], #16\n"));
+    s = s.write("    ldaddal x10, x0, [x9]\n");
   } else {
-    s = s.write("    ldr x10, [sp], #16\n    ldr x9, [sp], #16\n    stlr x10, [x9]\n    mov x0, #0\n");
+    s = san_atomic_align(s.write("    ldr x10, [sp], #16\n    ldr x9, [sp], #16\n"));
+    s = s.write("    stlr x10, [x9]\n    mov x0, #0\n");
   }
   return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
+}
+
+// The address of the atomic is in x9. The report clobbers only x30.
+function san_atomic_align(s: asmcore.EmitState): asmcore.EmitState {
+  if (!asmcore.san_atomic_check(s)) {
+    return s;
+  }
+  let lo = asmcore.fresh_label(s);
+  return lo.state.need("san_misaligned").write("    tst x9, #7\n    b.eq " + lo.name + "\n    bl __fern_san_abort_mis\n" + lo.name + ":\n");
 }
 
 // A cache or TLB op. A TLB op orders the table writes before it with dsb ishst,
@@ -9394,6 +9406,25 @@ function emit_san_owner_abort(s: asmcore.EmitState): asmcore.EmitState {
   return san_report_exit(s);
 }
 
+function emit_san_mis_abort(s: asmcore.EmitState): asmcore.EmitState {
+  if (!asmcore.san_atomic_check(s) || !s.has_need("san_misaligned")) {
+    return s;
+  }
+  let msg = asmcore.san_misaligned_message();
+  s = s.write("    .section .rodata\n");
+  s = s.write(".Lsan_mis:\n    .ascii \"" + msg + "\\n\"\n");
+  s = s.write("    .text\n");
+  s = s.write("    .globl __fern_san_abort_mis\n");
+  s = s.write("__fern_san_abort_mis:\n");
+  s = s.write("    adrp x1, .Lsan_mis\n");
+  s = s.write("    add x1, x1, :lo12:.Lsan_mis\n");
+  s = s.write("    mov x2, #" + util.i32_to_string(msg.len() + 1) + "\n");
+  s = s.write("    mov x0, #2\n");
+  s = s.write("    mov x8, #64\n");
+  s = s.svc(64);
+  return san_report_exit(s);
+}
+
 function san_report_exit(s: asmcore.EmitState): asmcore.EmitState {
   if (s.backtrace) {
     return s.write("    mov x19, #124\n    b __fern_bt_exit\n");
@@ -11950,6 +11981,7 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
   s = emit_san_owner_abort(s);
   s = emit_san_waf_abort(s);
   s = emit_san_hbo_abort(s);
+  s = emit_san_mis_abort(s);
   s = emit_san_abort(s);
   return emit_task_close_drop(s);
 }

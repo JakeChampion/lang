@@ -751,6 +751,16 @@ pub function san_owner_message(): string {
   return "fern-sanitizer: second context (a thread or stack that does not own the heap used it)";
 }
 
+// Under -sanitize on a host an atomic access checks that its address is a
+// multiple of 8. arm64 faults on a misaligned atomic, and x86-64 splits the lock.
+pub function san_atomic_check(s: EmitState): boolean {
+  return s.sanitize && process_entry(s);
+}
+
+pub function san_misaligned_message(): string {
+  return "fern-sanitizer: misaligned atomic (an atomic access of an address that is not a multiple of 8)";
+}
+
 pub function backtrace_on(): boolean {
   match (env("FERN_BACKTRACE")) {
     Some(v) => {
