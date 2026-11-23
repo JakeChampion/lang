@@ -950,7 +950,7 @@ function print_value_block_lines(body: ast.Stmt[], n: i32, tail: ast.Expr, show_
   let g = f;
   for i in 0..n {
     let ln = ast.stmt_line(body[i]);
-    if (i > 0 && ln > 0 && g.blank_before(ln)) {
+    if (i > 0 && ln > 0 && ln != ast.stmt_line(body[i - 1]) && g.blank_before(ln)) {
       out += "\n";
     }
     if (ln > 0) {
@@ -963,7 +963,7 @@ function print_value_block_lines(body: ast.Stmt[], n: i32, tail: ast.Expr, show_
     g = g2;
   }
   if (show_tail) {
-    let (tv, g3) = print_value_tail(tail, n > 0, depth + 1, g);
+    let (tv, g3) = print_value_tail(tail, n > 0 && first_line(tail) != ast.stmt_line(body[n - 1]), depth + 1, g);
     out += tv;
     g = g3;
   }
@@ -1594,7 +1594,8 @@ function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
   g = Fmt { ...g, close: close_line };
   for i in 0..body.len() {
     let ln = ast.stmt_line(body[i]);
-    if (i > 0 && ln > 0 && g.blank_before(ln)) {
+    // The blank line above a line is above its first statement only.
+    if (i > 0 && ln > 0 && ln != ast.stmt_line(body[i - 1]) && g.blank_before(ln)) {
       out += "\n";
     }
     if (ln > 0) {
@@ -2069,7 +2070,7 @@ function print_sugared_let_else(sg: ast.MatchSugar, depth: i32, f: Fmt): (string
   for i in 0..rest.len() {
     let ln = ast.stmt_line(rest[i]);
     out += "\n";
-    if (ln > 0 && g.blank_before(ln)) {
+    if (ln > 0 && ln != (if (i == 0) { sg.line } else { ast.stmt_line(rest[i - 1]) }) && g.blank_before(ln)) {
       out += "\n";
     }
     if (ln > 0) {
@@ -2213,7 +2214,7 @@ function print_let_else(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
   for i in 0..rest.len() {
     let ln = ast.stmt_line(rest[i]);
     out += "\n";
-    if (ln > 0 && g.blank_before(ln)) {
+    if (ln > 0 && ln != (if (i == 0) { m.line } else { ast.stmt_line(rest[i - 1]) }) && g.blank_before(ln)) {
       out += "\n";
     }
     if (ln > 0) {
@@ -2267,7 +2268,7 @@ function print_use(us: UseSugar, line: i32, depth: i32, f: Fmt): (string, Fmt) {
   for i in 0..us.body.len() {
     let ln = ast.stmt_line(us.body[i]);
     out += "\n";
-    if (ln > 0 && g.blank_before(ln)) {
+    if (ln > 0 && ln != (if (i == 0) { line } else { ast.stmt_line(us.body[i - 1]) }) && g.blank_before(ln)) {
       out += "\n";
     }
     if (ln > 0) {
@@ -3413,7 +3414,7 @@ function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
   }
   let g = f;
   for mi in 0..id.methods.len() {
-    if (mi > 0 && g.blank_before(id.methods[mi].line)) {
+    if (mi > 0 && id.methods[mi - 1].line != id.methods[mi].line && g.blank_before(id.methods[mi].line)) {
       out += "\n";
     }
     let (lead, lg) = drain_leading(g, id.methods[mi].line, 1);
@@ -3519,7 +3520,7 @@ function print_trait_decl(td: parser.TraitDecl, f: Fmt): (string, Fmt) {
   }
   let g = f;
   for mi in 0..td.methods.len() {
-    if (mi > 0 && g.blank_before(td.methods[mi].line)) {
+    if (mi > 0 && td.methods[mi - 1].line != td.methods[mi].line && g.blank_before(td.methods[mi].line)) {
       out += "\n";
     }
     let (lead, lg) = drain_leading(g, td.methods[mi].line, 1);
