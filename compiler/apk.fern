@@ -25,10 +25,11 @@ import "./util";
 // `min_sdk` is the lowest API level it runs on. `icon` is the PNG of the
 // launcher icon, or is empty. `compress` deflates the libraries. `home`
 // makes the activity a home screen, and `assets` go under assets/.
-// `providers` are the Java classes of the content providers.
+// `providers` are the Java classes of the content providers, and
+// `documents` are those of the documents providers.
 // `queries` are the intent actions of the components of other apps that
 // the app must see.
-pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], more_dex: u8[][], permissions: string[], min_sdk: i32, services: Service[], providers: string[], icon: u8[], banner: u8[], compress: boolean, cleartext: boolean, backup: boolean, debuggable: boolean, home: boolean, tv: boolean, pip: boolean, assets: Asset[], widget: Widget, queries: string[] }
+pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], more_dex: u8[][], permissions: string[], min_sdk: i32, services: Service[], providers: string[], documents: string[], icon: u8[], banner: u8[], compress: boolean, cleartext: boolean, backup: boolean, debuggable: boolean, home: boolean, tv: boolean, pip: boolean, assets: Asset[], widget: Widget, queries: string[] }
 
 // The app widget of the home screen: the Java class of its provider, which
 // extends android.appwidget.AppWidgetProvider, and the items of its row. An
@@ -217,6 +218,20 @@ function provider_element(name: string): androidxml.Element {
   return androidxml.element("provider", [text_attr("name", name), flag("exported", false), text_attr("authorities", name), flag("grantUriPermissions", true)], []);
 }
 
+// The permission that only the file picker of the system holds, and the
+// action by which it finds a documents provider.
+const MANAGE_DOCUMENTS: string = "android.permission.MANAGE_DOCUMENTS";
+
+const DOCUMENTS_ACTION: string = "android.content.action.DOCUMENTS_PROVIDER";
+
+// A documents provider: the file picker of the system shows its files to
+// each app. Only the picker can ask it, and the picker gives an app access
+// to one URI.
+function documents_element(name: string): androidxml.Element {
+  let filter = androidxml.element("intent-filter", [], [named("action", DOCUMENTS_ACTION)]);
+  return androidxml.element("provider", [text_attr("name", name), text_attr("permission", MANAGE_DOCUMENTS), flag("exported", true), text_attr("authorities", name), flag("grantUriPermissions", true)], [filter]);
+}
+
 function service_element(sv: Service): androidxml.Element {
   let attrs: androidxml.Attr[] = [text_attr("name", sv.name)];
   if (sv.permission.len() > 0) {
@@ -333,6 +348,9 @@ pub function manifest_tree(app: App): androidxml.Element {
   }
   for name in app.providers {
     parts = parts.append(provider_element(name));
+  }
+  for name in app.documents {
+    parts = parts.append(documents_element(name));
   }
   if (app.widget.provider.len() > 0) {
     parts = parts.append(receiver_element(app.widget));

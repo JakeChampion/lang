@@ -6395,9 +6395,10 @@ function apk_permissions(list: string): string[] {
 // NotificationListenerService is a service that only the system binds. Each
 // @jni class that extends MediaBrowserService is an exported media browser,
 // which Android Auto binds. Each @jni class that extends ContentProvider is
-// a provider with the name of the class as its authority. A @jni class that
-// implements RecognitionListener gives the manifest the query for the
-// recognition service.
+// a provider with the name of the class as its authority, and each that
+// extends DocumentsProvider is a provider for the file picker of the
+// system. A @jni class that implements RecognitionListener gives the
+// manifest the query for the recognition service.
 function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
   let activity = dex.subclass_of(classes, "android.app.NativeActivity");
   if (activity.len() == 0) {
@@ -6418,7 +6419,7 @@ function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
   if (dex.has_implementer(classes, "android.speech.RecognitionListener")) {
     queries = queries.append(apk.RECOGNITION_ACTION);
   }
-  let app = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, more_dex: [], permissions: permissions, min_sdk: apk.MIN_SDK, services: services, providers: dex.subclasses_of(classes, "android.content.ContentProvider"), icon: [], banner: [], compress: o.compress, cleartext: o.cleartext, backup: o.backup.unwrap_or(false), debuggable: o.debuggable, home: o.home, tv: o.tv, pip: o.pip, assets: [], widget: apk.no_widget(), queries: queries };
+  let app = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, more_dex: [], permissions: permissions, min_sdk: apk.MIN_SDK, services: services, providers: dex.subclasses_of(classes, "android.content.ContentProvider"), documents: dex.subclasses_of(classes, "android.provider.DocumentsProvider"), icon: [], banner: [], compress: o.compress, cleartext: o.cleartext, backup: o.backup.unwrap_or(false), debuggable: o.debuggable, home: o.home, tv: o.tv, pip: o.pip, assets: [], widget: apk.no_widget(), queries: queries };
   if (o.min_sdk.len() > 0) {
     app = apk.App { ...app, min_sdk: size_bytes(o.min_sdk) as i32 };
   }
