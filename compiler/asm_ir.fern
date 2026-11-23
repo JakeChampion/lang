@@ -7187,7 +7187,7 @@ function ssa_read_fixed_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
   if (ins.kind_tag == ssa.LD_AT) {
     return 4;
   }
-  if (ins.kind_tag == ssa.ARR_AT) {
+  if (ins.kind_tag == ssa.ARR_AT || ins.kind_tag == ssa.LD_SUM) {
     return if (imm.is_imm[ins.args[1]]) { 4 } else { 5 };
   }
   if (ins.kind_tag == ssa.STR_AT && imm.is_imm[ins.args[1]]) {

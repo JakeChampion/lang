@@ -435,7 +435,7 @@ const KIND_NAMES: string[] = [
   "str_view",  // 51
   "ld_idx",  // 52
   "st_idx",  // 53
-  "ld_byte",  // 54
+  "ld_sum",  // 54
   "st_byte",  // 55
   "call_ind",  // 56
   "agg_lit",  // 57
@@ -1925,7 +1925,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
           reads_mate = reads_mate.with(ins.result, true);
           def_a = def_a.with(ins.result, ins.args[1]);
           def_b = def_b.with(ins.result, ins.args[2]);
-        } else if (ins.kind_tag == PHI || ins.kind_tag == UNARY || ins.kind_tag == CALL || ins.kind_tag == CALL_IND || ins.kind_tag == DYN_DISPATCH || ins.kind_tag == BINARY && shares_operand_home(ins.str)) {
+        } else if (ins.kind_tag == PHI || ins.kind_tag == UNARY || ins.kind_tag == LD_SUM || ins.kind_tag == CALL || ins.kind_tag == CALL_IND || ins.kind_tag == DYN_DISPATCH || ins.kind_tag == BINARY && shares_operand_home(ins.str)) {
           reads_mate = reads_mate.with(ins.result, true);
           if (ins.kind_tag != PHI && ins.args.len() > 0) {
             def_a = def_a.with(ins.result, ins.args[0]);
@@ -7442,12 +7442,18 @@ function shape_load(ins: SInst, nvals: i32): boolean {
 struct SumRead { found: boolean, at: i32, imm: i32, str: string }
 
 // The load `ins` as a read of a sum, before its address is known to be one.
-function sum_read(ins: SInst, integer: boolean[]): SumRead {
+// `integer[v]` is 1 when an integer instruction reads v, and 2 when one of
+// them is a compare.
+function sum_read(ins: SInst, integer: i32[], uses: i32[]): SumRead {
   let none = SumRead { found: false, at: -1, imm: 0, str: "" };
   if (ins.kind_tag == UNARY && ins.args.len() == 1 && is_unary_load(ins.str)) {
     return SumRead { found: true, at: ins.args[0], imm: 0, str: if (ins.str == "load_u16") { "u16" } else { "i32" } };
   }
   if (ins.kind_tag != LD_AT || ins.args.len() != 1 || ins.result < 0 || ins.result >= integer.len() || sum_offset_of(0i64, ins.imm) < 0) {
+    return none;
+  }
+  // x86-64 reads an LD_AT in the compare that is its one reader.
+  if (uses[ins.result] == 1 && integer[ins.result] == 2) {
     return none;
   }
   if (ins.str == "u8") {
@@ -7457,23 +7463,25 @@ function sum_read(ins: SInst, integer: boolean[]): SumRead {
     return SumRead { found: true, at: ins.args[0], imm: ins.imm, str: ins.str };
   }
   // A word that only float instructions read gets a float register.
-  if (ins.str == "" && integer[ins.result]) {
+  if (ins.str == "" && integer[ins.result] > 0) {
     return SumRead { found: true, at: ins.args[0], imm: ins.imm, str: "i64" };
   }
   return none;
 }
 
-// integer[v] is true when an instruction that is not a float one reads v.
-function integer_reads(f: SFunc): boolean[] {
-  let out = __alloc_bool(f.nvals);
+// For each value: 1 when an instruction that is not a float one reads it,
+// and 2 when one of those instructions is a compare.
+function integer_reads(f: SFunc): i32[] {
+  let out = __alloc_i32(f.nvals);
   for blk in f.blocks {
     for ins in blk.insts {
       if (float_use(ins) || ins.kind_tag == PHI || float_tolerant(ins)) {
         continue;
       }
+      let kind = if (ins.kind_tag == BINARY && compare_op(ins.str)) { 2 } else { 1 };
       for a in ins.args {
-        if (a >= 0 && a < f.nvals) {
-          out = out.with(a, true);
+        if (a >= 0 && a < f.nvals && out[a] < kind) {
+          out = out.with(a, kind);
         }
       }
     }
@@ -7507,7 +7515,7 @@ pub function fold_sum_access(f: SFunc): Formed {
     let ninsts: SInst[] = [];
     for ins0 in blk.insts {
       let ins = ins0;
-      let read = sum_read(ins, integer);
+      let read = sum_read(ins, integer, uses);
       if (ins.kind_tag == LD_SUM && ins.str == "" && ins.imm == 0 || ins.kind_tag == ST_BYTE) {
         let zero = def_of(defs, ins.args[1]);
         read = SumRead { found: zero.kind_tag == CONST_INT && zero.imm == 0 || zero.kind_tag == CONST_I64 && util.lit_to_i64(zero.str) == 0i64, at: ins.args[0], imm: 0, str: "" };
