@@ -96,8 +96,6 @@ The limits are:
 
 - A server that accepts only 3.0 or 3.0.2 and requires signatures moves
   files at about 0.2 MiB/s (#16795).
-- The server of a stream listens on each interface of the phone, because
-  `std/serve` has no option for one address. The token is its guard.
 
 ## Other apps
 
@@ -113,7 +111,8 @@ A player reads a film a part at a time, and moves in it. `stream.fern`
 is an HTTP server on a port of the phone that answers range requests, and
 reads each part of 4 MiB from the share. The app gives the player the
 address of the file on that server. The address has a token that is new
-for each file, so no other program finds the file. A new stream ends the
+for each file, so no other program finds the file. The server listens
+on 127.0.0.1 only, so no other machine of the network reaches it. A new stream ends the
 server of the stream before it.
 
 ## The file picker of the system
