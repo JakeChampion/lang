@@ -2571,6 +2571,8 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         if (p.verbatim && wta_n > 0) {
           pending_type_args = wta_text;
           pending_type_arg_list = split_top_commas(wta_text);
+          pending_type_line = bline;
+          pending_type_col = bcol;
           p = wta_p;
         }
         let ta_depth = 0;

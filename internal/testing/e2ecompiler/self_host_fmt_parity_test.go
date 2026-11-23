@@ -135,6 +135,28 @@ impl Speak for Dog { // the impl
 
 impl Sized for Dog { type Item = i32; function size(self: Self): i32 { return 1; } } // one line
 `},
+	{"comment-after-a-call-with-type-arguments-and-on-a-pattern-parameter-header", `struct P { x: i32 }
+
+function id[T](x: T): T { return x; }
+
+function two[T, U](x: T, y: U): T { return x; }
+
+function param(P { x }: P): i32 { // on the header
+  return x;
+}
+
+function pair((a, b): (i32, i32)): i32 { // on the header
+  // above the statement
+  return a + b; // on the statement
+}
+
+function main(): i32 {
+  let a = id[i32](6); // after one type argument
+  let b = two[i32, i32](6, 7); // after two type arguments
+  let c = id[i32[]]([1]); // after an array type argument
+  return id[i32](a) + b + c[0]; // after a call in a return
+}
+`},
 	{"unsafe-value-blocks", `function f(bytes: u8[]): string {
   let n = unsafe { 3 };
   let text = unsafe { string_from_bytes_unchecked(bytes) };
