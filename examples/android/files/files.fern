@@ -537,7 +537,9 @@ function select_update(own m: Model, msg: Msg): Model {
       return Model { ...m, page: Browse, note: "", fault: "", task_revision: revision, loading: true, job: Some(Unpack(revision, m.place, store.join(m.path, name), target)) };
     },
     ToggleGrid => {
-      return Model { ...m, grid: !m.grid, unkept: true };
+      let next = Model { ...m, grid: !m.grid, unkept: true };
+      // A server folder gets its small pictures when the grid opens.
+      return if (next.grid && m.thumb_wait.len() == 0) { thumbs_started(next) } else { next };
     },
     ThumbRead(path, name, result) => {
       if (path != m.path) {
@@ -810,23 +812,32 @@ function result_update(own m: Model, msg: Msg): Model {
 }
 
 // The most small pictures of one folder, and the most bytes of an image
-// file that gets one.
+// file that gets one. Each picture of a server is a whole download, so a
+// server folder gets fewer and smaller ones, and only in the grid.
 const MOST_THUMBS: i32 = 60;
 
 const THUMB_BYTES: i32 = 12582912;
 
+const MOST_REMOTE_THUMBS: i32 = 24;
+
+const REMOTE_THUMB_BYTES: i32 = 4194304;
+
 // The pixels across of a small picture.
 const THUMB_WIDE: i32 = 192;
 
-// Starts the small pictures of the image files of a folder of the phone.
-// A folder of a server gets none, because each one is a whole download.
-function thumbs_started(m: Model): Model {
-  let store.Local = m.place else {
-    return m;
+// The image files of the folder that wait for a small picture.
+pub function thumb_names(m: Model): string[] {
+  let (most, bytes) = match (m.place) {
+    store.Local => (MOST_THUMBS, THUMB_BYTES),
+    store.Remote(_) => if (m.grid) { (MOST_REMOTE_THUMBS, REMOTE_THUMB_BYTES) } else { (0, 0) },
   };
   let have = m.thumbs.map((t: Thumb): string => t.name);
-  let wait = shown(m).filter((e: smb.Entry): boolean => !e.dir && is_photo(e.name) && e.size <= THUMB_BYTES as i64 && !have.contains(e.name)).map((e: smb.Entry): string => e.name).take(MOST_THUMBS);
-  return next_thumb(Model { ...m, thumbs: m.thumbs.filter((t: Thumb): boolean => entry_named(m, t.name).is_some()), thumb_wait: wait });
+  return shown(m).filter((e: smb.Entry): boolean => !e.dir && is_photo(e.name) && e.size <= bytes as i64 && !have.contains(e.name)).map((e: smb.Entry): string => e.name).take(most);
+}
+
+// Starts the small pictures of the image files of the folder.
+function thumbs_started(m: Model): Model {
+  return next_thumb(Model { ...m, thumbs: m.thumbs.filter((t: Thumb): boolean => entry_named(m, t.name).is_some()), thumb_wait: thumb_names(m) });
 }
 
 // Reads the first image file that waits for a small picture.

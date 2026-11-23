@@ -392,6 +392,34 @@ function test_thumbs_and_grid(): test.TestOutcome {
   return test.assert_eq(small + " " + grid.to_string() + " " + entered.to_string() + " " + kept.to_string(), "photo.jpg true true true");
 }
 
+// A server folder gets small pictures only in the grid, and fewer and
+// smaller ones than a folder of the phone.
+function test_server_thumbs(): test.TestOutcome {
+  let server = smb.Server { host: "nas.local", port: 445, share: "media", user: "", password: "", domain: "" };
+  let m = files.start([], true, [], "/tmp", prefs.decode(""));
+  let entries: smb.Entry[] = [smb.Entry { name: "big.jpg", dir: false, size: 5000000i64, modified: 0i64 }, smb.Entry { name: "notes.txt", dir: false, size: 10i64, modified: 0i64 }, smb.Entry { name: "Trips", dir: true, size: 0i64, modified: 0i64 }];
+  for i in 0..30 {
+    entries = entries.append(smb.Entry { name: "p" + (100 + i).to_string() + ".jpg", dir: false, size: 3000000i64, modified: 0i64 });
+  }
+  let local = files.Model { ...m, page: files.Browse, place: store.Local, entries: entries, grid: false };
+  let remote = files.Model { ...local, place: store.Remote(server) };
+  let gridded = files.Model { ...remote, grid: true };
+  let on_phone = files.thumb_names(local);
+  let in_list = files.thumb_names(remote);
+  let in_grid = files.thumb_names(gridded);
+  if (on_phone.len() != 31 || !on_phone.contains("big.jpg")) {
+    return test.fail("a folder of the phone must wait for 31 pictures, not " + on_phone.len().to_string());
+  }
+  if (in_list.len() != 0) {
+    return test.fail("a server folder in the list must wait for no picture");
+  }
+  if (in_grid.len() != 24 || in_grid.contains("big.jpg") || in_grid.contains("notes.txt")) {
+    return test.fail("a server folder in the grid must wait for 24 small pictures: " + in_grid.join(","));
+  }
+  let toggled = files.update(remote, files.ToggleGrid);
+  return test.assert_eq(toggled.thumb_wait.len(), 23);
+}
+
 // A copy tells Android what it does and when it ends. A step that fails
 // starts again, and the copy ends with a note after the last try.
 function test_background_and_retry(): test.TestOutcome {
@@ -476,6 +504,7 @@ function main(): i32 {
   r = r.it("measure the folders and sort by size", test_folder_sizes);
   r = r.it("zip a selection and extract the archive", test_zip_and_extract);
   r = r.it("show small pictures and a grid", test_thumbs_and_grid);
+  r = r.it("show small pictures of a server only in the grid", test_server_thumbs);
   r = r.it("tell Android of a copy, and try a failed step again", test_background_and_retry);
   r = r.it("delete to the trash, restore, and delete for good", test_trash);
   r = r.it("ask for access when the storage is closed", test_no_access);
