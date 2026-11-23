@@ -11,14 +11,15 @@ func TestSelfHostStrRcBoxIRX86_64(t *testing.T) {
 	l := newStdlibLoader(t)
 	dir := t.TempDir()
 
-	run := func(t *testing.T, prog, name string, want int, wantBox bool) {
+	// box is the call that makes the rc-headered text.
+	run := func(t *testing.T, prog, name string, want int, box string) {
 		t.Helper()
 		asm := []byte(l.emit(t, prog))
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
 		}
-		if wantBox && !bytes.Contains(asm, []byte("call __fern_str_box")) {
-			t.Errorf("%s: expected `call __fern_str_box` (rc-headered box construction), found none", name)
+		if !bytes.Contains(asm, []byte("call "+box+"\n")) {
+			t.Errorf("%s: expected `call %s` (rc-headered box construction), found none", name, box)
 		}
 		bin := buildBin(t, gcc, dir, name, string(asm))
 		var cmd *exec.Cmd
@@ -34,12 +35,12 @@ func TestSelfHostStrRcBoxIRX86_64(t *testing.T) {
 	}
 
 	run(t, `function churn(n: i32): i32 { let pre: string = "aa"; let suf: string = "bb"; let t: i32 = 0; let i: i32 = 0; while (i < n) { let r: string = pre + "x" + suf; if (r.len() < 5) { t = 1; } i = i + 1; } return t; } function main(): i32 { let v: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
-		"rcbox-churn-no-underflow", 0, true)
+		"rcbox-churn-no-underflow", 0, "__fn___fern_str_grow_fresh")
 
 	run(t, `@noinline function ids(s: string): string { return s; } function mk(): i32 { let s: string = "!" + ids("hi"); return s.len(); } function main(): i32 { let r: i32 = mk(); if (__rc_underflow_count() != 0) { return 99; } return r; }`,
-		"rcbox-scope-exit", 3, true)
+		"rcbox-scope-exit", 3, "__fern_str_box_hdr")
 
 	run(t, `import "std/i32";
 function churn(n: i32): i32 { let ok: i32 = 0; let i: i32 = 0; while (i < n) { let s: string = i.to_string(); if (s.len() < 1) { ok = 1; } i = i + 1; } return ok; } function main(): i32 { let r: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return r; }`,
-		"rcbox-i32-to-string-churn", 0, true)
+		"rcbox-i32-to-string-churn", 0, "__fern_str_box_hdr")
 }
