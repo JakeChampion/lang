@@ -25,14 +25,17 @@ These records of `std/crypto` have the attribute:
 | Module | Records |
 |---|---|
 | `aes` | `Cipher` |
+| `aes_gcm` | `Key` |
 | `des` | `Cipher` |
 | `chacha20poly1305` | `Key` |
 | `hpke` | `Context`, `HybridKey`, `HybridP256Key`, `P256Key`, `Encapsulation` |
 | `mlkem768` | `KeyPair`, `Encapsulation` |
 | `rsa` | `PrivateKey` |
 
-`aes_gcm.Key`, `ecdsa.PrivateKey` and `ed25519.PrivateKey` are `@value` records, and a declaration takes one of the two attributes.
-These three records do not have `@secret`. Call their `erase()` method.
+A struct can have `@value` and `@secret` together. `aes_gcm.Key` has both.
+`ecdsa.PrivateKey` and `ed25519.PrivateKey` are `@value` records without `@secret`.
+The compiler imports their modules, and the stage0 pin does not parse two attributes on one declaration.
+Call their `erase()` method.
 
 ## Limits
 

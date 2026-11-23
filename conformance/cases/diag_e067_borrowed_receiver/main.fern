@@ -1,0 +1,20 @@
+// spec: MC-11
+// A receiver without `own` passes the obligation on, as a parameter without
+// `own` does, so a method that only reads a @must_consume receiver is E067.
+
+@must_consume
+struct Ticket { id: i32 }
+
+function (own t: Ticket) redeem(): i32 {
+  return t.id;
+}
+
+function (t: Ticket) peek(): i32 {
+  return t.id;
+}
+
+function main(): i32 {
+  let t = Ticket { id: 7 };
+  let n = t.peek();
+  return t.redeem() - n;
+}

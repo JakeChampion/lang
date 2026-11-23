@@ -16037,6 +16037,87 @@ function expected_here(p: Par, what: string): ast.Stmt[] {
   return [decl_sentinel(p, "expected " + what + ", got " + tok_desc(p.peek()))];
 }
 
+// The attributes before a declaration, in source order.
+function parse_decl_attrs(p: Par): (DeclAttr[], ast.Stmt[], Par) {
+  let attrs: DeclAttr[] = [];
+  while (p.peek_punct() == "@") {
+    let at = p;
+    let (da, da_bad, da_p) = parse_decl_attr(p);
+    if (da_bad.len() > 0) {
+      return (attrs, da_bad, da_p);
+    }
+    let clash = attr_conflict(attrs, da);
+    if (clash.len() > 0) {
+      return (attrs, [decl_sentinel(at, clash)], da_p);
+    }
+    attrs = attrs.append(da);
+    p = da_p;
+  }
+  return (attrs, [], p);
+}
+
+// Sets of attributes. Two attributes of one set cannot apply to one declaration together.
+function attr_conflict_groups(): string[][] {
+  return [["import", "export", "jni", "callback"], ["inline", "noinline"], ["value", "must_consume"], ["norc", "interrupt", "early", "secondary"]];
+}
+
+// The P001 message when the attribute `next_attr` cannot follow `attrs`, or an empty string.
+function attr_conflict(attrs: DeclAttr[], next_attr: DeclAttr): string {
+  let next = next_attr.name;
+  let marked: string[] = [];
+  if (next == "must_consume") {
+    marked = decl_attr_named(attrs, "derive").derives;
+  } else if (next == "derive" && has_decl_attr(attrs, "must_consume")) {
+    marked = next_attr.derives;
+  }
+  for d in marked {
+    if (derived_method_reads_value(d)) {
+      return "@must_consume and @derive(" + d + ") cannot apply to one declaration, because the derived method reads a value that it does not consume";
+    }
+  }
+  for a in attrs {
+    if (a.name == next) {
+      return "@" + next + " appears twice on one declaration";
+    }
+    for group in attr_conflict_groups() {
+      if (util.has_str(group, a.name) && util.has_str(group, next)) {
+        return "@" + a.name + " and @" + next + " cannot apply to one declaration";
+      }
+    }
+  }
+  return "";
+}
+
+// Whether the derive `d` makes a method that takes a value of the type without `own`.
+function derived_method_reads_value(d: string): boolean {
+  let kind = derive_simple_name(d);
+  return kind != "Default" && kind != "FromJson";
+}
+
+// The attribute `name` among `attrs`, or no attribute.
+function decl_attr_named(attrs: DeclAttr[], name: string): DeclAttr {
+  for a in attrs {
+    if (a.name == name) {
+      return a;
+    }
+  }
+  return no_decl_attr();
+}
+
+function has_decl_attr(attrs: DeclAttr[], name: string): boolean {
+  return decl_attr_named(attrs, name).name.len() > 0;
+}
+
+// The first attribute of `attrs` that does not apply to a declaration of `kind`, or an empty string.
+function first_misfit(attrs: DeclAttr[], kind: string): string {
+  for a in attrs {
+    if (!attr_fits(a.name, kind)) {
+      return a.name;
+    }
+  }
+  return "";
+}
+
 function parse_decl_attr(p: Par): (DeclAttr, ast.Stmt[], Par) {
   let at = p;
   p = p.advance();
@@ -17966,19 +18047,15 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
   let mth_traits: string[] = [];
   while (!p.at_end()) {
     let decl_start = p.pos;
-    let attr = no_decl_attr();
-    if (p.peek_punct() == "@") {
-      let (da, da_bad, da_p) = parse_decl_attr(p);
-      if (da_bad.len() > 0) {
-        for b in da_bad {
-          top_stmts = top_stmts.append(b);
-        }
-        p = skip_failed_decl(da_p, decl_start);
-        continue;
+    let (attrs, da_bad, da_p) = parse_decl_attrs(p);
+    if (da_bad.len() > 0) {
+      for b in da_bad {
+        top_stmts = top_stmts.append(b);
       }
-      attr = da;
-      p = da_p;
+      p = skip_failed_decl(da_p, decl_start);
+      continue;
     }
+    p = da_p;
     let kw = p.peek_keyword();
     let decl_pub = false;
     let decl_package = false;
@@ -18047,8 +18124,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     if (is_resource) {
       decl_kind = "resource";
     }
-    if (!attr_fits(attr.name, decl_kind)) {
-      top_stmts = top_stmts.append(decl_sentinel(p, attr_misplaced(attr.name)));
+    let misfit = first_misfit(attrs, decl_kind);
+    if (misfit.len() > 0) {
+      top_stmts = top_stmts.append(decl_sentinel(p, attr_misplaced(misfit)));
       p = skip_failed_decl(p, decl_start);
       continue;
     }
@@ -18070,17 +18148,20 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         p = sync_to_top_level(p);
         continue;
       }
-      let inline_hint = attr.name == "inline" || attr.name == "noinline";
-      if (verbatim && inline_hint) {
-        inline_hints = inline_hints.append(FunctionInlineHint { line: fr_func.line, col: fr_func.col, never: attr.name == "noinline" });
+      let never_inline = has_decl_attr(attrs, "noinline");
+      let always_inline = has_decl_attr(attrs, "inline");
+      if (verbatim && (never_inline || always_inline)) {
+        inline_hints = inline_hints.append(FunctionInlineHint { line: fr_func.line, col: fr_func.col, never: never_inline });
       }
-      let fr_pub = FuncDecl { ...fr_func, is_pub: decl_pub, is_package: decl_package, no_inline: attr.name == "noinline", always_inline: attr.name == "inline" };
-      if (attr.name == "import" || attr.name == "callback") {
-        fr_pub = FuncDecl { ...fr_pub, import_iface: attr.iface, import_wit: attr.wit, import_weak: attr.weak };
-      }
-      exports = with_attr_export(exports, attr, fr_func);
-      if (attr.name == "provide" || attr.name == "norc" || attr.name == "interrupt" || attr.name == "early" || attr.name == "secondary") {
-        marks = marks.append(FuncMark { attr: attr.name, arg: attr.wit, func_name: fr_func.name, line: fr_func.line, col: fr_func.col });
+      let fr_pub = FuncDecl { ...fr_func, is_pub: decl_pub, is_package: decl_package, no_inline: never_inline, always_inline: always_inline };
+      for attr in attrs {
+        if (attr.name == "import" || attr.name == "callback") {
+          fr_pub = FuncDecl { ...fr_pub, import_iface: attr.iface, import_wit: attr.wit, import_weak: attr.weak };
+        }
+        exports = with_attr_export(exports, attr, fr_func);
+        if (attr.name == "provide" || attr.name == "norc" || attr.name == "interrupt" || attr.name == "early" || attr.name == "secondary") {
+          marks = marks.append(FuncMark { attr: attr.name, arg: attr.wit, func_name: fr_func.name, line: fr_func.line, col: fr_func.col });
+        }
       }
       let fr_out = fr_pub;
       if (decl_fip || decl_fbip) {
@@ -18098,8 +18179,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
       let (sr_decl, sr_p) = parse_struct_decl(p);
       p = sr_p;
       flines = record_field_lines(flines, verbatim, sr_decl.name, sr_decl.line, field_lines(sr_decl.fields));
-      structs = structs.append(StructDecl { ...sr_decl, derives: attr.derives, must_consume: attr.name == "must_consume", secret: attr.name == "secret", value_type: attr.name == "value", is_pub: decl_pub, is_package: decl_package, opaque: decl_opaque });
-      funcs = synth_derives(sr_decl, attr.derives, funcs, std_json_alias(imports));
+      let sr_derives = decl_attr_named(attrs, "derive").derives;
+      structs = structs.append(StructDecl { ...sr_decl, derives: sr_derives, must_consume: has_decl_attr(attrs, "must_consume"), secret: has_decl_attr(attrs, "secret"), value_type: has_decl_attr(attrs, "value"), is_pub: decl_pub, is_package: decl_package, opaque: decl_opaque });
+      funcs = synth_derives(sr_decl, sr_derives, funcs, std_json_alias(imports));
       continue;
     }
     if (kw == "type") {
@@ -18114,11 +18196,11 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
       let (enr_name, enr_variants, enr_type_params, enr_const_params, enr_vlines, enr_p) = parse_enum_decl(p);
       p = enr_p;
       flines = record_field_lines(flines, verbatim, enr_name, eline, enr_vlines);
-      enums = enums.append(EnumDecl { name: enr_name, variant_names: enum_variant_names(enr_variants), type_params: enr_type_params, const_params: enr_const_params, line: eline, col: ecol, must_consume: attr.name == "must_consume", try_marker: attr.name == "try", is_pub: decl_pub, is_package: decl_package, module: "", instance: "", visible_from: [] });
+      enums = enums.append(EnumDecl { name: enr_name, variant_names: enum_variant_names(enr_variants), type_params: enr_type_params, const_params: enr_const_params, line: eline, col: ecol, must_consume: has_decl_attr(attrs, "must_consume"), try_marker: has_decl_attr(attrs, "try"), is_pub: decl_pub, is_package: decl_package, module: "", instance: "", visible_from: [] });
       for ei in 0..enr_variants.len() {
-        structs = structs.append(StructDecl { ...enr_variants[ei], derives: attr.derives });
+        structs = structs.append(StructDecl { ...enr_variants[ei], derives: decl_attr_named(attrs, "derive").derives });
       }
-      funcs = synth_enum_derives(enr_name, enr_type_params, enr_variants, attr.derives, funcs, std_json_alias(imports));
+      funcs = synth_enum_derives(enr_name, enr_type_params, enr_variants, decl_attr_named(attrs, "derive").derives, funcs, std_json_alias(imports));
       continue;
     }
     if (kw == "const") {
@@ -18190,7 +18272,8 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
       let rnr_col = p.peek_col();
       let (rnr_name, rnr_p) = parse_resource_decl_name(p);
       p = rnr_p;
-      resources = resources.append(ResourceDecl { name: rnr_name, iface: attr.iface, wit: attr.wit, line: rnr_line, col: rnr_col });
+      let rnr_import = decl_attr_named(attrs, "import");
+      resources = resources.append(ResourceDecl { name: rnr_name, iface: rnr_import.iface, wit: rnr_import.wit, line: rnr_line, col: rnr_col });
       continue;
     }
     let (stmtR_stmt, stmtR_p) = parse_stmt(p);

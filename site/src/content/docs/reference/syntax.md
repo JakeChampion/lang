@@ -325,11 +325,25 @@ An attribute starts with `@` and applies to the declaration after it.
 | `@derive(cmp.Eq, …)` | struct, enum | generates trait impls — see [Traits](../traits/#deriving-traits--derive) |
 | `@try` | enum | lets `?` unwrap it — see [Error handling](../error-handling/#on-your-own-enums--try) |
 | `@must_consume` | struct, enum | every value must be consumed on every path — see [Language features](../language-features/#values-that-must-be-used--must_consume) |
+| `@value` | struct | the record holds only copyable data — see `docs/VALUE-TYPES.md` |
+| `@secret` | struct | the drop zeroes the numeric arrays that the record holds alone — see `docs/SECRET-TYPES.md` |
 | `@inline` / `@noinline` | function | lift the inliner's size limit, or never inline |
 | `@import("iface", "name")` | body-less function | binds a WebAssembly component import |
 | `@export("iface", "name")` | function | binds a WebAssembly component export |
 
 Any other name is a parse error.
+
+A declaration can have more than one attribute, for example `@value` and
+`@secret` on a key record. Each attribute can occur one time on a
+declaration. Each attribute must apply to the declaration kind. Two
+attributes from one of these sets cannot apply to one declaration:
+
+- `@import`, `@export`, `@jni` and `@callback`
+- `@inline` and `@noinline`
+- `@value` and `@must_consume`
+- `@norc`, `@interrupt`, `@early` and `@secondary`
+
+A conflict, a repeated attribute, or a misplaced attribute is `P001`.
 
 [1]: https://github.com/JakeChampion/lang/blob/main/spec/grammar.ebnf
 [2]: https://github.com/JakeChampion/lang/blob/main/compiler/parser.fern

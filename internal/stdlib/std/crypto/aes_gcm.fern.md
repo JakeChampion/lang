@@ -72,6 +72,7 @@ import "std/crypto/aead";
 ```fern
 <<3 pub struct Key>>=
 @value
+@secret
 pub struct Key { rk: u8[], h: u8[] }
 ```
 

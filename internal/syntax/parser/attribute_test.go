@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/syntax/ast"
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
@@ -32,7 +33,15 @@ func TestAttributePlacement(t *testing.T) {
 		{"@try\nstruct S { a: i32 }\nfunction main(): void {}", "2:1", enumOnly},
 		{"@try\npub function f(): void {}", "2:5", enumOnly},
 		{"@inline\nstruct S { a: i32 }", "2:1", inlineMsg},
-		{"@derive(Eq)\n@must_consume\nstruct S { a: i32 }", "2:1", "@derive " + structOrEnum},
+		{"@value\n@try\nstruct S { a: i32 }", "3:1", enumOnly},
+		{"@secret\n@secret\nstruct S { a: i32 }", "2:1", "@secret appears twice on one declaration"},
+		{"@derive(Eq)\n@derive(Hash)\nstruct S { a: i32 }", "2:1", "@derive appears twice on one declaration"},
+		{"@value\n@must_consume\nstruct S { a: i32 }", "2:1", "@value and @must_consume cannot apply to one declaration"},
+		{"@inline\n@noinline\nfunction f(): void {}", "2:1", "@inline and @noinline cannot apply to one declaration"},
+		{"@import(\"a:b/c\", \"f\")\n@export(\"a:b/c\", \"g\")\nfunction f(): void;", "2:1", "@import and @export cannot apply to one declaration"},
+		{"@norc\n@early\nfunction f(): void {}", "2:1", "@norc and @early cannot apply to one declaration"},
+		{"@derive(cmp.Eq)\n@must_consume\nstruct S { a: i32 }", "2:1", "@must_consume and @derive(cmp.Eq) cannot apply to one declaration, because the derived method reads a value that it does not consume"},
+		{"@must_consume\n@derive(cmp.Default, cmp.Display)\nenum E { A }", "2:1", "@must_consume and @derive(cmp.Display) cannot apply to one declaration, because the derived method reads a value that it does not consume"},
 		{"@derive(Eq)", "2:1", "@derive " + structOrEnum},
 		{"pub @derive(Eq) struct S { a: i32 }", "1:1", "`pub` must be followed by `function`, `struct`, `enum`, `type`, `trait`, `const`, `opaque`, `fip`, `fbip`, or `async`"},
 		{"pub(foo) function f(): void {}", "1:1", "`pub(...)` only supports `pub(package)`"},
@@ -109,5 +118,39 @@ func TestSecretAttributeDeclaration(t *testing.T) {
 	}
 	if len(prog.Structs) != 2 || !prog.Structs[0].Secret || !prog.Structs[0].Public || prog.Structs[1].Secret {
 		t.Fatalf("secret declaration lost its metadata: %+v", prog.Structs)
+	}
+}
+
+func TestStackedAttributes(t *testing.T) {
+	prog, err := Parse(`@value
+@secret
+pub struct Key { bytes: u8[] }
+@derive(cmp.Default)
+@must_consume
+struct B { x: i32 }
+@must_consume
+@try
+enum C { Good(i32), Bad(string) }
+@noinline
+@export("a:b/c", "g")
+function g(): void {}
+@provide("log")
+@norc
+function uart(data: usize, len: i32): void {}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prog.Structs) != 2 || !prog.Structs[0].ValueType || !prog.Structs[0].Secret || !prog.Structs[0].Public {
+		t.Errorf("@value @secret struct lost an attribute: %+v", prog.Structs)
+	}
+	if len(prog.Structs) == 2 && (len(prog.Structs[1].Derives) != 1 || !prog.Structs[1].MustConsume) {
+		t.Errorf("@derive @must_consume struct lost an attribute: %+v", prog.Structs[1])
+	}
+	if len(prog.Enums) != 1 || !prog.Enums[0].MustConsume || !prog.Enums[0].Try {
+		t.Errorf("@must_consume @try enum lost an attribute: %+v", prog.Enums)
+	}
+	if len(prog.Funcs) != 2 || prog.Funcs[0].ExportWITName != "g" || prog.Funcs[0].InlineHint != ast.InlineHintNever || prog.Funcs[1].Provides != "log" || !prog.Funcs[1].NoRC {
+		t.Errorf("stacked function attributes lost one: %+v", prog.Funcs)
 	}
 }
