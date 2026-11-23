@@ -1056,6 +1056,18 @@ function test_field_takes_text(): test.TestOutcome {
   return test.assert_eq(got, "true AVA name  true");
 }
 
+function secret_view(m: Form, s: ui.Screen): ui.El[Msg] {
+  return ui.column([name_field(m.name).secret()]);
+}
+
+function test_secret_field_shows_dots(): test.TestOutcome {
+  let s = sim.start(Form { name: "", sent: "", backs: 0, upper: false, gone: false }, ui.program(secret_view, form_update), fonts(), 200, 400, 1.0);
+  let hint = sim.shows(s, "AV");
+  s = sim.type_in(s, "name", "AVA");
+  let got = hint.to_string() + " " + s.shell.app.name + " " + sim.shows(s, "•••").to_string() + " " + sim.shows(s, "AVA").to_string() + " " + sim.spoken(s).contains("AV, 3 characters").to_string();
+  return test.assert_eq(got, "true AVA true false true");
+}
+
 function test_field_submits_and_clears(): test.TestOutcome {
   let s = sim.enter(sim.type_in(form(false), "name", "AVA"));
   let got = s.shell.app.sent + " [" + s.shell.app.name + "] [" + s.shell.host.focus + "] " + sim.keyboard(s).is_none().to_string() + " " + sim.shows(s, "AV").to_string();
@@ -1477,6 +1489,7 @@ function main(): i32 {
   r = r.it("a text follows the font size of the system", test_text_follows_the_font_scale);
   r = r.it("a field has its text, its line and its caret", test_field_layout);
   r = r.it("a field takes the text of the keyboard", test_field_takes_text);
+  r = r.it("a secret field shows a dot for each character", test_secret_field_shows_dots);
   r = r.it("the action key submits and the program clears the field", test_field_submits_and_clears);
   r = r.it("the keyboard gets the text that the program keeps", test_program_changes_the_text);
   r = r.it("the focus goes away", test_focus_goes_away);
