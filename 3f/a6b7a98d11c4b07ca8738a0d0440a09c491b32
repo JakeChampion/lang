@@ -647,3 +647,26 @@ wasm32/checker.unproved	127
 x86_64/checker.refuted	5263
 x86_64/checker.weakened	238
 x86_64/checker.missed	225
+
+# lane: net-soak
+soak/static.requests	31835240
+soak/static.failed	0
+soak/static.rss_warm_kb	636
+soak/static.rss_end_kb	636
+soak/static.rss_growth_kb	0
+soak/static.allocs	240915
+soak/static.live_bytes	0
+soak/echo.requests	24170015
+soak/echo.failed	0
+soak/echo.rss_warm_kb	696
+soak/echo.rss_end_kb	696
+soak/echo.rss_growth_kb	0
+soak/echo.allocs	1082783779
+soak/echo.live_bytes	0
+soak/recent.requests	19601706
+soak/recent.failed	0
+soak/recent.rss_warm_kb	668
+soak/recent.rss_end_kb	668
+soak/recent.rss_growth_kb	0
+soak/recent.allocs	312989730
+soak/recent.live_bytes	0
