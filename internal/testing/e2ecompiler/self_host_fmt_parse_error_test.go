@@ -13,6 +13,7 @@ var fmtParseErrorCases = []struct{ name, src, where string }{
 	{"missing-last-brace", "function main(): i32 {\n  return 0;\n", ":3:1: error[P001]"},
 	{"stray-token", "function main(): i32 { return @; }\n", ":1:31: error[P001]"},
 	{"lex-error", "function main(): i32 { let s = \"abc\n  return 0; }\n", ":1:32: error[P001]"},
+	{"two-pipe-placeholders", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return 5 |> add(_, _); }\n", ":2:43: error[P004]"},
 	{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }\n", ":1:13: error[P001]"},
 }
 
