@@ -719,8 +719,16 @@ pub function dos2time(dos: i64, now: i64): i64 {
   if (dos == 0i64) {
     return now;
   }
-  let y = (dos >> 25 & 127i64) + 1980i64;
+  // mktime() carries a month of 0 or of 13 to 15 into the year.
   let m = dos >> 21 & 15i64;
+  let y = (dos >> 25 & 127i64) + 1980i64;
+  if (m == 0i64) {
+    m = 12i64;
+    y -= 1i64;
+  } else if (m > 12i64) {
+    m -= 12i64;
+    y += 1i64;
+  }
   let d = dos >> 16 & 31i64;
   let secs = days_from_civil(y, m, d) * 86400i64 + (dos >> 11 & 31i64) * 3600i64 + (dos >> 5 & 63i64) * 60i64 + (dos << 1 & 62i64);
   let zone = tz.local_zone();
@@ -758,8 +766,10 @@ pub struct Header {
   // The first byte of the compressed data.
   next: i32,
   stamp: i64,
-  name: Option[string],
-  comment: Option[string],
+  // The name and the comment are bytes, as pigz prints them, and the name
+  // ends at its first zero byte, as a C string does.
+  name: Option[u8[]],
+  comment: Option[u8[]],
   zip_crc: i64,
   zip_clen: i64,
   zip_ulen: i64,
@@ -804,8 +814,30 @@ function tolong(v: i64): i64 {
   return (v & 2147483647i64) - (v & 2147483648i64);
 }
 
-function text_of(bytes: [u8]): string {
-  return utf8.from_bytes_lossy(bytes);
+// The name of a header as text, for the name of an output file.
+pub function name_text(name: Option[u8[]]): Option[string] {
+  match (name) {
+    Some(n) => {
+      return Some(utf8.from_bytes_lossy(n));
+    },
+    None => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// The bytes before the first zero byte.
+function c_string(bytes: u8[]): u8[] {
+  match (zero_at(bytes, 0)) {
+    Some(end) => {
+      return array.slice(bytes, 0, end);
+    },
+    None => {
+      return bytes;
+    }
+  }
+  return bytes;
 }
 
 function no_header(form: i32, at: i32): Header {
@@ -879,7 +911,7 @@ function zip_header_of(data: u8[], at: i32, save: boolean, h0: Header, now: i64)
     if (r10.eof || r10.at as i64 + fname > data.len() as i64) {
       return Header { ...h, method: -3, next: data.len() };
     }
-    h = Header { ...h, name: Some(text_of(data[r10.at:r10.at + fname as i32])) };
+    h = Header { ...h, name: Some(c_string(array.slice(data, r10.at, r10.at + fname as i32))) };
     r11 = In { ...r10, at: r10.at + fname as i32 };
   } else {
     let (ok2, rs) = skip(data, r10, fname);
@@ -995,7 +1027,7 @@ function gzip_header_of(data: u8[], at: i32, save: boolean, h0: Header): Header 
       return Header { ...h, method: -3, next: data.len() };
     };
     if (save) {
-      h = Header { ...h, name: Some(text_of(data[r.at:end])) };
+      h = Header { ...h, name: Some(array.slice(data, r.at, end)) };
     }
     r = In { ...r, at: end + 1 };
   }
@@ -1004,7 +1036,7 @@ function gzip_header_of(data: u8[], at: i32, save: boolean, h0: Header): Header 
       return Header { ...h, method: -3, next: data.len() };
     };
     if (save) {
-      h = Header { ...h, comment: Some(text_of(data[r.at:end])) };
+      h = Header { ...h, comment: Some(array.slice(data, r.at, end)) };
     }
     r = In { ...r, at: end + 1 };
   }
@@ -1155,7 +1187,7 @@ pub struct Decoded {
   // True when a zip file holds more entries, which keeps the input.
   keep: boolean,
   // The comment of the first zip entry, from its central directory.
-  comment: Option[string],
+  comment: Option[u8[]],
 }
 
 function decoded(members: Member[]): Decoded {
@@ -1260,7 +1292,7 @@ pub function infchk(own feed: Feed, first: Header, path: string, o: Options, now
   let form = first.form;
   let ret = 8;
   let more = false;
-  let comment: Option[string] = None;
+  let comment: Option[u8[]] = None;
   loop {
     let got = inflate_member(f, form == 1, out)?;
     f = got.feed;
@@ -1311,7 +1343,7 @@ struct Trailer {
   pos: i32,
   error: string,
   more: boolean,
-  comment: Option[string],
+  comment: Option[u8[]],
 }
 
 function trailer_error(why: string): Trailer {
@@ -1407,7 +1439,7 @@ function inflate_refusal(e: deflate.InflateError): string {
 }
 
 // more_zip_entries() for a listing.
-pub function zip_comment(data: u8[], at: i32, check: u32, find: boolean): (boolean, Option[string]) {
+pub function zip_comment(data: u8[], at: i32, check: u32, find: boolean): (boolean, Option[u8[]]) {
   return more_zip_entries(data, at, check, find);
 }
 
@@ -1416,7 +1448,7 @@ pub function zip_comment(data: u8[], at: i32, check: u32, find: boolean): (boole
 // more_zip_entries(): whether another local header follows the entry at
 // data[at:]. With `find`, also the comment of the first entry. That comes
 // from the central directory header with its CRC and offset 0.
-function more_zip_entries(data: u8[], at: i32, check: u32, find: boolean): (boolean, Option[string]) {
+function more_zip_entries(data: u8[], at: i32, check: u32, find: boolean): (boolean, Option[u8[]]) {
   let (sig, r) = get4(data, In { at: at, eof: false });
   let another = !r.eof && sig == 67324752i64;
   if (!find) {
@@ -1446,7 +1478,7 @@ function more_zip_entries(data: u8[], at: i32, check: u32, find: boolean): (bool
       for i in from..from + len {
         bytes = bytes.append(if (data[i] == 0 as u8) { b' ' } else { data[i] });
       }
-      return (another, Some(text_of(bytes)));
+      return (another, Some(bytes));
     }
     pos = head;
   }
@@ -1541,7 +1573,7 @@ pub function unlzw(own feed: Feed, path: string, out: (u8[]) => Result[void, Fai
   let mask = 511;
   let end = if (block) { 256 } else { 255 };
   if (z.pos >= lzw_end(z)) {
-    return Ok(decoded([]));
+    return Ok(decoded([Member { form: -1, check: 0u32, clen: z.f.start + z.f.buf.len() as i64 - 3i64, ulen: 0i64 }]));
   }
   let buf = z.f.buf[z.pos] as i32;
   let pos = z.pos + 1;
@@ -1673,7 +1705,7 @@ function filled(n: i32, v: i32): i32[] {
 // The lines of a listing. `first` prints the title line before them.
 pub struct Listing {
   first: boolean,
-  text: string,
+  text: u8[],
 }
 
 // One line of show_info(): `method` and `check` of the input, `clen` and
@@ -1681,7 +1713,7 @@ pub struct Listing {
 // the first. `name` is the name in the header, if any.
 // It keeps the branches of show_info() of pigz in their order, to check against it.
 // fern-lint: allow cyclomatic-complexity
-pub function show_info(l: Listing, o: Options, path: string, name: Option[string], stamp: i64, now: i64, form: i32, method: i32, check: u32, clen: i64, len: i64, cont: boolean, comment: Option[string]): Listing {
+pub function show_info(l: Listing, o: Options, path: string, name: Option[u8[]], stamp: i64, now: i64, form: i32, method: i32, check: u32, clen: i64, len: i64, cont: boolean, comment: Option[u8[]]): Listing {
   let tag = tag_of(o, path, name, cont);
   let lines = "";
   let first = l.first;
@@ -1697,46 +1729,60 @@ pub function show_info(l: Listing, o: Options, path: string, name: Option[string
   if (o.verbosity > 1) {
     lines += method_column(o, form, method, check) + stamp_text(stamp, now, cont) + "  ";
   }
+  let text = l.text.concat(lines.bytes());
   if (o.verbosity > 0) {
-    let unknown = form == 3 && o.decode == 0 || method == 8 && clen > len + (len >> 10) + 12i64 || method == 257 && clen > len + (len >> 1) + 3i64;
-    let sizes = clen.to_string().pad_start(10, ' ') + " " + len.to_string().pad_start(10, ' ');
-    if (unknown) {
-      lines += sizes + "?  unk    " + tag + "\n";
-    } else {
-      lines += sizes + " " + percent(len, clen) + "  " + tag + "\n";
-    }
+    // The lengths are unsigned, as length_t of pigz is.
+    let in_tot = clen as u64;
+    let out_tot = len as u64;
+    let unknown = form == 3 && o.decode == 0 || method == 8 && in_tot > out_tot + (out_tot >> 10u64) + 12u64 || method == 257 && in_tot > out_tot + (out_tot >> 1u64) + 3u64;
+    let sizes = length_text(clen) + " " + length_text(len);
+    let middle = if (unknown) { "?  unk    " } else { " " + percent(len, clen) + "  " };
+    text = text.concat((sizes + middle).bytes()).concat(tag).append(b'\n');
   }
   if (o.verbosity > 1) {
     if let Some(c) = comment {
-      lines += c + "\n";
+      text = text.concat(c).append(b'\n');
     }
   }
-  return Listing { first: first, text: l.text + lines };
+  return Listing { first: first, text: text };
+}
+
+// printf("%10ju") of a length.
+function length_text(v: i64): string {
+  return (v as u64).to_string().pad_start(10, ' ');
 }
 
 // The name in a listing: the name in the header, or the name of the input
 // without its suffix, cut to 48 bytes, or to 16 with -v.
-function tag_of(o: Options, path: string, name: Option[string], cont: boolean): string {
+function tag_of(o: Options, path: string, name: Option[u8[]], cont: boolean): u8[] {
   let max = if (o.verbosity > 1) { 16 } else { 48 };
-  let tag = "<...>";
+  let tag = "<...>".bytes();
   if (!cont) {
     match (name) {
       Some(n) => {
-        tag = n.take(max + 1);
+        tag = first_bytes(n, max + 1);
       },
       None => {
         let n = path.len() - compressed_suffix(path);
-        tag = path.take(if (n > max + 1) { max + 1 } else { n });
-        if (path.drop(n) == ".tgz" && n < max + 1) {
-          tag = (tag + ".tar").take(max + 1);
+        tag = first_bytes(path.bytes(), n);
+        if (path.drop(n) == ".tgz") {
+          tag = tag.concat(".tar".bytes());
         }
+        tag = first_bytes(tag, max + 1);
       }
     }
   }
   if (tag.len() > max) {
-    return tag.take(max - 3) + "...";
+    return array.slice(tag, 0, max - 3).concat("...".bytes());
   }
   return tag;
+}
+
+function first_bytes(bytes: u8[], n: i32): u8[] {
+  if (bytes.len() > n) {
+    return array.slice(bytes, 0, n);
+  }
+  return bytes;
 }
 
 // The time in a listing: the month, the day and the time, or the year for
@@ -1775,8 +1821,8 @@ pub function show_total(l: Listing, o: Options, check: u32, clen: i64, len: i64)
   if (o.verbosity > 1) {
     line = "        " + check_hex(check) + "                ";
   }
-  line += clen.to_string().pad_start(10, ' ') + " " + len.to_string().pad_start(10, ' ') + " " + percent(len, clen) + "  (total)\n";
-  return Listing { ...l, text: l.text + line };
+  line += length_text(clen) + " " + length_text(len) + " " + percent(len, clen) + "  (total)\n";
+  return Listing { ...l, text: l.text.concat(line.bytes()) };
 }
 
 function check_hex(check: u32): string {
@@ -1791,7 +1837,7 @@ function check_hex(check: u32): string {
 }
 
 // printf("%6.1f%%") of 100 * (len - clen) / len, with -inf% and -nan% when
-// len is 0, as glibc prints them.
+// len is 0, as glibc prints them. clen is unsigned.
 function percent(len: i64, clen: i64): string {
   if (len == 0i64) {
     if (clen == 0i64) {
@@ -1799,8 +1845,21 @@ function percent(len: i64, clen: i64): string {
     }
     return "  -inf%";
   }
-  let red = 100.0 * (len as f64 - clen as f64) / (len as f64);
-  return red.to_string_prec(1).pad_start(6, ' ') + "%";
+  let red = 100.0 * (len as f64 - (clen as u64) as f64) / (len as f64);
+  return fixed1(red).pad_start(6, ' ') + "%";
+}
+
+// printf("%.1f") of x. to_string_prec rounds a tie away from zero, and
+// glibc rounds it to the even digit. x is a tie when 4 * x is odd.
+function fixed1(x: f64): string {
+  let text = x.to_string_prec(1);
+  let q = x * 4.0;
+  let odd = q == q.floor() && (q / 2.0).floor() * 2.0 != q;
+  let last = text.bytes()[text.len() - 1];
+  if (odd && (last - b'0') % 2u8 == 1u8) {
+    return (x - 0.05.copysign(x)).to_string_prec(1);
+  }
+  return text;
 }
 
 pub function le32_of(data: u8[], at: i32): u32 {

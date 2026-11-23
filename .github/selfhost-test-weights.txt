@@ -1183,6 +1183,7 @@ TestSelfHostExampleMarkdownFormats 174
 TestSelfHostExampleMarkdownSpec 7
 TestSelfHostExampleMarkdownUnit 13
 TestSelfHostExamplePigzCLI 132
+TestSelfHostExamplePigzDamaged 330
 TestSelfHostExamplePigzLarge 18
 TestSelfHostExamplePigzUnit 229
 TestSelfHostExampleRgAgainstRipgrep 69

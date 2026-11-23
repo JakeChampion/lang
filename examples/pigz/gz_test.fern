@@ -402,6 +402,7 @@ function test_decode(): test.TestOutcome {
     decode("hello".bytes()),
     decode(array.slice(gzip, 0, 15)),
     decode(lzw.with(2, 112 as u8)),
+    decode(array.slice(lzw, 0, 3)),
   ];
   let text = "68656c6c6f2068656c6c6f2068656c6c6f2068656c6c6f0a";
   return test.assert_eq_array(got, [
@@ -419,21 +420,57 @@ function test_decode(): test.TestOutcome {
     "refused f unrecognized format",
     "refused f unrecognized format",
     "skipping: f: unknown lzw flags set after ",
+    "ok -1 1 ",
   ]);
 }
 
 function test_list(): test.TestOutcome {
   let o = gz.defaults();
   let v = gz.Options { ...o, verbosity: 2 };
-  let first = gz.Listing { first: true, text: "" };
+  let first = gz.Listing { first: true, text: [] };
+  let later = gz.Listing { first: false, text: [] };
   let a = gz.show_info(first, o, "dir/archive.tgz", None, 0i64, 0i64, 0, 8, 190416896u32, 43i64, 24i64, false, None);
-  let b = gz.show_info(first, v, "f.gz", Some("a-rather-long-name.txt"), 0i64, 0i64, 1, 8, 190416896u32, 1000i64, 0i64, false, Some("note"));
-  let c = gz.show_total(gz.Listing { first: false, text: "" }, o, 0u32, 10i64, 0i64);
-  return test.assert_eq_array([a.text, b.text, c.text], [
-    "compressed   original reduced  name\n        43         24?  unk    dir/archive.tar\n",
-    "method    check    timestamp    compressed   original reduced  name\nzlib 8  0b598800  ------ -----        1000          0?  unk    a-rather-long...\nnote\n",
-    "        10          0   -inf%  (total)\n",
+  let b = gz.show_info(first, v, "f.gz", Some("a-rather-long-name.txt".bytes()), 0i64, 0i64, 1, 8, 190416896u32, 1000i64, 0i64, false, Some("note".bytes()));
+  let c = gz.show_total(later, o, 0u32, 10i64, 0i64);
+  // A name and a comment that are not UTF-8 keep their bytes.
+  let d = gz.show_info(later, v, "f.gz", Some(bytes_of("e1")), 0i64, 0i64, 0, 8, 0u32, 12i64, 20i64, false, Some(bytes_of("ef")));
+  // A compressed length below zero is unsigned, so it is too long.
+  let e = gz.show_info(later, o, "f.zz", None, 0i64, 0i64, 1, 8, 0u32, -4i64, 0i64, false, None);
+  // 100 * (16 - 17) / 16 is -6.25, a tie that glibc rounds to even.
+  let f = gz.show_info(later, o, "f.Z", None, 0i64, 0i64, -1, 257, 0u32, 17i64, 16i64, false, None);
+  // 100 * (400 - 397) / 400 is 0.75, and 0.8 is the even digit.
+  let g = gz.show_info(later, o, "f.Z", None, 0i64, 0i64, -1, 257, 0u32, 397i64, 400i64, false, None);
+  let got = [a.text, b.text, c.text, d.text, e.text, f.text, g.text];
+  let shown: string[] = [];
+  for t in got {
+    shown = shown.append(hex.encode(t));
+  }
+  return test.assert_eq_array(shown, [
+    hex.encode("compressed   original reduced  name\n        43         24?  unk    dir/archive.tar\n".bytes()),
+    hex.encode("method    check    timestamp    compressed   original reduced  name\nzlib 8  0b598800  ------ -----        1000          0?  unk    a-rather-long...\nnote\n".bytes()),
+    hex.encode("        10          0   -inf%  (total)\n".bytes()),
+    hex.encode("gzip 8  00000000  ------ -----          12         20   40.0%  ".bytes().concat(bytes_of("e10aef0a"))),
+    hex.encode("18446744073709551612          0?  unk    f\n".bytes()),
+    hex.encode("        17         16   -6.2%  f\n".bytes()),
+    hex.encode("       397        400    0.8%  f\n".bytes()),
   ]);
+}
+
+// A zip name ends at its first zero byte, and a zip month of 0 or of 13 to
+// 15 carries into the year, as mktime() carries it.
+function test_zip_header(): test.TestOutcome {
+  let zip = bytes_of("504b03041400080008000000000000000000000000000000000003000000610062");
+  let h = gz.get_header(zip, 0, true, 0, 0i64);
+  let name = "none";
+  if let Some(n) = h.name {
+    name = hex.encode(n);
+  }
+  let day = 17i64 << 16;
+  let march_2027 = gz.dos2time(47i64 << 25 | 3i64 << 21 | day, 0i64);
+  let month_15 = gz.dos2time(46i64 << 25 | 15i64 << 21 | day, 0i64);
+  let december_2026 = gz.dos2time(46i64 << 25 | 12i64 << 21 | day, 0i64);
+  let month_0 = gz.dos2time(47i64 << 25 | day, 0i64);
+  return test.assert_eq_array([name, (month_15 - march_2027).to_string(), (month_0 - december_2026).to_string()], ["61", "0", "0"]);
 }
 
 function test_combine(): test.TestOutcome {
@@ -457,6 +494,7 @@ function main(): i32 {
   r = r.it("zopfli and level 11 give the bytes of pigz", test_zopfli);
   r = r.it("each format decodes, and corrupt data gets the message of pigz", test_decode);
   r = r.it("the lines of a listing", test_list);
+  r = r.it("a zip header gives its name and its time as pigz does", test_zip_header);
   r = r.it("the checks of two runs combine", test_combine);
   return r.finish();
 }
