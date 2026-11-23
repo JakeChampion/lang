@@ -255,10 +255,11 @@ watch subscribes the pollables a record's kind names (a listener or a
 connect under way through tcp-socket.subscribe, a connection through its
 input and output streams, a datagram socket through its datagram streams)
 and a wait polls them with a timer for a finite timeout. Two rules hold on
-every target: a host may report readiness spuriously (wasmtime does after a
-read that did not drain the socket), so a reader reads until -EAGAIN; and
-closing a socket stops every set watching it, as close(2) does for epoll and
-kqueue: on wasm, where the pollables a watch holds are children of the
+every target. First, a host can report readiness spuriously, so a reader reads
+until -EAGAIN. wasmtime does this after a read that did not drain the socket.
+wasmtime 51 also does it for a new connection before its first read. Second,
+when a program closes a socket, each set that watches it stops, as close(2)
+does for epoll and kqueue: on wasm, where the pollables a watch holds are children of the
 socket's streams, `tcp_close` unwatches it from each live set first. Behind
 it, `tcp_recv_into(fd, buf)` is
 the owned-buffer read: the bytes read into the caller's `u8[]`, 0 at EOF,

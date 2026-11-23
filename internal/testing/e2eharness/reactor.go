@@ -99,6 +99,11 @@ function main(): i32 {
     if (a.fd < 0) { return fail(10); }
     if (reactor_ctl(r, 1, a.fd, 1) != 0) { return fail(11); }
     if (reactor_ctl(r, 2, ln.fd, 0) != 0) { return fail(12); }
+    // A host may report a new connection readable before any bytes come
+    // (wasmtime 51 does), so a read clears that before the idle wait.
+    if (tcp_socket_ctl(a, 3, 1) != 0) { return fail(39); }
+    if (tcp_recv_into(a, [0u8]) != 0 - eagain()) { return fail(40); }
+    if (tcp_socket_ctl(a, 3, 0) != 0) { return fail(41); }
     if (wait_until(r, events, 20) != 0) { return fail(13); }
     if (tcp_send_bytes(c, [104u8, 105u8]) != 2) { return fail(14); }
     if (expect_ready(r, a.fd, 1, 2000, 15) != 0) { return 15; }
@@ -139,7 +144,7 @@ function main(): i32 {
     if (expect_both(r, ln.fd, 1, a.fd, 1, 2000, 34) != 0) { return 34; }
     tcp_close(c2);
     if (reactor_ctl(r, 2, ln.fd, 0) != 0) { return fail(35); }
-    if (reactor_ctl(r, 2, a.fd, 0) != 0) { return fail(29); }
+    if (reactor_ctl(r, 2, a.fd, 0) != 0) { return fail(42); }
     tcp_close(a);
     tcp_close(ln);
     if (reactor_ctl(r, 3, 0, 0) != 0) { return fail(30); }
