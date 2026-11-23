@@ -1,0 +1,11 @@
+# The settings of `fern -apk` for the file explorer.
+[package]
+name = "files"
+lib = "app.fern"
+
+[android]
+package = "dev.fern.files"
+label = "Fern Files"
+icon = "icon.png"
+min_sdk = 30
+permissions = ["MANAGE_EXTERNAL_STORAGE", "INTERNET", "ACCESS_NETWORK_STATE"]

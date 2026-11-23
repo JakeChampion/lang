@@ -16011,6 +16011,13 @@ function struct_lit_spelling(sl: ast.ExprStructLit, env: MEnv, funcs: MFns): str
     return sl.type_name;
   }
   let sd = funcs.structs[si];
+  // A literal with a base takes the type arguments of the base.
+  if (sl.has_base) {
+    let from = mono_infer(sl.base, env, funcs);
+    if (from.len() > sd.name.len() && strip_struct_base(from) == sd.name) {
+      return from;
+    }
+  }
   let binds = MEnv { mnames: [], mtypes: [] };
   let k = 0;
   while (k < sl.field_names.len() && k < sl.field_values.len()) {
