@@ -149,7 +149,8 @@ def tap(out, step, label, hold=False, scroll=False):
     point = find(out, step, label, scroll=scroll)
     if not point:
         screen(out, step)
-        fail(f"{step}: the screen does not show {label}")
+        shown = sorted({name for name, _, _ in nodes(dump(out, step))})
+        fail(f"{step}: the screen does not show {label}. It shows {shown}")
         return False
     x, y = map(str, point)
     if hold:
