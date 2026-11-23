@@ -9,6 +9,42 @@ import (
 	"testing"
 )
 
+// rdaLinkTree adds links that remove_dir_all must remove and not follow: a
+// link to a directory outside the tree, and a link that points at itself.
+// It returns the file in the outside directory, which must survive.
+func rdaLinkTree(t *testing.T, root, tree string) string {
+	t.Helper()
+	keep := filepath.Join(root, "keep")
+	if err := os.MkdirAll(keep, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", keep, err)
+	}
+	precious := filepath.Join(keep, "file.txt")
+	if err := os.WriteFile(precious, []byte("precious"), 0o644); err != nil {
+		t.Fatalf("write %s: %v", precious, err)
+	}
+	rel, err := filepath.Rel(tree, keep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(rel, filepath.Join(tree, "link")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if err := os.Symlink("loop", filepath.Join(tree, "sub", "loop")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	return precious
+}
+
+func checkRdaLinkTree(t *testing.T, tree, precious string) {
+	t.Helper()
+	if _, err := os.Lstat(tree); !os.IsNotExist(err) {
+		t.Errorf("%s still present after remove_dir_all (lstat err = %v)", tree, err)
+	}
+	if b, err := os.ReadFile(precious); err != nil || string(b) != "precious" {
+		t.Errorf("remove_dir_all followed a link: %s = %q, %v", precious, b, err)
+	}
+}
+
 func TestSelfHostRemoveDirAllIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -29,6 +65,7 @@ func TestSelfHostRemoveDirAllIR(t *testing.T) {
 			t.Fatalf("write %s: %v", f, err)
 		}
 	}
+	precious := rdaLinkTree(t, dir, rda)
 
 	src := fmt.Sprintf(`function main(): i32 {
     match (remove_dir_all(%q)) {
@@ -67,9 +104,56 @@ func TestSelfHostRemoveDirAllIR(t *testing.T) {
 	if code := run.ProcessState.ExitCode(); code != 0 {
 		t.Errorf("remove_dir_all IR program exited %d, want 0 (nested tree removed -> None, missing -> None)", code)
 	}
-	if _, err := os.Stat(rda); !os.IsNotExist(err) {
-		t.Errorf("rda still present after remove_dir_all (stat err = %v)", err)
+	checkRdaLinkTree(t, rda, precious)
+}
+
+func TestSelfHostRemoveDirAllArm64IR(t *testing.T) {
+	arm64gcc, qemu := arm64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
+
+	rda := filepath.Join(dir, "rda")
+	if err := os.MkdirAll(filepath.Join(rda, "sub"), 0o755); err != nil {
+		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(rda, "sub", "g.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	precious := rdaLinkTree(t, dir, rda)
+
+	src := fmt.Sprintf(`function main(): i32 {
+    match (remove_dir_all(%q)) {
+        Err(_) => { return 1; },
+        Ok(_) => { return 0; },
+    }
+}`, rda)
+	driverArgs := []string{"-target", "arm64-linux"}
+	var cmd *exec.Cmd
+	if len(x86runner) == 0 {
+		cmd = exec.Command(driverBin, driverArgs...)
+	} else {
+		cmd = exec.Command(x86runner[0], append(append(append([]string{}, x86runner[1:]...), driverBin), driverArgs...)...)
+	}
+	cmd.Stdin = bytes.NewReader([]byte(src))
+	asm, err := cmd.Output()
+	if err != nil || len(asm) == 0 {
+		t.Fatalf("driver failed: %v", err)
+	}
+	if !bytes.Contains(asm, []byte("__fern_remove_dir_all")) {
+		t.Fatal("remove_dir_all did not reach the arm64 IR runtime (no __fern_remove_dir_all in asm)")
+	}
+	bin := buildBinArm64(t, arm64gcc, dir, "rda_arm64", string(asm))
+	run := runArm64Bin(qemu, bin)
+	_ = run.Run()
+	if run.ProcessState == nil || !run.ProcessState.Exited() {
+		t.Fatal("arm64 program did not exit normally")
+	}
+	if code := run.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("remove_dir_all arm64 IR program exited %d, want 0", code)
+	}
+	checkRdaLinkTree(t, rda, precious)
 }
 
 func TestSelfHostRemoveDirAllIRWasm(t *testing.T) {
@@ -97,6 +181,7 @@ func TestSelfHostRemoveDirAllIRWasm(t *testing.T) {
 	mustWr(filepath.Join(rda, "f2.txt"))
 	mustWr(filepath.Join(rda, "sub", "g.txt"))
 	mustWr(filepath.Join(rda, "sub", "sub2", "h.txt"))
+	precious := rdaLinkTree(t, dir, rda)
 
 	const src = `function main(): i32 {
     match (remove_dir_all("rda_dir")) {
@@ -137,7 +222,5 @@ func TestSelfHostRemoveDirAllIRWasm(t *testing.T) {
 	if code := run.ProcessState.ExitCode(); code != 0 {
 		t.Errorf("remove_dir_all wasm IR program exited %d, want 0 (tree removed -> None, missing -> None)\n--- WAT ---\n%s", code, wat)
 	}
-	if _, err := os.Stat(rda); !os.IsNotExist(err) {
-		t.Errorf("rda_dir still present after remove_dir_all (stat err = %v)", err)
-	}
+	checkRdaLinkTree(t, rda, precious)
 }

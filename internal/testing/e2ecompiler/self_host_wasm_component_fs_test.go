@@ -274,6 +274,33 @@ remove_dir_all missing ok
 create_dir ok
 remove_dir ok
 `},
+	{name: "remove_dir_all does not follow links", src: `function main(): i32 {
+    unit("create_dir_all", create_dir_all("t/sub"));
+    unit("create_dir", create_dir("keep", 493));
+    unit("write", write_file("keep/file.txt", "precious"));
+    unit("dir link", create_symlink("../keep", "t/link"));
+    unit("loop link", create_symlink("loop", "t/sub/loop"));
+    unit("remove_dir_all", remove_dir_all("t"));
+    match (lstat("t")) { Ok(_) => { print("t still there"); }, Err(e) => { print("t " + kind(e)); } }
+    match (read_file("keep/file.txt")) { Ok(s) => { print("keep [" + s + "]"); }, Err(e) => { print("keep " + kind(e)); } }
+    unit("top link", create_symlink("keep", "top"));
+    unit("remove_dir_all top link", remove_dir_all("top"));
+    match (lstat("top")) { Ok(_) => { print("top still there"); }, Err(e) => { print("top " + kind(e)); } }
+    match (read_file("keep/file.txt")) { Ok(s) => { print("keep [" + s + "]"); }, Err(e) => { print("keep " + kind(e)); } }
+    return 0;
+}`, want: `create_dir_all ok
+create_dir ok
+write ok
+dir link ok
+loop link ok
+remove_dir_all ok
+t NotFound
+keep [precious]
+top link ok
+remove_dir_all top link ok
+top NotFound
+keep [precious]
+`},
 	{name: "links and rename", src: `function main(): i32 {
     unit("write", write_file("a.txt", "hello"));
     unit("symlink", create_symlink("a.txt", "s"));

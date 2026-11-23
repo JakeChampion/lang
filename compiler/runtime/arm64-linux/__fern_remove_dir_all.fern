@@ -10,27 +10,30 @@ function __fern_remove_dir_all(path: string): Result[void, IoError] {
     i += 1;
   }
   __raw_store8(pathz, plen, 0);
-  let fd = __syscall3(56, -100, pathz as i64, 16384) as i32;
+  let fd = __syscall3(56, -100, pathz as i64, 49152) as i32;
   if (fd < 0) {
     let e = -fd;
-    if (e == 20) {
-      __syscall3(35, -100, pathz as i64, 0);
+    if (e == 20 || e == 40) {
+      e = -(__syscall3(35, -100, pathz as i64, 0) as i32);
     }
     let pathz_own0 = __raw_string(pathz, plen + 1);
-    if (e == 2) {
-      return Ok(());
-    }
-    if (e == 20) {
+    if (e == 0 || e == 2) {
       return Ok(());
     }
     return Err(__fern_io_error(e, __fern_path_copy(pathz_own0, plen)));
   }
+  let first: Result[void, IoError] = Ok(());
+  let failed = 0;
   let basep = __raw_alloc(8);
   let done = 0;
   while (done == 0) {
     let buf = __raw_alloc(65536);
     let n = __syscall4(61, fd as i64, buf as i64, 65536, basep as i64) as i32;
     if (n <= 0) {
+      if (n < 0 && failed == 0) {
+        first = Err(__fern_io_error(-n, __fern_path_copy(path, plen)));
+        failed = 1;
+      }
       done = 1;
     } else {
       let pos = 0;
@@ -75,7 +78,12 @@ function __fern_remove_dir_all(path: string): Result[void, IoError] {
           __memcpy(cb + plen as usize + 1, buf + pos as usize + 19, nlen);
           match (__fern_remove_dir_all(__raw_string(cb, cl))) {
             Ok(_) => {},
-            Err(_) => {}
+            Err(err) => {
+              if (failed == 0) {
+                first = Err(err);
+                failed = 1;
+              }
+            }
           }
         }
         pos += reclen;
@@ -85,7 +93,13 @@ function __fern_remove_dir_all(path: string): Result[void, IoError] {
   }
   let basep_own = __raw_string(basep, 8);
   __syscall3(57, fd as i64, 0, 0);
-  __syscall3(35, -100, pathz as i64, 512);
+  let r = __syscall3(35, -100, pathz as i64, 512) as i32;
   let pathz_own = __raw_string(pathz, plen + 1);
+  if (failed == 1) {
+    return first;
+  }
+  if (r < 0 && r != -2) {
+    return Err(__fern_io_error(-r, __fern_path_copy(pathz_own, plen)));
+  }
   return Ok(());
 }
