@@ -358,6 +358,15 @@ function def_of(f: ssa.SFunc, d: ssa.DefSites, v: i32): ssa.SInst {
   return f.blocks[d.block[v]].insts[d.at[v]];
 }
 
+// The definition of `v` in the function of the walk, from the table of the
+// walk.
+function def_in(w: Walk, v: i32): ssa.SInst {
+  if (v < 0 || v >= w.insts.len()) {
+    return ssa.no_inst();
+  }
+  return w.insts[v];
+}
+
 function is_zero(f: ssa.SFunc, d: ssa.DefSites, v: i32): boolean {
   return zero_word(def_of(f, d, v));
 }
@@ -371,7 +380,7 @@ function def_at(w: Walk, v: i32): ssa.SInst {
   if (w.outer.on && outside(w.f, w.defs, v)) {
     return def_of(w.outer.f, w.outer.defs, v);
   }
-  return def_of(w.f, w.defs, v);
+  return def_in(w, v);
 }
 
 function zero_at(w: Walk, v: i32): boolean {
@@ -433,6 +442,7 @@ struct Walk {
   phis: i32[],
   outer: Outer,
   splits: Splits,
+  insts: ssa.SInst[],
   firsts: i32[][],
   carried: i32[][],
   children: boolean[],
@@ -587,7 +597,7 @@ function no_unique(): Unique {
 
 function unique_word(w: Walk, v: i32, path: i32[]): Unique {
   let root = w.root[v];
-  let ins = def_of(w.f, w.defs, root);
+  let ins = def_in(w, root);
   if (is_call(ins, "__fern_rc_is_unique") && ins.args.len() == 1) {
     return Unique { root: w.root[ins.args[0]], also: [] };
   }
@@ -706,7 +716,7 @@ function token_root_at(w: Walk, regions: i32[][], v: i32, path: i32[]): i32 {
   if (util.index_of_i32(path, root) >= 0) {
     return -2;
   }
-  let ins = def_of(w.f, w.defs, root);
+  let ins = def_in(w, root);
   if (ins.kind_tag != ssa.PHI || path.len() >= 8) {
     return -1;
   }
@@ -756,7 +766,7 @@ function token_input(w: Walk, regions: i32[][], a: i32, pi: i32, path: i32[]): i
 struct Tested { word: i32, on_true: boolean }
 
 function tested(w: Walk, cond: i32): Tested {
-  let ins = def_of(w.f, w.defs, cond);
+  let ins = def_in(w, cond);
   if (ins.kind_tag != ssa.BINARY || ins.args.len() != 2 || ins.str != "eq" && ins.str != "ne") {
     return Tested { word: cond, on_true: true };
   }
@@ -1419,7 +1429,7 @@ function load_key(w: Walk, ld: ssa.SInst): i32 {
 }
 
 function index_key(w: Walk, v: i32): i32 {
-  let d = def_of(w.f, w.defs, w.root[v]);
+  let d = def_in(w, w.root[v]);
   if (d.kind_tag == ssa.CONST_INT && d.imm >= 0) {
     return -2 - d.imm;
   }
@@ -1707,7 +1717,7 @@ function box_on_edges(w: Walk, p: i32, base: i32, boxed: boolean[], edge: boolea
   if (bi < 0) {
     return false;
   }
-  let ins = def_of(w.f, w.defs, p);
+  let ins = def_in(w, p);
   let b = w.f.blocks[bi];
   let any = false;
   let i = 0;
@@ -2461,7 +2471,7 @@ function kind_of(w: Walk, v: i32): string {
   if (v < w.f.nparams) {
     return "param";
   }
-  return ssa.kind_name(def_of(w.f, w.defs, v).kind_tag);
+  return ssa.kind_name(def_in(w, v).kind_tag);
 }
 
 function child_why(w: Walk, root: i32): string {
@@ -2529,7 +2539,7 @@ function spend_count(own p: Progress, w: Walk, v: i32, block: i32, what: string)
 function spend_counted(own p: Progress, w: Walk, v: i32, block: i32, what: string): Progress {
   let r = w.root[v];
   if (w.idx[r] < 0 && w.origin[r] == org_none() && r >= w.f.nparams) {
-    let k = def_of(w.f, w.defs, r).kind_tag;
+    let k = def_in(w, r).kind_tag;
     if (is_named_op(k)) {
       return found(p, w, "spent a word nothing counts", r, block, what);
     }
@@ -2622,7 +2632,7 @@ function retain_count(own p: Progress, w: Walk, v: i32, result: i32): Progress {
 }
 
 function owned_base(w: Walk, v: i32): boolean {
-  let d = def_of(w.f, w.defs, v);
+  let d = def_in(w, v);
   if (!is_load(d) || d.args.len() == 0) {
     return false;
   }
@@ -2854,7 +2864,7 @@ function put_back(w: Walk, st: ssa.SInst, val: i32): boolean {
   if (st.kind_tag != ssa.ST_AT || val < 0 || val >= w.kept.len() || !w.kept[w.root[val]] || st.args.len() < 2 || w.root[st.args[0]] != w.held) {
     return false;
   }
-  return def_of(w.f, w.defs, w.root[val]).imm == st.imm;
+  return def_in(w, w.root[val]).imm == st.imm;
 }
 
 function put_backs(w: Walk, st: Stores, dom: ssadeps.Dom): boolean[] {
@@ -2867,7 +2877,7 @@ function put_backs(w: Walk, st: Stores, dom: ssadeps.Dom): boolean[] {
     let ins = w.f.blocks[st.block[k]].insts[st.at[k]];
     if (st.base[k] == w.held && ins.kind_tag == ssa.ST_AT && !st.zero[k]) {
       let val = w.root[ins.args[ins.args.len() - 1]];
-      let ld = def_of(w.f, w.defs, val);
+      let ld = def_in(w, val);
       let lb = w.defs.block[val];
       if (ld.kind_tag == ssa.LD_AT && ld.args.len() > 0 && ld.imm == ins.imm && w.root[ld.args[0]] == w.held && lb >= 0 && w.origin[val] == org_borrowed()) {
         if ((lb == st.block[k] && w.defs.at[val] < st.at[k] || ssadeps.dom_holds(dom, st.block[k], lb))
@@ -3249,7 +3259,7 @@ function tag_on_edge(w: Walk, bi: i32, sid: i32): Tag {
   if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f) {
     return Tag { word: -1, c: 0, equal: false };
   }
-  let ins = def_of(w.f, w.defs, t.cond);
+  let ins = def_in(w, t.cond);
   if (ins.kind_tag == ssa.BINARY && ins.args.len() == 2 && (ins.str == "eq" || ins.str == "ne")) {
     let tg = compared(w, ins);
     let equal = sid == t.t;
@@ -3282,7 +3292,7 @@ function same_box_on_edge(own p: Progress, w: Walk, bi: i32, sid: i32): Progress
   if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f) {
     return p;
   }
-  let c = def_of(w.f, w.defs, t.cond);
+  let c = def_in(w, t.cond);
   if (c.kind_tag != ssa.BINARY || c.args.len() != 2 || c.str != "eq" && c.str != "ne") {
     return p;
   }
@@ -3315,7 +3325,7 @@ function first_on_shared_arm(w: Walk, block: i32, root: i32, result: i32): boole
   if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f || t.f != block) {
     return false;
   }
-  let c = def_of(w.f, w.defs, t.cond);
+  let c = def_in(w, t.cond);
   if (!is_call(c, "__fern_rc_is_unique") || c.args.len() != 1 || c.args[0] < 0 || w.root[c.args[0]] != root) {
     return false;
   }
@@ -3376,7 +3386,7 @@ function twin_on_edge(own p: Progress, w: Walk, x: i32, y: i32, equal: boolean):
 }
 
 function took_operand(own p: Progress, w: Walk, result: i32, operand: i32): Progress {
-  let d = def_of(w.f, w.defs, result);
+  let d = def_in(w, result);
   if (d.kind_tag != ssa.CALL || result < 0 || operand < 0) {
     return p;
   }
@@ -3471,7 +3481,7 @@ function kept_side(side: i32, taken: i32): i32 {
 // Where a token is not zero, the token and its box are one box. The other
 // name of `v` there, or -1 if `t` is not a token of `v` or `v` itself.
 function other_name(w: Walk, v: i32, t: i32): i32 {
-  let box = token_box(w, def_of(w.f, w.defs, t));
+  let box = token_box(w, def_in(w, t));
   if (box < 0) {
     return -1;
   }
@@ -3641,7 +3651,7 @@ function forget_key(own p: Progress, v: i32): Progress {
 }
 
 function token_key(w: Walk, o: i32): boolean {
-  return o >= 0 && token_box(w, def_of(w.f, w.defs, o)) >= 0;
+  return o >= 0 && token_box(w, def_in(w, o)) >= 0;
 }
 
 // A key whose twins tell whether a value is the box of the key, and not
@@ -3684,7 +3694,7 @@ function token_side_on_edge(own p: Progress, w: Walk, bi: i32, sid: i32): Progre
     return p;
   }
   let tok = w.root[ts.word];
-  if (token_box(w, def_of(w.f, w.defs, tok)) < 0 && (tok >= p.condkey.len() || !p.condkey[tok])) {
+  if (token_box(w, def_in(w, tok)) < 0 && (tok >= p.condkey.len() || !p.condkey[tok])) {
     return p;
   }
   let is_box = sid == t.t == ts.on_true;
@@ -3910,7 +3920,7 @@ function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: 
     uses = ssa.use_counts(f);
     paired = returns_pair(f, irops);
   }
-  let w = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: paired, why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: uses, dom: dom, regions: [], openers: [], held: hold.box, reused: hold.reused, phis: phis_of(f), outer: outer_of(base), firsts: firsts_of(f, rt.root), carried: [], children: [], takes: no_takes(), params_at_entry: !base.on, debt: [], kept: [], splits: Splits { word: [], on_true: [], to: [], returns: [] } };
+  let w = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: paired, why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: uses, dom: dom, regions: [], openers: [], held: hold.box, reused: hold.reused, phis: phis_of(f), outer: outer_of(base), firsts: firsts_of(f, rt.root), carried: [], children: [], takes: no_takes(), params_at_entry: !base.on, debt: [], kept: [], splits: Splits { word: [], on_true: [], to: [], returns: [] }, insts: ssa.inst_defs(f) };
   w = Walk { ...w, splits: splits_of(w) };
   w = Walk { ...w, carried: carried_of(w) };
   let rg = inherited_regions(unique_regions(w, dom, reach), f, reach, base);
@@ -4105,7 +4115,7 @@ function debts(w: Walk, taken: boolean[], from_id: i32): boolean[] {
   let out = __alloc_bool(w.f.nvals);
   for v in 0..taken.len() {
     if (taken[v] && w.defs.block[v] >= 0 && ssadeps.dom_holds(w.dom, w.defs.block[v], from)) {
-      let d = def_of(w.f, w.defs, v);
+      let d = def_in(w, v);
       if (is_load(d) && d.args.len() > 0 && w.root[d.args[0]] == w.held) {
         out = out.with(v, true);
       }
@@ -4411,7 +4421,7 @@ function fixed_phis(w: Walk, pr: Pruned, reach: boolean[], box: i32): i32[] {
     for p in w.phis {
       let bi = w.defs.block[p];
       if (out[p] < 0 && reach[bi]) {
-        let fx = fixed_phi(w, pr, reach, out, w.f.blocks[bi], def_of(w.f, w.defs, p), box);
+        let fx = fixed_phi(w, pr, reach, out, w.f.blocks[bi], def_in(w, p), box);
         if (fx >= 0) {
           out = out.with(p, fx);
           changed = true;
@@ -4514,7 +4524,7 @@ function calls_on_box(b: ssa.SBlock, root: i32[], box: i32): boolean {
 }
 
 function drop_phi_edges(w: Walk, own pr: Pruned, phi: i32, box: i32, hold: boolean, depth: i32): Pruned {
-  let ins = def_of(w.f, w.defs, phi);
+  let ins = def_in(w, phi);
   let bi = w.defs.block[phi];
   if (ins.kind_tag != ssa.PHI || bi < 0 || depth >= 8 || util.index_of_i32(pr.phis, phi) >= 0) {
     return pr;
@@ -4760,7 +4770,7 @@ function seed_edge(own pa: Progress, wa: Walk, lva: Live, roots: i32[], bi: i32,
 }
 
 function is_phi(w: Walk, v: i32): boolean {
-  return def_of(w.f, w.defs, v).kind_tag == ssa.PHI;
+  return def_in(w, v).kind_tag == ssa.PHI;
 }
 
 function base_count(w: Walk, lv: Live, p0: Progress, base0: i32, bi: i32, r: i32): i32 {
