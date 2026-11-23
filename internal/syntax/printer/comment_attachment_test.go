@@ -426,6 +426,55 @@ function main(): i32 {
 	}
 }
 
+func TestFormatKeepsBlockCloserCommentOutOfLastStatement(t *testing.T) {
+	src := `function f(a: i32): i32 {
+  return f(a, // arg a
+    2);
+} // end f
+
+function g(a: i32): i32 {
+  if (a > 0) {
+    let xs = [a,
+      2];
+  } // end if
+  return g(
+    a,
+    2,
+  ); // after the call
+}
+`
+	want := `function f(a: i32): i32 {
+  return f(
+    a,  // arg a
+    2,
+  );
+}
+
+// end f
+
+function g(a: i32): i32 {
+  if (a > 0) {
+    let xs = [
+      a,
+      2,
+    ];
+  }
+  // end if
+  return g(
+    a,
+    2,
+  );  // after the call
+}
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := Format(prog); got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestFormatKeepsDeclarationOrder(t *testing.T) {
 	src := `function first(): i32 { return 1; }
 

@@ -135,6 +135,8 @@ type formatter struct {
 	ci       int
 	blanks   map[int]bool
 	depth    int
+	// The line of the brace that closes the block in progress, or 0.
+	closeLine int
 }
 
 func (f *formatter) blankBefore(line int) bool {
@@ -1038,7 +1040,10 @@ func (f *formatter) formatBlock(blk *ast.Block, depth int) {
 		f.emitTrailing(blk.P.Line)
 	}
 	f.b.WriteByte('\n')
+	outer := f.closeLine
+	f.closeLine = blk.End.Line
 	f.formatStmtLines(blk.Stmts, depth+1, false)
+	f.closeLine = outer
 	f.b.WriteByte('\n')
 	if blk.End.Line > 0 {
 		f.drainLeading(blk.End.Line, depth+1)
@@ -1111,7 +1116,10 @@ func (f *formatter) formatStmtLine(s ast.Stmt, depth int) {
 	f.formatStmt(s, depth)
 	if isSingleLineStmt(s) {
 		f.emitTrailing(s.Pos().Line)
-		f.emitTrailing(stmtLastLine(s))
+		// The comment on the line that closes the block is not of this statement.
+		if last := stmtLastLine(s); last != f.closeLine || last == s.Pos().Line {
+			f.emitTrailing(last)
+		}
 	}
 }
 

@@ -1327,10 +1327,11 @@ function indent_str(depth: i32): string {
 }
 
 // at is the line of the statement in print. own is the span of the last block printed, or -1.
-struct Fmt { comments: lexer.Comment[], ci: i32, blanks: boolean[], spans: parser.BlockSpans, si: i32, at: i32, own: i32 }
+// `close` is the line of the brace that closes the block in progress, or 0.
+struct Fmt { comments: lexer.Comment[], ci: i32, blanks: boolean[], spans: parser.BlockSpans, si: i32, at: i32, own: i32, close: i32 }
 
 function empty_fmt(): Fmt {
-  return Fmt { comments: [], ci: 0, blanks: [], spans: no_spans(), si: 0, at: 0, own: -1 };
+  return Fmt { comments: [], ci: 0, blanks: [], spans: no_spans(), si: 0, at: 0, own: -1, close: 0 };
 }
 
 function no_spans(): parser.BlockSpans {
@@ -1589,6 +1590,7 @@ function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
     g = gt;
   }
   out += "\n";
+  g = Fmt { ...g, close: close_line };
   for i in 0..body.len() {
     let ln = ast.stmt_line(body[i]);
     if (i > 0 && ln > 0 && g.blank_before(ln)) {
@@ -1609,7 +1611,7 @@ function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
     g = gc;
   }
   out = out + indent_str(depth) + "}";
-  return (out, Fmt { ...g, own: span });
+  return (out, Fmt { ...g, own: span, close: f.close });
 }
 
 // An empty block takes the first span that opens on or after the line of its
@@ -2696,7 +2698,12 @@ function print_stmt_line(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
     let ln = ast.stmt_line(st);
     if (ln > 0) {
       let (tr, g2) = emit_trailing(g, ln);
-      let (tr2, g3) = emit_trailing(g2, stmt_last_line(st, ln, g2.spans));
+      // The comment on the line that closes the block is not of this statement.
+      let last = stmt_last_line(st, ln, g2.spans);
+      if (last == g2.close && last != ln) {
+        return (out + tr, g2);
+      }
+      let (tr2, g3) = emit_trailing(g2, last);
       return (out + tr + tr2, g3);
     }
   }
@@ -3636,7 +3643,7 @@ function print_annotated_function(fd: parser.FuncDecl, mod: parser.Module, hints
 }
 
 function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[], impls: parser.ImplDecl[], flines: parser.FieldLines[], hints: parser.FunctionInlineHint[], spans: parser.BlockSpans, comments: lexer.Comment[], blanks: boolean[]): string {
-  let f = Fmt { comments: comments, ci: 0, blanks: blanks, spans: spans, si: 0, at: 0, own: -1 };
+  let f = Fmt { comments: comments, ci: 0, blanks: blanks, spans: spans, si: 0, at: 0, own: -1, close: 0 };
   let chunks: string[] = [];
   let wrote = false;
   let kinds: i32[] = [];

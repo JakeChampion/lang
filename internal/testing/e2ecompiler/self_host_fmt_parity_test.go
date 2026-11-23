@@ -102,6 +102,22 @@ enum E { One, Two } // about E
 
 function main(): i32 { return 0; }
 `},
+	{"comment-on-the-line-that-closes-a-block", `function f(a: i32): i32 {
+  return f(a, // arg a
+    2);
+} // end f
+
+function g(a: i32): i32 {
+  if (a > 0) {
+    let xs = [a,
+      2];
+  } // end if
+  return g(
+    a,
+    2,
+  ); // after the call
+}
+`},
 	{"unsafe-value-blocks", `function f(bytes: u8[]): string {
   let n = unsafe { 3 };
   let text = unsafe { string_from_bytes_unchecked(bytes) };
