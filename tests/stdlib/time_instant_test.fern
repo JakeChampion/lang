@@ -82,6 +82,16 @@ function test_rfc3339_offset_out_of_the_years(): test.TestOutcome {
   return test.assert_eq(first.format_rfc3339(), "0000-01-01T00:00:00Z");
 }
 
+function test_rfc3339_long_fraction(): test.TestOutcome {
+  let Ok(t) = time.timestamp_parse_rfc3339("2026-05-19T14:30:00.1234567899999Z") else {
+    return test.fail("a fraction of 13 digits did not parse");
+  };
+  if (t.nsec != 123456789) {
+    return test.fail("the digits after the ninth changed the nanoseconds");
+  }
+  return test.assert_true(time.timestamp_parse_rfc3339("2026-05-19T14:30:00.123456789x1Z").is_err());
+}
+
 function main(): i32 {
   let t = test.new("time instant");
   t = t.it("now is monotonic", test_now_is_monotonic);
@@ -91,5 +101,6 @@ function main(): i32 {
   t = t.it("timestamp arithmetic", test_timestamp_arithmetic);
   t = t.it("timestamp millis", test_timestamp_millis);
   t = t.it("an offset cannot leave the RFC 3339 years", test_rfc3339_offset_out_of_the_years);
+  t = t.it("a fraction can have more than nine digits", test_rfc3339_long_fraction);
   return t.finish();
 }

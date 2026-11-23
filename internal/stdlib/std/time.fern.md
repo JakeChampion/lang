@@ -17,6 +17,8 @@ Duration, instant, and timestamp arithmetic saturates. A result outside the rang
 The `as_*` conversions truncate toward zero. A count outside the `i64` range saturates.
 Division of a duration by zero gives `DURATION_ZERO`, as integer division by zero gives zero.
 
+The RFC 3339 parsers accept a fraction of a second with one digit or more. They keep the first nine digits and drop the others.
+
 ## Executable example
 
 ```fern test name=std-time-example
@@ -1146,14 +1148,21 @@ function __rfc3339(s: string): Option[(Timestamp, i32)] {
     if (frac_end == frac_start) {
       return None;
     }
-    if (frac_end - frac_start > 9) {
-      return None;
+    // Digits after the ninth are less than one nanosecond, and are dropped.
+    let kept_end = frac_end;
+    if (kept_end - frac_start > 9) {
+      kept_end = frac_start + 9;
+      for extra in kept_end..frac_end {
+        if (s[extra] < 48 || s[extra] > 57) {
+          return None;
+        }
+      }
     }
-    let frac = __parse_digits(s, frac_start, frac_end);
+    let frac = __parse_digits(s, frac_start, kept_end);
     if (frac < 0) {
       return None;
     }
-    let pad: i32 = 9 - (frac_end - frac_start);
+    let pad: i32 = 9 - (kept_end - frac_start);
     while (pad > 0) {
       frac *= 10;
       pad -= 1;
