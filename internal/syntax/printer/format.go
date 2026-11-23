@@ -663,7 +663,11 @@ func (f *formatter) formatTraitDecl(td *ast.TraitDecl) {
 		f.b.WriteString(" {}\n")
 		return
 	}
-	f.b.WriteString(" {\n")
+	f.b.WriteString(" {")
+	if len(td.Methods) == 0 || td.Methods[0].P.Line > td.P.Line {
+		f.emitTrailing(td.P.Line)
+	}
+	f.b.WriteByte('\n')
 	for _, at := range td.AssocTypes {
 		f.indent(1)
 		f.b.WriteString("type ")
@@ -755,7 +759,11 @@ func (f *formatter) formatImplDecl(id *ast.ImplDecl) {
 		f.b.WriteString(" {}\n")
 		return
 	}
-	f.b.WriteString(" {\n")
+	f.b.WriteString(" {")
+	if len(id.Methods) == 0 || id.Methods[0].P.Line > id.P.Line {
+		f.emitTrailing(id.P.Line)
+	}
+	f.b.WriteByte('\n')
 	names := make([]string, 0, len(id.AssocTypeBindings))
 	for name := range id.AssocTypeBindings {
 		names = append(names, name)
