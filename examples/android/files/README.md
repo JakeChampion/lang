@@ -50,27 +50,39 @@ button that opens that setting.
 
 ## SMB
 
-`smb.fern` is an SMB 2 client over TCP. It signs in with NTLMv2
-(`ntlm.fern`, `md4.fern`) and signs each message when the server asks for
-that. It verifies the signature of each reply on a session that signs.
+`smb.fern` is an SMB client over TCP for the dialects from 2.0.2 to 3.1.1.
+It signs in with NTLMv2 (`ntlm.fern`, `md4.fern`). `smb3.fern` has the
+parts of SMB 3.
 
-A server of the 2.1 dialect takes up to 4 MiB in one read or one write.
-The client pays one credit for each 64 KiB. Through a link with a
-round trip of 4 ms, a file of 200 MiB moves at about 80 MiB/s.
+- With 3.1.1 the client encrypts each message with AES-128-GCM when the
+  server has that cipher. It signs with AES-GMAC or AES-CMAC otherwise.
+- With 2.0.2 and 2.1 it signs each message with HMAC-SHA256.
+- It verifies the signature or the tag of each reply.
 
-Each operation makes its own connection, because a worker is a
-process of its own and cannot share a socket.
+The client offers 2.0.2, 2.1 and 3.1.1 first. A server of 3.0 or 3.0.2
+then picks 2.1, because the AES-CMAC of those dialects is slow here
+(#16795). A server that takes none of the three gets each dialect in a
+second connection.
 
-The person gives the address of the server. The app asks the server for
-its disk shares (the call NetrShareEnum on the `srvsvc` pipe), and the
-person picks one or types its name. The password field shows dots. The
-app keeps the servers in a file that a key of the Android Keystore seals
+A server from 2.1 takes up to 4 MiB in one read or one write. The client
+pays one credit for each 64 KiB. Through a link with a round trip of 4 ms,
+a file of 200 MiB moves at about 80 MiB/s.
+
+Each operation makes its own connection, because a worker is a process of
+its own and cannot share a socket.
+
+The person gives the address of the server, or picks it from a scan of
+the network of the phone (`scan.fern`). The app asks the server for its
+disk shares (the call NetrShareEnum on the `srvsvc` pipe), and the person
+picks one or types its name. The password field shows dots. The app keeps
+the servers in a file that a key of the Android Keystore seals
 (`vault.fern`).
 
 The limits are:
 
-- A server that accepts only SMB 3 gets a note, because the app does not
-  speak that dialect.
+- A server that accepts only 3.0 or 3.0.2 and requires signatures moves
+  files at about 0.2 MiB/s (#16795).
+- A file of a server downloads in full before another app shows it.
 
 ## Other apps
 
