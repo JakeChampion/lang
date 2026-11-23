@@ -1705,11 +1705,38 @@ pub function (p: PreparedLookup) with_classes(classes: u8[]): PreparedLookup {
 }
 
 pub function (p: PreparedLookup) apply(r: Run, mask: i32, opts: i32): Run {
+  if (!p.reverse) {
+    let tried = idle_attempts(p, r, mask);
+    if (tried == 0 || tried > 0 && r.ops <= 0) {
+      return r;
+    }
+    if (tried > 0) {
+      return Run { ...r, ops: (r.ops - tried).max(0) };
+    }
+  }
   let l = Lookup { ...p.lookup, opts: opts, base: r.glyphs.len() };
   if (p.reverse) {
     return reverse_substituted(p.font, r, l, mask);
   }
   return applied_to_each(p.font, r, l, mask, p.digests);
+}
+
+// The attempts that `applied_to_each` takes from the run when the digest of
+// `p` holds no glyph that the lookup tries, or -1 when it holds one. Each
+// glyph that the lookup tries takes one attempt there.
+function idle_attempts(p: PreparedLookup, r: Run, mask: i32): i32 {
+  let filter = filters_classes(p.lookup);
+  let tried = 0;
+  for i in 0..r.glyphs.len() {
+    if ((r.masks[i] & mask) == 0 || filter && skipped_class(p.font, p.lookup, r, i)) {
+      continue;
+    }
+    if (digest_has(p.digests, 0, r.glyphs[i])) {
+      return -1;
+    }
+    tried += 1;
+  }
+  return tried;
 }
 
 // `r` after the GSUB lookup `li` at each glyph whose mask has a bit of
