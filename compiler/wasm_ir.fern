@@ -5944,7 +5944,7 @@ function stat_like_func(name: string, lookupflags: string): string {
   o = o + "  (func $" + name + " (param $path i32) (param $fstype i32) (result i32)\n";
   o += "    (local $err i32) (local $buf i32) (local $ft i32) (local $fs i32) (local $res i32)\n";
   o += "    (local.set $buf (call $__fern_alloc (i32.const 64)))\n";
-  o = o + "    (local.set $err (call $__fern_path_filestat_get (i32.const 3) (i32.const " + lookupflags + ") (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path)) (local.get $buf)))\n";
+  o = o + "    (local.set $err (call $__fern_path_filestat_get (i32.const 3) (i32.const " + lookupflags + ") " + str_data_wat("(local.get $path)") + " " + str_len_wat("(local.get $path)") + " (local.get $buf)))\n";
   o += "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o += "      (call $__fern_raw_free (local.get $buf) (i32.const 64))\n";
   o += "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
@@ -6227,7 +6227,7 @@ pub function remove_file_func(): string {
   let o = "";
   o += "  (func $__fern_remove_file (param $path i32) (result i32)\n";
   o += "    (local $err i32) (local $res i32)\n";
-  o += "    (local.set $err (call $__fern_path_unlink_file (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))))\n";
+  o += "    (local.set $err (call $__fern_path_unlink_file (i32.const 3) " + str_data_wat("(local.get $path)") + " " + str_len_wat("(local.get $path)") + "))\n";
   o += "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o += "    (if (i32.eq (local.get $err) (i32.const 0)) (then\n";
   o += "      (i32.store (local.get $res) (i32.const 0))\n";
@@ -6243,7 +6243,7 @@ pub function create_dir_func(): string {
   let o = "";
   o += "  (func $__fern_create_dir (param $path i32) (param $mode i32) (result i32)\n";
   o += "    (local $err i32) (local $res i32)\n";
-  o += "    (local.set $err (call $__fern_path_create_directory (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))))\n";
+  o += "    (local.set $err (call $__fern_path_create_directory (i32.const 3) " + str_data_wat("(local.get $path)") + " " + str_len_wat("(local.get $path)") + "))\n";
   o += path_result_tail("$path");
   return o;
 }
@@ -6252,7 +6252,7 @@ pub function remove_dir_func(): string {
   let o = "";
   o += "  (func $__fern_remove_dir (param $path i32) (result i32)\n";
   o += "    (local $err i32) (local $res i32)\n";
-  o += "    (local.set $err (call $__fern_path_remove_directory (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))))\n";
+  o += "    (local.set $err (call $__fern_path_remove_directory (i32.const 3) " + str_data_wat("(local.get $path)") + " " + str_len_wat("(local.get $path)") + "))\n";
   o += path_result_tail("$path");
   return o;
 }
@@ -6261,7 +6261,7 @@ pub function create_link_func(): string {
   let o = "";
   o += "  (func $__fern_create_link (param $target i32) (param $path i32) (result i32)\n";
   o += "    (local $err i32) (local $res i32)\n";
-  o += "    (local.set $err (call $__fern_path_link (i32.const 3) (i32.const 0) (i32.add (local.get $target) (i32.const 4)) (i32.load (local.get $target)) (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))))\n";
+  o += "    (local.set $err (call $__fern_path_link (i32.const 3) (i32.const 0) " + str_data_wat("(local.get $target)") + " " + str_len_wat("(local.get $target)") + " (i32.const 3) " + str_data_wat("(local.get $path)") + " " + str_len_wat("(local.get $path)") + "))\n";
   o += path_result_tail("$path");
   return o;
 }
@@ -6270,7 +6270,7 @@ pub function rename_func(): string {
   let o = "";
   o += "  (func $__fern_rename (param $old i32) (param $path i32) (result i32)\n";
   o += "    (local $err i32) (local $res i32)\n";
-  o += "    (local.set $err (call $__fern_path_rename (i32.const 3) (i32.add (local.get $old) (i32.const 4)) (i32.load (local.get $old)) (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))))\n";
+  o += "    (local.set $err (call $__fern_path_rename (i32.const 3) " + str_data_wat("(local.get $old)") + " " + str_len_wat("(local.get $old)") + " (i32.const 3) " + str_data_wat("(local.get $path)") + " " + str_len_wat("(local.get $path)") + "))\n";
   o += path_result_tail("$path");
   return o;
 }
@@ -6279,7 +6279,7 @@ pub function create_symlink_func(): string {
   let o = "";
   o += "  (func $__fern_create_symlink (param $target i32) (param $path i32) (result i32)\n";
   o += "    (local $err i32) (local $res i32)\n";
-  o += "    (local.set $err (call $__fern_path_symlink (i32.add (local.get $target) (i32.const 4)) (i32.load (local.get $target)) (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))))\n";
+  o += "    (local.set $err (call $__fern_path_symlink " + str_data_wat("(local.get $target)") + " " + str_len_wat("(local.get $target)") + " (i32.const 3) " + str_data_wat("(local.get $path)") + " " + str_len_wat("(local.get $path)") + "))\n";
   o += path_result_tail("$path");
   return o;
 }
@@ -6288,7 +6288,7 @@ pub function truncate_func(): string {
   let o = "";
   o += "  (func $__fern_truncate (param $path i32) (param $length i64) (result i32)\n";
   o += "    (local $err i32) (local $res i32) (local $fd i32)\n";
-  o += "    (local.set $err (call $__fern_path_open (i32.const 3) (i32.const 1) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path)) (i32.const 0) (i64.const 4194368) (i64.const 4194368) (i32.const 0) (i32.const 16)))\n";
+  o += "    (local.set $err (call $__fern_path_open (i32.const 3) (i32.const 1) " + str_data_wat("(local.get $path)") + " " + str_len_wat("(local.get $path)") + " (i32.const 0) (i64.const 4194368) (i64.const 4194368) (i32.const 0) (i32.const 16)))\n";
   o += "    (if (i32.eqz (local.get $err)) (then\n";
   o += "      (local.set $fd (i32.load (i32.const 16)))\n";
   o += "      (local.set $err (call $__fern_fd_filestat_set_size (local.get $fd) (local.get $length)))\n";
@@ -6346,7 +6346,7 @@ pub function set_file_times_func(): string {
   o += "        (if (i32.and (local.get $flags) (i32.const 16)) (then (local.set $fst (i32.or (local.get $fst) (i32.const 8)))) (else (local.set $fst (i32.or (local.get $fst) (i32.const 4)))))))\n";
   o += "      (local.set $lf (i32.const 1))\n";
   o += "      (if (i32.and (local.get $flags) (i32.const 1)) (then (local.set $lf (i32.const 0))))\n";
-  o += "      (local.set $err (call $__fern_path_filestat_set_times (i32.const 3) (local.get $lf) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))";
+  o += "      (local.set $err (call $__fern_path_filestat_set_times (i32.const 3) (local.get $lf) " + str_data_wat("(local.get $path)") + " " + str_len_wat("(local.get $path)");
   o += " (i64.add (i64.mul (local.get $asec) (i64.const 1000000000)) (local.get $ansec))";
   o += " (i64.add (i64.mul (local.get $msec) (i64.const 1000000000)) (local.get $mnsec))";
   o += " (local.get $fst)))))\n";
@@ -6381,7 +6381,7 @@ function read_link_payload_func(raw: boolean): string {
   o += "    (local $err i32) (local $res i32) (local $buf i32) (local $used i32) (local $blk i32) (local $i i32)\n";
   o += "    (local.set $used (call $__fern_str_box (i32.const 4)))\n";
   o += "    (local.set $buf (call $__fern_str_box (i32.const 4096)))\n";
-  o += "    (local.set $err (call $__fern_path_readlink (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path)) (local.get $buf) (i32.const 4096) (local.get $used)))\n";
+  o += "    (local.set $err (call $__fern_path_readlink (i32.const 3) " + str_data_wat("(local.get $path)") + " " + str_len_wat("(local.get $path)") + " (local.get $buf) (i32.const 4096) (local.get $used)))\n";
   o += "    (if (i32.eqz (local.get $err)) (then\n";
   o += "      (if (i32.ge_u (i32.load (local.get $used)) (i32.const 4096)) (then (local.set $err (i32.const 37))))))\n";
   if (!raw) {
@@ -6422,8 +6422,8 @@ pub function create_dir_all_func(): string {
   let o = "";
   o += "  (func $__fern_create_dir_all (param $path i32) (result i32)\n";
   o += "    (local $err i32) (local $res i32) (local $len i32) (local $base i32) (local $j i32)\n";
-  o += "    (local.set $len (i32.load (local.get $path)))\n";
-  o += "    (local.set $base (i32.add (local.get $path) (i32.const 4)))\n";
+  o += "    (local.set $len " + str_len_wat("(local.get $path)") + ")\n";
+  o += "    (local.set $base " + str_data_wat("(local.get $path)") + ")\n";
   o += "    (local.set $j (i32.const 1))\n";
   o += "    (block $cdone (loop $cloop\n";
   o += "      (br_if $cdone (i32.ge_u (local.get $j) (local.get $len)))\n";
@@ -6462,7 +6462,7 @@ function read_dir_func_like(fname: string, skip_dots: boolean, ino: boolean, raw
   o += "    (local $err i32) (local $fd i32) (local $arr i32) (local $buf i32) (local $ent i32)\n";
   o += "    (local $cookie i64) (local $lastnext i64) (local $used i32) (local $pos i32)\n";
   o += "    (local $namlen i32) (local $nameptr i32) (local $blk i32) (local $i i32) (local $skip i32) (local $res i32)\n";
-  o += "    (local.set $err (call $__fern_path_open (i32.const 3) (i32.const 1) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path)) (i32.const 0) (i64.const 16384) (i64.const 0) (i32.const 0) (i32.const 16)))\n";
+  o += "    (local.set $err (call $__fern_path_open (i32.const 3) (i32.const 1) " + str_data_wat("(local.get $path)") + " " + str_len_wat("(local.get $path)") + " (i32.const 0) (i64.const 16384) (i64.const 0) (i32.const 0) (i32.const 16)))\n";
   o += "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o += "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o += "      (i32.store (local.get $res) (i32.const 1))\n";
@@ -6577,25 +6577,25 @@ pub function remove_dir_all_func(p2: boolean): string {
   } else {
     o += rda_list_p1();
   }
-  o += "    (local.set $plen (i32.load (local.get $path)))\n";
+  o += "    (local.set $plen " + str_len_wat("(local.get $path)") + ")\n";
   o += "    (local.set $i (i32.const 0))\n";
   o += "    (block $dd (loop $dc\n";
   o += "      (br_if $dd (i32.ge_s (local.get $i) (i32.load (local.get $names))))\n";
   o += "      (local.set $nm (i32.load (i32.add (i32.add (local.get $names) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
-  o += "      (local.set $namlen (i32.load (local.get $nm)))\n";
+  o += "      (local.set $namlen " + str_len_wat("(local.get $nm)") + ")\n";
   o += "      (local.set $child (call $__fern_alloc (i32.add (i32.const 4) (i32.add (i32.add (local.get $plen) (i32.const 1)) (local.get $namlen)))))\n";
   o += "      (i32.store (local.get $child) (i32.add (i32.add (local.get $plen) (i32.const 1)) (local.get $namlen)))\n";
   o += "      (local.set $j (i32.const 0))\n";
   o += "      (block $p1d (loop $p1c\n";
   o += "        (br_if $p1d (i32.ge_u (local.get $j) (local.get $plen)))\n";
-  o += "        (i32.store8 (i32.add (i32.add (local.get $child) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add (i32.add (local.get $path) (i32.const 4)) (local.get $j))))\n";
+  o += "        (i32.store8 (i32.add (i32.add (local.get $child) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add " + str_data_wat("(local.get $path)") + " (local.get $j))))\n";
   o += "        (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
   o += "        (br $p1c)))\n";
   o += "      (i32.store8 (i32.add (i32.add (local.get $child) (i32.const 4)) (local.get $plen)) (i32.const 47))\n";
   o += "      (local.set $j (i32.const 0))\n";
   o += "      (block $p2d (loop $p2c\n";
   o += "        (br_if $p2d (i32.ge_u (local.get $j) (local.get $namlen)))\n";
-  o += "        (i32.store8 (i32.add (i32.add (i32.add (local.get $child) (i32.const 4)) (i32.add (local.get $plen) (i32.const 1))) (local.get $j)) (i32.load8_u (i32.add (i32.add (local.get $nm) (i32.const 4)) (local.get $j))))\n";
+  o += "        (i32.store8 (i32.add (i32.add (i32.add (local.get $child) (i32.const 4)) (i32.add (local.get $plen) (i32.const 1))) (local.get $j)) (i32.load8_u (i32.add " + str_data_wat("(local.get $nm)") + " (local.get $j))))\n";
   o += "        (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
   o += "        (br $p2c)))\n";
   o += "      (local.set $j (call $__fern_remove_dir_all (local.get $child)))\n";
@@ -6605,14 +6605,14 @@ pub function remove_dir_all_func(p2: boolean): string {
   o += "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o += "      (br $dc)))\n";
   o += "    (drop (call $__fern_arr_dec_ptr (local.get $names)))\n";
-  o += "    (drop (call $__fern_path_remove_directory (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))))\n";
+  o += "    (drop (call $__fern_path_remove_directory (i32.const 3) " + str_data_wat("(local.get $path)") + " " + str_len_wat("(local.get $path)") + "))\n";
   o += "    (call $__fern_rda_ok))\n";
   return o;
 }
 
 function rda_list_p1(): string {
   let o = "";
-  o += "    (local.set $err (call $__fern_path_open (i32.const 3) (i32.const 1) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path)) (i32.const 2) (i64.const 16384) (i64.const 0) (i32.const 0) (i32.const 16)))\n";
+  o += "    (local.set $err (call $__fern_path_open (i32.const 3) (i32.const 1) " + str_data_wat("(local.get $path)") + " " + str_len_wat("(local.get $path)") + " (i32.const 2) (i64.const 16384) (i64.const 0) (i32.const 0) (i32.const 16)))\n";
   o += rda_refusal();
   o += "    (local.set $fd (i32.load (i32.const 16)))\n";
   o += "    (local.set $names (call $__fern_arr_box (i32.const 0)))\n";
@@ -6720,11 +6720,11 @@ pub function temp_dir_func(): string {
   o += "  (func $__fern_temp_dir (param $prefix i32) (result i32)\n";
   o += "    (local $plen i32) (local $tot i32) (local $blk i32) (local $base i32) (local $i i32)\n";
   o += "    (local $rnd i32) (local $nib i32) (local $try i32) (local $err i32) (local $res i32)\n";
-  o += "    (local.set $plen (i32.load (local.get $prefix)))\n";
+  o += "    (local.set $plen " + str_len_wat("(local.get $prefix)") + ")\n";
   o += "    (local.set $i (i32.const 0))\n";
   o += "    (block $sd (loop $sl\n";
   o += "      (br_if $sd (i32.ge_u (local.get $i) (local.get $plen)))\n";
-  o += "      (if (i32.eq (i32.load8_u (i32.add (i32.add (local.get $prefix) (i32.const 4)) (local.get $i))) (i32.const 47)) (then\n";
+  o += "      (if (i32.eq (i32.load8_u (i32.add " + str_data_wat("(local.get $prefix)") + " (local.get $i))) (i32.const 47)) (then\n";
   o += "        (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o += "        (i32.store (local.get $res) (i32.const 1))\n";
   o += "        (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (i32.const 28) (call $__fern_rc_inc (local.get $prefix))))\n";
@@ -6734,7 +6734,7 @@ pub function temp_dir_func(): string {
   o += "    (local.set $tot (i32.add (local.get $plen) (i32.const 9)))\n";
   o += "    (local.set $blk (call $__fern_str_box (i32.add (i32.const 4) (local.get $tot))))\n";
   o += "    (i32.store (local.get $blk) (local.get $tot))\n";
-  o += "    (memory.copy (i32.add (local.get $blk) (i32.const 4)) (i32.add (local.get $prefix) (i32.const 4)) (local.get $plen))\n";
+  o += "    (memory.copy (i32.add (local.get $blk) (i32.const 4)) " + str_data_wat("(local.get $prefix)") + " (local.get $plen))\n";
   o += "    (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $plen)) (i32.const 45))\n";
   o += "    (local.set $base (i32.add (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $plen)) (i32.const 1)))\n";
   o += "    (block $made (loop $next\n";
@@ -7745,16 +7745,18 @@ function buf_take_bytes_helper(): string {
 
 function buf_table_helpers(needs: string[], raw: boolean): string {
   let variant = "";
-  let offset = "4";
+  let s_len = str_len_wat("(local.get $s)");
+  let s_data = str_data_wat("(local.get $s)");
   if (raw) {
     variant = "bytes_";
-    offset = "8";
+    s_len = "(i32.load (local.get $s))";
+    s_data = "(i32.add (local.get $s) (i32.const 8))";
   }
   let o = "";
   if (need(needs, "buf_push_" + variant + "mapped")) {
     o = o + "  (func $__fern_buf_push_" + variant + "mapped (param $h i32) (param $s i32) (param $t i32)\n";
     o += "    (local $n i32) (local $i i32) (local $d i32) (local $len i32) (local $m i32) (local $c i32)\n";
-    o += "    (local.set $n (i32.load (local.get $s)))\n";
+    o = o + "    (local.set $n " + s_len + ")\n";
     o += "    (if (i32.eqz (local.get $n)) (then (return)))\n";
     o += "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
     o += "    (if (i32.gt_u (i32.add (local.get $len) (local.get $n)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
@@ -7762,7 +7764,7 @@ function buf_table_helpers(needs: string[], raw: boolean): string {
     o += "    (local.set $d (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
     o += "    (local.set $m (i32.load (local.get $t)))\n";
     o += "    (block $md (loop $ml (br_if $md (i32.ge_u (local.get $i) (local.get $n)))\n";
-    o = o + "      (local.set $c (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const " + offset + ")) (local.get $i))))\n";
+    o = o + "      (local.set $c (i32.load8_u (i32.add " + s_data + " (local.get $i))))\n";
     o += "      (if (i32.lt_u (local.get $c) (local.get $m)) (then\n";
     o += "        (local.set $c (i32.load8_u (i32.add (i32.add (local.get $t) (i32.const 8)) (local.get $c))))))\n";
     o += "      (i32.store8 (i32.add (local.get $d) (local.get $i)) (local.get $c))\n";
@@ -7772,7 +7774,7 @@ function buf_table_helpers(needs: string[], raw: boolean): string {
   if (need(needs, "buf_push_" + variant + "filtered")) {
     o = o + "  (func $__fern_buf_push_" + variant + "filtered (param $h i32) (param $s i32) (param $t i32)\n";
     o += "    (local $n i32) (local $i i32) (local $d i32) (local $len i32) (local $m i32) (local $c i32) (local $j i32)\n";
-    o += "    (local.set $n (i32.load (local.get $s)))\n";
+    o = o + "    (local.set $n " + s_len + ")\n";
     o += "    (if (i32.eqz (local.get $n)) (then (return)))\n";
     o += "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
     o += "    (if (i32.gt_u (i32.add (local.get $len) (local.get $n)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
@@ -7780,7 +7782,7 @@ function buf_table_helpers(needs: string[], raw: boolean): string {
     o += "    (local.set $d (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
     o += "    (local.set $m (i32.load (local.get $t)))\n";
     o += "    (block $fd (loop $fl (br_if $fd (i32.ge_u (local.get $i) (local.get $n)))\n";
-    o = o + "      (local.set $c (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const " + offset + ")) (local.get $i))))\n";
+    o = o + "      (local.set $c (i32.load8_u (i32.add " + s_data + " (local.get $i))))\n";
     o += "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o += "      (if (i32.lt_u (local.get $c) (local.get $m)) (then\n";
     o += "        (br_if $fl (i32.load8_u (i32.add (i32.add (local.get $t) (i32.const 8)) (local.get $c))))))\n";
@@ -7858,7 +7860,7 @@ pub function buf_helpers(needs: string[]): string {
   if (need(needs, "buf_push")) {
     o += "  (func $__fern_buf_push (param $h i32) (param $s i32)\n";
     o += "    (local $sl i32) (local $i i32) (local $d i32) (local $len i32)\n";
-    o += "    (local.set $sl (i32.load (local.get $s)))\n";
+    o += "    (local.set $sl " + str_len_wat("(local.get $s)") + ")\n";
     o += "    (if (i32.eqz (local.get $sl)) (then (return)))\n";
     o += "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
     o += "    (if (i32.gt_u (i32.add (local.get $len) (local.get $sl)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
@@ -7866,20 +7868,20 @@ pub function buf_helpers(needs: string[]): string {
     o += "    (local.set $d (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
     o += "    (local.set $i (i32.const 0))\n";
     o += "    (block $ad (loop $al (br_if $ad (i32.ge_u (local.get $i) (local.get $sl)))\n";
-    o += "      (i32.store8 (i32.add (local.get $d) (local.get $i)) (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
+    o += "      (i32.store8 (i32.add (local.get $d) (local.get $i)) (i32.load8_u (i32.add " + str_data_wat("(local.get $s)") + " (local.get $i))))\n";
     o += "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $al)))\n";
     o += "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $sl))))\n";
   }
   if (need(needs, "buf_push_range")) {
     o += "  (func $__fern_buf_push_range (param $h i32) (param $s i32) (param $lo i32) (param $hi i32)\n";
     o += "    (local $n i32) (local $len i32)\n";
-    o += "    (if (i32.or (i32.or (i32.lt_s (local.get $lo) (i32.const 0)) (i32.gt_s (local.get $hi) (i32.load (local.get $s)))) (i32.gt_s (local.get $lo) (local.get $hi))) (then (call $__fern_abort_slice) (unreachable)))\n";
+    o += "    (if (i32.or (i32.or (i32.lt_s (local.get $lo) (i32.const 0)) (i32.gt_s (local.get $hi) " + str_len_wat("(local.get $s)") + ")) (i32.gt_s (local.get $lo) (local.get $hi))) (then (call $__fern_abort_slice) (unreachable)))\n";
     o += "    (local.set $n (i32.sub (local.get $hi) (local.get $lo)))\n";
     o += "    (if (i32.eqz (local.get $n)) (then (return)))\n";
     o += "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
     o += "    (if (i32.gt_u (i32.add (local.get $len) (local.get $n)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
     o += "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (local.get $n)))))\n";
-    o += "    (memory.copy (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)) (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $lo)) (local.get $n))\n";
+    o += "    (memory.copy (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)) (i32.add " + str_data_wat("(local.get $s)") + " (local.get $lo)) (local.get $n))\n";
     o += "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $n))))\n";
   }
   o += buf_table_helpers(needs, false);
@@ -8158,7 +8160,7 @@ pub function env_func(): string {
   o += "    (local $count i32) (local $bufsz i32) (local $ptrs i32) (local $buf i32)\n";
   o += "    (local $nlen i32) (local $i i32) (local $e i32) (local $j i32) (local $ok i32)\n";
   o += "    (local $vstart i32) (local $vlen i32) (local $res i32) (local $tmp i32)\n";
-  o += "    (local.set $nlen (i32.load (local.get $np)))\n";
+  o += "    (local.set $nlen " + str_len_wat("(local.get $np)") + ")\n";
   o += "    (drop (call $__fern_environ_sizes_get (i32.const 0) (i32.const 4)))\n";
   o += "    (local.set $count (i32.load (i32.const 0)))\n";
   o += "    (local.set $bufsz (i32.load (i32.const 4)))\n";
@@ -8173,7 +8175,7 @@ pub function env_func(): string {
   o += "      (local.set $j (i32.const 0))\n";
   o += "      (block $md (loop $mc\n";
   o += "        (br_if $md (i32.ge_u (local.get $j) (local.get $nlen)))\n";
-  o += "        (if (i32.ne (i32.load8_u (i32.add (i32.add (local.get $np) (i32.const 4)) (local.get $j))) (i32.load8_u (i32.add (local.get $e) (local.get $j)))) (then (local.set $ok (i32.const 0)) (br $md)))\n";
+  o += "        (if (i32.ne (i32.load8_u (i32.add " + str_data_wat("(local.get $np)") + " (local.get $j))) (i32.load8_u (i32.add (local.get $e) (local.get $j)))) (then (local.set $ok (i32.const 0)) (br $md)))\n";
   o += "        (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
   o += "        (br $mc)))\n";
   o += "      (if (i32.and (local.get $ok) (i32.eq (i32.load8_u (i32.add (local.get $e) (local.get $nlen))) (i32.const 61))) (then\n";
@@ -8385,7 +8387,7 @@ function readfile_named(name: string, checked: boolean): string {
   let o = "";
   o += "  (func " + name + " (param $np i32) (result i32)\n";
   o += "    (local $err i32) (local $fd i32) (local $blk i32) (local $off i32) (local $n i32) (local $tmp i32) (local $cap i32) (local $grown i32)\n";
-  o += "    (local.set $err (call $__fern_path_open (i32.const 3) (i32.const 1) (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np)) (i32.const 0) (i64.const 6) (i64.const 0) (i32.const 0) (i32.const 16)))\n";
+  o += "    (local.set $err (call $__fern_path_open (i32.const 3) (i32.const 1) " + str_data_wat("(local.get $np)") + " " + str_len_wat("(local.get $np)") + " (i32.const 0) (i64.const 6) (i64.const 0) (i32.const 0) (i32.const 16)))\n";
   o += "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o += "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o += "      (i32.store (local.get $tmp) (i32.const 1))\n";
@@ -8427,7 +8429,7 @@ pub function readfile_bytes_func(): string {
   let o = "";
   o += "  (func $__fern_read_file_bytes (param $np i32) (result i32)\n";
   o += "    (local $err i32) (local $fd i32) (local $off i32) (local $n i32) (local $tmp i32) (local $cap i32) (local $arr i32) (local $grown i32)\n";
-  o += "    (local.set $err (call $__fern_path_open (i32.const 3) (i32.const 1) (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np)) (i32.const 0) (i64.const 6) (i64.const 0) (i32.const 0) (i32.const 16)))\n";
+  o += "    (local.set $err (call $__fern_path_open (i32.const 3) (i32.const 1) " + str_data_wat("(local.get $np)") + " " + str_len_wat("(local.get $np)") + " (i32.const 0) (i64.const 6) (i64.const 0) (i32.const 0) (i32.const 16)))\n";
   o += "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o += "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o += "      (i32.store (local.get $tmp) (i32.const 1))\n";
@@ -8466,14 +8468,14 @@ pub function writefile_bytes_func(p2: boolean): string {
   o += "    (local.set $fd (i32.const -1)) (local.set $strm (i32.const -1))\n";
   o += "    (block $done\n";
   o += "      (block $path_done (loop $path_scan\n";
-  o += "        (br_if $path_done (i32.ge_u (local.get $i) (i32.load (local.get $np))))\n";
+  o += "        (br_if $path_done (i32.ge_u (local.get $i) " + str_len_wat("(local.get $np)") + "))\n";
   o += "        (if (i32.eqz (i32.load8_u offset=4 (i32.add (local.get $np) (local.get $i)))) (then (local.set $err (i32.const 28)) (br $done)))\n";
   o += "        (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $path_scan)))\n";
   if (p2) {
     o += "(local.set $pre (call $__fern_preopen_p2))\n";
     o += "      (if (i32.lt_s (local.get $pre) (i32.const 0)) (then (local.set $err (i32.const 44)) (br $done)))\n";
     o += "      (local.set $ra (call $__fern_alloc (i32.const 32)))\n";
-    o += "      (call $__fern_open_at (local.get $pre) (i32.const 1) (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np)) (i32.const 9) (i32.const 2) (local.get $ra))\n";
+    o += "      (call $__fern_open_at (local.get $pre) (i32.const 1) " + str_data_wat("(local.get $np)") + " " + str_len_wat("(local.get $np)") + " (i32.const 9) (i32.const 2) (local.get $ra))\n";
     o += "      (if (i32.load8_u (local.get $ra)) (then\n";
     o += "        (local.set $err (call $__fern_errno_p2 (i32.load8_u offset=4 (local.get $ra))))\n";
     o += "(br $done)))\n";
@@ -8484,7 +8486,7 @@ pub function writefile_bytes_func(p2: boolean): string {
     o += "(br $done)))\n";
     o += "      (local.set $strm (i32.load offset=4 (local.get $ra)))\n";
   } else {
-    o += "(local.set $err (call $__fern_path_open (i32.const 3) (i32.const 1) (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np)) (i32.const 9) (i64.const 68) (i64.const 0) (i32.const 0) (i32.const 16)))\n";
+    o += "(local.set $err (call $__fern_path_open (i32.const 3) (i32.const 1) " + str_data_wat("(local.get $np)") + " " + str_len_wat("(local.get $np)") + " (i32.const 9) (i64.const 68) (i64.const 0) (i32.const 0) (i32.const 16)))\n";
     o += "      (br_if $done (local.get $err))\n";
     o += "      (local.set $fd (i32.load (i32.const 16)))\n";
   }
@@ -8531,17 +8533,17 @@ pub function writefile_func(): string {
   let o = "";
   o += "  (func $__fern_write_file (param $np i32) (param $cp i32) (result i32)\n";
   o += "    (local $err i32) (local $fd i32) (local $tmp i32) (local $cur i32) (local $n i32)\n";
-  o += "    (local.set $err (call $__fern_path_open (i32.const 3) (i32.const 1) (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np)) (i32.const 9) (i64.const 68) (i64.const 0) (i32.const 0) (i32.const 16)))\n";
+  o += "    (local.set $err (call $__fern_path_open (i32.const 3) (i32.const 1) " + str_data_wat("(local.get $np)") + " " + str_len_wat("(local.get $np)") + " (i32.const 9) (i64.const 68) (i64.const 0) (i32.const 0) (i32.const 16)))\n";
   o += "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o += "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o += "      (i32.store (local.get $tmp) (i32.const 1))\n";
   o += "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $np))))\n";
   o += "      (return (local.get $tmp))))\n";
   o += "    (local.set $fd (i32.load (i32.const 16)))\n";
-  o += "    (local.set $n (i32.load (local.get $cp)))\n";
+  o += "    (local.set $n " + str_len_wat("(local.get $cp)") + ")\n";
   o += "    (block $wd (loop $wc\n";
   o += "      (br_if $wd (i32.ge_u (local.get $cur) (local.get $n)))\n";
-  o += "      (i32.store (i32.const 0) (i32.add (i32.add (local.get $cp) (i32.const 4)) (local.get $cur)))\n";
+  o += "      (i32.store (i32.const 0) (i32.add " + str_data_wat("(local.get $cp)") + " (local.get $cur)))\n";
   o += "      (i32.store (i32.const 4) (i32.sub (local.get $n) (local.get $cur)))\n";
   o += "      (local.set $err (call $__fern_fd_write (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
   o += "      (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
@@ -8573,7 +8575,7 @@ pub function open_file_func(): string {
   o += "      (local.set $oflags (i32.const 5)) (local.set $rights (i64.const 68)) (local.set $fdflags (i32.const 0)))\n";
   o += "    (else\n";
   o += "      (local.set $oflags (i32.const 9)) (local.set $rights (i64.const 68)) (local.set $fdflags (i32.const 0))))))))\n";
-  o += "    (local.set $err (call $__fern_path_open (i32.const 3) (i32.const 1) (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np)) (local.get $oflags) (local.get $rights) (i64.const 0) (local.get $fdflags) (i32.const 16)))\n";
+  o += "    (local.set $err (call $__fern_path_open (i32.const 3) (i32.const 1) " + str_data_wat("(local.get $np)") + " " + str_len_wat("(local.get $np)") + " (local.get $oflags) (local.get $rights) (i64.const 0) (local.get $fdflags) (i32.const 16)))\n";
   o += "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o += "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o += "      (i32.store (local.get $res) (i32.const 1))\n";
@@ -8593,7 +8595,7 @@ pub function open_with_func(): string {
   o += "    (if (local.get $write) (then (local.set $rights (i64.const 68))))\n";
   o = o + "    (local.set $err (if (result i32) (i32.and (local.get $flags) (i32.const 392)) (then " + refused_errno() + ") (else (call $__fern_path_open (i32.const 3)";
   o += " (i32.xor (i32.and (i32.shr_u (local.get $flags) (i32.const 9)) (i32.const 1)) (i32.const 1))";
-  o += " (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np))";
+  o += " " + str_data_wat("(local.get $np)") + " " + str_len_wat("(local.get $np)");
   o += " (i32.or (i32.and (local.get $flags) (i32.const 5)) (i32.and (i32.shr_u (local.get $flags) (i32.const 3)) (i32.const 2)))";
   o += " (local.get $rights) (i64.const 0)";
   o += " (i32.or (i32.shl (i32.and (local.get $flags) (i32.const 2)) (i32.const 1)) (i32.or (i32.and (i32.shr_u (local.get $flags) (i32.const 4)) (i32.const 2)) (i32.and (i32.shr_u (local.get $flags) (i32.const 2)) (i32.const 16))))";
