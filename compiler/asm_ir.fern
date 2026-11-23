@@ -11267,15 +11267,17 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     if (k == ssa.LD_IDX || k == ssa.ST_IDX) {
       at = "(" + a + "," + b + ",8)";
     }
+    if (k == ssa.LD_SUM) {
+      at = ssa_mem_i(a, b, 1, ins.imm);
+    }
   }
   let d = ssa_dst(reg_of, ins.result);
   if (k == ssa.LD_IDX) {
     s = s.write("    movq " + at + ", " + d + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
-  if (k == ssa.LD_BYTE) {
-    s = s.write("    movzbl " + at + ", " + ssa_r32(d) + "\n");
-    return ssa_store(reg_of, ins.result, d, s);
+  if (k == ssa.LD_SUM) {
+    return ssa_store(reg_of, ins.result, d, s.write(ssa_sum_load(ins.str, at, d)));
   }
   let c = ssa_src(reg_of, ins.args[2], "%rdx");
   s = ssa_load(reg_of, ins.args[2], c, s);
@@ -11283,6 +11285,23 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     return s.write("    movq " + c + ", " + at + "\n");
   }
   return s.write("    movb " + ssa_r8(c) + ", " + at + "\n");
+}
+
+// The load of an LD_SUM of element `mark` from `at` into `d`.
+function ssa_sum_load(mark: string, at: string, d: string): string {
+  if (mark == "u16") {
+    return "    movzwl " + at + ", " + ssa_r32(d) + "\n";
+  }
+  if (mark == "i32") {
+    return "    movslq " + at + ", " + d + "\n";
+  }
+  if (mark == "u32") {
+    return "    movl " + at + ", " + ssa_r32(d) + "\n";
+  }
+  if (mark == "i64") {
+    return "    movq " + at + ", " + d + "\n";
+  }
+  return "    movzbl " + at + ", " + ssa_r32(d) + "\n";
 }
 
 function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {

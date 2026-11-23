@@ -114,7 +114,7 @@ pub const LD_IDX: i32 = 52;
 
 pub const ST_IDX: i32 = 53;
 
-pub const LD_BYTE: i32 = 54;
+pub const LD_SUM: i32 = 54;
 
 pub const ST_BYTE: i32 = 55;
 
@@ -329,7 +329,7 @@ function carries_str(kind: i32): boolean {
 }
 
 function shows_imm(ins: SInst): boolean {
-  return carries_imm(ins.kind_tag) || ins.kind_tag >= LD_AT && ins.kind_tag <= ARR_ST && ins.imm != 0;
+  return carries_imm(ins.kind_tag) || (ins.kind_tag >= LD_AT && ins.kind_tag <= ARR_ST || ins.kind_tag == LD_SUM) && ins.imm != 0;
 }
 
 function shows_str(ins: SInst): boolean {
@@ -2758,19 +2758,36 @@ function split_spilled_in_loops(f: SFunc, reg_of: i32[], fl: boolean[], at: i32[
     }
   }
   let idom = immediate_dominators(f, at);
+  let weights = weights_from_latches(latch);
+  let cold = cold_blocks(f);
   let plans: SplitPlan[] = [];
   for c in 0..cands.len() {
     if (in_phi[c] || def_at[c] < 0 || uses[c].len() == 0) {
       continue;
     }
     if let Some(p) = split_plan(f, at, idom, latch, loops, cands[c], def_at[c], uses[c]) {
-      plans = plans.append(p);
+      // The reads in the loop come from a register after the split. A split
+      // pays only when its store and its load weigh less than those reads.
+      let reads = 0;
+      for u in uses[c] {
+        if (u >= p.head && u <= p.last) {
+          reads += weights[u];
+        }
+      }
+      if (split_cost(p, weights, cold) < reads) {
+        plans = plans.append(p);
+      }
     }
   }
   if (plans.len() == 0) {
     return none;
   }
-  return split_by(f, at, idom, plans, cells, weights_from_latches(latch));
+  return split_by(f, at, idom, plans, cells, weights, cold);
+}
+
+// The weight of the store and of the load that a split adds.
+function split_cost(p: SplitPlan, weights: i32[], cold: boolean[]): i32 {
+  return weights[p.pre] + (if (cold[p.after]) { 1 } else { weights[p.after] });
 }
 
 function split_plan(f: SFunc, at: i32[], idom: i32[], latch: i32[], loops: i32[], v: i32, def: i32, uses: i32[]): Option[SplitPlan] {
@@ -2866,11 +2883,10 @@ function dominated_by(idom: i32[], b: i32, d: i32): boolean {
   return false;
 }
 
-function split_by(f: SFunc, at: i32[], idom: i32[], plans: SplitPlan[], cells: i32, weights: i32[]): LoopSplit {
+function split_by(f: SFunc, at: i32[], idom: i32[], plans: SplitPlan[], cells: i32, weights: i32[], cold: boolean[]): LoopSplit {
   let made: i32[] = [];
   let blocks = f.blocks;
   let cost = 0;
-  let cold = cold_blocks(f);
   for k in 0..plans.len() {
     let p = plans[k];
     let cell = cells + k;
@@ -2889,7 +2905,7 @@ function split_by(f: SFunc, at: i32[], idom: i32[], plans: SplitPlan[], cells: i
     }
     let pre = blocks[p.pre];
     blocks = blocks.with(p.pre, SBlock { ...pre, insts: pre.insts.append(frame_cell(stored, cell, 0)).append(SInst { kind_tag: ST_AT, result: wrote, args: [stored, p.v], imm: 0, str: "" }) });
-    cost += weights[p.pre] + (if (cold[exit]) { 1 } else { weights[exit] });
+    cost += split_cost(p, weights, cold);
     // The value in each block of the loop: the phi before the inner loop,
     // and the load in each block that the load dominates. Other blocks
     // after the inner loop do not read the value.
@@ -4009,7 +4025,10 @@ function imm_use(ins: SInst, a: i32, konst: boolean[], c: i64, right: string[], 
   if ((ins.kind_tag == LD_IDX || ins.kind_tag == ST_IDX) && a == 1) {
     return c >= 0i64 && c <= 4095i64;
   }
-  if ((ins.kind_tag == LD_BYTE || ins.kind_tag == ST_BYTE) && a == 1) {
+  if (ins.kind_tag == LD_SUM && a == 1) {
+    return ins.str == "" && ins.imm == 0;
+  }
+  if (ins.kind_tag == ST_BYTE && a == 1) {
     return true;
   }
   if (ins.kind_tag >= ARR_AT && ins.kind_tag <= STR_AT && a == 1) {
@@ -6009,7 +6028,7 @@ pub function form(f: SFunc, owned_frame_views: boolean): Formed {
   let unwrapped = drop_low_wraps(prune_dead(fold_offsets(fuse_rotates(fold_lane_identities(narrow_field_loads(shared.f))))));
   let extended = fold_extensions(unwrapped.f);
   let g = extended.f;
-  let bytes = fold_byte_access(g);
+  let bytes = fold_sum_access(g);
   if (bytes.repl.len() > 0) {
     g = prune_dead(bytes.f);
   }
@@ -7418,45 +7437,108 @@ function shape_load(ins: SInst, nvals: i32): boolean {
   return ins.imm == 0 && ins.str == "" || ins.imm == tag_offset() && ins.str == "u32";
 }
 
-pub function fold_byte_access(f: SFunc): Formed {
-  if (!has_byte_access(f)) {
-    return Formed { f: f, repl: [] };
+// A load of the sum of two values and a constant: `a + b + imm`. The text is
+// the element: "" for a byte, "u16", "i32" (with the sign), "u32" or "i64".
+struct SumRead { found: boolean, at: i32, imm: i32, str: string }
+
+// The load `ins` as a read of a sum, before its address is known to be one.
+function sum_read(ins: SInst, integer: boolean[]): SumRead {
+  let none = SumRead { found: false, at: -1, imm: 0, str: "" };
+  if (ins.kind_tag == UNARY && ins.args.len() == 1 && is_unary_load(ins.str)) {
+    return SumRead { found: true, at: ins.args[0], imm: 0, str: if (ins.str == "load_u16") { "u16" } else { "i32" } };
   }
-  let def_b = __alloc_i32(f.nvals);
-  let def_k = __alloc_i32(f.nvals);
-  for i in 0..f.nvals {
-    def_b = def_b.with(i, -1);
-    def_k = def_k.with(i, -1);
+  if (ins.kind_tag != LD_AT || ins.args.len() != 1 || ins.result < 0 || ins.result >= integer.len() || sum_offset_of(0i64, ins.imm) < 0) {
+    return none;
   }
-  for bi in 0..f.blocks.len() {
-    let k = 0;
-    while (k < f.blocks[bi].insts.len()) {
-      let r = f.blocks[bi].insts[k].result;
-      if (r >= 0 && r < f.nvals) {
-        def_b = def_b.with(r, bi);
-        def_k = def_k.with(r, k);
+  if (ins.str == "u8") {
+    return SumRead { found: true, at: ins.args[0], imm: ins.imm, str: "" };
+  }
+  if (ins.str == "i32" || ins.str == "u32") {
+    return SumRead { found: true, at: ins.args[0], imm: ins.imm, str: ins.str };
+  }
+  // A word that only float instructions read gets a float register.
+  if (ins.str == "" && integer[ins.result]) {
+    return SumRead { found: true, at: ins.args[0], imm: ins.imm, str: "i64" };
+  }
+  return none;
+}
+
+// integer[v] is true when an instruction that is not a float one reads v.
+function integer_reads(f: SFunc): boolean[] {
+  let out = __alloc_bool(f.nvals);
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (float_use(ins) || ins.kind_tag == PHI || float_tolerant(ins)) {
+        continue;
       }
-      k += 1;
+      for a in ins.args {
+        if (a >= 0 && a < f.nvals) {
+          out = out.with(a, true);
+        }
+      }
     }
   }
+  return out;
+}
+
+// A load at `add(a, b)` reads `a + b` itself when the add is in the block of
+// the load and nothing else reads the full-width sum. A byte store does the
+// same. A load takes a constant that one side of the sum adds as its offset,
+// when the constant is a multiple of 8.
+pub function fold_sum_access(f: SFunc): Formed {
+  if (!has_sum_access(f)) {
+    return Formed { f: f, repl: [] };
+  }
+  let defs = inst_defs(f);
   let uses = use_counts(f);
+  let integer = integer_reads(f);
+  let home = __alloc_i32(f.nvals);
+  for bi in 0..f.blocks.len() {
+    for ins in f.blocks[bi].insts {
+      if (ins.result >= 0 && ins.result < f.nvals) {
+        home = home.with(ins.result, bi);
+      }
+    }
+  }
   let changed = false;
   let nblocks: SBlock[] = [];
-  for blk in f.blocks {
+  for bi in 0..f.blocks.len() {
+    let blk = f.blocks[bi];
     let ninsts: SInst[] = [];
     for ins0 in blk.insts {
       let ins = ins0;
-      if ((ins.kind_tag == LD_BYTE || ins.kind_tag == ST_BYTE) && const_zero(f, def_b, def_k, ins.args[1])) {
-        let base = ins.args[0];
-        let d = def_at(f, def_b, def_k, base);
-        if (d.kind_tag == BINARY && d.str == "add" && d.imm == 64 && d.args.len() == 2 && base >= 0 && base < uses.len() && uses[base] == 1) {
-          let nargs: i32[] = [d.args[0], d.args[1]];
-          if (ins.kind_tag == ST_BYTE) {
-            nargs = nargs.append(ins.args[2]);
+      let read = sum_read(ins, integer);
+      if (ins.kind_tag == LD_SUM && ins.str == "" && ins.imm == 0 || ins.kind_tag == ST_BYTE) {
+        let zero = def_of(defs, ins.args[1]);
+        read = SumRead { found: zero.kind_tag == CONST_INT && zero.imm == 0 || zero.kind_tag == CONST_I64 && util.lit_to_i64(zero.str) == 0i64, at: ins.args[0], imm: 0, str: "" };
+      }
+      let d = def_of(defs, read.at);
+      // A load that is not yet a sum read keeps a constant side of its
+      // address in the add.
+      if (read.found && ins.kind_tag != LD_SUM && ins.kind_tag != ST_BYTE && full_add(d) && (constant_def(def_of(defs, d.args[0])) || constant_def(def_of(defs, d.args[1])))) {
+        read = SumRead { ...read, found: false };
+      }
+      if (read.found && full_add(d) && uses[read.at] == 1 && home[read.at] == bi) {
+        let a = d.args[0];
+        let b = d.args[1];
+        let imm = read.imm;
+        if (ins.kind_tag != ST_BYTE) {
+          let da = def_of(defs, a);
+          let db = def_of(defs, b);
+          if (full_add(da) && uses[a] == 1 && home[a] == bi && sum_offset(defs, da.args[1], imm) >= 0) {
+            imm = sum_offset(defs, da.args[1], imm);
+            a = da.args[0];
+          } else if (full_add(db) && uses[b] == 1 && home[b] == bi && sum_offset(defs, db.args[1], imm) >= 0) {
+            imm = sum_offset(defs, db.args[1], imm);
+            b = db.args[0];
           }
-          ins = SInst { ...ins, args: nargs };
-          changed = true;
         }
+        if (ins.kind_tag == ST_BYTE) {
+          ins = SInst { ...ins, args: [a, b, ins.args[2]] };
+        } else {
+          ins = SInst { kind_tag: LD_SUM, result: ins.result, args: [a, b], imm: imm, str: read.str };
+        }
+        changed = true;
       }
       ninsts = ninsts.append(ins);
     }
@@ -7468,10 +7550,32 @@ pub function fold_byte_access(f: SFunc): Formed {
   return Formed { f: SFunc { ...f, blocks: nblocks }, repl: identity_repl(f.nvals) };
 }
 
-function has_byte_access(f: SFunc): boolean {
+function constant_def(d: SInst): boolean {
+  return d.kind_tag == CONST_INT || d.kind_tag == CONST_I64;
+}
+
+function full_add(d: SInst): boolean {
+  return d.kind_tag == BINARY && d.str == "add" && d.imm == 64 && d.args.len() == 2;
+}
+
+// `imm` plus the constant `v`, or -1 when a sum read cannot take the total.
+function sum_offset(defs: SInst[], v: i32, imm: i32): i32 {
+  return sum_offset_of(offset_const(defs, v), imm);
+}
+
+// The largest offset is 4088: each backend has a multiple of 8 up to it in
+// one load of each width.
+function sum_offset_of(c: i64, imm: i32): i32 {
+  if (c < 0i64 || imm < 0 || (c + imm as i64) % 8i64 != 0i64 || c + imm as i64 > 4088i64) {
+    return -1;
+  }
+  return (c + imm as i64) as i32;
+}
+
+function has_sum_access(f: SFunc): boolean {
   for blk in f.blocks {
     for ins in blk.insts {
-      if (ins.kind_tag == LD_BYTE || ins.kind_tag == ST_BYTE) {
+      if (ins.kind_tag == LD_SUM || ins.kind_tag == ST_BYTE || ins.kind_tag == LD_AT || ins.kind_tag == UNARY && is_unary_load(ins.str)) {
         return true;
       }
     }
@@ -7815,8 +7919,17 @@ function unary_facts(ins: SInst, held: i32): i32 {
 
 // What a load or a byte mask leaves in its register, or 0.
 function source_facts(f: SFunc, def_b: i32[], def_k: i32[], ins: SInst): i32 {
-  if (ins.kind_tag == LD_BYTE) {
-    return EXT_BYTE;
+  if (ins.kind_tag == LD_SUM) {
+    if (ins.str == "") {
+      return EXT_BYTE;
+    }
+    if (ins.str == "u16") {
+      return EXT_I32 | EXT_U32;
+    }
+    if (ins.str == "i32") {
+      return EXT_I32;
+    }
+    return if (ins.str == "u32") { EXT_U32 } else { 0 };
   }
   if (ins.kind_tag == ARR_AT || ins.kind_tag == STR_AT) {
     return if (ins.imm == 2 || ins.imm == 3) { 0 } else { elem_facts(ins) };
@@ -9242,7 +9355,7 @@ function inst_has_effect(k: i32): boolean {
   if (k < PRINT) {
     return k == PARAM || k == CALL || k == CALL_INDIRECT || k == ALLOC || k == STORE_ELEM || k == CONCAT;
   }
-  return k != SELECT && k != CARRY && k != LD_AT && k != FN_ADDR && k != SHAPE_ADDR && k != STR_LIT && k != LD_IDX && k != LD_BYTE && k != AGG_LIT && k != SYM_ADDR && k != TERNARY && k != FRAME_CELL;
+  return k != SELECT && k != CARRY && k != LD_AT && k != FN_ADDR && k != SHAPE_ADDR && k != STR_LIT && k != LD_IDX && k != LD_SUM && k != AGG_LIT && k != SYM_ADDR && k != TERNARY && k != FRAME_CELL;
 }
 
 function prune_roots(f: SFunc): i32[] {

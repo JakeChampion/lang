@@ -4672,8 +4672,14 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     s = s.write("    ldr " + d + ", " + at + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
-  if (k == ssa.LD_BYTE) {
-    s = s.write("    ldrb " + ssa_wreg(d) + ", " + at + "\n");
+  if (k == ssa.LD_SUM) {
+    // No load has two registers and an offset in its address, and the
+    // assembler has no load with the sign from two registers.
+    if (!imm.is_imm[ins.args[1]] && (ins.imm != 0 || ins.str == "i32")) {
+      s = s.write("    add " + d + ", " + a + ", " + ssa_src(reg_of, ins.args[1], "x5") + "\n");
+      at = "[" + d + ", #" + util.i32_to_string(ins.imm) + "]";
+    }
+    s = s.write("    " + ssa_sum_load(ins.str, d) + ", " + at + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
   let c = ssa_src(reg_of, ins.args[2], "x6");
@@ -4682,6 +4688,23 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     return s.write("    str " + c + ", " + at + "\n");
   }
   return s.write("    strb " + ssa_wreg(c) + ", " + at + "\n");
+}
+
+// The load of an LD_SUM of element `mark` and its register for `d`.
+function ssa_sum_load(mark: string, d: string): string {
+  if (mark == "u16") {
+    return "ldrh " + ssa_wreg(d);
+  }
+  if (mark == "i32") {
+    return "ldrsw " + d;
+  }
+  if (mark == "u32") {
+    return "ldr " + ssa_wreg(d);
+  }
+  if (mark == "i64") {
+    return "ldr " + d;
+  }
+  return "ldrb " + ssa_wreg(d);
 }
 
 function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
