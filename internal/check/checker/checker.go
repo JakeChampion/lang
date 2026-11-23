@@ -371,12 +371,6 @@ func builtinStructDecls() []*ast.StructDecl {
 			},
 		},
 		{
-			Name: "BytesWriter",
-			Fields: []ast.Param{
-				{Name: "data", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
-			},
-		},
-		{
 			Name: "Instant",
 			Fields: []ast.Param{
 				{Name: "sec", Type: ast.NumberType{Width: 64, Signed: true}},
@@ -528,17 +522,6 @@ func builtinStructDecls() []*ast.StructDecl {
 			TypeParams: []string{"T"},
 			Fields: []ast.Param{
 				{Name: "value", Type: ast.NumberType{}},
-			},
-		},
-		{
-			Name: "Url",
-			Fields: []ast.Param{
-				{Name: "scheme", Type: ast.StringType{}},
-				{Name: "host", Type: ast.StringType{}},
-				{Name: "port", Type: ast.NumberType{}},
-				{Name: "path", Type: ast.StringType{}},
-				{Name: "query", Type: ast.StringType{}},
-				{Name: "fragment", Type: ast.StringType{}},
 			},
 		},
 	}
@@ -11457,10 +11440,11 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	var callbackCaptures map[string][]ast.Param
 	var inlineCaptures map[ast.Expr][]ast.Param
 	var holderCaptures map[string][]ast.Param
+	var heldOwners map[string]bool
 	callbackCapturesKnown := false
 	ensureCallbackCaptures := func() {
 		if !callbackCapturesKnown {
-			callbackCaptures, inlineCaptures, holderCaptures = c.localCallbackCaptures(fn)
+			callbackCaptures, inlineCaptures, holderCaptures, heldOwners = c.localCallbackCaptures(fn)
 			callbackCapturesKnown = true
 		}
 	}
@@ -11480,7 +11464,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				}
 			}
 		}
-		return false
+		return heldOwners[name]
 	}
 	// A call argument that holds a callback, such as a record with a callback
 	// field, takes the loans of that callback into the callee.

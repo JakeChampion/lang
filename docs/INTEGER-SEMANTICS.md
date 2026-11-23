@@ -64,6 +64,20 @@ is arithmetic (sign-propagating) for signed types and logical
 4294967288u32 >> 2 == 1073741822   // logical
 ```
 
+A shift is a mixed integer operation when its operands have different types.
+The value and the count convert to their common type, and the shift computes at that type.
+Thus `u32 << i32` is an `i64`, and `u8 >> i32` is an `i32`.
+The count then masks to the width of the common type.
+Cast the count to keep the type of the value:
+
+```
+function rotl(x: u32, s: i32): u32 {
+  return (x << s as u32) | (x >> (32 - s) as u32);
+}
+```
+
+For this operation, `rotate_left` of `std/u32` is the better function.
+
 ## Bitwise NOT: `~`
 
 `~x` flips each bit of the integer `x`, and its type is the type of `x`. So

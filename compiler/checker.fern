@@ -6570,7 +6570,7 @@ function operator_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo
 }
 
 function bitwise_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type, s: Scope): typeinfo.Type {
-  if (b.op == "&" || b.op == "|" || b.op == "^") {
+  if (b.op == "&" || b.op == "|" || b.op == "^" || b.op == "<<" || b.op == ">>") {
     if (is_integer(lt) && is_integer(rt)) {
       return int_result(lt, rt, b.left, b.right);
     }
@@ -6579,19 +6579,6 @@ function bitwise_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.
       return bovt;
     }
     return t_unknown("bitwise operands must both be integers");
-  }
-  if (b.op == "<<" || b.op == ">>") {
-    if (is_integer(lt) && is_integer(rt)) {
-      if (int_literal_tree(b.left) && !int_literal_tree(b.right) || unsettled_int_literal(b.left)) {
-        return rt;
-      }
-      return lt;
-    }
-    let sovt = s.binop_overload_ret(b.op, lt);
-    if (!is_unknown(sovt)) {
-      return sovt;
-    }
-    return t_unknown("shift operands must both be integers");
   }
   if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
     return typeinfo.t_bool();
@@ -19986,9 +19973,15 @@ function ocl_value(value: ast.Expr, facts: OclFacts): OclCapture[] {
       return ocl_lambda(lm, facts);
     },
     ast.ExprFieldAccess(fa) => {
+      if (ocl_plain(fa.ty, facts)) {
+        return [];
+      }
       return ocl_project(ocl_value(fa.obj, facts), callbackpaths.field(fa.field));
     },
     ast.ExprIndex(x) => {
+      if (ocl_plain(x.ty, facts)) {
+        return [];
+      }
       return ocl_project(ocl_value(x.array, facts), "a:*");
     },
     ast.ExprCall(c) => {
@@ -20000,6 +19993,11 @@ function ocl_value(value: ast.Expr, facts: OclFacts): OclCapture[] {
     _ => {}
   }
   return ocl_aggregate(value, facts);
+}
+
+// A value of plain data holds no callback, so it has no loan.
+function ocl_plain(ty: string, facts: OclFacts): boolean {
+  return ty.len() > 0 && ow_value_data(ty, facts.factories.decls, []);
 }
 
 function ocl_aggregate(value: ast.Expr, facts: OclFacts): OclCapture[] {
@@ -20029,7 +20027,7 @@ function ocl_aggregate(value: ast.Expr, facts: OclFacts): OclCapture[] {
 // A moved callback keeps the loans of its environment. A moved resource
 // instead belongs to the returned callback, so its old binding is not a loan.
 function ocl_call(call: ast.ExprCall, facts: OclFacts): OclCapture[] {
-  if (call.ty.len() > 0 && ow_value_data(call.ty, facts.factories.decls, [])) {
+  if (ocl_plain(call.ty, facts)) {
     return [];
   }
   if (ocl_variant(call.callee, facts)) {
@@ -20615,8 +20613,10 @@ function ow_local_capture_owner(name: string, ctx: OwnCtx): boolean {
       return true;
     }
   }
+  // A local that holds a callback makes an owner of a binding with one definition only.
+  let single = ocl_unique(facts.names, name);
   for i in 0..facts.rows.len() {
-    if (ocl_callback_type(facts.types[i], facts.tparams)) {
+    if (single || ocl_callback_type(facts.types[i], facts.tparams)) {
       for capture in facts.rows[i] {
         if (capture.name == name && !ow_cached_value_data(capture.type_name, ctx.decls, ctx.value_proofs)) {
           return true;

@@ -48,6 +48,7 @@ The main function calls the function with indexes at the ends of the arrays and 
 
 The interpreter of the compiler checks each access, so it is the reference.
 x86-64, arm64 under QEMU and wasm under wasmtime must print the same lines and abort with the same cause line, or not abort.
+Each target runs two builds: the default build, and a build with `FERN_DEBUG_NO_RANGE_PROOFS=1`.
 Each pull request runs 32 programs from fixed seeds. A seed that exceeds the interpreter time limit is reported as skipped. At least three quarters of the seeds must yield a reference result. Each compiled target must produce a result for every seed that reaches comparison.
 `FERN_BOUNDS_SWEEP` sets a different number, and `FERN_BOUNDS_SWEEP_BASE` sets the seed before the first.
 The `bounds-guard-sweep` job of `nightly-fuzz.yml` runs 400 new seeds each night.
@@ -61,9 +62,27 @@ It found three defects of other types, and each has a repair and a test:
 | The two interpreters stopped with an internal error for a lane load or store that is not in its array. | `oob_lane_load_past_length`, `oob_lane_store_past_length` |
 | The certifier of reference counts refused a function whose release is behind a comparison of a value with itself. | `TestSelfHostSelfComparedReleaseCertifies` |
 
+## Differential of the range proofs
+
+`FERN_DEBUG_NO_RANGE_PROOFS=1` turns off each rewrite that a proof of a range permits.
+These are the checks that `compiler/ssabounds.fern` removes or groups, its word loads and quotients, and the loop versions of `compiler/semversion.fern`.
+A build with the switch keeps each check, so it is the unoptimized side of a comparison.
+
+`TestSelfHostRangeProofsOff` (`internal/testing/e2ecompiler`) builds each program twice for x86-64 and twice for arm64.
+The two builds must print the same lines, exit with the same code, and abort with the same cause line or not abort.
+The first programs are the guard cases and the unsafe guard cases of `self_host_guard_bounds_test.go`.
+The others are loops, word reads and quotients with operands at the ends of the array and of `i32`.
+Each program that aborts has a twin that does not abort.
+The test also counts the bounds traps of each proven twin: the build without the proofs must have more.
+
+`TestDifferential_SelfHostX86_64` and its other legs set the switch on about a quarter of their seeds (`selfHostPassSwitches`).
+
+The first run of the test on 2026-11-22 found no difference between the two builds.
+
 ## Limits
 
 These probes exercise the checked paths the language exposes and one raw path.
 The sweep is a sample. It does not prove that every elided check in `ssabounds.fern` is sound.
+The two builds of the differential agree when a check that stays is wrong. The interpreter comparison covers that.
 A translation validation of check elimination belongs to SEC-012 and SEC-017.
 The arm64 results are QEMU results.

@@ -28,6 +28,7 @@ func resultLoanCases(t *testing.T, bin string, runner []string, dir, fixture str
 	for _, name := range []string{
 		"diag_e050_factory_callback_uses_consumed_capture",
 		"diag_e050_factory_callback_uses_consumed_local",
+		"diag_e050_factory_holder_uses_consumed_local",
 		"diag_e050_dynamic_factory_uses_consumed_capture",
 		"diag_e050_projected_callback_index_capture",
 		"diag_e050_record_callback_uses_consumed_capture",

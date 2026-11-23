@@ -1983,7 +1983,7 @@ func TestInterpScriptBytesWriter(t *testing.T) {
 			name: "write_string + into_string round-trips",
 			source: `import "std/io_buffered";
 function main(): i32 {
-    let w: BytesWriter = io_buffered.bytes_writer_new();
+    let w: io_buffered.BytesWriter = io_buffered.bytes_writer_new();
     w = w.write_string("HTTP/1.1 200 OK\r\n");
     w = w.write_string("\r\nhello");
     print(w.len().to_string());
@@ -1996,7 +1996,7 @@ function main(): i32 {
 			name: "write_byte appends single bytes",
 			source: `import "std/io_buffered";
 function main(): i32 {
-    let w: BytesWriter = io_buffered.bytes_writer_new();
+    let w: io_buffered.BytesWriter = io_buffered.bytes_writer_new();
     w = w.write_byte(72);  // 'H'
     w = w.write_byte(105); // 'i'
     match (w.into_string()) { Ok(s) => { print(s); }, Err(_) => { return 1; }, }
@@ -2008,7 +2008,7 @@ function main(): i32 {
 			name: "reset clears the buffer for reuse",
 			source: `import "std/io_buffered";
 function main(): i32 {
-    let w: BytesWriter = io_buffered.bytes_writer_new();
+    let w: io_buffered.BytesWriter = io_buffered.bytes_writer_new();
     w = w.write_string("first");
     if (w.len() != 5) { return 1; }
     w = w.reset();
@@ -2024,7 +2024,7 @@ function main(): i32 {
 			name: "write_bytes for raw u8[] payloads",
 			source: `import "std/io_buffered";
 function main(): i32 {
-    let w: BytesWriter = io_buffered.bytes_writer_new();
+    let w: io_buffered.BytesWriter = io_buffered.bytes_writer_new();
     let bs: u8[] = "binary".bytes();
     w = w.write_bytes(bs);
     if (w.len() != 6) { return 1; }

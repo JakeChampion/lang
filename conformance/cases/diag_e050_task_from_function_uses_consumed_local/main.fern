@@ -1,0 +1,23 @@
+import "std/async";
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): void {}
+
+function read(h: Handle): i32 {
+  return h.fd;
+}
+
+function start(h: Handle): async.Future[i32] {
+  return async.spawn((): i32 => read(h));
+}
+
+function main(): i32 {
+  let h = Handle { fd: 3 };
+  let f = start(h);
+  h.close();
+  match (async.block_on(f)) {
+    Some(v) => { return v; },
+    None => { return 0; }
+  }
+}

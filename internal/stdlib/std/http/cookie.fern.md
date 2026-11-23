@@ -50,7 +50,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<17 struct __Parsed>>
 
-<<18 function __url(request_url: string): Result[Url, Ignored]>>
+<<18 function __url(request_url: string): Result[url.Url, Ignored]>>
 
 <<19 function __max_age(v: string): Option[i32]>>
 
@@ -58,7 +58,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<21 function __year_of(year: i32): i32>>
 
-<<22 function __place(j: Jar, u: Url, p: __Parsed, now: time.Timestamp): Result[Cookie, Ignored]>>
+<<22 function __place(j: Jar, u: url.Url, p: __Parsed, now: time.Timestamp): Result[Cookie, Ignored]>>
 
 <<23 pub function domain_matches(host: string, domain: string): boolean>>
 
@@ -474,7 +474,7 @@ pub function (j: Jar) set(request_url: string, set_cookie: string, now: time.Tim
 }
 
 pub function (j: Jar) header(request_url: string, now: time.Timestamp): Option[string] {
-  let u = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
+  let u = url.Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   match (url.parse(request_url)) {
     Ok(p) => {
       u = p;
@@ -540,11 +540,11 @@ pub function (j: Jar) clear(): void {
 struct __Parsed { name: string, value: string, domain: string, path: string, has_path: boolean, secure: boolean, http_only: boolean, partitioned: boolean, expires: i64, max_age_set: boolean }
 ```
 
-### `18 function __url(request_url: string): Result[Url, Ignored]`
+### `18 function __url(request_url: string): Result[url.Url, Ignored]`
 
 ```fern
-<<18 function __url(request_url: string): Result[Url, Ignored]>>=
-function __url(request_url: string): Result[Url, Ignored] {
+<<18 function __url(request_url: string): Result[url.Url, Ignored]>>=
+function __url(request_url: string): Result[url.Url, Ignored] {
   match (url.parse(request_url)) {
     Ok(u) => {
       if (u.host.len() == 0) {
@@ -861,11 +861,11 @@ function __month_of(token: string): i32 {
 }
 ```
 
-### `22 function __place(j: Jar, u: Url, p: __Parsed, now: time.Timestamp): Result[Cookie, Ignored]`
+### `22 function __place(j: Jar, u: url.Url, p: __Parsed, now: time.Timestamp): Result[Cookie, Ignored]`
 
 ```fern
-<<22 function __place(j: Jar, u: Url, p: __Parsed, now: time.Timestamp): Result[Cookie, Ignored]>>=
-function __place(j: Jar, u: Url, p: __Parsed, now: time.Timestamp): Result[Cookie, Ignored] {
+<<22 function __place(j: Jar, u: url.Url, p: __Parsed, now: time.Timestamp): Result[Cookie, Ignored]>>=
+function __place(j: Jar, u: url.Url, p: __Parsed, now: time.Timestamp): Result[Cookie, Ignored] {
   let host = u.host.to_lower();
   let domain = host;
   let host_only = true;
@@ -1038,7 +1038,7 @@ function __is_ip(host: string): boolean {
   return labels[labels.len() - 1].is_ascii_digits();
 }
 
-function __default_path(u: Url): string {
+function __default_path(u: url.Url): string {
   let p = u.path;
   if (!p.starts_with("/")) {
     return "/";
@@ -1052,7 +1052,7 @@ function __default_path(u: Url): string {
   return p.slice_snap(0, last);
 }
 
-function __request_path(u: Url): string {
+function __request_path(u: url.Url): string {
   if (!u.path.starts_with("/")) {
     return "/";
   }

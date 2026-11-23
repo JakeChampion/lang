@@ -464,21 +464,63 @@ the reactors is exact.
 
 ## Measurement
 
-The table compares the tool with oha 1.16.0 on the same host, with the
-servers on that host too. The runs of the tools alternated, three times, for
-5 seconds each (`-z 5s`). Each row gives the mean of three runs, and the
-lowest and the highest run.
+### HTTP/1.1, with oha and wrk
 
-- http: the `std/serve` hello server of
-  `internal/testing/e2e/load_example_test.go`, `-c 50`.
-- https, h2c and h2: a Go `net/http` server with a P-256 certificate, HTTP/2
-  in clear text for h2c, and `--insecure` for both tools. HTTP/2 runs used
-  `-c 10 -p 10`.
+The table compares the tool with oha 1.17.0 and wrk 4.1.0 on the same host,
+with the server on that host too. The runs of the tools alternated, five
+times, for 5 seconds each at 50 connections. Each row gives the mean of five
+runs, and the lowest and the highest run.
+
+- Fern: a `std/serve` hello server with one event loop, built with `-O`.
+- nginx: nginx 1.24.0 with two worker processes, no access log, and
+  `return 200 "hello"`.
+- All CPUs: the default of the tool and of oha, and `-t4` for wrk.
+- One: `--worker-threads 1` for the tool and for oha, and `-t1` for wrk.
+
+| Server | Threads | Tool | Requests/sec | CPU time for each request |
+| --- | --- | --- | --: | --: |
+| Fern | all CPUs | oha | 128,802 (106,484 to 144,248) | 11.7 µs |
+| Fern | all CPUs | wrk | 111,810 (97,919 to 129,022) | 8.3 µs |
+| Fern | all CPUs | this tool | 105,815 (96,294 to 119,711) | 8.7 µs |
+| Fern | one | oha | 127,278 (110,301 to 149,747) | 8.3 µs |
+| Fern | one | wrk | 176,007 (141,776 to 208,010) | 5.5 µs |
+| Fern | one | this tool | 173,830 (119,714 to 214,742) | 5.7 µs |
+| nginx | all CPUs | oha | 227,934 (198,988 to 245,579) | 9.4 µs |
+| nginx | all CPUs | wrk | 284,690 (256,610 to 319,002) | 6.6 µs |
+| nginx | all CPUs | this tool | 279,054 (247,852 to 304,289) | 6.6 µs |
+| nginx | one | oha | 91,674 (83,761 to 101,038) | 11.3 µs |
+| nginx | one | wrk | 121,053 (105,934 to 141,660) | 8.3 µs |
+| nginx | one | this tool | 142,037 (125,977 to 165,596) | 7.1 µs |
+
+The CPU time is the user time and the system time of the tool and its
+reactors, divided by its responses.
+
+- The tool and wrk are equal within the range of the runs. The tool sends
+  each request with one `sendto` and reads each response with one `read`.
+  Its user time for each request is 1.4 to 2.0 µs. Its system time is 7 to
+  8 µs.
+- The tool uses less CPU time for each request than oha in each row. It
+  gives 22% to 55% more requests/sec than oha in all rows but one.
+- That row is the Fern server with all CPUs. The server has one event loop,
+  and it uses one CPU fully. Four reactors on four CPUs then take CPU time
+  from the server, and wrk has the same decrease. oha divides its work
+  between its threads while it runs, so it decreases less. For a server on
+  the same host, set `--worker-threads` to the number of CPUs that the
+  server does not use.
+
+The host was a 4-core x86-64 container (Intel Xeon at 2.3 GHz, Linux 6.18) on
+2026-11-23, with a load average of 1 to 3.5.
+
+### HTTPS and HTTP/2, with oha
+
+The table compares the tool with oha 1.16.0. The runs of the tools
+alternated, three times, for 5 seconds each. The servers were Go `net/http`
+servers with a P-256 certificate, with HTTP/2 in clear text for h2c. Both
+tools used `--insecure`. The https runs used `-c 50`, and the HTTP/2 runs
+used `-c 10 -p 10`. The tool used one reactor.
 
 | Target | Tool | Requests/sec | CPU time for each request |
 | --- | --- | --: | --: |
-| http | oha 1.16.0 | 121,188 (117,762 to 124,672) | 9.8 µs |
-| http | this tool | 110,951 (105,898 to 118,908) | 5.5 µs |
 | https | oha 1.16.0 | 46,786 (42,956 to 53,751) | 13.4 µs |
 | https | this tool | 33,441 (32,043 to 35,172) | 10.8 µs |
 | h2c | oha 1.16.0 | 36,628 (33,216 to 41,504) | 13.3 µs |
@@ -486,27 +528,20 @@ lowest and the highest run.
 | h2 | oha 1.16.0 | 38,679 (36,741 to 42,392) | 13.3 µs |
 | h2 | this tool | 32,821 (32,018 to 33,235) | 8.7 µs |
 
-The CPU time is the user time and the system time of the tool and its
-reactors, divided by its responses. The tool uses 20% to 45% less CPU time
-for each request than oha on each target.
+For https at `-c 50`, one reactor is a limit. In four later alternating runs,
+oha gave 60,497 requests/sec. The tool gave 53,002 with one reactor and
+64,818 with `--worker-threads 3`. For h2 in those runs, one reactor gave
+37,219 and oha 34,889.
 
-The requests/sec of a run depend on the load of the host more than on the
-tool. In a later set of three alternating runs against the http server, the
-tool gave 128,746 requests/sec and oha 95,518. For https at `-c 50`, one
-reactor is a limit: in four alternating runs, oha gave 60,497 requests/sec,
-the tool 53,002 with one reactor and 64,818 with `--worker-threads 3`. For
-h2, one reactor gave 37,219 and oha 34,889.
+The host was the same type of container on 2026-11-14. Other jobs ran on the
+host, with a load average of 5 to 17, and the runs vary by up to 40%.
 
-The rows of the tool used one reactor, which was the default for these
-connection counts on that date. The default is now one reactor for each CPU,
-as in oha. On 2026-11-15, two runs against the http server at `-c 50` for 4
-seconds compared the two. One reactor gave 122,010 and 125,152
-requests/sec, at 5.2 and 5.5 µs of CPU time for each request. Four reactors
-gave 122,087 and 121,616 requests/sec, at 8.1 and 7.9 µs.
+### In place of oha
 
-The host was a 4-core x86-64 container (Intel Xeon at 2.1 GHz, Linux 6.18) on
-2026-11-14. Other jobs ran on the host, with a load average of 5 to 17, and
-the runs vary by up to 40%.
+The tool accepts the command line that `scripts/net-soak` gives to oha.
+`FERN_OHA=./load scripts/net-soak` completes with no failed request and a
+balanced census for each of the three servers. `scripts/net-bench` and
+`scripts/net-soak` use the oha of `mise.toml` when `FERN_OHA` is not set.
 
 ## Files
 

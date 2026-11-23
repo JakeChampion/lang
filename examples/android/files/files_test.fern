@@ -1,0 +1,347 @@
+// Tests of the file explorer on the simulator of std/android/ui. The
+// storage of the phone is a temporary directory, so each action of the
+// person changes real files.
+import "std/android/draw";
+import "std/android/fonts";
+import "std/android/testkit";
+import "std/android/text";
+import "std/android/ui/sim";
+import "std/test";
+import "./files";
+import "./prefs";
+import "./smb";
+import "./store";
+
+function test_fonts(): text.Fonts {
+  let dir = "examples/android/paper/testfonts";
+  if (read_file_bytes(dir + "/Roboto-Regular.ttf").is_err()) {
+    dir = "../paper/testfonts";
+  }
+  let weights = [400, 500, 700];
+  let found = weights.map((weight: i32): Option[fonts.Found] => fonts.find_in(dir, "Roboto", weight));
+  return text.load(found, weights, (path: string): u8[] => read_file_bytes(path).unwrap_or([]));
+}
+
+// Saves a picture of the screen when FERN_FILES_PNG names a directory.
+function preview(s: sim.Sim[files.Model, files.Msg], name: string): void {
+  if let Some(dir) = env("FERN_FILES_PNG") {
+    let frame = sim.picture(s);
+    let saved = testkit.save_png(frame, dir + "/" + name + ".png");
+    draw.release(frame);
+  }
+}
+
+// A storage with two folders and three files.
+function fixture(): string {
+  let dir = temp_dir("fern-files").unwrap_or("");
+  let made = create_dir_all(dir + "/Download/old").is_ok() && create_dir_all(dir + "/Music").is_ok();
+  let wrote = write_file(dir + "/notes.txt", "Buy milk.\nCall the plumber.\n").is_ok() && write_file_bytes(dir + "/photo.jpg", [1u8, 2u8, 3u8, 4u8]).is_ok() && write_file(dir + "/.secret", "x").is_ok();
+  return dir;
+}
+
+function nas(): files.Saved {
+  return files.Saved { name: "Films", server: smb.Server { host: "192.168.1.20", port: 445, share: "media", user: "jo", password: "pw", domain: "" } };
+}
+
+// The decoder of the tests: bytes that start with 1 are a red tile.
+function tile(bytes: u8[]): Option[draw.Image] {
+  if (bytes.len() == 0 || bytes[0] != 1u8) {
+    return None;
+  }
+  let pixels: u8[] = [];
+  for i in 0..8 {
+    pixels = pixels.concat([215u8, 25u8, 33u8, 255u8]);
+  }
+  return Some(draw.Image { width: 4, height: 2, pixels: pixels });
+}
+
+function simulator(dir: string, servers: files.Saved[]): sim.Sim[files.Model, files.Msg] {
+  let roots = [files.Root { label: "Phone storage", path: dir, total: 128000000000i64, free: 51200000000i64 }];
+  let platform = files.Platform {
+    roots: (): files.Root[] => roots,
+    access: (): boolean => read_dir(dir).is_ok(),
+    ask_access: (): boolean => true,
+    save: (kept: files.Saved[]): boolean => write_file(dir + "/.saved", kept.len().to_string()).is_ok(),
+    keep: (p: files.Prefs): boolean => write_file(dir + "/.prefs", prefs.encode(p)).is_ok(),
+    share: (path: string): boolean => write_file(dir + "/.shared", path).is_ok(),
+    open: (path: string): boolean => !path.ends_with(".jpg") && write_file(dir + "/.opened", path).is_ok(),
+    decode: (bytes: u8[], wide: i32): Option[draw.Image] => tile(bytes),
+  };
+  return sim.scaled(sim.themed(sim.start(files.start(roots, read_dir(dir).is_ok(), servers, dir + "/.cache", prefs.decode(read_file(dir + "/.prefs").unwrap_or(""))), files.program(platform), test_fonts(), 720, 1600, 2.0), true), 1.0);
+}
+
+// Does the jobs of the last action and draws their result.
+function done(own s: sim.Sim[files.Model, files.Msg]): sim.Sim[files.Model, files.Msg] {
+  let next = sim.jobs_done(s);
+  for i in 0..4 {
+    next = sim.jobs_done(next);
+  }
+  return sim.settle(next);
+}
+
+function names(s: sim.Sim[files.Model, files.Msg]): string {
+  return files.shown(s.shell.app).map((e: smb.Entry): string => e.name).join(",");
+}
+
+function test_browse(): test.TestOutcome {
+  let dir = fixture();
+  let s = simulator(dir, [nas()]);
+  preview(s, "01-home");
+  if (!sim.shows(s, "Phone storage") || !sim.shows(s, "Films") || !sim.shows(s, "smb://192.168.1.20/media")) {
+    return test.fail("the home screen must show the storage and the saved server");
+  }
+  s = done(sim.tap(s, "Phone storage"));
+  preview(s, "02-folder");
+  if (names(s) != "Download,Music,notes.txt,photo.jpg") {
+    return test.fail("the folder shows " + names(s));
+  }
+  s = sim.tap(s, "Hidden: off");
+  if (names(s) != "Download,Music,.secret,notes.txt,photo.jpg") {
+    return test.fail("with hidden files the folder shows " + names(s));
+  }
+  s = sim.tap(s, "Sort order · Name");
+  if (names(s) != "Download,Music,notes.txt,photo.jpg,.secret") {
+    return test.fail("by size the folder shows " + names(s));
+  }
+  s = sim.type_in(s, "filter", "NOTE");
+  if (names(s) != "notes.txt") {
+    return test.fail("the filter shows " + names(s));
+  }
+  s = sim.type_in(s, "filter", "");
+  s = done(sim.tap(s, "Download"));
+  if (names(s) != "old" || !sim.shows(s, "Phone storage / Download")) {
+    return test.fail("the Download folder shows " + names(s));
+  }
+  s = done(sim.back(s));
+  s = sim.back(s);
+  let home = sim.shows(s, "Add a server");
+  let removed = remove_dir_all(dir);
+  return test.assert_eq(home && !sim.finished(s), true);
+}
+
+function test_copy_and_move(): test.TestOutcome {
+  let dir = fixture();
+  let s = done(sim.tap(simulator(dir, []), "Phone storage"));
+  s = sim.hold(s, "notes.txt");
+  s = sim.tap(s, "photo.jpg");
+  preview(s, "03-selection");
+  if (!sim.shows(s, "2 selected")) {
+    return test.fail("a long press must start a selection");
+  }
+  s = sim.tap(s, "Copy");
+  s = done(sim.tap(s, "Music"));
+  preview(s, "04-paste");
+  s = done(sim.tap(s, "Paste here"));
+  for i in 0..6 {
+    s = done(s);
+  }
+  if (names(s) != "notes.txt,photo.jpg" || read_file(dir + "/Music/notes.txt").unwrap_or("") != "Buy milk.\nCall the plumber.\n") {
+    return test.fail("the copy gave " + names(s));
+  }
+  if (stat(dir + "/notes.txt").is_err()) {
+    return test.fail("a copy must keep the source");
+  }
+  // The same items again get new names.
+  s = sim.hold(s, "notes.txt");
+  s = sim.tap(s, "Move");
+  s = done(sim.back(s));
+  s = done(sim.tap(s, "Download"));
+  s = done(sim.tap(s, "Paste here"));
+  let moved = names(s) == "old,notes.txt" && stat(dir + "/Music/notes.txt").is_err() && stat(dir + "/Download/notes.txt").is_ok();
+  let removed = remove_dir_all(dir);
+  return test.assert_eq(moved, true);
+}
+
+function test_folder_rename_delete(): test.TestOutcome {
+  let dir = fixture();
+  let s = done(sim.tap(simulator(dir, []), "Phone storage"));
+  s = sim.tap(s, "New folder");
+  s = sim.type_in(s, "name", "Music");
+  s = sim.tap(s, "Save");
+  if (!sim.shows(s, "That name is in use already.")) {
+    return test.fail("a name in use must give a note");
+  }
+  s = sim.type_in(s, "name", "Trips");
+  preview(s, "05-new-folder");
+  s = done(sim.tap(s, "Save"));
+  if (stat(dir + "/Trips").is_err() || names(s) != "Download,Music,Trips,notes.txt,photo.jpg") {
+    return test.fail("the new folder is not there: " + names(s));
+  }
+  s = sim.tap(s, "notes.txt");
+  preview(s, "06-file");
+  s = sim.tap(s, "Rename");
+  s = sim.type_in(s, "name", "todo.txt");
+  s = done(sim.tap(s, "Save"));
+  if (stat(dir + "/todo.txt").is_err() || stat(dir + "/notes.txt").is_ok()) {
+    return test.fail("the rename did not move the file");
+  }
+  s = sim.tap(s, "todo.txt");
+  s = done(sim.tap(s, "Preview as text"));
+  preview(s, "07-text");
+  if (!sim.shows(s, "Buy milk.")) {
+    return test.fail("the preview must show the text of the file");
+  }
+  s = sim.back(s);
+  s = sim.tap(s, "Delete");
+  if (stat(dir + "/todo.txt").is_err() || !sim.says(s, "Confirm delete")) {
+    return test.fail("the first tap of Delete must only ask");
+  }
+  s = done(sim.tap(s, "Confirm delete"));
+  let gone = stat(dir + "/todo.txt").is_err();
+  s = sim.hold(s, "Download");
+  s = sim.tap(s, "Delete");
+  s = done(sim.tap(s, "Confirm delete"));
+  let folder_gone = stat(dir + "/Download").is_err() && names(s) == "Music,Trips,photo.jpg";
+  let removed = remove_dir_all(dir);
+  return test.assert_eq(gone && folder_gone, true);
+}
+
+function test_servers(): test.TestOutcome {
+  let dir = fixture();
+  let s = simulator(dir, []);
+  s = sim.tap(s, "Add a server");
+  preview(s, "08-server");
+  s = sim.tap(s, "Save");
+  if (!sim.shows(s, "Give the address and the share.")) {
+    return test.fail("a server with no address must give a note");
+  }
+  s = sim.type_in(s, "host", "nas.local");
+  s = sim.type_in(s, "share", "media");
+  s = sim.type_in(s, "user", "jo");
+  s = sim.type_in(s, "password", "secret");
+  s = sim.tap(s, "Save");
+  let saved = s.shell.app.servers;
+  if (saved.len() != 1 || saved[0].name != "media on nas.local" || saved[0].server.password != "secret" || read_file(dir + "/.saved").unwrap_or("") != "1") {
+    return test.fail("the app did not save the server");
+  }
+  s = sim.tap(s, "Edit media on nas.local");
+  s = sim.tap(s, "Remove");
+  s = sim.tap(s, "Confirm removal");
+  let none = s.shell.app.servers.len() == 0 && read_file(dir + "/.saved").unwrap_or("") == "0";
+  // A server that does not answer gives a note in the folder, not a crash.
+  let lost = files.Saved { name: "Lost", server: smb.Server { host: "127.0.0.1", port: 1, share: "x", user: "", password: "", domain: "" } };
+  let t = done(sim.tap(simulator(dir, [lost]), "Lost"));
+  preview(t, "09-lost");
+  let told = t.shell.app.fault.len() > 0 && !t.shell.app.loading;
+  let removed = remove_dir_all(dir);
+  return test.assert_eq(none && told, true);
+}
+
+function test_picture_and_select_all(): test.TestOutcome {
+  let dir = fixture();
+  let wrote = write_file(dir + "/broken.png", "not an image").is_ok();
+  let s = done(sim.tap(simulator(dir, []), "Phone storage"));
+  s = sim.tap(s, "photo.jpg");
+  s = done(sim.tap(s, "View picture"));
+  preview(s, "11-picture");
+  if (!sim.says(s, "Picture photo.jpg") || !sim.shows(s, "4 × 2 shown")) {
+    return test.fail("the picture of the file must show");
+  }
+  s = sim.back(sim.back(s));
+  s = sim.tap(s, "broken.png");
+  s = done(sim.tap(s, "View picture"));
+  if (!sim.shows(s, "The app cannot read this image.")) {
+    return test.fail("a file that is not an image must give a note");
+  }
+  s = sim.back(sim.back(s));
+  s = sim.hold(s, "Music");
+  s = sim.tap(s, "All");
+  let all = sim.shows(s, "5 selected");
+  let removed = remove_dir_all(dir);
+  return test.assert_eq(all && wrote, true);
+}
+
+// The platform of the tests opens each file but a .jpg file.
+function test_open(): test.TestOutcome {
+  let dir = fixture();
+  let s = done(sim.tap(simulator(dir, []), "Phone storage"));
+  s = sim.tap(s, "notes.txt");
+  s = sim.tap(s, "Open");
+  let opened = read_file(dir + "/.opened").unwrap_or("") == dir + "/notes.txt" && s.shell.app.fault.len() == 0;
+  s = sim.back(s);
+  s = sim.tap(s, "photo.jpg");
+  s = sim.tap(s, "Open");
+  let told = sim.shows(s, "No app on this phone opens this file.");
+  let removed = remove_dir_all(dir);
+  return test.assert_eq(opened.to_string() + " " + told.to_string(), "true true");
+}
+
+function test_pins_recent_and_prefs(): test.TestOutcome {
+  let dir = fixture();
+  let s = done(sim.tap(simulator(dir, []), "Phone storage"));
+  s = sim.tap(s, "Sort order · Name");
+  s = done(sim.tap(s, "Download"));
+  s = sim.tap(s, "Pin");
+  if (!sim.says(s, "Unpin")) {
+    return test.fail("a pinned folder must offer Unpin");
+  }
+  s = done(sim.back(s));
+  s = sim.tap(s, "notes.txt");
+  s = sim.tap(s, "Share");
+  let shared = read_file(dir + "/.shared").unwrap_or("") == dir + "/notes.txt";
+  s = sim.tap(s, "Open");
+  // A new start of the app has the same preferences.
+  let t = simulator(dir, []);
+  preview(t, "13-pins");
+  if (t.shell.app.sort != 1 || !sim.says(t, "Pinned Download") || !sim.says(t, "Recent notes.txt")) {
+    return test.fail("the next start must have the sort order, the pin and the recent file");
+  }
+  t = done(sim.tap(t, "Pinned Download"));
+  let at_pin = t.shell.app.path == dir + "/Download" && sim.shows(t, "Phone storage / Download");
+  t = done(sim.tap(sim.back(sim.back(t)), "Recent notes.txt"));
+  let at_recent = t.shell.app.path == dir;
+  let removed = remove_dir_all(dir);
+  return test.assert_eq(shared.to_string() + " " + at_pin.to_string() + " " + at_recent.to_string(), "true true true");
+}
+
+function test_search_below(): test.TestOutcome {
+  let dir = fixture();
+  let wrote = write_file(dir + "/Download/old/Notes of May.txt", "x").is_ok();
+  let s = done(sim.tap(simulator(dir, []), "Phone storage"));
+  s = sim.type_in(s, "filter", "NOTES");
+  s = done(sim.tap(s, "Search the folders below"));
+  preview(s, "14-search");
+  if (names(s) != "Download/old/Notes of May.txt,notes.txt") {
+    return test.fail("the search found " + names(s));
+  }
+  s = sim.tap(s, "Download/old/Notes of May.txt");
+  s = sim.tap(s, "Rename");
+  s = sim.type_in(s, "name", "may.txt");
+  s = done(sim.tap(s, "Save"));
+  // The filter stays, so the folder shows its one file with that text.
+  let renamed = stat(dir + "/Download/old/may.txt").is_ok() && names(s) == "notes.txt";
+  let removed = remove_dir_all(dir);
+  return test.assert_eq(wrote && renamed, true);
+}
+
+function test_folder_sizes(): test.TestOutcome {
+  let dir = fixture();
+  let wrote = write_file_bytes(dir + "/Music/a.flac", [0u8, 1u8, 2u8, 3u8, 4u8, 5u8]).is_ok() && write_file(dir + "/Download/old/b.txt", "12").is_ok();
+  let s = done(sim.tap(simulator(dir, []), "Phone storage"));
+  s = done(sim.tap(s, "Measure the folders"));
+  preview(s, "15-sizes");
+  let shown = names(s) == "Music,Download,notes.txt,photo.jpg" && sim.shows(s, "6 B · " + store.day_text(now_unix_ms() / 1000i64));
+  let removed = remove_dir_all(dir);
+  return test.assert_eq(wrote && shown, true);
+}
+
+function test_no_access(): test.TestOutcome {
+  let s = simulator("/no/such/storage", []);
+  preview(s, "10-access");
+  return test.assert_eq(sim.says(s, "Allow access") && !s.shell.app.granted, true);
+}
+
+function main(): i32 {
+  let r = test.new("Fern Files");
+  r = r.it("browse, sort, filter and go back", test_browse);
+  r = r.it("copy and move a selection", test_copy_and_move);
+  r = r.it("make a folder, rename, preview and delete", test_folder_rename_delete);
+  r = r.it("save and remove a server", test_servers);
+  r = r.it("show a picture and select all", test_picture_and_select_all);
+  r = r.it("open a file in another app", test_open);
+  r = r.it("keep the pins, the recent files and the sort order", test_pins_recent_and_prefs);
+  r = r.it("search the folders below", test_search_below);
+  r = r.it("measure the folders and sort by size", test_folder_sizes);
+  r = r.it("ask for access when the storage is closed", test_no_access);
+  return r.finish();
+}

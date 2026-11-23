@@ -462,6 +462,7 @@ A PKCS#1 key and an OpenSSH key also hold qinv. Construction uses that value whe
 <<14 pub struct PrivateKey>>=
 // The CRT values are big-endian bytes: p and q, dp and dq with the length
 // of p and q, and qinv with the length of p.
+@secret
 pub struct PrivateKey {
   public: PublicKey,
   m: montgomery.Modulus,

@@ -148,12 +148,14 @@ pub const PUBLIC_KEY_SIZE: i32 = 1216;
 
 pub const ENC_SIZE: i32 = 1120;
 
+@secret
 pub struct HybridKey {
   public_key: u8[],
   decapsulation_key: u8[],
   scalar: u8[],
 }
 
+@secret
 pub struct Encapsulation {
   shared_secret: u8[],
   enc: u8[],
@@ -254,6 +256,7 @@ pub const MLKEM768_P256_PUBLIC_KEY_SIZE: i32 = 1249;
 
 pub const MLKEM768_P256_ENC_SIZE: i32 = 1153;
 
+@secret
 pub struct HybridP256Key {
   public_key: u8[],
   decapsulation_key: u8[],
@@ -378,6 +381,7 @@ pub const P256_PUBLIC_KEY_SIZE: i32 = 65;
 
 pub const P256_ENC_SIZE: i32 = 65;
 
+@secret
 pub struct P256Key {
   scalar: u8[],
   public_key: u8[],

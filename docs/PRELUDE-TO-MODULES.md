@@ -54,8 +54,8 @@ function main(): i32 {
 ```
 
 Built-in **types** (`Option`, `Result`, `IoError`, `Body`,
-`Reader`, `Writer`, `Map`, `HttpRequest`, `HttpResponse`,
-`Url`) stay auto-available — they're language primitives, not
+`Reader`, `Writer`, `Map`, `HttpRequest`, `HttpResponse`)
+stay auto-available — they're language primitives, not
 stdlib helpers. The user shouldn't need `import "core/option";`
 to write `Option[i32]`. The synthetic-decl block in
 `checker.go:Check()` keeps that responsibility.

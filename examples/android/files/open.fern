@@ -1,0 +1,188 @@
+// Opens a file of the phone in another app. Android lets another app read
+// a file only through a content provider, so the app has one: the URI of a
+// file is its path below the authority of the provider. The provider is not
+// exported, and the app gives access to one URI with each intent.
+import "std/android";
+import "std/jni";
+import "std/option";
+import "std/result";
+import "std/string";
+import "std/unicode";
+
+// The class of the provider, which is also its authority.
+pub const AUTHORITY: string = "dev.fern.files.Shared";
+
+// The type of each file name end that an app can open.
+const TYPES: (string, string)[] = [
+  ("jpg", "image/jpeg"), ("jpeg", "image/jpeg"), ("png", "image/png"), ("gif", "image/gif"), ("webp", "image/webp"), ("bmp", "image/bmp"), ("heic", "image/heic"), ("svg", "image/svg+xml"),
+  ("mp3", "audio/mpeg"), ("flac", "audio/flac"), ("wav", "audio/x-wav"), ("ogg", "audio/ogg"), ("opus", "audio/ogg"), ("m4a", "audio/mp4"), ("aac", "audio/aac"),
+  ("mp4", "video/mp4"), ("m4v", "video/mp4"), ("mkv", "video/x-matroska"), ("mov", "video/quicktime"), ("avi", "video/x-msvideo"), ("webm", "video/webm"), ("ts", "video/mp2t"),
+  ("pdf", "application/pdf"), ("epub", "application/epub+zip"), ("zip", "application/zip"), ("apk", "application/vnd.android.package-archive"), ("json", "application/json"),
+  ("doc", "application/msword"), ("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"), ("xls", "application/vnd.ms-excel"),
+  ("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"), ("ppt", "application/vnd.ms-powerpoint"),
+  ("pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
+  ("txt", "text/plain"), ("log", "text/plain"), ("md", "text/markdown"), ("csv", "text/csv"), ("html", "text/html"), ("htm", "text/html"), ("xml", "text/xml"),
+];
+
+// The media type of the file `name`, from the end of its name.
+pub function mime(name: string): string {
+  let dot = name.last_index_of(".").unwrap_or(-1);
+  if (dot >= 0) {
+    let end = name.drop(dot + 1).to_lower();
+    for kind in TYPES {
+      if (kind.0 == end) {
+        return kind.1;
+      }
+    }
+  }
+  return "application/octet-stream";
+}
+
+function path_of(e: usize, uri: usize): string {
+  let text = jni.call_object(e, uri, "getPath", "()Ljava/lang/String;", []);
+  let path = jni.string_of(e, text);
+  let text_ref = jni.delete_local_ref(e, text);
+  return path;
+}
+
+// The java.io.File of `path`, or 0.
+function file_of(e: usize, path: string): usize {
+  let class = jni.find_class(e, "java/io/File");
+  let ctor = jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;)V");
+  let text = jni.new_string(e, path);
+  let args = jni.jvalues([text]);
+  let file = jni.new_object_a(e, class, ctor, args);
+  jni.free_buffer(args);
+  let text_ref = jni.delete_local_ref(e, text);
+  let class_ref = jni.delete_local_ref(e, class);
+  return file;
+}
+
+// The answer of the provider to openFile: a descriptor that reads the file
+// of `uri`. A file that does not open leaves its Java exception for the
+// caller, as openFile declares.
+pub function descriptor(e: usize, uri: usize): usize {
+  let file = file_of(e, path_of(e, uri));
+  if (file == 0 as usize) {
+    return 0 as usize;
+  }
+  let class = jni.find_class(e, "android/os/ParcelFileDescriptor");
+  let open = jni.get_static_method_id(e, class, "open", "(Ljava/io/File;I)Landroid/os/ParcelFileDescriptor;");
+  // 0x10000000 is MODE_READ_ONLY.
+  let args = jni.jvalues([file, 0x10000000 as usize]);
+  let out = jni.call_static_object_method_a(e, class, open, args);
+  jni.free_buffer(args);
+  let file_ref = jni.delete_local_ref(e, file);
+  let class_ref = jni.delete_local_ref(e, class);
+  return out;
+}
+
+// The answer of the provider to getType.
+pub function kind(e: usize, uri: usize): usize {
+  return jni.new_string(e, mime(path_of(e, uri)));
+}
+
+// The answer of the provider to query: one row with the name and the size
+// of the file, which an app reads before it opens the file.
+pub function row(e: usize, uri: usize): usize {
+  let path = path_of(e, uri);
+  let size = match (stat(path)) { Ok(st) => st.size, Err(_) => 0i64 };
+  let name = path.rsplit_once("/").map((parts: (string, string)): string => parts.1).unwrap_or(path);
+  let columns = jni.string_array(e, ["_display_name", "_size"]);
+  let class = jni.find_class(e, "android/database/MatrixCursor");
+  let ctor = jni.get_method_id(e, class, "<init>", "([Ljava/lang/String;)V");
+  let made = jni.jvalues([columns]);
+  let cursor = jni.new_object_a(e, class, ctor, made);
+  jni.free_buffer(made);
+  let long_class = jni.find_class(e, "java/lang/Long");
+  let value_of = jni.get_static_method_id(e, long_class, "valueOf", "(J)Ljava/lang/Long;");
+  let number = jni.jvalue_set_long(jni.jvalue_alloc(1), 0, size);
+  let boxed = jni.call_static_object_method_a(e, long_class, value_of, number);
+  jni.free_buffer(number);
+  let values = jni.new_object_array(e, 2, jni.find_class(e, "java/lang/Object"), 0 as usize);
+  let text = jni.new_string(e, name);
+  let first = jni.set_object_array_element(e, values, 0, text);
+  let second = jni.set_object_array_element(e, values, 1, boxed);
+  let added = jni.call_void(e, cursor, "addRow", "([Ljava/lang/Object;)V", [values]);
+  return cursor;
+}
+
+// The content URI of the file `path`: Uri.fromFile encodes the path, and
+// the builder gives it the scheme and the authority of the provider.
+function shared_uri(e: usize, path: string): usize {
+  let file = file_of(e, path);
+  let class = jni.find_class(e, "android/net/Uri");
+  let from_file = jni.get_static_method_id(e, class, "fromFile", "(Ljava/io/File;)Landroid/net/Uri;");
+  let args = jni.jvalues([file]);
+  let plain = jni.call_static_object_method_a(e, class, from_file, args);
+  jni.free_buffer(args);
+  if (jni.check(e).is_err() || plain == 0 as usize) {
+    return 0 as usize;
+  }
+  let builder = jni.call_object(e, plain, "buildUpon", "()Landroid/net/Uri$Builder;", []);
+  let scheme = jni.new_string(e, "content");
+  let authority = jni.new_string(e, AUTHORITY);
+  let with_scheme = jni.call_object(e, builder, "scheme", "(Ljava/lang/String;)Landroid/net/Uri$Builder;", [scheme]);
+  let with_authority = jni.call_object(e, builder, "authority", "(Ljava/lang/String;)Landroid/net/Uri$Builder;", [authority]);
+  return jni.call_object(e, builder, "build", "()Landroid/net/Uri;", []);
+}
+
+// Asks Android to show the file `path` in another app. It is false when no
+// app on the phone opens a file of that type.
+pub function view(ctx: usize, path: string): boolean {
+  let e = android.env(ctx);
+  let uri = shared_uri(e, path);
+  if (uri == 0 as usize) {
+    return false;
+  }
+  let class = jni.find_class(e, "android/content/Intent");
+  let ctor = jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;)V");
+  let action = jni.new_string(e, "android.intent.action.VIEW");
+  let init = jni.jvalues([action]);
+  let intent = jni.new_object_a(e, class, ctor, init);
+  jni.free_buffer(init);
+  if (jni.check(e).is_err() || intent == 0 as usize) {
+    return false;
+  }
+  let kind = jni.new_string(e, mime(path));
+  let typed = jni.call_object(e, intent, "setDataAndType", "(Landroid/net/Uri;Ljava/lang/String;)Landroid/content/Intent;", [uri, kind]);
+  // 1 is FLAG_GRANT_READ_URI_PERMISSION.
+  let flagged = jni.call_object(e, intent, "addFlags", "(I)Landroid/content/Intent;", [1 as usize]);
+  let started = jni.call_void(e, android.activity_object(ctx), "startActivity", "(Landroid/content/Intent;)V", [intent]);
+  let intent_ref = jni.delete_local_ref(e, intent);
+  return jni.check(e).is_ok() && started;
+}
+
+// Asks Android for the apps that take the file `path`, such as a mail app,
+// and gives the file to the one that the person picks.
+pub function send(ctx: usize, path: string): boolean {
+  let e = android.env(ctx);
+  let uri = shared_uri(e, path);
+  if (uri == 0 as usize) {
+    return false;
+  }
+  let class = jni.find_class(e, "android/content/Intent");
+  let ctor = jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;)V");
+  let action = jni.new_string(e, "android.intent.action.SEND");
+  let init = jni.jvalues([action]);
+  let intent = jni.new_object_a(e, class, ctor, init);
+  jni.free_buffer(init);
+  if (jni.check(e).is_err() || intent == 0 as usize) {
+    return false;
+  }
+  let kind = jni.new_string(e, mime(path));
+  let stream = jni.new_string(e, "android.intent.extra.STREAM");
+  let typed = jni.call_object(e, intent, "setType", "(Ljava/lang/String;)Landroid/content/Intent;", [kind]);
+  let filled = jni.call_object(e, intent, "putExtra", "(Ljava/lang/String;Landroid/os/Parcelable;)Landroid/content/Intent;", [stream, uri]);
+  // 1 is FLAG_GRANT_READ_URI_PERMISSION.
+  let flagged = jni.call_object(e, intent, "addFlags", "(I)Landroid/content/Intent;", [1 as usize]);
+  let chooser_of = jni.get_static_method_id(e, class, "createChooser", "(Landroid/content/Intent;Ljava/lang/CharSequence;)Landroid/content/Intent;");
+  let args = jni.jvalues([intent, 0 as usize]);
+  let chooser = jni.call_static_object_method_a(e, class, chooser_of, args);
+  jni.free_buffer(args);
+  if (jni.check(e).is_err() || chooser == 0 as usize) {
+    return false;
+  }
+  let started = jni.call_void(e, android.activity_object(ctx), "startActivity", "(Landroid/content/Intent;)V", [chooser]);
+  return jni.check(e).is_ok() && started;
+}

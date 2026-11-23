@@ -71,6 +71,7 @@ import "std/crypto/aead";
 
 ```fern
 <<3 pub struct Key>>=
+@secret
 pub struct Key { k: u8[] }
 
 // Consumes the key and zeroes its key bytes when it owns the last reference.

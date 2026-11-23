@@ -1,0 +1,270 @@
+// Tests of the parts of the file explorer that do not need a screen: the
+// hashes and the messages of the SMB sign-in, the paths, and the texts.
+import "std/hex";
+import "std/test";
+import "./files";
+import "./md4";
+import "./ntlm";
+import "./open";
+import "./prefs";
+import "./smb";
+import "./store";
+import "./vault";
+
+// The first outcome that is a failure, or a pass.
+function all(outcomes: test.TestOutcome[]): test.TestOutcome {
+  for outcome in outcomes {
+    if let test.Fail(_) = outcome {
+      return outcome;
+    }
+  }
+  return test.pass();
+}
+
+function holds(fact: boolean, otherwise: string): test.TestOutcome {
+  return if (fact) { test.pass() } else { test.fail(otherwise) };
+}
+
+// The test vectors of RFC 1320.
+function test_md4(): test.TestOutcome {
+  let empty: u8[] = [];
+  return all([
+    test.assert_eq(hex.encode(md4.sum(empty)), "31d6cfe0d16ae931b73c59d7e0c089c0"),
+    test.assert_eq(hex.encode(md4.sum("abc".bytes())), "a448017aaf21d8525fc10ae87aa6729d"),
+    test.assert_eq(hex.encode(md4.sum("12345678901234567890123456789012345678901234567890123456789012345678901234567890".bytes())), "e33b4ddc9c38f2199c3e7b164fcc0536"),
+  ]);
+}
+
+// The HMAC-MD5 vector of RFC 2202, and the NTOWFv2 key of MS-NLMP 4.2.4.
+function test_ntlm_keys(): test.TestOutcome {
+  return all([
+    test.assert_eq(hex.encode(ntlm.hmac_md5("Jefe".bytes(), "what do ya want for nothing?".bytes())), "750c783e6ab0b503eaa86e310a5db738"),
+    test.assert_eq(hex.encode(ntlm.v2_key("User", "Domain", "Password")), "0c868a403bfd7a93a3001ef22ef02e3f"),
+    test.assert_eq(ntlm.text16(ntlm.utf16("Ünï cödé.txt")), "Ünï cödé.txt"),
+  ]);
+}
+
+function test_challenge(): test.TestOutcome {
+  let none = ntlm.challenge("not a message".bytes());
+  let message = ntlm.negotiate();
+  return all([holds(none.is_none(), "text that is not NTLM gave a challenge"), test.assert_eq(hex.encode(ntlm.part(message, 0, 8)), "4e544c4d53535000")]);
+}
+
+// One record of a directory listing: a directory with the name "docs".
+function record(name: string, dir: boolean, size: i64, next: i32): u8[] {
+  let wide = ntlm.utf16(name);
+  let out = ntlm.put32(ntlm.put32([], next as i64), 0i64);
+  // 2026-11-22 in the 100 ns units of Windows, for each of the four times.
+  let time = (1795305600i64 + 11644473600i64) * 10000000i64;
+  out = ntlm.put64(ntlm.put64(ntlm.put64(ntlm.put64(out, time), time), time), time);
+  out = ntlm.put64(ntlm.put64(out, size), size);
+  out = ntlm.put32(ntlm.put32(out, if (dir) { 16i64 } else { 32i64 }), wide.len() as i64);
+  return out.concat(wide);
+}
+
+function test_listing(): test.TestOutcome {
+  let first = record("..", true, 0i64, 0);
+  let second = record("docs", true, 0i64, 0);
+  let buffer = record("..", true, 0i64, first.len()).concat(record("docs", true, 0i64, second.len())).concat(record("a.txt", false, 1536i64, 0));
+  let found = smb.entries(buffer);
+  if (found.len() != 2) {
+    return test.fail("the listing has " + found.len().to_string() + " entries");
+  }
+  return all([
+    test.assert_eq(found[0].name, "docs"),
+    holds(found[0].dir, "docs is not a directory"),
+    test.assert_eq(found[1].name, "a.txt"),
+    test.assert_eq(found[1].size, 1536i64),
+    test.assert_eq(store.day_text(found[1].modified), "2026-11-22"),
+  ]);
+}
+
+// A string of an RPC message, as a server writes it.
+function wide_text(out: u8[], text: string): u8[] {
+  let wide = ntlm.utf16(text).concat(ntlm.zeros(2));
+  let count = (wide.len() / 2) as i64;
+  let b = ntlm.put32(ntlm.put32(ntlm.put32(out, count), 0i64), count).concat(wide);
+  return b.concat(ntlm.zeros((4 - b.len() % 4) % 4));
+}
+
+// The reply to NetrShareEnum with a disk share, a hidden share, the pipe
+// share, and a disk share with no remark.
+function test_shares(): test.TestOutcome {
+  let stub = ntlm.put32(ntlm.put32(ntlm.put32(ntlm.put32(ntlm.put32(ntlm.put32([], 1i64), 1i64), 0x20000i64), 4i64), 0x20004i64), 4i64);
+  let kinds = [0i64, 0x80000000i64, 0x80000003i64, 0i64];
+  for i in 0..4 {
+    stub = ntlm.put32(ntlm.put32(ntlm.put32(stub, 0x20008i64), kinds[i]), if (i == 3) { 0i64 } else { 0x2000ci64 });
+  }
+  stub = wide_text(wide_text(stub, "media"), "Films and music");
+  stub = wide_text(wide_text(stub, "C$"), "Default share");
+  stub = wide_text(wide_text(stub, "IPC$"), "IPC");
+  stub = wide_text(stub, "Ünï");
+  let request = smb.share_request("nas");
+  let bind = smb.share_bind();
+  return all([
+    test.assert_eq(smb.share_names(stub).join(","), "media,Ünï"),
+    test.assert_eq(smb.share_names([]).len(), 0),
+    test.assert_eq(ntlm.get16(request, 8), request.len()),
+    test.assert_eq(ntlm.get16(request, 22), 15),
+    test.assert_eq(bind.len(), 72),
+    test.assert_eq(hex.encode(ntlm.part(bind, 32, 48)), "c84f324b7016d30112785a47bf6ee188"),
+  ]);
+}
+
+// A reply has a good signature only with the key, the flag and each byte.
+function test_signature(): test.TestOutcome {
+  let key = ntlm.zeros(15).append(7u8);
+  let head = ntlm.put32(ntlm.zeros(16), 8i64).concat(ntlm.zeros(44));
+  let framed = smb.sealed(head, "body".bytes(), key);
+  let msg = ntlm.part(framed, 4, framed.len());
+  let changed = msg.with(66, 0u8);
+  let plain = smb.sealed(ntlm.zeros(64), "body".bytes(), key);
+  return all([
+    holds(smb.signed_by(msg, key), "a signed reply did not pass"),
+    holds(!smb.signed_by(changed, key), "a changed reply passed"),
+    holds(!smb.signed_by(msg, ntlm.zeros(16)), "a reply passed with another key"),
+    holds(!smb.signed_by(ntlm.part(plain, 4, plain.len()), key), "a reply with no signature flag passed"),
+  ]);
+}
+
+// A read takes what the server and the credits allow, and costs one credit
+// for each 64 KiB.
+function test_request_sizes(): test.TestOutcome {
+  return all([
+    test.assert_eq(smb.payload(8388608, 8388608, 256), 4194304),
+    test.assert_eq(smb.payload(8388608, 1048576, 256), 1048576),
+    test.assert_eq(smb.payload(8388608, 8388608, 3), 196608),
+    test.assert_eq(smb.payload(8388608, 8388608, 0), 65536),
+    test.assert_eq(smb.payload(100, 65536, 1), 100),
+    test.assert_eq(smb.charge_of(0), 1),
+    test.assert_eq(smb.charge_of(65536), 1),
+    test.assert_eq(smb.charge_of(65537), 2),
+    test.assert_eq(smb.charge_of(4194304), 64),
+  ]);
+}
+
+function test_paths(): test.TestOutcome {
+  return all([
+    test.assert_eq(smb.wire_path("/docs/a b.txt"), "docs\\a b.txt"),
+    test.assert_eq(store.join("", "a"), "a"),
+    test.assert_eq(store.join("/a/", "b"), "/a/b"),
+    test.assert_eq(store.parent("/a/b/c"), "/a/b"),
+    test.assert_eq(store.parent("a"), ""),
+    test.assert_eq(store.base("/a/b c"), "b c"),
+    test.assert_eq(store.free_name(["a.txt", "a (2).txt"], "a.txt"), "a (3).txt"),
+    test.assert_eq(store.free_name(["docs"], "docs"), "docs (2)"),
+  ]);
+}
+
+function test_types(): test.TestOutcome {
+  return all([
+    test.assert_eq(open.mime("Holiday.JPG"), "image/jpeg"),
+    test.assert_eq(open.mime("/a/b.c/film.mkv"), "video/x-matroska"),
+    test.assert_eq(open.mime("notes"), "application/octet-stream"),
+    test.assert_eq(open.mime("archive.tar.xyz"), "application/octet-stream"),
+  ]);
+}
+
+function test_prefs(): test.TestOutcome {
+  let pin = files.Mark { label: "Films = \"best\"", path: "/storage/emulated/0/Movies", server: "" };
+  let recent = files.Mark { label: "a.mkv", path: "films/a.mkv", server: "NAS" };
+  let back = prefs.decode(prefs.encode(files.Prefs { sort: 2, hidden: true, pins: [pin], recent: [recent, pin] }));
+  let first = prefs.decode("not a store");
+  return all([
+    test.assert_eq(back.sort, 2),
+    holds(back.hidden, "hidden did not come back"),
+    test.assert_eq(back.pins.len(), 1),
+    test.assert_eq(back.pins[0].label, "Films = \"best\""),
+    test.assert_eq(back.recent[0].server, "NAS"),
+    test.assert_eq(back.recent[0].path, "films/a.mkv"),
+    test.assert_eq(first.sort + first.pins.len(), 0),
+  ]);
+}
+
+function test_texts(): test.TestOutcome {
+  return all([
+    test.assert_eq(store.size_text(5i64), "5 B"),
+    test.assert_eq(store.size_text(1536i64), "1.5 KB"),
+    test.assert_eq(store.size_text(128849018880i64), "120 GB"),
+    test.assert_eq(store.day_text(0i64), ""),
+    test.assert_eq(store.day_text(951782400i64), "2000-02-29"),
+  ]);
+}
+
+// A copy of a directory in steps of 1 MiB gives the same bytes.
+function test_copy(): test.TestOutcome {
+  let Ok(dir) = temp_dir("fern-files") else {
+    return test.fail("no temp dir");
+  };
+  let big: u8[] = [];
+  for i in 0..150000 {
+    big = big.append((i % 251) as u8);
+  }
+  let block = big;
+  for i in 0..4 {
+    big = big.concat(block).concat(block);
+  }
+  let made = store.make_dir(store.Local, dir + "/src").is_ok() && store.make_dir(store.Local, dir + "/src/in").is_ok() && store.make_dir(store.Local, dir + "/dst").is_ok();
+  let wrote = write_file_bytes(dir + "/src/in/big.bin", big).is_ok() && write_file_bytes(dir + "/src/in/empty", []).is_ok();
+  let Ok(items) = store.list(store.Local, dir + "/src") else {
+    return test.fail("no listing");
+  };
+  let Ok(steps) = store.plan(store.Local, dir + "/src", items, store.Local, dir + "/dst") else {
+    return test.fail("no plan");
+  };
+  for step in steps {
+    let offset = 0i64;
+    while (true) {
+      let Ok(n) = store.advance(store.Local, store.Local, step, offset) else {
+        return test.fail("a step failed");
+      };
+      offset += n;
+      if (step.dir || n < store.STEP as i64) {
+        break;
+      }
+    }
+  }
+  let copy = read_file_bytes(dir + "/dst/in/big.bin").unwrap_or([]);
+  let empty = read_file_bytes(dir + "/dst/in/empty");
+  let removed = remove_dir_all(dir);
+  return all([
+    holds(made && wrote, "the files of the test are not there"),
+    test.assert_eq(steps.len(), 3),
+    test.assert_eq(copy.len(), big.len()),
+    holds(copy == big, "the copy has different bytes"),
+    holds(empty.is_ok(), "the copy has no empty file"),
+  ]);
+}
+
+function test_vault(): test.TestOutcome {
+  let server = smb.Server { host: "nas.local", port: 4450, share: "media", user: "jo", password: "p=1\n\"é#", domain: "HOME" };
+  let back = vault.decode(vault.encode([files.Saved { name: "Films = here", server: server }, files.Saved { name: "", server: smb.Server { ...server, host: "" } }]));
+  if (back.len() != 1) {
+    return test.fail("the vault gave " + back.len().to_string() + " servers");
+  }
+  return all([
+    test.assert_eq(back[0].name, "Films = here"),
+    test.assert_eq(back[0].server.password, "p=1\n\"é#"),
+    test.assert_eq(back[0].server.port, 4450),
+    test.assert_eq(back[0].server.domain, "HOME"),
+    test.assert_eq(vault.decode("not a store").len(), 0),
+  ]);
+}
+
+function main(): i32 {
+  let r = test.new("Fern Files protocol");
+  r = r.it("MD4 gives the hashes of RFC 1320", test_md4);
+  r = r.it("the NTLMv2 key follows the specification", test_ntlm_keys);
+  r = r.it("the sign-in messages have the NTLM mark", test_challenge);
+  r = r.it("a directory listing gives its entries without . and ..", test_listing);
+  r = r.it("the reply to a share question gives the disk shares", test_shares);
+  r = r.it("a reply passes only with its signature", test_signature);
+  r = r.it("a request takes what the credits pay for", test_request_sizes);
+  r = r.it("paths join, split and get free names", test_paths);
+  r = r.it("a file name gives its media type", test_types);
+  r = r.it("the preferences survive their file", test_prefs);
+  r = r.it("sizes and days read well", test_texts);
+  r = r.it("a copy in steps keeps each byte", test_copy);
+  r = r.it("the saved servers survive the vault", test_vault);
+  return r.finish();
+}
