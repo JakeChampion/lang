@@ -1494,6 +1494,10 @@ function contextual(f: Font, own r: Run, l: Lookup, st: i32, kind: i32, cov: i32
   let set = rule_set(f.data, st, kind, cov, r.glyphs[i], format);
   for k in 0..rule_count(f.data, set, format) {
     let rule = context_rule(f.data, st, set, kind, format, k);
+    // Each part of a rule needs one glyph for each of its values.
+    if (rule.back.n > i || rule.input.n + rule.ahead.n > r.glyphs.len() - 1 - i) {
+      continue;
+    }
     let ps = matched_input(f, r, l, mask, i, rule.input);
     // HarfBuzz keeps the glyphs before the input in the syllable only while
     // the lookup has not changed the count of glyphs, and the glyphs after
