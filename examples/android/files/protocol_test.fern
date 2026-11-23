@@ -7,6 +7,7 @@ import "./files";
 import "./md4";
 import "./ntlm";
 import "./open";
+import "./pack";
 import "./prefs";
 import "./scan";
 import "./smb";
@@ -234,16 +235,26 @@ function test_types(): test.TestOutcome {
 function test_prefs(): test.TestOutcome {
   let pin = files.Mark { label: "Films = \"best\"", path: "/storage/emulated/0/Movies", server: "" };
   let recent = files.Mark { label: "a.mkv", path: "films/a.mkv", server: "NAS" };
-  let back = prefs.decode(prefs.encode(files.Prefs { sort: 2, hidden: true, pins: [pin], recent: [recent, pin] }));
+  let back = prefs.decode(prefs.encode(files.Prefs { sort: 2, hidden: true, grid: true, pins: [pin], recent: [recent, pin] }));
   let first = prefs.decode("not a store");
   return all([
     test.assert_eq(back.sort, 2),
-    holds(back.hidden, "hidden did not come back"),
+    holds(back.hidden && back.grid, "hidden and grid did not come back"),
     test.assert_eq(back.pins.len(), 1),
     test.assert_eq(back.pins[0].label, "Films = \"best\""),
     test.assert_eq(back.recent[0].server, "NAS"),
     test.assert_eq(back.recent[0].path, "films/a.mkv"),
     test.assert_eq(first.sort + first.pins.len(), 0),
+  ]);
+}
+
+// No name of an archive puts a file outside the folder of the extraction.
+function test_archive_names(): test.TestOutcome {
+  return all([
+    test.assert_eq(pack.safe_parts("../../etc/passwd").join("/"), "etc/passwd"),
+    test.assert_eq(pack.safe_parts("/abs/./x").join("/"), "abs/x"),
+    test.assert_eq(pack.safe_parts("a\\..\\b.txt").join("/"), "a/b.txt"),
+    test.assert_eq(pack.safe_parts("..").len(), 0),
   ]);
 }
 
@@ -333,6 +344,7 @@ function main(): i32 {
   r = r.it("paths join, split and get free names", test_paths);
   r = r.it("a file name gives its media type", test_types);
   r = r.it("the preferences survive their file", test_prefs);
+  r = r.it("an archive name stays below its folder", test_archive_names);
   r = r.it("sizes and days read well", test_texts);
   r = r.it("a copy in steps keeps each byte", test_copy);
   r = r.it("the saved servers survive the vault", test_vault);

@@ -23,6 +23,10 @@ saved server. The headings are words of round dots.
 - The app keeps the sort order, the hidden files setting, the pins and the
   recent files from one start to the next (`prefs.fern`).
 
+- A folder shows as a list or as a grid of tiles. An image file of the
+  phone shows a small picture of itself. An image file of a server does
+  not, because each small picture is a whole download.
+
 A long press starts a selection:
 
 - One button selects each item of the folder.
@@ -30,6 +34,7 @@ A long press starts a selection:
   tap.
 - The app pastes into the folder that shows, also from the phone to a
   server and back.
+- **Zip** makes an archive of the selection in the folder that shows.
 - A copy runs in steps of 8 MiB. The screen shows its progress, and a
   button stops it.
 
@@ -40,6 +45,8 @@ The app does more for one file:
   other file as text.
 - **Open** shows the file in another app of the phone, such as a video
   player. A file of a server goes to the cache of the app first.
+- **Extract here** puts the files of a zip archive of at most 256 MiB in
+  a new folder beside it (`pack.fern`).
 - **Share** gives the file to an app that the person picks, such as a
   mail app.
 - A file shows a picture of dots for what it holds: an image, sound, a

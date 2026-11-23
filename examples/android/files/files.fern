@@ -11,6 +11,7 @@ import "std/i64";
 import "std/string";
 import "std/utf8";
 import "std/worker";
+import "./pack";
 import "./scan";
 import "./smb";
 import "./store";
@@ -35,11 +36,14 @@ pub struct Task { src: store.Place, dst: store.Place, steps: store.Step[], at: i
 pub struct Mark { label: string, path: string, server: string }
 
 // What the app keeps from one start to the next.
-pub struct Prefs { sort: i32, hidden: boolean, pins: Mark[], recent: Mark[] }
+pub struct Prefs { sort: i32, hidden: boolean, grid: boolean, pins: Mark[], recent: Mark[] }
 
 pub function no_prefs(): Prefs {
-  return Prefs { sort: 0, hidden: false, pins: [], recent: [] };
+  return Prefs { sort: 0, hidden: false, grid: false, pins: [], recent: [] };
 }
+
+// The small picture of an image file of the folder that shows.
+pub struct Thumb { name: string, image: draw.Image }
 
 pub enum Naming { Folder, NewName(string) }
 
@@ -59,6 +63,9 @@ enum Job {
   Measure(i64, store.Place, string, smb.Entry[]),
   Shares(i64, smb.Server),
   Scan(i64),
+  ReadThumb(string, store.Place, string),
+  Unpack(i64, store.Place, string, string),
+  Pack(i64, store.Place, string, smb.Entry[], string),
 }
 
 // What the app needs from Android: the storages of the phone, whether the
@@ -84,6 +91,15 @@ pub struct Model {
   // True when the entries are what a search below the folder found. The
   // name of each entry is then its path below the folder.
   found: boolean,
+  // True when a folder shows as a grid of tiles.
+  grid: boolean,
+  // The small pictures of the folder that shows, the names of the image
+  // files that wait for one, and the bytes of the one that waits for the
+  // decoder with its name.
+  thumbs: Thumb[],
+  thumb_wait: string[],
+  thumb_raw: u8[],
+  thumb_name: string,
   page: Page,
   place: store.Place,
   label: string,
@@ -172,6 +188,10 @@ pub enum Msg {
   ServersFound(i64, Result[string[], string]),
   PickServer(string),
   SelectAll,
+  Zip,
+  ToggleGrid,
+  ThumbRead(string, string, Result[smb.Part, string]),
+  Extract(string),
   OpenFile(string),
   ShareFile(string),
   TogglePin,
@@ -203,7 +223,7 @@ function no_server(): Saved {
 // `granted` is false when Android hides the files of the storages.
 pub function start(roots: Root[], granted: boolean, servers: Saved[], cache: string, prefs: Prefs): Model {
   return Model {
-    roots: roots, servers: servers, granted: granted, cache: cache, launch: "", sharing: false, pins: prefs.pins, recent: prefs.recent, unkept: false, found: false, page: Home, place: store.Local, label: "", top: "", path: "", entries: [], loading: false, note: "", fault: "", sort: prefs.sort, hidden: prefs.hidden, query: "",
+    roots: roots, servers: servers, granted: granted, cache: cache, launch: "", sharing: false, pins: prefs.pins, recent: prefs.recent, unkept: false, found: false, grid: prefs.grid, thumbs: [], thumb_wait: [], thumb_raw: [], thumb_name: "", page: Home, place: store.Local, label: "", top: "", path: "", entries: [], loading: false, note: "", fault: "", sort: prefs.sort, hidden: prefs.hidden, query: "",
     selecting: false, picked: [], clip: None, task: None, naming: None, name_text: "", confirm: "", draft: no_server(), preview: "", picture: None, raw: [], wide: 0, shares: [], finding: false, hosts: [], scanning: false, revision: 0i64, task_revision: 0i64, job: None, need_roots: false, ask_access: false, unsaved: false,
   };
 }
@@ -223,7 +243,7 @@ function reload(m: Model): Model {
 }
 
 function open(m: Model, place: store.Place, label: string, top: string, path: string): Model {
-  return reload(Model { ...m, page: Browse, place: place, label: label, top: top, path: path, entries: [], note: "", fault: "", query: "", selecting: false, picked: [], naming: None, confirm: "" });
+  return reload(Model { ...m, page: Browse, place: place, label: label, top: top, path: path, entries: [], thumbs: [], thumb_wait: [], note: "", fault: "", query: "", selecting: false, picked: [], naming: None, confirm: "" });
 }
 
 function entry_named(m: Model, name: string): Option[smb.Entry] {
@@ -423,6 +443,37 @@ function select_update(own m: Model, msg: Msg): Model {
     StopSelecting => {
       return Model { ...m, selecting: false, picked: [], confirm: "" };
     },
+    Zip => {
+      let items = picked_entries(m);
+      if (items.len() == 0) {
+        return m;
+      }
+      let named = if (items.len() == 1) { items[0].name } else if (store.base(m.path).len() > 0) { store.base(m.path) } else { "Archive" };
+      let to = store.free_name(m.entries.map((e: smb.Entry): string => e.name), named + ".zip");
+      let revision = m.task_revision + 1i64;
+      return Model { ...m, selecting: false, picked: [], note: "", fault: "", task_revision: revision, loading: true, job: Some(Pack(revision, m.place, m.path, items, store.join(m.path, to))) };
+    },
+    Extract(name) => {
+      let folder = if (name.to_lower().ends_with(".zip")) { name.take(name.len() - 4) } else { name + " files" };
+      let into = store.free_name(m.entries.map((e: smb.Entry): string => e.name), store.base(folder));
+      let revision = m.task_revision + 1i64;
+      let target = store.join(store.parent(store.join(m.path, name)), into);
+      return Model { ...m, page: Browse, note: "", fault: "", task_revision: revision, loading: true, job: Some(Unpack(revision, m.place, store.join(m.path, name), target)) };
+    },
+    ToggleGrid => {
+      return Model { ...m, grid: !m.grid, unkept: true };
+    },
+    ThumbRead(path, name, result) => {
+      if (path != m.path) {
+        return m;
+      }
+      if let Ok(part) = result {
+        if (part.size == part.data.len() as i64 && part.data.len() > 0) {
+          return next_thumb(Model { ...m, thumb_raw: part.data, thumb_name: name });
+        }
+      }
+      return next_thumb(m);
+    },
     SelectAll => {
       return Model { ...m, picked: shown(m).map((e: smb.Entry): string => e.name), confirm: "" };
     },
@@ -583,7 +634,7 @@ function result_update(own m: Model, msg: Msg): Model {
       }
       match (result) {
         Ok(entries) => {
-          return Model { ...m, entries: entries, loading: false };
+          return thumbs_started(Model { ...m, entries: entries, loading: false });
         },
         Err(e) => {
           return failed(Model { ...m, entries: [], loading: false }, e);
@@ -637,6 +688,35 @@ function result_update(own m: Model, msg: Msg): Model {
       return m;
     }
   }
+}
+
+// The most small pictures of one folder, and the most bytes of an image
+// file that gets one.
+const MOST_THUMBS: i32 = 60;
+
+const THUMB_BYTES: i32 = 12582912;
+
+// The pixels across of a small picture.
+const THUMB_WIDE: i32 = 192;
+
+// Starts the small pictures of the image files of a folder of the phone.
+// A folder of a server gets none, because each one is a whole download.
+function thumbs_started(m: Model): Model {
+  let store.Local = m.place else {
+    return m;
+  };
+  let have = m.thumbs.map((t: Thumb): string => t.name);
+  let wait = shown(m).filter((e: smb.Entry): boolean => !e.dir && is_photo(e.name) && e.size <= THUMB_BYTES as i64 && !have.contains(e.name)).map((e: smb.Entry): string => e.name).take(MOST_THUMBS);
+  return next_thumb(Model { ...m, thumbs: m.thumbs.filter((t: Thumb): boolean => entry_named(m, t.name).is_some()), thumb_wait: wait });
+}
+
+// Reads the first image file that waits for a small picture.
+function next_thumb(m: Model): Model {
+  if (m.thumb_wait.len() == 0) {
+    return m;
+  }
+  let name = m.thumb_wait[0];
+  return Model { ...m, thumb_wait: m.thumb_wait.drop(1), job: Some(ReadThumb(m.path, m.place, name)) };
 }
 
 function up(m: Model): Model {
@@ -838,7 +918,7 @@ pub function update(own m: Model, msg: Msg): Model {
     NewFolder | StartRename(_) | NameText(_) | SaveName | CancelName => {
       return name_update(idle, msg);
     },
-    Tap(_) | Hold(_) | StopSelecting | SelectAll | Copy(_) | CopyOne(_, _) | ClearClip | Delete | DeleteOne(_) => {
+    Tap(_) | Hold(_) | StopSelecting | SelectAll | Zip | Extract(_) | ToggleGrid | ThumbRead(_, _, _) | Copy(_) | CopyOne(_, _) | ClearClip | Delete | DeleteOne(_) => {
       return select_update(idle, msg);
     },
     OpenServer(_) | EditServer(_) | Draft(_, _) | SaveServer | DeleteServer | FindShares | SharesFound(_, _) | PickShare(_) | FindServers | ServersFound(_, _) | PickServer(_) => {
@@ -867,6 +947,11 @@ function removed(place: store.Place, dir: string, items: smb.Entry[]): Result[vo
   for item in items {
     store.remove(place, store.join(dir, item.name), item.dir)?;
   }
+  return Ok(());
+}
+
+function counted(done: Result[i32, string]): Result[void, string] {
+  let count = done?;
   return Ok(());
 }
 
@@ -909,6 +994,15 @@ function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
       Search(revision, place, path, needle) => {
         return Searched(revision, store.search(place, path, needle));
       },
+      Unpack(revision, place, path, into) => {
+        return Finished(revision, "Extracted.", counted(pack.extract(place, path, into)));
+      },
+      Pack(revision, place, dir, items, to) => {
+        return Finished(revision, "The archive is in this folder.", counted(pack.pack(place, dir, items, to)));
+      },
+      ReadThumb(path, place, name) => {
+        return ThumbRead(path, name, store.read(place, store.join(path, name), 0i64, THUMB_BYTES));
+      },
       Scan(revision) => {
         return ServersFound(revision, scan.servers());
       },
@@ -929,6 +1023,12 @@ function effects(m: Model, platform: Platform): Model {
     let kept = platform.save(m.servers);
     next = Model { ...next, unsaved: false };
   }
+  if (m.thumb_raw.len() > 0) {
+    next = Model { ...next, thumb_raw: [], thumb_name: "" };
+    if let Some(small) = platform.decode(m.thumb_raw, THUMB_WIDE) {
+      next = Model { ...next, thumbs: next.thumbs.append(Thumb { name: m.thumb_name, image: small }) };
+    }
+  }
   if (m.raw.len() > 0) {
     let shown = platform.decode(m.raw, m.wide);
     next = Model { ...next, raw: [], loading: false, picture: shown };
@@ -937,7 +1037,7 @@ function effects(m: Model, platform: Platform): Model {
     }
   }
   if (m.unkept) {
-    let kept = platform.keep(Prefs { sort: m.sort, hidden: m.hidden, pins: m.pins, recent: m.recent });
+    let kept = platform.keep(Prefs { sort: m.sort, hidden: m.hidden, grid: m.grid, pins: m.pins, recent: m.recent });
     next = Model { ...next, unkept: false };
   }
   if (m.launch.len() > 0) {
@@ -1171,8 +1271,39 @@ function entry_detail(e: smb.Entry): string {
   return if (day.len() > 0) { store.size_text(e.size) + " · " + day } else { store.size_text(e.size) };
 }
 
+// The picture of an entry at `size` dp: its small picture when it has one,
+// or dots for what it holds.
+function entry_picture(m: Model, e: smb.Entry, size: f64): ui.El[Msg] {
+  if let Some(thumb) = m.thumbs.find((t: Thumb): boolean => t.name == e.name) {
+    return ui.picture[Msg]("thumb:" + m.path + "/" + e.name, thumb.image).width(size).height(size).rounded(6.0);
+  }
+  let dots = if (e.dir) { glyph(FOLDER, "dir", ui.INK) } else { file_glyph(e.name, ui.MUTED) };
+  return ui.row([dots]).aligned(ui.CENTER).width(size).height(size);
+}
+
+// A tile of the grid: the picture of the entry over its name.
+function entry_tile(m: Model, e: smb.Entry): ui.El[Msg] {
+  let on = m.selecting && m.picked.contains(e.name);
+  let name = ui.text[Msg](e.name).sized(13.0).clamped(2).colored(if (on) { ui.PRIMARY } else { ui.INK });
+  let state = if (on) { ", selected" } else { "" };
+  return ui.column([entry_picture(m, e, 88.0), name]).spaced(4.0).aligned(ui.CENTER).padding_xy(4.0, 4.0).wide().on_tap(Tap(e.name)).on_long(Hold(e.name)).described(e.name + state);
+}
+
+// One row of the grid: the 3 entries from `first`.
+function tile_row(m: Model, items: smb.Entry[], first: i32): ui.El[Msg] {
+  let cells: ui.El[Msg][] = [];
+  for k in 0..3 {
+    if (first + k < items.len()) {
+      cells = cells.append(entry_tile(m, items[first + k]));
+    } else {
+      cells = cells.append(ui.box[Msg]().wide());
+    }
+  }
+  return ui.row(cells).spaced(8.0).wide().height(140.0);
+}
+
 function entry_row(m: Model, e: smb.Entry): ui.El[Msg] {
-  let picture = if (e.dir) { glyph(FOLDER, "dir", ui.INK) } else { file_glyph(e.name, ui.MUTED) };
+  let picture = entry_picture(m, e, 36.0);
   let words = ui.column([ui.text[Msg](e.name).sized(16.0).clamped(1), ui.text[Msg](entry_detail(e)).colored(ui.MUTED).clamped(1)]).spaced(2.0).wide();
   let kids = [picture, words];
   if (m.selecting) {
@@ -1213,7 +1344,7 @@ function selection_bar(m: Model): ui.El[Msg][] {
   let delete = if (m.confirm == "delete") { "Confirm delete" } else { "Delete" };
   return [ui.card([
     ui.row([ui.text[Msg](m.picked.len().to_string() + " selected").weighted(600).wide(), ui.text_button("Cancel", StopSelecting)]).aligned(ui.CENTER),
-    actions_row([ui.text_button("Copy", Copy(false)), ui.text_button("Move", Copy(true)), ui.text_button(delete, Delete), ui.text_button("All", SelectAll)]),
+    actions_row([ui.text_button("Copy", Copy(false)), ui.text_button("Move", Copy(true)), ui.text_button(delete, Delete), ui.text_button("Zip", Zip), ui.text_button("All", SelectAll)]),
   ]).spaced(4.0).wide()];
 }
 
@@ -1239,10 +1370,11 @@ function browse(m: Model): ui.El[Msg] {
   } else if (items.len() == 0 && m.fault.len() == 0) {
     head = head.append(ui.text[Msg](if (m.entries.len() == 0) { "This folder is empty." } else { "No name has this text." }).colored(ui.MUTED));
   }
-  let list = ui.list("entries:" + m.path + ":" + m.sort.to_string() + ":" + m.query + ":" + m.hidden.to_string(), items.len(), 64.0, (i: i32): ui.El[Msg] => entry_row(m, items[i]));
+  let key = "entries:" + m.path + ":" + m.sort.to_string() + ":" + m.query + ":" + m.hidden.to_string() + ":" + m.thumbs.len().to_string();
+  let list = if (m.grid) { ui.list(key + ":grid", (items.len() + 2) / 3, 140.0, (i: i32): ui.El[Msg] => tile_row(m, items, i * 3)) } else { ui.list(key, items.len(), 64.0, (i: i32): ui.El[Msg] => entry_row(m, items[i])) };
   let bars = ui.column(selection_bar(m).concat(task_bar(m)).concat(clip_bar(m))).spaced(8.0).wide();
   let body = ui.column(head.append(list).append(bars)).spaced(8.0).padding_xy(16.0, 8.0).wide().tall();
-  return ui.column([ui.app_bar(title, Some(Up), [ui.text_button(if (pinned(m)) { "Unpin" } else { "Pin" }, TogglePin), ui.text_button("Home", GoHome)]), body]).wide().tall();
+  return ui.column([ui.app_bar(title, Some(Up), [ui.text_button(if (m.grid) { "List" } else { "Grid" }, ToggleGrid), ui.text_button(if (pinned(m)) { "Unpin" } else { "Pin" }, TogglePin), ui.text_button("Home", GoHome)]), body]).wide().tall();
 }
 
 // A screen over the folder: a bar with a back arrow, then its rows.
@@ -1271,7 +1403,7 @@ function item(m: Model, name: string, screen: ui.Screen): ui.El[Msg] {
     ui.text[Msg](trail(m)).colored(ui.MUTED),
     actions_row([ui.button("Open", OpenFile(name)), look_button(name, screen), ui.outlined_button("Share", ShareFile(name))]),
     actions_row([ui.outlined_button("Copy", CopyOne(name, false)), ui.outlined_button("Move", CopyOne(name, true)), ui.text_button("Rename", StartRename(name)), ui.text_button(delete, DeleteOne(name))]),
-  ]).concat(task_bar(m));
+  ]).concat(if (name.to_lower().ends_with(".zip")) { [actions_row([ui.outlined_button("Extract here", Extract(name))])] } else { [] }).concat(task_bar(m));
   return sheet("File", rows, "item");
 }
 

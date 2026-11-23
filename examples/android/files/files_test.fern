@@ -325,6 +325,47 @@ function test_folder_sizes(): test.TestOutcome {
   return test.assert_eq(wrote && shown, true);
 }
 
+function test_zip_and_extract(): test.TestOutcome {
+  let dir = fixture();
+  let big = "Fern Files. ".repeat(4000);
+  let wrote = write_file(dir + "/Download/old/long.txt", big).is_ok();
+  let s = done(sim.tap(simulator(dir, []), "Phone storage"));
+  s = sim.hold(s, "Download");
+  s = sim.tap(s, "notes.txt");
+  s = done(sim.tap(s, "Zip"));
+  if (names(s) != "Download,Music,Phone storage.zip,notes.txt,photo.jpg" && !names(s).contains(".zip")) {
+    return test.fail("the archive is not in the folder: " + names(s));
+  }
+  let archive = files.shown(s.shell.app).filter((e: smb.Entry): boolean => e.name.ends_with(".zip"));
+  if (archive.len() != 1 || archive[0].size >= big.len() as i64) {
+    return test.fail("the archive must be smaller than its text");
+  }
+  s = sim.tap(s, archive[0].name);
+  s = done(sim.tap(s, "Extract here"));
+  let out = dir + "/" + archive[0].name.take(archive[0].name.len() - 4);
+  let same = read_file(out + "/Download/old/long.txt").unwrap_or("") == big && read_file(out + "/notes.txt").unwrap_or("") == "Buy milk.\nCall the plumber.\n";
+  let removed = remove_dir_all(dir);
+  return test.assert_eq(wrote && same, true);
+}
+
+function test_thumbs_and_grid(): test.TestOutcome {
+  let dir = fixture();
+  let s = done(sim.tap(simulator(dir, []), "Phone storage"));
+  for i in 0..3 {
+    s = done(s);
+  }
+  let small = s.shell.app.thumbs.map((t: files.Thumb): string => t.name).join(",");
+  s = sim.tap(s, "Grid");
+  preview(s, "16-grid");
+  let grid = s.shell.app.grid && sim.says(s, "List") && sim.shows(s, "photo.jpg");
+  s = done(sim.tap(s, "Download"));
+  let entered = s.shell.app.path == dir + "/Download" && s.shell.app.thumbs.len() == 0;
+  let again = simulator(dir, []);
+  let kept = again.shell.app.grid;
+  let removed = remove_dir_all(dir);
+  return test.assert_eq(small + " " + grid.to_string() + " " + entered.to_string() + " " + kept.to_string(), "photo.jpg true true true");
+}
+
 function test_no_access(): test.TestOutcome {
   let s = simulator("/no/such/storage", []);
   preview(s, "10-access");
@@ -342,6 +383,8 @@ function main(): i32 {
   r = r.it("keep the pins, the recent files and the sort order", test_pins_recent_and_prefs);
   r = r.it("search the folders below", test_search_below);
   r = r.it("measure the folders and sort by size", test_folder_sizes);
+  r = r.it("zip a selection and extract the archive", test_zip_and_extract);
+  r = r.it("show small pictures and a grid", test_thumbs_and_grid);
   r = r.it("ask for access when the storage is closed", test_no_access);
   return r.finish();
 }
