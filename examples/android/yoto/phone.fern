@@ -139,6 +139,11 @@ pub function received(s: State, revision: i64, result: Result[api.Stream[], api.
 }
 
 pub function control(s: State, command: api.Command): State {
+  return control_at(s, command, monotonic_ns());
+}
+
+// `now` is the monotonic clock in nanoseconds.
+pub function control_at(s: State, command: api.Command, now: i64): State {
   match (command) {
     api.Pause => {
       if let Playing = s.phase {
@@ -147,7 +152,7 @@ pub function control(s: State, command: api.Command): State {
     },
     api.Resume => {
       if let Paused = s.phase {
-        let long_pause = s.paused_at > 0i64 && monotonic_ns() - s.paused_at >= 120000000000i64;
+        let long_pause = s.paused_at > 0i64 && now - s.paused_at >= 120000000000i64;
         let at = if (long_pause) { (s.elapsed - 10000i64).max(0i64) } else { s.resume_ms };
         return State { ...s, action: Some(Start), resume_ms: at, paused_at: 0i64 };
       }
