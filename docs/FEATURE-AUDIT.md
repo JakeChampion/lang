@@ -200,7 +200,6 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `JsonValue` variants | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | via `std/json` parse/encode roundtrip (`audit_std_json`) |
 | `Reader` / `Writer` | | | | | | ⬜ | |
 | `HttpRequest` / `HttpResponse` | | | | | | ⬜ | |
-| `Url` | | | | | | ⬜ | |
 | `Map[K, V]` / `MapIter[K, V]` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | Map ops audited (i32+string keys); MapIter cursor (`iter`/`has_next`/`key`/`value`/`advance`) now lowers on the self-host **IR path** for x86-64/arm64 (wasm routes via the AST path) — flips `json_roundtrip` |
 | Time types (`Instant`/`Date`/…) | | | | | | ⬜ | via std/time |
 

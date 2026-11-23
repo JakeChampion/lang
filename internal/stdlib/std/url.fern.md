@@ -517,6 +517,9 @@ function __joined_path(segments: string[], absolute: boolean): string {
 
 ```fern
 <<11 pub function parse(s: string): Result[Url, UrlError]>>=
+// The parts of a URL. `port` is 0 where the text gives none.
+pub struct Url { scheme: string, host: string, port: i32, path: string, query: string, fragment: string }
+
 // The URL a parse refused, and which part of it was at fault.
 pub struct UrlError { text: string, kind: UrlErrorKind }
 
