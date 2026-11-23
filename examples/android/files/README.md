@@ -107,6 +107,10 @@ It also copies a directory in steps.
 `files_test.fern` runs the app on the simulator of `std/android/ui`, with a
 temporary directory as the storage of the phone.
 
+`smb_live.fern` checks the SMB client against a real server.
+`scripts/files-samba-check` runs it against Samba with each set of
+dialects and signature rules, and the Android lane of CI runs that script.
+
 ```sh
 fern -apk files.apk examples/android/files/app.fern
 ```

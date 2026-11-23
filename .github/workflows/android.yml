@@ -62,6 +62,9 @@ name: Android
 # its effective state checked before either copy starts.
 # The seccomp job checks the syscalls of the fixture corpus against
 # Android's app filter.
+# The files-samba job runs the SMB client of examples/android/files against
+# Samba, with each set of dialects and signature rules that the client has
+# code for. No other lane has an SMB server.
 
 # Called from ci.yml rather than triggered: that is the one workflow a pull
 # request or a push to main launches. It decides from the changed files
@@ -373,6 +376,21 @@ jobs:
   # seccomp filter that bionic generates at the AOSP tag in
   # scripts/android-app-syscalls.py. A syscall outside it kills an app with
   # SIGSYS on a phone, and nothing else would see it.
+  files-samba:
+    name: android-files-samba
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: Install Samba
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends samba
+      # Samba keeps its users with the rights of root, so the check runs
+      # with sudo. It uses a port and directories of its own.
+      - name: Check the SMB client of Fern Files against Samba
+        run: |
+          make bin/fern
+          sudo scripts/files-samba-check "$PWD/bin/fern"
   seccomp:
     name: android-seccomp-corpus
     runs-on: ubuntu-24.04
