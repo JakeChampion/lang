@@ -3396,7 +3396,13 @@ function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
   if (id.methods.len() == 0 && id.assoc_names.len() == 0) {
     return (out + " {}\n", f);
   }
-  out += " {\n";
+  out += " {";
+  if (id.methods.len() == 0 || id.methods[0].line > id.line) {
+    let (tr, hf) = emit_trailing(f, id.line);
+    out += tr;
+    f = hf;
+  }
+  out += "\n";
   for abi in 0..id.assoc_names.len() {
     let abv = "";
     if (abi < id.assoc_values.len()) {
@@ -3500,7 +3506,13 @@ function print_trait_decl(td: parser.TraitDecl, f: Fmt): (string, Fmt) {
   if (td.methods.len() == 0 && td.assoc_types.len() == 0) {
     return (out + " {}\n", f);
   }
-  out += " {\n";
+  out += " {";
+  if (td.methods.len() == 0 || td.methods[0].line > td.line) {
+    let (tr, hf) = emit_trailing(f, td.line);
+    out += tr;
+    f = hf;
+  }
+  out += "\n";
   for ati in 0..td.assoc_types.len() {
     out = out + indent_str(1) + "type " + td.assoc_types[ati] + ";\n";
   }

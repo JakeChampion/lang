@@ -118,6 +118,23 @@ function g(a: i32): i32 {
   ); // after the call
 }
 `},
+	{"comment-on-a-trait-or-impl-header", `trait Speak { // the trait
+  function speak(self: Self): i32; // required
+}
+
+trait Sized { // sized
+  type Item;
+  function size(self: Self): i32;
+}
+
+struct Dog { age: i32 }
+
+impl Speak for Dog { // the impl
+  function speak(self: Self): i32 { return self.age; }
+}
+
+impl Sized for Dog { type Item = i32; function size(self: Self): i32 { return 1; } } // one line
+`},
 	{"unsafe-value-blocks", `function f(bytes: u8[]): string {
   let n = unsafe { 3 };
   let text = unsafe { string_from_bytes_unchecked(bytes) };
