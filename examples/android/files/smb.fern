@@ -68,8 +68,6 @@ const NO_MORE_FILES: i64 = 0x80000006i64;
 
 const END_OF_FILE: i64 = 0xc0000011i64;
 
-const NOT_SUPPORTED: i64 = 0xc00000bbi64;
-
 // A read gave a part of a message of a pipe, and the pipe has more.
 const BUFFER_OVERFLOW: i64 = 0x80000005i64;
 
@@ -82,13 +80,6 @@ const ENCRYPTION: i64 = 0x40i64;
 
 // The signature of a session of a dialect before 3.0.
 const HMAC_SHA256: i32 = 0;
-
-// The dialects that the client offers first. A server of 3.0 or 3.0.2 then
-// picks 2.1, whose HMAC-SHA256 signature is much faster here than the
-// AES-CMAC of those dialects.
-const FAST_DIALECTS: i32[] = [0x0202, 0x0210, 0x0311];
-
-const EACH_DIALECT: i32[] = [0x0202, 0x0210, 0x0300, 0x0302, 0x0311];
 
 const SMB_2_0_2: i32 = 0x0202;
 
@@ -354,9 +345,10 @@ function sized(st: State, body: u8[]): State {
   return State { ...st, most_read: ntlm.get32(body, 32).min(limit).max(CHUNK as i64) as i32, most_write: ntlm.get32(body, 36).min(limit).max(CHUNK as i64) as i32 };
 }
 
-// The request that offers `dialects`. The contexts at its end are for
+// The request that offers each dialect. The contexts at its end are for
 // the 3.1.1 dialect, and a server of an older dialect does not read them.
-function hello(dialects: i32[]): u8[] {
+function hello(): u8[] {
+  let dialects = [SMB_2_0_2, SMB_2_1, SMB_3_0, SMB_3_0_2, SMB_3_1_1];
   let b = ntlm.put32(ntlm.put16(ntlm.put16(ntlm.put16(ntlm.put16([], 36), dialects.len()), 1), 0), LARGE_MTU | ENCRYPTION).concat(rand.bytes(16));
   let fixed = 64 + 36 + dialects.len() * 2;
   let pad = (8 - fixed % 8) % 8;
@@ -393,9 +385,9 @@ function session_body(blob: u8[]): u8[] {
 
 // Agrees the dialect, signs in and opens the share. It gives the state of
 // the connection.
-function sign_in(sock: Socket, s: Server, dialects: i32[]): Result[State, string] {
+function sign_in(sock: Socket, s: Server): Result[State, string] {
   let st = State { session: ntlm.zeros(8), tree: ntlm.zeros(4), next: 0i64, key: [], signs: false, credits: 1, most_read: CHUNK, most_write: CHUNK, dialect: 0, signer: HMAC_SHA256, seal_key: [], open_key: [] };
-  let (st0, agreed) = request(sock, st, NEGOTIATE, hello(dialects));
+  let (st0, agreed) = request(sock, st, NEGOTIATE, hello());
   let terms = expect(agreed, OK)?;
   let dialect = ntlm.get16(terms.body, 4);
   let st1 = State { ...sized(st0, terms.body), dialect: dialect };
@@ -429,34 +421,22 @@ function with_share[T](s: Server, work: (Socket, State) => Result[T, string]): R
   if (s.host.len() == 0 || s.share.len() == 0) {
     return Err("Give the name of the server and of the share.");
   }
-  let (first, refused) = connected(s, FAST_DIALECTS, work);
-  if (refused) {
-    return connected(s, EACH_DIALECT, work).0;
-  }
-  return first;
-}
-
-// Runs `work` on a connection that offers `dialects`. The boolean is true
-// when the server took none of them.
-function connected[T](s: Server, dialects: i32[], work: (Socket, State) => Result[T, string]): (Result[T, string], boolean) {
   match (dns.dial(s.host, if (s.port > 0) { s.port } else { 445 }, dns.dial_options())) {
     Ok(sock) => {
       let out: Result[T, string] = Err("");
-      let refused = false;
-      match (sign_in(sock, s, dialects)) {
+      match (sign_in(sock, s)) {
         Ok(st) => {
           out = work(sock, st);
         },
         Err(e) => {
-          refused = e == status_text(NOT_SUPPORTED);
           out = Err(e);
         }
       }
       let closed = tcp_close(sock);
-      return (out, refused);
+      return out;
     },
     Err(e) => {
-      return (Err("Could not reach " + s.host + ": " + e.message()), false);
+      return Err("Could not reach " + s.host + ": " + e.message());
     }
   }
 }

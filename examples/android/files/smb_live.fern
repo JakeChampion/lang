@@ -1,7 +1,6 @@
 // Checks the SMB client against a real server. FILES_SMB_SERVER holds the
 // host, the port, the share, the user and the password, with spaces between
-// them. FILES_SMB_BYTES is the size of the file that goes to the server and
-// back. scripts/files-samba-check runs this program against Samba with each
+// them. scripts/files-samba-check runs this program against Samba with each
 // set of dialects and signature rules.
 import "std/i32";
 import "std/result";
@@ -58,7 +57,8 @@ function copied(src: store.Place, from: string, dst: store.Place, to: string): R
 
 function test_round_trip(): test.TestOutcome {
   let remote = store.Remote(server());
-  let size = i32.parse_i32(env("FILES_SMB_BYTES").unwrap_or("12000000")).unwrap_or(12000000);
+  // The file has more bytes than one step of a copy, and than one request.
+  let size = 12000000;
   let Ok(dir) = temp_dir("fern-files-live") else {
     return test.fail("no temp dir");
   };
