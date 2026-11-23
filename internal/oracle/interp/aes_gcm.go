@@ -126,7 +126,7 @@ func builtinAESExpandKey(_ *Interp, args []Value) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(v[0]) != 16 && len(v[0]) != 32 {
+	if len(v[0]) != 16 && len(v[0]) != 24 && len(v[0]) != 32 {
 		return nil, fmt.Errorf("__aes_expand_key: a key of %d bytes", len(v[0]))
 	}
 	return byteArray(aesExpandKey(v[0])), nil
@@ -151,6 +151,8 @@ func newRoundKeyBlock(rk []byte) (roundKeyBlock, bool) {
 	switch {
 	case len(rk) >= 240:
 		return roundKeyBlock{rk, 14}, true
+	case len(rk) >= 208:
+		return roundKeyBlock{rk, 12}, true
 	case len(rk) >= 176:
 		return roundKeyBlock{rk, 10}, true
 	}
@@ -219,21 +221,13 @@ func (b roundKeyBlock) Encrypt(dst, src []byte) {
 	copy(dst, s[:])
 }
 
-// decRoundKeyBlock also takes the 208 bytes of a 192-bit key.
-func decRoundKeyBlock(rk []byte) (roundKeyBlock, bool) {
-	if len(rk) >= 208 && len(rk) < 240 {
-		return roundKeyBlock{rk, 12}, true
-	}
-	return newRoundKeyBlock(rk)
-}
-
 func builtinAESDecBlocks(_ *Interp, args []Value) (Value, error) {
 	v, err := byteViews("__aes_dec_blocks", args, 2)
 	if err != nil {
 		return nil, err
 	}
 	rk, data := v[0], v[1]
-	block, ok := decRoundKeyBlock(rk)
+	block, ok := newRoundKeyBlock(rk)
 	if !ok {
 		return nil, fmt.Errorf("__aes_dec_blocks: round keys of %d bytes", len(rk))
 	}

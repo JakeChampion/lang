@@ -68,6 +68,9 @@ function schedules(): i32 {
   if (!same(r256[32:48], hex("9ba354118e6925afa51a8b5f2067fcde")) || !same(r256[224:240], hex("fe4890d1e6188d0b046df344706c631e"))) {
     return 4;
   }
+  if (!same(__aes_expand_key(pattern(24, 1, 0)), hex("` + aesKATSchedule192 + `"))) {
+    return 5;
+  }
   return 0;
 }
 
@@ -81,6 +84,15 @@ function blocks(): i32 {
   let r256: u8[] = __aes_expand_key(pattern(32, 1, 0));
   if (!same(__aes_ctr32(r256, pt, zero), hex("8ea2b7ca516745bfeafc49904b496089"))) {
     return 11;
+  }
+  let r192: u8[] = __aes_expand_key(pattern(24, 1, 0));
+  if (!same(__aes_ctr32(r192, pt, zero), hex("dda97ca4864cdfe06eaf70a0ec0d7191"))) {
+    return 14;
+  }
+  // Five blocks: the pass of four blocks and the pass of one block.
+  let counters: u8[] = __aes_dec_blocks(r192, __aes_ctr32(r192, pattern(16, 9, 4), __alloc_u8(80)));
+  if (!same(counters[0:16], pattern(16, 9, 4)) || !same(counters[64:80], pattern(16, 9, 4).with(15, 143 as u8))) {
+    return 15;
   }
   // Round keys that no key schedule made: each engine uses them as they are.
   if (!same(__aes_ctr32(pattern(200, 7, 3), pt, zero), hex("69e756ba3d13e77cac8af65add76f67d"))) {
@@ -391,10 +403,10 @@ const (
 // aesKernelMisuses each stop the program instead of reaching outside the
 // buffer: a text region past its end, a negative offset, an aad region past
 // its end, an iv that is not 12 bytes, a schedule short of AES-128's, a key
-// that is not 16 or 32 bytes, and a counter, a hash key or a hash block short
+// that is not 16, 24 or 32 bytes, and a counter, a hash key or a hash block short
 // of 16 bytes.
 var aesKernelMisuses = []string{
-	"__aes_expand_key(__alloc_u8(24))",
+	"__aes_expand_key(__alloc_u8(20))",
 	"__aes_expand_key(__alloc_u8(0))",
 	"__aes_ctr32(rk[0:10], __alloc_u8(16), __alloc_u8(16))",
 	"__aes_ctr32(rk, __alloc_u8(15), __alloc_u8(16))",
