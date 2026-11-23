@@ -11,7 +11,7 @@ import "./parser";
 import "./checker";
 
 function main(): i32 {
-  let source = "struct Point { x: i32, label: string }\nstruct Empty {}\nstruct Box[T] { value: T }\nenum E { EmptyCase, Data(i32), Record { x: i32 } }\ntype Mixed = Point | string;\nfunction main(): i32 { return 0; }\n";
+  let source = "struct Point { x: i32, label: string }\nstruct Empty {}\nstruct Box[T] { value: T }\nenum E { EmptyCase, Data(i32), Record { x: i32 } }\ntype Mixed = Point | Empty;\nfunction main(): i32 { return 0; }\n";
   let s = checker.module_scope(checker.query_view(parser.parse_module(lexer.tokenize(source))));
   let Some(point) = checker.struct_sig(s, "Point") else { return 10; };
   if (point.name != "Point" || point.enum_owner != "" || point.module != "" || point.opaque || point.type_params.len() != 0 || point.derives.len() != 0) { return 1; }
