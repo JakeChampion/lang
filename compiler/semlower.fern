@@ -875,8 +875,12 @@ pub function runtime_module_lowering(source: parser.Module): physicalbody.Lowere
   }
   let out: irtables.Lowered[] = [];
   let helpers = ssarc.no_helpers(inf.built.contracts);
-  let i = 0;
-  while (i < im.funcs.len()) {
+  let kept: boolean[] = [];
+  for i in 0..im.funcs.len() {
+    if (inf.built.decls[i].dropped) {
+      kept = kept.append(false);
+      continue;
+    }
     match (inf.rows.body[i]) {
       Ok(body) => {
         match (body) {
@@ -892,8 +896,8 @@ pub function runtime_module_lowering(source: parser.Module): physicalbody.Lowere
         return runtime_refused(im.funcs[i].name, inf.rows.why[i]);
       }
     }
+    kept = kept.append(true);
     helpers = ssarc.with_drop_helpers(helpers, inf.built.decls[i].func);
-    i += 1;
   }
   let declaration_count = out.len();
   let completed = match (complete_runtime_helpers(out, helpers.rows)) { Ok(rows) => rows, Err(refusal) => { return runtime_refused(refusal.name, refusal.why); } };
@@ -905,11 +909,11 @@ pub function runtime_module_lowering(source: parser.Module): physicalbody.Lowere
     helper_types = helper_types.append(origin.helper);
   }
   let declarations: string[] = [];
-  i = 0;
-  for fd in im.funcs {
-    tally("runtime " + fd.name, "produced");
-    declarations = declarations.append(inf.built.names[i]);
-    i += 1;
+  for i in 0..im.funcs.len() {
+    if (kept[i]) {
+      tally("runtime " + im.funcs[i].name, "produced");
+      declarations = declarations.append(inf.built.names[i]);
+    }
   }
   return physicalbody.Lowered { bodies: completed.bodies, declarations: declarations, helper_types: helper_types, contracts: physical_contracts(inf.built), records: inf.built.records, enums: inf.built.enums, finalizers: inf.built.finalizers };
 }

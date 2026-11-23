@@ -10237,11 +10237,24 @@ pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (p
   if (roots.len() == 0) {
     return units;
   }
-  let mod = rtmodule.load_wasm("wasm32-wasi", roots);
-  let lowered = rt_lower(mod);
+  let loaded = rtmodule.load_wasm("wasm32-wasi", roots);
+  let lowered = rt_lower(loaded);
+  let mod = declared_runtime(loaded, util.name_index(lowered.declarations));
   let bodies = irtables.lowered_results(lowered.bodies);
   let text = emit_functions_ns("$runtime", mod, bodies, physicalbody.collection(lowered), san);
   return units.append(WasmUnit { ns: "$runtime", text: text, strs: str_values(bodies), caggs: const_agg_values(bodies), fns: fn_value_table(bodies) });
+}
+
+// The runtime functions that the lowering kept. A function spliced into each
+// of its callers has no body.
+function declared_runtime(mod: parser.Module, declared: util.NameIndex): parser.Module {
+  let funcs: parser.FuncDecl[] = [];
+  for fd in mod.funcs {
+    if (declared.has(fd.name)) {
+      funcs = funcs.append(fd);
+    }
+  }
+  return parser.Module { ...mod, funcs: funcs };
 }
 
 function module_needs_type_ids(units: WasmUnit[], needs: string[]): boolean {
