@@ -40,6 +40,17 @@ class NodeTests(unittest.TestCase):
         self.assertEqual(check.nodes(""), [])
 
 
+class ScreenTests(unittest.TestCase):
+    def test_physical_size(self):
+        self.assertEqual(check.screen_size("Physical size: 1080x2400\n"), (1080, 2400))
+
+    def test_override_wins(self):
+        self.assertEqual(check.screen_size("Physical size: 1080x2400\nOverride size: 720x1600\n"), (720, 1600))
+
+    def test_no_size(self):
+        self.assertIsNone(check.screen_size("error: device offline"))
+
+
 class TrashTests(unittest.TestCase):
     def test_entry_of_the_file(self):
         listing = ".\n..\n1795000000~L3N0b3JhZ2U~other.txt\n1795000001~L3N0b3JhZ2U~notes.txt\n"

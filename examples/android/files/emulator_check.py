@@ -108,13 +108,34 @@ def dump(out, step):
     return xml
 
 
+def screen_size(text):
+    """The width and the height in the output of `wm size`, or None. An
+    override of the size comes after the physical size."""
+    sizes = re.findall(r"(\d+)x(\d+)", text)
+    return tuple(map(int, sizes[-1])) if sizes else None
+
+
+def scroll():
+    """Moves a list up by a third of the screen."""
+    width, height = screen_size(adb("shell", "wm", "size", check=False)) or (1080, 1920)
+    x = str(width // 2)
+    adb("shell", "input", "swipe", x, str(height * 2 // 3), x, str(height // 3), "400")
+    time.sleep(0.7)
+
+
 def find(out, step, label, timeout=30):
-    """The middle of the node `label`, when it shows in `timeout` seconds."""
+    """The middle of the node `label`, when it shows in `timeout` seconds.
+    The tree has only the rows on the screen, so each third look without
+    the node moves the list up."""
     deadline = time.monotonic() + timeout
+    looks = 0
     while time.monotonic() < deadline:
         point = point_of(dump(out, step), label)
         if point:
             return point
+        looks += 1
+        if looks % 3 == 0:
+            scroll()
         time.sleep(0.5)
     return None
 
@@ -124,7 +145,8 @@ def tap(out, step, label, hold=False):
     point = find(out, step, label)
     if not point:
         screen(out, step)
-        fail(f"{step}: the screen does not show {label}")
+        shown = sorted({name for name, _, _ in nodes(dump(out, step))})
+        fail(f"{step}: the screen does not show {label}. It shows {shown}")
         return False
     x, y = map(str, point)
     if hold:
