@@ -208,7 +208,7 @@ There, pigz used 0.50 s of CPU time and 2.2 MB of memory. The port used
 150 MB.
 
 In CPU time, the port compresses 1.03 to 1.09 times slower with one
-process, and 1.09 to 1.36 times slower with four. With four processes,
+process. With four, it is 1.09 to 1.36 times slower. With four processes,
 each worker copies its input and its output, and it starts with an empty
 heap. When it compresses with one process, the port uses 1.5 MB of
 memory, and pigz uses 2.6 MB.
@@ -317,6 +317,12 @@ The messages and the exit codes are those of pigz 2.8. Some examples:
 - With `-lv`, the port keeps all of a zip file in memory, for the comment
   of its central directory.
 
+- With `-N`, a header name that is not UTF-8 gives another output name.
+  pigz uses the bytes of the name. A Fern path is a `string`, which is
+  always UTF-8 (`docs/STRINGS-SOTA.md`). So the port puts U+FFFD in place
+  of each byte that is not UTF-8. A listing shows the bytes of the name,
+  as pigz does.
+
 ## Tests
 
 - `gz_test.fern`: the options, the environment variables, the names, the
@@ -332,6 +338,14 @@ The messages and the exit codes are those of pigz 2.8. Some examples:
   arm64. Each case runs in a new directory. The test compares what each
   run gives with `testdata/pigz-2.8.json`, which holds what pigz 2.8 gave:
   the exit code, the messages, the standard output and each file.
+
+- `TestSelfHostExamplePigzDamaged` runs `-dc`, `-t`, `-l` and `-ltv` on
+  damaged streams on x86-64 and arm64. The streams are gzip with each header field, two
+  gzip members, zlib, two zip entries and compress.
+  The test cuts each stream at many lengths, and it changes one byte at
+  many offsets. Each run must give the exit code, the messages and the
+  output of pigz 2.8. `testdata/pigz-2.8-damaged.txt` holds the exit code
+  and a digest of the messages and the output for each run.
 
 - `TestSelfHostExamplePigzLarge` decompresses and tests a gzip member of
   4.5 GiB on x86-64. The test makes the member from 72 copies of the

@@ -639,9 +639,9 @@ function write_stdout(bytes: u8[]): Result[void, gz.Fail] {
 
 function print_listing(r: Run): Result[Run, gz.Fail] {
   if (r.listing.text.len() > 0) {
-    write_stdout(r.listing.text.bytes())?;
+    write_stdout(r.listing.text)?;
   }
-  return Ok(Run { ...r, listing: gz.Listing { ...r.listing, text: "" } });
+  return Ok(Run { ...r, listing: gz.Listing { ...r.listing, text: [] } });
 }
 
 // list_info(): one line for the input from its header and trailer. It reads
@@ -938,7 +938,7 @@ function destination(r: Run, src: Source, h: gz.Header): Result[Dest, gz.Fail] {
     }
     return Ok(ToStdout);
   }
-  let outf = if (o.decode != 0) { gz.decompressed_name(src.path, h.name, (o.headis & 1) != 0) } else { src.path + o.sufx };
+  let outf = if (o.decode != 0) { gz.decompressed_name(src.path, gz.name_text(h.name), (o.headis & 1) != 0) } else { src.path + o.sufx };
   if (lstat(outf).is_ok() && !o.force && !overwrite(r, outf)) {
     return Ok(Refused(complain(r, "skipping: " + outf + " exists")));
   }
@@ -1205,7 +1205,7 @@ function main(): i32 {
     return stopped(parsed, prog);
   };
   o = all;
-  let r = Run { o: o, prog: prog, ret: 0, listing: gz.Listing { first: true, text: "" }, now: now_unix_ms() / 1000i64 };
+  let r = Run { o: o, prog: prog, ret: 0, listing: gz.Listing { first: true, text: [] }, now: now_unix_ms() / 1000i64 };
   match (run_all(r)) {
     Ok(done) => {
       return done.ret;
