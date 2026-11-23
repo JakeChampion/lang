@@ -166,6 +166,7 @@ The schedule of FIPS 46-3. PC-1 gives two halves of 28 bits, and each round rota
 
 ```fern
 <<5 the key schedule>>=
+@secret
 pub struct Cipher { keys: u64[] }
 
 // Consumes the key and zeroes its round keys when it owns the last reference.

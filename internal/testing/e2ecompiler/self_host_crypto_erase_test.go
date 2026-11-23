@@ -13,7 +13,8 @@ import (
 // arena the primitive used for the key material it copied: the HMAC pads
 // (the key XOR 0x36 and 0x5c), the clamped X25519 scalar, the ChaCha20
 // one-time Poly1305 key, the Ed25519 nonce hash, and the round keys of an
-// AES-GCM key that was erased. The scan starts at a probe block taken before
+// AES-GCM key that was erased. A key record of a @secret struct must leave
+// no copy when it is dropped without an erase call. The scan starts at a probe block taken before
 // the primitive ran and covers every byte the bump pointer moved past, so a
 // released copy anywhere in that window is found. The plant mode releases a
 // block of the HMAC inner pad pattern without erasing it, which shows that
@@ -29,6 +30,8 @@ import "std/crypto/chacha20poly1305";
 import "std/crypto/ed25519";
 import "std/crypto/ecdsa";
 import "std/crypto/x25519";
+import "std/crypto/hpke";
+import "std/crypto/mlkem768";
 // Bytes that differ from each other, so a part of them matches at one place only.
 function mixed(n: i32): u8[] {
   let b: u8[] = __alloc_u8(n);
@@ -176,6 +179,14 @@ function run(mode: string, key: [u8], msg: [u8], nonce12: [u8]): i32 {
     if (mode == "des-cipher") { c.erase(); }
     return 0;
   }
+  if (mode == "p256-key-drop") {
+    let Ok(k) = hpke.p256_key("DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD".as_bytes()) else { return 9; };
+    return k.public_key.len() - 65;
+  }
+  if (mode == "mlkem-key-drop") {
+    let Ok(k) = mlkem768.keygen_derand(key, msg[0:32]) else { return 9; };
+    return k.decapsulation_key.len() - 2400;
+  }
   if (mode == "aes-key") { return aes_key(true); }
   if (mode == "aes-key-drop") { return aes_key(false); }
   if (mode == "ed25519-key") { return ed25519_key(true); }
@@ -240,6 +251,13 @@ function needles_of(mode: string, key: [u8], msg: [u8], nonce12: [u8]): u8[][] {
   if (mode == "des-cipher" || mode == "des-cipher-drop") {
     // The first two round keys for 0x133457799bbcdff1, stored as little-endian u64s.
     return [hex.decode("7270fcef021b0000e5c9dbd9ae790000").unwrap_or([])];
+  }
+  if (mode == "p256-key-drop") {
+    return [filled(32, 68 as u8)];
+  }
+  if (mode == "mlkem-key-drop") {
+    let Ok(k) = mlkem768.keygen_derand(key, msg[0:32]) else { return []; };
+    return [copy_of(k.decapsulation_key, 0, 32)];
   }
   if (mode == "aes-key" || mode == "aes-key-drop") {
     return [__aes_expand_key(filled(16, 65 as u8))];
@@ -324,7 +342,17 @@ func TestSelfHostPrimitivesEraseKeyMaterial(t *testing.T) {
 					t.Errorf("%s: %d stale copies of key material in the arena after the primitive returned, want 0", mode, got)
 				}
 			}
-			for _, mode := range []string{"aes-key", "ed25519-key", "ecdsa-key", "chacha-key", "aes-cipher", "des-cipher"} {
+			for _, mode := range []string{"chacha-key", "aes-cipher", "des-cipher"} {
+				if got := run(mode); got != 0 {
+					t.Errorf("%s: %d copies of the erased key's secret in the arena, want 0", mode, got)
+				}
+			}
+			for _, mode := range []string{"chacha-key-drop", "aes-cipher-drop", "des-cipher-drop", "p256-key-drop", "mlkem-key-drop"} {
+				if got := run(mode); got != 0 {
+					t.Errorf("%s: a dropped @secret key left %d copies of its secret in the arena, want 0", mode, got)
+				}
+			}
+			for _, mode := range []string{"aes-key", "ed25519-key", "ecdsa-key"} {
 				if got := run(mode + "-drop"); got < 1 {
 					t.Fatalf("%s-drop: a dropped key left %d copies of its secret in the arena, want at least 1: the control does not see the dropped key", mode, got)
 				}

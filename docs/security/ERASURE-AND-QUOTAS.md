@@ -65,6 +65,7 @@ The call consumes one holder.
 
 A struct with the attribute `@secret` erases without a call. When the last reference to such a record goes away, its drop zeroes each numeric array that the record holds alone, in each build.
 An array that another value still holds keeps its elements. The rules and the limits are in [SECRET-TYPES.md](../SECRET-TYPES.md), and `TestSelfHostSecretRecordWipesItsArrays` pins them on both native targets.
+The key records of `aes`, `des`, `chacha20poly1305`, `hpke`, `mlkem768` and `rsa` have the attribute. [SECRET-TYPES.md](../SECRET-TYPES.md) lists them.
 
 The stores cannot be elided, because no pass of the compiler removes a store to an array.
 `TestSelfHostEraseZeroesStorage` pins that on both targets.
@@ -89,6 +90,9 @@ They erase an explicit shared holder, then sign and verify with the other holder
 `TestSelfHostPrimitivesEraseKeyMaterial` checks released secret storage for both private-key types on x86-64 and ARM64 under QEMU.
 Each drop control must leave a stale secret in the scan.
 Each erase control must leave none.
+
+The same test drops a `chacha20poly1305.Key`, an `aes.Cipher`, a `des.Cipher`, an `hpke.P256Key` and an `mlkem768.KeyPair` without an erase call.
+Each of these `@secret` records must leave no secret in the scan.
 
 ## Heap quotas
 
@@ -132,7 +136,8 @@ go test ./internal/testing/e2ecompiler -run 'TestSelfHostEraseZeroesStorage|Test
 
 ## Remaining limits
 
-- `erase` takes an array of an element type with a zero. A secret held in a string or in an array of records has no erasure call. A struct that holds a secret array offers one only where its module wrote it: `aes_gcm.Key`, `ed25519.PrivateKey` and `ecdsa.PrivateKey` have `erase()`, and a struct dropped without it keeps its bytes.
+- `erase` takes an array of an element type with a zero. A secret held in a string or in an array of records has no erasure call. A struct without `@secret` that holds a secret array offers one only where its module wrote it.
+- `aes_gcm.Key`, `ed25519.PrivateKey` and `ecdsa.PrivateKey` are `@value` records, and a declaration takes one attribute, so they do not have `@secret`. They have `erase()`, and one that the program drops without that call keeps its bytes. The stage0 pin must also parse `@secret` before `ecdsa` and `ed25519` can use it, because the compiler imports them.
 - A quota per allocation site, per package, or per request is not defined. The arena quota and the processor time quota are one number each per executable.
 - There is no quota for child processes. `RLIMIT_NPROC` counts the processes of a user, not of a program, and the kernel does not apply it to root.
 - The sanitizer's quarantine keeps a released block until its byte budget evicts it, so under `-sanitize` an erased block stays mapped for a time. That is SEC-024 ([QUARANTINE.md](QUARANTINE.md)).
