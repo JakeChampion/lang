@@ -1113,15 +1113,16 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
     },
     ast.ExprTuple(t) => {
       let out = "(";
-      let i = 0;
-      while (i < t.elements.len()) {
+      let g = f;
+      for i in 0..t.elements.len() {
         if (i > 0) {
           out += ", ";
         }
-        out += print_expr(t.elements[i], depth);
-        i += 1;
+        let (elem, eg) = print_expr_c(t.elements[i], prec_lowest(), depth, g);
+        out += elem;
+        g = eg;
       }
-      return (out + ")", f);
+      return (out + ")", g);
     },
     ast.ExprIndex(x) => {
       let (xa, xf) = print_expr_c(x.array, prec_primary(), depth, f);

@@ -157,6 +157,25 @@ function main(): i32 {
   return id[i32](a) + b + c[0]; // after a call in a return
 }
 `},
+	{"comment-in-a-match-that-is-a-tuple-element", `enum E { A, B }
+function f(e: E): i32 {
+  let p: (i64, i64) = (
+    match (e) {
+      A => 1 as i64, // c1
+      B => 2 as i64
+    },
+    100 as i64
+  );
+  let xs = [
+    match (e) {
+      A => 1, // c2
+      B => 2
+    },
+    3
+  ];
+  return p.0 as i32 + xs[0];
+}
+`},
 	{"unsafe-value-blocks", `function f(bytes: u8[]): string {
   let n = unsafe { 3 };
   let text = unsafe { string_from_bytes_unchecked(bytes) };
