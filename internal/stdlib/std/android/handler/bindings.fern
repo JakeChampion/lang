@@ -1,0 +1,204 @@
+// Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
+import "std/jni";
+
+// A android.os.Looper.
+pub struct Looper { ref: usize }
+
+pub function (x: Looper) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Looper) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.os.Looper and the IDs of its members.
+pub struct LooperClass { class: usize, id_get_main_looper: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function looper_class(e: usize): Result[LooperClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/os/Looper")?;
+  let id_get_main_looper = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getMainLooper", "()Landroid/os/Looper;"))?;
+  return Ok(LooperClass { class: class, id_get_main_looper: id_get_main_looper });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: LooperClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.os.Looper.getMainLooper()Landroid/os/Looper;
+pub function (c: LooperClass) get_main_looper(e: usize): Result[Looper, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_get_main_looper, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Looper { ref: got });
+}
+
+// A android.os.Handler.
+pub struct Handler { ref: usize }
+
+pub function (x: Handler) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Handler) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.os.Handler and the IDs of its members.
+pub struct HandlerClass { class: usize, id_new: usize, id_obtain_message: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function handler_class(e: usize): Result[HandlerClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/os/Handler")?;
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Landroid/os/Looper;Landroid/os/Handler$Callback;)V"))?;
+  let id_obtain_message = jni.checked_id(e, class, jni.get_method_id(e, class, "obtainMessage", "(IIILjava/lang/Object;)Landroid/os/Message;"))?;
+  return Ok(HandlerClass { class: class, id_new: id_new, id_obtain_message: id_obtain_message });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: HandlerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.os.Handler.<init>(Landroid/os/Looper;Landroid/os/Handler$Callback;)V
+pub function (c: HandlerClass) new(e: usize, a0: Looper, a1: jni.Object): Result[Handler, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Handler { ref: got });
+}
+
+// android.os.Handler.obtainMessage(IIILjava/lang/Object;)Landroid/os/Message;
+pub function (c: HandlerClass) obtain_message(e: usize, self: Handler, a0: i32, a1: i32, a2: i32, a3: jni.Object): Result[Message, jni.JavaError] {
+  let args = jni.jvalue_alloc(4);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.jvalue_set_int(args, 2, a2 as usize);
+  jni.jvalue_set_int(args, 3, a3.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_obtain_message, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Message { ref: got });
+}
+
+// A android.os.Message.
+pub struct Message { ref: usize }
+
+pub function (x: Message) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Message) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.os.Message and the IDs of its members.
+pub struct MessageClass { class: usize, id_send_to_target: usize, id_arg1: usize, id_obj: usize, id_what: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function message_class(e: usize): Result[MessageClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/os/Message")?;
+  let id_send_to_target = jni.checked_id(e, class, jni.get_method_id(e, class, "sendToTarget", "()V"))?;
+  let id_arg1 = jni.checked_id(e, class, jni.get_field_id(e, class, "arg1", "I"))?;
+  let id_obj = jni.checked_id(e, class, jni.get_field_id(e, class, "obj", "Ljava/lang/Object;"))?;
+  let id_what = jni.checked_id(e, class, jni.get_field_id(e, class, "what", "I"))?;
+  return Ok(MessageClass { class: class, id_send_to_target: id_send_to_target, id_arg1: id_arg1, id_obj: id_obj, id_what: id_what });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: MessageClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.os.Message.sendToTarget()V
+pub function (c: MessageClass) send_to_target(e: usize, self: Message): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_send_to_target, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.os.Message.arg1
+pub function (c: MessageClass) arg1(e: usize, self: Message): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_arg1, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+pub function (c: MessageClass) set_arg1(e: usize, self: Message, value: i32): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 5, self.ref, c.id_arg1, value as usize);
+  return jni.check(e);
+}
+
+// android.os.Message.obj
+pub function (c: MessageClass) obj(e: usize, self: Message): Result[jni.Object, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_obj, 0 as usize);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+pub function (c: MessageClass) set_obj(e: usize, self: Message, value: jni.Object): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_obj, value.ref);
+  return jni.check(e);
+}
+
+// android.os.Message.what
+pub function (c: MessageClass) what(e: usize, self: Message): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_what, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+pub function (c: MessageClass) set_what(e: usize, self: Message, value: i32): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 5, self.ref, c.id_what, value as usize);
+  return jni.check(e);
+}
+
+// The struct of IDs of each class of this module.
+pub struct Classes { looper: LooperClass, handler: HandlerClass, message: MessageClass }
+
+// Makes the struct of IDs of each class. Call it one time, and call
+// `release` when the app does not call Java again. One lookup for each
+// class, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function classes(e: usize): Result[Classes, jni.JavaError] {
+  let looper = match (looper_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      return Err(err);
+    },
+  };
+  let handler = match (handler_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      return Err(err);
+    },
+  };
+  let message = match (message_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      looper.release(e);
+      handler.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { looper: looper, handler: handler, message: message });
+}
+
+// Deletes the reference to each class. Do not use `c` after this call.
+pub function (c: Classes) release(e: usize): void {
+  c.looper.release(e);
+  c.handler.release(e);
+  c.message.release(e);
+}

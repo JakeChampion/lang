@@ -154,7 +154,8 @@ The order puts first what stops a release, then what most apps need.
    `std/android/sensors` reads the sensors through the NDK, with a `Ready`
    event of the loop. `std/android/location` gives fixes through a @jni
    `LocationListener`. `std/android/camera` gives the frames of a camera
-   through the NDK.
+   through the NDK. `std/android/speech` gives the words that a person
+   speaks, through a `SpeechRecognizer` on the main thread.
 
 5. **Components.** Done: `std/android/ui` has a checkbox, a radio
    button, a menu, a snackbar, tabs, an app bar and the page stack `Nav`.

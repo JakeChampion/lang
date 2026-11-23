@@ -4266,9 +4266,10 @@ pub function reuse_planned(f: ssasem.Func, p: Plan, idx: i32[][], dom: ssadeps.D
   let uses = p.analysis.uses;
   let pairs: ReusePairs[] = [];
   let keeps: Keeps[] = [];
-  for b in f.graph.blocks {
+  for bi in 0..f.graph.blocks.len() {
+    let b = f.graph.blocks[bi];
     let pr = reuse_pairs(f, p, idx, vr, b, off, carry);
-    keeps = keeps.append(block_keeps(f, p, idx, b, pr, carry, links, uses));
+    keeps = keeps.append(block_keeps(f, p, idx, b, bi, pr, carry, links, uses));
     pairs = pairs.append(pr);
   }
   return Plan { ...p, links: links, chained: chained_withs(f, links), reuse: Reuse { pairs: pairs, keeps: keeps, carry: carry, reads: vr, disabled: off } };
@@ -5274,7 +5275,7 @@ function carried_builds(c: Carry, b: ssa.SBlock): boolean[] {
   return out;
 }
 
-function block_keeps(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, carry: Carry, links: i32[], uses: ssasem.Uses): Keeps {
+function block_keeps(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, bi: i32, pairs: ReusePairs, carry: Carry, links: i32[], uses: ssasem.Uses): Keeps {
   let out = no_keeps();
   for pos in 0..b.insts.len() {
     let donor = pairs.selfs[pos];
@@ -5295,10 +5296,10 @@ function block_keeps(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs
       }
     }
   }
-  return tested(f, p, idx, b, pairs, carry, links, classified(f, p, idx, b, pairs, carry, links, out));
+  return tested(f, p, idx, b, pairs, carry, links, classified(f, p, idx, b, bi, uses, pairs, carry, links, out));
 }
 
-function classified(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, carry: Carry, links: i32[], own out: Keeps): Keeps {
+function classified(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, bi: i32, uses: ssasem.Uses, pairs: ReusePairs, carry: Carry, links: i32[], own out: Keeps): Keeps {
   for pos in 0..b.insts.len() {
     let dying = step_of(p, idx, b.id, pos, -1).drops;
     if (pairs.tokens[pos] >= 0) {
@@ -5308,7 +5309,7 @@ function classified(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs:
       dying = dying.append(carry_held(carry, b.id, pos));
     }
     for d in dying {
-      let start = first_classified_take(f, p, b, d, pos, links);
+      let start = first_classified_take(f, p, b, bi, uses, d, pos, links);
       if (start >= 0 && util.index_of_i32(out.donors, d) < 0 && util.index_of_i32(pairs.selfs, d) < 0) {
         let moved: i32[] = [];
         let freed: boolean[] = [];
@@ -5398,12 +5399,23 @@ function tested_end(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, d: i32
   return end;
 }
 
-function first_classified_take(f: ssasem.Func, p: Plan, b: ssa.SBlock, d: i32, dies: i32, links: i32[]): i32 {
+// `b` is block `bi` of f. Only an instruction that reads d can be a take of
+// d or can refuse the run, so the search reads the uses of d in the block.
+function first_classified_take(f: ssasem.Func, p: Plan, b: ssa.SBlock, bi: i32, uses: ssasem.Uses, d: i32, dies: i32, links: i32[]): i32 {
   if (d < 0 || d < links.len() && links[d] >= 0 || !ssasem.counted(f, f.values[d]) || ssasem.finalizer_of(f, f.values[d]) != "") {
     return -1;
   }
   let first: i32 = -1;
-  for pos in 0..=dies {
+  let before: i32 = -1;
+  for u in ssasem.first_use_in(uses, d, bi)..uses.start[d + 1] {
+    if (uses.block[u] != bi || uses.at[u] > dies) {
+      break;
+    }
+    let pos = uses.at[u];
+    if (pos == before) {
+      continue;
+    }
+    before = pos;
     let ins = b.insts[pos];
     if (first < 0 && classified_take(f, p, ins, d)) {
       first = pos;

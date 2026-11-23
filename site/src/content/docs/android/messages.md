@@ -358,6 +358,42 @@ shows the dialog. `location.last(ctx, precise)` gives the last fix that
 the phone knows, at once. Stop the fixes with `location.stop` before
 Destroy.
 
+## Speech
+
+`std/android/speech` gives the words that a person speaks, through the
+`SpeechRecognizer` of Android. The module declares its own @jni class, so
+the app declares none. `speech.new` gives `None` on a device with no
+recognition service.
+
+```fern
+import "std/android/speech";
+
+let Some(r) = speech.new(ctx) else {
+  // The device has no recognition service.
+};
+let sent = speech.start(ctx, r, "en-US");
+
+// For each event of the loop:
+match (speech.event(e)) {
+  Some(speech.Words(text)) => {
+    // The person said `text`.
+  },
+  Some(speech.Failed(code)) => {
+    // `code` is an ERROR_ value, such as speech.ERROR_NO_MATCH.
+  },
+  _ => {}
+}
+```
+
+`Ready` comes when the recognizer listens, and `Partial` has the words
+while the person speaks. An empty language tag is the language of the
+device. `speech.stop` tells the recognizer to listen no more and gives the words, and
+`speech.cancel` gives no event.
+
+The app needs the permission `RECORD_AUDIO`. `speech.ask(ctx)` shows the
+dialog. Give each event of the loop to `speech.event` one time. Call
+`speech.close` before Destroy.
+
 ## Camera
 
 `std/android/camera` gives the frames of a camera of the phone. `start`
