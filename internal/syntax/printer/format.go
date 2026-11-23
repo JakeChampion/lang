@@ -1474,7 +1474,11 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		}
 		f.b.WriteString("match (")
 		f.formatExpr(x.Tag, precLowest)
-		f.b.WriteString(") {\n")
+		f.b.WriteString(") {")
+		if x.P.Line > 0 && len(arms) > 0 && arms[0].P.Line > x.P.Line {
+			f.emitTrailing(x.P.Line)
+		}
+		f.b.WriteByte('\n')
 		for i := 0; i < len(arms); i++ {
 			arm := arms[i]
 			f.indent(depth + 1)
@@ -1492,6 +1496,9 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			f.formatBlock(arm.Body, depth+1)
 			if i < len(arms)-1 {
 				f.b.WriteByte(',')
+			}
+			if arm.Body != nil && arm.Body.End.Line > 0 {
+				f.emitTrailing(arm.Body.End.Line)
 			}
 			f.b.WriteByte('\n')
 		}

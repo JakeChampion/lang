@@ -50,6 +50,33 @@ pub function (p: Pool) log(): usize {
   return p.base;
 }
 `},
+	{"match-header-and-arm-comments", `enum E { A, B(i32), C }
+
+function f(e: E, s: string, t: (i32, i32)): i32 {
+  match (e) { // on the match
+    A => { return 0; }, // on the arm
+    B(n) => {
+      return n;  // on the statement
+    },  // after the arm
+    C => {}  // after an empty arm
+  }
+  match (s) {  // literal patterns
+    "a" => {
+      return 1;
+    },  // after a literal arm
+    _ => {}  // after the last arm
+  }
+  match (t) {  // tuple patterns
+    (0, y) => {
+      return y;
+    },  // after a tuple arm
+    (x, _) => {
+      return x;
+    }  // after the last tuple arm
+  }
+  return 2;
+}
+`},
 	{"unsafe-value-blocks", `function f(bytes: u8[]): string {
   let n = unsafe { 3 };
   let text = unsafe { string_from_bytes_unchecked(bytes) };

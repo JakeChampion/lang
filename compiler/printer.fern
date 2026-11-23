@@ -2015,8 +2015,14 @@ function sugar_written_arms(sg: ast.MatchSugar): WrittenArm[] {
 function print_sugared_match(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, Fmt) {
   let pad = indent_str(depth);
   let arms = sugar_written_arms(sg);
-  let out = "match (" + print_expr(sg.scrut, depth) + ") {\n";
+  let out = "match (" + print_expr(sg.scrut, depth) + ") {";
   let g = f;
+  if (sg.line > 0 && arms.len() > 0 && arms[0].line > sg.line) {
+    let (tr, gh) = emit_trailing(g, sg.line);
+    out += tr;
+    g = gh;
+  }
+  out += "\n";
   for i in 0..arms.len() {
     let (arm_body, g1) = print_block(arms[i].body, depth + 1, g);
     g = g1;
@@ -2027,6 +2033,11 @@ function print_sugared_match(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, F
     out = out + " => " + arm_body;
     if (i + 1 < arms.len()) {
       out += ",";
+    }
+    if (g.own >= 0) {
+      let (tr, gt) = emit_trailing(g, g.spans.closes[g.own]);
+      out += tr;
+      g = gt;
     }
     out += "\n";
   }
@@ -2114,12 +2125,18 @@ function print_lit_pat(a: ast.LitArm): string {
 
 function print_match(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
   let pad = indent_str(depth);
-  let out = "match (" + print_expr(m.scrutinee, depth) + ") {\n";
+  let out = "match (" + print_expr(m.scrutinee, depth) + ") {";
   let g = f;
   let arms = m.arms;
   if (m.sugar.len() > 0) {
     arms = m.sugar;
   }
+  if (m.line > 0 && arms.len() > 0 && arms[0].line > m.line) {
+    let (tr, gh) = emit_trailing(g, m.line);
+    out += tr;
+    g = gh;
+  }
+  out += "\n";
   let i = 0;
   while (i < arms.len()) {
     let (arm_body, g1) = print_block(arms[i].body, depth + 1, anchored(g, arms[i].line));
@@ -2137,6 +2154,11 @@ function print_match(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
     out = out + " => " + arm_body;
     if (i + 1 < arms.len()) {
       out += ",";
+    }
+    if (g.own >= 0) {
+      let (tr, gt) = emit_trailing(g, g.spans.closes[g.own]);
+      out += tr;
+      g = gt;
     }
     out += "\n";
     i += 1;
