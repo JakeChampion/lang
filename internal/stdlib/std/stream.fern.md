@@ -10,6 +10,25 @@ The `ByteStream` reader stores bytes or reads them from a body source. Its state
 
 Remaining length, end of input, and faults describe different states. A stream read from a body source ends with `None` whether the body arrived whole or not; `fault()` then says which, as `Some(StreamFault)` for a body that ended early. A caller must preserve progress rather than reread from an earlier stream value.
 
+## Executable example
+
+```fern test name=std-stream-example
+import "std/stream";
+import "std/string";
+
+function main(): i32 {
+  let s = stream.from_string("first\nsecond");
+  let (line, rest) = s.read_line();
+  let Ok(Some(text)) = line else { return 1; };
+  if (text != "first") { return 2; }
+  let (bytes, end) = rest.read_n(3);
+  if (bytes != "sec".bytes() || end.remaining() != 3) { return 3; }
+  let (tail, done) = end.read_all();
+  if (tail != "ond".bytes() || !done.is_empty()) { return 4; }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.

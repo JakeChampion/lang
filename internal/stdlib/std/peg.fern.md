@@ -10,6 +10,25 @@ A grammar maps rule names to patterns and names a start rule. A match records it
 
 Grammar construction checks rule references before evaluation. A missing rule is a `GrammarError` that names it. A failed match records the furthest input position reached by the evaluator.
 
+## Executable example
+
+```fern test name=std-peg-example
+import "std/peg";
+
+function main(): i32 {
+  let version = PSeq([PPlus(peg.digit()), PLit("."), PPlus(peg.digit())]);
+  let Ok(m) = peg.parse_pattern(version, "12.5-beta") else { return 1; };
+  if (m.pos != 4) { return 2; }
+  match (peg.parse_pattern(version, "12-5")) {
+    Ok(m) => { return 3; },
+    Err(e) => {
+      if (e.furthest != 2) { return 4; }
+    }
+  }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.

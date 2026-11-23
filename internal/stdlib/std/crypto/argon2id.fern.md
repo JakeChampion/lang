@@ -6,6 +6,30 @@ This module implements Argon2id version 19 from RFC 9106. The default parameters
 
 `memory_kib` is the requested matrix size. `limit_kib` bounds the matrix and four scratch blocks before allocation. It also bounds the output length. The caller supplies input storage, and BLAKE2b uses additional fixed-size buffers.
 
+## Executable example
+
+The example uses a small matrix so that it runs fast. Do not use these parameters for a real password.
+
+```fern test name=std-crypto-argon2id-example
+import "std/crypto/argon2id";
+import "std/string";
+
+function main(): i32 {
+  let p = argon2id.Params { ...argon2id.defaults(), memory_kib: 64, passes: 2 };
+  let Ok(first) = argon2id.key("password".bytes(), "0123456789abcdef".bytes(), p) else { return 1; };
+  let Ok(again) = argon2id.key("password".bytes(), "0123456789abcdef".bytes(), p) else { return 2; };
+  let Ok(other) = argon2id.key("passwore".bytes(), "0123456789abcdef".bytes(), p) else { return 3; };
+  if (first.len() != p.tag_len || first != again || first == other) { return 4; }
+  match (argon2id.key("password".bytes(), "short".bytes(), p)) {
+    Ok(tag) => { return 5; },
+    Err(e) => {}
+  }
+  return 0;
+}
+```
+
+## Module assembly
+
 ```fern
 <<*>>=
 <<parameters>>

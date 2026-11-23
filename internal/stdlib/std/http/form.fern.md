@@ -10,6 +10,27 @@ A form maps each field name to an array of values. This representation preserves
 
 The request parser checks the form content type and reports a concrete form error. `get` selects one value, while `get_all` returns all values.
 
+## Executable example
+
+```fern test name=std-http-form-example
+import "std/http";
+import "std/http/form";
+import "std/option";
+
+function main(): i32 {
+  let req = http.request("POST", "/login").with_text("user=ada&tag=a+b&tag=c%26d").with_header("Content-Type", "application/x-www-form-urlencoded");
+  let Ok(fields) = form.parse(req) else { return 1; };
+  if (fields.get("user").unwrap_or("") != "ada") { return 2; }
+  if (fields.get_all("tag") != ["a b", "c&d"]) { return 3; }
+  if (fields.has("password")) { return 4; }
+  match (form.parse(http.request("POST", "/login").with_text("user=ada"))) {
+    Ok(f) => { return 5; },
+    Err(e) => {}
+  }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.

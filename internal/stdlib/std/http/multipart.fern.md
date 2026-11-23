@@ -10,6 +10,21 @@ A multipart reader separates part headers from part content. Each step returns t
 
 Part count, part size, total size, and header size have separate limits. A caller must finish or skip a part before it requests the next part.
 
+## Executable example
+
+```fern test name=std-http-multipart-example
+import "std/http/multipart";
+import "core/map";
+
+function main(): i32 {
+  let req = multipart.builder().field("title", "Report").field("tag", "a").field("tag", "b").request("POST", "/upload");
+  let Ok(fields) = multipart.fields(req, multipart.limits()) else { return 1; };
+  if (fields.get_or("title", []) != ["Report"]) { return 2; }
+  if (fields.get_or("tag", []) != ["a", "b"]) { return 3; }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.

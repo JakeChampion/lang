@@ -12,6 +12,26 @@ The decoder reads the stream through a 64-bit bit buffer. It decodes each prefix
 
 A stream that ends before the decoder has the bits it needs is truncated. This rule also applies when the missing bits make the rest of the stream look malformed.
 
+## Executable example
+
+```fern test name=std-brotli-example
+import "std/brotli";
+import "std/string";
+
+function main(): i32 {
+  let text = "to be or not to be, that is the question".repeat(8).bytes();
+  let packed = brotli.compress(text);
+  if (packed.len() >= text.len()) { return 1; }
+  let Ok(plain) = brotli.decompress(packed, 4096) else { return 2; };
+  if (plain != text) { return 3; }
+  match (brotli.decompress(packed, 16)) {
+    Ok(bytes) => { return 4; },
+    Err(e) => {}
+  }
+  return 0;
+}
+```
+
 ## Module assembly
 
 ```fern

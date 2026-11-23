@@ -10,6 +10,30 @@ A route combines an HTTP method, a path pattern, parameter names, and a handler.
 
 Route construction can record a concrete route error. Parameter access distinguishes a missing value from a value that cannot be parsed as an integer.
 
+## Executable example
+
+```fern test name=std-http-router-example
+import "std/http";
+import "std/http/router";
+import "std/platform";
+
+function greet(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
+  let id = params.int("id")?;
+  return Ok(http.ok("user " + id.to_string()));
+}
+
+function main(): i32 {
+  let Ok(routes) = router.new[platform.Host]().get("/users/{id}", greet).check() else { return 1; };
+  let plat = platform.host();
+  let found = routes.handle(http.request("GET", "/users/7"), plat);
+  if (found.status != 200 || found.body_text_lossy() != "user 7") { return 2; }
+  if (routes.handle(http.request("GET", "/users/seven"), plat).status != 400) { return 3; }
+  if (routes.handle(http.request("POST", "/users/7"), plat).status != 405) { return 4; }
+  if (routes.handle(http.request("GET", "/nothing"), plat).status != 404) { return 5; }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.
