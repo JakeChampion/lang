@@ -452,7 +452,7 @@ two traits each provide that name for the type. The self-host emits the later
 provider renamed (`P.B.scale` by `parser.claim_method_name`, `i32.__entry.add`
 across modules by `flatten.disambiguate_methods`), so its monomorphiser
 respells a bounded call on the template, before substituting, to the bound's
-provider, chosen as a `dyn` dispatch chooses its arm (`parser.bound_rewritten`
+provider, chosen as a `dyn` dispatch chooses its arm (`monomorph.bound_rewritten`
 for a bounded generic's clone and a bounded impl's method alike; #12277). An
 associated call through the variable (`T.zero()`) is respelled the same way, to
 the bound's associated function, and the Go re-check of the clone's
@@ -943,7 +943,7 @@ regressing the self-host gates. It needs traits in two slices:
   (i32/i64/u32/u64/bool) do not**. So `assert_eq(1, 2)` — a bounded
   generic whose `T` is i32 — fell into the struct dispatch path,
   dereferenced the integer as a pointer, and crashed. The fix
-  monomorphises: `parser.monomorphize_module` (run inside
+  monomorphises: `monomorph.monomorphize_module` (run inside
   `module_with_builtins`, so every asm driver gets it with no checker)
   walks call sites, infers each instantiation's concrete type from the
   argument bound to the type variable, clones `f` → `f__<type>` with the
@@ -1109,7 +1109,7 @@ regressing the self-host gates. It needs traits in two slices:
   concrete struct (`Box__i32` whose `v: i32`, `Box__string` whose
   `v: string`) so a `@derive` / parametric-`impl` method body's
   `self.v.m()` resolves the field type statically. The pass
-  (`parser.monomorphize_structs`, run inside `module_with_builtins` right
+  (`monomorph.monomorphize_structs`, run inside `module_with_builtins` right
   after the function monomorphiser) reuses the existing
   `mono_infer` / `bind_unify` / `subst_ty` / `split_dunder` machinery:
   `StructDecl` now records its `type_params` (captured by

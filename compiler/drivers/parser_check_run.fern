@@ -6,6 +6,7 @@ import "../astwalk";
 import "../builtinsigs";
 import "../lexer";
 import "../parser";
+import "../monomorph";
 import "../returninfer";
 import "../astpasses";
 import "../typeinfo";
@@ -67,7 +68,7 @@ function check_callback_receiver_methods(): test.TestOutcome {
   for receiver in ["i32", "f64", "boolean", "string", "Host", "Choice"] {
     for signature in ["(i32) => Fut[T]", "(Fut[T]) => i32", "((Fut[T]) => i32) => i32"] {
       let source = prefix + "function (x: " + receiver + ") run[T](k: " + signature + "): i32 { return 1; }";
-      let mod = parser.register_struct_method_generics(parser.parse_module(lexer.tokenize(source)));
+      let mod = monomorph.register_struct_method_generics(parser.parse_module(lexer.tokenize(source)));
       if (mod.funcs.len() != 1 || mod.funcs[0].name != "__smm_" + receiver + "_run") {
         return test.fail("the generic receiver method needs a function template: " + receiver + " " + signature);
       }

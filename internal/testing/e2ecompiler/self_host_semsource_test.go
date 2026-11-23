@@ -806,7 +806,7 @@ function flipped(m: Swap): Swap { match (m) { Front(n, k) => { return Back(k, fl
 `
 
 const semsourcePrintDriver = `import "./semsource"; import "./ssa"; import "./ssaunits"; import "./typeinfo";
-import "./parser"; import "./lexer"; import "./util"; import "./lift"; import "./checker"; import "./modloader"; import "./flatten";
+import "./parser"; import "./lexer"; import "./util"; import "./lift"; import "./monomorph"; import "./checker"; import "./modloader"; import "./flatten";
 function show(p: semsource.Produced): void {
     if (!p.ok) { print("refused " + p.why); return; }
     if (p.template) { print("template instantiated"); return; }
@@ -847,7 +847,7 @@ function main(): i32 {
     // The production pipeline injects the front end's own enum variants
     // (IoError, Body) as declarations before the lambda lift runs;
     // without them a Result's error arm names a union nothing declares.
-    let mod = lift.lift_lambdas_typed(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
+    let mod = lift.lift_lambdas_typed(monomorph.register_struct_method_generics(monomorph.register_map_method_generics(monomorph.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
     // Every declaration the fixture wrote, in order, then every instance its
     // templates were produced at. The imported modules' are not printed.
     let built = semsource.build_module(mod);
@@ -934,12 +934,12 @@ function main(): i32 {
 `
 
 const semsourceInferDriver = `import "./semsource"; import "./util";
-import "./parser"; import "./lexer"; import "./lift";
+import "./parser"; import "./lexer"; import "./lift"; import "./monomorph";
 function main(): i32 {
     let src: string = "";
     match (read_file(args()[1])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
     let parsed = parser.parse_module(lexer.tokenize(src));
-    let mod = lift.lift_lambdas_typed(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
+    let mod = lift.lift_lambdas_typed(monomorph.register_struct_method_generics(monomorph.register_map_method_generics(monomorph.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
     let built = semsource.with_inferred_modes(semsource.build_module(mod));
     let i: i32 = 0;
     while (i < built.decls.len()) {

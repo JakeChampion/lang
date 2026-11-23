@@ -2,6 +2,7 @@ import "./ast";
 import "./util";
 import "./lexer";
 import "./parser";
+import "./monomorph";
 import "./localfuncs";
 import "./defaultargs";
 import "./astwalk";
@@ -32653,14 +32654,14 @@ function instantiated_clones(mod: parser.Module, env: ModuleEnv): Clones {
       continue;
     }
     let g = gens[template_index(gens, inst.name)];
-    if (parser.type_args_depth(spelled) >= parser.MAX_INSTANCE_DEPTH) {
+    if (monomorph.type_args_depth(spelled) >= monomorph.MAX_INSTANCE_DEPTH) {
       if (!util.has_str(deep, inst.name)) {
         deep = deep.append(inst.name);
-        diags = diags.append(dg_at("E107", "generic function \"" + inst.name + "\" has an instance with " + util.i32_to_string(parser.MAX_INSTANCE_DEPTH) + " levels of type arguments: a call in its body gives it a larger type each time", g.line, g.col));
+        diags = diags.append(dg_at("E107", "generic function \"" + inst.name + "\" has an instance with " + util.i32_to_string(monomorph.MAX_INSTANCE_DEPTH) + " levels of type arguments: a call in its body gives it a larger type each time", g.line, g.col));
       }
       continue;
     }
-    if (inst.depth >= parser.MAX_INSTANCE_DEPTH) {
+    if (inst.depth >= monomorph.MAX_INSTANCE_DEPTH) {
       continue;
     }
     keys = keys.append(key);

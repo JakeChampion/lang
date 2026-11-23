@@ -4,6 +4,7 @@ import "../ssasem";
 import "../semsource";
 import "../lexer";
 import "../parser";
+import "../monomorph";
 import "../lift";
 import "../util";
 
@@ -102,7 +103,7 @@ function main(): i32 {
     }
   }
   let parsed = parser.parse_module(lexer.tokenize(src));
-  let mod = lift.lift_lambdas_typed(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
+  let mod = lift.lift_lambdas_typed(monomorph.register_struct_method_generics(monomorph.register_map_method_generics(monomorph.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
   let built = semsource.with_inferred_modes(semsource.build_module(mod));
   let functions = 0;
   let keeps = 0;
