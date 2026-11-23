@@ -47,7 +47,7 @@ pub struct VArr { items: Value[], elem: string, view: boolean, store: interpheap
 // zero for a value that a builtin builds.
 pub struct VTuple { elements: Value[], key: i64 }
 
-pub struct VFunc { params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], captured_names: string[], captured_values: Value[], captured_types: string[], generic_name: string, self_name: string, peers: i32, cells: boolean }
+pub struct VFunc { params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], captured_names: string[], captured_values: Value[], captured_types: string[], generic_name: string, self_name: string, peers: i32, cells: boolean, tynames: boolean }
 
 pub struct VMap { keys: Value[], values: Value[], key: i64 }
 
@@ -1101,7 +1101,7 @@ function interp_char_boundary(s: string, i: i32): boolean {
   return icb < 128 || icb >= 192;
 }
 
-pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[], types: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string, try_cleanup: ast.Stmt[], heap: interpheap.Heap, cells: boolean }
+pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[], types: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string, try_cleanup: ast.Stmt[], heap: interpheap.Heap, cells: boolean, tynames: boolean }
 
 // The program's functions in declaration order, indexed by the name a call
 // uses: the declared name, except that a Map `__iterator` is `iter`.
@@ -1163,18 +1163,23 @@ pub function new_env(heap: interpheap.Heap): Env {
   let fs: parser.FuncDecl[] = [];
   let al: parser.TypeAlias[] = [];
   let no_structs: parser.StructDecl[] = [];
-  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: funcs_of(fs), aliases: al, type_decls: module_type_decls(no_structs), ret: "", try_cleanup: [], heap: heap, cells: true };
+  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: funcs_of(fs), aliases: al, type_decls: module_type_decls(no_structs), ret: "", try_cleanup: [], heap: heap, cells: true, tynames: false };
 }
 
 function new_module_env(heap: interpheap.Heap, fs: Funcs, al: parser.TypeAlias[], vd: parser.StructDecl[]): Env {
   let ns: string[] = [];
   let vs: Value[] = [];
   let ts: string[] = [];
-  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, ret: "", try_cleanup: [], heap: heap, cells: true };
+  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, ret: "", try_cleanup: [], heap: heap, cells: true, tynames: false };
 }
 
 function (e: Env) bind(name: string, v: Value): Env {
   return e.bind_decl(name, v, "");
+}
+
+// Binds a type parameter or a const parameter to its argument.
+function (e: Env) bind_type(name: string, v: Value): Env {
+  return Env { ...e.bind(name, v), tynames: true };
 }
 
 function (e: Env) bind_decl(name: string, v: Value, decl_ty: string): Env {
@@ -1763,7 +1768,7 @@ function cell_tree_text(h: usize, v: Value, own edges: interpheap.Root[], heap: 
         if (!captured.ok) {
           return (false, edges);
         }
-        let code = interpheap.ClosureCode { params: f.params, ret_type: f.ret_type, body: f.body, captured_names: f.captured_names, captured_types: f.captured_types, generic_name: f.generic_name, self_name: f.self_name, peers: f.peers, cells: f.cells };
+        let code = interpheap.ClosureCode { params: f.params, ret_type: f.ret_type, body: f.body, captured_names: f.captured_names, captured_types: f.captured_types, generic_name: f.generic_name, self_name: f.self_name, peers: f.peers, cells: f.cells, tynames: f.tynames };
         let root = interpheap.allocate_closure(heap, code, captured.text, captured.edges);
         cell_bits_text(h, 70, edges.len() as i64);
         return (true, edges.append(root));
@@ -2021,7 +2026,7 @@ function cell_leaf_value(s: string, at: Cell[i32], edges: interpheap.Root[], hea
     let payload = interpheap.get(root);
     if let Some(code) = payload.closure {
       let captured = cell_parts_value(payload.text, cell_new(0), interpheap.children(root), heap, []);
-      return VFunc { params: code.params, ret_type: code.ret_type, body: code.body, captured_names: code.captured_names, captured_values: captured.values, captured_types: code.captured_types, generic_name: code.generic_name, self_name: code.self_name, peers: code.peers, cells: code.cells };
+      return VFunc { params: code.params, ret_type: code.ret_type, body: code.body, captured_names: code.captured_names, captured_values: captured.values, captured_types: code.captured_types, generic_name: code.generic_name, self_name: code.self_name, peers: code.peers, cells: code.cells, tynames: code.tynames };
     }
     return v_err("function binding has no code");
   }
@@ -5538,6 +5543,7 @@ function resolve_ident_value(name: string, env: Env): Value {
           self_name: "",
           peers: 0,
           cells: env.funcs.cells[vfi],
+          tynames: false,
         };
       }
     }
@@ -5749,6 +5755,7 @@ function eval_expr(e: ast.Expr, env: Env): Value {
         self_name: "",
         peers: 0,
         cells: lambda_needs_cells(lm, env),
+        tynames: captured.tynames,
       };
     },
     ast.ExprMapLit(_) => {
@@ -6044,9 +6051,11 @@ function bound_type_args(targs: string[], env: Env): string[] {
 // The value that `name` has as a part of a type: a binding of the
 // environment, or a constant of the module.
 function type_binding(name: string, env: Env): Value {
-  let bound = env.lookup(name);
-  if (!is_err(bound)) {
-    return bound;
+  if (env.tynames) {
+    let bound = env.lookup(name);
+    if (!is_err(bound)) {
+      return bound;
+    }
   }
   for ci in env.funcs.named(name) {
     let cfd = env.funcs.decls[ci];
@@ -6054,11 +6063,20 @@ function type_binding(name: string, env: Env): Value {
       return call_func(env.heap, name, [], env.funcs, env.aliases, env.type_decls);
     }
   }
-  return bound;
+  return v_absent();
+}
+
+// Reports a spelling that names no constant of the module: a plain name that
+// no function has, or an array of a plain name.
+function closed_spelling(spelling: string, funcs: Funcs): boolean {
+  if (parser.plain_type_spelling(spelling)) {
+    return funcs.runtime_names.chain(spelling) < 0;
+  }
+  return parser.array_of_plain_spelling(spelling);
 }
 
 function bound_type_spelling(spelling: string, env: Env): string {
-  if (spelling.len() == 0) {
+  if (spelling.len() == 0 || !env.tynames && closed_spelling(spelling, env.funcs)) {
     return spelling;
   }
   let ref = parser.parse_type_ref(spelling);
@@ -6447,7 +6465,7 @@ function call_closure(heap: interpheap.Heap, cv: Value, args: Value[], funcs: Fu
 }
 
 function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], inline_value: boolean): Value {
-  let fv = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [], generic_name: "", self_name: "", peers: 0, cells: true };
+  let fv = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [], generic_name: "", self_name: "", peers: 0, cells: true, tynames: false };
   match (cv) {
     VFunc(v) => {
       fv = v;
@@ -6462,7 +6480,7 @@ function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], func
   if (args.len() != fv.params.len()) {
     return v_err("arity mismatch calling closure");
   }
-  let env = Env { outer: None, depth: 0, names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, ret: "", try_cleanup: [], heap: heap, cells: fv.cells };
+  let env = Env { outer: None, depth: 0, names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, ret: "", try_cleanup: [], heap: heap, cells: fv.cells, tynames: fv.tynames };
   for j in 0..fv.params.len() {
     env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
   }
@@ -6563,7 +6581,7 @@ function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args
     }
     let t = 0;
     while (t < tps.len() && t < targs.len()) {
-      env = env.bind(tps[t], v_type(parser.render_type_ref(targs[t])));
+      env = env.bind_type(tps[t], v_type(parser.render_type_ref(targs[t])));
       t += 1;
     }
   }
@@ -6689,7 +6707,7 @@ function bind_tyargs(env: Env, fd: parser.FuncDecl, has_recv: boolean, recv: Val
       concrete = type_args[at];
     }
     if (parser.is_const_arg(concrete)) {
-      e = e.bind(tp, v_int(util.digits_to_i32(concrete)));
+      e = e.bind_type(tp, v_int(util.digits_to_i32(concrete)));
       t += 1;
       continue;
     }
@@ -6707,9 +6725,9 @@ function bind_tyargs(env: Env, fd: parser.FuncDecl, has_recv: boolean, recv: Val
       concrete = tyarg_match_names(fd.ret_type, tp, expect);
     }
     if (parser.is_const_arg(concrete)) {
-      e = e.bind(tp, v_int(util.digits_to_i32(concrete)));
+      e = e.bind_type(tp, v_int(util.digits_to_i32(concrete)));
     } else if (concrete.len() > 0 && !util.has_str(fd.type_params, concrete)) {
-      e = e.bind(tp, v_type(concrete));
+      e = e.bind_type(tp, v_type(concrete));
     }
     t += 1;
   }
@@ -6753,7 +6771,7 @@ function bind_receiver_consts(env: Env, receiver_type: string, recv_type: string
   for name in names {
     let concrete = tyarg_match_names(receiver_type, name, recv_type);
     if (parser.is_const_arg(concrete)) {
-      e = e.bind(name, v_int(util.digits_to_i32(concrete)));
+      e = e.bind_type(name, v_int(util.digits_to_i32(concrete)));
     }
   }
   return e;
