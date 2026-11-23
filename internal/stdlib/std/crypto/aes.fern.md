@@ -10,6 +10,8 @@ CBC operates on whole blocks and supplies neither padding nor a message authenti
 
 The S-box is computed, not read from a table: the inverse in GF(2^8) is x^254, and then the affine map of FIPS 197 section 5.1.1 applies. Thus no step reads memory at an index that depends on the key or the data.
 
+`encrypt_block` with a key of 128 or 256 bits uses the AES kernel of the target, which `std/crypto/aes_gcm` also uses: the AES instructions on x86-64 and arm64, and a bitsliced cipher on WebAssembly. Each of these runs in constant time. The kernel has no schedule for a key of 192 bits and no inverse cipher, so a key of 192 bits and each `decrypt_block` use the rounds of this module.
+
 ## Contracts
 
 A key of a length other than 16, 24 or 32 bytes gives `KeyLength`. An initialization vector of a length other than 16 bytes gives `IvLength`. Data that is not a whole number of blocks gives `DataLength`.
@@ -252,14 +254,22 @@ function __inverse_mix(own s: u8[]): u8[] {
   return s;
 }
 
-// The cipher of FIPS 197 section 5.1 on the 16 bytes of block.
+// The cipher of FIPS 197 section 5.1 on the 16 bytes of block. A key of 128
+// or 256 bits uses the AES kernel of the target: one counter block of CTR
+// mode with a zero text is the cipher of the counter. The kernel has no
+// schedule for a key of 192 bits, so that key uses the rounds below.
 pub function (c: Cipher) encrypt_block(block: [u8]): u8[] {
+  if (c.rounds != 12) {
+    return __aes_ctr32(c.keys, block[0:16], ZERO_BLOCK);
+  }
   let s = __add_key(__bytes_into(__alloc_u8(16), 0, block, 0, 16), c.keys, 0);
   for round in 1..c.rounds {
     s = __add_key(__mix(__sub_shift(s)), c.keys, round);
   }
   return __add_key(__sub_shift(s), c.keys, c.rounds);
 }
+
+const ZERO_BLOCK: u8[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 // The inverse cipher of FIPS 197 section 5.3 on the 16 bytes of block.
 pub function (c: Cipher) decrypt_block(block: [u8]): u8[] {
