@@ -700,3 +700,15 @@ httplint/range.bad	0
 httplint/range.warn	1
 httplint/fresh.bad	0
 httplint/fresh.warn	0
+
+# lane: net-tls-interop
+tls/client/openssl.bulk_mbytes_per_s	578.5
+tls/client/openssl.handshakes_per_s	107.5
+tls/client/go.bulk_mbytes_per_s	508.4
+tls/client/go.handshakes_per_s	106.4
+tls/client/rustls.handshakes_per_s	108.7
+tls/client/bssl.handshakes_per_s	109.3
+tls/server/go.bulk_mbytes_per_s	284.4
+tls/server/curl.bulk_mbytes_per_s	423.0
+tls/server/handshakes_per_s	665.2
+tls/server/resumed_handshakes_per_s	685.0
