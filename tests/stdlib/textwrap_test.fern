@@ -34,6 +34,17 @@ function test_collapses_spaces_and_edges(): test.TestOutcome {
   return test.assert_eq(textwrap.word_wrap("a b c", 0), "a b c");
 }
 
+function test_tabs_and_carriage_returns(): test.TestOutcome {
+  if (textwrap.word_wrap("a\tb  c\r\nd e\r\n", 3) != "a b\nc\nd e\n") {
+    return test.fail("a tab and a carriage return separate words");
+  }
+  return test.assert_eq(textwrap.word_wrap("\t one\t\ttwo \t", 20), "one two");
+}
+
+function test_counts_code_points(): test.TestOutcome {
+  return test.assert_eq(textwrap.word_wrap("café au lait", 7), "café au\nlait");
+}
+
 function main(): i32 {
   let r = test.new("std/textwrap");
   r = r.it("greedy wrap", test_greedy_wrap);
@@ -42,5 +53,7 @@ function main(): i32 {
   r = r.it("long word", test_long_word);
   r = r.it("hard newlines", test_preserves_hard_newlines);
   r = r.it("collapse + edges", test_collapses_spaces_and_edges);
+  r = r.it("tabs + carriage returns", test_tabs_and_carriage_returns);
+  r = r.it("code points", test_counts_code_points);
   return r.finish();
 }

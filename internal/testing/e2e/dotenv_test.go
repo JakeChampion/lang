@@ -15,6 +15,13 @@ function main(): i32 {
     if (!m.contains("EMPTY") || m.get_or("EMPTY", "?") != "") { return 6; }
     if (m.contains("no_eq")) { return 7; }
     if (m.len() != 6) { return 8; }   // HOST, PORT, TOKEN, MSG, RAW, EMPTY
+    let q: Map[string, string] = dotenv.parse("A=bar # note\nURL=http://host/#top\nB=\"x # y\" # note\nC=\"line 1\nline 2\"\nD=\"open\nE='p'\n");
+    if (q.get_or("A", "?") != "bar") { return 9; }
+    if (q.get_or("URL", "?") != "http://host/#top") { return 10; }
+    if (q.get_or("B", "?") != "x # y") { return 11; }
+    if (q.get_or("C", "?") != "line 1\nline 2") { return 12; }
+    if (q.get_or("D", "?") != "\"open") { return 13; }
+    if (q.get_or("E", "?") != "p" || q.len() != 6) { return 14; }
     return 42;
 }
 `
