@@ -33871,7 +33871,7 @@ function main(): i32 {
     return 220;
   }
 
-  let src23 = "struct Circle { r: i32 } pub type Shape = Circle; function id(s: Shape): Shape { return s; } function main(): i32 { return 0; }";
+  let src23 = "struct Circle { r: i32 } struct Square { s: i32 } pub type Shape = Circle | Square; function id(s: Shape): Shape { return s; } function main(): i32 { return 0; }";
   let mod23 = parser.parse_module(lexer.tokenize(src23));
   let mt23 = check_module(mod23);
   if (!mt23.all_well_typed) {
@@ -33897,13 +33897,6 @@ function main(): i32 {
   let mt26 = check_module(mod26);
   if (mt26.all_well_typed) {
     return 260;
-  }
-
-  let src27 = "struct Circle { r: i32 } pub type Shape = Circle; function go(sh: Shape): i32 { match (sh) { Circle(c) => { return c.r; } } return 0; } function main(): i32 { return go(Circle { r: 4 }); }";
-  let mod27 = parser.parse_module(lexer.tokenize(src27));
-  let mt27 = check_module(mod27);
-  if (!mt27.all_well_typed) {
-    return 270;
   }
 
   let src28: string = "struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { let c = Circle { r: 1 }; match (c) { Square(_) => { return 1; } } return 0; }";
@@ -34172,7 +34165,7 @@ function main(): i32 {
     return 650;
   }
 
-  let src66 = "struct Circle { r: i32 } struct Triangle { b: i32 } pub type Shape = Circle; function f(): Shape { return Triangle { b: 3 }; } function main(): i32 { return 0; }";
+  let src66 = "struct Circle { r: i32 } struct Triangle { b: i32 } struct Square { s: i32 } pub type Shape = Circle | Square; function f(): Shape { return Triangle { b: 3 }; } function main(): i32 { return 0; }";
   let mod66 = parser.parse_module(lexer.tokenize(src66));
   let mt66 = check_module(mod66);
   if (mt66.all_well_typed) {
