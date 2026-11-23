@@ -106,6 +106,7 @@ an empty value.
 | `FERN_DEBUG_SSA_DENY` | Exclude registers selected by the numeric mask from native register allocation. |
 | `FERN_DEBUG_SEM_INLINE`, `FERN_DEBUG_SEM_REUSE` | Set to zero or an empty value to disable semantic inlining or reuse of previously lowered rows. Both passes run by default. |
 | `FERN_DEBUG_NO_SEM_REACH`, `FERN_DEBUG_NO_SCALE_KERNEL`, `FERN_DEBUG_NO_PRODUCT_KERNEL`, `FERN_DEBUG_NO_ARRAY_FUSION` | Disable the named pass when enabled. |
+| `FERN_DEBUG_NO_RANGE_PROOFS` | Keep each bounds check that the compiler can prove unnecessary. The word loads, loop versions and quotient rewrites that use the same proofs are also off. |
 | `FERN_DEBUG_SELFHOST_NO_REUSE` | Disable allocation reuse in the self-host compiler's generated code. |
 | `FERN_DEBUG_HIGH_HEAP` | Request a high heap address on ARM64 Linux for pointer-width testing. |
 | `FERN_DEBUG_IR_VERIFY` | Verify IR by default. Use `quiet` to verify without printing a report, `1` to print it, or `0` to disable verification. |

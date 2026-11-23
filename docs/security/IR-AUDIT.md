@@ -64,7 +64,8 @@ Floats, pointer-width ops, memory, and calls are barriers, so the oracle covers 
 
 `internal/testing/fernsmith` generates programs from a seed and shrinks a failing seed.
 `TestDifferential_SelfHostX86_64` compares the self-host compiler with the Go interpreter on exit codes and output.
-Half of the seeds run with a random pass configuration from `selfHostPassSwitches`: the reuse pass, inlining, array fusion, and the scale and product kernels can each be left out.
+Half of the seeds run with a random pass configuration from `selfHostPassSwitches`: the reuse pass, inlining, array fusion, the scale and product kernels, and the range proofs can each be left out.
+The range proofs are the check elimination of `compiler/ssabounds.fern` and the loop versions of `compiler/semversion.fern` (`docs/security/BOUNDS-AUDIT.md`).
 That is the optimized-against-unoptimized comparison SEC-012 asks for, on exit codes and output, which includes a bounds abort's exit 134 and the checked-arithmetic results.
 The lanes do not compare the trap's message or the faulting address.
 
