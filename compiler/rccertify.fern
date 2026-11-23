@@ -2843,6 +2843,19 @@ function apply_store(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken
         p = Progress { ...p, state: p.state.with(kn, twin(twin_key(s), twin_same(s) + 1, no_side())) };
         continue;
       }
+      // The unit goes to a live token of the box when the token is the box,
+      // and to the box when the token is zero.
+      let tok = live_token_of(p, w, r);
+      if (tok >= 0) {
+        let kt = w.idx[tok];
+        let kb = w.idx[r];
+        let st = p.state[kt];
+        let sb = p.state[kb];
+        if (st >= 0 && st < cap() && sb >= 0 && sb < cap()) {
+          p = Progress { ...p, state: p.state.with(kb, twin(tok, sb, sb + 1)).with(kt, twin(tok, st + 1, st)) };
+          continue;
+        }
+      }
       let k = w.idx[r];
       if (k >= 0 && flat(p.state[k]) != maybe()) {
         let s = flat(p.state[k]);
@@ -3677,6 +3690,20 @@ function named_box(p: Progress, r: i32): i32 {
     let s = p.state[k];
     if (is_twin(s) && twin_key(s) == r && twin_apart(s) == no_side() && twin_same(s) < cap()) {
       return k;
+    }
+  }
+  return -1;
+}
+
+// The root of a token whose box is `r` and whose slot holds a state, or -1.
+function live_token_of(p: Progress, w: Walk, r: i32): i32 {
+  if (r < 0 || w.idx[r] < 0) {
+    return -1;
+  }
+  for ph in w.phis {
+    let t = w.root[ph];
+    if (t == ph && w.idx[t] >= 0 && p.state[w.idx[t]] != absent() && token_box(w, def_in(w, ph)) == r) {
+      return t;
     }
   }
   return -1;
