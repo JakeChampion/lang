@@ -43,9 +43,9 @@ function headers(): test.TestOutcome {
       return test.fail("reserved header field");
     }
   }
-  for bytes in [changed(input, 1, input[1] & 249u8 | 2u8), changed(input, 1, input[1] & 231u8), changed(input, 2, input[2] & 15u8)] {
+  for bytes in [changed(input, 1, input[1] & 249u8 | 2u8), changed(input, 1, input[1] & 231u8)] {
     if let Err(pcm.Unsupported) = header.parse(bytes, 0) {} else {
-      return test.fail("other layer, version, or free format");
+      return test.fail("other layer or version");
     }
   }
   return test.pass();

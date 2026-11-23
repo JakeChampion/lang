@@ -1,9 +1,11 @@
-# Bounded MP3 frame extents
+# Bounded MPEG audio frame extents
 
 Indexed bitrates determine their frame extent directly.
 Free-format discovery requires compatible headers at two successive frame boundaries.
 Two complete frames at physical EOF also determine an extent.
 The unpadded extent remains constant, while each frame supplies its own padding bit.
+A Layer I padding bit adds one four-byte slot, and a Layer I extent is a whole number of slots.
+`begin` starts a Layer III search. `layered` starts a search for any layer.
 
 The incremental probe checks at most 256 byte positions per call.
 It retains a search position across short reads and requests only the required lookahead.
@@ -20,15 +22,20 @@ An established extent permits isolated-frame decode and the final frame of a str
 import "std/audio/mp3/header";
 import "std/audio/pcm";
 
-pub struct Search { next: i32, first: i32, signature: i32, rate: i32, mono: boolean, padding: i32, side: i32, eof: boolean }
+pub struct Search { next: i32, first: i32, signature: i32, rate: i32, mono: boolean, padding: i32, slot: i32, side: i32, eof: boolean }
 
 pub enum Probe { Found(i32), Need(Search, i32), Pending(Search) }
 
 pub function begin(h: header.Header): Search {
   let version = if (h.version == 1) { 3 } else if (h.version == 2) { 2 } else { 0 };
-  let side = header.side_bytes(h);
-  let first = 4 + side + (if (h.crc) { 2 } else { 0 });
-  return Search { next: first, first: first, signature: 224 | version << 3 | 2, rate: h.rate_index % 3 << 2, mono: h.channels == 1, padding: h.padding, side: side, eof: false };
+  return layered(1, version, h.rate_index % 3, h.channels == 1, h.padding, h.crc, header.side_bytes(h));
+}
+
+// `layer` and `version` are the two-bit header fields. `side` counts the bytes every frame holds after its header and CRC.
+pub function layered(layer: i32, version: i32, rate_index: i32, mono: boolean, padding: i32, crc: boolean, side: i32): Search {
+  let slot = if (layer == 3) { 4 } else { 1 };
+  let first = 4 + side + (if (crc) { 2 } else { 0 });
+  return Search { next: first, first: first, signature: 224 | version << 3 | layer << 1, rate: rate_index << 2, mono: mono, padding: padding * slot, slot: slot, side: side, eof: false };
 }
 
 function compatible(input: [u8], at: i32, state: Search): boolean {
@@ -44,7 +51,7 @@ function ceiling(maximum: i32): i32 {
 }
 
 function valid_search(state: Search, eof: boolean): boolean {
-  return state.first >= 4 && state.next >= state.first && state.padding >= 0 && state.padding <= 1 && (!state.eof || eof);
+  return state.first >= 4 && state.next >= state.first && (state.slot == 1 || state.slot == 4) && (state.padding == 0 || state.padding == state.slot) && (!state.eof || eof);
 }
 
 function at_eof(state: Search, eof: boolean): Search {
@@ -54,7 +61,10 @@ function at_eof(state: Search, eof: boolean): Search {
 
 function following(input: [u8], state: Search, next: i32, eof: boolean): Option[Probe] {
   let base = next - state.padding;
-  let padding = input[next + 2] as i32 >> 1 & 1;
+  if (base % state.slot != 0) {
+    return None;
+  }
+  let padding = (input[next + 2] as i32 >> 1 & 1) * state.slot;
   let bytes = base + padding;
   let minimum = 4 + state.side + (if ((input[next + 1] as i32 & 1) == 0) { 2 } else { 0 });
   if (bytes < minimum) {
@@ -125,15 +135,15 @@ pub function resolve(input: [u8], at: i32, h: header.Header, base: i32, maximum:
   if (at < 0 || at > input.len() - 4) {
     return Err(pcm.Truncated);
   }
-  return complete(input[at:], h, maximum);
+  return sized(h, discover(input[at:], begin(h), maximum)?, maximum);
 }
 
-function complete(input: [u8], h: header.Header, maximum: i32): Result[header.Header, pcm.AudioError] {
-  let search = begin(h);
+// Find the unpadded extent of the frame at the start of a complete input.
+pub function discover(input: [u8], search: Search, maximum: i32): Result[i32, pcm.AudioError] {
   while (true) {
     match (probe(input, search, maximum, true)?) {
       Found(value) => {
-        return sized(h, value, maximum);
+        return Ok(value);
       },
       Pending(next) => {
         search = next;

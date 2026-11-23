@@ -1,0 +1,184 @@
+import "std/audio/mp1";
+import "std/audio/mp2";
+import "std/audio/mp2/header";
+import "std/audio/mp3/spectral";
+import "std/audio/pcm";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "mp2_check";
+import "mpeg12_freeformat_vectors" as vectors;
+
+// Decode each Layer I frame from a view that starts at its header and return the frame extents.
+function layer1_frames(input: [u8], expected: [u8], channels: i32): Result[i32[], string] {
+  let count = 384 * channels;
+  let state = mp1.decoder();
+  let output = spectral.zeros(count);
+  let sizes: i32[] = [];
+  let at = 0;
+  while (at < input.len()) {
+    let (next, result) = state.decode_frame_into(input[at:], output, pcm.default_limits());
+    state = next;
+    let frame = match (result) { Ok(value) => value, Err(e) => { return Err("Layer I frame: " + e.message()); } };
+    if (frame.bytes_read % 4 != 0) {
+      return Err("Layer I slot alignment");
+    }
+    mp2_check.samples(frame.samples, count, expected, sizes.len() * count)?;
+    sizes = sizes.append(frame.bytes_read);
+    at += frame.bytes_read;
+    output = frame.samples;
+  }
+  return Ok(sizes);
+}
+
+function references(): test.TestOutcome {
+  for v in vectors.vectors() {
+    let Ok(input) = ref.unpack(v.encoded) else {
+      return test.fail("fixture");
+    };
+    let Ok(expected) = ref.unpack(v.pcm) else {
+      return test.fail("reference");
+    };
+    if (v.layer == 1) {
+      let Ok(audio) = mp1.decode_raw(input, pcm.default_limits()) else {
+        return test.fail("Layer I whole decode");
+      };
+      if (audio.sample_rate != v.rate || audio.channels != v.channels || audio.samples.len() != v.frames * 384 * v.channels) {
+        return test.fail("Layer I format or sample count");
+      }
+      if let Err(e) = mp2_check.samples(audio.samples, audio.samples.len(), expected, 0) {
+        return test.fail(e);
+      }
+      if let Err(e) = layer1_frames(input, expected, v.channels) {
+        return test.fail(e);
+      }
+    } else {
+      let Ok(h) = header.parse(input, 0) else {
+        return test.fail("Layer II header");
+      };
+      if (h.bitrate != 0 || h.bytes != 0) {
+        return test.fail("free-format header extent");
+      }
+      if let Err(e) = mp2_check.run(input, expected, v.rate, v.channels, v.frames * 1152) {
+        return test.fail(e);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function layer1_boundaries(): test.TestOutcome {
+  let v = vectors.vectors()[0];
+  let Ok(input) = ref.unpack(v.encoded) else {
+    return test.fail("fixture");
+  };
+  let Ok(expected) = ref.unpack(v.pcm) else {
+    return test.fail("reference");
+  };
+  let Ok(sizes) = layer1_frames(input, expected, v.channels) else {
+    return test.fail("frame extents");
+  };
+  let limits = pcm.default_limits();
+  let (_, alone) = mp1.decoder().decode_frame_into(input[:sizes[0]], spectral.zeros(384), limits);
+  if let Err(pcm.Truncated) = alone {} else {
+    return test.fail("fresh frame without a following header");
+  }
+  let Ok(tail) = mp1.decode_raw(input[sizes[0]:], limits) else {
+    return test.fail("two complete frames at the end of the input");
+  };
+  if (tail.samples.len() != 768) {
+    return test.fail("two-frame sample count");
+  }
+  let second = sizes[0] + sizes[1];
+  // One extra byte after each frame moves the extent off the four-byte slots.
+  let unaligned: u8[] = [];
+  for i in 0..input.len() {
+    if (i == sizes[0] || i == second) {
+      unaligned = unaligned.append(0u8);
+    }
+    unaligned = unaligned.append(input[i]);
+  }
+  unaligned = unaligned.append(0u8);
+  if let Err(pcm.Truncated) = mp1.decode_raw(unaligned, limits) {} else {
+    return test.fail("extent outside four-byte slots");
+  }
+  let state = mp1.decoder();
+  let at = 0;
+  for i in 0..2 {
+    let (next, result) = state.decode_frame_into(input[at:], spectral.zeros(384), limits);
+    state = next;
+    let Ok(frame) = result else {
+      return test.fail("leading frame");
+    };
+    at += frame.bytes_read;
+  }
+  let (retry, corrupt) = state.decode_frame_into(input.with(at + 4, input[at + 4] ^ 1u8)[at:], spectral.zeros(384), limits);
+  if let Err(pcm.Checksum) = corrupt {} else {
+    return test.fail("final-frame CRC");
+  }
+  let (_, last) = retry.decode_frame_into(input[at:], spectral.zeros(384), limits);
+  let Ok(frame) = last else {
+    return test.fail("established extent after a CRC error");
+  };
+  if let Err(e) = mp2_check.samples(frame.samples, 384, expected, 768) {
+    return test.fail(e);
+  }
+  return test.pass();
+}
+
+function layer2_boundaries(): test.TestOutcome {
+  // MPEG-1 stereo at 48 kHz with every frame protected.
+  let v = vectors.vectors()[5];
+  let Ok(input) = ref.unpack(v.encoded) else {
+    return test.fail("fixture");
+  };
+  if (v.layer != 2 || v.rate != 48000 || v.channels != 2) {
+    return test.fail("fixture order");
+  }
+  let limits = pcm.default_limits();
+  let Ok(first) = mp2.inspect(input, 0, limits) else {
+    return test.fail("discovered extent");
+  };
+  if (first.bitrate != 0 || first.bytes < 6 || !first.crc) {
+    return test.fail("protected free-format header");
+  }
+  if let Err(pcm.Truncated) = mp2.inspect(input[:first.bytes], 0, limits) {} else {
+    return test.fail("fresh frame without a following header");
+  }
+  let Ok(raw) = header.parse(input, 0) else {
+    return test.fail("header");
+  };
+  if let Err(pcm.Limit) = header.resolve(input, 0, raw, 0, first.bytes - first.padding - 1) {} else {
+    return test.fail("extent limit");
+  }
+  let (state, opening) = mp2.decoder().decode_frame_into(input, 0, spectral.zeros(2304), limits);
+  let Ok(frame) = opening else {
+    return test.fail("first frame");
+  };
+  let second = frame.bytes_read;
+  let corrupt = input.with(second + 4, input[second + 4] ^ 1u8);
+  let (failed, rejected) = state.decode_frame_into(corrupt, second, spectral.zeros(2304), limits);
+  if let Err(pcm.Checksum) = rejected {} else {
+    return test.fail("second-frame CRC");
+  }
+  let Ok(middle) = mp2.inspect(input, second, limits) else {
+    return test.fail("second extent");
+  };
+  let last = second + middle.bytes;
+  let (kept, final_frame) = failed.decode_frame_into(input[last:], 0, spectral.zeros(2304), limits);
+  if (final_frame.is_err()) {
+    return test.fail("established extent after a CRC error");
+  }
+  let (_, cleared) = kept.reset().decode_frame_into(input[last:], 0, spectral.zeros(2304), limits);
+  if let Err(pcm.Truncated) = cleared {} else {
+    return test.fail("reset clears the extent");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("free-format MPEG Layer I and II");
+  runner = runner.it("independent scalar PCM through whole and frame decode", references);
+  runner = runner.it("Layer I discovery, slot alignment and CRC retry", layer1_boundaries);
+  runner = runner.it("Layer II discovery, limit, CRC error and reset", layer2_boundaries);
+  return runner.finish();
+}

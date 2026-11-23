@@ -83,9 +83,6 @@ function boundaries(): test.TestOutcome {
   if let Err(pcm.Truncated) = mp1.decode_raw(input[:input.len() - 1], limits) {} else {
     return test.fail("incomplete final frame");
   }
-  if let Err(pcm.Unsupported) = mp1.decode_raw(input.with(2, 0u8), limits) {} else {
-    return test.fail("free format");
-  }
   if let Err(pcm.Limit) = mp1.decode_raw(input, pcm.Limits { ...limits, max_samples: 1151 }) {} else {
     return test.fail("cumulative budget");
   }

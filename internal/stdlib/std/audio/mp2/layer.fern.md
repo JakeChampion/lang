@@ -22,7 +22,8 @@ function allocation(h: header.Header): Allocation {
   let bands = 30;
   let family = 2;
   if (h.version == 1) {
-    let kbps = h.bitrate / h.channels;
+    // ISO 11172-3 Table B.2 puts free format with 192 kbit/s per channel.
+    let kbps = if (h.bitrate == 0) { 192 } else { h.bitrate / h.channels };
     family = 1;
     bands = 27;
     if (kbps < 56) {
