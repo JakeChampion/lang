@@ -27,6 +27,11 @@ func TestSelfHostCheckedValueTypes(t *testing.T) {
 		{"obligation", `@must_consume struct Part { bytes: u8[] } @value struct Bad { part: Part }`, "E051"},
 		{"enum obligation", `@must_consume enum Part { SomeData(u8[]), Empty } @value struct Bad { part: Part }`, "E051"},
 		{"union cell", `struct A { data: Cell[i32] } struct B { n: i32 } type Choice = A | B; @value struct Bad { data: Choice }`, "E051"},
+		{"union data", `struct A { n: i32 } struct B { s: string } type Choice = A | B; @value struct Key { data: Choice } function (own k: Key) erase(): void {} function f(k: Key): void { k.erase(); }`, ""},
+		{"enum payload cell", `enum Part { Hold(Cell[i32]), Empty } @value struct Bad { part: Part }`, "E051"},
+		{"second variant cell", `enum Part { Empty, Plain(i32), Hold(Cell[i32]) } @value struct Bad { part: Part }`, "E051"},
+		{"generic enum data", `enum Maybe[T] { Just(T), Nothing } @value struct Key { data: Maybe[u8[]] } function (own k: Key) erase(): void {} function f(k: Key): void { k.erase(); }`, ""},
+		{"generic enum cell", `enum Maybe[T] { Just(T), Nothing } @value struct Bad { data: Maybe[Cell[i32]] }`, "E051"},
 		{"unmarked cleanup", `struct Key { bytes: u8[] } function (own k: Key) erase(): void {} function f(k: Key): void { k.erase(); }`, "E051"},
 		{"explicit own stays moved", key + `function f(own k: Key): i32 { k.erase(); return k.bytes.len(); }`, "E050"},
 	}
