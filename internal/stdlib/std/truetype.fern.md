@@ -1725,13 +1725,18 @@ pub function (p: PreparedLookup) apply(r: Run, mask: i32, opts: i32): Run {
 // `p` holds no glyph that the lookup tries, or -1 when it holds one. Each
 // glyph that the lookup tries takes one attempt there.
 function idle_attempts(p: PreparedLookup, r: Run, mask: i32): i32 {
+  if (p.digests.len() < 3) {
+    return -1;
+  }
   let filter = filters_classes(p.lookup);
+  let (d0, d4, d9) = (p.digests[0], p.digests[1], p.digests[2]);
   let tried = 0;
   for i in 0..r.glyphs.len() {
     if ((r.masks[i] & mask) == 0 || filter && skipped_class(p.font, p.lookup, r, i)) {
       continue;
     }
-    if (digest_has(p.digests, 0, r.glyphs[i])) {
+    let g = r.glyphs[i];
+    if ((d0 >> (g & 63) as u64 & d4 >> (g >> 4 & 63) as u64 & d9 >> (g >> 9 & 63) as u64 & 1u64) != 0u64) {
       return -1;
     }
     tried += 1;
