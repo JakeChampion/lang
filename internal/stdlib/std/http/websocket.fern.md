@@ -16,6 +16,21 @@ A long-lived producer needs a suitable `serve.Config.background_deadline`. A zer
 
 Message limits and output pressure have separate controls. Send results distinguish accepted data, backpressure, and dropped data. Upgrade errors retain their cause.
 
+## Executable example
+
+```fern test name=std-http-websocket-example
+import "std/http/websocket";
+
+function main(): i32 {
+  // The key and the accept value of RFC 6455 section 1.3.
+  if (websocket.accept_key("dGhlIHNhbXBsZSBub25jZQ==") != "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=") { return 1; }
+  // A final text frame with no mask: the frame "Hello" of RFC 6455 section 5.7.
+  let frame = websocket.frame(true, 1, [72u8, 101u8, 108u8, 108u8, 111u8], []);
+  if (frame != [129u8, 5u8, 72u8, 101u8, 108u8, 108u8, 111u8]) { return 2; }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.

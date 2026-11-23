@@ -323,3 +323,25 @@ func TestSelfHostFmaF32Emission(t *testing.T) {
 		})
 	}
 }
+
+// The software fma of wasm calls small runtime helpers that the inliner
+// splices into each caller. A helper that is not a root of the runtime unit
+// then has no body in the module (#16850).
+func TestSelfHostWasmDropsSplicedRuntimeHelpers(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(fmaPolySrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wat := e2eharness.EmitAsmWithSelfHost(t, e2eharness.SelfHostCLI(t), e2eharness.TargetWasm32Wasi, src)
+	if !strings.Contains(wat, "(func $__fern_fma_f64 ") {
+		t.Fatal("the module has no $__fern_fma_f64, the root that poly calls")
+	}
+	for _, name := range []string{"$__fern_fma_bit", "$__fern_fma_shr", "$__fern_fma_signed"} {
+		if strings.Contains(wat, "call "+name+"\n") {
+			t.Fatalf("%s is still called, so this test no longer covers a spliced helper", name)
+		}
+		if strings.Contains(wat, "(func "+name+" ") {
+			t.Errorf("%s has a body, but each of its calls is spliced", name)
+		}
+	}
+}

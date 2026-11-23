@@ -49,23 +49,25 @@ pub function load_with(target: string, roots: string, mode: i32, path: string, r
 
 pub function load_bound(target: string, roots: string, keys: string[], values: ast.Expr[]): parser.Module {
   let files = Files { index: util.name_index(rtbundle.names()), indices: rtbundle.indices(target), contents: rtbundle.contents(), paths: rtbundle.paths(), offset: 0, target: target };
-  return load_files(files, roots, keys, values);
+  return load_files(files, roots, keys, values, false);
 }
 
 pub function template(roots: string, keys: string[], values: ast.Expr[]): parser.Module {
   let files = Files { index: util.name_index(rttemplates.names()), indices: rttemplates.indices("compiler"), contents: rttemplates.contents(), paths: rttemplates.paths(), offset: rtbundle.paths().len(), target: "compiler" };
-  return load_files(files, roots, keys, values);
+  return load_files(files, roots, keys, values, false);
 }
 
 // Keep native source contents outside the Wasm driver's dependency closure.
+// The backend calls only the roots by name, so each other function is marked
+// as reached by direct calls alone, and can go once its calls are spliced.
 pub function load_wasm(target: string, roots: string): parser.Module {
   let files = Files { index: util.name_index(rtwasm.names()), indices: rtwasm.indices(target), contents: rtwasm.contents(), paths: rtwasm.paths(), offset: rtbundle.paths().len() + rttemplates.paths().len(), target: target };
-  return load_files(files, roots, [], []);
+  return load_files(files, roots, [], [], true);
 }
 
 struct Files { index: util.NameIndex, indices: i32[], contents: string[], paths: string[], offset: i32, target: string }
 
-function load_files(files: Files, roots: string, keys: string[], values: ast.Expr[]): parser.Module {
+function load_files(files: Files, roots: string, keys: string[], values: ast.Expr[], mark_direct: boolean): parser.Module {
   let index = files.index;
   let indices = files.indices;
   if (indices.len() == 0) {
@@ -115,7 +117,22 @@ function load_files(files: Files, roots: string, keys: string[], values: ast.Exp
     }
   }
   let configured = constfold.fold_module(configure(mod, keys, values));
-  return returninfer.infer_ret_types_module(treeshake.treeshake_roots(configured, requested));
+  let roots_at = util.name_index(requested);
+  let shaken = treeshake.treeshake_roots(configured, requested);
+  if (mark_direct) {
+    shaken = direct_marked(shaken, roots_at);
+  }
+  return returninfer.infer_ret_types_module(shaken);
+}
+
+function direct_marked(mod: parser.Module, roots: util.NameIndex): parser.Module {
+  let marks = mod.marks;
+  for fd in mod.funcs {
+    if (!roots.has(fd.name)) {
+      marks = marks.append(parser.FuncMark { attr: parser.DIRECT_MARK, arg: "", func_name: fd.name, line: fd.line, col: fd.col });
+    }
+  }
+  return parser.Module { ...mod, marks: marks };
 }
 
 function declared(mod: parser.Module, name: string): boolean {

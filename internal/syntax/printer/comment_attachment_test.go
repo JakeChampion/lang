@@ -475,6 +475,64 @@ function g(a: i32): i32 {
 	}
 }
 
+func TestFormatKeepsCommentOnPatternParameterHeaderAndTypeArgumentCall(t *testing.T) {
+	src := `struct P { x: i32 }
+
+function id[T](x: T): T { return x; }
+
+function two[T, U](x: T, y: U): T { return x; }
+
+function param(P { x }: P): i32 { // on the header
+  return x;
+}
+
+function pair((a, b): (i32, i32)): i32 { // on the header
+  // above the statement
+  return a + b; // on the statement
+}
+
+function main(): i32 {
+  let a = id[i32](6); // after one type argument
+  let b = two[i32, i32](6, 7); // after two type arguments
+  let c = id[i32[]]([1]); // after an array type argument
+  return id[i32](a) + b + c[0]; // after a call in a return
+}
+`
+	want := `struct P { x: i32 }
+
+function id[T](x: T): T {
+  return x;
+}
+
+function two[T, U](x: T, y: U): T {
+  return x;
+}
+
+function param(P { x }: P): i32 {  // on the header
+  return x;
+}
+
+function pair((a, b): (i32, i32)): i32 {  // on the header
+  // above the statement
+  return a + b;  // on the statement
+}
+
+function main(): i32 {
+  let a = id[i32](6);  // after one type argument
+  let b = two[i32, i32](6, 7);  // after two type arguments
+  let c = id[i32[]]([1]);  // after an array type argument
+  return id[i32](a) + b + c[0];  // after a call in a return
+}
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := Format(prog); got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestFormatKeepsDeclarationOrder(t *testing.T) {
 	src := `function first(): i32 { return 1; }
 

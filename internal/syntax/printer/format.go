@@ -1033,7 +1033,7 @@ func (f *formatter) formatBlockFrom(blk *ast.Block, depth, skip int) {
 		f.b.WriteString("{}")
 		return
 	}
-	rest := &ast.Block{Stmts: blk.Stmts[skip:]}
+	rest := &ast.Block{P: blk.P, End: blk.End, Stmts: blk.Stmts[skip:]}
 	f.formatBlock(rest, depth)
 }
 

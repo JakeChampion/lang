@@ -1,14 +1,16 @@
 function __fern_strcmp(a: usize, b: usize): i32 {
-  let la = __load_i32(a) as u32;
-  let lb = __load_i32(b) as u32;
+  let la = __fern_str_len(a) as u32;
+  let lb = __fern_str_len(b) as u32;
+  let pa = __fern_str_data(a);
+  let pb = __fern_str_data(b);
   let n = la;
   if (lb < n) {
     n = lb;
   }
   let i: u32 = 0;
   while (i < n) {
-    let ca = __load_u8(a + 4 + i);
-    let cb = __load_u8(b + 4 + i);
+    let ca = __load_u8(pa + i);
+    let cb = __load_u8(pb + i);
     if (ca < cb) {
       return -1;
     }

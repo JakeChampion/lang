@@ -5,14 +5,15 @@ pub function texts(): string[] {
   return [aborts.arr_oob() + "\n", aborts.str_oob() + "\n", aborts.slice_range() + "\n", aborts.alloc_size() + "\n", aborts.oom() + "\n", aborts.free_range() + "\n", aborts.double_free() + "\n"];
 }
 
-pub function helpers(offsets: i32[], mode: i32): string {
+// bytes_at[i] is the address of the first byte of the text of abort i.
+pub function helpers(bytes_at: i32[], mode: i32): string {
   let names: string[] = ["arr", "str", "slice", "alloc", "oom", "free_range", "double_free"];
   let messages = texts();
   let out = "";
   for i in 0..names.len() {
     out = out + "  (func $__fern_abort_" + names[i] + "\n";
-    if (i < offsets.len()) {
-      let ptr = util.i32_to_string(offsets[i] + 4);
+    if (i < bytes_at.len()) {
+      let ptr = util.i32_to_string(bytes_at[i]);
       let len = util.i32_to_string(messages[i].len());
       if (mode == 0) {
         out = out + "    (i32.store (i32.const 0) (i32.const " + ptr + "))\n";
@@ -36,13 +37,13 @@ pub function san_texts(): string[] {
 // $__fern_san_over, $__fern_san_uaf, $__fern_san_hbo and $__fern_san_waf write their report to stderr. A core
 // module then exits with 124, as a native program does. A component has no
 // exit status but success or failure, so it traps.
-pub function san_helpers(offsets: i32[], mode: i32): string {
+pub function san_helpers(bytes_at: i32[], mode: i32): string {
   let names: string[] = ["over", "uaf", "hbo", "waf"];
   let messages = san_texts();
   let out = "";
   for i in 0..names.len() {
     out = out + "  (func $__fern_san_" + names[i] + "\n";
-    let ptr = util.i32_to_string(offsets[i] + 4);
+    let ptr = util.i32_to_string(bytes_at[i]);
     let len = util.i32_to_string(messages[i].len());
     if (mode == 0) {
       out = out + "    (i32.store (i32.const 0) (i32.const " + ptr + "))\n";

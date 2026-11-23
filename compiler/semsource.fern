@@ -10060,7 +10060,7 @@ pub function lowered_names(): util.NameIndex {
 }
 
 function outside_unnamed(p: Produced, name: string, i: i32, mod: parser.Module): boolean {
-  if (p.template || p.bodyless || !p.ok || name == "main" || name.starts_with("__") || util.contains(name, ".")) {
+  if (p.template || p.bodyless || !p.ok || name == "main" || name.starts_with("__") && !parser.reached_directly(mod, name) || util.contains(name, ".")) {
     return false;
   }
   return i >= mod.funcs.len() || decl_unnamed(mod.funcs[i], mod);

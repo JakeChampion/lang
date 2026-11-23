@@ -10,6 +10,25 @@ Compression policy combines accepted content codings, a minimum size, and conten
 
 Negotiation must agree with the selected representation. Bodies that are too small or unsuitable can remain uncompressed. The configured content-code list controls the available choices.
 
+## Executable example
+
+```fern test name=std-http-compress-example
+import "std/http/compress";
+import "std/deflate";
+import "std/string";
+
+function main(): i32 {
+  if (!compress.compressible("text/html; charset=utf-8") || compress.compressible("image/png")) { return 1; }
+  let body = "to be or not to be, that is the question".repeat(8).bytes();
+  let Some(packed) = compress.encode("gzip", body) else { return 2; };
+  if (packed.len() >= body.len()) { return 3; }
+  let Ok(plain) = deflate.gunzip(packed, 4096) else { return 4; };
+  if (plain != body) { return 5; }
+  if (compress.encode("unknown", body).is_some()) { return 6; }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.
