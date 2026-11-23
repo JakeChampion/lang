@@ -1698,6 +1698,24 @@ function emit_san_owner_abort(s: asmcore.EmitState): asmcore.EmitState {
   return san_report_exit(s);
 }
 
+function emit_san_mis_abort(s: asmcore.EmitState): asmcore.EmitState {
+  if (!asmcore.san_atomic_check(s) || !s.has_need("san_misaligned")) {
+    return s;
+  }
+  let msg = asmcore.san_misaligned_message();
+  s = s.write("    .section .rodata\n");
+  s = s.write(".Lsan_mis:\n    .ascii \"" + msg + "\\n\"\n");
+  s = s.write("    .section .text\n");
+  s = s.write("    .globl __fern_san_abort_mis\n");
+  s = s.write("__fern_san_abort_mis:\n");
+  s = s.write("    leaq .Lsan_mis(%rip), %rsi\n");
+  s = s.write("    movq $" + util.i32_to_string(msg.len() + 1) + ", %rdx\n");
+  s = s.write("    movq $2, %rdi\n");
+  s = s.write("    movq $1, %rax\n");
+  s = s.syscall(1);
+  return san_report_exit(s);
+}
+
 function san_report_exit(s: asmcore.EmitState): asmcore.EmitState {
   if (s.backtrace) {
     return s.write("    movq $124, %r15\n    jmp __fern_bt_exit\n");
@@ -10242,7 +10260,7 @@ function ssa_sysreg(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
 // because %rax, %rcx and %rdx can hold one of them.
 function ssa_atomic(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   if (ins.str == "dev_atomic_load_acquire") {
-    s = ssa_load(reg_of, ins.args[0], "%rcx", s);
+    s = san_atomic_align(ssa_load(reg_of, ins.args[0], "%rcx", s));
     s = s.write("    movq (%rcx), %rax\n");
     return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
   }
@@ -10250,16 +10268,24 @@ function ssa_atomic(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
     s = ssa_push_operand(reg_of, a, s);
   }
   if (ins.str == "dev_atomic_cas") {
-    s = ssa_pop_r(ssa_pop_r(ssa_pop_r(s, "%rdx"), "%rax"), "%rcx");
+    s = san_atomic_align(ssa_pop_r(ssa_pop_r(ssa_pop_r(s, "%rdx"), "%rax"), "%rcx"));
     s = s.write("    lock cmpxchgq %rdx, (%rcx)\n");
   } else if (ins.str == "dev_atomic_fetch_add") {
-    s = ssa_pop_r(ssa_pop_r(s, "%rax"), "%rcx");
+    s = san_atomic_align(ssa_pop_r(ssa_pop_r(s, "%rax"), "%rcx"));
     s = s.write("    lock xaddq %rax, (%rcx)\n");
   } else {
-    s = ssa_pop_r(ssa_pop_r(s, "%rax"), "%rcx");
+    s = san_atomic_align(ssa_pop_r(ssa_pop_r(s, "%rax"), "%rcx"));
     s = s.write("    movq %rax, (%rcx)\n    xorl %eax, %eax\n");
   }
   return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
+}
+
+// The address of the atomic is in %rcx.
+function san_atomic_align(s: asmcore.EmitState): asmcore.EmitState {
+  if (!asmcore.san_atomic_check(s)) {
+    return s;
+  }
+  return s.need("san_misaligned").write("    testb $7, %cl\n    jnz __fern_san_abort_mis\n");
 }
 
 // A cache or TLB op. clflush writes back and invalidates the line, because the
@@ -14717,6 +14743,7 @@ function emit_entry_environment(s: asmcore.EmitState): asmcore.EmitState {
     s = emit_san_owner_abort(s);
     s = emit_san_waf_abort(s);
     s = emit_san_hbo_abort(s);
+    s = emit_san_mis_abort(s);
   }
   if (asmcore.vdso_wanted(s, "x86-64-linux")) {
     s = s.need("ccall:__c_call2");
