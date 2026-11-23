@@ -34,7 +34,8 @@ func TestSelfHostNestedFieldGrowKeepsTheCallersValues(t *testing.T) {
 				t.Fatal(err)
 			}
 			out := filepath.Join(dir, "prog")
-			cmd := exec.Command(cli, "-target", "x86-64-linux", "-o", out, src, stdlib)
+			// The program runs on this machine, so the target is the host.
+			cmd := exec.Command(cli, "-target", e2eharness.HostSelfHostTarget(), "-o", out, src, stdlib)
 			cmd.Env = append(os.Environ(), "FERN_SANITIZE=1")
 			if output, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("compile: %v\n%s", err, output)
