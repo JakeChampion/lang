@@ -8524,6 +8524,7 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
   if (name.len() == 0) {
     return (TypeAlias { name: "", variants: [], variant_args: [], variant_lines: [], type_params: [], const_params: [], line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
   }
+  let name_at = p;
   p = p.advance();
   let (tparams, cparams, tp_p) = parse_decl_tparams(p, "type", name);
   p = tp_p;
@@ -8534,11 +8535,18 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
   let variants: string[] = [];
   let vargs: string[] = [];
   let vlines: i32[] = [];
-  while (p.peek_ident().len() > 0) {
+  while (true) {
+    if (p.peek_ident().len() == 0) {
+      return union_decl_error(p, "expected a name, got " + tok_desc(p.peek()), name, tparams, cparams, taline, tacol);
+    }
+    let member = p;
     vlines = vlines.append(p.peek_line());
     let (dt, dt_p) = parse_decl_type(p);
     p = dt_p;
     let r = parse_type_ref(dt.name);
+    if (r.array_depth > 0) {
+      return union_decl_error(member, "a union member names a struct, not an array type", name, tparams, cparams, taline, tacol);
+    }
     variants = variants.append(r.base);
     vargs = vargs.append(type_ref_args_spelling(r));
     if (p.peek_punct() == "|") {
@@ -8547,8 +8555,32 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
     }
     break;
   }
-  p = p.expect_semi();
+  if (p.peek_punct() != ";") {
+    return union_decl_error(p, "expected \";\", got " + tok_desc(p.peek()), name, tparams, cparams, taline, tacol);
+  }
+  p = p.advance();
+  if (variants.len() < 2) {
+    p = Par { ...p, type_errs: p.type_errs.append(s_unknown(name_at, decl_fault("union \"" + name + "\" must list two or more struct members"))) };
+  }
   return (TypeAlias { name: name, variants: variants, variant_args: vargs, variant_lines: vlines, type_params: tparams, const_params: cparams, line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
+}
+
+// One error for a malformed union declaration. The parse resumes after its `;`
+// or at the next declaration.
+function union_decl_error(at: Par, message: string, name: string, tparams: string[], cparams: string[], line: i32, col: i32): (TypeAlias, Par) {
+  let p = Par { ...at, type_errs: at.type_errs.append(s_unknown(at, decl_fault(message))) };
+  return (TypeAlias { name: name, variants: [], variant_args: [], variant_lines: [], type_params: tparams, const_params: cparams, line: line, col: col, is_pub: true, is_package: false, module: "" }, past_union_decl(p));
+}
+
+function past_union_decl(p: Par): Par {
+  let q = p;
+  while (!q.at_end() && !at_top_level_decl(q) && q.peek_keyword() != "type") {
+    if (q.peek_punct() == ";") {
+      return q.advance();
+    }
+    q = q.advance();
+  }
+  return q;
 }
 
 function type_ref_args_spelling(r: TypeRef): string {

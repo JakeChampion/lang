@@ -34,6 +34,7 @@ func TestGrammarDerivesConstruct(t *testing.T) {
 		{"arrow lambda with an owning parameter", `function main(): i32 { let f = (st: i32, own a: string[]): string[] => a; return 0; }`},
 		{"arrow lambda with an owning first parameter", `function main(): i32 { let f = (own a: string[]): string[] => a; return 0; }`},
 		{"slice", `function main(): i32 { return xs[0:n]; }`},
+		{"generic union", `type R[T] = Ok[T] | Fail;`},
 
 		{"if let value after a diverging branch", `function f(): i32 { let n = if let 1 = value { return 2; } else { if let 3 = value { return 4; } else { value } }; return n; }`},
 		{"if let value", `function f(): i32 { return if let Some(n) = source() { n } else { 0 }; }`},
@@ -143,6 +144,9 @@ func TestGrammarRejects(t *testing.T) {
 		{"arrow lambda, untyped params", `function main(): i32 { let f = (x, y) => x; return 0; }`},
 
 		{"single-type alias", `type Id = Point;`},
+		{"union of primitives", `type X = i32 | string;`},
+		{"union with an array member", `type X = A | B[];`},
+		{"union with an optional member", `type X = A | B?;`},
 		{"break with a value", `function main(): i32 { while (true) { break 5; } return 0; }`},
 		{"struct literal field shorthand", `function main(): i32 { let p: P = P { x }; return 0; }`},
 		{"if expression with unbraced branches", `function main(): i32 { let a: i32 = if (true) 1 else 2; return a; }`},

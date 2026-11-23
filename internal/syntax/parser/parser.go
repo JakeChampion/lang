@@ -2047,7 +2047,7 @@ func (p *parser) parseUnionDecl() (*ast.UnionDecl, error) {
 		return nil, err
 	}
 	if len(members) < 2 {
-		return nil, p.errorf(name.Pos, "union %q must list at least two struct members (use a struct alias for a single type)", name.Text)
+		return nil, p.errorfCode(name.Pos, "P001", "union %q must list two or more struct members", name.Text)
 	}
 	return &ast.UnionDecl{P: kw.Pos, Name: name.Text, TypeParams: typeParams, ConstParams: constParams, Members: members, MemberLines: lines}, nil
 }
@@ -2058,6 +2058,9 @@ func (p *parser) parseUnionMember() (ast.StructType, error) {
 		return ast.StructType{}, err
 	}
 	st := ast.StructType{Name: name.Text}
+	if p.match(lexer.Punct, "[") && p.peekAt(1).Text == "]" {
+		return ast.StructType{}, unionArrayMember(p, name.Pos)
+	}
 	if p.match(lexer.Punct, "[") {
 		p.advance()
 		for {
@@ -2075,8 +2078,15 @@ func (p *parser) parseUnionMember() (ast.StructType, error) {
 		if _, err := p.expect(lexer.Punct, "]"); err != nil {
 			return ast.StructType{}, err
 		}
+		if p.match(lexer.Punct, "[") {
+			return ast.StructType{}, unionArrayMember(p, name.Pos)
+		}
 	}
 	return st, nil
+}
+
+func unionArrayMember(p *parser, pos ast.Position) *Error {
+	return p.errorfCode(pos, "P001", "a union member names a struct, not an array type")
 }
 
 func (p *parser) parenListIsFuncParams() bool {
