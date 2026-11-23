@@ -117,7 +117,7 @@ pub function address(port: i32, token: string, name: string): string {
 // app ends. It gives a text only when the server does not start.
 pub function serve_file(place: store.Place, path: string, size: i64, token: string, port: i32): string {
   let handler: (HttpRequest, platform.Host) => HttpResponse = (req: HttpRequest, host: platform.Host): HttpResponse => answer(place, path, size, token, req);
-  match (serve.run(port, serve.Config { ...serve.config(), stop_with_parent: true }, handler)) {
+  match (serve.run(port, serve.Config { ...serve.config(), stop_with_parent: true }.with_loopback(), handler)) {
     Ok(_) => {
       return "";
     },

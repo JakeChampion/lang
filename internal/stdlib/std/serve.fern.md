@@ -8,7 +8,7 @@ Server configuration selects protocol support, transport options, and operationa
 
 ## Contracts
 
-Server execution owns network and scheduler effects. TLS configuration requires an identity. Protocol upgrades and optional kernel features remain explicit configuration choices.
+Server execution owns network and scheduler effects. A server listens on each address of the machine. `with_loopback` makes it listen on 127.0.0.1 only, for a server that only programs of the same machine use. TLS configuration requires an identity. Protocol upgrades and optional kernel features remain explicit configuration choices.
 
 ## Module assembly
 
@@ -270,6 +270,8 @@ pub struct Config {
   h3: boolean,
   h3_sock: i32,
   h3_retry_above: i32,
+  // Listen on 127.0.0.1 only, so no other machine reaches the server.
+  loopback: boolean,
 }
 ```
 
@@ -278,11 +280,15 @@ pub struct Config {
 ```fern
 <<5 pub function config(): Config>>=
 pub function config(): Config {
-  return Config { backlog: 65535, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false, metrics: metrics.registry(), metrics_port: 0, on_metrics_listen: None, h2: false, io_uring: false, io_uring_zc_bytes: 3072, ktls: false, h3: false, h3_sock: 0 - 1, h3_retry_above: 32 };
+  return Config { backlog: 65535, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false, metrics: metrics.registry(), metrics_port: 0, on_metrics_listen: None, h2: false, io_uring: false, io_uring_zc_bytes: 3072, ktls: false, h3: false, h3_sock: 0 - 1, h3_retry_above: 32, loopback: false };
 }
 
 pub function (c: Config) with_tls(cfg: server.Config): Config {
   return Config { ...c, tls: Some(cfg.with_alpn(["http/1.1"])) };
+}
+
+pub function (c: Config) with_loopback(): Config {
+  return Config { ...c, loopback: true };
 }
 
 pub function (c: Config) with_h2(): Config {
@@ -447,6 +453,9 @@ function __listener_of(port: i32, opts: Config): __Listen {
       }
     },
     None => {}
+  }
+  if (opts.loopback) {
+    return __listen(tcp_listen_with([127u8, 0u8, 0u8, 1u8], port, opts.backlog, opts.reuse_port), false);
   }
   if (target_os() != "wasi") {
     let both = tcp_listen_with(__every_v6(), port, opts.backlog, opts.reuse_port);
