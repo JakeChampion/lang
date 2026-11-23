@@ -54,6 +54,17 @@ class TrashTests(unittest.TestCase):
                 self.assertIsNone(check.trash_entry(listing, "notes.txt"))
 
 
+class SwipeTests(unittest.TestCase):
+    def test_half_the_screen(self):
+        self.assertEqual(check.swipe_up(tree()), ((540, 1800), (540, 600)))
+
+    def test_no_screen(self):
+        for xml in ("", "ERROR: could not get idle state.", "<hierarchy />",
+                    "<hierarchy><node bounds='[0,0][0,0]' /></hierarchy>"):
+            with self.subTest(xml=xml):
+                self.assertIsNone(check.swipe_up(xml))
+
+
 class FileTests(unittest.TestCase):
     def test_digest(self):
         self.assertEqual(check.digest("abc123  /storage/emulated/0/Pictures/dot.png\n"), "abc123")
