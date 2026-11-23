@@ -49,18 +49,23 @@ func TestAndroidFilesApk(t *testing.T) {
 	for _, want := range []string{
 		"dev.fern.files", "Fern Files", "android.permission.MANAGE_EXTERNAL_STORAGE", "android.permission.INTERNET",
 		"provider", "dev.fern.files.Shared", "authorities", "grantUriPermissions",
+		"dev.fern.files.Documents", "android.permission.MANAGE_DOCUMENTS", "android.content.action.DOCUMENTS_PROVIDER",
 	} {
 		if !bytes.Contains(manifest, utf16le(want)) {
 			t.Errorf("the manifest has no string %q", want)
 		}
 	}
 	dex := readZipEntry(t, zr, "classes.dex")
-	for _, want := range []string{"Ldev/fern/files/Shared;", "Landroid/content/ContentProvider;", "openFile", "getType", "query"} {
+	for _, want := range []string{
+		"Ldev/fern/files/Shared;", "Landroid/content/ContentProvider;", "openFile", "getType", "query",
+		"Ldev/fern/files/Documents;", "Landroid/provider/DocumentsProvider;", "queryRoots", "queryChildDocuments", "openDocument",
+	} {
 		if !bytes.Contains(dex, []byte(want)) {
 			t.Errorf("classes.dex has no string %q", want)
 		}
 	}
 	providerTree(t, out)
+	documentsTree(t, out)
 	have := map[string]bool{}
 	for _, f := range zr.File {
 		have[f.Name] = true
@@ -99,6 +104,38 @@ func providerTree(t *testing.T, apk string) {
 	} {
 		if !strings.Contains(tree[at:], want) {
 			t.Errorf("the provider element has no %s:\n%s", want, tree[at:])
+		}
+	}
+}
+
+// documentsTree checks the element of the documents provider with aapt,
+// when the machine has it: a @jni class that extends DocumentsProvider is
+// exported, only the file picker of the system can ask it, and the picker
+// finds it by its action.
+func documentsTree(t *testing.T, apk string) {
+	aapt, err := exec.LookPath("aapt")
+	if err != nil {
+		t.Log("aapt is not on PATH, so the documents provider is checked by its strings only")
+		return
+	}
+	o, err := exec.Command(aapt, "dump", "xmltree", apk, "AndroidManifest.xml").CombinedOutput()
+	if err != nil {
+		t.Fatalf("aapt dump xmltree: %v\n%s", err, o)
+	}
+	tree := string(o)
+	at := strings.Index(tree, `A: android:name(0x01010003)="dev.fern.files.Documents"`)
+	if at < 0 {
+		t.Fatalf("the manifest has no documents provider:\n%s", tree)
+	}
+	for _, want := range []string{
+		`A: android:permission(0x01010006)="android.permission.MANAGE_DOCUMENTS"`,
+		"A: android:exported(0x01010010)=(type 0x12)0xffffffff",
+		`A: android:authorities(0x01010018)="dev.fern.files.Documents"`,
+		"A: android:grantUriPermissions(0x0101001b)=(type 0x12)0xffffffff",
+		`A: android:name(0x01010003)="android.content.action.DOCUMENTS_PROVIDER"`,
+	} {
+		if !strings.Contains(tree[at:], want) {
+			t.Errorf("the documents provider has no %s:\n%s", want, tree[at:])
 		}
 	}
 }

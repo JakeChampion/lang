@@ -110,6 +110,16 @@ address of the file on that server. The address has a token that is new
 for each file, so no other program finds the file. A new stream ends the
 server of the stream before it.
 
+## The file picker of the system
+
+`docs.fern` is a documents provider: the file picker of Android shows
+each saved server, so each app of the phone can open a file of a server.
+`fern -apk` puts a @jni class that extends `DocumentsProvider` in the
+manifest as a provider that only the picker can ask.
+
+The provider gives documents for reading only. A file goes to the cache
+of the app in full before the other app gets it.
+
 ## Tests
 
 `protocol_test.fern` checks MD4 and NTLMv2 against their specifications,

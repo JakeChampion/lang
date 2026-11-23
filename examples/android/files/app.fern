@@ -9,6 +9,7 @@ import "std/android/launch";
 import "std/android/ui/app";
 import "std/jni";
 import "std/result";
+import "./docs";
 import "./files";
 import "./open";
 import "./prefs";
@@ -60,6 +61,36 @@ pub function shared_delete(env: usize, thiz: usize, uri: usize, selection: usize
 pub function shared_update(env: usize, thiz: usize, uri: usize, change: usize, selection: usize, values: usize): i32 {
   return 0;
 }
+
+// The documents provider: the file picker of the system shows the saved
+// servers to each app of the phone. Android calls it on a thread of its own.
+@jni("dev.fern.files.Documents extends android.provider.DocumentsProvider", "boolean onCreate()")
+pub function documents_create(env: usize, thiz: usize): u8 {
+  return 1u8;
+}
+
+@jni("dev.fern.files.Documents", "android.database.Cursor queryRoots(java.lang.String[])")
+pub function documents_roots(env: usize, thiz: usize, projection: usize): usize {
+  return docs.roots(env, thiz, projection, ICON);
+}
+
+@jni("dev.fern.files.Documents", "android.database.Cursor queryDocument(java.lang.String, java.lang.String[])")
+pub function documents_one(env: usize, thiz: usize, id: usize, projection: usize): usize {
+  return docs.document(env, thiz, id, projection);
+}
+
+@jni("dev.fern.files.Documents", "android.database.Cursor queryChildDocuments(java.lang.String, java.lang.String[], java.lang.String)")
+pub function documents_children(env: usize, thiz: usize, parent: usize, projection: usize, order: usize): usize {
+  return docs.children(env, thiz, parent, projection);
+}
+
+@jni("dev.fern.files.Documents", "android.os.ParcelFileDescriptor openDocument(java.lang.String, java.lang.String, android.os.CancellationSignal)")
+pub function documents_open(env: usize, thiz: usize, id: usize, mode: usize, signal: usize): usize {
+  return docs.opened(env, thiz, id, mode);
+}
+
+// The resource of the icon of the app, which fern -apk gives this ID.
+const ICON: i32 = 2130771968;
 
 const MAIN: string = "/storage/emulated/0";
 
