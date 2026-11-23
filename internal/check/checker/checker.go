@@ -11457,10 +11457,11 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	var callbackCaptures map[string][]ast.Param
 	var inlineCaptures map[ast.Expr][]ast.Param
 	var holderCaptures map[string][]ast.Param
+	var heldOwners map[string]bool
 	callbackCapturesKnown := false
 	ensureCallbackCaptures := func() {
 		if !callbackCapturesKnown {
-			callbackCaptures, inlineCaptures, holderCaptures = c.localCallbackCaptures(fn)
+			callbackCaptures, inlineCaptures, holderCaptures, heldOwners = c.localCallbackCaptures(fn)
 			callbackCapturesKnown = true
 		}
 	}
@@ -11480,7 +11481,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				}
 			}
 		}
-		return false
+		return heldOwners[name]
 	}
 	// A call argument that holds a callback, such as a record with a callback
 	// field, takes the loans of that callback into the callee.
