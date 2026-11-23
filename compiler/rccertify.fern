@@ -432,6 +432,7 @@ struct Walk {
   reused: boolean[],
   phis: i32[],
   outer: Outer,
+  splits: Splits,
   firsts: i32[][],
   carried: i32[][],
   children: boolean[],
@@ -1541,7 +1542,7 @@ function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed
   if (marks[lb] && settles_in(w, ld, lb, lp + 1, w.f.blocks[lb].insts.len(), mode, boxed)) {
     return Paths { escapes: false, edge: edge };
   }
-  if (w.f.blocks[lb].term.kind_tag == ssa.TERM_RET) {
+  if (w.splits.returns[lb]) {
     return Paths { escapes: true, edge: edge };
   }
   let seen = __alloc_bool(w.f.blocks.len());
@@ -1551,11 +1552,7 @@ function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed
     top -= 1;
     let b = stack[top];
     for e in 0..2 {
-      let sid = ssa.successor_id(w.f.blocks[b].term, e);
-      let si = -1;
-      if (sid >= 0 && sid < w.at.len()) {
-        si = w.at[sid];
-      }
+      let si = w.splits.to[b * 2 + e];
       if (si >= 0 && token_zero_edge(w, b, e, boxed)) {
         si = -1;
       }
@@ -1568,7 +1565,7 @@ function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed
       if (si >= 0 && !seen[si]) {
         seen = seen.with(si, true);
         if (!(marks[si] && settles_in(w, ld, si, 0, w.f.blocks[si].insts.len(), mode, boxed))) {
-          if (w.f.blocks[si].term.kind_tag == ssa.TERM_RET) {
+          if (w.splits.returns[si]) {
             return Paths { escapes: true, edge: edge };
           }
           stack = pushed(stack, top, si);
@@ -1584,12 +1581,40 @@ function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed
 // boxed only while every walked edge into it carries the shell, so no walked
 // path takes this edge.
 function token_zero_edge(w: Walk, b: i32, e: i32, boxed: boolean[]): boolean {
-  let t = w.f.blocks[b].term;
-  if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f) {
-    return false;
+  let word = w.splits.word[b];
+  return word >= 0 && boxed_token(w, boxed, word) && e == 1 == w.splits.on_true[b];
+}
+
+// The ends of the blocks, for the walks that follow the edges. For each
+// block that ends in a branch with two targets, `word` is the word that the
+// branch tests and `on_true` the side that a word that is not zero takes.
+// The word is -1 for each other block. `to` has the two successors of each
+// block as block indexes, or -1. `returns` marks a block that ends in a
+// return.
+struct Splits { word: i32[], on_true: boolean[], to: i32[], returns: boolean[] }
+
+function splits_of(w: Walk): Splits {
+  let word: i32[] = [];
+  let on_true: boolean[] = [];
+  let to: i32[] = [];
+  let returns: boolean[] = [];
+  for b in w.f.blocks {
+    let t = b.term;
+    returns = returns.append(t.kind_tag == ssa.TERM_RET);
+    for e in 0..2 {
+      let sid = ssa.successor_id(t, e);
+      to = to.append(if (sid >= 0 && sid < w.at.len()) { w.at[sid] } else { -1 });
+    }
+    if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f) {
+      word = word.append(-1);
+      on_true = on_true.append(false);
+    } else {
+      let tt = tested(w, t.cond);
+      word = word.append(tt.word);
+      on_true = on_true.append(tt.on_true);
+    }
   }
-  let tt = tested(w, t.cond);
-  return tt.word >= 0 && boxed_token(w, boxed, tt.word) && e == 1 == tt.on_true;
+  return Splits { word: word, on_true: on_true, to: to, returns: returns };
 }
 
 function boxed_token(w: Walk, boxed: boolean[], v: i32): boolean {
@@ -3885,7 +3910,8 @@ function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: 
     uses = ssa.use_counts(f);
     paired = returns_pair(f, irops);
   }
-  let w = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: paired, why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: uses, dom: dom, regions: [], openers: [], held: hold.box, reused: hold.reused, phis: phis_of(f), outer: outer_of(base), firsts: firsts_of(f, rt.root), carried: [], children: [], takes: no_takes(), params_at_entry: !base.on, debt: [], kept: [] };
+  let w = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: paired, why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: uses, dom: dom, regions: [], openers: [], held: hold.box, reused: hold.reused, phis: phis_of(f), outer: outer_of(base), firsts: firsts_of(f, rt.root), carried: [], children: [], takes: no_takes(), params_at_entry: !base.on, debt: [], kept: [], splits: Splits { word: [], on_true: [], to: [], returns: [] } };
+  w = Walk { ...w, splits: splits_of(w) };
   w = Walk { ...w, carried: carried_of(w) };
   let rg = inherited_regions(unique_regions(w, dom, reach), f, reach, base);
   let own_children = children_boxes(w, rg.roots);
