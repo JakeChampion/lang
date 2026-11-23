@@ -644,7 +644,7 @@ is boxed (`ssasem.dyn_box`, lowered to `op_dyn_box`) into a cell laid out
 as a one-field record, the value stored at its own width. The release
 frees a boxed string. A generic declaration's instances are the clones
 monomorphisation made of it, each a concrete of its own. Each clone has its
-own implementation records (`parser.instance_impls`), with the trait arguments
+own implementation records (`monomorph.instance_impls`), with the trait arguments
 of that instance, so `Fixed__i32` implements `Source[i32]` only. See
 `docs/rc-log/2026-09-23-dyn-trait-dispatch-on-the-typed-path.md`,
 `docs/rc-log/2026-09-23-g-a-dyn-value-is-counted.md` and
