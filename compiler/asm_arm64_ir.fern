@@ -4672,8 +4672,14 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     s = s.write("    ldr " + d + ", " + at + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
-  if (k == ssa.LD_BYTE) {
-    s = s.write("    ldrb " + ssa_wreg(d) + ", " + at + "\n");
+  if (k == ssa.LD_SUM) {
+    // No load has two registers and an offset in its address, and the
+    // assembler has no load with the sign from two registers.
+    if (!imm.is_imm[ins.args[1]] && (ins.imm != 0 || ins.str == "i32")) {
+      s = s.write("    add " + d + ", " + a + ", " + ssa_src(reg_of, ins.args[1], "x5") + "\n");
+      at = "[" + d + ", #" + util.i32_to_string(ins.imm) + "]";
+    }
+    s = s.write("    " + ssa_sum_load(ins.str, d) + ", " + at + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
   let c = ssa_src(reg_of, ins.args[2], "x6");
@@ -4682,6 +4688,57 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     return s.write("    str " + c + ", " + at + "\n");
   }
   return s.write("    strb " + ssa_wreg(c) + ", " + at + "\n");
+}
+
+// The most instructions between one literal pool and the next.
+function ssa_pool_reach(): i32 {
+  return 256;
+}
+
+// The instructions, counted in emit order, that a literal pool goes before.
+// A pool goes before the last instruction of the least loop weight in the
+// second half of the reach of the pool before it. The branch over the pool
+// then runs as seldom as the function lets it.
+function ssa_pool_sites(f: ssa.SFunc, fr: SsaFrame, order: i32[]): boolean[] {
+  let loop_weight = ssa.block_loop_weights(f);
+  let view = ssa_fuse_view(fr);
+  let weights: i32[] = [];
+  for bi in order {
+    let blk = f.blocks[bi];
+    for k in 0..blk.insts.len() - ssa_fuse(view, blk).n {
+      weights = weights.append(loop_weight[bi]);
+    }
+  }
+  let sites = __alloc_bool(weights.len());
+  let last = 0;
+  while (weights.len() - last > ssa_pool_reach()) {
+    let best = last + ssa_pool_reach() / 2;
+    for k in best..last + ssa_pool_reach() + 1 {
+      if (weights[k] <= weights[best]) {
+        best = k;
+      }
+    }
+    sites = sites.with(best, true);
+    last = best;
+  }
+  return sites;
+}
+
+// The load of an LD_SUM of element `mark` and its register for `d`.
+function ssa_sum_load(mark: string, d: string): string {
+  if (mark == "u16") {
+    return "ldrh " + ssa_wreg(d);
+  }
+  if (mark == "i32") {
+    return "ldrsw " + d;
+  }
+  if (mark == "u32") {
+    return "ldr " + ssa_wreg(d);
+  }
+  if (mark == "i64") {
+    return "ldr " + d;
+  }
+  return "ldrb " + ssa_wreg(d);
 }
 
 function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -5597,7 +5654,6 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   s = asmcore.EmitState { ...s, ssa_frame: frame + save, ssa_save: save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes) };
   s = ssa_load_params(f, if (split.early.len() > 0) { early_homes.entry } else { reg_of }, fr.fmask, s);
   let frame_homes = reg_of;
-  let pool_insts = 0;
   let order = ssa_emit_order(f, fr, reg_of);
   let starts: i32[] = [];
   let end = 0;
@@ -5605,6 +5661,11 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     starts = starts.append(end);
     end += blk.insts.len() + 1;
   }
+  let pool_sites: boolean[] = [];
+  if (end > ssa_pool_reach()) {
+    pool_sites = ssa_pool_sites(f, fr, order);
+  }
+  let emitted = 0;
   for oi in 0..order.len() {
     let bi = order[oi];
     let pos = starts[bi];
@@ -5633,11 +5694,10 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     let tailed = false;
     while (ii < blk.insts.len() - fu.n) {
       // The pool goes before an instruction, so the branch over it never lands on a jump.
-      if (pool_insts >= 256) {
+      if (emitted < pool_sites.len() && pool_sites[emitted]) {
         let after_pool = asmcore.lab_new(s, lp + "pool_" + util.i32_to_string(pos + ii));
         s = ssa_b(after_pool.state, after_pool.lab).write("    .ltorg\n");
         s = s.lab_def(after_pool.lab);
-        pool_insts = 0;
       }
       s = asmcore.dbg_label(s, dbg, fn_label, pos + ii);
       let ins = blk.insts[ii];
@@ -5650,7 +5710,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
         s = ssa_saved_inst(blk, ii, reg_of, lp, fr, r, cold.by_pos[pos + ii], s);
       }
       ii += 1;
-      pool_insts += 1;
+      emitted += 1;
     }
     s = asmcore.dbg_labels(s, dbg, fn_label, pos + ii, pos + blk.insts.len());
     s = asmcore.ssa_fused_loc(prepared.source, blk, ii, tailed, s);

@@ -69,7 +69,7 @@ function indexed(): ssa.SFunc {
     inst(ssa.BINARY, 3, [1, 2], "add"), inst(ssa.UNARY, 4, [3], "int_cast:i32"), inst(ssa.ARR_AT, 5, [0, 4], "u8"),
     inst(ssa.BINARY, 6, [1, 2], "sub"), inst(ssa.UNARY, 7, [6], "int_cast:i32"), inst(ssa.ARR_AT, 8, [0, 7], "u8"),
     inst(ssa.BINARY, 9, [8, 7], "add"), inst(ssa.BINARY, 10, [5, 9], "add"),
-    inst(ssa.BINARY, 11, [1, 2], "mul"), inst(ssa.UNARY, 12, [11], "int_cast:i32"), inst(ssa.LD_BYTE, 13, [0, 12], ""),
+    inst(ssa.BINARY, 11, [1, 2], "mul"), inst(ssa.UNARY, 12, [11], "int_cast:i32"), inst(ssa.LD_SUM, 13, [0, 12], ""),
     inst(ssa.BINARY, 14, [10, 13], "add"),
   ];
   let b0 = ssa.SBlock { id: 0, insts: insts, term: ret(14), preds: [] };

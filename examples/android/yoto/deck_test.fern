@@ -1262,8 +1262,9 @@ function test_chapter_timer_and_prefetch(): test.TestOutcome {
   if (opened.get() != 2 || played.get() != 1 || !state.sleep_ended || state.at != 1) {
     return test.fail("prepare the next track early and hold it at the chapter boundary");
   }
-  let paused = phone.State { ...state, elapsed: 40000i64, paused_at: monotonic_ns() - 121000000000i64 };
-  let resumed = phone.apply(phone.control(paused, api.Resume), output);
+  // The clock is given, because a machine can be up for less than the pause.
+  let paused = phone.State { ...state, elapsed: 40000i64, paused_at: 1000000000i64 };
+  let resumed = phone.apply(phone.control_at(paused, api.Resume, 122000000000i64), output);
   return test.assert_eq(resumed.starting_seek && sought.get() == 30000i64, true);
 }
 

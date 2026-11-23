@@ -7,7 +7,7 @@ import "core/int";
 
 
 function main(): i32 {
-    let w: BytesWriter = io_buffered.bytes_writer_new();
+    let w: io_buffered.BytesWriter = io_buffered.bytes_writer_new();
     w = w.write_string("ab");
     w = w.write_byte(67);
     w = w.write_bytes([68 as u8, 69 as u8]);
@@ -16,7 +16,7 @@ function main(): i32 {
         Ok(s) => { print(s); },
         Err(_) => { return 1; },
     }
-    let w2: BytesWriter = w.reset();
+    let w2: io_buffered.BytesWriter = w.reset();
     print(w2.len().to_string());
     if (w2.is_empty()) { print("empty"); } else { print("nonempty"); }
     return 0;

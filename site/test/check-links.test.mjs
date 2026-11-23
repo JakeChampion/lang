@@ -71,3 +71,20 @@ test("stops after the last attempt, and does not try an HTTP status again", asyn
   assert.equal((await fetchRetry("u", {}, 3, missing)).status, 404);
   assert.equal(calls, 1);
 });
+
+test("tries a gateway status again, and gives the last one when each attempt has it", async () => {
+  let calls = 0;
+  const recovers = async () => {
+    calls++;
+    return { status: calls < 2 ? 502 : 200 };
+  };
+  assert.equal((await fetchRetry("u", {}, 3, recovers)).status, 200);
+  assert.equal(calls, 2);
+  calls = 0;
+  const gateway = async () => {
+    calls++;
+    return { status: 503 };
+  };
+  assert.equal((await fetchRetry("u", {}, 3, gateway)).status, 503);
+  assert.equal(calls, 3);
+});

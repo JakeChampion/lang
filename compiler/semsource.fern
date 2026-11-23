@@ -104,6 +104,7 @@ struct State {
   // The values that this body read from a shared word.
   word_reads: WordRead[],
   tested: Tested[],
+  range_proofs: boolean,
 }
 
 // Value `id` is the bits at `shift` of `word`, a shared word of a variant.
@@ -6090,14 +6091,14 @@ function refuse(why: string): Produced {
 }
 
 // What a body takes from the options of the build and from the module.
-struct Layout { debug_lines: boolean, packs: boolean, finalized: string[] }
+struct Layout { debug_lines: boolean, packs: boolean, finalized: string[], range_proofs: boolean }
 
 function layout_of(opts: BuildOpts, finalizers: ssasem.Finalizer[]): Layout {
   let finalized: string[] = [];
   for row in finalizers {
     finalized = finalized.append(row.receiver);
   }
-  return Layout { debug_lines: opts.debug_lines, packs: opts.pack_fields, finalized: finalized };
+  return Layout { debug_lines: opts.debug_lines, packs: opts.pack_fields, finalized: finalized, range_proofs: opts.passes.range_proofs };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: Handers, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], layout: Layout): State {
@@ -6107,7 +6108,7 @@ function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Co
     names: [], by_name: util.no_last_index(), vals: [], scope: scope, result: result_type(fd, scope, binding, contracts.list), loops: [], contracts: contracts, calls: [],
     template: generic_decl(fd), binding: binding, requests: [], foreign: [], handers: handers, shadows: shadows, views: views,
     name: name, modes: [], funcs: funcs, impls: impls, try_cleanup: deferlower.try_cleanup(fd.body), replaying: false, armed: 0, escaping: escaping_bindings(fd.body), learned: [], learned_types: [],
-    narrowings: [], debug_lines: layout.debug_lines, dbg_vals: [], dbg_names: [], packs: layout.packs, finalized: layout.finalized, word_reads: [], tested: [],
+    narrowings: [], debug_lines: layout.debug_lines, dbg_vals: [], dbg_names: [], packs: layout.packs, finalized: layout.finalized, word_reads: [], tested: [], range_proofs: layout.range_proofs,
   };
 }
 
@@ -7461,8 +7462,11 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo,
   let graph = ssa.SFunc { ...f.graph, name: name, nparams: params.len() };
   f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: semrecords.records_of(table.records), enums: table.enums, schema_checked: false, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows, finalizers: finalizers, map_module: s.scope.module_imported("core/map") };
   f = ssasem.tail_recursion(ssasem.rebuilt_variants(ssasem.boxed_enum_dyns(f)), self_call_name(fd, name));
-  f = ssabounds.word_loads(ssabounds.grouped_accesses(ssabounds.proven_indices(f)), word_load_contracts(), [ssabytes.word_name(4), ssabytes.word_name(8)], [ssabytes.swap_name(4), ssabytes.swap_name(8)]);
-  f = ssaquotient.shared_quotients(ssabounds.nonneg_quotients(f));
+  if (s.range_proofs) {
+    f = ssabounds.word_loads(ssabounds.grouped_accesses(ssabounds.proven_indices(f)), word_load_contracts(), [ssabytes.word_name(4), ssabytes.word_name(8)], [ssabytes.swap_name(4), ssabytes.swap_name(8)]);
+    f = ssabounds.nonneg_quotients(f);
+  }
+  f = ssaquotient.shared_quotients(f);
   return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: util.append_all(s.requests, closed.requests), bodyless: false, analysis: None, view_escape: 0, dropped: false }, memo: table.memo };
 }
 
@@ -9458,7 +9462,9 @@ function infer_ownership(all: Produced[], names: string[], table: ssasem.Contrac
 
 // Diagnostic switches that turn semantic passes off. env_passes reads them
 // once, where the build options are made.
-pub struct PassSwitches { reach: boolean, inline: boolean, scale_kernel: boolean, product_kernel: boolean, fusion: boolean }
+// range_proofs covers each rewrite that a proof of a range permits: a check
+// that is removed or grouped, a word load, a loop version, a quotient.
+pub struct PassSwitches { reach: boolean, inline: boolean, scale_kernel: boolean, product_kernel: boolean, fusion: boolean, range_proofs: boolean }
 
 pub function env_passes(): PassSwitches {
   let inline = true;
@@ -9474,6 +9480,7 @@ pub function env_passes(): PassSwitches {
     scale_kernel: !util.debug_flag("FERN_DEBUG_NO_SCALE_KERNEL", "FERN_NO_SCALE_KERNEL"),
     product_kernel: !util.debug_flag("FERN_DEBUG_NO_PRODUCT_KERNEL", "FERN_NO_PRODUCT_KERNEL"),
     fusion: !util.debug_flag("FERN_DEBUG_NO_ARRAY_FUSION", "FERN_NO_ARRAY_FUSION"),
+    range_proofs: !util.debug_flag("FERN_DEBUG_NO_RANGE_PROOFS", "FERN_NO_RANGE_PROOFS"),
   };
 }
 
@@ -9563,8 +9570,10 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     let inlined = inline_leaves(sp.all, names, mod, opts, sp.roots);
     table = split_contracts(table, inlined.all, names);
     laid = inlined.laid;
-    all = version_loops(prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report, opts.passes), names, mod, opts, true), opts.stack_phi_joins), opts.size);
-    all = sign_tested_reads(caller_ranges(all, names, mod));
+    all = version_loops(prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report, opts.passes), names, mod, opts, true), opts.stack_phi_joins), opts.size || !opts.passes.range_proofs);
+    if (opts.passes.range_proofs) {
+      all = sign_tested_reads(caller_ranges(all, names, mod));
+    }
   }
   if (opts.shape_slot) {
     all = with_shape_slots(all);
@@ -9704,8 +9713,8 @@ function unique_loops(all: Produced[]): Produced[] {
 }
 
 // A build for size keeps one version of each loop.
-function version_loops(all: Produced[], size: boolean): Produced[] {
-  if (size) {
+function version_loops(all: Produced[], one: boolean): Produced[] {
+  if (one) {
     return all;
   }
   let sw = optbisect.switches();
@@ -9822,7 +9831,7 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, opt
   for i in 0..all.len() {
     let p = Produced { ...all[i], func: out.funcs[i], modes: out.modes[i] };
     if (out.rewritten[i]) {
-      p = Produced { ...p, func: ssabounds.proven_indices(p.func), analysis: None };
+      p = Produced { ...p, func: if (opts.passes.range_proofs) { ssabounds.proven_indices(p.func) } else { p.func }, analysis: None };
     }
     result = result.append(p);
   }

@@ -124,11 +124,13 @@ pub function (e: MlKemError) message(): string {
 
 ```fern
 <<7 pub struct KeyPair>>=
+@secret
 pub struct KeyPair {
   encapsulation_key: u8[],
   decapsulation_key: u8[],
 }
 
+@secret
 pub struct Encapsulation {
   shared_secret: u8[],
   ciphertext: u8[],

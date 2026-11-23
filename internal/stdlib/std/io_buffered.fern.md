@@ -83,6 +83,9 @@ import "std/utf8" as utf8;
 
 ```fern
 <<3 pub function bytes_writer_new(): BytesWriter>>=
+// A byte buffer in memory. Each write returns the next writer.
+pub struct BytesWriter { data: u8[] }
+
 pub function bytes_writer_new(): BytesWriter {
   let empty: u8[] = [];
   return BytesWriter { data: empty };

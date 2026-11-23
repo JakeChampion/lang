@@ -372,7 +372,9 @@ func runGuardProgram(t *testing.T, cmd *exec.Cmd) (guardRun, bool) {
 // guards and index arithmetic: the same lines, and the same abort or none.
 // The interpreter checks each access. The targets remove the checks that
 // compiler/ssabounds.fern and compiler/semversion.fern prove, so a wrong
-// proof is a line that differs or an abort that does not occur.
+// proof is a line that differs or an abort that does not occur. Each target
+// runs a second build that keeps those checks, which shows whether a
+// difference comes from a proof.
 // FERN_BOUNDS_SWEEP gives the number of programs, and FERN_BOUNDS_SWEEP_BASE
 // the seed before the first.
 func TestSelfHostBoundsGuardSweep(t *testing.T) {
@@ -406,9 +408,12 @@ func TestSelfHostBoundsGuardSweep(t *testing.T) {
 				}
 				compared <- true
 				engines := map[string]*exec.Cmd{
-					"x86-64-linux": runX86_64Bin(cli.runner, cli.x86Binary(t, src)),
-					"arm64-linux":  runArm64Bin(qemu, cli.arm64Binary(t, src)),
-					"wasm32-wasi":  exec.Command(wasmtime, "run", cli.wasmComponent(t, src)),
+					"x86-64-linux":                  runX86_64Bin(cli.runner, cli.x86Binary(t, src)),
+					"arm64-linux":                   runArm64Bin(qemu, cli.arm64Binary(t, src)),
+					"wasm32-wasi":                   exec.Command(wasmtime, "run", cli.wasmComponent(t, src)),
+					"x86-64-linux, no range proofs": runX86_64Bin(cli.runner, cli.x86Binary(t, src, noRangeProofs)),
+					"arm64-linux, no range proofs":  runArm64Bin(qemu, cli.arm64Binary(t, src, noRangeProofs)),
+					"wasm32-wasi, no range proofs":  exec.Command(wasmtime, "run", cli.wasmComponent(t, src, noRangeProofs)),
 				}
 				for target, cmd := range engines {
 					got, ended := runGuardProgram(t, cmd)

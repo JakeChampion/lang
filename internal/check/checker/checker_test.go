@@ -1771,6 +1771,19 @@ func TestReservedBuiltinNamesCannotBeShadowed(t *testing.T) {
 	}
 }
 
+// std/url and std/io_buffered own these two names, so a program can declare them.
+func TestModuleOwnedStructNamesAreNotReserved(t *testing.T) {
+	for _, name := range []string{"Url", "BytesWriter"} {
+		if IsReservedName(name) {
+			t.Errorf("IsReservedName(%q) = true", name)
+		}
+		src := "struct " + name + " { n: i32 }\nfunction main(): i32 { let v = " + name + " { n: 1 }; return v.n; }"
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("struct %s: %v", name, err)
+		}
+	}
+}
+
 func TestJsonValueIsNotReserved(t *testing.T) {
 	if err := checkSource(t, `enum JsonValue { JNull }
 function main(): i32 { let v: JsonValue = JNull; return 0; }`); err != nil {

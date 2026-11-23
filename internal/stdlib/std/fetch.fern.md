@@ -140,7 +140,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<62 pub function (p: ProxyEnv) proxy_for(target_url: string): Option[string]>>
 
-<<63 function __proxy_for_url(p: ProxyEnv, u: Url): Option[string]>>
+<<63 function __proxy_for_url(p: ProxyEnv, u: url.Url): Option[string]>>
 
 <<64 struct __Rule>>
 
@@ -472,7 +472,7 @@ function __target_of(raw: string, policy: Policy): Result[__Target, FetchError] 
   return Ok(__Target { host: u.host, port: port, target: target, host_field: host_field, proxy_auth: "", direct: true, origin: u.host, authority: authority, tls: tls });
 }
 
-function __http_url(raw: string): Result[Url, FetchError] {
+function __http_url(raw: string): Result[url.Url, FetchError] {
   match (url.parse(raw)) {
     Ok(parsed) => {
       return __http_url_checked(raw, parsed);
@@ -484,7 +484,7 @@ function __http_url(raw: string): Result[Url, FetchError] {
   return Err(InvalidUrl(raw));
 }
 
-function __http_url_checked(raw: string, u: Url): Result[Url, FetchError] {
+function __http_url_checked(raw: string, u: url.Url): Result[url.Url, FetchError] {
   if (u.scheme.len() == 0) {
     return Err(InvalidUrl("no scheme in " + raw));
   }
@@ -518,7 +518,7 @@ function __ambiguous_ipv4(host: string): boolean {
   return !net.is_ipv4(host);
 }
 
-function __request_target(u: Url): Result[string, FetchError] {
+function __request_target(u: url.Url): Result[string, FetchError] {
   let target = u.path;
   if (target.len() == 0) {
     target = "/";
@@ -2244,7 +2244,7 @@ function __holds(names: string[], name: string): boolean {
 }
 
 function __same_origin(a: string, b: string): boolean {
-  let ua = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
+  let ua = url.Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   let ub = ua;
   match (url.parse(a)) {
     Ok(p) => {
@@ -2265,7 +2265,7 @@ function __same_origin(a: string, b: string): boolean {
   return ua.scheme.to_lower() == ub.scheme.to_lower() && ua.host.to_lower() == ub.host.to_lower() && __effective_port(ua) == __effective_port(ub);
 }
 
-function __effective_port(u: Url): i32 {
+function __effective_port(u: url.Url): i32 {
   if (u.port != 0) {
     return u.port;
   }
@@ -4037,11 +4037,11 @@ pub function (p: ProxyEnv) proxy_for(target_url: string): Option[string] {
 }
 ```
 
-### `63 function __proxy_for_url(p: ProxyEnv, u: Url): Option[string]`
+### `63 function __proxy_for_url(p: ProxyEnv, u: url.Url): Option[string]`
 
 ```fern
-<<63 function __proxy_for_url(p: ProxyEnv, u: Url): Option[string]>>=
-function __proxy_for_url(p: ProxyEnv, u: Url): Option[string] {
+<<63 function __proxy_for_url(p: ProxyEnv, u: url.Url): Option[string]>>=
+function __proxy_for_url(p: ProxyEnv, u: url.Url): Option[string] {
   let proxy = p.http_proxy;
   if (u.scheme == "https") {
     proxy = p.https_proxy;
@@ -4365,7 +4365,7 @@ function __proxy_of(spec: string, name: string): Result[__Proxy, FetchError] {
   if (!full.contains("://")) {
     full = "http://" + full;
   }
-  let u = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
+  let u = url.Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   match (url.parse(full)) {
     Ok(parsed) => {
       u = parsed;
