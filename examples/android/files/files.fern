@@ -6,15 +6,19 @@ import "std/android";
 import "std/android/draw";
 import "std/android/ui";
 import "std/array";
+import "std/hex";
 import "std/i32";
 import "std/i64";
+import "std/rand";
 import "std/string";
 import "std/utf8";
 import "std/worker";
 import "./pack";
 import "./scan";
 import "./smb";
+import "./open";
 import "./store";
+import "./stream";
 import "../look";
 import "../matrix";
 
@@ -63,6 +67,7 @@ enum Job {
   Measure(i64, store.Place, string, smb.Entry[]),
   Shares(i64, smb.Server),
   Scan(i64),
+  Stream(store.Place, string, i64, string, i32, i32, string),
   ReadThumb(string, store.Place, string),
   Unpack(i64, store.Place, string, string),
   Pack(i64, store.Place, string, smb.Entry[], string),
@@ -71,8 +76,8 @@ enum Job {
 // What the app needs from Android: the storages of the phone, whether the
 // app has access to all files, the screen that gives that access, a place to keep the servers, a place
 // to keep the preferences, the app of the phone that shows a file, the
-// apps that take a file, and a decoder that gives an image at a width in pixels or less.
-pub struct Platform { roots: () => Root[], access: () => boolean, ask_access: () => boolean, save: (Saved[]) => boolean, keep: (Prefs) => boolean, open: (string) => boolean, share: (string) => boolean, decode: (u8[], i32) => Option[draw.Image] }
+// player of an HTTP address, the apps that take a file, and a decoder that gives an image at a width in pixels or less.
+pub struct Platform { roots: () => Root[], access: () => boolean, ask_access: () => boolean, save: (Saved[]) => boolean, keep: (Prefs) => boolean, open: (string) => boolean, play: (string, string) => boolean, share: (string) => boolean, decode: (u8[], i32) => Option[draw.Image] }
 
 pub struct Model {
   roots: Root[],
@@ -82,6 +87,13 @@ pub struct Model {
   // and the path of the file that waits for that app.
   cache: string,
   launch: string,
+  // The HTTP address of a file of a server that waits for a player, with
+  // the name of the file. The port and the token are those of the server
+  // of this phone that streams, or 0 and "".
+  play: string,
+  play_name: string,
+  stream_port: i32,
+  stream_token: string,
   // True when the file that waits goes to an app that the person picks.
   sharing: boolean,
   pins: Mark[],
@@ -191,6 +203,7 @@ pub enum Msg {
   Zip,
   ToggleGrid,
   ThumbRead(string, string, Result[smb.Part, string]),
+  StreamEnded(string),
   Extract(string),
   OpenFile(string),
   ShareFile(string),
@@ -223,7 +236,7 @@ function no_server(): Saved {
 // `granted` is false when Android hides the files of the storages.
 pub function start(roots: Root[], granted: boolean, servers: Saved[], cache: string, prefs: Prefs): Model {
   return Model {
-    roots: roots, servers: servers, granted: granted, cache: cache, launch: "", sharing: false, pins: prefs.pins, recent: prefs.recent, unkept: false, found: false, grid: prefs.grid, thumbs: [], thumb_wait: [], thumb_raw: [], thumb_name: "", page: Home, place: store.Local, label: "", top: "", path: "", entries: [], loading: false, note: "", fault: "", sort: prefs.sort, hidden: prefs.hidden, query: "",
+    roots: roots, servers: servers, granted: granted, cache: cache, launch: "", play: "", play_name: "", stream_port: 0, stream_token: "", sharing: false, pins: prefs.pins, recent: prefs.recent, unkept: false, found: false, grid: prefs.grid, thumbs: [], thumb_wait: [], thumb_raw: [], thumb_name: "", page: Home, place: store.Local, label: "", top: "", path: "", entries: [], loading: false, note: "", fault: "", sort: prefs.sort, hidden: prefs.hidden, query: "",
     selecting: false, picked: [], clip: None, task: None, naming: None, name_text: "", confirm: "", draft: no_server(), preview: "", picture: None, raw: [], wide: 0, shares: [], finding: false, hosts: [], scanning: false, revision: 0i64, task_revision: 0i64, job: None, need_roots: false, ask_access: false, unsaved: false,
   };
 }
@@ -473,6 +486,12 @@ function select_update(own m: Model, msg: Msg): Model {
         }
       }
       return next_thumb(m);
+    },
+    StreamEnded(text) => {
+      if (text.len() > 0) {
+        return failed(Model { ...m, stream_port: 0, stream_token: "" }, text);
+      }
+      return m;
     },
     SelectAll => {
       return Model { ...m, picked: shown(m).map((e: smb.Entry): string => e.name), confirm: "" };
@@ -782,6 +801,15 @@ function open_file(m: Model, name: string, sharing: boolean): Model {
   if let store.Local = m.place {
     return Model { ...clear, launch: store.join(m.path, name) };
   }
+  if (!sharing && open.plays(name)) {
+    // A player reads a film or sound a part at a time, so the app serves
+    // the file on a port of this phone, with a token that is new each time.
+    let dice = rand.bytes(18);
+    let token = hex.encode(dice.take(16));
+    let port = 20000 + (dice[16] as i32 * 256 + dice[17] as i32) % 40000;
+    let job = Stream(m.place, store.join(m.path, name), e.size, token, port, m.stream_port, m.stream_token);
+    return Model { ...clear, play: stream.address(port, token, name), play_name: name, stream_port: port, stream_token: token, job: Some(job) };
+  }
   if (m.task.is_some()) {
     return failed(m, "Wait for the copy that runs.");
   }
@@ -918,7 +946,7 @@ pub function update(own m: Model, msg: Msg): Model {
     NewFolder | StartRename(_) | NameText(_) | SaveName | CancelName => {
       return name_update(idle, msg);
     },
-    Tap(_) | Hold(_) | StopSelecting | SelectAll | Zip | Extract(_) | ToggleGrid | ThumbRead(_, _, _) | Copy(_) | CopyOne(_, _) | ClearClip | Delete | DeleteOne(_) => {
+    Tap(_) | Hold(_) | StopSelecting | SelectAll | Zip | Extract(_) | StreamEnded(_) | ToggleGrid | ThumbRead(_, _, _) | Copy(_) | CopyOne(_, _) | ClearClip | Delete | DeleteOne(_) => {
       return select_update(idle, msg);
     },
     OpenServer(_) | EditServer(_) | Draft(_, _) | SaveServer | DeleteServer | FindShares | SharesFound(_, _) | PickShare(_) | FindServers | ServersFound(_, _) | PickServer(_) => {
@@ -1003,6 +1031,10 @@ function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
       ReadThumb(path, place, name) => {
         return ThumbRead(path, name, store.read(place, store.join(path, name), 0i64, THUMB_BYTES));
       },
+      Stream(place, path, size, token, port, old_port, old_token) => {
+        stream.stop(old_port, old_token);
+        return StreamEnded(stream.serve_file(place, path, size, token, port));
+      },
       Scan(revision) => {
         return ServersFound(revision, scan.servers());
       },
@@ -1039,6 +1071,12 @@ function effects(m: Model, platform: Platform): Model {
   if (m.unkept) {
     let kept = platform.keep(Prefs { sort: m.sort, hidden: m.hidden, grid: m.grid, pins: m.pins, recent: m.recent });
     next = Model { ...next, unkept: false };
+  }
+  if (m.play.len() > 0) {
+    next = Model { ...next, play: "", play_name: "" };
+    if (!platform.play(m.play, m.play_name)) {
+      next = failed(next, "No app on this phone plays this file.");
+    }
   }
   if (m.launch.len() > 0) {
     next = Model { ...next, launch: "", sharing: false };

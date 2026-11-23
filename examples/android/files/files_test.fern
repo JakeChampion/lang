@@ -63,6 +63,7 @@ function simulator(dir: string, servers: files.Saved[]): sim.Sim[files.Model, fi
     ask_access: (): boolean => true,
     save: (kept: files.Saved[]): boolean => write_file(dir + "/.saved", kept.len().to_string()).is_ok(),
     keep: (p: files.Prefs): boolean => write_file(dir + "/.prefs", prefs.encode(p)).is_ok(),
+    play: (address: string, name: string): boolean => write_file(dir + "/.played", address + " " + name).is_ok(),
     share: (path: string): boolean => write_file(dir + "/.shared", path).is_ok(),
     open: (path: string): boolean => !path.ends_with(".jpg") && write_file(dir + "/.opened", path).is_ok(),
     decode: (bytes: u8[], wide: i32): Option[draw.Image] => tile(bytes),
