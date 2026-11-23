@@ -11,6 +11,7 @@ import (
 func registerAESGCM(i *Interp) {
 	i.Builtins["__aes_expand_key"] = &Builtin{Fn: builtinAESExpandKey}
 	i.Builtins["__aes_ctr32"] = &Builtin{Fn: builtinAESCtr32}
+	i.Builtins["__aes_dec_blocks"] = &Builtin{Fn: builtinAESDecBlocks}
 	i.Builtins["__ghash"] = &Builtin{Fn: builtinGHASH}
 	i.Builtins["__aes_gcm_seal_into"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return aesGCMInto("__aes_gcm_seal_into", args, true) }}
 	i.Builtins["__aes_gcm_open_into"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return aesGCMInto("__aes_gcm_open_into", args, false) }}
@@ -158,8 +159,35 @@ func newRoundKeyBlock(rk []byte) (roundKeyBlock, bool) {
 
 func (b roundKeyBlock) BlockSize() int { return 16 }
 
-func (b roundKeyBlock) Decrypt(_, _ []byte) {
-	panic("roundKeyBlock: counter modes do not decrypt a block")
+func (b roundKeyBlock) Decrypt(dst, src []byte) {
+	sb := aesSbox()
+	var inv [256]byte
+	for x, y := range sb {
+		inv[y] = byte(x)
+	}
+	var s [16]byte
+	for i := range s {
+		s[i] = src[i] ^ b.rk[16*b.rounds+i]
+	}
+	for r := b.rounds - 1; r >= 0; r-- {
+		var t [16]byte
+		for c := 0; c < 4; c++ {
+			for row := 0; row < 4; row++ {
+				t[4*((c+row)%4)+row] = inv[s[4*c+row]] ^ b.rk[16*r+4*((c+row)%4)+row]
+			}
+		}
+		if r > 0 {
+			for c := 0; c < 4; c++ {
+				a0, a1, a2, a3 := t[4*c], t[4*c+1], t[4*c+2], t[4*c+3]
+				t[4*c] = gfMul(a0, 14) ^ gfMul(a1, 11) ^ gfMul(a2, 13) ^ gfMul(a3, 9)
+				t[4*c+1] = gfMul(a0, 9) ^ gfMul(a1, 14) ^ gfMul(a2, 11) ^ gfMul(a3, 13)
+				t[4*c+2] = gfMul(a0, 13) ^ gfMul(a1, 9) ^ gfMul(a2, 14) ^ gfMul(a3, 11)
+				t[4*c+3] = gfMul(a0, 11) ^ gfMul(a1, 13) ^ gfMul(a2, 9) ^ gfMul(a3, 14)
+			}
+		}
+		s = t
+	}
+	copy(dst, s[:])
 }
 
 func (b roundKeyBlock) Encrypt(dst, src []byte) {
@@ -189,6 +217,31 @@ func (b roundKeyBlock) Encrypt(dst, src []byte) {
 		}
 	}
 	copy(dst, s[:])
+}
+
+// decRoundKeyBlock also takes the 208 bytes of a 192-bit key.
+func decRoundKeyBlock(rk []byte) (roundKeyBlock, bool) {
+	if len(rk) >= 208 && len(rk) < 240 {
+		return roundKeyBlock{rk, 12}, true
+	}
+	return newRoundKeyBlock(rk)
+}
+
+func builtinAESDecBlocks(_ *Interp, args []Value) (Value, error) {
+	v, err := byteViews("__aes_dec_blocks", args, 2)
+	if err != nil {
+		return nil, err
+	}
+	rk, data := v[0], v[1]
+	block, ok := decRoundKeyBlock(rk)
+	if !ok {
+		return nil, fmt.Errorf("__aes_dec_blocks: round keys of %d bytes", len(rk))
+	}
+	out := make([]byte, len(data)&^15)
+	for at := 0; at < len(out); at += 16 {
+		block.Decrypt(out[at:at+16], data[at:at+16])
+	}
+	return byteArray(out), nil
 }
 
 func builtinAESCtr32(_ *Interp, args []Value) (Value, error) {

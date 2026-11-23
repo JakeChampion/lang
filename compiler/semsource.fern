@@ -8673,6 +8673,7 @@ function aes_gcm_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__bytes_into", params: [bytes, typeinfo.t_i32(), view, typeinfo.t_i32(), typeinfo.t_i32()], modes: [ssaunits.counted_mode(), ssaunits.value_mode(), b, ssaunits.value_mode(), ssaunits.value_mode()], result: bytes },
     ssasem.Contract { name: "__aes_expand_key", params: [view], modes: [b], result: bytes },
     ssasem.Contract { name: "__aes_ctr32", params: [view, view, view], modes: [b, b, b], result: bytes },
+    ssasem.Contract { name: "__aes_dec_blocks", params: [view, view], modes: [b, b], result: bytes },
     ssasem.Contract { name: "__ghash", params: [view, view, view], modes: [b, b, b], result: bytes },
     ssasem.Contract { name: "__aes_gcm_seal_into", params: aes_gcm_into_params(), modes: aes_gcm_into_modes(), result: bytes },
     ssasem.Contract { name: "__aes_gcm_open_into", params: aes_gcm_into_params(), modes: aes_gcm_into_modes(), result: bytes },

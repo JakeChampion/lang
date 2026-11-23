@@ -996,13 +996,14 @@ runs among the ChaCha20 rounds. The probe also gives the 1000 bytes to
 of eight blocks. It also reaches the x86-64 Poly1305 kernel's groups of four
 blocks.
 
-The AES-GCM kernels (`__aes_expand_key`, `__aes_ctr32`, `__ghash`, and the
+The AES-GCM kernels (`__aes_expand_key`, `__aes_ctr32`, `__aes_dec_blocks`, `__ghash`, and the
 in-place pair `__aes_gcm_seal_into` / `__aes_gcm_open_into`) are checked on
 their own against known answers on every target by
 `TestSelfHostAESGCMKernelsX86_64`, `…Arm64` (qemu), `…Wasm` and
 `TestSelfHostInterpAESGCMKernels` (both interpreters). The answers are
 FIPS-197's key schedules and blocks, GCM's test case 2 GHASH, test cases 4
-and 16 sealed and opened in place, and a counter whose low word wraps. Every
+and 16 sealed and opened in place, a counter whose low word wraps, and the
+inverse cipher for each key size. Every
 length to 80 bytes is also covered, which crosses each kernel's unrolled
 stride and partial last block. Seal and open are held to what the separate
 kernels compose to, under a sequence number folded into the nonce. An open

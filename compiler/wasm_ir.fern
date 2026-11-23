@@ -635,7 +635,7 @@ function is_scan_masks_bytes(o: ir.Op): boolean {
 }
 
 function uses_aes_gcm(kinds: i32[]): boolean {
-  return has_kind(kinds, "aes_expand_key") || has_kind(kinds, "aes_ctr32") || has_kind(kinds, "ghash")
+  return has_kind(kinds, "aes_expand_key") || has_kind(kinds, "aes_ctr32") || has_kind(kinds, "aes_dec_blocks") || has_kind(kinds, "ghash")
     || has_kind(kinds, "aes_gcm_seal_into") || has_kind(kinds, "aes_gcm_open_into");
 }
 

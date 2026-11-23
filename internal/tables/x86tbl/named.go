@@ -233,5 +233,8 @@ var Named = []NamedFamily{
 		{ATT: "pmaxud", Op: 0x3F, ATTProbe: "pmaxud %xmm1, %xmm0"},
 		{ATT: "aesenc", Op: 0xDC, ATTProbe: "aesenc %xmm1, %xmm0"},
 		{ATT: "aesenclast", Op: 0xDD, ATTProbe: "aesenclast %xmm1, %xmm0"},
+		{ATT: "aesdec", Op: 0xDE, ATTProbe: "aesdec %xmm1, %xmm0"},
+		{ATT: "aesdeclast", Op: 0xDF, ATTProbe: "aesdeclast %xmm1, %xmm0"},
+		{ATT: "aesimc", Op: 0xDB, ATTProbe: "aesimc %xmm1, %xmm0"},
 	}},
 }

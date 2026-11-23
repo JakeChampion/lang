@@ -162,6 +162,7 @@ var hardenFrameHelpers = []struct {
 	{"__fern_crc32_cksum_data:", true},
 	{"__fern_aes_expand_key:", true},
 	{"__fern_aes_ctr32:", false},
+	{"__fern_aes_dec_blocks:", false},
 	{"__fern_ghash:", false},
 	{"__fern_aes_gcm_seal_into:", true},
 	{"__fern_aes_gcm_open_into:", true},

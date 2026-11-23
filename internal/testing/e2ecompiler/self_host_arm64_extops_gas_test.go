@@ -401,6 +401,8 @@ func TestSelfHostArm64VectorWidenAcrossGas(t *testing.T) {
 		{"aese v31.16b, v30.16b", 0x4e284bdf},
 		{"aesmc v31.16b, v29.16b", 0x4e286bbf},
 		{"aese v17.16b, v5.16b", 0x4e2848b1},
+		{"aesd v0.16b, v4.16b", 0x4e285880},
+		{"aesimc v4.16b, v4.16b", 0x4e287884},
 
 		{"sha256h q0, q1, v2.4s", 0x5e024020},
 		{"sha256h2 q0, q1, v2.4s", 0x5e025020},

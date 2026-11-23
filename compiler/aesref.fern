@@ -126,6 +126,72 @@ function encrypt_block(rk: u8[], rounds: i32, block: u8[], sb: i32[]): u8[] {
   return st;
 }
 
+function inverse_sbox_table(sb: i32[]): i32[] {
+  let t = __alloc_i32(256);
+  for x in 0..256 {
+    t = t.with(sb[x], x);
+  }
+  return t;
+}
+
+function inverse_mix_column(a0: i32, a1: i32, a2: i32, a3: i32): i32[] {
+  return [
+    gf_mul(a0, 14) ^ gf_mul(a1, 11) ^ gf_mul(a2, 13) ^ gf_mul(a3, 9),
+    gf_mul(a0, 9) ^ gf_mul(a1, 14) ^ gf_mul(a2, 11) ^ gf_mul(a3, 13),
+    gf_mul(a0, 13) ^ gf_mul(a1, 9) ^ gf_mul(a2, 14) ^ gf_mul(a3, 11),
+    gf_mul(a0, 11) ^ gf_mul(a1, 13) ^ gf_mul(a2, 9) ^ gf_mul(a3, 14),
+  ];
+}
+
+function inverse_round(st: u8[], rk: u8[], at: i32, inv: i32[], last: boolean): u8[] {
+  let out = __alloc_u8(16);
+  for c in 0..4 {
+    let a0 = inv[st[4 * c] as i32] ^ rk[at + 4 * c] as i32;
+    let a1 = inv[st[4 * (c + 3 & 3) + 1] as i32] ^ rk[at + 4 * c + 1] as i32;
+    let a2 = inv[st[4 * (c + 2 & 3) + 2] as i32] ^ rk[at + 4 * c + 2] as i32;
+    let a3 = inv[st[4 * (c + 1 & 3) + 3] as i32] ^ rk[at + 4 * c + 3] as i32;
+    let m: i32[] = [a0, a1, a2, a3];
+    if (!last) {
+      m = inverse_mix_column(a0, a1, a2, a3);
+    }
+    for r in 0..4 {
+      out = out.with(4 * c + r, m[r] as u8);
+    }
+  }
+  return out;
+}
+
+// The inverse cipher over each whole block of data. The round keys are the keys of the cipher.
+pub function dec_blocks(rk: u8[], data: u8[]): u8[] {
+  let rounds = 10;
+  if (rk.len() >= 208) {
+    rounds = 12;
+  }
+  if (rk.len() >= 240) {
+    rounds = 14;
+  }
+  let inv = inverse_sbox_table(sbox_table());
+  let n = data.len() / 16 * 16;
+  let out = __alloc_u8(n);
+  let at = 0;
+  while (at < n) {
+    let st = __alloc_u8(16);
+    for i in 0..16 {
+      st = st.with(i, data[at + i] ^ rk[16 * rounds + i]);
+    }
+    let r = rounds - 1;
+    while (r >= 0) {
+      st = inverse_round(st, rk, 16 * r, inv, r == 0);
+      r -= 1;
+    }
+    for i in 0..16 {
+      out = out.with(at + i, st[i]);
+    }
+    at += 16;
+  }
+  return out;
+}
+
 function inc32(cb: u8[]): u8[] {
   let k = 15;
   let carry = true;

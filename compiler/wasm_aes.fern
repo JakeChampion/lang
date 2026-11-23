@@ -222,6 +222,95 @@ function encrypt_func(): string {
     + "    (call $__fern_aes_bs_ark (local.get $p) (i32.add (local.get $sk) (i32.shl (local.get $rounds) (i32.const 6))))\n  )\n";
 }
 
+// y -> A^-1(y ^ 0x63), the inverse of the affine layer of the S-box. The inverse S-box is this map on each side of the S-box.
+function inverse_affine_func(): string {
+  let o = "  (func $__fern_aes_bs_inv_affine (param $p i32)";
+  let body = "";
+  for k in 0..8 {
+    let ks = util.i32_to_string(k);
+    let v = "(i64.load offset=" + util.i32_to_string(8 * k) + " (local.get $p))";
+    if (k == 0 || k == 1 || k == 5 || k == 6) {
+      v = "(i64.xor " + v + " (i64.const -1))";
+    }
+    o = o + " (local $q" + ks + " i64)";
+    body = body + "    (local.set $q" + ks + " " + v + ")\n";
+  }
+  for k in 0..8 {
+    body = body + "    (i64.store offset=" + util.i32_to_string(8 * k) + " (local.get $p) (i64.xor (i64.xor " + lget("q" + util.i32_to_string(k + 2 & 7)) + " "
+      + lget("q" + util.i32_to_string(k + 5 & 7)) + ") " + lget("q" + util.i32_to_string(k + 7 & 7)) + "))\n";
+  }
+  return o + "\n" + body + "  )\n";
+}
+
+function inverse_shift_rows_func(): string {
+  let x = "(local.get $x)";
+  return "  (func $__fern_aes_bs_inv_shift_rows (param $p i32) (local $i i32) (local $x i64) (local $a i32)\n"
+    + "    (block $done (loop $next\n      (br_if $done (i32.ge_u (local.get $i) (i32.const 8)))\n"
+    + "      (local.set $a (i32.add (local.get $p) (i32.shl (local.get $i) (i32.const 3))))\n      (local.set $x (i64.load (local.get $a)))\n"
+    + "      (i64.store (local.get $a) (i64.or (i64.or (i64.or (i64.and " + x + " (i64.const 65535))\n"
+    + "        (i64.shl (i64.and " + x + " (i64.const 268369920)) (i64.const 4)))\n"
+    + "        (i64.or (i64.shr_u (i64.and " + x + " (i64.const 4026531840)) (i64.const 12))\n"
+    + "        (i64.shr_u (i64.and " + x + " (i64.const 280375465082880)) (i64.const 8))))\n"
+    + "        (i64.or (i64.or (i64.shl (i64.and " + x + " (i64.const 1095216660480)) (i64.const 8))\n"
+    + "        (i64.shr_u (i64.and " + x + " " + i64c("0xFFF0000000000000") + ") (i64.const 4)))\n"
+    + "        (i64.shl (i64.and " + x + " (i64.const 4222124650659840)) (i64.const 12)))))\n"
+    + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n      (br $next)))\n  )\n";
+}
+
+// The inverse of MixColumns is MixColumns three times: its matrix has order 4.
+function decrypt_func(): string {
+  let inv_sub = "(call $__fern_aes_bs_inv_shift_rows (local.get $p))\n      (call $__fern_aes_bs_inv_affine (local.get $p))\n"
+    + "      (call $__fern_aes_bs_sbox (local.get $p))\n      (call $__fern_aes_bs_inv_affine (local.get $p))\n";
+  return "  (func $__fern_aes_bs_decrypt (param $p i32) (param $sk i32) (param $rounds i32) (local $u i32)\n"
+    + "    (call $__fern_aes_bs_ark (local.get $p) (i32.add (local.get $sk) (i32.shl (local.get $rounds) (i32.const 6))))\n"
+    + "    (local.set $u (i32.sub (local.get $rounds) (i32.const 1)))\n"
+    + "    (block $done (loop $round\n      (br_if $done (i32.eqz (local.get $u)))\n      " + inv_sub
+    + "      (call $__fern_aes_bs_ark (local.get $p) (i32.add (local.get $sk) (i32.shl (local.get $u) (i32.const 6))))\n"
+    + "      (call $__fern_aes_bs_mix_columns (local.get $p))\n      (call $__fern_aes_bs_mix_columns (local.get $p))\n      (call $__fern_aes_bs_mix_columns (local.get $p))\n"
+    + "      (local.set $u (i32.sub (local.get $u) (i32.const 1)))\n      (br $round)))\n"
+    + "    " + inv_sub + "    (call $__fern_aes_bs_ark (local.get $p) (local.get $sk))\n  )\n";
+}
+
+function dec_chunk_wat(): string {
+  let o = "      (memory.fill (local.get $w) (i32.const 0) (i32.const 64))\n      (local.set $k (i32.sub (local.get $n) (local.get $at)))\n"
+    + "      (if (i32.gt_u (local.get $k) (i32.const 64)) (then (local.set $k (i32.const 64))))\n"
+    + "      (memory.copy (local.get $w) (i32.add (local.get $ip) (local.get $at)) (local.get $k))\n";
+  for j in 0..4 {
+    o = o + "      (call $__fern_aes_bs_in (local.get $q) (i32.add (local.get $w) (i32.const " + util.i32_to_string(16 * j) + ")) (i32.const " + util.i32_to_string(j) + "))\n";
+  }
+  o += "      (call $__fern_aes_bs_ortho (local.get $q))\n      (call $__fern_aes_bs_decrypt (local.get $q) (local.get $sk) (local.get $rounds))\n      (call $__fern_aes_bs_ortho (local.get $q))\n";
+  for j in 0..4 {
+    o = o + "      (call $__fern_aes_bs_out (local.get $q) (i32.add (local.get $w) (i32.const " + util.i32_to_string(16 * j) + ")) (i32.const " + util.i32_to_string(j) + "))\n";
+  }
+  return o + "      (memory.copy (i32.add (local.get $op) (local.get $at)) (local.get $w) (local.get $k))\n";
+}
+
+// The inverse cipher over each whole block of data, four blocks in each pass.
+function dec_blocks_func(): string {
+  return "  (func $__fern_aes_dec_blocks (param $rk i32) (param $data i32) (result i32)\n"
+    + "    (local $rounds i32) (local $n i32) (local $out i32) (local $rkp i32) (local $ip i32) (local $op i32)\n"
+    + "    (local $tmp i32) (local $sk i32) (local $q i32) (local $w i32) (local $j i32) (local $at i32) (local $k i32)\n"
+    + abort_unless("(i32.ge_u (call $__fern_aes_view_len (local.get $rk)) (i32.const 176))")
+    + "    (local.set $rounds (i32.const 10))\n"
+    + "    (if (i32.ge_u (call $__fern_aes_view_len (local.get $rk)) (i32.const 208)) (then (local.set $rounds (i32.const 12))))\n"
+    + "    (if (i32.ge_u (call $__fern_aes_view_len (local.get $rk)) (i32.const 240)) (then (local.set $rounds (i32.const 14))))\n"
+    + "    (local.set $n (i32.and (call $__fern_aes_view_len (local.get $data)) (i32.const -16)))\n"
+    + "    (local.set $out (call $__fern_aes_bytes (local.get $n)))\n"
+    + "    (if (i32.eqz (local.get $n)) (then (return (local.get $out))))\n"
+    + "    (local.set $rkp (call $__fern_aes_view_data (local.get $rk)))\n    (local.set $ip (call $__fern_aes_view_data (local.get $data)))\n"
+    + "    (local.set $op (i32.add (local.get $out) (i32.const 8)))\n"
+    + "    (local.set $tmp (call $__fern_aes_bytes (i32.shl (i32.add (local.get $rounds) (i32.const 3)) (i32.const 6))))\n"
+    + "    (local.set $sk (i32.add (local.get $tmp) (i32.const 8)))\n"
+    + "    (local.set $q (i32.add (local.get $sk) (i32.shl (i32.add (local.get $rounds) (i32.const 1)) (i32.const 6))))\n"
+    + "    (local.set $w (i32.add (local.get $q) (i32.const 64)))\n"
+    + ctr_keys_wat()
+    + "    (block $done (loop $chunk\n      (br_if $done (i32.ge_u (local.get $at) (local.get $n)))\n"
+    + dec_chunk_wat()
+    + "      (local.set $at (i32.add (local.get $at) (i32.const 64)))\n      (br $chunk)))\n"
+    + "    (memory.fill (local.get $sk) (i32.const 0) (i32.load (local.get $tmp)))\n"
+    + "    (drop (call $__fern_arr_dec (local.get $tmp)))\n    (local.get $out))\n";
+}
+
 function sub_word_func(): string {
   return "  (func $__fern_aes_sub_word (param $p i32) (param $x i32) (result i32)\n"
     + "    (memory.fill (local.get $p) (i32.const 0) (i32.const 64))\n"
@@ -447,6 +536,7 @@ pub function kernel_name(tag: i32): string {
   return match (tag) {
     402 => "$__fern_aes_expand_key",
     403 => "$__fern_aes_ctr32",
+    575 => "$__fern_aes_dec_blocks",
     444 => "$__fern_aes_gcm_seal_into",
     445 => "$__fern_aes_gcm_open_into",
     _ => "$__fern_ghash",
@@ -455,5 +545,5 @@ pub function kernel_name(tag: i32): string {
 
 pub function funcs(): string {
   return sbox_func() + ortho_func() + interleave_funcs() + shift_rows_func() + mix_columns_func()
-    + encrypt_func() + sub_word_func() + expand_key_func() + ctr_at_func() + ctr32_func() + ghash_at_func() + ghash_func() + gcm_func();
+    + encrypt_func() + inverse_affine_func() + inverse_shift_rows_func() + decrypt_func() + dec_blocks_func() + sub_word_func() + expand_key_func() + ctr_at_func() + ctr32_func() + ghash_at_func() + ghash_func() + gcm_func();
 }

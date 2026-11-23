@@ -407,7 +407,7 @@ and Piledriver are AVX1 parts and never ran this output.
 
 **AES-NI is a raise, and it drops no hardware.** The psABI levels leave AES-NI
 out of every one of them, v4 included, so std/crypto/aes_gcm's kernels
-(`__aes_expand_key`, `__aes_ctr32`) take it as a separate bit (#9858). Every
+(`__aes_expand_key`, `__aes_ctr32`, `__aes_dec_blocks`) take it as a separate bit (#9858). Every
 AVX2 part from Intel and AMD has it — the Pentium and Celeron lines that
 shipped without AES-NI also shipped without AVX — so the parts the v3 floor
 admits are the parts this one admits. The reason not to do without it is
