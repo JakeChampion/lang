@@ -37,6 +37,12 @@ A long press starts a selection:
 - **Zip** makes an archive of the selection in the folder that shows.
 - A copy runs in steps of 8 MiB. The screen shows its progress, and a
   button stops it.
+- A copy continues while the window of the app is away: a foreground
+  service keeps the app at work, and its notification says what the copy
+  does.
+- A step that fails starts again from its byte, 3 times at most, after
+  waits of 1.5 s, 3 s and 4.5 s. So a connection that drops for a moment
+  does not end the copy.
 
 The app does more for one file:
 

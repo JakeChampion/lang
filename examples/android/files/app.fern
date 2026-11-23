@@ -6,6 +6,7 @@ import "std/android/draw";
 import "std/android/image";
 import "std/i32";
 import "std/android/launch";
+import "std/android/service";
 import "std/android/ui/app";
 import "std/jni";
 import "std/result";
@@ -60,6 +61,46 @@ pub function shared_delete(env: usize, thiz: usize, uri: usize, selection: usize
 @jni("dev.fern.files.Shared", "int update(android.net.Uri, android.content.ContentValues, java.lang.String, java.lang.String[])")
 pub function shared_update(env: usize, thiz: usize, uri: usize, change: usize, selection: usize, values: usize): i32 {
   return 0;
+}
+
+// The foreground service that keeps a copy at work while the window of
+// the app is away. Its notification says what the copy does.
+@jni("dev.fern.files.Copying extends android.app.Service", "android.os.IBinder onBind(android.content.Intent)")
+pub function copying_bind(env: usize, thiz: usize, intent: usize): usize {
+  return 0 as usize;
+}
+
+@jni("dev.fern.files.Copying", "int onStartCommand(android.content.Intent, int, int)")
+pub function copying_command(env: usize, thiz: usize, intent: usize, flags: i32, id: i32): i32 {
+  return service.command(env, thiz, intent, notice("A copy runs."));
+}
+
+const COPYING: string = "dev.fern.files.Copying";
+
+function notice(text: string): service.Notice {
+  return service.Notice { channel: "copies", channel_name: "Copies", title: "Fern Files", text: text, action: "", stop: "", unlock: false };
+}
+
+// Tells Android what a copy does: the first text starts the service and
+// keeps the loop of the app alive, and "" ends both.
+function busy(ctx: usize, running: Cell[boolean], text: string): boolean {
+  if (text.len() == 0) {
+    if (running.get()) {
+      service.stop(ctx, COPYING);
+      android.keep_alive(ctx, false);
+      running.set(false);
+    }
+    return true;
+  }
+  if (!running.get()) {
+    if (!android.has_permission(ctx, "android.permission.POST_NOTIFICATIONS")) {
+      android.request_permissions(ctx, ["android.permission.POST_NOTIFICATIONS"]);
+    }
+    android.keep_alive(ctx, true);
+    running.set(service.start(ctx, COPYING));
+  }
+  service.update(ctx, COPYING, notice(text));
+  return running.get();
 }
 
 // The documents provider: the file picker of the system shows the saved
@@ -166,6 +207,7 @@ function app_main(ctx: usize): usize {
   let cache = android.cache_dir(ctx) + "/open";
   let cleared = remove_dir_all(cache);
   let made = create_dir_all(cache);
+  let running = cell_new(false);
   let platform = files.Platform {
     roots: (): files.Root[] => roots(),
     access: (): boolean => has_access(ctx),
@@ -175,6 +217,7 @@ function app_main(ctx: usize): usize {
     open: (path: string): boolean => open.view(ctx, path),
     share: (path: string): boolean => open.send(ctx, path),
     play: (address: string, name: string): boolean => open.play(ctx, address, name),
+    busy: (text: string): boolean => busy(ctx, running, text),
     decode: (bytes: u8[], wide: i32): Option[draw.Image] => picture(bytes, wide),
   };
   let last = app.run(ctx, files.start(roots(), has_access(ctx), vault.load(dir, android.env(ctx)), cache, prefs.load(dir)), files.program(platform));
