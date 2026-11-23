@@ -1493,7 +1493,15 @@ function contextual(f: Font, own r: Run, l: Lookup, st: i32, kind: i32, cov: i32
   let format = u16_at(f.data, st);
   let set = rule_set(f.data, st, kind, cov, r.glyphs[i], format);
   for k in 0..rule_count(f.data, set, format) {
+    // Each part of a rule needs one glyph for each of its values.
+    let after = r.glyphs.len() - 1 - i;
+    if (!rule_has_room(f.data, set, kind, format, k, i, after)) {
+      continue;
+    }
     let rule = context_rule(f.data, st, set, kind, format, k);
+    if (rule.back.n > i || rule.input.n + rule.ahead.n > after) {
+      continue;
+    }
     let ps = matched_input(f, r, l, mask, i, rule.input);
     // HarfBuzz keeps the glyphs before the input in the syllable only while
     // the lookup has not changed the count of glyphs, and the glyphs after
@@ -1530,6 +1538,26 @@ function rule_count(b: [u8], set: i32, format: i32): i32 {
     return 1;
   }
   return if (set == 0) { 0 } else { u16_at(b, set) };
+}
+
+// Whether rule `k` of the set at `set` can fit `before` glyphs before the
+// position and `after` glyphs after it. It reads the counts of the rule
+// only. A subtable of format 3 has its counts in its one rule, so it fits.
+function rule_has_room(b: [u8], set: i32, kind: i32, format: i32, k: i32, before: i32, after: i32): boolean {
+  if (format == 3) {
+    return true;
+  }
+  let at = set + u16_at(b, set + 2 + 2 * k);
+  if (kind == 5) {
+    return u16_at(b, at) - 1 <= after;
+  }
+  let nb = u16_at(b, at);
+  if (nb > before) {
+    return false;
+  }
+  let ni = at + 2 + 2 * nb;
+  let n = u16_at(b, ni);
+  return n - 1 + u16_at(b, ni + 2 * n) <= after;
 }
 
 function context_rule(b: [u8], st: i32, set: i32, kind: i32, format: i32, k: i32): Rule {
