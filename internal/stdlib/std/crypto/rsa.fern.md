@@ -4,11 +4,11 @@ This module verifies RSA signatures and encrypts with RSA-OAEP under RFC 8017.
 
 ## Model
 
-A public key stores the modulus, exponent, and encoded size. Construction validates these integer inputs before signature verification. A private key adds the private exponent and the Montgomery form of the modulus.
+A public key stores the modulus, exponent, and encoded size. Construction validates these integer inputs before signature verification. A private key adds the CRT values and the Montgomery form of the modulus.
 
 ## Contracts
 
-PKCS#1 v1.5 and PSS are separate verification methods on the public key. Both use an explicit SHA-2 selector and return false for an invalid signature. OAEP encryption takes its seed from the caller. OAEP decryption does not branch or index on a secret value, and all of its failures give one error.
+PKCS#1 v1.5 and PSS are separate verification methods on the public key. Both use an explicit SHA-2 selector and return false for an invalid signature. OAEP encryption takes its seed from the caller. Private key construction and OAEP decryption do not branch or index on a secret value. All failures of a decryption give one error.
 
 ## Module assembly
 
@@ -450,9 +450,13 @@ pub function (key: PublicKey) verify_pss(hash: sha2.Hash, msg: [u8], sig: [u8]):
 
 ### `14 pub struct PrivateKey`
 
-A private key keeps its public key and the values of the Chinese remainder theorem (CRT): the Montgomery forms of p and q, dp = d mod (p - 1), dq = d mod (q - 1), and qinv = q^-1 mod p. It also keeps the Montgomery form of the modulus n for the check of each decryption. Construction checks the key as Go's `rsa.PrivateKey.Validate` does, and computes the CRT values. That work uses `std/bigint`, which is not constant-time, so a caller marks the key secret after construction.
+A private key keeps its public key and the values of the Chinese remainder theorem (CRT): the Montgomery forms of p and q, dp = d mod (p - 1), dq = d mod (q - 1), and qinv = q^-1 mod p. It also keeps the Montgomery form of the modulus n for the check of each decryption. Construction checks the key as Go's `rsa.PrivateKey.Validate` does, and computes the CRT values.
 
-A PKCS#1 key and an OpenSSH key also hold qinv. Construction uses that value when q qinv mod p is 1. Otherwise it computes qinv, which takes about as long as one decryption. Go always computes qinv, so a wrong value in a key file is not an error.
+The values d, p, q and qinv are secret. Construction has no branch and no index on their bytes. Only these values become public: the verdict of each check, and the bit lengths of p and q. The lengths of the arguments are public.
+
+Construction works on words of 32 bits, each in an `i64`, with the least significant word first. Thus a carry is the bits above bit 31. The modulus p - 1 is even and has no Montgomery form. Thus a remainder comes from one conditional subtraction for each bit of the dividend.
+
+A PKCS#1 key and an OpenSSH key also hold qinv. Construction uses that value when q qinv mod p is 1. Otherwise it computes qinv as q^(p - 2) mod p, which takes about as long as one decryption. Go always computes qinv, so a wrong value in a key file is not an error.
 
 ```fern
 <<14 pub struct PrivateKey>>=
@@ -471,52 +475,212 @@ pub struct PrivateKey {
   qinv: u8[],
 }
 
-function __one(): bigint.BigInt {
-  return bigint.from_u64(1 as u64);
+const __WORD: i64 = 4294967295;
+
+// The words of a big-endian value.
+function __words(b: [u8]): i64[] {
+  let out = __zero_words((b.len() + 3) / 4);
+  let i = 0;
+  while (i < b.len()) {
+    let at = (b.len() - 1 - i) / 4;
+    out = out.with(at, out[at] << 8 | b[i] as i64);
+    i += 1;
+  }
+  return out;
 }
 
-// d * e is 1 modulo prime - 1.
-function __inverse_mod(d: bigint.BigInt, e: bigint.BigInt, prime: bigint.BigInt): boolean {
-  return d.mul(e).divmod(prime.sub(__one())).1.cmp(__one()) == 0;
+function __zero_words(n: i32): i64[] {
+  let out = __alloc_i64(n);
+  let i = 0;
+  while (i < n) {
+    out = out.with(i, 0 as i64);
+    i += 1;
+  }
+  return out;
+}
+
+// The low len bytes of w, big-endian.
+function __word_bytes(w: [i64], len: i32): u8[] {
+  let out = __alloc_u8(len);
+  let i = 0;
+  while (i < len && i < 4 * w.len()) {
+    out = out.with(len - 1 - i, (w[i / 4] >> 8 * (i % 4) & 255 as i64) as u8);
+    i += 1;
+  }
+  return out;
+}
+
+// The word i of w, and 0 above its length.
+function __word(w: [i64], i: i32): i64 {
+  if (i < w.len()) {
+    return w[i];
+  }
+  return 0 as i64;
+}
+
+// 1 when a and b are the same number, else 0. The lengths can differ.
+function __same_words(a: [i64], b: [i64]): i64 {
+  let acc = 0 as i64;
+  let i = 0;
+  while (i < a.len() || i < b.len()) {
+    acc |= __word(a, i) ^ __word(b, i);
+    i += 1;
+  }
+  return __eq_mask(acc, 0 as i64);
+}
+
+// 1 when a < b, else 0. The lengths can differ.
+function __less(a: [i64], b: [i64]): i64 {
+  let borrow = 0 as i64;
+  let i = 0;
+  while (i < a.len() || i < b.len()) {
+    borrow = __word(a, i) - __word(b, i) - borrow >> 63 & 1 as i64;
+    i += 1;
+  }
+  return borrow;
+}
+
+// a - k with n words, for a small k. The result is not correct when a < k.
+function __less_small(a: [i64], k: i64, n: i32): i64[] {
+  let out = __alloc_i64(n);
+  let borrow = k;
+  let i = 0;
+  while (i < n) {
+    let d = __word(a, i) - borrow;
+    out = out.with(i, d & __WORD);
+    borrow = d >> 63 & 1 as i64;
+    i += 1;
+  }
+  return out;
+}
+
+// a k for k < 2^31, with the length of a. The top word of a is 0.
+function __times_small(a: [i64], k: i64): i64[] {
+  let out = __alloc_i64(a.len());
+  let carry = 0 as i64;
+  let i = 0;
+  while (i < a.len()) {
+    let t = a[i] * k + carry;
+    out = out.with(i, t & __WORD);
+    carry = t >> 32;
+    i += 1;
+  }
+  return out;
+}
+
+// The product a b, with the words of both.
+function __product(a: [i64], b: [i64]): i64[] {
+  let out = __zero_words(a.len() + b.len());
+  let i = 0;
+  while (i < a.len()) {
+    let x = a[i] as u64;
+    let carry = 0 as u64;
+    let j = 0;
+    while (j < b.len()) {
+      let t = x * (b[j] as u64) + out[i + j] as u64 + carry;
+      out = out.with(i + j, (t & __WORD as u64) as i64);
+      carry = t >> 32 as u64;
+      j += 1;
+    }
+    out = out.with(i + b.len(), carry as i64);
+    i += 1;
+  }
+  return out;
+}
+
+// a mod m. m is not 0, it has the length of the result, and its top word is
+// 0. Each step doubles the remainder, adds the next bit of a, and subtracts
+// m when the difference is not negative.
+function __remainder(a: [i64], m: [i64]): i64[] {
+  let n = m.len();
+  let r = __zero_words(n);
+  let at = 32 * a.len() - 1;
+  while (at >= 0) {
+    let t = __alloc_i64(n);
+    let d = __alloc_i64(n);
+    let carry = a[at / 32] >> at % 32 & 1 as i64;
+    let borrow = 0 as i64;
+    let i = 0;
+    while (i < n) {
+      let x = r[i] << 1 | carry;
+      carry = x >> 32;
+      let w = x & __WORD;
+      let y = w - m[i] - borrow;
+      borrow = y >> 63 & 1 as i64;
+      t = t.with(i, w);
+      d = d.with(i, y & __WORD);
+      i += 1;
+    }
+    r = montgomery.select(t, d, 1 as i64 - borrow);
+    at -= 1;
+  }
+  return r;
+}
+
+// The bit length of w.
+function __bit_length(w: [i64]): i64 {
+  let seen = 0 as i64;
+  let bits = 0 as i64;
+  let at = 32 * w.len() - 1;
+  while (at >= 0) {
+    seen |= w[at / 32] >> at % 32 & 1 as i64;
+    bits += seen;
+    at -= 1;
+  }
+  return bits;
+}
+
+// v, a value below 2^31 that the caller makes public.
+function __public(v: i64): i32 {
+  let b = __alloc_u8(4).with(0, (v & 255 as i64) as u8).with(1, (v >> 8 & 255 as i64) as u8).with(2, (v >> 16 & 255 as i64) as u8).with(3, (v >> 24 & 255 as i64) as u8);
+  __ct_public(b);
+  return b[0] as i32 | b[1] as i32 << 8 | b[2] as i32 << 16 | b[3] as i32 << 24;
+}
+
+// d mod (prime - 1), and 1 when d e is 1 modulo prime - 1, else 0. The
+// result has one word more than prime, and that word is 0.
+function __crt_exponent(d: [i64], e: i64, prime: [i64]): (i64[], i64) {
+  let m = __less_small(prime, 1 as i64, prime.len() + 1);
+  let r = __remainder(d, m);
+  return (r, __same_words(__remainder(__times_small(r, e), m), [1 as i64]));
 }
 
 // The private key of an RSA key pair with two primes. qinv is the CRT
 // coefficient of the key file, or empty.
 pub function private_key(modulus: [u8], exponent: [u8], d: [u8], p: [u8], q: [u8], qinv: [u8]): Result[PrivateKey, RsaError] {
   let public = public_key(modulus, exponent)?;
-  let bp = __from_be(p);
-  let bq = __from_be(q);
-  if (bp.cmp(__one()) <= 0 || bq.cmp(__one()) <= 0) {
+  let pw = __words(p);
+  let qw = __words(q);
+  let one = [1 as i64];
+  if (__public(__less(one, pw) & __less(one, qw)) == 0) {
     return Err(InvalidPrime);
   }
-  if (bp.mul(bq).cmp(public.n) != 0) {
+  if (__public(__same_words(__product(pw, qw), __words(modulus))) == 0) {
     return Err(InvalidModulus);
   }
-  let bd = __from_be(d);
-  if (!__inverse_mod(bd, public.e, bp) || !__inverse_mod(bd, public.e, bq)) {
+  let e = public.e.word64(0) as i64;
+  let dw = __words(d);
+  let (dpw, dp_ok) = __crt_exponent(dw, e, pw);
+  let (dqw, dq_ok) = __crt_exponent(dw, e, qw);
+  if (__public(dp_ok & dq_ok) == 0) {
     return Err(InvalidExponents);
   }
   let m = montgomery.modulus(hex.encode(modulus), public.bytes);
-  let p_bits = bp.bit_length();
-  let q_bits = bq.bit_length();
-  let p_bytes = __to_be(bp, (p_bits + 7) / 8);
-  let q_bytes = __to_be(bq, (q_bits + 7) / 8);
+  let p_bits = __public(__bit_length(pw));
+  let q_bits = __public(__bit_length(qw));
+  let p_bytes = __word_bytes(pw, (p_bits + 7) / 8);
+  let q_bytes = __word_bytes(qw, (q_bits + 7) / 8);
   let mp = montgomery.modulus_of(p_bytes, p_bits);
-  let dp = __to_be(bd.divmod(bp.sub(__one())).1, p_bytes.len());
-  let dq = __to_be(bd.divmod(bq.sub(__one())).1, q_bytes.len());
-  let bc = __from_be(qinv);
-  let coefficient = if (bc.cmp(bp) < 0 && bq.mul(bc).divmod(bp).1.cmp(__one()) == 0) {
-    __to_be(bc, p_bytes.len())
+  let q_mod_p = montgomery.from_bytes(mp, q_bytes);
+  let from_file = montgomery.from_bytes(mp, qinv);
+  let cw = __words(qinv);
+  let usable = __less(cw, pw) & montgomery.is_zero(montgomery.sub(mp, montgomery.mul(mp, q_mod_p, from_file), mp.one));
+  let coefficient = if (__public(usable) == 1) {
+    __word_bytes(cw, p_bytes.len())
   } else {
-    montgomery.to_bytes(mp, montgomery.inv(mp, montgomery.from_bytes(mp, q_bytes)))
+    montgomery.to_bytes(mp, __pow_secret(mp, q_mod_p, __word_bytes(__less_small(pw, 2 as i64, pw.len()), p_bytes.len())))
   };
-  return Ok(PrivateKey { public: public, m: m, p: p_bytes, q: q_bytes, p_bits: p_bits, q_bits: q_bits, dp: dp, dq: dq, qinv: coefficient });
-}
-
-// The secret values of the key, for a caller that marks them secret under
-// the constant-time gate after construction: p, q, dp, dq and qinv.
-pub function (k: PrivateKey) secrets(): u8[][] {
-  return [k.p, k.q, k.dp, k.dq, k.qinv];
+  return Ok(PrivateKey { public: public, m: m, p: p_bytes, q: q_bytes, p_bits: p_bits, q_bits: q_bits, dp: __word_bytes(dpw, p_bytes.len()), dq: __word_bytes(dqw, q_bytes.len()), qinv: coefficient });
 }
 
 pub function (k: PrivateKey) public_key(): PublicKey {

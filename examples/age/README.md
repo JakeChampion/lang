@@ -340,8 +340,10 @@ The secret values go through the constant-time gate of the repository:
   and the values of the CRT are secret. The RSA decryption uses the CRT, as
   Go does. It reads the exponents with masks, and then it checks that m^e
   is c again. That check and the OAEP check make only their verdicts
-  public. The base64 of a PEM file and the checks of an RSA key are not
-  constant-time, as in Go: the port marks the key secret after them.
+  public. The base64 of a PEM file and the port's own checks of an RSA
+  key file are not constant-time, as in Go: the port marks d, p, q and
+  qinv secret after them. The construction of the key in `std/crypto/rsa`
+  is constant-time.
 
 - Blowfish, for an OpenSSH key with a passphrase, reads its tables at
   secret indexes, as OpenSSH does.

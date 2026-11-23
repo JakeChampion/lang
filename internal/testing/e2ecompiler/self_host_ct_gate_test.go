@@ -622,6 +622,75 @@ function main(): i32 {
 }
 `, false},
 	// RFC 4226 takes the window of the code at an offset that comes from the MAC.
+	{"rsa-oaep", `import "std/crypto/rsa";
+import "std/crypto/sha2";
+import "std/hex";
+import "std/result";
+
+const N: string = "e2488e82714208faa22e7ea0aa5820729683d776f05a7cb49467212db0c884b5825f36d9e059e817e069f5a3f91d06616d9b7c822ded1f082127fc65df3e0b0919e86e65f9a51a5ba4308de9dca40fcc020662e03318f07da851cc6c46883a2a12213b94d2985e7c2afd0a2f4cd278ccfc193f61edc4154e49bc8e7e6383af95";
+const D: string = "5a8d528a1caca24f39eb853ce22e15fe0501898dcd2d48ce32bcfa6800609dcaccfb31460b23af5f2eacf861bfe4bf92e97bd95d76e7770d97c71a97e1b8404d89570caa96af17a21837c4aecf99f20e77abb4e3c37997d3612eee3fac3b5cf5ef96aa6d342b5479eb98303d7f3d0ce0b18e6ea97be06e997f4df94d8ac21b59";
+const P: string = "f8971e7f101426799d5e58e6862393527ceba7a7a868039a787c9d486a262f3c25166257f2ccd2cb0edb162fbcb645f5ee9547b835f3454b21fef28dc8474f83";
+const Q: string = "e9073947614330e625ba0c7f7aba7dc257897546ca2a57e1a27c6b9d8066df669bff867b9333e3421088febd21f04f8571acce7d9777afeaf7b85f03b7eb0107";
+const QINV: string = "430a5e2268f2ce9f3dd5d4ebcbf990230c4f896a6d9015e3e21f0daba885855321d4076e3f3e715e977ad8e39f49df1868dfc9766e8534973ad0baaf0e8ad31e";
+const C: string = "d6bb2b1652bddb62c747eac83d143e608b753730a4936da9ffe6594ffeb3e4e6283f7ea6d7f10a1d89cc0bdf4927f7af3ee9736fa035cf91f80797cebf3c7acacff97ced06501795c07d669d0f4f995d42a55f9cc5d5d8b00a0291be75204cc074d81386dada61f40d744f5e65ea7d2ef9de3dc9e6e1d85c830991a4967ce423";
+
+function bytes(h: string): u8[] {
+  return hex.decode(h).unwrap_or([]);
+}
+
+function secret(h: string): u8[] {
+  let b = bytes((h));
+  __ct_secret(b);
+  return b;
+}
+
+// 0 when the key decrypts C to 16 bytes that start 00 01 02, else a code.
+function decrypts(qinv: [u8], c: [u8]): i32 {
+  let n = bytes((N));
+  let e = bytes(("010001"));
+  let Ok(k) = rsa.private_key(n, e, secret(D), secret(P), secret(Q), qinv) else {
+    return 1;
+  };
+  let Ok(m) = k.decrypt_oaep(sha2.Hash.Sha256, c, "age-encryption.org/v1/ssh-rsa".as_bytes()) else {
+    return 2;
+  };
+  __ct_public(m);
+  if (m.len() != 16 || m[1] != 1 as u8 || m[2] != 2 as u8) {
+    return 3;
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let c = bytes((C));
+  let with_file = decrypts(secret(QINV), c);
+  if (with_file != 0) {
+    return with_file;
+  }
+  let computed = decrypts([], c);
+  if (computed != 0) {
+    return 10 + computed;
+  }
+  let wrong = decrypts(secret(P), c);
+  if (wrong != 0) {
+    return 20 + wrong;
+  }
+  if (decrypts(secret(QINV), c.with(0, c[0] ^ 1 as u8)) != 2) {
+    return 30;
+  }
+  let n = bytes((N));
+  let e = bytes(("010001"));
+  match (rsa.private_key(n, e, secret(P), secret(P), secret(Q), [])) {
+    Ok(_) => { return 40; },
+    Err(_) => {},
+  }
+  match (rsa.private_key(n, e, secret(D), secret(Q), secret(Q), [])) {
+    Ok(_) => { return 41; },
+    Err(_) => {},
+  }
+  return 0;
+}
+`, false},
 	{"consteq", `import "std/crypto";
 
 function main(): i32 {

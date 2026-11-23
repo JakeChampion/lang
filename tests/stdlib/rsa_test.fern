@@ -231,8 +231,8 @@ function oaep_key_with(d: string, p: string, q: string, qinv: string): Result[rs
   );
 }
 
-// The key keeps the qinv of the key file when it is right, and computes
-// qinv when the file gives none or a wrong one, as Go does.
+// The key decrypts with the qinv of the key file, and with the qinv it
+// computes when the file gives none or a wrong one, as Go does.
 function test_crt_coefficient(): test.TestOutcome {
   let got: string[] = [];
   for qinv in [OAEP_QINV, "", "01", OAEP_P, "00" + OAEP_QINV] {
@@ -246,10 +246,9 @@ function test_crt_coefficient(): test.TestOutcome {
       Ok(m) => hex.encode(m),
       Err(e) => e.message(),
     };
-    got = got.append(hex.encode(k.secrets()[4]) + " " + m);
+    got = got.append(m);
   }
-  let want = OAEP_QINV + " " + OAEP_MSG;
-  return test.assert_eq_array(got, [want, want, want, want, want]);
+  return test.assert_eq_array(got, [OAEP_MSG, OAEP_MSG, OAEP_MSG, OAEP_MSG, OAEP_MSG]);
 }
 
 function decrypted(c: string, label: string): string {
@@ -323,12 +322,38 @@ function key_error(d: string, p: string, q: string): string {
 }
 
 function test_private_key_refusals(): test.TestOutcome {
-  let got = [key_error(OAEP_D, "01", OAEP_Q), key_error(OAEP_D, OAEP_Q, OAEP_Q), key_error(OAEP_P, OAEP_P, OAEP_Q)];
-  return test.assert_eq_array(got, [
-    "rsa: a prime of the private key is 1 or less",
-    "rsa: the product of the primes is not the modulus",
-    "rsa: d * e is not 1 modulo p - 1 and q - 1",
-  ]);
+  let prime = "rsa: a prime of the private key is 1 or less";
+  let product = "rsa: the product of the primes is not the modulus";
+  let exponents = "rsa: d * e is not 1 modulo p - 1 and q - 1";
+  let got = [
+    key_error(OAEP_D, "01", OAEP_Q),
+    key_error(OAEP_D, OAEP_P, "0000"),
+    key_error(OAEP_D, "", OAEP_Q),
+    key_error(OAEP_D, OAEP_Q, OAEP_Q),
+    key_error(OAEP_D, OAEP_P + "00", OAEP_Q),
+    key_error(OAEP_P, OAEP_P, OAEP_Q),
+    key_error("01", OAEP_P, OAEP_Q),
+    key_error("", OAEP_P, OAEP_Q),
+  ];
+  return test.assert_eq_array(got, [prime, prime, prime, product, product, exponents, exponents, exponents]);
+}
+
+// Leading zero bytes and the order of the primes do not change the key.
+function test_private_key_forms(): test.TestOutcome {
+  let got: string[] = [];
+  for (d, p, q) in [("0000" + OAEP_D, "00" + OAEP_P, "000000" + OAEP_Q), (OAEP_D, OAEP_Q, OAEP_P)] {
+    let k = match (oaep_key(d, p, q)) {
+      Ok(k) => k,
+      Err(e) => {
+        return test.fail(e.message());
+      },
+    };
+    got = got.append(match (k.decrypt_oaep(sha2.Hash.Sha256, __codec_bytes(hex.decode(OAEP_C)), OAEP_LABEL.as_bytes())) {
+      Ok(m) => hex.encode(m),
+      Err(e) => e.message(),
+    });
+  }
+  return test.assert_eq_array(got, [OAEP_MSG, OAEP_MSG]);
 }
 
 function main(): i32 {
@@ -349,6 +374,7 @@ function main(): i32 {
   r = r.it("OAEP encryption with a fixed seed", test_oaep_encrypt);
   r = r.it("OAEP refusals", test_oaep_refusals);
   r = r.it("private key refusals", test_private_key_refusals);
+  r = r.it("private key forms", test_private_key_forms);
   r = r.it("the CRT coefficient of a key file", test_crt_coefficient);
   return r.finish();
 }
