@@ -236,6 +236,7 @@ which ones.
 | `WASI-PREVIEW2.md` | [record] | The WASI Preview 1 to 2 component migration; complete, with components composed in-tree. |
 | `WASI-PREVIEW3-ASYNC-PLAN.md` | [record] | Preview-3 component-model async; async exports, async imports and `Stream[T]` shipped for scalar types. |
 | `WASM-COMPONENT-GENERATOR.md` | [record] | A generated wasm component envelope in the self-host; complete. |
+| `WASM-STRING-BOX.md` | [plan] | The plan to make each wasm32 string the `[data, len]` box of the native targets, so that a slice needs no copy (#15740). |
 | `WASM-REACTOR-PLAN.md` | [record] | The wasm reactor on Preview-2 pollables and the composition blocker it hit; shipped. |
 | `WIT-BRING-YOUR-OWN.md` | [record] | Compiling against a user-supplied WIT world; P1–P6 shipped in both compilers. |
 
