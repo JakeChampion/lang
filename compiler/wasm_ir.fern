@@ -4236,7 +4236,11 @@ function wasm_index_sign_trap(idx_local: i32, cause: string): string {
 function wasm_arr_index_trap(base_local: i32, idx_local: i32, cause: string): string {
   let s = "";
   s = s + "    local.tee " + util.i32_to_string(base_local) + "\n";
-  s += "    i32.load\n";
+  if (cause == "str") {
+    s += str_len_stack();
+  } else {
+    s += "    i32.load\n";
+  }
   s = s + "    local.get " + util.i32_to_string(idx_local) + "\n";
   s += "    i32.le_u\n";
   return s + "    if\n      call $__fern_abort_" + cause + "\n      unreachable\n    end\n";
@@ -4981,7 +4985,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (ir.is_view_string(o)) {
     parts = parts.append(view_string_wat(o, eltmp));
   } else if (o.kind_tag == ir.K_STR_DATA) {
-    parts = parts.append("    i32.const 4\n    i32.add\n");
+    parts = parts.append(str_data_stack());
   } else if (o.kind_tag == ir.K_RAW_ADDR) {
     parts = parts.append("    i32.add\n");
   } else if (o.kind_tag == ir.K_LOAD_LOCAL) {
@@ -5037,7 +5041,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
       + util.i32_to_string(cx.strs.offset_of(o.str, "string literal") - str_region_base()) + "\n    i32.add\n");
   } else if (o.kind_tag == ir.K_STR_INDEX) {
     if (o.i32_imm == 1) {
-      parts = parts.append("    i32.const 4\n    i32.add\n    i32.add\n    i32.load8_u\n");
+      parts = parts.append(str_index_stack());
     } else {
       parts = emit_wasm_str_index(arrtmp, bctmp, o.i32_imm, parts);
     }
@@ -5206,7 +5210,7 @@ function emit_str_op_wat(o: ir.Op): string {
     return "    call $__fern_mismatch_bytes_str\n";
   }
   if (o.kind_tag == ir.K_STR_LEN) {
-    return "    i32.load\n";
+    return str_len_stack();
   }
   if (o.kind_tag == ir.K_STR_SLICE) {
     return "    call $__fern_substr\n";
@@ -6760,6 +6764,21 @@ pub function temp_dir_func(): string {
   o += "    (i32.store (i32.add (local.get $res) (i32.const 4)) (local.get $blk))\n";
   o += "    (local.get $res))\n";
   return o;
+}
+
+// The stack forms of the emitters: str_len_stack takes a string and leaves
+// its length, str_data_stack leaves the address of its first byte, and
+// str_index_stack takes a string and an index and leaves that byte.
+function str_len_stack(): string {
+  return "    i32.load\n";
+}
+
+function str_data_stack(): string {
+  return "    i32.const 4\n    i32.add\n";
+}
+
+function str_index_stack(): string {
+  return "    i32.const 4\n    i32.add\n    i32.add\n    i32.load8_u\n";
 }
 
 // The WAT of the length of the string at `s`.
@@ -13705,7 +13724,7 @@ function emit_wasm_str_index(arrtmp: i32, bctmp: i32, check: i32, parts: string[
     return parts.append(wasm_arr_index_trap(arrtmp, bctmp, "str")).append("    i32.const 0\n");
   }
   parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp, "str"));
-  parts = parts.append("    i32.const 4\n    i32.add\n    i32.add\n    i32.load8_u\n");
+  parts = parts.append(str_index_stack());
   return parts;
 }
 
