@@ -126,9 +126,9 @@ selfhost/x86-64-linux/deflate_encode.emit	7282
 selfhost/x86-64-linux/enum_match.emit	1036
 selfhost/x86-64-linux/http_hello.emit	16675
 selfhost/x86-64-linux/int_loop.emit	298
-selfhost/x86-64-linux/map_int.emit	8891
-selfhost/x86-64-linux/map_probe_chain.emit	8895
-selfhost/x86-64-linux/map_string.emit	9772
+selfhost/x86-64-linux/map_int.emit	8753
+selfhost/x86-64-linux/map_probe_chain.emit	8757
+selfhost/x86-64-linux/map_string.emit	9647
 selfhost/x86-64-linux/ordmap_insert.emit	6096
 selfhost/x86-64-linux/pmap_insert.emit	3683
 selfhost/x86-64-linux/pvec_with.emit	3489

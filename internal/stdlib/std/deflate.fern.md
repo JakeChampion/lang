@@ -14,6 +14,26 @@ Output limits bound decompressed data. `Inflated` retains both the output and th
 
 The encoder has compression levels 1 to 9, as gzip has. `deflate_level` and `gzip_level` take the level. Level 1 is `deflate_fast`, and level 6 is `deflate` and `gzip`. A higher level visits more candidates at each position and gives smaller output.
 
+## Executable example
+
+```fern test name=std-deflate-example
+import "std/deflate";
+import "std/string";
+
+function main(): i32 {
+  let text = "to be or not to be, that is the question".repeat(8).bytes();
+  let packed = deflate.gzip(text);
+  if (packed.len() >= text.len()) { return 1; }
+  let Ok(plain) = deflate.gunzip(packed, 4096) else { return 2; };
+  if (plain != text) { return 3; }
+  match (deflate.gunzip(packed, 16)) {
+    Ok(bytes) => { return 4; },
+    Err(e) => {}
+  }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.

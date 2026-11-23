@@ -1086,12 +1086,13 @@ function main(): i32 {
     show("2024-02-29T23:59:59Z");
     show("2026-05-19T14:30:00.500Z");           // 3-digit fraction → nsec=5e8
     show("2026-05-19T14:30:00.123456789Z");
+    show("2026-05-19T14:30:00.1234567899999+01:00"); // digits after the ninth are dropped
     // The in-range neighbours of the out-of-range rows below.
     show("2023-02-28T23:59:59Z");
     show("2023-12-31T00:00:00Z");
     return 0;
 }`,
-			wantStdout: "2026-05-19T14:30:00Z\n1970-01-01T00:00:00Z\n2024-02-29T23:59:59Z\n2026-05-19T14:30:00.500000000Z\n2026-05-19T14:30:00.123456789Z\n2023-02-28T23:59:59Z\n2023-12-31T00:00:00Z\n",
+			wantStdout: "2026-05-19T14:30:00Z\n1970-01-01T00:00:00Z\n2024-02-29T23:59:59Z\n2026-05-19T14:30:00.500000000Z\n2026-05-19T14:30:00.123456789Z\n2026-05-19T13:30:00.123456789Z\n2023-02-28T23:59:59Z\n2023-12-31T00:00:00Z\n",
 		},
 		{
 			name: "timestamp_parse_rfc3339 rejects malformed input",
@@ -1110,7 +1111,7 @@ function main(): i32 {
     show("2026-05-19 14:30:00Z");                 // space instead of T
     show("2026-05-19T14:30:00+0000");             // offset without a colon
     show("2026-05-19T14:30:00.Z");                // empty fraction
-    show("2026-05-19T14:30:00.1234567890Z");      // 10-digit fraction
+    show("2026-05-19T14:30:00.123456789x1Z");     // a letter after the ninth fraction digit
     // RFC 3339 §5.6 constrains every field, so an out-of-range one is a
     // syntax error, not a value to roll over into the next unit (#8469).
     show("2023-02-29T00:00:00Z");                 // Feb 29 in a common year

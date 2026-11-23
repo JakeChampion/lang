@@ -13,6 +13,23 @@ A `Zoned` value pairs a `time.Timestamp` with a zone, and gives the local civil 
 
 Local civil-time conversion must account for transition gaps and repeated times. Generated zone data remains intact within its marked chunk.
 
+## Executable example
+
+```fern test name=std-tz-example
+import "std/tz";
+import "std/time";
+
+function main(): i32 {
+  let zone = tz.zone_from_tz("CET-1CEST,M3.5.0,M10.5.0/3");
+  let Ok(winter) = time.timestamp_parse_rfc3339("2024-01-15T12:00:00Z") else { return 1; };
+  let Ok(summer) = time.timestamp_parse_rfc3339("2024-07-15T12:00:00Z") else { return 2; };
+  if (zone.offset_at(winter) != 3600 || zone.is_dst_at(winter)) { return 3; }
+  if (zone.offset_at(summer) != 7200 || zone.abbrev_at(summer) != "CEST") { return 4; }
+  if (zone.at(summer).format_rfc3339() != "2024-07-15T14:00:00+02:00") { return 5; }
+  return 0;
+}
+```
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.

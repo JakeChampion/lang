@@ -160,9 +160,11 @@ function move_helpers(): string[] {
   ];
 }
 
-function release_prefixes(): string[] {
+// The release prefixes that start with `__drop_`. The other two are
+// `__sem_release_` and `__closure_drop_`.
+function drop_prefixes(): string[] {
   return [
-    "__sem_release_", "__closure_drop_", "__drop_struct_flat_", "__drop_struct_", "__drop_enum_", "__drop_tuple_",
+    "__drop_struct_flat_", "__drop_struct_", "__drop_enum_", "__drop_tuple_",
     "__drop_dyn_", "__drop_arr_struct_", "__drop_arr_tuple_", "__drop_arr_enum_", "__drop_arr_dyn_", "__drop_arr_arr_",
     "__drop_arr_of_", "__drop_map_", "__drop_mapchain_",
   ];
@@ -173,6 +175,9 @@ function release_names(): string[] {
 }
 
 pub function releases_operand(name: string): boolean {
+  if (!name.starts_with("__")) {
+    return false;
+  }
   return util.index_of_str(release_helpers(), name) >= 0 || util.index_of_str(move_helpers(), name) >= 0 || is_generated_release(name);
 }
 
@@ -185,7 +190,14 @@ function has_prefix(name: string, prefix: string): boolean {
 }
 
 pub function is_generated_release(name: string): boolean {
-  for p in release_prefixes() {
+  if (has_prefix(name, "__sem_release_") || has_prefix(name, "__closure_drop_")) {
+    return true;
+  }
+  // Each other prefix and each name of a release starts with `__drop_`.
+  if (!name.starts_with("__drop_")) {
+    return false;
+  }
+  for p in drop_prefixes() {
     if (has_prefix(name, p)) {
       return true;
     }
