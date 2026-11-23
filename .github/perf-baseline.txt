@@ -208,7 +208,7 @@ aarch64/perceus_rbtree_ck.text	3479
 aarch64/perceus_rbtree_ck.ir	27669017
 x86_64/video_qtrle.text 5615
 x86_64/video_qtrle.ir 1351828808
-aarch64/video_qtrle.text 6232
+aarch64/video_qtrle.text 6296
 aarch64/video_qtrle.ir 1166068375
 x86_64/hex_encode.text	2132
 x86_64/hex_encode.ir	56977710
@@ -216,8 +216,8 @@ aarch64/hex_encode.text	2361
 x86_64/base64_encode.text	2416
 x86_64/base64_encode.ir	66154798
 aarch64/base64_encode.text	2616
-aarch64/hex_encode.ir	69713241
-aarch64/base64_encode.ir	67320921
+aarch64/hex_encode.ir	67615577
+aarch64/base64_encode.ir	65223769
 x86_64/hex_decode.text	2659
 x86_64/hex_decode.ir	251175773
 aarch64/hex_decode.text	2826
