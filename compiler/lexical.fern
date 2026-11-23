@@ -9,7 +9,8 @@ pub struct Binding { id: i32, name: string, symbol: string, line: i32, col: i32 
 
 pub struct ResolvedFunction { func: parser.FuncDecl, bindings: Binding[] }
 
-struct Scope { bindings: Binding[], visible: i32[], reserved: string[] }
+// `by_name` has the entries of `visible` by the name of their binding.
+struct Scope { bindings: Binding[], visible: i32[], by_name: util.LastIndex, reserved: string[] }
 
 pub function source_name(symbol: string): string {
   if (symbol.len() < 12 || !symbol.starts_with("$binding$")) {
@@ -26,6 +27,17 @@ pub function source_name(symbol: string): string {
 }
 
 function lookup(s: Scope, name: string): string {
+  if (s.by_name.on()) {
+    let at = s.by_name.head(name);
+    while (at >= 0) {
+      let b = s.bindings[s.visible[at]];
+      if (b.name == name) {
+        return b.symbol;
+      }
+      at = s.by_name.prior[at];
+    }
+    return name;
+  }
   let i = s.visible.len();
   while (i > 0) {
     i -= 1;
@@ -47,7 +59,29 @@ function bind(s: Scope, name: string, line: i32, col: i32): Scope {
     symbol += "$";
   }
   let b = Binding { id: id, name: name, symbol: symbol, line: line, col: col };
-  return Scope { ...s, bindings: s.bindings.append(b), visible: s.visible.append(id) };
+  // Read s for the index before the bind, so that the bind is the last use
+  // of s and grows its arrays in place.
+  let by_name = visible_with(s, name);
+  return Scope { ...s, bindings: s.bindings.append(b), visible: s.visible.append(id), by_name: by_name };
+}
+
+// A scope of fewer visible names than this has no index.
+const VISIBLE_INDEX_FROM: i32 = 32;
+
+// The index of the visible names of `s` after `name` joins them.
+function visible_with(s: Scope, name: string): util.LastIndex {
+  let k = s.visible.len();
+  if (!s.by_name.on() && k < VISIBLE_INDEX_FROM) {
+    return s.by_name;
+  }
+  if (s.by_name.on() && s.by_name.room(k)) {
+    return s.by_name.with_entry(name);
+  }
+  let out = util.last_index_for(2 * (k + 1));
+  for id in s.visible {
+    out = out.with_entry(s.bindings[id].name);
+  }
+  return out.with_entry(name);
 }
 
 function bind_one(s: Scope, name: string, line: i32, col: i32): Scope {
@@ -81,7 +115,7 @@ function names(s: Scope, packed: string): string {
 }
 
 function leave(inner: Scope, outer: Scope): Scope {
-  return Scope { ...inner, visible: outer.visible };
+  return Scope { ...inner, visible: outer.visible, by_name: outer.by_name };
 }
 
 function expr(e: ast.Expr, s: Scope): (ast.Expr, Scope) {
@@ -379,7 +413,7 @@ pub function resolve_func(fd: parser.FuncDecl): ResolvedFunction {
     reserved = reserve(p.name, reserved);
   }
   reserved = reserve(fd.receiver_name, reserved);
-  let s = Scope { bindings: [], visible: [], reserved: reserved };
+  let s = Scope { bindings: [], visible: [], by_name: util.no_last_index(), reserved: reserved };
   s = bind(s, fd.receiver_name, fd.line, fd.col);
   let receiver = lookup(s, fd.receiver_name);
   let (ps, inner) = params(fd.params, s, fd.line, fd.col);

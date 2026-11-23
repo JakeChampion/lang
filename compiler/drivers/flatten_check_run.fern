@@ -2,6 +2,7 @@ import "../ast";
 import "../flatten";
 import "../lexer";
 import "../parser";
+import "../util";
 import "std/test";
 
 function flatten_source(src: string): parser.Module {
@@ -244,7 +245,7 @@ function test_mangled_declarations(): test.TestOutcome {
 
 function test_type_names(): test.TestOutcome {
   // A single bucket suffices for these small declaration tables.
-  let ctx = flatten.RewriteCtx { type_params: [], modnames: ["lexer", "test"], modprefixes: ["lexer", "test"], prefix: "lx", declnames: ["Token"], declnames_mangled: ["lx__Token"], dn_head: [0], dn_next: [-1], locals: [], enumnames: [], imported_enums: [], ivar_names: ["Fail"], ivar_mangled: ["test__Fail"], variant_scope: ["lexer", "test"], reexport_keys: [], reexport_targets: [], own_variants: [] };
+  let ctx = flatten.RewriteCtx { type_params: [], modnames: ["lexer", "test"], modprefixes: ["lexer", "test"], prefix: "lx", declnames: ["Token"], declnames_mangled: ["lx__Token"], dn_head: [0], dn_next: [-1], locals: util.name_index([]), enumnames: [], imported_enums: [], ivar_names: ["Fail"], ivar_mangled: ["test__Fail"], variant_scope: ["lexer", "test"], reexport_keys: [], reexport_targets: [], own_variants: [] };
   for (source, expected) in [
     ("lexer.Token[]", "lexer__Token[]"),
     ("Token[]", "lx__Token[]"),

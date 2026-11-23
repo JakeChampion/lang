@@ -1,0 +1,1339 @@
+// Files: a file explorer for the storage of the phone and for the shares of
+// SMB servers. It has the look of the other Fern apps: black, white and
+// grey, red only for what is live, and headings of round dots.
+import "core/cmp";
+import "std/android";
+import "std/android/draw";
+import "std/android/ui";
+import "std/array";
+import "std/i32";
+import "std/i64";
+import "std/string";
+import "std/utf8";
+import "std/worker";
+import "./smb";
+import "./store";
+import "../look";
+import "../matrix";
+
+// A storage of the phone, with its size and its free room in bytes.
+pub struct Root { label: string, path: string, total: i64, free: i64 }
+
+// A server that the person saved, with the name that the app shows for it.
+pub struct Saved { name: string, server: smb.Server }
+
+// What the person copied or cut: items of one directory of one place.
+pub struct Clip { place: store.Place, dir: string, items: smb.Entry[], cut: boolean }
+
+// A copy that runs: its steps, the step that it is at, and its progress.
+// `open` is the path of a download that another app shows at the end.
+pub struct Task { src: store.Place, dst: store.Place, steps: store.Step[], at: i32, offset: i64, done: i64, total: i64, clip: Clip, stop: boolean, open: string }
+
+// A folder that the person pinned, or the folder of a file that the person
+// opened. `server` is the name of a saved server, or "" for the phone.
+pub struct Mark { label: string, path: string, server: string }
+
+// What the app keeps from one start to the next.
+pub struct Prefs { sort: i32, hidden: boolean, pins: Mark[], recent: Mark[] }
+
+pub function no_prefs(): Prefs {
+  return Prefs { sort: 0, hidden: false, pins: [], recent: [] };
+}
+
+pub enum Naming { Folder, NewName(string) }
+
+pub enum Page { Home, Browse, Item(string), Server(i32), Text(string), Picture(string) }
+
+enum Job {
+  List(i64, store.Place, string),
+  Plan(i64, Clip, store.Place, string),
+  Advance(i64, store.Place, store.Place, store.Step, i64),
+  Remove(i64, store.Place, string, smb.Entry[]),
+  MakeDir(i64, store.Place, string),
+  Rename(i64, store.Place, string, string),
+  Move(i64, store.Place, string, smb.Entry[], string),
+  ReadText(i64, store.Place, string),
+  ReadPicture(i64, store.Place, string),
+  Search(i64, store.Place, string, string),
+  Measure(i64, store.Place, string, smb.Entry[]),
+  Shares(i64, smb.Server),
+}
+
+// What the app needs from Android: the storages of the phone, whether the
+// app has access to all files, the screen that gives that access, a place to keep the servers, a place
+// to keep the preferences, the app of the phone that shows a file, the
+// apps that take a file, and a decoder that gives an image at a width in pixels or less.
+pub struct Platform { roots: () => Root[], access: () => boolean, ask_access: () => boolean, save: (Saved[]) => boolean, keep: (Prefs) => boolean, open: (string) => boolean, share: (string) => boolean, decode: (u8[], i32) => Option[draw.Image] }
+
+pub struct Model {
+  roots: Root[],
+  servers: Saved[],
+  granted: boolean,
+  // The directory for the copy of a server file that another app shows,
+  // and the path of the file that waits for that app.
+  cache: string,
+  launch: string,
+  // True when the file that waits goes to an app that the person picks.
+  sharing: boolean,
+  pins: Mark[],
+  recent: Mark[],
+  // True when the preferences changed and the file does not have them.
+  unkept: boolean,
+  // True when the entries are what a search below the folder found. The
+  // name of each entry is then its path below the folder.
+  found: boolean,
+  page: Page,
+  place: store.Place,
+  label: string,
+  top: string,
+  path: string,
+  entries: smb.Entry[],
+  loading: boolean,
+  note: string,
+  // The text of the last note that tells of a fault.
+  fault: string,
+  sort: i32,
+  hidden: boolean,
+  query: string,
+  selecting: boolean,
+  picked: string[],
+  clip: Option[Clip],
+  task: Option[Task],
+  naming: Option[Naming],
+  name_text: string,
+  // The action that waits for a second tap, or "".
+  confirm: string,
+  draft: Saved,
+  preview: string,
+  picture: Option[draw.Image],
+  // The bytes of an image that waits for the decoder, and the most pixels
+  // across that the screen shows.
+  raw: u8[],
+  wide: i32,
+  // The shares that the server of the draft has, and true while the app
+  // asks for them.
+  shares: string[],
+  finding: boolean,
+  revision: i64,
+  task_revision: i64,
+  job: Option[Job],
+  need_roots: boolean,
+  ask_access: boolean,
+  unsaved: boolean,
+}
+
+pub enum Msg {
+  OpenRoot(i32),
+  OpenFolder(string, string),
+  OpenServer(i32),
+  EditServer(i32),
+  Draft(i32, string),
+  SaveServer,
+  DeleteServer,
+  Enter(string),
+  Up,
+  GoHome,
+  ClosePage,
+  Listed(i64, Result[smb.Entry[], string]),
+  NextSort,
+  ToggleHidden,
+  Query(string),
+  Tap(string),
+  Hold(string),
+  StopSelecting,
+  Copy(boolean),
+  CopyOne(string, boolean),
+  Paste,
+  ClearClip,
+  Planned(i64, Result[store.Step[], string]),
+  Advanced(i64, Result[i64, string]),
+  StopTask,
+  Finished(i64, string, Result[void, string]),
+  Delete,
+  DeleteOne(string),
+  NewFolder,
+  StartRename(string),
+  NameText(string),
+  SaveName,
+  CancelName,
+  Preview(string),
+  TextRead(i64, Result[smb.Part, string]),
+  ShowPicture(string, i32),
+  PictureRead(i64, Result[smb.Part, string]),
+  FindShares,
+  SharesFound(i64, Result[string[], string]),
+  PickShare(string),
+  SelectAll,
+  OpenFile(string),
+  ShareFile(string),
+  TogglePin,
+  OpenMark(Mark),
+  MeasureFolders,
+  Measured(i64, smb.Entry[]),
+  DeepSearch,
+  Searched(i64, Result[smb.Entry[], string]),
+  AskAccess,
+  Resumed,
+}
+
+// The folders of the main storage that the home screen offers.
+const PLACES: (string, string)[] = [("Downloads", "Download"), ("Camera", "DCIM"), ("Pictures", "Pictures"), ("Music", "Music"), ("Movies", "Movies"), ("Documents", "Documents")];
+
+const SORTS: string[] = ["Name", "Size", "Date"];
+
+// The most bytes of a text file that the preview shows.
+const PREVIEW_BYTES: i32 = 65536;
+
+// The most bytes of an image file that the app reads to show it.
+const PICTURE_BYTES: i32 = 16777216;
+
+function no_server(): Saved {
+  return Saved { name: "", server: smb.Server { host: "", port: 445, share: "", user: "", password: "", domain: "" } };
+}
+
+// The model of the home screen, with the storages and the servers.
+// `granted` is false when Android hides the files of the storages.
+pub function start(roots: Root[], granted: boolean, servers: Saved[], cache: string, prefs: Prefs): Model {
+  return Model {
+    roots: roots, servers: servers, granted: granted, cache: cache, launch: "", sharing: false, pins: prefs.pins, recent: prefs.recent, unkept: false, found: false, page: Home, place: store.Local, label: "", top: "", path: "", entries: [], loading: false, note: "", fault: "", sort: prefs.sort, hidden: prefs.hidden, query: "",
+    selecting: false, picked: [], clip: None, task: None, naming: None, name_text: "", confirm: "", draft: no_server(), preview: "", picture: None, raw: [], wide: 0, shares: [], finding: false, revision: 0i64, task_revision: 0i64, job: None, need_roots: false, ask_access: false, unsaved: false,
+  };
+}
+
+function failed(m: Model, text: string): Model {
+  return Model { ...m, note: text, fault: text };
+}
+
+function told(m: Model, text: string): Model {
+  return Model { ...m, note: text, fault: "" };
+}
+
+// Reads the directory `path` of the place that shows.
+function reload(m: Model): Model {
+  let revision = m.revision + 1i64;
+  return Model { ...m, loading: true, found: false, revision: revision, job: Some(List(revision, m.place, m.path)) };
+}
+
+function open(m: Model, place: store.Place, label: string, top: string, path: string): Model {
+  return reload(Model { ...m, page: Browse, place: place, label: label, top: top, path: path, entries: [], note: "", fault: "", query: "", selecting: false, picked: [], naming: None, confirm: "" });
+}
+
+function entry_named(m: Model, name: string): Option[smb.Entry] {
+  return m.entries.find((e: smb.Entry): boolean => e.name == name);
+}
+
+function picked_entries(m: Model): smb.Entry[] {
+  return m.entries.filter((e: smb.Entry): boolean => m.picked.contains(e.name));
+}
+
+// The entries that the list shows: with the filter and the sort order of
+// the person, and with each directory before the files.
+pub function shown(m: Model): smb.Entry[] {
+  let needle = m.query.trim().to_lower();
+  let kept = m.entries.filter((e: smb.Entry): boolean => (m.hidden || !e.name.starts_with(".")) && (needle.len() == 0 || e.name.to_lower().contains(needle)));
+  let order = m.sort;
+  return cmp.sort_by(kept, (a: smb.Entry, b: smb.Entry): i32 => {
+    if (a.dir != b.dir) {
+      return if (a.dir) { -1 } else { 1 };
+    }
+    if (order == 1 && a.size != b.size) {
+      return if (a.size > b.size) { -1 } else { 1 };
+    }
+    if (order == 2 && a.modified != b.modified) {
+      return if (a.modified > b.modified) { -1 } else { 1 };
+    }
+    return a.name.cmp_ignore_ascii_case(b.name);
+  });
+}
+
+function valid_name(name: string): boolean {
+  let text = name.trim();
+  return text.len() > 0 && !text.contains("/") && !text.contains("\\") && text != "." && text != "..";
+}
+
+function start_paste(m: Model): Model {
+  let Some(clip) = m.clip else {
+    return m;
+  };
+  let revision = m.task_revision + 1i64;
+  if (clip.cut && store.same_place(clip.place, m.place)) {
+    if (clip.dir == m.path) {
+      return told(Model { ...m, clip: None }, "The items are in this folder already.");
+    }
+    return Model { ...m, task_revision: revision, clip: None, loading: true, job: Some(Move(revision, m.place, clip.dir, clip.items, m.path)) };
+  }
+  let waiting = Task { src: clip.place, dst: m.place, steps: [], at: 0, offset: 0i64, done: 0i64, total: 0i64, clip: clip, stop: false, open: "" };
+  return Model { ...m, task_revision: revision, task: Some(waiting), clip: None, note: "", fault: "", job: Some(Plan(revision, clip, m.place, m.path)) };
+}
+
+// Starts the step that the task is at, or ends the task after its last
+// step. A cut then removes what it copied.
+function continue_task(m: Model, t: Task): Model {
+  if (t.stop) {
+    return reload(told(Model { ...m, task: None }, "The copy stopped. The part that it made stays."));
+  }
+  if (t.at >= t.steps.len() && t.open.len() > 0) {
+    return Model { ...m, task: None, launch: t.open };
+  }
+  if (t.at < t.steps.len()) {
+    return Model { ...m, task: Some(t), job: Some(Advance(m.task_revision, t.src, t.dst, t.steps[t.at], t.offset)) };
+  }
+  let ended = told(Model { ...m, task: None }, if (t.clip.cut) { "Moved." } else { "Copied." });
+  if (t.clip.cut) {
+    return Model { ...ended, loading: true, job: Some(Remove(m.task_revision, t.src, t.clip.dir, t.clip.items)) };
+  }
+  return reload(ended);
+}
+
+function task_update(own m: Model, msg: Msg): Model {
+  match (msg) {
+    Paste => {
+      return start_paste(m);
+    },
+    Planned(revision, result) => {
+      let Some(t) = m.task else {
+        return m;
+      };
+      if (revision != m.task_revision) {
+        return m;
+      }
+      match (result) {
+        Ok(steps) => {
+          let total = 0i64;
+          for s in steps {
+            total += s.size;
+          }
+          return continue_task(m, Task { ...t, steps: steps, total: total });
+        },
+        Err(e) => {
+          return failed(Model { ...m, task: None }, e);
+        }
+      }
+    },
+    Advanced(revision, result) => {
+      let Some(t) = m.task else {
+        return m;
+      };
+      if (revision != m.task_revision) {
+        return m;
+      }
+      match (result) {
+        Ok(n) => {
+          let whole = t.steps[t.at].dir || n < store.STEP as i64;
+          let next = if (whole) { Task { ...t, at: t.at + 1, offset: 0i64, done: t.done + n } } else { Task { ...t, offset: t.offset + n, done: t.done + n } };
+          return continue_task(m, next);
+        },
+        Err(e) => {
+          return reload(failed(Model { ...m, task: None }, e));
+        }
+      }
+    },
+    StopTask => {
+      if let Some(t) = m.task {
+        return Model { ...m, task: Some(Task { ...t, stop: true }) };
+      }
+      return m;
+    },
+    _ => {
+      return m;
+    }
+  }
+}
+
+function name_update(own m: Model, msg: Msg): Model {
+  match (msg) {
+    NewFolder => {
+      return Model { ...m, naming: Some(Folder), name_text: "", selecting: false, picked: [] };
+    },
+    StartRename(name) => {
+      return Model { ...m, page: Browse, naming: Some(NewName(name)), name_text: name };
+    },
+    NameText(text) => {
+      return Model { ...m, name_text: text };
+    },
+    CancelName => {
+      return Model { ...m, naming: None };
+    },
+    SaveName => {
+      let Some(kind) = m.naming else {
+        return m;
+      };
+      let name = m.name_text.trim();
+      if (!valid_name(name)) {
+        return failed(m, "Give a name with no slash.");
+      }
+      if (entry_named(m, name).is_some()) {
+        return failed(m, "That name is in use already.");
+      }
+      let revision = m.task_revision + 1i64;
+      let next = Model { ...m, naming: None, task_revision: revision, loading: true, note: "", fault: "" };
+      match (kind) {
+        Folder => {
+          return Model { ...next, job: Some(MakeDir(revision, m.place, store.join(m.path, name))) };
+        },
+        NewName(old) => {
+          return Model { ...next, job: Some(Rename(revision, m.place, store.join(m.path, old), store.join(store.parent(store.join(m.path, old)), name))) };
+        }
+      }
+    },
+    _ => {
+      return m;
+    }
+  }
+}
+
+// Removes `items` of the folder that shows, on the second tap.
+function remove_items(m: Model, items: smb.Entry[], key: string): Model {
+  if (items.len() == 0) {
+    return m;
+  }
+  if (m.confirm != key) {
+    return Model { ...m, confirm: key };
+  }
+  let revision = m.task_revision + 1i64;
+  return Model { ...m, page: Browse, confirm: "", selecting: false, picked: [], task_revision: revision, loading: true, job: Some(Remove(revision, m.place, m.path, items)) };
+}
+
+function select_update(own m: Model, msg: Msg): Model {
+  match (msg) {
+    Tap(name) => {
+      if (m.selecting) {
+        let picked = if (m.picked.contains(name)) { m.picked.filter((p: string): boolean => p != name) } else { m.picked.append(name) };
+        return Model { ...m, picked: picked, confirm: "" };
+      }
+      if let Some(e) = entry_named(m, name) {
+        if (e.dir) {
+          return open(m, m.place, m.label, m.top, store.join(m.path, name));
+        }
+        return Model { ...m, page: Item(name), confirm: "" };
+      }
+      return m;
+    },
+    Hold(name) => {
+      return Model { ...m, selecting: true, picked: [name], naming: None, confirm: "" };
+    },
+    StopSelecting => {
+      return Model { ...m, selecting: false, picked: [], confirm: "" };
+    },
+    SelectAll => {
+      return Model { ...m, picked: shown(m).map((e: smb.Entry): string => e.name), confirm: "" };
+    },
+    Copy(cut) => {
+      let items = picked_entries(m);
+      if (items.len() == 0) {
+        return m;
+      }
+      return told(Model { ...m, clip: Some(Clip { place: m.place, dir: m.path, items: items, cut: cut }), selecting: false, picked: [] }, "");
+    },
+    CopyOne(name, cut) => {
+      if let Some(e) = entry_named(m, name) {
+        return Model { ...m, page: Browse, clip: Some(Clip { place: m.place, dir: m.path, items: [e], cut: cut }) };
+      }
+      return m;
+    },
+    ClearClip => {
+      return Model { ...m, clip: None };
+    },
+    Delete => {
+      return remove_items(m, picked_entries(m), "delete");
+    },
+    DeleteOne(name) => {
+      return remove_items(m, m.entries.filter((e: smb.Entry): boolean => e.name == name), "delete:" + name);
+    },
+    _ => {
+      return m;
+    }
+  }
+}
+
+// The draft `d` with `text` in the field `field` of the server screen.
+function drafted(d: Saved, field: i32, text: string): Saved {
+  let s = d.server;
+  match (field) {
+    0 => {
+      return Saved { ...d, name: text };
+    },
+    1 => {
+      return Saved { ...d, server: smb.Server { ...s, host: text.trim() } };
+    },
+    2 => {
+      return Saved { ...d, server: smb.Server { ...s, share: text.trim() } };
+    },
+    3 => {
+      return Saved { ...d, server: smb.Server { ...s, user: text.trim() } };
+    },
+    4 => {
+      return Saved { ...d, server: smb.Server { ...s, password: text } };
+    },
+    _ => {
+      return Saved { ...d, server: smb.Server { ...s, domain: text.trim() } };
+    }
+  }
+}
+
+function server_update(own m: Model, msg: Msg): Model {
+  match (msg) {
+    OpenServer(i) => {
+      if (i < 0 || i >= m.servers.len()) {
+        return m;
+      }
+      let s = m.servers[i];
+      return open(m, store.Remote(s.server), s.name, "", "");
+    },
+    EditServer(i) => {
+      let draft = if (i >= 0 && i < m.servers.len()) { m.servers[i] } else { no_server() };
+      return Model { ...m, page: Server(i), draft: draft, shares: [], finding: false, note: "", fault: "", confirm: "" };
+    },
+    Draft(field, text) => {
+      let next = drafted(m.draft, field, text);
+      return Model { ...m, draft: next };
+    },
+    FindShares => {
+      if (m.draft.server.host.len() == 0) {
+        return failed(m, "Give the address first.");
+      }
+      let revision = m.revision + 1i64;
+      return Model { ...m, finding: true, shares: [], note: "", fault: "", revision: revision, job: Some(Shares(revision, m.draft.server)) };
+    },
+    SharesFound(revision, result) => {
+      if (revision != m.revision) {
+        return m;
+      }
+      match (result) {
+        Ok(names) => {
+          return told(Model { ...m, finding: false, shares: names }, if (names.len() == 0) { "The server shows no shares." } else { "" });
+        },
+        Err(e) => {
+          return failed(Model { ...m, finding: false }, e);
+        }
+      }
+    },
+    PickShare(name) => {
+      return Model { ...m, draft: drafted(m.draft, 2, name) };
+    },
+    SaveServer => {
+      let Server(i) = m.page else {
+        return m;
+      };
+      let d = m.draft;
+      if (d.server.host.len() == 0 || d.server.share.len() == 0) {
+        return failed(m, "Give the address and the share.");
+      }
+      let named = if (d.name.trim().len() > 0) { Saved { ...d, name: d.name.trim() } } else { Saved { ...d, name: d.server.share + " on " + d.server.host } };
+      let servers = if (i >= 0 && i < m.servers.len()) { m.servers.with(i, named) } else { m.servers.append(named) };
+      return Model { ...m, servers: servers, page: Home, unsaved: true, note: "", fault: "" };
+    },
+    DeleteServer => {
+      let Server(i) = m.page else {
+        return m;
+      };
+      if (i < 0 || i >= m.servers.len()) {
+        return Model { ...m, page: Home };
+      }
+      if (m.confirm != "server") {
+        return Model { ...m, confirm: "server" };
+      }
+      let servers: Saved[] = [];
+      for k in 0..m.servers.len() {
+        if (k != i) {
+          servers = servers.append(m.servers[k]);
+        }
+      }
+      return Model { ...m, servers: servers, page: Home, unsaved: true, confirm: "" };
+    },
+    _ => {
+      return m;
+    }
+  }
+}
+
+function result_update(own m: Model, msg: Msg): Model {
+  match (msg) {
+    Listed(revision, result) => {
+      if (revision != m.revision) {
+        return m;
+      }
+      match (result) {
+        Ok(entries) => {
+          return Model { ...m, entries: entries, loading: false };
+        },
+        Err(e) => {
+          return failed(Model { ...m, entries: [], loading: false }, e);
+        }
+      }
+    },
+    Finished(revision, done, result) => {
+      if (revision != m.task_revision) {
+        return m;
+      }
+      match (result) {
+        Ok(_) => {
+          return reload(told(m, done));
+        },
+        Err(e) => {
+          return reload(failed(m, e));
+        }
+      }
+    },
+    PictureRead(revision, result) => {
+      if (revision != m.revision) {
+        return m;
+      }
+      match (result) {
+        Ok(part) => {
+          if (part.size > part.data.len() as i64) {
+            return failed(Model { ...m, loading: false }, "The image is too large to show.");
+          }
+          return Model { ...m, raw: part.data };
+        },
+        Err(e) => {
+          return failed(Model { ...m, loading: false }, e);
+        }
+      }
+    },
+    TextRead(revision, result) => {
+      if (revision != m.revision) {
+        return m;
+      }
+      match (result) {
+        Ok(part) => {
+          let more = if (part.size > part.data.len() as i64) { "\n\n… the first " + store.size_text(part.data.len() as i64) + " of " + store.size_text(part.size) } else { "" };
+          return Model { ...m, loading: false, preview: utf8.from_bytes_lossy(part.data) + more };
+        },
+        Err(e) => {
+          return failed(Model { ...m, loading: false }, e);
+        }
+      }
+    },
+    _ => {
+      return m;
+    }
+  }
+}
+
+function up(m: Model): Model {
+  if (m.found) {
+    return reload(Model { ...m, query: "" });
+  }
+  if (m.path == m.top || m.path.len() <= m.top.len()) {
+    return Model { ...m, page: Home, note: "", fault: "", selecting: false, picked: [], naming: None, need_roots: true };
+  }
+  return open(m, m.place, m.label, m.top, store.parent(m.path));
+}
+
+// The name of the server that shows, or "" for the phone.
+function server_name(m: Model): string {
+  if let store.Remote(_) = m.place {
+    return m.label;
+  }
+  return "";
+}
+
+function mark_here(m: Model): Mark {
+  let label = if (store.base(m.path).len() > 0 && m.path != m.top) { store.base(m.path) } else { m.label };
+  return Mark { label: label, path: m.path, server: server_name(m) };
+}
+
+function pinned(m: Model): boolean {
+  let here = mark_here(m);
+  return m.pins.any((p: Mark): boolean => p.path == here.path && p.server == here.server);
+}
+
+// The model with the file `name` first in the recent files, which hold 8.
+function remembered(m: Model, name: string): Model {
+  let path = store.join(m.path, name);
+  let mark = Mark { label: store.base(name), path: path, server: server_name(m) };
+  let rest = m.recent.filter((r: Mark): boolean => r.path != path || r.server != mark.server);
+  return Model { ...m, recent: [mark].concat(rest).take(8), unkept: true };
+}
+
+// Opens the folder of a pin, or the folder that holds a recent file.
+function open_mark(m: Model, mark: Mark): Model {
+  let dir = if (m.pins.any((p: Mark): boolean => p.path == mark.path && p.server == mark.server)) { mark.path } else { store.parent(mark.path) };
+  if (mark.server.len() > 0) {
+    let Some(saved) = m.servers.find((s: Saved): boolean => s.name == mark.server) else {
+      return failed(m, "The server of this item is not saved.");
+    };
+    return open(m, store.Remote(saved.server), saved.name, "", dir);
+  }
+  for root in m.roots {
+    if (dir.starts_with(root.path)) {
+      return open(m, store.Local, root.label, root.path, dir);
+    }
+  }
+  return open(m, store.Local, mark.label, dir, dir);
+}
+
+// Shows the file in another app. A file of a server goes to the cache of
+// the app first.
+function open_file(m: Model, name: string, sharing: boolean): Model {
+  let Some(e) = entry_named(m, name) else {
+    return m;
+  };
+  let clear = Model { ...m, note: "", fault: "", sharing: sharing };
+  if let store.Local = m.place {
+    return Model { ...clear, launch: store.join(m.path, name) };
+  }
+  if (m.task.is_some()) {
+    return failed(m, "Wait for the copy that runs.");
+  }
+  let to = store.join(m.cache, store.base(name));
+  let step = store.Step { from: store.join(m.path, name), to: to, size: e.size, dir: false };
+  let clip = Clip { place: m.place, dir: m.path, items: [e], cut: false };
+  let task = Task { src: m.place, dst: store.Local, steps: [step], at: 0, offset: 0i64, done: 0i64, total: e.size, clip: clip, stop: false, open: to };
+  return continue_task(Model { ...clear, task_revision: m.task_revision + 1i64 }, task);
+}
+
+function browse_update(own m: Model, msg: Msg): Model {
+  match (msg) {
+    OpenRoot(i) => {
+      if (i < 0 || i >= m.roots.len()) {
+        return m;
+      }
+      return open(m, store.Local, m.roots[i].label, m.roots[i].path, m.roots[i].path);
+    },
+    OpenFolder(label, path) => {
+      if (m.roots.len() == 0) {
+        return m;
+      }
+      return open(m, store.Local, label, m.roots[0].path, store.join(m.roots[0].path, path));
+    },
+    Enter(name) => {
+      return open(m, m.place, m.label, m.top, store.join(m.path, name));
+    },
+    Up => {
+      return up(m);
+    },
+    GoHome => {
+      return Model { ...m, page: Home, note: "", fault: "", selecting: false, picked: [], naming: None, need_roots: true };
+    },
+    ClosePage => {
+      match (m.page) {
+        Text(name) => {
+          return Model { ...m, page: Item(name), preview: "", note: "", fault: "" };
+        },
+        Picture(name) => {
+          return Model { ...m, page: Item(name), picture: None, note: "", fault: "" };
+        },
+        Server(_) => {
+          return Model { ...m, page: Home, note: "", fault: "" };
+        },
+        _ => {
+          return Model { ...m, page: Browse, confirm: "" };
+        }
+      }
+    },
+    NextSort => {
+      return Model { ...m, sort: (m.sort + 1) % SORTS.len(), unkept: true };
+    },
+    ToggleHidden => {
+      return Model { ...m, hidden: !m.hidden, unkept: true };
+    },
+    Query(text) => {
+      return Model { ...m, query: text };
+    },
+    Preview(name) => {
+      let revision = m.revision + 1i64;
+      return Model { ...m, page: Text(name), preview: "", loading: true, revision: revision, job: Some(ReadText(revision, m.place, store.join(m.path, name))) };
+    },
+    OpenFile(name) => {
+      return open_file(remembered(m, name), name, false);
+    },
+    ShareFile(name) => {
+      return open_file(m, name, true);
+    },
+    TogglePin => {
+      let here = mark_here(m);
+      let pins = if (pinned(m)) { m.pins.filter((p: Mark): boolean => p.path != here.path || p.server != here.server) } else { m.pins.append(here) };
+      return Model { ...m, pins: pins, unkept: true };
+    },
+    OpenMark(mark) => {
+      return open_mark(m, mark);
+    },
+    MeasureFolders => {
+      let revision = m.revision + 1i64;
+      return Model { ...m, loading: true, sort: 1, unkept: true, note: "", fault: "", revision: revision, job: Some(Measure(revision, m.place, m.path, m.entries)) };
+    },
+    Measured(revision, entries) => {
+      if (revision != m.revision) {
+        return m;
+      }
+      return Model { ...m, entries: entries, loading: false };
+    },
+    DeepSearch => {
+      if (m.query.trim().len() == 0) {
+        return m;
+      }
+      let revision = m.revision + 1i64;
+      return Model { ...m, loading: true, note: "", fault: "", revision: revision, job: Some(Search(revision, m.place, m.path, m.query.trim())) };
+    },
+    Searched(revision, result) => {
+      if (revision != m.revision) {
+        return m;
+      }
+      match (result) {
+        Ok(entries) => {
+          let note = if (entries.len() >= store.MOST_FOUND) { "The first " + entries.len().to_string() + " items show." } else { "" };
+          return told(Model { ...m, entries: entries, loading: false, found: true, selecting: false, picked: [] }, note);
+        },
+        Err(e) => {
+          return failed(Model { ...m, loading: false }, e);
+        }
+      }
+    },
+    ShowPicture(name, wide) => {
+      let revision = m.revision + 1i64;
+      return Model { ...m, page: Picture(name), picture: None, loading: true, note: "", fault: "", revision: revision, wide: wide, job: Some(ReadPicture(revision, m.place, store.join(m.path, name))) };
+    },
+    AskAccess => {
+      return Model { ...m, ask_access: true };
+    },
+    Resumed => {
+      let again = Model { ...m, need_roots: true };
+      if let Browse = m.page {
+        return reload(again);
+      }
+      return again;
+    },
+    _ => {
+      return m;
+    }
+  }
+}
+
+pub function update(own m: Model, msg: Msg): Model {
+  let idle = Model { ...m, job: None };
+  match (msg) {
+    Paste | Planned(_, _) | Advanced(_, _) | StopTask => {
+      return task_update(idle, msg);
+    },
+    NewFolder | StartRename(_) | NameText(_) | SaveName | CancelName => {
+      return name_update(idle, msg);
+    },
+    Tap(_) | Hold(_) | StopSelecting | SelectAll | Copy(_) | CopyOne(_, _) | ClearClip | Delete | DeleteOne(_) => {
+      return select_update(idle, msg);
+    },
+    OpenServer(_) | EditServer(_) | Draft(_, _) | SaveServer | DeleteServer | FindShares | SharesFound(_, _) | PickShare(_) => {
+      return server_update(idle, msg);
+    },
+    Listed(_, _) | Finished(_, _, _) | TextRead(_, _) | PictureRead(_, _) => {
+      return result_update(idle, msg);
+    },
+    _ => {
+      return browse_update(idle, msg);
+    }
+  }
+}
+
+function moved(place: store.Place, from: string, items: smb.Entry[], to: string): Result[void, string] {
+  let taken = store.list(place, to)?.map((e: smb.Entry): string => e.name);
+  for item in items {
+    let name = store.free_name(taken, item.name);
+    taken = taken.append(name);
+    store.rename_to(place, store.join(from, item.name), store.join(to, name))?;
+  }
+  return Ok(());
+}
+
+function removed(place: store.Place, dir: string, items: smb.Entry[]): Result[void, string] {
+  for item in items {
+    store.remove(place, store.join(dir, item.name), item.dir)?;
+  }
+  return Ok(());
+}
+
+function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
+  let Some(job) = m.job else {
+    return [];
+  };
+  return [worker.spawn((): Msg => {
+    match (job) {
+      List(revision, place, path) => {
+        return Listed(revision, store.list(place, path));
+      },
+      Plan(revision, clip, place, path) => {
+        return Planned(revision, store.plan(clip.place, clip.dir, clip.items, place, path));
+      },
+      Advance(revision, src, dst, step, offset) => {
+        return Advanced(revision, store.advance(src, dst, step, offset));
+      },
+      Remove(revision, place, dir, items) => {
+        return Finished(revision, "Removed.", removed(place, dir, items));
+      },
+      MakeDir(revision, place, path) => {
+        return Finished(revision, "", store.make_dir(place, path));
+      },
+      Rename(revision, place, from, to) => {
+        return Finished(revision, "", store.rename_to(place, from, to));
+      },
+      Move(revision, place, from, items, to) => {
+        return Finished(revision, "Moved.", moved(place, from, items, to));
+      },
+      ReadText(revision, place, path) => {
+        return TextRead(revision, store.read(place, path, 0i64, PREVIEW_BYTES));
+      },
+      ReadPicture(revision, place, path) => {
+        return PictureRead(revision, store.read(place, path, 0i64, PICTURE_BYTES));
+      },
+      Measure(revision, place, path, entries) => {
+        return Measured(revision, store.measured(place, path, entries));
+      },
+      Search(revision, place, path, needle) => {
+        return Searched(revision, store.search(place, path, needle));
+      },
+      Shares(revision, server) => {
+        return SharesFound(revision, smb.shares(server));
+      }
+    }
+  })];
+}
+
+function effects(m: Model, platform: Platform): Model {
+  let next = m;
+  if (m.ask_access) {
+    let asked = platform.ask_access();
+    next = Model { ...next, ask_access: false };
+  }
+  if (m.unsaved) {
+    let kept = platform.save(m.servers);
+    next = Model { ...next, unsaved: false };
+  }
+  if (m.raw.len() > 0) {
+    let shown = platform.decode(m.raw, m.wide);
+    next = Model { ...next, raw: [], loading: false, picture: shown };
+    if (shown.is_none()) {
+      next = failed(next, "The app cannot read this image.");
+    }
+  }
+  if (m.unkept) {
+    let kept = platform.keep(Prefs { sort: m.sort, hidden: m.hidden, pins: m.pins, recent: m.recent });
+    next = Model { ...next, unkept: false };
+  }
+  if (m.launch.len() > 0) {
+    next = Model { ...next, launch: "", sharing: false };
+    let went = if (m.sharing) { platform.share(m.launch) } else { platform.open(m.launch) };
+    if (!went) {
+      next = failed(next, "No app on this phone opens this file.");
+    }
+  }
+  if (m.need_roots) {
+    let roots = platform.roots();
+    next = Model { ...next, need_roots: false, roots: roots, granted: platform.access() };
+  }
+  return next;
+}
+
+// Where the back key goes, or None to leave the app.
+pub function back(m: Model): Option[Msg] {
+  match (m.page) {
+    Home => {
+      return None;
+    },
+    Browse => {
+      if (m.naming.is_some()) {
+        return Some(CancelName);
+      }
+      if (m.selecting) {
+        return Some(StopSelecting);
+      }
+      return Some(Up);
+    },
+    _ => {
+      return Some(ClosePage);
+    }
+  }
+}
+
+// Black or white, grey, and red for what is live.
+pub function theme(dark: boolean): ui.Theme {
+  let white = draw.rgb(255, 255, 255);
+  if (dark) {
+    return ui.Theme { background: look.bg(), surface: look.surface(), primary: look.red(), on_primary: white, ink: white, muted: draw.rgb(150, 150, 150), outline: look.outline(), track: draw.rgb(48, 48, 48), pressed: draw.rgba(255, 255, 255, 31), error: draw.rgb(255, 120, 120) };
+  }
+  return ui.Theme { background: draw.rgb(242, 242, 242), surface: white, primary: look.red(), on_primary: white, ink: draw.rgb(0, 0, 0), muted: draw.rgb(110, 110, 110), outline: draw.rgb(200, 200, 200), track: draw.rgb(222, 222, 222), pressed: draw.rgba(0, 0, 0, 31), error: draw.rgb(179, 38, 30) };
+}
+
+// Words of round dots, `high` dp high, in the color of the role `role`.
+function dots(text: string, high: f64, role: i32): ui.El[Msg] {
+  let wide = matrix.width(text, 100) as f64 / 100.0 * (high / (matrix.ROWS as f64));
+  let paint = (color: i32): ((draw.Frame, i32, i32, i32, i32) => void) => (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => { matrix.text(f, x, y, text, (h / matrix.ROWS).max(1), color); };
+  return ui.tinted("dots:" + text + ":" + high.to_string(), role, paint).width(wide.ceil() + 1.0).height(high).described(text);
+}
+
+// The dots of the picture of a folder or of a file, 7 across and 6 down.
+const FOLDER: string[] = ["111....", "1111111", "1.....1", "1.....1", "1.....1", "1111111"];
+
+const SHEET: string[] = ["11111..", "1...11.", "1....11", "1.....1", "1.....1", "1111111"];
+
+const PHOTO: string[] = ["1111111", "1....11", "1.....1", "1..1..1", "1.111.1", "1111111"];
+
+const SOUND: string[] = ["..1111.", "..1..1.", "..1..1.", "..1..1.", "111.111", "111.111"];
+
+const FILM: string[] = ["1111111", "1.1...1", "1.11..1", "1.11..1", "1.1...1", "1111111"];
+
+const PHOTO_ENDS: string[] = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"];
+
+const SOUND_ENDS: string[] = [".mp3", ".flac", ".wav", ".ogg", ".m4a", ".opus", ".aac"];
+
+const FILM_ENDS: string[] = [".mp4", ".mkv", ".mov", ".avi", ".webm"];
+
+function is_photo(name: string): boolean {
+  return name.to_lower().ends_with_any(PHOTO_ENDS);
+}
+
+// The picture of a file: what the end of its name says that it holds.
+function file_glyph(name: string, role: i32): ui.El[Msg] {
+  let low = name.to_lower();
+  if (low.ends_with_any(PHOTO_ENDS)) {
+    return glyph(PHOTO, "photo", role);
+  }
+  if (low.ends_with_any(SOUND_ENDS)) {
+    return glyph(SOUND, "sound", role);
+  }
+  if (low.ends_with_any(FILM_ENDS)) {
+    return glyph(FILM, "film", role);
+  }
+  return glyph(SHEET, "file", role);
+}
+
+function glyph(rows: string[], key: string, role: i32): ui.El[Msg] {
+  let paint = (color: i32): ((draw.Frame, i32, i32, i32, i32) => void) => (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => {
+    let pitch = (w / 7).min(h / 6).max(2);
+    let left = x + (w - pitch * 7) / 2 + pitch / 2;
+    let top = y + (h - pitch * 6) / 2 + pitch / 2;
+    for j in 0..rows.len() {
+      let row = rows[j].bytes();
+      for i in 0..row.len() {
+        if (row[i] == 49u8) {
+          f.disc(left + i * pitch, top + j * pitch, (pitch * 2 / 5).max(1), color);
+        }
+      }
+    }
+  };
+  return ui.tinted("glyph:" + key, role, paint).width(36.0).height(36.0);
+}
+
+function notice(m: Model): ui.El[Msg][] {
+  if (m.note.len() == 0) {
+    return [];
+  }
+  return [ui.text[Msg](m.note).colored(if (m.note == m.fault) { ui.ERROR } else { ui.MUTED })];
+}
+
+function actions_row(buttons: ui.El[Msg][]): ui.El[Msg] {
+  return ui.row(buttons).spaced(4.0).aligned(ui.CENTER).wrapped().wide();
+}
+
+function section(title: string): ui.El[Msg] {
+  return ui.row([dots(title, 12.0, ui.MUTED)]).padding_xy(0.0, 6.0);
+}
+
+// A row of the home screen: a picture, a name and a line below it.
+function place_row(picture: ui.El[Msg], name: string, detail: string, message: Msg): ui.El[Msg] {
+  let words = [ui.text[Msg](name).sized(16.0).weighted(500).clamped(1)];
+  if (detail.len() > 0) {
+    words = words.append(ui.text[Msg](detail).colored(ui.MUTED).clamped(1));
+  }
+  return ui.row([picture, ui.column(words).spaced(2.0).wide()]).aligned(ui.CENTER).spaced(14.0).padding_xy(4.0, 8.0).wide().on_tap(message).described(name);
+}
+
+function root_card(root: Root, at: i32): ui.El[Msg] {
+  let used = root.total - root.free;
+  let part = if (root.total > 0i64) { used as f64 / (root.total as f64) } else { 0.0 };
+  return ui.card([
+    ui.row([glyph(FOLDER, "root", ui.INK), ui.column([ui.text[Msg](root.label).sized(17.0).weighted(600).clamped(1), ui.text[Msg](store.size_text(root.free) + " free of " + store.size_text(root.total)).colored(ui.MUTED)]).spaced(2.0).wide()]).aligned(ui.CENTER).spaced(14.0),
+    ui.progress(part),
+  ]).spaced(12.0).wide().on_tap(OpenRoot(at)).described(root.label);
+}
+
+// What a copy does now, with a bar and a button to stop it.
+function task_bar(m: Model): ui.El[Msg][] {
+  let Some(t) = m.task else {
+    return [];
+  };
+  let verb = if (t.open.len() > 0) { "Downloading" } else if (t.clip.cut) { "Moving" } else { "Copying" };
+  if (t.steps.len() == 0) {
+    return [ui.card([ui.text[Msg](verb + ": reading the items…")]).wide()];
+  }
+  let part = if (t.total > 0i64) { t.done as f64 / (t.total as f64) } else { t.at as f64 / (t.steps.len() as f64) };
+  let line = verb + " " + (t.at + 1).min(t.steps.len()).to_string() + " of " + t.steps.len().to_string() + " · " + store.size_text(t.done) + " of " + store.size_text(t.total);
+  return [ui.card([
+    ui.row([ui.text[Msg](line).clamped(2).wide(), ui.text_button(if (t.stop) { "Stopping…" } else { "Stop" }, StopTask)]).aligned(ui.CENTER).spaced(8.0),
+    ui.progress(part),
+  ]).spaced(8.0).wide()];
+}
+
+function clip_bar(m: Model): ui.El[Msg][] {
+  let Some(clip) = m.clip else {
+    return [];
+  };
+  let count = clip.items.len();
+  let what = if (count == 1) { clip.items[0].name } else { count.to_string() + " items" };
+  let line = (if (clip.cut) { "Move " } else { "Copy " }) + what;
+  let buttons: ui.El[Msg][] = [];
+  if let Browse = m.page {
+    if (m.task.is_none()) {
+      buttons = buttons.append(ui.button("Paste here", Paste));
+    }
+  }
+  buttons = buttons.append(ui.text_button("Clear", ClearClip));
+  return [ui.card([ui.text[Msg](line).clamped(1), actions_row(buttons)]).spaced(4.0).wide()];
+}
+
+// Where a mark is: its server, then its path.
+function mark_detail(mark: Mark): string {
+  return if (mark.server.len() > 0) { mark.server + " · /" + mark.path } else { mark.path };
+}
+
+function home(m: Model): ui.El[Msg] {
+  let rows: ui.El[Msg][] = [ui.row([dots("FILES", 28.0, ui.INK)]).padding_xy(0.0, 12.0)];
+  rows = rows.concat(notice(m));
+  if (!m.granted) {
+    rows = rows.append(ui.card([
+      ui.text[Msg]("Files needs access to all files to show the storage of the phone.").wide(),
+      ui.button("Allow access", AskAccess),
+    ]).spaced(12.0).wide());
+  }
+  rows = rows.append(section("STORAGE"));
+  for i in 0..m.roots.len() {
+    rows = rows.append(root_card(m.roots[i], i));
+  }
+  if (m.roots.len() == 0) {
+    rows = rows.append(ui.text[Msg]("The phone reports no storage.").colored(ui.MUTED));
+  }
+  rows = rows.append(section("PLACES"));
+  for place in PLACES {
+    rows = rows.append(place_row(glyph(FOLDER, "place", ui.MUTED), place.0, "", OpenFolder(place.0, place.1)));
+  }
+  if (m.pins.len() > 0) {
+    rows = rows.append(section("PINNED"));
+    for pin in m.pins {
+      rows = rows.append(place_row(glyph(FOLDER, "pin", ui.PRIMARY), pin.label, mark_detail(pin), OpenMark(pin)).described("Pinned " + pin.label));
+    }
+  }
+  if (m.recent.len() > 0) {
+    rows = rows.append(section("RECENT"));
+    for item in m.recent {
+      rows = rows.append(place_row(file_glyph(item.label, ui.MUTED), item.label, mark_detail(item), OpenMark(item)).described("Recent " + item.label));
+    }
+  }
+  rows = rows.append(section("NETWORK"));
+  for i in 0..m.servers.len() {
+    let s = m.servers[i];
+    let line = ui.row([
+      place_row(glyph(FOLDER, "server", ui.PRIMARY), s.name, "smb://" + s.server.host + "/" + s.server.share, OpenServer(i)),
+      ui.text_button("Edit", EditServer(i)).described("Edit " + s.name),
+    ]).aligned(ui.CENTER).wide();
+    rows = rows.append(line);
+  }
+  rows = rows.append(ui.outlined_button("Add a server", EditServer(-1)));
+  let list = ui.column(rows).spaced(8.0).padding_xy(16.0, 8.0).wide().tall().scroll("home");
+  return ui.column([list, ui.column(task_bar(m).concat(clip_bar(m))).spaced(8.0).padding_xy(16.0, 8.0).wide()]).wide().tall();
+}
+
+function entry_detail(e: smb.Entry): string {
+  let day = store.day_text(e.modified);
+  if (e.dir) {
+    let what = if (e.size > 0i64) { store.size_text(e.size) } else { "Folder" };
+    return if (day.len() > 0) { what + " · " + day } else { what };
+  }
+  return if (day.len() > 0) { store.size_text(e.size) + " · " + day } else { store.size_text(e.size) };
+}
+
+function entry_row(m: Model, e: smb.Entry): ui.El[Msg] {
+  let picture = if (e.dir) { glyph(FOLDER, "dir", ui.INK) } else { file_glyph(e.name, ui.MUTED) };
+  let words = ui.column([ui.text[Msg](e.name).sized(16.0).clamped(1), ui.text[Msg](entry_detail(e)).colored(ui.MUTED).clamped(1)]).spaced(2.0).wide();
+  let kids = [picture, words];
+  if (m.selecting) {
+    let on = m.picked.contains(e.name);
+    let mark: ui.El[Msg] = ui.box().width(14.0).height(14.0).rounded(7.0).background(if (on) { ui.PRIMARY } else { ui.TRACK });
+    kids = kids.append(mark);
+  }
+  let state = if (m.selecting && m.picked.contains(e.name)) { ", selected" } else { "" };
+  return ui.row(kids).aligned(ui.CENTER).spaced(14.0).padding_xy(4.0, 0.0).wide().height(64.0).on_tap(Tap(e.name)).on_long(Hold(e.name)).described(e.name + state);
+}
+
+// The path of the folder that shows, below the name of its place.
+function trail(m: Model): string {
+  let below = if (m.path.len() > m.top.len()) { m.path.drop(m.top.len()) } else { "" };
+  let parts = below.split("/").filter((p: string): boolean => p.len() > 0);
+  return [m.label].concat(parts).join(" / ");
+}
+
+function naming_card(m: Model): ui.El[Msg][] {
+  let Some(kind) = m.naming else {
+    return [];
+  };
+  let title = match (kind) {
+    Folder => "New folder",
+    NewName(_) => "Rename",
+  };
+  return [ui.card([
+    ui.text[Msg](title).weighted(600),
+    ui.field[Msg]("name", m.name_text, "Name").on_edit((text: string): Msg => NameText(text)).on_submit(SaveName),
+    actions_row([ui.button("Save", SaveName), ui.text_button("Cancel", CancelName)]),
+  ]).spaced(8.0).wide()];
+}
+
+function selection_bar(m: Model): ui.El[Msg][] {
+  if (!m.selecting) {
+    return [];
+  }
+  let delete = if (m.confirm == "delete") { "Confirm delete" } else { "Delete" };
+  return [ui.card([
+    ui.row([ui.text[Msg](m.picked.len().to_string() + " selected").weighted(600).wide(), ui.text_button("Cancel", StopSelecting)]).aligned(ui.CENTER),
+    actions_row([ui.text_button("Copy", Copy(false)), ui.text_button("Move", Copy(true)), ui.text_button(delete, Delete), ui.text_button("All", SelectAll)]),
+  ]).spaced(4.0).wide()];
+}
+
+function browse(m: Model): ui.El[Msg] {
+  let items = shown(m);
+  let title = if (m.path == m.top || store.base(m.path).len() == 0) { m.label } else { store.base(m.path) };
+  let head: ui.El[Msg][] = [ui.text[Msg](trail(m)).colored(ui.MUTED).clamped(1)];
+  head = head.append(actions_row([
+    ui.text_button("Sort: " + SORTS[m.sort], NextSort).described("Sort order · " + SORTS[m.sort]),
+    ui.text_button(if (m.hidden) { "Hidden: shown" } else { "Hidden: off" }, ToggleHidden),
+    ui.text_button("New", NewFolder).described("New folder"),
+    ui.text_button("Sizes", MeasureFolders).described("Measure the folders"),
+  ]));
+  head = head.append(ui.field[Msg]("filter", m.query, "Filter this folder").on_edit((text: string): Msg => Query(text)).on_submit(DeepSearch));
+  if (m.found) {
+    head = head.append(ui.row([ui.text[Msg]("Found below this folder").colored(ui.MUTED).wide(), ui.text_button("Show the folder", Enter(""))]).aligned(ui.CENTER));
+  } else if (m.query.trim().len() > 0) {
+    head = head.append(actions_row([ui.text_button("Search the folders below", DeepSearch)]));
+  }
+  head = head.concat(naming_card(m)).concat(notice(m));
+  if (m.loading) {
+    head = head.append(ui.text[Msg]("Reading…").colored(ui.MUTED));
+  } else if (items.len() == 0 && m.fault.len() == 0) {
+    head = head.append(ui.text[Msg](if (m.entries.len() == 0) { "This folder is empty." } else { "No name has this text." }).colored(ui.MUTED));
+  }
+  let list = ui.list("entries:" + m.path + ":" + m.sort.to_string() + ":" + m.query + ":" + m.hidden.to_string(), items.len(), 64.0, (i: i32): ui.El[Msg] => entry_row(m, items[i]));
+  let bars = ui.column(selection_bar(m).concat(task_bar(m)).concat(clip_bar(m))).spaced(8.0).wide();
+  let body = ui.column(head.append(list).append(bars)).spaced(8.0).padding_xy(16.0, 8.0).wide().tall();
+  return ui.column([ui.app_bar(title, Some(Up), [ui.text_button(if (pinned(m)) { "Unpin" } else { "Pin" }, TogglePin), ui.text_button("Home", GoHome)]), body]).wide().tall();
+}
+
+// A screen over the folder: a bar with a back arrow, then its rows.
+function sheet(title: string, rows: ui.El[Msg][], name: string): ui.El[Msg] {
+  let body = ui.column(rows).spaced(12.0).padding_xy(16.0, 8.0).wide().tall().scroll(name);
+  return ui.column([ui.app_bar(title, Some(ClosePage), []), body]).wide().tall();
+}
+
+// The button that shows what the file holds: its picture, or its text.
+function look_button(name: string, screen: ui.Screen): ui.El[Msg] {
+  if (is_photo(name)) {
+    return ui.outlined_button("View picture", ShowPicture(name, screen.w));
+  }
+  return ui.outlined_button("Preview as text", Preview(name));
+}
+
+function item(m: Model, name: string, screen: ui.Screen): ui.El[Msg] {
+  let Some(e) = entry_named(m, name) else {
+    return sheet(name, [ui.text[Msg]("The folder no longer has this file.").colored(ui.MUTED)], "item");
+  };
+  let delete = if (m.confirm == "delete:" + name) { "Confirm delete" } else { "Delete" };
+  let rows = notice(m).concat([
+    ui.row([file_glyph(e.name, ui.INK), ui.text[Msg](e.name).sized(18.0).weighted(600).wide()]).aligned(ui.CENTER).spaced(14.0),
+    ui.text[Msg](store.size_text(e.size) + " · " + e.size.to_string() + " bytes").colored(ui.MUTED),
+    ui.text[Msg]("Changed " + store.day_text(e.modified)).colored(ui.MUTED),
+    ui.text[Msg](trail(m)).colored(ui.MUTED),
+    actions_row([ui.button("Open", OpenFile(name)), look_button(name, screen), ui.outlined_button("Share", ShareFile(name))]),
+    actions_row([ui.outlined_button("Copy", CopyOne(name, false)), ui.outlined_button("Move", CopyOne(name, true)), ui.text_button("Rename", StartRename(name)), ui.text_button(delete, DeleteOne(name))]),
+  ]).concat(task_bar(m));
+  return sheet("File", rows, "item");
+}
+
+function text_page(m: Model, name: string): ui.El[Msg] {
+  let rows = notice(m);
+  if (m.loading) {
+    rows = rows.append(ui.text[Msg]("Reading…").colored(ui.MUTED));
+  } else {
+    rows = rows.append(ui.text[Msg](m.preview).sized(13.0).wide());
+  }
+  return sheet(name, rows, "text:" + name);
+}
+
+function picture_page(m: Model, name: string, screen: ui.Screen): ui.El[Msg] {
+  let rows = notice(m);
+  if (m.loading) {
+    rows = rows.append(ui.text[Msg]("Reading…").colored(ui.MUTED));
+  }
+  if let Some(shown) = m.picture {
+    let wide = screen.width() - 32.0;
+    let high = wide * (shown.height as f64) / (shown.width.max(1) as f64);
+    rows = rows.append(ui.picture[Msg]("picture:" + m.path + "/" + name, shown).width(wide).height(high).rounded(8.0).described("Picture " + name));
+    rows = rows.append(ui.text[Msg](shown.width.to_string() + " × " + shown.height.to_string() + " shown").colored(ui.MUTED));
+  }
+  return sheet(name, rows, "picture:" + name);
+}
+
+function labelled(label: string, name: string, value: string, hint: string, field: i32): ui.El[Msg] {
+  return ui.column([ui.text[Msg](label).colored(ui.MUTED), ui.field[Msg](name, value, hint).on_edit((text: string): Msg => Draft(field, text))]).spaced(4.0).wide();
+}
+
+// The button that asks the server for its shares, and a button for each
+// share that it gave.
+function share_picker(m: Model): ui.El[Msg] {
+  let buttons: ui.El[Msg][] = [ui.text_button(if (m.finding) { "Looking…" } else { "Find shares" }, FindShares)];
+  for name in m.shares {
+    let chosen = name == m.draft.server.share;
+    let pick = if (chosen) { ui.button(name, PickShare(name)) } else { ui.outlined_button(name, PickShare(name)) };
+    buttons = buttons.append(pick.described("Share " + name));
+  }
+  return actions_row(buttons);
+}
+
+function server_page(m: Model, at: i32): ui.El[Msg] {
+  let s = m.draft.server;
+  let rows = notice(m).concat([
+    labelled("Address", "host", s.host, "192.168.1.10 or nas.local", 1),
+    labelled("User", "user", s.user, "Leave empty for a guest", 3),
+    ui.column([ui.text[Msg]("Password").colored(ui.MUTED), ui.field[Msg]("password", s.password, "Password").secret().on_edit((text: string): Msg => Draft(4, text))]).spaced(4.0).wide(),
+    labelled("Domain", "domain", s.domain, "Optional", 5),
+    labelled("Share", "share", s.share, "The name of the shared folder", 2),
+    share_picker(m),
+    labelled("Name in this app", "label", m.draft.name, "Optional", 0),
+  ]);
+  let buttons = [ui.button("Save", SaveServer)];
+  if (at >= 0) {
+    buttons = buttons.append(ui.text_button(if (m.confirm == "server") { "Confirm removal" } else { "Remove" }, DeleteServer));
+  }
+  rows = rows.append(actions_row(buttons));
+  rows = rows.append(ui.text[Msg]("Files speaks SMB 2 and signs in with NTLMv2. The password stays on this phone.").colored(ui.MUTED));
+  return sheet(if (at >= 0) { "Edit server" } else { "Add a server" }, rows, "server");
+}
+
+pub function view(m: Model, screen: ui.Screen): ui.El[Msg] {
+  match (m.page) {
+    Home => {
+      return home(m);
+    },
+    Browse => {
+      return browse(m);
+    },
+    Item(name) => {
+      return item(m, name, screen);
+    },
+    Picture(name) => {
+      return picture_page(m, name, screen);
+    },
+    Server(at) => {
+      return server_page(m, at);
+    },
+    Text(name) => {
+      return text_page(m, name);
+    }
+  }
+}
+
+function system(event: android.Event): Option[Msg] {
+  if let android.Resume = event {
+    return Some(Resumed);
+  }
+  return None;
+}
+
+pub function program(platform: Platform): ui.Program[Model, Msg] {
+  return ui.program(view, update).with_jobs(start_job).with_effects((m: Model): Model => effects(m, platform)).with_back(back).with_system(system).with_theme(theme);
+}

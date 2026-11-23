@@ -1,0 +1,72 @@
+// MD4, the digest of RFC 1320. NTLM makes the key of a password with it,
+// and nothing else in the app uses it. MD4 is broken for other purposes.
+import "std/u32";
+
+const S1: i32[] = [3, 7, 11, 19];
+
+const S2: i32[] = [3, 5, 9, 13];
+
+const S3: i32[] = [3, 9, 11, 15];
+
+const ORDER3: i32[] = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15];
+
+function word(bs: u8[], at: i32): u32 {
+  return bs[at] as u32 | bs[at + 1] as u32 << 8 | bs[at + 2] as u32 << 16 | bs[at + 3] as u32 << 24;
+}
+
+function put(out: u8[], v: u32): u8[] {
+  return out.append((v & 0xffu32) as u8).append((v >> 8 & 0xffu32) as u8).append((v >> 16 & 0xffu32) as u8).append((v >> 24 & 0xffu32) as u8);
+}
+
+// The message with the padding of MD4: a 1 bit, zeros, and the length in
+// bits as 64 bits, least byte first.
+function padded(msg: u8[]): u8[] {
+  let out = msg.append(128u8);
+  while (out.len() % 64 != 56) {
+    out = out.append(0u8);
+  }
+  let bits = msg.len() as i64 * 8i64;
+  for i in 0..8 {
+    out = out.append((bits >> (8 * i) as i64 & 255i64) as u8);
+  }
+  return out;
+}
+
+// The 16 bytes of the MD4 digest of `msg`.
+pub function sum(msg: u8[]): u8[] {
+  let data = padded(msg);
+  let a = 0x67452301u32;
+  let b = 0xefcdab89u32;
+  let c = 0x98badcfeu32;
+  let d = 0x10325476u32;
+  let at = 0;
+  while (at < data.len()) {
+    let x: u32[] = [];
+    for i in 0..16 {
+      x = x.append(word(data, at + i * 4));
+    }
+    let v = [a, b, c, d];
+    for i in 0..16 {
+      let f = v[1] & v[2] | (v[1] ^ 0xffffffffu32) & v[3];
+      let t = (v[0] + f + x[i]).rotate_left(S1[i % 4]);
+      v = [v[3], t, v[1], v[2]];
+    }
+    for i in 0..16 {
+      let k = i % 4 * 4 + i / 4;
+      let g = v[1] & v[2] | v[1] & v[3] | v[2] & v[3];
+      let t = (v[0] + g + x[k] + 0x5a827999u32).rotate_left(S2[i % 4]);
+      v = [v[3], t, v[1], v[2]];
+    }
+    for i in 0..16 {
+      let h = v[1] ^ v[2] ^ v[3];
+      let t = (v[0] + h + x[ORDER3[i]] + 0x6ed9eba1u32).rotate_left(S3[i % 4]);
+      v = [v[3], t, v[1], v[2]];
+    }
+    a += v[0];
+    b += v[1];
+    c += v[2];
+    d += v[3];
+    at += 64;
+  }
+  return put(put(put(put([], a), b), c), d);
+}
