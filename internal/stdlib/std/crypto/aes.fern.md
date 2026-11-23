@@ -147,6 +147,7 @@ function __inverse_sbox(y: i32): i32 {
 
 ```fern
 <<5 the key expansion>>=
+@secret
 pub struct Cipher { rounds: i32, keys: u8[] }
 
 // Consumes the key and zeroes its round keys when it owns the last reference.

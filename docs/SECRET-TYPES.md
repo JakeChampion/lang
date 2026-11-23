@@ -18,6 +18,22 @@ A struct update `Key { ...k, id: 2 }` shares the arrays of `k`, so they are wipe
 A type with the attribute keeps its box, as a type with a `core/mem.Drop` finalizer does, so the drop runs.
 The attribute has no other effect on how the program runs. The two interpreters run a `@secret` record like any other record.
 
+## Key types of the standard library
+
+These records of `std/crypto` have the attribute:
+
+| Module | Records |
+|---|---|
+| `aes` | `Cipher` |
+| `des` | `Cipher` |
+| `chacha20poly1305` | `Key` |
+| `hpke` | `Context`, `HybridKey`, `HybridP256Key`, `P256Key`, `Encapsulation` |
+| `mlkem768` | `KeyPair`, `Encapsulation` |
+| `rsa` | `PrivateKey` |
+
+`aes_gcm.Key`, `ecdsa.PrivateKey` and `ed25519.PrivateKey` are `@value` records, and a declaration takes one of the two attributes.
+These three records do not have `@secret`. Call their `erase()` method.
+
 ## Limits
 
 - The drop wipes the numeric arrays that are fields of the record. It does not wipe a scalar field, a string, or an array inside a nested record or an enum.
