@@ -4715,16 +4715,32 @@ function pipe_fill(e: ast.Expr, left: ast.Expr): ast.Expr {
   return left;
 }
 
+// The error for the second `_` of a piped call, or None.
+function pipe_second_hole(right: ast.Expr): Option[ast.Expr] {
+  if let ast.ExprCall(c) = right {
+    let seen = false;
+    for arg in c.args {
+      if (pipe_is_hole(arg)) {
+        if (seen) {
+          let extra = named_marker_value(arg);
+          return Some(e_unknown_at(coded_fault("P004", "at most one `_` placeholder in a piped call"), ast.expr_line(extra), ast.expr_col(extra)));
+        }
+        seen = true;
+      }
+    }
+  }
+  return None;
+}
+
 function pipe_desugar(left: ast.Expr, right: ast.Expr, line: i32, col: i32): ast.Expr {
+  if let Some(fault) = pipe_second_hole(right) {
+    return fault;
+  }
   match (right) {
     ast.ExprCall(c) => {
       let hole: i32 = -1;
       for hi in 0..c.args.len() {
         if (pipe_is_hole(c.args[hi])) {
-          if (hole >= 0) {
-            let extra = named_marker_value(c.args[hi]);
-            return e_unknown_at(coded_fault("P004", "at most one `_` placeholder in a piped call"), ast.expr_line(extra), ast.expr_col(extra));
-          }
           hole = hi;
         }
       }
@@ -4784,7 +4800,7 @@ function parse_pipe(p: Par): (ast.Expr, Par) {
     let (right_expr, right_p) = parse_range(p);
     p = right_p;
     if (p.verbatim) {
-      acc = e_binary("|>", acc, right_expr);
+      acc = pipe_second_hole(right_expr).unwrap_or(e_binary("|>", acc, right_expr));
       continue;
     }
     acc = pipe_desugar(acc, right_expr, pipe_line, pipe_col);
