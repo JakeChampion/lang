@@ -912,8 +912,12 @@ function cold_branch(blk: SBlock, k: i32, cold: boolean): boolean {
 }
 
 pub function cold_blocks(f: SFunc): boolean[] {
-  let n = f.blocks.len();
   let at = block_positions(f);
+  return cold_blocks_with_dominators(f, at, immediate_dominators(f, at));
+}
+
+function cold_blocks_with_dominators(f: SFunc, at: i32[], idom: i32[]): boolean[] {
+  let n = f.blocks.len();
   let latch = __alloc_i32(n);
   let span = __alloc_i32(n);
   for i in 0..n {
@@ -933,7 +937,6 @@ pub function cold_blocks(f: SFunc): boolean[] {
       }
     }
   }
-  let idom = immediate_dominators(f, at);
   let out = __alloc_bool(n);
   for i in 0..n {
     out = out.with(i, latch[i] >= 0 && !dominates(idom, i, latch[i]));
@@ -2759,7 +2762,7 @@ function split_spilled_in_loops(f: SFunc, reg_of: i32[], fl: boolean[], at: i32[
   }
   let idom = immediate_dominators(f, at);
   let weights = weights_from_latches(latch);
-  let cold = cold_blocks(f);
+  let cold = cold_blocks_with_dominators(f, at, idom);
   let plans: SplitPlan[] = [];
   for c in 0..cands.len() {
     if (in_phi[c] || def_at[c] < 0 || uses[c].len() == 0) {
