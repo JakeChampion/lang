@@ -69,11 +69,10 @@ pub function open(ctx: usize): boolean {
   }
   let e = android.env(ctx);
   unsafe {
-    if (jni.call1(e, 19, 16 as usize) as i32 != 0) {
-      jni.exception_clear(e);
+    if (!jni.push_local_frame(e, 16)) {
       return false;
     }
-    defer jni.call1(e, 20, 0 as usize);
+    defer jni.pop_local_frame(e, 0 as usize);
     let action = jni.new_string(e, "android.intent.action.OPEN_DOCUMENT");
     let intent = make(e, "android/content/Intent", "(Ljava/lang/String;)V", [action]);
     if (intent == 0 as usize) {
@@ -108,11 +107,10 @@ pub function copy_later(ctx: usize, intent: usize, id: i32, limit: i32, dir: str
     return false;
   }
   unsafe {
-    if (jni.call1(e, 19, 24 as usize) as i32 != 0) {
-      jni.exception_clear(e);
+    if (!jni.push_local_frame(e, 24)) {
       return false;
     }
-    defer jni.call1(e, 20, 0 as usize);
+    defer jni.pop_local_frame(e, 0 as usize);
     let activity = android.activity_object(ctx);
     let resolver = jni.call_object(e, activity, "getContentResolver", "()Landroid/content/ContentResolver;", []);
     if (!healthy(e, resolver)) {
@@ -234,11 +232,10 @@ function import_documents(e: usize, resolver: usize, intent: usize, dir: string,
   let files: api.LocalAudio[] = [];
   for i in 0..n {
     unsafe {
-      if (jni.call1(e, 19, 20 as usize) as i32 != 0) {
-        jni.exception_clear(e);
+      if (!jni.push_local_frame(e, 20)) {
         break;
       }
-      defer jni.call1(e, 20, 0 as usize);
+      defer jni.pop_local_frame(e, 0 as usize);
       let uri = if (many) { item_uri(e, clip, i) } else { jni.call_object(e, intent, "getData", "()Landroid/net/Uri;", []) };
       if (healthy(e, uri)) {
         if let Some(audio) = read_audio(e, resolver, uri, dir, buffer) {

@@ -223,10 +223,10 @@ pub function show_channel(ctx: usize, channel: i64, programs: Program[]): boolea
 // Adds the program `p` to the channel `channel`, in a local frame of its
 // own.
 function add_program(e: usize, tv: Tv, channel: i64, p: Program): boolean {
-  if (!push_frame(e, 32)) {
+  if (!jni.push_local_frame(e, 32)) {
     return false;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   let Some(values) = new_values(e, tv) else {
     return false;
   };
@@ -284,17 +284,17 @@ struct Tv { c: bindings.Classes, app: bindings.Context, resolver: bindings.Conte
 // The classes and the resolver, in a new local frame of `refs` references.
 // None when Java refuses one of them.
 function open(ctx: usize, e: usize, refs: i32): Option[Tv] {
-  if (!push_frame(e, refs)) {
+  if (!jni.push_local_frame(e, refs)) {
     return None;
   }
   let Ok(c) = bindings.classes(e) else {
-    pop_frame(e);
+    jni.pop_local_frame(e, 0 as usize);
     return None;
   };
   let app = bindings.Context { ref: android.activity_object(ctx) };
   let Ok(resolver) = c.context.get_content_resolver(e, app) else {
     c.release(e);
-    pop_frame(e);
+    jni.pop_local_frame(e, 0 as usize);
     return None;
   };
   return Some(Tv { c: c, app: app, resolver: resolver });
@@ -302,7 +302,7 @@ function open(ctx: usize, e: usize, refs: i32): Option[Tv] {
 
 function close(e: usize, tv: Tv): void {
   tv.c.release(e);
-  pop_frame(e);
+  jni.pop_local_frame(e, 0 as usize);
 }
 
 // A new empty ContentValues.
@@ -403,19 +403,5 @@ function put_text(e: usize, tv: Tv, values: bindings.ContentValues, key: string,
 function put_number(e: usize, tv: Tv, values: bindings.ContentValues, key: string, value: i64): Result[void, jni.JavaError] {
   let boxed = tv.c.long.value_of(e, value)?;
   return tv.c.content_values.put_string_long(e, values, key, boxed);
-}
-
-// Starts a local frame of `refs` references. False when Java refuses it.
-function push_frame(e: usize, refs: i32): boolean {
-  if (jni.call1(e, 19, refs as usize) as i32 != 0) {
-    let cleared = jni.exception_clear(e);
-    return false;
-  }
-  return true;
-}
-
-// Ends the local frame of references that a call started.
-function pop_frame(e: usize): void {
-  let popped = jni.call1(e, 20, 0 as usize);
 }
 ```

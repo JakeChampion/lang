@@ -44,13 +44,12 @@ function session(e: usize, alias: string): Result[bindings.Classes, jni.JavaErro
   if (alias.len() == 0 || e == 0 as usize) {
     return Err(failure("expected an alias and a JNI environment"));
   }
-  if (jni.call1(e, 19, 64 as usize) as i32 != 0) {
-    jni.check(e)?;
+  if (!jni.push_local_frame(e, 64)) {
     return Err(failure("cannot create JNI local frame"));
   }
   let classes = bindings.classes(e);
   if let Err(err) = classes {
-    jni.call1(e, 20, 0 as usize);
+    jni.pop_local_frame(e, 0 as usize);
     return Err(err);
   }
   return classes;
@@ -58,7 +57,7 @@ function session(e: usize, alias: string): Result[bindings.Classes, jni.JavaErro
 
 function close(e: usize, c: bindings.Classes): void {
   c.release(e);
-  jni.call1(e, 20, 0 as usize);
+  jni.pop_local_frame(e, 0 as usize);
 }
 
 function lookup(e: usize, c: bindings.Classes, alias: string): Result[jni.Object, jni.JavaError] {

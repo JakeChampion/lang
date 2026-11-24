@@ -169,11 +169,10 @@ pub function publish_media(ctx: usize, class: string, n: Notice, session: usize,
   unsafe {
     let e = android.env(ctx);
     // Bound the local references of the builder and its action intents.
-    if (jni.call1(e, 19, 96 as usize) as i32 != 0) {
-      jni.exception_clear(e);
+    if (!jni.push_local_frame(e, 96)) {
       return;
     }
-    defer jni.call1(e, 20, 0 as usize);
+    defer jni.pop_local_frame(e, 0 as usize);
     let obj = android.activity_object(ctx);
     let notification: usize = notification_of(e, obj, jni.load_class(e, obj, class), n, session, buttons);
     let manager: usize = jni.call_object(e, obj, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [jni.new_string(e, "notification")]);

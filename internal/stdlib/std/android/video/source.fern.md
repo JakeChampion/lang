@@ -129,16 +129,6 @@ pub function (source: Source) read_at(offset: i64, count: i32): Result[u8[], fra
   return read_bytes(source.fd, position, bytes);
 }
 
-function cleared(e: usize): boolean {
-  let exception = jni.exception_occurred(e);
-  if (exception == 0 as usize) {
-    return false;
-  }
-  let _ = jni.exception_clear(e);
-  let _ = jni.delete_local_ref(e, exception);
-  return true;
-}
-
 function begin(e: usize): boolean {
   if (e == 0 as usize) {
     return false;
@@ -148,15 +138,14 @@ function begin(e: usize): boolean {
     let _ = jni.delete_local_ref(e, pending);
     return false;
   }
-  if (jni.call1(e, 19, 32 as usize) as i32 != 0) {
-    let _ = cleared(e);
+  if (!jni.push_local_frame(e, 32)) {
     return false;
   }
   return true;
 }
 
 function end(e: usize): void {
-  let _ = jni.call1(e, 20, 0 as usize);
+  let _ = jni.pop_local_frame(e, 0 as usize);
 }
 
 function duplicate(fd: i32, offset: i64, length: i64, maximum: i64): Result[Source, frame.VideoError] {

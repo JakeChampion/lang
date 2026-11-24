@@ -102,18 +102,6 @@ const USAGE_VOICE_COMMUNICATION: i32 = 2;
 
 const CONTENT_SPEECH: i32 = 1;
 
-function push_frame(e: usize): boolean {
-  if (jni.call1(e, 19, 64 as usize) as i32 != 0) {
-    jni.exception_clear(e);
-    return false;
-  }
-  return true;
-}
-
-function pop_frame(e: usize): void {
-  jni.call1(e, 20, 0 as usize);
-}
-
 // Promote only the references that survive the local frame.
 function keep(e: usize, obj: usize): Result[usize, jni.JavaError] {
   let ref = jni.new_global_ref(e, obj);
@@ -166,10 +154,10 @@ pub function music(ctx: usize, class: string): Option[Focus] {
 
 function made(ctx: usize, class: string, gain: i32, purpose: i32, kind: i32): Option[Focus] {
   let e = android.env(ctx);
-  if (!push_frame(e)) {
+  if (!jni.push_local_frame(e, 64)) {
     return None;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   let Ok(f) = make_focus(e, bindings.Context { ref: android.activity_object(ctx) }, class, gain, purpose, kind) else {
     return None;
   };
@@ -179,10 +167,10 @@ function made(ctx: usize, class: string, gain: i32, purpose: i32, kind: i32): Op
 // Asks for the focus. It is false when Android refuses, as during a call.
 pub function request(ctx: usize, f: Focus): boolean {
   let e = android.env(ctx);
-  if (!push_frame(e)) {
+  if (!jni.push_local_frame(e, 64)) {
     return false;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   let Ok(c) = bindings.audio_manager_class(e) else {
     return false;
   };
@@ -196,10 +184,10 @@ pub function request(ctx: usize, f: Focus): boolean {
 // Gives the focus back.
 pub function release(ctx: usize, f: Focus): void {
   let e = android.env(ctx);
-  if (!push_frame(e)) {
+  if (!jni.push_local_frame(e, 64)) {
     return;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   let Ok(c) = bindings.audio_manager_class(e) else {
     return;
   };
