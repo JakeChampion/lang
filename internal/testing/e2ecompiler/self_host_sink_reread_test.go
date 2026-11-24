@@ -375,3 +375,79 @@ function main(): i32 {
 func TestSelfHostCompareThenTake(t *testing.T) {
 	runRereadProgram(t, "compare_then_take.fern", compareThenTakeProg)
 }
+
+// An element is lent to a call before a spliced update with a join, and is
+// stored back after the join. The call only borrows the element, so the
+// update block reads the array again and takes the element there. Before,
+// the call counted as a spend: the first read of the array stayed, and each
+// round made a new element and copied the array (#14440).
+const lentThenTakeAcrossJoinProg = `import "std/array";
+
+struct Stream { buf: u8[], base: i64, sent: i64, fin_sent: boolean }
+struct Streams { list: Stream[], filled: u8[], send_sent: i64, next: i32 }
+
+@noinline
+function written(st: Stream): i64 {
+  return st.base + st.buf.len() as i64;
+}
+
+@noinline
+function append_range(out: u8[], b: [u8], from: i32, to: i32): u8[] {
+  let o = out;
+  for k in from..to {
+    o = o.append(b[k]);
+  }
+  return o;
+}
+
+function sent_of(st: Stream, n: i64, fin: boolean): Stream {
+  return Stream { ...st, sent: st.sent + n, fin_sent: st.fin_sent || fin };
+}
+
+@noinline
+function new_data(s: Streams, i: i32, room: i32): Streams {
+  let sent = s.list[i].sent;
+  let w = written(s.list[i]);
+  let n = w - sent;
+  if (room as i64 < n) {
+    n = room as i64;
+  }
+  if (n == 0) {
+    return s;
+  }
+  let at = sent as i32;
+  let out = append_range(s.filled, s.list[i].buf, at, at + n as i32);
+  return Streams { ...s, filled: out, list: s.list.with(i, sent_of(s.list[i], n, sent + n == w)) };
+}
+
+function main(): i32 {
+  let list: Stream[] = [];
+  for j in 0..4 {
+    let b: u8[] = [];
+    for q in 0..(8000 + j / 3 * 12000) {
+      b = b.append(q as u8);
+    }
+    list = list.append(Stream { buf: b, base: 0, sent: 0, fin_sent: false });
+  }
+  let s = Streams { list: list, filled: [], send_sent: 0, next: 0 };
+  let before = __heap_alloc_count();
+  for round in 0..1000 {
+    s = Streams { ...new_data(s, round % 4, 40), filled: [] };
+  }
+  let n = __heap_alloc_count() - before;
+  if (s.list[0].sent != 8000 as i64 || !s.list[0].fin_sent || s.list[3].sent != 10000 as i64 || s.list[3].fin_sent) {
+    return 1;
+  }
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  if (n > 1100 as i64) {
+    return 2;
+  }
+  return 0;
+}
+`
+
+func TestSelfHostLentThenTakeAcrossJoin(t *testing.T) {
+	runRereadProgram(t, "lent_then_take_across_join.fern", lentThenTakeAcrossJoinProg)
+}
