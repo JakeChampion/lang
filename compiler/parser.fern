@@ -12768,12 +12768,42 @@ pub function is_send_builtin(name: string): boolean {
   return name == "__send_copy" || name == "__send_adopt" || name == "__send_root" || name == "__send_release";
 }
 
+pub const LAMBDA_PREFIX: string = "__lam_";
+
+const IIFE_MARK: string = "$iife";
+
+const MKCLO_PREFIX: string = "__mkclo$";
+
+pub function lambda_name(index: i32): string {
+  return LAMBDA_PREFIX + util.i32_to_string(index);
+}
+
+pub function is_lambda_name(name: string): boolean {
+  return name.len() > LAMBDA_PREFIX.len() && name.starts_with(LAMBDA_PREFIX);
+}
+
+pub function iife_name(owner: string, index: i32): string {
+  return owner + IIFE_MARK + util.i32_to_string(index);
+}
+
+pub function is_iife_name(name: string): boolean {
+  return util.contains(name, IIFE_MARK);
+}
+
+// The callee of the marker call that makes a closure of the function `target`.
+pub function mkclo_name(target: string): string {
+  return MKCLO_PREFIX + target;
+}
+
+pub function is_mkclo_name(name: string): boolean {
+  return name.len() > MKCLO_PREFIX.len() && name.starts_with(MKCLO_PREFIX);
+}
+
 pub function mkclo_body(name: string): string {
-  let marker = "__mkclo$";
-  if (name.len() <= marker.len() || !name.starts_with(marker)) {
+  if (!is_mkclo_name(name)) {
     return "";
   }
-  return slice_unchecked(name, marker.len(), name.len()).to_owned();
+  return slice_unchecked(name, MKCLO_PREFIX.len(), name.len()).to_owned();
 }
 
 pub function is_written_lambda_origin(origin: string): boolean {
