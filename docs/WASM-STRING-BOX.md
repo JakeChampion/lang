@@ -143,9 +143,13 @@ bytes are in its own block.
 (`str_slice_wat`). It checks the bounds and then makes one of two forms:
 
 - The frame form, for a slice whose uses read it within one instruction, is
-  a window in the shadow-stack frame, tagged 1. `is_frame_window` gives it a
-  slot, as it gives one to the frame form of `K_RAW_STRING`.
-- The heap form is a borrowed box from `$__fern_str_borrow`.
+  a box in the shadow-stack frame (`$__fern_str_frame_view`), with no tag.
+  `is_frame_window` gives it a slot, as it gives one to the frame form of
+  `K_RAW_STRING`.
+- The heap form is a borrowed box (`$__fern_str_view`, which calls
+  `$__fern_str_borrow`).
+
+Both forms check the bounds in `$__fern_str_view_check`.
 
 Neither holds a unit of its source. So the RC passes no longer have a wasm
 mode in which a view in the frame holds a unit: `owned_frame_views` is
