@@ -1488,7 +1488,7 @@ function drop_tuple_fields(own r: irtables.LowerState, slot: i32, tup: typeinfo.
 
 // A field of a taking environment can be 0, so its load is not marked counted.
 // A record of a `@secret` struct zeroes each numeric array that it holds
-// alone before the array goes back to the allocator.
+// alone before the array goes back to the allocator, and each scalar field.
 function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func, env: boolean, takes: boolean, secret: boolean): irtables.LowerState {
   let child = scratch;
   r = reserve(r, child + 1);
@@ -1510,6 +1510,10 @@ function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semre
         r = wipe_sole(r, child, shift);
       }
       r = drop_value(r, child, fields[i].ty, child + 1, f);
+    } else if (secret && ssasem.is_scalar(fields[i].ty)) {
+      r = emit(r, ir.op_load_local(slot));
+      r = emit(r, zero(fields[i].ty));
+      r = field_store(r, fields, i);
     }
   }
   return r;

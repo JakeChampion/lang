@@ -82,54 +82,147 @@ function main(): i32 {
 }
 `
 
-func TestSelfHostSecretRecordWipesItsArrays(t *testing.T) {
+// A record of a `@secret` struct also zeroes its scalar fields when it is
+// released. The record has seven fields, and a raw allocation of 64 bytes
+// takes its freed box back. The fields `a`, `b`, `e` and `f` and the four
+// bytes of `c` hold the byte 65, which is 36 bytes. The control is the same
+// record without the attribute.
+const secretScalarsSrc = `@secret
+struct Key { a: u64, b: i64, c: i32, d: f64, e: u64, f: u64, g: boolean }
+
+struct Plain { a: u64, b: i64, c: i32, d: f64, e: u64, f: u64, g: boolean }
+
+@noinline
+function make_key(v: u64): Key {
+  return Key { a: v, b: v as i64, c: 1094795585, d: 1.5, e: v, f: v, g: true };
+}
+
+@noinline
+function make_plain(v: u64): Plain {
+  return Plain { a: v, b: v as i64, c: 1094795585, d: 1.5, e: v, f: v, g: true };
+}
+
+@noinline
+function sum_key(k: Key): u64 {
+  return k.a + k.e + k.f + (k.b as u64) + (k.c as u64);
+}
+
+@noinline
+function sum_plain(k: Plain): u64 {
+  return k.a + k.e + k.f + (k.b as u64) + (k.c as u64);
+}
+
+@noinline
+function key(v: u64): u64 {
+  return sum_key(make_key(v));
+}
+
+@noinline
+function plain(v: u64): u64 {
+  return sum_plain(make_plain(v));
+}
+
+function stale(): i32 {
+  unsafe {
+    let found: i32 = 0;
+    for k in 0..8 {
+      let p: usize = __alloc(64);
+      for i in 0..64 {
+        if (__load_u8(p + (i as usize)) == 65 as u8) { found += 1; }
+      }
+    }
+    return found;
+  }
+}
+
+function main(): i32 {
+  let mode: string = args()[1];
+  let word: u64 = 4702111234474983745u64 + (args().len() as u64) - 2u64;
+  if (mode == "secret") {
+    let n = key(word);
+  } else {
+    let n = plain(word);
+  }
+  print(stale().to_string());
+  return 0;
+}
+`
+
+// secretRun compiles src for target and gives a function that runs the
+// program in one mode and splits its output into fields.
+func secretRun(t *testing.T, target, src string) func(mode string) []string {
+	t.Helper()
 	cli := buildSelfHostCLI(t)
 	_, qemu := arm64Tooling(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "main")
+	args := []string{"-target", target, "-o", bin, path, cli.stdlib}
+	cmd := runX86_64Bin(cli.runner, cli.bin, args...)
+	cmd.Env = childEnv()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("self-host CLI %v: %v\n%s", args, err, out)
+	}
+	return func(mode string) []string {
+		t.Helper()
+		var c *exec.Cmd
+		if target == "arm64-linux" {
+			c = runArm64Bin(qemu, bin, mode)
+		} else {
+			c = runX86_64Bin(cli.runner, bin, mode)
+		}
+		var stdout, stderr bytes.Buffer
+		c.Stdout, c.Stderr = &stdout, &stderr
+		if err := c.Run(); err != nil {
+			t.Fatalf("%s: %v\nstdout: %s\nstderr: %s", mode, err, stdout.String(), stderr.String())
+		}
+		return strings.Fields(stdout.String())
+	}
+}
+
+// secretCount is the count of secret bytes that a mode read back, which is
+// the last field of its output.
+func secretCount(t *testing.T, mode string, fields []string) int {
+	t.Helper()
+	if len(fields) == 0 {
+		t.Fatalf("%s printed nothing", mode)
+	}
+	n, err := strconv.Atoi(fields[len(fields)-1])
+	if err != nil {
+		t.Fatalf("%s printed %q", mode, fields)
+	}
+	return n
+}
+
+func TestSelfHostSecretRecordWipesItsArrays(t *testing.T) {
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
-			dir := t.TempDir()
-			src := filepath.Join(dir, "main.fern")
-			if err := os.WriteFile(src, []byte(secretSrc), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			bin := filepath.Join(dir, "main")
-			args := []string{"-target", target, "-o", bin, src, cli.stdlib}
-			cmd := runX86_64Bin(cli.runner, cli.bin, args...)
-			cmd.Env = childEnv()
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("self-host CLI %v: %v\n%s", args, err, out)
-			}
-			run := func(mode string) []string {
-				t.Helper()
-				var c *exec.Cmd
-				if target == "arm64-linux" {
-					c = runArm64Bin(qemu, bin, mode)
-				} else {
-					c = runX86_64Bin(cli.runner, bin, mode)
-				}
-				var stdout, stderr bytes.Buffer
-				c.Stdout, c.Stderr = &stdout, &stderr
-				if err := c.Run(); err != nil {
-					t.Fatalf("%s: %v\nstdout: %s\nstderr: %s", mode, err, stdout.String(), stderr.String())
-				}
-				return strings.Fields(stdout.String())
-			}
-			count := func(mode string, fields []string) int {
-				t.Helper()
-				n, err := strconv.Atoi(fields[len(fields)-1])
-				if err != nil {
-					t.Fatalf("%s printed %q", mode, fields)
-				}
-				return n
-			}
-			if got := count("plain", run("plain")); got < 48 {
+			run := secretRun(t, target, secretSrc)
+			if got := secretCount(t, "plain", run("plain")); got < 48 {
 				t.Fatalf("plain read %d secret bytes back; the raw allocation no longer observes the released block", got)
 			}
-			if got := count("secret", run("secret")); got != 0 {
+			if got := secretCount(t, "secret", run("secret")); got != 0 {
 				t.Fatalf("after the release of a @secret record the raw allocation read %d secret bytes back, want 0", got)
 			}
 			if got := run("shared"); len(got) != 3 || got[0] != "65" || got[1] != "65" {
 				t.Fatalf("shared printed %q; the array that the caller still holds must keep its bytes", got)
+			}
+		})
+	}
+}
+
+func TestSelfHostSecretRecordWipesItsScalars(t *testing.T) {
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			run := secretRun(t, target, secretScalarsSrc)
+			if got := secretCount(t, "plain", run("plain")); got < 36 {
+				t.Fatalf("plain read %d secret bytes back, want 36; the raw allocation no longer observes the released record", got)
+			}
+			if got := secretCount(t, "secret", run("secret")); got != 0 {
+				t.Fatalf("after the release of a @secret record the raw allocation read %d bytes of its scalar fields back, want 0", got)
 			}
 		})
 	}

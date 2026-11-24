@@ -15,7 +15,7 @@ import "std/option";
 // (mark_cell_writers).
 // A type whose drop has an effect: a call of its finalizer `symbol`, or for
 // a `@secret` struct with no finalizer an empty symbol and the wipe of its
-// arrays. Such a type keeps its box, so its drop helper runs.
+// arrays and scalar fields. Such a type keeps its box, so its drop helper runs.
 pub struct Finalizer { receiver: string, symbol: string, writes: boolean }
 
 pub function finalizer_index(rows: Finalizer[], receiver: string): Option[i32] {

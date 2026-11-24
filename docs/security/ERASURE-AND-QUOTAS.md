@@ -63,8 +63,8 @@ Uniquely held storage contains zeroes at release.
 Shared storage uses copy-on-write, so other holders retain their bytes.
 The call consumes one holder.
 
-A struct with the attribute `@secret` erases without a call. When the last reference to such a record goes away, its drop zeroes each numeric array that the record holds alone, in each build.
-An array that another value still holds keeps its elements. The rules and the limits are in [SECRET-TYPES.md](../SECRET-TYPES.md), and `TestSelfHostSecretRecordWipesItsArrays` pins them on both native targets.
+A struct with the attribute `@secret` erases without a call. When the last reference to such a record goes away, its drop zeroes each numeric array that the record holds alone and each scalar field of the record, in each build.
+An array that another value still holds keeps its elements. The rules and the limits are in [SECRET-TYPES.md](../SECRET-TYPES.md), and `TestSelfHostSecretRecordWipesItsArrays` and `TestSelfHostSecretRecordWipesItsScalars` pin them on both native targets.
 The key records of `aes`, `aes_gcm`, `des`, `chacha20poly1305`, `hpke`, `mlkem768` and `rsa` have the attribute. [SECRET-TYPES.md](../SECRET-TYPES.md) lists them.
 
 The stores cannot be elided, because no pass of the compiler removes a store to an array.

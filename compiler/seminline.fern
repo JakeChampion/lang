@@ -367,7 +367,7 @@ function resource_owners(funcs: ssasem.Func[]): ResourceOwners {
   let owners = ResourceOwners { names: util.name_index([]), types: util.name_index([]) };
   for f in funcs {
     for finalizer in f.finalizers {
-      // A `@secret` row runs no code: its wipe only touches arrays that the drop frees.
+      // A `@secret` row runs no code: its wipe only touches the record and the arrays that the drop frees.
       if (finalizer.symbol.len() > 0 && !owners.names.has(finalizer.receiver)) {
         owners = ResourceOwners { ...owners, names: owners.names.added(finalizer.receiver) };
       }
