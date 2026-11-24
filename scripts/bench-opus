@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Measure std/opus CELT encode and Opus decode against the system libopus.
+
+The case is the walkie-talkie voice path: 48 kHz mono, 20 ms frames, VBR.
+libopus uses RESTRICTED_LOWDELAY, which selects CELT only, at complexity 5,
+the complexity of std/opus. Each side times its codec loop in the process.
+"""
+import argparse
+import ctypes.util
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import platform
+import random
+import shutil
+import statistics
+import struct
+import subprocess
+import tempfile
+
+root = Path(__file__).resolve().parent.parent
+os.chdir(root)
+
+
+def speech(seconds):
+    """Voiced harmonics with vibrato, a noise fricative, a pause, and a DC offset."""
+    rng = random.Random(14083)
+    rate = 48000
+    out = []
+    for n in range(seconds * rate):
+        t = n / rate
+        phase = t % 1.0
+        if phase < 0.6:
+            f0 = 120 + 40 * math.sin(2 * math.pi * 2.5 * t)
+            voiced = sum(math.sin(2 * math.pi * f0 * k * t) / k for k in range(1, 16))
+            value = 0.12 * voiced * math.sin(math.pi * phase / 0.6)
+        elif phase < 0.8:
+            value = rng.uniform(-0.08, 0.08)
+        else:
+            value = 0.0
+        out.append(max(-1.0, min(1.0, value + 0.02 + rng.uniform(-0.002, 0.002))))
+    return struct.pack(f'<{len(out)}f', *out)
+
+
+def run(program, *arguments):
+    return subprocess.check_output([str(program), *map(str, arguments)], text=True)
+
+
+def framed(lines):
+    data = bytearray()
+    for line in lines:
+        packet = bytes.fromhex(line)
+        data += struct.pack('<H', len(packet)) + packet
+    return bytes(data)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--seconds', type=int, default=10)
+    parser.add_argument('--bitrate', type=int, default=24000)
+    parser.add_argument('--iterations', type=int, default=10)
+    parser.add_argument('--trials', type=int, default=7)
+    args = parser.parse_args()
+    compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
+    compiler = shutil.which(compiler) or compiler
+    target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux', 'arm64': 'arm64-darwin'}[os.uname().machine]
+    library = ctypes.util.find_library('opus')
+    if not library:
+        raise SystemExit('libopus is required')
+    library = next((str(p) for d in ['/usr/lib', '/usr/lib64', f'/usr/lib/{os.uname().machine}-linux-gnu']
+                    for p in Path(d).glob(library) if p.exists()), library)
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        fern, c = tmp / 'fern', tmp / 'c'
+        subprocess.run([compiler, '-stdlib', 'internal/stdlib', '-target', target, '-o', str(fern), 'bench/audio/opus_codec.fern'], check=True)
+        subprocess.run(['cc', '-O2', '-o', str(c), 'scripts/audio-reference/opus_bench.c', library], check=True)
+        pcm = tmp / 'speech.f32'
+        pcm.write_bytes(speech(args.seconds))
+
+        fern_packets = run(fern, 'encode', pcm, 1, args.bitrate, 'dump').split()
+        c_packets = run(c, 'encode', pcm, 1, args.bitrate, 'dump').split()
+        assert len(fern_packets) == len(c_packets) == args.seconds * 50
+        same = sum(a == b for a, b in zip(fern_packets, c_packets))
+        stream = tmp / 'libopus.packets'
+        stream.write_bytes(framed(c_packets))
+        ours = b''.join(bytes.fromhex(line) for line in run(fern, 'decode', stream, 1, 0, 'dump').split())
+        theirs = b''.join(bytes.fromhex(line) for line in run(c, 'decode', stream, 1, 0, 'dump').split())
+        assert len(ours) == len(theirs) == len(pcm.read_bytes())
+        a = struct.unpack(f'<{len(ours) // 4}f', ours)
+        b = struct.unpack(f'<{len(theirs) // 4}f', theirs)
+        difference = max(abs(x - y) for x, y in zip(a, b))
+        assert difference <= 0.000001, difference
+
+        seconds = {f'{side}_{mode}': [] for side in ['fern', 'libopus'] for mode in ['encode', 'decode']}
+        checksums = {}
+        for trial in range(args.trials):
+            order = [('fern', fern), ('libopus', c)]
+            for side, program in (order if trial % 2 == 0 else order[::-1]):
+                for mode, path in [('encode', pcm), ('decode', stream)]:
+                    ns, checksum = run(program, mode, path, args.iterations, args.bitrate, 'time').split()
+                    seconds[f'{side}_{mode}'].append(int(ns) / 1e9)
+                    checksums.setdefault((side, mode), set()).add(checksum)
+        assert all(len(values) == 1 for values in checksums.values())
+        assert checksums[('fern', 'decode')] == checksums[('libopus', 'decode')]
+        audio = args.seconds * args.iterations
+        median = {name: statistics.median(values) for name, values in seconds.items()}
+        print(json.dumps({
+            'machine': platform.platform(), 'cpu': platform.processor() or os.uname().machine,
+            'compiler_sha256': hashlib.sha256(Path(compiler).read_bytes()).hexdigest(),
+            'libopus': library, 'libopus_sha256': hashlib.sha256(Path(library).read_bytes()).hexdigest(),
+            'sample_rate': 48000, 'channels': 1, 'frame_ms': 20, 'bitrate': args.bitrate, 'complexity': 5,
+            'audio_seconds_per_run': audio, 'trials': args.trials,
+            'identical_packets': f'{same}/{len(c_packets)}', 'max_decode_difference': difference,
+            'seconds': seconds, 'median_seconds': median,
+            'realtime_factor': {name: audio / value for name, value in median.items()},
+            'fern_over_libopus': {mode: median[f'fern_{mode}'] / median[f'libopus_{mode}'] for mode in ['encode', 'decode']},
+        }, indent=2))
+
+
+if __name__ == '__main__':
+    main()

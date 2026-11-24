@@ -23,6 +23,7 @@ After recovery, decode that same packet normally to obtain its current audio.
 Both durations must be multiples of 2.5 ms, with a maximum of 120 ms.
 
 The encoder has a 120-sample lookahead at 48 kHz. A container must account for that delay and final padding.
+Before CELT, the encoder removes DC with the 3 Hz high-pass filter of libopus 1.4 (`dc_reject` in `opus_encoder.c`).
 After a decode error, reset the decoder before the next packet.
 
 ```fern
@@ -36,7 +37,8 @@ import "std/f32";
 
 pub struct Decoder { state: Option[playback.State], sample_rate: i32, channels: i32 }
 
-pub struct Encoder { state: celt_encoder.Encoder, channels: i32 }
+// `hp_mem` holds the DC filter state, one value for each channel.
+pub struct Encoder { state: celt_encoder.Encoder, channels: i32, hp_mem: f32[] }
 
 pub struct Encoded { encoder: Encoder, packet: u8[] }
 
@@ -98,7 +100,7 @@ pub function encoder(channels: i32, bitrate: i32): Result[Encoder, pcm.AudioErro
     return Err(pcm.Unsupported);
   }
   let state = celt_encoder.Encoder { ...celt_encoder.new_encoder(channels), bitrate: bitrate, vbr: true };
-  return Ok(Encoder { state: state, channels: channels });
+  return Ok(Encoder { state: state, channels: channels, hp_mem: [0.0f32, 0.0f32] });
 }
 
 // fern-lint: allow cyclomatic-complexity
@@ -118,8 +120,9 @@ pub function (own enc: Encoder) encode(samples: [f32], frame_size: i32, max_byte
       return Err(pcm.Sample);
     }
   }
+  let (filtered, hp_mem) = dc_reject(samples, enc.hp_mem, enc.channels);
   let lm = if (frame_size == 120) { 0 } else if (frame_size == 240) { 1 } else if (frame_size == 480) { 2 } else { 3 };
-  let result = celt_encoder.encode(enc.state, samples, frame_size, max_bytes - 1);
+  let result = celt_encoder.encode(enc.state, filtered, frame_size, max_bytes - 1);
   if (result.error != 0) {
     return Err(pcm.Header);
   }
@@ -128,6 +131,21 @@ pub function (own enc: Encoder) encode(samples: [f32], frame_size: i32, max_byte
   for byte in result.packet {
     out = out.append(byte);
   }
-  return Ok(Encoded { encoder: Encoder { state: result.st, channels: enc.channels }, packet: out });
+  return Ok(Encoded { encoder: Encoder { state: result.st, channels: enc.channels, hp_mem: hp_mem }, packet: out });
+}
+
+// The float `dc_reject` of libopus 1.4 at 3 Hz and 48 kHz, in the same order of operations.
+function dc_reject(samples: [f32], own mem: f32[], channels: i32): (f32[], f32[]) {
+  let coef = 6.3f32 * 3.0f32 / 48000.0f32;
+  let coef2 = 1.0f32 - coef;
+  let out: f32[] = [];
+  for i in 0..samples.len() {
+    let c = i % channels;
+    let x = samples[i];
+    let m = mem[c];
+    out = out.append(x - m);
+    mem = mem.with(c, coef * x + 1.0e-30f32 + coef2 * m);
+  }
+  return (out, mem);
 }
 ```
