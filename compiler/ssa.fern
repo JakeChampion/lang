@@ -2761,14 +2761,18 @@ function split_spilled_in_loops(f: SFunc, reg_of: i32[], fl: boolean[], at: i32[
     }
   }
   let idom = immediate_dominators(f, at);
-  let weights = weights_from_latches(latch);
-  let cold = cold_blocks_with_dominators(f, at, idom);
+  let weights: i32[] = [];
+  let cold: boolean[] = [];
   let plans: SplitPlan[] = [];
   for c in 0..cands.len() {
     if (in_phi[c] || def_at[c] < 0 || uses[c].len() == 0) {
       continue;
     }
     if let Some(p) = split_plan(f, at, idom, latch, loops, cands[c], def_at[c], uses[c]) {
+      if (weights.len() == 0) {
+        weights = weights_from_latches(latch);
+        cold = cold_blocks_with_dominators(f, at, idom);
+      }
       // The reads in the loop come from a register after the split. A split
       // pays only when its store and its load weigh less than those reads.
       let reads = 0;
