@@ -34,6 +34,8 @@ function main(): i32 {
 ```fern
 <<*>>=
 // This module encodes lossless JPEG XL images.
+import "core/cmp";
+import "core/error";
 import "std/i32";
 
 <<errors>>
@@ -71,6 +73,10 @@ pub function (e: EncodeError) message(): string {
 pub function (e: EncodeError) to_string(): string {
   return e.message();
 }
+
+impl error.Error for EncodeError {}
+
+impl cmp.Display for EncodeError {}
 ```
 
 ### `bits`
