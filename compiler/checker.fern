@@ -5625,7 +5625,11 @@ function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], name
   if (!is_unknown(dest)) {
     let no_types: typeinfo.Type[] = [];
     let (dn, dt) = gc_bind_param(ret, dest, sig.type_params, s.type_names(), [], no_types);
-    bound = util.append_all(bound, dn);
+    for k in 0..dn.len() {
+      if (!mentions_foreign_type_variable(dt[k], s)) {
+        bound = bound.append(dn[k]);
+      }
+    }
   }
   for tp in sig.all_type_params {
     let (named, all_empty) = empty_array_positions(sig.param_type_names, c.args, tp, s);
@@ -15121,14 +15125,12 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
     di = c.args.len();
   }
   while (di < c.args.len()) {
-    let dest = t_unknown("no declared parameter");
+    let arg_dest = t_unknown("no declared parameter");
     if (di < dests.len()) {
-      dest = dests[di];
+      arg_dest = dests[di];
     }
-    if (generic_fn_value_arg(c.args[di], s) || struct_lit_arg(c.args[di])) {
-      dest = bound_param_dest(c, di, dest, s);
-    }
-    out = util.append_diags(out, dest_call_diags(c.args[di], dest, s));
+    arg_dest = bound_param_dest(c, di, arg_dest, dest, s);
+    out = util.append_diags(out, dest_call_diags(c.args[di], arg_dest, s));
     di += 1;
   }
   match (c.callee) {
@@ -16720,7 +16722,9 @@ function struct_lit_arg(e: ast.Expr): boolean {
   return false;
 }
 
-function bound_param_dest(c: ast.ExprCall, di: i32, dest: typeinfo.Type, s: Scope): typeinfo.Type {
+// The type of parameter `di` of the generic call `c`, with the type
+// arguments that its arguments and its destination `outer` bind.
+function bound_param_dest(c: ast.ExprCall, di: i32, dest: typeinfo.Type, outer: typeinfo.Type, s: Scope): typeinfo.Type {
   if let ast.ExprIdent(cid) = c.callee {
     let Some(sig) = s.lookup_sig(cid.name) else {
       return dest;
@@ -16729,6 +16733,18 @@ function bound_param_dest(c: ast.ExprCall, di: i32, dest: typeinfo.Type, s: Scop
       return dest;
     }
     let (bn, bt) = call_type_bindings(sig, c, s);
+    if (!is_unknown(outer)) {
+      let (dn, dt) = gc_bind_param(sig_ret_ref(sig), outer, sig.type_params, s.type_names(), [], []);
+      for k in 0..dn.len() {
+        let at = util.index_of_str(bn, dn[k]);
+        if (at < 0) {
+          bn = bn.append(dn[k]);
+          bt = bt.append(dt[k]);
+        } else if (type_contains_unknown(bt[at])) {
+          bt = bt.with(at, dt[k]);
+        }
+      }
+    }
     return type_from_ref_subst(sig_param_ref(sig, di), bn, bt, s.type_names());
   }
   return dest;
@@ -16962,6 +16978,12 @@ function foreign_type_variable(t: typeinfo.Type, s: Scope): boolean {
     name = e.name;
   }
   return name.len() > 0 && !util.has_str(s.tparams, name);
+}
+
+// A destination that names a type parameter of another callee binds
+// nothing: that parameter is still open.
+function mentions_foreign_type_variable(t: typeinfo.Type, s: Scope): boolean {
+  return foreign_type_variable(t, s) || typeinfo.any_child(t, (c: typeinfo.Type): boolean => mentions_foreign_type_variable(c, s));
 }
 
 function lit_dest_args(sl: ast.ExprStructLit, dest_args: typeinfo.Type[], s: Scope): typeinfo.Type[] {
@@ -32424,7 +32446,7 @@ function arg_value_insts(c: ast.ExprCall, s: Scope, gens: parser.FuncDecl[], dep
   let i = 0;
   while (i < c.args.len() && i < dests.len()) {
     if (generic_fn_value_arg(c.args[i], s)) {
-      if let Some(inst) = fn_value_inst(c.args[i], bound_param_dest(c, i, dests[i], s), s, gens, depth) {
+      if let Some(inst) = fn_value_inst(c.args[i], bound_param_dest(c, i, dests[i], t_unknown("no destination"), s), s, gens, depth) {
         out = out.append(inst);
       }
     }

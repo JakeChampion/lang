@@ -12339,6 +12339,9 @@ func (c *checker) checkBlockExprAt(n *ast.BlockExpr, parent *scope, want ast.Typ
 		c.unsafeDepth++
 		defer func() { c.unsafeDepth-- }()
 	}
+	// The statements of the block set their own expected types, and the
+	// tail gets the type that the block is expected to have.
+	expected := c.expectedType
 	s := newScope(parent)
 	prevMutualRec := c.mutualRecSiblings
 	c.mutualRecSiblings = nil
@@ -12356,7 +12359,7 @@ func (c *checker) checkBlockExprAt(n *ast.BlockExpr, parent *scope, want ast.Typ
 	if want != nil {
 		return c.checkArmAt(&n.Tail, s, want)
 	}
-	return c.checkExpr(n.Tail, s)
+	return c.checkExprAt(n.Tail, s, expected)
 }
 
 // checkArmAt checks a branch of a value `if` or `match` where want is
@@ -16729,6 +16732,16 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			if c.openCallLet == n {
 				if result, open := c.openGenericResult(n, genericFn, ft, sub, opened); open {
 					return result
+				}
+			}
+			// A type parameter of another callee, which its call has not
+			// bound yet, does not bind a type parameter of this call.
+			inScope := c.typeParamsInScope()
+			for _, tp := range genericFn.TypeParams {
+				if v, ok := sub[tp]; ok {
+					if _, escaped := paramTypeNotIn(v, inScope); escaped {
+						delete(sub, tp)
+					}
 				}
 			}
 			args := make([]ast.Type, len(genericFn.TypeParams))
