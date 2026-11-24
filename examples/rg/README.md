@@ -222,9 +222,9 @@ order of the walk.
   `\p{Greek}` and `\p{Grek}`, and the properties of emoji are there. As in
   ripgrep, `\p{sc!=Greek}` is `\p{Greek}`. Some properties are not in
   `std/regex`, and a pattern with one of them gives an error of
-  `std/regex`. They are Script_Extensions, Age, Grapheme_Cluster_Break,
-  Word_Break and Sentence_Break. The binary properties that are not in Go's
-  tables are also not there, such as ID_Start, XID_Start and Bidi_Mirrored.
+  `std/regex`. They are Script_Extensions, Age and Sentence_Break. The
+  binary properties that are not in Go's tables are also not there, such as
+  ID_Start, XID_Start and Bidi_Mirrored.
 
 - **Pattern errors.** `regex.check` reports each error of regex-syntax
   0.8.2 with its text and its span, and ripgrep's hint about PCRE2. `-P`
@@ -297,7 +297,7 @@ order of the walk.
   with the leak census.
 
 - `TestSelfHostExampleRgAgainstRipgrep` runs the port and `/usr/bin/rg`
-  14.1.0 with 670 command lines on the same files, on x86-64 and on arm64.
+  14.1.0 with 681 command lines on the same files, on x86-64 and on arm64.
   The stdout, the stderr and the exit status must be the same. The files
   include an empty file and a file with no last line terminator. They also
   include CRLF lines, NUL lines, a line of 209,008 bytes, UTF-8 text,

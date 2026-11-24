@@ -28,7 +28,7 @@ The syntax is that of the Rust `regex` crate:
 
 - A literal character, `.`, `^` and `$`, groups `(...)`, `(?:...)`, `(?<name>...)` and `(?P<name>...)`, alternatives `|`, and the repetitions `*`, `+`, `?`, `{n}`, `{n,}` and `{n,m}`. A `?` after a repetition makes it lazy: it prefers one fewer repeat to one more.
 - The classes `\d`, `\s` and `\w`, and their complements `\D`, `\S` and `\W`.
-- A general category, a script or a binary property of Unicode: `\p{...}` or `\pL`, and `\P{...}` or `\PL` for the complement. Examples are `\p{Greek}`, `\p{Lu}`, `\p{sc=Cyrillic}` and `\p{White_Space}`.
+- A general category, a script, a binary property or a break class of Unicode: `\p{...}` or `\pL`, and `\P{...}` or `\PL` for the complement. Examples are `\p{Greek}`, `\p{Lu}`, `\p{sc=Cyrillic}` and `\p{White_Space}`. A class of Grapheme_Cluster_Break or Word_Break needs the name of its property, as `\p{gcb=Extend}` and `\p{wb=ALetter}`.
 - Bracket classes such as `[a-z\d]` and `[^\p{L}]`. They can hold nested classes and the ASCII classes such as `[:alpha:]`. `&&`, `--` and `~~` give the intersection, the difference and the symmetric difference.
 - The assertions `\b`, `\B`, `\<`, `\>`, `\A`, `\z`, `\b{start}`, `\b{end}`, `\b{start-half}` and `\b{end-half}`.
 - The escapes `\n`, `\t`, `\r`, `\f`, `\v` and `\a`, and an escaped ASCII mark that is not a letter or a digit.
@@ -5515,9 +5515,7 @@ function __sx_property(text: string): string {
 function __sx_known_value(canon: string, value: string): boolean {
   return match (canon) {
     "Age" => __sx_has(SX_AGES, value),
-    "Grapheme_Cluster_Break" => __sx_has(SX_GCB, value),
     "Sentence_Break" => __sx_has(SX_SB, value),
-    "Word_Break" => __sx_has(SX_WB, value),
     "Script_Extensions" => unicode.property_ranges("sc=" + value) != None,
     _ => false,
   };
@@ -5717,14 +5715,8 @@ const SX_BOOLS: string = "ASCII_Hex_Digit Alphabetic Bidi_Control Bidi_Mirrored 
 // The loose values of Age in regex-syntax 0.8.2 that select code points.
 const SX_AGES: string = "1.1 10.0 11.0 12.0 12.1 13.0 14.0 15.0 2.0 2.1 3.0 3.1 3.2 4.0 4.1 5.0 5.1 5.2 6.0 6.1 6.2 6.3 7.0 8.0 9.0 v100 v11 v110 v120 v121 v130 v140 v150 v20 v21 v30 v31 v32 v40 v41 v50 v51 v52 v60 v61 v62 v63 v70 v80 v90";
 
-// The loose values of Grapheme_Cluster_Break in regex-syntax 0.8.2 other than Other.
-const SX_GCB: string = "cn control cr eb ebase ebasegaz ebg em emodifier ex extend gaz glueafterzwj l lf lv lvt pp prepend regionalindicator ri sm spacingmark t v zwj";
-
 // The loose values of Sentence_Break in regex-syntax 0.8.2 other than Other.
 const SX_SB: string = "at aterm cl close cr ex extend fo format le lf lo lower nu numeric oletter sc scontinue se sep sp st sterm up upper";
-
-// The loose values of Word_Break in regex-syntax 0.8.2 other than Other.
-const SX_WB: string = "aletter cr doublequote dq eb ebase ebasegaz ebg em emodifier ex extend extendnumlet fo format gaz glueafterzwj hebrewletter hl ka katakana le lf mb midletter midnum midnumlet ml mn newline nl nu numeric regionalindicator ri singlequote sq wsegspace zwj";
 ```
 
 ### Module introduction
