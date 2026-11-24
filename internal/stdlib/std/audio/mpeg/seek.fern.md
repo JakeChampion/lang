@@ -4,6 +4,7 @@ The raw MPEG decoders share this frame-offset index. Their header readers supply
 
 ```fern
 <<*>>=
+// This module holds the frame-offset index that the MPEG Layer I and Layer II decoders seek with.
 import "std/audio/pcm";
 import "std/i32";
 
