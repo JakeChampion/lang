@@ -95,7 +95,8 @@ class WindowTests(unittest.TestCase):
                          "com.android.permissioncontroller/com.android.permissioncontroller.permission.ui.GrantPermissionsActivity")
 
     def test_no_focus(self):
-        self.assertEqual(check.focused_window("  mCurrentFocus=null\n"), "")
+        self.assertEqual(check.focused_window("  mCurrentFocus=null\n"), "null")
+        self.assertEqual(check.focused_window(""), "")
 
 
 class DocumentTests(unittest.TestCase):

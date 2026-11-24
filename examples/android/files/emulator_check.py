@@ -202,36 +202,41 @@ def dump(out, step):
 
 def find(out, step, label, timeout=30, scroll=False):
     """The middle of the node `label`, when it shows in `timeout` seconds.
-    With `scroll`, each second dump that does not show it scrolls the screen
-    down. When a scroll does not change the names on the screen, the list is
-    at its end, and the next scrolls go up."""
-    deadline = time.monotonic() + timeout
-    looks = 0
+    With `scroll`, each dump that does not show it scrolls the screen down,
+    and the time is 60 seconds at least. When two scrolls in a row do not
+    change the names on the screen, the list is at its end, and the next
+    scrolls go the other way."""
+    deadline = time.monotonic() + (max(timeout, 60) if scroll else timeout)
     down = True
     before = None
+    still = 0
     while time.monotonic() < deadline:
         xml = dump(out, step)
         point = point_of(xml, label)
         if point:
             return point
-        looks += 1
-        swipe = swipe_up(xml) if scroll and looks % 2 == 0 else None
+        swipe = swipe_up(xml) if scroll else None
         if swipe:
             names = sorted(name for name, _, _ in nodes(xml))
-            if names == before:
+            still = still + 1 if names == before else 0
+            if still >= 2:
                 down = not down
+                still = 0
             before = names
+            print(f"{step}: no {label}, scroll {'down' if down else 'up'} from {names[:2]} … {names[-2:]}", flush=True)
             (x, y), (x2, y2) = swipe if down else reversed(swipe)
             # A slow drag scrolls the list and does not fling it.
-            adb("shell", "input", "swipe", str(x), str(y), str(x2), str(y2), "1500")
+            adb("shell", "input", "swipe", str(x), str(y), str(x2), str(y2), "800")
             time.sleep(1)
-        time.sleep(0.5)
+        else:
+            time.sleep(0.5)
     return None
 
 
 def focused_window(dumpsys):
-    """The window that has the focus in a dump of `dumpsys window`, or ""."""
-    m = re.search(r"mCurrentFocus=Window\{\S+ \S+ ([^}]+)\}", dumpsys)
+    """The window that has the focus in a dump of `dumpsys window`: its
+    component, or the word that the dump gives, or "" for no such line."""
+    m = re.search(r"mCurrentFocus=Window\{\S+ \S+ ([^}]+)\}", dumpsys) or re.search(r"mCurrentFocus=(\S+)", dumpsys)
     return m.group(1) if m else ""
 
 
