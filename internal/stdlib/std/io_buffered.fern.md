@@ -283,12 +283,12 @@ pub function (b: BufWriter) flush(): Result[BufWriter, IoError] {
 
 pub function (own b: BufWriter) close(): Result[void, IoError] {
   let pending = buf_len(b.buf.h);
-  let flushed = b.flush();
+  let failed: Option[IoError] = match (b.flush()) { Err(e) => Some(e), Ok(_) => None };
   if let Err(e) = b.w.close() {
     return Err(e);
   }
   if (pending > 0) {
-    if let Err(e) = flushed {
+    if let Some(e) = failed {
       return Err(e);
     }
   }

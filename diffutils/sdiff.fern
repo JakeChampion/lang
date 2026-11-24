@@ -524,21 +524,29 @@ function spawn_editor(m: Merge, editor: string, name: string): void {
 // check_child_status: a program that the merge runs must exit with a status
 // of `max_ok` or less.
 function check_child(m: Merge, prog: string, st: i32, max_ok: i32): void {
+  let trouble = child_trouble(prog, st, max_ok);
+  if (trouble.len() > 0) {
+    die(m, trouble);
+  }
+}
+
+// The message for a wait status that check_child refuses, or "".
+function child_trouble(prog: string, st: i32, max_ok: i32): string {
   let code = st >> 8 & 255;
   if ((st & 127) == 0 && code <= max_ok) {
-    return;
+    return "";
   }
   let what = "subsidiary program '" + prog + "' ";
   if ((st & 127) != 0) {
-    die(m, what + "failed");
+    return what + "failed";
   }
   if (code == 126) {
-    die(m, what + "could not be invoked");
+    return what + "could not be invoked";
   }
   if (code == 127) {
-    die(m, what + "not found");
+    return what + "not found";
   }
-  die(m, what + "failed (exit status " + code.to_string() + ")");
+  return what + "failed (exit status " + code.to_string() + ")";
 }
 
 // The merge commands of diff --sdiff-merge-assist, and its wait status.
@@ -745,14 +753,18 @@ function merge(cfg: Cfg, ops: string[]): i32 {
   let ok = interact(m, r.0, left, lname, right, rname);
   flush_out(m);
   write_merged(m);
-  w.close();
   remove_tmp(m);
   buf_free(m.out);
   buf_free(m.merged);
+  w.close();
   if (!ok) {
     return EXIT_TROUBLE;
   }
-  check_child(m, program(cfg), r.1, 1);
+  let trouble = child_trouble(program(cfg), r.1, 1);
+  if (trouble.len() > 0) {
+    gnu.error(trouble);
+    return EXIT_TROUBLE;
+  }
   return r.1 >> 8 & 255;
 }
 

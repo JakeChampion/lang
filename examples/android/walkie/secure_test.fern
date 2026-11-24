@@ -164,7 +164,7 @@ function test_kem_secrets_are_erased(): test.TestOutcome {
   let sa = sas_of(a);
   let sb = sas_of(b);
   let c = party(false, "carol");
-  let old = c;
+  let old = unsafe { share_unchecked(c) };
   secure.close_handshake(c);
   return test.assert_eq(ka.kem.get().len().to_string() + " " + kb.kem.get().len().to_string() + " " + old.kem.get().len().to_string() + " " + (sa == sb).to_string(), "0 0 0 true");
 }
@@ -282,7 +282,7 @@ function test_receiver_aliases_cannot_replay_a_frame(): test.TestOutcome {
 
 function test_close_invalidates_channel_aliases(): test.TestOutcome {
   let (a, b) = channels(party(true, "alice"), party(false, "bob"));
-  let old = a;
+  let old = unsafe { share_unchecked(a) };
   let (b1, voice) = secure.seal_control(b, "voice".as_bytes());
   secure.close(a);
   let (a1, outgoing) = secure.seal_control(old, "late".as_bytes());
@@ -316,7 +316,7 @@ function test_ephemeral_key_is_used_once(): test.TestOutcome {
 
 function test_cancelled_handshake_clears_aliases(): test.TestOutcome {
   let a = party(true, "alice");
-  let old = a;
+  let old = unsafe { share_unchecked(a) };
   secure.close_handshake(a);
   let (stopped, _) = secure.receive(old, [17 as u8]);
   return test.assert_eq(old.private.get().len().to_string() + " " + stopped.failed.to_string(), "0 true");

@@ -82,7 +82,8 @@ A shadowed name does not erase an outer callback loan.
 Lambda parameters and local named functions use the same scope rule.
 
 An index expression also retains loans from callbacks that compute its index.
-Mutable bindings and resource paths inside aggregates still need a broader proof.
+Mutable bindings still need a broader proof.
+A local that reads a resource path keeps a loan of its lender (`docs/CLOSURE-CAPTURE.md`).
 
 A fresh local can transfer after its capturing callbacks finish their last uses.
 The checked proof requires a straight-line body with unmodified bindings.

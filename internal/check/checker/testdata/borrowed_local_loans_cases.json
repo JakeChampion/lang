@@ -1,0 +1,142 @@
+[
+ {
+  "name": "field read after the owner is consumed",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let h = p.h; p.close(); return h.read(); }\n",
+  "want": "E050"
+ },
+ {
+  "name": "field read after its path is consumed",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let h = p.h; closeh(p.h); return h.read(); }\n",
+  "want": "E050"
+ },
+ {
+  "name": "sibling field stays after another path is consumed",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let g = p.g; closeh(p.h); let n = g.read(); closeh(p.g); return n; }\n",
+  "want": ""
+ },
+ {
+  "name": "fresh local lender",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own q: P): i32 { q.close(); let p = fresh(); let h = p.h; p.close(); return h.read(); }\n",
+  "want": "E050"
+ },
+ {
+  "name": "method result",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let h = p.handle(); p.close(); return h.read(); }\n",
+  "want": "E050"
+ },
+ {
+  "name": "variant wrapper",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let o = Some(p.h); p.close(); return match (o) { Some(h) => h.read(), None => 0 }; }\n",
+  "want": "E050"
+ },
+ {
+  "name": "record wrapper",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nstruct W { h: H }\nfunction run(own p: P): i32 { let w = W { h: p.h }; p.close(); return w.h.read(); }\n",
+  "want": "E050"
+ },
+ {
+  "name": "tuple wrapper",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let w = (p.h, 1); p.close(); return w.0.read(); }\n",
+  "want": "E050"
+ },
+ {
+  "name": "match binder",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let o = Some(p.h); match (o) { Some(h) => { p.close(); return h.read(); }, None => { p.close(); return 0; } } }\n",
+  "want": "E050"
+ },
+ {
+  "name": "alias of the lender",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own q: P): i32 { q.close(); let p = fresh(); let a = p; p.close(); return a.h.read(); }\n",
+  "want": "E050"
+ },
+ {
+  "name": "local of a local",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let h = p.h; let k = h; p.close(); return k.read(); }\n",
+  "want": "E050"
+ },
+ {
+  "name": "returned after the consume",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction pick(own p: P): H { let h = p.h; p.close(); return h; }\nfunction run(own p: P): i32 { return pick(p).read(); }\n",
+  "want": "E050"
+ },
+ {
+  "name": "argument after the consume",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let h = p.h; p.close(); return h.closed.get(); }\n",
+  "want": "E050"
+ },
+ {
+  "name": "consume in one branch",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let h = p.h; if (p.n > 0) { p.close(); return h.read(); } p.close(); return 0; }\n",
+  "want": "E050"
+ },
+ {
+  "name": "read before the consume",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let h = p.h; let n = h.read(); p.close(); return n; }\n",
+  "want": ""
+ },
+ {
+  "name": "plain data copy",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let n = p.n; let tags = p.tags; p.close(); return n + tags.len(); }\n",
+  "want": ""
+ },
+ {
+  "name": "data field of a holder",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nstruct W { h: H, n: i32 }\nfunction run(own p: P): i32 { let w = W { h: p.h, n: 2 }; p.close(); return w.n; }\n",
+  "want": ""
+ },
+ {
+  "name": "holder passed beside the consumed lender",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let h = p.h; return both(p, h); }\n",
+  "want": ""
+ },
+ {
+  "name": "holder read inside the consuming call",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction count(own p: P, n: i32): i32 { p.close(); return n; }\nfunction run(own p: P): i32 { let h = p.h; return count(p, h.read()); }\n",
+  "want": ""
+ },
+ {
+  "name": "lender moved into a local",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let h = p.h; let q = p; let n = h.read(); q.close(); return n; }\n",
+  "want": ""
+ },
+ {
+  "name": "lender moved into a local and consumed",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let h = p.h; let q = p; q.close(); return h.read(); }\n",
+  "want": "E050"
+ },
+ {
+  "name": "lender moved into a record",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nstruct Box { p: P }\nfunction (own b: Box) close(): void { b.p.close(); }\nfunction run(own p: P): i32 { let h = p.h; let b = Box { p: p }; let n = h.read(); b.close(); return n; }\n",
+  "want": ""
+ },
+ {
+  "name": "taker keeps the value over its own update",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let h = p.h; let q = p; q = q.renamed(1); let n = h.read(); q.close(); return n; }\n",
+  "want": ""
+ },
+ {
+  "name": "taker gets another value after a consume",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let h = p.h; let q = p; q.close(); q = fresh(); let n = h.read(); q.close(); return n; }\n",
+  "want": "E050"
+ },
+ {
+  "name": "match payload takes the owner",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nenum T { Leaf(H), Fork(H, H) }\nfunction end(own t: T): i32 { match (t) { Leaf(h) => { let n = h.read(); h.close(); return n; }, Fork(l, r) => { l.close(); let n = r.read(); r.close(); return n; } } }\nfunction run(own p: P): i32 { p.close(); return end(Leaf(H { closed: cell_new(0) })); }\n",
+  "want": ""
+ },
+ {
+  "name": "result that holds the receiver",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction (p: P) same(): Result[P, i32] { return Ok(p); }\nfunction run(own p: P): i32 { let r = p.same(); p.close(); if let Err(n) = r { return n; } return 0; }\n",
+  "want": "E050"
+ },
+ {
+  "name": "unchecked share",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let h = unsafe { share_unchecked(p.h) }; p.close(); return h.read(); }\n",
+  "want": ""
+ },
+ {
+  "name": "callback loan keeps its message",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let g = (): i32 => p.h.read(); p.close(); return g(); }\n",
+  "want": "E050"
+ }
+]

@@ -1,0 +1,29 @@
+struct Handle { closed: Cell[i32] }
+
+function (h: Handle) read(): i32 {
+  return h.closed.get();
+}
+
+function (own h: Handle) close(): void {
+  h.closed.set(1);
+}
+
+struct Pair { h: Handle, n: i32 }
+
+function (own p: Pair) close(): void {
+  p.h.close();
+}
+
+function (p: Pair) handle(): Handle {
+  return p.h;
+}
+
+function run(own p: Pair): i32 {
+  let h = p.handle();
+  p.close();
+  return h.read();
+}
+
+function main(): i32 {
+  return run(Pair { h: Handle { closed: cell_new(0) }, n: 0 });
+}

@@ -10501,8 +10501,8 @@ function write_array_in_place(a: ast.StmtAssign, own env: Env): StepResult {
     args = args.append(vs);
   }
   let cur = match (env.raw_value(a.target)) { Some(v) => v, None => { return step_stop(env, v_err("in-place write: missing binding")); } };
-  let heap = env.heap;
   let released = env.update(a.target, v_int(0));
+  let heap = released.heap;
   for i in 0..names.len() {
     let VArr(av) = cur else {
       return step_stop(released, v_err("in-place write: not an array"));
