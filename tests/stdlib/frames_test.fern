@@ -6,9 +6,10 @@ import "std/option";
 // base up. The header and the bitmap take the first frame.
 const REGION_BYTES: usize = 266240;
 
-function region(): frames.Frames {
+// The frames over `block`, set up again for each case.
+function region(block: usize): frames.Frames {
   unsafe {
-    let Some(f) = frames.new(__alloc(REGION_BYTES as i32) + 1 as usize, REGION_BYTES - 1 as usize) else {
+    let Some(f) = frames.new(block + 1 as usize, REGION_BYTES - 1 as usize) else {
       eprint("no frames\n");
       exit(98);
       return frames.Frames { base: 0 as usize };
@@ -17,8 +18,8 @@ function region(): frames.Frames {
   }
 }
 
-function test_counts(): test.TestOutcome {
-  let f = region();
+function test_counts(block: usize): test.TestOutcome {
+  let f = region(block);
   if (f.base % frames.FRAME_BYTES != 0 as usize) {
     return test.fail("base is not frame aligned");
   }
@@ -30,8 +31,8 @@ function test_counts(): test.TestOutcome {
 
 // Every free frame comes out once, frame aligned and inside the region, and
 // then alloc gives None.
-function test_exhaust(): test.TestOutcome {
-  let f = region();
+function test_exhaust(block: usize): test.TestOutcome {
+  let f = region(block);
   let got = 0;
   let last = 0 as usize;
   while (true) {
@@ -52,8 +53,8 @@ function test_exhaust(): test.TestOutcome {
 
 // A freed frame is the next one allocated, and a frame the region does not
 // own is refused.
-function test_free(): test.TestOutcome {
-  let f = region();
+function test_free(block: usize): test.TestOutcome {
+  let f = region(block);
   let Some(a) = f.alloc() else {
     return test.fail("no first frame");
   };
@@ -76,8 +77,8 @@ function test_free(): test.TestOutcome {
 }
 
 // A run is contiguous, skips frames in use, and comes back whole.
-function test_runs(): test.TestOutcome {
-  let f = region();
+function test_runs(block: usize): test.TestOutcome {
+  let f = region(block);
   let Some(first) = f.alloc() else {
     return test.fail("no first frame");
   };
@@ -110,8 +111,8 @@ function test_runs(): test.TestOutcome {
 
 // A reserved range keeps its frames, the frame of a partial page included,
 // from alloc. A second reserve and a range past the region mark nothing.
-function test_reserve(): test.TestOutcome {
-  let f = region();
+function test_reserve(block: usize): test.TestOutcome {
+  let f = region(block);
   let page = frames.FRAME_BYTES;
   let marked = f.reserve(f.base + 10 as usize * page - 100 as usize, 3 as usize * page);
   if (marked != 4 as usize || f.free_count() != 59 as usize) {
@@ -133,11 +134,16 @@ function test_reserve(): test.TestOutcome {
 }
 
 function main(): i32 {
+  let block = unsafe { __alloc(REGION_BYTES as i32) };
   let r = test.new("std/frames");
-  r = r.it("counts the frames after the header", test_counts);
-  r = r.it("hands out every free frame once", test_exhaust);
-  r = r.it("reuses a freed frame and refuses a foreign one", test_free);
-  r = r.it("allocates and returns runs", test_runs);
-  r = r.it("keeps a reserved range out of alloc", test_reserve);
-  return r.finish();
+  r = r.it("counts the frames after the header", (): test.TestOutcome => test_counts(block));
+  r = r.it("hands out every free frame once", (): test.TestOutcome => test_exhaust(block));
+  r = r.it("reuses a freed frame and refuses a foreign one", (): test.TestOutcome => test_free(block));
+  r = r.it("allocates and returns runs", (): test.TestOutcome => test_runs(block));
+  r = r.it("keeps a reserved range out of alloc", (): test.TestOutcome => test_reserve(block));
+  let verdict = r.finish();
+  unsafe {
+    __free(block, REGION_BYTES as i32);
+  }
+  return verdict;
 }

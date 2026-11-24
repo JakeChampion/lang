@@ -15,7 +15,9 @@ function hunks(a: string, b: string, o: linediff.Options, context: i32): string 
   let lb = linediff.lines_of(bb);
   let out = buf_new(256);
   linediff.unified(out, la, lb, linediff.diff(la, lb, o), linediff.Emit { context: context, interhunk: 0, funcnames: true, find_func: None });
-  return buf_take(out);
+  let text = buf_take(out);
+  buf_free(out);
+  return text;
 }
 
 function myers(): linediff.Options {
@@ -150,13 +152,16 @@ function test_find_func(): test.TestOutcome {
   let out = buf_new(256);
   linediff.unified(out, la, lb, linediff.diff(la, lb, myers()), linediff.Emit { context: 1, interhunk: 0, funcnames: true, find_func: Some(find) });
   let named = buf_take(out);
+  buf_free(out);
   if (named != "@@ -5,2 +5,2 @@ one\n z\n-old\n+new\n") {
     return test.fail("the name of find_func: " + named);
   }
   let none = (data: u8[], s: i32, e: i32): (i32, i32) => (-1, -1);
   let bare = buf_new(256);
   linediff.unified(bare, la, lb, linediff.diff(la, lb, myers()), linediff.Emit { context: 1, interhunk: 0, funcnames: true, find_func: Some(none) });
-  return test.assert_eq(buf_take(bare), "@@ -5,2 +5,2 @@\n z\n-old\n+new\n");
+  let unnamed = buf_take(bare);
+  buf_free(bare);
+  return test.assert_eq(unnamed, "@@ -5,2 +5,2 @@\n z\n-old\n+new\n");
 }
 
 function test_common_tail(): test.TestOutcome {
