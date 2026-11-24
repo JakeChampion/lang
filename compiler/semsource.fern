@@ -5967,7 +5967,7 @@ function synthesised(fd: parser.FuncDecl): boolean {
 }
 
 function synthesised_name(name: string): boolean {
-  return name.starts_with("__lam_") || util.contains(name, "$iife");
+  return parser.is_lambda_name(name) || parser.is_iife_name(name);
 }
 
 function result_type(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Binding, contracts: ssasem.Contract[]): typeinfo.Type {
@@ -7862,7 +7862,7 @@ function call_exprs(e: ast.Expr, own acc: ast.ExprCall[]): ast.ExprCall[] {
 // a call of a closure, and the positions that the callee stores.
 function stored_params(call: ast.ExprCall, c: Carried, known: Handers): i64 {
   if let ast.ExprIdent(id) = call.callee {
-    if (id.name.starts_with("__mkclo$") || c.values.has(id.name)) {
+    if (parser.is_mkclo_name(id.name) || c.values.has(id.name)) {
       return every_param();
     }
     return known.stored(id.name);
