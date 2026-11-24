@@ -1,0 +1,83 @@
+struct Handle { closed: Cell[i32] }
+
+function (h: Handle) read(): i32 {
+  return h.closed.get();
+}
+
+function (own h: Handle) close(): void {
+  h.closed.set(1);
+}
+
+struct Pair { h: Handle, g: Handle, n: i32 }
+
+function (own p: Pair) close(): void {
+  p.h.close();
+  p.g.close();
+}
+
+function (own p: Pair) renamed(n: i32): Pair {
+  return Pair { ...p, n: n };
+}
+
+function close_handle(own h: Handle): void {
+  h.close();
+}
+
+function fresh(n: i32): Pair {
+  return Pair { h: Handle { closed: cell_new(0) }, g: Handle { closed: cell_new(0) }, n: n };
+}
+
+// A read before the consume of the lender.
+function read_first(own p: Pair): i32 {
+  let h = p.h;
+  let n = h.read();
+  p.close();
+  return n;
+}
+
+// A copy of plain value data has no lender.
+function copy_data(own p: Pair): i32 {
+  let n = p.n;
+  p.close();
+  return n;
+}
+
+// The consume of one field does not end the loan of another field.
+function sibling(own p: Pair): i32 {
+  let g = p.g;
+  close_handle(p.h);
+  let n = g.read();
+  close_handle(p.g);
+  return n + 1;
+}
+
+// A local that takes the lender keeps the loan until its own consume.
+function moved_lender(own p: Pair): i32 {
+  let h = p.h;
+  let q = p;
+  q = q.renamed(2);
+  let n = h.read();
+  q.close();
+  return n + 2;
+}
+
+// The call that consumes the lender can also read the local.
+function beside(own p: Pair, h: Handle): i32 {
+  let n = h.read();
+  p.close();
+  return n + 3;
+}
+
+function passed_beside(own p: Pair): i32 {
+  let h = p.h;
+  return beside(p, h);
+}
+
+function main(): i32 {
+  print(read_first(fresh(0)));
+  print(copy_data(fresh(7)));
+  print(sibling(fresh(0)));
+  print(moved_lender(fresh(0)));
+  print(passed_beside(fresh(0)));
+  return 0;
+}

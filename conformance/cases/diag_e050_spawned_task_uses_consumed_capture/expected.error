@@ -1,1 +1,1 @@
-"task" holds a callback that uses captured owned parameter "h" after it was consumed
+"task" borrows from "h", and is used after "h" was consumed

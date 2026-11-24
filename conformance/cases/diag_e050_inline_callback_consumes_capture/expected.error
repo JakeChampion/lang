@@ -1,1 +1,1 @@
-callback "lambda" uses captured owned parameter "h" after it was consumed
+the callback borrows from "h", and is used after "h" was consumed

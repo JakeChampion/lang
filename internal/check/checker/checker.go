@@ -11450,7 +11450,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	type movedSet = map[string]ast.Position
 	var callbackCaptures map[string][]ast.Param
 	var inlineCaptures map[ast.Expr][]ast.Param
-	var holderCaptures map[string][]ast.Param
+	var holderCaptures map[string][]callbackLoan
 	var heldOwners map[string]bool
 	callbackCapturesKnown := false
 	ensureCallbackCaptures := func() {
@@ -11459,6 +11459,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			callbackCapturesKnown = true
 		}
 	}
+	takers := map[string]bool{}
 	localCaptureOwner := func(name string) bool {
 		ensureCallbackCaptures()
 		for _, captures := range callbackCaptures {
@@ -11477,6 +11478,14 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		return heldOwners[name]
 	}
+	// A consumed taker that no callback uses is in moved under takerKey, so
+	// that only the loans of its lenders read it.
+	takerKey := func(name string) string {
+		if owned[name] || localCaptureOwner(name) {
+			return name
+		}
+		return "~" + name
+	}
 	// An assignment gives a consumed owner a new value. A callback or holder
 	// made before it still holds the consumed value, under staleLoan's key.
 	staleLoan := func(holder, owner string) string { return holder + "#" + owner }
@@ -11490,17 +11499,20 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		if declaredAt == nil {
 			declaredAt = firstDeclarations(fn.Body)
 		}
-		for _, rows := range []map[string][]ast.Param{callbackCaptures, holderCaptures} {
-			for holder, captures := range rows {
-				// A holder declared after the assignment never held the consumed value.
-				if decl, ok := declaredAt[holder]; !ok || !positionBefore(decl, assigned) {
-					continue
-				}
-				for _, capture := range captures {
-					if capture.Name == owner {
-						moved[staleLoan(holder, owner)] = at
-					}
-				}
+		keep := func(holder, lender string) {
+			// A holder declared after the assignment never held the consumed value.
+			if decl, ok := declaredAt[holder]; ok && positionBefore(decl, assigned) && lender == owner {
+				moved[staleLoan(holder, owner)] = at
+			}
+		}
+		for holder, captures := range callbackCaptures {
+			for _, capture := range captures {
+				keep(holder, capture.Name)
+			}
+		}
+		for holder, loans := range holderCaptures {
+			for _, loan := range loans {
+				keep(holder, loan.param.Name)
 			}
 		}
 	}
@@ -11518,20 +11530,107 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		at, stale := moved[staleLoan(holder, owner)]
 		return at, stale
 	}
-	// A call argument that holds a callback, such as a record with a callback
-	// field, takes the loans of that callback into the callee.
-	checkHolderCaptures := func(value ast.Expr, moved movedSet) {
+	// takenBy has, at the position of a consume, the local that took the
+	// value: its lenders lend to that local from there.
+	takenBy := map[ast.Position][]string{}
+	// inFlight has each consume by an argument of a call that has not
+	// started: a local that the call also reads is not used after it.
+	inFlight := map[ast.Position]bool{}
+	// initConsumes has, at the position of a consume, the local whose
+	// initializer contains it.
+	initConsumes := map[ast.Position]string{}
+	var lenderConsumed func(moved movedSet, holder, owner string, at ast.Position, depth int) (ast.Position, bool)
+	lenderConsumed = func(moved movedSet, holder, owner string, at ast.Position, depth int) (ast.Position, bool) {
+		takers, taken := takenBy[at]
+		if !taken {
+			return at, true
+		}
+		if slices.Contains(takers, holder) || depth > len(takenBy) {
+			return at, false
+		}
+		for _, taker := range takers {
+			if next, consumed := moved[takerKey(taker)]; consumed {
+				if end, ended := lenderConsumed(moved, holder, taker, next, depth+1); ended {
+					return end, true
+				}
+			}
+		}
+		return at, false
+	}
+	// A local that is not plain value data keeps the loans of the value that
+	// made it: a callback that it holds, or the lender of a resource that it
+	// reads. A callback loan ends at a call argument only.
+	checkHolderLoans := func(value ast.Expr, moved movedSet, lentOnly bool) {
 		id, ok := value.(*ast.Ident)
-		if !ok || len(moved) == 0 || c.callbackValues[value] || id.Builtin || !id.Local || owned[id.Name] {
+		if !ok || len(moved) == 0 || c.callbackValues[value] || id.Builtin || !id.Local || owned[id.Name] || strings.HasPrefix(id.Name, ast.ForEachIterPrefix) {
 			return
 		}
 		if t := c.localUseTypes[id]; t == nil || c.copyableCallResult(t) {
 			return
 		}
 		ensureCallbackCaptures()
-		for _, capture := range holderCaptures[id.Name] {
-			if at, consumed := consumedLoan(moved, id.Name, capture.Name); consumed {
-				c.movedErr(value.Pos(), at, "moved here", "%q holds a callback that uses captured owned parameter %q after it was consumed", id.Name, capture.Name)
+		reported := map[string]bool{}
+		for _, loan := range holderCaptures[id.Name] {
+			owner := loan.param.Name
+			if reported[owner] || lentOnly && !loan.lent {
+				continue
+			}
+			at, consumed := consumedLoan(moved, id.Name, owner)
+			if consumed && loan.lent {
+				at, consumed = lenderConsumed(moved, id.Name, owner, at, 0)
+			}
+			if !consumed && loan.lent {
+				at, consumed = lentPathMoved(moved, loan)
+			}
+			if !consumed || loan.lent && (inFlight[at] || initConsumes[at] == id.Name) {
+				continue
+			}
+			reported[owner] = true
+			c.movedErr(value.Pos(), at, "moved here", "%q borrows from %q, and is used after %q was consumed", id.Name, owner, owner)
+		}
+	}
+	checkHolderCaptures := func(value ast.Expr, moved movedSet) { checkHolderLoans(value, moved, false) }
+	// retake ends the loans of the value that a consumed taker held: the
+	// taker gets a new value, which is not the value of its lenders.
+	retake := func(name string, moved movedSet) {
+		at, consumed := moved[takerKey(name)]
+		if !consumed {
+			return
+		}
+		for lender, taken := range moved {
+			if slices.Contains(takenBy[taken], name) {
+				moved[lender] = at
+			}
+		}
+	}
+	// takePayloads gives the payloads of a consumed scrutinee to the names
+	// that its arms bind.
+	takePayloads := func(tag ast.Expr, binders []string, moved movedSet) {
+		id, ok := tag.(*ast.Ident)
+		if !ok {
+			return
+		}
+		if at, isMoved := moved[id.Name]; isMoved && at == id.Pos() {
+			for _, name := range binders {
+				if name != "" && name != "_" && !slices.Contains(takenBy[at], name) {
+					takenBy[at] = append(takenBy[at], name)
+					takers[name] = true
+				}
+			}
+		}
+	}
+	// take records each lender that the initializer of a local moves into it.
+	// A consume in the initializer does not come after the local.
+	take := func(name string, init ast.Expr, before, moved movedSet) {
+		for lender, at := range moved {
+			if prev, had := before[lender]; !had || prev != at {
+				initConsumes[at] = name
+			}
+		}
+		for _, id := range movedOperands(init) {
+			if at, isMoved := moved[id.Name]; isMoved && at == id.Pos() && !slices.Contains(takenBy[at], name) {
+				takenBy[at] = append(takenBy[at], name)
+				takers[name] = true
 			}
 		}
 	}
@@ -11539,13 +11638,13 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		if value == nil || len(moved) == 0 || !c.callbackValues[value] {
 			return
 		}
-		name := "lambda"
+		name, who := "lambda", "the callback"
 		switch v := value.(type) {
 		case *ast.Ident:
 			if v.Builtin || !v.Local || owned[v.Name] {
 				return
 			}
-			name = v.Name
+			name, who = v.Name, strconv.Quote(v.Name)
 		case *ast.Lambda:
 		case *ast.IfExpr, *ast.MatchExpr, *ast.BlockExpr, *ast.Call, *ast.FieldAccess, *ast.Index:
 			name = "value"
@@ -11559,7 +11658,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		for _, capture := range captures {
 			if at, consumed := consumedLoan(moved, name, capture.Name); consumed {
-				c.movedErr(value.Pos(), at, "moved here", "callback %q uses captured owned parameter %q after it was consumed", name, capture.Name)
+				c.movedErr(value.Pos(), at, "moved here", "%s borrows from %q, and is used after %q was consumed", who, capture.Name, capture.Name)
 			}
 		}
 	}
@@ -11807,6 +11906,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		var branches []movedSet
 		var continues []bool
 		for _, arm := range m.Arms {
+			takePayloads(m.Tag, arm.Binders(), moved)
 			armMoved := cloneMoved(baseline)
 			if len(arm.Binders()) == 0 {
 				restoreTag(armMoved, whole, m.Tag)
@@ -11839,6 +11939,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		borrow := map[*ast.Ident]bool{}
 		dynConsumed := map[*ast.Ident]bool{}
 		fieldTarget := map[*ast.Ident]bool{}
+		// dataRead has each local whose use reads a field of plain value data.
+		dataRead := map[*ast.Ident]bool{}
 		fieldMoves := map[*ast.FieldAccess]bool{}
 		localConsumes := map[*ast.Ident]bool{}
 		immediate := map[*ast.Lambda]bool{}
@@ -11852,6 +11954,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				if id, ok := x.Target.(*ast.Ident); ok {
 					borrow[id] = true
 					fieldTarget[id] = true
+					if t := c.declaredFieldType(c.localUseTypes[id], x.Field); t != nil && c.copyableCallResult(t) {
+						dataRead[id] = true
+					}
 				}
 			case *ast.Index:
 				if id, ok := x.Array.(*ast.Ident); ok {
@@ -11983,14 +12088,25 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		recordUse = func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.Call:
+				before := cloneMoved(moved)
+				var started []ast.Position
 				walkOperand(x.Callee)
 				for _, arg := range x.Args {
 					walkOperand(arg)
+					for name, at := range moved {
+						if prev, had := before[name]; (!had || prev != at) && !inFlight[at] {
+							inFlight[at] = true
+							started = append(started, at)
+						}
+					}
 				}
 				checkCallbackCaptures(x.Callee, moved)
 				for _, arg := range x.Args {
 					checkCallbackCaptures(arg, moved)
 					checkHolderCaptures(arg, moved)
+				}
+				for _, at := range started {
+					delete(inFlight, at)
 				}
 				if lambda, ok := x.Callee.(*ast.Lambda); ok {
 					walkLambda(lambda, true)
@@ -12045,10 +12161,13 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			if !operands[id] {
 				checkCallbackCaptures(id, moved)
+				if !dataRead[id] {
+					checkHolderLoans(id, moved, true)
+				}
 			}
 			if !owned[id.Name] {
-				if localConsumes[id] && localCaptureOwner(id.Name) {
-					moved[id.Name] = id.Pos()
+				if localConsumes[id] && (takers[id.Name] || localCaptureOwner(id.Name)) {
+					moved[takerKey(id.Name)] = id.Pos()
 				}
 				return true
 			}
@@ -12111,6 +12230,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				continue
 			}
 			holder, owner, stale := strings.Cut(name, "#")
+			if strings.HasPrefix(name, "~") {
+				continue
+			}
 			if !stale {
 				c.errfCode(at, "E050", "owned parameter %q is consumed inside a loop; a later iteration would use it after move", name)
 				continue
@@ -12120,7 +12242,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				declared = firstDeclarations(body)
 			}
 			if _, inBody := declared[holder]; !inBody {
-				c.errfCode(at, "E050", "callback %q uses captured owned parameter %q, which is consumed inside a loop; a later iteration would use it after move", holder, owner)
+				c.errfCode(at, "E050", "%q borrows from %q, which is consumed inside a loop; a later iteration would use it after move", holder, owner)
 			}
 		}
 		for _, at := range frame.breaks {
@@ -12177,13 +12299,17 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 						}
 						return
 					}
+					before := cloneMoved(moved)
 					recordExprUses(x.Init, moved)
 					moved[id.Name] = id.Pos()
+					take(x.Name, x.Init, before, moved)
 					return
 				}
 			}
 			admitSupersededFields(x.Init, false)
+			before := cloneMoved(moved)
 			recordExprUses(x.Init, moved)
+			take(x.Name, x.Init, before, moved)
 			dropStaleLoans(moved, x.Name)
 		case *ast.ExprStmt:
 			if asn, ok := x.Expr.(*ast.Assign); ok {
@@ -12199,9 +12325,13 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 						}
 					}
 				}
+				if id, ok := asn.Target.(*ast.Ident); ok {
+					retake(id.Name, moved)
+				}
 				recordExprUses(asn.Value, moved)
 				captureOwner := false
 				if id, ok := asn.Target.(*ast.Ident); ok {
+					delete(moved, "~"+id.Name)
 					dropStaleLoans(moved, id.Name)
 					// A local that a callback captures is in moved only after a consume.
 					_, captureOwner = moved[id.Name]
@@ -12292,6 +12422,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			var branches []movedSet
 			var continues []bool
 			for _, arm := range x.Arms {
+				takePayloads(x.Tag, arm.Binders(), moved)
 				armMoved := cloneMoved(baseline)
 				if len(arm.Binders()) == 0 {
 					restoreTag(armMoved, whole, x.Tag)

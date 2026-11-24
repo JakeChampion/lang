@@ -193,6 +193,28 @@ It is E050 as a call argument after the captured owner moves.
 The captured owner can be an `own` parameter or a fresh local, and the local can get its callback from a function.
 The cases `diag_e050_record_callback_uses_consumed_capture`, `diag_e050_spawned_task_uses_consumed_capture`, `diag_e050_factory_holder_uses_consumed_local` and `diag_e050_task_from_function_uses_consumed_local` cover this rule.
 
+The callback loan is one case of a general rule.
+A local that is not plain value data keeps a loan of each lender that its value reads.
+The value can be a field path, an element, the result of a declared method, a wrapper literal or a match binder.
+For a method result, the lenders are the receiver and the borrowed arguments.
+A use of the local after the consume of a lender is E050: `"h" borrows from "p", and is used after "p" was consumed`.
+The use can be a receiver, an argument, a returned value or a field read.
+The consume of a field path ends only the loans that read that field.
+A copy of plain value data has no lender, and a read before the consume stays valid.
+A read of a plain data field of the local is a copy also.
+
+A local that takes the lender keeps the loan alive.
+`let q = p;`, a literal that holds `p`, a for-each loop over `p` and a match that takes the payloads of `p` each move the value.
+The loan then ends at the consume of that local.
+`q = q.step();` keeps the value in `q`.
+An assignment of a different value to a consumed `q` does not.
+The call that consumes the lender can read the local in another argument, because the call has not started.
+`unsafe { share_unchecked(v) }` gives an alias that has no loan.
+The cases `diag_e050_borrowed_local_after_consume`, `diag_e050_method_result_after_consume` and `borrowed_local_loans`, and `internal/check/checker/testdata/borrowed_local_loans_cases.json`, cover this rule.
+The rule has two limits.
+A loan does not follow the lender through a call result, so `let q = p.step();` ends the loans of `p`.
+A consume in a loop pass does not refuse a use that comes earlier in the next pass.
+
 A fresh local can go to an `own` parameter after a callback has finished borrowing it.
 Both checkers recognize a local callback whose uses are direct calls in its declaring block before the next access to the captured owner.
 For example, after `let n = g();`, the assignment `h = renew(h);` can consume and replace `h` when this was the last call to `g`.
