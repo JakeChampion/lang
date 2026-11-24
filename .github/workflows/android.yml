@@ -45,6 +45,9 @@ name: Android
 # closes the app.
 # examples/android/todo has a text field of std/android/ui: its check types
 # two items with key events, and reads them when the back key closes the app.
+# examples/android/press makes images smaller: its check taps the button
+# that opens the document picker of Android, and requires the empty result
+# of the picker in the app when the back key closes the picker.
 # examples/android/fluid is a fluid simulation in OpenGL ES shaders: its
 # check puts dye on the screen with a swipe, pauses the fluid from the
 # dialog, and saves a picture to the gallery.
@@ -148,6 +151,7 @@ jobs:
           ./bin/fern -target x86-64-linux -o build/android-stopwatch/jnibind tools/jnibind/jnibind.fern
           ./bin/fern -apk build/android-stopwatch/fern-counter.apk examples/android/counter/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-todo.apk examples/android/todo/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-press.apk examples/android/press/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-fluid.apk examples/android/fluid/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-tune.apk examples/android/tune/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-paper.apk examples/android/paper/app.fern
@@ -222,6 +226,7 @@ jobs:
             build/android-stopwatch/fern-counter.apk
             build/android-stopwatch/fern-counter-bundle.apk
             build/android-stopwatch/fern-todo.apk
+            build/android-stopwatch/fern-press.apk
             build/android-stopwatch/fern-fluid.apk
             build/android-stopwatch/fern-tune.apk
             build/android-stopwatch/fern-paper.apk
@@ -335,6 +340,7 @@ jobs:
             adb uninstall dev.fern.counter || true
             python3 examples/android/counter/emulator_check.py build/android-stopwatch/fern-counter-bundle.apk build/android-stopwatch/emulator/counter-bundle || echo "examples/android/counter from its bundle" >> build/android-stopwatch/emulator/failed
             python3 examples/android/todo/emulator_check.py build/android-stopwatch/fern-todo.apk build/android-stopwatch/emulator/todo || echo "examples/android/todo" >> build/android-stopwatch/emulator/failed
+            python3 examples/android/press/emulator_check.py build/android-stopwatch/fern-press.apk build/android-stopwatch/emulator/press || echo "examples/android/press" >> build/android-stopwatch/emulator/failed
             python3 examples/android/fluid/emulator_check.py build/android-stopwatch/fern-fluid.apk build/android-stopwatch/emulator/fluid || echo "examples/android/fluid" >> build/android-stopwatch/emulator/failed
             python3 examples/android/tune/emulator_check.py build/android-stopwatch/fern-tune.apk build/android-stopwatch/emulator/tune || echo "examples/android/tune" >> build/android-stopwatch/emulator/failed
             python3 examples/android/paper/emulator_check.py build/android-stopwatch/fern-paper.apk build/android-stopwatch/fern-notifytest.apk build/android-stopwatch/emulator/paper || echo "examples/android/paper" >> build/android-stopwatch/emulator/failed

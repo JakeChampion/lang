@@ -1,0 +1,293 @@
+// Runs Press on the simulator of std/android/ui/sim, on the host. The
+// device of the tests decodes with std/jpeg, and keeps the files that the
+// app saves and shares in cells. With PRESS_UI_PNG set to a directory, the
+// tests write the screens there as PNG files.
+import "std/android/draw";
+import "std/android/fonts";
+import "std/android/testkit";
+import "std/android/text";
+import "std/android/ui/sim";
+import "std/jpeg";
+import "std/option";
+import "std/result";
+import "std/test";
+import "./pixels";
+import "./press";
+
+function font_dir(): string {
+  if let Ok(_) = read_file_bytes("examples/android/paper/testfonts/Roboto-Regular.ttf") {
+    return "examples/android/paper/testfonts";
+  }
+  return "../paper/testfonts";
+}
+
+function test_fonts(): text.Fonts {
+  let ws = [400, 500, 700];
+  let found: Option[fonts.Found][] = [];
+  for w in ws {
+    found = found.append(fonts.find_in(font_dir(), "Roboto", w));
+  }
+  return text.load(found, ws, (path: string): u8[] => read_file_bytes(path).unwrap_or([]));
+}
+
+// A photo-like image of w by h: soft gradients, with fine detail in a band.
+function photo(w: i32, h: i32): draw.Image {
+  let px: u8[] = [];
+  let seed = 7;
+  for y in 0..h {
+    for x in 0..w {
+      seed = seed * 1103515245 + 12345 & 2147483647;
+      let grain = if (y > h / 3 && y < h / 2) { seed % 61 - 30 } else { 0 };
+      let r = (60 + x * 150 / w + grain).max(0).min(255);
+      let g = (200 - y * 140 / h + grain).max(0).min(255);
+      px = px.append(r as u8).append(g as u8).append(((x + y) * 90 / (w + h) + 40) as u8).append(255u8);
+    }
+  }
+  return draw.Image { width: w, height: h, pixels: px };
+}
+
+// The device of the tests. Each saved or shared file goes in `files`, and
+// `picks` counts the calls of the picker.
+struct Fake { files: Cell[string[]], picks: Cell[i32] }
+
+function fake(): Fake {
+  let none: string[] = [];
+  return Fake { files: cell_new(none), picks: cell_new(0) };
+}
+
+function device(f: Fake, webp_works: boolean): press.Device {
+  return press.Device {
+    pick: (): boolean => {
+      f.picks.set(f.picks.get() + 1);
+      return true;
+    },
+    decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => {
+      let Ok(img) = jpeg.decode_image(bytes) else {
+        return None;
+      };
+      return Some(pixels.resized(draw.Image { width: img.width, height: img.height, pixels: img.pixels }, w, h));
+    },
+    webp: (img: draw.Image, quality: i32, lossless: boolean): Option[u8[]] => {
+      if (!webp_works) {
+        return None;
+      }
+      // A stand-in for the WebP encoder of the phone: a JPEG file, which
+      // the decoder of the tests reads.
+      return jpeg.encode_rgba8(img.width, img.height, img.pixels, jpeg.Options { quality: quality, subsampling: jpeg.S420 }).ok();
+    },
+    save: (name: string, mime: string, bytes: u8[]): boolean => {
+      f.files.set(f.files.get().append("save " + name + " " + mime + " " + bytes.len().to_string()));
+      return true;
+    },
+    share: (name: string, mime: string, bytes: u8[]): boolean => {
+      f.files.set(f.files.get().append("share " + name + " " + mime));
+      return true;
+    },
+  };
+}
+
+function picked(): press.Picked {
+  let img = photo(640, 480);
+  let (pw, ph) = pixels.fit(640, 480, 320);
+  let file = jpeg.encode_rgba8(640, 480, img.pixels, jpeg.Options { quality: 95, subsampling: jpeg.S444 }).unwrap_or([]);
+  return press.Picked { name: "beach.jpg", bytes: file.len(), image: img, preview: pixels.resized(img, pw, ph) };
+}
+
+function started(f: Fake, webp_works: boolean): sim.Sim[press.Model, press.Msg] {
+  return sim.start(press.start(), press.program(device(f, webp_works)), test_fonts(), 1080, 2400, 2.75);
+}
+
+// The app after the person opened the photo and the first encoding ended.
+function opened(f: Fake): sim.Sim[press.Model, press.Msg] {
+  return settled(sim.send(sim.tap(started(f, true), "Open an image"), press.Opened(picked())));
+}
+
+// Lets the ticks pass and the workers end until no encoding waits.
+function settled(own s: sim.Sim[press.Model, press.Msg]): sim.Sim[press.Model, press.Msg] {
+  let t = s;
+  for i in 0..10 {
+    t = sim.jobs_done(sim.after(t, 300i64));
+  }
+  return t;
+}
+
+function saved(s: sim.Sim[press.Model, press.Msg], name: string): void {
+  if let Some(out) = env("PRESS_UI_PNG") {
+    let fr = sim.picture(s);
+    let ok = testkit.save_png(fr, out + "/" + name + ".png");
+    draw.release(fr);
+  }
+}
+
+// A line of the screen starts with `prefix`: a long text wraps.
+function shows_start(s: sim.Sim[press.Model, press.Msg], prefix: string): boolean {
+  for t in sim.texts(s) {
+    if (t.starts_with(prefix)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function output_size(s: sim.Sim[press.Model, press.Msg]): i32 {
+  return match (s.shell.app.output) {
+    Some(out) => out.bytes.len(),
+    None => -1,
+  };
+}
+
+function test_welcome(): test.TestOutcome {
+  let f = fake();
+  let s = sim.tap(started(f, true), "Open an image");
+  saved(s, "welcome");
+  return test.assert_eq(sim.shows(s, "Make images smaller").to_string() + " " + f.picks.get().to_string(), "true 1");
+}
+
+// The first encoding is JPEG at quality 75, smaller than the file of the
+// photo, and the screen tells how much smaller.
+function test_first_encoding(): test.TestOutcome {
+  let f = fake();
+  let s = opened(f);
+  saved(s, "jpeg");
+  let m = s.shell.app;
+  let Some(out) = m.output else {
+    return test.fail("no output");
+  };
+  let Some(p) = m.source else {
+    return test.fail("no source");
+  };
+  let starts_jpeg = out.bytes[0] == 255u8 && out.bytes[1] == 216u8;
+  let line = press.format_name(press.JPEG) + ": " + press.size_text(out.bytes.len()) + " · 640 × 480 · " + press.change_text(p.bytes, out.bytes.len());
+  return test.assert_eq(starts_jpeg.to_string() + " " + (out.bytes.len() < p.bytes).to_string() + " " + sim.shows(s, line).to_string(), "true true true");
+}
+
+// A lower quality gives a smaller file, after the slider stops.
+function test_quality_slider(): test.TestOutcome {
+  let f = fake();
+  let s = opened(f);
+  let at75 = output_size(s);
+  s = settled(sim.slide(s, "Quality", 0.2));
+  let low = output_size(s);
+  return test.assert_eq(s.shell.app.settings.quality.to_string() + " " + (low < at75).to_string(), "21 true");
+}
+
+// The size slider resizes the image before the encoder.
+function test_size_slider(): test.TestOutcome {
+  let f = fake();
+  let s = settled(sim.slide(opened(f), "Size", 0.5));
+  let m = s.shell.app;
+  let Some(out) = m.output else {
+    return test.fail("no output");
+  };
+  return test.assert_eq(m.settings.scale.to_string() + "% " + out.width.to_string() + "x" + out.height.to_string() + " " + sim.shows(s, "Size").to_string(), "55% 352x264 true");
+}
+
+function test_png(): test.TestOutcome {
+  let f = fake();
+  let s = settled(sim.tap(opened(f), "PNG"));
+  saved(s, "png");
+  let Some(out) = s.shell.app.output else {
+    return test.fail("no output");
+  };
+  let png_magic = out.bytes[0] == 137u8 && out.bytes[1] == 80u8;
+  let told = shows_start(s, "PNG keeps each pixel.");
+  return test.assert_eq(png_magic.to_string() + " " + told.to_string() + " " + sim.says(s, "Quality").to_string(), "true true false");
+}
+
+// WebP goes to the encoder of the phone, which the fake device stands in
+// for. A lossless WebP has no quality.
+function test_webp(): test.TestOutcome {
+  let f = fake();
+  let s = settled(sim.tap(opened(f), "WebP"));
+  let ok = output_size(s) > 0 && sim.says(s, "Quality");
+  s = sim.tap(s, "Lossless");
+  return test.assert_eq(ok.to_string() + " " + s.shell.app.settings.lossless.to_string() + " " + sim.says(s, "Quality").to_string(), "true true false");
+}
+
+function test_webp_fails(): test.TestOutcome {
+  let f = fake();
+  let s = settled(sim.send(sim.tap(settled(sim.send(started(f, false), press.Opened(picked()))), "WebP"), press.Tick));
+  return test.assert_eq(shows_start(s, "This phone could not encode WebP."), true);
+}
+
+// The split of the comparison follows the finger: left of it is the
+// original, and right of it is the output.
+function test_split(): test.TestOutcome {
+  let f = fake();
+  let s = sim.send(opened(f), press.Split(0.25));
+  let m = s.shell.app;
+  let Some(p) = m.source else {
+    return test.fail("no source");
+  };
+  let Some(out) = m.output else {
+    return test.fail("no output");
+  };
+  let y = p.preview.height / 2;
+  let left = m.shown.pixel(10, y) == p.preview.pixel(10, y);
+  let right = m.shown.pixel(300, y) == out.preview.pixel(300, y);
+  return test.assert_eq(left.to_string() + " " + right.to_string() + " " + m.split.to_string(), "true true 0.25");
+}
+
+function test_save_and_share(): test.TestOutcome {
+  let f = fake();
+  let s = sim.tap(sim.tap(opened(f), "WebP"), "Save");
+  let waited = shows_start(s, "Press is still making the image.");
+  s = sim.tap(sim.tap(settled(s), "OK"), "Save");
+  saved(s, "saved");
+  s = sim.tap(sim.tap(s, "OK"), "Share");
+  let size = output_size(s);
+  return test.assert_eq(waited.to_string() + " " + f.files.get().join("|"), "true save beach.webp image/webp " + size.to_string() + "|share beach.webp image/webp");
+}
+
+function test_back(): test.TestOutcome {
+  let f = fake();
+  let s = sim.back(opened(f));
+  let closed = sim.shows(s, "Make images smaller");
+  return test.assert_eq(closed.to_string() + " " + sim.finished(sim.back(s)).to_string(), "true true");
+}
+
+function test_dark(): test.TestOutcome {
+  let f = fake();
+  let s = sim.themed(opened(f), true);
+  saved(s, "jpeg-dark");
+  return test.assert_eq(sim.shows(s, "Original: " + press.size_text(picked().bytes) + " · 640 × 480"), true);
+}
+
+function test_texts(): test.TestOutcome {
+  let names = [press.file_name(press.Model { ...press.start(), source: Some(picked()) }, press.WEBP), press.size_text(999), press.size_text(51234), press.size_text(512345), press.size_text(2405000), press.size_text(1000000), press.change_text(1000, 210), press.change_text(1000, 1040), press.change_text(10, 10)];
+  return test.assert_eq(names.join("|"), "beach.webp|999 B|51.2 KB|512 KB|2.41 MB|1.00 MB|79% smaller|4% bigger|the same size");
+}
+
+function test_pixels(): test.TestOutcome {
+  let (a, b) = pixels.fit(4000, 3000, 960);
+  let (c, d) = pixels.fit(300, 4000, 960);
+  let (e, g) = pixels.scaled_size(4000, 3000, 25);
+  let half = draw.Image { width: 1, height: 1, pixels: [64u8, 32u8, 0u8, 128u8] };
+  let white = pixels.on_white(half);
+  let straight = pixels.unpremultiplied(half);
+  let flat = pixels.resized(photo(64, 64), 16, 16);
+  let got = [a, b, c, d, e, g, white[0] as i32, white[1] as i32, white[3] as i32, straight[0] as i32, straight[1] as i32, straight[3] as i32, flat.width, flat.pixels.len()];
+  let text: string[] = [];
+  for v in got {
+    text = text.append(v.to_string());
+  }
+  return test.assert_eq(text.join(" "), "960 720 72 960 1000 750 191 159 255 128 64 128 16 1024");
+}
+
+function main(): i32 {
+  let r = test.new("examples/android/press");
+  r = r.it("the welcome screen opens the picker", test_welcome);
+  r = r.it("the first encoding is a smaller JPEG", test_first_encoding);
+  r = r.it("a lower quality gives a smaller file", test_quality_slider);
+  r = r.it("the size slider resizes the image", test_size_slider);
+  r = r.it("PNG keeps each pixel and has no quality", test_png);
+  r = r.it("WebP goes to the encoder of the phone", test_webp);
+  r = r.it("a phone with no WebP encoder gives a note", test_webp_fails);
+  r = r.it("the split shows the original and the output", test_split);
+  r = r.it("save and share give the file to the phone", test_save_and_share);
+  r = r.it("the back key closes the image, then the app", test_back);
+  r = r.it("the dark theme", test_dark);
+  r = r.it("the texts of sizes and names", test_texts);
+  r = r.it("the work on pixels", test_pixels);
+  return r.finish();
+}

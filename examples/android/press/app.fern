@@ -1,0 +1,79 @@
+// Press with no Java code of its own. NativeActivity loads this library
+// and calls ANativeActivity_onCreate, and std/android/ui/app runs the
+// program of press.fern with the device of device.fern.
+import "std/android";
+import "std/android/draw";
+import "std/android/image";
+import "std/android/launch";
+import "std/android/ui/app";
+import "std/log";
+import "./device";
+import "./pixels";
+import "./press";
+
+pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
+  launch.start(activity, app_main_entry());
+}
+
+@jni("dev.fern.press.MainActivity extends android.app.NativeActivity", "void onActivityResult(int, int, android.content.Intent)")
+pub function activity_result(env: usize, thiz: usize, request: i32, result: i32, data: usize): void {
+  if (request == device.REQUEST) {
+    device.picked(env, result, data);
+  }
+}
+
+@callback("app_main")
+function app_main_entry(): usize;
+
+// The message for the image of the document `uri`. An image of more than
+// image.MAX_PIXELS pixels opens at the largest size that has fewer.
+function opened(ctx: usize, uri: usize, dir: string): press.Msg {
+  let (name, bytes) = match (device.read(ctx, uri, dir)) {
+    Ok(got) => got,
+    Err(note) => {
+      return press.OpenFailed(note);
+    },
+  };
+  let Some((w0, h0)) = image.size(bytes) else {
+    return press.OpenFailed("Android cannot read " + name + " as an image.");
+  };
+  let (w, h) = (w0, h0);
+  while (w as i64 * (h as i64) > image.MAX_PIXELS as i64) {
+    w = w * 3 / 4;
+    h = h * 3 / 4;
+  }
+  let (pw, ph) = pixels.fit(w, h, press.PREVIEW);
+  let full = if (w == w0) { image.decode(bytes) } else { image.decode_cover(bytes, w, h) };
+  let Some(img) = full else {
+    return press.OpenFailed("Android cannot read " + name + " as an image.");
+  };
+  let preview = image.decode_cover(bytes, pw, ph).unwrap_or(pixels.resized(img, pw, ph));
+  return press.Opened(press.Picked { name: name, bytes: bytes.len(), image: img, preview: preview });
+}
+
+function app_main(ctx: usize): usize {
+  let dir = android.cache_dir(ctx);
+  let d = press.Device {
+    pick: (): boolean => device.pick(ctx),
+    decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => image.decode_cover(bytes, w, h),
+    webp: (img: draw.Image, quality: i32, lossless: boolean): Option[u8[]] => image.encode(img, if (lossless) { image.WebpLossless } else { image.Webp }, if (lossless) { 75 } else { quality }),
+    save: (name: string, mime: string, bytes: u8[]): boolean => device.save(ctx, name, mime, bytes),
+    share: (name: string, mime: string, bytes: u8[]): boolean => device.share(ctx, name, mime, bytes),
+  };
+  let base = press.program(d);
+  let p = base.with_system((event: android.Event): Option[press.Msg] => {
+    if let android.Posted(kind, uri) = event {
+      if (kind == device.PICKED) {
+        if (uri == 0 as usize) {
+          log.info("press: no image chosen");
+          return None;
+        }
+        return Some(opened(ctx, uri, dir));
+      }
+    }
+    return base.system(event);
+  });
+  let last = app.run(ctx, press.start(), p);
+  log.info("press: closed");
+  return 0 as usize;
+}

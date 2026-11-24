@@ -1,0 +1,85 @@
+// The Huffman tables of the encoder for symbol counts whose optimal codes
+// are longer than the 16 bits of a JPEG table. It needs an image of some
+// thousands of blocks, so only the compiled gates run it.
+import "std/jpeg";
+import "std/test";
+
+// Pixels with noise in their top half, which give the encoder symbol counts
+// whose optimal codes are longer than 16 bits.
+function noisy(w: i32, h: i32): u8[] {
+  let px: u8[] = [];
+  let seed = 12345;
+  for y in 0..h {
+    for x in 0..w {
+      seed = seed * 1103515245 + 12345 & 2147483647;
+      let n = if (y < h / 2) { seed % 257 - 128 } else { 0 };
+      let v = (x + y) / 4 + 64 + n;
+      let c = if (v < 0) { 0 } else if (v > 255) { 255 } else { v };
+      px = px.append(c as u8).append((255 - c) as u8).append((c / 2) as u8).append(255u8);
+    }
+  }
+  return px;
+}
+
+function encoded(w: i32, h: i32, px: u8[], quality: i32, sub: jpeg.Subsampling): u8[] {
+  match (jpeg.encode_rgba8(w, h, px, jpeg.Options { quality: quality, subsampling: sub })) {
+    Ok(file) => {
+      return file;
+    },
+    Err(_) => {
+      return [];
+    }
+  }
+}
+
+function decodes(file: u8[]): boolean {
+  return match (jpeg.decode_image(file)) {
+    Ok(img) => img.width == 256 && img.height == 256,
+    Err(_) => false,
+  };
+}
+
+// The offset of the first segment with `marker`, or -1.
+function segment_at(file: u8[], marker: i32): i32 {
+  let i = 2;
+  while (i + 4 <= file.len() && file[i] == 255u8) {
+    if (file[i + 1] as i32 == marker) {
+      return i;
+    }
+    i += 2 + (file[i + 2] as i32 << 8 | file[i + 3] as i32);
+  }
+  return -1;
+}
+
+// Each Huffman table has codes of at most 16 bits that leave a code free,
+// and the length of the segment agrees with the counts of the tables.
+function test_encode_huffman_tables(): test.TestOutcome {
+  let file = encoded(256, 256, noisy(256, 256), 100, jpeg.S444);
+  let at = segment_at(file, 196);
+  if (at < 0) {
+    return test.fail("no Huffman tables");
+  }
+  let end = at + 2 + (file[at + 2] as i32 << 8 | file[at + 3] as i32);
+  let p = at + 4;
+  let tables = 0;
+  let good = true;
+  while (p < end) {
+    let space = 0;
+    let n = 0;
+    for len in 1..17 {
+      let count = file[p + len] as i32;
+      n += count;
+      space += count << 16 - len;
+    }
+    good = good && space < 65536;
+    p += 17 + n;
+    tables += 1;
+  }
+  return test.assert_eq(good && p == end && tables == 4 && decodes(file), true);
+}
+
+function main(): i32 {
+  let r = test.new("std/jpeg Huffman tables");
+  r = r.it("codes of at most 16 bits", test_encode_huffman_tables);
+  return r.finish();
+}

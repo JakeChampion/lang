@@ -1,6 +1,6 @@
-# Android image decoder
+# Android image decoder and encoder
 
-This module decodes JPEG, PNG, WebP, GIF and HEIF images with the NDK image decoder, for a NativeActivity app of `std/android`.
+This module decodes and encodes images for a NativeActivity app of `std/android`. The NDK image decoder reads JPEG, PNG, WebP, GIF and HEIF images. The NDK bitmap encoder writes JPEG, PNG and WebP images.
 
 ## Model
 
@@ -10,7 +10,9 @@ This module decodes JPEG, PNG, WebP, GIF and HEIF images with the NDK image deco
 
 `size` reads only the header of an image.
 
-The module needs API level 30, for `AImageDecoder`. A bad image, a format that the platform does not decode, or an image of more than `MAX_PIXELS` pixels gives `None`.
+`encode` writes a `draw.Image` as a file of a `Format`, with `AndroidBitmap_compress` of `libjnigraphics.so`. The quality is from 0 to 100. A lossless format ignores it.
+
+The module needs API level 30, for `AImageDecoder` and `AndroidBitmap_compress`. A bad image, a format that the platform does not decode, or an image of more than `MAX_PIXELS` pixels gives `None`.
 
 ## Contracts
 
@@ -25,6 +27,8 @@ The functions use no state, so they can run on any thread of the app. They call 
 <<C functions>>
 
 <<decoding>>
+
+<<encoding>>
 ```
 
 ### `module introduction`
@@ -64,6 +68,9 @@ function c_set_size(decoder: usize, width: i32, height: i32): i32;
 
 @import("libjnigraphics.so", "AImageDecoder_decodeImage")
 function c_decode(decoder: usize, pixels: usize, stride: usize, size: usize): i32;
+
+@import("libjnigraphics.so", "AndroidBitmap_compress")
+function c_compress(info: usize, dataspace: i32, pixels: usize, format: i32, quality: i32, context: usize, write: usize): i32;
 
 const SUCCESS: i32 = 0;
 
@@ -140,9 +147,7 @@ function decode_at(d: Decoder, w: i32, h: i32): Option[draw.Image] {
       return None;
     }
     let px = __alloc_u8(n);
-    for i in 0..n {
-      px = px.with(i, __load_u8(buf + i as usize) as u8);
-    }
+    __memcpy(__bytes_data(px), buf, n);
     __free(buf, n);
     return Some(draw.Image { width: w, height: h, pixels: px });
   }
@@ -169,5 +174,101 @@ pub function decode_cover(bytes: [u8], w: i32, h: i32): Option[draw.Image] {
   let img = decode_at(d, tw, th);
   close(d);
   return img;
+}
+```
+
+### `encoding`
+
+`AndroidBitmap_compress` gives the bytes of the file to a write function, in parts. `written` puts each part in a C buffer that grows: the buffer is a header of three words, the address, the length and the capacity of the bytes. The function runs on the thread of `encode`, before `AndroidBitmap_compress` returns.
+
+The `AndroidBitmapInfo` is the width, the height and the stride as 32-bit words, then the format and the flags. A flag of 0 tells that the alpha is multiplied in. The data space is `ADATASPACE_SRGB`.
+
+```fern
+<<encoding>>=
+// The formats of `encode`, with the numbers of AndroidBitmapCompressFormat.
+pub enum Format { Jpeg, Png, Webp, WebpLossless }
+
+function format_number(f: Format): i32 {
+  match (f) {
+    Jpeg => {
+      return 0;
+    },
+    Png => {
+      return 1;
+    },
+    Webp => {
+      return 3;
+    },
+    WebpLossless => {
+      return 4;
+    }
+  }
+}
+
+const SRGB: i32 = 142671872;
+
+@callback("written")
+function written_entry(): usize;
+
+// Adds the `size` bytes at `data` to the buffer `out`.
+function written(out: usize, data: usize, size: usize): u8 {
+  unsafe {
+    let at: usize = __load_ptr(out);
+    let len: usize = __load_ptr(out + 8 as usize);
+    let cap: usize = __load_ptr(out + 16 as usize);
+    if (len + size > cap) {
+      let more: usize = (len + size) * (2 as usize);
+      let grown: usize = __alloc(more as i32);
+      if (len > 0 as usize) {
+        __memcpy(grown, at, len as i32);
+        __free(at, cap as i32);
+      }
+      __store_ptr(out, grown);
+      __store_ptr(out + 16 as usize, more);
+      at = grown;
+    }
+    __memcpy(at + len, data, size as i32);
+    __store_ptr(out + 8 as usize, len + size);
+  }
+  return 1u8;
+}
+
+// The file of `img` in the format `f` at `quality` from 0 to 100, or None
+// when the platform does not encode it.
+pub function encode(img: draw.Image, f: Format, quality: i32): Option[u8[]] {
+  let n = img.width * img.height * 4;
+  if (img.width <= 0 || img.height <= 0 || img.pixels.len() != n) {
+    return None;
+  }
+  unsafe {
+    let info: usize = __alloc(20);
+    __store_i32(info, img.width);
+    __store_i32(info + 4 as usize, img.height);
+    __store_i32(info + 8 as usize, img.width * 4);
+    __store_i32(info + 12 as usize, RGBA_8888);
+    __store_i32(info + 16 as usize, 0);
+    let pixels: usize = __alloc(n);
+    __memcpy(pixels, __bytes_data(img.pixels), n);
+    let out: usize = __alloc(24);
+    __store_ptr(out, 0 as usize);
+    __store_ptr(out + 8 as usize, 0 as usize);
+    __store_ptr(out + 16 as usize, 0 as usize);
+    let rc = c_compress(info, SRGB, pixels, format_number(f), quality, out, written_entry());
+    __free(pixels, n);
+    __free(info, 20);
+    let at: usize = __load_ptr(out);
+    let len = __load_ptr(out + 8 as usize) as i32;
+    let cap = __load_ptr(out + 16 as usize) as i32;
+    __free(out, 24);
+    let bytes = __alloc_u8(len);
+    if (len > 0) {
+      __memcpy(__bytes_data(bytes), at, len);
+      __free(at, cap);
+    }
+    if (rc != SUCCESS || len == 0) {
+      return None;
+    }
+    return Some(bytes);
+  }
 }
 ```

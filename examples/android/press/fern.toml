@@ -1,0 +1,10 @@
+# The settings of `fern -apk` for Press. API level 30 has the image
+# decoder and the bitmap encoder of the NDK.
+[package]
+name = "press"
+lib = "app.fern"
+
+[android]
+package = "dev.fern.press"
+label = "Press"
+min_sdk = 30

@@ -1,0 +1,246 @@
+// The work that Press does on pixels: sizes, resizing, alpha and the
+// picture that compares two images. The images have the alpha multiplied
+// in, as std/android/image decodes them. Nothing here calls Android, so a
+// worker can run it and the tests run it on the host.
+import "std/android/draw";
+import "std/f64";
+
+// The size of an image of w by h in a box of `most` by `most`, with its
+// shape kept. A smaller image keeps its size.
+pub function fit(w: i32, h: i32, most: i32): (i32, i32) {
+  if (w <= most && h <= most) {
+    return (w, h);
+  }
+  if (w >= h) {
+    return (most, at_least_one(((h as i64 * (most as i64) + (w / 2) as i64) / (w as i64)) as i32));
+  }
+  return (at_least_one(((w as i64 * (most as i64) + (h / 2) as i64) / (h as i64)) as i32), most);
+}
+
+function at_least_one(n: i32): i32 {
+  if (n < 1) {
+    return 1;
+  }
+  return n;
+}
+
+// The size of an image of w by h at `percent` of its sides.
+pub function scaled_size(w: i32, h: i32, percent: i32): (i32, i32) {
+  if (percent >= 100) {
+    return (w, h);
+  }
+  return (at_least_one((w * percent + 50) / 100), at_least_one((h * percent + 50) / 100));
+}
+
+// Each alpha of `img` is 255.
+pub function opaque(img: draw.Image): boolean {
+  let px = img.pixels;
+  let i = 3;
+  while (i < px.len()) {
+    if (px[i] != 255u8) {
+      return false;
+    }
+    i += 4;
+  }
+  return true;
+}
+
+// The pixels of `img` over white, as RGBA with each alpha 255: the format of
+// a file with no alpha, such as JPEG.
+pub function on_white(img: draw.Image): u8[] {
+  let px = img.pixels;
+  let out = __alloc_u8(px.len());
+  let i = 0;
+  while (i + 3 < px.len()) {
+    let white = 255 - px[i + 3] as i32;
+    out = out.with(i, add_255(px[i] as i32 + white)).with(i + 1, add_255(px[i + 1] as i32 + white)).with(i + 2, add_255(px[i + 2] as i32 + white)).with(i + 3, 255u8);
+    i += 4;
+  }
+  return out;
+}
+
+function add_255(v: i32): u8 {
+  if (v > 255) {
+    return 255u8;
+  }
+  return v as u8;
+}
+
+// The RGB pixels of `img`, with no alpha.
+pub function rgb(img: draw.Image): u8[] {
+  let px = img.pixels;
+  let n = px.len() / 4;
+  let out = __alloc_u8(n * 3);
+  for i in 0..n {
+    out = out.with(i * 3, px[i * 4]).with(i * 3 + 1, px[i * 4 + 1]).with(i * 3 + 2, px[i * 4 + 2]);
+  }
+  return out;
+}
+
+// The RGBA pixels of `img` with the alpha not multiplied in, as a PNG file
+// keeps them.
+pub function unpremultiplied(img: draw.Image): u8[] {
+  let px = img.pixels;
+  let out = __alloc_u8(px.len());
+  let i = 0;
+  while (i + 3 < px.len()) {
+    let a = px[i + 3] as i32;
+    if (a == 255 || a == 0) {
+      out = out.with(i, px[i]).with(i + 1, px[i + 1]).with(i + 2, px[i + 2]).with(i + 3, px[i + 3]);
+    } else {
+      out = out.with(i, add_255((px[i] as i32 * 255 + a / 2) / a)).with(i + 1, add_255((px[i + 1] as i32 * 255 + a / 2) / a)).with(i + 2, add_255((px[i + 2] as i32 * 255 + a / 2) / a)).with(i + 3, a as u8);
+    }
+    i += 4;
+  }
+  return out;
+}
+
+// The weights of a filter from `src` samples to `dst` samples: for each
+// output sample, the first input sample and `taps` weights that add up to
+// 1 << 14.
+struct Taps { first: i32[], weights: i32[], taps: i32 }
+
+const ONE: i32 = 16384;
+
+// The Lanczos filter with three lobes.
+function lanczos3(x: f64): f64 {
+  let a = x.abs();
+  if (a < 0.000001) {
+    return 1.0;
+  }
+  if (a >= 3.0) {
+    return 0.0;
+  }
+  let p = 3.14159265358979 * a;
+  return 3.0 * p.sin() * (p / 3.0).sin() / (p * p);
+}
+
+function taps_for(src: i32, dst: i32): Taps {
+  let scale = src as f64 / (dst as f64);
+  let wide = scale.max(1.0);
+  let support = 3.0 * wide;
+  let taps = (support * 2.0).ceil() as i32 + 1;
+  let first: i32[] = [];
+  let weights: i32[] = [];
+  for i in 0..dst {
+    let center = (i as f64 + 0.5) * scale;
+    let start = (center - support).floor() as i32;
+    let raw: f64[] = [];
+    let sum = 0.0;
+    for k in 0..taps {
+      let x = start + k;
+      let w = if (x < 0 || x >= src) { 0.0 } else { lanczos3((x as f64 + 0.5 - center) / wide) };
+      raw = raw.append(w);
+      sum += w;
+    }
+    let fixed: i32[] = [];
+    let total = 0;
+    let best = 0;
+    for k in 0..taps {
+      let w = (raw[k] / sum * (ONE as f64)).round() as i32;
+      fixed = fixed.append(w);
+      total += w;
+      if (raw[k] > raw[best]) {
+        best = k;
+      }
+    }
+    fixed = fixed.with(best, fixed[best] + ONE - total);
+    first = first.append(start);
+    for w in fixed {
+      weights = weights.append(w);
+    }
+  }
+  return Taps { first: first, weights: weights, taps: taps };
+}
+
+function clamp(v: i32, lo: i32, hi: i32): i32 {
+  if (v < lo) {
+    return lo;
+  }
+  if (v > hi) {
+    return hi;
+  }
+  return v;
+}
+
+function sample(sum: i32): u8 {
+  return clamp(sum + ONE / 2 >> 14, 0, 255) as u8;
+}
+
+// `img` at w by h, with a Lanczos filter of three lobes: first across each
+// row, then down each column.
+pub function resized(img: draw.Image, w: i32, h: i32): draw.Image {
+  if (w == img.width && h == img.height) {
+    return img;
+  }
+  let across = across_rows(img.pixels, img.width, img.height, taps_for(img.width, w), w);
+  return draw.Image { width: w, height: h, pixels: down_columns(across, w, img.height, taps_for(img.height, h), h) };
+}
+
+function across_rows(px: [u8], w0: i32, h0: i32, t: Taps, w: i32): u8[] {
+  let out = __alloc_u8(w * h0 * 4);
+  for y in 0..h0 {
+    let row = y * w0;
+    for x in 0..w {
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let a = 0;
+      let start = t.first[x];
+      for k in 0..t.taps {
+        let wk = t.weights[x * t.taps + k];
+        if (wk != 0) {
+          let at = (row + clamp(start + k, 0, w0 - 1)) * 4;
+          r += px[at] as i32 * wk;
+          g += px[at + 1] as i32 * wk;
+          b += px[at + 2] as i32 * wk;
+          a += px[at + 3] as i32 * wk;
+        }
+      }
+      let to = (y * w + x) * 4;
+      out = out.with(to, sample(r)).with(to + 1, sample(g)).with(to + 2, sample(b)).with(to + 3, sample(a));
+    }
+  }
+  return out;
+}
+
+function down_columns(px: [u8], w: i32, h0: i32, t: Taps, h: i32): u8[] {
+  let out = __alloc_u8(w * h * 4);
+  let stride = w * 4;
+  for y in 0..h {
+    let start = t.first[y];
+    for i in 0..stride {
+      let sum = 0;
+      for k in 0..t.taps {
+        let wk = t.weights[y * t.taps + k];
+        if (wk != 0) {
+          sum += px[clamp(start + k, 0, h0 - 1) * stride + i] as i32 * wk;
+        }
+      }
+      out = out.with(y * stride + i, sample(sum));
+    }
+  }
+  return out;
+}
+
+// The picture that compares `before` and `after`, of the same size: the
+// part of `before` left of `split`, from 0 to 1 of the width, the part of
+// `after` right of it, and a white line between them.
+pub function compared(before: draw.Image, after: draw.Image, split: f64): draw.Image {
+  if (after.width != before.width || after.height != before.height) {
+    return before;
+  }
+  let w = before.width;
+  let at = clamp((split * (w as f64)).round() as i32, 0, w);
+  let out = __alloc_u8(w * before.height * 4);
+  for y in 0..before.height {
+    let row = y * w * 4;
+    out = __bytes_into(out, row, before.pixels, row, at * 4);
+    out = __bytes_into(out, row + at * 4, after.pixels, row + at * 4, (w - at) * 4);
+    for x in clamp(at - 1, 0, w)..clamp(at + 1, 0, w) {
+      let p = row + x * 4;
+      out = out.with(p, 255u8).with(p + 1, 255u8).with(p + 2, 255u8).with(p + 3, 255u8);
+    }
+  }
+  return draw.Image { width: w, height: before.height, pixels: out };
+}

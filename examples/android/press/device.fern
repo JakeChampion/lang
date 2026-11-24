@@ -1,0 +1,243 @@
+// What Press does through Android: it lets the person choose an image,
+// reads the image, and puts files in the gallery and in the share sheet.
+import "std/android";
+import "std/jni";
+import "std/result";
+
+// The `android.tell` kind of the result of the picker.
+pub const PICKED: i32 = 0x50525350;
+
+// The request code of the picker in onActivityResult.
+pub const REQUEST: i32 = 7311;
+
+// The folder of the files of Press in the gallery.
+pub const FOLDER: string = "Pictures/Press";
+
+// The most bytes of an image file that Press reads.
+const MOST_BYTES: i64 = 268435456i64;
+
+const INTENT: string = "Landroid/content/Intent;";
+
+// The JNI functions PushLocalFrame and PopLocalFrame.
+const PUSH_FRAME: i32 = 19;
+
+const POP_FRAME: i32 = 20;
+
+function healthy(e: usize, ref: usize): boolean {
+  return jni.check(e).is_ok() && ref != 0 as usize;
+}
+
+function made(e: usize, class: string, sig: string, values: usize[]): usize {
+  let cls = jni.find_class(e, class);
+  if (!healthy(e, cls)) {
+    return 0 as usize;
+  }
+  let ctor = jni.get_method_id(e, cls, "<init>", sig);
+  if (!healthy(e, ctor)) {
+    return 0 as usize;
+  }
+  let args = jni.jvalues(values);
+  let obj = jni.new_object_a(e, cls, ctor, args);
+  jni.free_buffer(args);
+  return if (healthy(e, obj)) { obj } else { 0 as usize };
+}
+
+// Runs `body` in a frame of local references, which Android frees after it.
+function framed(e: usize, refs: i32, body: () => boolean): boolean {
+  unsafe {
+    if (jni.call1(e, PUSH_FRAME, refs as usize) as i32 != 0) {
+      jni.exception_clear(e);
+      return false;
+    }
+    let ok = body();
+    let popped = jni.call1(e, POP_FRAME, 0 as usize);
+    return ok;
+  }
+}
+
+// Shows the picker of documents of Android for one image. The result comes
+// to onActivityResult, which gives it to `picked`.
+pub function pick(ctx: usize): boolean {
+  if (android.detached(ctx)) {
+    return false;
+  }
+  let e = android.env(ctx);
+  return framed(e, 16, (): boolean => {
+    let intent = made(e, "android/content/Intent", "(Ljava/lang/String;)V", [jni.new_string(e, "android.intent.action.OPEN_DOCUMENT")]);
+    if (intent == 0 as usize) {
+      return false;
+    }
+    let category = jni.new_string(e, "android.intent.category.OPENABLE");
+    let kind = jni.new_string(e, "image/*");
+    return healthy(e, jni.call_object(e, intent, "addCategory", "(Ljava/lang/String;)" + INTENT, [category]))
+      && healthy(e, jni.call_object(e, intent, "setType", "(Ljava/lang/String;)" + INTENT, [kind]))
+      && jni.call_void(e, android.activity_object(ctx), "startActivityForResult", "(" + INTENT + "I)V", [intent, REQUEST as usize]);
+  });
+}
+
+// Gives the URI of the chosen image to the loop of the app as a global
+// reference, or 0 when the person chose nothing.
+pub function picked(e: usize, result: i32, data: usize): void {
+  if (result != -1 || data == 0 as usize) {
+    let told = android.tell(e, PICKED, 0 as usize);
+    return;
+  }
+  let uri = jni.call_object(e, data, "getData", "()Landroid/net/Uri;", []);
+  let ref = if (healthy(e, uri)) { jni.new_global_ref(e, uri) } else { 0 as usize };
+  if (!android.tell(e, PICKED, ref) && ref != 0 as usize) {
+    jni.delete_global_ref(e, ref);
+  }
+}
+
+// The display name and the bytes of the document `uri`, a global
+// reference that this function deletes. The bytes go through a file in
+// `dir`, as Java copies them in parts.
+pub function read(ctx: usize, uri: usize, dir: string): Result[(string, u8[]), string] {
+  let e = android.env(ctx);
+  defer jni.delete_global_ref(e, uri);
+  let path = dir + "/press-picked";
+  let name = cell_new("");
+  let copied = framed(e, 32, (): boolean => {
+    let resolver = jni.call_object(e, android.activity_object(ctx), "getContentResolver", "()Landroid/content/ContentResolver;", []);
+    if (!healthy(e, resolver)) {
+      return false;
+    }
+    name.set(display_name(e, resolver, uri));
+    let input = jni.call_object(e, resolver, "openInputStream", "(Landroid/net/Uri;)Ljava/io/InputStream;", [uri]);
+    if (!healthy(e, input)) {
+      return false;
+    }
+    let ok = copy_to(e, input, path);
+    let closed = jni.call_void(e, input, "close", "()V", []);
+    return ok;
+  });
+  if (!copied) {
+    let removed = remove_file(path);
+    return Err("Press could not read the image.");
+  }
+  let bytes = read_file_bytes(path);
+  let removed = remove_file(path);
+  return match (bytes) {
+    Ok(b) => Ok((if (name.get().len() > 0) { name.get() } else { "image" }, b)),
+    Err(_) => Err("Press could not read the image."),
+  };
+}
+
+function display_name(e: usize, resolver: usize, uri: usize): string {
+  let cols = jni.string_array(e, ["_display_name"]);
+  let cursor = jni.call_object(e, resolver, "query", "(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;", [uri, cols, 0 as usize, 0 as usize, 0 as usize]);
+  if (!healthy(e, cursor)) {
+    return "";
+  }
+  defer jni.call_void(e, cursor, "close", "()V", []);
+  let cls = jni.get_object_class(e, cursor);
+  let first = jni.call_boolean_method_a(e, cursor, jni.get_method_id(e, cls, "moveToFirst", "()Z"), 0 as usize);
+  if (!jni.check(e).is_ok() || first == 0) {
+    return "";
+  }
+  let text = jni.call_object(e, cursor, "getString", "(I)Ljava/lang/String;", [0 as usize]);
+  return if (healthy(e, text)) { jni.string_of(e, text) } else { "" };
+}
+
+// Copies the Java InputStream `input` to the file `path`, in parts of 64 KB.
+function copy_to(e: usize, input: usize, path: string): boolean {
+  let buffer = jni.new_byte_array(e, 65536);
+  let out = made(e, "java/io/FileOutputStream", "(Ljava/lang/String;)V", [jni.new_string(e, path)]);
+  if (!healthy(e, buffer) || out == 0 as usize) {
+    return false;
+  }
+  let read = jni.get_method_id(e, jni.get_object_class(e, input), "read", "([B)I");
+  let args = jni.jvalues([buffer]);
+  defer jni.free_buffer(args);
+  let total = 0i64;
+  let good = healthy(e, read);
+  while (good) {
+    let n = jni.call_int_method_a(e, input, read, args);
+    if (jni.check(e).is_err()) {
+      good = false;
+    } else if (n < 0) {
+      break;
+    } else {
+      total += n as i64;
+      good = total <= MOST_BYTES && jni.call_void(e, out, "write", "([BII)V", [buffer, 0 as usize, n as usize]);
+    }
+  }
+  let closed = jni.call_void(e, out, "close", "()V", []);
+  return good && closed && total > 0i64;
+}
+
+// Writes `bytes` to the Java OutputStream `out`, in parts of 64 KB.
+function write_all(e: usize, out: usize, bytes: [u8]): boolean {
+  let part = 65536;
+  let chunk = jni.new_byte_array(e, part);
+  let ok = healthy(e, chunk);
+  let at = 0;
+  while (ok && at < bytes.len()) {
+    let size = (bytes.len() - at).min(part);
+    jni.set_byte_array_region(e, chunk, 0, bytes[at:at + size]);
+    ok = jni.call_void(e, out, "write", "([BII)V", [chunk, 0 as usize, size as usize]);
+    at += size;
+  }
+  return jni.call_void(e, out, "close", "()V", []) && ok;
+}
+
+// Puts the file `bytes` in the gallery with the name `name` and the MIME
+// type `mime`, through the MediaStore. The app needs no permission for a
+// file that it adds. It gives the content URI of the file as a local
+// reference, or 0 when Android does not take the file.
+function insert(ctx: usize, e: usize, name: string, mime: string, bytes: [u8]): usize {
+  let resolver = jni.call_object(e, android.activity_object(ctx), "getContentResolver", "()Landroid/content/ContentResolver;", []);
+  let values = made(e, "android/content/ContentValues", "()V", []);
+  let media = jni.find_class(e, "android/provider/MediaStore$Images$Media");
+  if (!healthy(e, resolver) || values == 0 as usize || !healthy(e, media)) {
+    return 0 as usize;
+  }
+  for (k, v) in [("_display_name", name), ("mime_type", mime), ("relative_path", FOLDER)] {
+    let put = jni.call_void(e, values, "put", "(Ljava/lang/String;Ljava/lang/String;)V", [jni.new_string(e, k), jni.new_string(e, v)]);
+  }
+  let base = jni.get_static_object_field(e, media, jni.get_static_field_id(e, media, "EXTERNAL_CONTENT_URI", "Landroid/net/Uri;"));
+  let uri = jni.call_object(e, resolver, "insert", "(Landroid/net/Uri;Landroid/content/ContentValues;)Landroid/net/Uri;", [base, values]);
+  if (!healthy(e, uri)) {
+    return 0 as usize;
+  }
+  let out = jni.call_object(e, resolver, "openOutputStream", "(Landroid/net/Uri;)Ljava/io/OutputStream;", [uri]);
+  if (!healthy(e, out) || !write_all(e, out, bytes)) {
+    let args = jni.jvalues([uri, 0 as usize, 0 as usize]);
+    let deleted = jni.call_int_method_a(e, resolver, jni.get_method_id(e, jni.get_object_class(e, resolver), "delete", "(Landroid/net/Uri;Ljava/lang/String;[Ljava/lang/String;)I"), args);
+    jni.free_buffer(args);
+    jni.exception_clear(e);
+    return 0 as usize;
+  }
+  return uri;
+}
+
+pub function save(ctx: usize, name: string, mime: string, bytes: u8[]): boolean {
+  let e = android.env(ctx);
+  return framed(e, 32, (): boolean => insert(ctx, e, name, mime, bytes) != 0 as usize);
+}
+
+// Saves the file, then gives it to the app that the person picks in the
+// share sheet of Android.
+pub function share(ctx: usize, name: string, mime: string, bytes: u8[]): boolean {
+  let e = android.env(ctx);
+  return framed(e, 32, (): boolean => {
+    let uri = insert(ctx, e, name, mime, bytes);
+    if (uri == 0 as usize) {
+      return false;
+    }
+    let intent = made(e, "android/content/Intent", "(Ljava/lang/String;)V", [jni.new_string(e, "android.intent.action.SEND")]);
+    if (intent == 0 as usize) {
+      return false;
+    }
+    let typed = jni.call_object(e, intent, "setType", "(Ljava/lang/String;)" + INTENT, [jni.new_string(e, mime)]);
+    let filled = jni.call_object(e, intent, "putExtra", "(Ljava/lang/String;Landroid/os/Parcelable;)" + INTENT, [jni.new_string(e, "android.intent.extra.STREAM"), uri]);
+    // 1 is FLAG_GRANT_READ_URI_PERMISSION.
+    let flagged = jni.call_object(e, intent, "addFlags", "(I)" + INTENT, [1 as usize]);
+    let class = jni.find_class(e, "android/content/Intent");
+    let chooser_of = jni.get_static_method_id(e, class, "createChooser", "(Landroid/content/Intent;Ljava/lang/CharSequence;)Landroid/content/Intent;");
+    let args = jni.jvalues([intent, 0 as usize]);
+    let chooser = jni.call_static_object_method_a(e, class, chooser_of, args);
+    jni.free_buffer(args);
+    return healthy(e, chooser) && jni.call_void(e, android.activity_object(ctx), "startActivity", "(" + INTENT + ")V", [chooser]);
+  });
+}
