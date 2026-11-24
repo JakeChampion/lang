@@ -41,13 +41,20 @@ pub function requests(ctx: usize, read: i32): i32 { return on_ui_request(read, 0
 
 static int locals, calls, ui = 77, flags = 1024 | 128;
 static void require(int ok) { if (!ok) { fprintf(stderr, "bars: locals=%d calls=%d ui=%d flags=%d\n", locals, calls, ui, flags); exit(1); } }
-static uintptr_t get_class(uintptr_t e, uintptr_t obj) { locals++; return obj + 1000; }
+// The bindings look up each class by its name, keep a global reference to it, and work in a local frame.
+static int saved_locals, frames, globals;
+static uintptr_t find_class(uintptr_t e, const char *name) { locals++; return 9000; }
+static uintptr_t new_global(uintptr_t e, uintptr_t obj) { globals++; return obj; }
+static void delete_global(uintptr_t e, uintptr_t obj) { globals--; }
+static int32_t push(uintptr_t e, int32_t n) { frames++; saved_locals = locals; return 0; }
+static uintptr_t pop(uintptr_t e, uintptr_t keep) { frames--; locals = saved_locals; return 0; }
 static uintptr_t method(uintptr_t e, uintptr_t cls, const char *name, const char *sig) {
-  if (!strcmp(name, "getWindow")) { require(cls == 1100 && !strcmp(sig, "()Landroid/view/Window;")); return 1; }
-  if (!strcmp(name, "getDecorView")) { require(cls == 1200 && !strcmp(sig, "()Landroid/view/View;")); return 2; }
-  if (!strcmp(name, "setFlags")) { require(cls == 1200 && !strcmp(sig, "(II)V")); return 3; }
-  require(cls == 1300 && !strcmp(name, "setSystemUiVisibility") && !strcmp(sig, "(I)V"));
-  return 4;
+  if (!strcmp(name, "getWindow")) { require(!strcmp(sig, "()Landroid/view/Window;")); return 1; }
+  if (!strcmp(name, "getDecorView")) { require(!strcmp(sig, "()Landroid/view/View;")); return 2; }
+  if (!strcmp(name, "setFlags")) { require(!strcmp(sig, "(II)V")); return 3; }
+  if (!strcmp(name, "setSystemUiVisibility")) { require(!strcmp(sig, "(I)V")); return 4; }
+  // The bindings look up each member of a class. The test calls only the four members above.
+  return 99;
 }
 static uintptr_t object(uintptr_t e, uintptr_t obj, uintptr_t id, uintptr_t args) {
   require((obj == 100 && id == 1) || (obj == 200 && id == 2));
@@ -60,7 +67,7 @@ static void call(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args)
   calls++;
 }
 static uintptr_t exception(uintptr_t e) { return 0; }
-static void release(uintptr_t e, uintptr_t obj) { require(obj == 200 || obj == 300 || obj == 1100 || obj == 1200 || obj == 1300); locals--; }
+static void release(uintptr_t e, uintptr_t obj) { require(obj != 0); locals--; }
 int main(int argc, char **argv) {
   void *lib = dlopen(argv[1], RTLD_NOW);
   if (!lib) { fprintf(stderr, "%s\n", dlerror()); return 2; }
@@ -75,7 +82,12 @@ int main(int argc, char **argv) {
   int fds[2];
   require(pipe(fds) == 0 && fcntl(fds[0], F_SETFL, O_NONBLOCK) == 0);
   wire((uintptr_t)ctx, (uintptr_t)activity, fds[0], fds[1]);
-  table[31] = (uintptr_t)get_class;
+  table[6] = (uintptr_t)find_class;
+  table[19] = (uintptr_t)push;
+  table[20] = (uintptr_t)pop;
+  table[21] = (uintptr_t)new_global;
+  table[22] = (uintptr_t)delete_global;
+  table[17] = (uintptr_t)exception;
   table[33] = (uintptr_t)method;
   table[36] = (uintptr_t)object;
   table[63] = (uintptr_t)call;
@@ -98,7 +110,7 @@ int main(int argc, char **argv) {
       require(ui == (on ? 5894 : 0) && flags == (128 | (on ? 1024 : 0)) && locals == 0);
     }
   }
-  require(calls == 24);
+  require(calls == 24 && frames == 0 && globals == 0);
   return 0;
 }
 `

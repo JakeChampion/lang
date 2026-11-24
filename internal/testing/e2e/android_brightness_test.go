@@ -52,16 +52,18 @@ enum { WINDOW = 300, PARAMS = 400, FIELD = 500, AUDIO = 600, RESOLVER = 700, SET
 static const char *names[] = { "", "getWindow", "getAttributes", "", "", "setAttributes",
   "getSystemService", "getStreamVolume", "getStreamMaxVolume", "setStreamVolume", "getContentResolver", "getInt" };
 
-static uintptr_t get_class(uintptr_t e, uintptr_t obj) { require(obj != 0, "class of null"); locals++; return obj + 1000; }
 // The bindings look up each class by its name and keep a global reference to it.
 static uintptr_t find_class(uintptr_t e, const char *name) {
   locals++;
   if (!strcmp(name, "android/provider/Settings$System")) return SETTINGS;
   if (!strcmp(name, "android/content/Context")) return SETTINGS + 1;
-  require(!strcmp(name, "android/media/AudioManager"), name);
-  return SETTINGS + 2;
+  if (!strcmp(name, "android/media/AudioManager")) return SETTINGS + 2;
+  if (!strcmp(name, "android/app/Activity")) return SETTINGS + 3;
+  if (!strcmp(name, "android/view/Window")) return SETTINGS + 4;
+  require(!strcmp(name, "android/view/WindowManager$LayoutParams"), name);
+  return SETTINGS + 5;
 }
-static uintptr_t new_global(uintptr_t e, uintptr_t obj) { require(obj >= SETTINGS && obj <= SETTINGS + 2, "global of a class"); globals++; return obj; }
+static uintptr_t new_global(uintptr_t e, uintptr_t obj) { require(obj >= SETTINGS && obj <= SETTINGS + 5, "global of a class"); globals++; return obj; }
 static void delete_global(uintptr_t e, uintptr_t obj) { require(globals > 0, "delete of a global"); globals--; }
 static int32_t push(uintptr_t e, int32_t n) { require(frames == 0, "one frame"); frames++; saved_locals = locals; return 0; }
 static uintptr_t pop(uintptr_t e, uintptr_t keep) { require(frames == 1 && keep == 0, "pop"); frames--; locals = saved_locals; return 0; }
@@ -91,8 +93,9 @@ static void call(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args)
   }
 }
 static uintptr_t field_id(uintptr_t e, uintptr_t cls, const char *name, const char *sig) {
-  require(cls == PARAMS + 1000 && !strcmp(name, "screenBrightness") && !strcmp(sig, "F"), "GetFieldID screenBrightness");
-  return FIELD;
+  require(cls == SETTINGS + 5, "a field of WindowManager.LayoutParams");
+  if (!strcmp(name, "screenBrightness")) { require(!strcmp(sig, "F"), "GetFieldID screenBrightness"); return FIELD; }
+  return FIELD + 1;
 }
 // SetFloatField takes its value in the first vector register.
 static void set_float(uintptr_t e, uintptr_t obj, uintptr_t field, float v) {
@@ -135,7 +138,6 @@ int main(int argc, char **argv) {
   table[21] = (uintptr_t)new_global;
   table[22] = (uintptr_t)delete_global;
   table[23] = (uintptr_t)release;
-  table[31] = (uintptr_t)get_class;
   table[33] = (uintptr_t)method;
   table[36] = (uintptr_t)object;
   table[51] = (uintptr_t)call_int;

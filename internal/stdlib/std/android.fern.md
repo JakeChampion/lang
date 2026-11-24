@@ -26,7 +26,7 @@ A module that makes more than one Java object of one listener class can tell the
 
 A lock of the process guards the live loop. `start`, `tell` and the end of a loop with no activity take it, so a new activity does not take over a loop that ends.
 
-The module calls Java for the directories, the permissions, the Intent of the activity, the volume, the time zone, the languages and the font scale through `std/android/bindings`, which `jnibind` writes from `bindings.spec`. The other Java calls of the module are JNI calls that name each class and each method as text.
+The module calls Java for the directories, the permissions, the Intent of the activity, the volume, the time zone, the languages and the font scale through `std/android/bindings`, which `jnibind` writes from `bindings.spec`. The calls for the system bars, the display mode, the orientation, the brightness of the window and picture-in-picture go through it also. The other Java calls of the module are JNI calls that name each class and each method as text.
 
 ## Contracts
 
@@ -909,32 +909,39 @@ function apply_system_bars(activity: usize): void {
     let fullscreen = 0;
     if ((Context.c_load_flags(ctx) & FLAG_IMMERSIVE) != 0) {
       ui = IMMERSIVE_UI;
-      fullscreen = 1024;
+      fullscreen = bindings.WINDOW_MANAGER_LAYOUT_PARAMS_FLAG_FULLSCREEN;
     }
     let e: usize = NativeActivity.c_load_env(activity);
-    let obj: usize = NativeActivity.c_load_clazz(activity);
-    let activity_class: usize = jni.get_object_class(e, obj);
-    let none: usize = jni.jvalue_alloc(0);
-    let window: usize = jni.call_object_method_a(e, obj, jni.get_method_id(e, activity_class, "getWindow", "()Landroid/view/Window;"), none);
-    let window_class: usize = jni.get_object_class(e, window);
-    let decor: usize = jni.call_object_method_a(e, window, jni.get_method_id(e, window_class, "getDecorView", "()Landroid/view/View;"), none);
-    jni.free_buffer(none);
-    let window_args: usize = jni.jvalues([fullscreen as usize, 1024 as usize]);
-    let changed: usize = jni.call_void_method_a(e, window, jni.get_method_id(e, window_class, "setFlags", "(II)V"), window_args);
-    jni.free_buffer(window_args);
-    let decor_class: usize = jni.get_object_class(e, decor);
-    let args: usize = jni.jvalues([ui as usize]);
-    let ignored: usize = jni.call_void_method_a(e, decor, jni.get_method_id(e, decor_class, "setSystemUiVisibility", "(I)V"), args);
-    jni.free_buffer(args);
-    if (jni.exception_occurred(e) != 0 as usize) {
-      let cleared: usize = jni.exception_clear(e);
-    }
-    let a: usize = jni.delete_local_ref(e, decor);
-    let b: usize = jni.delete_local_ref(e, window);
-    let c: usize = jni.delete_local_ref(e, decor_class);
-    let d: usize = jni.delete_local_ref(e, window_class);
-    let f: usize = jni.delete_local_ref(e, activity_class);
+    let shown = show_bars(e, bindings.Activity { ref: NativeActivity.c_load_clazz(activity) }, fullscreen, ui);
   }
+}
+
+// The Window of an activity and its decor view, as local references.
+struct Decor { window: bindings.Window, view: bindings.View }
+
+function decor_of(e: usize, activity: bindings.Activity): Result[Decor, jni.JavaError] {
+  let activities = bindings.activity_class(e)?;
+  defer activities.release(e);
+  let windows = bindings.window_class(e)?;
+  defer windows.release(e);
+  let window = activities.get_window(e, activity)?;
+  return Ok(Decor { window: window, view: windows.get_decor_view(e, window)? });
+}
+
+// Sets the fullscreen flag of the window to `fullscreen` and the
+// visibility of the system bars to `ui`.
+function show_bars(e: usize, activity: bindings.Activity, fullscreen: i32, ui: i32): Result[void, jni.JavaError] {
+  if (!jni.push_local_frame(e, 8)) {
+    return Ok(());
+  }
+  defer end_frame(e);
+  let windows = bindings.window_class(e)?;
+  defer windows.release(e);
+  let views = bindings.view_class(e)?;
+  defer views.release(e);
+  let decor = decor_of(e, activity)?;
+  windows.set_flags(e, decor.window, fullscreen, bindings.WINDOW_MANAGER_LAYOUT_PARAMS_FLAG_FULLSCREEN)?;
+  return views.set_system_ui_visibility(e, decor.view, ui);
 }
 
 // From Android 15 the insets ask again once the window is there, so the
@@ -1684,9 +1691,6 @@ pub function unbatched_touch(ctx: usize, on: boolean): void {
   ui_request(ctx, UiRequest { op: TOUCH_AT_ONCE, a: a, b: 0, data: 0 as usize });
 }
 
-// InputDevice.SOURCE_CLASS_POINTER: touch screens, pens and mice.
-const SOURCE_CLASS_POINTER: i32 = 2;
-
 // Does the request of `unbatched_touch` on the UI thread.
 function touch_at_once(ctx: usize, on: boolean): void {
   unsafe {
@@ -1695,16 +1699,21 @@ function touch_at_once(ctx: usize, on: boolean): void {
     }
     let activity: usize = Context.c_load_activity(ctx);
     let e: usize = NativeActivity.c_load_env(activity);
-    let window: usize = jni.call_object(e, NativeActivity.c_load_clazz(activity), "getWindow", "()Landroid/view/Window;", []);
-    let decor: usize = jni.call_object(e, window, "getDecorView", "()Landroid/view/View;", []);
-    let source = 0;
-    if (on) {
-      source = SOURCE_CLASS_POINTER;
-    }
-    let asked = jni.call_void(e, decor, "requestUnbufferedDispatch", "(I)V", [source as usize]);
-    let a: usize = jni.delete_local_ref(e, decor);
-    let b: usize = jni.delete_local_ref(e, window);
+    // SOURCE_CLASS_POINTER is touch screens, pens and mice.
+    let source = if (on) { bindings.INPUT_DEVICE_SOURCE_CLASS_POINTER } else { 0 };
+    let asked = dispatch_at_once(e, bindings.Activity { ref: NativeActivity.c_load_clazz(activity) }, source);
   }
+}
+
+function dispatch_at_once(e: usize, activity: bindings.Activity, source: i32): Result[void, jni.JavaError] {
+  if (!jni.push_local_frame(e, 8)) {
+    return Ok(());
+  }
+  defer end_frame(e);
+  let views = bindings.view_class(e)?;
+  defer views.release(e);
+  let decor = decor_of(e, activity)?;
+  return views.request_unbuffered_dispatch(e, decor.view, source);
 }
 
 // Asks Android for the mode of the display with the most refreshes in a
@@ -1718,42 +1727,70 @@ pub function prefer_fast_display(ctx: usize): void {
 function fast_display(activity: usize): void {
   unsafe {
     let e: usize = NativeActivity.c_load_env(activity);
-    let obj: usize = NativeActivity.c_load_clazz(activity);
-    let window: usize = jni.call_object(e, obj, "getWindow", "()Landroid/view/Window;", []);
-    let manager: usize = jni.call_object(e, obj, "getWindowManager", "()Landroid/view/WindowManager;", []);
-    let display: usize = jni.call_object(e, manager, "getDefaultDisplay", "()Landroid/view/Display;", []);
-    let now: usize = jni.call_object(e, display, "getMode", "()Landroid/view/Display$Mode;", []);
-    let modes: usize = jni.call_object(e, display, "getSupportedModes", "()[Landroid/view/Display$Mode;", []);
-    let class: usize = jni.get_object_class(e, now);
-    let width_of: usize = jni.get_method_id(e, class, "getPhysicalWidth", "()I");
-    let height_of: usize = jni.get_method_id(e, class, "getPhysicalHeight", "()I");
-    let rate_of: usize = jni.get_method_id(e, class, "getRefreshRate", "()F");
-    let id_of: usize = jni.get_method_id(e, class, "getModeId", "()I");
-    let none: usize = jni.jvalue_alloc(0);
-    let width: i32 = jni.call_int_method_a(e, now, width_of, none);
-    let height: i32 = jni.call_int_method_a(e, now, height_of, none);
-    let best: i32 = jni.call_int_method_a(e, now, id_of, none);
-    let rate: f32 = jni.call_float_method_a(e, now, rate_of, none);
-    for i in 0..jni.get_array_length(e, modes) {
-      let mode: usize = jni.get_object_array_element(e, modes, i);
-      if (jni.call_int_method_a(e, mode, width_of, none) == width && jni.call_int_method_a(e, mode, height_of, none) == height) {
-        let r: f32 = jni.call_float_method_a(e, mode, rate_of, none);
-        if (r > rate + 0.5 as f32) {
-          rate = r;
-          best = jni.call_int_method_a(e, mode, id_of, none);
-        }
-      }
-      let dropped: usize = jni.delete_local_ref(e, mode);
+    let obj = bindings.Activity { ref: NativeActivity.c_load_clazz(activity) };
+    if (!jni.push_local_frame(e, 16)) {
+      return;
     }
-    jni.free_buffer(none);
-    let attrs: usize = jni.call_object(e, window, "getAttributes", "()Landroid/view/WindowManager$LayoutParams;", []);
-    let attrs_class: usize = jni.get_object_class(e, attrs);
-    let set: usize = jni.set_int_field(e, attrs, jni.get_field_id(e, attrs_class, "preferredDisplayModeId", "I"), best as usize);
-    let applied = jni.call_void(e, window, "setAttributes", "(Landroid/view/WindowManager$LayoutParams;)V", [attrs]);
-    for r in [attrs_class, attrs, class, modes, now, display, manager, window] {
-      let dropped: usize = jni.delete_local_ref(e, r);
-    }
+    defer end_frame(e);
+    let Ok(modes) = bindings.display_mode_class(e) else {
+      return;
+    };
+    defer modes.release(e);
+    let asked = match (fastest_mode(e, modes, obj)) {
+      Ok(best) => prefer_mode(e, obj, best),
+      Err(err) => Err(err),
+    };
   }
+}
+
+// The size, the rate and the ID of a mode of a display.
+struct ModeFacts { width: i32, height: i32, rate: f32, id: i32 }
+
+function mode_facts(e: usize, modes: bindings.Display_ModeClass, mode: bindings.Display_Mode): Result[ModeFacts, jni.JavaError] {
+  let width = modes.get_physical_width(e, mode)?;
+  let height = modes.get_physical_height(e, mode)?;
+  let rate = modes.get_refresh_rate(e, mode)?;
+  return Ok(ModeFacts { width: width, height: height, rate: rate, id: modes.get_mode_id(e, mode)? });
+}
+
+// The ID of the mode of the display of `activity` with the most refreshes
+// in a second, at the size that the display has now.
+function fastest_mode(e: usize, modes: bindings.Display_ModeClass, activity: bindings.Activity): Result[i32, jni.JavaError] {
+  let activities = bindings.activity_class(e)?;
+  defer activities.release(e);
+  let managers = bindings.window_manager_class(e)?;
+  defer managers.release(e);
+  let displays = bindings.display_class(e)?;
+  defer displays.release(e);
+  let display = managers.get_default_display(e, activities.get_window_manager(e, activity)?)?;
+  let now = mode_facts(e, modes, displays.get_mode(e, display)?)?;
+  let all = displays.get_supported_modes(e, display)?;
+  let best = now.id;
+  let rate = now.rate;
+  for i in 0..jni.get_array_length(e, all.ref) {
+    let mode = bindings.Display_Mode { ref: jni.get_object_array_element(e, all.ref, i) };
+    let facts = mode_facts(e, modes, mode)?;
+    if (facts.width == now.width && facts.height == now.height && facts.rate > rate + 0.5 as f32) {
+      rate = facts.rate;
+      best = facts.id;
+    }
+    let dropped: usize = jni.delete_local_ref(e, mode.ref);
+  }
+  return Ok(best);
+}
+
+// Asks the window of `activity` for the display mode with the ID `mode`.
+function prefer_mode(e: usize, activity: bindings.Activity, mode: i32): Result[void, jni.JavaError] {
+  let activities = bindings.activity_class(e)?;
+  defer activities.release(e);
+  let windows = bindings.window_class(e)?;
+  defer windows.release(e);
+  let params = bindings.window_manager_layout_params_class(e)?;
+  defer params.release(e);
+  let window = activities.get_window(e, activity)?;
+  let attrs = windows.get_attributes(e, window)?;
+  params.set_preferred_display_mode_id(e, attrs, mode)?;
+  return windows.set_attributes(e, window, attrs);
 }
 
 // The audio stream that the volume keys change while the window shows, as
@@ -1802,9 +1839,11 @@ function apply_orientation(ctx: usize, which: i32): void {
   unsafe {
     let activity: usize = Context.c_load_activity(ctx);
     let e: usize = NativeActivity.c_load_env(activity);
-    let obj: usize = NativeActivity.c_load_clazz(activity);
-    let set = jni.call_void(e, obj, "setRequestedOrientation", "(I)V", [which as usize]);
-    let cleared: usize = jni.exception_clear(e);
+    let Ok(activities) = bindings.activity_class(e) else {
+      return;
+    };
+    defer activities.release(e);
+    let set = activities.set_requested_orientation(e, bindings.Activity { ref: NativeActivity.c_load_clazz(activity) }, which);
   }
 }
 
@@ -1816,16 +1855,17 @@ pub function in_pip(ctx: usize): boolean {
   let e = env(ctx);
   unsafe {
     let activity: usize = Context.c_load_activity(ctx);
-    let obj: usize = NativeActivity.c_load_clazz(activity);
-    let class: usize = jni.get_object_class(e, obj);
-    let id: usize = jni.get_method_id(e, class, "isInPictureInPictureMode", "()Z");
-    let on = false;
-    if (id != 0 as usize) {
-      on = jni.call_boolean_method_a(e, obj, id, 0 as usize) != 0;
+    let Ok(activities) = bindings.activity_class(e) else {
+      return false;
+    };
+    defer activities.release(e);
+    if (!activities.has_is_in_picture_in_picture_mode()) {
+      return false;
     }
-    let d: usize = jni.delete_local_ref(e, class);
-    let cleared: usize = jni.exception_clear(e);
-    return on;
+    return match (activities.is_in_picture_in_picture_mode(e, bindings.Activity { ref: NativeActivity.c_load_clazz(activity) })) {
+      Ok(on) => on,
+      Err(_) => false,
+    };
   }
 }
 
@@ -2329,36 +2369,40 @@ function do_request(ctx: usize, r: UiRequest): boolean {
 }
 
 // Sets WindowManager.LayoutParams.screenBrightness to `permille` / 1000, or
-// to BRIGHTNESS_OVERRIDE_NONE (-1) for a negative `permille`.
+// to BRIGHTNESS_OVERRIDE_NONE for a negative `permille`.
 function apply_brightness(ctx: usize, permille: i32): void {
-  let level = -1.0f32;
+  let level = bindings.WINDOW_MANAGER_LAYOUT_PARAMS_BRIGHTNESS_OVERRIDE_NONE;
   if (permille >= 0) {
     level = permille as f32 / 1000.0f32;
   }
   unsafe {
     let activity: usize = Context.c_load_activity(ctx);
     let e: usize = NativeActivity.c_load_env(activity);
-    let obj: usize = NativeActivity.c_load_clazz(activity);
-    let window: usize = jni.call_object(e, obj, "getWindow", "()Landroid/view/Window;", []);
-    let lp = 0 as usize;
-    if (window != 0 as usize) {
-      lp = jni.call_object(e, window, "getAttributes", "()Landroid/view/WindowManager$LayoutParams;", []);
-    }
-    if (lp != 0 as usize) {
-      let class: usize = jni.get_object_class(e, lp);
-      let field: usize = jni.get_field_id(e, class, "screenBrightness", "F");
-      if (field != 0 as usize) {
-        jni.set_float_field(e, lp, field, level);
-        let applied = jni.call_void(e, window, "setAttributes", "(Landroid/view/WindowManager$LayoutParams;)V", [lp]);
-      }
-      let d: usize = jni.delete_local_ref(e, class);
-      let f: usize = jni.delete_local_ref(e, lp);
-    }
-    if (window != 0 as usize) {
-      let g: usize = jni.delete_local_ref(e, window);
-    }
-    let cleared: usize = jni.exception_clear(e);
+    let lit = light_window(e, bindings.Activity { ref: NativeActivity.c_load_clazz(activity) }, level);
   }
+}
+
+function light_window(e: usize, activity: bindings.Activity, level: f32): Result[void, jni.JavaError] {
+  if (!jni.push_local_frame(e, 8)) {
+    return Ok(());
+  }
+  defer end_frame(e);
+  let activities = bindings.activity_class(e)?;
+  defer activities.release(e);
+  let windows = bindings.window_class(e)?;
+  defer windows.release(e);
+  let params = bindings.window_manager_layout_params_class(e)?;
+  defer params.release(e);
+  let window = activities.get_window(e, activity)?;
+  if (window.is_null()) {
+    return Ok(());
+  }
+  let attrs = windows.get_attributes(e, window)?;
+  if (attrs.is_null()) {
+    return Ok(());
+  }
+  params.set_screen_brightness(e, attrs, level)?;
+  return windows.set_attributes(e, window, attrs);
 }
 
 // Activity.setPictureInPictureParams with the shape of a w by h video,
@@ -2379,44 +2423,34 @@ function apply_pip(ctx: usize, on: boolean, w: i32, h: i32): void {
   unsafe {
     let activity: usize = Context.c_load_activity(ctx);
     let e: usize = NativeActivity.c_load_env(activity);
-    let obj: usize = NativeActivity.c_load_clazz(activity);
-    let builder_class: usize = jni.find_class(e, "android/app/PictureInPictureParams$Builder");
-    let rational_class: usize = jni.find_class(e, "android/util/Rational");
-    if (builder_class != 0 as usize && rational_class != 0 as usize) {
-      let builder_args: usize = jni.jvalues([]);
-      let builder: usize = jni.new_object_a(e, builder_class, jni.get_method_id(e, builder_class, "<init>", "()V"), builder_args);
-      jni.free_buffer(builder_args);
-      let ratio_args: usize = jni.jvalues([width as usize, height as usize]);
-      let ratio: usize = jni.new_object_a(e, rational_class, jni.get_method_id(e, rational_class, "<init>", "(II)V"), ratio_args);
-      jni.free_buffer(ratio_args);
-      if (builder != 0 as usize && ratio != 0 as usize) {
-        let shaped: usize = jni.call_object(e, builder, "setAspectRatio", "(Landroid/util/Rational;)Landroid/app/PictureInPictureParams$Builder;", [ratio]);
-        if (sdk_version(ctx) >= 31) {
-          let auto_on = 0 as usize;
-          if (on) {
-            auto_on = 1 as usize;
-          }
-          let entered: usize = jni.call_object(e, builder, "setAutoEnterEnabled", "(Z)Landroid/app/PictureInPictureParams$Builder;", [auto_on]);
-          let gone_entered: usize = jni.delete_local_ref(e, entered);
-        }
-        let params: usize = jni.call_object(e, builder, "build", "()Landroid/app/PictureInPictureParams;", []);
-        if (params != 0 as usize) {
-          let set = jni.call_void(e, obj, "setPictureInPictureParams", "(Landroid/app/PictureInPictureParams;)V", [params]);
-          let gone_params: usize = jni.delete_local_ref(e, params);
-        }
-        let gone_shaped: usize = jni.delete_local_ref(e, shaped);
-      }
-      let gone_builder: usize = jni.delete_local_ref(e, builder);
-      let gone_ratio: usize = jni.delete_local_ref(e, ratio);
-    }
-    if (builder_class != 0 as usize) {
-      let gb: usize = jni.delete_local_ref(e, builder_class);
-    }
-    if (rational_class != 0 as usize) {
-      let gr: usize = jni.delete_local_ref(e, rational_class);
-    }
-    let cleared: usize = jni.exception_clear(e);
+    let shaped = shape_pip(e, bindings.Activity { ref: NativeActivity.c_load_clazz(activity) }, on, sdk_version(ctx) >= 31, width, height);
   }
+}
+
+// Gives `activity` the picture-in-picture shape of `width` by `height`.
+// With `auto`, it also sets if Android starts the mode when the app goes
+// to the background.
+function shape_pip(e: usize, activity: bindings.Activity, on: boolean, auto: boolean, width: i32, height: i32): Result[void, jni.JavaError] {
+  if (!jni.push_local_frame(e, 8)) {
+    return Ok(());
+  }
+  defer end_frame(e);
+  let builders = bindings.picture_in_picture_params_builder_class(e)?;
+  defer builders.release(e);
+  let rationals = bindings.rational_class(e)?;
+  defer rationals.release(e);
+  let activities = bindings.activity_class(e)?;
+  defer activities.release(e);
+  let builder = builders.new(e)?;
+  let shaped = builders.set_aspect_ratio(e, builder, rationals.new(e, width, height)?)?;
+  if (auto && builders.has_set_auto_enter_enabled()) {
+    let entered = builders.set_auto_enter_enabled(e, builder, on)?;
+  }
+  let params = builders.build(e, builder)?;
+  if (params.is_null()) {
+    return Ok(());
+  }
+  return activities.set_picture_in_picture_params(e, activity, params);
 }
 
 function field_request(ctx: usize, r: UiRequest): void {

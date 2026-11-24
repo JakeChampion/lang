@@ -121,17 +121,22 @@ pub function (x: Activity) as_context(): Context {
 }
 
 // The class android.app.Activity and the IDs of its members.
-pub struct ActivityClass { class: usize, id_get_intent: usize, id_move_task_to_back: usize, id_request_permissions: usize, id_set_volume_control_stream: usize }
+pub struct ActivityClass { class: usize, id_get_intent: usize, id_get_window: usize, id_get_window_manager: usize, id_is_in_picture_in_picture_mode: usize, id_move_task_to_back: usize, id_request_permissions: usize, id_set_picture_in_picture_params: usize, id_set_requested_orientation: usize, id_set_volume_control_stream: usize }
 
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function activity_class(e: usize): Result[ActivityClass, jni.JavaError] {
   let class = jni.global_class(e, "android/app/Activity")?;
   let id_get_intent = jni.checked_id(e, class, jni.get_method_id(e, class, "getIntent", "()Landroid/content/Intent;"))?;
+  let id_get_window = jni.checked_id(e, class, jni.get_method_id(e, class, "getWindow", "()Landroid/view/Window;"))?;
+  let id_get_window_manager = jni.checked_id(e, class, jni.get_method_id(e, class, "getWindowManager", "()Landroid/view/WindowManager;"))?;
+  let id_is_in_picture_in_picture_mode = jni.optional_id(e, jni.get_method_id(e, class, "isInPictureInPictureMode", "()Z"));
   let id_move_task_to_back = jni.checked_id(e, class, jni.get_method_id(e, class, "moveTaskToBack", "(Z)Z"))?;
   let id_request_permissions = jni.checked_id(e, class, jni.get_method_id(e, class, "requestPermissions", "([Ljava/lang/String;I)V"))?;
+  let id_set_picture_in_picture_params = jni.optional_id(e, jni.get_method_id(e, class, "setPictureInPictureParams", "(Landroid/app/PictureInPictureParams;)V"));
+  let id_set_requested_orientation = jni.checked_id(e, class, jni.get_method_id(e, class, "setRequestedOrientation", "(I)V"))?;
   let id_set_volume_control_stream = jni.checked_id(e, class, jni.get_method_id(e, class, "setVolumeControlStream", "(I)V"))?;
-  return Ok(ActivityClass { class: class, id_get_intent: id_get_intent, id_move_task_to_back: id_move_task_to_back, id_request_permissions: id_request_permissions, id_set_volume_control_stream: id_set_volume_control_stream });
+  return Ok(ActivityClass { class: class, id_get_intent: id_get_intent, id_get_window: id_get_window, id_get_window_manager: id_get_window_manager, id_is_in_picture_in_picture_mode: id_is_in_picture_in_picture_mode, id_move_task_to_back: id_move_task_to_back, id_request_permissions: id_request_permissions, id_set_picture_in_picture_params: id_set_picture_in_picture_params, id_set_requested_orientation: id_set_requested_orientation, id_set_volume_control_stream: id_set_volume_control_stream });
 }
 
 // Deletes the reference to the class. Do not use `c` after this call.
@@ -146,6 +151,41 @@ pub function (c: ActivityClass) get_intent(e: usize, self: Activity): Result[Int
   jni.free_buffer(args);
   jni.check(e)?;
   return Ok(Intent { ref: got });
+}
+
+// android.app.Activity.getWindow()Landroid/view/Window;
+pub function (c: ActivityClass) get_window(e: usize, self: Activity): Result[Window, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_window, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Window { ref: got });
+}
+
+// android.app.Activity.getWindowManager()Landroid/view/WindowManager;
+pub function (c: ActivityClass) get_window_manager(e: usize, self: Activity): Result[WindowManager, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_window_manager, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(WindowManager { ref: got });
+}
+
+// False when the device does not have the member of `is_in_picture_in_picture_mode`.
+pub function (c: ActivityClass) has_is_in_picture_in_picture_mode(): boolean {
+  return c.id_is_in_picture_in_picture_mode != 0 as usize;
+}
+
+// android.app.Activity.isInPictureInPictureMode()Z
+pub function (c: ActivityClass) is_in_picture_in_picture_mode(e: usize, self: Activity): Result[boolean, jni.JavaError] {
+  if (c.id_is_in_picture_in_picture_mode == 0 as usize) {
+    return Err(jni.absent("android.app.Activity.isInPictureInPictureMode"));
+  }
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_is_in_picture_in_picture_mode, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
 }
 
 // android.app.Activity.moveTaskToBack(Z)Z
@@ -164,6 +204,34 @@ pub function (c: ActivityClass) request_permissions(e: usize, self: Activity, a0
   jni.jvalue_set_int(args, 0, a0.ref);
   jni.jvalue_set_int(args, 1, a1 as usize);
   jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_request_permissions, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// False when the device does not have the member of `set_picture_in_picture_params`.
+pub function (c: ActivityClass) has_set_picture_in_picture_params(): boolean {
+  return c.id_set_picture_in_picture_params != 0 as usize;
+}
+
+// android.app.Activity.setPictureInPictureParams(Landroid/app/PictureInPictureParams;)V
+pub function (c: ActivityClass) set_picture_in_picture_params(e: usize, self: Activity, a0: jni.Object): Result[void, jni.JavaError] {
+  if (c.id_set_picture_in_picture_params == 0 as usize) {
+    return Err(jni.absent("android.app.Activity.setPictureInPictureParams"));
+  }
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set_picture_in_picture_params, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.app.Activity.setRequestedOrientation(I)V
+pub function (c: ActivityClass) set_requested_orientation(e: usize, self: Activity, a0: i32): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set_requested_orientation, args);
   jni.free_buffer(args);
   jni.check(e)?;
   return Ok(());
@@ -623,8 +691,479 @@ pub function (c: LocaleListClass) to_language_tags(e: usize, self: LocaleList): 
   return Ok(text);
 }
 
+// A android.view.Window.
+pub struct Window { ref: usize }
+
+pub function (x: Window) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Window) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.view.Window and the IDs of its members.
+pub struct WindowClass { class: usize, id_get_attributes: usize, id_get_decor_view: usize, id_set_attributes: usize, id_set_flags: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function window_class(e: usize): Result[WindowClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/view/Window")?;
+  let id_get_attributes = jni.checked_id(e, class, jni.get_method_id(e, class, "getAttributes", "()Landroid/view/WindowManager$LayoutParams;"))?;
+  let id_get_decor_view = jni.checked_id(e, class, jni.get_method_id(e, class, "getDecorView", "()Landroid/view/View;"))?;
+  let id_set_attributes = jni.checked_id(e, class, jni.get_method_id(e, class, "setAttributes", "(Landroid/view/WindowManager$LayoutParams;)V"))?;
+  let id_set_flags = jni.checked_id(e, class, jni.get_method_id(e, class, "setFlags", "(II)V"))?;
+  return Ok(WindowClass { class: class, id_get_attributes: id_get_attributes, id_get_decor_view: id_get_decor_view, id_set_attributes: id_set_attributes, id_set_flags: id_set_flags });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: WindowClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.view.Window.getAttributes()Landroid/view/WindowManager$LayoutParams;
+pub function (c: WindowClass) get_attributes(e: usize, self: Window): Result[WindowManager_LayoutParams, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_attributes, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(WindowManager_LayoutParams { ref: got });
+}
+
+// android.view.Window.getDecorView()Landroid/view/View;
+pub function (c: WindowClass) get_decor_view(e: usize, self: Window): Result[View, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_decor_view, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(View { ref: got });
+}
+
+// android.view.Window.setAttributes(Landroid/view/WindowManager$LayoutParams;)V
+pub function (c: WindowClass) set_attributes(e: usize, self: Window, a0: WindowManager_LayoutParams): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set_attributes, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.view.Window.setFlags(II)V
+pub function (c: WindowClass) set_flags(e: usize, self: Window, a0: i32, a1: i32): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set_flags, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.view.View.
+pub struct View { ref: usize }
+
+pub function (x: View) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: View) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.view.View and the IDs of its members.
+pub struct ViewClass { class: usize, id_request_unbuffered_dispatch: usize, id_set_system_ui_visibility: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function view_class(e: usize): Result[ViewClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/view/View")?;
+  let id_request_unbuffered_dispatch = jni.optional_id(e, jni.get_method_id(e, class, "requestUnbufferedDispatch", "(I)V"));
+  let id_set_system_ui_visibility = jni.checked_id(e, class, jni.get_method_id(e, class, "setSystemUiVisibility", "(I)V"))?;
+  return Ok(ViewClass { class: class, id_request_unbuffered_dispatch: id_request_unbuffered_dispatch, id_set_system_ui_visibility: id_set_system_ui_visibility });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ViewClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// False when the device does not have the member of `request_unbuffered_dispatch`.
+pub function (c: ViewClass) has_request_unbuffered_dispatch(): boolean {
+  return c.id_request_unbuffered_dispatch != 0 as usize;
+}
+
+// android.view.View.requestUnbufferedDispatch(I)V
+pub function (c: ViewClass) request_unbuffered_dispatch(e: usize, self: View, a0: i32): Result[void, jni.JavaError] {
+  if (c.id_request_unbuffered_dispatch == 0 as usize) {
+    return Err(jni.absent("android.view.View.requestUnbufferedDispatch"));
+  }
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_request_unbuffered_dispatch, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.view.View.setSystemUiVisibility(I)V
+pub function (c: ViewClass) set_system_ui_visibility(e: usize, self: View, a0: i32): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set_system_ui_visibility, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.view.WindowManager.
+pub struct WindowManager { ref: usize }
+
+pub function (x: WindowManager) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: WindowManager) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.view.WindowManager and the IDs of its members.
+pub struct WindowManagerClass { class: usize, id_get_default_display: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function window_manager_class(e: usize): Result[WindowManagerClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/view/WindowManager")?;
+  let id_get_default_display = jni.checked_id(e, class, jni.get_method_id(e, class, "getDefaultDisplay", "()Landroid/view/Display;"))?;
+  return Ok(WindowManagerClass { class: class, id_get_default_display: id_get_default_display });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: WindowManagerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.view.WindowManager.getDefaultDisplay()Landroid/view/Display;
+pub function (c: WindowManagerClass) get_default_display(e: usize, self: WindowManager): Result[Display, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_default_display, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Display { ref: got });
+}
+
+// A android.view.WindowManager.LayoutParams.
+pub struct WindowManager_LayoutParams { ref: usize }
+
+pub function (x: WindowManager_LayoutParams) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: WindowManager_LayoutParams) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub const WINDOW_MANAGER_LAYOUT_PARAMS_BRIGHTNESS_OVERRIDE_NONE: f32 = -1.0;
+
+pub const WINDOW_MANAGER_LAYOUT_PARAMS_FLAG_FULLSCREEN: i32 = 1024;
+
+// The class android.view.WindowManager.LayoutParams and the IDs of its members.
+pub struct WindowManager_LayoutParamsClass { class: usize, id_preferred_display_mode_id: usize, id_screen_brightness: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function window_manager_layout_params_class(e: usize): Result[WindowManager_LayoutParamsClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/view/WindowManager$LayoutParams")?;
+  let id_preferred_display_mode_id = jni.checked_id(e, class, jni.get_field_id(e, class, "preferredDisplayModeId", "I"))?;
+  let id_screen_brightness = jni.checked_id(e, class, jni.get_field_id(e, class, "screenBrightness", "F"))?;
+  return Ok(WindowManager_LayoutParamsClass { class: class, id_preferred_display_mode_id: id_preferred_display_mode_id, id_screen_brightness: id_screen_brightness });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: WindowManager_LayoutParamsClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.view.WindowManager.LayoutParams.preferredDisplayModeId
+pub function (c: WindowManager_LayoutParamsClass) preferred_display_mode_id(e: usize, self: WindowManager_LayoutParams): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_preferred_display_mode_id, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+pub function (c: WindowManager_LayoutParamsClass) set_preferred_display_mode_id(e: usize, self: WindowManager_LayoutParams, value: i32): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 5, self.ref, c.id_preferred_display_mode_id, value as usize);
+  return jni.check(e);
+}
+
+// android.view.WindowManager.LayoutParams.screenBrightness
+pub function (c: WindowManager_LayoutParamsClass) screen_brightness(e: usize, self: WindowManager_LayoutParams): Result[f32, jni.JavaError] {
+  let got = jni.invoke_f32(e, jni.GET_FIELD + 7, self.ref, c.id_screen_brightness, 0 as usize);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+pub function (c: WindowManager_LayoutParamsClass) set_screen_brightness(e: usize, self: WindowManager_LayoutParams, value: f32): Result[void, jni.JavaError] {
+  jni.set_float_field(e, self.ref, c.id_screen_brightness, value);
+  return jni.check(e);
+}
+
+// A android.view.Display.
+pub struct Display { ref: usize }
+
+pub function (x: Display) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Display) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.view.Display and the IDs of its members.
+pub struct DisplayClass { class: usize, id_get_mode: usize, id_get_supported_modes: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function display_class(e: usize): Result[DisplayClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/view/Display")?;
+  let id_get_mode = jni.checked_id(e, class, jni.get_method_id(e, class, "getMode", "()Landroid/view/Display$Mode;"))?;
+  let id_get_supported_modes = jni.checked_id(e, class, jni.get_method_id(e, class, "getSupportedModes", "()[Landroid/view/Display$Mode;"))?;
+  return Ok(DisplayClass { class: class, id_get_mode: id_get_mode, id_get_supported_modes: id_get_supported_modes });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: DisplayClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.view.Display.getMode()Landroid/view/Display$Mode;
+pub function (c: DisplayClass) get_mode(e: usize, self: Display): Result[Display_Mode, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_mode, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Display_Mode { ref: got });
+}
+
+// android.view.Display.getSupportedModes()[Landroid/view/Display$Mode;
+pub function (c: DisplayClass) get_supported_modes(e: usize, self: Display): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_supported_modes, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// A android.view.Display.Mode.
+pub struct Display_Mode { ref: usize }
+
+pub function (x: Display_Mode) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Display_Mode) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.view.Display.Mode and the IDs of its members.
+pub struct Display_ModeClass { class: usize, id_get_mode_id: usize, id_get_physical_height: usize, id_get_physical_width: usize, id_get_refresh_rate: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function display_mode_class(e: usize): Result[Display_ModeClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/view/Display$Mode")?;
+  let id_get_mode_id = jni.checked_id(e, class, jni.get_method_id(e, class, "getModeId", "()I"))?;
+  let id_get_physical_height = jni.checked_id(e, class, jni.get_method_id(e, class, "getPhysicalHeight", "()I"))?;
+  let id_get_physical_width = jni.checked_id(e, class, jni.get_method_id(e, class, "getPhysicalWidth", "()I"))?;
+  let id_get_refresh_rate = jni.checked_id(e, class, jni.get_method_id(e, class, "getRefreshRate", "()F"))?;
+  return Ok(Display_ModeClass { class: class, id_get_mode_id: id_get_mode_id, id_get_physical_height: id_get_physical_height, id_get_physical_width: id_get_physical_width, id_get_refresh_rate: id_get_refresh_rate });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: Display_ModeClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.view.Display.Mode.getModeId()I
+pub function (c: Display_ModeClass) get_mode_id(e: usize, self: Display_Mode): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_mode_id, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.view.Display.Mode.getPhysicalHeight()I
+pub function (c: Display_ModeClass) get_physical_height(e: usize, self: Display_Mode): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_physical_height, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.view.Display.Mode.getPhysicalWidth()I
+pub function (c: Display_ModeClass) get_physical_width(e: usize, self: Display_Mode): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_physical_width, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.view.Display.Mode.getRefreshRate()F
+pub function (c: Display_ModeClass) get_refresh_rate(e: usize, self: Display_Mode): Result[f32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke_f32(e, jni.CALL_METHOD + 21, self.ref, c.id_get_refresh_rate, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// A android.app.PictureInPictureParams.Builder.
+pub struct PictureInPictureParams_Builder { ref: usize }
+
+pub function (x: PictureInPictureParams_Builder) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: PictureInPictureParams_Builder) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.app.PictureInPictureParams.Builder and the IDs of its members.
+pub struct PictureInPictureParams_BuilderClass { class: usize, id_new: usize, id_build: usize, id_set_aspect_ratio: usize, id_set_auto_enter_enabled: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function picture_in_picture_params_builder_class(e: usize): Result[PictureInPictureParams_BuilderClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/app/PictureInPictureParams$Builder")?;
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "()V"))?;
+  let id_build = jni.checked_id(e, class, jni.get_method_id(e, class, "build", "()Landroid/app/PictureInPictureParams;"))?;
+  let id_set_aspect_ratio = jni.checked_id(e, class, jni.get_method_id(e, class, "setAspectRatio", "(Landroid/util/Rational;)Landroid/app/PictureInPictureParams$Builder;"))?;
+  let id_set_auto_enter_enabled = jni.optional_id(e, jni.get_method_id(e, class, "setAutoEnterEnabled", "(Z)Landroid/app/PictureInPictureParams$Builder;"));
+  return Ok(PictureInPictureParams_BuilderClass { class: class, id_new: id_new, id_build: id_build, id_set_aspect_ratio: id_set_aspect_ratio, id_set_auto_enter_enabled: id_set_auto_enter_enabled });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: PictureInPictureParams_BuilderClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.app.PictureInPictureParams.Builder.<init>()V
+pub function (c: PictureInPictureParams_BuilderClass) new(e: usize): Result[PictureInPictureParams_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(PictureInPictureParams_Builder { ref: got });
+}
+
+// android.app.PictureInPictureParams.Builder.build()Landroid/app/PictureInPictureParams;
+pub function (c: PictureInPictureParams_BuilderClass) build(e: usize, self: PictureInPictureParams_Builder): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_build, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// android.app.PictureInPictureParams.Builder.setAspectRatio(Landroid/util/Rational;)Landroid/app/PictureInPictureParams$Builder;
+pub function (c: PictureInPictureParams_BuilderClass) set_aspect_ratio(e: usize, self: PictureInPictureParams_Builder, a0: Rational): Result[PictureInPictureParams_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_aspect_ratio, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(PictureInPictureParams_Builder { ref: got });
+}
+
+// False when the device does not have the member of `set_auto_enter_enabled`.
+pub function (c: PictureInPictureParams_BuilderClass) has_set_auto_enter_enabled(): boolean {
+  return c.id_set_auto_enter_enabled != 0 as usize;
+}
+
+// android.app.PictureInPictureParams.Builder.setAutoEnterEnabled(Z)Landroid/app/PictureInPictureParams$Builder;
+pub function (c: PictureInPictureParams_BuilderClass) set_auto_enter_enabled(e: usize, self: PictureInPictureParams_Builder, a0: boolean): Result[PictureInPictureParams_Builder, jni.JavaError] {
+  if (c.id_set_auto_enter_enabled == 0 as usize) {
+    return Err(jni.absent("android.app.PictureInPictureParams.Builder.setAutoEnterEnabled"));
+  }
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, jni.jbool(a0));
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_auto_enter_enabled, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(PictureInPictureParams_Builder { ref: got });
+}
+
+// A android.util.Rational.
+pub struct Rational { ref: usize }
+
+pub function (x: Rational) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Rational) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.util.Rational and the IDs of its members.
+pub struct RationalClass { class: usize, id_new: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function rational_class(e: usize): Result[RationalClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/util/Rational")?;
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(II)V"))?;
+  return Ok(RationalClass { class: class, id_new: id_new });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: RationalClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.util.Rational.<init>(II)V
+pub function (c: RationalClass) new(e: usize, a0: i32, a1: i32): Result[Rational, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Rational { ref: got });
+}
+
+// A android.view.InputDevice.
+pub struct InputDevice { ref: usize }
+
+pub function (x: InputDevice) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: InputDevice) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub const INPUT_DEVICE_SOURCE_CLASS_POINTER: i32 = 2;
+
+// The class android.view.InputDevice and the IDs of its members.
+pub struct InputDeviceClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function input_device_class(e: usize): Result[InputDeviceClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/view/InputDevice")?;
+  return Ok(InputDeviceClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: InputDeviceClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
 // The struct of IDs of each class of this module.
-pub struct Classes { context: ContextClass, activity: ActivityClass, file: FileClass, intent: IntentClass, package_manager: PackageManagerClass, key_character_map: KeyCharacterMapClass, settings_system: Settings_SystemClass, audio_manager: AudioManagerClass, time_zone: TimeZoneClass, resources: ResourcesClass, configuration: ConfigurationClass, locale_list: LocaleListClass }
+pub struct Classes { context: ContextClass, activity: ActivityClass, file: FileClass, intent: IntentClass, package_manager: PackageManagerClass, key_character_map: KeyCharacterMapClass, settings_system: Settings_SystemClass, audio_manager: AudioManagerClass, time_zone: TimeZoneClass, resources: ResourcesClass, configuration: ConfigurationClass, locale_list: LocaleListClass, window: WindowClass, view: ViewClass, window_manager: WindowManagerClass, window_manager_layout_params: WindowManager_LayoutParamsClass, display: DisplayClass, display_mode: Display_ModeClass, picture_in_picture_params_builder: PictureInPictureParams_BuilderClass, rational: RationalClass, input_device: InputDeviceClass }
 
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
@@ -769,7 +1308,205 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       return Err(err);
     },
   };
-  return Ok(Classes { context: context, activity: activity, file: file, intent: intent, package_manager: package_manager, key_character_map: key_character_map, settings_system: settings_system, audio_manager: audio_manager, time_zone: time_zone, resources: resources, configuration: configuration, locale_list: locale_list });
+  let window = match (window_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      resources.release(e);
+      configuration.release(e);
+      locale_list.release(e);
+      return Err(err);
+    },
+  };
+  let view = match (view_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      resources.release(e);
+      configuration.release(e);
+      locale_list.release(e);
+      window.release(e);
+      return Err(err);
+    },
+  };
+  let window_manager = match (window_manager_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      resources.release(e);
+      configuration.release(e);
+      locale_list.release(e);
+      window.release(e);
+      view.release(e);
+      return Err(err);
+    },
+  };
+  let window_manager_layout_params = match (window_manager_layout_params_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      resources.release(e);
+      configuration.release(e);
+      locale_list.release(e);
+      window.release(e);
+      view.release(e);
+      window_manager.release(e);
+      return Err(err);
+    },
+  };
+  let display = match (display_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      resources.release(e);
+      configuration.release(e);
+      locale_list.release(e);
+      window.release(e);
+      view.release(e);
+      window_manager.release(e);
+      window_manager_layout_params.release(e);
+      return Err(err);
+    },
+  };
+  let display_mode = match (display_mode_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      resources.release(e);
+      configuration.release(e);
+      locale_list.release(e);
+      window.release(e);
+      view.release(e);
+      window_manager.release(e);
+      window_manager_layout_params.release(e);
+      display.release(e);
+      return Err(err);
+    },
+  };
+  let picture_in_picture_params_builder = match (picture_in_picture_params_builder_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      resources.release(e);
+      configuration.release(e);
+      locale_list.release(e);
+      window.release(e);
+      view.release(e);
+      window_manager.release(e);
+      window_manager_layout_params.release(e);
+      display.release(e);
+      display_mode.release(e);
+      return Err(err);
+    },
+  };
+  let rational = match (rational_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      resources.release(e);
+      configuration.release(e);
+      locale_list.release(e);
+      window.release(e);
+      view.release(e);
+      window_manager.release(e);
+      window_manager_layout_params.release(e);
+      display.release(e);
+      display_mode.release(e);
+      picture_in_picture_params_builder.release(e);
+      return Err(err);
+    },
+  };
+  let input_device = match (input_device_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      resources.release(e);
+      configuration.release(e);
+      locale_list.release(e);
+      window.release(e);
+      view.release(e);
+      window_manager.release(e);
+      window_manager_layout_params.release(e);
+      display.release(e);
+      display_mode.release(e);
+      picture_in_picture_params_builder.release(e);
+      rational.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { context: context, activity: activity, file: file, intent: intent, package_manager: package_manager, key_character_map: key_character_map, settings_system: settings_system, audio_manager: audio_manager, time_zone: time_zone, resources: resources, configuration: configuration, locale_list: locale_list, window: window, view: view, window_manager: window_manager, window_manager_layout_params: window_manager_layout_params, display: display, display_mode: display_mode, picture_in_picture_params_builder: picture_in_picture_params_builder, rational: rational, input_device: input_device });
 }
 
 // Deletes the reference to each class. Do not use `c` after this call.
@@ -786,4 +1523,13 @@ pub function (c: Classes) release(e: usize): void {
   c.resources.release(e);
   c.configuration.release(e);
   c.locale_list.release(e);
+  c.window.release(e);
+  c.view.release(e);
+  c.window_manager.release(e);
+  c.window_manager_layout_params.release(e);
+  c.display.release(e);
+  c.display_mode.release(e);
+  c.picture_in_picture_params_builder.release(e);
+  c.rational.release(e);
+  c.input_device.release(e);
 }
