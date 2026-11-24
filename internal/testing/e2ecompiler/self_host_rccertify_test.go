@@ -275,6 +275,24 @@ function pick(name: string): Case {
         let b3: ssa.SBlock = block(3, [1, 2], tail, ret(r));
         return Case { f: func(2, 8, [b0, b1, b2, b3]), modes: [borrow, rccertify.value_mode()], returns_unit: name == "literal-phi-returned" };
     }
+    if (name == "literal-phi-of-literals-returned" || name == "literal-phi-of-literals-leaked") {
+        // v4 is a fresh box on one path, and on the other the phi v6 of two
+        // literals, which is a literal too.
+        let b0: ssa.SBlock = block(0, [], [param(0), param(1)], brif(1, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [fresh_box(2)], br(5));
+        let b2: ssa.SBlock = block(2, [0], [], brif(1, 3, 4));
+        let b3: ssa.SBlock = block(3, [2], [inst(57, 3, [], 0, "&arr|")], br(6));
+        let b4: ssa.SBlock = block(4, [2], [inst(57, 5, [], 0, "&arr|")], br(6));
+        let b6: ssa.SBlock = block(6, [3, 4], [inst(8, 6, [3, 5], 0, "")], br(5));
+        let r: i32 = 4;
+        let tail: ssa.SInst[] = [inst(8, 4, [2, 6], 0, "")];
+        if (name == "literal-phi-of-literals-leaked") {
+            tail = tail.append(const_int(7, 0));
+            r = 7;
+        }
+        let b5: ssa.SBlock = block(5, [1, 6], tail, ret(r));
+        return Case { f: func(2, 8, [b0, b1, b2, b3, b4, b6, b5]), modes: [borrow, rccertify.value_mode()], returns_unit: name == "literal-phi-of-literals-returned" };
+    }
     if (name == "pair-word-released-on-each-payload-tag") {
         // A paired callee whose payload is a reference under tags 0 and 1:
         // the word is released on each, and the arm the two compares leave
@@ -860,6 +878,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"literal-phi-returned", nil, 0},
 		{"literal-phi-leaked", []string{"leaked where it dies of v2"}, 0},
 		{"literal-phi-released-twice", []string{"spent without a unit of v4"}, 0},
+		{"literal-phi-of-literals-returned", nil, 0},
+		{"literal-phi-of-literals-leaked", []string{"leaked where it dies of v2"}, 0},
 		{"borrow-phi-released", nil, 1},
 		{"resumed-frame-refused", []string{"cannot be certified: resumes from a task frame, which the certifier does not model"}, 0},
 		{"pair-word-released-on-each-payload-tag", nil, 0},

@@ -3484,10 +3484,25 @@ function excluded_on(w: Walk, bi: i32, d: i32, sid: i32, word: i32): i32 {
 
 struct Fed { p: Progress, input: i32 }
 
-// A string or an aggregate literal: an immortal box.
+// A string or an aggregate literal, or a phi of them: an immortal box.
 function literal(w: Walk, v: i32): boolean {
-  let k = def_at(w, v).kind_tag;
-  return k == ssa.STR_LIT || k == ssa.AGG_LIT;
+  return literal_within(w, v, 4);
+}
+
+function literal_within(w: Walk, v: i32, depth: i32): boolean {
+  let ins = def_at(w, v);
+  if (ins.kind_tag == ssa.STR_LIT || ins.kind_tag == ssa.AGG_LIT) {
+    return true;
+  }
+  if (ins.kind_tag != ssa.PHI || depth == 0) {
+    return false;
+  }
+  for a in ins.args {
+    if (a < 0 || a != v && !literal_within(w, a, depth - 1)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // The units of one side of a twin that a phi input takes: one, as for a
