@@ -361,6 +361,23 @@ pub function new_local_ref(env: usize, ref: usize): usize {
   return call1(env, 25, ref);
 }
 
+// Starts a frame with room for `capacity` local references. It is false,
+// with the exception cleared, when the VM has no memory for the frame.
+pub function push_local_frame(env: usize, capacity: i32): boolean {
+  if (call1(env, 19, capacity as usize) as i32 != 0) {
+    exception_clear(env);
+    return false;
+  }
+  return true;
+}
+
+// Ends the frame of `push_local_frame` and deletes each of its local
+// references. The result is a local reference to `keep` in the frame
+// below, or null when `keep` is null.
+pub function pop_local_frame(env: usize, keep: usize): usize {
+  return call1(env, 20, keep);
+}
+
 pub function get_superclass(env: usize, clazz: usize): usize {
   return call1(env, 10, clazz);
 }
