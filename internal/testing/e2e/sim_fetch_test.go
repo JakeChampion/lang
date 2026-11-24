@@ -57,7 +57,7 @@ func TestSimFetchArm64(t *testing.T) {
 }
 
 func TestWASMSimFetch(t *testing.T) {
-	out, _, code := runWasmArtifact(t, buildResultComponent(t, simFetchSource(t)), runOpts{})
+	out, _, code := runWasmArtifact(t, buildResultComponent(t, simFetchSource(t)), runOpts{workDir: t.TempDir()})
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\n%s", code, out)
 	}

@@ -10,7 +10,7 @@ Each function then does what a person does. `tap` and `hold` find an element by 
 
 After each event, the simulator draws a frame, as the display does at the next vsync. So the layout that the test reads is the layout that the person sees.
 
-`themed` sets the dark theme, and `scaled` sets the font size of the system. `directed` sets a layout that is right to left. `kept` keeps the loop alive after a Destroy event, as `android.keep_alive` does, so a test can check what the program closes.
+`themed` sets the dark theme, and `scaled` sets the font size of the system. `directed` sets a layout that is right to left. `resized` gives the window a new size, as when the screen turns. `kept` keeps the loop alive after a Destroy event, as `android.keep_alive` does, so a test can check what the program closes.
 
 `texts` gives the texts that the screen shows, and `shows` tells whether it shows one text. `says` also finds an element by what an accessibility service reads for it, such as a button of icons. `finished` tells whether the program closed the app, and `keyboard` gives the text that the keyboard of the system shows. `spoken` gives what an accessibility service reads. `picture` draws the screen on a frame, which `testkit.save_png` writes as a PNG file.
 
@@ -138,6 +138,11 @@ pub function kept[S, M](own s: Sim[S, M], on: boolean): Sim[S, M] {
 // a language of the person sets it.
 pub function directed[S, M](own s: Sim[S, M], rtl: boolean): Sim[S, M] {
   return event(Sim { ...s, rtl: rtl }, android.WindowResized(android.Window { ptr: 1 as usize }));
+}
+
+// The simulator with a window of w by h pixels, as after the screen turned.
+pub function resized[S, M](own s: Sim[S, M], w: i32, h: i32): Sim[S, M] {
+  return event(Sim { ...s, w: w, h: h }, android.WindowResized(android.Window { ptr: 1 as usize }));
 }
 
 // The simulator in the dark theme, or in the light theme.

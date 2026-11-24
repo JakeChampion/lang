@@ -48,6 +48,10 @@ static const char *string_of(uintptr_t id) {
   return "";
 }
 static uintptr_t find_class(uintptr_t e, const char *name) { return 7; }
+// The bindings keep a global reference to the System class for one call.
+static int globals;
+static uintptr_t new_global(uintptr_t e, uintptr_t ref) { globals++; return ref; }
+static void delete_global(uintptr_t e, uintptr_t ref) { globals--; }
 static uintptr_t method(uintptr_t e, uintptr_t cls, const char *name, const char *sig) { return 9; }
 static uintptr_t property(uintptr_t e, uintptr_t cls, uintptr_t id, const uint64_t *args) {
   return text(strcmp(string_of(args[0]), "dev.fern.android.loop") ? "" : live);
@@ -75,6 +79,8 @@ int main(int argc, char **argv) {
   table[6] = (uintptr_t)find_class;
   table[15] = (uintptr_t)none;
   table[17] = (uintptr_t)none;
+  table[21] = (uintptr_t)new_global;
+  table[22] = (uintptr_t)delete_global;
   table[23] = (uintptr_t)release;
   table[113] = (uintptr_t)method;
   table[116] = (uintptr_t)property;
@@ -101,6 +107,7 @@ int main(int argc, char **argv) {
   drop(ctx, 8);
   drop(ctx, -1);
   require(slot_of(env, 105) == 7, "a slot out of the range changes nothing");
+  require(globals == 0, "each global reference is deleted");
   return 0;
 }
 `

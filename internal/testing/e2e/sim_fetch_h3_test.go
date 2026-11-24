@@ -63,7 +63,7 @@ func TestSimFetchH3Arm64(t *testing.T) {
 }
 
 func TestWASMSimFetchH3(t *testing.T) {
-	out, _, code := runWasmArtifact(t, buildResultComponent(t, simFetchH3Source(t)), runOpts{})
+	out, _, code := runWasmArtifact(t, buildResultComponent(t, simFetchH3Source(t)), runOpts{workDir: t.TempDir()})
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\n%s", code, out)
 	}

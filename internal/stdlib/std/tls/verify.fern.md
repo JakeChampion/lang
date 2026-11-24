@@ -120,6 +120,7 @@ pub enum VerifyError {
   BadSignature(i32),
   NameConstraint(i32),
   RootsUnreadable(string),
+  RemovedRootUnreadable(string),
   UnsupportedAlgorithm(string),
   Distrusted(i32),
   DeniedKey(i32),
@@ -201,6 +202,9 @@ pub function (e: VerifyError) message(): string {
     },
     RootsUnreadable(path) => {
       return "tls verify: no certificates could be read from " + path;
+    },
+    RemovedRootUnreadable(path) => {
+      return "tls verify: cannot read the removed roots at " + path;
     },
     NameConstraint(i) => {
       return "tls verify: certificate " + i.to_string() + "'s name constraints exclude a name below it";
@@ -315,10 +319,7 @@ pub function system_roots(): Option[Roots] {
   if let Some(p) = env("SSL_CERT_FILE") {
     paths = [p];
   } else if (target_os() == "android") {
-    if let Ok(r) = android_roots() {
-      return Some(r);
-    }
-    return None;
+    return android_roots();
   }
   for p in paths {
     if let Ok(r) = roots_from_file(p) {
@@ -328,16 +329,22 @@ pub function system_roots(): Option[Roots] {
   return None;
 }
 
-function android_roots(): Result[Roots, VerifyError] {
+// The roots of the first directory that has any, less the roots that the
+// user removed. A removal directory that cannot be read gives no roots: the
+// next directory would give back a root that the user removed.
+function android_roots(): Option[Roots] {
   // Android allocates a range of 100000 UIDs to each user profile.
   let user = getuid() / 100000u32;
   let removed = "/data/misc/user/" + user.to_string() + "/cacerts-removed";
   for dir in ANDROID_ROOT_DIRS {
     if let Ok(system) = roots_from_dir(dir) {
-      return __exclude_removed(system, removed);
+      return match (__without_removed(system, removed)) {
+        Ok(r) => Some(r),
+        Err(_) => None,
+      };
     }
   }
-  return Err(RootsUnreadable(ANDROID_ROOT_DIRS[0]));
+  return None;
 }
 
 // The roots in the PEM files of directory `dir`, one or more in each file.
@@ -361,48 +368,40 @@ pub function roots_from_dir(dir: string): Result[Roots, VerifyError] {
 
 // Reads system roots and excludes certificates present in the user's
 // removal directory. Android stores removed certificates as DER files.
+// Only a removal directory that does not exist removes nothing. Each other
+// read error, and an entry that holds no certificate, is an error, because
+// a root that the user removed would stay trusted.
 pub function roots_from_dir_excluding(dir: string, removed: string): Result[Roots, VerifyError] {
-  let system = roots_from_dir(dir)?;
-  return __exclude_removed(system, removed);
+  return __without_removed(roots_from_dir(dir)?, removed);
 }
 
-function __exclude_removed(system: Roots, removed: string): Result[Roots, VerifyError] {
-  let names: string[] = [];
-  match (read_dir(removed)) {
-    Ok(entries) => {
-      names = entries;
-    },
+function __without_removed(system: Roots, removed: string): Result[Roots, VerifyError] {
+  let names = match (read_dir(removed)) {
+    Ok(names) => names,
     Err(NotFound(_)) => {
       return Ok(system);
     },
     Err(_) => {
-      return Err(RootsUnreadable(removed));
-    }
-  }
+      return Err(RemovedRootUnreadable(removed));
+    },
+  };
   let excluded: u8[][] = [];
   for name in names {
     let path = removed + "/" + name;
     let Ok(data) = read_file_bytes(path) else {
-      return Err(RootsUnreadable(path));
+      return Err(RemovedRootUnreadable(path));
     };
-    let certs: u8[][] = [];
     if (data.len() > 0 && data[0] == 0x30u8) {
-      certs = [data];
-    } else {
-      let Ok(found) = pem.certificates(utf8.from_bytes_lossy(data)) else {
-        return Err(RootsUnreadable(path));
-      };
-      certs = found;
+      excluded = excluded.append(data);
+      continue;
     }
+    let Ok(certs) = pem.certificates(utf8.from_bytes_lossy(data)) else {
+      return Err(RemovedRootUnreadable(path));
+    };
     if (certs.len() == 0) {
-      return Err(RootsUnreadable(path));
+      return Err(RemovedRootUnreadable(path));
     }
-    for der in certs {
-      if let Err(_) = x509.parse(der) {
-        return Err(RootsUnreadable(path));
-      }
-      excluded = excluded.append(der);
-    }
+    excluded = excluded.concat(certs);
   }
   if (excluded.len() == 0) {
     return Ok(system);

@@ -23,6 +23,7 @@ The generated `compiler/rtbundle.fern` embeds those files for the pinned compile
 | Linux x86-64 | `getrandom`, number 318 | Positive byte count, at most the request size |
 | Linux AArch64 | `getrandom`, number 278 | Positive byte count, at most the request size |
 | Darwin AArch64 | `getentropy`, number 500 | Zero, which means a complete request |
+| wasm32-wasi (core module) | `random_get` of `wasi_snapshot_preview1` | Zero, which means a complete request |
 
 Each request contains at most 256 bytes.
 Linux short reads advance by the actual byte count.
@@ -80,6 +81,10 @@ Native Darwin CI must verify its zero-success syscall convention.
 `TestArm64DarwinEntropyCompletion` covers zero, one, 256, 257, and 1024 bytes and an integer draw.
 Local QEMU results do not replace that native CI evidence.
 
-WASI continues to use the host random interface.
+A wasm32-wasi core module calls `random_get` one time for each request.
+A result other than zero writes the same diagnostic to stderr and traps.
+The program does not use the buffer.
+`TestSelfHostWasmEntropyFailure` puts a `random_get` that fails in place of the import, and requires the diagnostic, a trap and no output.
+A wasm32-wasi component takes its bytes from `get-random-u64` of `wasi:random/random`, which has no error result.
 The Go oracle continues to use `crypto/rand`.
 This change preserves their current entropy providers.

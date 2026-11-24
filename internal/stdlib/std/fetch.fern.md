@@ -10,6 +10,8 @@ A request value combines its method, URL, headers, body, timeouts, and decode po
 
 Connection, inactivity, and total timeouts describe different phases. Body and decode limits bound resource use. Network operations return concrete fetch errors.
 
+A request body of `BodyFile` or `BodyFileRanges` goes out from the file in pieces of at most 64 KiB. The client does not hold the whole file in memory. Such a request has a connection of its own in a task, and each attempt reads the file from its start. A file that cannot be read, or that changes during the send, gives `InvalidRequest`. `wasi:http` has no filesystem, and refuses a file body.
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.
@@ -40,7 +42,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<12 function __target_of(raw: string, policy: Policy): Result[__Target, FetchError]>>
 
-<<13 function __wire(req: Request, t: __Target, body: u8[]): u8[]>>
+<<13 function __wire(req: Request, t: __Target, body: u8[], after: i64): u8[]>>
 
 <<14 pub trait Transport>>
 
@@ -546,14 +548,55 @@ function __request_ok(req: Request): Result[void, FetchError] {
     }
     i += 1;
   }
+  return Ok(());
+}
+
+// __Upload is the body of a request that comes from a file, and how much of
+// it was sent. `file` is None for a body that is in memory. `open` holds
+// until the end of the body is sent.
+struct __Upload { file: Option[http.FileBody], next: i32, left: i64, open: boolean }
+
+function __no_upload(): __Upload {
+  return __Upload { file: None, next: 0, left: 0 as i64, open: false };
+}
+
+function __upload(req: Request): Result[__Upload, FetchError] {
+  let none: u8[] = [];
+  let found: Option[http.FileBody] = None;
   match (req.body) {
     BodyFile(path) => {
-      return Err(InvalidRequest("a file body cannot be sent"));
+      let whole: i64[] = [];
+      found = http.file_body(path, whole, [none, none]);
     },
     BodyFileRanges(path, ranges, seams) => {
-      return Err(InvalidRequest("a file body cannot be sent"));
+      if (ranges.len() == 0 || !http.file_ranges_ok(ranges, seams)) {
+        return Err(InvalidRequest("the ranges of the file body do not agree with its seams"));
+      }
+      found = http.file_body(path, ranges, seams);
     },
-    _ => {}
+    _ => {
+      return Ok(__no_upload());
+    }
+  }
+  match (found) {
+    Some(f) => {
+      return Ok(__Upload { file: Some(f), next: 0, left: f.len(), open: true });
+    },
+    None => {
+      return Err(InvalidRequest("the file of the body cannot be read"));
+    }
+  }
+  return Err(InvalidRequest("the file of the body cannot be read"));
+}
+
+function __file_changed(): FetchError {
+  return InvalidRequest("the file of the body changed while it was sent");
+}
+
+// __in_time refuses more work on a request that is past its total bound.
+function __in_time[T: Transport](tr: T, req: Request, started: i64): Result[void, FetchError] {
+  if (time.instant_nanos(tr.now()) - started >= req.timeouts.total.as_nanos()) {
+    return Err(Timeout(Total));
   }
   return Ok(());
 }
@@ -574,11 +617,13 @@ function __host_field(host: string, port: i32, tls: boolean): string {
 }
 ```
 
-### `13 function __wire(req: Request, t: __Target, body: u8[]): u8[]`
+### `13 function __wire(req: Request, t: __Target, body: u8[], after: i64): u8[]`
 
 ```fern
-<<13 function __wire(req: Request, t: __Target, body: u8[]): u8[]>>=
-function __wire(req: Request, t: __Target, body: u8[]): u8[] {
+<<13 function __wire(req: Request, t: __Target, body: u8[], after: i64): u8[]>>=
+// `after` is the count of the bytes of the body that follow `body`, in
+// later writes.
+function __wire(req: Request, t: __Target, body: u8[], after: i64): u8[] {
   let b = buf_new(256 + body.len());
   buf_push(b, req.method);
   buf_push(b, " ");
@@ -601,9 +646,10 @@ function __wire(req: Request, t: __Target, body: u8[]): u8[] {
     }
     i += 1;
   }
-  if (__carries_length(req, body.len())) {
+  let length = body.len() as i64 + after;
+  if (__carries_length(req, length)) {
     buf_push(b, "Content-Length: ");
-    buf_push(b, body.len().to_string());
+    buf_push(b, length.to_string());
     buf_push(b, "\r\n");
   }
   if (__asks_codings(req)) {
@@ -621,7 +667,7 @@ function __wire(req: Request, t: __Target, body: u8[]): u8[] {
   return out;
 }
 
-function __sent_fields(req: Request, t: __Target, body_len: i32): HeaderMap {
+function __sent_fields(req: Request, t: __Target, body_len: i64): HeaderMap {
   let out = headers.new();
   let i = 0;
   while (i < req.headers.names.len()) {
@@ -657,8 +703,8 @@ function __sent(h: HeaderMap, i: i32): boolean {
   return true;
 }
 
-function __carries_length(req: Request, body_len: i32): boolean {
-  return body_len > 0 || req.method == "POST" || req.method == "PUT" || req.method == "PATCH";
+function __carries_length(req: Request, body_len: i64): boolean {
+  return body_len > 0 as i64 || req.method == "POST" || req.method == "PUT" || req.method == "PATCH";
 }
 
 function __sends_proxy_auth(req: Request, t: __Target): boolean {
@@ -2306,6 +2352,8 @@ function __send_once[T: Transport](tr: T, req: Request, started: i64, policy: Po
 }
 
 function __send_dialled[T: Transport](tr: T, req: Request, t: __Target, started: i64, policy: Policy): Result[HttpResponse, FetchError] {
+  // A file body that cannot be sent is refused before the dial.
+  let up = __upload(req)?;
   __origin_checked(tr, t, policy)?;
   let guard = policy.public_only && t.direct;
   let first = __attempt(tr, req, t, started, guard, policy.roots, true);
@@ -2365,7 +2413,7 @@ function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64,
     conn = __take_idle(tr, place);
   }
   if (conn.fd < 0) {
-    if (t.tls && async.in_task()) {
+    if (__shares(req, t)) {
       match (tr.idle().shared) {
         Some(sh) => {
           return __attempt_shared(tr, req, t, started, place, guard, roots, sh);
@@ -2376,6 +2424,27 @@ function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64,
     conn = __connect(tr, t, req, guard, roots)?;
   }
   return __attempt_opened(tr, req, t, started, place, conn);
+}
+
+// A body from a file has a connection of its own: the task feeds the pieces,
+// and a shared connection takes a whole body from its loop.
+function __shares(req: Request, t: __Target): boolean {
+  return t.tls && async.in_task() && !__from_file(req);
+}
+
+function __from_file(req: Request): boolean {
+  match (req.body) {
+    BodyFile(path) => {
+      return true;
+    },
+    BodyFileRanges(path, ranges, seams) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
 }
 
 function __attempt_opened[T: Transport](tr: T, req: Request, t: __Target, started: i64, place: __Place, conn: __Conn): Result[HttpResponse, FetchError] {
@@ -2496,7 +2565,7 @@ function __shared_wait[T: Transport](tr: T, req: Request, started: i64, sh: Shar
 }
 
 function __attempt_h1[T: Transport](tr: T, req: Request, t: __Target, started: i64, place: __Place, conn: __Conn): Result[HttpResponse, FetchError] {
-  match (__send_all(tr, conn, __wire(req, t, req.body.bytes()))) {
+  match (__h1_sent(tr, conn, req, t, started)) {
     Ok(c) => {
       conn = c;
     },
@@ -2522,15 +2591,48 @@ function __attempt_h1[T: Transport](tr: T, req: Request, t: __Target, started: i
   return Err(Protocol("unreachable"));
 }
 
-function __attempt_h2[T: Transport](tr: T, req: Request, t: __Target, started: i64, place: __Place, conn: __Conn, hc: h2.Conn): Result[HttpResponse, FetchError] {
-  let (sent, stream) = hc.request(__outgoing(req, t));
-  if (stream < 0) {
-    tr.close(conn.fd);
-    return Err(Io(net.ConnectionReset));
+function __h1_sent[T: Transport](tr: T, conn: __Conn, req: Request, t: __Target, started: i64): Result[__Conn, FetchError] {
+  let up = __upload(req)?;
+  let Some(f) = up.file else {
+    return __send_all(tr, conn, __wire(req, t, req.body.bytes(), 0 as i64));
+  };
+  let none: u8[] = [];
+  conn = __send_all(tr, conn, __wire(req, t, none, up.left))?;
+  let left = up.left;
+  let i = 0;
+  while (true) {
+    __in_time(tr, req, started)?;
+    let Some(piece) = f.piece(i) else {
+      break;
+    };
+    conn = __send_all(tr, conn, piece)?;
+    left -= piece.len() as i64;
+    i += 1;
   }
-  match (__h2_answered(tr, req, started, __H2Call { conn: conn, h2: sent.conn, out: sent.output }, stream)) {
+  if (left != 0 as i64) {
+    return Err(__file_changed());
+  }
+  return Ok(conn);
+}
+
+function __attempt_h2[T: Transport](tr: T, req: Request, t: __Target, started: i64, place: __Place, conn: __Conn, hc: h2.Conn): Result[HttpResponse, FetchError] {
+  let stream = -1;
+  let call = __H2Call { conn: conn, h2: hc, out: [], up: __no_upload() };
+  match (__h2_asked(call, req, t)) {
+    Ok(asked) => {
+      call = asked.0;
+      stream = asked.1;
+    },
+    Err(e) => {
+      tr.close(conn.fd);
+      return Err(e);
+    }
+  }
+  match (__h2_answered(tr, req, started, call, stream)) {
     Ok(done) => {
-      if (done.0.h2.closed() || done.0.h2.going_away()) {
+      // An answer that came before the end of the body leaves a stream that
+      // the server can hold open.
+      if (done.0.h2.closed() || done.0.h2.going_away() || done.0.up.open) {
         __close(tr, done.0.conn);
       } else {
         __park(tr, place, __Conn { ...done.0.conn, h2: Some(done.0.h2) });
@@ -2543,6 +2645,47 @@ function __attempt_h2[T: Transport](tr: T, req: Request, t: __Target, started: i
     }
   }
   return Err(Protocol("unreachable"));
+}
+
+// __h2_asked opens the stream of the request. A body from a file comes
+// after, from __h2_fed.
+function __h2_asked(call: __H2Call, req: Request, t: __Target): Result[(__H2Call, i32), FetchError] {
+  let up = __upload(req)?;
+  let (sent, stream) = __h2_stream(call.h2, req, t, up);
+  if (stream < 0) {
+    return Err(Io(net.ConnectionReset));
+  }
+  return Ok((__H2Call { ...call, h2: sent.conn, out: sent.output, up: up }, stream));
+}
+
+function __h2_stream(hc: h2.Conn, req: Request, t: __Target, up: __Upload): (h2.Step, i32) {
+  if (up.open) {
+    return hc.request_producing(__outgoing_head(req, t, up.left));
+  }
+  return hc.request(__outgoing(req, t));
+}
+
+// The stream takes a piece when it holds less than one. When the window of
+// the server is shut, the caller reads, and waits for it to open.
+function __h2_feeds(call: __H2Call, stream: i32): boolean {
+  return call.up.open && call.h2.producing(stream) && call.h2.pending(stream) < 65536;
+}
+
+// __h2_fed gives the next piece of the file to the stream, or ends the body.
+function __h2_fed[T: Transport](tr: T, req: Request, started: i64, call: __H2Call, stream: i32): Result[__H2Call, FetchError] {
+  __in_time(tr, req, started)?;
+  let Some(f) = call.up.file else {
+    return Ok(call);
+  };
+  let Some(piece) = f.piece(call.up.next) else {
+    if (call.up.left != 0 as i64) {
+      return Err(__file_changed());
+    }
+    let ended = call.h2.end(stream, headers.new());
+    return Ok(__H2Call { ...call, h2: ended.conn, out: ended.output, up: __Upload { ...call.up, open: false } });
+  };
+  let step = call.h2.write(stream, piece);
+  return Ok(__H2Call { ...call, h2: step.conn, out: step.output, up: __Upload { ...call.up, next: call.up.next + 1, left: call.up.left - piece.len() as i64 } });
 }
 
 // __noted applies the Alt-Svc fields of a response read over TCP from the
@@ -2563,7 +2706,7 @@ function __noted[T: Transport](tr: T, t: __Target, resp: HttpResponse): HttpResp
 
 ```fern
 <<46 struct __H2Call>>=
-struct __H2Call { conn: __Conn, h2: h2.Conn, out: u8[] }
+struct __H2Call { conn: __Conn, h2: h2.Conn, out: u8[], up: __Upload }
 ```
 
 ### `47 function __h2_answered[T: Transport](tr: T, req: Request, started: i64, call: __H2Call, stream: i32): Resul...`
@@ -2573,12 +2716,16 @@ struct __H2Call { conn: __Conn, h2: h2.Conn, out: u8[] }
 function __h2_answered[T: Transport](tr: T, req: Request, started: i64, call: __H2Call, stream: i32): Result[(__H2Call, HttpResponse), FetchError] {
   while (true) {
     let conn = __send_all(tr, call.conn, call.out)?;
+    if (__h2_feeds(call, stream)) {
+      call = __h2_fed(tr, req, started, __H2Call { ...call, conn: conn, out: [] }, stream)?;
+      continue;
+    }
     let got = __recv_bounded(tr, conn, req.timeouts, started, 65536)?;
     if (got.bytes.len() == 0) {
       return Err(__closed_early(0));
     }
     let step = call.h2.read(got.bytes);
-    call = __H2Call { conn: got.conn, h2: step.conn, out: step.output };
+    call = __H2Call { ...call, conn: got.conn, h2: step.conn, out: step.output };
     match (__h2_answer(step.events, stream)) {
       Some(answer) => {
         let resp = answer?;
@@ -2876,9 +3023,9 @@ function __attempt_h3_opened[T: Transport](tr: T, req: Request, t: __Target, sta
     return Err(Protocol("HTTP/3: no connection"));
   };
   let early = h.early();
-  match (h.request(__outgoing(req, t))) {
+  match (__h3_asked(h, req, t)) {
     Ok(asked) => {
-      match (__h3_answered(tr, req, started, conn.fd, asked.0, asked.1)) {
+      match (__h3_answered(tr, req, started, conn.fd, asked.0, asked.1, asked.2)) {
         Ok(done) => {
           if (early && done.1.status == 425) {
             return __h3_too_early(tr, req, t, started, at, __Conn { ...conn, h3: Some(done.0) });
@@ -2897,9 +3044,9 @@ function __attempt_h3_opened[T: Transport](tr: T, req: Request, t: __Target, sta
         }
       }
     },
-    Err(why) => {
+    Err(e) => {
       tr.close(conn.fd);
-      return Err(Protocol("HTTP/3: " + why));
+      return Err(e);
     }
   }
   return Err(Protocol("unreachable"));
@@ -2925,7 +3072,29 @@ function __h3_too_early[T: Transport](tr: T, req: Request, t: __Target, started:
   return Err(Protocol("unreachable"));
 }
 
-function __h3_answered[T: Transport](tr: T, req: Request, started: i64, fd: i32, h: h3q.Conn, id: i64): Result[(h3q.Conn, HttpResponse), FetchError] {
+// __h3_asked opens the stream of the request. A body from a file comes
+// after, from __h3_fed.
+function __h3_asked(h: h3q.Conn, req: Request, t: __Target): Result[(h3q.Conn, i64, __Upload), FetchError] {
+  let up = __upload(req)?;
+  match (__h3_stream(h, req, t, up)) {
+    Ok(asked) => {
+      return Ok((asked.0, asked.1, up));
+    },
+    Err(why) => {
+      return Err(Protocol("HTTP/3: " + why));
+    }
+  }
+  return Err(Protocol("unreachable"));
+}
+
+function __h3_stream(h: h3q.Conn, req: Request, t: __Target, up: __Upload): Result[(h3q.Conn, i64), string] {
+  if (up.open) {
+    return h.request_producing(__outgoing_head(req, t, up.left));
+  }
+  return h.request(__outgoing(req, t));
+}
+
+function __h3_answered[T: Transport](tr: T, req: Request, started: i64, fd: i32, h: h3q.Conn, id: i64, up: __Upload): Result[(h3q.Conn, HttpResponse), FetchError] {
   let quiet = time.instant_nanos(tr.now());
   while (true) {
     h = __h3_flush(tr, fd, h);
@@ -2933,12 +3102,18 @@ function __h3_answered[T: Transport](tr: T, req: Request, started: i64, fd: i32,
     h = h.events_taken();
     match (__h3_answer(evs, id)) {
       Some(answer) => {
-        return Ok((h, answer?));
+        return Ok((__h3_body_left(tr, fd, h, id, up), answer?));
       },
       None => {}
     }
     if (h.done()) {
       return Err(__h3_closed(h, "the response"));
+    }
+    if (__h3_feeds(h, id, up)) {
+      let fed = __h3_fed(tr, req, started, h, id, up)?;
+      h = fed.0;
+      up = fed.1;
+      continue;
     }
     let step = __h3_pump(tr, fd, h, __h3_most(req.timeouts, started, quiet, time.instant_nanos(tr.now()))?)?;
     h = step.0;
@@ -2947,6 +3122,36 @@ function __h3_answered[T: Transport](tr: T, req: Request, started: i64, fd: i32,
     }
   }
   return Err(Protocol("unreachable"));
+}
+
+// __h3_body_left stops a body that the answer came before the end of, with
+// H3_REQUEST_CANCELLED.
+function __h3_body_left[T: Transport](tr: T, fd: i32, h: h3q.Conn, id: i64, up: __Upload): h3q.Conn {
+  if (up.open) {
+    return __h3_flush(tr, fd, h.abort(id, 268 as i64));
+  }
+  return h;
+}
+
+// The stream takes a piece when it holds less than one. When the server or
+// the congestion window holds the bytes back, the caller waits for a datagram.
+function __h3_feeds(h: h3q.Conn, id: i64, up: __Upload): boolean {
+  return up.open && h.quic().buffered(id) < 65536 as i64;
+}
+
+// __h3_fed gives the next piece of the file to the stream, or ends the body.
+function __h3_fed[T: Transport](tr: T, req: Request, started: i64, h: h3q.Conn, id: i64, up: __Upload): Result[(h3q.Conn, __Upload), FetchError] {
+  __in_time(tr, req, started)?;
+  let Some(f) = up.file else {
+    return Ok((h, up));
+  };
+  let Some(piece) = f.piece(up.next) else {
+    if (up.left != 0 as i64) {
+      return Err(__file_changed());
+    }
+    return Ok((h.end(id, headers.new()), __Upload { ...up, open: false }));
+  };
+  return Ok((h.write(id, piece), __Upload { ...up, next: up.next + 1, left: up.left - piece.len() as i64 }));
 }
 
 // __h3_most is how long the response may still be waited for: the total
@@ -3398,6 +3603,13 @@ function __global_only(found: Lookup): Result[void, FetchError] {
 
 function __outgoing(req: Request, t: __Target): http.Outgoing {
   let body = req.body.bytes();
+  return http.Outgoing { ...__outgoing_head(req, t, body.len() as i64), body: body };
+}
+
+// __outgoing_head is the request with no body. `length` is the length of the
+// body that follows it.
+function __outgoing_head(req: Request, t: __Target, length: i64): http.Outgoing {
+  let none: u8[] = [];
   let scheme = "http";
   if (t.tls) {
     scheme = "https";
@@ -3406,7 +3618,7 @@ function __outgoing(req: Request, t: __Target): http.Outgoing {
   if (!t.direct && !t.tls) {
     target = "http://" + t.host_field + target;
   }
-  return http.Outgoing { method: req.method, scheme: scheme, authority: t.host_field, target: target, headers: __sent_fields(req, t, body.len()), body: body, trailers: headers.new() };
+  return http.Outgoing { method: req.method, scheme: scheme, authority: t.host_field, target: target, headers: __sent_fields(req, t, length), body: none, trailers: headers.new() };
 }
 
 function __global_addr(named: net.IpAddr, judged: net.IpAddr): Result[void, FetchError] {
@@ -3417,6 +3629,9 @@ function __global_addr(named: net.IpAddr, judged: net.IpAddr): Result[void, Fetc
 }
 
 function __send_hosted(req: Request, t: __Target): Result[HttpResponse, FetchError] {
+  if (__from_file(req)) {
+    return Err(InvalidRequest("wasi:http has no filesystem to read a file body from"));
+  }
   let limits = wasi_http.Limits { connect: __connect_bound(req.timeouts), inactivity: req.timeouts.inactivity, body_cap: req.limits.body };
   match (wasi_http.outgoing(__outgoing(req, t), limits)) {
     Ok(resp) => {

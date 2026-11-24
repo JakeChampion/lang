@@ -484,6 +484,10 @@ function t_unknown(reason: string): typeinfo.Type {
   return typeinfo.TypeUnknown { reason: reason };
 }
 
+function t_var(name: string, declared: boolean): typeinfo.Type {
+  return typeinfo.TypeVar { name: name, declared: declared };
+}
+
 function cell_elem_type(t: typeinfo.Type): typeinfo.Type {
   if let typeinfo.TypeStruct(s) = t {
     if (s.args.len() == 1) {
@@ -1424,6 +1428,9 @@ pub function type_debug(t: typeinfo.Type): string {
     typeinfo.TypeUnknown(uk) => {
       return "unknown(" + uk.reason + ")";
     },
+    typeinfo.TypeVar(_) => {
+      return "unknown(" + unknown_reason(t) + ")";
+    },
     typeinfo.TypeErased(e) => {
       return "erased(" + e.name + ")";
     }
@@ -1710,6 +1717,9 @@ function type_eq_in(a: typeinfo.Type, b: typeinfo.Type, modes: boolean): boolean
     typeinfo.TypeUnknown(_) => {
       return false;
     },
+    typeinfo.TypeVar(_) => {
+      return false;
+    },
     typeinfo.TypeNever(_) => {
       if let typeinfo.TypeNever(_) = b {
         return true;
@@ -1757,9 +1767,13 @@ function holds_any_unknown(t: typeinfo.Type): boolean {
   return is_unknown(t) || typeinfo.any_child(t, holds_any_unknown);
 }
 
-function is_unknown(t: typeinfo.Type): boolean {
+// True for a type that the checker did not resolve. A type variable is one.
+pub function is_unknown(t: typeinfo.Type): boolean {
   match (t) {
     typeinfo.TypeUnknown(_) => {
+      return true;
+    },
+    typeinfo.TypeVar(_) => {
       return true;
     },
     _ => {
@@ -1791,7 +1805,7 @@ function is_func_type(t: typeinfo.Type): boolean {
 }
 
 function type_contains_unknown(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeUnknown(_) = t {
+  if (is_unknown(t)) {
     return !unbound_enum_argument(t);
   }
   return typeinfo.any_child(t, type_contains_unknown);
@@ -1969,6 +1983,9 @@ function downcast_operand_ok(t: typeinfo.Type): boolean {
     typeinfo.TypeUnknown(_) => {
       return true;
     },
+    typeinfo.TypeVar(_) => {
+      return true;
+    },
     typeinfo.TypeNever(_) => {
       return true;
     },
@@ -2001,6 +2018,9 @@ function is_primitive_type(t: typeinfo.Type): boolean {
 function literal_match_type(t: typeinfo.Type): boolean {
   match (t) {
     typeinfo.TypeUnknown(_) => {
+      return false;
+    },
+    typeinfo.TypeVar(_) => {
       return false;
     },
     typeinfo.TypeErased(_) => {
@@ -2613,6 +2633,7 @@ function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
       }
     },
     typeinfo.TypeUnknown(_) => {},
+    typeinfo.TypeVar(_) => {},
     _ => {
       out = out.append(dg_at("E024", "struct destructure needs a struct expression, got " + type_label(it), v.line, v.col));
     }
@@ -4830,8 +4851,8 @@ function callable_assignable(from: typeinfo.TypeFunc, to: typeinfo.TypeFunc, uni
 }
 
 function callable_slot_open(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeUnknown(u) = t {
-    return !u.reason.starts_with(TPARAM_MARK) && !u.reason.starts_with(UNRESOLVED_MARK);
+  if let typeinfo.TypeUnknown(_) = t {
+    return true;
   }
   return false;
 }
@@ -5472,7 +5493,7 @@ function inferred_sig_ret(sig: FuncSig, c: ast.ExprCall, s: Scope, names: string
     for tp in sig.type_params {
       if (util.index_of_str(bn, tp) < 0) {
         bn = bn.append(tp);
-        bt = bt.append(t_unknown(TPARAM_MARK + tp));
+        bt = bt.append(t_var(tp, true));
       }
     }
     if (bn.len() > 0 && util.contains(sig.ret_type_name, "::")) {
@@ -7005,6 +7026,9 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
         typeinfo.TypeUnknown(_) => {
           return CheckResult { scope: s, ty: t };
         },
+        typeinfo.TypeVar(_) => {
+          return CheckResult { scope: s, ty: t };
+        },
         _ => {}
       }
       if (is_unknown(t)) {
@@ -7466,7 +7490,7 @@ function generic_method_ret(msig: MethodSig, mb: MethodBinding, s: Scope): typei
   for tp in mb.full {
     if (util.index_of_str(bn, tp) < 0) {
       bn = bn.append(tp);
-      bt = bt.append(t_unknown(TPARAM_MARK + tp));
+      bt = bt.append(t_var(tp, true));
     }
   }
   if (bn.len() == 0) {
@@ -7823,7 +7847,7 @@ function type_from_ref_names_part_5(r: parser.TypeRef, tn: TypeNames, name: stri
       return t_union(r.base);
     }
   }
-  return t_unknown(UNRESOLVED_MARK + name);
+  return t_var(name, false);
 }
 
 function callable_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
@@ -7932,7 +7956,7 @@ function vec_type(r: parser.TypeRef, tparams: string[], targs: typeinfo.Type[], 
   let n = type_from_ref_subst(r.args[0], tparams, targs, tn);
   let elem = type_from_ref_subst(r.args[1], tparams, targs, tn);
   if (is_unknown(n) && is_type_variable(n) || is_unknown(elem) && is_type_variable(elem)) {
-    return t_unknown(TPARAM_MARK + parser.render_type_ref(r));
+    return t_var(parser.render_type_ref(r), true);
   }
   if (is_type_variable(n) || is_type_variable(elem)) {
     return typeinfo.TypeErased { name: parser.render_type_ref(r) };
@@ -7964,25 +7988,11 @@ function with_nominal_args(t: typeinfo.Type, args: typeinfo.Type[]): typeinfo.Ty
   return t;
 }
 
-const TPARAM_MARK: string = "type parameter ";
-
-const UNRESOLVED_MARK: string = "unrecognised type name: ";
-
-pub function typevar_reason_name(reason: string): string {
-  if (reason.len() > TPARAM_MARK.len() && reason.starts_with(TPARAM_MARK)) {
-    return slice_unchecked(reason, TPARAM_MARK.len(), reason.len()).to_owned();
-  }
-  if (reason.len() > UNRESOLVED_MARK.len() && reason.starts_with(UNRESOLVED_MARK)) {
-    return slice_unchecked(reason, UNRESOLVED_MARK.len(), reason.len()).to_owned();
-  }
-  return "";
-}
-
-function tvar_name(t: typeinfo.Type): string {
-  if let typeinfo.TypeUnknown(u) = t {
-    let name = typevar_reason_name(u.reason);
-    if (parser.looks_type_var(name)) {
-      return name;
+// The name of a type variable that has the spelling of one, or "".
+pub function tvar_name(t: typeinfo.Type): string {
+  if let typeinfo.TypeVar(v) = t {
+    if (parser.looks_type_var(v.name)) {
+      return v.name;
     }
   }
   return "";
@@ -8000,7 +8010,7 @@ function unknown_beyond_tvars(t: typeinfo.Type): boolean {
   if (is_type_variable(t)) {
     return false;
   }
-  if let typeinfo.TypeUnknown(_) = t {
+  if (is_unknown(t)) {
     return !unbound_enum_argument(t);
   }
   return typeinfo.any_child(t, unknown_beyond_tvars);
@@ -8031,7 +8041,7 @@ function dyn_type_subst(name: string, tparams: string[], targs: typeinfo.Type[],
       continue;
     }
     if (type_contains_unknown(targs[i])) {
-      return t_unknown(TPARAM_MARK + name);
+      return t_var(name, true);
     }
     names = names.append(tparams[i]);
     labels = labels.append(type_label(targs[i]));
@@ -8045,7 +8055,7 @@ function dyn_type_subst(name: string, tparams: string[], targs: typeinfo.Type[],
 function erased_tparams(tparams: string[]): typeinfo.Type[] {
   let erased: typeinfo.Type[] = [];
   for tp in tparams {
-    erased = erased.append(t_unknown(TPARAM_MARK + tp));
+    erased = erased.append(t_var(tp, true));
   }
   return erased;
 }
@@ -8553,6 +8563,9 @@ pub function type_label(t: typeinfo.Type): string {
       return c.value;
     },
     typeinfo.TypeUnknown(_) => {
+      return "unknown";
+    },
+    typeinfo.TypeVar(_) => {
       return "unknown";
     },
     typeinfo.TypeErased(e) => {
@@ -14776,6 +14789,9 @@ function display_unjudged(t: typeinfo.Type): boolean {
     typeinfo.TypeUnknown(_) => {
       return true;
     },
+    typeinfo.TypeVar(_) => {
+      return true;
+    },
     typeinfo.TypeErased(_) => {
       return true;
     },
@@ -15851,10 +15867,9 @@ function pointer_cast_diags(u: ast.ExprUnary, cot: typeinfo.Type, tgt: typeinfo.
 }
 
 function unresolved_cast_diags(u: ast.ExprUnary, tgt: typeinfo.Type, cot: typeinfo.Type, s: Scope): util.Diag[] {
-  if let typeinfo.TypeUnknown(tu) = tgt {
-    let name = typevar_reason_name(tu.reason);
-    if (tu.reason.starts_with(UNRESOLVED_MARK) && !util.has_str(s.tparams, name) && cast_pointer_int(cot) && !is_usize(cot)) {
-      return [e069_cast(u, cot, t_struct(name))];
+  if let typeinfo.TypeVar(tv) = tgt {
+    if (!tv.declared && tv.name.len() > 0 && !util.has_str(s.tparams, tv.name) && cast_pointer_int(cot) && !is_usize(cot)) {
+      return [e069_cast(u, cot, t_struct(tv.name))];
     }
   }
   return [];
@@ -17263,6 +17278,7 @@ function tuple_destr_diags(t: typeinfo.Type, n: i32, line: i32, col: i32): util.
       }
     },
     typeinfo.TypeUnknown(_) => {},
+    typeinfo.TypeVar(_) => {},
     _ => {
       return [dg_at("E024", "tuple destructure needs a tuple expression, got " + type_label(t), line, col)];
     }
@@ -17433,6 +17449,7 @@ function cover_shape_diags(p: CoverPat, t: typeinfo.Type, s: Scope, line: i32, c
         }
       },
       typeinfo.TypeUnknown(_) => {},
+      typeinfo.TypeVar(_) => {},
       _ => {
         return [dg_at("E035", "tuple pattern needs a tuple value, got " + type_label(t), line, col)];
       }
@@ -19836,7 +19853,7 @@ function ocl_method_loans(call: ast.ExprCall, facts: OclFacts): OclCapture[] {
   };
   let out: OclCapture[] = [];
   for method in lenders.methods {
-    if (lu_matches_method(method, fa) && !util.has_str(lenders.fresh_methods, method.receiver + "." + method.name)) {
+    if (lu_matches_method(method, fa) && !lenders.fresh_methods.has(method.receiver + "." + method.name)) {
       if (lu_lends(method, 0)) {
         out = ocl_lent_loans(out, fa.obj, facts);
       }
@@ -20869,7 +20886,7 @@ function lu_has(ctx: OwnCtx, key: string): boolean {
   return lu.keys.has(key);
 }
 
-struct OwnCtx { factories: OclFactoryState, result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: util.NameIndex, scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[], sends: string[], lends: Cell[OwnLends] }
+struct OwnCtx { factories: OclFactoryState, result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: util.NameIndex, fresh_methods: util.NameIndex, fresh_scrut: util.NameIndex, bound: util.NameIndex, scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[], sends: string[], lends: Cell[OwnLends] }
 
 // The state of the loans of locals for one function. Each row has a position
 // of a consume. takers names a local that took the consumed value.
@@ -21555,7 +21572,7 @@ function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
       if (ctx.ofuncs.ctors.has(cid.name) && !ow_ctor_name_taken(ctx, cid.name) || ow_builtin_variant(ctx, cid.name)) {
         return true;
       }
-      return !ow_name_bound(ctx, cid.name) && (util.has_str(ctx.fresh_scrut, cid.name) || util.has_str(ctx.fresh, cid.name) && !ow_expr_holds_no_handle(e, ctx));
+      return !ow_name_bound(ctx, cid.name) && (ctx.fresh_scrut.has(cid.name) || ctx.fresh.has(cid.name) && !ow_expr_holds_no_handle(e, ctx));
     }
     return ow_qualified_ctor(c.callee, ctx) || ow_fresh_method_result(c, ctx);
   }
@@ -21567,7 +21584,7 @@ function ow_fresh_method_result(c: ast.ExprCall, ctx: OwnCtx): boolean {
   if let ast.ExprFieldAccess(mfa) = c.callee {
     for ns in ow_type_namespaces(check_expr(mfa.obj, ctx.scope)) {
       let name = ns + "." + mfa.field;
-      if (util.has_str(ow_fresh_builtin_methods(), name) || util.has_str(ctx.fresh_scrut, name)) {
+      if (util.has_str(ow_fresh_builtin_methods(), name) || ctx.fresh_scrut.has(name)) {
         return true;
       }
     }
@@ -21942,7 +21959,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
           if (ctx.ofuncs.ctors.has(cid.name) && !ow_ctor_name_taken(ctx, cid.name) || ow_builtin_variant(ctx, cid.name)) {
             return ow_variant_args_owned(c, ctx);
           }
-          return cid.name == "share_unchecked" || !ow_name_bound(ctx, cid.name) && util.has_str(ctx.fresh, cid.name) || ow_callback_args_owned(c, ctx.last_use.get());
+          return cid.name == "share_unchecked" || !ow_name_bound(ctx, cid.name) && ctx.fresh.has(cid.name) || ow_callback_args_owned(c, ctx.last_use.get());
         },
         ast.ExprFieldAccess(mfa) => {
           // An associated call with no arguments has no source for a loan.
@@ -21956,7 +21973,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
             return ow_variant_args_owned(c, ctx);
           }
           for ns in ow_type_namespaces(check_expr(mfa.obj, ctx.scope)) {
-            if (util.has_str(ctx.fresh_methods, ns + "." + mfa.field)) {
+            if (ctx.fresh_methods.has(ns + "." + mfa.field)) {
               return true;
             }
           }
@@ -23326,7 +23343,7 @@ function lu_call_borrows_beside(fx: LuFn, c: ast.ExprCall, except: string): bool
   }
   if let ast.ExprFieldAccess(field) = c.callee {
     let key = ow_receiver_ns(ast.receiver_tag(field.obj)) + "." + field.field;
-    if (util.has_str(fx.lenders.fresh_methods, key)) {
+    if (fx.lenders.fresh_methods.has(key)) {
       return false;
     }
     for method in fx.lenders.methods {
@@ -28472,7 +28489,7 @@ function ow_value_decl(name: string, structs: parser.StructDecl[], snames: util.
 
 function ow_copy_type_at(e: ast.Expr, own types: string[]): string[] {
   if let ast.ExprCall(call) = e {
-    if (call.ty.len() > 0 && !util.has_str(types, call.ty)) {
+    if (call.ty.len() > 0) {
       return types.append(call.ty);
     }
   }
@@ -28488,8 +28505,13 @@ function ow_copy_results(typed: parser.FuncDecl[], dx: OwnDecls): util.NameIndex
       types = astwalk.fold_stmt(st, types, ow_copy_type_at);
     }
   }
+  let met = util.name_index([]);
   let copyable: string[] = [];
   for spelling in types {
+    if (met.has(spelling)) {
+      continue;
+    }
+    met = met.added(spelling);
     if (ow_value_data(spelling, dx, [])) {
       copyable = copyable.append(spelling);
     }
@@ -28825,7 +28847,7 @@ function ow_handle_borrows(mod: parser.Module, borrows: util.NameIndex, dx: OwnD
 // module does not declare has no row, and every argument of it can lend.
 struct OwnLend { name: string, receiver: string, lend: boolean[], callbacks: boolean[] }
 
-struct OwnLenders { rows: OwnLend[], names: util.NameIndex, methods: OwnLend[], fresh_methods: string[], constructors: util.NameIndex, variants: OwnVariants, decls: OwnDecls }
+struct OwnLenders { rows: OwnLend[], names: util.NameIndex, methods: OwnLend[], fresh_methods: util.NameIndex, constructors: util.NameIndex, variants: OwnVariants, decls: OwnDecls }
 
 // The payloads of each variant constructor that can lend a handle to the
 // value that it makes. keys holds two names for row k: the name with its enum
@@ -28915,7 +28937,7 @@ function ow_lenders(mod: parser.Module, ofuncs: OwnFuncs, dx: OwnDecls): OwnLend
       }
     }
   }
-  return OwnLenders { rows: rows, names: util.name_index(names), methods: methods, fresh_methods: [], constructors: util.name_index(constructors), variants: ow_variants(mod, dx), decls: dx };
+  return OwnLenders { rows: rows, names: util.name_index(names), methods: methods, fresh_methods: util.name_index([]), constructors: util.name_index(constructors), variants: ow_variants(mod, dx), decls: dx };
 }
 
 function ow_decl_type_is_pointer(fn: parser.FuncDecl, tn: string, ofuncs: OwnFuncs): boolean {
@@ -29526,7 +29548,7 @@ function ow_fresh_builtins(): string[] {
 
 // The functions whose result is fresh by signature: no borrowed pointer
 // parameter that can hold a handle.
-function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, dx: OwnDecls): string[] {
+function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, dx: OwnDecls): util.NameIndex {
   let out = builtins.names;
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || !ow_sig_type_is_pointer(fn, fn.ret_type, ofuncs)) {
@@ -29547,7 +29569,7 @@ function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtin
       out = out.append(fn.name);
     }
   }
-  return out;
+  return util.name_index(out);
 }
 
 function ow_result_borrows(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, lenders: OwnLenders): util.NameIndex {
@@ -29614,7 +29636,7 @@ function ow_calls_any(callees: string[], names: util.NameIndex): boolean {
   return false;
 }
 
-function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, borrows: util.NameIndex): string[] {
+function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, borrows: util.NameIndex): util.NameIndex {
   let out = builtins.names;
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || !ow_decl_type_is_pointer(fn, fn.ret_type, ofuncs)) {
@@ -29625,11 +29647,11 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.Na
     }
     out = out.append(fn.name);
   }
-  return out;
+  return util.name_index(out);
 }
 
 // The receiver namespace and method name identify a fresh method.
-function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, borrows: util.NameIndex): string[] {
+function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, borrows: util.NameIndex): util.NameIndex {
   let out: string[] = [];
   let refused: string[] = [];
   for fn in mod.funcs {
@@ -29652,7 +29674,7 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.N
       kept = kept.append(name);
     }
   }
-  return kept;
+  return util.name_index(kept);
 }
 
 // Use the typed receiver when analysing method results. This temporary
@@ -30948,13 +30970,9 @@ function cell_payload_risk(t: typeinfo.Type, s: Scope, own: string[], seen: stri
       }
       return union_payload_risk(s.unions.unions[at], s, seen.append(u.name));
     },
-    typeinfo.TypeUnknown(u) => {
-      let n = TPARAM_MARK.len();
-      if (u.reason.len() > n && util.str_range_eq(u.reason, 0, n, TPARAM_MARK)) {
-        let tp = slice_unchecked(u.reason, n, u.reason.len()).to_owned();
-        if (!util.has_str(own, tp)) {
-          return tp;
-        }
+    typeinfo.TypeVar(v) => {
+      if (v.declared && v.name.len() > 0 && !util.has_str(own, v.name)) {
+        return v.name;
       }
     },
     typeinfo.TypeErased(e) => {
@@ -31017,10 +31035,9 @@ function e057_diag(label: string, elem: typeinfo.Type, s: Scope, line: i32, col:
 
 function named_tparams(t: typeinfo.Type): typeinfo.Type {
   match (t) {
-    typeinfo.TypeUnknown(u) => {
-      let n = TPARAM_MARK.len();
-      if (u.reason.len() > n && util.str_range_eq(u.reason, 0, n, TPARAM_MARK)) {
-        return t_struct(slice_unchecked(u.reason, n, u.reason.len()).to_owned());
+    typeinfo.TypeVar(v) => {
+      if (v.declared && v.name.len() > 0) {
+        return t_struct(v.name);
       }
     },
     typeinfo.TypeArray(a) => {
@@ -32978,6 +32995,9 @@ function spellable(t: typeinfo.Type): boolean {
     typeinfo.TypeUnknown(_) => {
       return false;
     },
+    typeinfo.TypeVar(_) => {
+      return false;
+    },
     typeinfo.TypeErased(_) => {
       return false;
     },
@@ -34272,12 +34292,12 @@ function unknown_site(stmts: ast.Stmt[], s: Scope): UnknownSite {
   let cur = s;
   for st in stmts {
     let r = check_stmt(st, cur);
-    if let typeinfo.TypeUnknown(u) = r.ty {
+    if (is_unknown(r.ty)) {
       let inner = unknown_site_within(st, cur);
       if (inner.found) {
         return inner;
       }
-      return UnknownSite { found: true, line: ast.stmt_line(st), col: ast.stmt_col(st), reason: u.reason };
+      return UnknownSite { found: true, line: ast.stmt_line(st), col: ast.stmt_col(st), reason: unknown_reason(r.ty) };
     }
     cur = r.scope;
   }
@@ -34336,8 +34356,8 @@ pub function ill_typed_hint(raw_mod: parser.Module): util.Diag[] {
   for top_stmt in mod.top_stmts {
     let r = check_stmt(top_stmt, s);
     s = r.scope;
-    if let typeinfo.TypeUnknown(u) = r.ty {
-      return [untyped_code(ast.stmt_line(top_stmt), ast.stmt_col(top_stmt), "this top-level statement (" + u.reason + ")")];
+    if (is_unknown(r.ty)) {
+      return [untyped_code(ast.stmt_line(top_stmt), ast.stmt_col(top_stmt), "this top-level statement (" + unknown_reason(r.ty) + ")")];
     }
   }
   return [dg_at("", "internal error: the checker rejected this module without a diagnostic; this is a compiler bug, please report it", 0, 0)];
@@ -37820,9 +37840,16 @@ function open_spelling_list(ts: typeinfo.Type[]): string {
   return out;
 }
 
-function unknown_reason(t: typeinfo.Type): string {
+// The text that says why a type is unknown, or "" for a known type.
+pub function unknown_reason(t: typeinfo.Type): string {
   if let typeinfo.TypeUnknown(u) = t {
     return u.reason;
+  }
+  if let typeinfo.TypeVar(v) = t {
+    if (v.declared) {
+      return "type parameter " + v.name;
+    }
+    return "unrecognised type name: " + v.name;
   }
   return "";
 }

@@ -12,7 +12,7 @@ When `timeout` gives 0, `run` gives `Tick` after the event that is ready, if one
 
 The two threads take turns in the Fern code of the library: `__fern_busy` is a lock, and a C call gives it back. A thread that waits for the lock gets the next turn, so a loop thread that is busy does not keep the UI thread out.
 
-The app draws the pixels itself: `lock` gives the frame of the window, `std/android/draw` draws rectangles and text on it, and `post` shows it. `request_frame` asks the display for its next frame, and the loop then gives `Vsync` to `step` at that vsync, so an app draws each frame of an animation at the time the display shows it. The window covers the whole screen, and `ContentRect` gives the part of it that the system bars and the keyboard leave free. `asset` reads a file that `fern -apk -apk-asset` put in the APK.
+The app draws the pixels itself: `lock` gives the frame of the window, `std/android/draw` draws rectangles and text on it, and `post` shows it. `request_frame` asks the display for its next frame, and the loop then gives `Vsync` to `step` at that vsync, so an app draws each frame of an animation at the time the display shows it. The window covers the whole screen, and `Insets` gives the parts at its edges that the system bars and the keyboard cover. `asset` reads a file that `fern -apk -apk-asset` put in the APK.
 
 Other modules send their own events to the loop thread with `tell`, and the loop gives them to `step` as `Posted` events. `tell` sends to the live loop of the process, which `live_loop` names. `std/android/service` runs a foreground service, `std/android/p2p` uses Wi-Fi Direct, `std/android/focus` asks for the audio focus, and `std/android/noisy` tells when the headphones come out. Each one decodes its `Posted` events. A module whose Java object takes each call on the main thread sends its commands there with `std/android/handler`. An app that uses none of them does not carry their code.
 
@@ -26,7 +26,7 @@ A module that makes more than one Java object of one listener class can tell the
 
 A lock of the process guards the live loop. `start`, `tell` and the end of a loop with no activity take it, so a new activity does not take over a loop that ends.
 
-The module calls Java for the directories, the permissions, the Intent of the activity, the volume, the time zone, the languages and the font scale through `std/android/bindings`, which `jnibind` writes from `bindings.spec`. The calls for the system bars, the display mode, the orientation, the brightness of the window and picture-in-picture go through it also. The other Java calls of the module are JNI calls that name each class and each method as text.
+The module calls Java for the directories, the permissions, the Intent of the activity, the volume, the time zone, the languages and the font scale through `std/android/bindings`, which `jnibind` writes from `bindings.spec`. The calls for the system bars, the display mode, the orientation, the brightness of the window, picture-in-picture, the system properties and the API level go through it also. The other Java calls of the module are JNI calls that name each class and each method as text.
 
 ## Contracts
 
@@ -254,9 +254,9 @@ From Android 13 the system gives the back key and the back gesture to a callback
 
 `Vsync` comes at the vsync after a call to `request_frame`, with the time of the frame on the monotonic clock in nanoseconds. Draw the frame of an animation for that time. A step can call `request_frame` at each time: a call between a vsync and its `Vsync` event asks for the frame after it. Before the step of a `Vsync`, the loop gives the input events that wait, so the frame has the newest places of the fingers. A display with more than one rate can stay at its low rate, and `prefer_fast_display` asks for the mode with the most frames in a second. The step of each `Vsync` is a section named `frame` in the system trace, through `std/android/trace`.
 
-`ContentRect` has the left, top, right and bottom edges, in pixels of the window, of the part of the window that the status bar, the navigation bar and the keyboard leave free. It comes after the window shows and each time that part changes, for example when the keyboard opens.
+`Insets` has the widths, in pixels, of the parts at the left, top, right and bottom edges of the window that the status bar, the navigation bar and the keyboard cover. It comes after the window shows and each time those parts change, for example when the keyboard opens or the screen turns. When the screen turns, the insets can come before `WindowResized`. The widths do not depend on the size of the window, so the order does not change what the app shows.
 
-Before Android 15, the keyboard counts only for an activity with `android:windowSoftInputMode` set to adjust its size, as `fern -apk` sets it. From Android 15 the window goes under the bars and the keyboard. Then the rectangle comes from their insets and from the cutout of the display.
+Before Android 15, the keyboard counts only for an activity with `android:windowSoftInputMode` set to adjust its size, as `fern -apk` sets it. From Android 15 the window goes under the bars and the keyboard. Then the insets come from the bars, the keyboard and the cutout of the display.
 
 `Ready` has the ident of a source that another module added to the looper of the loop thread, when that source has data. The module reads the data when it gets the event, so the looper does not give the same data again. `std/android/sensors` adds its queue with the ident `IDENT_SENSORS`, and `std/android/camera` adds a pipe with the ident `IDENT_CAMERA`.
 
@@ -277,7 +277,7 @@ pub enum Event {
   WindowResized(Window),
   WindowRedraw(Window),
   WindowDestroyed(Window),
-  ContentRect(i32, i32, i32, i32),
+  Insets(i32, i32, i32, i32),
   Vsync(i64),
   Touch(i32, f32, f32),
   Key(i32, i32),
@@ -314,7 +314,7 @@ const INPUT_CREATED: i32 = 11;
 
 const INPUT_DESTROYED: i32 = 12;
 
-const CONTENT_RECT: i32 = 24;
+const INSETS: i32 = 24;
 
 const TEXT: i32 = 25;
 
@@ -353,16 +353,16 @@ function window_event(kind: i32, w: Window): Event {
   return WindowDestroyed(w);
 }
 
-// The event of a message from the UI thread. For CONTENT_RECT, `arg` is the
-// ARect of the UI thread, which waits for the reply.
+// The event of a message from the UI thread. For INSETS, `arg` is a Rect of
+// the insets on the UI thread, which waits for the reply.
 function message_event(kind: i32, arg: usize): Event {
   if (kind == FOCUS) {
     return Focus(arg != 0 as usize);
   }
-  if (kind == CONTENT_RECT) {
+  if (kind == INSETS) {
     unsafe {
       let r = Rect.c_load(arg);
-      return ContentRect(r.left, r.top, r.right, r.bottom);
+      return Insets(r.left, r.top, r.right, r.bottom);
     }
   }
   if (kind >= WINDOW_CREATED && kind <= WINDOW_DESTROYED) {
@@ -482,27 +482,26 @@ const KEPT_REPLY: i32 = 2;
 
 // Sets the property `key` to `value`, or clears it when `value` is "".
 function set_property(e: usize, key: string, value: string): void {
-  let class: usize = jni.find_class(e, "java/lang/System");
-  let name: usize = jni.new_string(e, key);
+  let Ok(systems) = bindings.system_class(e) else {
+    return;
+  };
+  defer systems.release(e);
   if (value.len() == 0) {
-    let args: usize = jni.jvalues([name]);
-    let old: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "clearProperty", "(Ljava/lang/String;)Ljava/lang/String;"), args);
-    jni.free_buffer(args);
+    let old = systems.clear_property(e, key);
   } else {
-    let args: usize = jni.jvalues([name, jni.new_string(e, value)]);
-    let old: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "setProperty", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"), args);
-    jni.free_buffer(args);
+    let old = systems.set_property(e, key, value);
   }
-  let cleared: usize = jni.exception_clear(e);
 }
 
 // The number in the property `key`, or 0 when it has none.
 function number_property(e: usize, key: string): usize {
-  let class: usize = jni.find_class(e, "java/lang/System");
-  let args: usize = jni.jvalues([jni.new_string(e, key)]);
-  let got: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "getProperty", "(Ljava/lang/String;)Ljava/lang/String;"), args);
-  jni.free_buffer(args);
-  let text: string = jni.string_of(e, got);
+  let Ok(systems) = bindings.system_class(e) else {
+    return 0 as usize;
+  };
+  defer systems.release(e);
+  let Ok(text) = systems.get_property(e, key) else {
+    return 0 as usize;
+  };
   let v = 0 as usize;
   for c in text.as_bytes() {
     if (c < 48u8 || c > 57u8) {
@@ -800,21 +799,30 @@ function end_frame(e: usize): void {
 
 // The API level of the device.
 function sdk_level(e: usize): i32 {
-  let version = jni.find_class(e, "android/os/Build$VERSION");
-  let level = jni.get_static_int_field(e, version, jni.get_static_field_id(e, version, "SDK_INT", "I"));
-  let dropped: usize = jni.delete_local_ref(e, version);
-  return level;
+  let Ok(versions) = bindings.build_version_class(e) else {
+    return 0;
+  };
+  defer versions.release(e);
+  return match (versions.sdk_int(e)) {
+    Ok(level) => level,
+    Err(_) => 0,
+  };
 }
 
 // A global reference to the Application of the Context `context`, or 0.
 function application_of(e: usize, context: usize): usize {
-  let app: usize = jni.call_object(e, context, "getApplicationContext", "()Landroid/content/Context;", []);
-  if (jni.exception_occurred(e) != 0 as usize || app == 0 as usize) {
-    let cleared: usize = jni.exception_clear(e);
+  let Ok(contexts) = bindings.context_class(e) else {
+    return 0 as usize;
+  };
+  defer contexts.release(e);
+  let Ok(app) = contexts.get_application_context(e, bindings.Context { ref: context }) else {
+    return 0 as usize;
+  };
+  if (app.is_null()) {
     return 0 as usize;
   }
-  let global: usize = jni.new_global_ref(e, app);
-  let local: usize = jni.delete_local_ref(e, app);
+  let global: usize = jni.new_global_ref(e, app.ref);
+  let local: usize = jni.delete_local_ref(e, app.ref);
   return global;
 }
 
@@ -945,7 +953,7 @@ function show_bars(e: usize, activity: bindings.Activity, fullscreen: i32, ui: i
 }
 
 // From Android 15 the insets ask again once the window is there, so the
-// ContentRect of the insets comes after WindowCreated.
+// Insets event comes after WindowCreated.
 function on_window_created(activity: usize, window: usize): void {
   send(activity, WINDOW_CREATED, window);
   unsafe {
@@ -986,15 +994,20 @@ function on_input_destroyed(activity: usize, queue: usize): void {
 }
 
 // From Android 15 the content view covers the whole window, and the insets
-// listener sends the rectangle instead.
+// listener sends the insets instead.
 function on_content_rect(activity: usize, rect: usize): void {
   unsafe {
     let ctx: usize = NativeActivity.c_load_instance(activity);
-    if (ctx != 0 as usize && Context.c_load_insets_class(ctx) != 0 as usize) {
+    if (ctx == 0 as usize || Context.c_load_insets_class(ctx) != 0 as usize) {
       return;
     }
+    let (w, h) = decor_size(ui_env(activity), NativeActivity.c_load_clazz(activity));
+    if (w <= 0 || h <= 0) {
+      return;
+    }
+    let r = Rect.c_load(rect);
+    deliver_insets(ctx, Rect { left: r.left.max(0), top: r.top.max(0), right: (w - r.right).max(0), bottom: (h - r.bottom).max(0) });
   }
-  send(activity, CONTENT_RECT, rect);
 }
 ```
 
@@ -2723,9 +2736,11 @@ function text_of_buffer(buf: usize): string {
 
 An app that targets Android 16 does not get the back key as a key event from Android 13. The system gives it to the `OnBackInvokedCallback` of the activity, and the manifest of `fern -apk` asks for that from Android 13. `hook_views` registers the class `dev.fern.android.Back` of `std/android/launch` as that callback. Its callback calls `back_invoked`, which sends `BACK` to the loop thread. On Android 16 the input queue still gives the back key too, and a key of the keyboard that hides itself comes there also. So while the callback is registered, the loop drops the back key of the input queue and marks it handled.
 
-From Android 15 the window of an app that targets API 35 or later goes under the system bars, the keyboard and the display cutout. The content view of NativeActivity then covers the whole window, and so does its content rectangle. `hook_views` sets the class `dev.fern.android.Insets` of `std/android/launch` as the listener of the insets of the decor view. Its callback calls `insets_applied`, which sends the part of the window that the insets leave free as `CONTENT_RECT`. `on_content_rect` then sends nothing. The listener then calls the method of the view, so the view handles the insets as before.
+From Android 15 the window of an app that targets API 35 or later goes under the system bars, the keyboard and the display cutout. The content view of NativeActivity then covers the whole window, and so does its content rectangle. `hook_views` sets the class `dev.fern.android.Insets` of `std/android/launch` as the listener of the insets of the decor view. Its callback calls `insets_applied`, which sends the insets of the system bars, the keyboard and the cutout as `INSETS`. `on_content_rect` then sends nothing. The listener then calls the method of the view, so the view handles the insets as before.
 
-The first insets come before the window, so `insets_applied` sends nothing while the activity has no window. After `WindowCreated`, `on_window_created` asks for the insets again. The size comes from the metrics of the window, because the insets can come before the layout of the view.
+The first insets come before the window, so `insets_applied` sends nothing while the activity has no window. After `WindowCreated`, `on_window_created` asks for the insets again.
+
+Before Android 15, `on_content_rect` gets the edges of the content view, after the layout of the view. It sends the insets between those edges and the edges of the decor view, which covers the window.
 
 `hook_views` runs on the UI thread after the loop thread starts, because a callback waits for the reply of the loop thread.
 
@@ -2848,8 +2863,8 @@ function ask_insets(e: usize, obj: usize): void {
 }
 
 // Keeps whether the keyboard of the system shows in `insets`. Then it sends
-// the part of the window that `insets` leave free to the loop thread, while
-// the activity has a window.
+// the insets of the bars, the keyboard and the cutout to the loop thread,
+// while the activity has a window.
 function send_insets(e: usize, ctx: usize, insets: usize): void {
   let type_class: usize = jni.find_class(e, "android/view/WindowInsets$Type");
   let none: usize = jni.jvalue_alloc(0);
@@ -2870,21 +2885,14 @@ function send_insets(e: usize, ctx: usize, insets: usize): void {
   }
   jni.free_buffer(none);
   let edges: usize = jni.call_object(e, insets, "getInsets", "(I)Landroid/graphics/Insets;", [types as usize]);
-  unsafe {
-    let activity: usize = Context.c_load_activity(ctx);
-    let (w, h) = window_size(e, NativeActivity.c_load_clazz(activity));
-    if (edges != 0 as usize && w > 0) {
-      let class: usize = jni.get_object_class(e, edges);
-      let left = jni.get_int_field(e, edges, jni.get_field_id(e, class, "left", "I"));
-      let top = jni.get_int_field(e, edges, jni.get_field_id(e, class, "top", "I"));
-      let right = jni.get_int_field(e, edges, jni.get_field_id(e, class, "right", "I"));
-      let bottom = jni.get_int_field(e, edges, jni.get_field_id(e, class, "bottom", "I"));
-      let a: usize = jni.delete_local_ref(e, class);
-      let r: usize = __alloc(Rect.c_size() as i32);
-      Rect { left: left, top: top, right: w - right, bottom: h - bottom }.c_store(r);
-      let got = deliver(ctx, CONTENT_RECT, r);
-      __free(r, Rect.c_size() as i32);
-    }
+  if (edges != 0 as usize) {
+    let class: usize = jni.get_object_class(e, edges);
+    let left = jni.get_int_field(e, edges, jni.get_field_id(e, class, "left", "I"));
+    let top = jni.get_int_field(e, edges, jni.get_field_id(e, class, "top", "I"));
+    let right = jni.get_int_field(e, edges, jni.get_field_id(e, class, "right", "I"));
+    let bottom = jni.get_int_field(e, edges, jni.get_field_id(e, class, "bottom", "I"));
+    let a: usize = jni.delete_local_ref(e, class);
+    deliver_insets(ctx, Rect { left: left, top: top, right: right, bottom: bottom });
   }
   let cleared: usize = jni.exception_clear(e);
   for r in [edges, type_class] {
@@ -2892,20 +2900,29 @@ function send_insets(e: usize, ctx: usize, insets: usize): void {
   }
 }
 
-// The width and the height of the window of the activity `obj`, from its
-// WindowMetrics, or 0 and 0.
-function window_size(e: usize, obj: usize): (i32, i32) {
-  let manager: usize = jni.call_object(e, obj, "getWindowManager", "()Landroid/view/WindowManager;", []);
-  let metrics: usize = jni.call_object(e, manager, "getCurrentWindowMetrics", "()Landroid/view/WindowMetrics;", []);
-  let bounds: usize = jni.call_object(e, metrics, "getBounds", "()Landroid/graphics/Rect;", []);
+// Sends the insets `r` to the loop thread, and waits for its reply.
+function deliver_insets(ctx: usize, r: Rect): void {
+  unsafe {
+    let at: usize = __alloc(Rect.c_size() as i32);
+    r.c_store(at);
+    let got = deliver(ctx, INSETS, at);
+    __free(at, Rect.c_size() as i32);
+  }
+}
+
+// The width and the height of the decor view of the activity `obj`, or 0
+// and 0.
+function decor_size(e: usize, obj: usize): (i32, i32) {
+  let window: usize = jni.call_object(e, obj, "getWindow", "()Landroid/view/Window;", []);
+  let decor: usize = jni.call_object(e, window, "getDecorView", "()Landroid/view/View;", []);
   let w = 0;
   let h = 0;
-  if (bounds != 0 as usize) {
-    w = call_int(e, bounds, "width", "()I", []);
-    h = call_int(e, bounds, "height", "()I", []);
+  if (decor != 0 as usize) {
+    w = call_int(e, decor, "getWidth", "()I", []);
+    h = call_int(e, decor, "getHeight", "()I", []);
   }
   let cleared: usize = jni.exception_clear(e);
-  for r in [bounds, metrics, manager] {
+  for r in [decor, window] {
     let d: usize = jni.delete_local_ref(e, r);
   }
   return (w, h);

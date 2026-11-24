@@ -2824,7 +2824,7 @@ pub function component_uses_stderr(mod: parser.Module, needs: string[]): boolean
 }
 
 pub function needs_abort(needs: string[]): boolean {
-  return need(needs, "@allocates") || need(needs, "free") || need(needs, "@abort_checks");
+  return need(needs, "@allocates") || need(needs, "free") || need(needs, "@abort_checks") || need(needs, "@uses_random");
 }
 
 function runtime_needs(mod: parser.Module, needs: string[]): string[] {
@@ -5994,7 +5994,7 @@ pub function random_bytes_ir_func(): string {
   o += "    (local.set $arr (call $__fern_arr_elems (local.get $n) (i32.const 1)))\n";
   o += "    (i32.store (local.get $arr) (local.get $n))\n";
   o += "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
-  o += "    (drop (call $__fern_random_get (i32.add (local.get $arr) (i32.const 8)) (local.get $n)))\n";
+  o += "    (if (call $__fern_random_get (i32.add (local.get $arr) (i32.const 8)) (local.get $n)) (then (call $__fern_abort_entropy) (unreachable)))\n";
   o += "    (local.get $arr))\n";
   return o;
 }
@@ -6002,7 +6002,7 @@ pub function random_bytes_ir_func(): string {
 pub function random_i32_func(): string {
   let o = "";
   o += "  (func $__fern_random_i32 (result i32)\n";
-  o += "    (drop (call $__fern_random_get (i32.const 16) (i32.const 4)))\n";
+  o += "    (if (call $__fern_random_get (i32.const 16) (i32.const 4)) (then (call $__fern_abort_entropy) (unreachable)))\n";
   o += "    (i32.load (i32.const 16)))\n";
   return o;
 }

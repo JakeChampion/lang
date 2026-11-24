@@ -2459,7 +2459,7 @@ function test_system_bars_leave_the_content_free(): test.TestOutcome {
   note(log.files, "/data/settings=id=abc\ntoken=tok-1\nserver_name=Den\nserver_uri=https://up.example:32400\nserver_token=srv\n");
   let f = frame();
   defer free_frame(f);
-  let s = settle(at(shown(log, f, "", ""), log, 0i64, f, android.ContentRect(0, 80, W, H - 100)), log, 0i64, f);
+  let s = settle(at(shown(log, f, "", ""), log, 0i64, f, android.Insets(0, 80, 0, 100)), log, 0i64, f);
   let low = 0;
   for n in s.nodes {
     if (n.tap.name.starts_with("tab:")) {

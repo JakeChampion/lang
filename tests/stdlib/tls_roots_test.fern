@@ -1,4 +1,3 @@
-import "std/result";
 import "std/test";
 import "core/int";
 import "std/hex";
@@ -151,34 +150,54 @@ function test_disabled_roots(dir: string): test.TestOutcome {
   let Ok(none) = verify.roots_from_dir_excluding(system, removed) else {
     return test.fail("all roots disabled");
   };
-  if (none.certs.len() != 0) {
-    return test.fail("disabled roots retained");
-  }
-  if (verify.roots_from_dir_excluding(system, removed + "/second").is_ok()) {
-    return test.fail("a file used as the removal directory");
-  }
-  let bad = removed + "/bad";
-  for contents in ["", "not a certificate", pem.encode("CERTIFICATE", [0x30u8])] {
-    let Ok(_) = write_file(bad, contents) else {
-      return test.fail("write bad removal entry");
-    };
-    if (verify.roots_from_dir_excluding(system, removed).is_ok()) {
-      return test.fail("invalid removal entry accepted");
-    }
-  }
-  let Ok(_) = write_file_bytes(bad, [0x30u8]) else {
-    return test.fail("write malformed DER");
+  return test.assert_eq(none.certs.len(), 0);
+}
+
+function removal_refusal(system: string, removed: string): string {
+  return match (verify.roots_from_dir_excluding(system, removed)) {
+    Ok(r) => "kept " + r.certs.len().to_string(),
+    Err(e) => e.message(),
   };
-  if (verify.roots_from_dir_excluding(system, removed).is_ok()) {
-    return test.fail("malformed DER accepted");
-  }
-  let Ok(_) = remove_file(bad) else {
-    return test.fail("remove malformed entry");
+}
+
+// A removal directory that cannot be read, and an entry that holds no
+// certificate, give an error: a root that the user removed must not stay.
+function test_disabled_roots_fail_closed(dir: string): test.TestOutcome {
+  let system = dir + "/system2";
+  let Ok(_) = create_dir_all(system) else {
+    return test.fail("create system directory");
   };
-  let Ok(_) = create_dir_all(bad) else {
-    return test.fail("create unreadable entry");
+  let Ok(_) = write_file(system + "/roots", pem.encode("CERTIFICATE", ec_root()) + pem.encode("CERTIFICATE", rsa_root())) else {
+    return test.fail("write roots");
   };
-  return test.assert_eq(verify.roots_from_dir_excluding(system, removed).is_err(), true);
+  let not_a_dir = dir + "/removed-file";
+  let Ok(_) = write_file(not_a_dir, "x") else {
+    return test.fail("write a file at the removal path");
+  };
+  let damaged = dir + "/removed-damaged";
+  let Ok(_) = create_dir_all(damaged) else {
+    return test.fail("create removal directory");
+  };
+  let Ok(_) = write_file_bytes(damaged + "/ok.0", rsa_root()) else {
+    return test.fail("write disabled DER");
+  };
+  let Ok(_) = write_file(damaged + "/bad.0", "no certificate here\n") else {
+    return test.fail("write a damaged entry");
+  };
+  let empty = dir + "/removed-empty-entry";
+  let Ok(_) = create_dir_all(empty) else {
+    return test.fail("create removal directory");
+  };
+  let Ok(_) = write_file(empty + "/zero.0", "") else {
+    return test.fail("write an empty entry");
+  };
+  let nested = dir + "/removed-nested";
+  let Ok(_) = create_dir_all(nested + "/sub.0") else {
+    return test.fail("create a directory entry");
+  };
+  let got = [removal_refusal(system, not_a_dir), removal_refusal(system, damaged), removal_refusal(system, empty), removal_refusal(system, nested), removal_refusal(system, dir + "/removed-absent")];
+  let bad = "tls verify: cannot read the removed roots at ";
+  return test.assert_eq_array(got, [bad + not_a_dir, bad + damaged + "/bad.0", bad + empty + "/zero.0", bad + nested + "/sub.0", "kept 2"]);
 }
 
 function test_roots_dir_empty(dir: string): test.TestOutcome {
@@ -216,6 +235,7 @@ function main(): i32 {
   rr = rr.it("roots from a directory of files", () => test_roots_dir(dir));
   rr = rr.it("a directory with no roots", () => test_roots_dir_empty(dir));
   rr = rr.it("user-disabled roots", () => test_disabled_roots(dir));
+  rr = rr.it("user-disabled roots that cannot be read", () => test_disabled_roots_fail_closed(dir));
   rr = rr.it("the system's roots", test_system_roots);
   return rr.finish();
 }
