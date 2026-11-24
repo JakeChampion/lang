@@ -1,0 +1,52 @@
+// spec: SE-05
+// A record of a `@secret` struct zeroes the scalars and the numeric arrays of
+// a nested record or tuple that it holds alone when it is released. A nested
+// record or tuple that another value still holds keeps its fields.
+
+struct Half { lo: u64, hi: u64, words: u64[] }
+
+@secret
+struct Key { half: Half, pair: (u64, f64, u8[]), id: i32 }
+
+@noinline
+function half(v: u64): Half {
+  return Half { lo: v, hi: v + 1u64, words: [v, v + 2u64] };
+}
+
+@noinline
+function pair(v: u64): (u64, f64, u8[]) {
+  return (v, 1.5, [v as u8, 9 as u8]);
+}
+
+@noinline
+function held_half(v: u64): Half {
+  let h = half(v);
+  let k = Key { half: h, pair: pair(v), id: 3 };
+  print("key " + k.id.to_string() + " holds " + k.half.words.len().to_string() + " words");
+  return h;
+}
+
+@noinline
+function held_pair(v: u64): (u64, f64, u8[]) {
+  let p = pair(v);
+  let k = Key { half: half(v), pair: p, id: 4 };
+  print("key " + k.id.to_string() + " holds " + k.pair.2.len().to_string() + " bytes");
+  return p;
+}
+
+@noinline
+function sum(k: Key): u64 {
+  return k.half.lo + k.half.hi + k.half.words[1] + k.pair.0 + k.pair.2[1] as u64;
+}
+
+function main(): i32 {
+  let h = held_half(65u64);
+  print("the shared record still reads " + h.lo.to_string() + " " + h.hi.to_string() + " " + h.words[1].to_string());
+  let p = held_pair(70u64);
+  print("the shared tuple still reads " + p.0.to_string() + " " + p.1.to_string() + " " + p.2[0].to_string());
+  let k = Key { half: half(10u64), pair: pair(20u64), id: 9 };
+  print("sum " + sum(k).to_string());
+  let copy = Key { ...k, id: 10 };
+  print("the copy " + copy.id.to_string() + " sums " + sum(copy).to_string());
+  return 0;
+}

@@ -1487,8 +1487,8 @@ function drop_tuple_fields(own r: irtables.LowerState, slot: i32, tup: typeinfo.
 }
 
 // A field of a taking environment can be 0, so its load is not marked counted.
-// A record of a `@secret` struct zeroes each numeric array that it holds
-// alone before the array goes back to the allocator, and each scalar field.
+// A record of a `@secret` struct zeroes each scalar field, and each child
+// that it holds alone before the child goes back to the allocator.
 function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func, env: boolean, takes: boolean, secret: boolean): irtables.LowerState {
   let child = scratch;
   r = reserve(r, child + 1);
@@ -1505,15 +1505,75 @@ function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semre
         r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
       }
       r = emit(r, ir.op_store_local(child));
-      let shift = ssasem.elem_shift(fields[i].ty);
-      if (secret && shift >= 0) {
-        r = wipe_sole(r, child, shift);
+      if (secret) {
+        r = wipe_child(r, child, fields[i].ty, child + 1, f);
       }
       r = drop_value(r, child, fields[i].ty, child + 1, f);
     } else if (secret && ssasem.is_scalar(fields[i].ty)) {
       r = emit(r, ir.op_load_local(slot));
       r = emit(r, zero(fields[i].ty));
       r = field_store(r, fields, i);
+    }
+  }
+  return r;
+}
+
+// Zeroes the secret storage of the child in `slot` when no other value holds
+// the child: the elements of a numeric array, and the scalars and the
+// children of a record or a tuple. A record with a finalizer keeps its
+// fields, because the finalizer reads them later. The loads here borrow, so
+// they are not marked counted.
+function wipe_child(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
+  let shift = ssasem.elem_shift(t);
+  if (shift >= 0) {
+    return wipe_sole(r, slot, shift);
+  }
+  let record = ssasem.box_shape(t) && typeinfo.is_record(t) && !ssasem.secret_record(t, f) && ssasem.finalizer_of(f, t) == "";
+  if (!record && !typeinfo.is_tuple(t)) {
+    return r;
+  }
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, aligned_unique_of(t, f));
+  r = emit(r, ir.op_if(0));
+  if (record) {
+    r = wipe_record_fields(r, slot, ssasem.record_fields(t, f), scratch, f);
+  } else {
+    r = wipe_tuple_fields(r, slot, typeinfo.tuple_elements(t), scratch, f);
+  }
+  return emit(r, ir.op_end());
+}
+
+function wipe_record_fields(own r: irtables.LowerState, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func): irtables.LowerState {
+  let child = scratch;
+  r = reserve(r, child + 1);
+  for i in 0..fields.len() {
+    if (ssasem.counted(f, fields[i].ty)) {
+      r = emit(r, ir.op_load_local(slot));
+      r = emit(r, ir.op_struct_get(i, 0));
+      r = emit(r, ir.op_store_local(child));
+      r = wipe_child(r, child, fields[i].ty, child + 1, f);
+    } else if (ssasem.is_scalar(fields[i].ty)) {
+      r = emit(r, ir.op_load_local(slot));
+      r = emit(r, zero(fields[i].ty));
+      r = field_store(r, fields, i);
+    }
+  }
+  return r;
+}
+
+function wipe_tuple_fields(own r: irtables.LowerState, slot: i32, elems: typeinfo.Type[], scratch: i32, f: ssasem.Func): irtables.LowerState {
+  let child = scratch;
+  r = reserve(r, child + 1);
+  for i in 0..elems.len() {
+    if (ssasem.counted(f, elems[i])) {
+      r = emit(r, ir.op_load_local(slot));
+      r = emit(r, ir.op_tuple_get(i));
+      r = emit(r, ir.op_store_local(child));
+      r = wipe_child(r, child, elems[i], child + 1, f);
+    } else if (ssasem.is_scalar(elems[i])) {
+      r = emit(r, ir.op_load_local(slot));
+      r = emit(r, zero(elems[i]));
+      r = tuple_store(r, elems[i], i);
     }
   }
   return r;
@@ -1884,16 +1944,20 @@ function reuse_tuple(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst,
   for i in 0..ins.args.len().min(elems.len()) {
     r = emit(r, ir.op_load_local(ins.result));
     r = emit(r, ir.op_load_local(ins.args[i]));
-    let kind = tuple_kind(elems[i]);
-    if (kind == "i64") {
-      r = emit(r, ir.op_tuple_set_w(i, 64, true));
-    } else if (kind == "f64") {
-      r = emit(r, ir.op_tuple_set_w(i, 64, false));
-    } else {
-      r = emit(r, ir.op_tuple_set(i));
-    }
+    r = tuple_store(r, elems[i], i);
   }
   return r;
+}
+
+function tuple_store(own r: irtables.LowerState, elem: typeinfo.Type, i: i32): irtables.LowerState {
+  let kind = tuple_kind(elem);
+  if (kind == "i64") {
+    return emit(r, ir.op_tuple_set_w(i, 64, true));
+  }
+  if (kind == "f64") {
+    return emit(r, ir.op_tuple_set_w(i, 64, false));
+  }
+  return emit(r, ir.op_tuple_set(i));
 }
 
 function at(p: ssaunits.Plan, idx: i32[][], block: i32, point: i32, target: i32): ssaunits.Step {
@@ -7627,7 +7691,7 @@ function device_op(name: string): ir.Op {
 
 // The IR kind of a privileged intrinsic such as __wfi, or 0 for any other name.
 function privileged_kind(name: string): i32 {
-  if (!name.starts_with("__")) {
+  if (!util.is_reserved_name(name)) {
     return 0;
   }
   let k = ir.kind_id(slice_unchecked(name, 2, name.len()).to_owned());

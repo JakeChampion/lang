@@ -148,6 +148,85 @@ function main(): i32 {
 }
 `
 
+// A record of a `@secret` struct also zeroes the scalars and the numeric
+// arrays of a nested record and of a tuple that it holds alone. The scan
+// takes raw blocks of each size class from 24 to 72 bytes, so it finds the
+// box of the nested record, the box of the tuple and their arrays. The
+// control is the same record without the attribute. "shared" returns the
+// nested record from the key, so that record must keep its fields.
+const secretNestedSrc = `struct Half { a: u64, b: u64, c: u64, words: u64[] }
+
+@secret
+struct Key { half: Half, pair: (u64, u64, u64[]), n: i32 }
+
+struct Plain { half: Half, pair: (u64, u64, u64[]), n: i32 }
+
+@noinline
+function words(v: u64): u64[] {
+  return [v, v, v, v, v, v];
+}
+
+@noinline
+function half(v: u64): Half {
+  return Half { a: v, b: v, c: v, words: words(v) };
+}
+
+@noinline
+function pair(v: u64): (u64, u64, u64[]) {
+  return (v, v, words(v));
+}
+
+@noinline
+function key(v: u64): u64 {
+  let k = Key { half: half(v), pair: pair(v), n: 1 };
+  return k.half.a + k.pair.0 + k.pair.2[5] + k.half.words[5];
+}
+
+@noinline
+function plain(v: u64): u64 {
+  let k = Plain { half: half(v), pair: pair(v), n: 1 };
+  return k.half.a + k.pair.0 + k.pair.2[5] + k.half.words[5];
+}
+
+@noinline
+function shared(v: u64): Half {
+  let h = half(v);
+  let k = Key { half: h, pair: pair(v), n: 1 };
+  let n = k.n;
+  return h;
+}
+
+function stale(): i32 {
+  unsafe {
+    let found: i32 = 0;
+    for size in 3..10 {
+      for k in 0..8 {
+        let p: usize = __alloc(size * 8);
+        for i in 0..size * 8 {
+          if (__load_u8(p + (i as usize)) == 65 as u8) { found += 1; }
+        }
+      }
+    }
+    return found;
+  }
+}
+
+function main(): i32 {
+  let mode: string = args()[1];
+  let word: u64 = 4702111234474983745u64 + (args().len() as u64) - 2u64;
+  if (mode == "secret") {
+    let n = key(word);
+  } else if (mode == "shared") {
+    let h = shared(word);
+    print((h.a == word && h.c == word && h.words[5] == word).to_string());
+  } else {
+    let n = plain(word);
+  }
+  print(stale().to_string());
+  return 0;
+}
+`
+
 // secretRun compiles src for target and gives a function that runs the
 // program in one mode and splits its output into fields.
 func secretRun(t *testing.T, target, src string) func(mode string) []string {
@@ -223,6 +302,23 @@ func TestSelfHostSecretRecordWipesItsScalars(t *testing.T) {
 			}
 			if got := secretCount(t, "secret", run("secret")); got != 0 {
 				t.Fatalf("after the release of a @secret record the raw allocation read %d bytes of its scalar fields back, want 0", got)
+			}
+		})
+	}
+}
+
+func TestSelfHostSecretRecordWipesItsNestedBoxes(t *testing.T) {
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			run := secretRun(t, target, secretNestedSrc)
+			if got := secretCount(t, "plain", run("plain")); got != 136 {
+				t.Fatalf("plain read %d secret bytes back, want 136; the raw allocations no longer observe the released boxes", got)
+			}
+			if got := secretCount(t, "secret", run("secret")); got != 0 {
+				t.Fatalf("after the release of a @secret record the raw allocations read %d bytes of its nested boxes back, want 0", got)
+			}
+			if got := run("shared"); len(got) != 2 || got[0] != "true" {
+				t.Fatalf("shared printed %q; the nested record that the caller still holds must keep its fields", got)
 			}
 		})
 	}

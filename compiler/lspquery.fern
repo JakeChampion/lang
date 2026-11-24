@@ -114,7 +114,7 @@ function constant_declaration(v: checker.QueryView, target: string): boolean {
 // Constant substitution removes reference nodes from the checked tree.
 // Recover only a real source reference, after ordinary local lookup fails.
 function source_constant(p: Program, v: checker.QueryView, quals: flatten.Qualifiers, site: Site): Option[Found] {
-  let target = if (quals.own.len() > 0) { quals.own + "__" + site.name } else { site.name };
+  let target = if (quals.own.len() > 0) { util.mangled(quals.own, site.name) } else { site.name };
   if (site.qual.len() > 0) {
     target = site.target;
   }
@@ -343,7 +343,7 @@ function after_dot(fa: ast.ExprFieldAccess, site: Site): boolean {
 
 function names(n: string, name: string): boolean {
   let s = lexical.source_name(n);
-  return s == name || s.ends_with("__" + name);
+  return s == name || util.has_mangled_tail(s, name);
 }
 
 pub struct Found { kind: i32, expr: ast.Expr, fd: i32 }
@@ -731,7 +731,7 @@ pub function func_text(name: string, sig: checker.FuncSig): string {
 
 pub function variant_text(s: checker.Scope, name: string, owner: string): string {
   let u: checker.UnionSig = match (checker.enum_sig(s, owner)) { Some(sig) => sig, None => { return "(variant of " + owner + ") " + name; } };
-  return "(variant of " + owner + ") " + unprefixed(name, u.module) + payload(s, name, u);
+  return "(variant of " + owner + ") " + util.unqualified(name, u.module) + payload(s, name, u);
 }
 
 function payload(s: checker.Scope, name: string, u: checker.UnionSig): string {
@@ -765,7 +765,7 @@ function enum_text(s: checker.Scope, u: checker.UnionSig): string {
     if (i > 0) {
       out += ",";
     }
-    out = out + " " + unprefixed(u.variants[i], u.module) + payload(s, u.variants[i], u);
+    out = out + " " + util.unqualified(u.variants[i], u.module) + payload(s, u.variants[i], u);
   }
   return closed(out, u.variants.len());
 }
@@ -821,24 +821,15 @@ pub function written(q: flatten.Qualifiers, label: string): string {
 
 function written_name(q: flatten.Qualifiers, name: string): string {
   for k in 0..q.prefixes.len() {
-    let p = q.prefixes[k] + "__";
-    if (name.starts_with(p)) {
-      return q.aliases[k] + "." + slice_unchecked(name, p.len(), name.len());
+    if (util.has_mangled_head(name, q.prefixes[k])) {
+      return q.aliases[k] + "." + slice_unchecked(name, q.prefixes[k].len() + util.NAME_SEP.len(), name.len());
     }
   }
-  return unprefixed(name, q.own);
+  return util.unqualified(name, q.own);
 }
 
 function word_byte(b: u8): boolean {
   return b == b'_' || b >= b'a' && b <= b'z' || b >= b'A' && b <= b'Z' || b >= b'0' && b <= b'9';
-}
-
-pub function unprefixed(name: string, prefix: string): string {
-  let p = prefix + "__";
-  if (prefix.len() > 0 && name.starts_with(p)) {
-    return slice_unchecked(name, p.len(), name.len()).to_owned();
-  }
-  return name;
 }
 
 const TYPE_CANDIDATES_SET: string[] = ["struct", "enum", "type", "trait", "function", "resource"];
@@ -855,7 +846,7 @@ pub function type_candidates(q: Query): string[] {
     return [];
   }
   if (q.quals.own.len() > 0) {
-    return [q.quals.own + "__" + q.site.name, q.site.name];
+    return [util.mangled(q.quals.own, q.site.name), q.site.name];
   }
   return [q.site.name];
 }
@@ -1008,7 +999,7 @@ pub function decl_def(p: Program, line: i32, col: i32, name: string): Option[Sou
     return None;
   }
   let m = util.pos_file_index(line);
-  let shown = unprefixed(name, quals_of(view_of(p), m).own);
+  let shown = util.unqualified(name, quals_of(view_of(p), m).own);
   let toks = module_toks(p, m);
   return tok_answer(toks, first_ident(toks, after(toks, line, col), shown), line, col, shown);
 }

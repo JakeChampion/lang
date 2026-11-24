@@ -10551,7 +10551,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
     if (imm.konst[nr]) {
       s = s.syscall(imm.value[nr] as i32);
     } else {
-      s = s.raw_syscall("__" + ins.str);
+      s = s.raw_syscall(util.reserved_name(ins.str));
     }
     return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
   }

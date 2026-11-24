@@ -101,7 +101,7 @@ function type_named(p: lspquery.Program, v: checker.QueryView, name: string): Op
 }
 
 function variant_target(p: lspquery.Program, v: checker.QueryView, s: checker.Scope, owner: string, name: string): Target {
-  return Target { ...named_target(R_VARIANT, lspquery.unprefixed(name, checker.union_module(s, owner)), lspquery.variant_def(p, v, owner, name)), owner: owner };
+  return Target { ...named_target(R_VARIANT, util.unqualified(name, checker.union_module(s, owner)), lspquery.variant_def(p, v, owner, name)), owner: owner };
 }
 
 function member_target(p: lspquery.Program, v: checker.QueryView, s: checker.Scope, fa: ast.ExprFieldAccess, called: boolean): Option[Target] {
@@ -164,7 +164,7 @@ function declared_target(p: lspquery.Program, q: lspquery.Query): Option[Target]
 
 function func_declared(q: lspquery.Query, toks: lspquery.Tok[], m: i32): Option[Target] {
   for fd in q.v.mod.funcs {
-    if (lspquery.declared_in(fd.line, m) && lspquery.unprefixed(fd.name, q.quals.own) == q.site.name) {
+    if (lspquery.declared_in(fd.line, m) && util.unqualified(fd.name, q.quals.own) == q.site.name) {
       let a = named_after(toks, fd.line, fd.col, q.site.name);
       if (at_site(a, q.site) && fd.receiver_type.len() > 0) {
         return Some(Target { ...named_target(R_METHOD, q.site.name, a), at_line: fd.line, at_col: fd.col });
@@ -196,7 +196,7 @@ function type_declared(p: lspquery.Program, q: lspquery.Query, toks: lspquery.To
 }
 
 function struct_declared(q: lspquery.Query, toks: lspquery.Tok[], sd: parser.StructDecl): Option[Target] {
-  let name = lspquery.unprefixed(sd.name, q.quals.own);
+  let name = util.unqualified(sd.name, q.quals.own);
   let a = named_after(toks, sd.line, sd.col, name);
   if (name == q.site.name && at_site(a, q.site)) {
     return Some(named_target(R_TYPE, sd.name, a));
@@ -210,12 +210,12 @@ function struct_declared(q: lspquery.Query, toks: lspquery.Tok[], sd: parser.Str
 }
 
 function enum_declared(p: lspquery.Program, q: lspquery.Query, toks: lspquery.Tok[], ed: parser.EnumDecl): Option[Target] {
-  let a = named_after(toks, ed.line, ed.col, lspquery.unprefixed(ed.name, q.quals.own));
+  let a = named_after(toks, ed.line, ed.col, util.unqualified(ed.name, q.quals.own));
   if (at_site(a, q.site)) {
     return Some(named_target(R_TYPE, ed.name, a));
   }
   for vn in ed.variant_names {
-    if (lspquery.unprefixed(vn, q.quals.own) == q.site.name) {
+    if (util.unqualified(vn, q.quals.own) == q.site.name) {
       let va = lspquery.variant_def(p, q.v, ed.name, vn);
       if (at_site(va, q.site)) {
         return Some(Target { ...named_target(R_VARIANT, q.site.name, va), owner: ed.name });
@@ -328,7 +328,7 @@ function variant_uses(v: checker.QueryView, t: Target): Anchor[] {
 }
 
 function names_variant(f: VariantFind, name: string): boolean {
-  return name.ends_with(f.name) && lspquery.unprefixed(name, f.prefix) == f.name && checker.variant_enum(f.s, name) == f.owner;
+  return name.ends_with(f.name) && util.unqualified(name, f.prefix) == f.name && checker.variant_enum(f.s, name) == f.owner;
 }
 
 function variant_stmt(st: ast.Stmt, own f: VariantFind): VariantFind {
@@ -352,7 +352,7 @@ function variant_expr(e: ast.Expr, own f: VariantFind): VariantFind {
       }
     },
     ast.ExprFieldAccess(fa) => {
-      if (lspquery.unprefixed(fa.field, f.prefix) == f.name && lspquery.enum_qualifier(f.s, fa) == f.owner) {
+      if (util.unqualified(fa.field, f.prefix) == f.name && lspquery.enum_qualifier(f.s, fa) == f.owner) {
         return VariantFind { ...f, out: f.out.append(Anchor { line: fa.line, col: fa.col, pattern: false }) };
       }
     },

@@ -175,7 +175,7 @@ function release_names(): string[] {
 }
 
 pub function releases_operand(name: string): boolean {
-  if (!name.starts_with("__")) {
+  if (!util.is_reserved_name(name)) {
     return false;
   }
   return util.index_of_str(release_helpers(), name) >= 0 || util.index_of_str(move_helpers(), name) >= 0 || is_generated_release(name);

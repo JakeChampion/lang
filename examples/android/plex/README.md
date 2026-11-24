@@ -336,6 +336,8 @@ tools/media3/fetch
 adb install -r fern-plex.apk
 ```
 
+The [nightly release](https://github.com/JakeChampion/lang/releases/tag/nightly) has a signed `fern-plex.apk` from `main`. Each nightly uses the same key, so it installs over the one before it.
+
 `fern.toml` gives the settings of the APK. Its `dex` key names the DEX file
 of Media3 ExoPlayer that `tools/media3/fetch` writes, and the APK holds it
 as `classes2.dex`. The script needs `java` on the PATH.

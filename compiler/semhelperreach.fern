@@ -48,7 +48,7 @@ pub function select(declarations: irtables.LowerResult[], extra: irtables.LowerR
     m = Marked { ...m, live: m.live.append(false) };
   }
   let names = util.name_index(labels);
-  let infix = "__";
+  let infix = util.NAME_SEP;
   for label in labels {
     if (!util.contains(label, infix)) {
       infix = "";

@@ -539,7 +539,7 @@ function any_names_argless_enum(ts: typeinfo.Type[], scope: checker.Scope): bool
 }
 
 function record_variables(name: string, scope: checker.Scope, seen: string[]): string[] {
-  if (!util.contains(name, "__")) {
+  if (!util.is_mangled(name)) {
     return [];
   }
   let Some(sig) = checker.struct_sig(scope, name) else {
@@ -2551,8 +2551,8 @@ function concat_kernel(name: string, c: ast.ExprCall, s: State): boolean {
 // A generic function of std/array, or one of its instances (`array__concat__u8`).
 function std_array_function(name: string, base: string, s: State): boolean {
   let module = util.mangle_prefix("array");
-  let whole = module + "__" + base;
-  if (name != whole && !name.starts_with(whole + "__")) {
+  let whole = util.mangled(module, base);
+  if (name != whole && !util.has_mangled_head(name, whole)) {
     return false;
   }
   return match (s.scope.lookup_sig(name)) { Some(sig) => sig.module == module, None => false };
@@ -4217,7 +4217,7 @@ function widen(v: Value, expected: typeinfo.Type): Value {
   }
   if (layout == semrecords.layout_variant()) {
     for vn in union_variants(s, owner) {
-      if (clone_base(vn) != clone_base(member)) {
+      if (util.mangled_base(vn) != util.mangled_base(member)) {
         continue;
       }
       if let Some(shape) = literal_payloads(s, expected, vn, layout) {
@@ -4229,17 +4229,6 @@ function widen(v: Value, expected: typeinfo.Type): Value {
     }
   }
   return v;
-}
-
-function clone_base(name: string): string {
-  let i = 1;
-  while (i + 1 < name.len()) {
-    if (name[i] == b'_' && name[i + 1] == b'_') {
-      return slice_unchecked(name, 0, i).to_owned();
-    }
-    i += 1;
-  }
-  return name;
 }
 
 function expr(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
@@ -10065,7 +10054,7 @@ pub function lowered_names(): util.NameIndex {
 }
 
 function outside_unnamed(p: Produced, name: string, i: i32, mod: parser.Module): boolean {
-  if (p.template || p.bodyless || !p.ok || name == "main" || name.starts_with("__") && !parser.reached_directly(mod, name) || util.contains(name, ".")) {
+  if (p.template || p.bodyless || !p.ok || name == "main" || util.is_reserved_name(name) && !parser.reached_directly(mod, name) || util.contains(name, ".")) {
     return false;
   }
   return i >= mod.funcs.len() || decl_unnamed(mod.funcs[i], mod);
