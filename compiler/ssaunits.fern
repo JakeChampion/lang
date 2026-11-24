@@ -1700,17 +1700,21 @@ function wide_literal(f: ssasem.Func, defs: ssa.SInst[], d: ssa.SInst): ssa.SIns
 
 function negated_word(defs: ssa.SInst[], d: ssa.SInst): string {
   let k = defs[d.args[d.args.len() - 1]];
-  if (k.kind_tag != ssa.CONST_INT || k.imm < 0) {
+  if (k.kind_tag != ssa.CONST_INT) {
     return "";
   }
+  // The negation wraps, as it does when the program runs: the literal
+  // 2147483648 is the least i32, and its negation is that same value.
+  let value = if (k.str != "") { util.lit_to_i64(k.str) } else { k.imm as i64 };
+  let word = util.i64_to_string(((0i64 - value) as i32) as i64);
   if (d.kind_tag == ssa.UNARY) {
-    return util.i32_to_string(0 - k.imm);
+    return word;
   }
   let zero = defs[d.args[0]];
   if (d.kind_tag != ssa.BINARY || zero.kind_tag != ssa.CONST_INT || zero.imm != 0) {
     return "";
   }
-  return util.i32_to_string(0 - k.imm);
+  return word;
 }
 
 // Constant fields have the same wrapped representation as runtime integer casts.
