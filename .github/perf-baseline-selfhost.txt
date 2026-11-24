@@ -162,7 +162,7 @@ selfhost/x86-64-linux/perceus_rbtree_ck.emit	3065
 selfhost/arm64-linux/perceus_rbtree_ck.emit	3479
 selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4400
 selfhost/x86-64-linux/video_qtrle.emit 5615
-selfhost/arm64-linux/video_qtrle.emit 6296
+selfhost/arm64-linux/video_qtrle.emit 6203
 selfhost/wasm32-wasi/video_qtrle.emit 6194
 selfhost/x86-64-linux/hex_encode.emit	2132
 selfhost/arm64-linux/hex_encode.emit	2361
