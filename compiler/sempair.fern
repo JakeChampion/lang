@@ -16,13 +16,20 @@ struct Shape { ty: typeinfo.Type, names: string[], payloads: typeinfo.Type[], ha
 
 struct Pairing { ok: boolean[], split: boolean[] }
 
+// The function types whose values return in words. `of` gives, for a function
+// that a closure of such a type names, the position of the type in `keys`.
+// `first` gives one such function for each type.
+struct Valued { keys: util.NameIndex, first: i32[], of: i32[] }
+
+struct Callees { ix: util.NameIndex, vd: Valued }
+
 function max_variants(): i32 {
   return 16;
 }
 
-pub function pair_returns(funcs: ssasem.Func[], names: string[], rewrite: boolean[], unnamed: boolean[]): Paired {
-  let ix = util.name_index(names);
-  let pg = pairable(funcs, names, ix, rewrite, unnamed);
+pub function pair_returns(funcs: ssasem.Func[], names: string[], rewrite: boolean[], unnamed: boolean[], whole: boolean): Paired {
+  let ix = Callees { ix: util.name_index(names), vd: valued(funcs, util.name_index(names), rewrite, unnamed, whole) };
+  let pg = pairable(funcs, ix, rewrite, unnamed);
   let paired = pg.ok;
   let out: ssasem.Func[] = [];
   let changed: boolean[] = [];
@@ -47,19 +54,212 @@ pub function pair_returns(funcs: ssasem.Func[], names: string[], rewrite: boolea
   return Paired { funcs: out, changed: changed };
 }
 
-function pairable(funcs: ssasem.Func[], names: string[], ix: util.NameIndex, rewrite: boolean[], unnamed: boolean[]): Pairing {
-  let refs = refs_of(funcs, ix, rewrite);
+function pairable(funcs: ssasem.Func[], ix: Callees, rewrite: boolean[], unnamed: boolean[]): Pairing {
+  let refs = refs_of(funcs, ix.ix, rewrite);
   let ok: boolean[] = [];
   let split: boolean[] = [];
   let dead: boolean[] = [];
   for i in 0..funcs.len() {
     let direct = refs.calls[i] > 0 && !refs.other[i];
-    let paired = direct && rewrite[i] && unnamed[i] && shaped(funcs[i]);
+    let paired = direct && rewrite[i] && unnamed[i] && shaped(funcs[i]) || ix.vd.of.len() > 0 && ix.vd.of[i] >= 0;
     ok = ok.append(paired);
     split = split.append(paired && splits(funcs[i]));
     dead = dead.append(refs.calls[i] == 0 && !refs.other[i] && rewrite[i] && unnamed[i]);
   }
   return taken_apart(funcs, ix, Pairing { ok: ok, split: split }, dead);
+}
+
+function no_valued(): Valued {
+  let none: string[] = [];
+  return Valued { keys: util.name_index(none), first: [], of: [] };
+}
+
+// A closure hides its body from its caller, so each function that a closure
+// of one type names must return the same way. A type returns in words when
+// each closure of that type and each call through one is in these bodies.
+// Then a closure names each such function and nothing else does.
+function valued(funcs: ssasem.Func[], ix: util.NameIndex, rewrite: boolean[], unnamed: boolean[], whole: boolean): Valued {
+  if (!whole) {
+    return no_valued();
+  }
+  let vd = closure_types(funcs, ix, rewrite, unnamed);
+  if (vd.first.len() == 0) {
+    return vd;
+  }
+  let dead = __alloc_bool(vd.first.len());
+  for k in 0..vd.first.len() {
+    dead = dead.with(k, vd.first[k] < 0);
+  }
+  for j in 0..funcs.len() {
+    let f = funcs[j];
+    let seen = util.name_index([]);
+    for b in f.graph.blocks {
+      for ins in b.insts {
+        let at = ix.find(ins.str);
+        if (at >= 0 && vd.of[at] >= 0 && ins.kind_tag != ssasem.closure_new() && !names_data(ins.kind_tag)) {
+          dead = dead.with(vd.of[at], true);
+        }
+        let outside = exposes(ins, ix, rewrite) || lowered_loop(ins);
+        if (ins.kind_tag == ssasem.call_value() && ins.args.len() > 0) {
+          let k = vd.keys.find(ssasem.type_key(f.values[ins.args[0]]));
+          outside = k >= 0 && vd.first[k] >= 0 && (!rewrite[j] || ins.imm != 0 || !semtypes.equal(f.values[ins.result], funcs[vd.first[k]].result));
+        }
+        if (!outside) {
+          continue;
+        }
+        for t in operand_types(f, ins) {
+          let key = ssasem.type_key(t);
+          if (!seen.has(key)) {
+            seen = seen.added(key);
+            dead = without_funcs(dead, vd, f, t);
+          }
+        }
+      }
+    }
+    if (!unnamed[j]) {
+      for t in f.params.append(f.result) {
+        dead = without_funcs(dead, vd, f, t);
+      }
+    }
+  }
+  let first = vd.first;
+  let of = vd.of;
+  for k in 0..first.len() {
+    if (dead[k]) {
+      first = first.with(k, -1);
+    }
+  }
+  for i in 0..of.len() {
+    if (of[i] >= 0 && dead[of[i]]) {
+      of = of.with(i, -1);
+    }
+  }
+  return Valued { keys: vd.keys, first: first, of: of };
+}
+
+// The lowering can run a map of an array in place, with a loop of its own
+// that calls the function value (ssarc.map_in_place).
+function lowered_loop(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.call() && ins.str.starts_with("__arrm_map__");
+}
+
+// The types of the closures whose result is a tuple that can return in words.
+// `first` is -1 for a type when a closure of it names a function that cannot.
+function closure_types(funcs: ssasem.Func[], ix: util.NameIndex, rewrite: boolean[], unnamed: boolean[]): Valued {
+  let none: string[] = [];
+  let keys = util.name_index(none);
+  let first: i32[] = [];
+  let bad: boolean[] = [];
+  let of = util.minus_ones(funcs.len());
+  for j in 0..funcs.len() {
+    let f = funcs[j];
+    for b in f.graph.blocks {
+      for ins in b.insts {
+        if (ins.kind_tag != ssasem.closure_new() || !is_tuple(ssasem.func_result(f.values[ins.result]))) {
+          continue;
+        }
+        let key = ssasem.type_key(f.values[ins.result]);
+        let k = keys.find(key);
+        if (k < 0) {
+          k = first.len();
+          keys = keys.added(key);
+          first = first.append(-1);
+          bad = bad.append(false);
+        }
+        let t = ix.find(ins.str);
+        if (!rewrite[j] || t < 0 || !rewrite[t] || !unnamed[t] || !value_shaped(funcs[t]) || !semtypes.equal(ssasem.func_result(f.values[ins.result]), funcs[t].result)) {
+          bad = bad.with(k, true);
+        } else if (of[t] >= 0 && of[t] != k) {
+          bad = bad.with(k, true).with(of[t], true);
+        } else {
+          of = of.with(t, k);
+          if (first[k] < 0) {
+            first = first.with(k, t);
+          }
+        }
+      }
+    }
+  }
+  for k in 0..first.len() {
+    if (bad[k]) {
+      first = first.with(k, -1);
+    }
+  }
+  return Valued { keys: keys, first: first, of: of };
+}
+
+function is_tuple(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeTuple(_) = t {
+    return true;
+  }
+  return false;
+}
+
+function value_shaped(f: ssasem.Func): boolean {
+  return is_tuple(f.result) && (pair_type(f, f.result) || semscalarreturn.eligible(f, f.result));
+}
+
+// Marks each function type that a value of type `t0` can hold, and each that
+// the parameters and the result of such a function can hold.
+function without_funcs(own dead: boolean[], vd: Valued, f: ssasem.Func, t0: typeinfo.Type): boolean[] {
+  let seen = util.name_index([]);
+  let work: typeinfo.Type[] = [t0];
+  while (work.len() > 0) {
+    let next: typeinfo.Type[] = [];
+    for t in work {
+      let key = ssasem.type_key(t);
+      if (seen.has(key)) {
+        continue;
+      }
+      seen = seen.added(key);
+      if (ssasem.is_func(t)) {
+        let k = vd.keys.find(key);
+        if (k >= 0) {
+          dead = dead.with(k, true);
+        }
+        next = util.append_all(next, ssasem.func_params(t).append(ssasem.func_result(t)));
+      } else {
+        next = util.append_all(next, held_types(f, t));
+      }
+    }
+    work = next;
+  }
+  return dead;
+}
+
+// For each function type, whether each function that a closure of it names
+// builds each value that it returns.
+function values_built(funcs: ssasem.Func[], vd: Valued): boolean[] {
+  let out: boolean[] = [];
+  for k in 0..vd.first.len() {
+    out = out.append(true);
+  }
+  for i in 0..vd.of.len() {
+    if (vd.of[i] >= 0 && out[vd.of[i]] && !always_built(funcs[i])) {
+      out = out.with(vd.of[i], false);
+    }
+  }
+  return out;
+}
+
+function built_at(funcs: ssasem.Func[], vd: Valued, built: boolean[], at: i32): boolean {
+  if (vd.of.len() > 0 && vd.of[at] >= 0) {
+    return built[vd.of[at]];
+  }
+  return always_built(funcs[at]);
+}
+
+// Each function that a closure of one type names stops with the others.
+function without_callee(own ok: boolean[], vd: Valued, at: i32): boolean[] {
+  if (vd.of.len() == 0 || vd.of[at] < 0) {
+    return ok.with(at, false);
+  }
+  for i in 0..vd.of.len() {
+    if (vd.of[i] == vd.of[at]) {
+      ok = ok.with(i, false);
+    }
+  }
+  return ok;
 }
 
 // If each split payload is a fresh scalar pair, a caller that keeps it can
@@ -86,13 +286,14 @@ function builds_scalar_payloads(f: ssasem.Func): boolean {
 
 // A kept value needs its original box unless the callee builds a fresh value
 // that the caller can rebuild. Apply that check separately to split payloads.
-function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, pg0: Pairing, dead: boolean[]): Pairing {
+function taken_apart(funcs: ssasem.Func[], ix: Callees, pg0: Pairing, dead: boolean[]): Pairing {
   let ok = pg0.ok;
   let split = pg0.split;
   let fresh: boolean[] = [];
   for i in 0..funcs.len() {
     fresh = fresh.append(split[i] && builds_scalar_payloads(funcs[i]));
   }
+  let built = values_built(funcs, ix.vd);
   let changed = true;
   while (changed) {
     changed = false;
@@ -108,16 +309,16 @@ function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, pg0: Pairing, dea
       let computed = false;
       for b in funcs[j].graph.blocks {
         for ins in b.insts {
-          let at = paired_callee(ins, ix, ok);
+          let at = paired_callee(funcs[j], ins, ix, ok);
           if (at >= 0 && !computed) {
             let defs = ssa.inst_defs(funcs[j].graph);
-            whole = whole_values(funcs[j], ix, ok, ok[j]);
+            whole = whole_in(funcs[j], ix, ok, ok[j]);
             scalar_whole = semscalarreturn.donors(funcs[j], defs, retained_values(funcs[j], defs, ix, ok, ok[j], whole));
             inner = payloads_whole(funcs[j], defs, ix, Pairing { ok: ok, split: split }, ok[j], ok[j] && !split[j]);
             computed = true;
           }
-          if (at >= 0 && keeps_result(funcs[at], ins.result, whole, scalar_whole)) {
-            ok = ok.with(at, false);
+          if (at >= 0 && keeps_result(funcs[at], built_at(funcs, ix.vd, built, at), ins.result, whole, scalar_whole)) {
+            ok = without_callee(ok, ix.vd, at);
             split = split.with(at, false);
             changed = true;
           } else if (at >= 0 && split[at] && inner[ins.result] && !fresh[at]) {
@@ -134,7 +335,7 @@ function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, pg0: Pairing, dea
 
 // The values whose two-word variant payload is kept whole: read out and used
 // whole, or returned whole by a callee that hands it on in one word.
-function payloads_whole(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, pg: Pairing, paired: boolean, returns_whole: boolean): boolean[] {
+function payloads_whole(f: ssasem.Func, defs: ssa.SInst[], ix: Callees, pg: Pairing, paired: boolean, returns_whole: boolean): boolean[] {
   let returned: boolean[] = [];
   if (paired && !returns_whole) {
     returned = returned_constructions(f, defs);
@@ -167,8 +368,8 @@ function returned_constructions(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
   return out;
 }
 
-function keeps_result(callee: ssasem.Func, value: i32, whole: boolean[], scalar_whole: boolean[]): boolean {
-  if (always_built(callee)) {
+function keeps_result(callee: ssasem.Func, built: boolean, value: i32, whole: boolean[], scalar_whole: boolean[]): boolean {
+  if (built) {
     return false;
   }
   return whole[value] || semscalarreturn.eligible(callee, callee.result) && scalar_whole[value];
@@ -235,11 +436,19 @@ function constant_value(defs: ssa.SInst[], v: i32, depth: i32): boolean {
   return true;
 }
 
-function paired_callee(ins: ssa.SInst, ix: util.NameIndex, ok: boolean[]): i32 {
-  if (ins.kind_tag != ssasem.call()) {
-    return -1;
+// The paired function that `ins` calls: by name, or through a function value
+// whose type returns in words. One function then stands for each function
+// that a closure of the type names.
+function paired_callee(f: ssasem.Func, ins: ssa.SInst, ix: Callees, ok: boolean[]): i32 {
+  let at = -1;
+  if (ins.kind_tag == ssasem.call()) {
+    at = ix.ix.find(ins.str);
+  } else if (ins.kind_tag == ssasem.call_value() && ix.vd.first.len() > 0 && ins.args.len() > 0) {
+    let k = ix.vd.keys.find(ssasem.type_key(f.values[ins.args[0]]));
+    if (k >= 0) {
+      at = ix.vd.first[k];
+    }
   }
-  let at = ix.find(ins.str);
   if (at >= 0 && ok[at]) {
     return at;
   }
@@ -247,6 +456,10 @@ function paired_callee(ins: ssa.SInst, ix: util.NameIndex, ok: boolean[]): i32 {
 }
 
 pub function whole_values(f: ssasem.Func, ix: util.NameIndex, ok: boolean[], paired: boolean): boolean[] {
+  return whole_in(f, Callees { ix: ix, vd: no_valued() }, ok, paired);
+}
+
+function whole_in(f: ssasem.Func, ix: Callees, ok: boolean[], paired: boolean): boolean[] {
   let defs = ssa.inst_defs(f.graph);
   let none: boolean[] = [];
   return through_joins(defs, seeded(f, defs, ix, ok, none, paired, []));
@@ -254,7 +467,7 @@ pub function whole_values(f: ssasem.Func, ix: util.NameIndex, ok: boolean[], pai
 
 // A construction that no use keeps whole is taken apart, so it retains none
 // of its arguments.
-function retained_values(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, ok: boolean[], paired: boolean, whole0: boolean[]): boolean[] {
+function retained_values(f: ssasem.Func, defs: ssa.SInst[], ix: Callees, ok: boolean[], paired: boolean, whole0: boolean[]): boolean[] {
   let whole = whole0;
   let none: boolean[] = [];
   let found = -1;
@@ -283,7 +496,7 @@ function retained_values(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, 
 // split names the callees whose payloads a caller rebuilds as constructions.
 // returned marks the variants a split function returns: its return takes
 // their payloads apart, so they keep nothing whole.
-function seeded(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, ok: boolean[], split: boolean[], paired: boolean, returned: boolean[]): boolean[] {
+function seeded(f: ssasem.Func, defs: ssa.SInst[], ix: Callees, ok: boolean[], split: boolean[], paired: boolean, returned: boolean[]): boolean[] {
   let g = f.graph;
   let whole = __alloc_bool(g.nvals);
   for b in g.blocks {
@@ -292,7 +505,7 @@ function seeded(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, ok: boole
       if (!apart && ins.kind_tag != ssa.COPY && ins.kind_tag != ssa.PHI) {
         whole = marked_all(whole, ins.args);
       }
-      if (ins.kind_tag == ssa.PHI && !joins_apart(ins, defs, ix, ok, split)) {
+      if (ins.kind_tag == ssa.PHI && !joins_apart(f, ins, defs, ix, ok, split)) {
         whole = marked_all(whole, [ins.result]);
       }
       let donor = ssasem.update_base(ins);
@@ -340,19 +553,19 @@ pub function reads_apart(k: i32): boolean {
   return k == ssasem.variant_is() || k == ssasem.variant_get() || k == ssasem.tuple_get() || k == ssasem.record_get();
 }
 
-function joins_apart(phi: ssa.SInst, defs: ssa.SInst[], ix: util.NameIndex, ok: boolean[], split: boolean[]): boolean {
+function joins_apart(f: ssasem.Func, phi: ssa.SInst, defs: ssa.SInst[], ix: Callees, ok: boolean[], split: boolean[]): boolean {
   for a in phi.args {
     let d = ssa.copy_source(defs, a);
     let k = d.kind_tag;
-    if (k != ssasem.variant_new() && k != ssasem.tuple_new() && k != ssasem.record_new() && k != ssasem.zero() && k != ssa.PHI && paired_callee(d, ix, ok) < 0 && !split_payload(d, defs, ix, split)) {
+    if (k != ssasem.variant_new() && k != ssasem.tuple_new() && k != ssasem.record_new() && k != ssasem.zero() && k != ssa.PHI && paired_callee(f, d, ix, ok) < 0 && !split_payload(f, d, defs, ix, split)) {
       return false;
     }
   }
   return true;
 }
 
-function split_payload(d: ssa.SInst, defs: ssa.SInst[], ix: util.NameIndex, split: boolean[]): boolean {
-  return split.len() > 0 && d.kind_tag == ssasem.variant_get() && d.args.len() == 1 && paired_callee(ssa.copy_source(defs, d.args[0]), ix, split) >= 0;
+function split_payload(f: ssasem.Func, d: ssa.SInst, defs: ssa.SInst[], ix: Callees, split: boolean[]): boolean {
+  return split.len() > 0 && d.kind_tag == ssasem.variant_get() && d.args.len() == 1 && paired_callee(f, ssa.copy_source(defs, d.args[0]), ix, split) >= 0;
 }
 
 function marked_all(own flags: boolean[], vs: i32[]): boolean[] {
@@ -747,35 +960,31 @@ function return_tested(f0: ssasem.Func, bi: i32, sh: Shape, defs: ssa.SInst[]): 
   return tests_on(f, bi, tests, first, n, v, sh);
 }
 
-function calls_paired(f: ssasem.Func, ix: util.NameIndex, paired: boolean[]): boolean {
+function calls_paired(f: ssasem.Func, ix: Callees, paired: boolean[]): boolean {
   for b in f.graph.blocks {
-    if (paired_call_at(b, ix, paired) >= 0) {
+    if (paired_call_at(f, b, ix, paired) >= 0) {
       return true;
     }
   }
   return false;
 }
 
-function paired_call_at(b: ssa.SBlock, ix: util.NameIndex, paired: boolean[]): i32 {
+function paired_call_at(f: ssasem.Func, b: ssa.SBlock, ix: Callees, paired: boolean[]): i32 {
   for k in 0..b.insts.len() {
-    let ins = b.insts[k];
-    if (ins.kind_tag == ssasem.call() && ins.imm == 0) {
-      let at = ix.find(ins.str);
-      if (at >= 0 && paired[at]) {
-        return k;
-      }
+    if (b.insts[k].imm == 0 && paired_callee(f, b.insts[k], ix, paired) >= 0) {
+      return k;
     }
   }
   return -1;
 }
 
-function rebuild_calls(f0: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, pg: Pairing): ssasem.Func {
+function rebuild_calls(f0: ssasem.Func, funcs: ssasem.Func[], ix: Callees, pg: Pairing): ssasem.Func {
   let f = f0;
   let bi = 0;
   while (bi < f.graph.blocks.len()) {
-    let k = paired_call_at(f.graph.blocks[bi], ix, pg.ok);
+    let k = paired_call_at(f, f.graph.blocks[bi], ix, pg.ok);
     if (k >= 0) {
-      let at = ix.find(f.graph.blocks[bi].insts[k].str);
+      let at = paired_callee(f, f.graph.blocks[bi].insts[k], ix, pg.ok);
       f = rebuild_at(f, bi, k, funcs[at], pg.split[at]);
     } else {
       bi += 1;
@@ -933,7 +1142,7 @@ function dispatched(bi: i32, k: i32, sh: Shape, c: Captured, callee: ssasem.Func
   f = repointed(f, ssa.term_targets(b.term), b.id, join);
   f = with_block(f, bi, ssa.SBlock { ...f.graph.blocks[bi], insts: head });
   f = tests_on(f, bi, tests, first, n, c.tag, sh);
-  return with_callee_enum(ssasem.Func { ...f, calls: dispatch_contracts(f.calls, call.str, sh) }, callee, sh);
+  return with_callee_enum(ssasem.Func { ...f, calls: dispatch_contracts(f.calls, call, sh) }, callee, sh);
 }
 
 function before(insts: ssa.SInst[], k: i32): ssa.SInst[] {
@@ -952,10 +1161,8 @@ function after(insts: ssa.SInst[], k: i32): ssa.SInst[] {
   return out;
 }
 
-function dispatch_contracts(calls0: ssasem.Contract[], name: string, sh: Shape): ssasem.Contract[] {
-  let calls = calls0;
-  let at = ssasem.find_contract_in(calls, name);
-  calls = calls.with(at, ssasem.Contract { ...calls[at], result: pair_result(sh) });
+function dispatch_contracts(calls0: ssasem.Contract[], call: ssa.SInst, sh: Shape): ssasem.Contract[] {
+  let calls = result_retyped(calls0, call, pair_result(sh));
   if (sh.lanes) {
     return calls;
   }
@@ -972,6 +1179,16 @@ function dispatch_contracts(calls0: ssasem.Contract[], name: string, sh: Shape):
     }
   }
   return calls;
+}
+
+// A call through a function value has no contract. The type of its result
+// value gives the result.
+function result_retyped(calls: ssasem.Contract[], call: ssa.SInst, t: typeinfo.Type): ssasem.Contract[] {
+  if (call.kind_tag != ssasem.call()) {
+    return calls;
+  }
+  let at = ssasem.find_contract_in(calls, call.str);
+  return calls.with(at, ssasem.Contract { ...calls[at], result: t });
 }
 
 function word_contract(slot: i32): ssasem.Contract {
@@ -1021,9 +1238,7 @@ function rebuild_pair(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ssasem.Func 
     }
   }
   f = with_block(f, bi, ssa.SBlock { ...b, insts: insts });
-  let calls = f.calls;
-  let at = ssasem.find_contract_in(calls, call.str);
-  calls = calls.with(at, ssasem.Contract { ...calls[at], result: sh.payloads[0] });
+  let calls = result_retyped(f.calls, call, sh.payloads[0]);
   calls = ssasem.with_contract(calls, word_contract(0));
   calls = ssasem.with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[1]), params: [typeinfo.t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[1] });
   return ssasem.Func { ...f, calls: calls };
@@ -1071,9 +1286,7 @@ function rebuild_reference_tail(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ss
     }
   }
   f = with_block(f, bi, ssa.SBlock { ...b, insts: insts });
-  let calls = f.calls;
-  let at = ssasem.find_contract_in(calls, call.str);
-  calls = calls.with(at, ssasem.Contract { ...calls[at], result: sh.payloads[0] });
+  let calls = result_retyped(f.calls, call, sh.payloads[0]);
   calls = ssasem.with_contract(calls, word_contract(0));
   calls = ssasem.with_contract(calls, lane_contract(1));
   calls = ssasem.with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[1]), params: [typeinfo.t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[1] });
@@ -1108,9 +1321,7 @@ function rebuild_three_references(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): 
     }
   }
   f = with_block(f, bi, ssa.SBlock { ...b, insts: insts });
-  let calls = f.calls;
-  let at = ssasem.find_contract_in(calls, call.str);
-  calls = calls.with(at, ssasem.Contract { ...calls[at], result: sh.payloads[0] });
+  let calls = result_retyped(f.calls, call, sh.payloads[0]);
   calls = ssasem.with_contract(ssasem.with_contract(calls, word_contract(0)), word_contract(1));
   calls = ssasem.with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[1]), params: [typeinfo.t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[1] });
   calls = ssasem.with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[2]), params: [typeinfo.t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[2] });

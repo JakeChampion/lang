@@ -2590,7 +2590,8 @@ pub function op_call_indirect(argc: i32): Op {
 
 // The contract of a call through a function value, in the width of its op:
 // one bit says that the contract is known, one that the result holds a unit,
-// and bit j that operand j hands its unit to the callee. A raw call has none.
+// one for each pair word of the result that holds a unit, and bit j that
+// operand j hands its unit to the callee. A raw call has none.
 pub function call_units_known(): i32 {
   return 1 << 29;
 }
@@ -2599,9 +2600,13 @@ pub function call_units_result(): i32 {
   return 1 << 28;
 }
 
+pub function call_units_word(slot: i32): i32 {
+  return 1 << 27 - slot;
+}
+
 // The most operands whose units the contract can name.
 pub function call_units_operands(): i32 {
-  return 28;
+  return 26;
 }
 
 pub function with_call_units(o: Op, units: i32): Op {
