@@ -16810,6 +16810,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 			if complete {
+				resolveFuncValueHints(n.Args, sub)
 				c.checkTypeArgBounds(genericFn, args, sub, tpSet, n.P)
 				n.TypeArgs = args
 				return c.resolveProj(substituteType(ft.Result, sub))
