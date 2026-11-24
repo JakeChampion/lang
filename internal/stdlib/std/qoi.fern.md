@@ -23,6 +23,7 @@ The first pixel before the image is black, with an alpha of 255.
 ## Executable example
 
 ```fern test name=std-qoi-example
+import "core/cmp";
 import "std/qoi";
 
 function main(): i32 {
@@ -39,6 +40,8 @@ function main(): i32 {
 ```fern
 <<*>>=
 // This module encodes and decodes QOI images.
+import "core/cmp";
+import "core/error";
 
 <<images and errors>>
 
@@ -68,6 +71,14 @@ pub function (e: EncodeError) message(): string {
   }
 }
 
+pub function (e: EncodeError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for EncodeError {}
+
+impl cmp.Display for EncodeError {}
+
 pub enum DecodeError { NotQoi, BadHeader, TooLarge, Truncated }
 
 pub function (e: DecodeError) message(): string {
@@ -86,6 +97,14 @@ pub function (e: DecodeError) message(): string {
     }
   }
 }
+
+pub function (e: DecodeError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for DecodeError {}
+
+impl cmp.Display for DecodeError {}
 
 // The most pixels that the four bytes of each pixel of an image can hold.
 pub const MAX_PIXELS: i64 = 536870911i64;

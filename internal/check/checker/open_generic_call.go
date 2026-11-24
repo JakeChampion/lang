@@ -509,10 +509,39 @@ func (c *checker) argHint(pt ast.Type, fn *ast.FuncDecl, sub map[string]ast.Type
 			}
 			cloned = true
 		}
-		hint[tp] = ast.ParamType{Name: tp + "'"}
+		hint[tp] = ast.ParamType{Name: unboundHintName(tp)}
 	}
 	if hint == nil {
 		return pt
 	}
 	return substituteType(pt, hint)
+}
+
+func unboundHintName(param string) string {
+	return param + "'"
+}
+
+// A named generic function can receive its expected signature before a later
+// argument binds the callee's parameters. Resolve the temporary names left in
+// that function value so its instantiation survives monomorphization.
+func resolveFuncValueHints(args []ast.Expr, sub map[string]ast.Type) {
+	var bindings map[string]ast.Type
+	for _, arg := range args {
+		id, ok := arg.(*ast.Ident)
+		if !ok {
+			continue
+		}
+		for i, typ := range id.TypeArgs {
+			if !containsParamType(typ) {
+				continue
+			}
+			if bindings == nil {
+				bindings = make(map[string]ast.Type, len(sub))
+				for name, bound := range sub {
+					bindings[unboundHintName(name)] = bound
+				}
+			}
+			id.TypeArgs[i] = substituteType(typ, bindings)
+		}
+	}
 }

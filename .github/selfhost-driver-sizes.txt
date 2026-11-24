@@ -80,5 +80,5 @@ drivers/wasm_run.fern 11057328
 drivers/wasm_runio_run.fern 11017264
 drivers/asm_pathprobe_run.fern 6231168
 drivers/checker_modload_run.fern 4577744
-drivers/checker_codes_run.fern 4272656
+drivers/checker_codes_run.fern 4489168
 drivers/interp_run.fern 3379408
