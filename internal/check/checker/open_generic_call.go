@@ -409,3 +409,71 @@ func typeMentionsAny(t ast.Type, tpSet map[string]bool) bool {
 	}
 	return false
 }
+
+// errOpenTypeArgs reports an outermost generic call of body whose type
+// arguments still name a type parameter that the function does not declare.
+// Monomorph gives an inner call the type arguments of the call around it, so
+// only the outermost call of a chain must settle. When it does not, as in
+// `row([leaf()])`, nothing gave the chain a type. The E040 goes to the
+// innermost open call, where the self-hosted checker reports it.
+func (c *checker) errOpenTypeArgs(body *ast.Block) {
+	inScope := c.typeParamsInScope()
+	var visit func(n ast.Node) bool
+	visit = func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FuncDecl:
+			return false
+		case *ast.Call:
+			if c.genericCallOf(x) == nil {
+				return true
+			}
+			if c.openTypeArg(x, inScope) >= 0 {
+				c.errInnermostOpenCall(x, inScope)
+			}
+			return false
+		}
+		return true
+	}
+	ast.Walk(body, visit)
+}
+
+// genericCallOf gives the generic function that call names, or nil.
+func (c *checker) genericCallOf(call *ast.Call) *ast.FuncDecl {
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return nil
+	}
+	fn := c.info.GenericFuncs[id.Name]
+	if fn == nil || len(fn.TypeParams) != len(call.TypeArgs) {
+		return nil
+	}
+	return fn
+}
+
+// openTypeArg gives the index of the first type argument of call that names
+// a type parameter outside inScope, or -1.
+func (c *checker) openTypeArg(call *ast.Call, inScope map[string]bool) int {
+	for k, arg := range call.TypeArgs {
+		if _, open := paramTypeNotIn(arg, inScope); open {
+			return k
+		}
+	}
+	return -1
+}
+
+func (c *checker) errInnermostOpenCall(call *ast.Call, inScope map[string]bool) {
+	inner := call
+	ast.Walk(call, func(n ast.Node) bool {
+		if x, ok := n.(*ast.Call); ok && x != call && c.genericCallOf(x) != nil && c.openTypeArg(x, inScope) >= 0 {
+			inner = x
+		}
+		_, nested := n.(*ast.FuncDecl)
+		return !nested
+	})
+	if c.failedExprs[inner] {
+		return
+	}
+	fn := c.genericCallOf(inner)
+	display, spelling := callSiteName(fn)
+	c.errfCode(inner.P, "E040", "could not infer type parameter %s for %s — supply it explicitly at the call site (e.g. %s[i32](...)) or annotate the binding", fn.TypeParams[c.openTypeArg(inner, inScope)], display, spelling)
+}

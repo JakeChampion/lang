@@ -9930,6 +9930,7 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	c.checkBlock(fn.Body, root)
 	c.settleLitLocals(fn.Body)
 	c.finishOpenEnumLocals()
+	c.errOpenTypeArgs(fn.Body)
 	if infer {
 		c.inferReturnType(fn, rets)
 	}
@@ -12339,6 +12340,9 @@ func (c *checker) checkBlockExprAt(n *ast.BlockExpr, parent *scope, want ast.Typ
 		c.unsafeDepth++
 		defer func() { c.unsafeDepth-- }()
 	}
+	// The statements of the block set their own expected types, and the
+	// tail gets the type that the block is expected to have.
+	expected := c.expectedType
 	s := newScope(parent)
 	prevMutualRec := c.mutualRecSiblings
 	c.mutualRecSiblings = nil
@@ -12356,7 +12360,7 @@ func (c *checker) checkBlockExprAt(n *ast.BlockExpr, parent *scope, want ast.Typ
 	if want != nil {
 		return c.checkArmAt(&n.Tail, s, want)
 	}
-	return c.checkExpr(n.Tail, s)
+	return c.checkExprAt(n.Tail, s, expected)
 }
 
 // checkArmAt checks a branch of a value `if` or `match` where want is

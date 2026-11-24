@@ -160,6 +160,128 @@ function test_no_scan(): test.TestOutcome {
   return test.assert_eq(message(data), "jpeg: corrupt data: no scan");
 }
 
+// A smooth image of w by h pixels, with `bpp` bytes each.
+function smooth(w: i32, h: i32, bpp: i32): u8[] {
+  let px: u8[] = [];
+  for y in 0..h {
+    for x in 0..w {
+      px = px.append((40 + x * 160 / w) as u8).append((200 - y * 120 / h) as u8).append((90 + (x + y) * 60 / (w + h)) as u8);
+      if (bpp == 4) {
+        px = px.append(255u8);
+      }
+    }
+  }
+  return px;
+}
+
+function encoded(w: i32, h: i32, px: u8[], quality: i32, sub: jpeg.Subsampling): u8[] {
+  match (jpeg.encode_rgba8(w, h, px, jpeg.Options { quality: quality, subsampling: sub })) {
+    Ok(file) => {
+      return file;
+    },
+    Err(_) => {
+      return [];
+    }
+  }
+}
+
+// The largest difference of a channel between `px`, with four bytes for
+// each pixel, and the decoded `file`, or 1000 when the file does not decode
+// at w by h.
+function round_trip_diff(file: u8[], w: i32, h: i32, px: u8[]): i32 {
+  let Ok(img) = jpeg.decode_image(file) else {
+    return 1000;
+  };
+  if (img.width != w || img.height != h) {
+    return 1000;
+  }
+  let most = 0;
+  for i in 0..px.len() {
+    let d = (img.pixels[i] as i32 - px[i] as i32).abs();
+    if (d > most) {
+      most = d;
+    }
+  }
+  return most;
+}
+
+function test_encode_444(): test.TestOutcome {
+  let px = smooth(24, 16, 4);
+  return test.assert_eq(round_trip_diff(encoded(24, 16, px, 95, jpeg.S444), 24, 16, px) <= 6, true);
+}
+
+function test_encode_420(): test.TestOutcome {
+  let px = smooth(24, 16, 4);
+  return test.assert_eq(round_trip_diff(encoded(24, 16, px, 90, jpeg.S420), 24, 16, px) <= 10, true);
+}
+
+// The last blocks of an image whose sides are not a multiple of the block
+// repeat the edge pixels.
+function test_encode_odd_sizes(): test.TestOutcome {
+  let wide = smooth(17, 9, 4);
+  let one: u8[] = [10, 200, 30, 255];
+  let got = round_trip_diff(encoded(17, 9, wide, 90, jpeg.S420), 17, 9, wide) <= 12 && round_trip_diff(encoded(1, 1, one, 90, jpeg.S420), 1, 1, one) <= 8;
+  return test.assert_eq(got, true);
+}
+
+function test_encode_rgb_and_rgba(): test.TestOutcome {
+  let rgb = match (jpeg.encode_rgb8(20, 12, smooth(20, 12, 3), jpeg.options())) {
+    Ok(f) => f,
+    Err(_) => [],
+  };
+  let rgba = encoded(20, 12, smooth(20, 12, 4), 75, jpeg.S420);
+  return test.assert_eq(rgb.len() > 0 && rgb == rgba, true);
+}
+
+function test_encode_quality(): test.TestOutcome {
+  let px = smooth(24, 16, 4);
+  let low = encoded(24, 16, px, 20, jpeg.S420).len();
+  let mid = encoded(24, 16, px, 60, jpeg.S420).len();
+  let high = encoded(24, 16, px, 95, jpeg.S420).len();
+  let clamped = encoded(24, 16, px, 0, jpeg.S420) == encoded(24, 16, px, 1, jpeg.S420) && encoded(24, 16, px, 500, jpeg.S420) == encoded(24, 16, px, 100, jpeg.S420);
+  return test.assert_eq(low < mid && mid < high && clamped, true);
+}
+
+function encode_message(w: i32, h: i32, px: u8[]): string {
+  match (jpeg.encode_rgb8(w, h, px, jpeg.options())) {
+    Ok(_) => {
+      return "ok";
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+}
+
+function test_encode_errors(): test.TestOutcome {
+  let got = encode_message(0, 1, []) + " | " + encode_message(65536, 1, []) + " | " + encode_message(2, 2, [1u8, 2u8, 3u8]);
+  return test.assert_eq(got, "jpeg: the width and the height must be from 1 to 65535 | jpeg: the width and the height must be from 1 to 65535 | jpeg: the length of the pixels does not agree with the dimensions");
+}
+
+// The offset of the first segment with `marker`, or -1.
+function segment_at(file: u8[], marker: i32): i32 {
+  let i = 2;
+  while (i + 4 <= file.len() && file[i] == 255u8) {
+    if (file[i + 1] as i32 == marker) {
+      return i;
+    }
+    i += 2 + (file[i + 2] as i32 << 8 | file[i + 3] as i32);
+  }
+  return -1;
+}
+
+// The frame gives the size and the sampling factors of Y: 2 by 2 for 4:2:0
+// and 1 by 1 for 4:4:4.
+function test_encode_frame(): test.TestOutcome {
+  let px = smooth(20, 12, 4);
+  let half = encoded(20, 12, px, 75, jpeg.S420);
+  let full = encoded(20, 12, px, 75, jpeg.S444);
+  let a = segment_at(half, 192);
+  let b = segment_at(full, 192);
+  let got = (half[a + 5] as i32 << 8 | half[a + 6] as i32).to_string() + "x" + (half[a + 7] as i32 << 8 | half[a + 8] as i32).to_string() + " " + half[a + 11].to_string() + " " + full[b + 11].to_string();
+  return test.assert_eq(got, "12x20 34 17");
+}
+
 function main(): i32 {
   let r = test.new("std/jpeg");
   r = r.it("baseline 4:4:4", test_baseline_444);
@@ -174,5 +296,12 @@ function main(): i32 {
   r = r.it("segment bounds", test_segment_bounds);
   r = r.it("undefined table", test_undefined_table);
   r = r.it("no scan", test_no_scan);
+  r = r.it("encode 4:4:4", test_encode_444);
+  r = r.it("encode 4:2:0", test_encode_420);
+  r = r.it("encode odd sizes", test_encode_odd_sizes);
+  r = r.it("encode RGB and RGBA", test_encode_rgb_and_rgba);
+  r = r.it("encode quality", test_encode_quality);
+  r = r.it("encode errors", test_encode_errors);
+  r = r.it("encode frame", test_encode_frame);
   return r.finish();
 }

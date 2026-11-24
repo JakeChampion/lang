@@ -169,6 +169,8 @@ func checkStdTestCensus(t *testing.T, stderr string) {
 // The suites that take more than a minute under the self-host interpreter. The
 // interp leg leaves them out so that it fits one job.
 var interpSlowStdTests = map[string]bool{
+	// Codes longer than 16 bits need an image of thousands of blocks. The encoder smoke of jpeg stays here.
+	"jpeg_huffman": true,
 	// Layer II has 66 streams and a full mutation campaign. Protected-frame smoke stays here.
 	"mp2": true, "mp2_shard1": true, "mp2_shard2": true, "mp2_shard3": true, "mp2_boundary": true,
 	// The full FLAC encoder bank includes 65,535-frame blocks. Small smoke stays here.
@@ -646,6 +648,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"android_ui_scene", langSrcAbs(t, "tests/stdlib/android_ui_scene_test.fern"), ""},
 		{"android_ui", langSrcAbs(t, "tests/stdlib/android_ui_test.fern"), ""},
 		{"jpeg", langSrcAbs(t, "tests/stdlib/jpeg_test.fern"), ""},
+		{"jpeg_huffman", langSrcAbs(t, "tests/stdlib/jpeg_huffman_test.fern"), ""},
 		{"truetype", langSrcAbs(t, "tests/stdlib/truetype_test.fern"), ""},
 		{"truetype_var", langSrcAbs(t, "tests/stdlib/truetype_var_test.fern"), ""},
 		{"truetype_cff", langSrcAbs(t, "tests/stdlib/truetype_cff_test.fern"), ""},

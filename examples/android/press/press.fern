@@ -1,0 +1,477 @@
+// Press: the state, the screens and the messages of the app that makes
+// images smaller. It has no Android code: the functions of `Device` do what
+// needs the phone, so press_test.fern runs the app on the host.
+import "std/android/draw";
+import "std/android/ui";
+import "std/jpeg";
+import "std/png";
+import "std/worker";
+import "./pixels";
+
+// The formats that Press writes, in the order of their tabs.
+pub const JPEG: i32 = 0;
+
+pub const WEBP: i32 = 1;
+
+pub const PNG: i32 = 2;
+
+// The longest side of the pictures that compare the images, in pixels.
+pub const PREVIEW: i32 = 960;
+
+// The image that the person opened: the name of its file, the size of the
+// file in bytes, its pixels, and its pixels at the size of the preview.
+pub struct Picked { name: string, bytes: i32, image: draw.Image, preview: draw.Image }
+
+// The choices of the person: the format, the quality from 1 to 100, the
+// size in percent of the sides, all the chroma samples for JPEG, and
+// lossless WebP.
+pub struct Settings { format: i32, quality: i32, scale: i32, full_chroma: boolean, lossless: boolean }
+
+pub function settings(): Settings {
+  return Settings { format: JPEG, quality: 75, scale: 100, full_chroma: false, lossless: false };
+}
+
+// A file that Press made in `format`, with the size of its image and the
+// image of the file at the size of the preview.
+pub struct Output { format: i32, bytes: u8[], width: i32, height: i32, preview: draw.Image }
+
+// The work of a worker: the settings of `generation` for `image`.
+pub struct Job { generation: i32, image: draw.Image, settings: Settings, opaque: boolean }
+
+// What the program asks of the phone after a message. `effects` does it.
+pub enum Want { Nothing, Pick, Webp(i32, draw.Image), Preview(Output), Keep, Send }
+
+pub struct Model {
+  source: Option[Picked],
+  opaque: boolean,
+  settings: Settings,
+  output: Option[Output],
+  shown: draw.Image,
+  shown_key: i32,
+  split: f64,
+  generation: i32,
+  done: i32,
+  quiet: i32,
+  busy: boolean,
+  job: Option[Job],
+  want: Want,
+  note: string,
+}
+
+pub function start(): Model {
+  return Model { source: None, opaque: true, settings: settings(), output: None, shown: no_image(), shown_key: 0, split: 0.5, generation: 0, done: 0, quiet: 0, busy: false, job: None, want: Nothing, note: "" };
+}
+
+function no_image(): draw.Image {
+  return draw.Image { width: 0, height: 0, pixels: [] };
+}
+
+pub enum Msg {
+  Open,
+  Opened(Picked),
+  OpenFailed(string),
+  Close,
+  Format(i32),
+  Quality(f64),
+  Scale(f64),
+  FullChroma,
+  Lossless,
+  Split(f64),
+  Tick,
+  Encoded(i32, u8[], i32, i32),
+  Resized(i32, draw.Image),
+  Save,
+  Share,
+  Dismiss,
+}
+
+// What Press needs of the phone. `decode` gives the image of a file at a
+// size, `webp` encodes an image as WebP at a quality, lossless or not, and
+// `save` and `share` take the name, the MIME type and the bytes of a file.
+pub struct Device {
+  pick: () => boolean,
+  decode: (u8[], i32, i32) => Option[draw.Image],
+  webp: (draw.Image, i32, boolean) => Option[u8[]],
+  save: (string, string, u8[]) => boolean,
+  share: (string, string, u8[]) => boolean,
+}
+
+// The ticks of no change before a new encoding starts, so that a slider
+// that moves starts one encoding when it stops.
+const QUIET_TICKS: i32 = 2;
+
+const TICK_MS: i32 = 120;
+
+pub function wait(m: Model): i32 {
+  if (m.source.is_some() && m.done != m.generation && !m.busy) {
+    return TICK_MS;
+  }
+  return -1;
+}
+
+// The settings changed: the output of the settings before is old.
+function changed(own m: Model, s: Settings): Model {
+  return Model { ...m, settings: s, generation: m.generation + 1, quiet: 0 };
+}
+
+pub function update(own m0: Model, msg: Msg): Model {
+  let m = Model { ...m0, job: None, want: Nothing };
+  let s = m.settings;
+  match (msg) {
+    Open => {
+      return Model { ...m, want: Pick, note: "" };
+    },
+    Opened(p) => {
+      return Model { ...m, source: Some(p), opaque: pixels.opaque(p.image), output: None, shown: p.preview, shown_key: m.shown_key + 1, split: 0.5, generation: m.generation + 1, quiet: QUIET_TICKS, note: "" };
+    },
+    OpenFailed(note) => {
+      return Model { ...m, note: note };
+    },
+    Close => {
+      return Model { ...m, source: None, output: None, shown: no_image(), generation: m.generation + 1, done: m.generation + 1, note: "" };
+    },
+    Format(f) => {
+      if (f == s.format) {
+        return m;
+      }
+      return changed(m, Settings { ...s, format: f });
+    },
+    Quality(part) => {
+      let q = 1 + (part * 99.0).round() as i32;
+      if (q == s.quality) {
+        return m;
+      }
+      return changed(m, Settings { ...s, quality: q });
+    },
+    Scale(part) => {
+      let pct = 5 + (part * 19.0).round() as i32 * 5;
+      if (pct == s.scale) {
+        return m;
+      }
+      return changed(m, Settings { ...s, scale: pct });
+    },
+    FullChroma => {
+      return changed(m, Settings { ...s, full_chroma: !s.full_chroma });
+    },
+    Lossless => {
+      return changed(m, Settings { ...s, lossless: !s.lossless });
+    },
+    Split(part) => {
+      return show(Model { ...m, split: part.max(0.0).min(1.0) });
+    },
+    Tick => {
+      return ticked(m);
+    },
+    Encoded(generation, bytes, w, h) => {
+      if (generation != m.generation) {
+        return Model { ...m, busy: false };
+      }
+      if (bytes.len() == 0) {
+        return Model { ...m, busy: false, done: generation, note: "Press could not encode the image." };
+      }
+      return Model { ...m, want: Preview(Output { format: s.format, bytes: bytes, width: w, height: h, preview: no_image() }) };
+    },
+    Resized(generation, img) => {
+      if (generation != m.generation) {
+        return Model { ...m, busy: false };
+      }
+      return Model { ...m, want: Webp(generation, img) };
+    },
+    Save => {
+      return ready(m, Keep);
+    },
+    Share => {
+      return ready(m, Send);
+    },
+    Dismiss => {
+      return Model { ...m, note: "" };
+    }
+  }
+}
+
+// The state that asks for `want` when the output is for the settings, or
+// with a note while Press still makes it.
+function ready(own m: Model, want: Want): Model {
+  if (m.output.is_none()) {
+    return m;
+  }
+  if (m.busy || m.done != m.generation) {
+    return Model { ...m, note: "Press is still making the image. Try again when it is ready." };
+  }
+  return Model { ...m, want: want };
+}
+
+// A tick while the settings change: after QUIET_TICKS ticks with no change,
+// a worker encodes the image. WebP at its own size needs no worker: the
+// phone encodes it.
+function ticked(own m: Model): Model {
+  let Some(p) = m.source else {
+    return m;
+  };
+  if (m.busy || m.done == m.generation) {
+    return m;
+  }
+  if (m.quiet + 1 < QUIET_TICKS) {
+    return Model { ...m, quiet: m.quiet + 1 };
+  }
+  let s = m.settings;
+  if (s.format == WEBP && s.scale == 100) {
+    return Model { ...m, quiet: 0, busy: true, want: Webp(m.generation, p.image) };
+  }
+  return Model { ...m, quiet: 0, busy: true, job: Some(Job { generation: m.generation, image: p.image, settings: s, opaque: m.opaque }) };
+}
+
+pub function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
+  let Some(job) = m.job else {
+    return [];
+  };
+  return [worker.spawn((): Msg => run_job(job))];
+}
+
+// The work of a worker: it resizes the image, then encodes JPEG or PNG, or
+// gives the resized image for the phone to encode as WebP.
+pub function run_job(job: Job): Msg {
+  let s = job.settings;
+  let (w, h) = pixels.scaled_size(job.image.width, job.image.height, s.scale);
+  let img = pixels.resized(job.image, w, h);
+  if (s.format == WEBP) {
+    return Resized(job.generation, img);
+  }
+  return Encoded(job.generation, encoded(img, s, job.opaque), w, h);
+}
+
+// The JPEG or PNG file of `img`, or no bytes when the encoder refuses it.
+pub function encoded(img: draw.Image, s: Settings, opaque: boolean): u8[] {
+  if (s.format == JPEG) {
+    let sub = if (s.full_chroma) { jpeg.S444 } else { jpeg.S420 };
+    let opts = jpeg.Options { quality: s.quality, subsampling: sub };
+    return match (jpeg.encode_rgba8(img.width, img.height, pixels.on_white(img), opts)) {
+      Ok(bytes) => bytes,
+      Err(_) => [],
+    };
+  }
+  let made = if (opaque) { png.encode_rgb8(img.width, img.height, pixels.rgb(img)) } else { png.encode_rgba8(img.width, img.height, pixels.unpremultiplied(img)) };
+  return match (made) {
+    Ok(bytes) => bytes,
+    Err(_) => [],
+  };
+}
+
+// The picture of the compare view: the original, and the output right of
+// the split when there is one.
+function show(own m: Model): Model {
+  let Some(p) = m.source else {
+    return m;
+  };
+  let shown = match (m.output) {
+    Some(out) => pixels.compared(p.preview, out.preview, m.split),
+    None => p.preview,
+  };
+  return Model { ...m, shown: shown, shown_key: m.shown_key + 1 };
+}
+
+// Does what the state asks of the phone, and gives the state after it.
+pub function effects(m: Model, d: Device): Model {
+  match (m.want) {
+    Nothing => {
+      return m;
+    },
+    Pick => {
+      if (!d.pick()) {
+        return Model { ...m, want: Nothing, note: "Android has no app to choose an image." };
+      }
+      return Model { ...m, want: Nothing };
+    },
+    Webp(generation, img) => {
+      let s = m.settings;
+      let Some(bytes) = d.webp(img, s.quality, s.lossless) else {
+        return Model { ...m, want: Nothing, busy: false, done: generation, note: "This phone could not encode WebP." };
+      };
+      return effects(Model { ...m, want: Preview(Output { format: WEBP, bytes: bytes, width: img.width, height: img.height, preview: no_image() }) }, d);
+    },
+    Preview(out) => {
+      let Some(p) = m.source else {
+        return Model { ...m, want: Nothing, busy: false };
+      };
+      let preview = d.decode(out.bytes, p.preview.width, p.preview.height).unwrap_or(p.preview);
+      return show(Model { ...m, want: Nothing, busy: false, done: m.generation, output: Some(Output { ...out, preview: preview }) });
+    },
+    Keep => {
+      let Some(out) = m.output else {
+        return Model { ...m, want: Nothing };
+      };
+      let name = file_name(m, out.format);
+      let saved = d.save(name, mime(out.format), out.bytes);
+      let note = if (saved) { "Saved " + name + " to Pictures/Press." } else { "Press could not save the image." };
+      return Model { ...m, want: Nothing, note: note };
+    },
+    Send => {
+      let Some(out) = m.output else {
+        return Model { ...m, want: Nothing };
+      };
+      let shared = d.share(file_name(m, out.format), mime(out.format), out.bytes);
+      return Model { ...m, want: Nothing, note: if (shared) { "" } else { "Press could not share the image." } };
+    }
+  }
+}
+
+pub function format_name(f: i32): string {
+  return ["JPEG", "WebP", "PNG"][f];
+}
+
+pub function mime(f: i32): string {
+  return ["image/jpeg", "image/webp", "image/png"][f];
+}
+
+// The name of a file of `format`: the name of the image that the person
+// opened, with the extension of the format.
+pub function file_name(m: Model, format: i32): string {
+  let name = match (m.source) {
+    Some(p) => p.name,
+    None => "",
+  };
+  let stem = match (name.rsplit_once(".")) {
+    Some((before, _)) => before,
+    None => name,
+  };
+  if (stem.len() == 0) {
+    stem = "image";
+  }
+  return stem + "." + ["jpg", "webp", "png"][format];
+}
+
+// A size of a file, in bytes, KB or MB of 1000.
+pub function size_text(n: i32): string {
+  if (n < 1000) {
+    return n.to_string() + " B";
+  }
+  if (n < 100000) {
+    let tenths = (n + 50) / 100;
+    return (tenths / 10).to_string() + "." + (tenths % 10).to_string() + " KB";
+  }
+  if (n < 1000000) {
+    return ((n + 500) / 1000).to_string() + " KB";
+  }
+  let hundredths = (n + 5000) / 10000;
+  let rest = hundredths % 100;
+  let pad = if (rest < 10) { "0" } else { "" };
+  return (hundredths / 100).to_string() + "." + pad + rest.to_string() + " MB";
+}
+
+// How the size of the output compares with the size of the original.
+pub function change_text(before: i32, after: i32): string {
+  if (before <= 0) {
+    return "";
+  }
+  let pct = ((after as i64 - before as i64) * 100i64 / (before as i64)) as i32;
+  if (pct < 0) {
+    return (-pct).to_string() + "% smaller";
+  }
+  if (pct > 0) {
+    return pct.to_string() + "% bigger";
+  }
+  return "the same size";
+}
+
+function dims(w: i32, h: i32): string {
+  return w.to_string() + " × " + h.to_string();
+}
+
+pub function view(m: Model, s: ui.Screen): ui.El[Msg] {
+  let Some(p) = m.source else {
+    return welcome(m);
+  };
+  let body: ui.El[Msg][] = [comparison(m, p, s), facts(m, p)];
+  body = body.append(ui.tabs(["JPEG", "WebP", "PNG"], m.settings.format, (i: i32): Msg => Format(i)));
+  for c in controls(m, p) {
+    body = body.append(c);
+  }
+  body = body.append(ui.row([ui.outlined_button("Share", Msg.Share), ui.button("Save", Msg.Save)]).spaced(12.0).justified(ui.END).wide());
+  let page: ui.El[Msg][] = [ui.app_bar(p.name, Some(Close), []), ui.column(body).spaced(12.0).padding_xy(16.0, 8.0).wide().scroll("settings").grow(1.0)];
+  if (m.note.len() > 0) {
+    page = page.append(ui.snackbar(m.note, "OK", Dismiss));
+  }
+  return ui.column(page).wide().tall();
+}
+
+function welcome(m: Model): ui.El[Msg] {
+  let kids: ui.El[Msg][] = [
+    ui.text("Make images smaller").sized(28.0).weighted(500).wrapped(),
+    ui.text("Open a photo, choose a format and a quality, and compare the result with the original before you save it. Nothing leaves the phone.").colored(ui.MUTED).wrapped(),
+    ui.button("Open an image", Open),
+  ];
+  if (m.note.len() > 0) {
+    kids = kids.append(ui.text(m.note).colored(ui.ERROR).wrapped());
+  }
+  return ui.column([ui.app_bar("Press", None, []), ui.column(kids).spaced(20.0).padding(24.0).wide()]).wide().tall();
+}
+
+// The picture that compares the original, left of the split, with the
+// output. A finger on it moves the split.
+function comparison(m: Model, p: Picked, s: ui.Screen): ui.El[Msg] {
+  let room = s.width() - 32.0;
+  let aspect = p.preview.width as f64 / (p.preview.height.max(1) as f64);
+  let h = (room / aspect).min(s.height() * 0.45);
+  let w = h * aspect;
+  let after = match (m.output) {
+    Some(out) => format_name(out.format),
+    None => "…",
+  };
+  let labels = ui.row([label("Original"), ui.space(), label(after)]).padding(8.0).wide();
+  let picture: ui.El[Msg] = ui.picture("compare-" + m.shown_key.to_string(), m.shown).width(w).height(h).on_slide((part: f64): Msg => Split(part)).described("Comparison of the original and the " + format_name(m.settings.format) + " image");
+  return ui.row([ui.stack([picture, labels]).width(w).height(h)]).justified(ui.CENTER).wide();
+}
+
+function label(t: string): ui.El[Msg] {
+  return ui.row([ui.text(t).sized(13.0).weighted(500)]).padding_xy(8.0, 4.0).background(ui.SURFACE).rounded(12.0);
+}
+
+function facts(m: Model, p: Picked): ui.El[Msg] {
+  let original: ui.El[Msg] = ui.text("Original: " + size_text(p.bytes) + " · " + dims(p.image.width, p.image.height)).colored(ui.MUTED);
+  let busy = if (m.busy || m.done != m.generation) { " · updating" } else { "" };
+  let result: ui.El[Msg] = match (m.output) {
+    Some(out) => ui.text(format_name(out.format) + ": " + size_text(out.bytes.len()) + " · " + dims(out.width, out.height) + " · " + change_text(p.bytes, out.bytes.len()) + busy).weighted(500),
+    None => ui.text("Compressing…").weighted(500),
+  };
+  return ui.column([result.wrapped(), original.wrapped()]).spaced(4.0).wide();
+}
+
+// The sliders and the boxes of the format.
+function controls(m: Model, p: Picked): ui.El[Msg][] {
+  let s = m.settings;
+  let out: ui.El[Msg][] = [];
+  if (s.format == JPEG || s.format == WEBP && !s.lossless) {
+    out = out.append(named_slider("Quality", s.quality.to_string(), (s.quality - 1) as f64 / 99.0, (part: f64): Msg => Quality(part)));
+  }
+  if (s.format == JPEG) {
+    out = out.append(ui.labelled_checkbox(s.full_chroma, "Keep all the colour detail (4:4:4)", FullChroma));
+  }
+  if (s.format == WEBP) {
+    out = out.append(ui.labelled_checkbox(s.lossless, "Lossless", Lossless));
+  }
+  if (s.format == PNG) {
+    out = out.append(ui.text("PNG keeps each pixel. A smaller size makes the file smaller.").colored(ui.MUTED).wrapped());
+  }
+  let (w, h) = pixels.scaled_size(p.image.width, p.image.height, s.scale);
+  out = out.append(named_slider("Size", s.scale.to_string() + "% · " + dims(w, h), (s.scale - 5) as f64 / 95.0, (part: f64): Msg => Scale(part)));
+  return out;
+}
+
+function named_slider(name: string, value: string, part: f64, slide: (f64) => Msg): ui.El[Msg] {
+  let head: ui.El[Msg] = ui.row([ui.text(name).weighted(500), ui.space().grow(1.0), ui.text(value).colored(ui.MUTED)]).wide();
+  return ui.column([head, ui.slider(part, slide).described(name)]).wide();
+}
+
+pub function back(m: Model): Option[Msg] {
+  if (m.note.len() > 0 && m.source.is_some()) {
+    return Some(Dismiss);
+  }
+  if (m.source.is_some()) {
+    return Some(Close);
+  }
+  return None;
+}
+
+pub function program(d: Device): ui.Program[Model, Msg] {
+  return ui.program(view, update).with_tick(wait, Msg.Tick).with_jobs(start_job).with_effects((m: Model): Model => effects(m, d)).with_back(back);
+}
