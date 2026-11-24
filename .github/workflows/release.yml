@@ -234,6 +234,17 @@ jobs:
           fi
           printf 'pub const SERVER_HOST: string = "%s";\n' "$WALKIE_SERVER" > examples/android/walkie/server_host.fern
 
+      # The Plex app plays with Media3 ExoPlayer, and its fern.toml names the
+      # DEX file that tools/media3/fetch writes from the pinned artifacts.
+      - name: Cache the Media3 artifacts
+        uses: actions/cache@v6
+        with:
+          path: build/media3/cache
+          key: media3-${{ hashFiles('tools/media3/media3.lock') }}
+
+      - name: Get Media3 ExoPlayer
+        run: tools/media3/fetch
+
       - name: Build and sign the APKs
         run: |
           set -euo pipefail
@@ -246,6 +257,11 @@ jobs:
           ./bin/fern -apk dist/apk/fern-fluid.apk -apk-key "$key" examples/android/fluid/app.fern
           ./bin/fern -apk dist/apk/fern-native.apk -apk-key "$key" -apk-package dev.fern.native -apk-label "Fern Native" examples/android/native/app.fern
           ./bin/fern -apk dist/apk/fern-walkie.apk -apk-key "$key" examples/android/walkie/app.fern
+          ./bin/fern -apk dist/apk/fern-plex.apk -apk-key "$key" examples/android/plex/app.fern
+          ./bin/fern -apk dist/apk/fern-files.apk -apk-key "$key" examples/android/files/app.fern
+          ./bin/fern -apk dist/apk/fern-tune.apk -apk-key "$key" examples/android/tune/app.fern
+          ./bin/fern -apk dist/apk/fern-press.apk -apk-key "$key" examples/android/press/app.fern
+          ./bin/fern -apk dist/apk/fern-story-deck.apk -apk-key "$key" examples/android/yoto/app.fern
 
       # apksigner is the check Android itself applies at install. The
       # certificate digests in the log let a user compare the signer of an
@@ -350,15 +366,20 @@ jobs:
             arm64 phones and x86-64 emulators.
             ${{ needs.apk.outputs.signing == 'release' && 'Each nightly is signed with the same key, so it installs over the one before it.' || '' }}
 
-            | App                          | APK                  |
-            |------------------------------|----------------------|
-            | Walkie-talkie on the LAN     | `fern-walkie.apk`    |
-            | Stopwatch                    | `fern-stopwatch.apk` |
-            | Paper, a minimal home screen | `fern-paper.apk`     |
-            | A counter of `std/android/ui` | `fern-counter.apk`   |
-            | A to-do list with a text field | `fern-todo.apk`     |
-            | A fluid simulation on the GPU | `fern-fluid.apk`    |
-            | The smallest NativeActivity  | `fern-native.apk`    |
+            | App                                 | APK                    |
+            |-------------------------------------|------------------------|
+            | Walkie-talkie on the LAN            | `fern-walkie.apk`      |
+            | A Plex client for phones and TVs    | `fern-plex.apk`        |
+            | A file explorer with SMB and WebDAV | `fern-files.apk`       |
+            | A music player                      | `fern-tune.apk`        |
+            | Story Deck, for Yoto players        | `fern-story-deck.apk`  |
+            | Press, an image converter           | `fern-press.apk`       |
+            | Stopwatch                           | `fern-stopwatch.apk`   |
+            | Paper, a minimal home screen        | `fern-paper.apk`       |
+            | A counter of `std/android/ui`       | `fern-counter.apk`     |
+            | A to-do list with a text field      | `fern-todo.apk`        |
+            | A fluid simulation on the GPU       | `fern-fluid.apk`       |
+            | The smallest NativeActivity         | `fern-native.apk`      |
 
             Each `fern` archive ships a single self-contained binary:
             the self-hosted compiler with its standard library

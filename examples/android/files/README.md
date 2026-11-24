@@ -188,3 +188,5 @@ server in the app, and does the same read and copies with it.
 ```sh
 fern -apk files.apk examples/android/files/app.fern
 ```
+
+The [nightly release](https://github.com/JakeChampion/lang/releases/tag/nightly) has a signed `fern-files.apk` from `main`. Each nightly uses the same key, so it installs over the one before it.
