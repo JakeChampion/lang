@@ -299,7 +299,7 @@ function advance_lanes(group: u8[], from: i64, to: i64): u8[] {
 }
 
 // lanes gives eight copies of each dynamic block, in the group layout of
-// `crypto.Sha1x8`: block b of lane k is at byte 512 * b + 64 * k.
+// `crypto.Sha1x8` and `crypto.Sha256x8`: block b of lane k is at byte 512 * b + 64 * k.
 function lanes(dynamic: u8[]): u8[] {
   let out: u8[] = [];
   for b in 0..dynamic.len() / 64 {
@@ -312,17 +312,8 @@ function lanes(dynamic: u8[]): u8[] {
   return out;
 }
 
-trait Lanes {
-  function blocks(self: Self, bs: [u8]): Self;
-  function word(self: Self, w: i32, lane: i32): u32;
-}
-
-impl Lanes for crypto.Sha1x8 {}
-
-impl Lanes for crypto.Sha256x8 {}
-
-function lane_matches[H: Lanes](h: H, k: i32, spec: Spec, words: i32): boolean {
-  for w in 1..words {
+function lane_matches(h: crypto.Sha1x8, k: i32, spec: Spec): boolean {
+  for w in 0..5 {
     if ((h.word(w, k) & spec.mask[w]) != spec.data[w]) {
       return false;
     }
@@ -334,15 +325,16 @@ function lane_matches[H: Lanes](h: H, k: i32, spec: Spec, words: i32): boolean {
 // gives the first that matches.
 pub function search_range(j: Job, start: i64, count: i64): Option[i64] {
   return match (j.algo) {
-    Sha1 => search_lanes(crypto.sha1_new().update(j.prefix).x8(), j, start, start + count, 5),
-    Sha256 => search_lanes(crypto.sha256_new().update(j.prefix).x8(), j, start, start + count, 8),
+    Sha1 => search_sha1(j, start, start + count),
+    Sha256 => search_sha256(j, start, start + count),
   };
 }
 
-// search_lanes tries eight specifiers at a time: lane k of a step tries
+// search_sha1 tries eight specifiers at a time: lane k of a step tries
 // `s + k`, where `s` is a multiple of 8. The lanes are checked in order, so
 // the first match is the lowest.
-function search_lanes[H: Lanes](base: H, j: Job, start: i64, end: i64, words: i32): Option[i64] {
+function search_sha1(j: Job, start: i64, end: i64): Option[i64] {
+  let base = crypto.sha1_new().update(j.prefix).x8();
   let s = start - start % 8;
   let group = lanes(j.dynamic);
   for k in 0..8 {
@@ -354,7 +346,40 @@ function search_lanes[H: Lanes](base: H, j: Job, start: i64, end: i64, words: i3
     let h = base.blocks(group);
     for k in 0..8 {
       let spec = s + k as i64;
-      if ((h.word(0, k) & m0) == d0 && spec >= start && spec < end && lane_matches(h, k, j.spec, words)) {
+      if ((h.word(0, k) & m0) == d0 && spec >= start && spec < end && lane_matches(h, k, j.spec)) {
+        return Some(spec);
+      }
+    }
+    group = advance_lanes(group, s, s + 8);
+    s += 8;
+  }
+  return None;
+}
+
+function lane_matches_sha256(h: crypto.Sha256x8, k: i32, spec: Spec): boolean {
+  for w in 0..8 {
+    if ((h.word(w, k) & spec.mask[w]) != spec.data[w]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// search_sha256 tries eight specifiers at a time, as search_sha1 does.
+function search_sha256(j: Job, start: i64, end: i64): Option[i64] {
+  let base = crypto.sha256_new().update(j.prefix).x8();
+  let s = start - start % 8;
+  let group = lanes(j.dynamic);
+  for k in 0..8 {
+    group = scatter(group, 64 * k, s + k as i64);
+  }
+  let d0 = j.spec.data[0];
+  let m0 = j.spec.mask[0];
+  while (s < end) {
+    let h = base.blocks(group);
+    for k in 0..8 {
+      let spec = s + k as i64;
+      if ((h.word(0, k) & m0) == d0 && spec >= start && spec < end && lane_matches_sha256(h, k, j.spec)) {
         return Some(spec);
       }
     }

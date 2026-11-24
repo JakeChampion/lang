@@ -48,6 +48,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<generated data 3>>
 
 <<sha1 on eight lanes>>
+
 <<sha256 on eight lanes>>
 
 <<4 function __mac_digest(hlen: i32, msg: [u8]): u8[]>>
@@ -3489,18 +3490,25 @@ pub function (h: Sha1x8) word(w: i32, lane: i32): u32 {
 }
 ```
 
-### SHA-256 on eight lanes
+### `sha256 on eight lanes`
 
-`Sha256x8` uses the same block and lane order as `Sha1x8`. A chaining value has eight words per lane. The native targets use the eight-lane kernel. Other targets apply the scalar SHA-256 block function to each lane.
+`Sha256x8` holds eight SHA-256 states, one for each lane. A step absorbs one block into each lane. A search that tries many messages with the same prefix uses it: the prefix makes one `Sha256`, and `x8` copies its chaining value into the eight lanes.
+
+The state has the layout of `Sha1x8`, with eight words for each lane: word `w` of lane `k` is at byte `4 * (8 * w + k)`. A group of 512 bytes holds one block for each lane, and the block of lane `k` starts at byte `64 * k`. On x86-64 one call of the kernel runs the eight lanes in the 32-bit lanes of the AVX2 registers. On arm64 the kernel runs the lanes one after another on the SHA-256 instructions. Other engines run each lane through the block function of `Sha256`.
 
 ```fern
 <<sha256 on eight lanes>>=
+// Eight SHA-256 states. Word `w` of lane `k` is at byte `4 * (8 * w + k)`.
 pub struct Sha256x8 { state: u8[] }
+
+function __sha256_words(h: Sha256): u32[] {
+  return [h.h0, h.h1, h.h2, h.h3, h.h4, h.h5, h.h6, h.h7];
+}
 
 // Eight copies of the chaining value of `h`. The bytes after the last whole
 // block of `h` are not in the copies.
 pub function (h: Sha256) x8(): Sha256x8 {
-  let words: u32[] = [h.h0, h.h1, h.h2, h.h3, h.h4, h.h5, h.h6, h.h7];
+  let words = __sha256_words(h);
   let st = __zero_u8(256);
   for w in 0..8 {
     for k in 0..8 {
@@ -3520,14 +3528,15 @@ pub function (h: Sha256x8) blocks(bs: [u8]): Sha256x8 {
   for k in 0..8 {
     let lane = Sha256 {
       ...sha256_new(),
-      h0: h.word(0, k), h1: h.word(1, k), h2: h.word(2, k), h3: h.word(3, k), h4: h.word(4, k), h5: h.word(5, k), h6: h.word(6, k), h7: h.word(7, k),
+      h0: h.word(0, k), h1: h.word(1, k), h2: h.word(2, k), h3: h.word(3, k),
+      h4: h.word(4, k), h5: h.word(5, k), h6: h.word(6, k), h7: h.word(7, k),
     };
     let g = 0;
     while (g + 512 <= bs.len()) {
       lane = __sha256_blocks(lane, bs, g + 64 * k, 1);
       g += 512;
     }
-    let words: u32[] = [lane.h0, lane.h1, lane.h2, lane.h3, lane.h4, lane.h5, lane.h6, lane.h7];
+    let words = __sha256_words(lane);
     for w in 0..8 {
       st = __put_le32(st, 4 * (8 * w + k), words[w]);
     }
