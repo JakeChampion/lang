@@ -76,10 +76,10 @@ SHA-NI) on 2026-11-12. The runs of the two programs alternated. Upstream uses
 the SHA-NI instructions. This port uses the 8-lane AVX2 kernel of
 `crypto.Sha1x8`, because SHA-NI is above the x86-64 baseline of Fern.
 
-A SHA-256 search of 2^24 specifiers on one core of the same type of host
-took 0.95 s on 2026-11-24, which is 17.7 million hashes per second. With one
-specifier in each step, before `crypto.Sha256x8`, it took 3.9 s (4.3 million).
-`--benchmark` does not measure the SHA-256 search.
+`--benchmark` does not measure the SHA-256 search. On 2026-11-24, a SHA-256
+search of 2^24 specifiers took 0.95 s on one core of the same type of host.
+That is 17.7 million hashes per second. Before `crypto.Sha256x8`, with one
+specifier in each step, it took 3.9 s (4.3 million).
 
 The time of a real run depends on luck: the two programs try different
 specifiers, so each finds a different match after a different number of
