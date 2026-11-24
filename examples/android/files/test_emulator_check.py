@@ -124,8 +124,8 @@ class TrashTests(unittest.TestCase):
 
 
 class SwipeTests(unittest.TestCase):
-    def test_half_the_screen(self):
-        self.assertEqual(check.swipe_up(tree()), ((540, 1800), (540, 600)))
+    def test_above_the_bars(self):
+        self.assertEqual(check.swipe_up(tree()), ((540, 1320), (540, 360)))
 
     def test_no_screen(self):
         for xml in ("", "ERROR: could not get idle state.", "<hierarchy />",

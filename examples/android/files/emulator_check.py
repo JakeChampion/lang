@@ -169,7 +169,9 @@ def trash_entry(listing, name):
 
 def swipe_up(xml):
     """The two points of a swipe that moves the screen of a uiautomator dump
-    up by half its height, or None when the dump has no screen."""
+    up by two fifths of its height, or None when the dump has no screen. The
+    swipe starts above the middle, because the bars of a task and of the
+    clipboard can cover the bottom of the screen, and they do not scroll."""
     try:
         top = ET.fromstring(xml).find("node")
     except ET.ParseError:
@@ -181,7 +183,7 @@ def swipe_up(xml):
     if right <= x or bottom <= y:
         return None
     middle, height = (x + right) // 2, bottom - y
-    return (middle, y + height * 3 // 4), (middle, y + height // 4)
+    return (middle, y + height * 11 // 20), (middle, y + height * 3 // 20)
 
 
 def digest(text):
