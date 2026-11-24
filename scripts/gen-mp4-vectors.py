@@ -116,6 +116,9 @@ def main():
             ('movie-clock', 44100, 2, 2051, 'tone', ['-movie_timescale', '90000']),
             ('two-audio-tracks', 44100, 2, 2051, 'tone', ['-map', '0:a', '-map', '0:a']),
             ('silence', 44100, 1, 2048, 'silence', []),
+            ('fragmented', 48000, 2, 4099, 'tone', ['-movflags', '+frag_keyframe+empty_moov+default_base_moof', '-frag_duration', '50000']),
+            ('fragmented-base-offset', 44100, 1, 2051, 'tone', ['-movflags', '+frag_keyframe+empty_moov', '-frag_duration', '30000']),
+            ('fragmented-initial-packets', 44100, 2, 4099, 'tone', ['-movflags', '+frag_keyframe', '-frag_duration', '40000']),
         ]:
             (temp / 'input.f32').write_bytes(AAC['signal'](channels, frames, mode))
             AAC['run'](['-f', 'f32le', '-ar', str(rate), '-ac', str(channels), '-i', str(temp / 'input.f32'),

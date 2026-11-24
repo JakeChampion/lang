@@ -5,7 +5,10 @@ It shares movie clocks, packet tables, media extents, track identifiers, and edi
 Codec modules validate decoder-specific configuration and supply PCM.
 The index retains byte offsets and metadata without PCM or a copy of the input.
 
-Fragmented files, encryption, and external media references are unsupported.
+A complete view can hold a fragmented file. The `moov` box then holds the track defaults and any initial packets.
+Each `moof` box adds the packets of its runs to the tracks in file order (`std/audio/mp4/fragments`).
+The seekable-file scanner retains each `moof` box with its file offset and supplies the same reader.
+Encryption and external media references are unsupported.
 Box, track, description, packet, edit, and encoded-input budgets bound parsing.
 
 ```fern
@@ -13,6 +16,7 @@ Box, track, description, packet, edit, and encoded-input budgets bound parsing.
 // Index ISO audio tracks with bounded packet tables and edit lists.
 import "std/audio/mp4/boxes";
 import "std/audio/mp4/entries";
+import "std/audio/mp4/fragments";
 import "std/audio/mp4/tables";
 import "std/audio/mp4/time";
 import "std/audio/pcm";
@@ -24,7 +28,7 @@ pub struct Track { id: u32, enabled: boolean, clock: time.Clock, configurations:
 
 pub struct Index { movie: time.Clock, tracks: Track[], bytes: i64, budget: boxes.Budget }
 
-struct Scan { budget: boxes.Budget, media: tables.Media[], limits: Limits, packets: i32, file_bytes: i64 }
+struct Scan { budget: boxes.Budget, media: tables.Media[], limits: Limits, packets: i32, file_bytes: i64, fragmented: boolean }
 
 pub function default_limits(): Limits {
   return Limits { audio: pcm.default_limits(), max_boxes: 65536, max_tracks: 32, max_packets: 1048576, max_descriptions: 64, max_edits: 64 };
@@ -116,6 +120,12 @@ function sample_table(input: [u8], stbl: boxes.Box, own scan: Scan, kind: u32): 
   let offsets = tables.offsets(input, exclusive(children, "stco", "co64")?, scan.limits.max_packets, scan.file_bytes)?;
   let chunks = tables.chunks(input, boxes.required(children, "stsc")?, scan.limits.max_packets)?;
   let times = tables.times(input, boxes.required(children, "stts")?, scan.limits.max_packets)?;
+  if (scan.fragmented && sizes.len() == 0) {
+    if (offsets.len() != 0 || chunks.len() != 0 || times.len() != 0) {
+      return Err(pcm.Header);
+    }
+    return Ok((Scan { ...scan, budget: b2 }, descriptions, []));
+  }
   let packets = tables.packets(sizes, offsets, chunks, times, scan.media, descriptions.len())?;
   return Ok((Scan { ...scan, budget: b2, packets: scan.packets + packets.len() }, descriptions, packets));
 }
@@ -140,10 +150,6 @@ function track(input: [u8], box: boxes.Box, own scan: Scan, kind: u32): Result[(
   let b4 = entries.data_reference(input, information, b3)?;
   let (next, configurations, packets) = sample_table(input, boxes.required(information, "stbl")?, Scan { ...scan, budget: b4 }, kind)?;
   let (b5, edits) = time.edits(input, children, next.budget, next.limits.max_edits)?;
-  let last = packets[packets.len() - 1];
-  if (clock.duration != 0i64 && clock.duration != last.position + last.duration as i64) {
-    return Err(pcm.Header);
-  }
   let value = Track { id: id.id, enabled: id.enabled, clock: clock, configurations: configurations, packets: packets, edits: edits };
   return Ok((Scan { ...next, budget: b5 }, Some(value)));
 }
@@ -173,17 +179,76 @@ pub(package) function validate_limits(input: [u8], limits: Limits): Result[void,
   return Ok(());
 }
 
-function media_ranges(top: [boxes.Box]): Result[tables.Media[], pcm.AudioError] {
+function media_ranges(top: [boxes.Box]): tables.Media[] {
   let media: tables.Media[] = [];
   for box in top {
-    if (box.kind == boxes.tag("moof")) {
-      return Err(pcm.Unsupported);
-    }
     if (box.kind == boxes.tag("mdat")) {
       media = media.append(tables.Media { start: box.data as i64, end: box.end as i64 });
     }
   }
-  return Ok(media);
+  return media;
+}
+
+function movie_fragments(top: [boxes.Box]): fragments.Fragment[] {
+  let moofs: fragments.Fragment[] = [];
+  for box in top {
+    if (box.kind == boxes.tag("moof")) {
+      moofs = moofs.append(fragments.Fragment { box: box, at: box.start as i64 });
+    }
+  }
+  return moofs;
+}
+
+// The scanner retains each `moof` box in file order, with its file offset.
+function retained_fragments(input: [u8], starts: [i64]): Result[fragments.Fragment[], pcm.AudioError] {
+  let moofs: fragments.Fragment[] = [];
+  let at = 0;
+  for start in starts {
+    let box = boxes.read(input, at, input.len())?;
+    if (box.kind != boxes.tag("moof")) {
+      return Err(pcm.Header);
+    }
+    moofs = moofs.append(fragments.Fragment { box: box, at: start });
+    at = box.end;
+  }
+  if (at != input.len()) {
+    return Err(pcm.Header);
+  }
+  return Ok(moofs);
+}
+
+function packets_end(packets: [tables.Packet]): i64 {
+  if (packets.len() == 0) {
+    return 0i64;
+  }
+  let last = packets[packets.len() - 1];
+  return last.position + last.duration as i64;
+}
+
+// The media duration of a fragmented track can cover only its `moov` packets.
+function check_duration(track: Track, initial: i64, fragmented: boolean): Result[void, pcm.AudioError] {
+  if (track.packets.len() == 0) {
+    return Err(pcm.Header);
+  }
+  let total = packets_end(track.packets);
+  if (track.clock.duration != 0i64 && track.clock.duration != total && !(fragmented && track.clock.duration == initial)) {
+    return Err(pcm.Header);
+  }
+  return Ok(());
+}
+
+function fragment_tracks(input: [u8], mvex: boxes.Box, moof_bytes: [u8], moofs: [fragments.Fragment], own tracks: Track[], own scan: Scan): Result[(Scan, Track[]), pcm.AudioError] {
+  let (budget, defaults) = fragments.defaults(input, mvex, scan.budget, scan.limits.max_tracks)?;
+  let targets: fragments.Target[] = [];
+  for track in tracks {
+    targets = targets.append(fragments.Target { id: track.id, descriptions: track.configurations.len(), packets: track.packets });
+  }
+  let (next, values) = fragments.append(moof_bytes, moofs, defaults, targets, scan.media, fragments.Scan { budget: budget, packets: scan.packets, max_packets: scan.limits.max_packets, max_bytes: scan.limits.audio.max_input_bytes, file_bytes: scan.file_bytes })?;
+  for i in 0..tracks.len() {
+    let track = tracks[i];
+    tracks = tracks.with(i, Track { ...track, packets: values[i].packets });
+  }
+  return Ok((Scan { ...scan, budget: next.budget, packets: next.packets }, tracks));
 }
 
 function add_track(input: [u8], box: boxes.Box, own scan: Scan, own tracks: Track[], kind: u32): Result[(Scan, Track[]), pcm.AudioError] {
@@ -199,8 +264,7 @@ function add_track(input: [u8], box: boxes.Box, own scan: Scan, own tracks: Trac
   return Ok((next, tracks));
 }
 
-function movie_tracks(input: [u8], children: [boxes.Box], own scan: Scan, kind: u32): Result[Index, pcm.AudioError] {
-  let movie = time.clock(input, boxes.required(children, "mvhd")?)?;
+function read_tracks(input: [u8], children: [boxes.Box], own scan: Scan, kind: u32): Result[(Scan, Track[]), pcm.AudioError] {
   let tracks: Track[] = [];
   let count = 0;
   for box in children {
@@ -217,27 +281,49 @@ function movie_tracks(input: [u8], children: [boxes.Box], own scan: Scan, kind: 
   if (tracks.len() == 0) {
     return Err(pcm.Unsupported);
   }
-  return Ok(Index { movie: movie, tracks: tracks, bytes: scan.file_bytes, budget: scan.budget });
+  return Ok((scan, tracks));
 }
 
-function movie_children(input: [u8], moov: boxes.Box, budget: boxes.Budget): Result[(boxes.Budget, boxes.Box[]), pcm.AudioError] {
-  let (next, children) = boxes.children(input, moov.data, moov.end, budget)?;
-  if let Some(_) = boxes.one(children, "mvex")? {
-    return Err(pcm.Unsupported);
+// Append the fragment packets, then check each media duration.
+function complete_tracks(input: [u8], mvex: Option[boxes.Box], moof_bytes: [u8], moofs: [fragments.Fragment], own tracks: Track[], own scan: Scan): Result[(Scan, Track[]), pcm.AudioError] {
+  let initial: i64[] = [];
+  for track in tracks {
+    initial = initial.append(packets_end(track.packets));
   }
-  return Ok((next, children));
+  if let Some(box) = mvex {
+    let (next, values) = fragment_tracks(input, box, moof_bytes, moofs, tracks, scan)?;
+    scan = next;
+    tracks = values;
+  }
+  for i in 0..tracks.len() {
+    check_duration(tracks[i], initial[i], scan.fragmented)?;
+  }
+  return Ok((scan, tracks));
+}
+
+function movie_tracks(input: [u8], children: [boxes.Box], moof_bytes: [u8], moofs: [fragments.Fragment], own scan: Scan, kind: u32): Result[Index, pcm.AudioError] {
+  let movie = time.clock(input, boxes.required(children, "mvhd")?)?;
+  let mvex = boxes.one(children, "mvex")?;
+  let fragmented = match (mvex) { Some(_) => true, None => false };
+  if (!fragmented && moofs.len() != 0) {
+    return Err(pcm.Header);
+  }
+  let (read, tracks) = read_tracks(input, children, Scan { ...scan, fragmented: fragmented }, kind)?;
+  let (next, complete) = complete_tracks(input, mvex, moof_bytes, moofs, tracks, read)?;
+  return Ok(Index { movie: movie, tracks: complete, bytes: next.file_bytes, budget: next.budget });
 }
 
 pub function inspect(input: [u8], limits: Limits, kind: u32): Result[Index, pcm.AudioError] {
   validate_limits(input, limits)?;
   let (budget, top) = boxes.children(input, 0, input.len(), boxes.Budget { boxes: 0, maximum: limits.max_boxes })?;
   file_type(input, top)?;
-  let (next, children) = movie_children(input, boxes.required(top, "moov")?, budget)?;
-  let media = media_ranges(top)?;
+  let moov = boxes.required(top, "moov")?;
+  let (next, children) = boxes.children(input, moov.data, moov.end, budget)?;
+  let media = media_ranges(top);
   if (media.len() == 0) {
     return Err(pcm.Header);
   }
-  return movie_tracks(input, children, Scan { budget: next, media: media, limits: limits, packets: 0, file_bytes: input.len() as i64 }, kind);
+  return movie_tracks(input, children, input, movie_fragments(top), Scan { budget: next, media: media, limits: limits, packets: 0, file_bytes: input.len() as i64, fragmented: false }, kind);
 }
 
 function source_ranges(media: [tables.Media], file_bytes: i64, top_boxes: i32, maximum: i32): Result[void, pcm.AudioError] {
@@ -254,10 +340,11 @@ function source_ranges(media: [tables.Media], file_bytes: i64, top_boxes: i32, m
   return Ok(());
 }
 
-// The shared file scanner supplies one movie box and absolute media ranges.
-pub(package) function inspect_movie(input: [u8], media: tables.Media[], file_bytes: i64, top_boxes: i32, limits: Limits, kind: u32): Result[Index, pcm.AudioError] {
+// The shared file scanner supplies one movie box, the `moof` boxes with their
+// file offsets, and absolute media ranges.
+pub(package) function inspect_movie(input: [u8], moof_bytes: [u8], moof_starts: [i64], media: tables.Media[], file_bytes: i64, top_boxes: i32, limits: Limits, kind: u32): Result[Index, pcm.AudioError] {
   validate_limits(input, limits)?;
-  if (file_bytes < input.len() as i64) {
+  if (file_bytes < input.len() as i64 + moof_bytes.len() as i64) {
     return Err(pcm.Header);
   }
   source_ranges(media, file_bytes, top_boxes, limits.max_boxes)?;
@@ -265,7 +352,8 @@ pub(package) function inspect_movie(input: [u8], media: tables.Media[], file_byt
   if (moov.kind != boxes.tag("moov") || moov.end != input.len()) {
     return Err(pcm.Header);
   }
-  let (next, children) = movie_children(input, moov, boxes.Budget { boxes: top_boxes, maximum: limits.max_boxes })?;
-  return movie_tracks(input, children, Scan { budget: next, media: media, limits: limits, packets: 0, file_bytes: file_bytes }, kind);
+  let (next, children) = boxes.children(input, moov.data, moov.end, boxes.Budget { boxes: top_boxes, maximum: limits.max_boxes })?;
+  let moofs = retained_fragments(moof_bytes, moof_starts)?;
+  return movie_tracks(input, children, moof_bytes, moofs, Scan { budget: next, media: media, limits: limits, packets: 0, file_bytes: file_bytes, fragmented: false }, kind);
 }
 ```
