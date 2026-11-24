@@ -10,6 +10,8 @@ The adapter owns a QUIC connection and an HTTP/3 session. It translates their pr
 
 The caller supplies datagrams and time progress and sends the returned datagrams. Body limits bound collected request or response data.
 
+A client sends a body in parts with `request_producing`. Each call to `write` gives a part, and `end` closes the body.
+
 `read(datagram, now)` processes the datagram and transmits at the supplied instant. It returns the next connection, outgoing datagrams, HTTP events, session tickets, and the ECN codepoint for those datagrams together in a `Step`. Use `read_from` when the transport supplies the peer address and received ECN codepoint. Other transitions can be collected with `step()`, for example `c.tick(now).transmit(now).step()`. Continue with `step.conn` after dispatching the results.
 
 ## Module assembly
@@ -681,16 +683,27 @@ pub function (c: Conn) abort(id: i64, code: i64): Conn {
 }
 
 pub function (c: Conn) request(out: http.Outgoing): Result[(Conn, i64), string] {
+  let whole = out.body.len() == 0 && out.trailers.names.len() == 0;
+  let (cur, id) = c.__asked(out, whole)?;
+  if (!whole) {
+    cur = cur.write(id, out.body).end(id, out.trailers);
+  }
+  return Ok((cur.__applied(time.instant_from_nanos(0)), id));
+}
+
+// Opens a request whose body comes after it, in calls to `write` that a call
+// to `end` follows. `out` has no body.
+pub function (c: Conn) request_producing(out: http.Outgoing): Result[(Conn, i64), string] {
+  let (cur, id) = c.__asked(out, false)?;
+  return Ok((cur.__applied(time.instant_from_nanos(0)), id));
+}
+
+function (c: Conn) __asked(out: http.Outgoing, whole: boolean): Result[(Conn, i64), string] {
   if (!c.ready() && !c.early()) {
     return Err("h3: the connection takes no requests");
   }
   let (q, id) = c.quic.open_stream(false)?;
-  let s = c.session.send_headers(id, __request_fields(out), out.body.len() == 0 && out.trailers.names.len() == 0);
-  let cur = Conn { ...c, quic: q, session: s };
-  if (out.body.len() > 0 || out.trailers.names.len() > 0) {
-    cur = cur.write(id, out.body).end(id, out.trailers);
-  }
-  return Ok((cur.__applied(time.instant_from_nanos(0)), id));
+  return Ok((Conn { ...c, quic: q, session: c.session.send_headers(id, __request_fields(out), whole) }, id));
 }
 ```
 

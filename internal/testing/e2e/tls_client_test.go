@@ -171,6 +171,23 @@ function interop_get(url: string): fetch.Request {
   return fetch.get(url).with_timeouts(fetch.Timeouts { ...fetch.timeouts(), connect: time.duration_seconds(@TOTAL@), total: time.duration_seconds(@TOTAL@) });
 }
 
+// A file of 300000 bytes: more than four times the first window of an
+// HTTP/2 stream.
+function upload_file(): string {
+  let path = "fern-tls-client-upload.bin";
+  if let Ok(dir) = temp_dir("fern_tls_client") {
+    path = dir + "/upload.bin";
+  }
+  let data: u8[] = [];
+  for i in 0..300000 {
+    data = data.append((i % 251) as u8);
+  }
+  if let Err(e) = write_file_bytes(path, data) {
+    return "";
+  }
+  return path;
+}
+
 function show(label: string, r: Result[HttpResponse, fetch.FetchError]): void {
   match (r) {
     Ok(resp) => {
@@ -403,6 +420,7 @@ function main(): i32 {
   let over_h2: fetch.Sockets = fetch.sockets();
   show("h2", fetch.send_on(over_h2, interop_get("https://localhost:@H2@/k").with_header("X-Fern", "yes"), proxies("")));
   show("h2 again", fetch.send_on(over_h2, interop_get("https://localhost:@H2@/l").with_body(BodyText("body-bytes")), proxies("")));
+  show("h2 file", fetch.send_on(over_h2, interop_get("https://localhost:@H2@/m").with_body(BodyFile(upload_file())), proxies("")));
   fetch.close_idle(over_h2);
   match (verify.system_roots()) {
     Some(roots) => {
@@ -448,6 +466,7 @@ func (w *tlsWorld) check(t *testing.T, got string, mainConns int64) {
 		"tunnel: " + ok("/g", "X25519MLKEM768"),
 		"h2: 200 /k HTTP/2.0 h2 body=0 x-fern=yes",
 		"h2 again: 200 /l HTTP/2.0 h2 body=10 x-fern=-",
+		"h2 file: 200 /m HTTP/2.0 h2 body=300000 x-fern=-",
 		"given: " + ok("/h", "X25519MLKEM768"),
 		"none: error TLS: the peer's certificate is not trusted: tls verify: no path from the certificate reaches a trusted root",
 		"given again: " + ok("/j", "X25519MLKEM768"),

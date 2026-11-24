@@ -22,6 +22,9 @@ trap '"$serve" stop "$work"; "$serve" stop "$secure"; rm -rf "$work" "$secure"' 
 "$serve" start "$work" "$port"
 # A second server speaks HTTPS with a self-signed certificate, for the pin.
 "$serve" start "$secure" $((port + 1)) tls
+# A file that is larger than the memory the client may hold for it.
+truncate -s 256M "$work/large.bin"
+export FILES_DAV_LARGE="$work/large.bin"
 export FILES_DAV_TLS="https://127.0.0.1:$((port + 1))/files $user $password $(cat "$secure/fingerprint")"
 if FILES_DAV_SERVER="http://127.0.0.1:$port/files $user $password" "$work/live" > "$work/out.txt" 2>&1 && grep -q '^# fail 0' "$work/out.txt"; then
   grep '^# pass' "$work/out.txt"
