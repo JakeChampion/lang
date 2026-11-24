@@ -138,12 +138,12 @@ aarch64/closure_call.text	1309
 aarch64/closure_call.ir	46002179
 aarch64/deflate_decode.ir	25800113
 aarch64/deflate_decode.text	15384
-aarch64/deflate_encode.ir	42416239
+aarch64/deflate_encode.ir	40167832
 aarch64/deflate_encode.text	7906
 aarch64/enum_match.text	1273
 aarch64/enum_match.ir	24075112
 aarch64/http_hello.text	17189
-aarch64/http_hello.ir	24312553
+aarch64/http_hello.ir	24052553
 aarch64/int_loop.text	376
 aarch64/int_loop.ir	18000085
 aarch64/map_int.text	8808
@@ -209,7 +209,7 @@ aarch64/perceus_rbtree_ck.ir	27669017
 x86_64/video_qtrle.text 5615
 x86_64/video_qtrle.ir 1351828808
 aarch64/video_qtrle.text 6203
-aarch64/video_qtrle.ir 1261793091
+aarch64/video_qtrle.ir 1183393090
 x86_64/hex_encode.text	2132
 x86_64/hex_encode.ir	56977710
 aarch64/hex_encode.text	2361
@@ -245,8 +245,8 @@ aarch64/byte_copy_append.dr	6298434
 aarch64/byte_copy_with.dr	6199460
 aarch64/call_overhead.dr	1187566
 aarch64/closure_call.dr	4842023
-aarch64/deflate_decode.dr	2789052
-aarch64/deflate_encode.dr	7306039
+aarch64/deflate_decode.dr	3039902
+aarch64/deflate_encode.dr	6617247
 aarch64/enum_match.dr	1125004
 aarch64/gather_many.dr	10348475
 aarch64/hex_decode.dr	15885910
