@@ -63,7 +63,7 @@ x86_64/deflate_encode.ir	39149067
 x86_64/deflate_encode.text	7282
 x86_64/enum_match.text	1036
 x86_64/enum_match.ir	29250077
-x86_64/http_hello.text	16185
+x86_64/http_hello.text	16393
 x86_64/http_hello.ir	21960372
 x86_64/int_loop.text	298
 x86_64/int_loop.ir	12000077
@@ -142,7 +142,7 @@ aarch64/deflate_encode.ir	40167832
 aarch64/deflate_encode.text	7906
 aarch64/enum_match.text	1273
 aarch64/enum_match.ir	24075112
-aarch64/http_hello.text	17189
+aarch64/http_hello.text	17377
 aarch64/http_hello.ir	24052553
 aarch64/int_loop.text	376
 aarch64/int_loop.ir	18000085
