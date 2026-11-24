@@ -2,27 +2,26 @@
 
 Status: [reference] shipped.
 
-Fern supports **Knuth-style literate programming**: you write a program
-as a document for humans to read, with the code embedded in named
-*chunks* that can be presented in whatever order best explains the
-ideas. A tool then *tangles* the chunks into a compilable program and
-*weaves* a typeset reading copy.
+Fern supports **Knuth-style literate programming**. You write a program as
+a document for humans to read. The code is in named *chunks*, and you put
+the chunks in the order that best explains the ideas. A tool then *tangles*
+the chunks into a program that compiles, and *weaves* a typeset reading
+copy.
 
 > *"Instead of imagining that our main task is to instruct a computer
 > what to do, let us concentrate rather on explaining to human beings
 > what we want a computer to do."* — Donald Knuth
 
-A literate Fern program is a Markdown file with the extension
-`.fern.md`. Because the carrier format is Markdown, the file already
-renders as documentation on GitHub and in any Markdown viewer with no
-extra tooling — `weave` only adds chunk labels and cross-references on
-top.
+A literate Fern program is a Markdown file with the extension `.fern.md`.
+Because the carrier format is Markdown, GitHub and any Markdown viewer
+already show the file as documentation, with no other tool. `weave` only
+adds chunk labels and cross-references.
 
 ## The chunk syntax
 
-Code lives in fenced code blocks tagged `fern`. A block whose first
-non-blank line is a **chunk header** `<<NAME>>=` defines the chunk
-`NAME`; the remaining lines are its body:
+Code is in fenced code blocks tagged `fern`. A block whose first non-blank
+line is a **chunk header** `<<NAME>>=` defines the chunk `NAME`. The lines
+after the header are its body:
 
 ````markdown
 ```fern
@@ -44,11 +43,11 @@ function main(): i32 { print(greeting()); return 0; }
 
 Inside a chunk body, a line whose trimmed content is exactly `<<NAME>>`
 (no trailing `=`) is a **chunk reference**. Tangling replaces it with
-the expansion of `NAME`. The reference above pulls in `greeting`, and
-because chunks resolve through a name table rather than by document
-order, `greeting` can be defined *before or after* the place it's used.
+the expansion of `NAME`. The reference above pulls in `greeting`.
+Chunks resolve through a name table, not by document order. Thus you can
+define `greeting` *before or after* the place where you use it.
 
-Three more rules round it out:
+Four more rules complete the syntax:
 
 - **Indentation is preserved.** A reference indented by *n* columns
   prepends that indentation to every line of the expansion, so a chunk
@@ -58,12 +57,13 @@ Three more rules round it out:
   definition across a narrative (woven as `⟨name⟩+≡`).
 - **Headerless `fern` blocks are display-only.** A ```` ```fern ````
   block with no `<<NAME>>=` header is woven into the document but never
-  tangled, so you can show illustrative snippets that aren't part of the
+  tangled. Thus you can show example snippets that are not part of the
   build.
 - **Escaping.** A line you want to emit *literally* as `<<name>>`
   (rather than expand) is written with a leading backslash —
-  `\<<name>>`. Tangling strips the backslash and emits `<<name>>`
-  verbatim (the chunk needn't exist); weaving shows it literally too.
+  `\<<name>>`. Tangling removes the backslash and emits `<<name>>`
+  verbatim, and the chunk does not have to exist. Weaving also shows it
+  literally.
   Useful for code/templates that themselves contain `<<…>>` tokens.
 
 ## The CLI
@@ -79,9 +79,9 @@ and any unused chunks marked. (Omitted for a trivial one-chunk
 document.)
 
 Both accept `-o` to write to disk instead of stdout. For a multi-file
-document (`file=` blocks) `-tangle -o DIR` ejects one file per module
-under `DIR` (creating subdirectories), so the generated tree can be
-inspected or built directly; a single-`<<*>>` document writes
+document (`file=` blocks), `-tangle -o DIR` writes one file for each module
+under `DIR`, and makes the subdirectories. Thus you can examine or build the
+generated tree directly. A document with a single `<<*>>` root writes
 `-tangle -o FILE`. `-weave -o FILE` writes the woven Markdown.
 
 A `file=` name is a path below the output directory. An absolute path
@@ -93,9 +93,9 @@ fern -tangle -o prog.fern one.fern.md
 fern -weave  -o prog.md  prog.fern.md
 ```
 
-`fern -tangle -chunk NAME` expands and prints just one named chunk (and
-its transitive references) instead of the `<<*>>` root — handy for
-inspecting or extracting a single chunk:
+`fern -tangle -chunk NAME` expands and prints only one named chunk and its
+transitive references, not the `<<*>>` root. Use it to examine or extract
+one chunk:
 
 ```sh
 fern -tangle -chunk 'the main loop' prog.fern.md
@@ -110,10 +110,10 @@ definition (combine with `-o page.html`):
 fern -weave -html -o prog.html prog.fern.md
 ```
 
-The prose is rendered through a small Markdown subset (headings, lists,
-blockquotes, rules, and the inline spans `code`, **bold**, *italic*,
-links); the value over the Markdown weave is the linked, highlighted
-code chunks rather than a full CommonMark engine. The page also gets a
+A small Markdown subset renders the prose: headings, lists, blockquotes,
+rules, and the inline spans `code`, **bold**, *italic* and links. The value
+over the Markdown weave is the linked, highlighted code chunks, not a full
+CommonMark engine. The page also gets a
 **table of contents** (from the document's headings, which are anchored)
 and a **chunk index** appendix listing every chunk alphabetically —
 each links to its definition and to the chunks that reference it
@@ -127,11 +127,11 @@ leaving prose, fences, and chunk headers untouched (`-w` writes back,
 fern -fmt -w prog.fern.md
 ```
 
-A chunk body is reformatted when it parses on its own — as either a set
-of top-level declarations or a statement list. Bodies the formatter
-can't parse standalone — fragments split mid-construct, or chunks
-containing `<<reference>>` lines (not valid Fern) — are left **verbatim**,
-so formatting never corrupts a document. Comments and blank-line
+The formatter changes a chunk body when the body parses on its own, as a set
+of top-level declarations or as a statement list. It leaves a body
+**verbatim** when the body does not parse alone. Examples are a fragment cut
+in the middle of a construct, and a chunk with `<<reference>>` lines, which
+are not valid Fern. Thus formatting never corrupts a document. Comments and blank-line
 grouping inside a chunk are preserved.
 
 A `.fern.md` file is also accepted directly by every mode that takes a
@@ -154,9 +154,8 @@ Tangling reorders chunks, so a line in the generated source rarely
 shares the line number of the line you wrote. Fern tracks the
 provenance of every generated line and **remaps compiler diagnostics
 back onto the `.fern.md` document** — the file name, line, column, and
-the rendered source snippet all point at what you actually typed, not
-at the generated intermediate. (Internally: `Tangle` returns a line map
-that the CLI turns into a position remapper for `diag.FormatRemapped`.)
+the rendered source snippet all point at what you typed, not at the
+generated source. The implementation map below tells how.
 
 ## Editor support (LSP)
 
@@ -167,24 +166,24 @@ tangle errors (missing root, undefined / cyclic chunk). Open a
 `.fern.md` in an editor wired to `fern -lsp` and a type error in a chunk
 squiggles in place.
 
-The **cursor-driven features work too**: hover, go-to-definition,
-find-all-references, completion, and signature help. A request position
-is translated from the document onto the generated source, the tangled
-program is queried, and any result ranges are remapped back onto the
-document — so go-to-definition on a chunk reference jumps to the chunk's
-definition line, references span every use across chunks, and so on. A
-cursor on a non-tangled line (prose, a chunk header, an unused chunk)
-simply returns nothing. The whole-document features — document symbols,
+The **cursor-driven features also work**: hover, go-to-definition,
+find-all-references, completion, and signature help. The server moves a
+request position from the document onto the generated source, and queries
+the tangled program. Then it moves each result range back onto the
+document. Thus go-to-definition on a chunk reference goes to the definition
+line of the chunk, and references span each use across chunks. A cursor on
+a line that is not tangled, such as prose, a chunk header or an unused
+chunk, returns nothing. The whole-document features — document symbols,
 inlay hints, semantic tokens and rename — cover every chunk the same way.
 
 ## Doctests — runnable examples
 
-A ```` ```fern test ```` block is a *doctest*: a runnable example that
-`fern -doctest` tangles (its `<<refs>>` expand against the document's
-chunks, so an example can pull in the very code the prose explains) into
-a standalone program, compiles, and runs. The example **passes when it
-compiles and `main` returns 0** — so it can't silently rot as the code
-around it changes.
+A ```` ```fern test ```` block is a *doctest*. `fern -doctest` tangles the
+example into a standalone program, compiles it, and runs it. Its `<<refs>>`
+expand against the chunks of the document, so an example can pull in the
+code that the prose explains. The example **passes when it compiles and
+`main` returns 0**. Thus it cannot rot silently when the code around it
+changes.
 
 ````markdown
 ```fern test name=greeting-says-hi
@@ -200,12 +199,13 @@ function main(): i32 {
 fern -doctest prog.fern.md
 ```
 
-Output is TAP (`ok N - name` / `not ok N - name`); the command exits
-non-zero if any example fails. An optional `name=…` directive labels the
-example (otherwise it's numbered). A compile error in an example is
-reported against the document line you wrote. The example resolves
-stdlib and disk-relative imports against the document's directory; a
-`test` block is shown in the woven output but never part of the tangle.
+The output is TAP (`ok N - name` / `not ok N - name`). The command exits
+non-zero if an example fails. An optional `name=…` directive labels the
+example. If there is no name, the example has a number. A compile error in
+an example points at the document line that you wrote. The example resolves
+stdlib and disk-relative imports against the directory of the document. The
+woven output shows a `test` block, but the block is never part of the
+tangle.
 
 ## Lints
 
@@ -221,7 +221,7 @@ stdlib and disk-relative imports against the document's directory; a
 
 - **No root chunk** — the document defines no `<<*>>=` block.
 - **Undefined chunk reference** — `<<NAME>>` references a chunk that is
-  never defined; reported at the reference site.
+  never defined. The error is at the reference.
 - **Cyclic chunk reference** — a chunk is defined in terms of itself
   (directly or transitively).
 
@@ -249,8 +249,8 @@ pub function square(n: i32): i32 { return n * n; }
 
 Rules:
 
-- **Chunk definitions are shared** across the whole document; each
-  file-root pulls in whichever chunks it references. So you describe the
+- **The whole document shares the chunk definitions.** Each file-root pulls
+  in the chunks that it references. So you describe the
   architecture as one narrative and partition it into modules with
   `file=` blocks.
 - The generated modules **`import` each other normally** (`import
@@ -259,11 +259,11 @@ Rules:
   compile / `-interp` / `-check`.
 - **Same `file=PATH` repeated** concatenates in document order, exactly
   like same-name chunk pieces.
-- The **compile entry** is the file marked `entry` (or, if exactly one
-  file is defined, that one; or the sole module defining a `main`
-  function). Mark one block `file=app.fern entry` to be explicit.
-- **`fern -tangle`** prints every module under a `// ==> path <==`
-  banner; **`fern -weave`** labels each file-root `📄 path`.
+- The **compile entry** is the file marked `entry`. With no mark, it is the
+  only file, or else the only module that defines a `main` function. Mark
+  one block `file=app.fern entry` to be explicit.
+- **`fern -tangle`** prints each module under a `// ==> path <==` banner.
+  **`fern -weave`** labels each file-root `📄 path`.
 - **Diagnostics still map back to the document**: each module carries
   its own provenance map, so a type error in any generated file points
   at the `.fern.md` line you wrote.
@@ -274,19 +274,19 @@ one-file case.
 
 ## Example
 
-See [`examples/literate/fizzbuzz.fern.md`](../examples/literate/fizzbuzz.fern.md)
-for a complete single-file program that defines its chunks out of order,
-references a chunk inside an indented `while` body, and reads as prose
-top to bottom; and
+[`examples/literate/fizzbuzz.fern.md`](../examples/literate/fizzbuzz.fern.md)
+is a complete single-file program. It defines its chunks out of order,
+references a chunk inside an indented `while` body, and reads as prose from
+top to bottom.
 [`examples/literate/multi_module.fern.md`](../examples/literate/multi_module.fern.md)
-for a two-module program assembled with `file=` roots.
+is a two-module program that `file=` roots assemble.
 
 ## A literate document as an importable library
 
-A `.fern` file (or another `.fern.md`) can `import` a literate document
-as an ordinary module — write `import "./greet"` and, when no plain
-`greet.fern` exists, a sibling `greet.fern.md` is tangled in memory and
-loaded in its place:
+A `.fern` file, or another `.fern.md`, can `import` a literate document as
+an ordinary module. Write `import "./greet"`. When there is no plain
+`greet.fern`, the compiler tangles a sibling `greet.fern.md` in memory and
+loads it in its place:
 
 ```fern
 import "./greet";   // resolves to greet.fern, or greet.fern.md
@@ -307,11 +307,11 @@ Standard library modules can use `.fern.md` sources. Imports retain their
 public names, such as `import "std/option"`. The compiler expands the
 document in memory before it checks or compiles the module.
 
-The library has 152 literate modules. The
-[source inventory](LITERATE-STDLIB.md) lists each document and the six plain
-sources. Each literate module contains STE explanations and named chunks.
-There are 71 executable examples across 68 documents. Brief declaration
-comments provide the text for API reference pages and editor hovers.
+Most of the library is literate. The
+[source inventory](LITERATE-STDLIB.md) lists the documents and the plain
+sources. Each literate module contains STE explanations and named chunks,
+and many contain executable examples. Brief declaration comments give the
+text for API reference pages and editor hovers.
 
 ```sh
 fern -doctest internal/stdlib/std/option.fern.md
@@ -327,44 +327,52 @@ files. A plain `.fern` module takes precedence when both formats exist.
 ## Scope and current limitations
 
 - The chunk grammar uses the `<<name>>` delimiters from `noweb`/WEB.
-  A whole-line literal `<<name>>` is written `\<<name>>` (see Escaping
-  above); `<<` / `>>` elsewhere on a line are never treated as markers.
+  Write a whole-line literal `<<name>>` as `\<<name>>` (see Escaping
+  above). A `<<` or `>>` at another place on a line is never a marker.
 
 ## Implementation map
 
-The engine is `compiler/literate.fern`. `parse` splits a document into blocks
-(prose, display-only, chunk, `file=` root, `test` example); `tangle` expands
-the root chunk `<<*>>` into Fern source plus a per-line provenance map,
-`tangle_files` does the same per `file=` root, `entry_file` picks the compile
-entry, and `doctests` tangles each example on its own. `compiler/weave.fern`
+The engine is `compiler/literate.fern`:
+
+- `parse` splits a document into blocks: prose, display-only, chunk, `file=`
+  root and `test` example.
+- `tangle` expands the root chunk `<<*>>` into Fern source and a provenance
+  map for each line. `tangle_files` does the same for each `file=` root.
+- `entry_file` selects the compile entry.
+- `doctests` tangles each example on its own.
+
+ `compiler/weave.fern`
 renders the blocks for `-weave`: Markdown, or with `-html` a page whose prose
 goes through its small Markdown renderer. `-tangle`, `-weave` and `-doctest`
-are `run_tangle` and `run_doctests` in `compiler/fern.fern`; doctests are
-loaded, gated and interpreted as `-interp` runs a program.
+are `run_tangle` and `run_doctests` in `compiler/fern.fern`. The CLI loads,
+gates and interprets a doctest as `-interp` runs a program.
 
 The compiler tangles for every `-target` compile, and for its own
 `-check` / `-interp`:
-`entry_sources` in `compiler/fern.fern` tangles a `.fern.md` entry to its
-module, or to every `file=` module with the entry first; `modloader.read_module`
-falls back to a `.fern.md` sibling for an import; and each module's
-`util.LineMap` moves a diagnostic onto its document when it is printed
-(`util.doc_diag`). A `-g` build moves each line row the same way
-(`asmcore.loc_row`). Positions are remapped there rather than in the lexer
-because the compiler orders and identifies expressions by position, and a chunk
-can be expanded twice.
+- `entry_sources` in `compiler/fern.fern` tangles a `.fern.md` entry to its
+  module, or to each `file=` module with the entry first.
+- `modloader.read_module` uses a `.fern.md` sibling for an import when there
+  is no `.fern` file.
+- The `util.LineMap` of each module moves a diagnostic onto its document
+  when the CLI prints it (`util.doc_diag`).
 
-The Go front end keeps a tangle of its own in `internal/tools/literate`, which the
-oracle's loader and the Go language server read documents through; `cmd/fern`'s
-`-tangle`, `-weave` and `-doctest` run the compiler's. On the Go side
-(`cmd/fern/main.go`): `loadEntry` tangles a `.fern.md` entry in
-memory before the `-check` / `-interp` pipeline, and
-`loadMultiFileEntry` feeds every generated module to `modload.LoadWith` as
-virtual-file overrides (keyed by path relative to the document dir), loading from
-the entry.
+ A `-g` build moves each line row the same way
+(`asmcore.loc_row`). The remap is there and not in the lexer. The
+compiler orders and identifies expressions by position, and a chunk can
+expand two times.
 
-Importing a literate library goes through `modload.readModuleSource`, which falls
-back to a sibling `.fern.md` when a `.fern` import target is missing and tangles
-it; `LoadWithLiterate` returns the per-module `LiterateModule{DocPath, DocSrc,
+The Go front end has its own tangle in `internal/tools/literate`. The loader
+of the oracle and the Go language server read documents through it. The
+`-tangle`, `-weave` and `-doctest` of `cmd/fern` run the tangle of the
+compiler. On the Go side
+(`cmd/fern/main.go`), `loadEntry` tangles a `.fern.md` entry in memory before
+the `-check` / `-interp` pipeline. `loadMultiFileEntry` gives each generated
+module to `modload.LoadWith` as a virtual-file override, keyed by its path
+relative to the directory of the document. The load starts at the entry.
+
+An import of a literate library goes through `modload.readModuleSource`. When
+a `.fern` import target is missing, it uses a sibling `.fern.md` and tangles
+it. `LoadWithLiterate` returns the per-module `LiterateModule{DocPath, DocSrc,
 LineMap}` provenance, so the CLI's `entry.remaps` (a per-module
 `litRemap{docPath, docSrc, remap}`) maps an imported library's diagnostics onto
 *its* document. Diagnostics are rendered through `diag.FormatRemapped`, the
