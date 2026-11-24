@@ -26,6 +26,7 @@ share. The emulator reaches the computer at 10.0.2.2.
 - A copy of the picture arrives on the share with the same bytes.
 - As root, the provider of documents gives the saved server as a root,
   the file of the share as a child of that root, and the text of the file.
+  A write to that file through the provider reaches the share.
 
 It fails on a crash in logcat. OUT_DIR gets the frames, the trees and
 logcat.
@@ -59,6 +60,7 @@ SMB_USER = os.environ.get("FILES_SMB_USER", "fernfiles")
 SMB_PASSWORD = os.environ.get("FILES_SMB_PASSWORD", "live-check-1")
 SMB_NOTE = "smb-check.txt"
 SMB_TEXT = "The share of the emulator check has this line."
+CHANGED_TEXT = "Another app changed this file through the file picker.\n"
 
 
 def png(width, height, rgb):
@@ -167,7 +169,9 @@ def trash_entry(listing, name):
 
 def swipe_up(xml):
     """The two points of a swipe that moves the screen of a uiautomator dump
-    up by half its height, or None when the dump has no screen."""
+    up by two fifths of its height, or None when the dump has no screen. The
+    swipe starts above the middle, because the bars of a task and of the
+    clipboard can cover the bottom of the screen, and they do not scroll."""
     try:
         top = ET.fromstring(xml).find("node")
     except ET.ParseError:
@@ -179,7 +183,7 @@ def swipe_up(xml):
     if right <= x or bottom <= y:
         return None
     middle, height = (x + right) // 2, bottom - y
-    return (middle, y + height * 3 // 4), (middle, y + height // 4)
+    return (middle, y + height * 11 // 20), (middle, y + height * 3 // 20)
 
 
 def digest(text):
@@ -200,31 +204,46 @@ def dump(out, step):
 
 def find(out, step, label, timeout=30, scroll=False):
     """The middle of the node `label`, when it shows in `timeout` seconds.
-    With `scroll`, each second dump that does not show it scrolls the screen
-    down. When a scroll does not change the names on the screen, the list is
-    at its end, and the next scrolls go up."""
-    deadline = time.monotonic() + timeout
-    looks = 0
+    With `scroll`, each dump that does not show it scrolls the screen down,
+    and the time is 60 seconds at least. When two scrolls in a row do not
+    change the names on the screen, the list is at its end, and the next
+    scrolls go the other way."""
+    deadline = time.monotonic() + (max(timeout, 60) if scroll else timeout)
     down = True
     before = None
+    still = 0
     while time.monotonic() < deadline:
         xml = dump(out, step)
         point = point_of(xml, label)
         if point:
             return point
-        looks += 1
-        swipe = swipe_up(xml) if scroll and looks % 2 == 0 else None
+        swipe = swipe_up(xml) if scroll else None
         if swipe:
             names = sorted(name for name, _, _ in nodes(xml))
-            if names == before:
+            still = still + 1 if names == before else 0
+            if still >= 2:
                 down = not down
+                still = 0
             before = names
+            print(f"{step}: no {label}, scroll {'down' if down else 'up'} from {names[:2]} … {names[-2:]}", flush=True)
             (x, y), (x2, y2) = swipe if down else reversed(swipe)
             # A slow drag scrolls the list and does not fling it.
-            adb("shell", "input", "swipe", str(x), str(y), str(x2), str(y2), "1500")
+            adb("shell", "input", "swipe", str(x), str(y), str(x2), str(y2), "800")
             time.sleep(1)
-        time.sleep(0.5)
+        else:
+            time.sleep(0.5)
     return None
+
+
+def focused_window(dumpsys):
+    """The window that has the focus in a dump of `dumpsys window`: its
+    component, or the word that the dump gives, or "" for no such line."""
+    m = re.search(r"mCurrentFocus=Window\{\S+ \S+ ([^}]+)\}", dumpsys) or re.search(r"mCurrentFocus=(\S+)", dumpsys)
+    return m.group(1) if m else ""
+
+
+def front_window():
+    return focused_window(adb("shell", "dumpsys", "window", "windows", check=False))
 
 
 def tap(out, step, label, hold=False, scroll=False):
@@ -233,7 +252,7 @@ def tap(out, step, label, hold=False, scroll=False):
     if not point:
         screen(out, step)
         shown = sorted({name for name, _, _ in nodes(dump(out, step))})
-        fail(f"{step}: the screen does not show {label}. It shows {shown}")
+        fail(f"{step}: the screen does not show {label}. It shows {shown}, and the window in front is {front_window()!r}")
         return False
     x, y = map(str, point)
     if hold:
@@ -417,9 +436,10 @@ def check_server(out, share_dir, port):
         fail("the copy of the picture did not arrive on the share with the same bytes")
 
 
-def check_documents(out):
+def check_documents(out, share_dir):
     """Reads the saved server through the provider of documents, which the
-    file picker of the system uses. The first server has the ID 0."""
+    file picker of the system uses, and writes a file of it. The first
+    server has the ID 0."""
     if not root():
         return print("the device refuses root: the provider of documents is not read", flush=True)
     queries = {
@@ -437,6 +457,14 @@ def check_documents(out):
         fail(f"the provider of documents does not give the file of the share: {got['children'].stdout!r} {got['children'].stderr!r}")
     if SMB_TEXT not in got["text"].stdout:
         fail(f"the provider of documents does not give the text of the file: {got['text'].stdout!r} {got['text'].stderr!r}")
+    # A write goes to the cache of the app, and to the server when the
+    # writer closes the file.
+    wrote = subprocess.run(["adb", "shell", "content", "write", "--uri", document_uri("0:" + SMB_NOTE)],
+                           input=CHANGED_TEXT, capture_output=True, text=True)
+    target = Path(share_dir, SMB_NOTE)
+    if not until(lambda: target.exists() and target.read_text() == CHANGED_TEXT):
+        now = target.read_text() if target.exists() else "no file"
+        fail(f"a write through the provider of documents did not reach the share: it holds {now!r}, and the write gave {wrote.stdout!r} {wrote.stderr!r}")
 
 
 def main(apk, out, share_dir=None, port=None):
@@ -446,6 +474,9 @@ def main(apk, out, share_dir=None, port=None):
     Path(out, PICTURE).write_bytes(picture)
     adb("install", "-r", apk)
     adb("shell", "appops", "set", PACKAGE, "MANAGE_EXTERNAL_STORAGE", "allow")
+    # A copy shows a notification. Without this permission the first copy
+    # asks for it, and the dialog of Android covers the app.
+    adb("shell", "pm", "grant", PACKAGE, "android.permission.POST_NOTIFICATIONS", check=False)
     adb("shell", "rm", "-rf", f"{STORAGE}/.FernTrash", f"{STORAGE}/Pictures/{PICTURE}", check=False)
     adb("shell", "mkdir", "-p", f"{STORAGE}/Download", f"{STORAGE}/Pictures")
     adb("push", f"{out}/{NOTE}", f"{STORAGE}/Download/{NOTE}")
@@ -461,7 +492,7 @@ def main(apk, out, share_dir=None, port=None):
         check_open(out)
         if share_dir:
             check_server(out, share_dir, port)
-            check_documents(out)
+            check_documents(out, share_dir)
 
     log = logcat()
     with open(f"{out}/logcat.txt", "w") as f:

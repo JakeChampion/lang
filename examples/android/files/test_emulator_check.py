@@ -87,6 +87,18 @@ class CrashTests(unittest.TestCase):
         self.assertEqual(check.crash_blocks("E/AndroidRuntime( 1): something\n"), [])
 
 
+class WindowTests(unittest.TestCase):
+    def test_focused_window(self):
+        dump = ("  mCurrentFocus=Window{9f1c2d u0 com.android.permissioncontroller/com.android.permissioncontroller.permission.ui.GrantPermissionsActivity}\n"
+                "  mFocusedApp=ActivityRecord{1 u0 dev.fern.files/android.app.NativeActivity t9}\n")
+        self.assertEqual(check.focused_window(dump),
+                         "com.android.permissioncontroller/com.android.permissioncontroller.permission.ui.GrantPermissionsActivity")
+
+    def test_no_focus(self):
+        self.assertEqual(check.focused_window("  mCurrentFocus=null\n"), "null")
+        self.assertEqual(check.focused_window(""), "")
+
+
 class DocumentTests(unittest.TestCase):
     def test_root_of_a_server(self):
         self.assertEqual(check.document_uri("0:", children=True),
@@ -112,8 +124,8 @@ class TrashTests(unittest.TestCase):
 
 
 class SwipeTests(unittest.TestCase):
-    def test_half_the_screen(self):
-        self.assertEqual(check.swipe_up(tree()), ((540, 1800), (540, 600)))
+    def test_above_the_bars(self):
+        self.assertEqual(check.swipe_up(tree()), ((540, 1320), (540, 360)))
 
     def test_no_screen(self):
         for xml in ("", "ERROR: could not get idle state.", "<hierarchy />",

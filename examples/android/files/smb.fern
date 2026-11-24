@@ -789,11 +789,24 @@ pub function remove(s: Server, path: string, dir: boolean): Result[void, string]
 
 // Gives the file or the directory `from` the path `to` in the same share.
 pub function rename(s: Server, from: string, to: string): Result[void, string] {
+  return renamed_to(s, from, to, false);
+}
+
+// Renames the file `from` to `to`, and replaces a file that has the name
+// `to`. The server does it in one step, so `to` is never a part of a file.
+pub function replace(s: Server, from: string, to: string): Result[void, string] {
+  return renamed_to(s, from, to, true);
+}
+
+// The rename of FileRenameInformation, whose first byte is
+// ReplaceIfExists.
+function renamed_to(s: Server, from: string, to: string, replace: boolean): Result[void, string] {
   return with_share(s, (sock: Socket, st: State): Result[void, string] => {
     let (st1, opened) = open(sock, st, from, 0x110080i64, 1i64, 0i64, 0i64);
     let it = opened?;
     let name = ntlm.utf16(wire_path(to));
-    let info = ntlm.put32(ntlm.put64(ntlm.zeros(8), 0i64), name.len() as i64).concat(name);
+    let head = [if (replace) { 1u8 } else { 0u8 }].concat(ntlm.zeros(7));
+    let info = ntlm.put32(ntlm.put64(head, 0i64), name.len() as i64).concat(name);
     let q = ntlm.put32(ntlm.put16([], 33).append(1u8).append(10u8), info.len() as i64);
     q = ntlm.put32(ntlm.put16(ntlm.put16(q, 96), 0), 0i64).concat(it.id).concat(info);
     let (st2, got) = request(sock, st1, SET_INFO, q);

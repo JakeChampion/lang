@@ -303,11 +303,44 @@ function test_documents(): test.TestOutcome {
   let dir = ["mime_type", "last_modified", "_size"].map((c: string): string => shown(docs.document_value(c, 2, "x", folder))).join("|");
   let (at, path) = docs.document_of("2:dir/a:b.mkv").unwrap_or((-1, ""));
   return all([
-    test.assert_eq(root, "2|Films|smb://nas/media|2:|9|0|-"),
-    test.assert_eq(one, "2:dir/a b.mkv|a b.mkv|video/x-matroska|1000000|77|0"),
+    test.assert_eq(root, "2|Films|smb://nas/media|2:|9|1|-"),
+    test.assert_eq(one, "2:dir/a b.mkv|a b.mkv|video/x-matroska|1000000|77|6"),
     test.assert_eq(dir, docs.DIRECTORY + "|-|-"),
     test.assert_eq(at.to_string() + " " + path, "2 dir/a:b.mkv"),
     holds(docs.document_of("x:1").is_none() && docs.document_of("nothing").is_none() && docs.document_of("-1:a").is_none(), "a bad ID gave a document"),
+  ]);
+}
+
+// How the mode `mode` of openDocument writes, as a word.
+function mode_word(mode: string): string {
+  let Ok(how) = docs.write_mode(mode) else {
+    return "bad";
+  };
+  let Some(keep) = how else {
+    return "read";
+  };
+  return if (keep) { "keep" } else { "empty" };
+}
+
+// What the picker may do with a document, where a new document goes, how
+// a mode of openDocument writes, and the record of an upload.
+function test_document_writes(): test.TestOutcome {
+  let modes = ["r", "w", "wt", "rwt", "wa", "rw"].map(mode_word).join(",");
+  let u = docs.Upload { saved_dir: "/data/user/0/dev.fern.files/no_backup", server: 3, path: "Films/new film.mkv", copy: "/data/user/0/dev.fern.files/cache/documents/3-new film.mkv" };
+  let back = docs.upload_of(docs.upload_text(u)).map((b: docs.Upload): string => b.saved_dir + "|" + b.server.to_string() + "|" + b.path + "|" + b.copy).unwrap_or("none");
+  return all([
+    test.assert_eq(docs.document_flags("", true), 8i64),
+    test.assert_eq(docs.document_flags("Films", true), 12i64),
+    test.assert_eq(docs.document_flags("Films/a.mkv", false), 6i64),
+    test.assert_eq(docs.created_path("Films", ["a.mkv", "b.txt"], "c.txt"), "Films/c.txt"),
+    test.assert_eq(docs.created_path("Films", ["a.mkv", "b.txt"], "b.txt"), "Films/b (2).txt"),
+    test.assert_eq(docs.created_path("", [], "../x.txt"), "x.txt"),
+    test.assert_eq(modes, "read,empty,empty,empty,keep,keep"),
+    test.assert_eq(docs.partial_path("Films/a.mkv"), "Films/.a.mkv.fern-upload"),
+    test.assert_eq(docs.partial_path("a.mkv"), ".a.mkv.fern-upload"),
+    holds(docs.write_mode("x").is_err(), "an unknown mode must be an error"),
+    test.assert_eq(back, u.saved_dir + "|3|" + u.path + "|" + u.copy),
+    holds(docs.upload_of("").is_none() && docs.upload_of("a\nb\nc\nd").is_none() && docs.upload_of("a\n1\nc").is_none(), "a bad record gave an upload"),
   ]);
 }
 
@@ -411,6 +444,7 @@ function main(): i32 {
   r = r.it("an archive name stays below its folder", test_archive_names);
   r = r.it("a range request names the bytes of a file", test_ranges);
   r = r.it("the file picker gets rows for servers and files", test_documents);
+  r = r.it("the file picker may make, write and delete documents", test_document_writes);
   r = r.it("an item of the trash keeps its folder and its name", test_trash_names);
   r = r.it("sizes and days read well", test_texts);
   r = r.it("a copy in steps keeps each byte", test_copy);

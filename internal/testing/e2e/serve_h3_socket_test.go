@@ -84,6 +84,9 @@ func TestServeH3SocketX86_64(t *testing.T) {
 		src = strings.Replace(src, "serve.run(0, serve.config().with_tls(server.config(id, rand.bytes(32))).with_h3(), handle)", "serve.supervise_with(0, serve.Config { ...serve.config().with_tls(server.config(id, rand.bytes(32))).with_h3(), workers: 2 }, \"\", worker)", 1)
 		bin := build(t, "socket_workers", src)
 		addr, _ := e2eharness.StartInheritedServer(t, runX86Bin(w.qemu, bin))
+		// The supervisor binds its UDP pool before a worker can accept TCP.
+		// Start the QUIC client deadline after that pool is listening.
+		e2eharness.WaitServerReady(t, addr)
 		_, port, _ := net.SplitHostPort(addr)
 		seen := map[string]bool{}
 		for i := 0; i < 32 && len(seen) < 2; i++ {

@@ -1,7 +1,8 @@
 // The documents provider of the app: the file picker of the system shows
-// the saved SMB servers, so each app of the phone can open a file of a
-// server. The provider reads only. A file goes to the cache of the app
-// before the other app gets it.
+// the saved SMB servers, so each app of the phone can open, make, change
+// and delete a file of a server. A file goes to the cache of the app
+// before the other app reads it. A file that the other app writes goes to
+// the cache first, and to the server when the other app closes it.
 //
 // The ID of a document is the index of its server, a colon, and its path
 // on the share. The provider runs on a thread of Android with no window,
@@ -25,6 +26,66 @@ pub const DIRECTORY: string = "vnd.android.document/directory";
 const ROOT_COLUMNS: string[] = ["root_id", "title", "flags", "document_id", "icon", "summary"];
 
 const DOCUMENT_COLUMNS: string[] = ["document_id", "mime_type", "_display_name", "last_modified", "flags", "_size"];
+
+// The flags of a root and of a document that tell the picker what an app
+// can do: make a document in the root, write a file, delete a document,
+// and make a document in a directory.
+const ROOT_SUPPORTS_CREATE: i64 = 1;
+
+const SUPPORTS_WRITE: i64 = 2;
+
+const SUPPORTS_DELETE: i64 = 4;
+
+const DIR_SUPPORTS_CREATE: i64 = 8;
+
+// What an app can do with the document at `path`. The top of a share is
+// not deleted.
+pub function document_flags(path: string, dir: boolean): i64 {
+  if (dir) {
+    return if (path.len() == 0) { DIR_SUPPORTS_CREATE } else { DIR_SUPPORTS_CREATE | SUPPORTS_DELETE };
+  }
+  return SUPPORTS_WRITE | SUPPORTS_DELETE;
+}
+
+// The path of a new document with the name `name` in the directory
+// `parent`, whose entries have the names `taken`.
+pub function created_path(parent: string, taken: string[], name: string): string {
+  return store.join(parent, store.free_name(taken, store.base(name)));
+}
+
+// How a mode of openDocument writes: None for a read, Some(true) when the
+// file keeps what it holds, and Some(false) when it starts empty. An
+// unknown mode is an error.
+pub function write_mode(mode: string): Result[Option[boolean], string] {
+  return match (mode) {
+    "r" => Ok(None),
+    "w" | "wt" | "rwt" => Ok(Some(false)),
+    "wa" | "rw" => Ok(Some(true)),
+    _ => Err("Fern Files does not know the mode " + mode + "."),
+  };
+}
+
+// A file that another app writes: the directory of the saved servers, the
+// index of the server, the path on the share, and the copy in the cache.
+pub struct Upload { saved_dir: string, server: i32, path: string, copy: string }
+
+// The text of the record of `u`, one value on each line.
+pub function upload_text(u: Upload): string {
+  return [u.saved_dir, u.server.to_string(), u.path, u.copy].join("\n");
+}
+
+// The upload of the record `text`, or None for text that
+// `upload_text` did not make.
+pub function upload_of(text: string): Option[Upload] {
+  let lines = text.split("\n");
+  if (lines.len() != 4) {
+    return None;
+  }
+  let Ok(server) = i32.parse_i32(lines[1]) else {
+    return None;
+  };
+  return Some(Upload { saved_dir: lines[0].to_owned(), server: server, path: lines[2].to_owned(), copy: lines[3].to_owned() });
+}
 
 // One cell of a row of a cursor.
 pub enum Value { Text(string), Number(i64), Empty }
@@ -52,7 +113,7 @@ pub function root_value(column: string, at: i32, saved: files.Saved, icon: i32):
     "summary" => Text("smb://" + saved.server.host + "/" + saved.server.share),
     "document_id" => Text(document_id(at, "")),
     "icon" => Number(icon as i64),
-    "flags" => Number(0i64),
+    "flags" => Number(ROOT_SUPPORTS_CREATE),
     _ => Empty,
   };
 }
@@ -66,7 +127,7 @@ pub function document_value(column: string, server: i32, path: string, e: smb.En
     "mime_type" => Text(if (e.dir) { DIRECTORY } else { open.mime(e.name) }),
     "last_modified" => if (e.modified > 0i64) { Number(e.modified * 1000i64) } else { Empty },
     "_size" => if (e.dir) { Empty } else { Number(e.size) },
-    "flags" => Number(0i64),
+    "flags" => Number(document_flags(path, e.dir)),
     _ => Empty,
   };
 }
@@ -207,28 +268,189 @@ pub function children(e: usize, provider: usize, parent: usize, projection: usiz
   return cursor(e, names, rows);
 }
 
-// The answer to openDocument for reading: the file goes to the cache of
-// the app, and the other app gets a descriptor of that copy.
+// The answer to openDocument. A read gets a copy of the file in the cache
+// of the app. A write gets a file in the cache, which goes to the server
+// when the other app closes it.
 pub function opened(e: usize, provider: usize, id: usize, mode: usize): usize {
-  if (jni.string_of(e, mode) != "r") {
-    return missing(e, "Fern Files gives documents for reading only.");
-  }
+  let how = match (write_mode(jni.string_of(e, mode))) {
+    Ok(how) => how,
+    Err(text) => {
+      return missing(e, text);
+    },
+  };
   let Some((at, saved, path)) = located(e, provider, jni.string_of(e, id)) else {
     return missing(e, "No saved server has this document.");
   };
   let dir = context_dir(e, provider, "getCacheDir") + "/documents";
   let made = create_dir_all(dir);
   let copy = store.join(dir, at.to_string() + "-" + store.base(path));
+  let keep = how.unwrap_or(true);
+  if (keep) {
+    if let Err(text) = fetched(saved.server, path, copy, how.is_some()) {
+      return missing(e, text);
+    }
+  } else if (write_file(copy, "").is_err()) {
+    return missing(e, "Fern Files could not make a file in its cache.");
+  }
+  let Some(_) = how else {
+    return open.descriptor_of(e, copy);
+  };
+  let record = Upload { saved_dir: context_dir(e, provider, "getNoBackupFilesDir"), server: at, path: path, copy: copy };
+  return writer(e, copy, jni.string_of(e, mode), record);
+}
+
+// Copies the file `path` of the server `server` to `copy`. With `new_ok`,
+// a file that the server does not have gives an empty copy.
+function fetched(server: smb.Server, path: string, copy: string, new_ok: boolean): Result[void, string] {
   let step = store.Step { from: path, to: copy, size: 0i64, dir: false };
   let offset = 0i64;
   while (true) {
-    let Ok(n) = store.advance(store.Remote(saved.server), store.Local, step, offset) else {
-      return missing(e, "The server did not give this document.");
+    let n = match (store.advance(store.Remote(server), store.Local, step, offset)) {
+      Ok(n) => n,
+      Err(text) => {
+        if (new_ok && offset == 0i64) {
+          return write_file(copy, "").map_err((x: IoError): string => "Fern Files could not make a file in its cache.");
+        }
+        return Err("The server did not give this document.");
+      },
     };
     offset += n;
     if (n < store.STEP as i64) {
+      return Ok(());
+    }
+  }
+  return Ok(());
+}
+
+// A ParcelFileDescriptor of the file `copy` with the mode `mode`, whose
+// close sends the file to the server. A thread of its own waits for the
+// close. The listener of the close is a java.util.Properties, which keeps
+// the record of the upload.
+function writer(e: usize, copy: string, mode: string, record: Upload): usize {
+  let thread_class = jni.find_class(e, "android/os/HandlerThread");
+  let thread_name = jni.new_string(e, "fern-upload");
+  let args = jni.jvalues([thread_name]);
+  let thread = jni.new_object_a(e, thread_class, jni.get_method_id(e, thread_class, "<init>", "(Ljava/lang/String;)V"), args);
+  jni.free_buffer(args);
+  let started = jni.call_void(e, thread, "start", "()V", []);
+  let looper = jni.call_object(e, thread, "getLooper", "()Landroid/os/Looper;", []);
+  let handler_class = jni.find_class(e, "android/os/Handler");
+  let looper_args = jni.jvalues([looper]);
+  let handler = jni.new_object_a(e, handler_class, jni.get_method_id(e, handler_class, "<init>", "(Landroid/os/Looper;)V"), looper_args);
+  jni.free_buffer(looper_args);
+  let listener_class = jni.find_class(e, "dev/fern/files/Upload");
+  let listener = jni.new_object_a(e, listener_class, jni.get_method_id(e, listener_class, "<init>", "()V"), 0 as usize);
+  if (jni.check(e).is_err() || listener == 0 as usize) {
+    return missing(e, "Fern Files could not wait for the file.");
+  }
+  let key = jni.new_string(e, UPLOAD_KEY);
+  let value = jni.new_string(e, upload_text(record));
+  let kept = jni.call_object(e, listener, "setProperty", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/Object;", [key, value]);
+  let pfd = jni.find_class(e, "android/os/ParcelFileDescriptor");
+  let mode_text = jni.new_string(e, mode);
+  let mode_args = jni.jvalues([mode_text]);
+  let bits = jni.call_static_int_method_a(e, pfd, jni.get_static_method_id(e, pfd, "parseMode", "(Ljava/lang/String;)I"), mode_args);
+  jni.free_buffer(mode_args);
+  let file = open.file_of(e, copy);
+  let open_args = jni.jvalues([file, bits as usize, handler, listener]);
+  let out = jni.call_static_object_method_a(e, pfd, jni.get_static_method_id(e, pfd, "open", "(Ljava/io/File;ILandroid/os/Handler;Landroid/os/ParcelFileDescriptor$OnCloseListener;)Landroid/os/ParcelFileDescriptor;"), open_args);
+  jni.free_buffer(open_args);
+  return out;
+}
+
+// The key of the record of an upload in its listener.
+const UPLOAD_KEY: string = "upload";
+
+// The answer to onClose of the listener `listener`: the file goes to the
+// server, unless the other app closed it with an error. The thread of the
+// listener then stops.
+pub function closed(e: usize, listener: usize, failure: usize): void {
+  let key = jni.new_string(e, UPLOAD_KEY);
+  let text = jni.call_object(e, listener, "getProperty", "(Ljava/lang/String;)Ljava/lang/String;", [key]);
+  if let Some(u) = upload_of(if (text == 0 as usize) { "" } else { jni.string_of(e, text) }) {
+    if (failure == 0 as usize) {
+      let sent = sent_to_server(e, u);
+    }
+    let gone = remove_file(u.copy);
+  }
+  let looper_class = jni.find_class(e, "android/os/Looper");
+  let looper = jni.call_static_object_method_a(e, looper_class, jni.get_static_method_id(e, looper_class, "myLooper", "()Landroid/os/Looper;"), 0 as usize);
+  if (looper != 0 as usize) {
+    let quit = jni.call_void(e, looper, "quitSafely", "()V", []);
+  }
+}
+
+// Sends the copy of `u` to its server.
+function sent_to_server(e: usize, u: Upload): Result[void, string] {
+  let saved = vault.load(u.saved_dir, e);
+  if (u.server < 0 || u.server >= saved.len()) {
+    return Err("The server of the file is not saved.");
+  }
+  let size = match (stat(u.copy)) {
+    Ok(st) => st.size,
+    Err(_) => {
+      return Err("The file is not in the cache.");
+    },
+  };
+  let server = saved[u.server].server;
+  let part = partial_path(u.path);
+  let step = store.Step { from: u.copy, to: part, size: size, dir: false };
+  let offset = 0i64;
+  while (offset == 0i64 || offset < size) {
+    let n = match (store.advance(store.Local, store.Remote(server), step, offset)) {
+      Ok(n) => n,
+      Err(text) => {
+        let removed = smb.remove(server, part, false);
+        return Err(text);
+      },
+    };
+    offset += n;
+    if (n == 0i64) {
       break;
     }
   }
-  return open.descriptor_of(e, copy);
+  return smb.replace(server, part, u.path);
+}
+
+// The name that a file has on the server while it goes there. A rename
+// to the name of the file ends the upload, so a lost connection leaves the
+// old file whole.
+pub function partial_path(path: string): string {
+  return store.join(store.parent(path), "." + store.base(path) + ".fern-upload");
+}
+
+// The answer to createDocument: a new file or directory with the name
+// `name` in the directory `parent`. Its ID goes back to the picker.
+pub function create(e: usize, provider: usize, parent: usize, kind: usize, name: usize): usize {
+  let Some((at, saved, path)) = located(e, provider, jni.string_of(e, parent)) else {
+    return missing(e, "No saved server has this folder.");
+  };
+  let Ok(entries) = smb.list(saved.server, path) else {
+    return missing(e, "The server did not give this folder.");
+  };
+  let made = created_path(path, entries.map((x: smb.Entry): string => x.name), jni.string_of(e, name));
+  let result = if (jni.string_of(e, kind) == DIRECTORY) { smb.make_dir(saved.server, made) } else { smb.write(saved.server, made, 0i64, []) };
+  if (result.is_err()) {
+    return missing(e, "The server did not make the document.");
+  }
+  return jni.new_string(e, document_id(at, made));
+}
+
+// The answer to deleteDocument.
+pub function delete(e: usize, provider: usize, id: usize): void {
+  let Some((at, saved, path)) = located(e, provider, jni.string_of(e, id)) else {
+    let none = missing(e, "No saved server has this document.");
+    return;
+  };
+  let Ok(beside) = smb.list(saved.server, store.parent(path)) else {
+    let none = missing(e, "The server did not give the folder of this document.");
+    return;
+  };
+  let Some(entry) = beside.find((x: smb.Entry): boolean => x.name == store.base(path)) else {
+    let none = missing(e, "The server has no such document.");
+    return;
+  };
+  if (path.len() == 0 || smb.remove(saved.server, path, entry.dir).is_err()) {
+    let none = missing(e, "The server did not delete the document.");
+  }
 }

@@ -1,4 +1,8 @@
 import "std/audio/mp1";
+import "std/audio/mpeg/input" as streaming;
+import "std/audio/source";
+import "mp3_input_check" as chunks;
+import "mp1_vectors";
 import "std/audio/mp2";
 import "std/audio/mp2/header";
 import "std/audio/mp3/spectral";
@@ -6,6 +10,7 @@ import "std/audio/pcm";
 import "std/test";
 import "aac_kernel_check" as ref;
 import "mp2_check";
+import "mp2_smoke_vectors";
 import "mpeg12_freeformat_vectors" as vectors;
 
 // Decode each Layer I frame from a view that starts at its header and return the frame extents.
@@ -175,10 +180,164 @@ function layer2_boundaries(): test.TestOutcome {
   return test.pass();
 }
 
+function seek_layer2(encoded: string, reference: string, channels: i32): Result[void, string] {
+  let input = ref.unpack(encoded)?;
+  let expected = ref.unpack(reference)?;
+  let limits = pcm.default_limits();
+  let Ok(index) = mp2.seek_index(input, 1024, limits) else {
+    return Err("Layer II index");
+  };
+  let frames = expected.len() / 4 / channels;
+  if (index.frames() != frames as i64) {
+    return Err("seek length");
+  }
+  let count = 13 * channels;
+  let output = spectral.zeros(count + 1).with(count, -123.5f32);
+  for position in [frames - 13, 1148, 1152, 1, 0] {
+    let Ok(samples) = index.read_into(input, position as i64, 13, output) else {
+      return Err("seek range");
+    };
+    mp2_check.samples(samples, count, expected, position * channels)?;
+    if (samples[count] != -123.5f32) {
+      return Err("seek suffix");
+    }
+    output = samples;
+  }
+  return seek_bounds(index, input, output, count, limits);
+}
+
+function seek_bounds(index: mp2.SeekIndex, input: [u8], own output: f32[], count: i32, limits: pcm.Limits): Result[void, string] {
+  if let Err(pcm.Limit) = mp2.seek_index(input, 1, limits) {} else {
+    return Err("index capacity");
+  }
+  let Ok(end) = index.read_into(input, index.frames(), 0, output) else {
+    return Err("empty read");
+  };
+  if (end[count] != -123.5f32) {
+    return Err("empty suffix");
+  }
+  return Ok(());
+}
+
+function seek_references(): test.TestOutcome {
+  let indexed = mp2_smoke_vectors.stream();
+  if let Err(e) = seek_layer2(indexed.encoded, indexed.pcm, indexed.channels) {
+    return test.fail(e);
+  }
+  for v in vectors.vectors() {
+    if (v.layer == 2) {
+      if let Err(e) = seek_layer2(v.encoded, v.pcm, v.channels) {
+        return test.fail(e);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function valid_frame(frame: streaming.Frame, channels: i32, frames: i32): boolean {
+  return frame.channels == channels && frame.frames == frames && frame.samples[channels * frames] == -112.0f32;
+}
+
+function stream_case(encoded: string, reference: string, one: boolean, channels: i32): Result[void, string] {
+  let bytes = ref.unpack(encoded)?;
+  let expected = ref.unpack(reference)?;
+  let limits = pcm.default_limits();
+  let window = source.Limits { chunk_size: 257, max_buffer_bytes: 8192 };
+  let init = if (one) { streaming.layer1(limits, window) } else { streaming.layer2(limits, window) };
+  let Ok(input) = init else {
+    return Err("initialize reader");
+  };
+  return stream_samples(input, bytes, expected, channels, if (one) { 384 } else { 1152 });
+}
+
+function stream_samples(own input: streaming.Input, bytes: u8[], expected: [u8], channels: i32, frames: i32): Result[void, string] {
+  let calls = cell_new(0);
+  let position = cell_new(0);
+  let read = chunks.bytes_reader(bytes, position, calls, true);
+  let count = frames * channels;
+  let output = spectral.zeros(count + 1).with(count, -112.0f32);
+  let at = 0;
+  while (true) {
+    let (next, event) = match (input.next_with(read, output)) { Ok(v) => v, Err(e) => { return Err(e.message()); } };
+    input = next;
+    let Some(frame) = event else {
+      break;
+    };
+    if (!valid_frame(frame, channels, frames)) {
+      return Err("reader format or suffix");
+    }
+    mp2_check.samples(frame.samples, count, expected, at)?;
+    at += count;
+    output = frame.samples;
+  }
+  return finished(input, read, calls, at == expected.len() / 4, position.get() == bytes.len());
+}
+
+function finished(own input: streaming.Input, read: (i32) => Result[u8[], IoError], calls: Cell[i32], pcm_complete: boolean, bytes_complete: boolean): Result[void, string] {
+  if (!pcm_complete || !bytes_complete) {
+    return Err("stream extent");
+  }
+  let prior = calls.get();
+  let Ok((_, None())) = input.next_with(read, []) else {
+    return Err("repeat EOF");
+  };
+  if (calls.get() != prior) {
+    return Err("read after EOF");
+  }
+  return Ok(());
+}
+
+function stream_references(): test.TestOutcome {
+  let one = mp1_vectors.vectors()[0];
+  if let Err(e) = stream_case(one.encoded, one.pcm, true, one.channels) {
+    return test.fail(e);
+  }
+  let two = mp2_smoke_vectors.stream();
+  if let Err(e) = stream_case(two.encoded, two.pcm, false, two.channels) {
+    return test.fail(e);
+  }
+  for v in vectors.vectors() {
+    if let Err(e) = stream_case(v.encoded, v.pcm, v.layer == 1, v.channels) {
+      return test.fail(e);
+    }
+  }
+  return test.pass();
+}
+
+function rejected(bytes: u8[], window: source.Limits, count: i32): Result[void, source.ReadError] {
+  let input = streaming.layer2(pcm.default_limits(), window)?;
+  let read = chunks.bytes_reader(bytes, cell_new(0), cell_new(0), true);
+  let _ = input.next_with(read, spectral.zeros(count))?;
+  return Ok(());
+}
+
+function stream_errors(): test.TestOutcome {
+  let Ok(bytes) = ref.unpack(mp2_smoke_vectors.vector().encoded) else {
+    return test.fail("fixture");
+  };
+  let window = source.default_limits();
+  if let Err(source.ReadAudio(pcm.Buffer)) = rejected(bytes, window, 0) {} else {
+    return test.fail("short output");
+  }
+  if let Err(source.ReadAudio(pcm.Truncated)) = rejected([255u8], window, 2304) {} else {
+    return test.fail("partial header");
+  }
+  if let Err(source.ReadSize) = rejected(bytes, source.Limits { chunk_size: 4, max_buffer_bytes: 4 }, 2304) {} else {
+    return test.fail("bounded packet window");
+  }
+  if let Err(source.ReadAudio(pcm.Checksum)) = rejected(bytes.with(4, bytes[4] ^ 1u8), window, 2304) {} else {
+    return test.fail("protected payload");
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let runner = test.new("free-format MPEG Layer I and II");
   runner = runner.it("independent scalar PCM through whole and frame decode", references);
   runner = runner.it("Layer I discovery, slot alignment and CRC retry", layer1_boundaries);
   runner = runner.it("Layer II discovery, limit, CRC error and reset", layer2_boundaries);
+  runner = runner.it("Layer II seeks match independent PCM", seek_references);
+  runner = runner.it("bounded short reads match independent PCM", stream_references);
+  runner = runner.it("truncated, protected and over-budget source frames", stream_errors);
   return runner.finish();
 }

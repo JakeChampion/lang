@@ -1358,6 +1358,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{sock, ast.BoolType{}, u8s},
 		Result: ast.NumberType{},
 	}
+	// wasm_name_lookup(name, out): i32 — the addresses of name from
+	// wasi:sockets/ip-name-lookup, as 17-byte records in out: the family
+	// (4 or 6), then 16 address bytes in network order. The count, or -errno.
+	c.info.FuncSigs["wasm_name_lookup"] = &ast.FuncType{
+		Params: []ast.Type{u8s, u8s},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	c.info.FuncSigs["tcp_sendfile"] = &ast.FuncType{
 		Params: []ast.Type{sock, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.NumberType{},

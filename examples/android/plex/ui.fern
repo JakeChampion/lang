@@ -117,6 +117,8 @@ pub struct View {
   servers: plex.Server[],
   server_states: string[],
   query: string,
+  has_voice: boolean,
+  listening: boolean,
   typing: boolean,
   account: string,
   server_name: string,
@@ -146,7 +148,7 @@ pub function english(): i18n.Strings {
 }
 
 pub function empty_view(w: i32, h: i32): View {
-  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, menu_smart: false, saved: [], saved_done: 0, saved_total: 0, now_playing: "", users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", offline: false, servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", language: "", subtitles: "", caption_size: "", caption_back: "", smart: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english(), local: false };
+  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, sort: 0, unwatched: false, letters: [], menu: plex.no_item(), menu_download: -1, menu_smart: false, saved: [], saved_done: 0, saved_total: 0, now_playing: "", users: [], pin_for: "", pin_digits: "", item: plex.no_item(), children: [], pin_code: "", status: "", error: "", offline: false, servers: [], server_states: [], query: "", has_voice: false, listening: false, typing: false, account: "", server_name: "", quality: "", language: "", subtitles: "", caption_size: "", caption_back: "", smart: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16), texts: english(), local: false };
 }
 
 // --- metrics
@@ -935,11 +937,18 @@ function search(m: Metrics, v: View): scene.Node[] {
   if (line < 1) {
     line = 1;
   }
-  out = out.append(tap(scene.node(16 * m.u, fy, m.w - 32 * m.u, fh, scene.Outline(border, fh / 2, line)), "type"));
-  let cells = (m.w - 64 * m.u) / m.cw;
+  let width = m.w - 32 * m.u;
+  if (v.has_voice) {
+    let mic = tr(m, if (v.listening) { "Cancel" } else { "Speak" });
+    let bw = button_width(m, mic);
+    out = util_append(out, button(m, m.w - 16 * m.u - bw, fy, mic, v.listening, "voice"));
+    width -= bw + 8 * m.u;
+  }
+  out = out.append(tap(scene.node(16 * m.u, fy, width, fh, scene.Outline(border, fh / 2, line)), "type"));
+  let cells = (width - 32 * m.u) / m.cw;
   if (v.query.len() == 0) {
     let sp = small_pitch(m);
-    out = out.append(heading(m, 32 * m.u, fy + (fh - matrix.height(sp)) / 2, m.w - 64 * m.u, tr(m, "Search movies, shows and music"), sp, look.muted()));
+    out = out.append(heading(m, 32 * m.u, fy + (fh - matrix.height(sp)) / 2, width - 32 * m.u, tr(m, "Search movies, shows and music"), sp, look.muted()));
   } else {
     let shown = v.query;
     if (draw.text_cells(shown) > cells - 1) {

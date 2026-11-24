@@ -24,6 +24,7 @@ var BuiltinCaps = map[string]string{
 	"tcp_listen_with":       "net",
 	"tcp_socket_ctl":        "net",
 	"tcp_addr_into":         "net",
+	"wasm_name_lookup":      "net",
 	"tcp_sendfile":          "net",
 	"tcp_send_buf":          "net",
 	"tcp_connect_with":      "net",

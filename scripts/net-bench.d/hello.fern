@@ -70,7 +70,11 @@ function secured(opts: serve.Config): Result[serve.Config, string] {
     return Err("TLS_CERT is set without TLS_KEY");
   };
   let id = identity_from(cert_path, key_path)?;
-  let tls = opts.with_tls(client_roots(server.config(id, rand.bytes(32)))?);
+  let cfg = server.config(id, rand.bytes(32));
+  if (env("TLS_NO_TICKETS").is_some()) {
+    cfg = cfg.without_tickets();
+  }
+  let tls = opts.with_tls(client_roots(cfg)?);
   if (env("H3").is_some()) {
     return Ok(tls.with_h3());
   }

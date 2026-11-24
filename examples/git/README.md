@@ -131,7 +131,7 @@ git index-pack [-v] [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   a message take the columns that git gives them.
 
   The diff of each commit is `-p`, `--raw`, `--stat`, `--numstat`,
-  `--shortstat`, `--summary` or `--patch-with-stat`, with the bytes of
+  `--shortstat`, `--summary`, `--patch-with-stat` or `--patch-with-raw`, with the bytes of
   git. `--check` shows the errors of white space of the added lines, with
   the rules of `core.whitespace`. It gives the exit status 2 for an
   error, as git does. `--abbrev=N` and `--no-abbrev` set the length of the

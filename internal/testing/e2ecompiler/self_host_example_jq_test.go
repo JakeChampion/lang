@@ -300,6 +300,8 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 		{[]string{"-c", "reduce .[] as $x (0; . + $x), [foreach .[] as $x (0; . + $x; [$x, .])]"}, "[1,2,3]\n"},
 		{[]string{"-c", "[.. | numbers] | sort, unique, min, max, (map(tostring) | join(\",\")), [limit(2; .[])]"}, "{\"a\":[3,{\"b\":[1,3.0]}],\"c\":2}\n"},
 		{[]string{"-c", "flatten(1), any, all, reverse, first, last, [range(length)]"}, "[[1,[2]],null,\"a\"]\n"},
+		{[]string{"-c", "[sort_by(.k), group_by(.k), unique_by(.k), min_by(.k), max_by(.k)]"}, `[null,{},{"k":1},{"k":1.0},{"k":[1]},{"k":[1,0]},{"k":{"a":1}}]`},
+		{[]string{"-c", "group_by(.k)"}, `[{"k":1},7]`},
 		{[]string{"-c", "sort"}, "{\"a\":1}\n[2,1]\n"},
 		{[]string{"-c", "."}, "1 2\n[1,\n]"},
 		{[]string{"-c", "."}, "1,2"},
@@ -452,6 +454,24 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 		{[]string{"--seq", "-c", "."}, []string{"\x1e1", "2\n\x1e3\n"}},
 	}
 	jqSymlinks(t, compare)
+	t.Run("relative library without PWD", func(t *testing.T) {
+		t.Setenv("PWD", "")
+		compare([]string{"-cn", "-L", "../../../examples/jq/tests/modules", `import "c" as foo; foo::c`}, "", "")
+	})
+	t.Run("relative library with stale PWD", func(t *testing.T) {
+		actual, stale := t.TempDir(), t.TempDir()
+		for dir, value := range map[string]string{actual: "actual", stale: "stale"} {
+			if err := os.Mkdir(filepath.Join(dir, "lib"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "lib", "m.jq"), []byte("def value: "+strconv.Quote(value)+";"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		t.Chdir(actual)
+		t.Setenv("PWD", stale)
+		compare([]string{"-nc", "-L", "lib", `include "m"; value`}, "", "")
+	})
 	for _, c := range fileCases {
 		dir := t.TempDir()
 		args := append([]string{}, c.args...)

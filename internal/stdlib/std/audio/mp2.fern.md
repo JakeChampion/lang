@@ -29,6 +29,8 @@ The complete-input convenience method requires consecutive compatible frames and
 Allocation, quantization, and synthesis follow scalar minimp3 at `ea99364f61c14656440e8d77e9c233ccf3124633` under CC0.
 The module executes Fern code and needs no external codec library.
 
+`seek_index` builds a bounded header index. `read_into` reads a range in PCM frames from the same immutable bytes and preserves the output suffix. It decodes at most one prior frame to restore synthesis history.
+
 ```fern
 <<*>>=
 // Decode bounded MPEG Layer II frames with exact scalar-reference operation order.
@@ -38,6 +40,7 @@ import "std/audio/mp3/bits";
 import "std/audio/mp3/spectral";
 import "std/audio/mp3/synthesis";
 import "std/audio/pcm";
+import "std/audio/mpeg/seek";
 import "std/audio/wire";
 
 pub opaque struct Decoder { qmf: f32[], sample_rate: i32, channels: i32, free_bytes: i32 }
@@ -168,6 +171,17 @@ pub function (own d: Decoder) decode_frame_with(input: [u8], at: i32, own output
   return reconstruct(prepared(d, h), payload, b, h, output, work);
 }
 
+// Decode one delimited packet with the same scratch workspace as decode_frame_with.
+pub function (own d: Decoder) decode_packet_with(packet: [u8], own output: f32[], own work: Workspace, limits: pcm.Limits): (Decoder, Workspace, Result[Frame, pcm.AudioError]) {
+  let h = match (header.parse(packet, 0)) { Ok(value) => value, Err(e) => { return (d, work, Err(e)); } };
+  let free = if (h.bitrate == 0 && d.free_bytes == 0) { packet.len() - h.padding } else { d.free_bytes };
+  let sized = match (header.resolve(packet, 0, h, free, limits.max_input_bytes)) { Ok(value) => value, Err(e) => { return (d, work, Err(e)); } };
+  if (sized.bytes != packet.len()) {
+    return (d, work, Err(pcm.Header));
+  }
+  return Decoder { ...d, free_bytes: free }.decode_frame_with(packet, 0, output, work, limits);
+}
+
 pub function (own d: Decoder) decode_frame(input: [u8], at: i32, limits: pcm.Limits): (Decoder, Result[Frame, pcm.AudioError]) {
   let h = match (located(input, at, d.free_bytes, limits)) { Ok(value) => value, Err(e) => { return (d, Err(e)); } };
   return d.decode_frame_into(input, at, spectral.zeros(1152 * h.channels), limits);
@@ -200,5 +214,48 @@ pub function decode_raw(input: [u8], limits: pcm.Limits): Result[Decoded, pcm.Au
     buffer = frame.samples;
   }
   return Ok(Decoded { sample_rate: h.sample_rate, channels: h.channels, samples: output });
+}
+
+pub opaque struct SeekIndex { index: seek.Index }
+
+function seek_frame(input: [u8], free: i32, limits: pcm.Limits): Result[seek.Frame, pcm.AudioError] {
+  let h = located(input, 0, free, limits)?;
+  return Ok(seek.Frame { rate: h.sample_rate, channels: h.channels, bytes: h.bytes, free: header.extent(h, free) });
+}
+
+pub function seek_index(input: [u8], max_entries: i32, limits: pcm.Limits): Result[SeekIndex, pcm.AudioError] {
+  return Ok(SeekIndex { index: seek.build(input, 1152, max_entries, limits, seek_frame)? });
+}
+
+pub function (value: SeekIndex) frames(): i64 {
+  return value.index.frames();
+}
+
+pub function (value: SeekIndex) read_into(input: [u8], position: i64, frames: i32, own output: f32[]): Result[f32[], pcm.AudioError] {
+  let index = value.index;
+  let range = index.range(input.len(), position, frames, output.len())?;
+  if (range.count == 0) {
+    return Ok(output);
+  }
+  let state = Decoder { ...decoder(), free_bytes: index.free };
+  let work = workspace();
+  let scratch = spectral.zeros(1152 * index.channels);
+  let written = 0;
+  for n in range.warmup..range.last + 1 {
+    let start = index.offsets[n];
+    let end = index.end(n);
+    let (next, reused, result) = state.decode_frame_with(input[start:end], 0, scratch, work, index.limits);
+    work = reused;
+    let decoded = result?;
+    if (decoded.bytes_read != end - start || decoded.channels != index.channels || decoded.sample_rate != index.rate) {
+      return Err(pcm.Header);
+    }
+    state = next;
+    scratch = decoded.samples;
+    let (after, filled) = range.copy(n, scratch, written, output);
+    written = after;
+    output = filled;
+  }
+  return Ok(output);
 }
 ```

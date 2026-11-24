@@ -217,8 +217,7 @@ TV. It shows the items that came to the server last, from the rows of the
 home screen that the server names "recent". A tap on one opens it in the
 app. When the person removes the channel, the app adds it again.
 
-The Search key of a remote opens the search with the keyboard. The
-microphone of the keyboard takes the words by voice.
+On devices with speech recognition, the Search key and the Speak button start voice search. Give the app microphone permission when prompted, then press Speak again. Cancel stops listening. On devices without a recognizer, the Search key opens the keyboard.
 
 Download in the menu of a poster gives the file of the item to the
 download manager of Android. A file that the phone does not play as it is

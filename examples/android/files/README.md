@@ -121,11 +121,18 @@ server of the stream before it.
 
 `docs.fern` is a documents provider: the file picker of Android shows
 each saved server, so each app of the phone can open a file of a server.
-`fern -apk` puts a @jni class that extends `DocumentsProvider` in the
-manifest as a provider that only the picker can ask.
+Another app can also save a new file to a server, change a file, and
+delete a file or a folder. `fern -apk` puts a @jni class that extends
+`DocumentsProvider` in the manifest as a provider that only the picker
+can ask.
 
-The provider gives documents for reading only. A file goes to the cache
-of the app in full before the other app gets it.
+A file goes to the cache of the app in full before the other app reads
+it. A file that the other app writes goes to the cache first. When the
+other app closes it, a thread sends it to the server under a hidden
+name. A rename that replaces the old file ends the upload, so a lost
+connection does not leave a part of a file. The listener of
+that close is a @jni class that extends `java.util.Properties`, which
+keeps the server and the path of the file.
 
 ## Tests
 
