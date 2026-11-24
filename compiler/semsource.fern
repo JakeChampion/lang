@@ -10251,6 +10251,10 @@ function prune_dead_constructions(all: Produced[], stack_phi_joins: boolean): Pr
       if (cs.merged > 0 && optbisect.allowed_by(sw, "cse", name)) {
         p = Produced { ...p, func: cs.f, analysis: None };
       }
+      let su = semsink.sink_to_uses(p.func);
+      if (su.reread > 0 && optbisect.allowed_by(sw, "sink-to-uses", name)) {
+        p = Produced { ...p, func: su.f, analysis: None };
+      }
       let pr = semdead.prune(p.func);
       if (pr.removed > 0 && optbisect.allowed_by(sw, "prune", name)) {
         p = Produced { ...p, func: pr.f, analysis: None };

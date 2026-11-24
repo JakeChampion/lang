@@ -19,6 +19,228 @@ pub function sink(f: ssasem.Func): Sunk {
   return Sunk { f: sk.f, reread: ru.s.reread + sk.reread };
 }
 
+// sink_to_uses moves a counted record or tuple field read down to the
+// block that dominates all of its uses. Each block on the way must have one
+// predecessor, and nothing on the way can spend the parent. Thus the read
+// enters no loop and crosses no merge. The plan can then take the field on
+// the one path that uses it. It runs after the merge of equal reads, so
+// that a read does not move away from its twin.
+pub function sink_to_uses(f: ssasem.Func): Sunk {
+  let n = 0;
+  for round in 0..4 {
+    let s = sink_to_uses_once(f);
+    if (s.reread == 0) {
+      return Sunk { f: f, reread: n };
+    }
+    f = s.f;
+    n += s.reread;
+  }
+  return Sunk { f: f, reread: n };
+}
+
+function sink_to_uses_once(f: ssasem.Func): Sunk {
+  let g = f.graph;
+  let pos = ssa.block_positions(g);
+  let dom = ssadeps.dominates_at(g, pos);
+  let uses = use_blocks(g, pos, f.values.len());
+  let def = util.minus_ones(f.values.len());
+  for bi in 0..g.blocks.len() {
+    for ins in g.blocks[bi].insts {
+      if (ins.result >= 0 && ins.result < def.len()) {
+        def = def.with(ins.result, bi);
+      }
+    }
+  }
+  let blocks = g.blocks;
+  let moved: ssa.SInst[][] = [];
+  while (moved.len() < g.blocks.len()) {
+    moved = moved.append([]);
+  }
+  for bi in 0..g.blocks.len() {
+    if (dom.pre[bi] >= 0) {
+      let insts = g.blocks[bi].insts;
+      let kept: boolean[] = [];
+      for k in 0..insts.len() {
+        kept = kept.append(true);
+      }
+      let dropped = false;
+      for j in 0..insts.len() {
+        let i = insts.len() - 1 - j;
+        let ins = insts[i];
+        if ((ins.kind_tag == ssasem.record_get() || ins.kind_tag == ssasem.tuple_get()) && counted_projection(ins, f.values)) {
+          let t = common_dominator(dom, uses[ins.result]);
+          if (t >= 0 && t != bi && single_chain(g, pos, dom, bi, t) && !spent_on_way(g, pos, dom, insts, kept, i, bi, t, ancestors(g, def, ins.args[0]))) {
+            kept = kept.with(i, false);
+            dropped = true;
+            moved = moved.with(t, [ins].concat(moved[t]));
+            let p = ins.args[0];
+            let at = util.index_of_i32(uses[p], bi);
+            if (at >= 0) {
+              uses = uses.with(p, uses[p].with(at, t));
+            }
+            def = def.with(ins.result, t);
+          }
+        }
+      }
+      if (dropped) {
+        let out: ssa.SInst[] = [];
+        for k in 0..insts.len() {
+          if (kept[k]) {
+            out = out.append(insts[k]);
+          }
+        }
+        blocks = blocks.with(bi, ssa.SBlock { ...blocks[bi], insts: out });
+      }
+    }
+  }
+  let n = 0;
+  for t in 0..moved.len() {
+    if (moved[t].len() > 0) {
+      n += moved[t].len();
+      let b = blocks[t];
+      let lead = leading(b.insts);
+      let out: ssa.SInst[] = [];
+      for k in 0..b.insts.len() {
+        if (k == lead) {
+          out = out.concat(moved[t]);
+        }
+        out = out.append(b.insts[k]);
+      }
+      if (lead == b.insts.len()) {
+        out = out.concat(moved[t]);
+      }
+      blocks = blocks.with(t, ssa.SBlock { ...b, insts: out });
+    }
+  }
+  if (n == 0) {
+    return Sunk { f: f, reread: 0 };
+  }
+  return Sunk { f: ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks } }, reread: n };
+}
+
+// leading is the number of params and phis at the start of insts.
+function leading(insts: ssa.SInst[]): i32 {
+  for k in 0..insts.len() {
+    if (insts[k].kind_tag != ssa.PARAM && insts[k].kind_tag != ssa.PHI) {
+      return k;
+    }
+  }
+  return insts.len();
+}
+
+// use_blocks is, per value, the block of each of its uses. A phi uses its
+// operand at the end of the predecessor that its slot names.
+function use_blocks(g: ssa.SFunc, pos: i32[], n: i32): i32[][] {
+  let uses: i32[][] = [];
+  while (uses.len() < n) {
+    uses = uses.append([]);
+  }
+  for bi in 0..g.blocks.len() {
+    let b = g.blocks[bi];
+    for ins in b.insts {
+      for slot in 0..ins.args.len() {
+        let a = ins.args[slot];
+        let at = bi;
+        if (ins.kind_tag == ssa.PHI && slot < b.preds.len()) {
+          at = pos[b.preds[slot]];
+        }
+        if (a >= 0 && a < n) {
+          uses = uses.with(a, uses[a].append(at));
+        }
+      }
+    }
+    let t = b.term;
+    if (t.kind_tag == ssa.TERM_BRIF && t.cond >= 0 && t.cond < n) {
+      uses = uses.with(t.cond, uses[t.cond].append(bi));
+    }
+    if (t.kind_tag == ssa.TERM_RET && t.value >= 0 && t.value < n) {
+      uses = uses.with(t.value, uses[t.value].append(bi));
+    }
+  }
+  return uses;
+}
+
+// common_dominator is the nearest block that dominates each block in at,
+// or -1 when at is empty or names an unreachable block.
+function common_dominator(dom: ssadeps.Dom, at: i32[]): i32 {
+  if (at.len() == 0) {
+    return -1;
+  }
+  let c = at[0];
+  for b in at {
+    if (dom.pre[b] < 0) {
+      return -1;
+    }
+    while (c >= 0 && !ssadeps.dom_holds(dom, b, c)) {
+      c = dom.idom[c];
+    }
+  }
+  return c;
+}
+
+// single_chain says each block on the dominator path below from, down to
+// to, has one predecessor.
+function single_chain(g: ssa.SFunc, pos: i32[], dom: ssadeps.Dom, from: i32, to: i32): boolean {
+  let c = to;
+  while (c != from) {
+    if (c < 0 || g.blocks[c].preds.len() != 1 || pos[g.blocks[c].preds[0]] != dom.idom[c]) {
+      return false;
+    }
+    c = dom.idom[c];
+  }
+  return true;
+}
+
+// ancestors is v and the values it is a field read of, in turn.
+function ancestors(g: ssa.SFunc, def: i32[], v: i32): i32[] {
+  let up = [v];
+  while (up.len() <= 8) {
+    let x = up[up.len() - 1];
+    if (x < 0 || x >= def.len() || def[x] < 0) {
+      return up;
+    }
+    let ins = read_def(g.blocks[def[x]], x);
+    if (!projection(ins.kind_tag) || ins.args.len() == 0) {
+      return up;
+    }
+    up = up.append(ins.args[0]);
+  }
+  return up;
+}
+
+function read_def(b: ssa.SBlock, v: i32): ssa.SInst {
+  for ins in b.insts {
+    if (ins.result == v) {
+      return ins;
+    }
+  }
+  return ssa.no_inst();
+}
+
+// spent_on_way says an instruction after i in from, or in a block of the
+// chain above to, spends a value in up.
+function spent_on_way(g: ssa.SFunc, pos: i32[], dom: ssadeps.Dom, insts: ssa.SInst[], kept: boolean[], i: i32, from: i32, to: i32, up: i32[]): boolean {
+  for k in i + 1..insts.len() {
+    if (kept[k] && spends_any(insts[k], up)) {
+      return true;
+    }
+  }
+  let c = dom.idom[to];
+  while (c != from) {
+    for ins in g.blocks[c].insts {
+      if (spends_any(ins, up)) {
+        return true;
+      }
+    }
+    c = dom.idom[c];
+  }
+  return false;
+}
+
+function spends_any(ins: ssa.SInst, up: i32[]): boolean {
+  return spends(ins.kind_tag) && touches(ins.args, up) || util.index_of_i32(up, ssasem.update_base(ins)) >= 0;
+}
+
 // sink_past_lent re-reads a projection below a call that only borrows its
 // parent. It runs once ownership inference has settled the callees' modes,
 // which `sink` runs before: a record or variant parameter declared
@@ -593,10 +815,7 @@ function sink_block(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock, values: typ
   if (r.insts.len() == 0) {
     return Sinking { b: b, values: values, added: 0, edits: [] };
   }
-  let lead = 0;
-  while (lead < insts.len() && (insts[lead].kind_tag == ssa.PARAM || insts[lead].kind_tag == ssa.PHI)) {
-    lead += 1;
-  }
+  let lead = leading(insts);
   let out: ssa.SInst[] = [];
   let k = 0;
   while (k < lead) {
