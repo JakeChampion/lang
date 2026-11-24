@@ -4,6 +4,7 @@ import "std/audio/mp3/spectral";
 import "std/test";
 import "aac_kernel_check" as ref;
 import "mp1_vectors";
+import "mpeg12_freeformat_vectors" as free_vectors;
 import "mp2_check";
 
 function incremental(input: [u8], expected: [u8], rate: i32, channels: i32): Result[void, string] {
@@ -146,11 +147,66 @@ function sample_extent(): test.TestOutcome {
   return test.assert_true(audio.samples.len() == 384);
 }
 
+function seek_case(encoded: string, reference: string, channels: i32): Result[void, string] {
+  let input = ref.unpack(encoded)?;
+  let expected = ref.unpack(reference)?;
+  let limits = pcm.default_limits();
+  let Ok(index) = mp1.seek_index(input, 1024, limits) else { return Err("index"); };
+  let frames = expected.len() / 4 / channels;
+  if (index.frames() != frames as i64) { return Err("length"); }
+  let count = 17 * channels;
+  let output = spectral.zeros(count + 1).with(count, -123.5f32);
+  for at in [frames - 17, 380, 1, 0] {
+    let Ok(samples) = index.read_into(input, at as i64, 17, output) else { return Err("seek"); };
+    mp2_check.samples(samples, count, expected, at * channels)?;
+    if (samples[count] != -123.5f32) { return Err("suffix"); }
+    output = samples;
+  }
+  seek_bounds(index, input, output, limits)?;
+  return check_preroll(input, count, limits);
+}
+
+function seek_bounds(index: mp1.SeekIndex, input: [u8], own output: f32[], limits: pcm.Limits): Result[void, string] {
+  if let Err(pcm.Limit) = mp1.seek_index(input, 1, limits) {} else { return Err("index limit"); }
+  if let Err(pcm.Buffer) = index.read_into(input, 0i64, 2, []) {} else { return Err("output size"); }
+  if let Err(pcm.Header) = index.read_into(input, index.frames(), 1, []) {} else { return Err("read past end"); }
+  let Ok(empty) = index.read_into(input, index.frames(), 0, output) else { return Err("empty end read"); };
+  if (empty[empty.len() - 1] != -123.5f32) { return Err("empty suffix"); }
+  return Ok(());
+}
+
+function check_preroll(input: u8[], count: i32, limits: pcm.Limits): Result[void, string] {
+  // Start well beyond the first two frames to exercise bounded preroll.
+  let twice = input;
+  for byte in input { twice = twice.append(byte); }
+  let Ok(long) = mp1.seek_index(twice, 2048, limits) else { return Err("long index"); };
+  let Ok(linear) = mp1.decode_raw(twice, limits) else { return Err("long stream"); };
+  let end = linear.samples.len() - count;
+  let Ok(last) = long.read_into(twice, long.frames() - 17i64, 17, spectral.zeros(count)) else { return Err("end seek"); };
+  for i in 0..count {
+    if (f32_bits(last[i]) != f32_bits(linear.samples[end + i])) { return Err("preroll"); }
+  }
+  return Ok(());
+}
+
+function seeks(): test.TestOutcome {
+  for v in mp1_vectors.vectors() {
+    if let Err(e) = seek_case(v.encoded, v.pcm, v.channels) { return test.fail(e); }
+  }
+  for v in free_vectors.vectors() {
+    if (v.layer == 1) {
+      if let Err(e) = seek_case(v.encoded, v.pcm, v.channels) { return test.fail(e); }
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let runner = test.new("MPEG Layer I");
   runner = runner.it("every sample matches independent scalar minimp3", references);
   runner = runner.it("frame grammar, CRC, truncation and output limits", boundaries);
   runner = runner.it("format changes preserve the previous stream history", format_changes);
   runner = runner.it("sample fields exactly fill or exceed the frame", sample_extent);
+  runner = runner.it("sample-accurate seeks in indexed and free-format streams", seeks);
   return runner.finish();
 }
