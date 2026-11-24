@@ -312,11 +312,11 @@ function resolved_checked(t: typeinfo.Type, template: boolean, b: ssasem.Binding
   if (!template) {
     return runtime_callable_type(t);
   }
-  if let typeinfo.TypeUnknown(u) = t {
-    let name = checker.typevar_reason_name(u.reason);
-    if (parser.looks_type_var(name)) {
-      return ssasem.substitute(typeinfo.TypeErased { name: name }, b);
-    }
+  let name = checker.tvar_name(t);
+  if (name.len() > 0) {
+    return ssasem.substitute(typeinfo.TypeErased { name: name }, b);
+  }
+  if (checker.is_unknown(t)) {
     return t;
   }
   if let typeinfo.TypeErased(_) = t {
@@ -556,10 +556,7 @@ function record_variables(name: string, scope: checker.Scope, seen: string[]): s
 }
 
 function spelled_variables(t: typeinfo.Type, scope: checker.Scope, seen: string[], out: string[]): string[] {
-  let name = "";
-  if let typeinfo.TypeUnknown(u) = t {
-    name = checker.typevar_reason_name(u.reason);
-  }
+  let name = checker.tvar_name(t);
   if let typeinfo.TypeErased(e) = t {
     name = e.name;
   }
@@ -2333,8 +2330,8 @@ function try_layout(layout: i32): boolean {
 }
 
 function type_detail(t: typeinfo.Type): string {
-  if let typeinfo.TypeUnknown(u) = t {
-    return u.reason;
+  if (checker.is_unknown(t)) {
+    return checker.unknown_reason(t);
   }
   return typeinfo.spelling(t);
 }

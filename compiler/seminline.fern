@@ -360,6 +360,9 @@ function owns_resource(t: typeinfo.Type, owners: ResourceOwners): boolean {
   if let typeinfo.TypeUnknown(_) = t {
     return true;
   }
+  if let typeinfo.TypeVar(_) = t {
+    return true;
+  }
   return false;
 }
 

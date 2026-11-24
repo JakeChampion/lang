@@ -581,11 +581,9 @@ function named_tvars(t: typeinfo.Type): typeinfo.Type {
   if let typeinfo.TypeErased(e) = t {
     return typeinfo.TypeStruct { name: e.name, args: [] };
   }
-  if let typeinfo.TypeUnknown(u) = t {
-    let tv = checker.typevar_reason_name(u.reason);
-    if (parser.looks_type_var(tv)) {
-      return typeinfo.TypeStruct { name: tv, args: [] };
-    }
+  let tv = checker.tvar_name(t);
+  if (tv.len() > 0) {
+    return typeinfo.TypeStruct { name: tv, args: [] };
   }
   if let typeinfo.TypeArray(a) = t {
     return typeinfo.TypeArray { ...a, elem: named_tvars(a.elem) };
