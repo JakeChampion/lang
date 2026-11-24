@@ -315,7 +315,10 @@ pub function system_roots(): Option[Roots] {
   if let Some(p) = env("SSL_CERT_FILE") {
     paths = [p];
   } else if (target_os() == "android") {
-    return android_roots();
+    if let Ok(r) = android_roots() {
+      return Some(r);
+    }
+    return None;
   }
   for p in paths {
     if let Ok(r) = roots_from_file(p) {
@@ -325,16 +328,16 @@ pub function system_roots(): Option[Roots] {
   return None;
 }
 
-function android_roots(): Option[Roots] {
+function android_roots(): Result[Roots, VerifyError] {
   // Android allocates a range of 100000 UIDs to each user profile.
   let user = getuid() / 100000u32;
   let removed = "/data/misc/user/" + user.to_string() + "/cacerts-removed";
   for dir in ANDROID_ROOT_DIRS {
-    if let Ok(r) = roots_from_dir_excluding(dir, removed) {
-      return Some(r);
+    if let Ok(system) = roots_from_dir(dir) {
+      return __exclude_removed(system, removed);
     }
   }
-  return None;
+  return Err(RootsUnreadable(ANDROID_ROOT_DIRS[0]));
 }
 
 // The roots in the PEM files of directory `dir`, one or more in each file.
@@ -360,17 +363,45 @@ pub function roots_from_dir(dir: string): Result[Roots, VerifyError] {
 // removal directory. Android stores removed certificates as DER files.
 pub function roots_from_dir_excluding(dir: string, removed: string): Result[Roots, VerifyError] {
   let system = roots_from_dir(dir)?;
-  let Ok(names) = read_dir(removed) else {
-    return Ok(system);
-  };
+  return __exclude_removed(system, removed);
+}
+
+function __exclude_removed(system: Roots, removed: string): Result[Roots, VerifyError] {
+  let names: string[] = [];
+  match (read_dir(removed)) {
+    Ok(entries) => {
+      names = entries;
+    },
+    Err(NotFound(_)) => {
+      return Ok(system);
+    },
+    Err(_) => {
+      return Err(RootsUnreadable(removed));
+    }
+  }
   let excluded: u8[][] = [];
   for name in names {
-    if let Ok(data) = read_file_bytes(removed + "/" + name) {
-      if (data.len() > 0 && data[0] == 0x30u8) {
-        excluded = excluded.append(data);
-      } else if let Ok(certs) = pem.certificates(utf8.from_bytes_lossy(data)) {
-        excluded = excluded.concat(certs);
+    let path = removed + "/" + name;
+    let Ok(data) = read_file_bytes(path) else {
+      return Err(RootsUnreadable(path));
+    };
+    let certs: u8[][] = [];
+    if (data.len() > 0 && data[0] == 0x30u8) {
+      certs = [data];
+    } else {
+      let Ok(found) = pem.certificates(utf8.from_bytes_lossy(data)) else {
+        return Err(RootsUnreadable(path));
+      };
+      certs = found;
+    }
+    if (certs.len() == 0) {
+      return Err(RootsUnreadable(path));
+    }
+    for der in certs {
+      if let Err(_) = x509.parse(der) {
+        return Err(RootsUnreadable(path));
       }
+      excluded = excluded.append(der);
     }
   }
   if (excluded.len() == 0) {

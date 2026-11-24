@@ -1,3 +1,4 @@
+import "std/result";
 import "std/test";
 import "core/int";
 import "std/hex";
@@ -150,7 +151,34 @@ function test_disabled_roots(dir: string): test.TestOutcome {
   let Ok(none) = verify.roots_from_dir_excluding(system, removed) else {
     return test.fail("all roots disabled");
   };
-  return test.assert_eq(none.certs.len(), 0);
+  if (none.certs.len() != 0) {
+    return test.fail("disabled roots retained");
+  }
+  if (verify.roots_from_dir_excluding(system, removed + "/second").is_ok()) {
+    return test.fail("a file used as the removal directory");
+  }
+  let bad = removed + "/bad";
+  for contents in ["", "not a certificate", pem.encode("CERTIFICATE", [0x30u8])] {
+    let Ok(_) = write_file(bad, contents) else {
+      return test.fail("write bad removal entry");
+    };
+    if (verify.roots_from_dir_excluding(system, removed).is_ok()) {
+      return test.fail("invalid removal entry accepted");
+    }
+  }
+  let Ok(_) = write_file_bytes(bad, [0x30u8]) else {
+    return test.fail("write malformed DER");
+  };
+  if (verify.roots_from_dir_excluding(system, removed).is_ok()) {
+    return test.fail("malformed DER accepted");
+  }
+  let Ok(_) = remove_file(bad) else {
+    return test.fail("remove malformed entry");
+  };
+  let Ok(_) = create_dir_all(bad) else {
+    return test.fail("create unreadable entry");
+  };
+  return test.assert_eq(verify.roots_from_dir_excluding(system, removed).is_err(), true);
 }
 
 function test_roots_dir_empty(dir: string): test.TestOutcome {
