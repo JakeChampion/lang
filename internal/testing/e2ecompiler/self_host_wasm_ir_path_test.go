@@ -570,6 +570,8 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"trim-tabs-nl", `function main(): i32 { return "\t\n ab \r\n".trim().len(); }`, 2},
 		{"trim-none", `function main(): i32 { return "abc".trim().len(); }`, 3},
 		{"trim-all-ws", `function main(): i32 { return "    ".trim().len() + 5; }`, 5},
+		{"trim-vt-ff", `function main(): i32 { return "\x0b\x0c ab \x0c\x0b".trim().len(); }`, 2},
+		{"trim-keeps-8-14", `function main(): i32 { return "\x08ab\x0e".trim().len(); }`, 4},
 		{"trim-param", `function tn(s: string): i32 { return s.trim().len(); } function main(): i32 { return tn("  padded  "); }`, 6},
 		{"replace-len", `function main(): i32 { return "a-b-c".replace("-", "_").len(); }`, 5},
 		{"replace-grow", `function main(): i32 { return "aaa".replace("a", "bb").len(); }`, 6},

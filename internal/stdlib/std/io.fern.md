@@ -205,7 +205,7 @@ pub function read_input(path: string): Result[string, IoError] {
 
 ### `7 pub function temp_file(prefix: string): Result[TempFile, IoError]`
 
-A temporary file is created exclusively, with mode 0600, under a name that carries 16 hexadecimal digits of kernel entropy. The call skips a name that already exists as a file or as a symbolic link. A prepared link at a guessed name therefore cannot redirect the write. The prefix must not contain a path separator.
+A temporary file is created exclusively, with mode 0600, under a name that carries 16 hexadecimal digits of kernel entropy. The call skips a name that already exists as a file or as a symbolic link. A prepared link at a guessed name therefore cannot redirect the write. The prefix must not contain a path separator. The file goes where `temp_dir` puts a directory: under `TMPDIR` or `/tmp` on a native target, and in the directory that the host gives the program on wasm.
 
 ```fern
 <<7 pub function temp_file(prefix: string): Result[TempFile, IoError]>>=
@@ -256,7 +256,7 @@ pub function temp_file(prefix: string): Result[TempFile, IoError] {
   }
   let tries = 0;
   while (tries < 64) {
-    let path = temp_root() + "/" + prefix + "-" + __hex_name(random_bytes(8));
+    let path = temp_root() + prefix + "-" + __hex_name(random_bytes(8));
     match (open_exclusive(path)) {
       Ok(w) => {
         return Ok(TempFile { path: path, file: w });
@@ -275,10 +275,16 @@ pub function temp_file(prefix: string): Result[TempFile, IoError] {
   return Err(AlreadyExists(prefix));
 }
 
-// TMPDIR names the root when it is an absolute path with more than the
-// leading separator. One trailing separator is dropped. Anything else is /tmp,
-// the rule the runtime applies for temp_dir.
+// The directory part of a temporary name, with its trailing separator: the
+// rule the runtime applies for temp_dir. TMPDIR names the root when it is an
+// absolute path with more than the leading separator, and one trailing
+// separator is dropped. Anything else is /tmp. On wasm the name is relative to
+// the directory that the host gives the program, which is all that it can
+// reach.
 function temp_root(): string {
+  if (target_arch() == "wasm32") {
+    return "";
+  }
   match (env("TMPDIR")) {
     Some(v) => {
       let n = v.len();
@@ -286,12 +292,12 @@ function temp_root(): string {
         n -= 1;
       }
       if (n > 1 && v[0] == 47 as u8) {
-        return slice_unchecked(v, 0, n) + "";
+        return slice_unchecked(v, 0, n) + "/";
       }
-      return "/tmp";
+      return "/tmp/";
     },
     None => {
-      return "/tmp";
+      return "/tmp/";
     }
   }
 }

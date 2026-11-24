@@ -7356,14 +7356,14 @@ pub function str_trim_helper(): string {
   o += "    (block $df (loop $cf\n";
   o += "      (br_if $df (i32.ge_s (local.get $start) (local.get $l)))\n";
   o += "      (local.set $ch (i32.load8_u (i32.add " + str_data_wat("(local.get $s)") + " (local.get $start))))\n";
-  o += "      (br_if $df (i32.eqz (i32.or (i32.or (i32.eq (local.get $ch) (i32.const 32)) (i32.eq (local.get $ch) (i32.const 9))) (i32.or (i32.eq (local.get $ch) (i32.const 10)) (i32.eq (local.get $ch) (i32.const 13))))))\n";
+  o += "      (br_if $df (i32.eqz (i32.or (i32.eq (local.get $ch) (i32.const 32)) (i32.le_u (i32.sub (local.get $ch) (i32.const 9)) (i32.const 4)))))\n";
   o += "      (local.set $start (i32.add (local.get $start) (i32.const 1)))\n";
   o += "      (br $cf)))\n";
   o += "    (local.set $end (local.get $l))\n";
   o += "    (block $db (loop $cb\n";
   o += "      (br_if $db (i32.le_s (local.get $end) (local.get $start)))\n";
   o += "      (local.set $ch (i32.load8_u (i32.add " + str_data_wat("(local.get $s)") + " (i32.sub (local.get $end) (i32.const 1)))))\n";
-  o += "      (br_if $db (i32.eqz (i32.or (i32.or (i32.eq (local.get $ch) (i32.const 32)) (i32.eq (local.get $ch) (i32.const 9))) (i32.or (i32.eq (local.get $ch) (i32.const 10)) (i32.eq (local.get $ch) (i32.const 13))))))\n";
+  o += "      (br_if $db (i32.eqz (i32.or (i32.eq (local.get $ch) (i32.const 32)) (i32.le_u (i32.sub (local.get $ch) (i32.const 9)) (i32.const 4)))))\n";
   o += "      (local.set $end (i32.sub (local.get $end) (i32.const 1)))\n";
   o += "      (br $cb)))\n";
   o += "    (local.set $nl (i32.sub (local.get $end) (local.get $start)))\n";
