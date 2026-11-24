@@ -812,6 +812,7 @@ pub function sha1(s: [u8]): u8[] {
 
 // === SHA-224 and SHA-256 (FIPS 180-4) ===
 
+@secret
 pub struct Sha256 {
   h0: u32,
   h1: u32,
@@ -2473,6 +2474,7 @@ pub function sm3(s: [u8]): u8[] {
 
 // === BLAKE2b (RFC 7693), unkeyed, digest length 1..64 bytes ===
 
+@secret
 pub struct Blake2b {
   h0: u64,
   h1: u64,
