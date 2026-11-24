@@ -19853,7 +19853,7 @@ function ocl_method_loans(call: ast.ExprCall, facts: OclFacts): OclCapture[] {
   };
   let out: OclCapture[] = [];
   for method in lenders.methods {
-    if (lu_matches_method(method, fa) && !util.has_str(lenders.fresh_methods, method.receiver + "." + method.name)) {
+    if (lu_matches_method(method, fa) && !lenders.fresh_methods.has(method.receiver + "." + method.name)) {
       if (lu_lends(method, 0)) {
         out = ocl_lent_loans(out, fa.obj, facts);
       }
@@ -20886,7 +20886,7 @@ function lu_has(ctx: OwnCtx, key: string): boolean {
   return lu.keys.has(key);
 }
 
-struct OwnCtx { factories: OclFactoryState, result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: util.NameIndex, scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[], sends: string[], lends: Cell[OwnLends] }
+struct OwnCtx { factories: OclFactoryState, result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: util.NameIndex, fresh_methods: util.NameIndex, fresh_scrut: util.NameIndex, bound: util.NameIndex, scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[], sends: string[], lends: Cell[OwnLends] }
 
 // The state of the loans of locals for one function. Each row has a position
 // of a consume. takers names a local that took the consumed value.
@@ -21572,7 +21572,7 @@ function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
       if (ctx.ofuncs.ctors.has(cid.name) && !ow_ctor_name_taken(ctx, cid.name) || ow_builtin_variant(ctx, cid.name)) {
         return true;
       }
-      return !ow_name_bound(ctx, cid.name) && (util.has_str(ctx.fresh_scrut, cid.name) || util.has_str(ctx.fresh, cid.name) && !ow_expr_holds_no_handle(e, ctx));
+      return !ow_name_bound(ctx, cid.name) && (ctx.fresh_scrut.has(cid.name) || ctx.fresh.has(cid.name) && !ow_expr_holds_no_handle(e, ctx));
     }
     return ow_qualified_ctor(c.callee, ctx) || ow_fresh_method_result(c, ctx);
   }
@@ -21584,7 +21584,7 @@ function ow_fresh_method_result(c: ast.ExprCall, ctx: OwnCtx): boolean {
   if let ast.ExprFieldAccess(mfa) = c.callee {
     for ns in ow_type_namespaces(check_expr(mfa.obj, ctx.scope)) {
       let name = ns + "." + mfa.field;
-      if (util.has_str(ow_fresh_builtin_methods(), name) || util.has_str(ctx.fresh_scrut, name)) {
+      if (util.has_str(ow_fresh_builtin_methods(), name) || ctx.fresh_scrut.has(name)) {
         return true;
       }
     }
@@ -21959,7 +21959,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
           if (ctx.ofuncs.ctors.has(cid.name) && !ow_ctor_name_taken(ctx, cid.name) || ow_builtin_variant(ctx, cid.name)) {
             return ow_variant_args_owned(c, ctx);
           }
-          return cid.name == "share_unchecked" || !ow_name_bound(ctx, cid.name) && util.has_str(ctx.fresh, cid.name) || ow_callback_args_owned(c, ctx.last_use.get());
+          return cid.name == "share_unchecked" || !ow_name_bound(ctx, cid.name) && ctx.fresh.has(cid.name) || ow_callback_args_owned(c, ctx.last_use.get());
         },
         ast.ExprFieldAccess(mfa) => {
           // An associated call with no arguments has no source for a loan.
@@ -21973,7 +21973,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
             return ow_variant_args_owned(c, ctx);
           }
           for ns in ow_type_namespaces(check_expr(mfa.obj, ctx.scope)) {
-            if (util.has_str(ctx.fresh_methods, ns + "." + mfa.field)) {
+            if (ctx.fresh_methods.has(ns + "." + mfa.field)) {
               return true;
             }
           }
@@ -23343,7 +23343,7 @@ function lu_call_borrows_beside(fx: LuFn, c: ast.ExprCall, except: string): bool
   }
   if let ast.ExprFieldAccess(field) = c.callee {
     let key = ow_receiver_ns(ast.receiver_tag(field.obj)) + "." + field.field;
-    if (util.has_str(fx.lenders.fresh_methods, key)) {
+    if (fx.lenders.fresh_methods.has(key)) {
       return false;
     }
     for method in fx.lenders.methods {
@@ -28489,7 +28489,7 @@ function ow_value_decl(name: string, structs: parser.StructDecl[], snames: util.
 
 function ow_copy_type_at(e: ast.Expr, own types: string[]): string[] {
   if let ast.ExprCall(call) = e {
-    if (call.ty.len() > 0 && !util.has_str(types, call.ty)) {
+    if (call.ty.len() > 0) {
       return types.append(call.ty);
     }
   }
@@ -28505,8 +28505,13 @@ function ow_copy_results(typed: parser.FuncDecl[], dx: OwnDecls): util.NameIndex
       types = astwalk.fold_stmt(st, types, ow_copy_type_at);
     }
   }
+  let met = util.name_index([]);
   let copyable: string[] = [];
   for spelling in types {
+    if (met.has(spelling)) {
+      continue;
+    }
+    met = met.added(spelling);
     if (ow_value_data(spelling, dx, [])) {
       copyable = copyable.append(spelling);
     }
@@ -28842,7 +28847,7 @@ function ow_handle_borrows(mod: parser.Module, borrows: util.NameIndex, dx: OwnD
 // module does not declare has no row, and every argument of it can lend.
 struct OwnLend { name: string, receiver: string, lend: boolean[], callbacks: boolean[] }
 
-struct OwnLenders { rows: OwnLend[], names: util.NameIndex, methods: OwnLend[], fresh_methods: string[], constructors: util.NameIndex, variants: OwnVariants, decls: OwnDecls }
+struct OwnLenders { rows: OwnLend[], names: util.NameIndex, methods: OwnLend[], fresh_methods: util.NameIndex, constructors: util.NameIndex, variants: OwnVariants, decls: OwnDecls }
 
 // The payloads of each variant constructor that can lend a handle to the
 // value that it makes. keys holds two names for row k: the name with its enum
@@ -28932,7 +28937,7 @@ function ow_lenders(mod: parser.Module, ofuncs: OwnFuncs, dx: OwnDecls): OwnLend
       }
     }
   }
-  return OwnLenders { rows: rows, names: util.name_index(names), methods: methods, fresh_methods: [], constructors: util.name_index(constructors), variants: ow_variants(mod, dx), decls: dx };
+  return OwnLenders { rows: rows, names: util.name_index(names), methods: methods, fresh_methods: util.name_index([]), constructors: util.name_index(constructors), variants: ow_variants(mod, dx), decls: dx };
 }
 
 function ow_decl_type_is_pointer(fn: parser.FuncDecl, tn: string, ofuncs: OwnFuncs): boolean {
@@ -29543,7 +29548,7 @@ function ow_fresh_builtins(): string[] {
 
 // The functions whose result is fresh by signature: no borrowed pointer
 // parameter that can hold a handle.
-function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, dx: OwnDecls): string[] {
+function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, dx: OwnDecls): util.NameIndex {
   let out = builtins.names;
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || !ow_sig_type_is_pointer(fn, fn.ret_type, ofuncs)) {
@@ -29564,7 +29569,7 @@ function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtin
       out = out.append(fn.name);
     }
   }
-  return out;
+  return util.name_index(out);
 }
 
 function ow_result_borrows(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, lenders: OwnLenders): util.NameIndex {
@@ -29631,7 +29636,7 @@ function ow_calls_any(callees: string[], names: util.NameIndex): boolean {
   return false;
 }
 
-function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, borrows: util.NameIndex): string[] {
+function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, borrows: util.NameIndex): util.NameIndex {
   let out = builtins.names;
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || !ow_decl_type_is_pointer(fn, fn.ret_type, ofuncs)) {
@@ -29642,11 +29647,11 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.Na
     }
     out = out.append(fn.name);
   }
-  return out;
+  return util.name_index(out);
 }
 
 // The receiver namespace and method name identify a fresh method.
-function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, borrows: util.NameIndex): string[] {
+function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, borrows: util.NameIndex): util.NameIndex {
   let out: string[] = [];
   let refused: string[] = [];
   for fn in mod.funcs {
@@ -29669,7 +29674,7 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.N
       kept = kept.append(name);
     }
   }
-  return kept;
+  return util.name_index(kept);
 }
 
 // Use the typed receiver when analysing method results. This temporary
