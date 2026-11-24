@@ -2283,7 +2283,7 @@ function union_table(unions: UnionSig[]): UnionTable {
   let lib_next = next;
   let bnames: string[] = [];
   for b in 0..vnames.len() {
-    bnames = bnames.append(unprefixed_variant(vnames[b], unions[vowner[b]].module));
+    bnames = bnames.append(util.unqualified(vnames[b], unions[vowner[b]].module));
   }
   let bhead = head;
   let bnext = next;
@@ -2310,14 +2310,6 @@ function union_table(unions: UnionSig[]): UnionTable {
 
 function declared_by_entry(u: UnionSig): boolean {
   return u.module.len() == 0;
-}
-
-function unprefixed_variant(name: string, module: string): string {
-  let m = module.len();
-  if (m > 0 && name.len() > m + 2 && name[m] == b'_' && name[m + 1] == b'_' && util.str_range_eq(name, 0, m, module)) {
-    return slice_unchecked(name, m + 2, name.len()).to_owned();
-  }
-  return name;
 }
 
 function enum_visible_from(u: UnionSig, from: string): boolean {
@@ -2769,7 +2761,7 @@ function payload_variant_value_diag(shown: string, payloads: i32, line: i32, col
 }
 
 function no_variant_diag(s: Scope, en: string, field: string, line: i32, col: i32): util.Diag {
-  return dg_at("E036", "enum " + shown_enum(s, en) + " has no variant \"" + unprefixed_variant(field, union_module(s, en)) + "\"", line, col);
+  return dg_at("E036", "enum " + shown_enum(s, en) + " has no variant \"" + util.unqualified(field, union_module(s, en)) + "\"", line, col);
 }
 
 function shown_variant(s: Scope, name: string): string {
@@ -2779,17 +2771,17 @@ function shown_variant(s: Scope, name: string): string {
     owner = s.lookup_union(variant_pattern_owner(name));
   }
   let module: string = match (owner) { Some(u) => u.module, None => "" };
-  return unprefixed_variant(bare, module);
+  return util.unqualified(bare, module);
 }
 
 function shown_variant_in(structs: StructTable, name: string): string {
   let module: string = match (find_variant_sig(structs, name)) { Some(sig) => sig.module, None => "" };
-  return unprefixed_variant(variant_pattern_name(name), module);
+  return util.unqualified(variant_pattern_name(name), module);
 }
 
 function shown_enum(s: Scope, name: string): string {
   let m = union_module(s, name);
-  let bare = unprefixed_variant(name, m);
+  let bare = util.unqualified(name, m);
   if (bare == name || m == s.fn_module) {
     return bare;
   }
@@ -2797,14 +2789,14 @@ function shown_enum(s: Scope, name: string): string {
 }
 
 function unknown_variant_diag(s: Scope, name: string, u: UnionSig, line: i32, col: i32): util.Diag {
-  let shown = unprefixed_variant(name, u.module);
+  let shown = util.unqualified(name, u.module);
   let hint = " — a bare name in arm position is a VARIANT, not a binding; for a catch-all use `_`, binding the scrutinee to a variable first if you need its value";
   let best = "";
   let best_d = 0;
   for v in u.variants {
-    let d = util.levenshtein(shown, unprefixed_variant(v, u.module));
+    let d = util.levenshtein(shown, util.unqualified(v, u.module));
     if (d <= shown.len() / 3 + 1 && (best.len() == 0 || d < best_d)) {
-      best = unprefixed_variant(v, u.module);
+      best = util.unqualified(v, u.module);
       best_d = d;
     }
   }
@@ -3576,7 +3568,7 @@ function (s: Scope) variant_hidden(v: StructSig): boolean {
 }
 
 function (s: Scope) variant_ambiguous(name: string): boolean {
-  let bare = unprefixed_variant(name, s.fn_module);
+  let bare = util.unqualified(name, s.fn_module);
   let n = 0;
   if (parser.builtin_enum_of(bare).len() > 0) {
     n = 1;
@@ -4395,7 +4387,7 @@ function (s: Scope) free_function_advice(method: string, recv: typeinfo.Type): s
     }
     let i = 0;
     while (i < sg.imports.len() && i < sg.direct.len()) {
-      if let Some(sig) = s.lookup_sig(sg.direct[i] + "__" + method) {
+      if let Some(sig) = s.lookup_sig(util.mangled(sg.direct[i], method)) {
         if (sig.is_pub && sig.receiver.len() == 0 && sig.param_types.len() > 0 && first_param_takes(sig.param_types[0], recv)) {
           return free_function_note(method, sg.imports[i]);
         }
@@ -12610,7 +12602,7 @@ function union_lists_variant(unions: UnionTable, en: string, nm: string): boolea
     return false;
   }
   for v in unions.unions[at].variants {
-    if (v == nm || v.ends_with("__" + nm)) {
+    if (v == nm || util.has_mangled_tail(v, nm)) {
       return true;
     }
   }
@@ -14660,7 +14652,7 @@ function payload_count_message(variant: string, want: i32, got: i32): string {
 function arg_subject(c: ast.ExprCall, n: i32): string {
   let arg = "argument " + util.i32_to_string(n);
   if let ast.ExprIdent(id) = c.callee {
-    if (!id.name.starts_with("__") || id.name.starts_with(util.ENTRY_SHADOW_PREFIX)) {
+    if (!util.is_reserved_name(id.name) || id.name.starts_with(util.ENTRY_SHADOW_PREFIX)) {
       return arg + " to \"" + util.demangle(id.name) + "\"";
     }
   }
@@ -15799,7 +15791,7 @@ function cast_target_diags(target: string, u: ast.ExprUnary, s: Scope): util.Dia
   for req in s.trait_reqs {
     traits = traits.append(req.trait_name);
     if (req.module.len() > 0) {
-      traits = traits.append(req.module + "__" + req.trait_name);
+      traits = traits.append(util.mangled(req.module, req.trait_name));
     }
   }
   let missing = e064_unknown_name(target, s.type_names(), traits, s.tparams);
@@ -17526,7 +17518,7 @@ function variant_cover_diags(rows: CoverPat[][], t: typeinfo.Type, sg: ast.Match
     for v in cover_ctor_names(t, s) {
       let arity = cover_arity(rows, v);
       if (cover_useful(cover_split(rows, v, arity), cover_arg_types(t, v, arity, s), s)) {
-        out = out.append(dg_at("E030", "match does not cover variant " + unprefixed_variant(v, union_module(s, u.name)) + " of enum " + shown_enum(s, u.name) + " — add an arm for it, or a `_` arm", sg.line, sg.col));
+        out = out.append(dg_at("E030", "match does not cover variant " + util.unqualified(v, union_module(s, u.name)) + " of enum " + shown_enum(s, u.name) + " — add an arm for it, or a `_` arm", sg.line, sg.col));
       }
     }
   }
@@ -17846,7 +17838,7 @@ function rows_cover(rows: CoverPat[][], t: typeinfo.Type, ctor: string, s: Scope
 }
 
 function names_ctor(written: string, ctor: string): boolean {
-  return written == ctor || written.len() > 0 && ctor.ends_with("__" + written);
+  return written == ctor || written.len() > 0 && util.has_mangled_tail(ctor, written);
 }
 
 function cover_arity(rows: CoverPat[][], ctor: string): i32 {
@@ -18252,7 +18244,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                 let lit_rows = literal_payload_rows(m.arms);
                 for variant in usig.variants {
                   if (!util.has_str(covered, variant) && !rows_cover(lit_rows, mst, variant, cur)) {
-                    out = out.append(dg_at("E030", "match does not cover variant " + unprefixed_variant(variant, usig.module) + " of enum " + shown_enum(cur, mun.name) + " — add an arm for it, or a `_` arm", m.line, m.col));
+                    out = out.append(dg_at("E030", "match does not cover variant " + util.unqualified(variant, usig.module) + " of enum " + shown_enum(cur, mun.name) + " — add an arm for it, or a `_` arm", m.line, m.col));
                   }
                 }
               }
@@ -18351,7 +18343,7 @@ function vref_expr(e: ast.Expr, s: Scope, ambig: string[]): util.Diag[] {
   function at(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprIdent(id) => {
-        let bare = unprefixed_variant(id.name, s.fn_module);
+        let bare = util.unqualified(id.name, s.fn_module);
         if (util.has_str(ambig, bare) && !s.known(id.name) && !s.has_sig(id.name) && s.variant_ambiguous(id.name)) {
           return acc.append(dg_at("E036", "variant \"" + bare + "\" is declared in multiple enums — qualify the reference", id.line, id.col));
         }
@@ -19195,9 +19187,9 @@ function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
   return acc;
 }
 
-// Every intrinsic name starts with "__", so other names skip the list.
+// Every intrinsic name is a reserved name, so other names skip the list.
 function is_registered_intrinsic(name: string): boolean {
-  return name.starts_with("__") && util.has_str(REGISTERED_INTRINSICS, name);
+  return util.is_reserved_name(name) && util.has_str(REGISTERED_INTRINSICS, name);
 }
 
 const REGISTERED_INTRINSICS: string[] = [
@@ -19461,9 +19453,9 @@ function impl_type_is_local(mod: parser.Module, im: parser.ImplInfo): boolean {
     return false;
   }
   if (im.module.len() == 0) {
-    return !util.contains(base, "__");
+    return !util.is_mangled(base);
   }
-  return base.starts_with(im.module + "__");
+  return util.has_mangled_head(base, im.module);
 }
 
 function declares_nominal(mod: parser.Module, name: string): boolean {
@@ -19575,7 +19567,7 @@ function reserved_name_diags(mod: parser.Module): util.Diag[] {
     }
   }
   for sd in mod.structs {
-    let user_struct = sd.enum_owner.len() == 0 && !sd.name.starts_with("__");
+    let user_struct = sd.enum_owner.len() == 0 && !util.is_reserved_name(sd.name);
     if (user_struct && sd.line > 0 && (parser.is_reserved_struct_name(sd.name) || parser.is_reserved_enum_name(sd.name))) {
       out = out.append(dg_at("E010", "struct \"" + sd.name + "\" is a reserved built-in name and cannot be redeclared", sd.line, sd.col));
     }
@@ -19593,11 +19585,7 @@ function written_func_name(fd: parser.FuncDecl): string {
   if (fd.name.starts_with(util.ENTRY_SHADOW_PREFIX)) {
     return slice_unchecked(fd.name, util.ENTRY_SHADOW_PREFIX.len(), fd.name.len()).to_owned();
   }
-  let prefix = fd.module + "__";
-  if (fd.module.len() > 0 && fd.name.starts_with(prefix)) {
-    return slice_unchecked(fd.name, prefix.len(), fd.name.len()).to_owned();
-  }
-  return fd.name;
+  return util.unqualified(fd.name, fd.module);
 }
 
 function collect_decl_diags(mod: parser.Module): util.Diag[] {
@@ -19654,7 +19642,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
   out = util.append_diags(out, trait_redeclared_diags(mod));
   for sn2 in 0..mod.structs.len() {
     let s2 = mod.structs[sn2];
-    let user_struct = s2.enum_owner.len() == 0 && !(s2.name.len() >= 2 && s2.name.starts_with("__"));
+    let user_struct = s2.enum_owner.len() == 0 && !util.is_reserved_name(s2.name);
     if (user_struct) {
       let sdup = false;
       for sj2 in 0..sn2 {
@@ -33377,7 +33365,7 @@ function instantiated_clones(mod: parser.Module, env: ModuleEnv): Clones {
       }
       spelled += ct;
     }
-    let key = inst.name + "__" + parser.sanitize_key(spelled);
+    let key = parser.instance_name(inst.name, spelled);
     if (util.has_str(keys, key)) {
       continue;
     }
@@ -33489,7 +33477,7 @@ function with_mangled(out: string[], name: string, prefix: string): string[] {
   if (name.starts_with(util.ENTRY_SHADOW_PREFIX)) {
     return out.append(name);
   }
-  if (prefix.len() == 0 || !name.starts_with(prefix + "__")) {
+  if (prefix.len() == 0 || !util.has_mangled_head(name, prefix)) {
     return out;
   }
   return out.append(name);
@@ -33734,7 +33722,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     e064_extra = e064_extra.append(trait_req.trait_name);
     e064_traits = e064_traits.append(trait_req.trait_name);
     if (trait_req.module.len() > 0) {
-      e064_traits = e064_traits.append(trait_req.module + "__" + trait_req.trait_name);
+      e064_traits = e064_traits.append(util.mangled(trait_req.module, trait_req.trait_name));
     }
   }
   for imp in mod.impls {

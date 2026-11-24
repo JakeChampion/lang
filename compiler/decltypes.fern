@@ -146,6 +146,6 @@ pub function follow_reexports(mangled: string, keys: string[], targets: string[]
 }
 
 pub function canonical_imported_trait(prefix: string, name: string, keys: string[], targets: string[]): string {
-  let origin = follow_reexports(prefix + "__" + name, keys, targets);
+  let origin = follow_reexports(util.mangled(prefix, name), keys, targets);
   return slice_unchecked(origin, 0, origin.len() - name.len() - 2) + "." + name;
 }
