@@ -11,25 +11,20 @@ function __fern_str_split(s: string, sep: string): string[] {
     }
     return out;
   }
+  let first = sep[0] as i32;
+  let rest = lenSep - 1;
   let start = 0;
   let i = 0;
   while (i + lenSep <= lenS) {
-    let j = 0;
-    let m = 1;
-    while (j < lenSep) {
-      if (s[i + j] != sep[j]) {
-        m = 0;
-        j = lenSep;
-      } else {
-        j += 1;
-      }
-    }
-    if (m == 1) {
-      out = out.append(slice_unchecked(s, start, i) + "");
-      i += lenSep;
+    let at = __memchr(s, first, i);
+    if (at < 0 || at + lenSep > lenS) {
+      i = lenS;
+    } else if (rest == 0 || __mismatch(s, at + 1, sep, 1, rest) == rest) {
+      out = out.append(slice_unchecked(s, start, at) + "");
+      i = at + lenSep;
       start = i;
     } else {
-      i += 1;
+      i = at + 1;
     }
   }
   out = out.append(slice_unchecked(s, start, lenS) + "");

@@ -1345,6 +1345,7 @@ string_literal_match                                 0
 string_methods                                       0
 string_repeat_join                                   0
 string_replace                                       0
+string_search_helpers_edges                          0
 string_slice                                         0
 string_slice_option                                  0
 string_split                                         0
