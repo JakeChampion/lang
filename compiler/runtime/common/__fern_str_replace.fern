@@ -5,24 +5,19 @@ function __fern_str_replace(h: string, o: string, nw: string): string {
     return __fern_str_dup(h);
   }
   let lenN = nw.len();
+  let first = o[0] as i32;
+  let rest = lenO - 1;
   let count = 0;
   let i = 0;
   while (i + lenO <= lenH) {
-    let j = 0;
-    let m = 1;
-    while (j < lenO) {
-      if (h[i + j] != o[j]) {
-        m = 0;
-        j = lenO;
-      } else {
-        j += 1;
-      }
-    }
-    if (m == 1) {
+    let at = __memchr(h, first, i);
+    if (at < 0 || at + lenO > lenH) {
+      i = lenH;
+    } else if (rest == 0 || __mismatch(h, at + 1, o, 1, rest) == rest) {
       count += 1;
-      i += lenO;
+      i = at + lenO;
     } else {
-      i += 1;
+      i = at + 1;
     }
   }
   if (count == 0) {
@@ -37,35 +32,26 @@ function __fern_str_replace(h: string, o: string, nw: string): string {
     return "";
   }
   let p = __raw_alloc(total);
+  let src = __raw_data(h);
   let w = 0;
+  // `k` is the first byte that is not copied, and `i` is where the search
+  // goes on.
   let k = 0;
-  while (k < lenH) {
-    let m2 = 0;
-    if (k + lenO <= lenH) {
-      let jj = 0;
-      m2 = 1;
-      while (jj < lenO) {
-        if (h[k + jj] != o[jj]) {
-          m2 = 0;
-          jj = lenO;
-        } else {
-          jj += 1;
-        }
-      }
-    }
-    if (m2 == 1) {
-      let t = 0;
-      while (t < lenN) {
-        __raw_store8(p, w, nw[t] as i32);
-        w += 1;
-        t += 1;
-      }
-      k += lenO;
+  i = 0;
+  while (count > 0) {
+    let at = __memchr(h, first, i);
+    if (rest == 0 || __mismatch(h, at + 1, o, 1, rest) == rest) {
+      __memcpy(p + w as usize, src + k as usize, at - k);
+      w += at - k;
+      __memcpy(p + w as usize, __raw_data(nw), lenN);
+      w += lenN;
+      k = at + lenO;
+      i = k;
+      count -= 1;
     } else {
-      __raw_store8(p, w, h[k] as i32);
-      w += 1;
-      k += 1;
+      i = at + 1;
     }
   }
+  __memcpy(p + w as usize, src + k as usize, lenH - k);
   return __raw_string(p, total);
 }
