@@ -254,8 +254,8 @@ function __be(x: bigint.BigInt, len: i32): u8[] {
 
 // The uncompressed point of `key`: 4, then x and y.
 function __point_of(key: PublicKey): u8[] {
-  let c = __params(key.curve);
-  return [4 as u8].concat(__be(key.x, c.bytes)).concat(__be(key.y, c.bytes));
+  let width = __curve_data(key.curve).bytes;
+  return [4 as u8].concat(__be(key.x, width)).concat(__be(key.y, width));
 }
 
 function __from_be(b: [u8], from: i32, len: i32): bigint.BigInt {
@@ -407,9 +407,14 @@ function __verify_rs(c: Params, key: PublicKey, hash: sha2.Hash, msg: [u8], r: b
     return false;
   }
   let p = c.p;
-  let zinv = __inv(x.z, p);
-  let ax = __mul(x.x, __mul(zinv, zinv, p), p);
-  return __mod(ax, n).eq(r);
+  // In Jacobian coordinates the affine x is X/Z². Since p < 2n,
+  // its only representatives congruent to r are r and possibly r + n.
+  let z2 = __mul(x.z, x.z, p);
+  if (x.x.eq(__mul(r, z2, p))) {
+    return true;
+  }
+  let other = r.add(n);
+  return other.cmp(p) < 0 && x.x.eq(__mul(other, z2, p));
 }
 ```
 
@@ -447,7 +452,7 @@ pub function (key: PublicKey) verify(hash: sha2.Hash, msg: [u8], sig: [u8]): boo
 <<13 pub struct PrivateKey>>=
 @value
 @secret
-pub struct PrivateKey { curve: Curve, d: u8[] }
+pub struct PrivateKey { curve: Curve, d: u8[], public: PublicKey }
 
 struct Proj { x: i64[], y: i64[], z: i64[] }
 
@@ -480,7 +485,10 @@ pub function private_key(curve: Curve, d: [u8]): Result[PrivateKey, EcdsaError] 
   if (!__scalar_ok(curve, d)) {
     return Err(ScalarRange);
   }
-  return Ok(PrivateKey { curve: curve, d: __bytes_owned(d) });
+  let point = __public_point(curve, d);
+  __ct_public(point);
+  let public = public_key(curve, point)?;
+  return Ok(PrivateKey { curve: curve, d: __bytes_owned(d), public: public });
 }
 
 // Consumes this key holder. Zeroes uniquely held secret arrays before release.
@@ -511,14 +519,18 @@ function __scalar_ok(curve: Curve, d: [u8]): boolean {
 ```fern
 <<17 pub function (k: PrivateKey) public_point(): u8[]>>=
 pub function (k: PrivateKey) public_point(): u8[] {
-  match (k.curve) {
+  return __point_of(k.public);
+}
+
+function __public_point(curve: Curve, d: [u8]): u8[] {
+  match (curve) {
     P256 => {
-      return p256.base_point(k.d);
+      return p256.base_point(d);
     },
     _ => {}
   }
-  let s = __signer(k.curve);
-  let xy = __affine(s, __base_mul(s, k.d));
+  let s = __signer(curve);
+  let xy = __affine(s, __base_mul(s, d));
   let out = [4 as u8];
   for b in xy.0 {
     out = out.append(b);
@@ -575,16 +587,10 @@ pub function (key: PrivateKey) sign(hash: sha2.Hash, msg: [u8]): Result[u8[], Ec
       sig = __sign_loop(hash, key.d, mont.to_bytes(s.fn, e), (k: u8[]): i64 => mont.in_range(s.fn, k), (k: u8[]): (u8[], u8[]) => __sign_with(s, key.d, e, k), n);
     }
   }
-  let point = key.public_point();
-  __ct_public(point);
-  return __checked_signature(key.curve, point, hash, msg, sig);
+  return __checked_signature(key.public, hash, msg, sig);
 }
 
-function __checked_signature(curve: Curve, point: [u8], hash: sha2.Hash, msg: [u8], own sig: u8[]): Result[u8[], EcdsaError] {
-  let Ok(public) = public_key(curve, point) else {
-    crypto.erase(sig);
-    return Err(SignatureCheck);
-  };
+function __checked_signature(public: PublicKey, hash: sha2.Hash, msg: [u8], own sig: u8[]): Result[u8[], EcdsaError] {
   if (!public.verify(hash, msg, sig)) {
     crypto.erase(sig);
     return Err(SignatureCheck);
@@ -593,7 +599,7 @@ function __checked_signature(curve: Curve, point: [u8], hash: sha2.Hash, msg: [u
 }
 ```
 
-The signer normalizes `s` to the low half of the group order. It verifies the final DER signature against the original message and its derived public point before returning it. A failed self-check returns `SignatureCheck`.
+The signer normalizes `s` to the low half of the group order. It verifies the final DER signature against the original message and the public key retained at construction before returning it. A failed self-check returns `SignatureCheck`.
 
 ```fern test name=std-crypto-ecdsa-signature-check
 <<*>>
@@ -601,7 +607,7 @@ The signer normalizes `s` to the low half of the group order. It verifies the fi
 function main(): i32 {
   let Ok(key) = private_key(P256, __alloc_u8(32).with(31, 1u8)) else { return 1; };
   let Ok(sig) = key.sign(sha2.Sha256, "first".as_bytes()) else { return 2; };
-  match (__checked_signature(P256, key.public_point(), sha2.Sha256, "second".as_bytes(), sig)) {
+  match (__checked_signature(key.public, sha2.Sha256, "second".as_bytes(), sig)) {
     Err(SignatureCheck()) => { return 0; },
     _ => { return 3; }
   }
