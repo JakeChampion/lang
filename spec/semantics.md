@@ -176,6 +176,7 @@ of them.
 | `SE-03` | `docs/SECRET-TYPES.md` | A struct can have both `@value` and `@secret`, and a value record that another binding holds keeps its bytes after an `own` call releases one holder | `secret_value_record` |
 | `SE-04` | `docs/SECRET-TYPES.md` | An attribute that occurs two times on one declaration is `P001` | `diag_secret_twice` |
 | `SE-05` | `docs/SECRET-TYPES.md` | A nested record or tuple that another value still holds keeps its fields after the `@secret` record that held it goes away | `secret_record_keeps_a_shared_nested_record` |
+| `SE-06` | `docs/SECRET-TYPES.md` | An enum value that another value still holds keeps its fields after the `@secret` record that held it goes away | `secret_record_keeps_a_shared_enum` |
 | `WK-01` | `docs/WORKERS.md` | A `send` parameter admits only a send-safe argument; a closure written at the call crosses with send-safe captures and result, and a function value does not (`E100`) | `diag_e100` |
 | `WK-02` | `docs/WORKERS.md` | `worker.spawn` runs its closure once and `join` returns the result, with the same contents on every engine | `worker_spawn_join` |
 | `WK-03` | `docs/WORKERS.md` | A `Worker` is `@must_consume`, so a spawned worker that is not joined is rejected (`E067`) | `diag_e067_worker_unjoined` |

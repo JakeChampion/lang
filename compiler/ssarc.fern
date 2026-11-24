@@ -1520,16 +1520,18 @@ function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semre
 
 // Zeroes the secret storage of the child in `slot` when no other value holds
 // the child: the elements of a numeric array, and the scalars and the
-// children of a record or a tuple. A record with a finalizer keeps its
-// fields, because the finalizer reads them later. The loads here borrow, so
+// children of a record, a tuple or an enum. A record or an enum with a
+// finalizer keeps its fields, because the finalizer reads them later. The loads here borrow, so
 // they are not marked counted.
 function wipe_child(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
   let shift = ssasem.elem_shift(t);
   if (shift >= 0) {
     return wipe_sole(r, slot, shift);
   }
-  let record = ssasem.box_shape(t) && typeinfo.is_record(t) && !ssasem.secret_record(t, f) && ssasem.finalizer_of(f, t) == "";
-  if (!record && !typeinfo.is_tuple(t)) {
+  let plain = ssasem.box_shape(t) && ssasem.finalizer_of(f, t) == "";
+  let record = plain && typeinfo.is_record(t) && !ssasem.secret_record(t, f);
+  let variant = plain && wiped_enum(t, f);
+  if (!record && !variant && !typeinfo.is_tuple(t)) {
     return r;
   }
   r = emit(r, ir.op_load_local(slot));
@@ -1537,10 +1539,67 @@ function wipe_child(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scr
   r = emit(r, ir.op_if(0));
   if (record) {
     r = wipe_record_fields(r, slot, ssasem.record_fields(t, f), scratch, f);
+  } else if (variant) {
+    r = wipe_variant_fields(r, slot, t, scratch, f);
   } else {
     r = wipe_tuple_fields(r, slot, typeinfo.tuple_elements(t), scratch, f);
   }
   return emit(r, ir.op_end());
+}
+
+// An enum whose value is a box of its own: not an immediate enum, and not a
+// union whose value is the box of a member type.
+function wiped_enum(t: typeinfo.Type, f: ssasem.Func): boolean {
+  if let typeinfo.TypeUnion(_) = t {
+    let layout = enum_layout(f, t);
+    return ssasem.counted(f, t) && (layout == semrecords.layout_variant() || layout == semrecords.layout_option());
+  }
+  return false;
+}
+
+// The payload store of an option takes one 32-bit value, so a wide or a
+// float payload keeps its bits.
+function wipe_variant_fields(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
+  let e = f.enums[semrecords.find_enum(f.enums, t)];
+  if (e.layout != semrecords.layout_option()) {
+    for v in e.variants {
+      if (semrecords.inhabited(v) && v.fields.len() > 0) {
+        r = emit(r, ir.op_load_local(slot));
+        r = variant_test(r, f, t, v.name);
+        r = emit(r, ir.op_if(0));
+        r = wipe_record_fields(r, slot, v.fields, scratch, f);
+        r = emit(r, ir.op_end());
+      }
+    }
+    return r;
+  }
+  let child = scratch;
+  r = reserve(r, child + 1);
+  for tag in 0..e.variants.len() {
+    let fields = e.variants[tag].fields;
+    if (fields.len() == 1 && (ssasem.counted(f, fields[0].ty) || narrow_scalar(fields[0].ty))) {
+      r = emit(r, ir.op_load_local(slot));
+      r = emit(r, ir.op_opt_tag());
+      r = emit(r, ir.op_const_i32(tag));
+      r = emit(r, ir.op_bin("eq", 0, false));
+      r = emit(r, ir.op_if(0));
+      r = emit(r, ir.op_load_local(slot));
+      if (ssasem.counted(f, fields[0].ty)) {
+        r = emit(r, ir.op_opt_payload());
+        r = emit(r, ir.op_store_local(child));
+        r = wipe_child(r, child, fields[0].ty, child + 1, f);
+      } else {
+        r = emit(r, ir.op_const_i32(0));
+        r = emit(r, ir.op_opt_set_payload());
+      }
+      r = emit(r, ir.op_end());
+    }
+  }
+  return r;
+}
+
+function narrow_scalar(t: typeinfo.Type): boolean {
+  return ssasem.is_scalar(t) && !wide_or_float(t);
 }
 
 function wipe_record_fields(own r: irtables.LowerState, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func): irtables.LowerState {
