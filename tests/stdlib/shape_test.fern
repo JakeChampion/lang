@@ -203,6 +203,39 @@ function test_prepared_coverage_range(): test.TestOutcome {
   return test.assert_eq(got + " " + joined(wide_ordinary.glyphs) + " " + idle_got, "63,64,65,66,126,12 0 101,401,401,99,4196 0 101,401,401,99,4196 12,13,200 2 0");
 }
 
+// `apply_each` gives the glyphs of one `apply` for each lookup, and takes
+// the same attempts. The first run has no glyph of the coverage 62..=65, so
+// the digest of the run tells that: the masks 1, 1 and 2 try 2, 2 and 1
+// glyphs. In the second run the lookup applies two times. In the third run
+// glyph 126 has the bit of 62 in the first word of the digest and glyph 48
+// has the bit of 62 in the second word, so the digest of the run holds the
+// coverage and each glyph does not.
+function test_prepared_lookups_in_sequence(): test.TestOutcome {
+  let Some(base) = devanagari() else {
+    return test.fail("the font did not parse");
+  };
+  let data: u8[] = [
+    0, 1, 0, 0, 0, 0, 0, 0, 0, 10,  // GSUB header
+    0, 1, 0, 4, 0, 1, 0, 0, 0, 1, 0, 8,  // one substitution lookup
+    0, 1, 0, 6, 0, 1,  // single substitution, delta +1
+    0, 2, 0, 1, 0, 62, 0, 65, 0, 0,  // coverage range 62..=65
+  ];
+  let font = truetype.Font { ...base, data: data, gsub: 0, gdef: -1 };
+  let p = font.prepare_lookup(0, false);
+  let inputs = [
+    truetype.run_of([12, 13, 200], [0, 1, 2], [1, 0, 3]),
+    truetype.run_of([62, 12, 200], [0, 1, 2], [1, 1, 1]),
+    truetype.run_of([126, 48], [0, 1], [1, 1]),
+  ];
+  let got = "";
+  for input in inputs {
+    let each = truetype.apply_each([p, p, p], input, [1, 1, 2], [0, 0, 0]);
+    let one = p.apply(p.apply(p.apply(input, 1, 0), 1, 0), 2, 0);
+    got = got + joined(each.glyphs) + " " + (input.ops - each.ops).to_string() + " " + (one.ops - each.ops).to_string() + " " + (joined(one.glyphs) == joined(each.glyphs)).to_string() + ";";
+  }
+  return test.assert_eq(got, "12,13,200 5 0 true;64,12,200 6 0 true;126,48 4 0 true;");
+}
+
 // A reverse chaining substitution inside an extension lookup replaces 7
 // with 8 only before another 7. Scanning from the right skips the first 7.
 function test_prepared_reverse_extension(): test.TestOutcome {
@@ -314,6 +347,7 @@ function main(): i32 {
   r = r.it("a cut font does not crash", test_a_cut_font_does_not_crash);
   r = r.it("prepared extension lookups preserve reverse chaining order", test_prepared_reverse_extension);
   r = r.it("the subtables of a lookup take from the attempts of the run", test_subtables_take_from_the_attempts);
+  r = r.it("prepared lookups in sequence take the attempts of each one alone", test_prepared_lookups_in_sequence);
   r = r.it("prepared coverage preserves matches, collisions and the operation budget", test_prepared_coverage_range);
   r = r.it("glyph_classes gives the class of each glyph in GDEF", test_glyph_classes_match_gdef);
   return r.finish();

@@ -1498,13 +1498,10 @@ function stage_lookups(f: truetype.Font, script: string, features: Feature[], gp
 }
 
 function apply_lookups(f: truetype.Font, r: truetype.Run, stage: Stage, gpos: boolean): truetype.Run {
-  let run = r;
-  for k in 0..stage.prepared.len() {
-    run = stage.prepared[k].apply(run, stage.masks[k], stage.opts[k]);
-  }
   if (stage.prepared.len() > 0) {
-    return run;
+    return truetype.apply_each(stage.prepared, r, stage.masks, stage.opts);
   }
+  let run = r;
   for k in 0..stage.lookups.len() {
     run = if (gpos) { f.position(run, stage.lookups[k], stage.masks[k], stage.opts[k]) } else { f.substitute(run, stage.lookups[k], stage.masks[k], stage.opts[k]) };
   }

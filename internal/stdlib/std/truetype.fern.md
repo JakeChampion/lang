@@ -1733,15 +1733,68 @@ pub function (p: PreparedLookup) with_classes(classes: u8[]): PreparedLookup {
 }
 
 pub function (p: PreparedLookup) apply(r: Run, mask: i32, opts: i32): Run {
-  if (!p.reverse) {
-    let tried = idle_attempts(p, r, mask);
-    if (tried == 0 || tried > 0 && r.ops <= 0) {
-      return r;
-    }
-    if (tried > 0) {
-      return Run { ...r, ops: (r.ops - tried).max(0) };
+  if (!p.reverse && p.digests.len() >= 3) {
+    let tried = idle_attempts(p, r, mask, p.digests[0], p.digests[1], p.digests[2]);
+    if (tried >= 0) {
+      return with_attempts_taken(r, tried);
     }
   }
+  return applied_prepared(p, r, mask, opts);
+}
+
+// `r` after each lookup of `ps` in turn, with the mask `masks[k]` and the
+// flags `opts[k]`, as `apply` gives it. A digest of the glyphs of the run
+// tells that a lookup holds none of them with no look at each glyph. Such a
+// lookup still takes its attempts, and lookups in sequence with one mask and
+// one class filter take the same count.
+pub function apply_each(ps: PreparedLookup[], r: Run, masks: i32[], opts: i32[]): Run {
+  let run = r;
+  let known = false;
+  let (r0, r4, r9) = (0u64, 0u64, 0u64);
+  let (of_mask, of_flag, of_set, counted) = (0, 0, 0, -1);
+  let owed = 0;
+  for k in 0..ps.len() {
+    let ds = ps[k].digests;
+    let tried = -1;
+    if (ds.len() >= 3 && !ps[k].reverse) {
+      if (!known) {
+        r0 = 0u64;
+        r4 = 0u64;
+        r9 = 0u64;
+        for g in run.glyphs {
+          r0 |= 1u64 << (g & 63) as u64;
+          r4 |= 1u64 << (g >> 4 & 63) as u64;
+          r9 |= 1u64 << (g >> 9 & 63) as u64;
+        }
+        known = true;
+        counted = -1;
+      }
+      if ((r0 & ds[0]) != 0u64 && (r4 & ds[1]) != 0u64 && (r9 & ds[2]) != 0u64) {
+        tried = idle_attempts(ps[k], run, masks[k], ds[0], ds[1], ds[2]);
+      } else {
+        let (flag, set) = (ps[k].lookup.flag, ps[k].lookup.set);
+        if (counted < 0 || of_mask != masks[k] || of_flag != flag || of_set != set) {
+          of_mask = masks[k];
+          of_flag = flag;
+          of_set = set;
+          counted = idle_attempts(ps[k], run, of_mask, 0u64, 0u64, 0u64);
+        }
+        tried = counted;
+      }
+    }
+    if (tried >= 0) {
+      owed += tried;
+      continue;
+    }
+    run = applied_prepared(ps[k], with_attempts_taken(run, owed), masks[k], opts[k]);
+    owed = 0;
+    known = false;
+  }
+  return with_attempts_taken(run, owed);
+}
+
+// `r` after `p` at each glyph that it tries.
+function applied_prepared(p: PreparedLookup, r: Run, mask: i32, opts: i32): Run {
   let l = Lookup { ...p.lookup, opts: opts, base: r.glyphs.len() };
   if (p.reverse) {
     return reverse_substituted(p.font, r, l, mask);
@@ -1749,15 +1802,19 @@ pub function (p: PreparedLookup) apply(r: Run, mask: i32, opts: i32): Run {
   return applied_to_each(p.font, r, l, mask, p.digests);
 }
 
-// The attempts that `applied_to_each` takes from the run when the digest of
-// `p` holds no glyph that the lookup tries, or -1 when it holds one. Each
-// glyph that the lookup tries takes one attempt there.
-function idle_attempts(p: PreparedLookup, r: Run, mask: i32): i32 {
-  if (p.digests.len() < 3) {
-    return -1;
+// `r` after a lookup that applied at no glyph took `tried` attempts.
+function with_attempts_taken(r: Run, tried: i32): Run {
+  if (tried == 0 || r.ops <= 0) {
+    return r;
   }
+  return Run { ...r, ops: (r.ops - tried).max(0) };
+}
+
+// The attempts that `applied_to_each` takes from the run when the digest
+// `d0`, `d4`, `d9` holds no glyph that the lookup of `p` tries, or -1 when it
+// holds one. Each glyph that the lookup tries takes one attempt there.
+function idle_attempts(p: PreparedLookup, r: Run, mask: i32, d0: u64, d4: u64, d9: u64): i32 {
   let filter = filters_classes(p.lookup);
-  let (d0, d4, d9) = (p.digests[0], p.digests[1], p.digests[2]);
   let tried = 0;
   for i in 0..r.glyphs.len() {
     if ((r.masks[i] & mask) == 0 || filter && skipped_class(p.font, p.lookup, r, i)) {
