@@ -1124,6 +1124,8 @@ function test_netd_reply(): test.TestOutcome {
 }
 
 function main(): i32 {
+  // A wasm program cannot reach /etc/hosts, and the live tests need it.
+  let no_hosts = read_file("/etc/hosts").is_err();
   let r = test.new("std/dns");
   r = r.it("a name on the wire", test_encode_name);
   r = r.it("an A query on the wire", test_query_on_the_wire);
@@ -1159,10 +1161,10 @@ function main(): i32 {
   r = r.it("RFC 8305: the dial options", test_dial_options);
   r = r.it("NAT64: the prefix an ipv4only.arpa record reveals", test_nat64_prefix_of);
   r = r.it("NAT64: an IPv4 address under a prefix", test_synthesize);
-  r = r.it("live: this machine's /etc/hosts", test_live_hosts_file);
+  r = r.skip_if(no_hosts, "live: this machine's /etc/hosts", "the host has no /etc/hosts", test_live_hosts_file);
   r = r.it("netd: the getaddrinfo command of Android", test_netd_request);
   r = r.it("netd: the reply, whole and in parts", test_netd_reply);
-  r = r.it("live: resolve localhost and a literal", test_live_resolve);
-  r = r.it("live: a resolver keeps what it read", test_live_resolver);
+  r = r.skip_if(no_hosts, "live: resolve localhost and a literal", "the host has no /etc/hosts", test_live_resolve);
+  r = r.skip_if(no_hosts, "live: a resolver keeps what it read", "the host has no /etc/hosts", test_live_resolver);
   return r.finish();
 }
