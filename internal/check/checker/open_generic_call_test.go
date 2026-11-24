@@ -68,6 +68,8 @@ func TestDestinationBindsACallInsideItsValue(t *testing.T) {
 		{"call with no argument before the first element with arguments", "function view(): i32 { let e = column([space(), space(), button(\"+\", Inc)]).padded(1.0); return 0; }"},
 		{"method argument binds the receiver", "function view(): i32 { let e = column([text(\"a\").on(Inc)]); return 0; }"},
 		{"function argument binds the receiver of a chain", "function view(): i32 { let e = column([text(\"a\").made((s: string): Msg => Dec).on(Inc)]).padded(1.0); return 0; }"},
+		{"tail of a block arm", "function view(o: Option[i32]): El[Msg] { let e: El[Msg] = match (o) { Some(n) => { let s = \"a\"; text(s) }, None => text(\"b\") }; return e; }"},
+		{"open call in an argument with a sibling", "function view(): i32 { let e = column([button(\"+\", Inc), column([space()])]); return 0; }"},
 		{"tuple element", "function view(): El[Msg] { let p: (El[Msg], i32) = (text(\"a\").padded(5.0), 1); return p.0; }"},
 	}
 	for _, c := range good {
@@ -79,6 +81,7 @@ func TestDestinationBindsACallInsideItsValue(t *testing.T) {
 		{"receiver with no destination", "function view(): i32 { let e = text(\"a\").padded(1.0); return 0; }", "could not infer type parameter M for text"},
 		{"method argument with no destination", "function view(): i32 { let e = text(\"a\").on(Inc); return 0; }", "could not infer type parameter M for text"},
 		{"array with no destination", "function view(): i32 { let e = [text(\"a\")]; return 0; }", "could not infer type parameter M for text"},
+		{"open call in an argument", "function view(): El[Msg] { let e = column([space()]); return column([e, button(\"+\", Inc)]); }", "could not infer type parameter M for column"},
 	}
 	for _, c := range bad {
 		err := checkSource(t, decls+c.body+end)

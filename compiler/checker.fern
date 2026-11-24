@@ -5615,13 +5615,18 @@ function elemless_array(t: typeinfo.Type): boolean {
   return false;
 }
 
-function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], name: string, s: Scope, dest: typeinfo.Type): util.Diag[] {
+function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], bt: typeinfo.Type[], name: string, s: Scope, dest: typeinfo.Type): util.Diag[] {
   let out: util.Diag[] = [];
   if (c.type_args.len() > 0) {
     return out;
   }
   let ret = sig_ret_ref(sig);
-  let bound = bn;
+  let bound: string[] = [];
+  for bi in 0..bn.len() {
+    if (bi >= bt.len() || tvar_name(bt[bi]).len() == 0) {
+      bound = bound.append(bn[bi]);
+    }
+  }
   if (!is_unknown(dest)) {
     let no_types: typeinfo.Type[] = [];
     let (dn, dt) = gc_bind_param(ret, dest, sig.type_params, s.type_names(), [], no_types);
@@ -5629,11 +5634,68 @@ function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], name
   }
   for tp in sig.all_type_params {
     let (named, all_empty) = empty_array_positions(sig.param_type_names, c.args, tp, s);
-    if (util.index_of_str(bound, tp) < 0 && !bound_names_tp(sig.type_bounds, tp) && all_empty) {
+    if (util.index_of_str(bound, tp) < 0 && !bound_names_tp(sig.type_bounds, tp) && (all_empty || open_positions(sig.param_type_names, c.args, tp, s))) {
       out = out.append(dg_at("E040", "could not infer type parameter " + tp + " for " + name + " — supply it explicitly at the call site (e.g. " + name + "[i32](...)) or annotate the binding", c.line, c.col));
     }
   }
   return out;
+}
+
+// open_positions reports that each argument whose parameter names tp binds
+// nothing or is an open generic call, and that one argument is such a call.
+function open_positions(spellings: string[], values: ast.Expr[], tp: string, s: Scope): boolean {
+  let open = false;
+  for k in 0..values.len() {
+    if (k < spellings.len() && spellings[k].len() > 0 && type_ref_names_any(parser.parse_type_ref(spellings[k]), [tp]) && !binds_nothing(values[k], s)) {
+      if (!only_open_calls(values[k], s)) {
+        return false;
+      }
+      open = true;
+    }
+  }
+  return open;
+}
+
+// only_open_calls reports an open generic call, or an array whose elements
+// each bind nothing or are open generic calls.
+function only_open_calls(e: ast.Expr, s: Scope): boolean {
+  if let ast.ExprCall(c) = e {
+    return open_generic_call(c, s);
+  }
+  let ast.ExprArray(arr) = e else {
+    return false;
+  };
+  for el in arr.elements {
+    if (!binds_nothing(el, s) && !only_open_calls(el, s)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// open_generic_call reports a generic call whose arguments leave a type
+// parameter unbound, or bind it only to another unbound parameter.
+function open_generic_call(c: ast.ExprCall, s: Scope): boolean {
+  let ast.ExprIdent(id) = c.callee else {
+    return false;
+  };
+  if (c.type_args.len() > 0 || s.defines(id.name)) {
+    return false;
+  }
+  let Some(sig) = s.lookup_sig(id.name) else {
+    return false;
+  };
+  if (sig.all_type_params.len() == 0 || c.args.len() != sig.param_types.len()) {
+    return false;
+  }
+  let (bn, bt) = call_type_bindings(sig, c, s);
+  for tp in sig.all_type_params {
+    let i = util.index_of_str(bn, tp);
+    if ((i < 0 || tvar_name(bt[i]).len() > 0) && !bound_names_tp(sig.type_bounds, tp)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function uninferred_method_diags(c: ast.ExprCall, recv: string, method: string, msig: MethodSig, s: Scope): util.Diag[] {
@@ -15189,7 +15251,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
               out = util.append_diags(out, call_bound_diags(sig.type_params, sig.type_bounds, sig.module, util.demangle(sig.name), cbn, cbt, s, c.line, c.col));
               let (fbn, fbt) = call_bindings(sig, c, s);
               out = util.append_diags(out, bound_arg_diags(sig, c, fbn, fbt, s));
-              out = util.append_diags(out, uninferred_call_diags(sig, c, fbn, id.name, s, dest));
+              out = util.append_diags(out, uninferred_call_diags(sig, c, fbn, fbt, id.name, s, dest));
             }
           }
         } else {

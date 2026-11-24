@@ -12340,12 +12340,15 @@ func (c *checker) checkBlockExprAt(n *ast.BlockExpr, parent *scope, want ast.Typ
 		defer func() { c.unsafeDepth-- }()
 	}
 	s := newScope(parent)
+	expected := c.expectedType
+	c.expectedType = nil
 	prevMutualRec := c.mutualRecSiblings
 	c.mutualRecSiblings = nil
 	for i, st := range n.Stmts {
 		n.Stmts[i] = c.checkStmtLoweringForEach(st, s)
 	}
 	c.mutualRecSiblings = prevMutualRec
+	c.expectedType = expected
 	if n.Tail == nil {
 		if c.stmtsDiverge(n.Stmts) {
 			return ast.NeverType{}
@@ -16741,6 +16744,12 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					args[i] = v
 				} else {
 					complete = false
+				}
+			}
+			if complete && callExpected == nil {
+				if open := c.unresolvedBindings(genericFn, sub); open != nil {
+					c.errUninferredParams(n, genericFn, open)
+					return nil
 				}
 			}
 			if complete {

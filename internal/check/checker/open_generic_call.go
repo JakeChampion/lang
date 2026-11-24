@@ -1,6 +1,10 @@
 package checker
 
-import "github.com/jakechampion/lang/internal/syntax/ast"
+import (
+	"maps"
+
+	"github.com/jakechampion/lang/internal/syntax/ast"
+)
 
 // An open generic call is the value of a `let` with no type, such as
 // `let m = ordmap.new();`, whose call leaves type parameters unbound. The
@@ -86,6 +90,25 @@ func (c *checker) openVariant(e ast.Expr) bool {
 	}
 	ed := c.info.Enums[id.EnumName]
 	return ed != nil && len(ed.TypeParams) > 0
+}
+
+// unresolvedBindings gives sub without each type parameter that it binds to
+// a type parameter of another function, such as the M of `row` in
+// `row([leaf()])`. Only an expected type of the call could resolve that
+// binding. It is nil when sub binds no such parameter.
+func (c *checker) unresolvedBindings(fn *ast.FuncDecl, sub map[string]ast.Type) map[string]ast.Type {
+	inScope := c.typeParamsInScope()
+	var out map[string]ast.Type
+	for _, tp := range fn.TypeParams {
+		if _, escaped := paramTypeNotIn(sub[tp], inScope); !escaped {
+			continue
+		}
+		if out == nil {
+			out = maps.Clone(sub)
+		}
+		delete(out, tp)
+	}
+	return out
 }
 
 // errUninferredParams reports the type parameters of fn that sub leaves
