@@ -26,7 +26,7 @@ A module that makes more than one Java object of one listener class can tell the
 
 A lock of the process guards the live loop. `start`, `tell` and the end of a loop with no activity take it, so a new activity does not take over a loop that ends.
 
-The module calls Java for the directories, the permissions, the Intent of the activity, the volume, the time zone, the languages and the font scale through `std/android/bindings`, which `jnibind` writes from `bindings.spec`. The calls for the system bars, the display mode, the orientation, the brightness of the window and picture-in-picture go through it also. The other Java calls of the module are JNI calls that name each class and each method as text.
+The module calls Java for the directories, the permissions, the Intent of the activity, the volume, the time zone, the languages and the font scale through `std/android/bindings`, which `jnibind` writes from `bindings.spec`. The calls for the system bars, the display mode, the orientation, the brightness of the window, picture-in-picture, the system properties and the API level go through it also. The other Java calls of the module are JNI calls that name each class and each method as text.
 
 ## Contracts
 
