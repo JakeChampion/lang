@@ -447,3 +447,14 @@ selfhost/wasm32-wasi/video_qtrle.emit	6670
 # lane: selfhost-alloc-x86_64
 x86_64/checker.allocs	53923811
 x86_64/checker.frees	53923811
+
+# lane: bootstrap-x86-64-linux
+bootstrap/x86-64-linux/stage1.wall_s	51
+bootstrap/x86-64-linux/stage1.peak_rss_mb	2350
+bootstrap/x86-64-linux/stage1.size_bytes	19893616
+bootstrap/x86-64-linux/stage2.wall_s	50
+bootstrap/x86-64-linux/stage2.peak_rss_mb	2347
+bootstrap/x86-64-linux/stage2.size_bytes	19893616
+bootstrap/x86-64-linux/stage3.wall_s	42
+bootstrap/x86-64-linux/stage3.peak_rss_mb	2344
+bootstrap/x86-64-linux/stage3.size_bytes	19893616
