@@ -1468,6 +1468,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	// wasm_resolve_name(name, out): number — the addresses of name from
+	// wasi:sockets/ip-name-lookup, written into out as 17-byte records: the
+	// family byte 4 or 6, then the address. The count of records, or -errno.
+	c.info.FuncSigs["wasm_resolve_name"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, u8s},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	c.info.FuncSigs["udp_bind"] = &ast.FuncType{
 		Params: []ast.Type{u8s, ast.NumberType{}},
 		Result: sock,

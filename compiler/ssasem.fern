@@ -426,7 +426,7 @@ pub function raw_array_args(name: string): i32[] {
   if (name == "__arr_set_len" || name == "__raw_arr_ptr") {
     return [0];
   }
-  if (name == "reactor_wait" || name == "ring_wait" || name == "tcp_recv_into") {
+  if (name == "reactor_wait" || name == "ring_wait" || name == "tcp_recv_into" || name == "wasm_resolve_name") {
     return [1];
   }
   if (name == "ring_recv" || name == "tcp_addr_into") {

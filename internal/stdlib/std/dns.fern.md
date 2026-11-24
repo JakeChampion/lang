@@ -6,6 +6,8 @@ This module resolves DNS names through host files, UDP, and TCP.
 
 DNS records retain their resource-data kind. Packet helpers encode and decode messages, while resolver functions coordinate host files and network exchanges.
 
+On `wasm32-wasi` the host resolves a name, through `wasi:sockets/ip-name-lookup`. The host must allow the lookup: `wasmtime run -S inherit-network -S allow-ip-name-lookup`.
+
 ## Contracts
 
 UDP and TCP use different message frame rules. The TCP path must send the complete length-prefixed query. Network operations return concrete DNS errors.
@@ -2978,7 +2980,59 @@ function resolve_in(conf: ResolvConf, hosts_of: () => HostsEntry[], name: string
   if (target_os() == "android") {
     return netd_lookup(name);
   }
+  if (target_os() == "wasi") {
+    return wasi_lookup(name);
+  }
   return found_addresses(conf, name);
+}
+
+// A WASI program cannot read `/etc/resolv.conf`, so the host resolves the
+// name, through `wasi:sockets/ip-name-lookup`.
+function wasi_lookup(name: string): Result[net.IpAddr[], DnsError] {
+  let records = zero_bytes(17 * 64);
+  let n = wasm_resolve_name(name, records);
+  if (n < 0) {
+    return Err(wasi_lookup_error(-n));
+  }
+  let found: net.IpAddr[] = [];
+  for k in 0..n {
+    if let Some(ip) = wasi_record_ip(records, k * 17) {
+      found = found.append(ip);
+    }
+  }
+  if (found.len() == 0) {
+    return Err(NoData);
+  }
+  return Ok(found);
+}
+
+// The address of the 17-byte record at `at`: the family byte 4 or 6, then
+// the address.
+function wasi_record_ip(b: [u8], at: i32): Option[net.IpAddr] {
+  if (b[at] == 4u8) {
+    return Some(net.ipv4(b[at + 1] as i32, b[at + 2] as i32, b[at + 3] as i32, b[at + 4] as i32));
+  }
+  let v6: u8[] = [];
+  for k in 0..16 {
+    v6 = v6.append(b[at + 1 + k]);
+  }
+  return net.ipv6(v6);
+}
+
+// The DnsError of a WASI errno from `wasm_resolve_name`: 44 is
+// name-unresolvable, 6 is temporary-resolver-failure and 29 is
+// permanent-resolver-failure.
+function wasi_lookup_error(errno: i32): DnsError {
+  if (errno == 44) {
+    return NoSuchName;
+  }
+  if (errno == 6) {
+    return NoReply;
+  }
+  if (errno == 29) {
+    return ServerFailure;
+  }
+  return NetFailed(net.error_from_host(errno));
 }
 ```
 

@@ -47,7 +47,7 @@ var capabilityProfiles = map[string]capabilityProfile{
 
 	"hosted-darwin": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "sysctl", "atomics"},
 
-	"wasi-cli": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal", "reactor", "pollable"},
+	"wasi-cli": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal", "reactor", "pollable", "resolve"},
 
 	"wasi-proxy": {"log", "now", "config", "random", "fetch", "pollable"},
 

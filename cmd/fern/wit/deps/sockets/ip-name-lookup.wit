@@ -1,0 +1,16 @@
+package wasi:sockets@0.2.0;
+
+// Vendored wasi:sockets/ip-name-lookup@0.2.0: the host resolves a name
+// to its addresses. `wasm_resolve_name` uses it.
+// Source: https://github.com/WebAssembly/wasi-sockets
+interface ip-name-lookup {
+    use wasi:io/poll@0.2.0.{pollable};
+    use network.{network, error-code, ip-address};
+
+    resolve-addresses: func(network: borrow<network>, name: string) -> result<resolve-address-stream, error-code>;
+
+    resource resolve-address-stream {
+        resolve-next-address: func() -> result<option<ip-address>, error-code>;
+        subscribe: func() -> pollable;
+    }
+}

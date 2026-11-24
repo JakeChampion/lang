@@ -3400,6 +3400,9 @@ function call_host_stub(name: string): Value {
   if (util.has_str(["wasm_poll", "wasm_timer_pollable"], name)) {
     return v_int(-1);
   }
+  if (name == "wasm_resolve_name") {
+    return v_int(-58);
+  }
   if (util.has_str(["wasm_block", "wasm_pollable_drop"], name)) {
     return v_int(0);
   }

@@ -23,7 +23,7 @@ function capability_profile(profile: string): string[] {
     return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "sysctl", "atomics"];
   }
   if (profile == "wasi-cli") {
-    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal", "reactor", "pollable"];
+    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal", "reactor", "pollable", "resolve"];
   }
   if (profile == "wasi-proxy") {
     return ["log", "now", "config", "random", "fetch", "pollable"];
@@ -232,6 +232,7 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "wasm_pollable_drop", capability: "pollable" },
     Gate { builtin: "wasm_block", capability: "pollable" },
     Gate { builtin: "wasm_poll", capability: "pollable" },
+    Gate { builtin: "wasm_resolve_name", capability: "resolve" },
     Gate { builtin: "env", capability: "env" },
     Gate { builtin: "environ", capability: "env" },
     Gate { builtin: "args", capability: "args" },

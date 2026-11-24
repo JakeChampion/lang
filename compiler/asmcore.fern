@@ -3205,6 +3205,7 @@ function builtin_i32_names(): string[] {
     "wasm_pollable_drop",
     "wasm_block",
     "wasm_poll",
+    "wasm_resolve_name",
     "tcp_listen",
     "tcp_accept",
     "tcp_accept_with",

@@ -64,6 +64,7 @@ var gatedBuiltins = map[string]string{
 	"wasm_pollable_drop":  "pollable",
 	"wasm_block":          "pollable",
 	"wasm_poll":           "pollable",
+	"wasm_resolve_name":   "resolve",
 
 	"env":        "env",
 	"environ":    "env",

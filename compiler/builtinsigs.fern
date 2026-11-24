@@ -291,6 +291,7 @@ pub function builtin_sigs(): string[] {
     "wasm_block(i32): i32",
     "wasm_poll(i32[]): i32",
     "wasm_pollable_drop(i32): i32",
+    "wasm_resolve_name(string, u8[]): i32",
     "wasm_timer_pollable(i64): i32",
     "window_size(i32): Result[WinSize, IoError]",
     "write(string): void",

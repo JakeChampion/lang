@@ -601,6 +601,7 @@ is the number of slots it leaves.
 | `reader_from_fd` | 573 | 1 | 1 |
 | `ffma32` | 574 | 3 | 1 |
 | `aes_dec_blocks` | 575 | 2 | 1 |
+| `wasm_resolve_name` | 576 | 2 | 1 |
 <!-- END ir_effects_run -->
 
 `vpermute` preserves all lane bits in two 128-bit inputs.

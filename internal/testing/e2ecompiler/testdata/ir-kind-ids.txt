@@ -522,3 +522,4 @@ ffma=572
 reader_from_fd=573
 ffma32=574
 aes_dec_blocks=575
+wasm_resolve_name=576

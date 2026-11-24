@@ -56,6 +56,7 @@ costs a silent failure on the first target that lacks it.
 | `now` | `now_unix_ms`, `now_ns`, `monotonic_ns`, `clock_resolution`, `clock_set`, `sleep_ms`, `sleep_ns`, `poll` | a clock, and wakeups driven by one |
 | `pollfd` | `timer_fd` | file descriptors a readiness primitive can wait on |
 | `pollable` | `wasm_timer_pollable`, `wasm_pollable_drop`, `wasm_block`, `wasm_poll` | wasi:io pollables, the handles a wasi wait blocks on. Granted by the two wasi profiles alone; std/async reaches them under a `target_os()` branch |
+| `resolve` | `wasm_resolve_name` | the host's name resolver, wasi:sockets/ip-name-lookup. Granted by the wasi CLI profile alone; std/dns reaches it under a `target_os()` branch, and sends its own queries on each other target |
 | `env` | `env` | envp, captured at process start |
 | `config` | `config_get` | deploy-time configuration: the environment where the target has one, wasi:config/store on the proxy world |
 | `args` | `args` | argv, which exists only because something exec'd you |
