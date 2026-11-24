@@ -238,7 +238,7 @@ function spent_on_way(g: ssa.SFunc, pos: i32[], dom: ssadeps.Dom, insts: ssa.SIn
 }
 
 function spends_any(ins: ssa.SInst, up: i32[]): boolean {
-  return spends(ins.kind_tag) && touches(ins.args, up) || util.index_of_i32(up, ssasem.update_base(ins)) >= 0;
+  return spends(ins) && touches(ins.args, up) || util.index_of_i32(up, ssasem.update_base(ins)) >= 0;
 }
 
 // sink_past_lent re-reads a projection below a call that only borrows its
@@ -310,7 +310,7 @@ function lent_target(f: ssasem.Func, insts: ssa.SInst[], i: i32): i32 {
     }
     if (at.kind_tag == ssasem.call() && lends_only(f, at, up)) {
       lent = lent || touches(at.args, up);
-    } else if (touches(at.args, up) && spends(at.kind_tag)) {
+    } else if (touches(at.args, up) && spends(at)) {
       return -1;
     }
   }
@@ -576,7 +576,7 @@ function spent_by(f: ssasem.Func, lent: boolean, parent: boolean[], deps: i32[][
   let bi = 0;
   for b in g.blocks {
     for ins in b.insts {
-      if (spends(ins.kind_tag)) {
+      if (spends(ins)) {
         let modes: i32[] = [];
         if (lent && ins.kind_tag == ssasem.call()) {
           modes = ssasem.callee_modes(f, ins);
@@ -605,8 +605,10 @@ function lent_to(f: ssasem.Func, modes: i32[], args: i32[], k: i32): boolean {
   return k < modes.len() && modes[k] == ssasem.borrow_mode() && args[k] >= 0 && ssasem.owned_shape(f.values[args[k]]) && !ssasem.is_string(f.values[args[k]]);
 }
 
-function spends(k: i32): boolean {
-  return !projection(k) && k != ssasem.variant_is() && k != ssasem.length() && k != ssa.PHI;
+// A comparison only reads its operands, strings included.
+function spends(ins: ssa.SInst): boolean {
+  let k = ins.kind_tag;
+  return !projection(k) && k != ssasem.variant_is() && k != ssasem.length() && k != ssa.PHI && !(k == ssa.BINARY && ssasem.comparison(ins.str));
 }
 
 function spend_phi_inputs(g: ssa.SFunc, pos: i32[], b: ssa.SBlock, spent0: i32[][], parent: boolean[], bi: i32): i32[][] {
