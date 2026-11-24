@@ -37,27 +37,88 @@ function parens(depth: i32): string {
   return s;
 }
 
-// A rule reference nested deeper than 2048 fails the match instead of
-// growing the stack without bound.
-function test_peg_depth_limit(): test.TestOutcome {
-  let rules: Map[string, peg.Pattern] = map_new(2);
-  rules = rules.insert("e", PChoice([PSeq([PLit("("), PRef("e"), PLit(")")]), PLit("x")]));
-  let Ok(g) = peg.grammar(rules, "e") else {
-    return test.fail("grammar should build");
+// A hosted native program has a stack of 1 GiB. On the other targets the
+// stack is smaller, and the peg frame limit stops a match first.
+function hosted(): boolean {
+  let os = target_os();
+  return os == "linux" || os == "android" || os == "darwin";
+}
+
+function parens_grammar(start: string, rules: Map[string, peg.Pattern]): peg.Grammar {
+  let all = rules.insert("e", PChoice([PSeq([PLit("("), PRef("e"), PLit(")")]), PLit("x")]));
+  let Ok(g) = peg.grammar(all, start) else {
+    return peg.Grammar { rules: all, start: start };
   };
-  match (peg.parse(g, parens(2000))) {
-    Ok(_) => {},
+  return g;
+}
+
+function too_deep(r: Result[peg.PegMatch, peg.PegError]): boolean {
+  match (r) {
+    Ok(_) => {
+      return false;
+    },
     Err(e) => {
-      return test.fail("2000 levels refused: " + e.message());
+      return e.too_deep;
     }
   }
-  match (peg.parse(g, parens(2100))) {
-    Ok(_) => {
-      return test.fail("2100 levels accepted");
-    },
-    Err(_) => {}
+}
+
+// A rule reference nested deeper than 2048 stops the match instead of
+// growing the stack without bound.
+function test_peg_depth_limit(): test.TestOutcome {
+  let none: Map[string, peg.Pattern] = map_new(2);
+  let g = parens_grammar("e", none);
+  if (!peg.parse(g, parens(400)).is_ok()) {
+    return test.fail("400 levels refused");
+  }
+  if (hosted() && !peg.parse(g, parens(2000)).is_ok()) {
+    return test.fail("2000 levels refused");
+  }
+  let deep = peg.parse(g, parens(2100));
+  if (!too_deep(deep)) {
+    return test.fail("2100 levels did not stop as too deep");
+  }
+  let Err(e) = deep else {
+    return test.fail("2100 levels accepted");
+  };
+  return test.assert_true(e.message().starts_with("peg: nesting too deep"));
+}
+
+// The depth limit stops the parse. No choice, option, repetition or
+// predicate can match after it.
+function test_peg_depth_limit_stops_the_parse(): test.TestOutcome {
+  let rows: peg.Pattern[] = [
+    PSeq([PNot(PRef("e")), PStar(PAny)]),
+    PChoice([PRef("e"), PStar(PAny)]),
+    PSeq([POpt(PRef("e")), PStar(PAny)]),
+    PSeq([PStar(PRef("e")), PStar(PAny)]),
+    PSeq([PAnd(PRef("e")), PStar(PAny)]),
+  ];
+  for i in 0..rows.len() {
+    let rules: Map[string, peg.Pattern] = map_new(2);
+    let g = parens_grammar("s", rules.insert("s", rows[i]));
+    if (!too_deep(peg.parse(g, parens(2100)))) {
+      return test.fail("row " + i.to_string() + " did not stop as too deep");
+    }
   }
   return test.pass();
+}
+
+// Patterns that nest without a rule reference also stop before the stack
+// runs out. On a hosted target the limit is above a million frames.
+function test_peg_frame_limit(): test.TestOutcome {
+  let p = PLit("x");
+  for i in 0..2000 {
+    p = PSeq([p]);
+  }
+  if (!hosted() && !too_deep(peg.parse_pattern(p, "x"))) {
+    return test.fail("2000 nested patterns did not stop as too deep");
+  }
+  let q = PLit("x");
+  for i in 0..500 {
+    q = PSeq([q]);
+  }
+  return test.assert_true(peg.parse_pattern(q, "x").is_ok());
 }
 
 function test_json_depth_limit(): test.TestOutcome {
@@ -166,7 +227,7 @@ function test_peg_lower_depth_limit(): test.TestOutcome {
   if (peg.parse_with_depth(g, "x", 0).is_ok()) {
     return test.fail("a rule matched at limit 0");
   }
-  if (!peg.parse_with_depth(g, parens(2000), 100000).is_ok()) {
+  if (hosted() && !peg.parse_with_depth(g, parens(2000), 100000).is_ok()) {
     return test.fail("2000 levels refused at limit 100000");
   }
   if (peg.parse_with_depth(g, parens(2100), 100000).is_ok()) {
@@ -278,6 +339,8 @@ function main(): i32 {
   let r = test.new("std parse limits");
   r = r.it("json depth limit", test_json_depth_limit);
   r = r.it("peg depth limit", test_peg_depth_limit);
+  r = r.it("peg depth limit stops the parse", test_peg_depth_limit_stops_the_parse);
+  r = r.it("peg frame limit", test_peg_frame_limit);
   r = r.it("json lower depth limit", test_json_lower_depth_limit);
   r = r.it("peg lower depth limit", test_peg_lower_depth_limit);
   r = r.it("json typed readers take a depth limit", test_json_typed_readers_take_a_depth_limit);
