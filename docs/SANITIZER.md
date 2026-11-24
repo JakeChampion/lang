@@ -154,84 +154,65 @@ pin the cheap proxy for that.
 Wasm pays the same: its quarantine, its poison checks, its redzone, its fill
 and its census.
 
-## Backend coverage
+## Target coverage
 
-| | leak census | rc over-release | use-after-free | second context |
+| Target | leak census | rc over-release, use-after-free, write-after-free, overflow | misaligned atomic | second context |
 | --- | --- | --- | --- | --- |
-| x86-64 (native) | ✅ | ✅ | ✅ | — |
-| arm64 (native) | ✅ | ✅ | ✅ | — |
-| x86-64 (self-host) | ✅ | ✅ | ✅ | ✅ |
-| arm64 (self-host) | ✅ | ✅ | ✅ | ✅ |
-| wasm (self-host) | ✅ | ✅ | ✅ | — |
-| the Go SSA backends | — | — | — | — |
+| x86-64-linux | ✅ | ✅ | ✅ | ✅ |
+| arm64-linux | ✅ | ✅ | ✅ | ✅ |
+| arm64-darwin | ✅ | ✅ | ✅ | ✅ |
+| x86-64-android, arm64-android | ✅ | ✅ | ✅ | ✅ |
+| wasm32-wasi | ✅ | ✅ | — | — |
+| wasm32-wasi-http | no exit, so no census | ✅ | — | — |
+| x86-64-kernel, arm64-kernel | refused | refused | refused | refused |
+| x86-64-freestanding, arm64-freestanding | refused | refused | refused | refused |
 
-Every row above emits the **same** message text and the same exit status — a
-`fern-sanitizer:` line does not tell you which compiler produced the binary,
-which is the point: "build it with `-sanitize`" has to mean one thing.
+Each target emits the **same** message text and the same exit status. A
+`fern-sanitizer:` line does not tell you which target made the binary, so
+"build it with `-sanitize`" means one thing everywhere.
 
-The two natives are at parity end-to-end, not just in the asm they emit: the
-same deliberate use-after-free program (`__fern_arr_dec` on an array's data
-pointer, then `__fern_rc_inc` on the retained address) trips the poisoned-read
-report with exit 124 and a backtrace on both, and the same clean program is
-silent with the same census on both
-(`internal/testing/e2e/sanitizer_test.go`, the `TestX86_64Sanitize*` /
-`TestArm64Sanitize*` pairs). That probe is also the recipe for reaching the
-detector from Fern: the plain `__rc_dec` builtin never frees on native, so a
-double `__rc_dec` reads rc 0 and reports over-release instead - only the
-freeing dec quarantines.
+The Linux targets are pinned end to end by the pairs in
+`internal/testing/e2e/sanitizer_test.go` (`TestX86_64Sanitize*` and
+`TestArm64Sanitize*`). The same use-after-free program (`__rc_dec` on an
+array, then `__fern_rc_inc` on its address) reports with exit 124 and a
+backtrace on both, and the same clean program is silent with the same census.
+A double `__rc_dec` reports **use-after-free**, not over-release: the first
+`__rc_dec` frees and poisons the block, so the second touches the poison.
 
-The arm64 family's Mach-O member is gated the same way:
-`arm64_darwin_sanitizer_test.go` (`TestArm64DarwinSanitize`, the macos lane)
-builds the self-host's probes through the CLI's `-sanitize` and runs them
-natively on Apple Silicon. There `__rc_dec` is the freeing dec, so a stale
-`__fern_rc_inc` and a second `__rc_dec` both land on the quarantine's poison
-and report the use-after-free.
+`TestArm64DarwinSanitize` (the macos lane) builds the same probes for
+`arm64-darwin` and runs them on Apple Silicon. The Android targets share the
+Linux runtime, and no test runs a sanitized Android program. Each hosted
+target emits the misaligned-atomic and second-context checks, but only the
+Linux tests run them.
 
-`-sanitize` on a target that is not fully covered **warns and names what the
-build does carry**, so a silent run is never mistaken for a checked one.
-wasm32-wasi carries each check that applies to it, so it has no warning. On
-wasm32-wasi-http the warning says that the census prints at process exit. On
-a target with no instrumentation at all, it says that the build carries no
-checks.
-
-The **self-host** compiler takes `-sanitize` as native does, and reads
-`FERN_SANITIZE=1` at emit time (its `FERN_LEAKCHECK` / `FERN_DEBUG_RC_TRACE` ports
-have the same shape), so either goes to the compiler process, not to the
-program it produces; the flag prints the same per-target coverage note:
+The compiler takes `-sanitize` at compile time, and reads `FERN_SANITIZE=1`
+in the compiler process, not in the program it makes:
 
 ```sh
-bin/fern-selfhost -sanitize -target x86-64-linux -o prog.s /ABS/prog.fern $PWD/internal/stdlib
+bin/fern -sanitize -target x86-64-linux -o prog prog.fern
 ```
 
-Its reports carry the same frame-pointer backtrace as native's, suppressed by
-`FERN_BACKTRACE=0`. This matters because the self-host compiler is precisely
-the long-running, allocation-heavy program the mode was argued for.
-
-Its quarantine also moves one diagnosis: the `__alloc_u8` + double-`__rc_dec`
-probe reports **use-after-free** there and **over-release** on native, because
-this runtime's `__rc_dec` maps to the freeing `__fern_arr_dec` — the first dec
-reclaims and poisons, so the second touches the poison, where native's plain
-`rc_dec` never frees and reads rc 0 instead. Each fires for what actually
-happened in its runtime; the texts are identical.
-
-One census reading that surprises people: `__free(ptr, size)` is a **no-op** in
-the self-host runtime (`irlower.fern` — "a no-op under the bump/leak heap"), so
-a program that raw-allocates and raw-frees reports every block as leaked there
-while native reports it reclaimed. That is the census being accurate about the
-runtime it is measuring, not a divergence to paper over.
+The compiler itself is the long-running, allocation-heavy program that the
+mode is for.
 
 ## A kernel image: the census through the board
 
 A target without a host has no stderr and no exit syscall. Thus the compiler
-refuses a `FERN_LEAKCHECK` or `-sanitize` build of one, with one exception. A
-kernel image whose board supplies a `log` provider prints the census through
-the provider. Its reset entry prints the census after `main` returns, before
-the `exit` provider stops the machine (`docs/FREESTANDING-CORE.md`, "A board
-supplies a capability").
+refuses a `-sanitize` or `FERN_SANITIZE=1` build of a kernel image or a
+freestanding library. The refusal names the syscall that the report needs:
 
+```
+fern: -target arm64-kernel has no host, but this build needs syscall 64. A switch that writes a report, such as -sanitize, FERN_SANITIZE or FERN_LEAKCHECK, needs a host
+```
+
+`FERN_LEAKCHECK=1` has one exception. A kernel image whose board supplies a
+`log` provider prints the census through the provider. Its reset entry prints
+the census after `main` returns, before the `exit` provider stops the machine
+(`docs/FREESTANDING-CORE.md`, "A board supplies a capability").
 `TestSelfHostKernelTicksOnQemu` and `TestSelfHostKernelX86TicksOnQemu` read a
-balanced census off the serial console. The fatal checks of `-sanitize` still
-need a host, because their abort path is a syscall.
+balanced census off the serial console. The fatal checks of `-sanitize` have
+no such exception, because their abort path is a syscall.
+`TestSelfHostFreestandingRefusesHostedRuntime` pins the refusals.
 
 ## wasm: the census, the quarantine and the redzone
 
@@ -312,13 +293,25 @@ holds a write past the request inside its class. `TestWasmSanitizeReportsWriteAf
 holds the write-after-free reports at eviction and at exit, and the poison
 that a stale read gives.
 
+## Combinations with other switches
+
+| Switch | With `-sanitize` |
+| --- | --- |
+| `-harden`, `-pie` | Compatible. The detectors and the hardening are both in the build, and the reports do not change. |
+| `-size` | The backtrace is off unless `-backtrace` is also given, so a report names its cause but not its location. `-profile diagnostic` gives `-backtrace`. |
+| `-backtrace=false` | A report names its cause but not its location. |
+| `-shared` | Compatible. The thread that holds the busy lock owns the heap (see "One context per heap"). |
+| `-quarantine SIZE` | Sets the quarantine budget. Without `-sanitize` the compiler refuses it. |
+| `FERN_RC_CERTIFY` | The certifier runs first. A program that miscounts on purpose is refused at compile time (exit 5) and never reaches the detectors. `FERN_RC_CERTIFY=0` lets it compile. |
+| `exit()` | The census prints, but there is no leak verdict (see "What it turns on"). |
+| a kernel or freestanding target | Refused (see "A kernel image"). |
+| `wasm32-wasi-http` | A warning: a request handler does not exit, so no census prints. |
+
 ## Editing notes
 
-One asymmetry worth knowing if you are editing this: arm64's `__fern_str_inc`
-**inlines** its rc bump instead of tail-calling `__fern_rc_inc` (it has to
-preserve the `(data, len)` pair in x0/x1), so it carries its own poison check.
-Any future helper that inlines an rc op rather than calling out needs the same
-treatment, or a stale reference walks straight past the detector.
+A helper that does an rc operation inline needs its own poison check.
+`__fern_rc_inc` and `__fern_rc_dec` have the check, so a call to them is
+safe. Without the check, a stale reference goes past the detector.
 
 ## Reading a finding
 
