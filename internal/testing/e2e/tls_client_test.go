@@ -349,6 +349,20 @@ function drained(c: client.Connection): string {
   return text;
 }
 
+function tls13_only(roots: verify.Roots): string {
+  let cfg = client.config("localhost", roots).without_tls12();
+  match (client.connect("localhost", @TLS12EC@, cfg, time.duration_seconds(@TOTAL@ as i64))) {
+    Err(e) => {
+      return e.message();
+    },
+    Ok(c) => {
+      let _ = c.close();
+      return "connected";
+    }
+  }
+  return "";
+}
+
 // greeted reads from a server that writes at once after its handshake.
 function greeted(roots: verify.Roots): string {
   match (client.connect("localhost", @GREET@, client.config("localhost", roots), time.duration_seconds(@TOTAL@ as i64))) {
@@ -406,6 +420,7 @@ function main(): i32 {
   fetch.close_idle(over_h2);
   match (verify.system_roots()) {
     Some(roots) => {
+      print("TLS 1.3 only: " + tls13_only(roots));
       let held: fetch.Sockets = fetch.sockets();
       show("given", fetch.send_on(held, interop_get("https://localhost:@RSA@/h"), trusting(roots)));
       show("none", fetch.send_on(held, interop_get("https://localhost:@RSA@/i"), trusting(verify.roots([]))));
@@ -448,6 +463,7 @@ func (w *tlsWorld) check(t *testing.T, got string, mainConns int64) {
 		"tunnel: " + ok("/g", "X25519MLKEM768"),
 		"h2: 200 /k HTTP/2.0 h2 body=0 x-fern=yes",
 		"h2 again: 200 /l HTTP/2.0 h2 body=10 x-fern=-",
+		"TLS 1.3 only: tls handshake: the peer sent alert 70",
 		"given: " + ok("/h", "X25519MLKEM768"),
 		"none: error TLS: the peer's certificate is not trusted: tls verify: no path from the certificate reaches a trusted root",
 		"given again: " + ok("/j", "X25519MLKEM768"),
