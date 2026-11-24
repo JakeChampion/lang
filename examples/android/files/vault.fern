@@ -7,50 +7,65 @@ import "std/kv";
 import "std/result";
 import "std/utf8";
 import "./files";
+import "./dav";
 import "./smb";
+import "./store";
 
 const KEY: string = "fern-files.servers.v1";
 
 const FILE: string = "/servers";
 
 // The servers as text: a count, then the fields of each server. Each value
-// is base64, so a password can hold each character.
+// is base64, so a password can hold each character. A WebDAV server has
+// the kind "dav", and a server with no kind is an SMB server.
 pub function encode(servers: files.Saved[]): string {
-  let store = kv.empty("").set("count", servers.len().to_string());
+  let kept = kv.empty("").set("count", servers.len().to_string());
   for i in 0..servers.len() {
     let s = servers[i];
     let at = i.to_string() + ".";
-    let fields = [("name", s.name), ("host", s.server.host), ("share", s.server.share), ("user", s.server.user), ("password", s.server.password), ("domain", s.server.domain)];
+    let fields = match (s.link) {
+      store.Smb(x) => [("name", s.name), ("host", x.host), ("share", x.share), ("user", x.user), ("password", x.password), ("domain", x.domain)],
+      store.Dav(x) => [("name", s.name), ("kind", "dav"), ("url", x.url), ("user", x.user), ("password", x.password), ("pin", x.pin)],
+    };
     for field in fields {
-      store = store.set(at + field.0, base64.encode(field.1.bytes()));
+      kept = kept.set(at + field.0, base64.encode(field.1.bytes()));
     }
-    store = store.set(at + "port", s.server.port.to_string());
+    if let store.Smb(x) = s.link {
+      kept = kept.set(at + "port", x.port.to_string());
+    }
   }
-  return store.encode();
+  return kept.encode();
 }
 
 // The servers of the text that `encode` made. A server with no address is
 // not a server, so the result does not have it.
 pub function decode(text: string): files.Saved[] {
-  let Ok(store) = kv.decode("", text) else {
+  let Ok(kept) = kv.decode("", text) else {
     return [];
   };
   let field = (key: string): string => {
-    if let Some(value) = store.get(key) {
+    if let Some(value) = kept.get(key) {
       if let Ok(bytes) = base64.decode(value) {
         return utf8.from_bytes_lossy(bytes);
       }
     }
     return "";
   };
-  let count = i32.parse_i32(store.get("count").unwrap_or("0")).unwrap_or(0);
+  let count = i32.parse_i32(kept.get("count").unwrap_or("0")).unwrap_or(0);
   let out: files.Saved[] = [];
   for i in 0..count {
     let at = i.to_string() + ".";
-    let port = i32.parse_i32(store.get(at + "port").unwrap_or("445")).unwrap_or(445);
+    if (field(at + "kind") == "dav") {
+      let server = dav.Server { url: field(at + "url"), user: field(at + "user"), password: field(at + "password"), pin: field(at + "pin") };
+      if (server.url.len() > 0) {
+        out = out.append(files.Saved { name: field(at + "name"), link: store.Dav(server) });
+      }
+      continue;
+    }
+    let port = i32.parse_i32(kept.get(at + "port").unwrap_or("445")).unwrap_or(445);
     let server = smb.Server { host: field(at + "host"), port: port, share: field(at + "share"), user: field(at + "user"), password: field(at + "password"), domain: field(at + "domain") };
     if (server.host.len() > 0) {
-      out = out.append(files.Saved { name: field(at + "name"), server: server });
+      out = out.append(files.Saved { name: field(at + "name"), link: store.Smb(server) });
     }
   }
   return out;

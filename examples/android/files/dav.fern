@@ -9,15 +9,24 @@ import "std/i32";
 import "std/i64";
 import "std/option";
 import "std/result";
+import "std/hex";
 import "std/string";
 import "std/time";
+import "std/tls";
+import "std/tls/verify";
 import "std/url";
 import "std/utf8";
 import "./smb";
 
 // A WebDAV server: the address of its top folder, such as
-// https://nas.local:5006/home, and the user and the password.
-pub struct Server { url: string, user: string, password: string }
+// https://nas.local:5006/home, the user and the password, and the SHA-256
+// fingerprint of a certificate that the person chose to trust, in hex, or
+// "" for the trust of the system.
+pub struct Server { url: string, user: string, password: string, pin: string }
+
+// The text of a failure because the phone does not trust the certificate
+// of the server. `fingerprint` then gives the fingerprint to show.
+pub const UNTRUSTED: string = "The server has a certificate that this phone does not trust.";
 
 // The body of a PROPFIND that asks for the properties that a list needs.
 const PROPFIND: string = "<?xml version=\"1.0\" encoding=\"utf-8\"?><d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/></d:prop></d:propfind>";
@@ -77,12 +86,35 @@ pub function status_text(code: i32): string {
   };
 }
 
-// The reply of `req`, or the text of its failure. A status that is not in
-// `wanted` is a failure.
-function sent(req: fetch.Request, wanted: i32[]): Result[HttpResponse, string] {
-  let reply = match (fetch.send(req)) {
+// The reply of `req` to `s`, with the pin of `s` when it has one.
+function asked_with_trust(s: Server, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
+  if (s.pin.len() == 0) {
+    return fetch.send(req);
+  }
+  let Ok(pin) = hex.decode(s.pin) else {
+    return fetch.send(req);
+  };
+  return fetch.send_trusting(req, verify.pinned([pin]));
+}
+
+// The fingerprint in a refusal of the certificate of a server because it
+// is not pinned, or None.
+function not_pinned(e: fetch.FetchError): Option[string] {
+  if let fetch.Tls(tls.Untrusted(verify.NotPinned(seen))) = e {
+    return Some(seen);
+  }
+  return None;
+}
+
+// The reply of `req` to `s`, or the text of its failure. A status that is
+// not in `wanted` is a failure.
+function sent(s: Server, req: fetch.Request, wanted: i32[]): Result[HttpResponse, string] {
+  let reply = match (asked_with_trust(s, req)) {
     Ok(r) => r,
     Err(e) => {
+      if let fetch.Tls(tls.Untrusted(_)) = e {
+        return Err(UNTRUSTED);
+      }
       return Err("The server did not answer: " + e.message());
     },
   };
@@ -95,7 +127,7 @@ function sent(req: fetch.Request, wanted: i32[]): Result[HttpResponse, string] {
 // The entries of the folder `path`.
 pub function list(s: Server, path: string): Result[smb.Entry[], string] {
   let req = asked(s, "PROPFIND", path + "/").with_header("Depth", "1").with_header("Content-Type", "application/xml; charset=utf-8").with_text(PROPFIND);
-  let reply = sent(req, [207])?;
+  let reply = sent(s, req, [207])?;
   return Ok(entries(utf8.from_bytes_lossy(reply.body.bytes()), path_part(address(s, path))));
 }
 
@@ -104,7 +136,7 @@ pub function list(s: Server, path: string): Result[smb.Entry[], string] {
 pub function read(s: Server, path: string, offset: i64, n: i32): Result[smb.Part, string] {
   let last = offset + n as i64 - 1i64;
   let req = asked(s, "GET", path).with_header("Range", "bytes=" + offset.to_string() + "-" + last.to_string());
-  let reply = sent(req, [200, 206, 416])?;
+  let reply = sent(s, req, [200, 206, 416])?;
   if (reply.status == 416) {
     let size = total_of(reply.headers.get("Content-Range").unwrap_or("")).unwrap_or(offset);
     return Ok(smb.Part { data: [], size: size });
@@ -120,6 +152,32 @@ pub function read(s: Server, path: string, offset: i64, n: i32): Result[smb.Part
   return Ok(smb.Part { data: body.drop(from).take(to - from), size: body.len() as i64 });
 }
 
+// The SHA-256 fingerprint in hex of the certificate that `s` shows, or
+// "" when the server does not answer with one. A pin that no certificate
+// has makes the client refuse the certificate and name its fingerprint.
+pub function fingerprint(s: Server): string {
+  let req = asked(s, "PROPFIND", "").with_header("Depth", "0");
+  let none: u8[] = [];
+  for i in 0..32 {
+    none = none.append(0u8);
+  }
+  return match (fetch.send_trusting(req, verify.pinned([none]))) {
+    Ok(_) => "",
+    Err(e) => not_pinned(e).unwrap_or(""),
+  };
+}
+
+// The fingerprint `hex_text` as a person reads it: pairs of capital hex
+// digits with colons, as in "AB:CD:01".
+pub function shown_fingerprint(hex_text: string): string {
+  let pairs: string[] = [];
+  let upper = hex_text.to_upper();
+  for i in 0..upper.len() / 2 {
+    pairs = pairs.append(upper.slice_snap(i * 2, i * 2 + 2).to_owned());
+  }
+  return pairs.join(":");
+}
+
 // The size of the whole file in a Content-Range value, such as
 // "bytes 0-99/1234" or "bytes */1234".
 pub function total_of(range: string): Option[i64] {
@@ -133,33 +191,33 @@ pub function write(s: Server, path: string, offset: i64, data: u8[]): Result[voi
   if (offset != 0i64) {
     return Err("A WebDAV server takes a file whole.");
   }
-  let reply = sent(asked(s, "PUT", path).with_bytes(data), [200, 201, 204])?;
+  let reply = sent(s, asked(s, "PUT", path).with_bytes(data), [200, 201, 204])?;
   return Ok(());
 }
 
 // Sends the file `local` of the phone as the file `path`, without reading
 // all of it into memory.
 pub function put_file(s: Server, path: string, local: string): Result[void, string] {
-  let reply = sent(asked(s, "PUT", path).with_body(BodyFile(local)), [200, 201, 204])?;
+  let reply = sent(s, asked(s, "PUT", path).with_body(BodyFile(local)), [200, 201, 204])?;
   return Ok(());
 }
 
 // Makes the folder `path`.
 pub function make_dir(s: Server, path: string): Result[void, string] {
-  let reply = sent(asked(s, "MKCOL", path), [201])?;
+  let reply = sent(s, asked(s, "MKCOL", path), [201])?;
   return Ok(());
 }
 
 // Deletes the file or the folder `path`, with what it holds.
 pub function remove(s: Server, path: string): Result[void, string] {
-  let reply = sent(asked(s, "DELETE", path), [200, 204])?;
+  let reply = sent(s, asked(s, "DELETE", path), [200, 204])?;
   return Ok(());
 }
 
 // Renames `from` to `to`. An item that has the name `to` stays.
 pub function rename(s: Server, from: string, to: string): Result[void, string] {
   let req = asked(s, "MOVE", from).with_header("Destination", address(s, to)).with_header("Overwrite", "F");
-  let reply = sent(req, [201, 204])?;
+  let reply = sent(s, req, [201, 204])?;
   return Ok(());
 }
 

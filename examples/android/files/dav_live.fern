@@ -12,9 +12,9 @@ import "./smb";
 function server(): dav.Server {
   let parts = env("FILES_DAV_SERVER").unwrap_or("").split(" ");
   if (parts.len() != 3) {
-    return dav.Server { url: "", user: "", password: "" };
+    return dav.Server { url: "", user: "", password: "", pin: "" };
   }
-  return dav.Server { url: parts[0], user: parts[1], password: parts[2] };
+  return dav.Server { url: parts[0], user: parts[1], password: parts[2], pin: "" };
 }
 
 function all(outcomes: test.TestOutcome[]): test.TestOutcome {
@@ -92,6 +92,29 @@ function test_rename_and_remove(): test.TestOutcome {
   ]);
 }
 
+// The server of FILES_DAV_TLS speaks HTTPS with a self-signed certificate
+// whose fingerprint is its fourth part. The phone does not trust it until
+// the server has that pin.
+function test_pinned(): test.TestOutcome {
+  let parts = env("FILES_DAV_TLS").unwrap_or("").split(" ");
+  if (parts.len() != 4) {
+    return test.fail("set FILES_DAV_TLS to: url user password fingerprint");
+  }
+  let s = dav.Server { url: parts[0], user: parts[1], password: parts[2], pin: "" };
+  let refused = dav.list(s, "").err().unwrap_or("");
+  let seen = dav.fingerprint(s);
+  let pinned = dav.Server { ...s, pin: seen };
+  let wrote = dav.write(pinned, "pinned.txt", 0i64, "pinned".bytes()).is_ok();
+  let names = dav.list(pinned, "").unwrap_or([]).map((e: smb.Entry): string => e.name);
+  let wrong = dav.list(dav.Server { ...s, pin: "00" + parts[3].drop(2) }, "").err().unwrap_or("");
+  return all([
+    test.assert_eq(refused, dav.UNTRUSTED),
+    test.assert_eq(seen, parts[3]),
+    test.assert_eq(wrote && names.contains("pinned.txt"), true),
+    test.assert_eq(wrong, dav.UNTRUSTED),
+  ]);
+}
+
 function main(): i32 {
   if (server().url.len() == 0) {
     print("set FILES_DAV_SERVER to: url user password");
@@ -101,5 +124,6 @@ function main(): i32 {
   r = r.it("a wrong password gets its note", test_wrong_password);
   r = r.it("a file goes to the server and back in parts", test_round_trip);
   r = r.it("a rename keeps an item of that name, and a delete takes a folder", test_rename_and_remove);
+  r = r.it("a server with a self-signed certificate needs its pin", test_pinned);
   return r.finish();
 }

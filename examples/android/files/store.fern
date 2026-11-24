@@ -1,6 +1,6 @@
-// The places that the app shows: the storage of the phone and the shares of
-// SMB servers. Each function takes a place, so the screens and the copy
-// work the same way on each of them.
+// The places that the app shows: the storage of the phone, the shares of
+// SMB servers, and the folders of WebDAV servers. Each function takes a
+// place, so the screens and the copy work the same way on each of them.
 import "std/array";
 import "std/base64";
 import "std/i32";
@@ -8,36 +8,40 @@ import "std/i64";
 import "std/string";
 import "std/unicode";
 import "std/utf8";
+import "./dav";
 import "./smb";
 
-pub enum Place { Local, Remote(smb.Server) }
+// A server: a share of an SMB server, or a folder of a WebDAV server.
+pub enum Link { Smb(smb.Server), Dav(dav.Server) }
+
+pub enum Place { Local, Remote(Link) }
 
 // The most bytes that one step of a copy moves.
 pub const STEP: i32 = 8388608;
 
 pub function same_place(a: Place, b: Place): boolean {
-  match (a) {
-    Local => {
-      match (b) {
-        Local => {
-          return true;
-        },
-        _ => {
-          return false;
-        }
-      }
-    },
-    Remote(x) => {
-      match (b) {
-        Remote(y) => {
-          return x.host == y.host && x.share == y.share && x.user == y.user && x.port == y.port;
-        },
-        _ => {
-          return false;
-        }
-      }
-    }
-  }
+  return match ((a, b)) {
+    (Local(), Local()) => true,
+    (Remote(x), Remote(y)) => same_link(x, y),
+    _ => false,
+  };
+}
+
+function same_link(a: Link, b: Link): boolean {
+  return match ((a, b)) {
+    (Smb(x), Smb(y)) => x.host == y.host && x.share == y.share && x.user == y.user && x.port == y.port,
+    (Dav(x), Dav(y)) => x.url == y.url && x.user == y.user,
+    _ => false,
+  };
+}
+
+// The text that names a server: smb://host/share, or the address of the
+// WebDAV folder.
+pub function link_text(link: Link): string {
+  return match (link) {
+    Smb(s) => "smb://" + s.host + "/" + s.share,
+    Dav(d) => d.url,
+  };
 }
 
 function io_text(e: IoError): string {
@@ -196,8 +200,11 @@ pub function list(place: Place, path: string): Result[smb.Entry[], string] {
     Local => {
       return local_list(path);
     },
-    Remote(server) => {
+    Remote(Smb(server)) => {
       return smb.list(server, path);
+    },
+    Remote(Dav(server)) => {
+      return dav.list(server, path);
     }
   }
 }
@@ -208,8 +215,11 @@ pub function read(place: Place, path: string, offset: i64, limit: i32): Result[s
     Local => {
       return local_read(path, offset, limit);
     },
-    Remote(server) => {
+    Remote(Smb(server)) => {
       return smb.read(server, path, offset, limit);
+    },
+    Remote(Dav(server)) => {
+      return dav.read(server, path, offset, limit);
     }
   }
 }
@@ -221,8 +231,11 @@ pub function write(place: Place, path: string, offset: i64, data: u8[]): Result[
     Local => {
       return local_write(path, offset, data);
     },
-    Remote(server) => {
+    Remote(Smb(server)) => {
       return smb.write(server, path, offset, data);
+    },
+    Remote(Dav(server)) => {
+      return dav.write(server, path, offset, data);
     }
   }
 }
@@ -232,8 +245,11 @@ pub function make_dir(place: Place, path: string): Result[void, string] {
     Local => {
       return done(create_dir(path, 493));
     },
-    Remote(server) => {
+    Remote(Smb(server)) => {
       return smb.make_dir(server, path);
+    },
+    Remote(Dav(server)) => {
+      return dav.make_dir(server, path);
     }
   }
 }
@@ -244,8 +260,11 @@ pub function remove(place: Place, path: string, dir: boolean): Result[void, stri
     Local => {
       return done(if (dir) { remove_dir_all(path) } else { remove_file(path) });
     },
-    Remote(server) => {
+    Remote(Smb(server)) => {
       return smb.remove(server, path, dir);
+    },
+    Remote(Dav(server)) => {
+      return dav.remove(server, path);
     }
   }
 }
@@ -255,8 +274,11 @@ pub function rename_to(place: Place, from: string, to: string): Result[void, str
     Local => {
       return done(rename(from, to));
     },
-    Remote(server) => {
+    Remote(Smb(server)) => {
       return smb.rename(server, from, to);
+    },
+    Remote(Dav(server)) => {
+      return dav.rename(server, from, to);
     }
   }
 }
@@ -315,11 +337,58 @@ pub function advance(src: Place, dst: Place, step: Step, offset: i64): Result[i6
     make_dir(dst, step.to)?;
     return Ok(0i64);
   }
+  if let Remote(Dav(server)) = dst {
+    return if (offset == 0i64) { put_whole(src, server, step) } else { Ok(0i64) };
+  }
   let part = read(src, step.from, offset, STEP)?;
   if (part.data.len() > 0 || offset == 0i64) {
     write(dst, step.to, offset, part.data)?;
   }
   return Ok(part.data.len() as i64);
+}
+
+// Sends the file of `step` whole to the WebDAV server `server`, which
+// takes a file whole, and gives its size. A file that is not on the phone
+// goes to a file of the phone first.
+function put_whole(src: Place, server: dav.Server, step: Step): Result[i64, string] {
+  if let Local = src {
+    let size = match (stat(step.from)) {
+      Ok(st) => st.size,
+      Err(_) => {
+        return Err("The file is not on the phone.");
+      },
+    };
+    dav.put_file(server, step.to, step.from)?;
+    return Ok(size);
+  }
+  let dir = match (temp_dir("fern-files-up")) {
+    Ok(d) => d,
+    Err(_) => {
+      return Err("The phone has no room for the file.");
+    },
+  };
+  let held = join(dir, "part");
+  let sent = match (copied_whole(src, step.from, held)) {
+    Ok(size) => dav.put_file(server, step.to, held).map((x: void): i64 => size),
+    Err(text) => Err(text),
+  };
+  let removed = remove_dir_all(dir);
+  return sent;
+}
+
+// Copies the file `from` of `src` to the file `to` of the phone, and gives
+// its size.
+function copied_whole(src: Place, from: string, to: string): Result[i64, string] {
+  let step = Step { from: from, to: to, size: 0i64, dir: false };
+  let offset = 0i64;
+  while (true) {
+    let n = advance(src, Local, step, offset)?;
+    offset += n;
+    if (n < STEP as i64) {
+      return Ok(offset);
+    }
+  }
+  return Ok(offset);
 }
 
 // The bytes of the files below the directory `path`, in at most
