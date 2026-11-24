@@ -168,6 +168,7 @@ pub function builtin_sigs(): string[] {
     "mknod(string, i32, i32, i32): Result[void, IoError]",
     "monotonic_ns(): i64",
     "mounts(): Result[MountEntry[], IoError]",
+    "name_lookup(string, u8[]): i32",
     "now_ns(): i64",
     "now_unix_ms(): i64",
     "open_appender(string): Result[Writer, IoError]",

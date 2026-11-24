@@ -23,7 +23,7 @@ function capability_profile(profile: string): string[] {
     return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "sysctl", "atomics"];
   }
   if (profile == "wasi-cli") {
-    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal", "reactor", "pollable"];
+    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal", "reactor", "pollable", "namelookup"];
   }
   if (profile == "wasi-proxy") {
     return ["log", "now", "config", "random", "fetch", "pollable"];
@@ -262,6 +262,7 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "udp_sendmmsg", capability: "mmsg" },
     Gate { builtin: "udp_recvmmsg", capability: "mmsg" },
     Gate { builtin: "udp_recvfrom", capability: "tcp" },
+    Gate { builtin: "name_lookup", capability: "namelookup" },
     Gate { builtin: "tcp_connect_with", capability: "tcp" },
     Gate { builtin: "unix_listen", capability: "unix" },
     Gate { builtin: "unix_connect", capability: "unix" },

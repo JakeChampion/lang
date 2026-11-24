@@ -94,6 +94,7 @@ var gatedBuiltins = map[string]string{
 	"udp_sendmmsg":          "mmsg",
 	"udp_recvmmsg":          "mmsg",
 	"udp_recvfrom":          "tcp",
+	"name_lookup":           "namelookup",
 	"tcp_listen_with":       "tcp",
 	"tcp_socket_ctl":        "tcp",
 	"tcp_addr_into":         "tcp",

@@ -1,0 +1,13 @@
+package wasi:sockets@0.2.0;
+
+interface ip-name-lookup {
+    use wasi:io/poll@0.2.0.{pollable};
+    use network.{network, error-code, ip-address};
+
+    resolve-addresses: func(network: borrow<network>, name: string) -> result<resolve-address-stream, error-code>;
+
+    resource resolve-address-stream {
+        resolve-next-address: func() -> result<option<ip-address>, error-code>;
+        subscribe: func() -> pollable;
+    }
+}

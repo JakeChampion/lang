@@ -74,6 +74,7 @@ costs a silent failure on the first target that lacks it.
 | `signal` | `signal_ignore`, `signal_default`, `signal_catch`, `signal_catch_interrupting`, `signal_taken`, `signal_raise` | a host that can deliver a signal to a process; a no-op on WASI, which cannot |
 | `cabi` | `__c_call0..4` (+ `_f32` / `_f64`) | a C calling convention to call a function pointer through |
 | `tcp` | `tcp_*`, `udp_*` | a network stack |
+| `namelookup` | `name_lookup` | a resolver in the host: wasi:sockets/ip-name-lookup. Granted by `wasi-cli` alone. std/dns reaches it under a `target_os()` branch, because a wasi program cannot read `/etc/hosts` or `/etc/resolv.conf` |
 | `unix` | `unix_listen`, `unix_connect` | Unix-domain sockets: a filesystem namespace for socket endpoints, which no WASI world has |
 | `vsock` | `vsock_connect` | VSOCK stream sockets between a virtual machine and its host (`AF_VSOCK`). Granted by `hosted-linux` and `hosted-android`. std/net reaches it under a `target_os()` branch |
 | `reactor` | `reactor_new`, `reactor_ctl`, `reactor_wait` | a readiness set the host keeps between waits: epoll, kqueue, or on wasm a table of wasi:io pollables |

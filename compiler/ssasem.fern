@@ -432,6 +432,9 @@ pub function raw_array_args(name: string): i32[] {
   if (name == "ring_recv" || name == "tcp_addr_into") {
     return [2];
   }
+  if (name == "name_lookup") {
+    return [1];
+  }
   if (name == "udp_recvfrom") {
     return [1, 2];
   }

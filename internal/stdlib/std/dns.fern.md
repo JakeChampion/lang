@@ -10,6 +10,8 @@ DNS records retain their resource-data kind. Packet helpers encode and decode me
 
 UDP and TCP use different message frame rules. The TCP path must send the complete length-prefixed query. Network operations return concrete DNS errors.
 
+`resolve` uses the resolver of the platform where the program cannot read `/etc/resolv.conf`. On Android it asks netd. On wasm32-wasi it asks the host through `wasi:sockets/ip-name-lookup`. The host must allow name lookup, for example with `wasmtime run -S allow-ip-name-lookup`.
+
 ## Executable example
 
 ```fern test name=std-dns-example
@@ -225,6 +227,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "std/net";
+import "std/errno";
 import "std/time";
 import "std/async";
 import "std/i32";
@@ -2978,8 +2981,51 @@ function resolve_in(conf: ResolvConf, hosts_of: () => HostsEntry[], name: string
   if (target_os() == "android") {
     return netd_lookup(name);
   }
+  if (target_os() == "wasi") {
+    return wasi_lookup(name);
+  }
   return found_addresses(conf, name);
 }
+
+// A wasi program cannot reach /etc/hosts or /etc/resolv.conf, so the host
+// resolves the name through wasi:sockets/ip-name-lookup. name_lookup writes
+// one 17-byte record for each address: the family, then the address.
+function wasi_lookup(name: string): Result[net.IpAddr[], DnsError] {
+  let out = __alloc_u8(WASI_LOOKUP_ADDRESSES * 17);
+  let n = name_lookup(name, out);
+  if (n < 0) {
+    let e = net.error_from_host(n);
+    if (e.errno() == errno.ENOENT) {
+      return Err(NoSuchName);
+    }
+    if (e.errno() == errno.EAGAIN) {
+      return Err(NoReply);
+    }
+    return Err(NetFailed(e));
+  }
+  let addrs: net.IpAddr[] = [];
+  for i in 0..n {
+    let at = i * 17;
+    if (out[at] == 4u8) {
+      addrs = addrs.append(net.ipv4(out[at + 1] as i32, out[at + 2] as i32, out[at + 3] as i32, out[at + 4] as i32));
+    } else {
+      let v6: u8[] = [];
+      for k in 0..16 {
+        v6 = v6.append(out[at + 1 + k]);
+      }
+      if let Some(ip) = net.ipv6(v6) {
+        addrs = addrs.append(ip);
+      }
+    }
+  }
+  if (addrs.len() == 0) {
+    return Err(NoData);
+  }
+  return Ok(addrs);
+}
+
+// The most addresses that wasi_lookup takes for one name.
+const WASI_LOOKUP_ADDRESSES: i32 = 64;
 ```
 
 ### `90 pub function netd_request(name: string): Option[u8[]]`

@@ -3218,6 +3218,7 @@ function builtin_i32_names(): string[] {
     "udp_connect",
     "udp_sendto",
     "udp_recvfrom",
+    "name_lookup",
     "tcp_connect_with",
     "unix_listen",
     "unix_connect",

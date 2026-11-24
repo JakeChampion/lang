@@ -8194,6 +8194,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "udp_sendmmsg", params: [typeinfo.t_i32(), bytes, bytes, fds], modes: [v, b, b, b], result: typeinfo.t_i32() },
     ssasem.Contract { name: "udp_recvmmsg", params: [typeinfo.t_i32(), bytes, bytes, fds], modes: [v, b, b, b], result: typeinfo.t_i32() },
     ssasem.Contract { name: "udp_recvfrom", params: [typeinfo.t_i32(), bytes, bytes], modes: [v, b, b], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "name_lookup", params: [typeinfo.t_string(), bytes], modes: [b, b], result: typeinfo.t_i32() },
     ssasem.Contract { name: "tcp_connect_with", params: [bytes, typeinfo.t_i32(), typeinfo.t_bool()], modes: [b, v, v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "unix_listen", params: [typeinfo.t_string(), typeinfo.t_i32()], modes: [b, v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "unix_connect", params: [typeinfo.t_string()], modes: [b], result: typeinfo.t_i32() },

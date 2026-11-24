@@ -36,6 +36,7 @@ pub function builtin_caps(): BuiltinCap[] {
     BuiltinCap { builtin: "udp_sendmmsg", capability: "net" },
     BuiltinCap { builtin: "udp_recvmmsg", capability: "net" },
     BuiltinCap { builtin: "udp_recvfrom", capability: "net" },
+    BuiltinCap { builtin: "name_lookup", capability: "net" },
     BuiltinCap { builtin: "tcp_connect_with", capability: "net" },
     BuiltinCap { builtin: "unix_listen", capability: "net" },
     BuiltinCap { builtin: "unix_connect", capability: "net" },

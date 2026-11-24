@@ -1501,6 +1501,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{sock, u8s, u8s},
 		Result: ast.NumberType{},
 	}
+	// name_lookup(name, out): the addresses of name from the resolver of a
+	// wasi host, as 17-byte records in out: the family (4 or 6) and the
+	// address bytes. The number of records, or -errno.
+	c.info.FuncSigs["name_lookup"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, u8s},
+		Result: ast.NumberType{},
+	}
 	// udp_recvmmsg(sock, buf, froms, lens): recvmmsg. lens holds three words
 	// per message slot, buf is split evenly across the slots, and froms takes
 	// one 19-byte address per message. The call fills, per message received,
