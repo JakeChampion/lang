@@ -572,8 +572,9 @@ locals sit above `nvals`. It emits:
   (`TestSelfHostLentWindowConsumers`). The heap form is a counted box
   `[data, len]` whose data is in the source. The view's string-arm reads
   (`ir.view_string`) and the wasm kernels that take a string or a view
-  remove the tag and read the two words. A string slice still copies its
-  bytes on wasm (`$__fern_substr`), so there its release stays.
+  remove the tag and read the two words. A string slice is a view on each
+  target. On wasm its frame form is a window and its heap form is a borrowed
+  box (`str_slice_wat`).
 
 What the lowering may assume: the plan verified; it re-derives the semantic
 facts it needs from the graph rather than trusting a sidecar. It refuses the
