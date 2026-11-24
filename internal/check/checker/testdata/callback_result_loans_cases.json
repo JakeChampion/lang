@@ -1498,5 +1498,75 @@
     "name": "factory record with a callback that captures a plain data field accepted after close",
     "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Box { run: () => i32, n: i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction make(h: H): Box { let k = h.fd; return Box { run: (): i32 => k, n: 2 }; }\nfunction run(own h: H): i32 { let b = make(h); h.close(); return call(b); }\nfunction main(): i32 { return run(H { fd: 7 }); }\n",
     "want": ""
+  },
+  {
+    "name": "reassigned fresh owner of a callback in each pass of a loop accepted",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction make(h: H): Box { return Box { run: (): i32 => read(h) }; }\nfunction mk(h: H): () => i32 { return (): i32 => read(h); }\nfunction renew(own h: H): H { return h; }\nfunction shut(own h: H): H { return H { fd: 0 }; }\nfunction run(): i32 { let h = H { fd: 1 }; let t = 0; for k in 0..2 { let g = mk(h); t += g(); h = renew(h); } h.close(); return t; }\nfunction main(): i32 { return run(); }\n",
+    "want": ""
+  },
+  {
+    "name": "reassigned own owner of a callback in each pass of a loop accepted",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction make(h: H): Box { return Box { run: (): i32 => read(h) }; }\nfunction mk(h: H): () => i32 { return (): i32 => read(h); }\nfunction renew(own h: H): H { return h; }\nfunction shut(own h: H): H { return H { fd: 0 }; }\nfunction run(own h: H): i32 { let t = 0; for k in 0..2 { let g = mk(h); t += g(); h = renew(h); } h.close(); return t; }\nfunction main(): i32 { return run(H { fd: 1 }); }\n",
+    "want": ""
+  },
+  {
+    "name": "reassigned own owner of a lambda in each pass of a loop accepted",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction make(h: H): Box { return Box { run: (): i32 => read(h) }; }\nfunction mk(h: H): () => i32 { return (): i32 => read(h); }\nfunction renew(own h: H): H { return h; }\nfunction shut(own h: H): H { return H { fd: 0 }; }\nfunction run(own h: H): i32 { let t = 0; for k in 0..2 { let g = (): i32 => read(h); t += g(); h = renew(h); } h.close(); return t; }\nfunction main(): i32 { return run(H { fd: 1 }); }\n",
+    "want": ""
+  },
+  {
+    "name": "factory callback after its own owner is consumed and reassigned",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction make(h: H): Box { return Box { run: (): i32 => read(h) }; }\nfunction mk(h: H): () => i32 { return (): i32 => read(h); }\nfunction renew(own h: H): H { return h; }\nfunction shut(own h: H): H { return H { fd: 0 }; }\nfunction run(own h: H): i32 { let g = mk(h); h = shut(h); return g(); }\nfunction main(): i32 { return run(H { fd: 1 }); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "factory record after its own owner is consumed and reassigned",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction make(h: H): Box { return Box { run: (): i32 => read(h) }; }\nfunction mk(h: H): () => i32 { return (): i32 => read(h); }\nfunction renew(own h: H): H { return h; }\nfunction shut(own h: H): H { return H { fd: 0 }; }\nfunction run(own h: H): i32 { let b = make(h); h = shut(h); return call(b); }\nfunction main(): i32 { return run(H { fd: 1 }); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "lambda after its own owner is consumed and reassigned",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction make(h: H): Box { return Box { run: (): i32 => read(h) }; }\nfunction mk(h: H): () => i32 { return (): i32 => read(h); }\nfunction renew(own h: H): H { return h; }\nfunction shut(own h: H): H { return H { fd: 0 }; }\nfunction run(own h: H): i32 { let g = (): i32 => read(h); h = shut(h); return g(); }\nfunction main(): i32 { return run(H { fd: 1 }); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "lambda after its fresh owner is consumed and reassigned",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction make(h: H): Box { return Box { run: (): i32 => read(h) }; }\nfunction mk(h: H): () => i32 { return (): i32 => read(h); }\nfunction renew(own h: H): H { return h; }\nfunction shut(own h: H): H { return H { fd: 0 }; }\nfunction run(): i32 { let h = H { fd: 1 }; let g = (): i32 => read(h); h = shut(h); return g(); }\nfunction main(): i32 { return run(); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "factory callback after its fresh owner is consumed and reassigned",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction make(h: H): Box { return Box { run: (): i32 => read(h) }; }\nfunction mk(h: H): () => i32 { return (): i32 => read(h); }\nfunction renew(own h: H): H { return h; }\nfunction shut(own h: H): H { return H { fd: 0 }; }\nfunction run(): i32 { let h = H { fd: 1 }; let g = mk(h); h = shut(h); return g(); }\nfunction main(): i32 { return run(); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "callback made again after its owner is reassigned accepted",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction make(h: H): Box { return Box { run: (): i32 => read(h) }; }\nfunction mk(h: H): () => i32 { return (): i32 => read(h); }\nfunction renew(own h: H): H { return h; }\nfunction shut(own h: H): H { return H { fd: 0 }; }\nfunction run(own h: H): i32 { let g = mk(h); let a = g(); h = shut(h); g = mk(h); let b = g(); h.close(); return a + b; }\nfunction main(): i32 { return run(H { fd: 1 }); }\n",
+    "want": ""
+  },
+  {
+    "name": "callback declared after its owner is reassigned accepted",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction make(h: H): Box { return Box { run: (): i32 => read(h) }; }\nfunction mk(h: H): () => i32 { return (): i32 => read(h); }\nfunction renew(own h: H): H { return h; }\nfunction shut(own h: H): H { return H { fd: 0 }; }\nfunction run(own h: H): i32 { h = shut(h); let g = mk(h); let n = g(); h.close(); return n; }\nfunction main(): i32 { return run(H { fd: 1 }); }\n",
+    "want": ""
+  },
+  {
+    "name": "callback used before its owner is consumed and reassigned accepted",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction make(h: H): Box { return Box { run: (): i32 => read(h) }; }\nfunction mk(h: H): () => i32 { return (): i32 => read(h); }\nfunction renew(own h: H): H { return h; }\nfunction shut(own h: H): H { return H { fd: 0 }; }\nfunction run(own h: H): i32 { let g = mk(h); let n = g(); h = shut(h); h.close(); return n; }\nfunction main(): i32 { return run(H { fd: 1 }); }\n",
+    "want": ""
+  },
+  {
+    "name": "callback declared before a loop that reassigns its owner",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction make(h: H): Box { return Box { run: (): i32 => read(h) }; }\nfunction mk(h: H): () => i32 { return (): i32 => read(h); }\nfunction renew(own h: H): H { return h; }\nfunction shut(own h: H): H { return H { fd: 0 }; }\nfunction run(own h: H): i32 { let g = mk(h); let t = 0; for k in 0..2 { t += g(); h = shut(h); } h.close(); return t; }\nfunction main(): i32 { return run(H { fd: 1 }); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "callback after a branch consumes and reassigns its owner",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction make(h: H): Box { return Box { run: (): i32 => read(h) }; }\nfunction mk(h: H): () => i32 { return (): i32 => read(h); }\nfunction renew(own h: H): H { return h; }\nfunction shut(own h: H): H { return H { fd: 0 }; }\nfunction run(own h: H, c: boolean): i32 { let g = mk(h); if (c) { h = shut(h); } let n = g(); h.close(); return n; }\nfunction main(): i32 { return run(H { fd: 1 }, true); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "record made again in each pass of a loop accepted",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction make(h: H): Box { return Box { run: (): i32 => read(h) }; }\nfunction mk(h: H): () => i32 { return (): i32 => read(h); }\nfunction renew(own h: H): H { return h; }\nfunction shut(own h: H): H { return H { fd: 0 }; }\nfunction run(own h: H): i32 { let t = 0; for k in 0..2 { let b = make(h); t += call(b); h = renew(h); } h.close(); return t; }\nfunction main(): i32 { return run(H { fd: 1 }); }\n",
+    "want": ""
   }
 ]

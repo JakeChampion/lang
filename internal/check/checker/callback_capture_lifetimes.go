@@ -6,7 +6,8 @@ import (
 )
 
 // Local callback values retain the resource captures of their definition.
-// Reassigned and shadowed bindings need a separate flow proof.
+// The walk of checkOwnedParams follows an assignment of the owner. Shadowed
+// bindings need a separate flow proof.
 //
 // The third result has each local that is not a callback but holds one, such
 // as a record with a callback field. The fourth result names each binding
@@ -170,7 +171,9 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 	captures := func(value *ast.Lambda, active map[string]bool) []callbackLoan {
 		var out []callbackLoan
 		for _, capture := range value.Captures {
-			if len(definitions[capture.Name]) > 1 || c.copyableCallResult(capture.Type) {
+			// The walk of a body follows each assignment of a local. A factory
+			// summary does not, so it keeps a binding with one definition only.
+			if summarize && len(definitions[capture.Name]) > 1 || c.copyableCallResult(capture.Type) {
 				continue
 			}
 			// A `once` lambda moves its captures in, so it holds no loan on them.
@@ -375,4 +378,29 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 		}
 	}
 	return out, inline, holders, heldOwners
+}
+
+// firstDeclarations gives the position of the first `let` of each name in
+// body, outside its nested functions.
+func firstDeclarations(body ast.Stmt) map[string]ast.Position {
+	out := map[string]ast.Position{}
+	if body == nil {
+		return out
+	}
+	ast.Walk(body, func(n ast.Node) bool {
+		switch v := n.(type) {
+		case *ast.Lambda, *ast.FuncDecl:
+			return false
+		case *ast.Var:
+			if _, seen := out[v.Name]; !seen {
+				out[v.Name] = v.Pos()
+			}
+		}
+		return true
+	})
+	return out
+}
+
+func positionBefore(a, b ast.Position) bool {
+	return a.Line < b.Line || a.Line == b.Line && a.Col < b.Col
 }
