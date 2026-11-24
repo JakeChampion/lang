@@ -36,6 +36,9 @@ function jni_frames(): i32;
 @import("libmediandk.so", "mock_jni_pending")
 function jni_pending(): i32;
 
+@import("libmediandk.so", "mock_jni_globals")
+function jni_globals(): i32;
+
 @import("libmediandk.so", "mock_jni_hardware_queries")
 function hardware_queries(): i32;
 
@@ -71,7 +74,7 @@ function discovery(): i32 {
   if (infos[0].profiles != [capabilities.ProfileLevel { profile: 1, level: 256 }] || infos[0].color_formats != [19, video.COLOR_SURFACE]) {
     return 103;
   }
-  if (capabilities.ordered(infos, request, capabilities.PreferHardware).len() != 2 || jni_frames() != 0 || jni_pending() != 0) {
+  if (capabilities.ordered(infos, request, capabilities.PreferHardware).len() != 2 || jni_frames() != 0 || jni_globals() != 0 || jni_pending() != 0) {
     return 104;
   }
   jni_mode(0);
@@ -92,7 +95,7 @@ function discovery(): i32 {
       return 108;
     };
     let selected = capabilities.ordered(filtered, request, capabilities.PreferHardware);
-    if (selected.len() != 1 || selected[0].implementation != capabilities.Software || jni_pending() != 0 || jni_frames() != 0) {
+    if (selected.len() != 1 || selected[0].implementation != capabilities.Software || jni_pending() != 0 || jni_frames() != 0 || jni_globals() != 0) {
       return 109;
     }
   }
@@ -104,7 +107,7 @@ function discovery(): i32 {
         return 110;
       }
     }
-    if (jni_pending() != 0 || jni_frames() != 0) {
+    if (jni_pending() != 0 || jni_frames() != 0 || jni_globals() != 0) {
       return 111;
     }
   }
@@ -115,7 +118,7 @@ function discovery(): i32 {
       return 112;
     }
   }
-  if (jni_pending() != 1 || jni_frames() != 0) {
+  if (jni_pending() != 1 || jni_frames() != 0 || jni_globals() != 0) {
     return 113;
   }
   jni_mode(0);
@@ -125,7 +128,7 @@ function discovery(): i32 {
       return 114;
     }
   }
-  if (jni_frames() != 0) {
+  if (jni_frames() != 0 || jni_globals() != 0) {
     return 115;
   }
   return 0;
@@ -137,7 +140,7 @@ function decoders(): i32 {
   let Ok(types) = capabilities.decoder_types(env, capabilities.default_limits()) else {
     return 151;
   };
-  if (types != ["video/avc", "video/hevc"] || jni_frames() != 0 || jni_pending() != 0) {
+  if (types != ["video/avc", "video/hevc"] || jni_frames() != 0 || jni_globals() != 0 || jni_pending() != 0) {
     return 152;
   }
   jni_mode(5);
@@ -147,7 +150,7 @@ function decoders(): i32 {
       return 153;
     }
   }
-  if (jni_pending() != 0 || jni_frames() != 0) {
+  if (jni_pending() != 0 || jni_frames() != 0 || jni_globals() != 0) {
     return 154;
   }
   jni_mode(7);
@@ -157,7 +160,7 @@ function decoders(): i32 {
       return 155;
     }
   }
-  if (jni_pending() != 0 || jni_frames() != 0) {
+  if (jni_pending() != 0 || jni_frames() != 0 || jni_globals() != 0) {
     return 156;
   }
   return 0;
