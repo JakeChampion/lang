@@ -595,8 +595,14 @@ function test_ticket_secret_length(): test.TestOutcome {
   for n in [0, 1, 31, 32, 48] {
     let cfg = server.config(id, drawn(n, 1 as i64));
     let valid = n >= 32;
-    if (listening(cfg).is_ok() != valid) {
+    let result = listening(cfg);
+    if (result.is_ok() != valid) {
       return test.fail("ticket secret of " + n.to_string() + " bytes");
+    }
+    if let Err(message) = result {
+      if (message != "server: session tickets require a key derived from at least 32 bytes of secret material") {
+        return test.fail(message);
+      }
     }
   }
   return test.assert_true(listening(server.config(id, []).without_tickets()).is_ok());

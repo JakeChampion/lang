@@ -155,7 +155,7 @@ pub struct Step { session: Session, output: u8[], data: u8[], closed: boolean, r
 <<6 pub function start(config: Config, entropy: [u8]): Result[Step, tls.TlsError]>>=
 pub function start(config: Config, entropy: [u8]): Result[Step, tls.TlsError] {
   if (config.tickets && config.ticket_key.len() != 32) {
-    return Err(tls.HandshakeFailed(handshake.Misuse("session tickets require a secret of at least 32 bytes")));
+    return Err(tls.InvalidTicketKey);
   }
   let sc = __handshake_config(config);
   let n = handshake.server_entropy(sc);

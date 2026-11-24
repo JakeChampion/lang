@@ -122,6 +122,7 @@ import "std/quic/packet";
 import "std/quic/params";
 import "std/quic/recovery";
 import "std/quic/streams";
+import "std/tls";
 import "std/tls/client" as tlsclient;
 import "std/tls/handshake";
 import "std/tls/keyschedule";
@@ -224,10 +225,14 @@ pub function (c: Config) server_side(id: identity.Identity): Config {
 
 // with_tickets has a server issue a session ticket on each connection,
 // sealed under a key derived from `secret`, and resume the tickets that any
-// server with the same secret issued. A secret shorter than 32 bytes
-// disables ticket issuance and resumption.
-pub function (c: Config) with_tickets(secret: [u8]): Config {
-  return Config { ...c, ticket_key: tlsserver.ticket_key_of(secret) };
+// server with the same secret issued. Supply at least 32 secret bytes.
+// Leave tickets disabled by omitting this call.
+pub function (c: Config) with_tickets(secret: [u8]): Result[Config, tls.TlsError] {
+  let key = tlsserver.ticket_key_of(secret);
+  if (key.len() != 32) {
+    return Err(tls.InvalidTicketKey);
+  }
+  return Ok(Config { ...c, ticket_key: key });
 }
 
 // with_ticket has a client offer the ticket `t` to resume its session.
@@ -387,7 +392,7 @@ pub function server_entropy(c: Config): i32 {
 }
 
 function __ticket_entropy(c: Config): i32 {
-  if (c.ticket_key.len() == 0) {
+  if (c.ticket_key.len() != 32) {
     return 0;
   }
   return tlsserver.TICKET_ENTROPY;
@@ -468,6 +473,9 @@ pub function accept_validated(c: Config, entropy: [u8], first: packet.Header, od
 }
 
 function __accept(c: Config, entropy: [u8], first: packet.Header, odcid: [u8], retried: Option[u8[]], now: i64, unix_ms: i64): Result[Conn, string] {
+  if (c.ticket_key.len() != 0 && c.ticket_key.len() != 32) {
+    return Err(tls.InvalidTicketKey.message());
+  }
   let Some(id) = c.identity else {
     return Err("quic: a server needs an identity");
   };
@@ -2008,7 +2016,7 @@ pub function (c: Conn) early_state(): i32 {
 // __ticket_issued sends a server's session ticket once the handshake is
 // done, when the config has a ticket key.
 function (c: Conn) __ticket_issued(now: i64): Conn {
-  if (!c.server || c.config.ticket_key.len() == 0 || c.state >= CLOSING) {
+  if (!c.server || c.config.ticket_key.len() != 32 || c.state >= CLOSING) {
     return c;
   }
   match (c.tls) {
@@ -2142,7 +2150,7 @@ function (c: Conn) __server_question(t: handshake.Server, e: handshake.Event, no
     },
     handshake.ResumeOffered(offer) => {
       let found: Option[handshake.Resumed] = None;
-      if (c.config.ticket_key.len() > 0) {
+      if (c.config.ticket_key.len() == 32) {
         found = tlsserver.lookup_ticket(c.config.ticket_key, offer, c.__wall_ms(now));
       }
       return c.__server_step(t.resume(found), now);

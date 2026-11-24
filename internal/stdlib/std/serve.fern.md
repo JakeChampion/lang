@@ -5922,6 +5922,9 @@ function __quic_open[D: async.Driver](drv: D, l: __Listen, opts: Config): __Quic
   if (!opts.h3) {
     return __quic_none();
   }
+  let Ok(tickets) = quic.config([]).server_side(t.identity).with_tickets(l.h3_key) else {
+    return __quic_none();
+  };
   let port = tcp_local_port(l.sock);
   let sock = __adopt(opts.h3_sock);
   if (sock.fd < 0) {
@@ -5937,7 +5940,7 @@ function __quic_open[D: async.Driver](drv: D, l: __Listen, opts: Config): __Quic
     let closed = net.close(sock);
     return __quic_none();
   }
-  return __Quic { ...__quic_none(), sock: Some(sock), port: port, cfg: __h3_marked(h3q.transport(quic.config([]).server_side(t.identity).with_tickets(l.h3_key).with_early_data())), key: l.h3_key, inbox: net.inbox(__h3_slots(), 65536) };
+  return __Quic { ...__quic_none(), sock: Some(sock), port: port, cfg: __h3_marked(h3q.transport(tickets.with_early_data())), key: l.h3_key, inbox: net.inbox(__h3_slots(), 65536) };
 }
 
 function __quic_on(c: __Conns): boolean {
