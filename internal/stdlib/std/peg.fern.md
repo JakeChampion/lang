@@ -8,7 +8,7 @@ A grammar maps rule names to patterns and names a start rule. A match records it
 
 ## Contracts
 
-Grammar construction checks rule references before evaluation. A missing rule is a `GrammarError` that names it. A failed match records the furthest input position reached by the evaluator.
+Grammar construction checks rule references before evaluation. A missing rule is a `GrammarError` that names it. A failed match records the furthest input position reached by the evaluator. A match that nests too deep stops the parse with a `PegError` whose `too_deep` is true. The limit is 2048 rule references, and less where the stack of the target is small, as on wasm.
 
 ## Executable example
 
@@ -105,7 +105,7 @@ pub struct Grammar { rules: Map[string, Pattern], start: string }
 
 pub struct PegMatch { pos: i32, caps: Map[string, string] }
 
-pub struct PegError { furthest: i32 }
+pub struct PegError { furthest: i32, too_deep: boolean }
 
 pub struct GrammarError { rule: string }
 ```
@@ -137,6 +137,9 @@ impl cmp.Display for GrammarError {}
 ```fern
 <<6 pub function (e: PegError) message(): string>>=
 pub function (e: PegError) message(): string {
+  if (e.too_deep) {
+    return "peg: nesting too deep (reached byte " + e.furthest.to_string() + ")";
+  }
   return "peg: no match (reached byte " + e.furthest.to_string() + ")";
 }
 
@@ -167,6 +170,13 @@ function __peg_fail(st: PegState, pos: i32): (i32, PegState) {
   return (-1, st);
 }
 
+// A match result of -1 is a failure that the caller can backtrack from. -2 is
+// the depth limit: it stops the parse, and no pattern can match after it.
+function __peg_too_deep(st: PegState, pos: i32): (i32, PegState) {
+  let (_, s2) = __peg_fail(st, pos);
+  return (-2, s2);
+}
+
 function __peg_merge_furthest(keep: PegState, from: PegState): PegState {
   if (from.furthest > keep.furthest) {
     return PegState { ...keep, furthest: from.furthest };
@@ -179,7 +189,10 @@ function __peg_merge_furthest(keep: PegState, from: PegState): PegState {
 
 ```fern
 <<9 function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState, depth: i32, seen_n: strin...>>=
-function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState, depth: i32, seen_n: string[], seen_p: i32[]): (i32, PegState) {
+function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState, depth: i32, seen_n: string[], seen_p: i32[], room: i32): (i32, PegState) {
+  if (room <= 0) {
+    return __peg_too_deep(st, pos);
+  }
   match (p) {
     PLit(s) => {
       let n = s.len();
@@ -244,7 +257,7 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
       let s2 = st;
       let i = 0;
       while (i < ps.len()) {
-        let (r, s3) = __peg_run(g, ps[i], input, cur, s2, depth, seen_n, seen_p);
+        let (r, s3) = __peg_run(g, ps[i], input, cur, s2, depth, seen_n, seen_p, room - 1);
         if (r < 0) {
           return (r, s3);
         }
@@ -258,8 +271,8 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
       let s2 = st;
       let i = 0;
       while (i < ps.len()) {
-        let (r, s3) = __peg_run(g, ps[i], input, pos, s2, depth, seen_n, seen_p);
-        if (r >= 0) {
+        let (r, s3) = __peg_run(g, ps[i], input, pos, s2, depth, seen_n, seen_p, room - 1);
+        if (r != -1) {
           return (r, s3);
         }
         s2 = __peg_merge_furthest(s2, s3);
@@ -271,7 +284,10 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
       let cur = pos;
       let s2 = st;
       while (true) {
-        let (r, s3) = __peg_run(g, sub, input, cur, s2, depth, seen_n, seen_p);
+        let (r, s3) = __peg_run(g, sub, input, cur, s2, depth, seen_n, seen_p, room - 1);
+        if (r == -2) {
+          return (r, s3);
+        }
         if (r < 0) {
           return (cur, __peg_merge_furthest(s2, s3));
         }
@@ -284,28 +300,31 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
       return (cur, s2);
     },
     PPlus(sub) => {
-      let (first, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
+      let (first, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p, room - 1);
       if (first < 0) {
         return (first, s2);
       }
-      return __peg_run(g, PStar(sub), input, first, s2, depth, seen_n, seen_p);
+      return __peg_run(g, PStar(sub), input, first, s2, depth, seen_n, seen_p, room - 1);
     },
     POpt(sub) => {
-      let (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
-      if (r >= 0) {
+      let (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p, room - 1);
+      if (r != -1) {
         return (r, s2);
       }
       return (pos, __peg_merge_furthest(st, s2));
     },
     PNot(sub) => {
-      let (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
+      let (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p, room - 1);
       if (r >= 0) {
         return __peg_fail(st, pos);
+      }
+      if (r == -2) {
+        return (r, s2);
       }
       return (pos, st);
     },
     PAnd(sub) => {
-      let (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
+      let (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p, room - 1);
       if (r < 0) {
         return (r, s2);
       }
@@ -313,7 +332,7 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
     },
     PRef(name) => {
       if (depth >= 2048) {
-        return __peg_fail(st, pos);
+        return __peg_too_deep(st, pos);
       }
       let si = 0;
       while (si < seen_n.len()) {
@@ -324,7 +343,7 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
       }
       match (g.rules.get(name)) {
         Some(rp) => {
-          return __peg_run(g, rp, input, pos, st, depth + 1, seen_n.append(name), seen_p.append(pos));
+          return __peg_run(g, rp, input, pos, st, depth + 1, seen_n.append(name), seen_p.append(pos), room - 1);
         },
         None => {
           return __peg_fail(st, pos);
@@ -332,7 +351,7 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
       }
     },
     PCap(name, sub) => {
-      let (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
+      let (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p, room - 1);
       if (r < 0) {
         return (r, s2);
       }
@@ -436,7 +455,7 @@ pub function grammar(rules: Map[string, Pattern], start: string): Result[Grammar
 function __peg_result(r: i32, st: PegState, input: string): Result[PegMatch, PegError] {
   let caps: Map[string, string] = map_new(8);
   if (r < 0) {
-    return Err(PegError { furthest: st.furthest });
+    return Err(PegError { furthest: st.furthest, too_deep: r == -2 });
   }
   let i = 0;
   while (i < st.tn.len()) {
@@ -445,7 +464,7 @@ function __peg_result(r: i32, st: PegState, input: string): Result[PegMatch, Peg
       if (r > furthest) {
         furthest = r;
       }
-      return Err(PegError { furthest: furthest });
+      return Err(PegError { furthest: furthest, too_deep: false });
     }
     i += 1;
   }
@@ -462,6 +481,17 @@ function __peg_result(r: i32, st: PegState, input: string): Result[PegMatch, Peg
 
 ```fern
 <<13 pub function parse(g: Grammar, input: string): Result[PegMatch, PegError]>>=
+// The most __peg_run frames that one match can use. A hosted native program
+// has a stack of 1 GiB. The other targets get the stack of their host: on
+// wasmtime it is 512 KiB, and a frame takes about 180 bytes.
+function __peg_frames(): i32 {
+  let os = target_os();
+  if (os == "linux" || os == "android" || os == "darwin") {
+    return 1048576;
+  }
+  return 1536;
+}
+
 pub function parse(g: Grammar, input: string): Result[PegMatch, PegError] {
   return parse_with_depth(g, input, 2048);
 }
@@ -469,7 +499,10 @@ pub function parse(g: Grammar, input: string): Result[PegMatch, PegError] {
 // parse_with_depth is parse with a lower depth limit. depth is the number of
 // rule references that one match can be inside, the start rule included. A
 // value above 2048 gives 2048: a caller can lower the limit of the module and
-// cannot raise it.
+// cannot raise it. A match also stops when its patterns nest deeper than the
+// stack of the target can hold. Either limit stops the parse with an error
+// whose too_deep is true: no choice, option, repetition or predicate continues
+// after it.
 pub function parse_with_depth(g: Grammar, input: string, depth: i32): Result[PegMatch, PegError] {
   let tn: string[] = [];
   let ts: i32[] = [];
@@ -481,7 +514,7 @@ pub function parse_with_depth(g: Grammar, input: string, depth: i32): Result[Peg
   } else if (depth < 2048) {
     start = 2048 - depth;
   }
-  let (r, s2) = __peg_run(g, PRef(g.start), input, 0, st, start, [], []);
+  let (r, s2) = __peg_run(g, PRef(g.start), input, 0, st, start, [], [], __peg_frames());
   return __peg_result(r, s2, input);
 }
 
