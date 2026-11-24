@@ -96,10 +96,10 @@ function mono_fn_value(e: ast.Expr, expected: string, env: parser.MEnv, funcs: p
   }
   let cur = ins.iadd(name, key);
   if let ast.ExprIdent(id) = e {
-    return RExpr { rexpr: ast.ExprIdent { ...id, name: name + "__" + parser.sanitize_key(key) }, rins: cur };
+    return RExpr { rexpr: ast.ExprIdent { ...id, name: parser.instance_name(name, key) }, rins: cur };
   }
   if let ast.ExprFieldAccess(fa) = e {
-    return RExpr { rexpr: ast.ExprFieldAccess { ...fa, field: fa.field + "__" + parser.sanitize_key(key) }, rins: cur };
+    return RExpr { rexpr: ast.ExprFieldAccess { ...fa, field: parser.instance_name(fa.field, key) }, rins: cur };
   }
   return RExpr { rexpr: e, rins: ins };
 }
@@ -439,7 +439,7 @@ function mono_expr(e: ast.Expr, env: parser.MEnv, funcs: parser.MFns, ins: parse
               ct = parser.infer_inst(funcs.decls[bi], c.args, env, funcs);
             }
             if (ct.len() > 0) {
-              let mang = cid.name + "__" + parser.sanitize_key(ct);
+              let mang = parser.instance_name(cid.name, ct);
               cur = cur.iadd(cid.name, ct);
               return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { ...cid, name: mang }, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: cur };
             }
@@ -457,7 +457,7 @@ function mono_expr(e: ast.Expr, env: parser.MEnv, funcs: parser.MFns, ins: parse
                 }
                 if (ct2.len() > 0) {
                   cur = cur.iadd(qn, ct2);
-                  return RExpr { rexpr: ast.ExprCall { callee: ast.ExprFieldAccess { ...fac, field: fac.field + "__" + parser.sanitize_key(ct2) }, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: cur };
+                  return RExpr { rexpr: ast.ExprCall { callee: ast.ExprFieldAccess { ...fac, field: parser.instance_name(fac.field, ct2) }, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: cur };
                 }
               }
             },
@@ -485,7 +485,7 @@ function mono_expr(e: ast.Expr, env: parser.MEnv, funcs: parser.MFns, ins: parse
                 }
                 if (key.len() > 0) {
                   instances = instances.iadd(name, key);
-                  name = name + "__" + parser.sanitize_key(key);
+                  name = parser.instance_name(name, key);
                 } else {
                   bound = false;
                 }
@@ -533,7 +533,7 @@ function mono_expr(e: ast.Expr, env: parser.MEnv, funcs: parser.MFns, ins: parse
                   mfolded = mfolded.append(nargs[mfk]);
                 }
                 cur = cur.iadd(mmn, mct);
-                return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: mmn + "__" + parser.sanitize_key(mct), line: fac.line, col: fac.col, ty: "", builtin: false }, args: mfolded, line: c.line, col: c.col, type_args: [], ty: c.ty }, rins: cur };
+                return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: parser.instance_name(mmn, mct), line: fac.line, col: fac.col, ty: "", builtin: false }, args: mfolded, line: c.line, col: c.col, type_args: [], ty: c.ty }, rins: cur };
               }
             }
           }
@@ -558,7 +558,7 @@ function mono_expr(e: ast.Expr, env: parser.MEnv, funcs: parser.MFns, ins: parse
                   sfolded = sfolded.append(nargs[sfk]);
                 }
                 cur = cur.iadd(smn, sct);
-                return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: smn + "__" + parser.sanitize_key(sct), line: fac.line, col: fac.col, ty: "", builtin: false }, args: sfolded, line: c.line, col: c.col, type_args: [], ty: c.ty }, rins: cur };
+                return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: parser.instance_name(smn, sct), line: fac.line, col: fac.col, ty: "", builtin: false }, args: sfolded, line: c.line, col: c.col, type_args: [], ty: c.ty }, rins: cur };
               }
             }
           }
@@ -758,7 +758,7 @@ function mono_call_expected(e: ast.Expr, expected: string, env: parser.MEnv, fun
               }
               if (key.len() > 0) {
                 let (nargs, cur) = mono_keyed_args(c, funcs.decls[bi], key, env, funcs, ins);
-                let mang = cid.name + "__" + parser.sanitize_key(key);
+                let mang = parser.instance_name(cid.name, key);
                 cur = cur.iadd(cid.name, key);
                 return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { ...cid, name: mang }, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: cur };
               }
@@ -777,7 +777,7 @@ function mono_call_expected(e: ast.Expr, expected: string, env: parser.MEnv, fun
                   if (qkey.len() > 0) {
                     let (qargs, qcur) = mono_keyed_args(c, funcs.decls[bq], qkey, env, funcs, ins);
                     qcur = qcur.iadd(qn, qkey);
-                    return RExpr { rexpr: ast.ExprCall { callee: ast.ExprFieldAccess { ...fac, field: fac.field + "__" + parser.sanitize_key(qkey) }, args: qargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: qcur };
+                    return RExpr { rexpr: ast.ExprCall { callee: ast.ExprFieldAccess { ...fac, field: parser.instance_name(fac.field, qkey) }, args: qargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: qcur };
                   }
                 }
               },
@@ -1012,7 +1012,7 @@ function clone_bg(fd: parser.FuncDecl, key: string, impls: parser.ImplInfo[], re
   }
   let (btp, bct) = bound_substitutions(fd, tparams, cts, impls);
   let rewritten = parser.FuncDecl { ...fd, body: bound_rewritten(fd, cts, reqs, funcs) };
-  return parser.instantiate_func(rewritten, fd.name + "__" + parser.sanitize_key(key), btp, bct, impls);
+  return parser.instantiate_func(rewritten, parser.instance_name(fd.name, key), btp, bct, impls);
 }
 
 function bound_rewritten(fd: parser.FuncDecl, cts: string[], reqs: parser.TraitReq[], funcs: parser.MFns): ast.Stmt[] {
@@ -1819,7 +1819,7 @@ function folded_array_call(amn: string, key: string, c: ast.ExprCall, fac: ast.E
   }
   let fcall = ast.ExprCall { callee: ast.ExprIdent { name: amn, line: fac.line, col: fac.col, ty: "", builtin: false }, args: raw, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
   let (folded, fins) = mono_call_args(fcall, env, funcs, ins);
-  return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: amn + "__" + parser.sanitize_key(key), line: fac.line, col: fac.col, ty: "", builtin: false }, args: folded, line: c.line, col: c.col, type_args: [], ty: c.ty }, rins: fins.iadd(amn, key) };
+  return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: parser.instance_name(amn, key), line: fac.line, col: fac.col, ty: "", builtin: false }, args: folded, line: c.line, col: c.col, type_args: [], ty: c.ty }, rins: fins.iadd(amn, key) };
 }
 
 function lane_bound_spellings(mod: parser.Module): string[] {
@@ -1973,12 +1973,12 @@ function lane_map_decl(key: string): parser.FuncDecl {
   let out = parser.e_ident("out");
   let i = parser.e_ident("i");
   let len = parser.e_call(parser.e_field_access(out, "len"), []);
-  let lane_call = parser.e_call(parser.e_ident(kernel + "__" + parser.sanitize_key(lanes)), [parser.e_call(parser.e_ident("__" + lanes + "_load"), [out, i])]);
+  let lane_call = parser.e_call(parser.e_ident(parser.instance_name(kernel, lanes)), [parser.e_call(parser.e_ident(util.reserved_name(lanes + "_load")), [out, i])]);
   let wide: ast.Stmt[] = [
-    parser.s_assign("out", parser.e_call(parser.e_ident("__" + lanes + "_with"), [out, i, lane_call])),
+    parser.s_assign("out", parser.e_call(parser.e_ident(util.reserved_name(lanes + "_with")), [out, i, lane_call])),
     parser.s_assign("i", parser.e_binary("+", i, parser.e_number(width, "", false))),
   ];
-  let one_call = parser.e_call(parser.e_ident(kernel + "__" + parser.sanitize_key(elem)), [parser.e_index(out, i, 0, 0)]);
+  let one_call = parser.e_call(parser.e_ident(parser.instance_name(kernel, elem)), [parser.e_index(out, i, 0, 0)]);
   let tail: ast.Stmt[] = [
     parser.s_assign("out", parser.e_call(parser.e_field_access(out, "with"), [i, one_call])),
     parser.s_assign("i", parser.e_binary("+", i, parser.e_number("1", "", false))),
@@ -2250,8 +2250,8 @@ function member_lit_dest(dest: string, name: string, funcs: parser.MFns): string
     let cts: string[] = [];
     if (parser.first_bracket(dest) >= 0 && parser.strip_struct_base(dest) == ed.name) {
       cts = parser.type_args_of(dest);
-    } else if (dest.starts_with(ed.name + "__")) {
-      cts = parser.split_key(slice_unchecked(dest, ed.name.len() + 2, dest.len()).to_owned(), ed.type_params.len(), funcs.structs, funcs.enums);
+    } else if (util.has_mangled_head(dest, ed.name)) {
+      cts = parser.split_key(slice_unchecked(dest, ed.name.len() + util.NAME_SEP.len(), dest.len()).to_owned(), ed.type_params.len(), funcs.structs, funcs.enums);
     }
     if (cts.len() != ed.type_params.len()) {
       continue;
@@ -2309,7 +2309,7 @@ function ms_struct_lit(s: ast.ExprStructLit, dest: string, env: parser.MEnv, gst
   } else if (gi >= 0) {
     let key = infer_lit_key(gstructs[gi], s.field_names, vals, env, funcs);
     if (key.len() > 0) {
-      tn = s.type_name + "__" + parser.sanitize_key(key);
+      tn = parser.instance_name(s.type_name, key);
       cur = cur.iadd(s.type_name, key);
     }
   }
@@ -2549,7 +2549,7 @@ function retype_assoc_call(init: ast.Expr, base: string, dest: string, funcs: pa
     if let ast.ExprFieldAccess(fa) = c.callee {
       let concrete = assoc_ctor_concrete(base, fa.field, dest, funcs);
       if let ast.ExprIdent(oid) = fa.obj {
-        if (concrete.len() > base.len() + 2 && concrete.starts_with(base + "__")) {
+        if (parser.is_clone_of(concrete, base)) {
           let obj: ast.Expr = ast.ExprIdent { ...oid, name: concrete, ty: "" };
           return ast.ExprCall { ...c, callee: ast.ExprFieldAccess { ...fa, obj: obj } };
         }
@@ -2723,7 +2723,7 @@ function mg_var_record(v: ast.StmtVar, env: parser.MEnv, gstructs: parser.Struct
 // ty names a clone of the generic struct `base`.
 function mg_clone_of(ins: parser.Insts, base: string, ty: string): boolean {
   for i in 0..ins.inames.len() {
-    if (ins.inames[i] == base && base + "__" + parser.sanitize_key(ins.itypes[i]) == ty) {
+    if (ins.inames[i] == base && parser.instance_name(base, ins.itypes[i]) == ty) {
       return true;
     }
   }
@@ -2863,7 +2863,7 @@ function clone_struct_method(m: parser.FuncDecl, base: string, key: string, gstr
   if (spelled.len() == cts.len()) {
     tparams = spelled;
   }
-  let mang = base + "__" + parser.sanitize_key(key);
+  let mang = parser.instance_name(base, key);
   let bsegs = parser.split_dunder(base);
   let bare_base = bsegs[bsegs.len() - 1];
   let cur = ins;
@@ -2938,7 +2938,7 @@ function ms_enum_clone_ty(ty: string, enums: parser.EnumDecl[]): string {
     return ty;
   }
   for k in 0..insts.inames.len() {
-    if (!enum_clone_exists(enums, insts.inames[k] + "__" + insts.itypes[k])) {
+    if (!enum_clone_exists(enums, util.mangled(insts.inames[k], insts.itypes[k]))) {
       return ty;
     }
   }
@@ -3188,7 +3188,7 @@ function ms_module(mod: parser.Module): parser.Module {
     let idx = parser.gstruct_index(gstructs, base);
     if (idx < 0) {
       let bgi = parser.bg_find(sfns, base);
-      if (bgi >= 0 && !has_func_named(mod.funcs, nfuncs, base + "__" + parser.sanitize_key(key))) {
+      if (bgi >= 0 && !has_func_named(mod.funcs, nfuncs, parser.instance_name(base, key))) {
         let bcl = clone_bg(sfns.decls[bgi], key, mod.impls, mod.trait_reqs, sfns);
         let bcr = mono_stmts(bcl.body, parser.env_from_params(bcl.params), instance_fns(sfns, key), ins, parser.fn_tag_spelling(bcl.ret_type, bcl.ret_fn_ret, bcl.ret_fn_param_types));
         ins = bcr.rins3;
@@ -3197,13 +3197,13 @@ function ms_module(mod: parser.Module): parser.Module {
         nfuncs = nfuncs.append(bfr.ffn);
       }
     }
-    if (idx >= 0 && plain_struct_named(mod.structs, base + "__" + parser.sanitize_key(key))) {
+    if (idx >= 0 && plain_struct_named(mod.structs, parser.instance_name(base, key))) {
       idx = -1;
     }
     if (idx >= 0) {
       let gd = gstructs[idx];
       let cts = parser.split_key(key, gd.type_params.len(), mod.structs, mod.enums);
-      let mang = base + "__" + parser.sanitize_key(key);
+      let mang = parser.instance_name(base, key);
       let cf: parser.StructFieldDecl[] = [];
       for cfi in 0..gd.fields.len() {
         let subbed = ms_enum_clone_ty(parser.subst_ty(gd.fields[cfi].type_name, gd.type_params, cts), mod.enums);
@@ -3348,7 +3348,7 @@ function ge_inst_of(ty: string, enums: parser.EnumDecl[]): GEInst {
   if (key.len() == 0) {
     return GEInst { ok: false, base: "", key: "", mang: "" };
   }
-  return GEInst { ok: true, base: base + "", key: key, mang: base + "__" + key };
+  return GEInst { ok: true, base: base + "", key: key, mang: util.mangled(base, key) };
 }
 
 function fn_key_sanitize(s: string): string {
@@ -3647,11 +3647,11 @@ function me_call_decl_at(funcs: parser.MFns, fname: string, ins: parser.Insts): 
 }
 
 function me_called_name(funcs: parser.MFns, fname: string, ins: parser.Insts): string {
-  if (funcs.free_at(fname) >= 0 || util.index_of_sub(fname, "__") <= 0) {
+  if (funcs.free_at(fname) >= 0 || util.index_of_sub(fname, util.NAME_SEP) <= 0) {
     return fname;
   }
   for k in 0..ins.inames.len() {
-    if (ins.inames[k] + "__" + parser.sanitize_key(ins.itypes[k]) == fname) {
+    if (parser.instance_name(ins.inames[k], ins.itypes[k]) == fname) {
       return ins.inames[k];
     }
   }
@@ -3667,7 +3667,7 @@ function me_ident(id: ast.ExprIdent, expected: string, env: parser.MEnv, enums: 
     let key = genum_key_from_anno(expected, enums[owner].name, enums);
     if (key.len() > 0) {
       let nins = ins.iadd_arg(enums[owner].name, key, genum_single_arg(expected));
-      return RExpr { rexpr: ast.ExprIdent { ...id, name: id.name + "__" + key }, rins: nins };
+      return RExpr { rexpr: ast.ExprIdent { ...id, name: util.mangled(id.name, key) }, rins: nins };
     }
   }
   return RExpr { rexpr: ast.ExprIdent { ...id }, rins: ins };
@@ -3746,7 +3746,7 @@ function me_expr(e: ast.Expr, expected: string, env: parser.MEnv, enums: parser.
       }
       if (key.len() > 0) {
         cur = cur.iadd_arg(enums[owner].name, key, carg);
-        let mv = vname + "__" + key;
+        let mv = util.mangled(vname, key);
         return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: mv, line: c.line, col: c.col, ty: "", builtin: false }, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: cur };
       }
       let rc = me_expr(me_block_at(c, expected, enums), "", env, enums, structs, funcs, cur);
@@ -3821,7 +3821,7 @@ function me_expr(e: ast.Expr, expected: string, env: parser.MEnv, enums: parser.
               let key = genum_key_from_anno(expected, enums[owner].name, enums);
               if (key.len() > 0) {
                 let nins = ins.iadd_arg(enums[owner].name, key, genum_single_arg(expected));
-                return RExpr { rexpr: ast.ExprIdent { name: fa.field + "__" + key, line: fa.line, col: fa.col, ty: "", builtin: false }, rins: nins };
+                return RExpr { rexpr: ast.ExprIdent { name: util.mangled(fa.field, key), line: fa.line, col: fa.col, ty: "", builtin: false }, rins: nins };
               }
             }
           }
@@ -3873,7 +3873,7 @@ function me_rewrite_arm_pattern(pat: ast.Pattern, ed: parser.EnumDecl, key: stri
       let vn = ed.variant_names;
       for j in 0..vn.len() {
         if (vn[j] == simple) {
-          return ast.PatVariant { ...pv, type_name: simple + "__" + key };
+          return ast.PatVariant { ...pv, type_name: util.mangled(simple, key) };
         }
       }
       return pat;
@@ -4297,7 +4297,7 @@ struct BgStep { funcs: parser.FuncDecl[], ins: parser.Insts }
 
 function me_bg_step(gidx: i32, base: string, key: string, mod: parser.Module, efns: parser.MFns, st: BgStep): BgStep {
   let at = parser.bg_find(efns, base);
-  if (gidx >= 0 || at < 0 || has_func_named(mod.funcs, st.funcs, base + "__" + parser.sanitize_key(key))) {
+  if (gidx >= 0 || at < 0 || has_func_named(mod.funcs, st.funcs, parser.instance_name(base, key))) {
     return st;
   }
   let bc = me_clone_bg(efns.decls[at], key, mod, efns, st.ins);
@@ -4525,11 +4525,11 @@ pub function monomorphize_enums(mod: parser.Module): parser.Module {
       if (ed.type_params.len() != 1) {
         cts = parser.split_key(key, ed.type_params.len(), mod.structs, menums);
       }
-      let mname = base + "__" + key;
+      let mname = util.mangled(base, key);
       let nvn: string[] = [];
       for vi2 in 0..ed.variant_names.len() {
         let vn0 = ed.variant_names[vi2];
-        nvn = nvn.append(vn0 + "__" + key);
+        nvn = nvn.append(util.mangled(vn0, key));
         if let Some(vidx) = parser.variant_struct_index(mod.structs, vn0, base) {
           let vs = mod.structs[vidx];
           let nf: parser.StructFieldDecl[] = [];
@@ -4561,7 +4561,7 @@ pub function monomorphize_enums(mod: parser.Module): parser.Module {
             }
             nf = nf.append(parser.StructFieldDecl { ...vs.fields[fj2], type_name: f_ty, fn_ret: f_ret, fn_param_types: f_ptys });
           }
-          cl_structs = cl_structs.append(parser.StructDecl { name: vn0 + "__" + key, fields: nf, type_params: [], const_params: [], derives: vs.derives, line: vs.line, col: vs.col, enum_owner: mname, must_consume: vs.must_consume, secret: vs.secret, value_type: vs.value_type, variant_field_names: vs.variant_field_names, is_pub: true, is_package: false, opaque: vs.opaque, module: vs.module });
+          cl_structs = cl_structs.append(parser.StructDecl { name: util.mangled(vn0, key), fields: nf, type_params: [], const_params: [], derives: vs.derives, line: vs.line, col: vs.col, enum_owner: mname, must_consume: vs.must_consume, secret: vs.secret, value_type: vs.value_type, variant_field_names: vs.variant_field_names, is_pub: true, is_package: false, opaque: vs.opaque, module: vs.module });
         }
       }
       cl_enums = cl_enums.append(parser.EnumDecl { name: mname, variant_names: nvn, type_params: [], const_params: [], line: ed.line, col: ed.col, must_consume: ed.must_consume, try_marker: ed.try_marker, is_pub: true, is_package: false, module: ed.module, instance: ed.name + "[" + parser.subst_ty_join(cts, ",", [], []) + "]", visible_from: ed.visible_from });

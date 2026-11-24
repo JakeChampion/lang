@@ -1,0 +1,38 @@
+import "std/string";
+
+// split, lines and replace find each separator with a search for its first
+// byte. These cases have a first byte with no separator after it, a
+// separator at each end, and separators that overlap.
+function show(parts: string[]): string {
+  return "[" + parts.join("|") + "]";
+}
+
+function main(): i32 {
+  print(show("a,b,,c,".split(",")));
+  print(show(",".split(",")));
+  print(show("".split(",")));
+  print(show("abcabcab".split("abc")));
+  print(show("aaa".split("aa")));
+  print(show("x".split("xyz")));
+  print(show("a-b->c->".split("->")));
+  print(show("one::two:three::".split("::")));
+  print(show("ab".split("ab")));
+  print(show("héllo wörld".split("ö")));
+  print(show("añb".split("")));
+  print(show("a\r\nb\n\nc\r".lines()));
+  print(show("\n".lines()) + show("".lines()) + show("ab\r\n".lines()) + show("\r".lines()) + show("x\n\r\ny".lines()));
+  print("aaaa".replace("aa", "b"));
+  print("[" + "abab".replace("ab", "") + "]");
+  print("xaxbxa".replace("xa", "long!"));
+  print("abc".replace("abcd", "z"));
+  print("a.b.c".replace(".", ""));
+  print("aab".replace("ab", "c"));
+  print("a-b->c-".replace("->", "="));
+  print("abc".replace("", "z"));
+  print("mississippi".replace("ssi", "SSI").replace("i", ""));
+  let long = "0123456789abcdef".repeat(40) + ";;" + "x".repeat(70) + ";" + "y".repeat(33) + ";;";
+  let parts = long.split(";;");
+  print(parts.len().to_string() + " " + parts[0].len().to_string() + " " + parts[1].len().to_string() + " " + parts[2].len().to_string());
+  print(long.replace(";;", "<>").len().to_string() + " " + long.replace(";", "").len().to_string());
+  return 0;
+}

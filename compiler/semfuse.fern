@@ -113,11 +113,12 @@ function verb_of(name: string): string {
 function iter_verb_of(name: string): string {
   let verbs: string[] = ["map", "filter", "take", "flat_map", "skip", "enumerate", "zip", "fold", "len", "collect", "find", "any", "all"];
   let n = slice_unchecked(name, 0, dollar_at(name)).to_owned();
-  if (n == "iter__range") {
+  if (n == util.mangled("iter", "range")) {
     return "range";
   }
-  if (n.starts_with("iter__of")) {
-    if (n.len() == 8 || slice_unchecked(n, 8, n.len()).to_owned().starts_with("__")) {
+  let of = util.mangled("iter", "of");
+  if (n.starts_with(of)) {
+    if (n == of || util.has_mangled_head(n, of)) {
       return "of";
     }
     return "";

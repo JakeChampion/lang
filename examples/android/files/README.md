@@ -108,6 +108,8 @@ has an address with `https://` or `http://`, a user and a password.
 `store.Link` holds either kind, so each screen, each copy, the stream of a
 video and the file picker of the system work with both. A copy to a
 WebDAV server sends each file whole in one step, from a file of the phone.
+The client holds the whole file in memory for that step, because
+`std/fetch` sends a body from memory only.
 
 A NAS often has a certificate of its own, which the phone does not trust.
 The folder then shows the SHA-256 fingerprint of that certificate, and a
@@ -188,3 +190,5 @@ server in the app, and does the same read and copies with it.
 ```sh
 fern -apk files.apk examples/android/files/app.fern
 ```
+
+The [nightly release](https://github.com/JakeChampion/lang/releases/tag/nightly) has a signed `fern-files.apk` from `main`. Each nightly uses the same key, so it installs over the one before it.

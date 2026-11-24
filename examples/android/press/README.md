@@ -72,6 +72,8 @@ or later:
 fern -apk press.apk -apk-run examples/android/press/app.fern
 ```
 
+The [nightly release](https://github.com/JakeChampion/lang/releases/tag/nightly) has a signed `fern-press.apk` from `main`. Each nightly uses the same key, so it installs over the one before it.
+
 ## Tests
 
 `internal/testing/e2e/android_press_test.go` runs two checks:

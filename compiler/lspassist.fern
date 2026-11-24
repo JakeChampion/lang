@@ -77,7 +77,7 @@ function bound_items(bs: Bound[]): Item[] {
 function global_items(s: checker.Scope, mod: parser.Module, m: i32, own: string, own acc: Item[]): Item[] {
   for fd in mod.funcs {
     if (lspquery.declared_in(fd.line, m) && offered_func(fd, fd.name)) {
-      acc = acc.append(func_item(s, fd.name, lspquery.unprefixed(fd.name, own)));
+      acc = acc.append(func_item(s, fd.name, util.unqualified(fd.name, own)));
     }
   }
   for sd in mod.structs {
@@ -107,7 +107,7 @@ function offered_struct(sd: parser.StructDecl): boolean {
 }
 
 function struct_item(sd: parser.StructDecl, prefix: string): Item {
-  let shown = lspquery.unprefixed(sd.name, prefix);
+  let shown = util.unqualified(sd.name, prefix);
   return Item { label: shown, kind: CI_STRUCT, detail: "struct " + shown + ferndoc.join_type_params(sd.type_params) };
 }
 
@@ -122,17 +122,17 @@ function func_item(s: checker.Scope, name: string, shown: string): Item {
 }
 
 function enum_items(s: checker.Scope, name: string, variants: string[], own: string, own acc: Item[]): Item[] {
-  let shown = lspquery.unprefixed(name, own);
+  let shown = util.unqualified(name, own);
   let module = checker.union_module(s, name);
   acc = acc.append(Item { label: shown, kind: CI_ENUM, detail: "enum " + shown });
   for vn in variants {
-    acc = acc.append(Item { label: lspquery.unprefixed(vn, module), kind: CI_ENUM_MEMBER, detail: lspquery.variant_text(s, vn, name) });
+    acc = acc.append(Item { label: util.unqualified(vn, module), kind: CI_ENUM_MEMBER, detail: lspquery.variant_text(s, vn, name) });
   }
   return acc;
 }
 
 function visible(name: string): boolean {
-  return name.len() > 0 && !name.starts_with("__");
+  return name.len() > 0 && !util.is_reserved_name(name);
 }
 
 function type_text(t: typeinfo.Type): string {
@@ -171,40 +171,39 @@ function members(v: checker.QueryView, toks: lspquery.Tok[], quals: flatten.Qual
 
 function own_first(own: string, name: string): string[] {
   if (own.len() > 0) {
-    return [own + "__" + name, name];
+    return [util.mangled(own, name), name];
   }
   return [name];
 }
 
 function export_items(s: checker.Scope, mod: parser.Module, prefix: string): Item[] {
   let out: Item[] = [];
-  let head = prefix + "__";
   for fd in mod.funcs {
-    if (exported(fd.is_pub, fd.name, head) && offered_func(fd, lspquery.unprefixed(fd.name, prefix))) {
-      out = out.append(func_item(s, fd.name, lspquery.unprefixed(fd.name, prefix)));
+    if (exported(fd.is_pub, fd.name, prefix) && offered_func(fd, util.unqualified(fd.name, prefix))) {
+      out = out.append(func_item(s, fd.name, util.unqualified(fd.name, prefix)));
     }
   }
   for sd in mod.structs {
-    if (exported(sd.is_pub, sd.name, head) && offered_struct(sd)) {
+    if (exported(sd.is_pub, sd.name, prefix) && offered_struct(sd)) {
       out = out.append(struct_item(sd, prefix));
     }
   }
   for ed in mod.enums {
-    if (exported(ed.is_pub, ed.name, head)) {
+    if (exported(ed.is_pub, ed.name, prefix)) {
       out = enum_items(s, ed.name, ed.variant_names, prefix, out);
     }
   }
   return out;
 }
 
-function exported(is_pub: boolean, name: string, head: string): boolean {
-  return is_pub && name.starts_with(head);
+function exported(is_pub: boolean, name: string, prefix: string): boolean {
+  return is_pub && util.has_mangled_head(name, prefix);
 }
 
 function variant_items(s: checker.Scope, u: checker.UnionSig): Item[] {
   let out: Item[] = [];
   for vn in u.variants {
-    out = out.append(Item { label: lspquery.unprefixed(vn, u.module), kind: CI_ENUM_MEMBER, detail: lspquery.variant_text(s, vn, u.name) });
+    out = out.append(Item { label: util.unqualified(vn, u.module), kind: CI_ENUM_MEMBER, detail: lspquery.variant_text(s, vn, u.name) });
   }
   return out;
 }
@@ -664,7 +663,7 @@ function const_type(p: lspquery.Program, m: i32, fd: parser.FuncDecl): string {
   let own = lspquery.quals_of(v, m).own;
   let bundled = fd.name;
   if (own.len() > 0) {
-    bundled = own + "__" + fd.name;
+    bundled = util.mangled(own, fd.name);
   }
   let Some(sig) = checker.func_sig(checker.module_scope(v.types), bundled) else {
     return "unknown";

@@ -320,7 +320,7 @@ function pure_rows(keys: string[], funcs: ssasem.Func[]): util.NameIndex {
         } else if (ins.kind_tag == ssasem.call()) {
           callee = rows.find(ins.str);
           if (effects.has(ins.str) && util.index_of_str(funcs[i].shadows, ins.str) < 0
-            || callee < 0 && !ins.str.starts_with("__")) {
+            || callee < 0 && !util.is_reserved_name(ins.str)) {
             bad = bad.with(i, true);
           }
         }

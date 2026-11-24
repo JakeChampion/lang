@@ -163,7 +163,7 @@ function pattern_variants(x: Ctx, i: i32, name: string, own acc: Mark[]): Mark[]
 }
 
 function spells_variant(t: lspquery.Tok, name: string): boolean {
-  return t.ident && (name == t.text || name.ends_with("__" + t.text) || name.ends_with("." + t.text));
+  return t.ident && (name == t.text || util.has_mangled_tail(name, t.text) || name.ends_with("." + t.text));
 }
 
 function qualifier_of(x: Ctx, j: i32): i32 {
@@ -326,7 +326,7 @@ function type_class(s: checker.Scope, q: flatten.Qualifiers, tparams: string[], 
   }
   let kind: i32 = -1;
   if (q.own.len() > 0) {
-    kind = type_kind(s, q.own + "__" + t.text);
+    kind = type_kind(s, util.mangled(q.own, t.text));
   }
   if (kind < 0) {
     kind = type_kind(s, t.text);

@@ -211,6 +211,8 @@ adb install -r story-deck.apk
 go test ./internal/testing/e2e -run '^TestAndroidStoryDeck'
 ```
 
+The [nightly release](https://github.com/JakeChampion/lang/releases/tag/nightly) has a signed `fern-story-deck.apk` from `main`. Each nightly uses the same key, so it installs over the one before it.
+
 The host tests cover account sign-in, library navigation, track search,
 download recovery, and player settings in the UI simulator. The large-library
 test reports search and scroll times for a fixture of 1,501 cards. The removal

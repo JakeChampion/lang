@@ -9,12 +9,17 @@ The array then goes back to the allocator with zeros in its elements.
 The drop also zeroes each scalar field of the record: an integer, a float, a boolean or a `char`.
 The box of the record then goes back to the allocator with zeros in those fields.
 
+The drop does the same for a nested record and for a tuple that the record holds alone.
+It zeroes the scalars of that record or tuple, and the numeric arrays that the record or tuple holds alone.
+The rule applies again to a record or a tuple inside it.
+
 This holds in each build, not only under `-harden`.
 
 A numeric array has elements of 1, 2, 4 or 8 bytes: `u8[]`, `u16[]`, `i32[]`, `u64[]`, `f64[]` and the other integer and float element types.
 
 An array that another value still holds keeps its elements.
 The drop wipes an array only when the record holds the last reference to it.
+A nested record or tuple that another value still holds keeps its fields and its arrays.
 A struct update `Key { ...k, id: 2 }` shares the arrays of `k`, so they are wiped when the last record that holds them goes away.
 
 `@secret` applies only to a `struct` declaration. On any other declaration it is `P001`.
@@ -42,7 +47,9 @@ A struct can have `@value` and `@secret` together. `aes_gcm.Key`, `ecdsa.Private
 
 ## Limits
 
-- The drop wipes the numeric arrays and the scalars that are fields of the record. It does not wipe a string. It does not wipe an array or a scalar inside a nested record, a tuple or an enum.
+- The drop does not wipe a string. It does not wipe an array or a scalar inside an enum, such as an `Option`, or inside an array of records.
+- The drop does not wipe a nested record that has a `core/mem.Drop` finalizer, because the finalizer reads the fields after the wipe.
+  Give that record the attribute `@secret`, and its own drop then wipes it after the finalizer.
 - A copy of the elements into another array, such as a slice that a program copies out, is not wiped.
 - The wasm allocator does not give a released block to a raw allocation of the same size.
   The read-back test therefore runs on the native targets only.
@@ -50,3 +57,4 @@ A struct can have `@value` and `@secret` together. `aes_gcm.Key`, `ecdsa.Private
 The semantic index is [spec/semantics.md](../spec/semantics.md).
 `TestSelfHostSecretRecordWipesItsArrays` reads the released blocks back through raw allocations on x86-64 and arm64.
 Its control is the same record without the attribute, which must read the secret bytes back.
+`TestSelfHostSecretRecordWipesItsScalars` does the same for the scalar fields, and `TestSelfHostSecretRecordWipesItsNestedBoxes` for a nested record and a tuple.
