@@ -76,6 +76,8 @@ SHA-NI) on 2026-11-12. The runs of the two programs alternated. Upstream uses
 the SHA-NI instructions. This port uses the 8-lane AVX2 kernel of
 `crypto.Sha1x8`, because SHA-NI is above the x86-64 baseline of Fern.
 
+SHA-256 repositories also search eight specifiers per step. On an AMD EPYC 9V74, a single worker searched 524,288 specifiers at 17.56 million hashes/s with the AVX2 kernel, up from 4.48 million with the scalar search. Both builds used the same compiler, benchmark commit text and 39-zero prefix. The measurements are medians of seven alternating runs pinned to one CPU.
+
 The time of a real run depends on luck: the two programs try different
 specifiers, so each finds a different match after a different number of
 hashes. On average, a run takes the time of 2^28 hashes, the same as the
@@ -87,9 +89,6 @@ benchmark.
   CPU search is the fallback. This port has only the CPU search.
 - Upstream threads stop at the first match from any thread. This port takes
   the lowest match in each round. Thus the result is the same on each run.
-- A SHA-256 repository gets a search of one specifier at a time. Upstream uses
-  the SHA-NI instructions for SHA-256 too, so it is probably faster there. That
-  case was not measured.
 
 ## Files
 

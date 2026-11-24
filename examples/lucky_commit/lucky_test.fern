@@ -161,6 +161,19 @@ function test_search_sha256_without_signature(): test.TestOutcome {
   );
 }
 
+function test_sha256_lane_ranges(): test.TestOutcome {
+  let p = lucky.process(unsigned_commit("", ""));
+  for lane in 0..8 {
+    let n = 16i64 + lane as i64;
+    let hash = lucky.object_hex(lucky.Algo.Sha256, p.with_padding(n));
+    let j = lucky.job(lucky.Algo.Sha256, p, spec_of(lucky.Algo.Sha256, hash));
+    if (lucky.search_range(j, 9, 18) != Some(n) || lucky.search_range(j, n + 1, 1) != None || lucky.search_range(j, n - 1, 1) != None) {
+      return test.fail("SHA-256 lane range");
+    }
+  }
+  return test.pass();
+}
+
 function test_search_with_placeholders(): test.TestOutcome {
   return check_search(
     lucky.Algo.Sha1, unsigned_commit("", ""), "8f1e428__2", 0, 100,
@@ -383,6 +396,7 @@ function main(): i32 {
   r = r.it("search failure", test_search_failure);
   r = r.it("search without a signature", test_search_without_signature);
   r = r.it("search sha256 without a signature", test_search_sha256_without_signature);
+  r = r.it("SHA-256 full hashes in partial lane groups", test_sha256_lane_ranges);
   r = r.it("search with placeholders", test_search_with_placeholders);
   r = r.it("search with a multi-word spec", test_search_with_multi_word_spec);
   r = r.it("search with a full spec", test_search_with_full_spec);
