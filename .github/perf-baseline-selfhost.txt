@@ -107,11 +107,11 @@ selfhost/wasm32-wasi/string_count_byte.emit	561
 selfhost/wasm32-wasi/string_find_byte.emit	1754
 selfhost/wasm32-wasi/string_rfind_byte.emit	1787
 selfhost/wasm32-wasi/string_scan.emit	1482
-selfhost/wasm32-wasi/string_slice.emit	564
+selfhost/wasm32-wasi/string_slice.emit	593
 selfhost/wasm32-wasi/struct_drop.emit	1706
-selfhost/wasm32-wasi/tokenize.emit	919
-selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	9893
-selfhost/wasm32-wasi/utf8_ingest_validated.emit	11215
+selfhost/wasm32-wasi/tokenize.emit	948
+selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	10034
+selfhost/wasm32-wasi/utf8_ingest_validated.emit	11337
 selfhost/x86-64-linux/array_append.emit	1227
 selfhost/x86-64-linux/array_index.emit	1231
 selfhost/x86-64-linux/array_scale_f64.emit	1415

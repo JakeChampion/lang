@@ -8208,6 +8208,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "ring_send_zc", params: [typeinfo.t_i64(), typeinfo.t_i32(), bytes, typeinfo.t_i32()], modes: [v, v, b, v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "tcp_recv_into", params: [typeinfo.t_i32(), bytes], modes: [v, b], result: typeinfo.t_i32() },
     ssasem.Contract { name: "tcp_addr_into", params: [typeinfo.t_i32(), typeinfo.t_bool(), bytes], modes: [v, v, b], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "wasm_name_lookup", params: [bytes, bytes], modes: [b, b], result: typeinfo.t_i32() },
     ssasem.Contract { name: "tcp_ktls", params: [typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32(), bytes], modes: [v, v, v, b], result: typeinfo.t_i32() },
     ssasem.Contract { name: "signal_ignore", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "signal_default", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
@@ -10249,6 +10250,10 @@ function prune_dead_constructions(all: Produced[], stack_phi_joins: boolean): Pr
       let cs = semcse.merge(p.func);
       if (cs.merged > 0 && optbisect.allowed_by(sw, "cse", name)) {
         p = Produced { ...p, func: cs.f, analysis: None };
+      }
+      let su = semsink.sink_to_uses(p.func);
+      if (su.reread > 0 && optbisect.allowed_by(sw, "sink-to-uses", name)) {
+        p = Produced { ...p, func: su.f, analysis: None };
       }
       let pr = semdead.prune(p.func);
       if (pr.removed > 0 && optbisect.allowed_by(sw, "prune", name)) {

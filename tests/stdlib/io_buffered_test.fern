@@ -265,7 +265,10 @@ function with_file(content: string, term: i32, chunk: i32): string[] {
 }
 
 function test_buf_writer_close_writes(): test.TestOutcome {
-  let path = "/tmp/fern_io_buffered_close_test.txt";
+  let Ok(dir) = temp_dir("fern-io-buffered") else {
+    return test.fail("temp_dir failed");
+  };
+  let path = dir + "/close_test.txt";
   match (open_writer(path)) {
     Ok(w) => {
       let b = io.buf_writer_new(w, 64);

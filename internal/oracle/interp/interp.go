@@ -1738,6 +1738,7 @@ func New() *Interp {
 	i.Builtins["wasm_timer_pollable"] = &Builtin{Fn: builtinWasmTimerPollable}
 	i.Builtins["wasm_block"] = &Builtin{Fn: builtinWasmBlock}
 	i.Builtins["wasm_poll"] = &Builtin{Fn: builtinWasmPoll}
+	i.Builtins["wasm_name_lookup"] = &Builtin{Fn: builtinWasmNameLookup}
 	i.inheritListener()
 	return i
 }
@@ -2275,6 +2276,14 @@ func builtinWasmPoll(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("wasm_poll: expected array arg, got %T", args[0])
 	}
 	return Number(-1), nil
+}
+
+// The interpreter is not a wasi host, so it has no wasi:sockets/ip-name-lookup.
+func builtinWasmNameLookup(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("wasm_name_lookup: expected 2 args, got %d", len(args))
+	}
+	return Number(-int64(syscall.ENOSYS)), nil
 }
 
 func builtinWasmTimerPollable(_ *Interp, args []Value) (Value, error) {

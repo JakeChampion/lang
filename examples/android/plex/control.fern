@@ -44,6 +44,10 @@ pub struct Device {
   // Turns the screen to the wide side of the video, or gives the turn back
   // to the device.
   turn: (boolean) => void,
+  has_voice: boolean,
+  voice_result: (android.Event) => Option[string],
+  voice_start: () => boolean,
+  voice_cancel: () => void,
   show_field: (string) => void,
   set_field: (string) => void,
   hide_field: () => void,
@@ -376,6 +380,7 @@ pub struct App {
   children: plex.Item[],
   query: string,
   typing: boolean,
+  listening: boolean,
   search_at: i64,
   error: string,
   api: Option[Call],
@@ -564,7 +569,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
     account: setting(text, "account"), quality: num(setting(text, "quality")), speed: speed_of(setting(text, "speed")), lang: plex.language_code(setting(text, "lang")), subs: mode_of(setting(text, "subs")), account_lang: setting(text, "account_lang"), account_subs: mode_of(setting(text, "account_subs")), picked: listed(setting(text, "picked")), caption_size: num(setting(text, "caption_size")) % 3, caption_box: setting(text, "caption_box") != "0", smart: listed(setting(text, "smart")), smart_count: smart_index(setting(text, "smart_count")), smart_at: -SMART_MS, browsing: [], browsed: [], texts: texts.for_languages(dev.languages), shuffle: setting(text, "shuffle") == "1", repeat: num(setting(text, "repeat")) % 3, sleep: 0, sleep_at: 0i64, turned: false, local: false,
     screen: ui.LOGIN, tab: 0, title: "", scroll: 0, rows: [], stack: [],
     hubs: none, results: none, sections: [], section: no_section(), items: [], total: 0, sort: 0, unwatched: false, letters: [], item: plex.no_item(), children: [],
-    query: "", typing: false, search_at: 0i64, error: "",
+    query: "", typing: false, listening: false, search_at: 0i64, error: "",
     api: None, asks: [], img: None, cache: map_new(64), cached: [], failed: [], report: None, reports: [], pending: load_pending(dev, dir),
     play: no_play(), press: no_press(), menu: plex.no_item(), focus: "", asked_notifications: false, users: [], pin_for: "", pin_digits: "", nodes: [], dirty: true, gpu: false, paint: false, fling: no_fling(),
     downloads: load_downloads(dev, dir), downloads_at: 0i64, offline: false,
@@ -4056,7 +4061,11 @@ pub function act(own s: App, a: string, n: scene.Node, x: i32): App {
   if (a == "watched") {
     return toggle_watched(t);
   }
+  if (a == "voice") {
+    return voice_search(t);
+  }
   if (a == "type") {
+    t = cancel_voice(t);
     t.dev.show_field(t.query);
     return App { ...t, typing: true, dirty: true };
   }
@@ -4273,10 +4282,12 @@ function remote_key(own s: App, code: i32): App {
   if (code == KEY_CENTER || code == KEY_ENTER || code == KEY_BUTTON_A) {
     return press_focus(s);
   }
-  // The Search key of a remote opens the search with the keyboard, whose
-  // microphone takes the words by voice.
+
   if (code == KEY_SEARCH && s.screen != ui.PLAYER && ui.has_tabs(s.screen)) {
     let t = open_tab(s, 2);
+    if (t.dev.has_voice) {
+      return voice_search(t);
+    }
     t.dev.show_field(t.query);
     return App { ...t, typing: true, dirty: true };
   }
@@ -4426,6 +4437,22 @@ function keyed(own s: App, q: string): App {
   return query_changed(s, q);
 }
 
+function cancel_voice(own s: App): App {
+  if (s.listening) {
+    s.dev.voice_cancel();
+    return App { ...s, listening: false, dirty: true };
+  }
+  return s;
+}
+
+function voice_search(own s: App): App {
+  if (s.listening) {
+    return cancel_voice(s);
+  }
+  s.dev.hide_field();
+  return App { ...s, typing: false, listening: s.dev.voice_start(), dirty: true };
+}
+
 // The typing ends and the search starts at once.
 function search_now(own s: App): App {
   s.dev.hide_field();
@@ -4480,7 +4507,7 @@ pub function view(s: App): ui.View {
     screen: s.screen, tab: s.tab, title: s.title, scroll: s.scroll, rows: s.rows, hubs: hubs,
     sections: s.sections, items: s.items, total: s.total, sort: s.sort, unwatched: s.unwatched, letters: s.letters, menu: s.menu, menu_download: download_percent(s, s.menu.key), menu_smart: s.smart.contains(s.menu.key), saved: waiting_rows(s), saved_done: s.downloads.filter((d: Saved): boolean => d.status == download.DONE).len(), saved_total: s.downloads.len(), now_playing: if (s.play.active && s.screen != ui.PLAYER) { p.item.title + " · " + p.item.grandparent } else { "" }, users: s.users, pin_for: s.pin_for, pin_digits: s.pin_digits, item: s.item, children: s.children,
     pin_code: s.pin.code, error: if (offline_home(s)) { "" } else { s.texts.text(s.error) }, offline: offline_home(s), servers: s.servers, server_states: s.states,
-    query: s.query, typing: s.typing, account: s.account, server_name: s.server.name,
+    has_voice: s.dev.has_voice, listening: s.listening, query: s.query, typing: s.typing, account: s.account, server_name: s.server.name,
     quality: plex.qualities()[s.quality].name, language: language_text(s), subtitles: subtitles_text(s), caption_size: s.texts.text(["Small", "Medium", "Large"][s.caption_size]), caption_back: s.texts.text(if (s.caption_box) { "Panel" } else { "Shadow" }), smart: s.texts.format("{0} episodes", [smart_counts()[s.smart_count].to_string()]), player: pv, base: s.base,
     loading: busy(s), cache: s.cache, local: s.local,
   };
@@ -4576,6 +4603,16 @@ pub function timeout(s: App, now: i64): i32 {
 }
 
 function event(own s: App, e: android.Event): App {
+  if let Some(words) = s.dev.voice_result(e) {
+    if (!s.listening || s.screen != ui.SEARCH) {
+      return s;
+    }
+    let t = App { ...s, listening: false, dirty: true };
+    if (words.trim().len() == 0) {
+      return t;
+    }
+    return search_now(query_changed(t, words));
+  }
   if let Some(c) = player.event(e) {
     if (s.dev.from_next(e)) {
       return next_event(s, c);
@@ -4599,6 +4636,7 @@ function event(own s: App, e: android.Event): App {
       return App { ...s, shown: false };
     },
     android.Pause => {
+      s = cancel_voice(s);
       // Music plays on while the app is away. A video pauses, unless it
       // plays on in a picture-in-picture window.
       if (s.play.active && s.play.prepared && !s.play.paused && !audio(s.play) && !s.dev.in_pip()) {
@@ -4774,6 +4812,9 @@ function frame(own s: App, ns: i64): App {
 pub function step(own s: App, e: android.Event): App {
   let now = s.dev.mono_ms();
   let t = smart_tick(download_tick(hold_tick(search_tick(pin_tick(line_up(play_tick(event(s, e), now)), now), now), now), now), now);
+  if (t.listening && t.screen != ui.SEARCH) {
+    t = cancel_voice(t);
+  }
   t = poll_probes(poll_report(poll_images(poll_api(t))));
   t = start_report(start_api(t));
   t = draw_screen(untwist(t));

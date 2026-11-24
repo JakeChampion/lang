@@ -549,7 +549,7 @@ pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.L
         name = parser.decl_key(mod.funcs[fi]);
       }
       if let Ok(lifted) = ssa_lift.lift_with_lanes(kt, name, cache[fi].n_params, cache[fi].n_locals, cache[fi].ops, false, cache[fi].v128_slots) {
-        let f = ssa.register_form(lifted.func);
+        let f = ssa.form(lifted.func);
         for leaf in ssa.leaf_of(name, f.f) {
           out = out.append(leaf);
         }
@@ -3205,6 +3205,7 @@ function builtin_i32_names(): string[] {
     "wasm_pollable_drop",
     "wasm_block",
     "wasm_poll",
+    "wasm_name_lookup",
     "tcp_listen",
     "tcp_accept",
     "tcp_accept_with",

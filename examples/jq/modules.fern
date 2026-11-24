@@ -47,6 +47,29 @@ const S_IFLNK: u32 = 0o120000u32;
 
 const S_IFDIR: u32 = 0o040000u32;
 
+// PWD can be inherited from a different directory. Use it only when it
+// names the working directory, including through a symbolic link.
+function current_directory(): Option[string] {
+  if let Some(cwd) = env("PWD") {
+    if (cwd.starts_with("/")) {
+      match ((stat("."), stat(cwd))) {
+        (Ok(a), Ok(b)) => {
+          if (a.dev == b.dev && a.ino == b.ino) {
+            return Some(cwd);
+          }
+        },
+        _ => {}
+      }
+    }
+  }
+  // Linux exposes the physical directory here. On hosts without procfs,
+  // realpath keeps the relative path when it cannot make it absolute.
+  return match (read_link("/proc/self/cwd")) {
+    Ok(cwd) => Some(cwd),
+    Err(_) => None,
+  };
+}
+
 function resolve(p: string): Option[string] {
   if (p.len() == 0) {
     return None;
@@ -54,14 +77,9 @@ function resolve(p: string): Option[string] {
   let resolved = "";
   let rest = p;
   if (p[0] != b'/') {
-    // $PWD names the current directory, maybe through links, which the walk
-    // follows. A WASI program has no getcwd.
-    let Some(cwd) = env("PWD") else {
+    let Some(cwd) = current_directory() else {
       return None;
     };
-    if (cwd.len() == 0 || cwd[0] != b'/') {
-      return None;
-    }
     rest = cwd + "/" + p;
   }
   let links = 0;
@@ -229,11 +247,11 @@ function find_module(rel: string, dirs: string[], suffix: string): string {
 
 // The search path of a directive: the `search` key of its metadata, or `.`
 // and the library directories.
-function directive_search(d: filter.Directive, library: string[]): string[] {
+function directive_search(d: filter.Directive, library: string[], jq_origin: string, origin: string): string[] {
   if let json.JObject(o) = d.meta {
     match (o.get_or("search", json.JNull)) {
       json.JString(s) => {
-        return [s];
+        return expanded([s], jq_origin, origin);
       },
       json.JArray(items) => {
         let out: string[] = [];
@@ -242,7 +260,7 @@ function directive_search(d: filter.Directive, library: string[]): string[] {
             out = out.append(s);
           }
         }
-        return out;
+        return expanded(out, jq_origin, origin);
       },
       json.JNull => {},
       _ => {
@@ -250,7 +268,9 @@ function directive_search(d: filter.Directive, library: string[]): string[] {
       }
     }
   }
-  return ["."].concat(library);
+  // A relative -L directory belongs to the invocation even when realpath
+  // cannot make it absolute, as on WASI without PWD.
+  return expanded(["."].concat(library), jq_origin, "");
 }
 
 function is_raw(d: filter.Directive): boolean {
@@ -318,7 +338,7 @@ function load_dep(own l: Loading, d: filter.Directive, origin: string): (Loading
     return (l.failing("jq: error: " + bad + "\n"), []);
   }
   let suffix = if (d.is_data) { ".json" } else { ".jq" };
-  let found = find_module(d.path, expanded(directive_search(d, l.library), l.jq_origin, origin), suffix);
+  let found = find_module(d.path, directive_search(d, l.library, l.jq_origin, origin), suffix);
   if (found.len() == 0) {
     if (is_optional(d)) {
       return (l, []);

@@ -89,7 +89,7 @@ function sparse_checks(f: ssa.SFunc, d: ssa.SFunc, r: ssa.SFunc): void {
   }
   require(changed, 83);
   expect(ssa.SFunc { ...mapped, blocks: blocks }, d, r, false, "undefined reuse operand", 84);
-  expect(ssa.register_form(f).f, d, r, true, "proved guarded two-child partial replacement", 85);
+  expect(ssa.form(f).f, d, r, true, "proved guarded two-child partial replacement", 85);
 }
 
 function physical_mutation(f: ssa.SFunc, mode: i32): ssa.SFunc {

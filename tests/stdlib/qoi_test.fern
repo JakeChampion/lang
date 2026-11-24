@@ -1,0 +1,98 @@
+import "std/qoi";
+import "std/test";
+
+// A file of 8 by 4 pixels that Pillow wrote, which uses each operation:
+// runs, small differences, luma differences, full RGB and RGBA pixels, and
+// the index. Pillow writes the color space 1, linear.
+function pillow_file(): u8[] {
+  return [113u8, 111u8, 105u8, 102u8, 0u8, 0u8, 0u8, 8u8, 0u8, 0u8, 0u8, 4u8, 4u8, 1u8, 254u8, 10u8, 20u8, 30u8, 199u8, 118u8, 9u8, 7u8, 9u8, 7u8, 9u8, 7u8, 254u8, 100u8, 120u8, 90u8, 185u8, 49u8, 185u8, 49u8, 185u8, 49u8, 185u8, 49u8, 185u8, 49u8, 185u8, 49u8, 185u8, 49u8, 255u8, 10u8, 20u8, 30u8, 128u8, 255u8, 200u8, 50u8, 50u8, 255u8, 255u8, 10u8, 20u8, 30u8, 130u8, 37u8, 255u8, 10u8, 20u8, 30u8, 132u8, 37u8, 255u8, 10u8, 20u8, 30u8, 134u8, 37u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8];
+}
+
+function pillow_pixels(): u8[] {
+  return [10u8, 20u8, 30u8, 255u8, 10u8, 20u8, 30u8, 255u8, 10u8, 20u8, 30u8, 255u8, 10u8, 20u8, 30u8, 255u8, 10u8, 20u8, 30u8, 255u8, 10u8, 20u8, 30u8, 255u8, 10u8, 20u8, 30u8, 255u8, 10u8, 20u8, 30u8, 255u8, 10u8, 20u8, 30u8, 255u8, 11u8, 19u8, 30u8, 255u8, 10u8, 20u8, 30u8, 255u8, 11u8, 19u8, 30u8, 255u8, 10u8, 20u8, 30u8, 255u8, 11u8, 19u8, 30u8, 255u8, 10u8, 20u8, 30u8, 255u8, 11u8, 19u8, 30u8, 255u8, 100u8, 120u8, 90u8, 255u8, 120u8, 145u8, 108u8, 255u8, 140u8, 170u8, 126u8, 255u8, 160u8, 195u8, 144u8, 255u8, 180u8, 220u8, 162u8, 255u8, 200u8, 245u8, 180u8, 255u8, 220u8, 14u8, 198u8, 255u8, 240u8, 39u8, 216u8, 255u8, 10u8, 20u8, 30u8, 128u8, 200u8, 50u8, 50u8, 255u8, 10u8, 20u8, 30u8, 130u8, 200u8, 50u8, 50u8, 255u8, 10u8, 20u8, 30u8, 132u8, 200u8, 50u8, 50u8, 255u8, 10u8, 20u8, 30u8, 134u8, 200u8, 50u8, 50u8, 255u8];
+}
+
+function encode_rgba(w: i32, h: i32, px: u8[]): u8[] {
+  return match (qoi.encode_rgba8(w, h, px)) {
+    Ok(f) => f,
+    Err(_) => [],
+  };
+}
+
+function decoded(file: u8[]): u8[] {
+  return match (qoi.decode_image(file)) {
+    Ok(img) => img.pixels,
+    Err(_) => [],
+  };
+}
+
+function test_decodes_pillow(): test.TestOutcome {
+  return test.assert_eq(decoded(pillow_file()) == pillow_pixels(), true);
+}
+
+// The encoder writes the operations that Pillow writes. Only the color
+// space byte differs: this module writes sRGB.
+function test_encodes_as_pillow(): test.TestOutcome {
+  let mine = encode_rgba(8, 4, pillow_pixels());
+  let theirs = pillow_file().with(13, 0u8);
+  return test.assert_eq(mine == theirs, true);
+}
+
+// A run longer than 62 pixels takes more than one operation.
+function test_long_run(): test.TestOutcome {
+  let px: u8[] = [];
+  for i in 0..200 {
+    px = px.append(7u8).append(8u8).append(9u8).append(255u8);
+  }
+  let file = encode_rgba(200, 1, px);
+  return test.assert_eq(decoded(file) == px && file.len() < 14 + 4 + 4 + 8, true);
+}
+
+function test_rgb(): test.TestOutcome {
+  let rgb: u8[] = [1, 2, 3, 250, 251, 252, 1, 2, 3];
+  let file = match (qoi.encode_rgb8(3, 1, rgb)) {
+    Ok(f) => f,
+    Err(_) => [],
+  };
+  let Ok(img) = qoi.decode_image(file) else {
+    return test.fail("no image");
+  };
+  let want: u8[] = [1, 2, 3, 255, 250, 251, 252, 255, 1, 2, 3, 255];
+  return test.assert_eq(img.channels.to_string() + " " + (img.pixels == want).to_string(), "3 true");
+}
+
+function encode_message(w: i32, h: i32, px: u8[]): string {
+  return match (qoi.encode_rgba8(w, h, px)) {
+    Ok(_) => "ok",
+    Err(e) => e.message(),
+  };
+}
+
+function decode_message(file: u8[]): string {
+  return match (qoi.decode_image(file)) {
+    Ok(_) => "ok",
+    Err(e) => e.message(),
+  };
+}
+
+function test_errors(): test.TestOutcome {
+  let good = pillow_file();
+  let cut: u8[] = [];
+  for i in 0..30 {
+    cut = cut.append(good[i]);
+  }
+  let huge = good.with(4, 255u8).with(8, 255u8);
+  let channels = good.with(12, 5u8);
+  let got = [encode_message(0, 1, []), encode_message(2, 1, [1u8]), decode_message([1u8, 2u8]), decode_message(cut), decode_message(huge), decode_message(channels)];
+  return test.assert_eq(got.join(" | "), "qoi: the width and the height must be 1 or more | qoi: the length of the pixels does not agree with the dimensions | qoi: not a QOI file | qoi: the data ends early | qoi: the image has more pixels than the limit | qoi: the header is not valid");
+}
+
+function main(): i32 {
+  let r = test.new("std/qoi");
+  r = r.it("decodes a file of Pillow", test_decodes_pillow);
+  r = r.it("encodes as Pillow", test_encodes_as_pillow);
+  r = r.it("long runs", test_long_run);
+  r = r.it("RGB", test_rgb);
+  r = r.it("errors", test_errors);
+  return r.finish();
+}

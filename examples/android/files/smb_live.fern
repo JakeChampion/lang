@@ -6,6 +6,7 @@ import "std/i32";
 import "std/result";
 import "std/string";
 import "std/test";
+import "std/utf8";
 import "./smb";
 import "./store";
 
@@ -91,6 +92,19 @@ function test_folders(): test.TestOutcome {
   return test.assert_eq(made.to_string() + " " + renamed.to_string() + " " + gone.to_string(), "true true true");
 }
 
+// A replace puts the new file in the place of the old one, and a plain
+// rename does not.
+function test_replace(): test.TestOutcome {
+  let s = server();
+  let remote = store.Remote(s);
+  let wrote = store.write(remote, "live/old.txt", 0i64, "old".bytes()).is_ok() && store.write(remote, "live/new.txt", 0i64, "new".bytes()).is_ok();
+  let refused = smb.rename(s, "live/new.txt", "live/old.txt").is_err();
+  let replaced = smb.replace(s, "live/new.txt", "live/old.txt").is_ok();
+  let text = store.read(remote, "live/old.txt", 0i64, 16).map((p: smb.Part): string => utf8.from_bytes_lossy(p.data)).unwrap_or("");
+  let gone = store.list(remote, "live").unwrap_or([]).filter((e: smb.Entry): boolean => e.name == "new.txt").len() == 0;
+  return test.assert_eq(wrote.to_string() + " " + refused.to_string() + " " + replaced.to_string() + " " + text + " " + gone.to_string(), "true true true new true");
+}
+
 function main(): i32 {
   if (server().host.len() == 0) {
     print("set FILES_SMB_SERVER to: host port share user password");
@@ -101,6 +115,7 @@ function main(): i32 {
   r = r.it("the server lists its share", test_shares);
   r = r.it("a wrong password gets its note", test_wrong_password);
   r = r.it("a file goes to the server and back with the same bytes", test_round_trip);
+  r = r.it("a replace puts a file in the place of another", test_replace);
   r = r.it("folders rename and go with what they hold", test_folders);
   return r.finish();
 }

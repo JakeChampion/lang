@@ -40,6 +40,31 @@ func TestFieldRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPageIndex(t *testing.T) {
+	rows := [][2]rune{{0x10, 0x20}, {0x7F, 0x81}, {0x300, 0x300}, {0x1FFFF, 0x20000}, {0x30000, 0x30005}}
+	table := encodeRanges(rows)
+	x := pageIndex(table, rangeChars, 1)
+	verifyPageIndex("test", table, x, rangeChars, 1)
+	for _, c := range []struct{ cp, lo, hi int }{
+		{0x00, 0, 1}, {0x7F, 0, 1}, {0x80, 1, 2}, {0x100, 2, 2}, {0x300, 2, 3}, {0x380, 3, 3},
+		{0x1FFFF, 3, 3}, {0x20000, 3, 4}, {0x30003, 3, 4}, {0x10FFFF, 3, 4},
+	} {
+		if lo, hi := pageRows(x, len(rows), c.cp); lo != c.lo || hi != c.hi {
+			t.Errorf("pageRows(U+%04X) = %d to %d, want %d to %d", c.cp, lo, hi, c.lo, c.hi)
+		}
+	}
+	// An index stops one page after the last row, so a table of low code
+	// points has a short index and gives no row above them.
+	low := encodeRanges([][2]rune{{0x41, 0x5A}})
+	lx := pageIndex(low, rangeChars, 1)
+	if len(lx) != 4 {
+		t.Errorf("the index of one low row has %d digits, want 4", len(lx))
+	}
+	if lo, hi := pageRows(lx, 1, 0x80); lo <= hi {
+		t.Errorf("pageRows(U+0080) of one low row = %d to %d, want no row", lo, hi)
+	}
+}
+
 func TestTablesMatchGoUnicode(t *testing.T) {
 	caseT, _, classes := tables()
 	if len(caseT)%recChars != 0 {

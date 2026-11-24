@@ -141,7 +141,7 @@ function sparse(f: ssa.SFunc): ssa.SFunc {
 }
 
 function sparse_controls(f: ssa.SFunc, shape: string, refs: boolean[]): void {
-  let formed = ssa.register_form(f).f;
+  let formed = ssa.form(f).f;
   require(formed.blocks[0].insts.len() < formed.nvals, 51);
   expect(formed, shape, refs, "", 52);
   let renamed = sparse(formed);

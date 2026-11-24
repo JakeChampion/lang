@@ -1,0 +1,439 @@
+// Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
+import "std/jni";
+
+// A android.media.MediaCodecList.
+pub struct MediaCodecList { ref: usize }
+
+pub function (x: MediaCodecList) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: MediaCodecList) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub const MEDIA_CODEC_LIST_REGULAR_CODECS: i32 = 0;
+
+// The class android.media.MediaCodecList and the IDs of its members.
+pub struct MediaCodecListClass { class: usize, id_new: usize, id_get_codec_infos: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function media_codec_list_class(e: usize): Result[MediaCodecListClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/media/MediaCodecList")?;
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(I)V"))?;
+  let id_get_codec_infos = jni.checked_id(e, class, jni.get_method_id(e, class, "getCodecInfos", "()[Landroid/media/MediaCodecInfo;"))?;
+  return Ok(MediaCodecListClass { class: class, id_new: id_new, id_get_codec_infos: id_get_codec_infos });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: MediaCodecListClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.media.MediaCodecList.<init>(I)V
+pub function (c: MediaCodecListClass) new(e: usize, a0: i32): Result[MediaCodecList, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(MediaCodecList { ref: got });
+}
+
+// android.media.MediaCodecList.getCodecInfos()[Landroid/media/MediaCodecInfo;
+pub function (c: MediaCodecListClass) get_codec_infos(e: usize, self: MediaCodecList): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_codec_infos, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// A android.media.MediaCodecInfo.
+pub struct MediaCodecInfo { ref: usize }
+
+pub function (x: MediaCodecInfo) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: MediaCodecInfo) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.media.MediaCodecInfo and the IDs of its members.
+pub struct MediaCodecInfoClass { class: usize, id_get_capabilities_for_type: usize, id_get_name: usize, id_get_supported_types: usize, id_is_alias: usize, id_is_encoder: usize, id_is_hardware_accelerated: usize, id_is_software_only: usize, id_is_vendor: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function media_codec_info_class(e: usize): Result[MediaCodecInfoClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/media/MediaCodecInfo")?;
+  let id_get_capabilities_for_type = jni.checked_id(e, class, jni.get_method_id(e, class, "getCapabilitiesForType", "(Ljava/lang/String;)Landroid/media/MediaCodecInfo$CodecCapabilities;"))?;
+  let id_get_name = jni.checked_id(e, class, jni.get_method_id(e, class, "getName", "()Ljava/lang/String;"))?;
+  let id_get_supported_types = jni.checked_id(e, class, jni.get_method_id(e, class, "getSupportedTypes", "()[Ljava/lang/String;"))?;
+  let id_is_alias = jni.optional_id(e, jni.get_method_id(e, class, "isAlias", "()Z"));
+  let id_is_encoder = jni.checked_id(e, class, jni.get_method_id(e, class, "isEncoder", "()Z"))?;
+  let id_is_hardware_accelerated = jni.optional_id(e, jni.get_method_id(e, class, "isHardwareAccelerated", "()Z"));
+  let id_is_software_only = jni.optional_id(e, jni.get_method_id(e, class, "isSoftwareOnly", "()Z"));
+  let id_is_vendor = jni.optional_id(e, jni.get_method_id(e, class, "isVendor", "()Z"));
+  return Ok(MediaCodecInfoClass { class: class, id_get_capabilities_for_type: id_get_capabilities_for_type, id_get_name: id_get_name, id_get_supported_types: id_get_supported_types, id_is_alias: id_is_alias, id_is_encoder: id_is_encoder, id_is_hardware_accelerated: id_is_hardware_accelerated, id_is_software_only: id_is_software_only, id_is_vendor: id_is_vendor });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: MediaCodecInfoClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.media.MediaCodecInfo.getCapabilitiesForType(Ljava/lang/String;)Landroid/media/MediaCodecInfo$CodecCapabilities;
+pub function (c: MediaCodecInfoClass) get_capabilities_for_type(e: usize, self: MediaCodecInfo, a0: string): Result[MediaCodecInfo_CodecCapabilities, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_capabilities_for_type, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(MediaCodecInfo_CodecCapabilities { ref: got });
+}
+
+// android.media.MediaCodecInfo.getName()Ljava/lang/String;
+pub function (c: MediaCodecInfoClass) get_name(e: usize, self: MediaCodecInfo): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_name, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// android.media.MediaCodecInfo.getSupportedTypes()[Ljava/lang/String;
+pub function (c: MediaCodecInfoClass) get_supported_types(e: usize, self: MediaCodecInfo): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_supported_types, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// False when the device does not have the member of `is_alias`.
+pub function (c: MediaCodecInfoClass) has_is_alias(): boolean {
+  return c.id_is_alias != 0 as usize;
+}
+
+// android.media.MediaCodecInfo.isAlias()Z
+pub function (c: MediaCodecInfoClass) is_alias(e: usize, self: MediaCodecInfo): Result[boolean, jni.JavaError] {
+  if (c.id_is_alias == 0 as usize) {
+    return Err(jni.absent("android.media.MediaCodecInfo.isAlias"));
+  }
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_is_alias, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// android.media.MediaCodecInfo.isEncoder()Z
+pub function (c: MediaCodecInfoClass) is_encoder(e: usize, self: MediaCodecInfo): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_is_encoder, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// False when the device does not have the member of `is_hardware_accelerated`.
+pub function (c: MediaCodecInfoClass) has_is_hardware_accelerated(): boolean {
+  return c.id_is_hardware_accelerated != 0 as usize;
+}
+
+// android.media.MediaCodecInfo.isHardwareAccelerated()Z
+pub function (c: MediaCodecInfoClass) is_hardware_accelerated(e: usize, self: MediaCodecInfo): Result[boolean, jni.JavaError] {
+  if (c.id_is_hardware_accelerated == 0 as usize) {
+    return Err(jni.absent("android.media.MediaCodecInfo.isHardwareAccelerated"));
+  }
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_is_hardware_accelerated, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// False when the device does not have the member of `is_software_only`.
+pub function (c: MediaCodecInfoClass) has_is_software_only(): boolean {
+  return c.id_is_software_only != 0 as usize;
+}
+
+// android.media.MediaCodecInfo.isSoftwareOnly()Z
+pub function (c: MediaCodecInfoClass) is_software_only(e: usize, self: MediaCodecInfo): Result[boolean, jni.JavaError] {
+  if (c.id_is_software_only == 0 as usize) {
+    return Err(jni.absent("android.media.MediaCodecInfo.isSoftwareOnly"));
+  }
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_is_software_only, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// False when the device does not have the member of `is_vendor`.
+pub function (c: MediaCodecInfoClass) has_is_vendor(): boolean {
+  return c.id_is_vendor != 0 as usize;
+}
+
+// android.media.MediaCodecInfo.isVendor()Z
+pub function (c: MediaCodecInfoClass) is_vendor(e: usize, self: MediaCodecInfo): Result[boolean, jni.JavaError] {
+  if (c.id_is_vendor == 0 as usize) {
+    return Err(jni.absent("android.media.MediaCodecInfo.isVendor"));
+  }
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_is_vendor, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// A android.media.MediaCodecInfo.CodecCapabilities.
+pub struct MediaCodecInfo_CodecCapabilities { ref: usize }
+
+pub function (x: MediaCodecInfo_CodecCapabilities) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: MediaCodecInfo_CodecCapabilities) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.media.MediaCodecInfo.CodecCapabilities and the IDs of its members.
+pub struct MediaCodecInfo_CodecCapabilitiesClass { class: usize, id_is_format_supported: usize, id_color_formats: usize, id_profile_levels: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function media_codec_info_codec_capabilities_class(e: usize): Result[MediaCodecInfo_CodecCapabilitiesClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/media/MediaCodecInfo$CodecCapabilities")?;
+  let id_is_format_supported = jni.checked_id(e, class, jni.get_method_id(e, class, "isFormatSupported", "(Landroid/media/MediaFormat;)Z"))?;
+  let id_color_formats = jni.checked_id(e, class, jni.get_field_id(e, class, "colorFormats", "[I"))?;
+  let id_profile_levels = jni.checked_id(e, class, jni.get_field_id(e, class, "profileLevels", "[Landroid/media/MediaCodecInfo$CodecProfileLevel;"))?;
+  return Ok(MediaCodecInfo_CodecCapabilitiesClass { class: class, id_is_format_supported: id_is_format_supported, id_color_formats: id_color_formats, id_profile_levels: id_profile_levels });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: MediaCodecInfo_CodecCapabilitiesClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.media.MediaCodecInfo.CodecCapabilities.isFormatSupported(Landroid/media/MediaFormat;)Z
+pub function (c: MediaCodecInfo_CodecCapabilitiesClass) is_format_supported(e: usize, self: MediaCodecInfo_CodecCapabilities, a0: MediaFormat): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_is_format_supported, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// android.media.MediaCodecInfo.CodecCapabilities.colorFormats
+pub function (c: MediaCodecInfo_CodecCapabilitiesClass) color_formats(e: usize, self: MediaCodecInfo_CodecCapabilities): Result[jni.Object, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_color_formats, 0 as usize);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+pub function (c: MediaCodecInfo_CodecCapabilitiesClass) set_color_formats(e: usize, self: MediaCodecInfo_CodecCapabilities, value: jni.Object): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_color_formats, value.ref);
+  return jni.check(e);
+}
+
+// android.media.MediaCodecInfo.CodecCapabilities.profileLevels
+pub function (c: MediaCodecInfo_CodecCapabilitiesClass) profile_levels(e: usize, self: MediaCodecInfo_CodecCapabilities): Result[jni.Object, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_profile_levels, 0 as usize);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+pub function (c: MediaCodecInfo_CodecCapabilitiesClass) set_profile_levels(e: usize, self: MediaCodecInfo_CodecCapabilities, value: jni.Object): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_profile_levels, value.ref);
+  return jni.check(e);
+}
+
+// A android.media.MediaCodecInfo.CodecProfileLevel.
+pub struct MediaCodecInfo_CodecProfileLevel { ref: usize }
+
+pub function (x: MediaCodecInfo_CodecProfileLevel) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: MediaCodecInfo_CodecProfileLevel) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.media.MediaCodecInfo.CodecProfileLevel and the IDs of its members.
+pub struct MediaCodecInfo_CodecProfileLevelClass { class: usize, id_level: usize, id_profile: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function media_codec_info_codec_profile_level_class(e: usize): Result[MediaCodecInfo_CodecProfileLevelClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/media/MediaCodecInfo$CodecProfileLevel")?;
+  let id_level = jni.checked_id(e, class, jni.get_field_id(e, class, "level", "I"))?;
+  let id_profile = jni.checked_id(e, class, jni.get_field_id(e, class, "profile", "I"))?;
+  return Ok(MediaCodecInfo_CodecProfileLevelClass { class: class, id_level: id_level, id_profile: id_profile });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: MediaCodecInfo_CodecProfileLevelClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.media.MediaCodecInfo.CodecProfileLevel.level
+pub function (c: MediaCodecInfo_CodecProfileLevelClass) level(e: usize, self: MediaCodecInfo_CodecProfileLevel): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_level, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+pub function (c: MediaCodecInfo_CodecProfileLevelClass) set_level(e: usize, self: MediaCodecInfo_CodecProfileLevel, value: i32): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 5, self.ref, c.id_level, value as usize);
+  return jni.check(e);
+}
+
+// android.media.MediaCodecInfo.CodecProfileLevel.profile
+pub function (c: MediaCodecInfo_CodecProfileLevelClass) profile(e: usize, self: MediaCodecInfo_CodecProfileLevel): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_profile, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+pub function (c: MediaCodecInfo_CodecProfileLevelClass) set_profile(e: usize, self: MediaCodecInfo_CodecProfileLevel, value: i32): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 5, self.ref, c.id_profile, value as usize);
+  return jni.check(e);
+}
+
+// A android.media.MediaFormat.
+pub struct MediaFormat { ref: usize }
+
+pub function (x: MediaFormat) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: MediaFormat) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.media.MediaFormat and the IDs of its members.
+pub struct MediaFormatClass { class: usize, id_create_audio_format: usize, id_create_video_format: usize, id_set_integer: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function media_format_class(e: usize): Result[MediaFormatClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/media/MediaFormat")?;
+  let id_create_audio_format = jni.checked_id(e, class, jni.get_static_method_id(e, class, "createAudioFormat", "(Ljava/lang/String;II)Landroid/media/MediaFormat;"))?;
+  let id_create_video_format = jni.checked_id(e, class, jni.get_static_method_id(e, class, "createVideoFormat", "(Ljava/lang/String;II)Landroid/media/MediaFormat;"))?;
+  let id_set_integer = jni.checked_id(e, class, jni.get_method_id(e, class, "setInteger", "(Ljava/lang/String;I)V"))?;
+  return Ok(MediaFormatClass { class: class, id_create_audio_format: id_create_audio_format, id_create_video_format: id_create_video_format, id_set_integer: id_set_integer });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: MediaFormatClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.media.MediaFormat.createAudioFormat(Ljava/lang/String;II)Landroid/media/MediaFormat;
+pub function (c: MediaFormatClass) create_audio_format(e: usize, a0: string, a1: i32, a2: i32): Result[MediaFormat, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(3);
+  jni.jvalue_set_int(args, 0, s0);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.jvalue_set_int(args, 2, a2 as usize);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_create_audio_format, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(MediaFormat { ref: got });
+}
+
+// android.media.MediaFormat.createVideoFormat(Ljava/lang/String;II)Landroid/media/MediaFormat;
+pub function (c: MediaFormatClass) create_video_format(e: usize, a0: string, a1: i32, a2: i32): Result[MediaFormat, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(3);
+  jni.jvalue_set_int(args, 0, s0);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.jvalue_set_int(args, 2, a2 as usize);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_create_video_format, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(MediaFormat { ref: got });
+}
+
+// android.media.MediaFormat.setInteger(Ljava/lang/String;I)V
+pub function (c: MediaFormatClass) set_integer(e: usize, self: MediaFormat, a0: string, a1: i32): Result[void, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, s0);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set_integer, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// The struct of IDs of each class of this module.
+pub struct Classes { media_codec_list: MediaCodecListClass, media_codec_info: MediaCodecInfoClass, media_codec_info_codec_capabilities: MediaCodecInfo_CodecCapabilitiesClass, media_codec_info_codec_profile_level: MediaCodecInfo_CodecProfileLevelClass, media_format: MediaFormatClass }
+
+// Makes the struct of IDs of each class. Call it one time, and call
+// `release` when the app does not call Java again. One lookup for each
+// class, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function classes(e: usize): Result[Classes, jni.JavaError] {
+  let media_codec_list = match (media_codec_list_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      return Err(err);
+    },
+  };
+  let media_codec_info = match (media_codec_info_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      media_codec_list.release(e);
+      return Err(err);
+    },
+  };
+  let media_codec_info_codec_capabilities = match (media_codec_info_codec_capabilities_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      media_codec_list.release(e);
+      media_codec_info.release(e);
+      return Err(err);
+    },
+  };
+  let media_codec_info_codec_profile_level = match (media_codec_info_codec_profile_level_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      media_codec_list.release(e);
+      media_codec_info.release(e);
+      media_codec_info_codec_capabilities.release(e);
+      return Err(err);
+    },
+  };
+  let media_format = match (media_format_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      media_codec_list.release(e);
+      media_codec_info.release(e);
+      media_codec_info_codec_capabilities.release(e);
+      media_codec_info_codec_profile_level.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { media_codec_list: media_codec_list, media_codec_info: media_codec_info, media_codec_info_codec_capabilities: media_codec_info_codec_capabilities, media_codec_info_codec_profile_level: media_codec_info_codec_profile_level, media_format: media_format });
+}
+
+// Deletes the reference to each class. Do not use `c` after this call.
+pub function (c: Classes) release(e: usize): void {
+  c.media_codec_list.release(e);
+  c.media_codec_info.release(e);
+  c.media_codec_info_codec_capabilities.release(e);
+  c.media_codec_info_codec_profile_level.release(e);
+  c.media_format.release(e);
+}

@@ -6,12 +6,12 @@
 
 #ifdef FERN_AUDIO_CODEC_MOCK
 #define MOCK_MIME "audio/mp4a-latm"
-#define MOCK_FORMAT "createAudioFormat"
+#define MOCK_FORMAT CREATE_AUDIO_FORMAT
 #define MOCK_FIRST 48000
 #define MOCK_SECOND 2
 #else
 #define MOCK_MIME "video/avc"
-#define MOCK_FORMAT "createVideoFormat"
+#define MOCK_FORMAT CREATE_VIDEO_FORMAT
 #define MOCK_FIRST 16
 #define MOCK_SECOND 8
 #endif
@@ -19,36 +19,42 @@
 typedef struct { int kind, id; const char *text; } Object;
 typedef union { void *l; int32_t i; int64_t j; } Value;
 enum { CLASS, LIST, FORMAT, INFO, CAPS, PROFILE, INFOS, TYPES, PROFILES, COLORS, STRING, EXCEPTION };
-static Object classes[3] = {{CLASS,0,0},{CLASS,1,0},{CLASS,2,0}};
+enum { LIST_CLASS, FORMAT_CLASS, INFO_CLASS, CAPS_CLASS, LEVEL_CLASS, THROWABLE_CLASS, CLASS_COUNT };
+static const char *class_names[] = {"android/media/MediaCodecList", "android/media/MediaFormat", "android/media/MediaCodecInfo", "android/media/MediaCodecInfo$CodecCapabilities", "android/media/MediaCodecInfo$CodecProfileLevel"};
+static Object classes[CLASS_COUNT] = {{CLASS,0,0},{CLASS,1,0},{CLASS,2,0},{CLASS,3,0},{CLASS,4,0},{CLASS,5,0}};
 static Object list = {LIST,0,0}, format = {FORMAT,0,0}, exception = {EXCEPTION,0,0};
 static Object infos_array = {INFOS,0,0}, infos[6], caps[6], types[6];
 static Object profiles_array = {PROFILES,0,0}, profile = {PROFILE,0,0}, colors = {COLORS,0,0};
 static const char *names[] = {"c2.vendor.avc.decoder", "c2.android.avc.decoder", "c2.vendor.avc.encoder", "c2.android.avc.encoder", "alias.avc.decoder", "other.hevc.decoder"};
-static Object name_objects[6], avc = {STRING,0,MOCK_MIME}, hevc = {STRING,0,"video/hevc"};
+static Object name_objects[6], avc = {STRING,0,MOCK_MIME}, hevc = {STRING,0,"video/hevc"}, thrown_text = {STRING,0,"mock exception"};
 static struct { Object obj; char bytes[513]; } strings[512];
-static int string_count, frame_count, saved_strings[16], pending, mode, hardware_queries;
+static int string_count, frame_count, saved_strings[16], pending, mode, hardware_queries, globals;
 static Object *live_types[16];
 static void *table[235];
 static void **env_table = table;
 
-enum { CONSTRUCTOR=1, GET_INFOS, GET_TYPES, GET_NAME, GET_CAPABILITIES, IS_ENCODER, IS_SUPPORTED, IS_HARDWARE, IS_SOFTWARE, IS_VENDOR, IS_ALIAS, CREATE_FORMAT, SET_INTEGER };
-static const char *method_names[] = {"", "<init>", "getCodecInfos", "getSupportedTypes", "getName", "getCapabilitiesForType", "isEncoder", "isFormatSupported", "isHardwareAccelerated", "isSoftwareOnly", "isVendor", "isAlias", MOCK_FORMAT, "setInteger"};
-static const char *signatures[] = {"", "(I)V", "()[Landroid/media/MediaCodecInfo;", "()[Ljava/lang/String;", "()Ljava/lang/String;", "(Ljava/lang/String;)Landroid/media/MediaCodecInfo$CodecCapabilities;", "()Z", "(Landroid/media/MediaFormat;)Z", "()Z", "()Z", "()Z", "()Z", "(Ljava/lang/String;II)Landroid/media/MediaFormat;", "(Ljava/lang/String;I)V"};
+enum { CONSTRUCTOR=1, GET_INFOS, GET_TYPES, GET_NAME, GET_CAPABILITIES, IS_ENCODER, IS_SUPPORTED, IS_HARDWARE, IS_SOFTWARE, IS_VENDOR, IS_ALIAS, CREATE_VIDEO_FORMAT, CREATE_AUDIO_FORMAT, SET_INTEGER, TO_STRING };
+static const char *method_names[] = {"", "<init>", "getCodecInfos", "getSupportedTypes", "getName", "getCapabilitiesForType", "isEncoder", "isFormatSupported", "isHardwareAccelerated", "isSoftwareOnly", "isVendor", "isAlias", "createVideoFormat", "createAudioFormat", "setInteger", "toString"};
+static const char *signatures[] = {"", "(I)V", "()[Landroid/media/MediaCodecInfo;", "()[Ljava/lang/String;", "()Ljava/lang/String;", "(Ljava/lang/String;)Landroid/media/MediaCodecInfo$CodecCapabilities;", "()Z", "(Landroid/media/MediaFormat;)Z", "()Z", "()Z", "()Z", "()Z", "(Ljava/lang/String;II)Landroid/media/MediaFormat;", "(Ljava/lang/String;II)Landroid/media/MediaFormat;", "(Ljava/lang/String;I)V", "()Ljava/lang/String;"};
+static const int method_classes[] = {0, LIST_CLASS, LIST_CLASS, INFO_CLASS, INFO_CLASS, INFO_CLASS, INFO_CLASS, CAPS_CLASS, INFO_CLASS, INFO_CLASS, INFO_CLASS, INFO_CLASS, FORMAT_CLASS, FORMAT_CLASS, FORMAT_CLASS, THROWABLE_CLASS};
 
-void mock_jni_mode(int value) { assert(frame_count == 0); mode = value; pending = value == 6; hardware_queries = string_count = 0; }
+void mock_jni_mode(int value) { assert(frame_count == 0 && globals == 0); mode = value; pending = value == 6; hardware_queries = string_count = 0; }
 int mock_jni_frames(void) { return frame_count; }
 int mock_jni_pending(void) { return pending; }
+int mock_jni_globals(void) { return globals; }
 int mock_jni_hardware_queries(void) { return hardware_queries; }
 static Object *find_class(void *env, const char *name) {
-    (void)env;
-    if (!strcmp(name,"android/media/MediaCodecList")) return classes;
-    assert(!strcmp(name,"android/media/MediaFormat")); return classes + 1;
+    (void)env; assert(frame_count > 0);
+    for (int i=0; i<THROWABLE_CLASS; i++) if (!strcmp(name,class_names[i])) return classes + i;
+    assert(0); return NULL;
 }
-static Object *get_class(void *env, Object *obj) { (void)env; assert(obj); return classes + 2; }
+static Object *new_global(void *env, Object *obj) { (void)env; assert(obj && obj->kind == CLASS); globals++; return obj; }
+static void delete_global(void *env, Object *obj) { (void)env; assert(obj && obj->kind == CLASS && globals > 0); globals--; }
+static Object *get_class(void *env, Object *obj) { (void)env; assert(obj == &exception); return classes + THROWABLE_CLASS; }
 static void *method_id(void *env, Object *cls, const char *name, const char *sig) {
     (void)env; assert(cls && cls->kind == CLASS);
-    for (int i=1; i<=SET_INTEGER; i++) if (!strcmp(name,method_names[i])) {
-        assert(!strcmp(sig,signatures[i]));
+    for (int i=1; i<=TO_STRING; i++) if (!strcmp(name,method_names[i])) {
+        assert(!strcmp(sig,signatures[i]) && cls == classes + method_classes[i]);
         if (mode == 4 && i == GET_INFOS) { pending = 1; return NULL; }
         return (void *)(uintptr_t)i;
     }
@@ -68,6 +74,7 @@ static Object *object_call(void *env, Object *obj, void *method, Value *args) {
         return types + obj->id;
     case GET_NAME: assert(obj->kind == INFO); return name_objects + obj->id;
     case GET_CAPABILITIES: assert(obj->kind == INFO && !strcmp(((Object *)args[0].l)->text,MOCK_MIME)); return caps + obj->id;
+    case TO_STRING: assert(obj == &exception); return &thrown_text;
     default: assert(0); return NULL;
     }
 }
@@ -87,7 +94,7 @@ static uint8_t boolean_call(void *env, Object *obj, void *method, Value *args) {
     }
 }
 static Object *static_object_call(void *env, Object *cls, void *method, Value *args) {
-    (void)env; assert(cls == classes + 1 && (uintptr_t)method == CREATE_FORMAT);
+    (void)env; assert(cls == classes + FORMAT_CLASS && (uintptr_t)method == MOCK_FORMAT);
     assert(!strcmp(((Object *)args[0].l)->text,MOCK_MIME) && args[1].i == MOCK_FIRST && args[2].i == MOCK_SECOND); return &format;
 }
 static void void_call(void *env, Object *obj, void *method, Value *args) {
@@ -100,9 +107,9 @@ static void void_call(void *env, Object *obj, void *method, Value *args) {
 }
 static void *field_id(void *env, Object *cls, const char *name, const char *sig) {
     (void)env; assert(cls && cls->kind == CLASS);
-    if (!strcmp(name,"profileLevels")) { assert(!strcmp(sig,"[Landroid/media/MediaCodecInfo$CodecProfileLevel;")); return (void *)1; }
-    if (!strcmp(name,"colorFormats")) { assert(!strcmp(sig,"[I")); return (void *)2; }
-    assert(!strcmp(sig,"I"));
+    if (!strcmp(name,"profileLevels")) { assert(cls == classes + CAPS_CLASS && !strcmp(sig,"[Landroid/media/MediaCodecInfo$CodecProfileLevel;")); return (void *)1; }
+    if (!strcmp(name,"colorFormats")) { assert(cls == classes + CAPS_CLASS && !strcmp(sig,"[I")); return (void *)2; }
+    assert(cls == classes + LEVEL_CLASS && !strcmp(sig,"I"));
     if (!strcmp(name,"profile")) return (void *)3;
     assert(!strcmp(name,"level")); return (void *)4;
 }
@@ -144,7 +151,7 @@ static Object *array_element(void *env, Object *array, int32_t index) {
     assert(array->kind == PROFILES); return &profile;
 }
 static void int_region(void *env, Object *array, int32_t start, int32_t count, int32_t *output) {
-    (void)env; assert(array == &colors && start >= 0 && start < 2 && count == 1); *output = start ? 2130708361 : 19;
+    (void)env; assert(array == &colors && start == 0 && count == 2); output[0] = 19; output[1] = 2130708361;
 }
 static int32_t push_frame(void *env, int32_t capacity) {
     (void)env; assert(capacity >= 32);
@@ -172,7 +179,7 @@ static void delete_ref(void *env, Object *obj) {
 void *mock_jni_env(void) {
     for (int i=0; i<6; i++) { infos[i] = (Object){INFO,i,0}; caps[i] = (Object){CAPS,i,0}; types[i] = (Object){TYPES,i,0}; name_objects[i] = (Object){STRING,i,names[i]}; }
     table[6]=(void *)find_class; table[15]=(void *)exception_occurred; table[17]=(void *)exception_clear;
-    table[19]=(void *)push_frame; table[20]=(void *)pop_frame; table[23]=(void *)delete_ref;
+    table[19]=(void *)push_frame; table[20]=(void *)pop_frame; table[21]=(void *)new_global; table[22]=(void *)delete_global; table[23]=(void *)delete_ref;
     table[30]=(void *)new_object; table[31]=(void *)get_class; table[33]=(void *)method_id;
     table[36]=(void *)object_call; table[39]=(void *)boolean_call; table[63]=(void *)void_call;
     table[94]=(void *)field_id; table[95]=(void *)object_field; table[100]=(void *)int_field;

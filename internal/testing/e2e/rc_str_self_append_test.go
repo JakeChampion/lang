@@ -248,8 +248,8 @@ func TestWASMStrAppendClassBoundary(t *testing.T) {
 		t.Fatalf("exited %d, want 0; stderr=%q", code, stderr)
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	if allocs != 11 {
-		t.Errorf("allocs = %d for 2100 appends across the 2048 tier change, want 11 — the grow takes an append its capacity does not hold, or sizes a fresh block other than by doubling", allocs)
+	if allocs != 9 {
+		t.Errorf("allocs = %d for 2100 appends across the 2048 tier change, want 9 — the grow takes an append its capacity does not hold, or sizes a fresh block other than by doubling", allocs)
 	}
 	if allocs != frees || live != 0 {
 		t.Errorf("heap unbalanced: allocs=%d frees=%d live_bytes=%d", allocs, frees, live)
