@@ -12318,13 +12318,21 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
       s = s2;
     }
   }
-  // The copy uses a register the function already saves and needs no spill slot.
+  // Adding an instruction keeps the block indices and spill slots valid.
+  let bp = ssa.block_positions(f);
   let saved = ssa_saved_regs(alloc.reg_of);
   let spilled_slots = ssa.spill_count(alloc.reg_of);
   if (saved.len() == ssa_nsaved() && spilled_slots >= ssa_nsaved()) {
+    let before = f.nvals;
     if let Some(w) = ssa.array_loop_home(f, alloc, saved) {
       f = ssa.with_loop_home(f, w);
       alloc = ssa.with_loop_allocation(alloc, w);
+    }
+    if let Some(g) = ssa.guarded_loop_home(f, alloc, saved, bp) {
+      f = ssa.with_guarded_home(f, g);
+      alloc = ssa.with_loop_allocation(alloc, g.window);
+    }
+    if (f.nvals != before) {
       imm = ssa_imms(f, s);
       s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f), ssa_even: ssadeps.even_values(f) };
     }
@@ -12368,7 +12376,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   } else if (bare) {
     epilogue = ssa_bare_epilogue(saved, pad);
   }
-  let bp = ssa.block_positions(f);
+
   let lbase = s.nlab;
   s = s.lab_take(bp.len());
   let lanes = ssa.lane_values(f);
