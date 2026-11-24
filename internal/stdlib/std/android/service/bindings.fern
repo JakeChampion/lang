@@ -1,0 +1,1376 @@
+// Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
+import "std/jni";
+
+// A android.content.Context.
+pub struct Context { ref: usize }
+
+pub function (x: Context) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Context) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub const CONTEXT_NOTIFICATION_SERVICE: string = "notification";
+
+pub const CONTEXT_POWER_SERVICE: string = "power";
+
+pub const CONTEXT_WIFI_SERVICE: string = "wifi";
+
+// The class android.content.Context and the IDs of its members.
+pub struct ContextClass { class: usize, id_get_application_context: usize, id_get_class_loader: usize, id_get_package_manager: usize, id_get_package_name: usize, id_get_system_service: usize, id_start_foreground_service: usize, id_start_service: usize, id_stop_service: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/Context")?;
+  let id_get_application_context = jni.checked_id(e, class, jni.get_method_id(e, class, "getApplicationContext", "()Landroid/content/Context;"))?;
+  let id_get_class_loader = jni.checked_id(e, class, jni.get_method_id(e, class, "getClassLoader", "()Ljava/lang/ClassLoader;"))?;
+  let id_get_package_manager = jni.checked_id(e, class, jni.get_method_id(e, class, "getPackageManager", "()Landroid/content/pm/PackageManager;"))?;
+  let id_get_package_name = jni.checked_id(e, class, jni.get_method_id(e, class, "getPackageName", "()Ljava/lang/String;"))?;
+  let id_get_system_service = jni.checked_id(e, class, jni.get_method_id(e, class, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;"))?;
+  let id_start_foreground_service = jni.checked_id(e, class, jni.get_method_id(e, class, "startForegroundService", "(Landroid/content/Intent;)Landroid/content/ComponentName;"))?;
+  let id_start_service = jni.checked_id(e, class, jni.get_method_id(e, class, "startService", "(Landroid/content/Intent;)Landroid/content/ComponentName;"))?;
+  let id_stop_service = jni.checked_id(e, class, jni.get_method_id(e, class, "stopService", "(Landroid/content/Intent;)Z"))?;
+  return Ok(ContextClass { class: class, id_get_application_context: id_get_application_context, id_get_class_loader: id_get_class_loader, id_get_package_manager: id_get_package_manager, id_get_package_name: id_get_package_name, id_get_system_service: id_get_system_service, id_start_foreground_service: id_start_foreground_service, id_start_service: id_start_service, id_stop_service: id_stop_service });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ContextClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.Context.getApplicationContext()Landroid/content/Context;
+pub function (c: ContextClass) get_application_context(e: usize, self: Context): Result[Context, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_application_context, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Context { ref: got });
+}
+
+// android.content.Context.getClassLoader()Ljava/lang/ClassLoader;
+pub function (c: ContextClass) get_class_loader(e: usize, self: Context): Result[ClassLoader, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_class_loader, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(ClassLoader { ref: got });
+}
+
+// android.content.Context.getPackageManager()Landroid/content/pm/PackageManager;
+pub function (c: ContextClass) get_package_manager(e: usize, self: Context): Result[PackageManager, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_package_manager, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(PackageManager { ref: got });
+}
+
+// android.content.Context.getPackageName()Ljava/lang/String;
+pub function (c: ContextClass) get_package_name(e: usize, self: Context): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_package_name, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// android.content.Context.getSystemService(Ljava/lang/String;)Ljava/lang/Object;
+pub function (c: ContextClass) get_system_service(e: usize, self: Context, a0: string): Result[jni.Object, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_system_service, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// android.content.Context.startForegroundService(Landroid/content/Intent;)Landroid/content/ComponentName;
+pub function (c: ContextClass) start_foreground_service(e: usize, self: Context, a0: Intent): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_start_foreground_service, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// android.content.Context.startService(Landroid/content/Intent;)Landroid/content/ComponentName;
+pub function (c: ContextClass) start_service(e: usize, self: Context, a0: Intent): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_start_service, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// android.content.Context.stopService(Landroid/content/Intent;)Z
+pub function (c: ContextClass) stop_service(e: usize, self: Context, a0: Intent): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_stop_service, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// A java.lang.ClassLoader.
+pub struct ClassLoader { ref: usize }
+
+pub function (x: ClassLoader) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ClassLoader) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.lang.ClassLoader and the IDs of its members.
+pub struct ClassLoaderClass { class: usize, id_load_class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function class_loader_class(e: usize): Result[ClassLoaderClass, jni.JavaError] {
+  let class = jni.global_class(e, "java/lang/ClassLoader")?;
+  let id_load_class = jni.checked_id(e, class, jni.get_method_id(e, class, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;"))?;
+  return Ok(ClassLoaderClass { class: class, id_load_class: id_load_class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ClassLoaderClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.lang.ClassLoader.loadClass(Ljava/lang/String;)Ljava/lang/Class;
+pub function (c: ClassLoaderClass) load_class(e: usize, self: ClassLoader, a0: string): Result[Class, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_load_class, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Class { ref: got });
+}
+
+// A java.lang.Class.
+pub struct Class { ref: usize }
+
+pub function (x: Class) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Class) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.lang.Class and the IDs of its members.
+pub struct ClassClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function class_class(e: usize): Result[ClassClass, jni.JavaError] {
+  let class = jni.global_class(e, "java/lang/Class")?;
+  return Ok(ClassClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ClassClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.app.Service.
+pub struct Service { ref: usize }
+
+pub function (x: Service) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Service) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub function (x: Service) as_context(): Context {
+  return Context { ref: x.ref };
+}
+
+pub const SERVICE_START_NOT_STICKY: i32 = 2;
+
+// The class android.app.Service and the IDs of its members.
+pub struct ServiceClass { class: usize, id_start_foreground_int_notification: usize, id_start_foreground_int_notification_int: usize, id_stop_self: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function service_class(e: usize): Result[ServiceClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/app/Service")?;
+  let id_start_foreground_int_notification = jni.checked_id(e, class, jni.get_method_id(e, class, "startForeground", "(ILandroid/app/Notification;)V"))?;
+  let id_start_foreground_int_notification_int = jni.optional_id(e, jni.get_method_id(e, class, "startForeground", "(ILandroid/app/Notification;I)V"));
+  let id_stop_self = jni.checked_id(e, class, jni.get_method_id(e, class, "stopSelf", "()V"))?;
+  return Ok(ServiceClass { class: class, id_start_foreground_int_notification: id_start_foreground_int_notification, id_start_foreground_int_notification_int: id_start_foreground_int_notification_int, id_stop_self: id_stop_self });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ServiceClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.app.Service.startForeground(ILandroid/app/Notification;)V
+pub function (c: ServiceClass) start_foreground_int_notification(e: usize, self: Service, a0: i32, a1: Notification): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_start_foreground_int_notification, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// False when the device does not have the member of `start_foreground_int_notification_int`.
+pub function (c: ServiceClass) has_start_foreground_int_notification_int(): boolean {
+  return c.id_start_foreground_int_notification_int != 0 as usize;
+}
+
+// android.app.Service.startForeground(ILandroid/app/Notification;I)V
+pub function (c: ServiceClass) start_foreground_int_notification_int(e: usize, self: Service, a0: i32, a1: Notification, a2: i32): Result[void, jni.JavaError] {
+  if (c.id_start_foreground_int_notification_int == 0 as usize) {
+    return Err(jni.absent("android.app.Service.startForeground"));
+  }
+  let args = jni.jvalue_alloc(3);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  jni.jvalue_set_int(args, 2, a2 as usize);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_start_foreground_int_notification_int, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.app.Service.stopSelf()V
+pub function (c: ServiceClass) stop_self(e: usize, self: Service): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_stop_self, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.content.pm.ServiceInfo.
+pub struct ServiceInfo { ref: usize }
+
+pub function (x: ServiceInfo) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ServiceInfo) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub const SERVICE_INFO_FOREGROUND_SERVICE_TYPE_MANIFEST: i32 = -1;
+
+// The class android.content.pm.ServiceInfo and the IDs of its members.
+pub struct ServiceInfoClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function service_info_class(e: usize): Result[ServiceInfoClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/pm/ServiceInfo")?;
+  return Ok(ServiceInfoClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ServiceInfoClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.content.Intent.
+pub struct Intent { ref: usize }
+
+pub function (x: Intent) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Intent) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.Intent and the IDs of its members.
+pub struct IntentClass { class: usize, id_new: usize, id_get_parcelable_extra: usize, id_put_extra: usize, id_set_action: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function intent_class(e: usize): Result[IntentClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/Intent")?;
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Landroid/content/Context;Ljava/lang/Class;)V"))?;
+  let id_get_parcelable_extra = jni.checked_id(e, class, jni.get_method_id(e, class, "getParcelableExtra", "(Ljava/lang/String;)Landroid/os/Parcelable;"))?;
+  let id_put_extra = jni.checked_id(e, class, jni.get_method_id(e, class, "putExtra", "(Ljava/lang/String;Landroid/os/Parcelable;)Landroid/content/Intent;"))?;
+  let id_set_action = jni.checked_id(e, class, jni.get_method_id(e, class, "setAction", "(Ljava/lang/String;)Landroid/content/Intent;"))?;
+  return Ok(IntentClass { class: class, id_new: id_new, id_get_parcelable_extra: id_get_parcelable_extra, id_put_extra: id_put_extra, id_set_action: id_set_action });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: IntentClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.Intent.<init>(Landroid/content/Context;Ljava/lang/Class;)V
+pub function (c: IntentClass) new(e: usize, a0: Context, a1: Class): Result[Intent, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Intent { ref: got });
+}
+
+// android.content.Intent.getParcelableExtra(Ljava/lang/String;)Landroid/os/Parcelable;
+pub function (c: IntentClass) get_parcelable_extra(e: usize, self: Intent, a0: string): Result[jni.Object, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_parcelable_extra, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// android.content.Intent.putExtra(Ljava/lang/String;Landroid/os/Parcelable;)Landroid/content/Intent;
+pub function (c: IntentClass) put_extra(e: usize, self: Intent, a0: string, a1: jni.Object): Result[Intent, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, s0);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_put_extra, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Intent { ref: got });
+}
+
+// android.content.Intent.setAction(Ljava/lang/String;)Landroid/content/Intent;
+pub function (c: IntentClass) set_action(e: usize, self: Intent, a0: string): Result[Intent, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_action, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Intent { ref: got });
+}
+
+// A android.content.pm.PackageManager.
+pub struct PackageManager { ref: usize }
+
+pub function (x: PackageManager) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: PackageManager) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.pm.PackageManager and the IDs of its members.
+pub struct PackageManagerClass { class: usize, id_get_launch_intent_for_package: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function package_manager_class(e: usize): Result[PackageManagerClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/pm/PackageManager")?;
+  let id_get_launch_intent_for_package = jni.checked_id(e, class, jni.get_method_id(e, class, "getLaunchIntentForPackage", "(Ljava/lang/String;)Landroid/content/Intent;"))?;
+  return Ok(PackageManagerClass { class: class, id_get_launch_intent_for_package: id_get_launch_intent_for_package });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: PackageManagerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.pm.PackageManager.getLaunchIntentForPackage(Ljava/lang/String;)Landroid/content/Intent;
+pub function (c: PackageManagerClass) get_launch_intent_for_package(e: usize, self: PackageManager, a0: string): Result[Intent, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_launch_intent_for_package, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Intent { ref: got });
+}
+
+// A android.app.PendingIntent.
+pub struct PendingIntent { ref: usize }
+
+pub function (x: PendingIntent) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: PendingIntent) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub const PENDING_INTENT_FLAG_IMMUTABLE: i32 = 67108864;
+
+pub const PENDING_INTENT_FLAG_UPDATE_CURRENT: i32 = 134217728;
+
+// The class android.app.PendingIntent and the IDs of its members.
+pub struct PendingIntentClass { class: usize, id_get_activity: usize, id_get_service: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function pending_intent_class(e: usize): Result[PendingIntentClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/app/PendingIntent")?;
+  let id_get_activity = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getActivity", "(Landroid/content/Context;ILandroid/content/Intent;I)Landroid/app/PendingIntent;"))?;
+  let id_get_service = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getService", "(Landroid/content/Context;ILandroid/content/Intent;I)Landroid/app/PendingIntent;"))?;
+  return Ok(PendingIntentClass { class: class, id_get_activity: id_get_activity, id_get_service: id_get_service });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: PendingIntentClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.app.PendingIntent.getActivity(Landroid/content/Context;ILandroid/content/Intent;I)Landroid/app/PendingIntent;
+pub function (c: PendingIntentClass) get_activity(e: usize, a0: Context, a1: i32, a2: Intent, a3: i32): Result[PendingIntent, jni.JavaError] {
+  let args = jni.jvalue_alloc(4);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.jvalue_set_int(args, 2, a2.ref);
+  jni.jvalue_set_int(args, 3, a3 as usize);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_get_activity, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(PendingIntent { ref: got });
+}
+
+// android.app.PendingIntent.getService(Landroid/content/Context;ILandroid/content/Intent;I)Landroid/app/PendingIntent;
+pub function (c: PendingIntentClass) get_service(e: usize, a0: Context, a1: i32, a2: Intent, a3: i32): Result[PendingIntent, jni.JavaError] {
+  let args = jni.jvalue_alloc(4);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.jvalue_set_int(args, 2, a2.ref);
+  jni.jvalue_set_int(args, 3, a3 as usize);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_get_service, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(PendingIntent { ref: got });
+}
+
+// A android.app.NotificationManager.
+pub struct NotificationManager { ref: usize }
+
+pub function (x: NotificationManager) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: NotificationManager) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub const NOTIFICATION_MANAGER_IMPORTANCE_LOW: i32 = 2;
+
+// The class android.app.NotificationManager and the IDs of its members.
+pub struct NotificationManagerClass { class: usize, id_create_notification_channel: usize, id_notify: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function notification_manager_class(e: usize): Result[NotificationManagerClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/app/NotificationManager")?;
+  let id_create_notification_channel = jni.checked_id(e, class, jni.get_method_id(e, class, "createNotificationChannel", "(Landroid/app/NotificationChannel;)V"))?;
+  let id_notify = jni.checked_id(e, class, jni.get_method_id(e, class, "notify", "(ILandroid/app/Notification;)V"))?;
+  return Ok(NotificationManagerClass { class: class, id_create_notification_channel: id_create_notification_channel, id_notify: id_notify });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: NotificationManagerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.app.NotificationManager.createNotificationChannel(Landroid/app/NotificationChannel;)V
+pub function (c: NotificationManagerClass) create_notification_channel(e: usize, self: NotificationManager, a0: NotificationChannel): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_create_notification_channel, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.app.NotificationManager.notify(ILandroid/app/Notification;)V
+pub function (c: NotificationManagerClass) notify(e: usize, self: NotificationManager, a0: i32, a1: Notification): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_notify, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.app.NotificationChannel.
+pub struct NotificationChannel { ref: usize }
+
+pub function (x: NotificationChannel) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: NotificationChannel) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.app.NotificationChannel and the IDs of its members.
+pub struct NotificationChannelClass { class: usize, id_new: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function notification_channel_class(e: usize): Result[NotificationChannelClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/app/NotificationChannel")?;
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;Ljava/lang/CharSequence;I)V"))?;
+  return Ok(NotificationChannelClass { class: class, id_new: id_new });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: NotificationChannelClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.app.NotificationChannel.<init>(Ljava/lang/String;Ljava/lang/CharSequence;I)V
+pub function (c: NotificationChannelClass) new(e: usize, a0: string, a1: jni.Object, a2: i32): Result[NotificationChannel, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(3);
+  jni.jvalue_set_int(args, 0, s0);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  jni.jvalue_set_int(args, 2, a2 as usize);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(NotificationChannel { ref: got });
+}
+
+// A android.app.Notification.
+pub struct Notification { ref: usize }
+
+pub function (x: Notification) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Notification) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.app.Notification and the IDs of its members.
+pub struct NotificationClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function notification_class(e: usize): Result[NotificationClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/app/Notification")?;
+  return Ok(NotificationClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: NotificationClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.app.Notification.Builder.
+pub struct Notification_Builder { ref: usize }
+
+pub function (x: Notification_Builder) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Notification_Builder) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.app.Notification.Builder and the IDs of its members.
+pub struct Notification_BuilderClass { class: usize, id_new: usize, id_add_action_int_char_sequence_pending_intent: usize, id_add_action_notification_action: usize, id_build: usize, id_set_content_intent: usize, id_set_content_text: usize, id_set_content_title: usize, id_set_ongoing: usize, id_set_small_icon: usize, id_set_style: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function notification_builder_class(e: usize): Result[Notification_BuilderClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/app/Notification$Builder")?;
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Landroid/content/Context;Ljava/lang/String;)V"))?;
+  let id_add_action_int_char_sequence_pending_intent = jni.checked_id(e, class, jni.get_method_id(e, class, "addAction", "(ILjava/lang/CharSequence;Landroid/app/PendingIntent;)Landroid/app/Notification$Builder;"))?;
+  let id_add_action_notification_action = jni.checked_id(e, class, jni.get_method_id(e, class, "addAction", "(Landroid/app/Notification$Action;)Landroid/app/Notification$Builder;"))?;
+  let id_build = jni.checked_id(e, class, jni.get_method_id(e, class, "build", "()Landroid/app/Notification;"))?;
+  let id_set_content_intent = jni.checked_id(e, class, jni.get_method_id(e, class, "setContentIntent", "(Landroid/app/PendingIntent;)Landroid/app/Notification$Builder;"))?;
+  let id_set_content_text = jni.checked_id(e, class, jni.get_method_id(e, class, "setContentText", "(Ljava/lang/CharSequence;)Landroid/app/Notification$Builder;"))?;
+  let id_set_content_title = jni.checked_id(e, class, jni.get_method_id(e, class, "setContentTitle", "(Ljava/lang/CharSequence;)Landroid/app/Notification$Builder;"))?;
+  let id_set_ongoing = jni.checked_id(e, class, jni.get_method_id(e, class, "setOngoing", "(Z)Landroid/app/Notification$Builder;"))?;
+  let id_set_small_icon = jni.checked_id(e, class, jni.get_method_id(e, class, "setSmallIcon", "(I)Landroid/app/Notification$Builder;"))?;
+  let id_set_style = jni.checked_id(e, class, jni.get_method_id(e, class, "setStyle", "(Landroid/app/Notification$Style;)Landroid/app/Notification$Builder;"))?;
+  return Ok(Notification_BuilderClass { class: class, id_new: id_new, id_add_action_int_char_sequence_pending_intent: id_add_action_int_char_sequence_pending_intent, id_add_action_notification_action: id_add_action_notification_action, id_build: id_build, id_set_content_intent: id_set_content_intent, id_set_content_text: id_set_content_text, id_set_content_title: id_set_content_title, id_set_ongoing: id_set_ongoing, id_set_small_icon: id_set_small_icon, id_set_style: id_set_style });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: Notification_BuilderClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.app.Notification.Builder.<init>(Landroid/content/Context;Ljava/lang/String;)V
+pub function (c: Notification_BuilderClass) new(e: usize, a0: Context, a1: string): Result[Notification_Builder, jni.JavaError] {
+  let s1 = jni.checked_string(e, a1)?;
+  defer jni.delete_local_ref(e, s1);
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, s1);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Notification_Builder { ref: got });
+}
+
+// android.app.Notification.Builder.addAction(ILjava/lang/CharSequence;Landroid/app/PendingIntent;)Landroid/app/Notification$Builder;
+pub function (c: Notification_BuilderClass) add_action_int_char_sequence_pending_intent(e: usize, self: Notification_Builder, a0: i32, a1: jni.Object, a2: PendingIntent): Result[Notification_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(3);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  jni.jvalue_set_int(args, 2, a2.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_add_action_int_char_sequence_pending_intent, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Notification_Builder { ref: got });
+}
+
+// android.app.Notification.Builder.addAction(Landroid/app/Notification$Action;)Landroid/app/Notification$Builder;
+pub function (c: Notification_BuilderClass) add_action_notification_action(e: usize, self: Notification_Builder, a0: jni.Object): Result[Notification_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_add_action_notification_action, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Notification_Builder { ref: got });
+}
+
+// android.app.Notification.Builder.build()Landroid/app/Notification;
+pub function (c: Notification_BuilderClass) build(e: usize, self: Notification_Builder): Result[Notification, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_build, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Notification { ref: got });
+}
+
+// android.app.Notification.Builder.setContentIntent(Landroid/app/PendingIntent;)Landroid/app/Notification$Builder;
+pub function (c: Notification_BuilderClass) set_content_intent(e: usize, self: Notification_Builder, a0: PendingIntent): Result[Notification_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_content_intent, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Notification_Builder { ref: got });
+}
+
+// android.app.Notification.Builder.setContentText(Ljava/lang/CharSequence;)Landroid/app/Notification$Builder;
+pub function (c: Notification_BuilderClass) set_content_text(e: usize, self: Notification_Builder, a0: jni.Object): Result[Notification_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_content_text, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Notification_Builder { ref: got });
+}
+
+// android.app.Notification.Builder.setContentTitle(Ljava/lang/CharSequence;)Landroid/app/Notification$Builder;
+pub function (c: Notification_BuilderClass) set_content_title(e: usize, self: Notification_Builder, a0: jni.Object): Result[Notification_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_content_title, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Notification_Builder { ref: got });
+}
+
+// android.app.Notification.Builder.setOngoing(Z)Landroid/app/Notification$Builder;
+pub function (c: Notification_BuilderClass) set_ongoing(e: usize, self: Notification_Builder, a0: boolean): Result[Notification_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, jni.jbool(a0));
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_ongoing, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Notification_Builder { ref: got });
+}
+
+// android.app.Notification.Builder.setSmallIcon(I)Landroid/app/Notification$Builder;
+pub function (c: Notification_BuilderClass) set_small_icon(e: usize, self: Notification_Builder, a0: i32): Result[Notification_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_small_icon, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Notification_Builder { ref: got });
+}
+
+// android.app.Notification.Builder.setStyle(Landroid/app/Notification$Style;)Landroid/app/Notification$Builder;
+pub function (c: Notification_BuilderClass) set_style(e: usize, self: Notification_Builder, a0: jni.Object): Result[Notification_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_style, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Notification_Builder { ref: got });
+}
+
+// A android.app.Notification.Action.Builder.
+pub struct Notification_Action_Builder { ref: usize }
+
+pub function (x: Notification_Action_Builder) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Notification_Action_Builder) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.app.Notification.Action.Builder and the IDs of its members.
+pub struct Notification_Action_BuilderClass { class: usize, id_new: usize, id_build: usize, id_set_authentication_required: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function notification_action_builder_class(e: usize): Result[Notification_Action_BuilderClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/app/Notification$Action$Builder")?;
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(ILjava/lang/CharSequence;Landroid/app/PendingIntent;)V"))?;
+  let id_build = jni.checked_id(e, class, jni.get_method_id(e, class, "build", "()Landroid/app/Notification$Action;"))?;
+  let id_set_authentication_required = jni.optional_id(e, jni.get_method_id(e, class, "setAuthenticationRequired", "(Z)Landroid/app/Notification$Action$Builder;"));
+  return Ok(Notification_Action_BuilderClass { class: class, id_new: id_new, id_build: id_build, id_set_authentication_required: id_set_authentication_required });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: Notification_Action_BuilderClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.app.Notification.Action.Builder.<init>(ILjava/lang/CharSequence;Landroid/app/PendingIntent;)V
+pub function (c: Notification_Action_BuilderClass) new(e: usize, a0: i32, a1: jni.Object, a2: PendingIntent): Result[Notification_Action_Builder, jni.JavaError] {
+  let args = jni.jvalue_alloc(3);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  jni.jvalue_set_int(args, 2, a2.ref);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Notification_Action_Builder { ref: got });
+}
+
+// android.app.Notification.Action.Builder.build()Landroid/app/Notification$Action;
+pub function (c: Notification_Action_BuilderClass) build(e: usize, self: Notification_Action_Builder): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_build, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// False when the device does not have the member of `set_authentication_required`.
+pub function (c: Notification_Action_BuilderClass) has_set_authentication_required(): boolean {
+  return c.id_set_authentication_required != 0 as usize;
+}
+
+// android.app.Notification.Action.Builder.setAuthenticationRequired(Z)Landroid/app/Notification$Action$Builder;
+pub function (c: Notification_Action_BuilderClass) set_authentication_required(e: usize, self: Notification_Action_Builder, a0: boolean): Result[Notification_Action_Builder, jni.JavaError] {
+  if (c.id_set_authentication_required == 0 as usize) {
+    return Err(jni.absent("android.app.Notification.Action.Builder.setAuthenticationRequired"));
+  }
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, jni.jbool(a0));
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_authentication_required, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Notification_Action_Builder { ref: got });
+}
+
+// A android.app.Notification.MediaStyle.
+pub struct Notification_MediaStyle { ref: usize }
+
+pub function (x: Notification_MediaStyle) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Notification_MediaStyle) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.app.Notification.MediaStyle and the IDs of its members.
+pub struct Notification_MediaStyleClass { class: usize, id_new: usize, id_set_media_session: usize, id_set_show_actions_in_compact_view: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function notification_media_style_class(e: usize): Result[Notification_MediaStyleClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/app/Notification$MediaStyle")?;
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "()V"))?;
+  let id_set_media_session = jni.checked_id(e, class, jni.get_method_id(e, class, "setMediaSession", "(Landroid/media/session/MediaSession$Token;)Landroid/app/Notification$MediaStyle;"))?;
+  let id_set_show_actions_in_compact_view = jni.checked_id(e, class, jni.get_method_id(e, class, "setShowActionsInCompactView", "([I)Landroid/app/Notification$MediaStyle;"))?;
+  return Ok(Notification_MediaStyleClass { class: class, id_new: id_new, id_set_media_session: id_set_media_session, id_set_show_actions_in_compact_view: id_set_show_actions_in_compact_view });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: Notification_MediaStyleClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.app.Notification.MediaStyle.<init>()V
+pub function (c: Notification_MediaStyleClass) new(e: usize): Result[Notification_MediaStyle, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Notification_MediaStyle { ref: got });
+}
+
+// android.app.Notification.MediaStyle.setMediaSession(Landroid/media/session/MediaSession$Token;)Landroid/app/Notification$MediaStyle;
+pub function (c: Notification_MediaStyleClass) set_media_session(e: usize, self: Notification_MediaStyle, a0: jni.Object): Result[Notification_MediaStyle, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_media_session, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Notification_MediaStyle { ref: got });
+}
+
+// android.app.Notification.MediaStyle.setShowActionsInCompactView([I)Landroid/app/Notification$MediaStyle;
+pub function (c: Notification_MediaStyleClass) set_show_actions_in_compact_view(e: usize, self: Notification_MediaStyle, a0: jni.Object): Result[Notification_MediaStyle, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_show_actions_in_compact_view, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Notification_MediaStyle { ref: got });
+}
+
+// A android.os.PowerManager.
+pub struct PowerManager { ref: usize }
+
+pub function (x: PowerManager) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: PowerManager) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub const POWER_MANAGER_PARTIAL_WAKE_LOCK: i32 = 1;
+
+// The class android.os.PowerManager and the IDs of its members.
+pub struct PowerManagerClass { class: usize, id_new_wake_lock: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function power_manager_class(e: usize): Result[PowerManagerClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/os/PowerManager")?;
+  let id_new_wake_lock = jni.checked_id(e, class, jni.get_method_id(e, class, "newWakeLock", "(ILjava/lang/String;)Landroid/os/PowerManager$WakeLock;"))?;
+  return Ok(PowerManagerClass { class: class, id_new_wake_lock: id_new_wake_lock });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: PowerManagerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.os.PowerManager.newWakeLock(ILjava/lang/String;)Landroid/os/PowerManager$WakeLock;
+pub function (c: PowerManagerClass) new_wake_lock(e: usize, self: PowerManager, a0: i32, a1: string): Result[PowerManager_WakeLock, jni.JavaError] {
+  let s1 = jni.checked_string(e, a1)?;
+  defer jni.delete_local_ref(e, s1);
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, s1);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_new_wake_lock, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(PowerManager_WakeLock { ref: got });
+}
+
+// A android.os.PowerManager.WakeLock.
+pub struct PowerManager_WakeLock { ref: usize }
+
+pub function (x: PowerManager_WakeLock) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: PowerManager_WakeLock) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.os.PowerManager.WakeLock and the IDs of its members.
+pub struct PowerManager_WakeLockClass { class: usize, id_acquire: usize, id_release_: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function power_manager_wake_lock_class(e: usize): Result[PowerManager_WakeLockClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/os/PowerManager$WakeLock")?;
+  let id_acquire = jni.checked_id(e, class, jni.get_method_id(e, class, "acquire", "()V"))?;
+  let id_release_ = jni.checked_id(e, class, jni.get_method_id(e, class, "release", "()V"))?;
+  return Ok(PowerManager_WakeLockClass { class: class, id_acquire: id_acquire, id_release_: id_release_ });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: PowerManager_WakeLockClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.os.PowerManager.WakeLock.acquire()V
+pub function (c: PowerManager_WakeLockClass) acquire(e: usize, self: PowerManager_WakeLock): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_acquire, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.os.PowerManager.WakeLock.release()V
+pub function (c: PowerManager_WakeLockClass) release_(e: usize, self: PowerManager_WakeLock): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_release_, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.net.wifi.WifiManager.
+pub struct WifiManager { ref: usize }
+
+pub function (x: WifiManager) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: WifiManager) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub const WIFI_MANAGER_WIFI_MODE_FULL_HIGH_PERF: i32 = 3;
+
+// The class android.net.wifi.WifiManager and the IDs of its members.
+pub struct WifiManagerClass { class: usize, id_create_wifi_lock: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function wifi_manager_class(e: usize): Result[WifiManagerClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/net/wifi/WifiManager")?;
+  let id_create_wifi_lock = jni.checked_id(e, class, jni.get_method_id(e, class, "createWifiLock", "(ILjava/lang/String;)Landroid/net/wifi/WifiManager$WifiLock;"))?;
+  return Ok(WifiManagerClass { class: class, id_create_wifi_lock: id_create_wifi_lock });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: WifiManagerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.net.wifi.WifiManager.createWifiLock(ILjava/lang/String;)Landroid/net/wifi/WifiManager$WifiLock;
+pub function (c: WifiManagerClass) create_wifi_lock(e: usize, self: WifiManager, a0: i32, a1: string): Result[WifiManager_WifiLock, jni.JavaError] {
+  let s1 = jni.checked_string(e, a1)?;
+  defer jni.delete_local_ref(e, s1);
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, s1);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_create_wifi_lock, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(WifiManager_WifiLock { ref: got });
+}
+
+// A android.net.wifi.WifiManager.WifiLock.
+pub struct WifiManager_WifiLock { ref: usize }
+
+pub function (x: WifiManager_WifiLock) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: WifiManager_WifiLock) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.net.wifi.WifiManager.WifiLock and the IDs of its members.
+pub struct WifiManager_WifiLockClass { class: usize, id_acquire: usize, id_release_: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function wifi_manager_wifi_lock_class(e: usize): Result[WifiManager_WifiLockClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/net/wifi/WifiManager$WifiLock")?;
+  let id_acquire = jni.checked_id(e, class, jni.get_method_id(e, class, "acquire", "()V"))?;
+  let id_release_ = jni.checked_id(e, class, jni.get_method_id(e, class, "release", "()V"))?;
+  return Ok(WifiManager_WifiLockClass { class: class, id_acquire: id_acquire, id_release_: id_release_ });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: WifiManager_WifiLockClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.net.wifi.WifiManager.WifiLock.acquire()V
+pub function (c: WifiManager_WifiLockClass) acquire(e: usize, self: WifiManager_WifiLock): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_acquire, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.net.wifi.WifiManager.WifiLock.release()V
+pub function (c: WifiManager_WifiLockClass) release_(e: usize, self: WifiManager_WifiLock): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_release_, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.R.drawable.
+pub struct R_drawable { ref: usize }
+
+pub function (x: R_drawable) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: R_drawable) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub const R_DRAWABLE_ic_btn_speak_now: i32 = 17301668;
+
+pub const R_DRAWABLE_ic_media_play: i32 = 17301540;
+
+pub const R_DRAWABLE_ic_menu_close_clear_cancel: i32 = 17301560;
+
+// The class android.R.drawable and the IDs of its members.
+pub struct R_drawableClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function r_drawable_class(e: usize): Result[R_drawableClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/R$drawable")?;
+  return Ok(R_drawableClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: R_drawableClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// The struct of IDs of each class of this module.
+pub struct Classes { context: ContextClass, class_loader: ClassLoaderClass, class: ClassClass, service: ServiceClass, service_info: ServiceInfoClass, intent: IntentClass, package_manager: PackageManagerClass, pending_intent: PendingIntentClass, notification_manager: NotificationManagerClass, notification_channel: NotificationChannelClass, notification: NotificationClass, notification_builder: Notification_BuilderClass, notification_action_builder: Notification_Action_BuilderClass, notification_media_style: Notification_MediaStyleClass, power_manager: PowerManagerClass, power_manager_wake_lock: PowerManager_WakeLockClass, wifi_manager: WifiManagerClass, wifi_manager_wifi_lock: WifiManager_WifiLockClass, r_drawable: R_drawableClass }
+
+// Makes the struct of IDs of each class. Call it one time, and call
+// `release` when the app does not call Java again. One lookup for each
+// class, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function classes(e: usize): Result[Classes, jni.JavaError] {
+  let context = match (context_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      return Err(err);
+    },
+  };
+  let class_loader = match (class_loader_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      return Err(err);
+    },
+  };
+  let class = match (class_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      return Err(err);
+    },
+  };
+  let service = match (service_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      return Err(err);
+    },
+  };
+  let service_info = match (service_info_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      service.release(e);
+      return Err(err);
+    },
+  };
+  let intent = match (intent_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      service.release(e);
+      service_info.release(e);
+      return Err(err);
+    },
+  };
+  let package_manager = match (package_manager_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      service.release(e);
+      service_info.release(e);
+      intent.release(e);
+      return Err(err);
+    },
+  };
+  let pending_intent = match (pending_intent_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      service.release(e);
+      service_info.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      return Err(err);
+    },
+  };
+  let notification_manager = match (notification_manager_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      service.release(e);
+      service_info.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      pending_intent.release(e);
+      return Err(err);
+    },
+  };
+  let notification_channel = match (notification_channel_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      service.release(e);
+      service_info.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      pending_intent.release(e);
+      notification_manager.release(e);
+      return Err(err);
+    },
+  };
+  let notification = match (notification_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      service.release(e);
+      service_info.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      pending_intent.release(e);
+      notification_manager.release(e);
+      notification_channel.release(e);
+      return Err(err);
+    },
+  };
+  let notification_builder = match (notification_builder_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      service.release(e);
+      service_info.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      pending_intent.release(e);
+      notification_manager.release(e);
+      notification_channel.release(e);
+      notification.release(e);
+      return Err(err);
+    },
+  };
+  let notification_action_builder = match (notification_action_builder_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      service.release(e);
+      service_info.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      pending_intent.release(e);
+      notification_manager.release(e);
+      notification_channel.release(e);
+      notification.release(e);
+      notification_builder.release(e);
+      return Err(err);
+    },
+  };
+  let notification_media_style = match (notification_media_style_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      service.release(e);
+      service_info.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      pending_intent.release(e);
+      notification_manager.release(e);
+      notification_channel.release(e);
+      notification.release(e);
+      notification_builder.release(e);
+      notification_action_builder.release(e);
+      return Err(err);
+    },
+  };
+  let power_manager = match (power_manager_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      service.release(e);
+      service_info.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      pending_intent.release(e);
+      notification_manager.release(e);
+      notification_channel.release(e);
+      notification.release(e);
+      notification_builder.release(e);
+      notification_action_builder.release(e);
+      notification_media_style.release(e);
+      return Err(err);
+    },
+  };
+  let power_manager_wake_lock = match (power_manager_wake_lock_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      service.release(e);
+      service_info.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      pending_intent.release(e);
+      notification_manager.release(e);
+      notification_channel.release(e);
+      notification.release(e);
+      notification_builder.release(e);
+      notification_action_builder.release(e);
+      notification_media_style.release(e);
+      power_manager.release(e);
+      return Err(err);
+    },
+  };
+  let wifi_manager = match (wifi_manager_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      service.release(e);
+      service_info.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      pending_intent.release(e);
+      notification_manager.release(e);
+      notification_channel.release(e);
+      notification.release(e);
+      notification_builder.release(e);
+      notification_action_builder.release(e);
+      notification_media_style.release(e);
+      power_manager.release(e);
+      power_manager_wake_lock.release(e);
+      return Err(err);
+    },
+  };
+  let wifi_manager_wifi_lock = match (wifi_manager_wifi_lock_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      service.release(e);
+      service_info.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      pending_intent.release(e);
+      notification_manager.release(e);
+      notification_channel.release(e);
+      notification.release(e);
+      notification_builder.release(e);
+      notification_action_builder.release(e);
+      notification_media_style.release(e);
+      power_manager.release(e);
+      power_manager_wake_lock.release(e);
+      wifi_manager.release(e);
+      return Err(err);
+    },
+  };
+  let r_drawable = match (r_drawable_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      class_loader.release(e);
+      class.release(e);
+      service.release(e);
+      service_info.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      pending_intent.release(e);
+      notification_manager.release(e);
+      notification_channel.release(e);
+      notification.release(e);
+      notification_builder.release(e);
+      notification_action_builder.release(e);
+      notification_media_style.release(e);
+      power_manager.release(e);
+      power_manager_wake_lock.release(e);
+      wifi_manager.release(e);
+      wifi_manager_wifi_lock.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { context: context, class_loader: class_loader, class: class, service: service, service_info: service_info, intent: intent, package_manager: package_manager, pending_intent: pending_intent, notification_manager: notification_manager, notification_channel: notification_channel, notification: notification, notification_builder: notification_builder, notification_action_builder: notification_action_builder, notification_media_style: notification_media_style, power_manager: power_manager, power_manager_wake_lock: power_manager_wake_lock, wifi_manager: wifi_manager, wifi_manager_wifi_lock: wifi_manager_wifi_lock, r_drawable: r_drawable });
+}
+
+// Deletes the reference to each class. Do not use `c` after this call.
+pub function (c: Classes) release(e: usize): void {
+  c.context.release(e);
+  c.class_loader.release(e);
+  c.class.release(e);
+  c.service.release(e);
+  c.service_info.release(e);
+  c.intent.release(e);
+  c.package_manager.release(e);
+  c.pending_intent.release(e);
+  c.notification_manager.release(e);
+  c.notification_channel.release(e);
+  c.notification.release(e);
+  c.notification_builder.release(e);
+  c.notification_action_builder.release(e);
+  c.notification_media_style.release(e);
+  c.power_manager.release(e);
+  c.power_manager_wake_lock.release(e);
+  c.wifi_manager.release(e);
+  c.wifi_manager_wifi_lock.release(e);
+  c.r_drawable.release(e);
+}

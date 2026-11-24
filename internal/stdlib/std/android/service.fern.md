@@ -14,6 +14,8 @@ A button of the notification sends an intent to the service. `command` then send
 
 The module needs API level 26, for the notification channel. From API level 29, `startForeground` takes the types of the manifest.
 
+The module calls Java only through `std/android/service/bindings`, which `jnibind` writes from `bindings.spec`.
+
 ## Contracts
 
 The activity is not valid after its Destroy event, so the app calls `stop` before that. Call each function except `command` on the loop thread.
@@ -37,6 +39,7 @@ The activity is not valid after its Destroy event, so the app calls `stop` befor
 <<module introduction>>=
 // This module runs a foreground service for a NativeActivity app.
 import "std/android";
+import "std/android/service/bindings";
 import "std/jni";
 ```
 
@@ -94,28 +97,44 @@ const APP_ACTION: string = "dev.fern.android.ACTION";
 // The action of the command that `stop` sends.
 const FINISH_ACTION: string = "dev.fern.android.FINISH";
 
-// START_NOT_STICKY: the system does not start the service again after it
-// stops the process.
-const NOT_STICKY: i32 = 2;
-
-// android.R.drawable.ic_btn_speak_now and ic_menu_close_clear_cancel.
-const ICON: usize = 17301668;
-
-const STOP_ICON: usize = 17301560;
-
-// android.R.drawable.ic_media_play.
-const MEDIA_ICON: usize = 17301540;
-
 // The extra of the start intent that holds the token of a media session.
 const SESSION_EXTRA: string = "dev.fern.android.SESSION";
 
-// A new intent from `context` to `class`.
-function service_intent(e: usize, context: usize, class: usize): usize {
-  let intent_class: usize = jni.find_class(e, "android/content/Intent");
-  let args: usize = jni.jvalues([context, class]);
-  let intent: usize = jni.new_object_a(e, intent_class, jni.get_method_id(e, intent_class, "<init>", "(Landroid/content/Context;Ljava/lang/Class;)V"), args);
-  jni.free_buffer(args);
-  return intent;
+// The ID of the one notification of the service.
+const NOTICE_ID: i32 = 1;
+
+// Starts a local frame and makes the classes of one call. None when
+// Android gives no frame or does not find a class.
+function begin(e: usize): Option[bindings.Classes] {
+  if (!jni.push_local_frame(e, 96)) {
+    return None;
+  }
+  match (bindings.classes(e)) {
+    Ok(c) => {
+      return Some(c);
+    },
+    Err(_) => {
+      let _ = jni.pop_local_frame(e, 0 as usize);
+      return None;
+    }
+  }
+}
+
+// Releases the classes and ends the local frame of `begin`.
+function end(e: usize, c: bindings.Classes): void {
+  c.release(e);
+  let _ = jni.pop_local_frame(e, 0 as usize);
+}
+
+// The class `name` of the app, which the class loader of `context` loads.
+function load(e: usize, c: bindings.Classes, context: bindings.Context, name: string): Result[bindings.Class, jni.JavaError] {
+  let loader = c.context.get_class_loader(e, context)?;
+  return c.class_loader.load_class(e, loader, name);
+}
+
+// A Java string for a CharSequence parameter.
+function text(e: usize, value: string): Result[jni.Object, jni.JavaError] {
+  return Ok(jni.Object { ref: jni.checked_string(e, value)? });
 }
 
 // Starts the foreground service `class`, the Java name of the app's @jni
@@ -125,47 +144,55 @@ pub function start(ctx: usize, class: string): boolean {
   return start_media(ctx, class, 0 as usize);
 }
 
+function started(e: usize, c: bindings.Classes, activity: bindings.Context, class: string, session: usize): Result[boolean, jni.JavaError] {
+  let intent = c.intent.new(e, activity, load(e, c, activity, class)?)?;
+  if (session != 0 as usize) {
+    let with_session = c.intent.put_extra(e, intent, SESSION_EXTRA, jni.Object { ref: session })?;
+  }
+  let name = c.context.start_foreground_service(e, activity, intent)?;
+  return Ok(!name.is_null());
+}
+
 // Starts the foreground service `class` with the notification of the media
 // session whose token is `session`, from `std/android/session`. Android
 // shows that notification as the media controls of the app.
 pub function start_media(ctx: usize, class: string, session: usize): boolean {
   let e: usize = android.env(ctx);
-  let obj: usize = android.activity_object(ctx);
-  let intent: usize = service_intent(e, obj, jni.load_class(e, obj, class));
-  if (session != 0 as usize) {
-    let with_session: usize = jni.call_object(e, intent, "putExtra", "(Ljava/lang/String;Landroid/os/Parcelable;)Landroid/content/Intent;", [jni.new_string(e, SESSION_EXTRA), session]);
-  }
-  let start: usize = jni.get_method_id(e, jni.get_object_class(e, obj), "startForegroundService", "(Landroid/content/Intent;)Landroid/content/ComponentName;");
-  let args: usize = jni.jvalues([intent]);
-  let started: usize = jni.call_object_method_a(e, obj, start, args);
-  jni.free_buffer(args);
-  if (jni.exception_occurred(e) != 0 as usize) {
-    jni.exception_clear(e);
+  let Some(c) = begin(e) else {
     return false;
+  };
+  defer end(e, c);
+  return match (started(e, c, bindings.Context { ref: android.activity_object(ctx) }, class, session)) {
+    Ok(ok) => ok,
+    Err(_) => false,
+  };
+}
+
+function stopped(e: usize, c: bindings.Classes, activity: bindings.Context, class: string): Result[void, jni.JavaError] {
+  let target = load(e, c, activity, class)?;
+  let finish = c.intent.new(e, activity, target)?;
+  let with_action = c.intent.set_action(e, finish, FINISH_ACTION)?;
+  let sent = match (c.context.start_service(e, activity, finish)) {
+    Ok(name) => !name.is_null(),
+    Err(_) => false,
+  };
+  if (sent) {
+    return Ok(());
   }
-  return started != 0 as usize;
+  let intent = c.intent.new(e, activity, target)?;
+  let gone = c.context.stop_service(e, activity, intent)?;
+  return Ok(());
 }
 
 // Stops the foreground service `class`, and removes its notification. Call
 // it on the loop thread.
 pub function stop(ctx: usize, class: string): void {
   let e: usize = android.env(ctx);
-  let obj: usize = android.activity_object(ctx);
-  let intent: usize = service_intent(e, obj, jni.load_class(e, obj, class));
-  let finish: usize = service_intent(e, obj, jni.load_class(e, obj, class));
-  let with_action: usize = jni.call_object(e, finish, "setAction", "(Ljava/lang/String;)Landroid/content/Intent;", [jni.new_string(e, FINISH_ACTION)]);
-  let send: usize = jni.get_method_id(e, jni.get_object_class(e, obj), "startService", "(Landroid/content/Intent;)Landroid/content/ComponentName;");
-  let finish_args: usize = jni.jvalues([finish]);
-  let sent: usize = jni.call_object_method_a(e, obj, send, finish_args);
-  jni.free_buffer(finish_args);
-  if (jni.exception_occurred(e) == 0 as usize && sent != 0 as usize) {
+  let Some(c) = begin(e) else {
     return;
-  }
-  jni.exception_clear(e);
-  let stop: usize = jni.get_method_id(e, jni.get_object_class(e, obj), "stopService", "(Landroid/content/Intent;)Z");
-  let args: usize = jni.jvalues([intent]);
-  let stopped: i32 = jni.call_boolean_method_a(e, obj, stop, args);
-  jni.free_buffer(args);
+  };
+  defer end(e, c);
+  let _ = stopped(e, c, bindings.Context { ref: android.activity_object(ctx) }, class);
 }
 
 // Shows the notification `n` in place of the notification of the running
@@ -180,19 +207,23 @@ pub function update_media(ctx: usize, class: string, n: Notice, session: usize):
   publish_media(ctx, class, n, session, []);
 }
 
+function notifications(e: usize, c: bindings.Classes, context: bindings.Context): Result[bindings.NotificationManager, jni.JavaError] {
+  let manager = c.context.get_system_service(e, context, bindings.CONTEXT_NOTIFICATION_SERVICE)?;
+  return Ok(bindings.NotificationManager { ref: manager.ref });
+}
+
+function published(e: usize, c: bindings.Classes, activity: bindings.Context, class: string, n: Notice, session: usize, buttons: MediaButton[]): Result[void, jni.JavaError] {
+  let notification = notification_of(e, c, activity, load(e, c, activity, class)?, n, session, buttons)?;
+  return c.notification_manager.notify(e, notifications(e, c, activity)?, NOTICE_ID, notification);
+}
+
 pub function publish_media(ctx: usize, class: string, n: Notice, session: usize, buttons: MediaButton[]): void {
-  unsafe {
-    let e = android.env(ctx);
-    // Bound the local references of the builder and its action intents.
-    if (!jni.push_local_frame(e, 96)) {
-      return;
-    }
-    defer jni.pop_local_frame(e, 0 as usize);
-    let obj = android.activity_object(ctx);
-    let notification: usize = notification_of(e, obj, jni.load_class(e, obj, class), n, session, buttons);
-    let manager: usize = jni.call_object(e, obj, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [jni.new_string(e, "notification")]);
-    let posted: boolean = jni.call_void(e, manager, "notify", "(ILandroid/app/Notification;)V", [1 as usize, notification]);
-  }
+  let e = android.env(ctx);
+  let Some(c) = begin(e) else {
+    return;
+  };
+  defer end(e, c);
+  let _ = published(e, c, bindings.Context { ref: android.activity_object(ctx) }, class, n, session, buttons);
 }
 
 // The onStartCommand of the app's service: `env`, `service` and `intent`
@@ -205,219 +236,196 @@ pub function command(e: usize, service: usize, intent: usize, n: Notice): i32 {
 }
 
 pub function command_media(e: usize, service: usize, intent: usize, n: Notice, buttons: MediaButton[]): i32 {
-  if (intent == 0 as usize) {
-    stop_self(e, service);
-    return NOT_STICKY;
+  let Some(c) = begin(e) else {
+    return bindings.SERVICE_START_NOT_STICKY;
+  };
+  defer end(e, c);
+  let _ = commanded(e, c, bindings.Service { ref: service }, bindings.Intent { ref: intent }, n, buttons);
+  return bindings.SERVICE_START_NOT_STICKY;
+}
+
+function commanded(e: usize, c: bindings.Classes, service: bindings.Service, intent: bindings.Intent, n: Notice, buttons: MediaButton[]): Result[void, jni.JavaError] {
+  if (intent.is_null()) {
+    return c.service.stop_self(e, service);
   }
-  let action: string = android.intent_action(e, intent);
+  let action: string = android.intent_action(e, intent.ref);
   if (action == STOP_ACTION) {
-    stop_self(e, service);
+    let gone = c.service.stop_self(e, service);
     let sent = android.tell(e, STOPPED, 0 as usize);
-    return NOT_STICKY;
+    return Ok(());
   }
   if (action == APP_ACTION) {
     let sent = android.tell(e, ACTION, 0 as usize);
-    return NOT_STICKY;
+    return Ok(());
   }
   if (action == FINISH_ACTION) {
-    stop_self(e, service);
-    return NOT_STICKY;
+    return c.service.stop_self(e, service);
   }
-  let session: usize = jni.call_object(e, intent, "getParcelableExtra", "(Ljava/lang/String;)Landroid/os/Parcelable;", [jni.new_string(e, SESSION_EXTRA)]);
-  let notification: usize = notification_of(e, service, jni.get_object_class(e, service), n, session, buttons);
-  start_foreground(e, service, notification);
-  return NOT_STICKY;
+  let session = c.intent.get_parcelable_extra(e, intent, SESSION_EXTRA)?;
+  let context = bindings.Context { ref: service.ref };
+  let class = bindings.Class { ref: jni.get_object_class(e, service.ref) };
+  let notification = notification_of(e, c, context, class, n, session.ref, buttons)?;
+  // From API level 29, startForeground takes the types of the manifest.
+  if (c.service.has_start_foreground_int_notification_int()) {
+    return c.service.start_foreground_int_notification_int(e, service, NOTICE_ID, notification, bindings.SERVICE_INFO_FOREGROUND_SERVICE_TYPE_MANIFEST);
+  }
+  return c.service.start_foreground_int_notification(e, service, NOTICE_ID, notification);
 }
 
 // The global references of a partial wake lock and a Wi-Fi lock.
 pub struct Awake { wake: usize, wifi: usize }
+
+// A global reference to a partial wake lock that is held, or 0.
+function wake_lock(e: usize, c: bindings.Classes, activity: bindings.Context, tag: string): Result[usize, jni.JavaError] {
+  let power = c.context.get_system_service(e, activity, bindings.CONTEXT_POWER_SERVICE)?;
+  if (power.is_null()) {
+    return Ok(0 as usize);
+  }
+  let lock = c.power_manager.new_wake_lock(e, bindings.PowerManager { ref: power.ref }, bindings.POWER_MANAGER_PARTIAL_WAKE_LOCK, tag)?;
+  if (lock.is_null()) {
+    return Ok(0 as usize);
+  }
+  c.power_manager_wake_lock.acquire(e, lock)?;
+  return Ok(jni.new_global_ref(e, lock.ref));
+}
+
+// A global reference to a Wi-Fi lock that is held, or 0.
+function wifi_lock(e: usize, c: bindings.Classes, activity: bindings.Context, tag: string): Result[usize, jni.JavaError] {
+  let app = c.context.get_application_context(e, activity)?;
+  let manager = c.context.get_system_service(e, app, bindings.CONTEXT_WIFI_SERVICE)?;
+  if (manager.is_null()) {
+    return Ok(0 as usize);
+  }
+  let lock = c.wifi_manager.create_wifi_lock(e, bindings.WifiManager { ref: manager.ref }, bindings.WIFI_MANAGER_WIFI_MODE_FULL_HIGH_PERF, tag)?;
+  if (lock.is_null()) {
+    return Ok(0 as usize);
+  }
+  c.wifi_manager_wifi_lock.acquire(e, lock)?;
+  return Ok(jni.new_global_ref(e, lock.ref));
+}
 
 // Keeps the CPU and the Wi-Fi radio awake while the screen is off, so a
 // socket keeps its datagrams on time. It needs the WAKE_LOCK permission.
 // Call it on the loop thread, and release_awake when the work stops.
 pub function stay_awake(ctx: usize, tag: string): Awake {
   let e: usize = android.env(ctx);
-  let obj: usize = android.activity_object(ctx);
-  let service: string = "(Ljava/lang/String;)Ljava/lang/Object;";
-  let power: usize = jni.call_object(e, obj, "getSystemService", service, [jni.new_string(e, "power")]);
-  // PowerManager.PARTIAL_WAKE_LOCK
-  let wake: usize = held(e, jni.call_object(e, power, "newWakeLock", "(ILjava/lang/String;)Landroid/os/PowerManager$WakeLock;", [1 as usize, jni.new_string(e, tag)]));
-  let app: usize = jni.call_object(e, obj, "getApplicationContext", "()Landroid/content/Context;", []);
-  let wifi_manager: usize = jni.call_object(e, app, "getSystemService", service, [jni.new_string(e, "wifi")]);
-  let wifi: usize = 0 as usize;
-  if (wifi_manager != 0 as usize) {
-    // WifiManager.WIFI_MODE_FULL_HIGH_PERF
-    wifi = held(e, jni.call_object(e, wifi_manager, "createWifiLock", "(ILjava/lang/String;)Landroid/net/wifi/WifiManager$WifiLock;", [3 as usize, jni.new_string(e, tag)]));
-  }
+  let Some(c) = begin(e) else {
+    return Awake { wake: 0 as usize, wifi: 0 as usize };
+  };
+  defer end(e, c);
+  let activity = bindings.Context { ref: android.activity_object(ctx) };
+  let wake = match (wake_lock(e, c, activity, tag)) { Ok(lock) => lock, Err(_) => 0 as usize };
+  let wifi = match (wifi_lock(e, c, activity, tag)) { Ok(lock) => lock, Err(_) => 0 as usize };
   return Awake { wake: wake, wifi: wifi };
-}
-
-// Acquires the lock `lock`, and gives a global reference to it, or 0.
-function held(e: usize, lock: usize): usize {
-  if (lock == 0 as usize || !jni.call_void(e, lock, "acquire", "()V", [])) {
-    return 0 as usize;
-  }
-  return jni.new_global_ref(e, lock);
 }
 
 pub function release_awake(ctx: usize, a: Awake): void {
   let e: usize = android.env(ctx);
-  for lock in [a.wake, a.wifi] {
-    if (lock != 0 as usize) {
-      let released: boolean = jni.call_void(e, lock, "release", "()V", []);
-      jni.delete_global_ref(e, lock);
+  if (a.wake != 0 as usize) {
+    if let Ok(locks) = bindings.power_manager_wake_lock_class(e) {
+      let _ = locks.release_(e, bindings.PowerManager_WakeLock { ref: a.wake });
+      locks.release(e);
     }
+    jni.delete_global_ref(e, a.wake);
   }
-}
-
-function stop_self(e: usize, service: usize): void {
-  let none: usize = jni.jvalue_alloc(0);
-  let stopped: usize = jni.call_void_method_a(e, service, jni.get_method_id(e, jni.get_object_class(e, service), "stopSelf", "()V"), none);
-  jni.free_buffer(none);
-}
-
-function sdk_int(e: usize): i32 {
-  let version: usize = jni.find_class(e, "android/os/Build$VERSION");
-  return jni.get_static_int_field(e, version, jni.get_static_field_id(e, version, "SDK_INT", "I"));
-}
-
-function start_foreground(e: usize, service: usize, notification: usize): void {
-  let class: usize = jni.get_object_class(e, service);
-  if (sdk_int(e) >= 29) {
-    let args: usize = jni.jvalues([1 as usize, notification, (0 - 1) as usize]);
-    let started: usize = jni.call_void_method_a(e, service, jni.get_method_id(e, class, "startForeground", "(ILandroid/app/Notification;I)V"), args);
-    jni.free_buffer(args);
-    return;
+  if (a.wifi != 0 as usize) {
+    if let Ok(locks) = bindings.wifi_manager_wifi_lock_class(e) {
+      let _ = locks.release_(e, bindings.WifiManager_WifiLock { ref: a.wifi });
+      locks.release(e);
+    }
+    jni.delete_global_ref(e, a.wifi);
   }
-  let args: usize = jni.jvalues([1 as usize, notification]);
-  let started: usize = jni.call_void_method_a(e, service, jni.get_method_id(e, class, "startForeground", "(ILandroid/app/Notification;)V"), args);
-  jni.free_buffer(args);
 }
 
 // Makes the channel of `n` with the low importance: no sound and no pop-up.
-function make_channel(e: usize, service: usize, n: Notice): void {
-  let get: usize = jni.get_method_id(e, jni.get_object_class(e, service), "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;");
-  let name: usize = jni.jvalues([jni.new_string(e, "notification")]);
-  let manager: usize = jni.call_object_method_a(e, service, get, name);
-  jni.free_buffer(name);
-  let channel_class: usize = jni.find_class(e, "android/app/NotificationChannel");
-  let args: usize = jni.jvalues([jni.new_string(e, n.channel), jni.new_string(e, n.channel_name), 2 as usize]);
-  let channel: usize = jni.new_object_a(e, channel_class, jni.get_method_id(e, channel_class, "<init>", "(Ljava/lang/String;Ljava/lang/CharSequence;I)V"), args);
-  jni.free_buffer(args);
-  let make: usize = jni.get_method_id(e, jni.get_object_class(e, manager), "createNotificationChannel", "(Landroid/app/NotificationChannel;)V");
-  let one: usize = jni.jvalues([channel]);
-  let made: usize = jni.call_void_method_a(e, manager, make, one);
-  jni.free_buffer(one);
-}
-
-// Calls the builder method `name` with the signature `sig` and the jvalues
-// `values`. Each one gives the builder back.
-function build_step(e: usize, builder: usize, name: string, sig: string, values: usize[]): void {
-  let args: usize = jni.jvalues(values);
-  let same: usize = jni.call_object_method_a(e, builder, jni.get_method_id(e, jni.get_object_class(e, builder), name, sig), args);
-  jni.free_buffer(args);
+function make_channel(e: usize, c: bindings.Classes, context: bindings.Context, n: Notice): Result[void, jni.JavaError] {
+  let channel = c.notification_channel.new(e, n.channel, text(e, n.channel_name)?, bindings.NOTIFICATION_MANAGER_IMPORTANCE_LOW)?;
+  return c.notification_manager.create_notification_channel(e, notifications(e, c, context)?, channel);
 }
 
 // The intent that a button of the notification sends to the service `class`
 // with the action `action`.
-function action_intent(e: usize, context: usize, class: usize, action: string): usize {
-  let intent: usize = service_intent(e, context, class);
-  let set: usize = jni.get_method_id(e, jni.get_object_class(e, intent), "setAction", "(Ljava/lang/String;)Landroid/content/Intent;");
-  let args: usize = jni.jvalues([jni.new_string(e, action)]);
-  let same: usize = jni.call_object_method_a(e, intent, set, args);
-  jni.free_buffer(args);
-  let pending_class: usize = jni.find_class(e, "android/app/PendingIntent");
-  let get: usize = jni.get_static_method_id(e, pending_class, "getService", "(Landroid/content/Context;ILandroid/content/Intent;I)Landroid/app/PendingIntent;");
-  // FLAG_IMMUTABLE | FLAG_UPDATE_CURRENT
-  let pargs: usize = jni.jvalues([context, 0 as usize, intent, 201326592 as usize]);
-  let pending: usize = jni.call_static_object_method_a(e, pending_class, get, pargs);
-  jni.free_buffer(pargs);
-  return pending;
+function action_intent(e: usize, c: bindings.Classes, context: bindings.Context, class: bindings.Class, action: string): Result[bindings.PendingIntent, jni.JavaError] {
+  let intent = c.intent.new(e, context, class)?;
+  let same = c.intent.set_action(e, intent, action)?;
+  return c.pending_intent.get_service(e, context, 0, intent, bindings.PENDING_INTENT_FLAG_IMMUTABLE | bindings.PENDING_INTENT_FLAG_UPDATE_CURRENT);
 }
 
 // A button of a notification that runs `pending` only on an unlocked phone.
 // It needs API level 31.
-function unlocked_action(e: usize, icon: usize, label: string, pending: usize): usize {
-  let class: usize = jni.find_class(e, "android/app/Notification$Action$Builder");
-  let args: usize = jni.jvalues([icon, jni.new_string(e, label), pending]);
-  let builder: usize = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", "(ILjava/lang/CharSequence;Landroid/app/PendingIntent;)V"), args);
-  jni.free_buffer(args);
-  build_step(e, builder, "setAuthenticationRequired", "(Z)Landroid/app/Notification$Action$Builder;", [1 as usize]);
-  let none: usize = jni.jvalue_alloc(0);
-  let action: usize = jni.call_object_method_a(e, builder, jni.get_method_id(e, class, "build", "()Landroid/app/Notification$Action;"), none);
-  jni.free_buffer(none);
-  return action;
+function unlocked_action(e: usize, c: bindings.Classes, icon: i32, label: string, pending: bindings.PendingIntent): Result[jni.Object, jni.JavaError] {
+  let builder = c.notification_action_builder.new(e, icon, text(e, label)?, pending)?;
+  let same = c.notification_action_builder.set_authentication_required(e, builder, true)?;
+  return c.notification_action_builder.build(e, builder);
 }
 
 // The intent that opens the app, for a tap on a notification.
-function open_intent(e: usize, context: usize): usize {
-  let packages: usize = jni.call_object(e, context, "getPackageManager", "()Landroid/content/pm/PackageManager;", []);
-  let name: usize = jni.call_object(e, context, "getPackageName", "()Ljava/lang/String;", []);
-  let launch: usize = jni.call_object(e, packages, "getLaunchIntentForPackage", "(Ljava/lang/String;)Landroid/content/Intent;", [name]);
-  let pending_class: usize = jni.find_class(e, "android/app/PendingIntent");
-  let get: usize = jni.get_static_method_id(e, pending_class, "getActivity", "(Landroid/content/Context;ILandroid/content/Intent;I)Landroid/app/PendingIntent;");
-  // FLAG_IMMUTABLE | FLAG_UPDATE_CURRENT
-  let args: usize = jni.jvalues([context, 0 as usize, launch, 201326592 as usize]);
-  let pending: usize = jni.call_static_object_method_a(e, pending_class, get, args);
-  jni.free_buffer(args);
-  return pending;
+function open_intent(e: usize, c: bindings.Classes, context: bindings.Context): Result[bindings.PendingIntent, jni.JavaError] {
+  let packages = c.context.get_package_manager(e, context)?;
+  let name = c.context.get_package_name(e, context)?;
+  let launch = c.package_manager.get_launch_intent_for_package(e, packages, name)?;
+  return c.pending_intent.get_activity(e, context, 0, launch, bindings.PENDING_INTENT_FLAG_IMMUTABLE | bindings.PENDING_INTENT_FLAG_UPDATE_CURRENT);
 }
 
 // Makes the notification of `builder` the media controls of the session
 // whose token is `session`. A tap on it opens the app.
-function media_style(e: usize, context: usize, builder: usize, session: usize, compact: i32): void {
-  let ret = ")Landroid/app/Notification$Builder;";
-  let style_class: usize = jni.find_class(e, "android/app/Notification$MediaStyle");
-  let none: usize = jni.jvalue_alloc(0);
-  let style: usize = jni.new_object_a(e, style_class, jni.get_method_id(e, style_class, "<init>", "()V"), none);
-  jni.free_buffer(none);
-  let same: usize = jni.call_object(e, style, "setMediaSession", "(Landroid/media/session/MediaSession$Token;)Landroid/app/Notification$MediaStyle;", [session]);
+function media_style(e: usize, c: bindings.Classes, context: bindings.Context, builder: bindings.Notification_Builder, session: usize, compact: i32): Result[void, jni.JavaError] {
+  let style = c.notification_media_style.new(e)?;
+  let same = c.notification_media_style.set_media_session(e, style, jni.Object { ref: session })?;
   if (compact > 0) {
     let positions = jni.new_int_array(e, compact);
+    jni.check(e)?;
     jni.set_int_array_region(e, positions, 0, [0, 1, 2].take(compact));
-    let updated = jni.call_object(e, style, "setShowActionsInCompactView", "([I)Landroid/app/Notification$MediaStyle;", [positions]);
+    let updated = c.notification_media_style.set_show_actions_in_compact_view(e, style, jni.Object { ref: positions })?;
   }
-  build_step(e, builder, "setStyle", "(Landroid/app/Notification$Style;" + ret, [style]);
-  build_step(e, builder, "setSmallIcon", "(I" + ret, [MEDIA_ICON]);
-  build_step(e, builder, "setContentIntent", "(Landroid/app/PendingIntent;" + ret, [open_intent(e, context)]);
+  let styled = c.notification_builder.set_style(e, builder, style.object())?;
+  let icon = c.notification_builder.set_small_icon(e, builder, bindings.R_DRAWABLE_ic_media_play)?;
+  let opens = c.notification_builder.set_content_intent(e, builder, open_intent(e, c, context)?)?;
+  return Ok(());
+}
+
+// Gives `builder` one button with the icon `icon` and the label `label`,
+// which sends `action` to the service `class`.
+function add_button(e: usize, c: bindings.Classes, builder: bindings.Notification_Builder, context: bindings.Context, class: bindings.Class, icon: i32, label: string, action: string): Result[void, jni.JavaError] {
+  let pending = action_intent(e, c, context, class, action)?;
+  let same = c.notification_builder.add_action_int_char_sequence_pending_intent(e, builder, icon, text(e, label)?, pending)?;
+  return Ok(());
+}
+
+// Gives `builder` the action of the app and the stop action of `n`.
+function add_actions(e: usize, c: bindings.Classes, builder: bindings.Notification_Builder, context: bindings.Context, class: bindings.Class, n: Notice): Result[void, jni.JavaError] {
+  let icon = bindings.R_DRAWABLE_ic_btn_speak_now;
+  if (n.action.len() > 0 && n.unlock && c.notification_action_builder.has_set_authentication_required()) {
+    let action = unlocked_action(e, c, icon, n.action, action_intent(e, c, context, class, APP_ACTION)?)?;
+    let same = c.notification_builder.add_action_notification_action(e, builder, action)?;
+  } else if (n.action.len() > 0) {
+    add_button(e, c, builder, context, class, icon, n.action, APP_ACTION)?;
+  }
+  if (n.stop.len() > 0) {
+    add_button(e, c, builder, context, class, bindings.R_DRAWABLE_ic_menu_close_clear_cancel, n.stop, STOP_ACTION)?;
+  }
+  return Ok(());
 }
 
 // The notification `n` of the service `class`, built in `context`: the
 // service, or the activity. It is ongoing. It has its stop action when `n`
 // has a label for it. With the token `session` of a media session, it is
 // the media controls of that session.
-function notification_of(e: usize, context: usize, class: usize, n: Notice, session: usize, buttons: MediaButton[]): usize {
-  make_channel(e, context, n);
-  let builder_class: usize = jni.find_class(e, "android/app/Notification$Builder");
-  let args: usize = jni.jvalues([context, jni.new_string(e, n.channel)]);
-  let builder: usize = jni.new_object_a(e, builder_class, jni.get_method_id(e, builder_class, "<init>", "(Landroid/content/Context;Ljava/lang/String;)V"), args);
-  jni.free_buffer(args);
-  let ret = ")Landroid/app/Notification$Builder;";
-  build_step(e, builder, "setContentTitle", "(Ljava/lang/CharSequence;" + ret, [jni.new_string(e, n.title)]);
-  build_step(e, builder, "setContentText", "(Ljava/lang/CharSequence;" + ret, [jni.new_string(e, n.text)]);
-  build_step(e, builder, "setSmallIcon", "(I" + ret, [ICON]);
-  build_step(e, builder, "setOngoing", "(Z" + ret, [1 as usize]);
-  if (n.action.len() > 0 && n.unlock && sdk_int(e) >= 31) {
-    build_step(e, builder, "addAction", "(Landroid/app/Notification$Action;" + ret, [unlocked_action(e, ICON, n.action, action_intent(e, context, class, APP_ACTION))]);
-  } else if (n.action.len() > 0) {
-    build_step(e, builder, "addAction", "(ILjava/lang/CharSequence;Landroid/app/PendingIntent;" + ret, [ICON, jni.new_string(e, n.action), action_intent(e, context, class, APP_ACTION)]);
-  }
-  if (n.stop.len() > 0) {
-    build_step(e, builder, "addAction", "(ILjava/lang/CharSequence;Landroid/app/PendingIntent;" + ret, [STOP_ICON, jni.new_string(e, n.stop), action_intent(e, context, class, STOP_ACTION)]);
-  }
+function notification_of(e: usize, c: bindings.Classes, context: bindings.Context, class: bindings.Class, n: Notice, session: usize, buttons: MediaButton[]): Result[bindings.Notification, jni.JavaError] {
+  make_channel(e, c, context, n)?;
+  let builder = c.notification_builder.new(e, context, n.channel)?;
+  let titled = c.notification_builder.set_content_title(e, builder, text(e, n.title)?)?;
+  let worded = c.notification_builder.set_content_text(e, builder, text(e, n.text)?)?;
+  let icon = c.notification_builder.set_small_icon(e, builder, bindings.R_DRAWABLE_ic_btn_speak_now)?;
+  let ongoing = c.notification_builder.set_ongoing(e, builder, true)?;
+  add_actions(e, c, builder, context, class, n)?;
   if (session != 0 as usize) {
     for button in buttons {
-      build_step(
-        e, builder, "addAction", "(ILjava/lang/CharSequence;Landroid/app/PendingIntent;" + ret,
-        [button.icon as usize, jni.new_string(e, button.label), action_intent(e, context, class, button.action)],
-      );
+      add_button(e, c, builder, context, class, button.icon, button.label, button.action)?;
     }
     let offset = if (n.action.len() > 0 || n.stop.len() > 0) { 0 } else { buttons.len().min(3) };
-    media_style(e, context, builder, session, offset);
+    media_style(e, c, context, builder, session, offset)?;
   }
-  let none: usize = jni.jvalue_alloc(0);
-  let notification: usize = jni.call_object_method_a(e, builder, jni.get_method_id(e, builder_class, "build", "()Landroid/app/Notification;"), none);
-  jni.free_buffer(none);
-  return notification;
+  return c.notification_builder.build(e, builder);
 }
 ```
