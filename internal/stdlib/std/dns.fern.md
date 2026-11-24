@@ -2977,7 +2977,9 @@ function resolve_in(conf: ResolvConf, hosts_of: () => HostsEntry[], name: string
     Err(_) => {}
   }
   if (target_os() == "wasi") {
-    return wasi_lookup(name);
+    let out = __alloc_u8(LOOKUP_KEPT * LOOKUP_RECORD);
+    let n = wasm_name_lookup(name.bytes(), out);
+    return wasi_lookup_result(out, n);
   }
   let hosts = hosts_lookup(hosts_of(), name);
   if (hosts.len() > 0) {
@@ -2993,9 +2995,7 @@ const LOOKUP_RECORD: i32 = 17;
 
 const LOOKUP_KEPT: i32 = 64;
 
-function wasi_lookup(name: string): Result[net.IpAddr[], DnsError] {
-  let out = __alloc_u8(LOOKUP_KEPT * LOOKUP_RECORD);
-  let n = wasm_name_lookup(name.bytes(), out);
+function wasi_lookup_result(out: u8[], n: i32): Result[net.IpAddr[], DnsError] {
   if (n < 0) {
     return Err(lookup_error(n));
   }
