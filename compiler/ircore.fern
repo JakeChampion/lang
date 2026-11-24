@@ -452,6 +452,11 @@ pub function unsupported_op_refuse(tag: i32, backend: string): string {
   return "";
 }
 
+pub function ssa_inst_refuse(kind: string, what: string, backend: string): void {
+  eprint("fern: error: no instruction selection for SSA instruction " + kind + " " + what + " on the " + backend + " backend — refusing to emit it as a unary");
+  exit(3);
+}
+
 pub function lower_failed_refuse(name: string, r: irtables.LowerResult): i32 {
   if (r.ok) {
     return 0;
