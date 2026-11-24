@@ -10080,7 +10080,7 @@ function take_piece(tokens: string[], at: i32, spare: i32, structs: StructDecl[]
         if (is_reserved_enum_name(cand) || reserved_generic_params(cand) > 0) {
           return Grouped { pieces: [cand + "[" + subst_ty_join(args.pieces, ",", [], []) + "]"], at: args.at };
         }
-        return Grouped { pieces: [cand + "__" + sanitize_key(join_dunder(args.pieces, 0, params))], at: args.at };
+        return Grouped { pieces: [instance_name(cand, join_dunder(args.pieces, 0, params))], at: args.at };
       }
     }
     k -= 1;
@@ -10143,6 +10143,11 @@ function join_dunder(xs: string[], from: i32, to: i32): string {
     out += xs[i];
   }
   return out;
+}
+
+// The name of the instance of the generic `base` that `key` selects.
+pub function instance_name(base: string, key: string): string {
+  return util.mangled(base, sanitize_key(key));
 }
 
 pub function sanitize_key(s: string): string {
@@ -10284,7 +10289,7 @@ function bind_argument_types(pattern: string, concrete: string, tparams: string[
   }
   if (pb > 0 && pattern.ends_with("]") && cb < 0) {
     let pbase = slice_unchecked(pattern, 0, pb);
-    let mpfx = pbase + "__";
+    let mpfx = pbase + util.NAME_SEP;
     if (concrete.len() > mpfx.len() && concrete.starts_with(mpfx)) {
       let pp = split_top_commas(slice_unchecked(pattern, pb + 1, pattern.len() - 1));
       let ckey = slice_unchecked(concrete, mpfx.len(), concrete.len());
@@ -12164,7 +12169,7 @@ pub function concrete_array_method_name(receiver: string, method: string): strin
   if (spelling_is_view(receiver)) {
     prefix = "__cviewm_";
   }
-  return prefix + sanitize_key(elem) + "__" + method;
+  return util.mangled(prefix + sanitize_key(elem), method);
 }
 
 pub function is_concrete_array_fold(fd: FuncDecl): boolean {
@@ -12347,7 +12352,7 @@ pub function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
         key += pr.ty;
       }
       cur = cur.iadd(base, key);
-      return TyIns { ty: base + "__" + sanitize_key(key), mins: cur };
+      return TyIns { ty: instance_name(base, key), mins: cur };
     }
     let cur2 = ins;
     let ninner = "";
@@ -12365,8 +12370,7 @@ pub function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
 }
 
 pub function is_clone_of(mangled: string, base: string): boolean {
-  let pfx = base + "__";
-  return mangled.len() > pfx.len() && mangled.starts_with(pfx);
+  return mangled.len() > base.len() + util.NAME_SEP.len() && util.has_mangled_head(mangled, base);
 }
 
 pub function array_element_expected(e: ast.Expr, expected: string): string {

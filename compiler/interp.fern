@@ -3022,7 +3022,7 @@ function lane_args(args: Value[]): VLanes[] {
 
 function lane_fn(verb: string, width: i32, xs: f64[]): f64 {
   if (verb == "sqrt" || verb == "floor" || verb == "round") {
-    return f64_primitive("__" + verb + "_f64", xs[0]);
+    return f64_primitive(util.reserved_name(verb + "_f64"), xs[0]);
   }
   if (verb == "mul_add" && width == 64) {
     return xs[0].fma(xs[1], xs[2]);

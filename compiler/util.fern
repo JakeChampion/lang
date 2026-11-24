@@ -1349,6 +1349,55 @@ pub function dunder_at(name: string): i32 {
   return -1;
 }
 
+// The separator of a mangled name. It joins a module prefix to a name, and a
+// generic name to the key of its instance.
+pub const NAME_SEP: string = "__";
+
+// The prefix of a name that the compiler reserves.
+pub const RESERVED_PREFIX: string = "__";
+
+pub function mangled(head: string, tail: string): string {
+  return head + NAME_SEP + tail;
+}
+
+pub function is_mangled(name: string): boolean {
+  return contains(name, NAME_SEP);
+}
+
+pub function has_mangled_head(name: string, head: string): boolean {
+  return name.starts_with(head) && str_eq_at(name, head.len(), NAME_SEP);
+}
+
+pub function has_mangled_tail(name: string, tail: string): boolean {
+  return name.ends_with(tail) && str_eq_at(name, name.len() - tail.len() - NAME_SEP.len(), NAME_SEP);
+}
+
+// The part of `name` before its first separator, or `name` when it has none.
+pub function mangled_base(name: string): string {
+  let cut = dunder_at(name);
+  if (cut < 0) {
+    return name;
+  }
+  return slice_unchecked(name, 0, cut).to_owned();
+}
+
+// The part of `name` after `head` and the separator. An empty `head`, or a
+// name that is not `head`, the separator and more text, gives `name`.
+pub function unqualified(name: string, head: string): string {
+  if (head.len() > 0 && name.len() > head.len() + NAME_SEP.len() && has_mangled_head(name, head)) {
+    return slice_unchecked(name, head.len() + NAME_SEP.len(), name.len()).to_owned();
+  }
+  return name;
+}
+
+pub function reserved_name(rest: string): string {
+  return RESERVED_PREFIX + rest;
+}
+
+pub function is_reserved_name(name: string): boolean {
+  return name.starts_with(RESERVED_PREFIX);
+}
+
 pub function show_type_vars(text: string): string {
   let out = "";
   let start = 0;

@@ -30,7 +30,7 @@ pub function sanitize_label(name: string): string {
   let out = "";
   let start = 0;
   while (dot >= 0) {
-    out = out + slice_unchecked(name, start, dot) + "__";
+    out = out + slice_unchecked(name, start, dot) + util.NAME_SEP;
     start = dot + 1;
     dot = __memchr(name, 46, start);
   }
@@ -4768,7 +4768,7 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
       return ctx;
     },
     ast.StmtVar(v) => {
-      if (v.name.len() >= 2 && v.name.starts_with("__")) {
+      if (util.is_reserved_name(v.name)) {
         return CheckCtx { st: ctx.st.bind_local_typed(v.name, ty_unknown()), diags: ctx.diags };
       }
       let got = infer_expr_type(v.init, ctx.st);
@@ -5206,25 +5206,19 @@ function callgate_known_names(mod: parser.Module): string[] {
 }
 
 function callgate_module_ns(name: string, names: string[], known: string[]): string {
-  let i = 1;
-  while (i + 1 < name.len()) {
-    if (name[i] == b'_' && name[i + 1] == b'_') {
-      let ns = slice_unchecked(name, 0, i).to_owned();
-      let pfx = ns + "__";
-      if (callgate_ns_present(pfx, names) || callgate_ns_present(pfx, known)) {
-        return "";
-      }
-      return ns;
-    }
-    i += 1;
+  if (util.dunder_at(name) < 0) {
+    return "";
   }
-  return "";
+  let ns = util.mangled_base(name);
+  if (callgate_ns_present(ns, names) || callgate_ns_present(ns, known)) {
+    return "";
+  }
+  return ns;
 }
 
-function callgate_ns_present(pfx: string, names: string[]): boolean {
-  for i in 0..names.len() {
-    let nm = names[i];
-    if (nm.len() > pfx.len() && nm.starts_with(pfx)) {
+function callgate_ns_present(ns: string, names: string[]): boolean {
+  for nm in names {
+    if (parser.is_clone_of(nm, ns)) {
       return true;
     }
   }
@@ -5336,7 +5330,7 @@ function callgate_known_callee(name: string, known: string[]): boolean {
   if (name.len() == 0) {
     return true;
   }
-  if (name.len() >= 2 && name.starts_with("__")) {
+  if (util.is_reserved_name(name)) {
     return true;
   }
   return callgate_name_in(known, name);

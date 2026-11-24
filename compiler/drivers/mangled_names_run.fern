@@ -1,0 +1,35 @@
+import "../parser";
+import "../util";
+
+function flag(b: boolean): string {
+  if (b) {
+    return "yes";
+  }
+  return "no";
+}
+
+function main(): i32 {
+  let out = "";
+  out = out + "mangled -> " + util.mangled("json", "parse") + "\n";
+  out = out + "instance -> " + parser.instance_name("Box", "i32") + "\n";
+  out = out + "instance of array -> " + parser.instance_name("Box", "i32[]") + "\n";
+  out = out + "reserved -> " + util.reserved_name("memchr") + "\n";
+  let names: string[] = ["json__parse", "json__", "json", "jsonx__parse", "__json__parse", "parse", ""];
+  for name in names {
+    let label = name;
+    if (label.len() == 0) {
+      label = "(empty)";
+    }
+    out = out + label
+      + ": mangled=" + flag(util.is_mangled(name))
+      + " reserved=" + flag(util.is_reserved_name(name))
+      + " head=" + flag(util.has_mangled_head(name, "json"))
+      + " tail=" + flag(util.has_mangled_tail(name, "parse"))
+      + " clone=" + flag(parser.is_clone_of(name, "json"))
+      + " base=" + util.mangled_base(name)
+      + " unqualified=" + util.unqualified(name, "json")
+      + " no-head=" + util.unqualified(name, "") + "\n";
+  }
+  write(out);
+  return 0;
+}

@@ -25,7 +25,7 @@ function imported_enums(imports: LoadedModule[], pfxs: string[]): ImportedEnum[]
   let out: ImportedEnum[] = [];
   for i in 0..imports.len() {
     for en in imports[i].mod.enums {
-      out = out.append(ImportedEnum { name: pfxs[i] + "__" + en.name, prefix: pfxs[i] });
+      out = out.append(ImportedEnum { name: util.mangled(pfxs[i], en.name), prefix: pfxs[i] });
     }
   }
   return out;
@@ -95,7 +95,7 @@ pub function mangled_name(prefix: string, name: string): string {
   if (is_runtime_helper_name(name)) {
     return name;
   }
-  return prefix + "__" + name;
+  return util.mangled(prefix, name);
 }
 
 function build_mangled_names(prefix: string, names: string[]): string[] {
@@ -803,7 +803,7 @@ function rewrite_type_parsed(tn: string, tref: parser.TypeRef, ctx: RewriteCtx):
       let rest = slice_unchecked(tn, dot + 1, tn.len());
       let member_dot = util.index_of_byte(rest, b'.', 0);
       if (member_dot >= 0) {
-        let en = lookup_reexport(prefix + "__" + slice_unchecked(rest, 0, member_dot), ctx);
+        let en = lookup_reexport(prefix + util.NAME_SEP + slice_unchecked(rest, 0, member_dot), ctx);
         let owner = imported_enum_prefix(en, ctx);
         if (owner.len() > 0) {
           return en + "." + mangled_name(owner, slice_unchecked(rest, member_dot + 1, rest.len()).to_owned());
@@ -811,10 +811,10 @@ function rewrite_type_parsed(tn: string, tref: parser.TypeRef, ctx: RewriteCtx):
       }
       let rb = parser.first_bracket(rest);
       if (rb < 0) {
-        return lookup_reexport(prefix + "__" + rest, ctx);
+        return lookup_reexport(util.mangled(prefix, rest), ctx);
       }
       let rbase = slice_unchecked(rest, 0, rb);
-      return lookup_reexport(prefix + "__" + rbase, ctx) + slice_unchecked(rest, rb, rest.len());
+      return lookup_reexport(util.mangled(prefix, rbase), ctx) + slice_unchecked(rest, rb, rest.len());
     }
     if (is_in(qual, ctx.enumnames)) {
       return mangle_bare(qual + "", ctx) + "." + mangle_bare(slice_unchecked(tn, dot + 1, tn.len()).to_owned(), ctx);
@@ -827,7 +827,7 @@ function rewrite_type_parsed(tn: string, tref: parser.TypeRef, ctx: RewriteCtx):
   }
   let base = slice_unchecked(tn, 0, br);
   if (declname_index_of(base + "", ctx) >= 0) {
-    return ctx.prefix + "__" + base + slice_unchecked(tn, br, tn.len());
+    return util.mangled(ctx.prefix, base) + slice_unchecked(tn, br, tn.len());
   }
   return tn;
 }
@@ -886,7 +886,7 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       match (fa.obj) {
         ast.ExprIdent(id) => {
           if (is_in(id.name, ctx.modnames) && !ctx.locals.has(id.name)) {
-            let mangled = lookup_reexport(resolve_prefix(id.name, ctx) + "__" + fa.field, ctx);
+            let mangled = lookup_reexport(util.mangled(resolve_prefix(id.name, ctx), fa.field), ctx);
             // Primitive display bodies share the compiler's canonical ABI.
             if (fa.field.starts_with("__primitive_")) {
               mangled = fa.field;
@@ -1696,7 +1696,7 @@ pub function qualified_name(q: Qualifiers, alias: string, name: string): string 
   if (i < 0) {
     return "";
   }
-  return decltypes.follow_reexports(q.prefixes[i] + "__" + name, q.reexport_keys, q.reexport_targets);
+  return decltypes.follow_reexports(util.mangled(q.prefixes[i], name), q.reexport_keys, q.reexport_targets);
 }
 
 pub function bundle(entry0: parser.Module, imports0: LoadedModule[], target: string): parser.Module {
@@ -1725,7 +1725,7 @@ pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[
       let sd = imports[iv].mod.structs[isd];
       if (sd.enum_owner.len() > 0) {
         ivar_names = ivar_names.append(sd.name);
-        ivar_mangled = ivar_mangled.append(pfxs[iv] + "__" + sd.name);
+        ivar_mangled = ivar_mangled.append(util.mangled(pfxs[iv], sd.name));
       }
       isd += 1;
     }
@@ -1856,8 +1856,8 @@ pub function build_reexports(imports: LoadedModule[], ids: string[], pfxs: strin
         }
         let names = imps[j].reexport_names;
         for n in 0..names.len() {
-          keys = keys.append(ns + "__" + names[n]);
-          targets = targets.append(origin + "__" + names[n]);
+          keys = keys.append(util.mangled(ns, names[n]));
+          targets = targets.append(util.mangled(origin, names[n]));
         }
       }
     }
@@ -1875,9 +1875,9 @@ function with_reexported_variants(rx: ReexportTable, imports: LoadedModule[], pf
     let ns = slice_unchecked(rx.keys[k], 0, rx.keys[k].len() - mangled_tail(rx.targets[k]).len() + 2).to_owned();
     for i in 0..imports.len() {
       for sd in imports[i].mod.structs {
-        if (sd.enum_owner.len() > 0 && pfxs[i] + "__" + sd.enum_owner == enum_name) {
+        if (sd.enum_owner.len() > 0 && util.mangled(pfxs[i], sd.enum_owner) == enum_name) {
           keys = keys.append(ns + sd.name);
-          targets = targets.append(pfxs[i] + "__" + sd.name);
+          targets = targets.append(util.mangled(pfxs[i], sd.name));
         }
       }
     }
@@ -1885,10 +1885,10 @@ function with_reexported_variants(rx: ReexportTable, imports: LoadedModule[], pf
   return ReexportTable { keys: keys, targets: targets };
 }
 
-// The name after the last "__" of a mangled name, with that "__".
+// The name after the last separator of a mangled name, with that separator.
 function mangled_tail(mangled: string): string {
-  let at = mangled.len() - 2;
-  while (at > 0 && !util.str_eq_at(mangled, at, "__")) {
+  let at = mangled.len() - util.NAME_SEP.len();
+  while (at > 0 && !util.str_eq_at(mangled, at, util.NAME_SEP)) {
     at -= 1;
   }
   return slice_unchecked(mangled, at, mangled.len()).to_owned();
@@ -1909,7 +1909,7 @@ pub function bundle_per_module(entry0: parser.Module, imports0: LoadedModule[], 
       let sd = imports[iv].mod.structs[isd];
       if (sd.enum_owner.len() > 0) {
         ivar_names = ivar_names.append(sd.name);
-        ivar_mangled = ivar_mangled.append(pfxs[iv] + "__" + sd.name);
+        ivar_mangled = ivar_mangled.append(util.mangled(pfxs[iv], sd.name));
       }
       isd += 1;
     }

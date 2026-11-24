@@ -1162,7 +1162,7 @@ function structural_key_element(e: typeinfo.Type): boolean {
 
 pub function keyed_map_key_fn(k: typeinfo.Type, which: string): string {
   if (structural_map_key(k)) {
-    return keyed_map_key_name(k) + "__" + which;
+    return util.mangled(keyed_map_key_name(k), which);
   }
   return keyed_map_key_name(k) + "." + which;
 }

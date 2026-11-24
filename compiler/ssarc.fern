@@ -7623,7 +7623,7 @@ function device_op(name: string): ir.Op {
 
 // The IR kind of a privileged intrinsic such as __wfi, or 0 for any other name.
 function privileged_kind(name: string): i32 {
-  if (!name.starts_with("__")) {
+  if (!util.is_reserved_name(name)) {
     return 0;
   }
   let k = ir.kind_id(slice_unchecked(name, 2, name.len()).to_owned());
