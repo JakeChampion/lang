@@ -215,8 +215,15 @@ programs give the same output for each script.
 
 The port is faster on eight scripts. On `y`, on `d` and on the regex
 `[0-9]x\|q[a-z]*z` it is not. callgrind counts the instructions on the
-first 10 MB of the input. For `y`, GNU sed runs 213 million and the port
-259 million. For `d`, GNU sed runs 71 million and the port 86 million.
+first 10 MB of the input, 2026-11-24. For `y`, GNU sed runs 224 million and
+the port 248 million. For `d`, GNU sed runs 77 million and the port 89
+million.
+
+On x86-64, the map of `y` reads a line of fewer than 256 bytes four bytes at
+a time. That takes the `y` script from 268 million to 248 million
+instructions. Most of the remaining difference is in `translate`. For each
+line, it makes a buffer, copies the result out of the buffer into a new
+array, and then releases the buffer.
 
 Thus the port spends more on each line before the script runs: about 400
 instructions for `d`. Half of that is the copy of the line into the
