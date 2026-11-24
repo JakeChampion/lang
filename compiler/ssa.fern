@@ -2963,6 +2963,112 @@ function renamed_in(b: SBlock, from: i32, to: i32, keep: i32): SBlock {
   return SBlock { ...b, insts: insts, term: t };
 }
 
+// The preheader is empty and falls through to the header. The body has one
+// incoming edge and branches back to the header. The array pointer has the
+// same value on every iteration, even if the loop writes its elements.
+pub struct LoopHome { head: i32, value: i32, reg: i32, first: i32, last: i32 }
+
+function array_loop_blocks(pre: SBlock, head: SBlock, body: SBlock, entry: i32): boolean {
+  return pre.term.target == head.id
+    && head.id != entry && head.preds.len() == 2 && head.term.kind_tag == TERM_BRIF
+    && head.term.t == body.id && head.term.f != body.id
+    && body.id != entry && body.preds.len() == 1 && body.preds[0] == head.id
+    && body.term.kind_tag == TERM_BR && body.term.target == head.id;
+}
+
+function indexed_loop_base(head: SBlock, body: SBlock): i32 {
+  let n = head.insts.len();
+  if (n < 3 || head.insts[0].kind_tag != PHI || body.insts.len() == 0) {
+    return -1;
+  }
+  let len = head.insts[n - 2];
+  let ix = body.insts[0];
+  if (len.kind_tag == LD_AT && len.imm == 0 && len.args.len() == 1
+    && ix.kind_tag == ARR_AT && ix.args.len() == 2 && ix.args[0] == len.args[0]) {
+    return len.args[0];
+  }
+  return -1;
+}
+
+// Include both edge positions. A value that ends at the entry or starts on
+// the back edge can still take part in a parallel phi copy at that position.
+function unused_saved_reg(a: Alloc, saved: i32[], first: i32, last: i32): i32 {
+  let busy = 0;
+  for v in 0..a.reg_of.len() {
+    let r = a.reg_of[v];
+    if (r >= 0 && r < 32 && a.lo[v] <= last && a.hi[v] >= first) {
+      busy = busy | 1 << r;
+    }
+  }
+  for r in saved {
+    if ((busy & 1 << r) == 0) {
+      return r;
+    }
+  }
+  return -1;
+}
+
+pub function array_loop_home(f: SFunc, a: Alloc, saved: i32[]): Option[LoopHome] {
+  for h in 1..f.blocks.len() - 1 {
+    let pre = f.blocks[h - 1];
+    if (pre.insts.len() != 0 || pre.term.kind_tag != TERM_BR) {
+      continue;
+    }
+    let head = f.blocks[h];
+    let body = f.blocks[h + 1];
+    if (!array_loop_blocks(pre, head, body, f.entry)) {
+      continue;
+    }
+    let v = indexed_loop_base(head, body);
+    if (v < 0 || a.reg_of[v] >= -1) {
+      continue;
+    }
+    let first = a.def_pos[head.insts[0].result] - 1;
+    if (a.def_pos[v] < 0 || a.def_pos[v] >= first) {
+      continue;
+    }
+    let last = first + head.insts.len() + body.insts.len() + 2;
+    let reg = unused_saved_reg(a, saved, first, last);
+    if (reg >= 0) {
+      return Some(LoopHome { head: h, value: v, reg: reg, first: first, last: last });
+    }
+  }
+  return None;
+}
+
+pub function with_loop_home(f: SFunc, w: LoopHome): SFunc {
+  let pre = f.blocks[w.head - 1];
+  let head = f.blocks[w.head];
+  let body = f.blocks[w.head + 1];
+  let n = head.insts.len() - 2;
+  let len = head.insts[n];
+  let ix = body.insts[0];
+  let copy = SInst { kind_tag: COPY, result: f.nvals, args: [w.value], imm: 0, str: "" };
+  let blocks = f.blocks.with(w.head - 1, SBlock { ...pre, insts: [copy] });
+  blocks = blocks.with(w.head, SBlock { ...head, insts: head.insts.with(n, SInst { ...len, args: [f.nvals] }) });
+  blocks = blocks.with(w.head + 1, SBlock { ...body, insts: body.insts.with(0, SInst { ...ix, args: ix.args.with(0, f.nvals) }) });
+  return SFunc { ...f, blocks: blocks, nvals: f.nvals + 1 };
+}
+
+function after_copy(xs: i32[], first: i32, extra: i32): i32[] {
+  let out: i32[] = [];
+  for x in xs {
+    out = out.append(if (x >= first) { x + 1 } else { x });
+  }
+  return out.append(extra);
+}
+
+pub function with_loop_allocation(a: Alloc, w: LoopHome): Alloc {
+  let cold: i32[] = [];
+  for i in 0..a.cold.len() {
+    if (i == w.first) {
+      cold = cold.append(COLD_NONE);
+    }
+    cold = cold.append(a.cold[i]);
+  }
+  return Alloc { reg_of: a.reg_of.append(w.reg), def_pos: after_copy(a.def_pos, w.first, w.first), lo: after_copy(a.lo, w.first, w.first), hi: after_copy(a.hi, w.first, w.last + 1), cold: cold };
+}
+
 pub function spill_code(slot: i32): i32 {
   return -2 - slot;
 }

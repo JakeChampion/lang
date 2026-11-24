@@ -12326,6 +12326,17 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
       s = s2;
     }
   }
+  // The copy uses a register the function already saves and needs no spill slot.
+  let saved = ssa_saved_regs(alloc.reg_of);
+  let spilled_slots = ssa.spill_count(alloc.reg_of);
+  if (saved.len() == ssa_nsaved() && spilled_slots >= ssa_nsaved()) {
+    if let Some(w) = ssa.array_loop_home(f, alloc, saved) {
+      f = ssa.with_loop_home(f, w);
+      alloc = ssa.with_loop_allocation(alloc, w);
+      imm = ssa_imms(f, s);
+      s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f), ssa_even: ssadeps.even_values(f) };
+    }
+  }
   match (util.debug_env("FERN_DEBUG_SSA_ALLOC", "FERN_SSA_ALLOC")) {
     Some(want) => {
       if (want == label_name || want == "*") {
@@ -12339,10 +12350,9 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   s = ssa_cfi(s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n"), 1, "", 0);
   s = ssa_entry_shim(f, asmcore.sanitize_label(label_name), s);
   s = ssa_release_entry(entry, lp, s);
-  let saved = ssa_saved_regs(reg_of);
   let fn_label = "__fn_" + asmcore.sanitize_label(label_name);
   let views = ssa.view_slots(f);
-  let nspill = asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of));
+  let nspill = asmcore.ssa_lane_spill(f, spilled_slots);
   let tails = ssa.tails_of(f, s.profile == 0);
   let leaf = s.profile == 0 && nspill == 0 && ssa.view_count(views) == 0 && !hev_on(s) && !ssa_calls_besides_tails(f, s, tails);
   let cold = ssa_cold_saves(f, alloc);

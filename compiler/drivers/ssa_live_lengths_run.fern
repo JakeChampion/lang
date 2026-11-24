@@ -81,8 +81,55 @@ function split_with_side_entry(skip_store: boolean, skip_phi: boolean): boolean 
   return ssalive.graph_error(f) == "" && split.cost > 0 == !(skip_store || skip_phi);
 }
 
+function saved_loop_home_cases(): boolean {
+  let entry = ssa.SBlock { id: 8, insts: [inst(ssa.PARAM, 0, [], ""), inst(ssa.PARAM, 1, [], "")], term: jump(10), preds: [] };
+  let pre = ssa.SBlock { id: 10, insts: [], term: jump(20), preds: [8] };
+  let head = ssa.SBlock { id: 20, insts: [inst(ssa.PHI, 2, [1, 5], ""), inst(ssa.LD_AT, 3, [0], ""), inst(ssa.BINARY, 4, [2, 3], "lt_s")], term: branch(4, 30, 40), preds: [10, 30] };
+  let body = ssa.SBlock { id: 30, insts: [inst(ssa.ARR_AT, 5, [0, 2], "")], term: jump(20), preds: [20] };
+  let end = ssa.SBlock { id: 40, insts: [inst(ssa.COPY, 6, [0], "")], term: ret(6), preds: [20] };
+  let f = ssa.SFunc { name: "array_loop", nparams: 2, nvals: 7, entry: 8, takes_env: false, blocks: [entry, pre, head, body, end] };
+  let a = ssa.Alloc { reg_of: [-2, 10, 10, 0, 1, 2, 9], def_pos: [0, 1, 4, 5, 6, 8, 10], lo: [0, 1, 4, 5, 6, 8, 10], hi: [10, 3, 9, 6, 7, 9, 11], cold: [0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0] };
+  let saved = [9, 10];
+  if let Some(w) = ssa.array_loop_home(f, a, saved) {
+    let g = ssa.with_loop_home(f, w);
+    let b = ssa.with_loop_allocation(a, w);
+    let copy = g.blocks[1].insts[0];
+    let reads = copy.kind_tag == ssa.COPY && copy.args == [0] && copy.result == 7
+      && g.blocks[2].insts[1].args == [7] && g.blocks[3].insts[0].args == [7, 2]
+      && g.blocks[4].insts[0].args == [0];
+    let homes = b.reg_of[0] == -2 && b.reg_of[7] == 9 && b.lo[7] == 3 && b.hi[7] == 10;
+    if (ssalive.graph_error(g) != "" || w.first != 3 || w.last != 9 || !reads || !homes || b.def_pos[2] != 5 || b.cold[7] != 1) {
+      return false;
+    }
+  } else {
+    return false;
+  }
+  // A home used on either edge excludes that register for the whole loop.
+  if let Some(_) = ssa.array_loop_home(f, ssa.Alloc { ...a, lo: a.lo.with(6, 3), hi: a.hi.with(6, 3) }, saved) {
+    return false;
+  }
+  if let Some(_) = ssa.array_loop_home(f, ssa.Alloc { ...a, lo: a.lo.with(6, 9), hi: a.hi.with(6, 11) }, saved) {
+    return false;
+  }
+  if let Some(_) = ssa.array_loop_home(f, a, []) {
+    return false;
+  }
+  let side = ssa.SFunc { ...f, blocks: [ssa.SBlock { ...entry, term: branch(1, 10, 30) }, pre, head, ssa.SBlock { ...body, preds: [8, 20] }, end] };
+  if let Some(_) = ssa.array_loop_home(side, a, saved) {
+    return false;
+  }
+  let phi = ssa.SBlock { ...head, insts: head.insts.with(1, inst(ssa.LD_AT, 3, [2], "")) };
+  let phi_body = ssa.SBlock { ...body, insts: [inst(ssa.ARR_AT, 5, [2, 1], "")] };
+  let varying = ssa.SFunc { ...f, blocks: [entry, pre, phi, phi_body, end] };
+  if let Some(_) = ssa.array_loop_home(varying, ssa.Alloc { ...a, reg_of: a.reg_of.with(2, -3) }, saved) {
+    return false;
+  }
+  return true;
+}
+
 function main(): i32 {
   let failures = 0;
+  failures = check(saved_loop_home_cases(), "saved register loop home", failures);
   failures = check(split_with_side_entry(true, false), "a side entry must not bypass the split store", failures);
   failures = check(split_with_side_entry(false, true), "a side entry must not bypass the split phi", failures);
   failures = check(split_with_side_entry(false, false), "a single-entry loop still splits", failures);
