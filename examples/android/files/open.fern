@@ -52,7 +52,7 @@ function path_of(e: usize, uri: usize): string {
 }
 
 // The java.io.File of `path`, or 0.
-function file_of(e: usize, path: string): usize {
+pub function file_of(e: usize, path: string): usize {
   let class = jni.find_class(e, "java/io/File");
   let ctor = jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;)V");
   let text = jni.new_string(e, path);

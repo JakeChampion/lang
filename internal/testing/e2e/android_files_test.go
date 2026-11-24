@@ -61,6 +61,8 @@ func TestAndroidFilesApk(t *testing.T) {
 	for _, want := range []string{
 		"Ldev/fern/files/Shared;", "Landroid/content/ContentProvider;", "openFile", "getType", "query",
 		"Ldev/fern/files/Documents;", "Landroid/provider/DocumentsProvider;", "queryRoots", "queryChildDocuments", "openDocument",
+		"createDocument", "deleteDocument",
+		"Ldev/fern/files/Upload;", "Ljava/util/Properties;", "Landroid/os/ParcelFileDescriptor$OnCloseListener;", "onClose",
 	} {
 		if !bytes.Contains(dex, []byte(want)) {
 			t.Errorf("classes.dex has no string %q", want)

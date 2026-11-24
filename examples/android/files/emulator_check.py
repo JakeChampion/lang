@@ -26,6 +26,7 @@ share. The emulator reaches the computer at 10.0.2.2.
 - A copy of the picture arrives on the share with the same bytes.
 - As root, the provider of documents gives the saved server as a root,
   the file of the share as a child of that root, and the text of the file.
+  A write to that file through the provider reaches the share.
 
 It fails on a crash in logcat. OUT_DIR gets the frames, the trees and
 logcat.
@@ -59,6 +60,7 @@ SMB_USER = os.environ.get("FILES_SMB_USER", "fernfiles")
 SMB_PASSWORD = os.environ.get("FILES_SMB_PASSWORD", "live-check-1")
 SMB_NOTE = "smb-check.txt"
 SMB_TEXT = "The share of the emulator check has this line."
+CHANGED_TEXT = "Another app changed this file through the file picker.\n"
 
 
 def png(width, height, rgb):
@@ -417,9 +419,10 @@ def check_server(out, share_dir, port):
         fail("the copy of the picture did not arrive on the share with the same bytes")
 
 
-def check_documents(out):
+def check_documents(out, share_dir):
     """Reads the saved server through the provider of documents, which the
-    file picker of the system uses. The first server has the ID 0."""
+    file picker of the system uses, and writes a file of it. The first
+    server has the ID 0."""
     if not root():
         return print("the device refuses root: the provider of documents is not read", flush=True)
     queries = {
@@ -437,6 +440,14 @@ def check_documents(out):
         fail(f"the provider of documents does not give the file of the share: {got['children'].stdout!r} {got['children'].stderr!r}")
     if SMB_TEXT not in got["text"].stdout:
         fail(f"the provider of documents does not give the text of the file: {got['text'].stdout!r} {got['text'].stderr!r}")
+    # A write goes to the cache of the app, and to the server when the
+    # writer closes the file.
+    wrote = subprocess.run(["adb", "shell", "content", "write", "--uri", document_uri("0:" + SMB_NOTE)],
+                           input=CHANGED_TEXT, capture_output=True, text=True)
+    target = Path(share_dir, SMB_NOTE)
+    if not until(lambda: target.exists() and target.read_text() == CHANGED_TEXT):
+        now = target.read_text() if target.exists() else "no file"
+        fail(f"a write through the provider of documents did not reach the share: it holds {now!r}, and the write gave {wrote.stdout!r} {wrote.stderr!r}")
 
 
 def main(apk, out, share_dir=None, port=None):
@@ -461,7 +472,7 @@ def main(apk, out, share_dir=None, port=None):
         check_open(out)
         if share_dir:
             check_server(out, share_dir, port)
-            check_documents(out)
+            check_documents(out, share_dir)
 
     log = logcat()
     with open(f"{out}/logcat.txt", "w") as f:
