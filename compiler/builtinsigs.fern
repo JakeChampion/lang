@@ -289,6 +289,7 @@ pub function builtin_sigs(): string[] {
     "unix_listen(string, i32): Socket",
     "vsock_connect(i32, i32): Socket",
     "wasm_block(i32): i32",
+    "wasm_name_lookup(u8[], u8[]): i32",
     "wasm_poll(i32[]): i32",
     "wasm_pollable_drop(i32): i32",
     "wasm_timer_pollable(i64): i32",

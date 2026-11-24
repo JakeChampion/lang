@@ -245,6 +245,8 @@ func vexFormCases() []string {
 		"vpbroadcastb 352(%r11), %ymm2",
 		"vpbroadcastb 355(%r11), %ymm5",
 		"vpbroadcastb (%rax), %ymm12",
+		"vpbroadcastd 252(%r10), %ymm8",
+		"vpbroadcastd (%rax), %ymm12",
 		"vpbroadcastd %xmm13, %ymm13",
 		"vpbroadcastd %xmm7, %ymm9",
 		"vpmulhuw %ymm14, %ymm1, %ymm1",

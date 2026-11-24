@@ -1047,6 +1047,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["__sha1_hw_blocks"] = &ast.FuncType{Params: []ast.Type{u8View, u8View}, Result: u8Arr}
 	c.info.FuncSigs["__sha1x8_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
 	c.info.FuncSigs["__sha1x8_hw_blocks"] = &ast.FuncType{Params: []ast.Type{u8View, u8View}, Result: u8Arr}
+	c.info.FuncSigs["__sha256x8_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
+	c.info.FuncSigs["__sha256x8_hw_blocks"] = &ast.FuncType{Params: []ast.Type{u8View, u8View}, Result: u8Arr}
 	for _, n := range []string{"__clz32", "__ctz32", "__popcount32"} {
 		c.info.FuncSigs[n] = &ast.FuncType{
 			Params: []ast.Type{ast.NumberType{Width: 32, Signed: false}},
@@ -1355,6 +1357,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["tcp_addr_into"] = &ast.FuncType{
 		Params: []ast.Type{sock, ast.BoolType{}, u8s},
 		Result: ast.NumberType{},
+	}
+	// wasm_name_lookup(name, out): i32 — the addresses of name from
+	// wasi:sockets/ip-name-lookup, as 17-byte records in out: the family
+	// (4 or 6), then 16 address bytes in network order. The count, or -errno.
+	c.info.FuncSigs["wasm_name_lookup"] = &ast.FuncType{
+		Params: []ast.Type{u8s, u8s},
+		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	c.info.FuncSigs["tcp_sendfile"] = &ast.FuncType{
 		Params: []ast.Type{sock, ast.NumberType{}, ast.NumberType{}},

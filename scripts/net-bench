@@ -79,7 +79,9 @@
 #                               fern, fern-ring (the same server waiting
 #                               on an io_uring, FERN_IO_URING=1), go,
 #                               hyper, h2o, httpz, zap, fern-twofetch or
-#                               hyper-twofetch
+#                               hyper-twofetch, fern-tls or h2o-tls. The
+#                               -tls-full rows open a fresh TLS 1.3 connection
+#                               per request with server tickets disabled.
 #   net/<server>/c<N>.p50_us    median latency, microseconds
 #   net/<server>/c<N>.p99_us    99th-percentile latency, microseconds
 #   net/<server>/c<N>.failed    responses that were not 200, plus errors
@@ -229,6 +231,16 @@ rows() {
   python3 scripts/net-bench.d/net_bench_rows.py oha "$@"
 }
 
+# tls_load NAME CONNECTIONS [OHA_FLAG] — HTTP/1.1 over TLS on the live server.
+tls_load() {
+  local name="$1" connections="$2" json="$work/$1-c$2.json" u0 s0 u1 s1
+  shift 2
+  read -r u0 s0 <<< "$(group_cpu "$server_pgid")"
+  "$OHA" --http-version 1.1 --insecure -z "${SECONDS_PER}s" -c "$connections" --no-tui --output-format json "$@" "https://127.0.0.1:$port/" > "$json"
+  read -r u1 s1 <<< "$(group_cpu "$server_pgid")"
+  rows "$name" "$connections" "$json" "$u0" "$s0" "$u1" "$s1"
+}
+
 # h3_rows NAME N M OUT LOG U0 S0 U1 S1 — the report rows for one HTTP/3
 # load, from h2load's output and its per-request log, with the server
 # group's clock ticks before (U0 S0) and after (U1 S1) it.
@@ -251,6 +263,23 @@ h3_rows() {
       "$work/pipeload" -addr "127.0.0.1:$port" -c "$n" -depth 16 -d "${SECONDS_PER}s" |
         awk -v s="$server" -v n="$n" '{ printf "net/%s/p%s.rps\t%s\nnet/%s/p%s.failed\t%s\n", s, n, $2, s, n, $4 }'
     done
+    stop_server
+  done
+  # Use the same hello, connection caps and P-256 certificate on both sides.
+  # Disabling tickets makes a new connection pay for a full handshake.
+  for server in fern h2o; do
+    port="$(free_port)"
+    if [ "$server" = fern ]; then
+      start_server "$work/server.log" env PORT="$port" TLS_NO_TICKETS=1 TLS_CERT="$certs/h3.pem" TLS_KEY="$certs/h3.key" "$work/fern-hello"
+    else
+      h2o_config "$port" "$certs/h3"
+      start_server "$work/server.log" h2o -c "$work/h2o.conf"
+    fi
+    await_port "$server-tls" "$port" "$work/server.log"
+    for n in $CONNECTIONS; do
+      tls_load "$server-tls" "$n"
+    done
+    tls_load "$server-tls-full" 64 --disable-keepalive
     stop_server
   done
   upstream_port="$(free_port)"

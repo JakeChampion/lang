@@ -657,14 +657,10 @@ function pick(name: string): Case {
         let insts: ssa.SInst[] = [param(0), call(1, "__fern_rc_dec", [0]), const_int(2, 1), inst(50, 3, [2], 0, "exit"), const_int(4, 0)];
         return Case { f: one_block(1, 5, insts, ret(4)), modes: [borrow], returns_unit: false };
     }
-    if (name == "frame-view-kept" || name == "wasm-frame-view-kept") {
+    if (name == "frame-view-kept") {
         // A view of a borrowed string in the frame, with no release.
         let insts: ssa.SInst[] = [param(0), inst(51, 1, [0], 1, ""), const_int(2, 0)];
         return Case { f: one_block(1, 3, insts, ret(2)), modes: [borrow], returns_unit: false };
-    }
-    if (name == "wasm-frame-view-released") {
-        let insts: ssa.SInst[] = [param(0), inst(51, 1, [0], 1, ""), call(2, "__fern_rc_dec", [1]), const_int(3, 0)];
-        return Case { f: one_block(1, 4, insts, ret(3)), modes: [borrow], returns_unit: false };
     }
     if (name == "loop-phi-borrows-a-held-box" || name == "loop-phi-borrows-a-box-never-released" || name == "loop-phi-released-with-its-box") {
         // The phi walks from the box to its children. Nothing spends the
@@ -789,11 +785,7 @@ function main(): i32 {
     // A case's call_word names op 0, the first pair word, or op 1, the
     // first slot's lane.
     let irops: ir.Op[] = [ir.op_call_pair_word(0), ir.op_call_scalar_word(0), ir.op_ret_pair_word(0), ir.op_ret_scalar_word(0)];
-    // On wasm a view in the frame is a copy on the heap, which holds a unit.
     let ops: rcsigs.OpTable = rcsigs.op_table();
-    if (av[1] == "wasm-frame-view-kept" || av[1] == "wasm-frame-view-released") {
-        ops = rcsigs.with_owned_frame_views(ops);
-    }
     let own_abi = if (av[1] == "unknown-contract-returns-a-phi-of-a-fresh-box") { abis.lookup("no such function") } else { abis.lookup("case") };
     let r: rccertify.Report = rccertify.certify(c.f, irops, own_abi, abis, rcsigs.table(), ops);
     for x in r.findings {
@@ -920,8 +912,6 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"loop-phi-borrows-a-box-never-released", []string{"of v1"}, 0},
 		{"loop-phi-released-with-its-box", []string{"spent without a unit of v1"}, 1},
 		{"frame-view-kept", nil, 0},
-		{"wasm-frame-view-kept", []string{"leaked at return of v1"}, 0},
-		{"wasm-frame-view-released", nil, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1211,8 +1211,8 @@ function diff_option(o: LogOpts, argv: string[], i: i32): (LogOpts, i32) {
   if (x == "--show-signature" || x == "--no-show-signature") {
     return (LogOpts { ...o, show_signature: x == "--show-signature" }, 1);
   }
-  if (x == "--raw") {
-    return (with_form(o, patch.Opts { ...d, raw: true }), 1);
+  if (x == "--raw" || x == "--patch-with-raw") {
+    return (with_form(o, patch.Opts { ...d, raw: true, patch: d.patch || x == "--patch-with-raw" }), 1);
   }
   if (x == "-p" || x == "-u" || x == "--patch") {
     return (with_form(o, patch.Opts { ...d, patch: true }), 1);

@@ -265,3 +265,28 @@ of three runs on a host with 4 cores, in seconds of wall time:
 | `[paths]` | 17.74 | 5.27 | 1.63 | 0.25 |
 
 On the documents, the filters are `.name` and `select(.x > 1)`.
+
+### Comparison with jaq
+
+All three programs ran the same five filters with compact output (`-c`).
+Times are median wall seconds from six runs pinned to one AMD EPYC 9V74
+CPU on x86-64 Linux. The order of the programs rotated between runs.
+An untimed run first checked that the three complete outputs had identical
+SHA-256 digests. Timed runs read the same memory-backed input file on stdin
+and wrote to `/dev/null`. The references were jq 1.7 and the GNU/Linux
+x86-64 release of jaq 3.2.0.
+
+| Filter | 99.5 MB array, jq | jaq | Fern | 100,000 documents, jq | jaq | Fern |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `.` | 1.912 | 0.500 | 0.389 | 0.323 | 0.347 | 0.144 |
+| `.[] \| .name` | 0.858 | 0.450 | 0.261 | 0.249 | 0.403 | 0.114 |
+| `map(select(.x > 1))` | 1.532 | 0.549 | 0.381 | 0.368 | 0.537 | 0.200 |
+| `group_by(.k)` | 2.238 | 0.697 | 0.605 | 0.495 | 0.494 | 0.189 |
+| `[paths]` | 1.489 | 0.629 | 0.392 | 1.178 | 0.719 | 0.233 |
+
+Both inputs use compact JSON. Record `i` has fields `name` (the string
+`record` followed by the decimal index), `x` (`i % 4`), `k` (`i % 19`)
+and `text`, in that order. The large array holds records 0 through 99999
+with 950 ASCII `a` bytes in each text. In the stream, line `i` holds an
+array with records `2*i` and `2*i+1`, each with empty text. Both inputs
+end with a newline. Their sizes are 99,536,259 and 9,383,624 bytes.

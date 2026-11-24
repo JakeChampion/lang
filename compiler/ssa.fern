@@ -912,8 +912,12 @@ function cold_branch(blk: SBlock, k: i32, cold: boolean): boolean {
 }
 
 pub function cold_blocks(f: SFunc): boolean[] {
-  let n = f.blocks.len();
   let at = block_positions(f);
+  return cold_blocks_with_dominators(f, at, immediate_dominators(f, at));
+}
+
+function cold_blocks_with_dominators(f: SFunc, at: i32[], idom: i32[]): boolean[] {
+  let n = f.blocks.len();
   let latch = __alloc_i32(n);
   let span = __alloc_i32(n);
   for i in 0..n {
@@ -933,7 +937,6 @@ pub function cold_blocks(f: SFunc): boolean[] {
       }
     }
   }
-  let idom = immediate_dominators(f, at);
   let out = __alloc_bool(n);
   for i in 0..n {
     out = out.with(i, latch[i] >= 0 && !dominates(idom, i, latch[i]));
@@ -2758,14 +2761,18 @@ function split_spilled_in_loops(f: SFunc, reg_of: i32[], fl: boolean[], at: i32[
     }
   }
   let idom = immediate_dominators(f, at);
-  let weights = weights_from_latches(latch);
-  let cold = cold_blocks(f);
+  let weights: i32[] = [];
+  let cold: boolean[] = [];
   let plans: SplitPlan[] = [];
   for c in 0..cands.len() {
     if (in_phi[c] || def_at[c] < 0 || uses[c].len() == 0) {
       continue;
     }
     if let Some(p) = split_plan(f, at, idom, latch, loops, cands[c], def_at[c], uses[c]) {
+      if (weights.len() == 0) {
+        weights = weights_from_latches(latch);
+        cold = cold_blocks_with_dominators(f, at, idom);
+      }
       // The reads in the loop come from a register after the split. A split
       // pays only when its store and its load weigh less than those reads.
       let reads = 0;
@@ -6015,12 +6022,7 @@ function compose_repl(a: i32[], b: i32[]): i32[] {
   return out;
 }
 
-pub function register_form(f: SFunc): Formed {
-  return form(f, false);
-}
-
-// owned_frame_views: a view in the frame holds a unit, so its release stays.
-pub function form(f: SFunc, owned_frame_views: boolean): Formed {
+pub function form(f: SFunc): Formed {
   let folded = prune_trivial_phis(slot_calls(without_lines(f)));
   let merged = merge_duplicates(folded.f);
   let plain = fold_identities(merged.f);
@@ -6045,7 +6047,7 @@ pub function form(f: SFunc, owned_frame_views: boolean): Formed {
     g = pruned.f;
     trimmed = pruned.repl;
   }
-  g = sink_loads(combine_byte_stores(zero_extended_indices(unsigned_group_checks(drop_inert_counts(g, owned_frame_views)))));
+  g = sink_loads(combine_byte_stores(zero_extended_indices(unsigned_group_checks(drop_inert_counts(g)))));
   return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), plain.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl), trimmed) };
 }
 
@@ -6551,8 +6553,8 @@ function with_insts(own out: SInst[], more: SInst[]): SInst[] {
 // entries return at the floor test. Nor does the release of a view the
 // function builds in its own frame, where its count is immortal. The
 // instruction goes.
-function drop_inert_counts(f: SFunc, owned_frame_views: boolean): SFunc {
-  if (!has_inert_counts(f, owned_frame_views)) {
+function drop_inert_counts(f: SFunc): SFunc {
+  if (!has_inert_counts(f)) {
     return f;
   }
   let defs = inst_defs(f);
@@ -6560,7 +6562,7 @@ function drop_inert_counts(f: SFunc, owned_frame_views: boolean): SFunc {
   let nblocks: SBlock[] = [];
   let changed = false;
   for blk in f.blocks {
-    let kept = without_inert_counts(blk, defs, uses, owned_frame_views);
+    let kept = without_inert_counts(blk, defs, uses);
     changed = changed || kept.insts.len() != blk.insts.len();
     nblocks = nblocks.append(kept);
   }
@@ -6573,7 +6575,7 @@ function drop_inert_counts(f: SFunc, owned_frame_views: boolean): SFunc {
 // Whether the function holds a zero constant and a count call, or a frame
 // view and a view release, so the common function pays one scan and no
 // allocation.
-function has_inert_counts(f: SFunc, owned_frame_views: boolean): boolean {
+function has_inert_counts(f: SFunc): boolean {
   let zero = false;
   let counts = false;
   let frame = false;
@@ -6586,7 +6588,7 @@ function has_inert_counts(f: SFunc, owned_frame_views: boolean): boolean {
       views = views || view_release(ins);
     }
   }
-  return zero && counts || !owned_frame_views && frame && views;
+  return zero && counts || frame && views;
 }
 
 function zero_constant(ins: SInst): boolean {
@@ -6599,10 +6601,10 @@ function zero_constant(ins: SInst): boolean {
   return ins.kind_tag == CONST_I64 && ins.str.len() > 0 && util.lit_to_i64(ins.str) == 0i64;
 }
 
-function without_inert_counts(blk: SBlock, defs: SInst[], uses: i32[], owned_frame_views: boolean): SBlock {
+function without_inert_counts(blk: SBlock, defs: SInst[], uses: i32[]): SBlock {
   let ninsts: SInst[] = [];
   for ins in blk.insts {
-    if (!inert_count(ins, defs, uses, owned_frame_views)) {
+    if (!inert_count(ins, defs, uses)) {
       ninsts = ninsts.append(ins);
     }
   }
@@ -6690,14 +6692,14 @@ function reads_frame_view(defs: SInst[], ins: SInst): boolean {
   return false;
 }
 
-function inert_count(ins: SInst, defs: SInst[], uses: i32[], owned_frame_views: boolean): boolean {
+function inert_count(ins: SInst, defs: SInst[], uses: i32[]): boolean {
   if (ins.result >= 0 && ins.result < uses.len() && uses[ins.result] > 0) {
     return false;
   }
   if (count_call(ins)) {
     return const_is(defs, ins.args[0], 0i64);
   }
-  if (owned_frame_views || !view_release(ins)) {
+  if (!view_release(ins)) {
     return false;
   }
   if (tagged_view_release(ins.str)) {

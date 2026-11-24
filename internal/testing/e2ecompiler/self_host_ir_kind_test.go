@@ -14,8 +14,8 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/ir_kind_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/ir_kind_run.fern", "ir_kind_run")
 
-	const want = "kind_count=575\n" +
-		"bijection_ok=524\n" +
+	const want = "kind_count=578\n" +
+		"bijection_ok=527\n" +
 		"bijection_failures=0\n" +
 		"retired=51\n" +
 		"neg_ok=15\n" +
@@ -31,7 +31,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"is_term return=1 br=1 exit=1 brif=0\n" +
 		"is_fold add=1 div_s=1 ge_s=1 fadd=0\n" +
 		"is_commute add=1 xor=1 sub=0 shl=0\n" +
-		"tag_consistency ok=279 bad=0\n"
+		"tag_consistency ok=282 bad=0\n"
 
 	table, err := os.ReadFile(filepath.Join("testdata", "ir-kind-ids.txt"))
 	if err != nil {

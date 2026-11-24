@@ -522,3 +522,6 @@ ffma=572
 reader_from_fd=573
 ffma32=574
 aes_dec_blocks=575
+wasm_name_lookup=576
+sha256x8_hw=577
+sha256x8_hw_blocks=578

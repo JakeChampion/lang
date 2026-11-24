@@ -108,7 +108,7 @@ function target_checks(target: string): void {
   expect(proof.release_body(r, d, proof.FlatChild { offset: -8 }), false, d.name, 21);
   let renamed = lift(rename_call(release, drop.name, "audited_child_drop"));
   expect(proof.release_body(renamed, ssa.SFunc { ...d, name: "audited_child_drop" }, layout), true, r.name, 22);
-  expect(proof.release_body(ssa.register_form(renamed).f, ssa.register_form(ssa.SFunc { ...d, name: "audited_child_drop" }).f, layout), true, r.name, 82);
+  expect(proof.release_body(ssa.form(renamed).f, ssa.form(ssa.SFunc { ...d, name: "audited_child_drop" }).f, layout), true, r.name, 82);
   let reordered: ssa.SBlock[] = [];
   let i = r.blocks.len();
   while (i > 0) {
@@ -363,8 +363,8 @@ function optimized_release(r: ssa.SFunc, d: ssa.SFunc, layout: proof.FlatChildre
 }
 
 function optimized_checks(d: ssa.SFunc, r: ssa.SFunc, layout: proof.FlatChildren): void {
-  let final_drop = ssa.register_form(d).f;
-  let final_release = ssa.register_form(r).f;
+  let final_drop = ssa.form(d).f;
+  let final_release = ssa.form(r).f;
   expect(proof.drop_body_many(final_drop, layout), true, d.name, 76);
   expect(proof.release_body_many(final_release, final_drop, layout), true, r.name, 77);
   expect(proof.release_body_many(r, final_drop, layout), true, r.name, 78);

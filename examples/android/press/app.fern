@@ -25,6 +25,9 @@ pub function activity_result(env: usize, thiz: usize, request: i32, result: i32,
 @callback("app_main")
 function app_main_entry(): usize;
 
+// The most bytes of the frames of an animation that Press keeps: 192 MB.
+const MOST_FRAME_BYTES: i64 = 201326592i64;
+
 // The message for the image of the document `uri`. An image of more than
 // image.MAX_PIXELS pixels opens at the largest size that has fewer.
 function opened(ctx: usize, uri: usize, dir: string): press.Msg {
@@ -37,6 +40,11 @@ function opened(ctx: usize, uri: usize, dir: string): press.Msg {
   let Some((w0, h0)) = image.size(bytes) else {
     return press.OpenFailed("Android cannot read " + name + " as an image.");
   };
+  if let Some(anim) = image.decode_frames(ctx, bytes, MOST_FRAME_BYTES) {
+    let first = anim.frames[0];
+    let (fw, fh) = pixels.fit(first.width, first.height, press.PREVIEW);
+    return press.Opened(press.Picked { name: name, bytes: bytes.len(), image: first, preview: pixels.resized(first, fw, fh), frames: anim.frames, delays: anim.delays_ms });
+  }
   let (w, h) = (w0, h0);
   while (w as i64 * (h as i64) > image.MAX_PIXELS as i64) {
     w = w * 3 / 4;
@@ -48,7 +56,7 @@ function opened(ctx: usize, uri: usize, dir: string): press.Msg {
     return press.OpenFailed("Android cannot read " + name + " as an image.");
   };
   let preview = image.decode_cover(bytes, pw, ph).unwrap_or(pixels.resized(img, pw, ph));
-  return press.Opened(press.Picked { name: name, bytes: bytes.len(), image: img, preview: preview });
+  return press.Opened(press.Picked { name: name, bytes: bytes.len(), image: img, preview: preview, frames: [], delays: [] });
 }
 
 function app_main(ctx: usize): usize {
@@ -57,8 +65,8 @@ function app_main(ctx: usize): usize {
     pick: (): boolean => device.pick(ctx),
     decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => image.decode_cover(bytes, w, h),
     webp: (img: draw.Image, quality: i32, lossless: boolean): Option[u8[]] => image.encode(img, if (lossless) { image.WebpLossless } else { image.Webp }, if (lossless) { 75 } else { quality }),
-    save: (name: string, mime: string, bytes: u8[]): boolean => device.save(ctx, name, mime, bytes),
-    share: (name: string, mime: string, bytes: u8[]): boolean => device.share(ctx, name, mime, bytes),
+    save: (name: string, mime: string, dir: string, bytes: u8[]): boolean => device.save(ctx, name, mime, dir, bytes),
+    share: (name: string, mime: string, dir: string, bytes: u8[]): boolean => device.share(ctx, name, mime, dir, bytes),
   };
   let base = press.program(d);
   let p = base.with_system((event: android.Event): Option[press.Msg] => {

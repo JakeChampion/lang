@@ -8,6 +8,8 @@ Packet ranges must lie inside a declared media-data payload.
 An explicit packet limit bounds arrays before allocation.
 More than 16 ordered, disjoint media ranges use one validation pass and a binary search for each packet.
 The complete-view and seekable-file indexers supply these ordered ranges.
+The fragment reader uses the same range check for each `trun` packet.
+
 Direct callers can supply other range orders or overlaps. Those inputs retain a linear search.
 The search does not copy ranges or require packet offsets in ascending order.
 
@@ -156,7 +158,7 @@ pub function times(input: [u8], box: boxes.Box, maximum: i32): Result[Time[], pc
   return Ok(out);
 }
 
-function ordered_media(media: [Media]): boolean {
+pub(package) function ordered_media(media: [Media]): boolean {
   let end = 0i64;
   for box in media {
     if (box.start < end || box.end < box.start) {
@@ -185,7 +187,7 @@ function ordered_contains(media: [Media], at: i64, bytes: i32): boolean {
   return at <= box.end && bytes as i64 <= box.end - at;
 }
 
-function contained(media: [Media], ordered: boolean, at: i64, bytes: i32): boolean {
+pub(package) function contained(media: [Media], ordered: boolean, at: i64, bytes: i32): boolean {
   if (at < 0i64 || bytes < 1) {
     return false;
   }

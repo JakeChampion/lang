@@ -10,6 +10,8 @@ This module decodes and encodes images for a NativeActivity app of `std/android`
 
 `size` reads only the header of an image.
 
+`decode_frames` decodes each frame of an animated GIF or WebP, from API level 31. A frame can cover a part of the image and blend with the frame before, so the decoder keeps one buffer: the frames decode into it in turn, and a frame that the file disposes to the background clears its rectangle first. The frames keep the size of the image, and the decoder stops at a budget of bytes.
+
 `encode` writes a `draw.Image` as a file of a `Format`, with `AndroidBitmap_compress` of `libjnigraphics.so`. The quality is from 0 to 100. A lossless format ignores it.
 
 The module needs API level 30, for `AImageDecoder` and `AndroidBitmap_compress`. A bad image, a format that the platform does not decode, or an image of more than `MAX_PIXELS` pixels gives `None`.
@@ -28,6 +30,8 @@ The functions use no state, so they can run on any thread of the app. They call 
 
 <<decoding>>
 
+<<animations>>
+
 <<encoding>>
 ```
 
@@ -35,8 +39,11 @@ The functions use no state, so they can run on any thread of the app. They call 
 
 ```fern
 <<module introduction>>=
-// This module decodes images with the NDK image decoder.
+// This module decodes and encodes images with the NDK.
+import "std/android";
 import "std/android/draw";
+import "std/ffi";
+import "std/i32";
 ```
 
 ### `C functions`
@@ -174,6 +181,111 @@ pub function decode_cover(bytes: [u8], w: i32, h: i32): Option[draw.Image] {
   let img = decode_at(d, tw, th);
   close(d);
   return img;
+}
+```
+
+### `animations`
+
+The functions of frames came in API level 31, so their imports are weak: the library loads on API level 30 too, and `decode_frames` calls them only from API level 31. A dispose operation of 2 is `ANDROID_IMAGE_DECODER_DISPOSE_OP_BACKGROUND`.
+
+```fern
+<<animations>>=
+@import("libjnigraphics.so", "AImageDecoder_isAnimated", weak)
+function c_is_animated(decoder: usize): u8;
+
+@import("libjnigraphics.so", "AImageDecoder_advanceFrame", weak)
+function c_advance(decoder: usize): i32;
+
+@import("libjnigraphics.so", "AImageDecoderFrameInfo_create", weak)
+function c_frame_info(): usize;
+
+@import("libjnigraphics.so", "AImageDecoderFrameInfo_delete", weak)
+function c_frame_info_delete(info: usize): void;
+
+@import("libjnigraphics.so", "AImageDecoder_getFrameInfo", weak)
+function c_get_frame_info(decoder: usize, info: usize): i32;
+
+@import("libjnigraphics.so", "AImageDecoderFrameInfo_getDuration", weak)
+function c_duration(info: usize): i64;
+
+@import("libjnigraphics.so", "AImageDecoderFrameInfo_getFrameRect", weak)
+function c_frame_rect(info: usize): Rect;
+
+@import("libjnigraphics.so", "AImageDecoderFrameInfo_getDisposeOp", weak)
+function c_dispose_op(info: usize): i32;
+
+// An ARect of the NDK.
+@derive(ffi.CLayout)
+struct Rect { left: i32, top: i32, right: i32, bottom: i32 }
+
+const DISPOSE_BACKGROUND: i32 = 2;
+
+// The frames of an animation, each the size of the image, and the time that
+// each shows, in milliseconds.
+pub struct Animation { frames: draw.Image[], delays_ms: i32[] }
+
+// The frames of the animated image in `bytes`, at most `most_bytes` bytes of
+// pixels of them. It is None for a still image, below API level 31, and
+// when the platform cannot decode two frames.
+pub function decode_frames(ctx: usize, bytes: [u8], most_bytes: i64): Option[Animation] {
+  if (android.sdk_version(ctx) < 31) {
+    return None;
+  }
+  let Some(d) = open(bytes) else {
+    return None;
+  };
+  let (w, h) = header_size(d);
+  let got = if (c_is_animated(d.handle) != 0u8 && c_set_format(d.handle, RGBA_8888) == SUCCESS) { frames_of(d, w, h, most_bytes) } else { None };
+  close(d);
+  return got;
+}
+
+function frames_of(d: Decoder, w: i32, h: i32, most_bytes: i64): Option[Animation] {
+  let n = w * h * 4;
+  if (w <= 0 || h <= 0 || w as i64 * (h as i64) > MAX_PIXELS as i64) {
+    return None;
+  }
+  let frames: draw.Image[] = [];
+  let delays: i32[] = [];
+  unsafe {
+    let buf: usize = __alloc(n);
+    __memset(buf, 0, n);
+    let info = c_frame_info();
+    let more = true;
+    while (more && (frames.len() + 1) as i64 * (n as i64) <= most_bytes) {
+      if (c_decode(d.handle, buf, (w * 4) as usize, n as usize) != SUCCESS || c_get_frame_info(d.handle, info) != SUCCESS) {
+        break;
+      }
+      let px = __alloc_u8(n);
+      __memcpy(__bytes_data(px), buf, n);
+      frames = frames.append(draw.Image { width: w, height: h, pixels: px });
+      delays = delays.append((c_duration(info) / 1000000i64) as i32);
+      if (c_dispose_op(info) == DISPOSE_BACKGROUND) {
+        clear_rect(buf, w, h, c_frame_rect(info));
+      }
+      more = c_advance(d.handle) == SUCCESS;
+    }
+    c_frame_info_delete(info);
+    __free(buf, n);
+  }
+  if (frames.len() < 2) {
+    return None;
+  }
+  return Some(Animation { frames: frames, delays_ms: delays });
+}
+
+// Sets the pixels of the rectangle `r` of the buffer to transparent.
+function clear_rect(buf: usize, w: i32, h: i32, r: Rect): void {
+  let x0 = r.left.max(0);
+  let x1 = r.right.min(w);
+  if (x1 <= x0) {
+    return;
+  }
+  unsafe {
+    for y in r.top.max(0)..r.bottom.min(h) {
+      __memset(buf + ((y * w + x0) * 4) as usize, 0, (x1 - x0) * 4);
+    }
+  }
 }
 ```
 

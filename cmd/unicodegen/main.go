@@ -597,6 +597,78 @@ func encodeFull(fs []fullCase) string {
 	return b.String()
 }
 
+// pageShift gives pages of 128 code points. pageLimit is the most pages that
+// an index holds. The rows above the last page are one span.
+const (
+	pageShift = 7
+	pageLimit = 0x20000 >> pageShift
+)
+
+// pageIndex gives the index of the table t, whose rows have rowChars digits
+// and are in order. hiField is the field that holds the last code point of a
+// row. Entry p is the first row whose last code point is not below page p,
+// as two digits. The index stops one page after the last row, so a code
+// point above its pages starts at the last entry.
+func pageIndex(t string, rowChars, hiField int) string {
+	n := len(t) / rowChars
+	if n == 0 || n >= 1<<12 {
+		panic(fmt.Sprintf("unicodegen: a page index needs 1 to 4095 rows, got %d", n))
+	}
+	hi := func(r int) int { return decField(t, r*rowChars+hiField*fieldChars) }
+	pages := min(pageLimit, hi(n-1)>>pageShift+1)
+	var b strings.Builder
+	row := 0
+	for p := 0; p <= pages; p++ {
+		for row < n && hi(row) < p<<pageShift {
+			row++
+		}
+		b.WriteByte(enc6(row >> 6))
+		b.WriteByte(enc6(row & 63))
+	}
+	return b.String()
+}
+
+// pageRows mirrors _rows of the generated module.
+func pageRows(x string, n, cp int) (lo, hi int) {
+	last := len(x)/2 - 1
+	p := min(cp>>pageShift, last)
+	entry := func(p int) int { return dec6(x[2*p])<<6 | dec6(x[2*p+1]) }
+	if p == last {
+		return entry(p), n - 1
+	}
+	return entry(p), min(entry(p+1), n-1)
+}
+
+// verifyPageIndex checks that the rows the index gives for each code point
+// of a row hold that row, and that the index gives rows of the table for
+// each other code point.
+func verifyPageIndex(name, t, x string, rowChars, hiField int) {
+	n := len(t) / rowChars
+	holds := func(cp, r int) {
+		lo, hi := pageRows(x, n, cp)
+		if lo < 0 || hi >= n || r >= 0 && (r < lo || r > hi) {
+			panic(fmt.Sprintf("unicodegen: %s: the index gives rows %d to %d of %d for U+%04X of row %d", name, lo, hi, n, cp, r))
+		}
+	}
+	for r := 0; r < n; r++ {
+		for cp := decField(t, r*rowChars); cp <= decField(t, r*rowChars+hiField*fieldChars); cp++ {
+			holds(cp, r)
+		}
+	}
+	for cp := 0; cp <= unicode.MaxRune; cp++ {
+		holds(cp, -1)
+	}
+}
+
+// emitIndexed writes the table and its page index.
+func emitIndexed(b *strings.Builder, name, index, table string, rowChars, hiField int) int {
+	x := pageIndex(table, rowChars, hiField)
+	verifyPageIndex(name, table, x, rowChars, hiField)
+	emitTable(b, name, table)
+	emitTable(b, index, x)
+	return len(x)
+}
+
 func inRanges(t string, cp int) bool {
 	lo, hi := 0, len(t)/rangeChars-1
 	for lo <= hi {
@@ -1566,18 +1638,19 @@ import "std/utf8" as utf8;
 `, unicode.Version, normDataVersion(), strings.Fields(gcbVersion)[0], strings.Fields(wbVersion)[0], strings.Fields(bidiVersion)[0])
 
 	emitTable(&b, "_case_table", caseT)
-	for _, name := range []string{"letter", "digit", "space", "upper", "lower", "cased", "caseignorable", "mark"} {
+	for _, name := range []string{"letter", "digit", "space", "upper", "lower", "cased", "caseignorable"} {
 		c := classes[name]
 		emitTable(&b, "_"+name+"_ranges", c.table)
 	}
+	stats.tableBytes += emitIndexed(&b, "_mark_ranges", "_mark_index", classes["mark"].table, rangeChars, 1)
 	emitTable(&b, "_full_upper_table", encodeFull(fullUpper))
 	emitTable(&b, "_full_lower_table", encodeFull(fullLower))
 	emitTable(&b, "_fold_table", encodeFull(foldExceptions))
 
-	emitTable(&b, "_ccc_ranges", cccT)
-	emitTable(&b, "_decomp_table", decompT)
-	emitTable(&b, "_decomp_step_table", stepT)
-	emitTable(&b, "_compose_table", composeT)
+	stats.tableBytes += emitIndexed(&b, "_ccc_ranges", "_ccc_index", cccT, 3*fieldChars, 1)
+	stats.tableBytes += emitIndexed(&b, "_decomp_table", "_decomp_index", decompT, 5*fieldChars, 0)
+	stats.tableBytes += emitIndexed(&b, "_decomp_step_table", "_decomp_step_index", stepT, 3*fieldChars, 0)
+	stats.tableBytes += emitIndexed(&b, "_compose_table", "_compose_index", composeT, 3*fieldChars, 0)
 	emitTable(&b, "_nfc_no_ranges", encodeRanges(nfcNo))
 	emitTable(&b, "_nfc_maybe_ranges", encodeRanges(nfcMaybe))
 	emitTable(&b, "_nfd_no_ranges", encodeRanges(nfdNo))
@@ -1600,6 +1673,25 @@ function _fld(t: string, i: i32): i32 {
     let v = (t[i] as i32 << 24) | (t[i + 1] as i32 << 16) | (t[i + 2] as i32 << 8) | t[i + 3] as i32;
     let w = v - 0x30303030 - (((v + 0x23232323) >> 7) & 0x01010101);
     return (w & 63) | ((w >> 2) & 0xfc0) | ((w >> 4) & 0x3f000) | ((w >> 6) & 0xfc0000);
+}
+
+// The two digits at i as one number.
+function _fld2(t: string, i: i32): i32 {
+    let v = (t[i] as i32 << 8) | t[i + 1] as i32;
+    let w = v - 0x3030 - (((v + 0x2323) >> 7) & 0x0101);
+    return (w & 63) | ((w >> 2) & 0xfc0);
+}
+
+// The first and the last row that can hold cp in a table of n rows with the
+// page index x. Entry p of x is the first row whose last code point is not
+// below page p, and a page is 128 code points. The rows from the last entry
+// hold each code point above the pages of x.
+function _rows(x: string, n: i32, cp: i32): (i32, i32) {
+    let last = x.len() / 2 - 1;
+    let p = (cp >> 7).min(last);
+    let lo = _fld2(x, 2 * p);
+    if (p == last) { return (lo, n - 1); }
+    return (lo, _fld2(x, 2 * p + 2).min(n - 1));
 }
 
 function _case_apply(cp: i32, want_upper: boolean): i32 {
@@ -1959,8 +2051,13 @@ pub function (s: string) title_case(): string {
 }
 
 function _in_ranges(t: string, cp: i32): boolean {
-    let lo = 0;
-    let hi = t.len() / 8 - 1;
+    return _in_rows(t, 0, t.len() / 8 - 1, cp);
+}
+
+// Whether a range of the rows from first to last of t holds cp.
+function _in_rows(t: string, first: i32, last: i32, cp: i32): boolean {
+    let lo = first;
+    let hi = last;
     while (lo <= hi) {
         let mid = lo + (hi - lo) / 2;
         let base = mid * 8;
@@ -2037,7 +2134,10 @@ pub function (c: char) is_lower(): boolean {
 
 // A mark: of the general category Mn, Mc or Me.
 pub function (c: char) is_mark(): boolean {
-    return c as i32 >= 768 && _in_ranges(_mark_ranges(), c as i32);
+    if ((c as i32) < 768) { return false; }
+    let t = _mark_ranges();
+    let (lo, hi) = _rows(_mark_index(), t.len() / 8, c as i32);
+    return _in_rows(t, lo, hi, c as i32);
 }
 
 function _all_cp(s: string, kind: i32): boolean {
@@ -2082,8 +2182,7 @@ function _ccc_of(cp: char): i32 {
     let n = cp as i32;
     if (n < 768) { return 0; }
     let t = _ccc_ranges();
-    let lo = 0;
-    let hi = t.len() / 12 - 1;
+    let (lo, hi) = _rows(_ccc_index(), t.len() / 12, n);
     while (lo <= hi) {
         let mid = lo + (hi - lo) / 2;
         let base = mid * 12;
@@ -2105,8 +2204,7 @@ function _decomp_append(out: char[], cp: char): char[] {
         return out;
     }
     let t = _decomp_table();
-    let lo = 0;
-    let hi = t.len() / 20 - 1;
+    let (lo, hi) = _rows(_decomp_index(), t.len() / 20, n);
     while (lo <= hi) {
         let mid = lo + (hi - lo) / 2;
         let base = mid * 20;
@@ -2160,8 +2258,7 @@ function _compose_pair(a: char, b: char): i32 {
         return 0;
     }
     let t = _compose_table();
-    let lo = 0;
-    let hi = t.len() / 12 - 1;
+    let (lo, hi) = _rows(_compose_index(), t.len() / 12, x);
     while (lo <= hi) {
         let mid = lo + (hi - lo) / 2;
         let base = mid * 12;
@@ -2429,8 +2526,7 @@ pub function decomposition_step(c: char): char[] {
         return [(n - (n - 44032) % 28) as char, (4519 + (n - 44032) % 28) as char];
     }
     let t = _decomp_step_table();
-    let lo = 0;
-    let hi = t.len() / 12 - 1;
+    let (lo, hi) = _rows(_decomp_step_index(), t.len() / 12, n);
     while (lo <= hi) {
         let mid = lo + (hi - lo) / 2;
         let base = mid * 12;

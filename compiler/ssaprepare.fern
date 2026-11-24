@@ -96,7 +96,7 @@ pub struct Output {
 }
 
 pub function finish(lowered: irtables.Lowered, selected: physicalbody.Selected, lifted: ssa_lift.Lifted, leaves: ssa.Leaves): Body {
-  return finish_formed(lowered, selected, lifted, ssa.register_form(ssa.inline_leaves(lifted.func, leaves)));
+  return finish_formed(lowered, selected, lifted, ssa.form(ssa.inline_leaves(lifted.func, leaves)));
 }
 
 pub function finish_formed(lowered: irtables.Lowered, selected: physicalbody.Selected, lifted: ssa_lift.Lifted, formed: ssa.Formed): Body {

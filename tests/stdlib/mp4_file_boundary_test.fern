@@ -193,8 +193,19 @@ function structures(): test.TestOutcome {
   let fragment: u8[] = [0, 0, 0, 8, 109, 111, 111, 102];
   let bad = appended(bytes, fragment);
   let io = memory.memory([memory.Segment { at: 0i64, bytes: bad }], [], 0);
-  if let Err(source.ReadAudio(pcm.Unsupported)) = mp4file.inspect_with(bad.len() as i64, io.seek, io.read, mp4file.default_limits()) {} else {
-    return test.fail("fragment");
+  if let Err(source.ReadAudio(pcm.Header)) = mp4file.inspect_with(bad.len() as i64, io.seek, io.read, mp4file.default_limits()) {} else {
+    return test.fail("fragment without mvex");
+  }
+  let Ok(fragmented) = check.fixture("fragmented") else {
+    return test.fail("fragmented fixture");
+  };
+  let Ok(moov) = locate(fragmented, ["moov"]) else {
+    return test.fail("fragmented moov");
+  };
+  let limited = mp4file.Limits { ...mp4file.default_limits(), max_metadata_bytes: moov.end - moov.start };
+  let source_io = memory.memory([memory.Segment { at: 0i64, bytes: fragmented }], [], 0);
+  if let Err(source.ReadAudio(pcm.Limit)) = mp4file.inspect_with(fragmented.len() as i64, source_io.seek, source_io.read, limited) {} else {
+    return test.fail("movie fragments share the metadata budget");
   }
   let Ok(table) = locate(bytes, ["moov", "trak", "mdia", "minf", "stbl", "stco"]) else {
     return test.fail("offsets");

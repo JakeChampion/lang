@@ -225,7 +225,7 @@ function controls(f: ssa.SFunc, producer: ssa.SFunc): void {
   expect(sparse_ids.rename(copies(f)), [producer], "", 45);
   expect(sparse(f), [producer], "", 46);
   expect(sparse_ids.rename(sparse(f)), [producer], "", 46);
-  expect(ssa.register_form(f).f, [ssa.register_form(producer).f], "", 57);
+  expect(ssa.form(f).f, [ssa.form(producer).f], "", 57);
   expect(sparse_ids.hole(sparse_ids.rename(f), 0), [producer], "unavailable caller origin operand", 58);
   expect(sparse_ids.hole(sparse_ids.rename(f), 1), [producer], "unavailable caller origin phi", 59);
   expect(sparse_ids.hole(sparse_ids.rename(f), 2), [producer], "unavailable caller origin terminator", 60);

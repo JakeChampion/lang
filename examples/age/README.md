@@ -513,6 +513,38 @@ as plain files and gives a header failure, as age does.
 
 ## Performance
 
+### Comparison with age and rage
+
+On x86-64 Linux, the Fern port had the lowest median time in each of
+these four operations on a 1 GiB sparse file of zeros. Times are seconds.
+
+| Operation | Fern | age 1.3.2 | rage 0.12.1 |
+| --- | ---: | ---: | ---: |
+| X25519 encrypt | 0.476 | 0.503 | 0.876 |
+| X25519 decrypt | 0.582 | 0.692 | 1.436 |
+| Passphrase encrypt | 1.151 | 1.674 | 2.859 |
+| Passphrase decrypt | 1.300 | 1.799 | 2.490 |
+
+The host was a shared AMD EPYC 9V74 with a four-CPU quota. The Fern
+compiler and port were built from `1152f3469a` on main. The port used
+`-O -target x86-64-linux`.
+Each median covers four wall-clock trials with the tool order rotated.
+For encryption, each tool read the same sparse file and wrote to
+`/dev/null`. For decryption, each read the same age-produced ciphertext
+from memory-backed storage and wrote to `/dev/null`.
+
+Passphrase timing includes prompting through a pseudo-terminal for Fern
+and age, and through a local pinentry helper for rage. Encryption used
+each tool's default work factor. Fern and age wrote scrypt factor 18 in
+the interoperability check, while rage wrote 19. The shared decryption
+input used factor 18 for all three.
+
+A separate interoperability check used 131,073 random bytes with X25519
+and 123,456 random bytes with passphrases. Every writer's output decrypted
+to the original bytes with each of the three readers.
+
+### Earlier comparison on Intel Xeon
+
 The input is 1 GiB of zeros in a sparse file. Each tool encrypts it to one
 X25519 recipient, and decrypts the file that age made with the identity.
 The output goes to `/dev/null`.

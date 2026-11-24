@@ -277,14 +277,14 @@ function t_array(elem: typeinfo.Type): typeinfo.Type {
 }
 
 pub function is_sha_hw_builtin(name: string): boolean {
-  return name == "__sha256_hw" || name == "__sha1_hw" || name == "__sha1x8_hw";
+  return name == "__sha256_hw" || name == "__sha1_hw" || name == "__sha1x8_hw" || name == "__sha256x8_hw";
 }
 
 function byte_kernel_arity(name: string): i32 {
   if (name == "__aes_expand_key") {
     return 1;
   }
-  if (name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks" || name == "__sha1x8_hw_blocks" || name == "__aes_dec_blocks") {
+  if (name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks" || name == "__sha1x8_hw_blocks" || name == "__sha256x8_hw_blocks" || name == "__aes_dec_blocks") {
     return 2;
   }
   if (name == "__aes_ctr32" || name == "__ghash") {
@@ -5625,11 +5625,7 @@ function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], name
   if (!is_unknown(dest)) {
     let no_types: typeinfo.Type[] = [];
     let (dn, dt) = gc_bind_param(ret, dest, sig.type_params, s.type_names(), [], no_types);
-    for k in 0..dn.len() {
-      if (!mentions_foreign_type_variable(dt[k], s)) {
-        bound = bound.append(dn[k]);
-      }
-    }
+    bound = util.append_all(bound, closed_bindings(dn, dt, s));
   }
   for tp in sig.all_type_params {
     let (named, all_empty) = empty_array_positions(sig.param_type_names, c.args, tp, s);
@@ -16980,6 +16976,18 @@ function foreign_type_variable(t: typeinfo.Type, s: Scope): boolean {
   return name.len() > 0 && !util.has_str(s.tparams, name);
 }
 
+// The names of `names` whose types name no open type parameter of another
+// callee.
+function closed_bindings(names: string[], types: typeinfo.Type[], s: Scope): string[] {
+  let out: string[] = [];
+  for k in 0..names.len() {
+    if (!mentions_foreign_type_variable(types[k], s)) {
+      out = out.append(names[k]);
+    }
+  }
+  return out;
+}
+
 // A destination that names a type parameter of another callee binds
 // nothing: that parameter is still open.
 function mentions_foreign_type_variable(t: typeinfo.Type, s: Scope): boolean {
@@ -19196,7 +19204,7 @@ const REGISTERED_INTRINSICS: string[] = [
   "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
   "__task_cancelled", "__task_cur", "__task_enter", "__task_fd_gen", "__task_free", "__task_gen", "__task_inline", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait",
   "__send_copy", "__send_adopt", "__send_root", "__send_release", "__heap_adopt", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
-  "__abs_f64", "__aes_ctr32", "__aes_dec_blocks", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__sha1x8_hw", "__sha1x8_hw_blocks", "__chacha20_xor_into", "__poly1305_blocks", "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into", "__alloc", "__alloc_bool", "__alloc_i16", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_reuse", "__alloc_u16", "__alloc_u8", "__alloc_u8_uninit", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len", "__mont_mul", "__scrypt_block_mix",
+  "__abs_f64", "__aes_ctr32", "__aes_dec_blocks", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__sha1x8_hw", "__sha1x8_hw_blocks", "__sha256x8_hw", "__sha256x8_hw_blocks", "__chacha20_xor_into", "__poly1305_blocks", "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into", "__alloc", "__alloc_bool", "__alloc_i16", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_reuse", "__alloc_u16", "__alloc_u8", "__alloc_u8_uninit", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len", "__mont_mul", "__scrypt_block_mix",
   "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
   "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
   "__c_call4", "__c_call4_f32", "__c_call4_f64", "__c_call5", "__c_call5_f32", "__c_call5_f64",
@@ -28966,7 +28974,7 @@ function ow_fresh_builtins(): string[] {
     "__socket_from_fd", "tcp_accept", "tcp_accept_with", "tcp_connect_with", "tcp_listen", "tcp_listen_with",
     "udp_bind", "udp_bind_with", "unix_connect", "unix_listen", "vsock_connect",
     "termios_get", "uname_field", "window_size",
-    "__bytes_owned", "__bytes_range", "__bytes_into", "__aes_expand_key", "__aes_ctr32", "__aes_dec_blocks", "__ghash", "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw_blocks", "__sha1_hw_blocks", "__sha1x8_hw_blocks", "__chacha20_xor_into", "__poly1305_blocks",
+    "__bytes_owned", "__bytes_range", "__bytes_into", "__aes_expand_key", "__aes_ctr32", "__aes_dec_blocks", "__ghash", "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw_blocks", "__sha1_hw_blocks", "__sha1x8_hw_blocks", "__sha256x8_hw_blocks", "__chacha20_xor_into", "__poly1305_blocks",
     "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into", "__mont_mul", "__scrypt_block_mix",
   ];
   return out;

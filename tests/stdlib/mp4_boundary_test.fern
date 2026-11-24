@@ -167,13 +167,6 @@ function unsupported(): test.TestOutcome {
   let Ok(bytes) = fixture("mono") else {
     return test.fail("reference");
   };
-  let fragmented = bytes;
-  for byte in [0u8, 0u8, 0u8, 8u8, 109u8, 111u8, 111u8, 102u8] {
-    fragmented = fragmented.append(byte);
-  }
-  if let Err(pcm.Unsupported) = mp4.inspect(fragmented, mp4.default_limits()) {} else {
-    return test.fail("fragmented media requires its own demux path");
-  }
   let Ok(stsd) = locate(bytes, ["moov", "trak", "mdia", "minf", "stbl", "stsd"]) else {
     return test.fail("description box");
   };
@@ -187,6 +180,114 @@ function unsupported(): test.TestOutcome {
   let external = word(bytes, dref.data + 16, 0u32);
   if let Err(pcm.Unsupported) = mp4.inspect(external, mp4.default_limits()) {} else {
     return test.fail("external data reference");
+  }
+  return test.pass();
+}
+
+// The box at `path` under the `number`th top-level `moof` box.
+function fragment_box(input: [u8], number: i32, path: [string]): Result[boxes.Box, pcm.AudioError] {
+  let (budget, top) = boxes.children(input, 0, input.len(), boxes.Budget { boxes: 0, maximum: 1024 })?;
+  let count = 0;
+  for box in top {
+    if (box.kind == boxes.tag("moof")) {
+      if (count == number) {
+        let found = box;
+        for tag in path {
+          let (next, children) = boxes.children(input, found.data, found.end, budget)?;
+          budget = next;
+          found = boxes.required(children, tag)?;
+        }
+        return Ok(found);
+      }
+      count += 1;
+    }
+  }
+  return Err(pcm.Header);
+}
+
+function last_media(input: [u8]): Result[boxes.Box, pcm.AudioError] {
+  let (_, top) = boxes.children(input, 0, input.len(), boxes.Budget { boxes: 0, maximum: 1024 })?;
+  let found: Option[boxes.Box] = None;
+  for box in top {
+    if (box.kind == boxes.tag("mdat")) {
+      found = Some(box);
+    }
+  }
+  return match (found) { Some(value) => Ok(value), None => Err(pcm.Header) };
+}
+
+function read_word(input: [u8], at: i32): u32 {
+  return input[at] as u32 << 24u32 | input[at + 1] as u32 << 16u32 | input[at + 2] as u32 << 8u32 | input[at + 3] as u32;
+}
+
+// Fragment runs follow the trex defaults, the moof base, and the track timeline.
+// fern-lint: allow cyclomatic-complexity
+function fragments(): test.TestOutcome {
+  let Ok(bytes) = fixture("fragmented") else {
+    return test.fail("reference");
+  };
+  let limits = mp4.default_limits();
+  let Ok(index) = mp4.inspect(bytes, limits) else {
+    return test.fail("fragmented index");
+  };
+  let packets = index.tracks[0].packets;
+  for i in 1..packets.len() {
+    if (packets[i].position != packets[i - 1].position + packets[i - 1].duration as i64) {
+      return test.fail("contiguous fragment timeline");
+    }
+  }
+  let Ok(mono) = fixture("mono") else {
+    return test.fail("mono reference");
+  };
+  let stray = mono;
+  for byte in [0u8, 0u8, 0u8, 8u8, 109u8, 111u8, 111u8, 102u8] {
+    stray = stray.append(byte);
+  }
+  if let Err(pcm.Header) = mp4.inspect(stray, limits) {} else {
+    return test.fail("movie fragment without mvex");
+  }
+  let Ok(mfhd) = fragment_box(bytes, 1, ["mfhd"]) else {
+    return test.fail("second mfhd");
+  };
+  if let Err(pcm.Header) = mp4.inspect(word(bytes, mfhd.data + 4, 1u32), limits) {} else {
+    return test.fail("repeated fragment sequence number");
+  }
+  let Ok(tfdt) = fragment_box(bytes, 1, ["traf", "tfdt"]) else {
+    return test.fail("second tfdt");
+  };
+  if let Err(pcm.Unsupported) = mp4.inspect(word(bytes, tfdt.data + 8, read_word(bytes, tfdt.data + 8) + 1u32), limits) {} else {
+    return test.fail("gap in the fragment decode time");
+  }
+  let Ok(tfhd) = fragment_box(bytes, 0, ["traf", "tfhd"]) else {
+    return test.fail("first tfhd");
+  };
+  let flags = read_word(bytes, tfhd.data);
+  if let Err(pcm.Unsupported) = mp4.inspect(word(bytes, tfhd.data, flags | 4u32), limits) {} else {
+    return test.fail("unknown track fragment flag");
+  }
+  if let Err(pcm.Header) = mp4.inspect(word(bytes, tfhd.data, flags | 65536u32), limits) {} else {
+    return test.fail("run in an empty-duration fragment");
+  }
+  if let Err(pcm.Header) = mp4.inspect(word(bytes, tfhd.data + 4, 99u32), limits) {} else {
+    return test.fail("fragment of a track without trex defaults");
+  }
+  let Ok(trun) = fragment_box(bytes, 0, ["traf", "trun"]) else {
+    return test.fail("first trun");
+  };
+  if let Err(pcm.Header) = mp4.inspect(word(bytes, trun.data + 8, 2147483647u32), limits) {} else {
+    return test.fail("run outside media data");
+  }
+  if let Err(pcm.Unsupported) = mp4.inspect(word(bytes, trun.data, read_word(bytes, trun.data) | 33554432u32), limits) {} else {
+    return test.fail("unknown run version");
+  }
+  if let Err(pcm.Limit) = mp4.inspect(bytes, mp4.Limits { ...limits, max_packets: packets.len() - 1 }) {} else {
+    return test.fail("fragment packet budget");
+  }
+  let Ok(media) = last_media(bytes) else {
+    return test.fail("last mdat");
+  };
+  if let Err(_) = mp4.inspect(bytes[:media.end - 1], limits) {} else {
+    return test.fail("truncated fragment media");
   }
   return test.pass();
 }
@@ -243,7 +344,8 @@ function main(): i32 {
   runner = runner.it("sample rounding, wide clock values, and overflow", clocks);
   runner = runner.it("64-bit chunks and packet ranges beyond eight GiB", wide_offsets);
   runner = runner.it("independent audio track selection and PCM", selection);
-  runner = runner.it("fragmented, encrypted, and external media return explicit errors", unsupported);
+  runner = runner.it("encrypted and external media return explicit errors", unsupported);
+  runner = runner.it("fragment defaults, sequence, decode time, runs, and budgets", fragments);
   runner = runner.it("empty and repeated edits retain the cumulative movie clock", edit_rounding);
   return runner.finish();
 }

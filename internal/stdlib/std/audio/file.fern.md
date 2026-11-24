@@ -34,25 +34,42 @@ pub function (window: Window) view(): [u8] {
   return window.buffer.view();
 }
 
+function positioned(own window: Window, result: Result[i64, IoError]): Result[Window, source.ReadError] {
+  let offset = match (result) { Ok(value) => value, Err(e) => { return Err(source.ReadIo(e)); } };
+  if (offset != window.offset) {
+    return Err(source.ReadSize);
+  }
+  return Ok(Window { ...window, positioned: true });
+}
+
+function after_read(offset: i64, bytes: i32, buffer: source.Buffer, ready: boolean): Result[Window, source.ReadError] {
+  if (!ready && buffer.eof) {
+    return Err(source.ReadAudio(pcm.Truncated));
+  }
+  return Ok(Window { offset: offset, bytes: bytes, buffer: buffer, positioned: true, ready: ready });
+}
+
 pub function (own window: Window) step_with(seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError]): Result[Window, source.ReadError] {
   if (window.ready) {
     return Ok(window);
   }
   if (!window.positioned) {
-    let offset = match (seek(window.offset)) { Ok(value) => value, Err(e) => { return Err(source.ReadIo(e)); } };
-    if (offset != window.offset) {
-      return Err(source.ReadSize);
-    }
-    return Ok(Window { ...window, positioned: true });
+    let offset = seek(window.offset);
+    return positioned(window, offset);
   }
   let (buffer, ready) = window.buffer.ensure(window.bytes, read)?;
-  if (!ready && buffer.eof) {
-    return Err(source.ReadAudio(pcm.Truncated));
-  }
-  return Ok(Window { ...window, buffer: buffer, ready: ready });
+  return after_read(window.offset, window.bytes, buffer, ready);
 }
 
 pub function (own window: Window) step(reader: Reader): Result[Window, source.ReadError] {
-  return window.step_with((offset: i64): Result[i64, IoError] => reader.seek(offset, 0), (count: i32): Result[u8[], IoError] => reader.read_chunk_bytes(count));
+  if (window.ready) {
+    return Ok(window);
+  }
+  if (!window.positioned) {
+    let offset = reader.seek(window.offset, 0);
+    return positioned(window, offset);
+  }
+  let (buffer, ready) = window.buffer.ensure_reader(window.bytes, reader)?;
+  return after_read(window.offset, window.bytes, buffer, ready);
 }
 ```

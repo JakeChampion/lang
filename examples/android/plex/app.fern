@@ -13,6 +13,7 @@ import "std/android/exoplayer";
 import "std/android/gl";
 import "std/android/image";
 import "std/android/keyboard";
+import "std/android/speech";
 import "std/android/player";
 import "std/android/service";
 import "std/android/session";
@@ -478,7 +479,7 @@ function browse_connect(ctx: usize, media: Media, svc: browse.Service): void {
   }
 }
 
-function device(ctx: usize, ps: Players, gpu: Cell[Option[Gpu]], media: Media): control.Device {
+function device(rec: Option[speech.Recognizer], ctx: usize, ps: Players, gpu: Cell[Option[Gpu]], media: Media): control.Device {
   let posters = android.cache_dir(ctx) + "/posters";
   return control.Device {
     mono_ms: (): i64 => mono_ms(),
@@ -500,6 +501,39 @@ function device(ctx: usize, ps: Players, gpu: Cell[Option[Gpu]], media: Media): 
     take_focus: (): boolean => take_focus(ctx, media),
     drop_focus: (): void => drop_focus(ctx, media),
     ask_notifications: (): void => ask_notifications(ctx),
+    has_voice: rec.is_some(),
+    voice_result: (e: android.Event): Option[string] => {
+      match (speech.event(e)) {
+        Some(speech.Words(q)) => {
+          return Some(q);
+        },
+        Some(speech.Failed(_)) => {
+          return Some("");
+        },
+        _ => {
+          return None;
+        }
+      }
+    },
+    voice_start: (): boolean => {
+      let Some(r) = rec else {
+        return false;
+      };
+      if (!speech.allowed(ctx)) {
+        speech.ask(ctx);
+        return false;
+      }
+      let started = speech.start(ctx, r, "");
+      if (started) {
+        log.info("plex: requested voice search");
+      }
+      return started;
+    },
+    voice_cancel: (): void => {
+      if let Some(r) = rec {
+        speech.cancel(ctx, r);
+      }
+    },
     show_field: (q: string): void => keyboard.show(ctx, q, android.INPUT_TEXT, android.ACTION_SEARCH),
     set_field: (q: string): void => keyboard.set_text(ctx, q),
     hide_field: (): void => keyboard.hide(ctx),
@@ -704,10 +738,14 @@ function app_main(ctx: usize): usize {
   let gpu = cell_new(none);
   let none_awake: Option[service.Awake] = None;
   let media = Media { session: session.new(ctx, "dev.fern.plex.Controls", "Fern for Plex"), awake: cell_new(none_awake), focus: focus.music(ctx, "dev.fern.plex.Focus") };
-  let first = control.new(device(ctx, ps, gpu, media), android.data_dir(ctx), android.intent_extra(ctx, "server"), android.intent_extra(ctx, "token"), android.intent_extra(ctx, "play"));
+  let rec = speech.new(ctx);
+  let first = control.new(device(rec, ctx, ps, gpu, media), android.data_dir(ctx), android.intent_extra(ctx, "server"), android.intent_extra(ctx, "token"), android.intent_extra(ctx, "play"));
   log.info("plex: started");
   let last = android.run(ctx, first, (own s: control.App, e: android.Event): control.App => control.step(s, e), (s: control.App): i32 => control.timeout(s, mono_ms()));
   control.close(last);
+  if let Some(r) = rec {
+    speech.close(ctx, r);
+  }
   media_end(ctx, media);
   if let Some(s) = media.session {
     session.close(ctx, s);

@@ -198,7 +198,7 @@ function target_checks(target: string): void {
   expect(check(sub, f, assertion), "replace", "scalar call may exit with unproved caller obligations");
   let safe = semlower.driven(parser.parse_module(lexer.tokenize("@noinline\nfunction require(ok: boolean, code: i32): void { return; }\nfunction main(): i32 { require(true,1); return 0; }\n")), target).sub;
   expect(check(sub, f, body(safe, "require")), "replace", "proved checked-capacity consumer invocation");
-  expect(check(sub, ssa.register_form(f).f, body(safe, "require")), "replace", "proved checked-capacity consumer invocation");
+  expect(check(sub, ssa.form(f).f, body(safe, "require")), "replace", "proved checked-capacity consumer invocation");
   controls(sub, f, body(safe, "require"));
   expect(check(sub, unsafe_storage("replace", false), body(safe, "require")), "replace", "storage transfer requires unique parent");
   expect(check(sub, unsafe_storage("replace", true), body(safe, "require")), "replace", "storage transfer requires discharged children");

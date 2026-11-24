@@ -3382,7 +3382,7 @@ function call_host_contract(heap: interpheap.Heap, name: string, args: Value[]):
   if (util.has_str(["proc_waitpid", "proc_waitpid_nohang", "proc_waitpid_status", "proc_wait_any"], name)) {
     return no_child(name);
   }
-  if (util.has_str(["ring_new", "ring_ctl", "ring_wait", "ring_recv", "ring_send_zc", "tcp_ktls", "vsock_connect"], name)) {
+  if (util.has_str(["ring_new", "ring_ctl", "ring_wait", "ring_recv", "ring_send_zc", "tcp_ktls", "vsock_connect", "wasm_name_lookup"], name)) {
     return host_enosys();
   }
   return call_host_stub(name);
@@ -8922,7 +8922,7 @@ function str_hash_word(s: string, at: i32, n: i32): i64 {
 }
 
 function is_sha_blocks_name(name: string): boolean {
-  return name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks" || name == "__sha1x8_hw_blocks";
+  return name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks" || name == "__sha1x8_hw_blocks" || name == "__sha256x8_hw_blocks";
 }
 
 function str_hash_low32(h: i64): i32 {

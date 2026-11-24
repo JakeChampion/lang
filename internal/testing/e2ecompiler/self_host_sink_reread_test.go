@@ -221,3 +221,117 @@ func runRereadProgram(t *testing.T, name, prog string) {
 		}
 	}
 }
+
+// The record is read above a match, and only one arm uses it, across a call
+// and a join. The read moves down into that arm. The plan then takes the
+// record, its array and the element there, and stores each back at the join
+// (#14440). Each Bytes round allocates only its array.
+const sinkToUsesProg = `import "std/array";
+
+enum RBody { Text(string), Bytes(u8[]) }
+struct Resp { status: i32, body: RBody, background: Option[i64] }
+struct Session { buf: u8[], sent: i64 }
+struct Conn { n: i64, date: string, log: u8[], session: Session }
+struct Q { conns: Conn[], k: i32, producers: i64[], name: string }
+struct Conns { quic: Q, date: string, serial: i32, later: i64[] }
+
+function (r: Resp) body_bytes(): u8[] {
+  match (r.body) {
+    Text(s) => { return s.bytes(); },
+    Bytes(b) => { return b; }
+  }
+}
+
+@noinline
+function (c: Conn) with_date(d: string): Conn {
+  if (d == c.date) { return c; }
+  return Conn { ...c, date: d };
+}
+
+function (s: Session) send(bytes: [u8], whole: boolean): Session {
+  let out = s.buf;
+  for b in bytes {
+    out = out.append(b);
+  }
+  if (whole) {
+    return Session { ...s, buf: out, sent: s.sent + 1 };
+  }
+  return Session { ...s, buf: out };
+}
+
+function (c: Conn) __respond_with(id: i64, bytes: [u8]): Conn {
+  let n = bytes.len();
+  if (id < 0) {
+    n = 0;
+  }
+  let sent = Conn { ...c, n: c.n + id + n as i64, session: c.session.send(bytes[0:n], id % 3 == 0) };
+  if (id > 100000) {
+    return sent;
+  }
+  return Conn { ...sent, n: sent.n + 1 };
+}
+
+function respond(c: Conn, id: i64, resp: Resp): Conn {
+  match (resp.body) {
+    Text(s) => { return c.__respond_with(id, s.as_bytes()); },
+    _ => { return c.__respond_with(id, resp.body_bytes()); }
+  }
+}
+
+function stage(own c: Conns, r: Resp): Conns {
+  match (r.background) {
+    Some(w) => {
+      return Conns { ...c, later: c.later.append(w) };
+    },
+    None => {
+      return c;
+    }
+  }
+}
+
+@noinline
+function h3_respond(own c: Conns, i: i32, id: i64, resp: Resp): Conns {
+  if (i < 0) { return c; }
+  let cur = stage(c, resp);
+  let q: Q = cur.quic;
+  match (resp.body) {
+    Bytes(b) => {
+      if (b.len() == 77) {
+        return Conns { ...cur, quic: Q { ...q, conns: q.conns.with(i, q.conns[i].with_date(cur.date)) } };
+      }
+      return Conns { ...cur, quic: Q { ...q, conns: q.conns.with(i, q.conns[i].with_date(cur.date)) } };
+    },
+    _ => {
+      return Conns { ...cur, quic: Q { ...q, conns: q.conns.with(i, respond(q.conns[i].with_date(cur.date), id, resp)) } };
+    }
+  }
+}
+
+function main(): i32 {
+  let conns: Conn[] = [];
+  for i in 0..4 {
+    conns = conns.append(Conn { n: i as i64, date: "", log: [], session: Session { buf: [], sent: 0 } });
+  }
+  let c: Conns = Conns { quic: Q { conns: conns, k: 0, producers: [], name: "q" }, date: "today", serial: 7, later: [] };
+  let before = __heap_alloc_count();
+  for round in 0..1000 {
+    let body: RBody = if (round % 2 == 0) { Text("hello") } else { Bytes([1 as u8, 2 as u8]) };
+    c = h3_respond(c, round % 4, round as i64, Resp { status: 200, body: body, background: None });
+  }
+  let n = __heap_alloc_count() - before;
+  if (c.quic.conns[0].n != 126000 as i64 || c.quic.conns[0].session.buf.len() != 1250) {
+    return 1;
+  }
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  if (n != 1024 as i64) {
+    return 2;
+  }
+  return 0;
+}
+`
+
+func TestSelfHostSinkReadToItsUses(t *testing.T) {
+	runRereadProgram(t, "sink_to_uses.fern", sinkToUsesProg)
+}

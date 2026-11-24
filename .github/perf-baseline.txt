@@ -151,7 +151,7 @@ aarch64/map_int.ir	23251053
 aarch64/map_probe_chain.text	8818
 aarch64/map_probe_chain.ir	220995206
 aarch64/map_string.text	9841
-aarch64/map_string.ir	47549521	2
+aarch64/map_string.ir	46464947	2
 aarch64/ordmap_insert.text	6525
 aarch64/ordmap_insert.ir	82086738
 aarch64/pmap_insert.text	4039
