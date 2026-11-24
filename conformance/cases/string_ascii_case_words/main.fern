@@ -1,0 +1,29 @@
+import "std/string";
+
+// to_ascii_lower and to_ascii_upper change eight bytes in each pass, and
+// then the bytes that are left. Each length from 0 to 19 has a different
+// count of each. The bytes around the letters, and the bytes that are not
+// ASCII, must stay as they are.
+function digest(s: string): i32 {
+  let h = 0;
+  for i in 0..s.len() {
+    h = h * 31 + s[i] as i32 & 16777215;
+  }
+  return h;
+}
+
+function main(): i32 {
+  let text = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\t\n";
+  for cut in 0..20 {
+    let part = text.take(cut) + text.drop(text.len() - cut);
+    print(part.to_ascii_lower() + "|" + part.to_ascii_upper());
+  }
+  print(text.to_ascii_lower());
+  print(text.to_ascii_upper());
+  let wide = "ÀÉîõü Ǆ ß Σ aZ@[`{ Straße ÀB àb";
+  print(wide.to_ascii_lower() + "|" + wide.to_ascii_upper());
+  let long = (text + wide).repeat(7);
+  print(digest(long.to_ascii_lower()).to_string() + " " + digest(long.to_ascii_upper()).to_string() + " " + long.to_ascii_lower().len().to_string());
+  print("[" + "".to_ascii_lower() + "][" + "".to_ascii_upper() + "]");
+  return 0;
+}
