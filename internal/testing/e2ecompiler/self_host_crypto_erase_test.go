@@ -342,22 +342,14 @@ func TestSelfHostPrimitivesEraseKeyMaterial(t *testing.T) {
 					t.Errorf("%s: %d stale copies of key material in the arena after the primitive returned, want 0", mode, got)
 				}
 			}
-			for _, mode := range []string{"chacha-key", "aes-cipher", "des-cipher", "aes-key"} {
+			for _, mode := range []string{"chacha-key", "aes-cipher", "des-cipher", "aes-key", "ed25519-key", "ecdsa-key"} {
 				if got := run(mode); got != 0 {
 					t.Errorf("%s: %d copies of the erased key's secret in the arena, want 0", mode, got)
 				}
 			}
-			for _, mode := range []string{"chacha-key-drop", "aes-cipher-drop", "des-cipher-drop", "p256-key-drop", "mlkem-key-drop", "aes-key-drop"} {
+			for _, mode := range []string{"chacha-key-drop", "aes-cipher-drop", "des-cipher-drop", "p256-key-drop", "mlkem-key-drop", "aes-key-drop", "ed25519-key-drop", "ecdsa-key-drop"} {
 				if got := run(mode); got != 0 {
 					t.Errorf("%s: a dropped @secret key left %d copies of its secret in the arena, want 0", mode, got)
-				}
-			}
-			for _, mode := range []string{"ed25519-key", "ecdsa-key"} {
-				if got := run(mode + "-drop"); got < 1 {
-					t.Fatalf("%s-drop: a dropped key left %d copies of its secret in the arena, want at least 1: the control does not see the dropped key", mode, got)
-				}
-				if got := run(mode); got != 0 {
-					t.Errorf("%s: %d copies of the erased key's secret in the arena, want 0", mode, got)
 				}
 			}
 		})

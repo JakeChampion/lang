@@ -446,6 +446,7 @@ pub function (key: PublicKey) verify(hash: sha2.Hash, msg: [u8], sig: [u8]): boo
 ```fern
 <<13 pub struct PrivateKey>>=
 @value
+@secret
 pub struct PrivateKey { curve: Curve, d: u8[] }
 
 struct Proj { x: i64[], y: i64[], z: i64[] }

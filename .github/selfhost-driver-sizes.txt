@@ -69,16 +69,16 @@ fern.fern/stage2 19644528
 # current compiler's codegen. It replaces the 500 KB target of #12508.
 net/tls_hello 876448
 
-fern.fern 18689488
-drivers/runtime_run.fern 18804400
-drivers/asm_load_run.fern 14326368
-drivers/asm_modload_run.fern 12810048
-drivers/asm_ir_run.fern 12351472
-drivers/asm_run.fern 11212944
-drivers/wasm_ir_run.fern 10438048
-drivers/wasm_run.fern 10447616
-drivers/wasm_runio_run.fern 10425056
+fern.fern 19889248
+drivers/runtime_run.fern 20011200
+drivers/asm_load_run.fern 15134192
+drivers/asm_modload_run.fern 13509584
+drivers/asm_ir_run.fern 13032944
+drivers/asm_run.fern 11827040
+drivers/wasm_ir_run.fern 11047248
+drivers/wasm_run.fern 11057328
+drivers/wasm_runio_run.fern 11017264
 drivers/asm_pathprobe_run.fern 6231168
 drivers/checker_modload_run.fern 4577744
 drivers/checker_codes_run.fern 4272656
-drivers/interp_run.fern 3183008
+drivers/interp_run.fern 3379408
