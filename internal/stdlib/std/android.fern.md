@@ -482,27 +482,26 @@ const KEPT_REPLY: i32 = 2;
 
 // Sets the property `key` to `value`, or clears it when `value` is "".
 function set_property(e: usize, key: string, value: string): void {
-  let class: usize = jni.find_class(e, "java/lang/System");
-  let name: usize = jni.new_string(e, key);
+  let Ok(systems) = bindings.system_class(e) else {
+    return;
+  };
+  defer systems.release(e);
   if (value.len() == 0) {
-    let args: usize = jni.jvalues([name]);
-    let old: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "clearProperty", "(Ljava/lang/String;)Ljava/lang/String;"), args);
-    jni.free_buffer(args);
+    let old = systems.clear_property(e, key);
   } else {
-    let args: usize = jni.jvalues([name, jni.new_string(e, value)]);
-    let old: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "setProperty", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"), args);
-    jni.free_buffer(args);
+    let old = systems.set_property(e, key, value);
   }
-  let cleared: usize = jni.exception_clear(e);
 }
 
 // The number in the property `key`, or 0 when it has none.
 function number_property(e: usize, key: string): usize {
-  let class: usize = jni.find_class(e, "java/lang/System");
-  let args: usize = jni.jvalues([jni.new_string(e, key)]);
-  let got: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "getProperty", "(Ljava/lang/String;)Ljava/lang/String;"), args);
-  jni.free_buffer(args);
-  let text: string = jni.string_of(e, got);
+  let Ok(systems) = bindings.system_class(e) else {
+    return 0 as usize;
+  };
+  defer systems.release(e);
+  let Ok(text) = systems.get_property(e, key) else {
+    return 0 as usize;
+  };
   let v = 0 as usize;
   for c in text.as_bytes() {
     if (c < 48u8 || c > 57u8) {
@@ -800,21 +799,30 @@ function end_frame(e: usize): void {
 
 // The API level of the device.
 function sdk_level(e: usize): i32 {
-  let version = jni.find_class(e, "android/os/Build$VERSION");
-  let level = jni.get_static_int_field(e, version, jni.get_static_field_id(e, version, "SDK_INT", "I"));
-  let dropped: usize = jni.delete_local_ref(e, version);
-  return level;
+  let Ok(versions) = bindings.build_version_class(e) else {
+    return 0;
+  };
+  defer versions.release(e);
+  return match (versions.sdk_int(e)) {
+    Ok(level) => level,
+    Err(_) => 0,
+  };
 }
 
 // A global reference to the Application of the Context `context`, or 0.
 function application_of(e: usize, context: usize): usize {
-  let app: usize = jni.call_object(e, context, "getApplicationContext", "()Landroid/content/Context;", []);
-  if (jni.exception_occurred(e) != 0 as usize || app == 0 as usize) {
-    let cleared: usize = jni.exception_clear(e);
+  let Ok(contexts) = bindings.context_class(e) else {
+    return 0 as usize;
+  };
+  defer contexts.release(e);
+  let Ok(app) = contexts.get_application_context(e, bindings.Context { ref: context }) else {
+    return 0 as usize;
+  };
+  if (app.is_null()) {
     return 0 as usize;
   }
-  let global: usize = jni.new_global_ref(e, app);
-  let local: usize = jni.delete_local_ref(e, app);
+  let global: usize = jni.new_global_ref(e, app.ref);
+  let local: usize = jni.delete_local_ref(e, app.ref);
   return global;
 }
 
