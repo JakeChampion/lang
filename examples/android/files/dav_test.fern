@@ -1,0 +1,79 @@
+// Checks the parts of the WebDAV client that need no server: the address
+// of a path, the path of an href, the XML of a multistatus as servers
+// write it, and the size in a Content-Range.
+import "std/test";
+import "./dav";
+import "./smb";
+
+function all(outcomes: test.TestOutcome[]): test.TestOutcome {
+  for outcome in outcomes {
+    if let test.Fail(_) = outcome {
+      return outcome;
+    }
+  }
+  return test.pass();
+}
+
+function names(es: smb.Entry[]): string {
+  return es.map((e: smb.Entry): string => e.name + (if (e.dir) { "/" } else { ":" + e.size.to_string() }) + "@" + e.modified.to_string()).join(" ");
+}
+
+// The multistatus of the example of RFC 4918, 9.1.3, with a prefix D.
+const RFC: string = "<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n<D:multistatus xmlns:D=\"DAV:\">\n  <D:response>\n    <D:href>http://www.example.com/container/</D:href>\n    <D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>\n  </D:response>\n  <D:response>\n    <D:href>http://www.example.com/container/front.html</D:href>\n    <D:propstat>\n      <D:prop>\n        <D:getcontentlength>4525</D:getcontentlength>\n        <D:getlastmodified>Mon, 12 Jan 1998 09:25:56 GMT</D:getlastmodified>\n        <D:resourcetype/>\n      </D:prop>\n      <D:status>HTTP/1.1 200 OK</D:status>\n    </D:propstat>\n  </D:response>\n</D:multistatus>";
+
+// The way of Nextcloud: a prefix d, paths with no host, an encoded space,
+// an entity, and a property that the server does not have.
+const NEXTCLOUD: string = "<?xml version=\"1.0\"?>\n<d:multistatus xmlns:d=\"DAV:\" xmlns:s=\"http://sabredav.org/ns\" xmlns:oc=\"http://owncloud.org/ns\"><d:response><d:href>/remote.php/dav/files/jo/Photos/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype><d:getlastmodified>Tue, 24 Nov 2026 10:00:00 GMT</d:getlastmodified></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat><d:propstat><d:prop><d:getcontentlength/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat></d:response><d:response><d:href>/remote.php/dav/files/jo/Photos/Summer%20trip/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype><d:getlastmodified>Mon, 23 Nov 2026 08:00:00 GMT</d:getlastmodified></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response><d:response><d:href>/remote.php/dav/files/jo/Photos/Tom%20%26%20Jo.jpg</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>81920</d:getcontentlength><d:getlastmodified>Sun, 22 Nov 2026 07:30:00 GMT</d:getlastmodified></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>";
+
+// The way of Apache mod_dav: the default namespace on each element, and a
+// prefix lp1 for the live properties.
+const APACHE: string = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:multistatus xmlns:D=\"DAV:\" xmlns:ns0=\"DAV:\">\n<D:response xmlns:lp1=\"DAV:\" xmlns:lp2=\"http://apache.org/dav/props/\">\n<D:href>/dav/</D:href>\n<D:propstat><D:prop><lp1:resourcetype><D:collection/></lp1:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>\n</D:response>\n<D:response xmlns:lp1=\"DAV:\" xmlns:lp2=\"http://apache.org/dav/props/\">\n<D:href>/dav/notes&amp;todo.txt</D:href>\n<D:propstat><D:prop><lp1:resourcetype/><lp1:getcontentlength>12</lp1:getcontentlength><lp1:getlastmodified>Tue, 24 Nov 2026 10:00:00 GMT</lp1:getlastmodified></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>\n</D:response>\n</D:multistatus>";
+
+function test_rfc(): test.TestOutcome {
+  return test.assert_eq(names(dav.entries(RFC, "/container")), "front.html:4525@884597156");
+}
+
+function test_nextcloud(): test.TestOutcome {
+  return test.assert_eq(names(dav.entries(NEXTCLOUD, "/remote.php/dav/files/jo/Photos/")), "Summer trip/@1795420800 Tom & Jo.jpg:81920@1795332600");
+}
+
+function test_apache(): test.TestOutcome {
+  return test.assert_eq(names(dav.entries(APACHE, "/dav")), "notes&todo.txt:12@1795514400");
+}
+
+function test_text_of_a_reply_that_is_not_xml(): test.TestOutcome {
+  return test.assert_eq(dav.entries("<html><body>Login</body></html>", "/").len(), 0);
+}
+
+function test_addresses(): test.TestOutcome {
+  let s = dav.Server { url: "https://nas.local:5006/home/", user: "jo", password: "pw" };
+  return all([
+    test.assert_eq(dav.address(s, ""), "https://nas.local:5006/home/"),
+    test.assert_eq(dav.address(s, "Films/a b&c.mkv"), "https://nas.local:5006/home/Films/a%20b%26c.mkv"),
+    test.assert_eq(dav.address(s, "/Films//x/"), "https://nas.local:5006/home/Films/x"),
+    test.assert_eq(dav.path_part("https://nas.local:5006/home/Films/a%20b%26c.mkv"), "/home/Films/a b&c.mkv"),
+    test.assert_eq(dav.path_part("/remote.php/dav/files/jo/"), "/remote.php/dav/files/jo"),
+    test.assert_eq(dav.path_part("http://host"), "/"),
+  ]);
+}
+
+function test_entities_and_ranges(): test.TestOutcome {
+  return all([
+    test.assert_eq(dav.decoded("a &amp; b &lt;c&gt; &#233;&#xE9; &bogus; &"), "a & b <c> éé &bogus; &"),
+    test.assert_eq(dav.total_of("bytes 0-99/1234").unwrap_or(-1i64), 1234i64),
+    test.assert_eq(dav.total_of("bytes */77").unwrap_or(-1i64), 77i64),
+    test.assert_eq(dav.total_of("bytes 0-99/*").is_none(), true),
+    test.assert_eq(dav.status_text(401), "The server refused the user or the password."),
+  ]);
+}
+
+function main(): i32 {
+  let r = test.new("WebDAV of Fern Files");
+  r = r.it("a multistatus of RFC 4918 gives the file and not the folder", test_rfc);
+  r = r.it("a multistatus of Nextcloud gives the folder and the file", test_nextcloud);
+  r = r.it("a multistatus of Apache gives the file with its entity", test_apache);
+  r = r.it("a reply that is not a multistatus gives no entry", test_text_of_a_reply_that_is_not_xml);
+  r = r.it("the address of a path and the path of an href", test_addresses);
+  r = r.it("entities and the sizes of ranges", test_entities_and_ranges);
+  return r.finish();
+}

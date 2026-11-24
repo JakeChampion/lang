@@ -9,27 +9,24 @@ import (
 // The walk of checkOwnedParams follows an assignment of the owner. Shadowed
 // bindings need a separate flow proof.
 //
-// The third result has each local that is not a callback but holds one, such
-// as a record with a callback field. The fourth result names each binding
-// with one definition that such a local uses.
-func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) (map[string][]ast.Param, map[ast.Expr][]ast.Param, map[string][]ast.Param, map[string]bool) {
+// The third result has each local that is not a callback but holds a loan:
+// a record with a callback field, or a local that reads a resource of its
+// lender. The fourth result names each binding with one definition that such
+// a local uses.
+func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) (map[string][]ast.Param, map[ast.Expr][]ast.Param, map[string][]callbackLoan, map[string]bool) {
 	c.computeCallbackFactories()
 	names, values, held, heldOwners := c.callbackCaptureFacts(fn, false)
 	out := map[string][]ast.Param{}
 	inline := map[ast.Expr][]ast.Param{}
-	holders := map[string][]ast.Param{}
 	for name, loans := range names {
 		out[name] = callbackLoanParams(loans)
-	}
-	for name, loans := range held {
-		holders[name] = callbackLoanParams(loans)
 	}
 	for value, loans := range values {
 		if c.callbackValues[value] {
 			inline[value] = callbackLoanParams(loans)
 		}
 	}
-	return out, inline, holders, heldOwners
+	return out, inline, held, heldOwners
 }
 
 // A factory summary names the inputs retained by its returned callback.
@@ -165,7 +162,7 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 		return true
 	})
 	var resolve func(string, map[string]bool) []callbackLoan
-	var valueCaptures func(ast.Expr, map[string]bool) []callbackLoan
+	var valueCaptures, environmentLoans func(ast.Expr, map[string]bool) []callbackLoan
 	memo := map[string][]callbackLoan{}
 	cyclic := map[string]bool{}
 	captures := func(value *ast.Lambda, active map[string]bool) []callbackLoan {
@@ -187,7 +184,54 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 		}
 		return out
 	}
+	// A binding that is not plain value data lends itself to each value that
+	// reads it. A factory summary has the loans of callbacks only.
+	lender := func(id *ast.Ident) []callbackLoan {
+		if summarize || !id.Local || id.Builtin || len(definitions[id.Name]) != 1 {
+			return nil
+		}
+		t := c.localUseTypes[id]
+		if _, callback := t.(*ast.FuncType); callback || t == nil || c.copyableCallResult(t) {
+			return nil
+		}
+		return []callbackLoan{{param: ast.Param{Name: id.Name, Type: t}, direct: true, lent: true}}
+	}
+	// The receiver and the borrowed arguments of a declared method lend to
+	// its result.
+	methodLoans := func(v *ast.Call, active map[string]bool) []callbackLoan {
+		id, named := v.Callee.(*ast.Ident)
+		if summarize || v.Method == nil || v.IsVariantCall || !named || !c.resultAnalysed[id.Name] || !c.resultBorrows[id.Name] {
+			return nil
+		}
+		var out []callbackLoan
+		flags := c.ownFlagsOf(v)
+		for i, arg := range v.Args {
+			if i < len(flags) && flags[i] {
+				continue
+			}
+			for _, loan := range widenCallbackLoans(valueCaptures(arg, active)) {
+				if loan.lent {
+					out = mergeCallbackLoans(out, []callbackLoan{loan})
+				}
+			}
+		}
+		return out
+	}
 	valueCaptures = func(value ast.Expr, active map[string]bool) []callbackLoan {
+		switch v := value.(type) {
+		case *ast.Ident:
+			return mergeCallbackLoans(resolve(v.Name, active), lender(v))
+		case *ast.Call:
+			return mergeCallbackLoans(environmentLoans(v, active), methodLoans(v, active))
+		case *ast.FieldAccess, *ast.Index:
+			// A part of plain value data is a copy, which has no lender.
+			if t := c.placeType(value); t != nil && c.copyableCallResult(t) {
+				return captureLoans(environmentLoans(value, active))
+			}
+		}
+		return environmentLoans(value, active)
+	}
+	environmentLoans = func(value ast.Expr, active map[string]bool) []callbackLoan {
 		switch v := value.(type) {
 		case *ast.Ident:
 			return resolve(v.Name, active)
@@ -260,10 +304,10 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 				if !c.callbackResultCalls[v] {
 					return nil
 				}
-				out := flattenCallbackLoans(valueCaptures(v.Callee, active))
+				out := flattenCallbackLoans(captureLoans(valueCaptures(v.Callee, active)))
 				flags := c.callOwnFlags[v]
 				for i, arg := range v.Args {
-					out = mergeCallbackLoans(out, flattenCallbackLoans(valueCaptures(arg, active)))
+					out = mergeCallbackLoans(out, flattenCallbackLoans(captureLoans(valueCaptures(arg, active))))
 					if input, ok := arg.(*ast.Ident); ok && input.Local && (i >= len(flags) || !flags[i]) && !c.copyableCallResult(bindingTypes[input.Name]) {
 						out = mergeCallbackLoans(out, []callbackLoan{{param: ast.Param{Name: input.Name, Type: bindingTypes[input.Name]}, direct: true}})
 					}
@@ -291,7 +335,7 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 					arg := v.Args[i]
 					if !source.direct {
 						if !known {
-							inherited = valueCaptures(arg, active)
+							inherited = captureLoans(valueCaptures(arg, active))
 							known = true
 						}
 						selected := selectCallbackLoans(inherited, source.path)
@@ -341,6 +385,9 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 		active[name] = true
 		defer delete(active, name)
 		loans := valueCaptures(values[0], active)
+		if t := bindingTypes[name]; t != nil && c.copyableCallResult(t) {
+			loans = captureLoans(loans)
+		}
 		if binders[name] {
 			loans = widenCallbackLoans(loans)
 		}

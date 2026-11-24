@@ -18,49 +18,24 @@ pub function volume(ctx: usize, stream: i32): void {
   android.volume_stream(ctx, stream);
 }
 `
-	const check = `#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <dlfcn.h>
-
-static int live, calls, expected;
-static void require(int ok) { if (!ok) { fprintf(stderr, "JNI contract: live=%d calls=%d\n", live, calls); exit(1); } }
-static uintptr_t get_class(uintptr_t env, uintptr_t obj) {
-  require(obj == 1234 && live == 0);
-  live++;
-  return 5678;
-}
-static uintptr_t method(uintptr_t env, uintptr_t cls, const char *name, const char *sig) {
-  require(cls == 5678 && live == 1 && !strcmp(name, "setVolumeControlStream") && !strcmp(sig, "(I)V"));
-  return 9012;
-}
-static void call(uintptr_t env, uintptr_t obj, uintptr_t id, const uint64_t *args) {
-  require(obj == 1234 && id == 9012 && live == 1 && (int32_t)args[0] == expected);
+	const check = androidBindingsMock + `
+static int calls, expected;
+static void set_stream(uintptr_t obj, const char *name, const uintptr_t *args) {
+  assert(obj == ACTIVITY && !strcmp(name, "setVolumeControlStream") && (int)args[0] == expected);
   calls++;
-}
-static void release(uintptr_t env, uintptr_t cls) {
-  require(cls == 5678 && live == 1);
-  live--;
 }
 int main(int argc, char **argv) {
   void *lib = dlopen(argv[1], RTLD_NOW);
-  if (!lib) { fprintf(stderr, "%s\n", dlerror()); return 2; }
+  assert(lib);
   void (*volume)(uintptr_t, int32_t) = dlsym(lib, "volume");
-  require(volume != NULL);
-  uintptr_t table[64] = {0}, activity[8] = {0}, ctx[8] = {0};
-  table[31] = (uintptr_t)get_class;
-  table[33] = (uintptr_t)method;
-  table[63] = (uintptr_t)call;
-  table[23] = (uintptr_t)release;
-  uintptr_t env = (uintptr_t)table;
-  activity[3] = 1234;
-  ctx[2] = (uintptr_t)activity;
-  ctx[4] = (uintptr_t)&env;
+  assert(volume);
+  uintptr_t ctx = mock_ctx();
+  on_void = set_stream;
   for (int i = 0; i < 12; i++) {
     expected = 3 + i % 3;
-    volume((uintptr_t)ctx, expected);
-    require(live == 0 && calls == i + 1);
+    volume(ctx, expected);
+    clean();
+    assert(calls == i + 1);
   }
   return 0;
 }

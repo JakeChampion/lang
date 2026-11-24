@@ -19710,7 +19710,8 @@ struct OwnReturns { synthetic: boolean, moved: MovedEntry[] }
 // loan covers its whole source.
 struct OclDef { name: string, value: ast.Expr, spelling: string, binder: boolean }
 
-struct OclCapture { name: string, type_name: string, result: string, source: string, direct: boolean, wide: boolean }
+// lent marks the loan of a local that reads its lender, not a capture.
+struct OclCapture { name: string, type_name: string, result: string, source: string, direct: boolean, wide: boolean, lent: boolean }
 
 struct OclFactories { names: util.NameIndex, funcs: parser.FuncDecl[], rows: OclCapture[][], decls: OwnDecls }
 
@@ -19718,7 +19719,7 @@ struct OclFactoryCache { known: boolean, factories: OclFactories }
 
 struct OclFactoryState { cache: Cell[OclFactoryCache], mod: parser.Module, env: ModuleEnv }
 
-struct OclFacts { names: util.NameIndex, rows: OclCapture[][], factories: OclFactories, inlines: OclCapture[], types: string[], tparams: string[], summary: boolean }
+struct OclFacts { names: util.NameIndex, rows: OclCapture[][], factories: OclFactories, inlines: OclCapture[], types: string[], tparams: string[], summary: boolean, methods: Option[OwnLenders] }
 
 struct OclInlineFacts { facts: OclFacts, captures: OclCapture[] }
 
@@ -19806,11 +19807,68 @@ function ocl_merge(into: OclCapture[], from: OclCapture[]): OclCapture[] {
 }
 
 function ocl_same(a: OclCapture, b: OclCapture): boolean {
-  return a.name == b.name && a.result == b.result && a.source == b.source && a.direct == b.direct && a.wide == b.wide;
+  return a.name == b.name && a.result == b.result && a.source == b.source && a.direct == b.direct && a.wide == b.wide && a.lent == b.lent;
 }
 
 function ocl_capture(name: string, ty: string, direct: boolean): OclCapture {
-  return OclCapture { name: name, type_name: ty, result: "", source: "", direct: direct, wide: false };
+  return OclCapture { name: name, type_name: ty, result: "", source: "", direct: direct, wide: false, lent: false };
+}
+
+// The loans that a callback environment holds, without the loans of lenders.
+function ocl_environment(loans: OclCapture[]): OclCapture[] {
+  let out: OclCapture[] = [];
+  for loan in loans {
+    if (!loan.lent) {
+      out = out.append(loan);
+    }
+  }
+  return out;
+}
+
+// A binding that is not plain value data lends itself to each value that
+// reads it. A factory summary has the loans of callbacks only.
+function ocl_lender(id: ast.ExprIdent, facts: OclFacts): OclCapture[] {
+  if (facts.summary || id.builtin || id.ty.len() == 0 || facts.names.find(id.name) < 0 || !ocl_unique(facts.names, id.name)) {
+    return [];
+  }
+  if (id.ty == "fn" || parser.ref_is_fn_value(parser.parse_type_ref(id.ty)) || ocl_plain(id.ty, facts)) {
+    return [];
+  }
+  return [OclCapture { ...ocl_capture(id.name, id.ty, true), lent: true }];
+}
+
+// The receiver and the borrowed arguments of a declared method lend to its
+// result.
+function ocl_method_loans(call: ast.ExprCall, facts: OclFacts): OclCapture[] {
+  let Some(lenders) = facts.methods else {
+    return [];
+  };
+  let ast.ExprFieldAccess(fa) = call.callee else {
+    return [];
+  };
+  let out: OclCapture[] = [];
+  for method in lenders.methods {
+    if (lu_matches_method(method, fa) && !util.has_str(lenders.fresh_methods, method.receiver + "." + method.name)) {
+      if (lu_lends(method, 0)) {
+        out = ocl_lent_loans(out, fa.obj, facts);
+      }
+      for i in 0..call.args.len() {
+        if (lu_lends(method, i + 1)) {
+          out = ocl_lent_loans(out, call.args[i], facts);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function ocl_lent_loans(own out: OclCapture[], value: ast.Expr, facts: OclFacts): OclCapture[] {
+  for loan in ocl_widen(ocl_value(value, facts)) {
+    if (loan.lent) {
+      out = ocl_merge(out, [loan]);
+    }
+  }
+  return out;
 }
 
 function ocl_prefix(part: string, loans: OclCapture[]): OclCapture[] {
@@ -20006,7 +20064,7 @@ function ocl_lambda(lm: ast.ExprLambda, facts: OclFacts): OclCapture[] {
 function ocl_value(value: ast.Expr, facts: OclFacts): OclCapture[] {
   match (value) {
     ast.ExprIdent(id) => {
-      return ocl_lookup(facts, id.name);
+      return ocl_merge(ocl_lookup(facts, id.name), ocl_lender(id, facts));
     },
     ast.ExprLambda(lm) => {
       return ocl_lambda(lm, facts);
@@ -20069,6 +20127,10 @@ function ocl_call(call: ast.ExprCall, facts: OclFacts): OclCapture[] {
   if (ocl_plain(call.ty, facts)) {
     return [];
   }
+  return ocl_merge(ocl_call_environment(call, facts), ocl_method_loans(call, facts));
+}
+
+function ocl_call_environment(call: ast.ExprCall, facts: OclFacts): OclCapture[] {
   if (ocl_variant(call.callee, facts)) {
     let out: OclCapture[] = [];
     for arg in call.args {
@@ -20142,7 +20204,7 @@ function ocl_variant(callee: ast.Expr, facts: OclFacts): boolean {
 function ocl_argument_loans(arg: ast.Expr, param: ast.ParamDecl, sources: OclCapture[], facts: OclFacts): OclCapture[] {
   for source in sources {
     if (source.name == param.name && !source.direct) {
-      return ocl_value(arg, facts);
+      return ocl_environment(ocl_value(arg, facts));
     }
   }
   return [];
@@ -20302,9 +20364,9 @@ function ocl_dynamic_call(c: ast.ExprCall, facts: OclFacts): OclCapture[] {
   if (!ocl_callback_result(c, ref, facts)) {
     return [];
   }
-  let out = ocl_flatten(ocl_value(c.callee, facts));
+  let out = ocl_flatten(ocl_environment(ocl_value(c.callee, facts)));
   for i in 0..c.args.len() {
-    out = ocl_merge(out, ocl_flatten(ocl_value(c.args[i], facts)));
+    out = ocl_merge(out, ocl_flatten(ocl_environment(ocl_value(c.args[i], facts))));
     let owned = ref.is_fn && i + 1 < ref.args.len() && parser.ref_is_own(ref.args[i]);
     if (!owned) {
       if let ast.ExprIdent(arg) = c.args[i] {
@@ -20344,7 +20406,7 @@ function ocl_factories(mod: parser.Module, env: ModuleEnv, dx: OwnDecls): OclFac
         continue;
       }
       stale = stale.with(i, false);
-      let facts = ocl_facts(funcs[i], factories, true);
+      let facts = ocl_facts(funcs[i], factories, true, None);
       let sources = ocl_factory_sources(funcs[i], facts, factories.rows[i]);
       if (sources.len() > factories.rows[i].len()) {
         factories = OclFactories { ...factories, rows: factories.rows.with(i, sources) };
@@ -20524,7 +20586,7 @@ function ocl_block(c: ast.ExprCall, facts: OclFacts): OclCapture[] {
   return out;
 }
 
-function ocl_facts(fn: parser.FuncDecl, factories: OclFactories, summarize: boolean): OclFacts {
+function ocl_facts(fn: parser.FuncDecl, factories: OclFactories, summarize: boolean, methods: Option[OwnLenders]): OclFacts {
   let defs: OclDef[] = [];
   for param in fn.params {
     defs = defs.append(ocl_param(param));
@@ -20540,7 +20602,13 @@ function ocl_facts(fn: parser.FuncDecl, factories: OclFactories, summarize: bool
     rows = rows.append([]);
     types = types.append(def.spelling);
   }
-  let facts = OclFacts { names: util.name_index(names), rows: rows, factories: factories, inlines: [], types: types, tparams: ocl_type_params(fn), summary: summarize };
+  let facts = OclFacts { names: util.name_index(names), rows: rows, factories: factories, inlines: [], types: types, tparams: ocl_type_params(fn), summary: summarize, methods: methods };
+  // A local of plain value data is a copy, which has no lender.
+  let copies: boolean[] = [];
+  for def in defs {
+    let spelling = if (def.spelling.len() > 0) { def.spelling } else { ast.expr_ty(def.value) };
+    copies = copies.append(!summarize && !def.binder && ocl_plain(spelling, facts));
+  }
   if (summarize) {
     facts = ocl_seed_params(fn, facts);
   }
@@ -20550,6 +20618,9 @@ function ocl_facts(fn: parser.FuncDecl, factories: OclFactories, summarize: bool
     for i in 0..defs.len() {
       if (ocl_unique(facts.names, defs[i].name)) {
         let loans = ocl_value(defs[i].value, facts);
+        if (copies[i]) {
+          loans = ocl_environment(loans);
+        }
         if (defs[i].binder) {
           loans = ocl_widen(loans);
         }
@@ -20599,7 +20670,7 @@ function ocl_inline_captures(e: ast.Expr, own state: OclInlineFacts): OclInlineF
   if (!ocl_callback_value(e, state.facts)) {
     return state;
   }
-  return OclInlineFacts { ...state, captures: ocl_merge(state.captures, ocl_value(e, state.facts)) };
+  return OclInlineFacts { ...state, captures: ocl_merge(state.captures, ocl_environment(ocl_value(e, state.facts))) };
 }
 
 function ocl_callback_type(spelling: string, tparams: string[]): boolean {
@@ -20638,11 +20709,11 @@ function ow_callback_facts(ctx: OwnCtx): OclFacts {
     ctx.factories.cache.set(state);
   }
   if (!lu.captures_known) {
-    let facts = ocl_facts(annotate_func(lu.fn, ctx.factories.env), state.factories, false);
+    let facts = ocl_facts(annotate_func(lu.fn, ctx.factories.env), state.factories, false, Some(lu.lenders));
     lu = LastUses { ...lu, captures_known: true, capture_names: facts.names, capture_rows: facts.rows, capture_inlines: facts.inlines, capture_types: facts.types, capture_tparams: facts.tparams };
     ctx.last_use.set(lu);
   }
-  return OclFacts { names: lu.capture_names, rows: lu.capture_rows, factories: state.factories, inlines: lu.capture_inlines, types: lu.capture_types, tparams: lu.capture_tparams, summary: false };
+  return OclFacts { names: lu.capture_names, rows: lu.capture_rows, factories: state.factories, inlines: lu.capture_inlines, types: lu.capture_types, tparams: lu.capture_tparams, summary: false, methods: None };
 }
 
 function ow_local_capture_owner(name: string, ctx: OwnCtx): boolean {
@@ -20655,9 +20726,10 @@ function ow_local_capture_owner(name: string, ctx: OwnCtx): boolean {
   // A local that holds a callback makes an owner of a binding with one definition only.
   let single = ocl_unique(facts.names, name);
   for i in 0..facts.rows.len() {
-    if (single || ocl_callback_type(facts.types[i], facts.tparams)) {
+    let callback = ocl_callback_type(facts.types[i], facts.tparams);
+    if (single || callback) {
       for capture in facts.rows[i] {
-        if (capture.name == name && !ow_cached_value_data(capture.type_name, ctx.decls, ctx.value_proofs)) {
+        if (capture.name == name && !(callback && capture.lent) && !ow_cached_value_data(capture.type_name, ctx.decls, ctx.value_proofs)) {
           return true;
         }
       }
@@ -20679,7 +20751,13 @@ function ow_capture_diags(value: ast.Expr, moved: MovedEntry[], ctx: OwnCtx, hol
   let ty = check_expr(value, ctx.scope);
   let spelling = typeinfo.spelling(ty);
   let callback = parser.ref_is_fn_value(parser.parse_type_ref(spelling)) || util.has_str(ctx.scope.tparams, spelling);
-  if (!callback && (!holder || ow_cached_value_data(spelling, ctx.decls, ctx.value_proofs) || !ow_local_holder(value, ctx))) {
+  if (!callback && !holder) {
+    if let ast.ExprIdent(id) = value {
+      return ow_lent_diags(id, spelling, moved, ctx);
+    }
+    return [];
+  }
+  if (!callback && (ow_cached_value_data(spelling, ctx.decls, ctx.value_proofs) || !ow_local_holder(value, ctx))) {
     return [];
   }
   let name = "lambda";
@@ -20706,9 +20784,9 @@ function ow_capture_diags(value: ast.Expr, moved: MovedEntry[], ctx: OwnCtx, hol
     if (!ow_moved_has(moved, key) && holder.len() > 0) {
       key = ow_stale_loan(holder, capture.name);
     }
-    if (ow_moved_has(moved, key) && !ow_cached_value_data(capture.type_name, ctx.decls, ctx.value_proofs)) {
-      let what = if (callback) { "callback \"" + name + "\" uses" } else { "\"" + name + "\" holds a callback that uses" };
-      out = out.append(ow_moved_diag(what + " captured owned parameter \"" + capture.name + "\" after it was consumed", expr_line(value), expr_col(value), moved, key, "moved here"));
+    if (!capture.lent && ow_moved_has(moved, key) && !ow_cached_value_data(capture.type_name, ctx.decls, ctx.value_proofs)) {
+      let who = if (holder.len() > 0) { "\"" + name + "\"" } else { "the callback" };
+      out = out.append(ow_moved_diag(ow_loan_message(who, capture.name), expr_line(value), expr_col(value), moved, key, "moved here"));
     }
   }
   return out;
@@ -20731,7 +20809,7 @@ function ow_keep_stale_loans(moved: MovedEntry[], owner: string, line: i32, col:
     let holder = facts.names.names[i];
     if (ocl_unique(facts.names, holder) && ow_declared_before(decls, holder, line, col)) {
       for capture in facts.rows[i] {
-        if (capture.name == owner) {
+        if (capture.name == owner && !(capture.lent && ocl_callback_type(facts.types[i], facts.tparams))) {
           out = ow_moved_add(out, ow_stale_loan(holder, owner), ow_moved_line(moved, owner), ow_moved_col(moved, owner));
         }
       }
@@ -20803,7 +20881,267 @@ function lu_has(ctx: OwnCtx, key: string): boolean {
   return lu.keys.has(key);
 }
 
-struct OwnCtx { factories: OclFactoryState, result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: util.NameIndex, scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[], sends: string[] }
+struct OwnCtx { factories: OclFactoryState, result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: util.NameIndex, scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[], sends: string[], lends: Cell[OwnLends] }
+
+// The state of the loans of locals for one function. Each row has a position
+// of a consume. takers names a local that took the consumed value.
+// in_flight has the consumes by the arguments of a call that has not started.
+// init_consumes names the local whose initializer contains the consume.
+struct OwnLends { takers: MovedEntry[], in_flight: MovedEntry[], init_consumes: MovedEntry[] }
+
+function ow_fresh_lends(): Cell[OwnLends] {
+  let none: MovedEntry[] = [];
+  return cell_new(OwnLends { takers: none, in_flight: none, init_consumes: none });
+}
+
+// The name of the taker that a for-each loop is. No statement consumes it.
+const OW_LOOP_TAKER: string = "__foreach_iter";
+
+function ow_pos_has(rows: MovedEntry[], name: string, line: i32, col: i32): boolean {
+  for row in rows {
+    if (row.mline == line && row.mcol == col && (name.len() == 0 || row.mname == name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function ow_moved_entry(m: MovedEntry[], name: string): Option[MovedEntry] {
+  for elem in m {
+    if (elem.mname == name) {
+      return Some(elem);
+    }
+  }
+  return None;
+}
+
+function ow_is_taker(ctx: OwnCtx, name: string): boolean {
+  for row in ctx.lends.get().takers {
+    if (row.mname == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// A consumed taker that no callback uses is in moved under this key, so that
+// only the loans of its lenders read it.
+function ow_taker_key(name: string, ctx: OwnCtx): string {
+  if (ow_is_owned(ctx, name) || ow_local_capture_owner(name, ctx)) {
+    return name;
+  }
+  return "~" + name;
+}
+
+function ow_add_taker(ctx: OwnCtx, name: string, line: i32, col: i32): void {
+  let lends = ctx.lends.get();
+  if (!ow_pos_has(lends.takers, name, line, col)) {
+    ctx.lends.set(OwnLends { ...lends, takers: lends.takers.append(MovedEntry { mname: name, mline: line, mcol: col }) });
+  }
+}
+
+// The consume that ends the value that holder borrows, from the consume at
+// `at`. A local that took the value keeps it until its own consume.
+function ow_lender_end(moved: MovedEntry[], holder: string, at: MovedEntry, ctx: OwnCtx, depth: i32): Option[MovedEntry] {
+  let takers = ctx.lends.get().takers;
+  let taken = false;
+  for row in takers {
+    if (row.mline == at.mline && row.mcol == at.mcol) {
+      taken = true;
+      if (row.mname == holder) {
+        return None;
+      }
+    }
+  }
+  if (!taken) {
+    return Some(at);
+  }
+  if (depth > takers.len()) {
+    return None;
+  }
+  for row in takers {
+    if (row.mline == at.mline && row.mcol == at.mcol) {
+      if let Some(next) = ow_moved_entry(moved, ow_taker_key(row.mname, ctx)) {
+        if let Some(end) = ow_lender_end(moved, holder, next, ctx, depth + 1) {
+          return Some(end);
+        }
+      }
+    }
+  }
+  return None;
+}
+
+// The consumed field of the lender that the loan covers: the field that the
+// loan names, or the first consumed field when the loan has the whole lender.
+function ow_lent_path_end(moved: MovedEntry[], loan: OclCapture): Option[MovedEntry] {
+  let head = callbackpaths.path_head(loan.source);
+  if (!loan.wide && head.starts_with("f:")) {
+    return ow_moved_entry(moved, loan.name + "." + slice_unchecked(head, 2, head.len()).to_owned());
+  }
+  if (!loan.wide && head.len() > 0) {
+    return None;
+  }
+  let prefix = loan.name + ".";
+  let first: Option[MovedEntry] = None;
+  for elem in moved {
+    if (elem.mname.starts_with(prefix)) {
+      let earlier = match (first) { Some(f) => elem.mline < f.mline || elem.mline == f.mline && elem.mcol < f.mcol, None => true };
+      if (earlier) {
+        first = Some(elem);
+      }
+    }
+  }
+  return first;
+}
+
+function ow_loan_message(who: string, lender: string): string {
+  return who + " borrows from \"" + lender + "\", and is used after \"" + lender + "\" was consumed";
+}
+
+// A local that is not plain value data keeps a loan of each lender that its
+// value reads. A use of the local after the consume of a lender is E050.
+function ow_lent_diags(id: ast.ExprIdent, spelling: string, moved: MovedEntry[], ctx: OwnCtx): util.Diag[] {
+  if (id.builtin || ow_is_owned(ctx, id.name) || !ctx.bound.has(id.name) || ow_cached_value_data(spelling, ctx.decls, ctx.value_proofs)) {
+    return [];
+  }
+  let lends = ctx.lends.get();
+  let reported: string[] = [];
+  let out: util.Diag[] = [];
+  for loan in ocl_lookup(ow_callback_facts(ctx), id.name) {
+    if (!loan.lent || util.has_str(reported, loan.name)) {
+      continue;
+    }
+    let key = loan.name;
+    if (!ow_moved_has(moved, key)) {
+      key = ow_stale_loan(id.name, loan.name);
+    }
+    let end: Option[MovedEntry] = None;
+    if let Some(at) = ow_moved_entry(moved, key) {
+      end = ow_lender_end(moved, id.name, at, ctx, 0);
+    }
+    if (end.is_none()) {
+      end = ow_lent_path_end(moved, loan);
+    }
+    if let Some(at) = end {
+      if (!ow_pos_has(lends.in_flight, "", at.mline, at.mcol) && !ow_pos_has(lends.init_consumes, id.name, at.mline, at.mcol)) {
+        reported = reported.append(loan.name);
+        out = out.append(ow_moved_diag(ow_loan_message("\"" + id.name + "\"", loan.name), id.line, id.col, [MovedEntry { ...at, mname: loan.name }], loan.name, "moved here"));
+      }
+    }
+  }
+  return out;
+}
+
+// The names that value can move into the local that it initializes: the
+// value, a part of a literal, or the result of a branch.
+function ow_moved_operands(value: ast.Expr, ctx: OwnCtx, own out: ast.ExprIdent[]): ast.ExprIdent[] {
+  if let ast.ExprIdent(id) = value {
+    return out.append(id);
+  }
+  for part in ow_moved_parts(value, ctx) {
+    out = ow_moved_operands(part, ctx, out);
+  }
+  return out;
+}
+
+function ow_moved_parts(value: ast.Expr, ctx: OwnCtx): ast.Expr[] {
+  if let ast.ExprStructLit(sl) = value {
+    return sl.field_values;
+  }
+  if let ast.ExprTuple(t) = value {
+    return t.elements;
+  }
+  if let ast.ExprArray(a) = value {
+    return a.elements;
+  }
+  let values: ast.Expr[] = [];
+  if let ast.ExprCall(c) = value {
+    if (ow_nested_variant(c.callee, ctx)) {
+      return c.args;
+    }
+    if let ast.ExprLambda(lm) = c.callee {
+      if (parser.is_value_block(c)) {
+        for st in lm.body {
+          values = astwalk.fold_stmt_nodes(st, values, ocl_return_value, ocl_keep_values, not_lambda);
+        }
+      }
+    }
+  }
+  return values;
+}
+
+// take records each lender that the initializer of the local moves into it.
+// A consume in the initializer does not come after the local.
+function ow_take(name: string, init: ast.Expr, before: MovedEntry[], after: MovedEntry[], ctx: OwnCtx): void {
+  let fresh: MovedEntry[] = [];
+  for elem in after {
+    let was = false;
+    for b in before {
+      was = was || b.mname == elem.mname && b.mline == elem.mline && b.mcol == elem.mcol;
+    }
+    if (!was) {
+      fresh = fresh.append(MovedEntry { ...elem, mname: name });
+    }
+  }
+  if (fresh.len() == 0) {
+    return;
+  }
+  let lends = ctx.lends.get();
+  ctx.lends.set(OwnLends { ...lends, init_consumes: lends.init_consumes.concat(fresh) });
+  for id in ow_moved_operands(init, ctx, []) {
+    if (ow_pos_has(after, id.name, id.line, id.col)) {
+      ow_add_taker(ctx, name, id.line, id.col);
+    }
+  }
+}
+
+// retake ends the loans of the value that a consumed taker held: the taker
+// gets a new value, which is not the value of its lenders.
+function ow_retake(name: string, moved: MovedEntry[], ctx: OwnCtx): MovedEntry[] {
+  let takers = ctx.lends.get().takers;
+  if (takers.len() == 0 || !ow_is_taker(ctx, name)) {
+    return moved;
+  }
+  let Some(at) = ow_moved_entry(moved, ow_taker_key(name, ctx)) else {
+    return moved;
+  };
+  let out: MovedEntry[] = [];
+  for elem in moved {
+    if (ow_pos_has(takers, name, elem.mline, elem.mcol)) {
+      out = out.append(MovedEntry { ...elem, mline: at.mline, mcol: at.mcol });
+    } else {
+      out = out.append(elem);
+    }
+  }
+  return out;
+}
+
+// The consumes of the arguments of a call are in flight until the call starts.
+function ow_mark_in_flight(before: MovedEntry[], after: MovedEntry[], ctx: OwnCtx): void {
+  let lends = ctx.lends.get();
+  let flight = lends.in_flight;
+  let grew = false;
+  for elem in after {
+    let was = false;
+    for b in before {
+      was = was || b.mname == elem.mname && b.mline == elem.mline && b.mcol == elem.mcol;
+    }
+    if (!was && !ow_pos_has(flight, "", elem.mline, elem.mcol)) {
+      flight = flight.append(MovedEntry { ...elem, mname: "" });
+      grew = true;
+    }
+  }
+  if (grew) {
+    ctx.lends.set(OwnLends { ...lends, in_flight: flight });
+  }
+}
+
+function ow_end_in_flight(depth: i32, ctx: OwnCtx): void {
+  let lends = ctx.lends.get();
+  if (lends.in_flight.len() > depth) {
+    ctx.lends.set(OwnLends { ...lends, in_flight: lends.in_flight.take(depth) });
+  }
+}
 
 function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) {
@@ -21089,7 +21427,7 @@ function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda, repeatable: boolean): Ow
       bound = bound.added(p.name);
     }
   }
-  let nested = OwnCtx { factories: ctx.factories, result_body: lm.body, ret_own: lm.ret_own, value_proofs: ctx.value_proofs, owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps(), replaced: ctx.replaced, sends: ctx.sends };
+  let nested = OwnCtx { factories: ctx.factories, result_body: lm.body, ret_own: lm.ret_own, value_proofs: ctx.value_proofs, owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps(), replaced: ctx.replaced, sends: ctx.sends, lends: ctx.lends };
   return nested;
 }
 
@@ -26654,6 +26992,7 @@ function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWal
   let d = ow_guard_call(c, ctx);
   let oc = ow_own_call(c, ctx);
   let m = moved;
+  let flight = ctx.lends.get().in_flight.len();
   let immediate = false;
   if let ast.ExprLambda(_) = c.callee {
     immediate = true;
@@ -26673,8 +27012,10 @@ function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWal
     }
     m = ra.moved;
     d = util.append_diags(d, ra.diags);
+    ow_mark_in_flight(moved, m, ctx);
   }
   d = ow_call_capture_diags(c, m, ctx, d);
+  ow_end_in_flight(flight, ctx);
   if let ast.ExprLambda(lm) = c.callee {
     let lctx = ow_nested_ctx(ctx, lm, false);
     let inner = ow_stmts(lm.body, ow_nested_moved(m, lm.params), lctx);
@@ -26685,9 +27026,9 @@ function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWal
 
 function ow_consume_arg(a: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   if let ast.ExprIdent(id) = a {
-    if (!id.builtin && !ow_is_owned(ctx, id.name) && ctx.bound.has(id.name) && !util.has_str(ctx.borrowed, id.name) && ow_local_capture_owner(id.name, ctx)) {
+    if (!id.builtin && !ow_is_owned(ctx, id.name) && ctx.bound.has(id.name) && !util.has_str(ctx.borrowed, id.name) && (ow_is_taker(ctx, id.name) || ow_local_capture_owner(id.name, ctx))) {
       let read = ru_borrow(a, moved, ctx);
-      return OwnWalk { ...read, moved: ow_moved_add(read.moved, id.name, id.line, id.col) };
+      return OwnWalk { ...read, moved: ow_moved_add(read.moved, ow_taker_key(id.name, ctx), id.line, id.col) };
     }
   }
   if let ast.ExprFieldAccess(fa) = a {
@@ -26764,6 +27105,15 @@ function ru_borrow(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   }
 }
 
+// A read of a field of plain value data from a local is a copy, which is
+// not a use of the loans of the local.
+function ow_reads_data(e: ast.Expr, obj: ast.ExprIdent, moved: MovedEntry[], ctx: OwnCtx): boolean {
+  if (moved.len() == 0 || obj.builtin || !ctx.bound.has(obj.name)) {
+    return false;
+  }
+  return ow_cached_value_data(typeinfo.spelling(check_expr(e, ctx.scope)), ctx.decls, ctx.value_proofs);
+}
+
 function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   match (e) {
     ast.ExprIdent(id) => {
@@ -26790,6 +27140,9 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
             return OwnWalk { moved: moved, diags: d };
           }
           return ru_field_target(fa.obj, moved, ctx);
+        }
+        if (ow_reads_data(e, oid, moved, ctx)) {
+          return OwnWalk { moved: moved, diags: [] };
         }
       }
       return ru_borrow(fa.obj, moved, ctx);
@@ -26978,6 +27331,9 @@ function ow_loop(label: string, body: ast.Stmt[], moved: MovedEntry[], ctx: OwnC
       if (ow_moved_has(moved, elem.mname)) {
         continue;
       }
+      if (elem.mname.starts_with("~")) {
+        continue;
+      }
       let cut = util.index_of_sub(elem.mname, "#");
       if (cut < 0) {
         out = out.append(dg_at("E050", "owned parameter \"" + elem.mname + "\" is consumed inside a loop; a later iteration would use it after move", elem.mline, elem.mcol));
@@ -26991,7 +27347,7 @@ function ow_loop(label: string, body: ast.Stmt[], moved: MovedEntry[], ctx: OwnC
       let holder = slice_unchecked(elem.mname, 0, cut).to_owned();
       if (!ow_declares(declared, holder)) {
         let owner = slice_unchecked(elem.mname, cut + 1, elem.mname.len()).to_owned();
-        out = out.append(dg_at("E050", "callback \"" + holder + "\" uses captured owned parameter \"" + owner + "\", which is consumed inside a loop; a later iteration would use it after move", elem.mline, elem.mcol));
+        out = out.append(dg_at("E050", "\"" + holder + "\" borrows from \"" + owner + "\", which is consumed inside a loop; a later iteration would use it after move", elem.mline, elem.mcol));
       }
     }
   }
@@ -27246,6 +27602,9 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   match (st) {
     ast.StmtVar(v) => {
       let rv = ru_expr(v.init, moved, ow_superseded_ctx(v.init, false, ctx));
+      if (v.destr.binds.len() == 0) {
+        ow_take(v.name, v.init, moved, rv.moved, ctx);
+      }
       return OwnWalk { ...rv, moved: ow_drop_stale_loans(rv.moved, v.name) };
     },
     ast.StmtReturn(r) => {
@@ -27268,8 +27627,8 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       if (!util.has_str(ctx.borrowed, a.target)) {
         actx = OwnCtx { ...actx, admit_fields: ow_field_move_fields(a.target, a.value, ctx) };
       }
-      let rv = ru_expr(a.value, moved, actx);
-      let m = ow_drop_stale_loans(rv.moved, a.target);
+      let rv = ru_expr(a.value, ow_retake(a.target, moved, ctx), actx);
+      let m = ow_drop_stale_loans(ow_moved_del(rv.moved, "~" + a.target), a.target);
       // A local that a callback captures is in moved only after a consume.
       if (ow_is_owned(ctx, a.target) || ow_moved_has(m, a.target)) {
         m = ow_keep_stale_loans(m, a.target, a.line, a.col, ctx);
@@ -27307,6 +27666,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       let ri = ru_borrow(fr.iter, moved, ctx);
       if (takes) {
         ri = ru_expr(fr.iter, moved, ctx);
+        ow_take(OW_LOOP_TAKER, fr.iter, moved, ri.moved, ctx);
       }
       let fctx = ow_bind_ctx(ctx, fr.var_name);
       let inner = for_body_scope(fr, ctx.scope);
@@ -27392,6 +27752,20 @@ function ow_stmts(stmts: ast.Stmt[], moved: MovedEntry[], ctx: OwnCtx): OwnWalk 
   return OwnWalk { moved: m, diags: d };
 }
 
+// The payloads of a consumed scrutinee go to the names that its arms bind.
+function ow_take_payloads(tag: ast.Expr, binders: string[], moved: MovedEntry[], ctx: OwnCtx): void {
+  let ast.ExprIdent(id) = tag else {
+    return;
+  };
+  if (ow_pos_has(moved, id.name, id.line, id.col)) {
+    for name in binders {
+      if (name.len() > 0 && name != "_") {
+        ow_add_taker(ctx, name, id.line, id.col);
+      }
+    }
+  }
+}
+
 function ow_match_stmt(m: ast.StmtMatch, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   let scrut_owned = ow_is_owned_scrutinee(m.scrutinee, ctx);
   let rs = ru_expr(m.scrutinee, moved, ctx);
@@ -27412,6 +27786,7 @@ function ow_match_stmt(m: ast.StmtMatch, moved: MovedEntry[], ctx: OwnCtx): OwnW
   let taken = ow_takes_scrutinee(m.scrutinee, ctx);
   for arm in m.arms {
     let names = astwalk.pattern_binders(arm.pattern, []);
+    ow_take_payloads(m.scrutinee, names, rs.moved, ctx);
     let actx = ow_arm_bind_ctx(ctx, arm.pattern);
     actx = ow_arm_ctx(OwnCtx { ...actx, scope: ow_pattern_scope(arm.pattern, ctx.scope, whole) }, arm.pattern, whole, m.scrutinee, taken, scrut_owned);
     let start = ow_moves_without(pending, names);
@@ -29447,7 +29822,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let ctx = OwnCtx { factories: factories, result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: util.name_index(ow_param_names(fn)), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, lu_fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body), sends: send_params(fn) };
+    let ctx = OwnCtx { factories: factories, result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: util.name_index(ow_param_names(fn)), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, lu_fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body), sends: send_params(fn), lends: ow_fresh_lends() };
     let nomoved: MovedEntry[] = [];
     let r = ow_stmts(fn.body, nomoved, ctx);
     out = util.append_diags(out, ow_source_diags(util.append_diags(send_param_assign_diags(fn, ctx.sends), r.diags), resolved.bindings));

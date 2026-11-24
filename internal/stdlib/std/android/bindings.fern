@@ -1,0 +1,789 @@
+// Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
+import "std/jni";
+
+// A android.content.Context.
+pub struct Context { ref: usize }
+
+pub function (x: Context) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Context) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub const CONTEXT_AUDIO_SERVICE: string = "audio";
+
+// The class android.content.Context and the IDs of its members.
+pub struct ContextClass { class: usize, id_check_self_permission: usize, id_get_cache_dir: usize, id_get_content_resolver: usize, id_get_files_dir: usize, id_get_no_backup_files_dir: usize, id_get_resources: usize, id_get_system_service: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/Context")?;
+  let id_check_self_permission = jni.checked_id(e, class, jni.get_method_id(e, class, "checkSelfPermission", "(Ljava/lang/String;)I"))?;
+  let id_get_cache_dir = jni.checked_id(e, class, jni.get_method_id(e, class, "getCacheDir", "()Ljava/io/File;"))?;
+  let id_get_content_resolver = jni.checked_id(e, class, jni.get_method_id(e, class, "getContentResolver", "()Landroid/content/ContentResolver;"))?;
+  let id_get_files_dir = jni.checked_id(e, class, jni.get_method_id(e, class, "getFilesDir", "()Ljava/io/File;"))?;
+  let id_get_no_backup_files_dir = jni.checked_id(e, class, jni.get_method_id(e, class, "getNoBackupFilesDir", "()Ljava/io/File;"))?;
+  let id_get_resources = jni.checked_id(e, class, jni.get_method_id(e, class, "getResources", "()Landroid/content/res/Resources;"))?;
+  let id_get_system_service = jni.checked_id(e, class, jni.get_method_id(e, class, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;"))?;
+  return Ok(ContextClass { class: class, id_check_self_permission: id_check_self_permission, id_get_cache_dir: id_get_cache_dir, id_get_content_resolver: id_get_content_resolver, id_get_files_dir: id_get_files_dir, id_get_no_backup_files_dir: id_get_no_backup_files_dir, id_get_resources: id_get_resources, id_get_system_service: id_get_system_service });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ContextClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.Context.checkSelfPermission(Ljava/lang/String;)I
+pub function (c: ContextClass) check_self_permission(e: usize, self: Context, a0: string): Result[i32, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_check_self_permission, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.content.Context.getCacheDir()Ljava/io/File;
+pub function (c: ContextClass) get_cache_dir(e: usize, self: Context): Result[File, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_cache_dir, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(File { ref: got });
+}
+
+// android.content.Context.getContentResolver()Landroid/content/ContentResolver;
+pub function (c: ContextClass) get_content_resolver(e: usize, self: Context): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_content_resolver, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// android.content.Context.getFilesDir()Ljava/io/File;
+pub function (c: ContextClass) get_files_dir(e: usize, self: Context): Result[File, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_files_dir, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(File { ref: got });
+}
+
+// android.content.Context.getNoBackupFilesDir()Ljava/io/File;
+pub function (c: ContextClass) get_no_backup_files_dir(e: usize, self: Context): Result[File, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_no_backup_files_dir, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(File { ref: got });
+}
+
+// android.content.Context.getResources()Landroid/content/res/Resources;
+pub function (c: ContextClass) get_resources(e: usize, self: Context): Result[Resources, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_resources, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Resources { ref: got });
+}
+
+// android.content.Context.getSystemService(Ljava/lang/String;)Ljava/lang/Object;
+pub function (c: ContextClass) get_system_service(e: usize, self: Context, a0: string): Result[jni.Object, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_system_service, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// A android.app.Activity.
+pub struct Activity { ref: usize }
+
+pub function (x: Activity) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Activity) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub function (x: Activity) as_context(): Context {
+  return Context { ref: x.ref };
+}
+
+// The class android.app.Activity and the IDs of its members.
+pub struct ActivityClass { class: usize, id_get_intent: usize, id_move_task_to_back: usize, id_request_permissions: usize, id_set_volume_control_stream: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function activity_class(e: usize): Result[ActivityClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/app/Activity")?;
+  let id_get_intent = jni.checked_id(e, class, jni.get_method_id(e, class, "getIntent", "()Landroid/content/Intent;"))?;
+  let id_move_task_to_back = jni.checked_id(e, class, jni.get_method_id(e, class, "moveTaskToBack", "(Z)Z"))?;
+  let id_request_permissions = jni.checked_id(e, class, jni.get_method_id(e, class, "requestPermissions", "([Ljava/lang/String;I)V"))?;
+  let id_set_volume_control_stream = jni.checked_id(e, class, jni.get_method_id(e, class, "setVolumeControlStream", "(I)V"))?;
+  return Ok(ActivityClass { class: class, id_get_intent: id_get_intent, id_move_task_to_back: id_move_task_to_back, id_request_permissions: id_request_permissions, id_set_volume_control_stream: id_set_volume_control_stream });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ActivityClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.app.Activity.getIntent()Landroid/content/Intent;
+pub function (c: ActivityClass) get_intent(e: usize, self: Activity): Result[Intent, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_intent, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Intent { ref: got });
+}
+
+// android.app.Activity.moveTaskToBack(Z)Z
+pub function (c: ActivityClass) move_task_to_back(e: usize, self: Activity, a0: boolean): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, jni.jbool(a0));
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_move_task_to_back, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// android.app.Activity.requestPermissions([Ljava/lang/String;I)V
+pub function (c: ActivityClass) request_permissions(e: usize, self: Activity, a0: jni.Object, a1: i32): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_request_permissions, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.app.Activity.setVolumeControlStream(I)V
+pub function (c: ActivityClass) set_volume_control_stream(e: usize, self: Activity, a0: i32): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set_volume_control_stream, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A java.io.File.
+pub struct File { ref: usize }
+
+pub function (x: File) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: File) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.io.File and the IDs of its members.
+pub struct FileClass { class: usize, id_get_absolute_path: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function file_class(e: usize): Result[FileClass, jni.JavaError] {
+  let class = jni.global_class(e, "java/io/File")?;
+  let id_get_absolute_path = jni.checked_id(e, class, jni.get_method_id(e, class, "getAbsolutePath", "()Ljava/lang/String;"))?;
+  return Ok(FileClass { class: class, id_get_absolute_path: id_get_absolute_path });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: FileClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.io.File.getAbsolutePath()Ljava/lang/String;
+pub function (c: FileClass) get_absolute_path(e: usize, self: File): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_absolute_path, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// A android.content.Intent.
+pub struct Intent { ref: usize }
+
+pub function (x: Intent) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Intent) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.Intent and the IDs of its members.
+pub struct IntentClass { class: usize, id_get_action: usize, id_get_string_extra: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function intent_class(e: usize): Result[IntentClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/Intent")?;
+  let id_get_action = jni.checked_id(e, class, jni.get_method_id(e, class, "getAction", "()Ljava/lang/String;"))?;
+  let id_get_string_extra = jni.checked_id(e, class, jni.get_method_id(e, class, "getStringExtra", "(Ljava/lang/String;)Ljava/lang/String;"))?;
+  return Ok(IntentClass { class: class, id_get_action: id_get_action, id_get_string_extra: id_get_string_extra });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: IntentClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.Intent.getAction()Ljava/lang/String;
+pub function (c: IntentClass) get_action(e: usize, self: Intent): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_action, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// android.content.Intent.getStringExtra(Ljava/lang/String;)Ljava/lang/String;
+pub function (c: IntentClass) get_string_extra(e: usize, self: Intent, a0: string): Result[string, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_string_extra, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// A android.content.pm.PackageManager.
+pub struct PackageManager { ref: usize }
+
+pub function (x: PackageManager) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: PackageManager) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub const PACKAGE_MANAGER_PERMISSION_GRANTED: i32 = 0;
+
+// The class android.content.pm.PackageManager and the IDs of its members.
+pub struct PackageManagerClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function package_manager_class(e: usize): Result[PackageManagerClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/pm/PackageManager")?;
+  return Ok(PackageManagerClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: PackageManagerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.view.KeyCharacterMap.
+pub struct KeyCharacterMap { ref: usize }
+
+pub function (x: KeyCharacterMap) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: KeyCharacterMap) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.view.KeyCharacterMap and the IDs of its members.
+pub struct KeyCharacterMapClass { class: usize, id_get: usize, id_load: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function key_character_map_class(e: usize): Result[KeyCharacterMapClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/view/KeyCharacterMap")?;
+  let id_get = jni.checked_id(e, class, jni.get_method_id(e, class, "get", "(II)I"))?;
+  let id_load = jni.checked_id(e, class, jni.get_static_method_id(e, class, "load", "(I)Landroid/view/KeyCharacterMap;"))?;
+  return Ok(KeyCharacterMapClass { class: class, id_get: id_get, id_load: id_load });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: KeyCharacterMapClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.view.KeyCharacterMap.get(II)I
+pub function (c: KeyCharacterMapClass) get(e: usize, self: KeyCharacterMap, a0: i32, a1: i32): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.view.KeyCharacterMap.load(I)Landroid/view/KeyCharacterMap;
+pub function (c: KeyCharacterMapClass) load(e: usize, a0: i32): Result[KeyCharacterMap, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_load, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(KeyCharacterMap { ref: got });
+}
+
+// A android.provider.Settings.System.
+pub struct Settings_System { ref: usize }
+
+pub function (x: Settings_System) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Settings_System) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub const SETTINGS_SYSTEM_SCREEN_BRIGHTNESS: string = "screen_brightness";
+
+// The class android.provider.Settings.System and the IDs of its members.
+pub struct Settings_SystemClass { class: usize, id_get_int: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function settings_system_class(e: usize): Result[Settings_SystemClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/provider/Settings$System")?;
+  let id_get_int = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getInt", "(Landroid/content/ContentResolver;Ljava/lang/String;I)I"))?;
+  return Ok(Settings_SystemClass { class: class, id_get_int: id_get_int });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: Settings_SystemClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.provider.Settings.System.getInt(Landroid/content/ContentResolver;Ljava/lang/String;I)I
+pub function (c: Settings_SystemClass) get_int(e: usize, a0: jni.Object, a1: string, a2: i32): Result[i32, jni.JavaError] {
+  let s1 = jni.checked_string(e, a1)?;
+  defer jni.delete_local_ref(e, s1);
+  let args = jni.jvalue_alloc(3);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, s1);
+  jni.jvalue_set_int(args, 2, a2 as usize);
+  let got = jni.invoke(e, jni.CALL_STATIC + 15, c.class, c.id_get_int, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// A android.media.AudioManager.
+pub struct AudioManager { ref: usize }
+
+pub function (x: AudioManager) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: AudioManager) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub const AUDIO_MANAGER_STREAM_MUSIC: i32 = 3;
+
+// The class android.media.AudioManager and the IDs of its members.
+pub struct AudioManagerClass { class: usize, id_get_stream_max_volume: usize, id_get_stream_volume: usize, id_set_stream_volume: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function audio_manager_class(e: usize): Result[AudioManagerClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/media/AudioManager")?;
+  let id_get_stream_max_volume = jni.checked_id(e, class, jni.get_method_id(e, class, "getStreamMaxVolume", "(I)I"))?;
+  let id_get_stream_volume = jni.checked_id(e, class, jni.get_method_id(e, class, "getStreamVolume", "(I)I"))?;
+  let id_set_stream_volume = jni.checked_id(e, class, jni.get_method_id(e, class, "setStreamVolume", "(III)V"))?;
+  return Ok(AudioManagerClass { class: class, id_get_stream_max_volume: id_get_stream_max_volume, id_get_stream_volume: id_get_stream_volume, id_set_stream_volume: id_set_stream_volume });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: AudioManagerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.media.AudioManager.getStreamMaxVolume(I)I
+pub function (c: AudioManagerClass) get_stream_max_volume(e: usize, self: AudioManager, a0: i32): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_stream_max_volume, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.media.AudioManager.getStreamVolume(I)I
+pub function (c: AudioManagerClass) get_stream_volume(e: usize, self: AudioManager, a0: i32): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_stream_volume, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.media.AudioManager.setStreamVolume(III)V
+pub function (c: AudioManagerClass) set_stream_volume(e: usize, self: AudioManager, a0: i32, a1: i32, a2: i32): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(3);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.jvalue_set_int(args, 2, a2 as usize);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set_stream_volume, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A java.util.TimeZone.
+pub struct TimeZone { ref: usize }
+
+pub function (x: TimeZone) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: TimeZone) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.util.TimeZone and the IDs of its members.
+pub struct TimeZoneClass { class: usize, id_get_default: usize, id_get_offset: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function time_zone_class(e: usize): Result[TimeZoneClass, jni.JavaError] {
+  let class = jni.global_class(e, "java/util/TimeZone")?;
+  let id_get_default = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getDefault", "()Ljava/util/TimeZone;"))?;
+  let id_get_offset = jni.checked_id(e, class, jni.get_method_id(e, class, "getOffset", "(J)I"))?;
+  return Ok(TimeZoneClass { class: class, id_get_default: id_get_default, id_get_offset: id_get_offset });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: TimeZoneClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.util.TimeZone.getDefault()Ljava/util/TimeZone;
+pub function (c: TimeZoneClass) get_default(e: usize): Result[TimeZone, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_get_default, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(TimeZone { ref: got });
+}
+
+// java.util.TimeZone.getOffset(J)I
+pub function (c: TimeZoneClass) get_offset(e: usize, self: TimeZone, a0: i64): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_long(args, 0, a0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_offset, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// A android.content.res.Resources.
+pub struct Resources { ref: usize }
+
+pub function (x: Resources) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Resources) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.res.Resources and the IDs of its members.
+pub struct ResourcesClass { class: usize, id_get_configuration: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function resources_class(e: usize): Result[ResourcesClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/res/Resources")?;
+  let id_get_configuration = jni.checked_id(e, class, jni.get_method_id(e, class, "getConfiguration", "()Landroid/content/res/Configuration;"))?;
+  return Ok(ResourcesClass { class: class, id_get_configuration: id_get_configuration });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ResourcesClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.res.Resources.getConfiguration()Landroid/content/res/Configuration;
+pub function (c: ResourcesClass) get_configuration(e: usize, self: Resources): Result[Configuration, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_configuration, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Configuration { ref: got });
+}
+
+// A android.content.res.Configuration.
+pub struct Configuration { ref: usize }
+
+pub function (x: Configuration) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Configuration) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.res.Configuration and the IDs of its members.
+pub struct ConfigurationClass { class: usize, id_get_locales: usize, id_font_scale: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function configuration_class(e: usize): Result[ConfigurationClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/res/Configuration")?;
+  let id_get_locales = jni.checked_id(e, class, jni.get_method_id(e, class, "getLocales", "()Landroid/os/LocaleList;"))?;
+  let id_font_scale = jni.checked_id(e, class, jni.get_field_id(e, class, "fontScale", "F"))?;
+  return Ok(ConfigurationClass { class: class, id_get_locales: id_get_locales, id_font_scale: id_font_scale });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ConfigurationClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.res.Configuration.getLocales()Landroid/os/LocaleList;
+pub function (c: ConfigurationClass) get_locales(e: usize, self: Configuration): Result[LocaleList, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_locales, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(LocaleList { ref: got });
+}
+
+// android.content.res.Configuration.fontScale
+pub function (c: ConfigurationClass) font_scale(e: usize, self: Configuration): Result[f32, jni.JavaError] {
+  let got = jni.invoke_f32(e, jni.GET_FIELD + 7, self.ref, c.id_font_scale, 0 as usize);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+pub function (c: ConfigurationClass) set_font_scale(e: usize, self: Configuration, value: f32): Result[void, jni.JavaError] {
+  jni.set_float_field(e, self.ref, c.id_font_scale, value);
+  return jni.check(e);
+}
+
+// A android.os.LocaleList.
+pub struct LocaleList { ref: usize }
+
+pub function (x: LocaleList) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: LocaleList) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.os.LocaleList and the IDs of its members.
+pub struct LocaleListClass { class: usize, id_to_language_tags: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function locale_list_class(e: usize): Result[LocaleListClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/os/LocaleList")?;
+  let id_to_language_tags = jni.checked_id(e, class, jni.get_method_id(e, class, "toLanguageTags", "()Ljava/lang/String;"))?;
+  return Ok(LocaleListClass { class: class, id_to_language_tags: id_to_language_tags });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: LocaleListClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.os.LocaleList.toLanguageTags()Ljava/lang/String;
+pub function (c: LocaleListClass) to_language_tags(e: usize, self: LocaleList): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_to_language_tags, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// The struct of IDs of each class of this module.
+pub struct Classes { context: ContextClass, activity: ActivityClass, file: FileClass, intent: IntentClass, package_manager: PackageManagerClass, key_character_map: KeyCharacterMapClass, settings_system: Settings_SystemClass, audio_manager: AudioManagerClass, time_zone: TimeZoneClass, resources: ResourcesClass, configuration: ConfigurationClass, locale_list: LocaleListClass }
+
+// Makes the struct of IDs of each class. Call it one time, and call
+// `release` when the app does not call Java again. One lookup for each
+// class, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function classes(e: usize): Result[Classes, jni.JavaError] {
+  let context = match (context_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      return Err(err);
+    },
+  };
+  let activity = match (activity_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      return Err(err);
+    },
+  };
+  let file = match (file_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      return Err(err);
+    },
+  };
+  let intent = match (intent_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      return Err(err);
+    },
+  };
+  let package_manager = match (package_manager_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      return Err(err);
+    },
+  };
+  let key_character_map = match (key_character_map_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      return Err(err);
+    },
+  };
+  let settings_system = match (settings_system_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      return Err(err);
+    },
+  };
+  let audio_manager = match (audio_manager_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      return Err(err);
+    },
+  };
+  let time_zone = match (time_zone_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      return Err(err);
+    },
+  };
+  let resources = match (resources_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      return Err(err);
+    },
+  };
+  let configuration = match (configuration_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      resources.release(e);
+      return Err(err);
+    },
+  };
+  let locale_list = match (locale_list_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      resources.release(e);
+      configuration.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { context: context, activity: activity, file: file, intent: intent, package_manager: package_manager, key_character_map: key_character_map, settings_system: settings_system, audio_manager: audio_manager, time_zone: time_zone, resources: resources, configuration: configuration, locale_list: locale_list });
+}
+
+// Deletes the reference to each class. Do not use `c` after this call.
+pub function (c: Classes) release(e: usize): void {
+  c.context.release(e);
+  c.activity.release(e);
+  c.file.release(e);
+  c.intent.release(e);
+  c.package_manager.release(e);
+  c.key_character_map.release(e);
+  c.settings_system.release(e);
+  c.audio_manager.release(e);
+  c.time_zone.release(e);
+  c.resources.release(e);
+  c.configuration.release(e);
+  c.locale_list.release(e);
+}

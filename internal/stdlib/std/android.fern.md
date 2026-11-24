@@ -26,6 +26,8 @@ A module that makes more than one Java object of one listener class can tell the
 
 A lock of the process guards the live loop. `start`, `tell` and the end of a loop with no activity take it, so a new activity does not take over a loop that ends.
 
+The module calls Java for the directories, the permissions, the Intent of the activity, the volume, the time zone, the languages and the font scale through `std/android/bindings`, which `jnibind` writes from `bindings.spec`. The other Java calls of the module are JNI calls that name each class and each method as text.
+
 ## Contracts
 
 The context `ctx` that `start` gives to the loop thread is valid until `run` returns. The Destroy handler closes resources that need this context. A `Window` is valid from its `WindowCreated` event until `step` returns for its `WindowDestroyed` event. A `Frame` is valid until `post`.
@@ -58,6 +60,7 @@ The context `ctx` that `start` gives to the loop thread is valid until `run` ret
 ```fern
 <<module introduction>>=
 // This module runs an Android app with no Java code, through NativeActivity.
+import "std/android/bindings";
 import "std/android/draw";
 import "std/android/trace";
 import "std/ffi";
@@ -790,6 +793,11 @@ pub(package) function hold_loop(e: usize, on: boolean): void {
   }
 }
 
+// Ends the local frame of `jni.push_local_frame`.
+function end_frame(e: usize): void {
+  let _ = jni.pop_local_frame(e, 0 as usize);
+}
+
 // The API level of the device.
 function sdk_level(e: usize): i32 {
   let version = jni.find_class(e, "android/os/Build$VERSION");
@@ -1383,25 +1391,24 @@ function new_back(ctx: usize, from: i32, now: i64): boolean {
 // top bit for a dead key, which types nothing alone.
 function key_char(ctx: usize, device: i32, code: i32, meta: i32): i32 {
   let e: usize = env(ctx);
-  let class: usize = jni.find_class(e, "android/view/KeyCharacterMap");
-  let args: usize = jni.jvalues([device as usize]);
-  let map: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "load", "(I)Landroid/view/KeyCharacterMap;"), args);
-  jni.free_buffer(args);
-  if (jni.exception_occurred(e) != 0 as usize || map == 0 as usize) {
-    let cleared: usize = jni.exception_clear(e);
-    let gone: usize = jni.delete_local_ref(e, class);
+  if (!jni.push_local_frame(e, 8)) {
     return 0;
   }
-  let get_args: usize = jni.jvalues([code as usize, meta as usize]);
-  let c: i32 = jni.call_int_method_a(e, map, jni.get_method_id(e, class, "get", "(II)I"), get_args);
-  jni.free_buffer(get_args);
-  if (jni.exception_occurred(e) != 0 as usize) {
-    let cleared: usize = jni.exception_clear(e);
-    c = 0;
+  defer end_frame(e);
+  let Ok(maps) = bindings.key_character_map_class(e) else {
+    return 0;
+  };
+  defer maps.release(e);
+  let Ok(map) = maps.load(e, device) else {
+    return 0;
+  };
+  if (map.is_null()) {
+    return 0;
   }
-  let a: usize = jni.delete_local_ref(e, map);
-  let b: usize = jni.delete_local_ref(e, class);
-  return c;
+  return match (maps.get(e, map, code, meta)) {
+    Ok(c) => c,
+    Err(_) => 0,
+  };
 }
 
 // The keys that the system handles after the app: the volume keys, the
@@ -1467,7 +1474,14 @@ pub function detached(ctx: usize): boolean {
 
 // The action of the Java Intent `intent`.
 pub function intent_action(e: usize, intent: usize): string {
-  return jni.string_of(e, jni.call_object(e, intent, "getAction", "()Ljava/lang/String;", []));
+  let Ok(intents) = bindings.intent_class(e) else {
+    return "";
+  };
+  defer intents.release(e);
+  return match (intents.get_action(e, bindings.Intent { ref: intent })) {
+    Ok(action) => action,
+    Err(_) => "",
+  };
 }
 
 // The string extra `name` of the Intent that started the activity, or ""
@@ -1478,23 +1492,28 @@ pub function intent_extra(ctx: usize, name: string): string {
     return "";
   }
   let e: usize = env(ctx);
-  let intent: usize = jni.call_object(e, activity_object(ctx), "getIntent", "()Landroid/content/Intent;", []);
-  if (jni.exception_occurred(e) != 0 as usize || intent == 0 as usize) {
-    let cleared: usize = jni.exception_clear(e);
+  if (!jni.push_local_frame(e, 8)) {
     return "";
   }
-  let value: usize = jni.call_object(e, intent, "getStringExtra", "(Ljava/lang/String;)Ljava/lang/String;", [jni.new_string(e, name)]);
-  if (jni.exception_occurred(e) != 0 as usize) {
-    let cleared: usize = jni.exception_clear(e);
-    value = 0 as usize;
+  defer end_frame(e);
+  let Ok(activities) = bindings.activity_class(e) else {
+    return "";
+  };
+  defer activities.release(e);
+  let Ok(intents) = bindings.intent_class(e) else {
+    return "";
+  };
+  defer intents.release(e);
+  let Ok(intent) = activities.get_intent(e, bindings.Activity { ref: activity_object(ctx) }) else {
+    return "";
+  };
+  if (intent.is_null()) {
+    return "";
   }
-  let out = "";
-  if (value != 0 as usize) {
-    out = jni.string_of(e, value);
-    let a: usize = jni.delete_local_ref(e, value);
-  }
-  let b: usize = jni.delete_local_ref(e, intent);
-  return out;
+  return match (intents.get_string_extra(e, intent, name)) {
+    Ok(value) => value,
+    Err(_) => "",
+  };
 }
 
 // The API level of the device.
@@ -1531,44 +1550,65 @@ pub function data_dir(ctx: usize): string {
 // to a backup or to a new device, or "" when there is none. Keep keys here.
 // Call it on the loop thread.
 pub function no_backup_dir(ctx: usize): string {
-  return context_dir(ctx, "getNoBackupFilesDir");
+  return context_dir(ctx, NoBackup);
 }
 
 // The directory for files that the app can make again, such as images from
 // the network, or "". Android deletes files in it when storage runs low,
 // and does not back it up.
 pub function cache_dir(ctx: usize): string {
-  return context_dir(ctx, "getCacheDir");
+  return context_dir(ctx, Cache);
 }
 
-// The absolute path of the directory that the Context method `method`
-// gives, or "" when it throws or gives none.
-function context_dir(ctx: usize, method: string): string {
+// A directory of the app that a Context gives.
+enum AppDir { NoBackup, Cache, Files }
+
+// The absolute path of the directory `which` of the app, or "" when the
+// Context throws or gives none.
+function context_dir(ctx: usize, which: AppDir): string {
   let e: usize = env(ctx);
-  let dir: usize = jni.call_object(e, activity_object(ctx), method, "()Ljava/io/File;", []);
-  if (jni.exception_occurred(e) != 0 as usize || dir == 0 as usize) {
-    let cleared: usize = jni.exception_clear(e);
+  if (!jni.push_local_frame(e, 8)) {
     return "";
   }
-  let path: usize = jni.call_object(e, dir, "getAbsolutePath", "()Ljava/lang/String;", []);
-  let out: string = jni.string_of(e, path);
-  let a: usize = jni.delete_local_ref(e, path);
-  let b: usize = jni.delete_local_ref(e, dir);
-  return out;
+  defer end_frame(e);
+  let Ok(contexts) = bindings.context_class(e) else {
+    return "";
+  };
+  defer contexts.release(e);
+  let Ok(files) = bindings.file_class(e) else {
+    return "";
+  };
+  defer files.release(e);
+  let context = bindings.Context { ref: activity_object(ctx) };
+  let got = match (which) {
+    NoBackup => contexts.get_no_backup_files_dir(e, context),
+    Cache => contexts.get_cache_dir(e, context),
+    Files => contexts.get_files_dir(e, context),
+  };
+  let Ok(dir) = got else {
+    return "";
+  };
+  if (dir.is_null()) {
+    return "";
+  }
+  return match (files.get_absolute_path(e, dir)) {
+    Ok(path) => path,
+    Err(_) => "",
+  };
 }
 
 // The app has permission `name`, such as "android.permission.RECORD_AUDIO".
 // Call it on the loop thread.
 pub function has_permission(ctx: usize, name: string): boolean {
   let e: usize = env(ctx);
-  let obj: usize = activity_object(ctx);
-  let check: usize = jni.get_method_id(e, jni.get_object_class(e, obj), "checkSelfPermission", "(Ljava/lang/String;)I");
-  let s: usize = jni.new_string(e, name);
-  let args: usize = jni.jvalues([s]);
-  let granted: i32 = jni.call_int_method_a(e, obj, check, args);
-  jni.free_buffer(args);
-  let deleted: usize = jni.delete_local_ref(e, s);
-  return granted == 0;
+  let Ok(contexts) = bindings.context_class(e) else {
+    return false;
+  };
+  defer contexts.release(e);
+  return match (contexts.check_self_permission(e, bindings.Context { ref: activity_object(ctx) }, name)) {
+    Ok(granted) => granted == bindings.PACKAGE_MANAGER_PERMISSION_GRANTED,
+    Err(_) => false,
+  };
 }
 
 // Asks the user for the permissions `names`. The activity pauses while the
@@ -1576,13 +1616,16 @@ pub function has_permission(ctx: usize, name: string): boolean {
 // the loop thread.
 pub function request_permissions(ctx: usize, names: string[]): void {
   let e: usize = env(ctx);
-  let obj: usize = activity_object(ctx);
-  let request: usize = jni.get_method_id(e, jni.get_object_class(e, obj), "requestPermissions", "([Ljava/lang/String;I)V");
+  if (!jni.push_local_frame(e, 8)) {
+    return;
+  }
+  defer end_frame(e);
+  let Ok(activities) = bindings.activity_class(e) else {
+    return;
+  };
+  defer activities.release(e);
   let array: usize = jni.string_array(e, names);
-  let args: usize = jni.jvalues([array, 1 as usize]);
-  let ignored: usize = jni.call_void_method_a(e, obj, request, args);
-  jni.free_buffer(args);
-  let deleted: usize = jni.delete_local_ref(e, array);
+  let asked = activities.request_permissions(e, bindings.Activity { ref: activity_object(ctx) }, jni.Object { ref: array }, 1);
 }
 
 // Asks the activity to finish. The Destroy event follows.
@@ -1597,7 +1640,7 @@ pub function finish(ctx: usize): void {
 
 // The directory of the private files of the Application Context.
 function files_dir(ctx: usize): string {
-  return context_dir(ctx, "getFilesDir");
+  return context_dir(ctx, Files);
 }
 
 // Keeps the screen on while the window shows, or stops that.
@@ -1717,12 +1760,11 @@ function fast_display(activity: usize): void {
 // an android.media.AudioManager stream: 3 music, 4 alarm and 5 notification.
 pub function volume_stream(ctx: usize, stream: i32): void {
   let e: usize = env(ctx);
-  let obj: usize = activity_object(ctx);
-  let class: usize = jni.get_object_class(e, obj);
-  let args: usize = jni.jvalues([stream as usize]);
-  let ignored: usize = jni.call_void_method_a(e, obj, jni.get_method_id(e, class, "setVolumeControlStream", "(I)V"), args);
-  jni.free_buffer(args);
-  let deleted: usize = jni.delete_local_ref(e, class);
+  let Ok(activities) = bindings.activity_class(e) else {
+    return;
+  };
+  defer activities.release(e);
+  let set = activities.set_volume_control_stream(e, bindings.Activity { ref: activity_object(ctx) }, stream);
 }
 
 // Sets the brightness of the window while it shows, from 0.0 to 1.0. A
@@ -1792,34 +1834,49 @@ pub function in_pip(ctx: usize): boolean {
 // thread.
 pub function system_brightness(ctx: usize): f32 {
   let e: usize = env(ctx);
-  let cr: usize = jni.call_object(e, activity_object(ctx), "getContentResolver", "()Landroid/content/ContentResolver;", []);
-  if (cr == 0 as usize) {
-    let none: usize = jni.exception_clear(e);
+  if (!jni.push_local_frame(e, 8)) {
     return 0.5f32;
   }
-  let class: usize = jni.find_class(e, "android/provider/Settings$System");
-  let name: usize = jni.new_string(e, "screen_brightness");
-  let args: usize = jni.jvalues([cr, name, 128 as usize]);
-  let got: i32 = jni.call_static_int_method_a(e, class, jni.get_static_method_id(e, class, "getInt", "(Landroid/content/ContentResolver;Ljava/lang/String;I)I"), args);
-  jni.free_buffer(args);
-  let a: usize = jni.delete_local_ref(e, name);
-  let b: usize = jni.delete_local_ref(e, class);
-  let c: usize = jni.delete_local_ref(e, cr);
-  let cleared: usize = jni.exception_clear(e);
-  return got.max(0).min(255) as f32 / 255.0f32;
+  defer end_frame(e);
+  let Ok(contexts) = bindings.context_class(e) else {
+    return 0.5f32;
+  };
+  defer contexts.release(e);
+  let Ok(settings) = bindings.settings_system_class(e) else {
+    return 0.5f32;
+  };
+  defer settings.release(e);
+  let Ok(resolver) = contexts.get_content_resolver(e, bindings.Context { ref: activity_object(ctx) }) else {
+    return 0.5f32;
+  };
+  if (resolver.is_null()) {
+    return 0.5f32;
+  }
+  // 128 is the level when the system has no setting.
+  let level = match (settings.get_int(e, resolver, bindings.SETTINGS_SYSTEM_SCREEN_BRIGHTNESS, 128)) {
+    Ok(got) => got,
+    Err(_) => 128,
+  };
+  return level.max(0).min(255) as f32 / 255.0f32;
 }
 
 // The volume of the music stream, and its greatest value. Call it on the
 // loop thread.
 pub function volume(ctx: usize): (i32, i32) {
   let e: usize = env(ctx);
-  let am: usize = audio_manager(e, activity_object(ctx));
-  if (am == 0 as usize) {
+  if (!jni.push_local_frame(e, 8)) {
     return (0, 0);
   }
-  let level = call_int(e, am, "getStreamVolume", "(I)I", [STREAM_MUSIC as usize]);
-  let max = call_int(e, am, "getStreamMaxVolume", "(I)I", [STREAM_MUSIC as usize]);
-  let a: usize = jni.delete_local_ref(e, am);
+  defer end_frame(e);
+  let Ok(managers) = bindings.audio_manager_class(e) else {
+    return (0, 0);
+  };
+  defer managers.release(e);
+  let Some(am) = audio_manager(e, activity_object(ctx)) else {
+    return (0, 0);
+  };
+  let level = match (managers.get_stream_volume(e, am, bindings.AUDIO_MANAGER_STREAM_MUSIC)) { Ok(v) => v, Err(_) => 0 };
+  let max = match (managers.get_stream_max_volume(e, am, bindings.AUDIO_MANAGER_STREAM_MUSIC)) { Ok(v) => v, Err(_) => 0 };
   return (level, max);
 }
 
@@ -1828,25 +1885,33 @@ pub function volume(ctx: usize): (i32, i32) {
 // thread.
 pub function set_volume(ctx: usize, level: i32): void {
   let e: usize = env(ctx);
-  let am: usize = audio_manager(e, activity_object(ctx));
-  if (am == 0 as usize) {
+  if (!jni.push_local_frame(e, 8)) {
     return;
   }
-  let set = jni.call_void(e, am, "setStreamVolume", "(III)V", [STREAM_MUSIC as usize, level.max(0) as usize, 0 as usize]);
-  let a: usize = jni.delete_local_ref(e, am);
-  let cleared: usize = jni.exception_clear(e);
+  defer end_frame(e);
+  let Ok(managers) = bindings.audio_manager_class(e) else {
+    return;
+  };
+  defer managers.release(e);
+  let Some(am) = audio_manager(e, activity_object(ctx)) else {
+    return;
+  };
+  let set = managers.set_stream_volume(e, am, bindings.AUDIO_MANAGER_STREAM_MUSIC, level.max(0), 0);
 }
 
-// AudioManager.STREAM_MUSIC.
-const STREAM_MUSIC: i32 = 3;
-
-// The AudioManager of the activity `obj` as a local reference, or 0.
-function audio_manager(e: usize, obj: usize): usize {
-  let service: usize = jni.new_string(e, "audio");
-  let am: usize = jni.call_object(e, obj, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [service]);
-  let a: usize = jni.delete_local_ref(e, service);
-  let cleared: usize = jni.exception_clear(e);
-  return am;
+// The AudioManager of the activity `obj` as a local reference, or None.
+function audio_manager(e: usize, obj: usize): Option[bindings.AudioManager] {
+  let Ok(contexts) = bindings.context_class(e) else {
+    return None;
+  };
+  defer contexts.release(e);
+  let Ok(am) = contexts.get_system_service(e, bindings.Context { ref: obj }, bindings.CONTEXT_AUDIO_SERVICE) else {
+    return None;
+  };
+  if (am.is_null()) {
+    return None;
+  }
+  return Some(bindings.AudioManager { ref: am.ref });
 }
 
 function call_int(e: usize, obj: usize, name: string, sig: string, values: usize[]): i32 {
@@ -1876,20 +1941,24 @@ function call_boolean(e: usize, obj: usize, name: string, sig: string, values: u
 // and the zone data of the device. Call it on the loop thread.
 pub function utc_offset_ms(ctx: usize, unix_ms: i64): i32 {
   let e: usize = env(ctx);
-  let class: usize = jni.find_class(e, "java/util/TimeZone");
-  let none: usize = jni.jvalue_alloc(0);
-  let zone: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "getDefault", "()Ljava/util/TimeZone;"), none);
-  jni.free_buffer(none);
-  let args: usize = jni.jvalues([unix_ms as usize]);
-  let offset: i32 = jni.call_int_method_a(e, zone, jni.get_method_id(e, class, "getOffset", "(J)I"), args);
-  jni.free_buffer(args);
-  if (jni.exception_occurred(e) != 0 as usize) {
-    let cleared: usize = jni.exception_clear(e);
-    offset = 0;
+  if (!jni.push_local_frame(e, 8)) {
+    return 0;
   }
-  let a: usize = jni.delete_local_ref(e, zone);
-  let b: usize = jni.delete_local_ref(e, class);
-  return offset;
+  defer end_frame(e);
+  let Ok(zones) = bindings.time_zone_class(e) else {
+    return 0;
+  };
+  defer zones.release(e);
+  let Ok(zone) = zones.get_default(e) else {
+    return 0;
+  };
+  if (zone.is_null()) {
+    return 0;
+  }
+  return match (zones.get_offset(e, zone, unix_ms)) {
+    Ok(offset) => offset,
+    Err(_) => 0,
+  };
 }
 
 // The file `name` under assets/ in the APK, or None when the APK has no
@@ -1980,17 +2049,44 @@ pub function rtl_layout(ctx: usize): boolean {
 // in sp by the scale and by the pixels of one dp.
 pub function font_scale(ctx: usize): f64 {
   let e: usize = env(ctx);
-  let resources: usize = jni.call_object(e, activity_object(ctx), "getResources", "()Landroid/content/res/Resources;", []);
-  let config: usize = jni.call_object(e, resources, "getConfiguration", "()Landroid/content/res/Configuration;", []);
-  let class: usize = jni.get_object_class(e, config);
-  let scale: f32 = jni.get_float_field(e, config, jni.get_field_id(e, class, "fontScale", "F"));
-  let c: usize = jni.delete_local_ref(e, class);
-  let b: usize = jni.delete_local_ref(e, config);
-  let a: usize = jni.delete_local_ref(e, resources);
+  if (!jni.push_local_frame(e, 8)) {
+    return 1.0;
+  }
+  defer end_frame(e);
+  let Ok(scale) = configured_scale(e, bindings.Context { ref: activity_object(ctx) }) else {
+    return 1.0;
+  };
   if (scale <= 0.0 as f32) {
     return 1.0;
   }
   return scale as f64;
+}
+
+// The Configuration of the resources of `context`, and its class. Release
+// the class before the local frame ends.
+struct Configured { class: bindings.ConfigurationClass, config: bindings.Configuration }
+
+function configured(e: usize, context: bindings.Context): Result[Configured, jni.JavaError] {
+  let contexts = bindings.context_class(e)?;
+  defer contexts.release(e);
+  let resources = bindings.resources_class(e)?;
+  defer resources.release(e);
+  let config = resources.get_configuration(e, contexts.get_resources(e, context)?)?;
+  return Ok(Configured { class: bindings.configuration_class(e)?, config: config });
+}
+
+function configured_scale(e: usize, context: bindings.Context): Result[f32, jni.JavaError] {
+  let c = configured(e, context)?;
+  defer c.class.release(e);
+  return c.class.font_scale(e, c.config);
+}
+
+function configured_tags(e: usize, context: bindings.Context): Result[string, jni.JavaError] {
+  let c = configured(e, context)?;
+  defer c.class.release(e);
+  let lists = bindings.locale_list_class(e)?;
+  defer lists.release(e);
+  return lists.to_language_tags(e, c.class.get_locales(e, c.config)?);
 }
 
 // The system uses the dark theme. Android starts an activity again when the
@@ -2013,14 +2109,13 @@ pub function night_mode(ctx: usize): boolean {
 // such as "en-US". `std/i18n` chooses the texts of a language from them.
 pub function languages(ctx: usize): string[] {
   let e = env(ctx);
-  let res: usize = jni.call_object(e, activity_object(ctx), "getResources", "()Landroid/content/res/Resources;", []);
-  let config: usize = jni.call_object(e, res, "getConfiguration", "()Landroid/content/res/Configuration;", []);
-  let list: usize = jni.call_object(e, config, "getLocales", "()Landroid/os/LocaleList;", []);
-  let tags: usize = jni.call_object(e, list, "toLanguageTags", "()Ljava/lang/String;", []);
-  if (tags == 0 as usize) {
+  if (!jni.push_local_frame(e, 8)) {
     return [];
   }
-  let text = jni.string_of(e, tags);
+  defer end_frame(e);
+  let Ok(text) = configured_tags(e, bindings.Context { ref: activity_object(ctx) }) else {
+    return [];
+  };
   if (text.len() == 0) {
     return [];
   }
@@ -2034,10 +2129,11 @@ pub function to_background(ctx: usize): void {
     return;
   }
   let e: usize = env(ctx);
-  let obj: usize = activity_object(ctx);
-  let args: usize = jni.jvalues([1 as usize]);
-  let moved: i32 = jni.call_boolean_method_a(e, obj, jni.get_method_id(e, jni.get_object_class(e, obj), "moveTaskToBack", "(Z)Z"), args);
-  jni.free_buffer(args);
+  let Ok(activities) = bindings.activity_class(e) else {
+    return;
+  };
+  defer activities.release(e);
+  let moved = activities.move_task_to_back(e, bindings.Activity { ref: activity_object(ctx) }, true);
 }
 ```
 

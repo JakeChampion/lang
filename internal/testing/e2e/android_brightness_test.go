@@ -44,7 +44,7 @@ pub function system_light(ctx: usize): i32 { return (system_brightness(ctx) * 10
 #include <fcntl.h>
 #include <unistd.h>
 
-static int locals, attrs, volume_set = -1;
+static int locals, saved_locals, frames, globals, attrs, volume_set = -1;
 static float level = 9.0f;
 static void require(int ok, const char *what) { if (!ok) { fprintf(stderr, "%s: locals=%d attrs=%d\n", what, locals, attrs); exit(1); } }
 
@@ -53,17 +53,24 @@ static const char *names[] = { "", "getWindow", "getAttributes", "", "", "setAtt
   "getSystemService", "getStreamVolume", "getStreamMaxVolume", "setStreamVolume", "getContentResolver", "getInt" };
 
 static uintptr_t get_class(uintptr_t e, uintptr_t obj) { require(obj != 0, "class of null"); locals++; return obj + 1000; }
+// The bindings look up each class by its name and keep a global reference to it.
 static uintptr_t find_class(uintptr_t e, const char *name) {
-  require(!strcmp(name, "android/provider/Settings$System"), "class name");
   locals++;
-  return SETTINGS;
+  if (!strcmp(name, "android/provider/Settings$System")) return SETTINGS;
+  if (!strcmp(name, "android/content/Context")) return SETTINGS + 1;
+  require(!strcmp(name, "android/media/AudioManager"), name);
+  return SETTINGS + 2;
 }
+static uintptr_t new_global(uintptr_t e, uintptr_t obj) { require(obj >= SETTINGS && obj <= SETTINGS + 2, "global of a class"); globals++; return obj; }
+static void delete_global(uintptr_t e, uintptr_t obj) { require(globals > 0, "delete of a global"); globals--; }
+static int32_t push(uintptr_t e, int32_t n) { require(frames == 0, "one frame"); frames++; saved_locals = locals; return 0; }
+static uintptr_t pop(uintptr_t e, uintptr_t keep) { require(frames == 1 && keep == 0, "pop"); frames--; locals = saved_locals; return 0; }
+// The bindings look up each member of a class. The calls of the test use the members of the names table.
 static uintptr_t method(uintptr_t e, uintptr_t cls, const char *name, const char *sig) {
   for (uintptr_t i = 1; i < sizeof names / sizeof names[0]; i++) {
     if (!strcmp(name, names[i])) return i;
   }
-  require(0, name);
-  return 0;
+  return 99;
 }
 static uintptr_t new_string(uintptr_t e, const uint16_t *units, uintptr_t n) { locals++; return 900 + n; }
 static uintptr_t object(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
@@ -123,6 +130,10 @@ int main(int argc, char **argv) {
   table[6] = (uintptr_t)find_class;
   table[15] = (uintptr_t)none;
   table[17] = (uintptr_t)none;
+  table[19] = (uintptr_t)push;
+  table[20] = (uintptr_t)pop;
+  table[21] = (uintptr_t)new_global;
+  table[22] = (uintptr_t)delete_global;
   table[23] = (uintptr_t)release;
   table[31] = (uintptr_t)get_class;
   table[33] = (uintptr_t)method;
@@ -155,6 +166,7 @@ int main(int argc, char **argv) {
   set_level((uintptr_t)ctx, 4);
   require(volume_set == 4 && locals == 0, "set_volume");
   require(system_light((uintptr_t)ctx) == 200 && locals == 0, "system_brightness");
+  require(frames == 0 && globals == 0, "frames and global references");
   return 0;
 }
 `

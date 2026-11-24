@@ -5891,10 +5891,13 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
     }
   }
   let targs = bound_type_args(c.type_args, env);
-  let (callee_fd, callee_known) = call_target(name, is_method, is_closure, recv, env);
+  let target = -1;
+  if (!is_method || has_call_arg(c.args)) {
+    target = call_target(name, is_method, is_closure, recv, env);
+  }
   let arg_vals: Value[] = [];
   for i in 0..c.args.len() {
-    let av = eval_pinned_arg(c, i, callee_fd, callee_known, is_method && !is_type_value(recv), recv, arg_vals, targs, env);
+    let av = eval_pinned_arg(c, i, target, is_method && !is_type_value(recv), recv, arg_vals, targs, env);
     if (is_err(av)) {
       return av;
     }
@@ -5907,8 +5910,8 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
     env.heap.call_at.set((c.line, c.col));
     return call_method_targs(env.heap, recv, recv_static, name, arg_vals, targs, env.funcs, env.aliases, env.type_decls);
   }
-  if (targs.len() == 0 && callee_known && !is_closure) {
-    targs = static_type_args(callee_fd, c.args, arg_vals, env);
+  if (targs.len() == 0 && target >= 0 && !is_closure) {
+    targs = static_type_args(env.funcs.decls[target], c.args, arg_vals, env);
   }
   if (is_closure) {
     let inline_value = false;
@@ -5922,7 +5925,7 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
     env.heap.call_at.set((c.line, c.col));
     return call_closure_mode(env.heap, closure_val, arg_vals, env.funcs, env.aliases, env.type_decls, inline_value);
   }
-  if (!callee_known) {
+  if (target < 0) {
     if let Some(member) = union_member_value(name, arg_vals, env.aliases) {
       return member;
     }
@@ -5986,34 +5989,45 @@ function static_type_args(fd: parser.FuncDecl, args: ast.Expr[], vals: Value[], 
   return out;
 }
 
-function eval_pinned_arg(c: ast.ExprCall, i: i32, fd: parser.FuncDecl, known: boolean, has_recv: boolean, recv: Value, earlier: Value[], targs: string[], env: Env): Value {
-  if (known && i < fd.params.len() && fd.type_params.len() > 0) {
-    if let ast.ExprCall(ac) = c.args[i] {
-      let pinned = bind_tyargs(env, fd, has_recv, recv, earlier, targs, "");
-      let arg_expect = bound_type_spelling(fd.params[i].type_name, pinned);
-      if (arg_expect.len() > 0) {
-        return eval_expr_call_expect(ac, env, arg_expect);
-      }
+// A method call uses its target only to pin the type of an argument that is
+// a call.
+function has_call_arg(args: ast.Expr[]): boolean {
+  for a in args {
+    if let ast.ExprCall(_) = a {
+      return true;
+    }
+  }
+  return false;
+}
+
+function eval_pinned_arg(c: ast.ExprCall, i: i32, target: i32, has_recv: boolean, recv: Value, earlier: Value[], targs: string[], env: Env): Value {
+  let ast.ExprCall(ac) = c.args[i] else {
+    return eval_expr(c.args[i], env);
+  };
+  if (target < 0) {
+    return eval_expr(c.args[i], env);
+  }
+  let fd = env.funcs.decls[target];
+  if (i < fd.params.len() && fd.type_params.len() > 0) {
+    let pinned = bind_tyargs(env, fd, has_recv, recv, earlier, targs, "");
+    let arg_expect = bound_type_spelling(fd.params[i].type_name, pinned);
+    if (arg_expect.len() > 0) {
+      return eval_expr_call_expect(ac, env, arg_expect);
     }
   }
   return eval_expr(c.args[i], env);
 }
 
-function call_target(name: string, is_method: boolean, is_closure: boolean, recv: Value, env: Env): (parser.FuncDecl, boolean) {
-  let none = parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: "", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: [], ret_own: false, ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
+// The position of the function that the call reaches, or -1 where no
+// declaration decides it.
+function call_target(name: string, is_method: boolean, is_closure: boolean, recv: Value, env: Env): i32 {
   if (is_closure) {
-    return (none, false);
+    return -1;
   }
-  let idx: i32 = -1;
   if (is_method) {
-    idx = method_target_index(name, recv, env);
-  } else {
-    idx = free_target_index(name, env);
+    return method_target_index(name, recv, env);
   }
-  if (idx < 0) {
-    return (none, false);
-  }
-  return (env.funcs.decls[idx], true);
+  return free_target_index(name, env);
 }
 
 function method_target_index(name: string, recv: Value, env: Env): i32 {
@@ -10451,9 +10465,7 @@ function in_place_array_write(a: ast.StmtAssign, env: Env): boolean {
   if (av.view || interpheap.get(av.store).words.len() > 0) {
     return false;
   }
-  let (fd, known) = call_target("with", true, false, value, env);
-  let (fd2, known2) = call_target("append", true, false, value, env);
-  return !known && !known2;
+  return call_target("with", true, false, value, env) < 0 && call_target("append", true, false, value, env) < 0;
 }
 
 // The `.with` and `.append` calls of e, innermost first, when e chains them on
@@ -10501,8 +10513,8 @@ function write_array_in_place(a: ast.StmtAssign, own env: Env): StepResult {
     args = args.append(vs);
   }
   let cur = match (env.raw_value(a.target)) { Some(v) => v, None => { return step_stop(env, v_err("in-place write: missing binding")); } };
-  let heap = env.heap;
   let released = env.update(a.target, v_int(0));
+  let heap = released.heap;
   for i in 0..names.len() {
     let VArr(av) = cur else {
       return step_stop(released, v_err("in-place write: not an array"));

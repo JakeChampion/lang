@@ -335,3 +335,43 @@ function main(): i32 {
 func TestSelfHostSinkReadToItsUses(t *testing.T) {
 	runRereadProgram(t, "sink_to_uses.fern", sinkToUsesProg)
 }
+
+// A string two records down is compared before an update of both records.
+// The comparison only reads the string, so the update block reads the
+// records again and takes them. Before, the comparison counted as a spend of
+// the string: the first reads stayed, and each round copied both records.
+const compareThenTakeProg = `struct St { list: i64[], n: i64, refused: string }
+struct Q { streams: St, k: i64 }
+struct Conn { quic: Q, parked: i64[] }
+
+@noinline
+function readable(own c: Conn): Conn {
+  if (c.quic.streams.refused != "") {
+    return c;
+  }
+  return Conn { ...c, quic: Q { ...c.quic, streams: St { ...c.quic.streams, n: c.quic.streams.n + 1 } } };
+}
+
+function main(): i32 {
+  let c = Conn { quic: Q { streams: St { list: [], n: 0, refused: "" }, k: 0 }, parked: [] };
+  let before = __heap_alloc_count();
+  for i in 0..1000 {
+    c = readable(c);
+  }
+  let n = __heap_alloc_count() - before;
+  if (c.quic.streams.n != 1000 as i64) {
+    return 1;
+  }
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  if (n > 10 as i64) {
+    return 2;
+  }
+  return 0;
+}
+`
+
+func TestSelfHostCompareThenTake(t *testing.T) {
+	runRereadProgram(t, "compare_then_take.fern", compareThenTakeProg)
+}

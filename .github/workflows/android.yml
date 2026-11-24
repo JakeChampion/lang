@@ -67,7 +67,8 @@ name: Android
 # Android's app filter.
 # The files-samba job runs the SMB client of examples/android/files against
 # Samba, with each set of dialects and signature rules that the client has
-# code for. The emulator job has a Samba server too, for the app itself.
+# code for, and its WebDAV client against wsgidav. The emulator job has a
+# Samba server too, for the app itself.
 
 # Called from ci.yml rather than triggered: that is the one workflow a pull
 # request or a push to main launches. It decides from the changed files
@@ -320,6 +321,7 @@ jobs:
             chmod +x build/android-stopwatch/jnibind
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" tests/android/jnibind/bindings.spec | diff -u tests/android/jnibind/bindings.fern - || echo "bindings of tests/android/jnibind" >> build/android-stopwatch/emulator/failed
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" examples/android/paper/bindings.spec | diff -u examples/android/paper/bindings.fern - || echo "bindings of examples/android/paper" >> build/android-stopwatch/emulator/failed
+            build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/bindings.spec | diff -u internal/stdlib/std/android/bindings.fern - || echo "bindings of std/android" >> build/android-stopwatch/emulator/failed
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/focus/bindings.spec | diff -u internal/stdlib/std/android/focus/bindings.fern - || echo "bindings of std/android/focus" >> build/android-stopwatch/emulator/failed
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/media/bindings.spec | diff -u internal/stdlib/std/android/media/bindings.fern - || echo "bindings of std/android/media" >> build/android-stopwatch/emulator/failed
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" internal/stdlib/std/android/noisy/bindings.spec | diff -u internal/stdlib/std/android/noisy/bindings.fern - || echo "bindings of std/android/noisy" >> build/android-stopwatch/emulator/failed
@@ -411,6 +413,10 @@ jobs:
         run: |
           make bin/fern
           sudo scripts/files-samba-check "$PWD/bin/fern"
+      - name: Install wsgidav
+        run: pipx install wsgidav==4.4.1 && pipx inject wsgidav cheroot
+      - name: Check the WebDAV client of Fern Files against wsgidav
+        run: scripts/files-dav-check "$PWD/bin/fern"
   seccomp:
     name: android-seccomp-corpus
     runs-on: ubuntu-24.04

@@ -24,14 +24,16 @@ enum { ACTIVITY=100, MANAGER, LOADER, CLASS, LISTENER, LOOPER, FIX, EXCEPTION };
 enum { PERMISSION=1, SERVICE, GET_LOADER, LOAD, NEW_INSTANCE, MAIN_LOOPER, REQUEST, REMOVE, LAST,
   LAT, LON, ALT, ACC, SPEED, BEARING, MS, TO_STRING };
 static int frames, globals, registrations, removals, pending, refuse, no_ref, missing;
-static uintptr_t find(uintptr_t e, const char *name) { assert(frames == 1); return 1; }
+// android.has_permission looks up the Context class with no frame of its own, and deletes the one local reference.
+static uintptr_t find(uintptr_t e, const char *name) { assert(frames == 1 || !strcmp(name, "android/content/Context")); return 1; }
 static uintptr_t get_class(uintptr_t e, uintptr_t obj) { assert(obj==ACTIVITY || obj==EXCEPTION); return 1; }
 static uintptr_t method(uintptr_t e, uintptr_t cls, const char *name, const char *sig) {
   const char *names[] = {"", "checkSelfPermission", "getSystemService", "getClassLoader", "loadClass",
     "newInstance", "getMainLooper", "requestLocationUpdates", "removeUpdates", "getLastKnownLocation",
     "getLatitude", "getLongitude", "getAltitude", "getAccuracy", "getSpeed", "getBearing", "getTime", "toString"};
   for (int i=1; i<=TO_STRING; i++) if (!strcmp(name,names[i])) return i;
-  abort();
+  // The bindings look up each member of a class. The test calls only the members above.
+  return TO_STRING + 1;
 }
 enum { FINE=200, LOCATION, CLASS_NAME, GPS };
 static int permission(uintptr_t e, uintptr_t obj, uintptr_t id, const uintptr_t *args) {

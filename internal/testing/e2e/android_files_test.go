@@ -21,6 +21,12 @@ func TestAndroidFilesProtocol(t *testing.T) {
 	runAppSuite(t, filesApp, "protocol_test.fern")
 }
 
+// dav_test.fern checks the WebDAV client without a server: the addresses,
+// and the multistatus replies of RFC 4918, Nextcloud and Apache.
+func TestAndroidFilesDav(t *testing.T) {
+	runAppSuite(t, filesApp, "dav_test.fern")
+}
+
 // files_test.fern runs the file explorer on the simulator of std/android/ui
 // with a temporary directory as the storage of the phone. It browses,
 // copies, moves, renames and deletes real files, and saves a server.

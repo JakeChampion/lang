@@ -1,1 +1,1 @@
-"b" holds a callback that uses captured owned parameter "h" after it was consumed
+"b" borrows from "h", and is used after "h" was consumed

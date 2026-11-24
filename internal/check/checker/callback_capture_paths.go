@@ -13,6 +13,8 @@ type callbackLoan struct {
 	param        ast.Param
 	result, path string
 	direct, wide bool
+	// lent marks the loan of a local that reads its lender, not a capture.
+	lent bool
 }
 
 type callbackPart struct {
@@ -127,7 +129,7 @@ func mergeCallbackLoans(into, from []callbackLoan) []callbackLoan {
 	for _, loan := range from {
 		found := false
 		for _, old := range into {
-			if old.param.Name == loan.param.Name && old.result == loan.result && old.path == loan.path && old.direct == loan.direct && old.wide == loan.wide {
+			if old.param.Name == loan.param.Name && old.result == loan.result && old.path == loan.path && old.direct == loan.direct && old.wide == loan.wide && old.lent == loan.lent {
 				found = true
 				break
 			}
@@ -195,11 +197,22 @@ func widenCallbackLoans(loans []callbackLoan) []callbackLoan {
 	return out
 }
 
+// captureLoans drops each loan that no callback environment holds.
+func captureLoans(loans []callbackLoan) []callbackLoan {
+	var out []callbackLoan
+	for _, loan := range loans {
+		if !loan.lent {
+			out = append(out, loan)
+		}
+	}
+	return out
+}
+
 func callbackLoanParams(loans []callbackLoan) []ast.Param {
 	var out []ast.Param
 	seen := map[string]bool{}
 	for _, loan := range loans {
-		if !seen[loan.param.Name] {
+		if !loan.lent && !seen[loan.param.Name] {
 			seen[loan.param.Name] = true
 			out = append(out, loan.param)
 		}
@@ -423,4 +436,22 @@ func (c *checker) boundCallbackPath(t ast.Type, path string) (string, bool) {
 		prefix = callbackPath(prefix, part)
 	}
 	return prefix, false
+}
+
+// placeType gives the type of a local, or of a field or an element below one.
+func (c *checker) placeType(value ast.Expr) ast.Type {
+	switch v := value.(type) {
+	case *ast.Ident:
+		return c.localUseTypes[v]
+	case *ast.FieldAccess:
+		return c.declaredFieldType(c.placeType(v.Target), v.Field)
+	case *ast.Index:
+		switch t := c.placeType(v.Array).(type) {
+		case ast.ArrayType:
+			return t.Elem
+		case ast.SliceType:
+			return t.Elem
+		}
+	}
+	return nil
 }
