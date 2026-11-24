@@ -120,6 +120,8 @@ pub struct EmitState {
   runtime_target: string,
   named: string[],
   rc_free_debug: boolean,
+  rc_trace: boolean,
+  rc_trace_deep: boolean,
   sanitize: boolean,
   sandbox: boolean,
   leak_check: boolean,
@@ -673,6 +675,8 @@ pub function new_state(): EmitState {
     runtime_target: "arm64-linux",
     named: [],
     rc_free_debug: false,
+    rc_trace: false,
+    rc_trace_deep: false,
     sanitize: false,
     sandbox: false,
     leak_check: false,
@@ -780,7 +784,7 @@ pub function leak_check_on(): boolean {
   return envflag.on("FERN_LEAKCHECK");
 }
 
-pub struct Switches { backtrace: boolean, sanitize: boolean, sandbox: boolean, cover: boolean, symbols: boolean, optimize: boolean, leak_check: boolean, rc_free_debug: boolean, var_rows: boolean, shared: boolean, size: boolean, harden: boolean, heap_limit: i64, quarantine: i64, cpu_limit: i64, pie: boolean, profile: string, target: string, line_maps: util.LineMap[], ram_base: i64, ram_size: i64, interrupts: string[], early: string, secondary: string, user_mode: boolean }
+pub struct Switches { backtrace: boolean, sanitize: boolean, sandbox: boolean, cover: boolean, symbols: boolean, optimize: boolean, leak_check: boolean, rc_free_debug: boolean, rc_trace: boolean, rc_trace_deep: boolean, var_rows: boolean, shared: boolean, size: boolean, harden: boolean, heap_limit: i64, quarantine: i64, cpu_limit: i64, pie: boolean, profile: string, target: string, line_maps: util.LineMap[], ram_base: i64, ram_size: i64, interrupts: string[], early: string, secondary: string, user_mode: boolean }
 
 // The -sanitize quarantine budget in bytes when no -quarantine was given: 64 MiB.
 pub function quarantine_default(): i64 {
@@ -796,11 +800,11 @@ pub function arena_bytes(limit: i64): i64 {
 }
 
 pub function env_switches(): Switches {
-  return Switches { backtrace: backtrace_on(), sanitize: sanitize_on(), sandbox: sandbox_on(), cover: false, symbols: false, optimize: false, leak_check: leak_check_on(), rc_free_debug: rc_free_debug_on(), var_rows: false, shared: false, size: size_on(), harden: false, heap_limit: 0i64, quarantine: quarantine_default(), cpu_limit: 0i64, pie: false, profile: "", target: "", line_maps: [], ram_base: 0i64, ram_size: 0i64, interrupts: [], early: "", secondary: "", user_mode: false };
+  return Switches { backtrace: backtrace_on(), sanitize: sanitize_on(), sandbox: sandbox_on(), cover: false, symbols: false, optimize: false, leak_check: leak_check_on(), rc_free_debug: rc_free_debug_on(), rc_trace: rc_trace_on(), rc_trace_deep: rc_trace_deep_on(), var_rows: false, shared: false, size: size_on(), harden: false, heap_limit: 0i64, quarantine: quarantine_default(), cpu_limit: 0i64, pie: false, profile: "", target: "", line_maps: [], ram_base: 0i64, ram_size: 0i64, interrupts: [], early: "", secondary: "", user_mode: false };
 }
 
 pub function with_switches(s: EmitState, sw: Switches): EmitState {
-  return EmitState { ...s, backtrace: sw.backtrace, var_rows: sw.var_rows, shared: sw.shared, size: sw.size, harden: sw.harden, pie: sw.pie, heap_limit: arena_bytes(sw.heap_limit), cpu_limit: sw.cpu_limit, quarantine: sw.quarantine, build_profile: sw.profile, build_target: sw.target, ram_base: sw.ram_base, ram_size: sw.ram_size, interrupts: sw.interrupts, early: sw.early, secondary: sw.secondary, user_mode: sw.user_mode, line_maps: sw.line_maps, sanitize: sw.sanitize, sandbox: sw.sandbox, cover: sw.cover, symbols: sw.symbols, optimize: sw.optimize, leak_check: sw.sanitize || sw.leak_check, rc_free_debug: sw.sanitize || sw.rc_free_debug };
+  return EmitState { ...s, backtrace: sw.backtrace, var_rows: sw.var_rows, shared: sw.shared, size: sw.size, harden: sw.harden, pie: sw.pie, heap_limit: arena_bytes(sw.heap_limit), cpu_limit: sw.cpu_limit, quarantine: sw.quarantine, build_profile: sw.profile, build_target: sw.target, ram_base: sw.ram_base, ram_size: sw.ram_size, interrupts: sw.interrupts, early: sw.early, secondary: sw.secondary, user_mode: sw.user_mode, line_maps: sw.line_maps, sanitize: sw.sanitize, sandbox: sw.sandbox, cover: sw.cover, symbols: sw.symbols, optimize: sw.optimize, leak_check: sw.sanitize || sw.leak_check, rc_free_debug: sw.sanitize || sw.rc_free_debug, rc_trace: sw.rc_trace, rc_trace_deep: sw.rc_trace_deep };
 }
 
 // A `.loc` row names the document line of a literate module, not its tangled line.
@@ -845,6 +849,14 @@ pub function emit_build_manifest(s: EmitState): EmitState {
 
 pub function rc_free_debug_on(): boolean {
   return util.debug_flag("FERN_DEBUG_RC_FREE", "FERN_RC_FREE_DEBUG");
+}
+
+pub function rc_trace_on(): boolean {
+  return util.debug_flag("FERN_DEBUG_RC_TRACE", "FERN_RC_TRACE");
+}
+
+pub function rc_trace_deep_on(): boolean {
+  return util.debug_flag("FERN_DEBUG_RC_TRACE_DEEP", "FERN_RC_TRACE_DEEP");
 }
 
 pub function with_funcs(s: EmitState, funcs: parser.FuncDecl[]): EmitState {
