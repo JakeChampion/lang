@@ -16,6 +16,8 @@ The callback runs on the main thread of the app. It sends the command to the liv
 
 The module needs API level 26.
 
+The module calls Java only through `std/android/session/bindings`, which `jnibind` writes from `bindings.spec`.
+
 ## Contracts
 
 Call each function except the six command functions on the loop thread. Call `close` before Destroy.
@@ -38,6 +40,7 @@ Call each function except the six command functions on the loop thread. Call `cl
 // This module tells Android what an app plays, and reports media buttons.
 import "std/android";
 import "std/android/draw";
+import "std/android/session/bindings";
 import "std/jni";
 ```
 
@@ -123,45 +126,28 @@ A callback needs a thread with a Java looper. The loop thread has none, so the c
 // Global references of the session and of its callback.
 pub struct Session { obj: usize, callback: usize }
 
-const SESSION: string = "android/media/session/MediaSession";
+// The room of the local frame of one call of this module.
+const FRAME: i32 = 32;
 
-const STATE_BUILDER: string = "android/media/session/PlaybackState$Builder";
-
-const TRACK_BUILDER: string = "android/media/MediaMetadata$Builder";
-
-// PlaybackState.STATE_PAUSED and STATE_PLAYING.
-const PAUSED: i32 = 2;
-
-const PLAYING: i32 = 3;
-
-// ACTION_STOP, PAUSE, PLAY, SKIP_TO_PREVIOUS, SKIP_TO_NEXT, SEEK_TO,
-// PLAY_PAUSE and PLAY_FROM_MEDIA_ID of PlaybackState. A browser such as
-// Android Auto plays an item of `std/android/browse` with the last one.
-const ACTIONS: i32 = 1847;
-
-function new_object(e: usize, class: usize, sig: string, args: usize[]): usize {
-  let values: usize = jni.jvalues(args);
-  let obj: usize = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", sig), values);
-  jni.free_buffer(values);
-  return obj;
+function end_frame(e: usize): void {
+  let _ = jni.pop_local_frame(e, 0 as usize);
 }
 
-// True when the last JNI call threw. It clears the exception.
-function threw(e: usize): boolean {
-  if (jni.exception_occurred(e) == 0 as usize) {
-    return false;
-  }
-  jni.exception_clear(e);
-  return true;
+function session_of(s: Session): bindings.MediaSession {
+  return bindings.MediaSession { ref: s.obj };
 }
 
-// A handler of the main looper of the app.
-function main_handler(e: usize): usize {
-  let looper_class: usize = jni.find_class(e, "android/os/Looper");
-  let none: usize = jni.jvalue_alloc(0);
-  let looper: usize = jni.call_static_object_method_a(e, looper_class, jni.get_static_method_id(e, looper_class, "getMainLooper", "()Landroid/os/Looper;"), none);
-  jni.free_buffer(none);
-  return new_object(e, jni.find_class(e, "android/os/Handler"), "(Landroid/os/Looper;)V", [looper]);
+// Gives `session` one callback of the class `class`, on a handler of the
+// main looper of the app, and makes the session active.
+function attach(e: usize, c: bindings.Classes, activity: bindings.Context, session: bindings.MediaSession, class: string): Result[Session, jni.JavaError] {
+  let loader = c.context.get_class_loader(e, activity)?;
+  let loaded = c.class_loader.load_class(e, loader, class)?;
+  let callback = c.class.new_instance(e, loaded)?;
+  let looper = c.looper.get_main_looper(e)?;
+  let handler = c.handler.new(e, looper)?;
+  c.media_session.set_callback(e, session, bindings.MediaSession_Callback { ref: callback.ref }, handler)?;
+  c.media_session.set_active(e, session, true)?;
+  return Ok(Session { obj: jni.new_global_ref(e, session.ref), callback: jni.new_global_ref(e, callback.ref) });
 }
 
 // An active session with the name `tag` and one callback of `class`, the
@@ -169,109 +155,108 @@ function main_handler(e: usize): usize {
 // is None when Android gives no session.
 pub function new(ctx: usize, class: string, tag: string): Option[Session] {
   let e: usize = android.env(ctx);
-  let obj: usize = android.activity_object(ctx);
-  let session: usize = new_object(e, jni.find_class(e, SESSION), "(Landroid/content/Context;Ljava/lang/String;)V", [obj, jni.new_string(e, tag)]);
-  if (threw(e) || session == 0 as usize) {
+  if (!jni.push_local_frame(e, FRAME)) {
     return None;
   }
-  let callback: usize = new_object(e, jni.load_class(e, obj, class), "()V", []);
-  if (threw(e) || callback == 0 as usize) {
+  defer end_frame(e);
+  let Ok(c) = bindings.classes(e) else {
+    return None;
+  };
+  defer c.release(e);
+  let activity = bindings.Context { ref: android.activity_object(ctx) };
+  let Ok(session) = c.media_session.new(e, activity, tag) else {
+    return None;
+  };
+  if (session.is_null()) {
     return None;
   }
-  let set: boolean = jni.call_void(e, session, "setCallback", "(Landroid/media/session/MediaSession$Callback;Landroid/os/Handler;)V", [callback, main_handler(e)]);
-  let active: boolean = jni.call_void(e, session, "setActive", "(Z)V", [1 as usize]);
-  if (!set || !active) {
-    return None;
+  match (attach(e, c, activity, session, class)) {
+    Ok(s) => {
+      return Some(s);
+    },
+    Err(_) => {
+      let _ = c.media_session.release_(e, session);
+      return None;
+    }
   }
-  return Some(Session { obj: jni.new_global_ref(e, session), callback: jni.new_global_ref(e, callback) });
-}
-
-// Puts the text `value` under the key `key` of the track of `builder`.
-function put_text(e: usize, builder: usize, key: string, value: string): void {
-  let k: usize = jni.new_string(e, key);
-  let v: usize = jni.new_string(e, value);
-  let same: usize = jni.call_object(e, builder, "putString", "(Ljava/lang/String;Ljava/lang/String;)L" + TRACK_BUILDER + ";", [k, v]);
-  let a: usize = jni.delete_local_ref(e, k);
-  let b: usize = jni.delete_local_ref(e, v);
-  let c: usize = jni.delete_local_ref(e, same);
 }
 
 // The longest side in pixels of the picture that the session gets.
 const ART_SIDE: i32 = 320;
 
-// A Bitmap of `img`, or 0. A pixel of a Bitmap is alpha, red, green and
-// blue in one int.
-function bitmap(e: usize, img: draw.Image): usize {
-  let n = img.width * img.height;
-  if (n <= 0 || img.pixels.len() < n * 4) {
-    return 0 as usize;
-  }
-  let colors: i32[] = [];
-  for k in 0..n {
-    let at = k * 4;
-    colors = colors.append(img.pixels[at + 3] as i32 << 24 | img.pixels[at] as i32 << 16 | img.pixels[at + 1] as i32 << 8 | img.pixels[at + 2] as i32);
-  }
-  let array: usize = jni.new_int_array(e, n);
-  jni.set_int_array_region(e, array, 0, colors);
-  let config_class: usize = jni.find_class(e, "android/graphics/Bitmap$Config");
-  let config: usize = jni.get_static_object_field(e, config_class, jni.get_static_field_id(e, config_class, "ARGB_8888", "Landroid/graphics/Bitmap$Config;"));
-  let bitmap_class: usize = jni.find_class(e, "android/graphics/Bitmap");
-  let values: usize = jni.jvalues([array, img.width as usize, img.height as usize, config]);
-  let made: usize = jni.call_static_object_method_a(e, bitmap_class, jni.get_static_method_id(e, bitmap_class, "createBitmap", "([IIILandroid/graphics/Bitmap$Config;)Landroid/graphics/Bitmap;"), values);
-  jni.free_buffer(values);
-  for local in [array, config] {
-    let dropped: usize = jni.delete_local_ref(e, local);
-  }
-  if (threw(e)) {
-    return 0 as usize;
-  }
-  return made;
-}
-
 // Puts the picture `img` of the album in the track of `builder`, at a
-// size of `ART_SIDE` pixels or less.
-function put_art(e: usize, builder: usize, img: draw.Image): void {
+// size of `ART_SIDE` pixels or less. A pixel of a Bitmap is alpha, red,
+// green and blue in one int.
+function put_art(e: usize, c: bindings.Classes, builder: bindings.MediaMetadata_Builder, img: draw.Image): Result[void, jni.JavaError] {
   let small = img;
   let longest = img.width.max(img.height);
   if (longest > ART_SIDE) {
     small = img.scaled((img.width * ART_SIDE / longest).max(1), (img.height * ART_SIDE / longest).max(1));
   }
-  let picture: usize = bitmap(e, small);
-  if (picture == 0 as usize) {
-    return;
+  let n = small.width * small.height;
+  if (n <= 0 || small.pixels.len() < n * 4) {
+    return Ok(());
   }
-  let key: usize = jni.new_string(e, "android.media.metadata.ALBUM_ART");
-  let same: usize = jni.call_object(e, builder, "putBitmap", "(Ljava/lang/String;Landroid/graphics/Bitmap;)L" + TRACK_BUILDER + ";", [key, picture]);
-  for local in [key, same, picture] {
-    let dropped: usize = jni.delete_local_ref(e, local);
+  let colors: i32[] = [];
+  for k in 0..n {
+    let at = k * 4;
+    colors = colors.append(small.pixels[at + 3] as i32 << 24 | small.pixels[at] as i32 << 16 | small.pixels[at + 1] as i32 << 8 | small.pixels[at + 2] as i32);
   }
+  let array: usize = jni.new_int_array(e, n);
+  jni.check(e)?;
+  if (array == 0 as usize) {
+    return Ok(());
+  }
+  jni.set_int_array_region(e, array, 0, colors);
+  let config = c.bitmap_config.argb_8888(e)?;
+  let picture = c.bitmap.create_bitmap(e, jni.Object { ref: array }, small.width, small.height, config)?;
+  if (picture.is_null()) {
+    return Ok(());
+  }
+  let same = c.media_metadata_builder.put_bitmap(e, builder, bindings.MEDIA_METADATA_METADATA_KEY_ALBUM_ART, picture)?;
+  return Ok(());
+}
+
+function publish_track(e: usize, c: bindings.Classes, s: Session, title: string, artist: string, album: string, length_ms: i64, art: Option[draw.Image]): Result[void, jni.JavaError] {
+  let builder = c.media_metadata_builder.new(e)?;
+  if let Some(img) = art {
+    // A track with no picture is better than no track.
+    let _ = put_art(e, c, builder, img);
+  }
+  let titled = c.media_metadata_builder.put_string(e, builder, bindings.MEDIA_METADATA_METADATA_KEY_TITLE, title)?;
+  let by = c.media_metadata_builder.put_string(e, builder, bindings.MEDIA_METADATA_METADATA_KEY_ARTIST, artist)?;
+  let on = c.media_metadata_builder.put_string(e, builder, bindings.MEDIA_METADATA_METADATA_KEY_ALBUM, album)?;
+  let timed = c.media_metadata_builder.put_long(e, builder, bindings.MEDIA_METADATA_METADATA_KEY_DURATION, length_ms.max(0i64))?;
+  let track = c.media_metadata_builder.build(e, builder)?;
+  return c.media_session.set_metadata(e, session_of(s), track);
 }
 
 // Gives the session the track that plays: its title, its artist, its
 // album, its length in ms, and the picture of its album or None.
 pub function set_track(ctx: usize, s: Session, title: string, artist: string, album: string, length_ms: i64, art: Option[draw.Image]): void {
   let e: usize = android.env(ctx);
-  let builder: usize = new_object(e, jni.find_class(e, TRACK_BUILDER), "()V", []);
-  if let Some(img) = art {
-    put_art(e, builder, img);
+  if (!jni.push_local_frame(e, FRAME)) {
+    return;
   }
-  put_text(e, builder, "android.media.metadata.TITLE", title);
-  put_text(e, builder, "android.media.metadata.ARTIST", artist);
-  put_text(e, builder, "android.media.metadata.ALBUM", album);
-  let key: usize = jni.new_string(e, "android.media.metadata.DURATION");
-  let same: usize = jni.call_object(e, builder, "putLong", "(Ljava/lang/String;J)L" + TRACK_BUILDER + ";", [key, length_ms.max(0i64) as usize]);
-  let track: usize = jni.call_object(e, builder, "build", "()Landroid/media/MediaMetadata;", []);
-  let set: boolean = jni.call_void(e, s.obj, "setMetadata", "(Landroid/media/MediaMetadata;)V", [track]);
-  for local in [key, same, track, builder] {
-    let dropped: usize = jni.delete_local_ref(e, local);
-  }
+  defer end_frame(e);
+  let Ok(c) = bindings.classes(e) else {
+    return;
+  };
+  defer c.release(e);
+  let _ = publish_track(e, c, s, title, artist, album, length_ms, art);
+}
+
+// The controls of `set_state`. A browser such as Android Auto plays an
+// item of `std/android/browse` with ACTION_PLAY_FROM_MEDIA_ID.
+function default_actions(): i64 {
+  return bindings.PLAYBACK_STATE_ACTION_STOP | bindings.PLAYBACK_STATE_ACTION_PAUSE | bindings.PLAYBACK_STATE_ACTION_PLAY | bindings.PLAYBACK_STATE_ACTION_SKIP_TO_PREVIOUS | bindings.PLAYBACK_STATE_ACTION_SKIP_TO_NEXT | bindings.PLAYBACK_STATE_ACTION_SEEK_TO | bindings.PLAYBACK_STATE_ACTION_PLAY_PAUSE | bindings.PLAYBACK_STATE_ACTION_PLAY_FROM_MEDIA_ID;
 }
 
 // Gives the session the state of the player, with its default controls.
 pub function set_state(ctx: usize, s: Session, playing: boolean, at_ms: i64): void {
-  let state = if (playing) { PLAYING } else { PAUSED };
+  let state = if (playing) { bindings.PLAYBACK_STATE_STATE_PLAYING } else { bindings.PLAYBACK_STATE_STATE_PAUSED };
   let rate = if (playing) { 1.0f32 } else { 0.0f32 };
-  set_transport(ctx, s, state, at_ms, rate, ACTIONS as i64);
+  set_transport(ctx, s, state, at_ms, rate, default_actions());
 }
 
 // Publishes the Android playback state, speed, and action flags.
@@ -281,41 +266,63 @@ pub function set_transport(ctx: usize, s: Session, state: i32, at_ms: i64, rate:
 
 pub struct TransportAction { id: string, label: string, icon: i32 }
 
+function publish_state(e: usize, sessions: bindings.MediaSessionClass, builders: bindings.PlaybackState_BuilderClass, s: Session, state: i32, at_ms: i64, rate: f32, actions: i64, custom: TransportAction[]): Result[void, jni.JavaError] {
+  let builder = builders.new(e)?;
+  let acted = builders.set_actions(e, builder, actions)?;
+  let stated = builders.set_state(e, builder, state, at_ms.max(0i64), rate)?;
+  for action in custom {
+    let added = builders.add_custom_action(e, builder, action.id, action.label, action.icon)?;
+    let _ = jni.delete_local_ref(e, added.ref);
+  }
+  let built = builders.build(e, builder)?;
+  return sessions.set_playback_state(e, session_of(s), built);
+}
+
 // Adds custom media controls to the published Android playback state.
 pub function set_transport_actions(ctx: usize, s: Session, state: i32, at_ms: i64, rate: f32, actions: i64, custom: TransportAction[]): void {
   let e: usize = android.env(ctx);
-  let builder: usize = new_object(e, jni.find_class(e, STATE_BUILDER), "()V", []);
-  let acts: usize = jni.call_object(e, builder, "setActions", "(J)L" + STATE_BUILDER + ";", [actions as usize]);
-  let stated: usize = jni.call_object(e, builder, "setState", "(IJF)L" + STATE_BUILDER + ";", [state as usize, at_ms.max(0i64) as usize, f32_bits(rate) as usize]);
-  for action in custom {
-    let name = jni.new_string(e, action.id);
-    let label = jni.new_string(e, action.label);
-    let added = jni.call_object(e, builder, "addCustomAction", "(Ljava/lang/String;Ljava/lang/String;I)L" + STATE_BUILDER + ";", [name, label, action.icon as usize]);
-    for ref in [name, label, added] {
-      let dropped = jni.delete_local_ref(e, ref);
-    }
+  if (!jni.push_local_frame(e, FRAME)) {
+    return;
   }
-  let built: usize = jni.call_object(e, builder, "build", "()Landroid/media/session/PlaybackState;", []);
-  let set: boolean = jni.call_void(e, s.obj, "setPlaybackState", "(Landroid/media/session/PlaybackState;)V", [built]);
-  for local in [acts, stated, built, builder] {
-    let dropped: usize = jni.delete_local_ref(e, local);
-  }
+  defer end_frame(e);
+  let Ok(sessions) = bindings.media_session_class(e) else {
+    return;
+  };
+  defer sessions.release(e);
+  let Ok(builders) = bindings.playback_state_builder_class(e) else {
+    return;
+  };
+  defer builders.release(e);
+  let _ = publish_state(e, sessions, builders, s, state, at_ms, rate, actions, custom);
 }
 
 // A global reference of the token of the session, for the notification of
 // a foreground service. The caller keeps it for the life of the session.
+// It is 0 when Android gives no token.
 pub function token(ctx: usize, s: Session): usize {
   let e: usize = android.env(ctx);
-  let local: usize = jni.call_object(e, s.obj, "getSessionToken", "()Landroid/media/session/MediaSession$Token;", []);
-  let global: usize = jni.new_global_ref(e, local);
-  let dropped: usize = jni.delete_local_ref(e, local);
+  let Ok(sessions) = bindings.media_session_class(e) else {
+    return 0 as usize;
+  };
+  defer sessions.release(e);
+  let Ok(local) = sessions.get_session_token(e, session_of(s)) else {
+    return 0 as usize;
+  };
+  if (local.is_null()) {
+    return 0 as usize;
+  }
+  let global: usize = jni.new_global_ref(e, local.ref);
+  let _ = jni.delete_local_ref(e, local.ref);
   return global;
 }
 
 // Ends the session and frees it. Call it before Destroy.
 pub function close(ctx: usize, s: Session): void {
   let e: usize = android.env(ctx);
-  let released: boolean = jni.call_void(e, s.obj, "release", "()V", []);
+  if let Ok(sessions) = bindings.media_session_class(e) {
+    let _ = sessions.release_(e, session_of(s));
+    sessions.release(e);
+  }
   jni.delete_global_ref(e, s.callback);
   jni.delete_global_ref(e, s.obj);
 }
