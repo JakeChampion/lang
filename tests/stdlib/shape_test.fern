@@ -209,19 +209,32 @@ function test_prepared_coverage_range(): test.TestOutcome {
 // glyphs. In the second run the lookup applies two times. In the third run
 // glyph 126 has the bit of 62 in the first word of the digest and glyph 48
 // has the bit of 62 in the second word, so the digest of the run holds the
-// coverage and each glyph does not.
+// coverage and each glyph does not. The last two runs put the first lookup
+// between two of a second lookup, with the coverage 66..=67. Glyph 32830 has
+// each bit of 62, so the first lookup tries it and does not apply. The
+// second lookup holds no glyph each time. Glyph 65 becomes 66, which the
+// second lookup holds only after that.
+function sequence_result(input: truetype.Run, each: truetype.Run, one: truetype.Run): string {
+  return joined(each.glyphs) + " " + (input.ops - each.ops).to_string() + " " + (one.ops - each.ops).to_string() + " " + (joined(one.glyphs) == joined(each.glyphs)).to_string() + ";";
+}
+
 function test_prepared_lookups_in_sequence(): test.TestOutcome {
   let Some(base) = devanagari() else {
     return test.fail("the font did not parse");
   };
   let data: u8[] = [
     0, 1, 0, 0, 0, 0, 0, 0, 0, 10,  // GSUB header
-    0, 1, 0, 4, 0, 1, 0, 0, 0, 1, 0, 8,  // one substitution lookup
+    0, 2, 0, 6, 0, 14,  // two lookups
+    0, 1, 0, 0, 0, 1, 0, 16,  // a substitution lookup
+    0, 1, 0, 0, 0, 1, 0, 24,  // a substitution lookup
     0, 1, 0, 6, 0, 1,  // single substitution, delta +1
     0, 2, 0, 1, 0, 62, 0, 65, 0, 0,  // coverage range 62..=65
+    0, 1, 0, 6, 0, 1,  // single substitution, delta +1
+    0, 2, 0, 1, 0, 66, 0, 67, 0, 0,  // coverage range 66..=67
   ];
   let font = truetype.Font { ...base, data: data, gsub: 0, gdef: -1 };
   let p = font.prepare_lookup(0, false);
+  let q = font.prepare_lookup(1, false);
   let inputs = [
     truetype.run_of([12, 13, 200], [0, 1, 2], [1, 0, 3]),
     truetype.run_of([62, 12, 200], [0, 1, 2], [1, 1, 1]),
@@ -231,9 +244,13 @@ function test_prepared_lookups_in_sequence(): test.TestOutcome {
   for input in inputs {
     let each = truetype.apply_each([p, p, p], input, [1, 1, 2], [0, 0, 0]);
     let one = p.apply(p.apply(p.apply(input, 1, 0), 1, 0), 2, 0);
-    got = got + joined(each.glyphs) + " " + (input.ops - each.ops).to_string() + " " + (one.ops - each.ops).to_string() + " " + (joined(one.glyphs) == joined(each.glyphs)).to_string() + ";";
+    got = got + sequence_result(input, each, one);
   }
-  return test.assert_eq(got, "12,13,200 5 0 true;64,12,200 6 0 true;126,48 4 0 true;");
+  for input in [truetype.run_of([32830, 12], [0, 1], [1, 1]), truetype.run_of([65, 12], [0, 1], [1, 1])] {
+    let each = truetype.apply_each([q, p, q], input, [1, 1, 1], [0, 0, 0]);
+    got = got + sequence_result(input, each, q.apply(p.apply(q.apply(input, 1, 0), 1, 0), 1, 0));
+  }
+  return test.assert_eq(got, "12,13,200 5 0 true;64,12,200 6 0 true;126,48 4 0 true;32830,12 6 0 true;67,12 6 0 true;");
 }
 
 // A reverse chaining substitution inside an extension lookup replaces 7
