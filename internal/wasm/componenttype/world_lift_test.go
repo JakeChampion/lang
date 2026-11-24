@@ -24,7 +24,8 @@ func TestWorldInterfaces(t *testing.T) {
 		"wasi:filesystem/preopens@0.2.0", "wasi:sockets/network@0.2.0",
 		"wasi:sockets/instance-network@0.2.0", "wasi:sockets/tcp@0.2.0",
 		"wasi:sockets/tcp-create-socket@0.2.0", "wasi:sockets/udp@0.2.0",
-		"wasi:sockets/udp-create-socket@0.2.0", "wasi:random/random@0.2.0",
+		"wasi:sockets/udp-create-socket@0.2.0", "wasi:sockets/ip-name-lookup@0.2.0",
+		"wasi:random/random@0.2.0",
 	}
 	if len(order) != len(wantOrder) {
 		t.Fatalf("interface count = %d, want %d (%v)", len(order), len(wantOrder), order)

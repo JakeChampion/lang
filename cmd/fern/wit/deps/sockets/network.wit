@@ -1,10 +1,8 @@
 package wasi:sockets@0.2.0;
 
-// Vendored subset of wasi:sockets/network@0.2.0 — the `network`
-// resource (an opaque host-provided handle) plus the
-// `ip-socket-address` variant used by start-bind. We only emit
-// IPv4, but the variant has to include the IPv6 case so the
-// canonical-ABI lowering matches what the host expects.
+// Vendored subset of wasi:sockets/network@0.2.0: the `network`
+// resource (an opaque host-provided handle), the address types that
+// tcp, udp and ip-name-lookup use, and the error codes.
 // Source: https://github.com/WebAssembly/wasi-sockets
 interface network {
     resource network;
@@ -13,6 +11,10 @@ interface network {
 
     type ipv4-address = tuple<u8, u8, u8, u8>;
     type ipv6-address = tuple<u16, u16, u16, u16, u16, u16, u16, u16>;
+    variant ip-address {
+        ipv4(ipv4-address),
+        ipv6(ipv6-address),
+    }
 
     record ipv4-socket-address {
         port: u16,

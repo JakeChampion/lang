@@ -2958,6 +2958,11 @@ pub function (r: Resolver) nat64_carried(addr: net.IpAddr): Option[net.IpAddr] {
 
 ### `89 function resolve_with(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError]`
 
+A wasi program cannot read `/etc/hosts` or `/etc/resolv.conf`. The host
+resolves the name through `wasi:sockets/ip-name-lookup` instead. The
+`wasm_name_lookup` builtin writes one 17-byte record for each address: the
+family (4 or 6), then 16 address bytes in network order.
+
 ```fern
 <<89 function resolve_with(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError]>>=
 function resolve_with(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
@@ -2971,6 +2976,9 @@ function resolve_in(conf: ResolvConf, hosts_of: () => HostsEntry[], name: string
     },
     Err(_) => {}
   }
+  if (target_os() == "wasi") {
+    return wasi_lookup(name);
+  }
   let hosts = hosts_lookup(hosts_of(), name);
   if (hosts.len() > 0) {
     return Ok(hosts);
@@ -2979,6 +2987,54 @@ function resolve_in(conf: ResolvConf, hosts_of: () => HostsEntry[], name: string
     return netd_lookup(name);
   }
   return found_addresses(conf, name);
+}
+
+const LOOKUP_RECORD: i32 = 17;
+
+const LOOKUP_KEPT: i32 = 64;
+
+function wasi_lookup(name: string): Result[net.IpAddr[], DnsError] {
+  let out = __alloc_u8(LOOKUP_KEPT * LOOKUP_RECORD);
+  let n = wasm_name_lookup(name.bytes(), out);
+  if (n < 0) {
+    return Err(lookup_error(n));
+  }
+  let found: net.IpAddr[] = [];
+  for k in 0..n {
+    if let Some(ip) = lookup_record(out, k * LOOKUP_RECORD) {
+      found = found.append(ip);
+    }
+  }
+  if (found.len() == 0) {
+    return Err(NoData);
+  }
+  return Ok(found);
+}
+
+// The wasi errno of a name-unresolvable, a temporary-resolver-failure and a
+// permanent-resolver-failure error code.
+function lookup_error(n: i32): DnsError {
+  if (n == -44) {
+    return NoSuchName;
+  }
+  if (n == -6) {
+    return NoReply;
+  }
+  if (n == -29) {
+    return ServerFailure;
+  }
+  return NetFailed(net.error_from_host(n));
+}
+
+function lookup_record(b: u8[], at: i32): Option[net.IpAddr] {
+  if (b[at] == 4u8) {
+    return Some(net.ipv4(b[at + 1] as i32, b[at + 2] as i32, b[at + 3] as i32, b[at + 4] as i32));
+  }
+  let v6: u8[] = [];
+  for k in 1..17 {
+    v6 = v6.append(b[at + k]);
+  }
+  return net.ipv6(v6);
 }
 ```
 
