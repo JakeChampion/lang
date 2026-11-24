@@ -266,10 +266,7 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (has_kind(kinds, "str_replace")) {
     out = out.append("@uses_str_replace");
   }
-  if (has_kind(kinds, "str_slice")) {
-    out = out.append("@uses_str_slice");
-  }
-  if (calls.contains("__fern_str_borrow")) {
+  if (calls.contains("__fern_str_borrow") || has_kind(kinds, "str_slice")) {
     out = out.append("@uses_str_borrow");
   }
   if (module_uses_frame_window(cache)) {
@@ -1068,7 +1065,7 @@ pub function module_uses_frame_window(cache: irtables.LowerResult[]): boolean {
 }
 
 function is_frame_window(o: ir.Op): boolean {
-  return ir.frame_box_base(o) >= 0 && o.kind_tag == ir.K_RAW_STRING;
+  return ir.frame_box_base(o) >= 0 && (o.kind_tag == ir.K_RAW_STRING || o.kind_tag == ir.K_STR_SLICE);
 }
 
 pub function module_uses_task(cache: irtables.LowerResult[]): boolean {
@@ -5046,6 +5043,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    i32.const 4\n    i32.mul\n    i32.add\n    i32.load\n");
   } else if (o.kind_tag == ir.K_RAW_STRING && o.i32_imm > 0) {
     parts = parts.append(frame_window_wat(cx, arrtmp, eltmp, bctmp));
+  } else if (o.kind_tag == ir.K_STR_SLICE) {
+    parts = parts.append(str_slice_wat(cx, o, arrtmp, eltmp, bctmp));
   } else if (o.kind_tag == ir.K_ARR_MAKE) {
     parts = emit_wasm_arr_make(arrtmp, eltmp, f64tmp, i64tmp, o, parts);
   } else if (o.kind_tag == ir.K_ARR_GET) {
@@ -5231,9 +5230,6 @@ function emit_str_op_wat(o: ir.Op): string {
   }
   if (o.kind_tag == ir.K_STR_LEN) {
     return str_len_stack();
-  }
-  if (o.kind_tag == ir.K_STR_SLICE) {
-    return "    call $__fern_substr\n";
   }
   if (o.kind_tag == ir.K_MEMCHR) {
     return "    call $__fern_memchr\n";
@@ -5431,8 +5427,34 @@ function shadow_frame_pop(windows: i32): string {
     + "\n    i32.add\n    global.set $__fern_shadow_sp\n";
 }
 
+// stack: s, start, end -> a view of the bytes start..end of the string s. The
+// frame form is a box in this call's shadow-stack frame, below the heap base,
+// so the count and the release skip it. The other form is a borrowed box.
+// Each holds no unit of s.
+function str_slice_wat(cx: WasmOpCtx, o: ir.Op, s: i32, start: i32, end: i32): string {
+  let a = util.i32_to_string(s);
+  let b = util.i32_to_string(start);
+  let e = util.i32_to_string(end);
+  let trap = "    if\n    call $__fern_abort_str\n    unreachable\n    end\n";
+  let out = "    local.set " + e + "\n    local.set " + b + "\n    local.set " + a + "\n"
+    + "    local.get " + e + "\n    local.get " + a + "\n" + str_len_stack() + "    i32.gt_u\n" + trap
+    + "    local.get " + b + "\n    local.get " + e + "\n    i32.gt_u\n" + trap
+    + "    local.get " + a + "\n" + str_data_stack() + "    local.get " + b + "\n    i32.add\n"
+    + "    local.get " + e + "\n    local.get " + b + "\n    i32.sub\n";
+  if (ir.frame_box_base(o) >= 0) {
+    return out + frame_box_wat(cx, s, start, end);
+  }
+  return out + "    call $__fern_str_borrow\n";
+}
+
 // stack: data, len -> the window's address plus 1.
 function frame_window_wat(cx: WasmOpCtx, data: i32, len: i32, at: i32): string {
+  return frame_box_wat(cx, data, len, at) + "    i32.const 1\n    i32.add\n";
+}
+
+// stack: data, len -> the address of a box [data, len] in this call's
+// shadow-stack frame.
+function frame_box_wat(cx: WasmOpCtx, data: i32, len: i32, at: i32): string {
   let d = util.i32_to_string(data);
   let l = util.i32_to_string(len);
   let w = util.i32_to_string(at);
@@ -5440,7 +5462,7 @@ function frame_window_wat(cx: WasmOpCtx, data: i32, len: i32, at: i32): string {
     + "    global.get $__fern_shadow_sp\n    i32.const " + util.i32_to_string(cx.window) + "\n    i32.add\n"
     + "    local.tee " + w + "\n    local.get " + d + "\n    i32.store\n"
     + "    local.get " + w + "\n    i32.const 4\n    i32.add\n    local.get " + l + "\n    i32.store\n"
-    + "    local.get " + w + "\n    i32.const 1\n    i32.add\n";
+    + "    local.get " + w + "\n";
 }
 
 // A view's string arm is a string or a borrowed descriptor (str_borrow_helper),
@@ -5604,7 +5626,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
   let strs = placed_strs(str_values(cache));
   let caggs = placed_caggs(const_agg_values(cache), 0);
   let ft = fn_value_index(cache);
-  let vgate = irverifygate.with_memo(irverifygate.with_owned_frame_views(irverifygate.gate(irtables.fn_sig_index(all_funcs, mod.funcs, cache), ssa_lift.kind_table(), physicalbody.abis(physical))), irverifygate.open_memo("wasm32"));
+  let vgate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(all_funcs, mod.funcs, cache), ssa_lift.kind_table(), physicalbody.abis(physical)), irverifygate.open_memo("wasm32"));
   let parts: string[] = [];
   for fi in 0..mod.funcs.len() {
     if (mod.funcs[fi].import_iface.len() == 0 && !cache[fi].superseded) {
@@ -6887,8 +6909,8 @@ pub function substr_helper(): string {
   return o;
 }
 
-// A borrowed descriptor {len | 1 << 31, data}: a counted box that aliases the
-// storage it was made from. A string's length never has the top bit.
+// A borrowed descriptor: a counted box [data, len] whose data is in the storage
+// it was made from. Its release frees only the box.
 pub function str_borrow_helper(): string {
   let o = "  (func $__fern_str_borrow (param $data i32) (param $len i32) (result i32)\n";
   o += "    (local $p i32)\n";
@@ -10807,7 +10829,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need(needs, "writer_truncate")) {
     parts = parts.append(writer_truncate_func());
   }
-  if (need(needs, "@uses_str_slice") || need(needs, "str_split") || need(needs, "@uses_str_lines")) {
+  if (need(needs, "str_split") || need(needs, "@uses_str_lines")) {
     parts = parts.append(substr_helper());
   }
   if (need(needs, "@uses_str_borrow")) {
