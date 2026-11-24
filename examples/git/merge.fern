@@ -1,0 +1,1563 @@
+// The merge of two commits in memory: merge-ort.c and merge-ll.c of git,
+// for the diff of a merge against the merge of its parents
+// (`--remerge-diff`).
+//
+// The merge holds its blobs and its trees in the store and writes no file.
+// A conflict leaves a file with conflict markers in the tree, and a
+// message for its path.
+import "std/array";
+import "std/linediff";
+import "std/string";
+import "core/cmp";
+import "core/map";
+import "./attr";
+import "./commitgraph";
+import "./config";
+import "./log";
+import "./objects";
+import "./refs";
+import "./store";
+import "./treediff";
+import "./walk";
+
+// The settings of a merge. `style` is a style of `std/linediff`, and
+// `algo` is the search of the diff of a content merge. `renames` finds the
+// renames. `dir_renames` is true unless `merge.directoryRenames` is
+// false, and `dir_moves` is true when it is true: a file then moves with
+// its directory with no conflict. `default_driver` is `merge.default`,
+// and `drivers` holds the names of the merge drivers of the
+// configuration. With a `verbosity` of 5 or more, the messages of an
+// inner merge are kept. `abbrev` is the least length of a short name.
+// `attrs` holds the attributes, or nothing.
+pub struct Options { style: i32, algo: linediff.Options, renames: boolean, dir_renames: boolean, dir_moves: boolean, rename_limit: i64, default_driver: string, drivers: string[], verbosity: i32, abbrev: i32, attrs: attr.Attrs[] }
+
+// The text of a gap: a part of a merge that the port does not have.
+function gap(what: string): string {
+  return "the port does not have " + what + " in a merge (--remerge-diff)";
+}
+
+// The settings of git with no configuration.
+pub function defaults(): Options {
+  return Options { style: linediff.STYLE_MERGE, algo: linediff.Options { algorithm: linediff.HISTOGRAM, minimal: false, indent_heuristic: false }, renames: true, dir_renames: true, dir_moves: false, rename_limit: 7000, default_driver: "", drivers: [], verbosity: 2, abbrev: 7, attrs: [] };
+}
+
+// The settings of a merge from the configuration, or the message of git
+// for a value that it refuses. `error` is a line that git writes before
+// the message.
+pub struct Configured { o: Options, error: string, fatal: string }
+
+// The integer of a value of the configuration (`git_parse_int` of git),
+// or the reason why git refuses it.
+function config_int(value: string): Result[i64, string] {
+  let i = 0;
+  let negative = value.starts_with("-");
+  if (value.starts_with("-") || value.starts_with("+")) {
+    i = 1;
+  }
+  let digits = i;
+  let n: i64 = 0;
+  while (i < value.len() && value[i] >= b'0' && value[i] <= b'9') {
+    n = n * 10 + (value[i] - b'0') as i64;
+    if (n > 4398046511104) {
+      return Err("out of range");
+    }
+    i += 1;
+  }
+  if (i == digits) {
+    return Err("invalid unit");
+  }
+  let unit = objects.part(value, i, value.len()).to_ascii_lower();
+  let factor: i64 = if (unit == "") { 1 } else if (unit == "k") { 1024 } else if (unit == "m") { 1048576 } else if (unit == "g") { 1073741824 } else { 0 };
+  if (factor == 0) {
+    return Err("invalid unit");
+  }
+  let v = if (negative) { -(n * factor) } else { n * factor };
+  if (v > 2147483647 || v < -2147483648) {
+    return Err("out of range");
+  }
+  return Ok(v);
+}
+
+// 1 or 0 for a boolean of the configuration, and -1 for a value that is
+// no boolean (`git_parse_maybe_bool` of git).
+function config_bool(e: config.Entry): i32 {
+  if (e.bare) {
+    return 1;
+  }
+  let low = e.value.to_ascii_lower();
+  if (low == "true" || low == "yes" || low == "on") {
+    return 1;
+  }
+  if (low == "" || low == "false" || low == "no" || low == "off") {
+    return 0;
+  }
+  return match (config_int(e.value)) {
+    Ok(n) => if (n != 0) { 1 } else { 0 },
+    Err(_) => -1,
+  };
+}
+
+function last_entry(c: config.Config, name: string): config.Entry[] {
+  let found: config.Entry[] = [];
+  for e in c.entries {
+    if (e.name == name) {
+      found = [e];
+    }
+  }
+  return found;
+}
+
+// The settings `base` with those of the configuration `c`, as
+// `init_ui_merge_options` of git reads them. `verbosity` is the value of
+// GIT_MERGE_VERBOSITY, or "".
+pub function configured(c: config.Config, base: Options, verbosity: string): Configured {
+  let o = base;
+  let stop = (message: string): Configured => Configured { o: base, error: "", fatal: message };
+  for name in ["merge.verbosity", "diff.renamelimit", "merge.renamelimit"] {
+    for e in last_entry(c, name) {
+      let value = if (e.bare) { "" } else { e.value };
+      match (config_int(value)) {
+        Ok(n) => {
+          o = if (name == "merge.verbosity") { Options { ...o, verbosity: n as i32 } } else { Options { ...o, rename_limit: if (n <= 0) { 7000 } else { n } } };
+        },
+        Err(why) => {
+          return stop("bad numeric config value '" + value + "' for '" + name + "' in file " + c.file + ": " + why);
+        }
+      }
+    }
+  }
+  for e in last_entry(c, "merge.renormalize") {
+    let b = config_bool(e);
+    if (b < 0) {
+      return stop("bad boolean config value '" + e.value + "' for 'merge.renormalize'");
+    }
+    if (b == 1) {
+      return stop(gap("merge.renormalize"));
+    }
+  }
+  for name in ["diff.renames", "merge.renames"] {
+    for e in last_entry(c, name) {
+      let low = e.value.to_ascii_lower();
+      let b = if (!e.bare && (low == "copies" || low == "copy")) { 1 } else { config_bool(e) };
+      if (b < 0) {
+        return stop("bad boolean config value '" + e.value + "' for '" + name + "'");
+      }
+      o = Options { ...o, renames: b == 1 };
+    }
+  }
+  for e in last_entry(c, "merge.directoryrenames") {
+    let b = config_bool(e);
+    if (b >= 0) {
+      o = Options { ...o, dir_renames: b == 1, dir_moves: b == 1 };
+    } else if (e.value.to_ascii_lower() == "conflict") {
+      o = Options { ...o, dir_renames: true, dir_moves: false };
+    }
+  }
+  for e in last_entry(c, "diff.algorithm") {
+    let low = e.value.to_ascii_lower();
+    let a = o.algo;
+    if (low == "myers" || low == "default") {
+      a = linediff.Options { ...a, algorithm: linediff.MYERS };
+    } else if (low == "minimal") {
+      a = linediff.Options { ...a, algorithm: linediff.MYERS, minimal: true };
+    } else if (low == "patience") {
+      a = linediff.Options { ...a, algorithm: linediff.PATIENCE };
+    } else if (low == "histogram") {
+      a = linediff.Options { ...a, algorithm: linediff.HISTOGRAM };
+    } else {
+      return stop("unknown value for config 'diff.algorithm': " + e.value);
+    }
+    o = Options { ...o, algo: a };
+  }
+  for e in c.entries {
+    if (e.name == "merge.conflictstyle") {
+      if (e.bare) {
+        return Configured { o: base, error: "error: " + config.missing_value(e), fatal: c.bad(e) };
+      }
+      if (e.value == "merge") {
+        o = Options { ...o, style: linediff.STYLE_MERGE };
+      } else if (e.value == "diff3") {
+        o = Options { ...o, style: linediff.STYLE_DIFF3 };
+      } else if (e.value == "zdiff3") {
+        o = Options { ...o, style: linediff.STYLE_ZDIFF3 };
+      } else {
+        return Configured { o: base, error: "error: unknown style '" + e.value + "' given for 'merge.conflictstyle'", fatal: c.bad(e) };
+      }
+    }
+    if (e.name == "merge.default" && !e.bare) {
+      o = Options { ...o, default_driver: e.value };
+    }
+    // The name of a driver is the part between `merge.` and the last dot.
+    let last = e.name.last_index_of(".").unwrap_or(-1);
+    if (e.name.starts_with("merge.") && last > 6) {
+      o = Options { ...o, drivers: o.drivers.append(objects.part(e.name, 6, last)) };
+    }
+  }
+  if (verbosity.len() > 0) {
+    let n = 0;
+    let i = 0;
+    while (i < verbosity.len() && verbosity[i] >= b'0' && verbosity[i] <= b'9' && n < 100) {
+      n = n * 10 + (verbosity[i] - b'0') as i32;
+      i += 1;
+    }
+    o = Options { ...o, verbosity: n };
+  }
+  return Configured { o: o, error: "", fatal: "" };
+}
+
+// ---- The merge of three contents (merge-ll.c) ----
+
+// The names after the conflict markers.
+pub struct Labels { base: string, ours: string, theirs: string }
+
+// The merge of three contents. `status` is CLEAN, CONFLICT, or
+// BINARY_CONFLICT for a file that the merge cannot change.
+pub struct Text { status: i32, bytes: u8[] }
+
+pub const CLEAN: i32 = 0;
+
+pub const CONFLICT: i32 = 1;
+
+pub const BINARY_CONFLICT: i32 = 2;
+
+pub const DEFAULT_MARKER_SIZE: i32 = 7;
+
+// True when the content is binary for git: a NUL in its first 8000 bytes.
+function is_binary(data: u8[]): boolean {
+  let n = data.len().min(8000);
+  return __memchr_bytes(array.slice(data, 0, n), 0, 0) >= 0;
+}
+
+// The merge of `ours` and `theirs`, which each change `base`, with the
+// driver `driver` of git: "text", "union" or "binary". `marker` is the
+// size of a conflict marker. In the merge of two merge bases (`inner`),
+// a binary file keeps the content of the base.
+pub function merge_text(o: Options, driver: string, marker: i32, inner: boolean, base: u8[], ours: u8[], theirs: u8[], l: Labels): Text {
+  if (driver == "binary" || is_binary(base) || is_binary(ours) || is_binary(theirs)) {
+    if (inner) {
+      return Text { status: CLEAN, bytes: base };
+    }
+    return Text { status: BINARY_CONFLICT, bytes: ours };
+  }
+  let out = buf_new(ours.len() + theirs.len() + 64);
+  let m = linediff.Merge { diff: o.algo, level: linediff.MERGE_ZEALOUS, style: o.style, favor: if (driver == "union") { linediff.FAVOR_UNION } else { linediff.FAVOR_NONE }, marker_size: marker, ours: l.ours, base: l.base, theirs: l.theirs };
+  let n = linediff.merge(out, linediff.lines_of(base), linediff.lines_of(ours), linediff.lines_of(theirs), m);
+  let bytes = buf_take_bytes(out);
+  buf_free(out);
+  return Text { status: if (n > 0) { CONFLICT } else { CLEAN }, bytes: bytes };
+}
+
+// The size of a conflict marker that the value of the attribute
+// `conflict-marker-size` gives. The second value is false for a value
+// that is not an integer (`strtol_i` of git).
+pub function marker_size(value: string): (i32, boolean) {
+  if (value == attr.UNSPECIFIED) {
+    return (DEFAULT_MARKER_SIZE, true);
+  }
+  let i = 0;
+  while (i < value.len() && (value[i] == b' ' || value[i] >= 9 && value[i] <= 13)) {
+    i += 1;
+  }
+  let negative = i < value.len() && value[i] == b'-';
+  if (i < value.len() && (value[i] == b'-' || value[i] == b'+')) {
+    i += 1;
+  }
+  let digits = i;
+  let n: i64 = 0;
+  while (i < value.len() && value[i] >= b'0' && value[i] <= b'9') {
+    n = n * 10 + (value[i] - b'0') as i64;
+    if (n > 2147483648) {
+      return (DEFAULT_MARKER_SIZE, false);
+    }
+    i += 1;
+  }
+  if (value == attr.SET || value == attr.UNSET || i == digits || i < value.len() || n == 2147483648 && !negative) {
+    return (DEFAULT_MARKER_SIZE, false);
+  }
+  return (if (negative || n == 0) { DEFAULT_MARKER_SIZE } else { n as i32 }, true);
+}
+
+// ---- The state of a merge ----
+
+// One side of a path: the mode and the name of its object. A side with no
+// entry has the mode "".
+struct Version { mode: string, hash: string }
+
+// What the merge knows of one path (`conflict_info` of git). `dir` is
+// the directory of the path. `stages` and `names` hold the base and the
+// two sides. `filemask` and `dirmask` have the bit 1 for the base, 2 for
+// the first side and 4 for the second side.
+struct Info { dir: string, clean: boolean, is_null: boolean, result: Version, stages: Version[], names: string[], filemask: i32, dirmask: i32, match_mask: i32, df_conflict: boolean, path_conflict: boolean }
+
+// The directories of one side that the merge can take with no walk when
+// the side has no rename (`deferred` of git), in the order of the walk,
+// each with the mask of the directory renames at its place. `targets`
+// holds the directories above the new path of a rename that the merge
+// knows, which need a walk.
+struct Deferred { dirs: string[], masks: Map[string, i32], okay: boolean, targets: Map[string, boolean] }
+
+// The renames that the merge of three trees found, for the second time
+// that git does the merge (`cached_pairs` of git): the new path of each
+// renamed file and "" for each deleted file, the deleted files that the
+// merge does not need, and the new paths.
+struct Cache { pairs: Map[string, string], irrelevant: Map[string, boolean], targets: Map[string, boolean] }
+
+// The state of the merge of three trees. `depth` is above 0 in the merge
+// of two merge bases. `messages` holds the header lines of each path, and
+// `message_paths` holds the paths in the order of their first message.
+// `pairs` holds the deleted and the added files of each side. `mask` is
+// `dir_rename_mask` of git. `tables` holds the count of the places of the
+// table of the deferred directories of each side. `cache` holds the
+// renames of each side when git does the merge of the trees again
+// (`redo`), and `dir_counts` holds the renames from the removed
+// directories of each side. `fatal` is the reason why the merge stops.
+struct State { store: store.Store, o: Options, depth: i32, branch1: string, branch2: string, ancestor: string, paths: Map[string, Info], messages: Map[string, string[]], message_paths: string[], pairs: treediff.Change[][], relevant: Map[string, i32][], removed: Map[string, i32][], deferred: Deferred[], tables: i32[], cache: Cache[], mask: i32, redo: boolean, dir_counts: treediff.DirCount[][], warnings: string[], fatal: string }
+
+function no_version(s: store.Store): Version {
+  return Version { mode: "", hash: "0".repeat(2 * s.width) };
+}
+
+const TREE_MODE: string = "40000";
+
+const KIND_NONE: i32 = 0;
+
+const KIND_FILE: i32 = 1;
+
+const KIND_LINK: i32 = 2;
+
+const KIND_COMMIT: i32 = 3;
+
+const KIND_TREE: i32 = 4;
+
+// The kind of the entry of a mode (`S_IFMT` of the mode), or -1 for a
+// mode that git does not write.
+function kind_of(mode: string): i32 {
+  return match (mode) {
+    "" => KIND_NONE,
+    "100644" => KIND_FILE,
+    "100755" => KIND_FILE,
+    "120000" => KIND_LINK,
+    "160000" => KIND_COMMIT,
+    "40000" => KIND_TREE,
+    _ => -1,
+  };
+}
+
+function same(a: Version, b: Version): boolean {
+  return a.mode == b.mode && a.hash == b.hash;
+}
+
+// Keeps a message for `path` as a header line of its diff (`path_msg` of
+// git): the messages of an inner merge are dropped unless the verbosity
+// is 5 or more.
+function message(st: State, path: string, text: string): State {
+  if (st.depth > 0 && st.o.verbosity < 5) {
+    return st;
+  }
+  let full = if (st.depth > 0) { "  From inner merge:" + " ".repeat(st.depth * 2) + text } else { text };
+  let line = "remerge " + full.replace("\n", "\n ");
+  let paths = if (st.messages.contains(path)) { st.message_paths } else { st.message_paths.append(path) };
+  return State { ...st, messages: st.messages.insert(path, st.messages.get_or(path, []).append(line)), message_paths: paths };
+}
+
+// ---- The walk of three trees (`traverse_trees` of git) ----
+
+// One name of the walk: the entry of each tree that has it. `mask` has
+// the bit of each tree with the name, and `dirmask` that of each tree
+// where it is a tree.
+struct Entry { name: string, versions: Version[], mask: i32, dirmask: i32 }
+
+function name_cmp(a: u8[], b: u8[]): i32 {
+  let n = a.len().min(b.len());
+  for i in 0..n {
+    if (a[i] != b[i]) {
+      return a[i] as i32 - b[i] as i32;
+    }
+  }
+  return a.len() - b.len();
+}
+
+// 0 when the entry `b` of a tree is the name `a`, 1 when the name can
+// come after `b` in the tree, and -1 when the tree does not have it
+// (`check_entry_match` of git).
+function entry_match(a: u8[], b: u8[]): i32 {
+  let c = name_cmp(a, b);
+  if (c == 0) {
+    return 0;
+  }
+  if (c > 0) {
+    return 1;
+  }
+  if (a.len() < b.len() && name_cmp(a, array.slice(b, 0, a.len())) == 0 && b[a.len()] < b'/') {
+    return 1;
+  }
+  return -1;
+}
+
+// The names of the trees `hashes` ("" for no tree) in the order of git,
+// which takes a file and a tree of the same name as one name.
+function walk3(s_in: store.Store, hashes: string[]): (store.Store, Entry[]) {
+  let s = s_in;
+  let trees: objects.RawTree[] = [];
+  for h in hashes {
+    let (s1, t) = treediff.entries_of(s, h);
+    s = s1;
+    trees = trees.append(t);
+  }
+  let pos: i32[] = [0, 0, 0];
+  let skipped: i32[][] = [[], [], []];
+  let out: Entry[] = [];
+  let none = no_version(s);
+  while (true) {
+    let first: u8[] = [];
+    let any = false;
+    for i in 0..3 {
+      while (pos[i] < trees[i].count() && skipped[i].contains(pos[i])) {
+        pos = pos.with(i, pos[i] + 1);
+      }
+      if (pos[i] < trees[i].count()) {
+        let name = trees[i].entry_name(pos[i]);
+        if (!any || name_cmp(name, first) < 0) {
+          first = name;
+          any = true;
+        }
+      }
+    }
+    if (!any) {
+      break;
+    }
+    let versions: Version[] = [];
+    let mask = 0;
+    let dirmask = 0;
+    for i in 0..3 {
+      let found = -1;
+      let k = pos[i];
+      while (k < trees[i].count()) {
+        let m = entry_match(first, trees[i].entry_name(k));
+        if (m == 0) {
+          found = k;
+        }
+        if (m <= 0) {
+          break;
+        }
+        k += 1;
+      }
+      if (found < 0) {
+        versions = versions.append(none);
+        continue;
+      }
+      versions = versions.append(Version { mode: trees[i].mode(found), hash: trees[i].hash_hex(found) });
+      mask |= 1 << i;
+      if (trees[i].is_tree(found)) {
+        dirmask |= 1 << i;
+      }
+      if (found == pos[i]) {
+        pos = pos.with(i, pos[i] + 1);
+      } else {
+        skipped = skipped.with(i, skipped[i].append(found));
+      }
+    }
+    out = out.append(Entry { name: unsafe { string_from_bytes_unchecked(first) }, versions: versions, mask: mask, dirmask: dirmask });
+  }
+  return (s, out);
+}
+
+// ---- The paths of the three trees (`collect_merge_info` of git) ----
+
+function resolved(dir: string, v: Version): Info {
+  return Info { dir: dir, clean: true, is_null: v.mode.len() == 0, result: v, stages: [], names: [], filemask: 0, dirmask: 0, match_mask: 0, df_conflict: false, path_conflict: false };
+}
+
+function with_path(st: State, path: string, info: Info): State {
+  return State { ...st, paths: st.paths.insert(path, info) };
+}
+
+// Adds the deleted file or the added file `path` of the side `side` to
+// the files of the search of renames (`add_pair` of git). The other side
+// changed a deleted file when `match_mask` is 0.
+function add_pair(st: State, e: Entry, path: string, side: i32, is_add: boolean, match_mask: i32): State {
+  let zero = no_version(st.store).hash;
+  let cache = st.cache[side];
+  if (is_add) {
+    if (cache.targets.contains(path)) {
+      return st;
+    }
+    let v = e.versions[side];
+    let added = treediff.Change { status: b'A', path: path.bytes(), old_mode: "", new_mode: v.mode, old_hash: zero, new_hash: v.hash, old_path: path.bytes(), score: 0 };
+    return State { ...st, pairs: st.pairs.with(side, st.pairs[side].append(added)) };
+  }
+  let now = st;
+  if (match_mask == 0 && cache.irrelevant.contains(path)) {
+    cache = Cache { ...cache, irrelevant: cache.irrelevant.remove(path) };
+    now = State { ...now, cache: now.cache.with(side, cache) };
+  }
+  if (match_mask == 0 || st.mask == 7) {
+    now = State { ...now, relevant: now.relevant.with(side, now.relevant[side].insert(path, if (match_mask == 0) { treediff.SOURCE_CONTENT } else { treediff.SOURCE_LOCATION })) };
+  }
+  if (cache.pairs.contains(path) || cache.irrelevant.contains(path)) {
+    return now;
+  }
+  let v = e.versions[0];
+  let deleted = treediff.Change { status: b'D', path: path.bytes(), old_mode: v.mode, new_mode: "", old_hash: v.hash, new_hash: zero, old_path: path.bytes(), score: 0 };
+  return State { ...now, pairs: now.pairs.with(side, now.pairs[side].append(deleted)) };
+}
+
+// The part of one name for the search of renames (`collect_rename_info`
+// of git): the removed directories, and the deleted and the added files.
+function collect_renames(st_in: State, e: Entry, dir: string, path: string, filemask: i32, dirmask: i32, match_mask: i32): State {
+  let st = st_in;
+  if (st.mask != 7 && (dirmask == 3 || dirmask == 5)) {
+    st = State { ...st, mask: dirmask & 6 };
+  }
+  if (dirmask == 1 || dirmask == 3 || dirmask == 5) {
+    let sides = (7 - dirmask) / 2;
+    let relevance = if (st.mask == 7) { treediff.DIR_FOR_ANCESTOR } else { treediff.DIR_NOT_RELEVANT };
+    for side in 1..3 {
+      if ((sides & side) != 0) {
+        st = State { ...st, removed: st.removed.with(side, st.removed[side].insert(path, relevance)) };
+      }
+    }
+  }
+  if (st.mask == 7 && (filemask == 2 || filemask == 4)) {
+    let side = 3 - filemask / 2;
+    st = State { ...st, removed: st.removed.with(side, st.removed[side].insert(dir, treediff.DIR_FOR_SELF)) };
+  }
+  if (filemask == 0 || filemask == 7) {
+    return st;
+  }
+  for side in 1..3 {
+    let side_mask = 1 << side;
+    if ((filemask & 1) != 0 && (filemask & side_mask) == 0) {
+      st = add_pair(st, e, path, side, false, match_mask & filemask);
+    }
+    if ((filemask & 1) == 0 && (filemask & side_mask) != 0) {
+      st = add_pair(st, e, path, side, true, match_mask & filemask);
+    }
+  }
+  return st;
+}
+
+// The trees of the three sides below a name: a side that is not a tree
+// has no tree.
+function trees_below(versions: Version[], dirmask: i32): string[] {
+  let out: string[] = [];
+  for i in 0..3 {
+    out = out.append(if ((dirmask & 1 << i) != 0) { versions[i].hash } else { "" });
+  }
+  return out;
+}
+
+// Takes one name of the directory `dir` (`collect_merge_info_callback`
+// of git).
+function collect(st_in: State, dir: string, e: Entry): State {
+  let st = st_in;
+  let before = st.mask;
+  for v in e.versions {
+    if (kind_of(v.mode) < 0) {
+      return State { ...st, fatal: gap("an entry of a tree with the mode " + v.mode) };
+    }
+  }
+  let filemask = e.mask & (7 ^ e.dirmask);
+  let base = e.versions[0];
+  let one = e.versions[1];
+  let two = e.versions[2];
+  let one_same = (e.mask & 3) == 3 && same(base, one);
+  let two_same = (e.mask & 5) == 5 && same(base, two);
+  let sides_same = (e.mask & 6) == 6 && same(one, two);
+  let match_mask = if (one_same) { if (two_same) { 7 } else { 3 } } else if (two_same) { 5 } else if (sides_same) { 6 } else { 0 };
+  let path = if (dir.len() == 0) { e.name } else { dir + "/" + e.name };
+  if (one_same && two_same) {
+    return with_path(st, path, resolved(dir, base));
+  }
+  if (sides_same && filemask == 7) {
+    return with_path(st, path, resolved(dir, one));
+  }
+  if (one_same && filemask == 7) {
+    return with_path(st, path, resolved(dir, two));
+  }
+  if (two_same && filemask == 7) {
+    return with_path(st, path, resolved(dir, one));
+  }
+  st = collect_renames(st, e, dir, path, filemask, e.dirmask, match_mask);
+  let info = Info { dir: dir, clean: false, is_null: e.dirmask != 0, result: no_version(st.store), stages: e.versions, names: [path, path, path], filemask: filemask, dirmask: e.dirmask, match_mask: match_mask, df_conflict: filemask != 0 && e.dirmask != 0, path_conflict: false };
+  if (e.dirmask == 0) {
+    return with_path(st, path, info);
+  }
+  let side = if (one_same) { 2 } else if (two_same) { 1 } else { 0 };
+  if (filemask == 0 && (e.dirmask == 2 || e.dirmask == 4)) {
+    info = Info { ...info, match_mask: 7 - e.dirmask };
+    side = e.dirmask / 2;
+  }
+  if (st.mask != 7 && side != 0 && st.deferred[side].okay && !st.deferred[side].targets.contains(path)) {
+    let d = st.deferred[side];
+    st = with_path(st, path, info);
+    return State { ...st, deferred: st.deferred.with(side, Deferred { ...d, dirs: d.dirs.append(path), masks: d.masks.insert(path, st.mask) }), mask: before };
+  }
+  st = with_path(st, path, Info { ...info, match_mask: info.match_mask & filemask });
+  st = traverse(st, path, trees_below(e.versions, e.dirmask));
+  return State { ...st, mask: before };
+}
+
+// Takes each name of the trees `trees` of the directory `dir`. When one
+// side removed the directory, a file that the other side added in it
+// makes the directory renames relevant (`traverse_trees_wrapper` of git).
+function traverse(st_in: State, dir: string, trees: string[]): State {
+  let (s, entries) = walk3(st_in.store, trees);
+  let st = State { ...st_in, store: s };
+  if (st.mask == 2 || st.mask == 4) {
+    for e in entries {
+      let filemask = e.mask & (7 ^ e.dirmask);
+      if (filemask != 0 && filemask == st.mask) {
+        st = State { ...st, mask: 7 };
+      }
+    }
+  }
+  for e in entries {
+    st = collect(st, dir, e);
+    if (st.fatal.len() > 0) {
+      return st;
+    }
+  }
+  return st;
+}
+
+// Takes a deferred directory as the side `side` has it, with no walk
+// (`resolve_trivial_directory_merge` of git).
+function resolve_trivial(ci: Info, side: i32): Info {
+  let dirmask = ci.dirmask & (7 ^ ci.match_mask);
+  return Info { ...ci, result: ci.stages[side], is_null: ci.stages[side].mode.len() == 0, dirmask: dirmask, filemask: ci.filemask & (7 ^ ci.match_mask), match_mask: 0, clean: !ci.df_conflict || dirmask != 0, df_conflict: false };
+}
+
+// The walk of the deferred directory `path` of the side `side`.
+function walk_deferred(st: State, path: string, ci: Info, mask: i32): State {
+  let trees = trees_below(ci.stages, ci.dirmask);
+  if (ci.match_mask == 3) {
+    trees = trees.with(1, trees[0]);
+  } else if (ci.match_mask == 5) {
+    trees = trees.with(2, trees[0]);
+  } else if (ci.match_mask == 6) {
+    trees = trees.with(2, trees[1]);
+  }
+  let now = with_path(st, path, Info { ...ci, match_mask: ci.match_mask & ci.filemask });
+  return traverse(State { ...now, mask: mask }, path, trees);
+}
+
+// Walks the deferred directories of each side that has a source of a
+// rename that the merge does not know, in the order of the `strmap` of
+// git. The merge takes the other deferred directories as the side has
+// them, but for those above the new path of a rename
+// (`handle_deferred_entries` of git).
+function handle_deferred(st_in: State): State {
+  let st = st_in;
+  let count_before = st.paths.len();
+  let walked = false;
+  for side in 1..3 {
+    let cache = st.cache[side];
+    let okay = true;
+    let targets: Map[string, boolean] = Map { };
+    for e in st.relevant[side].entries() {
+      let (source, _) = e;
+      if (cache.irrelevant.contains(source)) {
+        continue;
+      }
+      let Some(target) = cache.pairs.get(source) else {
+        okay = false;
+        continue;
+      };
+      let dir = if (target.len() == 0 || st.paths.contains(target)) { "" } else { treediff.dir_of(target) };
+      while (dir.len() > 0 && !targets.contains(dir)) {
+        targets = targets.insert(dir, true);
+        dir = treediff.dir_of(dir);
+      }
+    }
+    let d = st.deferred[side];
+    st = State { ...st, deferred: st.deferred.with(side, Deferred { dirs: [], masks: Map { }, okay: okay, targets: targets }) };
+    let (order, _) = treediff.strmap_order(d.dirs, st.tables[side]);
+    for path in order {
+      let Some(ci) = st.paths.get(path) else {
+        continue;
+      };
+      if (okay && !targets.contains(path)) {
+        st = with_path(st, path, resolve_trivial(ci, side));
+        continue;
+      }
+      st = walk_deferred(st, path, ci, d.masks.get_or(path, 0));
+      if (st.fatal.len() > 0) {
+        return st;
+      }
+    }
+    // The directories below a walked directory that the walk deferred.
+    let nested = st.deferred[side].dirs;
+    for path in nested {
+      if let Some(ci) = st.paths.get(path) {
+        st = with_path(st, path, resolve_trivial(ci, side));
+      }
+    }
+    let (_, places) = treediff.strmap_order(nested, 64);
+    st = State { ...st, tables: st.tables.with(side, places) };
+    walked = walked || !okay;
+  }
+  if (walked && st.redo) {
+    return State { ...st, fatal: gap("a source of a rename that the first merge of the trees did not find") };
+  }
+  // git does the merge of the trees again with the renames that it finds
+  // when the walk of the deferred directories gives three times the
+  // paths.
+  return State { ...st, redo: walked && count_before > 0 && st.paths.len() / count_before >= 3 };
+}
+
+// ---- The merge of the contents of one path ----
+
+// The content of the blob `hash`, or nothing for the name of zeros.
+function blob_of(st: State, hash: string): (State, u8[]) {
+  if (hash == no_version(st.store).hash) {
+    return (st, []);
+  }
+  let got = store.read(st.store, hash);
+  let now = State { ...st, store: got.store };
+  return match (got.object) {
+    Ok(o) => if (o.kind == "blob") { (now, o.body) } else { (State { ...now, fatal: "error: object " + hash + " is not a blob" }, []) },
+    Err(_) => (State { ...now, fatal: "error: cannot read object " + hash }, []),
+  };
+}
+
+// The driver of the merge of `path` (`find_ll_merge_driver` of git).
+function driver_of(st: State, path: string): (State, string) {
+  let value = if (st.o.attrs.len() > 0) { attr.value_of(st.o.attrs[0], path, "merge") } else { attr.UNSPECIFIED };
+  if (value == attr.SET) {
+    return (st, "text");
+  }
+  if (value == attr.UNSET) {
+    return (st, "binary");
+  }
+  let name = if (value == attr.UNSPECIFIED) { st.o.default_driver } else { value };
+  if (st.o.drivers.contains(name)) {
+    return (State { ...st, fatal: gap("the merge driver '" + name + "' of the configuration") }, "text");
+  }
+  return (st, if (name == "binary" || name == "union") { name } else { "text" });
+}
+
+// The merge of the blobs `o`, `a` and `b` for `path`, and the name of its
+// blob (`merge_3way` of git). The names of the three sides are `names`.
+function merge_3way(st_in: State, path: string, o: string, a: string, b: string, names: string[], extra_marker: i32): (State, i32, string) {
+  let plain = names[0] == names[1] && names[1] == names[2];
+  let l = if (plain) { Labels { base: st_in.ancestor, ours: st_in.branch1, theirs: st_in.branch2 } } else { Labels { base: st_in.ancestor + ":" + names[0], ours: st_in.branch1 + ":" + names[1], theirs: st_in.branch2 + ":" + names[2] } };
+  let (st0, base) = blob_of(st_in, o);
+  let (st1, ours) = blob_of(st0, a);
+  let (st2, theirs) = blob_of(st1, b);
+  let (st3, driver) = driver_of(st2, path);
+  let st = st3;
+  if (st.fatal.len() > 0) {
+    return (st, CLEAN, "");
+  }
+  let value = if (st.o.attrs.len() > 0) { attr.value_of(st.o.attrs[0], path, "conflict-marker-size") } else { attr.UNSPECIFIED };
+  let (marker, sound) = marker_size(value);
+  if (!sound) {
+    let shown = if (value == attr.SET) { "(builtin)true" } else if (value == attr.UNSET) { "" } else { value };
+    st = State { ...st, warnings: st.warnings.append("warning: invalid marker-size '" + shown + "', expecting an integer") };
+  }
+  let text = merge_text(st.o, driver, marker + extra_marker, st.depth > 0, base, ours, theirs, l);
+  if (text.status == BINARY_CONFLICT) {
+    st = message(st, path, "warning: Cannot merge binary files: " + path + " (" + l.ours + " vs. " + l.theirs + ")");
+  }
+  return (st, text.status, store.hold(st.store, "blob", text.bytes));
+}
+
+// The merge of the versions `o`, `a` and `b` of one path
+// (`handle_content_merge` of git): true for a merge with no conflict, and
+// the version of the result.
+function content_merge(st_in: State, path: string, o: Version, a: Version, b: Version, names: string[], extra_marker: i32): (State, boolean, Version) {
+  let st = st_in;
+  let clean = true;
+  let mode = b.mode;
+  if (a.mode != b.mode && a.mode != o.mode) {
+    mode = a.mode;
+    clean = b.mode == o.mode;
+  }
+  if (a.hash == b.hash || a.hash == o.hash) {
+    return (st, clean, Version { mode: mode, hash: b.hash });
+  }
+  if (b.hash == o.hash) {
+    return (st, clean, Version { mode: mode, hash: a.hash });
+  }
+  let kind = kind_of(a.mode);
+  if (kind == KIND_FILE) {
+    let two_way = kind_of(o.mode) != kind;
+    let (st1, status, hash) = merge_3way(st, path, if (two_way) { no_version(st.store).hash } else { o.hash }, a.hash, b.hash, names, extra_marker);
+    return (st1, clean && status == CLEAN, Version { mode: mode, hash: hash });
+  }
+  if (kind == KIND_COMMIT) {
+    return (State { ...st, fatal: gap("the merge of a submodule (" + path + ")") }, false, a);
+  }
+  // Two links: an inner merge keeps the base, and the last merge keeps
+  // the first side.
+  if (st.depth > 0) {
+    return (st, false, o);
+  }
+  return (st, false, Version { mode: mode, hash: a.hash });
+}
+
+// ---- The renames (`detect_and_process_renames` of git) ----
+
+// One rename of the side `side`.
+struct Rename { old: string, new: string, side: i32 }
+
+function text_cmp(a: string, b: string): i32 {
+  return name_cmp(a.bytes(), b.bytes());
+}
+
+// Moves the sides of each renamed file to its new path, and keeps the
+// conflicts of the renames (`process_renames` of git).
+function process_renames(st_in: State, renames: Rename[]): State {
+  let st = st_in;
+  let none = no_version(st.store);
+  let i = 0;
+  while (i < renames.len() && st.fatal.len() == 0) {
+    let r = renames[i];
+    i += 1;
+    if (r.old == r.new) {
+      continue;
+    }
+    let Some(found_old) = st.paths.get(r.old) else {
+      continue;
+    };
+    let oldinfo = found_old;
+    if (oldinfo.clean) {
+      continue;
+    }
+    let Some(found_new) = st.paths.get(r.new) else {
+      return State { ...st, fatal: gap("a rename to a path with no entry (" + r.new + ")") };
+    };
+    let newinfo = found_new;
+    if (i < renames.len() && renames[i].old == r.old) {
+      // The two sides renamed the file.
+      let other_new = renames[i].new;
+      i += 1;
+      if (other_new == r.new) {
+        st = with_path(st, r.new, Info { ...newinfo, stages: newinfo.stages.with(0, oldinfo.stages[0]), filemask: newinfo.filemask | 1 });
+        st = with_path(st, r.old, Info { ...oldinfo, is_null: true, clean: true });
+        continue;
+      }
+      let Some(side2) = st.paths.get(other_new) else {
+        return State { ...st, fatal: gap("a rename to a path with no entry (" + other_new + ")") };
+      };
+      if (newinfo.clean || side2.clean) {
+        return State { ...st, fatal: gap("a rename to a path that has no conflict (" + r.old + ")") };
+      }
+      let (st1, clean, merged) = content_merge(st, r.old, oldinfo.stages[0], newinfo.stages[1], side2.stages[2], [r.old, r.new, other_new], 1 + 2 * st.depth);
+      st = st1;
+      let binary = !clean && same(merged, newinfo.stages[1]);
+      st = with_path(st, r.new, Info { ...newinfo, stages: newinfo.stages.with(1, merged), path_conflict: true });
+      st = with_path(st, other_new, Info { ...side2, stages: side2.stages.with(2, if (binary) { side2.stages[2] } else { merged }), path_conflict: true });
+      st = with_path(st, r.old, Info { ...oldinfo, path_conflict: true });
+      st = message(st, r.old, "CONFLICT (rename/rename): " + r.old + " renamed to " + r.new + " in " + st.branch1 + " and to " + other_new + " in " + st.branch2 + ".");
+      continue;
+    }
+    if (newinfo.clean) {
+      return State { ...st, fatal: gap("a rename to a path that has no conflict (" + r.new + ")") };
+    }
+    let target = r.side;
+    let other = 3 - target;
+    let source_deleted = oldinfo.filemask == 1;
+    let type_changed = !source_deleted && kind_of(oldinfo.stages[other].mode) == KIND_FILE != (kind_of(newinfo.stages[target].mode) == KIND_FILE);
+    let collision = (newinfo.filemask & 1 << other) != 0 && !type_changed;
+    let rename_branch = if (target == 1) { st.branch1 } else { st.branch2 };
+    let delete_branch = if (target == 1) { st.branch2 } else { st.branch1 };
+    let deleted = "CONFLICT (rename/delete): " + r.old + " renamed to " + r.new + " in " + rename_branch + ", but deleted in " + delete_branch + ".";
+    if (collision && !source_deleted) {
+      // A rename to a path that the other side has also.
+      let names: string[] = [r.old, r.old, r.old].with(target, r.new);
+      let side1 = if (target == 1) { newinfo } else { oldinfo };
+      let side2 = if (target == 2) { newinfo } else { oldinfo };
+      let (st1, clean, merged) = content_merge(st, r.old, oldinfo.stages[0], side1.stages[1], side2.stages[2], names, 1 + 2 * st.depth);
+      st = st1;
+      newinfo = Info { ...newinfo, stages: newinfo.stages.with(target, merged) };
+      if (!clean) {
+        st = message(st, r.new, "CONFLICT (rename involved in collision): rename of " + r.old + " -> " + r.new + " has content conflicts AND collides with another path; this may result in nested conflict markers.");
+      }
+    } else if (collision) {
+      newinfo = Info { ...newinfo, path_conflict: true };
+      st = message(st, r.new, deleted);
+    } else {
+      newinfo = Info { ...newinfo, stages: newinfo.stages.with(0, oldinfo.stages[0]), filemask: newinfo.filemask | 1, names: newinfo.names.with(0, r.old) };
+      if (type_changed) {
+        oldinfo = Info { ...oldinfo, stages: oldinfo.stages.with(0, none), filemask: oldinfo.filemask & 6 };
+      } else if (source_deleted) {
+        newinfo = Info { ...newinfo, path_conflict: true };
+        st = message(st, r.new, deleted);
+      } else {
+        newinfo = Info { ...newinfo, stages: newinfo.stages.with(other, oldinfo.stages[other]), filemask: newinfo.filemask | 1 << other, names: newinfo.names.with(other, r.old) };
+      }
+    }
+    if (!type_changed) {
+      oldinfo = Info { ...oldinfo, is_null: true, clean: true };
+    }
+    st = with_path(with_path(st, r.old, oldinfo), r.new, newinfo);
+  }
+  return st;
+}
+
+// The paths of one side that the directory renames of the other side
+// move to one new path, in their order, and whether the conflict of the
+// new path has its message (`collision_info` of git).
+struct Collision { sources: string[], reported: boolean }
+
+// The new place of each removed directory of each side that most of its
+// renamed files give (`get_provisional_directory_renames` of git). A
+// directory that the two sides renamed has no new place.
+function directory_renames(st_in: State): (State, Map[string, string][]) {
+  let st = st_in;
+  let found: Map[string, string][] = [Map { }, Map { }, Map { }];
+  for side in 1..3 {
+    for d in st.dir_counts[side] {
+      let most = 0;
+      let twice = false;
+      let best = "";
+      for k in 0..d.targets.len() {
+        if (d.counts[k] == most) {
+          twice = true;
+        } else if (d.counts[k] > most) {
+          most = d.counts[k];
+          twice = false;
+          best = d.targets[k];
+        }
+      }
+      if (most == 0) {
+        continue;
+      }
+      if (twice) {
+        st = message(st, d.dir, "CONFLICT (directory rename split): Unclear where to rename " + d.dir + " to; it was renamed to multiple other directories, with no destination getting a majority of the files.");
+      } else {
+        found = found.with(side, found[side].insert(d.dir, best));
+      }
+    }
+  }
+  for e in found[1].entries() {
+    let (dir, _) = e;
+    if (found[2].contains(dir)) {
+      found = [Map { }, found[1].remove(dir), found[2].remove(dir)];
+    }
+  }
+  return (st, found);
+}
+
+// The nearest directory above `path` that has a new place, or "".
+function renamed_dir(path: string, dir_renames: Map[string, string]): string {
+  let dir = treediff.dir_of(path);
+  while (dir.len() > 0 && !dir_renames.contains(dir)) {
+    dir = treediff.dir_of(dir);
+  }
+  return dir;
+}
+
+// The path `path` below the directory `old_dir` in the new place of the
+// directory (`apply_dir_rename` of git).
+function in_new_dir(path: string, old_dir: string, new_dir: string): string {
+  return new_dir + objects.part(path, if (new_dir.len() == 0) { old_dir.len() + 1 } else { old_dir.len() }, path.len());
+}
+
+// The paths of `moves` that the directory renames `dir_renames` of the
+// other side move, by their new path (`compute_collisions` of git).
+function collisions_of(dir_renames: Map[string, string], moves: Rename[]): Map[string, Collision] {
+  let out: Map[string, Collision] = Map { };
+  for m in moves {
+    let dir = renamed_dir(m.new, dir_renames);
+    if (dir.len() == 0) {
+      continue;
+    }
+    let new_path = in_new_dir(m.new, dir, dir_renames.get_or(dir, ""));
+    let c = out.get_or(new_path, Collision { sources: [], reported: false });
+    if (!c.sources.contains(m.new)) {
+      out = out.insert(new_path, Collision { ...c, sources: cmp.sort_by(c.sources.append(m.new), text_cmp) });
+    }
+  }
+  return out;
+}
+
+// The new path of the added or renamed file `m` when the other side
+// renamed its directory, or "" (`check_for_directory_rename` of git).
+// `dir_renames` holds the directory renames of the other side and
+// `own_renames` those of the side of `m`. A new path that is not free,
+// or that more than one file moves to, gives a message and no move.
+function directory_rename_of(st: State, m: Rename, dir_renames: Map[string, string], own_renames: Map[string, string], other_collisions: Map[string, Collision], collisions: Map[string, Collision]): (State, Map[string, Collision], string) {
+  if (dir_renames.is_empty() || other_collisions.contains(m.new)) {
+    return (st, collisions, "");
+  }
+  let dir = renamed_dir(m.new, dir_renames);
+  if (dir.len() == 0) {
+    return (st, collisions, "");
+  }
+  let new_dir = dir_renames.get_or(dir, "");
+  if (own_renames.contains(new_dir)) {
+    return (st, collisions, "");
+  }
+  let new_path = in_new_dir(m.new, dir, new_dir);
+  let Some(c) = collisions.get(new_path) else {
+    return (State { ...st, fatal: gap("a directory rename with no record of its paths") }, collisions, "");
+  };
+  if (c.reported) {
+    return (st, collisions, "");
+  }
+  let in_way = false;
+  if let Some(info) = st.paths.get(new_path) {
+    in_way = info.clean || (1 << m.side & (info.filemask | info.dirmask)) != 0 || (info.filemask & 1) != 0 && m.old != new_path;
+  }
+  let sources = c.sources.join(", ");
+  if (in_way) {
+    let now = message(st, new_path, "CONFLICT (implicit dir rename): Existing file/dir at " + new_path + " in the way of implicit directory rename(s) putting the following path(s) there: " + sources + ".");
+    return (now, collisions.insert(new_path, Collision { ...c, reported: true }), "");
+  }
+  if (c.sources.len() > 1) {
+    let now = message(st, new_path, "CONFLICT (implicit dir rename): Cannot map more than one path to " + new_path + "; implicit directory renames tried to put these paths there: " + sources);
+    return (now, collisions.insert(new_path, Collision { ...c, reported: true }), "");
+  }
+  return (st, collisions, new_path);
+}
+
+// Moves the file of one side at `old_path` to `new_path`, in the new
+// place of its directory (`apply_directory_rename_modifications` of git).
+// With `merge.directoryRenames=conflict`, the move is a conflict.
+function move_path(st_in: State, old_path: string, new_path: string): State {
+  let st = st_in;
+  let none = no_version(st.store);
+  let Some(found) = st.paths.get(old_path) else {
+    return State { ...st, fatal: gap("a directory rename of a path with no entry (" + old_path + ")") };
+  };
+  let ci = found;
+  if (ci.clean || ci.filemask != 2 && ci.filemask != 4 || ci.dirmask > 1) {
+    return State { ...st, fatal: gap("a directory rename of a path that is not a file of one side (" + old_path + ")") };
+  }
+  // The directories above the new path that the merge does not have yet.
+  let missing: string[] = [];
+  let parent = treediff.dir_of(new_path);
+  while (parent.len() > 0 && !st.paths.contains(parent)) {
+    missing = missing.append(parent);
+    parent = treediff.dir_of(parent);
+  }
+  let k = missing.len();
+  while (k > 0) {
+    k -= 1;
+    st = with_path(st, missing[k], Info { dir: parent, clean: false, is_null: false, result: none, stages: [none, none, none], names: ["", "", ""], filemask: 0, dirmask: ci.filemask, match_mask: 0, df_conflict: false, path_conflict: false });
+    parent = missing[k];
+  }
+  if (ci.dirmask == 0) {
+    st = State { ...st, paths: st.paths.remove(old_path) };
+  } else {
+    // A directory of the base stays at the old path.
+    let stages = ci.stages;
+    for i in 0..3 {
+      if ((ci.dirmask & 1 << i) == 0) {
+        stages = stages.with(i, none);
+      }
+    }
+    st = with_path(st, old_path, Info { ...ci, filemask: 0, clean: true, stages: stages });
+    ci = Info { ...ci, dirmask: 0, stages: ci.stages.with(1, none) };
+  }
+  ci = Info { ...ci, dir: parent };
+  if let Some(there) = st.paths.get(new_path) {
+    if (there.clean || (there.filemask & ci.filemask) != 0) {
+      return State { ...st, fatal: gap("a directory rename to a path that has no conflict (" + new_path + ")") };
+    }
+    let index = ci.filemask / 2;
+    ci = Info { ...there, filemask: there.filemask | ci.filemask, df_conflict: there.df_conflict || there.dirmask != 0, names: there.names.with(index, ci.names[index]), stages: there.stages.with(index, ci.stages[index]) };
+  }
+  // With `merge.directoryRenames=conflict`, which is each value here but
+  // true, the new place is a conflict of the path.
+  return with_path(st, new_path, Info { ...ci, path_conflict: ci.path_conflict || !st.o.dir_moves });
+}
+
+// The deleted, the added and the renamed files of each side after the
+// search of renames. `detected` is true when a side had a search, and
+// `limited` when a side had too many files for the search.
+struct Searched { st: State, queues: treediff.Change[][], detected: boolean, limited: boolean }
+
+function side_renames_possible(st: State, side: i32): boolean {
+  return st.pairs[side].len() > 0 && !st.relevant[side].is_empty();
+}
+
+// Finds the renames of each side that has a deleted file that the other
+// side changed and that the merge does not know
+// (`detect_regular_renames` of git).
+function search_renames(st_in: State): Searched {
+  let st = st_in;
+  let queues: treediff.Change[][] = [[], st.pairs[1], st.pairs[2]];
+  let detected = false;
+  let limited = false;
+  for side in 1..3 {
+    let relevant = st.relevant[side];
+    for e in st.cache[side].pairs.entries() {
+      let (source, _) = e;
+      relevant = relevant.remove(source);
+    }
+    for e in st.cache[side].irrelevant.entries() {
+      let (source, _) = e;
+      relevant = relevant.remove(source);
+    }
+    st = State { ...st, relevant: st.relevant.with(side, relevant) };
+    if (!side_renames_possible(st, side)) {
+      continue;
+    }
+    let found = treediff.merge_renames(st.store, st.pairs[side], st.o.rename_limit, treediff.Scope { relevant: relevant, dirs_removed: st.removed[side] });
+    st = State { ...st, store: found.store, relevant: st.relevant.with(side, found.relevant), dir_counts: st.dir_counts.with(side, found.dir_counts) };
+    queues = queues.with(side, found.changes);
+    detected = true;
+    limited = limited || found.limited;
+  }
+  return Searched { st: st, queues: queues, detected: detected, limited: limited };
+}
+
+// Keeps each rename and each deleted file of a source that the merge
+// needs, for the second merge of the trees (`possibly_cache_new_pair` of
+// git).
+function keep_renames(st_in: State, queues: treediff.Change[][]): State {
+  let st = st_in;
+  for side in 1..3 {
+    let cache = st.cache[side];
+    for c in queues[side] {
+      let old = unsafe { string_from_bytes_unchecked(c.old_path) };
+      let value = if (c.status == b'A') { -1 } else { st.relevant[side].get_or(old, -1) };
+      if (value == treediff.SOURCE_NO_MORE) {
+        cache = Cache { ...cache, irrelevant: cache.irrelevant.insert(old, true) };
+      }
+      if (value > 0 && c.status == b'D') {
+        cache = Cache { ...cache, pairs: cache.pairs.insert(old, "") };
+      }
+      if (value > 0 && c.status == b'R') {
+        let new = unsafe { string_from_bytes_unchecked(c.path) };
+        cache = Cache { ...cache, pairs: cache.pairs.insert(old, new), targets: cache.targets.insert(new, true) };
+      }
+    }
+    st = State { ...st, cache: st.cache.with(side, cache) };
+  }
+  return st;
+}
+
+// The added and the renamed files of each side: those of the search, and
+// each rename that the merge knows, when its new path has a conflict
+// (`use_cached_pairs` of git).
+function moves_of(st: State, queues: treediff.Change[][]): Rename[][] {
+  let moves: Rename[][] = [[], [], []];
+  for side in 1..3 {
+    let list: Rename[] = [];
+    for c in queues[side] {
+      if (c.status == b'R' || c.status == b'A') {
+        list = list.append(Rename { old: unsafe { string_from_bytes_unchecked(c.old_path) }, new: unsafe { string_from_bytes_unchecked(c.path) }, side: side });
+      }
+    }
+    for e in st.cache[side].pairs.entries() {
+      let (old, new) = e;
+      if (new.len() > 0) {
+        if let Some(info) = st.paths.get(new) {
+          if (!info.clean) {
+            list = list.append(Rename { old: old, new: new, side: side });
+          }
+        }
+      }
+    }
+    moves = moves.with(side, list);
+  }
+  return moves;
+}
+
+// The renames of the two sides, after the move of each added and each
+// renamed file whose directory the other side renamed (`collect_renames`
+// of git).
+function with_directory_renames(st_in: State, moves: Rename[][]): (State, Rename[]) {
+  let st = st_in;
+  let dir_renames: Map[string, string][] = [Map { }, Map { }, Map { }];
+  if (st.depth == 0 && st.o.dir_renames) {
+    let (st1, found) = directory_renames(st);
+    st = st1;
+    dir_renames = found;
+  }
+  let collisions: Map[string, Collision][] = [Map { }, collisions_of(dir_renames[2], moves[1]), collisions_of(dir_renames[1], moves[2])];
+  let renames: Rename[] = [];
+  for side in 1..3 {
+    for m in moves[side] {
+      let (st2, c2, new_path) = directory_rename_of(st, m, dir_renames[3 - side], dir_renames[side], collisions[3 - side], collisions[side]);
+      st = st2;
+      collisions = collisions.with(side, c2);
+      if (new_path.len() > 0) {
+        st = move_path(st, m.new, new_path);
+        if (st.fatal.len() > 0) {
+          return (st, renames);
+        }
+        renames = renames.append(Rename { ...m, new: new_path });
+      } else if (m.old != m.new) {
+        renames = renames.append(m);
+      }
+    }
+  }
+  return (st, renames);
+}
+
+// Finds the renames of each side and applies them. The result is true
+// when git does the merge of the trees again with the renames, which the
+// state then holds (`detect_and_process_renames` of git).
+function detect_renames(st_in: State): (State, boolean) {
+  let known = !st_in.cache[1].pairs.is_empty() || !st_in.cache[2].pairs.is_empty();
+  if (!side_renames_possible(st_in, 1) && !side_renames_possible(st_in, 2) && !known || !st_in.o.renames) {
+    return (st_in, false);
+  }
+  let found = search_renames(st_in);
+  if (found.st.redo && found.detected && !found.limited) {
+    return (keep_renames(found.st, found.queues), true);
+  }
+  let (st, renames) = with_directory_renames(found.st, moves_of(found.st, found.queues));
+  if (st.fatal.len() > 0) {
+    return (st, false);
+  }
+  let places: i32[] = [];
+  for k in 0..renames.len() {
+    places = places.append(k);
+  }
+  let order = cmp.sort_by(places, (a: i32, b: i32): i32 => if (text_cmp(renames[a].old, renames[b].old) != 0) { text_cmp(renames[a].old, renames[b].old) } else { renames[a].side - renames[b].side });
+  return (process_renames(st, order.map((k: i32): Rename => renames[k])), false);
+}
+
+// ---- The result of each path (`process_entries` of git) ----
+
+// The entries of the trees that the merge writes: the entries of each
+// directory that is not complete, with the place of the first entry of
+// each directory (`directory_versions` of git).
+struct Dirs { names: string[], versions: Version[], offset_dirs: string[], offsets: i32[], last: string, started: boolean }
+
+// The order of two paths where a directory comes next to its entries:
+// each path sorts as if `/` ends it.
+function path_order(one: string, two: string): i32 {
+  let i = 0;
+  while (i < one.len() && i < two.len() && one[i] == two[i]) {
+    i += 1;
+  }
+  let c1 = if (i < one.len()) { one[i] } else { b'/' };
+  let c2 = if (i < two.len()) { two[i] } else { b'/' };
+  if (c1 == c2) {
+    return if (i < one.len()) { 1 } else { -1 };
+  }
+  return c1 as i32 - c2 as i32;
+}
+
+// The order of two entries of one tree: a tree sorts as if `/` ends its
+// name (`base_name_compare` of git).
+function entry_order(a: string, a_mode: string, b: string, b_mode: string): i32 {
+  let n = a.len().min(b.len());
+  for i in 0..n {
+    if (a[i] != b[i]) {
+      return a[i] as i32 - b[i] as i32;
+    }
+  }
+  let c1 = if (a.len() > n) { a[n] } else if (a_mode == TREE_MODE) { b'/' } else { 0 };
+  let c2 = if (b.len() > n) { b[n] } else if (b_mode == TREE_MODE) { b'/' } else { 0 };
+  return c1 as i32 - c2 as i32;
+}
+
+// Holds the tree of the entries of `d` from `offset`, and gives its name.
+function write_tree(s: store.Store, d: Dirs, offset: i32): string {
+  let places: i32[] = [];
+  for k in offset..d.names.len() {
+    places = places.append(k);
+  }
+  let order = cmp.sort_by(places, (a: i32, b: i32): i32 => entry_order(d.names[a], d.versions[a].mode, d.names[b], d.versions[b].mode));
+  let body: u8[] = [];
+  for k in order {
+    body = body.concat((d.versions[k].mode + " " + d.names[k]).bytes()).append(0);
+    if let Some(raw) = objects.raw_name(d.versions[k].hash) {
+      body = body.concat(raw);
+    }
+  }
+  return store.hold(s, "tree", body);
+}
+
+// Adds the result of `path` to the entries of its directory.
+function record(d: Dirs, path: string, info: Info): Dirs {
+  if (info.is_null) {
+    return d;
+  }
+  let name = objects.part(path, if (info.dir.len() > 0) { info.dir.len() + 1 } else { 0 }, path.len());
+  return Dirs { ...d, names: d.names.append(name), versions: d.versions.append(info.result) };
+}
+
+// Writes the tree of the last directory when the next path is not in it
+// (`write_completed_directory` of git).
+function complete_directory(st: State, d: Dirs, dir: string): (State, Dirs) {
+  if (d.started && dir == d.last) {
+    return (st, d);
+  }
+  if (!d.started || dir.starts_with(d.last)) {
+    return (st, Dirs { ...d, offset_dirs: d.offset_dirs.append(dir), offsets: d.offsets.append(d.names.len()), last: dir, started: true });
+  }
+  let top = d.offsets.len() - 1;
+  let offset = d.offsets[top];
+  let now = st;
+  if let Some(info) = st.paths.get(d.last) {
+    let done = if (offset == d.names.len()) { Info { ...info, is_null: true } } else { Info { ...info, is_null: false, result: Version { mode: TREE_MODE, hash: write_tree(st.store, d, offset) } } };
+    now = with_path(st, d.last, done);
+  }
+  let out = Dirs { ...d, names: array.slice(d.names, 0, offset), versions: array.slice(d.versions, 0, offset), offset_dirs: array.slice(d.offset_dirs, 0, top), offsets: array.slice(d.offsets, 0, top) };
+  if (top == 0 || out.offset_dirs[top - 1] != dir) {
+    out = Dirs { ...out, offset_dirs: out.offset_dirs.append(dir), offsets: out.offsets.append(out.names.len()) };
+  }
+  return (now, Dirs { ...out, last: dir });
+}
+
+// A path with the name of a branch after it that no other path has
+// (`unique_path` of git).
+function unique_path(st: State, path: string, branch: string): string {
+  let base = path + "~" + branch.replace("/", "_");
+  let out = base;
+  let suffix = 0;
+  while (st.paths.contains(out)) {
+    out = base + "_" + suffix.to_string();
+    suffix += 1;
+  }
+  return out;
+}
+
+// The sides of `ci` that are files, with no entry for the others.
+function files_only(st: State, ci: Info): Info {
+  let stages = ci.stages;
+  for i in 0..3 {
+    if ((ci.filemask & 1 << i) == 0) {
+      stages = stages.with(i, no_version(st.store));
+    }
+  }
+  return Info { ...ci, match_mask: ci.match_mask & (7 ^ ci.dirmask), dirmask: 0, stages: stages };
+}
+
+// The result of one path that has no result yet (`process_entry` of git).
+function process_entry(st_in: State, d_in: Dirs, path_in: string, ci_in: Info): (State, Dirs) {
+  let st = st_in;
+  let d = d_in;
+  let path = path_in;
+  let ci = ci_in;
+  let none = no_version(st.store);
+  let df_file_index = 0;
+  if (ci.dirmask != 0) {
+    d = record(d, path, ci);
+    if (ci.filemask == 0) {
+      return (st, d);
+    }
+  }
+  if (ci.df_conflict && ci.result.mode.len() == 0) {
+    // The directory is not in the way of the file.
+    ci = Info { ...files_only(st, ci), df_conflict: false, clean: false, is_null: false };
+  } else if (ci.df_conflict) {
+    if (ci.filemask == 1) {
+      return (with_path(st, path, Info { ...ci, filemask: 0 }), d);
+    }
+    // The directory stays, and the file moves to a new path.
+    df_file_index = if ((ci.dirmask & 2) != 0) { 2 } else { 1 };
+    let branch = if (df_file_index == 1) { st.branch1 } else { st.branch2 };
+    let moved = unique_path(st, path, branch);
+    st = with_path(st, path, Info { ...ci, filemask: 0 });
+    st = message(st, moved, "CONFLICT (file/directory): directory in the way of " + path + " from " + branch + "; moving it to " + moved + " instead.");
+    ci = files_only(st, ci);
+    path = moved;
+  }
+  if (ci.match_mask != 0) {
+    ci = Info { ...ci, clean: !ci.df_conflict && !ci.path_conflict };
+    if (ci.match_mask == 6) {
+      ci = Info { ...ci, result: ci.stages[1] };
+    } else {
+      let side = if ((7 & (7 ^ ci.match_mask)) == 4) { 2 } else { 1 };
+      let gone = ci.stages[side].mode.len() == 0;
+      ci = Info { ...ci, result: ci.stages[side], is_null: gone, clean: ci.clean || gone };
+    }
+  } else if (ci.filemask >= 6 && kind_of(ci.stages[1].mode) != kind_of(ci.stages[2].mode)) {
+    if (st.depth > 0) {
+      ci = Info { ...ci, clean: false, result: ci.stages[0], is_null: ci.stages[0].mode.len() == 0 };
+    } else {
+      // Two kinds of entry: a file moves to a new path, and with no file
+      // the two sides move.
+      let o_kind = kind_of(ci.stages[0].mode);
+      let a_kind = kind_of(ci.stages[1].mode);
+      let b_kind = kind_of(ci.stages[2].mode);
+      let rename_a = a_kind == KIND_FILE || b_kind != KIND_FILE;
+      let rename_b = a_kind != KIND_FILE;
+      let a_path = if (rename_a) { unique_path(st, path, st.branch1) } else { path };
+      let b_path = if (rename_b) { unique_path(st, path, st.branch2) } else { path };
+      let how = if (rename_a && rename_b) { "both of them so each can be" } else { "one of them so each can be" };
+      st = message(st, path, "CONFLICT (distinct types): " + path + " had different types on each side; renamed " + how + " recorded somewhere.");
+      let second = Info { ...ci, clean: false, result: ci.stages[2], stages: ci.stages.with(1, none), filemask: 5 };
+      if (b_kind != o_kind) {
+        second = Info { ...second, stages: second.stages.with(0, none), filemask: 4 };
+      }
+      ci = Info { ...ci, clean: false, result: ci.stages[1], stages: ci.stages.with(2, none), filemask: 3 };
+      if (a_kind != o_kind) {
+        ci = Info { ...ci, stages: ci.stages.with(0, none), filemask: 2 };
+      }
+      if (rename_a && rename_b) {
+        st = State { ...st, paths: st.paths.remove(path) };
+      }
+      st = with_path(st, b_path, second);
+      d = record(d, b_path, second);
+      path = a_path;
+    }
+  } else if (ci.filemask >= 6) {
+    let (st1, clean, merged) = content_merge(st, path, ci.stages[0], ci.stages[1], ci.stages[2], ci.names, st.depth * 2);
+    st = st1;
+    ci = Info { ...ci, clean: clean && !ci.df_conflict && !ci.path_conflict, result: merged, is_null: merged.mode.len() == 0 };
+    if (!clean) {
+      let reason = if (kind_of(merged.mode) == KIND_COMMIT) { "submodule" } else if (ci.filemask == 6) { "add/add" } else { "content" };
+      st = message(st, path, "CONFLICT (" + reason + "): Merge conflict in " + path);
+    }
+  } else if (ci.filemask == 3 || ci.filemask == 5) {
+    // One side changed the file and the other side deleted it.
+    let side = if (ci.filemask == 5) { 2 } else { 1 };
+    ci = Info { ...ci, result: ci.stages[if (st.depth > 0) { 0 } else { side }], clean: false };
+    let modify_branch = if (side == 1) { st.branch1 } else { st.branch2 };
+    let delete_branch = if (side == 1) { st.branch2 } else { st.branch1 };
+    if (!(ci.path_conflict && ci.stages[0].hash == ci.stages[side].hash)) {
+      st = message(st, path, "CONFLICT (modify/delete): " + path + " deleted in " + delete_branch + " and modified in " + modify_branch + ".  Version " + modify_branch + " of " + path + " left in tree.");
+    }
+  } else if (ci.filemask == 2 || ci.filemask == 4) {
+    ci = Info { ...ci, result: ci.stages[ci.filemask / 2], clean: !ci.df_conflict && !ci.path_conflict };
+  } else if (ci.filemask == 1) {
+    ci = Info { ...ci, is_null: true, result: none, clean: !ci.path_conflict };
+  }
+  return (with_path(st, path, ci), record(d, path, ci));
+}
+
+// Gives each path its result, and holds the trees of the merge: the name
+// of the tree of the top.
+function process_entries(st_in: State): (State, string) {
+  let st = st_in;
+  if (st.paths.is_empty()) {
+    return (st, store.hold(st.store, "tree", []));
+  }
+  let keys: string[] = [];
+  for e in st.paths.entries() {
+    let (k, _) = e;
+    keys = keys.append(k);
+  }
+  let sorted = cmp.sort_by(keys, path_order);
+  let d = Dirs { names: [], versions: [], offset_dirs: [], offsets: [], last: "", started: false };
+  let i = sorted.len();
+  while (i > 0 && st.fatal.len() == 0) {
+    i -= 1;
+    let path = sorted[i];
+    let Some(before) = st.paths.get(path) else {
+      continue;
+    };
+    let (st1, d1) = complete_directory(st, d, before.dir);
+    st = st1;
+    d = d1;
+    let Some(info) = st.paths.get(path) else {
+      continue;
+    };
+    if (info.clean) {
+      d = record(d, path, info);
+    } else {
+      let (st2, d2) = process_entry(st, d, path, info);
+      st = st2;
+      d = d2;
+    }
+  }
+  if (st.fatal.len() > 0) {
+    return (st, "");
+  }
+  return (st, write_tree(st.store, d, 0));
+}
+
+// ---- The merge of two commits ----
+
+function no_cache(): Cache {
+  return Cache { pairs: Map { }, irrelevant: Map { }, targets: Map { } };
+}
+
+// The merge of the trees `base`, `side1` and `side2`: the name of its
+// tree (`merge_ort_nonrecursive_internal` of git).
+function merge_trees(st_in: State, base: string, side1: string, side2: string): (State, string) {
+  let st = State { ...st_in, cache: [no_cache(), no_cache(), no_cache()], redo: false, dir_counts: [[], [], []] };
+  while (true) {
+    let fresh = Deferred { dirs: [], masks: Map { }, okay: true, targets: Map { } };
+    st = State { ...st, paths: Map { }, pairs: [[], [], []], relevant: [Map { }, Map { }, Map { }], removed: [Map { }, Map { }, Map { }], deferred: [fresh, fresh, fresh], mask: 0 };
+    st = traverse(st, "", [base, side1, side2]);
+    if (st.fatal.len() == 0) {
+      st = handle_deferred(st);
+    }
+    if (st.fatal.len() > 0) {
+      return (st, "");
+    }
+    let (st1, again) = detect_renames(st);
+    st = st1;
+    if (st.fatal.len() > 0) {
+      return (st, "");
+    }
+    if (!again) {
+      break;
+    }
+  }
+  return process_entries(st);
+}
+
+// The state of the merge of two commits: the graph of the commits with
+// the commits that the merge makes from two merge bases, and the count
+// of those commits.
+struct Merge { g: walk.Graph, st: State, made: i32 }
+
+// The merge of the commits `h1` and `h2`: the name of its tree
+// (`merge_ort_internal` of git). `bases` holds the merge bases when
+// `given` is true. The merge of more than one base is the base.
+function merge_recursive(m_in: Merge, bases_in: string[], given: boolean, h1: string, h2: string): (Merge, string) {
+  let m = m_in;
+  let bases = bases_in;
+  if (!given) {
+    let (g1, found) = walk.merge_bases(walk.Graph { ...m.g, store: m.st.store }, h1, [h2]);
+    m = Merge { ...m, g: g1, st: State { ...m.st, store: g1.store } };
+    bases = found.reverse();
+  }
+  let ancestor = "empty tree";
+  let base_tree = "";
+  let prev = "";
+  if (bases.len() > 0) {
+    prev = bases[0];
+    ancestor = if (bases.len() > 1) { "merged common ancestors" } else { refs.short_of(m.st.store, prev, m.st.o.abbrev) };
+  }
+  for k in 1..bases.len() {
+    let outer = m.st;
+    m = Merge { ...m, st: State { ...outer, depth: outer.depth + 1, branch1: "Temporary merge branch 1", branch2: "Temporary merge branch 2" } };
+    let (m1, tree) = merge_recursive(m, [], false, prev, bases[k]);
+    m = m1;
+    if (m.st.fatal.len() > 0) {
+      return (m, "");
+    }
+    m = Merge { ...m, st: State { ...m.st, depth: outer.depth, branch1: outer.branch1, branch2: outer.branch2 } };
+    let name = "merged tree " + m.made.to_string();
+    let node = walk.Node { parents: [prev, bases[k]], tree: tree, time: 0, ok: true, commit: log.commit_of(name, []), pos: -1, generation: commitgraph.INFINITY, loaded: true };
+    m = Merge { ...m, g: walk.Graph { ...m.g, nodes: m.g.nodes.insert(name, node) }, made: m.made + 1 };
+    prev = name;
+  }
+  let g = walk.Graph { ...m.g, store: m.st.store };
+  if (prev.len() > 0) {
+    let (g2, n) = walk.node(g, prev);
+    g = g2;
+    base_tree = n.tree;
+  }
+  let (g3, n1) = walk.node(g, h1);
+  let (g4, n2) = walk.node(g3, h2);
+  m = Merge { ...m, g: g4, st: State { ...m.st, store: g4.store, ancestor: ancestor } };
+  let (st, tree) = merge_trees(m.st, base_tree, n1.tree, n2.tree);
+  return (Merge { ...m, st: st }, tree);
+}
+
+// The header lines of one path.
+pub struct Messages { path: string, lines: string[] }
+
+// The result of a merge: the tree, the header lines of the paths with a
+// conflict, and the warnings of git. `fatal` is not empty when the merge
+// stops.
+pub struct Merged { store: store.Store, tree: string, messages: Messages[], warnings: string[], fatal: string }
+
+// The merge of the commits `h1` and `h2`, whose merge bases are `bases`,
+// in memory (`merge_incore_recursive` of git). `label1` and `label2` are
+// the names of the two commits after the conflict markers.
+pub function merge_commits(g: walk.Graph, o: Options, bases: string[], h1: string, h2: string, label1: string, label2: string): Merged {
+  let st = State { store: g.store, o: o, depth: 0, branch1: label1, branch2: label2, ancestor: "", paths: Map { }, messages: Map { }, message_paths: [], pairs: [], relevant: [], removed: [], deferred: [], tables: [64, 64, 64], cache: [], mask: 0, redo: false, dir_counts: [], warnings: [], fatal: "" };
+  let (m, tree) = merge_recursive(Merge { g: g, st: st, made: 0 }, bases, true, h1, h2);
+  let messages: Messages[] = [];
+  for path in m.st.message_paths {
+    messages = messages.append(Messages { path: path, lines: m.st.messages.get_or(path, []) });
+  }
+  return Merged { store: m.st.store, tree: tree, messages: messages, warnings: m.st.warnings, fatal: m.st.fatal };
+}

@@ -25,7 +25,9 @@ const LARGE_PACK: i64 = 1073741824;
 // `multi` holds the multi-pack index when the store has one, and `multi_packs`
 // gives the place in `packs` of each packfile that it names, or -1.
 // `trees` holds the trees that the store read last, with their entries.
-pub struct Store { objects: string, width: i32, packs: Packed[], shallow: string[], loose: string[], listed: boolean, hot: i32, multi: midx.Midx[], multi_packs: i32[], trees: Cell[Trees] }
+// `held` holds the objects that a command makes and does not write. Each
+// copy of a store shares them.
+pub struct Store { objects: string, width: i32, packs: Packed[], shallow: string[], loose: string[], listed: boolean, hot: i32, multi: midx.Midx[], multi_packs: i32[], trees: Cell[Trees], held: Cell[Map[string, objects.Object]] }
 
 // The last trees that a diff read: a walk of the history compares the tree
 // of each commit with the tree of its parent, which the next commit of
@@ -58,6 +60,29 @@ pub function keep_tree(s: Store, name: string, list: objects.RawTree): void {
   s.trees.set(Trees { names: names.append(name), lists: lists.append(list) });
 }
 
+function no_objects(): Map[string, objects.Object] {
+  return Map { };
+}
+
+// Holds the object of the kind `kind` with the content `body` in memory,
+// as the temporary object directory of git does, and gives its name. An
+// object that the store has is not held.
+pub function hold(s: Store, kind: string, body: u8[]): string {
+  let name = objects.hash_of(s.width, kind, body);
+  if (info(s, name).why.len() == 0) {
+    return name;
+  }
+  let held = s.held.get();
+  s.held.set(no_objects());
+  s.held.set(held.insert(name, objects.Object { kind: kind, body: body }));
+  return name;
+}
+
+// Drops the objects that the store holds in memory.
+pub function release(s: Store): void {
+  s.held.set(no_objects());
+}
+
 // The result of a read: the object, and the store with the packfile that
 // the read loaded.
 pub struct Found { store: Store, object: Result[objects.Object, string] }
@@ -73,7 +98,7 @@ pub function open(dir: string, a: i32, multi: boolean): Store {
   let names = match (read_dir(dir + "/pack")) {
     Ok(ns) => ns,
     Err(_) => {
-      return Store { objects: dir, width: a, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0, multi: [], multi_packs: [], trees: cell_new(Trees { names: [], lists: [] }) };
+      return Store { objects: dir, width: a, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0, multi: [], multi_packs: [], trees: cell_new(Trees { names: [], lists: [] }), held: cell_new(no_objects()) };
     },
   };
   for n in names {
@@ -86,7 +111,7 @@ pub function open(dir: string, a: i32, multi: boolean): Store {
       }
     }
   }
-  let s = Store { objects: dir, width: a, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0, multi: [], multi_packs: [], trees: cell_new(Trees { names: [], lists: [] }) };
+  let s = Store { objects: dir, width: a, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0, multi: [], multi_packs: [], trees: cell_new(Trees { names: [], lists: [] }), held: cell_new(no_objects()) };
   if (!multi) {
     return s;
   }
@@ -320,6 +345,9 @@ function packed_at(s: Store, name: string): (Store, i32, i64) {
 // The object `name`: the object of a packfile that has the name, or
 // the loose object. The error is "missing" when no place has it.
 pub function read(s: Store, name: string): Found {
+  if let Some(o) = s.held.get().get(name) {
+    return Found { store: s, object: Ok(o) };
+  }
   let (now, i, offset) = packed_at(s, name);
   if (i < 0) {
     return Found { store: now, object: objects.read_loose(now.objects, name) };
@@ -344,6 +372,9 @@ pub struct Info { store: Store, kind: string, size: i64, why: string }
 // The kind and the size of the object `name`. A packed object is not
 // inflated for them.
 pub function info(s: Store, name: string): Info {
+  if let Some(o) = s.held.get().get(name) {
+    return Info { store: s, kind: o.kind, size: o.body.len() as i64, why: "" };
+  }
   let (now, i, offset) = packed_at(s, name);
   if (i < 0) {
     return match (objects.loose_info(now.objects, name)) {
@@ -419,6 +450,12 @@ pub function listed(s: Store): Store {
 // `limit` names at most.
 function names_with_prefix(s: Store, short: string, limit: i32): string[] {
   let found = loose_with_prefix(s, short, limit);
+  for e in s.held.get().entries() {
+    let (name, _) = e;
+    if (name.starts_with(short) && !found.contains(name)) {
+      found = found.append(name);
+    }
+  }
   for p in s.packs {
     for name in pack.with_prefix(p.ix, short, limit) {
       if (!found.contains(name)) {

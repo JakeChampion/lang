@@ -636,15 +636,6 @@ function limit_list(w_in: Walk): Walk {
     out = out.append(c);
   }
   w = Walk { ...w, list: out, head: 0 };
-  // A parent that the range makes UNINTERESTING can make a merge TREESAME
-  // (`limiting_can_increase_treesame` of git).
-  if (prunes(w.opts) && w.opts.full_history && !w.opts.first_parent) {
-    for c in w.list {
-      if ((flag(w, c.hash) & (UNINTERESTING | TREESAME)) == 0) {
-        w = update_treesame(w, c.hash);
-      }
-    }
-  }
   if (w.opts.cherry_pick || w.opts.cherry_mark) {
     w = cherry_pick_list(w);
   }
@@ -658,6 +649,15 @@ function limit_list(w_in: Walk): Walk {
   }
   if (w.opts.ancestry) {
     w = limit_to_ancestry(w);
+  }
+  // A parent that the range or the ancestry path makes UNINTERESTING can
+  // make a merge TREESAME (`limiting_can_increase_treesame` of git).
+  if (prunes(w.opts) && w.opts.full_history && !w.opts.first_parent) {
+    for c in w.list {
+      if ((flag(w, c.hash) & (UNINTERESTING | TREESAME)) == 0) {
+        w = update_treesame(w, c.hash);
+      }
+    }
   }
   return w;
 }
