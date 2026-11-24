@@ -99,7 +99,20 @@ function bind_all(s: Scope, bound: string[], line: i32, col: i32): Scope {
   return out;
 }
 
+// A packed name holds several names: `a,(b,c)`.
+function packed_name(name: string): boolean {
+  for i in 0..name.len() {
+    if (name[i] == b',' || name[i] == b'(' || name[i] == b')') {
+      return true;
+    }
+  }
+  return false;
+}
+
 function names(s: Scope, packed: string): string {
+  if (!packed_name(packed)) {
+    return lookup(s, packed);
+  }
   let out = "";
   let start = 0;
   for i in 0..=packed.len() {
@@ -169,10 +182,16 @@ function params(ps: ast.ParamDecl[], s: Scope, line: i32, col: i32): (ast.ParamD
 function expr_at(e: ast.Expr, s: Scope): (ast.Expr, Scope, boolean) {
   match (e) {
     ast.ExprIdent(i) => {
+      // An identifier that keeps its name is not a change, so the walker
+      // does not rebuild the expressions that hold it.
       if (i.builtin) {
-        return (e, s, true);
+        return (e, s, false);
       }
-      return (ast.ExprIdent { ...i, name: lookup(s, i.name) }, s, true);
+      let symbol = lookup(s, i.name);
+      if (symbol == i.name) {
+        return (e, s, false);
+      }
+      return (ast.ExprIdent { ...i, name: symbol }, s, true);
     },
     ast.ExprLambda(lm) => {
       let captures: ast.TypedBinding[] = [];
@@ -253,17 +272,31 @@ function bind_cycle(stmts: ast.Stmt[], cycle: string[], own s: Scope): Scope {
   return s;
 }
 
+function bind_var(s: Scope, v: ast.StmtVar): Scope {
+  if (ast.destructures(v)) {
+    return bind_all(s, ast.append_var_names([], v), v.line, v.col);
+  }
+  return bind_one(s, v.name, v.line, v.col);
+}
+
+function destr_in(d: ast.Destr, s: Scope): ast.Destr {
+  if (d.binds.len() == 0) {
+    return d;
+  }
+  return ast.rename_destr(d, (n: string): string => lookup(s, n));
+}
+
 function var_at(v: ast.StmtVar, s: Scope, mutual: string[]): (ast.Stmt, Scope) {
   let before = s;
   let recursive = ast.var_binds_itself(v) && !util.has_str(mutual, v.name);
   if (recursive) {
-    before = bind_all(before, ast.append_var_names([], v), v.line, v.col);
+    before = bind_var(before, v);
   }
   let (init, tail) = expr(v.init, before);
   if (!recursive && !util.has_str(mutual, v.name)) {
-    tail = bind_all(tail, ast.append_var_names([], v), v.line, v.col);
+    tail = bind_var(tail, v);
   }
-  return (ast.StmtVar { ...v, name: lookup(tail, v.name), init: init, destr: ast.rename_destr(v.destr, (n: string): string => lookup(tail, n)) }, tail);
+  return (ast.StmtVar { ...v, name: lookup(tail, v.name), init: init, destr: destr_in(v.destr, tail) }, tail);
 }
 
 function stmt_at(st: ast.Stmt, s: Scope): (ast.Stmt, Scope, boolean) {
@@ -292,7 +325,7 @@ function stmt_at(st: ast.Stmt, s: Scope): (ast.Stmt, Scope, boolean) {
       let (iter, cs) = expr(f.iter, s);
       let inner = bind_all(cs, ast.append_for_names([], f), f.line, 0);
       let (bs, tail) = body(f.body, inner);
-      return (ast.StmtFor { ...f, var_name: lookup(inner, f.var_name), iter: iter, body: bs, destr: ast.rename_destr(f.destr, (n: string): string => lookup(inner, n)) }, leave(tail, s), true);
+      return (ast.StmtFor { ...f, var_name: lookup(inner, f.var_name), iter: iter, body: bs, destr: destr_in(f.destr, inner) }, leave(tail, s), true);
     },
     ast.StmtMatch(m) => {
       let (scrutinee, cur) = expr(m.scrutinee, s);
