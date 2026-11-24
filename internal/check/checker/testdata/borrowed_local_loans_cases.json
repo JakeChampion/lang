@@ -138,5 +138,15 @@
   "name": "callback loan keeps its message",
   "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct P { h: H, g: H, n: i32, tags: i32[] }\nfunction (own p: P) close(): void { p.h.close(); p.g.close(); }\nfunction (p: P) handle(): H { return p.h; }\nfunction (own p: P) renamed(n: i32): P { return P { ...p, n: n }; }\nfunction closeh(own h: H): void { h.close(); }\nfunction both(own p: P, h: H): i32 { let n = h.read(); p.close(); return n; }\nfunction fresh(): P { return P { h: H { closed: cell_new(0) }, g: H { closed: cell_new(0) }, n: 0, tags: [] }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own p: P): i32 { let g = (): i32 => p.h.read(); p.close(); return g(); }\n",
   "want": "E050"
+ },
+ {
+  "name": "match binder of a field stays after a sibling field is consumed",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct S { a: H, b: Option[H] }\nfunction fresh(): S { return S { a: H { closed: cell_new(0) }, b: Some(H { closed: cell_new(0) }) }; }\nfunction main(): i32 { return run(fresh()); }\nfunction run(own s: S): i32 { s.a.close(); if let Some(h) = s.b { return h.read(); } return 0; }\n",
+  "want": ""
+ },
+ {
+  "name": "match binder of a field after that field is consumed",
+  "source": "struct H { closed: Cell[i32] }\nfunction (h: H) read(): i32 { return h.closed.get(); }\nfunction (own h: H) close(): void { h.closed.set(1); }\nstruct S { a: H, b: Option[H] }\nfunction fresh(): S { return S { a: H { closed: cell_new(0) }, b: Some(H { closed: cell_new(0) }) }; }\nfunction main(): i32 { return run(fresh()); }\nfunction closeb(own b: Option[H]): void { if let Some(h) = b { h.close(); } }\nfunction run(own s: S): i32 { if let Some(h) = s.b { closeb(s.b); return h.read(); } return 0; }\n",
+  "want": "E050"
  }
 ]
