@@ -5,6 +5,7 @@ import "std/android/draw";
 import "std/android/ui";
 import "std/gif";
 import "std/jpeg";
+import "std/jxl";
 import "std/png";
 import "std/qoi";
 import "std/webp";
@@ -21,6 +22,8 @@ pub const PNG: i32 = 2;
 pub const QOI: i32 = 3;
 
 pub const GIF: i32 = 4;
+
+pub const JXL: i32 = 5;
 
 // The longest side of the pictures that compare the images, in pixels.
 pub const PREVIEW: i32 = 960;
@@ -316,6 +319,10 @@ pub function encoded(img: draw.Image, s: Settings, opaque: boolean): u8[] {
       Err(_) => [],
     };
   }
+  if (s.format == JXL) {
+    let made = if (opaque) { jxl.encode_rgb8(img.width, img.height, pixels.rgb(img)) } else { jxl.encode_rgba8(img.width, img.height, pixels.unpremultiplied(img)) };
+    return made.ok().unwrap_or([]);
+  }
   if (s.format == GIF) {
     return match (gif.encode_rgba8(img.width, img.height, pixels.unpremultiplied(img), gif.Options { colors: s.colors, dither: s.dither })) {
       Ok(bytes) => bytes,
@@ -411,17 +418,17 @@ function webp_file(frames: [draw.Image], delays: [i32], s: Settings, d: Device):
 }
 
 pub function format_name(f: i32): string {
-  return ["JPEG", "WebP", "PNG", "QOI", "GIF"][f];
+  return ["JPEG", "WebP", "PNG", "QOI", "GIF", "JXL"][f];
 }
 
 pub function mime(f: i32): string {
-  return ["image/jpeg", "image/webp", "image/png", "image/qoi", "image/gif"][f];
+  return ["image/jpeg", "image/webp", "image/png", "image/qoi", "image/gif", "image/jxl"][f];
 }
 
 // The folder of a saved file: the gallery for a format that Android shows,
 // and the downloads for one that it does not.
 pub function folder(f: i32): string {
-  return if (f == QOI) { "Download/Press" } else { "Pictures/Press" };
+  return if (f == QOI || f == JXL) { "Download/Press" } else { "Pictures/Press" };
 }
 
 // The name of a file of `format`: the name of the image that the person
@@ -438,7 +445,7 @@ pub function file_name(m: Model, format: i32): string {
   if (stem.len() == 0) {
     stem = "image";
   }
-  return stem + "." + ["jpg", "webp", "png", "qoi", "gif"][format];
+  return stem + "." + ["jpg", "webp", "png", "qoi", "gif", "jxl"][format];
 }
 
 // A size of a file, in bytes, KB or MB of 1000.
@@ -483,7 +490,7 @@ pub function view(m: Model, s: ui.Screen): ui.El[Msg] {
     return welcome(m);
   };
   let body: ui.El[Msg][] = [comparison(m, p, s), facts(m, p)];
-  body = body.append(ui.tabs(["JPEG", "WebP", "PNG", "QOI", "GIF"], m.settings.format, (i: i32): Msg => Format(i)));
+  body = body.append(ui.tabs(["JPEG", "WebP", "PNG", "QOI", "GIF", "JXL"], m.settings.format, (i: i32): Msg => Format(i)));
   for c in controls(m, p) {
     body = body.append(c);
   }
@@ -586,6 +593,9 @@ function controls(m: Model, p: Picked): ui.El[Msg][] {
   }
   if (s.format == QOI) {
     out = out.append(ui.text("QOI keeps each pixel, and encodes and decodes fast. The gallery cannot show QOI, so Press saves it to Download/Press.").colored(ui.MUTED).wrapped());
+  }
+  if (s.format == JXL) {
+    out = out.append(ui.text("JPEG XL here keeps each pixel. The gallery cannot show JPEG XL, so Press saves it to Download/Press.").colored(ui.MUTED).wrapped());
   }
   if (s.format == GIF) {
     out = out.append(named_slider("Colours", s.colors.to_string(), (s.colors - 2) as f64 / 254.0, (part: f64): Msg => Colors(part)));
