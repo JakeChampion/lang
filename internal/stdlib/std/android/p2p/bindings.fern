@@ -1,0 +1,1148 @@
+// Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
+import "std/jni";
+
+// A android.content.Context.
+pub struct Context { ref: usize }
+
+pub function (x: Context) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Context) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.Context and the IDs of its members.
+pub struct ContextClass { class: usize, id_get_class_loader: usize, id_get_main_looper: usize, id_get_system_service: usize, id_register_receiver: usize, id_unregister_receiver: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/Context")?;
+  let id_get_class_loader = jni.checked_id(e, class, jni.get_method_id(e, class, "getClassLoader", "()Ljava/lang/ClassLoader;"))?;
+  let id_get_main_looper = jni.checked_id(e, class, jni.get_method_id(e, class, "getMainLooper", "()Landroid/os/Looper;"))?;
+  let id_get_system_service = jni.checked_id(e, class, jni.get_method_id(e, class, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;"))?;
+  let id_register_receiver = jni.checked_id(e, class, jni.get_method_id(e, class, "registerReceiver", "(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;)Landroid/content/Intent;"))?;
+  let id_unregister_receiver = jni.checked_id(e, class, jni.get_method_id(e, class, "unregisterReceiver", "(Landroid/content/BroadcastReceiver;)V"))?;
+  return Ok(ContextClass { class: class, id_get_class_loader: id_get_class_loader, id_get_main_looper: id_get_main_looper, id_get_system_service: id_get_system_service, id_register_receiver: id_register_receiver, id_unregister_receiver: id_unregister_receiver });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ContextClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.Context.getClassLoader()Ljava/lang/ClassLoader;
+pub function (c: ContextClass) get_class_loader(e: usize, self: Context): Result[ClassLoader, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_class_loader, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(ClassLoader { ref: got });
+}
+
+// android.content.Context.getMainLooper()Landroid/os/Looper;
+pub function (c: ContextClass) get_main_looper(e: usize, self: Context): Result[Looper, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_main_looper, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Looper { ref: got });
+}
+
+// android.content.Context.getSystemService(Ljava/lang/String;)Ljava/lang/Object;
+pub function (c: ContextClass) get_system_service(e: usize, self: Context, a0: string): Result[jni.Object, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_system_service, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// android.content.Context.registerReceiver(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;)Landroid/content/Intent;
+pub function (c: ContextClass) register_receiver(e: usize, self: Context, a0: BroadcastReceiver, a1: IntentFilter): Result[Intent, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_register_receiver, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Intent { ref: got });
+}
+
+// android.content.Context.unregisterReceiver(Landroid/content/BroadcastReceiver;)V
+pub function (c: ContextClass) unregister_receiver(e: usize, self: Context, a0: BroadcastReceiver): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_unregister_receiver, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.content.BroadcastReceiver.
+pub struct BroadcastReceiver { ref: usize }
+
+pub function (x: BroadcastReceiver) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: BroadcastReceiver) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.BroadcastReceiver and the IDs of its members.
+pub struct BroadcastReceiverClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function broadcast_receiver_class(e: usize): Result[BroadcastReceiverClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/BroadcastReceiver")?;
+  return Ok(BroadcastReceiverClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: BroadcastReceiverClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.content.Intent.
+pub struct Intent { ref: usize }
+
+pub function (x: Intent) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Intent) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub function (x: Intent) as_parcelable(): Parcelable {
+  return Parcelable { ref: x.ref };
+}
+
+// The class android.content.Intent and the IDs of its members.
+pub struct IntentClass { class: usize, id_get_action: usize, id_get_int_extra: usize, id_get_parcelable_extra: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function intent_class(e: usize): Result[IntentClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/Intent")?;
+  let id_get_action = jni.checked_id(e, class, jni.get_method_id(e, class, "getAction", "()Ljava/lang/String;"))?;
+  let id_get_int_extra = jni.checked_id(e, class, jni.get_method_id(e, class, "getIntExtra", "(Ljava/lang/String;I)I"))?;
+  let id_get_parcelable_extra = jni.checked_id(e, class, jni.get_method_id(e, class, "getParcelableExtra", "(Ljava/lang/String;)Landroid/os/Parcelable;"))?;
+  return Ok(IntentClass { class: class, id_get_action: id_get_action, id_get_int_extra: id_get_int_extra, id_get_parcelable_extra: id_get_parcelable_extra });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: IntentClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.Intent.getAction()Ljava/lang/String;
+pub function (c: IntentClass) get_action(e: usize, self: Intent): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_action, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// android.content.Intent.getIntExtra(Ljava/lang/String;I)I
+pub function (c: IntentClass) get_int_extra(e: usize, self: Intent, a0: string, a1: i32): Result[i32, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, s0);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_int_extra, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.content.Intent.getParcelableExtra(Ljava/lang/String;)Landroid/os/Parcelable;
+pub function (c: IntentClass) get_parcelable_extra(e: usize, self: Intent, a0: string): Result[Parcelable, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_parcelable_extra, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Parcelable { ref: got });
+}
+
+// A android.content.IntentFilter.
+pub struct IntentFilter { ref: usize }
+
+pub function (x: IntentFilter) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: IntentFilter) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub function (x: IntentFilter) as_parcelable(): Parcelable {
+  return Parcelable { ref: x.ref };
+}
+
+// The class android.content.IntentFilter and the IDs of its members.
+pub struct IntentFilterClass { class: usize, id_new: usize, id_add_action: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function intent_filter_class(e: usize): Result[IntentFilterClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/content/IntentFilter")?;
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "()V"))?;
+  let id_add_action = jni.checked_id(e, class, jni.get_method_id(e, class, "addAction", "(Ljava/lang/String;)V"))?;
+  return Ok(IntentFilterClass { class: class, id_new: id_new, id_add_action: id_add_action });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: IntentFilterClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.IntentFilter.<init>()V
+pub function (c: IntentFilterClass) new(e: usize): Result[IntentFilter, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(IntentFilter { ref: got });
+}
+
+// android.content.IntentFilter.addAction(Ljava/lang/String;)V
+pub function (c: IntentFilterClass) add_action(e: usize, self: IntentFilter, a0: string): Result[void, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_add_action, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.os.Looper.
+pub struct Looper { ref: usize }
+
+pub function (x: Looper) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Looper) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.os.Looper and the IDs of its members.
+pub struct LooperClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function looper_class(e: usize): Result[LooperClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/os/Looper")?;
+  return Ok(LooperClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: LooperClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.os.Parcelable.
+pub struct Parcelable { ref: usize }
+
+pub function (x: Parcelable) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Parcelable) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.os.Parcelable and the IDs of its members.
+pub struct ParcelableClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function parcelable_class(e: usize): Result[ParcelableClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/os/Parcelable")?;
+  return Ok(ParcelableClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ParcelableClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.net.wifi.p2p.WifiP2pManager.
+pub struct WifiP2pManager { ref: usize }
+
+pub function (x: WifiP2pManager) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: WifiP2pManager) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.net.wifi.p2p.WifiP2pManager and the IDs of its members.
+pub struct WifiP2pManagerClass { class: usize, id_cancel_connect: usize, id_connect: usize, id_discover_peers: usize, id_initialize: usize, id_remove_group: usize, id_stop_peer_discovery: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function wifi_p2p_manager_class(e: usize): Result[WifiP2pManagerClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/net/wifi/p2p/WifiP2pManager")?;
+  let id_cancel_connect = jni.checked_id(e, class, jni.get_method_id(e, class, "cancelConnect", "(Landroid/net/wifi/p2p/WifiP2pManager$Channel;Landroid/net/wifi/p2p/WifiP2pManager$ActionListener;)V"))?;
+  let id_connect = jni.checked_id(e, class, jni.get_method_id(e, class, "connect", "(Landroid/net/wifi/p2p/WifiP2pManager$Channel;Landroid/net/wifi/p2p/WifiP2pConfig;Landroid/net/wifi/p2p/WifiP2pManager$ActionListener;)V"))?;
+  let id_discover_peers = jni.checked_id(e, class, jni.get_method_id(e, class, "discoverPeers", "(Landroid/net/wifi/p2p/WifiP2pManager$Channel;Landroid/net/wifi/p2p/WifiP2pManager$ActionListener;)V"))?;
+  let id_initialize = jni.checked_id(e, class, jni.get_method_id(e, class, "initialize", "(Landroid/content/Context;Landroid/os/Looper;Landroid/net/wifi/p2p/WifiP2pManager$ChannelListener;)Landroid/net/wifi/p2p/WifiP2pManager$Channel;"))?;
+  let id_remove_group = jni.checked_id(e, class, jni.get_method_id(e, class, "removeGroup", "(Landroid/net/wifi/p2p/WifiP2pManager$Channel;Landroid/net/wifi/p2p/WifiP2pManager$ActionListener;)V"))?;
+  let id_stop_peer_discovery = jni.checked_id(e, class, jni.get_method_id(e, class, "stopPeerDiscovery", "(Landroid/net/wifi/p2p/WifiP2pManager$Channel;Landroid/net/wifi/p2p/WifiP2pManager$ActionListener;)V"))?;
+  return Ok(WifiP2pManagerClass { class: class, id_cancel_connect: id_cancel_connect, id_connect: id_connect, id_discover_peers: id_discover_peers, id_initialize: id_initialize, id_remove_group: id_remove_group, id_stop_peer_discovery: id_stop_peer_discovery });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: WifiP2pManagerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.net.wifi.p2p.WifiP2pManager.cancelConnect(Landroid/net/wifi/p2p/WifiP2pManager$Channel;Landroid/net/wifi/p2p/WifiP2pManager$ActionListener;)V
+pub function (c: WifiP2pManagerClass) cancel_connect(e: usize, self: WifiP2pManager, a0: WifiP2pManager_Channel, a1: WifiP2pManager_ActionListener): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_cancel_connect, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.net.wifi.p2p.WifiP2pManager.connect(Landroid/net/wifi/p2p/WifiP2pManager$Channel;Landroid/net/wifi/p2p/WifiP2pConfig;Landroid/net/wifi/p2p/WifiP2pManager$ActionListener;)V
+pub function (c: WifiP2pManagerClass) connect(e: usize, self: WifiP2pManager, a0: WifiP2pManager_Channel, a1: WifiP2pConfig, a2: WifiP2pManager_ActionListener): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(3);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  jni.jvalue_set_int(args, 2, a2.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_connect, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.net.wifi.p2p.WifiP2pManager.discoverPeers(Landroid/net/wifi/p2p/WifiP2pManager$Channel;Landroid/net/wifi/p2p/WifiP2pManager$ActionListener;)V
+pub function (c: WifiP2pManagerClass) discover_peers(e: usize, self: WifiP2pManager, a0: WifiP2pManager_Channel, a1: WifiP2pManager_ActionListener): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_discover_peers, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.net.wifi.p2p.WifiP2pManager.initialize(Landroid/content/Context;Landroid/os/Looper;Landroid/net/wifi/p2p/WifiP2pManager$ChannelListener;)Landroid/net/wifi/p2p/WifiP2pManager$Channel;
+pub function (c: WifiP2pManagerClass) initialize(e: usize, self: WifiP2pManager, a0: Context, a1: Looper, a2: WifiP2pManager_ChannelListener): Result[WifiP2pManager_Channel, jni.JavaError] {
+  let args = jni.jvalue_alloc(3);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  jni.jvalue_set_int(args, 2, a2.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_initialize, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(WifiP2pManager_Channel { ref: got });
+}
+
+// android.net.wifi.p2p.WifiP2pManager.removeGroup(Landroid/net/wifi/p2p/WifiP2pManager$Channel;Landroid/net/wifi/p2p/WifiP2pManager$ActionListener;)V
+pub function (c: WifiP2pManagerClass) remove_group(e: usize, self: WifiP2pManager, a0: WifiP2pManager_Channel, a1: WifiP2pManager_ActionListener): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_remove_group, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.net.wifi.p2p.WifiP2pManager.stopPeerDiscovery(Landroid/net/wifi/p2p/WifiP2pManager$Channel;Landroid/net/wifi/p2p/WifiP2pManager$ActionListener;)V
+pub function (c: WifiP2pManagerClass) stop_peer_discovery(e: usize, self: WifiP2pManager, a0: WifiP2pManager_Channel, a1: WifiP2pManager_ActionListener): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_stop_peer_discovery, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.net.wifi.p2p.WifiP2pManager.Channel.
+pub struct WifiP2pManager_Channel { ref: usize }
+
+pub function (x: WifiP2pManager_Channel) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: WifiP2pManager_Channel) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.net.wifi.p2p.WifiP2pManager.Channel and the IDs of its members.
+pub struct WifiP2pManager_ChannelClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function wifi_p2p_manager_channel_class(e: usize): Result[WifiP2pManager_ChannelClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/net/wifi/p2p/WifiP2pManager$Channel")?;
+  return Ok(WifiP2pManager_ChannelClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: WifiP2pManager_ChannelClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.net.wifi.p2p.WifiP2pManager.ChannelListener.
+pub struct WifiP2pManager_ChannelListener { ref: usize }
+
+pub function (x: WifiP2pManager_ChannelListener) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: WifiP2pManager_ChannelListener) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.net.wifi.p2p.WifiP2pManager.ChannelListener and the IDs of its members.
+pub struct WifiP2pManager_ChannelListenerClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function wifi_p2p_manager_channel_listener_class(e: usize): Result[WifiP2pManager_ChannelListenerClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/net/wifi/p2p/WifiP2pManager$ChannelListener")?;
+  return Ok(WifiP2pManager_ChannelListenerClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: WifiP2pManager_ChannelListenerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.net.wifi.p2p.WifiP2pManager.ActionListener.
+pub struct WifiP2pManager_ActionListener { ref: usize }
+
+pub function (x: WifiP2pManager_ActionListener) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: WifiP2pManager_ActionListener) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.net.wifi.p2p.WifiP2pManager.ActionListener and the IDs of its members.
+pub struct WifiP2pManager_ActionListenerClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function wifi_p2p_manager_action_listener_class(e: usize): Result[WifiP2pManager_ActionListenerClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/net/wifi/p2p/WifiP2pManager$ActionListener")?;
+  return Ok(WifiP2pManager_ActionListenerClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: WifiP2pManager_ActionListenerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.net.wifi.p2p.WifiP2pConfig.
+pub struct WifiP2pConfig { ref: usize }
+
+pub function (x: WifiP2pConfig) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: WifiP2pConfig) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub function (x: WifiP2pConfig) as_parcelable(): Parcelable {
+  return Parcelable { ref: x.ref };
+}
+
+// The class android.net.wifi.p2p.WifiP2pConfig and the IDs of its members.
+pub struct WifiP2pConfigClass { class: usize, id_new: usize, id_device_address: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function wifi_p2p_config_class(e: usize): Result[WifiP2pConfigClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/net/wifi/p2p/WifiP2pConfig")?;
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "()V"))?;
+  let id_device_address = jni.checked_id(e, class, jni.get_field_id(e, class, "deviceAddress", "Ljava/lang/String;"))?;
+  return Ok(WifiP2pConfigClass { class: class, id_new: id_new, id_device_address: id_device_address });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: WifiP2pConfigClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.net.wifi.p2p.WifiP2pConfig.<init>()V
+pub function (c: WifiP2pConfigClass) new(e: usize): Result[WifiP2pConfig, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(WifiP2pConfig { ref: got });
+}
+
+// android.net.wifi.p2p.WifiP2pConfig.deviceAddress
+pub function (c: WifiP2pConfigClass) device_address(e: usize, self: WifiP2pConfig): Result[string, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_device_address, 0 as usize);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+pub function (c: WifiP2pConfigClass) set_device_address(e: usize, self: WifiP2pConfig, value: string): Result[void, jni.JavaError] {
+  let text = jni.checked_string(e, value)?;
+  defer jni.delete_local_ref(e, text);
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_device_address, text);
+  return jni.check(e);
+}
+
+// A android.net.wifi.p2p.WifiP2pDeviceList.
+pub struct WifiP2pDeviceList { ref: usize }
+
+pub function (x: WifiP2pDeviceList) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: WifiP2pDeviceList) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub function (x: WifiP2pDeviceList) as_parcelable(): Parcelable {
+  return Parcelable { ref: x.ref };
+}
+
+// The class android.net.wifi.p2p.WifiP2pDeviceList and the IDs of its members.
+pub struct WifiP2pDeviceListClass { class: usize, id_get_device_list: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function wifi_p2p_device_list_class(e: usize): Result[WifiP2pDeviceListClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/net/wifi/p2p/WifiP2pDeviceList")?;
+  let id_get_device_list = jni.checked_id(e, class, jni.get_method_id(e, class, "getDeviceList", "()Ljava/util/Collection;"))?;
+  return Ok(WifiP2pDeviceListClass { class: class, id_get_device_list: id_get_device_list });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: WifiP2pDeviceListClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.net.wifi.p2p.WifiP2pDeviceList.getDeviceList()Ljava/util/Collection;
+pub function (c: WifiP2pDeviceListClass) get_device_list(e: usize, self: WifiP2pDeviceList): Result[Collection, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_device_list, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Collection { ref: got });
+}
+
+// A android.net.wifi.p2p.WifiP2pDevice.
+pub struct WifiP2pDevice { ref: usize }
+
+pub function (x: WifiP2pDevice) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: WifiP2pDevice) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub function (x: WifiP2pDevice) as_parcelable(): Parcelable {
+  return Parcelable { ref: x.ref };
+}
+
+// The class android.net.wifi.p2p.WifiP2pDevice and the IDs of its members.
+pub struct WifiP2pDeviceClass { class: usize, id_device_address: usize, id_device_name: usize, id_status: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function wifi_p2p_device_class(e: usize): Result[WifiP2pDeviceClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/net/wifi/p2p/WifiP2pDevice")?;
+  let id_device_address = jni.checked_id(e, class, jni.get_field_id(e, class, "deviceAddress", "Ljava/lang/String;"))?;
+  let id_device_name = jni.checked_id(e, class, jni.get_field_id(e, class, "deviceName", "Ljava/lang/String;"))?;
+  let id_status = jni.checked_id(e, class, jni.get_field_id(e, class, "status", "I"))?;
+  return Ok(WifiP2pDeviceClass { class: class, id_device_address: id_device_address, id_device_name: id_device_name, id_status: id_status });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: WifiP2pDeviceClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.net.wifi.p2p.WifiP2pDevice.deviceAddress
+pub function (c: WifiP2pDeviceClass) device_address(e: usize, self: WifiP2pDevice): Result[string, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_device_address, 0 as usize);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+pub function (c: WifiP2pDeviceClass) set_device_address(e: usize, self: WifiP2pDevice, value: string): Result[void, jni.JavaError] {
+  let text = jni.checked_string(e, value)?;
+  defer jni.delete_local_ref(e, text);
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_device_address, text);
+  return jni.check(e);
+}
+
+// android.net.wifi.p2p.WifiP2pDevice.deviceName
+pub function (c: WifiP2pDeviceClass) device_name(e: usize, self: WifiP2pDevice): Result[string, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_device_name, 0 as usize);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+pub function (c: WifiP2pDeviceClass) set_device_name(e: usize, self: WifiP2pDevice, value: string): Result[void, jni.JavaError] {
+  let text = jni.checked_string(e, value)?;
+  defer jni.delete_local_ref(e, text);
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_device_name, text);
+  return jni.check(e);
+}
+
+// android.net.wifi.p2p.WifiP2pDevice.status
+pub function (c: WifiP2pDeviceClass) status(e: usize, self: WifiP2pDevice): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_status, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+pub function (c: WifiP2pDeviceClass) set_status(e: usize, self: WifiP2pDevice, value: i32): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 5, self.ref, c.id_status, value as usize);
+  return jni.check(e);
+}
+
+// A android.net.wifi.p2p.WifiP2pInfo.
+pub struct WifiP2pInfo { ref: usize }
+
+pub function (x: WifiP2pInfo) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: WifiP2pInfo) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub function (x: WifiP2pInfo) as_parcelable(): Parcelable {
+  return Parcelable { ref: x.ref };
+}
+
+// The class android.net.wifi.p2p.WifiP2pInfo and the IDs of its members.
+pub struct WifiP2pInfoClass { class: usize, id_group_formed: usize, id_group_owner_address: usize, id_is_group_owner: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function wifi_p2p_info_class(e: usize): Result[WifiP2pInfoClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/net/wifi/p2p/WifiP2pInfo")?;
+  let id_group_formed = jni.checked_id(e, class, jni.get_field_id(e, class, "groupFormed", "Z"))?;
+  let id_group_owner_address = jni.checked_id(e, class, jni.get_field_id(e, class, "groupOwnerAddress", "Ljava/net/InetAddress;"))?;
+  let id_is_group_owner = jni.checked_id(e, class, jni.get_field_id(e, class, "isGroupOwner", "Z"))?;
+  return Ok(WifiP2pInfoClass { class: class, id_group_formed: id_group_formed, id_group_owner_address: id_group_owner_address, id_is_group_owner: id_is_group_owner });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: WifiP2pInfoClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.net.wifi.p2p.WifiP2pInfo.groupFormed
+pub function (c: WifiP2pInfoClass) group_formed(e: usize, self: WifiP2pInfo): Result[boolean, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 1, self.ref, c.id_group_formed, 0 as usize);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+pub function (c: WifiP2pInfoClass) set_group_formed(e: usize, self: WifiP2pInfo, value: boolean): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 1, self.ref, c.id_group_formed, jni.jbool(value));
+  return jni.check(e);
+}
+
+// android.net.wifi.p2p.WifiP2pInfo.groupOwnerAddress
+pub function (c: WifiP2pInfoClass) group_owner_address(e: usize, self: WifiP2pInfo): Result[InetAddress, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_group_owner_address, 0 as usize);
+  jni.check(e)?;
+  return Ok(InetAddress { ref: got });
+}
+
+pub function (c: WifiP2pInfoClass) set_group_owner_address(e: usize, self: WifiP2pInfo, value: InetAddress): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 0, self.ref, c.id_group_owner_address, value.ref);
+  return jni.check(e);
+}
+
+// android.net.wifi.p2p.WifiP2pInfo.isGroupOwner
+pub function (c: WifiP2pInfoClass) is_group_owner(e: usize, self: WifiP2pInfo): Result[boolean, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 1, self.ref, c.id_is_group_owner, 0 as usize);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+pub function (c: WifiP2pInfoClass) set_is_group_owner(e: usize, self: WifiP2pInfo, value: boolean): Result[void, jni.JavaError] {
+  jni.invoke(e, jni.SET_FIELD + 1, self.ref, c.id_is_group_owner, jni.jbool(value));
+  return jni.check(e);
+}
+
+// A java.net.InetAddress.
+pub struct InetAddress { ref: usize }
+
+pub function (x: InetAddress) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: InetAddress) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.net.InetAddress and the IDs of its members.
+pub struct InetAddressClass { class: usize, id_get_host_address: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function inet_address_class(e: usize): Result[InetAddressClass, jni.JavaError] {
+  let class = jni.global_class(e, "java/net/InetAddress")?;
+  let id_get_host_address = jni.checked_id(e, class, jni.get_method_id(e, class, "getHostAddress", "()Ljava/lang/String;"))?;
+  return Ok(InetAddressClass { class: class, id_get_host_address: id_get_host_address });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: InetAddressClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.net.InetAddress.getHostAddress()Ljava/lang/String;
+pub function (c: InetAddressClass) get_host_address(e: usize, self: InetAddress): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_host_address, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// A java.util.Collection.
+pub struct Collection { ref: usize }
+
+pub function (x: Collection) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Collection) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.util.Collection and the IDs of its members.
+pub struct CollectionClass { class: usize, id_to_array: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function collection_class(e: usize): Result[CollectionClass, jni.JavaError] {
+  let class = jni.global_class(e, "java/util/Collection")?;
+  let id_to_array = jni.checked_id(e, class, jni.get_method_id(e, class, "toArray", "()[Ljava/lang/Object;"))?;
+  return Ok(CollectionClass { class: class, id_to_array: id_to_array });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: CollectionClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.util.Collection.toArray()[Ljava/lang/Object;
+pub function (c: CollectionClass) to_array(e: usize, self: Collection): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_to_array, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// A java.lang.Class.
+pub struct Class { ref: usize }
+
+pub function (x: Class) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Class) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.lang.Class and the IDs of its members.
+pub struct ClassClass { class: usize, id_new_instance: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function class_class(e: usize): Result[ClassClass, jni.JavaError] {
+  let class = jni.global_class(e, "java/lang/Class")?;
+  let id_new_instance = jni.checked_id(e, class, jni.get_method_id(e, class, "newInstance", "()Ljava/lang/Object;"))?;
+  return Ok(ClassClass { class: class, id_new_instance: id_new_instance });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ClassClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.lang.Class.newInstance()Ljava/lang/Object;
+pub function (c: ClassClass) new_instance(e: usize, self: Class): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_new_instance, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// A java.lang.ClassLoader.
+pub struct ClassLoader { ref: usize }
+
+pub function (x: ClassLoader) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ClassLoader) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.lang.ClassLoader and the IDs of its members.
+pub struct ClassLoaderClass { class: usize, id_load_class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function class_loader_class(e: usize): Result[ClassLoaderClass, jni.JavaError] {
+  let class = jni.global_class(e, "java/lang/ClassLoader")?;
+  let id_load_class = jni.checked_id(e, class, jni.get_method_id(e, class, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;"))?;
+  return Ok(ClassLoaderClass { class: class, id_load_class: id_load_class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ClassLoaderClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.lang.ClassLoader.loadClass(Ljava/lang/String;)Ljava/lang/Class;
+pub function (c: ClassLoaderClass) load_class(e: usize, self: ClassLoader, a0: string): Result[Class, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_load_class, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Class { ref: got });
+}
+
+// The struct of IDs of each class of this module.
+pub struct Classes { context: ContextClass, broadcast_receiver: BroadcastReceiverClass, intent: IntentClass, intent_filter: IntentFilterClass, looper: LooperClass, parcelable: ParcelableClass, wifi_p2p_manager: WifiP2pManagerClass, wifi_p2p_manager_channel: WifiP2pManager_ChannelClass, wifi_p2p_manager_channel_listener: WifiP2pManager_ChannelListenerClass, wifi_p2p_manager_action_listener: WifiP2pManager_ActionListenerClass, wifi_p2p_config: WifiP2pConfigClass, wifi_p2p_device_list: WifiP2pDeviceListClass, wifi_p2p_device: WifiP2pDeviceClass, wifi_p2p_info: WifiP2pInfoClass, inet_address: InetAddressClass, collection: CollectionClass, class: ClassClass, class_loader: ClassLoaderClass }
+
+// Makes the struct of IDs of each class. Call it one time, and call
+// `release` when the app does not call Java again. One lookup for each
+// class, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function classes(e: usize): Result[Classes, jni.JavaError] {
+  let context = match (context_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      return Err(err);
+    },
+  };
+  let broadcast_receiver = match (broadcast_receiver_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      return Err(err);
+    },
+  };
+  let intent = match (intent_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      broadcast_receiver.release(e);
+      return Err(err);
+    },
+  };
+  let intent_filter = match (intent_filter_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      broadcast_receiver.release(e);
+      intent.release(e);
+      return Err(err);
+    },
+  };
+  let looper = match (looper_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      broadcast_receiver.release(e);
+      intent.release(e);
+      intent_filter.release(e);
+      return Err(err);
+    },
+  };
+  let parcelable = match (parcelable_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      broadcast_receiver.release(e);
+      intent.release(e);
+      intent_filter.release(e);
+      looper.release(e);
+      return Err(err);
+    },
+  };
+  let wifi_p2p_manager = match (wifi_p2p_manager_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      broadcast_receiver.release(e);
+      intent.release(e);
+      intent_filter.release(e);
+      looper.release(e);
+      parcelable.release(e);
+      return Err(err);
+    },
+  };
+  let wifi_p2p_manager_channel = match (wifi_p2p_manager_channel_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      broadcast_receiver.release(e);
+      intent.release(e);
+      intent_filter.release(e);
+      looper.release(e);
+      parcelable.release(e);
+      wifi_p2p_manager.release(e);
+      return Err(err);
+    },
+  };
+  let wifi_p2p_manager_channel_listener = match (wifi_p2p_manager_channel_listener_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      broadcast_receiver.release(e);
+      intent.release(e);
+      intent_filter.release(e);
+      looper.release(e);
+      parcelable.release(e);
+      wifi_p2p_manager.release(e);
+      wifi_p2p_manager_channel.release(e);
+      return Err(err);
+    },
+  };
+  let wifi_p2p_manager_action_listener = match (wifi_p2p_manager_action_listener_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      broadcast_receiver.release(e);
+      intent.release(e);
+      intent_filter.release(e);
+      looper.release(e);
+      parcelable.release(e);
+      wifi_p2p_manager.release(e);
+      wifi_p2p_manager_channel.release(e);
+      wifi_p2p_manager_channel_listener.release(e);
+      return Err(err);
+    },
+  };
+  let wifi_p2p_config = match (wifi_p2p_config_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      broadcast_receiver.release(e);
+      intent.release(e);
+      intent_filter.release(e);
+      looper.release(e);
+      parcelable.release(e);
+      wifi_p2p_manager.release(e);
+      wifi_p2p_manager_channel.release(e);
+      wifi_p2p_manager_channel_listener.release(e);
+      wifi_p2p_manager_action_listener.release(e);
+      return Err(err);
+    },
+  };
+  let wifi_p2p_device_list = match (wifi_p2p_device_list_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      broadcast_receiver.release(e);
+      intent.release(e);
+      intent_filter.release(e);
+      looper.release(e);
+      parcelable.release(e);
+      wifi_p2p_manager.release(e);
+      wifi_p2p_manager_channel.release(e);
+      wifi_p2p_manager_channel_listener.release(e);
+      wifi_p2p_manager_action_listener.release(e);
+      wifi_p2p_config.release(e);
+      return Err(err);
+    },
+  };
+  let wifi_p2p_device = match (wifi_p2p_device_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      broadcast_receiver.release(e);
+      intent.release(e);
+      intent_filter.release(e);
+      looper.release(e);
+      parcelable.release(e);
+      wifi_p2p_manager.release(e);
+      wifi_p2p_manager_channel.release(e);
+      wifi_p2p_manager_channel_listener.release(e);
+      wifi_p2p_manager_action_listener.release(e);
+      wifi_p2p_config.release(e);
+      wifi_p2p_device_list.release(e);
+      return Err(err);
+    },
+  };
+  let wifi_p2p_info = match (wifi_p2p_info_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      broadcast_receiver.release(e);
+      intent.release(e);
+      intent_filter.release(e);
+      looper.release(e);
+      parcelable.release(e);
+      wifi_p2p_manager.release(e);
+      wifi_p2p_manager_channel.release(e);
+      wifi_p2p_manager_channel_listener.release(e);
+      wifi_p2p_manager_action_listener.release(e);
+      wifi_p2p_config.release(e);
+      wifi_p2p_device_list.release(e);
+      wifi_p2p_device.release(e);
+      return Err(err);
+    },
+  };
+  let inet_address = match (inet_address_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      broadcast_receiver.release(e);
+      intent.release(e);
+      intent_filter.release(e);
+      looper.release(e);
+      parcelable.release(e);
+      wifi_p2p_manager.release(e);
+      wifi_p2p_manager_channel.release(e);
+      wifi_p2p_manager_channel_listener.release(e);
+      wifi_p2p_manager_action_listener.release(e);
+      wifi_p2p_config.release(e);
+      wifi_p2p_device_list.release(e);
+      wifi_p2p_device.release(e);
+      wifi_p2p_info.release(e);
+      return Err(err);
+    },
+  };
+  let collection = match (collection_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      broadcast_receiver.release(e);
+      intent.release(e);
+      intent_filter.release(e);
+      looper.release(e);
+      parcelable.release(e);
+      wifi_p2p_manager.release(e);
+      wifi_p2p_manager_channel.release(e);
+      wifi_p2p_manager_channel_listener.release(e);
+      wifi_p2p_manager_action_listener.release(e);
+      wifi_p2p_config.release(e);
+      wifi_p2p_device_list.release(e);
+      wifi_p2p_device.release(e);
+      wifi_p2p_info.release(e);
+      inet_address.release(e);
+      return Err(err);
+    },
+  };
+  let class = match (class_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      broadcast_receiver.release(e);
+      intent.release(e);
+      intent_filter.release(e);
+      looper.release(e);
+      parcelable.release(e);
+      wifi_p2p_manager.release(e);
+      wifi_p2p_manager_channel.release(e);
+      wifi_p2p_manager_channel_listener.release(e);
+      wifi_p2p_manager_action_listener.release(e);
+      wifi_p2p_config.release(e);
+      wifi_p2p_device_list.release(e);
+      wifi_p2p_device.release(e);
+      wifi_p2p_info.release(e);
+      inet_address.release(e);
+      collection.release(e);
+      return Err(err);
+    },
+  };
+  let class_loader = match (class_loader_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      broadcast_receiver.release(e);
+      intent.release(e);
+      intent_filter.release(e);
+      looper.release(e);
+      parcelable.release(e);
+      wifi_p2p_manager.release(e);
+      wifi_p2p_manager_channel.release(e);
+      wifi_p2p_manager_channel_listener.release(e);
+      wifi_p2p_manager_action_listener.release(e);
+      wifi_p2p_config.release(e);
+      wifi_p2p_device_list.release(e);
+      wifi_p2p_device.release(e);
+      wifi_p2p_info.release(e);
+      inet_address.release(e);
+      collection.release(e);
+      class.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { context: context, broadcast_receiver: broadcast_receiver, intent: intent, intent_filter: intent_filter, looper: looper, parcelable: parcelable, wifi_p2p_manager: wifi_p2p_manager, wifi_p2p_manager_channel: wifi_p2p_manager_channel, wifi_p2p_manager_channel_listener: wifi_p2p_manager_channel_listener, wifi_p2p_manager_action_listener: wifi_p2p_manager_action_listener, wifi_p2p_config: wifi_p2p_config, wifi_p2p_device_list: wifi_p2p_device_list, wifi_p2p_device: wifi_p2p_device, wifi_p2p_info: wifi_p2p_info, inet_address: inet_address, collection: collection, class: class, class_loader: class_loader });
+}
+
+// Deletes the reference to each class. Do not use `c` after this call.
+pub function (c: Classes) release(e: usize): void {
+  c.context.release(e);
+  c.broadcast_receiver.release(e);
+  c.intent.release(e);
+  c.intent_filter.release(e);
+  c.looper.release(e);
+  c.parcelable.release(e);
+  c.wifi_p2p_manager.release(e);
+  c.wifi_p2p_manager_channel.release(e);
+  c.wifi_p2p_manager_channel_listener.release(e);
+  c.wifi_p2p_manager_action_listener.release(e);
+  c.wifi_p2p_config.release(e);
+  c.wifi_p2p_device_list.release(e);
+  c.wifi_p2p_device.release(e);
+  c.wifi_p2p_info.release(e);
+  c.inet_address.release(e);
+  c.collection.release(e);
+  c.class.release(e);
+  c.class_loader.release(e);
+}
