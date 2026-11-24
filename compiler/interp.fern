@@ -1110,7 +1110,7 @@ pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[
 // its body_needs_cells, and `cleanups` the actions for a try exit.
 // `receiver_args` holds the receiver argument names to check for const bindings.
 // `plain` is true for a function with no receiver whose name no builtin takes.
-pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex, iterator_decls: i32[], receivers: string[], receiver_args: string[][], cells: boolean[], cleanups: ast.Stmt[][], plain: boolean[] }
+pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex, qualifiers: util.NameIndex, iterator_decls: i32[], receivers: string[], receiver_args: string[][], cells: boolean[], cleanups: ast.Stmt[][], plain: boolean[] }
 
 function funcs_of(decls: parser.FuncDecl[]): Funcs {
   let names: string[] = [];
@@ -1120,7 +1120,12 @@ function funcs_of(decls: parser.FuncDecl[]): Funcs {
   let cleanups: ast.Stmt[][] = [];
   let cells: boolean[] = [];
   let plain: boolean[] = [];
+  let qualifiers = util.name_index([]);
   for fd in decls {
+    let qualifier = name_qualifier(fd.name);
+    if (qualifier.len() > 0 && fd.receiver_type.len() == 0 && !qualifiers.has(qualifier)) {
+      qualifiers = qualifiers.added(qualifier);
+    }
     let receiver = runtime_receiver_name(fd.receiver_type);
     let name = fd.name;
     if (name == "__iterator") {
@@ -1136,7 +1141,18 @@ function funcs_of(decls: parser.FuncDecl[]): Funcs {
     cleanups = cleanups.append(deferlower.try_cleanup(fd.body));
     plain = plain.append(fd.receiver_type.len() == 0 && !builtin_takes_name(fd.name));
   }
-  return Funcs { decls: decls, runtime_names: util.name_index(names), iterator_decls: iterator_decls, receivers: receivers, receiver_args: receiver_args, cells: cells, cleanups: cleanups, plain: plain };
+  return Funcs { decls: decls, runtime_names: util.name_index(names), qualifiers: qualifiers, iterator_decls: iterator_decls, receivers: receivers, receiver_args: receiver_args, cells: cells, cleanups: cleanups, plain: plain };
+}
+
+// The part of a function name before its first dot, or "" for a name with no
+// dot.
+function name_qualifier(name: string): string {
+  for i in 0..name.len() {
+    if (name[i] == b'.') {
+      return slice_unchecked(name, 0, i).to_owned();
+    }
+  }
+  return "";
 }
 
 // The positions of the functions that a call of `name` can reach, in
@@ -5824,10 +5840,12 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
       let qualified_handled = false;
       match (fa.obj) {
         ast.ExprIdent(ns_id) => {
-          let qname = ns_id.name + "." + fa.field;
-          if (user_func_exists(qname, env.funcs)) {
-            name = qname;
-            qualified_handled = true;
+          if (env.funcs.qualifiers.has(ns_id.name)) {
+            let qname = ns_id.name + "." + fa.field;
+            if (user_func_exists(qname, env.funcs)) {
+              name = qname;
+              qualified_handled = true;
+            }
           }
         },
         _ => {}
