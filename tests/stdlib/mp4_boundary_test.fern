@@ -217,7 +217,7 @@ function last_media(input: [u8]): Result[boxes.Box, pcm.AudioError] {
 }
 
 function read_word(input: [u8], at: i32): u32 {
-  return (input[at] as u32) << 24u32 | (input[at + 1] as u32) << 16u32 | (input[at + 2] as u32) << 8u32 | input[at + 3] as u32;
+  return input[at] as u32 << 24u32 | input[at + 1] as u32 << 16u32 | input[at + 2] as u32 << 8u32 | input[at + 3] as u32;
 }
 
 // Fragment runs follow the trex defaults, the moof base, and the track timeline.

@@ -39,20 +39,33 @@ struct Header { track: u32, base: i64, description: u32, duration: u32, bytes: u
 struct Run { at: i64, position: i64, packets: tables.Packet[] }
 
 const BASE_DATA_OFFSET: u64 = 0x1u64;
+
 const DESCRIPTION_INDEX: u64 = 0x2u64;
+
 const DEFAULT_DURATION: u64 = 0x8u64;
+
 const DEFAULT_SIZE: u64 = 0x10u64;
+
 const DEFAULT_FLAGS: u64 = 0x20u64;
+
 const DURATION_IS_EMPTY: u64 = 0x10000u64;
+
 const BASE_IS_MOOF: u64 = 0x20000u64;
+
 const HEADER_FLAGS: u64 = 0x3003bu64;
 
 const DATA_OFFSET: u64 = 0x1u64;
+
 const FIRST_FLAGS: u64 = 0x4u64;
+
 const SAMPLE_DURATION: u64 = 0x100u64;
+
 const SAMPLE_SIZE: u64 = 0x200u64;
+
 const SAMPLE_FLAGS: u64 = 0x400u64;
+
 const SAMPLE_COMPOSITION: u64 = 0x800u64;
+
 const RUN_FLAGS: u64 = 0xf05u64;
 
 // The track defaults of the `mvex` box. Each track has at most one `trex` box.
@@ -119,16 +132,16 @@ function track_header(input: [u8], tfhd: boxes.Box, moof: Fragment, previous: i6
     return Err(pcm.Truncated);
   }
   let flags = wire.be(input, tfhd.data + 1, 3);
-  if (input[tfhd.data] != 0u8 || flags & (HEADER_FLAGS ^ 0xffffffu64) != 0u64) {
+  if (input[tfhd.data] != 0u8 || (flags & (HEADER_FLAGS ^ 0xffffffu64)) != 0u64) {
     return Err(pcm.Unsupported);
   }
   let words = 0;
   for bit in [DESCRIPTION_INDEX, DEFAULT_DURATION, DEFAULT_SIZE, DEFAULT_FLAGS] {
-    if (flags & bit != 0u64) {
+    if ((flags & bit) != 0u64) {
       words += 1;
     }
   }
-  if (tfhd.end - tfhd.data != 8 + (if (flags & BASE_DATA_OFFSET != 0u64) { 8 } else { 0 }) + 4 * words) {
+  if (tfhd.end - tfhd.data != 8 + (if ((flags & BASE_DATA_OFFSET) != 0u64) { 8 } else { 0 }) + 4 * words) {
     return Err(pcm.Header);
   }
   let track = wire.be(input, tfhd.data + 4, 4) as u32;
@@ -136,8 +149,8 @@ function track_header(input: [u8], tfhd: boxes.Box, moof: Fragment, previous: i6
     return Err(pcm.Header);
   };
   let at = tfhd.data + 8;
-  let base = if (flags & BASE_IS_MOOF != 0u64) { moof.at } else { previous };
-  if (flags & BASE_DATA_OFFSET != 0u64) {
+  let base = if ((flags & BASE_IS_MOOF) != 0u64) { moof.at } else { previous };
+  if ((flags & BASE_DATA_OFFSET) != 0u64) {
     let explicit = wire.be(input, at, 8);
     if (explicit > file_bytes as u64) {
       return Err(pcm.Header);
@@ -145,10 +158,10 @@ function track_header(input: [u8], tfhd: boxes.Box, moof: Fragment, previous: i6
     base = explicit as i64;
     at += 8;
   }
-  let (a1, description) = field(input, at, flags & DESCRIPTION_INDEX != 0u64, value.description);
-  let (a2, duration) = field(input, a1, flags & DEFAULT_DURATION != 0u64, value.duration);
-  let (_, bytes) = field(input, a2, flags & DEFAULT_SIZE != 0u64, value.bytes);
-  return Ok(Header { track: track, base: base, description: description, duration: duration, bytes: bytes, empty: flags & DURATION_IS_EMPTY != 0u64 });
+  let (a1, description) = field(input, at, (flags & DESCRIPTION_INDEX) != 0u64, value.description);
+  let (a2, duration) = field(input, a1, (flags & DEFAULT_DURATION) != 0u64, value.duration);
+  let (_, bytes) = field(input, a2, (flags & DEFAULT_SIZE) != 0u64, value.bytes);
+  return Ok(Header { track: track, base: base, description: description, duration: duration, bytes: bytes, empty: (flags & DURATION_IS_EMPTY) != 0u64 });
 }
 
 // A `tfdt` box must start the fragment where the earlier packets of its track end.
@@ -183,7 +196,7 @@ function sample_run(input: [u8], trun: boxes.Box, header: Header, tracked: boole
   }
   let version = input[trun.data];
   let flags = wire.be(input, trun.data + 1, 3);
-  if (version > 1u8 || flags & (RUN_FLAGS ^ 0xffffffu64) != 0u64) {
+  if (version > 1u8 || (flags & (RUN_FLAGS ^ 0xffffffu64)) != 0u64) {
     return Err(pcm.Unsupported);
   }
   if (header.empty) {
@@ -195,16 +208,16 @@ function sample_run(input: [u8], trun: boxes.Box, header: Header, tracked: boole
   }
   let fields = 0;
   for bit in [SAMPLE_DURATION, SAMPLE_SIZE, SAMPLE_FLAGS, SAMPLE_COMPOSITION] {
-    if (flags & bit != 0u64) {
+    if ((flags & bit) != 0u64) {
       fields += 1;
     }
   }
-  let prefix = 8 + (if (flags & DATA_OFFSET != 0u64) { 4 } else { 0 }) + (if (flags & FIRST_FLAGS != 0u64) { 4 } else { 0 });
+  let prefix = 8 + (if ((flags & DATA_OFFSET) != 0u64) { 4 } else { 0 }) + (if ((flags & FIRST_FLAGS) != 0u64) { 4 } else { 0 });
   if ((trun.end - trun.data) as i64 != prefix as i64 + count as i64 * (4i64 * (fields as i64))) {
     return Err(pcm.Header);
   }
   let at = run.at;
-  if (flags & DATA_OFFSET != 0u64) {
+  if ((flags & DATA_OFFSET) != 0u64) {
     at = header.base + signed(wire.be(input, trun.data + 8, 4));
   }
   if (tracked && (header.description == 0u32 || header.description > descriptions as u32)) {
@@ -214,10 +227,10 @@ function sample_run(input: [u8], trun: boxes.Box, header: Header, tracked: boole
   let packets = run.packets;
   let p = trun.data + prefix;
   for _ in 0..count as i32 {
-    let (p1, duration) = field(input, p, flags & SAMPLE_DURATION != 0u64, header.duration);
-    let (p2, bytes) = field(input, p1, flags & SAMPLE_SIZE != 0u64, header.bytes);
-    let p3 = if (flags & SAMPLE_FLAGS != 0u64) { p2 + 4 } else { p2 };
-    let (p4, offset) = field(input, p3, flags & SAMPLE_COMPOSITION != 0u64, 0u32);
+    let (p1, duration) = field(input, p, (flags & SAMPLE_DURATION) != 0u64, header.duration);
+    let (p2, bytes) = field(input, p1, (flags & SAMPLE_SIZE) != 0u64, header.bytes);
+    let p3 = if ((flags & SAMPLE_FLAGS) != 0u64) { p2 + 4 } else { p2 };
+    let (p4, offset) = field(input, p3, (flags & SAMPLE_COMPOSITION) != 0u64, 0u32);
     p = p4;
     if (bytes == 0u32 || bytes > 2147483647u32) {
       return Err(pcm.Header);
