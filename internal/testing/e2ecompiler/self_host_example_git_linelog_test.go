@@ -24,7 +24,7 @@ var gitLineLogCases = []string{
 	// The forms of the output.
 	"log -L :f:b.c --oneline", "log -L :f:b.c --graph", "log -L :f:b.c --graph --oneline", "log -L :main:b.c --parents --oneline",
 	"log -L :f:b.c -s", "log -L :f:b.c --no-patch --format=%h|%p|%s", "log -L :f:b.c -s --parents --format=%h|%p|%s",
-	"log -L :f:b.c --raw", "log -L :f:b.c --raw -p", "log -L :f:b.c --name-only", "log -L :f:b.c --name-status --oneline",
+	"log -L :f:b.c --raw", "log -L :f:b.c --raw -p", "log -L :f:b.c --patch-with-raw", "log -L :f:b.c --name-only", "log -L :f:b.c --name-status --oneline",
 	"log -L :f:b.c --summary", "log -L :f:b.c --summary -p", "log -L :f:b.c --format=", "log -L :f:b.c --format=%s",
 	// The rename of a.c to b.c changes main, and the pair loses the status of a rename.
 	"log -L :main:b.c --name-status --oneline", "log -L :main:b.c --raw --oneline", "log -L :main:b.c --summary --oneline",
