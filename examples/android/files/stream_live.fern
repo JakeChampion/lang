@@ -18,6 +18,6 @@ function main(): i32 {
     return 2;
   }
   let server = smb.Server { host: s[0], port: i32.parse_i32(s[1]).unwrap_or(445), share: s[2], user: s[3], password: s[4], domain: "" };
-  print(stream.serve_file(store.Remote(server), f[0], i64.parse_i64(f[1]).unwrap_or(0i64), f[2], i32.parse_i32(f[3]).unwrap_or(0)));
+  print(stream.serve_file(store.Remote(store.Smb(server)), f[0], i64.parse_i64(f[1]).unwrap_or(0i64), f[2], i32.parse_i32(f[3]).unwrap_or(0)));
   return 1;
 }

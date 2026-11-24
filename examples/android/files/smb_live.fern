@@ -57,7 +57,7 @@ function copied(src: store.Place, from: string, dst: store.Place, to: string): R
 }
 
 function test_round_trip(): test.TestOutcome {
-  let remote = store.Remote(server());
+  let remote = store.Remote(store.Smb(server()));
   // The file has more bytes than one step of a copy, and than one request.
   let size = 12000000;
   let Ok(dir) = temp_dir("fern-files-live") else {
@@ -85,7 +85,7 @@ function test_round_trip(): test.TestOutcome {
 }
 
 function test_folders(): test.TestOutcome {
-  let remote = store.Remote(server());
+  let remote = store.Remote(store.Smb(server()));
   let made = store.make_dir(remote, "live/a").is_ok() && store.make_dir(remote, "live/a/b").is_ok() && store.write(remote, "live/a/b/note.txt", 0i64, "x".bytes()).is_ok();
   let renamed = store.rename_to(remote, "live/a", "live/c").is_ok() && store.list(remote, "live/c/b").unwrap_or([]).len() == 1;
   let gone = store.remove(remote, "live", true).is_ok() && store.list(remote, "live").is_err();
@@ -96,7 +96,7 @@ function test_folders(): test.TestOutcome {
 // rename does not.
 function test_replace(): test.TestOutcome {
   let s = server();
-  let remote = store.Remote(s);
+  let remote = store.Remote(store.Smb(s));
   let wrote = store.write(remote, "live/old.txt", 0i64, "old".bytes()).is_ok() && store.write(remote, "live/new.txt", 0i64, "new".bytes()).is_ok();
   let refused = smb.rename(s, "live/new.txt", "live/old.txt").is_err();
   let replaced = smb.replace(s, "live/new.txt", "live/old.txt").is_ok();
@@ -110,7 +110,7 @@ function main(): i32 {
     print("set FILES_SMB_SERVER to: host port share user password");
     return 2;
   }
-  let made = store.make_dir(store.Remote(server()), "live");
+  let made = store.make_dir(store.Remote(store.Smb(server())), "live");
   let r = test.new("Fern Files against an SMB server");
   r = r.it("the server lists its share", test_shares);
   r = r.it("a wrong password gets its note", test_wrong_password);

@@ -103,6 +103,12 @@ file. A PUT writes a file whole, from memory or from a file of the phone.
 MKCOL makes a folder, DELETE deletes an item, and MOVE renames one. A
 rename does not replace an item that has the new name.
 
+The form of a server has a choice between SMB and WebDAV. A WebDAV server
+has an address with `https://` or `http://`, a user and a password.
+`store.Link` holds either kind, so each screen, each copy, the stream of a
+video and the file picker of the system work with both. A copy to a
+WebDAV server sends each file whole in one step, from a file of the phone.
+
 The client reads the XML of a list with a small reader of its own. The
 reader keeps the local name of each tag, so each prefix of a namespace
 works. `dav_test.fern` checks it with the replies of RFC 4918, Nextcloud

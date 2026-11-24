@@ -13,6 +13,7 @@ import "std/rand";
 import "std/string";
 import "std/utf8";
 import "std/worker";
+import "./dav";
 import "./pack";
 import "./scan";
 import "./smb";
@@ -26,7 +27,7 @@ import "../matrix";
 pub struct Root { label: string, path: string, total: i64, free: i64 }
 
 // A server that the person saved, with the name that the app shows for it.
-pub struct Saved { name: string, server: smb.Server }
+pub struct Saved { name: string, link: store.Link }
 
 // What the person copied or cut: items of one directory of one place.
 pub struct Clip { place: store.Place, dir: string, items: smb.Entry[], cut: boolean }
@@ -166,6 +167,7 @@ pub enum Msg {
   OpenServer(i32),
   EditServer(i32),
   Draft(i32, string),
+  DraftKind(boolean),
   SaveServer,
   DeleteServer,
   Enter(string),
@@ -244,7 +246,7 @@ const PICTURE_BYTES: i32 = 16777216;
 const SMB_PORT: i32 = 445;
 
 function no_server(): Saved {
-  return Saved { name: "", server: smb.Server { host: "", port: SMB_PORT, share: "", user: "", password: "", domain: "" } };
+  return Saved { name: "", link: store.Smb(smb.Server { host: "", port: SMB_PORT, share: "", user: "", password: "", domain: "" }) };
 }
 
 // The model of the home screen, with the storages and the servers.
@@ -626,26 +628,76 @@ pub function address_text(s: smb.Server): string {
   return if (s.port == SMB_PORT) { s.host } else { s.host + ":" + s.port.to_string() };
 }
 
+// The draft `d` with the field `field` of the form set to `text`: 0 the
+// name, 1 the address, 2 the share, 3 the user, 4 the password, and 5 the
+// domain. A WebDAV server has no share and no domain.
 function drafted(d: Saved, field: i32, text: string): Saved {
-  let s = d.server;
-  match (field) {
-    0 => {
-      return Saved { ...d, name: text };
+  if (field == 0) {
+    return Saved { ...d, name: text };
+  }
+  match (d.link) {
+    store.Smb(s) => {
+      let next = match (field) {
+        1 => smb.Server { ...s, host: text.trim() },
+        2 => smb.Server { ...s, share: text.trim() },
+        3 => smb.Server { ...s, user: text.trim() },
+        4 => smb.Server { ...s, password: text },
+        _ => smb.Server { ...s, domain: text.trim() },
+      };
+      return Saved { ...d, link: store.Smb(next) };
     },
-    1 => {
-      return Saved { ...d, server: smb.Server { ...s, host: text.trim() } };
+    store.Dav(s) => {
+      let next = match (field) {
+        1 => dav.Server { ...s, url: text.trim() },
+        3 => dav.Server { ...s, user: text.trim() },
+        4 => dav.Server { ...s, password: text },
+        _ => s,
+      };
+      return Saved { ...d, link: store.Dav(next) };
+    }
+  }
+}
+
+// The draft `d` as a WebDAV server when `web` is set, else as an SMB
+// server. The user and the password stay.
+pub function kind_of(d: Saved, web: boolean): Saved {
+  let (user, password) = match (d.link) {
+    store.Smb(s) => (s.user, s.password),
+    store.Dav(s) => (s.user, s.password),
+  };
+  if (web) {
+    return Saved { ...d, link: store.Dav(dav.Server { url: "", user: user, password: password }) };
+  }
+  return Saved { ...d, link: store.Smb(smb.Server { host: "", port: SMB_PORT, share: "", user: user, password: password, domain: "" }) };
+}
+
+// The name of a WebDAV server for the list: the last folder of its
+// address and its host, as in "home on nas.local".
+pub function dav_name(address: string): string {
+  let rest = address.split_once("://").map((parts: (string, string)): string => parts.1).unwrap_or(address);
+  let host_port = rest.split_once("/").map((parts: (string, string)): string => parts.0).unwrap_or(rest);
+  let host = host_port.split_once(":").map((parts: (string, string)): string => parts.0).unwrap_or(host_port);
+  let path = dav.path_part(address);
+  let last = path.rsplit_once("/").map((parts: (string, string)): string => parts.1).unwrap_or("");
+  return if (last.len() > 0) { last + " on " + host } else { host };
+}
+
+// The saved server of the draft `d`, or the note that says what it lacks.
+pub function checked(d: Saved): Result[Saved, string] {
+  let name = d.name.trim();
+  match (d.link) {
+    store.Smb(raw) => {
+      let s = addressed(raw);
+      if (s.host.len() == 0 || s.share.len() == 0) {
+        return Err("Give the address and the share.");
+      }
+      return Ok(Saved { name: if (name.len() > 0) { name.to_owned() } else { s.share + " on " + s.host }, link: store.Smb(s) });
     },
-    2 => {
-      return Saved { ...d, server: smb.Server { ...s, share: text.trim() } };
-    },
-    3 => {
-      return Saved { ...d, server: smb.Server { ...s, user: text.trim() } };
-    },
-    4 => {
-      return Saved { ...d, server: smb.Server { ...s, password: text } };
-    },
-    _ => {
-      return Saved { ...d, server: smb.Server { ...s, domain: text.trim() } };
+    store.Dav(s) => {
+      if (!s.url.starts_with("https://") && !s.url.starts_with("http://")) {
+        return Err("Give the address of the WebDAV folder, with https://.");
+      }
+      return Ok(Saved { name: if (name.len() > 0) { name.to_owned() } else { dav_name(s.url) }, link: store.Dav(s) });
     }
   }
 }
@@ -657,23 +709,31 @@ function server_update(own m: Model, msg: Msg): Model {
         return m;
       }
       let s = m.servers[i];
-      return open(m, store.Remote(s.server), s.name, "", "");
+      return open(m, store.Remote(s.link), s.name, "", "");
     },
     EditServer(i) => {
       let draft = if (i >= 0 && i < m.servers.len()) { m.servers[i] } else { no_server() };
-      draft = Saved { ...draft, server: smb.Server { ...draft.server, host: address_text(draft.server), port: SMB_PORT } };
+      if let store.Smb(x) = draft.link {
+        draft = Saved { ...draft, link: store.Smb(smb.Server { ...x, host: address_text(x), port: SMB_PORT }) };
+      }
       return Model { ...m, page: Server(i), draft: draft, shares: [], finding: false, hosts: [], scanning: false, note: "", fault: "", confirm: "" };
     },
     Draft(field, text) => {
       let next = drafted(m.draft, field, text);
       return Model { ...m, draft: next };
     },
+    DraftKind(web) => {
+      return Model { ...m, draft: kind_of(m.draft, web), shares: [], hosts: [], note: "", fault: "" };
+    },
     FindShares => {
-      if (m.draft.server.host.len() == 0) {
+      let store.Smb(s) = m.draft.link else {
+        return m;
+      };
+      if (s.host.len() == 0) {
         return failed(m, "Give the address first.");
       }
       let revision = m.revision + 1i64;
-      return Model { ...m, finding: true, shares: [], note: "", fault: "", revision: revision, job: Some(Shares(revision, addressed(m.draft.server))) };
+      return Model { ...m, finding: true, shares: [], note: "", fault: "", revision: revision, job: Some(Shares(revision, addressed(s))) };
     },
     SharesFound(revision, result) => {
       if (revision != m.revision) {
@@ -715,11 +775,12 @@ function server_update(own m: Model, msg: Msg): Model {
       let Server(i) = m.page else {
         return m;
       };
-      let d = Saved { ...m.draft, server: addressed(m.draft.server) };
-      if (d.server.host.len() == 0 || d.server.share.len() == 0) {
-        return failed(m, "Give the address and the share.");
-      }
-      let named = if (d.name.trim().len() > 0) { Saved { ...d, name: d.name.trim() } } else { Saved { ...d, name: d.server.share + " on " + d.server.host } };
+      let named = match (checked(m.draft)) {
+        Ok(saved) => saved,
+        Err(text) => {
+          return failed(m, text);
+        },
+      };
       let servers = if (i >= 0 && i < m.servers.len()) { m.servers.with(i, named) } else { m.servers.append(named) };
       return Model { ...m, servers: servers, page: Home, unsaved: true, note: "", fault: "" };
     },
@@ -892,7 +953,7 @@ function open_mark(m: Model, mark: Mark): Model {
     let Some(saved) = m.servers.find((s: Saved): boolean => s.name == mark.server) else {
       return failed(m, "The server of this item is not saved.");
     };
-    return open(m, store.Remote(saved.server), saved.name, "", dir);
+    return open(m, store.Remote(saved.link), saved.name, "", dir);
   }
   for root in m.roots {
     if (dir.starts_with(root.path)) {
@@ -1060,7 +1121,7 @@ pub function update(own m: Model, msg: Msg): Model {
     Tap(_) | Hold(_) | StopSelecting | SelectAll | OpenTrash | RestorePicked | Zip | Extract(_) | StreamEnded(_) | ToggleGrid | ThumbRead(_, _, _) | Copy(_) | CopyOne(_, _) | ClearClip | Delete | DeleteOne(_) => {
       return select_update(idle, msg);
     },
-    OpenServer(_) | EditServer(_) | Draft(_, _) | SaveServer | DeleteServer | FindShares | SharesFound(_, _) | PickShare(_) | FindServers | ServersFound(_, _) | PickServer(_) => {
+    OpenServer(_) | EditServer(_) | Draft(_, _) | DraftKind(_) | SaveServer | DeleteServer | FindShares | SharesFound(_, _) | PickShare(_) | FindServers | ServersFound(_, _) | PickServer(_) => {
       return server_update(idle, msg);
     },
     Listed(_, _) | Finished(_, _, _) | TextRead(_, _) | PictureRead(_, _) => {
@@ -1429,7 +1490,7 @@ function home(m: Model): ui.El[Msg] {
   for i in 0..m.servers.len() {
     let s = m.servers[i];
     let line = ui.row([
-      place_row(glyph(FOLDER, "server", ui.PRIMARY), s.name, "smb://" + s.server.host + "/" + s.server.share, OpenServer(i)),
+      place_row(glyph(FOLDER, "server", ui.PRIMARY), s.name, store.link_text(s.link), OpenServer(i)),
       ui.text_button("Edit", EditServer(i)).described("Edit " + s.name),
     ]).aligned(ui.CENTER).wide();
     rows = rows.append(line);
@@ -1621,7 +1682,10 @@ function labelled(label: string, name: string, value: string, hint: string, fiel
 function share_picker(m: Model): ui.El[Msg] {
   let buttons: ui.El[Msg][] = [ui.text_button(if (m.finding) { "Looking…" } else { "Find shares" }, FindShares)];
   for name in m.shares {
-    let chosen = name == m.draft.server.share;
+    let chosen = match (m.draft.link) {
+      store.Smb(s) => name == s.share,
+      store.Dav(_) => false,
+    };
     let pick = if (chosen) { ui.button(name, PickShare(name)) } else { ui.outlined_button(name, PickShare(name)) };
     buttons = buttons.append(pick.described("Share " + name));
   }
@@ -1633,30 +1697,57 @@ function share_picker(m: Model): ui.El[Msg] {
 function server_picker(m: Model): ui.El[Msg] {
   let buttons: ui.El[Msg][] = [ui.text_button(if (m.scanning) { "Looking…" } else { "Find servers" }, FindServers)];
   for host in m.hosts {
-    let pick = if (host == m.draft.server.host) { ui.button(host, PickServer(host)) } else { ui.outlined_button(host, PickServer(host)) };
+    let chosen = match (m.draft.link) {
+      store.Smb(s) => host == s.host,
+      store.Dav(_) => false,
+    };
+    let pick = if (chosen) { ui.button(host, PickServer(host)) } else { ui.outlined_button(host, PickServer(host)) };
     buttons = buttons.append(pick.described("Server " + host));
   }
   return actions_row(buttons);
 }
 
+// The two kinds of server, as a choice at the top of the form.
+function kind_picker(web: boolean): ui.El[Msg] {
+  let smb_button = if (web) { ui.outlined_button("SMB", DraftKind(false)) } else { ui.button("SMB", DraftKind(false)) };
+  let dav_button = if (web) { ui.button("WebDAV", DraftKind(true)) } else { ui.outlined_button("WebDAV", DraftKind(true)) };
+  return actions_row([smb_button.described("SMB server" + (if (web) { "" } else { ", chosen" })), dav_button.described("WebDAV server" + (if (web) { ", chosen" } else { "" }))]);
+}
+
+function password_field(text: string): ui.El[Msg] {
+  return ui.column([ui.text[Msg]("Password").colored(ui.MUTED), ui.field[Msg]("password", text, "Password").secret().on_edit((value: string): Msg => Draft(4, value))]).spaced(4.0).wide();
+}
+
 function server_page(m: Model, at: i32): ui.El[Msg] {
-  let s = m.draft.server;
-  let rows = notice(m).concat([
-    labelled("Address", "host", s.host, "192.168.1.10 or nas.local:4450", 1),
-    server_picker(m),
-    labelled("User", "user", s.user, "Leave empty for a guest", 3),
-    ui.column([ui.text[Msg]("Password").colored(ui.MUTED), ui.field[Msg]("password", s.password, "Password").secret().on_edit((text: string): Msg => Draft(4, text))]).spaced(4.0).wide(),
-    labelled("Domain", "domain", s.domain, "Optional", 5),
-    labelled("Share", "share", s.share, "The name of the shared folder", 2),
-    share_picker(m),
-    labelled("Name in this app", "label", m.draft.name, "Optional", 0),
-  ]);
+  let fields: ui.El[Msg][] = match (m.draft.link) {
+    store.Smb(s) => [
+      kind_picker(false),
+      labelled("Address", "host", s.host, "192.168.1.10 or nas.local:4450", 1),
+      server_picker(m),
+      labelled("User", "user", s.user, "Leave empty for a guest", 3),
+      password_field(s.password),
+      labelled("Domain", "domain", s.domain, "Optional", 5),
+      labelled("Share", "share", s.share, "The name of the shared folder", 2),
+      share_picker(m),
+    ],
+    store.Dav(s) => [
+      kind_picker(true),
+      labelled("Address", "url", s.url, "https://nas.local:5006/home", 1),
+      labelled("User", "user", s.user, "Leave empty for no user", 3),
+      password_field(s.password),
+    ],
+  };
+  let rows = notice(m).concat(fields).append(labelled("Name in this app", "label", m.draft.name, "Optional", 0));
   let buttons = [ui.button("Save", SaveServer)];
   if (at >= 0) {
     buttons = buttons.append(ui.text_button(if (m.confirm == "server") { "Confirm removal" } else { "Remove" }, DeleteServer));
   }
   rows = rows.append(actions_row(buttons));
-  rows = rows.append(ui.text[Msg]("Files speaks SMB 2 and SMB 3, and encrypts with SMB 3.1.1. The password stays on this phone.").colored(ui.MUTED));
+  let about = match (m.draft.link) {
+    store.Smb(_) => "Files speaks SMB 2 and SMB 3, and encrypts with SMB 3.1.1. The password stays on this phone.",
+    store.Dav(_) => "Files speaks WebDAV, such as Nextcloud and the WebDAV service of a NAS. Use https:// so that the password goes encrypted. The password stays on this phone.",
+  };
+  rows = rows.append(ui.text[Msg](about).colored(ui.MUTED));
   return sheet(if (at >= 0) { "Edit server" } else { "Add a server" }, rows, "server");
 }
 

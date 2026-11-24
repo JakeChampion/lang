@@ -1,8 +1,11 @@
 // Tests of the parts of the file explorer that do not need a screen: the
 // hashes and the messages of the SMB sign-in, the paths, and the texts.
+import "std/base64";
 import "std/hex";
+import "std/kv";
 import "std/net";
 import "std/test";
+import "./dav";
 import "./docs";
 import "./files";
 import "./md4";
@@ -295,7 +298,7 @@ function shown(v: docs.Value): string {
 // The rows that the file picker of the system gets for a server and for
 // its files, and the IDs of its documents.
 function test_documents(): test.TestOutcome {
-  let nas = files.Saved { name: "Films", server: smb.Server { host: "nas", port: 445, share: "media", user: "", password: "", domain: "" } };
+  let nas = files.Saved { name: "Films", link: store.Smb(smb.Server { host: "nas", port: 445, share: "media", user: "", password: "", domain: "" }) };
   let file = smb.Entry { name: "a b.mkv", dir: false, size: 77i64, modified: 1000i64 };
   let folder = smb.Entry { name: "x", dir: true, size: 0i64, modified: 0i64 };
   let root = ["root_id", "title", "summary", "document_id", "icon", "flags", "other"].map((c: string): string => shown(docs.root_value(c, 2, nas, 9))).join("|");
@@ -410,17 +413,34 @@ function test_copy(): test.TestOutcome {
   ]);
 }
 
+// The smb.Server of a saved server, or an empty one for a WebDAV server.
+function smb_of(s: files.Saved): smb.Server {
+  return match (s.link) {
+    store.Smb(x) => x,
+    store.Dav(_) => smb.Server { host: "", port: 0, share: "", user: "", password: "", domain: "" },
+  };
+}
+
 function test_vault(): test.TestOutcome {
   let server = smb.Server { host: "nas.local", port: 4450, share: "media", user: "jo", password: "p=1\n\"é#", domain: "HOME" };
-  let back = vault.decode(vault.encode([files.Saved { name: "Films = here", server: server }, files.Saved { name: "", server: smb.Server { ...server, host: "" } }]));
-  if (back.len() != 1) {
+  let web = dav.Server { url: "https://cloud.example/remote.php/dav/files/jo", user: "jo", password: "a b=c" };
+  let back = vault.decode(vault.encode([files.Saved { name: "Films = here", link: store.Smb(server) }, files.Saved { name: "", link: store.Smb(smb.Server { ...server, host: "" }) }, files.Saved { name: "Cloud", link: store.Dav(web) }]));
+  if (back.len() != 2) {
     return test.fail("the vault gave " + back.len().to_string() + " servers");
   }
+  let cloud = match (back[1].link) {
+    store.Dav(x) => x.url + "|" + x.user + "|" + x.password,
+    store.Smb(_) => "smb",
+  };
+  // A server that an older Fern Files saved has no kind and is SMB.
+  let old = vault.decode(kv.empty("").set("count", "1").set("0.name", base64.encode("NAS".bytes())).set("0.host", base64.encode("nas".bytes())).set("0.share", base64.encode("media".bytes())).set("0.port", "445").encode());
   return all([
     test.assert_eq(back[0].name, "Films = here"),
-    test.assert_eq(back[0].server.password, "p=1\n\"é#"),
-    test.assert_eq(back[0].server.port, 4450),
-    test.assert_eq(back[0].server.domain, "HOME"),
+    test.assert_eq(smb_of(back[0]).password, "p=1\n\"é#"),
+    test.assert_eq(smb_of(back[0]).port, 4450),
+    test.assert_eq(smb_of(back[0]).domain, "HOME"),
+    test.assert_eq(back[1].name + "|" + cloud, "Cloud|https://cloud.example/remote.php/dav/files/jo|jo|a b=c"),
+    test.assert_eq(old.len() == 1 && smb_of(old[0]).share == "media" && smb_of(old[0]).port == 445, true),
     test.assert_eq(vault.decode("not a store").len(), 0),
   ]);
 }

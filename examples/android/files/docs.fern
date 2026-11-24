@@ -1,5 +1,5 @@
 // The documents provider of the app: the file picker of the system shows
-// the saved SMB servers, so each app of the phone can open, make, change
+// the saved servers, so each app of the phone can open, make, change
 // and delete a file of a server. A file goes to the cache of the app
 // before the other app reads it. A file that the other app writes goes to
 // the cache first, and to the server when the other app closes it.
@@ -110,7 +110,7 @@ pub function root_value(column: string, at: i32, saved: files.Saved, icon: i32):
   return match (column) {
     "root_id" => Text(at.to_string()),
     "title" => Text(saved.name),
-    "summary" => Text("smb://" + saved.server.host + "/" + saved.server.share),
+    "summary" => Text(store.link_text(saved.link)),
     "document_id" => Text(document_id(at, "")),
     "icon" => Number(icon as i64),
     "flags" => Number(ROOT_SUPPORTS_CREATE),
@@ -243,7 +243,7 @@ pub function document(e: usize, provider: usize, id: usize, projection: usize): 
     let top = smb.Entry { name: saved.name, dir: true, size: 0i64, modified: 0i64 };
     return cursor(e, names, [names.map((column: string): Value => document_value(column, at, "", top))]);
   }
-  let Ok(beside) = smb.list(saved.server, store.parent(path)) else {
+  let Ok(beside) = store.list(store.Remote(saved.link), store.parent(path)) else {
     return missing(e, "The server did not give the folder of this document.");
   };
   let Some(entry) = beside.find((x: smb.Entry): boolean => x.name == store.base(path)) else {
@@ -257,7 +257,7 @@ pub function children(e: usize, provider: usize, parent: usize, projection: usiz
   let Some((at, saved, path)) = located(e, provider, jni.string_of(e, parent)) else {
     return missing(e, "No saved server has this folder.");
   };
-  let Ok(entries) = smb.list(saved.server, path) else {
+  let Ok(entries) = store.list(store.Remote(saved.link), path) else {
     return missing(e, "The server did not give this folder.");
   };
   let names = columns(e, projection, DOCUMENT_COLUMNS);
@@ -286,7 +286,7 @@ pub function opened(e: usize, provider: usize, id: usize, mode: usize): usize {
   let copy = store.join(dir, at.to_string() + "-" + store.base(path));
   let keep = how.unwrap_or(true);
   if (keep) {
-    if let Err(text) = fetched(saved.server, path, copy, how.is_some()) {
+    if let Err(text) = fetched(saved.link, path, copy, how.is_some()) {
       return missing(e, text);
     }
   } else if (write_file(copy, "").is_err()) {
@@ -301,11 +301,11 @@ pub function opened(e: usize, provider: usize, id: usize, mode: usize): usize {
 
 // Copies the file `path` of the server `server` to `copy`. With `new_ok`,
 // a file that the server does not have gives an empty copy.
-function fetched(server: smb.Server, path: string, copy: string, new_ok: boolean): Result[void, string] {
+function fetched(link: store.Link, path: string, copy: string, new_ok: boolean): Result[void, string] {
   let step = store.Step { from: path, to: copy, size: 0i64, dir: false };
   let offset = 0i64;
   while (true) {
-    let n = match (store.advance(store.Remote(server), store.Local, step, offset)) {
+    let n = match (store.advance(store.Remote(link), store.Local, step, offset)) {
       Ok(n) => n,
       Err(text) => {
         if (new_ok && offset == 0i64) {
@@ -392,12 +392,17 @@ function sent_to_server(e: usize, u: Upload): Result[void, string] {
       return Err("The file is not in the cache.");
     },
   };
-  let server = saved[u.server].server;
+  let link = saved[u.server].link;
+  // A WebDAV server writes a PUT whole, so only SMB needs a hidden name.
+  let store.Smb(server) = link else {
+    let sent = store.advance(store.Local, store.Remote(link), store.Step { from: u.copy, to: u.path, size: size, dir: false }, 0i64)?;
+    return Ok(());
+  };
   let part = partial_path(u.path);
   let step = store.Step { from: u.copy, to: part, size: size, dir: false };
   let offset = 0i64;
   while (offset == 0i64 || offset < size) {
-    let n = match (store.advance(store.Local, store.Remote(server), step, offset)) {
+    let n = match (store.advance(store.Local, store.Remote(link), step, offset)) {
       Ok(n) => n,
       Err(text) => {
         let removed = smb.remove(server, part, false);
@@ -425,11 +430,12 @@ pub function create(e: usize, provider: usize, parent: usize, kind: usize, name:
   let Some((at, saved, path)) = located(e, provider, jni.string_of(e, parent)) else {
     return missing(e, "No saved server has this folder.");
   };
-  let Ok(entries) = smb.list(saved.server, path) else {
+  let Ok(entries) = store.list(store.Remote(saved.link), path) else {
     return missing(e, "The server did not give this folder.");
   };
   let made = created_path(path, entries.map((x: smb.Entry): string => x.name), jni.string_of(e, name));
-  let result = if (jni.string_of(e, kind) == DIRECTORY) { smb.make_dir(saved.server, made) } else { smb.write(saved.server, made, 0i64, []) };
+  let place = store.Remote(saved.link);
+  let result = if (jni.string_of(e, kind) == DIRECTORY) { store.make_dir(place, made) } else { store.write(place, made, 0i64, []) };
   if (result.is_err()) {
     return missing(e, "The server did not make the document.");
   }
@@ -442,7 +448,7 @@ pub function delete(e: usize, provider: usize, id: usize): void {
     let none = missing(e, "No saved server has this document.");
     return;
   };
-  let Ok(beside) = smb.list(saved.server, store.parent(path)) else {
+  let Ok(beside) = store.list(store.Remote(saved.link), store.parent(path)) else {
     let none = missing(e, "The server did not give the folder of this document.");
     return;
   };
@@ -450,7 +456,7 @@ pub function delete(e: usize, provider: usize, id: usize): void {
     let none = missing(e, "The server has no such document.");
     return;
   };
-  if (path.len() == 0 || smb.remove(saved.server, path, entry.dir).is_err()) {
+  if (path.len() == 0 || store.remove(store.Remote(saved.link), path, entry.dir).is_err()) {
     let none = missing(e, "The server did not delete the document.");
   }
 }
