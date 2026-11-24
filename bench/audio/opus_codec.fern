@@ -1,0 +1,114 @@
+// Encode or decode 48 kHz mono Opus at 20 ms frames, for scripts/bench-opus.
+// Usage: opus_codec encode|decode INPUT ITERATIONS BITRATE dump|time
+// encode reads f32le PCM. decode reads packets as a u16le length and the bytes.
+// dump prints each packet or each sample as hex. time prints the loop time in ns.
+import "std/opus";
+import "std/io";
+import "std/hex";
+import "std/audio/wire";
+import "std/i32";
+import "std/result";
+
+const FRAME: i32 = 960;
+
+const MAX_BYTES: i32 = 1276;
+
+function frames_of(input: [u8]): f32[][] {
+  let out: f32[][] = [];
+  let i = 0;
+  while (i + FRAME * 4 <= input.len()) {
+    let frame: f32[] = [];
+    for _ in 0..FRAME {
+      frame = frame.append(f32_from_bits(wire.le(input, i, 4) as i32));
+      i += 4;
+    }
+    out = out.append(frame);
+  }
+  return out;
+}
+
+function packets_of(input: [u8]): u8[][] {
+  let out: u8[][] = [];
+  let i = 0;
+  while (i + 2 <= input.len()) {
+    let n = wire.le(input, i, 2) as i32;
+    let packet: u8[] = [];
+    for k in i + 2..i + 2 + n {
+      packet = packet.append(input[k]);
+    }
+    out = out.append(packet);
+    i += 2 + n;
+  }
+  return out;
+}
+
+function encode_all(frames: [f32[]], bitrate: i32, dump: boolean): i64 {
+  let Ok(enc) = opus.encoder(1, bitrate) else {
+    return -1;
+  };
+  let checksum = 0i64;
+  for frame in frames {
+    let Ok(out) = enc.encode(frame, FRAME, MAX_BYTES) else {
+      return -1;
+    };
+    enc = out.encoder;
+    checksum += out.packet.len() as i64;
+    if (dump) {
+      print(hex.encode(out.packet));
+    }
+  }
+  return checksum;
+}
+
+function decode_all(packets: [u8[]], dump: boolean): i64 {
+  let Ok(dec) = opus.decoder(48000, 1) else {
+    return -1;
+  };
+  let checksum = 0i64;
+  for packet in packets {
+    let (next, result) = dec.decode(packet);
+    dec = next;
+    let Ok(pcm) = result else {
+      return -1;
+    };
+    checksum += dec.final_range() as i64;
+    if (dump) {
+      let bytes: u8[] = [];
+      for sample in pcm {
+        bytes = wire.put_le(bytes, f32_bits(sample) as u64, 4);
+      }
+      print(hex.encode(bytes));
+    }
+  }
+  return checksum;
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 6) {
+    return 2;
+  }
+  let Ok(input) = io.read_input_bytes(argv[2]) else {
+    return 3;
+  };
+  let iterations = i32.parse_i32_radix(argv[3], 10).unwrap_or(0);
+  let bitrate = i32.parse_i32_radix(argv[4], 10).unwrap_or(0);
+  let dump = argv[5] == "dump";
+  let encoding = argv[1] == "encode";
+  let pcm = if (encoding) { frames_of(input) } else { [] };
+  let packets = if (encoding) { [] } else { packets_of(input) };
+  let checksum = 0i64;
+  let started = monotonic_ns();
+  for _ in 0..iterations {
+    let sum = if (encoding) { encode_all(pcm, bitrate, dump) } else { decode_all(packets, dump) };
+    if (sum < 0) {
+      return 4;
+    }
+    checksum += sum;
+  }
+  let elapsed = monotonic_ns() - started;
+  if (!dump) {
+    print(elapsed.to_string() + " " + checksum.to_string());
+  }
+  return 0;
+}

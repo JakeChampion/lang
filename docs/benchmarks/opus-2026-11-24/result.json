@@ -1,0 +1,70 @@
+{
+  "machine": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
+  "cpu": "x86_64",
+  "compiler_sha256": "9efa770e2d5979eb744e7e1faeb27b004ef21ecaabf67fdf27c1408d2ca4e094",
+  "libopus": "/usr/lib/x86_64-linux-gnu/libopus.so.0",
+  "libopus_sha256": "63ddaf057d71c53090607e0467eb308640c3b39b0f189e5b937e9c397be2f676",
+  "sample_rate": 48000,
+  "channels": 1,
+  "frame_ms": 20,
+  "bitrate": 24000,
+  "complexity": 5,
+  "audio_seconds_per_run": 100,
+  "trials": 7,
+  "identical_packets": "478/500",
+  "max_decode_difference": 1.564621925354004e-07,
+  "seconds": {
+    "fern_encode": [
+      5.212998867,
+      5.544715439,
+      5.338023279,
+      5.535459287,
+      5.412132918,
+      5.385603122,
+      5.221661024
+    ],
+    "fern_decode": [
+      0.963151339,
+      0.971538419,
+      0.86765902,
+      1.055854651,
+      0.982564657,
+      1.025998993,
+      0.993799939
+    ],
+    "libopus_encode": [
+      0.264080413,
+      0.26620755,
+      0.256992323,
+      0.248560228,
+      0.219763644,
+      0.252434081,
+      0.28644268
+    ],
+    "libopus_decode": [
+      0.092189021,
+      0.09062599,
+      0.08850392,
+      0.10331197,
+      0.085559749,
+      0.10902256,
+      0.09176003
+    ]
+  },
+  "median_seconds": {
+    "fern_encode": 5.385603122,
+    "fern_decode": 0.982564657,
+    "libopus_encode": 0.256992323,
+    "libopus_decode": 0.09176003
+  },
+  "realtime_factor": {
+    "fern_encode": 18.56802251014441,
+    "fern_decode": 101.7744728426559,
+    "libopus_encode": 389.11668190181695,
+    "libopus_decode": 1089.7991205974974
+  },
+  "fern_over_libopus": {
+    "encode": 20.956280168727062,
+    "decode": 10.707980991287817
+  }
+}

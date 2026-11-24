@@ -122,6 +122,45 @@ function encode_packets(): test.TestOutcome {
   return test.assert_true(true);
 }
 
+function dc_rejection(): test.TestOutcome {
+  // The 3 Hz filter has a time constant of about 53 ms, so DC is gone after one second.
+  for cc in [1, 2] {
+    let Ok(enc) = opus.encoder(cc, 64000) else {
+      return test.fail("encoder");
+    };
+    let Ok(dec) = opus.decoder(48000, cc) else {
+      return test.fail("decoder");
+    };
+    let samples: f32[] = [];
+    for i in 0..960 * cc {
+      samples = samples.append(if (i % cc == 0) { 0.25f32 } else { -0.5f32 });
+    }
+    let last: f32[] = [];
+    for _ in 0..50 {
+      let Ok(out) = enc.encode(samples, 960, 1000) else {
+        return test.fail("Opus encode");
+      };
+      enc = out.encoder;
+      let (d, result) = dec.decode(out.packet);
+      dec = d;
+      let Ok(pcm) = result else {
+        return test.fail("Opus decode");
+      };
+      last = pcm;
+    }
+    for c in 0..cc {
+      let sum = 0.0f32;
+      for i in 0..960 {
+        sum += last[i * cc + c];
+      }
+      if ((sum / 960.0f32).abs() > 0.005f32) {
+        return test.fail("DC remains in channel " + c.to_string() + ": mean " + (sum / 960.0f32).to_string());
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
 function bandwidths(): test.TestOutcome {
   // A CELT silence frame has the same output at every bandwidth.
   for toc in [128, 160, 192, 224] {
@@ -189,6 +228,7 @@ function main(): i32 {
   let r = test.new("Opus CELT packets");
   r = r.it("DTX packets, decoder reset, and malformed arguments", errors);
   r = r.it("standard Opus framing and persistent CELT state", encode_packets);
+  r = r.it("the encoder removes DC as libopus does", dc_rejection);
   r = r.it("bandwidths, output rates, channel conversion, and padding", bandwidths);
   r = r.it("packet frame-count codes and 120 ms duration", multi_frame);
   return r.finish();

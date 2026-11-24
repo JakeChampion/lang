@@ -943,6 +943,12 @@ Decoder output can exceed that interval. A device conversion must apply clipping
 The CELT encoder has a 120-sample delay at 48 kHz.
 A container must account for the delay and final padding.
 
+Before CELT, the encoder removes DC with the 3 Hz filter of `opus_encode` in libopus 1.4.
+
+`scripts/bench-opus` compares 48 kHz mono voice at 24 kbit/s with the system libopus.
+The [2026-11-24 report](benchmarks/opus-2026-11-24/README.md) measures encode at 21.0 times and decode at 10.7 times the libopus time.
+It also checks that 478 of 500 packets are the same as the libopus packets.
+
 These modules compile for `arm64-android`, as shared libraries.
 The tests verify that build. They do not measure an Android device or its audio callback.
 The `std/android/audio` stream currently accepts mono, signed 16-bit samples stored in `i32` values.
@@ -962,6 +968,9 @@ scripts/check-audio-interop
 scripts/check-mp3-interop --iso
 python3 scripts/gen-mp3-vectors.py
 scripts/bench-mp3
+
+# Requires cc and libopus. Compares Opus voice encode and decode with libopus.
+scripts/bench-opus
 
 # Offline table checks use the exact pinned source file.
 python3 scripts/gen-mp3-tables.py --check --source /path/to/minimp3.h
