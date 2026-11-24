@@ -118,6 +118,7 @@ open the selected track with `index.stream`, and pass its packet number and an o
 PCM buffer to `read_alac_packet_into`. Each call reads only that packet under the
 file, byte-window, and operation limits. The returned frame gives the valid sample
 count as `frames * channels`. Packet numbers refer to media before presentation edits.
+For edited seeks on the same immutable Reader, pass the file index to `file.alac_seek_index`, then call `file.read_alac_range_into` with a position and count in presentation frames. Index construction reads each packet into a bounded window to determine its exact decoded length. Later calls read only packets needed by the requested range.
 For byte-view input, `seek_index` and `read_into` provide sample-accurate seeks on the edited presentation. The index locates the first requested edit and packet by binary search.
 
 ## Native FLAC encoding
