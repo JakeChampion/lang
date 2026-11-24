@@ -8,6 +8,7 @@
 // the microphone, the speaker, the touches and the screen.
 import "std/android";
 import "std/android/launch";
+import "std/android/ui/app";
 import "std/android/audio";
 import "std/android/focus";
 import "std/android/keyboard";
@@ -24,6 +25,7 @@ import "std/tls/verify";
 import "./control";
 import "./internet";
 import "./identity_store";
+import "./identity_error";
 import "./key_files";
 import "./lan";
 import "./modes";
@@ -285,7 +287,7 @@ function app_main(ctx: usize): usize {
     Ok(seed) => seed,
     Err(err) => {
       log.warn("walkie: cannot load identity: " + err);
-      android.finish(ctx);
+      let _ = app.run(ctx, err, identity_error.program());
       return 0 as usize;
     },
   };

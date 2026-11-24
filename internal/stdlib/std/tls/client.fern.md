@@ -6,7 +6,7 @@ This module provides TLS client sessions and connections.
 
 Client configuration supplies a server name, trust roots, ALPN protocols, and optional resumption or client identity. A session advances the TLS handshake and application records.
 
-The client offers TLS 1.3 and TLS 1.2. A server that does not speak TLS 1.3 can pick TLS 1.2 with an ECDHE suite (`std/tls/tls12`). The client checks the signature of its key exchange with `verify.signed12`. A TLS 1.2 session takes no tickets. It sends the client certificate of the configuration when the server asks for one. It cannot be saved, offloaded to the kernel or rekeyed.
+The client offers TLS 1.3 and TLS 1.2 by default. Use `config(...).without_tls12()` to require TLS 1.3. A server that does not speak TLS 1.3 can pick TLS 1.2 with an ECDHE suite (`std/tls/tls12`). The client checks the signature of its key exchange with `verify.signed12`. A TLS 1.2 session takes no tickets. It sends the client certificate of the configuration when the server asks for one. It cannot be saved, offloaded to the kernel or rekeyed.
 
 ## Contracts
 
@@ -108,7 +108,7 @@ import "std/result";
 ```fern
 <<3 pub struct Config>>=
 // verify is false when the session accepts any certificate chain.
-pub struct Config { server_name: string, alpn: string[], roots: verify.Roots, resume: Option[Ticket], identity: Option[identity.Identity], verify: boolean }
+pub struct Config { server_name: string, alpn: string[], roots: verify.Roots, resume: Option[Ticket], identity: Option[identity.Identity], verify: boolean, tls12: boolean }
 
 // verified_chain is empty if the issuing session did not verify its peer.
 // max_early is the most early data the ticket allows, 0 when it allows none.
@@ -120,7 +120,11 @@ pub struct Ticket { identity: u8[], psk: u8[], suite: i32, lifetime: Duration, a
 ```fern
 <<4 pub function config(server_name: string, roots: verify.Roots): Config>>=
 pub function config(server_name: string, roots: verify.Roots): Config {
-  return Config { server_name: server_name, alpn: [], roots: roots, resume: None, identity: None, verify: true };
+  return Config { server_name: server_name, alpn: [], roots: roots, resume: None, identity: None, verify: true, tls12: true };
+}
+
+pub function (c: Config) without_tls12(): Config {
+  return Config { ...c, tls12: false };
 }
 
 pub function (c: Config) without_verification(): Config {
@@ -173,7 +177,7 @@ pub function entropy(config: Config): i32 {
 }
 
 function __hello(config: Config): handshake.ClientConfig {
-  let hc = handshake.ClientConfig { ...handshake.client_config(config.server_name), alpn: config.alpn, tls12: true };
+  let hc = handshake.ClientConfig { ...handshake.client_config(config.server_name), alpn: config.alpn, tls12: config.tls12 };
   match (config.identity) {
     Some(id) => {
       return handshake.ClientConfig { ...hc, chain: id.chain, sign_schemes: [id.key.scheme()] };

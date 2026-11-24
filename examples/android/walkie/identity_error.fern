@@ -1,0 +1,13 @@
+import "std/android/ui";
+
+function view(reason: string, screen: ui.Screen): ui.El[boolean] {
+  return ui.column([
+    ui.text[boolean]("Cannot load this phone's identity").sized(22.0),
+    ui.text[boolean](reason),
+    ui.text[boolean]("Press Back to close Walkie."),
+  ]).spaced(12.0).padding_xy(16.0, 24.0).wide().tall().scroll("identity-error");
+}
+
+pub function program(): ui.Program[string, boolean] {
+  return ui.program[string, boolean](view, (own reason: string, message: boolean): string => reason);
+}
