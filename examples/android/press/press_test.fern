@@ -71,9 +71,12 @@ function device(f: Fake, webp_works: boolean): press.Device {
       if (!webp_works) {
         return None;
       }
-      // A stand-in for the WebP encoder of the phone: a JPEG file, which
-      // the decoder of the tests reads.
-      return jpeg.encode_rgba8(img.width, img.height, img.pixels, jpeg.Options { quality: quality, subsampling: jpeg.S420 }).ok();
+      // A stand-in for the WebP encoder of the phone: a JPEG file in the
+      // RIFF chunk of a still WebP file, which std/webp can animate.
+      let Ok(file) = jpeg.encode_rgba8(img.width, img.height, img.pixels, jpeg.Options { quality: quality, subsampling: jpeg.S420 }) else {
+        return None;
+      };
+      return Some(riff(file));
     },
     save: (name: string, mime: string, dir: string, bytes: u8[]): boolean => {
       f.files.set(f.files.get().append("save " + dir + "/" + name + " " + mime + " " + bytes.len().to_string()));
@@ -86,11 +89,90 @@ function device(f: Fake, webp_works: boolean): press.Device {
   };
 }
 
+function le32(own out: u8[], v: i32): u8[] {
+  return out.append((v & 255) as u8).append((v >> 8 & 255) as u8).append((v >> 16 & 255) as u8).append((v >> 24 & 255) as u8);
+}
+
+// `data` in the `VP8 ` chunk of a RIFF WebP file.
+function riff(data: u8[]): u8[] {
+  let pad = data.len() % 2;
+  let out = le32([82u8, 73u8, 70u8, 70u8], 12 + data.len() + pad).append(87u8).append(69u8).append(66u8).append(80u8);
+  out = le32(out.append(86u8).append(80u8).append(56u8).append(32u8), data.len());
+  for b in data {
+    out = out.append(b);
+  }
+  return if (pad == 1) { out.append(0u8) } else { out };
+}
+
+// The bytes hold the four bytes of `tag`.
+function holds(bytes: [u8], tag: string): boolean {
+  let t = tag.as_bytes();
+  for i in 0..bytes.len() - 3 {
+    if (bytes[i] == t[0] && bytes[i + 1] == t[1] && bytes[i + 2] == t[2] && bytes[i + 3] == t[3]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// An animation of three frames of 64 by 48 pixels.
+function spinner(): press.Picked {
+  let frames: draw.Image[] = [];
+  for k in 0..3 {
+    let px: u8[] = [];
+    for y in 0..48 {
+      for x in 0..64 {
+        let on = (x / 8 + k) % 3 == 0;
+        px = px.append(if (on) { 230u8 } else { 20u8 }).append((y * 5) as u8).append((k * 90) as u8).append(255u8);
+      }
+    }
+    frames = frames.append(draw.Image { width: 64, height: 48, pixels: px });
+  }
+  return press.Picked { name: "spin.gif", bytes: 9000, image: frames[0], preview: frames[0], frames: frames, delays: [100, 200, 300] };
+}
+
+// The app after the person opened the animation and chose `tab`.
+function spinning(f: Fake, tab: string): sim.Sim[press.Model, press.Msg] {
+  return settled(sim.tap(settled(sim.send(started(f, true), press.Opened(spinner()))), tab));
+}
+
+function output_of(s: sim.Sim[press.Model, press.Msg]): press.Output {
+  return s.shell.app.output.unwrap_or(press.Output { format: -1, bytes: [0u8, 0u8, 0u8, 0u8], width: 0, height: 0, frames: 0, preview: draw.Image { width: 0, height: 0, pixels: [] } });
+}
+
+// GIF, PNG and WebP keep the frames of an animation: an animated GIF, an
+// APNG with an acTL chunk, and a WebP file with an ANMF chunk for each
+// frame.
+function test_animations(): test.TestOutcome {
+  let f = fake();
+  let g = spinning(f, "GIF");
+  saved(g, "animated-gif");
+  let gif_out = output_of(g);
+  let png_out = output_of(spinning(f, "PNG"));
+  let webp_out = output_of(spinning(f, "WebP"));
+  let got = [
+    gif_out.frames.to_string() + " " + holds(gif_out.bytes, "NETS").to_string(),
+    png_out.frames.to_string() + " " + holds(png_out.bytes, "acTL").to_string() + " " + press.output_name(png_out),
+    webp_out.frames.to_string() + " " + holds(webp_out.bytes, "ANMF").to_string(),
+    shows_start(g, "Press keeps the 3 frames of the animation.").to_string() + " " + shows_start(g, "GIF: ").to_string(),
+  ];
+  return test.assert_eq(got.join(" | "), "3 true | 3 true APNG | 3 true | true true");
+}
+
+// JPEG and QOI have no animation: they keep the first frame, and the screen
+// says so.
+function test_animation_to_a_still(): test.TestOutcome {
+  let f = fake();
+  let s = spinning(f, "QOI");
+  let out = output_of(s);
+  return test.assert_eq(out.frames.to_string() + " " + shows_start(s, "QOI has no animation, so Press keeps the first frame.").to_string(), "1 true");
+}
+
 function picked(): press.Picked {
   let img = photo(640, 480);
   let (pw, ph) = pixels.fit(640, 480, 320);
   let file = jpeg.encode_rgba8(640, 480, img.pixels, jpeg.Options { quality: 95, subsampling: jpeg.S444 }).unwrap_or([]);
-  return press.Picked { name: "beach.jpg", bytes: file.len(), image: img, preview: pixels.resized(img, pw, ph) };
+  return press.Picked { name: "beach.jpg", bytes: file.len(), image: img, preview: pixels.resized(img, pw, ph), frames: [], delays: [] };
 }
 
 function started(f: Fake, webp_works: boolean): sim.Sim[press.Model, press.Msg] {
@@ -158,7 +240,8 @@ function test_first_encoding(): test.TestOutcome {
   };
   let starts_jpeg = out.bytes[0] == 255u8 && out.bytes[1] == 216u8;
   let line = press.format_name(press.JPEG) + ": " + press.size_text(out.bytes.len()) + " · 640 × 480 · " + press.change_text(p.bytes, out.bytes.len());
-  return test.assert_eq(starts_jpeg.to_string() + " " + (out.bytes.len() < p.bytes).to_string() + " " + sim.shows(s, line).to_string(), "true true true");
+  let warned = shows_start(s, "The result is bigger than the original.");
+  return test.assert_eq(starts_jpeg.to_string() + " " + (out.bytes.len() < p.bytes).to_string() + " " + sim.shows(s, line).to_string() + " " + warned.to_string(), "true true true false");
 }
 
 // A lower quality gives a smaller file, after the slider stops.
@@ -182,6 +265,7 @@ function test_size_slider(): test.TestOutcome {
   return test.assert_eq(m.settings.scale.to_string() + "% " + out.width.to_string() + "x" + out.height.to_string() + " " + sim.shows(s, "Size").to_string(), "55% 352x264 true");
 }
 
+// A PNG of the photo is bigger than its JPEG file, and the screen says so.
 function test_png(): test.TestOutcome {
   let f = fake();
   let s = settled(sim.tap(opened(f), "PNG"));
@@ -191,7 +275,8 @@ function test_png(): test.TestOutcome {
   };
   let png_magic = out.bytes[0] == 137u8 && out.bytes[1] == 80u8;
   let told = shows_start(s, "PNG keeps each pixel.");
-  return test.assert_eq(png_magic.to_string() + " " + told.to_string() + " " + sim.says(s, "Quality").to_string(), "true true false");
+  let warned = out.bytes.len() > s.shell.app.source.unwrap_or(picked()).bytes && shows_start(s, "The result is bigger than the original.");
+  return test.assert_eq(png_magic.to_string() + " " + told.to_string() + " " + sim.says(s, "Quality").to_string() + " " + warned.to_string(), "true true false true");
 }
 
 // QOI keeps each pixel. The gallery does not show QOI, so its file goes to
@@ -311,6 +396,8 @@ function main(): i32 {
   r = r.it("QOI keeps each pixel and saves to the downloads", test_qoi);
   r = r.it("GIF has a slider of colours", test_gif);
   r = r.it("WebP goes to the encoder of the phone", test_webp);
+  r = r.it("GIF, PNG and WebP keep an animation", test_animations);
+  r = r.it("JPEG and QOI keep the first frame of an animation", test_animation_to_a_still);
   r = r.it("a phone with no WebP encoder gives a note", test_webp_fails);
   r = r.it("the split shows the original and the output", test_split);
   r = r.it("save and share give the file to the phone", test_save_and_share);
