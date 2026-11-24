@@ -183,6 +183,8 @@ Build and run it on a phone or an emulator:
 fern -apk tune.apk -apk-run examples/android/tune/app.fern
 ```
 
+The [nightly release](https://github.com/JakeChampion/lang/releases/tag/nightly) has a signed `fern-tune.apk` from `main`. Each nightly uses the same key, so it installs over the one before it.
+
 Run its tests on the host:
 
 ```bash
