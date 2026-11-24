@@ -201,6 +201,13 @@ A loop body that declares its callback makes the callback again in each pass.
 So that loop can consume and assign the owner in each pass.
 The reassignment cases of `internal/check/checker/testdata/callback_result_loans_cases.json` cover this rule.
 
+A fresh local that a lambda captures is owned again after the last call of the lambda.
+This proof applies to a function body of declarations, assignments, expression statements and returns, where each lambda is the value of a `let`.
+Each use of the lambda must be a direct call before the first occurrence, after the lambda, that can end a value of the owner.
+These occurrences are each assignment to the owner, the last occurrence before an assignment whose value does not read the owner, and the last occurrence of the owner.
+The owner can then go to an `own` parameter or an `own` receiver, before or after an assignment.
+The `lambda` cases of `internal/check/checker/testdata/callback_result_loans_cases.json` cover this rule.
+
 Reads that only evaluate a condition or a block statement do not extend the returned callback's captures.
 It preserves repeated reads before cleanup and immutable data copies.
 The cases `diag_e050_callback_uses_consumed_capture` and `callback_capture_lifetimes` cover this guard.

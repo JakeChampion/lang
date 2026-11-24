@@ -1568,5 +1568,60 @@
     "name": "record made again in each pass of a loop accepted",
     "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nstruct Box { run: () => i32 }\nfunction call(b: Box): i32 { return b.run(); }\nfunction make(h: H): Box { return Box { run: (): i32 => read(h) }; }\nfunction mk(h: H): () => i32 { return (): i32 => read(h); }\nfunction renew(own h: H): H { return h; }\nfunction shut(own h: H): H { return H { fd: 0 }; }\nfunction run(own h: H): i32 { let t = 0; for k in 0..2 { let b = make(h); t += call(b); h = renew(h); } h.close(); return t; }\nfunction main(): i32 { return run(H { fd: 1 }); }\n",
     "want": ""
+  },
+  {
+    "name": "lambda owner renewed and closed after the last call of the lambda accepted",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nfunction renew(own h: H): H { return h; }\nfunction eat(own h: H): void {}\nfunction run(): i32 { let h = H { fd: 1 }; let g = (): i32 => read(h); let t = g(); h = renew(h); h.close(); return t; }\nfunction main(): i32 { return run(); }\n",
+    "want": ""
+  },
+  {
+    "name": "lambda owner renewed and moved after the last call of the lambda accepted",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nfunction renew(own h: H): H { return h; }\nfunction eat(own h: H): void {}\nfunction run(): i32 { let h = H { fd: 1 }; let g = (): i32 => read(h); let t = g(); h = renew(h); eat(h); return t; }\nfunction main(): i32 { return run(); }\n",
+    "want": ""
+  },
+  {
+    "name": "lambda owner read, then renewed two times after the last call of the lambda accepted",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nfunction renew(own h: H): H { return h; }\nfunction eat(own h: H): void {}\nfunction run(): i32 { let h = H { fd: 1 }; let g = (): i32 => read(h); let n = read(h); let t = g(); h = renew(h); h = renew(h); h.close(); return t + n; }\nfunction main(): i32 { return run(); }\n",
+    "want": ""
+  },
+  {
+    "name": "lambda owner replaced after the last call of the lambda accepted",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nfunction renew(own h: H): H { return h; }\nfunction eat(own h: H): void {}\nfunction run(): i32 { let h = H { fd: 1 }; let g = (): i32 => read(h); let t = g(); h = H { fd: 2 }; h.close(); return t; }\nfunction main(): i32 { return run(); }\n",
+    "want": ""
+  },
+  {
+    "name": "lambda owner moved and replaced after the last call of the lambda accepted",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nfunction renew(own h: H): H { return h; }\nfunction eat(own h: H): void {}\nfunction run(): i32 { let h = H { fd: 1 }; let g = (): i32 => read(h); let t = g(); eat(h); h = H { fd: 2 }; h.close(); return t; }\nfunction main(): i32 { return run(); }\n",
+    "want": ""
+  },
+  {
+    "name": "lambda made after its owner is renewed accepted",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nfunction renew(own h: H): H { return h; }\nfunction eat(own h: H): void {}\nfunction run(): i32 { let h = H { fd: 1 }; h = renew(h); let g = (): i32 => read(h); let t = g(); h.close(); return t; }\nfunction main(): i32 { return run(); }\n",
+    "want": ""
+  },
+  {
+    "name": "lambda called after its owner is renewed",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nfunction renew(own h: H): H { return h; }\nfunction eat(own h: H): void {}\nfunction run(): i32 { let h = H { fd: 1 }; let g = (): i32 => read(h); h = renew(h); let t = g(); h.close(); return t; }\nfunction main(): i32 { return run(); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "lambda called before and after its owner is renewed",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nfunction renew(own h: H): H { return h; }\nfunction eat(own h: H): void {}\nfunction run(): i32 { let h = H { fd: 1 }; let g = (): i32 => read(h); let t = g(); h = renew(h); let u = g(); h.close(); return t + u; }\nfunction main(): i32 { return run(); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "lambda called after its owner is moved and replaced",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nfunction renew(own h: H): H { return h; }\nfunction eat(own h: H): void {}\nfunction run(): i32 { let h = H { fd: 1 }; let g = (): i32 => read(h); eat(h); let t = g(); h = H { fd: 2 }; h.close(); return t; }\nfunction main(): i32 { return run(); }\n",
+    "want": "E051"
+  },
+  {
+    "name": "lambda called after its owner is replaced",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nfunction renew(own h: H): H { return h; }\nfunction eat(own h: H): void {}\nfunction run(): i32 { let h = H { fd: 1 }; let g = (): i32 => read(h); h = H { fd: 2 }; let t = g(); h.close(); return t; }\nfunction main(): i32 { return run(); }\n",
+    "want": "E051"
+  },
+  {
+    "name": "lambda copied after its owner is renewed",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nfunction renew(own h: H): H { return h; }\nfunction eat(own h: H): void {}\nfunction run(): i32 { let h = H { fd: 1 }; let g = (): i32 => read(h); let t = g(); h = renew(h); let k = g; h.close(); return t + k(); }\nfunction main(): i32 { return run(); }\n",
+    "want": "E050"
   }
 ]
