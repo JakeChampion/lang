@@ -195,11 +195,13 @@ pub function write(s: Server, path: string, offset: i64, data: u8[]): Result[voi
   return Ok(());
 }
 
-// Sends the file `local` of the phone as the file `path`, without reading
-// all of it into memory.
+// Sends the file `local` of the phone as the file `path`. std/fetch sends a
+// body from memory only, so the whole file goes into memory.
 pub function put_file(s: Server, path: string, local: string): Result[void, string] {
-  let reply = sent(s, asked(s, "PUT", path).with_body(BodyFile(local)), [200, 201, 204])?;
-  return Ok(());
+  let Ok(data) = read_file_bytes(local) else {
+    return Err("The file on the phone cannot be read.");
+  };
+  return write(s, path, 0i64, data);
 }
 
 // Makes the folder `path`.
