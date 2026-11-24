@@ -114,8 +114,13 @@ func runBufPushMappedCorpus(t *testing.T, builtin string, run func(t *testing.T,
 		if c.held != "" {
 			body.WriteString(fmt.Sprintf("    buf_push(b, %s);\n", fernQuote(c.held)))
 		}
+		src := fernQuote(c.s)
+		if builtin == "buf_push_bytes_mapped" {
+			src = fmt.Sprintf("src%d", len(want))
+			body.WriteString(fmt.Sprintf("    let %s: u8[] = %s;\n", src, fernSet([]byte(c.s))))
+		}
 		body.WriteString(fmt.Sprintf("    %s(b, %s, %s);\n    dump(buf_take_bytes(b));\n",
-			builtin, fernQuote(c.s), name))
+			builtin, src, name))
 		ref := bufPushMappedRef(c.held, c.s, c.table)
 		if builtin == "buf_push_filtered" {
 			ref = bufPushFilteredRef(c.held, c.s, c.table)
@@ -199,6 +204,47 @@ func TestArm64BufPushMapped(t *testing.T) {
 
 func TestWASMBufPushMapped(t *testing.T) {
 	runBufPushMappedCorpus(t, "buf_push_mapped", func(t *testing.T, src string) string {
+		out, _ := invokeWasmtime(t, src)
+		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+		if n := len(lines); n == 0 || strings.TrimSpace(lines[n-1]) != "0" {
+			t.Fatalf("main() result line = %q, want \"0\"", lines[len(lines)-1])
+		}
+		return strings.Join(lines[:len(lines)-1], "\n")
+	})
+}
+
+func TestInterpBufPushBytesMapped(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_bytes_mapped", func(t *testing.T, src string) string {
+		out, exit := runInterpExitCode(t, src)
+		if exit != 0 {
+			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
+		}
+		return out
+	})
+}
+
+func TestX86_64BufPushBytesMapped(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_bytes_mapped", func(t *testing.T, src string) string {
+		out, exit := compileAndRunX86_64(t, src)
+		if exit != 0 {
+			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
+		}
+		return out
+	})
+}
+
+func TestArm64BufPushBytesMapped(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_bytes_mapped", func(t *testing.T, src string) string {
+		out, exit := compileAndRunArm64(t, src)
+		if exit != 0 {
+			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
+		}
+		return out
+	})
+}
+
+func TestWASMBufPushBytesMapped(t *testing.T) {
+	runBufPushMappedCorpus(t, "buf_push_bytes_mapped", func(t *testing.T, src string) string {
 		out, _ := invokeWasmtime(t, src)
 		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 		if n := len(lines); n == 0 || strings.TrimSpace(lines[n-1]) != "0" {
