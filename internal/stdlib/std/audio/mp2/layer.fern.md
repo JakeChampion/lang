@@ -177,8 +177,8 @@ function clear_inactive(scale: Scale, own output: f32[]): f32[] {
   for band in 0..32 {
     for channel in 0..2 {
       if (band >= scale.bands || scale.allocation[band * 2 + channel] == 0u8) {
-        for i in 0..12 {
-          output = output.with(channel * 576 + band * 18 + i, 0.0f32);
+        for quad in 0..3 {
+          output = __f32x4_with(output, channel * 576 + band * 18 + quad * 4, __f32x4_splat(0.0f32));
         }
       }
     }
@@ -202,14 +202,18 @@ pub function granule_into(input: [u8], b: bits.Bits, scale: Scale, part: i32, ow
     }
   }
   for band in scale.stereo..scale.bands {
-    for i in 0..12 {
-      output = output.with(576 + band * 18 + i, output[band * 18 + i]);
+    for quad in 0..3 {
+      let at = band * 18 + quad * 4;
+      output = __f32x4_with(output, 576 + at, __f32x4_load(output, at));
     }
   }
   for band in 0..scale.bands {
-    for i in 0..12 {
-      output = output.with(band * 18 + i, output[band * 18 + i] * scale.factors[band * 6 + part]);
-      output = output.with(576 + band * 18 + i, output[576 + band * 18 + i] * scale.factors[band * 6 + 3 + part]);
+    let left = __f32x4_splat(scale.factors[band * 6 + part]);
+    let right = __f32x4_splat(scale.factors[band * 6 + 3 + part]);
+    for quad in 0..3 {
+      let at = band * 18 + quad * 4;
+      output = __f32x4_with(output, at, __f32x4_load(output, at) * left);
+      output = __f32x4_with(output, 576 + at, __f32x4_load(output, 576 + at) * right);
     }
   }
   return Ok((b, output));

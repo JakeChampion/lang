@@ -15,6 +15,11 @@ pub function new(limit: i32): Bits {
 }
 
 pub function peek(input: [u8], pos: i32, n: i32): u32 {
+  let first = pos >> 3;
+  if (n > 0 && n <= 25 && pos >= 0 && first <= input.len() - 4) {
+    let word = input[first] as u32 << 24u32 | input[first + 1] as u32 << 16u32 | input[first + 2] as u32 << 8u32 | input[first + 3] as u32;
+    return word << (pos & 7) as u32 >> (32 - n) as u32;
+  }
   let value = 0u32;
   let left = n;
   let at = pos;

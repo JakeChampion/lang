@@ -392,11 +392,6 @@ pub function granule(own qmf: f32[], own samples: f32[], channels: i32, own outp
   return granule_columns(qmf, samples, channels, 18, output, out_at);
 }
 
-// Layer II supplies twelve columns with the same 18-column subband stride.
-pub function granule12(own qmf: f32[], own samples: f32[], channels: i32, own output: f32[], out_at: i32): (f32[], f32[]) {
-  return granule_columns(qmf, samples, channels, 12, output, out_at);
-}
-
 function granule_columns(own qmf: f32[], own samples: f32[], channels: i32, columns: i32, own output: f32[], out_at: i32): (f32[], f32[]) {
   for ch in 0..channels {
     samples = dct32x4(samples, ch * 576, columns / 4);
@@ -448,12 +443,36 @@ pub function granule_at(own lines: f32[], offset: i32, own samples: f32[], chann
   return (lines, output, transform);
 }
 
+// Put the 960 history values at the start of the lines of one Layer II frame.
+pub function seed_lines(own lines: f32[], history: [f32]): f32[] {
+  for i in 0..15 * 64 {
+    lines = lines.with(i, history[i]);
+  }
+  return lines;
+}
+
+// One Layer II granule of twelve columns. The three granules of a frame share 3,264 lines from seed_lines.
+pub function granule12_at(own lines: f32[], offset: i32, own samples: f32[], channels: i32, own output: f32[], out_at: i32, own transform: f32[]): (f32[], f32[], f32[], f32[]) {
+  for ch in 0..channels {
+    let (values, scratch) = dct32x4_into(samples, ch * 576, 3, transform);
+    samples = values;
+    transform = scratch;
+  }
+  for block in 0..6 {
+    let i = block * 2;
+    let (next, pcm) = synth(samples, i, channels, lines, offset + i * 64, output, out_at + i * 32 * channels);
+    lines = next;
+    output = pcm;
+  }
+  return (lines, output, samples, transform);
+}
+
 function synthesize(own qmf: f32[], samples: [f32], channels: i32, columns: i32, own output: f32[], out_at: i32, own lines: f32[]): (f32[], f32[], f32[]) {
 <<polyphase synthesis body>>
   return (qmf, output, lines);
 }
 
-// Reuse Layer II scratch within one frame.
+// Reuse the scratch of one Layer I frame.
 // Supply 1,728 line values and 128 transform values. Initialize line storage to zero before its first use.
 pub function granule12_into(own qmf: f32[], own samples: f32[], channels: i32, own output: f32[], out_at: i32, own lines: f32[], own transform: f32[]): (f32[], f32[], f32[], f32[], f32[]) {
   for ch in 0..channels {

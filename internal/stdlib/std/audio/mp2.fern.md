@@ -12,7 +12,8 @@ Payload errors keep the extent. `reset` clears it. Reset the decoder before a fr
 The decoder retains only synthesis history, format information, and the free-format extent.
 Frame scratch is bounded and does not remain in decoder state.
 
-`workspace` allocates 3200 float elements and 128 bytes for repeated frame decode.
+`workspace` allocates 4736 float elements and 128 bytes for repeated frame decode.
+The three granules of a frame share one array of synthesis lines, so the decoder copies its history one time for each frame.
 `decode_frame_with` consumes and returns this workspace on every call.
 The caller can release it independently of decoder history.
 Unique workspace arrays retain storage across successful frames. Payload errors can replace scratch storage.
@@ -48,7 +49,7 @@ pub opaque struct Decoder { qmf: f32[], sample_rate: i32, channels: i32, free_by
 pub opaque struct Workspace { scratch: f32[], lines: f32[], transform: f32[], scale: layer.Scale }
 
 pub function workspace(): Workspace {
-  return Workspace { scratch: spectral.zeros(1152), lines: spectral.zeros(1728), transform: spectral.zeros(128), scale: layer.empty() };
+  return Workspace { scratch: spectral.zeros(1152), lines: spectral.zeros(3264), transform: spectral.zeros(128), scale: layer.empty() };
 }
 
 pub struct Frame { sample_rate: i32, channels: i32, frames: i32, bytes_read: i32, samples: f32[] }
@@ -101,6 +102,7 @@ function located(input: [u8], at: i32, free_bytes: i32, limits: pcm.Limits): Res
 function reconstruct(own d: Decoder, input: [u8], b: bits.Bits, h: header.Header, own output: f32[], own work: Workspace): (Decoder, Workspace, Result[Frame, pcm.AudioError]) {
   let Decoder { qmf, sample_rate, channels, free_bytes } = d;
   let Workspace { scratch, lines, transform, scale } = work;
+  lines = synthesis.seed_lines(lines, qmf);
   for part in 0..3 {
     let decoded = layer.granule_into(input, b, scale, part, scratch);
     let (next_bits, samples) = match (decoded) {
@@ -108,20 +110,20 @@ function reconstruct(own d: Decoder, input: [u8], b: bits.Bits, h: header.Header
       Err(e) => { return (Decoder { qmf: clear(qmf), sample_rate: 0, channels: 0, free_bytes: free_bytes }, workspace(), Err(e)); },
     };
     b = next_bits;
-    let (next_qmf, pcm, values, synthesis_lines, transform_values) = synthesis.granule12_into(qmf, samples, h.channels, output, part * 384 * h.channels, lines, transform);
-    qmf = next_qmf;
+    let (synthesis_lines, pcm, values, transform_values) = synthesis.granule12_at(lines, part * 12 * 64, samples, h.channels, output, part * 384 * h.channels, transform);
     output = pcm;
     scratch = values;
     lines = synthesis_lines;
     transform = transform_values;
   }
+  qmf = synthesis.frame_history(qmf, lines, h.channels);
   return (Decoder { qmf: qmf, sample_rate: sample_rate, channels: channels, free_bytes: free_bytes }, Workspace { scratch: scratch, lines: lines, transform: transform, scale: scale }, Ok(Frame { sample_rate: h.sample_rate, channels: h.channels, frames: 1152, bytes_read: h.bytes, samples: output }));
 }
 
 function reconstruct_frame(own d: Decoder, input: [u8], b: bits.Bits, scale: layer.Scale, h: header.Header, own output: f32[]): (Decoder, Result[Frame, pcm.AudioError]) {
   let Decoder { qmf, sample_rate, channels, free_bytes } = d;
   let scratch = spectral.zeros(1152);
-  let lines = spectral.zeros(1728);
+  let lines = synthesis.seed_lines(spectral.zeros(3264), qmf);
   let transform = spectral.zeros(128);
   for part in 0..3 {
     let decoded = layer.granule_into(input, b, scale, part, scratch);
@@ -130,13 +132,13 @@ function reconstruct_frame(own d: Decoder, input: [u8], b: bits.Bits, scale: lay
       Err(e) => { return (Decoder { qmf: clear(qmf), sample_rate: 0, channels: 0, free_bytes: free_bytes }, Err(e)); },
     };
     b = next_bits;
-    let (next_qmf, pcm, values, synthesis_lines, transform_values) = synthesis.granule12_into(qmf, samples, h.channels, output, part * 384 * h.channels, lines, transform);
-    qmf = next_qmf;
+    let (synthesis_lines, pcm, values, transform_values) = synthesis.granule12_at(lines, part * 12 * 64, samples, h.channels, output, part * 384 * h.channels, transform);
     output = pcm;
     scratch = values;
     lines = synthesis_lines;
     transform = transform_values;
   }
+  qmf = synthesis.frame_history(qmf, lines, h.channels);
   return (Decoder { qmf: qmf, sample_rate: sample_rate, channels: channels, free_bytes: free_bytes }, Ok(Frame { sample_rate: h.sample_rate, channels: h.channels, frames: 1152, bytes_read: h.bytes, samples: output }));
 }
 

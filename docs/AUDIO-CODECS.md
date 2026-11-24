@@ -504,6 +504,11 @@ Frame scratch reuse reduces decode time by 8.5 to 10.7 percent and allocation co
 The [scratch measurements](benchmarks/mp2-scratch-2026-11-09/README.md) retain the paired trials and unchanged decoder-state probes.
 That checksum-inclusive campaign measured 3.08 to 3.52 times the decode time of SIMD minimp3. The [same-library workspace comparison](benchmarks/mp2-workspace-2026-11-21/README.md) measures frame allocations, idle decoder memory, and decode time separately from complete PCM export.
 
+The three granules of a Layer II frame share one array of 3,264 synthesis lines, so the decoder copies its 960 history values into the lines one time and out one time for each frame.
+The scale of each band uses four-lane multiplies, and a bit field of 25 bits or fewer comes from one 32-bit word.
+On x86-64 Linux, Callgrind counts 22 to 29 percent fewer instructions for the workspace frame path on the three benchmark streams, and 6 percent fewer for a 192 kbit/s MPEG-1 Layer III stream.
+On the 48 kHz stereo stream, the median frame decode time is 2.9 times that of scalar minimp3 and 4.4 times that of SIMD minimp3.
+
 ## MP3
 
 `std/audio/mp3` provides native Layer III decode with normalized float output.
