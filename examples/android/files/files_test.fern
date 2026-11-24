@@ -329,7 +329,7 @@ function test_dav_server(): test.TestOutcome {
 function test_trust_certificate(): test.TestOutcome {
   let dir = fixture();
   let web = files.Saved { name: "home on nas", link: store.Dav(dav.Server { url: "https://127.0.0.1:1/home", user: "jo", password: "pw", pin: "" }) };
-  let s = sim.tap(simulator(dir, [web]), "home on nas");
+  let s = done(sim.tap(simulator(dir, [web]), "home on nas"));
   let revision = s.shell.app.revision;
   s = sim.settle(sim.send(s, files.Untrusted(revision, "0aff10")));
   preview(s, "20-untrusted");
