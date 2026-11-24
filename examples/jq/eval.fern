@@ -1411,9 +1411,40 @@ function nth_out(v: json.JsonValue, id: i32, depth: i32, k: (json.JsonValue, own
   return then_break(drive(k(v, t)), id);
 }
 
+// A field lookup gives exactly one value or an error. Its keys compare
+// in the same order as the singleton arrays the general filter produces.
+function field_key(f: filter.Ast): Option[json.JsonValue] {
+  let filter.Index(target, key) = f else {
+    return None;
+  };
+  let filter.Identity = target else {
+    return None;
+  };
+  let filter.Literal(value) = key else {
+    return None;
+  };
+  let json.JString(_) = value else {
+    return None;
+  };
+  return Some(value);
+}
+
 // `sort_by`, `group_by`, `unique_by`, `min_by` and `max_by`. The key of an
 // item is the array of the outputs of `f` on it.
 function keyed(what: string, f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
+  if let json.JArray(values) = input {
+    if let Some(field) = field_key(f) {
+      let ks: json.JsonValue[] = [];
+      for x in values {
+        let v = index(x, field);
+        if (v.failed()) {
+          return raised(st, v.error[0]);
+        }
+        ks = ks.append(v.values[0]);
+      }
+      return give(by(what, input, values, ks), k, st);
+    }
+  }
   let items = iterate(input);
   if (items.failed()) {
     return raised(st, items.error[0]);
