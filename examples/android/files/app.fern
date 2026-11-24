@@ -130,6 +130,24 @@ pub function documents_open(env: usize, thiz: usize, id: usize, mode: usize, sig
   return docs.opened(env, thiz, id, mode);
 }
 
+@jni("dev.fern.files.Documents", "java.lang.String createDocument(java.lang.String, java.lang.String, java.lang.String)")
+pub function documents_make(env: usize, thiz: usize, parent: usize, kind: usize, name: usize): usize {
+  return docs.create(env, thiz, parent, kind, name);
+}
+
+@jni("dev.fern.files.Documents", "void deleteDocument(java.lang.String)")
+pub function documents_delete(env: usize, thiz: usize, id: usize): void {
+  docs.delete(env, thiz, id);
+}
+
+// The listener of a file that another app writes to a server: its close
+// sends the file. It is a java.util.Properties, which keeps the record of
+// the upload.
+@jni("dev.fern.files.Upload extends java.util.Properties implements android.os.ParcelFileDescriptor$OnCloseListener", "void onClose(java.io.IOException)")
+pub function upload_closed(env: usize, thiz: usize, failure: usize): void {
+  docs.closed(env, thiz, failure);
+}
+
 // The resource of the icon of the app, which fern -apk gives this ID.
 const ICON: i32 = 2130771968;
 
