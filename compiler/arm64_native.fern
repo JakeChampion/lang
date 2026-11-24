@@ -3670,9 +3670,6 @@ function arm64_gas_bad_cond_token(mnem: string, ops: string[]): string {
   let Some(idx) = arm64_gas_cond_operand(mnem) else {
     return "";
   };
-  if (ops.len() <= idx) {
-    return mnem + ":arity";
-  }
   let c = ops[idx];
   if (arm64_gas_cond(c) < 0) {
     return c;
@@ -6822,9 +6819,6 @@ function arm64_gas_bad_swap(mnem: string, ops: string[], lm: Arm64Mem): string {
 }
 
 function arm64_gas_emit_swap(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
-  if (ops.len() < 3) {
-    return a;
-  }
   let rest = slice_unchecked(mnem, 3, mnem.len()).to_owned();
   util.push_bytes(a.code, arm64_swap(
     [], arm64_gas_excl_size(mnem, ops[1]), rest.starts_with("a"), util.index_of_sub(rest, "l") >= 0,
@@ -6834,9 +6828,6 @@ function arm64_gas_emit_swap(own a: Arm64Asm, mnem: string, ops: string[], lm: A
 }
 
 function arm64_gas_emit_lse(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
-  if (ops.len() < 3) {
-    return a;
-  }
   let cas = mnem.starts_with("cas");
   let rest = slice_unchecked(mnem, 5, mnem.len()).to_owned();
   if (cas) {
@@ -7000,13 +6991,7 @@ function arm64_gas_bad_fcmp(ops: string[]): string {
 function arm64_gas_emit_carry(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
   let w = arm64_gas_is_w(ops[0]);
   if (mnem == "ngc" || mnem == "ngcs") {
-    if (ops.len() < 2) {
-      return a;
-    }
     util.push_bytes(a.code, arm64_rrr([], arm64_carry_base(mnem), arm64_gas_reg(ops[0]), 31, arm64_gas_reg(ops[1]), w));
-    return a;
-  }
-  if (ops.len() < 3) {
     return a;
   }
   util.push_bytes(a.code, arm64_rrr([], arm64_carry_base(mnem), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), w));
@@ -7014,9 +6999,6 @@ function arm64_gas_emit_carry(own a: Arm64Asm, mnem: string, ops: string[]): Arm
 }
 
 function arm64_gas_emit_mulwide(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
-  if (ops.len() < 3) {
-    return a;
-  }
   if (mnem == "umulh" || mnem == "smulh") {
     let hb: i64 = 0x9bc07c00;
     if (mnem == "smulh") {
@@ -7026,9 +7008,6 @@ function arm64_gas_emit_mulwide(own a: Arm64Asm, mnem: string, ops: string[]): A
     return a;
   }
   if (mnem == "madd") {
-    if (ops.len() < 4) {
-      return a;
-    }
     util.push_bytes(a.code, arm64_muladd([], 0x9b000000, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_reg(ops[3]), arm64_gas_is_w(ops[0])));
     return a;
   }
@@ -7045,9 +7024,6 @@ function arm64_gas_emit_logical2(own a: Arm64Asm, mnem: string, ops: string[]): 
   let base_n = 3;
   if (mnem == "tst" || mnem == "mvn") {
     base_n = 2;
-  }
-  if (ops.len() < base_n) {
-    return a;
   }
   let rd = arm64_gas_reg(ops[0]);
   let rn = rd;
@@ -7098,9 +7074,6 @@ function arm64_bfm_base(mnem: string, w: boolean): i64 {
 }
 
 function arm64_gas_emit_bitfield(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
-  if (ops.len() < 4) {
-    return a;
-  }
   let w = arm64_gas_is_w(ops[0]);
   let size = 64;
   if (w) {
@@ -7123,13 +7096,7 @@ function arm64_gas_emit_bitfield(own a: Arm64Asm, mnem: string, ops: string[]): 
 
 function arm64_gas_emit_extr_ror(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
   if (mnem == "extr") {
-    if (ops.len() < 4) {
-      return a;
-    }
     util.push_bytes(a.code, arm64_extr([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_small_imm(ops[3]), arm64_gas_is_w(ops[0])));
-    return a;
-  }
-  if (ops.len() < 3) {
     return a;
   }
   if (!arm64_gas_data_gp(ops[2])) {
@@ -7147,21 +7114,12 @@ function arm64_gas_emit_condsel(own a: Arm64Asm, mnem: string, ops: string[]): A
   let w = arm64_gas_is_w(ops[0]);
   let rd = arm64_gas_reg(ops[0]);
   if (mnem == "cset" || mnem == "csetm") {
-    if (ops.len() < 2) {
-      return a;
-    }
     util.push_bytes(a.code, arm64_condsel([], arm64_condsel_base(mnem), rd, 31, 31, arm64_gas_cond(ops[1]) ^ 1, w));
     return a;
   }
   if (mnem == "cinc" || mnem == "cinv" || mnem == "cneg") {
-    if (ops.len() < 3) {
-      return a;
-    }
     let rn2 = arm64_gas_reg(ops[1]);
     util.push_bytes(a.code, arm64_condsel([], arm64_condsel_base(mnem), rd, rn2, rn2, arm64_gas_cond(ops[2]) ^ 1, w));
-    return a;
-  }
-  if (ops.len() < 4) {
     return a;
   }
   util.push_bytes(a.code, arm64_condsel([], arm64_condsel_base(mnem), rd, arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_cond(ops[3]), w));
@@ -7169,9 +7127,6 @@ function arm64_gas_emit_condsel(own a: Arm64Asm, mnem: string, ops: string[]): A
 }
 
 function arm64_gas_emit_condcmp(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
-  if (ops.len() < 4) {
-    return a;
-  }
   let base = arm64_condsel_base(mnem);
   let rm5 = 0;
   if (!arm64_gas_data_gp(ops[1])) {
@@ -7185,9 +7140,6 @@ function arm64_gas_emit_condcmp(own a: Arm64Asm, mnem: string, ops: string[]): A
 }
 
 function arm64_gas_emit_bitops(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
-  if (ops.len() < 2) {
-    return a;
-  }
   let rd = arm64_gas_reg(ops[0]);
   let rn = arm64_gas_reg(ops[1]);
   let w = arm64_gas_is_w(ops[0]);
@@ -7217,16 +7169,10 @@ function arm64_gas_emit_bitops(own a: Arm64Asm, mnem: string, ops: string[]): Ar
 
 function arm64_gas_emit_excl(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
   if (arm64_gas_family(mnem) == arm64_fam_excl_st()) {
-    if (ops.len() < 3) {
-      return a;
-    }
     util.push_bytes(a.code, arm64_excl_store(
       [], arm64_gas_excl_size(mnem, ops[1]),
       mnem.starts_with("stl"), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_mem_at(ops, 2, lm).base,
     ));
-    return a;
-  }
-  if (ops.len() < 2) {
     return a;
   }
   let size = arm64_gas_excl_size(mnem, ops[0]);
@@ -7245,17 +7191,11 @@ function arm64_gas_emit_barrier(own a: Arm64Asm, mnem: string, ops: string[]): A
     arm64_push_word(a.code, 0xd5033fdf);
     return a;
   }
-  if (ops.len() < 1) {
-    return a;
-  }
   util.push_bytes(a.code, arm64_barrier([], mnem == "dsb", arm64_barrier_opt(arm64_gas_trim(ops[0]))));
   return a;
 }
 
 function arm64_gas_emit_unscaled2(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
-  if (ops.len() < 2) {
-    return a;
-  }
   let rt = arm64_gas_reg(ops[0]);
   let m = arm64_gas_mem_at(ops, 1, lm);
   if (mnem == "ldursb" || mnem == "ldursh" || mnem == "ldursw") {
@@ -7278,9 +7218,6 @@ function arm64_gas_emit_unscaled2(own a: Arm64Asm, mnem: string, ops: string[], 
 }
 
 function arm64_gas_emit_pair(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
-  if (ops.len() < 3) {
-    return a;
-  }
   let base: i64 = 0xa8000000;
   let scale = 8;
   if (arm64_gas_is_w(ops[0])) {
@@ -7337,9 +7274,6 @@ function arm64_gas_emit_ldst_fp(own a: Arm64Asm, load: boolean, rt: i32, ops: st
 }
 
 function arm64_gas_emit_fpx(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
-  if (ops.len() < 4) {
-    return a;
-  }
   if (arm64_fp4_base(mnem) >= 0) {
     util.push_bytes(a.code, arm64_fp4([], arm64_fp4_base(mnem), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_reg(ops[3]), arm64_gas_is_sreg(ops[0])));
     return a;
@@ -7353,9 +7287,6 @@ function arm64_gas_emit_fpx(own a: Arm64Asm, mnem: string, ops: string[]): Arm64
 }
 
 function arm64_gas_emit_fcmp(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
-  if (ops.len() < 2) {
-    return a;
-  }
   let opc = 0;
   if (mnem == "fcmpe") {
     opc = 0x10;
@@ -7402,16 +7333,10 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
     return arm64_gas_emit_vecgen(a, mnem, ops);
   }
   if (fam == arm64_fam_sys()) {
-    if (ops.len() < 1) {
-      return a;
-    }
     util.push_bytes(a.code, arm64_exception([], mnem, arm64_gas_small_imm(ops[0], 65535)));
     return a;
   }
   if (fam == arm64_fam_indirect()) {
-    if (ops.len() < 1) {
-      return a;
-    }
     if (mnem == "blr") {
       util.push_bytes(a.code, arm64_blr([], arm64_gas_reg(ops[0])));
       return a;
@@ -7426,9 +7351,6 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
     return arm64_gas_emit_mulwide(a, mnem, ops);
   }
   if (fam == arm64_fam_crc()) {
-    if (ops.len() < 3) {
-      return a;
-    }
     util.push_bytes(a.code, arm64_rrr([], arm64_crc_base(mnem), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), false));
     return a;
   }
@@ -7466,9 +7388,6 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
     return arm64_gas_emit_pair(a, mnem, ops, lm);
   }
   if (fam == arm64_fam_fp3()) {
-    if (ops.len() < 3) {
-      return a;
-    }
     util.push_bytes(a.code, arm64_fp3([], arm64_fp3_base(mnem), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_is_sreg(ops[0])));
     return a;
   }
@@ -7488,9 +7407,6 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
     return arm64_gas_emit_ldst(a, mnem, ops, lm);
   }
   if (fam == arm64_fam_neg()) {
-    if (ops.len() < 2) {
-      return a;
-    }
     let nst = 0;
     let namt = 0;
     if (ops.len() >= 3) {
@@ -7501,9 +7417,6 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
     return a;
   }
   if (fam == arm64_fam_bfx()) {
-    if (ops.len() < 4) {
-      return a;
-    }
     let bfw = arm64_gas_is_w(ops[0]);
     let bfd = arm64_gas_reg(ops[0]);
     let bfn = arm64_gas_reg(ops[1]);
@@ -7517,9 +7430,6 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
     return a;
   }
   if (fam == arm64_fam_extend()) {
-    if (ops.len() < 2) {
-      return a;
-    }
     if (mnem == "sxtw") {
       util.push_bytes(a.code, arm64_sxtw([], arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])));
       return a;
@@ -7606,9 +7516,6 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
 }
 
 function arm64_gas_emit_movwide(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
-  if (ops.len() < 2) {
-    return a;
-  }
   if (mnem == "mov" || mnem == "movz") {
     let rd = arm64_gas_reg(ops[0]);
     if (ops[1].len() > 0 && ops[1][0] == b'#') {
@@ -7768,10 +7675,7 @@ function arm64_gas_emit_ldst(own a: Arm64Asm, mnem: string, ops: string[], lm: A
 }
 
 function arm64_gas_emit_shift(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
-  let imm = ops.len() >= 3 && ops[2].len() > 0 && ops[2][0] == b'#';
-  if (ops.len() < 3) {
-    return a;
-  }
+  let imm = ops[2].len() > 0 && ops[2][0] == b'#';
   let rd = arm64_gas_reg(ops[0]);
   let rn = arm64_gas_reg(ops[1]);
   let w = arm64_gas_is_w(ops[0]);
@@ -7800,9 +7704,6 @@ function arm64_gas_emit_shift(own a: Arm64Asm, mnem: string, ops: string[]): Arm
 }
 
 function arm64_gas_emit_muldiv(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
-  if (ops.len() < 3) {
-    return a;
-  }
   let rd = arm64_gas_reg(ops[0]);
   let rn = arm64_gas_reg(ops[1]);
   let rm = arm64_gas_reg(ops[2]);
@@ -7812,9 +7713,6 @@ function arm64_gas_emit_muldiv(own a: Arm64Asm, mnem: string, ops: string[]): Ar
     return a;
   }
   if (mnem == "msub") {
-    if (ops.len() < 4) {
-      return a;
-    }
     util.push_bytes(a.code, arm64_muladd([], 0x9b008000, rd, rn, rm, arm64_gas_reg(ops[3]), w));
     return a;
   }
@@ -7823,9 +7721,6 @@ function arm64_gas_emit_muldiv(own a: Arm64Asm, mnem: string, ops: string[]): Ar
 }
 
 function arm64_gas_emit_unscaled(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
-  if (ops.len() < 2) {
-    return a;
-  }
   let um = arm64_gas_mem_at(ops, 1, lm);
   let ufp = arm64_gas_fp_ldst_size(ops[0]);
   if (ufp > 0) {
@@ -8010,9 +7905,6 @@ function arm64_gas_emit_vecmov(own a: Arm64Asm, mnem: string, ops: string[]): Ar
 }
 
 function arm64_gas_emit_movi(own a: Arm64Asm, ops: string[]): Arm64Asm {
-  if (ops.len() < 2) {
-    return a;
-  }
   let mc = arm64_gas_vreg_arrof(ops[0]);
   let msz = arm64_gas_arr_size(mc);
   let mimm = arm64_gas_imm(ops[1]);
@@ -8036,9 +7928,6 @@ function arm64_gas_emit_movi(own a: Arm64Asm, ops: string[]): Arm64Asm {
 }
 
 function arm64_gas_emit_ldst_narrow(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
-  if (ops.len() < 2) {
-    return a;
-  }
   if ((mnem == "ldrb" || mnem == "strb") && ops.len() >= 3) {
     let pbb = arm64_gas_mem_at(ops, 1, lm).base;
     let poo = arm64_gas_imm(ops[2]);
@@ -8085,9 +7974,6 @@ function arm64_gas_emit_ldst_narrow(own a: Arm64Asm, mnem: string, ops: string[]
 }
 
 function arm64_gas_emit_fmov(own a: Arm64Asm, ops: string[]): Arm64Asm {
-  if (ops.len() < 2) {
-    return a;
-  }
   let d0 = arm64_gas_is_d(ops[0]);
   let d1 = arm64_gas_is_d(ops[1]);
   if (arm64_gas_is_s(ops[0])) {
@@ -9004,12 +8890,75 @@ function arm64_gas_label_line(own p: Arm64GasProg, own a: Arm64Asm, section: i32
 }
 
 // The operand faults of one instruction line, in the order they are reported.
+// A line with too few operands gets only the arity fault, because the other
+// checks read operands by index.
 function arm64_gas_line_faults(mnem: string, ops: string[], lmem: Arm64Mem): string[] {
+  if (ops.len() < arm64_gas_min_ops(mnem)) {
+    return [mnem + ":arity"];
+  }
   let out = arm64_gas_token_faults(mnem, ops, lmem);
   for fault in arm64_gas_form_faults(mnem, ops, lmem) {
     out = out.append(fault);
   }
   return out;
+}
+
+// The fewest operands a mnemonic takes. The vector families check their own
+// operand counts, so they return 0 here.
+// fern-lint: allow cyclomatic-complexity
+// Each family has one branch.
+function arm64_gas_min_ops(mnem: string): i32 {
+  let fam = arm64_gas_family(mnem);
+  if (fam == arm64_fam_sys() || fam == arm64_fam_indirect() || fam == arm64_fam_branch()) {
+    return 1;
+  }
+  if (fam == arm64_fam_barrier()) {
+    return if (mnem == "isb") { 0 } else { 1 };
+  }
+  if (fam == arm64_fam_addsub()) {
+    return if (mnem == "cmp" || mnem == "cmn") { 2 } else { 3 };
+  }
+  if (fam == arm64_fam_logical2()) {
+    return if (mnem == "tst" || mnem == "mvn") { 2 } else { 3 };
+  }
+  if (fam == arm64_fam_carry()) {
+    return if (mnem == "ngc" || mnem == "ngcs") { 2 } else { 3 };
+  }
+  if (fam == arm64_fam_mulwide()) {
+    return if (mnem == "madd" || arm64_gas_is_widening(mnem) && mnem != "smull" && mnem != "umull") { 4 } else { 3 };
+  }
+  if (fam == arm64_fam_muldiv()) {
+    return if (mnem == "msub") { 4 } else { 3 };
+  }
+  if (fam == arm64_fam_extr_ror()) {
+    return if (mnem == "extr") { 4 } else { 3 };
+  }
+  if (fam == arm64_fam_condsel()) {
+    if (mnem == "cset" || mnem == "csetm") {
+      return 2;
+    }
+    return if (mnem == "cinc" || mnem == "cinv" || mnem == "cneg") { 3 } else { 4 };
+  }
+  if (fam == arm64_fam_excl_ld() || fam == arm64_fam_acqrel()) {
+    return 2;
+  }
+  if (fam == arm64_fam_cbranch() || fam == arm64_fam_symaddr() || fam == arm64_fam_sysreg()
+    || fam == arm64_fam_movwide() || fam == arm64_fam_neg() || fam == arm64_fam_bitops()
+    || fam == arm64_fam_extend() || fam == arm64_fam_ldst() || fam == arm64_fam_ldst_narrow()
+    || fam == arm64_fam_unscaled() || fam == arm64_fam_unscaled2() || fam == arm64_fam_fcmp()
+    || fam == arm64_fam_funary() || fam == arm64_fam_fcvt() || fam == arm64_fam_fcvtz()
+    || fam == arm64_fam_cvtf() || fam == arm64_fam_fmov() || fam == arm64_fam_movi()) {
+    return 2;
+  }
+  if (fam == arm64_fam_tbranch() || fam == arm64_fam_logical3() || fam == arm64_fam_shift()
+    || fam == arm64_fam_pair() || fam == arm64_fam_excl_st() || fam == arm64_fam_swap()
+    || fam == arm64_fam_lse() || fam == arm64_fam_crc() || fam == arm64_fam_fp3()) {
+    return 3;
+  }
+  if (fam == arm64_fam_bitfield() || fam == arm64_fam_bfx() || fam == arm64_fam_fp4() || fam == arm64_fam_fpcond()) {
+    return 4;
+  }
+  return 0;
 }
 
 function arm64_gas_token_faults(mnem: string, ops: string[], lmem: Arm64Mem): string[] {
@@ -9319,8 +9268,12 @@ function arm64_gas_program_pass(src: string, words: u8[], origin: i32, relax: bo
       }
     }
     let lmem = arm64_gas_line_mem(ops);
-    for fault in arm64_gas_line_faults(mnem, ops, lmem) {
-      p = Arm64GasProg { ...p, unknown: p.unknown.append(fault) };
+    let faults = arm64_gas_line_faults(mnem, ops, lmem);
+    if (faults.len() > 0) {
+      for fault in faults {
+        p = Arm64GasProg { ...p, unknown: p.unknown.append(fault) };
+      }
+      continue;
     }
     if (mnem == "ldr" && util.index_of_sub(rest, "=") >= 0) {
       if (ops.len() != 2) {
