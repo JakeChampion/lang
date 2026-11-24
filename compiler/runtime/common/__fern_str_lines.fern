@@ -2,9 +2,16 @@ function __fern_str_lines(s: string): string[] {
   let out: string[] = [];
   let sl = s.len();
   let start = 0;
-  let i = 0;
-  while (i < sl) {
-    if (s[i] == 10) {
+  while (start < sl) {
+    let i = __memchr(s, 10, start);
+    if (i < 0) {
+      let tail = sl;
+      if (s[tail - 1] == 13) {
+        tail -= 1;
+      }
+      out = out.append(slice_unchecked(s, start, tail) + "");
+      start = sl;
+    } else {
       let end = i;
       if (end > start) {
         if (s[end - 1] == 13) {
@@ -14,14 +21,6 @@ function __fern_str_lines(s: string): string[] {
       out = out.append(slice_unchecked(s, start, end) + "");
       start = i + 1;
     }
-    i += 1;
-  }
-  if (start < sl) {
-    let tail = sl;
-    if (s[tail - 1] == 13) {
-      tail -= 1;
-    }
-    out = out.append(slice_unchecked(s, start, tail) + "");
   }
   return out;
 }
