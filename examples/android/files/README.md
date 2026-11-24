@@ -95,6 +95,20 @@ picks one or types its name. The password field shows dots. The app keeps
 the servers in a file that a key of the Android Keystore seals
 (`vault.fern`).
 
+## WebDAV
+
+`dav.fern` is a WebDAV client, for Nextcloud and for the WebDAV service of
+a NAS. A PROPFIND lists a folder, and a GET with a range reads a part of a
+file. A PUT writes a file whole, from memory or from a file of the phone.
+MKCOL makes a folder, DELETE deletes an item, and MOVE renames one. A
+rename does not replace an item that has the new name.
+
+The client reads the XML of a list with a small reader of its own. The
+reader keeps the local name of each tag, so each prefix of a namespace
+works. `dav_test.fern` checks it with the replies of RFC 4918, Nextcloud
+and Apache. `scripts/files-dav-check` runs `dav_live.fern` against the
+WebDAV server wsgidav, and the Android lane of CI runs that script.
+
 ## Other apps
 
 Android lets another app read a file only through a content provider.
