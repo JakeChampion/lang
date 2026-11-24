@@ -114,6 +114,20 @@ pub function config(id: identity.Identity, ticket_key: [u8]): Config {
   return Config { identity: id, alpn: [], tickets: true, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: ticket_key_of(ticket_key), client_roots: None };
 }
 
+// Construct a ticket-enabled configuration and report an invalid secret immediately.
+pub function try_config(id: identity.Identity, secret: [u8]): Result[Config, tls.TlsError] {
+  let c = config(id, secret);
+  c.validate_ticket_key()?;
+  return Ok(c);
+}
+
+pub function (c: Config) validate_ticket_key(): Result[void, tls.TlsError] {
+  if (c.tickets && c.ticket_key.len() != 32) {
+    return Err(tls.InvalidTicketKey);
+  }
+  return Ok(());
+}
+
 // Derives a ticket key from at least 32 bytes of secret material. A shorter
 // secret yields no key.
 pub function ticket_key_of(secret: [u8]): u8[] {
@@ -154,9 +168,7 @@ pub struct Step { session: Session, output: u8[], data: u8[], closed: boolean, r
 ```fern
 <<6 pub function start(config: Config, entropy: [u8]): Result[Step, tls.TlsError]>>=
 pub function start(config: Config, entropy: [u8]): Result[Step, tls.TlsError] {
-  if (config.tickets && config.ticket_key.len() != 32) {
-    return Err(tls.InvalidTicketKey);
-  }
+  config.validate_ticket_key()?;
   let sc = __handshake_config(config);
   let n = handshake.server_entropy(sc);
   if (entropy.len() != n + TICKET_ENTROPY) {

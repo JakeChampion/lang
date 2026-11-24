@@ -285,6 +285,12 @@ pub function (c: Config) with_tls(cfg: server.Config): Config {
   return Config { ...c, tls: Some(cfg.with_alpn(["http/1.1"])) };
 }
 
+// Check the prepared TLS configuration before installing it.
+pub function (c: Config) try_with_tls(cfg: server.Config): Result[Config, tls.TlsError] {
+  cfg.validate_ticket_key()?;
+  return Ok(c.with_tls(cfg));
+}
+
 pub function (c: Config) with_loopback(): Config {
   return Config { ...c, loopback: true };
 }
@@ -341,6 +347,7 @@ pub function run(port: i32, opts: Config, handler: (HttpRequest, platform.Host) 
 }
 
 pub function run_shutdown(port: i32, opts: Config, handler: (HttpRequest, platform.Host) => HttpResponse, shutdown: (string) => void): Result[i32, ListenError] {
+  __validate_tls(port, opts)?;
   let l = __serve_listener(port, opts);
   if (l.sock.fd < 0) {
     return Err(__listen_error(port, l.sock.fd));
@@ -401,17 +408,20 @@ function __shut(sock: Socket): i32 {
 
 ### `12 pub struct ListenError`
 
-A port the server could not bind: the server's own, or `metrics_port`.
+The port and cause of a startup failure. For a TLS configuration error, `tls_error` carries the TLS cause and `error` reports an invalid argument.
 
 ```fern
 <<12 pub struct ListenError>>=
-pub struct ListenError { port: i32, error: net.NetError }
+pub struct ListenError { port: i32, error: net.NetError, tls_error: Option[tls.TlsError] }
 
 impl cmp.Display for ListenError {}
 
 impl error.Error for ListenError {}
 
 pub function (e: ListenError) message(): string {
+  if let Some(cause) = e.tls_error {
+    return "cannot listen on port " + e.port.to_string() + ": " + cause.message();
+  }
   return "cannot listen on port " + e.port.to_string() + ": " + e.error.message();
 }
 
@@ -435,7 +445,16 @@ pub function exit_code(r: Result[i32, ListenError]): i32 {
 }
 
 function __listen_error(port: i32, code: i32): ListenError {
-  return ListenError { port: port, error: net.error_from_host(code) };
+  return ListenError { port: port, error: net.error_from_host(code), tls_error: None };
+}
+
+function __validate_tls(port: i32, opts: Config): Result[void, ListenError] {
+  if let Some(cfg) = opts.tls {
+    if let Err(cause) = cfg.validate_ticket_key() {
+      return Err(ListenError { port: port, error: net.error_from_host(-22), tls_error: Some(cause) });
+    }
+  }
+  return Ok(());
 }
 
 function __listener_of(port: i32, opts: Config): __Listen {
@@ -474,6 +493,7 @@ pub function run_with[S](port: i32, opts: Config, init: S, handler: (S, HttpRequ
 }
 
 pub function run_with_shutdown[S](port: i32, opts: Config, init: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), shutdown: (string, S) => void): Result[i32, ListenError] {
+  __validate_tls(port, opts)?;
   let l = __serve_listener(port, opts);
   if (l.sock.fd < 0) {
     return Err(__listen_error(port, l.sock.fd));
@@ -5216,6 +5236,7 @@ pub function supervise_with_shutdown[S](port: i32, opts: Config, init: S, handle
 ```fern
 <<67 function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[Writer])>>=
 function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[Writer]) => Result[i32, ListenError]): Result[i32, ListenError] {
+  __validate_tls(port, opts)?;
   let workers = opts.workers;
   if (workers < 1) {
     workers = cpu_count();
@@ -5525,7 +5546,7 @@ function __exporter(drv: async.RealDriver, opts: Config, snap: Option[Writer]): 
       return Ok(Some(e));
     },
     Err(e) => {
-      return Err(ListenError { port: opts.metrics_port, error: e });
+      return Err(ListenError { port: opts.metrics_port, error: e, tls_error: None });
     }
   }
   return Ok(None);

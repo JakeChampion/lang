@@ -156,7 +156,14 @@ function main(): i32 {
   }
   match (identity.from_pem(cert, key)) {
     Ok(id) => {
-      let cfg: serve.Config = serve.config().with_tls(server.config(id, rand.bytes(32)));
+      let invalid = server.config(id, __alloc_u8(31));
+      if (serve.config().try_with_tls(invalid).is_ok()) {
+        return 6;
+      }
+      let Err(refusal) = serve.run(0, serve.config().with_tls(invalid), handle) else { return 7; };
+      if let None = refusal.tls_error { return 8; }
+      let Ok(tickets) = server.try_config(id, rand.bytes(32)) else { return 9; };
+      let Ok(cfg) = serve.config().try_with_tls(tickets) else { return 10; };
       match (env("SERVE_STREAM")) {
         Some(_) => {
           cfg = serve.Config { ...cfg, stream_bodies: true };
