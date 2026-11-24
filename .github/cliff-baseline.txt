@@ -79,4 +79,4 @@
 # unbaselined arch reports UNBASELINED rather than failing.
 
 x86_64/checker.cliff_bytes	42068832
-x86_64/checker.cliff_count	578641
+x86_64/checker.cliff_count	551452
