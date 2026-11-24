@@ -850,6 +850,7 @@ own_tree_match                                       0
 owned_array_exchange_inputs                          0
 owned_callback_result_composition                    0
 owned_field_match_data                               0
+owned_handle_through_try                             0
 owned_let_arm_result_in_loop                         0
 owned_literal_field_values                           0
 owned_match_results_rebuild_literal                  0
