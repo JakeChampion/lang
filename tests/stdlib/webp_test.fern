@@ -1,0 +1,98 @@
+import "std/result";
+import "std/test";
+import "std/utf8";
+import "std/webp";
+
+// Still files of 3 by 2 pixels that Pillow wrote: lossy (a VP8 chunk),
+// lossy with alpha (VP8X, ALPH and VP8 chunks), and lossless (a VP8L chunk
+// of an odd size, with a byte of padding).
+function lossy(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 76u8, 0u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 32u8, 64u8, 0u8, 0u8, 0u8, 48u8, 2u8, 0u8, 157u8, 1u8, 42u8, 3u8, 0u8, 2u8, 0u8, 0u8, 192u8, 18u8, 37u8, 168u8, 2u8, 116u8, 186u8, 1u8, 248u8, 0u8, 3u8, 32u8, 241u8, 202u8, 128u8, 0u8, 254u8, 251u8, 156u8, 119u8, 26u8, 218u8, 13u8, 87u8, 255u8, 191u8, 16u8, 187u8, 94u8, 247u8, 195u8, 222u8, 31u8, 45u8, 127u8, 221u8, 255u8, 255u8, 185u8, 15u8, 15u8, 222u8, 227u8, 203u8, 247u8, 33u8, 225u8, 251u8, 253u8, 187u8, 32u8, 0u8, 0u8];
+}
+
+function lossy_alpha(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 106u8, 0u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 88u8, 10u8, 0u8, 0u8, 0u8, 16u8, 0u8, 0u8, 0u8, 2u8, 0u8, 0u8, 1u8, 0u8, 0u8, 65u8, 76u8, 80u8, 72u8, 7u8, 0u8, 0u8, 0u8, 0u8, 0u8, 255u8, 255u8, 255u8, 255u8, 255u8, 0u8, 86u8, 80u8, 56u8, 32u8, 60u8, 0u8, 0u8, 0u8, 48u8, 2u8, 0u8, 157u8, 1u8, 42u8, 3u8, 0u8, 2u8, 0u8, 0u8, 192u8, 18u8, 37u8, 168u8, 2u8, 116u8, 186u8, 1u8, 248u8, 0u8, 3u8, 32u8, 252u8, 38u8, 128u8, 0u8, 254u8, 251u8, 33u8, 170u8, 105u8, 91u8, 120u8, 23u8, 23u8, 255u8, 239u8, 245u8, 94u8, 254u8, 171u8, 223u8, 213u8, 127u8, 187u8, 79u8, 255u8, 111u8, 135u8, 251u8, 124u8, 63u8, 219u8, 225u8, 255u8, 237u8, 136u8, 0u8, 0u8];
+}
+
+function lossless(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 40u8, 0u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 76u8, 27u8, 0u8, 0u8, 0u8, 47u8, 2u8, 64u8, 0u8, 0u8, 47u8, 80u8, 133u8, 65u8, 142u8, 249u8, 143u8, 1u8, 128u8, 154u8, 182u8, 13u8, 216u8, 80u8, 231u8, 95u8, 78u8, 141u8, 232u8, 127u8, 76u8, 47u8, 0u8];
+}
+
+function le24_at(b: [u8], at: i32): i32 {
+  return b[at] as i32 | b[at + 1] as i32 << 8 | b[at + 2] as i32 << 16;
+}
+
+function word_at(b: [u8], at: i32): i32 {
+  return le24_at(b, at) | b[at + 3] as i32 << 24;
+}
+
+function tag(b: [u8], at: i32): string {
+  return utf8.from_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]).unwrap_or("????");
+}
+
+function slice(b: [u8], from: i32, to: i32): u8[] {
+  let out: u8[] = [];
+  for i in from..to {
+    out = out.append(b[i]);
+  }
+  return out;
+}
+
+// The tags of the chunks of the file, the fields of VP8X and ANIM, and for
+// each ANMF chunk its duration and whether its image chunks are those of
+// the still file.
+function described(file: [u8], stills: [u8[]], images_from: [i32]): string {
+  let parts: string[] = [tag(file, 0) + " " + (word_at(file, 4) == file.len() - 8).to_string() + " " + tag(file, 8)];
+  let at = 12;
+  let frame = 0;
+  while (at + 8 <= file.len()) {
+    let t = tag(file, at);
+    let size = word_at(file, at + 4);
+    let data = at + 8;
+    if (t == "VP8X") {
+      parts = parts.append(t + " " + file[data].to_string() + " " + (le24_at(file, data + 4) + 1).to_string() + "x" + (le24_at(file, data + 7) + 1).to_string());
+    } else if (t == "ANIM") {
+      parts = parts.append(t + " loops " + (file[data + 4] as i32 | file[data + 5] as i32 << 8).to_string());
+    } else if (t == "ANMF") {
+      let still = stills[frame];
+      let same = slice(file, data + 16, data + size) == slice(still, images_from[frame], still.len());
+      parts = parts.append(t + " " + le24_at(file, data + 12).to_string() + "ms " + file[data + 15].to_string() + " " + same.to_string());
+      frame += 1;
+    } else {
+      parts = parts.append(t);
+    }
+    at = data + size + size % 2;
+  }
+  return parts.join(" | ");
+}
+
+function test_animation(): test.TestOutcome {
+  let stills = [lossy(), lossy_alpha(), lossless()];
+  let file = match (webp.animate(3, 2, stills, [100, 250, 70000])) {
+    Ok(f) => f,
+    Err(e) => {
+      return test.fail(e.message());
+    },
+  };
+  return test.assert_eq(described(file, stills, [12, 30, 12]), "RIFF true WEBP | VP8X 18 3x2 | ANIM loops 0 | ANMF 100ms 2 true | ANMF 250ms 2 true | ANMF 70000ms 2 true");
+}
+
+function message(stills: u8[][], durations: i32[], w: i32): string {
+  return match (webp.animate(w, 2, stills, durations)) {
+    Ok(_) => "ok",
+    Err(e) => e.message(),
+  };
+}
+
+function test_errors(): test.TestOutcome {
+  let riff_with_no_image: u8[] = [82u8, 73u8, 70u8, 70u8, 12u8, 0u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 69u8, 88u8, 73u8, 70u8, 0u8, 0u8, 0u8, 0u8];
+  let got = [message([], [], 3), message([lossy()], [], 3), message([lossy(), [1u8]], [1, 2], 3), message([riff_with_no_image], [1], 3), message([lossy()], [1], 0)];
+  return test.assert_eq(got.join(" | "), "webp: an animation needs one frame or more, and one duration for each frame | webp: an animation needs one frame or more, and one duration for each frame | webp: a frame is not a still WebP file | webp: a frame is not a still WebP file | webp: the width and the height must be from 1 to 16384");
+}
+
+function main(): i32 {
+  let r = test.new("std/webp");
+  r = r.it("animation of lossy, alpha and lossless frames", test_animation);
+  r = r.it("errors", test_errors);
+  return r.finish();
+}

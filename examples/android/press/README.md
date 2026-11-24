@@ -21,6 +21,16 @@ A slider sets the quality from 1 to 100. A second slider sets the size from
 image before the encoder. For JPEG, a box keeps all the chroma samples
 (4:4:4). Without it, a block of 2 by 2 pixels has one chroma sample (4:2:0).
 
+## Animations
+
+Press opens an animated GIF or WebP on Android 12 (API level 31) and later.
+PNG writes an animated PNG (APNG), WebP an animated WebP, and GIF an
+animated GIF, with the delay of each frame. JPEG and QOI have no animation,
+so Press keeps the first frame. Press keeps at most 192 MB of frames.
+
+`std/webp` puts the still WebP files that the phone encodes for the frames
+in one animated file.
+
 ## Comparison, save and share
 
 The picture shows the original left of a white line and the result right

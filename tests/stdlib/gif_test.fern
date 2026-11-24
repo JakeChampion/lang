@@ -200,7 +200,7 @@ function test_transparency(): test.TestOutcome {
 function test_animation(): test.TestOutcome {
   let a = stripes(10, 8, 3);
   let b = stripes(10, 8, 5);
-  let file = match (gif.encode_frames(10, 8, [gif.Frame { pixels: a, delay_ms: 120 }, gif.Frame { pixels: b, delay_ms: 40 }], gif.options())) {
+  let file = match (gif.encode_frames(10, 8, [a, b], [120, 40], gif.options())) {
     Ok(f) => f,
     Err(_) => [],
   };
@@ -212,8 +212,8 @@ function test_animation(): test.TestOutcome {
   return test.assert_eq(r.loops.to_string() + " " + r.frames.len().to_string() + " " + delays.join(",") + " " + (r.frames[0] == a && r.frames[1] == b).to_string(), "true 2 12,4 true");
 }
 
-function message(w: i32, h: i32, frames: gif.Frame[]): string {
-  return match (gif.encode_frames(w, h, frames, gif.options())) {
+function message(w: i32, h: i32, frames: u8[][], delays: i32[]): string {
+  return match (gif.encode_frames(w, h, frames, delays, gif.options())) {
     Ok(_) => "ok",
     Err(e) => e.message(),
   };
@@ -221,8 +221,8 @@ function message(w: i32, h: i32, frames: gif.Frame[]): string {
 
 function test_errors(): test.TestOutcome {
   let one: u8[] = [1, 2, 3, 255];
-  let got = [message(0, 1, [gif.Frame { pixels: one, delay_ms: 0 }]), message(70000, 1, [gif.Frame { pixels: one, delay_ms: 0 }]), message(2, 1, [gif.Frame { pixels: one, delay_ms: 0 }]), message(1, 1, [])];
-  return test.assert_eq(got.join(" | "), "gif: the width and the height must be from 1 to 65535 | gif: the width and the height must be from 1 to 65535 | gif: the length of the pixels of a frame does not agree with the dimensions | gif: an image needs one frame or more");
+  let got = [message(0, 1, [one], [0]), message(70000, 1, [one], [0]), message(2, 1, [one], [0]), message(1, 1, [], []), message(1, 1, [one], [])];
+  return test.assert_eq(got.join(" | "), "gif: the width and the height must be from 1 to 65535 | gif: the width and the height must be from 1 to 65535 | gif: the length of the pixels of a frame does not agree with the dimensions | gif: an image needs one frame or more, and one delay for each frame | gif: an image needs one frame or more, and one delay for each frame");
 }
 
 function main(): i32 {

@@ -1,0 +1,103 @@
+import "std/png";
+import "std/result";
+import "std/test";
+import "std/utf8";
+
+function frame(k: i32): u8[] {
+  let px: u8[] = [];
+  for y in 0..6 {
+    for x in 0..5 {
+      px = px.append(((x + k) * 40) as u8).append((y * 30) as u8).append((k * 100) as u8).append(if (x == 0) { 0u8 } else { 255u8 });
+    }
+  }
+  return px;
+}
+
+function word_at(b: [u8], at: i32): i32 {
+  return b[at] as i32 << 24 | b[at + 1] as i32 << 16 | b[at + 2] as i32 << 8 | b[at + 3] as i32;
+}
+
+function tag(b: [u8], at: i32): string {
+  return utf8.from_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]).unwrap_or("????");
+}
+
+function slice(b: [u8], from: i32, to: i32): u8[] {
+  let out: u8[] = [];
+  for i in from..to {
+    out = out.append(b[i]);
+  }
+  return out;
+}
+
+// The data of the IDAT chunk of a PNG file.
+function idat(file: [u8]): u8[] {
+  let at = 8;
+  while (at + 8 <= file.len()) {
+    let size = word_at(file, at);
+    if (tag(file, at + 4) == "IDAT") {
+      return slice(file, at + 8, at + 8 + size);
+    }
+    at += 12 + size;
+  }
+  return [];
+}
+
+// The chunks of an APNG: the frame count and the plays of acTL, the
+// sequence number and the delay of each fcTL, and whether the data of each
+// frame is the data of a PNG of that frame alone.
+function test_chunks(): test.TestOutcome {
+  let frames = [frame(0), frame(1), frame(2)];
+  let file = match (png.encode_animation_rgba8(5, 6, frames, [100, 2000, 40], png.options())) {
+    Ok(f) => f,
+    Err(e) => {
+      return test.fail(e.message());
+    },
+  };
+  let parts: string[] = [];
+  let at = 8;
+  let k = 0;
+  while (at + 8 <= file.len()) {
+    let size = word_at(file, at);
+    let t = tag(file, at + 4);
+    let data = at + 8;
+    if (t == "acTL") {
+      parts = parts.append(t + " " + word_at(file, data).to_string() + " " + word_at(file, data + 4).to_string());
+    } else if (t == "fcTL") {
+      let delay = file[data + 20] as i32 << 8 | file[data + 21] as i32;
+      let den = file[data + 22] as i32 << 8 | file[data + 23] as i32;
+      parts = parts.append(t + " " + word_at(file, data).to_string() + " " + delay.to_string() + "/" + den.to_string());
+    } else if (t == "IDAT" || t == "fdAT") {
+      let from = if (t == "fdAT") { data + 4 } else { data };
+      let alone = match (png.encode_rgba8(5, 6, frames[k])) {
+        Ok(f) => idat(f),
+        Err(_) => [],
+      };
+      let seq = if (t == "fdAT") { " " + word_at(file, data).to_string() } else { "" };
+      parts = parts.append(t + seq + " " + (slice(file, from, data + size) == alone).to_string());
+      k += 1;
+    } else {
+      parts = parts.append(t);
+    }
+    at = data + size + 4;
+  }
+  return test.assert_eq(parts.join(" | "), "IHDR | acTL 3 0 | fcTL 0 100/1000 | IDAT true | fcTL 1 2000/1000 | fdAT 2 true | fcTL 3 40/1000 | fdAT 4 true | IEND");
+}
+
+function test_errors(): test.TestOutcome {
+  let none = match (png.encode_animation_rgba8(5, 6, [], [], png.options())) {
+    Ok(_) => "ok",
+    Err(e) => e.message(),
+  };
+  let short = match (png.encode_animation_rgba8(5, 6, [[1u8]], [0], png.options())) {
+    Ok(_) => "ok",
+    Err(e) => e.message(),
+  };
+  return test.assert_eq(none + " | " + short, "an animated PNG needs one frame or more, and one delay for each frame | RGB buffer length does not match the PNG dimensions");
+}
+
+function main(): i32 {
+  let r = test.new("std/png animation");
+  r = r.it("the chunks of an APNG", test_chunks);
+  r = r.it("errors", test_errors);
+  return r.finish();
+}

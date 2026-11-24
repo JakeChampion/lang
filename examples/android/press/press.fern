@@ -7,6 +7,7 @@ import "std/gif";
 import "std/jpeg";
 import "std/png";
 import "std/qoi";
+import "std/webp";
 import "std/worker";
 import "./pixels";
 
@@ -25,8 +26,28 @@ pub const GIF: i32 = 4;
 pub const PREVIEW: i32 = 960;
 
 // The image that the person opened: the name of its file, the size of the
-// file in bytes, its pixels, and its pixels at the size of the preview.
-pub struct Picked { name: string, bytes: i32, image: draw.Image, preview: draw.Image }
+// file in bytes, its pixels, and its pixels at the size of the preview. An
+// animation has its frames and their delays in milliseconds, and `image` is
+// its first frame. A still image has no frames.
+pub struct Picked { name: string, bytes: i32, image: draw.Image, preview: draw.Image, frames: draw.Image[], delays: i32[] }
+
+// The image is an animation.
+pub function animated(p: Picked): boolean {
+  return p.frames.len() > 1;
+}
+
+// The formats that keep an animation: APNG, animated WebP and GIF.
+pub function animates(f: i32): boolean {
+  return f == PNG || f == WEBP || f == GIF;
+}
+
+// The frames that an encoding of `format` takes, and their delays.
+function frames_for(p: Picked, format: i32): (draw.Image[], i32[]) {
+  if (animated(p) && animates(format)) {
+    return (p.frames, p.delays);
+  }
+  return ([p.image], [0]);
+}
 
 // The choices of the person: the format, the quality from 1 to 100, the
 // size in percent of the sides, all the chroma samples for JPEG, lossless
@@ -37,15 +58,16 @@ pub function settings(): Settings {
   return Settings { format: JPEG, quality: 75, scale: 100, full_chroma: false, lossless: false, colors: 256, dither: true };
 }
 
-// A file that Press made in `format`, with the size of its image and the
-// image of the file at the size of the preview.
-pub struct Output { format: i32, bytes: u8[], width: i32, height: i32, preview: draw.Image }
+// A file that Press made in `format`, with the size and the frames of its
+// image, and its first frame at the size of the preview.
+pub struct Output { format: i32, bytes: u8[], width: i32, height: i32, frames: i32, preview: draw.Image }
 
-// The work of a worker: the settings of `generation` for `image`.
-pub struct Job { generation: i32, image: draw.Image, settings: Settings, opaque: boolean }
+// The work of a worker: the settings of `generation` for the frames, one
+// for a still image.
+pub struct Job { generation: i32, frames: draw.Image[], delays: i32[], settings: Settings, opaque: boolean }
 
 // What the program asks of the phone after a message. `effects` does it.
-pub enum Want { Nothing, Pick, Webp(i32, draw.Image), Preview(Output), Keep, Send }
+pub enum Want { Nothing, Pick, Webp(i32, draw.Image[], i32[]), Preview(Output), Keep, Send }
 
 pub struct Model {
   source: Option[Picked],
@@ -86,8 +108,8 @@ pub enum Msg {
   Dither,
   Split(f64),
   Tick,
-  Encoded(i32, u8[], i32, i32),
-  Resized(i32, draw.Image),
+  Encoded(i32, u8[], i32, i32, i32),
+  Resized(i32, draw.Image[], i32[]),
   Save,
   Share,
   Dismiss,
@@ -181,20 +203,20 @@ pub function update(own m0: Model, msg: Msg): Model {
     Tick => {
       return ticked(m);
     },
-    Encoded(generation, bytes, w, h) => {
+    Encoded(generation, bytes, w, h, frames) => {
       if (generation != m.generation) {
         return Model { ...m, busy: false };
       }
       if (bytes.len() == 0) {
         return Model { ...m, busy: false, done: generation, note: "Press could not encode the image." };
       }
-      return Model { ...m, want: Preview(Output { format: s.format, bytes: bytes, width: w, height: h, preview: no_image() }) };
+      return Model { ...m, want: Preview(Output { format: s.format, bytes: bytes, width: w, height: h, frames: frames, preview: no_image() }) };
     },
-    Resized(generation, img) => {
+    Resized(generation, frames, delays) => {
       if (generation != m.generation) {
         return Model { ...m, busy: false };
       }
-      return Model { ...m, want: Webp(generation, img) };
+      return Model { ...m, want: Webp(generation, frames, delays) };
     },
     Save => {
       return ready(m, Keep);
@@ -234,10 +256,11 @@ function ticked(own m: Model): Model {
     return Model { ...m, quiet: m.quiet + 1 };
   }
   let s = m.settings;
+  let (frames, delays) = frames_for(p, s.format);
   if (s.format == WEBP && s.scale == 100) {
-    return Model { ...m, quiet: 0, busy: true, want: Webp(m.generation, p.image) };
+    return Model { ...m, quiet: 0, busy: true, want: Webp(m.generation, frames, delays) };
   }
-  return Model { ...m, quiet: 0, busy: true, job: Some(Job { generation: m.generation, image: p.image, settings: s, opaque: m.opaque }) };
+  return Model { ...m, quiet: 0, busy: true, job: Some(Job { generation: m.generation, frames: frames, delays: delays, settings: s, opaque: m.opaque }) };
 }
 
 pub function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
@@ -247,16 +270,40 @@ pub function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
   return [worker.spawn((): Msg => run_job(job))];
 }
 
-// The work of a worker: it resizes the image, then encodes JPEG or PNG, or
-// gives the resized image for the phone to encode as WebP.
+// The work of a worker: it resizes the frames, then encodes them, or gives
+// them to the phone to encode as WebP.
 pub function run_job(job: Job): Msg {
   let s = job.settings;
-  let (w, h) = pixels.scaled_size(job.image.width, job.image.height, s.scale);
-  let img = pixels.resized(job.image, w, h);
-  if (s.format == WEBP) {
-    return Resized(job.generation, img);
+  let first = job.frames[0];
+  let (w, h) = pixels.scaled_size(first.width, first.height, s.scale);
+  let frames: draw.Image[] = [];
+  for f in job.frames {
+    frames = frames.append(pixels.resized(f, w, h));
   }
-  return Encoded(job.generation, encoded(img, s, job.opaque), w, h);
+  if (s.format == WEBP) {
+    return Resized(job.generation, frames, job.delays);
+  }
+  if (frames.len() > 1) {
+    return Encoded(job.generation, animation(frames, job.delays, s), w, h, frames.len());
+  }
+  return Encoded(job.generation, encoded(frames[0], s, job.opaque), w, h, 1);
+}
+
+// The animated PNG or GIF file of the frames.
+pub function animation(frames: [draw.Image], delays: [i32], s: Settings): u8[] {
+  let straight: u8[][] = [];
+  for f in frames {
+    straight = straight.append(pixels.unpremultiplied(f));
+  }
+  let w = frames[0].width;
+  let h = frames[0].height;
+  let made = if (s.format == GIF) { gif.encode_frames(w, h, straight, delays, gif.Options { colors: s.colors, dither: s.dither }).ok() } else { png.encode_animation_rgba8(w, h, straight, delays, png_options()).ok() };
+  return made.unwrap_or([]);
+}
+
+// The rows of a PNG take the filter that makes them smallest.
+function png_options(): png.Options {
+  return png.Options { filter: png.Filter.Adaptive, compression: png.Compression.Balanced };
 }
 
 // The file of `img` in a format that Fern encodes, or no bytes when the
@@ -283,7 +330,7 @@ pub function encoded(img: draw.Image, s: Settings, opaque: boolean): u8[] {
       Err(_) => [],
     };
   }
-  let made = if (opaque) { png.encode_rgb8(img.width, img.height, pixels.rgb(img)) } else { png.encode_rgba8(img.width, img.height, pixels.unpremultiplied(img)) };
+  let made = if (opaque) { png.encode_rgb8_with_options(img.width, img.height, pixels.rgb(img), png_options()) } else { png.encode_rgba8_with_options(img.width, img.height, pixels.unpremultiplied(img), png_options()) };
   return match (made) {
     Ok(bytes) => bytes,
     Err(_) => [],
@@ -315,12 +362,11 @@ pub function effects(m: Model, d: Device): Model {
       }
       return Model { ...m, want: Nothing };
     },
-    Webp(generation, img) => {
-      let s = m.settings;
-      let Some(bytes) = d.webp(img, s.quality, s.lossless) else {
+    Webp(generation, frames, delays) => {
+      let Some(bytes) = webp_file(frames, delays, m.settings, d) else {
         return Model { ...m, want: Nothing, busy: false, done: generation, note: "This phone could not encode WebP." };
       };
-      return effects(Model { ...m, want: Preview(Output { format: WEBP, bytes: bytes, width: img.width, height: img.height, preview: no_image() }) }, d);
+      return effects(Model { ...m, want: Preview(Output { format: WEBP, bytes: bytes, width: frames[0].width, height: frames[0].height, frames: frames.len(), preview: no_image() }) }, d);
     },
     Preview(out) => {
       let Some(p) = m.source else {
@@ -346,6 +392,22 @@ pub function effects(m: Model, d: Device): Model {
       return Model { ...m, want: Nothing, note: if (shared) { "" } else { "Press could not share the image." } };
     }
   }
+}
+
+// The WebP file of the frames: the still file that the phone encodes, or an
+// animation of the still files of the frames.
+function webp_file(frames: [draw.Image], delays: [i32], s: Settings, d: Device): Option[u8[]] {
+  let stills: u8[][] = [];
+  for f in frames {
+    let Some(bytes) = d.webp(f, s.quality, s.lossless) else {
+      return None;
+    };
+    stills = stills.append(bytes);
+  }
+  if (stills.len() == 1) {
+    return Some(stills[0]);
+  }
+  return webp.animate(frames[0].width, frames[0].height, stills, delays).ok();
 }
 
 pub function format_name(f: i32): string {
@@ -425,8 +487,8 @@ pub function view(m: Model, s: ui.Screen): ui.El[Msg] {
   for c in controls(m, p) {
     body = body.append(c);
   }
-  body = body.append(ui.row([ui.outlined_button("Share", Msg.Share), ui.button("Save", Msg.Save)]).spaced(12.0).justified(ui.END).wide());
-  let page: ui.El[Msg][] = [ui.app_bar(p.name, Some(Close), []), ui.column(body).spaced(12.0).padding_xy(16.0, 8.0).wide().scroll("settings").grow(1.0)];
+  let actions = ui.row([ui.outlined_button("Share", Msg.Share), ui.button("Save", Msg.Save)]).spaced(12.0).justified(ui.END).padding_xy(16.0, 8.0).wide();
+  let page: ui.El[Msg][] = [ui.app_bar(p.name, Some(Close), []), ui.column(body).spaced(12.0).padding_xy(16.0, 8.0).wide().scroll("settings").grow(1.0), actions];
   if (m.note.len() > 0) {
     page = page.append(ui.snackbar(m.note, "OK", Dismiss));
   }
@@ -466,19 +528,50 @@ function label(t: string): ui.El[Msg] {
 }
 
 function facts(m: Model, p: Picked): ui.El[Msg] {
-  let original: ui.El[Msg] = ui.text("Original: " + size_text(p.bytes) + " · " + dims(p.image.width, p.image.height)).colored(ui.MUTED);
+  let original: ui.El[Msg] = ui.text("Original: " + size_text(p.bytes) + " · " + dims(p.image.width, p.image.height) + frames_text(p.frames.len())).colored(ui.MUTED);
   let busy = if (m.busy || m.done != m.generation) { " · updating" } else { "" };
   let result: ui.El[Msg] = match (m.output) {
-    Some(out) => ui.text(format_name(out.format) + ": " + size_text(out.bytes.len()) + " · " + dims(out.width, out.height) + " · " + change_text(p.bytes, out.bytes.len()) + busy).weighted(500),
+    Some(out) => ui.text(output_name(out) + ": " + size_text(out.bytes.len()) + " · " + dims(out.width, out.height) + frames_text(out.frames) + " · " + change_text(p.bytes, out.bytes.len()) + busy).weighted(500),
     None => ui.text("Compressing…").weighted(500),
   };
-  return ui.column([result.wrapped(), original.wrapped()]).spaced(4.0).wide();
+  let lines = [result.wrapped(), original.wrapped()];
+  if let Some(out) = m.output {
+    if (out.bytes.len() > p.bytes && m.done == m.generation) {
+      lines = lines.append(ui.text("The result is bigger than the original. " + smaller_hint(m.settings)).colored(ui.ERROR).wrapped());
+    }
+  }
+  return ui.column(lines).spaced(4.0).wide();
+}
+
+// What makes the output of the settings `s` smaller.
+function smaller_hint(s: Settings): string {
+  if (s.format == JPEG || s.format == WEBP && !s.lossless) {
+    return "A lower quality or a smaller size makes it smaller.";
+  }
+  if (s.format == GIF) {
+    return "Fewer colours or a smaller size make it smaller.";
+  }
+  return "A smaller size, or JPEG or WebP, makes it smaller.";
+}
+
+// The count of the frames of an animation, or nothing for a still image.
+pub function frames_text(n: i32): string {
+  return if (n > 1) { " · " + n.to_string() + " frames" } else { "" };
+}
+
+// The name of the format of an output: an animated PNG is an APNG.
+pub function output_name(out: Output): string {
+  return if (out.format == PNG && out.frames > 1) { "APNG" } else { format_name(out.format) };
 }
 
 // The sliders and the boxes of the format.
 function controls(m: Model, p: Picked): ui.El[Msg][] {
   let s = m.settings;
   let out: ui.El[Msg][] = [];
+  if (animated(p)) {
+    let note = if (animates(s.format)) { "Press keeps the " + p.frames.len().to_string() + " frames of the animation." } else { format_name(s.format) + " has no animation, so Press keeps the first frame." };
+    out = out.append(ui.text(note).colored(ui.MUTED).wrapped());
+  }
   if (s.format == JPEG || s.format == WEBP && !s.lossless) {
     out = out.append(named_slider("Quality", s.quality.to_string(), (s.quality - 1) as f64 / 99.0, (part: f64): Msg => Quality(part)));
   }

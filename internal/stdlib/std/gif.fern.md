@@ -10,7 +10,7 @@ The indices of each frame go through LZW compression with codes of 3 to 12 bits.
 
 ## Contracts
 
-The encoder accepts a width and a height from 1 to 65535. Each frame has RGBA pixels with four bytes each. Other dimensions give `InvalidDimensions`, a frame with a different length gives `InvalidBufferLength`, and no frames gives `NoFrames`. A count of colors below 2 is 2, and above 256 is 256. The delay of a frame is in milliseconds, and the file keeps it in hundredths of a second.
+The encoder accepts a width and a height from 1 to 65535. Each frame has RGBA pixels with four bytes each. Other dimensions give `InvalidDimensions`, and a frame with a different length gives `InvalidBufferLength`. No frames, or a count of delays that is not the count of frames, gives `NoFrames`. A count of colors below 2 is 2, and above 256 is 256. The delay of a frame is in milliseconds, and the file keeps it in hundredths of a second.
 
 ## Executable example
 
@@ -47,9 +47,6 @@ import "std/i32";
 
 ```fern
 <<frames and errors>>=
-// The RGBA pixels of a frame, and the time that it shows, in milliseconds.
-pub struct Frame { pixels: u8[], delay_ms: i32 }
-
 // The colors of the palette, from 2 to 256, and the error diffusion.
 pub struct Options { colors: i32, dither: boolean }
 
@@ -69,7 +66,7 @@ pub function (e: EncodeError) message(): string {
       return "gif: the length of the pixels of a frame does not agree with the dimensions";
     },
     NoFrames => {
-      return "gif: an image needs one frame or more";
+      return "gif: an image needs one frame or more, and one delay for each frame";
     }
   }
 }
@@ -80,13 +77,13 @@ pub function (e: EncodeError) to_string(): string {
 
 // The GIF file of one frame of RGBA pixels.
 pub function encode_rgba8(width: i32, height: i32, pixels: u8[], opts: Options): Result[u8[], EncodeError] {
-  return encode_frames(width, height, [Frame { pixels: pixels, delay_ms: 0 }], opts);
+  return encode_frames(width, height, [pixels], [0], opts);
 }
 
-// The GIF file of the frames, which loops for ever when there are two or
-// more.
-pub function encode_frames(width: i32, height: i32, frames: [Frame], opts: Options): Result[u8[], EncodeError] {
-  if let Some(e) = checked(width, height, frames) {
+// The GIF file of the frames, RGBA pixels each, which loops for ever when
+// there are two or more. Each frame shows for its delay in milliseconds.
+pub function encode_frames(width: i32, height: i32, frames: [u8[]], delays_ms: [i32], opts: Options): Result[u8[], EncodeError] {
+  if let Some(e) = checked(width, height, frames, delays_ms) {
     return Err(e);
   }
   let colors = opts.colors.max(2).min(256);
@@ -100,33 +97,32 @@ pub function encode_frames(width: i32, height: i32, frames: [Frame], opts: Optio
   let out = header(width, height, palette, bits, frames.len() > 1);
   let transparent = if (clear) { palette.len() / 3 } else { -1 };
   let cache = __alloc_i32(32768);
-  for f in frames {
-    let (indices, next_cache) = indexed(f.pixels, width, height, palette, transparent, opts.dither, cache);
+  for i in 0..frames.len() {
+    let (indices, next_cache) = indexed(frames[i], width, height, palette, transparent, opts.dither, cache);
     cache = next_cache;
-    out = frame(out, width, height, f.delay_ms, transparent, if (bits < 2) { 2 } else { bits }, indices);
+    out = frame(out, width, height, delays_ms[i], transparent, if (bits < 2) { 2 } else { bits }, indices);
   }
   return Ok(out.append(59u8));
 }
 
-function checked(width: i32, height: i32, frames: [Frame]): Option[EncodeError] {
+function checked(width: i32, height: i32, frames: [u8[]], delays_ms: [i32]): Option[EncodeError] {
   if (width <= 0 || height <= 0 || width > 65535 || height > 65535) {
     return Some(InvalidDimensions);
   }
-  if (frames.len() == 0) {
+  if (frames.len() == 0 || delays_ms.len() != frames.len()) {
     return Some(NoFrames);
   }
   let n = width as i64 * (height as i64) * 4i64;
   for f in frames {
-    if (f.pixels.len() as i64 != n) {
+    if (f.len() as i64 != n) {
       return Some(InvalidBufferLength);
     }
   }
   return None;
 }
 
-function has_transparency(frames: [Frame]): boolean {
-  for f in frames {
-    let px = f.pixels;
+function has_transparency(frames: [u8[]]): boolean {
+  for px in frames {
     let i = 3;
     while (i < px.len()) {
       if (px[i] < 128u8) {
@@ -153,13 +149,12 @@ function cell(r: i32, g: i32, b: i32): i32 {
   return r >> 3 << 10 | g >> 3 << 5 | b >> 3;
 }
 
-function histogram(frames: [Frame]): Histogram {
+function histogram(frames: [u8[]]): Histogram {
   let count = __alloc_i64(32768);
   let rs = __alloc_i64(32768);
   let gs = __alloc_i64(32768);
   let bs = __alloc_i64(32768);
-  for f in frames {
-    let px = f.pixels;
+  for px in frames {
     let i = 0;
     while (i + 3 < px.len()) {
       if (px[i + 3] >= 128u8) {

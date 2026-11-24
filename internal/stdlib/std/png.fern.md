@@ -66,7 +66,7 @@ import "core/error";
 
 ```fern
 <<3 pub enum EncodeError>>=
-pub enum EncodeError { InvalidDimensions, InvalidBufferLength }
+pub enum EncodeError { InvalidDimensions, InvalidBufferLength, NoFrames }
 ```
 
 ### `4 pub function (e: EncodeError) message(): string`
@@ -80,6 +80,9 @@ pub function (e: EncodeError) message(): string {
     },
     InvalidBufferLength => {
       return "RGB buffer length does not match the PNG dimensions";
+    },
+    NoFrames => {
+      return "an animated PNG needs one frame or more, and one delay for each frame";
     }
   }
 }
@@ -131,6 +134,31 @@ pub function encode_rgba8_with_options(width: i32, height: i32, pixels: [u8], op
 // The PNG of `pixels` with `bpp` bytes for each pixel: 3 for RGB and 4 for
 // RGBA.
 function encode(width: i32, height: i32, pixels: [u8], opts: Options, bpp: i32): Result[u8[], EncodeError] {
+  let data = match (image_data(width, height, pixels, opts, bpp)) {
+    Ok(d) => d,
+    Err(e) => {
+      return Err(e);
+    },
+  };
+  let output = chunk(signature_and_header(width, height, bpp), "IDAT", data);
+  return Ok(chunk(output, "IEND", []));
+}
+
+// The signature and the IHDR chunk.
+function signature_and_header(width: i32, height: i32, bpp: i32): u8[] {
+  let output: u8[] = [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8];
+  let header: u8[] = binary.append_u32_be([], width as u32);
+  header = binary.append_u32_be(header, height as u32);
+  let color_type: u8 = 2 as u8;
+  if (bpp == 4) {
+    color_type = 6 as u8;
+  }
+  header = header.append(8 as u8).append(color_type).append(0 as u8).append(0 as u8).append(0 as u8);
+  return chunk(output, "IHDR", header);
+}
+
+// The zlib stream of the filtered rows of `pixels`.
+function image_data(width: i32, height: i32, pixels: [u8], opts: Options, bpp: i32): Result[u8[], EncodeError] {
   if (width <= 0 || height <= 0 || width as i64 * (bpp as i64) + 1 > 2147483647) {
     return Err(InvalidDimensions);
   }
@@ -153,15 +181,6 @@ function encode(width: i32, height: i32, pixels: [u8], opts: Options, bpp: i32):
     rows = write_row(rows, row * (stride as i32 + 1) + 1, pixels, row * (stride as i32), stride as i32, filter, bpp);
     row += 1;
   }
-  let output: u8[] = [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8];
-  let header: u8[] = binary.append_u32_be([], width as u32);
-  header = binary.append_u32_be(header, height as u32);
-  let color_type: u8 = 2 as u8;
-  if (bpp == 4) {
-    color_type = 6 as u8;
-  }
-  header = header.append(8 as u8).append(color_type).append(0 as u8).append(0 as u8).append(0 as u8);
-  output = chunk(output, "IHDR", header);
   let payload: u8[] = [];
   match (opts.compression) {
     Compression.Balanced => {
@@ -173,8 +192,46 @@ function encode(width: i32, height: i32, pixels: [u8], opts: Options, bpp: i32):
   }
   let compressed: u8[] = binary.append_bytes([120 as u8, 1 as u8], payload);
   compressed = binary.append_u32_be(compressed, deflate.adler32(rows));
-  output = chunk(output, "IDAT", compressed);
+  return Ok(compressed);
+}
+
+// The animated PNG of the frames, RGBA pixels each, which loops for ever.
+// Each frame shows for its delay in milliseconds, from 0 to 65535.
+pub function encode_animation_rgba8(width: i32, height: i32, frames: [u8[]], delays_ms: [i32], opts: Options): Result[u8[], EncodeError] {
+  if (frames.len() == 0 || delays_ms.len() != frames.len()) {
+    return Err(NoFrames);
+  }
+  let output = signature_and_header(width, height, 4);
+  output = chunk(output, "acTL", binary.append_u32_be(binary.append_u32_be([], frames.len() as u32), 0 as u32));
+  let sequence = 0;
+  for i in 0..frames.len() {
+    let data = match (image_data(width, height, frames[i], opts, 4)) {
+      Ok(d) => d,
+      Err(e) => {
+        return Err(e);
+      },
+    };
+    output = chunk(output, "fcTL", frame_control(sequence, width, height, delays_ms[i]));
+    sequence += 1;
+    if (i == 0) {
+      output = chunk(output, "IDAT", data);
+    } else {
+      output = chunk(output, "fdAT", binary.append_bytes(binary.append_u32_be([], sequence as u32), data));
+      sequence += 1;
+    }
+  }
   return Ok(chunk(output, "IEND", []));
+}
+
+// The fcTL of a frame that covers the image, with no disposal and no
+// blending.
+function frame_control(sequence: i32, width: i32, height: i32, delay_ms: i32): u8[] {
+  let delay = if (delay_ms < 0) { 0 } else if (delay_ms > 65535) { 65535 } else { delay_ms };
+  let out: u8[] = binary.append_u32_be([], sequence as u32);
+  out = binary.append_u32_be(binary.append_u32_be(out, width as u32), height as u32);
+  out = binary.append_u32_be(binary.append_u32_be(out, 0 as u32), 0 as u32);
+  out = out.append((delay >> 8) as u8).append((delay & 255) as u8).append(3u8).append(232u8);
+  return out.append(0u8).append(0u8);
 }
 ```
 
