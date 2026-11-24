@@ -258,11 +258,11 @@ func directCallsBeforeOwner(stmts []ast.Stmt, owner string) map[*ast.Ident]bool 
 
 // lentPathMoved reports a consumed field of the lender that the loan covers:
 // the field that the loan names, or each field when the loan has the whole
-// lender.
+// lender. A wide loan of a named field covers only that field.
 func lentPathMoved(moved map[string]ast.Position, loan callbackLoan) (ast.Position, bool) {
 	head, _, _ := strings.Cut(loan.path, "/")
 	field, named := strings.CutPrefix(head, "f:")
-	if named && !loan.wide {
+	if named {
 		at, consumed := moved[loan.param.Name+"."+field]
 		return at, consumed
 	}
