@@ -126,7 +126,7 @@ pub function infer_func_returns(mod: parser.Module, widen_lambdas: boolean): par
       if (fd.body.len() == 0 || fd.receiver_type.len() > 0 || fd.all_type_params.len() > 0) {
         continue;
       }
-      if (fd.ret_type != "" && !(widen_lambdas && fd.ret_type == "i32" && fd.name.len() > 6 && fd.name.starts_with("__lam_"))) {
+      if (fd.ret_type != "" && !(widen_lambdas && fd.ret_type == "i32" && parser.is_lambda_name(fd.name))) {
         continue;
       }
       let inferred = irt_infer_func(fd, parser.Module { ...mod, funcs: funcs });

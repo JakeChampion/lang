@@ -54,10 +54,17 @@ pub function requests(ctx: usize, read: i32): i32 { return on_ui_request(read, 0
 static int locals, sets, value = 99;
 static void require(int ok, const char *what) { if (!ok) { fprintf(stderr, "%s: locals=%d sets=%d value=%d\n", what, locals, sets, value); exit(1); } }
 
-static uintptr_t get_class(uintptr_t e, uintptr_t obj) { require(obj == 100, "class of the activity"); locals++; return 200; }
+// The bindings look up each class by its name, keep a global reference to it, and work in a local frame.
+static int saved_locals, frames, globals;
+static uintptr_t find_class(uintptr_t e, const char *name) { locals++; return 9000; }
+static uintptr_t new_global(uintptr_t e, uintptr_t obj) { globals++; return obj; }
+static void delete_global(uintptr_t e, uintptr_t obj) { globals--; }
+static int32_t push(uintptr_t e, int32_t n) { frames++; saved_locals = locals; return 0; }
+static uintptr_t pop(uintptr_t e, uintptr_t keep) { frames--; locals = saved_locals; return 0; }
 static uintptr_t method(uintptr_t e, uintptr_t cls, const char *name, const char *sig) {
-  require(cls == 200 && !strcmp(name, "setRequestedOrientation") && !strcmp(sig, "(I)V"), name);
-  return 1;
+  if (!strcmp(name, "setRequestedOrientation")) { require(!strcmp(sig, "(I)V"), name); return 1; }
+  // The bindings look up each member of the Activity class. The test calls only this one.
+  return 99;
 }
 static void call(uintptr_t e, uintptr_t obj, uintptr_t id, const uint64_t *args) {
   require(id == 1 && obj == 100, "setRequestedOrientation of the activity");
@@ -80,7 +87,11 @@ int main(int argc, char **argv) {
   table[15] = (uintptr_t)none;
   table[17] = (uintptr_t)none;
   table[23] = (uintptr_t)release;
-  table[31] = (uintptr_t)get_class;
+  table[6] = (uintptr_t)find_class;
+  table[19] = (uintptr_t)push;
+  table[20] = (uintptr_t)pop;
+  table[21] = (uintptr_t)new_global;
+  table[22] = (uintptr_t)delete_global;
   table[33] = (uintptr_t)method;
   table[63] = (uintptr_t)call;
   uintptr_t env = (uintptr_t)table;
@@ -101,7 +112,7 @@ int main(int argc, char **argv) {
   require(sets == 2 && value == 7 && locals == 0, "portrait");
   turn((uintptr_t)ctx, 0);
   require(requests((uintptr_t)ctx, fds[0]) == 1, "requests");
-  require(sets == 3 && value == -1 && locals == 0, "back to the device");
+  require(sets == 3 && value == -1 && locals == 0 && frames == 0 && globals == 0, "back to the device");
   return 0;
 }
 `

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs examples/android/files/dav_live.fern against wsgidav, a WebDAV
-# server. It needs the wsgidav and cheroot packages of Python. CI installs
-# them with pip (.github/workflows/android.yml).
+# server, which scripts/files-dav-serve starts. CI installs wsgidav with
+# pipx (.github/workflows/android.yml).
 #
 # usage: scripts/files-dav-check [FERN]
 set -euo pipefail
@@ -12,35 +12,17 @@ port=${FILES_DAV_PORT:-44480}
 user=fernfiles
 password=live-check-1
 
-command -v wsgidav > /dev/null || { echo "files-dav-check: wsgidav is not on PATH" >&2; exit 2; }
-
+serve="$root/scripts/files-dav-serve"
+export FILES_DAV_USER=$user FILES_DAV_PASSWORD=$password
 work=$(mktemp -d)
-trap 'kill "$server" 2> /dev/null || true; rm -rf "$work"' EXIT
-mkdir -p "$work/share"
-cat > "$work/wsgidav.yaml" << CONF
-host: 127.0.0.1
-port: $port
-provider_mapping:
-  "/files": "$work/share"
-simple_dc:
-  user_mapping:
-    "/files":
-      "$user":
-        password: "$password"
-http_authenticator:
-  accept_basic: true
-  accept_digest: false
-  default_to_digest: false
-verbose: 1
-CONF
+secure=$(mktemp -d)
+trap '"$serve" stop "$work"; "$serve" stop "$secure"; rm -rf "$work" "$secure"' EXIT
 
 "$fern" -stdlib "$root/internal/stdlib" -o "$work/live" "$root/examples/android/files/dav_live.fern"
-wsgidav --config "$work/wsgidav.yaml" > "$work/server.log" 2>&1 &
-server=$!
-for _ in $(seq 1 50); do
-  (exec 3<> "/dev/tcp/127.0.0.1/$port") 2> /dev/null && break
-  sleep 0.2
-done
+"$serve" start "$work" "$port"
+# A second server speaks HTTPS with a self-signed certificate, for the pin.
+"$serve" start "$secure" $((port + 1)) tls
+export FILES_DAV_TLS="https://127.0.0.1:$((port + 1))/files $user $password $(cat "$secure/fingerprint")"
 if FILES_DAV_SERVER="http://127.0.0.1:$port/files $user $password" "$work/live" > "$work/out.txt" 2>&1 && grep -q '^# fail 0' "$work/out.txt"; then
   grep '^# pass' "$work/out.txt"
 else

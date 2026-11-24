@@ -1418,6 +1418,9 @@ function __roots_key(roots: Option[verify.Roots]): string {
       for c in r.certs {
         h = h.update(c.raw);
       }
+      for pin in r.pins {
+        h = h.update("pin".bytes()).update(pin);
+      }
       return hex.encode(h.finish());
     },
     None => {
@@ -1904,6 +1907,13 @@ function __datagram_watched(sock: Socket, max: i32, wait: Duration, cancel: i32)
 <<34 pub function send(req: Request): Result[HttpResponse, FetchError]>>=
 pub function send(req: Request): Result[HttpResponse, FetchError] {
   return __send_closing(Policy { ...public_policy(), public_only: false }, req);
+}
+
+// Sends `req` with `roots` in place of the trust of the system, for
+// example `verify.pinned` for a server with a self-signed certificate.
+// Private addresses are allowed, as with `send`.
+pub function send_trusting(req: Request, roots: verify.Roots): Result[HttpResponse, FetchError] {
+  return __send_closing(Policy { ...public_policy(), public_only: false, roots: Some(roots) }, req);
 }
 
 pub function send_public(req: Request): Result[HttpResponse, FetchError] {

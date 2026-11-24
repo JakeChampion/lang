@@ -1,5 +1,6 @@
 import "std/test";
 import "core/int";
+import "std/crypto";
 import "std/hex";
 import "std/codec";
 import "std/tls/pem";
@@ -451,6 +452,31 @@ function test_a_looping_chain_is_refused(): test.TestOutcome {
   return test.assert_eq(outcome(verify.server(loop_chain(), verify.no_roots(), "victim.test", time.timestamp_from_unix(1750000000 as i64))), "tls verify: no path from the certificate reaches a trusted root");
 }
 
+// A pinned leaf is trusted with no root and no matching name. A leaf that
+// is not pinned gives its own fingerprint.
+function test_pinned(): test.TestOutcome {
+  let fingerprint = crypto.sha256(ec_leaf());
+  let pinned = verify.pinned([fingerprint]);
+  let ok = outcome(verify.server([ec_leaf()], pinned, "nas.local", now()));
+  let chain = outcome(verify.server([ec_leaf(), ec_int()], pinned, "other.example", now()));
+  let other = match (verify.server([rsa_leaf()], pinned, "rsa.example", now())) {
+    Err(verify.NotPinned(seen)) => seen == hex.encode(crypto.sha256(rsa_leaf())),
+    _ => false,
+  };
+  let empty = match (verify.server([], pinned, "nas.local", now())) {
+    Err(verify.EmptyChain) => true,
+    _ => false,
+  };
+  let unpinned = outcome(verify.server([ec_leaf(), ec_int()], ec_roots(), "example.com", now()));
+  if (ok != "ok example.com" || chain != "ok example.com") {
+    return test.fail("a pinned leaf must be trusted: " + ok + " / " + chain);
+  }
+  if (!other || !empty) {
+    return test.fail("a leaf that is not pinned, or no leaf, must be refused");
+  }
+  return test.assert_eq(unpinned, "ok example.com");
+}
+
 function main(): i32 {
   let r = test.new("std/tls/verify");
   r = r.it("valid chains", test_valid_chains);
@@ -469,6 +495,7 @@ function main(): i32 {
   r = r.it("a looping chain is refused", test_a_looping_chain_is_refused);
   r = r.it("an intermediate that is not for servers issues no server certificate", test_an_intermediate_limits_the_purpose);
   r = r.it("RFC 8448's CertificateVerify", test_certificate_verify);
+  r = r.it("a pinned certificate", test_pinned);
   return r.finish();
 }
 

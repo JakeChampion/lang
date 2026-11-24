@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Starts or stops a WebDAV server (wsgidav) for the checks of
+# examples/android/files. The server listens on 127.0.0.1 only. Its folder
+# /files is the directory WORK/share, and the user is FILES_DAV_USER with
+# the password FILES_DAV_PASSWORD.
+#
+# With "tls", the server speaks HTTPS with a new self-signed certificate,
+# and WORK/fingerprint holds the SHA-256 fingerprint of that certificate.
+#
+# usage: scripts/files-dav-serve start WORK PORT [tls]
+#        scripts/files-dav-serve stop WORK
+set -euo pipefail
+
+user=${FILES_DAV_USER:-fernfiles}
+password=${FILES_DAV_PASSWORD:-live-check-1}
+action=${1:-}
+work=${2:-}
+[ -n "$work" ] || { sed -n '11,12p' "$0" >&2; exit 2; }
+
+case "$action" in
+  stop)
+    [ -f "$work/server.pid" ] && kill "$(cat "$work/server.pid")" 2> /dev/null || true
+    exit 0
+    ;;
+  start) ;;
+  *)
+    sed -n '11,12p' "$0" >&2
+    exit 2
+    ;;
+esac
+
+port=${3:?files-dav-serve: start needs a port}
+tls=${4:-}
+command -v wsgidav > /dev/null || { echo "files-dav-serve: wsgidav is not on PATH" >&2; exit 2; }
+mkdir -p "$work/share"
+cat > "$work/wsgidav.yaml" << CONF
+host: 127.0.0.1
+port: $port
+provider_mapping:
+  "/files": "$work/share"
+simple_dc:
+  user_mapping:
+    "/files":
+      "$user":
+        password: "$password"
+http_authenticator:
+  accept_basic: true
+  accept_digest: false
+  default_to_digest: false
+verbose: 1
+CONF
+if [ "$tls" = tls ]; then
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 2 \
+    -subj "/CN=fern-nas" -keyout "$work/key.pem" -out "$work/cert.pem" 2> /dev/null
+  openssl x509 -in "$work/cert.pem" -outform der | sha256sum | cut -d' ' -f1 > "$work/fingerprint"
+  printf 'ssl_certificate: "%s"\nssl_private_key: "%s"\n' "$work/cert.pem" "$work/key.pem" >> "$work/wsgidav.yaml"
+fi
+nohup wsgidav --config "$work/wsgidav.yaml" > "$work/server.log" 2>&1 &
+echo $! > "$work/server.pid"
+for _ in $(seq 1 50); do
+  (exec 3<> "/dev/tcp/127.0.0.1/$port") 2> /dev/null && exit 0
+  sleep 0.2
+done
+echo "files-dav-serve: wsgidav does not answer on port $port" >&2
+cat "$work/server.log" >&2
+exit 1

@@ -46,7 +46,7 @@ function test_text_of_a_reply_that_is_not_xml(): test.TestOutcome {
 }
 
 function test_addresses(): test.TestOutcome {
-  let s = dav.Server { url: "https://nas.local:5006/home/", user: "jo", password: "pw" };
+  let s = dav.Server { url: "https://nas.local:5006/home/", user: "jo", password: "pw", pin: "" };
   return all([
     test.assert_eq(dav.address(s, ""), "https://nas.local:5006/home/"),
     test.assert_eq(dav.address(s, "Films/a b&c.mkv"), "https://nas.local:5006/home/Films/a%20b%26c.mkv"),

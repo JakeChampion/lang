@@ -7,6 +7,7 @@ import "std/android/testkit";
 import "std/android/text";
 import "std/android/ui/sim";
 import "std/test";
+import "./dav";
 import "./files";
 import "./prefs";
 import "./smb";
@@ -39,8 +40,16 @@ function fixture(): string {
   return dir;
 }
 
+// The smb.Server of a saved server, or an empty one for a WebDAV server.
+function smb_of(s: files.Saved): smb.Server {
+  return match (s.link) {
+    store.Smb(x) => x,
+    store.Dav(_) => smb.Server { host: "", port: 0, share: "", user: "", password: "", domain: "" },
+  };
+}
+
 function nas(): files.Saved {
-  return files.Saved { name: "Films", server: smb.Server { host: "192.168.1.20", port: 445, share: "media", user: "jo", password: "pw", domain: "" } };
+  return files.Saved { name: "Films", link: store.Smb(smb.Server { host: "192.168.1.20", port: 445, share: "media", user: "jo", password: "pw", domain: "" }) };
 }
 
 // The decoder of the tests: bytes that start with 1 are a red tile.
@@ -198,39 +207,52 @@ function test_folder_rename_delete(): test.TestOutcome {
   return test.assert_eq(gone && folder_gone, true);
 }
 
+// A tap on `label`, after the form scrolls down to it when it is below the
+// screen.
+function tap_far(own s: sim.Sim[files.Model, files.Msg], label: string): sim.Sim[files.Model, files.Msg] {
+  let next = s;
+  for i in 0..6 {
+    if (sim.place_of(next, label, 0).is_some()) {
+      break;
+    }
+    next = sim.settle(sim.drag(next, 360, 1200, 360, 400, 800i64));
+  }
+  return sim.tap(next, label);
+}
+
 function test_servers(): test.TestOutcome {
   let dir = fixture();
   let s = simulator(dir, []);
   s = sim.tap(s, "Add a server");
   preview(s, "08-server");
-  s = sim.tap(s, "Save");
-  if (!sim.shows(s, "Give the address and the share.")) {
+  s = tap_far(s, "Save");
+  if (s.shell.app.fault != "Give the address and the share.") {
     return test.fail("a server with no address must give a note");
   }
   s = sim.type_in(s, "host", "nas.local");
   s = sim.type_in(s, "share", "media");
   s = sim.type_in(s, "user", "jo");
   s = sim.type_in(s, "password", "secret");
-  s = sim.tap(s, "Save");
+  s = tap_far(s, "Save");
   let saved = s.shell.app.servers;
-  if (saved.len() != 1 || saved[0].name != "media on nas.local" || saved[0].server.password != "secret" || read_file(dir + "/.saved").unwrap_or("") != "1") {
+  if (saved.len() != 1 || saved[0].name != "media on nas.local" || smb_of(saved[0]).password != "secret" || read_file(dir + "/.saved").unwrap_or("") != "1") {
     return test.fail("the app did not save the server");
   }
   // An address with a port gives the port, and the form shows it again.
   s = sim.tap(s, "Edit media on nas.local");
   s = sim.type_in(s, "host", "nas.local:4450");
-  s = sim.tap(s, "Save");
+  s = tap_far(s, "Save");
   let moved = s.shell.app.servers;
-  if (moved.len() != 1 || moved[0].server.host != "nas.local" || moved[0].server.port != 4450) {
+  if (moved.len() != 1 || smb_of(moved[0]).host != "nas.local" || smb_of(moved[0]).port != 4450) {
     return test.fail("an address with a port did not give the port");
   }
   s = sim.tap(s, "Edit media on nas.local");
-  if (s.shell.app.draft.server.host != "nas.local:4450") {
+  if (smb_of(s.shell.app.draft).host != "nas.local:4450") {
     return test.fail("the form did not show the port of the server");
   }
   s = sim.type_in(s, "host", "nas.local");
-  s = sim.tap(s, "Save");
-  if (s.shell.app.servers[0].server.port != 445) {
+  s = tap_far(s, "Save");
+  if (smb_of(s.shell.app.servers[0]).port != 445) {
     return test.fail("an address with no port did not give the port of SMB");
   }
   let plain = smb.Server { host: "", port: 445, share: "x", user: "", password: "", domain: "" };
@@ -241,16 +263,93 @@ function test_servers(): test.TestOutcome {
     }
   }
   s = sim.tap(s, "Edit media on nas.local");
-  s = sim.tap(s, "Remove");
-  s = sim.tap(s, "Confirm removal");
+  s = tap_far(s, "Remove");
+  s = tap_far(s, "Confirm removal");
   let none = s.shell.app.servers.len() == 0 && read_file(dir + "/.saved").unwrap_or("") == "0";
   // A server that does not answer gives a note in the folder, not a crash.
-  let lost = files.Saved { name: "Lost", server: smb.Server { host: "127.0.0.1", port: 1, share: "x", user: "", password: "", domain: "" } };
+  let lost = files.Saved { name: "Lost", link: store.Smb(smb.Server { host: "127.0.0.1", port: 1, share: "x", user: "", password: "", domain: "" }) };
   let t = done(sim.tap(simulator(dir, [lost]), "Lost"));
   preview(t, "09-lost");
   let told = t.shell.app.fault.len() > 0 && !t.shell.app.loading;
   let removed = remove_dir_all(dir);
   return test.assert_eq(none && told, true);
+}
+
+function all_of(outcomes: test.TestOutcome[]): test.TestOutcome {
+  for outcome in outcomes {
+    if let test.Fail(_) = outcome {
+      return outcome;
+    }
+  }
+  return test.pass();
+}
+
+// The name, the address, the user and the password of a saved WebDAV
+// server, or "smb".
+function dav_text(saved: files.Saved): string {
+  return match (saved.link) {
+    store.Dav(x) => saved.name + "|" + x.url + "|" + x.user + "|" + x.password,
+    store.Smb(_) => "smb",
+  };
+}
+
+// A WebDAV server needs an address with http:// or https://, and gets the
+// name of its last folder and its host. The user and the password stay
+// when the kind changes.
+function test_dav_server(): test.TestOutcome {
+  let dir = fixture();
+  let s = simulator(dir, []);
+  s = sim.tap(s, "Add a server");
+  s = sim.type_in(s, "user", "jo");
+  s = sim.tap(s, "WebDAV server");
+  preview(s, "19-dav-server");
+  s = sim.type_in(s, "url", "nas.local/home");
+  s = sim.type_in(s, "password", "secret");
+  s = tap_far(s, "Save");
+  if (s.shell.app.fault != "Give the address of the WebDAV folder, with https://.") {
+    return test.fail("an address with no scheme must give a note, not " + s.shell.app.fault);
+  }
+  s = sim.type_in(s, "url", "https://nas.local:5006/home/");
+  s = tap_far(s, "Save");
+  let saved = s.shell.app.servers;
+  let shown = if (saved.len() == 1) { dav_text(saved[0]) } else { "none" };
+  let listed = sim.shows(s, "https://nas.local:5006/home/");
+  let removed = remove_dir_all(dir);
+  return all_of([
+    test.assert_eq(shown, "home on nas.local|https://nas.local:5006/home/|jo|secret"),
+    test.assert_eq(listed, true),
+    test.assert_eq(files.dav_name("http://10.0.2.2:44480/files"), "files on 10.0.2.2"),
+    test.assert_eq(files.dav_name("https://cloud.example"), "cloud.example"),
+  ]);
+}
+
+// A WebDAV server with a certificate that the phone does not trust shows
+// its fingerprint, and the person can trust it: the saved server then has
+// it as its pin.
+function test_trust_certificate(): test.TestOutcome {
+  let dir = fixture();
+  let web = files.Saved { name: "home on nas", link: store.Dav(dav.Server { url: "https://127.0.0.1:1/home", user: "jo", password: "pw", pin: "" }) };
+  let s = sim.tap(simulator(dir, [web]), "home on nas");
+  let revision = s.shell.app.revision;
+  s = sim.settle(sim.send(s, files.Untrusted(revision, "0aff10")));
+  preview(s, "20-untrusted");
+  let shown = sim.shows(s, "0A:FF:10") && s.shell.app.fault == dav.UNTRUSTED;
+  s = sim.tap(s, "Trust this certificate");
+  let pin = match (s.shell.app.servers[0].link) {
+    store.Dav(x) => x.pin,
+    store.Smb(_) => "smb",
+  };
+  let place_pin = match (s.shell.app.place) {
+    store.Remote(store.Dav(x)) => x.pin,
+    _ => "none",
+  };
+  let removed = remove_dir_all(dir);
+  return all_of([
+    test.assert_eq(shown, true),
+    test.assert_eq(pin + " " + place_pin, "0aff10 0aff10"),
+    test.assert_eq(s.shell.app.untrusted, ""),
+    test.assert_eq(dav.shown_fingerprint("ab01"), "AB:01"),
+  ]);
 }
 
 function test_picture_and_select_all(): test.TestOutcome {
@@ -402,7 +501,7 @@ function test_server_thumbs(): test.TestOutcome {
     entries = entries.append(smb.Entry { name: "p" + (100 + i).to_string() + ".jpg", dir: false, size: 3000000i64, modified: 0i64 });
   }
   let local = files.Model { ...m, page: files.Browse, place: store.Local, entries: entries, grid: false };
-  let remote = files.Model { ...local, place: store.Remote(server) };
+  let remote = files.Model { ...local, place: store.Remote(store.Smb(server)) };
   let gridded = files.Model { ...remote, grid: true };
   let on_phone = files.thumb_names(local);
   let in_list = files.thumb_names(remote);
@@ -497,6 +596,8 @@ function main(): i32 {
   r = r.it("copy and move a selection", test_copy_and_move);
   r = r.it("make a folder, rename, preview and delete", test_folder_rename_delete);
   r = r.it("save and remove a server", test_servers);
+  r = r.it("save a WebDAV server", test_dav_server);
+  r = r.it("trust the certificate of a WebDAV server", test_trust_certificate);
   r = r.it("show a picture and select all", test_picture_and_select_all);
   r = r.it("open a file in another app", test_open);
   r = r.it("keep the pins, the recent files and the sort order", test_pins_recent_and_prefs);

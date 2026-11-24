@@ -103,6 +103,18 @@ file. A PUT writes a file whole, from memory or from a file of the phone.
 MKCOL makes a folder, DELETE deletes an item, and MOVE renames one. A
 rename does not replace an item that has the new name.
 
+The form of a server has a choice between SMB and WebDAV. A WebDAV server
+has an address with `https://` or `http://`, a user and a password.
+`store.Link` holds either kind, so each screen, each copy, the stream of a
+video and the file picker of the system work with both. A copy to a
+WebDAV server sends each file whole in one step, from a file of the phone.
+
+A NAS often has a certificate of its own, which the phone does not trust.
+The folder then shows the SHA-256 fingerprint of that certificate, and a
+button that trusts it. The saved server keeps the fingerprint as its pin,
+and the client then trusts only a certificate with that fingerprint
+(`verify.pinned` and `fetch.send_trusting`).
+
 The client reads the XML of a list with a small reader of its own. The
 reader keeps the local name of each tag, so each prefix of a namespace
 works. `dav_test.fern` checks it with the replies of RFC 4918, Nextcloud
@@ -170,6 +182,8 @@ The lane also starts Samba with `scripts/files-samba-serve`. The check
 then adds that server in the app, reads a file of the share, and copies a
 file in each direction. Last, it reads the server through the provider of
 documents, as the file picker of the system does.
+It then starts wsgidav with `scripts/files-dav-serve`, adds that WebDAV
+server in the app, and does the same read and copies with it.
 
 ```sh
 fern -apk files.apk examples/android/files/app.fern

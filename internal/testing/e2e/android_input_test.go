@@ -195,7 +195,13 @@ static uintptr_t named(const char *name) {
 }
 static int is(uintptr_t id, const char *name) { return id >= 1 && id <= (uintptr_t)count && !strcmp(names[id - 1], name); }
 static int mode(uintptr_t obj) { return obj >= 601 && obj <= 603; }
-static uintptr_t get_class(uintptr_t e, uintptr_t obj) { live++; return mode(obj) ? 1600 : obj + 1000; }
+// The bindings look up each class by its name, keep a global reference to it, and work in a local frame.
+static int saved_live, frames, globals;
+static uintptr_t find_class(uintptr_t e, const char *name) { live++; return 9000; }
+static uintptr_t new_global(uintptr_t e, uintptr_t obj) { globals++; return obj; }
+static void delete_global(uintptr_t e, uintptr_t obj) { globals--; }
+static int32_t push(uintptr_t e, int32_t n) { frames++; saved_live = live; return 0; }
+static uintptr_t pop(uintptr_t e, uintptr_t keep) { frames--; live = saved_live; return 0; }
 static uintptr_t member(uintptr_t e, uintptr_t cls, const char *name, const char *sig) { return named(name); }
 static uintptr_t object(uintptr_t e, uintptr_t obj, uintptr_t id, uintptr_t args) {
   live++;
@@ -234,9 +240,14 @@ static uintptr_t table[240], env, activity[8];
 static void *window(const char *path) {
   void *lib = dlopen(path, RTLD_NOW);
   if (!lib) { fprintf(stderr, "%s\n", dlerror()); exit(2); }
+  table[6] = (uintptr_t)find_class;
+  table[19] = (uintptr_t)push;
+  table[20] = (uintptr_t)pop;
+  table[21] = (uintptr_t)new_global;
+  table[22] = (uintptr_t)delete_global;
   table[15] = (uintptr_t)exception;
+  table[17] = (uintptr_t)exception;
   table[23] = (uintptr_t)release;
-  table[31] = (uintptr_t)get_class;
   table[33] = (uintptr_t)member;
   table[36] = (uintptr_t)object;
   table[51] = (uintptr_t)integer;
@@ -283,7 +294,7 @@ int main(int argc, char **argv) {
   // InputDevice.SOURCE_CLASS_POINTER is 2.
   require(asked == 1 && source == 2 && live == 0);
   at_once(ctx, 0);
-  require(asked == 2 && source == 0 && live == 0);
+  require(asked == 2 && source == 0 && live == 0 && frames == 0 && globals == 0);
   return 0;
 }
 `
@@ -304,7 +315,7 @@ int main(int argc, char **argv) {
   fast((uintptr_t)activity);
   // The mode 2 has the size of the mode in use and 120 refreshes. The mode
   // 3 has more refreshes, at another size.
-  require(preferred == 2 && applied == 1 && live == 0);
+  require(preferred == 2 && applied == 1 && live == 0 && frames == 0 && globals == 0);
   return 0;
 }
 `
