@@ -48,19 +48,25 @@ static void require(int ok, const char *what) { if (!ok) { fprintf(stderr, "%s: 
 enum { BUILDER_CLASS = 300, RATIONAL_CLASS = 400, BUILDER = 500, RATIO = 600, PARAMS = 700 };
 static const char *names[] = { "", "<init>", "setAspectRatio", "setAutoEnterEnabled", "build", "setPictureInPictureParams" };
 
-static uintptr_t get_class(uintptr_t e, uintptr_t obj) { require(obj != 0, "class of null"); locals++; return obj + 1000; }
+// The bindings keep a global reference to each class, and work in a local frame.
+static int saved_locals, frames, globals;
+static uintptr_t new_global(uintptr_t e, uintptr_t obj) { globals++; return obj; }
+static void delete_global(uintptr_t e, uintptr_t obj) { globals--; }
+static int32_t push(uintptr_t e, int32_t n) { frames++; saved_locals = locals; return 0; }
+static uintptr_t pop(uintptr_t e, uintptr_t keep) { frames--; locals = saved_locals; return 0; }
 static uintptr_t find_class(uintptr_t e, const char *name) {
   locals++;
   if (!strcmp(name, "android/app/PictureInPictureParams$Builder")) return BUILDER_CLASS;
-  require(!strcmp(name, "android/util/Rational"), "class name");
-  return RATIONAL_CLASS;
+  if (!strcmp(name, "android/util/Rational")) return RATIONAL_CLASS;
+  require(!strcmp(name, "android/app/Activity"), "class name");
+  return RATIONAL_CLASS + 1;
 }
 static uintptr_t method(uintptr_t e, uintptr_t cls, const char *name, const char *sig) {
   for (uintptr_t i = 1; i < sizeof names / sizeof names[0]; i++) {
     if (!strcmp(name, names[i])) return i;
   }
-  require(0, name);
-  return 0;
+  // The bindings look up each member of the Activity class. The test calls only the members of the names table.
+  return 99;
 }
 static uintptr_t new_object(uintptr_t e, uintptr_t cls, uintptr_t id, const uint64_t *args) {
   require(id == 1, "constructor");
@@ -101,7 +107,10 @@ int main(int argc, char **argv) {
   table[17] = (uintptr_t)none;
   table[23] = (uintptr_t)release;
   table[30] = (uintptr_t)new_object;
-  table[31] = (uintptr_t)get_class;
+  table[19] = (uintptr_t)push;
+  table[20] = (uintptr_t)pop;
+  table[21] = (uintptr_t)new_global;
+  table[22] = (uintptr_t)delete_global;
   table[33] = (uintptr_t)method;
   table[36] = (uintptr_t)object;
   table[63] = (uintptr_t)call;
@@ -129,7 +138,7 @@ int main(int argc, char **argv) {
   // With no pipe to the UI thread, the request goes nowhere.
   wire((uintptr_t)ctx, (uintptr_t)activity, fds[0], -1, (uintptr_t)&env);
   shape((uintptr_t)ctx, 1, 320, 240);
-  require(sets == 3, "a request with no pipe");
+  require(sets == 3 && frames == 0 && globals == 0, "a request with no pipe");
   return 0;
 }
 `
