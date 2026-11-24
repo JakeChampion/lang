@@ -3499,7 +3499,7 @@ The state has the layout of `Sha1x8`, with eight words for each lane: word `w` o
 ```fern
 <<sha256 on eight lanes>>=
 // Eight SHA-256 states. Word `w` of lane `k` is at byte `4 * (8 * w + k)`.
-pub struct Sha256x8 { state: u8[] }
+pub opaque struct Sha256x8 { state: u8[] }
 
 function __sha256_words(h: Sha256): u32[] {
   return [h.h0, h.h1, h.h2, h.h3, h.h4, h.h5, h.h6, h.h7];
