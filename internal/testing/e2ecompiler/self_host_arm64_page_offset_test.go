@@ -79,13 +79,13 @@ func TestSelfHostArm64PageOffsetLoads(t *testing.T) {
 		t.Fatalf("driver: %v\n%s", err, stderr.String())
 	}
 	for _, want := range []string{
-		"add_short [add:page-offset operands]\n",
+		"add_short [add:arity]\n",
 		"add_mixed [add:page-offset operands]\n",
 		"add_zr [add:page-offset operands]\n",
 		"add_x 2432705504\n",
 		"add_w 285220929\n",
 		"add_wsp 285220927\n",
-		"adrp_short [adrp:operands]\n",
+		"adrp_short [adrp:arity]\n",
 		"adrp_w [adrp:operands]\n",
 		"adrp_no_symbol [adrp:operands]\n",
 		"adr_fp [adr:operands]\n",
