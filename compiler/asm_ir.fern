@@ -198,14 +198,6 @@ function any_ccall_need(s: asmcore.EmitState): boolean {
   return s.has_need("ccall:__c_callv");
 }
 
-function rc_trace_on(): boolean {
-  return util.debug_flag("FERN_DEBUG_RC_TRACE", "FERN_RC_TRACE");
-}
-
-function rc_trace_deep_on(): boolean {
-  return util.debug_flag("FERN_DEBUG_RC_TRACE_DEEP", "FERN_RC_TRACE_DEEP");
-}
-
 function fused_marker(): i32 {
   return 1934589965;
 }
@@ -663,7 +655,7 @@ function direct_boxes(s: asmcore.EmitState): boolean {
 }
 
 function compact_boxes(s: asmcore.EmitState): boolean {
-  return !rc_trace_on() && !rtprofile.allocation(s.profile) && !s.harden && !s.rc_free_debug;
+  return !s.rc_trace && !rtprofile.allocation(s.profile) && !s.harden && !s.rc_free_debug;
 }
 
 // The release of a block that can be a box with a header of one word. Such a
@@ -762,11 +754,11 @@ function san_owner_guard(s: asmcore.EmitState): string {
 }
 
 function hev_on(s: asmcore.EmitState): boolean {
-  return rc_trace_on() || s.leak_check || rtprofile.allocation(s.profile);
+  return s.rc_trace || s.leak_check || rtprofile.allocation(s.profile);
 }
 
 function str_grow_census(s: asmcore.EmitState): asmcore.EmitState {
-  if (rc_trace_on()) {
+  if (s.rc_trace) {
     s = s.write("    movq %r9, %rax\n");
     s = s.write("    shlq $3, %rax\n");
     s = s.write("    subq %rax, __fern_lc_free_bytes(%rip)\n");
@@ -1359,12 +1351,12 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .align 8\n");
   }
   s = s.write("__fern_hev_site: .quad 0\n");
-  if (rc_trace_deep_on()) {
+  if (s.rc_trace_deep) {
     s = s.write("__fern_hev_caller2: .quad 0\n");
   }
   s = s.write("    .section .rodata\n");
   s = s.write(".Lhev_nl:\n    .ascii \"\\n\"\n");
-  if (rc_trace_on()) {
+  if (s.rc_trace) {
     s = s.write(".Lhev_pre:\n    .ascii \"rctrace \"\n");
   }
   if (s.leak_check) {
@@ -1409,7 +1401,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rax, __fern_lc_alloc_bytes(%rip)\n");
   }
   s = s.write("    jmp .Lhev_emit\n");
-  if (rc_trace_on() && s.has_need("worker_unmap")) {
+  if (s.rc_trace && s.has_need("worker_unmap")) {
     s = s.write("    .globl __fern_hev_u\n__fern_hev_u:\n");
     s = hev_save(s);
     s = s.write("    movq 104(%rsp), %r14\n    movq 112(%rsp), %r12\n    movq 120(%rsp), %r13\n    movq $117, %rbx\n    jmp .Lhev_emit\n");
@@ -1443,7 +1435,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rax, __fern_lc_free_bytes(%rip)\n");
   }
   s = s.write(".Lhev_emit:\n");
-  if (rc_trace_on()) {
+  if (s.rc_trace) {
     // The line is built in a stack buffer and written once: a forked worker
     // shares stderr with its parent, and a line of several writes tears.
     s = s.write("    subq $128, %rsp\n");
@@ -1461,7 +1453,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    je .Lhev_nocaller\n");
     s = s.write("    movq 8(%rax), %rbx\n");
     s = s.write(".Lhev_nocaller:\n");
-    if (rc_trace_deep_on()) {
+    if (s.rc_trace_deep) {
       s = s.write("    movq $0, %rax\n");
       s = s.write("    movq %rax, __fern_hev_caller2(%rip)\n");
       s = s.write("    testq %rbp, %rbp\n");
@@ -1480,7 +1472,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = hev_field(s, "%r13");
     s = hev_field(s, "%r14");
     s = hev_field(s, "%rbx");
-    if (rc_trace_deep_on()) {
+    if (s.rc_trace_deep) {
       s = s.write("    movq __fern_hev_caller2(%rip), %rbx\n");
       s = hev_field(s, "%rbx");
     }
@@ -1495,7 +1487,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = hev_restore(s);
   s = s.write("    ret\n");
   s = emit_hev_write(s);
-  if (rc_trace_on()) {
+  if (s.rc_trace) {
     s = s.write(".Lhev_hex:\n");
     s = s.write("    addq $16, %rdi\n");
     s = s.write("    movq %rdi, %rsi\n");
@@ -5360,7 +5352,7 @@ function emit_ir_runtime_part_6(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movl $0, %eax\n");
     s = s.write("    ja .Lsg_ret\n");
     s = s.write(".Lsg_fits:\n");
-    if (rc_trace_on()) {
+    if (s.rc_trace) {
       s = s.write("    leaq -8(%r8), %r11\n");
       s = hev_free(s, "%r11", "%r9");
       s = s.write("    pushq %r10\n");
@@ -13675,7 +13667,7 @@ function emit_worker_unmap(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq 16(%rax), %r9\n    subq 32(%rax), %r9\n");
     s = s.write(ready.name + ":\n    pushq %r8\n    pushq %r9\n");
   }
-  if (rc_trace_on()) {
+  if (s.rc_trace) {
     s = s.write("    pushq %rdx\n    pushq %rax\n");
   }
   s = s.write("    pushq %r10\n    pushq %rdx\n    pushq %rax\n    call __fn___fern_worker_unmap\n    addq $24, %rsp\n");
@@ -13683,22 +13675,22 @@ function emit_worker_unmap(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function worker_unmap_result(s: asmcore.EmitState, done_label: string): asmcore.EmitState {
-  if (rc_trace_on()) {
+  if (s.rc_trace) {
     s = s.write("    popq %rdi\n    popq %rsi\n");
   }
   if (s.leak_check) {
     s = s.write("    popq %rcx\n    popq %rdx\n");
   }
-  if (s.leak_check || rc_trace_on()) {
+  if (s.leak_check || s.rc_trace) {
     s = s.write("    testl %eax, %eax\n    jnz " + done_label + "\n");
   }
   if (s.leak_check) {
     s = s.write("    addq %rdx, __fern_lc_free_count(%rip)\n    addq %rcx, __fern_lc_free_bytes(%rip)\n");
   }
-  if (rc_trace_on()) {
+  if (s.rc_trace) {
     s = s.write("    pushq %rax\n    pushq %rsi\n    pushq %rdi\n    call __fern_hev_u\n    addq $16, %rsp\n    popq %rax\n");
   }
-  if (s.leak_check || rc_trace_on()) {
+  if (s.leak_check || s.rc_trace) {
     s = s.write(done_label + ":\n");
   }
   return s.write("    pushq %rax\n");

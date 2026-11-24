@@ -6,7 +6,7 @@ The [generated standard library reference](https://fern-lang.netlify.app/stdlib/
 It includes every published module, its declarations, and its source documentation.
 This guide covers conventions across modules.
 
-The [literate source inventory](LITERATE-STDLIB.md) links to all 152 handwritten module documents.
+Most modules are literate documents. The [literate source guide](LITERATE-STDLIB.md) tells how to find, edit and check them.
 Their prose describes module behavior and contracts. Named code chunks supply the implementation, and test fences contain executable examples.
 
 To build a local reference from this checkout:
