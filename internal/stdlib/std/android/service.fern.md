@@ -18,6 +18,8 @@ The module needs API level 26, for the notification channel. From API level 29, 
 
 The activity is not valid after its Destroy event, so the app calls `stop` before that. Call each function except `command` on the loop thread.
 
+`stop` does not call `stopService`. Android stops an app when a service that `startForegroundService` started stops before its `onStartCommand` calls `startForeground`. A short task can end in that time. `stop` thus sends a finish command with `startService`, and Android gives the service that command after the start command. When Android refuses `startService`, `stop` calls `stopService`.
+
 ## Module assembly
 
 ```fern
@@ -89,6 +91,9 @@ const STOP_ACTION: string = "dev.fern.android.STOP";
 
 const APP_ACTION: string = "dev.fern.android.ACTION";
 
+// The action of the command that `stop` sends.
+const FINISH_ACTION: string = "dev.fern.android.FINISH";
+
 // START_NOT_STICKY: the system does not start the service again after it
 // stops the process.
 const NOT_STICKY: i32 = 2;
@@ -147,6 +152,16 @@ pub function stop(ctx: usize, class: string): void {
   let e: usize = android.env(ctx);
   let obj: usize = android.activity_object(ctx);
   let intent: usize = service_intent(e, obj, jni.load_class(e, obj, class));
+  let finish: usize = service_intent(e, obj, jni.load_class(e, obj, class));
+  let with_action: usize = jni.call_object(e, finish, "setAction", "(Ljava/lang/String;)Landroid/content/Intent;", [jni.new_string(e, FINISH_ACTION)]);
+  let send: usize = jni.get_method_id(e, jni.get_object_class(e, obj), "startService", "(Landroid/content/Intent;)Landroid/content/ComponentName;");
+  let finish_args: usize = jni.jvalues([finish]);
+  let sent: usize = jni.call_object_method_a(e, obj, send, finish_args);
+  jni.free_buffer(finish_args);
+  if (jni.exception_occurred(e) == 0 as usize && sent != 0 as usize) {
+    return;
+  }
+  jni.exception_clear(e);
   let stop: usize = jni.get_method_id(e, jni.get_object_class(e, obj), "stopService", "(Landroid/content/Intent;)Z");
   let args: usize = jni.jvalues([intent]);
   let stopped: i32 = jni.call_boolean_method_a(e, obj, stop, args);
@@ -202,6 +217,10 @@ pub function command_media(e: usize, service: usize, intent: usize, n: Notice, b
   }
   if (action == APP_ACTION) {
     let sent = android.tell(e, ACTION, 0 as usize);
+    return NOT_STICKY;
+  }
+  if (action == FINISH_ACTION) {
+    stop_self(e, service);
     return NOT_STICKY;
   }
   let session: usize = jni.call_object(e, intent, "getParcelableExtra", "(Ljava/lang/String;)Landroid/os/Parcelable;", [jni.new_string(e, SESSION_EXTRA)]);

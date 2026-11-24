@@ -200,16 +200,26 @@ def dump(out, step):
 
 def find(out, step, label, timeout=30, scroll=False):
     """The middle of the node `label`, when it shows in `timeout` seconds.
-    With `scroll`, each dump that does not show it scrolls the screen down."""
+    With `scroll`, each second dump that does not show it scrolls the screen
+    down. When a scroll does not change the names on the screen, the list is
+    at its end, and the next scrolls go up."""
     deadline = time.monotonic() + timeout
+    looks = 0
+    down = True
+    before = None
     while time.monotonic() < deadline:
         xml = dump(out, step)
         point = point_of(xml, label)
         if point:
             return point
-        swipe = swipe_up(xml) if scroll else None
+        looks += 1
+        swipe = swipe_up(xml) if scroll and looks % 2 == 0 else None
         if swipe:
-            (x, y), (x2, y2) = swipe
+            names = sorted(name for name, _, _ in nodes(xml))
+            if names == before:
+                down = not down
+            before = names
+            (x, y), (x2, y2) = swipe if down else reversed(swipe)
             # A slow drag scrolls the list and does not fling it.
             adb("shell", "input", "swipe", str(x), str(y), str(x2), str(y2), "1500")
             time.sleep(1)
@@ -235,7 +245,7 @@ def tap(out, step, label, hold=False, scroll=False):
 
 
 def taps(out, step, labels):
-    return all(tap(out, f"{step}-{at}", label) for at, label in enumerate(labels))
+    return all(tap(out, f"{step}-{at}", label, scroll=True) for at, label in enumerate(labels))
 
 
 def type_in(out, step, hint, text):
