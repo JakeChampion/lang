@@ -194,12 +194,11 @@ struct Session { e: usize, app: bindings.Context, c: bindings.Classes }
 
 function session(ctx: usize): Option[Session] {
   let e = android.env(ctx);
-  if (jni.call1(e, 19, 64 as usize) as i32 != 0) {
-    jni.exception_clear(e);
+  if (!jni.push_local_frame(e, 64)) {
     return None;
   }
   let Ok(c) = bindings.classes(e) else {
-    jni.call1(e, 20, 0 as usize);
+    jni.pop_local_frame(e, 0 as usize);
     return None;
   };
   return Some(Session { e: e, app: bindings.Context { ref: android.activity_object(ctx) }, c: c });

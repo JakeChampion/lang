@@ -60,24 +60,12 @@ const FIRST_ITEM: i32 = 2130968576;
 // FLAG_IMMUTABLE and FLAG_UPDATE_CURRENT of PendingIntent.
 const PENDING_FLAGS: i32 = 201326592;
 
-function push_frame(e: usize): boolean {
-  if (jni.call1(e, 19, 32 as usize) as i32 != 0) {
-    let cleared = jni.exception_clear(e);
-    return false;
-  }
-  return true;
-}
-
-function pop_frame(e: usize): void {
-  let popped = jni.call1(e, 20, 0 as usize);
-}
-
 // The action of the Intent that Android sent, or "".
 pub function action(e: usize, intent: usize): string {
-  if (intent == 0 as usize || !push_frame(e)) {
+  if (intent == 0 as usize || !jni.push_local_frame(e, 32)) {
     return "";
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   let Ok(c) = bindings.intent_class(e) else {
     return "";
   };
@@ -167,10 +155,10 @@ function update(e: usize, c: bindings.Classes, context: bindings.Context, provid
 
 // Shows the layout on every widget for the given provider.
 pub function show(e: usize, context: usize, provider: string, look: Look): boolean {
-  if (context == 0 as usize || !push_frame(e)) {
+  if (context == 0 as usize || !jni.push_local_frame(e, 32)) {
     return false;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   let Ok(c) = bindings.classes(e) else {
     return false;
   };

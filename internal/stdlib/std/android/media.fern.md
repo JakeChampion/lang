@@ -48,18 +48,6 @@ const PART: i32 = 1048576;
 // The request code of the dialog of `ask_write`.
 const ASK_CODE: i32 = 7301;
 
-function frame(e: usize): boolean {
-  if (jni.call1(e, 19, 48 as usize) as i32 != 0) {
-    let cleared = jni.exception_clear(e);
-    return false;
-  }
-  return true;
-}
-
-function pop(e: usize, keep: usize): usize {
-  return jni.call1(e, 20, keep);
-}
-
 function resolver_of(e: usize, c: bindings.Classes, context: bindings.Context): Result[bindings.ContentResolver, jni.JavaError] {
   let resolver = c.context.get_content_resolver(e, context)?;
   if (resolver.is_null()) {
@@ -118,10 +106,10 @@ function lookup(e: usize, context: usize, path: string): Result[usize, jni.JavaE
 
 // Returns a local reference in the caller's frame.
 pub function audio_uri(e: usize, context: usize, path: string): usize {
-  if (!frame(e)) {
+  if (!jni.push_local_frame(e, 48)) {
     return 0 as usize;
   }
-  return pop(e, lookup(e, context, path).unwrap_or(0 as usize));
+  return jni.pop_local_frame(e, lookup(e, context, path).unwrap_or(0 as usize));
 }
 
 function request(e: usize, c: bindings.Classes, activity: bindings.Activity, resolver: bindings.ContentResolver, uri: bindings.Uri): Result[boolean, jni.JavaError] {
@@ -154,10 +142,10 @@ pub function ask_write(ctx: usize, path: string): boolean {
     return false;
   }
   let e = android.env(ctx);
-  if (!frame(e)) {
+  if (!jni.push_local_frame(e, 48)) {
     return false;
   }
-  defer pop(e, 0 as usize);
+  defer jni.pop_local_frame(e, 0 as usize);
   return ask(e, bindings.Activity { ref: android.activity_object(ctx) }, path).unwrap_or(false);
 }
 
@@ -196,10 +184,10 @@ function replace(e: usize, context: bindings.Context, path: string, bytes: [u8])
 }
 
 pub function write(e: usize, context: usize, path: string, bytes: [u8]): boolean {
-  if (!frame(e)) {
+  if (!jni.push_local_frame(e, 48)) {
     return false;
   }
-  defer pop(e, 0 as usize);
+  defer jni.pop_local_frame(e, 0 as usize);
   return replace(e, bindings.Context { ref: context }, path, bytes).unwrap_or(false);
 }
 ```

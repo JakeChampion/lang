@@ -72,18 +72,6 @@ const PERMISSION: string = "android.permission.POST_NOTIFICATIONS";
 
 ```fern
 <<calls>>=
-function push_frame(e: usize): boolean {
-  if (jni.call1(e, 19, 48 as usize) as i32 != 0) {
-    let cleared = jni.exception_clear(e);
-    return false;
-  }
-  return true;
-}
-
-function pop_frame(e: usize): void {
-  let popped = jni.call1(e, 20, 0 as usize);
-}
-
 function activity(ctx: usize): bindings.Context {
   return bindings.Context { ref: android.activity_object(ctx) };
 }
@@ -114,8 +102,8 @@ pub function channel(ctx: usize, c: Channel): void {
     return;
   }
   let e = android.env(ctx);
-  if (push_frame(e)) {
-    defer pop_frame(e);
+  if (jni.push_local_frame(e, 48)) {
+    defer jni.pop_local_frame(e, 0 as usize);
     let _ = create_channel(e, activity(ctx), c);
   }
 }
@@ -133,10 +121,10 @@ function enabled(e: usize, obj: bindings.Context): Result[boolean, jni.JavaError
 
 pub function allowed(ctx: usize): boolean {
   let e = android.env(ctx);
-  if (!permission(ctx) || !push_frame(e)) {
+  if (!permission(ctx) || !jni.push_local_frame(e, 48)) {
     return false;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   return enabled(e, activity(ctx)).unwrap_or(false);
 }
 
@@ -211,10 +199,10 @@ function publish(ctx: usize, e: usize, n: Note): Result[boolean, jni.JavaError] 
 
 pub function post(ctx: usize, n: Note): boolean {
   let e = android.env(ctx);
-  if (!permission(ctx) || !push_frame(e)) {
+  if (!permission(ctx) || !jni.push_local_frame(e, 48)) {
     return false;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   return publish(ctx, e, n).unwrap_or(false);
 }
 
@@ -227,8 +215,8 @@ function remove(e: usize, obj: bindings.Context, id: i32): Result[void, jni.Java
 
 pub function cancel(ctx: usize, id: i32): void {
   let e = android.env(ctx);
-  if (push_frame(e)) {
-    defer pop_frame(e);
+  if (jni.push_local_frame(e, 48)) {
+    defer jni.pop_local_frame(e, 0 as usize);
     let _ = remove(e, activity(ctx), id);
   }
 }
