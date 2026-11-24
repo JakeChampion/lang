@@ -2025,17 +2025,12 @@ function is_native_target(t: string): boolean {
   return t == "x86-64-linux" || t == "arm64-linux" || t == "x86-64-android" || t == "arm64-android" || t == "arm64-darwin";
 }
 
+// A target with no host refuses the build in the backend instead.
 function sanitize_warning(target: string): string {
-  if (is_native_target(target)) {
-    return "";
-  }
-  if (target == "wasm32-wasi") {
-    return "";
-  }
   if (target == "wasm32-wasi-http") {
     return "fern: warning: -sanitize on -target " + target + " prints the leak census at process exit, which a request handler never reaches";
   }
-  return "fern: warning: -sanitize has no effect on -target " + target + " (the detectors are native x86-64 and arm64 and wasm); this build carries no checks";
+  return "";
 }
 
 function dw_file_table(entry: string, files: string[], remaps: PathRemap[]): string {
