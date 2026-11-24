@@ -120,6 +120,7 @@ pub enum VerifyError {
   BadSignature(i32),
   NameConstraint(i32),
   RootsUnreadable(string),
+  RemovedRootUnreadable(string),
   UnsupportedAlgorithm(string),
   Distrusted(i32),
   DeniedKey(i32),
@@ -201,6 +202,9 @@ pub function (e: VerifyError) message(): string {
     },
     RootsUnreadable(path) => {
       return "tls verify: no certificates could be read from " + path;
+    },
+    RemovedRootUnreadable(path) => {
+      return "tls verify: cannot read the removed roots at " + path;
     },
     NameConstraint(i) => {
       return "tls verify: certificate " + i.to_string() + "'s name constraints exclude a name below it";
@@ -325,13 +329,19 @@ pub function system_roots(): Option[Roots] {
   return None;
 }
 
+// The roots of the first directory that has any, less the roots that the
+// user removed. A removal directory that cannot be read gives no roots: the
+// next directory would give back a root that the user removed.
 function android_roots(): Option[Roots] {
   // Android allocates a range of 100000 UIDs to each user profile.
   let user = getuid() / 100000u32;
   let removed = "/data/misc/user/" + user.to_string() + "/cacerts-removed";
   for dir in ANDROID_ROOT_DIRS {
-    if let Ok(r) = roots_from_dir_excluding(dir, removed) {
-      return Some(r);
+    if let Ok(system) = roots_from_dir(dir) {
+      return match (__without_removed(system, removed)) {
+        Ok(r) => Some(r),
+        Err(_) => None,
+      };
     }
   }
   return None;
@@ -358,20 +368,40 @@ pub function roots_from_dir(dir: string): Result[Roots, VerifyError] {
 
 // Reads system roots and excludes certificates present in the user's
 // removal directory. Android stores removed certificates as DER files.
+// Only a removal directory that does not exist removes nothing. Each other
+// read error, and an entry that holds no certificate, is an error, because
+// a root that the user removed would stay trusted.
 pub function roots_from_dir_excluding(dir: string, removed: string): Result[Roots, VerifyError] {
-  let system = roots_from_dir(dir)?;
-  let Ok(names) = read_dir(removed) else {
-    return Ok(system);
+  return __without_removed(roots_from_dir(dir)?, removed);
+}
+
+function __without_removed(system: Roots, removed: string): Result[Roots, VerifyError] {
+  let names = match (read_dir(removed)) {
+    Ok(names) => names,
+    Err(NotFound(_)) => {
+      return Ok(system);
+    },
+    Err(_) => {
+      return Err(RemovedRootUnreadable(removed));
+    },
   };
   let excluded: u8[][] = [];
   for name in names {
-    if let Ok(data) = read_file_bytes(removed + "/" + name) {
-      if (data.len() > 0 && data[0] == 0x30u8) {
-        excluded = excluded.append(data);
-      } else if let Ok(certs) = pem.certificates(utf8.from_bytes_lossy(data)) {
-        excluded = excluded.concat(certs);
-      }
+    let path = removed + "/" + name;
+    let Ok(data) = read_file_bytes(path) else {
+      return Err(RemovedRootUnreadable(path));
+    };
+    if (data.len() > 0 && data[0] == 0x30u8) {
+      excluded = excluded.append(data);
+      continue;
     }
+    let Ok(certs) = pem.certificates(utf8.from_bytes_lossy(data)) else {
+      return Err(RemovedRootUnreadable(path));
+    };
+    if (certs.len() == 0) {
+      return Err(RemovedRootUnreadable(path));
+    }
+    excluded = excluded.concat(certs);
   }
   if (excluded.len() == 0) {
     return Ok(system);
