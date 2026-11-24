@@ -87,6 +87,17 @@ class CrashTests(unittest.TestCase):
         self.assertEqual(check.crash_blocks("E/AndroidRuntime( 1): something\n"), [])
 
 
+class WindowTests(unittest.TestCase):
+    def test_focused_window(self):
+        dump = ("  mCurrentFocus=Window{9f1c2d u0 com.android.permissioncontroller/com.android.permissioncontroller.permission.ui.GrantPermissionsActivity}\n"
+                "  mFocusedApp=ActivityRecord{1 u0 dev.fern.files/android.app.NativeActivity t9}\n")
+        self.assertEqual(check.focused_window(dump),
+                         "com.android.permissioncontroller/com.android.permissioncontroller.permission.ui.GrantPermissionsActivity")
+
+    def test_no_focus(self):
+        self.assertEqual(check.focused_window("  mCurrentFocus=null\n"), "")
+
+
 class DocumentTests(unittest.TestCase):
     def test_root_of_a_server(self):
         self.assertEqual(check.document_uri("0:", children=True),

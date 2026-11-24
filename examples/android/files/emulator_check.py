@@ -229,13 +229,23 @@ def find(out, step, label, timeout=30, scroll=False):
     return None
 
 
+def focused_window(dumpsys):
+    """The window that has the focus in a dump of `dumpsys window`, or ""."""
+    m = re.search(r"mCurrentFocus=Window\{\S+ \S+ ([^}]+)\}", dumpsys)
+    return m.group(1) if m else ""
+
+
+def front_window():
+    return focused_window(adb("shell", "dumpsys", "window", "windows", check=False))
+
+
 def tap(out, step, label, hold=False, scroll=False):
     """Taps the node `label`, or holds it. False when it does not show."""
     point = find(out, step, label, scroll=scroll)
     if not point:
         screen(out, step)
         shown = sorted({name for name, _, _ in nodes(dump(out, step))})
-        fail(f"{step}: the screen does not show {label}. It shows {shown}")
+        fail(f"{step}: the screen does not show {label}. It shows {shown}, and the window in front is {front_window()!r}")
         return False
     x, y = map(str, point)
     if hold:
@@ -457,6 +467,9 @@ def main(apk, out, share_dir=None, port=None):
     Path(out, PICTURE).write_bytes(picture)
     adb("install", "-r", apk)
     adb("shell", "appops", "set", PACKAGE, "MANAGE_EXTERNAL_STORAGE", "allow")
+    # A copy shows a notification. Without this permission the first copy
+    # asks for it, and the dialog of Android covers the app.
+    adb("shell", "pm", "grant", PACKAGE, "android.permission.POST_NOTIFICATIONS", check=False)
     adb("shell", "rm", "-rf", f"{STORAGE}/.FernTrash", f"{STORAGE}/Pictures/{PICTURE}", check=False)
     adb("shell", "mkdir", "-p", f"{STORAGE}/Download", f"{STORAGE}/Pictures")
     adb("push", f"{out}/{NOTE}", f"{STORAGE}/Download/{NOTE}")
