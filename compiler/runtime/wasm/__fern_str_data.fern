@@ -1,4 +1,4 @@
-// The address of the first byte of the string `s`.
+// The address of the first byte of the string `s`. A string is a box [data, len].
 function __fern_str_data(s: usize): usize {
-  return s + 4;
+  return (__load_i32(s) as u32) as usize;
 }

@@ -1,16 +1,15 @@
 # A wasm string is a `[data, len]` box
 
-Status: [plan] for #15740. The owner chose this shape on 2026-11-23. Phase 1
-is done, except the four view decoders of the Fern runtime (see "Phase 1 at
-its end").
+Status: [plan] for #15740. The owner chose this shape on 2026-11-23. Phases
+1 and 2 are done (see "Phase 2 at its end"). Phases 3 and 4 remain.
 
 ## The decision
 
-On the native targets a string is a box of two words, `[data, len]`. On
-wasm32 a string is one `[len][bytes]` block. A view on wasm32 is one of two
-other forms: a counted `{len | 1 << 31, data}` descriptor
+On the native targets a string is a box of two words, `[data, len]`. Before
+phase 2, a wasm32 string was one `[len][bytes]` block. A view on wasm32 was one
+of two other forms: a counted `{len | 1 << 31, data}` descriptor
 (`$__fern_str_borrow`), or a `{data, len}` window in the shadow-stack frame,
-tagged 3 (`frame_window_wat`). A kernel that takes a string or a view decodes
+tagged 3 (`frame_window_wat`). A kernel that takes a string or a view decoded
 all three forms (`view_string_decode`, `byte_view_decode`).
 
 A string slice on wasm32 copies its bytes (`$__fern_substr`), because most
@@ -116,11 +115,26 @@ The Fern runtime reads a string through `__fern_str_len` and
 each caller. A runtime function that is not a root has no body when each of
 its calls is spliced (#16850).
 
-These still read the old layout, and phase 2 changes them by hand:
+## Phase 2 at its end
 
-- The four view decoders of the Fern runtime: `__fern_sum_bytes`,
-  `__fern_bsd_sum`, `__fern_scan_masks` and `__fern_scan_set`. They also take
-  a borrowed descriptor, which reads its length at the same address.
-- `view_string_decode` and `byte_view_decode` in `compiler/wasm_ir.fern`.
-- The storage of a buffer (`$__fern_buf_new`, `$__fern_buf_reserve`) is not a
-  string, so its layout can stay.
+Each wasm32 string is a box `[data, len]`, as on the native targets:
+
+- `$__fern_str_new` makes an owned string. Its bytes follow the box in the
+  same block, so `data` is the box + 8.
+- A literal is a box in the data segment. `str_literal_wat` writes the
+  absolute address of its bytes into the box.
+- `$__fern_str_borrow` makes a borrowed descriptor. It is also a box
+  `[data, len]`, with `data` in the source. A box holds no unit of its source,
+  so the release of each form frees only its own block.
+- A frame window (`frame_window_wat`) was already `[data, len]`.
+
+So each view form has the same two words. A decoder removes the tag of the
+address and reads `data` and `len`. `view_string_decode`, `byte_view_decode`,
+`view_string_wat` and the four view decoders of the Fern runtime do only this
+now. The sign bit of the length no longer marks a descriptor.
+
+A string grows in place only when `data` is the box + 8, because then its
+bytes are in its own block.
+
+Phase 3 makes `K_STR_SLICE` give a box with a `data` in the source, in place
+of a copy.

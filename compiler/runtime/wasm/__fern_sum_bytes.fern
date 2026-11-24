@@ -1,11 +1,9 @@
+// `s` is a string, a borrowed descriptor, or a frame window at its address
+// less 1. Each is a box [data, len].
 function __fern_sum_bytes(s: usize): i32 {
-  let tag = s & 1;
-  let n = __load_i32(s + tag * 3);
-  let p: usize = if (tag == 0) { s + 4 } else { (__load_i32(s - 1) as u32) as usize };
-  if (n < 0) {
-    p = (__load_i32(s + 4) as u32) as usize;
-    n = n & 2147483647;
-  }
+  let base = s - (s & 1);
+  let n = __fern_str_len(base);
+  let p = __fern_str_data(base);
   let i = 0;
   let sum: u32 = 0;
   while (i < n) {
