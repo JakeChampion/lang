@@ -6,6 +6,7 @@ The encoded window is bounded by the source limits. Initial free-format discover
 
 ```fern
 <<*>>=
+// Read MPEG Layer I and II streams one frame at a time.
 import "std/audio/mp1";
 import "std/audio/mp2";
 import "std/audio/mp2/header";
