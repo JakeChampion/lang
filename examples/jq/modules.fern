@@ -229,11 +229,11 @@ function find_module(rel: string, dirs: string[], suffix: string): string {
 
 // The search path of a directive: the `search` key of its metadata, or `.`
 // and the library directories.
-function directive_search(d: filter.Directive, library: string[]): string[] {
+function directive_search(d: filter.Directive, library: string[], jq_origin: string, origin: string): string[] {
   if let json.JObject(o) = d.meta {
     match (o.get_or("search", json.JNull)) {
       json.JString(s) => {
-        return [s];
+        return expanded([s], jq_origin, origin);
       },
       json.JArray(items) => {
         let out: string[] = [];
@@ -242,7 +242,7 @@ function directive_search(d: filter.Directive, library: string[]): string[] {
             out = out.append(s);
           }
         }
-        return out;
+        return expanded(out, jq_origin, origin);
       },
       json.JNull => {},
       _ => {
@@ -250,7 +250,9 @@ function directive_search(d: filter.Directive, library: string[]): string[] {
       }
     }
   }
-  return ["."].concat(library);
+  // A relative -L directory belongs to the invocation even when realpath
+  // cannot make it absolute, as on WASI without PWD.
+  return expanded(["."].concat(library), jq_origin, "");
 }
 
 function is_raw(d: filter.Directive): boolean {
@@ -318,7 +320,7 @@ function load_dep(own l: Loading, d: filter.Directive, origin: string): (Loading
     return (l.failing("jq: error: " + bad + "\n"), []);
   }
   let suffix = if (d.is_data) { ".json" } else { ".jq" };
-  let found = find_module(d.path, expanded(directive_search(d, l.library), l.jq_origin, origin), suffix);
+  let found = find_module(d.path, directive_search(d, l.library, l.jq_origin, origin), suffix);
   if (found.len() == 0) {
     if (is_optional(d)) {
       return (l, []);

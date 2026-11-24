@@ -409,6 +409,9 @@ pub function compare(a: string, b: string): i32 {
   if (b == NAN) {
     return 1;
   }
+  if (a == b) {
+    return 0;
+  }
   let ca = is_computed(a);
   let cb = is_computed(b);
   if (ca && cb) {
