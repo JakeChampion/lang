@@ -25884,6 +25884,114 @@ function lu_ended_callback_loans(body: ast.Stmt[], own facts: LuFacts): LuFacts 
   return LuFacts { ...facts, captured: lu_without_names(facts.captured, ended), escaping: lu_without_names(facts.escaping, ended) };
 }
 
+// A loop-local binding starts a new loan each time its declaration runs.
+// Keep the declaring block so no call from a different iteration or branch
+// is used as evidence that the loan has ended.
+struct LuCallbackBinding { name: string, lm: ast.ExprLambda, body: ast.Stmt[], next: i32 }
+
+function lu_callback_bindings(body: ast.Stmt[], own out: LuCallbackBinding[]): LuCallbackBinding[] {
+  for i in 0..body.len() {
+    let st = body[i];
+    if let ast.StmtVar(v) = st {
+      if let ast.ExprLambda(lm) = v.init {
+        if (lm.once) {
+          continue;
+        }
+        out = out.append(LuCallbackBinding { name: v.name, lm: lm, body: body, next: i + 1 });
+      }
+    }
+    for child in lu_bodies(st) {
+      out = lu_callback_bindings(child, out);
+    }
+  }
+  return out;
+}
+
+function lu_callback_defer(st: ast.Stmt, own state: LuLoanCheck): LuLoanCheck {
+  if let ast.StmtDefer(_) = st {
+    return LuLoanCheck { ...state, valid: false };
+  }
+  return state;
+}
+
+function lu_linear_loan_stmt(st: ast.Stmt, own check: LuLoanCheck): LuLoanCheck {
+  if let ast.StmtAssign(_) = st {
+    return check;
+  }
+  return lu_loan_stmt(st, check);
+}
+
+function lu_calls_before_owner(binding: LuCallbackBinding, owner: string): LuOcc[] {
+  let calls: LuOcc[] = [];
+  for i in binding.next..binding.body.len() {
+    let st = binding.body[i];
+    let state = astwalk.fold_stmt_nodes(st, LuLoanCheck { valid: true, lambdas: 0 }, lu_linear_loan_stmt, lu_loan_expr, astwalk.descend_all);
+    if (!state.valid || state.lambdas != 0 || util.has_str(lu_all_names(st, []), owner)) {
+      break;
+    }
+    calls = astwalk.fold_stmt_pruned(st, calls, lu_loan_calls, not_lambda);
+  }
+  return calls;
+}
+
+function lu_called_before_owner(binding: LuCallbackBinding, facts: LuFacts, owner: string): boolean {
+  let calls = lu_calls_before_owner(binding, owner);
+  for call in calls {
+    if (call.name == binding.name) {
+      return lu_loan_ends(facts, calls, binding.name, owner);
+    }
+  }
+  return false;
+}
+
+function lu_direct_callback_loans(body: ast.Stmt[], own facts: LuFacts): LuFacts {
+  if (facts.captured.len() == 0) {
+    return facts;
+  }
+  let bindings: LuCallbackBinding[] = [];
+  bindings = lu_callback_bindings(body, bindings);
+  if (bindings.len() == 0) {
+    return facts;
+  }
+  let check = LuLoanCheck { valid: true, lambdas: 0 };
+  for st in body {
+    check = astwalk.fold_stmt_nodes(st, check, lu_callback_defer, lu_loan_expr, astwalk.descend_all);
+  }
+  if (!check.valid || check.lambdas != bindings.len()) {
+    return facts;
+  }
+  let ended: string[] = [];
+  for owner in facts.captured {
+    if (util.has_str(ended, owner)) {
+      continue;
+    }
+    let local = false;
+    for v in facts.vars {
+      if (v.name == owner) {
+        local = true;
+      }
+    }
+    if (!local) {
+      continue;
+    }
+    let captured = false;
+    let safe = true;
+    for binding in bindings {
+      if (lu_loan_captures(binding.lm, owner)) {
+        captured = true;
+        if (!lu_called_before_owner(binding, facts, owner)) {
+          safe = false;
+          break;
+        }
+      }
+    }
+    if (captured && safe) {
+      ended = ended.append(owner);
+    }
+  }
+  return LuFacts { ...facts, captured: lu_without_names(facts.captured, ended), escaping: lu_without_names(facts.escaping, ended) };
+}
+
 function lu_function(fn: parser.FuncDecl, facts: LuFacts, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): LuFn {
   return LuFn { checked_params: lu_checked_params(fn), ret_own: fn.ret_own, facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, flow: lu_flow(fn.body) };
 }
@@ -25897,6 +26005,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
     nested = astwalk.fold_stmt_nodes(st, nested, astwalk.keep_lambdas, astwalk.collect_lambda, not_lambda);
   }
   facts = lu_ended_callback_loans(fn.body, facts);
+  facts = lu_direct_callback_loans(fn.body, facts);
   let fx0 = lu_function(fn, facts, ofuncs, borrows, lenders, builtins, noret);
   let fx = LuFn { ...fx0, fresh: lu_fresh_names(fx0), fresh_known: true };
   let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };

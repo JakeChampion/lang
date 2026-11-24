@@ -193,6 +193,11 @@ It is E050 as a call argument after the captured owner moves.
 The captured owner can be an `own` parameter or a fresh local, and the local can get its callback from a function.
 The cases `diag_e050_record_callback_uses_consumed_capture`, `diag_e050_spawned_task_uses_consumed_capture`, `diag_e050_factory_holder_uses_consumed_local` and `diag_e050_task_from_function_uses_consumed_local` cover this rule.
 
+A fresh local can go to an `own` parameter after a callback has finished borrowing it.
+Both checkers recognize a local callback whose uses are direct calls in its declaring block before the next access to the captured owner.
+For example, after `let n = g();`, the assignment `h = renew(h);` can consume and replace `h` when this was the last call to `g`.
+A callback declared inside a loop can meet this rule on each iteration.
+
 An assignment can give a consumed owner a new value.
 A callback or a holder that is declared before the assignment keeps the consumed value.
 A use of it after the assignment is E050.
