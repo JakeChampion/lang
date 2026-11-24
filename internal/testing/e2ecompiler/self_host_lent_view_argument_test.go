@@ -57,7 +57,7 @@ function main(): i32 {
 
 func TestSelfHostLentViewArgument(t *testing.T) {
 	cli := buildRuntimeCLI(t)
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			stderr, code := cli.exitOf(t, lentViewArgumentProgram, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 			if code != 0 {

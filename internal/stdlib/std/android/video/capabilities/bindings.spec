@@ -1,0 +1,5 @@
+android.media.MediaCodecList <init>(I)V getCodecInfos REGULAR_CODECS
+android.media.MediaCodecInfo getName getSupportedTypes getCapabilitiesForType isEncoder isHardwareAccelerated? isSoftwareOnly? isVendor? isAlias?
+android.media.MediaCodecInfo$CodecCapabilities isFormatSupported profileLevels colorFormats
+android.media.MediaCodecInfo$CodecProfileLevel profile level
+android.media.MediaFormat createVideoFormat createAudioFormat setInteger

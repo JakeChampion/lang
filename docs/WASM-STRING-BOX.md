@@ -1,7 +1,7 @@
 # A wasm string is a `[data, len]` box
 
 Status: [plan] for #15740. The owner chose this shape on 2026-11-23. Phases
-1 and 2 are done (see "Phase 2 at its end"). Phases 3 and 4 remain.
+1, 2 and 3 are done (see "Phase 3 at its end"). Phase 4 remains.
 
 ## The decision
 
@@ -136,5 +136,23 @@ now. The sign bit of the length no longer marks a descriptor.
 A string grows in place only when `data` is the box + 8, because then its
 bytes are in its own block.
 
-Phase 3 makes `K_STR_SLICE` give a box with a `data` in the source, in place
-of a copy.
+
+## Phase 3 at its end
+
+`K_STR_SLICE` gives a view on wasm32, as on the native targets
+(`str_slice_wat`). It checks the bounds and then makes one of two forms:
+
+- The frame form, for a slice whose uses read it within one instruction, is
+  a box in the shadow-stack frame (`$__fern_str_frame_view`), with no tag.
+  `is_frame_window` gives it a slot, as it gives one to the frame form of
+  `K_RAW_STRING`.
+- The heap form is a borrowed box (`$__fern_str_view`, which calls
+  `$__fern_str_borrow`).
+
+Both forms check the bounds in `$__fern_str_view_check`.
+
+Neither holds a unit of its source. So the RC passes no longer have a wasm
+mode in which a view in the frame holds a unit: `owned_frame_views` is
+removed from `rcsigs`, `irverifygate`, `rccertify` and `ssa.form`.
+`$__fern_substr` remains for the helpers whose pieces must own their bytes,
+such as `split`.

@@ -17,7 +17,8 @@ Skipped physical payload bytes still require validation during packet reads.
 
 The index does not decode audio or apply presentation edits.
 The caller must retain AAC decoder state and apply the existing presentation plan for priming and padding.
-Fragmented files, encryption, external data references, and unsupported AAC configurations retain the complete-view restrictions.
+Fragmented files are indexed as in the complete view. The scanner retains each `moof` box within the metadata budget.
+Encryption, external data references, and unsupported AAC configurations retain the complete-view restrictions.
 The calls are synchronous and belong outside a latency-sensitive Android callback.
 
 ```fern
@@ -57,14 +58,14 @@ function movie_with(bytes: i64, seek: (i64) => Result[i64, IoError], read: (i32)
 
 pub function inspect_with(bytes: i64, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError], limits: Limits): Result[mp4.Index, source.ReadError] {
   let movie = movie_with(bytes, seek, read, limits)?;
-  return match (mp4.inspect_movie(movie.bytes, movie.media, movie.file_bytes, movie.top_boxes, limits.index)) { Ok(value) => Ok(value), Err(error) => Err(source.ReadAudio(error)) };
+  return match (mp4.inspect_movie(movie.bytes, movie.fragments, movie.fragment_starts, movie.media, movie.file_bytes, movie.top_boxes, limits.index)) { Ok(value) => Ok(value), Err(error) => Err(source.ReadAudio(error)) };
 }
 
 // The index of the ALAC tracks of a file of `bytes` bytes that `seek` and
 // `read` give.
 pub function inspect_alac_with(bytes: i64, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError], limits: Limits): Result[alac.Index, source.ReadError] {
   let movie = movie_with(bytes, seek, read, limits)?;
-  return match (alac.inspect_movie(movie.bytes, movie.media, movie.file_bytes, movie.top_boxes, limits.index)) { Ok(value) => Ok(value), Err(error) => Err(source.ReadAudio(error)) };
+  return match (alac.inspect_movie(movie.bytes, movie.fragments, movie.fragment_starts, movie.media, movie.file_bytes, movie.top_boxes, limits.index)) { Ok(value) => Ok(value), Err(error) => Err(source.ReadAudio(error)) };
 }
 
 function reader_size(reader: Reader, limits: Limits): Result[i64, source.ReadError] {

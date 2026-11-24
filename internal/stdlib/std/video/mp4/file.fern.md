@@ -70,6 +70,9 @@ pub function inspect_with(bytes: i64, seek: (i64) => Result[i64, IoError], read:
     return Err(ReadVideo(mp4.video_error(error)));
   }
   let movie = match (metadata.inspect_with(bytes, seek, read, configured)) { Ok(value) => value, Err(error) => { return Err(source_error(error)); } };
+  if (movie.fragment_starts.len() != 0) {
+    return Err(ReadVideo(frame.Unsupported));
+  }
   let index = match (mp4.inspect_movie(movie.bytes, movie.media, movie.file_bytes, movie.top_boxes, limits.index)) { Ok(value) => value, Err(error) => { return Err(ReadVideo(error)); } };
   return match (mp4.check_file_type(index, movie.file_type)) { Ok(value) => Ok(value), Err(error) => Err(ReadVideo(error)) };
 }

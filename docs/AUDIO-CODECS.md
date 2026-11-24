@@ -111,7 +111,8 @@ FFmpeg independently checks the supported packet cases after channel-order norma
 The bank also covers short-packet sequences, exact edit trimming, fast-start files, version-one entries, wide offsets, and duplicate identical descriptions.
 The manifest identifies cases outside the FFmpeg decoder's packet support.
 
-Fragmented files, encryption, external references, configuration changes, and the ALAC decoder's 33-bit compressed-stereo gap remain unsupported.
+Both the byte-view and seekable-file indexes accept ALAC packets from movie fragments on a continuous decode timeline.
+Encryption, external references, configuration changes, and the ALAC decoder's 33-bit compressed-stereo gap remain unsupported.
 For packet playback from a seekable Reader, call `std/audio/mp4/file.inspect_alac`,
 open the selected track with `index.stream`, and pass its packet number and an owned
 PCM buffer to `read_alac_packet_into`. Each call reads only that packet under the
@@ -433,12 +434,13 @@ The packet-record budget applies across all audio tracks.
 Defaults permit 65,536 boxes, 32 tracks, 1,048,576 packet records, 64 descriptions per track, and 64 edits per track.
 The audio limits also bound each decoded AAC frame and the complete presentation output.
 
-Fragmented media, encryption, external data references, other audio codecs, format-changing descriptions, and nonzero composition offsets return `Unsupported`.
+AAC tracks can also use movie fragments with explicit or movie-fragment-relative data offsets.
+Encryption, external data references, other audio codecs, format-changing descriptions, and nonzero composition offsets return `Unsupported`.
 For a seekable AAC file, use `std/audio/mp4/file.inspect(reader, limits)` to index the metadata, then pass the index and track number to `std/audio/mp4/cursor.create`.
 Call `cursor.seek(position)` with a presentation frame offset and pass the same reader to `cursor.step_into` to read PCM. Keep the reader open while stepping the cursor.
-Fragmented MP4 support remains open under [#14518](https://github.com/JakeChampion/lang/issues/14518).
+Decode timeline gaps and nonzero composition offsets remain open under [#14518](https://github.com/JakeChampion/lang/issues/14518).
 
-Fifteen independent fixtures compare complete trimmed PCM with FFmpeg at an absolute tolerance of 0.000001.
+Eighteen independent fixtures compare complete trimmed PCM with FFmpeg at an absolute tolerance of 0.000001.
 They cover fast-start files, multiple audio tracks, a video track, compact sizes, extended boxes, and 64-bit chunk offsets.
 The reference generator uses the independently reported container duration to exclude final codec padding from FFmpeg output.
 Boundary tests cover incomplete prefixes, malformed tables, media ranges, budgets, track selection, and edit-clock rounding.
@@ -1108,7 +1110,7 @@ Each line names the issue that owns the work.
 - MPEG Layers I and II: decoder CPU performance ([#14689](https://github.com/JakeChampion/lang/issues/14689)).
 - MP3: damaged-stream synchronization and more tag formats. No issue owns this work.
 - AAC: HE-AAC/SBR/PS, protected ADTS verification, coupling-channel elements, program configurations, and 960-sample frames ([#14517](https://github.com/JakeChampion/lang/issues/14517)).
-- MP4/M4A: fragmented media and further codecs ([#14518](https://github.com/JakeChampion/lang/issues/14518)).
+- MP4/M4A: decode timeline gaps, composition offsets, and further codecs ([#14518](https://github.com/JakeChampion/lang/issues/14518)).
 - ALAC: edited presentation reads from a Reader and compressed stereo with 33 predictor bits ([#14685](https://github.com/JakeChampion/lang/issues/14685)).
 - Encoders: MP3, AAC, and Vorbis have no encoder, the Opus encoder is partial, and further FLAC encoder work remains ([#14688](https://github.com/JakeChampion/lang/issues/14688)).
 - Conformance: independent corpora and malformed-stream qualification for each decoder ([#14520](https://github.com/JakeChampion/lang/issues/14520)).

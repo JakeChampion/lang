@@ -438,6 +438,14 @@ wider design — Unicode-correct defaults with `ascii`-named fast paths,
 a distinct `char` type, and normalization/segmentation — tracked as
 epic #5626.
 
+**Page index**: the mark, combining class, decomposition, decomposition
+step and composition tables each have a page index (`_mark_index` and the
+others). A page is 128 code points. Entry `p` is the first row whose last
+code point is not below page `p`, so `_rows` gives the few rows that can
+hold a code point and the binary search starts there. The rows above
+U+1FFFF are one span. The five indexes add 9 KB. A table gets an index when
+a caller reads it for each character of a text, as `std/shape` does.
+
 ## Extras (not in the original 15)
 
 These landed in the chunks above but weren't on the original

@@ -50,7 +50,7 @@ function packets(reader: Reader, bytes: [u8]): Result[void, string] {
   return Ok(());
 }
 
-function fixture(encoded: string): Result[void, string] {
+function fixture(encoded: string, check: (Reader, [u8]) => Result[void, string]): Result[void, string] {
   let bytes = ref.unpack(encoded)?;
   let path = "fern-alac-" + hex.encode(rand.bytes(8));
   let Ok(writer) = open_exclusive(path) else {
@@ -66,14 +66,51 @@ function fixture(encoded: string): Result[void, string] {
     return Err("open fixture");
   };
   defer reader.close();
-  return packets(reader, bytes);
+  return check(reader, bytes);
 }
 
 function references(): test.TestOutcome {
   for vector in mp4_alac_vectors.all() {
-    if let Err(message) = fixture(vector.encoded) {
+    if let Err(message) = fixture(vector.encoded, packets) {
       return test.fail(vector.name + ": " + message);
     }
+  }
+  return test.pass();
+}
+
+// FFmpeg remuxed 8,241 stereo s16le frames at 44,100 Hz with ALAC and
+// +empty_moov+default_base_moof+frag_every_frame. Each packet has a
+// distinct constant in each channel. The last packet has only 49 frames.
+function fragmented_packets(reader: Reader, bytes: [u8]): Result[void, string] {
+  let limits = alac.default_limits();
+  let Ok(track) = alac.decode(bytes, limits) else {
+    return Err("fragmented track decode");
+  };
+  if (track.frames != 8241i64 || track.samples.len() != 16482) {
+    return Err("fragmented track extent");
+  }
+  for i in 0..8241 {
+    let packet = i / 4096;
+    if (track.samples[2 * i] != 7 + packet || track.samples[2 * i + 1] != -13 - packet) {
+      return Err("fragmented track PCM");
+    }
+  }
+  let Ok(index) = file.inspect_alac(reader, file.default_limits()) else {
+    return Err("fragmented file index");
+  };
+  let Ok(info) = index.information(0) else {
+    return Err("fragmented track metadata");
+  };
+  if (info.packets != 3) {
+    return Err("fragmented file packet count");
+  }
+  return packets(reader, bytes);
+}
+
+function fragments(): test.TestOutcome {
+  let encoded = "eNqlVEFrE0EUfrMptpYoAdNbwRR6yEGLwTbtqfXQg0IuUjwIBZ1kss3SnWyYfQnaS3vsvWd/QEXBozcPiv+ht57UH1BBpXR98zYxsyupqMPuvvlevpn93jcvCwDzPj7vBXG0AuCBjXTXdW+5RviljqIBAIR60FGQGYUvHARf4yGyrDy+B5cOjxa8RiN3ab6Nu/zOwiW7c0789XvFA60CSZOKVvm6Xm3a56MPDG53VGhGv8RRv+sytwir+7KrwjZzznTQ9SmWYp3ZdFGl+Xll2r4jr9g3YWU4fxtjM7RGxxgrh7MtQ9n6rSQPSmOpsDjmULpUnb3ucclTMHd4MGSVm2gw3eUsva1OxNjRSThuObhMeC9nK3FakYOretB+Zo1Ew3GkM38csq/QGv5YtznaseCaSwdiZK8XuotuBWSHLfAYo4gNlLyYN2/IgV+vLa0u1e7cJaioU9l87XdcAxvUTWw+2rwHa2me/at7w0LRV5hTXEbDpz0qxgpb1yTAnhhcK4qdC1+sJMuwk3zKoM8JTFPTXtw8SaBI9sP0+cbRwQSF3r8pLP2vwhli7L//8e5UvAGefl+boLAwWSHUJius/EGhraAJcKMoGqIrqvAi+Zo8zSCZwFXr3pNvwI175ZwegfaN7YCHSFFk/xaF3KfkoxDCscsyOr9SlWFqajZNUclm1NfBT3KevDE=";
+  if let Err(message) = fixture(encoded, fragmented_packets) {
+    return test.fail(message);
   }
   return test.pass();
 }
@@ -81,5 +118,6 @@ function references(): test.TestOutcome {
 function main(): i32 {
   let runner = test.new("M4A ALAC packet reads");
   runner = runner.it("read every packet in reverse order into caller storage across 44 tracks", references);
+  runner = runner.it("decode three ALAC fragments and read their packets in reverse order", fragments);
   return runner.finish();
 }

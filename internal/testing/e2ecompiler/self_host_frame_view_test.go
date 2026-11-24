@@ -85,7 +85,7 @@ func TestSelfHostFrameViews(t *testing.T) {
 			"arm64-linux":     frameViewNative,
 			"x86-64-linux":    frameViewNative,
 			"x86-64-sanitize": frameViewNative,
-			"wasm32-wasi":     "100300\n600200\n10539400\n200200\n",
+			"wasm32-wasi":     frameViewNative,
 		})
 }
 

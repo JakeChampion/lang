@@ -7,7 +7,8 @@ No float conversion or quantization occurs.
 
 The decoder reuses packet scratch and a bounded PCM buffer across the track.
 Normal media edits remove priming and padding. Empty edits insert silence.
-Fragmented media, encryption, external references, and configuration changes are unsupported.
+The complete view accepts fragmented files: each `moof` box adds packets to its track.
+Encryption, external references, and configuration changes are unsupported.
 The ALAC packet decoder retains its declared format and predictor limits.
 A retained index applies to the same immutable input bytes used during inspection.
 
@@ -120,8 +121,8 @@ pub function inspect(input: [u8], limits: container.Limits): Result[Index, pcm.A
 
 // The index of the movie boxes `input` of a file of `file_bytes` bytes,
 // with no bytes of the sound.
-pub(package) function inspect_movie(input: [u8], media: tables.Media[], file_bytes: i64, top_boxes: i32, limits: container.Limits): Result[Index, pcm.AudioError] {
-  return configured(input, container.inspect_movie(input, media, file_bytes, top_boxes, limits, boxes.tag("alac"))?, limits);
+pub(package) function inspect_movie(input: [u8], moof_bytes: [u8], moof_starts: [i64], media: tables.Media[], file_bytes: i64, top_boxes: i32, limits: container.Limits): Result[Index, pcm.AudioError] {
+  return configured(input, container.inspect_movie(input, moof_bytes, moof_starts, media, file_bytes, top_boxes, limits, boxes.tag("alac"))?, limits);
 }
 
 function configured(input: [u8], raw: container.Index, limits: container.Limits): Result[Index, pcm.AudioError] {
