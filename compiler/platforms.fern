@@ -448,7 +448,7 @@ pub function core_builtins(): string[] {
     "__account_entry", "__alloc_len",
     "__ct_secret", "__ct_public",
     "__bytes_owned", "__bytes_range", "__bytes_into",
-    "__aes_expand_key", "__aes_ctr32", "__aes_dec_blocks", "__ghash", "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__sha1x8_hw", "__sha1x8_hw_blocks", "__chacha20_xor_into", "__poly1305_blocks",
+    "__aes_expand_key", "__aes_ctr32", "__aes_dec_blocks", "__ghash", "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__sha1x8_hw", "__sha1x8_hw_blocks", "__sha256x8_hw", "__sha256x8_hw_blocks", "__chacha20_xor_into", "__poly1305_blocks",
     "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into", "__mont_mul", "__scrypt_block_mix",
     "map_new", "cell_new", "__send_copy", "__send_adopt", "__send_root", "__send_release", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked",
     "slice_unchecked", "share_unchecked",

@@ -657,7 +657,7 @@ function uses_aes_gcm(kinds: i32[]): boolean {
 
 function uses_sha_hw_blocks(kinds: i32[]): boolean {
   return has_kind(kinds, "sha256_hw_blocks") || has_kind(kinds, "sha1_hw_blocks")
-    || has_kind(kinds, "sha1x8_hw_blocks");
+    || has_kind(kinds, "sha1x8_hw_blocks") || has_kind(kinds, "sha256x8_hw_blocks");
 }
 
 // The helper that runs a byte kernel op.
