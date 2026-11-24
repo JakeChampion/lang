@@ -4833,6 +4833,12 @@ function instruction_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunit
   if (ssasem.is_function_op(ins.kind_tag)) {
     r = function_site(r, f, p.defs, ins);
     r = emit(r, ir.op_store_local(ins.result));
+    if (ins.kind_tag == ssasem.call_value() && ins.imm > 0) {
+      r = capture_pair_words(r, ins.imm);
+    }
+    if (ins.kind_tag == ssasem.call_value() && ins.imm < 0) {
+      r = capture_scalar_words(r, ins.imm);
+    }
     // The call took the reference of a `once` callee, and the body only
     // borrows the environment, so the caller drops it after the call.
     if (ins.kind_tag == ssasem.call_value() && ssasem.func_once(f.values[ins.args[0]])) {
@@ -6066,7 +6072,7 @@ function map_in_place(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst
   r = emit(r, ir.op_load_local(index));
   r = got_elem(r, arr_get_op(elem, true, f), elem);
   r = body_address(r, fn);
-  r = emit(r, call_value_op(2, f.values[fn]));
+  r = emit(r, call_value_op(2, f.values[fn], ssasem.func_result(f.values[fn])));
   r = put_elem(r, arr_set_op(elem), elem);
   r = emit(r, ir.op_load_local(index));
   r = emit(r, ir.op_const_i32(1));
@@ -6199,7 +6205,7 @@ function function_site(own r: irtables.LowerState, f: ssasem.Func, defs: ssa.SIn
     return emit(r, ir.op_call_direct(callee.str, ins.args.len()));
   }
   r = body_address(r, ins.args[0]);
-  return emit(r, with_units(call_value_op(ins.args.len(), f.values[ins.args[0]]), f, ins));
+  return emit(r, with_units(call_value_op(ins.args.len(), f.values[ins.args[0]], f.values[ins.result]), f, ins));
 }
 
 // The operands of a call through a function value that hand their unit to
@@ -6220,13 +6226,24 @@ function with_units(o: ir.Op, f: ssasem.Func, ins: ssa.SInst): ir.Op {
   if (ins.result >= 0 && ssasem.counted(f, f.values[ins.result])) {
     units = units | ir.call_units_result();
   }
+  if (ins.imm > 0) {
+    // Pair word k of a tuple that returns in words holds element k + 1.
+    if let typeinfo.TypeTuple(tup) = ssasem.func_result(callee) {
+      for slot in 0..ssasem.pair_capture_count(ins.imm) {
+        if (ssasem.counted(f, tup.elements[slot + 1])) {
+          units = units | ir.call_units_word(slot);
+        }
+      }
+    }
+  }
   return ir.with_call_units(o, units);
 }
 
 // A call through a function value of type `sig`: the wasm type tag and the
 // signature word a hardened native call checks against the callee's stub.
-function call_value_op(argc: i32, sig: typeinfo.Type): ir.Op {
-  return ir.op_call_indirect_sig(argc, signature_tag(sig), signature_word(sig));
+// `result` is the type of the first word of a result that returns in words.
+function call_value_op(argc: i32, sig: typeinfo.Type, result: typeinfo.Type): ir.Op {
+  return ir.op_call_indirect_sig(argc, signature_tag(sig, result), signature_word(sig));
 }
 
 function body_address(own r: irtables.LowerState, slot: i32): irtables.LowerState {
@@ -6255,18 +6272,18 @@ function key_eq_signature(): i32 {
   return ir.cfi_sig_hash("$fn$usize$usize$bool");
 }
 
-function full_signature_tag(sig: typeinfo.Type): string {
+function full_signature_tag(sig: typeinfo.Type, result: typeinfo.Type): string {
   let tag = "w";
   for p in ssasem.func_params(sig) {
     tag += width_char(p);
   }
-  return tag + "_" + width_char(ssasem.func_result(sig));
+  return tag + "_" + width_char(result);
 }
 
 // The wasm type tag: the full tag, or "" when every width is a word so the
 // backend keys the type by arity alone.
-function signature_tag(sig: typeinfo.Type): string {
-  let tag = full_signature_tag(sig);
+function signature_tag(sig: typeinfo.Type, result: typeinfo.Type): string {
+  let tag = full_signature_tag(sig, result);
   for i in 0..tag.len() {
     if (tag[i] != b'w' && tag[i] != b'_') {
       return tag;

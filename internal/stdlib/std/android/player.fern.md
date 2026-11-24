@@ -24,6 +24,8 @@ The listener runs on the main thread of the app. Each callback sends an event to
 `next_frame` takes the newest frame into the texture, and gives its transform matrix and its time. `held` is false until the texture holds a frame of the target. Call `target`, `next_frame` and `close_target` with the GL context of the texture current. `close_target` releases the two objects, after `hide` or `stop` takes the video off the surface.
 
 The module needs API level 26, for `ANativeWindow_toSurface` and the long seek API.
+
+The module calls Java only through `std/android/player/bindings`, which `jnibind` writes from `bindings.spec`.
 Android selects the codecs and controls A/V synchronization.
 This API does not select a named hardware or software codec.
 Use `std/android/video` when the app needs explicit codec policies.
@@ -71,6 +73,7 @@ Invalid method or object results prevent further JNI calls on that result.
 <<module introduction>>=
 // This module plays media with android.media.MediaPlayer.
 import "std/android";
+import "std/android/player/bindings";
 import "std/jni";
 ```
 
@@ -240,15 +243,6 @@ pub function (p: Player) sent(e: android.Event): boolean {
   return sent_by(e, p.slot);
 }
 
-const PLAYER: string = "android/media/MediaPlayer";
-
-const ATTRS: string = "android/media/AudioAttributes$Builder";
-
-// AudioAttributes.USAGE_MEDIA and CONTENT_TYPE_MOVIE.
-const USAGE_MEDIA: i32 = 1;
-
-const CONTENT_MOVIE: i32 = 3;
-
 function cleared(e: usize): boolean {
   let exception = jni.exception_occurred(e);
   if (exception == 0 as usize) {
@@ -278,119 +272,47 @@ function end(e: usize): void {
   let _ = jni.pop_local_frame(e, 0 as usize);
 }
 
-function method(e: usize, obj: usize, name: string, sig: string): usize {
-  if (obj == 0 as usize) {
-    return 0 as usize;
-  }
-  let class = jni.get_object_class(e, obj);
-  if (cleared(e) || class == 0 as usize) {
-    return 0 as usize;
-  }
-  let id = jni.get_method_id(e, class, name, sig);
-  if (cleared(e)) {
-    return 0 as usize;
-  }
-  return id;
+// True when the call of a wrapper did not throw.
+function done(got: Result[void, jni.JavaError]): boolean {
+  return match (got) {
+    Ok(_) => true,
+    Err(_) => false,
+  };
 }
 
-function call_void(e: usize, obj: usize, name: string, sig: string, args: usize[]): boolean {
-  let id = method(e, obj, name, sig);
-  if (id == 0 as usize) {
-    return false;
-  }
-  let values = jni.jvalues(args);
-  let _ = jni.call_void_method_a(e, obj, id, values);
-  jni.free_buffer(values);
-  return !cleared(e);
+function java_player(p: Player): bindings.MediaPlayer {
+  return bindings.MediaPlayer { ref: p.obj };
 }
 
-function call_object(e: usize, obj: usize, name: string, sig: string, args: usize[]): usize {
-  let id = method(e, obj, name, sig);
-  if (id == 0 as usize) {
-    return 0 as usize;
-  }
-  let values = jni.jvalues(args);
-  let value = jni.call_object_method_a(e, obj, id, values);
-  jni.free_buffer(values);
-  if (cleared(e)) {
-    return 0 as usize;
-  }
-  return value;
+// A new object of the app's class `name`, which the class loader of
+// `activity` loads. On Android, the classes of an app load only this way
+// from a thread that native code started.
+function new_listener(e: usize, c: bindings.Classes, activity: bindings.Context, name: string): Result[jni.Object, jni.JavaError] {
+  let loader = c.context.get_class_loader(e, activity)?;
+  let class = c.class_loader.load_class(e, loader, name)?;
+  return c.class.new_instance(e, class);
 }
 
-function call_int(e: usize, obj: usize, name: string): i32 {
-  let id = method(e, obj, name, "()I");
-  if (id == 0 as usize) {
-    return 0;
-  }
-  let value = jni.call_int_method_a(e, obj, id, 0 as usize);
-  if (cleared(e)) {
-    return 0;
-  }
-  return value;
+function attributes(e: usize, c: bindings.Classes): Result[bindings.AudioAttributes, jni.JavaError] {
+  let b = c.audio_attributes_builder.new(e)?;
+  let usage = c.audio_attributes_builder.set_usage(e, b, bindings.AUDIO_ATTRIBUTES_USAGE_MEDIA)?;
+  let content = c.audio_attributes_builder.set_content_type(e, b, bindings.AUDIO_ATTRIBUTES_CONTENT_TYPE_MOVIE)?;
+  return c.audio_attributes_builder.build(e, b);
 }
 
-function call_long(e: usize, obj: usize, name: string): Option[i64] {
-  let id = method(e, obj, name, "()J");
-  if (id == 0 as usize) {
-    return None;
+// Gives the player `mp` the listener and the audio attributes of a film.
+function wire(e: usize, c: bindings.Classes, mp: bindings.MediaPlayer, listener: usize): Result[boolean, jni.JavaError] {
+  c.media_player.set_on_prepared_listener(e, mp, bindings.MediaPlayer_OnPreparedListener { ref: listener })?;
+  c.media_player.set_on_completion_listener(e, mp, bindings.MediaPlayer_OnCompletionListener { ref: listener })?;
+  c.media_player.set_on_error_listener(e, mp, bindings.MediaPlayer_OnErrorListener { ref: listener })?;
+  c.media_player.set_on_info_listener(e, mp, bindings.MediaPlayer_OnInfoListener { ref: listener })?;
+  c.media_player.set_on_seek_complete_listener(e, mp, bindings.MediaPlayer_OnSeekCompleteListener { ref: listener })?;
+  let attrs = attributes(e, c)?;
+  if (attrs.is_null()) {
+    return Ok(false);
   }
-  let value = jni.call_long_method_a(e, obj, id, 0 as usize) as i64;
-  if (cleared(e)) {
-    return None;
-  }
-  return Some(value);
-}
-
-function find_class(e: usize, name: string): usize {
-  let class = jni.find_class(e, name);
-  if (cleared(e)) {
-    return 0 as usize;
-  }
-  return class;
-}
-
-function new_object(e: usize, class: usize, sig: string, args: usize[]): usize {
-  if (class == 0 as usize) {
-    return 0 as usize;
-  }
-  let id = jni.get_method_id(e, class, "<init>", sig);
-  if (cleared(e) || id == 0 as usize) {
-    return 0 as usize;
-  }
-  let values = jni.jvalues(args);
-  let value = jni.new_object_a(e, class, id, values);
-  jni.free_buffer(values);
-  if (cleared(e)) {
-    return 0 as usize;
-  }
-  return value;
-}
-
-function load_class(e: usize, activity: usize, name: string): usize {
-  let loader = call_object(e, activity, "getClassLoader", "()Ljava/lang/ClassLoader;", []);
-  let text = jni.new_string(e, name);
-  if (cleared(e) || text == 0 as usize) {
-    return 0 as usize;
-  }
-  return call_object(e, loader, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;", [text]);
-}
-
-function attributes(e: usize): usize {
-  let b = new_object(e, find_class(e, ATTRS), "()V", []);
-  let usage = call_object(e, b, "setUsage", "(I)L" + ATTRS + ";", [USAGE_MEDIA as usize]);
-  if (usage == 0 as usize) {
-    return 0 as usize;
-  }
-  let content = call_object(e, b, "setContentType", "(I)L" + ATTRS + ";", [CONTENT_MOVIE as usize]);
-  if (content == 0 as usize) {
-    return 0 as usize;
-  }
-  return call_object(e, b, "build", "()Landroid/media/AudioAttributes;", []);
-}
-
-function listen(e: usize, mp: usize, listener: usize, name: string, iface: string): boolean {
-  return call_void(e, mp, name, "(Landroid/media/MediaPlayer$" + iface + ";)V", [listener]);
+  c.media_player.set_audio_attributes(e, mp, attrs)?;
+  return Ok(true);
 }
 
 // A player whose listener is a new object of `class`, the Java name of the
@@ -402,59 +324,59 @@ pub function new(ctx: usize, class: string): Option[Player] {
     return None;
   }
   defer end(e);
-  let listener = new_object(e, load_class(e, android.activity_object(ctx), class), "()V", []);
-  if (listener == 0 as usize) {
+  let Ok(c) = bindings.classes(e) else {
+    return None;
+  };
+  defer c.release(e);
+  let Ok(listener) = new_listener(e, c, bindings.Context { ref: android.activity_object(ctx) }, class) else {
+    return None;
+  };
+  if (listener.is_null()) {
     return None;
   }
-  let mp = new_object(e, find_class(e, PLAYER), "()V", []);
-  if (mp == 0 as usize) {
+  let Ok(mp) = c.media_player.new(e) else {
+    return None;
+  };
+  if (mp.is_null()) {
     return None;
   }
-  let ok = listen(e, mp, listener, "setOnPreparedListener", "OnPreparedListener") && listen(e, mp, listener, "setOnCompletionListener", "OnCompletionListener") && listen(e, mp, listener, "setOnErrorListener", "OnErrorListener") && listen(e, mp, listener, "setOnInfoListener", "OnInfoListener") && listen(e, mp, listener, "setOnSeekCompleteListener", "OnSeekCompleteListener");
-  if (!ok || !set_attributes(e, mp)) {
-    let _ = call_void(e, mp, "release", "()V", []);
-    return None;
+  match (wire(e, c, mp, listener.ref)) {
+    Ok(true) => {},
+    _ => {
+      let _ = c.media_player.release_(e, mp);
+      return None;
+    }
   }
-  return retain(ctx, e, mp, listener);
+  return retain(ctx, e, c.media_player, mp, listener.ref);
 }
 
-function set_attributes(e: usize, mp: usize): boolean {
-  let attrs = attributes(e);
-  return attrs != 0 as usize && call_void(e, mp, "setAudioAttributes", "(Landroid/media/AudioAttributes;)V", [attrs]);
-}
-
-function retain(ctx: usize, e: usize, mp: usize, listener: usize): Option[Player] {
-  let obj = jni.new_global_ref(e, mp);
+function retain(ctx: usize, e: usize, players: bindings.MediaPlayerClass, mp: bindings.MediaPlayer, listener: usize): Option[Player] {
+  let obj = jni.new_global_ref(e, mp.ref);
   if (cleared(e) || obj == 0 as usize) {
-    let _ = call_void(e, mp, "release", "()V", []);
+    let _ = players.release_(e, mp);
     return None;
   }
   let saved_listener = jni.new_global_ref(e, listener);
   if (cleared(e) || saved_listener == 0 as usize) {
     let _ = jni.delete_global_ref(e, obj);
-    let _ = call_void(e, mp, "release", "()V", []);
+    let _ = players.release_(e, mp);
     return None;
   }
-  let slot = android.add_sender(ctx, session_of(e, mp));
+  let slot = android.add_sender(ctx, session_of(e, players, mp));
   if (slot < 0) {
     let _ = jni.delete_global_ref(e, saved_listener);
     let _ = jni.delete_global_ref(e, obj);
-    let _ = call_void(e, mp, "release", "()V", []);
+    let _ = players.release_(e, mp);
     return None;
   }
   return Some(Player { obj: obj, listener: saved_listener, slot: slot });
 }
 
-function session_of(e: usize, mp: usize): i64 {
-  let id = method(e, mp, "getAudioSessionId", "()I");
-  if (id == 0 as usize) {
-    return 0i64;
-  }
-  let session = jni.call_int_method_a(e, mp, id, 0 as usize);
-  if (cleared(e)) {
-    return 0i64;
-  }
-  return session as i64;
+function session_of(e: usize, players: bindings.MediaPlayerClass, mp: bindings.MediaPlayer): i64 {
+  return match (players.get_audio_session_id(e, mp)) {
+    Ok(session) => session as i64,
+    Err(_) => 0i64,
+  };
 }
 
 function valid_uri(uri: string): boolean {
@@ -469,24 +391,6 @@ function valid_uri(uri: string): boolean {
   return true;
 }
 
-function parse_uri(e: usize, text: usize): usize {
-  let class = find_class(e, "android/net/Uri");
-  if (class == 0 as usize) {
-    return 0 as usize;
-  }
-  let id = jni.get_static_method_id(e, class, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
-  if (cleared(e) || id == 0 as usize) {
-    return 0 as usize;
-  }
-  let values = jni.jvalues([text]);
-  let uri = jni.call_static_object_method_a(e, class, id, values);
-  jni.free_buffer(values);
-  if (cleared(e)) {
-    return 0 as usize;
-  }
-  return uri;
-}
-
 // Prepares a path, file URI, HTTP address, or granted content URI.
 // Prepared or Failed follows. An immediate failure returns false.
 pub function open(ctx: usize, p: Player, uri: string): boolean {
@@ -495,18 +399,37 @@ pub function open(ctx: usize, p: Player, uri: string): boolean {
     return false;
   }
   defer end(e);
-  if (!valid_uri(uri) || !call_void(e, p.obj, "reset", "()V", [])) {
+  if (!valid_uri(uri)) {
     return false;
   }
-  let text = jni.new_string(e, uri);
-  if (cleared(e) || text == 0 as usize) {
+  let Ok(players) = bindings.media_player_class(e) else {
+    return false;
+  };
+  defer players.release(e);
+  let Ok(uris) = bindings.uri_class(e) else {
+    return false;
+  };
+  defer uris.release(e);
+  if (!done(players.reset(e, java_player(p)))) {
     return false;
   }
-  let parsed = parse_uri(e, text);
-  if (parsed == 0 as usize) {
+  let Ok(parsed) = uris.parse(e, uri) else {
+    return false;
+  };
+  if (parsed.is_null()) {
     return false;
   }
-  return call_void(e, p.obj, "setDataSource", "(Landroid/content/Context;Landroid/net/Uri;)V", [android.activity_object(ctx), parsed]) && call_void(e, p.obj, "prepareAsync", "()V", []);
+  let activity = bindings.Context { ref: android.activity_object(ctx) };
+  return done(players.set_data_source(e, java_player(p), activity, parsed)) && done(players.prepare_async(e, java_player(p)));
+}
+
+// Gives the player `p` the surface `surface`, or no surface for a null one.
+function set_surface(e: usize, p: Player, surface: usize): boolean {
+  let Ok(players) = bindings.media_player_class(e) else {
+    return false;
+  };
+  defer players.release(e);
+  return done(players.set_surface(e, java_player(p), bindings.Surface { ref: surface }));
 }
 
 // Shows the video on window `w`. It gives the window up as the target of
@@ -522,14 +445,31 @@ pub function show(ctx: usize, p: Player, w: android.Window): boolean {
   if (cleared(e) || surface == 0 as usize) {
     return false;
   }
-  let ok = call_void(e, p.obj, "setSurface", "(Landroid/view/Surface;)V", [surface]);
-  let gone: usize = jni.delete_local_ref(e, surface);
-  return ok;
+  return set_surface(e, p, surface);
 }
 
 // A SurfaceTexture on an external GL texture and the Surface that feeds it,
 // as global references.
 pub struct Target { texture: usize, surface: usize }
+
+// The classes of a target. Release each one before the local frame ends.
+struct TargetClasses { textures: bindings.SurfaceTextureClass, surfaces: bindings.SurfaceClass }
+
+function target_classes(e: usize): Option[TargetClasses] {
+  let Ok(textures) = bindings.surface_texture_class(e) else {
+    return None;
+  };
+  let Ok(surfaces) = bindings.surface_class(e) else {
+    textures.release(e);
+    return None;
+  };
+  return Some(TargetClasses { textures: textures, surfaces: surfaces });
+}
+
+function (c: TargetClasses) release(e: usize): void {
+  c.surfaces.release(e);
+  c.textures.release(e);
+}
 
 // A target on the external texture with the id `texture_id`, or None.
 pub function target(ctx: usize, texture_id: i32): Option[Target] {
@@ -538,32 +478,42 @@ pub function target(ctx: usize, texture_id: i32): Option[Target] {
     return None;
   }
   defer end(e);
-  let st = new_object(e, find_class(e, "android/graphics/SurfaceTexture"), "(I)V", [texture_id as usize]);
-  if (st == 0 as usize) {
+  let Some(c) = target_classes(e) else {
+    return None;
+  };
+  defer c.release(e);
+  let Ok(st) = c.textures.new(e, texture_id) else {
+    return None;
+  };
+  if (st.is_null()) {
     return None;
   }
-  let surface = new_object(e, find_class(e, "android/view/Surface"), "(Landroid/graphics/SurfaceTexture;)V", [st]);
-  if (surface == 0 as usize) {
-    let _ = call_void(e, st, "release", "()V", []);
+  let made = c.surfaces.new(e, st);
+  let Ok(surface) = made else {
+    let _ = c.textures.release_(e, st);
+    return None;
+  };
+  if (surface.is_null()) {
+    let _ = c.textures.release_(e, st);
     return None;
   }
-  let saved_st = jni.new_global_ref(e, st);
+  let saved_st = jni.new_global_ref(e, st.ref);
   if (cleared(e) || saved_st == 0 as usize) {
-    release_target(e, st, surface);
+    release_target(e, c, st.ref, surface.ref);
     return None;
   }
-  let saved_surface = jni.new_global_ref(e, surface);
+  let saved_surface = jni.new_global_ref(e, surface.ref);
   if (cleared(e) || saved_surface == 0 as usize) {
     let _ = jni.delete_global_ref(e, saved_st);
-    release_target(e, st, surface);
+    release_target(e, c, st.ref, surface.ref);
     return None;
   }
   return Some(Target { texture: saved_st, surface: saved_surface });
 }
 
-function release_target(e: usize, st: usize, surface: usize): void {
-  let _ = call_void(e, surface, "release", "()V", []);
-  let _ = call_void(e, st, "release", "()V", []);
+function release_target(e: usize, c: TargetClasses, st: usize, surface: usize): void {
+  let _ = c.surfaces.release_(e, bindings.Surface { ref: surface });
+  let _ = c.textures.release_(e, bindings.SurfaceTexture { ref: st });
 }
 
 // Shows the video on the target in place of the window.
@@ -573,7 +523,7 @@ pub function show_target(ctx: usize, p: Player, t: Target): boolean {
     return false;
   }
   defer end(e);
-  return call_void(e, p.obj, "setSurface", "(Landroid/view/Surface;)V", [t.surface]);
+  return set_surface(e, p, t.surface);
 }
 
 // The newest frame of a target: the 16 numbers of its transform matrix,
@@ -606,21 +556,26 @@ pub function next_frame(ctx: usize, t: Target): Option[TargetFrame] {
     return None;
   }
   defer end(e);
-  if (!call_void(e, t.texture, "updateTexImage", "()V", [])) {
+  let Ok(textures) = bindings.surface_texture_class(e) else {
+    return None;
+  };
+  defer textures.release(e);
+  let texture = bindings.SurfaceTexture { ref: t.texture };
+  if (!done(textures.update_tex_image(e, texture))) {
     return None;
   }
   let array = jni.new_float_array(e, 16);
   if (cleared(e) || array == 0 as usize) {
     return None;
   }
-  if (!call_void(e, t.texture, "getTransformMatrix", "([F)V", [array])) {
+  if (!done(textures.get_transform_matrix(e, texture, jni.Object { ref: array }))) {
     return None;
   }
   let matrix = jni.float_array_region(e, array, 0, 16);
   if (cleared(e)) {
     return None;
   }
-  let Some(time) = call_long(e, t.texture, "getTimestamp") else {
+  let Ok(time) = textures.get_timestamp(e, texture) else {
     return None;
   };
   return Some(TargetFrame { matrix: matrix, time_ns: time });
@@ -633,7 +588,10 @@ pub function close_target(ctx: usize, t: Target): void {
     return;
   }
   defer end(e);
-  release_target(e, t.texture, t.surface);
+  if let Some(c) = target_classes(e) {
+    release_target(e, c, t.texture, t.surface);
+    c.release(e);
+  }
   let _ = jni.delete_global_ref(e, t.surface);
   let _ = jni.delete_global_ref(e, t.texture);
 }
@@ -645,7 +603,7 @@ pub function hide(ctx: usize, p: Player): void {
     return;
   }
   defer end(e);
-  let ok = call_void(e, p.obj, "setSurface", "(Landroid/view/Surface;)V", [0 as usize]);
+  let ok = set_surface(e, p, 0 as usize);
 }
 
 pub function start(ctx: usize, p: Player): boolean {
@@ -654,7 +612,11 @@ pub function start(ctx: usize, p: Player): boolean {
     return false;
   }
   defer end(e);
-  return call_void(e, p.obj, "start", "()V", []);
+  let Ok(players) = bindings.media_player_class(e) else {
+    return false;
+  };
+  defer players.release(e);
+  return done(players.start(e, java_player(p)));
 }
 
 pub function pause(ctx: usize, p: Player): boolean {
@@ -663,7 +625,11 @@ pub function pause(ctx: usize, p: Player): boolean {
     return false;
   }
   defer end(e);
-  return call_void(e, p.obj, "pause", "()V", []);
+  let Ok(players) = bindings.media_player_class(e) else {
+    return false;
+  };
+  defer players.release(e);
+  return done(players.pause(e, java_player(p)));
 }
 
 // Where a seek lands. Exact decodes from the sync frame before the time up
@@ -681,12 +647,15 @@ pub function seek(ctx: usize, p: Player, ms: i64, mode: SeekMode): boolean {
   if (ms < 0i64 || ms > 2147483647i64) {
     return false;
   }
-  // MediaPlayer.SEEK_CLOSEST is 3, and SEEK_CLOSEST_SYNC is 2.
   let code = match (mode) {
-    Exact => 3,
-    Sync => 2,
+    Exact => bindings.MEDIA_PLAYER_SEEK_CLOSEST,
+    Sync => bindings.MEDIA_PLAYER_SEEK_CLOSEST_SYNC,
   };
-  return call_void(e, p.obj, "seekTo", "(JI)V", [ms as usize, code as usize]);
+  let Ok(players) = bindings.media_player_class(e) else {
+    return false;
+  };
+  defer players.release(e);
+  return done(players.seek_to(e, java_player(p), ms, code));
 }
 
 pub function position_ms(ctx: usize, p: Player): i64 {
@@ -695,7 +664,14 @@ pub function position_ms(ctx: usize, p: Player): i64 {
     return 0i64;
   }
   defer end(e);
-  return call_int(e, p.obj, "getCurrentPosition") as i64;
+  let Ok(players) = bindings.media_player_class(e) else {
+    return 0i64;
+  };
+  defer players.release(e);
+  return match (players.get_current_position(e, java_player(p))) {
+    Ok(ms) => ms as i64,
+    Err(_) => 0i64,
+  };
 }
 
 // The length of the stream, or 0 when it has none, as a live stream.
@@ -705,11 +681,14 @@ pub function duration_ms(ctx: usize, p: Player): i64 {
     return 0i64;
   }
   defer end(e);
-  let d = call_int(e, p.obj, "getDuration");
-  if (d < 0) {
+  let Ok(players) = bindings.media_player_class(e) else {
     return 0i64;
-  }
-  return d as i64;
+  };
+  defer players.release(e);
+  return match (players.get_duration(e, java_player(p))) {
+    Ok(ms) => ms.max(0) as i64,
+    Err(_) => 0i64,
+  };
 }
 
 pub function playing(ctx: usize, p: Player): boolean {
@@ -718,15 +697,31 @@ pub function playing(ctx: usize, p: Player): boolean {
     return false;
   }
   defer end(e);
-  let id = method(e, p.obj, "isPlaying", "()Z");
-  if (id == 0 as usize) {
+  let Ok(players) = bindings.media_player_class(e) else {
     return false;
-  }
-  let got = jni.call_boolean_method_a(e, p.obj, id, 0 as usize);
-  return !cleared(e) && got != 0;
+  };
+  defer players.release(e);
+  return match (players.is_playing(e, java_player(p))) {
+    Ok(got) => got,
+    Err(_) => false,
+  };
 }
 
 pub struct Timestamp { media_us: i64, monotonic_ns: i64 }
+
+function anchor_of(e: usize, players: bindings.MediaPlayerClass, stamps: bindings.MediaTimestampClass, p: Player): Result[Option[Timestamp], jni.JavaError] {
+  let anchor = players.get_timestamp(e, java_player(p))?;
+  if (anchor.is_null()) {
+    return Ok(None);
+  }
+  let media = stamps.get_anchor_media_time_us(e, anchor)?;
+  // This spelling is the API 23 method. The corrected name needs API 28.
+  let system = stamps.get_anchor_sytem_nano_time(e, anchor)?;
+  if (media < 0i64 || system < 0i64) {
+    return Ok(None);
+  }
+  return Ok(Some(Timestamp { media_us: media, monotonic_ns: system }));
+}
 
 // The platform's media and system time anchor, or None when it is unknown.
 // An anchor does not establish the clock rate or physical output latency.
@@ -736,25 +731,19 @@ pub function timestamp(ctx: usize, p: Player): Option[Timestamp] {
     return None;
   }
   defer end(e);
-  let anchor = call_object(e, p.obj, "getTimestamp", "()Landroid/media/MediaTimestamp;", []);
-  if (anchor == 0 as usize) {
-    return None;
-  }
-  let Some(media) = call_long(e, anchor, "getAnchorMediaTimeUs") else {
+  let Ok(players) = bindings.media_player_class(e) else {
     return None;
   };
-  // This spelling is the API 23 method. The corrected name needs API 28.
-  let Some(system) = call_long(e, anchor, "getAnchorSytemNanoTime") else {
+  defer players.release(e);
+  let Ok(stamps) = bindings.media_timestamp_class(e) else {
     return None;
   };
-  if (media < 0i64 || system < 0i64) {
-    return None;
-  }
-  return Some(Timestamp { media_us: media, monotonic_ns: system });
+  defer stamps.release(e);
+  return match (anchor_of(e, players, stamps, p)) {
+    Ok(anchor) => anchor,
+    Err(_) => None,
+  };
 }
-
-// MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO.
-const TRACK_AUDIO: i32 = 2;
 
 // True when the prepared player selected a sound track.
 pub function has_audio(ctx: usize, p: Player): boolean {
@@ -763,44 +752,62 @@ pub function has_audio(ctx: usize, p: Player): boolean {
     return false;
   }
   defer end(e);
-  let id = method(e, p.obj, "getSelectedTrack", "(I)I");
-  if (id == 0 as usize) {
+  let Ok(players) = bindings.media_player_class(e) else {
     return false;
+  };
+  defer players.release(e);
+  return match (players.get_selected_track(e, java_player(p), bindings.MEDIA_PLAYER_TRACK_INFO_MEDIA_TRACK_TYPE_AUDIO)) {
+    Ok(track) => track >= 0,
+    Err(_) => false,
+  };
+}
+
+// The index of each sound track in the array `infos` of getTrackInfo, up
+// to the first one that Android does not give.
+function sound_tracks(e: usize, tracks: bindings.MediaPlayer_TrackInfoClass, infos: jni.Object): i32[] {
+  let out: i32[] = [];
+  let n = jni.get_array_length(e, infos.ref);
+  if (cleared(e)) {
+    return out;
   }
-  let values = jni.jvalues([TRACK_AUDIO as usize]);
-  let track = jni.call_int_method_a(e, p.obj, id, values);
-  jni.free_buffer(values);
-  return !cleared(e) && track >= 0;
+  for i in 0..n {
+    let info = jni.get_object_array_element(e, infos.ref, i);
+    if (cleared(e) || info == 0 as usize) {
+      return out;
+    }
+    if let Ok(kind) = tracks.get_track_type(e, bindings.MediaPlayer_TrackInfo { ref: info }) {
+      if (kind == bindings.MEDIA_PLAYER_TRACK_INFO_MEDIA_TRACK_TYPE_AUDIO) {
+        out = out.append(i);
+      }
+    }
+    let _ = jni.delete_local_ref(e, info);
+  }
+  return out;
 }
 
 // The index of each sound track of the prepared player, in the order of
 // the file.
 pub function audio_tracks(ctx: usize, p: Player): i32[] {
   let e: usize = android.env(ctx);
-  let out: i32[] = [];
   if (!begin(e)) {
-    return out;
+    return [];
   }
   defer end(e);
-  let infos = call_object(e, p.obj, "getTrackInfo", "()[Landroid/media/MediaPlayer$TrackInfo;", []);
-  if (infos == 0 as usize) {
-    return out;
+  let Ok(players) = bindings.media_player_class(e) else {
+    return [];
+  };
+  defer players.release(e);
+  let Ok(tracks) = bindings.media_player_track_info_class(e) else {
+    return [];
+  };
+  defer tracks.release(e);
+  let Ok(infos) = players.get_track_info(e, java_player(p)) else {
+    return [];
+  };
+  if (infos.is_null()) {
+    return [];
   }
-  let n = jni.get_array_length(e, infos);
-  if (cleared(e)) {
-    return out;
-  }
-  for i in 0..n {
-    let info = jni.get_object_array_element(e, infos, i);
-    if (cleared(e) || info == 0 as usize) {
-      return out;
-    }
-    if (call_int(e, info, "getTrackType") == TRACK_AUDIO) {
-      out = out.append(i);
-    }
-    let _ = jni.delete_local_ref(e, info);
-  }
-  return out;
+  return sound_tracks(e, tracks, infos);
 }
 
 // Plays the track with the index `index`.
@@ -810,7 +817,11 @@ pub function select_track(ctx: usize, p: Player, index: i32): boolean {
     return false;
   }
   defer end(e);
-  return call_void(e, p.obj, "selectTrack", "(I)V", [index as usize]);
+  let Ok(players) = bindings.media_player_class(e) else {
+    return false;
+  };
+  defer players.release(e);
+  return done(players.select_track(e, java_player(p), index));
 }
 
 // Plays at `rate` times the normal speed, from 0.25 to 4.0, with
@@ -824,18 +835,24 @@ pub function set_speed(ctx: usize, p: Player, rate: f32): boolean {
     return false;
   }
   defer end(e);
-  let params = new_object(e, find_class(e, "android/media/PlaybackParams"), "()V", []);
-  let id = method(e, params, "setSpeed", "(F)Landroid/media/PlaybackParams;");
-  if (id == 0 as usize) {
+  let Ok(players) = bindings.media_player_class(e) else {
+    return false;
+  };
+  defer players.release(e);
+  let Ok(params) = bindings.playback_params_class(e) else {
+    return false;
+  };
+  defer params.release(e);
+  let Ok(fresh) = params.new(e) else {
+    return false;
+  };
+  let Ok(sped) = params.set_speed(e, fresh, rate) else {
+    return false;
+  };
+  if (sped.is_null()) {
     return false;
   }
-  let args = jni.jvalue_set_f32(jni.jvalue_alloc(1), 0, rate);
-  let sped = jni.call_object_method_a(e, params, id, args);
-  jni.free_buffer(args);
-  if (cleared(e) || sped == 0 as usize) {
-    return false;
-  }
-  return call_void(e, p.obj, "setPlaybackParams", "(Landroid/media/PlaybackParams;)V", [sped]);
+  return done(players.set_playback_params(e, java_player(p), sped));
 }
 
 // The width and the height of the video, or 0 and 0 for audio.
@@ -845,7 +862,13 @@ pub function video_size(ctx: usize, p: Player): (i32, i32) {
     return (0, 0);
   }
   defer end(e);
-  return (call_int(e, p.obj, "getVideoWidth"), call_int(e, p.obj, "getVideoHeight"));
+  let Ok(players) = bindings.media_player_class(e) else {
+    return (0, 0);
+  };
+  defer players.release(e);
+  let width = match (players.get_video_width(e, java_player(p))) { Ok(w) => w, Err(_) => 0 };
+  let height = match (players.get_video_height(e, java_player(p))) { Ok(h) => h, Err(_) => 0 };
+  return (width, height);
 }
 
 // Stops the stream and takes the video off the window. The player keeps its
@@ -856,8 +879,12 @@ pub function stop(ctx: usize, p: Player): void {
     return;
   }
   defer end(e);
-  let surface = call_void(e, p.obj, "setSurface", "(Landroid/view/Surface;)V", [0 as usize]);
-  let reset = call_void(e, p.obj, "reset", "()V", []);
+  let Ok(players) = bindings.media_player_class(e) else {
+    return;
+  };
+  defer players.release(e);
+  let surface = players.set_surface(e, java_player(p), bindings.Surface { ref: 0 as usize });
+  let reset = players.reset(e, java_player(p));
 }
 
 // Sets the gain of both audio channels. A gain of 1 is the original level.
@@ -867,8 +894,11 @@ pub function set_volume(ctx: usize, p: Player, gain: f32): boolean {
     return false;
   }
   defer end(e);
-  let bits = f32_bits(gain) as usize;
-  return call_void(e, p.obj, "setVolume", "(FF)V", [bits, bits]);
+  let Ok(players) = bindings.media_player_class(e) else {
+    return false;
+  };
+  defer players.release(e);
+  return done(players.set_volume(e, java_player(p), gain, gain));
 }
 
 // Gives the player `next`, which must be prepared, to the player `p`, so
@@ -883,7 +913,11 @@ pub function set_next(ctx: usize, p: Player, next: Option[Player]): boolean {
   if let Some(n) = next {
     obj = n.obj;
   }
-  return call_void(e, p.obj, "setNextMediaPlayer", "(Landroid/media/MediaPlayer;)V", [obj]);
+  let Ok(players) = bindings.media_player_class(e) else {
+    return false;
+  };
+  defer players.release(e);
+  return done(players.set_next_media_player(e, java_player(p), bindings.MediaPlayer { ref: obj }));
 }
 
 // Stops the player and frees it and its listener.
@@ -893,7 +927,10 @@ pub function close(ctx: usize, p: Player): void {
     return;
   }
   defer end(e);
-  let released = call_void(e, p.obj, "release", "()V", []);
+  if let Ok(players) = bindings.media_player_class(e) {
+    let _ = players.release_(e, java_player(p));
+    players.release(e);
+  }
   android.drop_sender(ctx, p.slot);
   jni.delete_global_ref(e, p.listener);
   jni.delete_global_ref(e, p.obj);
@@ -911,7 +948,11 @@ function post(e: usize, mp: usize, c: Change): void {
     return;
   }
   defer end(e);
-  let (kind, arg) = posted(c, android.sender_slot(e, session_of(e, mp)));
+  let Ok(players) = bindings.media_player_class(e) else {
+    return;
+  };
+  defer players.release(e);
+  let (kind, arg) = posted(c, android.sender_slot(e, session_of(e, players, bindings.MediaPlayer { ref: mp })));
   let sent = android.tell(e, kind, arg);
 }
 

@@ -11477,6 +11477,47 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		return heldOwners[name]
 	}
+	// An assignment gives a consumed owner a new value. A callback or holder
+	// made before it still holds the consumed value, under staleLoan's key.
+	staleLoan := func(holder, owner string) string { return holder + "#" + owner }
+	var declaredAt map[string]ast.Position
+	keepStaleLoans := func(moved movedSet, owner string, assigned ast.Position) {
+		at, consumed := moved[owner]
+		if !consumed {
+			return
+		}
+		ensureCallbackCaptures()
+		if declaredAt == nil {
+			declaredAt = firstDeclarations(fn.Body)
+		}
+		for _, rows := range []map[string][]ast.Param{callbackCaptures, holderCaptures} {
+			for holder, captures := range rows {
+				// A holder declared after the assignment never held the consumed value.
+				if decl, ok := declaredAt[holder]; !ok || !positionBefore(decl, assigned) {
+					continue
+				}
+				for _, capture := range captures {
+					if capture.Name == owner {
+						moved[staleLoan(holder, owner)] = at
+					}
+				}
+			}
+		}
+	}
+	dropStaleLoans := func(moved movedSet, holder string) {
+		for k := range moved {
+			if strings.HasPrefix(k, holder+"#") {
+				delete(moved, k)
+			}
+		}
+	}
+	consumedLoan := func(moved movedSet, holder, owner string) (ast.Position, bool) {
+		if at, consumed := moved[owner]; consumed {
+			return at, true
+		}
+		at, stale := moved[staleLoan(holder, owner)]
+		return at, stale
+	}
 	// A call argument that holds a callback, such as a record with a callback
 	// field, takes the loans of that callback into the callee.
 	checkHolderCaptures := func(value ast.Expr, moved movedSet) {
@@ -11489,7 +11530,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		ensureCallbackCaptures()
 		for _, capture := range holderCaptures[id.Name] {
-			if at, consumed := moved[capture.Name]; consumed {
+			if at, consumed := consumedLoan(moved, id.Name, capture.Name); consumed {
 				c.movedErr(value.Pos(), at, "moved here", "%q holds a callback that uses captured owned parameter %q after it was consumed", id.Name, capture.Name)
 			}
 		}
@@ -11517,7 +11558,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			captures = inlineCaptures[value]
 		}
 		for _, capture := range captures {
-			if at, consumed := moved[capture.Name]; consumed {
+			if at, consumed := consumedLoan(moved, name, capture.Name); consumed {
 				c.movedErr(value.Pos(), at, "moved here", "callback %q uses captured owned parameter %q after it was consumed", name, capture.Name)
 			}
 		}
@@ -12064,9 +12105,22 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			walkStmt(step, back)
 		}
 		loopDepth--
+		var declared map[string]ast.Position
 		for name, at := range back {
-			if _, wasLive := moved[name]; !wasLive {
+			if _, wasLive := moved[name]; wasLive {
+				continue
+			}
+			holder, owner, stale := strings.Cut(name, "#")
+			if !stale {
 				c.errfCode(at, "E050", "owned parameter %q is consumed inside a loop; a later iteration would use it after move", name)
+				continue
+			}
+			// A later iteration makes a callback declared in the body again.
+			if declared == nil {
+				declared = firstDeclarations(body)
+			}
+			if _, inBody := declared[holder]; !inBody {
+				c.errfCode(at, "E050", "callback %q uses captured owned parameter %q, which is consumed inside a loop; a later iteration would use it after move", holder, owner)
 			}
 		}
 		for _, at := range frame.breaks {
@@ -12130,6 +12184,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			admitSupersededFields(x.Init, false)
 			recordExprUses(x.Init, moved)
+			dropStaleLoans(moved, x.Name)
 		case *ast.ExprStmt:
 			if asn, ok := x.Expr.(*ast.Assign); ok {
 				if id, ok := asn.Target.(*ast.Ident); ok && !owned[id.Name] {
@@ -12145,7 +12200,14 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					}
 				}
 				recordExprUses(asn.Value, moved)
-				if id, ok := asn.Target.(*ast.Ident); ok && owned[id.Name] {
+				captureOwner := false
+				if id, ok := asn.Target.(*ast.Ident); ok {
+					dropStaleLoans(moved, id.Name)
+					// A local that a callback captures is in moved only after a consume.
+					_, captureOwner = moved[id.Name]
+				}
+				if id, ok := asn.Target.(*ast.Ident); ok && (owned[id.Name] || captureOwner) {
+					keepStaleLoans(moved, id.Name, asn.Pos())
 					delete(moved, id.Name)
 					for path := range moved {
 						if len(path) > len(id.Name) && path[:len(id.Name)] == id.Name && path[len(id.Name)] == '.' {
