@@ -5853,6 +5853,7 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
       if (!qualified_handled) {
         let variant_call = false;
         let static_type = "";
+        let recv_read = false;
         match (fa.obj) {
           ast.ExprIdent(oid) => {
             let probe = resolve_ident_value(oid.name, env);
@@ -5862,6 +5863,9 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
                 variant_call = false;
                 static_type = oid.name;
               }
+            } else {
+              recv = probe;
+              recv_read = true;
             }
           },
           _ => {}
@@ -5882,9 +5886,11 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
             }
             recv = v_type(static_type);
           } else {
-            recv = eval_expr(fa.obj, env);
-            if (is_err(recv)) {
-              return recv;
+            if (!recv_read) {
+              recv = eval_expr(fa.obj, env);
+              if (is_err(recv)) {
+                return recv;
+              }
             }
             recv_static = bound_type_spelling(env.static_type_of(fa.obj), env);
             name = dyn_method_name(name, recv_static, recv, env.funcs);
@@ -10454,16 +10460,15 @@ function eval_assign_stmt(a: ast.StmtAssign, own env: Env): StepResult {
   if (is_err(av)) {
     return step_stop(env, av);
   }
-  if (!env.binds_name(a.target)) {
-    return step_stop(env, v_err("assign to undefined `" + a.target + "`"));
-  }
   match (env.raw_value(a.target)) {
     Some(value) => {
       if (cell_slot_set(value, av)) {
         return step_none(env);
       }
     },
-    None => {}
+    None => {
+      return step_stop(env, v_err("assign to undefined `" + a.target + "`"));
+    }
   }
   return step_none(env.update(a.target, av));
 }
