@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Drives the Fern Files APK on a running Android device or emulator.
 
-Usage: emulator_check.py APK OUT_DIR [SHARE_DIR PORT]
+Usage: emulator_check.py APK OUT_DIR [SHARE_DIR PORT [DAV_DIR DAV_PORT]]
 
 It installs the APK, gives it access to all files, and puts a text file
 and a picture in the Download folder of the device. It then uses the
@@ -27,6 +27,10 @@ share. The emulator reaches the computer at 10.0.2.2.
 - As root, the provider of documents gives the saved server as a root,
   the file of the share as a child of that root, and the text of the file.
   A write to that file through the provider reaches the share.
+
+With DAV_DIR and DAV_PORT, it also adds the WebDAV server on this computer
+that scripts/files-dav-serve starts, and does the same read and copies
+with it. DAV_DIR is the directory of its folder.
 
 It fails on a crash in logcat. OUT_DIR gets the frames, the trees and
 logcat.
@@ -61,6 +65,10 @@ SMB_PASSWORD = os.environ.get("FILES_SMB_PASSWORD", "live-check-1")
 SMB_NOTE = "smb-check.txt"
 SMB_TEXT = "The share of the emulator check has this line."
 CHANGED_TEXT = "Another app changed this file through the file picker.\n"
+DAV_USER = os.environ.get("FILES_DAV_USER", "fernfiles")
+DAV_PASSWORD = os.environ.get("FILES_DAV_PASSWORD", "live-check-1")
+DAV_NOTE = "dav-check.txt"
+DAV_TEXT = "The WebDAV folder of the emulator check has this line."
 
 
 def png(width, height, rgb):
@@ -409,31 +417,55 @@ def check_server(out, share_dir, port):
     if not (tap(out, "server-shares", "Find shares", scroll=True) and tap(out, "server-share", "Share share", scroll=True)
             and tap(out, "server-save", "Save", scroll=True)):
         return
-    if not tap(out, "server-open", server, scroll=True) or not taps(out, "server-text", [SMB_NOTE, "Preview as text"]):
-        return
-    if not until(lambda: any(SMB_TEXT in name for name, _, _ in nodes(dump(out, "server-text-shown")))):
-        screen(out, "server-text-shown")
-        fail("the file of the share does not show its text")
-    screen(out, "server-text-shown")
+    round_trip(out, "smb", server, SMB_NOTE, SMB_TEXT, share_dir)
 
-    # From the share to the phone. A new start reads the saved server again.
+
+def round_trip(out, kind, server, note, text, share_dir):
+    """Opens the saved server `server` and shows the text of its file
+    `note`, copies that file to the Download folder, and copies the picture
+    to the server. `share_dir` is the directory of the server on this
+    computer. The names of the steps start with `kind`."""
+    if not tap(out, f"{kind}-open", server, scroll=True) or not taps(out, f"{kind}-text", [note, "Preview as text"]):
+        return
+    if not until(lambda: any(text in name for name, _, _ in nodes(dump(out, f"{kind}-text-shown")))):
+        screen(out, f"{kind}-text-shown")
+        fail(f"{kind}: the file of the server does not show its text")
+    screen(out, f"{kind}-text-shown")
+
+    # From the server to the phone. A new start reads the saved server again.
     start()
-    if not tap(out, "download-open", server, scroll=True) or not taps(out, "download", [SMB_NOTE, "Copy", "Home", "Downloads", "Paste here"]):
+    if not tap(out, f"{kind}-download-open", server, scroll=True) or not taps(out, f"{kind}-download", [note, "Copy", "Home", "Downloads", "Paste here"]):
         return
-    want = hashlib.sha256((SMB_TEXT + "\n").encode()).hexdigest()
-    target = f"{STORAGE}/Download/{SMB_NOTE}"
+    want = hashlib.sha256((text + "\n").encode()).hexdigest()
+    target = f"{STORAGE}/Download/{note}"
     if not until(lambda: sum_of(target) == want):
-        screen(out, "download-done")
-        fail(f"the copy from the share has the digest {sum_of(target) or 'of no file'}, not {want}")
+        screen(out, f"{kind}-download-done")
+        fail(f"{kind}: the copy from the server has the digest {sum_of(target) or 'of no file'}, not {want}")
 
-    # From the phone to the share.
-    if not taps(out, "upload", [PICTURE, "Copy", "Home"]) or not tap(out, "upload-open", server, scroll=True) or not tap(out, "upload-paste", "Paste here"):
+    # From the phone to the server.
+    if not taps(out, f"{kind}-upload", [PICTURE, "Copy", "Home"]) or not tap(out, f"{kind}-upload-open", server, scroll=True) or not tap(out, f"{kind}-upload-paste", "Paste here"):
         return
     sent = Path(share_dir, PICTURE)
     picture = Path(out, PICTURE).read_bytes()
     if not until(lambda: sent.exists() and sent.read_bytes() == picture):
-        screen(out, "upload-done")
-        fail("the copy of the picture did not arrive on the share with the same bytes")
+        screen(out, f"{kind}-upload-done")
+        fail(f"{kind}: the copy of the picture did not arrive on the server with the same bytes")
+
+
+def check_dav(out, dav_dir, port):
+    """Adds the WebDAV server on this computer in the form, and does the
+    round trip with it."""
+    server = f"files on {HOST}"
+    Path(dav_dir, DAV_NOTE).write_text(DAV_TEXT + "\n")
+    start()
+    if not tap(out, "dav-add", "Add a server", scroll=True) or not tap(out, "dav-kind", "WebDAV server"):
+        return
+    if not (type_in(out, "dav-address", "https://nas.local:5006/home", f"http://{HOST}:{port}/files")
+            and type_in(out, "dav-user", "Leave empty for no user", DAV_USER)
+            and type_in(out, "dav-password", "Password", DAV_PASSWORD)
+            and tap(out, "dav-save", "Save", scroll=True)):
+        return
+    round_trip(out, "dav", server, DAV_NOTE, DAV_TEXT, dav_dir)
 
 
 def check_documents(out, share_dir):
@@ -467,7 +499,7 @@ def check_documents(out, share_dir):
         fail(f"a write through the provider of documents did not reach the share: it holds {now!r}, and the write gave {wrote.stdout!r} {wrote.stderr!r}")
 
 
-def main(apk, out, share_dir=None, port=None):
+def main(apk, out, share_dir=None, port=None, dav_dir=None, dav_port=None):
     subprocess.run(["mkdir", "-p", out], check=True)
     picture = png(48, 48, (215, 25, 33))
     Path(out, NOTE).write_text(NOTE_TEXT + "\n")
@@ -493,6 +525,8 @@ def main(apk, out, share_dir=None, port=None):
         if share_dir:
             check_server(out, share_dir, port)
             check_documents(out, share_dir)
+        if dav_dir:
+            check_dav(out, dav_dir, dav_port)
 
     log = logcat()
     with open(f"{out}/logcat.txt", "w") as f:
@@ -509,6 +543,6 @@ def main(apk, out, share_dir=None, port=None):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) not in (3, 5):
+    if len(sys.argv) not in (3, 5, 7):
         sys.exit(__doc__)
     main(*sys.argv[1:])

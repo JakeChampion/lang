@@ -176,6 +176,8 @@ The lane also starts Samba with `scripts/files-samba-serve`. The check
 then adds that server in the app, reads a file of the share, and copies a
 file in each direction. Last, it reads the server through the provider of
 documents, as the file picker of the system does.
+It then starts wsgidav with `scripts/files-dav-serve`, adds that WebDAV
+server in the app, and does the same read and copies with it.
 
 ```sh
 fern -apk files.apk examples/android/files/app.fern

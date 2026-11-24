@@ -255,6 +255,10 @@ jobs:
       # reaches the 127.0.0.1 of this computer at 10.0.2.2.
       - name: Start the SMB server of the Fern Files check
         run: sudo scripts/files-samba-serve start "$PWD/build/files-smb" 44450
+      - name: Start the WebDAV server of the Fern Files check
+        run: |
+          pipx install wsgidav==4.4.1 && pipx inject wsgidav cheroot
+          scripts/files-dav-serve start "$PWD/build/files-dav" 44480
       - name: Check the Plex video screen assertion
         run: python3 -B -m unittest discover -s examples/android/plex -p 'test_*.py'
       # The Plex check plays an H.264 test pattern, which ffmpeg writes. Each
@@ -351,7 +355,7 @@ jobs:
             python3 examples/android/tune/emulator_check.py build/android-stopwatch/fern-tune.apk build/android-stopwatch/emulator/tune || echo "examples/android/tune" >> build/android-stopwatch/emulator/failed
             python3 examples/android/paper/emulator_check.py build/android-stopwatch/fern-paper.apk build/android-stopwatch/fern-notifytest.apk build/android-stopwatch/emulator/paper || echo "examples/android/paper" >> build/android-stopwatch/emulator/failed
             python3 examples/android/plex/emulator_check.py build/android-stopwatch/fern-plex.apk build/android-stopwatch/emulator/plex build/android-stopwatch/pattern.mp4 || echo "examples/android/plex" >> build/android-stopwatch/emulator/failed
-            python3 examples/android/files/emulator_check.py build/android-stopwatch/fern-files.apk build/android-stopwatch/emulator/files build/files-smb/share 44450 || echo "examples/android/files" >> build/android-stopwatch/emulator/failed
+            python3 examples/android/files/emulator_check.py build/android-stopwatch/fern-files.apk build/android-stopwatch/emulator/files build/files-smb/share 44450 build/files-dav/share 44480 || echo "examples/android/files" >> build/android-stopwatch/emulator/failed
             python3 tests/android/tz/emulator_check.py build/android-stopwatch/zone build/android-stopwatch/emulator/tz || echo "tests/android/tz" >> build/android-stopwatch/emulator/failed
             python3 examples/android/walkie/emulator_check.py build/android-stopwatch/fern-walkie.apk build/android-stopwatch/fern-walkie2.apk build/android-stopwatch/emulator/walkie || echo "examples/android/walkie" >> build/android-stopwatch/emulator/failed
             ! test -s build/android-stopwatch/emulator/failed || { echo "failed checks:"; cat build/android-stopwatch/emulator/failed; exit 1; }
