@@ -13886,6 +13886,50 @@ function a64_sha1x8_blocks(s: asmcore.EmitState): string {
     + ".Lsx8_ret:\n    ldr x0, [x29, #40]\n" + rt_unframe_of(s, 48) + "    ret\n    .size __fern_sha1x8_hw_blocks, .-__fern_sha1x8_hw_blocks\n";
 }
 
+// The eight lanes of a word-major state run one after another on the SHA-256
+// instructions. Word w of lane k is at byte 4 * (8 * w + k), and a group of
+// 512 bytes holds one block of each lane.
+function a64_sha256x8_blocks(s: asmcore.EmitState): string {
+  let o: string = "    .global __fern_sha256x8_hw_blocks\n    .type __fern_sha256x8_hw_blocks, %function\n__fern_sha256x8_hw_blocks:\n"
+    + rt_frame_of(s, 96) + "    mov x29, sp\n"
+    + a64_aes_view("x1", "x3", "x4", ".Ls2x8_data") + "    str x3, [x29, #16]\n    str x4, [x29, #24]\n"
+    + a64_aes_view("x0", "x3", "x5", ".Ls2x8_st") + "    str x3, [x29, #32]\n"
+    + "    mov x0, #256\n    cmp x5, #256\n    b.hs .Ls2x8_stok\n    mov x0, #0\n.Ls2x8_stok:\n"
+    + a64_aes_alloc("40") + "    ldr x4, [x0]\n    cbz x4, .Ls2x8_ret\n    ldr x3, [x29, #32]\n    add x6, x0, #8\n";
+  for j in 0..16 {
+    o += "    ld1 {v0.16b}, [x3]\n    st1 {v0.16b}, [x6]\n    add x3, x3, #16\n    add x6, x6, #16\n";
+  }
+  o = o + a64_sha256_load_k() + "    ldr x1, [x29, #16]\n    ldr x4, [x29, #24]\n    add x10, x29, #48\n    add x11, x29, #64\n"
+    + ".Ls2x8_loop:\n    cmp x4, #512\n    b.lo .Ls2x8_ret\n    ldr x7, [x29, #40]\n    add x7, x7, #8\n";
+  for lane in 0..8 {
+    o = o + "    add x8, x1, #" + util.i32_to_string(64 * lane) + "\n" + a64_sha256x8_lane(lane, true);
+    for j in 4..8 {
+      let v = "v" + util.i32_to_string(j);
+      o = o + "    ld1 {" + v + ".16b}, [x8]\n    add x8, x8, #16\n    rev32 " + v + ".16b, " + v + ".16b\n";
+    }
+    o = o + "    st1 {v0.16b}, [x10]\n    st1 {v1.16b}, [x11]\n" + a64_sha256_rounds()
+      + "    ld1 {v2.16b}, [x10]\n    ld1 {v3.16b}, [x11]\n    add v0.4s, v0.4s, v2.4s\n    add v1.4s, v1.4s, v3.4s\n" + a64_sha256x8_lane(lane, false);
+  }
+  return o + "    add x1, x1, #512\n    sub x4, x4, #512\n    b .Ls2x8_loop\n"
+    + ".Ls2x8_ret:\n    ldr x0, [x29, #40]\n" + rt_unframe_of(s, 96) + "    ret\n    .size __fern_sha256x8_hw_blocks, .-__fern_sha256x8_hw_blocks\n";
+}
+
+// a64_sha256x8_lane moves the eight words of a lane between the state at x7
+// and v0 and v1.
+function a64_sha256x8_lane(lane: i32, load: boolean): string {
+  let o = "";
+  for w in 0..8 {
+    let at = "[x7, #" + util.i32_to_string(4 * lane + 32 * w) + "]\n";
+    let elem = "v" + util.i32_to_string(w / 4) + ".s[" + util.i32_to_string(w % 4) + "]";
+    if (load) {
+      o = o + "    ldr w9, " + at + "    ins " + elem + ", w9\n";
+    } else {
+      o = o + "    umov w9, " + elem + "\n    str w9, " + at;
+    }
+  }
+  return o;
+}
+
 // The kernels over arrays of 64-bit words.
 function a64_limb_kernels(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("mont_mul")) {
@@ -13920,6 +13964,10 @@ function emit_rt_byte_kernels(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("sha1x8")) {
     let sha1x8 = a64_sha1x8_blocks(s);
     s = s.write(sha1x8);
+  }
+  if (s.has_need("sha256x8")) {
+    let sha256x8 = a64_sha256x8_blocks(s);
+    s = s.write(sha256x8);
   }
   if (s.has_need("sha256")) {
     let sha256 = a64_sha256_blocks(s);

@@ -6,7 +6,7 @@ The encoded window is bounded by the source limits. Initial free-format discover
 
 ```fern
 <<*>>=
-// This module reads MPEG Layer I and Layer II frames from a byte source in sequence.
+// This module reads raw MPEG Layer I and Layer II streams one frame at a time.
 import "std/audio/mp1";
 import "std/audio/mp2";
 import "std/audio/mp2/header";

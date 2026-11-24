@@ -200,6 +200,8 @@ var Ungated = map[string]bool{
 	"__sha1_hw_blocks":            true,
 	"__sha1x8_hw":                 true,
 	"__sha1x8_hw_blocks":          true,
+	"__sha256x8_hw":               true,
+	"__sha256x8_hw_blocks":        true,
 	"__chacha20_xor_into":         true,
 	"__poly1305_blocks":           true,
 	"__mont_mul":                  true,
