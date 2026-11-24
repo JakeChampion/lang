@@ -176,7 +176,9 @@ pub function (own d: Decoder) decode_packet_with(packet: [u8], own output: f32[]
   let h = match (header.parse(packet, 0)) { Ok(value) => value, Err(e) => { return (d, work, Err(e)); } };
   let free = if (h.bitrate == 0 && d.free_bytes == 0) { packet.len() - h.padding } else { d.free_bytes };
   let sized = match (header.resolve(packet, 0, h, free, limits.max_input_bytes)) { Ok(value) => value, Err(e) => { return (d, work, Err(e)); } };
-  if (sized.bytes != packet.len()) { return (d, work, Err(pcm.Header)); }
+  if (sized.bytes != packet.len()) {
+    return (d, work, Err(pcm.Header));
+  }
   return Decoder { ...d, free_bytes: free }.decode_frame_with(packet, 0, output, work, limits);
 }
 
@@ -213,6 +215,7 @@ pub function decode_raw(input: [u8], limits: pcm.Limits): Result[Decoded, pcm.Au
   }
   return Ok(Decoded { sample_rate: h.sample_rate, channels: h.channels, samples: output });
 }
+
 pub opaque struct SeekIndex { index: seek.Index }
 
 function seek_frame(input: [u8], free: i32, limits: pcm.Limits): Result[seek.Frame, pcm.AudioError] {
@@ -231,7 +234,9 @@ pub function (value: SeekIndex) frames(): i64 {
 pub function (value: SeekIndex) read_into(input: [u8], position: i64, frames: i32, own output: f32[]): Result[f32[], pcm.AudioError] {
   let index = value.index;
   let range = index.range(input.len(), position, frames, output.len())?;
-  if (range.count == 0) { return Ok(output); }
+  if (range.count == 0) {
+    return Ok(output);
+  }
   let state = Decoder { ...decoder(), free_bytes: index.free };
   let work = workspace();
   let scratch = spectral.zeros(1152 * index.channels);
@@ -242,7 +247,9 @@ pub function (value: SeekIndex) read_into(input: [u8], position: i64, frames: i3
     let (next, reused, result) = state.decode_frame_with(input[start:end], 0, scratch, work, index.limits);
     work = reused;
     let decoded = result?;
-    if (decoded.bytes_read != end - start || decoded.channels != index.channels || decoded.sample_rate != index.rate) { return Err(pcm.Header); }
+    if (decoded.bytes_read != end - start || decoded.channels != index.channels || decoded.sample_rate != index.rate) {
+      return Err(pcm.Header);
+    }
     state = next;
     scratch = decoded.samples;
     let (after, filled) = range.copy(n, scratch, written, output);
