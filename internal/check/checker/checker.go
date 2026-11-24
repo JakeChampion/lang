@@ -16635,10 +16635,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		for i := range n.Args {
 			if i < len(ft.Params) {
-				hp := ft.Params[i]
-				if hintSub != nil {
-					hp = substituteType(hp, hintSub)
-				}
+				hp := c.argHint(ft.Params[i], genericFn, hintSub)
 				if !containsParamType(hp) {
 					c.setElemHintFor(n.Args[i], hp)
 				} else {
@@ -16648,10 +16645,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			at := recvType
 			if !(recvIsArg0 && i == 0) {
 				if i < len(ft.Params) {
-					pt := ft.Params[i]
-					if hintSub != nil {
-						pt = substituteType(pt, hintSub)
-					}
+					pt := c.argHint(ft.Params[i], genericFn, hintSub)
 					if _, isEnum := pt.(ast.EnumType); isEnum {
 						c.expectedType = pt
 					} else if st, isStruct := pt.(ast.StructType); isStruct && len(st.Args) > 0 {
@@ -16664,10 +16658,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 						if _, isName := n.Args[i].(*ast.Ident); isName {
 							// A function value binds its result. The
 							// expected type of the call does not.
-							c.expectedType = ft.Params[i]
-							if sub != nil {
-								c.expectedType = substituteType(ft.Params[i], sub)
-							}
+							c.expectedType = c.argHint(ft.Params[i], genericFn, sub)
 						}
 					}
 				}
