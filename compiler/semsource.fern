@@ -7879,7 +7879,8 @@ function stored_params(call: ast.ExprCall, c: Carried, known: Handers): i64 {
 
 // The parts of a body that the analysis reads: the names of the parameters,
 // each binding, each returned value and each call.
-struct FlowBody { key: string, names: string[], binds: Bound[], outs: ast.Expr[], calls: ast.ExprCall[], receiver: boolean }
+// `values` names each parameter and each local that the body binds.
+struct FlowBody { key: string, names: string[], binds: Bound[], outs: ast.Expr[], calls: ast.ExprCall[], receiver: boolean, values: util.NameIndex }
 
 function body_of(fd: parser.FuncDecl): FlowBody {
   let binds: Bound[] = [];
@@ -7890,7 +7891,12 @@ function body_of(fd: parser.FuncDecl): FlowBody {
     outs = astwalk.fold_stmt_spine(st, outs, return_exprs);
     calls = astwalk.fold_stmt(st, calls, call_exprs);
   }
-  return FlowBody { key: parser.decl_key(fd), names: decl_param_names(fd), binds: binds, outs: outs, calls: calls, receiver: has_receiver(fd) };
+  let names = decl_param_names(fd);
+  let values = names;
+  for b in binds {
+    values = values.append(b.name);
+  }
+  return FlowBody { key: parser.decl_key(fd), names: names, binds: binds, outs: outs, calls: calls, receiver: has_receiver(fd), values: util.name_index(values) };
 }
 
 // The parameters that a call of the body stores.
@@ -7909,12 +7915,8 @@ function hands_back(body: FlowBody, known: Handers): Kept {
   for i in 0..body.names.len() {
     sets = sets.append(param_bit(i));
   }
-  let values = body.names;
-  for b in body.binds {
-    values = values.append(b.name);
-  }
   let none: string[] = [];
-  let c = Carried { params: body.names, locals: util.name_index(none), sets: sets, values: util.name_index(values) };
+  let c = Carried { params: body.names, locals: util.name_index(none), sets: sets, values: body.values };
   let grew = true;
   while (grew) {
     grew = false;
