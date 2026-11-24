@@ -1264,6 +1264,7 @@ scalar_edge_cases                                    0
 scalar_match_bindings                                0
 scalar_sum_reassign                                  0
 secret_record_keeps_a_shared_array                   0
+secret_record_keeps_a_shared_nested_record           0
 secret_value_record                                  0
 semver_uuid_errors                                   0
 send_copy_deep                                       0

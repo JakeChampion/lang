@@ -521,7 +521,7 @@ func TestSelfHostAESGCMKernelsWasm(t *testing.T) {
 		t.Fatal(err)
 	}
 	wat := string(data)
-	for _, kernel := range []string{"$__fern_aes_expand_key", "$__fern_aes_ctr_at", "$__fern_aes_dec_blocks"} {
+	for _, kernel := range []string{"$__fern_aes_expand_key", "$__fern_aes_ctr_at", "$__fern_aes_dec_blocks", "$__fern_aes_gcm_into"} {
 		bodies := wasmFuncBodies(wat, kernel+" ")
 		const release = "(drop (call $__fern_arr_dec (local.get $tmp)))"
 		if len(bodies) != 1 || strings.Count(bodies[0], release) != 1 {

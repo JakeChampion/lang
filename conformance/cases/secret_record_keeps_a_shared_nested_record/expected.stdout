@@ -1,0 +1,6 @@
+key 3 holds 2 words
+the shared record still reads 65 66 67
+key 4 holds 2 bytes
+the shared tuple still reads 70 1.5 70
+sum 62
+the copy 10 sums 62
