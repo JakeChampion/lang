@@ -9930,6 +9930,7 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	c.checkBlock(fn.Body, root)
 	c.settleLitLocals(fn.Body)
 	c.finishOpenEnumLocals()
+	c.errOpenTypeArgs(fn.Body)
 	if infer {
 		c.inferReturnType(fn, rets)
 	}
@@ -16732,16 +16733,6 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			if c.openCallLet == n {
 				if result, open := c.openGenericResult(n, genericFn, ft, sub, opened); open {
 					return result
-				}
-			}
-			// A type parameter of another callee, which its call has not
-			// bound yet, does not bind a type parameter of this call.
-			inScope := c.typeParamsInScope()
-			for _, tp := range genericFn.TypeParams {
-				if v, ok := sub[tp]; ok {
-					if _, escaped := paramTypeNotIn(v, inScope); escaped {
-						delete(sub, tp)
-					}
 				}
 			}
 			args := make([]ast.Type, len(genericFn.TypeParams))
