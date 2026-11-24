@@ -436,11 +436,12 @@ lanes in the 32-bit lanes of the AVX2 registers. On arm64 it runs the lanes
 one after another on the SHA-1 instructions. On wasm the lanes run through
 the generated rounds.
 
-`__sha256x8_hw_blocks` does the same for SHA-256, on a state of eight words
-for each lane. On x86-64 its kernel runs the eight lanes in the 32-bit lanes
-of the AVX2 registers. On arm64 it runs the lanes one after another on the
-SHA-256 instructions. On wasm `__sha256x8_hw` is false, and the caller runs
-each lane through the generated rounds.
+`std/crypto`'s `Sha256x8` does the same for SHA-256
+(`__sha256x8_hw_blocks`), on a state of eight words for each lane. On x86-64
+its kernel runs the eight lanes in the 32-bit lanes of the AVX2 registers. On
+arm64 it runs the lanes one after another on the SHA-256 instructions. On wasm
+`__sha256x8_hw` is false, and `Sha256x8` runs each lane through the generated
+rounds.
 
 ChaCha20 runs in one kernel on each backend (`__chacha20_xor_into`). It XORs
 the key stream over a range of a byte array in place. On x86-64 the kernel

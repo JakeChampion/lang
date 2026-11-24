@@ -51,7 +51,7 @@ padding bytes whose bits change.
 
 A second run on a lucky commit replaces the padding of the first run, so the
 commit does not grow. A repository with the SHA-256 object format gets a
-SHA-256 search.
+SHA-256 search. That search uses `crypto.Sha256x8` in the same way.
 
 ## The search
 
@@ -75,6 +75,11 @@ The host was a 4-core x86-64 container (Intel Xeon at 2.3 GHz, with AVX2 and
 SHA-NI) on 2026-11-12. The runs of the two programs alternated. Upstream uses
 the SHA-NI instructions. This port uses the 8-lane AVX2 kernel of
 `crypto.Sha1x8`, because SHA-NI is above the x86-64 baseline of Fern.
+
+A SHA-256 search of 2^24 specifiers on one core of the same type of host
+took 0.95 s on 2026-11-24, which is 17.7 million hashes per second. With one
+specifier in each step, before `crypto.Sha256x8`, it took 3.9 s (4.3 million).
+`--benchmark` does not measure the SHA-256 search.
 
 The time of a real run depends on luck: the two programs try different
 specifiers, so each finds a different match after a different number of
