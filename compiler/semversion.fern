@@ -171,7 +171,7 @@ function closed(g: ssa.SFunc, at: i32[], body: i32[], head: i32): boolean {
 // of the values that take the other words. Those values follow the call, so
 // the copy gives them new values in the same order.
 function capture_range(ins: ssa.SInst): (i32, i32) {
-  if (ins.kind_tag != ssasem.call() || ins.imm == 0) {
+  if (ins.kind_tag != ssasem.call() && ins.kind_tag != ssasem.call_value() || ins.imm == 0) {
     return (-1, 0);
   }
   if (ins.imm > 0) {

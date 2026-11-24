@@ -9828,7 +9828,7 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, opt
     always = always.append(d >= 0 && mod.funcs[d].always_inline);
     i += 1;
   }
-  let out = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, uncalled, always, opts.size, roots);
+  let out = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, uncalled, always, opts.size, opts.whole, roots);
   let result: Produced[] = [];
   for i in 0..all.len() {
     let p = Produced { ...all[i], func: out.funcs[i], modes: out.modes[i] };

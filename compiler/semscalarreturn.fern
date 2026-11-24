@@ -211,8 +211,11 @@ pub function caller(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssase
       insts = insts.append(b.insts[p]);
     }
   }
-  let at = ssasem.find_contract_in(out.f.calls, ins.str);
-  let calls = out.f.calls.with(at, ssasem.Contract { ...out.f.calls[at], result: primary_type(parts_of(callee, callee.result)) });
+  let calls = out.f.calls;
+  if (ins.kind_tag == ssasem.call()) {
+    let at = ssasem.find_contract_in(calls, ins.str);
+    calls = calls.with(at, ssasem.Contract { ...calls[at], result: primary_type(parts_of(callee, callee.result)) });
+  }
   let graph = ssa.SFunc { ...out.f.graph, blocks: out.f.graph.blocks.with(bi, ssa.SBlock { ...b, insts: insts }) };
   return ssasem.Func { ...out.f, calls: calls, graph: graph };
 }

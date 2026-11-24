@@ -1158,7 +1158,7 @@ function main(): i32 {
   }
   let allocated: i64 = bench.alloc_count() - before;
   print(allocated.to_string());
-  if (allocated != 50i64) { return 2; }
+  if (allocated != 0i64) { return 2; }
   if (__rc_underflow_count() != 0) { return 99; }
   return 0;
 }
@@ -1359,15 +1359,392 @@ function main(): i32 {
 }
 `
 
+const pairValueProg = `import "std/bench";
+
+struct Box2 { n: i32, s: string }
+
+@noinline function sum(x: i32, y: i32): (i32, i32) {
+  return (x + y, x - y);
+}
+
+@noinline function swap(x: i32, y: i32): (i32, i32) {
+  return (y, x);
+}
+
+// The caller of the result cannot see which function it calls.
+@noinline function pick(n: i32): (i32, i32) => (i32, i32) {
+  if (n % 2 == 0) {
+    return sum;
+  }
+  return swap;
+}
+
+@noinline function scalars(n: i32, f: (i32, i32) => (i32, i32)): i32 {
+  let total: i32 = 0;
+  for i in 0..n {
+    let (a, b) = f(i, 1);
+    total = total + a * 2 + b;
+  }
+  return total;
+}
+
+@noinline function kept(b: Box2, c: Box2): (Box2, Box2, boolean) {
+  return (b, c, false);
+}
+
+@noinline function swapped(b: Box2, c: Box2): (Box2, Box2, boolean) {
+  return (c, b, true);
+}
+
+@noinline function pick_boxes(n: i32): (Box2, Box2) => (Box2, Box2, boolean) {
+  if (n % 2 == 0) {
+    return kept;
+  }
+  return swapped;
+}
+
+// A tuple of two references and a flag, as the visitor of a tree walk returns.
+@noinline function boxes(n: i32, f: (Box2, Box2) => (Box2, Box2, boolean), b: Box2, c: Box2): i32 {
+  let total: i32 = 0;
+  for i in 0..n {
+    let (x, y, changed) = f(b, c);
+    total = total + x.n * 2 + y.n;
+    if (changed) {
+      total = total + 100;
+    }
+  }
+  return total;
+}
+
+@noinline function rotate(a: Box2, b: Box2, c: Box2): (Box2, Box2, Box2) {
+  return (b, c, a);
+}
+
+@noinline function same(a: Box2, b: Box2, c: Box2): (Box2, Box2, Box2) {
+  return (a, b, c);
+}
+
+@noinline function pick_three(n: i32): (Box2, Box2, Box2) => (Box2, Box2, Box2) {
+  if (n % 2 == 0) {
+    return rotate;
+  }
+  return same;
+}
+
+@noinline function threes(n: i32, f: (Box2, Box2, Box2) => (Box2, Box2, Box2), a: Box2, b: Box2, c: Box2): i32 {
+  let total: i32 = 0;
+  for i in 0..n {
+    let (x, y, z) = f(a, b, c);
+    total = total + x.n * 100 + y.n * 10 + z.n;
+  }
+  return total;
+}
+
+@noinline function lanes_a(x: i64, y: f64): (i64, f64, i32) {
+  return (x * 3 as i64, y / 2.0, 7);
+}
+
+@noinline function lanes_b(x: i64, y: f64): (i64, f64, i32) {
+  return (x - 1 as i64, y + 0.5, 9);
+}
+
+@noinline function pick_lanes(n: i32): (i64, f64) => (i64, f64, i32) {
+  if (n % 2 == 0) {
+    return lanes_a;
+  }
+  return lanes_b;
+}
+
+@noinline function lanes(n: i32, f: (i64, f64) => (i64, f64, i32)): i32 {
+  let x: i64 = 1 as i64;
+  let y: f64 = 64.0;
+  let total: i32 = 0;
+  for i in 0..n {
+    let (a, b, c) = f(x, y);
+    x = a % 1000 as i64;
+    y = b;
+    total = total + c;
+  }
+  return total + x as i32 + y as i32;
+}
+
+@noinline function text_first(s: string, n: i32): (string, i32) {
+  return (s, n + 1);
+}
+
+@noinline function text_same(s: string, n: i32): (string, i32) {
+  return (s, n);
+}
+
+@noinline function pick_text(n: i32): (string, i32) => (string, i32) {
+  if (n % 2 == 0) {
+    return text_first;
+  }
+  return text_same;
+}
+
+@noinline function texts(n: i32, f: (string, i32) => (string, i32), s: string): i32 {
+  let total: i32 = 0;
+  for i in 0..n {
+    let (t, k) = f(s, i);
+    total = total + t.len() + k;
+  }
+  return total;
+}
+
+// Each lambda holds a capture, and the caller keeps each result whole.
+@noinline function pick_capture(n: i32, b: Box2): (i32) => (i32, Box2) {
+  if (n % 2 == 0) {
+    return (x: i32) => (x + b.n, b);
+  }
+  return (x: i32) => (x - b.n, b);
+}
+
+@noinline function wholes(n: i32, f: (i32) => (i32, Box2)): i32 {
+  let all: (i32, Box2)[] = [];
+  for i in 0..n {
+    all = all.append(f(i));
+  }
+  let total: i32 = 0;
+  for p in all {
+    total = total + p.0 + p.1.n;
+  }
+  return total;
+}
+
+@noinline function step_add(acc: (i32, i32), i: i32): (i32, i32) {
+  return (acc.0 + i, acc.1 + 1);
+}
+
+@noinline function step_sub(acc: (i32, i32), i: i32): (i32, i32) {
+  return (acc.0 - i, acc.1 + 1);
+}
+
+@noinline function pick_step(n: i32): ((i32, i32), i32) => (i32, i32) {
+  if (n % 2 == 0) {
+    return step_add;
+  }
+  return step_sub;
+}
+
+// The result goes back in whole as the next argument.
+@noinline function folded(n: i32, f: ((i32, i32), i32) => (i32, i32)): i32 {
+  let acc: (i32, i32) = (0, 0);
+  for i in 0..n {
+    acc = f(acc, i);
+  }
+  return acc.0 * 100 + acc.1;
+}
+
+// A function that returns the result of a call through a function value.
+@noinline function relay(f: (i32, i32) => (i32, i32), x: i32): (i32, i32) {
+  return f(x, 2);
+}
+
+@noinline function relayed(n: i32, f: (i32, i32) => (i32, i32)): i32 {
+  let total: i32 = 0;
+  for i in 0..n {
+    let (a, b) = relay(f, i);
+    total = total + a + b * 3;
+  }
+  return total;
+}
+
+struct Visitor { visit: (i32, i32) => (i32, i32), bias: i32 }
+
+@noinline function through_field(v: Visitor, n: i32): i32 {
+  let total: i32 = 0;
+  for i in 0..n {
+    let (a, b) = v.visit(i, v.bias);
+    total = total + a - b;
+  }
+  return total;
+}
+
+function main(): i32 {
+  let odd: i32 = args().len() % 2;
+  let even: i32 = odd + 1;
+  let s: string = "hey" + "".to_string();
+  let b: Box2 = Box2 { n: 3, s: s };
+  let c: Box2 = Box2 { n: 4, s: s };
+  let d: Box2 = Box2 { n: 5, s: s };
+  let f_even = pick(even);
+  let f_odd = pick(odd);
+  let g_even = pick_boxes(even);
+  let g_odd = pick_boxes(odd);
+  let h_even = pick_three(even);
+  let h_odd = pick_three(odd);
+  let l_even = pick_lanes(even);
+  let l_odd = pick_lanes(odd);
+  let t_even = pick_text(even);
+  let t_odd = pick_text(odd);
+  let a0: i64 = bench.alloc_count();
+  let total: i32 = scalars(100, f_even) + scalars(100, f_odd);
+  total = total + boxes(100, g_even, b, c) + boxes(100, g_odd, b, c);
+  total = total + threes(100, h_even, b, c, d) + threes(100, h_odd, b, c, d);
+  total = total + lanes(10, l_even) + lanes(10, l_odd);
+  total = total + texts(100, t_even, s) + texts(100, t_odd, s);
+  total = total + relayed(100, f_even) + relayed(100, f_odd);
+  total = total + through_field(Visitor { visit: f_even, bias: 2 }, 100) + through_field(Visitor { visit: f_odd, bias: 2 }, 100);
+  let allocated: i64 = bench.alloc_count() - a0;
+  let rest: i32 = wholes(10, pick_capture(even, b)) + wholes(10, pick_capture(odd, b));
+  rest = rest + folded(10, pick_step(even)) + folded(10, pick_step(odd));
+  print(total.to_string() + " " + rest.to_string() + " " + allocated.to_string());
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  if (total != 152969 || rest != 170) {
+    return 1;
+  }
+  if (allocated != 0) {
+    return 2;
+  }
+  return 0;
+}
+`
+
+const pairValueOutsideProg = `import "core/map";
+import "std/array";
+import "std/async";
+import "std/time";
+import "std/clock";
+
+struct Box2 { n: i32, s: string }
+
+@noinline function turned(x: (i32, i32)): (i32, i32) {
+  return (x.1, x.0 + 1);
+}
+
+@noinline function doubled(x: (i32, i32)): (i32, i32) {
+  return (x.0 * 2, x.1);
+}
+
+@noinline function pick(n: i32): ((i32, i32)) => (i32, i32) {
+  if (n % 2 == 0) {
+    return turned;
+  }
+  return doubled;
+}
+
+// The loop of map is not one of the bodies that call a function value.
+@noinline function mapped(xs: (i32, i32)[], f: ((i32, i32)) => (i32, i32)): i32 {
+  let total: i32 = 0;
+  for y in xs.map(f) {
+    total = total * 10 + y.0 + y.1;
+  }
+  return total;
+}
+
+@noinline function pairs(n: i32): (i32, i32)[] {
+  let out: (i32, i32)[] = [];
+  for i in 0..n {
+    out = out.append((i, i + 1));
+  }
+  return out;
+}
+
+// The receiver of map ends here, so the lowering can run the map in place.
+@noinline function in_place(n: i32, f: ((i32, i32)) => (i32, i32)): i32 {
+  let total: i32 = 0;
+  for y in pairs(n).map(f) {
+    total = total * 10 + y.0 + y.1;
+  }
+  return total;
+}
+
+@noinline function parked(b: Box2, park: boolean): (Box2, i32) {
+  if (park) {
+    let none: i32[] = [];
+    if let async.Wake.TimedOut = async.wait_any(none, Some(clock.instant().add(time.duration_millis(1)))) {
+      return (b, 1);
+    }
+  }
+  return (b, 2);
+}
+
+@noinline function ready(b: Box2, park: boolean): (Box2, i32) {
+  return (b, 3);
+}
+
+@noinline function pick_park(n: i32): (Box2, boolean) => (Box2, i32) {
+  if (n % 2 == 0) {
+    return parked;
+  }
+  return ready;
+}
+
+// The second call parks inside the function value.
+@noinline function across_park(b: Box2, f: (Box2, boolean) => (Box2, i32)): i32 {
+  let total: i32 = 0;
+  for i in 0..3 {
+    let (x, k) = f(b, i == 1);
+    total = total * 10 + k + x.n;
+  }
+  return total;
+}
+
+// The task runs this closure and keeps its tuple whole.
+@noinline function task_pair(b: Box2): (Box2, i32) {
+  let none: i32[] = [];
+  if let async.Wake.TimedOut = async.wait_any(none, Some(clock.instant().add(time.duration_millis(1)))) {
+    return (b, 5);
+  }
+  return (b, 6);
+}
+
+function drive[T](t: async.Task[T]): T {
+  let st: async.TaskStatus[T] = async.task_start(t);
+  while (true) {
+    match (st) {
+      Done(v) => {
+        return v;
+      },
+      Suspended(w) => {
+        st = async.task_resume(t, async.wait_any(w.set, w.until));
+      }
+    }
+  }
+}
+
+function main(): i32 {
+  let odd: i32 = args().len() % 2;
+  let even: i32 = odd + 1;
+  let s: string = "hey" + "".to_string();
+  let b: Box2 = Box2 { n: 3, s: s };
+  let xs: (i32, i32)[] = [(1, 2), (3, 4), (5, 6)];
+  let total: i32 = mapped(xs, pick(even)) + mapped(xs, pick(odd)) + in_place(3, pick(even)) + in_place(3, pick(odd));
+  let t: async.Task[(Box2, i32)] = async.task_new(() => task_pair(b));
+  let (kept, k) = drive(t);
+  total = total + (kept.n + k) * 10000;
+  let parks: async.Task[i32] = async.task_new(() => across_park(b, pick_park(even)));
+  let none: async.Task[i32] = async.task_new(() => across_park(b, pick_park(odd)));
+  let rest: i32 = drive(parks) + drive(none);
+  let m: Map[string, ((i32, i32)) => (i32, i32)] = map_new(0);
+  m = m.insert("a", turned);
+  m = m.insert("b", doubled);
+  let g = m.get_or("a", doubled);
+  let (q, r) = g((7, 8));
+  rest = rest + (q * 10 + r) * 10000;
+  print(total.to_string() + " " + rest.to_string());
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  if (total != 81401 || rest != 881211) {
+    return 1;
+  }
+  return 0;
+}
+`
+
 func TestSelfHostPairReturn(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}, {"method", pairMethodProg}, {"lanes", pairLanesProg}, {"split", pairSplitProg}, {"forward", pairForwardProg}, {"wide", pairWideProg}, {"tail-phi", pairTailPhiProg}, {"record", pairRecordProg}, {"record-guards", pairRecordGuardsProg}, {"record-heap-alias", pairRecordHeapAliasProg}, {"unpacked", pairUnpackedProg}, {"unpacked-callees", pairUnpackedCalleesProg}}
+	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}, {"method", pairMethodProg}, {"lanes", pairLanesProg}, {"split", pairSplitProg}, {"forward", pairForwardProg}, {"wide", pairWideProg}, {"tail-phi", pairTailPhiProg}, {"record", pairRecordProg}, {"record-guards", pairRecordGuardsProg}, {"record-heap-alias", pairRecordHeapAliasProg}, {"unpacked", pairUnpackedProg}, {"unpacked-callees", pairUnpackedCalleesProg}, {"value", pairValueProg}, {"value-outside", pairValueOutsideProg}}
 	for _, prog := range progs {
 		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 			t.Run(prog.name+"/"+target, func(t *testing.T) {
 				var stderr string
 				var code int
-				if target == "wasm32-wasi" && (prog.name == "suspend" || prog.name == "unpacked-callees") {
+				if target == "wasm32-wasi" && (prog.name == "suspend" || prog.name == "unpacked-callees" || prog.name == "value-outside") {
 					src := filepath.Join(t.TempDir(), "main.fern")
 					if err := os.WriteFile(src, []byte(prog.src), 0o644); err != nil {
 						t.Fatal(err)

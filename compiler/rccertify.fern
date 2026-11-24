@@ -1237,6 +1237,9 @@ function word_origin_at(w: Walk, bi: i32, pos: i32): Found {
   while (c >= 0 && is_call_word(insts[c])) {
     c -= 1;
   }
+  if (c >= 0 && insts[c].kind_tag == ssa.CALL_IND) {
+    return plain(indirect_word_origin(indirect_units(insts[c]), word_slot(w, insts[pos])));
+  }
   if (c < 0 || insts[c].kind_tag != ssa.CALL) {
     return plain(org_unknown());
   }
@@ -1248,6 +1251,18 @@ function word_origin_at(w: Walk, bi: i32, pos: i32): Found {
     fd = Found { ...fd, tag: call.result, mask: mask };
   }
   return fd;
+}
+
+// The origin of pair word `slot` of a call through a function value.
+function indirect_word_origin(units: i32, slot: i32): i32 {
+  if (units < 0) {
+    return org_unknown();
+  }
+  let held = slot >= 0 && (units & ir.call_units_word(slot)) != 0;
+  if (held) {
+    return org_fresh();
+  }
+  return org_none();
 }
 
 function is_call_word(ins: ssa.SInst): boolean {

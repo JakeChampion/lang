@@ -1834,6 +1834,12 @@ function call_value_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
       return "indirect call argument type";
     }
   }
+  if (ins.imm != 0) {
+    if (!call_capture_valid(f, ins)) {
+      return "indirect call immediate";
+    }
+    return "";
+  }
   if (!semtypes.equal(func_result(sig), result)) {
     return "indirect call result type";
   }
