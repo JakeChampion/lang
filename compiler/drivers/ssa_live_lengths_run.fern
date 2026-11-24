@@ -127,8 +127,51 @@ function saved_loop_home_cases(): boolean {
   return true;
 }
 
+function guarded_cases(): boolean {
+  let entry = ssa.SBlock { id: 8, insts: [inst(ssa.PARAM, 0, [], ""), inst(ssa.PARAM, 1, [], "")], term: jump(10), preds: [] };
+  let pre = ssa.SBlock { id: 10, insts: [], term: jump(20), preds: [8] };
+  let head = ssa.SBlock { id: 20, insts: [inst(ssa.PHI, 2, [1, 7], ""), inst(ssa.BINARY, 3, [2, 1], "lt_s")], term: branch(3, 30, 70), preds: [10, 60] };
+  let proven = ssa.SInst { ...inst(ssa.ARR_AT, 9, [0, 2], ""), imm: 1 };
+  let read = ssa.SBlock { id: 30, insts: [proven, inst(ssa.ARR_AT, 4, [0, 2], ""), inst(ssa.BINARY, 5, [1, 4], "ne")], term: branch(5, 40, 50), preds: [20] };
+  let store = ssa.SBlock { id: 40, insts: [inst(ssa.ARR_ST, 6, [0, 2, 1], "")], term: jump(60), preds: [30] };
+  let skip = ssa.SBlock { id: 50, insts: [], term: jump(60), preds: [30] };
+  let latch = ssa.SBlock { id: 60, insts: [inst(ssa.BINARY, 7, [2, 1], "add")], term: jump(20), preds: [40, 50] };
+  let exit = ssa.SBlock { id: 70, insts: [inst(ssa.COPY, 8, [0], "")], term: ret(8), preds: [20] };
+  let f = ssa.SFunc { name: "conditional_array", nparams: 2, nvals: 10, entry: 8, takes_env: false, blocks: [entry, pre, head, read, store, skip, latch, exit] };
+  let positions = ssa.block_positions(f);
+  let defs = [0, 1, 4, 5, 8, 9, 11, 14, 16, 7];
+  let a = ssa.Alloc { reg_of: [-2, 10, 1, 2, 3, 4, 5, 6, 9, 2], def_pos: defs, lo: defs, hi: [16, 15, 14, 6, 9, 10, 11, 15, 17, 7], cold: [] };
+  let Some(w) = ssa.guarded_loop_home(f, a, [9, 10], positions) else {
+    return false;
+  };
+  let g = ssa.with_guarded_home(f, w);
+  let homes = ssa.with_loop_allocation(a, w.window);
+  if (ssalive.graph_error(g) != "" || w.window.first != 3 || w.window.last != 15 || w.window.reg != 9 || homes.hi[10] != 16
+    || g.blocks[1].insts[0].args != [0] || g.blocks[3].insts[1].args != [10, 2]
+    || g.blocks[4].insts[0].args != [10, 2, 1] || g.blocks[7].insts[0].args != [0]) {
+    return false;
+  }
+  let cold = ssa.SFunc { ...f, blocks: f.blocks.with(3, ssa.SBlock { ...read, insts: read.insts.with(0, ssa.SInst { ...proven, imm: 0 }) }) };
+  if let Some(_) = ssa.guarded_loop_home(cold, a, [9], positions) {
+    return false;
+  }
+  let side = ssa.SFunc { ...f, blocks: f.blocks.with(0, ssa.SBlock { ...entry, term: branch(1, 10, 50) }).with(5, ssa.SBlock { ...skip, preds: [30, 8] }) };
+  if let Some(_) = ssa.guarded_loop_home(side, a, [9], positions) {
+    return false;
+  }
+  if let Some(_) = ssa.guarded_loop_home(f, ssa.Alloc { ...a, lo: a.lo.with(8, 15) }, [9], positions) {
+    return false;
+  }
+  let varying = ssa.SFunc { ...f, blocks: f.blocks.with(3, ssa.SBlock { ...read, insts: read.insts.with(1, inst(ssa.ARR_AT, 4, [2, 1], "")) }).with(4, ssa.SBlock { ...store, insts: [inst(ssa.ARR_ST, 6, [2, 1, 1], "")] }) };
+  if let Some(_) = ssa.guarded_loop_home(varying, ssa.Alloc { ...a, reg_of: a.reg_of.with(2, -3) }, [9], positions) {
+    return false;
+  }
+  return true;
+}
+
 function main(): i32 {
   let failures = 0;
+  failures = check(guarded_cases(), "guarded array loop", failures);
   failures = check(saved_loop_home_cases(), "saved register loop home", failures);
   failures = check(split_with_side_entry(true, false), "a side entry must not bypass the split store", failures);
   failures = check(split_with_side_entry(false, true), "a side entry must not bypass the split phi", failures);

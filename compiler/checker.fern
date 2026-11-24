@@ -20961,9 +20961,10 @@ function ow_lender_end(moved: MovedEntry[], holder: string, at: MovedEntry, ctx:
 
 // The consumed field of the lender that the loan covers: the field that the
 // loan names, or the first consumed field when the loan has the whole lender.
+// A wide loan of a named field covers only that field.
 function ow_lent_path_end(moved: MovedEntry[], loan: OclCapture): Option[MovedEntry] {
   let head = callbackpaths.path_head(loan.source);
-  if (!loan.wide && head.starts_with("f:")) {
+  if (head.starts_with("f:")) {
     return ow_moved_entry(moved, loan.name + "." + slice_unchecked(head, 2, head.len()).to_owned());
   }
   if (!loan.wide && head.len() > 0) {

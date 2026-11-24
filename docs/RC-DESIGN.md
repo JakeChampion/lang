@@ -591,7 +591,8 @@ edge into it. Thus the certifier walks no edge that no run takes. It accounts pe
 allocation or owned call result is a fresh unit, a counted parameter a unit
 handed in, a load, a borrowed parameter or an address into a box nothing; a retain adds one; a
 release, a move into a callee or container and a return each spend one. A
-string or aggregate literal is free: it holds no unit, and a retain or a
+string or aggregate literal is free, and so is a phi of literals: it holds
+no unit, and a retain or a
 release of it does nothing, because every retain and release skips an
 immortal box. At a join the counts are met per value. A count met with free
 is that count on some paths and free on the others: a spend of the free part

@@ -5,6 +5,10 @@ Status: [policy] normative for the native targets. Part of [SEC-025](https://git
 A struct with the attribute `@secret` holds secret data, such as a key.
 When the last reference to a record of such a struct goes away, its drop zeroes each numeric array that the record holds alone.
 The array then goes back to the allocator with zeros in its elements.
+
+The drop also zeroes each scalar field of the record: an integer, a float, a boolean or a `char`.
+The box of the record then goes back to the allocator with zeros in those fields.
+
 This holds in each build, not only under `-harden`.
 
 A numeric array has elements of 1, 2, 4 or 8 bytes: `u8[]`, `u16[]`, `i32[]`, `u64[]`, `f64[]` and the other integer and float element types.
@@ -38,7 +42,7 @@ A struct can have `@value` and `@secret` together. `aes_gcm.Key`, `ecdsa.Private
 
 ## Limits
 
-- The drop wipes the numeric arrays that are fields of the record. It does not wipe a scalar field, a string, or an array inside a nested record or an enum.
+- The drop wipes the numeric arrays and the scalars that are fields of the record. It does not wipe a string. It does not wipe an array or a scalar inside a nested record, a tuple or an enum.
 - A copy of the elements into another array, such as a slice that a program copies out, is not wiped.
 - The wasm allocator does not give a released block to a raw allocation of the same size.
   The read-back test therefore runs on the native targets only.

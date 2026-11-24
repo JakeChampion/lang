@@ -46,7 +46,7 @@ which ones.
 | `IDIOMS.md` | [reference] | Fern source style, with compiler bootstrap and validation limits. |
 | `LANGUAGE-DIRECTION.md` | [reference] | The language's direction: positioning, ideas adopted and rejected from other languages, and the shipping plan. |
 | `MUST-CONSUME.md` | [reference] | `@must_consume` types: structs and enums that may not be implicitly dropped, checked as E067. |
-| `SECRET-TYPES.md` | [policy] | `@secret` structs: the drop zeroes the numeric arrays that a record holds alone, in each build. |
+| `SECRET-TYPES.md` | [policy] | `@secret` structs: the drop zeroes the numeric arrays that a record holds alone and its scalar fields, in each build. |
 | `WORKERS.md` | [reference] | Share-nothing workers: `std/worker` spawn and join, the `send` parameter mode and E100, and the sequential degrade every engine runs. |
 | `NAMED-FIELD-VARIANTS.md` | [reference] | Named-field enum variants: declaring, constructing and destructuring them. |
 | `TRAITS.md` | [reference] | Traits: static ad-hoc polymorphism, bounded generics and cross-module coherence; phases 1–3 shipped. |
@@ -252,7 +252,7 @@ which ones.
 | `DST-PLATFORM-BRIEF.md` | [reference] | Deterministic simulation testing in std/sim, std/sim_platform and std/sim_fetch: a virtual clock and seeded fault injection. |
 | `PERSISTENT-COLLECTIONS.md` | [reference] | std/ordmap, ordset, pmap, pset and pvec: design, measurements, and what the compiler still owes them. |
 | `STDLIB.md` | [reference] | Library conventions and links to the generated API reference. |
-| `LITERATE-STDLIB.md` | [reference] | Source documents for 152 library modules, their checks, and the six plain-source exceptions. |
+| `LITERATE-STDLIB.md` | [reference] | The literate source documents of the library, their checks, and the plain sources. |
 | `WASI-SOCKET-ERRORS.md` | [reference] | How WASI socket error-code results map to negative Preview 1 errnos. |
 | `FEATURE-AUDIT.md` | [tracker] | Every built-in and stdlib function against every backend and the interpreter, with a log of the bugs found and fixed. |
 | `SOTA-STDLIB-MATRIX-2026.md` | [tracker] | The execution matrix over the blueprint: verdict, prerequisite, phase and acceptance gate per row. |

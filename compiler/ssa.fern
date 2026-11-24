@@ -3037,17 +3037,122 @@ pub function array_loop_home(f: SFunc, a: Alloc, saved: i32[]): Option[LoopHome]
 }
 
 pub function with_loop_home(f: SFunc, w: LoopHome): SFunc {
+  return with_array_home(f, w, w.head, 0);
+}
+
+function with_array_home(f: SFunc, w: LoopHome, read: i32, use_at: i32): SFunc {
   let pre = f.blocks[w.head - 1];
-  let head = f.blocks[w.head];
-  let body = f.blocks[w.head + 1];
-  let n = head.insts.len() - 2;
-  let len = head.insts[n];
-  let ix = body.insts[0];
+  let load = f.blocks[read];
+  let next = f.blocks[read + 1];
+  let k = load.insts.len() - 2;
+  let left = load.insts[k];
+  let right = next.insts[use_at];
   let copy = SInst { kind_tag: COPY, result: f.nvals, args: [w.value], imm: 0, str: "" };
   let blocks = f.blocks.with(w.head - 1, SBlock { ...pre, insts: [copy] });
-  blocks = blocks.with(w.head, SBlock { ...head, insts: head.insts.with(n, SInst { ...len, args: [f.nvals] }) });
-  blocks = blocks.with(w.head + 1, SBlock { ...body, insts: body.insts.with(0, SInst { ...ix, args: ix.args.with(0, f.nvals) }) });
+  blocks = blocks.with(read, SBlock { ...load, insts: load.insts.with(k, SInst { ...left, args: left.args.with(0, f.nvals) }) });
+  blocks = blocks.with(read + 1, SBlock { ...next, insts: next.insts.with(use_at, SInst { ...right, args: right.args.with(0, f.nvals) }) });
   return SFunc { ...f, blocks: blocks, nvals: f.nvals + 1 };
+}
+
+// A loop reads an array element, compares it, then writes to the same
+// array on one edge. Keep the pointer in a saved register through the loop.
+pub struct GuardedHome { window: LoopHome, read: i32, store: i32 }
+
+function guarded_array(b: SBlock): i32 {
+  let n = b.insts.len();
+  if (n < 2 || b.term.kind_tag != TERM_BRIF) {
+    return -1;
+  }
+  let load = b.insts[n - 2];
+  let cmp = b.insts[n - 1];
+  if (load.kind_tag != ARR_AT || cmp.kind_tag != BINARY || cmp.str != "ne" || cmp.result != b.term.cond || !cmp.args.contains(load.result)) {
+    return -1;
+  }
+  // A versioned loop can have two copies of this guard. Prefer the body
+  // where an earlier array read already has a bounds proof.
+  for k in 0..n - 2 {
+    let ins = b.insts[k];
+    if (ins.kind_tag == ARR_AT && ins.imm == 1) {
+      return load.args[0];
+    }
+  }
+  return -1;
+}
+
+// Reject a side entry even when it reaches a block without an array access.
+function guarded_loop_end(f: SFunc, at: i32[], h: i32, latch: i32, first: i32): i32 {
+  let last = first;
+  for bi in h..=latch {
+    let b = f.blocks[bi];
+    if (b.id == f.entry) {
+      return -1;
+    }
+    if (bi > h) {
+      for pred in b.preds {
+        let p = block_index(at, pred);
+        if (p < h || p > latch) {
+          return -1;
+        }
+      }
+    }
+    last = last + b.insts.len() + 1;
+  }
+  return last;
+}
+
+pub function guarded_loop_home(f: SFunc, a: Alloc, saved: i32[], at: i32[]): Option[GuardedHome] {
+  for bi in 1..f.blocks.len() - 2 {
+    let write = f.blocks[bi + 1];
+    if (write.term.kind_tag != TERM_BR || write.insts.len() == 0) {
+      continue;
+    }
+    let load = f.blocks[bi];
+    if (load.term.kind_tag != TERM_BRIF || load.term.t != write.id) {
+      continue;
+    }
+    let latch = block_index(at, write.term.target);
+    if (latch <= bi + 1 || f.blocks[latch].term.kind_tag != TERM_BR) {
+      continue;
+    }
+    let h = block_index(at, f.blocks[latch].term.target);
+    if (h <= 0 || h >= bi) {
+      continue;
+    }
+    let v = guarded_array(load);
+    if (v < 0 || a.reg_of[v] >= -1) {
+      continue;
+    }
+    let pre = f.blocks[h - 1];
+    let head = f.blocks[h];
+    if (pre.insts.len() != 0 || pre.term.kind_tag != TERM_BR || pre.term.target != head.id
+      || head.preds.len() != 2 || head.insts.len() == 0 || head.insts[0].kind_tag != PHI) {
+      continue;
+    }
+    let first = a.def_pos[head.insts[0].result] - 1;
+    if (a.def_pos[v] < 0 || a.def_pos[v] >= first) {
+      continue;
+    }
+    for j in 0..write.insts.len() {
+      let ins = write.insts[j];
+      if (ins.kind_tag != ARR_ST || ins.args[0] != v) {
+        continue;
+      }
+      let last = guarded_loop_end(f, at, h, latch, first);
+      if (last < first) {
+        break;
+      }
+      let reg = unused_saved_reg(a, saved, first, last);
+      if (reg >= 0) {
+        return Some(GuardedHome { window: LoopHome { head: h, value: v, reg: reg, first: first, last: last }, read: bi, store: j });
+      }
+      break;
+    }
+  }
+  return None;
+}
+
+pub function with_guarded_home(f: SFunc, w: GuardedHome): SFunc {
+  return with_array_home(f, w.window, w.read, w.store);
 }
 
 function after_copy(xs: i32[], first: i32, extra: i32): i32[] {

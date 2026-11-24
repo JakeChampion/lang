@@ -6,7 +6,7 @@ pub struct Field { name: string, ty: typeinfo.Type }
 
 // declared is the fields as written when fields holds some of them in parts, and empty otherwise.
 // `secret` marks a record of a `@secret` struct, whose drop wipes the
-// numeric arrays that it holds alone.
+// numeric arrays that it holds alone and its scalar fields.
 pub struct Record { ty: typeinfo.Type, fields: Field[], views: boolean, nests_func: boolean, declared: Field[], secret: boolean }
 
 pub struct Records { list: Record[], names: util.NameIndex }
