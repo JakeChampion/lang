@@ -350,8 +350,16 @@ func escapingNames(body ast.Node, withDefer bool) map[string]bool {
 		})
 		return true
 	})
+	if len(esc) == 0 {
+		return esc
+	}
 	for name := range endedCallbackLoans(body) {
 		delete(esc, name)
+	}
+	if block, ok := body.(*ast.Block); ok && len(esc) != 0 {
+		for name := range directCallbackLoans(block, esc) {
+			delete(esc, name)
+		}
 	}
 	return esc
 }
