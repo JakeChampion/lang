@@ -445,7 +445,7 @@ function test_p256_auth_psk_mode(): test.TestOutcome {
   let Ok(recipient) = hpke.p256_auth_recipient(r, s.public_key, pair.enc, b(A51_INFO), mode) else {
     return test.fail("recipient");
   };
-  let wrong_mode = hpke.AuthPSK([1u8], [2u8]);
+  let wrong_mode = hpke.AuthPSK(__alloc_u8(32), [2u8]);
   let Ok(wrong) = hpke.p256_auth_recipient(r, s.public_key, pair.enc, b(A51_INFO), wrong_mode) else {
     return test.fail("other PSK setup");
   };
@@ -464,8 +464,11 @@ function test_psk_inputs(): test.TestOutcome {
   if (hpke.psk_key_schedule(hpke.KEM_P256, ss, [], [], [1u8]).is_ok()) {
     return test.fail("empty PSK");
   }
-  if (hpke.psk_key_schedule(hpke.KEM_P256, ss, [], [1u8], []).is_ok()) {
+  if (hpke.psk_key_schedule(hpke.KEM_P256, ss, [], __alloc_u8(32), []).is_ok()) {
     return test.fail("empty id");
+  }
+  if (hpke.psk_key_schedule(hpke.KEM_P256, ss, [], __alloc_u8(31), [1u8]).is_ok()) {
+    return test.fail("31-byte PSK");
   }
   return test.pass();
 }
@@ -608,7 +611,7 @@ function main(): i32 {
   r = r.it("RFC 9180 A.5.2 psk mode", test_p256_psk_mode);
   r = r.it("RFC 9180 A.5.3 auth mode", test_p256_auth_mode);
   r = r.it("RFC 9180 A.5.4 auth_psk mode", test_p256_auth_psk_mode);
-  r = r.it("PSK inputs must both be present", test_psk_inputs);
+  r = r.it("PSK key length and identifier", test_psk_inputs);
   r = r.it("P-256 refusals", test_p256_refusals);
   r = r.it("MLKEM768-P256 public key and decapsulation", test_pq256_vector);
   r = r.it("MLKEM768-P256 seal and open", test_pq256_round_trip);

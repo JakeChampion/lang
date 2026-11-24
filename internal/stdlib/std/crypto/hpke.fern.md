@@ -16,7 +16,7 @@ A P-256 key is a scalar in the range 1 to n - 1, and its public key is the uncom
 
 The key schedule of RFC 9180 turns the shared secret and the `info` bytes into a `Context`. A `Context` seals or opens messages in sequence. Each message uses the next nonce.
 
-For PSK mode, pass the KEM shared secret, PSK and its identifier to `psk_key_schedule`. For P-256 sender authentication, use `p256_auth_sender_derand` and `p256_auth_recipient`. Pass `Auth` for sender authentication alone or `AuthPSK(psk, id)` to also bind the PSK. The recipient supplies the expected sender public key. PSK modes require a nonempty PSK and identifier. Use a PSK with at least 32 bytes of entropy.
+For PSK mode, pass the KEM shared secret, PSK and its identifier to `psk_key_schedule`. For P-256 sender authentication, use `p256_auth_sender_derand` and `p256_auth_recipient`. Pass `Auth` for sender authentication alone or `AuthPSK(psk, id)` to also bind the PSK. The recipient supplies the expected sender public key. PSK modes require a PSK of at least 32 bytes and a nonempty identifier. Use a PSK with at least 32 bytes of entropy.
 
 ## Contracts
 
@@ -128,7 +128,7 @@ pub function (e: HpkeError) message(): string {
     Point => "hpke: the P-256 point is not on the curve",
     Scalar => "hpke: the P-256 scalar is zero or not below n",
     MessageLimit => "hpke: the context has sealed or opened its last message",
-    PskInputs => "hpke: PSK mode requires a nonempty key and identifier",
+    PskInputs => "hpke: PSK mode requires a key of at least 32 bytes and a nonempty identifier",
     ExportLength(n) => "hpke: the export length is " + n.to_string() + ", want 1 to 8160",
   };
 }
@@ -529,7 +529,7 @@ pub function psk_key_schedule(kem_id: i32, shared_secret: [u8], info: [u8], psk:
 }
 
 function __psk_schedule(kem_id: i32, shared_secret: [u8], info: [u8], mode: u8, psk: [u8], psk_id: [u8]): Result[Context, HpkeError] {
-  if (psk.len() == 0 || psk_id.len() == 0) {
+  if (psk.len() < 32 || psk_id.len() == 0) {
     return Err(PskInputs);
   }
   return Ok(__schedule(kem_id, shared_secret, info, mode, psk, psk_id));
