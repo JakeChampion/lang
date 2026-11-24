@@ -45,7 +45,10 @@ function test_save_png(): test.TestOutcome {
   // Half of white over nothing is the premultiplied 128, 128, 128, 128.
   f.store(1, 0, 1, 1, draw.rgba(128, 128, 128, 128));
   let px = testkit.rgba(f);
-  let path = "/tmp/fern-testkit-" + now_unix_ms().to_string() + ".png";
+  let Ok(dir) = temp_dir("fern-testkit") else {
+    return test.fail("temp_dir failed");
+  };
+  let path = dir + "/frame.png";
   let ok = testkit.save_png(f, path);
   draw.release(f);
   let signature = false;
@@ -57,7 +60,10 @@ function test_save_png(): test.TestOutcome {
 }
 
 function test_logs(): test.TestOutcome {
-  let path = "/tmp/fern-testkit-log-" + now_unix_ms().to_string();
+  let Ok(dir) = temp_dir("fern-testkit") else {
+    return test.fail("temp_dir failed");
+  };
+  let path = dir + "/log";
   let missing = testkit.read_text(path + ".none");
   let wrote = write_file(path, "attach\ndetach\ndetach\nattach\n");
   return test.assert_eq("[" + missing + "] " + testkit.runs(testkit.read_text(path)), "[] attach detach attach");
