@@ -44,7 +44,9 @@ function invalid_header(input: [u8], a: i32, version: i32, rate_index: i32, bitr
 }
 
 function frame_length(bitrate: i32, rate: i32, base: i32, padding: i32): i32 {
-  if (bitrate != 0) { return 4 * (12000 * bitrate / rate + padding); }
+  if (bitrate != 0) {
+    return 4 * (12000 * bitrate / rate + padding);
+  }
   return if (base > 0) { base + 4 * padding } else { 0 };
 }
 
@@ -74,7 +76,9 @@ function parsed(input: [u8], free: i32, maximum: i32): Result[Header, pcm.AudioE
   let padding = b >> 1 & 1;
   let crc = (a & 1) == 0;
   let base = if (bitrate_index == 0) { free } else { 0 };
-  if (base > maximum) { return Err(pcm.Limit); }
+  if (base > maximum) {
+    return Err(pcm.Limit);
+  }
   let bytes = frame_length(bitrate, rate, base, padding);
   return Ok(Header { rate: rate, channels: if (mode == 3) { 1 } else { 2 }, separate: separate_bands(mode, input[3]), bytes: bytes, free: base, crc: crc });
 }
@@ -82,7 +86,9 @@ function parsed(input: [u8], free: i32, maximum: i32): Result[Header, pcm.AudioE
 // Return the encoded frame length from its header, or zero when a free-format
 // frame needs lookahead. A known free extent excludes the four-byte padding slot.
 pub function frame_bytes(input: [u8], free: i32, maximum: i32): Result[i32, pcm.AudioError] {
-  if (free < 0 || free % 4 != 0 || free > 1073741820) { return Err(pcm.Header); }
+  if (free < 0 || free % 4 != 0 || free > 1073741820) {
+    return Err(pcm.Header);
+  }
   let h = parsed(input, free, maximum)?;
   return Ok(h.bytes);
 }
@@ -94,20 +100,30 @@ function header(input: [u8], free: i32, maximum: i32): Result[Header, pcm.AudioE
     let base = framing.discover(input, search, maximum)?;
     h = parsed(input, base, maximum)?;
   }
-  if (h.bytes > input.len()) { return Err(pcm.Truncated); }
+  if (h.bytes > input.len()) {
+    return Err(pcm.Truncated);
+  }
   return Ok(h);
 }
 
 // Decode a frame whose byte extent was established by a container or stream reader.
 pub function (own state: Decoder) decode_packet_into(packet: [u8], own output: f32[], limits: pcm.Limits): (Decoder, Result[Frame, pcm.AudioError]) {
-  if (packet.len() < 4) { return (state, Err(pcm.Truncated)); }
+  if (packet.len() < 4) {
+    return (state, Err(pcm.Truncated));
+  }
   let free = state.free;
-  if (packet[2] >> 4u8 == 0u8 && free == 0) { free = packet.len() - (packet[2] as i32 >> 1 & 1) * 4; }
+  if (packet[2] >> 4u8 == 0u8 && free == 0) {
+    free = packet.len() - (packet[2] as i32 >> 1 & 1) * 4;
+  }
   let size = match (frame_bytes(packet, free, limits.max_input_bytes)) { Ok(n) => n, Err(e) => { return (state, Err(e)); } };
-  if (size < 4 + (if ((packet[1] & 1u8) == 0u8) { 2 } else { 0 }) || size != packet.len()) { return (state, Err(pcm.Header)); }
+  if (size < 4 + (if ((packet[1] & 1u8) == 0u8) { 2 } else { 0 }) || size != packet.len()) {
+    return (state, Err(pcm.Header));
+  }
   let before = state.free;
   let (next, result) = Decoder { ...state, free: free }.decode_frame_into(packet, output, limits);
-  if let Err(e) = result { return (Decoder { ...next, free: before }, Err(e)); }
+  if let Err(e) = result {
+    return (Decoder { ...next, free: before }, Err(e));
+  }
   return (next, result);
 }
 
@@ -268,7 +284,9 @@ pub function (value: SeekIndex) frames(): i64 {
 pub function (value: SeekIndex) read_into(input: [u8], position: i64, frames: i32, own output: f32[]): Result[f32[], pcm.AudioError] {
   let index = value.index;
   let range = index.range(input.len(), position, frames, output.len())?;
-  if (range.count == 0) { return Ok(output); }
+  if (range.count == 0) {
+    return Ok(output);
+  }
   let state = Decoder { ...decoder(), free: index.free };
   let scratch = spectral.zeros(384 * index.channels);
   let written = 0;
@@ -277,7 +295,9 @@ pub function (value: SeekIndex) read_into(input: [u8], position: i64, frames: i3
     let end = index.end(n);
     let (next, result) = state.decode_frame_into(input[start:end], scratch, index.limits);
     let decoded = result?;
-    if (decoded.bytes_read != end - start || decoded.channels != index.channels || decoded.sample_rate != index.rate) { return Err(pcm.Header); }
+    if (decoded.bytes_read != end - start || decoded.channels != index.channels || decoded.sample_rate != index.rate) {
+      return Err(pcm.Header);
+    }
     state = next;
     scratch = decoded.samples;
     let (after, filled) = range.copy(n, scratch, written, output);
