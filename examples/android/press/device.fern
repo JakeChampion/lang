@@ -10,9 +10,6 @@ pub const PICKED: i32 = 0x50525350;
 // The request code of the picker in onActivityResult.
 pub const REQUEST: i32 = 7311;
 
-// The folder of the files of Press in the gallery.
-pub const FOLDER: string = "Pictures/Press";
-
 // The most bytes of an image file that Press reads.
 const MOST_BYTES: i64 = 268435456i64;
 
@@ -181,18 +178,19 @@ function write_all(e: usize, out: usize, bytes: [u8]): boolean {
   return jni.call_void(e, out, "close", "()V", []) && ok;
 }
 
-// Puts the file `bytes` in the gallery with the name `name` and the MIME
-// type `mime`, through the MediaStore. The app needs no permission for a
+// Puts the file `bytes` in the folder `dir` with the name `name` and the MIME
+// type `mime`, through the MediaStore: the downloads for a folder under
+// Download, and the gallery for another. The app needs no permission for a
 // file that it adds. It gives the content URI of the file as a local
 // reference, or 0 when Android does not take the file.
-function insert(ctx: usize, e: usize, name: string, mime: string, bytes: [u8]): usize {
+function insert(ctx: usize, e: usize, name: string, mime: string, dir: string, bytes: [u8]): usize {
   let resolver = jni.call_object(e, android.activity_object(ctx), "getContentResolver", "()Landroid/content/ContentResolver;", []);
   let values = made(e, "android/content/ContentValues", "()V", []);
-  let media = jni.find_class(e, "android/provider/MediaStore$Images$Media");
+  let media = jni.find_class(e, if (dir.starts_with("Download/")) { "android/provider/MediaStore$Downloads" } else { "android/provider/MediaStore$Images$Media" });
   if (!healthy(e, resolver) || values == 0 as usize || !healthy(e, media)) {
     return 0 as usize;
   }
-  for (k, v) in [("_display_name", name), ("mime_type", mime), ("relative_path", FOLDER)] {
+  for (k, v) in [("_display_name", name), ("mime_type", mime), ("relative_path", dir)] {
     let put = jni.call_void(e, values, "put", "(Ljava/lang/String;Ljava/lang/String;)V", [jni.new_string(e, k), jni.new_string(e, v)]);
   }
   let base = jni.get_static_object_field(e, media, jni.get_static_field_id(e, media, "EXTERNAL_CONTENT_URI", "Landroid/net/Uri;"));
@@ -211,17 +209,17 @@ function insert(ctx: usize, e: usize, name: string, mime: string, bytes: [u8]): 
   return uri;
 }
 
-pub function save(ctx: usize, name: string, mime: string, bytes: u8[]): boolean {
+pub function save(ctx: usize, name: string, mime: string, dir: string, bytes: u8[]): boolean {
   let e = android.env(ctx);
-  return framed(e, 32, (): boolean => insert(ctx, e, name, mime, bytes) != 0 as usize);
+  return framed(e, 32, (): boolean => insert(ctx, e, name, mime, dir, bytes) != 0 as usize);
 }
 
 // Saves the file, then gives it to the app that the person picks in the
 // share sheet of Android.
-pub function share(ctx: usize, name: string, mime: string, bytes: u8[]): boolean {
+pub function share(ctx: usize, name: string, mime: string, dir: string, bytes: u8[]): boolean {
   let e = android.env(ctx);
   return framed(e, 32, (): boolean => {
-    let uri = insert(ctx, e, name, mime, bytes);
+    let uri = insert(ctx, e, name, mime, dir, bytes);
     if (uri == 0 as usize) {
       return false;
     }
