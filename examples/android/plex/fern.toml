@@ -11,6 +11,6 @@ cleartext = true
 tv = true
 pip = true
 banner = "banner.png"
-permissions = ["INTERNET", "ACCESS_NETWORK_STATE", "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_MEDIA_PLAYBACK", "POST_NOTIFICATIONS", "WAKE_LOCK", "com.android.providers.tv.permission.WRITE_EPG_DATA"]
+permissions = ["RECORD_AUDIO", "INTERNET", "ACCESS_NETWORK_STATE", "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_MEDIA_PLAYBACK", "POST_NOTIFICATIONS", "WAKE_LOCK", "com.android.providers.tv.permission.WRITE_EPG_DATA"]
 # Media3 ExoPlayer, from tools/media3/fetch.
 dex = ["../../../build/media3/dex/classes.dex"]

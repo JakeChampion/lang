@@ -272,7 +272,7 @@ function movie_with_sound(sound: string): string {
 // files.
 // The requests, the calls of the player and the files of the fake device,
 // and the decoders that it has.
-struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]], sound: Cell[boolean], gpu: Cell[boolean], languages: Cell[string[]], pip: Cell[boolean], access: Cell[android.AccessItem[]], progress: Cell[download.Progress], ids: Cell[i64], focus: Cell[boolean], parent: Cell[string], media: Cell[string] }
+struct Log { voice: Cell[boolean], urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]], sound: Cell[boolean], gpu: Cell[boolean], languages: Cell[string[]], pip: Cell[boolean], access: Cell[android.AccessItem[]], progress: Cell[download.Progress], ids: Cell[i64], focus: Cell[boolean], parent: Cell[string], media: Cell[string] }
 
 function none_access(): android.AccessItem[] {
   let out: android.AccessItem[] = [];
@@ -281,7 +281,7 @@ function none_access(): android.AccessItem[] {
 
 function new_log(): Log {
   let none: string[] = [];
-  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]), sound: cell_new(true), gpu: cell_new(false), languages: cell_new(["en-US"]), pip: cell_new(false), access: cell_new(none_access()), progress: cell_new(download.Progress { status: download.PENDING, done: 0i64, total: -1i64 }), ids: cell_new(42i64), focus: cell_new(true), parent: cell_new(""), media: cell_new("") };
+  return Log { voice: cell_new(false), urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]), sound: cell_new(true), gpu: cell_new(false), languages: cell_new(["en-US"]), pip: cell_new(false), access: cell_new(none_access()), progress: cell_new(download.Progress { status: download.PENDING, done: 0i64, total: -1i64 }), ids: cell_new(42i64), focus: cell_new(true), parent: cell_new(""), media: cell_new("") };
 }
 
 function note(c: Cell[string[]], s: string): void {
@@ -328,6 +328,17 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     finish: (): void => note(log.calls, "finish"),
     keep_screen_on: (on: boolean): void => {},
     immersive: (on: boolean): void => {},
+    has_voice: log.voice.get(),
+    voice_result: (e: android.Event): Option[string] => {
+      if let android.Posted(kind, _) = e {
+        if (kind == 44) {
+          return Some("Inception");
+        }
+      }
+      return None;
+    },
+    voice_start: (): boolean => true,
+    voice_cancel: (): void => note(log.calls, "voice cancel"),
     show_field: (q: string): void => note(log.calls, "field show [" + q + "]"),
     set_field: (q: string): void => note(log.calls, "field set [" + q + "]"),
     hide_field: (): void => note(log.calls, "field hide"),
@@ -2030,6 +2041,25 @@ function test_gpu_draws_at_the_vsync(): test.TestOutcome {
   return test.assert_eq((count_calls(log, "present screen") - before).to_string(), "1");
 }
 
+function test_voice_search(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  log.voice.set(true);
+  let t = at(home, log, 100i64, f, android.Key(84, 0));
+  if (!t.listening || t.typing || !node(t, "voice").is_some()) {
+    return test.fail("the Search key did not start voice input");
+  }
+  t = settle(at(t, log, 200i64, f, android.Posted(44, 0 as usize)), log, 200i64, f);
+  if (t.listening || !has_url(log, "/hubs/search?query=Inception&")) {
+    return test.fail("the recognized words did not reach search");
+  }
+  t = tap(t, log, 300i64, f, "voice");
+  t = at(t, log, 400i64, f, android.Pause);
+  return test.assert_eq((!t.listening && has_call(log, "voice cancel")).to_string(), "true");
+}
+
 function test_search_types_and_asks(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -2530,6 +2560,7 @@ function main(): i32 {
   r = r.it("the keys of a TV remote seek, show the controls and pause", test_remote_on_the_video);
   r = r.it("a swipe flings the library, and a touch stops it", test_fling_moves_the_library);
   r = r.it("with a GPU the screen draws at the vsync", test_gpu_draws_at_the_vsync);
+  r = r.it("voice search uses the recognized words", test_voice_search);
   r = r.it("a search waits for a pause in typing", test_search_types_and_asks);
   r = r.it("the keyboard of the system searches through the text field", test_search_from_text_field);
   r = r.it("a sign-out goes back to the sign-in", test_back_and_sign_out);

@@ -287,6 +287,21 @@ def check_home(out, port):
         fail(f"the home screen shows {posters} pixels of the posters")
 
 
+def check_voice_search(port):
+    service = adb("shell", "settings", "get", "secure", "voice_recognition_service").strip()
+    if not service or service == "null":
+        print("voice search skipped: no recognition service configured", flush=True)
+        return
+    before = count_log(r"plex: requested voice search")
+    hubs = requests_for("/hubs")
+    start(port)
+    if not wait_for(lambda: requests_for("/hubs") > hubs):
+        return fail("voice search could not open the home screen")
+    adb("shell", "input", "keyevent", "84")
+    if not wait_for(lambda: count_log(r"plex: requested voice search") > before):
+        fail("the remote Search key did not request speech recognition")
+
+
 def check_track(out, port):
     start(port, "900")
     if not wait_for(lambda: "plex: prepared 900" in logcat()):
@@ -506,6 +521,7 @@ def main(apk, out, video=None):
     try:
         check_home(out, port)
         check_remote(out, port)
+        check_voice_search(port)
         check_track(out, port)
         check_background(out, port)
         check_gapless(out, port)
