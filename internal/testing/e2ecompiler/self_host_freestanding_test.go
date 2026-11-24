@@ -104,23 +104,54 @@ func TestSelfHostFreestandingEmitsNoHost(t *testing.T) {
 	}
 }
 
-// A runtime switch that writes a report needs a host, so the build stops and
-// names the syscall instead of emitting it.
+// A switch that writes a report needs a host, so the build stops and names
+// the syscall instead of emitting it. No warning says that the build carries
+// no checks, because there is no build.
 func TestSelfHostFreestandingRefusesHostedRuntime(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	for _, target := range []string{"x86-64-freestanding", "arm64-freestanding"} {
-		t.Run(target, func(t *testing.T) {
-			_, msg, err := emitFreestanding(t, cli, target, freestandingLibSrc, "FERN_LEAKCHECK=1")
-			if err == nil {
-				t.Fatal("the build with FERN_LEAKCHECK=1 succeeded; its leak report needs a host")
+	lib := filepath.Join(t.TempDir(), "lib.fern")
+	if err := os.WriteFile(lib, []byte(freestandingLibSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	kernel := writeTickProgram(t, tickBoardSrc, tickMainSrc)
+	switches := []struct {
+		name  string
+		env   []string
+		flags []string
+	}{
+		{"FERN_LEAKCHECK", []string{"FERN_LEAKCHECK=1"}, nil},
+		{"FERN_SANITIZE", []string{"FERN_SANITIZE=1"}, nil},
+		{"flag", nil, []string{"-sanitize"}},
+	}
+	for _, target := range []string{"x86-64-freestanding", "arm64-freestanding", "arm64-kernel"} {
+		for _, sw := range switches {
+			if target == "arm64-kernel" && sw.name == "FERN_LEAKCHECK" {
+				continue // the board's log provider prints the census
 			}
-			if !strings.Contains(msg, "has no host, but this build needs syscall") {
-				t.Errorf("the refusal does not name the syscall:\n%s", msg)
-			}
-			if strings.Contains(msg, "IR-eligible") {
-				t.Errorf("the refusal is followed by an unrelated IR diagnostic:\n%s", msg)
-			}
-		})
+			t.Run(target+"/"+sw.name, func(t *testing.T) {
+				out := filepath.Join(t.TempDir(), "out")
+				var cmd *exec.Cmd
+				if target == "arm64-kernel" {
+					cmd = cli.compileCmd(target, out, kernel, append([]string{"-ram", kernelRAM}, sw.flags...)...)
+				} else {
+					cmd = cli.compileCmd(target, out, lib, append([]string{"-export", "add,total,env", "-emit", "asm"}, sw.flags...)...)
+				}
+				cmd.Env = append(os.Environ(), sw.env...)
+				msg, err := cmd.CombinedOutput()
+				if err == nil {
+					t.Fatal("the build succeeded; its report needs a host")
+				}
+				if !strings.Contains(string(msg), "has no host, but this build needs syscall") {
+					t.Errorf("the refusal does not name the syscall:\n%s", msg)
+				}
+				if strings.Contains(string(msg), "warning") {
+					t.Errorf("the refusal comes with a warning:\n%s", msg)
+				}
+				if strings.Contains(string(msg), "IR-eligible") {
+					t.Errorf("the refusal is followed by an unrelated IR diagnostic:\n%s", msg)
+				}
+			})
+		}
 	}
 }
 

@@ -268,15 +268,14 @@ function begin(e: usize): boolean {
     let _ = jni.delete_local_ref(e, pending);
     return false;
   }
-  if (jni.call1(e, 19, 64 as usize) as i32 != 0) {
-    let _ = cleared(e);
+  if (!jni.push_local_frame(e, 64)) {
     return false;
   }
   return true;
 }
 
 function end(e: usize): void {
-  let _ = jni.call1(e, 20, 0 as usize);
+  let _ = jni.pop_local_frame(e, 0 as usize);
 }
 
 function method(e: usize, obj: usize, name: string, sig: string): usize {
