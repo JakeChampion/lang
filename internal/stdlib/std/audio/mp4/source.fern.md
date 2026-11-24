@@ -1,7 +1,9 @@
 # Borrowed ISO movie metadata
 
 This package helper supplies the shared file scanner for native AAC and video MP4 indexes.
-It reads top-level headers and one bounded movie box while it skips media payloads.
+It reads top-level headers, one bounded movie box, and each movie-fragment box while it skips media payloads.
+
+The movie and fragment boxes share one metadata budget. Each fragment keeps its file offset.
 The codec adapters retain their own track, packet, configuration, and file-type checks.
 The caller owns the immutable source. Each seek and each short read counts against the operation budget.
 
@@ -17,9 +19,9 @@ import "std/audio/wire";
 
 pub(package) struct Limits { input: source.Limits, max_file_bytes: i64, max_metadata_bytes: i32, max_input_bytes: i32, max_boxes: i32, max_operations: i32 }
 
-pub(package) struct Metadata { bytes: u8[], media: tables.Media[], file_bytes: i64, top_boxes: i32, file_type: boolean }
+pub(package) struct Metadata { bytes: u8[], fragments: u8[], fragment_starts: i64[], media: tables.Media[], file_bytes: i64, top_boxes: i32, file_type: boolean }
 
-struct Scan { limits: Limits, file_bytes: i64, at: i64, boxes: i32, operations: i32, file_type: boolean, metadata: u8[], media: tables.Media[] }
+struct Scan { limits: Limits, file_bytes: i64, at: i64, boxes: i32, operations: i32, file_type: boolean, metadata: u8[], fragments: u8[], fragment_starts: i64[], media: tables.Media[] }
 
 struct Header { kind: u32, start: i64, data: i64, end: i64 }
 
@@ -38,7 +40,7 @@ function create(bytes: i64, limits: Limits): Result[Scan, source.ReadError] {
   if let Err(error) = source.create(limits.input) {
     return Err(error);
   }
-  return Ok(Scan { limits: limits, file_bytes: bytes, at: 0i64, boxes: 0, operations: 0, file_type: false, metadata: [], media: [] });
+  return Ok(Scan { limits: limits, file_bytes: bytes, at: 0i64, boxes: 0, operations: 0, file_type: false, metadata: [], fragments: [], fragment_starts: [], media: [] });
 }
 
 function load(scan: Scan, offset: i64, bytes: i32, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError]): Result[(Scan, u8[]), source.ReadError] {
@@ -88,7 +90,7 @@ function header(scan: Scan, seek: (i64) => Result[i64, IoError], read: (i32) => 
 
 function retain(scan: Scan, box: Header, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError]): Result[Scan, source.ReadError] {
   if (box.kind == boxes.tag("moof")) {
-    return Err(source.ReadAudio(pcm.Unsupported));
+    return retain_fragment(scan, box, seek, read);
   }
   if (box.kind == boxes.tag("ftyp")) {
     if (scan.file_type || box.end - box.data < 8i64 || (box.end - box.data) % 4i64 != 0i64) {
@@ -105,16 +107,31 @@ function retain(scan: Scan, box: Header, seek: (i64) => Result[i64, IoError], re
   return retain_movie(scan, box, seek, read);
 }
 
+// The movie and fragment boxes count against one metadata budget.
+function retained_bytes(scan: Scan, box: Header): Result[i32, source.ReadError] {
+  let bytes = box.end - box.start;
+  let total = bytes + scan.metadata.len() as i64 + scan.fragments.len() as i64;
+  if (total > scan.limits.max_metadata_bytes as i64 || total > scan.limits.max_input_bytes as i64) {
+    return Err(source.ReadAudio(pcm.Limit));
+  }
+  return Ok(bytes as i32);
+}
+
 function retain_movie(scan: Scan, box: Header, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError]): Result[Scan, source.ReadError] {
   if (scan.metadata.len() != 0) {
     return Err(source.ReadAudio(pcm.Header));
   }
-  let bytes = box.end - box.start;
-  if (bytes > scan.limits.max_metadata_bytes as i64 || bytes > scan.limits.max_input_bytes as i64) {
-    return Err(source.ReadAudio(pcm.Limit));
-  }
-  let (next, metadata) = load(scan, box.start, bytes as i32, seek, read)?;
+  let (next, metadata) = load(scan, box.start, retained_bytes(scan, box)?, seek, read)?;
   return Ok(Scan { ...next, metadata: metadata });
+}
+
+function retain_fragment(scan: Scan, box: Header, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError]): Result[Scan, source.ReadError] {
+  let (next, bytes) = load(scan, box.start, retained_bytes(scan, box)?, seek, read)?;
+  let fragments = next.fragments;
+  for value in bytes {
+    fragments = fragments.append(value);
+  }
+  return Ok(Scan { ...next, fragments: fragments, fragment_starts: next.fragment_starts.append(box.start) });
 }
 
 pub(package) function inspect_with(bytes: i64, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError], limits: Limits): Result[Metadata, source.ReadError] {
@@ -130,6 +147,6 @@ pub(package) function inspect_with(bytes: i64, seek: (i64) => Result[i64, IoErro
   if (scan.metadata.len() == 0) {
     return Err(source.ReadAudio(pcm.Header));
   }
-  return Ok(Metadata { bytes: scan.metadata, media: scan.media, file_bytes: scan.file_bytes, top_boxes: scan.boxes, file_type: scan.file_type });
+  return Ok(Metadata { bytes: scan.metadata, fragments: scan.fragments, fragment_starts: scan.fragment_starts, media: scan.media, file_bytes: scan.file_bytes, top_boxes: scan.boxes, file_type: scan.file_type });
 }
 ```

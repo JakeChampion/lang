@@ -7,7 +7,8 @@ The AAC-LC packet decoder supplies PCM without a platform codec.
 Track times and edit lists control encoder-delay and final-padding removal.
 The whole-track API retains interleaved float PCM within explicit cumulative limits.
 `decode_alac` supplies exact integer PCM for ALAC tracks through the shared container parser.
-Fragmented media, encrypted entries, and external references are unsupported.
+The complete view accepts fragmented files: each `moof` box adds packets to its track.
+Encrypted entries and external references are unsupported.
 
 ```fern
 <<*>>=
@@ -40,8 +41,8 @@ pub function inspect(input: [u8], limits: container.Limits): Result[Index, pcm.A
   return configured(input, container.inspect(input, limits, boxes.tag("mp4a"))?, limits);
 }
 
-pub(package) function inspect_movie(input: [u8], media: tables.Media[], file_bytes: i64, top_boxes: i32, limits: container.Limits): Result[Index, pcm.AudioError] {
-  return configured(input, container.inspect_movie(input, media, file_bytes, top_boxes, limits, boxes.tag("mp4a"))?, limits);
+pub(package) function inspect_movie(input: [u8], moof_bytes: [u8], moof_starts: [i64], media: tables.Media[], file_bytes: i64, top_boxes: i32, limits: container.Limits): Result[Index, pcm.AudioError] {
+  return configured(input, container.inspect_movie(input, moof_bytes, moof_starts, media, file_bytes, top_boxes, limits, boxes.tag("mp4a"))?, limits);
 }
 
 function configured(input: [u8], raw: container.Index, limits: container.Limits): Result[Index, pcm.AudioError] {
