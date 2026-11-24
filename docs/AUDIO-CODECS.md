@@ -475,6 +475,8 @@ The generator also checks that each Layer II stream decodes in minimp3 to the sa
 
 `std/audio/mp1.decode_raw` decodes consecutive indexed Layer I frames. The MPEG-1 and MPEG-2 fixtures cover mono, stereo, dual channel and all four joint-stereo boundaries. Each fixture mixes protected and unprotected frames and compares the complete interleaved output with pinned scalar minimp3. The incremental Layer I API accepts one frame at a time with a reusable PCM buffer and preserves its synthesis history on input or buffer errors. The Layer I API accepts raw frames and does not apply de-emphasis filtering.
 
+For sequential Layer I and II playback, construct a bounded reader with `std/audio/mpeg/input.layer1` or `layer2`. Call `next` with a borrowed Reader and a reusable PCM buffer until it returns `None`. Both codecs also expose `seek_index` over a byte view. Its `read_into` method reconstructs synthesis history before the requested sample and writes the requested range.
+
 The independent reference bank contains 66 streams from FFmpeg and TwoLAME.
 It covers tones, transients, deterministic noise, silence, all rates and channel modes, and 24 protected streams.
 Fern output matches pinned scalar minimp3 bit for bit.
@@ -1103,7 +1105,7 @@ These results preserve exact scalar-reference PCM and do not establish world-lea
 
 Each line names the issue that owns the work.
 
-- MPEG Layers I and II: source readers and seek indexes ([#14689](https://github.com/JakeChampion/lang/issues/14689)).
+- MPEG Layers I and II: decoder CPU performance ([#14689](https://github.com/JakeChampion/lang/issues/14689)).
 - MP3: damaged-stream synchronization and more tag formats. No issue owns this work.
 - AAC: HE-AAC/SBR/PS, protected ADTS verification, coupling-channel elements, program configurations, and 960-sample frames ([#14517](https://github.com/JakeChampion/lang/issues/14517)).
 - MP4/M4A: fragmented media and further codecs ([#14518](https://github.com/JakeChampion/lang/issues/14518)).
