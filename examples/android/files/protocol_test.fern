@@ -423,13 +423,13 @@ function smb_of(s: files.Saved): smb.Server {
 
 function test_vault(): test.TestOutcome {
   let server = smb.Server { host: "nas.local", port: 4450, share: "media", user: "jo", password: "p=1\n\"é#", domain: "HOME" };
-  let web = dav.Server { url: "https://cloud.example/remote.php/dav/files/jo", user: "jo", password: "a b=c" };
+  let web = dav.Server { url: "https://cloud.example/remote.php/dav/files/jo", user: "jo", password: "a b=c", pin: "0aff" };
   let back = vault.decode(vault.encode([files.Saved { name: "Films = here", link: store.Smb(server) }, files.Saved { name: "", link: store.Smb(smb.Server { ...server, host: "" }) }, files.Saved { name: "Cloud", link: store.Dav(web) }]));
   if (back.len() != 2) {
     return test.fail("the vault gave " + back.len().to_string() + " servers");
   }
   let cloud = match (back[1].link) {
-    store.Dav(x) => x.url + "|" + x.user + "|" + x.password,
+    store.Dav(x) => x.url + "|" + x.user + "|" + x.password + "|" + x.pin,
     store.Smb(_) => "smb",
   };
   // A server that an older Fern Files saved has no kind and is SMB.
@@ -439,7 +439,7 @@ function test_vault(): test.TestOutcome {
     test.assert_eq(smb_of(back[0]).password, "p=1\n\"é#"),
     test.assert_eq(smb_of(back[0]).port, 4450),
     test.assert_eq(smb_of(back[0]).domain, "HOME"),
-    test.assert_eq(back[1].name + "|" + cloud, "Cloud|https://cloud.example/remote.php/dav/files/jo|jo|a b=c"),
+    test.assert_eq(back[1].name + "|" + cloud, "Cloud|https://cloud.example/remote.php/dav/files/jo|jo|a b=c|0aff"),
     test.assert_eq(old.len() == 1 && smb_of(old[0]).share == "media" && smb_of(old[0]).port == 445, true),
     test.assert_eq(vault.decode("not a store").len(), 0),
   ]);

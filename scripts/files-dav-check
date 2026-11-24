@@ -15,10 +15,14 @@ password=live-check-1
 serve="$root/scripts/files-dav-serve"
 export FILES_DAV_USER=$user FILES_DAV_PASSWORD=$password
 work=$(mktemp -d)
-trap '"$serve" stop "$work"; rm -rf "$work"' EXIT
+secure=$(mktemp -d)
+trap '"$serve" stop "$work"; "$serve" stop "$secure"; rm -rf "$work" "$secure"' EXIT
 
 "$fern" -stdlib "$root/internal/stdlib" -o "$work/live" "$root/examples/android/files/dav_live.fern"
 "$serve" start "$work" "$port"
+# A second server speaks HTTPS with a self-signed certificate, for the pin.
+"$serve" start "$secure" $((port + 1)) tls
+export FILES_DAV_TLS="https://127.0.0.1:$((port + 1))/files $user $password $(cat "$secure/fingerprint")"
 if FILES_DAV_SERVER="http://127.0.0.1:$port/files $user $password" "$work/live" > "$work/out.txt" 2>&1 && grep -q '^# fail 0' "$work/out.txt"; then
   grep '^# pass' "$work/out.txt"
 else

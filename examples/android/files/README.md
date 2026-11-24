@@ -109,6 +109,12 @@ has an address with `https://` or `http://`, a user and a password.
 video and the file picker of the system work with both. A copy to a
 WebDAV server sends each file whole in one step, from a file of the phone.
 
+A NAS often has a certificate of its own, which the phone does not trust.
+The folder then shows the SHA-256 fingerprint of that certificate, and a
+button that trusts it. The saved server keeps the fingerprint as its pin,
+and the client then trusts only a certificate with that fingerprint
+(`verify.pinned` and `fetch.send_trusting`).
+
 The client reads the XML of a list with a small reader of its own. The
 reader keeps the local name of each tag, so each prefix of a namespace
 works. `dav_test.fern` checks it with the replies of RFC 4918, Nextcloud

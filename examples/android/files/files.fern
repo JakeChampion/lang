@@ -100,6 +100,9 @@ pub struct Model {
   play_name: string,
   stream_port: i32,
   stream_token: string,
+  // The SHA-256 fingerprint of a certificate that the phone does not
+  // trust, which the person can choose to trust, or "".
+  untrusted: string,
   // True when the file that waits goes to an app that the person picks.
   sharing: boolean,
   pins: Mark[],
@@ -168,6 +171,8 @@ pub enum Msg {
   EditServer(i32),
   Draft(i32, string),
   DraftKind(boolean),
+  Untrusted(i64, string),
+  TrustCertificate,
   SaveServer,
   DeleteServer,
   Enter(string),
@@ -253,7 +258,7 @@ function no_server(): Saved {
 // `granted` is false when Android hides the files of the storages.
 pub function start(roots: Root[], granted: boolean, servers: Saved[], cache: string, prefs: Prefs): Model {
   return Model {
-    roots: roots, servers: servers, granted: granted, cache: cache, launch: "", busy: "", play: "", play_name: "", stream_port: 0, stream_token: "", sharing: false, pins: prefs.pins, recent: prefs.recent, unkept: false, found: false, grid: prefs.grid, thumbs: [], thumb_wait: [], thumb_raw: [], thumb_name: "", page: Home, place: store.Local, label: "", top: "", path: "", entries: [], loading: false, note: "", fault: "", sort: prefs.sort, hidden: prefs.hidden, query: "",
+    roots: roots, servers: servers, granted: granted, cache: cache, launch: "", busy: "", play: "", play_name: "", stream_port: 0, stream_token: "", untrusted: "", sharing: false, pins: prefs.pins, recent: prefs.recent, unkept: false, found: false, grid: prefs.grid, thumbs: [], thumb_wait: [], thumb_raw: [], thumb_name: "", page: Home, place: store.Local, label: "", top: "", path: "", entries: [], loading: false, note: "", fault: "", sort: prefs.sort, hidden: prefs.hidden, query: "",
     selecting: false, picked: [], clip: None, task: None, naming: None, name_text: "", confirm: "", draft: no_server(), preview: "", picture: None, raw: [], wide: 0, shares: [], finding: false, hosts: [], scanning: false, revision: 0i64, task_revision: 0i64, job: None, need_roots: false, ask_access: false, unsaved: false,
   };
 }
@@ -273,7 +278,7 @@ function reload(m: Model): Model {
 }
 
 function open(m: Model, place: store.Place, label: string, top: string, path: string): Model {
-  return reload(Model { ...m, page: Browse, place: place, label: label, top: top, path: path, entries: [], thumbs: [], thumb_wait: [], note: "", fault: "", query: "", selecting: false, picked: [], naming: None, confirm: "" });
+  return reload(Model { ...m, page: Browse, place: place, label: label, top: top, path: path, entries: [], thumbs: [], thumb_wait: [], note: "", fault: "", untrusted: "", query: "", selecting: false, picked: [], naming: None, confirm: "" });
 }
 
 function entry_named(m: Model, name: string): Option[smb.Entry] {
@@ -648,7 +653,7 @@ function drafted(d: Saved, field: i32, text: string): Saved {
     },
     store.Dav(s) => {
       let next = match (field) {
-        1 => dav.Server { ...s, url: text.trim() },
+        1 => dav.Server { ...s, url: text.trim(), pin: "" },
         3 => dav.Server { ...s, user: text.trim() },
         4 => dav.Server { ...s, password: text },
         _ => s,
@@ -656,6 +661,39 @@ function drafted(d: Saved, field: i32, text: string): Saved {
       return Saved { ...d, link: store.Dav(next) };
     }
   }
+}
+
+// The answer of the job that lists the folder `path` of `place`. A WebDAV
+// server whose certificate the phone does not trust gives the fingerprint
+// of that certificate, so the person can choose to trust it.
+function listed(revision: i64, place: store.Place, path: string): Msg {
+  let result = store.list(place, path);
+  if let Err(text) = result {
+    if let store.Remote(store.Dav(server)) = place {
+      if (text == dav.UNTRUSTED) {
+        let seen = dav.fingerprint(server);
+        if (seen.len() > 0) {
+          return Untrusted(revision, seen);
+        }
+      }
+    }
+  }
+  return Listed(revision, result);
+}
+
+// The model after the person chose to trust the certificate with the
+// fingerprint `m.untrusted`: the saved server of the folder keeps it as
+// its pin, and the folder loads again.
+function trusted(m: Model): Model {
+  let store.Remote(store.Dav(server)) = m.place else {
+    return m;
+  };
+  if (m.untrusted.len() == 0) {
+    return m;
+  }
+  let pinned = dav.Server { ...server, pin: m.untrusted };
+  let servers = m.servers.map((s: Saved): Saved => if (store.same_place(store.Remote(s.link), m.place)) { Saved { ...s, link: store.Dav(pinned) } } else { s });
+  return reload(Model { ...m, servers: servers, place: store.Remote(store.Dav(pinned)), untrusted: "", unsaved: true, note: "", fault: "" });
 }
 
 // The draft `d` as a WebDAV server when `web` is set, else as an SMB
@@ -666,7 +704,7 @@ pub function kind_of(d: Saved, web: boolean): Saved {
     store.Dav(s) => (s.user, s.password),
   };
   if (web) {
-    return Saved { ...d, link: store.Dav(dav.Server { url: "", user: user, password: password }) };
+    return Saved { ...d, link: store.Dav(dav.Server { url: "", user: user, password: password, pin: "" }) };
   }
   return Saved { ...d, link: store.Smb(smb.Server { host: "", port: SMB_PORT, share: "", user: user, password: password, domain: "" }) };
 }
@@ -721,6 +759,15 @@ function server_update(own m: Model, msg: Msg): Model {
     Draft(field, text) => {
       let next = drafted(m.draft, field, text);
       return Model { ...m, draft: next };
+    },
+    Untrusted(revision, seen) => {
+      if (revision != m.revision) {
+        return m;
+      }
+      return failed(Model { ...m, entries: [], loading: false, untrusted: seen }, dav.UNTRUSTED);
+    },
+    TrustCertificate => {
+      return trusted(m);
     },
     DraftKind(web) => {
       return Model { ...m, draft: kind_of(m.draft, web), shares: [], hosts: [], note: "", fault: "" };
@@ -1121,7 +1168,7 @@ pub function update(own m: Model, msg: Msg): Model {
     Tap(_) | Hold(_) | StopSelecting | SelectAll | OpenTrash | RestorePicked | Zip | Extract(_) | StreamEnded(_) | ToggleGrid | ThumbRead(_, _, _) | Copy(_) | CopyOne(_, _) | ClearClip | Delete | DeleteOne(_) => {
       return select_update(idle, msg);
     },
-    OpenServer(_) | EditServer(_) | Draft(_, _) | DraftKind(_) | SaveServer | DeleteServer | FindShares | SharesFound(_, _) | PickShare(_) | FindServers | ServersFound(_, _) | PickServer(_) => {
+    OpenServer(_) | EditServer(_) | Draft(_, _) | DraftKind(_) | Untrusted(_, _) | TrustCertificate | SaveServer | DeleteServer | FindShares | SharesFound(_, _) | PickShare(_) | FindServers | ServersFound(_, _) | PickServer(_) => {
       return server_update(idle, msg);
     },
     Listed(_, _) | Finished(_, _, _) | TextRead(_, _) | PictureRead(_, _) => {
@@ -1162,7 +1209,7 @@ function start_job(m: Model, msg: Msg): own worker.Worker[Msg][] {
   return [worker.spawn((): Msg => {
     match (job) {
       List(revision, place, path) => {
-        return Listed(revision, store.list(place, path));
+        return listed(revision, place, path);
       },
       Plan(revision, clip, place, path) => {
         return Planned(revision, store.plan(clip.place, clip.dir, clip.items, place, path));
@@ -1590,6 +1637,19 @@ function selection_bar(m: Model): ui.El[Msg][] {
   ]).spaced(4.0).wide()];
 }
 
+// The card that shows the fingerprint of a certificate that the phone does
+// not trust, with the button that trusts it.
+function trust_card(m: Model): ui.El[Msg][] {
+  if (m.untrusted.len() == 0) {
+    return [];
+  }
+  return [ui.card([
+    ui.text[Msg]("A server with a certificate of its own, such as a NAS, shows this. Trust it only when your server shows the same SHA-256 fingerprint.").wide(),
+    ui.text[Msg](dav.shown_fingerprint(m.untrusted)).sized(13.0).wide(),
+    actions_row([ui.button("Trust this certificate", TrustCertificate)]),
+  ]).spaced(12.0).wide()];
+}
+
 function browse(m: Model): ui.El[Msg] {
   let items = shown(m);
   let title = if (m.path == m.top || store.base(m.path).len() == 0) { m.label } else { store.base(m.path) };
@@ -1606,7 +1666,7 @@ function browse(m: Model): ui.El[Msg] {
   } else if (m.query.trim().len() > 0) {
     head = head.append(actions_row([ui.text_button("Search the folders below", DeepSearch)]));
   }
-  head = head.concat(naming_card(m)).concat(notice(m));
+  head = head.concat(naming_card(m)).concat(notice(m)).concat(trust_card(m));
   if (m.loading) {
     head = head.append(ui.text[Msg]("Reading…").colored(ui.MUTED));
   } else if (items.len() == 0 && m.fault.len() == 0) {

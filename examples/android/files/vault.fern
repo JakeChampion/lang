@@ -25,7 +25,7 @@ pub function encode(servers: files.Saved[]): string {
     let at = i.to_string() + ".";
     let fields = match (s.link) {
       store.Smb(x) => [("name", s.name), ("host", x.host), ("share", x.share), ("user", x.user), ("password", x.password), ("domain", x.domain)],
-      store.Dav(x) => [("name", s.name), ("kind", "dav"), ("url", x.url), ("user", x.user), ("password", x.password)],
+      store.Dav(x) => [("name", s.name), ("kind", "dav"), ("url", x.url), ("user", x.user), ("password", x.password), ("pin", x.pin)],
     };
     for field in fields {
       kept = kept.set(at + field.0, base64.encode(field.1.bytes()));
@@ -56,7 +56,7 @@ pub function decode(text: string): files.Saved[] {
   for i in 0..count {
     let at = i.to_string() + ".";
     if (field(at + "kind") == "dav") {
-      let server = dav.Server { url: field(at + "url"), user: field(at + "user"), password: field(at + "password") };
+      let server = dav.Server { url: field(at + "url"), user: field(at + "user"), password: field(at + "password"), pin: field(at + "pin") };
       if (server.url.len() > 0) {
         out = out.append(files.Saved { name: field(at + "name"), link: store.Dav(server) });
       }
