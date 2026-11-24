@@ -4,8 +4,9 @@ import "core/error";
 import "std/crypto";
 import "std/rand";
 import "std/result";
+import "std/option";
 
-function read_optional(path: string): Result[Option[u8[]], string] {
+pub function read_optional(path: string): Result[Option[u8[]], string] {
   return match (read_file_bytes(path)) {
     Ok(bytes) => Ok(Some(bytes)),
     Err(NotFound(_)) => Ok(None),
@@ -39,7 +40,7 @@ function legacy(keys: string, old: string): Result[u8[], string] {
   return Ok(rand.bytes(32));
 }
 
-function sync_dir(dir: string): Result[void, string] {
+pub function sync_dir(dir: string): Result[void, string] {
   let reader = open_reader(dir).map_err((e: IoError): string => e.message())?;
   let synced = reader.fsync();
   let closed = reader.close();
@@ -47,7 +48,7 @@ function sync_dir(dir: string): Result[void, string] {
   return closed.map_err((e: IoError): string => e.message());
 }
 
-function commit(path: string, bytes: [u8]): Result[void, string] {
+pub function commit(path: string, bytes: [u8]): Result[void, string] {
   let temp = path + ".next";
   let writer = open_writer(temp).map_err((e: IoError): string => e.message())?;
   if let Err(e) = writer.write_bytes(bytes) {
@@ -61,8 +62,8 @@ function commit(path: string, bytes: [u8]): Result[void, string] {
   return rename(temp, path).map_err((e: IoError): string => e.message());
 }
 
-function remove_plain(dir: string): Result[void, string] {
-  return match (remove_file(dir + "/identity")) {
+pub function remove_plain(dir: string, name: string): Result[void, string] {
+  return match (remove_file(dir + "/" + name)) {
     Ok(_) => sync_dir(dir),
     Err(NotFound(_)) => Ok(()),
     Err(e) => Err(e.message()),
@@ -74,7 +75,7 @@ function load_seed(keys: string, old: string, has_key: () => Result[boolean, str
   if let Some(envelope) = read_optional(path)? {
     return open(envelope);
   }
-  if (has_key()? || has_peers(keys)?) {
+  if (has_key()? || has_peers(keys)? || read_optional(keys + "/peers.sealed")?.is_some()) {
     return Err("sealed identity is missing");
   }
   let seed = legacy(keys, old)?;
@@ -98,9 +99,9 @@ pub function load(keys: string, old: string, has_key: () => Result[boolean, stri
   // Repeat cleanup after an interrupted upgrade. Sync before unlinking in
   // case the previous run stopped between the rename and directory fsync.
   sync_dir(keys)?;
-  remove_plain(keys)?;
+  remove_plain(keys, "identity")?;
   if (old != "" && old != keys) {
-    remove_plain(old)?;
+    remove_plain(old, "identity")?;
   }
   return Ok(seed);
 }

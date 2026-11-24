@@ -267,7 +267,7 @@ the other phone to its list of known phones. FORGET PHONES on the settings
 screen clears the list, so each phone shows the string again.
 
 Walkie seals the Ed25519 identity seed with a non-exportable AES key in the
-Android Keystore. The sealed seed and list of known phones live in the app's
+Android Keystore. The sealed seed and encrypted list of known phones live in the app's
 no-backup directory. On upgrade, Walkie keeps the existing identity, verifies
 the sealed seed, and removes the old plaintext files. If the key is unavailable
 or the sealed seed fails authentication, the app stops before connecting. A missing sealed seed also stops startup when the Keystore alias or migrated peers already exist. During a first migration, a valid legacy seed preserves the old identity.
