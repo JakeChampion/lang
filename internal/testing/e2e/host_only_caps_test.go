@@ -79,6 +79,25 @@ func TestPollablesRefusedOffWasi(t *testing.T) {
 	}
 }
 
+func TestNameLookupOnlyOnWasiCli(t *testing.T) {
+	prog, err := parser.Parse(`function main(): i32 { let out = __alloc_u8(17); let name: u8[] = [108u8]; return wasm_name_lookup(name, out); }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := checker.Check(prog); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-android", "x86-64-android", "arm64-darwin", "arm64-freestanding", "x86-64-freestanding", "wasm32-wasi-http"} {
+		vs := platforms.Enforce(prog, target)
+		if len(vs) == 0 || vs[0].Builtin != "wasm_name_lookup" || vs[0].Capability != "namelookup" {
+			t.Errorf("%s: violations %v, want wasm_name_lookup refused on the namelookup capability", target, vs)
+		}
+	}
+	if vs := platforms.Enforce(prog, "wasm32-wasi"); len(vs) != 0 {
+		t.Errorf("wasm32-wasi refused wasm_name_lookup: %v", vs)
+	}
+}
+
 func TestPollableWrappersBuildEverywhere(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
