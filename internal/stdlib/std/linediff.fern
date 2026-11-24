@@ -11,7 +11,8 @@
 // (Myers, patience or histogram), and the compaction of the changes with
 // the indent heuristic and, for histogram, a Myers diff of each group that
 // moved. `unified` writes the hunks of a unified diff as
-// git writes them, with the function line in each hunk header.
+// git writes them, with the function line in each hunk header. `merge`
+// writes the three-way merge of xdiff, with the conflict markers of git.
 
 import "std/array";
 
@@ -1525,4 +1526,371 @@ pub function unified(out: usize, a: Lines, b: Lines, script: Change[], em: Emit)
     }
     k = last + 1;
   }
+}
+
+// ---- Merge (xmerge.c) ----
+
+// The levels of a merge. MINIMAL makes a conflict of each pair of changes
+// that touch. EAGER takes two equal changes as one change. ZEALOUS also
+// keeps only the lines of a conflict that differ between the two sides.
+// ZEALOUS_ALNUM also joins two conflicts when no line between them has a
+// letter or a digit.
+pub const MERGE_MINIMAL: i32 = 0;
+
+pub const MERGE_EAGER: i32 = 1;
+
+pub const MERGE_ZEALOUS: i32 = 2;
+
+pub const MERGE_ZEALOUS_ALNUM: i32 = 3;
+
+// The styles of a conflict. STYLE_MERGE shows the two sides. STYLE_DIFF3
+// also shows the lines of the base between them. STYLE_ZDIFF3 is
+// STYLE_DIFF3 without the lines that start or end the two sides.
+pub const STYLE_MERGE: i32 = 0;
+
+pub const STYLE_DIFF3: i32 = 1;
+
+pub const STYLE_ZDIFF3: i32 = 2;
+
+// The side that a conflict takes with no marker: none, the first side,
+// the second side, or the two sides one after the other.
+pub const FAVOR_NONE: i32 = 0;
+
+pub const FAVOR_OURS: i32 = 1;
+
+pub const FAVOR_THEIRS: i32 = 2;
+
+pub const FAVOR_UNION: i32 = 3;
+
+// The options of a merge. `marker_size` is the count of characters of a
+// conflict marker. `ours`, `base` and `theirs` are the names after the
+// markers. An empty name gives a marker with no name.
+pub struct Merge { diff: Options, level: i32, style: i32, favor: i32, marker_size: i32, ours: string, base: string, theirs: string }
+
+// The options of `git merge-file`.
+pub function merge_defaults(): Merge {
+  return Merge { diff: Options { algorithm: MYERS, minimal: false, indent_heuristic: false }, level: MERGE_ZEALOUS_ALNUM, style: STYLE_MERGE, favor: FAVOR_NONE, marker_size: 7, ours: "", base: "", theirs: "" };
+}
+
+// One region of a merge. `mode` is 0 for a conflict and 4 for a conflict
+// whose sides are equal. It is 1 for the lines of the first side, 2 for
+// the lines of the second side, and 3 for the two. The region is `chg0`
+// lines of the base from `i0` and `chg1` lines of the first side from
+// `i1`. It is `chg2` lines of the second side from `i2`.
+struct Region { mode: i32, i0: i32, chg0: i32, i1: i32, chg1: i32, i2: i32, chg2: i32 }
+
+// Adds a region, or extends the last region when the two touch
+// (`xdl_append_merge`).
+function add_region(own c: Region[], r: Region): Region[] {
+  let n = c.len();
+  if (n > 0) {
+    let m = c[n - 1];
+    if (r.i1 <= m.i1 + m.chg1 || r.i2 <= m.i2 + m.chg2) {
+      let mode = if (r.mode != m.mode) { 0 } else { m.mode };
+      return c.with(n - 1, Region { mode: mode, i0: m.i0, chg0: r.i0 + r.chg0 - m.i0, i1: m.i1, chg1: r.i1 + r.chg1 - m.i1, i2: m.i2, chg2: r.i2 + r.chg2 - m.i2 });
+    }
+  }
+  return c.append(r);
+}
+
+function same_lines(a: Lines, i: i32, b: Lines, j: i32, count: i32): boolean {
+  for k in 0..count {
+    if (!same_line(a, i + k, b, j + k)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The region of a change `x` of the first side only. `shift` is the count
+// of lines that the second side has more than the base before the change.
+function ours_region(x: Change, shift: i32): Region {
+  return Region { mode: 1, i0: x.i1, chg0: x.del, i1: x.i2, chg1: x.ins, i2: x.i1 + shift, chg2: x.del };
+}
+
+function theirs_region(y: Change, shift: i32): Region {
+  return Region { mode: 2, i0: y.i1, chg0: y.del, i1: y.i1 + shift, chg1: y.del, i2: y.i2, chg2: y.ins };
+}
+
+// The conflict of the changes `x` and `y`, which touch: each side from
+// the first line of the two changes to their last line.
+function conflict_region(x: Change, y: Change): Region {
+  let off = x.i1 - y.i1;
+  let ffo = off + x.del - y.del;
+  let i0 = x.i1;
+  let i1 = x.i2;
+  let i2 = y.i2;
+  if (off > 0) {
+    i0 -= off;
+    i1 -= off;
+  } else {
+    i2 += off;
+  }
+  let chg0 = x.i1 + x.del - i0;
+  let chg1 = x.i2 + x.ins - i1;
+  let chg2 = y.i2 + y.ins - i2;
+  if (ffo < 0) {
+    chg0 -= ffo;
+    chg1 -= ffo;
+  } else {
+    chg2 += ffo;
+  }
+  return Region { mode: 0, i0: i0, chg0: chg0, i1: i1, chg1: chg1, i2: i2, chg2: chg2 };
+}
+
+// Reports whether the two sides make the same change. MERGE_MINIMAL does
+// not compare them.
+function same_change(x: Change, y: Change, ours: Lines, theirs: Lines, level: i32): boolean {
+  return level != MERGE_MINIMAL && x.i1 == y.i1 && x.del == y.del && x.ins == y.ins && same_lines(ours, x.i2, theirs, y.i2, x.ins);
+}
+
+// The regions of the changes `s1` from the base to `ours` and `s2` from
+// the base to `theirs` (the first part of `xdl_do_merge`).
+function regions(s1: Change[], s2: Change[], base: Lines, ours: Lines, theirs: Lines, level: i32): Region[] {
+  let c: Region[] = [];
+  let a = 0;
+  let b = 0;
+  while (a < s1.len() && b < s2.len()) {
+    let x = s1[a];
+    let y = s2[b];
+    let e1 = x.i1 + x.del;
+    let e2 = y.i1 + y.del;
+    if (e1 < y.i1) {
+      c = add_region(c, ours_region(x, y.i2 - y.i1));
+      a += 1;
+    } else if (e2 < x.i1) {
+      c = add_region(c, theirs_region(y, x.i2 - x.i1));
+      b += 1;
+    } else {
+      if (!same_change(x, y, ours, theirs, level)) {
+        c = add_region(c, conflict_region(x, y));
+      }
+      if (e1 >= e2) {
+        b += 1;
+      }
+      if (e2 >= e1) {
+        a += 1;
+      }
+    }
+  }
+  for k in a..s1.len() {
+    c = add_region(c, ours_region(s1[k], theirs.count() - base.count()));
+  }
+  for k in b..s2.len() {
+    c = add_region(c, theirs_region(s2[k], ours.count() - base.count()));
+  }
+  return c;
+}
+
+function line_range(l: Lines, i: i32, count: i32): Lines {
+  return lines_of(array.slice(l.data, l.starts[i], l.starts[i + count]));
+}
+
+// Divides each conflict into the changes between its two sides
+// (`xdl_refine_conflicts`).
+function refine_conflicts(c: Region[], ours: Lines, theirs: Lines, o: Options): Region[] {
+  let out: Region[] = [];
+  for m in c {
+    if (m.mode != 0 || m.chg1 == 0 || m.chg2 == 0) {
+      out = out.append(m);
+      continue;
+    }
+    let script = diff(line_range(ours, m.i1, m.chg1), line_range(theirs, m.i2, m.chg2), o);
+    if (script.len() == 0) {
+      out = out.append(Region { ...m, mode: 4 });
+      continue;
+    }
+    for ch in script {
+      out = out.append(Region { mode: 0, i0: m.i0, chg0: m.chg0, i1: ch.i1 + m.i1, chg1: ch.del, i2: ch.i2 + m.i2, chg2: ch.ins });
+    }
+  }
+  return out;
+}
+
+function has_alnum(l: Lines, begin: i32, end: i32): boolean {
+  for k in l.starts[begin]..l.starts[end] {
+    let ch = l.data[k];
+    if (ch >= b'0' && ch <= b'9' || ch >= b'A' && ch <= b'Z' || ch >= b'a' && ch <= b'z') {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Joins two conflicts with 3 lines or fewer between them
+// (`xdl_simplify_non_conflicts`). With `no_alnum`, it also joins two
+// conflicts with no letter and no digit between them.
+function join_conflicts(c: Region[], ours: Lines, no_alnum: boolean): Region[] {
+  let out: Region[] = [];
+  for next in c {
+    let n = out.len();
+    if (n == 0) {
+      out = out.append(next);
+      continue;
+    }
+    let m = out[n - 1];
+    let begin = m.i1 + m.chg1;
+    let end = next.i1;
+    if (m.mode != 0 || next.mode != 0 || end - begin > 3 && (!no_alnum || has_alnum(ours, begin, end))) {
+      out = out.append(next);
+    } else {
+      out = out.with(n - 1, Region { ...m, chg1: next.i1 + next.chg1 - m.i1, chg2: next.i2 + next.chg2 - m.i2 });
+    }
+  }
+  return out;
+}
+
+// Removes the lines that start and that end the two sides of each
+// conflict (`xdl_refine_zdiff3_conflicts`).
+function trim_conflicts(c: Region[], ours: Lines, theirs: Lines): Region[] {
+  let out: Region[] = [];
+  for m in c {
+    if (m.mode != 0) {
+      out = out.append(m);
+      continue;
+    }
+    let i1 = m.i1;
+    let i2 = m.i2;
+    let chg1 = m.chg1;
+    let chg2 = m.chg2;
+    while (chg1 > 0 && chg2 > 0 && same_line(ours, i1, theirs, i2)) {
+      chg1 -= 1;
+      chg2 -= 1;
+      i1 += 1;
+      i2 += 1;
+    }
+    while (chg1 > 0 && chg2 > 0 && same_line(ours, i1 + chg1 - 1, theirs, i2 + chg2 - 1)) {
+      chg1 -= 1;
+      chg2 -= 1;
+    }
+    out = out.append(Region { ...m, i1: i1, chg1: chg1, i2: i2, chg2: chg2 });
+  }
+  return out;
+}
+
+// The line end of the line `i` (`is_eol_crlf`): 1 for CR LF and 0 for LF
+// only. It is -1 when the text does not show its line end.
+function eol_crlf(l: Lines, i: i32): i32 {
+  let n = l.count();
+  if (n == 0) {
+    return -1;
+  }
+  let s = l.starts[i];
+  let e = l.starts[i + 1];
+  if (i < n - 1 || l.data[e - 1] == b'\n') {
+    return if (e - s > 1 && l.data[e - 2] == b'\r') { 1 } else { 0 };
+  }
+  if (i == 0) {
+    return -1;
+  }
+  return if (s - l.starts[i - 1] > 1 && l.data[s - 2] == b'\r') { 1 } else { 0 };
+}
+
+// Reports whether the markers of the region end with CR LF: the line end
+// of the line before each side, then that of the first line of the base.
+function cr_needed(base: Lines, ours: Lines, theirs: Lines, m: Region): boolean {
+  let cr = eol_crlf(ours, (m.i1 - 1).max(0));
+  if (cr != 0) {
+    cr = eol_crlf(theirs, (m.i2 - 1).max(0));
+  }
+  if (cr != 0) {
+    cr = eol_crlf(base, 0);
+  }
+  return cr > 0;
+}
+
+function put_eol(out: usize, cr: boolean): void {
+  if (cr) {
+    buf_push_byte(out, b'\r' as i32);
+  }
+  buf_push_byte(out, b'\n' as i32);
+}
+
+// Writes `count` lines from line `i`. With `add_nl`, a last line with no
+// line end gets one.
+function put_lines(out: usize, l: Lines, i: i32, count: i32, cr: boolean, add_nl: boolean): void {
+  if (count < 1) {
+    return;
+  }
+  let e = l.starts[i + count];
+  buf_push_bytes_range(out, l.data, l.starts[i], e);
+  if (add_nl && l.data[e - 1] != b'\n') {
+    put_eol(out, cr);
+  }
+}
+
+function put_marker(out: usize, ch: u8, size: i32, name: string, cr: boolean): void {
+  for k in 0..size {
+    buf_push_byte(out, ch as i32);
+  }
+  if (name != "") {
+    buf_push_byte(out, b' ' as i32);
+    buf_push(out, name);
+  }
+  put_eol(out, cr);
+}
+
+function put_conflict(out: usize, base: Lines, ours: Lines, theirs: Lines, m: Region, o: Merge, cr: boolean): void {
+  let size = if (o.marker_size > 0) { o.marker_size } else { 7 };
+  put_marker(out, b'<', size, o.ours, cr);
+  put_lines(out, ours, m.i1, m.chg1, cr, true);
+  if (o.style != STYLE_MERGE) {
+    put_marker(out, b'|', size, o.base, cr);
+    put_lines(out, base, m.i0, m.chg0, cr, true);
+  }
+  put_marker(out, b'=', size, "", cr);
+  put_lines(out, theirs, m.i2, m.chg2, cr, true);
+  put_marker(out, b'>', size, o.theirs, cr);
+}
+
+// Writes the regions `c` and the lines of `ours` between them
+// (`xdl_fill_merge_buffer`), and gives the count of conflicts.
+function put_regions(out: usize, c: Region[], base: Lines, ours: Lines, theirs: Lines, o: Merge): i32 {
+  let conflicts = 0;
+  let at = 0;
+  for m in c {
+    let mode = if (m.mode == 0) { o.favor } else { m.mode };
+    if (mode == 4) {
+      continue;
+    }
+    put_lines(out, ours, at, m.i1 - at, false, false);
+    let cr = cr_needed(base, ours, theirs, m);
+    if (mode == 0) {
+      conflicts += 1;
+      put_conflict(out, base, ours, theirs, m, o, cr);
+    }
+    if ((mode & 1) != 0) {
+      put_lines(out, ours, m.i1, m.chg1, cr, (mode & 2) != 0);
+    }
+    if ((mode & 2) != 0) {
+      put_lines(out, theirs, m.i2, m.chg2, false, false);
+    }
+    at = m.i1 + m.chg1;
+  }
+  put_lines(out, ours, at, ours.count() - at, false, false);
+  return conflicts;
+}
+
+// Writes the merge of `ours` and `theirs`, which each change `base`, to
+// the buffer `out`, as `xdl_merge` of xdiff writes it. The result is the
+// count of conflicts.
+pub function merge(out: usize, base: Lines, ours: Lines, theirs: Lines, o: Merge): i32 {
+  let s1 = diff(base, ours, o.diff);
+  let s2 = diff(base, theirs, o.diff);
+  if (s1.len() == 0) {
+    buf_push_bytes_range(out, theirs.data, 0, theirs.data.len());
+    return 0;
+  }
+  if (s2.len() == 0) {
+    buf_push_bytes_range(out, ours.data, 0, ours.data.len());
+    return 0;
+  }
+  let level = if (o.style == STYLE_DIFF3) { o.level.min(MERGE_EAGER) } else { o.level };
+  let c = regions(s1, s2, base, ours, theirs, level);
+  if (o.style == STYLE_ZDIFF3) {
+    c = trim_conflicts(c, ours, theirs);
+  } else if (level >= MERGE_ZEALOUS) {
+    c = join_conflicts(refine_conflicts(c, ours, theirs, o.diff), ours, level > MERGE_ZEALOUS);
+  }
+  return put_regions(out, c, base, ours, theirs, o);
 }

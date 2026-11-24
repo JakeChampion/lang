@@ -171,6 +171,88 @@ function test_common_tail(): test.TestOutcome {
   return test.assert_eq(linediff.common_tail(a, b), 2045);
 }
 
+// The merge of `ours` and `theirs` from `base`, with the names `x`, `b`
+// and `y`, and its count of conflicts in front.
+function merged(base: string, ours: string, theirs: string, o: linediff.Merge): string {
+  let out = buf_new(256);
+  let named = linediff.Merge { ...o, ours: "x", base: "b", theirs: "y" };
+  let n = linediff.merge(out, linediff.lines_of(base.bytes()), linediff.lines_of(ours.bytes()), linediff.lines_of(theirs.bytes()), named);
+  let text = buf_take(out);
+  buf_free(out);
+  return n.to_string() + ":" + text;
+}
+
+function test_merge_clean(): test.TestOutcome {
+  let o = linediff.merge_defaults();
+  if (merged("a\nb\nc\n", "a\nb\nc\nd\n", "A\nb\nc\n", o) != "0:A\nb\nc\nd\n") {
+    return test.fail("a change of each side");
+  }
+  if (merged("a\nb\nc\n", "a\nb\nc\n", "a\nc\n", o) != "0:a\nc\n") {
+    return test.fail("a change of the second side only");
+  }
+  return test.assert_eq(merged("a\nb\nc\n", "a\nX\nc\n", "a\nX\nc\n", o), "0:a\nX\nc\n");
+}
+
+function test_merge_conflict(): test.TestOutcome {
+  let o = linediff.merge_defaults();
+  if (merged("a\nb\nc\n", "a\nc\n", "a\nB\nc\n", o) != "1:a\n<<<<<<< x\n=======\nB\n>>>>>>> y\nc\n") {
+    return test.fail("a deletion and a change");
+  }
+  if (merged("a\nb\nc\n", "a\nX", "a\nY", o) != "1:a\n<<<<<<< x\nX\n=======\nY\n>>>>>>> y\n") {
+    return test.fail("no line end at the end of the two sides");
+  }
+  if (merged("a\nb\nc\n", "a\nX", "a\nY", linediff.Merge { ...o, marker_size: 3 }) != "1:a\n<<< x\nX\n===\nY\n>>> y\n") {
+    return test.fail("markers of 3 characters");
+  }
+  return test.assert_eq(merged("a\r\nb\r\nc\r\n", "a\r\nX\r\nc\r\n", "a\r\nY\r\nc\r\n", o), "1:a\r\n<<<<<<< x\r\nX\r\n=======\r\nY\r\n>>>>>>> y\r\nc\r\n");
+}
+
+// Two conflicts with 3 lines between them become one conflict. The styles
+// with the base keep them apart, and `zdiff3` moves the common line out.
+function test_merge_styles(): test.TestOutcome {
+  let base = "a\nb\nc\nd\ne\nf\ng\n";
+  let ours = "a\nB1\nc\nd\n}\nF1\ng\n";
+  let theirs = "a\nB2\nc\nd\n}\nF2\ng\n";
+  let o = linediff.merge_defaults();
+  if (merged(base, ours, theirs, o) != "1:a\n<<<<<<< x\nB1\nc\nd\n}\nF1\n=======\nB2\nc\nd\n}\nF2\n>>>>>>> y\ng\n") {
+    return test.fail("merge");
+  }
+  if (merged(base, ours, theirs, linediff.Merge { ...o, style: linediff.STYLE_DIFF3 }) != "2:a\n<<<<<<< x\nB1\n||||||| b\nb\n=======\nB2\n>>>>>>> y\nc\nd\n<<<<<<< x\n}\nF1\n||||||| b\ne\nf\n=======\n}\nF2\n>>>>>>> y\ng\n") {
+    return test.fail("diff3");
+  }
+  if (merged(base, ours, theirs, linediff.Merge { ...o, style: linediff.STYLE_ZDIFF3 }) != "2:a\n<<<<<<< x\nB1\n||||||| b\nb\n=======\nB2\n>>>>>>> y\nc\nd\n}\n<<<<<<< x\nF1\n||||||| b\ne\nf\n=======\nF2\n>>>>>>> y\ng\n") {
+    return test.fail("zdiff3");
+  }
+  if (merged(base, ours, theirs, linediff.Merge { ...o, favor: linediff.FAVOR_UNION }) != "0:a\nB1\nc\nd\n}\nF1\nB2\nc\nd\n}\nF2\ng\n") {
+    return test.fail("union");
+  }
+  if (merged(base, ours, theirs, linediff.Merge { ...o, favor: linediff.FAVOR_OURS }) != "0:" + ours) {
+    return test.fail("ours");
+  }
+  return test.assert_eq(merged(base, ours, theirs, linediff.Merge { ...o, favor: linediff.FAVOR_THEIRS }), "0:" + theirs);
+}
+
+// MERGE_ZEALOUS_ALNUM joins two conflicts with 4 lines between them that
+// have no letter and no digit. MERGE_ZEALOUS keeps them apart.
+function test_merge_levels(): test.TestOutcome {
+  let base = "1\n2\n;\n{\n}\n\n7\n8\n";
+  let ours = "1\nX\n;\n{\n}\n\nA\n8\n";
+  let theirs = "1\nY\n;\n{\n}\n\nB\n8\n";
+  let o = linediff.merge_defaults();
+  if (merged(base, ours, theirs, o) != "1:1\n<<<<<<< x\nX\n;\n{\n}\n\nA\n=======\nY\n;\n{\n}\n\nB\n>>>>>>> y\n8\n") {
+    return test.fail("zealous alnum");
+  }
+  let two = "2:1\n<<<<<<< x\nX\n=======\nY\n>>>>>>> y\n;\n{\n}\n\n<<<<<<< x\nA\n=======\nB\n>>>>>>> y\n8\n";
+  if (merged(base, ours, theirs, linediff.Merge { ...o, level: linediff.MERGE_ZEALOUS }) != two) {
+    return test.fail("zealous");
+  }
+  let same = "a\nX\nc\n";
+  if (merged("a\nb\nc\n", same, same, linediff.Merge { ...o, level: linediff.MERGE_EAGER }) != "0:" + same) {
+    return test.fail("eager");
+  }
+  return test.assert_eq(merged("a\nb\nc\n", same, same, linediff.Merge { ...o, level: linediff.MERGE_MINIMAL }), "1:a\n<<<<<<< x\nX\n=======\nX\n>>>>>>> y\nc\n");
+}
+
 function main(): i32 {
   let r = test.new("std/linediff");
   r = r.it("lines", test_lines);
@@ -186,5 +268,9 @@ function main(): i32 {
   r = r.it("gnu search", test_gnu_search);
   r = r.it("a function line from find_func", test_find_func);
   r = r.it("common tail", test_common_tail);
+  r = r.it("merge with no conflict", test_merge_clean);
+  r = r.it("merge with a conflict", test_merge_conflict);
+  r = r.it("merge styles and sides", test_merge_styles);
+  r = r.it("merge levels", test_merge_levels);
   return r.finish();
 }
