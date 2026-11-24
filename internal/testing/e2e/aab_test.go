@@ -41,7 +41,7 @@ func TestApkBundle(t *testing.T) {
 	for _, f := range zr.File {
 		names = append(names, f.Name)
 	}
-	want := "META-INF/MANIFEST.MF META-INF/FERN.SF META-INF/FERN.EC BundleConfig.pb base/manifest/AndroidManifest.xml base/dex/classes.dex base/resources.pb base/res/drawable/icon.png base/res/layout/widget.xml base/res/xml/widget.xml base/lib/arm64-v8a/libapp.so base/lib/x86_64/libapp.so"
+	want := "META-INF/MANIFEST.MF META-INF/FERN.SF META-INF/FERN.EC BundleConfig.pb base/manifest/AndroidManifest.xml base/dex/classes.dex base/resources.pb base/res/drawable/icon.png base/res/layout/widget.xml base/res/xml/widget.xml base/res/xml/data_extraction_rules.xml base/res/xml/full_backup_content.xml base/lib/arm64-v8a/libapp.so base/lib/x86_64/libapp.so"
 	if got := strings.Join(names, " "); got != want {
 		t.Errorf("entries = %s\nwant %s", got, want)
 	}

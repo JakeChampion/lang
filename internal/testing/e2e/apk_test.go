@@ -77,7 +77,7 @@ func TestApkWriter(t *testing.T) {
 			t.Errorf("%s: data at %d, want a multiple of %d", f.Name, off, align)
 		}
 	}
-	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
+	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex resources.arsc res/xml/data_extraction_rules.xml res/xml/full_backup_content.xml lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
 		t.Errorf("entries = %s", got)
 	}
 	man := readZipEntry(t, zr, "AndroidManifest.xml")
@@ -194,6 +194,45 @@ func TestApkCleartext(t *testing.T) {
 		t.Errorf("android:extractNativeLibs = %#x (set %v), want false beside the cleartext attribute", v, ok)
 	}
 	verifyApkV2(t, raw)
+}
+
+func TestApkBackupRules(t *testing.T) {
+	dir := t.TempDir()
+	_, plain := buildApk(t, dir)
+	_, enabled := buildApk(t, dir, "-apk-backup")
+	defaultZip, enabledZip := zipOf(t, plain), zipOf(t, enabled)
+	manifest := readZipEntry(t, defaultZip, "AndroidManifest.xml")
+	optIn := readZipEntry(t, enabledZip, "AndroidManifest.xml")
+	for _, rules := range []struct {
+		name           string
+		attr, resource uint32
+		elements       int
+		tags           []string
+	}{
+		{"data_extraction_rules", 0x0101063e, 0x7f020000, 21, []string{"data-extraction-rules", "cloud-backup", "device-transfer"}},
+		{"full_backup_content", 0x010104eb, 0x7f020001, 10, []string{"full-backup-content"}},
+	} {
+		if v, ok := applicationAttr(t, manifest, rules.attr); !ok || v != rules.resource {
+			t.Errorf("%s manifest reference = %#x, want %#x", rules.name, v, rules.resource)
+		}
+		if _, ok := applicationAttr(t, optIn, rules.attr); ok {
+			t.Errorf("-apk-backup retains %s", rules.name)
+		}
+		path := "res/xml/" + rules.name + ".xml"
+		if f, err := enabledZip.Open(path); err == nil {
+			f.Close()
+			t.Errorf("-apk-backup includes %s", path)
+		}
+		xml := readZipEntry(t, defaultZip, path)
+		if got := xmlElements(t, path, xml); got != rules.elements {
+			t.Errorf("%s has %d elements, want %d", path, got, rules.elements)
+		}
+		for _, name := range append(rules.tags, "exclude", "domain", "path", ".", "root", "file", "database", "sharedpref", "external", "device_root", "device_file", "device_database", "device_sharedpref") {
+			if !bytes.Contains(xml, utf16le(name)) {
+				t.Errorf("%s lacks %q", path, name)
+			}
+		}
+	}
 }
 
 // TestApkDebuggable checks that -apk-debuggable sets android:debuggable, so
@@ -396,7 +435,7 @@ func TestApkIcon(t *testing.T) {
 			t.Errorf("%s: method %d at %d, want stored at a multiple of 4 (%v)", f.Name, f.Method, off, err)
 		}
 	}
-	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex resources.arsc res/drawable/icon.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
+	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex resources.arsc res/drawable/icon.png res/xml/data_extraction_rules.xml res/xml/full_backup_content.xml lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
 		t.Errorf("entries = %s", got)
 	}
 	if got := readZipEntry(t, zr, "res/drawable/icon.png"); !bytes.Equal(got, buf.Bytes()) {
@@ -453,8 +492,8 @@ func TestApkBanner(t *testing.T) {
 		entries string
 		id      string
 	}{
-		{"with an icon", []string{"-apk-icon", icon, "-apk-banner", banner}, "AndroidManifest.xml classes.dex resources.arsc res/drawable/icon.png res/drawable/banner.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so", "0x7f010001"},
-		{"alone", []string{"-apk-banner", banner}, "AndroidManifest.xml classes.dex resources.arsc res/drawable/banner.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so", "0x7f010000"},
+		{"with an icon", []string{"-apk-icon", icon, "-apk-banner", banner}, "AndroidManifest.xml classes.dex resources.arsc res/drawable/icon.png res/drawable/banner.png res/xml/data_extraction_rules.xml res/xml/full_backup_content.xml lib/arm64-v8a/libapp.so lib/x86_64/libapp.so", "0x7f010001"},
+		{"alone", []string{"-apk-banner", banner}, "AndroidManifest.xml classes.dex resources.arsc res/drawable/banner.png res/xml/data_extraction_rules.xml res/xml/full_backup_content.xml lib/arm64-v8a/libapp.so lib/x86_64/libapp.so", "0x7f010000"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path, raw := buildApk(t, dir, tc.flags...)
