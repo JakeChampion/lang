@@ -109,6 +109,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<35 the encoder of zlib>>
 
 <<36 streaming inflate>>
+
+<<37 the start of a stream>>
 ```
 
 ### `dependencies 1`
@@ -1030,12 +1032,33 @@ function __dynamic(own s: __State, data: [u8]): __State {
 }
 
 function __dynamic_tables(own s: __State, data: [u8]): __Tables {
+  let head = __dynamic_lengths(s, data);
+  if (head.state.failed) {
+    return __empty_tables(head.state);
+  }
+  let state = __State { ...head.state };
+  if let Some(e) = __codes_error(state.lengths, state.counts, head.nlen, head.ndist) {
+    return __empty_tables(__fail(__State { ...state, lengths: [], counts: [] }, e));
+  }
+  return __dynamic_codes(state, head.nlen, head.ndist);
+}
+
+// The state after the header of a dynamic block, with the count of the
+// literal/length codes and of the distance codes. `state.lengths` holds the
+// length of each code, and `state.counts` counts the codes of each length.
+struct __Lengths { state: __State, nlen: i32, ndist: i32 }
+
+function __no_lengths(s: __State): __Lengths {
+  return __Lengths { state: s, nlen: 0, ndist: 0 };
+}
+
+function __dynamic_lengths(own s: __State, data: [u8]): __Lengths {
   s = __bits(s, data, 14);
   let nlen = (s.last & 31) + 257;
   let ndist = (s.last >> 5 & 31) + 1;
   let ncode = (s.last >> 10) + 4;
   if (nlen > 286 || ndist > 30) {
-    return __empty_tables(__fail(s, Malformed("too many length or distance codes")));
+    return __no_lengths(__fail(s, Malformed("too many length or distance codes")));
   }
   let order = __code_length_order();
   let lengths = __alloc_i32(19);
@@ -1056,34 +1079,34 @@ function __dynamic_tables(own s: __State, data: [u8]): __Tables {
   }
   let left = __left(count, 0);
   if (left != 0) {
-    return __empty_tables(__fail(s, Malformed("an incomplete or over-subscribed code length code")));
+    return __no_lengths(__fail(s, Malformed("an incomplete or over-subscribed code length code")));
   }
   s = __code_lengths(s, data, __build(lengths, 0, 19, count, 0, left, 7, LENGTH_VALUES), nlen, ndist);
-  if (s.failed) {
-    return __empty_tables(s);
-  }
-  return __dynamic_codes(s, nlen, ndist);
+  return __Lengths { state: s, nlen: nlen, ndist: ndist };
 }
 
-// `s.counts` holds the count of the codes of each length of the
-// literal/length code, then of the distance code.
+// The fault of the two codes of a dynamic block, or none. `counts` holds
+// the count of the codes of each length of the literal/length code, then of
+// the distance code.
+function __codes_error(all: i32[], counts: i32[], nlen: i32, ndist: i32): Option[InflateError] {
+  if (all[256] == 0) {
+    return Some(Malformed("no end-of-block code"));
+  }
+  if (__invalid(counts, 0, __left(counts, 0), nlen, false)) {
+    return Some(Malformed("an incomplete or over-subscribed literal/length code"));
+  }
+  if (__invalid(counts, 16, __left(counts, 16), ndist, true)) {
+    return Some(Malformed("an incomplete or over-subscribed distance code"));
+  }
+  return None;
+}
+
 function __dynamic_codes(own s: __State, nlen: i32, ndist: i32): __Tables {
   let all = s.lengths;
   let counts = s.counts;
   s = __State { ...s, lengths: [], counts: [] };
-  if (all[256] == 0) {
-    return __empty_tables(__fail(s, Malformed("no end-of-block code")));
-  }
-  let ll = __left(counts, 0);
-  if (__invalid(counts, 0, ll, nlen, false)) {
-    return __empty_tables(__fail(s, Malformed("an incomplete or over-subscribed literal/length code")));
-  }
-  let dl = __left(counts, 16);
-  if (__invalid(counts, 16, dl, ndist, true)) {
-    return __empty_tables(__fail(s, Malformed("an incomplete or over-subscribed distance code")));
-  }
-  let lit = __build(all, 0, nlen, counts, 0, ll, LIT_BITS, LIT_VALUES);
-  let dist = __build(all, nlen, ndist, counts, 16, dl, DIST_BITS, DIST_VALUES);
+  let lit = __build(all, 0, nlen, counts, 0, __left(counts, 0), LIT_BITS, LIT_VALUES);
+  let dist = __build(all, nlen, ndist, counts, 16, __left(counts, 16), DIST_BITS, DIST_VALUES);
   return __Tables { state: s, literal: lit, distance: dist };
 }
 
@@ -2717,5 +2740,224 @@ pub function inflate_part(own st: InflateStream, input: [u8], from: i32, last: b
   let error: Option[InflateError] = if (s.failed) { Some(s.error) } else { None };
   let next = InflateStream { buf: s.out, n: s.n, bitbuf: s.bitbuf, bitcnt: s.bitcnt, phase: phase, final_block: final_block, remaining: remaining, literal: lit, distance: dist };
   return InflatePart { stream: next, out: out, used: s.pos - from, done: phase == P_DONE && !s.failed, error: error };
+}
+```
+
+### The start of a stream
+
+`inflate_start` gives the first bytes of the output of a stream. A reader
+of a Git packfile needs it: the size of an object is in the first bytes of
+its delta.
+
+The decoder builds no decode table. For a dynamic block it sorts the symbols
+by the length of their code, and it reads each code one bit at a time, as
+the canonical order of the codes permits. That costs more for each symbol
+and much less for each block. So it is the faster decoder only for a small
+count of bytes.
+
+```fern
+<<37 the start of a stream>>=
+// The symbols of the two codes of a dynamic block in the order of their
+// codes: the literal/length symbols, then the distance symbols from `nlen`.
+function __canonical_order(lengths: i32[], counts: i32[], nlen: i32): i32[] {
+  let offs = __alloc_i32(32);
+  let len = 1;
+  while (len < 15) {
+    offs = offs.with(len + 1, offs[len] + counts[len]);
+    offs = offs.with(len + 17, offs[len + 16] + counts[len + 16]);
+    len += 1;
+  }
+  let sorted = __alloc_i32(lengths.len());
+  for sym in 0..lengths.len() {
+    let l = lengths[sym];
+    if (l != 0) {
+      let side = if (sym < nlen) { 0 } else { 16 };
+      let base = if (sym < nlen) { 0 } else { nlen };
+      sorted = sorted.with(base + offs[side + l], sym - base);
+      offs = offs.with(side + l, offs[side + l] + 1);
+    }
+  }
+  return sorted;
+}
+
+// The next code of `buf`, as its symbol * 16 + its length, or -1 when the
+// first 15 bits are no code. `counts[at + len]` counts the codes of `len`
+// bits, and the symbols of the code are in `sorted` from `from`.
+function __canonical_code(buf: u64, counts: i32[], at: i32, sorted: i32[], from: i32): i32 {
+  let code = 0;
+  let first = 0;
+  let index = 0;
+  for len in 1..16 {
+    code |= (buf >> (len - 1) as u64 & 1u64) as i32;
+    let count = counts[at + len];
+    if (code - count < first) {
+      return sorted[from + index + code - first] << 4 | len;
+    }
+    index += count;
+    first = first + count << 1;
+    code <<= 1;
+  }
+  return -1;
+}
+
+struct __Start { out: u8[], pos: i32, bitbuf: i32, bitcnt: i32, error: Option[InflateError] }
+
+// Decodes the symbols of one block from the state `s` until `out` has
+// `want` bytes or the block ends. `sorted` is empty for the fixed codes.
+// One symbol and its match need 48 bits at most, so one refill serves each.
+// fern-lint: allow cyclomatic-complexity
+function __start_codes(data: [u8], s: __State, own out: u8[], want: i32, sorted: i32[], nlen: i32): __Start {
+  let counts = s.counts;
+  let dynamic = sorted.len() > 0;
+  let pos = s.pos;
+  let buf = s.bitbuf as u64;
+  let cnt = s.bitcnt;
+  let end = data.len();
+  let error: Option[InflateError] = None;
+  while (out.len() < want) {
+    while (cnt <= 56 && pos < end) {
+      buf |= data[pos] as u64 << cnt as u64;
+      pos += 1;
+      cnt += 8;
+    }
+    let value = 0;
+    let used = 0;
+    if (dynamic) {
+      let code = __canonical_code(buf, counts, 0, sorted, 0);
+      if (code < 0) {
+        error = Some(if (cnt < 15) { Truncated } else { Malformed("a bit pattern that is no literal/length code") });
+        break;
+      }
+      used = code & 15;
+      value = LIT_VALUES[code >> 4];
+    } else {
+      let entry = FIXED_LIT_TABLE[(buf & LIT_MASK) as i32];
+      used = entry >> 8 & 15;
+      value = entry - used * 257;
+    }
+    if (used > cnt) {
+      error = Some(Truncated);
+      break;
+    }
+    buf >>= used as u64;
+    cnt -= used;
+    if (value < 0) {
+      out = out.append((value >> 16 & 255) as u8);
+      continue;
+    }
+    if ((value & E_END) != 0) {
+      break;
+    }
+    if ((value & E_PAST) != 0) {
+      error = Some(Malformed("a length code past 285"));
+      break;
+    }
+    let extra = value & 255;
+    let length = (value >> 16) + __low(buf, extra) as i32;
+    buf >>= extra as u64;
+    cnt -= extra;
+    if (dynamic) {
+      let code = __canonical_code(buf, counts, 16, sorted, nlen);
+      if (code < 0) {
+        error = Some(if (cnt < 15) { Truncated } else { Malformed("a bit pattern that is no distance code") });
+        break;
+      }
+      used = code & 15;
+      value = DIST_VALUES[code >> 4];
+    } else {
+      let entry = FIXED_DIST_TABLE[(buf & DIST_MASK) as i32];
+      if ((entry & E_NO_CODE) != 0) {
+        error = Some(if (cnt < 5) { Truncated } else { Malformed("a bit pattern that is no distance code") });
+        break;
+      }
+      used = entry >> 8 & 15;
+      value = entry - used * 257;
+    }
+    extra = value & 255;
+    if (cnt < used + extra) {
+      error = Some(Truncated);
+      break;
+    }
+    buf >>= used as u64;
+    let distance = (value >> 16) + __low(buf, extra) as i32;
+    buf >>= extra as u64;
+    cnt -= used + extra;
+    if (distance > out.len()) {
+      error = Some(Malformed("a distance before the start of the output"));
+      break;
+    }
+    let k = 0;
+    while (k < length && out.len() < want) {
+      out = out.append(out[out.len() - distance]);
+      k += 1;
+    }
+  }
+  pos -= cnt >> 3;
+  cnt &= 7;
+  return __Start { out: out, pos: pos, bitbuf: __low(buf, cnt) as i32, bitcnt: cnt, error: error };
+}
+
+// The first `want` bytes of the output of the stream that starts at `from`
+// in `input`, or all of the output when the stream gives fewer. `Truncated`
+// says that `input` ends before the stream gives them.
+pub function inflate_start(input: [u8], from: i32, want: i32): Result[u8[], InflateError] {
+  if (from < 0) {
+    return Err(Malformed("an offset below zero"));
+  }
+  let out: u8[] = [];
+  let s = __State { pos: from, bitbuf: 0, bitcnt: 0, out: [], n: 0, max_out: want, last: 0, failed: false, error: Truncated, lengths: [], counts: [] };
+  let done = false;
+  while (!done && out.len() < want) {
+    s = __bits(s, input, 3);
+    if (s.failed) {
+      return Err(s.error);
+    }
+    done = (s.last & 1) == 1;
+    let kind = s.last >> 1;
+    if (kind == 3) {
+      return Err(Malformed("a reserved block type"));
+    }
+    if (kind == 0) {
+      let at = s.pos;
+      if (at + 4 > input.len()) {
+        return Err(Truncated);
+      }
+      let len = input[at] as i32 | input[at + 1] as i32 << 8;
+      if ((len ^ (input[at + 2] as i32 | input[at + 3] as i32 << 8)) != 65535) {
+        return Err(Malformed("a stored block's length and its complement disagree"));
+      }
+      at += 4;
+      let take = cmp.min(len, want - out.len());
+      if (at + take > input.len()) {
+        return Err(Truncated);
+      }
+      for k in 0..take {
+        out = out.append(input[at + k]);
+      }
+      s = __State { ...s, pos: at + len, bitbuf: 0, bitcnt: 0 };
+      continue;
+    }
+    let sorted: i32[] = [];
+    let nlen = 0;
+    if (kind == 2) {
+      let head = __dynamic_lengths(s, input);
+      s = __State { ...head.state };
+      if (s.failed) {
+        return Err(s.error);
+      }
+      if let Some(e) = __codes_error(s.lengths, s.counts, head.nlen, head.ndist) {
+        return Err(e);
+      }
+      nlen = head.nlen;
+      sorted = __canonical_order(s.lengths, s.counts, nlen);
+    }
+    let run = __start_codes(input, s, out, want, sorted, nlen);
+    if let Some(e) = run.error {
+      return Err(e);
+    }
+    out = run.out;
+    s = __State { ...s, pos: run.pos, bitbuf: run.bitbuf, bitcnt: run.bitcnt, lengths: [], counts: [] };
+  }
+  return Ok(out);
 }
 ```
