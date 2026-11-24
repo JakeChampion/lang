@@ -25759,10 +25759,15 @@ function lu_resolved(fn: parser.FuncDecl): parser.FuncDecl {
   return lexical.resolve_func(fn).func;
 }
 
-struct LuLoanCheck { valid: boolean, lambdas: i32 }
+struct LuNameCount { name: string, count: i32 }
+
+struct LuLoanCheck { valid: boolean, lambdas: i32, assigns: i32 }
 
 function lu_loan_stmt(st: ast.Stmt, own check: LuLoanCheck): LuLoanCheck {
   match (st) {
+    ast.StmtAssign(_) => {
+      return LuLoanCheck { ...check, assigns: check.assigns + 1 };
+    },
     ast.StmtVar(_) => {},
     ast.StmtReturn(_) => {},
     ast.StmtExpr(_) => {},
@@ -25775,7 +25780,7 @@ function lu_loan_stmt(st: ast.Stmt, own check: LuLoanCheck): LuLoanCheck {
 
 function lu_loan_expr(e: ast.Expr, own check: LuLoanCheck): LuLoanCheck {
   if let ast.ExprLambda(lm) = e {
-    return LuLoanCheck { valid: check.valid && lm.origin.len() == 0, lambdas: check.lambdas + 1 };
+    return LuLoanCheck { ...check, valid: check.valid && lm.origin.len() == 0, lambdas: check.lambdas + 1 };
   }
   return check;
 }
@@ -25789,6 +25794,70 @@ function lu_loan_calls(e: ast.Expr, own calls: LuOcc[]): LuOcc[] {
   return calls;
 }
 
+function lu_occ_in(occs: LuOcc[], occ: LuOcc): boolean {
+  for o in occs {
+    if (o.line == occ.line && o.col == occ.col) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function lu_count_name(e: ast.Expr, own counts: LuNameCount): LuNameCount {
+  if let ast.ExprIdent(id) = e {
+    if (id.name == counts.name) {
+      return LuNameCount { ...counts, count: counts.count + 1 };
+    }
+  }
+  return counts;
+}
+
+// The indexes of the occurrences that can end a value of the owner: each
+// assignment, the last occurrence before an assignment whose value does not
+// read the owner, and the last occurrence of all.
+function lu_loan_moves(facts: LuFacts, assigns: ast.StmtAssign[], owner: string): i32[] {
+  let moves: i32[] = [];
+  let last = -1;
+  for i in 0..facts.occ.len() {
+    let occ = facts.occ[i];
+    if (occ.name != owner) {
+      continue;
+    }
+    for a in assigns {
+      if (a.target == owner && a.target_line == occ.line && a.target_col == occ.col) {
+        if (last >= 0 && astwalk.fold_expr(a.value, LuNameCount { name: owner, count: 0 }, lu_count_name).count == 0) {
+          moves = moves.append(last);
+        }
+        moves = moves.append(i);
+      }
+    }
+    last = i;
+  }
+  return moves.append(last);
+}
+
+// The first move of the owner after the lambda reads it. The last move is the
+// result when no move follows the lambda.
+function lu_loan_bound(facts: LuFacts, moves: i32[], lm: ast.ExprLambda, owner: string): i32 {
+  let inside: LuOcc[] = [];
+  for st in lm.body {
+    inside = astwalk.fold_stmt_nodes(st, LuFacts { ...lu_empty_facts(), occ: inside }, lu_fact_stmt, lu_fact_expr, astwalk.descend_all).occ;
+  }
+  let read = -1;
+  for i in 0..facts.occ.len() {
+    if (facts.occ[i].name == owner && lu_occ_in(inside, facts.occ[i])) {
+      read = i;
+    }
+  }
+  let bound = moves[moves.len() - 1];
+  for move in moves {
+    if (move > read && move < bound) {
+      bound = move;
+    }
+  }
+  return bound;
+}
+
 // Every use of this callback is a direct call before the owner's last read.
 function lu_loan_ends(facts: LuFacts, calls: LuOcc[], callback: string, owner: string): boolean {
   let last = -1;
@@ -25797,6 +25866,11 @@ function lu_loan_ends(facts: LuFacts, calls: LuOcc[], callback: string, owner: s
       last = i;
     }
   }
+  return lu_loan_ends_before(facts, calls, callback, last);
+}
+
+// Every use of this callback is a direct call before index `last`.
+function lu_loan_ends_before(facts: LuFacts, calls: LuOcc[], callback: string, last: i32): boolean {
   for i in 0..facts.occ.len() {
     let occurrence = facts.occ[i];
     if (occurrence.name != callback) {
@@ -25826,14 +25900,14 @@ function lu_loan_captures(lm: ast.ExprLambda, owner: string): boolean {
   return util.has_str(names, owner);
 }
 
-function lu_owner_loan_ends(vars: ast.StmtVar[], facts: LuFacts, calls: LuOcc[], owner: string): boolean {
+function lu_owner_loan_ends(vars: ast.StmtVar[], facts: LuFacts, calls: LuOcc[], owner: string, moves: i32[]): boolean {
   let captured = false;
   let safe = true;
   for callback in vars {
     if let ast.ExprLambda(lm) = callback.init {
       if (lu_loan_captures(lm, owner)) {
         captured = true;
-        safe = safe && lu_loan_ends(facts, calls, callback.name, owner);
+        safe = safe && lu_loan_ends_before(facts, calls, callback.name, lu_loan_bound(facts, moves, lm, owner));
       }
     }
   }
@@ -25850,14 +25924,18 @@ function lu_without_names(names: string[], removed: string[]): string[] {
   return out;
 }
 
-// Restrict the loan-end proof to immutable bindings in a straight-line body.
-// Captures inside another lambda cannot use this proof.
+// Restrict the loan-end proof to a straight-line body, where each assignment
+// is a statement of the body. Captures inside another lambda cannot use it.
 function lu_ended_callback_loans(body: ast.Stmt[], own facts: LuFacts): LuFacts {
-  let check = LuLoanCheck { valid: true, lambdas: 0 };
+  let check = LuLoanCheck { valid: true, lambdas: 0, assigns: 0 };
   let bound = 0;
   let vars: ast.StmtVar[] = [];
+  let assigns: ast.StmtAssign[] = [];
   let calls: LuOcc[] = [];
   for st in body {
+    if let ast.StmtAssign(a) = st {
+      assigns = assigns.append(a);
+    }
     if let ast.StmtVar(v) = st {
       vars = vars.append(v);
       if let ast.ExprLambda(_) = v.init {
@@ -25872,13 +25950,114 @@ function lu_ended_callback_loans(body: ast.Stmt[], own facts: LuFacts): LuFacts 
     check = astwalk.fold_stmt_nodes(st, check, lu_loan_stmt, lu_loan_expr, astwalk.descend_all);
     calls = astwalk.fold_stmt_pruned(st, calls, lu_loan_calls, not_lambda);
   }
-  if (!check.valid || check.lambdas != bound) {
+  if (!check.valid || check.lambdas != bound || check.assigns != assigns.len()) {
     return facts;
   }
   let ended: string[] = [];
   for owner in vars {
-    if (lu_owner_loan_ends(vars, facts, calls, owner.name)) {
+    if (lu_owner_loan_ends(vars, facts, calls, owner.name, lu_loan_moves(facts, assigns, owner.name))) {
       ended = ended.append(owner.name);
+    }
+  }
+  return LuFacts { ...facts, captured: lu_without_names(facts.captured, ended), escaping: lu_without_names(facts.escaping, ended) };
+}
+
+// A loop-local binding starts a new loan each time its declaration runs.
+// Keep the declaring block so no call from a different iteration or branch
+// is used as evidence that the loan has ended.
+struct LuCallbackBinding { name: string, lm: ast.ExprLambda, body: ast.Stmt[], next: i32 }
+
+function lu_callback_bindings(body: ast.Stmt[], own out: LuCallbackBinding[]): LuCallbackBinding[] {
+  for i in 0..body.len() {
+    let st = body[i];
+    if let ast.StmtVar(v) = st {
+      if let ast.ExprLambda(lm) = v.init {
+        if (lm.once) {
+          continue;
+        }
+        out = out.append(LuCallbackBinding { name: v.name, lm: lm, body: body, next: i + 1 });
+      }
+    }
+    for child in lu_bodies(st) {
+      out = lu_callback_bindings(child, out);
+    }
+  }
+  return out;
+}
+
+function lu_callback_defer(st: ast.Stmt, own state: LuLoanCheck): LuLoanCheck {
+  if let ast.StmtDefer(_) = st {
+    return LuLoanCheck { ...state, valid: false };
+  }
+  return state;
+}
+
+function lu_calls_before_owner(binding: LuCallbackBinding, owner: string): LuOcc[] {
+  let calls: LuOcc[] = [];
+  for i in binding.next..binding.body.len() {
+    let st = binding.body[i];
+    let state = astwalk.fold_stmt_nodes(st, LuLoanCheck { valid: true, lambdas: 0, assigns: 0 }, lu_loan_stmt, lu_loan_expr, astwalk.descend_all);
+    if (!state.valid || state.lambdas != 0 || util.has_str(lu_all_names(st, []), owner)) {
+      break;
+    }
+    calls = astwalk.fold_stmt_pruned(st, calls, lu_loan_calls, not_lambda);
+  }
+  return calls;
+}
+
+function lu_called_before_owner(binding: LuCallbackBinding, facts: LuFacts, owner: string): boolean {
+  let calls = lu_calls_before_owner(binding, owner);
+  for call in calls {
+    if (call.name == binding.name) {
+      return lu_loan_ends(facts, calls, binding.name, owner);
+    }
+  }
+  return false;
+}
+
+function lu_direct_callback_loans(body: ast.Stmt[], own facts: LuFacts): LuFacts {
+  if (facts.captured.len() == 0) {
+    return facts;
+  }
+  let bindings: LuCallbackBinding[] = [];
+  bindings = lu_callback_bindings(body, bindings);
+  if (bindings.len() == 0) {
+    return facts;
+  }
+  let check = LuLoanCheck { valid: true, lambdas: 0, assigns: 0 };
+  for st in body {
+    check = astwalk.fold_stmt_nodes(st, check, lu_callback_defer, lu_loan_expr, astwalk.descend_all);
+  }
+  if (!check.valid || check.lambdas != bindings.len()) {
+    return facts;
+  }
+  let ended: string[] = [];
+  for owner in facts.captured {
+    if (util.has_str(ended, owner)) {
+      continue;
+    }
+    let local = false;
+    for v in facts.vars {
+      if (v.name == owner) {
+        local = true;
+      }
+    }
+    if (!local) {
+      continue;
+    }
+    let captured = false;
+    let safe = true;
+    for binding in bindings {
+      if (lu_loan_captures(binding.lm, owner)) {
+        captured = true;
+        if (!lu_called_before_owner(binding, facts, owner)) {
+          safe = false;
+          break;
+        }
+      }
+    }
+    if (captured && safe) {
+      ended = ended.append(owner);
     }
   }
   return LuFacts { ...facts, captured: lu_without_names(facts.captured, ended), escaping: lu_without_names(facts.escaping, ended) };
@@ -25897,6 +26076,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
     nested = astwalk.fold_stmt_nodes(st, nested, astwalk.keep_lambdas, astwalk.collect_lambda, not_lambda);
   }
   facts = lu_ended_callback_loans(fn.body, facts);
+  facts = lu_direct_callback_loans(fn.body, facts);
   let fx0 = lu_function(fn, facts, ofuncs, borrows, lenders, builtins, noret);
   let fx = LuFn { ...fx0, fresh: lu_fresh_names(fx0), fresh_known: true };
   let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };

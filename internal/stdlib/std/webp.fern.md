@@ -39,6 +39,8 @@ function main(): i32 {
 ```fern
 <<*>>=
 // This module makes animated WebP files from still WebP files.
+import "core/cmp";
+import "core/error";
 import "std/i32";
 
 <<errors>>
@@ -67,6 +69,14 @@ pub function (e: AnimateError) message(): string {
     }
   }
 }
+
+pub function (e: AnimateError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for AnimateError {}
+
+impl cmp.Display for AnimateError {}
 ```
 
 ### `chunks`

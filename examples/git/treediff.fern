@@ -257,8 +257,9 @@ const MAX_SCORE: i32 = 60000;
 
 const MIN_SCORE: i32 = 30000;
 
-// The most pairs that the search of renames compares: 1000 by 1000.
-const RENAME_LIMIT: i64 = 1000000;
+// The most sources and destinations on each side of the comparison of
+// contents: 1000 by 1000.
+const RENAME_LIMIT: i64 = 1000;
 
 // The bytes of a blob, the counts of its spans by hash, and its size.
 struct Blob { bytes: u8[], spans: Map[i32, i64], counted: boolean, read: boolean }
@@ -565,24 +566,11 @@ function find_copies(s: store.Store, queue: Change[], min_score: i32): (store.St
       }
     }
     let left = dsts.filter((d: i32): boolean => source_of[d] < 0);
-    if (left.len() > 0 && left.len() as i64 * (srcs.len() as i64) <= RENAME_LIMIT) {
+    if (left.len() > 0 && left.len() as i64 * (srcs.len() as i64) <= RENAME_LIMIT * RENAME_LIMIT) {
       let all: Candidate[] = [];
       for d in left {
-        let best: Candidate[] = [Candidate { dst: -1, src: -1, score: 0, name: 0 }, Candidate { dst: -1, src: -1, score: 0, name: 0 }, Candidate { dst: -1, src: -1, score: 0, name: 0 }, Candidate { dst: -1, src: -1, score: 0, name: 0 }];
-        for k in srcs {
-          let (r2, sc) = similarity(r, queue[k], queue[d], min_score);
-          r = r2;
-          let c = Candidate { dst: d, src: k, score: sc, name: if (basename_same(queue[k].path, queue[d].path)) { 1 } else { 0 } };
-          let worst = 0;
-          for i in 1..4 {
-            if (candidate_cmp(best[i], best[worst]) > 0) {
-              worst = i;
-            }
-          }
-          if (candidate_cmp(best[worst], c) > 0) {
-            best = best.with(worst, c);
-          }
-        }
+        let (r2, best) = candidates_of(r, queue, srcs, d, min_score);
+        r = r2;
         all = all.concat(best);
       }
       let places: i32[] = [];
@@ -625,38 +613,247 @@ function find_copies(s: store.Store, queue: Change[], min_score: i32): (store.St
   return (r.store, out);
 }
 
-function find_renames(s: store.Store, changes: Change[], basenames: boolean, min_score: i32): (store.Store, Change[]) {
+// The order in which a `strmap` of git gives the keys `keys`, which it
+// got in that order, and the count of the places of its table after
+// them. The table starts with `places` places (64 for a new table) and
+// grows by 4. The last key of a place comes first.
+pub function strmap_order(keys: string[], places: i32): (string[], i32) {
+  let size = places;
+  let hashes: i64[] = [];
+  let table: i32[][] = [];
+  for b in 0..size {
+    table = table.append([]);
+  }
+  for k in 0..keys.len() {
+    let h: i64 = 2166136261;
+    for c in keys[k].bytes() {
+      h = h * 16777619 & 4294967295 ^ c as i64;
+    }
+    hashes = hashes.append(h);
+    let b = (h & (size - 1) as i64) as i32;
+    table = table.with(b, [k].concat(table[b]));
+    if (k + 1 > size * 80 / 100) {
+      let wide = size * 4;
+      let next: i32[][] = [];
+      for b2 in 0..wide {
+        next = next.append([]);
+      }
+      for bucket in table {
+        for e in bucket {
+          let nb = (hashes[e] & (wide - 1) as i64) as i32;
+          next = next.with(nb, [e].concat(next[nb]));
+        }
+      }
+      table = next;
+      size = wide;
+    }
+  }
+  let out: string[] = [];
+  for bucket in table {
+    for e in bucket {
+      out = out.append(keys[e]);
+    }
+  }
+  return (out, size);
+}
+
+// The values of a directory that one side of a merge removed
+// (`dirs_removed` of git): its rename is not needed, is needed for a
+// directory above it, or is needed for the directory.
+pub const DIR_NOT_RELEVANT: i32 = 0;
+
+pub const DIR_FOR_ANCESTOR: i32 = 1;
+
+pub const DIR_FOR_SELF: i32 = 2;
+
+// The values of a source of a rename in a merge (`relevant_sources` of
+// git): the other side changed its content, or only its place counts.
+pub const SOURCE_NO_MORE: i32 = 0;
+
+pub const SOURCE_CONTENT: i32 = 1;
+
+pub const SOURCE_LOCATION: i32 = 2;
+
+// The sources that a merge needs, and the directories that the side
+// removed. A source that is not in `relevant` gets only an exact rename.
+pub struct Scope { relevant: Map[string, i32], dirs_removed: Map[string, i32] }
+
+// The count of the renames from one directory to each new directory,
+// with the new directories in the order of their first rename.
+struct Counts { dirs: string[], count: Map[string, i32] }
+
+// The count of the renames from the removed directory `dir` to each
+// directory of `targets`.
+pub struct DirCount { dir: string, targets: string[], counts: i32[] }
+
+// The counts for each old directory (`dir_rename_count` of git), and the
+// values of the removed directories.
+struct DirRenames { on: boolean, removed: Map[string, i32], counts: Map[string, Counts] }
+
+// The directory that no rename gives yet (`UNKNOWN_DIR` of git).
+const UNKNOWN_DIR: string = "/";
+
+function text_of(p: u8[]): string {
+  return unsafe { string_from_bytes_unchecked(p) };
+}
+
+// The path above `path`, or "" at the top.
+pub function dir_of(path: string): string {
+  let i = path.len();
+  while (i > 0 && path[i - 1] != b'/') {
+    i -= 1;
+  }
+  return if (i == 0) { "" } else { objects.part(path, 0, i - 1) };
+}
+
+function counted(d: DirRenames, old_dir: string, new_dir: string): DirRenames {
+  let c = d.counts.get_or(old_dir, Counts { dirs: [], count: Map { } });
+  let dirs = if (c.count.contains(new_dir)) { c.dirs } else { c.dirs.append(new_dir) };
+  return DirRenames { ...d, counts: d.counts.insert(old_dir, Counts { dirs: dirs, count: c.count.insert(new_dir, c.count.get_or(new_dir, 0) + 1) }) };
+}
+
+// Counts the rename of `old` to `new` for the removed directories above
+// `old` (`update_dir_rename_counts` of git).
+function count_rename(d_in: DirRenames, old: string, new: string): DirRenames {
+  let d = d_in;
+  if (!d.on) {
+    return d;
+  }
+  let old_dir = old;
+  let new_dir = new;
+  let first = true;
+  while (true) {
+    let old_part = old_dir;
+    old_dir = dir_of(old_dir);
+    if (!d.removed.contains(old_dir)) {
+      break;
+    }
+    let new_part = new_dir;
+    new_dir = dir_of(new_dir);
+    if (!first && objects.part(old_part, if (old_dir.len() > 0) { old_dir.len() + 1 } else { 0 }, old_part.len()) != objects.part(new_part, if (new_dir.len() > 0) { new_dir.len() + 1 } else { 0 }, new_part.len())) {
+      break;
+    }
+    let value = d.removed.get_or(old_dir, DIR_NOT_RELEVANT);
+    if (value == DIR_FOR_SELF || first) {
+      d = counted(d, old_dir, new_dir);
+    }
+    first = false;
+    if (value == DIR_NOT_RELEVANT || old_dir.len() == 0 || new_dir.len() == 0) {
+      break;
+    }
+  }
+  return d;
+}
+
+// The new directory with the most renames, the first of them in the
+// order of git (`get_highest_rename_path`).
+function highest(c: Counts): string {
+  let best = "";
+  let most = 0;
+  let (order, _) = strmap_order(c.dirs, 64);
+  for dir in order {
+    let n = c.count.get_or(dir, 0);
+    if (n > most) {
+      most = n;
+      best = dir;
+    }
+  }
+  return best;
+}
+
+// True when more renames cannot change the new directory with the most
+// renames (`dir_rename_already_determinable` of git).
+function determinable(c: Counts): boolean {
+  let first = 0;
+  let second = 0;
+  let unknown = 0;
+  for dir in c.dirs {
+    let n = c.count.get_or(dir, 0);
+    if (dir == UNKNOWN_DIR) {
+      unknown = n;
+    } else if (n >= first) {
+      second = first;
+      first = n;
+    } else if (n >= second) {
+      second = n;
+    }
+  }
+  return first > second + unknown;
+}
+
+// The options of the search of renames. `basenames` compares first the
+// files with the same last part of their path. `limit` is the most
+// sources and destinations on each side of the comparison of contents.
+// Without `empty`, an empty blob is no source and no destination. `scope`
+// holds the parts of a merge, or nothing.
+struct Search { basenames: boolean, min_score: i32, limit: i64, empty: boolean, scope: Scope[] }
+
+// The source of each added change, or -1, with its score. `used` is 1
+// for each source of a rename. `dir_counts` holds the renames from each
+// removed directory that a merge needs. `limited`
+// is true when the files are too many for the comparison of contents.
+// `relevant` holds the sources of a merge after the search.
+struct Paired { store: store.Store, source_of: i32[], score_of: i32[], used: i32[], dir_counts: DirCount[], limited: boolean, relevant: Map[string, i32] }
+
+// The best four sources of the destination `d` among `srcs`
+// (`record_if_better` of git).
+function candidates_of(r_in: Renames, changes: Change[], srcs: i32[], d: i32, min_score: i32): (Renames, Candidate[]) {
+  let r = r_in;
+  let best: Candidate[] = [Candidate { dst: -1, src: -1, score: 0, name: 0 }, Candidate { dst: -1, src: -1, score: 0, name: 0 }, Candidate { dst: -1, src: -1, score: 0, name: 0 }, Candidate { dst: -1, src: -1, score: 0, name: 0 }];
+  for k in srcs {
+    let (r2, sc) = similarity(r, changes[k], changes[d], min_score);
+    r = r2;
+    let c = Candidate { dst: d, src: k, score: sc, name: if (basename_same(changes[k].path, changes[d].path)) { 1 } else { 0 } };
+    let worst = 0;
+    for i in 1..4 {
+      if (candidate_cmp(best[i], best[worst]) > 0) {
+        worst = i;
+      }
+    }
+    if (candidate_cmp(best[worst], c) > 0) {
+      best = best.with(worst, c);
+    }
+  }
+  return (r, best);
+}
+
+// The renames of the deleted and the added changes of `changes`:
+// `diffcore_rename_extended` of git without copies.
+function pair(s: store.Store, changes: Change[], o: Search): Paired {
+  let empty_blob = objects.hash_of(s.width, "blob", []);
   let srcs: i32[] = [];
   let dsts: i32[] = [];
   for i in 0..changes.len() {
     let c = changes[i];
-    if (c.status == b'D') {
+    if (c.status == b'D' && (o.empty || c.old_hash != empty_blob)) {
       srcs = srcs.append(i);
-    } else if (c.status == b'A') {
+    } else if (c.status == b'A' && (o.empty || c.new_hash != empty_blob)) {
       dsts = dsts.append(i);
     }
   }
-  if (srcs.len() == 0 || dsts.len() == 0) {
-    return (s, changes);
-  }
-  let r = Renames { store: s, blobs: Map { } };
   let source_of = __alloc_i32(changes.len()).map((v: i32): i32 => -1);
   let score_of = __alloc_i32(changes.len());
   let used = __alloc_i32(changes.len());
-  // Exact renames: the same blob.
+  if (srcs.len() == 0 || dsts.len() == 0) {
+    return Paired { store: s, source_of: source_of, score_of: score_of, used: used, dir_counts: [], limited: false, relevant: if (o.scope.len() > 0) { o.scope[0].relevant } else { Map { } } };
+  }
+  let r = Renames { store: s, blobs: Map { } };
+  // Exact renames: the same blob. git looks at 100 sources at most.
   for d in dsts {
     let dst = changes[d];
     let best = -1;
     let best_score = -1;
+    let left = 100;
     for k in srcs {
       let src = changes[k];
       let modes_ok = is_regular(src.old_mode) && is_regular(dst.new_mode) || src.old_mode == dst.new_mode;
-      if (src.old_hash == dst.new_hash && modes_ok && used[k] == 0) {
+      if (left > 0 && best_score < 2 && src.old_hash == dst.new_hash && modes_ok && used[k] == 0) {
         let sc = 1 + (if (basename_same(src.path, dst.path)) { 1 } else { 0 });
         if (sc > best_score) {
           best = k;
           best_score = sc;
         }
+        left -= 1;
       }
     }
     if (best >= 0) {
@@ -665,56 +862,128 @@ function find_renames(s: store.Store, changes: Change[], basenames: boolean, min
       used = used.with(best, 1);
     }
   }
-  srcs = srcs.filter((k: i32): boolean => used[k] == 0);
-  // Renames to a file with the same last part of its path.
-  let src_names: Map[string, i32] = Map { };
-  for k in srcs {
-    let base = basename(changes[k].path);
-    src_names = src_names.insert(base, if (src_names.contains(base)) { -1 } else { k });
+  let dirs = DirRenames { on: false, removed: Map { }, counts: Map { } };
+  let relevant: Map[string, i32] = Map { };
+  let merge = o.scope.len() > 0;
+  if (merge) {
+    dirs = DirRenames { on: true, removed: o.scope[0].dirs_removed, counts: Map { } };
+    relevant = o.scope[0].relevant;
   }
-  let dst_names: Map[string, i32] = Map { };
-  for d in dsts {
-    if (source_of[d] < 0) {
-      let base = basename(changes[d].path);
-      dst_names = dst_names.insert(base, if (dst_names.contains(base)) { -1 } else { d });
-    }
-  }
-  let min_basename = min_score + (0.5 * ((MAX_SCORE - min_score) as f64)) as i32;
-  for k in srcs {
-    let base = basename(changes[k].path);
-    if (basenames && dst_names.contains(base)) {
-      let d = dst_names.get_or(base, -1);
-      if (src_names.get_or(base, -1) != -1 && d != -1 && source_of[d] < 0) {
-        let (r1, sc) = similarity(r, changes[k], changes[d], min_basename);
-        r = r1;
-        if (sc >= min_basename) {
-          source_of = source_of.with(d, k);
-          score_of = score_of.with(d, sc);
-          used = used.with(k, 1);
+  if (o.min_score < MAX_SCORE && o.basenames) {
+    srcs = srcs.filter((k: i32): boolean => used[k] == 0);
+    // The place of each destination with no source, and the new place of
+    // each removed directory, from the exact renames
+    // (`initialize_dir_rename_info`).
+    let places: Map[string, i32] = Map { };
+    let guess: Map[string, string] = Map { };
+    if (merge) {
+      for d in dsts {
+        if (source_of[d] < 0) {
+          places = places.insert(text_of(changes[d].path), d);
+        } else {
+          dirs = count_rename(dirs, text_of(changes[source_of[d]].path), text_of(changes[d].path));
         }
       }
+      for e in dirs.counts.entries() {
+        let (old_dir, c) = e;
+        guess = guess.insert(old_dir, highest(c));
+      }
     }
+    // Renames to a file with the same last part of its path.
+    let src_names: Map[string, i32] = Map { };
+    for k in srcs {
+      let base = basename(changes[k].path);
+      src_names = src_names.insert(base, if (src_names.contains(base)) { -1 } else { k });
+    }
+    let dst_names: Map[string, i32] = Map { };
+    for d in dsts {
+      if (source_of[d] < 0) {
+        let base = basename(changes[d].path);
+        dst_names = dst_names.insert(base, if (dst_names.contains(base)) { -1 } else { d });
+      }
+    }
+    let min_basename = o.min_score + (0.5 * ((MAX_SCORE - o.min_score) as f64)) as i32;
+    for k in srcs {
+      let path = text_of(changes[k].path);
+      if (merge && !relevant.contains(path)) {
+        continue;
+      }
+      let base = basename(changes[k].path);
+      if (!dst_names.contains(base)) {
+        continue;
+      }
+      let d = dst_names.get_or(base, -1);
+      if (src_names.get_or(base, -1) == -1 || d == -1) {
+        // The file of the same name in the new place of its directory
+        // (`idx_possible_rename`).
+        d = -1;
+        if let Some(new_dir) = guess.get(dir_of(path)) {
+          d = places.get_or(new_dir + "/" + base, -1);
+        }
+      }
+      if (d == -1 || source_of[d] >= 0) {
+        continue;
+      }
+      let (r1, sc) = similarity(r, changes[k], changes[d], min_basename);
+      r = r1;
+      if (sc >= min_basename) {
+        source_of = source_of.with(d, k);
+        score_of = score_of.with(d, sc);
+        used = used.with(k, 1);
+        dirs = count_rename(dirs, path, text_of(changes[d].path));
+      }
+    }
+    srcs = srcs.filter((k: i32): boolean => used[k] == 0 && (!merge || relevant.contains(text_of(changes[k].path))));
+    if (merge) {
+      // A source that only gives the place of a removed directory is not
+      // needed when the place is sure (`handle_early_known_dir_renames`).
+      for k in srcs {
+        let old_dir = dir_of(text_of(changes[k].path));
+        while (old_dir.len() > 0 && dirs.removed.get_or(old_dir, DIR_NOT_RELEVANT) != DIR_NOT_RELEVANT) {
+          dirs = counted(dirs, old_dir, UNKNOWN_DIR);
+          old_dir = dir_of(old_dir);
+        }
+      }
+      for e in dirs.counts.entries() {
+        let (old_dir, c) = e;
+        if (dirs.removed.get_or(old_dir, DIR_NOT_RELEVANT) == DIR_FOR_SELF && determinable(c)) {
+          dirs = DirRenames { ...dirs, removed: dirs.removed.insert(old_dir, DIR_FOR_ANCESTOR) };
+        }
+      }
+      let needed: i32[] = [];
+      for k in srcs {
+        let path = text_of(changes[k].path);
+        let removable = relevant.get_or(path, SOURCE_NO_MORE) == SOURCE_LOCATION;
+        let dir = dir_of(path);
+        while (removable) {
+          let value = dirs.removed.get_or(dir, DIR_NOT_RELEVANT);
+          if (value == DIR_NOT_RELEVANT) {
+            break;
+          }
+          if (value == DIR_FOR_SELF) {
+            removable = false;
+          }
+          dir = dir_of(dir);
+        }
+        if (removable) {
+          relevant = relevant.insert(path, SOURCE_NO_MORE);
+        } else {
+          needed = needed.append(k);
+        }
+      }
+      srcs = needed;
+    }
+  } else {
+    srcs = srcs.filter((k: i32): boolean => used[k] == 0);
   }
-  srcs = srcs.filter((k: i32): boolean => used[k] == 0);
   let left = dsts.filter((d: i32): boolean => source_of[d] < 0);
-  if (srcs.len() > 0 && left.len() > 0 && left.len() as i64 * (srcs.len() as i64) <= RENAME_LIMIT) {
+  let compare = o.min_score < MAX_SCORE && srcs.len() > 0 && left.len() > 0;
+  let limited = compare && left.len() as i64 * (srcs.len() as i64) > o.limit * o.limit;
+  if (compare && !limited) {
     let all: Candidate[] = [];
     for d in left {
-      let best: Candidate[] = [Candidate { dst: -1, src: -1, score: 0, name: 0 }, Candidate { dst: -1, src: -1, score: 0, name: 0 }, Candidate { dst: -1, src: -1, score: 0, name: 0 }, Candidate { dst: -1, src: -1, score: 0, name: 0 }];
-      for k in srcs {
-        let (r2, sc) = similarity(r, changes[k], changes[d], min_score);
-        r = r2;
-        let c = Candidate { dst: d, src: k, score: sc, name: if (basename_same(changes[k].path, changes[d].path)) { 1 } else { 0 } };
-        let worst = 0;
-        for i in 1..4 {
-          if (candidate_cmp(best[i], best[worst]) > 0) {
-            worst = i;
-          }
-        }
-        if (candidate_cmp(best[worst], c) > 0) {
-          best = best.with(worst, c);
-        }
-      }
+      let (r2, best) = candidates_of(r, changes, srcs, d, o.min_score);
+      r = r2;
       all = all.concat(best);
     }
     let places: i32[] = [];
@@ -726,25 +995,61 @@ function find_renames(s: store.Store, changes: Change[], basenames: boolean, min
     for i in order {
       let c = all[i];
       if (!stop) {
-        if (c.dst < 0 || c.score < min_score) {
+        if (c.dst < 0 || c.score < o.min_score) {
           stop = true;
         } else if (source_of[c.dst] < 0 && used[c.src] == 0) {
           source_of = source_of.with(c.dst, c.src);
           score_of = score_of.with(c.dst, c.score);
           used = used.with(c.src, 1);
+          dirs = count_rename(dirs, text_of(changes[c.src].path), text_of(changes[c.dst].path));
         }
       }
     }
   }
+  // The counts of the removed directories that a merge needs
+  // (`cleanup_dir_rename_info`).
+  let dir_counts: DirCount[] = [];
+  for e in dirs.counts.entries() {
+    let (old_dir, c) = e;
+    if (dirs.removed.get_or(old_dir, DIR_NOT_RELEVANT) != DIR_NOT_RELEVANT) {
+      let targets = c.dirs.filter((dir: string): boolean => dir != UNKNOWN_DIR);
+      dir_counts = dir_counts.append(DirCount { dir: old_dir, targets: targets, counts: targets.map((dir: string): i32 => c.count.get_or(dir, 0)) });
+    }
+  }
+  return Paired { store: r.store, source_of: source_of, score_of: score_of, used: used, dir_counts: dir_counts, limited: limited, relevant: relevant };
+}
+
+// The changes with each pair of `p` as one rename at the place of its
+// added file.
+function with_renames(changes: Change[], p: Paired): Change[] {
   let out: Change[] = [];
   for i in 0..changes.len() {
     let c = changes[i];
-    if (c.status == b'A' && source_of[i] >= 0) {
-      let src = changes[source_of[i]];
-      out = out.append(Change { ...c, status: b'R', old_path: src.path, old_mode: src.old_mode, old_hash: src.old_hash, score: score_of[i] });
-    } else if (!(c.status == b'D' && used[i] != 0)) {
+    if (c.status == b'A' && p.source_of[i] >= 0) {
+      let src = changes[p.source_of[i]];
+      out = out.append(Change { ...c, status: b'R', old_path: src.path, old_mode: src.old_mode, old_hash: src.old_hash, score: p.score_of[i] });
+    } else if (!(c.status == b'D' && p.used[i] != 0)) {
       out = out.append(c);
     }
   }
-  return (r.store, out);
+  return out;
+}
+
+function find_renames(s: store.Store, changes: Change[], basenames: boolean, min_score: i32): (store.Store, Change[]) {
+  let p = pair(s, changes, Search { basenames: basenames, min_score: min_score, limit: RENAME_LIMIT, empty: true, scope: [] });
+  return (p.store, with_renames(changes, p));
+}
+
+// The renames of one side of a merge. `dir_counts` holds the renames
+// from each removed directory that the merge needs. `limited` is true when the files are too many for the comparison of
+// contents. `relevant` holds the sources that the merge needs after the
+// search.
+pub struct MergeRenames { store: store.Store, changes: Change[], dir_counts: DirCount[], limited: boolean, relevant: Map[string, i32] }
+
+// The renames of one side of a merge, whose deleted and added files are
+// `changes`: `detect_regular_renames` of merge-ort. `limit` is
+// `merge.renameLimit`.
+pub function merge_renames(s: store.Store, changes: Change[], limit: i64, scope: Scope): MergeRenames {
+  let p = pair(s, changes, Search { basenames: true, min_score: MIN_SCORE, limit: limit, empty: false, scope: [scope] });
+  return MergeRenames { store: p.store, changes: with_renames(changes, p), dir_counts: p.dir_counts, limited: p.limited, relevant: p.relevant };
 }

@@ -321,7 +321,7 @@ the second fits a word: the first element is its result, which may be as
 wide as any result (an i64, a u64, a float), and the second the word. A caller rebuilds the pair from the two, and split reads
 its projections off the construction, so the pair is never built; a return
 that is not a construction (a join of two, a parameter) is projected in the
-callee. A tuple of three or four scalars returns in scalar lanes, as a record of scalars does. A pair of scalars whose second element is wider than a word also returns in scalar lanes. A tuple of five or more elements stays boxed. A tuple of three or four that holds a reference also stays boxed. Wasm spells a paired function's result from its lowered body, not its declaration. `TestSelfHostPairReturn` covers the shapes on the three targets, a pair and a Result returned across a park among them, and its `split` program pins a loop of three-word returns at no allocations.
+callee. A tuple of three or four scalars returns in scalar lanes, as a record of scalars does. A pair of scalars whose second element is wider than a word also returns in scalar lanes. A tuple of five or more elements stays boxed. A tuple of three or four elements that holds a reference returns in words in three shapes (`sempair.pair_type`). The shapes are three references, two references and one scalar, and two references and two booleans. Each other such tuple stays boxed. Wasm spells a paired function's result from its lowered body, not its declaration. `TestSelfHostPairReturn` covers the shapes on the three targets, a pair and a Result returned across a park among them, and its `split` program pins a loop of three-word returns at no allocations.
 
 `sempair`, which `seminline` runs once nothing more is spliced, chooses the
 functions: nothing outside the bodies names one and every body that names
@@ -343,6 +343,30 @@ never free. A caller that keeps the value whole builds one box from the
 words, and the callee builds no box. The other callers get the words. One
 `Some(now.add(d))` in `std/fetch` kept `Duration.add` boxed for every caller,
 the reactor's wait among them.
+
+A call through a function value follows the same convention for a tuple
+result. The caller cannot see the body. Thus each function that a closure of
+one type names must return in the same way. `sempair.valued` selects a
+function type only in a whole-program build. Each closure of the type, and
+each call through a value of the type, must be in these bodies. A closure
+names a wrapper (`$wrap`) or a lifted lambda, and that function is the paired
+callee.
+
+A type is not selected when a value of it can reach code outside these bodies.
+Such code is a callee with no body here, a map, a dynamic value, or a
+construction hole. The signature of a function that code outside can call has
+the same effect. The rule for a caller that keeps the result whole applies to
+the type as a unit. The type stays boxed unless each function of the type
+builds each value that it returns. Thus a fold that hands its tuple back to
+the function keeps the box that the function uses again.
+
+The call keeps its kind (`ssasem.call_value`). Its immediate names the values
+that take the words, as the immediate of a direct call does. The contract of
+the indirect call has one bit for each pair word that holds a unit
+(`ir.call_units_word`). The certifier reads the origin of a pair word from
+that bit. The `value` and `value-outside` programs of `TestSelfHostPairReturn`
+cover the shapes, a result kept whole, and a park inside the function value.
+They also cover the values that reach a task, a map and the loop of `map`.
 
 The same rule holds one level down. A function returns a payload in two words
 only while every caller takes the payload apart as well

@@ -37,6 +37,9 @@ function selected_track(): i32;
 @import("libandroid.so", "mock_player_nexts")
 function nexts(): i32;
 
+@import("libandroid.so", "mock_player_tuned")
+function tuned(): i32;
+
 @import("libandroid.so", "mock_player_target_releases")
 function target_releases(): i32;
 
@@ -155,6 +158,9 @@ function operations(ctx: usize): i32 {
   mode(0);
   if (p.slot != 0 || !player.set_next(ctx, p, Some(p)) || !player.set_next(ctx, p, None) || nexts() != 2 || live() != 2) {
     return 219;
+  }
+  if (player.set_speed(ctx, p, 8.0f32) || !player.set_speed(ctx, p, 1.5f32) || !player.set_volume(ctx, p, 0.5f32) || tuned() != 2 || live() != 2) {
+    return 220;
   }
   player.hide(ctx, p);
   player.stop(ctx, p);

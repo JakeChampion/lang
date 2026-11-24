@@ -138,11 +138,24 @@ git index-pack [-v] [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   short names.
 
   The diff of a merge is that of `-m`, `-c`, `--cc`, `--dd`,
-  `--no-diff-merges` and `--diff-merges=` with each value of git but
-  `remerge`. `-m` shows the diff from each parent, with
-  `(from PARENT)` after the name of the commit. `-c` and `--cc` show the
-  combined diff of the paths that change from each parent, with the
-  hunks and the stat of git.
+  `--remerge-diff`, `--no-diff-merges` and `--diff-merges=` with each
+  value of git. `log.diffMerges` sets the diff of `-m`. `-m` shows the
+  diff from each parent, with `(from PARENT)` after the name of the
+  commit. `-c` and `--cc` show the combined diff of the paths that change
+  from each parent, with the hunks and the stat of git.
+
+  `--remerge-diff` merges the two parents of a merge again in memory,
+  as merge-ort of git does. It shows the diff from that merge to the
+  merge commit. A file with a conflict has the conflict markers of git,
+  with the style of `merge.conflictStyle`. The message of each conflict
+  is a header line of the diff of its path. A merge of more than two
+  parents shows the line of git for it, and no diff.
+
+  The merge finds the renames of files and of directories, with
+  `merge.renames`, `merge.renameLimit` and `merge.directoryRenames`. It
+  merges two or more merge bases first, and that merge is the base. The
+  attributes `merge` and `conflict-marker-size` select the built-in
+  driver and the size of the markers of a path.
 
   `--word-diff` with each of its forms, `--word-diff-regex=`,
   `--color-words` and `diff.wordRegex` show the patch as a diff of
@@ -262,6 +275,26 @@ git 2.43 is also different in these things:
   group of changes that the compaction moved.
 - the rule `incomplete-line` of white space. git 2.43 does not have it.
 
+With git 2.43, these things of `--remerge-diff` are different:
+
+- the merge bases of a merge that comes after one of its ancestors in
+  the output, as with `--reverse`. git 2.43 drops the parents of each
+  commit that it showed.
+- the conflicts of a file with lines that come two times, because the
+  merge uses the histogram diff.
+- `merge.renames` or `diff.renames` set to false. git 2.56.1 finds no
+  renames, and git 2.43 finds them.
+
+With git 2.43, these settings, messages and merges are also different:
+
+- `diff.algorithm`. git 2.56.1 merges with that search, and git 2.43
+  always merges with the histogram search.
+- the message for a `merge.conflictStyle` that git does not know.
+- the message for a `conflict-marker-size` that is not an integer.
+- a merge where a file is in the way of the new place of a renamed
+  directory, or where a file and a directory have one path. git 2.56.1
+  corrects some of these merges of git 2.43.
+
 ## Files
 
 - `objects.fern`: the hash algorithms, the name of an object, the loose
@@ -289,6 +322,7 @@ git 2.43 is also different in these things:
 - `patch.fern`: the diff of a commit: the patch, `--stat`, `--numstat`,
   `--shortstat` and `--summary`, `--raw`, `--check` and `--word-diff`.
 - `combine.fern`: the combined diff of a merge (`-c` and `--cc`).
+- `merge.fern`: the merge of two commits for `--remerge-diff`.
 - `moved.fern`: the colors of the moved lines (`--color-moved`).
 - `ws.fern`: the rules of `core.whitespace` and their errors.
 - `attr.fern`: the attributes of `.gitattributes`.
@@ -305,7 +339,13 @@ git 2.43 is also different in these things:
 
 ## What it does not have yet
 
-- The option `--remerge-diff` of `log`.
+- Four parts of the merge of `--remerge-diff`. They are the merge of a
+  submodule that the two parents changed, and a merge driver of the
+  configuration (`merge.NAME.driver`). They are also
+  `merge.renormalize`, and a tree with a mode that git does not write.
+  For a merge that needs one of them, the port stops with a message
+  that names the part. It also stops at a state of the renames that
+  git takes for an internal error.
 
 - The other parts of a driver of the attribute `diff`: `-diff` and
   `diff.NAME.binary` for a binary file, the regex of words of a driver
@@ -482,6 +522,15 @@ The corpus was a single-branch clone of facebook/zstd at
   random history of merges with conflicts. It runs the diffs of words
   and the moved lines, also of random edits. It runs the copies, also in
   a random history, the notes, and the signatures of two keys of gpg.
+
+- `TestSelfHostExampleGitRemerge` runs 100 forms of `log` for the diff
+  of a merge, most of them with `--remerge-diff`. The repository has
+  each kind of merge: clean merges, each kind of conflict, renamed files
+  and directories, two merge bases, and a merge of three parents. The
+  test runs them with each style of conflict and with the other
+  settings of a merge. It runs them with the attributes of a merge. It
+  also runs random histories of merges, and the merges that the port
+  refuses.
 
 - `TestSelfHostExampleGitSignatures` runs the signatures of ssh-keygen,
   gpgsm and gpg: the keys of the allowed signers, an unknown key, a

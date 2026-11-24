@@ -30,6 +30,8 @@ function main(): i32 {
 ```fern
 <<*>>=
 // This module encodes GIF images.
+import "core/cmp";
+import "core/error";
 import "std/i32";
 
 <<frames and errors>>
@@ -74,6 +76,10 @@ pub function (e: EncodeError) message(): string {
 pub function (e: EncodeError) to_string(): string {
   return e.message();
 }
+
+impl error.Error for EncodeError {}
+
+impl cmp.Display for EncodeError {}
 
 // The GIF file of one frame of RGBA pixels.
 pub function encode_rgba8(width: i32, height: i32, pixels: u8[], opts: Options): Result[u8[], EncodeError] {

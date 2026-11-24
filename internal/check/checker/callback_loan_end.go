@@ -3,7 +3,8 @@ package checker
 import "github.com/jakechampion/lang/internal/syntax/ast"
 
 // endedCallbackLoans proves a loan end in a straight-line body. Every use of
-// each capturing callback must be a direct call before the owner's last read.
+// each capturing callback must be a direct call before the first move of the
+// owner that follows the lambda.
 func endedCallbackLoans(node ast.Node) map[string]bool {
 	body, ok := node.(*ast.Block)
 	if !ok || body == nil {
@@ -11,6 +12,7 @@ func endedCallbackLoans(node ast.Node) map[string]bool {
 	}
 	locals := map[string]int{}
 	callbacks := map[*ast.Lambda]string{}
+	assigns := map[*ast.Assign]bool{}
 	for _, stmt := range body.Stmts {
 		switch s := stmt.(type) {
 		case *ast.Var:
@@ -18,7 +20,14 @@ func endedCallbackLoans(node ast.Node) map[string]bool {
 			if lm, ok := s.Init.(*ast.Lambda); ok {
 				callbacks[lm] = s.Name
 			}
-		case *ast.Return, *ast.ExprStmt:
+		case *ast.ExprStmt:
+			if assign, ok := s.Expr.(*ast.Assign); ok {
+				if _, ok := assign.Target.(*ast.Ident); !ok {
+					return nil
+				}
+				assigns[assign] = true
+			}
+		case *ast.Return:
 		default:
 			return nil
 		}
@@ -33,7 +42,11 @@ func endedCallbackLoans(node ast.Node) map[string]bool {
 			if callbacks[x] == "" {
 				valid = false
 			}
-		case *ast.Assign, *ast.If, *ast.IfExpr, *ast.Match, *ast.MatchExpr,
+		case *ast.Assign:
+			if !assigns[x] {
+				valid = false
+			}
+		case *ast.If, *ast.IfExpr, *ast.Match, *ast.MatchExpr,
 			*ast.While, *ast.For, *ast.ForEach, *ast.Defer, *ast.BlockExpr, *ast.FuncDecl:
 			valid = false
 		}
@@ -62,12 +75,13 @@ func endedCallbackLoans(node ast.Node) map[string]bool {
 			if locals[owner] != 1 {
 				continue
 			}
+			bound := loanBound(order, loanMoves(order, assigns, owner), lm, owner)
 			ended[owner] = true
 			if locals[callback] != 1 {
 				blocked[owner] = true
 			}
 			for _, use := range uses {
-				if !calls[use] || order.Idx[use] >= order.last[owner] {
+				if !calls[use] || order.Idx[use] >= bound {
 					blocked[owner] = true
 				}
 			}
@@ -77,4 +91,163 @@ func endedCallbackLoans(node ast.Node) map[string]bool {
 		delete(ended, owner)
 	}
 	return ended
+}
+
+// loanMoves gives the indexes of the occurrences that can end a value of the
+// owner: each assignment, the last occurrence before an assignment whose value
+// does not read the owner, and the last occurrence of all.
+func loanMoves(order IdentOrder, assigns map[*ast.Assign]bool, owner string) []int {
+	moves := []int{order.last[owner]}
+	for assign := range assigns {
+		target := assign.Target.(*ast.Ident)
+		if target.Name != owner {
+			continue
+		}
+		at := order.Idx[target]
+		moves = append(moves, at)
+		if maxIdentIndex(order, assign.Value, owner) > 0 {
+			continue
+		}
+		before := 0
+		for _, id := range order.byName[owner] {
+			if i := order.Idx[id]; i < at && i > before {
+				before = i
+			}
+		}
+		if before > 0 {
+			moves = append(moves, before)
+		}
+	}
+	return moves
+}
+
+// loanBound gives the first move of the owner after the lambda reads it. The
+// last occurrence of the owner is the result when no move follows the lambda.
+func loanBound(order IdentOrder, moves []int, lm *ast.Lambda, owner string) int {
+	read := maxIdentIndex(order, lm, owner)
+	bound := order.last[owner]
+	for _, move := range moves {
+		if move > read && move < bound {
+			bound = move
+		}
+	}
+	return bound
+}
+
+func maxIdentIndex(order IdentOrder, node ast.Node, name string) int {
+	last := 0
+	ast.Walk(node, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == name && order.Idx[id] > last {
+			last = order.Idx[id]
+		}
+		return true
+	})
+	return last
+}
+
+// directCallbackLoans proves that a directly bound callback finishes all its
+// calls in its declaring block before the next access to the captured owner.
+// In a loop the binding and this interval start again on every iteration.
+func directCallbackLoans(body *ast.Block, escaping map[string]bool) map[string]bool {
+	type binding struct {
+		name  string
+		after []ast.Stmt
+	}
+	callbacks := map[*ast.Lambda]binding{}
+	locals := map[string]int{}
+	lambdas := 0
+	unsupported := false
+	ast.Walk(body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Defer, *ast.FuncDecl:
+			unsupported = true
+		case *ast.Lambda:
+			if x.Once {
+				unsupported = true
+				return false
+			}
+			lambdas++
+			ast.Walk(x.Body, func(inner ast.Node) bool {
+				switch inner.(type) {
+				case *ast.Lambda, *ast.Defer, *ast.FuncDecl:
+					unsupported = true
+				}
+				return !unsupported
+			})
+			return false
+		case *ast.Var:
+			locals[x.Name]++
+		case *ast.Block:
+			for i, stmt := range x.Stmts {
+				if v, ok := stmt.(*ast.Var); ok {
+					if lm, ok := v.Init.(*ast.Lambda); ok {
+						callbacks[lm] = binding{v.Name, x.Stmts[i+1:]}
+					}
+				}
+			}
+		}
+		return true
+	})
+	if unsupported || lambdas == 0 || len(callbacks) != lambdas {
+		return nil
+	}
+	order := IdentOrderOf(body)
+	ended, blocked := map[string]bool{}, map[string]bool{}
+	for lm, callback := range callbacks {
+		for owner := range lambdaFreeNames(lm) {
+			if !escaping[owner] || locals[owner] != 1 || blocked[owner] {
+				continue
+			}
+			ended[owner] = true
+			calls := directCallsBeforeOwner(callback.after, owner)
+			if locals[callback.name] != 1 || len(order.byName[callback.name]) == 0 {
+				blocked[owner] = true
+			}
+			for _, use := range order.byName[callback.name] {
+				if !calls[use] || order.Idx[use] >= order.last[owner] {
+					blocked[owner] = true
+					break
+				}
+			}
+		}
+	}
+	for name := range blocked {
+		delete(ended, name)
+	}
+	return ended
+}
+
+func directCallsBeforeOwner(stmts []ast.Stmt, owner string) map[*ast.Ident]bool {
+	calls := map[*ast.Ident]bool{}
+	for _, stmt := range stmts {
+		switch stmt.(type) {
+		case *ast.Var, *ast.Return, *ast.ExprStmt:
+		default:
+			return calls
+		}
+		if StmtReferencesName(stmt, owner) {
+			return calls
+		}
+		// Stop before an expression introduces a different control-flow region.
+		linear := true
+		ast.Walk(stmt, func(n ast.Node) bool {
+			switch n.(type) {
+			case *ast.Lambda, *ast.BlockExpr, *ast.IfExpr, *ast.MatchExpr:
+				linear = false
+			}
+			return linear
+		})
+		if !linear {
+			return calls
+		}
+		ast.Walk(stmt, func(n ast.Node) bool {
+			if c, ok := n.(*ast.Call); ok && c.Method == nil {
+				if id, ok := c.Callee.(*ast.Ident); ok {
+					calls[id] = true
+				}
+			}
+			return true
+		})
+	}
+	return calls
 }
