@@ -4,11 +4,11 @@ This module validates certificate paths, host names, and TLS signatures.
 
 ## Model
 
-Verification combines trust roots, certificate paths, host names, time, and signature rules. Root metadata can include a distrust time.
+Verification combines trust roots, certificate paths, host names, time, and signature rules. Root metadata can include a distrust time. Trust can instead be a set of pinned SHA-256 fingerprints of leaf certificates: `pinned` makes it, for a server with a self-signed certificate that a person chose to trust.
 
 ## Contracts
 
-A parsed certificate does not confer trust. The verifier must evaluate the requested peer role and name against the selected roots and applicable certificate constraints.
+A parsed certificate does not confer trust. The verifier must evaluate the requested peer role and name against the selected roots and applicable certificate constraints. Pinned trust replaces those checks for a server: the leaf certificate must have a pinned fingerprint, and the TLS handshake still checks that the server holds its key. A leaf that is not pinned gives `NotPinned` with its fingerprint, so a program can show it to a person.
 
 ## Module assembly
 
@@ -125,6 +125,7 @@ pub enum VerifyError {
   DeniedKey(i32),
   WeakKey(i32),
   SearchLimit,
+  NotPinned(string),
 }
 ```
 
@@ -215,6 +216,9 @@ pub function (e: VerifyError) message(): string {
     },
     SearchLimit => {
       return "tls verify: the certificates need too many signature checks to find a path";
+    },
+    NotPinned(fingerprint) => {
+      return "tls verify: the certificate of the server has the SHA-256 fingerprint " + fingerprint + ", which is not pinned";
     }
   }
   return "";
@@ -225,7 +229,10 @@ pub function (e: VerifyError) message(): string {
 
 ```fern
 <<7 pub struct Roots>>=
-pub struct Roots { certs: x509.Certificate[], distrust_after: i64[] }
+// `pins` holds the SHA-256 fingerprints of pinned leaf certificates. When it
+// is not empty, a server is trusted only when its own certificate has one
+// of them, and the certificates and the name do not count.
+pub struct Roots { certs: x509.Certificate[], distrust_after: i64[], pins: u8[][] }
 ```
 
 ### `8 pub function (r: Roots) distrusting(i: i32, after: time.Timestamp): Roots`
@@ -237,7 +244,15 @@ pub function (r: Roots) distrusting(i: i32, after: time.Timestamp): Roots {
 }
 
 pub function no_roots(): Roots {
-  return Roots { certs: [], distrust_after: [] };
+  return Roots { certs: [], distrust_after: [], pins: [] };
+}
+
+// Trust that accepts only a server whose certificate has one of the
+// SHA-256 `fingerprints`, as for a server with a self-signed certificate
+// that a person chose to trust. The chain and the name do not count, but
+// the server must still prove that it holds the key of that certificate.
+pub function pinned(fingerprints: u8[][]): Roots {
+  return Roots { certs: [], distrust_after: [], pins: fingerprints };
 }
 
 pub function roots(ders: u8[][]): Roots {
@@ -251,7 +266,7 @@ pub function roots(ders: u8[][]): Roots {
   for c in out {
     dates = dates.append(0 as i64);
   }
-  return Roots { certs: out, distrust_after: dates };
+  return Roots { certs: out, distrust_after: dates, pins: [] };
 }
 
 pub function roots_from_pem(text: string): Result[Roots, VerifyError] {
@@ -371,7 +386,7 @@ pub function roots_from_dir_excluding(dir: string, removed: string): Result[Root
       }
     }
     if (!disabled) {
-      kept = Roots { certs: kept.certs.append(system.certs[i]), distrust_after: kept.distrust_after.append(system.distrust_after[i]) };
+      kept = Roots { ...kept, certs: kept.certs.append(system.certs[i]), distrust_after: kept.distrust_after.append(system.distrust_after[i]) };
     }
   }
   return Ok(kept);
@@ -891,9 +906,33 @@ function __has(v: string[], x: string): boolean {
 ```fern
 <<19 pub function server(chain: u8[][], roots: Roots, name: string, now: time.Timestamp): Result[x509.Ce...>>=
 pub function server(chain: u8[][], roots: Roots, name: string, now: time.Timestamp): Result[x509.Certificate, VerifyError] {
+  if (roots.pins.len() > 0) {
+    return __pinned_leaf(chain, roots.pins);
+  }
   let certs = __parsed(chain)?;
   __leaf_ok(certs[0], name, now.sec)?;
   return __rooted(certs, roots, now.sec, true);
+}
+
+// The leaf of `chain` when its SHA-256 fingerprint is one of `pins`.
+function __pinned_leaf(chain: u8[][], pins: u8[][]): Result[x509.Certificate, VerifyError] {
+  if (chain.len() == 0) {
+    return Err(EmptyChain);
+  }
+  let fingerprint = crypto.sha256(chain[0]);
+  for pin in pins {
+    if (__same_bytes(pin, fingerprint)) {
+      match (x509.parse(chain[0])) {
+        Ok(leaf) => {
+          return Ok(leaf);
+        },
+        Err(e) => {
+          return Err(Parse(0, e));
+        }
+      }
+    }
+  }
+  return Err(NotPinned(hex.encode(fingerprint)));
 }
 
 pub function client(chain: u8[][], roots: Roots, now: time.Timestamp): Result[x509.Certificate, VerifyError] {
