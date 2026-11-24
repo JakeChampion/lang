@@ -2,9 +2,9 @@
 
 Status: [reference] shipped.
 
-`fern -lint` reports code that compiles and still costs the next reader more
-than it should. It is not the checker: the checker rejects programs that
-cannot run, a lint names a program that runs badly. That split decides
+`fern -lint` reports code that compiles but is hard for the next reader. It
+is not the checker. The checker rejects programs that cannot run, and a lint
+names a program that runs but is badly made. That split decides
 everything else about the design.
 
 Engine: `compiler/lint.fern`. CLI: `run_lint` in `compiler/fern.fern`.
@@ -23,33 +23,34 @@ finding, without the source line and the help.
 A lint sees `parser.parse_module` output and nothing else — no type-check,
 no import resolution, no constant folding.
 
-That buys three things worth more than type information would be:
+That gives three things that are worth more than type information:
 
 - **A broken file still lints.** Type errors and lint findings are usually
   present in the same draft, and a linter that goes quiet exactly when the
   code is at its messiest is a linter nobody runs.
-- **A tree costs one parse per file.** `fern -lint compiler`
-  reads 94 modules in about a second. A `-check`-shaped linter would resolve
-  the whole import graph per entry point.
-- **The desugars have happened, the lowerings have not.** `if let`, `let
-  else`, `assert`, `todo` and range-`for` are already the shapes the
-  compiler works in, so a rule matches one node kind rather than two
-  spellings of it. But the *type-directed* lowerings — `for … in` over an
-  array, over a stream — have NOT run, so a rule still sees the loop the
-  author wrote.
+- **A tree costs one parse per file.** `fern -lint compiler` reads the
+  1,264 files of the tree in about three seconds. A linter in the shape of
+  `-check` resolves the whole import graph for each entry point.
+- **The desugars ran, and the lowerings did not.** `if let`, `let else`,
+  `assert`, `todo` and range-`for` are already in the shapes that the
+  compiler uses. Thus a rule matches one node kind, not two spellings of it.
+  But the *type-directed* lowerings, such as `for … in` over an array or a
+  stream, did NOT run. Thus a rule sees the loop that the author wrote.
 
-A rule that genuinely needs types does not belong here; it belongs in the
-checker, as a warning.
+A rule that needs types does not belong here. It belongs in the checker, as
+a warning.
 
 ## Rules
 
 A rule has a stable kebab-case name, a one-line description, a default
-severity and, optionally, `<rule>.<key>` options. There are three rules today,
-and `lint.Config` holds each one's severity and threshold directly; a new rule
+severity and, optionally, `<rule>.<key>` options. There are three rules.
+`lint.Config` holds the severity and the threshold of each rule.
+
+A new rule
 adds its fields there, an arm to `set_pair` / `set_option`, its run to
 `lint_file`, and its entry to `rules_listing` and `known_rules`. An unknown key
-or an unusable value must error: linting at a default the user did not ask for
-is worse than refusing.
+or an unusable value must give an error. A lint at a default that the user
+did not ask for is worse than a refusal.
 
 `lint_file` applies the `fern-lint:` suppressions, so no rule knows they
 exist.
@@ -58,16 +59,18 @@ exist.
 
 Default: `warn`, `max = 10` (McCabe's own recommendation).
 
-`lint.score` is one for the entry path plus one per fork. The scoring model
-is the whole content of the metric, so `TestSelfHostLintScoreModel` pins every
-entry below — a traversal change that quietly starts or stops counting one of
-them moves every number in the repo gate.
+`lint.score` is one for the entry path plus one for each fork. The scoring
+model is the whole content of the metric, so `TestSelfHostLintScoreModel` pins
+each entry below. A change to the traversal that starts or stops the count of
+one of them moves each number in the repository gate.
 
-The parser has desugared some forms by the time the linter sees them, and the
-score is of the source, not the desugar: a tuple, struct, literal or nested
-pattern match is scored by the arms recorded as written (the `sugar` the
-printer reprints from), a C-style `for` by the loop `printer.as_c_for`
-recovers, and a `todo` not at all.
+The parser desugars some forms before the linter sees them. The score is of
+the source, not of the desugar:
+
+- A tuple, struct, literal or nested pattern match scores the arms as the
+  author wrote them (the `sugar` that the printer prints again).
+- A C-style `for` scores the loop that `printer.as_c_for` recovers.
+- A `todo` scores nothing.
 
 | Construct | Adds |
 |---|---|
@@ -82,9 +85,9 @@ recovers, and a `todo` not at all.
 | `todo` | 0 — a stub marker |
 | `break`, `continue`, `return` | 0 — the fork that created the path already counted |
 
-A lambda's body counts INTO the function that spells it. An inline closure
-is code the reader walks past, so hiding an `if` in one must not make the
-enclosing function read as simpler than it is.
+The body of a lambda counts INTO the function that contains it. The reader
+reads an inline closure as a part of that function. Thus an `if` in a closure
+must not make the function look simpler than it is.
 
 ### change-risk
 
@@ -100,34 +103,44 @@ complexity^2 * (1 - coverage)^3 + complexity
 
 with `complexity` the cyclomatic score above and `coverage` the share of the
 function's instrumented lines the run hit. The two inputs pull in opposite
-directions on purpose: a complex function under test scores about its
-complexity, a simple untested one scores about its complexity, and only
-complex code nobody exercises climbs. Thirty is Savoia's own threshold; the
-formula is a fit to developers' judgements, not a derivation, so the number
-is a convention rather than a measurement.
+directions on purpose. A complex function under test scores about its
+complexity. A simple function with no test also scores about its complexity.
+Only complex code that no test runs climbs.
 
-A function's lines are the rows between its first line and the last line any
-statement or expression in its body starts on (`span_end`). The closing brace
-may sit lower, but no instrumented line can, so the span needs no end marker
-from the parser, and a lambda's rows count into the function that spells it,
-as its forks do. Coverage is by LINE, not branch edge: every statement has a
+Thirty is the threshold of Savoia. The
+formula is a fit to the judgements of developers, not a derivation. Thus the
+number is a convention, not a measurement.
+
+The lines of a function go from its first line to `span_end`. That is the
+last line on which a statement or an expression of its body starts. The
+closing brace can be lower, but no instrumented line can be lower. Thus the
+span needs no end marker from the parser. The rows of a lambda count into the
+function that contains it, as its forks do. Coverage is by LINE, not branch edge: every statement has a
 row, so the denominator is dense and stable, where edges exist only for
 functions with conditionals.
 
-The run names a file as the compile was told it and the lint as it was
-walked, so a run file matches a linted one when spelled identically or when
-one is the other with leading directories added or removed; the longest such
-name wins. The score is computed in integers (`risk_score`), rounded half up,
-so it is the same on every backend.
+The run names a file as the compile got it, and the lint names it as the walk
+found it. Thus a file of the run matches a linted file when the names are the
+same. It also matches when one name is the other with leading directories
+added or removed.
+The longest such name wins. `risk_score` calculates the score in integers,
+rounded half up, so it is the same on each backend.
 
-Five things are deliberately NOT a quiet pass. A function the run holds no
-row for is skipped, because the run never instrumented it (a file outside the
-covered program, say), but a `-lint-cover` file with no rows, one with a row
-that does not parse, one that cannot be read, or one naming none of the
-linted files is a usage error (exit 2) — as is configuring the rule, by
-`[lint]`, `-lint-set` or `-lint-opt`, without giving a run. A rule set to
-`allow` scores nothing, so none of the five applies to it. A gate that can pass with its measurement missing is the one
-the ratchet test guards against, and this rule holds itself to the same bar.
+Five things are deliberately NOT a quiet pass. The rule skips a function that
+has no row in the run, because the run did not instrument it. An example is
+a function in a file outside the covered program. But each of these is a usage error
+(exit 2):
+
+- a `-lint-cover` file with no rows
+- a `-lint-cover` file with a row that does not parse
+- a `-lint-cover` file that cannot be read
+- a `-lint-cover` file that names none of the linted files
+- a configuration of the rule, by `[lint]`, `-lint-set` or `-lint-opt`, with
+  no run
+
+A rule set to `allow` scores nothing, so none of the five applies to it. The
+ratchet test guards against a gate that can pass when its measurement is
+missing, and this rule holds itself to the same bar.
 The repository ratchet does not include this rule: it needs a run of every
 suite, which the gate's one-parse-per-file cost cannot afford.
 
@@ -167,10 +180,10 @@ decrease passes and needs no edit.
 
 ### Why summed distance, and not a count
 
-Counting the functions over the limit is the obvious metric and the wrong
-one. Splitting a 472-fork monster into ten readable 40-fork helpers takes
-that count from **1 to 10** — so a count-based gate reports the single most
-valuable refactor available as a regression, and blocks it.
+The count of the functions over the limit is the obvious metric, and it is
+the wrong one. A split of one 472-fork function into ten readable 40-fork
+helpers takes that count from **1 to 10**. Thus a gate on the count reports
+the most valuable refactor as a regression, and blocks it.
 
 Summed distance calls the same split what it is: **462 down to 300**. It
 keeps falling as the pieces get simpler, all the way to zero, so it is
@@ -186,16 +199,15 @@ line saying why. An exception is reviewable where it applies and invisible in
 a list.
 
 The two numbers treat an `allow` differently, on purpose. It removes a
-function from the EXCESS — that is what the annotation asks for — but not
-from the CEILING, because "this one may exceed the limit" is not "this one
-may be worse than anything here has ever been". So a new 500-fork function
-fails the gate however it is annotated.
+function from the EXCESS, because that is what the annotation asks for. It
+does not remove the function from the CEILING. "This function can go above
+the limit" is not "this function can be worse than any function before it".
+Thus a new 500-fork function fails the gate, whatever its annotation.
 
 The gate is `TestSelfHostRepoComplexityDelta`, which runs
 `compiler/drivers/lint_ratchet_run.fern` over each tree of the base commit and
-of the change. Its excess comes from
-`lint.lint_file` rather than from `lint.score` directly, so an `allow` comment
-in a Fern source exempts a function from the gate exactly as it does from the
-command line — one suppression mechanism, not a second one only the gate
-honours. Each finding carries its score in `Finding.value`, so the gate
+of the change. Its excess comes from `lint.lint_file`, not directly from
+`lint.score`. Thus an `allow` comment in a Fern source exempts a function from
+the gate in the same way as from the command line. There is one suppression
+mechanism, not a second one that only the gate obeys. Each finding carries its score in `Finding.value`, so the gate
 compares numbers instead of parsing them back out of prose.
