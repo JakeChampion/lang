@@ -79,7 +79,8 @@ A process that must not leave a secret in a core dump calls `disable_core_dumps`
 
 ### Private keys
 
-The ECDSA and Ed25519 `erase` methods consume one private-key holder.
+`ecdsa.PrivateKey` and `ed25519.PrivateKey` are `@secret`, so the drop of the last holder zeroes their arrays.
+Their `erase` methods consume one private-key holder.
 They erase the secret arrays that this holder owns.
 Other holders retain their arrays through copy-on-write and can still sign.
 The caller must erase the last holder to clear the last shared secret storage.
@@ -88,10 +89,9 @@ The caller must also erase separate input arrays and secret copies.
 The ECDSA and Ed25519 library suites check the shared-holder case.
 They erase an explicit shared holder, then sign and verify with the other holder.
 `TestSelfHostPrimitivesEraseKeyMaterial` checks released secret storage for both private-key types on x86-64 and ARM64 under QEMU.
-Each drop control must leave a stale secret in the scan.
-Each erase control must leave none.
+Each erase run must leave none.
 
-The same test drops a `chacha20poly1305.Key`, an `aes.Cipher`, an `aes_gcm.Key`, a `des.Cipher`, an `hpke.P256Key` and an `mlkem768.KeyPair` without an erase call.
+The same test drops a `chacha20poly1305.Key`, an `aes.Cipher`, an `aes_gcm.Key`, a `des.Cipher`, an `ecdsa.PrivateKey`, an `ed25519.PrivateKey`, an `hpke.P256Key` and an `mlkem768.KeyPair` without an erase call.
 Each of these `@secret` records must leave no secret in the scan.
 
 ## Heap quotas
@@ -137,7 +137,6 @@ go test ./internal/testing/e2ecompiler -run 'TestSelfHostEraseZeroesStorage|Test
 ## Remaining limits
 
 - `erase` takes an array of an element type with a zero. A secret held in a string or in an array of records has no erasure call. A struct without `@secret` that holds a secret array offers one only where its module wrote it.
-- `ed25519.PrivateKey` and `ecdsa.PrivateKey` do not have `@secret`. They have `erase()`, and one that the program drops without that call keeps its bytes. The compiler imports `ecdsa` and `ed25519`, so they can have `@secret` only after the stage0 pin parses two attributes on one declaration.
 - A quota per allocation site, per package, or per request is not defined. The arena quota and the processor time quota are one number each per executable.
 - There is no quota for child processes. `RLIMIT_NPROC` counts the processes of a user, not of a program, and the kernel does not apply it to root.
 - The sanitizer's quarantine keeps a released block until its byte budget evicts it, so under `-sanitize` an erased block stays mapped for a time. That is SEC-024 ([QUARANTINE.md](QUARANTINE.md)).
