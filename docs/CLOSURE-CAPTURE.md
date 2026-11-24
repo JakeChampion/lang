@@ -185,15 +185,22 @@ The conformance cases `a_once_closure_owns_its_captures`, `a_once_function_type_
 
 A callback must finish its resource reads before the owner consumes the resource.
 Both checkers report E050 for direct local callbacks and simple aliases after a captured owner moves.
-The guard requires one lexical definition for each binding it follows.
 An argument cannot consume a captured owner that the call still needs.
 This rule also covers callback literals and their captured callback aliases.
 Selected callback values retain the captures of their `if`, `match`, and block results.
 A local that holds a callback, such as a record with a callback field or the task of `async.spawn`, keeps the loans of that callback.
 It is E050 as a call argument after the captured owner moves.
 The captured owner can be an `own` parameter or a fresh local, and the local can get its callback from a function.
-A fresh local that is assigned again is not such an owner, because the guard follows a binding with one definition only.
 The cases `diag_e050_record_callback_uses_consumed_capture`, `diag_e050_spawned_task_uses_consumed_capture`, `diag_e050_factory_holder_uses_consumed_local` and `diag_e050_task_from_function_uses_consumed_local` cover this rule.
+
+An assignment can give a consumed owner a new value.
+A callback or a holder that is declared before the assignment keeps the consumed value.
+A use of it after the assignment is E050.
+A new definition of the callback, or a declaration after the assignment, holds the new value.
+A loop body that declares its callback makes the callback again in each pass.
+So that loop can consume and assign the owner in each pass.
+The reassignment cases of `internal/check/checker/testdata/callback_result_loans_cases.json` cover this rule.
+
 Reads that only evaluate a condition or a block statement do not extend the returned callback's captures.
 It preserves repeated reads before cleanup and immutable data copies.
 The cases `diag_e050_callback_uses_consumed_capture` and `callback_capture_lifetimes` cover this guard.
@@ -207,7 +214,8 @@ The case `diag_e051_callback_result_holds_a_capture` covers this rule.
 
 This guard does not establish complete capture lifetimes.
 Callback factories and aggregate fields need a broader loan analysis.
-Mutable and shadowed bindings, deferred callbacks, and resource field paths have the same limit.
+A factory summary follows a binding with one definition only.
+Shadowed bindings, deferred callbacks, and resource field paths have the same limit.
 Issue #15328 tracks that remaining work.
 
 ## Cross-compiler parity
