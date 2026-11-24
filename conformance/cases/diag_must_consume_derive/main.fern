@@ -1,0 +1,23 @@
+// spec: MC-12
+// A derived `eq` reads a second value without `own`, so it cannot discharge
+// the obligation of a @must_consume type. `cmp.Default` makes a value and
+// reads none, so it can apply.
+
+import "core/cmp";
+
+@derive(cmp.Default)
+@must_consume
+struct Fresh { id: i32 }
+
+@derive(cmp.Eq)
+@must_consume
+struct Ticket { id: i32 }
+
+function (own f: Fresh) open(): i32 {
+  return f.id;
+}
+
+function main(): i32 {
+  let f = Fresh { id: 0 };
+  return f.open();
+}

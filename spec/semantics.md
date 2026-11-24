@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**162 of 165** claims are pinned by a conformance case. The remaining
+**166 of 169** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -169,8 +169,12 @@ of them.
 | `MC-08` | `docs/MUST-CONSUME.md` | A value that the statements after a `let ... else` consume, and that its else arm consumes, is consumed | `must_consume_let_else` |
 | `MC-09` | `docs/MUST-CONSUME.md` | An else arm of a `let ... else` that leaves the function before it consumes a `@must_consume` value is rejected (`E067`) | `diag_e067_let_else_return` |
 | `MC-10` | `docs/MUST-CONSUME.md` | A match on a struct pattern consumes its subject | `must_consume_struct_pattern` |
+| `MC-11` | `docs/MUST-CONSUME.md` | A receiver without `own` of a `@must_consume` type carries the obligation, so a method that only reads it is rejected (`E067`) | `diag_e067_borrowed_receiver` |
+| `MC-12` | `docs/MUST-CONSUME.md` | `@must_consume` with a derive whose method reads a value without `own` is `P001`, and `cmp.Default` can apply | `diag_must_consume_derive` |
 | `SE-01` | `docs/SECRET-TYPES.md` | A `@secret` record reads its fields like any other record, and an array that another value still holds keeps its elements after the record goes away | `secret_record_keeps_a_shared_array` |
 | `SE-02` | `docs/SECRET-TYPES.md` | `@secret` applies only to a `struct` declaration (`P001`) | `diag_secret_on_a_function` |
+| `SE-03` | `docs/SECRET-TYPES.md` | A struct can have both `@value` and `@secret`, and a value record that another binding holds keeps its bytes after an `own` call releases one holder | `secret_value_record` |
+| `SE-04` | `docs/SECRET-TYPES.md` | An attribute that occurs two times on one declaration is `P001` | `diag_secret_twice` |
 | `WK-01` | `docs/WORKERS.md` | A `send` parameter admits only a send-safe argument; a closure written at the call crosses with send-safe captures and result, and a function value does not (`E100`) | `diag_e100` |
 | `WK-02` | `docs/WORKERS.md` | `worker.spawn` runs its closure once and `join` returns the result, with the same contents on every engine | `worker_spawn_join` |
 | `WK-03` | `docs/WORKERS.md` | A `Worker` is `@must_consume`, so a spawned worker that is not joined is rejected (`E067`) | `diag_e067_worker_unjoined` |

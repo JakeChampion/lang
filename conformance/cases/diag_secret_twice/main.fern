@@ -1,0 +1,11 @@
+// spec: SE-04
+// An attribute can occur one time on a declaration.
+
+@secret
+@secret
+struct Key { bytes: u8[] }
+
+function main(): i32 {
+  let k = Key { bytes: [1u8] };
+  return k.bytes.len() - 1;
+}

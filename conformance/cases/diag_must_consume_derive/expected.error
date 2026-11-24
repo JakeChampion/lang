@@ -1,0 +1,1 @@
+@must_consume and @derive(cmp.Eq) cannot apply to one declaration, because the derived method reads a value that it does not consume

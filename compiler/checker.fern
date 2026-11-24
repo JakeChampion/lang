@@ -10252,6 +10252,12 @@ function mc_for_bindings(fr: ast.StmtFor, body: Scope, structs: parser.StructDec
 
 function must_consume_diags(fn: parser.FuncDecl, s: Scope, structs: parser.StructDecl[], enums: parser.EnumDecl[]): util.Diag[] {
   let out: util.Diag[] = [];
+  if (fn.receiver_name.len() > 0 && !fn.receiver_own) {
+    let rn = mc_marked_type_name(fn.receiver_type, structs, enums);
+    if (rn.len() > 0) {
+      out = util.append_diags(out, mc_check_binding(fn.body, 0, fn.receiver_name, rn, fn.line, fn.col, structs, enums));
+    }
+  }
   for p in fn.params {
     if (!p.own) {
       let tn = mc_marked_type_name(p.type_name, structs, enums);

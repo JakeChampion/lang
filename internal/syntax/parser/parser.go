@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -360,48 +361,27 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			continue
 		}
-		var derives []string
-		var importIface, importWIT string
-		importWeak := false
-		var exportIface, exportWIT string
-		var jniClass, jniDecl string
-		mustConsume := false
-		tryMarker := false
-		inlineHint := ast.InlineHintNone
-		attrName := ""
-		provides := ""
-		noRC := false
-		interrupt := ""
-		early := false
-		secondary := false
-		if p.match(lexer.Punct, "@") {
-			attr, err := p.parseAttribute()
-			if err != nil {
-				p.errors = append(p.errors, err)
-				p.syncToTopLevel()
-				if p.i == before {
-					p.advance()
-				}
-				continue
+		attr, attrNames, err := p.parseAttributes()
+		if err != nil {
+			p.errors = append(p.errors, err)
+			p.syncToTopLevel()
+			if p.i == before {
+				p.advance()
 			}
-			derives = attr.derives
-			importIface = attr.importIface
-			importWIT = attr.importWIT
-			importWeak = attr.importWeak
-			exportIface = attr.exportIface
-			exportWIT = attr.exportWIT
-			jniClass = attr.jniClass
-			jniDecl = attr.jniDecl
-			mustConsume = attr.mustConsume
-			tryMarker = attr.tryMarker
-			inlineHint = attr.inlineHint
-			attrName = attr.name
-			provides = attr.provides
-			noRC = attr.noRC
-			interrupt = attr.interrupt
-			early = attr.early
-			secondary = attr.secondary
+			continue
 		}
+		derives := attr.derives
+		importIface, importWIT, importWeak := attr.importIface, attr.importWIT, attr.importWeak
+		exportIface, exportWIT := attr.exportIface, attr.exportWIT
+		jniClass, jniDecl := attr.jniClass, attr.jniDecl
+		mustConsume := attr.mustConsume
+		tryMarker := attr.tryMarker
+		inlineHint := attr.inlineHint
+		provides := attr.provides
+		noRC := attr.noRC
+		interrupt := attr.interrupt
+		early := attr.early
+		secondary := attr.secondary
 		isPub := false
 		isPackage := false
 		if p.match(lexer.Keyword, "pub") {
@@ -426,8 +406,8 @@ func (p *parser) parseProgram() *ast.Program {
 				isPackage = true
 			}
 			if p.match(lexer.Keyword, "use") {
-				if attrName != "" {
-					p.errors = append(p.errors, p.errorfCode(p.peek().Pos, "P001", "%s", attrMisplaced(attrName)))
+				if len(attrNames) > 0 {
+					p.errors = append(p.errors, p.errorfCode(p.peek().Pos, "P001", "%s", attrMisplaced(attrNames[0])))
 					p.syncToTopLevel()
 					continue
 				}
@@ -513,8 +493,8 @@ func (p *parser) parseProgram() *ast.Program {
 		} else if p.peek().Kind == lexer.Keyword {
 			declKind = p.peek().Text
 		}
-		if !attrFits(attrName, declKind) {
-			p.errors = append(p.errors, p.errorfCode(p.peek().Pos, "P001", "%s", attrMisplaced(attrName)))
+		if misfit := firstMisfit(attrNames, declKind); misfit != "" {
+			p.errors = append(p.errors, p.errorfCode(p.peek().Pos, "P001", "%s", attrMisplaced(misfit)))
 			p.syncToTopLevel()
 			if p.i == before {
 				p.advance()
@@ -553,8 +533,8 @@ func (p *parser) parseProgram() *ast.Program {
 				sd.PackageScoped = isPackage
 				sd.Derives = derives
 				sd.MustConsume = mustConsume
-				sd.ValueType = attrName == "value"
-				sd.Secret = attrName == "secret"
+				sd.ValueType = slices.Contains(attrNames, "value")
+				sd.Secret = slices.Contains(attrNames, "secret")
 				sd.Opaque = isOpaque
 				prog.Structs = append(prog.Structs, sd)
 			}
@@ -1195,6 +1175,114 @@ type declAttr struct {
 	interrupt   string
 	early       bool
 	secondary   bool
+}
+
+// parseAttributes reads the attributes before a declaration. It returns them
+// merged into one declAttr, with their names in source order.
+func (p *parser) parseAttributes() (declAttr, []string, error) {
+	var merged declAttr
+	var names []string
+	for p.match(lexer.Punct, "@") {
+		at := p.peek()
+		attr, err := p.parseAttribute()
+		if err != nil {
+			return declAttr{}, nil, err
+		}
+		if msg := attrConflict(names, merged.derives, attr); msg != "" {
+			return declAttr{}, nil, p.errorfCode(at.Pos, "P001", "%s", msg)
+		}
+		names = append(names, attr.name)
+		merged = mergeAttr(merged, attr)
+	}
+	return merged, names, nil
+}
+
+// attrConflictGroups lists sets of attributes. Two attributes of one set
+// cannot apply to one declaration together.
+var attrConflictGroups = [][]string{
+	{"import", "export", "jni", "callback"},
+	{"inline", "noinline"},
+	{"value", "must_consume"},
+	{"norc", "interrupt", "early", "secondary"},
+}
+
+// attrConflict returns the P001 message when the attribute next cannot follow
+// the attributes in names and the derives already read, or an empty string.
+func attrConflict(names, derives []string, nextAttr declAttr) string {
+	next := nextAttr.name
+	var marked []string
+	if next == "must_consume" {
+		marked = derives
+	} else if next == "derive" && slices.Contains(names, "must_consume") {
+		marked = nextAttr.derives
+	}
+	for _, d := range marked {
+		if derivedMethodReadsValue(d) {
+			return "@must_consume and @derive(" + d + ") cannot apply to one declaration, because the derived method reads a value that it does not consume"
+		}
+	}
+	for _, n := range names {
+		if n == next {
+			return "@" + next + " appears twice on one declaration"
+		}
+		for _, group := range attrConflictGroups {
+			if slices.Contains(group, n) && slices.Contains(group, next) {
+				return "@" + n + " and @" + next + " cannot apply to one declaration"
+			}
+		}
+	}
+	return ""
+}
+
+// derivedMethodReadsValue reports whether the derive d makes a method that
+// takes a value of the type without `own`.
+func derivedMethodReadsValue(d string) bool {
+	switch d[strings.LastIndex(d, ".")+1:] {
+	case "Default", "FromJson":
+		return false
+	}
+	return true
+}
+
+func mergeAttr(acc, a declAttr) declAttr {
+	if a.derives != nil {
+		acc.derives = a.derives
+	}
+	if a.importIface != "" {
+		acc.importIface, acc.importWIT, acc.importWeak = a.importIface, a.importWIT, a.importWeak
+	}
+	if a.exportIface != "" {
+		acc.exportIface, acc.exportWIT = a.exportIface, a.exportWIT
+	}
+	if a.jniClass != "" {
+		acc.jniClass, acc.jniDecl = a.jniClass, a.jniDecl
+	}
+	if a.inlineHint != ast.InlineHintNone {
+		acc.inlineHint = a.inlineHint
+	}
+	if a.provides != "" {
+		acc.provides = a.provides
+	}
+	if a.interrupt != "" {
+		acc.interrupt = a.interrupt
+	}
+	acc.mustConsume = acc.mustConsume || a.mustConsume
+	acc.tryMarker = acc.tryMarker || a.tryMarker
+	acc.noRC = acc.noRC || a.noRC
+	acc.early = acc.early || a.early
+	acc.secondary = acc.secondary || a.secondary
+	return acc
+}
+
+// firstMisfit returns the first attribute in names that does not apply to a
+// declaration of kind, or an empty string.
+func firstMisfit(names []string, kind string) string {
+	for _, n := range names {
+		if !attrFits(n, kind) {
+			return n
+		}
+	}
+	return ""
 }
 
 func (p *parser) parseAttribute() (declAttr, error) {

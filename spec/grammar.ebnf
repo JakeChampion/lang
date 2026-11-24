@@ -20,6 +20,9 @@ UseNames    = IDENT { ',' IDENT } [ ',' ] ;
 
 # @value has no arguments and applies only to a struct declaration.
 # The checked field and copyability rules are in docs/VALUE-TYPES.md.
+# A declaration can have several attributes. The parser refuses a repeated
+# attribute and the conflicting sets that
+# site/src/content/docs/reference/syntax.md lists.
 Attribute   = '@' ( 'import' | IDENT ) [ '(' [ AttrArgs ] ')' ] ;
 AttrArgs    = AttrArg { ',' AttrArg } [ ',' ] ;
 AttrArg     = STRING | NUMBER | QualName ;

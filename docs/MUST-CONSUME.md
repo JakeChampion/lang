@@ -77,6 +77,11 @@ it claims:
    so it is a consuming use: the obligation moves to the method, which
    is tracked like any callee (a consuming receiver is the declared
    sink).
+   A receiver without `own` carries the obligation into the method,
+   as a parameter without `own` does, so the method must consume it.
+   A derived method that reads a value of the type cannot consume it,
+   so `@must_consume` with such a derive is `P001`. `cmp.Default` and
+   `json.FromJson` make a value and read none, so they can apply.
 3. Storing into an UNMARKED container is reported as a violation
    at the store site ("obligation laundered into unmarked type") —
    this keeps slice 1 sound without inter-type obligation flow.

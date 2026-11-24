@@ -1,0 +1,21 @@
+// spec: SE-03
+// A struct can have both `@value` and `@secret`. The record keeps the copy
+// contract of a value record, and its drop wipes only the arrays that it
+// holds alone, so the other holder keeps its bytes.
+
+@value
+@secret
+struct Key { bytes: u8[], id: i32 }
+
+function first(own k: Key): i32 {
+  return k.bytes[0] as i32;
+}
+
+function main(): i32 {
+  let k = Key { bytes: [7u8, 9u8], id: 3 };
+  let alias = k;
+  print("first " + first(k).to_string());
+  print("alias " + alias.id.to_string() + " reads " + alias.bytes[1].to_string());
+  print("key reads " + k.bytes[0].to_string());
+  return 0;
+}
