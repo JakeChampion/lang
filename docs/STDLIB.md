@@ -87,12 +87,12 @@ For dimensions supplied at runtime, use `ndarray.try_from_flat`,
 invalid dimensions. The shorter `from_flat` and `reshape` require valid
 dimensions and abort on a mismatch. See the [ndarray contracts and examples](../internal/stdlib/std/ndarray.fern.md).
 
-Regex patterns are checked by `regex.compile`, which returns
-`Result[Regex, CompileError]`. Search and replacement methods use the compiled
-receiver. Text outputs return `Result` for invalid UTF-8; capture accessors
-also use `Option` to distinguish absence from a matched empty string.
-`peg.new` validates grammar references with `GrammarError`; `peg.parse` and
-`peg.parse_pattern` report input failures with `ParseError`.
+`regex.compile` checks a pattern and returns `Result[Regex, CompileError]`.
+Search and replacement methods use the compiled receiver. Text outputs return
+`Result` for invalid UTF-8. Capture accessors also use `Option` to
+distinguish absence from a matched empty string. `peg.grammar` checks the
+rule references of a grammar and gives a `GrammarError` for a missing rule.
+`peg.parse` and `peg.parse_pattern` report input failures with `PegError`.
 
 
 ## Text and bytes
@@ -118,7 +118,8 @@ It checks dimensions and buffer length before allocation and returns a typed enc
 `std/png.encode_rgba8` encodes RGBA quadruples, with the alpha as the fourth byte of each pixel.
 `encode_rgb8_with_options` and `encode_rgba8_with_options` accept `png.Options` for filters and compression.
 `png.options()` selects `Filter.Unfiltered` and `Compression.Balanced`, which preserve the original output.
-Available filters are `Unfiltered`, `Sub`, `Up`, `Average`, `Paeth`, and `Adaptive`.
+
+The filters are `Unfiltered`, `Sub`, `Up`, `Average`, `Paeth`, and `Adaptive`.
 `Adaptive` selects a filter for each row by the sum of absolute signed residuals.
 `Compression.Fast` uses a greedy compressor with one candidate per match.
 All modes preserve the input pixels.
