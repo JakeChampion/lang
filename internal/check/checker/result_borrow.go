@@ -301,6 +301,9 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 		}
 	}
 	switch x := e.(type) {
+	case *ast.TryOp:
+		// Both the unwrapped value and the propagated error come from inner.
+		return c.exprBorrows(x.Inner, b)
 	case nil:
 		return false
 	case *ast.Lambda:

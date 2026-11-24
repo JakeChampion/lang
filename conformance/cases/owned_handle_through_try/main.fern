@@ -1,0 +1,39 @@
+// spec: OR-01
+
+import "std/result";
+
+struct Handle { n: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.n;
+}
+
+struct Held { h: Handle }
+
+function made(name: string): Result[Held, string] {
+  if (name == "error") {
+    return Err("error");
+  }
+  return Ok(Held { h: Handle { n: 7 } });
+}
+
+function opened(name: string): Result[Option[Held], string] {
+  if (name == "") {
+    return Ok(None);
+  }
+  return Ok(Some(made(name)?));
+}
+
+function use_handle(name: string): Result[i32, string] {
+  if let Some(value) = opened(name)? {
+    return Ok(value.h.close());
+  }
+  return Ok(0);
+}
+
+function main(): i32 {
+  print(use_handle("file").unwrap_or(-1));
+  print(use_handle("").unwrap_or(-1));
+  print(use_handle("error").unwrap_or(-1));
+  return 0;
+}
