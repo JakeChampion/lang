@@ -180,7 +180,7 @@ print(s.getsockname()[1])'
 # The body the interop origins code on /gzip.
 GZIP_TEXT="$(python3 -c 'print("hello gzip " * 30, end="")')"
 
-# h2o_config PORT — the lane's h2o origin on PORT, written to
+# h2o_config PORT [TLS_CERT_PREFIX] — the lane's h2o origin on PORT, written to
 # $work/h2o.conf: "hello" on every path net-bench loads, and the targets
 # scripts/net-interop reads on paths of their own, so the hello path
 # stays the one net-bench measures. /gzip alone is coded on the fly.
@@ -191,6 +191,18 @@ h2o_config() {
 listen:
   host: 127.0.0.1
   port: $1
+EOF
+  if [ -n "${2:-}" ]; then
+    cat >> "$work/h2o.conf" <<EOF
+  ssl:
+    certificate-file: $2.pem
+    key-file: $2.key
+    min-version: TLSv1.3
+ssl-session-resumption:
+  mode: off
+EOF
+  fi
+  cat >> "$work/h2o.conf" <<EOF
 num-threads: $(nproc)
 max-connections: 16384
 hosts:
