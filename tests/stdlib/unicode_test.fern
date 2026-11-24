@@ -146,6 +146,21 @@ function test_composition(): test.TestOutcome {
   return test.assert_eq(got.map((n: i32): string => n.to_string()).join(" "), "2345 0 1574 0 44032");
 }
 
+// The lookups that use a page index, at the first and the last code point
+// of a page, at the last row of a table, and above the pages of the index.
+function test_page_edges(): test.TestOutcome {
+  let marks = [0x2FF, 0x300, 0x36F, 0x370, 0x37F, 0x380, 0xE00FF, 0xE0100, 0xE01EF, 0xE01F0, 0x10FFFF].map((c: i32): string => if ((c as char).is_mark()) { "1" } else { "0" });
+  let classes = [0x300, 0x37F, 0x1E94A, 0x1E94B, 0x2F800, 0x10FFFF].map((c: i32): string => unicode.combining_class(c as char).to_string());
+  let show = (c: i32): string => unicode.decomposition(c as char).map((d: char): string => (d as i32).to_string()).join(" ");
+  let step = (c: i32): string => unicode.decomposition_step(c as char).map((d: char): string => (d as i32).to_string()).join(" ");
+  let parts = [show(0x7F), show(0x80), show(0xC0), show(0xFF), show(0x100), show(0x2F800), show(0x2FA1D), show(0x2FA1E), show(0x10FFFF), step(0xFF), step(0x2FA1D), step(0x10FFFF)];
+  let pairs = [unicode.composition('y', '\u{308}'), unicode.composition('\u{11935}', '\u{11930}'), unicode.composition('\u{10FFFF}', '\u{308}'), unicode.composition('\u{7F}', '\u{300}')].map((n: i32): string => n.to_string());
+  return test.assert_eq(
+    marks.join("") + "|" + classes.join(" ") + "|" + parts.join(",") + "|" + pairs.join(" "),
+    "01100001100|230 0 7 0 0 0|127,128,65 768,121 776,65 772,20029,173568,195102,1114111,121 776,173568,1114111|255 71992 0 0",
+  );
+}
+
 // Beh is dual joining, alef right joining, the tatweel join causing and the
 // fatha transparent. A Latin letter and the hamza do not join. The Syriac
 // letter alaph is right joining and the Mongolian letter a is dual joining.
@@ -256,6 +271,7 @@ function main(): i32 {
   r = r.it("decomposition", test_decomposition);
   r = r.it("decomposition_step", test_decomposition_step);
   r = r.it("composition", test_composition);
+  r = r.it("page edges", test_page_edges);
   r = r.it("joining_type", test_joining_type);
   r = r.it("is_digit", test_is_digit);
   r = r.it("is_alphanumeric/space", test_is_alnum_whitespace);
