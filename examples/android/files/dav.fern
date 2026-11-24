@@ -1,0 +1,354 @@
+// The WebDAV client of Fern Files: a folder of a WebDAV server, such as
+// Nextcloud or the WebDAV service of a NAS. A PROPFIND lists a folder, GET
+// with a range reads a part of a file, and PUT writes a file whole.
+// Each operation is one request, like each operation of the SMB client.
+import "std/base64";
+import "std/fetch";
+import "std/http";
+import "std/i32";
+import "std/i64";
+import "std/option";
+import "std/result";
+import "std/string";
+import "std/time";
+import "std/url";
+import "std/utf8";
+import "./smb";
+
+// A WebDAV server: the address of its top folder, such as
+// https://nas.local:5006/home, and the user and the password.
+pub struct Server { url: string, user: string, password: string }
+
+// The body of a PROPFIND that asks for the properties that a list needs.
+const PROPFIND: string = "<?xml version=\"1.0\" encoding=\"utf-8\"?><d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/></d:prop></d:propfind>";
+
+// The most bytes of a reply: a part of a file of store.STEP bytes, or a
+// list of a large folder.
+const MOST_BODY: i32 = 16777216;
+
+// The address of `path` below the top folder of `s`. Each part of the
+// path is encoded on its own, so a slash in a name cannot occur.
+pub function address(s: Server, path: string): string {
+  let top = if (s.url.ends_with("/")) { s.url.take(s.url.len() - 1) } else { s.url };
+  let parts = path.split("/").filter((p: string): boolean => p.len() > 0).map((p: string): string => url.encode(p));
+  return if (parts.len() == 0) { top + "/" } else { top + "/" + parts.join("/") };
+}
+
+// The path part of an address or of an href, decoded, with no slash at
+// its end: "https://nas/dav/a%20b/" gives "/dav/a b".
+pub function path_part(href: string): string {
+  let rest = href;
+  if let Some((_, after)) = href.split_once("://") {
+    rest = match (after.index_of("/")) {
+      Some(at) => after.drop(at),
+      None => "/",
+    };
+  }
+  let clean = match (rest.index_of("?")) {
+    Some(at) => rest.take(at),
+    None => rest,
+  };
+  let decoded = url.decode(clean);
+  return if (decoded.len() > 1 && decoded.ends_with("/")) { decoded.take(decoded.len() - 1) } else { decoded };
+}
+
+// The request `method` to `path` of `s`, with the password of `s`.
+function asked(s: Server, method: string, path: string): fetch.Request {
+  let limits = http.HttpLimits { ...http.limits(), body: MOST_BODY };
+  let req = fetch.request(method, address(s, path)).with_limits(limits).with_redirects(0);
+  if (s.user.len() > 0) {
+    req = req.with_header("Authorization", "Basic " + base64.encode((s.user + ":" + s.password).bytes()));
+  }
+  return req;
+}
+
+// The text of a failed request.
+pub function status_text(code: i32): string {
+  return match (code) {
+    401 => "The server refused the user or the password.",
+    403 => "The server does not let this user do that.",
+    404 => "The server has no such file or folder.",
+    405 => "The server does not let this happen here.",
+    409 => "The folder of this item is not on the server.",
+    412 => "An item with that name is on the server.",
+    423 => "The item is locked on the server.",
+    507 => "The server is full.",
+    _ => "The server answered " + code.to_string() + ".",
+  };
+}
+
+// The reply of `req`, or the text of its failure. A status that is not in
+// `wanted` is a failure.
+function sent(req: fetch.Request, wanted: i32[]): Result[HttpResponse, string] {
+  let reply = match (fetch.send(req)) {
+    Ok(r) => r,
+    Err(e) => {
+      return Err("The server did not answer: " + e.message());
+    },
+  };
+  if (!wanted.contains(reply.status)) {
+    return Err(status_text(reply.status));
+  }
+  return Ok(reply);
+}
+
+// The entries of the folder `path`.
+pub function list(s: Server, path: string): Result[smb.Entry[], string] {
+  let req = asked(s, "PROPFIND", path + "/").with_header("Depth", "1").with_header("Content-Type", "application/xml; charset=utf-8").with_text(PROPFIND);
+  let reply = sent(req, [207])?;
+  return Ok(entries(utf8.from_bytes_lossy(reply.body.bytes()), path_part(address(s, path))));
+}
+
+// At most `n` bytes of the file `path` from `offset`, and the size of the
+// file.
+pub function read(s: Server, path: string, offset: i64, n: i32): Result[smb.Part, string] {
+  let last = offset + n as i64 - 1i64;
+  let req = asked(s, "GET", path).with_header("Range", "bytes=" + offset.to_string() + "-" + last.to_string());
+  let reply = sent(req, [200, 206, 416])?;
+  if (reply.status == 416) {
+    let size = total_of(reply.headers.get("Content-Range").unwrap_or("")).unwrap_or(offset);
+    return Ok(smb.Part { data: [], size: size });
+  }
+  let body = reply.body.bytes();
+  if (reply.status == 206) {
+    let size = total_of(reply.headers.get("Content-Range").unwrap_or("")).unwrap_or(offset + body.len() as i64);
+    return Ok(smb.Part { data: body, size: size });
+  }
+  // A server that ignores the range gives the whole file.
+  let from = offset.min(body.len() as i64) as i32;
+  let to = (from + n).min(body.len());
+  return Ok(smb.Part { data: body.drop(from).take(to - from), size: body.len() as i64 });
+}
+
+// The size of the whole file in a Content-Range value, such as
+// "bytes 0-99/1234" or "bytes */1234".
+pub function total_of(range: string): Option[i64] {
+  let (_, total) = range.rsplit_once("/")?;
+  return i64.parse_i64(total.trim()).ok();
+}
+
+// Writes `data` as the whole file `path`. WebDAV writes a file whole, so a
+// write at an offset other than 0 is an error.
+pub function write(s: Server, path: string, offset: i64, data: u8[]): Result[void, string] {
+  if (offset != 0i64) {
+    return Err("A WebDAV server takes a file whole.");
+  }
+  let reply = sent(asked(s, "PUT", path).with_bytes(data), [200, 201, 204])?;
+  return Ok(());
+}
+
+// Sends the file `local` of the phone as the file `path`, without reading
+// all of it into memory.
+pub function put_file(s: Server, path: string, local: string): Result[void, string] {
+  let reply = sent(asked(s, "PUT", path).with_body(BodyFile(local)), [200, 201, 204])?;
+  return Ok(());
+}
+
+// Makes the folder `path`.
+pub function make_dir(s: Server, path: string): Result[void, string] {
+  let reply = sent(asked(s, "MKCOL", path), [201])?;
+  return Ok(());
+}
+
+// Deletes the file or the folder `path`, with what it holds.
+pub function remove(s: Server, path: string): Result[void, string] {
+  let reply = sent(asked(s, "DELETE", path), [200, 204])?;
+  return Ok(());
+}
+
+// Renames `from` to `to`. An item that has the name `to` stays.
+pub function rename(s: Server, from: string, to: string): Result[void, string] {
+  let req = asked(s, "MOVE", from).with_header("Destination", address(s, to)).with_header("Overwrite", "F");
+  let reply = sent(req, [201, 204])?;
+  return Ok(());
+}
+
+// A part of an XML text: a start tag, an end tag, or text. A tag has its
+// local name, with no prefix of a namespace. An empty element gives a
+// start tag and an end tag.
+enum Token { Start(string), End(string), Text(string) }
+
+// The tokens of `xml`. Comments, declarations and processing instructions
+// give no token.
+function tokens(xml: string): Token[] {
+  let out: Token[] = [];
+  let at = 0;
+  let n = xml.len();
+  while (at < n) {
+    let Some(lt) = xml.drop(at).index_of("<") else {
+      out = out.append(Text(xml.drop(at).to_owned()));
+      break;
+    };
+    if (lt > 0) {
+      out = out.append(Text(xml.slice_snap(at, at + lt).to_owned()));
+    }
+    let open = at + lt;
+    if (xml.drop(open).starts_with("<![CDATA[")) {
+      let end = xml.drop(open).index_of("]]>").unwrap_or(n - open);
+      out = out.append(Text(entities_kept(xml.slice_snap(open + 9, open + end))));
+      at = open + end + 3;
+      continue;
+    }
+    let Some(gt) = xml.drop(open).index_of(">") else {
+      break;
+    };
+    let inner = xml.slice_snap(open + 1, open + gt);
+    at = open + gt + 1;
+    if (inner.starts_with("?") || inner.starts_with("!")) {
+      continue;
+    }
+    if (inner.starts_with("/")) {
+      out = out.append(End(local(inner.drop(1))));
+      continue;
+    }
+    let name = local(inner);
+    out = out.append(Start(name));
+    if (inner.ends_with("/")) {
+      out = out.append(End(name));
+    }
+  }
+  return out;
+}
+
+// CDATA text is kept as it is, so its entities stay. `decoded` turns
+// "&amp;" into "&", so the text here gets "&amp;" in place of each "&".
+function entities_kept(text: string): string {
+  return text.replace("&", "&amp;");
+}
+
+// The local name of the tag whose text is `inner`: the name with no
+// prefix, no attributes and no slash.
+function local(inner: string): string {
+  let name = inner.trim();
+  for stop in [" ", "\t", "\n", "\r", "/"] {
+    if let Some(at) = name.index_of(stop) {
+      name = name.take(at);
+    }
+  }
+  return match (name.rsplit_once(":")) {
+    Some((_, after)) => after.to_owned(),
+    None => name.to_owned(),
+  };
+}
+
+// The text `text` with its XML entities as characters.
+pub function decoded(text: string): string {
+  let out = "";
+  let rest = text;
+  while (true) {
+    let Some(amp) = rest.index_of("&") else {
+      return out + rest;
+    };
+    out += rest.take(amp);
+    rest = rest.drop(amp);
+    let Some(semi) = rest.index_of(";") else {
+      return out + rest;
+    };
+    let name = rest.slice_snap(1, semi);
+    let one = match (name) {
+      "amp" => "&",
+      "lt" => "<",
+      "gt" => ">",
+      "quot" => "\"",
+      "apos" => "'",
+      _ => numbered(name),
+    };
+    if (one.len() == 0) {
+      out += "&";
+      rest = rest.drop(1);
+    } else {
+      out += one;
+      rest = rest.drop(semi + 1);
+    }
+  }
+  return out;
+}
+
+// The character of a numeric entity such as "#233" or "#xE9", or "".
+function numbered(name: string): string {
+  if (!name.starts_with("#")) {
+    return "";
+  }
+  let digits = name.drop(1);
+  let value = if (digits.starts_with("x") || digits.starts_with("X")) { i32.parse_i32_radix(digits.drop(1), 16) } else { i32.parse_i32(digits) };
+  let Ok(code) = value else {
+    return "";
+  };
+  let Some(ch) = utf8.char_from_i32(code) else {
+    return "";
+  };
+  return utf8.encode(ch);
+}
+
+// One response of a multistatus: its href and its properties.
+struct Found { href: string, dir: boolean, size: i64, modified: i64 }
+
+// The entries of a PROPFIND multistatus `xml` for the folder whose path
+// is `folder`. The folder itself is not an entry.
+pub function entries(xml: string, folder: string): smb.Entry[] {
+  let found: Found[] = [];
+  let open: string[] = [];
+  let now = Found { href: "", dir: false, size: 0i64, modified: 0i64 };
+  let within = false;
+  for t in tokens(xml) {
+    match (t) {
+      Start(name) => {
+        if (name == "response") {
+          now = Found { href: "", dir: false, size: 0i64, modified: 0i64 };
+          within = true;
+        }
+        if (within && name == "collection" && open.contains("resourcetype")) {
+          now = Found { ...now, dir: true };
+        }
+        open = open.append(name);
+      },
+      End(name) => {
+        if (name == "response" && within) {
+          found = found.append(now);
+          within = false;
+        }
+        if (open.len() > 0) {
+          open = open.take(open.len() - 1);
+        }
+      },
+      Text(text) => {
+        if (!within || open.len() == 0) {
+          continue;
+        }
+        let value = decoded(text.trim());
+        match (open[open.len() - 1]) {
+          "href" => {
+            now = Found { ...now, href: now.href + value };
+          },
+          "getcontentlength" => {
+            now = Found { ...now, size: i64.parse_i64(value).unwrap_or(0i64) };
+          },
+          "getlastmodified" => {
+            let at = match (time.http_date_parse(value)) {
+              Ok(stamp) => stamp.sec,
+              Err(_) => 0i64,
+            };
+            now = Found { ...now, modified: at };
+          },
+          _ => {}
+        }
+      }
+    }
+  }
+  let here = path_part(folder);
+  let out: smb.Entry[] = [];
+  for f in found {
+    let path = path_part(f.href);
+    if (path == here || path.len() == 0) {
+      continue;
+    }
+    let name = match (path.rsplit_once("/")) {
+      Some((_, last)) => last.to_owned(),
+      None => path,
+    };
+    if (name.len() > 0) {
+      out = out.append(smb.Entry { name: name, dir: f.dir, size: if (f.dir) { 0i64 } else { f.size }, modified: f.modified });
+    }
+  }
+  return out;
+}

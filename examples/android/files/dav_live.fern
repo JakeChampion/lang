@@ -1,0 +1,105 @@
+// Checks the WebDAV client against a real server. FILES_DAV_SERVER holds
+// the address of the top folder, the user and the password, with spaces
+// between them. scripts/files-dav-check runs this program against
+// wsgidav.
+import "std/result";
+import "std/string";
+import "std/test";
+import "std/utf8";
+import "./dav";
+import "./smb";
+
+function server(): dav.Server {
+  let parts = env("FILES_DAV_SERVER").unwrap_or("").split(" ");
+  if (parts.len() != 3) {
+    return dav.Server { url: "", user: "", password: "" };
+  }
+  return dav.Server { url: parts[0], user: parts[1], password: parts[2] };
+}
+
+function all(outcomes: test.TestOutcome[]): test.TestOutcome {
+  for outcome in outcomes {
+    if let test.Fail(_) = outcome {
+      return outcome;
+    }
+  }
+  return test.pass();
+}
+
+function test_wrong_password(): test.TestOutcome {
+  let s = server();
+  match (dav.list(dav.Server { ...s, password: s.password + "x" }, "")) {
+    Ok(_) => {
+      return test.fail("the server took a wrong password");
+    },
+    Err(e) => {
+      return test.assert_eq(e, "The server refused the user or the password.");
+    }
+  }
+}
+
+// A file goes up from memory and from a file, shows in the list with its
+// size, and comes back in parts.
+function test_round_trip(): test.TestOutcome {
+  let s = server();
+  let Ok(dir) = temp_dir("fern-files-dav") else {
+    return test.fail("no temp dir");
+  };
+  let data: u8[] = [];
+  for i in 0..65536 {
+    data = data.append((i * 7 % 251) as u8);
+  }
+  while (data.len() < 3000000) {
+    data = data.concat(data);
+  }
+  let big = data.take(3000000);
+  let wrote = write_file_bytes(dir + "/up.bin", big).is_ok();
+  let made = dav.make_dir(s, "live");
+  let small = dav.write(s, "live/note.txt", 0i64, "Fern & WebDAV".bytes());
+  let sent = dav.put_file(s, "live/Ünï up.bin", dir + "/up.bin");
+  let removed = remove_dir_all(dir);
+  let listed = dav.list(s, "live").unwrap_or([]);
+  let shown = listed.map((e: smb.Entry): string => e.name + ":" + e.size.to_string()).join(",");
+  let middle = dav.read(s, "live/Ünï up.bin", 1000000i64, 65536);
+  let end = dav.read(s, "live/Ünï up.bin", 2999990i64, 65536);
+  let past = dav.read(s, "live/Ünï up.bin", 3000000i64, 65536);
+  let text = dav.read(s, "live/note.txt", 0i64, 100).map((p: smb.Part): string => utf8.from_bytes_lossy(p.data)).unwrap_or("");
+  return all([
+    test.assert_eq(wrote && made.is_ok() && small.is_ok() && sent.is_ok(), true),
+    test.assert_eq(listed.len(), 2),
+    test.assert_eq(shown.contains("Ünï up.bin:3000000") && shown.contains("note.txt:13"), true),
+    test.assert_eq(middle.map((p: smb.Part): boolean => p.data == big.drop(1000000).take(65536) && p.size == 3000000i64).unwrap_or(false), true),
+    test.assert_eq(end.map((p: smb.Part): boolean => p.data == big.drop(2999990)).unwrap_or(false), true),
+    test.assert_eq(past.map((p: smb.Part): i32 => p.data.len()).unwrap_or(-1), 0),
+    test.assert_eq(text, "Fern & WebDAV"),
+    test.assert_eq(dav.write(s, "live/note.txt", 5i64, "x".bytes()).is_err(), true),
+  ]);
+}
+
+// A rename keeps an item that has the new name, and a delete takes a
+// folder with what it holds.
+function test_rename_and_remove(): test.TestOutcome {
+  let s = server();
+  let a = dav.write(s, "live/a.txt", 0i64, "a".bytes()).is_ok() && dav.write(s, "live/b.txt", 0i64, "b".bytes()).is_ok();
+  let refused = dav.rename(s, "live/a.txt", "live/b.txt").is_err();
+  let moved = dav.rename(s, "live/a.txt", "live/c d.txt").is_ok();
+  let names = dav.list(s, "live").unwrap_or([]).map((e: smb.Entry): string => e.name);
+  let gone = dav.remove(s, "live").is_ok() && dav.list(s, "live").is_err();
+  return all([
+    test.assert_eq(a && refused && moved, true),
+    test.assert_eq(names.contains("c d.txt") && !names.contains("a.txt") && names.contains("b.txt"), true),
+    test.assert_eq(gone, true),
+  ]);
+}
+
+function main(): i32 {
+  if (server().url.len() == 0) {
+    print("set FILES_DAV_SERVER to: url user password");
+    return 2;
+  }
+  let r = test.new("Fern Files against a WebDAV server");
+  r = r.it("a wrong password gets its note", test_wrong_password);
+  r = r.it("a file goes to the server and back in parts", test_round_trip);
+  r = r.it("a rename keeps an item of that name, and a delete takes a folder", test_rename_and_remove);
+  return r.finish();
+}
