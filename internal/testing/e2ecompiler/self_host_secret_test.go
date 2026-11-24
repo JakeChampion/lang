@@ -227,6 +227,107 @@ function main(): i32 {
 }
 `
 
+// A record of a `@secret` struct also zeroes the fields of an enum value
+// that it holds alone: the scalars and the numeric arrays of a variant, and
+// the payload of an `Option` that is an array or a 32-bit scalar. A field of
+// the record that is `None` points to a static box, and a byte of that
+// address can be 65, so the scan counts a byte only when the other byte of
+// its pair is also 65. The control is the same record without the
+// attribute. "shared" returns the enum value from the key, so that value
+// must keep its fields.
+const secretEnumSrc = `import "std/option";
+
+enum Part { Words(u64, u64, u64[]), Small(i32, u64), Empty }
+
+@secret
+struct Key { part: Part, other: Part, spare: Option[u64[]], small: Option[i32], none: Option[u64[]], n: i32 }
+
+struct Plain { part: Part, other: Part, spare: Option[u64[]], small: Option[i32], none: Option[u64[]], n: i32 }
+
+@noinline
+function words(v: u64): u64[] {
+  return [v, v, v, v, v, v];
+}
+
+@noinline
+function part(v: u64): Part {
+  return Words(v, v, words(v));
+}
+
+@noinline
+function small(v: u64): Part {
+  return Small(1094795585, v);
+}
+
+@noinline
+function spare(v: u64): Option[u64[]] {
+  return Some(words(v));
+}
+
+@noinline
+function few(v: u64): Option[i32] {
+  return if (v > 0u64) { Some(1094795585) } else { None };
+}
+
+function weigh(p: Part): u64 {
+  return match (p) {
+    Words(a, b, ws) => a + b + ws[5],
+    Small(a, b) => (a as u64) + b,
+    Empty => 0u64,
+  };
+}
+
+@noinline
+function key(v: u64): u64 {
+  let k = Key { part: part(v), other: small(v), spare: spare(v), small: few(v), none: None, n: 1 };
+  return weigh(k.part) + weigh(k.other) + k.spare.map((ws: u64[]): u64 => ws[5]).unwrap_or(0u64) + (k.small.unwrap_or(0) as u64);
+}
+
+@noinline
+function plain(v: u64): u64 {
+  let k = Plain { part: part(v), other: small(v), spare: spare(v), small: few(v), none: None, n: 1 };
+  return weigh(k.part) + weigh(k.other) + k.spare.map((ws: u64[]): u64 => ws[5]).unwrap_or(0u64) + (k.small.unwrap_or(0) as u64);
+}
+
+@noinline
+function shared(v: u64): Part {
+  let p = part(v);
+  let k = Key { part: p, other: Empty, spare: None, small: None, none: None, n: 1 };
+  let n = k.n;
+  return p;
+}
+
+function stale(): i32 {
+  unsafe {
+    let found: i32 = 0;
+    for size in 2..10 {
+      for k in 0..8 {
+        let p: usize = __alloc(size * 8);
+        for i in 0..size * 8 {
+          if (__load_u8(p + (i as usize)) == 65 as u8 && __load_u8(p + ((i ^ 1) as usize)) == 65 as u8) { found += 1; }
+        }
+      }
+    }
+    return found;
+  }
+}
+
+function main(): i32 {
+  let mode: string = args()[1];
+  let word: u64 = 4702111234474983745u64 + (args().len() as u64) - 2u64;
+  if (mode == "secret") {
+    let n = key(word);
+  } else if (mode == "shared") {
+    let p = shared(word);
+    print((weigh(p) == word + word + word).to_string());
+  } else {
+    let n = plain(word);
+  }
+  print(stale().to_string());
+  return 0;
+}
+`
+
 // secretRun compiles src for target and gives a function that runs the
 // program in one mode and splits its output into fields.
 func secretRun(t *testing.T, target, src string) func(mode string) []string {
@@ -319,6 +420,23 @@ func TestSelfHostSecretRecordWipesItsNestedBoxes(t *testing.T) {
 			}
 			if got := run("shared"); len(got) != 2 || got[0] != "true" {
 				t.Fatalf("shared printed %q; the nested record that the caller still holds must keep its fields", got)
+			}
+		})
+	}
+}
+
+func TestSelfHostSecretRecordWipesItsEnums(t *testing.T) {
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			run := secretRun(t, target, secretEnumSrc)
+			if got := secretCount(t, "plain", run("plain")); got != 128 {
+				t.Fatalf("plain read %d secret bytes back, want 128; the raw allocations no longer observe the released boxes", got)
+			}
+			if got := secretCount(t, "secret", run("secret")); got != 0 {
+				t.Fatalf("after the release of a @secret record the raw allocations read %d bytes of its enum values back, want 0", got)
+			}
+			if got := run("shared"); len(got) != 2 || got[0] != "true" {
+				t.Fatalf("shared printed %q; the enum value that the caller still holds must keep its fields", got)
 			}
 		})
 	}
