@@ -308,8 +308,8 @@ public names, such as `import "std/option"`. The compiler expands the
 document in memory before it checks or compiles the module.
 
 Most of the library is literate. The
-[source inventory](LITERATE-STDLIB.md) lists the documents and the plain
-sources. Each literate module contains STE explanations and named chunks,
+[literate source guide](LITERATE-STDLIB.md) tells how to find the documents,
+and lists the plain sources. Each literate module contains STE explanations and named chunks,
 and many contain executable examples. Brief declaration comments give the
 text for API reference pages and editor hovers.
 
