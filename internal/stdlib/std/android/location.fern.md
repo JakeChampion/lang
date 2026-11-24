@@ -153,18 +153,6 @@ function provider(ctx: usize, precise: boolean): string {
   return "network";
 }
 
-function push_frame(e: usize): boolean {
-  if (jni.call1(e, 19, 32 as usize) as i32 != 0) {
-    let cleared = jni.exception_clear(e);
-    return false;
-  }
-  return true;
-}
-
-function pop_frame(e: usize): void {
-  let popped = jni.call1(e, 20, 0 as usize);
-}
-
 function new_listener(e: usize, c: bindings.Classes, activity: bindings.Context, name: string): Result[bindings.LocationListener, jni.JavaError] {
   let loader = c.context.get_class_loader(e, activity)?;
   let class = c.class_loader.load_class(e, loader, name)?;
@@ -175,10 +163,10 @@ function new_listener(e: usize, c: bindings.Classes, activity: bindings.Context,
 // Fixes about each period_ms milliseconds for the app's LocationListener.
 pub function start(ctx: usize, class: string, precise: boolean, period_ms: i64): Option[Location] {
   let e = android.env(ctx);
-  if (!push_frame(e)) {
+  if (!jni.push_local_frame(e, 32)) {
     return None;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   if (!allowed(ctx, precise)) {
     return None;
   }
@@ -224,10 +212,10 @@ pub function stop(ctx: usize, l: Location): void {
   let e = android.env(ctx);
   defer jni.delete_global_ref(e, l.manager);
   defer jni.delete_global_ref(e, l.listener);
-  if (!push_frame(e)) {
+  if (!jni.push_local_frame(e, 32)) {
     return;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   let Ok(c) = bindings.location_manager_class(e) else {
     return;
   };
@@ -237,10 +225,10 @@ pub function stop(ctx: usize, l: Location): void {
 
 pub function last(ctx: usize, precise: boolean): Option[Fix] {
   let e = android.env(ctx);
-  if (!push_frame(e)) {
+  if (!jni.push_local_frame(e, 32)) {
     return None;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   if (!allowed(ctx, precise)) {
     return None;
   }
@@ -299,10 +287,10 @@ function fix_of(e: usize, loc: bindings.Location): Option[Fix] {
 // The onLocationChanged of the app's listener: `env`, `listener` and
 // `location` are its arguments. It sends the fix to the loop thread.
 pub function changed(e: usize, listener: usize, location: usize): void {
-  if (!push_frame(e)) {
+  if (!jni.push_local_frame(e, 32)) {
     return;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   let Some(fix) = fix_of(e, bindings.Location { ref: location }) else {
     return;
   };

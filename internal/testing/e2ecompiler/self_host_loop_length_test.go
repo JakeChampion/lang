@@ -16,6 +16,13 @@ const loopLengthProg = `@noinline function pick(a: i32[], s: string, ix: i32[]):
     }
     return t;
 }
+@noinline function bytes(b: u8[], ix: i32[]): i32 {
+    let t: i32 = 0;
+    for k in 0..ix.len() {
+        t = t + b[ix[k]] as i32;
+    }
+    return t;
+}
 @noinline function grow(a0: i32[], ix: i32[]): i32 {
     let a = a0;
     let t: i32 = 0;
@@ -38,15 +45,19 @@ function main(): i32 {
     if (n == 4) {
         return grow(a, [0, 9]);
     }
+    let raw: u8[] = [7, 200, 13];
+    if (n == 5) {
+        return bytes(raw, [2, 3]);
+    }
     let empty: i32[] = [];
-    return pick(a, "abcd", [3, 0, 2]) + pick(empty, "", none) + grow(a, [0, 4, 5]) - 400;
+    return pick(a, "abcd", [3, 0, 2]) + pick(empty, "", none) + grow(a, [0, 4, 5]) + bytes(raw, [1, 2, 1]) - 813;
 }
 `
 
 // A checked read of an array or a string in a loop that cannot change a
 // length compares its index with one load of the length before the loop,
-// on arm64. A loop that grows the array still loads the length on each
-// trip. An index out of range still aborts with the message of an array or
+// on arm64, and a byte read loads from the address of the elements. A loop
+// that grows the array still loads the length on each trip. An index out of range still aborts with the message of an array or
 // of a string.
 func TestSelfHostLoopLengthLoad(t *testing.T) {
 	h := selfHostCLIForHost(t)
@@ -68,6 +79,11 @@ func TestSelfHostLoopLengthLoad(t *testing.T) {
 	if body := condBranchBody(t, string(asm), "pick"); ownLoad.MatchString(body) || !strings.Contains(body, "b __fern_oob_abort") || !strings.Contains(body, "b __fern_str_oob_abort") {
 		t.Errorf("pick loads a length in a check, or has lost a check:\n%s", body)
 	}
+	// A byte read loads from two registers: the address of the elements,
+	// formed before the loop, and the index.
+	if body := condBranchBody(t, string(asm), "bytes"); ownLoad.MatchString(body) || !regexp.MustCompile(`ldrb w\d+, \[x\d+, x\d+\]\n`).MatchString(body) {
+		t.Errorf("bytes loads a length in a check, or reads a byte through an add:\n%s", body)
+	}
 	if body := condBranchBody(t, string(asm), "grow"); !ownLoad.MatchString(body) {
 		t.Errorf("grow compares with a length from before the loop that grows the array:\n%s", body)
 	}
@@ -85,6 +101,7 @@ func TestSelfHostLoopLengthLoad(t *testing.T) {
 			{[]string{"x"}, 134, "array index out of range"},
 			{[]string{"x", "y"}, 134, "string index out of range"},
 			{[]string{"x", "y", "z"}, 134, "array index out of range"},
+			{[]string{"x", "y", "z", "w"}, 134, "array index out of range"},
 		} {
 			cmd := exec.Command(bin, run.args...)
 			if len(tg.runner) > 0 {

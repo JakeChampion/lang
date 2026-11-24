@@ -142,18 +142,6 @@ const CANCEL: i32 = 4;
 
 const RELEASE: i32 = 5;
 
-function push_frame(e: usize): boolean {
-  if (jni.call1(e, 19, 32 as usize) as i32 != 0) {
-    let cleared = jni.exception_clear(e);
-    return false;
-  }
-  return true;
-}
-
-function pop_frame(e: usize): void {
-  let popped = jni.call1(e, 20, 0 as usize);
-}
-
 // Whether the person gave the app the permission to record.
 pub function allowed(ctx: usize): boolean {
   return android.has_permission(ctx, RECORD);
@@ -169,10 +157,10 @@ pub function ask(ctx: usize): void {
 // Whether the device has a recognition service that the app sees.
 pub function available(ctx: usize): boolean {
   let e = android.env(ctx);
-  if (!push_frame(e)) {
+  if (!jni.push_local_frame(e, 32)) {
     return false;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   let Ok(c) = bindings.speech_recognizer_class(e) else {
     return false;
   };
@@ -211,10 +199,10 @@ pub function new(ctx: usize): Option[Recognizer] {
     return None;
   }
   let e = android.env(ctx);
-  if (!push_frame(e)) {
+  if (!jni.push_local_frame(e, 32)) {
     return None;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   let activity = android.activity_object(ctx);
   let Ok(r) = made(e, bindings.Context { ref: activity }) else {
     return None;
@@ -228,10 +216,10 @@ pub function new(ctx: usize): Option[Recognizer] {
 
 function send(ctx: usize, r: Recognizer, what: i32): boolean {
   let e = android.env(ctx);
-  if (!push_frame(e)) {
+  if (!jni.push_local_frame(e, 32)) {
     return false;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   return r.handler.send(e, what, 0, 0 as usize);
 }
 
@@ -239,10 +227,10 @@ function send(ctx: usize, r: Recognizer, what: i32): boolean {
 // `language`, or in the language of the device for an empty tag.
 pub function start(ctx: usize, r: Recognizer, language: string): boolean {
   let e = android.env(ctx);
-  if (!push_frame(e)) {
+  if (!jni.push_local_frame(e, 32)) {
     return false;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   let tag = jni.new_string(e, language);
   if (jni.check(e).is_err() || tag == 0 as usize) {
     return false;
@@ -292,10 +280,10 @@ const RESULTS: string = "results_recognition";
 
 // Runs one command. It gives 1, as the message needs no other handler.
 function handle(e: usize, listener: usize, msg: usize): u8 {
-  if (!push_frame(e)) {
+  if (!jni.push_local_frame(e, 32)) {
     return 0u8;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   match (bindings.classes(e)) {
     Ok(c) => {
       if let Err(err) = command(e, c, listener, msg) {
@@ -380,10 +368,10 @@ function first(e: usize, results: usize): Result[string, jni.JavaError] {
 
 // The first words of the Bundle `results`, in a local frame.
 function heard(e: usize, results: usize): string {
-  if (results == 0 as usize || !push_frame(e)) {
+  if (results == 0 as usize || !jni.push_local_frame(e, 32)) {
     return "";
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   return first(e, results).unwrap_or("");
 }
 

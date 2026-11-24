@@ -134,12 +134,11 @@ function manager_of(ctx: usize): usize {
       return c_manager();
     }
     let e: usize = android.env(ctx);
-    // PushLocalFrame bounds the local references during class and method lookup.
-    if (jni.call1(e, 19, 8 as usize) as i32 != 0) {
-      let cleared = jni.exception_clear(e);
+    // The local frame bounds the local references during class and method lookup.
+    if (!jni.push_local_frame(e, 8)) {
       return 0 as usize;
     }
-    defer jni.call1(e, 20, 0 as usize);  // PopLocalFrame
+    defer jni.pop_local_frame(e, 0 as usize);
     let Ok(c) = bindings.context_class(e) else {
       return 0 as usize;
     };

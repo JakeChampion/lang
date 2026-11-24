@@ -7151,6 +7151,7 @@ pub function hoisted_lengths(f: SFunc): SFunc {
     }
     let bases: i32[] = [];
     let lens: i32[] = [];
+    let datas = util.minus_ones(0);
     let loads: SInst[] = [];
     for bi in h..=last {
       let insts: SInst[] = [];
@@ -7168,10 +7169,22 @@ pub function hoisted_lengths(f: SFunc): SFunc {
           let id = f.nvals + made.len();
           made = made.append(b);
           lens = lens.append(id);
+          datas = datas.append(-1);
           loads = loads.append(SInst { kind_tag: LD_AT, result: id, args: [b], imm: if (ins.kind_tag == STR_AT) { 8 } else { 0 }, str: "" });
         }
         insts = insts.append(SInst { kind_tag: BOUND, result: -1, args: [ins.args[1], lens[k]], imm: if (ins.kind_tag == STR_AT) { 1 } else { 0 }, str: "" });
-        if (ins.kind_tag == ARR_ST || ins.imm == 0) {
+        // A byte read loads from the address of the elements, which the
+        // block before the loop forms one time.
+        if (ins.kind_tag == ARR_AT && ins.imm == 0 && ins.str == "u8" && ins.result >= 0) {
+          if (datas[k] < 0) {
+            let eight = f.nvals + made.len();
+            made = made.append(b).append(b);
+            datas = datas.with(k, eight + 1);
+            loads = loads.append(SInst { kind_tag: CONST_INT, result: eight, args: [], imm: 8, str: "" });
+            loads = loads.append(SInst { kind_tag: BINARY, result: eight + 1, args: [b, eight], imm: 64, str: "add" });
+          }
+          insts = insts.append(SInst { kind_tag: LD_SUM, result: ins.result, args: [datas[k], ins.args[1]], imm: 0, str: "" });
+        } else if (ins.kind_tag == ARR_ST || ins.imm == 0) {
           insts = insts.append(SInst { ...ins, imm: 1 });
         }
         changed = true;

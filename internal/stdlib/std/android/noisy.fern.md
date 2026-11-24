@@ -59,18 +59,6 @@ pub struct Noisy { context: usize, receiver: usize }
 
 const ACTION: string = "android.media.AUDIO_BECOMING_NOISY";
 
-function push_frame(e: usize): boolean {
-  if (jni.call1(e, 19, 32 as usize) as i32 != 0) {
-    let cleared = jni.exception_clear(e);
-    return false;
-  }
-  return true;
-}
-
-function pop_frame(e: usize): void {
-  let popped = jni.call1(e, 20, 0 as usize);
-}
-
 // The app's receiver has a public no-argument constructor. Load it through
 // the app's class loader because the loop runs on a native thread.
 function new_receiver(e: usize, c: bindings.Classes, activity: bindings.Context, name: string): Result[bindings.BroadcastReceiver, jni.JavaError] {
@@ -84,10 +72,10 @@ function new_receiver(e: usize, c: bindings.Classes, activity: bindings.Context,
 // may return a null sticky intent.
 pub function start(ctx: usize, class: string): Option[Noisy] {
   let e = android.env(ctx);
-  if (!push_frame(e)) {
+  if (!jni.push_local_frame(e, 32)) {
     return None;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   let Ok(c) = bindings.classes(e) else {
     return None;
   };
@@ -129,10 +117,10 @@ pub function stop(ctx: usize, n: Noisy): void {
   let e = android.env(ctx);
   defer jni.delete_global_ref(e, n.context);
   defer jni.delete_global_ref(e, n.receiver);
-  if (!push_frame(e)) {
+  if (!jni.push_local_frame(e, 32)) {
     return;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   let Ok(c) = bindings.context_class(e) else {
     return;
   };

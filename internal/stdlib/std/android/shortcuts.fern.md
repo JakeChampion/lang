@@ -48,18 +48,6 @@ The intent of a shortcut names the activity of the app as its component. The mod
 // person sees, and the action of the intent that it starts the app with.
 pub struct Shortcut { id: string, label: string, action: string }
 
-function push_frame(e: usize): boolean {
-  if (jni.call1(e, 19, 32 as usize) as i32 != 0) {
-    let cleared = jni.exception_clear(e);
-    return false;
-  }
-  return true;
-}
-
-function pop_frame(e: usize): void {
-  let popped = jni.call1(e, 20, 0 as usize);
-}
-
 function build_item(e: usize, c: bindings.Classes, activity: bindings.Activity, item: Shortcut): Result[bindings.ShortcutInfo, jni.JavaError] {
   let intent = c.intent.new(e, item.action)?;
   let component = c.activity.get_component_name(e, activity)?;
@@ -73,10 +61,10 @@ function build_item(e: usize, c: bindings.Classes, activity: bindings.Activity, 
 }
 
 function append_item(e: usize, c: bindings.Classes, activity: bindings.Activity, list: bindings.ArrayList, item: Shortcut): Result[boolean, jni.JavaError] {
-  if (!push_frame(e)) {
+  if (!jni.push_local_frame(e, 32)) {
     return Ok(false);
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   let shortcut = build_item(e, c, activity, item)?;
   return c.array_list.add(e, list, shortcut.object());
 }
@@ -84,10 +72,10 @@ function append_item(e: usize, c: bindings.Classes, activity: bindings.Activity,
 // Gives the launcher the shortcuts in place of those it has.
 pub function set(ctx: usize, items: Shortcut[]): boolean {
   let e = android.env(ctx);
-  if (!push_frame(e)) {
+  if (!jni.push_local_frame(e, 32)) {
     return false;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   let Ok(c) = bindings.classes(e) else {
     return false;
   };
@@ -116,10 +104,10 @@ pub function pin(ctx: usize, item: Shortcut): boolean {
     return false;
   }
   let e = android.env(ctx);
-  if (!push_frame(e)) {
+  if (!jni.push_local_frame(e, 32)) {
     return false;
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   let Ok(c) = bindings.classes(e) else {
     return false;
   };
@@ -143,10 +131,10 @@ pub function action(ctx: usize): string {
     return "";
   }
   let e = android.env(ctx);
-  if (!push_frame(e)) {
+  if (!jni.push_local_frame(e, 32)) {
     return "";
   }
-  defer pop_frame(e);
+  defer jni.pop_local_frame(e, 0 as usize);
   let Ok(activity) = bindings.activity_class(e) else {
     return "";
   };
@@ -170,10 +158,10 @@ pub function action(ctx: usize): string {
 
 // Keeps the intent from onNewIntent for the next Resume.
 pub function keep_intent(env: usize, activity: usize, intent: usize): void {
-  if (!push_frame(env)) {
+  if (!jni.push_local_frame(env, 32)) {
     return;
   }
-  defer pop_frame(env);
+  defer jni.pop_local_frame(env, 0 as usize);
   let Ok(c) = bindings.activity_class(env) else {
     return;
   };

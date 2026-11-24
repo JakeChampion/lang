@@ -1722,7 +1722,7 @@ pub function hostless_syscall_refusal(s: EmitState): string {
     return "fern: -target " + s.build_target + " has no host, but the program reaches " + s.raw_syscall + ", which makes a syscall";
   }
   if (s.syscalls.len() > 0) {
-    return "fern: -target " + s.build_target + " has no host, but this build needs syscall " + util.i32_to_string(s.syscalls[0]) + ". A runtime switch such as FERN_SANITIZE or FERN_LEAKCHECK needs a host";
+    return "fern: -target " + s.build_target + " has no host, but this build needs syscall " + util.i32_to_string(s.syscalls[0]) + ". A switch that writes a report, such as -sanitize, FERN_SANITIZE or FERN_LEAKCHECK, needs a host";
   }
   return "";
 }

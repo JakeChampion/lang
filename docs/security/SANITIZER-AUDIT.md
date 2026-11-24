@@ -46,4 +46,5 @@ Shadow memory costs one bit to one byte per arena byte and a check on every raw 
 
 - The count detectors cover reference-counted misuse only. Raw memory misuse through the raw builtins is the unsafe surface of [UNSAFE-INVENTORY.md](UNSAFE-INVENTORY.md). Its detectors are the arena-bounds check of `__free` and, under `-sanitize`, three more. The first is the abort on a second `__free` of a quarantined block. The second is the redzone check at every `__free` ([ALLOCATOR-AUDIT.md](ALLOCATOR-AUDIT.md)). The third is the alignment check of each atomic.
 - The quarantine holds a byte budget, 64 MiB unless `-quarantine SIZE` gives another. A use after free older than the budget is a silent reuse again ([QUARANTINE.md](QUARANTINE.md)).
+- `docs/SANITIZER.md` ("Combinations with other switches") lists the switches that change a sanitized build and the targets that refuse one. A kernel image or a freestanding library has no host for a report, so the compiler refuses `-sanitize` there.
 - There is no source-span attribution beyond the backtrace. A report names the function, not the line, unless `-g` and `addr2line` resolve it.

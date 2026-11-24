@@ -122,3 +122,51 @@ func TestSelfHostTempDirErrorNamesPrefix(t *testing.T) {
 		})
 	}
 }
+
+// On wasm io.temp_file puts the file where temp_dir puts a directory: under
+// the directory that the host gives the program, with a relative name. A
+// WASI program cannot reach /tmp.
+func TestSelfHostWasmTempFileName(t *testing.T) {
+	requireWasmTools(t)
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte(`import "std/io";
+function main(): i32 {
+    let Ok(t) = io.temp_file("probe") else { return 1; };
+    let Ok(_) = t.file.write("abc") else { return 2; };
+    let Ok(_) = t.file.close() else { return 3; };
+    print(t.path);
+    return 0;
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	name := regexp.MustCompile(`^probe-[0-9a-f]{16}$`)
+	for _, form := range [][]string{nil, {"-emit", "core-module"}} {
+		label := "component"
+		if form != nil {
+			label = "core-module"
+		}
+		t.Run(label, func(t *testing.T) {
+			out := filepath.Join(t.TempDir(), "main.wasm")
+			args := append(append([]string{"-target", "wasm32-wasi"}, form...), "-o", out, src, cli.stdlib)
+			cmd := runX86_64Bin(cli.runner, cli.bin, args...)
+			cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
+			if msg, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("self-host CLI: %v\n%s", err, msg)
+			}
+			run := t.TempDir()
+			got, err := exec.Command("wasmtime", "run", "--dir", run, out).Output()
+			if err != nil {
+				t.Fatalf("wasmtime run: %v\n%s", err, got)
+			}
+			made := strings.TrimSuffix(string(got), "\n")
+			if !name.MatchString(made) {
+				t.Fatalf("temp_file returned %q, want probe-<16 hex>", made)
+			}
+			if data, err := os.ReadFile(filepath.Join(run, made)); err != nil || string(data) != "abc" {
+				t.Errorf("%q under the preopen holds %q (err = %v), want \"abc\"", made, data, err)
+			}
+		})
+	}
+}

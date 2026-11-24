@@ -98,7 +98,7 @@ pub function ordered(infos: [CodecInfo], request: Request, policy: Policy): Code
 }
 
 pub(package) function pop(env: usize): void {
-  let _ = jni.call1(env, 20, 0 as usize);
+  let _ = jni.pop_local_frame(env, 0 as usize);
 }
 
 pub(package) function healthy(env: usize): boolean {
@@ -281,8 +281,7 @@ function colors(env: usize, caps: usize, limits: Limits): Result[i32[], frame.Vi
 }
 
 pub(package) function push(env: usize): Result[void, frame.VideoError] {
-  if (jni.call1(env, 19, 64 as usize) as i32 != 0) {
-    let _ = healthy(env);
+  if (!jni.push_local_frame(env, 64)) {
     return Err(frame.Platform);
   }
   return Ok(());
