@@ -3554,12 +3554,12 @@ function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string):
     }
     return x86_gas_vex_rm(a, mnem, 2, 1, 0, 90, id, src, true, false);
   }
-  if (mnem == "vpbroadcastb" && x86_gas_has_paren(src)) {
+  if ((mnem == "vpbroadcastb" || mnem == "vpbroadcastd") && x86_gas_has_paren(src)) {
     let md = x86_gas_ymm(dst);
     if (md < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    return x86_gas_vex_rm(a, mnem, 2, 1, 0, 120, md, src, true, false);
+    return x86_gas_vex_rm(a, mnem, 2, 1, 0, x86_broadcast_op(mnem), md, src, true, false);
   }
   if (mnem == "vpbroadcastb" || mnem == "vpbroadcastd" || mnem == "vbroadcastsd") {
     let bv = x86_gas_vreg(dst);
@@ -3590,7 +3590,7 @@ function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string):
   return a;
 }
 
-// The 0F38 opcode of each broadcast from an xmm register.
+// The 0F38 opcode of each broadcast.
 function x86_broadcast_op(mnem: string): i32 {
   if (mnem == "vbroadcastsd") {
     return 25;

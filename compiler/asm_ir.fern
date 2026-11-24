@@ -2535,13 +2535,89 @@ function x86_sha256_schedule(x: string[]): string {
     + "    movdqa %xmm1, " + x[0] + "\n";
 }
 
-function emit_rt_sha256(s: asmcore.EmitState): asmcore.EmitState {
+// The byte-swap mask and the round constants that the two SHA-256 kernels read.
+function emit_rt_sha256_consts(s: asmcore.EmitState): asmcore.EmitState {
   let k = asmcore.sha256_k();
   s = s.write("    .section .rodata\n    .align 16\n.Lsha_bswap:\n    .byte 3,2,1,0,7,6,5,4,11,10,9,8,15,14,13,12\n.Lsha_k:\n");
   for i in 0..64 {
     s = s.write("    .long " + util.i64_to_string(k[i] as i64) + "\n");
   }
-  return s.write("    .section .text\n" + x86_sha256_blocks());
+  return s.write("    .section .text\n");
+}
+
+// SHA-256 on eight messages at once, one per 32-bit lane of the ymm registers.
+// The state is word-major: word w of lane k is at byte 4 * (8 * w + k). A
+// group of 512 bytes holds one block of each lane, lane k at byte 64 * k.
+function x86_sha256x8_blocks(): string {
+  let o: string = "    .globl __fern_sha256x8_hw_blocks\n    .type __fern_sha256x8_hw_blocks, @function\n__fern_sha256x8_hw_blocks:\n"
+    + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $576, %rsp\n"
+    + x86_aes_view("%rsi", "%r8", "%r9", ".Ls2x8_data") + "    movq %r8, -24(%rbp)\n    movq %r9, -32(%rbp)\n"
+    + x86_aes_view("%rdi", "%r8", "%r10", ".Ls2x8_st") + "    movq %r8, -8(%rbp)\n"
+    + "    movl $256, %edi\n    cmpq $256, %r10\n    jae .Ls2x8_stok\n    xorl %edi, %edi\n.Ls2x8_stok:\n"
+    + x86_aes_alloc() + "    testq %rdi, %rdi\n    jz .Ls2x8_ret\n    movq -8(%rbp), %r8\n";
+  for j in 0..8 {
+    o = o + "    vmovdqu " + util.i32_to_string(32 * j) + "(%r8), %ymm0\n    vmovdqu %ymm0, " + util.i32_to_string(8 + 32 * j) + "(%rax)\n";
+  }
+  o += "    leaq .Lsha_bswap(%rip), %r10\n    vbroadcasti128 (%r10), %ymm15\n    leaq .Lsha_k(%rip), %r10\n    movq -24(%rbp), %rsi\n    movq -32(%rbp), %rdx\n";
+  o += ".Ls2x8_loop:\n    cmpq $512, %rdx\n    jb .Ls2x8_ret\n";
+  o = o + x86_x8_transpose(0) + x86_x8_transpose(1) + "    movq -48(%rbp), %rax\n";
+  for j in 0..8 {
+    o = o + "    vmovdqu " + util.i32_to_string(8 + 32 * j) + "(%rax), " + ymm(j) + "\n";
+  }
+  o += x86_sha256x8_rounds();
+  for j in 0..8 {
+    let off = util.i32_to_string(8 + 32 * j);
+    o = o + "    vpaddd " + off + "(%rax), " + ymm(j) + ", " + ymm(j) + "\n    vmovdqu " + ymm(j) + ", " + off + "(%rax)\n";
+  }
+  return o + "    addq $512, %rsi\n    subq $512, %rdx\n    jmp .Ls2x8_loop\n"
+    + ".Ls2x8_ret:\n    vzeroupper\n" + x86_aes_epilogue() + "    .size __fern_sha256x8_hw_blocks, .-__fern_sha256x8_hw_blocks\n";
+}
+
+// x86_x8_sigma writes rotr(src, a) ^ rotr(src, b) ^ last(src, c) to dst. The
+// last term is a shift when `shift` is true, and a rotation when it is not.
+function x86_x8_sigma(src: string, a: i32, b: i32, c: i32, shift: boolean, dst: string, tmp: string): string {
+  let o = "    vpsrld $" + util.i32_to_string(a) + ", " + src + ", " + dst + "\n";
+  let terms: i32[][] = [[0, 32 - a], [1, b], [0, 32 - b], [1, c]];
+  if (!shift) {
+    terms = terms.append([0, 32 - c]);
+  }
+  let names: string[] = ["vpslld", "vpsrld"];
+  for t in terms {
+    o = o + "    " + names[t[0]] + " $" + util.i32_to_string(t[1]) + ", " + src + ", " + tmp + "\n    vpxor " + tmp + ", " + dst + ", " + dst + "\n";
+  }
+  return o;
+}
+
+// x86_sha256x8_rounds runs the 64 rounds on a..h in ymm0..ymm7, with the
+// round constants at (%r10). The names rotate each round, and after 64
+// rounds they are back in place.
+function x86_sha256x8_rounds(): string {
+  let r: i32[] = [0, 1, 2, 3, 4, 5, 6, 7];
+  let o = "";
+  for t in 0..64 {
+    let a = ymm(r[0]);
+    let b = ymm(r[1]);
+    let c = ymm(r[2]);
+    let e = ymm(r[4]);
+    let g = ymm(r[6]);
+    let h = ymm(r[7]);
+    let w = util.i32_to_string(32 * (t % 16)) + "(%rsp)";
+    if (t >= 16) {
+      o = o + "    vmovdqu " + util.i32_to_string(32 * ((t - 15) % 16)) + "(%rsp), %ymm9\n" + x86_x8_sigma("%ymm9", 7, 18, 3, true, "%ymm10", "%ymm11")
+        + "    vmovdqu " + util.i32_to_string(32 * ((t - 2) % 16)) + "(%rsp), %ymm9\n" + x86_x8_sigma("%ymm9", 17, 19, 10, true, "%ymm12", "%ymm11")
+        + "    vpaddd %ymm12, %ymm10, %ymm10\n    vpaddd " + util.i32_to_string(32 * ((t - 7) % 16)) + "(%rsp), %ymm10, %ymm10\n"
+        + "    vpaddd " + w + ", %ymm10, %ymm10\n    vmovdqu %ymm10, " + w + "\n";
+      w = "%ymm10";
+    }
+    o = o + "    vpbroadcastd " + util.i32_to_string(4 * t) + "(%r10), %ymm8\n    vpaddd %ymm8, " + h + ", " + h + "\n    vpaddd " + w + ", " + h + ", " + h + "\n"
+      + x86_x8_sigma(e, 6, 11, 25, false, "%ymm9", "%ymm11") + "    vpaddd %ymm9, " + h + ", " + h + "\n"
+      + "    vpxor " + g + ", " + ymm(r[5]) + ", %ymm9\n    vpand " + e + ", %ymm9, %ymm9\n    vpxor " + g + ", %ymm9, %ymm9\n    vpaddd %ymm9, " + h + ", " + h + "\n"
+      + "    vpaddd " + h + ", " + ymm(r[3]) + ", " + ymm(r[3]) + "\n"
+      + x86_x8_sigma(a, 2, 13, 22, false, "%ymm9", "%ymm11") + "    vpaddd %ymm9, " + h + ", " + h + "\n"
+      + "    vpor " + b + ", " + a + ", %ymm9\n    vpand " + c + ", %ymm9, %ymm9\n    vpand " + b + ", " + a + ", %ymm11\n    vpor %ymm11, %ymm9, %ymm9\n    vpaddd %ymm9, " + h + ", " + h + "\n";
+    r = [r[7], r[0], r[1], r[2], r[3], r[4], r[5], r[6]];
+  }
+  return o;
 }
 
 // SHA-1 on eight messages at once, one per 32-bit lane of the ymm registers.
@@ -2560,7 +2636,7 @@ function x86_sha1x8_blocks(): string {
   }
   o += "    leaq .Lsx8_consts(%rip), %r10\n    vmovdqu (%r10), %ymm15\n    movq -24(%rbp), %rsi\n    movq -32(%rbp), %rdx\n";
   o += ".Lsx8_loop:\n    cmpq $512, %rdx\n    jb .Lsx8_ret\n";
-  o = o + x86_sha1x8_transpose(0) + x86_sha1x8_transpose(1) + "    movq -48(%rbp), %rax\n";
+  o = o + x86_x8_transpose(0) + x86_x8_transpose(1) + "    movq -48(%rbp), %rax\n";
   for j in 0..5 {
     o = o + "    vmovdqu " + util.i32_to_string(8 + 32 * j) + "(%rax), %ymm" + util.i32_to_string(j) + "\n";
   }
@@ -2578,9 +2654,9 @@ function ymm(n: i32): string {
   return "%ymm" + util.i32_to_string(n);
 }
 
-// x86_sha1x8_transpose writes the words 8 * half to 8 * half + 7 of the eight
+// x86_x8_transpose writes the words 8 * half to 8 * half + 7 of the eight
 // blocks at (%rsi) to the schedule at (%rsp), one ymm for each word.
-function x86_sha1x8_transpose(half: i32): string {
+function x86_x8_transpose(half: i32): string {
   let o = "";
   for k in 0..8 {
     o = o + "    vmovdqu " + util.i32_to_string(64 * k + 32 * half) + "(%rsi), " + ymm(k) + "\n";
@@ -2660,8 +2736,14 @@ function x86_sha1x8_rounds(): string {
 }
 
 function emit_rt_byte_kernels(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.has_need("sha256") || s.has_need("sha256x8")) {
+    s = emit_rt_sha256_consts(s);
+  }
   if (s.has_need("sha256")) {
-    s = emit_rt_sha256(s);
+    s = s.write(x86_sha256_blocks());
+  }
+  if (s.has_need("sha256x8")) {
+    s = s.write(x86_sha256x8_blocks());
   }
   if (s.has_need("sha1x8")) {
     s = emit_rt_sha1x8(s);
@@ -12885,7 +12967,7 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.write("    pushq $1\n");
   } else if (o.kind_tag == ir.K_SHA1_HW) {
     s = s.write("    pushq $0\n");
-  } else if (o.kind_tag == ir.K_SHA1X8_HW) {
+  } else if (o.kind_tag == ir.K_SHA1X8_HW || o.kind_tag == ir.K_SHA256X8_HW) {
     s = s.write("    pushq $1\n");
   } else if (o.kind_tag == ir.K_SHA1_HW_BLOCKS) {
     s = s.write("    addq $16, %rsp\n    xorl %edi, %edi\n    call __fern_arr_box\n    movq $0, (%rax)\n    pushq %rax\n").need("heap");
