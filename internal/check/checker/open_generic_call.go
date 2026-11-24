@@ -1,6 +1,10 @@
 package checker
 
-import "github.com/jakechampion/lang/internal/syntax/ast"
+import (
+	"maps"
+
+	"github.com/jakechampion/lang/internal/syntax/ast"
+)
 
 // An open generic call is the value of a `let` with no type, such as
 // `let m = ordmap.new();`, whose call leaves type parameters unbound. The
@@ -329,7 +333,8 @@ func (c *checker) receiverExpected(call *ast.Call, fa *ast.FieldAccess, expected
 	sub := map[string]ast.Type{}
 	bindOpenParams(ft.Result, expected, tpSet, sub)
 	if len(sub) == len(tpSet) {
-		if want := substituteType(ft.Params[0], sub); !containsParamType(want) {
+		want := substituteType(ft.Params[0], sub)
+		if _, escaped := paramTypeNotIn(want, c.typeParamsInScope()); !escaped {
 			return want
 		}
 	}
@@ -476,4 +481,38 @@ func (c *checker) errInnermostOpenCall(call *ast.Call, inScope map[string]bool) 
 	fn := c.genericCallOf(inner)
 	display, spelling := callSiteName(fn)
 	c.errfCode(inner.P, "E040", "could not infer type parameter %s for %s — supply it explicitly at the call site (e.g. %s[i32](...)) or annotate the binding", fn.TypeParams[c.openTypeArg(inner, inScope)], display, spelling)
+}
+
+// argHint gives the expected type for an argument of a call to fn from its
+// parameter type pt. A type parameter of fn that sub leaves unbound gets a
+// name that no source type parameter can have when the call site has a type
+// parameter of the same name. The argument then cannot bind it to the
+// caller's parameter.
+func (c *checker) argHint(pt ast.Type, fn *ast.FuncDecl, sub map[string]ast.Type) ast.Type {
+	if fn == nil || len(fn.TypeParams) == 0 {
+		if sub == nil {
+			return pt
+		}
+		return substituteType(pt, sub)
+	}
+	inScope := c.typeParamsInScope()
+	hint := sub
+	cloned := false
+	for _, tp := range fn.TypeParams {
+		if _, bound := sub[tp]; bound || !inScope[tp] {
+			continue
+		}
+		if !cloned {
+			hint = maps.Clone(sub)
+			if hint == nil {
+				hint = map[string]ast.Type{}
+			}
+			cloned = true
+		}
+		hint[tp] = ast.ParamType{Name: tp + "'"}
+	}
+	if hint == nil {
+		return pt
+	}
+	return substituteType(pt, hint)
 }
