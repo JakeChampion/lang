@@ -12,7 +12,7 @@
 # The subjects are the compiler's own sources, so a change to those sources
 # moves the rows too, with no change to the certifier.
 x86_64/fern_main.unproved	1054	0
-wasm32/checker.unproved	129	0
-x86_64/checker.refuted	5320	0
+wasm32/checker.unproved	137	0
+x86_64/checker.refuted	5322	0
 x86_64/checker.weakened	240	0
 x86_64/checker.missed	227	0
