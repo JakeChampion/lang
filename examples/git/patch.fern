@@ -3,6 +3,7 @@
 // `--summary`. The hunks come from the xdiff engine of std/linediff.
 import "std/array";
 import "std/linediff";
+import "core/cmp";
 import "core/map";
 import "./attr";
 import "./color";
@@ -31,10 +32,15 @@ import "../../coreutils/lib/bre";
 // `pal` holds the colors of `color.diff.SLOT`. `line_ranges` holds the
 // ranges of lines of `-L` of each path of the new side: the patch of such
 // a path shows only the lines in its ranges.
-pub struct Opts { line_ranges: Map[string, i32[]], pal: color.Palette, attrs: attr.Attrs[], drivers: userdiff.Drivers, color_moved: i32, color_moved_ws: i32, word_diff: i32, word_regex: bre.Bre[], word_regex_error: string, ws_rule: i32, abbrev: i32, raw: boolean, patch: boolean, stat: boolean, numstat: boolean, shortstat: boolean, summary: boolean, context: i32, interhunk: i32, src: string, dst: string, algo: linediff.Options, full_index: boolean, text: boolean, stat_width: i32, stat_name_width: i32, stat_graph_width: i32, stat_count: i32, color: boolean }
+// `headers` holds more header lines for the patch of a path: the
+// messages of the conflicts of `--remerge-diff`. With `remerge`, the
+// patches are in the order of their old paths, as git gives them with
+// such lines. With `header_pairs`, a path with header lines and no
+// change has a patch of its header.
+pub struct Opts { headers: Map[string, string[]], remerge: boolean, header_pairs: boolean, line_ranges: Map[string, i32[]], pal: color.Palette, attrs: attr.Attrs[], drivers: userdiff.Drivers, color_moved: i32, color_moved_ws: i32, word_diff: i32, word_regex: bre.Bre[], word_regex_error: string, ws_rule: i32, abbrev: i32, raw: boolean, patch: boolean, stat: boolean, numstat: boolean, shortstat: boolean, summary: boolean, context: i32, interhunk: i32, src: string, dst: string, algo: linediff.Options, full_index: boolean, text: boolean, stat_width: i32, stat_name_width: i32, stat_graph_width: i32, stat_count: i32, color: boolean }
 
 pub function defaults(): Opts {
-  return Opts { line_ranges: Map { }, pal: color.palette_default(), attrs: [], drivers: userdiff.none(), color_moved: moved.NO, color_moved_ws: 0, word_diff: WORDS_NONE, word_regex: [], word_regex_error: "", ws_rule: ws.DEFAULT_RULE, abbrev: -1, raw: false, patch: false, stat: false, numstat: false, shortstat: false, summary: false, context: 3, interhunk: 0, src: "a/", dst: "b/", algo: linediff.defaults(), full_index: false, text: false, stat_width: -1, stat_name_width: 0, stat_graph_width: 0, stat_count: 0, color: false };
+  return Opts { headers: Map { }, remerge: false, header_pairs: false, line_ranges: Map { }, pal: color.palette_default(), attrs: [], drivers: userdiff.none(), color_moved: moved.NO, color_moved_ws: 0, word_diff: WORDS_NONE, word_regex: [], word_regex_error: "", ws_rule: ws.DEFAULT_RULE, abbrev: -1, raw: false, patch: false, stat: false, numstat: false, shortstat: false, summary: false, context: 3, interhunk: 0, src: "a/", dst: "b/", algo: linediff.defaults(), full_index: false, text: false, stat_width: -1, stat_name_width: 0, stat_graph_width: 0, stat_count: 0, color: false };
 }
 
 // True when the options print a diff.
@@ -684,14 +690,20 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
   let name_b = p.two.path;
   let a_one = quote_two(o.src, name_a);
   let b_two = quote_two(o.dst, name_b);
-  let lbl0 = if (one.valid) { a_one } else { "/dev/null" };
-  let lbl1 = if (two.valid) { b_two } else { "/dev/null" };
+  // A pair with no side holds only the header lines of its path.
+  let phoney = !one.valid && !two.valid;
+  let lbl0 = if (one.valid || phoney) { a_one } else { "/dev/null" };
+  let lbl1 = if (two.valid || phoney) { b_two } else { "/dev/null" };
   let meta = "";
   if (p.status == b'R' || p.status == b'C') {
     let word = if (p.status == b'R') { "rename" } else { "copy" };
     meta += "similarity index " + (p.score * 100 / 60000).to_string() + "%\n";
     meta += word + " from " + quoted(name_a) + "\n";
     meta += word + " to " + quoted(name_b) + "\n";
+  }
+  let more = o.headers.get_or(text(name_a), []);
+  for line in more {
+    meta += line + "\n";
   }
   if (one.hash != two.hash) {
     let full = o.full_index;
@@ -704,6 +716,9 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
   }
   meta = meta_lines(o, meta);
   t = add(t, head_use, meta_line(o, "diff --git " + a_one + " " + b_two));
+  if (phoney) {
+    return (s, add(t, meta_use, meta));
+  }
   if (!one.valid) {
     t = add(add(t, head_use, meta_line(o, "new file mode " + mode6(two.mode))), meta_use, meta);
   } else if (!two.valid) {
@@ -730,7 +745,7 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
   let (body, died) = hunks(o, a, b, p.one.path, p.two.path);
   // git writes the header of a change of content with its first line of
   // the patch. It writes the header of each other pair before the diff.
-  let must_show = !one.valid || !two.valid || one.mode != two.mode || p.status == b'R' || p.status == b'C';
+  let must_show = !one.valid || !two.valid || one.mode != two.mode || p.status == b'R' || p.status == b'C' || more.len() > 0;
   if (died.len() > 0) {
     return (s, Text { ...if (must_show) { t } else { t_in }, fatal: died });
   }
@@ -985,6 +1000,42 @@ function word_body(t_in: Text, o: Opts, body: string): Text {
   buf_free(minus);
   buf_free(plus);
   return t;
+}
+
+// The pairs in the order of their old paths, with a pair of no side for
+// each path that has header lines and no pair
+// (`create_filepairs_for_header_only_notifications` of git).
+function with_header_pairs(o: Opts, pairs: Pair[]): Pair[] {
+  let all = pairs;
+  if (o.header_pairs) {
+    let present: Map[string, boolean] = Map { };
+    for p in pairs {
+      present = present.insert(text(p.one.path), true);
+    }
+    for e in o.headers.entries() {
+      let (path, _) = e;
+      if (!present.contains(path)) {
+        let none = Side { valid: false, path: path.bytes(), mode: "", hash: "" };
+        all = all.append(Pair { status: b'M', score: 0, one: none, two: none });
+      }
+    }
+  }
+  let places: i32[] = [];
+  for k in 0..all.len() {
+    places = places.append(k);
+  }
+  let order = cmp.sort_by(places, (a: i32, b: i32): i32 => if (path_cmp(all[a].one.path, all[b].one.path) != 0) { path_cmp(all[a].one.path, all[b].one.path) } else { a - b });
+  return order.map((k: i32): Pair => all[k]);
+}
+
+function path_cmp(a: u8[], b: u8[]): i32 {
+  let n = a.len().min(b.len());
+  for i in 0..n {
+    if (a[i] != b[i]) {
+      return a[i] as i32 - b[i] as i32;
+    }
+  }
+  return a.len() - b.len();
 }
 
 // The patch of one pair. A change between a file and a link is a deletion
@@ -1397,7 +1448,7 @@ function raw_line(s: store.Store, o: Opts, p: Pair, least: i32): string {
 pub function render(s_in: store.Store, changes: treediff.Change[], o: Opts, least: i32, prefix_width: (i32) => i32): (store.Store, Text) {
   let s = s_in;
   let t = text_new();
-  if (changes.len() == 0) {
+  if (changes.len() == 0 && !o.remerge) {
     return (s, t);
   }
   let pairs = changes.map((c: treediff.Change): Pair => pair_of(c));
@@ -1420,11 +1471,11 @@ pub function render(s_in: store.Store, changes: treediff.Change[], o: Opts, leas
     if (o.numstat) {
       t = add_each(t, show_numstat(stats));
     }
-    if (o.stat) {
+    if (o.stat && stats.len() > 0) {
       let (t1, at_call) = call(t);
       t = add_each(t1, show_stats(stats, o, prefix_width(at_call)));
     }
-    if (o.shortstat) {
+    if (o.shortstat && stats.len() > 0) {
       t = add_each(t, show_shortstat(stats));
     }
     separator = true;
@@ -1444,7 +1495,7 @@ pub function render(s_in: store.Store, changes: treediff.Change[], o: Opts, leas
       let (t2, at_call) = call(t);
       t = push(t2, at_call, "", true);
     }
-    for p in pairs {
+    for p in if (o.remerge) { with_header_pairs(o, pairs) } else { pairs } {
       if (t.fatal.len() > 0) {
         return (s, t);
       }
