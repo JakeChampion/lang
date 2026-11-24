@@ -95,6 +95,28 @@ var binaryAliases = map[string][]string{
 	"XID_Continue": {"xidc"}, "XID_Start": {"xids"},
 }
 
+// gcbValues are the names of each Grapheme_Cluster_Break class of
+// gcbdata.txt, as regex-syntax 0.8.2 knows them.
+var gcbValues = map[string][]string{
+	"CONTROL": {"Control", "cn"}, "CR": {"CR"}, "EXTEND": {"Extend", "ex"}, "L": {"L"}, "LF": {"LF"},
+	"LV": {"LV"}, "LVT": {"LVT"}, "PREPEND": {"Prepend", "pp"},
+	"REGIONAL_INDICATOR": {"Regional_Indicator", "ri"}, "SPACINGMARK": {"SpacingMark", "sm"},
+	"T": {"T"}, "V": {"V"}, "ZWJ": {"ZWJ"},
+}
+
+// wbValues are the names of each Word_Break class of wbdata.txt, as
+// regex-syntax 0.8.2 knows them. "ex" is ExtendNumLet, and Extend has no
+// short name.
+var wbValues = map[string][]string{
+	"ALETTER": {"ALetter", "le"}, "CR": {"CR"}, "DOUBLE_QUOTE": {"Double_Quote", "dq"},
+	"EXTEND": {"Extend"}, "EXTENDNUMLET": {"ExtendNumLet", "ex"}, "FORMAT": {"Format", "fo"},
+	"HEBREW_LETTER": {"Hebrew_Letter", "hl"}, "KATAKANA": {"Katakana", "ka"}, "LF": {"LF"},
+	"MIDLETTER": {"MidLetter", "ml"}, "MIDNUM": {"MidNum", "mn"}, "MIDNUMLET": {"MidNumLet", "mb"},
+	"NEWLINE": {"Newline", "nl"}, "NUMERIC": {"Numeric", "nu"},
+	"REGIONAL_INDICATOR": {"Regional_Indicator", "ri"}, "SINGLE_QUOTE": {"Single_Quote", "sq"},
+	"WSEGSPACE": {"WSegSpace"}, "ZWJ": {"ZWJ"},
+}
+
 // gcGroups are the categories of one letter and LC, as unions of the
 // categories of two letters.
 var gcGroups = map[string]string{
@@ -212,8 +234,21 @@ type propTable struct {
 	rs   [][2]rune
 }
 
+// breakClasses gives the class of each code point from the runs of a break
+// property. The class is 0 for a code point that no run holds.
+func breakClasses(each func(yield func(lo, hi rune, class int))) []uint8 {
+	out := make([]uint8, unicode.MaxRune+1)
+	each(func(lo, hi rune, class int) {
+		for r := lo; r <= hi; r++ {
+			out[r] = uint8(class)
+		}
+	})
+	return out
+}
+
 // propTables gives each table of ranges and the keys that name it. A key is
-// "gc:", "sc:" or "bp:" and the loose name, or "pw:word" for \w.
+// "gc:", "sc:", "bp:", "gcb:" or "wb:" and the loose name, or "pw:word" for
+// \w.
 func propTables() []propTable {
 	var out []propTable
 	seen := map[string]bool{}
@@ -246,6 +281,35 @@ func propTables() []propTable {
 		t := unicode.Scripts[name]
 		add("sc", name, scriptAliases[name], func(r rune) bool { return unicode.Is(t, r) })
 	}
+	addBreak := func(kind string, values map[string][]string, classes map[string]int, of []uint8) {
+		if len(values) != len(classes) {
+			panic("unicodegen: the values of " + kind + " are not the classes of its data")
+		}
+		var names []string
+		for name := range values {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			class, ok := classes[name]
+			if !ok {
+				panic("unicodegen: " + kind + " has no class " + name)
+			}
+			add(kind, values[name][0], values[name][1:], func(r rune) bool { return int(of[r]) == class })
+		}
+	}
+	gcbs, _, _ := parseGCBData()
+	addBreak("gcb", gcbValues, gcbNames, breakClasses(func(yield func(lo, hi rune, class int)) {
+		for _, g := range gcbs {
+			yield(g.lo, g.hi, g.class)
+		}
+	}))
+	wbs, _ := parseWBData()
+	addBreak("wb", wbValues, wbNames, breakClasses(func(yield func(lo, hi rune, class int)) {
+		for _, w := range wbs {
+			yield(w.lo, w.hi, w.class)
+		}
+	}))
 	props := binaryProps()
 	var names []string
 	for name := range props {
@@ -462,14 +526,16 @@ function _prop_decode(span: (i32, i32)): Option[i32[]] {
     return Some(out);
 }
 
-// property_ranges gives the code points of a general category, a script or a
-// binary property, as pairs of the first and the last code point of each
-// range in order. The name is that of ` + "`\\p{...}`" + ` in a regular expression, as
-// regex-syntax reads it: case, spaces, underscores, hyphens and an "is" at
-// the start do not count. ` + "`gc=`" + `, ` + "`sc=`" + `, ` + "`General_Category=`" + ` and ` + "`Script=`" + `, or the
-// same names with ` + "`:`" + ` or ` + "`!=`" + `, select the kind of property. Without a kind, a
-// binary property comes first, then a general category, then a script.
-// An unknown name gives None.
+// property_ranges gives the code points of a general category, a script, a
+// binary property or a break class, as pairs of the first and the last code
+// point of each range in order. The name is that of ` + "`\\p{...}`" + ` in a regular
+// expression, as regex-syntax reads it: case, spaces, underscores, hyphens
+// and an "is" at the start do not count. ` + "`gc=`" + `, ` + "`sc=`" + `, ` + "`gcb=`" + ` and ` + "`wb=`" + `, their long
+// names ` + "`General_Category=`" + `, ` + "`Script=`" + `, ` + "`Grapheme_Cluster_Break=`" + ` and
+// ` + "`Word_Break=`" + `, or the same names with ` + "`:`" + ` or ` + "`!=`" + `, select the kind of
+// property. A break class always needs its kind. Without a kind, a binary
+// property comes first, then a general category, then a script. An unknown
+// name gives None.
 pub function property_ranges(name: string): Option[i32[]] {
     let (op, width) = _prop_op(name);
     if (op >= 0) {
@@ -484,9 +550,12 @@ pub function property_ranges(name: string): Option[i32[]] {
 }
 
 // _prop_valued gives the span of the ranges of a value of the property
-// kind: a general category, Any, Assigned and ASCII for gc, or a script.
+// kind: a general category, Any, Assigned and ASCII for gc, a script, or a
+// class of Grapheme_Cluster_Break or Word_Break other than Other.
 function _prop_valued(kind: string, value: string): (i32, i32) {
     if (kind == "sc" || kind == "script") { return _prop_index("sc:" + value); }
+    if (kind == "gcb" || kind == "graphemeclusterbreak") { return _prop_index("gcb:" + value); }
+    if (kind == "wb" || kind == "wordbreak") { return _prop_index("wb:" + value); }
     if (kind != "gc" && kind != "generalcategory") { return (-1, 0); }
     let span = _prop_index("gc:" + value);
     if (span.0 < 0 && (value == "any" || value == "assigned" || value == "ascii")) { return _prop_index("bp:" + value); }

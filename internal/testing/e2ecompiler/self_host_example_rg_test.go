@@ -425,6 +425,9 @@ func rgLateCases() []rgCase {
 		"-w [z-a] a.txt", "--no-unicode \\p{L} a.txt", "( a.txt", "-i -e foo -e \\x{110000} a.txt",
 		"[a-\\w] a.txt", "a{1 a.txt", "\\b{foo} a.txt", "(?x)a{ 1 } a.txt", "[o--f] a.txt", "\\p{Grek}+ uni.txt",
 		"\\p{IsGreek}+ uni.txt", "\\p{sc!=Greek}+ uni.txt", "\\P{sc!=Greek}+ uni.txt", "\\p{Emoji} uni.txt", "\\p{wspace} uni.txt",
+		"-o \\p{wb=le}+ uni.txt", "-o \\P{Word_Break=ALetter}+ uni.txt", "-c \\p{wb=WSegSpace} uni.txt", "\\p{wb=ex} uni.txt",
+		"-o \\P{gcb=cn}+ uni.txt", "-c \\p{Grapheme_Cluster_Break:LF} uni.txt", "\\p{gcb!=ex} uni.txt", "\\p{gcb=Other} a.txt",
+		"\\p{wb=eb} a.txt", "\\p{gcb=le} a.txt", "\\p{ALetter} a.txt",
 		// The encodings of the Encoding Standard.
 		"-E sjis foo sjis.txt", "-E Shift_JIS -o \\p{Hiragana}+ sjis.txt", "-E windows-31j --passthru x sjis.txt",
 		"-E euc-jp --passthru x eucjp.txt", "-E euc-kr foo euckr.txt", "-E gbk --passthru x gbk.txt",
