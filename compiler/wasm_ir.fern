@@ -269,6 +269,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (calls.contains("__fern_str_borrow") || has_kind(kinds, "str_slice")) {
     out = out.append("@uses_str_borrow");
   }
+  if (has_kind(kinds, "str_slice")) {
+    out = out.append("@uses_str_view");
+  }
   if (module_uses_frame_window(cache)) {
     out = out.append("@uses_frame_window");
   }
@@ -5044,7 +5047,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == ir.K_RAW_STRING && o.i32_imm > 0) {
     parts = parts.append(frame_window_wat(cx, arrtmp, eltmp, bctmp));
   } else if (o.kind_tag == ir.K_STR_SLICE) {
-    parts = parts.append(str_slice_wat(cx, o, arrtmp, eltmp, bctmp));
+    parts = parts.append(str_slice_wat(cx, o));
   } else if (o.kind_tag == ir.K_ARR_MAKE) {
     parts = emit_wasm_arr_make(arrtmp, eltmp, f64tmp, i64tmp, o, parts);
   } else if (o.kind_tag == ir.K_ARR_GET) {
@@ -5431,30 +5434,33 @@ function shadow_frame_pop(windows: i32): string {
 // frame form is a box in this call's shadow-stack frame, below the heap base,
 // so the count and the release skip it. The other form is a borrowed box.
 // Each holds no unit of s.
-function str_slice_wat(cx: WasmOpCtx, o: ir.Op, s: i32, start: i32, end: i32): string {
-  let a = util.i32_to_string(s);
-  let b = util.i32_to_string(start);
-  let e = util.i32_to_string(end);
-  let trap = "    if\n    call $__fern_abort_str\n    unreachable\n    end\n";
-  let out = "    local.set " + e + "\n    local.set " + b + "\n    local.set " + a + "\n"
-    + "    local.get " + e + "\n    local.get " + a + "\n" + str_len_stack() + "    i32.gt_u\n" + trap
-    + "    local.get " + b + "\n    local.get " + e + "\n    i32.gt_u\n" + trap
-    + "    local.get " + a + "\n" + str_data_stack() + "    local.get " + b + "\n    i32.add\n"
-    + "    local.get " + e + "\n    local.get " + b + "\n    i32.sub\n";
+function str_slice_wat(cx: WasmOpCtx, o: ir.Op): string {
   if (ir.frame_box_base(o) >= 0) {
-    return out + frame_box_wat(cx, s, start, end);
+    return "    global.get $__fern_shadow_sp\n    i32.const " + util.i32_to_string(cx.window) + "\n    i32.add\n    call $__fern_str_frame_view\n";
   }
-  return out + "    call $__fern_str_borrow\n";
+  return "    call $__fern_str_view\n";
+}
+
+// $__fern_str_view and $__fern_str_frame_view check the bounds of a slice of
+// the string $s and make its box [data, len]: a borrowed box on the heap, or
+// the frame box at $at.
+pub function str_view_helpers(): string {
+  let o = "  (func $__fern_str_view_check (param $s i32) (param $start i32) (param $end i32)\n";
+  o += "    (if (i32.gt_u (local.get $end) " + str_len_wat("(local.get $s)") + ") (then (call $__fern_abort_str) (unreachable)))\n";
+  o += "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (call $__fern_abort_str) (unreachable))))\n";
+  o += "  (func $__fern_str_view (param $s i32) (param $start i32) (param $end i32) (result i32)\n";
+  o += "    (call $__fern_str_view_check (local.get $s) (local.get $start) (local.get $end))\n";
+  o += "    (call $__fern_str_borrow (i32.add " + str_data_wat("(local.get $s)") + " (local.get $start)) (i32.sub (local.get $end) (local.get $start))))\n";
+  o += "  (func $__fern_str_frame_view (param $s i32) (param $start i32) (param $end i32) (param $at i32) (result i32)\n";
+  o += "    (call $__fern_str_view_check (local.get $s) (local.get $start) (local.get $end))\n";
+  o += "    (i32.store (local.get $at) (i32.add " + str_data_wat("(local.get $s)") + " (local.get $start)))\n";
+  o += "    " + str_set_len_wat("(local.get $at)", "(i32.sub (local.get $end) (local.get $start))") + "\n";
+  o += "    (local.get $at))\n";
+  return o;
 }
 
 // stack: data, len -> the window's address plus 1.
 function frame_window_wat(cx: WasmOpCtx, data: i32, len: i32, at: i32): string {
-  return frame_box_wat(cx, data, len, at) + "    i32.const 1\n    i32.add\n";
-}
-
-// stack: data, len -> the address of a box [data, len] in this call's
-// shadow-stack frame.
-function frame_box_wat(cx: WasmOpCtx, data: i32, len: i32, at: i32): string {
   let d = util.i32_to_string(data);
   let l = util.i32_to_string(len);
   let w = util.i32_to_string(at);
@@ -5462,7 +5468,7 @@ function frame_box_wat(cx: WasmOpCtx, data: i32, len: i32, at: i32): string {
     + "    global.get $__fern_shadow_sp\n    i32.const " + util.i32_to_string(cx.window) + "\n    i32.add\n"
     + "    local.tee " + w + "\n    local.get " + d + "\n    i32.store\n"
     + "    local.get " + w + "\n    i32.const 4\n    i32.add\n    local.get " + l + "\n    i32.store\n"
-    + "    local.get " + w + "\n";
+    + "    local.get " + w + "\n    i32.const 1\n    i32.add\n";
 }
 
 // A view's string arm is a string or a borrowed descriptor (str_borrow_helper),
@@ -10834,6 +10840,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "@uses_str_borrow")) {
     parts = parts.append(str_borrow_helper());
+  }
+  if (need(needs, "@uses_str_view")) {
+    parts = parts.append(str_view_helpers());
   }
   parts = kernel_helper_parts(needs, parts);
   if (need(needs, "arr_reserve")) {
