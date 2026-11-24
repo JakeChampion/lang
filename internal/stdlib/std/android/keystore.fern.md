@@ -1,6 +1,6 @@
 # Sealing small values with Android Keystore
 
-On Android API 23 and later, call `ensure_key(e, alias)` on the app's loop thread to provision an AES-256 key under an app-private alias. Pass the current thread's JNI environment (for example, `android.env(ctx)`). Reserve the alias for this module and have one app process manage it. Concurrent threads in that process serialize key creation. The key stays in the AndroidKeyStore provider. Hardware backing depends on the device.
+On Android API 23 and later, call `ensure_key(e, alias)` on the app's loop thread to provision an AES-256 key under an app-private alias. Use `has_key(e, alias)` to query an alias without provisioning it. Pass the current thread's JNI environment (for example, `android.env(ctx)`). Reserve the alias for this module and have one app process manage it. Concurrent threads in that process serialize key creation. The key stays in the AndroidKeyStore provider. Hardware backing depends on the device.
 
 `seal(e, alias, value)` accepts 1 to 4096 bytes. Store its result as bytes: a fresh 12-byte provider-generated IV followed by the ciphertext and the 16-byte GCM authentication tag. `open(e, alias, sealed)` releases plaintext only after authentication. Neither operation creates a missing key. Uninstalling the app or losing the keystore entry can make stored values unrecoverable.
 
@@ -72,6 +72,14 @@ function lookup(e: usize, c: bindings.Classes, alias: string): Result[jni.Object
 
 ```fern
 <<key provision>>=
+// Look up an alias without provisioning a replacement.
+pub function has_key(e: usize, alias: string): Result[boolean, jni.JavaError] {
+  let c = session(e, alias)?;
+  defer close(e, c);
+  let existing = lookup(e, c, alias)?;
+  return Ok(!existing.is_null());
+}
+
 pub function ensure_key(e: usize, alias: string): Result[void, jni.JavaError] {
   let c = session(e, alias)?;
   defer close(e, c);

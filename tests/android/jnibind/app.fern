@@ -183,6 +183,9 @@ function keystore_part(e: usize): Result[void, jni.JavaError] {
   let alias = "fern.jnibind.test";
   let data: u8[] = [0u8, 255u8, 37u8];
   keystore.ensure_key(e, alias)?;
+  if (!keystore.has_key(e, alias)? || keystore.has_key(e, alias + ".unprovisioned")?) {
+    return Err(jni.JavaError { text: "unexpected key alias status" });
+  }
   let sealed = keystore.seal(e, alias, data)?;
   keystore.ensure_key(e, alias)?;
   let again = keystore.seal(e, alias, data)?;

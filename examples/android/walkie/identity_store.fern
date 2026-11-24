@@ -13,13 +13,27 @@ function read_optional(path: string): Result[Option[u8[]], string] {
   };
 }
 
+function has_peers(dir: string): Result[boolean, string] {
+  if let Some(peers) = read_optional(dir + "/peers")? {
+    return Ok(peers.len() > 0);
+  }
+  return Ok(false);
+}
+
 function legacy(keys: string, old: string): Result[u8[], string] {
   if let Some(seed) = read_optional(keys + "/identity")? {
-    return Ok(seed);
+    if (seed.len() == 32) {
+      return Ok(seed);
+    }
   }
   if (old != "" && old != keys) {
     if let Some(seed) = read_optional(old + "/identity")? {
-      return Ok(seed);
+      if (seed.len() == 32) {
+        return Ok(seed);
+      }
+    }
+    if (has_peers(old)?) {
+      return Err("identity missing for the known phones");
     }
   }
   return Ok(rand.bytes(32));
@@ -55,15 +69,15 @@ function remove_plain(dir: string): Result[void, string] {
   };
 }
 
-function load_seed(keys: string, old: string, seal: (u8[]) => Result[u8[], string], open: (u8[]) => Result[u8[], string]): Result[u8[], string] {
+function load_seed(keys: string, old: string, has_key: () => Result[boolean, string], seal: (u8[]) => Result[u8[], string], open: (u8[]) => Result[u8[], string]): Result[u8[], string] {
   let path = keys + "/identity.sealed";
   if let Some(envelope) = read_optional(path)? {
     return open(envelope);
   }
-  let seed = legacy(keys, old)?;
-  if (seed.len() != 32) {
-    return Err("invalid legacy identity");
+  if (has_key()? || has_peers(keys)?) {
+    return Err("sealed identity is missing");
   }
+  let seed = legacy(keys, old)?;
   let sealed = seal(seed)?;
   let verified = open(sealed)?;
   if (!crypto.consteq(verified, seed)) {
@@ -73,11 +87,11 @@ function load_seed(keys: string, old: string, seal: (u8[]) => Result[u8[], strin
   return Ok(seed);
 }
 
-pub function load(keys: string, old: string, seal: (u8[]) => Result[u8[], string], open: (u8[]) => Result[u8[], string]): Result[u8[], string] {
+pub function load(keys: string, old: string, has_key: () => Result[boolean, string], seal: (u8[]) => Result[u8[], string], open: (u8[]) => Result[u8[], string]): Result[u8[], string] {
   if (keys == "") {
     return Err("no identity storage directory");
   }
-  let seed = load_seed(keys, old, seal, open)?;
+  let seed = load_seed(keys, old, has_key, seal, open)?;
   if (seed.len() != 32) {
     return Err("invalid sealed identity");
   }

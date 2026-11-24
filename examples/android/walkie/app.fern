@@ -282,7 +282,8 @@ function app_main(ctx: usize): usize {
   let e = android.env(ctx);
   let wrap = (seed: u8[]): Result[u8[], string] => seal_seed(e, seed);
   let unwrap = (sealed: u8[]): Result[u8[], string] => keystore.open(e, IDENTITY_ALIAS, sealed).map_err((err: jni.JavaError): string => err.message());
-  let loaded = identity_store.load(keys, dir, wrap, unwrap);
+  let has_key = (): Result[boolean, string] => keystore.has_key(e, IDENTITY_ALIAS).map_err((err: jni.JavaError): string => err.message());
+  let loaded = identity_store.load(keys, dir, has_key, wrap, unwrap);
   let id_seed = match (loaded) {
     Ok(seed) => seed,
     Err(err) => {
