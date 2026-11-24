@@ -270,6 +270,89 @@ function gsub_of_subtables(kind: i32, n: i32, sub: u8[]): u8[] {
   return data.concat(sub);
 }
 
+// A GSUB table with two lookups. Lookup 0 has the type `kind` and the one
+// subtable `sub`. Lookup 1 adds 100 to each glyph from 1 to 50.
+function gsub_of_context(kind: i32, sub: u8[]): u8[] {
+  let data: u8[] = [
+    0, 1, 0, 0, 0, 0, 0, 0, 0, 10,  // GSUB header
+    0, 2, 0, 6, 0, 14,  // two lookups
+    0, kind as u8, 0, 0, 0, 1, 0, 32,  // lookup 0, with its subtable last
+    0, 1, 0, 0, 0, 1, 0, 8,  // lookup 1
+    0, 1, 0, 6, 0, 100,  // single substitution, delta +100
+    0, 2, 0, 1, 0, 1, 0, 50, 0, 0,  // coverage range 1..=50
+  ];
+  return data.concat(sub);
+}
+
+// The glyphs of `input` after lookup 0 of a table of `gsub_of_context`,
+// when `substitute` and a prepared lookup give the same glyphs.
+function context_glyphs(base: truetype.Font, kind: i32, sub: u8[], input: i32[]): string {
+  let font = truetype.Font { ...base, data: gsub_of_context(kind, sub), gsub: 0, gdef: -1 };
+  let clusters: i32[] = [];
+  let masks: i32[] = [];
+  for k in 0..input.len() {
+    clusters = clusters.append(k);
+    masks = masks.append(1);
+  }
+  let run = truetype.run_of(input, clusters, masks);
+  let plain = joined(font.substitute(run, 0, 1, 0).glyphs);
+  let prepared = joined(font.prepare_lookup(0, false).apply(run, 1, 0).glyphs);
+  return if (plain == prepared) { plain } else { plain + " != " + prepared };
+}
+
+// A context and a chaining context find the parts of a rule in each format.
+// Each rule applies lookup 1 at one glyph of its input. A rule does not
+// apply when its input, the glyph before it or the glyph after it is not
+// there.
+function test_context_formats(): test.TestOutcome {
+  let Some(base) = devanagari() else {
+    return test.fail("the font did not parse");
+  };
+  // Format 1: glyph 5 then glyph 6, and lookup 1 at the second glyph.
+  let glyphs: u8[] = [
+    0, 1, 0, 8, 0, 1, 0, 14,
+    0, 1, 0, 1, 0, 5,  // coverage: 5
+    0, 1, 0, 4,  // one rule
+    0, 2, 0, 1, 0, 6, 0, 1, 0, 1,
+  ];
+  // Format 3: a coverage of 5 then a coverage of 6, and lookup 1 at the
+  // first glyph.
+  let coverages: u8[] = [
+    0, 3, 0, 2, 0, 1, 0, 14, 0, 20, 0, 0, 0, 1,
+    0, 1, 0, 1, 0, 5,
+    0, 1, 0, 1, 0, 6,
+  ];
+  // Chaining format 3: glyph 5 after glyph 8 and before glyph 6.
+  let chained_coverages: u8[] = [
+    0, 3, 0, 1, 0, 20, 0, 1, 0, 26, 0, 1, 0, 32, 0, 1, 0, 0, 0, 1,
+    0, 1, 0, 1, 0, 8,
+    0, 1, 0, 1, 0, 5,
+    0, 1, 0, 1, 0, 6,
+  ];
+  // Chaining format 1: glyphs 5 and 6 after glyph 8 and before glyph 7, and
+  // lookup 1 at the second glyph.
+  let chained_glyphs: u8[] = [
+    0, 1, 0, 8, 0, 1, 0, 14,
+    0, 1, 0, 1, 0, 5,  // coverage: 5
+    0, 1, 0, 4,  // one rule
+    0, 1, 0, 8, 0, 2, 0, 6, 0, 1, 0, 7, 0, 1, 0, 1, 0, 1,
+  ];
+  // Chaining format 2: the same rule with the classes 1 to 4 for the glyphs
+  // 5 to 8.
+  let chained_classes: u8[] = [
+    0, 2, 0, 16, 0, 22, 0, 22, 0, 22, 0, 2, 0, 0, 0, 36,
+    0, 1, 0, 1, 0, 5,  // coverage: 5
+    0, 1, 0, 5, 0, 4, 0, 1, 0, 2, 0, 3, 0, 4,  // classes
+    0, 1, 0, 4,  // one rule for class 1
+    0, 1, 0, 4, 0, 2, 0, 2, 0, 1, 0, 3, 0, 1, 0, 1, 0, 1,
+  ];
+  let got = context_glyphs(base, 5, glyphs, [5, 6, 5, 7, 5]) + " " + context_glyphs(base, 5, coverages, [5, 6, 5, 7, 5]);
+  got = got + " " + context_glyphs(base, 6, chained_coverages, [5, 6, 8, 5, 6, 8, 5, 7, 8, 5]);
+  got = got + " " + context_glyphs(base, 6, chained_glyphs, [5, 6, 7, 8, 5, 6, 7, 8, 5, 6, 6, 8, 5, 6]);
+  got = got + " " + context_glyphs(base, 6, chained_classes, [5, 6, 7, 8, 5, 6, 7, 8, 5, 6, 6, 8, 5, 6]);
+  return test.assert_eq(got, "5,106,5,7,5 105,6,5,7,5 5,6,8,105,6,8,5,7,8,5 5,6,7,8,5,106,7,8,5,6,6,8,5,6 5,6,7,8,5,106,7,8,5,6,6,8,5,6");
+}
+
 // A lookup can declare 65535 subtables. Each 64 subtables that a glyph
 // examines take one from the attempts of the run, as the glyph does, so a
 // font cannot make each attempt examine them for nothing.
@@ -346,6 +429,7 @@ function main(): i32 {
   r = r.it("a font with no GSUB table gives one glyph for each character", test_no_gsub);
   r = r.it("a cut font does not crash", test_a_cut_font_does_not_crash);
   r = r.it("prepared extension lookups preserve reverse chaining order", test_prepared_reverse_extension);
+  r = r.it("a context finds the parts of a rule in each format", test_context_formats);
   r = r.it("the subtables of a lookup take from the attempts of the run", test_subtables_take_from_the_attempts);
   r = r.it("prepared lookups in sequence take the attempts of each one alone", test_prepared_lookups_in_sequence);
   r = r.it("prepared coverage preserves matches, collisions and the operation budget", test_prepared_coverage_range);
