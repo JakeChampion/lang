@@ -30,6 +30,9 @@ function jni_frames(): i32;
 @import("libmediandk.so", "mock_jni_pending")
 function jni_pending(): i32;
 
+@import("libmediandk.so", "mock_jni_globals")
+function jni_globals(): i32;
+
 @import("libmediandk.so", "mock_jni_hardware_queries")
 function hardware_queries(): i32;
 
@@ -48,7 +51,7 @@ function discovery(): i32 {
     return 1;
   };
   let selected = capabilities.ordered(infos, config().request, policy.PreferHardware);
-  if (infos.len() != 3 || selected.len() != 2 || selected[0].implementation != policy.Hardware || selected[1].implementation != policy.Software || !infos[2].alias || jni_frames() != 0) {
+  if (infos.len() != 3 || selected.len() != 2 || selected[0].implementation != policy.Hardware || selected[1].implementation != policy.Software || !infos[2].alias || jni_frames() != 0 || jni_globals() != 0) {
     return 2;
   }
   let Ok(old) = capabilities.discover(e, 28, config().request, 256) else {
@@ -70,7 +73,7 @@ function discovery(): i32 {
       return 6;
     };
     let chosen = capabilities.ordered(filtered, config().request, policy.PreferHardware);
-    if (chosen.len() != 1 || chosen[0].implementation != policy.Software || jni_pending() != 0 || jni_frames() != 0) {
+    if (chosen.len() != 1 || chosen[0].implementation != policy.Software || jni_pending() != 0 || jni_frames() != 0 || jni_globals() != 0) {
       return 7;
     }
   }
@@ -79,7 +82,7 @@ function discovery(): i32 {
     if let Ok(_) = capabilities.discover(e, 29, config().request, 256) {
       return 8;
     }
-    if (jni_frames() != 0 || jni_pending() != (if (failure == 6) { 1 } else { 0 })) {
+    if (jni_frames() != 0 || jni_globals() != 0 || jni_pending() != (if (failure == 6) { 1 } else { 0 })) {
       return 9;
     }
   }

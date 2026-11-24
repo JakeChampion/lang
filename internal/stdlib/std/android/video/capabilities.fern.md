@@ -1,6 +1,7 @@
 # Android video codec capabilities
 
 Discovery uses MediaCodecList through the caller's attached JNI environment.
+The module calls Java only through `std/android/video/capabilities/bindings`, which `jnibind` writes from `bindings.spec`.
 The regular codec list excludes codecs that require secure or tunneled operation.
 Android 29 or later supplies hardware, software, vendor, and alias attributes.
 Earlier versions report `Unknown` and never infer hardware from a codec name.
@@ -17,6 +18,7 @@ Discovery clears exceptions that it handles and bounds local JNI references.
 <<*>>=
 // This module discovers Android video codecs and orders supported candidates.
 import "std/jni";
+import "std/android/video/capabilities/bindings";
 import "std/video/frame";
 import "core/cmp";
 
@@ -101,7 +103,7 @@ pub(package) function pop(env: usize): void {
   let _ = jni.pop_local_frame(env, 0 as usize);
 }
 
-pub(package) function healthy(env: usize): boolean {
+function healthy(env: usize): boolean {
   let exception = jni.exception_occurred(env);
   if (exception == 0 as usize) {
     return true;
@@ -111,171 +113,91 @@ pub(package) function healthy(env: usize): boolean {
   return false;
 }
 
-function method(env: usize, obj: usize, name: string, signature: string): Result[usize, frame.VideoError] {
-  let cls = jni.get_object_class(env, obj);
-  if (!healthy(env) || cls == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  let id = jni.get_method_id(env, cls, name, signature);
-  let _ = jni.delete_local_ref(env, cls);
-  if (!healthy(env) || id == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  return Ok(id);
+// The result of a wrapper. An error of Java is `Platform`.
+pub(package) function platform[T](got: Result[T, jni.JavaError]): Result[T, frame.VideoError] {
+  return match (got) {
+    Ok(value) => Ok(value),
+    Err(_) => Err(frame.Platform),
+  };
 }
 
-function object(env: usize, obj: usize, name: string, signature: string, values: usize[]): Result[usize, frame.VideoError] {
-  let id = method(env, obj, name, signature)?;
-  let args = jni.jvalues(values);
-  let value = jni.call_object_method_a(env, obj, id, args);
-  jni.free_buffer(args);
-  if (!healthy(env) || value == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  return Ok(value);
+// The classes that the discovery calls. Release them before the local frame ends.
+pub(package) function classes(env: usize): Result[bindings.Classes, frame.VideoError] {
+  return platform(bindings.classes(env));
 }
 
-pub(package) function read_boolean(env: usize, obj: usize, name: string): Result[boolean, frame.VideoError] {
-  let id = method(env, obj, name, "()Z")?;
-  let value = jni.call_boolean_method_a(env, obj, id, 0 as usize);
+// The length of `array`, which is at most `maximum`.
+pub(package) function length(env: usize, array: jni.Object, maximum: i32): Result[i32, frame.VideoError] {
+  let count = jni.get_array_length(env, array.ref);
   if (!healthy(env)) {
     return Err(frame.Platform);
   }
-  return Ok(value != 0);
-}
-
-function integer_field(env: usize, obj: usize, name: string): Result[i32, frame.VideoError] {
-  let cls = jni.get_object_class(env, obj);
-  if (!healthy(env) || cls == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  let id = jni.get_field_id(env, cls, name, "I");
-  let _ = jni.delete_local_ref(env, cls);
-  if (!healthy(env) || id == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  let value = jni.get_int_field(env, obj, id);
-  if (!healthy(env)) {
-    return Err(frame.Platform);
-  }
-  return Ok(value);
-}
-
-function object_field(env: usize, obj: usize, name: string, signature: string): Result[usize, frame.VideoError] {
-  let cls = jni.get_object_class(env, obj);
-  if (!healthy(env) || cls == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  let id = jni.get_field_id(env, cls, name, signature);
-  let _ = jni.delete_local_ref(env, cls);
-  if (!healthy(env) || id == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  let value = jni.get_object_field(env, obj, id);
-  if (!healthy(env) || value == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  return Ok(value);
-}
-
-function set_integer(env: usize, format: usize, name: string, value: i32): Result[void, frame.VideoError] {
-  let id = method(env, format, "setInteger", "(Ljava/lang/String;I)V")?;
-  let key = jni.new_string(env, name);
-  if (!healthy(env) || key == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  let args = jni.jvalues([key, value as usize]);
-  let _ = jni.call_void_method_a(env, format, id, args);
-  jni.free_buffer(args);
-  let _ = jni.delete_local_ref(env, key);
-  if (!healthy(env)) {
-    return Err(frame.Platform);
-  }
-  return Ok(());
-}
-
-pub(package) function media_format(env: usize, factory: string, kind: string, first: i32, second: i32): Result[usize, frame.VideoError] {
-  let cls = jni.find_class(env, "android/media/MediaFormat");
-  if (!healthy(env) || cls == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  let id = jni.get_static_method_id(env, cls, factory, "(Ljava/lang/String;II)Landroid/media/MediaFormat;");
-  if (!healthy(env) || id == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  let mime = jni.new_string(env, kind);
-  if (!healthy(env) || mime == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  let args = jni.jvalues([mime, first as usize, second as usize]);
-  let format = jni.call_static_object_method_a(env, cls, id, args);
-  jni.free_buffer(args);
-  if (!healthy(env) || format == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  return Ok(format);
-}
-
-pub(package) function set_positive(env: usize, format: usize, key: string, value: i32): Result[void, frame.VideoError] {
-  if (value > 0) {
-    set_integer(env, format, key, value)?;
-  }
-  return Ok(());
-}
-
-function request_format(env: usize, request: Request): Result[usize, frame.VideoError] {
-  let format = media_format(env, "createVideoFormat", request.mime, request.width, request.height)?;
-  set_positive(env, format, "frame-rate", request.frame_rate)?;
-  set_positive(env, format, "bitrate", request.bitrate)?;
-  set_positive(env, format, "profile", request.profile)?;
-  set_positive(env, format, "level", request.level)?;
-  set_positive(env, format, "color-format", request.color_format)?;
-  return Ok(format);
-}
-
-function profiles(env: usize, caps: usize, limits: Limits): Result[ProfileLevel[], frame.VideoError] {
-  let array = object_field(env, caps, "profileLevels", "[Landroid/media/MediaCodecInfo$CodecProfileLevel;")?;
-  let count = jni.get_array_length(env, array);
-  if (!healthy(env)) {
-    return Err(frame.Platform);
-  }
-  if (count < 0 || count > limits.max_profiles) {
+  if (count < 0 || count > maximum) {
     return Err(frame.Limit);
   }
+  return Ok(count);
+}
+
+// A local reference to element `i` of `array`.
+function element(env: usize, array: jni.Object, i: i32): Result[usize, frame.VideoError] {
+  let item = jni.get_object_array_element(env, array.ref, i);
+  if (!healthy(env) || item == 0 as usize) {
+    return Err(frame.Platform);
+  }
+  return Ok(item);
+}
+
+// Codec `i` of the array `infos` that `codec_infos` gives.
+pub(package) function info_at(env: usize, infos: jni.Object, i: i32): Result[bindings.MediaCodecInfo, frame.VideoError] {
+  return Ok(bindings.MediaCodecInfo { ref: element(env, infos, i)? });
+}
+
+pub(package) function set_positive(env: usize, c: bindings.Classes, format: bindings.MediaFormat, key: string, value: i32): Result[void, frame.VideoError] {
+  if (value > 0) {
+    platform(c.media_format.set_integer(env, format, key, value))?;
+  }
+  return Ok(());
+}
+
+function request_format(env: usize, c: bindings.Classes, request: Request): Result[bindings.MediaFormat, frame.VideoError] {
+  let format = platform(c.media_format.create_video_format(env, request.mime, request.width, request.height))?;
+  if (format.is_null()) {
+    return Err(frame.Platform);
+  }
+  set_positive(env, c, format, "frame-rate", request.frame_rate)?;
+  set_positive(env, c, format, "bitrate", request.bitrate)?;
+  set_positive(env, c, format, "profile", request.profile)?;
+  set_positive(env, c, format, "level", request.level)?;
+  set_positive(env, c, format, "color-format", request.color_format)?;
+  return Ok(format);
+}
+
+function profiles(env: usize, c: bindings.Classes, caps: bindings.MediaCodecInfo_CodecCapabilities, limits: Limits): Result[ProfileLevel[], frame.VideoError] {
+  let array = platform(c.media_codec_info_codec_capabilities.profile_levels(env, caps))?;
+  if (array.is_null()) {
+    return Err(frame.Platform);
+  }
+  let count = length(env, array, limits.max_profiles)?;
   let out: ProfileLevel[] = [];
   for i in 0..count {
-    let item = jni.get_object_array_element(env, array, i);
-    if (!healthy(env) || item == 0 as usize) {
-      return Err(frame.Platform);
-    }
-    out = out.append(ProfileLevel { profile: integer_field(env, item, "profile")?, level: integer_field(env, item, "level")? });
-    let _ = jni.delete_local_ref(env, item);
+    let item = bindings.MediaCodecInfo_CodecProfileLevel { ref: element(env, array, i)? };
+    let profile = platform(c.media_codec_info_codec_profile_level.profile(env, item))?;
+    let level = platform(c.media_codec_info_codec_profile_level.level(env, item))?;
+    out = out.append(ProfileLevel { profile: profile, level: level });
+    let _ = jni.delete_local_ref(env, item.ref);
   }
   return Ok(out);
 }
 
-function colors(env: usize, caps: usize, limits: Limits): Result[i32[], frame.VideoError] {
-  let array = object_field(env, caps, "colorFormats", "[I")?;
-  let count = jni.get_array_length(env, array);
-  if (!healthy(env)) {
+function colors(env: usize, c: bindings.Classes, caps: bindings.MediaCodecInfo_CodecCapabilities, limits: Limits): Result[i32[], frame.VideoError] {
+  let array = platform(c.media_codec_info_codec_capabilities.color_formats(env, caps))?;
+  if (array.is_null()) {
     return Err(frame.Platform);
   }
-  if (count < 0 || count > limits.max_color_formats) {
-    return Err(frame.Limit);
-  }
-  let out: i32[] = [];
-  unsafe {
-    let scratch = __alloc(4);
-    for i in 0..count {
-      // JNIEnv.GetIntArrayRegion is table entry 203.
-      let _ = __c_call5(jni.method_ptr(env, 203), env, array, i as usize, 1 as usize, scratch);
-      if (!healthy(env)) {
-        __free(scratch, 4);
-        return Err(frame.Platform);
-      }
-      out = out.append(__load_i32(scratch));
-    }
-    __free(scratch, 4);
+  let count = length(env, array, limits.max_color_formats)?;
+  let out = jni.int_array_region(env, array.ref, 0, count);
+  if (!healthy(env)) {
+    return Err(frame.Platform);
   }
   return Ok(out);
 }
@@ -287,22 +209,16 @@ pub(package) function push(env: usize): Result[void, frame.VideoError] {
   return Ok(());
 }
 
-function supported_types(env: usize, info: usize): Result[string[], frame.VideoError] {
-  let types = object(env, info, "getSupportedTypes", "()[Ljava/lang/String;", [])?;
-  defer jni.delete_local_ref(env, types);
-  let count = jni.get_array_length(env, types);
-  if (!healthy(env)) {
+function supported_types(env: usize, c: bindings.Classes, info: bindings.MediaCodecInfo): Result[string[], frame.VideoError] {
+  let types = platform(c.media_codec_info.get_supported_types(env, info))?;
+  if (types.is_null()) {
     return Err(frame.Platform);
   }
-  if (count < 0 || count > 256) {
-    return Err(frame.Limit);
-  }
+  defer jni.delete_local_ref(env, types.ref);
+  let count = length(env, types, 256)?;
   let out: string[] = [];
   for i in 0..count {
-    let item = jni.get_object_array_element(env, types, i);
-    if (!healthy(env) || item == 0 as usize) {
-      return Err(frame.Platform);
-    }
+    let item = element(env, types, i)?;
     out = out.append(jni.string_of(env, item));
     let _ = jni.delete_local_ref(env, item);
     if (!healthy(env)) {
@@ -312,50 +228,50 @@ function supported_types(env: usize, info: usize): Result[string[], frame.VideoE
   return Ok(out);
 }
 
-pub(package) function supports_type(env: usize, info: usize, mime: string): Result[boolean, frame.VideoError] {
-  let types = supported_types(env, info)?;
+pub(package) function is_encoder(env: usize, c: bindings.Classes, info: bindings.MediaCodecInfo): Result[boolean, frame.VideoError] {
+  return platform(c.media_codec_info.is_encoder(env, info));
+}
+
+pub(package) function supports_type(env: usize, c: bindings.Classes, info: bindings.MediaCodecInfo, mime: string): Result[boolean, frame.VideoError] {
+  let types = supported_types(env, c, info)?;
   return Ok(types.contains(mime));
 }
 
-pub(package) function codec_name(env: usize, info: usize): Result[string, frame.VideoError] {
-  let name_obj = object(env, info, "getName", "()Ljava/lang/String;", [])?;
-  if (jni.get_string_utf_length(env, name_obj) > 512) {
+pub(package) function codec_name(env: usize, c: bindings.Classes, info: bindings.MediaCodecInfo): Result[string, frame.VideoError] {
+  let name = platform(c.media_codec_info.get_name(env, info))?;
+  if (name.len() > 512) {
     return Err(frame.Limit);
   }
-  let name = jni.string_of(env, name_obj);
-  if (!healthy(env) || name.len() == 0) {
+  if (name.len() == 0) {
     return Err(frame.Platform);
   }
   return Ok(name);
 }
 
-pub(package) function codec_caps(env: usize, info: usize, mime: string): Result[usize, frame.VideoError] {
-  let name = jni.new_string(env, mime);
-  if (!healthy(env) || name == 0 as usize) {
+pub(package) function codec_caps(env: usize, c: bindings.Classes, info: bindings.MediaCodecInfo, mime: string): Result[bindings.MediaCodecInfo_CodecCapabilities, frame.VideoError] {
+  let caps = platform(c.media_codec_info.get_capabilities_for_type(env, info, mime))?;
+  if (caps.is_null()) {
     return Err(frame.Platform);
   }
-  return object(env, info, "getCapabilitiesForType", "(Ljava/lang/String;)Landroid/media/MediaCodecInfo$CodecCapabilities;", [name]);
+  return Ok(caps);
 }
 
-pub(package) function format_supported(env: usize, caps: usize, format: usize): Result[Option[boolean], frame.VideoError] {
-  let id = method(env, caps, "isFormatSupported", "(Landroid/media/MediaFormat;)Z")?;
-  let args = jni.jvalues([format]);
-  let supported = jni.call_boolean_method_a(env, caps, id, args);
-  jni.free_buffer(args);
-  if (!healthy(env)) {
-    return Ok(None);
-  }
-  return Ok(Some(supported != 0));
+// None when the codec throws for `format`.
+pub(package) function format_supported(env: usize, c: bindings.Classes, caps: bindings.MediaCodecInfo_CodecCapabilities, format: bindings.MediaFormat): Option[boolean] {
+  return match (c.media_codec_info_codec_capabilities.is_format_supported(env, caps, format)) {
+    Ok(supported) => Some(supported),
+    Err(_) => None,
+  };
 }
 
 pub(package) struct Attributes { implementation: Implementation, vendor: boolean, alias: boolean }
 
-pub(package) function attributes(env: usize, info: usize, api_level: i32): Result[Attributes, frame.VideoError] {
+pub(package) function attributes(env: usize, c: bindings.Classes, info: bindings.MediaCodecInfo, api_level: i32): Result[Attributes, frame.VideoError] {
   if (api_level < 29) {
     return Ok(Attributes { implementation: Unknown, vendor: false, alias: false });
   }
-  let hardware = read_boolean(env, info, "isHardwareAccelerated")?;
-  let software = read_boolean(env, info, "isSoftwareOnly")?;
+  let hardware = platform(c.media_codec_info.is_hardware_accelerated(env, info))?;
+  let software = platform(c.media_codec_info.is_software_only(env, info))?;
   let implementation = Unknown;
   if (hardware && !software) {
     implementation = Hardware;
@@ -363,65 +279,53 @@ pub(package) function attributes(env: usize, info: usize, api_level: i32): Resul
   if (software && !hardware) {
     implementation = Software;
   }
-  return Ok(Attributes { implementation: implementation, vendor: read_boolean(env, info, "isVendor")?, alias: read_boolean(env, info, "isAlias")? });
+  let vendor = platform(c.media_codec_info.is_vendor(env, info))?;
+  let alias = platform(c.media_codec_info.is_alias(env, info))?;
+  return Ok(Attributes { implementation: implementation, vendor: vendor, alias: alias });
 }
 
-function report(env: usize, info: usize, caps: usize, request: Request, supported: boolean, api_level: i32, limits: Limits): Result[CodecInfo, frame.VideoError] {
-  let attr = attributes(env, info, api_level)?;
-  return Ok(CodecInfo { name: codec_name(env, info)?, request: request, implementation: attr.implementation, vendor: attr.vendor, alias: attr.alias, supported: supported, profiles: profiles(env, caps, limits)?, color_formats: colors(env, caps, limits)? });
+function report(env: usize, c: bindings.Classes, info: bindings.MediaCodecInfo, caps: bindings.MediaCodecInfo_CodecCapabilities, request: Request, supported: boolean, api_level: i32, limits: Limits): Result[CodecInfo, frame.VideoError] {
+  let attr = attributes(env, c, info, api_level)?;
+  return Ok(CodecInfo { name: codec_name(env, c, info)?, request: request, implementation: attr.implementation, vendor: attr.vendor, alias: attr.alias, supported: supported, profiles: profiles(env, c, caps, limits)?, color_formats: colors(env, c, caps, limits)? });
 }
 
-function inspect_codec(env: usize, info: usize, format: usize, request: Request, api_level: i32, limits: Limits): Result[Option[CodecInfo], frame.VideoError] {
+function inspect_codec(env: usize, c: bindings.Classes, info: bindings.MediaCodecInfo, format: bindings.MediaFormat, request: Request, api_level: i32, limits: Limits): Result[Option[CodecInfo], frame.VideoError] {
   push(env)?;
   defer pop(env);
-  if (read_boolean(env, info, "isEncoder")? != request.encoder) {
+  if (is_encoder(env, c, info)? != request.encoder) {
     return Ok(None);
   }
-  if (!supports_type(env, info, request.mime)?) {
+  if (!supports_type(env, c, info, request.mime)?) {
     return Ok(None);
   }
-  let caps = codec_caps(env, info, request.mime)?;
-  let Some(supported) = format_supported(env, caps, format)? else {
+  let caps = codec_caps(env, c, info, request.mime)?;
+  let Some(supported) = format_supported(env, c, caps, format) else {
     return Ok(None);
   };
-  return Ok(Some(report(env, info, caps, request, supported, api_level, limits)?));
+  return Ok(Some(report(env, c, info, caps, request, supported, api_level, limits)?));
 }
 
-pub(package) function codec_list(env: usize): Result[usize, frame.VideoError] {
-  let cls = jni.find_class(env, "android/media/MediaCodecList");
-  if (!healthy(env) || cls == 0 as usize) {
+// The array of each regular codec of the device.
+pub(package) function codec_infos(env: usize, c: bindings.Classes): Result[jni.Object, frame.VideoError] {
+  let list = platform(c.media_codec_list.new(env, bindings.MEDIA_CODEC_LIST_REGULAR_CODECS))?;
+  if (list.is_null()) {
     return Err(frame.Platform);
   }
-  let ctor = jni.get_method_id(env, cls, "<init>", "(I)V");
-  if (!healthy(env) || ctor == 0 as usize) {
+  let infos = platform(c.media_codec_list.get_codec_infos(env, list))?;
+  if (infos.is_null()) {
     return Err(frame.Platform);
   }
-  let args = jni.jvalues([0 as usize]);
-  let list = jni.new_object_a(env, cls, ctor, args);
-  jni.free_buffer(args);
-  if (!healthy(env) || list == 0 as usize) {
-    return Err(frame.Platform);
-  }
-  return object(env, list, "getCodecInfos", "()[Landroid/media/MediaCodecInfo;", []);
+  return Ok(infos);
 }
 
-function collect(env: usize, infos: usize, request: Request, api_level: i32, limits: Limits): Result[CodecInfo[], frame.VideoError] {
-  let count = jni.get_array_length(env, infos);
-  if (!healthy(env)) {
-    return Err(frame.Platform);
-  }
-  if (count < 0 || count > limits.max_codecs) {
-    return Err(frame.Limit);
-  }
-  let format = request_format(env, request)?;
+function collect(env: usize, c: bindings.Classes, infos: jni.Object, request: Request, api_level: i32, limits: Limits): Result[CodecInfo[], frame.VideoError] {
+  let count = length(env, infos, limits.max_codecs)?;
+  let format = request_format(env, c, request)?;
   let out: CodecInfo[] = [];
   for i in 0..count {
-    let info = jni.get_object_array_element(env, infos, i);
-    if (!healthy(env) || info == 0 as usize) {
-      return Err(frame.Platform);
-    }
-    let inspected = inspect_codec(env, info, format, request, api_level, limits);
-    let _ = jni.delete_local_ref(env, info);
+    let info = info_at(env, infos, i)?;
+    let inspected = inspect_codec(env, c, info, format, request, api_level, limits);
+    let _ = jni.delete_local_ref(env, info.ref);
     match (inspected?) {
       Some(value) => {
         out = out.append(value);
@@ -433,11 +337,11 @@ function collect(env: usize, infos: usize, request: Request, api_level: i32, lim
 }
 
 // The types of codec `info` when it is a decoder, else none.
-function decoder_types_of(env: usize, info: usize): Result[string[], frame.VideoError] {
-  if (read_boolean(env, info, "isEncoder")?) {
+function decoder_types_of(env: usize, c: bindings.Classes, info: bindings.MediaCodecInfo): Result[string[], frame.VideoError] {
+  if (is_encoder(env, c, info)?) {
     return Ok([]);
   }
-  return supported_types(env, info);
+  return supported_types(env, c, info);
 }
 
 // Each MIME type that a regular decoder of the device takes, once.
@@ -455,22 +359,15 @@ pub function decoder_types(env: usize, limits: Limits): Result[string[], frame.V
   }
   push(env)?;
   defer pop(env);
-  let infos = codec_list(env)?;
-  let count = jni.get_array_length(env, infos);
-  if (!healthy(env)) {
-    return Err(frame.Platform);
-  }
-  if (count < 0 || count > limits.max_codecs) {
-    return Err(frame.Limit);
-  }
+  let c = classes(env)?;
+  defer c.release(env);
+  let infos = codec_infos(env, c)?;
+  let count = length(env, infos, limits.max_codecs)?;
   let out: string[] = [];
   for i in 0..count {
-    let info = jni.get_object_array_element(env, infos, i);
-    if (!healthy(env) || info == 0 as usize) {
-      return Err(frame.Platform);
-    }
-    let got = decoder_types_of(env, info);
-    let _ = jni.delete_local_ref(env, info);
+    let info = info_at(env, infos, i)?;
+    let got = decoder_types_of(env, c, info);
+    let _ = jni.delete_local_ref(env, info.ref);
     let types = got?;
     for t in types {
       if (!out.contains(t)) {
@@ -495,7 +392,9 @@ pub function discover(env: usize, api_level: i32, request: Request, limits: Limi
   }
   push(env)?;
   defer pop(env);
-  let infos = codec_list(env)?;
-  return collect(env, infos, request, api_level, limits);
+  let c = classes(env)?;
+  defer c.release(env);
+  let infos = codec_infos(env, c)?;
+  return collect(env, c, infos, request, api_level, limits);
 }
 ```
