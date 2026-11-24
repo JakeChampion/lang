@@ -477,13 +477,6 @@ function __max_early(t: message.NewSessionTicket): u32 {
   return 0 as u32;
 }
 
-// ticket_from is the ticket a client for `server_name` keeps from the
-// NewSessionTicket `t` that the server sent on the connection `c`.
-// This low-level constructor has no verification policy and records no verified chain.
-pub function ticket_from(c: handshake.Client, t: message.NewSessionTicket, server_name: string, now: time.Timestamp): Option[Ticket] {
-  return ticket_from_peer(c, t, server_name, now, false, []);
-}
-
 // A resumed handshake inherits its authenticated chain. A full handshake
 // provides a new chain even if the client offered a ticket.
 pub function ticket_from_peer(c: handshake.Client, t: message.NewSessionTicket, server_name: string, now: time.Timestamp, verify_peer: boolean, prior_chain: u8[][]): Option[Ticket] {

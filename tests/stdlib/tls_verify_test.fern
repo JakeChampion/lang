@@ -477,6 +477,26 @@ function test_pinned(): test.TestOutcome {
   return test.assert_eq(unpinned, "ok example.com");
 }
 
+function test_pinned_roles(): test.TestOutcome {
+  let chain = [ec_leaf(), ec_int()];
+  let roots = verify.Roots { ...ec_roots(), mode: verify.PinnedServers([]) };
+  match (verify.server(chain, roots, "example.com", now())) {
+    Err(verify.NotPinned(_)) => {},
+    _ => {
+      return test.fail("empty server pins must refuse the certificate");
+    }
+  }
+  let pinned = verify.pinned([crypto.sha256(ec_leaf())]);
+  match (verify.client(chain, pinned, now())) {
+    Err(verify.ClientPinningUnsupported) => {
+      return test.pass();
+    },
+    _ => {
+      return test.fail("client verification requires certificate authorities");
+    }
+  }
+}
+
 function main(): i32 {
   let r = test.new("std/tls/verify");
   r = r.it("valid chains", test_valid_chains);
@@ -496,6 +516,7 @@ function main(): i32 {
   r = r.it("an intermediate that is not for servers issues no server certificate", test_an_intermediate_limits_the_purpose);
   r = r.it("RFC 8448's CertificateVerify", test_certificate_verify);
   r = r.it("a pinned certificate", test_pinned);
+  r = r.it("pinned trust is only for servers", test_pinned_roles);
   return r.finish();
 }
 
