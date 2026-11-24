@@ -292,6 +292,17 @@ function test_qoi(): test.TestOutcome {
   return test.assert_eq(magic.to_string() + " " + shows_start(s, "QOI keeps each pixel").to_string() + " " + f.files.get().join("|"), "true true save Download/Press/beach.qoi image/qoi " + out.bytes.len().to_string());
 }
 
+// JPEG XL keeps each pixel, and its file goes to the downloads.
+function test_jxl(): test.TestOutcome {
+  let f = fake();
+  let s = settled(sim.tap(opened(f), "JXL"));
+  saved(s, "jxl");
+  let out = output_of(s);
+  let magic = out.bytes[0] == 255u8 && out.bytes[1] == 10u8;
+  s = sim.tap(s, "Save");
+  return test.assert_eq(magic.to_string() + " " + shows_start(s, "JPEG XL here keeps each pixel.").to_string() + " " + f.files.get().join("|"), "true true save Download/Press/beach.jxl image/jxl " + out.bytes.len().to_string());
+}
+
 // GIF has a slider of colours and no quality. Fewer colours give a smaller
 // file.
 function test_gif(): test.TestOutcome {
@@ -395,6 +406,7 @@ function main(): i32 {
   r = r.it("PNG keeps each pixel and has no quality", test_png);
   r = r.it("QOI keeps each pixel and saves to the downloads", test_qoi);
   r = r.it("GIF has a slider of colours", test_gif);
+  r = r.it("JPEG XL keeps each pixel and saves to the downloads", test_jxl);
   r = r.it("WebP goes to the encoder of the phone", test_webp);
   r = r.it("GIF, PNG and WebP keep an animation", test_animations);
   r = r.it("JPEG and QOI keep the first frame of an animation", test_animation_to_a_still);

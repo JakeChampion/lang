@@ -7,14 +7,16 @@ the phone.
 
 ## Formats
 
-The encoders of JPEG, PNG, QOI and GIF are in the standard library:
-`std/jpeg`, `std/png`, `std/qoi` and `std/gif`. They are written in Fern.
+The encoders of JPEG, PNG, QOI, GIF and lossless JPEG XL are in the
+standard library: `std/jpeg`, `std/png`, `std/qoi`, `std/gif` and
+`std/jxl`. They are written in Fern.
 WebP comes from the encoder of the phone, through `image.encode` of
 `std/android/image`. WebP can be lossy or lossless.
 
 GIF has a palette of 2 to 256 colours. With the Dither box, the encoder
-spreads the error of each pixel to its neighbours. The gallery of Android does not show QOI, so
-Press saves a QOI file to `Download/Press`.
+spreads the error of each pixel to its neighbours. The gallery of Android
+does not show QOI or JPEG XL, so Press saves those files to
+`Download/Press`.
 
 A slider sets the quality from 1 to 100. A second slider sets the size from
 5% to 100% of the sides. A Lanczos filter with three lobes resizes the
@@ -25,8 +27,9 @@ image before the encoder. For JPEG, a box keeps all the chroma samples
 
 Press opens an animated GIF or WebP on Android 12 (API level 31) and later.
 PNG writes an animated PNG (APNG), WebP an animated WebP, and GIF an
-animated GIF, with the delay of each frame. JPEG and QOI have no animation,
-so Press keeps the first frame. Press keeps at most 192 MB of frames.
+animated GIF, with the delay of each frame. JPEG, QOI and JPEG XL have no
+animation here, so Press keeps the first frame. Press keeps at most 192 MB
+of frames.
 
 `std/webp` puts the still WebP files that the phone encodes for the frames
 in one animated file.
@@ -38,8 +41,8 @@ of it. A finger on the picture moves the line. Under the picture, the app
 shows the size of each file and how much smaller the result is.
 
 Save puts the file in `Pictures/Press` through the MediaStore, so the app
-needs no permission. A QOI file goes to `Download/Press`. Share saves the file and then opens the share sheet of
-Android.
+needs no permission. A QOI or JPEG XL file goes to `Download/Press`. Share
+saves the file and then opens the share sheet of Android.
 
 ## Work beside the screen
 

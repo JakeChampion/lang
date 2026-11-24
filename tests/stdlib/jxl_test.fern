@@ -1,0 +1,95 @@
+import "std/hash/crc32";
+import "std/jxl";
+import "std/option";
+import "std/result";
+import "std/test";
+
+// Pixels of w by h with `bpp` bytes each: gradients, a sharp edge and
+// noise, so the codes of each channel have more than four symbols.
+function image(w: i32, h: i32, bpp: i32): u8[] {
+  let px: u8[] = [];
+  let seed = 11;
+  for y in 0..h {
+    for x in 0..w {
+      seed = seed * 1103515245 + 12345 & 2147483647;
+      let edge = if (x > w / 2) { 120 } else { 0 };
+      px = px.append(((x * 3 + y + edge) % 256) as u8).append(((y * 5 + seed % 9) % 256) as u8).append(((x + y * 2) % 256) as u8);
+      if (bpp == 4) {
+        px = px.append((255 - x % 64) as u8);
+      }
+    }
+  }
+  return px;
+}
+
+function encoded(w: i32, h: i32, bpp: i32): u8[] {
+  let px = image(w, h, bpp);
+  let made = if (bpp == 4) { jxl.encode_rgba8(w, h, px) } else { jxl.encode_rgb8(w, h, px) };
+  let file = match (made) {
+    Ok(f) => f,
+    Err(_) => [],
+  };
+  if let Some(dir) = env("JXL_TEST_OUT") {
+    let ok = write_file_bytes(dir + "/" + w.to_string() + "x" + h.to_string() + "x" + bpp.to_string() + ".jxl", file);
+    let raw = write_file_bytes(dir + "/" + w.to_string() + "x" + h.to_string() + "x" + bpp.to_string() + ".raw", px);
+  }
+  return file;
+}
+
+// The length and the CRC-32 of the file.
+function summary(file: u8[]): string {
+  return file.len().to_string() + " " + crc32.new().update(file).finish().to_string();
+}
+
+// libjxl 0.13.0 decodes each of these files to its pixels exactly. The test
+// keeps the length and the CRC-32 of each, so a change to the bytes shows.
+// One group of RGB, one group of RGBA, and four groups and two LF groups of
+// RGBA.
+function test_files(): test.TestOutcome {
+  let got = [summary(encoded(40, 30, 3)), summary(encoded(23, 17, 4)), summary(encoded(2100, 3, 4))];
+  return test.assert_eq(got.join(" | "), "1363 3262887182 | 538 2080594203 | 6876 3595370061");
+}
+
+// A solid image is one value for each channel and copies of distance 1,
+// so its file is small. libjxl decodes this one exactly.
+function test_runs(): test.TestOutcome {
+  let px: u8[] = [];
+  for i in 0..300 * 200 {
+    px = px.append(40u8).append(90u8).append(200u8).append(255u8);
+  }
+  let file = jxl.encode_rgba8(300, 200, px).ok().unwrap_or([]);
+  if let Some(dir) = env("JXL_TEST_OUT") {
+    let ok = write_file_bytes(dir + "/300x200x4.jxl", file);
+    let raw = write_file_bytes(dir + "/300x200x4.raw", px);
+  }
+  return test.assert_eq(summary(file), "94 3118128054");
+}
+
+// The signature, then a size header that is not small, with the height and
+// the width less one in fields of 9 or 13 bits.
+function test_headers(): test.TestOutcome {
+  let f = encoded(300, 2, 3);
+  let height = (f[2] as i32 >> 3 | f[3] as i32 << 5) & 511;
+  return test.assert_eq(f[0].to_string() + " " + f[1].to_string() + " " + (f[2] as i32 & 1).to_string() + " " + height.to_string(), "255 10 0 1");
+}
+
+function message(w: i32, h: i32, px: u8[]): string {
+  return match (jxl.encode_rgb8(w, h, px)) {
+    Ok(_) => "ok",
+    Err(e) => e.message(),
+  };
+}
+
+function test_errors(): test.TestOutcome {
+  let got = [message(0, 1, []), message(2, 1, [1u8, 2u8, 3u8])];
+  return test.assert_eq(got.join(" | "), "jxl: the width and the height must be from 1 to 1073741824 | jxl: the length of the pixels does not agree with the dimensions");
+}
+
+function main(): i32 {
+  let r = test.new("std/jxl");
+  r = r.it("files that libjxl decodes", test_files);
+  r = r.it("runs", test_runs);
+  r = r.it("headers", test_headers);
+  r = r.it("errors", test_errors);
+  return r.finish();
+}

@@ -653,6 +653,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"gif", langSrcAbs(t, "tests/stdlib/gif_test.fern"), ""},
 		{"webp", langSrcAbs(t, "tests/stdlib/webp_test.fern"), ""},
 		{"png_animation", langSrcAbs(t, "tests/stdlib/png_animation_test.fern"), ""},
+		{"jxl", langSrcAbs(t, "tests/stdlib/jxl_test.fern"), ""},
 		{"truetype", langSrcAbs(t, "tests/stdlib/truetype_test.fern"), ""},
 		{"truetype_var", langSrcAbs(t, "tests/stdlib/truetype_var_test.fern"), ""},
 		{"truetype_cff", langSrcAbs(t, "tests/stdlib/truetype_cff_test.fern"), ""},
