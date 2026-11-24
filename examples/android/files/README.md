@@ -24,8 +24,9 @@ saved server. The headings are words of round dots.
   recent files from one start to the next (`prefs.fern`).
 
 - A folder shows as a list or as a grid of tiles. An image file of the
-  phone shows a small picture of itself. An image file of a server does
-  not, because each small picture is a whole download.
+  phone shows a small picture of itself. Each small picture of a server
+  is a whole download, so a server folder gets them only in the grid. It
+  gets at most 24, from files of 4 MiB or less.
 
 A long press starts a selection:
 
@@ -146,7 +147,8 @@ Android lane of CI runs it.
 
 The lane also starts Samba with `scripts/files-samba-serve`. The check
 then adds that server in the app, reads a file of the share, and copies a
-file in each direction.
+file in each direction. Last, it reads the server through the provider of
+documents, as the file picker of the system does.
 
 ```sh
 fern -apk files.apk examples/android/files/app.fern
