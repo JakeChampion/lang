@@ -547,29 +547,22 @@ pub function object_cached(src: Source, offset: i64, c: Cache): (Result[objects.
 const DELTA_HEAD: i32 = 20;
 
 // The size of the object that the delta of the entry `e` makes, or -1. It
-// is the second number of the delta, so a short start of the stream gives it.
+// is the second number of the delta, so the start of the stream gives it.
 function delta_size(w: Window, e: Entry): i64 {
   let from = e.data_at - w.shift + 2;
   if (from < 0 || from >= w.bytes.len() as i64) {
     return -1;
   }
-  let at = from as i32;
-  // The start of the stream is enough for most deltas, and a stream with
-  // a large table of codes takes more of it.
-  for take in [512, 4096] {
-    if let Ok(reader) = deflate.inflate_reader(objects.part(w.bytes, at, w.bytes.len().min(at + take)).bytes(), 32768) {
-      let read = reader.read;
-      let want = DELTA_HEAD.min(e.size.max(1));
-      if let Ok(chunk) = read(want, (): boolean => false) {
-        if (chunk.bytes.len() >= want || at + take >= w.bytes.len()) {
-          let (_, a) = delta_number(chunk.bytes, 0);
-          let (size, _) = delta_number(chunk.bytes, a);
-          return size;
-        }
-      }
-    }
+  let want = DELTA_HEAD.min(e.size.max(1));
+  let Ok(head) = deflate.inflate_start(w.bytes.as_bytes(), from as i32, want) else {
+    return -1;
+  };
+  if (head.len() < want) {
+    return -1;
   }
-  return -1;
+  let (_, a) = delta_number(head, 0);
+  let (size, _) = delta_number(head, a);
+  return size;
 }
 
 // The kind of the object that the chain of deltas from `e` starts at.
