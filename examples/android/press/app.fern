@@ -57,8 +57,8 @@ function app_main(ctx: usize): usize {
     pick: (): boolean => device.pick(ctx),
     decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => image.decode_cover(bytes, w, h),
     webp: (img: draw.Image, quality: i32, lossless: boolean): Option[u8[]] => image.encode(img, if (lossless) { image.WebpLossless } else { image.Webp }, if (lossless) { 75 } else { quality }),
-    save: (name: string, mime: string, bytes: u8[]): boolean => device.save(ctx, name, mime, bytes),
-    share: (name: string, mime: string, bytes: u8[]): boolean => device.share(ctx, name, mime, bytes),
+    save: (name: string, mime: string, dir: string, bytes: u8[]): boolean => device.save(ctx, name, mime, dir, bytes),
+    share: (name: string, mime: string, dir: string, bytes: u8[]): boolean => device.share(ctx, name, mime, dir, bytes),
   };
   let base = press.program(d);
   let p = base.with_system((event: android.Event): Option[press.Msg] => {

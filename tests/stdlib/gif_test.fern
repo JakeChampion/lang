@@ -1,0 +1,237 @@
+import "std/gif";
+import "std/test";
+
+// A GIF file read back: the global palette, and the RGBA pixels and the
+// delay in hundredths of a second of each frame.
+struct Read { palette: u8[], frames: u8[][], delays: i32[], loops: boolean }
+
+function le16(b: [u8], at: i32): i32 {
+  return b[at] as i32 | b[at + 1] as i32 << 8;
+}
+
+// The indices that the LZW data `data` gives, with `lit` bits for a
+// literal. It is the decoder of the GIF format, to check the encoder.
+function unlzw(data: [u8], lit: i32): u8[] {
+  let clear = 1 << lit;
+  let width = lit + 1;
+  let prefix: i32[] = [];
+  let suffix: u8[] = [];
+  for i in 0..4096 {
+    prefix = prefix.append(-1);
+    suffix = suffix.append((if (i < clear) { i } else { 0 }) as u8);
+  }
+  let avail = clear + 2;
+  let old = -1;
+  let out: u8[] = [];
+  let acc = 0;
+  let n = 0;
+  let at = 0;
+  while (true) {
+    while (n < width && at < data.len()) {
+      acc = acc | data[at] as i32 << n;
+      n += 8;
+      at += 1;
+    }
+    if (n < width) {
+      return out;
+    }
+    let code = acc & (1 << width) - 1;
+    acc = acc >> width;
+    n -= width;
+    if (code == clear) {
+      width = lit + 1;
+      avail = clear + 2;
+      old = -1;
+      continue;
+    }
+    if (code == clear + 1) {
+      return out;
+    }
+    let first = code;
+    let word: u8[] = [];
+    let c = code;
+    if (code >= avail && old >= 0) {
+      c = old;
+    }
+    while (c >= clear) {
+      word = word.append(suffix[c]);
+      c = prefix[c];
+    }
+    word = word.append(c as u8);
+    let head = word[word.len() - 1];
+    for k in 0..word.len() {
+      out = out.append(word[word.len() - 1 - k]);
+    }
+    if (code >= avail && old >= 0) {
+      out = out.append(head);
+    }
+    if (old >= 0 && avail < 4096) {
+      prefix = prefix.with(avail, old);
+      suffix = suffix.with(avail, head);
+      avail += 1;
+      if (avail == 1 << width && width < 12) {
+        width += 1;
+      }
+    }
+    old = first;
+  }
+  return out;
+}
+
+function read(file: u8[]): Read {
+  let flags = file[10] as i32;
+  let size = 3 * (1 << (flags & 7) + 1);
+  let palette: u8[] = [];
+  for i in 0..size {
+    palette = palette.append(file[13 + i]);
+  }
+  let p = 13 + size;
+  let frames: u8[][] = [];
+  let delays: i32[] = [];
+  let loops = false;
+  let delay = 0;
+  let transparent = -1;
+  while (p < file.len() && file[p] != 59u8) {
+    if (file[p] == 33u8) {
+      if (file[p + 1] == 249u8) {
+        delay = le16(file, p + 4);
+        transparent = if ((file[p + 3] as i32 & 1) == 1) { file[p + 6] as i32 } else { -1 };
+      }
+      if (file[p + 1] == 255u8) {
+        loops = true;
+      }
+      p += 2;
+      while (file[p] != 0u8) {
+        p += file[p] as i32 + 1;
+      }
+      p += 1;
+    } else {
+      let w = le16(file, p + 5);
+      let h = le16(file, p + 7);
+      let lit = file[p + 10] as i32;
+      p += 11;
+      let data: u8[] = [];
+      while (file[p] != 0u8) {
+        for k in 0..file[p] as i32 {
+          data = data.append(file[p + 1 + k]);
+        }
+        p += file[p] as i32 + 1;
+      }
+      p += 1;
+      let idx = unlzw(data, lit);
+      let px: u8[] = [];
+      for i in 0..w * h {
+        let k = if (i < idx.len()) { idx[i] as i32 } else { 0 };
+        if (k == transparent) {
+          px = px.append(0u8).append(0u8).append(0u8).append(0u8);
+        } else {
+          px = px.append(palette[k * 3]).append(palette[k * 3 + 1]).append(palette[k * 3 + 2]).append(255u8);
+        }
+      }
+      frames = frames.append(px);
+      delays = delays.append(delay);
+    }
+  }
+  return Read { palette: palette, frames: frames, delays: delays, loops: loops };
+}
+
+// An image of w by h with `colors` colors in stripes.
+function stripes(w: i32, h: i32, colors: i32): u8[] {
+  let px: u8[] = [];
+  for y in 0..h {
+    for x in 0..w {
+      let k = (x / 3 + y) % colors;
+      px = px.append((k * 37 % 256) as u8).append((k * 91 % 256) as u8).append((255 - k * 13 % 256) as u8).append(255u8);
+    }
+  }
+  return px;
+}
+
+function encoded(w: i32, h: i32, px: u8[], opts: gif.Options): u8[] {
+  return match (gif.encode_rgba8(w, h, px, opts)) {
+    Ok(f) => f,
+    Err(_) => [],
+  };
+}
+
+// An image of fewer colors than the palette holds comes back exactly, with
+// dithering and without it.
+function test_few_colors_exact(): test.TestOutcome {
+  let px = stripes(40, 30, 7);
+  let plain = read(encoded(40, 30, px, gif.Options { colors: 256, dither: false })).frames[0];
+  let dithered = read(encoded(40, 30, px, gif.Options { colors: 16, dither: true })).frames[0];
+  return test.assert_eq((plain == px).to_string() + " " + (dithered == px).to_string(), "true true");
+}
+
+// More colors than the palette holds: the pixels take colors near their own,
+// and the palette has the count that the options ask for.
+function test_quantizes(): test.TestOutcome {
+  let px = stripes(64, 64, 200);
+  let r = read(encoded(64, 64, px, gif.Options { colors: 32, dither: false }));
+  let total = 0;
+  for i in 0..px.len() {
+    total += (r.frames[0][i] as i32 - px[i] as i32).abs();
+  }
+  return test.assert_eq(r.palette.len().to_string() + " " + (total / px.len() < 12).to_string(), "96 true");
+}
+
+// A long image of random pixels uses every width of code and clears the
+// table of 4096 codes more than once. Its 32 colors are in 32 cells of the
+// histogram, so they come back exactly.
+function test_long_lzw(): test.TestOutcome {
+  let px: u8[] = [];
+  let seed = 99;
+  for i in 0..120 * 100 {
+    seed = seed * 1103515245 + 12345 & 2147483647;
+    let k = seed % 32;
+    px = px.append((k * 8) as u8).append((255 - k * 8) as u8).append((k * 4) as u8).append(255u8);
+  }
+  let back = read(encoded(120, 100, px, gif.Options { colors: 64, dither: false })).frames[0];
+  return test.assert_eq(back == px, true);
+}
+
+function test_transparency(): test.TestOutcome {
+  let px: u8[] = [10, 20, 30, 255, 0, 0, 0, 0, 10, 20, 30, 255, 200, 100, 0, 40];
+  let back = read(encoded(4, 1, px, gif.options())).frames[0];
+  let want: u8[] = [10, 20, 30, 255, 0, 0, 0, 0, 10, 20, 30, 255, 0, 0, 0, 0];
+  return test.assert_eq(back == want, true);
+}
+
+function test_animation(): test.TestOutcome {
+  let a = stripes(10, 8, 3);
+  let b = stripes(10, 8, 5);
+  let file = match (gif.encode_frames(10, 8, [gif.Frame { pixels: a, delay_ms: 120 }, gif.Frame { pixels: b, delay_ms: 40 }], gif.options())) {
+    Ok(f) => f,
+    Err(_) => [],
+  };
+  let r = read(file);
+  let delays: string[] = [];
+  for d in r.delays {
+    delays = delays.append(d.to_string());
+  }
+  return test.assert_eq(r.loops.to_string() + " " + r.frames.len().to_string() + " " + delays.join(",") + " " + (r.frames[0] == a && r.frames[1] == b).to_string(), "true 2 12,4 true");
+}
+
+function message(w: i32, h: i32, frames: gif.Frame[]): string {
+  return match (gif.encode_frames(w, h, frames, gif.options())) {
+    Ok(_) => "ok",
+    Err(e) => e.message(),
+  };
+}
+
+function test_errors(): test.TestOutcome {
+  let one: u8[] = [1, 2, 3, 255];
+  let got = [message(0, 1, [gif.Frame { pixels: one, delay_ms: 0 }]), message(70000, 1, [gif.Frame { pixels: one, delay_ms: 0 }]), message(2, 1, [gif.Frame { pixels: one, delay_ms: 0 }]), message(1, 1, [])];
+  return test.assert_eq(got.join(" | "), "gif: the width and the height must be from 1 to 65535 | gif: the width and the height must be from 1 to 65535 | gif: the length of the pixels of a frame does not agree with the dimensions | gif: an image needs one frame or more");
+}
+
+function main(): i32 {
+  let r = test.new("std/gif");
+  r = r.it("few colors come back exactly", test_few_colors_exact);
+  r = r.it("more colors than the palette", test_quantizes);
+  r = r.it("long LZW data", test_long_lzw);
+  r = r.it("transparency", test_transparency);
+  r = r.it("animation", test_animation);
+  r = r.it("errors", test_errors);
+  return r.finish();
+}

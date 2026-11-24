@@ -75,12 +75,12 @@ function device(f: Fake, webp_works: boolean): press.Device {
       // the decoder of the tests reads.
       return jpeg.encode_rgba8(img.width, img.height, img.pixels, jpeg.Options { quality: quality, subsampling: jpeg.S420 }).ok();
     },
-    save: (name: string, mime: string, bytes: u8[]): boolean => {
-      f.files.set(f.files.get().append("save " + name + " " + mime + " " + bytes.len().to_string()));
+    save: (name: string, mime: string, dir: string, bytes: u8[]): boolean => {
+      f.files.set(f.files.get().append("save " + dir + "/" + name + " " + mime + " " + bytes.len().to_string()));
       return true;
     },
-    share: (name: string, mime: string, bytes: u8[]): boolean => {
-      f.files.set(f.files.get().append("share " + name + " " + mime));
+    share: (name: string, mime: string, dir: string, bytes: u8[]): boolean => {
+      f.files.set(f.files.get().append("share " + dir + "/" + name + " " + mime));
       return true;
     },
   };
@@ -194,6 +194,33 @@ function test_png(): test.TestOutcome {
   return test.assert_eq(png_magic.to_string() + " " + told.to_string() + " " + sim.says(s, "Quality").to_string(), "true true false");
 }
 
+// QOI keeps each pixel. The gallery does not show QOI, so its file goes to
+// the downloads.
+function test_qoi(): test.TestOutcome {
+  let f = fake();
+  let s = settled(sim.tap(opened(f), "QOI"));
+  let Some(out) = s.shell.app.output else {
+    return test.fail("no output");
+  };
+  let magic = out.bytes[0] == 113u8 && out.bytes[1] == 111u8 && out.bytes[2] == 105u8 && out.bytes[3] == 102u8;
+  s = sim.tap(s, "Save");
+  return test.assert_eq(magic.to_string() + " " + shows_start(s, "QOI keeps each pixel").to_string() + " " + f.files.get().join("|"), "true true save Download/Press/beach.qoi image/qoi " + out.bytes.len().to_string());
+}
+
+// GIF has a slider of colours and no quality. Fewer colours give a smaller
+// file.
+function test_gif(): test.TestOutcome {
+  let f = fake();
+  let s = settled(sim.tap(opened(f), "GIF"));
+  let full = output_size(s);
+  let Some(out) = s.shell.app.output else {
+    return test.fail("no output");
+  };
+  let magic = out.bytes[0] == 71u8 && out.bytes[1] == 73u8 && out.bytes[2] == 70u8;
+  s = settled(sim.slide(s, "Colours", 0.0));
+  return test.assert_eq(magic.to_string() + " " + s.shell.app.settings.colors.to_string() + " " + (output_size(s) < full).to_string() + " " + sim.says(s, "Quality").to_string(), "true 2 true false");
+}
+
 // WebP goes to the encoder of the phone, which the fake device stands in
 // for. A lossless WebP has no quality.
 function test_webp(): test.TestOutcome {
@@ -236,7 +263,7 @@ function test_save_and_share(): test.TestOutcome {
   saved(s, "saved");
   s = sim.tap(sim.tap(s, "OK"), "Share");
   let size = output_size(s);
-  return test.assert_eq(waited.to_string() + " " + f.files.get().join("|"), "true save beach.webp image/webp " + size.to_string() + "|share beach.webp image/webp");
+  return test.assert_eq(waited.to_string() + " " + f.files.get().join("|"), "true save Pictures/Press/beach.webp image/webp " + size.to_string() + "|share Pictures/Press/beach.webp image/webp");
 }
 
 function test_back(): test.TestOutcome {
@@ -281,6 +308,8 @@ function main(): i32 {
   r = r.it("a lower quality gives a smaller file", test_quality_slider);
   r = r.it("the size slider resizes the image", test_size_slider);
   r = r.it("PNG keeps each pixel and has no quality", test_png);
+  r = r.it("QOI keeps each pixel and saves to the downloads", test_qoi);
+  r = r.it("GIF has a slider of colours", test_gif);
   r = r.it("WebP goes to the encoder of the phone", test_webp);
   r = r.it("a phone with no WebP encoder gives a note", test_webp_fails);
   r = r.it("the split shows the original and the output", test_split);

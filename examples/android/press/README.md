@@ -7,10 +7,14 @@ the phone.
 
 ## Formats
 
-JPEG and PNG come from the encoders of the standard library, `std/jpeg`
-and `std/png`, which are written in Fern. WebP comes from the encoder of
-the phone, through `image.encode` of `std/android/image`. WebP can be lossy
-or lossless.
+The encoders of JPEG, PNG, QOI and GIF are in the standard library:
+`std/jpeg`, `std/png`, `std/qoi` and `std/gif`. They are written in Fern.
+WebP comes from the encoder of the phone, through `image.encode` of
+`std/android/image`. WebP can be lossy or lossless.
+
+GIF has a palette of 2 to 256 colours. With the Dither box, the encoder
+spreads the error of each pixel to its neighbours. The gallery of Android does not show QOI, so
+Press saves a QOI file to `Download/Press`.
 
 A slider sets the quality from 1 to 100. A second slider sets the size from
 5% to 100% of the sides. A Lanczos filter with three lobes resizes the
@@ -24,7 +28,7 @@ of it. A finger on the picture moves the line. Under the picture, the app
 shows the size of each file and how much smaller the result is.
 
 Save puts the file in `Pictures/Press` through the MediaStore, so the app
-needs no permission. Share saves the file and then opens the share sheet of
+needs no permission. A QOI file goes to `Download/Press`. Share saves the file and then opens the share sheet of
 Android.
 
 ## Work beside the screen
