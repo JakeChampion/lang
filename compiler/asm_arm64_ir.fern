@@ -4932,7 +4932,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     s = ssa_load(reg_of, ins.args[0], "x4", s);
     s = ssa_load(reg_of, ins.args[1], "x5", s);
     s = s.write(ir_bin_asm(ir.kind_id(ins.str), ins.imm, "x4", "x5", "x6"));
-  } else {
+  } else if (k == ssa.UNARY) {
     let src = "";
     if (reg_of[ins.args[0]] >= 0 && ssa_reg(reg_of[ins.args[0]]) != d) {
       src = ssa_reg(reg_of[ins.args[0]]);
@@ -4960,6 +4960,8 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
       s = ssa_load(reg_of, ins.args[0], d, s);
       s = s.write(ssa_unary_asm(ins.str, ins.imm == 1, d));
     }
+  } else {
+    ircore.ssa_inst_refuse(ssa.kind_name(k), ins.str, "arm64");
   }
   return ssa_store(reg_of, ins.result, d, s);
 }
