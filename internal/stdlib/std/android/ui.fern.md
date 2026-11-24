@@ -3364,9 +3364,8 @@ function arranged[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event):
     android.WindowDestroyed(_) => {
       return Shell { app: s.app, host: Host { ...h, paint: h.dev.detach(h.paint), window: 0 as usize }, said: s.said, jobs: s.jobs };
     },
-    android.ContentRect(left, top, right, bottom) => {
-      let sc = h.screen;
-      return Shell { app: s.app, host: changed(Host { ...h, screen: Screen { ...sc, left: left.max(0), top: top.max(0), right: (sc.w - right).max(0), bottom: (sc.h - bottom).max(0) } }), said: s.said, jobs: s.jobs };
+    android.Insets(left, top, right, bottom) => {
+      return Shell { app: s.app, host: changed(Host { ...h, screen: Screen { ...h.screen, left: left, top: top, right: right, bottom: bottom } }), said: s.said, jobs: s.jobs };
     },
     android.Pause => {
       let released = Shell { ...s, host: Host { ...h, backspace_at: 0i64 } };
